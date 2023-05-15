@@ -1,0 +1,34 @@
+services:
+  cassini-operator:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile.operator
+    restart: unless-stopped
+    environment:
+      CASSINI_OPERATOR_BASE_PATH: ${CASSINI_OPERATOR_BASE_PATH:-/}
+      CASSINI_MAX_RECORD_WORKERS: ${CASSINI_MAX_RECORD_WORKERS:-1}
+      CASSINI_MAX_BUILD_WORKERS: ${CASSINI_MAX_BUILD_WORKERS:-1}
+    ports:
+      - "${CASSINI_OPERATOR_PORT:-4000}:4000"
+    volumes:
+      - cassini_operator_state:/var/lib/cassini-operator
+      - cassini_published_site:/srv/cassini-site
+
+  cassini-control-panel:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile.control-panel
+    restart: unless-stopped
+    depends_on:
+      - cassini-operator
+    environment:
+      CASSINI_OPERATOR_BASE_PATH: ${CASSINI_OPERATOR_BASE_PATH:-/}
+      CASSINI_OPERATOR_URL: http://host.docker.internal:${CASSINI_OPERATOR_PORT:-4000}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${CASSINI_CONTROL_PANEL_PORT:-4173}:4173"
+
+volumes:
+  cassini_operator_state:
+  cassini_published_site:

@@ -137,6 +137,28 @@ func TestJobsHandlerReturnsEmptyArray(t *testing.T) {
 	}
 }
 
+func TestHTTPHandlerMountsRoutesUnderConfiguredBasePath(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.BasePath = "/operator"
+
+	handler := newHTTPHandler(log.New(ioDiscard{}, "", 0), rt)
+
+	prefixedReq := httptest.NewRequest(http.MethodGet, "/operator/jobs", nil)
+	prefixedRec := httptest.NewRecorder()
+	handler.ServeHTTP(prefixedRec, prefixedReq)
+	if prefixedRec.Code != http.StatusOK {
+		t.Fatalf("prefixed status = %d, want %d body=%s", prefixedRec.Code, http.StatusOK, prefixedRec.Body.String())
+	}
+
+	rootReq := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	rootRec := httptest.NewRecorder()
+	handler.ServeHTTP(rootRec, rootReq)
+	if rootRec.Code != http.StatusNotFound {
+		t.Fatalf("root status = %d, want %d body=%s", rootRec.Code, http.StatusNotFound, rootRec.Body.String())
+	}
+}
+
 func TestJobDetailHandlerReturnsNotFound(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -183,6 +205,74 @@ func TestLoadConfigRejectsMissingCassiniBin(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cassini binary") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadConfigUsesCassiniPrefixedWorkerEnvAndBasePath(t *testing.T) {
+	repoRoot := makeFakeOperatorRepoRoot(t)
+	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
+	t.Setenv("CASSINI_MAX_RECORD_WORKERS", "2")
+	t.Setenv("CASSINI_MAX_BUILD_WORKERS", "3")
+	t.Setenv("CASSINI_OPERATOR_BASE_PATH", "/operator/")
+
+	cfg, exitCode, err := loadConfig(nil, ioDiscard{})
+	if err != nil {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0", exitCode)
+	}
+	if cfg.BindAddr != "0.0.0.0:4000" {
+		t.Fatalf("bind = %q, want %q", cfg.BindAddr, "0.0.0.0:4000")
+	}
+	if cfg.BasePath != "/operator" {
+		t.Fatalf("basePath = %q, want %q", cfg.BasePath, "/operator")
+	}
+	if cfg.MaxRecordWorkers != 2 {
+		t.Fatalf("maxRecordWorkers = %d, want 2", cfg.MaxRecordWorkers)
+	}
+	if cfg.MaxBuildWorkers != 3 {
+		t.Fatalf("maxBuildWorkers = %d, want 3", cfg.MaxBuildWorkers)
+	}
+}
+
+func TestLoadConfigAllowsExplicitPathsOutsideRepo(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir temp dir: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(cwd)
+	}()
+
+	cassiniBin := filepath.Join(tmp, "cassini")
+	if err := os.WriteFile(cassiniBin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write cassini bin: %v", err)
+	}
+	t.Setenv("CASSINI_BIN", cassiniBin)
+	t.Setenv("CASSINI_OPERATOR_DB_PATH", filepath.Join(tmp, "runtime", "jobs.sqlite3"))
+	t.Setenv("CASSINI_OPERATOR_WORK_ROOT", filepath.Join(tmp, "runtime", "jobs"))
+	t.Setenv("CASSINI_OPERATOR_SITE_ROOT", filepath.Join(tmp, "runtime", "site"))
+
+	cfg, exitCode, err := loadConfig(nil, ioDiscard{})
+	if err != nil {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0", exitCode)
+	}
+	if cfg.RepoRoot != "" {
+		t.Fatalf("repoRoot = %q, want empty outside repo", cfg.RepoRoot)
+	}
+	if cfg.CassiniBin != cassiniBin {
+		t.Fatalf("cassiniBin = %q, want %q", cfg.CassiniBin, cassiniBin)
+	}
+	if cfg.DBPath != filepath.Join(tmp, "runtime", "jobs.sqlite3") {
+		t.Fatalf("dbPath = %q", cfg.DBPath)
 	}
 }
 

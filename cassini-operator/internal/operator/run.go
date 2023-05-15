@@ -23,7 +23,8 @@ import (
 )
 
 const (
-	defaultBind              = "127.0.0.1:8080"
+	defaultBind              = "0.0.0.0:4000"
+	defaultOperatorBasePath  = "/"
 	defaultRecordWorkerCount = 1
 	nextcloudTalkProvider    = "nextcloud-talk"
 )
@@ -31,6 +32,7 @@ const (
 type Config struct {
 	RepoRoot         string
 	BindAddr         string
+	BasePath         string
 	DBPath           string
 	WorkRoot         string
 	SiteRoot         string
@@ -104,13 +106,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/jobs", runtime.jobsHandler)
-	mux.HandleFunc("/jobs/", runtime.jobDetailHandler)
-	mux.HandleFunc("/events", runtime.eventsHandler)
-
 	server := &http.Server{
-		Handler:           requestLogger(logger, mux),
+		Handler:           newHTTPHandler(logger, runtime),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -122,6 +119,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	defer listener.Close()
 
 	fmt.Fprintf(stdout, "listening -> http://%s\n", listener.Addr().String())
+	logger.Printf("base_path -> %s", cfg.BasePath)
 	logger.Printf("db -> %s", cfg.DBPath)
 	logger.Printf("work_root -> %s", cfg.WorkRoot)
 	logger.Printf("site_root -> %s", cfg.SiteRoot)
@@ -161,34 +159,31 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
-	repoRoot, err := findRepoRoot()
-	if err != nil {
-		return Config{}, 1, fmt.Errorf("resolve repo root: %w", err)
+	repoRoot, repoRootErr := findRepoRoot()
+	if repoRootErr != nil {
+		repoRoot = ""
 	}
 
-	defaultDataRoot := filepath.Join(repoRoot, "cassini-operator", "runtime")
-	defaultDBPath := filepath.Join(defaultDataRoot, "jobs.sqlite3")
-	defaultWorkRoot := filepath.Join(defaultDataRoot, "jobs")
-	defaultSiteRoot := filepath.Join(defaultDataRoot, "site")
-	defaultMaxRecordWorkers, err := parsePositiveIntEnv("MAX_RECORD_WORKERS", defaultRecordWorkerCount)
+	defaultDataRoot := defaultOperatorDataRoot(repoRoot)
+	defaultMaxRecordWorkers, err := parsePositiveIntEnvAny([]string{"CASSINI_MAX_RECORD_WORKERS", "MAX_RECORD_WORKERS"}, defaultRecordWorkerCount)
 	if err != nil {
 		return Config{}, 2, err
 	}
-	defaultMaxBuildWorkers, err := parsePositiveIntEnv("MAX_BUILD_WORKERS", defaultBuildWorkerCount)
+	defaultMaxBuildWorkers, err := parsePositiveIntEnvAny([]string{"CASSINI_MAX_BUILD_WORKERS", "MAX_BUILD_WORKERS"}, defaultBuildWorkerCount)
 	if err != nil {
 		return Config{}, 2, err
 	}
-	defaultCassiniBin := envOrDefault("CASSINI_BIN", filepath.Join(repoRoot, "bin", "cassini"))
 
 	fs := flag.NewFlagSet("cassini-operator", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
 	cfg := Config{RepoRoot: repoRoot}
-	fs.StringVar(&cfg.BindAddr, "bind", defaultBind, "HTTP bind address")
-	fs.StringVar(&cfg.DBPath, "db", defaultDBPath, "SQLite database path")
-	fs.StringVar(&cfg.WorkRoot, "work-root", envOrDefault("WORK_ROOT", defaultWorkRoot), "per-job artifact root")
-	fs.StringVar(&cfg.SiteRoot, "site-root", envOrDefault("SITE_ROOT", defaultSiteRoot), "published site output root")
-	fs.StringVar(&cfg.CassiniBin, "cassini-bin", defaultCassiniBin, "Cassini CLI binary path")
+	fs.StringVar(&cfg.BindAddr, "bind", envOrDefaultAny([]string{"CASSINI_OPERATOR_BIND_ADDR"}, defaultBind), "HTTP bind address")
+	fs.StringVar(&cfg.BasePath, "base-path", envOrDefaultAny([]string{"CASSINI_OPERATOR_BASE_PATH"}, defaultOperatorBasePath), "HTTP route prefix")
+	fs.StringVar(&cfg.DBPath, "db", envOrDefaultAny([]string{"CASSINI_OPERATOR_DB_PATH"}, filepath.Join(defaultDataRoot, "jobs.sqlite3")), "SQLite database path")
+	fs.StringVar(&cfg.WorkRoot, "work-root", envOrDefaultAny([]string{"CASSINI_OPERATOR_WORK_ROOT", "WORK_ROOT"}, filepath.Join(defaultDataRoot, "jobs")), "per-job artifact root")
+	fs.StringVar(&cfg.SiteRoot, "site-root", envOrDefaultAny([]string{"CASSINI_OPERATOR_SITE_ROOT", "SITE_ROOT"}, filepath.Join(defaultDataRoot, "site")), "published site output root")
+	fs.StringVar(&cfg.CassiniBin, "cassini-bin", envOrDefaultAny([]string{"CASSINI_BIN"}, defaultCassiniBinPath(repoRoot)), "Cassini CLI binary path")
 	fs.IntVar(&cfg.MaxRecordWorkers, "max-record-workers", defaultMaxRecordWorkers, "maximum concurrent record workers")
 	fs.IntVar(&cfg.MaxBuildWorkers, "max-build-workers", defaultMaxBuildWorkers, "maximum concurrent build workers")
 	fs.Usage = func() {
@@ -196,8 +191,8 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 
 Usage:
   cassini-operator
-  cassini-operator --bind 127.0.0.1:8080
-  cassini-operator --db ./cassini-operator/runtime/jobs.sqlite3
+  cassini-operator --bind 0.0.0.0:4000
+  cassini-operator --base-path /operator --db ./cassini-operator/runtime/jobs.sqlite3
 
 Flags:
 `)
@@ -214,15 +209,26 @@ Flags:
 		return Config{}, 2, fmt.Errorf("unexpected positional arguments: %v", fs.Args())
 	}
 
-	cfg.DBPath = resolveRepoRelativePath(repoRoot, cfg.DBPath)
-	cfg.WorkRoot = resolveRepoRelativePath(repoRoot, cfg.WorkRoot)
-	cfg.SiteRoot = resolveRepoRelativePath(repoRoot, cfg.SiteRoot)
-	cfg.CassiniBin = resolveRepoRelativePath(repoRoot, cfg.CassiniBin)
+	cfg.BindAddr = strings.TrimSpace(cfg.BindAddr)
+	if cfg.BindAddr == "" {
+		return Config{}, 2, errors.New("--bind must not be empty")
+	}
+	cfg.BasePath, err = normalizeBasePath(cfg.BasePath)
+	if err != nil {
+		return Config{}, 2, err
+	}
+	cfg.DBPath = resolveConfigPath(repoRoot, cfg.DBPath)
+	cfg.WorkRoot = resolveConfigPath(repoRoot, cfg.WorkRoot)
+	cfg.SiteRoot = resolveConfigPath(repoRoot, cfg.SiteRoot)
+	cfg.CassiniBin = resolveConfigPath(repoRoot, cfg.CassiniBin)
 	if cfg.MaxRecordWorkers < 1 {
 		return Config{}, 2, errors.New("--max-record-workers must be >= 1")
 	}
 	if cfg.MaxBuildWorkers < 1 {
 		return Config{}, 2, errors.New("--max-build-workers must be >= 1")
+	}
+	if strings.TrimSpace(cfg.CassiniBin) == "" {
+		return Config{}, 2, errors.New("--cassini-bin must not be empty")
 	}
 	if err := validateExecutable(cfg.CassiniBin); err != nil {
 		return Config{}, 2, fmt.Errorf("cassini binary: %w", err)
@@ -231,34 +237,76 @@ Flags:
 	return cfg, 0, nil
 }
 
-func parsePositiveIntEnv(name string, fallback int) (int, error) {
-	value := strings.TrimSpace(os.Getenv(name))
-	if value == "" {
-		return fallback, nil
+func parsePositiveIntEnvAny(names []string, fallback int) (int, error) {
+	for _, name := range names {
+		value := strings.TrimSpace(os.Getenv(name))
+		if value == "" {
+			continue
+		}
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return 0, fmt.Errorf("parse %s: %w", name, err)
+		}
+		if n < 1 {
+			return 0, fmt.Errorf("%s must be >= 1", name)
+		}
+		return n, nil
 	}
-	n, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("parse %s: %w", name, err)
-	}
-	if n < 1 {
-		return 0, fmt.Errorf("%s must be >= 1", name)
-	}
-	return n, nil
+	return fallback, nil
 }
 
-func envOrDefault(name, fallback string) string {
-	value := strings.TrimSpace(os.Getenv(name))
-	if value == "" {
-		return fallback
+func envOrDefaultAny(names []string, fallback string) string {
+	for _, name := range names {
+		value := strings.TrimSpace(os.Getenv(name))
+		if value != "" {
+			return value
+		}
 	}
-	return value
+	return fallback
 }
 
-func resolveRepoRelativePath(repoRoot, path string) string {
+func resolveConfigPath(base, path string) string {
 	if filepath.IsAbs(path) {
 		return path
 	}
-	return filepath.Join(repoRoot, path)
+	if strings.TrimSpace(base) != "" {
+		return filepath.Join(base, path)
+	}
+	resolved, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	return resolved
+}
+
+func defaultOperatorDataRoot(repoRoot string) string {
+	if strings.TrimSpace(repoRoot) != "" {
+		return filepath.Join(repoRoot, "cassini-operator", "runtime")
+	}
+	return "/var/lib/cassini-operator"
+}
+
+func defaultCassiniBinPath(repoRoot string) string {
+	if strings.TrimSpace(repoRoot) != "" {
+		return filepath.Join(repoRoot, "bin", "cassini")
+	}
+	return "/usr/local/bin/cassini"
+}
+
+func normalizeBasePath(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	normalized := trimmed
+	if normalized == "" {
+		normalized = defaultOperatorBasePath
+	}
+	normalized = strings.TrimRight(normalized, "/")
+	if normalized == "" {
+		normalized = "/"
+	}
+	if !strings.HasPrefix(normalized, "/") {
+		return "", errors.New("--base-path must start with '/'")
+	}
+	return normalized, nil
 }
 
 func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logger, stdout, stderr io.Writer) *Runtime {
@@ -286,6 +334,25 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	rt.startBuildWorkers()
 	rt.startPublishWorker()
 	return rt
+}
+
+func newHTTPHandler(logger *log.Logger, rt *Runtime) http.Handler {
+	api := http.NewServeMux()
+	api.HandleFunc("/jobs", rt.jobsHandler)
+	api.HandleFunc("/jobs/", rt.jobDetailHandler)
+	api.HandleFunc("/events", rt.eventsHandler)
+	return requestLogger(logger, mountBasePath(rt.cfg.BasePath, api))
+}
+
+func mountBasePath(basePath string, api http.Handler) http.Handler {
+	if basePath == "" || basePath == "/" {
+		return api
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle(basePath, http.StripPrefix(basePath, api))
+	mux.Handle(basePath+"/", http.StripPrefix(basePath, api))
+	return mux
 }
 
 func (rt *Runtime) jobsHandler(w http.ResponseWriter, r *http.Request) {

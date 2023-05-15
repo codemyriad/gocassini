@@ -5,7 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const operatorBasePath = normalizeOperatorBasePath(
-    env.CASSINI_OPERATOR_BASE_PATH ?? process.env.CASSINI_OPERATOR_BASE_PATH ?? "/operator",
+    env.CASSINI_OPERATOR_BASE_PATH ?? process.env.CASSINI_OPERATOR_BASE_PATH ?? "/",
   );
   const operatorProxyTarget = (env.CASSINI_OPERATOR_URL ?? process.env.CASSINI_OPERATOR_URL ?? "").trim();
   const proxy = createOperatorProxy(operatorBasePath, operatorProxyTarget);
@@ -32,31 +32,34 @@ function createOperatorProxy(operatorBasePath: string, operatorProxyTarget: stri
     return {};
   }
 
-  const prefixPattern = new RegExp(`^${escapeRegExp(operatorBasePath)}`);
+  if (operatorBasePath === "/") {
+    return {
+      "/jobs": directOperatorProxy(operatorProxyTarget),
+      "/events": directOperatorProxy(operatorProxyTarget),
+    };
+  }
+
   return {
-    [operatorBasePath]: {
-      target: operatorProxyTarget,
-      changeOrigin: true,
-      secure: false,
-      timeout: 0,
-      proxyTimeout: 0,
-      rewrite(path) {
-        const rewritten = path.replace(prefixPattern, "");
-        return rewritten === "" ? "/" : rewritten;
-      },
-    },
+    [operatorBasePath]: directOperatorProxy(operatorProxyTarget),
+  };
+}
+
+function directOperatorProxy(operatorProxyTarget: string): ProxyOptions {
+  return {
+    target: operatorProxyTarget,
+    changeOrigin: true,
+    secure: false,
+    timeout: 0,
+    proxyTimeout: 0,
   };
 }
 
 function normalizeOperatorBasePath(value: string): string {
   const trimmed = value.trim();
-  const normalized = (trimmed === "" ? "/operator" : trimmed).replace(/\/+$/, "") || "/";
+  const normalized = (trimmed === "" ? "/" : trimmed).replace(/\/+$/, "") || "/";
   if (!normalized.startsWith("/")) {
     throw new Error("CASSINI_OPERATOR_BASE_PATH must start with '/'.");
   }
   return normalized;
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
