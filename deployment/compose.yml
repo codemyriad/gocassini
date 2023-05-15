@@ -29,6 +29,18 @@ services:
     ports:
       - "${CASSINI_CONTROL_PANEL_PORT:-4173}:4173"
 
+  cassini-viewer:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile.viewer
+    restart: unless-stopped
+    depends_on:
+      - cassini-operator
+    ports:
+      - "${CASSINI_VIEWER_PORT:-8765}:8765"
+    volumes:
+      - cassini_published_site:/srv/cassini-site:ro
+
 volumes:
   cassini_operator_state:
   cassini_published_site:
