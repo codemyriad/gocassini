@@ -38,6 +38,17 @@ Each packet record:
 - wireBytes: `wireLen`
 - crc32: optional `u32`
 
+### Index sidecar (implemented)
+
+- `streams/<stream_id>.idx` is a binary list of fixed-size entries:
+  - recvMonoNS: `u64`
+  - fileOffset: `u64`
+- `pkg/core/store` exposes:
+  - `BuildIndex(logPath, indexPath string) error`
+  - `ReadIndex(indexPath string) ([]IndexEntry, error)`
+  - `FindOffset(entries []IndexEntry, recvMonoNS uint64) (IndexEntry, bool)` (timestamp lower-bound lookup)
+- this allows deterministic time-based seeks before forward scanning when implementing remux/inspect diagnostics.
+
 ## Current migration status
 
 - current code still uses `internal/cassette` for `.csr` capture
