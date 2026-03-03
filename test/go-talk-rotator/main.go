@@ -1685,7 +1685,8 @@ func rotateAudio(ctx context.Context, bots []*bot, every time.Duration) {
 				log.Printf("[manager] mute switch failed for %s: %v", bots[idx].cfg.GuestName, err)
 			}
 		}
-		log.Printf("[manager] audible=%s active=%d", bots[chosen].cfg.GuestName, len(active))
+		mediaSec := bots[chosen].cfg.JoinDelay.Seconds() + float64(bots[chosen].videoSamples.Load())/30.0
+		log.Printf("[manager] audible=%s active=%d media_t=%.3f", bots[chosen].cfg.GuestName, len(active), mediaSec)
 
 		if !sleepContext(ctx, every) {
 			return

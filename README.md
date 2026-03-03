@@ -41,6 +41,18 @@ cd /path/to/gocassini-repo-root
 
 This uses `test/compose.yml` and starts a local Nextcloud Talk stack, creates a room, runs publishers, and validates recorder outputs.
 
+### Local private config (`.envrc`)
+
+For private values (for example a cloud `CALL_URL`), keep them outside git:
+
+```bash
+cd /path/to/gocassini-repo-root
+cp .envrc.example .envrc
+# edit .envrc with your real values
+```
+
+`.envrc` is gitignored.
+
 ### Live smoke in local stack
 
 ```bash

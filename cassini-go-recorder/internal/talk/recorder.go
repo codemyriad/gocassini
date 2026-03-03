@@ -765,6 +765,40 @@ func (r *Recorder) ensureIntermediateWriter(session *sessionCapture, kind string
 	}
 }
 
+type finalMergeInput struct {
+	Session       *sessionCapture
+	OffsetSeconds float64
+}
+
+func planFinalMergeInputs(sessions []*sessionCapture, probeStart func(path string) (float64, bool)) []finalMergeInput {
+	if len(sessions) == 0 {
+		return nil
+	}
+
+	earliest := sessions[0].StartedAt
+	for _, s := range sessions[1:] {
+		if s.StartedAt.Before(earliest) {
+			earliest = s.StartedAt
+		}
+	}
+
+	out := make([]finalMergeInput, 0, len(sessions))
+	for _, session := range sessions {
+		sourceStart := 0.0
+		if probeStart != nil {
+			if v, ok := probeStart(session.MKVPath); ok {
+				sourceStart = v
+			}
+		}
+		desired := session.StartedAt.Sub(earliest).Seconds()
+		out = append(out, finalMergeInput{
+			Session:       session,
+			OffsetSeconds: desired - sourceStart,
+		})
+	}
+	return out
+}
+
 func (r *Recorder) composeFinalOutput(sessions []*sessionCapture) error {
 	if len(sessions) == 0 {
 		return errors.New("no captured sessions available for compose")
@@ -792,27 +826,19 @@ func (r *Recorder) composeFinalOutput(sessions []*sessionCapture) error {
 		return nil
 	}
 
-	earliest := prepared[0].StartedAt
-	for _, s := range prepared[1:] {
-		if s.StartedAt.Before(earliest) {
-			earliest = s.StartedAt
-		}
-	}
-
+	mergeInputs := planFinalMergeInputs(prepared, probeMinStreamStartSeconds)
 	args := []string{"-y", "-v", "error"}
-	for _, session := range prepared {
-		desired := session.StartedAt.Sub(earliest).Seconds()
-		sourceStart, _ := probeMinStreamStartSeconds(session.MKVPath)
-		offset := desired - sourceStart
-		if math.Abs(offset) > 1e-6 {
-			args = append(args, "-itsoffset", fmt.Sprintf("%.6f", offset))
+	for _, input := range mergeInputs {
+		if math.Abs(input.OffsetSeconds) > 1e-6 {
+			args = append(args, "-itsoffset", fmt.Sprintf("%.6f", input.OffsetSeconds))
 		}
-		args = append(args, "-i", session.MKVPath)
+		args = append(args, "-i", input.Session.MKVPath)
 	}
 
 	videoIndex := 0
 	audioIndex := 0
-	for i, session := range prepared {
+	for i, input := range mergeInputs {
+		session := input.Session
 		if session.HasVideo {
 			args = append(args, "-map", fmt.Sprintf("%d:v?", i))
 			args = append(args,

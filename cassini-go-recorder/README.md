@@ -30,7 +30,7 @@ go run ./cmd/gocassini-inspect /tmp/gocassini.csr
 cd cassini-go-recorder
 go run ./cmd/gocassini \
   --mode talk \
-  --call-url https://cloud.codemyriad.io/call/erwcr27x \
+  --call-url https://cloud.example.com/call/<ROOM_TOKEN> \
   --name GocassiniObserver \
   --duration 55 \
   --output /tmp/meeting.csr \
@@ -57,6 +57,15 @@ This runs:
 - publisher bot
 - recorder in live mode
 - output validation
+
+You can also run:
+
+```bash
+cd cassini-go-recorder
+./e2e_with_publisher.sh
+```
+
+If `CALL_URL` is unset, it reuses `test/runtime/last_call_url` or creates a fresh room in the local test stack.
 
 Clean up:
 

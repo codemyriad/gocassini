@@ -26,6 +26,9 @@ All generated media/runtime artifacts stay outside git-tracked content.
   - `stream-three-songs-until.sh`: retrying loop for continuous cloud/local soak until a wall-clock time
   - `record-three-songs.sh`: Go recorder + 3-client stream + composition in one command
   - `compose-recording.sh`: compose recorder multi-stream MKV into one review MP4 (audio gated from publisher rotation log when available)
+  - `verify-sync-from-report.sh`: compare final MKV stream start offsets against recorder report expectations
+  - `verify-audio-tail.sh`: fail if composed output audio ends too early or is silent in the last seconds
+  - `ci-e2e-rotation.sh`: local-stack E2E with 3 rotating publishers and composed-tail-audio assertions
   - `smoke.sh`: end-to-end smoke run
 - `go-talk-rotator/`: Go publisher used by `stream-three-songs.sh`
 - `media/`: test inputs (`raw/`, `aligned/`, `webrtc/`) (gitignored except placeholders)
@@ -119,7 +122,7 @@ Cloud room test:
 ```bash
 cd test
 ./bin/stream-three-songs.sh \
-  --call-url "https://cloud.codemyriad.io/call/erwcr27x" \
+  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>" \
   --skip-prepare
 ```
 
@@ -128,7 +131,7 @@ Continuous retry loop (for on/off manual validation windows):
 ```bash
 cd test
 ./bin/stream-three-songs-until.sh \
-  --call-url "https://cloud.codemyriad.io/call/erwcr27x" \
+  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>" \
   --until "08:00" \
   --skip-prepare
 ```
@@ -137,7 +140,7 @@ You can also pass an absolute stop time:
 
 ```bash
 ./bin/stream-three-songs-until.sh \
-  --call-url "https://cloud.codemyriad.io/call/erwcr27x" \
+  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>" \
   --until "2026-03-03 08:00" \
   --skip-prepare
 ```
@@ -160,7 +163,18 @@ This generates:
 - raw recorder archive CSR (`/tmp/three-songs.csr`)
 - recorder JSON report (`/tmp/three-songs.mkv.json`)
 - composed review MP4 (`/tmp/three-songs.composed.mp4`)
+- composed tail-audio validation (`verify-audio-tail.sh`, auto-run)
+- sync validation output (`verify-sync-from-report.sh`, auto-run unless `--skip-sync-check`)
 - recorder/publisher logs (`/tmp/three-songs.mkv.recorder.log`, `/tmp/three-songs.mkv.publisher.log`)
+
+Run sync validation manually:
+
+```bash
+./bin/verify-sync-from-report.sh \
+  --recording /tmp/three-songs.mkv \
+  --report /tmp/three-songs.mkv.json \
+  --tolerance 0.35
+```
 
 ## Compose Profiles
 
@@ -189,6 +203,7 @@ The repository runs three local integration scripts in GitHub Actions:
 - `./test/bin/ci-e2e.sh` (baseline single publisher)
 - `./test/bin/ci-e2e-mute.sh` (mute-aware 3 publisher flow)
 - `./test/bin/ci-e2e-rejoin.sh` (leave/rejoin flow with two publisher phases)
+- `./test/bin/ci-e2e-rotation.sh` (3 rotating publishers with composed tail-audio checks)
 
 All scenarios use the local Compose stack in this repository:
 
@@ -201,6 +216,7 @@ You can run them locally the same way as CI:
 ./test/bin/ci-e2e.sh
 ./test/bin/ci-e2e-mute.sh
 ./test/bin/ci-e2e-rejoin.sh
+./test/bin/ci-e2e-rotation.sh
 ```
 
 ## Teardown

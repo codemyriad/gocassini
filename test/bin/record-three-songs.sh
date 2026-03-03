@@ -12,6 +12,7 @@ OUTPUT="${OUTPUT:-}"
 ARCHIVE_OUTPUT="${ARCHIVE_OUTPUT:-}"
 COMPOSED_OUTPUT="${COMPOSED_OUTPUT:-}"
 SKIP_PREPARE="${SKIP_PREPARE:-0}"
+SKIP_SYNC_CHECK="${SKIP_SYNC_CHECK:-0}"
 RECORDER_NAME="${RECORDER_NAME:-GocassiniThreeSongs}"
 REQUEST_OFFER_INTERVAL="${REQUEST_OFFER_INTERVAL:-2}"
 MAX_REQUEST_OFFER_ATTEMPTS="${MAX_REQUEST_OFFER_ATTEMPTS:-30}"
@@ -44,6 +45,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-prepare)
       SKIP_PREPARE=1
+      shift
+      ;;
+    --skip-sync-check)
+      SKIP_SYNC_CHECK=1
       shift
       ;;
     *)
@@ -152,6 +157,13 @@ if [[ ! -f "$ARCHIVE_OUTPUT" ]]; then
 fi
 
 "$SCRIPT_DIR/compose-recording.sh" --input "$OUTPUT" --output "$COMPOSED_OUTPUT"
+"$SCRIPT_DIR/verify-audio-tail.sh" --input "$COMPOSED_OUTPUT"
+
+if [[ "$SKIP_SYNC_CHECK" != "1" && -f "$REPORT_JSON" ]]; then
+  "$SCRIPT_DIR/verify-sync-from-report.sh" \
+    --recording "$OUTPUT" \
+    --report "$REPORT_JSON"
+fi
 
 log "Recorder log: $REC_LOG"
 log "Publisher log: $PUB_LOG"

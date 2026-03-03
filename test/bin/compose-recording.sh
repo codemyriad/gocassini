@@ -160,19 +160,21 @@ ROTATION_MODE="fallback-amix"
 if [[ -n "$PUBLISHER_LOG" && -f "$PUBLISHER_LOG" ]]; then
   mapfile -t AUDIBLE_LINES < <(rg -N '^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} \[manager\] audible=' "$PUBLISHER_LOG" || true)
   if [[ "${#AUDIBLE_LINES[@]}" -gt 0 ]]; then
-    BASE_TS="$(rg -N -m1 '^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}' "$PUBLISHER_LOG" | awk '{print $1" "$2}')"
-    BASE_EPOCH="$(date -ud "${BASE_TS//\//-}" +%s 2>/dev/null || true)"
-    if [[ -n "$BASE_EPOCH" ]]; then
-      declare -a EVENT_TIMES=()
-      declare -a EVENT_KEYS=()
+    declare -a EVENT_TIMES=()
+    declare -a EVENT_KEYS=()
+    HAVE_MEDIA_T=1
+    for line in "${AUDIBLE_LINES[@]}"; do
+      media_t="$(printf '%s\n' "$line" | sed -n 's/.* media_t=\([0-9.][0-9.]*\).*/\1/p')"
+      if [[ -z "$media_t" ]]; then
+        HAVE_MEDIA_T=0
+        break
+      fi
+    done
+
+    if [[ "$HAVE_MEDIA_T" == "1" ]]; then
       for line in "${AUDIBLE_LINES[@]}"; do
-        ts="${line:0:19}"
-        epoch="$(date -ud "${ts//\//-}" +%s 2>/dev/null || true)"
-        if [[ -z "$epoch" ]]; then
-          continue
-        fi
-        rel="$((epoch - BASE_EPOCH))"
-        if (( rel < 0 )); then
+        media_t="$(printf '%s\n' "$line" | sed -n 's/.* media_t=\([0-9.][0-9.]*\).*/\1/p')"
+        if [[ -z "$media_t" ]]; then
           continue
         fi
         name="${line#*audible=}"
@@ -181,26 +183,81 @@ if [[ -n "$PUBLISHER_LOG" && -f "$PUBLISHER_LOG" ]]; then
         if [[ -z "$key" ]]; then
           continue
         fi
-        EVENT_TIMES+=("$rel")
+        EVENT_TIMES+=("$media_t")
         EVENT_KEYS+=("$key")
       done
 
-      if [[ "${#EVENT_TIMES[@]}" -gt 0 ]]; then
-        TARGET_END_INT="$(awk -v d="$TARGET_DURATION_PADDED" 'BEGIN { printf "%d", d + 0.5 }')"
-        for ((i = 0; i < ${#EVENT_TIMES[@]}; i++)); do
-          start="${EVENT_TIMES[$i]}"
-          if (( i + 1 < ${#EVENT_TIMES[@]} )); then
-            end="${EVENT_TIMES[$((i + 1))]}"
-          else
-            end="$TARGET_END_INT"
-          fi
-          if (( end <= start )); then
+      for ((i = 0; i < ${#EVENT_TIMES[@]}; i++)); do
+        start="${EVENT_TIMES[$i]}"
+        if (( i + 1 < ${#EVENT_TIMES[@]} )); then
+          end="${EVENT_TIMES[$((i + 1))]}"
+        else
+          end="$TARGET_DURATION_PADDED"
+        fi
+        dur="$(awk -v a="$start" -v b="$end" 'BEGIN { printf "%.6f", b - a }')"
+        if ! awk -v d="$dur" 'BEGIN { exit !(d > 0.001) }'; then
+          continue
+        fi
+        AUDIO_ROTATION_KEYS+=("${EVENT_KEYS[$i]}")
+        AUDIO_ROTATION_STARTS+=("$start")
+        AUDIO_ROTATION_ENDS+=("$end")
+      done
+    else
+      BASE_TS="$(rg -N -m1 '^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}' "$PUBLISHER_LOG" | awk '{print $1" "$2}')"
+      BASE_EPOCH="$(date -ud "${BASE_TS//\//-}" +%s 2>/dev/null || true)"
+      if [[ -n "$BASE_EPOCH" ]]; then
+        for line in "${AUDIBLE_LINES[@]}"; do
+          ts="${line:0:19}"
+          epoch="$(date -ud "${ts//\//-}" +%s 2>/dev/null || true)"
+          if [[ -z "$epoch" ]]; then
             continue
           fi
-          AUDIO_ROTATION_KEYS+=("${EVENT_KEYS[$i]}")
-          AUDIO_ROTATION_STARTS+=("$start")
-          AUDIO_ROTATION_ENDS+=("$end")
+          rel="$((epoch - BASE_EPOCH))"
+          if (( rel < 0 )); then
+            continue
+          fi
+          name="${line#*audible=}"
+          name="${name%% active=*}"
+          key="$(name_to_key "$name")"
+          if [[ -z "$key" ]]; then
+            continue
+          fi
+          EVENT_TIMES+=("$rel")
+          EVENT_KEYS+=("$key")
         done
+
+        if [[ "${#EVENT_TIMES[@]}" -gt 0 ]]; then
+          END_TS="$(rg -N -m1 '^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} \[manager\] all bots completed' "$PUBLISHER_LOG" | awk '{print $1" "$2}')"
+          if [[ -z "$END_TS" ]]; then
+            last_idx=$(( ${#AUDIBLE_LINES[@]} - 1 ))
+            END_TS="${AUDIBLE_LINES[$last_idx]:0:19}"
+          fi
+          END_EPOCH="$(date -ud "${END_TS//\//-}" +%s 2>/dev/null || true)"
+          if [[ -n "$END_EPOCH" && "$END_EPOCH" -gt "$BASE_EPOCH" ]]; then
+            WALL_TOTAL="$((END_EPOCH - BASE_EPOCH))"
+            SCALE="$(awk -v t="$TARGET_DURATION_PADDED" -v w="$WALL_TOTAL" 'BEGIN { if (w <= 0) print 1.0; else printf "%.9f", t / w }')"
+            cursor="0.000000"
+            for ((i = 0; i < ${#EVENT_TIMES[@]}; i++)); do
+              start="${EVENT_TIMES[$i]}"
+              if (( i + 1 < ${#EVENT_TIMES[@]} )); then
+                end="${EVENT_TIMES[$((i + 1))]}"
+              else
+                end="$WALL_TOTAL"
+              fi
+              raw_dur="$(awk -v a="$start" -v b="$end" 'BEGIN { printf "%.6f", b - a }')"
+              if ! awk -v d="$raw_dur" 'BEGIN { exit !(d > 0.001) }'; then
+                continue
+              fi
+              dur="$(awk -v d="$raw_dur" -v s="$SCALE" 'BEGIN { printf "%.6f", d * s }')"
+              seg_start="$cursor"
+              seg_end="$(awk -v c="$cursor" -v d="$dur" 'BEGIN { printf "%.6f", c + d }')"
+              AUDIO_ROTATION_KEYS+=("${EVENT_KEYS[$i]}")
+              AUDIO_ROTATION_STARTS+=("$seg_start")
+              AUDIO_ROTATION_ENDS+=("$seg_end")
+              cursor="$seg_end"
+            done
+          fi
+        fi
       fi
     fi
   fi

@@ -1,0 +1,9 @@
+# Copy to .envrc (gitignored) and adjust values for your environment.
+# If you use direnv, run: direnv allow
+
+# Optional: private cloud room URL for ad-hoc capture runs.
+export CALL_URL="https://cloud.example.com/call/<ROOM_TOKEN>"
+
+# Optional: local test stack defaults.
+export NEXTCLOUD_URL="http://127.0.0.1:18080"
+export NEXTCLOUD_STATUS_URL="${NEXTCLOUD_URL}/status.php"

@@ -4,19 +4,39 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TEST_DIR="$ROOT_DIR/../test"
 
-CALL_URL="${CALL_URL:-https://cloud.codemyriad.io/call/erwcr27x}"
+CALL_URL="${CALL_URL:-}"
+CALL_NAME="${CALL_NAME:-Cassini Go E2E room}"
 REC_DURATION="${REC_DURATION:-55}"
 PUB_DURATION="${PUB_DURATION:-24}"
 PUB_USERS="${PUB_USERS:-2}"
 START_DELAY="${START_DELAY:-6}"
 OUTPUT="${OUTPUT:-/tmp/gocassini-e2e.csr}"
 FINAL_OUTPUT="${FINAL_OUTPUT:-${OUTPUT%.csr}.mkv}"
+CHECK_COMPOSED_AUDIO_TAIL="${CHECK_COMPOSED_AUDIO_TAIL:-0}"
 NAME="${NAME:-GocassiniBot}"
 
 REC_LOG="${REC_LOG:-/tmp/gocassini-e2e.log}"
 PUB_LOG="${PUB_LOG:-/tmp/gocassini-publisher-e2e.log}"
 
 rm -f "$OUTPUT" "$FINAL_OUTPUT" "$REC_LOG" "$PUB_LOG"
+
+if [[ -z "$CALL_URL" && -f "$TEST_DIR/runtime/last_call_url" ]]; then
+  CALL_URL="$(cat "$TEST_DIR/runtime/last_call_url")"
+fi
+
+if [[ -z "$CALL_URL" ]]; then
+  if [[ ! -x "$TEST_DIR/bin/create-room.sh" ]]; then
+    echo "missing CALL_URL and local create-room helper is unavailable" >&2
+    echo "set CALL_URL or run ./test/bin/ci-e2e.sh" >&2
+    exit 1
+  fi
+
+  echo "CALL_URL not provided, creating room in local test stack..."
+  if ! CALL_URL="$("$TEST_DIR/bin/create-room.sh" --name "$CALL_NAME" | tail -n1)"; then
+    echo "could not create local room. Start local stack with ./test/bin/up.sh or use ./test/bin/ci-e2e.sh" >&2
+    exit 1
+  fi
+fi
 
 if [[ -z "${SEGMENTS_DIR:-}" ]]; then
   SEGMENTS_PARENT="$(dirname "$FINAL_OUTPUT")"
@@ -113,6 +133,21 @@ echo "--- final mkv streams ---"
 ffprobe -v error \
   -show_entries stream=index,codec_type,codec_name,start_time,duration \
   -of compact=p=0:nk=1 "$FINAL_OUTPUT" | sed -n '1,120p'
+
+if [[ "$CHECK_COMPOSED_AUDIO_TAIL" == "1" ]]; then
+  if (( PUB_USERS < 3 )); then
+    echo "[WARN] CHECK_COMPOSED_AUDIO_TAIL=1 requires PUB_USERS>=3 (current: $PUB_USERS). Skipping."
+  else
+    COMPOSED_OUTPUT="${FINAL_OUTPUT%.mkv}.composed.mp4"
+    echo "--- composing review MP4 + checking tail audio ---"
+    "$TEST_DIR/bin/compose-recording.sh" \
+      --input "$FINAL_OUTPUT" \
+      --output "$COMPOSED_OUTPUT" \
+      --publisher-log "$PUB_LOG"
+    "$TEST_DIR/bin/verify-audio-tail.sh" --input "$COMPOSED_OUTPUT"
+    echo "composed output: $COMPOSED_OUTPUT"
+  fi
+fi
 
 echo "--- key recorder lines ---"
 rg -n "talk bootstrap|subscribing to remote session|remote track:|ICE state=connected|duration reached|run error|composed final multi-track output|kept intermediate files" "$REC_LOG" -S || true

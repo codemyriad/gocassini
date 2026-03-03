@@ -69,7 +69,7 @@ if ! [[ "$USERS" =~ ^[0-9]+$ ]] || (( USERS < 1 || USERS > 3 )); then
 fi
 
 if [[ "$PREPARE" == "1" && -z "$MEDIA_PREFIX" ]]; then
-  MEDIA_PREFIX="$("$SCRIPT_DIR/prepare-media.sh")"
+  MEDIA_PREFIX="$("$SCRIPT_DIR/prepare-media.sh" | tail -n1)"
 fi
 if [[ -z "$MEDIA_PREFIX" ]]; then
   MEDIA_PREFIX="$MEDIA_DIR/sample"

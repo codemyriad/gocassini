@@ -17,7 +17,7 @@ Date: 2026-03-02
 - Added one subscriber `PeerConnection` per remote signaling session.
 - Implemented `requestoffer` retry/backoff + explicit `endOfCandidates` logic.
 - Wired remote tracks to `CaptureTrack` goroutines and single-file `.csr` archive output.
-- Added live validation against `https://cloud.codemyriad.io/call/erwcr27x` (1-user and 2-user publisher scenarios).
+- Added live validation against a real cloud call URL (1-user and 2-user publisher scenarios).
 - Added repeatable Go e2e harness (`e2e_with_publisher.sh`) and archive inspector CLI (`gocassini-inspect`).
 
 ## Phase 2 (Completed)

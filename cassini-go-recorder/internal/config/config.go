@@ -40,7 +40,7 @@ func FromFlags(args []string) (Config, error) {
 	fs.IntVar(&cfg.SimTracks, "sim-tracks", 3, "number of synthetic tracks in simulate mode")
 	fs.IntVar(&cfg.SimPackets, "sim-packets", 150, "packets per synthetic track in simulate mode")
 	fs.IntVar(&durationSeconds, "duration", 30, "runtime duration in seconds")
-	fs.StringVar(&cfg.CallURL, "call-url", "https://cloud.codemyriad.io/call/erwcr27x", "Nextcloud Talk call URL")
+	fs.StringVar(&cfg.CallURL, "call-url", "", "Nextcloud Talk call URL (required in talk mode)")
 	fs.StringVar(&cfg.GuestName, "name", "GocassiniObserver", "display name for the observer guest")
 	fs.IntVar(&cfg.JoinFlags, "join-flags", 1, "call join flags (must include bit 1)")
 	fs.BoolVar(&cfg.Insecure, "insecure", false, "disable TLS certificate verification (testing only)")
@@ -58,6 +58,9 @@ func FromFlags(args []string) (Config, error) {
 
 	if cfg.Mode != "simulate" && cfg.Mode != "talk" {
 		return Config{}, fmt.Errorf("unsupported mode %q", cfg.Mode)
+	}
+	if cfg.Mode == "talk" && cfg.CallURL == "" {
+		return Config{}, errors.New("call-url must be provided in talk mode")
 	}
 	if cfg.OutputPath == "" {
 		return Config{}, errors.New("output path must not be empty")
