@@ -6,6 +6,7 @@ It is intentionally narrow: one job, one output contract, and strong behavior fo
 ## Current scope (v1)
 - Capture audio/video RTP streams from Nextcloud Talk meetings
 - Persist a raw archive (`.csr`) with packet metadata
+- Persist a per-session artifact directory with `session.json`, `streams/*.rtplog`, and `events.ndjson`
 - Compose a multi-track MKV (`.mkv`) as the primary deliverable
 - Keep intermediate files deterministic and optionally cleanable
 - Keep everything script-friendly and machine-friendly
@@ -77,6 +78,7 @@ cd test
 ## Output contract
 
 - Archive file: `.csr` (source-of-truth stream log)
+- Session artifact: `sessions/<id>/session.json`, `streams/*.rtplog`, `events.ndjson`
 - Final output: `.mkv` (single deliverable for playback/transcoding/transcription)
 - Report: `<final>.json` with session and compose status
 - Intermediate per-session files: `<output>-segments-*` unless cleanup is enabled

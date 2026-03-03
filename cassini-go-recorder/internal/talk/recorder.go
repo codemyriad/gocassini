@@ -46,6 +46,8 @@ type Recorder struct {
 	writer      *cassette.Writer
 	rtpRecorder *recorder.RTPRecorder
 
+	sessionArtifact *sessionCaptureArtifact
+
 	finalOutputPath string
 	segmentsDir     string
 	startedAt       time.Time
@@ -121,6 +123,14 @@ func (r *Recorder) run(ctx context.Context) error {
 		return err
 	}
 	r.segmentsDir = segmentsDir
+
+	sessionArtifact, err := newSessionCaptureArtifact(r.finalOutputPath, r.cfg.CallURL, r.roomToken, r.cfg.GuestName)
+	if err != nil {
+		log.Printf("session artifact init failed (continuing legacy capture): %v", err)
+	} else {
+		r.sessionArtifact = sessionArtifact
+		log.Printf("session artifact capture enabled: session_id=%s path=%s", sessionArtifact.sessionID, sessionArtifact.sessionDir)
+	}
 
 	w, err := cassette.NewWriter(r.cfg.OutputPath)
 	if err != nil {
@@ -270,6 +280,16 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 		r.writer = nil
 	}
 
+	var artifactSummary *sessionCaptureSummary
+	if r.sessionArtifact != nil {
+		summary := r.sessionArtifact.summary()
+		artifactSummary = &summary
+		if err := r.sessionArtifact.close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		r.sessionArtifact = nil
+	}
+
 	r.sessionMu.Lock()
 	sessions := make([]*sessionCapture, len(r.sessionOrder))
 	copy(sessions, r.sessionOrder)
@@ -318,6 +338,7 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 		composeOK,
 		composeErrText,
 		intermediateCleaned,
+		artifactSummary,
 	); err != nil {
 		if firstErr == nil {
 			firstErr = err
@@ -615,6 +636,15 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 		log.Printf("prepare intermediate writer failed sid=%s kind=%s codec=%s: %v", remoteSessionID, kind, codec, err)
 	}
 
+	streamCaptureID := ""
+	if r.sessionArtifact != nil {
+		streamCaptureID, err = r.sessionArtifact.openTrack(remoteSessionID, session.ParticipantName, track, time.Now())
+		if err != nil {
+			log.Printf("session artifact stream open failed sid=%s kind=%s: %v", remoteSessionID, kind, err)
+			streamCaptureID = ""
+		}
+	}
+
 	participant := recorder.ParticipantRef{
 		ParticipantName: session.ParticipantName,
 		ParticipantID:   "",
@@ -644,10 +674,12 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 	}
 
 	trackEnded := false
+	reason := "ended"
 	for {
+		recv := time.Now()
 		pkt, _, readErr := track.ReadRTP()
 		if readErr != nil {
-			reason := "read-error"
+			reason = "read-error"
 			if errors.Is(readErr, context.Canceled) || errors.Is(readErr, context.DeadlineExceeded) {
 				reason = "context-cancelled"
 			} else if strings.Contains(strings.ToLower(readErr.Error()), "eof") {
@@ -661,11 +693,16 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 			break
 		}
 
-		if err := r.rtpRecorder.WritePacket(trackRef, pkt, time.Now()); err != nil {
+		if err := r.rtpRecorder.WritePacket(trackRef, pkt, recv); err != nil {
 			_ = r.rtpRecorder.EndTrack(trackRef, "archive-write-error", time.Now())
 			trackEnded = true
 			log.Printf("archive packet write failed sid=%s track=%s: %v", remoteSessionID, track.ID(), err)
 			break
+		}
+		if streamCaptureID != "" {
+			if err := r.sessionArtifact.writeRTP(streamCaptureID, pkt, recv); err != nil {
+				log.Printf("session artifact packet write failed sid=%s stream=%s track=%s: %v", remoteSessionID, streamCaptureID, track.ID(), err)
+			}
 		}
 
 		r.sessionMu.Lock()
@@ -691,6 +728,11 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 	if !trackEnded {
 		if err := r.rtpRecorder.EndTrack(trackRef, "ended", time.Now()); err != nil {
 			log.Printf("end track marker failed sid=%s track=%s: %v", remoteSessionID, track.ID(), err)
+		}
+	}
+	if streamCaptureID != "" {
+		if err := r.sessionArtifact.closeStream(streamCaptureID, reason, time.Now()); err != nil {
+			log.Printf("session artifact stream close failed sid=%s stream=%s: %v", remoteSessionID, streamCaptureID, err)
 		}
 	}
 
@@ -1220,7 +1262,23 @@ func (r *Recorder) writeReport(
 	composeOK bool,
 	composeErr string,
 	intermediateCleaned bool,
+	artifactSummary *sessionCaptureSummary,
 ) error {
+	reportSessionArtifact := map[string]any{"enabled": false}
+	if artifactSummary != nil {
+		reportSessionArtifact = map[string]any{
+			"enabled":             artifactSummary.Enabled,
+			"closed":              artifactSummary.Closed,
+			"session_id":          artifactSummary.SessionID,
+			"session_json":        artifactSummary.SessionJSONPath,
+			"events_ndjson":       artifactSummary.EventsPath,
+			"streams_dir":         artifactSummary.StreamsDir,
+			"stream_count":        artifactSummary.StreamCount,
+			"packet_count":        artifactSummary.PacketCount,
+			"active_stream_count":  artifactSummary.ActiveStreamCount,
+		}
+	}
+
 	archiveExists, archiveSize := fileState(r.cfg.OutputPath)
 	finalExists, finalSize := fileState(r.finalOutputPath)
 	segmentsExists := dirExists(r.segmentsDir)
@@ -1310,6 +1368,7 @@ func (r *Recorder) writeReport(
 			"cleanup_performed":     intermediateCleaned,
 			"intermediate_retained": !intermediateCleaned,
 		},
+		"session_artifact": reportSessionArtifact,
 		"archive_stats": map[string]any{
 			"track_count":      trackCount,
 			"rtp_packet_count": packetCount,
