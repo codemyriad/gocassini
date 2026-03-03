@@ -95,5 +95,6 @@ cd test
 - Report: `<final>.json` with session and compose status
 - Intermediate per-session files: `<output>-segments-*` unless cleanup is enabled
 - `gocassini-inspect` prints legacy archive summaries; session artifacts are written next to `.mkv` and available at `<final>/../sessions/<id>/`.
+  For session artifacts it also prints `segment_churn` (`ssrc_changes`, `pt_changes`, `max_gap_ms`) and stream close reasons.
 
 The project is designed so the primary interface remains the CLI and file artifacts.

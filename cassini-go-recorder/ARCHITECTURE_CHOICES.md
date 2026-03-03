@@ -62,3 +62,21 @@ Build a Go/Pion recorder that captures Nextcloud Talk media with minimal CPU ove
 - No fatal recorder crashes under join/leave churn.
 - Deterministic archive parse/replay.
 - Post-processed output shows no obvious drift in beginning/middle/end spot checks.
+
+## Expected Debugging Time Savings
+
+The segmentation-first capture path is intended to reduce drift debugging effort
+from "reproduce live and guess" to "replay deterministic packet truth":
+
+- previous failure mode: one long stream timeline, drift discovered at tail,
+  often requiring a full meeting rerun to inspect a single timeline seam
+- current direction: segment on RTP identity churn (SSRC/PT), then inspect/remux
+  each seam offline from `streams/*.rtplog` and `events.ndjson`
+
+Estimated impact for a typical drift incident:
+
+- before: ~60-180 minutes (reproduce call + capture + manual triage)
+- after: ~10-30 minutes (inspect + remux from existing session artifact)
+
+These are engineering targets, not guarantees, and are validated through the
+deterministic + local E2E harness in `test/bin`.
