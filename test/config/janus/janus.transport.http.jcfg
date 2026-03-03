@@ -2,7 +2,7 @@ general: {
   json = "indented"
   base_path = "/janus"
   http = true
-  port = 18088
+  port = 28088
   https = false
 }
 

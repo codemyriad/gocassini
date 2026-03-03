@@ -1,7 +1,7 @@
 general: {
   json = "indented"
   ws = true
-  ws_port = 18188
+  ws_port = 28188
   ws_ip = "127.0.0.1"
   wss = false
 }

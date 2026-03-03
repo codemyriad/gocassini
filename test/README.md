@@ -192,8 +192,8 @@ The repository runs three local integration scripts in GitHub Actions:
 
 All scenarios use the local Compose stack in this repository:
 
-- Nextcloud API at `http://127.0.0.1:18080`
-- Signaling server at `http://127.0.0.1:18082`
+- Nextcloud API at `http://127.0.0.1:28080`
+- Signaling server at `http://127.0.0.1:28082`
 
 You can run them locally the same way as CI:
 

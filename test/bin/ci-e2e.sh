@@ -7,9 +7,9 @@ source "$SCRIPT_DIR/common.sh"
 
 export PROJECT_NAME="${PROJECT_NAME:-gocassini-ci}"
 export SPREED_PROFILE="${SPREED_PROFILE:-full}"
-export NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://127.0.0.1:18080}"
+export NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://127.0.0.1:28080}"
 export NEXTCLOUD_STATUS_URL="${NEXTCLOUD_STATUS_URL:-$NEXTCLOUD_URL/status.php}"
-export SIGNALING_URL="${SIGNALING_URL:-http://127.0.0.1:18082}"
+export SIGNALING_URL="${SIGNALING_URL:-http://127.0.0.1:28082}"
 
 export ADMIN_USER="${ADMIN_USER:-admin}"
 export ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"

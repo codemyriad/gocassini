@@ -31,7 +31,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "18080:80"
+      - "28080:80"
     volumes:
       - nextcloud_data:/var/www/html
 

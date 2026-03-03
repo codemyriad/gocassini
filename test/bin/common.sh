@@ -12,13 +12,13 @@ default_signaling_url() {
   local gateway
   gateway="$(docker network inspect "${PROJECT_NAME}_default" -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
   if [[ -n "$gateway" ]]; then
-    echo "http://$gateway:18082"
+    echo "http://$gateway:28082"
     return
   fi
-  echo "http://127.0.0.1:18082"
+  echo "http://127.0.0.1:28082"
 }
 
-NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://127.0.0.1:18080}"
+NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://127.0.0.1:28080}"
 NEXTCLOUD_STATUS_URL="${NEXTCLOUD_STATUS_URL:-$NEXTCLOUD_URL/status.php}"
 
 ADMIN_USER="${ADMIN_USER:-admin}"
