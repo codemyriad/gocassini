@@ -13,6 +13,7 @@ ARCHIVE_OUTPUT="${ARCHIVE_OUTPUT:-}"
 COMPOSED_OUTPUT="${COMPOSED_OUTPUT:-}"
 SKIP_PREPARE="${SKIP_PREPARE:-0}"
 SKIP_SYNC_CHECK="${SKIP_SYNC_CHECK:-0}"
+CHECK_SESSION_ARTIFACT="${CHECK_SESSION_ARTIFACT:-1}"
 RECORDER_NAME="${RECORDER_NAME:-GocassiniThreeSongs}"
 REQUEST_OFFER_INTERVAL="${REQUEST_OFFER_INTERVAL:-2}"
 MAX_REQUEST_OFFER_ATTEMPTS="${MAX_REQUEST_OFFER_ATTEMPTS:-30}"
@@ -162,6 +163,11 @@ fi
 if [[ "$SKIP_SYNC_CHECK" != "1" && -f "$REPORT_JSON" ]]; then
   "$SCRIPT_DIR/verify-sync-from-report.sh" \
     --recording "$OUTPUT" \
+    --report "$REPORT_JSON"
+fi
+if [[ "$CHECK_SESSION_ARTIFACT" == "1" && -f "$REPORT_JSON" ]]; then
+  "$SCRIPT_DIR/verify-session-artifact.sh" \
+    --final-output "$OUTPUT" \
     --report "$REPORT_JSON"
 fi
 

@@ -82,5 +82,6 @@ cd test
 - Final output: `.mkv` (single deliverable for playback/transcoding/transcription)
 - Report: `<final>.json` with session and compose status
 - Intermediate per-session files: `<output>-segments-*` unless cleanup is enabled
+- `gocassini-inspect` prints legacy archive summaries; session artifacts are written next to `.mkv` and available at `<final>/../sessions/<id>/`.
 
 The project is designed so the primary interface remains the CLI and file artifacts.

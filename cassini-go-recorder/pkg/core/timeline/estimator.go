@@ -74,10 +74,20 @@ func (e *SegmentEstimator) PTS(ssrc uint32, rtpTS uint32) (uint64, bool) {
 	if s.clockRate == 0 {
 		s.clockRate = 90000
 	}
+	if s.clockRate == 0 {
+		return 0, false
+	}
 
 	unwrapped := s.unwrapRTP(rtpTS)
-	delta := float64(unwrapped - s.startRTP)
-	pts := s.startMono + uint64((delta/float64(s.clockRate))*1e9)
+	delta := unwrapped - s.startRTP
+	if delta < 0 {
+		delta = 0
+	}
+	deltaNS := (delta * 1_000_000_000) / int64(s.clockRate)
+	pts := s.startMono
+	if deltaNS >= 0 {
+		pts += uint64(deltaNS)
+	}
 	if pts <= s.lastPTS {
 		pts = s.lastPTS + 1
 	}

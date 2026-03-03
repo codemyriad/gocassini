@@ -47,6 +47,30 @@ cd /path/to/gocassini-repo-root
 
 This uses `test/compose.yml` and starts a local Nextcloud Talk stack, creates a room, runs publishers, and validates recorder outputs.
 
+### Render and inspect combined output
+
+- Compose MP4 for full-length review (with mute-alternating audio when publisher logs are available):
+
+```bash
+cd /path/to/gocassini-repo-root
+./test/bin/record-three-songs.sh \
+  --duration 300 \
+  --output /tmp/three-songs-full.mkv \
+  --recorder-duration 360
+```
+
+- The script writes:
+  - `<output>.json` (run report, includes session artifact paths),
+  - `<output>.composed.mp4` (preview composition),
+  - `<output>.csr` (archive),
+  - session artifact directory at `<output_dir>/sessions/<id>/`.
+
+- To verify session artifacts in CI-style mode:
+
+```bash
+./test/bin/verify-session-artifact.sh --final-output /tmp/three-songs-full.mkv
+```
+
 ### Local private config (`.envrc`)
 
 For private values (for example a cloud `CALL_URL`), keep them outside git:

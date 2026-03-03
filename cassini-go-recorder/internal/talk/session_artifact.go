@@ -18,22 +18,22 @@ import (
 )
 
 type sessionCaptureArtifact struct {
-	sessionDir   string
-	streamsDir   string
-	sessionPath  string
-	eventsPath   string
-	sessionID    string
-	sessionMeta  session.Session
+	sessionDir  string
+	streamsDir  string
+	sessionPath string
+	eventsPath  string
+	sessionID   string
+	sessionMeta session.Session
 
 	eventsFile   *os.File
 	eventsWriter *bufio.Writer
 
-	mu            sync.Mutex
-	closed        bool
-	streamSeq     int
-	streams       map[string]*sessionCaptureStream
-	logicalBy     map[string]string
-	participants  map[string]struct{}
+	mu           sync.Mutex
+	closed       bool
+	streamSeq    int
+	streams      map[string]*sessionCaptureStream
+	logicalBy    map[string]string
+	participants map[string]struct{}
 }
 
 type sessionCaptureStream struct {
@@ -49,7 +49,7 @@ type sessionCaptureSummary struct {
 	Enabled           bool   `json:"enabled"`
 	Closed            bool   `json:"closed"`
 	SessionID         string `json:"session_id"`
-	SessionJSONPath    string `json:"session_json"`
+	SessionJSONPath   string `json:"session_json"`
 	EventsPath        string `json:"events_ndjson"`
 	StreamsDir        string `json:"streams_dir"`
 	StreamCount       int    `json:"stream_count"`
@@ -101,17 +101,17 @@ func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName
 		EventsSourcePath: filepath.Base(eventsPath),
 	}
 	artifact := &sessionCaptureArtifact{
-		sessionDir:    sessionDir,
-		streamsDir:    streamsDir,
-		sessionPath:   sessionPath,
-		eventsPath:    eventsPath,
-		sessionID:     sessionID,
-		sessionMeta:   meta,
-		eventsFile:    eventsFile,
-		eventsWriter:  bufio.NewWriter(eventsFile),
-		streams:       map[string]*sessionCaptureStream{},
-		logicalBy:     map[string]string{},
-		participants:  map[string]struct{}{},
+		sessionDir:   sessionDir,
+		streamsDir:   streamsDir,
+		sessionPath:  sessionPath,
+		eventsPath:   eventsPath,
+		sessionID:    sessionID,
+		sessionMeta:  meta,
+		eventsFile:   eventsFile,
+		eventsWriter: bufio.NewWriter(eventsFile),
+		streams:      map[string]*sessionCaptureStream{},
+		logicalBy:    map[string]string{},
+		participants: map[string]struct{}{},
 	}
 
 	if err := artifact.persistSessionLocked(); err != nil {
@@ -133,7 +133,6 @@ func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName
 
 func (a *sessionCaptureArtifact) openTrack(remoteSessionID, participantName string, track *webrtc.TrackRemote, arrival time.Time) (string, error) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.closed {
 		return "", fmt.Errorf("session artifact is closed")
 	}
@@ -148,6 +147,10 @@ func (a *sessionCaptureArtifact) openTrack(remoteSessionID, participantName stri
 		mid = track.ID()
 	}
 	rid := track.RID()
+	midSafe := sanitizeSessionPathPart(mid)
+	ridSafe := sanitizeSessionPathPart(rid)
+	fmtp := parseFmtp(track.Codec().SDPFmtpLine)
+	startMonoNS := uint64(arrival.UnixNano())
 
 	ltid := a.ensureLogicalTrackLocked(remoteSessionID, participantName, kind, mid, rid, arrival)
 	streamID := fmt.Sprintf("s_%06d", a.streamSeq+1)
@@ -157,17 +160,18 @@ func (a *sessionCaptureArtifact) openTrack(remoteSessionID, participantName stri
 	indexPath := filepath.Join(a.streamsDir, streamID+".idx")
 	header := store.StreamHeader{
 		StreamID:    streamID,
-		MID:         sanitizeSessionPathPart(mid),
-		RID:         sanitizeSessionPathPart(rid),
+		MID:         midSafe,
+		RID:         ridSafe,
 		Codec:       codec,
 		ClockRate:   track.Codec().ClockRate,
-		Fmtp:        parseFmtp(track.Codec().SDPFmtpLine),
+		Fmtp:        fmtp,
 		Direction:   "recvonly",
-		StartMonoNS: uint64(arrival.UnixNano()),
+		StartMonoNS: startMonoNS,
 		PT:          uint8(track.PayloadType()),
 	}
 	w, err := store.NewWriter(streamPath, header)
 	if err != nil {
+		a.mu.Unlock()
 		return "", fmt.Errorf("create stream writer: %w", err)
 	}
 
@@ -175,13 +179,13 @@ func (a *sessionCaptureArtifact) openTrack(remoteSessionID, participantName stri
 		stream: session.PacketStream{
 			StreamID:     streamID,
 			LTID:         ltid,
-			MID:          sanitizeSessionPathPart(mid),
-			RID:          sanitizeSessionPathPart(rid),
+			MID:          midSafe,
+			RID:          ridSafe,
 			PrimarySSRC:  uint32(track.SSRC()),
 			Codec:        codec,
 			ClockRate:    track.Codec().ClockRate,
-			FmtpSnapshot: parseFmtp(track.Codec().SDPFmtpLine),
-			StartMonoNS:   uint64(arrival.UnixNano()),
+			FmtpSnapshot: fmtp,
+			StartMonoNS:  startMonoNS,
 		},
 		writer:    w,
 		logPath:   streamPath,
@@ -190,27 +194,27 @@ func (a *sessionCaptureArtifact) openTrack(remoteSessionID, participantName stri
 	a.streams[streamID] = state
 	a.sessionMeta.PacketStreams = append(a.sessionMeta.PacketStreams, state.stream)
 	a.ensureParticipantLocked(remoteSessionID, participantName)
+	a.mu.Unlock()
+
 	if err := a.emitEvent(map[string]any{
 		"type":              "stream_opened",
 		"remote_session_id": remoteSessionID,
 		"participant_name":  participantName,
 		"ltid":              ltid,
 		"stream_id":         streamID,
-		"mid":               sanitizeSessionPathPart(mid),
-		"rid":               sanitizeSessionPathPart(rid),
+		"mid":               midSafe,
+		"rid":               ridSafe,
 		"kind":              kind,
 		"codec":             codec,
 	}, uint64(arrival.UnixNano())); err != nil {
 		_ = w.Close()
-		delete(a.streams, streamID)
-		a.sessionMeta.PacketStreams = a.sessionMeta.PacketStreams[:len(a.sessionMeta.PacketStreams)-1]
+		a.removeStream(streamID)
 		return "", err
 	}
 
-	if err := a.persistSessionLocked(); err != nil {
+	if err := a.persistSession(); err != nil {
 		_ = w.Close()
-		delete(a.streams, streamID)
-		a.sessionMeta.PacketStreams = a.sessionMeta.PacketStreams[:len(a.sessionMeta.PacketStreams)-1]
+		a.removeStream(streamID)
 		return "", err
 	}
 	return streamID, nil
@@ -292,15 +296,25 @@ func (a *sessionCaptureArtifact) close() error {
 		streams = append(streams, stream)
 	}
 	a.closed = true
-	eventsWriter := a.eventsWriter
-	a.eventsWriter = nil
-	eventsFile := a.eventsFile
-	a.eventsFile = nil
 	a.mu.Unlock()
 
 	for _, stream := range streams {
 		_ = a.closeStream(stream.stream.StreamID, "recorder-close", time.Now())
 	}
+
+	if err := a.emitEvent(map[string]any{
+		"type":   "session_closed",
+		"reason": "recorder-close",
+	}, uint64(time.Now().UnixNano())); err != nil {
+		return err
+	}
+
+	a.mu.Lock()
+	eventsWriter := a.eventsWriter
+	eventsFile := a.eventsFile
+	a.eventsWriter = nil
+	a.eventsFile = nil
+	a.mu.Unlock()
 
 	if eventsWriter != nil {
 		if err := eventsWriter.Flush(); err != nil {
@@ -330,10 +344,10 @@ func (a *sessionCaptureArtifact) summary() sessionCaptureSummary {
 		}
 	}
 	return sessionCaptureSummary{
-		Enabled:           a.eventsFile != nil || a.eventsWriter != nil,
+		Enabled:           a.sessionPath != "" && a.eventsPath != "",
 		Closed:            a.closed,
 		SessionID:         a.sessionID,
-		SessionJSONPath:    a.sessionPath,
+		SessionJSONPath:   a.sessionPath,
 		EventsPath:        a.eventsPath,
 		StreamsDir:        a.streamsDir,
 		StreamCount:       streamCount,
@@ -383,6 +397,8 @@ func (a *sessionCaptureArtifact) ensureParticipantLocked(remoteSessionID, partic
 }
 
 func (a *sessionCaptureArtifact) emitEvent(fields map[string]any, monoNS uint64) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.eventsWriter == nil {
 		return nil
 	}
@@ -423,6 +439,20 @@ func (a *sessionCaptureArtifact) persistSession() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.persistSessionLocked()
+}
+
+func (a *sessionCaptureArtifact) removeStream(streamID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	delete(a.streams, streamID)
+	for i := range a.sessionMeta.PacketStreams {
+		if a.sessionMeta.PacketStreams[i].StreamID != streamID {
+			continue
+		}
+		a.sessionMeta.PacketStreams = append(a.sessionMeta.PacketStreams[:i], a.sessionMeta.PacketStreams[i+1:]...)
+		break
+	}
 }
 
 func parseFmtp(raw string) map[string]string {

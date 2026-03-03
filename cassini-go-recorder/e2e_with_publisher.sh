@@ -17,6 +17,7 @@ NAME="${NAME:-GocassiniBot}"
 
 REC_LOG="${REC_LOG:-/tmp/gocassini-e2e.log}"
 PUB_LOG="${PUB_LOG:-/tmp/gocassini-publisher-e2e.log}"
+CHECK_SESSION_ARTIFACT="${CHECK_SESSION_ARTIFACT:-1}"
 
 rm -f "$OUTPUT" "$FINAL_OUTPUT" "$REC_LOG" "$PUB_LOG"
 
@@ -151,5 +152,11 @@ fi
 
 echo "--- key recorder lines ---"
 rg -n "talk bootstrap|subscribing to remote session|remote track:|ICE state=connected|duration reached|run error|composed final multi-track output|kept intermediate files" "$REC_LOG" -S || true
+
+if [[ "$CHECK_SESSION_ARTIFACT" == "1" ]]; then
+  "$SCRIPT_DIR/../test/bin/verify-session-artifact.sh" \
+    --final-output "$FINAL_OUTPUT" \
+    --report "${FINAL_OUTPUT}.json"
+fi
 
 echo "PASS"
