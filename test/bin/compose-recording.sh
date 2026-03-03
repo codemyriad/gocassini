@@ -317,7 +317,7 @@ if [[ "$ROTATION_MODE" == "publisher-log-splice" ]]; then
 
   if [[ "$seg_count" -gt 0 ]]; then
     AUDIO_FILTER="
-${seg_filter}${seg_labels}concat=n=${seg_count}:v=0:a=1,aresample=async=1:first_pts=0,alimiter=limit=0.95[aout]
+${seg_filter}${seg_labels}concat=n=${seg_count}:v=0:a=1,aresample=async=1:first_pts=0,apad=pad_dur=999999,atrim=duration=${TARGET_DURATION_PADDED},alimiter=limit=0.95[aout]
 "
   else
     log "  no valid rotation segments parsed from publisher log, falling back to amix"
@@ -327,7 +327,7 @@ ${seg_filter}${seg_labels}concat=n=${seg_count}:v=0:a=1,aresample=async=1:first_
   fi
 else
   AUDIO_FILTER="
-[0:${A_SPALMAN}][0:${A_GIULIA}][0:${A_FRANKIE}]amix=inputs=3:dropout_transition=0:normalize=0,aresample=async=1:first_pts=0,alimiter=limit=0.95[aout]
+[0:${A_SPALMAN}][0:${A_GIULIA}][0:${A_FRANKIE}]amix=inputs=3:duration=longest:dropout_transition=0:normalize=0,aresample=async=1:first_pts=0,apad=pad_dur=999999,atrim=duration=${TARGET_DURATION_PADDED},alimiter=limit=0.95[aout]
 "
 fi
 
