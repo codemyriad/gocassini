@@ -45,6 +45,15 @@ type sessionCaptureStream struct {
 	closed      bool
 }
 
+type trackDescriptor struct {
+	kind      string
+	codec     string
+	mid       string
+	rid       string
+	clockRate uint32
+	fmtp      map[string]string
+}
+
 type sessionCaptureSummary struct {
 	Enabled           bool   `json:"enabled"`
 	Closed            bool   `json:"closed"`
@@ -132,27 +141,30 @@ func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName
 }
 
 func (a *sessionCaptureArtifact) openTrack(remoteSessionID, participantName string, track *webrtc.TrackRemote, arrival time.Time) (string, error) {
-	a.mu.Lock()
-	if a.closed {
-		return "", fmt.Errorf("session artifact is closed")
-	}
 	if track == nil {
 		return "", fmt.Errorf("track is nil")
 	}
+	desc := descriptorFromTrack(track)
+	return a.openStream(remoteSessionID, participantName, desc, uint32(track.SSRC()), uint8(track.PayloadType()), arrival)
+}
 
-	kind := strings.ToLower(track.Kind().String())
-	codec := strings.ToLower(track.Codec().MimeType)
-	mid := track.StreamID()
-	if mid == "" {
-		mid = track.ID()
+func (a *sessionCaptureArtifact) openStream(
+	remoteSessionID, participantName string,
+	desc trackDescriptor,
+	primarySSRC uint32,
+	payloadType uint8,
+	arrival time.Time,
+) (string, error) {
+	a.mu.Lock()
+	if a.closed {
+		a.mu.Unlock()
+		return "", fmt.Errorf("session artifact is closed")
 	}
-	rid := track.RID()
-	midSafe := sanitizeSessionPathPart(mid)
-	ridSafe := sanitizeSessionPathPart(rid)
-	fmtp := parseFmtp(track.Codec().SDPFmtpLine)
-	startMonoNS := uint64(arrival.UnixNano())
 
-	ltid := a.ensureLogicalTrackLocked(remoteSessionID, participantName, kind, mid, rid, arrival)
+	midSafe := sanitizeSessionPathPart(desc.mid)
+	ridSafe := sanitizeSessionPathPart(desc.rid)
+	startMonoNS := uint64(arrival.UnixNano())
+	ltid := a.ensureLogicalTrackLocked(remoteSessionID, participantName, desc.kind, desc.mid, desc.rid, arrival)
 	streamID := fmt.Sprintf("s_%06d", a.streamSeq+1)
 	a.streamSeq++
 
@@ -162,12 +174,12 @@ func (a *sessionCaptureArtifact) openTrack(remoteSessionID, participantName stri
 		StreamID:    streamID,
 		MID:         midSafe,
 		RID:         ridSafe,
-		Codec:       codec,
-		ClockRate:   track.Codec().ClockRate,
-		Fmtp:        fmtp,
+		Codec:       desc.codec,
+		ClockRate:   desc.clockRate,
+		Fmtp:        cloneStringMap(desc.fmtp),
 		Direction:   "recvonly",
 		StartMonoNS: startMonoNS,
-		PT:          uint8(track.PayloadType()),
+		PT:          payloadType,
 	}
 	w, err := store.NewWriter(streamPath, header)
 	if err != nil {
@@ -181,10 +193,11 @@ func (a *sessionCaptureArtifact) openTrack(remoteSessionID, participantName stri
 			LTID:         ltid,
 			MID:          midSafe,
 			RID:          ridSafe,
-			PrimarySSRC:  uint32(track.SSRC()),
-			Codec:        codec,
-			ClockRate:    track.Codec().ClockRate,
-			FmtpSnapshot: fmtp,
+			PrimarySSRC:  primarySSRC,
+			Codec:        desc.codec,
+			ClockRate:    desc.clockRate,
+			PT:           payloadType,
+			FmtpSnapshot: cloneStringMap(desc.fmtp),
 			StartMonoNS:  startMonoNS,
 		},
 		writer:    w,
@@ -204,8 +217,10 @@ func (a *sessionCaptureArtifact) openTrack(remoteSessionID, participantName stri
 		"stream_id":         streamID,
 		"mid":               midSafe,
 		"rid":               ridSafe,
-		"kind":              kind,
-		"codec":             codec,
+		"kind":              desc.kind,
+		"codec":             desc.codec,
+		"primary_ssrc":      primarySSRC,
+		"pt":                payloadType,
 	}, uint64(arrival.UnixNano())); err != nil {
 		_ = w.Close()
 		a.removeStream(streamID)
@@ -511,4 +526,30 @@ func sanitizeSessionPathPart(value string) string {
 
 func makeSessionID() string {
 	return time.Now().UTC().Format("20060102T150405.000000000Z")
+}
+
+func descriptorFromTrack(track *webrtc.TrackRemote) trackDescriptor {
+	mid := track.StreamID()
+	if mid == "" {
+		mid = track.ID()
+	}
+	return trackDescriptor{
+		kind:      strings.ToLower(track.Kind().String()),
+		codec:     strings.ToLower(track.Codec().MimeType),
+		mid:       mid,
+		rid:       track.RID(),
+		clockRate: track.Codec().ClockRate,
+		fmtp:      parseFmtp(track.Codec().SDPFmtpLine),
+	}
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }

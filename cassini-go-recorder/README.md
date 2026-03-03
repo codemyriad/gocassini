@@ -89,6 +89,8 @@ cd test
 
 - Archive file: `.csr` (source-of-truth stream log)
 - Session artifact: `sessions/<id>/session.json`, `streams/*.rtplog`, `events.ndjson`
+  with stream segmentation on SSRC/PT churn (same logical track can produce
+  multiple stream segments)
 - Final output: `.mkv` (single deliverable for playback/transcoding/transcription)
 - Report: `<final>.json` with session and compose status
 - Intermediate per-session files: `<output>-segments-*` unless cleanup is enabled

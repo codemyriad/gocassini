@@ -64,6 +64,7 @@ type PacketStream struct {
 	CSRC         uint32            `json:"csrc"`
 	Codec        string            `json:"codec"`
 	ClockRate    uint32            `json:"clock_rate"`
+	PT           uint8             `json:"pt"`
 	FmtpSnapshot map[string]string `json:"fmtp_snapshot,omitempty"`
 	StartMonoNS  uint64            `json:"start_mono_ns"`
 }

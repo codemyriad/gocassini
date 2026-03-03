@@ -7,6 +7,8 @@ The source-of-truth output must stay append-only and semantic-lossless.
 - no packet drops in recorder path
 - monotonically increasing receive timestamps
 - stable identifiers that allow offline remuxing
+- aggressive segment boundaries on RTP identity changes (SSRC/PT) to keep each
+  stream file internally consistent
 
 ## On-disk session layout (target)
 
@@ -53,4 +55,5 @@ Each packet record:
 
 - current code still uses `internal/cassette` for `.csr` capture
 - new `pkg/core/store` is available and includes a schema-compatible writer/reader
+- session artifact capture writes one `.rtplog` segment per stable `(logical track, ssrc, pt)` window
 - full migration to multi-file session layout is staged

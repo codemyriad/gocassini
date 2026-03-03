@@ -3,6 +3,7 @@ package talk
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,5 +141,116 @@ func TestSessionArtifactStreamCloseBuildsIndex(t *testing.T) {
 	}
 	if len(data) == 0 {
 		t.Fatalf("expected session event log output")
+	}
+}
+
+func TestSessionArtifactOpenStreamTracksPacketIdentity(t *testing.T) {
+	tmp := t.TempDir()
+	artifactPath := filepath.Join(tmp, "identity.mkv")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	if err != nil {
+		t.Fatalf("create artifact: %v", err)
+	}
+	defer func() {
+		_ = artifact.close()
+	}()
+
+	desc := trackDescriptor{
+		kind:      "audio",
+		codec:     "audio/opus",
+		mid:       "mid-audio",
+		rid:       "",
+		clockRate: 48000,
+		fmtp:      map[string]string{"minptime": "10"},
+	}
+	streamID, err := artifact.openStream("sid-1", "Alice", desc, 4321, 111, time.Unix(0, 123456789))
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+
+	artifact.mu.Lock()
+	if len(artifact.sessionMeta.PacketStreams) != 1 {
+		artifact.mu.Unlock()
+		t.Fatalf("expected one packet stream, got=%d", len(artifact.sessionMeta.PacketStreams))
+	}
+	stream := artifact.sessionMeta.PacketStreams[0]
+	artifact.mu.Unlock()
+
+	if stream.StreamID != streamID {
+		t.Fatalf("unexpected stream id: got=%q want=%q", stream.StreamID, streamID)
+	}
+	if stream.PrimarySSRC != 4321 {
+		t.Fatalf("unexpected primary ssrc: got=%d", stream.PrimarySSRC)
+	}
+	if stream.PT != 111 {
+		t.Fatalf("unexpected pt: got=%d", stream.PT)
+	}
+	if stream.ClockRate != 48000 {
+		t.Fatalf("unexpected clock rate: got=%d", stream.ClockRate)
+	}
+	if stream.FmtpSnapshot["minptime"] != "10" {
+		t.Fatalf("unexpected fmtp snapshot: %v", stream.FmtpSnapshot)
+	}
+}
+
+func TestSessionArtifactOpenStreamReusesLogicalTrackAcrossSegments(t *testing.T) {
+	tmp := t.TempDir()
+	artifactPath := filepath.Join(tmp, "segments.mkv")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	if err != nil {
+		t.Fatalf("create artifact: %v", err)
+	}
+	defer func() {
+		_ = artifact.close()
+	}()
+
+	desc := trackDescriptor{
+		kind:      "video",
+		codec:     "video/vp8",
+		mid:       "mid-video",
+		rid:       "h",
+		clockRate: 90000,
+	}
+	firstID, err := artifact.openStream("sid-2", "Bob", desc, 5001, 96, time.Unix(0, 1000))
+	if err != nil {
+		t.Fatalf("open first stream: %v", err)
+	}
+	if err := artifact.closeStream(firstID, "segment-rotate:ssrc:5001->5002", time.Unix(0, 2000)); err != nil {
+		t.Fatalf("close first stream: %v", err)
+	}
+	secondID, err := artifact.openStream("sid-2", "Bob", desc, 5002, 96, time.Unix(0, 3000))
+	if err != nil {
+		t.Fatalf("open second stream: %v", err)
+	}
+	if firstID == secondID {
+		t.Fatalf("expected different stream ids, got same=%s", firstID)
+	}
+
+	artifact.mu.Lock()
+	streams := append([]session.PacketStream(nil), artifact.sessionMeta.PacketStreams...)
+	artifact.mu.Unlock()
+	if len(streams) != 2 {
+		t.Fatalf("expected two packet streams, got=%d", len(streams))
+	}
+	if streams[0].LTID != streams[1].LTID {
+		t.Fatalf("expected shared logical track id, got=%q and %q", streams[0].LTID, streams[1].LTID)
+	}
+	if streams[0].PrimarySSRC == streams[1].PrimarySSRC {
+		t.Fatalf("expected ssrc churn across segments")
+	}
+
+	eventsRaw, err := os.ReadFile(artifact.eventsPath)
+	if err != nil {
+		t.Fatalf("read events file: %v", err)
+	}
+	eventsText := string(eventsRaw)
+	if !strings.Contains(eventsText, "\"type\":\"stream_opened\"") {
+		t.Fatalf("expected stream_opened event in events log")
+	}
+	if !strings.Contains(eventsText, "\"type\":\"stream_closed\"") {
+		t.Fatalf("expected stream_closed event in events log")
+	}
+	if !strings.Contains(eventsText, "segment-rotate:ssrc:5001") {
+		t.Fatalf("expected stream_closed rotation reason in events log")
 	}
 }
