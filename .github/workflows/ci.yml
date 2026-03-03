@@ -36,6 +36,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: unit
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        script:
+          - ci-e2e.sh
+          - ci-e2e-mute.sh
+          - ci-e2e-rejoin.sh
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,4 +63,4 @@ jobs:
           NEXTCLOUD_URL: "http://127.0.0.1:18080"
           SIGNALING_URL: "http://127.0.0.1:18082"
           BOT_PASSWORD: "ci-bot-password"
-        run: ./test/bin/ci-e2e.sh
+        run: ./test/bin/${{ matrix.script }}

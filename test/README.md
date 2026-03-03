@@ -182,6 +182,27 @@ Use `./bin/ci-e2e.sh` for the full Nextcloud + recorder + publisher run used by 
 ./bin/ci-e2e.sh
 ```
 
+### CI integration scenarios
+
+The repository runs three local integration scripts in GitHub Actions:
+
+- `./test/bin/ci-e2e.sh` (baseline single publisher)
+- `./test/bin/ci-e2e-mute.sh` (mute-aware 3 publisher flow)
+- `./test/bin/ci-e2e-rejoin.sh` (leave/rejoin flow with two publisher phases)
+
+All scenarios use the local Compose stack in this repository:
+
+- Nextcloud API at `http://127.0.0.1:18080`
+- Signaling server at `http://127.0.0.1:18082`
+
+You can run them locally the same way as CI:
+
+```bash
+./test/bin/ci-e2e.sh
+./test/bin/ci-e2e-mute.sh
+./test/bin/ci-e2e-rejoin.sh
+```
+
 ## Teardown
 
 ```bash
