@@ -68,6 +68,16 @@ cd cassini-go-recorder
 
 If `CALL_URL` is unset, it reuses `test/runtime/last_call_url` or creates a fresh room in the local test stack.
 
+### Review output rendering
+
+- Render a synchronized 3-grid MP4 review file from a final MKV session:
+  - `./test/bin/compose-recording.sh --input <recording.mkv> --publisher-log <recording.mkv.publisher.log>`
+  - output defaults to `<recording>.composed.mp4`
+- Validate end-of-playback audio duration with the same verifier used in CI:
+  - `./test/bin/verify-audio-tail.sh --input <recording>.composed.mp4`
+  - if a scenario intentionally ends with all participants muted, use a lower threshold:
+    `./test/bin/verify-audio-tail.sh --input <recording>.composed.mp4 --min-mean-db -90`
+
 Clean up:
 
 ```bash
