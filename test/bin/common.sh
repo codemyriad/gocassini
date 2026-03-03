@@ -79,3 +79,30 @@ wait_for_nextcloud() {
   log "Nextcloud did not become ready within ${timeout_s}s"
   return 1
 }
+
+create_room_with_retry() {
+  local room_name="${1:-Local room}"
+  local max_attempts="${2:-6}"
+  local attempt=1
+  local output
+  local delay_s=1
+
+  while ((attempt <= max_attempts)); do
+    if output="$("$TEST_DIR/bin/create-room.sh" --name "$room_name" 2>&1)"; then
+      printf '%s\n' "$(echo "$output" | tail -n1)"
+      return 0
+    fi
+
+    log "room creation attempt $attempt/$max_attempts failed"
+    if ((attempt < max_attempts)); then
+      log "retrying room creation in ${delay_s}s..."
+      sleep "$delay_s"
+      delay_s=$((delay_s * 2))
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  log "create-room failed after ${max_attempts} attempts"
+  log "$output"
+  return 1
+}

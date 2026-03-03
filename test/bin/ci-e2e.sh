@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
 
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
 export PROJECT_NAME="${PROJECT_NAME:-gocassini-ci}"
 export SPREED_PROFILE="${SPREED_PROFILE:-full}"
 export NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://127.0.0.1:28080}"
@@ -41,13 +43,13 @@ log "Starting local Nextcloud Talk stack for CI"
 "$SCRIPT_DIR/up.sh"
 
 log "Creating temporary room for CI capture"
-CALL_URL="$("$SCRIPT_DIR/create-room.sh" --name "$CALL_NAME" | tail -n1)"
+CALL_URL="$(create_room_with_retry "$CALL_NAME")"
 log "Test room URL: $CALL_URL"
 export CALL_URL
 
 log "Running recorder + publisher end-to-end"
 (
-  cd "$SCRIPT_DIR/../cassini-go-recorder"
+  cd "$REPO_ROOT/cassini-go-recorder"
   ./e2e_with_publisher.sh
 )
 

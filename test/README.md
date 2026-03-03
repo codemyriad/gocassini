@@ -219,6 +219,9 @@ You can run them locally the same way as CI:
 ./test/bin/ci-e2e-rotation.sh
 ```
 
+Both CI entrypoints use bounded retry when creating the temporary Talk room to
+handle transient OCS/API bootstrap races in freshly-started local stacks.
+
 ## Teardown
 
 ```bash
