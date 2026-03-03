@@ -57,3 +57,10 @@ Each packet record:
 - new `pkg/core/store` is available and includes a schema-compatible writer/reader
 - session artifact capture writes one `.rtplog` segment per stable `(logical track, ssrc, pt)` window
 - full migration to multi-file session layout is staged
+
+## Validation hooks
+
+- `pkg/core/validate` provides deterministic log checks used by inspect tooling:
+  - monotonic `recvMonoNS` enforcement
+  - RTP payload type consistency against stream header snapshots
+- `gocassini-inspect` surfaces these as per-stream `issues=<N>` plus top issue samples.

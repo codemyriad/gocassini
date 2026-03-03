@@ -13,6 +13,7 @@ import (
 	"gocassini/internal/cassette"
 	"gocassini/pkg/core/session"
 	"gocassini/pkg/core/store"
+	"gocassini/pkg/core/validate"
 )
 
 type trackSummary struct {
@@ -190,6 +191,11 @@ func inspectSessionArtifact(sessionPath string) error {
 			fmt.Printf("stream=%s error=%v\n", stream.StreamID, err)
 			continue
 		}
+		validation, validationErr := validate.CheckLog(path)
+		issueCount := 0
+		if validationErr == nil {
+			issueCount = validation.IssueCount
+		}
 		kind := "-"
 		if logical, ok := logicalByLTID[stream.LTID]; ok && logical.Kind != "" {
 			kind = logical.Kind
@@ -199,7 +205,7 @@ func inspectSessionArtifact(sessionPath string) error {
 			durationNS = summary.last - summary.first
 		}
 		fmt.Printf(
-			"stream=%s ltid=%s kind=%s mid=%s rid=%s codec=%s ssrc=%d pt=%d rtp=%d rtcp=%d first_ns=%d last_ns=%d dur_ms=%.3f\n",
+			"stream=%s ltid=%s kind=%s mid=%s rid=%s codec=%s ssrc=%d pt=%d rtp=%d rtcp=%d first_ns=%d last_ns=%d dur_ms=%.3f issues=%d\n",
 			stream.StreamID,
 			stream.LTID,
 			kind,
@@ -213,7 +219,20 @@ func inspectSessionArtifact(sessionPath string) error {
 			summary.first,
 			summary.last,
 			float64(durationNS)/1e6,
+			issueCount,
 		)
+		if validationErr != nil {
+			fmt.Printf("  validation_error=%v\n", validationErr)
+		} else if validation.IssueCount > 0 {
+			limit := len(validation.Issues)
+			if limit > 3 {
+				limit = 3
+			}
+			for idx := 0; idx < limit; idx++ {
+				issue := validation.Issues[idx]
+				fmt.Printf("  issue[%d]=%s recv_ns=%d %s\n", idx, issue.Code, issue.RecvMonoNS, issue.Message)
+			}
+		}
 		inspected = append(inspected, inspectedSessionStream{
 			packet:  stream,
 			summary: summary,
