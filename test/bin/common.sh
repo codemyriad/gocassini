@@ -82,10 +82,11 @@ wait_for_nextcloud() {
 
 create_room_with_retry() {
   local room_name="${1:-Local room}"
-  local max_attempts="${2:-6}"
+  local max_attempts="${2:-10}"
   local attempt=1
   local output
   local delay_s=1
+  local did_rebootstrap=0
 
   while ((attempt <= max_attempts)); do
     if output="$("$TEST_DIR/bin/create-room.sh" --name "$room_name" 2>&1)"; then
@@ -93,16 +94,28 @@ create_room_with_retry() {
       return 0
     fi
 
-    log "room creation attempt $attempt/$max_attempts failed"
+    log "room creation attempt $attempt/$max_attempts failed" >&2
+    if ((did_rebootstrap == 0)) && [[ "$output" == *"statuscode': 996"* || "$output" == *'"statuscode": 996'* ]]; then
+      log "room creation hit statuscode 996; re-running bootstrap once before next retry" >&2
+      if "$TEST_DIR/bin/bootstrap.sh" >/dev/null 2>&1; then
+        log "bootstrap retry completed" >&2
+      else
+        log "bootstrap retry failed; continuing with room retries" >&2
+      fi
+      did_rebootstrap=1
+    fi
     if ((attempt < max_attempts)); then
-      log "retrying room creation in ${delay_s}s..."
+      log "retrying room creation in ${delay_s}s..." >&2
       sleep "$delay_s"
       delay_s=$((delay_s * 2))
+      if ((delay_s > 30)); then
+        delay_s=30
+      fi
     fi
     attempt=$((attempt + 1))
   done
 
-  log "create-room failed after ${max_attempts} attempts"
-  log "$output"
+  log "create-room failed after ${max_attempts} attempts" >&2
+  log "$output" >&2
   return 1
 }

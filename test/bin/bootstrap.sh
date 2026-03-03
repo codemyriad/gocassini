@@ -30,13 +30,18 @@ if ! compose ps --services --filter status=running | grep -Fxq signaling; then
   exit 0
 fi
 
+effective_signaling_url="${SIGNALING_URL:-}"
+if [[ -z "$effective_signaling_url" || "$effective_signaling_url" == "http://127.0.0.1:18082" ]]; then
+  effective_signaling_url="$(default_signaling_url)"
+fi
+
 if occ_has "talk:signaling:add"; then
-  log "Configuring external signaling server: $SIGNALING_URL"
-  occ talk:signaling:delete "$SIGNALING_URL" >/dev/null 2>&1 || true
-  occ talk:signaling:add "$SIGNALING_URL" "$SIGNALING_SHARED_SECRET"
+  log "Configuring external signaling server: $effective_signaling_url"
+  occ talk:signaling:delete "$effective_signaling_url" >/dev/null 2>&1 || true
+  occ talk:signaling:add "$effective_signaling_url" "$SIGNALING_SHARED_SECRET"
 else
   log "No talk:signaling:add command; setting legacy app config"
-  signaling_json=$(printf '{"servers":[{"server":"%s","verify":false}],"secret":"%s"}' "$SIGNALING_URL" "$SIGNALING_SHARED_SECRET")
+  signaling_json=$(printf '{"servers":[{"server":"%s","verify":false}],"secret":"%s"}' "$effective_signaling_url" "$SIGNALING_SHARED_SECRET")
   occ config:app:set spreed signaling_servers --value="$signaling_json"
 fi
 

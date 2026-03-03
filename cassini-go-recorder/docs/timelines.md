@@ -24,8 +24,7 @@ This gives stable long-term drift characteristics because timestamps are anchore
 
 ## Current implementation status
 
-- in-progress: `pkg/core/timeline/estimator.go` contains a segment-oriented
-  baseline estimator
+- `pkg/core/timeline/estimator.go` contains a segment-oriented baseline estimator
 - SR correction and explicit anchor-based AV synchronization are planned in the next phase
 
 ## Current behavior (implemented)

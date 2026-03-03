@@ -53,7 +53,7 @@ Each packet record:
 
 ## Current migration status
 
-- current code still uses `internal/cassette` for `.csr` capture
+- current code dual-writes legacy `.csr` (`internal/cassette`) and session artifact streams (`pkg/core/store`)
 - new `pkg/core/store` is available and includes a schema-compatible writer/reader
 - session artifact capture writes one `.rtplog` segment per stable `(logical track, ssrc, pt)` window
 - full migration to multi-file session layout is staged

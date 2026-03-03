@@ -87,7 +87,7 @@ fi
 
 if [[ "$stream_count" -gt 0 ]]; then
   while IFS= read -r stream; do
-    index_path="${stream}.idx"
+    index_path="${stream%.rtplog}.idx"
     if [[ ! -f "$index_path" ]]; then
       echo "missing index for stream: $stream" >&2
       exit 1

@@ -221,6 +221,8 @@ You can run them locally the same way as CI:
 
 Both CI entrypoints use bounded retry when creating the temporary Talk room to
 handle transient OCS/API bootstrap races in freshly-started local stacks.
+`bootstrap.sh` also auto-resolves a container-reachable signaling URL for local
+Docker runs (gateway address instead of host-loopback).
 
 ## Teardown
 

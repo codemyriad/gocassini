@@ -154,7 +154,7 @@ echo "--- key recorder lines ---"
 rg -n "talk bootstrap|subscribing to remote session|remote track:|ICE state=connected|duration reached|run error|composed final multi-track output|kept intermediate files" "$REC_LOG" -S || true
 
 if [[ "$CHECK_SESSION_ARTIFACT" == "1" ]]; then
-  "$SCRIPT_DIR/../test/bin/verify-session-artifact.sh" \
+  "$TEST_DIR/bin/verify-session-artifact.sh" \
     --final-output "$FINAL_OUTPUT" \
     --report "${FINAL_OUTPUT}.json"
 fi
