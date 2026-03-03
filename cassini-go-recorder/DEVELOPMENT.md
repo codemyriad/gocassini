@@ -54,3 +54,9 @@ This script starts the Go recorder and drives Go publisher clients through the s
 
 - Resolution adaptation inside a single continuous publisher session is not yet simulated.
 - Explicit packet-loss/jitter shaping is not yet part of the harness.
+
+## Planned Architecture Workstream
+
+- move `.csr` from single-track archive to `pkg/core/store` style `.rtplog` streams
+- keep recorder path stable while adding compatibility diagnostics between old and new formats
+- add event NDJSON and `session.json` output as first-class debug artifacts

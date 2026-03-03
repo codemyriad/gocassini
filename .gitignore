@@ -7,6 +7,7 @@
 !/test/media/aligned/.gitkeep
 /test/media/raw/*
 !/test/media/raw/.gitkeep
+/test/media/youtube/*
 /test/media/sample.*
 
 # Local recorder artifacts
@@ -19,6 +20,7 @@ gocassini-*.log
 # Go build output
 /cassini-go-recorder/gocassini
 /cassini-go-recorder/*.out
+/cassini-go-recorder/tmp
 
 # Local developer environment (private, non-committed)
 .envrc

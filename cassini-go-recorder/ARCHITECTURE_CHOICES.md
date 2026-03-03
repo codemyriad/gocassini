@@ -49,6 +49,13 @@ Build a Go/Pion recorder that captures Nextcloud Talk media with minimal CPU ove
 4. Add deterministic replay/composition tooling from archive to deliverable media.
 5. Validate sync on multi-participant joins/rejoins and packet-loss scenarios.
 
+## Long-term Migration Decision
+
+- adopt a session-directory capture model with session-wide metadata (`session.json`)
+- capture packet truth at stream granularity with `.rtplog` and optional `.idx`
+- split identity mapping by `MID/RID` before SSRC and keep SSRC as segment identity
+- keep `.csr` as compatibility mode until the new layout is fully proven in CI
+
 ## Acceptance Gate Before Switching Production
 
 - Stable capture with 2+ concurrent participants.

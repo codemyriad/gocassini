@@ -39,6 +39,14 @@ Date: 2026-03-02
 - Improve composed MKV metadata and deterministic track labeling.
 - Second derivative target: optional composed grid MP4.
 
+## Architecture Migration Path (2026-03 onward)
+
+- add `pkg/core/session` as the index model for session-wide truth
+- add `pkg/core/store` as the canonical stream log schema (`.rtplog` + optional `.idx`)
+- add `pkg/core/timeline` baseline estimator and `pkg/core/mux` remux interface
+- keep current `.csr` flow unchanged while adding compatibility tooling so we can compare outputs side-by-side
+- next phase: move capture writes from `internal/cassette` into `pkg/core/store` and switch `cmd/gocassini-inspect` + remux to consume the new schema
+
 ## Go/No-Go Criteria
 
 Proceed with full migration only if:

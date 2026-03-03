@@ -32,6 +32,12 @@ go run ./cmd/gocassini --mode simulate --output /tmp/gocassini.csr
 go run ./cmd/gocassini-inspect /tmp/gocassini.csr
 ```
 
+### Debugging and architecture notes
+
+- `cassini-go-recorder/docs/formats.md`: packet truth format and planned migration to stream-session layout.
+- `cassini-go-recorder/docs/timelines.md`: timing model and drift handling strategy.
+- `cassini-go-recorder/docs/muxing.md`: remux design and back-end strategy.
+
 ### Full local integration test (real Nextcloud stack)
 
 ```bash
@@ -142,6 +148,15 @@ GitHub Actions runs:
 - unit tests for `cassini-go-recorder`
 - unit tests for `test/go-talk-rotator`
 - integration test against local Nextcloud harness using `./test/bin/ci-e2e.sh`
+
+### Migration status
+
+- The repository now has new core packages (`pkg/core/...`) that define the long-term architecture:
+  - `pkg/core/session`: immutable schema for session-level metadata
+  - `pkg/core/store`: append-only stream packet log
+  - `pkg/core/timeline`: timeline estimator API
+  - `pkg/core/mux`: mux abstraction
+- Current recorder command still writes `.csr` through the legacy archive path. A staged migration keeps this stable while we add deterministic remux validation against the new schema.
 
 ## Next steps
 
