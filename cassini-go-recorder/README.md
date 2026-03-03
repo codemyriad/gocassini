@@ -16,6 +16,7 @@ It is intentionally narrow: one job, one output contract, and strong behavior fo
 - `cmd/gocassini-inspect`: archive inspection utility
 - `internal/`: codec-agnostic recorder, signaling, and Nextcloud Talk adapters
 - `test/`: local reproducible Nextcloud Talk stack + publisher harness
+- `docs/architecture-migration-status.md`: current migration goals, effort, and status
 
 ## Quickstart
 

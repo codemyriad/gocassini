@@ -1,0 +1,63 @@
+# Architecture Migration Status (2026-03-03)
+
+## Goals
+
+1. Make drift bugs reproducible from packet truth without rerunning meetings.
+2. Segment streams aggressively on RTP identity churn (SSRC/PT) so timeline seams
+   are explicit.
+3. Expose diagnostics that explain churn/gaps/validation issues quickly.
+4. Keep local E2E checks representative of real Talk behavior.
+
+## Implemented in this cycle
+
+1. Segment-aware session artifact capture:
+- stream logs rotate on SSRC/PT changes and preserve logical-track mapping.
+- `session.json` packet streams now include `pt`.
+
+2. Deterministic inspection upgrades:
+- `gocassini-inspect` prints per-stream identity (`ssrc`, `pt`) and validation
+  issue counts.
+- `segment_churn` summary added per logical track (`segments`, `ssrc_changes`,
+  `pt_changes`, `max_gap_ms`).
+- stream close reasons are aggregated from `events.ndjson`.
+
+3. Validation package:
+- added `pkg/core/validate` for `.rtplog` invariants:
+  - monotonic `recvMonoNS`
+  - RTP unmarshal sanity
+  - payload-type consistency vs stream header snapshot
+
+4. Local E2E hardening:
+- room creation retries made observable (`stderr`) and more resilient.
+- one-time bootstrap refresh on OCS `statuscode 996`.
+- bootstrap now auto-resolves container-reachable signaling URL for Docker runs.
+- fixed `e2e_with_publisher.sh` artifact verifier path bug.
+- fixed `verify-session-artifact.sh` index filename logic (`<stream>.idx`).
+
+## Evidence
+
+- unit/integration tests:
+  - `go test ./...` passes in `cassini-go-recorder`.
+- local live E2E:
+  - `REC_DURATION=25 PUB_DURATION=20 ./test/bin/ci-e2e-rotation.sh` passes.
+  - composed output tail-audio check passes in the same run.
+  - session artifact verification passes (`streams`, `events`, `.idx` sidecars).
+
+## Debug-time impact
+
+Current expected triage path for drift:
+
+1. inspect session artifact (`gocassini-inspect session.json`)
+2. locate churn seams/issues (`segment_churn`, validation output)
+3. remux/replay from existing logs
+
+This should continue reducing drift incident investigation from "rerun live call"
+to "replay deterministic artifact", typically cutting triage from hours to tens
+of minutes.
+
+## Remaining migration work
+
+1. Move final output composition to an offline remux path driven directly by
+   `streams/*.rtplog` instead of only capture-time intermediates.
+2. Add SR/capture-time correction layer in `pkg/core/timeline`.
+3. Add richer depacketization/remux modules for broader codec/container support.
