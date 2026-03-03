@@ -6,9 +6,10 @@ import (
 )
 
 type Estimator interface {
-	ObserveRTP(ssrc uint32, recvNS uint64, rtpTS uint32, marker bool, isKeyframe bool)
+	ObserveRTP(ssrc uint32, recvNS uint64, rtpTS uint32, marker bool, isKeyframe bool, clockRate uint32)
 	ObserveRTCP(ssrc uint32, recvNS uint64, raw []byte)
 	PTS(ssrc uint32, rtpTS uint32) (uint64, bool)
+	SetClockRate(ssrc uint32, clockRate uint32)
 	CloseStream(ssrc uint32)
 }
 
@@ -23,6 +24,7 @@ type segmentState struct {
 	startRTP  int64
 	lastRTP   int64
 	seen      bool
+	ptsReady  bool
 	lastPTS   uint64
 }
 
@@ -32,7 +34,7 @@ func NewSegmentEstimator() *SegmentEstimator {
 	}
 }
 
-func (e *SegmentEstimator) ObserveRTP(ssrc uint32, recvNS uint64, rtpTS uint32, marker bool, isKeyframe bool) {
+func (e *SegmentEstimator) ObserveRTP(ssrc uint32, recvNS uint64, rtpTS uint32, marker bool, isKeyframe bool, clockRate uint32) {
 	_ = marker
 	_ = isKeyframe
 	e.mu.Lock()
@@ -49,9 +51,15 @@ func (e *SegmentEstimator) ObserveRTP(ssrc uint32, recvNS uint64, rtpTS uint32, 
 		s.startMono = recvNS
 		s.startRTP = int64(rtpTS)
 		s.lastRTP = int64(rtpTS)
-		s.clockRate = 0
+		if clockRate > 0 {
+			s.clockRate = clockRate
+		}
 		s.lastPTS = recvNS
+		s.ptsReady = false
 		return
+	}
+	if clockRate > 0 && s.clockRate == 0 {
+		s.clockRate = clockRate
 	}
 	s.lastRTP = s.unwrapRTP(rtpTS)
 }
@@ -61,6 +69,17 @@ func (e *SegmentEstimator) ObserveRTCP(ssrc uint32, recvNS uint64, raw []byte) {
 	_ = recvNS
 	_ = raw
 	_ = ssrc
+}
+
+func (e *SegmentEstimator) SetClockRate(ssrc uint32, clockRate uint32) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	stream := e.streams[ssrc]
+	if stream == nil || clockRate == 0 {
+		return
+	}
+	stream.clockRate = clockRate
 }
 
 func (e *SegmentEstimator) PTS(ssrc uint32, rtpTS uint32) (uint64, bool) {
@@ -88,9 +107,10 @@ func (e *SegmentEstimator) PTS(ssrc uint32, rtpTS uint32) (uint64, bool) {
 	if deltaNS >= 0 {
 		pts += uint64(deltaNS)
 	}
-	if pts <= s.lastPTS {
+	if s.ptsReady && pts <= s.lastPTS {
 		pts = s.lastPTS + 1
 	}
+	s.ptsReady = true
 	s.lastPTS = pts
 	return pts, true
 }
