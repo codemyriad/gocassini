@@ -1,0 +1,334 @@
+```md
+# Gocassini — Project Kickoff Document
+Version: 0.1  
+Audience: developer starting implementation  
+Scope: foundation, output contract, CLI design, architecture direction
+
+---
+
+# 0. What This Is
+
+Gocassini is a **CLI meeting recorder**.
+
+It produces exactly one primary artifact per meeting:
+
+> **1 meeting → 1 MKV → separate tracks per participant**
+
+Everything else is secondary.
+
+This is not a conferencing platform.  
+This is not a UI-heavy app.  
+This is not a SaaS.
+
+It is a capture layer designed to feed other tools.
+
+Unix philosophy:
+- Do one thing well.
+- Produce clean, predictable output.
+- Compose downstream.
+
+---
+
+# 1. Non-Negotiable Design Principles
+
+## 1.1 Output Contract First
+
+The MKV structure is the stable interface.
+
+Integrations, flags, internal implementation may change.
+The artifact format must be treated as a long-term contract.
+
+## 1.2 CLI-First
+
+No GUI.
+No embedded dashboard.
+No browser frontend.
+
+All interaction happens via CLI and files.
+
+## 1.3 Deterministic Behavior
+
+Same inputs → same file naming pattern → same metadata structure.
+
+No surprises.
+
+## 1.4 Toolchain-Oriented
+
+Gocassini must work well with:
+
+- ffmpeg
+- ffprobe
+- transcription engines
+- archival systems
+- storage sync tools
+- shell pipelines
+
+Design for pipes and scripts.
+
+---
+
+# 2. Output Contract (v1 Draft)
+
+Primary artifact: Matroska container (.mkv)
+
+## 2.1 File Naming
+
+Default pattern:
+
+```
+
+{room}-{YYYYMMDD}-{HHMMSS}.mkv
+
+```
+
+Example:
+```
+
+team-sync-20260303-140512.mkv
+
+```
+
+Configurable, but with sane default.
+
+---
+
+## 2.2 Track Structure
+
+Each participant must have:
+
+- Separate audio track
+- Optional separate video track (if supported)
+
+Track naming convention:
+
+```
+
+participant:<stable_id>
+
+```
+
+Optional metadata:
+```
+
+participant_display_name
+participant_source_id
+
+```
+
+If a participant leaves and rejoins:
+- Prefer same logical track
+- If technically impossible, document behavior
+
+---
+
+## 2.3 Container Metadata
+
+If available, embed:
+
+- meeting_start_timestamp (UTC)
+- meeting_end_timestamp (UTC)
+- room_identifier
+- provider (e.g. nextcloud-talk)
+- gocassini_version
+
+Avoid custom binary blobs.
+Prefer standard MKV metadata fields where possible.
+
+---
+
+# 3. CLI Design
+
+Keep it simple and composable.
+
+## 3.1 Basic Command
+
+```
+
+gocassini record --provider nextcloud --room <id> --output <file>
+
+```
+
+Defaults:
+- Output file auto-generated if not provided
+- Logs to stderr
+- Structured logs optional
+
+---
+
+## 3.2 Subcommands (Future-Proof)
+
+```
+
+gocassini record
+gocassini inspect
+gocassini version
+gocassini help
+
+```
+
+Keep command surface minimal.
+
+Avoid flag explosion.
+
+---
+
+## 3.3 Exit Codes
+
+0 → success  
+non-zero → meaningful failure
+
+Do not overcomplicate error taxonomy initially.
+
+---
+
+# 4. Architecture Direction
+
+## 4.1 Provider Abstraction
+
+Internal structure should allow:
+
+```
+
+Provider interface {
+Join()
+CaptureStreams()
+EmitTracks()
+Close()
+}
+
+```
+
+Nextcloud Talk is first provider.
+Architecture must allow:
+
+- Google Meet
+- Zoom
+- Other WebRTC sources
+
+Do not bake provider logic into core recorder.
+
+---
+
+## 4.2 Core Layers
+
+Suggested layering:
+
+1. Provider adapter (protocol, signaling, stream capture)
+2. Stream normalizer (timestamps, buffering)
+3. MKV writer
+4. Metadata layer
+
+The MKV writer should not know about provider specifics.
+
+---
+
+## 4.3 Single Binary
+
+Deliverable:
+- Single static binary (Linux first)
+- No runtime dependency jungle
+
+Prefer minimal external dependencies.
+
+---
+
+# 5. Logging Philosophy
+
+Default: human-readable logs to stderr.
+
+Optional:
+```
+
+--log-format json
+
+```
+
+Logs must never corrupt stdout (stdout reserved for future pipeline use).
+
+---
+
+# 6. What We Are Not Building (Now)
+
+- Live streaming UI
+- Built-in transcription
+- Web dashboard
+- Cloud sync system
+- SaaS account system
+- Real-time analytics
+
+Those belong to other tools in the ecosystem.
+
+---
+
+# 7. Brand Positioning (for context)
+
+Short description:
+
+> Gocassini is a CLI meeting recorder that outputs a single MKV with per-participant tracks. Built for Unix pipelines.
+
+Tone:
+- Technical
+- Slightly playful
+- Not theatrical
+- Not corporate
+
+No space-mission cosplay.
+No overbranding.
+
+---
+
+# 8. Versioning Strategy
+
+Early-stage:
+- 0.x releases
+- Breaking CLI changes acceptable
+- Breaking output format changes discouraged
+
+When output contract stabilizes:
+- Announce artifact stability explicitly
+
+---
+
+# 9. Milestone 0 (First Meaningful Version)
+
+Goal:
+Record a Nextcloud Talk meeting and produce:
+
+- One MKV file
+- Separate audio tracks per participant
+- Embedded meeting start timestamp
+- Deterministic filename
+
+No polishing.
+No provider generalization yet beyond minimal interface boundary.
+
+---
+
+# 10. Definition of “Done” for First Release
+
+- Recording works reliably for basic case
+- MKV structure validated with ffprobe
+- No memory leaks in typical session
+- File closes cleanly on SIGINT
+- README documents actual behavior (not aspiration)
+
+---
+
+# 11. Long-Term Direction (Informal)
+
+Gocassini is intended to become:
+
+- The capture layer
+- Part of a larger open-source toolchain
+- A foundation for archival-grade meeting storage
+
+Think:
+black box recorder for meetings.
+
+But start small.
+Ship artifact stability first.
+
+---
+
+End of document.
+```

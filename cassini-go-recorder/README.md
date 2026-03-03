@@ -1,0 +1,75 @@
+# Gocassini
+
+`gocassini` is a CLI-first meeting recorder for Nextcloud Talk.
+It is intentionally narrow: one job, one output contract, and strong behavior for automation.
+
+## Current scope (v1)
+- Capture audio/video RTP streams from Nextcloud Talk meetings
+- Persist a raw archive (`.csr`) with packet metadata
+- Compose a multi-track MKV (`.mkv`) as the primary deliverable
+- Keep intermediate files deterministic and optionally cleanable
+- Keep everything script-friendly and machine-friendly
+
+## What this repo contains
+- `cmd/gocassini`: main recorder command
+- `cmd/gocassini-inspect`: archive inspection utility
+- `internal/`: codec-agnostic recorder, signaling, and Nextcloud Talk adapters
+- `test/`: local reproducible Nextcloud Talk stack + publisher harness
+
+## Quickstart
+
+```bash
+cd cassini-go-recorder
+go run ./cmd/gocassini --mode simulate --output /tmp/gocassini.csr
+go run ./cmd/gocassini-inspect /tmp/gocassini.csr
+```
+
+## Live Talk capture
+
+```bash
+cd cassini-go-recorder
+go run ./cmd/gocassini \
+  --mode talk \
+  --call-url https://cloud.codemyriad.io/call/erwcr27x \
+  --name GocassiniObserver \
+  --duration 55 \
+  --output /tmp/meeting.csr \
+  --final-output /tmp/meeting.mkv
+```
+
+Use `--help` on each command to inspect all options:
+
+```bash
+go run ./cmd/gocassini --help
+go run ./cmd/gocassini-inspect --help
+```
+
+## Integration test helper
+
+```bash
+cd ..
+./test/bin/ci-e2e.sh
+```
+
+This runs:
+- local Nextcloud Talk stack
+- room creation
+- publisher bot
+- recorder in live mode
+- output validation
+
+Clean up:
+
+```bash
+cd test
+./bin/down.sh --volumes
+```
+
+## Output contract
+
+- Archive file: `.csr` (source-of-truth stream log)
+- Final output: `.mkv` (single deliverable for playback/transcoding/transcription)
+- Report: `<final>.json` with session and compose status
+- Intermediate per-session files: `<output>-segments-*` unless cleanup is enabled
+
+The project is designed so the primary interface remains the CLI and file artifacts.

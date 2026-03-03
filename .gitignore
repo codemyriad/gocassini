@@ -1,0 +1,20 @@
+# Test/runtime artifacts
+/test/runtime/*
+!/test/runtime/.gitkeep
+/test/media/processed/*
+!/test/media/processed/.gitkeep
+/test/media/aligned/*
+!/test/media/aligned/.gitkeep
+/test/media/raw/*
+!/test/media/raw/.gitkeep
+
+# Local recorder artifacts
+*.csr
+*.mkv
+*.json
+gocassini-*.log
+*gocassini*.log
+
+# Go build output
+/cassini-go-recorder/gocassini
+/cassini-go-recorder/*.out
