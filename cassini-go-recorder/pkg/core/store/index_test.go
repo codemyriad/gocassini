@@ -66,6 +66,13 @@ func TestBuildIndexAndFindOffset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read index: %v", err)
 	}
+	info, err := os.Stat(indexPath)
+	if err != nil {
+		t.Fatalf("index stat: %v", err)
+	}
+	if info.Size() != int64(len(entries)*16) {
+		t.Fatalf("unexpected index file size: got=%d want=%d", info.Size(), len(entries)*16)
+	}
 	if len(entries) != 3 {
 		t.Fatalf("expected 3 entries, got %d", len(entries))
 	}
