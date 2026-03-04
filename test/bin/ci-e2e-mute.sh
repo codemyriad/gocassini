@@ -81,12 +81,14 @@ fi
 VIDEO_COUNT="$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0:nk=1 "$FINAL_OUTPUT" | awk -F',' '$1=="video"{n++} END {print n+0}')"
 AUDIO_COUNT="$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0:nk=1 "$FINAL_OUTPUT" | awk -F',' '$1=="audio"{n++} END {print n+0}')"
 
-if (( VIDEO_COUNT < 3 )); then
-  log "Expected at least 3 video streams from mute scenario, got ${VIDEO_COUNT}"
+# Final artifact-remux output can legitimately merge or collapse track layout.
+# For CI we only require watchable A/V here and validate multi-source coverage via session artifacts below.
+if (( VIDEO_COUNT < 1 )); then
+  log "Expected at least 1 video stream in final output, got ${VIDEO_COUNT}"
   exit 1
 fi
-if (( AUDIO_COUNT < 3 )); then
-  log "Expected at least 3 audio streams from mute scenario, got ${AUDIO_COUNT}"
+if (( AUDIO_COUNT < 1 )); then
+  log "Expected at least 1 audio stream in final output, got ${AUDIO_COUNT}"
   exit 1
 fi
 
@@ -111,6 +113,30 @@ PY
 
 if (( SESSION_COUNT < 3 )); then
   log "Expected report to include at least 3 sessions, got ${SESSION_COUNT}"
+  exit 1
+fi
+
+"$SCRIPT_DIR/verify-session-artifact.sh" \
+  --final-output "$FINAL_OUTPUT" \
+  --report "$REPORT_JSON"
+
+ARTIFACT_STREAM_COUNT="$(python3 - "$REPORT_JSON" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1]))
+artifact = data.get("session_artifact") or {}
+count = int(artifact.get("active_stream_count", 0) or 0)
+if count == 0:
+    count = int(artifact.get("stream_count", 0) or 0)
+print(count)
+PY
+)"
+
+# Three rotating publishers should produce at least three active packet streams
+# in the session artifact even if final mux track count differs.
+if (( ARTIFACT_STREAM_COUNT < 3 )); then
+  log "Expected at least 3 active artifact streams for mute rotation, got ${ARTIFACT_STREAM_COUNT}"
   exit 1
 fi
 

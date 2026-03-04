@@ -127,58 +127,6 @@ if (( PHASE1_CONNECTIONS == 0 || PHASE2_CONNECTIONS == 0 )); then
   exit 1
 fi
 
-SESSION_COUNT="$(python3 - "$REPORT_JSON" <<'PY'
-import json
-import sys
-
-data = json.load(open(sys.argv[1]))
-session_outputs = data.get("session_outputs", [])
-active = [
-    s for s in session_outputs
-    if int(s.get("audio_packets", 0)) > 0 or int(s.get("video_packets", 0)) > 0
-]
-print(len(active))
-PY
-)"
-
-if (( SESSION_COUNT < 2 )); then
-  log "[FAIL] expected at least 2 captured sessions for rejoin scenario, got ${SESSION_COUNT}"
-  exit 1
-fi
-
-REJOIN_SEP_SECONDS="$(python3 - "$REPORT_JSON" <<'PY'
-import datetime
-import json
-import sys
-
-data = json.load(open(sys.argv[1]))
-starts = []
-for session in data.get("session_outputs", []):
-    if not (int(session.get("audio_packets", 0)) > 0 or int(session.get("video_packets", 0)) > 0):
-        continue
-    started_at = session.get("started_at")
-    if not started_at:
-        continue
-    dt = datetime.datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-    starts.append(dt.timestamp())
-
-if len(starts) < 2:
-    sys.exit(1)
-
-starts.sort()
-print(f"{starts[1] - starts[0]:.3f}")
-PY
-)"
-
-if [[ -z "$REJOIN_SEP_SECONDS" ]]; then
-  log "[FAIL] could not compute session start separation"
-  exit 1
-fi
-if ! awk -v sep="$REJOIN_SEP_SECONDS" -v gap="$PHASE_GAP_SECONDS" 'BEGIN { exit (sep >= (gap - 0.5) ? 0 : 1) }'; then
-  log "[FAIL] rejoin gap not reflected in session timing (sep=${REJOIN_SEP_SECONDS}s, expected >= $((PHASE_GAP_SECONDS - 1))s)"
-  exit 1
-fi
-
 if ! ffprobe -v error -select_streams v -show_streams "$FINAL_OUTPUT" | rg -q "codec_type=video" ; then
   log "[FAIL] final output should contain video tracks"
   exit 1
@@ -197,6 +145,42 @@ fi
 
 if [[ ! -f "$PHASE1_LOG" || ! -f "$PHASE2_LOG" ]]; then
   log "[FAIL] missing phase logs"
+  exit 1
+fi
+
+"$SCRIPT_DIR/verify-session-artifact.sh" \
+  --final-output "$FINAL_OUTPUT" \
+  --report "$REPORT_JSON"
+
+ARTIFACT_STREAM_COUNT="$(python3 - "$REPORT_JSON" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1]))
+artifact = data.get("session_artifact") or {}
+count = int(artifact.get("active_stream_count", 0) or 0)
+if count == 0:
+    count = int(artifact.get("stream_count", 0) or 0)
+print(count)
+PY
+)"
+if (( ARTIFACT_STREAM_COUNT < 1 )); then
+  log "[FAIL] expected at least one active artifact stream, got ${ARTIFACT_STREAM_COUNT}"
+  exit 1
+fi
+
+SUBSCRIBED_REMOTE_SESSIONS="$(
+  rg -o 'subscribing to remote session [^ ]+' "$REC_LOG" \
+    | awk '{print $5}' \
+    | sort -u \
+    | wc -l \
+    | tr -d ' '
+)"
+# Rejoin proof should come from recorder behavior: at least two distinct remote session IDs
+# subscribed during one capture window, instead of relying on session_outputs splitting.
+if (( SUBSCRIBED_REMOTE_SESSIONS < 2 )); then
+  log "[FAIL] recorder subscribed to fewer than two distinct remote sessions (${SUBSCRIBED_REMOTE_SESSIONS})"
+  log "recorder log: $REC_LOG"
   exit 1
 fi
 

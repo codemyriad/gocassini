@@ -205,6 +205,14 @@ The repository runs three local integration scripts in GitHub Actions:
 - `./test/bin/ci-e2e-rejoin.sh` (leave/rejoin flow with two publisher phases)
 - `./test/bin/ci-e2e-rotation.sh` (3 rotating publishers with composed tail-audio checks)
 
+Scenario assertions are intentionally artifact-centric:
+
+- `ci-e2e-mute.sh` requires only at least one final video/audio track, then validates
+  multi-publisher capture via session artifact stream counts and publisher mute logs.
+- `ci-e2e-rejoin.sh` validates both publisher phases plus recorder evidence of two
+  distinct remote session subscriptions (instead of requiring `session_outputs >= 2`,
+  which is brittle under merged artifact-remux output).
+
 All scenarios use the local Compose stack in this repository:
 
 - Nextcloud API at `http://127.0.0.1:28080`
