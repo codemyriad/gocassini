@@ -10,6 +10,8 @@
 - live capture writes both legacy `.csr` and session artifacts (`session.json`,
   `events.ndjson`, `streams/*.rtplog`)
 - per-session `.ivf/.ogg/.mkv` intermediate assets are still used for immediate playback path
+- offline artifact remux is available via `cmd/gocassini-remux` and rebuilds a
+  multitrack MKV from `streams/*.rtplog` (VP8/Opus currently)
 - future phase: plug `pkg/core/mux.Muxer` with multiple backends:
   - pure-Go MKV/WebM (minimal deps)
   - FFmpeg `-c copy` plugin for broader container support
@@ -21,3 +23,13 @@ that truth later, drift fixes become a replay problem instead of a lossy product
 
 `gocassini-inspect` now reports per-logical-track segment churn (`ssrc_changes`,
 `pt_changes`, and `max_gap_ms`) to make timeline seams explicit during triage.
+
+Artifact remux CLI:
+
+```bash
+go run ./cmd/gocassini-remux \
+  --session /tmp/sessions/<session_id>/session.json \
+  --output /tmp/session-artifact-remux.mkv
+```
+
+The current artifact remux implementation supports VP8/Opus streams.

@@ -1,0 +1,377 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"math"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"gocassini/pkg/core/depacket"
+	"gocassini/pkg/core/remux"
+	"gocassini/pkg/core/session"
+)
+
+type config struct {
+	SessionPath   string
+	OutputPath    string
+	WorkDir       string
+	KeepWork      bool
+	StrictCodecs  bool
+	PrintSummary  bool
+	TitleOverride string
+}
+
+type segmentArtifact struct {
+	Stream   session.PacketStream
+	Kind     string
+	TempPath string
+	FirstNS  uint64
+	Packets  int
+}
+
+func main() {
+	cfg, err := parseFlags()
+	if err != nil {
+		exitErr(err)
+	}
+
+	sessionJSON, err := resolveSessionJSONPath(cfg.SessionPath)
+	if err != nil {
+		exitErr(err)
+	}
+	sess, err := loadSession(sessionJSON)
+	if err != nil {
+		exitErr(err)
+	}
+
+	workDir, cleanup, err := prepareWorkDir(cfg.WorkDir, cfg.KeepWork)
+	if err != nil {
+		exitErr(err)
+	}
+	defer cleanup()
+
+	segments, err := buildSegmentMKVs(sessionJSON, sess, workDir, cfg.StrictCodecs)
+	if err != nil {
+		exitErr(err)
+	}
+	if len(segments) == 0 {
+		exitErr(errors.New("no remuxable streams found in session artifact"))
+	}
+
+	if err := mergeSegments(cfg.OutputPath, cfg.TitleOverride, sess, segments); err != nil {
+		exitErr(err)
+	}
+
+	if cfg.PrintSummary {
+		fmt.Printf("session=%s output=%s work_dir=%s segments=%d\n", sess.SessionID, cfg.OutputPath, workDir, len(segments))
+	}
+}
+
+func parseFlags() (config, error) {
+	var cfg config
+	flag.StringVar(&cfg.SessionPath, "session", "", "path to session.json or session directory")
+	flag.StringVar(&cfg.OutputPath, "output", "", "final output MKV path")
+	flag.StringVar(&cfg.WorkDir, "work-dir", "", "temporary work directory (default: mktemp)")
+	flag.BoolVar(&cfg.KeepWork, "keep-work", false, "keep temporary work directory after completion")
+	flag.BoolVar(&cfg.StrictCodecs, "strict-codecs", false, "fail if unsupported codecs are present (default: skip unsupported streams)")
+	flag.BoolVar(&cfg.PrintSummary, "summary", true, "print final remux summary")
+	flag.StringVar(&cfg.TitleOverride, "title", "", "optional container title metadata")
+	flag.Parse()
+
+	if strings.TrimSpace(cfg.SessionPath) == "" {
+		return config{}, errors.New("missing --session")
+	}
+	if strings.TrimSpace(cfg.OutputPath) == "" {
+		return config{}, errors.New("missing --output")
+	}
+	return cfg, nil
+}
+
+func resolveSessionJSONPath(input string) (string, error) {
+	info, err := os.Stat(input)
+	if err != nil {
+		return "", fmt.Errorf("stat session path: %w", err)
+	}
+	if info.IsDir() {
+		path := filepath.Join(input, "session.json")
+		if _, err := os.Stat(path); err != nil {
+			return "", fmt.Errorf("session.json not found in %s", input)
+		}
+		return path, nil
+	}
+	if filepath.Base(input) == "session.json" {
+		return input, nil
+	}
+	return "", fmt.Errorf("expected session dir or session.json, got: %s", input)
+}
+
+func loadSession(path string) (session.Session, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return session.Session{}, fmt.Errorf("read session json: %w", err)
+	}
+	var sess session.Session
+	if err := json.Unmarshal(raw, &sess); err != nil {
+		return session.Session{}, fmt.Errorf("parse session json: %w", err)
+	}
+	return sess, nil
+}
+
+func prepareWorkDir(configured string, keep bool) (string, func(), error) {
+	if configured != "" {
+		if err := os.MkdirAll(configured, 0o755); err != nil {
+			return "", nil, fmt.Errorf("create work dir: %w", err)
+		}
+		return configured, func() {}, nil
+	}
+
+	tempDir, err := os.MkdirTemp("", "gocassini-remux-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("create temp work dir: %w", err)
+	}
+	cleanup := func() {
+		if keep {
+			return
+		}
+		_ = os.RemoveAll(tempDir)
+	}
+	return tempDir, cleanup, nil
+}
+
+func buildSegmentMKVs(
+	sessionJSON string,
+	sess session.Session,
+	workDir string,
+	strictCodecs bool,
+) ([]segmentArtifact, error) {
+	baseDir := filepath.Dir(sessionJSON)
+	streamsDir := filepath.Join(baseDir, "streams")
+
+	logicalByLTID := map[string]session.LogicalTrack{}
+	for _, logical := range sess.LogicalTracks {
+		logicalByLTID[logical.LTID] = logical
+	}
+
+	out := make([]segmentArtifact, 0, len(sess.PacketStreams))
+	for _, stream := range sess.PacketStreams {
+		codec := strings.ToLower(strings.TrimSpace(stream.Codec))
+		kind := logicalByLTID[stream.LTID].Kind
+		if kind == "" {
+			kind = remux.KindFromCodec(codec)
+		}
+		ext := remux.ElementaryExtension(codec)
+		if ext == "" {
+			if strictCodecs {
+				return nil, fmt.Errorf("unsupported codec for stream %s: %s", stream.StreamID, stream.Codec)
+			}
+			continue
+		}
+
+		logPath := filepath.Join(streamsDir, stream.StreamID+".rtplog")
+		if _, err := os.Stat(logPath); err != nil {
+			if strictCodecs {
+				return nil, fmt.Errorf("stream log missing for %s: %w", stream.StreamID, err)
+			}
+			continue
+		}
+
+		elementaryPath := filepath.Join(workDir, stream.StreamID+ext)
+		writeResult, err := depacket.WriteElementaryFromRTPLog(logPath, codec, stream.ClockRate, elementaryPath)
+		if err != nil {
+			if strictCodecs {
+				return nil, fmt.Errorf("depacketize stream %s: %w", stream.StreamID, err)
+			}
+			continue
+		}
+		if writeResult.RTPPackets == 0 {
+			continue
+		}
+
+		segmentPath := filepath.Join(workDir, stream.StreamID+".mkv")
+		if err := composeSingleTrackMKV(elementaryPath, segmentPath, kind); err != nil {
+			if strictCodecs {
+				return nil, fmt.Errorf("compose stream %s mkv: %w", stream.StreamID, err)
+			}
+			continue
+		}
+
+		out = append(out, segmentArtifact{
+			Stream:   stream,
+			Kind:     kind,
+			TempPath: segmentPath,
+			FirstNS:  writeResult.FirstRecvNS,
+			Packets:  writeResult.RTPPackets,
+		})
+	}
+	return out, nil
+}
+
+func composeSingleTrackMKV(inputPath, outputPath, kind string) error {
+	args := []string{
+		"-y",
+		"-v", "error",
+		"-i", inputPath,
+	}
+	switch kind {
+	case "audio":
+		args = append(args, "-map", "0:a:0")
+	case "video":
+		args = append(args, "-map", "0:v:0")
+	default:
+		args = append(args, "-map", "0")
+	}
+	args = append(args, "-c", "copy", outputPath)
+	return runCommand("ffmpeg", args...)
+}
+
+func mergeSegments(outputPath, titleOverride string, sess session.Session, segments []segmentArtifact) error {
+	if len(segments) == 1 {
+		return copyFile(segments[0].TempPath, outputPath)
+	}
+
+	inputs := make([]remux.StreamInput, 0, len(segments))
+	pathByID := map[string]string{}
+	kindByID := map[string]string{}
+	for _, seg := range segments {
+		sourceStart, _ := probeMinStreamStartSeconds(seg.TempPath)
+		inputs = append(inputs, remux.StreamInput{
+			StreamID:    seg.Stream.StreamID,
+			LTID:        seg.Stream.LTID,
+			Kind:        seg.Kind,
+			Codec:       seg.Stream.Codec,
+			FirstRecvNS: seg.FirstNS,
+			SourceStart: sourceStart,
+		})
+		pathByID[seg.Stream.StreamID] = seg.TempPath
+		kindByID[seg.Stream.StreamID] = seg.Kind
+	}
+	planned := remux.PlanMerge(inputs)
+
+	args := []string{"-y", "-v", "error"}
+	for _, item := range planned {
+		if math.Abs(item.OffsetSeconds) > 1e-6 {
+			args = append(args, "-itsoffset", fmt.Sprintf("%.6f", item.OffsetSeconds))
+		}
+		args = append(args, "-i", pathByID[item.StreamID])
+	}
+
+	videoIndex := 0
+	audioIndex := 0
+	for idx, item := range planned {
+		kind := kindByID[item.StreamID]
+		title := fmt.Sprintf("%s %s", item.StreamID, kind)
+		switch kind {
+		case "video":
+			args = append(args, "-map", fmt.Sprintf("%d:v:0", idx))
+			args = append(args,
+				fmt.Sprintf("-metadata:s:v:%d", videoIndex), "title="+title,
+				fmt.Sprintf("-metadata:s:v:%d", videoIndex), "ltid="+item.LTID,
+			)
+			videoIndex++
+		case "audio":
+			args = append(args, "-map", fmt.Sprintf("%d:a:0", idx))
+			args = append(args,
+				fmt.Sprintf("-metadata:s:a:%d", audioIndex), "title="+title,
+				fmt.Sprintf("-metadata:s:a:%d", audioIndex), "ltid="+item.LTID,
+			)
+			audioIndex++
+		}
+	}
+
+	title := titleOverride
+	if strings.TrimSpace(title) == "" {
+		title = "Cassini Artifact Remux " + sess.SessionID
+	}
+
+	args = append(args,
+		"-c", "copy",
+		"-metadata", "title="+title,
+		"-metadata", "session_id="+sess.SessionID,
+		outputPath,
+	)
+	return runCommand("ffmpeg", args...)
+}
+
+func runCommand(name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		errText := strings.TrimSpace(string(out))
+		if errText == "" {
+			return err
+		}
+		return fmt.Errorf("%w: %s", err, errText)
+	}
+	return nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open src file: %w", err)
+	}
+	defer func() {
+		_ = in.Close()
+	}()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("create dst file: %w", err)
+	}
+	defer func() {
+		_ = out.Close()
+	}()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return fmt.Errorf("copy file: %w", err)
+	}
+	return out.Close()
+}
+
+func probeMinStreamStartSeconds(path string) (float64, bool) {
+	cmd := exec.Command(
+		"ffprobe",
+		"-v", "error",
+		"-show_entries", "stream=start_time",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		path,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, false
+	}
+
+	lines := strings.Split(string(out), "\n")
+	min := math.MaxFloat64
+	have := false
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.EqualFold(line, "N/A") {
+			continue
+		}
+		value, convErr := strconv.ParseFloat(line, 64)
+		if convErr != nil {
+			continue
+		}
+		if value < min {
+			min = value
+		}
+		have = true
+	}
+	if !have {
+		return 0, false
+	}
+	return min, true
+}
+
+func exitErr(err error) {
+	fmt.Fprintln(os.Stderr, err)
+	os.Exit(1)
+}

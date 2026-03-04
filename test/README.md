@@ -223,6 +223,8 @@ Both CI entrypoints use bounded retry when creating the temporary Talk room to
 handle transient OCS/API bootstrap races in freshly-started local stacks.
 `bootstrap.sh` also auto-resolves a container-reachable signaling URL for local
 Docker runs (gateway address instead of host-loopback).
+`cassini-go-recorder/e2e_with_publisher.sh` also verifies that
+`gocassini-remux` can rebuild an artifact-based MKV from `session.json`.
 
 ## Teardown
 

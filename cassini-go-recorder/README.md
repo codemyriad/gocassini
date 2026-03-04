@@ -14,6 +14,7 @@ It is intentionally narrow: one job, one output contract, and strong behavior fo
 ## What this repo contains
 - `cmd/gocassini`: main recorder command
 - `cmd/gocassini-inspect`: archive inspection utility
+- `cmd/gocassini-remux`: offline remux from session artifacts (`session.json` + `streams/*.rtplog`)
 - `internal/`: codec-agnostic recorder, signaling, and Nextcloud Talk adapters
 - `test/`: local reproducible Nextcloud Talk stack + publisher harness
 - `docs/architecture-migration-status.md`: current migration goals, effort, and status
@@ -44,6 +45,7 @@ Use `--help` on each command to inspect all options:
 ```bash
 go run ./cmd/gocassini --help
 go run ./cmd/gocassini-inspect --help
+go run ./cmd/gocassini-remux --help
 ```
 
 ## Integration test helper
@@ -97,5 +99,18 @@ cd test
 - Intermediate per-session files: `<output>-segments-*` unless cleanup is enabled
 - `gocassini-inspect` prints legacy archive summaries; session artifacts are written next to `.mkv` and available at `<final>/../sessions/<id>/`.
   For session artifacts it also prints per-stream validation issues, `segment_churn` (`ssrc_changes`, `pt_changes`, `max_gap_ms`), and stream close reasons.
+- `gocassini-remux` can rebuild a multitrack MKV directly from session artifacts without using capture-time intermediate files.
 
 The project is designed so the primary interface remains the CLI and file artifacts.
+
+## Artifact Remux
+
+Rebuild a multi-track MKV directly from a session artifact directory:
+
+```bash
+go run ./cmd/gocassini-remux \
+  --session /tmp/sessions/<session_id>/session.json \
+  --output /tmp/session-artifact-remux.mkv
+```
+
+Current supported codecs for artifact remux are VP8 video and Opus audio.

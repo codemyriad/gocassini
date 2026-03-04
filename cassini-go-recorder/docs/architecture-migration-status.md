@@ -21,6 +21,11 @@
   `pt_changes`, `max_gap_ms`).
 - stream close reasons are aggregated from `events.ndjson`.
 
+2.5. Offline artifact remux:
+- added `cmd/gocassini-remux` to rebuild multitrack MKV directly from
+  `session.json` + `streams/*.rtplog` (VP8/Opus path).
+- local E2E now exercises this artifact-based remux step.
+
 3. Validation package:
 - added `pkg/core/validate` for `.rtplog` invariants:
   - monotonic `recvMonoNS`
@@ -57,7 +62,7 @@ of minutes.
 
 ## Remaining migration work
 
-1. Move final output composition to an offline remux path driven directly by
-   `streams/*.rtplog` instead of only capture-time intermediates.
+1. Promote artifact remux path from CLI/e2e tool to default final-output
+   composition in the recorder path.
 2. Add SR/capture-time correction layer in `pkg/core/timeline`.
 3. Add richer depacketization/remux modules for broader codec/container support.

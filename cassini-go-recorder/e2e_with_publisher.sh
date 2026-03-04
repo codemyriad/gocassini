@@ -18,6 +18,7 @@ NAME="${NAME:-GocassiniBot}"
 REC_LOG="${REC_LOG:-/tmp/gocassini-e2e.log}"
 PUB_LOG="${PUB_LOG:-/tmp/gocassini-publisher-e2e.log}"
 CHECK_SESSION_ARTIFACT="${CHECK_SESSION_ARTIFACT:-1}"
+CHECK_ARTIFACT_REMUX="${CHECK_ARTIFACT_REMUX:-1}"
 
 rm -f "$OUTPUT" "$FINAL_OUTPUT" "$REC_LOG" "$PUB_LOG"
 
@@ -157,6 +158,33 @@ if [[ "$CHECK_SESSION_ARTIFACT" == "1" ]]; then
   "$TEST_DIR/bin/verify-session-artifact.sh" \
     --final-output "$FINAL_OUTPUT" \
     --report "${FINAL_OUTPUT}.json"
+fi
+
+if [[ "$CHECK_ARTIFACT_REMUX" == "1" ]]; then
+  if command -v jq >/dev/null 2>&1; then
+    SESSION_JSON="$(jq -r '.session_artifact.session_json // empty' "${FINAL_OUTPUT}.json")"
+    if [[ -n "$SESSION_JSON" && -f "$SESSION_JSON" ]]; then
+      REMUX_OUTPUT="${FINAL_OUTPUT%.mkv}.artifact-remux.mkv"
+      (
+        cd "$ROOT_DIR"
+        go run ./cmd/gocassini-remux \
+          --session "$SESSION_JSON" \
+          --output "$REMUX_OUTPUT"
+      )
+      if [[ ! -s "$REMUX_OUTPUT" ]]; then
+        echo "[FAIL] artifact remux output missing or empty: $REMUX_OUTPUT"
+        exit 1
+      fi
+      echo "--- artifact remux streams ---"
+      ffprobe -v error \
+        -show_entries stream=index,codec_type,codec_name,start_time,duration \
+        -of compact=p=0:nk=1 "$REMUX_OUTPUT" | sed -n '1,120p'
+    else
+      echo "[WARN] session artifact json missing in report; skipping artifact remux check"
+    fi
+  else
+    echo "[WARN] jq not available; skipping artifact remux check"
+  fi
 fi
 
 echo "PASS"
