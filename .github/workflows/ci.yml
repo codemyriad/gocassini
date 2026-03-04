@@ -24,6 +24,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
       - name: Install Go dependencies
         working-directory: ${{ matrix.module }}
         run: go mod download
@@ -50,6 +51,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: cassini-go-recorder/go.mod
+          cache-dependency-path: |
+            cassini-go-recorder/go.sum
+            test/go-talk-rotator/go.sum
       - name: Install runtime tools
         run: |
           sudo apt-get update
@@ -77,6 +81,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: cassini-go-recorder/go.mod
+          cache-dependency-path: |
+            cassini-go-recorder/go.sum
+            test/go-talk-rotator/go.sum
       - name: Install runtime tools
         run: |
           sudo apt-get update
