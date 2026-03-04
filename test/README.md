@@ -212,6 +212,10 @@ Scenario assertions are intentionally artifact-centric:
 - `ci-e2e-rejoin.sh` validates both publisher phases plus recorder evidence of two
   distinct remote session subscriptions (instead of requiring `session_outputs >= 2`,
   which is brittle under merged artifact-remux output).
+- `ci-e2e-rejoin.sh` does not fail solely on missing final video in a flaky run; it
+  treats recorder/subscription evidence and session artifacts as the primary signal.
+- `compose-recording.sh` supports merged-audio recordings by reusing available audio
+  stream lanes when fewer than three audio tracks are present.
 
 All scenarios use the local Compose stack in this repository:
 

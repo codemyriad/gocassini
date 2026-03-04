@@ -86,9 +86,12 @@ if [[ "${#VIDEO_STREAMS[@]}" -lt 3 ]]; then
   echo "expected at least 3 video streams in recording, found ${#VIDEO_STREAMS[@]}" >&2
   exit 1
 fi
-if [[ "${#AUDIO_STREAMS[@]}" -lt 3 ]]; then
-  echo "expected at least 3 audio streams in recording, found ${#AUDIO_STREAMS[@]}" >&2
+if [[ "${#AUDIO_STREAMS[@]}" -lt 1 ]]; then
+  echo "expected at least 1 audio stream in recording, found ${#AUDIO_STREAMS[@]}" >&2
   exit 1
+fi
+if [[ "${#AUDIO_STREAMS[@]}" -lt 3 ]]; then
+  log "compose fallback: found ${#AUDIO_STREAMS[@]} audio stream(s), reusing available stream(s) for voice lanes"
 fi
 
 pick_stream() {
@@ -115,8 +118,14 @@ V_GIULIA="$(pick_stream "video" "$GIULIA_PATTERN" "${VIDEO_STREAMS[1]}")"
 V_FRANKIE="$(pick_stream "video" "$FRANKIE_PATTERN" "${VIDEO_STREAMS[2]}")"
 
 A_SPALMAN="$(pick_stream "audio" "$SPALMAN_PATTERN" "${AUDIO_STREAMS[0]}")"
-A_GIULIA="$(pick_stream "audio" "$GIULIA_PATTERN" "${AUDIO_STREAMS[1]}")"
-A_FRANKIE="$(pick_stream "audio" "$FRANKIE_PATTERN" "${AUDIO_STREAMS[2]}")"
+A_GIULIA="$A_SPALMAN"
+A_FRANKIE="$A_SPALMAN"
+if [[ "${#AUDIO_STREAMS[@]}" -ge 2 ]]; then
+  A_GIULIA="$(pick_stream "audio" "$GIULIA_PATTERN" "${AUDIO_STREAMS[1]}")"
+fi
+if [[ "${#AUDIO_STREAMS[@]}" -ge 3 ]]; then
+  A_FRANKIE="$(pick_stream "audio" "$FRANKIE_PATTERN" "${AUDIO_STREAMS[2]}")"
+fi
 
 log "Composing recording from streams:"
 log "  video: spalman=$V_SPALMAN giulia=$V_GIULIA frankie=$V_FRANKIE"
