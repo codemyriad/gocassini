@@ -75,7 +75,7 @@ If `CALL_URL` is unset, it reuses `test/runtime/last_call_url` or creates a fres
 ### Review output rendering
 
 - Render a synchronized 3-grid MP4 review file from a final MKV session:
-  - `./test/bin/compose-recording.sh --input <recording.mkv> --publisher-log <recording.mkv.publisher.log>`
+  - `./test/bin/compose-recording.sh --input <recording.mkv>`
   - output defaults to `<recording>.composed.mp4`
 - Validate end-of-playback audio duration with the same verifier used in CI:
   - `./test/bin/verify-audio-tail.sh --input <recording>.composed.mp4`

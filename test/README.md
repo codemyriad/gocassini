@@ -25,7 +25,7 @@ All generated media/runtime artifacts stay outside git-tracked content.
   - `stream-three-songs.sh`: 3-client synchronized publisher flow (Go rotator)
   - `stream-three-songs-until.sh`: retrying loop for continuous cloud/local soak until a wall-clock time
   - `record-three-songs.sh`: Go recorder + 3-client stream + composition in one command
-  - `compose-recording.sh`: compose recorder multi-stream MKV into one review MP4 (audio gated from publisher rotation log when available)
+  - `compose-recording.sh`: Rust/GStreamer compositor for recorder multi-stream MKV -> review MP4
   - `verify-sync-from-report.sh`: compare final MKV stream start offsets against recorder report expectations
   - `verify-audio-tail.sh`: fail if composed output audio ends too early or is silent in the last seconds
   - `ci-e2e-rotation.sh`: local-stack E2E with 3 rotating publishers and composed-tail-audio assertions
@@ -214,8 +214,10 @@ Scenario assertions are intentionally artifact-centric:
   which is brittle under merged artifact-remux output).
 - `ci-e2e-rejoin.sh` does not fail solely on missing final video in a flaky run; it
   treats recorder/subscription evidence and session artifacts as the primary signal.
-- `compose-recording.sh` supports merged-audio recordings by reusing available audio
-  stream lanes when fewer than three audio tracks are present.
+- `compose-recording.sh` is backed by `test/bin/compose-rs` (Rust) and defaults to
+  low-res preview rendering (`640x360@6fps`) to keep turnaround fast during sync checks.
+- The compositor uses bounded queues and process RSS guards to reduce memory-pressure
+  risk on long sparse-track meetings.
 
 All scenarios use the local Compose stack in this repository:
 
