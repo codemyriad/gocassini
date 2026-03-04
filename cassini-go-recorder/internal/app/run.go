@@ -15,11 +15,15 @@ import (
 )
 
 func Run(cfg config.Config) error {
+	return RunContext(context.Background(), cfg)
+}
+
+func RunContext(ctx context.Context, cfg config.Config) error {
 	switch cfg.Mode {
 	case "simulate":
 		return runSimulate(cfg)
 	case "talk":
-		return talk.Run(context.Background(), cfg)
+		return talk.Run(ctx, cfg)
 	default:
 		return fmt.Errorf("unsupported mode %q", cfg.Mode)
 	}
