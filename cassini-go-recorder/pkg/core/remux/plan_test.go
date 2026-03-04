@@ -49,6 +49,41 @@ func TestPlanMergeOrdersByRecvNSAndComputesOffsets(t *testing.T) {
 	}
 }
 
+func TestPlanMergeUsesTimelineStartWhenProvided(t *testing.T) {
+	inputs := []StreamInput{
+		{
+			StreamID:        "s_1",
+			FirstRecvNS:     2_000_000_000,
+			FirstTimelineNS: 2_100_000_000,
+			SourceStart:     0,
+		},
+		{
+			StreamID:        "s_2",
+			FirstRecvNS:     3_000_000_000,
+			FirstTimelineNS: 2_000_000_000,
+			SourceStart:     0.2,
+		},
+	}
+
+	got := PlanMerge(inputs)
+	if len(got) != 2 {
+		t.Fatalf("planned len: got=%d want=2", len(got))
+	}
+	// s_2 should become the base because FirstTimelineNS is earlier.
+	if got[0].StreamID != "s_2" {
+		t.Fatalf("first stream: got=%s want=s_2", got[0].StreamID)
+	}
+	if got[1].StreamID != "s_1" {
+		t.Fatalf("second stream: got=%s want=s_1", got[1].StreamID)
+	}
+	if got[0].OffsetSeconds != -0.2 {
+		t.Fatalf("base stream offset mismatch: got=%f want=%f", got[0].OffsetSeconds, -0.2)
+	}
+	if got[1].OffsetSeconds != 0.1 {
+		t.Fatalf("timeline-shifted offset mismatch: got=%f want=%f", got[1].OffsetSeconds, 0.1)
+	}
+}
+
 func TestKindFromCodec(t *testing.T) {
 	if got := KindFromCodec("audio/opus"); got != "audio" {
 		t.Fatalf("audio codec kind mismatch: %s", got)

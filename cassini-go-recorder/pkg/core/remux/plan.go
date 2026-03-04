@@ -12,7 +12,10 @@ type StreamInput struct {
 	Kind        string
 	Codec       string
 	FirstRecvNS uint64
-	SourceStart float64
+	// FirstTimelineNS optionally carries a corrected timeline start (ns).
+	// If zero, FirstRecvNS is used for planning offsets.
+	FirstTimelineNS int64
+	SourceStart     float64
 }
 
 type PlannedInput struct {
@@ -30,22 +33,31 @@ func PlanMerge(inputs []StreamInput) []PlannedInput {
 		ordered = append(ordered, in)
 	}
 	sort.Slice(ordered, func(i, j int) bool {
-		if ordered[i].FirstRecvNS == ordered[j].FirstRecvNS {
+		iStart := effectiveTimelineStartNS(ordered[i])
+		jStart := effectiveTimelineStartNS(ordered[j])
+		if iStart == jStart {
 			return ordered[i].StreamID < ordered[j].StreamID
 		}
-		return ordered[i].FirstRecvNS < ordered[j].FirstRecvNS
+		return iStart < jStart
 	})
 
-	base := ordered[0].FirstRecvNS
+	base := effectiveTimelineStartNS(ordered[0])
 	out := make([]PlannedInput, 0, len(ordered))
 	for _, in := range ordered {
-		desired := float64(in.FirstRecvNS-base) / 1e9
+		desired := float64(effectiveTimelineStartNS(in)-base) / 1e9
 		out = append(out, PlannedInput{
 			StreamInput:   in,
 			OffsetSeconds: desired - in.SourceStart,
 		})
 	}
 	return out
+}
+
+func effectiveTimelineStartNS(in StreamInput) int64 {
+	if in.FirstTimelineNS > 0 {
+		return in.FirstTimelineNS
+	}
+	return int64(in.FirstRecvNS)
 }
 
 func KindFromCodec(codec string) string {

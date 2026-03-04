@@ -30,6 +30,8 @@
   `session.json` + `streams/*.rtplog` (Opus + VP8/VP9/H264/AV1 paths).
 - recorder final-output compose now uses the same artifact remux path first,
   then falls back to legacy intermediate merge if remux fails.
+- remux offset planning now uses bounded timeline-derived start adjustments
+  (SR-aware), so stitching is informed by corrected timeline estimates.
 - local E2E now exercises this artifact-based remux step.
 
 2.6. Timeline correction:
@@ -74,8 +76,8 @@ of minutes.
 
 ## Remaining migration work
 
-1. Integrate timeline correction outputs into remux/inspect drift diagnostics
-   beyond per-stream SR stats.
+1. Integrate timeline correction outputs into richer remux reporting so per-stream
+   applied adjustments are visible in output metadata/reporting.
 2. Extend artifact remux audio codec coverage beyond Opus where deployment
    requires it.
 3. Add richer depacketization/remux modules for broader codec/container support

@@ -13,6 +13,9 @@
   to legacy per-session `.ivf/.ogg/.mkv` composition on remux failure
 - offline artifact remux is available via `cmd/gocassini-remux` and rebuilds a
   multitrack MKV from `streams/*.rtplog` (Opus + VP8/VP9/H264/AV1)
+- merge planning now accepts corrected timeline starts (from SR-aware estimator)
+  and applies bounded per-stream start adjustments before final `-itsoffset`
+  mapping, reducing long-run sync skew without re-encoding
 - future phase: plug `pkg/core/mux.Muxer` with multiple backends:
   - pure-Go MKV/WebM (minimal deps)
   - FFmpeg `-c copy` plugin for broader container support

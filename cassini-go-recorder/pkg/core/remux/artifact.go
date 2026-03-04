@@ -31,11 +31,13 @@ type BuildResult struct {
 }
 
 type segmentArtifact struct {
-	Stream   session.PacketStream
-	Kind     string
-	TempPath string
-	FirstNS  uint64
-	Packets  int
+	Stream           session.PacketStream
+	Kind             string
+	TempPath         string
+	FirstNS          uint64
+	FirstTimelineNS  int64
+	TimelineAdjustNS int64
+	Packets          int
 }
 
 func BuildFromSession(inputPath, outputPath string, opts BuildOptions) (BuildResult, error) {
@@ -189,6 +191,21 @@ func buildSegmentMKVs(
 			Packets:  writeResult.RTPPackets,
 		})
 	}
+
+	for idx := range out {
+		seg := &out[idx]
+		logPath := filepath.Join(streamsDir, seg.Stream.StreamID+".rtplog")
+		profile, err := analyzeTimeline(logPath, seg.Stream.PrimarySSRC, seg.Stream.ClockRate)
+		if err != nil {
+			seg.FirstTimelineNS = int64(seg.FirstNS)
+			continue
+		}
+		seg.TimelineAdjustNS = recommendedTimelineStartAdjustmentNS(profile)
+		seg.FirstTimelineNS = int64(seg.FirstNS) + seg.TimelineAdjustNS
+		if seg.FirstTimelineNS < 0 {
+			seg.FirstTimelineNS = 0
+		}
+	}
 	return out, nil
 }
 
@@ -222,12 +239,13 @@ func mergeSegments(outputPath, titleOverride string, sess session.Session, segme
 	for _, seg := range segments {
 		sourceStart, _ := probeMinStreamStartSeconds(seg.TempPath)
 		inputs = append(inputs, StreamInput{
-			StreamID:    seg.Stream.StreamID,
-			LTID:        seg.Stream.LTID,
-			Kind:        seg.Kind,
-			Codec:       seg.Stream.Codec,
-			FirstRecvNS: seg.FirstNS,
-			SourceStart: sourceStart,
+			StreamID:        seg.Stream.StreamID,
+			LTID:            seg.Stream.LTID,
+			Kind:            seg.Kind,
+			Codec:           seg.Stream.Codec,
+			FirstRecvNS:     seg.FirstNS,
+			FirstTimelineNS: seg.FirstTimelineNS,
+			SourceStart:     sourceStart,
 		})
 		pathByID[seg.Stream.StreamID] = seg.TempPath
 		kindByID[seg.Stream.StreamID] = seg.Kind
