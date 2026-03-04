@@ -515,8 +515,6 @@ type bot struct {
 	videoSender *webrtc.RTPSender
 	audioSender *webrtc.RTPSender
 	callSID     string
-	currentSID  string
-	sidMu       sync.Mutex
 
 	answerMu       sync.Mutex
 	answerReceived bool
@@ -546,12 +544,10 @@ type bot struct {
 }
 
 func newBot(cfg *botConfig) *bot {
-	callSID := randomHex(16)
 	return &bot{
 		cfg:         cfg,
 		http:        newOCSClient(cfg.BaseURL, cfg.Insecure),
-		callSID:     callSID,
-		currentSID:  callSID,
+		callSID:     randomHex(16),
 		answerCh:    make(chan struct{}),
 		connectedCh: make(chan struct{}),
 		doneCh:      make(chan struct{}),
@@ -697,45 +693,6 @@ func (b *bot) isDone() bool {
 	default:
 		return false
 	}
-}
-
-func (b *bot) getCurrentSID() string {
-	b.sidMu.Lock()
-	defer b.sidMu.Unlock()
-	return b.currentSID
-}
-
-func (b *bot) setCurrentSID(sid string) {
-	sid = strings.TrimSpace(sid)
-	if sid == "" {
-		return
-	}
-	b.sidMu.Lock()
-	b.currentSID = sid
-	b.sidMu.Unlock()
-}
-
-func resolveCallSID(msgType, msgSID, activeSID string) (resolvedSID string, accept bool, sidChanged bool) {
-	msgSID = strings.TrimSpace(msgSID)
-	activeSID = strings.TrimSpace(activeSID)
-
-	if strings.EqualFold(msgType, "offer") {
-		if msgSID != "" && msgSID != activeSID {
-			return msgSID, true, true
-		}
-		if activeSID != "" {
-			return activeSID, true, false
-		}
-		return msgSID, true, false
-	}
-
-	if msgSID != "" && activeSID != "" && msgSID != activeSID {
-		return activeSID, false, false
-	}
-	if activeSID != "" {
-		return activeSID, true, false
-	}
-	return msgSID, true, false
 }
 
 func (b *bot) isAudioReady() bool {
@@ -969,13 +926,9 @@ func (b *bot) startWebRTC(ctx context.Context) error {
 	if local == nil {
 		return errors.New("local description is nil after offer")
 	}
-	currentSID := b.getCurrentSID()
-	if currentSID == "" {
-		currentSID = b.callSID
-	}
 	if err := b.sendCallMessage(map[string]any{
 		"to":       b.signalingSessionID,
-		"sid":      currentSID,
+		"sid":      b.callSID,
 		"roomType": "video",
 		"type":     "offer",
 		"payload": map[string]any{
@@ -1137,17 +1090,13 @@ func (b *bot) handleCallData(ctx context.Context, data map[string]any) error {
 	if b.pc == nil {
 		return nil
 	}
-	msgType := asString(data["type"])
-	payload := asMap(data["payload"])
-	activeSID := b.getCurrentSID()
-	sid, accept, sidChanged := resolveCallSID(msgType, asString(data["sid"]), activeSID)
-	if !accept {
+	sid := asString(data["sid"])
+	if sid != "" && sid != b.callSID {
 		return nil
 	}
-	if sidChanged {
-		b.logf("switching signaling sid from %s to %s on incoming offer", activeSID, sid)
-		b.setCurrentSID(sid)
-	}
+
+	msgType := asString(data["type"])
+	payload := asMap(data["payload"])
 
 	switch msgType {
 	case "answer":
@@ -1165,9 +1114,6 @@ func (b *bot) handleCallData(ctx context.Context, data map[string]any) error {
 			strings.Contains(upper, "VP8"),
 			strings.Contains(upper, "H264"),
 		)
-		if sid != "" {
-			b.setCurrentSID(sid)
-		}
 		b.answerMu.Lock()
 		if !b.answerReceived {
 			b.answerReceived = true
@@ -1206,9 +1152,6 @@ func (b *bot) handleCallData(ctx context.Context, data map[string]any) error {
 			to = b.signalingSessionID
 		}
 		answerSID := sid
-		if answerSID == "" {
-			answerSID = b.getCurrentSID()
-		}
 		if answerSID == "" {
 			answerSID = b.callSID
 		}
@@ -1558,17 +1501,6 @@ func (b *bot) setAudioMuted(muted bool) error {
 	}
 	b.audioMuted = muted
 	b.muteMu.Unlock()
-
-	callFlags := joinFlagsAudioVideo
-	if muted {
-		callFlags = joinFlagsVideoOnly
-	}
-	updateCtx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-	defer cancel()
-	if err := b.updateCallFlags(updateCtx, callFlags); err != nil {
-		return err
-	}
-	b.broadcastMuteState(muted)
 
 	if muted {
 		b.logf("audio muted")
