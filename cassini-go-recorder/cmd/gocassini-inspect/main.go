@@ -14,6 +14,8 @@ import (
 	"gocassini/pkg/core/session"
 	"gocassini/pkg/core/store"
 	"gocassini/pkg/core/validate"
+
+	"github.com/pion/rtcp"
 )
 
 type trackSummary struct {
@@ -205,7 +207,7 @@ func inspectSessionArtifact(sessionPath string) error {
 			durationNS = summary.last - summary.first
 		}
 		fmt.Printf(
-			"stream=%s ltid=%s kind=%s mid=%s rid=%s codec=%s ssrc=%d pt=%d rtp=%d rtcp=%d first_ns=%d last_ns=%d dur_ms=%.3f issues=%d\n",
+			"stream=%s ltid=%s kind=%s mid=%s rid=%s codec=%s ssrc=%d pt=%d rtp=%d rtcp=%d sr=%d rr=%d first_ns=%d last_ns=%d dur_ms=%.3f issues=%d\n",
 			stream.StreamID,
 			stream.LTID,
 			kind,
@@ -216,11 +218,16 @@ func inspectSessionArtifact(sessionPath string) error {
 			stream.PT,
 			summary.rtp,
 			summary.rtcp,
+			summary.rtcpSR,
+			summary.rtcpRR,
 			summary.first,
 			summary.last,
 			float64(durationNS)/1e6,
 			issueCount,
 		)
+		if summary.srClockRateEstimate > 0 {
+			fmt.Printf("  sr_clock_rate_est=%.2f\n", summary.srClockRateEstimate)
+		}
 		if validationErr != nil {
 			fmt.Printf("  validation_error=%v\n", validationErr)
 		} else if validation.IssueCount > 0 {
@@ -264,10 +271,13 @@ func inspectSessionArtifact(sessionPath string) error {
 }
 
 type streamSummary struct {
-	rtp   int
-	rtcp  int
-	first uint64
-	last  uint64
+	rtp                 int
+	rtcp                int
+	rtcpSR              int
+	rtcpRR              int
+	first               uint64
+	last                uint64
+	srClockRateEstimate float64
 }
 
 func printSegmentChurn(streams []inspectedSessionStream, logicalByLTID map[string]session.LogicalTrack) {
@@ -361,6 +371,11 @@ func inspectStreamLog(path string) (streamSummary, error) {
 	}()
 
 	var summary streamSummary
+	lastSRRecv := uint64(0)
+	lastSRRTPUnwrapped := int64(0)
+	srHaveLast := false
+	srRateSum := float64(0)
+	srRateSamples := 0
 	for {
 		rec, err := rdr.Next()
 		if err != nil {
@@ -374,6 +389,35 @@ func inspectStreamLog(path string) (streamSummary, error) {
 			summary.rtp++
 		case store.KindRTCP:
 			summary.rtcp++
+			packets, parseErr := rtcp.Unmarshal(rec.WireBytes)
+			if parseErr == nil {
+				for _, packet := range packets {
+					switch typed := packet.(type) {
+					case *rtcp.SenderReport:
+						summary.rtcpSR++
+						if srHaveLast {
+							currRTP := unwrap32(lastSRRTPUnwrapped, typed.RTPTime)
+							deltaRTP := currRTP - lastSRRTPUnwrapped
+							if deltaRTP > 0 && rec.RecvMonoNS > lastSRRecv {
+								deltaRecv := rec.RecvMonoNS - lastSRRecv
+								rate := float64(deltaRTP) * 1e9 / float64(deltaRecv)
+								if rate > 0 {
+									srRateSum += rate
+									srRateSamples++
+								}
+							}
+							lastSRRTPUnwrapped = currRTP
+							lastSRRecv = rec.RecvMonoNS
+						} else {
+							lastSRRTPUnwrapped = int64(typed.RTPTime)
+							lastSRRecv = rec.RecvMonoNS
+							srHaveLast = true
+						}
+					case *rtcp.ReceiverReport:
+						summary.rtcpRR++
+					}
+				}
+			}
 		}
 		if summary.first == 0 || rec.RecvMonoNS < summary.first {
 			summary.first = rec.RecvMonoNS
@@ -382,7 +426,22 @@ func inspectStreamLog(path string) (streamSummary, error) {
 			summary.last = rec.RecvMonoNS
 		}
 	}
+	if srRateSamples > 0 {
+		summary.srClockRateEstimate = srRateSum / float64(srRateSamples)
+	}
 	return summary, nil
+}
+
+func unwrap32(last int64, raw uint32) int64 {
+	raw64 := int64(raw)
+	delta := raw64 - (last & 0xffffffff)
+	for delta > (1 << 31) {
+		delta -= 1 << 32
+	}
+	for delta < -(1 << 31) {
+		delta += 1 << 32
+	}
+	return last + delta
 }
 
 func detectSessionArtifactPath(path string) (string, bool) {

@@ -6,6 +6,9 @@ import (
 	"testing"
 
 	"gocassini/pkg/core/session"
+	"gocassini/pkg/core/store"
+
+	"github.com/pion/rtcp"
 )
 
 func TestSummarizeSegmentChurn(t *testing.T) {
@@ -82,5 +85,76 @@ func TestStreamCloseReasons(t *testing.T) {
 	}
 	if reasons["segment-rotate:ssrc:1->2"] != 1 {
 		t.Fatalf("expected rotate=1, got=%d", reasons["segment-rotate:ssrc:1->2"])
+	}
+}
+
+func TestInspectStreamLogCountsRTCPAndSRRate(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "stream.rtplog")
+	writer, err := store.NewWriter(logPath, store.StreamHeader{
+		StreamID:    "s_000001",
+		Codec:       "video/vp8",
+		ClockRate:   90000,
+		Direction:   "recvonly",
+		StartMonoNS: 1_000_000_000,
+		PT:          96,
+	})
+	if err != nil {
+		t.Fatalf("create writer: %v", err)
+	}
+
+	sr1 := &rtcp.SenderReport{SSRC: 1, RTPTime: 1000}
+	sr2 := &rtcp.SenderReport{SSRC: 1, RTPTime: 91000}
+	rr := &rtcp.ReceiverReport{SSRC: 2}
+	wireSR1, err := sr1.Marshal()
+	if err != nil {
+		t.Fatalf("marshal sr1: %v", err)
+	}
+	wireSR2, err := sr2.Marshal()
+	if err != nil {
+		t.Fatalf("marshal sr2: %v", err)
+	}
+	wireRR, err := rr.Marshal()
+	if err != nil {
+		t.Fatalf("marshal rr: %v", err)
+	}
+
+	if err := writer.Write(store.Record{RecvMonoNS: 1_000_000_000, Kind: store.KindRTCP, WireBytes: wireSR1}); err != nil {
+		t.Fatalf("write sr1: %v", err)
+	}
+	if err := writer.Write(store.Record{RecvMonoNS: 2_000_000_000, Kind: store.KindRTCP, WireBytes: wireSR2}); err != nil {
+		t.Fatalf("write sr2: %v", err)
+	}
+	if err := writer.Write(store.Record{RecvMonoNS: 2_100_000_000, Kind: store.KindRTCP, WireBytes: wireRR}); err != nil {
+		t.Fatalf("write rr: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	summary, err := inspectStreamLog(logPath)
+	if err != nil {
+		t.Fatalf("inspect stream: %v", err)
+	}
+	if summary.rtcp != 3 {
+		t.Fatalf("expected rtcp=3, got=%d", summary.rtcp)
+	}
+	if summary.rtcpSR != 2 {
+		t.Fatalf("expected sr=2, got=%d", summary.rtcpSR)
+	}
+	if summary.rtcpRR != 1 {
+		t.Fatalf("expected rr=1, got=%d", summary.rtcpRR)
+	}
+	// 90000 RTP ticks across 1 second should estimate roughly 90 kHz.
+	if summary.srClockRateEstimate < 89000 || summary.srClockRateEstimate > 91000 {
+		t.Fatalf("unexpected sr clock rate estimate: %.2f", summary.srClockRateEstimate)
+	}
+}
+
+func TestUnwrap32(t *testing.T) {
+	last := int64(0xfffffff0)
+	got := unwrap32(last, 0x00000020)
+	if got <= last {
+		t.Fatalf("expected unwrap to increase, got=%d last=%d", got, last)
 	}
 }
