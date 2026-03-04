@@ -26,10 +26,11 @@ go run ./cmd/gocassini \
   --mode talk \
   --call-url "$CALL_URL" \
   --name "CassiniRecorder" \
-  --duration 180 \
   --output /tmp/meeting.csr \
   --final-output /tmp/meeting.mkv
 ```
+
+By default, talk mode now auto-terminates when all remote participants leave (with an 8s grace). Add `--duration <seconds>` only if you also want a hard cap.
 
 Terminal 2: start 3 bots streaming the three-song set
 
@@ -165,7 +166,6 @@ ExecStart=/usr/local/bin/gocassini \
   --mode talk \
   --call-url https://cloud.example.com/call/<ROOM_TOKEN> \
   --name GocassiniObserver \
-  --duration 3600 \
   --output /var/lib/gocassini/recording.csr \
   --final-output /var/lib/gocassini/recording.mkv
 Restart=on-failure
@@ -181,6 +181,7 @@ sudo systemctl enable --now gocassini
 ```
 
 Replace placeholders with your actual room tokens / orchestration wrapper.
+Add `--duration <seconds>` to `ExecStart` only if you also want a hard cap in addition to auto-stop-on-empty-room.
 
 ### 4) If your operator is Salt
 

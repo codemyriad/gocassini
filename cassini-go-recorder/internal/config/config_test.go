@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestFromFlagsTalkModeRequiresCallURL(t *testing.T) {
 	_, err := FromFlags([]string{
@@ -36,5 +39,49 @@ func TestFromFlagsTalkModeAcceptsCallURL(t *testing.T) {
 	}
 	if cfg.CallURL != "https://cloud.example.com/call/roomtoken" {
 		t.Fatalf("unexpected call-url: %q", cfg.CallURL)
+	}
+}
+
+func TestFromFlagsTalkDefaultsAutoStopOnEmptyRoom(t *testing.T) {
+	cfg, err := FromFlags([]string{
+		"--mode", "talk",
+		"--call-url", "https://cloud.example.com/call/roomtoken",
+		"--output", "/tmp/out.csr",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Duration != 0 {
+		t.Fatalf("expected default duration 0 (disabled), got %s", cfg.Duration)
+	}
+	if !cfg.StopWhenRoomEmpty {
+		t.Fatalf("expected stop-when-room-empty to default to true")
+	}
+	if cfg.RoomEmptyGrace != 8*time.Second {
+		t.Fatalf("expected room-empty-grace=8s, got %s", cfg.RoomEmptyGrace)
+	}
+}
+
+func TestFromFlagsRejectsNegativeDuration(t *testing.T) {
+	_, err := FromFlags([]string{
+		"--mode", "talk",
+		"--call-url", "https://cloud.example.com/call/roomtoken",
+		"--output", "/tmp/out.csr",
+		"--duration", "-1",
+	})
+	if err == nil {
+		t.Fatalf("expected error for negative duration")
+	}
+}
+
+func TestFromFlagsRejectsNegativeRoomEmptyGrace(t *testing.T) {
+	_, err := FromFlags([]string{
+		"--mode", "talk",
+		"--call-url", "https://cloud.example.com/call/roomtoken",
+		"--output", "/tmp/out.csr",
+		"--room-empty-grace", "-0.5",
+	})
+	if err == nil {
+		t.Fatalf("expected error for negative room-empty-grace")
 	}
 }

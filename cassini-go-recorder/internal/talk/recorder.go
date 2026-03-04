@@ -22,6 +22,14 @@ import (
 
 const requestOfferResponseTimeout = 8 * time.Second
 
+type roomEmptyTimerAction uint8
+
+const (
+	roomEmptyTimerNoop roomEmptyTimerAction = iota
+	roomEmptyTimerArm
+	roomEmptyTimerDisarm
+)
+
 type Recorder struct {
 	cfg config.Config
 
@@ -51,6 +59,8 @@ type Recorder struct {
 
 	mu          sync.Mutex
 	subscribers map[string]*subscriberPeer
+
+	subscriberUpdates chan struct{}
 }
 
 type sessionCapture struct {
@@ -85,11 +95,12 @@ type subscriberPeer struct {
 
 func Run(ctx context.Context, cfg config.Config) error {
 	r := &Recorder{
-		cfg:              cfg,
-		subscribers:      make(map[string]*subscriberPeer),
-		sessionsByRemote: make(map[string]*sessionCapture),
-		identityByRemote: make(map[string]participantIdentity),
-		startedAt:        time.Now().UTC(),
+		cfg:               cfg,
+		subscribers:       make(map[string]*subscriberPeer),
+		sessionsByRemote:  make(map[string]*sessionCapture),
+		identityByRemote:  make(map[string]participantIdentity),
+		startedAt:         time.Now().UTC(),
+		subscriberUpdates: make(chan struct{}, 1),
 	}
 	return r.run(ctx)
 }
@@ -137,24 +148,103 @@ func (r *Recorder) run(ctx context.Context) error {
 		errCh <- r.requestOfferLoop(runCtx)
 	}()
 
+	durationLabel := "none"
+	if r.cfg.Duration > 0 {
+		durationLabel = r.cfg.Duration.String()
+	}
 	log.Printf(
-		"talk recorder running: room=%s duration=%s final=%s segments=%s",
+		"talk recorder running: room=%s duration_limit=%s stop_when_room_empty=%t room_empty_grace=%s final=%s segments=%s",
 		r.roomToken,
-		r.cfg.Duration,
+		durationLabel,
+		r.cfg.StopWhenRoomEmpty,
+		r.cfg.RoomEmptyGrace,
 		r.finalOutputPath,
 		r.segmentsDir,
 	)
 
-	select {
-	case <-time.After(r.cfg.Duration):
-		log.Printf("talk recorder duration reached: %s", r.cfg.Duration)
-	case err := <-errCh:
-		if err != nil && !errors.Is(err, context.Canceled) {
-			cancel()
-			_ = r.cleanup(context.Background())
-			return err
+	var durationTimer *time.Timer
+	var durationCh <-chan time.Time
+	if r.cfg.Duration > 0 {
+		durationTimer = time.NewTimer(r.cfg.Duration)
+		durationCh = durationTimer.C
+	}
+
+	var roomEmptyTimer *time.Timer
+	var roomEmptyTimerCh <-chan time.Time
+	roomHasSeenRemote := false
+	roomEmptyTimerArmed := false
+	if r.cfg.StopWhenRoomEmpty {
+		r.notifySubscriberChange()
+	}
+
+	stopReason := ""
+
+runLoop:
+	for {
+		select {
+		case <-durationCh:
+			stopReason = fmt.Sprintf("duration limit reached: %s", r.cfg.Duration)
+			break runLoop
+		case <-roomEmptyTimerCh:
+			if r.subscriberCount() == 0 {
+				stopReason = fmt.Sprintf("room empty for %s after remote participants left", r.cfg.RoomEmptyGrace)
+				break runLoop
+			}
+			roomEmptyTimerArmed = false
+			roomEmptyTimerCh = nil
+		case <-r.subscriberUpdates:
+			if !r.cfg.StopWhenRoomEmpty {
+				continue
+			}
+
+			subscriberCount := r.subscriberCount()
+			var action roomEmptyTimerAction
+			roomHasSeenRemote, action = nextRoomEmptyTimerAction(roomHasSeenRemote, roomEmptyTimerArmed, subscriberCount)
+			switch action {
+			case roomEmptyTimerArm:
+				if roomEmptyTimer == nil {
+					roomEmptyTimer = time.NewTimer(r.cfg.RoomEmptyGrace)
+				} else {
+					stopAndDrainTimer(roomEmptyTimer)
+					roomEmptyTimer.Reset(r.cfg.RoomEmptyGrace)
+				}
+				roomEmptyTimerArmed = true
+				roomEmptyTimerCh = roomEmptyTimer.C
+				log.Printf("room empty; stopping in %s unless a participant rejoins", r.cfg.RoomEmptyGrace)
+			case roomEmptyTimerDisarm:
+				if roomEmptyTimer != nil {
+					stopAndDrainTimer(roomEmptyTimer)
+				}
+				roomEmptyTimerArmed = false
+				roomEmptyTimerCh = nil
+				log.Printf("participant activity resumed; room-empty stop canceled")
+			}
+		case err := <-errCh:
+			if err != nil && !errors.Is(err, context.Canceled) {
+				cancel()
+				if durationTimer != nil {
+					stopAndDrainTimer(durationTimer)
+				}
+				if roomEmptyTimer != nil {
+					stopAndDrainTimer(roomEmptyTimer)
+				}
+				_ = r.cleanup(context.Background())
+				return err
+			}
+		case <-runCtx.Done():
+			stopReason = "context canceled"
+			break runLoop
 		}
-	case <-runCtx.Done():
+	}
+
+	if durationTimer != nil {
+		stopAndDrainTimer(durationTimer)
+	}
+	if roomEmptyTimer != nil {
+		stopAndDrainTimer(roomEmptyTimer)
+	}
+	if stopReason != "" {
+		log.Printf("talk recorder stopping: %s", stopReason)
 	}
 
 	cancel()
@@ -578,6 +668,7 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, er
 	}
 	r.subscribers[remoteSessionID] = peer
 	r.mu.Unlock()
+	r.notifySubscriberChange()
 
 	log.Printf("subscribing to remote session %s", remoteSessionID)
 	if err := peer.requestOffer(); err != nil {
@@ -589,14 +680,62 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, er
 
 func (r *Recorder) removeSubscriber(remoteSessionID string) error {
 	r.mu.Lock()
+	_, hadPeer := r.subscribers[remoteSessionID]
 	peer := r.subscribers[remoteSessionID]
 	delete(r.subscribers, remoteSessionID)
 	r.mu.Unlock()
+	if hadPeer {
+		r.notifySubscriberChange()
+	}
 	if peer == nil {
 		return nil
 	}
 	log.Printf("closing subscriber for remote session %s", remoteSessionID)
 	return peer.close()
+}
+
+func nextRoomEmptyTimerAction(hasSeenRemote bool, timerArmed bool, subscriberCount int) (bool, roomEmptyTimerAction) {
+	if subscriberCount > 0 {
+		if timerArmed {
+			return true, roomEmptyTimerDisarm
+		}
+		return true, roomEmptyTimerNoop
+	}
+	if !hasSeenRemote {
+		if timerArmed {
+			return hasSeenRemote, roomEmptyTimerDisarm
+		}
+		return hasSeenRemote, roomEmptyTimerNoop
+	}
+	return hasSeenRemote, roomEmptyTimerArm
+}
+
+func (r *Recorder) notifySubscriberChange() {
+	if r.subscriberUpdates == nil {
+		return
+	}
+	select {
+	case r.subscriberUpdates <- struct{}{}:
+	default:
+	}
+}
+
+func (r *Recorder) subscriberCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.subscribers)
+}
+
+func stopAndDrainTimer(timer *time.Timer) {
+	if timer == nil {
+		return
+	}
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
 }
 
 func (r *Recorder) rememberParticipantIdentity(remoteSessionID, displayName, participantID string) {
@@ -1269,8 +1408,12 @@ func (r *Recorder) writeReport(
 		"room_token":       r.roomToken,
 		"guest_name":       r.cfg.GuestName,
 		"duration_seconds": int(r.cfg.Duration / time.Second),
-		"join_flags":       r.cfg.JoinFlags,
-		"turn_mode":        r.cfg.TurnMode,
+		"stop_when_room_empty": map[string]any{
+			"enabled":       r.cfg.StopWhenRoomEmpty,
+			"grace_seconds": r.cfg.RoomEmptyGrace.Seconds(),
+		},
+		"join_flags": r.cfg.JoinFlags,
+		"turn_mode":  r.cfg.TurnMode,
 
 		"requested_output_path": r.cfg.OutputPath,
 		"final_output": map[string]any{
