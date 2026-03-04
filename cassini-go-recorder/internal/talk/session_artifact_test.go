@@ -305,7 +305,7 @@ func TestSessionArtifactOpenStreamTracksPacketIdentity(t *testing.T) {
 		clockRate: 48000,
 		fmtp:      map[string]string{"minptime": "10"},
 	}
-	streamID, err := artifact.openStream("sid-1", "Alice", desc, 4321, 111, time.Unix(0, 123456789))
+	streamID, err := artifact.openStream("sid-1", "user-1", "Alice", desc, 4321, 111, time.Unix(0, 123456789))
 	if err != nil {
 		t.Fatalf("open stream: %v", err)
 	}
@@ -353,14 +353,14 @@ func TestSessionArtifactOpenStreamReusesLogicalTrackAcrossSegments(t *testing.T)
 		rid:       "h",
 		clockRate: 90000,
 	}
-	firstID, err := artifact.openStream("sid-2", "Bob", desc, 5001, 96, time.Unix(0, 1000))
+	firstID, err := artifact.openStream("sid-2", "user-2", "Bob", desc, 5001, 96, time.Unix(0, 1000))
 	if err != nil {
 		t.Fatalf("open first stream: %v", err)
 	}
 	if err := artifact.closeStream(firstID, "segment-rotate:ssrc:5001->5002", time.Unix(0, 2000)); err != nil {
 		t.Fatalf("close first stream: %v", err)
 	}
-	secondID, err := artifact.openStream("sid-2", "Bob", desc, 5002, 96, time.Unix(0, 3000))
+	secondID, err := artifact.openStream("sid-2", "user-2", "Bob", desc, 5002, 96, time.Unix(0, 3000))
 	if err != nil {
 		t.Fatalf("open second stream: %v", err)
 	}
@@ -394,5 +394,52 @@ func TestSessionArtifactOpenStreamReusesLogicalTrackAcrossSegments(t *testing.T)
 	}
 	if !strings.Contains(eventsText, "segment-rotate:ssrc:5001") {
 		t.Fatalf("expected stream_closed rotation reason in events log")
+	}
+}
+
+func TestSessionArtifactOpenStreamUsesMappedParticipantID(t *testing.T) {
+	tmp := t.TempDir()
+	artifactPath := filepath.Join(tmp, "participants.mkv")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	if err != nil {
+		t.Fatalf("create artifact: %v", err)
+	}
+	defer func() {
+		_ = artifact.close()
+	}()
+
+	desc := trackDescriptor{
+		kind:      "video",
+		codec:     "video/vp8",
+		mid:       "mid-video",
+		rid:       "",
+		clockRate: 90000,
+	}
+	if _, err := artifact.openStream("sid-10", "user-42", "Alice", desc, 1111, 96, time.Unix(0, 1000)); err != nil {
+		t.Fatalf("open first stream: %v", err)
+	}
+	if _, err := artifact.openStream("sid-11", "user-42", "Alice", desc, 1112, 96, time.Unix(0, 2000)); err != nil {
+		t.Fatalf("open second stream: %v", err)
+	}
+
+	artifact.mu.Lock()
+	participants := append([]session.Participant(nil), artifact.sessionMeta.Participants...)
+	logicalTracks := append([]session.LogicalTrack(nil), artifact.sessionMeta.LogicalTracks...)
+	artifact.mu.Unlock()
+
+	if len(participants) != 1 {
+		t.Fatalf("expected single participant entry for mapped id, got=%d", len(participants))
+	}
+	if participants[0].PID != "user-42" {
+		t.Fatalf("unexpected participant id: got=%q", participants[0].PID)
+	}
+	if participants[0].Display != "Alice" {
+		t.Fatalf("unexpected participant display: got=%q", participants[0].Display)
+	}
+	if len(logicalTracks) != 1 {
+		t.Fatalf("expected one logical track, got=%d", len(logicalTracks))
+	}
+	if logicalTracks[0].ParticipantID != "user-42" {
+		t.Fatalf("logical track participant_id mismatch: got=%q", logicalTracks[0].ParticipantID)
 	}
 }

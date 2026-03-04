@@ -34,7 +34,7 @@ type sessionCaptureArtifact struct {
 	streamSeq    int
 	streams      map[string]*sessionCaptureStream
 	logicalBy    map[string]string
-	participants map[string]struct{}
+	participants map[string]int
 }
 
 type sessionCaptureStream struct {
@@ -122,7 +122,7 @@ func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName
 		eventsWriter: bufio.NewWriter(eventsFile),
 		streams:      map[string]*sessionCaptureStream{},
 		logicalBy:    map[string]string{},
-		participants: map[string]struct{}{},
+		participants: map[string]int{},
 	}
 
 	if err := artifact.persistSessionLocked(); err != nil {
@@ -142,16 +142,16 @@ func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName
 	return artifact, nil
 }
 
-func (a *sessionCaptureArtifact) openTrack(remoteSessionID, participantName string, track *webrtc.TrackRemote, arrival time.Time) (string, error) {
+func (a *sessionCaptureArtifact) openTrack(remoteSessionID, participantID, participantName string, track *webrtc.TrackRemote, arrival time.Time) (string, error) {
 	if track == nil {
 		return "", fmt.Errorf("track is nil")
 	}
 	desc := descriptorFromTrack(track)
-	return a.openStream(remoteSessionID, participantName, desc, uint32(track.SSRC()), uint8(track.PayloadType()), arrival)
+	return a.openStream(remoteSessionID, participantID, participantName, desc, uint32(track.SSRC()), uint8(track.PayloadType()), arrival)
 }
 
 func (a *sessionCaptureArtifact) openStream(
-	remoteSessionID, participantName string,
+	remoteSessionID, participantID, participantName string,
 	desc trackDescriptor,
 	primarySSRC uint32,
 	payloadType uint8,
@@ -166,7 +166,8 @@ func (a *sessionCaptureArtifact) openStream(
 	midSafe := sanitizeSessionPathPart(desc.mid)
 	ridSafe := sanitizeSessionPathPart(desc.rid)
 	startMonoNS := uint64(arrival.UnixNano())
-	ltid := a.ensureLogicalTrackLocked(remoteSessionID, participantName, desc.kind, desc.mid, desc.rid, arrival)
+	pid := a.ensureParticipantLocked(remoteSessionID, participantID, participantName)
+	ltid := a.ensureLogicalTrackLocked(pid, desc.kind, desc.mid, desc.rid, arrival)
 	streamID := fmt.Sprintf("s_%06d", a.streamSeq+1)
 	a.streamSeq++
 
@@ -208,12 +209,12 @@ func (a *sessionCaptureArtifact) openStream(
 	}
 	a.streams[streamID] = state
 	a.sessionMeta.PacketStreams = append(a.sessionMeta.PacketStreams, state.stream)
-	a.ensureParticipantLocked(remoteSessionID, participantName)
 	a.mu.Unlock()
 
 	if err := a.emitEvent(map[string]any{
 		"type":              "stream_opened",
 		"remote_session_id": remoteSessionID,
+		"participant_id":    pid,
 		"participant_name":  participantName,
 		"ltid":              ltid,
 		"stream_id":         streamID,
@@ -423,13 +424,13 @@ func (a *sessionCaptureArtifact) summary() sessionCaptureSummary {
 	}
 }
 
-func (a *sessionCaptureArtifact) ensureLogicalTrackLocked(remoteSessionID, participantName, kind, mid, rid string, observed time.Time) string {
-	key := logicalTrackKey(remoteSessionID, kind, mid, rid)
+func (a *sessionCaptureArtifact) ensureLogicalTrackLocked(participantID, kind, mid, rid string, observed time.Time) string {
+	key := logicalTrackKey(participantID, kind, mid, rid)
 	if ltid := a.logicalBy[key]; ltid != "" {
 		return ltid
 	}
 
-	ltid := fmt.Sprintf("p:%s:%s:%s", sanitizeSessionPathPart(remoteSessionID), sanitizeSessionPathPart(kind), sanitizeSessionPathPart(mid))
+	ltid := fmt.Sprintf("p:%s:%s:%s", sanitizeSessionPathPart(participantID), sanitizeSessionPathPart(kind), sanitizeSessionPathPart(mid))
 	if rid != "" {
 		ltid += ":" + sanitizeSessionPathPart(rid)
 	}
@@ -438,29 +439,35 @@ func (a *sessionCaptureArtifact) ensureLogicalTrackLocked(remoteSessionID, parti
 		LTID:          ltid,
 		Kind:          kind,
 		Source:        inferSource(kind),
-		ParticipantID: sanitizeSessionPathPart(remoteSessionID),
+		ParticipantID: sanitizeSessionPathPart(participantID),
 		MID:           sanitizeSessionPathPart(mid),
 		RID:           sanitizeSessionPathPart(rid),
 		CreatedMonoNS: uint64(observed.UnixNano()),
 	})
-	a.ensureParticipantLocked(remoteSessionID, participantName)
 	return ltid
 }
 
-func (a *sessionCaptureArtifact) ensureParticipantLocked(remoteSessionID, participantName string) {
-	if _, ok := a.participants[remoteSessionID]; ok {
-		return
-	}
-
+func (a *sessionCaptureArtifact) ensureParticipantLocked(remoteSessionID, participantID, participantName string) string {
+	pid := normalizedParticipantID(participantID, remoteSessionID)
 	display := strings.TrimSpace(participantName)
 	if display == "" {
-		display = "participant-" + sanitizeSessionPathPart(remoteSessionID)
+		display = "participant-" + pid
 	}
-	a.participants[remoteSessionID] = struct{}{}
+
+	if idx, ok := a.participants[pid]; ok {
+		previous := strings.TrimSpace(a.sessionMeta.Participants[idx].Display)
+		if isPlaceholderParticipantName(previous, pid) && !isPlaceholderParticipantName(display, pid) {
+			a.sessionMeta.Participants[idx].Display = display
+		}
+		return pid
+	}
+
+	a.participants[pid] = len(a.sessionMeta.Participants)
 	a.sessionMeta.Participants = append(a.sessionMeta.Participants, session.Participant{
-		PID:     sanitizeSessionPathPart(remoteSessionID),
+		PID:     pid,
 		Display: display,
 	})
+	return pid
 }
 
 func (a *sessionCaptureArtifact) emitEvent(fields map[string]any, monoNS uint64) error {
@@ -557,8 +564,8 @@ func inferSource(kind string) string {
 	return kind
 }
 
-func logicalTrackKey(remoteSessionID, kind, mid, rid string) string {
-	key := sanitizeSessionPathPart(remoteSessionID) + "|" + strings.ToLower(strings.TrimSpace(kind))
+func logicalTrackKey(participantID, kind, mid, rid string) string {
+	key := sanitizeSessionPathPart(participantID) + "|" + strings.ToLower(strings.TrimSpace(kind))
 	key += "|" + sanitizeSessionPathPart(mid)
 	if rid != "" {
 		key += "|" + sanitizeSessionPathPart(rid)
@@ -574,6 +581,19 @@ func sanitizeSessionPathPart(value string) string {
 	value = strings.ReplaceAll(value, "/", "_")
 	value = strings.ReplaceAll(value, `\`, "_")
 	return value
+}
+
+func normalizedParticipantID(participantID, remoteSessionID string) string {
+	trimmed := strings.TrimSpace(participantID)
+	if trimmed == "" {
+		trimmed = strings.TrimSpace(remoteSessionID)
+	}
+	return sanitizeSessionPathPart(trimmed)
+}
+
+func isPlaceholderParticipantName(display, participantID string) bool {
+	display = strings.TrimSpace(display)
+	return display == "" || display == "participant-"+sanitizeSessionPathPart(participantID)
 }
 
 func makeSessionID() string {

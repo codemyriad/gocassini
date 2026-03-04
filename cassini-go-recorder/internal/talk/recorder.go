@@ -5,27 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"gocassini/internal/cassette"
 	"gocassini/internal/config"
 	"gocassini/internal/nextcloud"
-	"gocassini/internal/recorder"
 	"gocassini/internal/signaling"
 	coreremux "gocassini/pkg/core/remux"
 
 	"github.com/pion/webrtc/v4"
-	"github.com/pion/webrtc/v4/pkg/media/ivfwriter"
-	"github.com/pion/webrtc/v4/pkg/media/oggwriter"
 )
 
 const requestOfferResponseTimeout = 8 * time.Second
@@ -44,9 +36,6 @@ type Recorder struct {
 
 	signaling *signaling.Client
 
-	writer      *cassette.Writer
-	rtpRecorder *recorder.RTPRecorder
-
 	sessionArtifact *sessionCaptureArtifact
 	sessionPath     string
 	artifactRemux   *coreremux.BuildResult
@@ -58,6 +47,7 @@ type Recorder struct {
 	sessionMu        sync.Mutex
 	sessionsByRemote map[string]*sessionCapture
 	sessionOrder     []*sessionCapture
+	identityByRemote map[string]participantIdentity
 
 	mu          sync.Mutex
 	subscribers map[string]*subscriberPeer
@@ -66,20 +56,17 @@ type Recorder struct {
 type sessionCapture struct {
 	RemoteSessionID string
 	ParticipantName string
+	ParticipantID   string
 	Index           int
 	StartedAt       time.Time
 
-	AudioPath string
-	VideoPath string
-	MKVPath   string
-
-	AudioWriter *oggwriter.OggWriter
-	VideoWriter *ivfwriter.IVFWriter
-
 	AudioPackets int
 	VideoPackets int
-	HasAudio     bool
-	HasVideo     bool
+}
+
+type participantIdentity struct {
+	DisplayName   string
+	ParticipantID string
 }
 
 type subscriberPeer struct {
@@ -101,6 +88,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 		cfg:              cfg,
 		subscribers:      make(map[string]*subscriberPeer),
 		sessionsByRemote: make(map[string]*sessionCapture),
+		identityByRemote: make(map[string]participantIdentity),
 		startedAt:        time.Now().UTC(),
 	}
 	return r.run(ctx)
@@ -115,9 +103,6 @@ func (r *Recorder) run(ctx context.Context) error {
 	r.roomToken = roomToken
 	r.finalOutputPath = deriveFinalOutputPath(r.cfg.OutputPath, r.cfg.FinalOutputPath)
 
-	if err := ensureOutputDir(r.cfg.OutputPath); err != nil {
-		return err
-	}
 	if err := ensureOutputDir(r.finalOutputPath); err != nil {
 		return err
 	}
@@ -129,19 +114,11 @@ func (r *Recorder) run(ctx context.Context) error {
 
 	sessionArtifact, err := newSessionCaptureArtifact(r.finalOutputPath, r.cfg.CallURL, r.roomToken, r.cfg.GuestName)
 	if err != nil {
-		log.Printf("session artifact init failed (continuing legacy capture): %v", err)
-	} else {
-		r.sessionArtifact = sessionArtifact
-		r.sessionPath = sessionArtifact.sessionPath
-		log.Printf("session artifact capture enabled: session_id=%s path=%s", sessionArtifact.sessionID, sessionArtifact.sessionDir)
+		return fmt.Errorf("session artifact init failed: %w", err)
 	}
-
-	w, err := cassette.NewWriter(r.cfg.OutputPath)
-	if err != nil {
-		return err
-	}
-	r.writer = w
-	r.rtpRecorder = recorder.NewRTPRecorder(w)
+	r.sessionArtifact = sessionArtifact
+	r.sessionPath = sessionArtifact.sessionPath
+	log.Printf("session artifact capture enabled: session_id=%s path=%s", sessionArtifact.sessionID, sessionArtifact.sessionDir)
 
 	r.ocs = nextcloud.NewOCSClient(r.baseURL, r.cfg.Insecure)
 	if err := r.bootstrap(ctx); err != nil {
@@ -161,10 +138,9 @@ func (r *Recorder) run(ctx context.Context) error {
 	}()
 
 	log.Printf(
-		"talk recorder running: room=%s duration=%s archive=%s final=%s segments=%s",
+		"talk recorder running: room=%s duration=%s final=%s segments=%s",
 		r.roomToken,
 		r.cfg.Duration,
-		r.cfg.OutputPath,
 		r.finalOutputPath,
 		r.segmentsDir,
 	)
@@ -277,13 +253,6 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 		}
 	}
 
-	if r.writer != nil {
-		if err := r.writer.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
-		r.writer = nil
-	}
-
 	var artifactSummary *sessionCaptureSummary
 	if r.sessionArtifact != nil {
 		summary := r.sessionArtifact.summary()
@@ -299,22 +268,7 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 	copy(sessions, r.sessionOrder)
 	r.sessionMu.Unlock()
 
-	for _, session := range sessions {
-		if session.AudioWriter != nil {
-			if err := session.AudioWriter.Close(); err != nil && firstErr == nil {
-				firstErr = err
-			}
-			session.AudioWriter = nil
-		}
-		if session.VideoWriter != nil {
-			if err := session.VideoWriter.Close(); err != nil && firstErr == nil {
-				firstErr = err
-			}
-			session.VideoWriter = nil
-		}
-	}
-
-	if err := r.composeFinalOutput(sessions); err != nil {
+	if err := r.composeFinalOutput(); err != nil {
 		composeErrText = err.Error()
 		if firstErr == nil {
 			firstErr = err
@@ -525,13 +479,11 @@ func (r *Recorder) handleRoomEvent(roomEvent map[string]any) error {
 			if len(joinItem) == 0 {
 				continue
 			}
-			if _, ok := joinItem["roomsessionid"]; !ok {
-				continue
-			}
-			remoteSessionID := asString(joinItem["sessionid"])
+			remoteSessionID, displayName, participantID := parseRoomJoinIdentity(joinItem)
 			if remoteSessionID == "" {
 				continue
 			}
+			r.rememberParticipantIdentity(remoteSessionID, displayName, participantID)
 			if _, err := r.ensureSubscriber(remoteSessionID); err != nil {
 				return err
 			}
@@ -545,6 +497,7 @@ func (r *Recorder) handleRoomEvent(roomEvent map[string]any) error {
 			if remoteSessionID == "" {
 				continue
 			}
+			r.forgetParticipantIdentity(remoteSessionID)
 			if err := r.removeSubscriber(remoteSessionID); err != nil {
 				log.Printf("remove subscriber %s failed: %v", remoteSessionID, err)
 			}
@@ -626,18 +579,106 @@ func (r *Recorder) removeSubscriber(remoteSessionID string) error {
 	return peer.close()
 }
 
+func (r *Recorder) rememberParticipantIdentity(remoteSessionID, displayName, participantID string) {
+	if remoteSessionID == "" {
+		return
+	}
+
+	displayName = strings.TrimSpace(displayName)
+	participantID = strings.TrimSpace(participantID)
+
+	r.sessionMu.Lock()
+	defer r.sessionMu.Unlock()
+
+	current := r.identityByRemote[remoteSessionID]
+	if displayName == "" {
+		displayName = current.DisplayName
+	}
+	if participantID == "" {
+		participantID = current.ParticipantID
+	}
+	r.identityByRemote[remoteSessionID] = participantIdentity{
+		DisplayName:   displayName,
+		ParticipantID: participantID,
+	}
+
+	if session := r.sessionsByRemote[remoteSessionID]; session != nil {
+		if displayName != "" {
+			session.ParticipantName = displayName
+		}
+		if participantID != "" {
+			session.ParticipantID = participantID
+		}
+	}
+}
+
+func (r *Recorder) forgetParticipantIdentity(remoteSessionID string) {
+	if remoteSessionID == "" {
+		return
+	}
+	r.sessionMu.Lock()
+	delete(r.identityByRemote, remoteSessionID)
+	r.sessionMu.Unlock()
+}
+
+func parseRoomJoinIdentity(joinItem map[string]any) (string, string, string) {
+	scopes := []map[string]any{
+		joinItem,
+		asMap(joinItem["session"]),
+		asMap(joinItem["participant"]),
+		asMap(joinItem["user"]),
+		asMap(joinItem["actor"]),
+	}
+
+	remoteSessionID := firstNonEmpty(
+		scopes,
+		"sessionid",
+		"sessionId",
+		"roomSessionId",
+		"roomsessionid",
+	)
+	displayName := firstNonEmpty(
+		scopes,
+		"displayName",
+		"displayname",
+		"participantName",
+		"name",
+		"actorDisplayName",
+		"userDisplayName",
+	)
+	participantID := firstNonEmpty(
+		scopes,
+		"userid",
+		"userId",
+		"actorid",
+		"actorId",
+		"participantId",
+		"participantID",
+		"uid",
+	)
+
+	return remoteSessionID, displayName, participantID
+}
+
+func firstNonEmpty(scopes []map[string]any, keys ...string) string {
+	for _, scope := range scopes {
+		for _, key := range keys {
+			value := strings.TrimSpace(asString(scope[key]))
+			if value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
 func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver, remoteSessionID string) {
 	kind := strings.ToLower(track.Kind().String())
-	codec := strings.ToLower(track.Codec().MimeType)
 
 	session, err := r.ensureSessionCapture(remoteSessionID)
 	if err != nil {
 		log.Printf("ensure session capture failed sid=%s: %v", remoteSessionID, err)
 		return
-	}
-
-	if err := r.ensureIntermediateWriter(session, kind, codec); err != nil {
-		log.Printf("prepare intermediate writer failed sid=%s kind=%s codec=%s: %v", remoteSessionID, kind, codec, err)
 	}
 
 	streamCaptureID := ""
@@ -648,6 +689,7 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 	if r.sessionArtifact != nil {
 		streamCaptureID, err = r.sessionArtifact.openStream(
 			remoteSessionID,
+			session.ParticipantID,
 			session.ParticipantName,
 			trackDesc,
 			streamCaptureSSRC,
@@ -688,35 +730,8 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 		}()
 	}
 
-	participant := recorder.ParticipantRef{
-		ParticipantName: session.ParticipantName,
-		ParticipantID:   "",
-		RemoteSessionID: remoteSessionID,
-	}
 	log.Printf("remote track: sid=%s kind=%s track=%s stream=%s codec=%s", remoteSessionID, kind, track.ID(), track.StreamID(), track.Codec().MimeType)
 
-	meta := cassette.TrackMetadata{
-		StartedAtUnixNano: time.Now().UnixNano(),
-		ParticipantName:   participant.ParticipantName,
-		ParticipantID:     participant.ParticipantID,
-		RemoteSessionID:   participant.RemoteSessionID,
-		TrackID:           track.ID(),
-		StreamID:          track.StreamID(),
-		RID:               track.RID(),
-		Kind:              kind,
-		Codec:             track.Codec().MimeType,
-		ClockRate:         track.Codec().ClockRate,
-		SSRC:              uint32(track.SSRC()),
-		PayloadType:       uint8(track.PayloadType()),
-	}
-
-	trackRef, err := r.rtpRecorder.RegisterTrack(meta)
-	if err != nil {
-		log.Printf("register track failed sid=%s track=%s: %v", remoteSessionID, track.ID(), err)
-		return
-	}
-
-	trackEnded := false
 	reason := "ended"
 	for {
 		recv := time.Now()
@@ -728,20 +743,12 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 			} else if strings.Contains(strings.ToLower(readErr.Error()), "eof") {
 				reason = "eof"
 			}
-			_ = r.rtpRecorder.EndTrack(trackRef, reason, time.Now())
-			trackEnded = true
 			if !errors.Is(readErr, context.Canceled) && !strings.Contains(strings.ToLower(readErr.Error()), "eof") {
 				log.Printf("capture track read failed sid=%s track=%s: %v", remoteSessionID, track.ID(), readErr)
 			}
 			break
 		}
 
-		if err := r.rtpRecorder.WritePacket(trackRef, pkt, recv); err != nil {
-			_ = r.rtpRecorder.EndTrack(trackRef, "archive-write-error", time.Now())
-			trackEnded = true
-			log.Printf("archive packet write failed sid=%s track=%s: %v", remoteSessionID, track.ID(), err)
-			break
-		}
 		activeStreamID := getStreamCaptureID()
 		if activeStreamID != "" {
 			if pkt.SSRC != streamCaptureSSRC || pkt.PayloadType != streamCapturePT {
@@ -751,6 +758,7 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 				}
 				nextStreamID, openErr := r.sessionArtifact.openStream(
 					remoteSessionID,
+					session.ParticipantID,
 					session.ParticipantName,
 					trackDesc,
 					pkt.SSRC,
@@ -777,28 +785,13 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 		r.sessionMu.Lock()
 		switch kind {
 		case "audio":
-			if session.AudioWriter != nil {
-				if err := session.AudioWriter.WriteRTP(pkt); err != nil {
-					log.Printf("audio intermediate write failed sid=%s track=%s: %v", remoteSessionID, track.ID(), err)
-				}
-			}
 			session.AudioPackets++
 		case "video":
-			if session.VideoWriter != nil {
-				if err := session.VideoWriter.WriteRTP(pkt); err != nil {
-					log.Printf("video intermediate write failed sid=%s track=%s: %v", remoteSessionID, track.ID(), err)
-				}
-			}
 			session.VideoPackets++
 		}
 		r.sessionMu.Unlock()
 	}
 
-	if !trackEnded {
-		if err := r.rtpRecorder.EndTrack(trackRef, "ended", time.Now()); err != nil {
-			log.Printf("end track marker failed sid=%s track=%s: %v", remoteSessionID, track.ID(), err)
-		}
-	}
 	activeStreamID := getStreamCaptureID()
 	if activeStreamID != "" {
 		if err := r.sessionArtifact.closeStream(activeStreamID, reason, time.Now()); err != nil {
@@ -834,16 +827,18 @@ func (r *Recorder) ensureSessionCapture(remoteSessionID string) (*sessionCapture
 	}
 
 	index := len(r.sessionOrder) + 1
-	participantName := fmt.Sprintf("participant-%s", shortID(remoteSessionID))
+	identity := r.identityByRemote[remoteSessionID]
+	participantName := strings.TrimSpace(identity.DisplayName)
+	if participantName == "" {
+		participantName = fmt.Sprintf("participant-%s", shortID(remoteSessionID))
+	}
 
 	session := &sessionCapture{
 		RemoteSessionID: remoteSessionID,
 		ParticipantName: participantName,
+		ParticipantID:   firstNonEmpty([]map[string]any{{"participant_id": identity.ParticipantID}, {"remote_session_id": remoteSessionID}}, "participant_id", "remote_session_id"),
 		Index:           index,
 		StartedAt:       time.Now().UTC(),
-		AudioPath:       filepath.Join(r.segmentsDir, fmt.Sprintf("session-%02d-audio.ogg", index)),
-		VideoPath:       filepath.Join(r.segmentsDir, fmt.Sprintf("session-%02d-video.ivf", index)),
-		MKVPath:         filepath.Join(r.segmentsDir, fmt.Sprintf("session-%02d.mkv", index)),
 	}
 
 	r.sessionsByRemote[remoteSessionID] = session
@@ -851,165 +846,12 @@ func (r *Recorder) ensureSessionCapture(remoteSessionID string) (*sessionCapture
 	return session, nil
 }
 
-func (r *Recorder) ensureIntermediateWriter(session *sessionCapture, kind string, codec string) error {
-	r.sessionMu.Lock()
-	defer r.sessionMu.Unlock()
-
-	switch kind {
-	case "audio":
-		if session.AudioWriter != nil {
-			return nil
-		}
-		if !strings.Contains(codec, "opus") {
-			log.Printf("audio codec not supported for intermediate packet mux sid=%s codec=%s", session.RemoteSessionID, codec)
-			return nil
-		}
-		writer, err := oggwriter.New(session.AudioPath, 48000, 2)
-		if err != nil {
-			return fmt.Errorf("create ogg writer: %w", err)
-		}
-		session.AudioWriter = writer
-		session.HasAudio = true
-		return nil
-	case "video":
-		if session.VideoWriter != nil {
-			return nil
-		}
-		if !strings.Contains(codec, "vp8") {
-			log.Printf("video codec not supported for intermediate packet mux sid=%s codec=%s", session.RemoteSessionID, codec)
-			return nil
-		}
-		writer, err := ivfwriter.New(session.VideoPath)
-		if err != nil {
-			return fmt.Errorf("create ivf writer: %w", err)
-		}
-		session.VideoWriter = writer
-		session.HasVideo = true
-		return nil
-	default:
-		return nil
-	}
-}
-
-type finalMergeInput struct {
-	Session       *sessionCapture
-	OffsetSeconds float64
-}
-
-func planFinalMergeInputs(sessions []*sessionCapture, probeStart func(path string) (float64, bool)) []finalMergeInput {
-	if len(sessions) == 0 {
-		return nil
-	}
-
-	earliest := sessions[0].StartedAt
-	for _, s := range sessions[1:] {
-		if s.StartedAt.Before(earliest) {
-			earliest = s.StartedAt
-		}
-	}
-
-	out := make([]finalMergeInput, 0, len(sessions))
-	for _, session := range sessions {
-		sourceStart := 0.0
-		if probeStart != nil {
-			if v, ok := probeStart(session.MKVPath); ok {
-				sourceStart = v
-			}
-		}
-		desired := session.StartedAt.Sub(earliest).Seconds()
-		out = append(out, finalMergeInput{
-			Session:       session,
-			OffsetSeconds: desired - sourceStart,
-		})
-	}
-	return out
-}
-
-func (r *Recorder) composeFinalOutput(sessions []*sessionCapture) error {
+func (r *Recorder) composeFinalOutput() error {
 	r.artifactRemux = nil
-	if r.sessionPath != "" {
-		if err := r.composeFinalOutputFromSessionArtifact(); err == nil {
-			return nil
-		} else {
-			log.Printf("session artifact remux failed, falling back to legacy compose path: %v", err)
-		}
+	if r.sessionPath == "" {
+		return errors.New("session artifact is not available")
 	}
-
-	if len(sessions) == 0 {
-		return errors.New("no captured sessions available for compose")
-	}
-
-	prepared := make([]*sessionCapture, 0, len(sessions))
-	for _, session := range sessions {
-		if err := composeSessionMKV(session); err != nil {
-			log.Printf("compose session mkv failed sid=%s: %v", session.RemoteSessionID, err)
-			continue
-		}
-		if fileExists(session.MKVPath) {
-			prepared = append(prepared, session)
-		}
-	}
-
-	if len(prepared) == 0 {
-		return errors.New("no session MKVs available for final merge")
-	}
-
-	if len(prepared) == 1 {
-		if err := copyFile(prepared[0].MKVPath, r.finalOutputPath); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	mergeInputs := planFinalMergeInputs(prepared, probeMinStreamStartSeconds)
-	args := []string{"-y", "-v", "error"}
-	for _, input := range mergeInputs {
-		if math.Abs(input.OffsetSeconds) > 1e-6 {
-			args = append(args, "-itsoffset", fmt.Sprintf("%.6f", input.OffsetSeconds))
-		}
-		args = append(args, "-i", input.Session.MKVPath)
-	}
-
-	videoIndex := 0
-	audioIndex := 0
-	for i, input := range mergeInputs {
-		session := input.Session
-		if session.HasVideo {
-			args = append(args, "-map", fmt.Sprintf("%d:v?", i))
-			args = append(args,
-				fmt.Sprintf("-metadata:s:v:%d", videoIndex),
-				fmt.Sprintf("title=%s video", session.ParticipantName),
-				fmt.Sprintf("-metadata:s:v:%d", videoIndex),
-				fmt.Sprintf("remote_session_id=%s", session.RemoteSessionID),
-			)
-			videoIndex++
-		}
-
-		if session.HasAudio {
-			args = append(args, "-map", fmt.Sprintf("%d:a?", i))
-			args = append(args,
-				fmt.Sprintf("-metadata:s:a:%d", audioIndex),
-				fmt.Sprintf("title=%s audio", session.ParticipantName),
-				fmt.Sprintf("-metadata:s:a:%d", audioIndex),
-				fmt.Sprintf("remote_session_id=%s", session.RemoteSessionID),
-			)
-			audioIndex++
-		}
-	}
-
-	args = append(args,
-		"-c", "copy",
-		"-metadata", fmt.Sprintf("title=Cassini Go Recording %s", r.roomToken),
-		"-metadata", fmt.Sprintf("call_url=%s", r.cfg.CallURL),
-		"-metadata", fmt.Sprintf("room_token=%s", r.roomToken),
-		"-metadata", fmt.Sprintf("observer_name=%s", r.cfg.GuestName),
-		r.finalOutputPath,
-	)
-
-	if err := runCommand("ffmpeg", args...); err != nil {
-		return fmt.Errorf("final merge failed: %w", err)
-	}
-	return nil
+	return r.composeFinalOutputFromSessionArtifact()
 }
 
 func (r *Recorder) composeFinalOutputFromSessionArtifact() error {
@@ -1041,42 +883,6 @@ func (r *Recorder) composeFinalOutputFromSessionArtifact() error {
 	)
 	r.artifactRemux = &result
 	return nil
-}
-
-func composeSessionMKV(session *sessionCapture) error {
-	hasAudio := fileExists(session.AudioPath)
-	hasVideo := fileExists(session.VideoPath)
-	session.HasAudio = hasAudio
-	session.HasVideo = hasVideo
-	if !hasAudio && !hasVideo {
-		return errors.New("no intermediate audio/video files")
-	}
-
-	args := []string{"-y", "-v", "error"}
-	if hasVideo {
-		args = append(args, "-i", session.VideoPath)
-	}
-	if hasAudio {
-		args = append(args, "-i", session.AudioPath)
-	}
-
-	if hasVideo {
-		args = append(args, "-map", "0:v:0")
-		if hasAudio {
-			args = append(args, "-map", "1:a:0")
-		}
-	} else {
-		args = append(args, "-map", "0:a:0")
-	}
-
-	args = append(args,
-		"-c", "copy",
-		"-metadata", fmt.Sprintf("remote_session_id=%s", session.RemoteSessionID),
-		"-metadata", fmt.Sprintf("participant_name=%s", session.ParticipantName),
-		session.MKVPath,
-	)
-
-	return runCommand("ffmpeg", args...)
 }
 
 func (r *Recorder) newSubscriberPeer(remoteSessionID string) (*subscriberPeer, error) {
@@ -1403,62 +1209,35 @@ func (r *Recorder) writeReport(
 		}
 	}
 
-	archiveExists, archiveSize := fileState(r.cfg.OutputPath)
 	finalExists, finalSize := fileState(r.finalOutputPath)
 	segmentsExists := dirExists(r.segmentsDir)
 
-	trackCount, packetCount, archiveStatsErr := collectArchiveStats(r.cfg.OutputPath)
-	warnings := make([]string, 0, 4)
+	warnings := make([]string, 0, 2)
 	if composeErr != "" {
 		warnings = append(warnings, "final compose failed: "+composeErr)
-	}
-	if archiveStatsErr != nil {
-		warnings = append(warnings, "archive stats unavailable: "+archiveStatsErr.Error())
 	}
 
 	type sessionOutput struct {
 		RemoteSessionID string `json:"remote_session_id"`
 		ParticipantName string `json:"participant_name"`
+		ParticipantID   string `json:"participant_id"`
 		Index           int    `json:"index"`
 		StartedAt       string `json:"started_at"`
 
 		AudioPackets int `json:"audio_packets"`
 		VideoPackets int `json:"video_packets"`
-
-		AudioPath      string `json:"audio_path"`
-		AudioExists    bool   `json:"audio_exists"`
-		AudioSizeBytes int64  `json:"audio_size_bytes"`
-
-		VideoPath      string `json:"video_path"`
-		VideoExists    bool   `json:"video_exists"`
-		VideoSizeBytes int64  `json:"video_size_bytes"`
-
-		SessionMKVPath      string `json:"session_mkv_path"`
-		SessionMKVExists    bool   `json:"session_mkv_exists"`
-		SessionMKVSizeBytes int64  `json:"session_mkv_size_bytes"`
 	}
 
 	sessionOutputs := make([]sessionOutput, 0, len(sessions))
 	for _, s := range sessions {
-		audioExists, audioSize := fileState(s.AudioPath)
-		videoExists, videoSize := fileState(s.VideoPath)
-		sessionMKVExists, sessionMKVSize := fileState(s.MKVPath)
 		sessionOutputs = append(sessionOutputs, sessionOutput{
-			RemoteSessionID:     s.RemoteSessionID,
-			ParticipantName:     s.ParticipantName,
-			Index:               s.Index,
-			StartedAt:           s.StartedAt.UTC().Format(time.RFC3339Nano),
-			AudioPackets:        s.AudioPackets,
-			VideoPackets:        s.VideoPackets,
-			AudioPath:           s.AudioPath,
-			AudioExists:         audioExists,
-			AudioSizeBytes:      audioSize,
-			VideoPath:           s.VideoPath,
-			VideoExists:         videoExists,
-			VideoSizeBytes:      videoSize,
-			SessionMKVPath:      s.MKVPath,
-			SessionMKVExists:    sessionMKVExists,
-			SessionMKVSizeBytes: sessionMKVSize,
+			RemoteSessionID: s.RemoteSessionID,
+			ParticipantName: s.ParticipantName,
+			ParticipantID:   s.ParticipantID,
+			Index:           s.Index,
+			StartedAt:       s.StartedAt.UTC().Format(time.RFC3339Nano),
+			AudioPackets:    s.AudioPackets,
+			VideoPackets:    s.VideoPackets,
 		})
 	}
 
@@ -1473,11 +1252,7 @@ func (r *Recorder) writeReport(
 		"join_flags":       r.cfg.JoinFlags,
 		"turn_mode":        r.cfg.TurnMode,
 
-		"archive_output": map[string]any{
-			"path":       r.cfg.OutputPath,
-			"exists":     archiveExists,
-			"size_bytes": archiveSize,
-		},
+		"requested_output_path": r.cfg.OutputPath,
 		"final_output": map[string]any{
 			"path":          r.finalOutputPath,
 			"exists":        finalExists,
@@ -1494,12 +1269,8 @@ func (r *Recorder) writeReport(
 		},
 		"session_artifact": reportSessionArtifact,
 		"artifact_remux":   buildArtifactRemuxReport(r.artifactRemux),
-		"archive_stats": map[string]any{
-			"track_count":      trackCount,
-			"rtp_packet_count": packetCount,
-		},
-		"session_outputs": sessionOutputs,
-		"warnings":        warnings,
+		"session_outputs":  sessionOutputs,
+		"warnings":         warnings,
 	}
 
 	body, err := json.MarshalIndent(report, "", "  ")
@@ -1553,33 +1324,6 @@ func buildArtifactRemuxReport(result *coreremux.BuildResult) map[string]any {
 			return totalAdjustNS / int64(len(result.StreamPlans))
 		}(),
 	}
-}
-
-func collectArchiveStats(path string) (int, int, error) {
-	reader, err := cassette.OpenReader(path)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer reader.Close()
-
-	trackCount := 0
-	packetCount := 0
-	for {
-		rec, err := reader.Next()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return 0, 0, err
-		}
-		switch rec.Type {
-		case cassette.RecordTrackStart:
-			trackCount++
-		case cassette.RecordRTPPacket:
-			packetCount++
-		}
-	}
-	return trackCount, packetCount, nil
 }
 
 func fileState(path string) (bool, int64) {
@@ -1649,88 +1393,6 @@ func prepareSegmentsDir(finalOutput string, configured string) (string, error) {
 		return "", fmt.Errorf("create segments temp dir: %w", err)
 	}
 	return dir, nil
-}
-
-func fileExists(path string) bool {
-	if path == "" {
-		return false
-	}
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return false
-	}
-	return info.Size() > 0
-}
-
-func copyFile(src string, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("open src file: %w", err)
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return fmt.Errorf("create dst file: %w", err)
-	}
-	defer out.Close()
-
-	if _, err := io.Copy(out, in); err != nil {
-		return fmt.Errorf("copy file: %w", err)
-	}
-	return out.Close()
-}
-
-func runCommand(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		errText := strings.TrimSpace(string(out))
-		if errText == "" {
-			return err
-		}
-		return fmt.Errorf("%w: %s", err, errText)
-	}
-	return nil
-}
-
-func probeMinStreamStartSeconds(path string) (float64, bool) {
-	cmd := exec.Command(
-		"ffprobe",
-		"-v",
-		"error",
-		"-show_entries",
-		"stream=start_time",
-		"-of",
-		"default=noprint_wrappers=1:nokey=1",
-		path,
-	)
-	out, err := cmd.Output()
-	if err != nil {
-		return 0, false
-	}
-
-	lines := strings.Split(string(out), "\n")
-	min := math.MaxFloat64
-	have := false
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.EqualFold(line, "N/A") {
-			continue
-		}
-		value, convErr := strconv.ParseFloat(line, 64)
-		if convErr != nil {
-			continue
-		}
-		if value < min {
-			min = value
-		}
-		have = true
-	}
-	if !have {
-		return 0, false
-	}
-	return min, true
 }
 
 func asMap(v any) map[string]any {

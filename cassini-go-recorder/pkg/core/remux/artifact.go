@@ -268,6 +268,14 @@ func mergeSegments(
 		pathByID[seg.Stream.StreamID] = seg.TempPath
 		kindByID[seg.Stream.StreamID] = seg.Kind
 	}
+	logicalByLTID := map[string]session.LogicalTrack{}
+	for _, logical := range sess.LogicalTracks {
+		logicalByLTID[logical.LTID] = logical
+	}
+	participantDisplayByID := map[string]string{}
+	for _, participant := range sess.Participants {
+		participantDisplayByID[participant.PID] = participant.Display
+	}
 
 	args := []string{"-y", "-v", "error"}
 	for _, item := range planned {
@@ -281,21 +289,37 @@ func mergeSegments(
 	audioIndex := 0
 	for idx, item := range planned {
 		kind := kindByID[item.StreamID]
+		logical := logicalByLTID[item.LTID]
+		participantID := strings.TrimSpace(logical.ParticipantID)
+		participantName := strings.TrimSpace(participantDisplayByID[participantID])
 		title := fmt.Sprintf("%s %s", item.StreamID, kind)
+		if participantName != "" {
+			title = fmt.Sprintf("%s %s", participantName, kind)
+		}
+		streamMetadata := []string{
+			"ltid=" + item.LTID,
+			"stream_id=" + item.StreamID,
+		}
+		if participantID != "" {
+			streamMetadata = append(streamMetadata, "participant_id="+participantID)
+		}
+		if participantName != "" {
+			streamMetadata = append(streamMetadata, "participant_name="+participantName)
+		}
 		switch kind {
 		case "video":
 			args = append(args, "-map", fmt.Sprintf("%d:v:0", idx))
-			args = append(args,
-				fmt.Sprintf("-metadata:s:v:%d", videoIndex), "title="+title,
-				fmt.Sprintf("-metadata:s:v:%d", videoIndex), "ltid="+item.LTID,
-			)
+			args = append(args, fmt.Sprintf("-metadata:s:v:%d", videoIndex), "title="+title)
+			for _, entry := range streamMetadata {
+				args = append(args, fmt.Sprintf("-metadata:s:v:%d", videoIndex), entry)
+			}
 			videoIndex++
 		case "audio":
 			args = append(args, "-map", fmt.Sprintf("%d:a:0", idx))
-			args = append(args,
-				fmt.Sprintf("-metadata:s:a:%d", audioIndex), "title="+title,
-				fmt.Sprintf("-metadata:s:a:%d", audioIndex), "ltid="+item.LTID,
-			)
+			args = append(args, fmt.Sprintf("-metadata:s:a:%d", audioIndex), "title="+title)
+			for _, entry := range streamMetadata {
+				args = append(args, fmt.Sprintf("-metadata:s:a:%d", audioIndex), entry)
+			}
 			audioIndex++
 		}
 	}
