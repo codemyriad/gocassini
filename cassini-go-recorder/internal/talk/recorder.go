@@ -530,7 +530,11 @@ func (r *Recorder) handleSignalingData(data map[string]any) error {
 	if peer == nil {
 		return nil
 	}
-	return peer.handleMessage(data)
+	if err := peer.handleMessage(data); err != nil {
+		log.Printf("subscriber signaling handling failed sid=%s type=%s: %v", fromSession, msgType, err)
+		return nil
+	}
+	return nil
 }
 
 func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, error) {
