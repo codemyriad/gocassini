@@ -32,6 +32,8 @@
   then falls back to legacy intermediate merge if remux fails.
 - remux offset planning now uses bounded timeline-derived start adjustments
   (SR-aware), so stitching is informed by corrected timeline estimates.
+- recorder reports now persist exact per-stream applied adjustments and offsets
+  under `artifact_remux.stream_plans[]`.
 - local E2E now exercises this artifact-based remux step.
 
 2.6. Timeline correction:
@@ -76,8 +78,8 @@ of minutes.
 
 ## Remaining migration work
 
-1. Integrate timeline correction outputs into richer remux reporting so per-stream
-   applied adjustments are visible in output metadata/reporting.
+1. Add optional output metadata embedding for per-stream adjustment summaries so
+   forensic context survives when JSON sidecars are unavailable.
 2. Extend artifact remux audio codec coverage beyond Opus where deployment
    requires it.
 3. Add richer depacketization/remux modules for broader codec/container support

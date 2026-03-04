@@ -49,6 +49,7 @@ type Recorder struct {
 
 	sessionArtifact *sessionCaptureArtifact
 	sessionPath     string
+	artifactRemux   *coreremux.BuildResult
 
 	finalOutputPath string
 	segmentsDir     string
@@ -925,6 +926,7 @@ func planFinalMergeInputs(sessions []*sessionCapture, probeStart func(path strin
 }
 
 func (r *Recorder) composeFinalOutput(sessions []*sessionCapture) error {
+	r.artifactRemux = nil
 	if r.sessionPath != "" {
 		if err := r.composeFinalOutputFromSessionArtifact(); err == nil {
 			return nil
@@ -1037,6 +1039,7 @@ func (r *Recorder) composeFinalOutputFromSessionArtifact() error {
 		result.WorkDir,
 		result.Segments,
 	)
+	r.artifactRemux = &result
 	return nil
 }
 
@@ -1490,6 +1493,7 @@ func (r *Recorder) writeReport(
 			"intermediate_retained": !intermediateCleaned,
 		},
 		"session_artifact": reportSessionArtifact,
+		"artifact_remux":   buildArtifactRemuxReport(r.artifactRemux),
 		"archive_stats": map[string]any{
 			"track_count":      trackCount,
 			"rtp_packet_count": packetCount,
@@ -1507,6 +1511,48 @@ func (r *Recorder) writeReport(
 		return fmt.Errorf("write report file: %w", err)
 	}
 	return nil
+}
+
+func buildArtifactRemuxReport(result *coreremux.BuildResult) map[string]any {
+	if result == nil {
+		return map[string]any{"used": false}
+	}
+
+	totalAdjustNS := int64(0)
+	maxAbsAdjustNS := int64(0)
+	adjustedStreams := 0
+	for _, plan := range result.StreamPlans {
+		totalAdjustNS += plan.TimelineAdjustNS
+		absAdjust := plan.TimelineAdjustNS
+		if absAdjust < 0 {
+			absAdjust = -absAdjust
+		}
+		if absAdjust > maxAbsAdjustNS {
+			maxAbsAdjustNS = absAdjust
+		}
+		if plan.TimelineAdjustNS != 0 {
+			adjustedStreams++
+		}
+	}
+
+	return map[string]any{
+		"used":              true,
+		"session_json":      result.SessionJSONPath,
+		"output_path":       result.OutputPath,
+		"work_dir":          result.WorkDir,
+		"segments":          result.Segments,
+		"stream_plans":      result.StreamPlans,
+		"adjusted_streams":  adjustedStreams,
+		"total_adjust_ns":   totalAdjustNS,
+		"max_abs_adjust_ns": maxAbsAdjustNS,
+		"max_abs_adjust_ms": float64(maxAbsAdjustNS) / 1e6,
+		"mean_adjust_ns_per_stream": func() int64 {
+			if len(result.StreamPlans) == 0 {
+				return 0
+			}
+			return totalAdjustNS / int64(len(result.StreamPlans))
+		}(),
+	}
 }
 
 func collectArchiveStats(path string) (int, int, error) {

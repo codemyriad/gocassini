@@ -1,10 +1,13 @@
 package remux
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gocassini/pkg/core/session"
 )
 
 func TestResolveSessionJSONPathFromFileAndDir(t *testing.T) {
@@ -82,5 +85,87 @@ func TestBuildFromSessionNoRemuxableStreams(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no remuxable streams") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildStreamPlansIncludesTimelineAdjustments(t *testing.T) {
+	segments := []segmentArtifact{
+		{
+			Stream:           sessionPacket("s_000001", "ltid-video", "video/vp8"),
+			Kind:             "video",
+			FirstNS:          10_000,
+			FirstTimelineNS:  5_000,
+			TimelineAdjustNS: -5_000,
+			Packets:          1200,
+			TimelineProfile: timelineProfile{
+				Samples:             1200,
+				RawDurationNS:       7_200_000_000,
+				CorrectedDurationNS: 7_150_000_000,
+			},
+		},
+		{
+			Stream:           sessionPacket("s_000002", "ltid-audio", "audio/opus"),
+			Kind:             "audio",
+			FirstNS:          12_000,
+			FirstTimelineNS:  12_000,
+			TimelineAdjustNS: 0,
+			Packets:          250,
+			TimelineProfile: timelineProfile{
+				Samples:             250,
+				RawDurationNS:       6_000_000_000,
+				CorrectedDurationNS: 6_000_000_000,
+			},
+		},
+	}
+	planned := []PlannedInput{
+		{
+			StreamInput: StreamInput{
+				StreamID:        "s_000001",
+				LTID:            "ltid-video",
+				Kind:            "video",
+				Codec:           "video/vp8",
+				FirstRecvNS:     10_000,
+				FirstTimelineNS: 5_000,
+				SourceStart:     0.25,
+			},
+			OffsetSeconds: 1.25,
+		},
+		{
+			StreamInput: StreamInput{
+				StreamID:        "s_000002",
+				LTID:            "ltid-audio",
+				Kind:            "audio",
+				Codec:           "audio/opus",
+				FirstRecvNS:     12_000,
+				FirstTimelineNS: 12_000,
+				SourceStart:     0.10,
+			},
+			OffsetSeconds: 0.75,
+		},
+	}
+
+	got := buildStreamPlans(segments, planned)
+	if len(got) != 2 {
+		t.Fatalf("stream plans len: got=%d want=2", len(got))
+	}
+	if got[0].StreamID != "s_000001" || got[0].TimelineAdjustNS != -5_000 {
+		t.Fatalf("unexpected first stream plan: %+v", got[0])
+	}
+	if got[0].TimelineSamples != 1200 {
+		t.Fatalf("expected samples=1200, got=%d", got[0].TimelineSamples)
+	}
+	if math.Abs(got[0].OffsetSeconds-1.25) > 1e-9 {
+		t.Fatalf("unexpected first offset: %f", got[0].OffsetSeconds)
+	}
+	if got[1].StreamID != "s_000002" || got[1].TimelineAdjustNS != 0 {
+		t.Fatalf("unexpected second stream plan: %+v", got[1])
+	}
+}
+
+func sessionPacket(streamID, ltid, codec string) session.PacketStream {
+	return session.PacketStream{
+		StreamID: streamID,
+		LTID:     ltid,
+		Codec:    codec,
 	}
 }

@@ -44,6 +44,17 @@ func main() {
 			result.WorkDir,
 			result.Segments,
 		)
+		for _, plan := range result.StreamPlans {
+			fmt.Printf(
+				"  stream=%s kind=%s codec=%s adjust_ns=%d offset_s=%.6f timeline_samples=%d\n",
+				plan.StreamID,
+				plan.Kind,
+				plan.Codec,
+				plan.TimelineAdjustNS,
+				plan.OffsetSeconds,
+				plan.TimelineSamples,
+			)
+		}
 	}
 }
 

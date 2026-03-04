@@ -28,6 +28,23 @@ type BuildResult struct {
 	OutputPath      string
 	WorkDir         string
 	Segments        int
+	StreamPlans     []StreamPlan
+}
+
+type StreamPlan struct {
+	StreamID               string  `json:"stream_id"`
+	LTID                   string  `json:"ltid"`
+	Kind                   string  `json:"kind"`
+	Codec                  string  `json:"codec"`
+	RTPPackets             int     `json:"rtp_packets"`
+	FirstRecvNS            uint64  `json:"first_recv_ns"`
+	FirstTimelineNS        int64   `json:"first_timeline_ns"`
+	TimelineAdjustNS       int64   `json:"timeline_adjust_ns"`
+	TimelineSamples        int     `json:"timeline_samples"`
+	TimelineRawDurationNS  int64   `json:"timeline_raw_duration_ns"`
+	TimelineCorrDurationNS int64   `json:"timeline_corrected_duration_ns"`
+	SourceStartSeconds     float64 `json:"source_start_seconds"`
+	OffsetSeconds          float64 `json:"offset_seconds"`
 }
 
 type segmentArtifact struct {
@@ -37,6 +54,8 @@ type segmentArtifact struct {
 	FirstNS          uint64
 	FirstTimelineNS  int64
 	TimelineAdjustNS int64
+	TimelineProfile  timelineProfile
+	SourceStart      float64
 	Packets          int
 }
 
@@ -64,14 +83,17 @@ func BuildFromSession(inputPath, outputPath string, opts BuildOptions) (BuildRes
 		return BuildResult{}, errors.New("no remuxable streams found in session artifact")
 	}
 
-	if err := mergeSegments(outputPath, opts.Title, sess, segments); err != nil {
+	planned := planSegments(segments)
+	if err := mergeSegments(outputPath, opts.Title, sess, segments, planned); err != nil {
 		return BuildResult{}, err
 	}
+
 	return BuildResult{
 		SessionJSONPath: sessionJSON,
 		OutputPath:      outputPath,
 		WorkDir:         workDir,
 		Segments:        len(segments),
+		StreamPlans:     buildStreamPlans(segments, planned),
 	}, nil
 }
 
@@ -200,6 +222,7 @@ func buildSegmentMKVs(
 			seg.FirstTimelineNS = int64(seg.FirstNS)
 			continue
 		}
+		seg.TimelineProfile = profile
 		seg.TimelineAdjustNS = recommendedTimelineStartAdjustmentNS(profile)
 		seg.FirstTimelineNS = int64(seg.FirstNS) + seg.TimelineAdjustNS
 		if seg.FirstTimelineNS < 0 {
@@ -228,29 +251,23 @@ func composeSingleTrackMKV(inputPath, outputPath, kind string) error {
 	return runCommand("ffmpeg", args...)
 }
 
-func mergeSegments(outputPath, titleOverride string, sess session.Session, segments []segmentArtifact) error {
+func mergeSegments(
+	outputPath,
+	titleOverride string,
+	sess session.Session,
+	segments []segmentArtifact,
+	planned []PlannedInput,
+) error {
 	if len(segments) == 1 {
 		return copyFile(segments[0].TempPath, outputPath)
 	}
 
-	inputs := make([]StreamInput, 0, len(segments))
 	pathByID := map[string]string{}
 	kindByID := map[string]string{}
 	for _, seg := range segments {
-		sourceStart, _ := probeMinStreamStartSeconds(seg.TempPath)
-		inputs = append(inputs, StreamInput{
-			StreamID:        seg.Stream.StreamID,
-			LTID:            seg.Stream.LTID,
-			Kind:            seg.Kind,
-			Codec:           seg.Stream.Codec,
-			FirstRecvNS:     seg.FirstNS,
-			FirstTimelineNS: seg.FirstTimelineNS,
-			SourceStart:     sourceStart,
-		})
 		pathByID[seg.Stream.StreamID] = seg.TempPath
 		kindByID[seg.Stream.StreamID] = seg.Kind
 	}
-	planned := PlanMerge(inputs)
 
 	args := []string{"-y", "-v", "error"}
 	for _, item := range planned {
@@ -295,6 +312,60 @@ func mergeSegments(outputPath, titleOverride string, sess session.Session, segme
 		outputPath,
 	)
 	return runCommand("ffmpeg", args...)
+}
+
+func planSegments(segments []segmentArtifact) []PlannedInput {
+	inputs := make([]StreamInput, 0, len(segments))
+	for idx := range segments {
+		seg := &segments[idx]
+		sourceStart, _ := probeMinStreamStartSeconds(seg.TempPath)
+		seg.SourceStart = sourceStart
+		inputs = append(inputs, StreamInput{
+			StreamID:        seg.Stream.StreamID,
+			LTID:            seg.Stream.LTID,
+			Kind:            seg.Kind,
+			Codec:           seg.Stream.Codec,
+			FirstRecvNS:     seg.FirstNS,
+			FirstTimelineNS: seg.FirstTimelineNS,
+			SourceStart:     sourceStart,
+		})
+	}
+	planned := PlanMerge(inputs)
+	if len(planned) == 1 {
+		planned[0].OffsetSeconds = 0
+	}
+	return planned
+}
+
+func buildStreamPlans(segments []segmentArtifact, planned []PlannedInput) []StreamPlan {
+	segmentsByID := map[string]segmentArtifact{}
+	for _, seg := range segments {
+		segmentsByID[seg.Stream.StreamID] = seg
+	}
+
+	out := make([]StreamPlan, 0, len(planned))
+	for _, item := range planned {
+		seg, ok := segmentsByID[item.StreamID]
+		if !ok {
+			continue
+		}
+		out = append(out, StreamPlan{
+			StreamID:               item.StreamID,
+			LTID:                   item.LTID,
+			Kind:                   item.Kind,
+			Codec:                  item.Codec,
+			RTPPackets:             seg.Packets,
+			FirstRecvNS:            seg.FirstNS,
+			FirstTimelineNS:        seg.FirstTimelineNS,
+			TimelineAdjustNS:       seg.TimelineAdjustNS,
+			TimelineSamples:        seg.TimelineProfile.Samples,
+			TimelineRawDurationNS:  seg.TimelineProfile.RawDurationNS,
+			TimelineCorrDurationNS: seg.TimelineProfile.CorrectedDurationNS,
+			SourceStartSeconds:     item.SourceStart,
+			OffsetSeconds:          item.OffsetSeconds,
+		})
+	}
+	return out
 }
 
 func runCommand(name string, args ...string) error {

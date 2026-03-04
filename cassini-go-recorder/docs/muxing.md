@@ -39,3 +39,9 @@ go run ./cmd/gocassini-remux \
 ```
 
 The current artifact remux implementation supports Opus + VP8/VP9/H264/AV1 streams.
+
+Recorder reports now include applied remux plans:
+
+- `artifact_remux.stream_plans[].timeline_adjust_ns`
+- `artifact_remux.stream_plans[].offset_seconds`
+- aggregate stats (`adjusted_streams`, `max_abs_adjust_ns`)
