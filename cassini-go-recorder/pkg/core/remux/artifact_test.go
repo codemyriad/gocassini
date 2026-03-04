@@ -68,7 +68,7 @@ func TestBuildFromSessionNoRemuxableStreams(t *testing.T) {
     "recorder_identity": {"display":"recorder","silent":true}
   },
   "packet_streams": [
-    {"stream_id":"s_000001","ltid":"p:a:video:mid","mid":"mid","rid":"","primary_ssrc":1,"codec":"video/h264","clock_rate":90000,"start_mono_ns":1}
+    {"stream_id":"s_000001","ltid":"p:a:audio:mid","mid":"mid","rid":"","primary_ssrc":1,"codec":"audio/pcmu","clock_rate":8000,"start_mono_ns":1}
   ]
 }`
 	sessionJSON := filepath.Join(sessionDir, "session.json")

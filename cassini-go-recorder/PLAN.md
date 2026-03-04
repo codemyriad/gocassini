@@ -43,7 +43,7 @@ Date: 2026-03-02
 
 - add `pkg/core/session` as the index model for session-wide truth
 - add `pkg/core/store` as the canonical stream log schema (`.rtplog` + optional `.idx`)
-- add `pkg/core/timeline` baseline estimator and `pkg/core/mux` remux interface
+- add `pkg/core/timeline` estimator (recv-time canonical + bounded SR correction) and `pkg/core/mux` remux interface
 - add `pkg/core/validate` invariants for deterministic drift triage (`recvMonoNS` monotonicity + payload-type consistency)
 - add `pkg/core/depacket` + `pkg/core/remux` and `cmd/gocassini-remux` for offline artifact-based MKV reconstruction
 - keep current `.csr` flow unchanged while adding compatibility tooling so we can compare outputs side-by-side

@@ -12,7 +12,7 @@
 - recorder final-output compose now prefers session-artifact remux and falls back
   to legacy per-session `.ivf/.ogg/.mkv` composition on remux failure
 - offline artifact remux is available via `cmd/gocassini-remux` and rebuilds a
-  multitrack MKV from `streams/*.rtplog` (VP8/Opus currently)
+  multitrack MKV from `streams/*.rtplog` (Opus + VP8/VP9/H264/AV1)
 - future phase: plug `pkg/core/mux.Muxer` with multiple backends:
   - pure-Go MKV/WebM (minimal deps)
   - FFmpeg `-c copy` plugin for broader container support
@@ -33,4 +33,4 @@ go run ./cmd/gocassini-remux \
   --output /tmp/session-artifact-remux.mkv
 ```
 
-The current artifact remux implementation supports VP8/Opus streams.
+The current artifact remux implementation supports Opus + VP8/VP9/H264/AV1 streams.

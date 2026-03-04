@@ -66,5 +66,5 @@ Each packet record:
   - monotonic `recvMonoNS` enforcement
   - RTP payload type consistency against stream header snapshots
 - `gocassini-inspect` surfaces these as per-stream `issues=<N>` plus top issue samples.
-- `cmd/gocassini-remux` consumes the same logs and reconstructs VP8/Opus
-  elementary files + MKV outputs for offline replay.
+- `cmd/gocassini-remux` consumes the same logs and reconstructs Opus +
+  VP8/VP9/H264/AV1 elementary files + MKV outputs for offline replay.

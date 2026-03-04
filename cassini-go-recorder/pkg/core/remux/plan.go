@@ -53,7 +53,7 @@ func KindFromCodec(codec string) string {
 	switch {
 	case strings.HasPrefix(lc, "audio/"), lc == "opus":
 		return "audio"
-	case strings.HasPrefix(lc, "video/"), lc == "vp8":
+	case strings.HasPrefix(lc, "video/"), lc == "vp8", lc == "vp9", lc == "h264", lc == "av1":
 		return "video"
 	default:
 		return "unknown"
@@ -65,8 +65,10 @@ func ElementaryExtension(codec string) string {
 	switch {
 	case strings.Contains(lc, "opus"):
 		return ".ogg"
-	case strings.Contains(lc, "vp8"):
+	case strings.Contains(lc, "vp8"), strings.Contains(lc, "vp9"), strings.Contains(lc, "av1"):
 		return ".ivf"
+	case strings.Contains(lc, "h264"):
+		return ".h264"
 	default:
 		return ""
 	}

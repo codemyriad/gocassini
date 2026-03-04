@@ -56,6 +56,9 @@ func TestKindFromCodec(t *testing.T) {
 	if got := KindFromCodec("video/VP8"); got != "video" {
 		t.Fatalf("video codec kind mismatch: %s", got)
 	}
+	if got := KindFromCodec("video/h264"); got != "video" {
+		t.Fatalf("h264 codec kind mismatch: %s", got)
+	}
 	if got := KindFromCodec("application/binary"); got != "unknown" {
 		t.Fatalf("unknown codec kind mismatch: %s", got)
 	}
@@ -68,7 +71,13 @@ func TestElementaryExtension(t *testing.T) {
 	if got := ElementaryExtension("video/vp8"); got != ".ivf" {
 		t.Fatalf("vp8 extension mismatch: %s", got)
 	}
-	if got := ElementaryExtension("video/h264"); got != "" {
+	if got := ElementaryExtension("video/vp9"); got != ".ivf" {
+		t.Fatalf("vp9 extension mismatch: %s", got)
+	}
+	if got := ElementaryExtension("video/h264"); got != ".h264" {
+		t.Fatalf("h264 extension mismatch: %s", got)
+	}
+	if got := ElementaryExtension("audio/pcmu"); got != "" {
 		t.Fatalf("unexpected extension for unsupported codec: %s", got)
 	}
 }

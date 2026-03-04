@@ -14,7 +14,7 @@ func TestWriteElementaryFromRTPLogOpus(t *testing.T) {
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "audio.rtplog")
 	outPath := filepath.Join(tmp, "audio.ogg")
-	if err := writeSampleLog(logPath, 111, true); err != nil {
+	if err := writeSampleLog(logPath, 111, sampleOpusPayload); err != nil {
 		t.Fatalf("write sample log: %v", err)
 	}
 
@@ -41,7 +41,7 @@ func TestWriteElementaryFromRTPLogVP8(t *testing.T) {
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "video.rtplog")
 	outPath := filepath.Join(tmp, "video.ivf")
-	if err := writeSampleLog(logPath, 96, false); err != nil {
+	if err := writeSampleLog(logPath, 96, sampleVP8Payload); err != nil {
 		t.Fatalf("write sample log: %v", err)
 	}
 
@@ -61,19 +61,65 @@ func TestWriteElementaryFromRTPLogVP8(t *testing.T) {
 	}
 }
 
+func TestWriteElementaryFromRTPLogVP9(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "video-vp9.rtplog")
+	outPath := filepath.Join(tmp, "video-vp9.ivf")
+	if err := writeSampleLog(logPath, 98, sampleVP9Payload); err != nil {
+		t.Fatalf("write sample log: %v", err)
+	}
+	result, err := WriteElementaryFromRTPLog(logPath, "video/vp9", 90000, outPath)
+	if err != nil {
+		t.Fatalf("write elementary: %v", err)
+	}
+	if result.RTPPackets != 2 {
+		t.Fatalf("rtp packet count: got=%d want=2", result.RTPPackets)
+	}
+	info, err := os.Stat(outPath)
+	if err != nil {
+		t.Fatalf("stat output: %v", err)
+	}
+	if info.Size() <= 32 {
+		t.Fatalf("output too small: size=%d", info.Size())
+	}
+}
+
+func TestWriteElementaryFromRTPLogH264(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "video-h264.rtplog")
+	outPath := filepath.Join(tmp, "video-h264.h264")
+	if err := writeSampleLog(logPath, 102, sampleH264Payload); err != nil {
+		t.Fatalf("write sample log: %v", err)
+	}
+	result, err := WriteElementaryFromRTPLog(logPath, "video/h264", 90000, outPath)
+	if err != nil {
+		t.Fatalf("write elementary: %v", err)
+	}
+	if result.RTPPackets != 2 {
+		t.Fatalf("rtp packet count: got=%d want=2", result.RTPPackets)
+	}
+	info, err := os.Stat(outPath)
+	if err != nil {
+		t.Fatalf("stat output: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Fatalf("empty output")
+	}
+}
+
 func TestWriteElementaryFromRTPLogUnsupportedCodec(t *testing.T) {
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "stream.rtplog")
-	if err := writeSampleLog(logPath, 96, false); err != nil {
+	if err := writeSampleLog(logPath, 96, sampleVP8Payload); err != nil {
 		t.Fatalf("write sample log: %v", err)
 	}
-	_, err := WriteElementaryFromRTPLog(logPath, "video/h264", 90000, filepath.Join(tmp, "out.h264"))
+	_, err := WriteElementaryFromRTPLog(logPath, "audio/pcmu", 8000, filepath.Join(tmp, "out.pcmu"))
 	if err == nil {
 		t.Fatalf("expected unsupported codec error")
 	}
 }
 
-func writeSampleLog(path string, payloadType uint8, opus bool) error {
+func writeSampleLog(path string, payloadType uint8, payload func() []byte) error {
 	writer, err := store.NewWriter(path, store.StreamHeader{
 		StreamID:    "s_000001",
 		Codec:       "sample",
@@ -98,7 +144,7 @@ func writeSampleLog(path string, payloadType uint8, opus bool) error {
 			SSRC:           7777,
 			Marker:         true,
 		},
-		Payload: samplePayload(opus),
+		Payload: payload(),
 	}
 	packet2 := &rtp.Packet{
 		Header: rtp.Header{
@@ -109,7 +155,7 @@ func writeSampleLog(path string, payloadType uint8, opus bool) error {
 			SSRC:           7777,
 			Marker:         true,
 		},
-		Payload: samplePayload(opus),
+		Payload: payload(),
 	}
 	wire1, err := packet1.Marshal()
 	if err != nil {
@@ -135,10 +181,21 @@ func writeSampleLog(path string, payloadType uint8, opus bool) error {
 	return writer.Close()
 }
 
-func samplePayload(opus bool) []byte {
-	if opus {
-		return []byte{0xf8, 0xff, 0xfe}
-	}
+func sampleOpusPayload() []byte {
+	return []byte{0xf8, 0xff, 0xfe}
+}
+
+func sampleVP8Payload() []byte {
 	// VP8 payload descriptor (S=1, PID=0) + minimal keyframe header bytes.
 	return []byte{0x10, 0x00, 0x00, 0x00, 0x9d, 0x01, 0x2a, 0x00, 0x00, 0x00}
+}
+
+func sampleVP9Payload() []byte {
+	// VP9 payload descriptor with beginning-of-frame bit set.
+	return []byte{0x08, 0x01, 0x20}
+}
+
+func sampleH264Payload() []byte {
+	// SPS NALU (type 7) so h264 writer treats this as keyframe access unit.
+	return []byte{0x67, 0x42, 0x00, 0x1f, 0xe5, 0x88, 0x68}
 }

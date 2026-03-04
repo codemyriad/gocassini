@@ -114,4 +114,4 @@ go run ./cmd/gocassini-remux \
   --output /tmp/session-artifact-remux.mkv
 ```
 
-Current supported codecs for artifact remux are VP8 video and Opus audio.
+Current supported codecs for artifact remux are Opus audio and VP8/VP9/H264/AV1 video.

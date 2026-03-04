@@ -1,6 +1,11 @@
 package timeline
 
-import "testing"
+import (
+	"math"
+	"testing"
+
+	"github.com/pion/rtcp"
+)
 
 func TestSegmentEstimatorWraparoundMonotonic(t *testing.T) {
 	e := NewSegmentEstimator()
@@ -133,6 +138,94 @@ func TestSegmentEstimatorCanSetClockRateAfterFirstPacket(t *testing.T) {
 	}
 }
 
+func TestSegmentEstimatorSRCorrectionReducesDrift(t *testing.T) {
+	ssrc := uint32(0x42)
+	const seconds = 60
+	const driftedTicksPerSecond = 90090
+
+	withSR := NewSegmentEstimator()
+	withoutSR := NewSegmentEstimator()
+
+	withSR.ObserveRTP(ssrc, 0, 0, false, false, 90000)
+	withoutSR.ObserveRTP(ssrc, 0, 0, false, false, 90000)
+
+	var withSRPTS uint64
+	var withoutSRPTS uint64
+	for sec := 1; sec <= seconds; sec++ {
+		recv := uint64(sec) * 1_000_000_000
+		rtpTS := uint32(sec * driftedTicksPerSecond)
+
+		withSR.ObserveRTP(ssrc, recv, rtpTS, false, false, 90000)
+		withoutSR.ObserveRTP(ssrc, recv, rtpTS, false, false, 90000)
+		if sec%5 == 0 {
+			raw := mustSenderReport(t, ssrc, rtpTS)
+			withSR.ObserveRTCP(ssrc, recv, raw)
+		}
+
+		var ok bool
+		withSRPTS, ok = withSR.PTS(ssrc, rtpTS)
+		if !ok {
+			t.Fatalf("missing withSR pts for sec=%d", sec)
+		}
+		withoutSRPTS, ok = withoutSR.PTS(ssrc, rtpTS)
+		if !ok {
+			t.Fatalf("missing withoutSR pts for sec=%d", sec)
+		}
+	}
+
+	expectedRecv := float64(seconds) * 1_000_000_000
+	withDiff := math.Abs(float64(withSRPTS) - expectedRecv)
+	withoutDiff := math.Abs(float64(withoutSRPTS) - expectedRecv)
+	if withDiff >= withoutDiff {
+		t.Fatalf("expected SR correction to reduce drift: with=%.0f without=%.0f", withDiff, withoutDiff)
+	}
+	if withDiff > 20_000_000 {
+		t.Fatalf("expected corrected drift <=20ms, got %.0fns", withDiff)
+	}
+}
+
+func TestSegmentEstimatorSRNeverMovesPTSBackwards(t *testing.T) {
+	e := NewSegmentEstimator()
+	ssrc := uint32(0x77)
+	e.ObserveRTP(ssrc, 1_000_000_000, 0, false, false, 90000)
+
+	last := uint64(0)
+	for sec := 1; sec <= 10; sec++ {
+		recv := uint64(1_000_000_000 + sec*1_000_000_000)
+		rtpTS := uint32(sec * 90000)
+		e.ObserveRTP(ssrc, recv, rtpTS, false, false, 90000)
+		// Inject noisy sender reports that would normally pull timestamps around.
+		noisyRTP := rtpTS
+		if sec%2 == 0 {
+			noisyRTP = rtpTS - 1000
+		}
+		e.ObserveRTCP(ssrc, recv, mustSenderReport(t, ssrc, noisyRTP))
+
+		pts, ok := e.PTS(ssrc, rtpTS)
+		if !ok {
+			t.Fatalf("missing pts at sec=%d", sec)
+		}
+		if sec > 1 && pts <= last {
+			t.Fatalf("pts went backwards at sec=%d: pts=%d last=%d", sec, pts, last)
+		}
+		last = pts
+	}
+}
+
+func TestSegmentEstimatorIgnoreInvalidRTCP(t *testing.T) {
+	e := NewSegmentEstimator()
+	ssrc := uint32(0x99)
+	e.ObserveRTP(ssrc, 1_000, 10, false, false, 90000)
+	e.ObserveRTCP(ssrc, 2_000, []byte{0x01, 0x02, 0x03})
+	pts, ok := e.PTS(ssrc, 20)
+	if !ok {
+		t.Fatal("expected pts after invalid rtcp")
+	}
+	if pts == 0 {
+		t.Fatal("expected non-zero pts")
+	}
+}
+
 func recordPackets(t *testing.T, e *SegmentEstimator, ssrc uint32, recv uint64, ts uint32, clockRate uint32) {
 	t.Helper()
 	e.ObserveRTP(ssrc, recv, ts, false, false, clockRate)
@@ -140,4 +233,17 @@ func recordPackets(t *testing.T, e *SegmentEstimator, ssrc uint32, recv uint64, 
 	if !ok {
 		t.Fatalf("expected PTS state for ssrc=%d ts=%d", ssrc, ts)
 	}
+}
+
+func mustSenderReport(t *testing.T, ssrc, rtpTS uint32) []byte {
+	t.Helper()
+	sr := &rtcp.SenderReport{
+		SSRC:    ssrc,
+		RTPTime: rtpTS,
+	}
+	raw, err := sr.Marshal()
+	if err != nil {
+		t.Fatalf("marshal sender report: %v", err)
+	}
+	return raw
 }

@@ -9,6 +9,7 @@ import (
 	"gocassini/pkg/core/store"
 
 	"github.com/pion/rtp"
+	"github.com/pion/webrtc/v4/pkg/media/h264writer"
 	"github.com/pion/webrtc/v4/pkg/media/ivfwriter"
 	"github.com/pion/webrtc/v4/pkg/media/oggwriter"
 )
@@ -96,6 +97,24 @@ func newRTPWriter(codec string, clockRate uint32, outputPath string) (rtpWriter,
 		w, err := ivfwriter.New(outputPath)
 		if err != nil {
 			return nil, fmt.Errorf("create ivf writer: %w", err)
+		}
+		return w, nil
+	case strings.Contains(lc, "vp9"):
+		w, err := ivfwriter.New(outputPath, ivfwriter.WithCodec("video/VP9"))
+		if err != nil {
+			return nil, fmt.Errorf("create vp9 ivf writer: %w", err)
+		}
+		return w, nil
+	case strings.Contains(lc, "av1"):
+		w, err := ivfwriter.New(outputPath, ivfwriter.WithCodec("video/AV1"))
+		if err != nil {
+			return nil, fmt.Errorf("create av1 ivf writer: %w", err)
+		}
+		return w, nil
+	case strings.Contains(lc, "h264"):
+		w, err := h264writer.New(outputPath)
+		if err != nil {
+			return nil, fmt.Errorf("create h264 writer: %w", err)
 		}
 		return w, nil
 	default:

@@ -196,6 +196,7 @@ func composeSingleTrackMKV(inputPath, outputPath, kind string) error {
 	args := []string{
 		"-y",
 		"-v", "error",
+		"-fflags", "+genpts",
 		"-i", inputPath,
 	}
 	switch kind {

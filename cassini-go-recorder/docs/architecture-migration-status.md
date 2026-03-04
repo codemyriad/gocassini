@@ -1,4 +1,4 @@
-# Architecture Migration Status (2026-03-03)
+# Architecture Migration Status (2026-03-04)
 
 ## Goals
 
@@ -25,10 +25,16 @@
 
 2.5. Offline artifact remux:
 - added `cmd/gocassini-remux` to rebuild multitrack MKV directly from
-  `session.json` + `streams/*.rtplog` (VP8/Opus path).
+  `session.json` + `streams/*.rtplog` (Opus + VP8/VP9/H264/AV1 paths).
 - recorder final-output compose now uses the same artifact remux path first,
   then falls back to legacy intermediate merge if remux fails.
 - local E2E now exercises this artifact-based remux step.
+
+2.6. Timeline correction:
+- `pkg/core/timeline` now applies bounded SR-aware slope/intercept correction on
+  top of receive-time canonical mapping.
+- deterministic tests verify correction reduces synthetic long-run drift and keeps
+  PTS monotonic under noisy SR input.
 
 3. Validation package:
 - added `pkg/core/validate` for `.rtplog` invariants:
@@ -66,7 +72,9 @@ of minutes.
 
 ## Remaining migration work
 
-1. Extend artifact remux beyond VP8/Opus coverage (VP9/H264 and wider audio
-   variants as needed).
-2. Add SR/capture-time correction layer in `pkg/core/timeline`.
-3. Add richer depacketization/remux modules for broader codec/container support.
+1. Integrate timeline correction outputs into remux/inspect drift diagnostics
+   beyond per-stream SR stats.
+2. Extend artifact remux audio codec coverage beyond Opus where deployment
+   requires it.
+3. Add richer depacketization/remux modules for broader codec/container support
+   and participant-level layout rendering.
