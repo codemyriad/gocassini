@@ -24,6 +24,8 @@
 2.5. Offline artifact remux:
 - added `cmd/gocassini-remux` to rebuild multitrack MKV directly from
   `session.json` + `streams/*.rtplog` (VP8/Opus path).
+- recorder final-output compose now uses the same artifact remux path first,
+  then falls back to legacy intermediate merge if remux fails.
 - local E2E now exercises this artifact-based remux step.
 
 3. Validation package:
@@ -62,7 +64,7 @@ of minutes.
 
 ## Remaining migration work
 
-1. Promote artifact remux path from CLI/e2e tool to default final-output
-   composition in the recorder path.
+1. Extend artifact remux beyond VP8/Opus coverage (VP9/H264 and wider audio
+   variants as needed).
 2. Add SR/capture-time correction layer in `pkg/core/timeline`.
 3. Add richer depacketization/remux modules for broader codec/container support.

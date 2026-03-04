@@ -95,6 +95,7 @@ cd test
   with stream segmentation on SSRC/PT churn (same logical track can produce
   multiple stream segments)
 - Final output: `.mkv` (single deliverable for playback/transcoding/transcription)
+- Final output compose path prefers session-artifact remux (`streams/*.rtplog`) and falls back to legacy intermediates if needed
 - Report: `<final>.json` with session and compose status
 - Intermediate per-session files: `<output>-segments-*` unless cleanup is enabled
 - `gocassini-inspect` prints legacy archive summaries; session artifacts are written next to `.mkv` and available at `<final>/../sessions/<id>/`.

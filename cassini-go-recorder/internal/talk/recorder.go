@@ -21,6 +21,7 @@ import (
 	"gocassini/internal/nextcloud"
 	"gocassini/internal/recorder"
 	"gocassini/internal/signaling"
+	coreremux "gocassini/pkg/core/remux"
 
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media/ivfwriter"
@@ -47,6 +48,7 @@ type Recorder struct {
 	rtpRecorder *recorder.RTPRecorder
 
 	sessionArtifact *sessionCaptureArtifact
+	sessionPath     string
 
 	finalOutputPath string
 	segmentsDir     string
@@ -129,6 +131,7 @@ func (r *Recorder) run(ctx context.Context) error {
 		log.Printf("session artifact init failed (continuing legacy capture): %v", err)
 	} else {
 		r.sessionArtifact = sessionArtifact
+		r.sessionPath = sessionArtifact.sessionPath
 		log.Printf("session artifact capture enabled: session_id=%s path=%s", sessionArtifact.sessionID, sessionArtifact.sessionDir)
 	}
 
@@ -889,6 +892,14 @@ func planFinalMergeInputs(sessions []*sessionCapture, probeStart func(path strin
 }
 
 func (r *Recorder) composeFinalOutput(sessions []*sessionCapture) error {
+	if r.sessionPath != "" {
+		if err := r.composeFinalOutputFromSessionArtifact(); err == nil {
+			return nil
+		} else {
+			log.Printf("session artifact remux failed, falling back to legacy compose path: %v", err)
+		}
+	}
+
 	if len(sessions) == 0 {
 		return errors.New("no captured sessions available for compose")
 	}
@@ -963,6 +974,36 @@ func (r *Recorder) composeFinalOutput(sessions []*sessionCapture) error {
 	if err := runCommand("ffmpeg", args...); err != nil {
 		return fmt.Errorf("final merge failed: %w", err)
 	}
+	return nil
+}
+
+func (r *Recorder) composeFinalOutputFromSessionArtifact() error {
+	if r.sessionPath == "" {
+		return errors.New("session artifact is not available")
+	}
+
+	workDir := filepath.Join(r.segmentsDir, "artifact-remux-work")
+	result, err := coreremux.BuildFromSession(
+		r.sessionPath,
+		r.finalOutputPath,
+		coreremux.BuildOptions{
+			WorkDir:      workDir,
+			KeepWork:     true,
+			StrictCodecs: false,
+			Title:        fmt.Sprintf("Cassini Go Recording %s", r.roomToken),
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	log.Printf(
+		"composed final output from session artifact: session=%s output=%s work=%s segments=%d",
+		result.SessionJSONPath,
+		result.OutputPath,
+		result.WorkDir,
+		result.Segments,
+	)
 	return nil
 }
 
