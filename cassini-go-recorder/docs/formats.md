@@ -56,6 +56,8 @@ Each packet record:
 - current code dual-writes legacy `.csr` (`internal/cassette`) and session artifact streams (`pkg/core/store`)
 - new `pkg/core/store` is available and includes a schema-compatible writer/reader
 - session artifact capture writes one `.rtplog` segment per stable `(logical track, ssrc, pt)` window
+- session artifact capture now writes both RTP and RTCP packets from live receiver paths
+- per-stream receive timestamps are clamped to stay strictly monotonic across mixed RTP/RTCP writes
 - full migration to multi-file session layout is staged
 
 ## Validation hooks

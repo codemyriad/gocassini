@@ -13,6 +13,8 @@
 1. Segment-aware session artifact capture:
 - stream logs rotate on SSRC/PT changes and preserve logical-track mapping.
 - `session.json` packet streams now include `pt`.
+- live capture now records RTCP alongside RTP in `streams/*.rtplog`.
+- mixed RTP/RTCP writes enforce monotonic per-stream receive timestamps.
 
 2. Deterministic inspection upgrades:
 - `gocassini-inspect` prints per-stream identity (`ssrc`, `pt`) and validation

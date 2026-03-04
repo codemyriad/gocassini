@@ -625,7 +625,7 @@ func (r *Recorder) removeSubscriber(remoteSessionID string) error {
 	return peer.close()
 }
 
-func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote, remoteSessionID string) {
+func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver, remoteSessionID string) {
 	kind := strings.ToLower(track.Kind().String())
 	codec := strings.ToLower(track.Codec().MimeType)
 
@@ -640,6 +640,7 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 	}
 
 	streamCaptureID := ""
+	var streamCaptureMu sync.RWMutex
 	streamCaptureSSRC := uint32(track.SSRC())
 	streamCapturePT := uint8(track.PayloadType())
 	trackDesc := descriptorFromTrack(track)
@@ -656,6 +657,34 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 			log.Printf("session artifact stream open failed sid=%s kind=%s: %v", remoteSessionID, kind, err)
 			streamCaptureID = ""
 		}
+	}
+	getStreamCaptureID := func() string {
+		streamCaptureMu.RLock()
+		defer streamCaptureMu.RUnlock()
+		return streamCaptureID
+	}
+	setStreamCaptureID := func(value string) {
+		streamCaptureMu.Lock()
+		streamCaptureID = value
+		streamCaptureMu.Unlock()
+	}
+
+	if r.sessionArtifact != nil && receiver != nil {
+		go func() {
+			for {
+				packets, _, readErr := receiver.ReadRTCP()
+				if readErr != nil {
+					return
+				}
+				activeStreamID := getStreamCaptureID()
+				if activeStreamID == "" || len(packets) == 0 {
+					continue
+				}
+				if err := r.sessionArtifact.writeRTCP(activeStreamID, packets, time.Now()); err != nil {
+					log.Printf("session artifact rtcp write failed sid=%s stream=%s track=%s: %v", remoteSessionID, activeStreamID, track.ID(), err)
+				}
+			}
+		}()
 	}
 
 	participant := recorder.ParticipantRef{
@@ -712,11 +741,12 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 			log.Printf("archive packet write failed sid=%s track=%s: %v", remoteSessionID, track.ID(), err)
 			break
 		}
-		if streamCaptureID != "" {
+		activeStreamID := getStreamCaptureID()
+		if activeStreamID != "" {
 			if pkt.SSRC != streamCaptureSSRC || pkt.PayloadType != streamCapturePT {
 				rotateReason := streamSegmentRotationReason(streamCaptureSSRC, pkt.SSRC, streamCapturePT, pkt.PayloadType)
-				if err := r.sessionArtifact.closeStream(streamCaptureID, rotateReason, recv); err != nil {
-					log.Printf("session artifact stream rotate-close failed sid=%s stream=%s track=%s: %v", remoteSessionID, streamCaptureID, track.ID(), err)
+				if err := r.sessionArtifact.closeStream(activeStreamID, rotateReason, recv); err != nil {
+					log.Printf("session artifact stream rotate-close failed sid=%s stream=%s track=%s: %v", remoteSessionID, activeStreamID, track.ID(), err)
 				}
 				nextStreamID, openErr := r.sessionArtifact.openStream(
 					remoteSessionID,
@@ -727,18 +757,19 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 					recv,
 				)
 				if openErr != nil {
-					log.Printf("session artifact stream rotate-open failed sid=%s old_stream=%s track=%s: %v", remoteSessionID, streamCaptureID, track.ID(), openErr)
-					streamCaptureID = ""
+					log.Printf("session artifact stream rotate-open failed sid=%s old_stream=%s track=%s: %v", remoteSessionID, activeStreamID, track.ID(), openErr)
+					setStreamCaptureID("")
 				} else {
-					streamCaptureID = nextStreamID
+					setStreamCaptureID(nextStreamID)
 					streamCaptureSSRC = pkt.SSRC
 					streamCapturePT = pkt.PayloadType
 				}
 			}
 		}
-		if streamCaptureID != "" {
-			if err := r.sessionArtifact.writeRTP(streamCaptureID, pkt, recv); err != nil {
-				log.Printf("session artifact packet write failed sid=%s stream=%s track=%s: %v", remoteSessionID, streamCaptureID, track.ID(), err)
+		activeStreamID = getStreamCaptureID()
+		if activeStreamID != "" {
+			if err := r.sessionArtifact.writeRTP(activeStreamID, pkt, recv); err != nil {
+				log.Printf("session artifact packet write failed sid=%s stream=%s track=%s: %v", remoteSessionID, activeStreamID, track.ID(), err)
 			}
 		}
 
@@ -767,10 +798,12 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 			log.Printf("end track marker failed sid=%s track=%s: %v", remoteSessionID, track.ID(), err)
 		}
 	}
-	if streamCaptureID != "" {
-		if err := r.sessionArtifact.closeStream(streamCaptureID, reason, time.Now()); err != nil {
-			log.Printf("session artifact stream close failed sid=%s stream=%s: %v", remoteSessionID, streamCaptureID, err)
+	activeStreamID := getStreamCaptureID()
+	if activeStreamID != "" {
+		if err := r.sessionArtifact.closeStream(activeStreamID, reason, time.Now()); err != nil {
+			log.Printf("session artifact stream close failed sid=%s stream=%s: %v", remoteSessionID, activeStreamID, err)
 		}
+		setStreamCaptureID("")
 	}
 
 	if err := ctx.Err(); err != nil && !errors.Is(err, context.Canceled) {
@@ -1079,8 +1112,8 @@ func (r *Recorder) newSubscriberPeer(remoteSessionID string) (*subscriberPeer, e
 			log.Printf("send candidate failed sid=%s: %v", remoteSessionID, err)
 		}
 	})
-	pc.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
-		go r.onRemoteTrack(context.Background(), track, remoteSessionID)
+	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		go r.onRemoteTrack(context.Background(), track, receiver, remoteSessionID)
 	})
 
 	return peer, nil

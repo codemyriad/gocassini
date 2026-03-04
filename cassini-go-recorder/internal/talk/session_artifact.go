@@ -13,6 +13,7 @@ import (
 	"gocassini/pkg/core/session"
 	"gocassini/pkg/core/store"
 
+	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
@@ -43,6 +44,7 @@ type sessionCaptureStream struct {
 	indexPath   string
 	packetCount int
 	closed      bool
+	lastRecvNS  uint64
 }
 
 type trackDescriptor struct {
@@ -247,10 +249,12 @@ func (a *sessionCaptureArtifact) writeRTP(streamID string, pkt *rtp.Packet, recv
 		a.mu.Unlock()
 		return fmt.Errorf("stream not writable: %s", streamID)
 	}
+	recvMonoNS := clampMonoNS(stream, uint64(recv.UnixNano()))
+	writer := stream.writer
 	a.mu.Unlock()
 
-	if err := stream.writer.Write(store.Record{
-		RecvMonoNS: uint64(recv.UnixNano()),
+	if err := writer.Write(store.Record{
+		RecvMonoNS: recvMonoNS,
 		Kind:       store.KindRTP,
 		WireBytes:  wire,
 	}); err != nil {
@@ -259,6 +263,54 @@ func (a *sessionCaptureArtifact) writeRTP(streamID string, pkt *rtp.Packet, recv
 
 	a.mu.Lock()
 	stream.packetCount++
+	a.mu.Unlock()
+	return nil
+}
+
+func (a *sessionCaptureArtifact) writeRTCP(streamID string, packets []rtcp.Packet, recv time.Time) error {
+	wirePackets := make([][]byte, 0, len(packets))
+	for _, packet := range packets {
+		wire, err := packet.Marshal()
+		if err != nil {
+			return fmt.Errorf("marshal RTCP packet: %w", err)
+		}
+		if len(wire) == 0 {
+			continue
+		}
+		wirePackets = append(wirePackets, wire)
+	}
+	if len(wirePackets) == 0 {
+		return nil
+	}
+
+	a.mu.Lock()
+	stream := a.streams[streamID]
+	if stream == nil || stream.writer == nil || stream.closed {
+		a.mu.Unlock()
+		return fmt.Errorf("stream not writable: %s", streamID)
+	}
+	writer := stream.writer
+	recvTimes := make([]uint64, 0, len(wirePackets))
+	recvMonoNS := uint64(recv.UnixNano())
+	for range wirePackets {
+		recvMonoNS = clampMonoNS(stream, recvMonoNS)
+		recvTimes = append(recvTimes, recvMonoNS)
+		recvMonoNS++
+	}
+	a.mu.Unlock()
+
+	for idx, wire := range wirePackets {
+		if err := writer.Write(store.Record{
+			RecvMonoNS: recvTimes[idx],
+			Kind:       store.KindRTCP,
+			WireBytes:  wire,
+		}); err != nil {
+			return err
+		}
+	}
+
+	a.mu.Lock()
+	stream.packetCount += len(wirePackets)
 	a.mu.Unlock()
 	return nil
 }
@@ -526,6 +578,15 @@ func sanitizeSessionPathPart(value string) string {
 
 func makeSessionID() string {
 	return time.Now().UTC().Format("20060102T150405.000000000Z")
+}
+
+func clampMonoNS(stream *sessionCaptureStream, recvMonoNS uint64) uint64 {
+	if stream.lastRecvNS == 0 || recvMonoNS > stream.lastRecvNS {
+		stream.lastRecvNS = recvMonoNS
+		return recvMonoNS
+	}
+	stream.lastRecvNS++
+	return stream.lastRecvNS
 }
 
 func descriptorFromTrack(track *webrtc.TrackRemote) trackDescriptor {

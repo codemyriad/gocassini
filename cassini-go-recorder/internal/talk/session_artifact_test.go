@@ -10,6 +10,7 @@ import (
 	"gocassini/pkg/core/session"
 	"gocassini/pkg/core/store"
 
+	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 )
 
@@ -141,6 +142,147 @@ func TestSessionArtifactStreamCloseBuildsIndex(t *testing.T) {
 	}
 	if len(data) == 0 {
 		t.Fatalf("expected session event log output")
+	}
+}
+
+func TestSessionArtifactWriteRTCP(t *testing.T) {
+	tmp := t.TempDir()
+	artifactPath := filepath.Join(tmp, "rtcp.mkv")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	if err != nil {
+		t.Fatalf("create artifact: %v", err)
+	}
+
+	streamID := "s_000001"
+	streamPath := filepath.Join(artifact.streamsDir, streamID+".rtplog")
+	header := store.StreamHeader{
+		StreamID:    streamID,
+		Codec:       "video/vp8",
+		ClockRate:   90000,
+		Direction:   "recvonly",
+		StartMonoNS: uint64(time.Now().UnixNano()),
+	}
+	w, err := store.NewWriter(streamPath, header)
+	if err != nil {
+		t.Fatalf("create writer: %v", err)
+	}
+	artifact.streams[streamID] = &sessionCaptureStream{
+		stream: session.PacketStream{
+			StreamID: streamID,
+		},
+		writer:    w,
+		logPath:   streamPath,
+		indexPath: streamPath + ".idx",
+	}
+	artifact.mu.Lock()
+	artifact.sessionMeta.PacketStreams = append(artifact.sessionMeta.PacketStreams, session.PacketStream{
+		StreamID: streamID,
+	})
+	artifact.mu.Unlock()
+
+	if err := artifact.writeRTCP(streamID, []rtcp.Packet{
+		&rtcp.PictureLossIndication{SenderSSRC: 1234, MediaSSRC: 5678},
+	}, time.Now()); err != nil {
+		t.Fatalf("write rtcp: %v", err)
+	}
+	if err := artifact.closeStream(streamID, "test", time.Now()); err != nil {
+		t.Fatalf("close stream: %v", err)
+	}
+
+	reader, err := store.OpenReader(streamPath)
+	if err != nil {
+		t.Fatalf("open reader: %v", err)
+	}
+	defer func() {
+		_ = reader.Close()
+	}()
+	record, err := reader.Next()
+	if err != nil {
+		t.Fatalf("read record: %v", err)
+	}
+	if record.Kind != store.KindRTCP {
+		t.Fatalf("expected rtcp record kind, got=%d", record.Kind)
+	}
+	if len(record.WireBytes) == 0 {
+		t.Fatalf("expected rtcp bytes")
+	}
+}
+
+func TestSessionArtifactWriteRTPAndRTCPClampMonotonicRecvNS(t *testing.T) {
+	tmp := t.TempDir()
+	artifactPath := filepath.Join(tmp, "monotonic.mkv")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	if err != nil {
+		t.Fatalf("create artifact: %v", err)
+	}
+
+	streamID := "s_000001"
+	streamPath := filepath.Join(artifact.streamsDir, streamID+".rtplog")
+	header := store.StreamHeader{
+		StreamID:    streamID,
+		Codec:       "video/vp8",
+		ClockRate:   90000,
+		Direction:   "recvonly",
+		StartMonoNS: uint64(time.Now().UnixNano()),
+	}
+	w, err := store.NewWriter(streamPath, header)
+	if err != nil {
+		t.Fatalf("create writer: %v", err)
+	}
+	artifact.streams[streamID] = &sessionCaptureStream{
+		stream: session.PacketStream{
+			StreamID: streamID,
+		},
+		writer:    w,
+		logPath:   streamPath,
+		indexPath: streamPath + ".idx",
+	}
+	artifact.mu.Lock()
+	artifact.sessionMeta.PacketStreams = append(artifact.sessionMeta.PacketStreams, session.PacketStream{
+		StreamID: streamID,
+	})
+	artifact.mu.Unlock()
+
+	base := time.Unix(0, 1_000_000_000)
+	pkt := &rtp.Packet{
+		Header: rtp.Header{
+			SequenceNumber: 1,
+			Timestamp:      1000,
+			SSRC:           1234,
+			PayloadType:    96,
+		},
+		Payload: []byte{0x10, 0x00, 0x00, 0x00},
+	}
+	if err := artifact.writeRTP(streamID, pkt, base.Add(5*time.Millisecond)); err != nil {
+		t.Fatalf("write rtp: %v", err)
+	}
+	if err := artifact.writeRTCP(streamID, []rtcp.Packet{
+		&rtcp.PictureLossIndication{SenderSSRC: 1, MediaSSRC: 2},
+	}, base); err != nil {
+		t.Fatalf("write rtcp: %v", err)
+	}
+	if err := artifact.closeStream(streamID, "test", time.Now()); err != nil {
+		t.Fatalf("close stream: %v", err)
+	}
+
+	reader, err := store.OpenReader(streamPath)
+	if err != nil {
+		t.Fatalf("open reader: %v", err)
+	}
+	defer func() {
+		_ = reader.Close()
+	}()
+
+	first, err := reader.Next()
+	if err != nil {
+		t.Fatalf("read first record: %v", err)
+	}
+	second, err := reader.Next()
+	if err != nil {
+		t.Fatalf("read second record: %v", err)
+	}
+	if second.RecvMonoNS <= first.RecvMonoNS {
+		t.Fatalf("non-monotonic recv ns: first=%d second=%d", first.RecvMonoNS, second.RecvMonoNS)
 	}
 }
 
