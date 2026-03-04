@@ -26,7 +26,9 @@ ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
 BOT_USER="${BOT_USER:-botuser}"
 BOT_PASSWORD="${BOT_PASSWORD:-zN4vQ9mT2Kp7R1x!}"
 
-SIGNALING_URL="${SIGNALING_URL:-$(default_signaling_url)}"
+# Keep empty by default here: bootstrap resolves an effective signaling URL
+# after Docker networking is up.
+SIGNALING_URL="${SIGNALING_URL:-}"
 SIGNALING_SHARED_SECRET="${SIGNALING_SHARED_SECRET:-7f4dca67263621ba7f9f9917e13de95a201f6f360be0d303e3008c2e6c8ad37d}"
 TURN_SERVER="${TURN_SERVER:-127.0.0.1:13479}"
 TURN_SHARED_SECRET="${TURN_SHARED_SECRET:-3c04d2fc2f7fe39d48eb4dc77f652c8c778a4ea178b0e486529b284afca7b648}"

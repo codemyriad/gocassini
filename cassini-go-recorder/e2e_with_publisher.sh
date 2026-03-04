@@ -10,7 +10,7 @@ REC_DURATION="${REC_DURATION:-55}"
 PUB_DURATION="${PUB_DURATION:-24}"
 PUB_USERS="${PUB_USERS:-2}"
 START_DELAY="${START_DELAY:-6}"
-OUTPUT="${OUTPUT:-/tmp/gocassini-e2e.csr}"
+OUTPUT="${OUTPUT:-/tmp/gocassini-e2e.requested-output}"
 FINAL_OUTPUT="${FINAL_OUTPUT:-${OUTPUT%.csr}.mkv}"
 CHECK_COMPOSED_AUDIO_TAIL="${CHECK_COMPOSED_AUDIO_TAIL:-0}"
 NAME="${NAME:-GocassiniBot}"
@@ -86,28 +86,6 @@ sleep "$START_DELAY"
 ) >"$PUB_LOG" 2>&1 || true
 
 wait "$REC_PID" || true
-
-if [[ ! -f "$OUTPUT" ]]; then
-  echo "[FAIL] output not found: $OUTPUT"
-  echo "--- recorder log tail ---"
-  tail -n 120 "$REC_LOG" || true
-  exit 1
-fi
-
-SIZE="$(stat -c '%s' "$OUTPUT")"
-echo "output size bytes: $SIZE"
-if [[ "$SIZE" -le 14 ]]; then
-  echo "[FAIL] output contains header only (<=14 bytes)"
-  echo "--- recorder log tail ---"
-  tail -n 160 "$REC_LOG" || true
-  exit 1
-fi
-
-echo "--- archive summary ---"
-(
-  cd "$ROOT_DIR"
-  go run ./cmd/gocassini-inspect "$OUTPUT"
-)
 
 if [[ ! -f "$FINAL_OUTPUT" ]]; then
   echo "[FAIL] final mkv not found: $FINAL_OUTPUT"

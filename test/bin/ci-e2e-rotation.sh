@@ -9,7 +9,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 export PROJECT_NAME="${PROJECT_NAME:-gocassini-ci-rotation}"
 export SPREED_PROFILE="${SPREED_PROFILE:-full}"
-export NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://127.0.0.1:18080}"
+export NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://127.0.0.1:28080}"
 export NEXTCLOUD_STATUS_URL="${NEXTCLOUD_STATUS_URL:-$NEXTCLOUD_URL/status.php}"
 export SIGNALING_URL="${SIGNALING_URL:-}"
 
@@ -28,7 +28,7 @@ export CALL_NAME="${CALL_NAME:-CI Rotation room}"
 export CHECK_COMPOSED_AUDIO_TAIL="${CHECK_COMPOSED_AUDIO_TAIL:-1}"
 
 CI_OUTPUT_BASE="/tmp/gocassini-ci-rotation-$(date -u +%Y%m%dT%H%M%S)-$$"
-export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.csr}"
+export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.requested-output}"
 export FINAL_OUTPUT="${FINAL_OUTPUT:-$CI_OUTPUT_BASE.mkv}"
 export REC_LOG="${REC_LOG:-/tmp/gocassini-ci-rotation-recorder.log}"
 export PUB_LOG="${PUB_LOG:-/tmp/gocassini-ci-rotation-publisher.log}"

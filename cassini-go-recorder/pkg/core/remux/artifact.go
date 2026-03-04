@@ -204,6 +204,12 @@ func buildSegmentMKVs(
 			}
 			continue
 		}
+		if !probeHasUsableStream(segmentPath) {
+			if strictCodecs {
+				return nil, fmt.Errorf("compose stream %s mkv: unusable segment output", stream.StreamID)
+			}
+			continue
+		}
 
 		out = append(out, segmentArtifact{
 			Stream:   stream,
@@ -462,4 +468,25 @@ func probeMinStreamStartSeconds(path string) (float64, bool) {
 		return 0, false
 	}
 	return min, true
+}
+
+func probeHasUsableStream(path string) bool {
+	cmd := exec.Command(
+		"ffprobe",
+		"-v", "error",
+		"-show_entries", "stream=codec_type",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		path,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		switch strings.TrimSpace(strings.ToLower(line)) {
+		case "audio", "video":
+			return true
+		}
+	}
+	return false
 }

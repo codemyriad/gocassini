@@ -31,7 +31,7 @@ if ! compose ps --services --filter status=running | grep -Fxq signaling; then
 fi
 
 effective_signaling_url="${SIGNALING_URL:-}"
-if [[ -z "$effective_signaling_url" || "$effective_signaling_url" == "http://127.0.0.1:18082" ]]; then
+if [[ -z "$effective_signaling_url" || "$effective_signaling_url" == "http://127.0.0.1:18082" || "$effective_signaling_url" == "http://127.0.0.1:28082" ]]; then
   effective_signaling_url="$(default_signaling_url)"
 fi
 

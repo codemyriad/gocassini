@@ -4,12 +4,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 export PROJECT_NAME="${PROJECT_NAME:-gocassini-ci-mute}"
 export SPREED_PROFILE="${SPREED_PROFILE:-full}"
 export NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://127.0.0.1:28080}"
 export NEXTCLOUD_STATUS_URL="${NEXTCLOUD_STATUS_URL:-$NEXTCLOUD_URL/status.php}"
-export SIGNALING_URL="${SIGNALING_URL:-http://127.0.0.1:28082}"
+export SIGNALING_URL="${SIGNALING_URL:-}"
 
 export ADMIN_USER="${ADMIN_USER:-admin}"
 export ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
@@ -25,11 +26,11 @@ export PUB_USERS="${PUB_USERS:-3}"
 export CALL_NAME="${CALL_NAME:-CI Gocassini mute room}"
 
 CI_OUTPUT_BASE="/tmp/gocassini-ci-mute-$(date -u +%Y%m%dT%H%M%S)-$$"
-export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.csr}"
+export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.requested-output}"
 export FINAL_OUTPUT="${FINAL_OUTPUT:-$CI_OUTPUT_BASE.mkv}"
 export REC_LOG="${REC_LOG:-/tmp/gocassini-ci-recorder-mute.log}"
 export PUB_LOG="${PUB_LOG:-/tmp/gocassini-ci-publisher-mute.log}"
-export REPORT_JSON="${REPORT_JSON:-$OUTPUT.json}"
+export REPORT_JSON="${REPORT_JSON:-$FINAL_OUTPUT.json}"
 
 cleanup() {
   log "Cleaning up local test stack"
@@ -42,13 +43,13 @@ log "Starting local Nextcloud Talk stack for CI (mute rotation)"
 "$SCRIPT_DIR/up.sh"
 
 log "Creating temporary room for CI capture"
-CALL_URL="$("$SCRIPT_DIR/create-room.sh" --name "$CALL_NAME" | tail -n1)"
+CALL_URL="$(create_room_with_retry "$CALL_NAME")"
 log "Test room URL: $CALL_URL"
 export CALL_URL
 
 log "Running recorder + rotating publishers (mute coverage)"
 (
-  cd "$SCRIPT_DIR/../cassini-go-recorder"
+  cd "$REPO_ROOT/cassini-go-recorder"
   ./e2e_with_publisher.sh
 )
 ci_rc=$?
@@ -89,8 +90,12 @@ if (( AUDIO_COUNT < 3 )); then
   exit 1
 fi
 
-if [[ -f "$REPORT_JSON" ]]; then
-  SESSION_COUNT="$(python3 - "$REPORT_JSON" <<'PY'
+if [[ ! -f "$REPORT_JSON" ]]; then
+  log "Recorder report missing: $REPORT_JSON"
+  exit 1
+fi
+
+SESSION_COUNT="$(python3 - "$REPORT_JSON" <<'PY'
 import json
 import sys
 
@@ -98,15 +103,15 @@ data = json.load(open(sys.argv[1]))
 session_outputs = data.get("session_outputs", [])
 active = [
     s for s in session_outputs
-    if s.get("audio_exists") or s.get("video_exists") or s.get("h264_video_exists")
+    if int(s.get("audio_packets", 0)) > 0 or int(s.get("video_packets", 0)) > 0
 ]
 print(len(active))
 PY
 )"
-  if (( SESSION_COUNT < 3 )); then
-    log "Expected report to include at least 3 sessions, got ${SESSION_COUNT}"
-    exit 1
-  fi
+
+if (( SESSION_COUNT < 3 )); then
+  log "Expected report to include at least 3 sessions, got ${SESSION_COUNT}"
+  exit 1
 fi
 
 log "PASS: mute coverage scenario complete"
