@@ -111,8 +111,12 @@ print(len(active))
 PY
 )"
 
-if (( SESSION_COUNT < 3 )); then
-  log "Expected report to include at least 3 sessions, got ${SESSION_COUNT}"
+EXPECTED_SESSIONS="$PUB_USERS"
+if (( EXPECTED_SESSIONS < 1 )); then
+  EXPECTED_SESSIONS=1
+fi
+if (( SESSION_COUNT < EXPECTED_SESSIONS )); then
+  log "Expected report to include at least ${EXPECTED_SESSIONS} active sessions, got ${SESSION_COUNT}"
   exit 1
 fi
 
@@ -133,10 +137,9 @@ print(count)
 PY
 )"
 
-# Three rotating publishers should produce at least three active packet streams
-# in the session artifact even if final mux track count differs.
-if (( ARTIFACT_STREAM_COUNT < 3 )); then
-  log "Expected at least 3 active artifact streams for mute rotation, got ${ARTIFACT_STREAM_COUNT}"
+# Artifact stream floor should reflect how many publishers we intentionally launched.
+if (( ARTIFACT_STREAM_COUNT < EXPECTED_SESSIONS )); then
+  log "Expected at least ${EXPECTED_SESSIONS} active artifact streams for mute rotation, got ${ARTIFACT_STREAM_COUNT}"
   exit 1
 fi
 

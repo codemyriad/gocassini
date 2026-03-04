@@ -327,43 +327,59 @@ func (r *Recorder) hello(ctx context.Context) error {
 	}
 
 	backendURL := strings.TrimRight(r.baseURL, "/") + "/ocs/v2.php/apps/spreed/api/v3/signaling/backend"
-
+	authParamsByVersion := make(map[string]any, len(versions))
 	for _, version := range versions {
 		authRaw := helloAuth[version]
 		var authParams any
 		if err := json.Unmarshal(authRaw, &authParams); err != nil {
 			return fmt.Errorf("decode helloAuthParams[%s]: %w", version, err)
 		}
+		authParamsByVersion[version] = authParams
+	}
 
-		req := map[string]any{
-			"type": "hello",
-			"hello": map[string]any{
-				"version": version,
-				"auth": map[string]any{
-					"url":    backendURL,
-					"params": authParams,
+	const maxHelloRounds = 3
+	for round := 1; round <= maxHelloRounds; round++ {
+		for _, version := range versions {
+			req := map[string]any{
+				"type": "hello",
+				"hello": map[string]any{
+					"version": version,
+					"auth": map[string]any{
+						"url":    backendURL,
+						"params": authParamsByVersion[version],
+					},
+					"features": []any{"chat-relay"},
 				},
-				"features": []any{"chat-relay"},
-			},
+			}
+
+			resp, err := r.signaling.Request(ctx, req, 15*time.Second)
+			if err != nil {
+				log.Printf("hello version %s request failed (attempt %d/%d): %v", version, round, maxHelloRounds, err)
+				continue
+			}
+			if asString(resp["type"]) != "hello" {
+				log.Printf("hello version %s returned type=%s (attempt %d/%d)", version, asString(resp["type"]), round, maxHelloRounds)
+				continue
+			}
+
+			helloMap := asMap(resp["hello"])
+			r.signalingSessionID = asString(helloMap["sessionid"])
+			if r.signalingSessionID == "" {
+				return errors.New("hello response missing signaling sessionid")
+			}
+			log.Printf("hello ok (version %s)", version)
+			return nil
 		}
 
-		resp, err := r.signaling.Request(ctx, req, 15*time.Second)
-		if err != nil {
-			log.Printf("hello version %s request failed: %v", version, err)
-			continue
+		if round < maxHelloRounds {
+			backoff := time.Duration(round) * 500 * time.Millisecond
+			log.Printf("hello handshake not ready; retrying in %s (attempt %d/%d)", backoff, round+1, maxHelloRounds)
+			select {
+			case <-ctx.Done():
+				return context.Cause(ctx)
+			case <-time.After(backoff):
+			}
 		}
-		if asString(resp["type"]) != "hello" {
-			log.Printf("hello version %s returned type=%s", version, asString(resp["type"]))
-			continue
-		}
-
-		helloMap := asMap(resp["hello"])
-		r.signalingSessionID = asString(helloMap["sessionid"])
-		if r.signalingSessionID == "" {
-			return errors.New("hello response missing signaling sessionid")
-		}
-		log.Printf("hello ok (version %s)", version)
-		return nil
 	}
 
 	return errors.New("all signaling hello attempts failed")

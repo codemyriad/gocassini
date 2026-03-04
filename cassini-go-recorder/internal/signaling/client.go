@@ -25,6 +25,8 @@ type Client struct {
 
 	conn *websocket.Conn
 
+	writeMu sync.Mutex
+
 	events chan map[string]any
 	done   chan struct{}
 
@@ -82,6 +84,8 @@ func (c *Client) Close() error {
 	if c.conn == nil {
 		return nil
 	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	return c.conn.Close()
 }
 
@@ -89,7 +93,7 @@ func (c *Client) Send(payload map[string]any) error {
 	if c.conn == nil {
 		return errors.New("signaling websocket not connected")
 	}
-	return c.conn.WriteJSON(payload)
+	return c.writeJSON(payload)
 }
 
 func (c *Client) Request(ctx context.Context, payload map[string]any, timeout time.Duration) (map[string]any, error) {
@@ -110,7 +114,7 @@ func (c *Client) Request(ctx context.Context, payload map[string]any, timeout ti
 	c.pending[id] = respCh
 	c.mu.Unlock()
 
-	if err := c.conn.WriteJSON(req); err != nil {
+	if err := c.writeJSON(req); err != nil {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
@@ -215,6 +219,12 @@ func (c *Client) emitConnectionError(err error) {
 		"error": err.Error(),
 	}:
 	}
+}
+
+func (c *Client) writeJSON(payload any) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.conn.WriteJSON(payload)
 }
 
 func cloneMap(in map[string]any) map[string]any {
