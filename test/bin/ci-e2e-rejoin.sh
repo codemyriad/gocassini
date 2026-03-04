@@ -147,6 +147,12 @@ fi
   --final-output "$FINAL_OUTPUT" \
   --report "$REPORT_JSON"
 
+"$SCRIPT_DIR/verify-av-drift.sh" \
+  --input "$FINAL_OUTPUT" \
+  --report "$REPORT_JSON" \
+  --tolerance 0.80 \
+  --min-elapsed 5
+
 ARTIFACT_STREAM_COUNT="$(python3 - "$REPORT_JSON" <<'PY'
 import json
 import sys

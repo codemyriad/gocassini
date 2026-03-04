@@ -33,11 +33,12 @@ import (
 )
 
 const (
-	defaultRotateSeconds = 5.0
-	joinFlagsAudioVideo  = 1 | 2 | 4
-	joinFlagsVideoOnly   = 1 | 4
-	videoFrameDuration   = time.Second / 30
-	audioFrameDuration   = 20 * time.Millisecond
+	defaultRotateSeconds  = 5.0
+	defaultRoomEmptyGrace = 8 * time.Second
+	joinFlagsAudioVideo   = 1 | 2 | 4
+	joinFlagsVideoOnly    = 1 | 4
+	videoFrameDuration    = time.Second / 30
+	audioFrameDuration    = 20 * time.Millisecond
 )
 
 type stringList []string
@@ -507,6 +508,7 @@ type bot struct {
 	signaling *signalingClient
 
 	nextcloudSessionID string
+	stateMu            sync.RWMutex
 	signalingSessionID string
 
 	pc          *webrtc.PeerConnection
@@ -695,6 +697,18 @@ func (b *bot) isDone() bool {
 	}
 }
 
+func (b *bot) setSignalingSessionID(sessionID string) {
+	b.stateMu.Lock()
+	b.signalingSessionID = strings.TrimSpace(sessionID)
+	b.stateMu.Unlock()
+}
+
+func (b *bot) getSignalingSessionID() string {
+	b.stateMu.RLock()
+	defer b.stateMu.RUnlock()
+	return b.signalingSessionID
+}
+
 func (b *bot) isAudioReady() bool {
 	if b.cfg.AudioReady <= 0 {
 		return true
@@ -804,7 +818,7 @@ func (b *bot) hello(ctx context.Context) error {
 		if sessionID == "" {
 			return errors.New("hello response missing signaling sessionid")
 		}
-		b.signalingSessionID = sessionID
+		b.setSignalingSessionID(sessionID)
 		b.logf("hello ok (version %s)", version)
 		return nil
 	}
@@ -927,7 +941,7 @@ func (b *bot) startWebRTC(ctx context.Context) error {
 		return errors.New("local description is nil after offer")
 	}
 	if err := b.sendCallMessage(map[string]any{
-		"to":       b.signalingSessionID,
+		"to":       b.getSignalingSessionID(),
 		"sid":      b.callSID,
 		"roomType": "video",
 		"type":     "offer",
@@ -1149,7 +1163,7 @@ func (b *bot) handleCallData(ctx context.Context, data map[string]any) error {
 		}
 		to := asString(data["from"])
 		if to == "" {
-			to = b.signalingSessionID
+			to = b.getSignalingSessionID()
 		}
 		answerSID := sid
 		if answerSID == "" {
@@ -1518,7 +1532,7 @@ func (b *bot) isAudioMutedFlag() bool {
 
 func (b *bot) addAudienceSession(sessionID string) {
 	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" || sessionID == b.signalingSessionID {
+	if sessionID == "" || sessionID == b.getSignalingSessionID() {
 		return
 	}
 	b.audienceMu.Lock()
@@ -1547,9 +1561,24 @@ func (b *bot) audienceSnapshot() []string {
 	defer b.audienceMu.Unlock()
 	out := make([]string, 0, len(b.audience))
 	for sessionID := range b.audience {
-		if sessionID != "" && sessionID != b.signalingSessionID {
+		if sessionID != "" && sessionID != b.getSignalingSessionID() {
 			out = append(out, sessionID)
 		}
+	}
+	return out
+}
+
+func (b *bot) externalAudienceSessions(exclude map[string]struct{}) []string {
+	sessions := b.audienceSnapshot()
+	if len(sessions) == 0 || len(exclude) == 0 {
+		return sessions
+	}
+	out := sessions[:0]
+	for _, sessionID := range sessions {
+		if _, knownBot := exclude[sessionID]; knownBot {
+			continue
+		}
+		out = append(out, sessionID)
 	}
 	return out
 }
@@ -1699,6 +1728,73 @@ func allBotsDone(bots []*bot) bool {
 		}
 	}
 	return true
+}
+
+func knownBotSessions(bots []*bot) map[string]struct{} {
+	out := make(map[string]struct{}, len(bots))
+	for _, b := range bots {
+		if sid := strings.TrimSpace(b.getSignalingSessionID()); sid != "" {
+			out[sid] = struct{}{}
+		}
+	}
+	return out
+}
+
+func collectExternalAudienceSessions(bots []*bot) (map[string]struct{}, int) {
+	botSessions := knownBotSessions(bots)
+	external := map[string]struct{}{}
+	for _, b := range bots {
+		for _, sid := range b.externalAudienceSessions(botSessions) {
+			if sid == "" {
+				continue
+			}
+			external[sid] = struct{}{}
+		}
+	}
+	return external, len(botSessions)
+}
+
+func stopWhenAudienceGone(ctx context.Context, bots []*bot, grace time.Duration, cancel context.CancelFunc) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	seenExternal := false
+	var emptySince time.Time
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			external, knownBots := collectExternalAudienceSessions(bots)
+			if knownBots < len(bots) {
+				continue
+			}
+
+			externalCount := len(external)
+			if externalCount > 0 {
+				seenExternal = true
+				if !emptySince.IsZero() {
+					log.Printf("[manager] external participant activity resumed; room-empty auto-stop canceled")
+				}
+				emptySince = time.Time{}
+				continue
+			}
+			if !seenExternal {
+				continue
+			}
+			if emptySince.IsZero() {
+				emptySince = time.Now()
+				log.Printf("[manager] no external participants; stopping in %s unless someone rejoins", grace)
+				continue
+			}
+			if time.Since(emptySince) >= grace {
+				log.Printf("[manager] room stayed empty for %s; stopping all bots", grace)
+				cancel()
+				return
+			}
+		}
+	}
 }
 
 func buildICEServers(settings *signalingSettings) []webrtc.ICEServer {
@@ -2002,16 +2098,18 @@ func main() {
 
 func run() error {
 	var (
-		callURL       string
-		insecure      bool
-		videoFiles    stringList
-		audioFiles    stringList
-		names         stringList
-		joinDelaySecs floatList
-		audioReadySec floatList
-		syncShiftSec  floatList
-		durationSec   float64
-		rotateSeconds float64
+		callURL           string
+		insecure          bool
+		videoFiles        stringList
+		audioFiles        stringList
+		names             stringList
+		joinDelaySecs     floatList
+		audioReadySec     floatList
+		syncShiftSec      floatList
+		durationSec       float64
+		rotateSeconds     float64
+		stopWhenRoomEmpty bool
+		roomEmptyGraceSec float64
 	)
 
 	flag.StringVar(&callURL, "call-url", "", "Talk call URL")
@@ -2023,6 +2121,8 @@ func run() error {
 	flag.Var(&syncShiftSec, "sync-shift", "Per-bot media time shift in seconds (positive=forward, negative=backward, repeat up to video count)")
 	flag.Float64Var(&durationSec, "duration", 0, "Optional duration override in seconds for all bots")
 	flag.Float64Var(&rotateSeconds, "rotate-seconds", defaultRotateSeconds, "Audio rotation interval in seconds")
+	flag.BoolVar(&stopWhenRoomEmpty, "stop-when-room-empty", true, "Exit once all non-bot participants leave (after grace)")
+	flag.Float64Var(&roomEmptyGraceSec, "room-empty-grace-seconds", defaultRoomEmptyGrace.Seconds(), "Grace period before stopping after room empties")
 	flag.BoolVar(&insecure, "insecure", false, "Disable TLS verification")
 	flag.Parse()
 
@@ -2038,6 +2138,9 @@ func run() error {
 	}
 	if rotateSeconds <= 0 {
 		return errors.New("--rotate-seconds must be > 0")
+	}
+	if roomEmptyGraceSec < 0 {
+		return errors.New("--room-empty-grace-seconds must be >= 0")
 	}
 	if durationSec < 0 {
 		return errors.New("--duration must be >= 0")
@@ -2138,6 +2241,9 @@ func run() error {
 		)
 	}
 	log.Printf("[manager] rotating audible audio every %.2fs", rotateSeconds)
+	if stopWhenRoomEmpty {
+		log.Printf("[manager] auto-stop when room empty enabled (grace=%s)", time.Duration(roomEmptyGraceSec*float64(time.Second)))
+	}
 
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
@@ -2148,6 +2254,14 @@ func run() error {
 	bots := make([]*bot, 0, len(cfgs))
 	for _, cfg := range cfgs {
 		bots = append(bots, newBot(cfg))
+	}
+
+	if stopWhenRoomEmpty {
+		grace := time.Duration(roomEmptyGraceSec * float64(time.Second))
+		if grace <= 0 {
+			grace = defaultRoomEmptyGrace
+		}
+		go stopWhenAudienceGone(ctx, bots, grace, cancel)
 	}
 
 	rotateCtx, rotateCancel := context.WithCancel(ctx)

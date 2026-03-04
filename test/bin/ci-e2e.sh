@@ -26,11 +26,20 @@ export PUB_DURATION="${PUB_DURATION:-18}"
 export PUB_USERS="${PUB_USERS:-1}"
 export CALL_NAME="${CALL_NAME:-CI Gocassini room}"
 
+if (( REC_DURATION < 40 )); then
+  REC_DURATION=40
+fi
+if (( PUB_DURATION < 32 )); then
+  PUB_DURATION=32
+fi
+export REC_DURATION PUB_DURATION
+
 CI_OUTPUT_BASE="/tmp/gocassini-ci-$(date -u +%Y%m%dT%H%M%S)-$$"
 export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.csr}"
 export FINAL_OUTPUT="${FINAL_OUTPUT:-$CI_OUTPUT_BASE.mkv}"
 export REC_LOG="${REC_LOG:-/tmp/gocassini-ci-recorder.log}"
 export PUB_LOG="${PUB_LOG:-/tmp/gocassini-ci-publisher.log}"
+export REPORT_JSON="${REPORT_JSON:-$FINAL_OUTPUT.json}"
 
 cleanup() {
   log "Cleaning up local test stack"
@@ -52,5 +61,11 @@ log "Running recorder + publisher end-to-end"
   cd "$REPO_ROOT/cassini-go-recorder"
   ./e2e_with_publisher.sh
 )
+
+"$SCRIPT_DIR/verify-av-drift.sh" \
+  --input "$FINAL_OUTPUT" \
+  --report "$REPORT_JSON" \
+  --tolerance 0.80 \
+  --min-elapsed 5
 
 log "CI integration run complete"

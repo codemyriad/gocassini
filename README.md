@@ -31,6 +31,7 @@ go run ./cmd/gocassini \
 ```
 
 By default, talk mode now auto-terminates when all remote participants leave (with an 8s grace). Add `--duration <seconds>` only if you also want a hard cap.
+`Ctrl-C` is handled gracefully so cleanup/remux/report still run before exit.
 
 Terminal 2: start 3 bots streaming the three-song set
 
@@ -41,6 +42,7 @@ cd test
 ```
 
 If media is already prepared locally, add `--skip-prepare` to `stream-three-songs.sh`.
+By default, rotator bots auto-exit once all non-bot participants leave (8s grace). Disable with `--stop-when-room-empty=false`.
 
 ## Repository layout
 
@@ -80,6 +82,14 @@ cd /path/to/gocassini-repo-root
 ```
 
 This uses `test/compose.yml` and starts a local Nextcloud Talk stack, creates a room, runs publishers, and validates recorder outputs.
+
+To validate A/V drift on a produced recording + report:
+
+```bash
+./test/bin/verify-av-drift.sh \
+  --input /tmp/meeting.mkv \
+  --report /tmp/meeting.mkv.json
+```
 
 ### Render and inspect combined output
 
@@ -205,7 +215,11 @@ GitHub Actions runs:
 
 - unit tests for `cassini-go-recorder`
 - unit tests for `test/go-talk-rotator`
-- integration test against local Nextcloud harness using `./test/bin/ci-e2e.sh`
+- integration tests against local Nextcloud harness:
+  - `./test/bin/ci-e2e.sh`
+  - `./test/bin/ci-e2e-mute.sh`
+  - `./test/bin/ci-e2e-rejoin.sh`
+  - `./test/bin/ci-e2e-rotation.sh`
 
 ### Migration status
 

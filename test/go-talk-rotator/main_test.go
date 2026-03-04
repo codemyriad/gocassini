@@ -7,7 +7,7 @@ import (
 
 func TestHandleSignalingEventRoomAudience(t *testing.T) {
 	b := newBot(&botConfig{Index: 1})
-	b.signalingSessionID = "self-session"
+	b.setSignalingSessionID("self-session")
 
 	b.handleSignalingEvent(map[string]any{
 		"event": map[string]any{
@@ -34,7 +34,7 @@ func TestHandleSignalingEventRoomAudience(t *testing.T) {
 
 func TestHandleSignalingEventParticipantsAudience(t *testing.T) {
 	b := newBot(&botConfig{Index: 1})
-	b.signalingSessionID = "self-session"
+	b.setSignalingSessionID("self-session")
 	b.addAudienceSession("stale")
 
 	b.handleSignalingEvent(map[string]any{
@@ -72,6 +72,36 @@ func TestHandleSignalingEventParticipantsAudience(t *testing.T) {
 	got = b.audienceSnapshot()
 	if len(got) != 0 {
 		t.Fatalf("expected cleared audience on all/incall=0, got=%v", got)
+	}
+}
+
+func TestCollectExternalAudienceSessionsExcludesBotSessions(t *testing.T) {
+	b1 := newBot(&botConfig{Index: 1})
+	b2 := newBot(&botConfig{Index: 2})
+	b1.setSignalingSessionID("bot-session-1")
+	b2.setSignalingSessionID("bot-session-2")
+
+	b1.addAudienceSession("bot-session-2")
+	b1.addAudienceSession("viewer-a")
+	b2.addAudienceSession("bot-session-1")
+	b2.addAudienceSession("viewer-a")
+	b2.addAudienceSession("viewer-b")
+
+	external, knownBots := collectExternalAudienceSessions([]*bot{b1, b2})
+	if knownBots != 2 {
+		t.Fatalf("known bot session count mismatch: got=%d want=2", knownBots)
+	}
+	if len(external) != 2 {
+		t.Fatalf("external audience count mismatch: got=%d want=2", len(external))
+	}
+	if _, ok := external["viewer-a"]; !ok {
+		t.Fatalf("missing viewer-a in external audience: %+v", external)
+	}
+	if _, ok := external["viewer-b"]; !ok {
+		t.Fatalf("missing viewer-b in external audience: %+v", external)
+	}
+	if _, ok := external["bot-session-1"]; ok {
+		t.Fatalf("bot session should be filtered from external audience")
 	}
 }
 

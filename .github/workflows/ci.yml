@@ -57,7 +57,7 @@ jobs:
       - name: Install runtime tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg ripgrep
+          sudo apt-get install -y ffmpeg jq ripgrep
       - name: Run recorder integration test against local Nextcloud
         env:
           SPREED_PROFILE: full
