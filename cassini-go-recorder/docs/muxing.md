@@ -13,6 +13,10 @@
   to legacy per-session `.ivf/.ogg/.mkv` composition on remux failure
 - offline artifact remux is available via `cmd/gocassini-remux` and rebuilds a
   multitrack MKV from `streams/*.rtplog` (Opus + VP8/VP9/H264/AV1)
+- VP8/VP9 elementary generation now preserves RTP clock directly in IVF
+  (`timebase=1/clockRate`, frame PTS in RTP ticks) instead of deriving a
+  fixed-FPS timeline. This removes long-run video stretch that can make audio
+  lead over time.
 - merge planning now accepts corrected timeline starts (from SR-aware estimator)
   and applies bounded per-stream start adjustments before final `-itsoffset`
   mapping, reducing long-run sync skew without re-encoding
@@ -45,3 +49,14 @@ Recorder reports now include applied remux plans:
 - `artifact_remux.stream_plans[].timeline_adjust_ns`
 - `artifact_remux.stream_plans[].offset_seconds`
 - aggregate stats (`adjusted_streams`, `max_abs_adjust_ns`)
+
+Drift verification helper:
+
+```bash
+./test/bin/verify-av-drift.sh \
+  --input /tmp/meeting.mkv \
+  --report /tmp/meeting.mkv.json
+```
+
+This checks paired audio/video track elapsed timelines and fails when absolute
+A/V drift exceeds tolerance.

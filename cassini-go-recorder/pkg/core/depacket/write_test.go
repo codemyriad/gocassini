@@ -1,6 +1,8 @@
 package depacket
 
 import (
+	"encoding/binary"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -58,6 +60,39 @@ func TestWriteElementaryFromRTPLogVP8(t *testing.T) {
 	}
 	if info.Size() <= 32 {
 		t.Fatalf("output too small: size=%d", info.Size())
+	}
+}
+
+func TestWriteElementaryFromRTPLogVP8PreservesRTPClockPTS(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "video-pts.rtplog")
+	outPath := filepath.Join(tmp, "video-pts.ivf")
+	timestamps := []uint32{90_000, 93_000, 99_000, 117_000}
+	if err := writeSampleLogWithTimestamps(logPath, 96, sampleVP8Payload, timestamps); err != nil {
+		t.Fatalf("write sample log: %v", err)
+	}
+
+	if _, err := WriteElementaryFromRTPLog(logPath, "video/vp8", 90_000, outPath); err != nil {
+		t.Fatalf("write elementary: %v", err)
+	}
+
+	pts, timebaseNum, timebaseDen, err := readIVFFramePTS(outPath)
+	if err != nil {
+		t.Fatalf("read ivf pts: %v", err)
+	}
+	if len(pts) != len(timestamps) {
+		t.Fatalf("frame count mismatch: got=%d want=%d", len(pts), len(timestamps))
+	}
+	if timebaseNum != 1 || timebaseDen != 90_000 {
+		t.Fatalf("unexpected ivf timebase: got=%d/%d want=1/90000", timebaseNum, timebaseDen)
+	}
+
+	base := timestamps[0]
+	for i, got := range pts {
+		want := uint64(timestamps[i] - base)
+		if got != want {
+			t.Fatalf("frame %d pts mismatch: got=%d want=%d", i, got, want)
+		}
 	}
 }
 
@@ -120,6 +155,13 @@ func TestWriteElementaryFromRTPLogUnsupportedCodec(t *testing.T) {
 }
 
 func writeSampleLog(path string, payloadType uint8, payload func() []byte) error {
+	return writeSampleLogWithTimestamps(path, payloadType, payload, []uint32{1000, 2000})
+}
+
+func writeSampleLogWithTimestamps(path string, payloadType uint8, payload func() []byte, timestamps []uint32) error {
+	if len(timestamps) == 0 {
+		return nil
+	}
 	writer, err := store.NewWriter(path, store.StreamHeader{
 		StreamID:    "s_000001",
 		Codec:       "sample",
@@ -135,50 +177,79 @@ func writeSampleLog(path string, payloadType uint8, payload func() []byte) error
 		_ = writer.Close()
 	}()
 
-	packet1 := &rtp.Packet{
-		Header: rtp.Header{
-			Version:        2,
-			PayloadType:    payloadType,
-			SequenceNumber: 100,
-			Timestamp:      1000,
-			SSRC:           7777,
-			Marker:         true,
-		},
-		Payload: payload(),
-	}
-	packet2 := &rtp.Packet{
-		Header: rtp.Header{
-			Version:        2,
-			PayloadType:    payloadType,
-			SequenceNumber: 101,
-			Timestamp:      2000,
-			SSRC:           7777,
-			Marker:         true,
-		},
-		Payload: payload(),
-	}
-	wire1, err := packet1.Marshal()
-	if err != nil {
-		return err
-	}
-	wire2, err := packet2.Marshal()
-	if err != nil {
-		return err
-	}
-	if err := writer.Write(store.Record{RecvMonoNS: 2000, Kind: store.KindRTP, WireBytes: wire1}); err != nil {
-		return err
-	}
-	if err := writer.Write(store.Record{RecvMonoNS: 3000, Kind: store.KindRTP, WireBytes: wire2}); err != nil {
-		return err
+	recvNS := uint64(2000)
+	seq := uint16(100)
+	for _, ts := range timestamps {
+		packet := &rtp.Packet{
+			Header: rtp.Header{
+				Version:        2,
+				PayloadType:    payloadType,
+				SequenceNumber: seq,
+				Timestamp:      ts,
+				SSRC:           7777,
+				Marker:         true,
+			},
+			Payload: payload(),
+		}
+		seq++
+		wire, err := packet.Marshal()
+		if err != nil {
+			return err
+		}
+		if err := writer.Write(store.Record{RecvMonoNS: recvNS, Kind: store.KindRTP, WireBytes: wire}); err != nil {
+			return err
+		}
+		recvNS += 1000
 	}
 	if err := writer.Write(store.Record{
-		RecvMonoNS: 3500,
+		RecvMonoNS: recvNS + 500,
 		Kind:       store.KindRTCP,
 		WireBytes:  []byte{0x80, 0xc9, 0x00, 0x01},
 	}); err != nil {
 		return err
 	}
 	return writer.Close()
+}
+
+func readIVFFramePTS(path string) (pts []uint64, timebaseNum, timebaseDen uint32, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	defer func() {
+		_ = f.Close()
+	}()
+
+	header := make([]byte, 32)
+	if _, err := io.ReadFull(f, header); err != nil {
+		return nil, 0, 0, err
+	}
+	if string(header[0:4]) != "DKIF" {
+		return nil, 0, 0, io.ErrUnexpectedEOF
+	}
+	timebaseDen = binary.LittleEndian.Uint32(header[16:20])
+	timebaseNum = binary.LittleEndian.Uint32(header[20:24])
+
+	out := make([]uint64, 0, 16)
+	frameHeader := make([]byte, 12)
+	for {
+		if _, err := io.ReadFull(f, frameHeader); err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				break
+			}
+			return nil, 0, 0, err
+		}
+		size := binary.LittleEndian.Uint32(frameHeader[0:4])
+		out = append(out, binary.LittleEndian.Uint64(frameHeader[4:12]))
+		if size == 0 {
+			continue
+		}
+		if _, err := io.CopyN(io.Discard, f, int64(size)); err != nil {
+			return nil, 0, 0, err
+		}
+	}
+
+	return out, timebaseNum, timebaseDen, nil
 }
 
 func sampleOpusPayload() []byte {

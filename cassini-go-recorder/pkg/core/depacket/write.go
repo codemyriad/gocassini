@@ -94,13 +94,13 @@ func newRTPWriter(codec string, clockRate uint32, outputPath string) (rtpWriter,
 		}
 		return w, nil
 	case strings.Contains(lc, "vp8"):
-		w, err := ivfwriter.New(outputPath)
+		w, err := newIVFClockWriter(outputPath, "vp8", safeClockRate(clockRate, 90000))
 		if err != nil {
 			return nil, fmt.Errorf("create ivf writer: %w", err)
 		}
 		return w, nil
 	case strings.Contains(lc, "vp9"):
-		w, err := ivfwriter.New(outputPath, ivfwriter.WithCodec("video/VP9"))
+		w, err := newIVFClockWriter(outputPath, "vp9", safeClockRate(clockRate, 90000))
 		if err != nil {
 			return nil, fmt.Errorf("create vp9 ivf writer: %w", err)
 		}
@@ -120,4 +120,11 @@ func newRTPWriter(codec string, clockRate uint32, outputPath string) (rtpWriter,
 	default:
 		return nil, fmt.Errorf("unsupported codec for elementary write: %s", codec)
 	}
+}
+
+func safeClockRate(clockRate, fallback uint32) uint32 {
+	if clockRate == 0 {
+		return fallback
+	}
+	return clockRate
 }
