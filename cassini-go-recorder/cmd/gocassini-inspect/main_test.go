@@ -9,6 +9,7 @@ import (
 	"gocassini/pkg/core/store"
 
 	"github.com/pion/rtcp"
+	"github.com/pion/rtp"
 )
 
 func TestSummarizeSegmentChurn(t *testing.T) {
@@ -132,7 +133,7 @@ func TestInspectStreamLogCountsRTCPAndSRRate(t *testing.T) {
 		t.Fatalf("close writer: %v", err)
 	}
 
-	summary, err := inspectStreamLog(logPath)
+	summary, err := inspectStreamLog(logPath, 1, 90000)
 	if err != nil {
 		t.Fatalf("inspect stream: %v", err)
 	}
@@ -148,6 +149,81 @@ func TestInspectStreamLogCountsRTCPAndSRRate(t *testing.T) {
 	// 90000 RTP ticks across 1 second should estimate roughly 90 kHz.
 	if summary.srClockRateEstimate < 89000 || summary.srClockRateEstimate > 91000 {
 		t.Fatalf("unexpected sr clock rate estimate: %.2f", summary.srClockRateEstimate)
+	}
+}
+
+func TestInspectStreamLogTimelineDeltaStats(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "timeline.rtplog")
+	writer, err := store.NewWriter(logPath, store.StreamHeader{
+		StreamID:    "s_000010",
+		Codec:       "video/vp8",
+		ClockRate:   90000,
+		Direction:   "recvonly",
+		StartMonoNS: 1_000_000_000,
+		PT:          96,
+	})
+	if err != nil {
+		t.Fatalf("create writer: %v", err)
+	}
+
+	const ssrc = uint32(1234)
+	for sec := 0; sec <= 10; sec++ {
+		recv := uint64(1_000_000_000 + sec*1_000_000_000)
+		timestamp := uint32(sec * 90090)
+		packet := rtp.Packet{
+			Header: rtp.Header{
+				Version:        2,
+				PayloadType:    96,
+				SequenceNumber: uint16(100 + sec),
+				Timestamp:      timestamp,
+				SSRC:           ssrc,
+				Marker:         true,
+			},
+			Payload: []byte{0x10, 0x00, 0x00, 0x00, 0x9d, 0x01, 0x2a},
+		}
+		wire, err := packet.Marshal()
+		if err != nil {
+			t.Fatalf("marshal rtp packet: %v", err)
+		}
+		if err := writer.Write(store.Record{
+			RecvMonoNS: recv,
+			Kind:       store.KindRTP,
+			WireBytes:  wire,
+		}); err != nil {
+			t.Fatalf("write rtp: %v", err)
+		}
+		if sec%5 == 0 {
+			sr := &rtcp.SenderReport{SSRC: ssrc, RTPTime: timestamp}
+			raw, err := sr.Marshal()
+			if err != nil {
+				t.Fatalf("marshal sr: %v", err)
+			}
+			if err := writer.Write(store.Record{
+				RecvMonoNS: recv,
+				Kind:       store.KindRTCP,
+				WireBytes:  raw,
+			}); err != nil {
+				t.Fatalf("write sr: %v", err)
+			}
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	summary, err := inspectStreamLog(logPath, ssrc, 90000)
+	if err != nil {
+		t.Fatalf("inspect stream: %v", err)
+	}
+	if summary.timelineSamples == 0 {
+		t.Fatalf("expected timeline samples")
+	}
+	if summary.timelineMeanAbsDeltaMS <= 0 {
+		t.Fatalf("expected timeline mean abs delta to be positive")
+	}
+	if summary.timelineMaxAbsDeltaMS <= 0 {
+		t.Fatalf("expected timeline max abs delta to be positive")
 	}
 }
 

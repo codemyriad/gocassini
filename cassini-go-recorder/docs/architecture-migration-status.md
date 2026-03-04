@@ -19,6 +19,8 @@
 2. Deterministic inspection upgrades:
 - `gocassini-inspect` prints per-stream identity (`ssrc`, `pt`) and validation
   issue counts.
+- `gocassini-inspect` now reports per-stream RTP/RTCP timeline delta metrics
+  (`mean_abs`, `max_abs`, `last`) for faster drift triage.
 - `segment_churn` summary added per logical track (`segments`, `ssrc_changes`,
   `pt_changes`, `max_gap_ms`).
 - stream close reasons are aggregated from `events.ndjson`.

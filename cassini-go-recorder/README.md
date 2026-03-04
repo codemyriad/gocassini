@@ -100,6 +100,7 @@ cd test
 - Intermediate per-session files: `<output>-segments-*` unless cleanup is enabled
 - `gocassini-inspect` prints legacy archive summaries; session artifacts are written next to `.mkv` and available at `<final>/../sessions/<id>/`.
   For session artifacts it also prints per-stream validation issues, `segment_churn` (`ssrc_changes`, `pt_changes`, `max_gap_ms`), and stream close reasons.
+  It also reports timeline delta diagnostics (`mean_abs`, `max_abs`, `last`) derived from RTP/RTCP.
 - `gocassini-remux` can rebuild a multitrack MKV directly from session artifacts without using capture-time intermediate files.
 
 The project is designed so the primary interface remains the CLI and file artifacts.

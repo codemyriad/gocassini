@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,9 +14,11 @@ import (
 	"gocassini/internal/cassette"
 	"gocassini/pkg/core/session"
 	"gocassini/pkg/core/store"
+	"gocassini/pkg/core/timeline"
 	"gocassini/pkg/core/validate"
 
 	"github.com/pion/rtcp"
+	"github.com/pion/rtp"
 )
 
 type trackSummary struct {
@@ -188,7 +191,7 @@ func inspectSessionArtifact(sessionPath string) error {
 	inspected := make([]inspectedSessionStream, 0, len(sess.PacketStreams))
 	for _, stream := range sess.PacketStreams {
 		path := filepath.Join(streamsDir, stream.StreamID+".rtplog")
-		summary, err := inspectStreamLog(path)
+		summary, err := inspectStreamLog(path, stream.PrimarySSRC, stream.ClockRate)
 		if err != nil {
 			fmt.Printf("stream=%s error=%v\n", stream.StreamID, err)
 			continue
@@ -227,6 +230,15 @@ func inspectSessionArtifact(sessionPath string) error {
 		)
 		if summary.srClockRateEstimate > 0 {
 			fmt.Printf("  sr_clock_rate_est=%.2f\n", summary.srClockRateEstimate)
+		}
+		if summary.timelineSamples > 0 {
+			fmt.Printf(
+				"  timeline_delta_ms mean_abs=%.3f max_abs=%.3f last=%.3f samples=%d\n",
+				summary.timelineMeanAbsDeltaMS,
+				summary.timelineMaxAbsDeltaMS,
+				summary.timelineLastDeltaMS,
+				summary.timelineSamples,
+			)
 		}
 		if validationErr != nil {
 			fmt.Printf("  validation_error=%v\n", validationErr)
@@ -271,13 +283,17 @@ func inspectSessionArtifact(sessionPath string) error {
 }
 
 type streamSummary struct {
-	rtp                 int
-	rtcp                int
-	rtcpSR              int
-	rtcpRR              int
-	first               uint64
-	last                uint64
-	srClockRateEstimate float64
+	rtp                    int
+	rtcp                   int
+	rtcpSR                 int
+	rtcpRR                 int
+	first                  uint64
+	last                   uint64
+	srClockRateEstimate    float64
+	timelineSamples        int
+	timelineMeanAbsDeltaMS float64
+	timelineMaxAbsDeltaMS  float64
+	timelineLastDeltaMS    float64
 }
 
 func printSegmentChurn(streams []inspectedSessionStream, logicalByLTID map[string]session.LogicalTrack) {
@@ -361,7 +377,7 @@ func summarizeSegmentChurn(entries []inspectedSessionStream) segmentChurnSummary
 	return stats
 }
 
-func inspectStreamLog(path string) (streamSummary, error) {
+func inspectStreamLog(path string, primarySSRC uint32, clockRate uint32) (streamSummary, error) {
 	rdr, err := store.OpenReader(path)
 	if err != nil {
 		return streamSummary{}, err
@@ -376,6 +392,9 @@ func inspectStreamLog(path string) (streamSummary, error) {
 	srHaveLast := false
 	srRateSum := float64(0)
 	srRateSamples := 0
+	timelineAbsSumMS := float64(0)
+	estimator := timeline.NewSegmentEstimator()
+	lastRTPSSRC := primarySSRC
 	for {
 		rec, err := rdr.Next()
 		if err != nil {
@@ -387,8 +406,27 @@ func inspectStreamLog(path string) (streamSummary, error) {
 		switch rec.Kind {
 		case store.KindRTP:
 			summary.rtp++
+			var packet rtp.Packet
+			if err := packet.Unmarshal(rec.WireBytes); err != nil {
+				return streamSummary{}, err
+			}
+			lastRTPSSRC = packet.SSRC
+			estimator.ObserveRTP(packet.SSRC, rec.RecvMonoNS, packet.Timestamp, packet.Marker, false, clockRate)
+			if ptsNS, ok := estimator.PTS(packet.SSRC, packet.Timestamp); ok {
+				deltaMS := float64(int64(ptsNS)-int64(rec.RecvMonoNS)) / 1e6
+				summary.timelineLastDeltaMS = deltaMS
+				absDeltaMS := math.Abs(deltaMS)
+				if absDeltaMS > summary.timelineMaxAbsDeltaMS {
+					summary.timelineMaxAbsDeltaMS = absDeltaMS
+				}
+				timelineAbsSumMS += absDeltaMS
+				summary.timelineSamples++
+			}
 		case store.KindRTCP:
 			summary.rtcp++
+			if lastRTPSSRC != 0 {
+				estimator.ObserveRTCP(lastRTPSSRC, rec.RecvMonoNS, rec.WireBytes)
+			}
 			packets, parseErr := rtcp.Unmarshal(rec.WireBytes)
 			if parseErr == nil {
 				for _, packet := range packets {
@@ -425,6 +463,9 @@ func inspectStreamLog(path string) (streamSummary, error) {
 		if rec.RecvMonoNS > summary.last {
 			summary.last = rec.RecvMonoNS
 		}
+	}
+	if summary.timelineSamples > 0 {
+		summary.timelineMeanAbsDeltaMS = timelineAbsSumMS / float64(summary.timelineSamples)
 	}
 	if srRateSamples > 0 {
 		summary.srClockRateEstimate = srRateSum / float64(srRateSamples)

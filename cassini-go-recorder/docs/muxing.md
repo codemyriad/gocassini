@@ -24,6 +24,8 @@ that truth later, drift fixes become a replay problem instead of a lossy product
 
 `gocassini-inspect` now reports per-logical-track segment churn (`ssrc_changes`,
 `pt_changes`, and `max_gap_ms`) to make timeline seams explicit during triage.
+It also reports per-stream timeline delta metrics (`mean_abs`, `max_abs`, `last`)
+from RTP/RTCP timeline estimation so drift regressions are visible quickly.
 
 Artifact remux CLI:
 
