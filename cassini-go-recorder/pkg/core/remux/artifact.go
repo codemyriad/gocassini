@@ -298,9 +298,9 @@ func mergeSegments(
 		logical := logicalByLTID[item.LTID]
 		participantID := strings.TrimSpace(logical.ParticipantID)
 		participantName := strings.TrimSpace(participantDisplayByID[participantID])
-		title := fmt.Sprintf("%s %s", item.StreamID, kind)
+		title := item.StreamID
 		if participantName != "" {
-			title = fmt.Sprintf("%s %s", participantName, kind)
+			title = participantName
 		}
 		streamMetadata := []string{
 			"ltid=" + item.LTID,
