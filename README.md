@@ -8,6 +8,39 @@
 
 The repository is intentionally CLI-first and automation-friendly.
 
+## Get Up And Running
+
+Use two terminals from repo root.
+
+Set your call URL in each terminal (or source it from `.envrc`):
+
+```bash
+export CALL_URL="https://cloud.example.com/call/<ROOM_TOKEN>"
+```
+
+Terminal 1: start recorder
+
+```bash
+cd cassini-go-recorder
+go run ./cmd/gocassini \
+  --mode talk \
+  --call-url "$CALL_URL" \
+  --name "CassiniRecorder" \
+  --duration 180 \
+  --output /tmp/meeting.csr \
+  --final-output /tmp/meeting.mkv
+```
+
+Terminal 2: start 3 bots streaming the three-song set
+
+```bash
+cd test
+./bin/stream-three-songs.sh \
+  --call-url "$CALL_URL"
+```
+
+If media is already prepared locally, add `--skip-prepare` to `stream-three-songs.sh`.
+
 ## Repository layout
 
 - `cassini-go-recorder/`: recorder implementation and binaries.
