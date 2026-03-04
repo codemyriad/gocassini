@@ -18,10 +18,12 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -2141,7 +2143,10 @@ func run() error {
 	}
 	log.Printf("[manager] rotating audible audio every %.2fs", rotateSeconds)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
+	ctx, cancel := context.WithCancel(signalCtx)
 	defer cancel()
 
 	bots := make([]*bot, 0, len(cfgs))
