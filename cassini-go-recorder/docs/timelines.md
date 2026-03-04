@@ -29,6 +29,15 @@ This gives stable long-term drift characteristics because timestamps are anchore
 - corrections are bounded per SR update and PTS output is hard-clamped monotonic
 - explicit anchor-based cross-track A/V sync remains future work
 
+## Depacketization policy (implemented)
+
+- remux depacketization (`pkg/core/depacket`) now rewrites outgoing RTP packet
+  timestamps from `recvMonoNS` before writing Opus/VP8/VP9/H264 elementary data.
+- this makes receive-time the canonical clock for offline remux, so long receive
+  gaps (mute/silence or SFU suppression) are preserved instead of compressed.
+- practical effect: tracks no longer drift by multiple seconds when sender RTP
+  clocks stall, reset, or advance inconsistently during long sessions.
+
 ## Current behavior (implemented)
 
 - `SegmentEstimator` tracks per-SSRC state and unwraps RTP timestamps when needed.

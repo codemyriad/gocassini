@@ -3,6 +3,7 @@ package depacket
 import (
 	"encoding/binary"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -63,7 +64,7 @@ func TestWriteElementaryFromRTPLogVP8(t *testing.T) {
 	}
 }
 
-func TestWriteElementaryFromRTPLogVP8PreservesRTPClockPTS(t *testing.T) {
+func TestWriteElementaryFromRTPLogVP8UsesRecvTimelinePTS(t *testing.T) {
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "video-pts.rtplog")
 	outPath := filepath.Join(tmp, "video-pts.ivf")
@@ -87,12 +88,70 @@ func TestWriteElementaryFromRTPLogVP8PreservesRTPClockPTS(t *testing.T) {
 		t.Fatalf("unexpected ivf timebase: got=%d/%d want=1/90000", timebaseNum, timebaseDen)
 	}
 
-	base := timestamps[0]
+	stepTicks := uint64(math.Round(0.02 * 90_000))
 	for i, got := range pts {
-		want := uint64(timestamps[i] - base)
+		want := uint64(i) * stepTicks
 		if got != want {
 			t.Fatalf("frame %d pts mismatch: got=%d want=%d", i, got, want)
 		}
+	}
+}
+
+func TestWriteElementaryFromRTPLogVP8PreservesReceiveGaps(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "video-gap.rtplog")
+	outPath := filepath.Join(tmp, "video-gap.ivf")
+	timestamps := []uint32{90_000, 93_000, 96_000}
+	recvNS := []uint64{
+		2_000_000_000,
+		12_000_000_000,
+		22_000_000_000,
+	}
+	if err := writeSampleLogWithTimestampsAndRecv(logPath, 96, sampleVP8Payload, timestamps, recvNS); err != nil {
+		t.Fatalf("write sample log: %v", err)
+	}
+
+	if _, err := WriteElementaryFromRTPLog(logPath, "video/vp8", 90_000, outPath); err != nil {
+		t.Fatalf("write elementary: %v", err)
+	}
+	pts, _, _, err := readIVFFramePTS(outPath)
+	if err != nil {
+		t.Fatalf("read ivf frame pts: %v", err)
+	}
+	if len(pts) != 3 {
+		t.Fatalf("frame count mismatch: got=%d want=3", len(pts))
+	}
+	// Two 10s gaps at 90kHz should produce ~900,000 tick jumps each.
+	want := []uint64{0, 900_000, 1_800_000}
+	for idx := range want {
+		if pts[idx] != want[idx] {
+			t.Fatalf("frame %d pts mismatch: got=%d want=%d", idx, pts[idx], want[idx])
+		}
+	}
+}
+
+func TestRecvTimelineRewriteUsesReceiveClock(t *testing.T) {
+	var tl recvTimeline
+	const (
+		clockRate = uint32(48_000)
+		baseRecv  = uint64(1_000_000_000)
+	)
+
+	first := tl.rewrite(120, baseRecv, clockRate)
+	if first != 120 {
+		t.Fatalf("first timestamp changed: got=%d want=120", first)
+	}
+
+	// 20ms later -> +960 ticks at 48kHz.
+	second := tl.rewrite(121, baseRecv+20_000_000, clockRate)
+	if second != 1_080 {
+		t.Fatalf("second timestamp mismatch: got=%d want=1080", second)
+	}
+
+	// 10s later, even with a tiny RTP step, should preserve receive-time gap.
+	third := tl.rewrite(122, baseRecv+10_020_000_000, clockRate)
+	if third != 481_080 {
+		t.Fatalf("third timestamp mismatch: got=%d want=481080", third)
 	}
 }
 
@@ -154,6 +213,67 @@ func TestWriteElementaryFromRTPLogUnsupportedCodec(t *testing.T) {
 	}
 }
 
+func TestWriteElementaryFromRTPLogFirstRecvTracksRTPOnly(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "stream.rtplog")
+	outPath := filepath.Join(tmp, "stream.ogg")
+
+	writer, err := store.NewWriter(logPath, store.StreamHeader{
+		StreamID:    "s_000001",
+		Codec:       "audio/opus",
+		ClockRate:   48000,
+		Direction:   "recvonly",
+		StartMonoNS: 1_000,
+		PT:          111,
+	})
+	if err != nil {
+		t.Fatalf("new writer: %v", err)
+	}
+	if err := writer.Write(store.Record{
+		RecvMonoNS: 100,
+		Kind:       store.KindRTCP,
+		WireBytes:  []byte{0x80, 0xc9, 0x00, 0x01},
+	}); err != nil {
+		t.Fatalf("write rtcp: %v", err)
+	}
+	packet := &rtp.Packet{
+		Header: rtp.Header{
+			Version:        2,
+			PayloadType:    111,
+			SequenceNumber: 1,
+			Timestamp:      960,
+			SSRC:           7,
+			Marker:         true,
+		},
+		Payload: sampleOpusPayload(),
+	}
+	raw, err := packet.Marshal()
+	if err != nil {
+		t.Fatalf("marshal rtp: %v", err)
+	}
+	if err := writer.Write(store.Record{
+		RecvMonoNS: 200,
+		Kind:       store.KindRTP,
+		WireBytes:  raw,
+	}); err != nil {
+		t.Fatalf("write rtp: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	result, err := WriteElementaryFromRTPLog(logPath, "audio/opus", 48000, outPath)
+	if err != nil {
+		t.Fatalf("write elementary: %v", err)
+	}
+	if result.FirstRecvNS != 200 {
+		t.Fatalf("first recv mismatch: got=%d want=200", result.FirstRecvNS)
+	}
+	if result.LastRecvNS != 200 {
+		t.Fatalf("last recv mismatch: got=%d want=200", result.LastRecvNS)
+	}
+}
+
 func writeSampleLog(path string, payloadType uint8, payload func() []byte) error {
 	return writeSampleLogWithTimestamps(path, payloadType, payload, []uint32{1000, 2000})
 }
@@ -161,6 +281,28 @@ func writeSampleLog(path string, payloadType uint8, payload func() []byte) error
 func writeSampleLogWithTimestamps(path string, payloadType uint8, payload func() []byte, timestamps []uint32) error {
 	if len(timestamps) == 0 {
 		return nil
+	}
+	recvNS := make([]uint64, 0, len(timestamps))
+	next := uint64(2_000_000_000)
+	for range timestamps {
+		recvNS = append(recvNS, next)
+		next += 20_000_000
+	}
+	return writeSampleLogWithTimestampsAndRecv(path, payloadType, payload, timestamps, recvNS)
+}
+
+func writeSampleLogWithTimestampsAndRecv(
+	path string,
+	payloadType uint8,
+	payload func() []byte,
+	timestamps []uint32,
+	recvTimes []uint64,
+) error {
+	if len(timestamps) == 0 {
+		return nil
+	}
+	if len(recvTimes) != len(timestamps) {
+		return io.ErrShortBuffer
 	}
 	writer, err := store.NewWriter(path, store.StreamHeader{
 		StreamID:    "s_000001",
@@ -177,9 +319,8 @@ func writeSampleLogWithTimestamps(path string, payloadType uint8, payload func()
 		_ = writer.Close()
 	}()
 
-	recvNS := uint64(2000)
 	seq := uint16(100)
-	for _, ts := range timestamps {
+	for idx, ts := range timestamps {
 		packet := &rtp.Packet{
 			Header: rtp.Header{
 				Version:        2,
@@ -196,13 +337,12 @@ func writeSampleLogWithTimestamps(path string, payloadType uint8, payload func()
 		if err != nil {
 			return err
 		}
-		if err := writer.Write(store.Record{RecvMonoNS: recvNS, Kind: store.KindRTP, WireBytes: wire}); err != nil {
+		if err := writer.Write(store.Record{RecvMonoNS: recvTimes[idx], Kind: store.KindRTP, WireBytes: wire}); err != nil {
 			return err
 		}
-		recvNS += 1000
 	}
 	if err := writer.Write(store.Record{
-		RecvMonoNS: recvNS + 500,
+		RecvMonoNS: recvTimes[len(recvTimes)-1] + 500,
 		Kind:       store.KindRTCP,
 		WireBytes:  []byte{0x80, 0xc9, 0x00, 0x01},
 	}); err != nil {

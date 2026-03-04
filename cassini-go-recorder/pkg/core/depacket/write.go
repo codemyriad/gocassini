@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 
 	"gocassini/pkg/core/store"
@@ -44,6 +45,8 @@ func WriteElementaryFromRTPLog(logPath, codec string, clockRate uint32, outputPa
 	}()
 
 	var result WriteResult
+	var timeline recvTimeline
+	effectiveClockRate := effectiveClockRate(codec, clockRate)
 	for {
 		record, err := reader.Next()
 		if err != nil {
@@ -51,13 +54,6 @@ func WriteElementaryFromRTPLog(logPath, codec string, clockRate uint32, outputPa
 				break
 			}
 			return WriteResult{}, fmt.Errorf("read rtplog record: %w", err)
-		}
-
-		if result.FirstRecvNS == 0 || record.RecvMonoNS < result.FirstRecvNS {
-			result.FirstRecvNS = record.RecvMonoNS
-		}
-		if record.RecvMonoNS > result.LastRecvNS {
-			result.LastRecvNS = record.RecvMonoNS
 		}
 
 		switch record.Kind {
@@ -68,8 +64,15 @@ func WriteElementaryFromRTPLog(logPath, codec string, clockRate uint32, outputPa
 			if err := packet.Unmarshal(record.WireBytes); err != nil {
 				return WriteResult{}, fmt.Errorf("unmarshal rtp packet: %w", err)
 			}
+			packet.Timestamp = timeline.rewrite(packet.Timestamp, record.RecvMonoNS, effectiveClockRate)
 			if err := w.WriteRTP(&packet); err != nil {
 				return WriteResult{}, fmt.Errorf("write rtp packet: %w", err)
+			}
+			if result.FirstRecvNS == 0 || record.RecvMonoNS < result.FirstRecvNS {
+				result.FirstRecvNS = record.RecvMonoNS
+			}
+			if record.RecvMonoNS > result.LastRecvNS {
+				result.LastRecvNS = record.RecvMonoNS
 			}
 			result.RTPPackets++
 		}
@@ -122,9 +125,67 @@ func newRTPWriter(codec string, clockRate uint32, outputPath string) (rtpWriter,
 	}
 }
 
+func effectiveClockRate(codec string, clockRate uint32) uint32 {
+	if clockRate > 0 {
+		return clockRate
+	}
+	lc := strings.ToLower(strings.TrimSpace(codec))
+	switch {
+	case strings.Contains(lc, "opus"):
+		return 48000
+	case strings.Contains(lc, "vp8"), strings.Contains(lc, "vp9"), strings.Contains(lc, "h264"), strings.Contains(lc, "av1"):
+		return 90000
+	default:
+		return 90000
+	}
+}
+
 func safeClockRate(clockRate, fallback uint32) uint32 {
 	if clockRate == 0 {
 		return fallback
 	}
 	return clockRate
+}
+
+type recvTimeline struct {
+	initialized bool
+	baseRecvNS  uint64
+	baseTS      uint32
+	lastTS      int64
+}
+
+func (t *recvTimeline) rewrite(originalTS uint32, recvNS uint64, clockRate uint32) uint32 {
+	if !t.initialized {
+		t.initialized = true
+		t.baseRecvNS = recvNS
+		t.baseTS = originalTS
+		t.lastTS = int64(originalTS)
+		return originalTS
+	}
+
+	if recvNS < t.baseRecvNS {
+		recvNS = t.baseRecvNS
+	}
+	deltaSeconds := float64(recvNS-t.baseRecvNS) / 1e9
+	recvTicks := uint64(math.Round(deltaSeconds * float64(clockRate)))
+	candidate := uint32(uint64(t.baseTS) + recvTicks)
+	unwrapped := unwrap32(t.lastTS, candidate)
+	if unwrapped < t.lastTS {
+		unwrapped = t.lastTS
+		candidate = uint32(unwrapped)
+	}
+	t.lastTS = unwrapped
+	return candidate
+}
+
+func unwrap32(last int64, raw uint32) int64 {
+	raw64 := int64(raw)
+	delta := raw64 - (last & 0xffffffff)
+	for delta > (1 << 31) {
+		delta -= 1 << 32
+	}
+	for delta < -(1 << 31) {
+		delta += 1 << 32
+	}
+	return last + delta
 }
