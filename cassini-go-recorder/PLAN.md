@@ -1,59 +1,152 @@
-# Cassini Go Recorder - Implementation Plan
+# Cassini Go Recorder - Sync Recovery Plan
 
-Date: 2026-03-02
+Date: 2026-03-04
 
-## Phase 0 (Done in this iteration)
+## Status Update (2026-03-05)
 
-- Architecture choices documented.
-- Single-file packet archive format implemented (`.csr`, Cassini Stream Recording v1).
-- Archive writer/reader + roundtrip test added.
-- Pion track capture boundary added (`CaptureTrack`).
-- Deterministic `simulate` mode added for local verification without live infrastructure.
-- OCS bootstrap (`talk` mode): room check, participants/active, guest naming, signaling settings fetch, call join.
+- Composition ownership remains in `test/bin/compose-rs` (Rust + GStreamer).
+- Deterministic synthetic gate exists (`test/bin/ci-sync-composition.sh`) and currently passes.
+- A real bug was reproduced and fixed in the compositor graph:
+- symptom: pipeline stalls/hangs when one video track ends before others.
+- cause: per-branch `videorate` before `compositor` blocks sparse/ended pads.
+- fix: remove branch-level `videorate`/per-branch framerate forcing; keep framerate normalization only after compositor.
+- This bug class is now documented as a known composition-stage failure mode.
+- Remaining open issue: real meeting composition can still show inter-track skew even when multitrack MKV appears correct.
+- Current verifier coverage is strong for deterministic markers, but not yet sufficient to prove sparse join/leave/rejoin timing preservation in all real captures.
 
-## Phase 1 (Completed)
+### Sparse-track Reproducer (kept for handoff)
 
-- Ported standalone signaling websocket client with request/response correlation.
-- Added one subscriber `PeerConnection` per remote signaling session.
-- Implemented `requestoffer` retry/backoff + explicit `endOfCandidates` logic.
-- Wired remote tracks to `CaptureTrack` goroutines and single-file `.csr` archive output.
-- Added live validation against a real cloud call URL (1-user and 2-user publisher scenarios).
-- Added repeatable Go e2e harness (`e2e_with_publisher.sh`) and archive inspector CLI (`gocassini-inspect`).
+1. Build a two-track sparse MKV where one video track ends early.
+2. Compose with `test/bin/compose-recording.sh --preview`.
+3. Before the fix, render hangs around the short track end time.
+4. After removing branch `videorate`, the same repro completes.
 
-## Phase 2 (Completed)
+## Current Assessment
 
-- Added intermediate per-session files (`.ogg`/`.ivf` and per-session `.mkv`).
-- Added final single multi-track MKV composition with session start offsets.
-- Default behavior keeps intermediate files for forensic inspection in unique non-hidden temp dirs (`--cleanup-intermediate` opt-in).
-- Added JSON sidecar recording report (`<final>.json`) with output state, packet counters, and per-session artifact stats.
-- Added repeatable Go publisher integration harness (`e2e_with_publisher.sh`) for live validation.
+- Current pipeline appears correct through multitrack MKV output.
+- The composition stage is where sync gets scrambled.
+- Strong signal: manual VLC track switching on the multitrack file appears in sync.
+- Main risks observed:
+- wrong participant pairing (audio/video) when relying on stream order.
+- timing rebuilt from weak metadata (`ffprobe start_time`) instead of artifact truth.
+- hardware-path differences masking timeline bugs.
 
-## Phase 3
+## Decision
 
-- Add recovery behavior for abrupt disconnects and partial recordings.
-- Extend e2e harness with pass/fail assertions on expected track counts and minimum packet counts.
-- Enrich participant identity mapping beyond session-derived placeholders.
+- `session.json + streams/*.rtplog` is source of truth.
+- Artifact remux multitrack MKV is the sync reference.
+- Composition must consume artifact mapping/offsets, not infer timing.
 
-## Phase 4
+## Target State
 
-- Improve composed MKV metadata and deterministic track labeling.
-- Second derivative target: optional composed grid MP4.
+1. Deterministic local Talk test orchestration.
+2. Recorder captures truth and stable track identity.
+3. Remux produces multitrack MKV with validated sync.
+4. Composition preserves sync from multitrack/session artifact.
+5. Automated verifier gates both multitrack and composed outputs.
 
-## Architecture Migration Path (2026-03 onward)
+## Work Plan
 
-- add `pkg/core/session` as the index model for session-wide truth
-- add `pkg/core/store` as the canonical stream log schema (`.rtplog` + optional `.idx`)
-- add `pkg/core/timeline` estimator (recv-time canonical + bounded SR correction) and `pkg/core/mux` remux interface
-- add `pkg/core/validate` invariants for deterministic drift triage (`recvMonoNS` monotonicity + payload-type consistency)
-- add `pkg/core/depacket` + `pkg/core/remux` and `cmd/gocassini-remux` for offline artifact-based MKV reconstruction
-- keep current `.csr` flow unchanged while adding compatibility tooling so we can compare outputs side-by-side
-- next phase: move capture writes from `internal/cassette` into `pkg/core/store` and switch `cmd/gocassini-inspect` + remux to consume the new schema
+### Phase 1 - Local Talk Orchestration First
 
-## Go/No-Go Criteria
+- Add one entrypoint script to run a full local sync test lifecycle:
+- create or reuse local Nextcloud Talk room.
+- start deterministic publishers/bots.
+- start recorder.
+- stop all processes deterministically and collect artifacts.
+- integrate with existing tooling (`e2e_with_publisher.sh`, `test/bin/create-room.sh`, `test/bin/stream-video.sh`).
+- produce a single run folder with:
+- recorder logs.
+- publisher schedule manifest.
+- session artifact path.
+- multitrack output path.
+- composed output path.
 
-Proceed with full migration only if:
-- live capture is stable under join/leave churn;
-- no-transcode archive remains parseable/replayable across test calls;
-- offline composition yields acceptable sync in start/middle/end checks.
+Exit criteria:
+- one command runs local end-to-end and always produces inspectable artifacts.
 
-If not met, keep Go recorder in experimental mode and continue iterations before production promotion.
+### Phase 2 - Deterministic Signal Design (Audio + Video)
+
+- Use known, machine-detectable signals per participant.
+- Audio signal requirements:
+- unique frequency per participant, but not pure continuous sine only.
+- scheduled short chirps/beeps with known timestamps.
+- optional speech-like envelope/noise bursts to resemble real codec behavior.
+- Video signal requirements:
+- unique base color per participant, but not flat static frame only.
+- moving marker + frame counter + wallclock/mono timestamp overlay.
+- periodic visual event aligned with audio chirp schedule.
+- Persist full schedule manifest (`signals.json`) for verifier ground truth.
+
+Exit criteria:
+- signal generator can produce deterministic runs and manifest reproducibly.
+
+### Phase 3 - Sync Verifier for MKV and Composition
+
+- Add `cmd/gocassini-verify-sync`:
+- input: `session.json`, optional `signals.json`, multitrack MKV, composed output.
+- checks on multitrack:
+- participant mapping consistency (ltid <-> audio/video).
+- monotonic PTS per track.
+- audio chirp detections vs expected schedule per participant.
+- video marker detections vs expected schedule per participant.
+- checks on composed output:
+- no participant schedule collapse (no "everyone starts together" failure class).
+- bounded per-participant A/V skew.
+- bounded inter-participant skew relative to schedule.
+- emit machine-readable report JSON + non-zero exit on threshold failure.
+
+Exit criteria:
+- verifier fails on injected skew fixtures and passes on known-good fixtures.
+
+### Phase 4 - Composer Rewrite to Artifact-Driven Sync
+
+- Remove composition-time participant pairing heuristics.
+- Pair tracks using `session.json` logical track IDs / participant IDs.
+- Use remux stream plans for offsets/timeline.
+- Keep hardware acceleration as execution optimization only.
+- if VAAPI decode unsupported: software decode + VAAPI encode fallback.
+- identical timeline math across hardware/software code paths.
+
+Exit criteria:
+- same sync metrics for multitrack and composed outputs in verifier report.
+
+### Phase 5 - CI/Local Gate
+
+- Gate success on verifier for both artifacts:
+- multitrack MKV must pass.
+- composed output must pass.
+- add one regression fixture for the current bug class:
+- out-of-order speech / all-audio-at-once collapse.
+
+Exit criteria:
+- PASS/FAIL is automated; manual VLC inspection becomes optional.
+
+## Critique of the Proposed Signal Idea
+
+- Good direction overall: known audio/video patterns are exactly what we need.
+- Not sufficient if done as only pure sine + only flat color:
+- continuous pure sine is too forgiving and can hide packet-loss/reorder behavior.
+- static single-color video can hide frame timing/path issues.
+- stronger variant (recommended):
+- chirp schedule + unique frequencies + speech-like modulation.
+- color identity + moving marker + frame/time overlay.
+
+## Tests To Add (Red/Green Priority)
+
+1. `pkg/core/remux`: participant mapping tests where stream order differs from participant order.
+2. `pkg/core/remux`: churn/SSRC/PT change fixtures with monotonic and bounded-skew assertions.
+3. Composer unit tests: artifact-driven mapping independent from ffprobe order.
+4. Verifier tests: chirp and visual marker detection against `signals.json`.
+5. End-to-end local test: Talk + bots -> record -> remux -> compose -> verify.
+
+## What Is No Longer Considered “Done”
+
+- Composition sync is not considered complete without verifier pass.
+- Manual playback checks are supporting evidence only, not pass criteria.
+
+## Immediate Next Slice
+
+1. Implement Phase 1 orchestration command and artifact bundle output.
+2. Implement deterministic signal generator + `signals.json` manifest.
+3. Implement first verifier checks on multitrack MKV (before composition).

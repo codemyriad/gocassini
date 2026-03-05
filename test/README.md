@@ -204,6 +204,7 @@ The repository runs three local integration scripts in GitHub Actions:
 - `./test/bin/ci-e2e-mute.sh` (mute-aware 3 publisher flow)
 - `./test/bin/ci-e2e-rejoin.sh` (leave/rejoin flow with two publisher phases)
 - `./test/bin/ci-e2e-rotation.sh` (3 rotating publishers with composed tail-audio checks)
+- `./test/bin/ci-sync-composition.sh` (deterministic synthetic sync gate for multitrack -> composed output)
 
 Scenario assertions are intentionally artifact-centric:
 
@@ -218,6 +219,12 @@ Scenario assertions are intentionally artifact-centric:
   low-res preview rendering (`640x360@6fps`) to keep turnaround fast during sync checks.
 - The compositor uses bounded queues and process RSS guards to reduce memory-pressure
   risk on long sparse-track meetings.
+- Known composition-stage failure mode (now fixed in `compose-rs`): branch-level
+  `videorate` before `compositor` can stall when one participant video ends early.
+  Framerate normalization is now applied only after the compositor stage.
+- Remaining open problem: real-meeting composition can still show inter-track skew
+  even when deterministic marker fixtures pass; treat marker checks as necessary but
+  not sufficient until sparse join/leave/rejoin fixtures are added to the gate.
 
 All scenarios use the local Compose stack in this repository:
 

@@ -501,12 +501,10 @@ fn build_gst_compose_command(
 
     // Main graph queues are bounded to cap RAM under stalled downstream states.
     let queue_kv = "max-size-time=1000000000 max-size-bytes=4194304 max-size-buffers=64";
-    // Video branch queues are leaky to avoid compositor deadlocks on sparse/late tracks.
-    // We intentionally prefer frame dropping over unbounded buffering/hangs.
-    let video_branch_queue_kv = "leaky=downstream max-size-buffers=8 max-size-time=0 max-size-bytes=0";
-    // Audio queues are kept non-leaky and time-bounded large enough for late joins,
-    // so speech content is preserved while still preventing unbounded RAM growth.
-    let audio_branch_queue_kv = "max-size-time=400000000000 max-size-bytes=0 max-size-buffers=0";
+    // Branch queues sit before decode (compressed domain). Keep them bounded to cap
+    // memory use on sparse-track meetings while preserving timestamp order.
+    let video_branch_queue_kv = "max-size-time=5000000000 max-size-bytes=16777216 max-size-buffers=256";
+    let audio_branch_queue_kv = "max-size-time=5000000000 max-size-bytes=8388608 max-size-buffers=256";
 
     cmd.arg("filesrc")
         .arg(format!("location={}", input.to_string_lossy()))
@@ -641,11 +639,9 @@ fn build_gst_compose_command(
             .arg("!")
             .arg("videoscale")
             .arg("!")
-            .arg("videorate")
-            .arg("!")
             .arg(format!(
-                "video/x-raw,width={},height={},framerate={}/1",
-                layout.tile_w, layout.tile_h, settings.fps
+                "video/x-raw,width={},height={}",
+                layout.tile_w, layout.tile_h
             ))
             .arg("!")
             .arg(format!("comp.sink_{}", branch_idx));
@@ -902,6 +898,9 @@ mod tests {
         assert!(rendered.contains("demux.video_1"));
         assert!(rendered.contains("demux.audio_0"));
         assert!(!rendered.contains("uridecodebin"));
+        assert!(!rendered.contains("ts-offset="));
+        assert!(rendered.contains("compositor name=comp background=black ignore-inactive-pads=true"));
+        assert!(rendered.contains("audiomixer name=amix ignore-inactive-pads=true"));
         Ok(())
     }
 }
