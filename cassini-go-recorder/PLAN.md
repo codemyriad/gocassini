@@ -11,8 +11,12 @@ Date: 2026-03-04
 - cause: per-branch `videorate` before `compositor` blocks sparse/ended pads.
 - fix: remove branch-level `videorate`/per-branch framerate forcing; keep framerate normalization only after compositor.
 - This bug class is now documented as a known composition-stage failure mode.
-- Remaining open issue: real meeting composition can still show inter-track skew even when multitrack MKV appears correct.
-- Current verifier coverage is strong for deterministic markers, but not yet sufficient to prove sparse join/leave/rejoin timing preservation in all real captures.
+- Inter-track audio skew in composition was addressed by splitting composition into:
+- video-only GStreamer compose (VAAPI encode),
+- FFmpeg `amix` audio mix + final mux.
+- On the `daily-meeting--2026-03-04--12:36:53` fixture this now yields:
+- `global_lag_sec=0.0`, `drift_sec=0.0`, `global_corr=0.976699` (`verify-composed-sync.py`).
+- Remaining gap: broaden automated fixtures for join/leave/rejoin stress cases in CI.
 
 ### Sparse-track Reproducer (kept for handoff)
 

@@ -222,9 +222,10 @@ Scenario assertions are intentionally artifact-centric:
 - Known composition-stage failure mode (now fixed in `compose-rs`): branch-level
   `videorate` before `compositor` can stall when one participant video ends early.
   Framerate normalization is now applied only after the compositor stage.
-- Remaining open problem: real-meeting composition can still show inter-track skew
-  even when deterministic marker fixtures pass; treat marker checks as necessary but
-  not sufficient until sparse join/leave/rejoin fixtures are added to the gate.
+- Audio sync path now uses FFmpeg `amix` in a post-compose mux step:
+  GStreamer renders video-only (VAAPI), then FFmpeg mixes all source audio tracks
+  and muxes audio+video. This removed the observed inter-track audio skew on the
+  `daily-meeting--2026-03-04--12:36:53` fixture.
 
 All scenarios use the local Compose stack in this repository:
 

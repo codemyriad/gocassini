@@ -94,13 +94,6 @@ enum VideoEncoder {
     X264,
 }
 
-#[derive(Clone, Copy, Debug)]
-enum AudioEncoder {
-    Fdkaac,
-    Voaac,
-    AvencAac,
-}
-
 #[derive(Clone, Debug)]
 struct Settings {
     fps: u32,
@@ -214,9 +207,8 @@ fn main() -> Result<()> {
     };
 
     let video_encoder = choose_video_encoder(&args)?;
-    let audio_encoder = choose_audio_encoder(&args)?;
     eprintln!(
-        "compose-rs: input={} output={} tracks(video={},audio={}) settings={}x{}@{} video_enc={:?} audio_enc={:?}",
+        "compose-rs: input={} output={} tracks(video={},audio={}) settings={}x{}@{} video_enc={:?}",
         input_for_compose.display(),
         output.display(),
         selection.active_video.len(),
@@ -224,25 +216,47 @@ fn main() -> Result<()> {
         settings.width,
         settings.height,
         settings.fps,
-        video_encoder,
-        audio_encoder
+        video_encoder
     );
 
-    compose_with_gstreamer(
+    let has_audio = !selection.active_audio.is_empty();
+    let mut maybe_mux_dir: Option<TempDir> = None;
+    let gst_output = if has_audio {
+        let mux_dir = tempfile::Builder::new()
+            .prefix("compose-rs.mux.")
+            .tempdir()
+            .context("create mux tempdir")?;
+        let path = mux_dir.path().join("video_only.mp4");
+        maybe_mux_dir = Some(mux_dir);
+        path
+    } else {
+        output.clone()
+    };
+
+    compose_video_with_gstreamer(
         &args,
         &input_for_compose,
-        &output,
+        &gst_output,
         &selection.active_video,
-        &selection.active_audio,
         &layout,
         &settings,
         video_bitrate_kbps,
         video_encoder,
-        audio_encoder,
         &stop,
     )?;
+    if has_audio {
+        mux_audio_with_ffmpeg(
+            &args,
+            &gst_output,
+            &input_for_compose,
+            &output,
+            &selection.active_audio,
+            &stop,
+        )?;
+    }
 
     drop(maybe_trim_dir);
+    drop(maybe_mux_dir);
     eprintln!("compose-rs: done -> {}", output.display());
     Ok(())
 }
@@ -385,19 +399,6 @@ fn choose_video_encoder(args: &Args) -> Result<VideoEncoder> {
     Ok(VideoEncoder::X264)
 }
 
-fn choose_audio_encoder(args: &Args) -> Result<AudioEncoder> {
-    if has_gst_element(&args.gst_inspect, "fdkaacenc")? {
-        return Ok(AudioEncoder::Fdkaac);
-    }
-    if has_gst_element(&args.gst_inspect, "voaacenc")? {
-        return Ok(AudioEncoder::Voaac);
-    }
-    if has_gst_element(&args.gst_inspect, "avenc_aac")? {
-        return Ok(AudioEncoder::AvencAac);
-    }
-    bail!("no AAC encoder available (fdkaacenc/voaacenc/avenc_aac not found)")
-}
-
 fn has_gst_element(gst_inspect: &str, element: &str) -> Result<bool> {
     let status = Command::new(gst_inspect)
         .arg(element)
@@ -445,17 +446,15 @@ fn trim_input_with_ffmpeg(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn compose_with_gstreamer(
+fn compose_video_with_gstreamer(
     args: &Args,
     input: &Path,
     output: &Path,
     video_streams: &[StreamLane],
-    audio_streams: &[StreamLane],
     layout: &Layout,
     settings: &Settings,
     video_bitrate_kbps: u32,
     video_encoder: VideoEncoder,
-    audio_encoder: AudioEncoder,
     stop: &Arc<AtomicBool>,
 ) -> Result<()> {
     let mut cmd = build_gst_compose_command(
@@ -463,12 +462,10 @@ fn compose_with_gstreamer(
         input,
         output,
         video_streams,
-        audio_streams,
         layout,
         settings,
         video_bitrate_kbps,
         video_encoder,
-        audio_encoder,
     )?;
 
     run_guarded(
@@ -486,12 +483,10 @@ fn build_gst_compose_command(
     input: &Path,
     output: &Path,
     video_streams: &[StreamLane],
-    audio_streams: &[StreamLane],
     layout: &Layout,
     settings: &Settings,
     video_bitrate_kbps: u32,
     video_encoder: VideoEncoder,
-    audio_encoder: AudioEncoder,
 ) -> Result<Command> {
     let mut cmd = Command::new(&args.gst_launch);
     cmd.arg("-e");
@@ -504,7 +499,6 @@ fn build_gst_compose_command(
     // Branch queues sit before decode (compressed domain). Keep them bounded to cap
     // memory use on sparse-track meetings while preserving timestamp order.
     let video_branch_queue_kv = "max-size-time=5000000000 max-size-bytes=16777216 max-size-buffers=256";
-    let audio_branch_queue_kv = "max-size-time=5000000000 max-size-bytes=8388608 max-size-buffers=256";
 
     cmd.arg("filesrc")
         .arg(format!("location={}", input.to_string_lossy()))
@@ -571,43 +565,6 @@ fn build_gst_compose_command(
         .arg("!")
         .arg("mux.");
 
-    if !audio_streams.is_empty() {
-        cmd.arg("audiomixer")
-            .arg("name=amix")
-            .arg("ignore-inactive-pads=true")
-            .arg("!")
-            .arg("queue")
-            .args(queue_kv.split_whitespace())
-            .arg("!")
-            .arg("audioconvert")
-            .arg("!")
-            .arg("audioresample")
-            .arg("!")
-            .arg("audio/x-raw,rate=48000,channels=2")
-            .arg("!");
-
-        match audio_encoder {
-            AudioEncoder::Fdkaac => {
-                cmd.arg("fdkaacenc")
-                    .arg(format!("bitrate={}", args.audio_bitrate_kbps * 1000));
-            }
-            AudioEncoder::Voaac => {
-                cmd.arg("voaacenc")
-                    .arg(format!("bitrate={}", args.audio_bitrate_kbps * 1000));
-            }
-            AudioEncoder::AvencAac => {
-                cmd.arg("avenc_aac")
-                    .arg(format!("bit_rate={}", args.audio_bitrate_kbps * 1000));
-            }
-        }
-
-        cmd.arg("!")
-            .arg("queue")
-            .args(queue_kv.split_whitespace())
-            .arg("!")
-            .arg("mux.");
-    }
-
     cmd.arg("mp4mux")
         .arg("name=mux")
         .arg("faststart=true")
@@ -647,32 +604,62 @@ fn build_gst_compose_command(
             .arg(format!("comp.sink_{}", branch_idx));
     }
 
-    for (branch_idx, lane) in audio_streams.iter().enumerate() {
-        let use_decoder = if lane.codec_name.eq_ignore_ascii_case("opus") {
-            "opusdec"
-        } else if lane.codec_name.eq_ignore_ascii_case("aac") {
-            "avdec_aac"
-        } else {
-            "decodebin"
-        };
-
-        cmd.arg(format!("demux.audio_{}", lane.ordinal))
-            .arg("!")
-            .arg("queue")
-            .args(audio_branch_queue_kv.split_whitespace())
-            .arg("!")
-            .arg(use_decoder)
-            .arg("!")
-            .arg("audioconvert")
-            .arg("!")
-            .arg("audioresample")
-            .arg("!")
-            .arg("audio/x-raw,rate=48000,channels=2")
-            .arg("!")
-            .arg(format!("amix.sink_{}", branch_idx));
-    }
-
     Ok(cmd)
+}
+
+fn mux_audio_with_ffmpeg(
+    args: &Args,
+    video_only: &Path,
+    source: &Path,
+    output: &Path,
+    audio_streams: &[StreamLane],
+    stop: &Arc<AtomicBool>,
+) -> Result<()> {
+    if audio_streams.is_empty() {
+        return Err(anyhow!("no audio streams selected for muxing"));
+    }
+    let mut labels = String::new();
+    for lane in audio_streams {
+        labels.push_str(&format!("[1:a:{}]", lane.ordinal));
+    }
+    let filter = format!(
+        "{labels}amix=inputs={}:duration=longest:normalize=0,aresample=async=1[aout]",
+        audio_streams.len()
+    );
+
+    let mut cmd = Command::new(&args.ffmpeg);
+    cmd.arg("-hide_banner")
+        .arg("-nostdin")
+        .arg("-loglevel")
+        .arg(if args.verbose { "info" } else { "error" })
+        .arg("-i")
+        .arg(video_only)
+        .arg("-i")
+        .arg(source)
+        .arg("-filter_complex")
+        .arg(filter)
+        .arg("-map")
+        .arg("0:v:0")
+        .arg("-map")
+        .arg("[aout]")
+        .arg("-c:v")
+        .arg("copy")
+        .arg("-c:a")
+        .arg("aac")
+        .arg("-b:a")
+        .arg(format!("{}k", args.audio_bitrate_kbps))
+        .arg("-movflags")
+        .arg("+faststart")
+        .arg("-y")
+        .arg(output);
+
+    run_guarded(
+        &mut cmd,
+        stop,
+        args.max_rss_mb,
+        args.verbose,
+        "mux mixed audio with ffmpeg",
+    )
 }
 
 fn run_guarded(
@@ -873,34 +860,28 @@ mod tests {
                 codec_name: "vp8".to_string(),
             },
         ];
-        let audios = vec![StreamLane {
-            ff_index: 1,
-            ordinal: 0,
-            codec_name: "opus".to_string(),
-        }];
-
         let cmd = build_gst_compose_command(
             &args,
             Path::new("/tmp/in.mkv"),
             Path::new("/tmp/out.mp4"),
             &videos,
-            &audios,
             &layout,
             &settings,
             2500,
             VideoEncoder::X264,
-            AudioEncoder::AvencAac,
         )?;
 
         let rendered = fmt_command(&cmd);
         assert!(rendered.contains("matroskademux"));
         assert!(rendered.contains("demux.video_0"));
         assert!(rendered.contains("demux.video_1"));
-        assert!(rendered.contains("demux.audio_0"));
+        assert!(!rendered.contains("demux.audio_0"));
+        assert!(!rendered.contains("audiomixer"));
         assert!(!rendered.contains("uridecodebin"));
         assert!(!rendered.contains("ts-offset="));
-        assert!(rendered.contains("compositor name=comp background=black ignore-inactive-pads=true"));
-        assert!(rendered.contains("audiomixer name=amix ignore-inactive-pads=true"));
+        assert!(rendered.contains(
+            "compositor name=comp background=black ignore-inactive-pads=true"
+        ));
         Ok(())
     }
 }
