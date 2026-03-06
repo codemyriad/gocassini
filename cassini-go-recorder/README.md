@@ -39,7 +39,7 @@ go run ./cmd/gocassini \
   --final-output /tmp/meeting.mkv
 ```
 
-By default, talk mode auto-terminates when all remote participants leave (`--stop-when-room-empty=true`, `--room-empty-grace=8s`). Add `--duration <seconds>` only if you need a hard time limit.
+By default, talk mode auto-terminates when all remote participants leave (`--stop-when-room-empty=true`, `--room-empty-grace=30s`). Add `--duration <seconds>` only if you need a hard time limit.
 
 Use `--help` on each command to inspect all options:
 
