@@ -16,6 +16,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .common import seconds_to_ms
+from .speech_activity import TranscriptionChunk, detect_active_spans, plan_transcription_chunks
+from .timeline import TimeSpan, TimelineMap, build_digest_timeline_map
+
 
 @dataclass(frozen=True)
 class AudioStream:
@@ -27,6 +31,14 @@ class AudioStream:
     speaker_label: str
     start_ms: int
     duration_ms: int | None
+
+
+@dataclass(frozen=True)
+class TrackWorkspace:
+    stream: AudioStream
+    audio_path: Path
+    duration_ms: int
+    activity_spans: tuple[TimeSpan, ...]
 
 
 def run_command(cmd: list[str]) -> str:
@@ -120,11 +132,7 @@ def slugify(value: str) -> str:
     return normalized or "speaker"
 
 
-def seconds_to_ms(value: Any) -> int:
-    return max(0, int(round(float(value) * 1000)))
-
-
-def build_audio_derivative(input_path: Path, output_path: Path, audio_streams: list[AudioStream]) -> None:
+def build_mixed_master_audio(input_path: Path, output_path: Path, audio_streams: list[AudioStream]) -> None:
     if len(audio_streams) == 1:
         cmd = [
             "ffmpeg",
@@ -140,15 +148,7 @@ def build_audio_derivative(input_path: Path, output_path: Path, audio_streams: l
             "-sn",
             "-dn",
             "-c:a",
-            "libopus",
-            "-b:a",
-            "64k",
-            "-vbr",
-            "on",
-            "-compression_level",
-            "10",
-            "-application",
-            "voip",
+            "pcm_s16le",
             "-ac",
             "1",
             "-ar",
@@ -174,6 +174,58 @@ def build_audio_derivative(input_path: Path, output_path: Path, audio_streams: l
             "-sn",
             "-dn",
             "-c:a",
+            "pcm_s16le",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            str(output_path),
+        ]
+    subprocess.run(cmd, check=True)
+
+
+def render_digest_audio(
+    master_audio_path: Path,
+    output_path: Path,
+    timeline_map: TimelineMap,
+) -> None:
+    if not timeline_map.segments:
+        raise RuntimeError("Timeline map must contain at least one segment")
+
+    filter_parts: list[str] = []
+    labels: list[str] = []
+    for index, segment in enumerate(timeline_map.segments):
+        label = f"seg{index}"
+        labels.append(f"[{label}]")
+        if segment.kind == "audio":
+            filter_parts.append(
+                "[0:a]"
+                f"atrim=start={segment.source.start_ms / 1000.0:.6f}:"
+                f"end={segment.source.end_ms / 1000.0:.6f},"
+                f"asetpts=PTS-STARTPTS[{label}]"
+            )
+            continue
+        filter_parts.append(
+            f"anullsrc=r=48000:cl=mono:d={segment.digest.duration_ms / 1000.0:.6f}[{label}]"
+        )
+
+    filter_parts.append(
+        "".join(labels) + f"concat=n={len(labels)}:v=0:a=1[aout]"
+    )
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(master_audio_path),
+            "-filter_complex",
+            ";".join(filter_parts),
+            "-map",
+            "[aout]",
+            "-c:a",
             "libopus",
             "-b:a",
             "64k",
@@ -188,8 +240,9 @@ def build_audio_derivative(input_path: Path, output_path: Path, audio_streams: l
             "-ar",
             "48000",
             str(output_path),
-        ]
-    subprocess.run(cmd, check=True)
+        ],
+        check=True,
+    )
 
 
 def extract_track_audio(input_path: Path, output_path: Path, stream: AudioStream) -> None:
@@ -207,6 +260,32 @@ def extract_track_audio(input_path: Path, output_path: Path, stream: AudioStream
             "-vn",
             "-sn",
             "-dn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            str(output_path),
+        ],
+        check=True,
+    )
+
+
+def extract_audio_span(input_path: Path, output_path: Path, span: TimeSpan) -> None:
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(input_path),
+            "-ss",
+            f"{span.start_ms / 1000.0:.6f}",
+            "-to",
+            f"{span.end_ms / 1000.0:.6f}",
             "-ac",
             "1",
             "-ar",
@@ -245,6 +324,39 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def analyze_tracks(
+    *,
+    input_path: Path,
+    audio_streams: list[AudioStream],
+    tracks_dir: Path,
+    silence_noise_db: float,
+    minimum_silence_ms: int,
+    minimum_activity_ms: int,
+) -> list[TrackWorkspace]:
+    tracks_dir.mkdir(parents=True, exist_ok=True)
+    workspaces: list[TrackWorkspace] = []
+    for stream in audio_streams:
+        track_audio_path = tracks_dir / f"{stream.order:02d}-{stream.speaker_id}.wav"
+        extract_track_audio(input_path, track_audio_path, stream)
+        track_duration_ms = probe_duration_ms(track_audio_path)
+        activity_spans = detect_active_spans(
+            audio_path=track_audio_path,
+            total_duration_ms=track_duration_ms,
+            silence_noise_db=silence_noise_db,
+            minimum_silence_ms=minimum_silence_ms,
+            minimum_activity_ms=minimum_activity_ms,
+        )
+        workspaces.append(
+            TrackWorkspace(
+                stream=stream,
+                audio_path=track_audio_path,
+                duration_ms=track_duration_ms,
+                activity_spans=tuple(activity_spans),
+            )
+        )
+    return workspaces
 
 
 def transcribe_file(audio_path: Path, transcriber_url: str, timeout_seconds: int) -> dict[str, Any]:
@@ -309,6 +421,111 @@ def normalize_words(raw_words: list[dict[str, Any]], start_offset_ms: int) -> li
             normalized_word["confidence"] = float(confidence)
         normalized.append(normalized_word)
     return normalized
+
+
+def build_meeting_activity_spans(
+    track_workspaces: list[TrackWorkspace],
+    source_duration_ms: int,
+) -> list[TimeSpan]:
+    spans: list[TimeSpan] = []
+    for workspace in track_workspaces:
+        for span in workspace.activity_spans:
+            absolute = TimeSpan(
+                start_ms=min(source_duration_ms, workspace.stream.start_ms + span.start_ms),
+                end_ms=min(source_duration_ms, workspace.stream.start_ms + span.end_ms),
+            )
+            if absolute.duration_ms > 0:
+                spans.append(absolute)
+    return spans
+
+
+def filter_words_to_time_window(
+    words: list[dict[str, Any]],
+    *,
+    window_start_ms: int,
+    window_end_ms: int,
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for word in words:
+        midpoint_ms = (int(word["startMs"]) + int(word["endMs"])) // 2
+        if window_start_ms <= midpoint_ms < window_end_ms:
+            filtered.append(word)
+    return filtered
+
+
+def remap_words_to_digest_timeline(
+    words: list[dict[str, Any]],
+    timeline_map: TimelineMap,
+) -> list[dict[str, Any]]:
+    remapped: list[dict[str, Any]] = []
+    for word in words:
+        start_ms = timeline_map.map_source_to_digest(int(word["startMs"]))
+        end_ms = timeline_map.map_source_to_digest(int(word["endMs"]))
+        remapped_word = {
+            "text": word["text"],
+            "startMs": start_ms,
+            "endMs": max(start_ms, end_ms),
+        }
+        if "confidence" in word:
+            remapped_word["confidence"] = word["confidence"]
+        remapped.append(remapped_word)
+    return remapped
+
+
+def transcribe_track_chunks(
+    *,
+    workspace: TrackWorkspace,
+    chunks: list[TranscriptionChunk],
+    chunks_dir: Path,
+    responses_dir: Path,
+    transcriber_url: str,
+    timeout_seconds: int,
+    timeline_map: TimelineMap,
+) -> list[dict[str, Any]]:
+    speaker_chunks_dir = chunks_dir / workspace.stream.speaker_id
+    speaker_responses_dir = responses_dir / workspace.stream.speaker_id
+    speaker_chunks_dir.mkdir(parents=True, exist_ok=True)
+    speaker_responses_dir.mkdir(parents=True, exist_ok=True)
+
+    remapped_words: list[dict[str, Any]] = []
+    for index, chunk in enumerate(chunks, start=1):
+        chunk_audio_path = speaker_chunks_dir / f"chunk-{index:04d}.wav"
+        response_path = speaker_responses_dir / f"chunk-{index:04d}.json"
+        extract_audio_span(workspace.audio_path, chunk_audio_path, chunk.source)
+        raw_response = transcribe_file(chunk_audio_path, transcriber_url, timeout_seconds)
+        response_path.write_text(json.dumps(raw_response, indent=2), encoding="utf-8")
+
+        normalized_words = normalize_words(
+            raw_response.get("words") or [],
+            start_offset_ms=workspace.stream.start_ms + chunk.source.start_ms,
+        )
+        filtered_words = filter_words_to_time_window(
+            normalized_words,
+            window_start_ms=workspace.stream.start_ms + chunk.emit.start_ms,
+            window_end_ms=workspace.stream.start_ms + chunk.emit.end_ms,
+        )
+        remapped_words.extend(remap_words_to_digest_timeline(filtered_words, timeline_map))
+
+    remapped_words.sort(key=lambda word: (word["startMs"], word["endMs"], word["text"]))
+    return remapped_words
+
+
+def serialize_timeline_map(timeline_map: TimelineMap) -> dict[str, Any]:
+    return {
+        "version": "timeline.map.v1",
+        "sourceDurationMs": timeline_map.source_duration_ms,
+        "digestDurationMs": timeline_map.digest_duration_ms,
+        "segments": [
+            {
+                "kind": segment.kind,
+                "sourceStartMs": segment.source.start_ms,
+                "sourceEndMs": segment.source.end_ms,
+                "digestStartMs": segment.digest.start_ms,
+                "digestEndMs": segment.digest.end_ms,
+            }
+            for segment in timeline_map.segments
+        ],
+    }
 
 
 def segment_word_items(
@@ -512,20 +729,29 @@ def build_manifest(
     audio_name: str,
     transcript_name: str,
     captions_name: str,
+    timeline_name: str | None,
     speaker_count: int,
+    source_duration_ms: int,
+    digest_duration_ms: int,
 ) -> dict[str, Any]:
+    files: dict[str, str] = {
+        "audio": audio_name,
+        "transcript": transcript_name,
+        "captions": captions_name,
+    }
+    if timeline_name:
+        files["timeline"] = timeline_name
+
     return {
         "version": "cassini.meeting-artifact.v1",
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "source": {
             "basename": source_path.name,
+            "durationMs": source_duration_ms,
         },
-        "files": {
-            "audio": audio_name,
-            "transcript": transcript_name,
-            "captions": captions_name,
-        },
+        "files": files,
         "speakerCount": speaker_count,
+        "digestDurationMs": digest_duration_ms,
     }
 
 
@@ -538,10 +764,20 @@ def build_meeting_artifact(
     transcript_name: str = "transcript.words.v1.json",
     captions_name: str = "captions.vtt",
     manifest_name: str | None = "manifest.json",
+    timeline_name: str | None = "timeline.map.v1.json",
     timeout_seconds: int = 3600,
     segment_gap_ms: int = 900,
     max_segment_ms: int = 15_000,
     max_segment_words: int = 32,
+    silence_noise_db: float = -35.0,
+    minimum_silence_ms: int = 400,
+    minimum_activity_ms: int = 250,
+    activity_padding_ms: int = 200,
+    keep_silence_ms: int = 900,
+    compress_silence_to_ms: int = 800,
+    chunk_padding_ms: int = 200,
+    max_chunk_ms: int = 25_000,
+    chunk_overlap_ms: int = 500,
     work_dir: Path | None = None,
     keep_work_dir: bool = False,
 ) -> dict[str, Any]:
@@ -552,7 +788,7 @@ def build_meeting_artifact(
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    audio_streams, _ = probe_media(input_path)
+    audio_streams, input_duration_ms = probe_media(input_path)
     speaker_order = {stream.speaker_id: stream.order for stream in audio_streams}
     speakers = [
         {"id": stream.speaker_id, "label": stream.speaker_label}
@@ -575,22 +811,64 @@ def build_meeting_artifact(
         transcript_output_path = output_dir / transcript_name
         captions_output_path = output_dir / captions_name
         manifest_output_path = output_dir / manifest_name if manifest_name else None
+        timeline_output_path = output_dir / timeline_name if timeline_name else None
 
-        build_audio_derivative(input_path, audio_output_path, audio_streams)
+        tracks_dir = active_work_dir / "tracks"
+        chunks_dir = active_work_dir / "chunks"
+        responses_dir = active_work_dir / "responses"
+        master_audio_path = active_work_dir / "mixed-master.wav"
+
+        build_mixed_master_audio(input_path, master_audio_path, audio_streams)
+        source_duration_ms = input_duration_ms if input_duration_ms is not None else probe_duration_ms(
+            master_audio_path
+        )
+
+        track_workspaces = analyze_tracks(
+            input_path=input_path,
+            audio_streams=audio_streams,
+            tracks_dir=tracks_dir,
+            silence_noise_db=silence_noise_db,
+            minimum_silence_ms=minimum_silence_ms,
+            minimum_activity_ms=minimum_activity_ms,
+        )
+        meeting_activity_spans = build_meeting_activity_spans(
+            track_workspaces,
+            source_duration_ms=source_duration_ms,
+        )
+        timeline_map = build_digest_timeline_map(
+            activity_spans=meeting_activity_spans,
+            source_duration_ms=source_duration_ms,
+            activity_padding_ms=activity_padding_ms,
+            keep_silence_ms=keep_silence_ms,
+            compress_silence_to_ms=compress_silence_to_ms,
+        )
+        render_digest_audio(master_audio_path, audio_output_path, timeline_map)
         audio_duration_ms = probe_duration_ms(audio_output_path)
         audio_sha256 = sha256_file(audio_output_path)
 
         all_segments: list[dict[str, Any]] = []
-        for stream in audio_streams:
-            track_audio_path = active_work_dir / f"{stream.order:02d}-{stream.speaker_id}.wav"
-            track_response_path = active_work_dir / f"{stream.order:02d}-{stream.speaker_id}.json"
-            extract_track_audio(input_path, track_audio_path, stream)
-            raw_response = transcribe_file(track_audio_path, transcriber_url, timeout_seconds)
-            track_response_path.write_text(json.dumps(raw_response, indent=2), encoding="utf-8")
-            normalized_words = normalize_words(raw_response.get("words") or [], stream.start_ms)
+        chunk_count = 0
+        for workspace in track_workspaces:
+            transcription_chunks = plan_transcription_chunks(
+                activity_spans=list(workspace.activity_spans),
+                source_duration_ms=workspace.duration_ms,
+                chunk_padding_ms=chunk_padding_ms,
+                max_chunk_ms=max_chunk_ms,
+                chunk_overlap_ms=chunk_overlap_ms,
+            )
+            chunk_count += len(transcription_chunks)
+            normalized_words = transcribe_track_chunks(
+                workspace=workspace,
+                chunks=transcription_chunks,
+                chunks_dir=chunks_dir,
+                responses_dir=responses_dir,
+                transcriber_url=transcriber_url,
+                timeout_seconds=timeout_seconds,
+                timeline_map=timeline_map,
+            )
             speaker_segments = segment_word_items(
                 normalized_words,
-                speaker_id=stream.speaker_id,
+                speaker_id=workspace.stream.speaker_id,
                 gap_ms=segment_gap_ms,
                 max_segment_ms=max_segment_ms,
                 max_segment_words=max_segment_words,
@@ -612,6 +890,11 @@ def build_meeting_artifact(
             encoding="utf-8",
         )
         captions_output_path.write_text(captions_vtt, encoding="utf-8")
+        if timeline_output_path is not None:
+            timeline_output_path.write_text(
+                json.dumps(serialize_timeline_map(timeline_map), indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
 
         if manifest_output_path is not None:
             manifest = build_manifest(
@@ -619,7 +902,10 @@ def build_meeting_artifact(
                 audio_name=audio_name,
                 transcript_name=transcript_name,
                 captions_name=captions_name,
+                timeline_name=timeline_name,
                 speaker_count=len(speakers),
+                source_duration_ms=source_duration_ms,
+                digest_duration_ms=audio_duration_ms,
             )
             manifest_output_path.write_text(
                 json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
@@ -630,13 +916,14 @@ def build_meeting_artifact(
             "audio_path": str(audio_output_path),
             "transcript_path": str(transcript_output_path),
             "captions_path": str(captions_output_path),
+            "timeline_path": str(timeline_output_path) if timeline_output_path else None,
             "manifest_path": str(manifest_output_path) if manifest_output_path else None,
             "speaker_count": len(speakers),
             "segment_count": len(finalized_segments),
+            "chunk_count": chunk_count,
             "duration_ms": audio_duration_ms,
             "work_dir": str(active_work_dir),
         }
     finally:
         if temporary_root is not None:
             temporary_root.cleanup()
-
