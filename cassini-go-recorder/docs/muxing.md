@@ -17,9 +17,13 @@
   (`timebase=1/clockRate`, frame PTS in RTP ticks) instead of deriving a
   fixed-FPS timeline. This removes long-run video stretch that can make audio
   lead over time.
+- Opus/VP8/VP9/H264 depacketization now retimestamps packets from `recvMonoNS`
+  so mute/silence receive gaps survive offline remux.
 - merge planning now accepts corrected timeline starts (from SR-aware estimator)
   and applies bounded per-stream start adjustments before final `-itsoffset`
   mapping, reducing long-run sync skew without re-encoding
+- single-track remux now uses `ffmpeg -copyts` (no `+genpts`) so sparse packet
+  timelines are not flattened during intermediate MKV generation.
 - future phase: plug `pkg/core/mux.Muxer` with multiple backends:
   - pure-Go MKV/WebM (minimal deps)
   - FFmpeg `-c copy` plugin for broader container support
@@ -60,3 +64,7 @@ Drift verification helper:
 
 This checks paired audio/video track elapsed timelines and fails when absolute
 A/V drift exceeds tolerance.
+
+Note: this helper is strict and works best for controlled bot scenarios where
+audio/video are expected to stay continuously active. Human meetings with long
+mute periods can legitimately produce large elapsed differences per track.

@@ -57,8 +57,8 @@ func TestFromFlagsTalkDefaultsAutoStopOnEmptyRoom(t *testing.T) {
 	if !cfg.StopWhenRoomEmpty {
 		t.Fatalf("expected stop-when-room-empty to default to true")
 	}
-	if cfg.RoomEmptyGrace != 8*time.Second {
-		t.Fatalf("expected room-empty-grace=8s, got %s", cfg.RoomEmptyGrace)
+	if cfg.RoomEmptyGrace != 30*time.Second {
+		t.Fatalf("expected room-empty-grace=30s, got %s", cfg.RoomEmptyGrace)
 	}
 }
 

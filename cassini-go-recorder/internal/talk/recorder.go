@@ -579,34 +579,78 @@ func (r *Recorder) handleRoomEvent(roomEvent map[string]any) error {
 	target := asString(roomEvent["target"])
 	eventType := asString(roomEvent["type"])
 
-	if target == "room" && eventType == "join" {
-		for _, item := range asSlice(roomEvent["join"]) {
-			joinItem := asMap(item)
-			if len(joinItem) == 0 {
-				continue
+	switch target {
+	case "room":
+		switch eventType {
+		case "join":
+			for _, item := range asSlice(roomEvent["join"]) {
+				joinItem := asMap(item)
+				if len(joinItem) == 0 {
+					continue
+				}
+				remoteSessionID, displayName, participantID := parseRoomJoinIdentity(joinItem)
+				if remoteSessionID == "" {
+					continue
+				}
+				r.rememberParticipantIdentity(remoteSessionID, displayName, participantID)
+				if _, err := r.ensureSubscriber(remoteSessionID); err != nil {
+					return err
+				}
 			}
-			remoteSessionID, displayName, participantID := parseRoomJoinIdentity(joinItem)
-			if remoteSessionID == "" {
-				continue
-			}
-			r.rememberParticipantIdentity(remoteSessionID, displayName, participantID)
-			if _, err := r.ensureSubscriber(remoteSessionID); err != nil {
-				return err
-			}
+		case "leave":
+			r.removeParticipantSessions(asSlice(roomEvent["leave"]))
 		}
+	case "participants":
+		return r.handleParticipantsEvent(asMap(roomEvent["update"]))
+	}
+
+	return nil
+}
+
+func (r *Recorder) handleParticipantsEvent(update map[string]any) error {
+	if len(update) == 0 {
 		return nil
 	}
 
-	if target == "room" && eventType == "leave" {
-		for _, item := range asSlice(roomEvent["leave"]) {
-			remoteSessionID := asString(item)
-			if remoteSessionID == "" {
+	if asBool(update["all"]) {
+		if flags, ok := asInt(update["incall"]); ok && flags == 0 {
+			r.clearRemoteParticipants()
+			return nil
+		}
+	}
+
+	users := asSlice(update["users"])
+	if len(users) == 0 {
+		users = asSlice(update["changed"])
+	}
+	if len(users) == 0 {
+		return nil
+	}
+
+	if asBool(update["all"]) {
+		active := make(map[string]participantIdentity, len(users))
+		for _, raw := range users {
+			sessionID, identity, activeInCall := parseParticipantUpdate(asMap(raw))
+			if sessionID == "" || !activeInCall {
 				continue
 			}
-			r.forgetParticipantIdentity(remoteSessionID)
-			if err := r.removeSubscriber(remoteSessionID); err != nil {
-				log.Printf("remove subscriber %s failed: %v", remoteSessionID, err)
-			}
+			active[sessionID] = identity
+		}
+		return r.syncRemoteParticipants(active)
+	}
+
+	for _, raw := range users {
+		sessionID, identity, activeInCall := parseParticipantUpdate(asMap(raw))
+		if sessionID == "" {
+			continue
+		}
+		if !activeInCall {
+			r.removeParticipantSessions([]any{sessionID})
+			continue
+		}
+		r.rememberParticipantIdentity(sessionID, identity.DisplayName, identity.ParticipantID)
+		if _, err := r.ensureSubscriber(sessionID); err != nil {
+			return err
 		}
 	}
 
@@ -692,6 +736,54 @@ func (r *Recorder) removeSubscriber(remoteSessionID string) error {
 	}
 	log.Printf("closing subscriber for remote session %s", remoteSessionID)
 	return peer.close()
+}
+
+func (r *Recorder) removeParticipantSessions(sessions []any) {
+	for _, item := range sessions {
+		remoteSessionID := asString(item)
+		if remoteSessionID == "" {
+			continue
+		}
+		r.forgetParticipantIdentity(remoteSessionID)
+		if err := r.removeSubscriber(remoteSessionID); err != nil {
+			log.Printf("remove subscriber %s failed: %v", remoteSessionID, err)
+		}
+	}
+}
+
+func (r *Recorder) clearRemoteParticipants() {
+	r.mu.Lock()
+	sessions := make([]any, 0, len(r.subscribers))
+	for remoteSessionID := range r.subscribers {
+		sessions = append(sessions, remoteSessionID)
+	}
+	r.mu.Unlock()
+	r.removeParticipantSessions(sessions)
+}
+
+func (r *Recorder) syncRemoteParticipants(active map[string]participantIdentity) error {
+	r.mu.Lock()
+	current := make([]string, 0, len(r.subscribers))
+	for remoteSessionID := range r.subscribers {
+		current = append(current, remoteSessionID)
+	}
+	r.mu.Unlock()
+
+	for _, remoteSessionID := range current {
+		if _, ok := active[remoteSessionID]; ok {
+			continue
+		}
+		r.removeParticipantSessions([]any{remoteSessionID})
+	}
+
+	for remoteSessionID, identity := range active {
+		r.rememberParticipantIdentity(remoteSessionID, identity.DisplayName, identity.ParticipantID)
+		if _, err := r.ensureSubscriber(remoteSessionID); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func nextRoomEmptyTimerAction(hasSeenRemote bool, timerArmed bool, subscriberCount int) (bool, roomEmptyTimerAction) {
@@ -817,6 +909,54 @@ func parseRoomJoinIdentity(joinItem map[string]any) (string, string, string) {
 	)
 
 	return remoteSessionID, displayName, participantID
+}
+
+func parseParticipantUpdate(user map[string]any) (string, participantIdentity, bool) {
+	scopes := []map[string]any{
+		user,
+		asMap(user["session"]),
+		asMap(user["participant"]),
+		asMap(user["user"]),
+	}
+
+	sessionID := firstNonEmpty(
+		scopes,
+		"sessionid",
+		"sessionId",
+		"roomSessionId",
+		"roomsessionid",
+	)
+	if sessionID == "" {
+		return "", participantIdentity{}, false
+	}
+	if asBool(user["internal"]) {
+		return sessionID, participantIdentity{}, false
+	}
+	if flags, ok := asInt(user["inCall"]); ok && flags == 0 {
+		return sessionID, participantIdentity{}, false
+	}
+
+	return sessionID, participantIdentity{
+		DisplayName: firstNonEmpty(
+			scopes,
+			"displayName",
+			"displayname",
+			"participantName",
+			"name",
+			"actorDisplayName",
+			"userDisplayName",
+		),
+		ParticipantID: firstNonEmpty(
+			scopes,
+			"userid",
+			"userId",
+			"actorid",
+			"actorId",
+			"participantId",
+			"participantID",
+			"uid",
+		),
+	}, true
 }
 
 func firstNonEmpty(scopes []map[string]any, keys ...string) string {
@@ -1577,6 +1717,31 @@ func asSlice(v any) []any {
 func asString(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+func asBool(v any) bool {
+	b, _ := v.(bool)
+	return b
+}
+
+func asInt(v any) (int, bool) {
+	switch t := v.(type) {
+	case int:
+		return t, true
+	case int64:
+		return int(t), true
+	case float64:
+		i := int(t)
+		return i, float64(i) == t
+	case json.Number:
+		i, err := t.Int64()
+		if err != nil {
+			return 0, false
+		}
+		return int(i), true
+	default:
+		return 0, false
+	}
 }
 
 func asUint16(v any) (uint16, bool) {

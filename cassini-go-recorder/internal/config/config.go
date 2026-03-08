@@ -44,7 +44,7 @@ func FromFlags(args []string) (Config, error) {
 	fs.IntVar(&cfg.SimPackets, "sim-packets", 150, "packets per synthetic track in simulate mode")
 	fs.IntVar(&durationSeconds, "duration", 0, "hard runtime limit in seconds (0 disables fixed timeout)")
 	fs.BoolVar(&cfg.StopWhenRoomEmpty, "stop-when-room-empty", true, "in talk mode, stop after all remote participants leave")
-	fs.Float64Var(&roomEmptyGraceSeconds, "room-empty-grace", 8.0, "seconds to wait before stopping after room becomes empty")
+	fs.Float64Var(&roomEmptyGraceSeconds, "room-empty-grace", 30.0, "seconds to wait before stopping after room becomes empty")
 	fs.StringVar(&cfg.CallURL, "call-url", "", "Nextcloud Talk call URL (required in talk mode)")
 	fs.StringVar(&cfg.GuestName, "name", "GocassiniObserver", "display name for the observer guest")
 	fs.IntVar(&cfg.JoinFlags, "join-flags", 1, "call join flags (must include bit 1)")
