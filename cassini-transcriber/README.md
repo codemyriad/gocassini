@@ -10,6 +10,7 @@
 The pipeline assumes the source MKV carries one audio stream per participant and uses each audio stream title as the speaker label when available.
 
 The intended production design is documented in [docs/architecture.md](/home/silvio/dev/gocassini/cassini-transcriber/docs/architecture.md).
+Cassini-specific timing behavior is documented in [docs/sparse-stream-timing.md](/home/silvio/dev/gocassini/cassini-transcriber/docs/sparse-stream-timing.md).
 
 ## Contract
 
@@ -76,6 +77,7 @@ The CLI summary reports source duration, digest duration, reduction, chunk count
 ## Notes
 
 - The pipeline detects speech activity per speaker track, unions that activity at the meeting level, and compresses long all-speaker silence on the final digest timeline.
+- The source MKV may carry sparse audio packet timestamps; per-speaker decode must preserve those gaps or transcript timings will drift badly.
 - Each speaker track is transcribed separately in chunked requests, then merged into one time-ordered transcript.
 - `captions.vtt` is derived from `transcript.words.v1.json` and should not be edited independently.
 - The target architecture uses an explicit source-to-digest timeline remap so long all-speaker silence can be compressed without breaking transcript sync.
