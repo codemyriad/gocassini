@@ -20,6 +20,9 @@ from .common import seconds_to_ms
 from .speech_activity import TranscriptionChunk, detect_active_spans, plan_transcription_chunks
 from .timeline import TimeSpan, TimelineMap, build_digest_timeline_map
 
+TRACK_SAMPLE_RATE = 48_000
+CHUNK_SAMPLE_RATE = 16_000
+
 
 @dataclass(frozen=True)
 class AudioStream:
@@ -132,8 +135,11 @@ def slugify(value: str) -> str:
     return normalized or "speaker"
 
 
-def build_mixed_master_audio(input_path: Path, output_path: Path, audio_streams: list[AudioStream]) -> None:
-    if len(audio_streams) == 1:
+def build_mixed_master_audio(track_audio_paths: list[Path], output_path: Path) -> None:
+    if not track_audio_paths:
+        raise RuntimeError("At least one decoded track is required to build the master mix")
+
+    if len(track_audio_paths) == 1:
         cmd = [
             "ffmpeg",
             "-hide_banner",
@@ -141,46 +147,48 @@ def build_mixed_master_audio(input_path: Path, output_path: Path, audio_streams:
             "error",
             "-y",
             "-i",
-            str(input_path),
+            str(track_audio_paths[0]),
             "-map",
-            f"0:{audio_streams[0].index}",
-            "-vn",
-            "-sn",
-            "-dn",
+            "0:a",
             "-c:a",
             "pcm_s16le",
             "-ac",
             "1",
             "-ar",
-            "48000",
+            str(TRACK_SAMPLE_RATE),
             str(output_path),
         ]
     else:
-        labels = "".join(f"[0:{stream.index}]" for stream in audio_streams)
-        filter_complex = f"{labels}amix=inputs={len(audio_streams)}:normalize=0,alimiter=limit=0.95[aout]"
         cmd = [
             "ffmpeg",
             "-hide_banner",
             "-loglevel",
             "error",
             "-y",
-            "-i",
-            str(input_path),
+        ]
+        for track_audio_path in track_audio_paths:
+            cmd.extend(["-i", str(track_audio_path)])
+
+        labels = "".join(f"[{index}:a]" for index in range(len(track_audio_paths)))
+        filter_complex = (
+            f"{labels}amix=inputs={len(track_audio_paths)}:duration=longest:normalize=0,"
+            "alimiter=limit=0.95[aout]"
+        )
+        cmd.extend(
+            [
             "-filter_complex",
             filter_complex,
             "-map",
             "[aout]",
-            "-vn",
-            "-sn",
-            "-dn",
             "-c:a",
             "pcm_s16le",
             "-ac",
             "1",
             "-ar",
-            "48000",
+            str(TRACK_SAMPLE_RATE),
             str(output_path),
-        ]
+            ]
+        )
     subprocess.run(cmd, check=True)
 
 
@@ -260,10 +268,12 @@ def extract_track_audio(input_path: Path, output_path: Path, stream: AudioStream
             "-vn",
             "-sn",
             "-dn",
+            "-af",
+            "aresample=async=1:first_pts=0",
             "-ac",
             "1",
             "-ar",
-            "16000",
+            str(TRACK_SAMPLE_RATE),
             "-c:a",
             "pcm_s16le",
             str(output_path),
@@ -289,7 +299,7 @@ def extract_audio_span(input_path: Path, output_path: Path, span: TimeSpan) -> N
             "-ac",
             "1",
             "-ar",
-            "16000",
+            str(CHUNK_SAMPLE_RATE),
             "-c:a",
             "pcm_s16le",
             str(output_path),
@@ -430,10 +440,7 @@ def build_meeting_activity_spans(
     spans: list[TimeSpan] = []
     for workspace in track_workspaces:
         for span in workspace.activity_spans:
-            absolute = TimeSpan(
-                start_ms=min(source_duration_ms, workspace.stream.start_ms + span.start_ms),
-                end_ms=min(source_duration_ms, workspace.stream.start_ms + span.end_ms),
-            )
+            absolute = span.clip(lower_ms=0, upper_ms=source_duration_ms)
             if absolute.duration_ms > 0:
                 spans.append(absolute)
     return spans
@@ -497,12 +504,12 @@ def transcribe_track_chunks(
 
         normalized_words = normalize_words(
             raw_response.get("words") or [],
-            start_offset_ms=workspace.stream.start_ms + chunk.source.start_ms,
+            start_offset_ms=chunk.source.start_ms,
         )
         filtered_words = filter_words_to_time_window(
             normalized_words,
-            window_start_ms=workspace.stream.start_ms + chunk.emit.start_ms,
-            window_end_ms=workspace.stream.start_ms + chunk.emit.end_ms,
+            window_start_ms=chunk.emit.start_ms,
+            window_end_ms=chunk.emit.end_ms,
         )
         remapped_words.extend(remap_words_to_digest_timeline(filtered_words, timeline_map))
 
@@ -798,7 +805,7 @@ def build_meeting_artifact(
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    audio_streams, input_duration_ms = probe_media(input_path)
+    audio_streams, _ = probe_media(input_path)
     speaker_order = {stream.speaker_id: stream.order for stream in audio_streams}
     speakers = [
         {"id": stream.speaker_id, "label": stream.speaker_label}
@@ -828,11 +835,6 @@ def build_meeting_artifact(
         responses_dir = active_work_dir / "responses"
         master_audio_path = active_work_dir / "mixed-master.wav"
 
-        build_mixed_master_audio(input_path, master_audio_path, audio_streams)
-        source_duration_ms = input_duration_ms if input_duration_ms is not None else probe_duration_ms(
-            master_audio_path
-        )
-
         track_workspaces = analyze_tracks(
             input_path=input_path,
             audio_streams=audio_streams,
@@ -841,6 +843,11 @@ def build_meeting_artifact(
             minimum_silence_ms=minimum_silence_ms,
             minimum_activity_ms=minimum_activity_ms,
         )
+        build_mixed_master_audio(
+            [workspace.audio_path for workspace in track_workspaces],
+            master_audio_path,
+        )
+        source_duration_ms = probe_duration_ms(master_audio_path)
         meeting_activity_spans = build_meeting_activity_spans(
             track_workspaces,
             source_duration_ms=source_duration_ms,
