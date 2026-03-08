@@ -106,8 +106,14 @@ def plan_transcription_chunks(
     chunk_padding_ms: int = 200,
     max_chunk_ms: int = 25_000,
     chunk_overlap_ms: int = 500,
+    max_bridge_gap_ms: int = 1_500,
 ) -> list[TranscriptionChunk]:
-    if chunk_padding_ms < 0 or max_chunk_ms <= 0 or chunk_overlap_ms < 0:
+    if (
+        chunk_padding_ms < 0
+        or max_chunk_ms <= 0
+        or chunk_overlap_ms < 0
+        or max_bridge_gap_ms < 0
+    ):
         raise ValueError("Chunk planning values must be valid")
     if chunk_overlap_ms >= max_chunk_ms:
         raise ValueError("chunk_overlap_ms must be smaller than max_chunk_ms")
@@ -121,8 +127,13 @@ def plan_transcription_chunks(
             if span.duration_ms > 0
         ]
     )
+    bridged_spans = _bridge_spans(
+        padded_spans,
+        max_chunk_ms=max_chunk_ms,
+        max_bridge_gap_ms=max_bridge_gap_ms,
+    )
     chunks: list[TranscriptionChunk] = []
-    for span in padded_spans:
+    for span in bridged_spans:
         chunks.extend(
             _plan_chunks_for_span(
                 span,
@@ -131,6 +142,27 @@ def plan_transcription_chunks(
             )
         )
     return chunks
+
+
+def _bridge_spans(
+    spans: list[TimeSpan],
+    *,
+    max_chunk_ms: int,
+    max_bridge_gap_ms: int,
+) -> list[TimeSpan]:
+    if not spans:
+        return []
+
+    bridged: list[TimeSpan] = [spans[0]]
+    for span in spans[1:]:
+        current = bridged[-1]
+        gap_ms = span.start_ms - current.end_ms
+        proposed_duration_ms = span.end_ms - current.start_ms
+        if gap_ms <= max_bridge_gap_ms and proposed_duration_ms <= max_chunk_ms:
+            bridged[-1] = TimeSpan(current.start_ms, span.end_ms)
+            continue
+        bridged.append(span)
+    return bridged
 
 
 def _plan_chunks_for_span(

@@ -74,6 +74,23 @@ class ChunkPlanningTests(unittest.TestCase):
             ],
         )
 
+    def test_plan_transcription_chunks_bridges_nearby_activity(self) -> None:
+        chunks = plan_transcription_chunks(
+            activity_spans=[TimeSpan(1000, 1600), TimeSpan(2300, 2900), TimeSpan(10_000, 10_600)],
+            source_duration_ms=20_000,
+            chunk_padding_ms=100,
+            max_chunk_ms=25_000,
+            chunk_overlap_ms=500,
+            max_bridge_gap_ms=1_500,
+        )
+        self.assertEqual(
+            chunks,
+            [
+                TranscriptionChunk(source=TimeSpan(900, 3000), emit=TimeSpan(900, 3000)),
+                TranscriptionChunk(source=TimeSpan(9900, 10_700), emit=TimeSpan(9900, 10_700)),
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

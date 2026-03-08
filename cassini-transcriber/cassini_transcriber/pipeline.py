@@ -778,6 +778,7 @@ def build_meeting_artifact(
     chunk_padding_ms: int = 200,
     max_chunk_ms: int = 25_000,
     chunk_overlap_ms: int = 500,
+    max_bridge_gap_ms: int = 1_500,
     work_dir: Path | None = None,
     keep_work_dir: bool = False,
 ) -> dict[str, Any]:
@@ -855,6 +856,7 @@ def build_meeting_artifact(
                 chunk_padding_ms=chunk_padding_ms,
                 max_chunk_ms=max_chunk_ms,
                 chunk_overlap_ms=chunk_overlap_ms,
+                max_bridge_gap_ms=max_bridge_gap_ms,
             )
             chunk_count += len(transcription_chunks)
             normalized_words = transcribe_track_chunks(
