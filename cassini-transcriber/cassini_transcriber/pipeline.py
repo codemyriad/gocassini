@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
-import os
 import re
 import shutil
 import subprocess
@@ -32,8 +31,6 @@ class AudioStream:
     channels: int | None
     speaker_id: str
     speaker_label: str
-    start_ms: int
-    duration_ms: int | None
 
 
 @dataclass(frozen=True)
@@ -54,22 +51,20 @@ def run_command(cmd: list[str]) -> str:
     return completed.stdout
 
 
-def probe_media(input_path: Path) -> tuple[list[AudioStream], int | None]:
+def probe_media(input_path: Path) -> list[AudioStream]:
     raw = run_command(
         [
             "ffprobe",
             "-v",
             "error",
             "-show_entries",
-            "format=duration:stream=index,codec_type,codec_name,channels,start_time,duration:stream_tags=title",
+            "stream=index,codec_type,codec_name,channels:stream_tags=title",
             "-of",
             "json",
             str(input_path),
         ]
     )
     payload = json.loads(raw)
-    format_duration = payload.get("format", {}).get("duration")
-    input_duration_ms = seconds_to_ms(format_duration) if format_duration is not None else None
 
     audio_stream_specs: list[dict[str, Any]] = []
     for stream in payload.get("streams", []):
@@ -82,12 +77,6 @@ def probe_media(input_path: Path) -> tuple[list[AudioStream], int | None]:
                 "codec_name": stream.get("codec_name") or "unknown",
                 "channels": stream.get("channels"),
                 "speaker_label": str(tags.get("title") or "").strip(),
-                "start_ms": seconds_to_ms(stream.get("start_time") or 0),
-                "duration_ms": (
-                    seconds_to_ms(stream.get("duration"))
-                    if stream.get("duration") is not None
-                    else None
-                ),
             }
         )
 
@@ -111,11 +100,9 @@ def probe_media(input_path: Path) -> tuple[list[AudioStream], int | None]:
                 channels=int(spec["channels"]) if spec["channels"] is not None else None,
                 speaker_id=speaker_ids[order - 1],
                 speaker_label=label,
-                start_ms=int(spec["start_ms"]),
-                duration_ms=spec["duration_ms"],
             )
         )
-    return streams, input_duration_ms
+    return streams
 
 
 def make_speaker_ids(labels: list[str]) -> list[str]:
@@ -254,6 +241,7 @@ def render_digest_audio(
 
 
 def extract_track_audio(input_path: Path, output_path: Path, stream: AudioStream) -> None:
+    # Preserve sparse packet-time gaps so the decoded WAV stays on the meeting timeline.
     subprocess.run(
         [
             "ffmpeg",
@@ -805,7 +793,7 @@ def build_meeting_artifact(
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    audio_streams, _ = probe_media(input_path)
+    audio_streams = probe_media(input_path)
     speaker_order = {stream.speaker_id: stream.order for stream in audio_streams}
     speakers = [
         {"id": stream.speaker_id, "label": stream.speaker_label}

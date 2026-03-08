@@ -151,8 +151,6 @@ class TimelineIntegrationTests(unittest.TestCase):
                 channels=1,
                 speaker_id="spk_alex",
                 speaker_label="Alex",
-                start_ms=5000,
-                duration_ms=4000,
             ),
             audio_path=Path("/tmp/alex.wav"),
             duration_ms=4000,

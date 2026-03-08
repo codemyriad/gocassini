@@ -67,7 +67,7 @@ Observed behavior on real fixtures:
 2. Build speech activity from gap-preserving per-speaker audio.
 3. Extract transcription chunks from that same gap-preserving audio so chunk times are already on the meeting clock.
 4. Build the mixed master audio from timeline-faithful tracks or an equivalent gap-preserving mix path.
-5. Treat the audio timeline, not the container's nominal format duration, as the source of truth for transcript alignment.
+5. Treat the audio timeline, not the container's nominal format duration, as the source of truth for transcript alignment and `manifest.source.durationMs`.
 
 ## Validation
 
