@@ -20,6 +20,8 @@ Use two timelines:
 
 This lets the pipeline transcribe from the highest-fidelity source while still shipping a shorter digest whose transcript remains perfectly aligned to the delivered audio.
 
+There is one extra constraint that matters for Cassini recordings: the audio streams can be sparse over the meeting timeline. The pipeline must preserve packet-time gaps when decoding per-speaker audio or both the transcript and the silence-compressed digest will become misaligned. See [docs/sparse-stream-timing.md](/home/silvio/dev/gocassini/cassini-transcriber/docs/sparse-stream-timing.md).
+
 ## Silence Strategy
 
 Silence handling is a pipeline responsibility, not a model responsibility.
@@ -47,8 +49,8 @@ Do not transcribe the final mixed meeting audio.
 
 Instead:
 
-1. extract one mono WAV per participant audio stream,
-2. keep the source timeline offsets from the MKV,
+1. extract one mono WAV per participant audio stream while preserving packet-time gaps,
+2. treat those WAVs as meeting-relative absolute timelines,
 3. chunk each speaker track by speech activity,
 4. transcribe chunks independently through a compatible HTTP service,
 5. map chunk-local timestamps back onto the source timeline,
@@ -59,6 +61,7 @@ Why:
 
 - speaker labels already exist in the MKV metadata,
 - diarization is unnecessary for this source format,
+- sparse packet timing in the MKV is significant and must survive decode,
 - chunking avoids long-silence waste and large-request instability,
 - the transcript remains speaker-aware without extra ML steps.
 
