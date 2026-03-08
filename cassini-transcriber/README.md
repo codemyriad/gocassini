@@ -32,6 +32,7 @@ Key properties:
 - The canonical JSON is the source of truth; captions are derived from it.
 - Speaker IDs are stable and derived from stream titles.
 - Overlapping speaker segments are preserved in the canonical transcript.
+- `manifest.json` records the gap-preserving source-audio timeline duration, which may differ slightly from the container's nominal `format.duration`.
 
 ## Requirements
 
@@ -82,6 +83,14 @@ The CLI summary reports source duration, digest duration, reduction, chunk count
 - `captions.vtt` is derived from `transcript.words.v1.json` and should not be edited independently.
 - The target architecture uses an explicit source-to-digest timeline remap so long all-speaker silence can be compressed without breaking transcript sync.
 - `timeline.map.v1.json` is a debugging and audit artifact that records the source-to-digest time remap.
+
+## Credibility Checks
+
+When verifying an artifact:
+
+- compare the source audio stream packet timing to the decoded per-speaker track timeline, not to compact PCM extracted without gap preservation,
+- compare late joiners against the source-to-digest mapped time in `timeline.map.v1.json`, not against raw source milliseconds,
+- treat large multi-second cross-speaker overlaps as suspicious unless the source meeting actually contains interruptions.
 
 ## Tests
 

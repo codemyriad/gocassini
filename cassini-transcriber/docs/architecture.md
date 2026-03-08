@@ -102,6 +102,8 @@ The pipeline must enforce:
 - integer millisecond timings,
 - stable speaker IDs,
 - transcript timings aligned to the delivered audio,
+- source durations taken from the gap-preserving audio timeline, not blindly from container nominal duration,
+- late-joining speakers must not appear before their packet-time-mapped join point,
 - segment and word bounds sanity,
 - derived captions from the canonical JSON,
 - reproducible source-to-digest remapping.
