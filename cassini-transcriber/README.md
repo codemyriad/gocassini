@@ -69,7 +69,7 @@ Useful flags:
 - `--max-segment-ms` and `--max-segment-words` keep transcript chunks readable.
 - `--keep-silence-ms` and `--compress-silence-to-ms` control digest silence compression.
 - `--minimum-silence-ms`, `--minimum-activity-ms`, and `--silence-noise-db` tune speech activity detection.
-- `--max-chunk-ms` and `--chunk-overlap-ms` control chunked transcription requests.
+- `--max-chunk-ms`, `--chunk-overlap-ms`, and `--max-bridge-gap-ms` control chunked transcription requests.
 
 ## Notes
 

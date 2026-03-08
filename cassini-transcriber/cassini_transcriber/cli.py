@@ -124,6 +124,12 @@ def parse_args() -> argparse.Namespace:
         help="Overlap used when a chunk must be split",
     )
     parser.add_argument(
+        "--max-bridge-gap-ms",
+        type=int,
+        default=1500,
+        help="Merge nearby activity spans into one chunk when the silent gap is below this limit",
+    )
+    parser.add_argument(
         "--work-dir",
         type=Path,
         help="Directory for intermediate extracted tracks and raw responses",
@@ -160,6 +166,7 @@ def main() -> int:
         chunk_padding_ms=args.chunk_padding_ms,
         max_chunk_ms=args.max_chunk_ms,
         chunk_overlap_ms=args.chunk_overlap_ms,
+        max_bridge_gap_ms=args.max_bridge_gap_ms,
         work_dir=args.work_dir,
         keep_work_dir=args.keep_work_dir,
     )
