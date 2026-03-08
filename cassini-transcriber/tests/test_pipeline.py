@@ -142,7 +142,7 @@ class ManifestTests(unittest.TestCase):
 
 
 class TimelineIntegrationTests(unittest.TestCase):
-    def test_build_meeting_activity_spans_offsets_track_ranges(self) -> None:
+    def test_build_meeting_activity_spans_uses_absolute_track_timeline(self) -> None:
         workspace = TrackWorkspace(
             stream=AudioStream(
                 index=1,
@@ -156,11 +156,11 @@ class TimelineIntegrationTests(unittest.TestCase):
             ),
             audio_path=Path("/tmp/alex.wav"),
             duration_ms=4000,
-            activity_spans=(TimeSpan(100, 900), TimeSpan(1500, 2000)),
+            activity_spans=(TimeSpan(100, 900), TimeSpan(1500, 12_000)),
         )
         self.assertEqual(
             build_meeting_activity_spans([workspace], source_duration_ms=10_000),
-            [TimeSpan(5100, 5900), TimeSpan(6500, 7000)],
+            [TimeSpan(100, 900), TimeSpan(1500, 10_000)],
         )
 
     def test_filter_and_remap_words_to_digest_timeline(self) -> None:
