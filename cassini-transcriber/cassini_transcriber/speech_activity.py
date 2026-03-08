@@ -5,7 +5,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .pipeline import seconds_to_ms
+from .common import seconds_to_ms
 from .timeline import TimeSpan, merge_spans
 
 SILENCE_START_RE = re.compile(r"silence_start:\s*([0-9]+(?:\.[0-9]+)?)")

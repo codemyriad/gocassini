@@ -9,11 +9,18 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from cassini_transcriber.pipeline import (  # noqa: E402
+    AudioStream,
+    TrackWorkspace,
+    build_meeting_activity_spans,
+    filter_words_to_time_window,
     make_speaker_ids,
+    remap_words_to_digest_timeline,
     render_captions_vtt,
+    serialize_timeline_map,
     segment_word_items,
     validate_transcript_payload,
 )
+from cassini_transcriber.timeline import TimeSpan, build_digest_timeline_map  # noqa: E402
 
 
 class SpeakerIdTests(unittest.TestCase):
@@ -106,6 +113,70 @@ class ValidationTests(unittest.TestCase):
             ],
         }
         validate_transcript_payload(transcript, actual_audio_duration_ms=5000)
+
+
+class TimelineIntegrationTests(unittest.TestCase):
+    def test_build_meeting_activity_spans_offsets_track_ranges(self) -> None:
+        workspace = TrackWorkspace(
+            stream=AudioStream(
+                index=1,
+                order=1,
+                codec_name="opus",
+                channels=1,
+                speaker_id="spk_alex",
+                speaker_label="Alex",
+                start_ms=5000,
+                duration_ms=4000,
+            ),
+            audio_path=Path("/tmp/alex.wav"),
+            duration_ms=4000,
+            activity_spans=(TimeSpan(100, 900), TimeSpan(1500, 2000)),
+        )
+        self.assertEqual(
+            build_meeting_activity_spans([workspace], source_duration_ms=10_000),
+            [TimeSpan(5100, 5900), TimeSpan(6500, 7000)],
+        )
+
+    def test_filter_and_remap_words_to_digest_timeline(self) -> None:
+        timeline = build_digest_timeline_map(
+            activity_spans=[TimeSpan(1000, 2000), TimeSpan(7000, 8000)],
+            source_duration_ms=10_000,
+            activity_padding_ms=0,
+            keep_silence_ms=900,
+            compress_silence_to_ms=800,
+        )
+        words = [
+            {"text": "alpha", "startMs": 1500, "endMs": 1700},
+            {"text": "beta", "startMs": 2450, "endMs": 2600},
+            {"text": "gamma", "startMs": 7200, "endMs": 7400},
+        ]
+        filtered = filter_words_to_time_window(
+            words,
+            window_start_ms=1000,
+            window_end_ms=7000,
+        )
+        remapped = remap_words_to_digest_timeline(filtered, timeline)
+        self.assertEqual(
+            remapped,
+            [
+                {"text": "alpha", "startMs": 1300, "endMs": 1500},
+                {"text": "beta", "startMs": 1872, "endMs": 1896},
+            ],
+        )
+
+    def test_serialize_timeline_map(self) -> None:
+        timeline = build_digest_timeline_map(
+            activity_spans=[TimeSpan(1000, 2000)],
+            source_duration_ms=3000,
+            activity_padding_ms=0,
+            keep_silence_ms=900,
+            compress_silence_to_ms=800,
+        )
+        payload = serialize_timeline_map(timeline)
+        self.assertEqual(payload["version"], "timeline.map.v1")
+        self.assertEqual(payload["sourceDurationMs"], 3000)
+        self.assertEqual(payload["digestDurationMs"], timeline.digest_duration_ms)
+        self.assertEqual(payload["segments"][1]["kind"], "audio")
 
 
 if __name__ == "__main__":
