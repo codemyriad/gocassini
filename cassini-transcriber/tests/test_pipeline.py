@@ -12,6 +12,7 @@ from cassini_transcriber.pipeline import (  # noqa: E402
     AudioStream,
     TrackWorkspace,
     build_meeting_activity_spans,
+    build_manifest,
     filter_words_to_time_window,
     make_speaker_ids,
     remap_words_to_digest_timeline,
@@ -113,6 +114,31 @@ class ValidationTests(unittest.TestCase):
             ],
         }
         validate_transcript_payload(transcript, actual_audio_duration_ms=5000)
+
+
+class ManifestTests(unittest.TestCase):
+    def test_build_manifest_includes_digest_summary(self) -> None:
+        manifest = build_manifest(
+            source_path=Path("/tmp/daily-meeting.mkv"),
+            audio_name="meeting.webm",
+            transcript_name="transcript.words.v1.json",
+            captions_name="captions.vtt",
+            timeline_name="timeline.map.v1.json",
+            speaker_count=4,
+            chunk_count=12,
+            segment_count=34,
+            word_count=567,
+            timeline_segment_count=89,
+            source_duration_ms=120_000,
+            digest_duration_ms=95_000,
+        )
+        self.assertEqual(manifest["files"]["timeline"], "timeline.map.v1.json")
+        self.assertEqual(manifest["speakerCount"], 4)
+        self.assertEqual(manifest["chunkCount"], 12)
+        self.assertEqual(manifest["segmentCount"], 34)
+        self.assertEqual(manifest["wordCount"], 567)
+        self.assertEqual(manifest["timelineSegmentCount"], 89)
+        self.assertEqual(manifest["silenceReductionMs"], 25_000)
 
 
 class TimelineIntegrationTests(unittest.TestCase):

@@ -731,6 +731,10 @@ def build_manifest(
     captions_name: str,
     timeline_name: str | None,
     speaker_count: int,
+    chunk_count: int,
+    segment_count: int,
+    word_count: int,
+    timeline_segment_count: int,
     source_duration_ms: int,
     digest_duration_ms: int,
 ) -> dict[str, Any]:
@@ -751,7 +755,12 @@ def build_manifest(
         },
         "files": files,
         "speakerCount": speaker_count,
+        "chunkCount": chunk_count,
+        "segmentCount": segment_count,
+        "wordCount": word_count,
+        "timelineSegmentCount": timeline_segment_count,
         "digestDurationMs": digest_duration_ms,
+        "silenceReductionMs": max(0, source_duration_ms - digest_duration_ms),
     }
 
 
@@ -878,6 +887,7 @@ def build_meeting_artifact(
             all_segments.extend(speaker_segments)
 
         finalized_segments = assign_ids(all_segments, speaker_order)
+        word_count = sum(len(segment["words"]) for segment in finalized_segments)
         transcript_payload = build_transcript_payload(
             audio_name=audio_name,
             audio_duration_ms=audio_duration_ms,
@@ -906,6 +916,10 @@ def build_meeting_artifact(
                 captions_name=captions_name,
                 timeline_name=timeline_name,
                 speaker_count=len(speakers),
+                chunk_count=chunk_count,
+                segment_count=len(finalized_segments),
+                word_count=word_count,
+                timeline_segment_count=len(timeline_map.segments),
                 source_duration_ms=source_duration_ms,
                 digest_duration_ms=audio_duration_ms,
             )
@@ -922,8 +936,12 @@ def build_meeting_artifact(
             "manifest_path": str(manifest_output_path) if manifest_output_path else None,
             "speaker_count": len(speakers),
             "segment_count": len(finalized_segments),
+            "word_count": word_count,
             "chunk_count": chunk_count,
+            "source_duration_ms": source_duration_ms,
             "duration_ms": audio_duration_ms,
+            "reduction_ms": max(0, source_duration_ms - audio_duration_ms),
+            "timeline_segment_count": len(timeline_map.segments),
             "work_dir": str(active_work_dir),
         }
     finally:

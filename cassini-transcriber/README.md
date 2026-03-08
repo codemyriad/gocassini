@@ -5,7 +5,7 @@
 - one final mono Opus/WebM audio file,
 - one canonical `transcript.words.v1.json`,
 - one derived `captions.vtt`,
-- one small `manifest.json`.
+- one small `manifest.json` with digest/transcript summary metadata.
 
 The pipeline assumes the source MKV carries one audio stream per participant and uses each audio stream title as the speaker label when available.
 
@@ -70,6 +70,8 @@ Useful flags:
 - `--keep-silence-ms` and `--compress-silence-to-ms` control digest silence compression.
 - `--minimum-silence-ms`, `--minimum-activity-ms`, and `--silence-noise-db` tune speech activity detection.
 - `--max-chunk-ms`, `--chunk-overlap-ms`, and `--max-bridge-gap-ms` control chunked transcription requests.
+
+The CLI summary reports source duration, digest duration, reduction, chunk count, word count, and timeline segment count so batch runs are easier to inspect.
 
 ## Notes
 

@@ -179,8 +179,12 @@ def main() -> int:
         print(f"manifest={result['manifest_path']}")
     print(f"speakers={result['speaker_count']}")
     print(f"segments={result['segment_count']}")
+    print(f"words={result['word_count']}")
     print(f"chunks={result['chunk_count']}")
+    print(f"timeline_segments={result['timeline_segment_count']}")
+    print(f"source_duration_ms={result['source_duration_ms']}")
     print(f"duration_ms={result['duration_ms']}")
+    print(f"reduction_ms={result['reduction_ms']}")
     return 0
 
 
