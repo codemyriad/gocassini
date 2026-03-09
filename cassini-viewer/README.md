@@ -51,11 +51,11 @@ npm run build
 
 ## Static export
 
-Build self-contained browser packages for all checked-in demo meetings:
+Build self-contained browser packages from a directory of meeting artifacts:
 
 ```bash
 cd cassini-viewer
-npm run export:meetings
+npm run export:meetings -- --source-dir /path/to/meeting-artifacts
 ```
 
 This writes:
@@ -74,3 +74,5 @@ exports/static-meetings/
 ```
 
 Each meeting directory is standalone and can be copied to any static web server.
+
+If `public/demo/` exists in your working tree, `--source-dir` is optional and defaults to that directory.

@@ -5,24 +5,30 @@ import { fileURLToPath } from "node:url";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const viewerDir = resolve(scriptDir, "..");
 const distDir = resolve(viewerDir, "dist");
-const demoDir = resolve(viewerDir, "public", "demo");
+const defaultSourceDir = resolve(viewerDir, "public", "demo");
 const defaultOutputDir = resolve(viewerDir, "exports", "static-meetings");
 
-const outputDir = parseOutputDir(process.argv.slice(2));
+const { outputDir, sourceDir } = parseArgs(process.argv.slice(2));
 
 if (!existsSync(join(distDir, "index.html"))) {
   throw new Error(`Missing ${join(distDir, "index.html")}. Run "npm run build" first.`);
 }
-if (!existsSync(demoDir)) {
-  throw new Error(`Missing demo directory: ${demoDir}`);
+if (!existsSync(sourceDir)) {
+  throw new Error(
+    `Missing meeting source directory: ${sourceDir}. Pass --source-dir <artifact-root> when artifacts are stored outside this repo.`,
+  );
 }
 
 const builtIndexHtml = readFileSync(join(distDir, "index.html"), "utf8");
 const exportedIndexHtml = rewriteIndexHtmlForBundle(builtIndexHtml);
-const meetingDirs = readdirSync(demoDir, { withFileTypes: true })
+const meetingDirs = readdirSync(sourceDir, { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
   .map((entry) => entry.name)
   .sort();
+
+if (meetingDirs.length === 0) {
+  throw new Error(`No meeting directories found in ${sourceDir}.`);
+}
 
 rmSync(outputDir, { recursive: true, force: true });
 mkdirSync(outputDir, { recursive: true });
@@ -35,17 +41,29 @@ for (const artifact of exports) {
 }
 console.log(`landing page -> ${join(outputDir, "index.html")}`);
 
-function parseOutputDir(argv) {
+function parseArgs(argv) {
+  let outputDir = defaultOutputDir;
+  let sourceDir = defaultSourceDir;
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === "--output-dir") {
       const next = argv[index + 1];
       if (!next) {
         throw new Error("missing value for --output-dir");
       }
-      return resolve(viewerDir, next);
+      outputDir = resolve(viewerDir, next);
+      index += 1;
+      continue;
+    }
+    if (argv[index] === "--source-dir") {
+      const next = argv[index + 1];
+      if (!next) {
+        throw new Error("missing value for --source-dir");
+      }
+      sourceDir = resolve(viewerDir, next);
+      index += 1;
     }
   }
-  return defaultOutputDir;
+  return { outputDir, sourceDir };
 }
 
 function rewriteIndexHtmlForBundle(indexHtml) {
@@ -58,13 +76,13 @@ function rewriteIndexHtmlForBundle(indexHtml) {
 }
 
 function exportMeeting(meetingId, indexHtml) {
-  const sourceDir = join(demoDir, meetingId);
+  const sourceMeetingDir = join(sourceDir, meetingId);
   const targetDir = join(outputDir, meetingId);
-  const manifest = readManifest(sourceDir, meetingId);
+  const manifest = readManifest(sourceMeetingDir, meetingId);
 
   mkdirSync(targetDir, { recursive: true });
   cpSync(join(distDir, "assets"), join(targetDir, "assets"), { recursive: true });
-  cpSync(sourceDir, targetDir, { recursive: true });
+  cpSync(sourceMeetingDir, targetDir, { recursive: true });
   writeFileSync(join(targetDir, "index.html"), indexHtml, "utf8");
 
   return {
