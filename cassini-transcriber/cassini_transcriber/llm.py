@@ -1,0 +1,359 @@
+from __future__ import annotations
+
+import json
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+from typing import Any
+
+DEFAULT_READABLE_BATCH_RECORDS = 36
+DEFAULT_READABLE_BATCH_CHARS = 7000
+
+
+@dataclass(frozen=True)
+class OpenWebUIConfig:
+    base_url: str
+    email: str
+    password: str
+    model: str
+    timeout_seconds: int = 240
+
+
+@dataclass(frozen=True)
+class ReadableTranscriptRecord:
+    index: int
+    speaker_id: str | None
+    speaker_label: str
+    start_ms: int
+    end_ms: int
+    text: str
+    source_segment_ids: tuple[str, ...]
+
+
+class OpenWebUIChatClient:
+    def __init__(self, config: OpenWebUIConfig) -> None:
+        self._config = config
+        self._token: str | None = None
+
+    def rewrite_readable_records(
+        self,
+        records: list[ReadableTranscriptRecord],
+    ) -> list[str]:
+        prompt = build_readable_records_prompt(records)
+        content = self._chat_completion(
+            prompt,
+            system_prompt=(
+                "Return only rewritten records in the @@index@@ text format. "
+                "No markdown, no JSON, no commentary."
+            ),
+            max_tokens=estimate_completion_tokens(records),
+            retry_on_unauthorized=True,
+        )
+        return parse_readable_records_response(content, records)
+
+    def _chat_completion(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str,
+        max_tokens: int,
+        retry_on_unauthorized: bool,
+    ) -> str:
+        token = self._ensure_token()
+        payload = {
+            "model": self._config.model,
+            "temperature": 0,
+            "stream": False,
+            "max_tokens": max_tokens,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+        }
+        try:
+            response = self._post_json(
+                "/api/chat/completions",
+                payload,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        except urllib.error.HTTPError as error:
+            if retry_on_unauthorized and error.code == 401:
+                self._token = None
+                return self._chat_completion(
+                    prompt,
+                    system_prompt=system_prompt,
+                    max_tokens=max_tokens,
+                    retry_on_unauthorized=False,
+                )
+            raise
+        choices = response.get("choices") or []
+        if not choices:
+            raise ValueError("LLM response did not include choices")
+        message = choices[0].get("message") or {}
+        content = message.get("content")
+        if not isinstance(content, str):
+            raise ValueError("LLM response content was not a string")
+        return content
+
+    def _ensure_token(self) -> str:
+        if self._token is not None:
+            return self._token
+        response = self._post_json(
+            "/api/v1/auths/signin",
+            {
+                "email": self._config.email,
+                "password": self._config.password,
+            },
+        )
+        token = response.get("token")
+        if not isinstance(token, str) or not token:
+            raise ValueError("Open WebUI sign-in did not return a bearer token")
+        self._token = token
+        return token
+
+    def _post_json(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        request_headers = {"Content-Type": "application/json"}
+        if headers:
+            request_headers.update(headers)
+        request = urllib.request.Request(
+            urllib.parse.urljoin(self._normalized_base_url(), path),
+            data=json.dumps(payload).encode("utf-8"),
+            headers=request_headers,
+        )
+        with urllib.request.urlopen(request, timeout=self._config.timeout_seconds) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def _normalized_base_url(self) -> str:
+        return self._config.base_url.rstrip("/") + "/"
+
+
+def normalize_readable_text(text: str) -> str:
+    return " ".join(text.split()).strip()
+
+
+def plan_readable_windows(
+    segments: list[dict[str, Any]],
+    *,
+    max_gap_ms: int,
+    max_window_ms: int,
+    max_window_words: int,
+) -> list[list[dict[str, Any]]]:
+    if not segments:
+        return []
+
+    windows: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    current_word_count = 0
+
+    def flush() -> None:
+        nonlocal current
+        nonlocal current_word_count
+        if not current:
+            return
+        windows.append(current)
+        current = []
+        current_word_count = 0
+
+    for segment in segments:
+        segment_words = len(segment.get("words") or [])
+        if current:
+            previous = current[-1]
+            gap_ms = int(segment["startMs"]) - int(previous["endMs"])
+            window_duration_ms = int(segment["endMs"]) - int(current[0]["startMs"])
+            same_speaker = segment.get("speaker") == current[0].get("speaker")
+            should_flush = (
+                not same_speaker
+                or gap_ms > max_gap_ms
+                or current_word_count + segment_words > max_window_words
+                or window_duration_ms > max_window_ms
+            )
+            if should_flush:
+                flush()
+        current.append(segment)
+        current_word_count += segment_words
+
+    flush()
+    return windows
+
+
+def build_readable_records(
+    *,
+    transcript_payload: dict[str, Any],
+    max_gap_ms: int,
+    max_window_ms: int,
+    max_window_words: int,
+) -> list[ReadableTranscriptRecord]:
+    speakers = list(transcript_payload.get("speakers", []))
+    speaker_labels = {
+        speaker["id"]: speaker.get("label", speaker["id"])
+        for speaker in speakers
+        if "id" in speaker
+    }
+    source_segments = list(transcript_payload.get("segments", []))
+    windows = plan_readable_windows(
+        source_segments,
+        max_gap_ms=max_gap_ms,
+        max_window_ms=max_window_ms,
+        max_window_words=max_window_words,
+    )
+    records: list[ReadableTranscriptRecord] = []
+    for index, window in enumerate(windows, start=1):
+        speaker_id = window[0].get("speaker")
+        records.append(
+            ReadableTranscriptRecord(
+                index=index,
+                speaker_id=speaker_id,
+                speaker_label=speaker_labels.get(speaker_id, speaker_id or "Unknown speaker"),
+                start_ms=int(window[0]["startMs"]),
+                end_ms=int(window[-1]["endMs"]),
+                text=" ".join(segment["text"] for segment in window).strip(),
+                source_segment_ids=tuple(
+                    str(segment["id"]) for segment in window if isinstance(segment.get("id"), str)
+                ),
+            )
+        )
+    return records
+
+
+def plan_readable_record_batches(
+    records: list[ReadableTranscriptRecord],
+    *,
+    max_batch_records: int = DEFAULT_READABLE_BATCH_RECORDS,
+    max_batch_chars: int = DEFAULT_READABLE_BATCH_CHARS,
+) -> list[list[ReadableTranscriptRecord]]:
+    if not records:
+        return []
+
+    batches: list[list[ReadableTranscriptRecord]] = []
+    current: list[ReadableTranscriptRecord] = []
+    current_chars = 0
+
+    def flush() -> None:
+        nonlocal current
+        nonlocal current_chars
+        if not current:
+            return
+        batches.append(current)
+        current = []
+        current_chars = 0
+
+    for record in records:
+        record_chars = len(record.text) + len(record.speaker_label) + 24
+        if current and (
+            len(current) >= max_batch_records or current_chars + record_chars > max_batch_chars
+        ):
+            flush()
+        current.append(record)
+        current_chars += record_chars
+
+    flush()
+    return batches
+
+
+def build_readable_records_prompt(records: list[ReadableTranscriptRecord]) -> str:
+    if not records:
+        raise ValueError("At least one readable transcript record is required")
+    lines = [
+        f"@@{record.index}@@ {record.speaker_label} | {record.text}"
+        for record in records
+    ]
+    return (
+        "Rewrite each transcript window into readable text without paraphrasing.\n"
+        "Input records start with @@index@@ speakerLabel | raw ASR text.\n"
+        "Output exactly one rewritten record for each input record using the same marker format "
+        "and nothing else:\n"
+        "@@index@@ cleaned readable text\n"
+        "Rules:\n"
+        "- Keep the same number of records and the same indexes.\n"
+        "- Preserve meaning, order, and surviving wording.\n"
+        "- Only delete filler words, immediate repetitions, and obvious false starts.\n"
+        "- Add punctuation and casing.\n"
+        "- Do not paraphrase, reorder, or replace words with synonyms.\n"
+        "- Keep technical terms and names as heard, even if uncertain.\n"
+        f"- This batch contains exactly records {records[0].index}..{records[-1].index}.\n"
+        "Transcript:\n"
+        + "\n".join(lines)
+    )
+
+
+def parse_readable_records_response(
+    raw_content: str,
+    records: list[ReadableTranscriptRecord],
+) -> list[str]:
+    matches = re.findall(r"@@(\d+)@@\s*(.*?)(?=\s*@@\d+@@|$)", raw_content, re.S)
+    if len(matches) != len(records):
+        raise ValueError(
+            f"Readable transcript response returned {len(matches)} records, "
+            f"expected {len(records)}"
+        )
+
+    cleaned: list[str] = []
+    for expected_record, (index_text, text) in zip(records, matches, strict=True):
+        if int(index_text) != expected_record.index:
+            raise ValueError(
+                f"Readable transcript response returned record {index_text}, "
+                f"expected {expected_record.index}"
+            )
+        normalized = normalize_readable_text(text)
+        speaker_prefix = f"{expected_record.speaker_label} | "
+        if normalized.startswith(speaker_prefix):
+            normalized = normalized[len(speaker_prefix) :].strip()
+        if not normalized:
+            raise ValueError(f"Readable transcript response for {expected_record.index} was empty")
+        cleaned.append(normalized)
+    return cleaned
+
+
+def estimate_completion_tokens(records: list[ReadableTranscriptRecord]) -> int:
+    total_chars = sum(len(record.text) for record in records)
+    return max(512, min(3000, int(total_chars / 3)))
+
+
+def build_readable_transcript_payload(
+    *,
+    transcript_payload: dict[str, Any],
+    client: OpenWebUIChatClient,
+    max_gap_ms: int,
+    max_window_ms: int,
+    max_window_words: int,
+) -> dict[str, Any]:
+    speakers = list(transcript_payload.get("speakers", []))
+    records = build_readable_records(
+        transcript_payload=transcript_payload,
+        max_gap_ms=max_gap_ms,
+        max_window_ms=max_window_ms,
+        max_window_words=max_window_words,
+    )
+    readable_segments = []
+    for batch in plan_readable_record_batches(records):
+        try:
+            cleaned_texts = client.rewrite_readable_records(batch)
+        except Exception:
+            cleaned_texts = [record.text for record in batch]
+        for record, readable_text in zip(batch, cleaned_texts, strict=True):
+            readable_segments.append(
+                {
+                    "id": f"rseg_{record.index:06d}",
+                    "speaker": record.speaker_id,
+                    "startMs": record.start_ms,
+                    "endMs": record.end_ms,
+                    "text": readable_text,
+                    "sourceSegmentIds": list(record.source_segment_ids),
+                }
+            )
+
+    return {
+        "version": "transcript.readable.v1",
+        "media": dict(transcript_payload.get("media") or {}),
+        "speakers": speakers,
+        "segments": readable_segments,
+        "sourceTranscriptVersion": transcript_payload.get("version"),
+    }
