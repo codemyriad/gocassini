@@ -42,7 +42,19 @@ Key properties:
 - `ffmpeg`
 - `ffprobe`
 - Python 3.10+
-- A compatible HTTP transcription service that accepts `POST` multipart audio uploads and returns JSON with `text` plus word-level timestamps
+- One transcription backend:
+  - `auto`: use HTTP when `--transcriber-url` is set, otherwise prefer local execution and pick `cuda` when NVIDIA is available, else `cpu`
+  - `http`: a compatible HTTP transcription service that accepts `POST` multipart audio uploads and returns JSON with `text` plus word-level timestamps
+  - `local-whisper`: local Python package `faster-whisper`, plus an NVIDIA-capable CUDA runtime when `--whisper-device cuda` is used
+- Optional readable transcript cleanup backend when `--readable-transcript-name` is set:
+  - `auto`: use Open WebUI when fully configured, otherwise local Ollama when available, otherwise disable readable cleanup
+  - `none`: skip readable transcript cleanup
+  - `openwebui`: the existing Open WebUI settings
+  - `local-transformers`: local Python packages `torch` and `transformers`, plus an NVIDIA-capable CUDA runtime when `--local-llm-device cuda` is used
+  - `local-ollama`: local `ollama` CLI access, with the configured model pulled automatically unless `--ollama-no-auto-pull` is set
+
+For the local NVIDIA path, the Python packages are listed in
+`requirements-local-nvidia.txt`.
 
 Expected response shape:
 
@@ -67,12 +79,45 @@ python3 cassini-transcriber/build-meeting-artifact.py \
   --transcriber-url http://127.0.0.1:8000/v1/transcribe
 ```
 
+Local auto-selected run:
+
+```bash
+python3 cassini-transcriber/build-meeting-artifact.py \
+  --input /path/to/meeting.mkv \
+  --output-dir /tmp/meeting-artifact
+```
+
+One-command Docker wrapper:
+
+```bash
+./cassini-transcriber/bin/docker-run-local.sh \
+  --input /path/to/meeting.mkv \
+  --output-dir /tmp/meeting-artifact
+```
+
+One-command processor with stable output directories and optional rendered viewer bundle:
+
+```bash
+./cassini-transcriber/bin/process-meeting.sh \
+  --input /path/to/meeting.mkv \
+  --output-root /tmp/cassini-results
+```
+
+Add `--bundle-viewer` to also emit a static browser package for the meeting.
+
 Useful flags:
 
 - `--keep-work-dir` keeps extracted per-speaker WAV files and raw transcription responses.
+- `--transcriber-backend` supports `auto`, `http`, and `local-whisper`.
+- `--whisper-model auto` currently resolves to `large-v3` because quality is preferred over speed by default.
+- `--whisper-device auto` prefers `cuda` when NVIDIA is available, else `cpu`.
+- `--whisper-download-root` controls local model cache placement.
 - `--segment-gap-ms` tunes pause-based segmentation.
 - `--max-segment-ms` and `--max-segment-words` keep transcript chunks readable.
 - `--readable-transcript-name` enables a second LLM-cleaned transcript artifact.
+- `--readable-backend` supports `auto`, `none`, `openwebui`, `local-transformers`, and `local-ollama`.
+- `--local-llm-model`, `--local-llm-device`, and `--local-llm-download-root` control the local readable transcript backend.
+- `--ollama-model` and `--ollama-no-auto-pull` control the local Ollama readable transcript backend.
 - `--openwebui-base-url`, `--openwebui-email`, `--openwebui-password`, and `--openwebui-model` configure the Open WebUI service used for readable transcript cleanup.
 - `--keep-silence-ms` and `--compress-silence-to-ms` control digest silence compression.
 - `--minimum-silence-ms`, `--minimum-activity-ms`, and `--silence-noise-db` tune speech activity detection.
@@ -90,9 +135,21 @@ export CASSINI_OPENWEBUI_PASSWORD=...
 export CASSINI_OPENWEBUI_MODEL=qwen35-9b-q4
 ```
 
+Local runtime environment variables:
+
+```bash
+export CASSINI_TRANSCRIBER_BACKEND=local-whisper
+export CASSINI_WHISPER_MODEL=auto
+export CASSINI_WHISPER_DEVICE=auto
+export CASSINI_READABLE_BACKEND=none
+```
+
 ## Notes
 
 - The pipeline detects speech activity per speaker track, unions that activity at the meeting level, and compresses long all-speaker silence on the final digest timeline.
+- Backend prerequisites are validated before audio extraction starts so missing URLs, Python packages, or CUDA support fail early.
+- Local execution uses one heavy model stage at a time. ASR finishes before any optional readable-cleanup backend starts, so 8 GB cards are usable.
+- The Docker runner now keeps `_work` by default, so restarting the same output directory reuses chunk responses and extracted audio instead of recomputing everything.
 - The source MKV may carry sparse audio packet timestamps; per-speaker decode must preserve those gaps or transcript timings will drift badly.
 - Each speaker track is transcribed separately in chunked requests, then merged into one time-ordered transcript.
 - Multiple audio streams with the same normalized title are treated as one speaker in the final artifact, so rejoin tracks do not create fake extra speakers.
@@ -114,3 +171,16 @@ When verifying an artifact:
 ```bash
 python3 -m unittest discover -s cassini-transcriber/tests -t cassini-transcriber
 ```
+
+## Benchmarks
+
+Measured on `/mnt/data/cassini/initial-experiments/daily-meeting--2026-03-09--12:32:04.mkv`
+inside container `100`, with readable cleanup disabled, `small.en` used only as a
+device-comparison control model, and one-off image/model downloads excluded:
+
+- local GPU (`cuda`, warm cache): `53` seconds
+- local CPU (`cpu`): `196` seconds
+
+These numbers are not the current quality-first default. The current `auto`
+model policy resolves to `large-v3` until a Parakeet-based local backend is in
+place.

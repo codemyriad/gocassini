@@ -66,6 +66,13 @@ go test ./...
 python3 -m unittest discover -s cassini-transcriber/tests -t cassini-transcriber
 ```
 
+For the local MKV-to-audio+transcript path, see
+`cassini-transcriber/README.md`. That README now includes:
+
+- automatic backend selection (`http` vs local GPU vs local CPU),
+- a Docker-based one-command runner,
+- current benchmark numbers for the test meeting.
+
 ### Recorder smoke test (no real call)
 
 ```bash

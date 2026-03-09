@@ -17,6 +17,8 @@ from cassini_transcriber.pipeline import (  # noqa: E402
     make_track_ids,
     make_speaker_ids,
     normalize_speaker_label,
+    resolve_readable_backend,
+    resolve_transcriber_backend,
     remap_words_to_digest_timeline,
     render_captions_vtt,
     serialize_timeline_map,
@@ -220,6 +222,31 @@ class TimelineIntegrationTests(unittest.TestCase):
         self.assertEqual(payload["sourceDurationMs"], 3000)
         self.assertEqual(payload["digestDurationMs"], timeline.digest_duration_ms)
         self.assertEqual(payload["segments"][1]["kind"], "audio")
+
+
+class BackendResolutionTests(unittest.TestCase):
+    def test_resolve_transcriber_backend_prefers_http_when_url_is_present(self) -> None:
+        backend, device, model = resolve_transcriber_backend(
+            transcriber_backend="auto",
+            transcriber_url="http://127.0.0.1:8000/v1/transcribe",
+            whisper_device="auto",
+            whisper_model="auto",
+        )
+        self.assertEqual(backend, "http")
+        self.assertEqual(model, "large-v3")
+        self.assertIn(device, {"cpu", "cuda"})
+
+    def test_resolve_readable_backend_turns_off_when_no_output_is_requested(self) -> None:
+        backend = resolve_readable_backend(
+            readable_backend="auto",
+            readable_transcript_name=None,
+            openwebui_base_url=None,
+            openwebui_email=None,
+            openwebui_password=None,
+            openwebui_model=None,
+            ollama_binary="ollama",
+        )
+        self.assertEqual(backend, "none")
 
 
 if __name__ == "__main__":

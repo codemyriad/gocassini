@@ -2,23 +2,34 @@ from __future__ import annotations
 
 import hashlib
 import json
-import mimetypes
 import re
 import shutil
 import subprocess
 import tempfile
-import urllib.error
-import urllib.request
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from .common import seconds_to_ms
-from .llm import OpenWebUIChatClient, OpenWebUIConfig, build_readable_transcript_payload
+from .llm import (
+    LocalOllamaChatClient,
+    LocalOllamaConfig,
+    LocalTransformersChatClient,
+    LocalTransformersConfig,
+    OpenWebUIChatClient,
+    OpenWebUIConfig,
+    build_readable_transcript_payload,
+)
 from .speech_activity import TranscriptionChunk, detect_active_spans, plan_transcription_chunks
 from .timeline import TimeSpan, TimelineMap, build_digest_timeline_map
+from .transcription import (
+    HTTPTranscriptionClient,
+    HTTPTranscriptionConfig,
+    LocalWhisperConfig,
+    LocalWhisperTranscriptionClient,
+    TranscriptionClient,
+)
 
 TRACK_SAMPLE_RATE = 48_000
 CHUNK_SAMPLE_RATE = 16_000
@@ -143,6 +154,8 @@ def slugify(value: str) -> str:
 
 
 def build_mixed_master_audio(track_audio_paths: list[Path], output_path: Path) -> None:
+    if output_path.exists() and output_path.stat().st_size > 0:
+        return
     if not track_audio_paths:
         raise RuntimeError("At least one decoded track is required to build the master mix")
 
@@ -204,6 +217,8 @@ def render_digest_audio(
     output_path: Path,
     timeline_map: TimelineMap,
 ) -> None:
+    if output_path.exists() and output_path.stat().st_size > 0:
+        return
     if not timeline_map.segments:
         raise RuntimeError("Timeline map must contain at least one segment")
 
@@ -261,6 +276,8 @@ def render_digest_audio(
 
 
 def extract_track_audio(input_path: Path, output_path: Path, stream: AudioStream) -> None:
+    if output_path.exists() and output_path.stat().st_size > 0:
+        return
     # Preserve sparse packet-time gaps so the decoded WAV stays on the meeting timeline.
     subprocess.run(
         [
@@ -291,6 +308,8 @@ def extract_track_audio(input_path: Path, output_path: Path, stream: AudioStream
 
 
 def extract_audio_span(input_path: Path, output_path: Path, span: TimeSpan) -> None:
+    if output_path.exists() and output_path.stat().st_size > 0:
+        return
     subprocess.run(
         [
             "ffmpeg",
@@ -377,44 +396,6 @@ def analyze_tracks(
     return workspaces
 
 
-def transcribe_file(audio_path: Path, transcriber_url: str, timeout_seconds: int) -> dict[str, Any]:
-    mime_type = mimetypes.guess_type(audio_path.name)[0] or "application/octet-stream"
-    boundary = uuid.uuid4().hex
-    with audio_path.open("rb") as handle:
-        audio_bytes = handle.read()
-
-    parts = [
-        f"--{boundary}\r\n".encode("ascii"),
-        (
-            f'Content-Disposition: form-data; name="file"; filename="{audio_path.name}"\r\n'
-        ).encode("utf-8"),
-        f"Content-Type: {mime_type}\r\n\r\n".encode("ascii"),
-        audio_bytes,
-        b"\r\n",
-        f"--{boundary}--\r\n".encode("ascii"),
-    ]
-    payload = b"".join(parts)
-    request = urllib.request.Request(
-        transcriber_url,
-        data=payload,
-        headers={
-            "Accept": "application/json",
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "Content-Length": str(len(payload)),
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-            body = response.read()
-    except urllib.error.HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(
-            f"Transcription request failed for {audio_path.name}: HTTP {exc.code}: {details}"
-        ) from exc
-    return json.loads(body.decode("utf-8"))
-
-
 def normalize_words(raw_words: list[dict[str, Any]], start_offset_ms: int) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for raw_word in raw_words:
@@ -493,7 +474,7 @@ def transcribe_track_chunks(
     chunks: list[TranscriptionChunk],
     chunks_dir: Path,
     responses_dir: Path,
-    transcriber_url: str,
+    transcriber: TranscriptionClient,
     timeout_seconds: int,
     timeline_map: TimelineMap,
 ) -> list[dict[str, Any]]:
@@ -507,8 +488,11 @@ def transcribe_track_chunks(
         chunk_audio_path = speaker_chunks_dir / f"chunk-{index:04d}.wav"
         response_path = speaker_responses_dir / f"chunk-{index:04d}.json"
         extract_audio_span(workspace.audio_path, chunk_audio_path, chunk.source)
-        raw_response = transcribe_file(chunk_audio_path, transcriber_url, timeout_seconds)
-        response_path.write_text(json.dumps(raw_response, indent=2), encoding="utf-8")
+        if response_path.exists() and response_path.stat().st_size > 0:
+            raw_response = json.loads(response_path.read_text(encoding="utf-8"))
+        else:
+            raw_response = transcriber.transcribe(chunk_audio_path, timeout_seconds)
+            response_path.write_text(json.dumps(raw_response, indent=2), encoding="utf-8")
 
         normalized_words = normalize_words(
             raw_response.get("words") or [],
@@ -782,11 +766,78 @@ def build_manifest(
     }
 
 
+def has_nvidia_gpu() -> bool:
+    if not shutil.which("nvidia-smi"):
+        return False
+    completed = subprocess.run(
+        ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.returncode == 0 and bool(completed.stdout.strip())
+
+
+def resolve_transcriber_backend(
+    *,
+    transcriber_backend: str,
+    transcriber_url: str | None,
+    whisper_device: str,
+    whisper_model: str,
+) -> tuple[str, str, str]:
+    resolved_backend = transcriber_backend
+    resolved_device = whisper_device
+    resolved_model = whisper_model
+
+    if resolved_backend == "auto":
+        if transcriber_url:
+            resolved_backend = "http"
+        else:
+            resolved_backend = "local-whisper"
+
+    if resolved_device == "auto":
+        resolved_device = "cuda" if has_nvidia_gpu() else "cpu"
+
+    if resolved_model == "auto":
+        # Prefer the highest-quality Whisper checkpoint until Parakeet lands.
+        resolved_model = "large-v3"
+
+    return resolved_backend, resolved_device, resolved_model
+
+
+def resolve_readable_backend(
+    *,
+    readable_backend: str,
+    readable_transcript_name: str | None,
+    openwebui_base_url: str | None,
+    openwebui_email: str | None,
+    openwebui_password: str | None,
+    openwebui_model: str | None,
+    ollama_binary: str,
+) -> str:
+    if not readable_transcript_name:
+        return "none"
+
+    if readable_backend != "auto":
+        return readable_backend
+
+    if all((openwebui_base_url, openwebui_email, openwebui_password, openwebui_model)):
+        return "openwebui"
+    if shutil.which(ollama_binary):
+        return "local-ollama"
+    return "none"
+
+
 def build_meeting_artifact(
     *,
     input_path: Path,
     output_dir: Path,
-    transcriber_url: str,
+    transcriber_backend: str,
+    transcriber_url: str | None = None,
+    whisper_model: str = "auto",
+    whisper_device: str = "auto",
+    whisper_download_root: Path | None = None,
+    whisper_language: str | None = None,
     audio_name: str = "meeting.webm",
     transcript_name: str = "transcript.words.v1.json",
     readable_transcript_name: str | None = None,
@@ -807,11 +858,19 @@ def build_meeting_artifact(
     max_chunk_ms: int = 25_000,
     chunk_overlap_ms: int = 500,
     max_bridge_gap_ms: int = 1_500,
+    readable_backend: str = "auto",
     openwebui_base_url: str | None = None,
     openwebui_email: str | None = None,
     openwebui_password: str | None = None,
     openwebui_model: str | None = None,
     openwebui_timeout_seconds: int = 240,
+    local_llm_model: str = "Qwen/Qwen2.5-1.5B-Instruct",
+    local_llm_device: str = "cuda",
+    local_llm_download_root: Path | None = None,
+    local_llm_max_new_tokens: int = 1024,
+    ollama_model: str = "qwen35-9b-q4:latest",
+    ollama_binary: str = "ollama",
+    ollama_auto_pull: bool = True,
     readable_max_gap_ms: int = 1_800,
     readable_max_window_ms: int = 45_000,
     readable_max_window_words: int = 120,
@@ -824,6 +883,39 @@ def build_meeting_artifact(
     input_path = input_path.resolve()
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    transcriber_backend, whisper_device, whisper_model = resolve_transcriber_backend(
+        transcriber_backend=transcriber_backend,
+        transcriber_url=transcriber_url,
+        whisper_device=whisper_device,
+        whisper_model=whisper_model,
+    )
+    readable_backend = resolve_readable_backend(
+        readable_backend=readable_backend,
+        readable_transcript_name=readable_transcript_name,
+        openwebui_base_url=openwebui_base_url,
+        openwebui_email=openwebui_email,
+        openwebui_password=openwebui_password,
+        openwebui_model=openwebui_model,
+        ollama_binary=ollama_binary,
+    )
+
+    if transcriber_backend == "http":
+        transcriber: TranscriptionClient = HTTPTranscriptionClient(
+            HTTPTranscriptionConfig(url=str(transcriber_url or ""))
+        )
+    elif transcriber_backend == "local-whisper":
+        transcriber = LocalWhisperTranscriptionClient(
+            LocalWhisperConfig(
+                model=whisper_model,
+                device=whisper_device,
+                download_root=str(whisper_download_root.resolve()) if whisper_download_root else None,
+                language=whisper_language,
+            )
+        )
+    else:
+        raise ValueError(f"Unsupported transcription backend: {transcriber_backend}")
+    transcriber.validate_environment()
 
     audio_streams = probe_media(input_path)
     speaker_order: dict[str, int] = {}
@@ -907,7 +999,7 @@ def build_meeting_artifact(
                 chunks=transcription_chunks,
                 chunks_dir=chunks_dir,
                 responses_dir=responses_dir,
-                transcriber_url=transcriber_url,
+                transcriber=transcriber,
                 timeout_seconds=timeout_seconds,
                 timeline_map=timeline_map,
             )
@@ -930,26 +1022,30 @@ def build_meeting_artifact(
             segments=finalized_segments,
         )
         captions_vtt = render_captions_vtt(transcript_payload)
+        transcriber.release_resources()
         readable_payload: dict[str, Any] | None = None
         if readable_output_path is not None:
-            missing_openwebui = [
-                name
-                for name, value in (
-                    ("openwebui_base_url", openwebui_base_url),
-                    ("openwebui_email", openwebui_email),
-                    ("openwebui_password", openwebui_password),
-                    ("openwebui_model", openwebui_model),
-                )
-                if not value
-            ]
-            if missing_openwebui:
+            if readable_backend == "none":
                 raise ValueError(
-                    "Readable transcript generation requires Open WebUI settings: "
-                    + ", ".join(missing_openwebui)
+                    "Readable transcript output was requested, but readable_backend=none"
                 )
-            readable_payload = build_readable_transcript_payload(
-                transcript_payload=transcript_payload,
-                client=OpenWebUIChatClient(
+            if readable_backend == "openwebui":
+                missing_openwebui = [
+                    name
+                    for name, value in (
+                        ("openwebui_base_url", openwebui_base_url),
+                        ("openwebui_email", openwebui_email),
+                        ("openwebui_password", openwebui_password),
+                        ("openwebui_model", openwebui_model),
+                    )
+                    if not value
+                ]
+                if missing_openwebui:
+                    raise ValueError(
+                        "Readable transcript generation with Open WebUI requires: "
+                        + ", ".join(missing_openwebui)
+                    )
+                readable_client = OpenWebUIChatClient(
                     OpenWebUIConfig(
                         base_url=str(openwebui_base_url),
                         email=str(openwebui_email),
@@ -957,7 +1053,33 @@ def build_meeting_artifact(
                         model=str(openwebui_model),
                         timeout_seconds=openwebui_timeout_seconds,
                     )
-                ),
+                )
+            elif readable_backend == "local-transformers":
+                readable_client = LocalTransformersChatClient(
+                    LocalTransformersConfig(
+                        model=local_llm_model,
+                        device=local_llm_device,
+                        download_root=(
+                            str(local_llm_download_root.resolve()) if local_llm_download_root else None
+                        ),
+                        max_new_tokens=local_llm_max_new_tokens,
+                    )
+                )
+                readable_client.validate_environment()
+            elif readable_backend == "local-ollama":
+                readable_client = LocalOllamaChatClient(
+                    LocalOllamaConfig(
+                        model=ollama_model,
+                        binary=ollama_binary,
+                        auto_pull=ollama_auto_pull,
+                    )
+                )
+                readable_client.validate_environment()
+            else:
+                raise ValueError(f"Unsupported readable transcript backend: {readable_backend}")
+            readable_payload = build_readable_transcript_payload(
+                transcript_payload=transcript_payload,
+                client=readable_client,
                 max_gap_ms=readable_max_gap_ms,
                 max_window_ms=readable_max_window_ms,
                 max_window_words=readable_max_window_words,

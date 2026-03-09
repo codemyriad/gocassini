@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 DEFAULT_READABLE_BATCH_RECORDS = 36
 DEFAULT_READABLE_BATCH_CHARS = 7000
@@ -133,6 +135,175 @@ class OpenWebUIChatClient:
 
     def _normalized_base_url(self) -> str:
         return self._config.base_url.rstrip("/") + "/"
+
+
+@dataclass(frozen=True)
+class LocalTransformersConfig:
+    model: str
+    device: str = "cuda"
+    download_root: str | None = None
+    max_new_tokens: int = 1024
+
+
+class ReadableTranscriptClient(Protocol):
+    def rewrite_readable_records(
+        self,
+        records: list["ReadableTranscriptRecord"],
+    ) -> list[str]: ...
+
+    def validate_environment(self) -> None: ...
+
+
+class LocalTransformersChatClient:
+    def __init__(self, config: LocalTransformersConfig) -> None:
+        self._config = config
+        self._model: Any | None = None
+        self._tokenizer: Any | None = None
+
+    def validate_environment(self) -> None:
+        if not self._config.model.strip():
+            raise RuntimeError("Local readable transcript generation requires a non-empty model id")
+        try:
+            import torch  # type: ignore[import-not-found]
+            import transformers  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError(
+                "Local readable transcript generation requires the 'torch' and "
+                "'transformers' Python packages"
+            ) from exc
+        if self._config.device == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(
+                "Local readable transcript generation requested CUDA, but no CUDA device is available"
+            )
+
+    def _ensure_model(self) -> tuple[Any, Any]:
+        if self._model is not None and self._tokenizer is not None:
+            return self._model, self._tokenizer
+
+        import torch  # type: ignore[import-not-found]
+        from transformers import AutoModelForCausalLM, AutoTokenizer  # type: ignore[import-not-found]
+
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            self._config.model,
+            cache_dir=self._config.download_root,
+        )
+        torch_dtype = torch.float16 if self._config.device == "cuda" else torch.float32
+        self._model = AutoModelForCausalLM.from_pretrained(
+            self._config.model,
+            cache_dir=self._config.download_root,
+            torch_dtype=torch_dtype,
+        )
+        self._model.to(self._config.device)
+        self._model.eval()
+        return self._model, self._tokenizer
+
+    def rewrite_readable_records(
+        self,
+        records: list["ReadableTranscriptRecord"],
+    ) -> list[str]:
+        model, tokenizer = self._ensure_model()
+        prompt = build_readable_records_prompt(records)
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Return only rewritten records in the @@index@@ text format. "
+                    "No markdown, no JSON, no commentary."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
+        if hasattr(tokenizer, "apply_chat_template"):
+            rendered_prompt = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        else:
+            rendered_prompt = (
+                f"System: {messages[0]['content']}\n\nUser: {messages[1]['content']}\n\nAssistant:"
+            )
+
+        import torch  # type: ignore[import-not-found]
+
+        inputs = tokenizer(rendered_prompt, return_tensors="pt")
+        inputs = {key: value.to(self._config.device) for key, value in inputs.items()}
+        with torch.inference_mode():
+            outputs = model.generate(
+                **inputs,
+                do_sample=False,
+                max_new_tokens=min(
+                    self._config.max_new_tokens,
+                    max(estimate_completion_tokens(records), 256),
+                ),
+                pad_token_id=tokenizer.pad_token_id or tokenizer.eos_token_id,
+            )
+        completion_tokens = outputs[0][inputs["input_ids"].shape[1] :]
+        content = tokenizer.decode(completion_tokens, skip_special_tokens=True)
+        return parse_readable_records_response(content, records)
+
+
+@dataclass(frozen=True)
+class LocalOllamaConfig:
+    model: str
+    binary: str = "ollama"
+    auto_pull: bool = True
+
+
+class LocalOllamaChatClient:
+    def __init__(self, config: LocalOllamaConfig) -> None:
+        self._config = config
+
+    def validate_environment(self) -> None:
+        if not self._config.model.strip():
+            raise RuntimeError("Local Ollama readable transcript generation requires a non-empty model id")
+        if not shutil.which(self._config.binary):
+            raise RuntimeError(
+                f"Local Ollama readable transcript generation requires '{self._config.binary}' on PATH"
+            )
+        show = subprocess.run(
+            [self._config.binary, "show", self._config.model],
+            capture_output=True,
+            text=True,
+        )
+        if show.returncode == 0:
+            return
+        if not self._config.auto_pull:
+            raise RuntimeError(
+                f"Ollama model '{self._config.model}' is not available: "
+                f"{show.stderr.strip() or show.stdout.strip()}"
+            )
+        pull = subprocess.run(
+            [self._config.binary, "pull", self._config.model],
+            capture_output=True,
+            text=True,
+        )
+        if pull.returncode != 0:
+            raise RuntimeError(
+                f"Could not pull Ollama model '{self._config.model}': "
+                f"{pull.stderr.strip() or pull.stdout.strip()}"
+            )
+
+    def rewrite_readable_records(
+        self,
+        records: list["ReadableTranscriptRecord"],
+    ) -> list[str]:
+        prompt = (
+            "Return only rewritten records in the @@index@@ text format. "
+            "No markdown, no JSON, no commentary.\n\n"
+            + build_readable_records_prompt(records)
+        )
+        completed = subprocess.run(
+            [self._config.binary, "run", self._config.model, prompt],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"Ollama generation failed: {completed.stderr.strip() or completed.stdout.strip()}"
+            )
+        return parse_readable_records_response(completed.stdout, records)
 
 
 def normalize_readable_text(text: str) -> str:
@@ -320,7 +491,7 @@ def estimate_completion_tokens(records: list[ReadableTranscriptRecord]) -> int:
 def build_readable_transcript_payload(
     *,
     transcript_payload: dict[str, Any],
-    client: OpenWebUIChatClient,
+    client: ReadableTranscriptClient,
     max_gap_ms: int,
     max_window_ms: int,
     max_window_words: int,

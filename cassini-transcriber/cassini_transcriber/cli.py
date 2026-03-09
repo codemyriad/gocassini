@@ -11,15 +11,89 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Build a Cassini meeting artifact from a multitrack MKV using a "
-            "compatible HTTP transcription service."
+            "compatible HTTP service or a local runtime."
         )
     )
     parser.add_argument("--input", required=True, type=Path, help="Source multitrack MKV")
     parser.add_argument("--output-dir", required=True, type=Path, help="Artifact output directory")
     parser.add_argument(
+        "--transcriber-backend",
+        choices=("auto", "http", "local-whisper"),
+        default=os.getenv("CASSINI_TRANSCRIBER_BACKEND", "auto"),
+        help="Transcription backend to use",
+    )
+    parser.add_argument(
         "--transcriber-url",
-        required=True,
+        default=os.getenv("CASSINI_TRANSCRIBER_URL"),
         help="HTTP endpoint that accepts multipart file uploads and returns text + words",
+    )
+    parser.add_argument(
+        "--whisper-model",
+        default=os.getenv("CASSINI_WHISPER_MODEL", "auto"),
+        help="Local Whisper model name. 'auto' picks the highest-quality built-in default.",
+    )
+    parser.add_argument(
+        "--whisper-device",
+        default=os.getenv("CASSINI_WHISPER_DEVICE", "auto"),
+        help="Execution device for the local Whisper backend: auto, cuda, or cpu",
+    )
+    parser.add_argument(
+        "--whisper-download-root",
+        type=Path,
+        default=Path(os.getenv("CASSINI_WHISPER_DOWNLOAD_ROOT"))
+        if os.getenv("CASSINI_WHISPER_DOWNLOAD_ROOT")
+        else None,
+        help="Optional cache directory for downloaded Whisper models",
+    )
+    parser.add_argument(
+        "--whisper-language",
+        default=os.getenv("CASSINI_WHISPER_LANGUAGE"),
+        help="Optional forced Whisper language code such as 'en'",
+    )
+    parser.add_argument(
+        "--readable-backend",
+        choices=("auto", "none", "openwebui", "local-transformers", "local-ollama"),
+        default=os.getenv("CASSINI_READABLE_BACKEND", "auto"),
+        help="Readable transcript cleanup backend",
+    )
+    parser.add_argument(
+        "--local-llm-model",
+        default=os.getenv("CASSINI_LOCAL_LLM_MODEL", "Qwen/Qwen2.5-1.5B-Instruct"),
+        help="Local Hugging Face model used for readable transcript cleanup",
+    )
+    parser.add_argument(
+        "--local-llm-device",
+        default=os.getenv("CASSINI_LOCAL_LLM_DEVICE", "cuda"),
+        help="Torch device for the local readable transcript backend",
+    )
+    parser.add_argument(
+        "--local-llm-download-root",
+        type=Path,
+        default=Path(os.getenv("CASSINI_LOCAL_LLM_DOWNLOAD_ROOT"))
+        if os.getenv("CASSINI_LOCAL_LLM_DOWNLOAD_ROOT")
+        else None,
+        help="Optional cache directory for downloaded local LLM models",
+    )
+    parser.add_argument(
+        "--local-llm-max-new-tokens",
+        type=int,
+        default=int(os.getenv("CASSINI_LOCAL_LLM_MAX_NEW_TOKENS", "1024")),
+        help="Maximum tokens generated per local readable transcript batch",
+    )
+    parser.add_argument(
+        "--ollama-model",
+        default=os.getenv("CASSINI_OLLAMA_MODEL", "qwen35-9b-q4:latest"),
+        help="Local Ollama model used for readable transcript cleanup",
+    )
+    parser.add_argument(
+        "--ollama-binary",
+        default=os.getenv("CASSINI_OLLAMA_BINARY", "ollama"),
+        help="Ollama executable to invoke for local readable transcript cleanup",
+    )
+    parser.add_argument(
+        "--ollama-no-auto-pull",
+        action="store_true",
+        help="Do not auto-download the Ollama model when it is missing",
     )
     parser.add_argument(
         "--audio-name",
@@ -35,8 +109,8 @@ def parse_args() -> argparse.Namespace:
         "--readable-transcript-name",
         default=os.getenv("CASSINI_READABLE_TRANSCRIPT_NAME"),
         help=(
-            "Optional cleaned readable transcript filename. Requires Open WebUI "
-            "settings when set."
+            "Optional cleaned readable transcript filename. Disabled when "
+            "--readable-backend=none."
         ),
     )
     parser.add_argument(
@@ -197,10 +271,19 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.transcriber_backend == "http" and not args.transcriber_url:
+        raise SystemExit("--transcriber-url is required when --transcriber-backend=http")
+    if args.readable_backend == "none":
+        args.readable_transcript_name = None
     result = build_meeting_artifact(
         input_path=args.input,
         output_dir=args.output_dir,
+        transcriber_backend=args.transcriber_backend,
         transcriber_url=args.transcriber_url,
+        whisper_model=args.whisper_model,
+        whisper_device=args.whisper_device,
+        whisper_download_root=args.whisper_download_root,
+        whisper_language=args.whisper_language,
         audio_name=args.audio_name,
         transcript_name=args.transcript_name,
         readable_transcript_name=args.readable_transcript_name,
@@ -221,11 +304,19 @@ def main() -> int:
         max_chunk_ms=args.max_chunk_ms,
         chunk_overlap_ms=args.chunk_overlap_ms,
         max_bridge_gap_ms=args.max_bridge_gap_ms,
+        readable_backend=args.readable_backend,
         openwebui_base_url=args.openwebui_base_url,
         openwebui_email=args.openwebui_email,
         openwebui_password=args.openwebui_password,
         openwebui_model=args.openwebui_model,
         openwebui_timeout_seconds=args.openwebui_timeout_seconds,
+        local_llm_model=args.local_llm_model,
+        local_llm_device=args.local_llm_device,
+        local_llm_download_root=args.local_llm_download_root,
+        local_llm_max_new_tokens=args.local_llm_max_new_tokens,
+        ollama_model=args.ollama_model,
+        ollama_binary=args.ollama_binary,
+        ollama_auto_pull=not args.ollama_no_auto_pull,
         readable_max_gap_ms=args.readable_max_gap_ms,
         readable_max_window_ms=args.readable_max_window_ms,
         readable_max_window_words=args.readable_max_window_words,
