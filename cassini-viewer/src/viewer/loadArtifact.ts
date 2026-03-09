@@ -47,7 +47,7 @@ async function loadArtifactFromPaths(paths: {
   const response = await fetch(paths.transcriptPath);
   if (!response.ok) {
     throw new Error(
-      `Could not load ${paths.transcriptPath}. Serve a meeting artifact directory or choose files manually.`,
+      `Could not load ${paths.transcriptPath}. Serve the viewer from a meeting artifact directory or bundle transcript.words.v1.json next to index.html.`,
     );
   }
 

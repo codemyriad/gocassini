@@ -23,6 +23,9 @@ meeting-artifact/
   chapters.vtt
 ```
 
+This publish-safe branch intentionally does not commit real meeting artifacts under `public/demo/`.
+To preview the UI, serve the built viewer from inside a meeting artifact directory or copy the artifact files next to the built `index.html`.
+
 ## Contract with `cassini-transcriber`
 
 The viewer does not infer transcript structure from loose text.
