@@ -70,7 +70,11 @@
     window.addEventListener("keydown", handleWindowKeydown);
     pendingSeekMs = parseTimeHash(window.location.hash);
     const meetingId = new URL(window.location.href).searchParams.get("meeting");
-    if (DEMO_MEETINGS.length > 0) {
+    const viewerConfig = window as typeof window & {
+      __CASSINI_VIEWER_ARTIFACT_MODE__?: string;
+    };
+    const preferBundledArtifact = viewerConfig.__CASSINI_VIEWER_ARTIFACT_MODE__ === "bundled";
+    if (!preferBundledArtifact && DEMO_MEETINGS.length > 0) {
       const selected =
         DEMO_MEETINGS.find((meeting) => meeting.id === meetingId) ?? DEMO_MEETINGS[0];
       await loadDemoMeeting(selected);

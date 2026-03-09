@@ -48,3 +48,29 @@ cd cassini-viewer
 npm test
 npm run build
 ```
+
+## Static export
+
+Build self-contained browser packages for all checked-in demo meetings:
+
+```bash
+cd cassini-viewer
+npm run export:meetings
+```
+
+This writes:
+
+```text
+exports/static-meetings/
+  index.html
+  daily-meeting--2026-03-04--12-36-53/
+    index.html
+    assets/...
+    meeting.webm
+    transcript.words.v1.json
+    transcript.readable.v1.json
+    captions.vtt
+    ...
+```
+
+Each meeting directory is standalone and can be copied to any static web server.
