@@ -14,6 +14,7 @@ from cassini_transcriber.pipeline import (  # noqa: E402
     build_meeting_activity_spans,
     build_manifest,
     filter_words_to_time_window,
+    make_track_ids,
     make_speaker_ids,
     normalize_speaker_label,
     remap_words_to_digest_timeline,
@@ -26,16 +27,22 @@ from cassini_transcriber.timeline import TimeSpan, build_digest_timeline_map  # 
 
 
 class SpeakerIdTests(unittest.TestCase):
-    def test_make_speaker_ids_deduplicates_labels(self) -> None:
+    def test_make_speaker_ids_reuses_ids_for_rejoined_labels(self) -> None:
         self.assertEqual(
             make_speaker_ids(["Alex", "Alex", "Chris Jones"]),
-            ["spk_alex", "spk_alex_2", "spk_chris_jones"],
+            ["spk_alex", "spk_alex", "spk_chris_jones"],
         )
 
     def test_normalize_speaker_label_strips_common_stream_suffixes(self) -> None:
         self.assertEqual(normalize_speaker_label("Chris audio"), "Chris")
         self.assertEqual(normalize_speaker_label("Silvio video"), "Silvio")
         self.assertEqual(normalize_speaker_label("chima"), "chima")
+
+    def test_make_track_ids_stays_unique_for_duplicate_labels(self) -> None:
+        self.assertEqual(
+            make_track_ids(["Chris", "Chris", "Alex"]),
+            ["track_01_chris", "track_02_chris", "track_03_alex"],
+        )
 
 
 class SegmentationTests(unittest.TestCase):
@@ -158,6 +165,7 @@ class TimelineIntegrationTests(unittest.TestCase):
             stream=AudioStream(
                 index=1,
                 order=1,
+                track_id="track_01_alex",
                 codec_name="opus",
                 channels=1,
                 speaker_id="spk_alex",

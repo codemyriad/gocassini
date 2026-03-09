@@ -28,6 +28,7 @@ CHUNK_SAMPLE_RATE = 16_000
 class AudioStream:
     index: int
     order: int
+    track_id: str
     codec_name: str
     channels: int | None
     speaker_id: str
@@ -84,19 +85,20 @@ def probe_media(input_path: Path) -> list[AudioStream]:
     if not audio_stream_specs:
         raise RuntimeError(f"No audio streams found in {input_path}")
 
-    speaker_ids = make_speaker_ids(
-        [
-            spec["speaker_label"] or f"Speaker {position}"
-            for position, spec in enumerate(audio_stream_specs, start=1)
-        ]
-    )
+    labels = [
+        spec["speaker_label"] or f"Speaker {position}"
+        for position, spec in enumerate(audio_stream_specs, start=1)
+    ]
+    speaker_ids = make_speaker_ids(labels)
+    track_ids = make_track_ids(labels)
     streams: list[AudioStream] = []
     for order, spec in enumerate(audio_stream_specs, start=1):
-        label = spec["speaker_label"] or f"Speaker {order}"
+        label = labels[order - 1]
         streams.append(
             AudioStream(
                 index=spec["index"],
                 order=order,
+                track_id=track_ids[order - 1],
                 codec_name=spec["codec_name"],
                 channels=int(spec["channels"]) if spec["channels"] is not None else None,
                 speaker_id=speaker_ids[order - 1],
@@ -107,15 +109,27 @@ def probe_media(input_path: Path) -> list[AudioStream]:
 
 
 def make_speaker_ids(labels: list[str]) -> list[str]:
-    counts: dict[str, int] = {}
+    slug_counts: dict[str, int] = {}
+    ids_by_label: dict[str, str] = {}
     speaker_ids: list[str] = []
     for label in labels:
+        existing = ids_by_label.get(label)
+        if existing is not None:
+            speaker_ids.append(existing)
+            continue
+
         stem = slugify(label)
         base = f"spk_{stem}"
-        count = counts.get(base, 0) + 1
-        counts[base] = count
-        speaker_ids.append(base if count == 1 else f"{base}_{count}")
+        count = slug_counts.get(base, 0) + 1
+        slug_counts[base] = count
+        speaker_id = base if count == 1 else f"{base}_{count}"
+        ids_by_label[label] = speaker_id
+        speaker_ids.append(speaker_id)
     return speaker_ids
+
+
+def make_track_ids(labels: list[str]) -> list[str]:
+    return [f"track_{index:02d}_{slugify(label)}" for index, label in enumerate(labels, start=1)]
 
 
 def normalize_speaker_label(label: str) -> str:
@@ -342,7 +356,7 @@ def analyze_tracks(
     tracks_dir.mkdir(parents=True, exist_ok=True)
     workspaces: list[TrackWorkspace] = []
     for stream in audio_streams:
-        track_audio_path = tracks_dir / f"{stream.order:02d}-{stream.speaker_id}.wav"
+        track_audio_path = tracks_dir / f"{stream.order:02d}-{stream.track_id}.wav"
         extract_track_audio(input_path, track_audio_path, stream)
         track_duration_ms = probe_duration_ms(track_audio_path)
         activity_spans = detect_active_spans(
@@ -483,8 +497,8 @@ def transcribe_track_chunks(
     timeout_seconds: int,
     timeline_map: TimelineMap,
 ) -> list[dict[str, Any]]:
-    speaker_chunks_dir = chunks_dir / workspace.stream.speaker_id
-    speaker_responses_dir = responses_dir / workspace.stream.speaker_id
+    speaker_chunks_dir = chunks_dir / workspace.stream.track_id
+    speaker_responses_dir = responses_dir / workspace.stream.track_id
     speaker_chunks_dir.mkdir(parents=True, exist_ok=True)
     speaker_responses_dir.mkdir(parents=True, exist_ok=True)
 
@@ -812,11 +826,15 @@ def build_meeting_artifact(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     audio_streams = probe_media(input_path)
-    speaker_order = {stream.speaker_id: stream.order for stream in audio_streams}
-    speakers = [
-        {"id": stream.speaker_id, "label": stream.speaker_label}
-        for stream in audio_streams
-    ]
+    speaker_order: dict[str, int] = {}
+    speakers: list[dict[str, str]] = []
+    seen_speakers: set[str] = set()
+    for stream in audio_streams:
+        speaker_order.setdefault(stream.speaker_id, stream.order)
+        if stream.speaker_id in seen_speakers:
+            continue
+        seen_speakers.add(stream.speaker_id)
+        speakers.append({"id": stream.speaker_id, "label": stream.speaker_label})
 
     temporary_root: tempfile.TemporaryDirectory[str] | None = None
     if work_dir is not None:

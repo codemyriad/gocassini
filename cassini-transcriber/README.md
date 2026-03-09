@@ -95,6 +95,7 @@ export CASSINI_OPENWEBUI_MODEL=qwen35-9b-q4
 - The pipeline detects speech activity per speaker track, unions that activity at the meeting level, and compresses long all-speaker silence on the final digest timeline.
 - The source MKV may carry sparse audio packet timestamps; per-speaker decode must preserve those gaps or transcript timings will drift badly.
 - Each speaker track is transcribed separately in chunked requests, then merged into one time-ordered transcript.
+- Multiple audio streams with the same normalized title are treated as one speaker in the final artifact, so rejoin tracks do not create fake extra speakers.
 - `captions.vtt` is derived from `transcript.words.v1.json` and should not be edited independently.
 - `transcript.readable.v1.json`, when enabled, is a second-pass LLM cleanup pass over timed source spans and should be treated as presentation text only.
 - The target architecture uses an explicit source-to-digest timeline remap so long all-speaker silence can be compressed without breaking transcript sync.
