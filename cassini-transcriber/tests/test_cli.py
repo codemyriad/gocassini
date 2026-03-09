@@ -113,6 +113,54 @@ class CLITests(unittest.TestCase):
         self.assertEqual(kwargs["readable_backend"], "none")
         self.assertIsNone(kwargs["readable_transcript_name"])
 
+    def test_openai_compatible_backend_passes_api_options(self) -> None:
+        argv = [
+            "cassini-transcriber",
+            "--input",
+            "/tmp/in.mkv",
+            "--output-dir",
+            "/tmp/out",
+            "--transcriber-backend",
+            "local-whisper",
+            "--readable-backend",
+            "openai-compatible",
+            "--readable-transcript-name",
+            "transcript.readable.v1.json",
+            "--api-base-url",
+            "https://openrouter.ai/api/v1",
+            "--api-key",
+            "test-key",
+            "--api-model",
+            "openai/gpt-4o-mini",
+        ]
+        with (
+            patch.object(sys, "argv", argv),
+            patch("cassini_transcriber.cli.build_meeting_artifact") as build_meeting_artifact,
+        ):
+            build_meeting_artifact.return_value = {
+                "audio_path": "/tmp/out/meeting.webm",
+                "transcript_path": "/tmp/out/transcript.words.v1.json",
+                "readable_transcript_path": "/tmp/out/transcript.readable.v1.json",
+                "captions_path": "/tmp/out/captions.vtt",
+                "timeline_path": None,
+                "manifest_path": None,
+                "speaker_count": 1,
+                "segment_count": 1,
+                "word_count": 1,
+                "chunk_count": 1,
+                "timeline_segment_count": 1,
+                "source_duration_ms": 1000,
+                "duration_ms": 1000,
+                "reduction_ms": 0,
+            }
+            cli.main()
+
+        kwargs = build_meeting_artifact.call_args.kwargs
+        self.assertEqual(kwargs["readable_backend"], "openai-compatible")
+        self.assertEqual(kwargs["api_base_url"], "https://openrouter.ai/api/v1")
+        self.assertEqual(kwargs["api_key"], "test-key")
+        self.assertEqual(kwargs["api_model"], "openai/gpt-4o-mini")
+
 
 if __name__ == "__main__":
     unittest.main()

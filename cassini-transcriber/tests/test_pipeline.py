@@ -240,6 +240,9 @@ class BackendResolutionTests(unittest.TestCase):
         backend = resolve_readable_backend(
             readable_backend="auto",
             readable_transcript_name=None,
+            api_base_url="https://openrouter.ai/api/v1",
+            api_key="test-key",
+            api_model="openai/gpt-4o-mini",
             openwebui_base_url=None,
             openwebui_email=None,
             openwebui_password=None,
@@ -247,6 +250,21 @@ class BackendResolutionTests(unittest.TestCase):
             ollama_binary="ollama",
         )
         self.assertEqual(backend, "none")
+
+    def test_resolve_readable_backend_prefers_openai_compatible_when_api_key_is_present(self) -> None:
+        backend = resolve_readable_backend(
+            readable_backend="auto",
+            readable_transcript_name="transcript.readable.v1.json",
+            api_base_url="https://openrouter.ai/api/v1",
+            api_key="test-key",
+            api_model="openai/gpt-4o-mini",
+            openwebui_base_url=None,
+            openwebui_email=None,
+            openwebui_password=None,
+            openwebui_model=None,
+            ollama_binary="ollama",
+        )
+        self.assertEqual(backend, "openai-compatible")
 
 
 if __name__ == "__main__":

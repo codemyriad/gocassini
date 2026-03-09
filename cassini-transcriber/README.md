@@ -47,8 +47,9 @@ Key properties:
   - `http`: a compatible HTTP transcription service that accepts `POST` multipart audio uploads and returns JSON with `text` plus word-level timestamps
   - `local-whisper`: local Python package `faster-whisper`, plus an NVIDIA-capable CUDA runtime when `--whisper-device cuda` is used
 - Optional readable transcript cleanup backend when `--readable-transcript-name` is set:
-  - `auto`: use Open WebUI when fully configured, otherwise local Ollama when available, otherwise disable readable cleanup
+  - `auto`: use an OpenAI-compatible API when configured, otherwise Open WebUI when fully configured, otherwise local Ollama when available, otherwise disable readable cleanup
   - `none`: skip readable transcript cleanup
+  - `openai-compatible`: direct OpenAI-style chat-completions API, including OpenRouter
   - `openwebui`: the existing Open WebUI settings
   - `local-transformers`: local Python packages `torch` and `transformers`, plus an NVIDIA-capable CUDA runtime when `--local-llm-device cuda` is used
   - `local-ollama`: local `ollama` CLI access, with the configured model pulled automatically unless `--ollama-no-auto-pull` is set
@@ -115,7 +116,8 @@ Useful flags:
 - `--segment-gap-ms` tunes pause-based segmentation.
 - `--max-segment-ms` and `--max-segment-words` keep transcript chunks readable.
 - `--readable-transcript-name` enables a second LLM-cleaned transcript artifact.
-- `--readable-backend` supports `auto`, `none`, `openwebui`, `local-transformers`, and `local-ollama`.
+- `--readable-backend` supports `auto`, `none`, `openai-compatible`, `openwebui`, `local-transformers`, and `local-ollama`.
+- `--api-base-url`, `--api-key`, and `--api-model` configure an OpenAI-compatible readable transcript backend.
 - `--local-llm-model`, `--local-llm-device`, and `--local-llm-download-root` control the local readable transcript backend.
 - `--ollama-model` and `--ollama-no-auto-pull` control the local Ollama readable transcript backend.
 - `--openwebui-base-url`, `--openwebui-email`, `--openwebui-password`, and `--openwebui-model` configure the Open WebUI service used for readable transcript cleanup.
@@ -129,6 +131,9 @@ Readable transcript generation can also be configured through environment variab
 
 ```bash
 export CASSINI_READABLE_TRANSCRIPT_NAME=transcript.readable.v1.json
+export OPENROUTER_API_KEY=...
+export CASSINI_API_BASE_URL=https://openrouter.ai/api/v1
+export CASSINI_API_MODEL=openai/gpt-4o-mini
 export CASSINI_OPENWEBUI_BASE_URL=http://openwebui.example.internal
 export CASSINI_OPENWEBUI_EMAIL=admin@example.com
 export CASSINI_OPENWEBUI_PASSWORD=...
@@ -144,6 +149,19 @@ export CASSINI_WHISPER_DEVICE=auto
 export CASSINI_READABLE_BACKEND=none
 ```
 
+OpenRouter-backed readable transcript run:
+
+```bash
+export OPENROUTER_API_KEY=...
+python3 cassini-transcriber/build-meeting-artifact.py \
+  --input /path/to/meeting.mkv \
+  --output-dir /tmp/meeting-artifact \
+  --readable-transcript-name transcript.readable.v1.json \
+  --readable-backend openai-compatible \
+  --api-base-url https://openrouter.ai/api/v1 \
+  --api-model openai/gpt-4o-mini
+```
+
 ## Notes
 
 - The pipeline detects speech activity per speaker track, unions that activity at the meeting level, and compresses long all-speaker silence on the final digest timeline.
@@ -157,6 +175,9 @@ export CASSINI_READABLE_BACKEND=none
 - `transcript.readable.v1.json`, when enabled, is a second-pass LLM cleanup pass over timed source spans and should be treated as presentation text only.
 - The target architecture uses an explicit source-to-digest timeline remap so long all-speaker silence can be compressed without breaking transcript sync.
 - `timeline.map.v1.json` is a debugging and audit artifact that records the source-to-digest time remap.
+- On March 9, 2026, `OPENROUTER_API_KEY` was verified against `https://openrouter.ai/api/v1/models` and `https://openrouter.ai/api/v1/chat/completions`.
+- On the same date, the first readable-transcript batch from the sample meeting was compared across `openai/gpt-4o-mini`, `google/gemini-2.5-flash`, `anthropic/claude-3.7-sonnet`, and `qwen/qwen3-32b`; `openai/gpt-4o-mini` gave the cleanest adherence to Cassini's rewrite format, while `qwen/qwen3-32b` returned a non-string message payload through OpenRouter and is not the current recommendation.
+- `bin/compare-readable-models.py` is the repeatable harness for re-running those prompt and model checks on any existing `transcript.words.v1.json`.
 
 ## Credibility Checks
 

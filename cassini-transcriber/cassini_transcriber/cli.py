@@ -52,9 +52,60 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--readable-backend",
-        choices=("auto", "none", "openwebui", "local-transformers", "local-ollama"),
+        choices=(
+            "auto",
+            "none",
+            "openwebui",
+            "openai-compatible",
+            "local-transformers",
+            "local-ollama",
+        ),
         default=os.getenv("CASSINI_READABLE_BACKEND", "auto"),
         help="Readable transcript cleanup backend",
+    )
+    parser.add_argument(
+        "--api-base-url",
+        default=(
+            os.getenv("CASSINI_API_BASE_URL")
+            or os.getenv("OPENAI_BASE_URL")
+            or ("https://openrouter.ai/api/v1" if os.getenv("OPENROUTER_API_KEY") else None)
+        ),
+        help="Base URL for an OpenAI-compatible readable transcript API",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=(
+            os.getenv("CASSINI_API_KEY")
+            or os.getenv("OPENROUTER_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+        ),
+        help="API key for an OpenAI-compatible readable transcript API",
+    )
+    parser.add_argument(
+        "--api-model",
+        default=(
+            os.getenv("CASSINI_API_MODEL")
+            or os.getenv("OPENROUTER_MODEL")
+            or os.getenv("OPENAI_MODEL")
+            or "openai/gpt-4o-mini"
+        ),
+        help="Model name for an OpenAI-compatible readable transcript API",
+    )
+    parser.add_argument(
+        "--api-timeout-seconds",
+        type=int,
+        default=int(os.getenv("CASSINI_API_TIMEOUT_SECONDS", "240")),
+        help="Per-request timeout for an OpenAI-compatible readable transcript API",
+    )
+    parser.add_argument(
+        "--api-app-name",
+        default=os.getenv("CASSINI_API_APP_NAME", "gocassini"),
+        help="Application name sent to an OpenAI-compatible readable transcript API",
+    )
+    parser.add_argument(
+        "--api-site-url",
+        default=os.getenv("CASSINI_API_SITE_URL"),
+        help="Optional site URL sent to an OpenAI-compatible readable transcript API",
     )
     parser.add_argument(
         "--local-llm-model",
@@ -310,6 +361,12 @@ def main() -> int:
         openwebui_password=args.openwebui_password,
         openwebui_model=args.openwebui_model,
         openwebui_timeout_seconds=args.openwebui_timeout_seconds,
+        api_base_url=args.api_base_url,
+        api_key=args.api_key,
+        api_model=args.api_model,
+        api_timeout_seconds=args.api_timeout_seconds,
+        api_app_name=args.api_app_name,
+        api_site_url=args.api_site_url,
         local_llm_model=args.local_llm_model,
         local_llm_device=args.local_llm_device,
         local_llm_download_root=args.local_llm_download_root,

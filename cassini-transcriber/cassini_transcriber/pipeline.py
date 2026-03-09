@@ -17,6 +17,8 @@ from .llm import (
     LocalOllamaConfig,
     LocalTransformersChatClient,
     LocalTransformersConfig,
+    OpenAICompatibleChatClient,
+    OpenAICompatibleConfig,
     OpenWebUIChatClient,
     OpenWebUIConfig,
     build_readable_transcript_payload,
@@ -809,6 +811,9 @@ def resolve_readable_backend(
     *,
     readable_backend: str,
     readable_transcript_name: str | None,
+    api_base_url: str | None,
+    api_key: str | None,
+    api_model: str | None,
     openwebui_base_url: str | None,
     openwebui_email: str | None,
     openwebui_password: str | None,
@@ -821,6 +826,8 @@ def resolve_readable_backend(
     if readable_backend != "auto":
         return readable_backend
 
+    if api_key and (api_model or api_base_url):
+        return "openai-compatible"
     if all((openwebui_base_url, openwebui_email, openwebui_password, openwebui_model)):
         return "openwebui"
     if shutil.which(ollama_binary):
@@ -859,6 +866,12 @@ def build_meeting_artifact(
     chunk_overlap_ms: int = 500,
     max_bridge_gap_ms: int = 1_500,
     readable_backend: str = "auto",
+    api_base_url: str | None = None,
+    api_key: str | None = None,
+    api_model: str | None = None,
+    api_timeout_seconds: int = 240,
+    api_app_name: str = "gocassini",
+    api_site_url: str | None = None,
     openwebui_base_url: str | None = None,
     openwebui_email: str | None = None,
     openwebui_password: str | None = None,
@@ -893,6 +906,9 @@ def build_meeting_artifact(
     readable_backend = resolve_readable_backend(
         readable_backend=readable_backend,
         readable_transcript_name=readable_transcript_name,
+        api_base_url=api_base_url,
+        api_key=api_key,
+        api_model=api_model,
         openwebui_base_url=openwebui_base_url,
         openwebui_email=openwebui_email,
         openwebui_password=openwebui_password,
@@ -1054,6 +1070,32 @@ def build_meeting_artifact(
                         timeout_seconds=openwebui_timeout_seconds,
                     )
                 )
+            elif readable_backend == "openai-compatible":
+                missing_api = [
+                    name
+                    for name, value in (
+                        ("api_base_url", api_base_url),
+                        ("api_key", api_key),
+                        ("api_model", api_model),
+                    )
+                    if not value
+                ]
+                if missing_api:
+                    raise ValueError(
+                        "Readable transcript generation with an OpenAI-compatible API requires: "
+                        + ", ".join(missing_api)
+                    )
+                readable_client = OpenAICompatibleChatClient(
+                    OpenAICompatibleConfig(
+                        base_url=str(api_base_url),
+                        api_key=str(api_key),
+                        model=str(api_model),
+                        timeout_seconds=api_timeout_seconds,
+                        app_name=api_app_name,
+                        site_url=api_site_url,
+                    )
+                )
+                readable_client.validate_environment()
             elif readable_backend == "local-transformers":
                 readable_client = LocalTransformersChatClient(
                     LocalTransformersConfig(

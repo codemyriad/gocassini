@@ -3,12 +3,15 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from cassini_transcriber.llm import (  # noqa: E402
+    OpenAICompatibleChatClient,
+    OpenAICompatibleConfig,
     ReadableTranscriptRecord,
     build_readable_records,
     build_readable_transcript_payload,
@@ -50,6 +53,55 @@ class ReadableResponseTests(unittest.TestCase):
 
     def test_normalize_readable_text_strips_outer_whitespace(self) -> None:
         self.assertEqual(normalize_readable_text("  hello   there  "), "hello there")
+
+    def test_openai_compatible_chat_client_posts_chat_completion(self) -> None:
+        records = [
+            ReadableTranscriptRecord(
+                index=1,
+                speaker_id="spk_alex",
+                speaker_label="Alex",
+                start_ms=0,
+                end_ms=1000,
+                text="uh hello there",
+                source_segment_ids=("seg_1",),
+            )
+        ]
+        captured: dict[str, object] = {}
+
+        class FakeResponse:
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return (
+                    b'{"choices":[{"message":{"content":"@@1@@ Hello there."}}]}'
+                )
+
+        def fake_urlopen(request, timeout):  # type: ignore[no-untyped-def]
+            captured["url"] = request.full_url
+            captured["timeout"] = timeout
+            captured["headers"] = dict(request.header_items())
+            captured["payload"] = request.data.decode("utf-8")
+            return FakeResponse()
+
+        client = OpenAICompatibleChatClient(
+            OpenAICompatibleConfig(
+                base_url="https://openrouter.ai/api/v1",
+                api_key="test-key",
+                model="openai/gpt-4o-mini",
+            )
+        )
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            cleaned = client.rewrite_readable_records(records)
+
+        self.assertEqual(cleaned, ["Hello there."])
+        self.assertEqual(captured["url"], "https://openrouter.ai/api/v1/chat/completions")
+        self.assertEqual(captured["timeout"], 240)
+        self.assertIn("Authorization", captured["headers"])
+        self.assertIn("\"model\": \"openai/gpt-4o-mini\"", str(captured["payload"]))
 
 
 class ReadableWindowPlanningTests(unittest.TestCase):

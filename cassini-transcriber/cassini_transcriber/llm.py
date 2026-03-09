@@ -34,6 +34,16 @@ class ReadableTranscriptRecord:
     source_segment_ids: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class OpenAICompatibleConfig:
+    base_url: str
+    api_key: str
+    model: str
+    timeout_seconds: int = 240
+    app_name: str = "gocassini"
+    site_url: str | None = None
+
+
 class OpenWebUIChatClient:
     def __init__(self, config: OpenWebUIConfig) -> None:
         self._config = config
@@ -137,6 +147,59 @@ class OpenWebUIChatClient:
         return self._config.base_url.rstrip("/") + "/"
 
 
+class OpenAICompatibleChatClient:
+    def __init__(self, config: OpenAICompatibleConfig) -> None:
+        self._config = config
+
+    def validate_environment(self) -> None:
+        if not self._config.base_url.strip():
+            raise RuntimeError("OpenAI-compatible readable transcript generation requires a base URL")
+        if not self._config.api_key.strip():
+            raise RuntimeError("OpenAI-compatible readable transcript generation requires an API key")
+        if not self._config.model.strip():
+            raise RuntimeError("OpenAI-compatible readable transcript generation requires a model id")
+
+    def rewrite_readable_records(
+        self,
+        records: list[ReadableTranscriptRecord],
+    ) -> list[str]:
+        payload = {
+            "model": self._config.model,
+            "temperature": 0,
+            "messages": [
+                {"role": "system", "content": readable_transcript_system_prompt()},
+                {"role": "user", "content": build_readable_records_prompt(records)},
+            ],
+            "max_tokens": estimate_completion_tokens(records),
+        }
+        request_headers = {
+            "Authorization": f"Bearer {self._config.api_key}",
+            "HTTP-Referer": self._config.site_url or "https://gocassini.local",
+            "X-Title": self._config.app_name,
+        }
+        request = urllib.request.Request(
+            urllib.parse.urljoin(self._normalized_base_url(), "chat/completions"),
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                **request_headers,
+            },
+        )
+        with urllib.request.urlopen(request, timeout=self._config.timeout_seconds) as response:
+            content = json.loads(response.read().decode("utf-8"))
+        choices = content.get("choices") or []
+        if not choices:
+            raise ValueError("LLM response did not include choices")
+        message = choices[0].get("message") or {}
+        text = message.get("content")
+        if not isinstance(text, str):
+            raise ValueError("LLM response content was not a string")
+        return parse_readable_records_response(text, records)
+
+    def _normalized_base_url(self) -> str:
+        return self._config.base_url.rstrip("/") + "/"
+
+
 @dataclass(frozen=True)
 class LocalTransformersConfig:
     model: str
@@ -206,10 +269,7 @@ class LocalTransformersChatClient:
         messages = [
             {
                 "role": "system",
-                "content": (
-                    "Return only rewritten records in the @@index@@ text format. "
-                    "No markdown, no JSON, no commentary."
-                ),
+                "content": readable_transcript_system_prompt(),
             },
             {"role": "user", "content": prompt},
         ]
@@ -289,8 +349,8 @@ class LocalOllamaChatClient:
         records: list["ReadableTranscriptRecord"],
     ) -> list[str]:
         prompt = (
-            "Return only rewritten records in the @@index@@ text format. "
-            "No markdown, no JSON, no commentary.\n\n"
+            readable_transcript_system_prompt()
+            + "\n\n"
             + build_readable_records_prompt(records)
         )
         completed = subprocess.run(
@@ -449,9 +509,20 @@ def build_readable_records_prompt(records: list[ReadableTranscriptRecord]) -> st
         "- Add punctuation and casing.\n"
         "- Do not paraphrase, reorder, or replace words with synonyms.\n"
         "- Keep technical terms and names as heard, even if uncertain.\n"
+        "- Do not merge records, drop records, add new records, or add speaker labels.\n"
+        "- If a record is noisy or uncertain, keep the surviving words rather than inventing text.\n"
         f"- This batch contains exactly records {records[0].index}..{records[-1].index}.\n"
         "Transcript:\n"
         + "\n".join(lines)
+    )
+
+
+def readable_transcript_system_prompt() -> str:
+    return (
+        "You clean noisy ASR transcript windows.\n"
+        "Return only rewritten records in the @@index@@ text format.\n"
+        "No markdown, no JSON, no explanations, no surrounding prose.\n"
+        "Keep the same number of records and the same indexes."
     )
 
 
