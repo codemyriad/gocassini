@@ -9,3 +9,12 @@ coverage/
 !schema/*.json
 !fixtures/*.json
 !public/demo/**/*.json
+
+# Local bundled artifact for viewer smoke-testing
+public/meeting.webm
+public/transcript.words.v1.json
+public/transcript.readable.v1.json
+public/captions.vtt
+public/chapters.vtt
+public/timeline.map.v1.json
+public/manifest.json
