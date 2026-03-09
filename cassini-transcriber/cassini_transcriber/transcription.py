@@ -18,6 +18,8 @@ class TranscriptionClient(Protocol):
 
     def release_resources(self) -> None: ...
 
+    def cache_key(self) -> str: ...
+
 
 @dataclass(frozen=True)
 class HTTPTranscriptionConfig:
@@ -71,6 +73,9 @@ class HTTPTranscriptionClient:
 
     def release_resources(self) -> None:
         return
+
+    def cache_key(self) -> str:
+        return "http"
 
 
 @dataclass(frozen=True)
@@ -158,3 +163,7 @@ class LocalWhisperTranscriptionClient:
 
     def release_resources(self) -> None:
         self._model = None
+    
+    def cache_key(self) -> str:
+        language = self._config.language or "auto"
+        return f"local-whisper--{self._config.model}--{self._config.device}--{language}"

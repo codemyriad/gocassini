@@ -481,7 +481,8 @@ def transcribe_track_chunks(
     timeline_map: TimelineMap,
 ) -> list[dict[str, Any]]:
     speaker_chunks_dir = chunks_dir / workspace.stream.track_id
-    speaker_responses_dir = responses_dir / workspace.stream.track_id
+    backend_responses_dir = responses_dir / transcriber.cache_key()
+    speaker_responses_dir = backend_responses_dir / workspace.stream.track_id
     speaker_chunks_dir.mkdir(parents=True, exist_ok=True)
     speaker_responses_dir.mkdir(parents=True, exist_ok=True)
 

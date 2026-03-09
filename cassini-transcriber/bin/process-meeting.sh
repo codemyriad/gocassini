@@ -74,6 +74,14 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 
 mkdir -p "${RENDER_SOURCE_DIR}"
+ARTIFACT_MANIFEST="${ARTIFACT_DIR}/manifest.json"
+RENDERED_INDEX="${RENDER_OUTPUT_DIR}/${MEETING_ID}/index.html"
+if [[ -f "${RENDERED_INDEX}" && -f "${ARTIFACT_MANIFEST}" && "${RENDERED_INDEX}" -nt "${ARTIFACT_MANIFEST}" ]]; then
+  echo "artifact_dir=${ARTIFACT_DIR}"
+  echo "rendered_dir=${RENDER_OUTPUT_DIR}"
+  exit 0
+fi
+
 rm -rf "${RENDER_SOURCE_DIR:?}/${MEETING_ID}"
 cp -a "${ARTIFACT_DIR}" "${RENDER_SOURCE_DIR}/${MEETING_ID}"
 

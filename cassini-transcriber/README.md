@@ -168,6 +168,8 @@ python3 cassini-transcriber/build-meeting-artifact.py \
 - Backend prerequisites are validated before audio extraction starts so missing URLs, Python packages, or CUDA support fail early.
 - Local execution uses one heavy model stage at a time. ASR finishes before any optional readable-cleanup backend starts, so 8 GB cards are usable.
 - The Docker runner now keeps `_work` by default, so restarting the same output directory reuses chunk responses and extracted audio instead of recomputing everything.
+- Chunk transcription responses are cached per backend/model under `_work/responses`, so retrying with a different ASR backend or model reuses extracted audio while keeping response caches separate.
+- `bin/process-meeting.sh --bundle-viewer` skips the static HTML export when the rendered bundle is already newer than the artifact manifest.
 - The source MKV may carry sparse audio packet timestamps; per-speaker decode must preserve those gaps or transcript timings will drift badly.
 - Each speaker track is transcribed separately in chunked requests, then merged into one time-ordered transcript.
 - Multiple audio streams with the same normalized title are treated as one speaker in the final artifact, so rejoin tracks do not create fake extra speakers.
