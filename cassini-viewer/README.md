@@ -28,7 +28,7 @@ meeting-artifact/
 The viewer does not infer transcript structure from loose text.
 It expects the canonical `transcript.words.v1` JSON contract and treats that as the source of truth for transcript rendering and click-to-seek behavior.
 
-The schema snapshot used for this bootstrap lives at [schema/transcript-words-v1.schema.json](/home/silvio/dev/gocassini-second/cassini-viewer/schema/transcript-words-v1.schema.json).
+The schema snapshot used for this bootstrap lives at [schema/transcript-words-v1.schema.json](schema/transcript-words-v1.schema.json).
 
 ## Development
 
