@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+.vite/
+!package.json
+!package-lock.json
+!tsconfig.json
+!schema/*.json
+!fixtures/*.json
+!public/demo/**/*.json

@@ -1,0 +1,761 @@
+WEBVTT
+
+1
+00:00:00.960 --> 00:00:08.160
+Chris: gotten the things I wanted I I wanted to minimally get the sign up rebuild done and uh push in the um
+
+2
+00:00:09.440 --> 00:00:19.760
+Chris: the print X the print directory sheet uh spreadsheet printing thing. Um I think I'll probably put some time in this weekend to uh finish the
+
+3
+00:00:20.720 --> 00:00:28.821
+Chris: updates I've just described and try and do those two features. Um I think I'll have a bit of time tomorrow to to work on stuff and I would like to clear
+
+4
+00:00:28.821 --> 00:00:29.941
+Chris: that out the way
+
+5
+00:00:31.301 --> 00:00:34.021
+Chris: so that I can work on other things.
+
+6
+00:00:35.621 --> 00:00:37.301
+Chris: Additionally, I have had a chat with
+
+7
+00:00:38.421 --> 00:00:42.421
+Chris: Codex about SnapMenu and it's given me a good
+
+8
+00:00:44.092 --> 00:00:49.932
+Chris: I think I have quite a clear picture of it. I think there's, Alex, I said I need to communicate some things to you about stuff that might be missing from
+
+9
+00:00:51.292 --> 00:00:52.092
+Chris: a few things.
+
+10
+00:00:53.052 --> 00:00:56.492
+Chris: And I need to get those notes in order. And I will also try and do it this weekend.
+
+11
+00:00:58.492 --> 00:01:01.612
+Chris: And so when I woke up this morning, Sophie will introduce me to George this morning.
+
+12
+00:01:02.572 --> 00:01:06.572
+Chris: I can let him talk to George. It's pretty interesting. And
+
+13
+00:01:09.429 --> 00:01:19.909
+Chris: Yeah, I need to do. Oh, and oh, actually, yesterday I spent most of the morning on the airspaces next stage, and I did some, I prepared a bunch of markdown notes.
+
+14
+00:01:21.740 --> 00:01:30.140
+Chris: I was getting bogged down thinking about everything and planning, and then I got Codex to help me create a summary of what had happened so that I can communicate to Yvonne
+
+15
+00:01:30.220 --> 00:01:38.460
+Chris: what had happened and all of the different stages that I as I saw them. Yvonne and I talked about that briefly. Sylvia and I talked a bit about that this morning
+
+16
+00:01:38.620 --> 00:01:38.940
+Chris: too.
+
+17
+00:01:40.688 --> 00:01:51.968
+Chris: And Silvio, as always, snuck in at the last moment with a suggestion which potentially shaves off a whole bunch of work and gives them something very useful as a smaller next
+
+18
+00:01:51.968 --> 00:01:57.008
+Chris: step. So I need to write that up and also communicate that to Yvonne because it impacts what he will do next.
+
+19
+00:01:58.797 --> 00:02:08.237
+Chris: And I've had a look at Ivan's issues that he's opened, and I was just looking at his end-to-end component testing refactoring thing now.
+
+20
+00:02:09.837 --> 00:02:15.517
+Chris: So I will also try and just give that a once over today and respond to his comments on the issues.
+
+21
+00:02:18.058 --> 00:02:19.658
+Chris: That's me. Over to Alex.
+
+22
+00:02:21.538 --> 00:02:30.098
+Alex: So I've spent the morning cleaning up the Edible Zillow channel. That's done now. I had a
+
+23
+00:02:31.538 --> 00:02:33.058
+Alex: comment there about
+
+24
+00:02:35.166 --> 00:02:49.086
+Alex: the import and just something I guess to consider if we're selling that as a service. It seems coming from Slack that it interpreted a message thread as an entirely separate channel.
+
+25
+00:02:49.886 --> 00:02:51.966
+Alex: Like for example, the
+
+26
+00:02:53.806 --> 00:03:01.006
+Alex: updates from GitHub, there was at least like 300 separate channels per update.
+
+27
+00:03:03.166 --> 00:03:05.566
+Alex: And I went through all of them and I merged them all together.
+
+28
+00:03:06.625 --> 00:03:09.265
+Alex: But as I was doing it, I was thinking
+
+29
+00:03:09.758 --> 00:03:09.998
+Chris: Hmm.
+
+30
+00:03:11.176 --> 00:03:22.216
+Alex: if we're considering this as a service in the future, might be something that we need to address in terms of a migration as to how it understands the data.
+
+31
+00:03:24.136 --> 00:03:28.696
+Alex: I don't think our chat history is very long, but I could see that being quite a long and tedious process.
+
+32
+00:03:29.968 --> 00:03:36.368
+Alex: An organization that's got, we'd say, 10 years' worth of messages that is being imported into Zoom.
+
+33
+00:03:37.976 --> 00:03:38.296
+Alex: And
+
+34
+00:03:39.656 --> 00:03:42.856
+Alex: yesterday I finished up the first stage of the
+
+35
+00:03:43.816 --> 00:03:47.336
+Alex: marketing project for internal tools for Myriad.
+
+36
+00:03:48.776 --> 00:03:54.536
+Alex: Today I'm gonna try to do something similar for Edible.
+
+37
+00:03:55.702 --> 00:04:05.782
+Alex: What I managed to do with Myriad is set up a brand agent using Claude's cowork. So it has a lot of context around who the customer is,
+
+38
+00:04:06.982 --> 00:04:20.176
+Alex: what the service is that we're selling, and it was very instrumental in being able to craft that kind of content cluster. and find all the connections between those things and what
+
+39
+00:04:20.176 --> 00:04:30.416
+Alex: people might be interested. So I'm gonna do similar groundwork for Edible in terms of setting up the customer profile and the documentation on the services we're selling in order to set
+
+40
+00:04:30.416 --> 00:04:33.936
+Alex: up a brand agent that can also help with a lot of writing.
+
+41
+00:04:35.776 --> 00:04:38.096
+Alex: And let's try to tick off some.
+
+42
+00:04:39.207 --> 00:04:42.327
+Alex: uh search related uh content marketing.
+
+43
+00:04:43.454 --> 00:04:45.934
+Alex: So that's it for me to sogger.
+
+44
+00:04:49.267 --> 00:05:03.187
+Silvio: Yeah, probably the only work I actually did was a bit on Cassini then a lot of talking, but there were some interesting bits. One was I talked to Raz today, who
+
+45
+00:05:03.187 --> 00:05:07.507
+Silvio: got in touch with me because I have the experts page here in Bed House about
+
+46
+00:05:09.741 --> 00:05:18.541
+Silvio: Open source software that you can self-host, and he needed some CRM software. I ended up not being prepared enough.
+
+47
+00:05:20.621 --> 00:05:24.461
+Silvio: And while talking to Raz about this CRM software,
+
+48
+00:05:26.141 --> 00:05:28.141
+Silvio: I gave him this piece of advice that
+
+49
+00:05:29.421 --> 00:05:32.541
+Silvio: maybe it's better for him to find to.
+
+50
+00:05:33.518 --> 00:05:44.401
+Silvio: put down notes down what he needs What these needs are, and then all these needs might be fulfilled by different pieces of software. And it occurred to me that then you
+
+51
+00:05:44.401 --> 00:05:56.081
+Silvio: might want to integrate those, and this might be something that we propose as a business. So, there are many different bits that will help you. Like, one bit that almost everyone
+
+52
+00:05:56.081 --> 00:06:05.461
+Silvio: needs is the shared mailbox, like Zendesk, right? So, you have a team that is. That is doing customer care, and you want them to be able to follow the full confidence
+
+53
+00:06:05.621 --> 00:06:15.141
+Silvio: the company had with the customer every morning. So you need that. But then maybe you have some other module and you need to integrate the two together. And it is something
+
+54
+00:06:15.141 --> 00:06:15.221
+Silvio: that.
+
+55
+00:06:16.171 --> 00:06:17.371
+Silvio: we could offer.
+
+56
+00:06:18.971 --> 00:06:19.531
+Silvio: Maybe
+
+57
+00:06:20.491 --> 00:06:32.571
+Silvio: yeah, that was the conversation we read. Chris mentioned I introduced him to George. So George is a computer and he's named after George Orwell because the bookshop owner is
+
+58
+00:06:33.657 --> 00:06:43.657
+Silvio: Adamant of George Orwell lately is reading a lot of Orwell and talking to me about it. So it was, yeah, let's call it George. It has a video card, an Nvidia
+
+59
+00:06:43.657 --> 00:06:56.661
+Silvio: video card, which is kind of the latest model, but one of the smallest. So it's at the same time very good and very low end, but very high end. But it's
+
+60
+00:06:56.661 --> 00:07:05.061
+Silvio: very fast, it has eight gigs of RAM, it costs, I think, 300 euros, 300 or 400 euros, depending on where your source is.
+
+61
+00:07:06.021 --> 00:07:19.807
+Silvio: And I installed some local LLMs. In particular, I installed Wen3.5, which is just out like less than a week ago. And it's really incredible. For its size, it's Kind of intelligent
+
+62
+00:07:19.807 --> 00:07:34.447
+Silvio: and gives you good answers and can do a lot. Like the idea is that this machine has enough power to do the full meeting transcription, summarization, questions about metering transcription.
+
+63
+00:07:34.607 --> 00:07:36.207
+Silvio: So it is a prototype that.
+
+64
+00:07:37.122 --> 00:07:46.802
+Silvio: Is hostable if you have a thousand Euros budget, you can buy a machine like that and then use it to record your meetings and have all the transcriptions and the data
+
+65
+00:07:46.802 --> 00:07:59.828
+Silvio: will never leave your premises, which I believe is a good thing that some people might be after, not only in the very sensitive sectors, but also just. Just because, you know,
+
+66
+00:07:59.908 --> 00:08:02.548
+Silvio: just because you don't want to fit data to the NSA.
+
+67
+00:08:04.548 --> 00:08:11.268
+Silvio: And I haven't, I have had a cursory look into Alex's work, and I want to look into it some more.
+
+68
+00:08:12.228 --> 00:08:15.908
+Silvio: I realize when you say LinkedIn is next,
+
+69
+00:08:16.948 --> 00:08:21.348
+Silvio: probably means that I would need to do some work on my profile, and we will need a
+
+70
+00:08:22.783 --> 00:08:24.063
+Silvio: company profile.
+
+71
+00:08:25.343 --> 00:08:28.543
+Silvio: Yeah, everybody would need to do some work on their profile maybe.
+
+72
+00:08:30.783 --> 00:08:40.703
+Silvio: But but I plan to look into that, to give some feedback, but probably first to look into Ivan's work because that's more urgent and I haven't looked into that yet, especially
+
+73
+00:08:40.703 --> 00:08:50.703
+Silvio: for the feedback he needs. from the user's point of view of what's best for the user and what's acceptable and not from the user. So I will tackle that first and
+
+74
+00:08:50.703 --> 00:08:56.943
+Silvio: then look into the marketing materials. And of course, I will spend time working on Cassini.
+
+75
+00:08:58.543 --> 00:09:11.277
+Silvio: One note is that my credits on with OpenAI will expire April the first. Last time I looked into it. So we have a few weeks there's a new chat GPT version
+
+76
+00:09:11.277 --> 00:09:20.957
+Silvio: out which is better than the previous version as usual and so yeah please use the API key and that was me over to Marco
+
+77
+00:09:23.336 --> 00:09:30.056
+chima: Yeah, so sorry for being late to the meeting. I will need to change my laptop at some point
+
+78
+00:09:31.336 --> 00:09:31.896
+chima: this year.
+
+79
+00:09:34.456 --> 00:09:34.936
+chima: Maybe,
+
+80
+00:09:36.368 --> 00:09:40.421
+chima: well, that's a discussion for later, maybe.
+
+81
+00:09:43.540 --> 00:09:50.020
+chima: I worked on the debug page PR that was I realized yesterday that was
+
+82
+00:09:52.580 --> 00:09:58.740
+chima: there was a merge conflict against the main so I rebased it and
+
+83
+00:10:00.855 --> 00:10:11.080
+chima: and then the the pipeline turned red so I started trying to understand what was Changed what was wrong and ended up
+
+84
+00:10:13.000 --> 00:10:18.600
+chima: hitting two flaky tests because the connection is now handled.
+
+85
+00:10:19.908 --> 00:10:23.588
+chima: The readiness of the connection between only Broco between the
+
+86
+00:10:26.105 --> 00:10:40.665
+chima: local database and the remote database is considered ready in a different way. So I started working on end-to-end tests, and I'm still, I can still see the
+
+87
+00:10:40.665 --> 00:10:41.705
+chima: pipeline.
+
+88
+00:10:43.010 --> 00:10:43.250
+chima: Red.
+
+89
+00:10:44.770 --> 00:10:54.690
+chima: I mean, tests are passing on my local machine, but they are red on the pipeline. So I think I will need to give this a little more time. Like
+
+90
+00:10:55.650 --> 00:10:59.810
+chima: I expect in an hour to be able to turn this green.
+
+91
+00:11:01.010 --> 00:11:04.610
+chima: And then maybe, Silvia, you can take a look into it. I don't know if you already did.
+
+92
+00:11:05.530 --> 00:11:06.330
+chima: but I think
+
+93
+00:11:08.916 --> 00:11:18.116
+chima: just to see the new interface and to click things around you can already do that. I just want to fix those two tests that are about
+
+94
+00:11:19.876 --> 00:11:20.996
+chima: ensuring that
+
+95
+00:11:22.596 --> 00:11:25.236
+chima: the database status indicator is always
+
+96
+00:11:27.489 --> 00:11:34.529
+chima: Reflecting the current database. Other than that, I think the PR is ready. And
+
+97
+00:11:36.289 --> 00:11:40.769
+chima: yeah, that's what I've been doing today. I will be doing today. And
+
+98
+00:11:42.049 --> 00:11:47.199
+chima: so yes, still working on those two PRs to get them merged. And
+
+99
+00:11:48.399 --> 00:11:50.959
+chima: yeah, that's all. Back to Chris.
+
+100
+00:11:53.355 --> 00:11:55.995
+Chris: Any uh work-related uh comments?
+
+101
+00:11:57.695 --> 00:12:06.015
+chima: Yeah, I will need to change my laptop and if somebody have any suggestions, I wanted to take a framework as next.
+
+102
+00:12:07.218 --> 00:12:17.858
+Silvio: I I'm sorry, I feel like I'm a bit dreaming, but did we have discussions and me trying to tell Marco that I will buy you a laptop tomorrow, like three months
+
+103
+00:12:17.858 --> 00:12:25.138
+Silvio: ago when RAM before RAM prices spiked and disk prices went up? Did it happen or did I dream about it?
+
+104
+00:12:25.509 --> 00:12:26.469
+chima: No, it hadn't.
+
+105
+00:12:27.184 --> 00:12:27.744
+Silvio: Okay, okay, okay.
+
+106
+00:12:29.057 --> 00:12:29.537
+chima: Okay, okay.
+
+107
+00:12:31.324 --> 00:12:32.216
+Silvio: Yeah, I just mean there's no
+
+108
+00:12:32.216 --> 00:12:33.976
+chima: I already know about Ram Spikes.
+
+109
+00:12:35.438 --> 00:12:35.484
+Chris: But
+
+110
+00:12:35.484 --> 00:12:44.527
+Silvio: It doesn't sound you're adding anything to what has already been said. We know you need to change your laptop and you will do it in the future. That's no.
+
+111
+00:12:44.527 --> 00:12:44.607
+Chris: Yeah.
+
+112
+00:12:45.066 --> 00:12:45.226
+chima: Yeah.
+
+113
+00:12:46.635 --> 00:12:47.349
+chima: All right. I wanted to do it
+
+114
+00:12:47.349 --> 00:12:47.509
+Chris: Sure.
+
+115
+00:12:49.867 --> 00:12:49.947
+Chris: Okay.
+
+116
+00:12:50.555 --> 00:12:50.875
+chima: like
+
+117
+00:12:52.155 --> 00:12:56.715
+chima: a month ago, probably. That was my plan. But
+
+118
+00:12:57.141 --> 00:12:57.221
+Silvio: Yeah.
+
+119
+00:12:58.679 --> 00:12:58.911
+chima: It was delayed again
+
+120
+00:12:58.911 --> 00:12:59.951
+Silvio: There is no news.
+
+121
+00:13:01.159 --> 00:13:01.313
+chima: and uh
+
+122
+00:13:01.313 --> 00:13:01.393
+Chris: Yeah.
+
+123
+00:13:02.619 --> 00:13:10.157
+Silvio: No, but I mean, don't tell us you're thinking about changing your laptop. Keep it to yourself. The moment you change it, you tell. You take the decision, you tell.
+
+124
+00:13:10.157 --> 00:13:10.237
+Chris: Okay.
+
+125
+00:13:12.994 --> 00:13:15.257
+chima: I'm about to change it. So if you have suggestions.
+
+126
+00:13:15.257 --> 00:13:15.337
+Chris: Yeah.
+
+127
+00:13:15.883 --> 00:13:17.757
+Silvio: Since six months, you're there's an imminent threat to America by Iran from seven from it's been for 48 years. Right. I I feel the same vibes here. Sorry.
+
+128
+00:13:17.757 --> 00:13:17.917
+chima: Yeah.
+
+129
+00:13:23.648 --> 00:13:23.728
+Chris: Uh
+
+130
+00:13:25.683 --> 00:13:38.003
+chima: Well, let's say I'm mostly forced to change it now. Okay, six months ago, I was not really in the position. I mean, I was like, I would like to change my
+
+131
+00:13:38.003 --> 00:13:43.683
+chima: laptop. Probably it's a good idea. Now it's something that I can't delay any further.
+
+132
+00:13:45.017 --> 00:13:47.897
+Silvio: You are delaying it. You will change it when it dies.
+
+133
+00:13:49.869 --> 00:13:53.936
+Silvio: You didn't buy your laptop today, so you are delaying it. Sorry, sorry.
+
+134
+00:13:53.936 --> 00:13:55.536
+chima: Well, it's not dead yet.
+
+135
+00:14:00.055 --> 00:14:00.695
+Chris: I think,
+
+136
+00:14:02.055 --> 00:14:02.458
+Chris: Sylvia, I think you made your comment.
+
+137
+00:14:02.458 --> 00:14:03.658
+Silvio: Bad paragraph sketch.
+
+138
+00:14:07.975 --> 00:14:10.775
+Chris: That was a very elaborate, I told you so from Sylvia there.
+
+139
+00:14:12.500 --> 00:14:13.718
+Chris: So I
+
+140
+00:14:13.718 --> 00:14:14.198
+Silvio: I'm sorry.
+
+141
+00:14:15.888 --> 00:14:19.008
+Chris: I enjoy my think pad, Marco, if you want
+
+142
+00:14:20.128 --> 00:14:22.208
+Chris: to answer your question. I enjoy my think pad.
+
+143
+00:14:22.917 --> 00:14:23.317
+Silvio: Me too.
+
+144
+00:14:24.415 --> 00:14:25.535
+chima: Think pad. Okay.
+
+145
+00:14:26.010 --> 00:14:32.490
+Chris: I have a I have a T14S. I don't know, I don't, I guess there's new models now. This is already two years old, I think.
+
+146
+00:14:33.621 --> 00:14:33.701
+chima: Okay.
+
+147
+00:14:35.190 --> 00:14:37.510
+Silvio: I have a P14 with 64 gigs of RAM.
+
+148
+00:14:38.611 --> 00:14:40.294
+Chris: Yeah, I wish I got 64 gigs. Yeah, I only got I only got 32.
+
+149
+00:14:40.294 --> 00:14:40.774
+Silvio: which yeah
+
+150
+00:14:41.645 --> 00:14:42.205
+chima: Wealthy people.
+
+151
+00:14:43.952 --> 00:14:45.552
+Silvio: And I can expand it to 96.
+
+152
+00:14:46.729 --> 00:14:49.271
+Chris: Oh can I expand mine to 64? No mine's soldered. Mine's soldered. No, I yeah.
+
+153
+00:14:49.271 --> 00:14:49.751
+Silvio: Could be.
+
+154
+00:14:50.791 --> 00:14:50.871
+Silvio: No.
+
+155
+00:14:53.255 --> 00:15:03.575
+Chris: I was really impressed. I only asked one question to Quentin earlier on George, but I was very impressed by what George could do. And I liked the idea of being able
+
+156
+00:15:03.575 --> 00:15:05.335
+Chris: to run the local models.
+
+157
+00:15:06.645 --> 00:15:10.325
+Chris: Like that seems like a very important thing for us not to get.
+
+158
+00:15:11.621 --> 00:15:24.501
+Chris: Sucked into whatever the consequences of all these big US-centered AI tech companies, or at least our dependence on them, because, like I said earlier at this OVI, our behavior has definitely
+
+159
+00:15:24.501 --> 00:15:33.461
+Chris: changed in not so subtle ways in terms of how we work and how we depend on these things to get work done. So I think exploring these local models, at least
+
+160
+00:15:33.461 --> 00:15:34.501
+Chris: being able to set them up and
+
+161
+00:15:35.932 --> 00:15:37.618
+Silvio: I'm having lunch with Martin and Nick.
+
+162
+00:15:37.618 --> 00:15:37.698
+Chris: Yeah.
+
+163
+00:15:39.696 --> 00:15:40.336
+Chris: Where are they?
+
+164
+00:15:41.480 --> 00:15:44.600
+Silvio: Uh Nick just walked by and I think Martin is probably here.
+
+165
+00:15:45.928 --> 00:15:53.848
+Chris: Uh okay you can leave. We're in digression category. Uh we're in digression territory now. Yeah, Alex, I also need to look into the work you've done, so I'll try and do
+
+166
+00:15:53.848 --> 00:15:55.688
+Chris: this this weekend to to catch up with it.
+
+167
+00:16:00.636 --> 00:16:04.674
+Alex: I was going to say I think the question was relevant to what Sylvia was saying is that
+
+168
+00:16:05.598 --> 00:16:06.364
+Alex: I think you definitely have to set up your LinkedIn profiles, but I mean I can feed things that you need to write through the brand agent, or I can give you
+
+169
+00:16:06.364 --> 00:16:06.444
+Chris: Yeah.
+
+170
+00:16:12.958 --> 00:16:15.838
+Alex: all the context stocks so you can set up your own agent.
+
+171
+00:16:17.998 --> 00:16:18.318
+Alex: And
+
+172
+00:16:20.400 --> 00:16:30.160
+Alex: Yeah, it's not just on you. I think there's platform specific. I think visuals go down pretty well on LinkedIn. So I think there's some content to be created there also. So
+
+173
+00:16:30.320 --> 00:16:40.000
+Alex: when I was saying that there's LinkedIn work to be done, I think there's still it's not just on you, it's it's it's also uh still on me. Um and another thing
+
+174
+00:16:40.000 --> 00:16:47.342
+Alex: related to this is that we need to talk about um is that Apollo? Pachy, what do you use to build the mirror too?
+
+175
+00:16:48.637 --> 00:16:49.277
+Chris: Oh, um
+
+176
+00:16:50.658 --> 00:16:51.058
+Chris: That's true.
+
+177
+00:16:52.033 --> 00:16:54.033
+Alex: Astro, something with a name.
+
+178
+00:16:55.895 --> 00:17:02.935
+Alex: We need to talk about that because we're hoping to launch this by next week. I need to get on building those pages.
+
+179
+00:17:04.788 --> 00:17:05.428
+Chris: To do this uh
+
+180
+00:17:06.722 --> 00:17:07.202
+Chris: Yes, okay.
+
+181
+00:17:08.034 --> 00:17:09.954
+Alex: Maybe that's something we could do over the weekend.
+
+182
+00:17:10.437 --> 00:17:11.237
+Chris: Sounds good, yeah.
+
+183
+00:17:12.456 --> 00:17:12.616
+Chris: Um
+
+184
+00:17:13.969 --> 00:17:14.769
+Chris: Any other comments?
+
+185
+00:17:15.862 --> 00:17:16.422
+Chris: Me agreed.
+
+186
+00:17:18.956 --> 00:17:20.556
+chima: Okay, see you next week guys.
+
+187
+00:17:21.529 --> 00:17:21.948
+Chris: Have you a weekend?
+
+188
+00:17:21.948 --> 00:17:22.508
+Alex: Yes, we can.
+
+189
+00:17:22.863 --> 00:17:23.609
+chima: Yeah, nice weekend.
+
+190
+00:17:23.609 --> 00:17:23.849
+Chris: Bye.

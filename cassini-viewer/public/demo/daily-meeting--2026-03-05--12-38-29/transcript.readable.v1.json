@@ -1,0 +1,848 @@
+{
+  "version": "transcript.readable.v1",
+  "media": {
+    "src": "meeting.webm",
+    "durationMs": 857937,
+    "sha256": "2b0e75f5d1d951b1d11533185c32713750b12d98a346ed4da114f0572a0eafb3"
+  },
+  "speakers": [
+    {
+      "id": "spk_chris",
+      "label": "Chris"
+    },
+    {
+      "id": "spk_ivan",
+      "label": "Ivan"
+    },
+    {
+      "id": "spk_silvio",
+      "label": "Silvio"
+    }
+  ],
+  "segments": [
+    {
+      "id": "rseg_000001",
+      "speaker": "spk_ivan",
+      "startMs": 960,
+      "endMs": 23932,
+      "text": "storybook add-on for vtest and I need to need it to run rush update once I run rush update uh what happen is I get these cryptic errors uh anyway to summarize uh I fixed that but I've been wrestling with that yesterday you can see the latest uh yellow merged PR that includes the fix to this thing And that potentially unblocks",
+      "sourceSegmentIds": [
+        "seg_000001",
+        "seg_000002"
+      ]
+    },
+    {
+      "id": "rseg_000002",
+      "speaker": "spk_ivan",
+      "startMs": 23932,
+      "endMs": 38652,
+      "text": "also Svelte 10 migration from 9 to 10. I thought it was scoped to version 10, but apparently it just kept popping up. Anyway, I hope the issue is fixed now. This morning I worked on wrapping up the",
+      "sourceSegmentIds": [
+        "seg_000003",
+        "seg_000004"
+      ]
+    },
+    {
+      "id": "rseg_000003",
+      "speaker": "spk_ivan",
+      "startMs": 40652,
+      "endMs": 65037,
+      "text": "proposal for behavior-driven testing and whatnot. I'm quite close to that. But I still need to I've just now merged the fix, so I need to reconcile and rearrange the stuff for component testing that I need to push. So that will take me some 20 minutes, half an hour to an hour maybe to wrap up the other thing for the reconciliation.",
+      "sourceSegmentIds": [
+        "seg_000005",
+        "seg_000006",
+        "seg_000007"
+      ]
+    },
+    {
+      "id": "rseg_000004",
+      "speaker": "spk_ivan",
+      "startMs": 66180,
+      "endMs": 93465,
+      "text": "And then afterwards wrap up the stuff for the behavior driven testing proposal. So, yeah, Chris, I think having the discussion later in the afternoon about aerospaces also works for me. On that note, I think if there's a lot of context to digest and get to,",
+      "sourceSegmentIds": [
+        "seg_000008",
+        "seg_000009",
+        "seg_000010",
+        "seg_000011"
+      ]
+    },
+    {
+      "id": "rseg_000005",
+      "speaker": "spk_ivan",
+      "startMs": 94585,
+      "endMs": 116606,
+      "text": "and we have a limited amount of time. One thing definitely helps that maybe we tackle it immediately, the exploratory bit, so that you give me the context and some references, resources, whatever, so that I can think about it whilst you know walking down the street rather than whilst implementing something",
+      "sourceSegmentIds": [
+        "seg_000012",
+        "seg_000013"
+      ]
+    },
+    {
+      "id": "rseg_000006",
+      "speaker": "spk_silvio",
+      "startMs": 116035,
+      "endMs": 116115,
+      "text": "Yeah.",
+      "sourceSegmentIds": [
+        "seg_000014"
+      ]
+    },
+    {
+      "id": "rseg_000007",
+      "speaker": "spk_ivan",
+      "startMs": 118206,
+      "endMs": 143670,
+      "text": "at my computer. And I also if it's a very limited amount of time, like it would be like if we split it half and half, we get like 15 hours to 20 hours each. I don't know the scope, but if you think this context transfer and communicating back and forth would be a bottleneck, maybe it would make sense if you just do it since",
+      "sourceSegmentIds": [
+        "seg_000015",
+        "seg_000016",
+        "seg_000017"
+      ]
+    },
+    {
+      "id": "rseg_000008",
+      "speaker": "spk_ivan",
+      "startMs": 143670,
+      "endMs": 172494,
+      "text": "you've already been doing it. Like I'd like to do something new. uh a bit sick of uh constantly debugging stuff failing on a rather complex monorepo with submodules and not that well maintained dependencies and all that. But on the other hand, I mean, if uh if you know, I I don't want to um impede on um you know uh scoped progress.",
+      "sourceSegmentIds": [
+        "seg_000018",
+        "seg_000019",
+        "seg_000020"
+      ]
+    },
+    {
+      "id": "rseg_000009",
+      "speaker": "spk_ivan",
+      "startMs": 173755,
+      "endMs": 183275,
+      "text": "But then again, I I welcome the challenge as well. So yeah, uh whatever you decide on that. Um and yeah, over to Surya.",
+      "sourceSegmentIds": [
+        "seg_000021",
+        "seg_000022"
+      ]
+    },
+    {
+      "id": "rseg_000010",
+      "speaker": "spk_silvio",
+      "startMs": 185110,
+      "endMs": 203990,
+      "text": "Yeah, actually I don't have much report because yeah, yesterday afternoon I was busy with Mattia and this morning there was the beta breakfast that I reported on and I was distracted talking in mid space with person so I forgot about the meeting. I missed the meeting and yeah, I am Sylvia.",
+      "sourceSegmentIds": [
+        "seg_000023",
+        "seg_000024",
+        "seg_000025"
+      ]
+    },
+    {
+      "id": "rseg_000011",
+      "speaker": "spk_silvio",
+      "startMs": 206070,
+      "endMs": 207110,
+      "text": "That was my report.",
+      "sourceSegmentIds": [
+        "seg_000026"
+      ]
+    },
+    {
+      "id": "rseg_000012",
+      "speaker": "spk_chris",
+      "startMs": 208788,
+      "endMs": 233924,
+      "text": "Uh okay. Any uh work with these comments? Um just to say that I think it's probably worthwhile factoring in extra time for transferring context to you. So if we go over by an extra five or so hours of just me you know writing next to you, I don't think it's that complex. I think I can show you the things we've done, and you will get up to speed if we didn't have what we've already done.",
+      "sourceSegmentIds": [
+        "seg_000027",
+        "seg_000028",
+        "seg_000029",
+        "seg_000030"
+      ]
+    },
+    {
+      "id": "rseg_000013",
+      "speaker": "spk_chris",
+      "startMs": 235064,
+      "endMs": 243170,
+      "text": "To show you, then I think it would be a bit harder to introduce you to things, but I think there's enough visually for you to be able to grok it pretty quickly. So",
+      "sourceSegmentIds": [
+        "seg_000031",
+        "seg_000032"
+      ]
+    },
+    {
+      "id": "rseg_000014",
+      "speaker": "spk_chris",
+      "startMs": 245052,
+      "endMs": 251932,
+      "text": "it's just more, yeah. Anyway, we can talk later today. Ping me whenever you have until about",
+      "sourceSegmentIds": [
+        "seg_000033",
+        "seg_000034"
+      ]
+    },
+    {
+      "id": "rseg_000015",
+      "speaker": "spk_ivan",
+      "startMs": 249423,
+      "endMs": 249503,
+      "text": "Okay.",
+      "sourceSegmentIds": [
+        "seg_000035"
+      ]
+    },
+    {
+      "id": "rseg_000016",
+      "speaker": "spk_chris",
+      "startMs": 253212,
+      "endMs": 261184,
+      "text": "5 p.m. my time. So I can talk latest from 5 p.m. my time to 6 p.m. Yeah, which is, I think, late as 6 p.m. your time.",
+      "sourceSegmentIds": [
+        "seg_000036",
+        "seg_000037",
+        "seg_000038"
+      ]
+    },
+    {
+      "id": "rseg_000017",
+      "speaker": "spk_ivan",
+      "startMs": 262855,
+      "endMs": 285709,
+      "text": "Uh that worked. But I I mean also we can do this asynchronously. I mean I don't have to wrap this up before the conversation so I think I'll take an hour long break and after that we we can still meet. I I guess it depends on on on you getting it ready. So yeah whenever you're ready just just bring me and I'll contextual.",
+      "sourceSegmentIds": [
+        "seg_000039",
+        "seg_000040",
+        "seg_000041"
+      ]
+    },
+    {
+      "id": "rseg_000018",
+      "speaker": "spk_chris",
+      "startMs": 283917,
+      "endMs": 301723,
+      "text": "I think there's probably two parts. One is just introducing you to the stuff and showing you the stuff. Second thing is probably then preparing. And I'd also like to pass that plan by Silvio and Alex when we're after we've bought it through, because I think Alex might need to weigh in on design here or",
+      "sourceSegmentIds": [
+        "seg_000042",
+        "seg_000043"
+      ]
+    },
+    {
+      "id": "rseg_000019",
+      "speaker": "spk_chris",
+      "startMs": 301723,
+      "endMs": 310043,
+      "text": "we might need to get bigger makeup involved to just prototype something for us. And I think Silvio could also help just cut through the wrap and",
+      "sourceSegmentIds": [
+        "seg_000044"
+      ]
+    },
+    {
+      "id": "rseg_000020",
+      "speaker": "spk_ivan",
+      "startMs": 303599,
+      "endMs": 303679,
+      "text": "Uh",
+      "sourceSegmentIds": [
+        "seg_000045"
+      ]
+    },
+    {
+      "id": "rseg_000021",
+      "speaker": "spk_ivan",
+      "startMs": 310805,
+      "endMs": 310885,
+      "text": "Okay.",
+      "sourceSegmentIds": [
+        "seg_000046"
+      ]
+    },
+    {
+      "id": "rseg_000022",
+      "speaker": "spk_chris",
+      "startMs": 311003,
+      "endMs": 330903,
+      "text": "maybe help us trim off some of the things that we don't need here. I'm just a bit worried about it potentially involves pulling from two different sources and the second source is bank feeds. Just I don't really want us to get involved in that, but I think it's where we're potentially adding the most value. So there you go.",
+      "sourceSegmentIds": [
+        "seg_000047",
+        "seg_000048",
+        "seg_000049",
+        "seg_000050",
+        "seg_000051"
+      ]
+    },
+    {
+      "id": "rseg_000023",
+      "speaker": "spk_chris",
+      "startMs": 331828,
+      "endMs": 340749,
+      "text": "I think if we just lay out the picture and try and get a proposal together, we can share it with other people and help sound check whether or not it's reasonable in that.",
+      "sourceSegmentIds": [
+        "seg_000052",
+        "seg_000053"
+      ]
+    },
+    {
+      "id": "rseg_000024",
+      "speaker": "spk_ivan",
+      "startMs": 341799,
+      "endMs": 342679,
+      "text": "Yeah, mazes.",
+      "sourceSegmentIds": [
+        "seg_000054"
+      ]
+    },
+    {
+      "id": "rseg_000025",
+      "speaker": "spk_chris",
+      "startMs": 343400,
+      "endMs": 347800,
+      "text": "Yeah, Silvio, I don't know if you saw my question too. Did they give you an idea of what kind of people they're working with?",
+      "sourceSegmentIds": [
+        "seg_000055"
+      ]
+    },
+    {
+      "id": "rseg_000026",
+      "speaker": "spk_silvio",
+      "startMs": 349083,
+      "endMs": 372843,
+      "text": "Yeah, I was about to just say now, I tried to ask basically the question I asked was if a small business with 20 employees that needs help maintaining their next cloud instance is a good fit for what they do. And they basically said yes, it's a perfect fit. So small to medium businesses, I think, is their target. And they...",
+      "sourceSegmentIds": [
+        "seg_000056",
+        "seg_000057",
+        "seg_000058",
+        "seg_000059"
+      ]
+    },
+    {
+      "id": "rseg_000027",
+      "speaker": "spk_silvio",
+      "startMs": 374079,
+      "endMs": 385439,
+      "text": "With an extra example, they also said, yeah, what we can provide to these kinds of companies also the expertise to let them know what's out there and what they might need that they might not even know that is out there.",
+      "sourceSegmentIds": [
+        "seg_000060",
+        "seg_000061"
+      ]
+    },
+    {
+      "id": "rseg_000028",
+      "speaker": "spk_silvio",
+      "startMs": 387441,
+      "endMs": 387681,
+      "text": "Yeah,",
+      "sourceSegmentIds": [
+        "seg_000062"
+      ]
+    },
+    {
+      "id": "rseg_000029",
+      "speaker": "spk_ivan",
+      "startMs": 388182,
+      "endMs": 388262,
+      "text": "Yeah.",
+      "sourceSegmentIds": [
+        "seg_000063"
+      ]
+    },
+    {
+      "id": "rseg_000030",
+      "speaker": "spk_silvio",
+      "startMs": 389281,
+      "endMs": 411521,
+      "text": "as I said, they have a lot of experience with these open source. I really like that. And I think what I will do tomorrow, I have this session with a person who booked to know more about CRM, open source, self-hostable CRM solutions. And I think I will put it to these guys to say: look, if you go to them and have a talk, they probably can.",
+      "sourceSegmentIds": [
+        "seg_000064",
+        "seg_000065",
+        "seg_000066"
+      ]
+    },
+    {
+      "id": "rseg_000031",
+      "speaker": "spk_silvio",
+      "startMs": 413368,
+      "endMs": 435697,
+      "text": "Consult you, they can give you suggestions, and they can also take the job. And it's kind of good. I have one thing that I thought that basically they said, you know. My mantra is: I want to be paid by the hour because that's honest, that's how much I'm paid.",
+      "sourceSegmentIds": [
+        "seg_000067",
+        "seg_000068",
+        "seg_000069",
+        "seg_000070",
+        "seg_000071"
+      ]
+    },
+    {
+      "id": "rseg_000032",
+      "speaker": "spk_silvio",
+      "startMs": 436897,
+      "endMs": 458373,
+      "text": "And we're on the same team, me and the customer. Both want to get a solution as fast as possible. But then he said, Well, in this case, when you're in firefighting mode, like the likenesses of fires. So, if you're a firefighter, it gets paid when they put out every fire. You like the fact that every week there's a fire. You don't want",
+      "sourceSegmentIds": [
+        "seg_000072",
+        "seg_000073",
+        "seg_000074"
+      ]
+    },
+    {
+      "id": "rseg_000033",
+      "speaker": "spk_silvio",
+      "startMs": 458373,
+      "endMs": 473962,
+      "text": "that to stop because that's your cash flow going on. So, the incentives are wrong. So, basically, I realize that what I propose is doable and makes sense only if there is a strong trust. That I'm not doing that.",
+      "sourceSegmentIds": [
+        "seg_000075",
+        "seg_000076"
+      ]
+    },
+    {
+      "id": "rseg_000034",
+      "speaker": "spk_silvio",
+      "startMs": 478073,
+      "endMs": 478153,
+      "text": "Uh",
+      "sourceSegmentIds": [
+        "seg_000077"
+      ]
+    },
+    {
+      "id": "rseg_000035",
+      "speaker": "spk_chris",
+      "startMs": 479929,
+      "endMs": 489529,
+      "text": "Um, your comments about bouncing off this guy tomorrow to these other guys. Do you not feel like we've obviously we're already positioning ourselves to be able to do something similar to them?",
+      "sourceSegmentIds": [
+        "seg_000078",
+        "seg_000079"
+      ]
+    },
+    {
+      "id": "rseg_000036",
+      "speaker": "spk_silvio",
+      "startMs": 490931,
+      "endMs": 501331,
+      "text": "But we don't have any CRM expertise. So we've always at least we know Zulip. We we we've been using it with with CRM I would be completely blind.",
+      "sourceSegmentIds": [
+        "seg_000080",
+        "seg_000081"
+      ]
+    },
+    {
+      "id": "rseg_000037",
+      "speaker": "spk_chris",
+      "startMs": 502748,
+      "endMs": 508428,
+      "text": "We could factor that in and do some free exploratory work for this guy and get some exposure to it.",
+      "sourceSegmentIds": [
+        "seg_000082"
+      ]
+    },
+    {
+      "id": "rseg_000038",
+      "speaker": "spk_silvio",
+      "startMs": 509634,
+      "endMs": 516514,
+      "text": "I would expect that to be more work than I have this feeling, so I can't really justify it, but that's why.",
+      "sourceSegmentIds": [
+        "seg_000083",
+        "seg_000084"
+      ]
+    },
+    {
+      "id": "rseg_000039",
+      "speaker": "spk_chris",
+      "startMs": 517598,
+      "endMs": 526134,
+      "text": "I think it's interesting though. I mean, we were kind of with LVC now, we're kind of positioning ourselves in a similar way to these guys. And I feel like it's it's",
+      "sourceSegmentIds": [
+        "seg_000085"
+      ]
+    },
+    {
+      "id": "rseg_000040",
+      "speaker": "spk_ivan",
+      "startMs": 519487,
+      "endMs": 519567,
+      "text": "Yeah.",
+      "sourceSegmentIds": [
+        "seg_000086"
+      ]
+    },
+    {
+      "id": "rseg_000041",
+      "speaker": "spk_chris",
+      "startMs": 526134,
+      "endMs": 538010,
+      "text": "a good signal that they're have a they're not offering anything else. This is what they do. It's probably a good signal that there's some type of uh opportunity here that we should maybe also push as a as a service offer.",
+      "sourceSegmentIds": [
+        "seg_000087",
+        "seg_000088"
+      ]
+    },
+    {
+      "id": "rseg_000042",
+      "speaker": "spk_silvio",
+      "startMs": 539319,
+      "endMs": 562380,
+      "text": "Yeah, by the way, it was also interesting that the presenting guy said that they have all their services hosted on NetCap. If I understand correctly, they own a physical server. Co-located at NetCap and they install all their client instances there. So this allows them to cut coast quite a lot, I guess, because it sounds like a very sweet spot of coast.",
+      "sourceSegmentIds": [
+        "seg_000089",
+        "seg_000090"
+      ]
+    },
+    {
+      "id": "rseg_000043",
+      "speaker": "spk_silvio",
+      "startMs": 563820,
+      "endMs": 592327,
+      "text": "And then another guy approached him basically saying from hive.de h y.de and basically says we do We're a small AWS. We're like AWS, but smaller. And we also said many of our employees work for AWS, so we have a lot of expertise in the area. And they provide VMs and services like databases and so on. And also,",
+      "sourceSegmentIds": [
+        "seg_000091",
+        "seg_000092",
+        "seg_000093",
+        "seg_000094"
+      ]
+    },
+    {
+      "id": "rseg_000044",
+      "speaker": "spk_silvio",
+      "startMs": 593527,
+      "endMs": 596247,
+      "text": "yeah, a bit more than AWS is in the managed.",
+      "sourceSegmentIds": [
+        "seg_000095"
+      ]
+    },
+    {
+      "id": "rseg_000045",
+      "speaker": "spk_chris",
+      "startMs": 598123,
+      "endMs": 600843,
+      "text": "Any of your comments? Any not work related to their questions?",
+      "sourceSegmentIds": [
+        "seg_000096"
+      ]
+    },
+    {
+      "id": "rseg_000046",
+      "speaker": "spk_silvio",
+      "startMs": 602115,
+      "endMs": 626037,
+      "text": "Maybe I have one digression about Cassini because it's recording now. I think I got to a point where the recordings are okay, but the format I chose for the recording, which is a single-file, multi-track, multi-video, multi-audio, because to me it sounds like a good fit. But in the end, it's hard to. Test the",
+      "sourceSegmentIds": [
+        "seg_000097",
+        "seg_000098"
+      ]
+    },
+    {
+      "id": "rseg_000047",
+      "speaker": "spk_silvio",
+      "startMs": 626037,
+      "endMs": 649384,
+      "text": "sync on that file because I can never see all the tracks and all the audios mixed and check that we're not talking over each other in the recording because we're not in the meeting. So I realized I spent a lot of time just testing this. So basically, building something that will. Make a composite video of all this. And I just now",
+      "sourceSegmentIds": [
+        "seg_000099",
+        "seg_000100"
+      ]
+    },
+    {
+      "id": "rseg_000048",
+      "speaker": "spk_silvio",
+      "startMs": 649384,
+      "endMs": 668584,
+      "text": "realized: no, look, that file is good. You can just use it. You don't need to spend so much time validating that it's good because all my attempts at having the LLM write something, it would mess up the sync. So, but it was not because it was wrong in the original file, it was because the",
+      "sourceSegmentIds": [
+        "seg_000101",
+        "seg_000102"
+      ]
+    },
+    {
+      "id": "rseg_000049",
+      "speaker": "spk_silvio",
+      "startMs": 668824,
+      "endMs": 681167,
+      "text": "processing. further processing messed it up. So my point is that I went through at that end and wasted quite some tokens on it, but not that much time. And it was good.",
+      "sourceSegmentIds": [
+        "seg_000103",
+        "seg_000104"
+      ]
+    },
+    {
+      "id": "rseg_000050",
+      "speaker": "spk_ivan",
+      "startMs": 682715,
+      "endMs": 691275,
+      "text": "So does it sync automatically? Or does it just depend on like what you see? It's the same, but more or less what um",
+      "sourceSegmentIds": [
+        "seg_000105"
+      ]
+    },
+    {
+      "id": "rseg_000051",
+      "speaker": "spk_silvio",
+      "startMs": 691333,
+      "endMs": 717062,
+      "text": "So I had to initially I was recording from the server and recording from the server basically saves all the packets that come in. And all of this is enough to reconstruct an audio stream or a video stream, but not to sync them up as they were in while it happened. Because you need more information that Janus, the media server behind all this, doesn't. Save.",
+      "sourceSegmentIds": [
+        "seg_000106",
+        "seg_000107",
+        "seg_000108"
+      ]
+    },
+    {
+      "id": "rseg_000052",
+      "speaker": "spk_silvio",
+      "startMs": 718262,
+      "endMs": 744403,
+      "text": "So that's why now we have a bot. Well, also because the bot is easier to install. You don't need server access to use this bot. You can just point it at your instance and it will work. So it's easier. And it saves. Again, the packets, but something more, a little bit more about timing when these packets were received so that we can reconstruct all the streams in sync.",
+      "sourceSegmentIds": [
+        "seg_000109",
+        "seg_000110",
+        "seg_000111",
+        "seg_000112"
+      ]
+    },
+    {
+      "id": "rseg_000053",
+      "speaker": "spk_ivan",
+      "startMs": 745571,
+      "endMs": 752371,
+      "text": "Do you know the you know in filming uh a film why the clapper thing?",
+      "sourceSegmentIds": [
+        "seg_000113"
+      ]
+    },
+    {
+      "id": "rseg_000054",
+      "speaker": "spk_silvio",
+      "startMs": 753575,
+      "endMs": 755335,
+      "text": "Uh yeah, to sync up audio and video.",
+      "sourceSegmentIds": [
+        "seg_000114"
+      ]
+    },
+    {
+      "id": "rseg_000055",
+      "speaker": "spk_ivan",
+      "startMs": 755876,
+      "endMs": 762516,
+      "text": "Yeah, yeah. We used to do with just like, you know, just some very sharp uh sound.",
+      "sourceSegmentIds": [
+        "seg_000115"
+      ]
+    },
+    {
+      "id": "rseg_000056",
+      "speaker": "spk_silvio",
+      "startMs": 763725,
+      "endMs": 768205,
+      "text": "In Italian it's called chuck, which is the onomatopoeic sound it makes.",
+      "sourceSegmentIds": [
+        "seg_000116"
+      ]
+    },
+    {
+      "id": "rseg_000057",
+      "speaker": "spk_ivan",
+      "startMs": 768802,
+      "endMs": 776825,
+      "text": "Yeah. I don't know creation English or any other language term for the thing, the clapper.",
+      "sourceSegmentIds": [
+        "seg_000117",
+        "seg_000118"
+      ]
+    },
+    {
+      "id": "rseg_000058",
+      "speaker": "spk_silvio",
+      "startMs": 778042,
+      "endMs": 781962,
+      "text": "There's a magazine, there's a cinema magazine in Italy that is called Chuck.",
+      "sourceSegmentIds": [
+        "seg_000119"
+      ]
+    },
+    {
+      "id": "rseg_000059",
+      "speaker": "spk_ivan",
+      "startMs": 781709,
+      "endMs": 781789,
+      "text": "Okay.",
+      "sourceSegmentIds": [
+        "seg_000120"
+      ]
+    },
+    {
+      "id": "rseg_000060",
+      "speaker": "spk_silvio",
+      "startMs": 783288,
+      "endMs": 784728,
+      "text": "So that's why name was it.",
+      "sourceSegmentIds": [
+        "seg_000121"
+      ]
+    },
+    {
+      "id": "rseg_000061",
+      "speaker": "spk_chris",
+      "startMs": 783455,
+      "endMs": 786815,
+      "text": "Yeah, w I have never known the word for that thing interaction.",
+      "sourceSegmentIds": [
+        "seg_000122",
+        "seg_000123"
+      ]
+    },
+    {
+      "id": "rseg_000062",
+      "speaker": "spk_silvio",
+      "startMs": 793017,
+      "endMs": 793097,
+      "text": "Right.",
+      "sourceSegmentIds": [
+        "seg_000124"
+      ]
+    },
+    {
+      "id": "rseg_000063",
+      "speaker": "spk_ivan",
+      "startMs": 796086,
+      "endMs": 797286,
+      "text": "Clapperboard. Okay.",
+      "sourceSegmentIds": [
+        "seg_000125"
+      ]
+    },
+    {
+      "id": "rseg_000064",
+      "speaker": "spk_chris",
+      "startMs": 797154,
+      "endMs": 798034,
+      "text": "I forgot, yeah.",
+      "sourceSegmentIds": [
+        "seg_000126"
+      ]
+    },
+    {
+      "id": "rseg_000065",
+      "speaker": "spk_silvio",
+      "startMs": 798691,
+      "endMs": 799011,
+      "text": "Culture.",
+      "sourceSegmentIds": [
+        "seg_000127"
+      ]
+    },
+    {
+      "id": "rseg_000066",
+      "speaker": "spk_ivan",
+      "startMs": 800793,
+      "endMs": 810713,
+      "text": "I literally googled Film Take Clapper and it says how to use a clapper board the right way. So I imagine that's what the clapper board is.",
+      "sourceSegmentIds": [
+        "seg_000128"
+      ]
+    },
+    {
+      "id": "rseg_000067",
+      "speaker": "spk_chris",
+      "startMs": 811843,
+      "endMs": 814883,
+      "text": "I didn't know that was actually for syncing the the video and the audio.",
+      "sourceSegmentIds": [
+        "seg_000129"
+      ]
+    },
+    {
+      "id": "rseg_000068",
+      "speaker": "spk_silvio",
+      "startMs": 816010,
+      "endMs": 826970,
+      "text": "It also marks the scene. You see, you write there what scene it is, if it's the third take, the fourth take, and so you can, in the footage, you can identify each scene.",
+      "sourceSegmentIds": [
+        "seg_000130",
+        "seg_000131"
+      ]
+    },
+    {
+      "id": "rseg_000069",
+      "speaker": "spk_chris",
+      "startMs": 828017,
+      "endMs": 828657,
+      "text": "Makes a lot of sense.",
+      "sourceSegmentIds": [
+        "seg_000132"
+      ]
+    },
+    {
+      "id": "rseg_000070",
+      "speaker": "spk_ivan",
+      "startMs": 829878,
+      "endMs": 829958,
+      "text": "Okay.",
+      "sourceSegmentIds": [
+        "seg_000133"
+      ]
+    },
+    {
+      "id": "rseg_000071",
+      "speaker": "spk_chris",
+      "startMs": 831326,
+      "endMs": 834766,
+      "text": "Uh okay. There's nothing else, uh the media turned.",
+      "sourceSegmentIds": [
+        "seg_000134"
+      ]
+    },
+    {
+      "id": "rseg_000072",
+      "speaker": "spk_ivan",
+      "startMs": 836557,
+      "endMs": 844317,
+      "text": "Yeah, so Chris, whenever you're ready, ping me, just I have to give me an hour and then afterwards, whenever you're ready.",
+      "sourceSegmentIds": [
+        "seg_000135"
+      ]
+    },
+    {
+      "id": "rseg_000073",
+      "speaker": "spk_chris",
+      "startMs": 844688,
+      "endMs": 844768,
+      "text": "Okay.",
+      "sourceSegmentIds": [
+        "seg_000136"
+      ]
+    },
+    {
+      "id": "rseg_000074",
+      "speaker": "spk_ivan",
+      "startMs": 845677,
+      "endMs": 848717,
+      "text": "Might want to just do it maybe half an hour earlier so I can prepare.",
+      "sourceSegmentIds": [
+        "seg_000137"
+      ]
+    },
+    {
+      "id": "rseg_000075",
+      "speaker": "spk_chris",
+      "startMs": 849417,
+      "endMs": 854617,
+      "text": "Okay, sure. Let's say sometime after like 3 p.m. my time, maybe. That's a good idea. Three or four.",
+      "sourceSegmentIds": [
+        "seg_000138"
+      ]
+    },
+    {
+      "id": "rseg_000076",
+      "speaker": "spk_ivan",
+      "startMs": 855945,
+      "endMs": 856745,
+      "text": "Sure. Cheers.",
+      "sourceSegmentIds": [
+        "seg_000139"
+      ]
+    }
+  ],
+  "sourceTranscriptVersion": "transcript.words.v1"
+}

@@ -1,0 +1,46 @@
+:root {
+  color-scheme: light;
+  font-family: "Trebuchet MS", "Gill Sans", "Segoe UI", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  background:
+    radial-gradient(circle at top left, rgba(242, 214, 170, 0.35), transparent 32%),
+    radial-gradient(circle at top right, rgba(164, 196, 180, 0.3), transparent 30%),
+    linear-gradient(180deg, #f4efe6 0%, #efe8dc 48%, #e7dfd2 100%);
+  color: #1f2420;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100vh;
+}
+
+button,
+input,
+label {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 3px solid rgba(185, 104, 54, 0.45);
+  outline-offset: 2px;
+}

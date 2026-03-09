@@ -1,0 +1,21 @@
+{
+  "version": "cassini.meeting-artifact.v1",
+  "generatedAt": "2026-03-08T21:28:01.333643+00:00",
+  "source": {
+    "basename": "daily-meeting--2026-03-06--12:35:03.mkv",
+    "durationMs": 1102070
+  },
+  "files": {
+    "audio": "meeting.webm",
+    "transcript": "transcript.words.v1.json",
+    "captions": "captions.vtt",
+    "timeline": "timeline.map.v1.json"
+  },
+  "speakerCount": 4,
+  "chunkCount": 113,
+  "segmentCount": 190,
+  "wordCount": 2513,
+  "timelineSegmentCount": 495,
+  "digestDurationMs": 1045100,
+  "silenceReductionMs": 56970
+}

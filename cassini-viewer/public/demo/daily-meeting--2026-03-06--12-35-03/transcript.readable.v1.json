@@ -1,0 +1,1227 @@
+{
+  "version": "transcript.readable.v1",
+  "media": {
+    "src": "meeting.webm",
+    "durationMs": 1045100,
+    "sha256": "42f47356f4a0d8936ce28ffc479559b825930cc5745d09a393129268bd613232"
+  },
+  "speakers": [
+    {
+      "id": "spk_alex",
+      "label": "Alex"
+    },
+    {
+      "id": "spk_chris",
+      "label": "Chris"
+    },
+    {
+      "id": "spk_silvio",
+      "label": "Silvio"
+    },
+    {
+      "id": "spk_chima",
+      "label": "chima"
+    }
+  ],
+  "segments": [
+    {
+      "id": "rseg_000001",
+      "speaker": "spk_chris",
+      "startMs": 960,
+      "endMs": 28821,
+      "text": "I've gotten the things I wanted. I wanted to minimally get the sign-up rebuild done and push in the print directory sheet, the spreadsheet printing thing. I think I'll probably put some time in this weekend to finish the updates I've just described and try and do those two features. I think I'll have a bit of time tomorrow to work on stuff and I would like to clear",
+      "sourceSegmentIds": [
+        "seg_000001",
+        "seg_000002",
+        "seg_000003"
+      ]
+    },
+    {
+      "id": "rseg_000002",
+      "speaker": "spk_chris",
+      "startMs": 28821,
+      "endMs": 52092,
+      "text": "that out the way so that I can work on other things. Additionally, I have had a chat with Codex about SnapMenu and it's given me a good picture of it. I think there's, Alex, I said I need to communicate some things to you about stuff that might be missing from a few things.",
+      "sourceSegmentIds": [
+        "seg_000004",
+        "seg_000005",
+        "seg_000006",
+        "seg_000007",
+        "seg_000008",
+        "seg_000009"
+      ]
+    },
+    {
+      "id": "rseg_000003",
+      "speaker": "spk_chris",
+      "startMs": 53052,
+      "endMs": 56492,
+      "text": "And I need to get those notes in order. And I will also try and do it this weekend.",
+      "sourceSegmentIds": [
+        "seg_000010"
+      ]
+    },
+    {
+      "id": "rseg_000004",
+      "speaker": "spk_chris",
+      "startMs": 58492,
+      "endMs": 66572,
+      "text": "And so when I woke up this morning, Sophie will introduce me to George this morning. I can let him talk to George. It's pretty interesting. And",
+      "sourceSegmentIds": [
+        "seg_000011",
+        "seg_000012"
+      ]
+    },
+    {
+      "id": "rseg_000005",
+      "speaker": "spk_chris",
+      "startMs": 69429,
+      "endMs": 79909,
+      "text": "Yeah, I need to do. Oh, and actually, yesterday I spent most of the morning on the airspaces next stage, and I prepared a bunch of markdown notes.",
+      "sourceSegmentIds": [
+        "seg_000013"
+      ]
+    },
+    {
+      "id": "rseg_000006",
+      "speaker": "spk_chris",
+      "startMs": 81740,
+      "endMs": 98940,
+      "text": "I was getting bogged down thinking about everything and planning, and then I got Codex to help me create a summary of what had happened so that I can communicate to Yvonne what had happened and all of the different stages that I saw. Yvonne and I talked about that briefly. Sylvia and I talked a bit about that this morning too.",
+      "sourceSegmentIds": [
+        "seg_000014",
+        "seg_000015",
+        "seg_000016"
+      ]
+    },
+    {
+      "id": "rseg_000007",
+      "speaker": "spk_chris",
+      "startMs": 100688,
+      "endMs": 128237,
+      "text": "And Silvio, as always, snuck in at the last moment with a suggestion which potentially shaves off a whole bunch of work and gives them something very useful as a smaller next step. So I need to write that up and also communicate that to Yvonne because it impacts what he will do next. And I've had a look at Ivan's issues that he's opened, and I was just looking at his end-to-end component testing refactoring thing now.",
+      "sourceSegmentIds": [
+        "seg_000017",
+        "seg_000018",
+        "seg_000019"
+      ]
+    },
+    {
+      "id": "rseg_000008",
+      "speaker": "spk_chris",
+      "startMs": 129837,
+      "endMs": 135517,
+      "text": "So I will also try and just give that a once over today and respond to his comments on the issues.",
+      "sourceSegmentIds": [
+        "seg_000020"
+      ]
+    },
+    {
+      "id": "rseg_000009",
+      "speaker": "spk_chris",
+      "startMs": 138058,
+      "endMs": 139658,
+      "text": "That's me. Over to Alex.",
+      "sourceSegmentIds": [
+        "seg_000021"
+      ]
+    },
+    {
+      "id": "rseg_000010",
+      "speaker": "spk_alex",
+      "startMs": 141538,
+      "endMs": 153058,
+      "text": "So I've spent the morning cleaning up the Edible Zillow channel. That's done now. I had a comment there about",
+      "sourceSegmentIds": [
+        "seg_000022",
+        "seg_000023"
+      ]
+    },
+    {
+      "id": "rseg_000011",
+      "speaker": "spk_alex",
+      "startMs": 155166,
+      "endMs": 171966,
+      "text": "the import and just something I guess to consider if we're selling that as a service. It seems coming from Slack that it interpreted a message thread as an entirely separate channel. Like for example, the",
+      "sourceSegmentIds": [
+        "seg_000024",
+        "seg_000025"
+      ]
+    },
+    {
+      "id": "rseg_000012",
+      "speaker": "spk_alex",
+      "startMs": 173806,
+      "endMs": 181006,
+      "text": "updates from GitHub, there was at least like 300 separate channels per update.",
+      "sourceSegmentIds": [
+        "seg_000026"
+      ]
+    },
+    {
+      "id": "rseg_000013",
+      "speaker": "spk_alex",
+      "startMs": 183166,
+      "endMs": 189265,
+      "text": "And I went through all of them and I merged them all together. But as I was doing it, I was thinking",
+      "sourceSegmentIds": [
+        "seg_000027",
+        "seg_000028"
+      ]
+    },
+    {
+      "id": "rseg_000014",
+      "speaker": "spk_chris",
+      "startMs": 189758,
+      "endMs": 189998,
+      "text": "Hmm.",
+      "sourceSegmentIds": [
+        "seg_000029"
+      ]
+    },
+    {
+      "id": "rseg_000015",
+      "speaker": "spk_alex",
+      "startMs": 191176,
+      "endMs": 202216,
+      "text": "if we're considering this as a service in the future, might be something that we need to address in terms of a migration as to how it understands the data.",
+      "sourceSegmentIds": [
+        "seg_000030"
+      ]
+    },
+    {
+      "id": "rseg_000016",
+      "speaker": "spk_alex",
+      "startMs": 204136,
+      "endMs": 227336,
+      "text": "I don't think our chat history is very long, but I could see that being quite a long and tedious process. An organization that's got, we'd say, 10 years' worth of messages that is being imported into Zoom. And yesterday I finished up the first stage of the marketing project for internal tools for Myriad.",
+      "sourceSegmentIds": [
+        "seg_000031",
+        "seg_000032",
+        "seg_000033",
+        "seg_000034",
+        "seg_000035"
+      ]
+    },
+    {
+      "id": "rseg_000017",
+      "speaker": "spk_alex",
+      "startMs": 228776,
+      "endMs": 245782,
+      "text": "Today I'm gonna try to do something similar for Edible. What I managed to do with Myriad is set up a brand agent using Claude's cowork. So it has a lot of context around who the customer is,",
+      "sourceSegmentIds": [
+        "seg_000036",
+        "seg_000037"
+      ]
+    },
+    {
+      "id": "rseg_000018",
+      "speaker": "spk_alex",
+      "startMs": 246982,
+      "endMs": 273936,
+      "text": "what the service is that we're selling, and it was very instrumental in being able to craft that kind of content cluster and find all the connections between those things and what people might be interested. So I'm gonna do similar groundwork for Edible in terms of setting up the customer profile and the documentation on the services we're selling in order to set up a brand agent that can also help with a lot of writing.",
+      "sourceSegmentIds": [
+        "seg_000038",
+        "seg_000039",
+        "seg_000040"
+      ]
+    },
+    {
+      "id": "rseg_000019",
+      "speaker": "spk_alex",
+      "startMs": 275776,
+      "endMs": 285934,
+      "text": "And let's try to tick off some search related content marketing. So that's it for me to sogger.",
+      "sourceSegmentIds": [
+        "seg_000041",
+        "seg_000042",
+        "seg_000043"
+      ]
+    },
+    {
+      "id": "rseg_000020",
+      "speaker": "spk_silvio",
+      "startMs": 289267,
+      "endMs": 307507,
+      "text": "Yeah, probably the only work I actually did was a bit on Cassini then a lot of talking, but there were some interesting bits. One was I talked to Raz today, who got in touch with me because I have the experts page here in Bed House about",
+      "sourceSegmentIds": [
+        "seg_000044",
+        "seg_000045"
+      ]
+    },
+    {
+      "id": "rseg_000021",
+      "speaker": "spk_silvio",
+      "startMs": 309741,
+      "endMs": 318541,
+      "text": "Open source software that you can self-host, and he needed some CRM software. I ended up not being prepared enough.",
+      "sourceSegmentIds": [
+        "seg_000046"
+      ]
+    },
+    {
+      "id": "rseg_000022",
+      "speaker": "spk_silvio",
+      "startMs": 320621,
+      "endMs": 344401,
+      "text": "And while talking to Raz about this CRM software, I gave him this piece of advice that maybe it's better for him to put down notes down what he needs. What these needs are, and then all these needs might be fulfilled by different pieces of software. And it occurred to me that then you",
+      "sourceSegmentIds": [
+        "seg_000047",
+        "seg_000048",
+        "seg_000049",
+        "seg_000050"
+      ]
+    },
+    {
+      "id": "rseg_000023",
+      "speaker": "spk_silvio",
+      "startMs": 344401,
+      "endMs": 365461,
+      "text": "might want to integrate those, and this might be something that we propose as a business. So, there are many different bits that will help you. Like, one bit that almost everyone needs is the shared mailbox, like Zendesk, right? So, you have a team that is doing customer care, and you want them to be able to follow the full confidence",
+      "sourceSegmentIds": [
+        "seg_000051",
+        "seg_000052"
+      ]
+    },
+    {
+      "id": "rseg_000024",
+      "speaker": "spk_silvio",
+      "startMs": 365621,
+      "endMs": 392571,
+      "text": "the company had with the customer every morning. So you need that. But then maybe you have some other module and you need to integrate the two together. And it is something that we could offer. Maybe yeah, that was the conversation we read. Chris mentioned I introduced him to George. So George is a computer and he's named after George Orwell because the bookshop owner is",
+      "sourceSegmentIds": [
+        "seg_000053",
+        "seg_000054",
+        "seg_000055",
+        "seg_000056",
+        "seg_000057"
+      ]
+    },
+    {
+      "id": "rseg_000025",
+      "speaker": "spk_silvio",
+      "startMs": 393657,
+      "endMs": 416661,
+      "text": "Adamant of George Orwell lately is reading a lot of Orwell and talking to me about it. So it was, yeah, let's call it George. It has a video card, an Nvidia video card, which is kind of the latest model, but one of the smallest. So it's at the same time very good and very low end, but very high end. But it's",
+      "sourceSegmentIds": [
+        "seg_000058",
+        "seg_000059"
+      ]
+    },
+    {
+      "id": "rseg_000026",
+      "speaker": "spk_silvio",
+      "startMs": 416661,
+      "endMs": 439807,
+      "text": "very fast, it has eight gigs of RAM, it costs, I think, 300 euros, 300 or 400 euros, depending on where your source is. And I installed some local LLMs. In particular, I installed Wen3.5, which is just out like less than a week ago. And it's really incredible. For its size, it's Kind of intelligent",
+      "sourceSegmentIds": [
+        "seg_000060",
+        "seg_000061"
+      ]
+    },
+    {
+      "id": "rseg_000027",
+      "speaker": "spk_silvio",
+      "startMs": 439807,
+      "endMs": 466802,
+      "text": "and gives you good answers and can do a lot. Like the idea is that this machine has enough power to do the full meeting transcription, summarization, questions about metering transcription. So it is a prototype that is hostable if you have a thousand Euros budget, you can buy a machine like that and then use it to record your meetings and have all the transcriptions and the data",
+      "sourceSegmentIds": [
+        "seg_000062",
+        "seg_000063",
+        "seg_000064"
+      ]
+    },
+    {
+      "id": "rseg_000028",
+      "speaker": "spk_silvio",
+      "startMs": 466802,
+      "endMs": 482548,
+      "text": "will never leave your premises, which I believe is a good thing that some people might be after, not only in the very sensitive sectors, but also just. Just because, you know, just because you don't want to fit data to the NSA.",
+      "sourceSegmentIds": [
+        "seg_000065",
+        "seg_000066"
+      ]
+    },
+    {
+      "id": "rseg_000029",
+      "speaker": "spk_silvio",
+      "startMs": 484548,
+      "endMs": 508543,
+      "text": "And I haven't, I have had a cursory look into Alex's work, and I want to look into it some more. I realize when you say LinkedIn is next, probably means that I would need to do some work on my profile, and we will need a company profile. Yeah, everybody would need to do some work on their profile maybe.",
+      "sourceSegmentIds": [
+        "seg_000067",
+        "seg_000068",
+        "seg_000069",
+        "seg_000070",
+        "seg_000071"
+      ]
+    },
+    {
+      "id": "rseg_000030",
+      "speaker": "spk_silvio",
+      "startMs": 510783,
+      "endMs": 536943,
+      "text": "But but I plan to look into that, to give some feedback, but probably first to look into Ivan's work because that's more urgent and I haven't looked into that yet, especially for the feedback he needs. from the user's point of view of what's best for the user and what's acceptable and not from the user. So I will tackle that first and then look into the marketing materials. And of course, I will spend time working on Cassini.",
+      "sourceSegmentIds": [
+        "seg_000072",
+        "seg_000073",
+        "seg_000074"
+      ]
+    },
+    {
+      "id": "rseg_000031",
+      "speaker": "spk_silvio",
+      "startMs": 538543,
+      "endMs": 560957,
+      "text": "One note is that my credits on with OpenAI will expire April the first. Last time I looked into it. So we have a few weeks there's a new chat GPT version out which is better than the previous version as usual and so yeah please use the API key and that was me over to Marco",
+      "sourceSegmentIds": [
+        "seg_000075",
+        "seg_000076"
+      ]
+    },
+    {
+      "id": "rseg_000032",
+      "speaker": "spk_chima",
+      "startMs": 563336,
+      "endMs": 571896,
+      "text": "Yeah, so sorry for being late to the meeting. I will need to change my laptop at some point this year.",
+      "sourceSegmentIds": [
+        "seg_000077",
+        "seg_000078"
+      ]
+    },
+    {
+      "id": "rseg_000033",
+      "speaker": "spk_chima",
+      "startMs": 574456,
+      "endMs": 580421,
+      "text": "Maybe, well, that's a discussion for later, maybe.",
+      "sourceSegmentIds": [
+        "seg_000079",
+        "seg_000080"
+      ]
+    },
+    {
+      "id": "rseg_000034",
+      "speaker": "spk_chima",
+      "startMs": 583540,
+      "endMs": 590020,
+      "text": "I worked on the debug page PR that was I realized yesterday that was",
+      "sourceSegmentIds": [
+        "seg_000081"
+      ]
+    },
+    {
+      "id": "rseg_000035",
+      "speaker": "spk_chima",
+      "startMs": 592580,
+      "endMs": 598740,
+      "text": "there was a merge conflict against the main so I rebased it and",
+      "sourceSegmentIds": [
+        "seg_000082"
+      ]
+    },
+    {
+      "id": "rseg_000036",
+      "speaker": "spk_chima",
+      "startMs": 600855,
+      "endMs": 611080,
+      "text": "and then the the pipeline turned red so I started trying to understand what was Changed what was wrong and ended up",
+      "sourceSegmentIds": [
+        "seg_000083"
+      ]
+    },
+    {
+      "id": "rseg_000037",
+      "speaker": "spk_chima",
+      "startMs": 613000,
+      "endMs": 623588,
+      "text": "hitting two flaky tests because the connection is now handled. The readiness of the connection between only Broco between the",
+      "sourceSegmentIds": [
+        "seg_000084",
+        "seg_000085"
+      ]
+    },
+    {
+      "id": "rseg_000038",
+      "speaker": "spk_chima",
+      "startMs": 626105,
+      "endMs": 654690,
+      "text": "local database and the remote database is considered ready in a different way. So I started working on end-to-end tests, and I'm still, I can still see the pipeline. Red. I mean, tests are passing on my local machine, but they are red on the pipeline. So I think I will need to give this a little more time. Like",
+      "sourceSegmentIds": [
+        "seg_000086",
+        "seg_000087",
+        "seg_000088",
+        "seg_000089"
+      ]
+    },
+    {
+      "id": "rseg_000039",
+      "speaker": "spk_chima",
+      "startMs": 655650,
+      "endMs": 666330,
+      "text": "I expect in an hour to be able to turn this green. And then maybe, Silvia, you can take a look into it. I don't know if you already did. but I think",
+      "sourceSegmentIds": [
+        "seg_000090",
+        "seg_000091",
+        "seg_000092"
+      ]
+    },
+    {
+      "id": "rseg_000040",
+      "speaker": "spk_chima",
+      "startMs": 668916,
+      "endMs": 685236,
+      "text": "just to see the new interface and to click things around you can already do that. I just want to fix those two tests that are about ensuring that the database status indicator is always",
+      "sourceSegmentIds": [
+        "seg_000093",
+        "seg_000094",
+        "seg_000095"
+      ]
+    },
+    {
+      "id": "rseg_000041",
+      "speaker": "spk_chima",
+      "startMs": 687489,
+      "endMs": 710959,
+      "text": "Reflecting the current database. Other than that, I think the PR is ready. And yeah, that's what I've been doing today. I will be doing today. And so yes, still working on those two PRs to get them merged. And yeah, that's all. Back to Chris.",
+      "sourceSegmentIds": [
+        "seg_000096",
+        "seg_000097",
+        "seg_000098",
+        "seg_000099"
+      ]
+    },
+    {
+      "id": "rseg_000042",
+      "speaker": "spk_chris",
+      "startMs": 713355,
+      "endMs": 715995,
+      "text": "Any uh work-related uh comments?",
+      "sourceSegmentIds": [
+        "seg_000100"
+      ]
+    },
+    {
+      "id": "rseg_000043",
+      "speaker": "spk_chima",
+      "startMs": 717695,
+      "endMs": 726015,
+      "text": "Yeah, I will need to change my laptop and if somebody have any suggestions, I wanted to take a framework as next.",
+      "sourceSegmentIds": [
+        "seg_000101"
+      ]
+    },
+    {
+      "id": "rseg_000044",
+      "speaker": "spk_silvio",
+      "startMs": 727218,
+      "endMs": 745138,
+      "text": "I I'm sorry, I feel like I'm a bit dreaming, but did we have discussions and me trying to tell Marco that I will buy you a laptop tomorrow, like three months ago when RAM before RAM prices spiked and disk prices went up? Did it happen or did I dream about it?",
+      "sourceSegmentIds": [
+        "seg_000102",
+        "seg_000103"
+      ]
+    },
+    {
+      "id": "rseg_000045",
+      "speaker": "spk_chima",
+      "startMs": 745509,
+      "endMs": 746469,
+      "text": "No, it hadn't.",
+      "sourceSegmentIds": [
+        "seg_000104"
+      ]
+    },
+    {
+      "id": "rseg_000046",
+      "speaker": "spk_silvio",
+      "startMs": 747184,
+      "endMs": 747744,
+      "text": "Okay, okay, okay.",
+      "sourceSegmentIds": [
+        "seg_000105"
+      ]
+    },
+    {
+      "id": "rseg_000047",
+      "speaker": "spk_chima",
+      "startMs": 749057,
+      "endMs": 749537,
+      "text": "Okay, okay.",
+      "sourceSegmentIds": [
+        "seg_000106"
+      ]
+    },
+    {
+      "id": "rseg_000048",
+      "speaker": "spk_silvio",
+      "startMs": 751324,
+      "endMs": 752844,
+      "text": "Yeah, I just mean there's no",
+      "sourceSegmentIds": [
+        "seg_000107"
+      ]
+    },
+    {
+      "id": "rseg_000049",
+      "speaker": "spk_chima",
+      "startMs": 752216,
+      "endMs": 753976,
+      "text": "I already know about Ram Spikes.",
+      "sourceSegmentIds": [
+        "seg_000108"
+      ]
+    },
+    {
+      "id": "rseg_000050",
+      "speaker": "spk_chris",
+      "startMs": 755438,
+      "endMs": 755518,
+      "text": "But",
+      "sourceSegmentIds": [
+        "seg_000109"
+      ]
+    },
+    {
+      "id": "rseg_000051",
+      "speaker": "spk_silvio",
+      "startMs": 755484,
+      "endMs": 765324,
+      "text": "It doesn't sound you're adding anything to what has already been said. We know you need to change your laptop and you will do it in the future. That's no.",
+      "sourceSegmentIds": [
+        "seg_000110"
+      ]
+    },
+    {
+      "id": "rseg_000052",
+      "speaker": "spk_chris",
+      "startMs": 764527,
+      "endMs": 764607,
+      "text": "Yeah.",
+      "sourceSegmentIds": [
+        "seg_000111"
+      ]
+    },
+    {
+      "id": "rseg_000053",
+      "speaker": "spk_chima",
+      "startMs": 765066,
+      "endMs": 768955,
+      "text": "Yeah. All right. I wanted to do it",
+      "sourceSegmentIds": [
+        "seg_000112",
+        "seg_000113"
+      ]
+    },
+    {
+      "id": "rseg_000054",
+      "speaker": "spk_chris",
+      "startMs": 767349,
+      "endMs": 767509,
+      "text": "Sure.",
+      "sourceSegmentIds": [
+        "seg_000114"
+      ]
+    },
+    {
+      "id": "rseg_000055",
+      "speaker": "spk_chris",
+      "startMs": 769867,
+      "endMs": 769947,
+      "text": "Okay.",
+      "sourceSegmentIds": [
+        "seg_000115"
+      ]
+    },
+    {
+      "id": "rseg_000056",
+      "speaker": "spk_chima",
+      "startMs": 770555,
+      "endMs": 776715,
+      "text": "like a month ago, probably. That was my plan. But",
+      "sourceSegmentIds": [
+        "seg_000116",
+        "seg_000117"
+      ]
+    },
+    {
+      "id": "rseg_000057",
+      "speaker": "spk_silvio",
+      "startMs": 777141,
+      "endMs": 777221,
+      "text": "Yeah.",
+      "sourceSegmentIds": [
+        "seg_000118"
+      ]
+    },
+    {
+      "id": "rseg_000058",
+      "speaker": "spk_chima",
+      "startMs": 778679,
+      "endMs": 780199,
+      "text": "It was delayed again",
+      "sourceSegmentIds": [
+        "seg_000119"
+      ]
+    },
+    {
+      "id": "rseg_000059",
+      "speaker": "spk_silvio",
+      "startMs": 778911,
+      "endMs": 779951,
+      "text": "There is no news.",
+      "sourceSegmentIds": [
+        "seg_000120"
+      ]
+    },
+    {
+      "id": "rseg_000060",
+      "speaker": "spk_chima",
+      "startMs": 781159,
+      "endMs": 781639,
+      "text": "and uh",
+      "sourceSegmentIds": [
+        "seg_000121"
+      ]
+    },
+    {
+      "id": "rseg_000061",
+      "speaker": "spk_chris",
+      "startMs": 781313,
+      "endMs": 781393,
+      "text": "Yeah.",
+      "sourceSegmentIds": [
+        "seg_000122"
+      ]
+    },
+    {
+      "id": "rseg_000062",
+      "speaker": "spk_silvio",
+      "startMs": 782619,
+      "endMs": 792379,
+      "text": "No, but I mean, don't tell us you're thinking about changing your laptop. Keep it to yourself. The moment you change it, you tell. You take the decision, you tell.",
+      "sourceSegmentIds": [
+        "seg_000123"
+      ]
+    },
+    {
+      "id": "rseg_000063",
+      "speaker": "spk_chris",
+      "startMs": 790157,
+      "endMs": 790237,
+      "text": "Okay.",
+      "sourceSegmentIds": [
+        "seg_000124"
+      ]
+    },
+    {
+      "id": "rseg_000064",
+      "speaker": "spk_chima",
+      "startMs": 792994,
+      "endMs": 795554,
+      "text": "I'm about to change it. So if you have suggestions.",
+      "sourceSegmentIds": [
+        "seg_000125"
+      ]
+    },
+    {
+      "id": "rseg_000065",
+      "speaker": "spk_chris",
+      "startMs": 795257,
+      "endMs": 795337,
+      "text": "Yeah.",
+      "sourceSegmentIds": [
+        "seg_000126"
+      ]
+    },
+    {
+      "id": "rseg_000066",
+      "speaker": "spk_silvio",
+      "startMs": 795883,
+      "endMs": 808683,
+      "text": "Since six months, you're there's an imminent threat to America by Iran from seven from it's been for 48 years. Right. I I feel the same vibes here. Sorry.",
+      "sourceSegmentIds": [
+        "seg_000127"
+      ]
+    },
+    {
+      "id": "rseg_000067",
+      "speaker": "spk_chima",
+      "startMs": 797757,
+      "endMs": 797917,
+      "text": "Yeah.",
+      "sourceSegmentIds": [
+        "seg_000128"
+      ]
+    },
+    {
+      "id": "rseg_000068",
+      "speaker": "spk_chris",
+      "startMs": 803648,
+      "endMs": 803728,
+      "text": "Uh",
+      "sourceSegmentIds": [
+        "seg_000129"
+      ]
+    },
+    {
+      "id": "rseg_000069",
+      "speaker": "spk_chima",
+      "startMs": 805683,
+      "endMs": 823683,
+      "text": "Well, let's say I'm mostly forced to change it now. Okay, six months ago, I was not really in the position. I mean, I was like, I would like to change my laptop. Probably it's a good idea. Now it's something that I can't delay any further.",
+      "sourceSegmentIds": [
+        "seg_000130",
+        "seg_000131"
+      ]
+    },
+    {
+      "id": "rseg_000070",
+      "speaker": "spk_silvio",
+      "startMs": 825017,
+      "endMs": 827897,
+      "text": "You are delaying it. You will change it when it dies.",
+      "sourceSegmentIds": [
+        "seg_000132"
+      ]
+    },
+    {
+      "id": "rseg_000071",
+      "speaker": "spk_silvio",
+      "startMs": 829869,
+      "endMs": 835549,
+      "text": "You didn't buy your laptop today, so you are delaying it. Sorry, sorry.",
+      "sourceSegmentIds": [
+        "seg_000133"
+      ]
+    },
+    {
+      "id": "rseg_000072",
+      "speaker": "spk_chima",
+      "startMs": 833936,
+      "endMs": 835536,
+      "text": "Well, it's not dead yet.",
+      "sourceSegmentIds": [
+        "seg_000134"
+      ]
+    },
+    {
+      "id": "rseg_000073",
+      "speaker": "spk_chris",
+      "startMs": 840055,
+      "endMs": 843335,
+      "text": "I think, Sylvia, I think you made your comment.",
+      "sourceSegmentIds": [
+        "seg_000135",
+        "seg_000136"
+      ]
+    },
+    {
+      "id": "rseg_000074",
+      "speaker": "spk_silvio",
+      "startMs": 842458,
+      "endMs": 843658,
+      "text": "Bad paragraph sketch.",
+      "sourceSegmentIds": [
+        "seg_000137"
+      ]
+    },
+    {
+      "id": "rseg_000075",
+      "speaker": "spk_chris",
+      "startMs": 847975,
+      "endMs": 853860,
+      "text": "That was a very elaborate, I told you so from Sylvia there. So I",
+      "sourceSegmentIds": [
+        "seg_000138",
+        "seg_000139"
+      ]
+    },
+    {
+      "id": "rseg_000076",
+      "speaker": "spk_silvio",
+      "startMs": 853718,
+      "endMs": 854198,
+      "text": "I'm sorry.",
+      "sourceSegmentIds": [
+        "seg_000140"
+      ]
+    },
+    {
+      "id": "rseg_000077",
+      "speaker": "spk_chris",
+      "startMs": 855888,
+      "endMs": 862208,
+      "text": "I enjoy my think pad, Marco, if you want to answer your question. I enjoy my think pad.",
+      "sourceSegmentIds": [
+        "seg_000141",
+        "seg_000142"
+      ]
+    },
+    {
+      "id": "rseg_000078",
+      "speaker": "spk_silvio",
+      "startMs": 862917,
+      "endMs": 863317,
+      "text": "Me too.",
+      "sourceSegmentIds": [
+        "seg_000143"
+      ]
+    },
+    {
+      "id": "rseg_000079",
+      "speaker": "spk_chima",
+      "startMs": 864415,
+      "endMs": 865535,
+      "text": "Think pad. Okay.",
+      "sourceSegmentIds": [
+        "seg_000144"
+      ]
+    },
+    {
+      "id": "rseg_000080",
+      "speaker": "spk_chris",
+      "startMs": 866010,
+      "endMs": 872490,
+      "text": "I have a I have a T14S. I don't know, I don't, I guess there's new models now. This is already two years old, I think.",
+      "sourceSegmentIds": [
+        "seg_000145"
+      ]
+    },
+    {
+      "id": "rseg_000081",
+      "speaker": "spk_chima",
+      "startMs": 873621,
+      "endMs": 873701,
+      "text": "Okay.",
+      "sourceSegmentIds": [
+        "seg_000146"
+      ]
+    },
+    {
+      "id": "rseg_000082",
+      "speaker": "spk_silvio",
+      "startMs": 875190,
+      "endMs": 877510,
+      "text": "I have a P14 with 64 gigs of RAM.",
+      "sourceSegmentIds": [
+        "seg_000147"
+      ]
+    },
+    {
+      "id": "rseg_000083",
+      "speaker": "spk_chris",
+      "startMs": 878611,
+      "endMs": 882851,
+      "text": "Yeah, I wish I got 64 gigs. Yeah, I only got I only got 32.",
+      "sourceSegmentIds": [
+        "seg_000148"
+      ]
+    },
+    {
+      "id": "rseg_000084",
+      "speaker": "spk_silvio",
+      "startMs": 880294,
+      "endMs": 880774,
+      "text": "which yeah",
+      "sourceSegmentIds": [
+        "seg_000149"
+      ]
+    },
+    {
+      "id": "rseg_000085",
+      "speaker": "spk_chima",
+      "startMs": 881645,
+      "endMs": 882205,
+      "text": "Wealthy people.",
+      "sourceSegmentIds": [
+        "seg_000150"
+      ]
+    },
+    {
+      "id": "rseg_000086",
+      "speaker": "spk_silvio",
+      "startMs": 883952,
+      "endMs": 885552,
+      "text": "And I can expand it to 96.",
+      "sourceSegmentIds": [
+        "seg_000151"
+      ]
+    },
+    {
+      "id": "rseg_000087",
+      "speaker": "spk_chris",
+      "startMs": 886729,
+      "endMs": 891289,
+      "text": "Oh can I expand mine to 64? No mine's soldered. Mine's soldered. No, I yeah.",
+      "sourceSegmentIds": [
+        "seg_000152"
+      ]
+    },
+    {
+      "id": "rseg_000088",
+      "speaker": "spk_silvio",
+      "startMs": 889271,
+      "endMs": 890871,
+      "text": "Could be. No.",
+      "sourceSegmentIds": [
+        "seg_000153",
+        "seg_000154"
+      ]
+    },
+    {
+      "id": "rseg_000089",
+      "speaker": "spk_chris",
+      "startMs": 893255,
+      "endMs": 910325,
+      "text": "I was really impressed. I only asked one question to Quentin earlier on George, but I was very impressed by what George could do. And I liked the idea of being able to run the local models. Like that seems like a very important thing for us not to get.",
+      "sourceSegmentIds": [
+        "seg_000155",
+        "seg_000156",
+        "seg_000157"
+      ]
+    },
+    {
+      "id": "rseg_000090",
+      "speaker": "spk_chris",
+      "startMs": 911621,
+      "endMs": 934501,
+      "text": "Sucked into whatever the consequences of all these big US-centered AI tech companies, or at least our dependence on them, because, like I said earlier at this OVI, our behavior has definitely changed in not so subtle ways in terms of how we work and how we depend on these things to get work done. So I think exploring these local models, at least being able to set them up and",
+      "sourceSegmentIds": [
+        "seg_000158",
+        "seg_000159",
+        "seg_000160"
+      ]
+    },
+    {
+      "id": "rseg_000091",
+      "speaker": "spk_silvio",
+      "startMs": 935932,
+      "endMs": 938572,
+      "text": "I'm having lunch with Martin and Nick.",
+      "sourceSegmentIds": [
+        "seg_000161"
+      ]
+    },
+    {
+      "id": "rseg_000092",
+      "speaker": "spk_chris",
+      "startMs": 937618,
+      "endMs": 937698,
+      "text": "Yeah.",
+      "sourceSegmentIds": [
+        "seg_000162"
+      ]
+    },
+    {
+      "id": "rseg_000093",
+      "speaker": "spk_chris",
+      "startMs": 939696,
+      "endMs": 940336,
+      "text": "Where are they?",
+      "sourceSegmentIds": [
+        "seg_000163"
+      ]
+    },
+    {
+      "id": "rseg_000094",
+      "speaker": "spk_silvio",
+      "startMs": 941480,
+      "endMs": 944600,
+      "text": "Uh Nick just walked by and I think Martin is probably here.",
+      "sourceSegmentIds": [
+        "seg_000164"
+      ]
+    },
+    {
+      "id": "rseg_000095",
+      "speaker": "spk_chris",
+      "startMs": 945928,
+      "endMs": 955688,
+      "text": "Uh okay you can leave. We're in digression category. Uh we're in digression territory now. Yeah, Alex, I also need to look into the work you've done, so I'll try and do this this weekend to to catch up with it.",
+      "sourceSegmentIds": [
+        "seg_000165",
+        "seg_000166"
+      ]
+    },
+    {
+      "id": "rseg_000096",
+      "speaker": "spk_alex",
+      "startMs": 960636,
+      "endMs": 972958,
+      "text": "I was going to say I think the question was relevant to what Sylvia was saying is that I think you definitely have to set up your LinkedIn profiles, but I mean I can feed things that you need to write through the brand agent, or I can give you",
+      "sourceSegmentIds": [
+        "seg_000167",
+        "seg_000168"
+      ]
+    },
+    {
+      "id": "rseg_000097",
+      "speaker": "spk_chris",
+      "startMs": 966364,
+      "endMs": 966444,
+      "text": "Yeah.",
+      "sourceSegmentIds": [
+        "seg_000169"
+      ]
+    },
+    {
+      "id": "rseg_000098",
+      "speaker": "spk_alex",
+      "startMs": 972958,
+      "endMs": 975838,
+      "text": "all the context stocks so you can set up your own agent.",
+      "sourceSegmentIds": [
+        "seg_000170"
+      ]
+    },
+    {
+      "id": "rseg_000099",
+      "speaker": "spk_alex",
+      "startMs": 977998,
+      "endMs": 978318,
+      "text": "And",
+      "sourceSegmentIds": [
+        "seg_000171"
+      ]
+    },
+    {
+      "id": "rseg_000100",
+      "speaker": "spk_alex",
+      "startMs": 980400,
+      "endMs": 1000000,
+      "text": "Yeah, it's not just on you. I think there's platform specific. I think visuals go down pretty well on LinkedIn. So I think there's some content to be created there also. So when I was saying that there's LinkedIn work to be done, I think there's still it's not just on you, it's it's it's also uh still on me. Um and another thing",
+      "sourceSegmentIds": [
+        "seg_000172",
+        "seg_000173"
+      ]
+    },
+    {
+      "id": "rseg_000101",
+      "speaker": "spk_alex",
+      "startMs": 1000000,
+      "endMs": 1007342,
+      "text": "related to this is that we need to talk about um is that Apollo? Pachy, what do you use to build the mirror too?",
+      "sourceSegmentIds": [
+        "seg_000174"
+      ]
+    },
+    {
+      "id": "rseg_000102",
+      "speaker": "spk_chris",
+      "startMs": 1008637,
+      "endMs": 1011058,
+      "text": "Oh, um That's true.",
+      "sourceSegmentIds": [
+        "seg_000175",
+        "seg_000176"
+      ]
+    },
+    {
+      "id": "rseg_000103",
+      "speaker": "spk_alex",
+      "startMs": 1012033,
+      "endMs": 1014033,
+      "text": "Astro, something with a name.",
+      "sourceSegmentIds": [
+        "seg_000177"
+      ]
+    },
+    {
+      "id": "rseg_000104",
+      "speaker": "spk_alex",
+      "startMs": 1015895,
+      "endMs": 1022935,
+      "text": "We need to talk about that because we're hoping to launch this by next week. I need to get on building those pages.",
+      "sourceSegmentIds": [
+        "seg_000178"
+      ]
+    },
+    {
+      "id": "rseg_000105",
+      "speaker": "spk_chris",
+      "startMs": 1024788,
+      "endMs": 1027202,
+      "text": "To do this uh Yes, okay.",
+      "sourceSegmentIds": [
+        "seg_000179",
+        "seg_000180"
+      ]
+    },
+    {
+      "id": "rseg_000106",
+      "speaker": "spk_alex",
+      "startMs": 1028034,
+      "endMs": 1029954,
+      "text": "Maybe that's something we could do over the weekend.",
+      "sourceSegmentIds": [
+        "seg_000181"
+      ]
+    },
+    {
+      "id": "rseg_000107",
+      "speaker": "spk_chris",
+      "startMs": 1030437,
+      "endMs": 1036422,
+      "text": "Sounds good, yeah. Um Any other comments? Me agreed.",
+      "sourceSegmentIds": [
+        "seg_000182",
+        "seg_000183",
+        "seg_000184",
+        "seg_000185"
+      ]
+    },
+    {
+      "id": "rseg_000108",
+      "speaker": "spk_chima",
+      "startMs": 1038956,
+      "endMs": 1040556,
+      "text": "Okay, see you next week guys.",
+      "sourceSegmentIds": [
+        "seg_000186"
+      ]
+    },
+    {
+      "id": "rseg_000109",
+      "speaker": "spk_chris",
+      "startMs": 1041529,
+      "endMs": 1042329,
+      "text": "Have you a weekend?",
+      "sourceSegmentIds": [
+        "seg_000187"
+      ]
+    },
+    {
+      "id": "rseg_000110",
+      "speaker": "spk_alex",
+      "startMs": 1041948,
+      "endMs": 1042508,
+      "text": "Yes, we can.",
+      "sourceSegmentIds": [
+        "seg_000188"
+      ]
+    },
+    {
+      "id": "rseg_000111",
+      "speaker": "spk_chima",
+      "startMs": 1042863,
+      "endMs": 1043663,
+      "text": "Yeah, nice weekend.",
+      "sourceSegmentIds": [
+        "seg_000189"
+      ]
+    },
+    {
+      "id": "rseg_000112",
+      "speaker": "spk_chris",
+      "startMs": 1043609,
+      "endMs": 1043849,
+      "text": "Bye.",
+      "sourceSegmentIds": [
+        "seg_000190"
+      ]
+    }
+  ],
+  "sourceTranscriptVersion": "transcript.words.v1"
+}

@@ -1,0 +1,5222 @@
+{
+  "version": "timeline.map.v1",
+  "sourceDurationMs": 1702076,
+  "digestDurationMs": 1611872,
+  "segments": [
+    {
+      "kind": "silence",
+      "sourceStartMs": 0,
+      "sourceEndMs": 7736,
+      "digestStartMs": 0,
+      "digestEndMs": 800
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 7736,
+      "sourceEndMs": 9024,
+      "digestStartMs": 800,
+      "digestEndMs": 2088
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 9024,
+      "sourceEndMs": 9997,
+      "digestStartMs": 2088,
+      "digestEndMs": 2888
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 9997,
+      "sourceEndMs": 19390,
+      "digestStartMs": 2888,
+      "digestEndMs": 12281
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 19390,
+      "sourceEndMs": 19931,
+      "digestStartMs": 12281,
+      "digestEndMs": 12822
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 19931,
+      "sourceEndMs": 21704,
+      "digestStartMs": 12822,
+      "digestEndMs": 14595
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 21704,
+      "sourceEndMs": 21718,
+      "digestStartMs": 14595,
+      "digestEndMs": 14609
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 21718,
+      "sourceEndMs": 31321,
+      "digestStartMs": 14609,
+      "digestEndMs": 24212
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 31321,
+      "sourceEndMs": 31833,
+      "digestStartMs": 24212,
+      "digestEndMs": 24724
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 31833,
+      "sourceEndMs": 35175,
+      "digestStartMs": 24724,
+      "digestEndMs": 28066
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 35175,
+      "sourceEndMs": 35604,
+      "digestStartMs": 28066,
+      "digestEndMs": 28495
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 35604,
+      "sourceEndMs": 41275,
+      "digestStartMs": 28495,
+      "digestEndMs": 34166
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 41275,
+      "sourceEndMs": 42329,
+      "digestStartMs": 34166,
+      "digestEndMs": 34966
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 42329,
+      "sourceEndMs": 47398,
+      "digestStartMs": 34966,
+      "digestEndMs": 40035
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 47398,
+      "sourceEndMs": 47457,
+      "digestStartMs": 40035,
+      "digestEndMs": 40094
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 47457,
+      "sourceEndMs": 52793,
+      "digestStartMs": 40094,
+      "digestEndMs": 45430
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 52793,
+      "sourceEndMs": 52848,
+      "digestStartMs": 45430,
+      "digestEndMs": 45485
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 52848,
+      "sourceEndMs": 56233,
+      "digestStartMs": 45485,
+      "digestEndMs": 48870
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 56233,
+      "sourceEndMs": 56816,
+      "digestStartMs": 48870,
+      "digestEndMs": 49453
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 56816,
+      "sourceEndMs": 72336,
+      "digestStartMs": 49453,
+      "digestEndMs": 64973
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 72336,
+      "sourceEndMs": 72690,
+      "digestStartMs": 64973,
+      "digestEndMs": 65327
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 72690,
+      "sourceEndMs": 73622,
+      "digestStartMs": 65327,
+      "digestEndMs": 66259
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 73622,
+      "sourceEndMs": 73854,
+      "digestStartMs": 66259,
+      "digestEndMs": 66491
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 73854,
+      "sourceEndMs": 79718,
+      "digestStartMs": 66491,
+      "digestEndMs": 72355
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 79718,
+      "sourceEndMs": 79934,
+      "digestStartMs": 72355,
+      "digestEndMs": 72571
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 79934,
+      "sourceEndMs": 85965,
+      "digestStartMs": 72571,
+      "digestEndMs": 78602
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 85965,
+      "sourceEndMs": 86340,
+      "digestStartMs": 78602,
+      "digestEndMs": 78977
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 86340,
+      "sourceEndMs": 91411,
+      "digestStartMs": 78977,
+      "digestEndMs": 84048
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 91411,
+      "sourceEndMs": 91640,
+      "digestStartMs": 84048,
+      "digestEndMs": 84277
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 91640,
+      "sourceEndMs": 96097,
+      "digestStartMs": 84277,
+      "digestEndMs": 88734
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 96097,
+      "sourceEndMs": 96226,
+      "digestStartMs": 88734,
+      "digestEndMs": 88863
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 96226,
+      "sourceEndMs": 103525,
+      "digestStartMs": 88863,
+      "digestEndMs": 96162
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 103525,
+      "sourceEndMs": 104440,
+      "digestStartMs": 96162,
+      "digestEndMs": 96962
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 104440,
+      "sourceEndMs": 107219,
+      "digestStartMs": 96962,
+      "digestEndMs": 99741
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 107219,
+      "sourceEndMs": 107405,
+      "digestStartMs": 99741,
+      "digestEndMs": 99927
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 107405,
+      "sourceEndMs": 110968,
+      "digestStartMs": 99927,
+      "digestEndMs": 103490
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 110968,
+      "sourceEndMs": 111518,
+      "digestStartMs": 103490,
+      "digestEndMs": 104040
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 111518,
+      "sourceEndMs": 112883,
+      "digestStartMs": 104040,
+      "digestEndMs": 105405
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 112883,
+      "sourceEndMs": 113741,
+      "digestStartMs": 105405,
+      "digestEndMs": 106263
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 113741,
+      "sourceEndMs": 116556,
+      "digestStartMs": 106263,
+      "digestEndMs": 109078
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 116556,
+      "sourceEndMs": 118526,
+      "digestStartMs": 109078,
+      "digestEndMs": 109878
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 118526,
+      "sourceEndMs": 124892,
+      "digestStartMs": 109878,
+      "digestEndMs": 116244
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 124892,
+      "sourceEndMs": 125767,
+      "digestStartMs": 116244,
+      "digestEndMs": 117119
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 125767,
+      "sourceEndMs": 128244,
+      "digestStartMs": 117119,
+      "digestEndMs": 119596
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 128244,
+      "sourceEndMs": 128654,
+      "digestStartMs": 119596,
+      "digestEndMs": 120006
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 128654,
+      "sourceEndMs": 130763,
+      "digestStartMs": 120006,
+      "digestEndMs": 122115
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 130763,
+      "sourceEndMs": 131489,
+      "digestStartMs": 122115,
+      "digestEndMs": 122841
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 131489,
+      "sourceEndMs": 132325,
+      "digestStartMs": 122841,
+      "digestEndMs": 123677
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 132325,
+      "sourceEndMs": 133360,
+      "digestStartMs": 123677,
+      "digestEndMs": 124477
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 133360,
+      "sourceEndMs": 134224,
+      "digestStartMs": 124477,
+      "digestEndMs": 125341
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 134224,
+      "sourceEndMs": 136123,
+      "digestStartMs": 125341,
+      "digestEndMs": 126141
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 136123,
+      "sourceEndMs": 139605,
+      "digestStartMs": 126141,
+      "digestEndMs": 129623
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 139605,
+      "sourceEndMs": 140012,
+      "digestStartMs": 129623,
+      "digestEndMs": 130030
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 140012,
+      "sourceEndMs": 141371,
+      "digestStartMs": 130030,
+      "digestEndMs": 131389
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 141371,
+      "sourceEndMs": 141986,
+      "digestStartMs": 131389,
+      "digestEndMs": 132004
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 141986,
+      "sourceEndMs": 149579,
+      "digestStartMs": 132004,
+      "digestEndMs": 139597
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 149579,
+      "sourceEndMs": 150633,
+      "digestStartMs": 139597,
+      "digestEndMs": 140397
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 150633,
+      "sourceEndMs": 154436,
+      "digestStartMs": 140397,
+      "digestEndMs": 144200
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 154436,
+      "sourceEndMs": 154847,
+      "digestStartMs": 144200,
+      "digestEndMs": 144611
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 154847,
+      "sourceEndMs": 161609,
+      "digestStartMs": 144611,
+      "digestEndMs": 151373
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 161609,
+      "sourceEndMs": 161636,
+      "digestStartMs": 151373,
+      "digestEndMs": 151400
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 161636,
+      "sourceEndMs": 162670,
+      "digestStartMs": 151400,
+      "digestEndMs": 152434
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 162670,
+      "sourceEndMs": 162712,
+      "digestStartMs": 152434,
+      "digestEndMs": 152476
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 162712,
+      "sourceEndMs": 166012,
+      "digestStartMs": 152476,
+      "digestEndMs": 155776
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 166012,
+      "sourceEndMs": 166454,
+      "digestStartMs": 155776,
+      "digestEndMs": 156218
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 166454,
+      "sourceEndMs": 171564,
+      "digestStartMs": 156218,
+      "digestEndMs": 161328
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 171564,
+      "sourceEndMs": 172497,
+      "digestStartMs": 161328,
+      "digestEndMs": 162128
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 172497,
+      "sourceEndMs": 176324,
+      "digestStartMs": 162128,
+      "digestEndMs": 165955
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 176324,
+      "sourceEndMs": 176772,
+      "digestStartMs": 165955,
+      "digestEndMs": 166403
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 176772,
+      "sourceEndMs": 180392,
+      "digestStartMs": 166403,
+      "digestEndMs": 170023
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 180392,
+      "sourceEndMs": 181268,
+      "digestStartMs": 170023,
+      "digestEndMs": 170899
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 181268,
+      "sourceEndMs": 186167,
+      "digestStartMs": 170899,
+      "digestEndMs": 175798
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 186167,
+      "sourceEndMs": 186299,
+      "digestStartMs": 175798,
+      "digestEndMs": 175930
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 186299,
+      "sourceEndMs": 187689,
+      "digestStartMs": 175930,
+      "digestEndMs": 177320
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 187689,
+      "sourceEndMs": 188479,
+      "digestStartMs": 177320,
+      "digestEndMs": 178110
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 188479,
+      "sourceEndMs": 189653,
+      "digestStartMs": 178110,
+      "digestEndMs": 179284
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 189653,
+      "sourceEndMs": 191649,
+      "digestStartMs": 179284,
+      "digestEndMs": 180084
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 191649,
+      "sourceEndMs": 194883,
+      "digestStartMs": 180084,
+      "digestEndMs": 183318
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 194883,
+      "sourceEndMs": 195861,
+      "digestStartMs": 183318,
+      "digestEndMs": 184118
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 195861,
+      "sourceEndMs": 198163,
+      "digestStartMs": 184118,
+      "digestEndMs": 186420
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 198163,
+      "sourceEndMs": 200434,
+      "digestStartMs": 186420,
+      "digestEndMs": 187220
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 200434,
+      "sourceEndMs": 206253,
+      "digestStartMs": 187220,
+      "digestEndMs": 193039
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 206253,
+      "sourceEndMs": 206419,
+      "digestStartMs": 193039,
+      "digestEndMs": 193205
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 206419,
+      "sourceEndMs": 216693,
+      "digestStartMs": 193205,
+      "digestEndMs": 203479
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 216693,
+      "sourceEndMs": 216729,
+      "digestStartMs": 203479,
+      "digestEndMs": 203515
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 216729,
+      "sourceEndMs": 219483,
+      "digestStartMs": 203515,
+      "digestEndMs": 206269
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 219483,
+      "sourceEndMs": 219999,
+      "digestStartMs": 206269,
+      "digestEndMs": 206785
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 219999,
+      "sourceEndMs": 225573,
+      "digestStartMs": 206785,
+      "digestEndMs": 212359
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 225573,
+      "sourceEndMs": 225657,
+      "digestStartMs": 212359,
+      "digestEndMs": 212443
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 225657,
+      "sourceEndMs": 232156,
+      "digestStartMs": 212443,
+      "digestEndMs": 218942
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 232156,
+      "sourceEndMs": 232429,
+      "digestStartMs": 218942,
+      "digestEndMs": 219215
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 232429,
+      "sourceEndMs": 235829,
+      "digestStartMs": 219215,
+      "digestEndMs": 222615
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 235829,
+      "sourceEndMs": 235991,
+      "digestStartMs": 222615,
+      "digestEndMs": 222777
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 235991,
+      "sourceEndMs": 241984,
+      "digestStartMs": 222777,
+      "digestEndMs": 228770
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 241984,
+      "sourceEndMs": 242139,
+      "digestStartMs": 228770,
+      "digestEndMs": 228925
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 242139,
+      "sourceEndMs": 243456,
+      "digestStartMs": 228925,
+      "digestEndMs": 230242
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 243456,
+      "sourceEndMs": 243567,
+      "digestStartMs": 230242,
+      "digestEndMs": 230353
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 243567,
+      "sourceEndMs": 247436,
+      "digestStartMs": 230353,
+      "digestEndMs": 234222
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 247436,
+      "sourceEndMs": 247625,
+      "digestStartMs": 234222,
+      "digestEndMs": 234411
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 247625,
+      "sourceEndMs": 257356,
+      "digestStartMs": 234411,
+      "digestEndMs": 244142
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 257356,
+      "sourceEndMs": 257587,
+      "digestStartMs": 244142,
+      "digestEndMs": 244373
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 257587,
+      "sourceEndMs": 260258,
+      "digestStartMs": 244373,
+      "digestEndMs": 247044
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 260258,
+      "sourceEndMs": 260435,
+      "digestStartMs": 247044,
+      "digestEndMs": 247221
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 260435,
+      "sourceEndMs": 267215,
+      "digestStartMs": 247221,
+      "digestEndMs": 254001
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 267215,
+      "sourceEndMs": 267431,
+      "digestStartMs": 254001,
+      "digestEndMs": 254217
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 267431,
+      "sourceEndMs": 269179,
+      "digestStartMs": 254217,
+      "digestEndMs": 255965
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 269179,
+      "sourceEndMs": 269208,
+      "digestStartMs": 255965,
+      "digestEndMs": 255994
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 269208,
+      "sourceEndMs": 276787,
+      "digestStartMs": 255994,
+      "digestEndMs": 263573
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 276787,
+      "sourceEndMs": 276927,
+      "digestStartMs": 263573,
+      "digestEndMs": 263713
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 276927,
+      "sourceEndMs": 288487,
+      "digestStartMs": 263713,
+      "digestEndMs": 275273
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 288487,
+      "sourceEndMs": 288516,
+      "digestStartMs": 275273,
+      "digestEndMs": 275302
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 288516,
+      "sourceEndMs": 290439,
+      "digestStartMs": 275302,
+      "digestEndMs": 277225
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 290439,
+      "sourceEndMs": 290741,
+      "digestStartMs": 277225,
+      "digestEndMs": 277527
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 290741,
+      "sourceEndMs": 293538,
+      "digestStartMs": 277527,
+      "digestEndMs": 280324
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 293538,
+      "sourceEndMs": 294827,
+      "digestStartMs": 280324,
+      "digestEndMs": 281124
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 294827,
+      "sourceEndMs": 297604,
+      "digestStartMs": 281124,
+      "digestEndMs": 283901
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 297604,
+      "sourceEndMs": 298385,
+      "digestStartMs": 283901,
+      "digestEndMs": 284682
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 298385,
+      "sourceEndMs": 308161,
+      "digestStartMs": 284682,
+      "digestEndMs": 294458
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 308161,
+      "sourceEndMs": 308247,
+      "digestStartMs": 294458,
+      "digestEndMs": 294544
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 308247,
+      "sourceEndMs": 311991,
+      "digestStartMs": 294544,
+      "digestEndMs": 298288
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 311991,
+      "sourceEndMs": 312142,
+      "digestStartMs": 298288,
+      "digestEndMs": 298439
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 312142,
+      "sourceEndMs": 318834,
+      "digestStartMs": 298439,
+      "digestEndMs": 305131
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 318834,
+      "sourceEndMs": 318910,
+      "digestStartMs": 305131,
+      "digestEndMs": 305207
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 318910,
+      "sourceEndMs": 324602,
+      "digestStartMs": 305207,
+      "digestEndMs": 310899
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 324602,
+      "sourceEndMs": 324746,
+      "digestStartMs": 310899,
+      "digestEndMs": 311043
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 324746,
+      "sourceEndMs": 325873,
+      "digestStartMs": 311043,
+      "digestEndMs": 312170
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 325873,
+      "sourceEndMs": 327773,
+      "digestStartMs": 312170,
+      "digestEndMs": 312970
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 327773,
+      "sourceEndMs": 334301,
+      "digestStartMs": 312970,
+      "digestEndMs": 319498
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 334301,
+      "sourceEndMs": 334488,
+      "digestStartMs": 319498,
+      "digestEndMs": 319685
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 334488,
+      "sourceEndMs": 340594,
+      "digestStartMs": 319685,
+      "digestEndMs": 325791
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 340594,
+      "sourceEndMs": 340708,
+      "digestStartMs": 325791,
+      "digestEndMs": 325905
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 340708,
+      "sourceEndMs": 347752,
+      "digestStartMs": 325905,
+      "digestEndMs": 332949
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 347752,
+      "sourceEndMs": 347879,
+      "digestStartMs": 332949,
+      "digestEndMs": 333076
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 347879,
+      "sourceEndMs": 348938,
+      "digestStartMs": 333076,
+      "digestEndMs": 334135
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 348938,
+      "sourceEndMs": 349421,
+      "digestStartMs": 334135,
+      "digestEndMs": 334618
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 349421,
+      "sourceEndMs": 353809,
+      "digestStartMs": 334618,
+      "digestEndMs": 339006
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 353809,
+      "sourceEndMs": 353897,
+      "digestStartMs": 339006,
+      "digestEndMs": 339094
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 353897,
+      "sourceEndMs": 358794,
+      "digestStartMs": 339094,
+      "digestEndMs": 343991
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 358794,
+      "sourceEndMs": 358797,
+      "digestStartMs": 343991,
+      "digestEndMs": 343994
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 358797,
+      "sourceEndMs": 360205,
+      "digestStartMs": 343994,
+      "digestEndMs": 345402
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 360205,
+      "sourceEndMs": 362805,
+      "digestStartMs": 345402,
+      "digestEndMs": 346202
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 362805,
+      "sourceEndMs": 364966,
+      "digestStartMs": 346202,
+      "digestEndMs": 348363
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 364966,
+      "sourceEndMs": 365210,
+      "digestStartMs": 348363,
+      "digestEndMs": 348607
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 365210,
+      "sourceEndMs": 372457,
+      "digestStartMs": 348607,
+      "digestEndMs": 355854
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 372457,
+      "sourceEndMs": 372693,
+      "digestStartMs": 355854,
+      "digestEndMs": 356090
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 372693,
+      "sourceEndMs": 375251,
+      "digestStartMs": 356090,
+      "digestEndMs": 358648
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 375251,
+      "sourceEndMs": 375484,
+      "digestStartMs": 358648,
+      "digestEndMs": 358881
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 375484,
+      "sourceEndMs": 376572,
+      "digestStartMs": 358881,
+      "digestEndMs": 359969
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 376572,
+      "sourceEndMs": 376734,
+      "digestStartMs": 359969,
+      "digestEndMs": 360131
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 376734,
+      "sourceEndMs": 382969,
+      "digestStartMs": 360131,
+      "digestEndMs": 366366
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 382969,
+      "sourceEndMs": 383266,
+      "digestStartMs": 366366,
+      "digestEndMs": 366663
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 383266,
+      "sourceEndMs": 386310,
+      "digestStartMs": 366663,
+      "digestEndMs": 369707
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 386310,
+      "sourceEndMs": 387370,
+      "digestStartMs": 369707,
+      "digestEndMs": 370507
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 387370,
+      "sourceEndMs": 398016,
+      "digestStartMs": 370507,
+      "digestEndMs": 381153
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 398016,
+      "sourceEndMs": 398110,
+      "digestStartMs": 381153,
+      "digestEndMs": 381247
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 398110,
+      "sourceEndMs": 399322,
+      "digestStartMs": 381247,
+      "digestEndMs": 382459
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 399322,
+      "sourceEndMs": 399647,
+      "digestStartMs": 382459,
+      "digestEndMs": 382784
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 399647,
+      "sourceEndMs": 406181,
+      "digestStartMs": 382784,
+      "digestEndMs": 389318
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 406181,
+      "sourceEndMs": 406460,
+      "digestStartMs": 389318,
+      "digestEndMs": 389597
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 406460,
+      "sourceEndMs": 409765,
+      "digestStartMs": 389597,
+      "digestEndMs": 392902
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 409765,
+      "sourceEndMs": 409949,
+      "digestStartMs": 392902,
+      "digestEndMs": 393086
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 409949,
+      "sourceEndMs": 412055,
+      "digestStartMs": 393086,
+      "digestEndMs": 395192
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 412055,
+      "sourceEndMs": 412546,
+      "digestStartMs": 395192,
+      "digestEndMs": 395683
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 412546,
+      "sourceEndMs": 415932,
+      "digestStartMs": 395683,
+      "digestEndMs": 399069
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 415932,
+      "sourceEndMs": 416809,
+      "digestStartMs": 399069,
+      "digestEndMs": 399946
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 416809,
+      "sourceEndMs": 419976,
+      "digestStartMs": 399946,
+      "digestEndMs": 403113
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 419976,
+      "sourceEndMs": 420455,
+      "digestStartMs": 403113,
+      "digestEndMs": 403592
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 420455,
+      "sourceEndMs": 425205,
+      "digestStartMs": 403592,
+      "digestEndMs": 408342
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 425205,
+      "sourceEndMs": 425853,
+      "digestStartMs": 408342,
+      "digestEndMs": 408990
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 425853,
+      "sourceEndMs": 427056,
+      "digestStartMs": 408990,
+      "digestEndMs": 410193
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 427056,
+      "sourceEndMs": 427181,
+      "digestStartMs": 410193,
+      "digestEndMs": 410318
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 427181,
+      "sourceEndMs": 428506,
+      "digestStartMs": 410318,
+      "digestEndMs": 411643
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 428506,
+      "sourceEndMs": 429280,
+      "digestStartMs": 411643,
+      "digestEndMs": 412417
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 429280,
+      "sourceEndMs": 430389,
+      "digestStartMs": 412417,
+      "digestEndMs": 413526
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 430389,
+      "sourceEndMs": 430486,
+      "digestStartMs": 413526,
+      "digestEndMs": 413623
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 430486,
+      "sourceEndMs": 435638,
+      "digestStartMs": 413623,
+      "digestEndMs": 418775
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 435638,
+      "sourceEndMs": 436360,
+      "digestStartMs": 418775,
+      "digestEndMs": 419497
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 436360,
+      "sourceEndMs": 438112,
+      "digestStartMs": 419497,
+      "digestEndMs": 421249
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 438112,
+      "sourceEndMs": 438288,
+      "digestStartMs": 421249,
+      "digestEndMs": 421425
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 438288,
+      "sourceEndMs": 440111,
+      "digestStartMs": 421425,
+      "digestEndMs": 423248
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 440111,
+      "sourceEndMs": 440330,
+      "digestStartMs": 423248,
+      "digestEndMs": 423467
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 440330,
+      "sourceEndMs": 441852,
+      "digestStartMs": 423467,
+      "digestEndMs": 424989
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 441852,
+      "sourceEndMs": 444145,
+      "digestStartMs": 424989,
+      "digestEndMs": 425789
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 444145,
+      "sourceEndMs": 447589,
+      "digestStartMs": 425789,
+      "digestEndMs": 429233
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 447589,
+      "sourceEndMs": 447800,
+      "digestStartMs": 429233,
+      "digestEndMs": 429444
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 447800,
+      "sourceEndMs": 448972,
+      "digestStartMs": 429444,
+      "digestEndMs": 430616
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 448972,
+      "sourceEndMs": 449130,
+      "digestStartMs": 430616,
+      "digestEndMs": 430774
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 449130,
+      "sourceEndMs": 452854,
+      "digestStartMs": 430774,
+      "digestEndMs": 434498
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 452854,
+      "sourceEndMs": 453007,
+      "digestStartMs": 434498,
+      "digestEndMs": 434651
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 453007,
+      "sourceEndMs": 457305,
+      "digestStartMs": 434651,
+      "digestEndMs": 438949
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 457305,
+      "sourceEndMs": 457507,
+      "digestStartMs": 438949,
+      "digestEndMs": 439151
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 457507,
+      "sourceEndMs": 461494,
+      "digestStartMs": 439151,
+      "digestEndMs": 443138
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 461494,
+      "sourceEndMs": 462410,
+      "digestStartMs": 443138,
+      "digestEndMs": 443938
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 462410,
+      "sourceEndMs": 468123,
+      "digestStartMs": 443938,
+      "digestEndMs": 449651
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 468123,
+      "sourceEndMs": 468604,
+      "digestStartMs": 449651,
+      "digestEndMs": 450132
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 468604,
+      "sourceEndMs": 470753,
+      "digestStartMs": 450132,
+      "digestEndMs": 452281
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 470753,
+      "sourceEndMs": 471334,
+      "digestStartMs": 452281,
+      "digestEndMs": 452862
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 471334,
+      "sourceEndMs": 475432,
+      "digestStartMs": 452862,
+      "digestEndMs": 456960
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 475432,
+      "sourceEndMs": 475588,
+      "digestStartMs": 456960,
+      "digestEndMs": 457116
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 475588,
+      "sourceEndMs": 476394,
+      "digestStartMs": 457116,
+      "digestEndMs": 457922
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 476394,
+      "sourceEndMs": 477077,
+      "digestStartMs": 457922,
+      "digestEndMs": 458605
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 477077,
+      "sourceEndMs": 478283,
+      "digestStartMs": 458605,
+      "digestEndMs": 459811
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 478283,
+      "sourceEndMs": 478718,
+      "digestStartMs": 459811,
+      "digestEndMs": 460246
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 478718,
+      "sourceEndMs": 482223,
+      "digestStartMs": 460246,
+      "digestEndMs": 463751
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 482223,
+      "sourceEndMs": 482469,
+      "digestStartMs": 463751,
+      "digestEndMs": 463997
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 482469,
+      "sourceEndMs": 494475,
+      "digestStartMs": 463997,
+      "digestEndMs": 476003
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 494475,
+      "sourceEndMs": 496007,
+      "digestStartMs": 476003,
+      "digestEndMs": 476803
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 496007,
+      "sourceEndMs": 504872,
+      "digestStartMs": 476803,
+      "digestEndMs": 485668
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 504872,
+      "sourceEndMs": 505090,
+      "digestStartMs": 485668,
+      "digestEndMs": 485886
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 505090,
+      "sourceEndMs": 506152,
+      "digestStartMs": 485886,
+      "digestEndMs": 486948
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 506152,
+      "sourceEndMs": 506494,
+      "digestStartMs": 486948,
+      "digestEndMs": 487290
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 506494,
+      "sourceEndMs": 513350,
+      "digestStartMs": 487290,
+      "digestEndMs": 494146
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 513350,
+      "sourceEndMs": 513472,
+      "digestStartMs": 494146,
+      "digestEndMs": 494268
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 513472,
+      "sourceEndMs": 514195,
+      "digestStartMs": 494268,
+      "digestEndMs": 494991
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 514195,
+      "sourceEndMs": 515104,
+      "digestStartMs": 494991,
+      "digestEndMs": 495791
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 515104,
+      "sourceEndMs": 519816,
+      "digestStartMs": 495791,
+      "digestEndMs": 500503
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 519816,
+      "sourceEndMs": 520048,
+      "digestStartMs": 500503,
+      "digestEndMs": 500735
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 520048,
+      "sourceEndMs": 522505,
+      "digestStartMs": 500735,
+      "digestEndMs": 503192
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 522505,
+      "sourceEndMs": 522517,
+      "digestStartMs": 503192,
+      "digestEndMs": 503204
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 522517,
+      "sourceEndMs": 528460,
+      "digestStartMs": 503204,
+      "digestEndMs": 509147
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 528460,
+      "sourceEndMs": 528864,
+      "digestStartMs": 509147,
+      "digestEndMs": 509551
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 528864,
+      "sourceEndMs": 530653,
+      "digestStartMs": 509551,
+      "digestEndMs": 511340
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 530653,
+      "sourceEndMs": 530712,
+      "digestStartMs": 511340,
+      "digestEndMs": 511399
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 530712,
+      "sourceEndMs": 538645,
+      "digestStartMs": 511399,
+      "digestEndMs": 519332
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 538645,
+      "sourceEndMs": 539398,
+      "digestStartMs": 519332,
+      "digestEndMs": 520085
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 539398,
+      "sourceEndMs": 551346,
+      "digestStartMs": 520085,
+      "digestEndMs": 532033
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 551346,
+      "sourceEndMs": 551584,
+      "digestStartMs": 532033,
+      "digestEndMs": 532271
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 551584,
+      "sourceEndMs": 553190,
+      "digestStartMs": 532271,
+      "digestEndMs": 533877
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 553190,
+      "sourceEndMs": 553288,
+      "digestStartMs": 533877,
+      "digestEndMs": 533975
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 553288,
+      "sourceEndMs": 554425,
+      "digestStartMs": 533975,
+      "digestEndMs": 535112
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 554425,
+      "sourceEndMs": 555226,
+      "digestStartMs": 535112,
+      "digestEndMs": 535913
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 555226,
+      "sourceEndMs": 556262,
+      "digestStartMs": 535913,
+      "digestEndMs": 536949
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 556262,
+      "sourceEndMs": 556759,
+      "digestStartMs": 536949,
+      "digestEndMs": 537446
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 556759,
+      "sourceEndMs": 557612,
+      "digestStartMs": 537446,
+      "digestEndMs": 538299
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 557612,
+      "sourceEndMs": 559485,
+      "digestStartMs": 538299,
+      "digestEndMs": 539099
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 559485,
+      "sourceEndMs": 563258,
+      "digestStartMs": 539099,
+      "digestEndMs": 542872
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 563258,
+      "sourceEndMs": 564728,
+      "digestStartMs": 542872,
+      "digestEndMs": 543672
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 564728,
+      "sourceEndMs": 572332,
+      "digestStartMs": 543672,
+      "digestEndMs": 551276
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 572332,
+      "sourceEndMs": 572377,
+      "digestStartMs": 551276,
+      "digestEndMs": 551321
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 572377,
+      "sourceEndMs": 584262,
+      "digestStartMs": 551321,
+      "digestEndMs": 563206
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 584262,
+      "sourceEndMs": 584413,
+      "digestStartMs": 563206,
+      "digestEndMs": 563357
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 584413,
+      "sourceEndMs": 594876,
+      "digestStartMs": 563357,
+      "digestEndMs": 573820
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 594876,
+      "sourceEndMs": 594957,
+      "digestStartMs": 573820,
+      "digestEndMs": 573901
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 594957,
+      "sourceEndMs": 601751,
+      "digestStartMs": 573901,
+      "digestEndMs": 580695
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 601751,
+      "sourceEndMs": 601982,
+      "digestStartMs": 580695,
+      "digestEndMs": 580926
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 601982,
+      "sourceEndMs": 607344,
+      "digestStartMs": 580926,
+      "digestEndMs": 586288
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 607344,
+      "sourceEndMs": 607362,
+      "digestStartMs": 586288,
+      "digestEndMs": 586306
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 607362,
+      "sourceEndMs": 610034,
+      "digestStartMs": 586306,
+      "digestEndMs": 588978
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 610034,
+      "sourceEndMs": 610035,
+      "digestStartMs": 588978,
+      "digestEndMs": 588979
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 610035,
+      "sourceEndMs": 615188,
+      "digestStartMs": 588979,
+      "digestEndMs": 594132
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 615188,
+      "sourceEndMs": 615201,
+      "digestStartMs": 594132,
+      "digestEndMs": 594145
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 615201,
+      "sourceEndMs": 617718,
+      "digestStartMs": 594145,
+      "digestEndMs": 596662
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 617718,
+      "sourceEndMs": 617816,
+      "digestStartMs": 596662,
+      "digestEndMs": 596760
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 617816,
+      "sourceEndMs": 627362,
+      "digestStartMs": 596760,
+      "digestEndMs": 606306
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 627362,
+      "sourceEndMs": 627660,
+      "digestStartMs": 606306,
+      "digestEndMs": 606604
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 627660,
+      "sourceEndMs": 628596,
+      "digestStartMs": 606604,
+      "digestEndMs": 607540
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 628596,
+      "sourceEndMs": 628641,
+      "digestStartMs": 607540,
+      "digestEndMs": 607585
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 628641,
+      "sourceEndMs": 632890,
+      "digestStartMs": 607585,
+      "digestEndMs": 611834
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 632890,
+      "sourceEndMs": 633225,
+      "digestStartMs": 611834,
+      "digestEndMs": 612169
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 633225,
+      "sourceEndMs": 638761,
+      "digestStartMs": 612169,
+      "digestEndMs": 617705
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 638761,
+      "sourceEndMs": 639067,
+      "digestStartMs": 617705,
+      "digestEndMs": 618011
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 639067,
+      "sourceEndMs": 640094,
+      "digestStartMs": 618011,
+      "digestEndMs": 619038
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 640094,
+      "sourceEndMs": 640281,
+      "digestStartMs": 619038,
+      "digestEndMs": 619225
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 640281,
+      "sourceEndMs": 648497,
+      "digestStartMs": 619225,
+      "digestEndMs": 627441
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 648497,
+      "sourceEndMs": 649505,
+      "digestStartMs": 627441,
+      "digestEndMs": 628241
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 649505,
+      "sourceEndMs": 652681,
+      "digestStartMs": 628241,
+      "digestEndMs": 631417
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 652681,
+      "sourceEndMs": 652808,
+      "digestStartMs": 631417,
+      "digestEndMs": 631544
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 652808,
+      "sourceEndMs": 653905,
+      "digestStartMs": 631544,
+      "digestEndMs": 632641
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 653905,
+      "sourceEndMs": 654139,
+      "digestStartMs": 632641,
+      "digestEndMs": 632875
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 654139,
+      "sourceEndMs": 657246,
+      "digestStartMs": 632875,
+      "digestEndMs": 635982
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 657246,
+      "sourceEndMs": 657250,
+      "digestStartMs": 635982,
+      "digestEndMs": 635986
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 657250,
+      "sourceEndMs": 676978,
+      "digestStartMs": 635986,
+      "digestEndMs": 655714
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 676978,
+      "sourceEndMs": 677009,
+      "digestStartMs": 655714,
+      "digestEndMs": 655745
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 677009,
+      "sourceEndMs": 681843,
+      "digestStartMs": 655745,
+      "digestEndMs": 660579
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 681843,
+      "sourceEndMs": 681869,
+      "digestStartMs": 660579,
+      "digestEndMs": 660605
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 681869,
+      "sourceEndMs": 689063,
+      "digestStartMs": 660605,
+      "digestEndMs": 667799
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 689063,
+      "sourceEndMs": 689251,
+      "digestStartMs": 667799,
+      "digestEndMs": 667987
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 689251,
+      "sourceEndMs": 690906,
+      "digestStartMs": 667987,
+      "digestEndMs": 669642
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 690906,
+      "sourceEndMs": 690933,
+      "digestStartMs": 669642,
+      "digestEndMs": 669669
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 690933,
+      "sourceEndMs": 695626,
+      "digestStartMs": 669669,
+      "digestEndMs": 674362
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 695626,
+      "sourceEndMs": 696274,
+      "digestStartMs": 674362,
+      "digestEndMs": 675010
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 696274,
+      "sourceEndMs": 701895,
+      "digestStartMs": 675010,
+      "digestEndMs": 680631
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 701895,
+      "sourceEndMs": 702357,
+      "digestStartMs": 680631,
+      "digestEndMs": 681093
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 702357,
+      "sourceEndMs": 706753,
+      "digestStartMs": 681093,
+      "digestEndMs": 685489
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 706753,
+      "sourceEndMs": 706900,
+      "digestStartMs": 685489,
+      "digestEndMs": 685636
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 706900,
+      "sourceEndMs": 714732,
+      "digestStartMs": 685636,
+      "digestEndMs": 693468
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 714732,
+      "sourceEndMs": 715139,
+      "digestStartMs": 693468,
+      "digestEndMs": 693875
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 715139,
+      "sourceEndMs": 716468,
+      "digestStartMs": 693875,
+      "digestEndMs": 695204
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 716468,
+      "sourceEndMs": 716475,
+      "digestStartMs": 695204,
+      "digestEndMs": 695211
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 716475,
+      "sourceEndMs": 717683,
+      "digestStartMs": 695211,
+      "digestEndMs": 696419
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 717683,
+      "sourceEndMs": 717744,
+      "digestStartMs": 696419,
+      "digestEndMs": 696480
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 717744,
+      "sourceEndMs": 727181,
+      "digestStartMs": 696480,
+      "digestEndMs": 705917
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 727181,
+      "sourceEndMs": 727184,
+      "digestStartMs": 705917,
+      "digestEndMs": 705920
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 727184,
+      "sourceEndMs": 732739,
+      "digestStartMs": 705920,
+      "digestEndMs": 711475
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 732739,
+      "sourceEndMs": 733049,
+      "digestStartMs": 711475,
+      "digestEndMs": 711785
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 733049,
+      "sourceEndMs": 743952,
+      "digestStartMs": 711785,
+      "digestEndMs": 722688
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 743952,
+      "sourceEndMs": 744129,
+      "digestStartMs": 722688,
+      "digestEndMs": 722865
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 744129,
+      "sourceEndMs": 746662,
+      "digestStartMs": 722865,
+      "digestEndMs": 725398
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 746662,
+      "sourceEndMs": 746680,
+      "digestStartMs": 725398,
+      "digestEndMs": 725416
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 746680,
+      "sourceEndMs": 751538,
+      "digestStartMs": 725416,
+      "digestEndMs": 730274
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 751538,
+      "sourceEndMs": 751602,
+      "digestStartMs": 730274,
+      "digestEndMs": 730338
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 751602,
+      "sourceEndMs": 760598,
+      "digestStartMs": 730338,
+      "digestEndMs": 739334
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 760598,
+      "sourceEndMs": 760759,
+      "digestStartMs": 739334,
+      "digestEndMs": 739495
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 760759,
+      "sourceEndMs": 763588,
+      "digestStartMs": 739495,
+      "digestEndMs": 742324
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 763588,
+      "sourceEndMs": 764954,
+      "digestStartMs": 742324,
+      "digestEndMs": 743124
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 764954,
+      "sourceEndMs": 771099,
+      "digestStartMs": 743124,
+      "digestEndMs": 749269
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 771099,
+      "sourceEndMs": 771232,
+      "digestStartMs": 749269,
+      "digestEndMs": 749402
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 771232,
+      "sourceEndMs": 776627,
+      "digestStartMs": 749402,
+      "digestEndMs": 754797
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 776627,
+      "sourceEndMs": 776697,
+      "digestStartMs": 754797,
+      "digestEndMs": 754867
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 776697,
+      "sourceEndMs": 778949,
+      "digestStartMs": 754867,
+      "digestEndMs": 757119
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 778949,
+      "sourceEndMs": 779525,
+      "digestStartMs": 757119,
+      "digestEndMs": 757695
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 779525,
+      "sourceEndMs": 782038,
+      "digestStartMs": 757695,
+      "digestEndMs": 760208
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 782038,
+      "sourceEndMs": 782168,
+      "digestStartMs": 760208,
+      "digestEndMs": 760338
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 782168,
+      "sourceEndMs": 786242,
+      "digestStartMs": 760338,
+      "digestEndMs": 764412
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 786242,
+      "sourceEndMs": 786500,
+      "digestStartMs": 764412,
+      "digestEndMs": 764670
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 786500,
+      "sourceEndMs": 790090,
+      "digestStartMs": 764670,
+      "digestEndMs": 768260
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 790090,
+      "sourceEndMs": 790091,
+      "digestStartMs": 768260,
+      "digestEndMs": 768261
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 790091,
+      "sourceEndMs": 795627,
+      "digestStartMs": 768261,
+      "digestEndMs": 773797
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 795627,
+      "sourceEndMs": 795648,
+      "digestStartMs": 773797,
+      "digestEndMs": 773818
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 795648,
+      "sourceEndMs": 798417,
+      "digestStartMs": 773818,
+      "digestEndMs": 776587
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 798417,
+      "sourceEndMs": 799413,
+      "digestStartMs": 776587,
+      "digestEndMs": 777387
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 799413,
+      "sourceEndMs": 800186,
+      "digestStartMs": 777387,
+      "digestEndMs": 778160
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 800186,
+      "sourceEndMs": 803364,
+      "digestStartMs": 778160,
+      "digestEndMs": 778960
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 803364,
+      "sourceEndMs": 806292,
+      "digestStartMs": 778960,
+      "digestEndMs": 781888
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 806292,
+      "sourceEndMs": 806306,
+      "digestStartMs": 781888,
+      "digestEndMs": 781902
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 806306,
+      "sourceEndMs": 808229,
+      "digestStartMs": 781902,
+      "digestEndMs": 783825
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 808229,
+      "sourceEndMs": 808285,
+      "digestStartMs": 783825,
+      "digestEndMs": 783881
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 808285,
+      "sourceEndMs": 810058,
+      "digestStartMs": 783881,
+      "digestEndMs": 785654
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 810058,
+      "sourceEndMs": 811205,
+      "digestStartMs": 785654,
+      "digestEndMs": 786454
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 811205,
+      "sourceEndMs": 817824,
+      "digestStartMs": 786454,
+      "digestEndMs": 793073
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 817824,
+      "sourceEndMs": 819290,
+      "digestStartMs": 793073,
+      "digestEndMs": 793873
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 819290,
+      "sourceEndMs": 820193,
+      "digestStartMs": 793873,
+      "digestEndMs": 794776
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 820193,
+      "sourceEndMs": 820366,
+      "digestStartMs": 794776,
+      "digestEndMs": 794949
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 820366,
+      "sourceEndMs": 828766,
+      "digestStartMs": 794949,
+      "digestEndMs": 803349
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 828766,
+      "sourceEndMs": 828887,
+      "digestStartMs": 803349,
+      "digestEndMs": 803470
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 828887,
+      "sourceEndMs": 833571,
+      "digestStartMs": 803470,
+      "digestEndMs": 808154
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 833571,
+      "sourceEndMs": 833764,
+      "digestStartMs": 808154,
+      "digestEndMs": 808347
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 833764,
+      "sourceEndMs": 837083,
+      "digestStartMs": 808347,
+      "digestEndMs": 811666
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 837083,
+      "sourceEndMs": 840677,
+      "digestStartMs": 811666,
+      "digestEndMs": 812466
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 840677,
+      "sourceEndMs": 842022,
+      "digestStartMs": 812466,
+      "digestEndMs": 813811
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 842022,
+      "sourceEndMs": 842507,
+      "digestStartMs": 813811,
+      "digestEndMs": 814296
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 842507,
+      "sourceEndMs": 845264,
+      "digestStartMs": 814296,
+      "digestEndMs": 817053
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 845264,
+      "sourceEndMs": 845532,
+      "digestStartMs": 817053,
+      "digestEndMs": 817321
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 845532,
+      "sourceEndMs": 847185,
+      "digestStartMs": 817321,
+      "digestEndMs": 818974
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 847185,
+      "sourceEndMs": 848823,
+      "digestStartMs": 818974,
+      "digestEndMs": 819774
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 848823,
+      "sourceEndMs": 849859,
+      "digestStartMs": 819774,
+      "digestEndMs": 820810
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 849859,
+      "sourceEndMs": 850440,
+      "digestStartMs": 820810,
+      "digestEndMs": 821391
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 850440,
+      "sourceEndMs": 853130,
+      "digestStartMs": 821391,
+      "digestEndMs": 824081
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 853130,
+      "sourceEndMs": 853924,
+      "digestStartMs": 824081,
+      "digestEndMs": 824875
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 853924,
+      "sourceEndMs": 856441,
+      "digestStartMs": 824875,
+      "digestEndMs": 827392
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 856441,
+      "sourceEndMs": 856467,
+      "digestStartMs": 827392,
+      "digestEndMs": 827418
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 856467,
+      "sourceEndMs": 857269,
+      "digestStartMs": 827418,
+      "digestEndMs": 828220
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 857269,
+      "sourceEndMs": 857459,
+      "digestStartMs": 828220,
+      "digestEndMs": 828410
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 857459,
+      "sourceEndMs": 860341,
+      "digestStartMs": 828410,
+      "digestEndMs": 831292
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 860341,
+      "sourceEndMs": 861041,
+      "digestStartMs": 831292,
+      "digestEndMs": 831992
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 861041,
+      "sourceEndMs": 866646,
+      "digestStartMs": 831992,
+      "digestEndMs": 837597
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 866646,
+      "sourceEndMs": 866875,
+      "digestStartMs": 837597,
+      "digestEndMs": 837826
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 866875,
+      "sourceEndMs": 872580,
+      "digestStartMs": 837826,
+      "digestEndMs": 843531
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 872580,
+      "sourceEndMs": 872725,
+      "digestStartMs": 843531,
+      "digestEndMs": 843676
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 872725,
+      "sourceEndMs": 873647,
+      "digestStartMs": 843676,
+      "digestEndMs": 844598
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 873647,
+      "sourceEndMs": 874691,
+      "digestStartMs": 844598,
+      "digestEndMs": 845398
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 874691,
+      "sourceEndMs": 876692,
+      "digestStartMs": 845398,
+      "digestEndMs": 847399
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 876692,
+      "sourceEndMs": 876830,
+      "digestStartMs": 847399,
+      "digestEndMs": 847537
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 876830,
+      "sourceEndMs": 880278,
+      "digestStartMs": 847537,
+      "digestEndMs": 850985
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 880278,
+      "sourceEndMs": 880713,
+      "digestStartMs": 850985,
+      "digestEndMs": 851420
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 880713,
+      "sourceEndMs": 891638,
+      "digestStartMs": 851420,
+      "digestEndMs": 862345
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 891638,
+      "sourceEndMs": 891755,
+      "digestStartMs": 862345,
+      "digestEndMs": 862462
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 891755,
+      "sourceEndMs": 895696,
+      "digestStartMs": 862462,
+      "digestEndMs": 866403
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 895696,
+      "sourceEndMs": 896292,
+      "digestStartMs": 866403,
+      "digestEndMs": 866999
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 896292,
+      "sourceEndMs": 900281,
+      "digestStartMs": 866999,
+      "digestEndMs": 870988
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 900281,
+      "sourceEndMs": 900399,
+      "digestStartMs": 870988,
+      "digestEndMs": 871106
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 900399,
+      "sourceEndMs": 901729,
+      "digestStartMs": 871106,
+      "digestEndMs": 872436
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 901729,
+      "sourceEndMs": 901949,
+      "digestStartMs": 872436,
+      "digestEndMs": 872656
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 901949,
+      "sourceEndMs": 902889,
+      "digestStartMs": 872656,
+      "digestEndMs": 873596
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 902889,
+      "sourceEndMs": 903511,
+      "digestStartMs": 873596,
+      "digestEndMs": 874218
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 903511,
+      "sourceEndMs": 904636,
+      "digestStartMs": 874218,
+      "digestEndMs": 875343
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 904636,
+      "sourceEndMs": 904685,
+      "digestStartMs": 875343,
+      "digestEndMs": 875392
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 904685,
+      "sourceEndMs": 907829,
+      "digestStartMs": 875392,
+      "digestEndMs": 878536
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 907829,
+      "sourceEndMs": 908076,
+      "digestStartMs": 878536,
+      "digestEndMs": 878783
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 908076,
+      "sourceEndMs": 910995,
+      "digestStartMs": 878783,
+      "digestEndMs": 881702
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 910995,
+      "sourceEndMs": 911234,
+      "digestStartMs": 881702,
+      "digestEndMs": 881941
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 911234,
+      "sourceEndMs": 916943,
+      "digestStartMs": 881941,
+      "digestEndMs": 887650
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 916943,
+      "sourceEndMs": 917102,
+      "digestStartMs": 887650,
+      "digestEndMs": 887809
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 917102,
+      "sourceEndMs": 926367,
+      "digestStartMs": 887809,
+      "digestEndMs": 897074
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 926367,
+      "sourceEndMs": 927454,
+      "digestStartMs": 897074,
+      "digestEndMs": 897874
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 927454,
+      "sourceEndMs": 932621,
+      "digestStartMs": 897874,
+      "digestEndMs": 903041
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 932621,
+      "sourceEndMs": 932849,
+      "digestStartMs": 903041,
+      "digestEndMs": 903269
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 932849,
+      "sourceEndMs": 946605,
+      "digestStartMs": 903269,
+      "digestEndMs": 917025
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 946605,
+      "sourceEndMs": 946634,
+      "digestStartMs": 917025,
+      "digestEndMs": 917054
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 946634,
+      "sourceEndMs": 954067,
+      "digestStartMs": 917054,
+      "digestEndMs": 924487
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 954067,
+      "sourceEndMs": 955367,
+      "digestStartMs": 924487,
+      "digestEndMs": 925287
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 955367,
+      "sourceEndMs": 962660,
+      "digestStartMs": 925287,
+      "digestEndMs": 932580
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 962660,
+      "sourceEndMs": 962812,
+      "digestStartMs": 932580,
+      "digestEndMs": 932732
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 962812,
+      "sourceEndMs": 971464,
+      "digestStartMs": 932732,
+      "digestEndMs": 941384
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 971464,
+      "sourceEndMs": 971588,
+      "digestStartMs": 941384,
+      "digestEndMs": 941508
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 971588,
+      "sourceEndMs": 973654,
+      "digestStartMs": 941508,
+      "digestEndMs": 943574
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 973654,
+      "sourceEndMs": 973748,
+      "digestStartMs": 943574,
+      "digestEndMs": 943668
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 973748,
+      "sourceEndMs": 976823,
+      "digestStartMs": 943668,
+      "digestEndMs": 946743
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 976823,
+      "sourceEndMs": 977138,
+      "digestStartMs": 946743,
+      "digestEndMs": 947058
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 977138,
+      "sourceEndMs": 979460,
+      "digestStartMs": 947058,
+      "digestEndMs": 949380
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 979460,
+      "sourceEndMs": 980160,
+      "digestStartMs": 949380,
+      "digestEndMs": 950080
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 980160,
+      "sourceEndMs": 982581,
+      "digestStartMs": 950080,
+      "digestEndMs": 952501
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 982581,
+      "sourceEndMs": 982742,
+      "digestStartMs": 952501,
+      "digestEndMs": 952662
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 982742,
+      "sourceEndMs": 988814,
+      "digestStartMs": 952662,
+      "digestEndMs": 958734
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 988814,
+      "sourceEndMs": 991468,
+      "digestStartMs": 958734,
+      "digestEndMs": 959534
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 991468,
+      "sourceEndMs": 992443,
+      "digestStartMs": 959534,
+      "digestEndMs": 960509
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 992443,
+      "sourceEndMs": 992497,
+      "digestStartMs": 960509,
+      "digestEndMs": 960563
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 992497,
+      "sourceEndMs": 1000232,
+      "digestStartMs": 960563,
+      "digestEndMs": 968298
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1000232,
+      "sourceEndMs": 1001061,
+      "digestStartMs": 968298,
+      "digestEndMs": 969127
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1001061,
+      "sourceEndMs": 1007674,
+      "digestStartMs": 969127,
+      "digestEndMs": 975740
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1007674,
+      "sourceEndMs": 1007794,
+      "digestStartMs": 975740,
+      "digestEndMs": 975860
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1007794,
+      "sourceEndMs": 1023897,
+      "digestStartMs": 975860,
+      "digestEndMs": 991963
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1023897,
+      "sourceEndMs": 1023983,
+      "digestStartMs": 991963,
+      "digestEndMs": 992049
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1023983,
+      "sourceEndMs": 1025303,
+      "digestStartMs": 992049,
+      "digestEndMs": 993369
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1025303,
+      "sourceEndMs": 1025325,
+      "digestStartMs": 993369,
+      "digestEndMs": 993391
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1025325,
+      "sourceEndMs": 1026893,
+      "digestStartMs": 993391,
+      "digestEndMs": 994959
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1026893,
+      "sourceEndMs": 1027238,
+      "digestStartMs": 994959,
+      "digestEndMs": 995304
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1027238,
+      "sourceEndMs": 1029942,
+      "digestStartMs": 995304,
+      "digestEndMs": 998008
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1029942,
+      "sourceEndMs": 1031539,
+      "digestStartMs": 998008,
+      "digestEndMs": 998808
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1031539,
+      "sourceEndMs": 1032874,
+      "digestStartMs": 998808,
+      "digestEndMs": 1000143
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1032874,
+      "sourceEndMs": 1033062,
+      "digestStartMs": 1000143,
+      "digestEndMs": 1000331
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1033062,
+      "sourceEndMs": 1034183,
+      "digestStartMs": 1000331,
+      "digestEndMs": 1001452
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1034183,
+      "sourceEndMs": 1035563,
+      "digestStartMs": 1001452,
+      "digestEndMs": 1002252
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1035563,
+      "sourceEndMs": 1040886,
+      "digestStartMs": 1002252,
+      "digestEndMs": 1007575
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1040886,
+      "sourceEndMs": 1040975,
+      "digestStartMs": 1007575,
+      "digestEndMs": 1007664
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1040975,
+      "sourceEndMs": 1050724,
+      "digestStartMs": 1007664,
+      "digestEndMs": 1017413
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1050724,
+      "sourceEndMs": 1050905,
+      "digestStartMs": 1017413,
+      "digestEndMs": 1017594
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1050905,
+      "sourceEndMs": 1054298,
+      "digestStartMs": 1017594,
+      "digestEndMs": 1020987
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1054298,
+      "sourceEndMs": 1054421,
+      "digestStartMs": 1020987,
+      "digestEndMs": 1021110
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1054421,
+      "sourceEndMs": 1060331,
+      "digestStartMs": 1021110,
+      "digestEndMs": 1027020
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1060331,
+      "sourceEndMs": 1060444,
+      "digestStartMs": 1027020,
+      "digestEndMs": 1027133
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1060444,
+      "sourceEndMs": 1070220,
+      "digestStartMs": 1027133,
+      "digestEndMs": 1036909
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1070220,
+      "sourceEndMs": 1070320,
+      "digestStartMs": 1036909,
+      "digestEndMs": 1037009
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1070320,
+      "sourceEndMs": 1071985,
+      "digestStartMs": 1037009,
+      "digestEndMs": 1038674
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1071985,
+      "sourceEndMs": 1072858,
+      "digestStartMs": 1038674,
+      "digestEndMs": 1039547
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1072858,
+      "sourceEndMs": 1078667,
+      "digestStartMs": 1039547,
+      "digestEndMs": 1045356
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1078667,
+      "sourceEndMs": 1078706,
+      "digestStartMs": 1045356,
+      "digestEndMs": 1045395
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1078706,
+      "sourceEndMs": 1081944,
+      "digestStartMs": 1045395,
+      "digestEndMs": 1048633
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1081944,
+      "sourceEndMs": 1082117,
+      "digestStartMs": 1048633,
+      "digestEndMs": 1048806
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1082117,
+      "sourceEndMs": 1085429,
+      "digestStartMs": 1048806,
+      "digestEndMs": 1052118
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1085429,
+      "sourceEndMs": 1085627,
+      "digestStartMs": 1052118,
+      "digestEndMs": 1052316
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1085627,
+      "sourceEndMs": 1090892,
+      "digestStartMs": 1052316,
+      "digestEndMs": 1057581
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1090892,
+      "sourceEndMs": 1090986,
+      "digestStartMs": 1057581,
+      "digestEndMs": 1057675
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1090986,
+      "sourceEndMs": 1093882,
+      "digestStartMs": 1057675,
+      "digestEndMs": 1060571
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1093882,
+      "sourceEndMs": 1095346,
+      "digestStartMs": 1060571,
+      "digestEndMs": 1061371
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1095346,
+      "sourceEndMs": 1102094,
+      "digestStartMs": 1061371,
+      "digestEndMs": 1068119
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1102094,
+      "sourceEndMs": 1102348,
+      "digestStartMs": 1068119,
+      "digestEndMs": 1068373
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1102348,
+      "sourceEndMs": 1105607,
+      "digestStartMs": 1068373,
+      "digestEndMs": 1071632
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1105607,
+      "sourceEndMs": 1105862,
+      "digestStartMs": 1071632,
+      "digestEndMs": 1071887
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1105862,
+      "sourceEndMs": 1107585,
+      "digestStartMs": 1071887,
+      "digestEndMs": 1073610
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1107585,
+      "sourceEndMs": 1107822,
+      "digestStartMs": 1073610,
+      "digestEndMs": 1073847
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1107822,
+      "sourceEndMs": 1111552,
+      "digestStartMs": 1073847,
+      "digestEndMs": 1077577
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1111552,
+      "sourceEndMs": 1111669,
+      "digestStartMs": 1077577,
+      "digestEndMs": 1077694
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1111669,
+      "sourceEndMs": 1113820,
+      "digestStartMs": 1077694,
+      "digestEndMs": 1079845
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1113820,
+      "sourceEndMs": 1113867,
+      "digestStartMs": 1079845,
+      "digestEndMs": 1079892
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1113867,
+      "sourceEndMs": 1120369,
+      "digestStartMs": 1079892,
+      "digestEndMs": 1086394
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1120369,
+      "sourceEndMs": 1120485,
+      "digestStartMs": 1086394,
+      "digestEndMs": 1086510
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1120485,
+      "sourceEndMs": 1127963,
+      "digestStartMs": 1086510,
+      "digestEndMs": 1093988
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1127963,
+      "sourceEndMs": 1128123,
+      "digestStartMs": 1093988,
+      "digestEndMs": 1094148
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1128123,
+      "sourceEndMs": 1131042,
+      "digestStartMs": 1094148,
+      "digestEndMs": 1097067
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1131042,
+      "sourceEndMs": 1131392,
+      "digestStartMs": 1097067,
+      "digestEndMs": 1097417
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1131392,
+      "sourceEndMs": 1136001,
+      "digestStartMs": 1097417,
+      "digestEndMs": 1102026
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1136001,
+      "sourceEndMs": 1136063,
+      "digestStartMs": 1102026,
+      "digestEndMs": 1102088
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1136063,
+      "sourceEndMs": 1139716,
+      "digestStartMs": 1102088,
+      "digestEndMs": 1105741
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1139716,
+      "sourceEndMs": 1139730,
+      "digestStartMs": 1105741,
+      "digestEndMs": 1105755
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1139730,
+      "sourceEndMs": 1148265,
+      "digestStartMs": 1105755,
+      "digestEndMs": 1114290
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1148265,
+      "sourceEndMs": 1148575,
+      "digestStartMs": 1114290,
+      "digestEndMs": 1114600
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1148575,
+      "sourceEndMs": 1149558,
+      "digestStartMs": 1114600,
+      "digestEndMs": 1115583
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1149558,
+      "sourceEndMs": 1150278,
+      "digestStartMs": 1115583,
+      "digestEndMs": 1116303
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1150278,
+      "sourceEndMs": 1164960,
+      "digestStartMs": 1116303,
+      "digestEndMs": 1130985
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1164960,
+      "sourceEndMs": 1165058,
+      "digestStartMs": 1130985,
+      "digestEndMs": 1131083
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1165058,
+      "sourceEndMs": 1167300,
+      "digestStartMs": 1131083,
+      "digestEndMs": 1133325
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1167300,
+      "sourceEndMs": 1167423,
+      "digestStartMs": 1133325,
+      "digestEndMs": 1133448
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1167423,
+      "sourceEndMs": 1176154,
+      "digestStartMs": 1133448,
+      "digestEndMs": 1142179
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1176154,
+      "sourceEndMs": 1176175,
+      "digestStartMs": 1142179,
+      "digestEndMs": 1142200
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1176175,
+      "sourceEndMs": 1181253,
+      "digestStartMs": 1142200,
+      "digestEndMs": 1147278
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1181253,
+      "sourceEndMs": 1186194,
+      "digestStartMs": 1147278,
+      "digestEndMs": 1148078
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1186194,
+      "sourceEndMs": 1188938,
+      "digestStartMs": 1148078,
+      "digestEndMs": 1150822
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1188938,
+      "sourceEndMs": 1189252,
+      "digestStartMs": 1150822,
+      "digestEndMs": 1151136
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1189252,
+      "sourceEndMs": 1191486,
+      "digestStartMs": 1151136,
+      "digestEndMs": 1153370
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1191486,
+      "sourceEndMs": 1191539,
+      "digestStartMs": 1153370,
+      "digestEndMs": 1153423
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1191539,
+      "sourceEndMs": 1193571,
+      "digestStartMs": 1153423,
+      "digestEndMs": 1155455
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1193571,
+      "sourceEndMs": 1193764,
+      "digestStartMs": 1155455,
+      "digestEndMs": 1155648
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1193764,
+      "sourceEndMs": 1196572,
+      "digestStartMs": 1155648,
+      "digestEndMs": 1158456
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1196572,
+      "sourceEndMs": 1197465,
+      "digestStartMs": 1158456,
+      "digestEndMs": 1159349
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1197465,
+      "sourceEndMs": 1199566,
+      "digestStartMs": 1159349,
+      "digestEndMs": 1161450
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1199566,
+      "sourceEndMs": 1201514,
+      "digestStartMs": 1161450,
+      "digestEndMs": 1162250
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1201514,
+      "sourceEndMs": 1202723,
+      "digestStartMs": 1162250,
+      "digestEndMs": 1163459
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1202723,
+      "sourceEndMs": 1208775,
+      "digestStartMs": 1163459,
+      "digestEndMs": 1164259
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1208775,
+      "sourceEndMs": 1213604,
+      "digestStartMs": 1164259,
+      "digestEndMs": 1169088
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1213604,
+      "sourceEndMs": 1214104,
+      "digestStartMs": 1169088,
+      "digestEndMs": 1169588
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1214104,
+      "sourceEndMs": 1215168,
+      "digestStartMs": 1169588,
+      "digestEndMs": 1170652
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1215168,
+      "sourceEndMs": 1216233,
+      "digestStartMs": 1170652,
+      "digestEndMs": 1171452
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1216233,
+      "sourceEndMs": 1226207,
+      "digestStartMs": 1171452,
+      "digestEndMs": 1181426
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1226207,
+      "sourceEndMs": 1226239,
+      "digestStartMs": 1181426,
+      "digestEndMs": 1181458
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1226239,
+      "sourceEndMs": 1230581,
+      "digestStartMs": 1181458,
+      "digestEndMs": 1185800
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1230581,
+      "sourceEndMs": 1231252,
+      "digestStartMs": 1185800,
+      "digestEndMs": 1186471
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1231252,
+      "sourceEndMs": 1232092,
+      "digestStartMs": 1186471,
+      "digestEndMs": 1187311
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1232092,
+      "sourceEndMs": 1232130,
+      "digestStartMs": 1187311,
+      "digestEndMs": 1187349
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1232130,
+      "sourceEndMs": 1236797,
+      "digestStartMs": 1187349,
+      "digestEndMs": 1192016
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1236797,
+      "sourceEndMs": 1237032,
+      "digestStartMs": 1192016,
+      "digestEndMs": 1192251
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1237032,
+      "sourceEndMs": 1244197,
+      "digestStartMs": 1192251,
+      "digestEndMs": 1199416
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1244197,
+      "sourceEndMs": 1244304,
+      "digestStartMs": 1199416,
+      "digestEndMs": 1199523
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1244304,
+      "sourceEndMs": 1255251,
+      "digestStartMs": 1199523,
+      "digestEndMs": 1210470
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1255251,
+      "sourceEndMs": 1255541,
+      "digestStartMs": 1210470,
+      "digestEndMs": 1210760
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1255541,
+      "sourceEndMs": 1257340,
+      "digestStartMs": 1210760,
+      "digestEndMs": 1212559
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1257340,
+      "sourceEndMs": 1257473,
+      "digestStartMs": 1212559,
+      "digestEndMs": 1212692
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1257473,
+      "sourceEndMs": 1258540,
+      "digestStartMs": 1212692,
+      "digestEndMs": 1213759
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1258540,
+      "sourceEndMs": 1258647,
+      "digestStartMs": 1213759,
+      "digestEndMs": 1213866
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1258647,
+      "sourceEndMs": 1263025,
+      "digestStartMs": 1213866,
+      "digestEndMs": 1218244
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1263025,
+      "sourceEndMs": 1263149,
+      "digestStartMs": 1218244,
+      "digestEndMs": 1218368
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1263149,
+      "sourceEndMs": 1265509,
+      "digestStartMs": 1218368,
+      "digestEndMs": 1220728
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1265509,
+      "sourceEndMs": 1265606,
+      "digestStartMs": 1220728,
+      "digestEndMs": 1220825
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1265606,
+      "sourceEndMs": 1269756,
+      "digestStartMs": 1220825,
+      "digestEndMs": 1224975
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1269756,
+      "sourceEndMs": 1269792,
+      "digestStartMs": 1224975,
+      "digestEndMs": 1225011
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1269792,
+      "sourceEndMs": 1272520,
+      "digestStartMs": 1225011,
+      "digestEndMs": 1227739
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1272520,
+      "sourceEndMs": 1272644,
+      "digestStartMs": 1227739,
+      "digestEndMs": 1227863
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1272644,
+      "sourceEndMs": 1273640,
+      "digestStartMs": 1227863,
+      "digestEndMs": 1228859
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1273640,
+      "sourceEndMs": 1274485,
+      "digestStartMs": 1228859,
+      "digestEndMs": 1229704
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1274485,
+      "sourceEndMs": 1275894,
+      "digestStartMs": 1229704,
+      "digestEndMs": 1231113
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1275894,
+      "sourceEndMs": 1276334,
+      "digestStartMs": 1231113,
+      "digestEndMs": 1231553
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1276334,
+      "sourceEndMs": 1280202,
+      "digestStartMs": 1231553,
+      "digestEndMs": 1235421
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1280202,
+      "sourceEndMs": 1280526,
+      "digestStartMs": 1235421,
+      "digestEndMs": 1235745
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1280526,
+      "sourceEndMs": 1282507,
+      "digestStartMs": 1235745,
+      "digestEndMs": 1237726
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1282507,
+      "sourceEndMs": 1282713,
+      "digestStartMs": 1237726,
+      "digestEndMs": 1237932
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1282713,
+      "sourceEndMs": 1286836,
+      "digestStartMs": 1237932,
+      "digestEndMs": 1242055
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1286836,
+      "sourceEndMs": 1286922,
+      "digestStartMs": 1242055,
+      "digestEndMs": 1242141
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1286922,
+      "sourceEndMs": 1290362,
+      "digestStartMs": 1242141,
+      "digestEndMs": 1245581
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1290362,
+      "sourceEndMs": 1290502,
+      "digestStartMs": 1245581,
+      "digestEndMs": 1245721
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1290502,
+      "sourceEndMs": 1294454,
+      "digestStartMs": 1245721,
+      "digestEndMs": 1249673
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1294454,
+      "sourceEndMs": 1294715,
+      "digestStartMs": 1249673,
+      "digestEndMs": 1249934
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1294715,
+      "sourceEndMs": 1296379,
+      "digestStartMs": 1249934,
+      "digestEndMs": 1251598
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1296379,
+      "sourceEndMs": 1296635,
+      "digestStartMs": 1251598,
+      "digestEndMs": 1251854
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1296635,
+      "sourceEndMs": 1297781,
+      "digestStartMs": 1251854,
+      "digestEndMs": 1253000
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1297781,
+      "sourceEndMs": 1298491,
+      "digestStartMs": 1253000,
+      "digestEndMs": 1253710
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1298491,
+      "sourceEndMs": 1307121,
+      "digestStartMs": 1253710,
+      "digestEndMs": 1262340
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1307121,
+      "sourceEndMs": 1307770,
+      "digestStartMs": 1262340,
+      "digestEndMs": 1262989
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1307770,
+      "sourceEndMs": 1317188,
+      "digestStartMs": 1262989,
+      "digestEndMs": 1272407
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1317188,
+      "sourceEndMs": 1317455,
+      "digestStartMs": 1272407,
+      "digestEndMs": 1272674
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1317455,
+      "sourceEndMs": 1321757,
+      "digestStartMs": 1272674,
+      "digestEndMs": 1276976
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1321757,
+      "sourceEndMs": 1321966,
+      "digestStartMs": 1276976,
+      "digestEndMs": 1277185
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1321966,
+      "sourceEndMs": 1323877,
+      "digestStartMs": 1277185,
+      "digestEndMs": 1279096
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1323877,
+      "sourceEndMs": 1324016,
+      "digestStartMs": 1279096,
+      "digestEndMs": 1279235
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1324016,
+      "sourceEndMs": 1326553,
+      "digestStartMs": 1279235,
+      "digestEndMs": 1281772
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1326553,
+      "sourceEndMs": 1326884,
+      "digestStartMs": 1281772,
+      "digestEndMs": 1282103
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1326884,
+      "sourceEndMs": 1329693,
+      "digestStartMs": 1282103,
+      "digestEndMs": 1284912
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1329693,
+      "sourceEndMs": 1329825,
+      "digestStartMs": 1284912,
+      "digestEndMs": 1285044
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1329825,
+      "sourceEndMs": 1332758,
+      "digestStartMs": 1285044,
+      "digestEndMs": 1287977
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1332758,
+      "sourceEndMs": 1332906,
+      "digestStartMs": 1287977,
+      "digestEndMs": 1288125
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1332906,
+      "sourceEndMs": 1336196,
+      "digestStartMs": 1288125,
+      "digestEndMs": 1291415
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1336196,
+      "sourceEndMs": 1336238,
+      "digestStartMs": 1291415,
+      "digestEndMs": 1291457
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1336238,
+      "sourceEndMs": 1337131,
+      "digestStartMs": 1291457,
+      "digestEndMs": 1292350
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1337131,
+      "sourceEndMs": 1337472,
+      "digestStartMs": 1292350,
+      "digestEndMs": 1292691
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1337472,
+      "sourceEndMs": 1339818,
+      "digestStartMs": 1292691,
+      "digestEndMs": 1295037
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1339818,
+      "sourceEndMs": 1339945,
+      "digestStartMs": 1295037,
+      "digestEndMs": 1295164
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1339945,
+      "sourceEndMs": 1340897,
+      "digestStartMs": 1295164,
+      "digestEndMs": 1296116
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1340897,
+      "sourceEndMs": 1341081,
+      "digestStartMs": 1296116,
+      "digestEndMs": 1296300
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1341081,
+      "sourceEndMs": 1354628,
+      "digestStartMs": 1296300,
+      "digestEndMs": 1309847
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1354628,
+      "sourceEndMs": 1354661,
+      "digestStartMs": 1309847,
+      "digestEndMs": 1309880
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1354661,
+      "sourceEndMs": 1356639,
+      "digestStartMs": 1309880,
+      "digestEndMs": 1311858
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1356639,
+      "sourceEndMs": 1356792,
+      "digestStartMs": 1311858,
+      "digestEndMs": 1312011
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1356792,
+      "sourceEndMs": 1360511,
+      "digestStartMs": 1312011,
+      "digestEndMs": 1315730
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1360511,
+      "sourceEndMs": 1360657,
+      "digestStartMs": 1315730,
+      "digestEndMs": 1315876
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1360657,
+      "sourceEndMs": 1362090,
+      "digestStartMs": 1315876,
+      "digestEndMs": 1317309
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1362090,
+      "sourceEndMs": 1362101,
+      "digestStartMs": 1317309,
+      "digestEndMs": 1317320
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1362101,
+      "sourceEndMs": 1363015,
+      "digestStartMs": 1317320,
+      "digestEndMs": 1318234
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1363015,
+      "sourceEndMs": 1363049,
+      "digestStartMs": 1318234,
+      "digestEndMs": 1318268
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1363049,
+      "sourceEndMs": 1366688,
+      "digestStartMs": 1318268,
+      "digestEndMs": 1321907
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1366688,
+      "sourceEndMs": 1366976,
+      "digestStartMs": 1321907,
+      "digestEndMs": 1322195
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1366976,
+      "sourceEndMs": 1368405,
+      "digestStartMs": 1322195,
+      "digestEndMs": 1323624
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1368405,
+      "sourceEndMs": 1368481,
+      "digestStartMs": 1323624,
+      "digestEndMs": 1323700
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1368481,
+      "sourceEndMs": 1369174,
+      "digestStartMs": 1323700,
+      "digestEndMs": 1324393
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1369174,
+      "sourceEndMs": 1370327,
+      "digestStartMs": 1324393,
+      "digestEndMs": 1325193
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1370327,
+      "sourceEndMs": 1378119,
+      "digestStartMs": 1325193,
+      "digestEndMs": 1332985
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1378119,
+      "sourceEndMs": 1378136,
+      "digestStartMs": 1332985,
+      "digestEndMs": 1333002
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1378136,
+      "sourceEndMs": 1387956,
+      "digestStartMs": 1333002,
+      "digestEndMs": 1342822
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1387956,
+      "sourceEndMs": 1388999,
+      "digestStartMs": 1342822,
+      "digestEndMs": 1343622
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1388999,
+      "sourceEndMs": 1390581,
+      "digestStartMs": 1343622,
+      "digestEndMs": 1345204
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1390581,
+      "sourceEndMs": 1390629,
+      "digestStartMs": 1345204,
+      "digestEndMs": 1345252
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1390629,
+      "sourceEndMs": 1396612,
+      "digestStartMs": 1345252,
+      "digestEndMs": 1351235
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1396612,
+      "sourceEndMs": 1397765,
+      "digestStartMs": 1351235,
+      "digestEndMs": 1352035
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1397765,
+      "sourceEndMs": 1402012,
+      "digestStartMs": 1352035,
+      "digestEndMs": 1356282
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1402012,
+      "sourceEndMs": 1402227,
+      "digestStartMs": 1356282,
+      "digestEndMs": 1356497
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1402227,
+      "sourceEndMs": 1410601,
+      "digestStartMs": 1356497,
+      "digestEndMs": 1364871
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1410601,
+      "sourceEndMs": 1410635,
+      "digestStartMs": 1364871,
+      "digestEndMs": 1364905
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1410635,
+      "sourceEndMs": 1414373,
+      "digestStartMs": 1364905,
+      "digestEndMs": 1368643
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1414373,
+      "sourceEndMs": 1414500,
+      "digestStartMs": 1368643,
+      "digestEndMs": 1368770
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1414500,
+      "sourceEndMs": 1415456,
+      "digestStartMs": 1368770,
+      "digestEndMs": 1369726
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1415456,
+      "sourceEndMs": 1415472,
+      "digestStartMs": 1369726,
+      "digestEndMs": 1369742
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1415472,
+      "sourceEndMs": 1419954,
+      "digestStartMs": 1369742,
+      "digestEndMs": 1374224
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1419954,
+      "sourceEndMs": 1420034,
+      "digestStartMs": 1374224,
+      "digestEndMs": 1374304
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1420034,
+      "sourceEndMs": 1423355,
+      "digestStartMs": 1374304,
+      "digestEndMs": 1377625
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1423355,
+      "sourceEndMs": 1423704,
+      "digestStartMs": 1377625,
+      "digestEndMs": 1377974
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1423704,
+      "sourceEndMs": 1425271,
+      "digestStartMs": 1377974,
+      "digestEndMs": 1379541
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1425271,
+      "sourceEndMs": 1425477,
+      "digestStartMs": 1379541,
+      "digestEndMs": 1379747
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1425477,
+      "sourceEndMs": 1428133,
+      "digestStartMs": 1379747,
+      "digestEndMs": 1382403
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1428133,
+      "sourceEndMs": 1428135,
+      "digestStartMs": 1382403,
+      "digestEndMs": 1382405
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1428135,
+      "sourceEndMs": 1432074,
+      "digestStartMs": 1382405,
+      "digestEndMs": 1386344
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1432074,
+      "sourceEndMs": 1432161,
+      "digestStartMs": 1386344,
+      "digestEndMs": 1386431
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1432161,
+      "sourceEndMs": 1434087,
+      "digestStartMs": 1386431,
+      "digestEndMs": 1388357
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1434087,
+      "sourceEndMs": 1434137,
+      "digestStartMs": 1388357,
+      "digestEndMs": 1388407
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1434137,
+      "sourceEndMs": 1439339,
+      "digestStartMs": 1388407,
+      "digestEndMs": 1393609
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1439339,
+      "sourceEndMs": 1439362,
+      "digestStartMs": 1393609,
+      "digestEndMs": 1393632
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1439362,
+      "sourceEndMs": 1442040,
+      "digestStartMs": 1393632,
+      "digestEndMs": 1396310
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1442040,
+      "sourceEndMs": 1444174,
+      "digestStartMs": 1396310,
+      "digestEndMs": 1397110
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1444174,
+      "sourceEndMs": 1445423,
+      "digestStartMs": 1397110,
+      "digestEndMs": 1398359
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1445423,
+      "sourceEndMs": 1445826,
+      "digestStartMs": 1398359,
+      "digestEndMs": 1398762
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1445826,
+      "sourceEndMs": 1451238,
+      "digestStartMs": 1398762,
+      "digestEndMs": 1404174
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1451238,
+      "sourceEndMs": 1454288,
+      "digestStartMs": 1404174,
+      "digestEndMs": 1404974
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1454288,
+      "sourceEndMs": 1457508,
+      "digestStartMs": 1404974,
+      "digestEndMs": 1408194
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1457508,
+      "sourceEndMs": 1458104,
+      "digestStartMs": 1408194,
+      "digestEndMs": 1408790
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1458104,
+      "sourceEndMs": 1458928,
+      "digestStartMs": 1408790,
+      "digestEndMs": 1409614
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1458928,
+      "sourceEndMs": 1459144,
+      "digestStartMs": 1409614,
+      "digestEndMs": 1409830
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1459144,
+      "sourceEndMs": 1460579,
+      "digestStartMs": 1409830,
+      "digestEndMs": 1411265
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1460579,
+      "sourceEndMs": 1461164,
+      "digestStartMs": 1411265,
+      "digestEndMs": 1411850
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1461164,
+      "sourceEndMs": 1463830,
+      "digestStartMs": 1411850,
+      "digestEndMs": 1414516
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1463830,
+      "sourceEndMs": 1464191,
+      "digestStartMs": 1414516,
+      "digestEndMs": 1414877
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1464191,
+      "sourceEndMs": 1464866,
+      "digestStartMs": 1414877,
+      "digestEndMs": 1415552
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1464866,
+      "sourceEndMs": 1465733,
+      "digestStartMs": 1415552,
+      "digestEndMs": 1416419
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1465733,
+      "sourceEndMs": 1466384,
+      "digestStartMs": 1416419,
+      "digestEndMs": 1417070
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1466384,
+      "sourceEndMs": 1467703,
+      "digestStartMs": 1417070,
+      "digestEndMs": 1417870
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1467703,
+      "sourceEndMs": 1469373,
+      "digestStartMs": 1417870,
+      "digestEndMs": 1419540
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1469373,
+      "sourceEndMs": 1469618,
+      "digestStartMs": 1419540,
+      "digestEndMs": 1419785
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1469618,
+      "sourceEndMs": 1470547,
+      "digestStartMs": 1419785,
+      "digestEndMs": 1420714
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1470547,
+      "sourceEndMs": 1470775,
+      "digestStartMs": 1420714,
+      "digestEndMs": 1420942
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1470775,
+      "sourceEndMs": 1474432,
+      "digestStartMs": 1420942,
+      "digestEndMs": 1424599
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1474432,
+      "sourceEndMs": 1476313,
+      "digestStartMs": 1424599,
+      "digestEndMs": 1425399
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1476313,
+      "sourceEndMs": 1476973,
+      "digestStartMs": 1425399,
+      "digestEndMs": 1426059
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1476973,
+      "sourceEndMs": 1477958,
+      "digestStartMs": 1426059,
+      "digestEndMs": 1426859
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1477958,
+      "sourceEndMs": 1481489,
+      "digestStartMs": 1426859,
+      "digestEndMs": 1430390
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1481489,
+      "sourceEndMs": 1483521,
+      "digestStartMs": 1430390,
+      "digestEndMs": 1431190
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1483521,
+      "sourceEndMs": 1484438,
+      "digestStartMs": 1431190,
+      "digestEndMs": 1432107
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1484438,
+      "sourceEndMs": 1485775,
+      "digestStartMs": 1432107,
+      "digestEndMs": 1432907
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1485775,
+      "sourceEndMs": 1493589,
+      "digestStartMs": 1432907,
+      "digestEndMs": 1440721
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1493589,
+      "sourceEndMs": 1493676,
+      "digestStartMs": 1440721,
+      "digestEndMs": 1440808
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1493676,
+      "sourceEndMs": 1496537,
+      "digestStartMs": 1440808,
+      "digestEndMs": 1443669
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1496537,
+      "sourceEndMs": 1496626,
+      "digestStartMs": 1443669,
+      "digestEndMs": 1443758
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1496626,
+      "sourceEndMs": 1498918,
+      "digestStartMs": 1443758,
+      "digestEndMs": 1446050
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1498918,
+      "sourceEndMs": 1499375,
+      "digestStartMs": 1446050,
+      "digestEndMs": 1446507
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1499375,
+      "sourceEndMs": 1500534,
+      "digestStartMs": 1446507,
+      "digestEndMs": 1447666
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1500534,
+      "sourceEndMs": 1500949,
+      "digestStartMs": 1447666,
+      "digestEndMs": 1448081
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1500949,
+      "sourceEndMs": 1503059,
+      "digestStartMs": 1448081,
+      "digestEndMs": 1450191
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1503059,
+      "sourceEndMs": 1504132,
+      "digestStartMs": 1450191,
+      "digestEndMs": 1450991
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1504132,
+      "sourceEndMs": 1506859,
+      "digestStartMs": 1450991,
+      "digestEndMs": 1453718
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1506859,
+      "sourceEndMs": 1507096,
+      "digestStartMs": 1453718,
+      "digestEndMs": 1453955
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1507096,
+      "sourceEndMs": 1508297,
+      "digestStartMs": 1453955,
+      "digestEndMs": 1455156
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1508297,
+      "sourceEndMs": 1509445,
+      "digestStartMs": 1455156,
+      "digestEndMs": 1455956
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1509445,
+      "sourceEndMs": 1510919,
+      "digestStartMs": 1455956,
+      "digestEndMs": 1457430
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1510919,
+      "sourceEndMs": 1511260,
+      "digestStartMs": 1457430,
+      "digestEndMs": 1457771
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1511260,
+      "sourceEndMs": 1513241,
+      "digestStartMs": 1457771,
+      "digestEndMs": 1459752
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1513241,
+      "sourceEndMs": 1513318,
+      "digestStartMs": 1459752,
+      "digestEndMs": 1459829
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1513318,
+      "sourceEndMs": 1515554,
+      "digestStartMs": 1459829,
+      "digestEndMs": 1462065
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1515554,
+      "sourceEndMs": 1515964,
+      "digestStartMs": 1462065,
+      "digestEndMs": 1462475
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1515964,
+      "sourceEndMs": 1517949,
+      "digestStartMs": 1462475,
+      "digestEndMs": 1464460
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1517949,
+      "sourceEndMs": 1524231,
+      "digestStartMs": 1464460,
+      "digestEndMs": 1465260
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1524231,
+      "sourceEndMs": 1526467,
+      "digestStartMs": 1465260,
+      "digestEndMs": 1467496
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1526467,
+      "sourceEndMs": 1526776,
+      "digestStartMs": 1467496,
+      "digestEndMs": 1467805
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1526776,
+      "sourceEndMs": 1528193,
+      "digestStartMs": 1467805,
+      "digestEndMs": 1469222
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1528193,
+      "sourceEndMs": 1528527,
+      "digestStartMs": 1469222,
+      "digestEndMs": 1469556
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1528527,
+      "sourceEndMs": 1533191,
+      "digestStartMs": 1469556,
+      "digestEndMs": 1474220
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1533191,
+      "sourceEndMs": 1534215,
+      "digestStartMs": 1474220,
+      "digestEndMs": 1475020
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1534215,
+      "sourceEndMs": 1534996,
+      "digestStartMs": 1475020,
+      "digestEndMs": 1475801
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1534996,
+      "sourceEndMs": 1535058,
+      "digestStartMs": 1475801,
+      "digestEndMs": 1475863
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1535058,
+      "sourceEndMs": 1537293,
+      "digestStartMs": 1475863,
+      "digestEndMs": 1478098
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1537293,
+      "sourceEndMs": 1537437,
+      "digestStartMs": 1478098,
+      "digestEndMs": 1478242
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1537437,
+      "sourceEndMs": 1538101,
+      "digestStartMs": 1478242,
+      "digestEndMs": 1478906
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1538101,
+      "sourceEndMs": 1542986,
+      "digestStartMs": 1478906,
+      "digestEndMs": 1479706
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1542986,
+      "sourceEndMs": 1544026,
+      "digestStartMs": 1479706,
+      "digestEndMs": 1480746
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1544026,
+      "sourceEndMs": 1548349,
+      "digestStartMs": 1480746,
+      "digestEndMs": 1481546
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1548349,
+      "sourceEndMs": 1549476,
+      "digestStartMs": 1481546,
+      "digestEndMs": 1482673
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1549476,
+      "sourceEndMs": 1550193,
+      "digestStartMs": 1482673,
+      "digestEndMs": 1483390
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1550193,
+      "sourceEndMs": 1551352,
+      "digestStartMs": 1483390,
+      "digestEndMs": 1484549
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1551352,
+      "sourceEndMs": 1551559,
+      "digestStartMs": 1484549,
+      "digestEndMs": 1484756
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1551559,
+      "sourceEndMs": 1554571,
+      "digestStartMs": 1484756,
+      "digestEndMs": 1487768
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1554571,
+      "sourceEndMs": 1554683,
+      "digestStartMs": 1487768,
+      "digestEndMs": 1487880
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1554683,
+      "sourceEndMs": 1555730,
+      "digestStartMs": 1487880,
+      "digestEndMs": 1488927
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1555730,
+      "sourceEndMs": 1555774,
+      "digestStartMs": 1488927,
+      "digestEndMs": 1488971
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1555774,
+      "sourceEndMs": 1559154,
+      "digestStartMs": 1488971,
+      "digestEndMs": 1492351
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1559154,
+      "sourceEndMs": 1559218,
+      "digestStartMs": 1492351,
+      "digestEndMs": 1492415
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1559218,
+      "sourceEndMs": 1563959,
+      "digestStartMs": 1492415,
+      "digestEndMs": 1497156
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1563959,
+      "sourceEndMs": 1566570,
+      "digestStartMs": 1497156,
+      "digestEndMs": 1497956
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1566570,
+      "sourceEndMs": 1572291,
+      "digestStartMs": 1497956,
+      "digestEndMs": 1503677
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1572291,
+      "sourceEndMs": 1573083,
+      "digestStartMs": 1503677,
+      "digestEndMs": 1504469
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1573083,
+      "sourceEndMs": 1575015,
+      "digestStartMs": 1504469,
+      "digestEndMs": 1506401
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1575015,
+      "sourceEndMs": 1575950,
+      "digestStartMs": 1506401,
+      "digestEndMs": 1507201
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1575950,
+      "sourceEndMs": 1577115,
+      "digestStartMs": 1507201,
+      "digestEndMs": 1508366
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1577115,
+      "sourceEndMs": 1578778,
+      "digestStartMs": 1508366,
+      "digestEndMs": 1509166
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1578778,
+      "sourceEndMs": 1586673,
+      "digestStartMs": 1509166,
+      "digestEndMs": 1517061
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1586673,
+      "sourceEndMs": 1586775,
+      "digestStartMs": 1517061,
+      "digestEndMs": 1517163
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1586775,
+      "sourceEndMs": 1587666,
+      "digestStartMs": 1517163,
+      "digestEndMs": 1518054
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1587666,
+      "sourceEndMs": 1587764,
+      "digestStartMs": 1518054,
+      "digestEndMs": 1518152
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1587764,
+      "sourceEndMs": 1590502,
+      "digestStartMs": 1518152,
+      "digestEndMs": 1520890
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1590502,
+      "sourceEndMs": 1590705,
+      "digestStartMs": 1520890,
+      "digestEndMs": 1521093
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1590705,
+      "sourceEndMs": 1595715,
+      "digestStartMs": 1521093,
+      "digestEndMs": 1526103
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1595715,
+      "sourceEndMs": 1596671,
+      "digestStartMs": 1526103,
+      "digestEndMs": 1526903
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1596671,
+      "sourceEndMs": 1600198,
+      "digestStartMs": 1526903,
+      "digestEndMs": 1530430
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1600198,
+      "sourceEndMs": 1600388,
+      "digestStartMs": 1530430,
+      "digestEndMs": 1530620
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1600388,
+      "sourceEndMs": 1604887,
+      "digestStartMs": 1530620,
+      "digestEndMs": 1535119
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1604887,
+      "sourceEndMs": 1604903,
+      "digestStartMs": 1535119,
+      "digestEndMs": 1535135
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1604903,
+      "sourceEndMs": 1608256,
+      "digestStartMs": 1535135,
+      "digestEndMs": 1538488
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1608256,
+      "sourceEndMs": 1608369,
+      "digestStartMs": 1538488,
+      "digestEndMs": 1538601
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1608369,
+      "sourceEndMs": 1612444,
+      "digestStartMs": 1538601,
+      "digestEndMs": 1542676
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1612444,
+      "sourceEndMs": 1612627,
+      "digestStartMs": 1542676,
+      "digestEndMs": 1542859
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1612627,
+      "sourceEndMs": 1615290,
+      "digestStartMs": 1542859,
+      "digestEndMs": 1545522
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1615290,
+      "sourceEndMs": 1615593,
+      "digestStartMs": 1545522,
+      "digestEndMs": 1545825
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1615593,
+      "sourceEndMs": 1616521,
+      "digestStartMs": 1545825,
+      "digestEndMs": 1546753
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1616521,
+      "sourceEndMs": 1617100,
+      "digestStartMs": 1546753,
+      "digestEndMs": 1547332
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1617100,
+      "sourceEndMs": 1624617,
+      "digestStartMs": 1547332,
+      "digestEndMs": 1554849
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1624617,
+      "sourceEndMs": 1626273,
+      "digestStartMs": 1554849,
+      "digestEndMs": 1555649
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1626273,
+      "sourceEndMs": 1627019,
+      "digestStartMs": 1555649,
+      "digestEndMs": 1556395
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1627019,
+      "sourceEndMs": 1627077,
+      "digestStartMs": 1556395,
+      "digestEndMs": 1556453
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1627077,
+      "sourceEndMs": 1633355,
+      "digestStartMs": 1556453,
+      "digestEndMs": 1562731
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1633355,
+      "sourceEndMs": 1634175,
+      "digestStartMs": 1562731,
+      "digestEndMs": 1563551
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1634175,
+      "sourceEndMs": 1635272,
+      "digestStartMs": 1563551,
+      "digestEndMs": 1564648
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1635272,
+      "sourceEndMs": 1636218,
+      "digestStartMs": 1564648,
+      "digestEndMs": 1565448
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1636218,
+      "sourceEndMs": 1637146,
+      "digestStartMs": 1565448,
+      "digestEndMs": 1566376
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1637146,
+      "sourceEndMs": 1639382,
+      "digestStartMs": 1566376,
+      "digestEndMs": 1567176
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1639382,
+      "sourceEndMs": 1646292,
+      "digestStartMs": 1567176,
+      "digestEndMs": 1574086
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1646292,
+      "sourceEndMs": 1646772,
+      "digestStartMs": 1574086,
+      "digestEndMs": 1574566
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1646772,
+      "sourceEndMs": 1649891,
+      "digestStartMs": 1574566,
+      "digestEndMs": 1577685
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1649891,
+      "sourceEndMs": 1651381,
+      "digestStartMs": 1577685,
+      "digestEndMs": 1578485
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1651381,
+      "sourceEndMs": 1653684,
+      "digestStartMs": 1578485,
+      "digestEndMs": 1580788
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1653684,
+      "sourceEndMs": 1656939,
+      "digestStartMs": 1580788,
+      "digestEndMs": 1581588
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1656939,
+      "sourceEndMs": 1659909,
+      "digestStartMs": 1581588,
+      "digestEndMs": 1584558
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1659909,
+      "sourceEndMs": 1660341,
+      "digestStartMs": 1584558,
+      "digestEndMs": 1584990
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1660341,
+      "sourceEndMs": 1662108,
+      "digestStartMs": 1584990,
+      "digestEndMs": 1586757
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1662108,
+      "sourceEndMs": 1662228,
+      "digestStartMs": 1586757,
+      "digestEndMs": 1586877
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1662228,
+      "sourceEndMs": 1666154,
+      "digestStartMs": 1586877,
+      "digestEndMs": 1590803
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1666154,
+      "sourceEndMs": 1666655,
+      "digestStartMs": 1590803,
+      "digestEndMs": 1591304
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1666655,
+      "sourceEndMs": 1669712,
+      "digestStartMs": 1591304,
+      "digestEndMs": 1594361
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1669712,
+      "sourceEndMs": 1670588,
+      "digestStartMs": 1594361,
+      "digestEndMs": 1595237
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1670588,
+      "sourceEndMs": 1672162,
+      "digestStartMs": 1595237,
+      "digestEndMs": 1596811
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1672162,
+      "sourceEndMs": 1672684,
+      "digestStartMs": 1596811,
+      "digestEndMs": 1597333
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1672684,
+      "sourceEndMs": 1674339,
+      "digestStartMs": 1597333,
+      "digestEndMs": 1598988
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1674339,
+      "sourceEndMs": 1676463,
+      "digestStartMs": 1598988,
+      "digestEndMs": 1599788
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1676463,
+      "sourceEndMs": 1677627,
+      "digestStartMs": 1599788,
+      "digestEndMs": 1600952
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1677627,
+      "sourceEndMs": 1680997,
+      "digestStartMs": 1600952,
+      "digestEndMs": 1601752
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1680997,
+      "sourceEndMs": 1682853,
+      "digestStartMs": 1601752,
+      "digestEndMs": 1603608
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1682853,
+      "sourceEndMs": 1683231,
+      "digestStartMs": 1603608,
+      "digestEndMs": 1603986
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1683231,
+      "sourceEndMs": 1686064,
+      "digestStartMs": 1603986,
+      "digestEndMs": 1606819
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1686064,
+      "sourceEndMs": 1686148,
+      "digestStartMs": 1606819,
+      "digestEndMs": 1606903
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1686148,
+      "sourceEndMs": 1687305,
+      "digestStartMs": 1606903,
+      "digestEndMs": 1608060
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1687305,
+      "sourceEndMs": 1688066,
+      "digestStartMs": 1608060,
+      "digestEndMs": 1608821
+    },
+    {
+      "kind": "audio",
+      "sourceStartMs": 1688066,
+      "sourceEndMs": 1690317,
+      "digestStartMs": 1608821,
+      "digestEndMs": 1611072
+    },
+    {
+      "kind": "silence",
+      "sourceStartMs": 1690317,
+      "sourceEndMs": 1702076,
+      "digestStartMs": 1611072,
+      "digestEndMs": 1611872
+    }
+  ]
+}

@@ -1,0 +1,977 @@
+WEBVTT
+
+1
+00:00:01.040 --> 00:00:02.000
+Chris audio: Because I
+
+2
+00:00:03.027 --> 00:00:11.267
+Chris audio: see what you're saying, but I disagree with some of it. And from the perspective, I feel like you've taken the technical approach, and I feel like I'm pushing more for
+
+3
+00:00:12.867 --> 00:00:16.707
+Chris audio: the ease of usability, not ease of usability, but
+
+4
+00:00:17.827 --> 00:00:22.787
+Chris audio: thinking about more from the user side. And I'd like Sylvia to weigh in because he's connected to the bookstore and what they may want.
+
+5
+00:00:24.964 --> 00:00:33.204
+Chris audio: I think that your suggestions make a lot of sense in terms of just pulling on the hammer on not allowing over-delivered books to be scanned in the first place.
+
+6
+00:00:35.190 --> 00:00:43.830
+Chris audio: And it makes the system more rigorous. But I yeah, I don't know. It just feels a little bit at least my click maybe would help with my click through yesterday. Things
+
+7
+00:00:43.830 --> 00:00:47.990
+Chris audio: felt off when I was clicking through it. And the final point about not
+
+8
+00:00:49.693 --> 00:00:59.853
+Chris audio: That thing not being communicated to the user, even if it shouldn't happen, I think we should still just take a stance of communicating when something goes wrong to the user in
+
+9
+00:00:59.853 --> 00:01:05.293
+Chris audio: some way. It shouldn't just remain unresponsive. So we need to find some way of communicating that to them.
+
+10
+00:01:06.493 --> 00:01:13.451
+Chris audio: Anyway, yeah, I've now pushed that off onto Sylvia to have a look and act as a tiebreaker in terms of the way we should move forward with it. Again, I don't
+
+11
+00:01:13.451 --> 00:01:18.811
+Chris audio: think you should all back the PR. I think this should go in. So this is something we move into next part.
+
+12
+00:01:20.011 --> 00:01:28.011
+Chris audio: And yet I spoke this morning with Silvio about his Go Cassini project. I don't think we it was more just an introduction to what he's been doing and his thoughts on
+
+13
+00:01:28.011 --> 00:01:31.931
+Chris audio: it. Didn't exactly shape a first stage of it.
+
+14
+00:01:32.891 --> 00:01:35.851
+Chris audio: I will try and sew if his the notes I made and uh
+
+15
+00:01:37.122 --> 00:01:48.802
+Chris audio: gape up something that we can discuss further um potentially rope more of you guys into uh into working on it um and that's me over to uh alex
+
+16
+00:01:50.198 --> 00:01:56.358
+Alex audio: Um so I'm in the middle of working on a marketing strategy for the internal tool service.
+
+17
+00:01:57.318 --> 00:02:01.238
+Alex audio: Um I've identified that I think I think when you're starting
+
+18
+00:02:04.683 --> 00:02:05.003
+Alex audio: um
+
+19
+00:02:06.301 --> 00:02:11.421
+Alex audio: Because we've not really done anything yet, I think we need to start kind of far and wide. So
+
+20
+00:02:12.781 --> 00:02:19.421
+Alex audio: trying to generate an approach for Google AdWords, LinkedIn and also Reddit, targeting
+
+21
+00:02:20.447 --> 00:02:23.967
+Alex audio: forums like small business, entrepreneur, these types of things.
+
+22
+00:02:25.251 --> 00:02:36.931
+Alex audio: And then underneath each of those there's articles that need to be generated and kind of paths that go through and keywords to be targeted and all of these different things. I
+
+23
+00:02:36.931 --> 00:02:44.398
+Alex audio: think if you throw some ad budget at these then you can see which ones are performing best and then which ones are turning up the type of leads that you're looking
+
+24
+00:02:44.398 --> 00:02:45.838
+Alex audio: for and then you can work fine from there.
+
+25
+00:02:47.363 --> 00:02:56.803
+Alex audio: So I'll be working on that for the rest of the day. And the other thing I'm going to do today is clean up the Zoom up space for Edible in the
+
+26
+00:02:56.883 --> 00:02:57.203
+Alex audio: park.
+
+27
+00:03:00.244 --> 00:03:03.284
+Alex audio: Yeah, it's just about all over the place, so I'm going to bring some organisation to that.
+
+28
+00:03:04.386 --> 00:03:06.146
+Alex audio: That's it for me, or to Eva.
+
+29
+00:03:07.540 --> 00:03:19.540
+Ivan audio: Uh yeah, I spent essentially all of my time on the uh review on under delivery policy. I wasn't really available uh yesterday in the afternoon. Had just an hour to um
+
+30
+00:03:19.860 --> 00:03:26.020
+Ivan audio: communicate with uh Code Rabbit from from a cafe and uh I have to say I enjoyed that communication.
+
+31
+00:03:27.745 --> 00:03:38.945
+Ivan audio: I did apply a bunch of patches that I suggested. I added two tweaks that I had to do manually. It suggested how to do it, just didn't suggest the commit.
+
+32
+00:03:40.065 --> 00:03:48.145
+Ivan audio: So yeah, I've done those locally. I have to push that and spent some time on this morning on Chris's
+
+33
+00:03:49.105 --> 00:03:49.905
+Ivan audio: review.
+
+34
+00:03:51.073 --> 00:03:51.393
+Ivan audio: And
+
+35
+00:03:52.513 --> 00:04:01.313
+Ivan audio: the feedback to it. I'd like to give you my reasoning now in the meeting about the status.
+
+36
+00:04:02.273 --> 00:04:07.233
+Ivan audio: And yeah, I think I agree that this shouldn't block it.
+
+37
+00:04:08.433 --> 00:04:13.793
+Ivan audio: There's one thing that I'd fix immediately and leave it to do for later, that integrity check.
+
+38
+00:04:15.097 --> 00:04:27.017
+Ivan audio: And then open like two or three additional tickets referencing this conversation for future. Because some stuff is, yeah,
+
+39
+00:04:28.537 --> 00:04:35.337
+Ivan audio: anything that would have to be done, like the bug fixes should be fixed immediately. Those are very minor.
+
+40
+00:04:36.457 --> 00:04:36.937
+Ivan audio: But like,
+
+41
+00:04:37.927 --> 00:04:44.158
+Ivan audio: stuff that we kind of decide on. Like i i if if we bu anyway,
+
+42
+00:04:45.118 --> 00:04:55.758
+Ivan audio: I think the future work should not be applied immediately. It can be applied right after this, but uh be tagged as a separate unit of work. And I'll leave it at
+
+43
+00:04:55.758 --> 00:05:06.679
+Ivan audio: that and I'd like to revisit after status. Um, don't don't please don't merge anything in because there are, I think, one or two small things uh that I'd still have to
+
+44
+00:05:06.679 --> 00:05:11.959
+Ivan audio: look into and uh check immediately so that uh this thing is somewhat complete.
+
+45
+00:05:13.290 --> 00:05:19.690
+Ivan audio: And yeah, as for the testing thing, yeah, it obviously didn't work on that.
+
+46
+00:05:22.330 --> 00:05:32.570
+Ivan audio: One of these suggestions ties into this a bit. But yeah, I'd like to spend the rest of today then to work on those and then s maybe.
+
+47
+00:05:34.938 --> 00:05:42.458
+Ivan audio: Just regarding the plans with airspaces, maybe yeah, tomorrow we can start talking about that.
+
+48
+00:05:44.218 --> 00:05:45.178
+Ivan audio: Over to Marco.
+
+49
+00:05:46.682 --> 00:05:48.362
+chima audio: Yeah, can you hear me? Yeah.
+
+50
+00:05:49.802 --> 00:05:54.922
+chima audio: So I updated my PR about the debug page and also the sync
+
+51
+00:05:56.122 --> 00:06:08.442
+chima audio: the data the db sync improvements. I think that's ready. I added some tests. I merged the current master branch to
+
+52
+00:06:10.747 --> 00:06:23.227
+chima audio: Uh make it uh to resolve uh to solve some merge conflicts. Uh as soon as Silvio review it and merge it, I will start working on uh if there isn't any
+
+53
+00:06:23.387 --> 00:06:29.067
+chima audio: other thing to be done here, I will work on PR one one nine eight
+
+54
+00:06:30.027 --> 00:06:34.347
+chima audio: and uh check that uh uh is fine.
+
+55
+00:06:35.923 --> 00:06:39.123
+chima audio: review it and uh merge it eventually.
+
+56
+00:06:40.323 --> 00:06:42.083
+chima audio: And then uh
+
+57
+00:06:43.683 --> 00:06:51.683
+chima audio: I think I can take something uh uh something else to do. Um maybe we can uh
+
+58
+00:06:52.643 --> 00:06:58.563
+chima audio: um I will ping um Sylvia or Chris in the uh in the afternoon.
+
+59
+00:06:59.897 --> 00:07:04.857
+chima audio: And yeah, that's all. Back to Chris. Now over to Silvio. Sorry.
+
+60
+00:07:06.109 --> 00:07:06.669
+Silvio audio: Right.
+
+61
+00:07:07.629 --> 00:07:20.349
+Silvio audio: I think I did some work with Bibrocco, putting things in shape. Maybe I merge one of the PRs I had yesterday, the one that does the migration as soon as the
+
+62
+00:07:20.349 --> 00:07:23.287
+Silvio audio: sync server starts in case it's needed.
+
+63
+00:07:25.433 --> 00:07:29.353
+Silvio audio: And yeah, I have some progress with GoCassini, which is
+
+64
+00:07:30.372 --> 00:07:31.012
+Silvio audio: Among us.
+
+65
+00:07:33.252 --> 00:07:35.652
+Silvio audio: And we'll see how this recording goes.
+
+66
+00:07:37.252 --> 00:07:37.572
+Silvio audio: I
+
+67
+00:07:38.532 --> 00:07:51.277
+Silvio audio: started thinking about specifically what to propose as a contract for the Discord to Zoolit migration, since that's the typical situation where there's a lot of unknowns and they can't really guarantee
+
+68
+00:07:51.277 --> 00:07:54.557
+Silvio audio: any time frame. So what I can propose is
+
+69
+00:07:57.523 --> 00:08:01.123
+Silvio audio: Check-ins, checkpoints along the way
+
+70
+00:08:02.243 --> 00:08:14.323
+Silvio audio: to meet and assess what has been done. I'm kind of happy with the way that ChatGPT ended up putting it in a nice web page that is
+
+71
+00:08:15.814 --> 00:08:19.894
+Silvio audio: laid out like a landing page with a proposal. I think it's a good
+
+72
+00:08:20.975 --> 00:08:30.255
+Silvio audio: Way to communicate because it surfaces the important information, still keeps the one that is less important there.
+
+73
+00:08:32.015 --> 00:08:38.495
+Silvio audio: I like the I'm pretty happy with that. I should share it with everyone. I only shared it with Chris.
+
+74
+00:08:40.405 --> 00:08:45.925
+Silvio audio: And my plan for today is to look into the two PRs that were mentioned. One about the
+
+75
+00:08:46.885 --> 00:08:54.965
+Silvio audio: under delivered and booked by the supplier, and the other one regarding the debug page. I'll test those.
+
+76
+00:08:55.925 --> 00:08:58.165
+Silvio audio: That's all for me. Back to Chris.
+
+77
+00:08:59.739 --> 00:09:02.219
+Chris audio: Any work related uh comments any?
+
+78
+00:09:03.992 --> 00:09:16.472
+Ivan audio: Uh yeah, w with regard to my response, like the initial context where I said that we've decided to explicitly not support over delivery. We thought about that a lot and when
+
+79
+00:09:16.472 --> 00:09:25.357
+Ivan audio: I started working on this ticket, I think I asked you guys like three times. So we're not supporting over delivery behaviour. So, yeah, just to make that clear, it's not my
+
+80
+00:09:25.357 --> 00:09:31.277
+Ivan audio: decision. I think it's a good decision. But yeah, I'm not pushing for that.
+
+81
+00:09:32.477 --> 00:09:45.597
+Ivan audio: And I explicitly said that it's undefined behavior because, yeah, I just didn't handle it. And what you saw, Chris, was undefined behavior. And I think if we're not supporting it for
+
+82
+00:09:45.597 --> 00:09:59.906
+Ivan audio: now, As I wrote in my response, we should take additional steps to not allow anyone to scan books that don't belong to this reconciliation order that includes unknown
+
+83
+00:09:59.906 --> 00:10:06.546
+Ivan audio: ISBNs and over-delivery of known ISBNs. So if five are ordered, you can scan at most five.
+
+84
+00:10:08.065 --> 00:10:12.145
+Ivan audio: And the thing, the integrity check,
+
+85
+00:10:13.185 --> 00:10:17.985
+Ivan audio: like if there aren't any if there aren't enough customer order lines,
+
+86
+00:10:19.345 --> 00:10:26.065
+Ivan audio: like I kind of borrowed from Rust. Like in Rust, you sometimes need to make
+
+87
+00:10:28.190 --> 00:10:30.097
+Ivan audio: collectively exhaustive
+
+88
+00:10:31.944 --> 00:10:44.584
+Ivan audio: Cases, but some cases you know that will be unreachable. So there's even a special macro called unreachable, which essentially throws an error if someone a runtime error if someone manages to
+
+89
+00:10:44.584 --> 00:10:56.385
+Ivan audio: get there. We agree that since this is customer facing, we should communicate that to customer. But I think this should kind of be captured with some like global error handler. And
+
+90
+00:10:56.385 --> 00:11:07.025
+Ivan audio: potentially telemetry, or not telemetry, but crash litics, letting us know that the unreachable was actually reached. And the third bit is the
+
+91
+00:11:08.305 --> 00:11:13.665
+Ivan audio: fixture builder. And yeah, please give me your thoughts on that.
+
+92
+00:11:15.105 --> 00:11:20.065
+Ivan audio: I tend to get into building these interfaces, and sometimes they're
+
+93
+00:11:21.333 --> 00:11:25.653
+Ivan audio: Unnecessary, like we did with DB and with the end-to-end
+
+94
+00:11:26.613 --> 00:11:33.733
+Ivan audio: testing shit that we now have to get ourselves out of. But I think the fixture builder
+
+95
+00:11:35.333 --> 00:11:44.773
+Ivan audio: addresses problems, the same class of problems that are popping up in like two or three different places. One is writing fixtures for tests.
+
+96
+00:11:46.240 --> 00:11:51.040
+Ivan audio: And ensuring the consistency between them. And the other one is writing
+
+97
+00:11:52.640 --> 00:12:06.640
+Ivan audio: the debug data, which is inconsistent. And that's why the runtime integrity check was failing, because our debug data is not logically consistent. And the third one is kind of touches on
+
+98
+00:12:06.640 --> 00:12:16.978
+Ivan audio: the fixtures for end-to-end, but like if we're doing storybook testing, we also want to have like a quick way of setting up state, quick and standardized way of setting up state,
+
+99
+00:12:17.058 --> 00:12:19.378
+Ivan audio: which I think will also be easier for agents.
+
+100
+00:12:20.498 --> 00:12:21.858
+Ivan audio: So yeah, I uh
+
+101
+00:12:23.132 --> 00:12:34.762
+Ivan audio: I came up with this kind of API that uh that I'd like to implement. And it's detailed over there. I think it should be extracted as a separate ticket. But yeah,
+
+102
+00:12:35.962 --> 00:12:39.882
+Ivan audio: give me your thoughts on that. And this is the bit, yeah, that touches on
+
+103
+00:12:41.642 --> 00:12:43.642
+Ivan audio: my effort to
+
+104
+00:12:45.882 --> 00:12:56.997
+Ivan audio: handle t to manage tests in a structured manner, but also once those behaviors get written into tests. to also have a standard way of writing those tests.
+
+105
+00:12:59.120 --> 00:13:05.280
+Silvio audio: Can I ask you to point it at the fixture builder because I assumed it was in PR 1201?
+
+106
+00:13:06.694 --> 00:13:12.934
+Ivan audio: Uh it's the comment it's the comment on Chris it's the latest one comment in the 1201 I think yeah.
+
+107
+00:13:13.953 --> 00:13:14.593
+Silvio audio: I'll read that.
+
+108
+00:13:15.269 --> 00:13:26.629
+Ivan audio: And somewhere near the bottom, I think. It's not the last one, but it's next to the last. I uh I tried to add those vertic uh horizontal lines to split uh
+
+109
+00:13:26.949 --> 00:13:31.269
+Ivan audio: sections of the test text. Yeah, you you can see them. They're not very helpful. But
+
+110
+00:13:34.386 --> 00:13:38.786
+Chris audio: Yeah, just to respond to the first partio, I think it's possible to not support over-delivery.
+
+111
+00:13:41.454 --> 00:13:43.934
+Chris audio: While still letting them do things
+
+112
+00:13:44.894 --> 00:13:46.974
+Chris audio: and just do nothing with it afterwards. I mean,
+
+113
+00:13:48.894 --> 00:13:59.134
+Chris audio: in my mind, not supporting over delivery is figuring out the cases after if we need to do anything with the books that are over delivered. So right now we could just
+
+114
+00:13:59.134 --> 00:14:03.694
+Chris audio: say to them, nothing will happen to these books that you've scanned into this attempt at reconciliation.
+
+115
+00:14:05.718 --> 00:14:10.278
+Chris audio: And it being it not really, you know, continuing on into the state of the
+
+116
+00:14:11.718 --> 00:14:19.558
+Chris audio: whatever afterwards. I mean, I guess the thing that we could do is potentially, if they have scanned them in and they would like to commit those books into stock, we would
+
+117
+00:14:19.558 --> 00:14:26.038
+Chris audio: create potentially they would be included in stock via some new end note. I mean, that's the only.
+
+118
+00:14:27.159 --> 00:14:33.159
+Chris audio: thing that i in my head i see as like us handling uh uh over delivery um
+
+119
+00:14:34.359 --> 00:14:44.839
+Chris audio: but the that point where they're doing work uh i feel like there's a there is a bit of a gray zone there where like we can not support it uh but
+
+120
+00:14:44.839 --> 00:14:47.319
+Chris audio: still let them see the stuff that they're doing
+
+121
+00:14:48.529 --> 00:14:55.729
+Chris audio: It's just that nothing will happen afterwards. Or we can take your approach of just like, you know, you can't scan this because it's not not in this order. But then potentially
+
+122
+00:14:55.809 --> 00:15:02.802
+Chris audio: we get to a point where, you know, maybe it is in that order. Maybe it's something that they, you know, and they just want to scan it.
+
+123
+00:15:04.229 --> 00:15:04.629
+Chris audio: I don't know.
+
+124
+00:15:06.069 --> 00:15:14.389
+Chris audio: I don't know what is like for me, yesterday's scanning, like it's undefined behavior, but like I'm scanning and I'm seeing nothing popping up. And it was also kind of it was
+
+125
+00:15:14.469 --> 00:15:16.069
+Chris audio: a bit confusing because it was incrementing the
+
+126
+00:15:17.029 --> 00:15:23.669
+Chris audio: total delivered count. So I'm seeing that go up, but I'm not seeing any books bros appear. So then I was getting a bit confused.
+
+127
+00:15:26.087 --> 00:15:33.047
+Chris audio: Yeah, I think it could be vastly improved just by pulling down the shutter and being like, No, you can't scan this book in. And
+
+128
+00:15:34.327 --> 00:15:43.207
+Chris audio: everything you've said basically has a knock effect, right? I can see the benefit of that. And it would probably have made a huge difference to my experience yesterday of clicking through
+
+129
+00:15:43.207 --> 00:15:45.847
+Chris audio: the flow. I think it just depends
+
+130
+00:15:47.047 --> 00:15:48.487
+Chris audio: what stance we want to take.
+
+131
+00:15:50.240 --> 00:15:57.520
+Chris audio: you know if we want to allow people to just just work and see and and um and not be frustrated by saying no you can't do this no you can't do
+
+132
+00:15:57.520 --> 00:15:58.160
+Chris audio: this kind of thing
+
+133
+00:16:00.574 --> 00:16:06.094
+Ivan audio: I mean, like, you know, what you experienced was the definition of undefined behavior.
+
+134
+00:16:07.294 --> 00:16:07.534
+Ivan audio: But
+
+135
+00:16:09.134 --> 00:16:18.500
+Ivan audio: I think iterative approach locks it down. They scan a book, ah, drag in. You can't do that. You know what you want to do with that book is up to you.
+
+136
+00:16:18.820 --> 00:16:23.540
+Ivan audio: You can add it manually to an inbound note, add it to stock. You can
+
+137
+00:16:24.500 --> 00:16:37.620
+Ivan audio: maybe update the supplier order or whatever, create a new one, handle it in any way you see fit for now. As for the following steps, we already handle this.
+
+138
+00:16:39.208 --> 00:16:41.288
+Ivan audio: By but like
+
+139
+00:16:42.468 --> 00:16:49.188
+Ivan audio: it's not trivial. As you said, like there are there are multiple things they can do with that book. And if they see it,
+
+140
+00:16:50.228 --> 00:17:01.910
+Ivan audio: like if we show it in an additional section, like unordered stuff over delivery, we used to have that. But if we want to do that, it's an additional work. Whereas just
+
+141
+00:17:01.910 --> 00:17:15.510
+Ivan audio: adding a a dialogue, it's somewhat additional work, but not too much. So they get immediate feedback and they may or may not notice the under delivery section. And then we kind
+
+142
+00:17:15.510 --> 00:17:28.035
+Ivan audio: of just delay the check to finalization. So the same check, the same pop-up that would happen, we would also need to implement a pop-up. Before finalization. So it gets much more
+
+143
+00:17:28.035 --> 00:17:35.395
+Ivan audio: complex based on an assumption of what they might want. What we had earlier is we had
+
+144
+00:17:37.795 --> 00:17:39.395
+Ivan audio: like a short circuit
+
+145
+00:17:42.091 --> 00:17:43.691
+Ivan audio: fast delivery, whatever.
+
+146
+00:17:44.651 --> 00:17:58.613
+Ivan audio: So if there is a customer order line, So say you have five books in a supplier order, but there are collectively seven customer order lines for that book, and you get
+
+147
+00:17:58.613 --> 00:18:08.590
+Ivan audio: six delivered. The five will be filled as they would, but the sixth one will be yeah, filled early, that's what I called it. So the sixth one, even though it's not
+
+148
+00:18:08.590 --> 00:18:14.190
+Ivan audio: placed with the supplier, there's a customer order for that book. So no need to add it to stock. You just
+
+149
+00:18:15.150 --> 00:18:27.275
+Ivan audio: match it with the customer. And we had logic for that. I think that logic is still kind of in. We just remove the integrity check and we Can kind of get
+
+150
+00:18:27.275 --> 00:18:34.555
+Ivan audio: back to that. But there's also case number two. So, you know, already two cases, and maybe there's a third case.
+
+151
+00:18:36.543 --> 00:18:44.463
+Ivan audio: If we want to go down any of those routes, like we can combine those, like we can make a decision to fill early the existing
+
+152
+00:18:45.663 --> 00:18:52.543
+Ivan audio: customer order lines, and then if there aren't any additional existing customer order lines, then add it to stock.
+
+153
+00:18:53.688 --> 00:19:04.488
+Ivan audio: again, th this is a decision and it's an additional unit of work. And I think blocking it altogether for now until we figure that out is the quick and easy thing
+
+154
+00:19:04.488 --> 00:19:07.048
+Ivan audio: we can do and have it feel like a complete product.
+
+155
+00:19:08.238 --> 00:19:16.158
+Chris audio: Okay, sorry I guess we probably shouldn't have got into that here so um and left it for maybe Sylvia to and I to talk about afterwards uh give him a night
+
+156
+00:19:16.238 --> 00:19:18.078
+Chris audio: to talk about afterwards but um
+
+157
+00:19:19.358 --> 00:19:21.278
+Chris audio: any other small digressions?
+
+158
+00:19:22.330 --> 00:19:23.290
+Chris audio: or work-related comments.
+
+159
+00:19:24.499 --> 00:19:24.820
+Chris audio: I think
+
+160
+00:19:24.820 --> 00:19:25.620
+Ivan audio: I have one
+
+161
+00:19:26.820 --> 00:19:29.220
+Ivan audio: geopolitics digression.
+
+162
+00:19:31.439 --> 00:19:39.355
+Ivan audio: Do you guys know an interesting fact? Like, I had a conversation with Dora and with another friend of mine of how things are going to shit, how you know, the war
+
+163
+00:19:39.355 --> 00:19:52.869
+Ivan audio: is brewing, and how AI will make the elites completely in control of all of us. And like there are. Two things throughout history that we failed to appreciate is that there
+
+164
+00:19:52.869 --> 00:20:02.789
+Ivan audio: was never a time where there was no war anywhere in the world. That's a conversation I had with Dora and Dora had with Chad GPT. So, you know, throughout history, maybe
+
+165
+00:20:03.109 --> 00:20:10.149
+Ivan audio: the only time there was no war anywhere in the world was when the tribes were so far apart that they didn't, you know.
+
+166
+00:20:11.320 --> 00:20:12.680
+Ivan audio: attack each other.
+
+167
+00:20:14.120 --> 00:20:25.080
+Ivan audio: And we've enjoyed for the past like since World War Two we've enjoyed somewhat peaceful time. That was the Cold War and Vietnam and all that. But
+
+168
+00:20:26.360 --> 00:20:28.520
+Ivan audio: so yeah, that. And
+
+169
+00:20:29.640 --> 00:20:43.105
+Ivan audio: economically, it's the best time since the beginning of time, still. So there's a growing gap between the rich and the poor and the disappearing middle class and all that. But you
+
+170
+00:20:43.105 --> 00:20:45.345
+Ivan audio: know, go back a hundred years to
+
+171
+00:20:46.625 --> 00:20:48.465
+Ivan audio: we still had monarchies and
+
+172
+00:20:50.065 --> 00:20:51.585
+Ivan audio: very contained
+
+173
+00:20:53.950 --> 00:20:55.790
+Ivan audio: something, you know, so some better
+
+174
+00:20:57.550 --> 00:21:03.733
+Ivan audio: some places had it better, like maybe Europe and the US, but the rest of the world was much more shit. So yeah, just a positive outlook on a situation.
+
+175
+00:21:03.733 --> 00:21:05.333
+Chris audio: I'd like to I'd like to
+
+176
+00:21:06.293 --> 00:21:17.573
+Chris audio: I'd like to challenge that. I I think that's a very Eurocentric idea about about the uh how progressed w our society is in in the grand scheme of things. Uh I've
+
+177
+00:21:17.733 --> 00:21:27.573
+Chris audio: heard that the at least two utter points, I forget what the second one is, but the first is uh the Qing dynasty, apparently the quality of life and the um
+
+178
+00:21:28.765 --> 00:21:29.433
+Chris audio: Quality of life and wealth
+
+179
+00:21:29.433 --> 00:21:29.513
+Ivan audio: Okay.
+
+180
+00:21:32.685 --> 00:21:35.005
+Chris audio: that generally the people had
+
+181
+00:21:36.285 --> 00:21:45.565
+Chris audio: could rival what we had what we have today. We're not as technologically advanced, but they may not have been this technologically advanced, but they had apparently a better quality of living
+
+182
+00:21:45.565 --> 00:21:57.371
+Chris audio: and a better spread of wealth than we do today. So I don't necessarily think that. Yes, we're more technologically advanced than it has ever been, but I think it's a little
+
+183
+00:21:57.371 --> 00:22:03.851
+Chris audio: bit questionable whether or not our quality of life is actually as good as it could be.
+
+184
+00:22:06.138 --> 00:22:12.458
+Chris audio: Given that we look on older times and say, ah, they probably had it really shipped back then because they didn't have a.
+
+185
+00:22:13.482 --> 00:22:23.879
+Chris audio: a running toilet in their house or whatever, you know, but actually they they probably had to work less and uh had better quality food and and whatever. So um I would
+
+186
+00:22:23.959 --> 00:22:24.519
+Chris audio: I would challenge it.
+
+187
+00:22:24.558 --> 00:22:25.118
+Ivan audio: I uh
+
+188
+00:22:26.158 --> 00:22:30.878
+Ivan audio: like you know to to give you know Tulsi the ball back um
+
+189
+00:22:32.125 --> 00:22:42.445
+Ivan audio: what was happening in Europe at that time I'm talking uh the world in general because maybe America in the 70s was the best time you know with the when boomers could
+
+190
+00:22:42.685 --> 00:22:48.445
+Ivan audio: buy house houses for cash after saving up for two years of working as a plumber
+
+191
+00:22:49.890 --> 00:22:50.439
+Ivan audio: But like I'm talking like on average, like across the world, every snapshot in time, not a particular contained civilization. As for the quality of life, I agree with you completely. Who's
+
+192
+00:22:50.439 --> 00:22:50.839
+Chris audio: Quote.
+
+193
+00:23:03.010 --> 00:23:14.752
+Ivan audio: to say that locking our eyes to the screen, we have it better than people dying from the next cold, but still having the time of their lives? uh you know out
+
+194
+00:23:14.752 --> 00:23:16.112
+Ivan audio: in the sun and and all that.
+
+195
+00:23:18.950 --> 00:23:23.590
+Ivan audio: Just as a global outlook and a snapshot in any bit of time.
+
+196
+00:23:24.974 --> 00:23:28.014
+Silvio audio: I'm just very grateful I have ventil anesthesia.
+
+197
+00:23:28.950 --> 00:23:29.030
+Ivan audio: Yeah.
+
+198
+00:23:31.899 --> 00:23:34.299
+Silvio audio: Would have to be born before that.
+
+199
+00:23:36.739 --> 00:23:36.979
+Ivan audio: Yeah.
+
+200
+00:23:37.900 --> 00:23:39.500
+Ivan audio: Gives me headaches, but
+
+201
+00:23:40.345 --> 00:23:40.825
+Silvio audio: Um
+
+202
+00:23:41.260 --> 00:23:42.300
+Ivan audio: it's better.
+
+203
+00:23:42.345 --> 00:23:42.585
+Silvio audio: yeah
+
+204
+00:23:43.705 --> 00:23:43.865
+Silvio audio: probably.
+
+205
+00:23:45.559 --> 00:23:45.639
+Chris audio: Yeah.
+
+206
+00:23:47.339 --> 00:23:50.139
+chima audio: Have you ever watched Fallout the series?
+
+207
+00:23:51.350 --> 00:23:51.910
+Silvio audio: on my list.
+
+208
+00:23:53.307 --> 00:23:53.627
+chima audio: I
+
+209
+00:23:54.667 --> 00:24:09.067
+chima audio: do watch it. And there are those vaults where people live in a post-apocalyptic world. And those vaults are completely engineered for wellness and people's quality of life. But
+
+210
+00:24:09.067 --> 00:24:12.714
+chima audio: that's what, I mean, a corporate design.
+
+211
+00:24:16.356 --> 00:24:17.396
+chima audio: Way of living.
+
+212
+00:24:18.356 --> 00:24:22.276
+chima audio: I think that, I mean, give it a watch. It's
+
+213
+00:24:23.316 --> 00:24:24.196
+chima audio: interesting, I think.
+
+214
+00:24:25.500 --> 00:24:28.540
+chima audio: And also the motto of the of the
+
+215
+00:24:29.500 --> 00:24:33.100
+chima audio: the series is war never changes so
+
+216
+00:24:35.996 --> 00:24:38.476
+chima audio: if you were asking this even
+
+217
+00:24:39.946 --> 00:24:40.586
+Ivan audio: Makes sense, yeah.
+
+218
+00:24:42.266 --> 00:24:45.441
+Chris audio: Okay. Grad time limit. I'm just going to give you
+
+219
+00:24:45.441 --> 00:24:47.601
+chima audio: I have just one question. Sorry for
+
+220
+00:24:50.001 --> 00:24:57.041
+chima audio: having brought this up earlier. It's not clear to me what we decided about the Berlin road trip.
+
+221
+00:24:58.436 --> 00:25:06.910
+Chris audio: The dates for the working week will be from the 18th to the 22nd of May, from the Monday to the Friday.
+
+222
+00:25:09.406 --> 00:25:17.246
+Chris audio: I need to still, I have not done it. I will do it before the end of the week. Make a plan about how we're handling expense trip expenses.
+
+223
+00:25:18.446 --> 00:25:25.246
+Chris audio: On your plates right now, I would say have a think about when you would want to fly in and out.
+
+224
+00:25:26.930 --> 00:25:30.210
+Chris audio: So if you would arrive the weekend before, if you would stay the weekend after.
+
+225
+00:25:31.260 --> 00:25:39.900
+Chris audio: Or if you want to do like Cynthia and I and just stay for a whole month in Berlin, I don't know. I mean, obviously we're not paying for accommodation for the
+
+226
+00:25:39.900 --> 00:25:45.980
+Chris audio: full month, but like, you know, we will cover the flights and the accommodation for that work week.
+
+227
+00:25:47.580 --> 00:25:54.700
+Chris audio: So if people can get an idea of when they would maybe travel, then I will bring it together with how we're handling the expenses for them.
+
+228
+00:25:56.529 --> 00:26:02.529
+chima audio: I I just wanted to know if we reached the consensus uh on the dates of eighteen to twenty two.
+
+229
+00:26:03.711 --> 00:26:04.511
+Chris audio: Yep, that was me.
+
+230
+00:26:05.688 --> 00:26:06.248
+chima audio: Okay, thank you.
+
+231
+00:26:07.496 --> 00:26:08.139
+Chris audio: Um actually can I check with Silver?
+
+232
+00:26:08.139 --> 00:26:14.726
+Ivan audio: Yeah, we'll write that up in the uh in the comment on the road trip, like the around the departure.
+
+233
+00:26:14.726 --> 00:26:15.446
+Chris audio: Yes, I'll add it here.
+
+234
+00:26:18.645 --> 00:26:20.565
+Chris audio: Uh yeah, add that add that into the thing, yes.
+
+235
+00:26:22.228 --> 00:26:28.788
+Chris audio: Sylvia, can I chat with you for two seconds more after the call? I just said something I realized I wanted to. And I'm just going to leave everyone here of this
+
+236
+00:26:29.108 --> 00:26:34.628
+Chris audio: picture of the two dogs, Nick, oh, and Cynthia, but also the two dogs just hanging out.
+
+237
+00:26:35.748 --> 00:26:36.708
+Chris audio: Look at this little pa.
+
+238
+00:26:38.133 --> 00:26:38.148
+Silvio audio: Mm-hmm.
+
+239
+00:26:38.148 --> 00:26:38.868
+Chris audio: He's giving her a hug.
+
+240
+00:26:40.188 --> 00:26:40.668
+Silvio audio: Record.
+
+241
+00:26:42.392 --> 00:26:46.552
+Chris audio: Okay, meaning wind. Uh speaking responses tomorrow. Oh.
+
+242
+00:26:47.063 --> 00:26:47.943
+Silvio audio: Meet in the other room.
+
+243
+00:26:48.981 --> 00:26:50.031
+Chris audio: Oh other room, sounds good. Okay, bye, Kasini.
+
+244
+00:26:50.031 --> 00:26:50.111
+chima audio: I

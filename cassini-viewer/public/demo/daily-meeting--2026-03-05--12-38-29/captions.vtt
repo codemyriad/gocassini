@@ -1,0 +1,557 @@
+WEBVTT
+
+1
+00:00:00.960 --> 00:00:13.680
+Ivan: storybook add-on for vtest and i need to need it to run rush update once i run rush update uh what happen is i get these cryptic errors uh anyway to summarize
+
+2
+00:00:13.840 --> 00:00:23.932
+Ivan: uh i fixed that but i've been wrestling with that yesterday you can see the latest uh yellow merged pr that includes the fix to to this thing And that potentially unblocks
+
+3
+00:00:23.932 --> 00:00:32.812
+Ivan: also Svelte 10 migration from 9 to 10. I thought it was scoped to version 10, but apparently it just kept popping up.
+
+4
+00:00:33.772 --> 00:00:38.652
+Ivan: Anyway, I hope the issue is fixed now. This morning I worked on wrapping up the
+
+5
+00:00:40.652 --> 00:00:45.532
+Ivan: proposal for behavior-driven testing and whatnot. I'm quite close to that.
+
+6
+00:00:46.637 --> 00:00:57.837
+Ivan: But I still need to I've just now merged the fix, so I need to reconcile and rearrange the stuff for component testing that I need to push. So that will take
+
+7
+00:00:57.837 --> 00:01:05.037
+Ivan: me some 20 minutes, half an hour to an hour maybe to wrap up the other thing for the reconciliation.
+
+8
+00:01:06.180 --> 00:01:15.460
+Ivan: And then afterwards wrap up the stuff for the behavior driven testing proposal. So, yeah, Chris,
+
+9
+00:01:16.980 --> 00:01:23.940
+Ivan: I think having the discussion later in the afternoon about aerospaces also works for me.
+
+10
+00:01:25.060 --> 00:01:27.860
+Ivan: On that note, I think if if
+
+11
+00:01:29.305 --> 00:01:33.465
+Ivan: There's a lot of context to digest and get to,
+
+12
+00:01:34.585 --> 00:01:48.505
+Ivan: and we have a limited amount of time. One thing definitely helps that maybe we tackle it immediately, the exploratory bit, so that you give me the context and some references, resources,
+
+13
+00:01:48.665 --> 00:01:56.035
+Ivan: whatever, so that I can think about it whilst you know walking down the street rather than whilst implementing something
+
+14
+00:01:56.035 --> 00:01:56.115
+Silvio: Yeah.
+
+15
+00:01:58.206 --> 00:01:59.646
+Ivan: at my computer.
+
+16
+00:02:01.406 --> 00:02:13.246
+Ivan: And I also if it's a very limited amount of time, like it would be like if we spit it half and half, we get like 15 hours to twenty hours each.
+
+17
+00:02:13.910 --> 00:02:23.670
+Ivan: I don't know the scope, but if you think this context transfer and communicating back and forth would be a bottleneck, maybe it would make sense if you just do it since
+
+18
+00:02:23.670 --> 00:02:37.774
+Ivan: you've already been doing it. Like I'd like to do something new. uh a bit sick of uh constantly debugging stuff failing on a rather complex monorepo with sub modules and not
+
+19
+00:02:37.774 --> 00:02:50.654
+Ivan: that well maintained dependencies and and all that. But on the other hand, I mean, if uh if you know, I I d I don't want to um impede on um you
+
+20
+00:02:50.654 --> 00:02:52.494
+Ivan: know uh scoped progress.
+
+21
+00:02:53.755 --> 00:03:01.435
+Ivan: But then again, I I welcome the challenge as well. So yeah, uh whatever whatever you decide on that. Um and yeah, over
+
+22
+00:03:02.395 --> 00:03:03.275
+Ivan: over to Surya.
+
+23
+00:03:05.110 --> 00:03:07.750
+Silvio: Yeah, actually I don't have much report because
+
+24
+00:03:08.710 --> 00:03:20.870
+Silvio: yeah, yesterday afternoon I was busy with Mattia and this morning there was the beta breakfast that I reported on and I was distracted talking in mid space with person so I
+
+25
+00:03:20.870 --> 00:03:23.990
+Silvio: forgot about the meeting. I missed the meeting and yeah, I am Sylvia.
+
+26
+00:03:26.070 --> 00:03:27.110
+Silvio: That was my report.
+
+27
+00:03:28.788 --> 00:03:31.748
+Chris: Uh okay. Any uh work with these comments?
+
+28
+00:03:32.960 --> 00:03:43.360
+Chris: Um just to say that I think it's probably worthwhile factoring in extra time for transferring context to you. So if we go over by an extra five or so hours of
+
+29
+00:03:43.360 --> 00:03:47.120
+Chris: just me you know writing next to you, I don't think it's that complex.
+
+30
+00:03:48.164 --> 00:03:53.924
+Chris: I think I can show you the things we've done, and you will get up to speed if we didn't have what we've already done.
+
+31
+00:03:55.064 --> 00:04:02.504
+Chris: To show you, then I think it would be a bit harder to introduce you to things, but I think there's enough visually for you to be able to grock it pretty
+
+32
+00:04:02.504 --> 00:04:03.170
+Chris: quickly. So
+
+33
+00:04:05.052 --> 00:04:08.012
+Chris: it's just more, yeah. Anyway, we can talk later today.
+
+34
+00:04:09.372 --> 00:04:09.423
+Chris: Ping me whenever you have until about
+
+35
+00:04:09.423 --> 00:04:09.503
+Ivan: Okay.
+
+36
+00:04:13.212 --> 00:04:14.732
+Chris: 5 p.m. my time. So
+
+37
+00:04:15.772 --> 00:04:18.172
+Chris: I can talk latest from 5 p.m. my time to 6 p.m.
+
+38
+00:04:19.344 --> 00:04:21.184
+Chris: Yeah, which is, I think, late as 6 p.m. your time.
+
+39
+00:04:22.855 --> 00:04:23.895
+Ivan: Uh that worked.
+
+40
+00:04:25.069 --> 00:04:34.669
+Ivan: But I I mean also we can do this asynchronously. I mean I don't have to wrap this up before the conversation so I think I'll take a an hour long break
+
+41
+00:04:34.829 --> 00:04:43.917
+Ivan: and after that we we can still meet. I I guess it depends on on on you getting it ready. So yeah whenever you're ready just just bring me and I'll contextual.
+
+42
+00:04:43.917 --> 00:04:51.597
+Chris: I think there's probably two parts. One is just introducing you to the stuff and showing you the stuff. Second thing is probably then preparing.
+
+43
+00:04:53.072 --> 00:05:01.723
+Chris: And I'd also like to pass that plan by Stilvio and Alex when we're after we've bought it through, because I think Alex might need to weigh in on design here or
+
+44
+00:05:01.723 --> 00:05:03.599
+Chris: we might need to get bigger makeup involved to just prototype something for us. And I think Silvio could also help just cut through the wrap and
+
+45
+00:05:03.599 --> 00:05:03.679
+Ivan: Uh
+
+46
+00:05:10.805 --> 00:05:10.885
+Ivan: Okay.
+
+47
+00:05:11.003 --> 00:05:13.563
+Chris: maybe help us trim off some of the things that we don't need here.
+
+48
+00:05:14.843 --> 00:05:19.563
+Chris: I'm just a bit worried about it potentially involves pulling from two different sources
+
+49
+00:05:20.683 --> 00:05:22.923
+Chris: and the second source is bank feeds.
+
+50
+00:05:23.963 --> 00:05:29.243
+Chris: Just I don't really want us to get involved in that, but I think it's where we're potentially adding the most value.
+
+51
+00:05:30.423 --> 00:05:30.903
+Chris: So there you go.
+
+52
+00:05:31.828 --> 00:05:38.948
+Chris: I think if we just lay out the picture and try and get a proposal together, we can share it with other people and help sound check whether or not it's
+
+53
+00:05:40.109 --> 00:05:40.749
+Chris: reasonable in that.
+
+54
+00:05:41.799 --> 00:05:42.679
+Ivan: Yeah, mazes.
+
+55
+00:05:43.400 --> 00:05:47.800
+Chris: Yeah, Soviet, I don't know if you saw my question too. Did they give you an idea of what kind of people they're working with?
+
+56
+00:05:49.083 --> 00:06:01.403
+Silvio: Yeah, I was about to just say now, I tried to ask basically the question I asked was if a small business with 20 employees that needs help maintaining their next cloud
+
+57
+00:06:01.403 --> 00:06:06.443
+Silvio: instance is a good fit for what they do. And they basically said yes, it's a perfect fit.
+
+58
+00:06:07.403 --> 00:06:10.603
+Silvio: So small to medium businesses, I think, is their target.
+
+59
+00:06:12.203 --> 00:06:12.843
+Silvio: And they...
+
+60
+00:06:14.079 --> 00:06:22.879
+Silvio: With an extra example, they also said, yeah, what we can provide to these kinds of companies also the expertise to let them know what's out there and what they might need
+
+61
+00:06:22.879 --> 00:06:25.439
+Silvio: that they might not even know that is out there.
+
+62
+00:06:27.441 --> 00:06:27.681
+Silvio: Yeah,
+
+63
+00:06:28.182 --> 00:06:28.262
+Ivan: Yeah.
+
+64
+00:06:29.281 --> 00:06:38.081
+Silvio: as I said, they have a lot of experience with these open source. I really like that. And I think what I will do tomorrow, I have this session with a person
+
+65
+00:06:38.081 --> 00:06:49.921
+Silvio: who booked to know more about CRM, open source, self-hostable CRM solutions. And I think I will put it to these guys to say: look, if you go to them and have
+
+66
+00:06:49.921 --> 00:06:51.521
+Silvio: a talk, they probably can.
+
+67
+00:06:53.368 --> 00:06:54.968
+Silvio: Consult you, they can
+
+68
+00:06:55.928 --> 00:07:00.408
+Silvio: give you suggestions, and they can also take the job. And
+
+69
+00:07:01.448 --> 00:07:05.195
+Silvio: it's kind of good. I have one thing that I
+
+70
+00:07:06.195 --> 00:07:09.315
+Silvio: thought that basically they said, you know.
+
+71
+00:07:10.577 --> 00:07:15.697
+Silvio: My mantra is: I want to be paid by the hour because that's honest, that's how much I'm paid.
+
+72
+00:07:16.897 --> 00:07:26.177
+Silvio: And we're on the same team, me and the customer. Both want to get a solution to a solution as fast as possible. But then he said, Well, in this case, when
+
+73
+00:07:26.177 --> 00:07:27.617
+Silvio: you're in firefighting mode,
+
+74
+00:07:28.773 --> 00:07:38.373
+Silvio: Like the likenesses of fires. So, if you're a firefighter, it gets paid when they put out every fire. You like the fact that every week there's a fire. You don't want
+
+75
+00:07:38.373 --> 00:07:50.133
+Silvio: that to stop because that's your cash flow going on. So, the incentives are wrong. So, basically, I realize that what I propose is doable and makes sense only if there is
+
+76
+00:07:50.133 --> 00:07:53.962
+Silvio: a strong trust. That I'm not doing that.
+
+77
+00:07:58.073 --> 00:07:58.153
+Silvio: Uh
+
+78
+00:07:59.929 --> 00:08:09.369
+Chris: Um, your comments about bouncing off this guy tomorrow to these other guys. Do you not feel like we've obviously we're already positioning ourselves to be able to do something similar to
+
+79
+00:08:09.369 --> 00:08:09.529
+Chris: them?
+
+80
+00:08:10.931 --> 00:08:16.291
+Silvio: But we don't have any CRM expertise. So we've always at least we know Zulip. We we
+
+81
+00:08:17.411 --> 00:08:21.331
+Silvio: we've been using it with with CRM I would be completely blind.
+
+82
+00:08:22.748 --> 00:08:28.428
+Chris: We could factor that in and do some free exploratory work for this guy and get some exposure to it.
+
+83
+00:08:29.634 --> 00:08:31.714
+Silvio: I would expect that to be more work than
+
+84
+00:08:33.394 --> 00:08:36.514
+Silvio: I have this feeling, so I can't really justify it, but that's why.
+
+85
+00:08:37.598 --> 00:08:39.487
+Chris: I think it's interesting though. I mean, we were kind of with LVC now, we're kind of positioning ourselves in a similar way to these guys. And I feel like it's it's
+
+86
+00:08:39.487 --> 00:08:39.567
+Ivan: Yeah.
+
+87
+00:08:46.134 --> 00:08:55.290
+Chris: a good signal that they're have a they're not offering anything else. This is what they do. It's probably a good signal that there's some type of uh opportunity here that we
+
+88
+00:08:55.290 --> 00:08:58.010
+Chris: should maybe also push as a as a service offer.
+
+89
+00:08:59.319 --> 00:09:11.340
+Silvio: Yeah, by the way, it was also interesting that the presenting guy said that they have all their services hosted on NetCap. If I understand correctly, they own a physical server. Co-located
+
+90
+00:09:11.340 --> 00:09:22.380
+Silvio: at NetCap and they install all their client instances there. So this allows them to cut coast quite a lot, I guess, because it sounds like a very sweet spot of coast.
+
+91
+00:09:23.820 --> 00:09:32.300
+Silvio: And then another guy approached him basically saying from hive.de h y.de
+
+92
+00:09:33.260 --> 00:09:35.020
+Silvio: and basically says we do
+
+93
+00:09:36.647 --> 00:09:47.687
+Silvio: We're a small AWS. We're like AWS, but smaller. And we also said many of our employees work for AWS, so we have a lot of expertise in the area. And they
+
+94
+00:09:47.687 --> 00:09:52.327
+Silvio: provide VMs and services like databases and so on. And also,
+
+95
+00:09:53.527 --> 00:09:56.247
+Silvio: yeah, a bit more than AWS is in the managed.
+
+96
+00:09:58.123 --> 00:10:00.843
+Chris: Any of your comments? Any not work related to their questions?
+
+97
+00:10:02.115 --> 00:10:11.475
+Silvio: Maybe I have one digression about Cassini because it's recording now. I think I got to a point where the recordings are okay, but
+
+98
+00:10:12.595 --> 00:10:26.037
+Silvio: the format I chose for the recording, which is a single-file, multi-track, multi-video, multi-audio, because to me it sounds like a good fit. But in the end, it's hard to. Test the
+
+99
+00:10:26.037 --> 00:10:37.637
+Silvio: sync on that file because I can never see all the tracks and all the audios mixed and check that we're not talking over each other in the recording because we're not
+
+100
+00:10:37.637 --> 00:10:49.384
+Silvio: in the meeting. So I realized I spent a lot of time just testing this. So basically, building something that will. Make a composite video of all this. And I just now
+
+101
+00:10:49.384 --> 00:10:57.384
+Silvio: realized: no, look, that file is good. You can just use it. You don't need to spend so much time validating that it's good because
+
+102
+00:10:58.344 --> 00:11:08.584
+Silvio: all my attempts at having the LLM write something, it would mess up the sync. So, but it was not because it was wrong in the original file, it was because the
+
+103
+00:11:08.824 --> 00:11:20.927
+Silvio: processing. further processing messed it up. So my point is that I went through at that end and wasted quite some tokens on it, but not that much time. And it was
+
+104
+00:11:20.927 --> 00:11:21.167
+Silvio: good.
+
+105
+00:11:22.715 --> 00:11:31.275
+Ivan: So does it sync automatically? Or does it just depend on like what you see? It's the same, but more or less what um
+
+106
+00:11:31.333 --> 00:11:42.693
+Silvio: So I had to initially I was recording from the server and recording from the server basically saves all the packets that come in. And all of this is enough to reconstruct
+
+107
+00:11:42.853 --> 00:11:55.093
+Silvio: an audio stream or a video stream, but not to sync them up as they were in while it happened. Because you need more information that Janus, the media server behind all
+
+108
+00:11:55.093 --> 00:11:57.062
+Silvio: this, doesn't. Save.
+
+109
+00:11:58.262 --> 00:12:08.822
+Silvio: So that's why now we have a bot. Well, also because the bot is easier to install. You don't need server access to use this bot. You can just point it at
+
+110
+00:12:08.822 --> 00:12:12.422
+Silvio: your instance and it will work. So it's easier.
+
+111
+00:12:13.542 --> 00:12:14.502
+Silvio: And it saves.
+
+112
+00:12:15.523 --> 00:12:24.403
+Silvio: Again, the packets, but something more, a little bit more about timing when these packets were received so that we can reconstruct all the streams in sync.
+
+113
+00:12:25.571 --> 00:12:32.371
+Ivan: Do you know the you know in filming uh a film why the clapper thing?
+
+114
+00:12:33.575 --> 00:12:35.335
+Silvio: Uh yeah, to sync up audio and video.
+
+115
+00:12:35.876 --> 00:12:42.516
+Ivan: Yeah, yeah. We used to do with just like, you know, just some very sharp uh sound.
+
+116
+00:12:43.725 --> 00:12:48.205
+Silvio: In Italian it's called chuck, which is the onomatopoeic sound it makes.
+
+117
+00:12:48.802 --> 00:12:48.882
+Ivan: Yeah.
+
+118
+00:12:50.345 --> 00:12:56.825
+Ivan: I don't know creation English or any other language term for the thing, the clapper.
+
+119
+00:12:58.042 --> 00:13:01.709
+Silvio: There's a magazine, there's a cinema magazine in Italy that is called Chuck.
+
+120
+00:13:01.709 --> 00:13:01.789
+Ivan: Okay.
+
+121
+00:13:03.288 --> 00:13:03.455
+Silvio: So that's why name was it.
+
+122
+00:13:03.455 --> 00:13:03.855
+Chris: Yeah, w
+
+123
+00:13:05.055 --> 00:13:06.815
+Chris: I have never known the word for that thing interaction.
+
+124
+00:13:13.017 --> 00:13:13.097
+Silvio: Right.
+
+125
+00:13:16.086 --> 00:13:17.154
+Ivan: Clapperboard. Okay.
+
+126
+00:13:17.154 --> 00:13:18.034
+Chris: I forgot, yeah.
+
+127
+00:13:18.691 --> 00:13:19.011
+Silvio: Culture.
+
+128
+00:13:20.793 --> 00:13:30.713
+Ivan: I literally googled Film Take Clapper and it says how to use a clapper board the right way. So I imagine that's what the clapper board is.
+
+129
+00:13:31.843 --> 00:13:34.883
+Chris: I didn't know that was actually for syncing the the video and the audio.
+
+130
+00:13:36.010 --> 00:13:37.610
+Silvio: It also marks the scene.
+
+131
+00:13:38.810 --> 00:13:46.970
+Silvio: You see, you write there what scene it is, if it's the third take, the fourth take, and so you can, in the footage, you can identify each scene.
+
+132
+00:13:48.017 --> 00:13:48.657
+Chris: Makes a lot of sense.
+
+133
+00:13:49.878 --> 00:13:49.958
+Ivan: Okay.
+
+134
+00:13:51.326 --> 00:13:54.766
+Chris: Uh okay. There's nothing else, uh the media turned.
+
+135
+00:13:56.557 --> 00:14:04.317
+Ivan: Yeah, so Chris, whenever you're ready, ping me, just I have to give me an hour and then afterwards, whenever you're ready.
+
+136
+00:14:04.688 --> 00:14:04.768
+Chris: Okay.
+
+137
+00:14:05.677 --> 00:14:08.717
+Ivan: Might want to just do it maybe half an hour earlier so I can prepare.
+
+138
+00:14:09.417 --> 00:14:14.617
+Chris: Okay, sure. Let's say sometime after like 3 p.m. my time, maybe. That's a good idea. Three or four.
+
+139
+00:14:15.945 --> 00:14:16.745
+Ivan: Sure. Cheers.

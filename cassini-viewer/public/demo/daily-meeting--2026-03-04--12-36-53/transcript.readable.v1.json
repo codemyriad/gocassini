@@ -1,0 +1,1141 @@
+{
+  "version": "transcript.readable.v1",
+  "media": {
+    "src": "meeting.webm",
+    "durationMs": 1611880,
+    "sha256": "4506b219d3d9b1ce33617bd634bb32adec4eaba91e6a3cebfd7983716b32c723"
+  },
+  "speakers": [
+    {
+      "id": "spk_silvio_audio",
+      "label": "Silvio audio"
+    },
+    {
+      "id": "spk_chris_audio",
+      "label": "Chris audio"
+    },
+    {
+      "id": "spk_alex_audio",
+      "label": "Alex audio"
+    },
+    {
+      "id": "spk_ivan_audio",
+      "label": "Ivan audio"
+    },
+    {
+      "id": "spk_chima_audio",
+      "label": "chima audio"
+    }
+  ],
+  "segments": [
+    {
+      "id": "rseg_000001",
+      "speaker": "spk_chris_audio",
+      "startMs": 1040,
+      "endMs": 22787,
+      "text": "Because I see what you're saying, but I disagree with some of it. And from the perspective, I feel like you've taken the technical approach, and I feel like I'm pushing more for the ease of usability, not ease of usability, but thinking about more from the user side. And I'd like Sylvia to weigh in because she's connected to the bookstore and what they may want.",
+      "sourceSegmentIds": [
+        "seg_000001",
+        "seg_000002",
+        "seg_000003",
+        "seg_000004"
+      ]
+    },
+    {
+      "id": "rseg_000002",
+      "speaker": "spk_chris_audio",
+      "startMs": 24964,
+      "endMs": 33204,
+      "text": "I think that your suggestions make a lot of sense in terms of just pulling on the hammer on not allowing over-delivered books to be scanned in the first place.",
+      "sourceSegmentIds": [
+        "seg_000005"
+      ]
+    },
+    {
+      "id": "rseg_000003",
+      "speaker": "spk_chris_audio",
+      "startMs": 35190,
+      "endMs": 65293,
+      "text": "And it makes the system more rigorous. But I, yeah, I don't know. It just feels a little bit, at least my click, maybe would help with my click through yesterday. Things felt off when I was clicking through it. And the final point about not that thing not being communicated to the user, even if it shouldn't happen, I think we should still just take a stance of communicating when something goes wrong to the user in some way. It shouldn't just remain unresponsive. So we need to find some way of communicating that to them.",
+      "sourceSegmentIds": [
+        "seg_000006",
+        "seg_000007",
+        "seg_000008",
+        "seg_000009"
+      ]
+    },
+    {
+      "id": "rseg_000004",
+      "speaker": "spk_chris_audio",
+      "startMs": 66493,
+      "endMs": 95851,
+      "text": "Anyway, yeah, I've now pushed that off onto Sylvia to have a look and act as a tiebreaker in terms of the way we should move forward with it. Again, I don't think you should all back the PR. I think this should go in. So this is something we move into next part. And yet I spoke this morning with Silvio about his Go Cassini project. I don't think we, it was more just an introduction to what he's been doing and his thoughts on it. Didn't exactly shape a first stage of it. I will try and sew if his the notes I made and uh",
+      "sourceSegmentIds": [
+        "seg_000010",
+        "seg_000011",
+        "seg_000012",
+        "seg_000013",
+        "seg_000014"
+      ]
+    },
+    {
+      "id": "rseg_000005",
+      "speaker": "spk_chris_audio",
+      "startMs": 97122,
+      "endMs": 108802,
+      "text": "gape up something that we can discuss further, um, potentially rope more of you guys into uh, into working on it, um, and that's me over to uh, Alex.",
+      "sourceSegmentIds": [
+        "seg_000015"
+      ]
+    },
+    {
+      "id": "rseg_000006",
+      "speaker": "spk_alex_audio",
+      "startMs": 110198,
+      "endMs": 121238,
+      "text": "Um, so I'm in the middle of working on a marketing strategy for the internal tool service. Um, I've identified that I think, I think when you're starting",
+      "sourceSegmentIds": [
+        "seg_000016",
+        "seg_000017"
+      ]
+    },
+    {
+      "id": "rseg_000007",
+      "speaker": "spk_alex_audio",
+      "startMs": 124683,
+      "endMs": 165838,
+      "text": "um, because we've not really done anything yet, I think we need to start kind of far and wide. So trying to generate an approach for Google AdWords, LinkedIn, and also Reddit, targeting forums like small business, entrepreneur, these types of things. And then underneath each of those there's articles that need to be generated and kind of paths that go through and keywords to be targeted and all of these different things. I think if you throw some ad budget at these then you can see which ones are performing best and then which ones are turning up the type of leads that you're looking for and then you can work fine from there.",
+      "sourceSegmentIds": [
+        "seg_000018",
+        "seg_000019",
+        "seg_000020",
+        "seg_000021",
+        "seg_000022",
+        "seg_000023",
+        "seg_000024"
+      ]
+    },
+    {
+      "id": "rseg_000008",
+      "speaker": "spk_alex_audio",
+      "startMs": 167363,
+      "endMs": 177203,
+      "text": "So I'll be working on that for the rest of the day. And the other thing I'm going to do today is clean up the Zoom up space for Edible in the park.",
+      "sourceSegmentIds": [
+        "seg_000025",
+        "seg_000026"
+      ]
+    },
+    {
+      "id": "rseg_000009",
+      "speaker": "spk_alex_audio",
+      "startMs": 180244,
+      "endMs": 186146,
+      "text": "Yeah, it's just about all over the place, so I'm going to bring some organisation to that. That's it for me, or to Eva.",
+      "sourceSegmentIds": [
+        "seg_000027",
+        "seg_000028"
+      ]
+    },
+    {
+      "id": "rseg_000010",
+      "speaker": "spk_ivan_audio",
+      "startMs": 187540,
+      "endMs": 231393,
+      "text": "Uh, yeah, I spent essentially all of my time on the uh, review on under delivery policy. I wasn't really available uh, yesterday in the afternoon. Had just an hour to um, communicate with uh, Code Rabbit from from a cafe and uh, I have to say I enjoyed that communication. I did apply a bunch of patches that I suggested. I added two tweaks that I had to do manually. It suggested how to do it, just didn't suggest the commit. So yeah, I've done those locally. I have to push that and spent some time on this morning on Chris's review. And",
+      "sourceSegmentIds": [
+        "seg_000029",
+        "seg_000030",
+        "seg_000031",
+        "seg_000032",
+        "seg_000033",
+        "seg_000034"
+      ]
+    },
+    {
+      "id": "rseg_000011",
+      "speaker": "spk_ivan_audio",
+      "startMs": 232513,
+      "endMs": 276937,
+      "text": "the feedback to it. I'd like to give you my reasoning now in the meeting about the status. And yeah, I think I agree that this shouldn't block it. There's one thing that I'd fix immediately and leave it to do for later, that integrity check. And then open like two or three additional tickets referencing this conversation for future. Because some stuff is, yeah, anything that would have to be done, like the bug fixes should be fixed immediately. Those are very minor. But like,",
+      "sourceSegmentIds": [
+        "seg_000035",
+        "seg_000036",
+        "seg_000037",
+        "seg_000038",
+        "seg_000039",
+        "seg_000040"
+      ]
+    },
+    {
+      "id": "rseg_000012",
+      "speaker": "spk_ivan_audio",
+      "startMs": 277927,
+      "endMs": 319690,
+      "text": "stuff that we kind of decide on. Like i, i, if if we bu, anyway, I think the future work should not be applied immediately. It can be applied right after this, but uh, be tagged as a separate unit of work. And I'll leave it at that and I'd like to revisit after status. Um, don't, don't, please don't merge anything in because there are, I think, one or two small things uh, that I'd still have to look into and uh, check immediately so that uh, this thing is somewhat complete. And yeah, as for the testing thing, yeah, it obviously didn't work on that.",
+      "sourceSegmentIds": [
+        "seg_000041",
+        "seg_000042",
+        "seg_000043",
+        "seg_000044",
+        "seg_000045"
+      ]
+    },
+    {
+      "id": "rseg_000013",
+      "speaker": "spk_ivan_audio",
+      "startMs": 322330,
+      "endMs": 332570,
+      "text": "One of these suggestions ties into this a bit. But yeah, I'd like to spend the rest of today then to work on those and then s maybe.",
+      "sourceSegmentIds": [
+        "seg_000046"
+      ]
+    },
+    {
+      "id": "rseg_000014",
+      "speaker": "spk_ivan_audio",
+      "startMs": 334938,
+      "endMs": 345178,
+      "text": "Just regarding the plans with airspaces, maybe yeah, tomorrow we can start talking about that. Over to Marco.",
+      "sourceSegmentIds": [
+        "seg_000047",
+        "seg_000048"
+      ]
+    },
+    {
+      "id": "rseg_000015",
+      "speaker": "spk_chima_audio",
+      "startMs": 346682,
+      "endMs": 368442,
+      "text": "Yeah, can you hear me? Yeah. So I updated my PR about the debug page and also the sync the data the db sync improvements. I think that's ready. I added some tests. I merged the current master branch to",
+      "sourceSegmentIds": [
+        "seg_000049",
+        "seg_000050",
+        "seg_000051"
+      ]
+    },
+    {
+      "id": "rseg_000016",
+      "speaker": "spk_chima_audio",
+      "startMs": 370747,
+      "endMs": 411683,
+      "text": "Uh, make it uh, to resolve uh, to solve some merge conflicts. Uh, as soon as Silvio review it and merge it, I will start working on uh, if there isn't any other thing to be done here, I will work on PR one one nine eight and uh, check that uh, uh, is fine. review it and uh, merge it eventually. And then uh, I think I can take something uh, uh, something else to do. Um, maybe we can uh",
+      "sourceSegmentIds": [
+        "seg_000052",
+        "seg_000053",
+        "seg_000054",
+        "seg_000055",
+        "seg_000056",
+        "seg_000057"
+      ]
+    },
+    {
+      "id": "rseg_000017",
+      "speaker": "spk_chima_audio",
+      "startMs": 412643,
+      "endMs": 424857,
+      "text": "um, I will ping um, Sylvia or Chris in the uh, in the afternoon. And yeah, that's all. Back to Chris. Now over to Silvio. Sorry.",
+      "sourceSegmentIds": [
+        "seg_000058",
+        "seg_000059"
+      ]
+    },
+    {
+      "id": "rseg_000018",
+      "speaker": "spk_silvio_audio",
+      "startMs": 426109,
+      "endMs": 443287,
+      "text": "Right. I think I did some work with Bibrocco, putting things in shape. Maybe I merge one of the PRs I had yesterday, the one that does the migration as soon as the sync server starts in case it's needed.",
+      "sourceSegmentIds": [
+        "seg_000060",
+        "seg_000061",
+        "seg_000062"
+      ]
+    },
+    {
+      "id": "rseg_000019",
+      "speaker": "spk_silvio_audio",
+      "startMs": 445433,
+      "endMs": 451012,
+      "text": "And yeah, I have some progress with GoCassini, which is Among us.",
+      "sourceSegmentIds": [
+        "seg_000063",
+        "seg_000064"
+      ]
+    },
+    {
+      "id": "rseg_000020",
+      "speaker": "spk_silvio_audio",
+      "startMs": 453252,
+      "endMs": 474557,
+      "text": "And we'll see how this recording goes. I started thinking about specifically what to propose as a contract for the Discord to Zoolit migration, since that's the typical situation where there's a lot of unknowns and they can't really guarantee any time frame. So what I can propose is",
+      "sourceSegmentIds": [
+        "seg_000065",
+        "seg_000066",
+        "seg_000067",
+        "seg_000068"
+      ]
+    },
+    {
+      "id": "rseg_000021",
+      "speaker": "spk_silvio_audio",
+      "startMs": 477523,
+      "endMs": 518495,
+      "text": "Check-ins, checkpoints along the way to meet and assess what has been done. I'm kind of happy with the way that ChatGPT ended up putting it in a nice web page that is laid out like a landing page with a proposal. I think it's a good Way to communicate because it surfaces the important information, still keeps the one that is less important there. I like the, I'm pretty happy with that. I should share it with everyone. I only shared it with Chris.",
+      "sourceSegmentIds": [
+        "seg_000069",
+        "seg_000070",
+        "seg_000071",
+        "seg_000072",
+        "seg_000073"
+      ]
+    },
+    {
+      "id": "rseg_000022",
+      "speaker": "spk_silvio_audio",
+      "startMs": 520405,
+      "endMs": 538165,
+      "text": "And my plan for today is to look into the two PRs that were mentioned. One about the under-delivered and booked by the supplier, and the other one regarding the debug page. I'll test those. That's all for me. Back to Chris.",
+      "sourceSegmentIds": [
+        "seg_000074",
+        "seg_000075",
+        "seg_000076"
+      ]
+    },
+    {
+      "id": "rseg_000023",
+      "speaker": "spk_chris_audio",
+      "startMs": 539739,
+      "endMs": 542219,
+      "text": "Any work-related comments, any?",
+      "sourceSegmentIds": [
+        "seg_000077"
+      ]
+    },
+    {
+      "id": "rseg_000024",
+      "speaker": "spk_ivan_audio",
+      "startMs": 543992,
+      "endMs": 585597,
+      "text": "Uh, yeah, with regard to my response, like the initial context where I said that we've decided to explicitly not support over-delivery. We thought about that a lot, and when I started working on this ticket, I think I asked you guys like three times. So we're not supporting over-delivery behavior. So, yeah, just to make that clear, it's not my decision. I think it's a good decision. But yeah, I'm not pushing for that. And I explicitly said that it's undefined behavior because, yeah, I just didn't handle it. And what you saw, Chris, was undefined behavior. And I think if we're not supporting it for",
+      "sourceSegmentIds": [
+        "seg_000078",
+        "seg_000079",
+        "seg_000080",
+        "seg_000081"
+      ]
+    },
+    {
+      "id": "rseg_000025",
+      "speaker": "spk_ivan_audio",
+      "startMs": 585597,
+      "endMs": 626065,
+      "text": "now, as I wrote in my response, we should take additional steps to not allow anyone to scan books that don't belong to this reconciliation order that includes unknown ISBNs and over-delivery of known ISBNs. So if five are ordered, you can scan at most five. And the thing, the integrity check, like if there aren't any if there aren't enough customer order lines, like I kind of borrowed from Rust. Like in Rust, you sometimes need to make",
+      "sourceSegmentIds": [
+        "seg_000082",
+        "seg_000083",
+        "seg_000084",
+        "seg_000085",
+        "seg_000086"
+      ]
+    },
+    {
+      "id": "rseg_000026",
+      "speaker": "spk_ivan_audio",
+      "startMs": 628190,
+      "endMs": 630097,
+      "text": "collectively exhaustive",
+      "sourceSegmentIds": [
+        "seg_000087"
+      ]
+    },
+    {
+      "id": "rseg_000027",
+      "speaker": "spk_ivan_audio",
+      "startMs": 631944,
+      "endMs": 673665,
+      "text": "cases, but some cases you know that will be unreachable. So there's even a special macro called unreachable, which essentially throws an error if someone a runtime error if someone manages to get there. We agree that since this is customer-facing, we should communicate that to customer. But I think this should kind of be captured with some like global error handler. And potentially telemetry, or not telemetry, but crash litics, letting us know that the unreachable was actually reached. And the third bit is the fixture builder. And yeah, please give me your thoughts on that.",
+      "sourceSegmentIds": [
+        "seg_000088",
+        "seg_000089",
+        "seg_000090",
+        "seg_000091"
+      ]
+    },
+    {
+      "id": "rseg_000028",
+      "speaker": "spk_ivan_audio",
+      "startMs": 675105,
+      "endMs": 711040,
+      "text": "I tend to get into building these interfaces, and sometimes they're unnecessary, like we did with DB and with the end-to-end testing shit that we now have to get ourselves out of. But I think the fixture builder addresses problems, the same class of problems that are popping up in like two or three different places. One is writing fixtures for tests. And ensuring the consistency between them. And the other one is writing",
+      "sourceSegmentIds": [
+        "seg_000092",
+        "seg_000093",
+        "seg_000094",
+        "seg_000095",
+        "seg_000096"
+      ]
+    },
+    {
+      "id": "rseg_000029",
+      "speaker": "spk_ivan_audio",
+      "startMs": 712640,
+      "endMs": 754762,
+      "text": "the debug data, which is inconsistent. And that's why the runtime integrity check was failing, because our debug data is not logically consistent. And the third one is kind of touches on the fixtures for end-to-end, but like if we're doing storybook testing, we also want to have like a quick way of setting up state, quick and standardized way of setting up state, which I think will also be easier for agents. So yeah, I uh I came up with this kind of API that uh that I'd like to implement. And it's detailed over there. I think it should be extracted as a separate ticket. But yeah,",
+      "sourceSegmentIds": [
+        "seg_000097",
+        "seg_000098",
+        "seg_000099",
+        "seg_000100",
+        "seg_000101"
+      ]
+    },
+    {
+      "id": "rseg_000030",
+      "speaker": "spk_ivan_audio",
+      "startMs": 755962,
+      "endMs": 763642,
+      "text": "give me your thoughts on that. And this is the bit, yeah, that touches on my effort to",
+      "sourceSegmentIds": [
+        "seg_000102",
+        "seg_000103"
+      ]
+    },
+    {
+      "id": "rseg_000031",
+      "speaker": "spk_ivan_audio",
+      "startMs": 765882,
+      "endMs": 776997,
+      "text": "handle t to manage tests in a structured manner, but also once those behaviors get written into tests. to also have a standard way of writing those tests.",
+      "sourceSegmentIds": [
+        "seg_000104"
+      ]
+    },
+    {
+      "id": "rseg_000032",
+      "speaker": "spk_silvio_audio",
+      "startMs": 779120,
+      "endMs": 785280,
+      "text": "Can I ask you to point it at the fixture builder because I assumed it was in PR 1201?",
+      "sourceSegmentIds": [
+        "seg_000105"
+      ]
+    },
+    {
+      "id": "rseg_000033",
+      "speaker": "spk_ivan_audio",
+      "startMs": 786694,
+      "endMs": 792934,
+      "text": "Uh, it's the comment, it's the comment on Chris, it's the latest one comment in the 1201 I think, yeah.",
+      "sourceSegmentIds": [
+        "seg_000106"
+      ]
+    },
+    {
+      "id": "rseg_000034",
+      "speaker": "spk_silvio_audio",
+      "startMs": 793953,
+      "endMs": 794593,
+      "text": "I'll read that.",
+      "sourceSegmentIds": [
+        "seg_000107"
+      ]
+    },
+    {
+      "id": "rseg_000035",
+      "speaker": "spk_ivan_audio",
+      "startMs": 795269,
+      "endMs": 811269,
+      "text": "And somewhere near the bottom, I think. It's not the last one, but it's next to the last. I uh I tried to add those vertic uh horizontal lines to split uh sections of the test text. Yeah, you you can see them. They're not very helpful. But",
+      "sourceSegmentIds": [
+        "seg_000108",
+        "seg_000109"
+      ]
+    },
+    {
+      "id": "rseg_000036",
+      "speaker": "spk_chris_audio",
+      "startMs": 814386,
+      "endMs": 818786,
+      "text": "Yeah, just to respond to the first partio, I think it's possible to not support over-delivery.",
+      "sourceSegmentIds": [
+        "seg_000110"
+      ]
+    },
+    {
+      "id": "rseg_000037",
+      "speaker": "spk_chris_audio",
+      "startMs": 821454,
+      "endMs": 826974,
+      "text": "While still letting them do things and just do nothing with it afterwards. I mean,",
+      "sourceSegmentIds": [
+        "seg_000111",
+        "seg_000112"
+      ]
+    },
+    {
+      "id": "rseg_000038",
+      "speaker": "spk_chris_audio",
+      "startMs": 828894,
+      "endMs": 843694,
+      "text": "in my mind, not supporting over delivery is figuring out the cases after if we need to do anything with the books that are over delivered. So right now we could just say to them, nothing will happen to these books that you've scanned into this attempt at reconciliation.",
+      "sourceSegmentIds": [
+        "seg_000113",
+        "seg_000114"
+      ]
+    },
+    {
+      "id": "rseg_000039",
+      "speaker": "spk_chris_audio",
+      "startMs": 845718,
+      "endMs": 884839,
+      "text": "And it being it not really, you know, continuing on into the state of the whatever afterwards. I mean, I guess the thing that we could do is potentially, if they have scanned them in and they would like to commit those books into stock, we would create potentially they would be included in stock via some new end note. I mean, that's the only. thing that i in my head i see as like us handling uh uh over delivery um but the that point where they're doing work uh i feel like there's a there is a bit of a gray zone there where like we can not support it uh but",
+      "sourceSegmentIds": [
+        "seg_000115",
+        "seg_000116",
+        "seg_000117",
+        "seg_000118",
+        "seg_000119"
+      ]
+    },
+    {
+      "id": "rseg_000040",
+      "speaker": "spk_chris_audio",
+      "startMs": 884839,
+      "endMs": 916069,
+      "text": "still let them see the stuff that they're doing. It's just that nothing will happen afterwards. Or we can take your approach of just like, you know, you can't scan this because it's not not in this order. But then potentially we get to a point where, you know, maybe it is in that order. Maybe it's something that they, you know, and they just want to scan it. I don't know. I don't know what is like for me, yesterday's scanning, like it's undefined behavior, but like I'm scanning and I'm seeing nothing popping up. And it was also kind of it was a bit confusing because it was incrementing the",
+      "sourceSegmentIds": [
+        "seg_000120",
+        "seg_000121",
+        "seg_000122",
+        "seg_000123",
+        "seg_000124",
+        "seg_000125"
+      ]
+    },
+    {
+      "id": "rseg_000041",
+      "speaker": "spk_chris_audio",
+      "startMs": 917029,
+      "endMs": 923669,
+      "text": "total delivered count. So I'm seeing that go up, but I'm not seeing any books bros appear. So then I was getting a bit confused.",
+      "sourceSegmentIds": [
+        "seg_000126"
+      ]
+    },
+    {
+      "id": "rseg_000042",
+      "speaker": "spk_chris_audio",
+      "startMs": 926087,
+      "endMs": 958160,
+      "text": "Yeah, I think it could be vastly improved just by pulling down the shutter and being like, No, you can't scan this book in. And everything you've said basically has a knock effect, right? I can see the benefit of that. And it would probably have made a huge difference to my experience yesterday of clicking through the flow. I think it just depends what stance we want to take. you know if we want to allow people to just just work and see and and um and not be frustrated by saying no you can't do this no you can't do this kind of thing",
+      "sourceSegmentIds": [
+        "seg_000127",
+        "seg_000128",
+        "seg_000129",
+        "seg_000130",
+        "seg_000131",
+        "seg_000132"
+      ]
+    },
+    {
+      "id": "rseg_000043",
+      "speaker": "spk_ivan_audio",
+      "startMs": 960574,
+      "endMs": 1001288,
+      "text": "I mean, like, you know, what you experienced was the definition of undefined behavior. But I think iterative approach locks it down. They scan a book, ah, drag in. You can't do that. You know what you want to do with that book is up to you. You can add it manually to an inbound note, add it to stock. You can maybe update the supplier order or whatever, create a new one, handle it in any way you see fit for now. As for the following steps, we already handle this. By but like",
+      "sourceSegmentIds": [
+        "seg_000133",
+        "seg_000134",
+        "seg_000135",
+        "seg_000136",
+        "seg_000137",
+        "seg_000138"
+      ]
+    },
+    {
+      "id": "rseg_000044",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1002468,
+      "endMs": 1035510,
+      "text": "it's not trivial. As you said, like there are there are multiple things they can do with that book. And if they see it, like if we show it in an additional section, like unordered stuff over delivery, we used to have that. But if we want to do that, it's an additional work. Whereas just adding a a dialogue, it's somewhat additional work, but not too much. So they get immediate feedback and they may or may not notice the under delivery section. And then we kind",
+      "sourceSegmentIds": [
+        "seg_000139",
+        "seg_000140",
+        "seg_000141"
+      ]
+    },
+    {
+      "id": "rseg_000045",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1035510,
+      "endMs": 1055395,
+      "text": "of just delay the check to finalization. So the same check, the same pop-up that would happen, we would also need to implement a pop-up. Before finalization. So it gets much more complex based on an assumption of what they might want. What we had earlier is we had",
+      "sourceSegmentIds": [
+        "seg_000142",
+        "seg_000143"
+      ]
+    },
+    {
+      "id": "rseg_000046",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1057795,
+      "endMs": 1059395,
+      "text": "like a short circuit",
+      "sourceSegmentIds": [
+        "seg_000144"
+      ]
+    },
+    {
+      "id": "rseg_000047",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1062091,
+      "endMs": 1094190,
+      "text": "fast delivery, whatever. So if there is a customer order line, So say you have five books in a supplier order, but there are collectively seven customer order lines for that book, and you get six delivered. The five will be filled as they would, but the sixth one will be yeah, filled early, that's what I called it. So the sixth one, even though it's not placed with the supplier, there's a customer order for that book. So no need to add it to stock. You just",
+      "sourceSegmentIds": [
+        "seg_000145",
+        "seg_000146",
+        "seg_000147",
+        "seg_000148"
+      ]
+    },
+    {
+      "id": "rseg_000048",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1095150,
+      "endMs": 1114555,
+      "text": "match it with the customer. And we had logic for that. I think that logic is still kind of in. We just remove the integrity check and we Can kind of get back to that. But there's also case number two. So, you know, already two cases, and maybe there's a third case.",
+      "sourceSegmentIds": [
+        "seg_000149",
+        "seg_000150"
+      ]
+    },
+    {
+      "id": "rseg_000049",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1116543,
+      "endMs": 1147048,
+      "text": "If we want to go down any of those routes, like we can combine those, like we can make a decision to fill early the existing customer order lines, and then if there aren't any additional existing customer order lines, then add it to stock. again, th this is a decision and it's an additional unit of work. And I think blocking it altogether for now until we figure that out is the quick and easy thing we can do and have it feel like a complete product.",
+      "sourceSegmentIds": [
+        "seg_000151",
+        "seg_000152",
+        "seg_000153",
+        "seg_000154"
+      ]
+    },
+    {
+      "id": "rseg_000050",
+      "speaker": "spk_chris_audio",
+      "startMs": 1148238,
+      "endMs": 1165299,
+      "text": "Okay, sorry I guess we probably shouldn't have got into that here so um and left it for maybe Sylvia to and I to talk about afterwards uh give him a night to talk about afterwards but um any other small digressions? or work-related comments. I think",
+      "sourceSegmentIds": [
+        "seg_000155",
+        "seg_000156",
+        "seg_000157",
+        "seg_000158",
+        "seg_000159"
+      ]
+    },
+    {
+      "id": "rseg_000051",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1164820,
+      "endMs": 1169220,
+      "text": "I have one geopolitics digression.",
+      "sourceSegmentIds": [
+        "seg_000160",
+        "seg_000161"
+      ]
+    },
+    {
+      "id": "rseg_000052",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1171439,
+      "endMs": 1210149,
+      "text": "Do you guys know an interesting fact? Like, I had a conversation with Dora and with another friend of mine of how things are going to shit, how you know, the war is brewing, and how AI will make the elites completely in control of all of us. And like there are. Two things throughout history that we failed to appreciate is that there was never a time where there was no war anywhere in the world. That's a conversation I had with Dora and Dora had with Chad GPT. So, you know, throughout history, maybe the only time there was no war anywhere in the world was when the tribes were so far apart that they didn't, you know.",
+      "sourceSegmentIds": [
+        "seg_000162",
+        "seg_000163",
+        "seg_000164",
+        "seg_000165"
+      ]
+    },
+    {
+      "id": "rseg_000053",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1211320,
+      "endMs": 1251585,
+      "text": "attack each other. And we've enjoyed for the past like since World War Two we've enjoyed somewhat peaceful time. That was the Cold War and Vietnam and all that. But so yeah, that. And economically, it's the best time since the beginning of time, still. So there's a growing gap between the rich and the poor and the disappearing middle class and all that. But you know, go back a hundred years to we still had monarchies and very contained",
+      "sourceSegmentIds": [
+        "seg_000166",
+        "seg_000167",
+        "seg_000168",
+        "seg_000169",
+        "seg_000170",
+        "seg_000171",
+        "seg_000172"
+      ]
+    },
+    {
+      "id": "rseg_000054",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1253950,
+      "endMs": 1266430,
+      "text": "something, you know, so some better some places had it better, like maybe Europe and the US, but the rest of the world was much more shit. So yeah, just a positive outlook on a situation.",
+      "sourceSegmentIds": [
+        "seg_000173",
+        "seg_000174"
+      ]
+    },
+    {
+      "id": "rseg_000055",
+      "speaker": "spk_chris_audio",
+      "startMs": 1263733,
+      "endMs": 1290605,
+      "text": "I'd like to I'd like to I'd like to challenge that. I I think that's a very Eurocentric idea about about the uh how progressed w our society is in in the grand scheme of things. Uh I've heard that the at least two utter points, I forget what the second one is, but the first is uh the Qing dynasty, apparently the quality of life and the um Quality of life and wealth",
+      "sourceSegmentIds": [
+        "seg_000175",
+        "seg_000176",
+        "seg_000177",
+        "seg_000178"
+      ]
+    },
+    {
+      "id": "rseg_000056",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1289433,
+      "endMs": 1289513,
+      "text": "Okay.",
+      "sourceSegmentIds": [
+        "seg_000179"
+      ]
+    },
+    {
+      "id": "rseg_000057",
+      "speaker": "spk_chris_audio",
+      "startMs": 1292685,
+      "endMs": 1323851,
+      "text": "that generally the people had could rival what we had what we have today. We're not as technologically advanced, but they may not have been this technologically advanced, but they had apparently a better quality of living and a better spread of wealth than we do today. So I don't necessarily think that. Yes, we're more technologically advanced than it has ever been, but I think it's a little bit questionable whether or not our quality of life is actually as good as it could be.",
+      "sourceSegmentIds": [
+        "seg_000180",
+        "seg_000181",
+        "seg_000182",
+        "seg_000183"
+      ]
+    },
+    {
+      "id": "rseg_000058",
+      "speaker": "spk_chris_audio",
+      "startMs": 1326138,
+      "endMs": 1344519,
+      "text": "Given that we look on older times and say, ah, they probably had it really shipped back then because they didn't have a. a running toilet in their house or whatever, you know, but actually they they probably had to work less and uh had better quality food and and whatever. So um I would I would challenge it.",
+      "sourceSegmentIds": [
+        "seg_000184",
+        "seg_000185",
+        "seg_000186"
+      ]
+    },
+    {
+      "id": "rseg_000059",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1344558,
+      "endMs": 1383010,
+      "text": "I uh like you know to to give you know Tulsi the ball back um what was happening in Europe at that time I'm talking uh the world in general because maybe America in the 70s was the best time you know with the when boomers could buy house houses for cash after saving up for two years of working as a plumber But like I'm talking like on average, like across the world, every snapshot in time, not a particular contained civilization. As for the quality of life, I agree with you completely. Who's",
+      "sourceSegmentIds": [
+        "seg_000187",
+        "seg_000188",
+        "seg_000189",
+        "seg_000190",
+        "seg_000191"
+      ]
+    },
+    {
+      "id": "rseg_000060",
+      "speaker": "spk_chris_audio",
+      "startMs": 1370439,
+      "endMs": 1370839,
+      "text": "Quote.",
+      "sourceSegmentIds": [
+        "seg_000192"
+      ]
+    },
+    {
+      "id": "rseg_000061",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1383010,
+      "endMs": 1396112,
+      "text": "to say that locking our eyes to the screen, we have it better than people dying from the next cold, but still having the time of their lives? uh you know out in the sun and and all that.",
+      "sourceSegmentIds": [
+        "seg_000193",
+        "seg_000194"
+      ]
+    },
+    {
+      "id": "rseg_000062",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1398950,
+      "endMs": 1403590,
+      "text": "Just as a global outlook and a snapshot in any bit of time.",
+      "sourceSegmentIds": [
+        "seg_000195"
+      ]
+    },
+    {
+      "id": "rseg_000063",
+      "speaker": "spk_silvio_audio",
+      "startMs": 1404974,
+      "endMs": 1408014,
+      "text": "I'm just very grateful I have ventil anesthesia.",
+      "sourceSegmentIds": [
+        "seg_000196"
+      ]
+    },
+    {
+      "id": "rseg_000064",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1408950,
+      "endMs": 1409030,
+      "text": "Yeah.",
+      "sourceSegmentIds": [
+        "seg_000197"
+      ]
+    },
+    {
+      "id": "rseg_000065",
+      "speaker": "spk_silvio_audio",
+      "startMs": 1411899,
+      "endMs": 1414299,
+      "text": "Would have to be born before that.",
+      "sourceSegmentIds": [
+        "seg_000198"
+      ]
+    },
+    {
+      "id": "rseg_000066",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1416739,
+      "endMs": 1419500,
+      "text": "Yeah. Gives me headaches, but",
+      "sourceSegmentIds": [
+        "seg_000199",
+        "seg_000200"
+      ]
+    },
+    {
+      "id": "rseg_000067",
+      "speaker": "spk_silvio_audio",
+      "startMs": 1420345,
+      "endMs": 1420825,
+      "text": "Um",
+      "sourceSegmentIds": [
+        "seg_000201"
+      ]
+    },
+    {
+      "id": "rseg_000068",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1421260,
+      "endMs": 1422300,
+      "text": "it's better.",
+      "sourceSegmentIds": [
+        "seg_000202"
+      ]
+    },
+    {
+      "id": "rseg_000069",
+      "speaker": "spk_silvio_audio",
+      "startMs": 1422345,
+      "endMs": 1423865,
+      "text": "yeah probably.",
+      "sourceSegmentIds": [
+        "seg_000203",
+        "seg_000204"
+      ]
+    },
+    {
+      "id": "rseg_000070",
+      "speaker": "spk_chris_audio",
+      "startMs": 1425559,
+      "endMs": 1425639,
+      "text": "Yeah.",
+      "sourceSegmentIds": [
+        "seg_000205"
+      ]
+    },
+    {
+      "id": "rseg_000071",
+      "speaker": "spk_chima_audio",
+      "startMs": 1427339,
+      "endMs": 1430139,
+      "text": "Have you ever watched Fallout the series?",
+      "sourceSegmentIds": [
+        "seg_000206"
+      ]
+    },
+    {
+      "id": "rseg_000072",
+      "speaker": "spk_silvio_audio",
+      "startMs": 1431350,
+      "endMs": 1431910,
+      "text": "On my list.",
+      "sourceSegmentIds": [
+        "seg_000207"
+      ]
+    },
+    {
+      "id": "rseg_000073",
+      "speaker": "spk_chima_audio",
+      "startMs": 1433307,
+      "endMs": 1452714,
+      "text": "I do watch it. And there are those vaults where people live in a post-apocalyptic world. And those vaults are completely engineered for wellness and people's quality of life. But that's what, I mean, a corporate design.",
+      "sourceSegmentIds": [
+        "seg_000208",
+        "seg_000209",
+        "seg_000210"
+      ]
+    },
+    {
+      "id": "rseg_000074",
+      "speaker": "spk_chima_audio",
+      "startMs": 1456356,
+      "endMs": 1473100,
+      "text": "Way of living. I think that, I mean, give it a watch. It's interesting, I think. And also the motto of the series is war never changes so",
+      "sourceSegmentIds": [
+        "seg_000211",
+        "seg_000212",
+        "seg_000213",
+        "seg_000214",
+        "seg_000215"
+      ]
+    },
+    {
+      "id": "rseg_000075",
+      "speaker": "spk_chima_audio",
+      "startMs": 1475996,
+      "endMs": 1478476,
+      "text": "If you were asking this even",
+      "sourceSegmentIds": [
+        "seg_000216"
+      ]
+    },
+    {
+      "id": "rseg_000076",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1479946,
+      "endMs": 1480586,
+      "text": "Makes sense, yeah.",
+      "sourceSegmentIds": [
+        "seg_000217"
+      ]
+    },
+    {
+      "id": "rseg_000077",
+      "speaker": "spk_chris_audio",
+      "startMs": 1482266,
+      "endMs": 1486186,
+      "text": "Okay. Grad time limit. I'm just going to give you",
+      "sourceSegmentIds": [
+        "seg_000218"
+      ]
+    },
+    {
+      "id": "rseg_000078",
+      "speaker": "spk_chima_audio",
+      "startMs": 1485441,
+      "endMs": 1487601,
+      "text": "I have just one question. Sorry for",
+      "sourceSegmentIds": [
+        "seg_000219"
+      ]
+    },
+    {
+      "id": "rseg_000079",
+      "speaker": "spk_chima_audio",
+      "startMs": 1490001,
+      "endMs": 1497041,
+      "text": "Having brought this up earlier, it's not clear to me what we decided about the Berlin road trip.",
+      "sourceSegmentIds": [
+        "seg_000220"
+      ]
+    },
+    {
+      "id": "rseg_000080",
+      "speaker": "spk_chris_audio",
+      "startMs": 1498436,
+      "endMs": 1506910,
+      "text": "The dates for the working week will be from the 18th to the 22nd of May, from Monday to Friday.",
+      "sourceSegmentIds": [
+        "seg_000221"
+      ]
+    },
+    {
+      "id": "rseg_000081",
+      "speaker": "spk_chris_audio",
+      "startMs": 1509406,
+      "endMs": 1545980,
+      "text": "I need to still, I have not done it. I will do it before the end of the week. Make a plan about how we're handling the expense trip expenses. On your plates right now, I would say have a think about when you would want to fly in and out. So if you would arrive the weekend before, if you would stay the weekend after. Or if you want to do like Cynthia and I and just stay for a whole month in Berlin, I don't know. I mean, obviously we're not paying for accommodation for the full month, but like, you know, we will cover the flights and the accommodation for that work week.",
+      "sourceSegmentIds": [
+        "seg_000222",
+        "seg_000223",
+        "seg_000224",
+        "seg_000225",
+        "seg_000226"
+      ]
+    },
+    {
+      "id": "rseg_000082",
+      "speaker": "spk_chris_audio",
+      "startMs": 1547580,
+      "endMs": 1554700,
+      "text": "So if people can get an idea of when they would maybe travel, then I will bring it together with how we're handling the expenses for them.",
+      "sourceSegmentIds": [
+        "seg_000227"
+      ]
+    },
+    {
+      "id": "rseg_000083",
+      "speaker": "spk_chima_audio",
+      "startMs": 1556529,
+      "endMs": 1562529,
+      "text": "I just wanted to know if we reached the consensus uh on the dates of eighteen to twenty two.",
+      "sourceSegmentIds": [
+        "seg_000228"
+      ]
+    },
+    {
+      "id": "rseg_000084",
+      "speaker": "spk_chris_audio",
+      "startMs": 1563711,
+      "endMs": 1564511,
+      "text": "Yep, that was me.",
+      "sourceSegmentIds": [
+        "seg_000229"
+      ]
+    },
+    {
+      "id": "rseg_000085",
+      "speaker": "spk_chima_audio",
+      "startMs": 1565688,
+      "endMs": 1566248,
+      "text": "Okay, thank you.",
+      "sourceSegmentIds": [
+        "seg_000230"
+      ]
+    },
+    {
+      "id": "rseg_000086",
+      "speaker": "spk_chris_audio",
+      "startMs": 1567496,
+      "endMs": 1569096,
+      "text": "Um, actually, can I check with Silver?",
+      "sourceSegmentIds": [
+        "seg_000231"
+      ]
+    },
+    {
+      "id": "rseg_000087",
+      "speaker": "spk_ivan_audio",
+      "startMs": 1568139,
+      "endMs": 1577419,
+      "text": "Yeah, we'll write that up in the comment on the road trip, like the around the departure.",
+      "sourceSegmentIds": [
+        "seg_000232"
+      ]
+    },
+    {
+      "id": "rseg_000088",
+      "speaker": "spk_chris_audio",
+      "startMs": 1574726,
+      "endMs": 1575446,
+      "text": "Yes, I'll add it here.",
+      "sourceSegmentIds": [
+        "seg_000233"
+      ]
+    },
+    {
+      "id": "rseg_000089",
+      "speaker": "spk_chris_audio",
+      "startMs": 1578645,
+      "endMs": 1596708,
+      "text": "Uh yeah, add that into the thing, yes. Sylvia, can I chat with you for two seconds more after the call? I just said something I realized I wanted to. And I'm just going to leave everyone here of this picture of the two dogs, Nick, oh, and Cynthia, but also the two dogs just hanging out. Look at this little pa.",
+      "sourceSegmentIds": [
+        "seg_000234",
+        "seg_000235",
+        "seg_000236",
+        "seg_000237"
+      ]
+    },
+    {
+      "id": "rseg_000090",
+      "speaker": "spk_silvio_audio",
+      "startMs": 1598133,
+      "endMs": 1598373,
+      "text": "Mm-hmm.",
+      "sourceSegmentIds": [
+        "seg_000238"
+      ]
+    },
+    {
+      "id": "rseg_000091",
+      "speaker": "spk_chris_audio",
+      "startMs": 1598148,
+      "endMs": 1598868,
+      "text": "He's giving her a hug.",
+      "sourceSegmentIds": [
+        "seg_000239"
+      ]
+    },
+    {
+      "id": "rseg_000092",
+      "speaker": "spk_silvio_audio",
+      "startMs": 1600188,
+      "endMs": 1600668,
+      "text": "Record.",
+      "sourceSegmentIds": [
+        "seg_000240"
+      ]
+    },
+    {
+      "id": "rseg_000093",
+      "speaker": "spk_chris_audio",
+      "startMs": 1602392,
+      "endMs": 1606552,
+      "text": "Okay, meaning wind. Uh speaking responses tomorrow. Oh.",
+      "sourceSegmentIds": [
+        "seg_000241"
+      ]
+    },
+    {
+      "id": "rseg_000094",
+      "speaker": "spk_silvio_audio",
+      "startMs": 1607063,
+      "endMs": 1607943,
+      "text": "Meet in the other room.",
+      "sourceSegmentIds": [
+        "seg_000242"
+      ]
+    },
+    {
+      "id": "rseg_000095",
+      "speaker": "spk_chris_audio",
+      "startMs": 1608981,
+      "endMs": 1610981,
+      "text": "Oh, other room, sounds good. Okay, bye, Kasini.",
+      "sourceSegmentIds": [
+        "seg_000243"
+      ]
+    },
+    {
+      "id": "rseg_000096",
+      "speaker": "spk_chima_audio",
+      "startMs": 1610031,
+      "endMs": 1610111,
+      "text": "I",
+      "sourceSegmentIds": [
+        "seg_000244"
+      ]
+    }
+  ],
+  "sourceTranscriptVersion": "transcript.words.v1"
+}
