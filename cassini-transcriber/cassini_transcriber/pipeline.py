@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from .common import seconds_to_ms
+from .llm import OpenWebUIChatClient, OpenWebUIConfig, build_readable_transcript_payload
 from .speech_activity import TranscriptionChunk, detect_active_spans, plan_transcription_chunks
 from .timeline import TimeSpan, TimelineMap, build_digest_timeline_map
 
@@ -76,7 +77,7 @@ def probe_media(input_path: Path) -> list[AudioStream]:
                 "index": int(stream["index"]),
                 "codec_name": stream.get("codec_name") or "unknown",
                 "channels": stream.get("channels"),
-                "speaker_label": str(tags.get("title") or "").strip(),
+                "speaker_label": normalize_speaker_label(str(tags.get("title") or "").strip()),
             }
         )
 
@@ -115,6 +116,11 @@ def make_speaker_ids(labels: list[str]) -> list[str]:
         counts[base] = count
         speaker_ids.append(base if count == 1 else f"{base}_{count}")
     return speaker_ids
+
+
+def normalize_speaker_label(label: str) -> str:
+    normalized = re.sub(r"\s+(audio|video)\s*$", "", label, flags=re.IGNORECASE).strip()
+    return normalized or label
 
 
 def slugify(value: str) -> str:
@@ -723,6 +729,7 @@ def build_manifest(
     source_path: Path,
     audio_name: str,
     transcript_name: str,
+    readable_name: str | None,
     captions_name: str,
     timeline_name: str | None,
     speaker_count: int,
@@ -738,6 +745,8 @@ def build_manifest(
         "transcript": transcript_name,
         "captions": captions_name,
     }
+    if readable_name:
+        files["readableTranscript"] = readable_name
     if timeline_name:
         files["timeline"] = timeline_name
 
@@ -766,6 +775,7 @@ def build_meeting_artifact(
     transcriber_url: str,
     audio_name: str = "meeting.webm",
     transcript_name: str = "transcript.words.v1.json",
+    readable_transcript_name: str | None = None,
     captions_name: str = "captions.vtt",
     manifest_name: str | None = "manifest.json",
     timeline_name: str | None = "timeline.map.v1.json",
@@ -783,6 +793,14 @@ def build_meeting_artifact(
     max_chunk_ms: int = 25_000,
     chunk_overlap_ms: int = 500,
     max_bridge_gap_ms: int = 1_500,
+    openwebui_base_url: str | None = None,
+    openwebui_email: str | None = None,
+    openwebui_password: str | None = None,
+    openwebui_model: str | None = None,
+    openwebui_timeout_seconds: int = 240,
+    readable_max_gap_ms: int = 1_800,
+    readable_max_window_ms: int = 45_000,
+    readable_max_window_words: int = 120,
     work_dir: Path | None = None,
     keep_work_dir: bool = False,
 ) -> dict[str, Any]:
@@ -814,6 +832,9 @@ def build_meeting_artifact(
     try:
         audio_output_path = output_dir / audio_name
         transcript_output_path = output_dir / transcript_name
+        readable_output_path = (
+            output_dir / readable_transcript_name if readable_transcript_name else None
+        )
         captions_output_path = output_dir / captions_name
         manifest_output_path = output_dir / manifest_name if manifest_name else None
         timeline_output_path = output_dir / timeline_name if timeline_name else None
@@ -891,11 +912,48 @@ def build_meeting_artifact(
             segments=finalized_segments,
         )
         captions_vtt = render_captions_vtt(transcript_payload)
+        readable_payload: dict[str, Any] | None = None
+        if readable_output_path is not None:
+            missing_openwebui = [
+                name
+                for name, value in (
+                    ("openwebui_base_url", openwebui_base_url),
+                    ("openwebui_email", openwebui_email),
+                    ("openwebui_password", openwebui_password),
+                    ("openwebui_model", openwebui_model),
+                )
+                if not value
+            ]
+            if missing_openwebui:
+                raise ValueError(
+                    "Readable transcript generation requires Open WebUI settings: "
+                    + ", ".join(missing_openwebui)
+                )
+            readable_payload = build_readable_transcript_payload(
+                transcript_payload=transcript_payload,
+                client=OpenWebUIChatClient(
+                    OpenWebUIConfig(
+                        base_url=str(openwebui_base_url),
+                        email=str(openwebui_email),
+                        password=str(openwebui_password),
+                        model=str(openwebui_model),
+                        timeout_seconds=openwebui_timeout_seconds,
+                    )
+                ),
+                max_gap_ms=readable_max_gap_ms,
+                max_window_ms=readable_max_window_ms,
+                max_window_words=readable_max_window_words,
+            )
 
         transcript_output_path.write_text(
             json.dumps(transcript_payload, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
+        if readable_output_path is not None and readable_payload is not None:
+            readable_output_path.write_text(
+                json.dumps(readable_payload, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
         captions_output_path.write_text(captions_vtt, encoding="utf-8")
         if timeline_output_path is not None:
             timeline_output_path.write_text(
@@ -908,6 +966,7 @@ def build_meeting_artifact(
                 source_path=input_path,
                 audio_name=audio_name,
                 transcript_name=transcript_name,
+                readable_name=readable_transcript_name,
                 captions_name=captions_name,
                 timeline_name=timeline_name,
                 speaker_count=len(speakers),
@@ -926,6 +985,7 @@ def build_meeting_artifact(
         return {
             "audio_path": str(audio_output_path),
             "transcript_path": str(transcript_output_path),
+            "readable_transcript_path": str(readable_output_path) if readable_output_path else None,
             "captions_path": str(captions_output_path),
             "timeline_path": str(timeline_output_path) if timeline_output_path else None,
             "manifest_path": str(manifest_output_path) if manifest_output_path else None,

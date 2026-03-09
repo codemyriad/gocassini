@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from .pipeline import build_meeting_artifact
@@ -29,6 +30,14 @@ def parse_args() -> argparse.Namespace:
         "--transcript-name",
         default="transcript.words.v1.json",
         help="Canonical transcript filename",
+    )
+    parser.add_argument(
+        "--readable-transcript-name",
+        default=os.getenv("CASSINI_READABLE_TRANSCRIPT_NAME"),
+        help=(
+            "Optional cleaned readable transcript filename. Requires Open WebUI "
+            "settings when set."
+        ),
     )
     parser.add_argument(
         "--captions-name",
@@ -130,6 +139,50 @@ def parse_args() -> argparse.Namespace:
         help="Merge nearby activity spans into one chunk when the silent gap is below this limit",
     )
     parser.add_argument(
+        "--openwebui-base-url",
+        default=os.getenv("CASSINI_OPENWEBUI_BASE_URL"),
+        help="Open WebUI base URL used for readable transcript generation",
+    )
+    parser.add_argument(
+        "--openwebui-email",
+        default=os.getenv("CASSINI_OPENWEBUI_EMAIL"),
+        help="Open WebUI login email used for readable transcript generation",
+    )
+    parser.add_argument(
+        "--openwebui-password",
+        default=os.getenv("CASSINI_OPENWEBUI_PASSWORD"),
+        help="Open WebUI login password used for readable transcript generation",
+    )
+    parser.add_argument(
+        "--openwebui-model",
+        default=os.getenv("CASSINI_OPENWEBUI_MODEL"),
+        help="Open WebUI model id used for readable transcript generation",
+    )
+    parser.add_argument(
+        "--openwebui-timeout-seconds",
+        type=int,
+        default=int(os.getenv("CASSINI_OPENWEBUI_TIMEOUT_SECONDS", "240")),
+        help="Per-request timeout for readable transcript generation",
+    )
+    parser.add_argument(
+        "--readable-max-gap-ms",
+        type=int,
+        default=int(os.getenv("CASSINI_READABLE_MAX_GAP_MS", "1800")),
+        help="Maximum inter-segment gap when grouping readable transcript windows",
+    )
+    parser.add_argument(
+        "--readable-max-window-ms",
+        type=int,
+        default=int(os.getenv("CASSINI_READABLE_MAX_WINDOW_MS", "45000")),
+        help="Maximum readable transcript window duration",
+    )
+    parser.add_argument(
+        "--readable-max-window-words",
+        type=int,
+        default=int(os.getenv("CASSINI_READABLE_MAX_WINDOW_WORDS", "120")),
+        help="Maximum readable transcript window word count",
+    )
+    parser.add_argument(
         "--work-dir",
         type=Path,
         help="Directory for intermediate extracted tracks and raw responses",
@@ -150,6 +203,7 @@ def main() -> int:
         transcriber_url=args.transcriber_url,
         audio_name=args.audio_name,
         transcript_name=args.transcript_name,
+        readable_transcript_name=args.readable_transcript_name,
         captions_name=args.captions_name,
         manifest_name=args.manifest_name,
         timeline_name=args.timeline_name,
@@ -167,11 +221,21 @@ def main() -> int:
         max_chunk_ms=args.max_chunk_ms,
         chunk_overlap_ms=args.chunk_overlap_ms,
         max_bridge_gap_ms=args.max_bridge_gap_ms,
+        openwebui_base_url=args.openwebui_base_url,
+        openwebui_email=args.openwebui_email,
+        openwebui_password=args.openwebui_password,
+        openwebui_model=args.openwebui_model,
+        openwebui_timeout_seconds=args.openwebui_timeout_seconds,
+        readable_max_gap_ms=args.readable_max_gap_ms,
+        readable_max_window_ms=args.readable_max_window_ms,
+        readable_max_window_words=args.readable_max_window_words,
         work_dir=args.work_dir,
         keep_work_dir=args.keep_work_dir,
     )
     print(f"audio={result['audio_path']}")
     print(f"transcript={result['transcript_path']}")
+    if result.get("readable_transcript_path"):
+        print(f"readable_transcript={result['readable_transcript_path']}")
     print(f"captions={result['captions_path']}")
     if result.get("timeline_path"):
         print(f"timeline={result['timeline_path']}")

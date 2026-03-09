@@ -15,6 +15,7 @@ from cassini_transcriber.pipeline import (  # noqa: E402
     build_manifest,
     filter_words_to_time_window,
     make_speaker_ids,
+    normalize_speaker_label,
     remap_words_to_digest_timeline,
     render_captions_vtt,
     serialize_timeline_map,
@@ -30,6 +31,11 @@ class SpeakerIdTests(unittest.TestCase):
             make_speaker_ids(["Alex", "Alex", "Chris Jones"]),
             ["spk_alex", "spk_alex_2", "spk_chris_jones"],
         )
+
+    def test_normalize_speaker_label_strips_common_stream_suffixes(self) -> None:
+        self.assertEqual(normalize_speaker_label("Chris audio"), "Chris")
+        self.assertEqual(normalize_speaker_label("Silvio video"), "Silvio")
+        self.assertEqual(normalize_speaker_label("chima"), "chima")
 
 
 class SegmentationTests(unittest.TestCase):
@@ -122,6 +128,7 @@ class ManifestTests(unittest.TestCase):
             source_path=Path("/tmp/daily-meeting.mkv"),
             audio_name="meeting.webm",
             transcript_name="transcript.words.v1.json",
+            readable_name="transcript.readable.v1.json",
             captions_name="captions.vtt",
             timeline_name="timeline.map.v1.json",
             speaker_count=4,
@@ -133,6 +140,10 @@ class ManifestTests(unittest.TestCase):
             digest_duration_ms=95_000,
         )
         self.assertEqual(manifest["files"]["timeline"], "timeline.map.v1.json")
+        self.assertEqual(
+            manifest["files"]["readableTranscript"],
+            "transcript.readable.v1.json",
+        )
         self.assertEqual(manifest["speakerCount"], 4)
         self.assertEqual(manifest["chunkCount"], 12)
         self.assertEqual(manifest["segmentCount"], 34)
