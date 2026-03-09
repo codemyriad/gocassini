@@ -2106,6 +2106,7 @@ func run() error {
 		joinDelaySecs     floatList
 		audioReadySec     floatList
 		syncShiftSec      floatList
+		botDurationSec    floatList
 		durationSec       float64
 		rotateSeconds     float64
 		stopWhenRoomEmpty bool
@@ -2119,6 +2120,7 @@ func run() error {
 	flag.Var(&joinDelaySecs, "join-delay", "Join delay in seconds (repeat up to video count)")
 	flag.Var(&audioReadySec, "audio-ready-after", "Audio can become audible after N seconds from stream start (repeat up to video count)")
 	flag.Var(&syncShiftSec, "sync-shift", "Per-bot media time shift in seconds (positive=forward, negative=backward, repeat up to video count)")
+	flag.Var(&botDurationSec, "bot-duration", "Per-bot duration in seconds (0 means until EOF, repeat up to video count)")
 	flag.Float64Var(&durationSec, "duration", 0, "Optional duration override in seconds for all bots")
 	flag.Float64Var(&rotateSeconds, "rotate-seconds", defaultRotateSeconds, "Audio rotation interval in seconds")
 	flag.BoolVar(&stopWhenRoomEmpty, "stop-when-room-empty", true, "Exit once all non-bot participants leave (after grace)")
@@ -2156,6 +2158,9 @@ func run() error {
 	}
 	if len(syncShiftSec) > participantCount {
 		return fmt.Errorf("--sync-shift count (%d) exceeds participant count (%d)", len(syncShiftSec), participantCount)
+	}
+	if len(botDurationSec) > participantCount {
+		return fmt.Errorf("--bot-duration count (%d) exceeds participant count (%d)", len(botDurationSec), participantCount)
 	}
 
 	for _, path := range append(append([]string{}, videoFiles...), audioFiles...) {
@@ -2204,6 +2209,20 @@ func run() error {
 	if durationSec > 0 {
 		overrideDuration = time.Duration(durationSec * float64(time.Second))
 	}
+	resolvedDurations := make([]time.Duration, participantCount)
+	for i := 0; i < participantCount; i++ {
+		resolvedDurations[i] = overrideDuration
+	}
+	for i := 0; i < len(botDurationSec) && i < participantCount; i++ {
+		if botDurationSec[i] < 0 {
+			return fmt.Errorf("bot-duration must be >= 0 (idx=%d value=%.3f)", i, botDurationSec[i])
+		}
+		if botDurationSec[i] == 0 {
+			resolvedDurations[i] = 0
+			continue
+		}
+		resolvedDurations[i] = time.Duration(botDurationSec[i] * float64(time.Second))
+	}
 
 	cfgs := make([]*botConfig, 0, participantCount)
 	for i := 0; i < participantCount; i++ {
@@ -2217,7 +2236,7 @@ func run() error {
 			JoinDelay:  time.Duration(resolvedJoinDelays[i] * float64(time.Second)),
 			AudioReady: time.Duration(resolvedAudioReady[i] * float64(time.Second)),
 			SyncShift:  time.Duration(resolvedSyncShift[i] * float64(time.Second)),
-			Duration:   overrideDuration,
+			Duration:   resolvedDurations[i],
 			Insecure:   insecure,
 			CallURLRaw: callURL,
 		})

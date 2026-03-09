@@ -25,3 +25,6 @@ gocassini-*.log
 # Local developer environment (private, non-committed)
 .envrc
 .env.local
+
+# Private local media captures
+/media/

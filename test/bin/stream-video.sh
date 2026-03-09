@@ -10,8 +10,20 @@ USERS="${USERS:-1}"
 DURATION="${DURATION:-20}"
 NAME_PREFIX="${NAME_PREFIX:-HarnessBot}"
 MEDIA_PREFIX="${MEDIA_PREFIX:-}"
+MEDIA_PREFIXES="${MEDIA_PREFIXES:-}"
+NAMES="${NAMES:-}"
+JOIN_DELAYS="${JOIN_DELAYS:-}"
+AUDIO_READY_AFTERS="${AUDIO_READY_AFTERS:-}"
+SYNC_SHIFTS="${SYNC_SHIFTS:-}"
+BOT_DURATIONS="${BOT_DURATIONS:-}"
 PREPARE="${PREPARE:-1}"
 ROTATE_SECONDS="${ROTATE_SECONDS:-5}"
+declare -a MEDIA_PREFIX_LIST=()
+declare -a NAME_LIST=()
+declare -a JOIN_DELAY_LIST=()
+declare -a AUDIO_READY_LIST=()
+declare -a SYNC_SHIFT_LIST=()
+declare -a BOT_DURATION_LIST=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -31,16 +43,40 @@ while [[ $# -gt 0 ]]; do
       NAME_PREFIX="$2"
       shift 2
       ;;
+    --names)
+      NAMES="$2"
+      shift 2
+      ;;
     --media)
-      MEDIA_PREFIX="$2"
+      MEDIA_PREFIX_LIST+=("$2")
       shift 2
       ;;
     --media-prefix)
-      MEDIA_PREFIX="$2"
+      MEDIA_PREFIX_LIST+=("$2")
+      shift 2
+      ;;
+    --media-prefixes)
+      MEDIA_PREFIXES="$2"
       shift 2
       ;;
     --rotate-seconds)
       ROTATE_SECONDS="$2"
+      shift 2
+      ;;
+    --join-delays)
+      JOIN_DELAYS="$2"
+      shift 2
+      ;;
+    --audio-ready-afters)
+      AUDIO_READY_AFTERS="$2"
+      shift 2
+      ;;
+    --sync-shifts)
+      SYNC_SHIFTS="$2"
+      shift 2
+      ;;
+    --bot-durations)
+      BOT_DURATIONS="$2"
       shift 2
       ;;
     --skip-prepare)
@@ -68,27 +104,80 @@ if ! [[ "$USERS" =~ ^[0-9]+$ ]] || (( USERS < 1 || USERS > 3 )); then
   exit 1
 fi
 
-if [[ "$PREPARE" == "1" && -z "$MEDIA_PREFIX" ]]; then
-  MEDIA_PREFIX="$("$SCRIPT_DIR/prepare-media.sh" | tail -n1)"
-fi
-if [[ -z "$MEDIA_PREFIX" ]]; then
-  MEDIA_PREFIX="$MEDIA_DIR/sample"
-fi
-if [[ "$MEDIA_PREFIX" == *.ivf ]]; then
-  MEDIA_PREFIX="${MEDIA_PREFIX%.ivf}"
-elif [[ "$MEDIA_PREFIX" == *.ogg ]]; then
-  MEDIA_PREFIX="${MEDIA_PREFIX%.ogg}"
-elif [[ "$MEDIA_PREFIX" == *.mp4 ]]; then
-  MEDIA_PREFIX="${MEDIA_PREFIX%.mp4}"
-fi
+split_csv_into() {
+  local csv="$1"
+  local -n out_ref="$2"
+  out_ref=()
+  if [[ -z "$csv" ]]; then
+    return 0
+  fi
+  IFS=',' read -r -a items <<<"$csv"
+  for item in "${items[@]}"; do
+    trimmed="$(echo "$item" | xargs)"
+    if [[ -n "$trimmed" ]]; then
+      out_ref+=("$trimmed")
+    fi
+  done
+}
 
-VIDEO_FILE="${MEDIA_PREFIX}.ivf"
-AUDIO_FILE="${MEDIA_PREFIX}.ogg"
-if [[ ! -f "$VIDEO_FILE" || ! -f "$AUDIO_FILE" ]]; then
-  echo "required media files not found: $VIDEO_FILE and $AUDIO_FILE" >&2
-  echo "run: $SCRIPT_DIR/prepare-media.sh --prefix $MEDIA_PREFIX" >&2
+split_csv_into "$NAMES" NAME_LIST
+split_csv_into "$JOIN_DELAYS" JOIN_DELAY_LIST
+split_csv_into "$AUDIO_READY_AFTERS" AUDIO_READY_LIST
+split_csv_into "$SYNC_SHIFTS" SYNC_SHIFT_LIST
+split_csv_into "$BOT_DURATIONS" BOT_DURATION_LIST
+
+for pair in \
+  "names:${#NAME_LIST[@]}" \
+  "join-delays:${#JOIN_DELAY_LIST[@]}" \
+  "audio-ready-afters:${#AUDIO_READY_LIST[@]}" \
+  "sync-shifts:${#SYNC_SHIFT_LIST[@]}" \
+  "bot-durations:${#BOT_DURATION_LIST[@]}"; do
+  key="${pair%%:*}"
+  count="${pair##*:}"
+  if (( count > USERS )); then
+    echo "--$key count ($count) exceeds --users ($USERS)" >&2
+    exit 1
+  fi
+done
+
+if [[ -n "$MEDIA_PREFIXES" ]]; then
+  split_csv_into "$MEDIA_PREFIXES" csv_media
+  MEDIA_PREFIX_LIST+=("${csv_media[@]}")
+fi
+if [[ "${#MEDIA_PREFIX_LIST[@]}" -eq 0 && -n "$MEDIA_PREFIX" ]]; then
+  MEDIA_PREFIX_LIST=("$MEDIA_PREFIX")
+fi
+if [[ "${#MEDIA_PREFIX_LIST[@]}" -eq 0 && "$PREPARE" == "1" ]]; then
+  MEDIA_PREFIX_LIST=("$("$SCRIPT_DIR/prepare-media.sh" | tail -n1)")
+fi
+if [[ "${#MEDIA_PREFIX_LIST[@]}" -eq 0 ]]; then
+  MEDIA_PREFIX_LIST=("$MEDIA_DIR/sample")
+fi
+if [[ "${#MEDIA_PREFIX_LIST[@]}" -gt 1 && "${#MEDIA_PREFIX_LIST[@]}" -ne "$USERS" ]]; then
+  echo "when multiple --media-prefix values are provided, count must match --users" >&2
   exit 1
 fi
+
+normalize_prefix() {
+  local value="$1"
+  if [[ "$value" == *.ivf ]]; then
+    value="${value%.ivf}"
+  elif [[ "$value" == *.ogg ]]; then
+    value="${value%.ogg}"
+  elif [[ "$value" == *.mp4 ]]; then
+    value="${value%.mp4}"
+  fi
+  echo "$value"
+}
+
+resolve_media_prefix() {
+  local user_index="$1"
+  if [[ "${#MEDIA_PREFIX_LIST[@]}" -eq 1 ]]; then
+    echo "$(normalize_prefix "${MEDIA_PREFIX_LIST[0]}")"
+    return 0
+  fi
+  echo "$(normalize_prefix "${MEDIA_PREFIX_LIST[$((user_index - 1))]}")"
+}
 
 GO_ROTATOR_DIR="${GO_ROTATOR_DIR:-$TEST_DIR/go-talk-rotator}"
 if [[ ! -d "$GO_ROTATOR_DIR" || ! -f "$GO_ROTATOR_DIR/main.go" ]]; then
@@ -101,8 +190,11 @@ if ! command -v go >/dev/null 2>&1; then
 fi
 
 log "Call URL: $CALL_URL"
-log "Media prefix: $MEDIA_PREFIX"
+log "Media prefixes configured: ${#MEDIA_PREFIX_LIST[@]}"
 log "Users: $USERS"
+if [[ "${#NAME_LIST[@]}" -gt 0 ]]; then
+  log "Custom names configured: ${#NAME_LIST[@]}"
+fi
 
 CMD_ARGS=(
   --call-url "$CALL_URL"
@@ -111,12 +203,46 @@ CMD_ARGS=(
 )
 
 for ((i = 1; i <= USERS; i++)); do
-  CMD_ARGS+=(--video "$VIDEO_FILE")
-  CMD_ARGS+=(--audio "$AUDIO_FILE")
-  CMD_ARGS+=(--name "${NAME_PREFIX}${i}")
-  CMD_ARGS+=(--join-delay "$((i - 1))")
-  CMD_ARGS+=(--audio-ready-after 0)
-  CMD_ARGS+=(--sync-shift 0)
+  media_prefix="$(resolve_media_prefix "$i")"
+  video_file="${media_prefix}.ivf"
+  audio_file="${media_prefix}.ogg"
+  if [[ ! -f "$video_file" || ! -f "$audio_file" ]]; then
+    echo "required media files not found for user $i: $video_file and $audio_file" >&2
+    echo "run: $SCRIPT_DIR/prepare-media.sh --prefix $media_prefix" >&2
+    exit 1
+  fi
+  log "User $i media: $media_prefix"
+
+  if (( ${#NAME_LIST[@]} >= i )); then
+    bot_name="${NAME_LIST[$((i - 1))]}"
+  else
+    bot_name="${NAME_PREFIX}${i}"
+  fi
+  if (( ${#JOIN_DELAY_LIST[@]} >= i )); then
+    join_delay="${JOIN_DELAY_LIST[$((i - 1))]}"
+  else
+    join_delay="$((i - 1))"
+  fi
+  if (( ${#AUDIO_READY_LIST[@]} >= i )); then
+    audio_ready="${AUDIO_READY_LIST[$((i - 1))]}"
+  else
+    audio_ready="0"
+  fi
+  if (( ${#SYNC_SHIFT_LIST[@]} >= i )); then
+    sync_shift="${SYNC_SHIFT_LIST[$((i - 1))]}"
+  else
+    sync_shift="0"
+  fi
+
+  CMD_ARGS+=(--video "$video_file")
+  CMD_ARGS+=(--audio "$audio_file")
+  CMD_ARGS+=(--name "$bot_name")
+  CMD_ARGS+=(--join-delay "$join_delay")
+  CMD_ARGS+=(--audio-ready-after "$audio_ready")
+  CMD_ARGS+=(--sync-shift "$sync_shift")
+  if (( ${#BOT_DURATION_LIST[@]} >= i )); then
+    CMD_ARGS+=(--bot-duration "${BOT_DURATION_LIST[$((i - 1))]}")
+  fi
 done
 
 (

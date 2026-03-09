@@ -14,6 +14,13 @@ OUTPUT="${OUTPUT:-/tmp/gocassini-e2e.requested-output}"
 FINAL_OUTPUT="${FINAL_OUTPUT:-${OUTPUT%.csr}.mkv}"
 CHECK_COMPOSED_AUDIO_TAIL="${CHECK_COMPOSED_AUDIO_TAIL:-0}"
 NAME="${NAME:-GocassiniBot}"
+MEDIA_PREFIX="${MEDIA_PREFIX:-}"
+MEDIA_PREFIXES="${MEDIA_PREFIXES:-}"
+NAMES="${NAMES:-}"
+JOIN_DELAYS="${JOIN_DELAYS:-}"
+AUDIO_READY_AFTERS="${AUDIO_READY_AFTERS:-}"
+SYNC_SHIFTS="${SYNC_SHIFTS:-}"
+BOT_DURATIONS="${BOT_DURATIONS:-}"
 
 REC_LOG="${REC_LOG:-/tmp/gocassini-e2e.log}"
 PUB_LOG="${PUB_LOG:-/tmp/gocassini-publisher-e2e.log}"
@@ -55,6 +62,13 @@ echo "CALL_URL=$CALL_URL"
 echo "REC_DURATION=$REC_DURATION"
 echo "PUB_DURATION=$PUB_DURATION"
 echo "PUB_USERS=$PUB_USERS"
+echo "MEDIA_PREFIX=$MEDIA_PREFIX"
+echo "MEDIA_PREFIXES=$MEDIA_PREFIXES"
+echo "NAMES=$NAMES"
+echo "JOIN_DELAYS=$JOIN_DELAYS"
+echo "AUDIO_READY_AFTERS=$AUDIO_READY_AFTERS"
+echo "SYNC_SHIFTS=$SYNC_SHIFTS"
+echo "BOT_DURATIONS=$BOT_DURATIONS"
 echo "OUTPUT=$OUTPUT"
 echo "FINAL_OUTPUT=$FINAL_OUTPUT"
 echo "SEGMENTS_DIR=$SEGMENTS_DIR"
@@ -78,11 +92,40 @@ sleep "$START_DELAY"
 
 (
   cd "$TEST_DIR"
-  ./bin/stream-video.sh \
-    --call-url "$CALL_URL" \
-    --users "$PUB_USERS" \
-    --duration "$PUB_DURATION" \
+  STREAM_ARGS=(
+    --call-url "$CALL_URL"
+    --users "$PUB_USERS"
+    --duration "$PUB_DURATION"
     --name-prefix "CassiniGoE2E"
+  )
+  if [[ -n "$MEDIA_PREFIX" ]]; then
+    STREAM_ARGS+=(--media-prefix "$MEDIA_PREFIX")
+  fi
+  if [[ -n "$MEDIA_PREFIXES" ]]; then
+    IFS=',' read -r -a MEDIA_ITEMS <<<"$MEDIA_PREFIXES"
+    for prefix in "${MEDIA_ITEMS[@]}"; do
+      trimmed="$(echo "$prefix" | xargs)"
+      if [[ -n "$trimmed" ]]; then
+        STREAM_ARGS+=(--media-prefix "$trimmed")
+      fi
+    done
+  fi
+  if [[ -n "$NAMES" ]]; then
+    STREAM_ARGS+=(--names "$NAMES")
+  fi
+  if [[ -n "$JOIN_DELAYS" ]]; then
+    STREAM_ARGS+=(--join-delays "$JOIN_DELAYS")
+  fi
+  if [[ -n "$AUDIO_READY_AFTERS" ]]; then
+    STREAM_ARGS+=(--audio-ready-afters "$AUDIO_READY_AFTERS")
+  fi
+  if [[ -n "$SYNC_SHIFTS" ]]; then
+    STREAM_ARGS+=(--sync-shifts "$SYNC_SHIFTS")
+  fi
+  if [[ -n "$BOT_DURATIONS" ]]; then
+    STREAM_ARGS+=(--bot-durations "$BOT_DURATIONS")
+  fi
+  ./bin/stream-video.sh "${STREAM_ARGS[@]}"
 ) >"$PUB_LOG" 2>&1 || true
 
 wait "$REC_PID" || true
