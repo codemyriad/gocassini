@@ -10,8 +10,8 @@
 
 The pipeline assumes the source MKV carries one audio stream per participant and uses each audio stream title as the speaker label when available.
 
-The intended production design is documented in [docs/architecture.md](/home/silvio/dev/gocassini/cassini-transcriber/docs/architecture.md).
-Cassini-specific timing behavior is documented in [docs/sparse-stream-timing.md](/home/silvio/dev/gocassini/cassini-transcriber/docs/sparse-stream-timing.md).
+The intended production design is documented in [docs/architecture.md](docs/architecture.md).
+Cassini-specific timing behavior is documented in [docs/sparse-stream-timing.md](docs/sparse-stream-timing.md).
 
 ## Contract
 

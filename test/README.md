@@ -24,11 +24,8 @@ All generated media/runtime artifacts stay outside git-tracked content.
   - `stream-video.sh`: basic publisher flow (1-3 clients) using Go rotator + local sample assets
   - `stream-three-songs.sh`: 3-client synchronized publisher flow (Go rotator)
   - `stream-three-songs-until.sh`: retrying loop for continuous cloud/local soak until a wall-clock time
-  - `record-three-songs.sh`: Go recorder + 3-client stream + composition in one command
-  - `compose-recording.sh`: Rust/GStreamer compositor for recorder multi-stream MKV -> review MP4
+  - `record-three-songs.sh`: Go recorder + 3-client stream capture in one command
   - `verify-sync-from-report.sh`: compare final MKV stream start offsets against recorder report expectations
-  - `verify-audio-tail.sh`: fail if composed output audio ends too early or is silent in the last seconds
-  - `ci-e2e-rotation.sh`: local-stack E2E with 3 rotating publishers and composed-tail-audio assertions
   - `smoke.sh`: end-to-end smoke run
 - `go-talk-rotator/`: Go publisher used by `stream-three-songs.sh`
 - `media/`: test inputs (`raw/`, `aligned/`, `webrtc/`) (gitignored except placeholders)
@@ -145,7 +142,7 @@ You can also pass an absolute stop time:
   --skip-prepare
 ```
 
-Recorder + composition in one command:
+Recorder + capture in one command:
 
 ```bash
 cd test
@@ -162,8 +159,6 @@ This generates:
 - raw recorder output MKV (`/tmp/three-songs.mkv`)
 - raw recorder archive CSR (`/tmp/three-songs.csr`)
 - recorder JSON report (`/tmp/three-songs.mkv.json`)
-- composed review MP4 (`/tmp/three-songs.composed.mp4`)
-- composed tail-audio validation (`verify-audio-tail.sh`, auto-run)
 - sync validation output (`verify-sync-from-report.sh`, auto-run unless `--skip-sync-check`)
 - recorder/publisher logs (`/tmp/three-songs.mkv.recorder.log`, `/tmp/three-songs.mkv.publisher.log`)
 
@@ -203,8 +198,6 @@ The repository runs three local integration scripts in GitHub Actions:
 - `./test/bin/ci-e2e.sh` (baseline single publisher)
 - `./test/bin/ci-e2e-mute.sh` (mute-aware 3 publisher flow)
 - `./test/bin/ci-e2e-rejoin.sh` (leave/rejoin flow with two publisher phases)
-- `./test/bin/ci-e2e-rotation.sh` (3 rotating publishers with composed tail-audio checks)
-- `./test/bin/ci-sync-composition.sh` (deterministic synthetic sync gate for multitrack -> composed output)
 
 Scenario assertions are intentionally artifact-centric:
 
@@ -215,17 +208,6 @@ Scenario assertions are intentionally artifact-centric:
   which is brittle under merged artifact-remux output).
 - `ci-e2e-rejoin.sh` does not fail solely on missing final video in a flaky run; it
   treats recorder/subscription evidence and session artifacts as the primary signal.
-- `compose-recording.sh` is backed by `test/bin/compose-rs` (Rust) and defaults to
-  low-res preview rendering (`640x360@6fps`) to keep turnaround fast during sync checks.
-- The compositor uses bounded queues and process RSS guards to reduce memory-pressure
-  risk on long sparse-track meetings.
-- Known composition-stage failure mode (now fixed in `compose-rs`): branch-level
-  `videorate` before `compositor` can stall when one participant video ends early.
-  Framerate normalization is now applied only after the compositor stage.
-- Audio sync path now uses FFmpeg `amix` in a post-compose mux step:
-  GStreamer renders video-only (VAAPI), then FFmpeg mixes all source audio tracks
-  and muxes audio+video. This removed the observed inter-track audio skew on the
-  `daily-meeting--2026-03-04--12:36:53` fixture.
 
 All scenarios use the local Compose stack in this repository:
 
@@ -238,7 +220,6 @@ You can run them locally the same way as CI:
 ./test/bin/ci-e2e.sh
 ./test/bin/ci-e2e-mute.sh
 ./test/bin/ci-e2e-rejoin.sh
-./test/bin/ci-e2e-rotation.sh
 ```
 
 Both CI entrypoints use bounded retry when creating the temporary Talk room to

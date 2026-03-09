@@ -47,6 +47,8 @@ By default, rotator bots auto-exit once all non-bot participants leave (8s grace
 ## Repository layout
 
 - `cassini-go-recorder/`: recorder implementation and binaries.
+- `cassini-transcriber/`: MKV-to-audio+transcript artifact builder.
+- `cassini-viewer/`: static Svelte UI for listening to a meeting artifact.
 - `test/`: reproducible local Nextcloud Talk stack and publisher harness.
 - `.github/workflows/ci.yml`: unit + integration CI.
 - `media-kit.txt` / `media-kit.md`: brand direction and design principles.
@@ -58,6 +60,10 @@ By default, rotator bots auto-exit once all non-bot participants leave (8s grace
 ```bash
 cd cassini-go-recorder
 go test ./...
+```
+
+```bash
+python3 -m unittest discover -s cassini-transcriber/tests -t cassini-transcriber
 ```
 
 ### Recorder smoke test (no real call)
@@ -91,9 +97,9 @@ To validate A/V drift on a produced recording + report:
   --report /tmp/meeting.mkv.json
 ```
 
-### Render and inspect combined output
+### Record a reproducible three-song meeting
 
-- Compose MP4 for full-length review (with mute-alternating audio when publisher logs are available):
+- Capture a full recorder run against the three-song publisher scenario:
 
 ```bash
 cd /path/to/gocassini-repo-root
@@ -105,7 +111,6 @@ cd /path/to/gocassini-repo-root
 
 - The script writes:
   - `<output>.json` (run report, includes session artifact paths),
-  - `<output>.composed.mp4` (preview composition),
   - `<output>.csr` (archive),
   - session artifact directory at `<output_dir>/sessions/<id>/`.
 
@@ -214,12 +219,12 @@ salt '*' state.apply gocassini.recorder
 GitHub Actions runs:
 
 - unit tests for `cassini-go-recorder`
+- unit tests for `cassini-transcriber`
 - unit tests for `test/go-talk-rotator`
 - integration tests against local Nextcloud harness:
   - `./test/bin/ci-e2e.sh`
   - `./test/bin/ci-e2e-mute.sh`
   - `./test/bin/ci-e2e-rejoin.sh`
-  - `./test/bin/ci-e2e-rotation.sh`
 
 ### Migration status
 

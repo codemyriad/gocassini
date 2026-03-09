@@ -60,8 +60,9 @@
 - unit/integration tests:
   - `go test ./...` passes in `cassini-go-recorder`.
 - local live E2E:
-  - `REC_DURATION=25 PUB_DURATION=20 ./test/bin/ci-e2e-rotation.sh` passes.
-  - composed output tail-audio check passes in the same run.
+  - `./test/bin/ci-e2e.sh` covers the baseline single-publisher path.
+  - `./test/bin/ci-e2e-mute.sh` covers multi-publisher mute behavior.
+  - `./test/bin/ci-e2e-rejoin.sh` covers leave/rejoin behavior.
   - session artifact verification passes (`streams`, `events`, `.idx` sidecars).
 
 ## Debug-time impact

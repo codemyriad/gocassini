@@ -32,10 +32,25 @@ jobs:
         working-directory: ${{ matrix.module }}
         run: go test ./...
 
+  unit_transcriber:
+    name: Unit tests (cassini-transcriber)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run unit tests
+        run: python3 -m unittest discover -s cassini-transcriber/tests -t cassini-transcriber
+
   integration:
     name: Integration (local Nextcloud Talk)
     runs-on: ubuntu-latest
-    needs: unit
+    needs:
+      - unit
+      - unit_transcriber
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -68,34 +83,3 @@ jobs:
           SIGNALING_URL: "http://127.0.0.1:28082"
           BOT_PASSWORD: "ci-bot-password"
         run: ./test/bin/${{ matrix.script }}
-
-  integration_rotation:
-    name: Integration (3-user rotation + composed audio checks)
-    runs-on: ubuntu-latest
-    needs: unit
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: cassini-go-recorder/go.mod
-          cache-dependency-path: |
-            cassini-go-recorder/go.sum
-            test/go-talk-rotator/go.sum
-      - name: Install runtime tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg jq ripgrep
-      - name: Run rotating publisher integration test against local Nextcloud
-        env:
-          SPREED_PROFILE: full
-          REC_DURATION: 75
-          PUB_DURATION: 60
-          PUB_USERS: 3
-          CHECK_COMPOSED_AUDIO_TAIL: 1
-          NEXTCLOUD_URL: "http://127.0.0.1:28080"
-          SIGNALING_URL: "http://127.0.0.1:28082"
-          BOT_PASSWORD: "ci-bot-password"
-        run: ./test/bin/ci-e2e-rotation.sh

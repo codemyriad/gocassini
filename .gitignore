@@ -22,6 +22,10 @@ gocassini-*.log
 /cassini-go-recorder/*.out
 /cassini-go-recorder/tmp
 
+# Python cache
+__pycache__/
+*.pyc
+
 # Local developer environment (private, non-committed)
 .envrc
 .env.local

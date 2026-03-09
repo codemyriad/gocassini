@@ -12,7 +12,6 @@ PUB_USERS="${PUB_USERS:-2}"
 START_DELAY="${START_DELAY:-6}"
 OUTPUT="${OUTPUT:-/tmp/gocassini-e2e.requested-output}"
 FINAL_OUTPUT="${FINAL_OUTPUT:-${OUTPUT%.csr}.mkv}"
-CHECK_COMPOSED_AUDIO_TAIL="${CHECK_COMPOSED_AUDIO_TAIL:-0}"
 NAME="${NAME:-GocassiniBot}"
 MEDIA_PREFIX="${MEDIA_PREFIX:-}"
 MEDIA_PREFIXES="${MEDIA_PREFIXES:-}"
@@ -156,21 +155,6 @@ echo "--- final mkv streams ---"
 ffprobe -v error \
   -show_entries stream=index,codec_type,codec_name,start_time,duration \
   -of compact=p=0:nk=1 "$FINAL_OUTPUT" | sed -n '1,120p'
-
-if [[ "$CHECK_COMPOSED_AUDIO_TAIL" == "1" ]]; then
-  if (( PUB_USERS < 3 )); then
-    echo "[WARN] CHECK_COMPOSED_AUDIO_TAIL=1 requires PUB_USERS>=3 (current: $PUB_USERS). Skipping."
-  else
-    COMPOSED_OUTPUT="${FINAL_OUTPUT%.mkv}.composed.mp4"
-    echo "--- composing review MP4 + checking tail audio ---"
-    "$TEST_DIR/bin/compose-recording.sh" \
-      --input "$FINAL_OUTPUT" \
-      --output "$COMPOSED_OUTPUT" \
-      --publisher-log "$PUB_LOG"
-    "$TEST_DIR/bin/verify-audio-tail.sh" --input "$COMPOSED_OUTPUT"
-    echo "composed output: $COMPOSED_OUTPUT"
-  fi
-fi
 
 echo "--- key recorder lines ---"
 rg -n "talk bootstrap|subscribing to remote session|remote track:|ICE state=connected|duration reached|run error|composed final multi-track output|kept intermediate files" "$REC_LOG" -S || true

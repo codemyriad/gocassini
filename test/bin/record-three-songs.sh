@@ -10,7 +10,6 @@ DURATION="${DURATION:-}"
 RECORDER_DURATION="${RECORDER_DURATION:-}"
 OUTPUT="${OUTPUT:-}"
 ARCHIVE_OUTPUT="${ARCHIVE_OUTPUT:-}"
-COMPOSED_OUTPUT="${COMPOSED_OUTPUT:-}"
 SKIP_PREPARE="${SKIP_PREPARE:-0}"
 SKIP_SYNC_CHECK="${SKIP_SYNC_CHECK:-0}"
 CHECK_SESSION_ARTIFACT="${CHECK_SESSION_ARTIFACT:-1}"
@@ -34,10 +33,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --output)
       OUTPUT="$2"
-      shift 2
-      ;;
-    --composed-output)
-      COMPOSED_OUTPUT="$2"
       shift 2
       ;;
     --archive-output)
@@ -70,9 +65,6 @@ fi
 
 if [[ -z "$OUTPUT" ]]; then
   OUTPUT="/tmp/three-songs-recording-$(date -u +%Y%m%d-%H%M%S).mkv"
-fi
-if [[ -z "$COMPOSED_OUTPUT" ]]; then
-  COMPOSED_OUTPUT="${OUTPUT%.*}.composed.mp4"
 fi
 if [[ -z "$ARCHIVE_OUTPUT" ]]; then
   ARCHIVE_OUTPUT="${OUTPUT%.*}.csr"
@@ -157,9 +149,6 @@ if [[ ! -f "$ARCHIVE_OUTPUT" ]]; then
   exit 1
 fi
 
-"$SCRIPT_DIR/compose-recording.sh" --input "$OUTPUT" --output "$COMPOSED_OUTPUT"
-"$SCRIPT_DIR/verify-audio-tail.sh" --input "$COMPOSED_OUTPUT"
-
 if [[ "$SKIP_SYNC_CHECK" != "1" && -f "$REPORT_JSON" ]]; then
   "$SCRIPT_DIR/verify-sync-from-report.sh" \
     --recording "$OUTPUT" \
@@ -178,4 +167,3 @@ if [[ -f "$REPORT_JSON" ]]; then
 fi
 log "Archive recording: $ARCHIVE_OUTPUT"
 log "Raw recording: $OUTPUT"
-log "Composed video: $COMPOSED_OUTPUT"
