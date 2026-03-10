@@ -12,8 +12,17 @@ REC_DURATION="${REC_DURATION:-55}"
 PUB_DURATION="${PUB_DURATION:-24}"
 PUB_USERS="${PUB_USERS:-2}"
 START_DELAY="${START_DELAY:-6}"
-OUTPUT="${OUTPUT:-/tmp/gocassini-e2e.requested-output}"
-FINAL_OUTPUT="${FINAL_OUTPUT:-${OUTPUT%.csr}.mkv}"
+OUTPUT="${OUTPUT:-/tmp/gocassini-e2e.mkv}"
+FINAL_OUTPUT="${FINAL_OUTPUT:-}"
+if [[ -z "$FINAL_OUTPUT" ]]; then
+  if [[ "$OUTPUT" == *.mkv ]]; then
+    FINAL_OUTPUT="$OUTPUT"
+  elif [[ "$OUTPUT" == *.csr ]]; then
+    FINAL_OUTPUT="${OUTPUT%.csr}.mkv"
+  else
+    FINAL_OUTPUT="${OUTPUT}.mkv"
+  fi
+fi
 NAME="${NAME:-GocassiniBot}"
 MEDIA_PREFIX="${MEDIA_PREFIX:-}"
 MEDIA_PREFIXES="${MEDIA_PREFIXES:-}"

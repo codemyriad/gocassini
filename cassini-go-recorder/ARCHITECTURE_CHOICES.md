@@ -9,9 +9,9 @@ Build a Go/Pion recorder that captures Nextcloud Talk media with minimal CPU ove
 
 ## Decisions Captured
 
-1. Single artifact capture (not per-participant files)
-- Capture writes one append-only archive file per meeting.
-- Rationale: preserves cross-participant timing in one timeline and simplifies storage/transport.
+1. Single public meeting artifact (not per-participant outputs)
+- Capture produces one MKV deliverable per meeting and stores packet truth in a colocated session directory.
+- Rationale: preserves cross-participant timing while keeping the operator-facing artifact simple.
 
 2. No transcode in capture path
 - Capture stores encoded RTP packets as received (with metadata + receive timestamps).
@@ -19,8 +19,8 @@ Build a Go/Pion recorder that captures Nextcloud Talk media with minimal CPU ove
 - Rationale: keep CPU dominated by signaling + packet I/O, not encoding.
 
 3. Two-phase pipeline
-- Phase A (live): ingest signaling + WebRTC packets and persist archive.
-- Phase B (offline): compose derivatives (single video, mixed audio, edited layouts) from the archive.
+- Phase A (live): ingest signaling + WebRTC packets and persist session artifacts.
+- Phase B (offline): compose the final MKV and any other derivatives from that packet truth.
 - Rationale: reliability and low runtime cost during meetings.
 
 4. Bot-as-participant remains primary ingestion path
@@ -54,7 +54,7 @@ Build a Go/Pion recorder that captures Nextcloud Talk media with minimal CPU ove
 - adopt a session-directory capture model with session-wide metadata (`session.json`)
 - capture packet truth at stream granularity with `.rtplog` and optional `.idx`
 - split identity mapping by `MID/RID` before SSRC and keep SSRC as segment identity
-- keep `.csr` as compatibility mode until the new layout is fully proven in CI
+- keep `.csr` only as a compatibility mode for simulate/legacy tooling
 
 ## Acceptance Gate Before Switching Production
 

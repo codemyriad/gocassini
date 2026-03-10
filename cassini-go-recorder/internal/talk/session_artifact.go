@@ -142,14 +142,6 @@ func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName
 	return artifact, nil
 }
 
-func (a *sessionCaptureArtifact) openTrack(remoteSessionID, participantID, participantName string, track *webrtc.TrackRemote, arrival time.Time) (string, error) {
-	if track == nil {
-		return "", fmt.Errorf("track is nil")
-	}
-	desc := descriptorFromTrack(track)
-	return a.openStream(remoteSessionID, participantID, participantName, desc, uint32(track.SSRC()), uint8(track.PayloadType()), arrival)
-}
-
 func (a *sessionCaptureArtifact) openStream(
 	remoteSessionID, participantID, participantName string,
 	desc trackDescriptor,
@@ -236,6 +228,32 @@ func (a *sessionCaptureArtifact) openStream(
 		return "", err
 	}
 	return streamID, nil
+}
+
+func (a *sessionCaptureArtifact) updateParticipantDisplay(remoteSessionID, participantID, participantName string) error {
+	display := strings.TrimSpace(participantName)
+	if display == "" {
+		return nil
+	}
+
+	pid := normalizedParticipantID(participantID, remoteSessionID)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	idx, ok := a.participants[pid]
+	if !ok {
+		return nil
+	}
+	current := strings.TrimSpace(a.sessionMeta.Participants[idx].Display)
+	if current == display {
+		return nil
+	}
+	if current != "" && !isPlaceholderParticipantName(current, pid) {
+		return nil
+	}
+	a.sessionMeta.Participants[idx].Display = display
+	return a.persistSessionLocked()
 }
 
 func (a *sessionCaptureArtifact) writeRTP(streamID string, pkt *rtp.Packet, recv time.Time) error {

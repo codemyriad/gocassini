@@ -5,9 +5,10 @@ It is intentionally narrow: one job, one output contract, and strong behavior fo
 
 ## Current scope (v1)
 - Capture audio/video RTP streams from Nextcloud Talk meetings
-- Persist a raw archive (`.csr`) with packet metadata
 - Persist a per-session artifact directory with `session.json`, `streams/*.rtplog`, and `events.ndjson`
 - Compose a multi-track MKV (`.mkv`) as the primary deliverable
+- Embed portable Cassini meeting metadata directly in the final MKV
+- Keep legacy `.csr` archive handling only for simulate mode and compatibility tooling
 - Keep intermediate files deterministic and optionally cleanable
 - Keep everything script-friendly and machine-friendly
 
@@ -15,6 +16,7 @@ It is intentionally narrow: one job, one output contract, and strong behavior fo
 - `cmd/gocassini`: main recorder command
 - `cmd/gocassini-inspect`: archive inspection utility
 - `cmd/gocassini-remux`: offline remux from session artifacts (`session.json` + `streams/*.rtplog`)
+- `cmd/gocassini-upgrade-mkv`: upgrade older meeting MKVs plus legacy `.mkv.json` reports into MKV-v1
 - `internal/`: codec-agnostic recorder, signaling, and Nextcloud Talk adapters
 - `test/`: local reproducible Nextcloud Talk stack + publisher harness
 - `docs/architecture-migration-status.md`: current migration goals, effort, and status
@@ -35,9 +37,10 @@ go run ./cmd/gocassini \
   --mode talk \
   --call-url https://cloud.example.com/call/<ROOM_TOKEN> \
   --name GocassiniObserver \
-  --output /tmp/meeting.csr \
-  --final-output /tmp/meeting.mkv
+  --output /tmp/meeting.mkv
 ```
+
+In talk mode, `--output` can point directly at the final `.mkv`. Keep `--final-output` only if you need a separate compatibility path.
 
 By default, talk mode auto-terminates when all remote participants leave (`--stop-when-room-empty=true`, `--room-empty-grace=30s`). Add `--duration <seconds>` only if you need a hard time limit.
 
@@ -47,6 +50,7 @@ Use `--help` on each command to inspect all options:
 go run ./cmd/gocassini --help
 go run ./cmd/gocassini-inspect --help
 go run ./cmd/gocassini-remux --help
+go run ./cmd/gocassini-upgrade-mkv --help
 ```
 
 ## Integration test helper
@@ -81,11 +85,10 @@ cd test
 
 ## Output contract
 
-- Archive file: `.csr` (source-of-truth stream log)
+- Final output: `.mkv` (single deliverable for playback/transcoding/transcription)
 - Session artifact: `sessions/<id>/session.json`, `streams/*.rtplog`, `events.ndjson`
   with stream segmentation on SSRC/PT churn (same logical track can produce
   multiple stream segments)
-- Final output: `.mkv` (single deliverable for playback/transcoding/transcription)
 - Final output compose path prefers session-artifact remux (`streams/*.rtplog`) and falls back to legacy intermediates if needed
   with timeline-aware offset planning from SR-corrected estimates.
 - Final MKV embeds Cassini meeting metadata directly:
@@ -95,11 +98,28 @@ cd test
   - attached portable JSON report (`cassini-report.v1.json`) for richer inspection.
 - Report: optional `<final>.json` legacy sidecar with session and compose status
   when `--write-report` is enabled.
+- Legacy archive file: `.csr` remains supported by simulate mode and inspect tooling,
+  but it is no longer the normal Talk recording artifact.
 - Intermediate per-session files: `<output>-segments-*` unless cleanup is enabled
 - `gocassini-inspect` prints legacy archive summaries; session artifacts are written next to `.mkv` and available at `<final>/../sessions/<id>/`.
   For session artifacts it also prints per-stream validation issues, `segment_churn` (`ssrc_changes`, `pt_changes`, `max_gap_ms`), and stream close reasons.
   It also reports timeline delta diagnostics (`mean_abs`, `max_abs`, `last`) derived from RTP/RTCP.
 - `gocassini-remux` can rebuild a multitrack MKV directly from session artifacts without using capture-time intermediate files.
+
+## Legacy MKV Upgrade
+
+If you have an older meeting `.mkv` that predates the MKV-v1 metadata contract,
+but you still have its legacy recorder sidecar at `<meeting>.mkv.json`, you can
+upgrade it into a compliant MKV without re-recording:
+
+```bash
+go run ./cmd/gocassini-upgrade-mkv \
+  --input /path/to/meeting.mkv
+```
+
+This writes `/path/to/meeting.v1.mkv` by default. The upgrader keeps the
+existing audio/video streams, copies the container, injects the missing MKV-v1
+tags, and attaches `cassini-report.v1.json` inside the MKV.
 
 The project is designed so the primary interface remains the CLI and file artifacts.
 

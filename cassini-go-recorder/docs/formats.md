@@ -10,9 +10,9 @@ The source-of-truth output must stay append-only and semantic-lossless.
 - aggressive segment boundaries on RTP identity changes (SSRC/PT) to keep each
   stream file internally consistent
 
-## On-disk session layout (target)
+## On-disk session layout
 
-The target is `sessions/<session_id>/` with:
+Talk capture writes `sessions/<session_id>/` with:
 
 - `session.json`: indexed metadata and event pointers
 - `sdp/`: SDP snapshots (`000_offer.sdp`, `001_answer.sdp`, ...)
@@ -53,12 +53,12 @@ Each packet record:
 
 ## Current migration status
 
-- current code dual-writes legacy `.csr` (`internal/cassette`) and session artifact streams (`pkg/core/store`)
+- current Talk capture writes session artifact streams via `pkg/core/store`
 - new `pkg/core/store` is available and includes a schema-compatible writer/reader
 - session artifact capture writes one `.rtplog` segment per stable `(logical track, ssrc, pt)` window
 - session artifact capture now writes both RTP and RTCP packets from live receiver paths
 - per-stream receive timestamps are clamped to stay strictly monotonic across mixed RTP/RTCP writes
-- full migration to multi-file session layout is staged
+- legacy `.csr` archives remain only for simulate mode and compatibility tooling
 
 ## Validation hooks
 
@@ -68,3 +68,6 @@ Each packet record:
 - `gocassini-inspect` surfaces these as per-stream `issues=<N>` plus top issue samples.
 - `cmd/gocassini-remux` consumes the same logs and reconstructs Opus +
   VP8/VP9/H264/AV1 elementary files + MKV outputs for offline replay.
+- `cmd/gocassini-upgrade-mkv` can upgrade older MKVs that still have their
+  legacy `.mkv.json` recorder report, producing a compliant MKV-v1 artifact
+  without needing the original `sessions/<id>/` directory.

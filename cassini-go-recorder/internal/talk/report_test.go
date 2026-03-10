@@ -98,3 +98,48 @@ func TestWriteReportIncludesArtifactRemuxPlans(t *testing.T) {
 		t.Fatalf("unexpected first stream adjustment: %v", first["timeline_adjust_ns"])
 	}
 }
+
+func TestDeriveFinalOutputPath(t *testing.T) {
+	cases := []struct {
+		name       string
+		archive    string
+		final      string
+		wantOutput string
+	}{
+		{
+			name:       "explicit final output wins",
+			archive:    "/tmp/meeting.csr",
+			final:      "/tmp/custom.mkv",
+			wantOutput: "/tmp/custom.mkv",
+		},
+		{
+			name:       "csr archive derives mkv",
+			archive:    "/tmp/meeting.csr",
+			wantOutput: "/tmp/meeting.mkv",
+		},
+		{
+			name:       "mkv output stays mkv",
+			archive:    "/tmp/meeting.mkv",
+			wantOutput: "/tmp/meeting.mkv",
+		},
+		{
+			name:       "extensionless output appends mkv",
+			archive:    "/tmp/meeting",
+			wantOutput: "/tmp/meeting.mkv",
+		},
+		{
+			name:       "uppercase csr derives mkv",
+			archive:    "/tmp/MEETING.CSR",
+			wantOutput: "/tmp/MEETING.mkv",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := deriveFinalOutputPath(tc.archive, tc.final)
+			if got != tc.wantOutput {
+				t.Fatalf("deriveFinalOutputPath(%q, %q) = %q, want %q", tc.archive, tc.final, got, tc.wantOutput)
+			}
+		})
+	}
+}

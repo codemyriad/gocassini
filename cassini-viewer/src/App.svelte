@@ -14,7 +14,10 @@
     loadBundledArtifact,
     type LoadedArtifact,
   } from "./viewer/loadArtifact";
-  import { DEMO_MEETINGS, type DemoMeeting } from "./viewer/demoMeetings";
+  import {
+    loadMeetingCatalog,
+    type MeetingCatalogEntry,
+  } from "./viewer/catalog";
 
   interface DisplaySegment {
     id: string;
@@ -34,6 +37,7 @@
   let chaptersSrc: string | null = null;
   let errorMessage = "";
   let loading = true;
+  let catalogMeetings: MeetingCatalogEntry[] = [];
 
   let currentTimeMs = 0;
   let durationMs = 0;
@@ -47,7 +51,7 @@
   let animationFrameId = 0;
   let lastAutoScrollSegmentId = "";
   let selectedMeetingId = "";
-  let activeDemoMeeting: DemoMeeting | null = null;
+  let activeMeeting: MeetingCatalogEntry | null = null;
   let showExactWords = false;
   const CONTINUATION_GAP_MS = 60_000;
 
@@ -56,6 +60,17 @@
   $: visibleSegments = displaySegments;
   $: activeSegment = getActiveDisplaySegment(displaySegments, currentTimeMs);
   $: activeWord = getActiveDisplayWord(activeSegment, currentTimeMs);
+  $: documentTitle = activeMeeting
+    ? `${activeMeeting.title} | Cassini Viewer`
+    : catalogMeetings.length > 0
+      ? "Cassini Meetings"
+      : "Cassini Viewer";
+  $: mastheadSummary =
+    transcriptIndex !== null
+      ? `${speakers.length} speaker${speakers.length === 1 ? "" : "s"} · ${displaySegments.length} passage${displaySegments.length === 1 ? "" : "s"} · ${formatClockTime(durationMs)}`
+      : catalogMeetings.length > 0
+        ? `${catalogMeetings.length} meeting${catalogMeetings.length === 1 ? "" : "s"} available`
+        : "No transcript loaded";
   $: if (
     followPlayback &&
     !manualScrollLock &&
@@ -74,14 +89,27 @@
       __CASSINI_VIEWER_ARTIFACT_MODE__?: string;
     };
     const preferBundledArtifact = viewerConfig.__CASSINI_VIEWER_ARTIFACT_MODE__ === "bundled";
-    if (!preferBundledArtifact && DEMO_MEETINGS.length > 0) {
-      const selected =
-        DEMO_MEETINGS.find((meeting) => meeting.id === meetingId) ?? DEMO_MEETINGS[0];
-      await loadDemoMeeting(selected);
-      return;
-    }
     try {
+      if (!preferBundledArtifact) {
+        const catalog = await loadMeetingCatalog();
+        if (catalog?.meetings.length) {
+          catalogMeetings = catalog.meetings;
+          selectedMeetingId = meetingId ?? "";
+          const selected =
+            catalog.meetings.find((meeting) => meeting.id === meetingId) ??
+            (catalog.meetings.length === 1 ? catalog.meetings[0] : null);
+          if (selected) {
+            await loadCatalogMeeting(selected);
+          } else if (meetingId) {
+            errorMessage = `Meeting not found in catalog: ${meetingId}`;
+          }
+          loading = false;
+          return;
+        }
+      }
       const artifact = await loadBundledArtifact();
+      selectedMeetingId = "";
+      activeMeeting = null;
       applyArtifact(artifact);
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : String(error);
@@ -97,6 +125,7 @@
 
   function applyArtifact(artifact: LoadedArtifact) {
     stopPlaybackClock();
+    audioEl?.pause();
     playing = false;
     currentTimeMs = 0;
     transcriptIndex = artifact.index;
@@ -111,18 +140,38 @@
     lastAutoScrollSegmentId = "";
   }
 
-  async function loadDemoMeeting(meeting: DemoMeeting) {
+  function resetLoadedArtifact() {
+    stopPlaybackClock();
+    audioEl?.pause();
+    playing = false;
+    currentTimeMs = 0;
+    transcriptIndex = null;
+    readableTranscript = null;
+    audioSrc = "";
+    captionsSrc = null;
+    chaptersSrc = null;
+    durationMs = 0;
+    showExactWords = false;
+    manualScrollLock = false;
+    lastAutoScrollSegmentId = "";
+    selectedMeetingId = "";
+  }
+
+  async function loadCatalogMeeting(meeting: MeetingCatalogEntry) {
     loading = true;
     errorMessage = "";
     try {
-      const artifact = await loadArtifactFromDirectory(meeting.path);
+      const artifact = await loadArtifactFromDirectory(meeting.artifactPath);
       selectedMeetingId = meeting.id;
-      activeDemoMeeting = meeting;
+      activeMeeting = meeting;
       applyArtifact(artifact);
       const url = new URL(window.location.href);
       url.searchParams.set("meeting", meeting.id);
       window.history.replaceState({}, "", url);
     } catch (error) {
+      resetLoadedArtifact();
+      activeMeeting = null;
+      selectedMeetingId = "";
       errorMessage = error instanceof Error ? error.message : String(error);
     } finally {
       loading = false;
@@ -238,7 +287,7 @@
     togglePlayback();
   }
 
-  function loadMeetingButtonLabel(meeting: DemoMeeting): string {
+  function loadMeetingButtonLabel(meeting: MeetingCatalogEntry): string {
     return `${meeting.title} - ${meeting.dateLabel}`;
   }
 
@@ -334,7 +383,7 @@
 </script>
 
 <svelte:head>
-  <title>Cassini Viewer</title>
+  <title>{documentTitle}</title>
   <meta
     name="description"
     content="Static audio and transcript viewer for transcript.words.v1 meeting artifacts."
@@ -345,28 +394,50 @@
   <header class="masthead panel">
     <div class="masthead-copy">
       <p class="eyebrow">Cassini Viewer</p>
-      <h1>{activeDemoMeeting ? `${activeDemoMeeting.title}, ${activeDemoMeeting.dateLabel}` : "Meeting transcript viewer"}</h1>
-      <p class="masthead-meta">
-        {speakers.length} speaker{speakers.length === 1 ? "" : "s"} · {displaySegments.length} passage{displaySegments.length === 1 ? "" : "s"} · {formatClockTime(durationMs)}
-      </p>
+      <h1>
+        {#if activeMeeting}
+          {activeMeeting.title}, {activeMeeting.dateLabel}
+        {:else if catalogMeetings.length > 0}
+          Cassini meeting library
+        {:else}
+          Meeting transcript viewer
+        {/if}
+      </h1>
+      <p class="masthead-meta">{mastheadSummary}</p>
     </div>
     <div class="info-strip">
-      <span class="info-pill">{readableTranscript ? "Readable + exact timing" : "Canonical timing"}</span>
-      <span class="info-pill">{formatClockTime(currentTimeMs)} / {formatClockTime(durationMs)}</span>
+      <span class="info-pill">
+        {#if transcriptIndex}
+          {readableTranscript ? "Readable + exact timing" : "Canonical timing"}
+        {:else if catalogMeetings.length > 0}
+          Runtime catalog
+        {:else}
+          Viewer ready
+        {/if}
+      </span>
+      <span class="info-pill">
+        {#if transcriptIndex}
+          {formatClockTime(currentTimeMs)} / {formatClockTime(durationMs)}
+        {:else if catalogMeetings.length > 0}
+          Choose a meeting
+        {:else}
+          Waiting for artifact
+        {/if}
+      </span>
     </div>
   </header>
 
   <div class="layout">
     <aside class="sidebar">
-      {#if DEMO_MEETINGS.length > 0}
+      {#if catalogMeetings.length > 0}
         <section class="panel">
           <h2>Meetings</h2>
           <div class="meeting-list">
-            {#each DEMO_MEETINGS as meeting}
+            {#each catalogMeetings as meeting}
               <button
                 class:active-meeting={meeting.id === selectedMeetingId}
                 class="meeting-card"
-                on:click={() => loadDemoMeeting(meeting)}
+                on:click={() => loadCatalogMeeting(meeting)}
                 type="button"
               >
                 <span class="meeting-title">{loadMeetingButtonLabel(meeting)}</span>
@@ -375,8 +446,6 @@
                     meeting.digestDurationMs,
                   )}
                 </span>
-                <span class="meeting-meta">{meeting.speakers.join(", ")}</span>
-                <span class="meeting-teaser">{meeting.teaser}</span>
               </button>
             {/each}
           </div>
@@ -396,10 +465,14 @@
         <div>
           <p class="eyebrow">Transcript</p>
           <p class="transcript-summary">
-            {#if readableTranscript}
+            {#if activeMeeting && readableTranscript}
               Readable transcript first. Click any passage to seek. Press space to play or pause.
-            {:else}
+            {:else if activeMeeting}
               Canonical timed transcript. Click any passage to seek the audio. Press space to play or pause.
+            {:else if catalogMeetings.length > 0}
+              Choose a meeting from the library to load its audio, transcript, and timing data.
+            {:else}
+              Load a meeting artifact to inspect its transcript and timing.
             {/if}
           </p>
         </div>
@@ -411,7 +484,13 @@
       {#if loading}
         <p class="muted">Loading transcript bootstrap...</p>
       {:else if visibleSegments.length === 0}
-        <p class="muted">No transcript loaded yet.</p>
+        <p class="muted">
+          {#if catalogMeetings.length > 0}
+            Select a meeting to load its audio and transcript.
+          {:else}
+            No transcript loaded yet.
+          {/if}
+        </p>
       {:else}
         <div
           bind:this={transcriptPane}
@@ -469,7 +548,15 @@
     <div class="player-card panel">
       <div class="player-meta">
         <p class="eyebrow">Player</p>
-        <strong>{activeDemoMeeting ? activeDemoMeeting.dateLabel : "Manual artifact"}</strong>
+        <strong>
+          {#if activeMeeting}
+            {activeMeeting.title}
+          {:else if catalogMeetings.length > 0}
+            Meeting library
+          {:else}
+            Manual artifact
+          {/if}
+        </strong>
         <p class="player-hint">Space toggles play and pause.</p>
       </div>
 
@@ -494,7 +581,13 @@
           {/if}
         </audio>
       {:else}
-        <p class="muted">No audio source available for this artifact.</p>
+        <p class="muted">
+          {#if catalogMeetings.length > 0}
+            Select a meeting to load its audio source.
+          {:else}
+            No audio source available for this artifact.
+          {/if}
+        </p>
       {/if}
 
       <div class="player-actions">
@@ -664,18 +757,10 @@
     font-weight: 700;
   }
 
-  .meeting-meta,
-  .meeting-teaser {
+  .meeting-meta {
     color: #665d51;
     font-size: 0.89rem;
     line-height: 1.45;
-  }
-
-  .meeting-teaser {
-    display: -webkit-box;
-    overflow: hidden;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
   }
 
   .player-actions button,

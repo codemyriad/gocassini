@@ -7,8 +7,9 @@
 
 ## Current state
 
-- live capture writes both legacy `.csr` and session artifacts (`session.json`,
-  `events.ndjson`, `streams/*.rtplog`)
+- live Talk capture writes session artifacts (`session.json`, `events.ndjson`,
+  `streams/*.rtplog`) and composes the final meeting MKV
+- legacy `.csr` archives remain only for simulate mode and compatibility tooling
 - recorder final-output compose now prefers session-artifact remux and falls back
   to legacy per-session `.ivf/.ogg/.mkv` composition on remux failure
 - offline artifact remux is available via `cmd/gocassini-remux` and rebuilds a

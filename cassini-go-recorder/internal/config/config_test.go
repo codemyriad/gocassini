@@ -42,6 +42,20 @@ func TestFromFlagsTalkModeAcceptsCallURL(t *testing.T) {
 	}
 }
 
+func TestFromFlagsTalkModeAcceptsMKVOutputPath(t *testing.T) {
+	cfg, err := FromFlags([]string{
+		"--mode", "talk",
+		"--call-url", "https://cloud.example.com/call/roomtoken",
+		"--output", "/tmp/out.mkv",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.OutputPath != "/tmp/out.mkv" {
+		t.Fatalf("unexpected output path: %q", cfg.OutputPath)
+	}
+}
+
 func TestFromFlagsTalkDefaultsAutoStopOnEmptyRoom(t *testing.T) {
 	cfg, err := FromFlags([]string{
 		"--mode", "talk",

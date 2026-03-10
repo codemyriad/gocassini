@@ -2,46 +2,63 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, write
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const CATALOG_VERSION = "cassini.viewer.catalog.v1";
+
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const viewerDir = resolve(scriptDir, "..");
 const distDir = resolve(viewerDir, "dist");
 const defaultSourceDir = resolve(viewerDir, "public", "demo");
 const defaultOutputDir = resolve(viewerDir, "exports", "static-meetings");
 
-const { outputDir, sourceDir } = parseArgs(process.argv.slice(2));
-
-if (!existsSync(join(distDir, "index.html"))) {
-  throw new Error(`Missing ${join(distDir, "index.html")}. Run "npm run build" first.`);
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
 }
-if (!existsSync(sourceDir)) {
-  throw new Error(
-    `Missing meeting source directory: ${sourceDir}. Pass --source-dir <artifact-root> when artifacts are stored outside this repo.`,
+
+export function main(argv = process.argv.slice(2)) {
+  const { outputDir, sourceDir } = parseArgs(argv);
+  const distIndexPath = join(distDir, "index.html");
+
+  if (!existsSync(distIndexPath)) {
+    throw new Error(`Missing ${distIndexPath}. Run "npm run build" first.`);
+  }
+  if (!existsSync(sourceDir)) {
+    throw new Error(
+      `Missing meeting source directory: ${sourceDir}. Pass --source-dir <artifact-root> when artifacts are stored outside this repo.`,
+    );
+  }
+
+  const meetingDirs = readdirSync(sourceDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+
+  if (meetingDirs.length === 0) {
+    throw new Error(`No meeting directories found in ${sourceDir}.`);
+  }
+
+  rmSync(outputDir, { recursive: true, force: true });
+  mkdirSync(outputDir, { recursive: true });
+  mkdirSync(join(outputDir, "meetings"), { recursive: true });
+
+  const builtIndexHtml = readFileSync(distIndexPath, "utf8");
+  writeFileSync(join(outputDir, "index.html"), rewriteIndexHtmlForCatalog(builtIndexHtml), "utf8");
+  cpSync(join(distDir, "assets"), join(outputDir, "assets"), { recursive: true });
+
+  const meetings = meetingDirs.map((meetingId) => exportMeeting({ meetingId, sourceDir, outputDir }));
+  writeFileSync(
+    join(outputDir, "catalog.json"),
+    `${JSON.stringify({ version: CATALOG_VERSION, meetings }, null, 2)}\n`,
+    "utf8",
   );
+
+  console.log(`viewer index -> ${join(outputDir, "index.html")}`);
+  console.log(`viewer catalog -> ${join(outputDir, "catalog.json")}`);
+  for (const meeting of meetings) {
+    console.log(`${meeting.id} -> ${join(outputDir, "meetings", meeting.id)}`);
+  }
 }
 
-const builtIndexHtml = readFileSync(join(distDir, "index.html"), "utf8");
-const exportedIndexHtml = rewriteIndexHtmlForBundle(builtIndexHtml);
-const meetingDirs = readdirSync(sourceDir, { withFileTypes: true })
-  .filter((entry) => entry.isDirectory())
-  .map((entry) => entry.name)
-  .sort();
-
-if (meetingDirs.length === 0) {
-  throw new Error(`No meeting directories found in ${sourceDir}.`);
-}
-
-rmSync(outputDir, { recursive: true, force: true });
-mkdirSync(outputDir, { recursive: true });
-
-const exports = meetingDirs.map((meetingId) => exportMeeting(meetingId, exportedIndexHtml));
-writeFileSync(join(outputDir, "index.html"), renderLandingPage(exports), "utf8");
-
-for (const artifact of exports) {
-  console.log(`${artifact.id} -> ${artifact.outputDir}`);
-}
-console.log(`landing page -> ${join(outputDir, "index.html")}`);
-
-function parseArgs(argv) {
+export function parseArgs(argv) {
   let outputDir = defaultOutputDir;
   let sourceDir = defaultSourceDir;
   for (let index = 0; index < argv.length; index += 1) {
@@ -66,36 +83,31 @@ function parseArgs(argv) {
   return { outputDir, sourceDir };
 }
 
-function rewriteIndexHtmlForBundle(indexHtml) {
-  return indexHtml
-    .replace(/(src|href)="\/assets\//g, '$1="./assets/')
-    .replace(
-      "</head>",
-      '    <script>window.__CASSINI_VIEWER_ARTIFACT_MODE__ = "bundled";</script>\n  </head>',
-    );
+export function rewriteIndexHtmlForCatalog(indexHtml) {
+  return indexHtml.replace(/(src|href)="\/assets\//g, '$1="./assets/');
 }
 
-function exportMeeting(meetingId, indexHtml) {
+export function exportMeeting({ meetingId, sourceDir, outputDir }) {
   const sourceMeetingDir = join(sourceDir, meetingId);
-  const targetDir = join(outputDir, meetingId);
+  const targetMeetingDir = join(outputDir, "meetings", meetingId);
   const manifest = readManifest(sourceMeetingDir, meetingId);
+  const { title, dateLabel } = describeMeeting(meetingId);
 
-  mkdirSync(targetDir, { recursive: true });
-  cpSync(join(distDir, "assets"), join(targetDir, "assets"), { recursive: true });
-  cpSync(sourceMeetingDir, targetDir, { recursive: true });
-  writeFileSync(join(targetDir, "index.html"), indexHtml, "utf8");
+  mkdirSync(targetMeetingDir, { recursive: true });
+  copyPublicMeetingFiles(sourceMeetingDir, targetMeetingDir, manifest);
 
   return {
     id: meetingId,
-    outputDir: targetDir,
+    artifactPath: `./meetings/${meetingId}`,
+    title,
+    dateLabel,
     speakerCount: manifest.speakerCount ?? 0,
     segmentCount: manifest.segmentCount ?? 0,
     digestDurationMs: manifest.digestDurationMs ?? 0,
-    title: formatMeetingTitle(meetingId),
   };
 }
 
-function readManifest(sourceDir, meetingId) {
+export function readManifest(sourceDir, meetingId) {
   const manifestPath = join(sourceDir, "manifest.json");
   if (!existsSync(manifestPath)) {
     return {};
@@ -107,123 +119,81 @@ function readManifest(sourceDir, meetingId) {
   }
 }
 
-function formatMeetingTitle(meetingId) {
-  const match = /^(.*)--(\d{4})-(\d{2})-(\d{2})--(\d{2})-(\d{2})-(\d{2})$/.exec(meetingId);
-  if (!match) {
-    return meetingId;
+export function copyPublicMeetingFiles(sourceMeetingDir, targetMeetingDir, manifest) {
+  const filesToCopy = new Set([
+    "manifest.json",
+    "meeting.webm",
+    "transcript.words.v1.json",
+    "transcript.readable.v1.json",
+    "captions.vtt",
+    "chapters.vtt",
+    "timeline.map.v1.json",
+  ]);
+
+  if (manifest && typeof manifest === "object" && manifest.files && typeof manifest.files === "object") {
+    for (const value of Object.values(manifest.files)) {
+      if (typeof value === "string" && value.trim() !== "") {
+        filesToCopy.add(value);
+      }
+    }
   }
-  const [, rawTitle, year, month, day, hour, minute] = match;
-  return `${toTitleCase(rawTitle)} - ${year}-${month}-${day} ${hour}:${minute}`;
+
+  for (const optionalFile of ["transcript.readable.v1.json", "chapters.vtt"]) {
+    const optionalPath = join(sourceMeetingDir, optionalFile);
+    if (existsSync(optionalPath)) {
+      filesToCopy.add(optionalFile);
+    }
+  }
+
+  for (const relativePath of filesToCopy) {
+    const sourcePath = join(sourceMeetingDir, relativePath);
+    if (!existsSync(sourcePath)) {
+      continue;
+    }
+    const targetPath = join(targetMeetingDir, relativePath);
+    mkdirSync(dirname(targetPath), { recursive: true });
+    cpSync(sourcePath, targetPath, { recursive: true });
+  }
 }
 
-function toTitleCase(text) {
+export function describeMeeting(meetingId) {
+  const colonTimeStamp = /^(.*)--(\d{4})-(\d{2})-(\d{2})--(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(meetingId);
+  if (colonTimeStamp) {
+    const [, rawTitle, year, month, day, hour, minute] = colonTimeStamp;
+    return {
+      title: toTitleCase(rawTitle),
+      dateLabel: `${year}-${month}-${day} ${hour}:${minute}`,
+    };
+  }
+
+  const modernStamp = /^(.*)--(\d{8})T(\d{2})(\d{2})(\d{2})$/.exec(meetingId);
+  if (modernStamp) {
+    const [, rawTitle, yyyymmdd, hour, minute] = modernStamp;
+    return {
+      title: toTitleCase(rawTitle),
+      dateLabel: `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)} ${hour}:${minute}`,
+    };
+  }
+
+  const legacyStamp = /^(.*)--(\d{4})-(\d{2})-(\d{2})--(\d{2})-(\d{2})-(\d{2})$/.exec(meetingId);
+  if (legacyStamp) {
+    const [, rawTitle, year, month, day, hour, minute] = legacyStamp;
+    return {
+      title: toTitleCase(rawTitle),
+      dateLabel: `${year}-${month}-${day} ${hour}:${minute}`,
+    };
+  }
+
+  return {
+    title: toTitleCase(meetingId),
+    dateLabel: meetingId,
+  };
+}
+
+export function toTitleCase(text) {
   return text
     .split("-")
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
-}
-
-function formatDuration(ms) {
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
-  }
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
-
-function renderLandingPage(exports) {
-  const items = exports
-    .map(
-      (artifact) => `      <li>
-        <a href="./${artifact.id}/">${escapeHtml(artifact.title)}</a>
-        <span>${artifact.speakerCount} speakers</span>
-        <span>${artifact.segmentCount} segments</span>
-        <span>${formatDuration(artifact.digestDurationMs)}</span>
-      </li>`,
-    )
-    .join("\n");
-
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Cassini Meetings</title>
-    <style>
-      :root {
-        color-scheme: light;
-        font-family: Georgia, "Times New Roman", serif;
-      }
-      body {
-        margin: 0;
-        min-height: 100vh;
-        background: linear-gradient(180deg, #f5efe3 0%, #ebe4d6 100%);
-        color: #251d14;
-      }
-      main {
-        max-width: 960px;
-        margin: 0 auto;
-        padding: 3rem 1rem 4rem;
-      }
-      h1 {
-        margin: 0 0 0.75rem;
-        font-size: clamp(2rem, 5vw, 3.6rem);
-      }
-      p {
-        max-width: 60ch;
-        line-height: 1.5;
-      }
-      ul {
-        list-style: none;
-        padding: 0;
-        margin: 2rem 0 0;
-        display: grid;
-        gap: 0.9rem;
-      }
-      li {
-        display: grid;
-        gap: 0.2rem;
-        padding: 1rem 1.1rem;
-        border: 1px solid rgba(37, 29, 20, 0.15);
-        border-radius: 0.9rem;
-        background: rgba(255, 252, 246, 0.78);
-      }
-      a {
-        color: inherit;
-        font-size: 1.15rem;
-        font-weight: 700;
-        text-decoration: none;
-      }
-      a:hover {
-        text-decoration: underline;
-      }
-      span {
-        color: #5d4f3b;
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>Cassini Meetings</h1>
-      <p>Each directory below is a standalone static package. Upload this whole folder to a web server and open any meeting in a browser.</p>
-      <ul>
-${items}
-      </ul>
-    </main>
-  </body>
-</html>
-`;
-}
-
-function escapeHtml(value) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }

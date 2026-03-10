@@ -194,7 +194,9 @@ TRANSCRIBE_LOG="$OUTPUT_ROOT/transcriber.log"
 MEETING_ID="$(basename "$OUTPUT" .mkv)"
 ARTIFACT_DIR="$ARTIFACT_OUTPUT_ROOT/${MEETING_ID}.artifact"
 RENDERED_DIR="$ARTIFACT_OUTPUT_ROOT/${MEETING_ID}.rendered"
-RENDERED_INDEX="$RENDERED_DIR/${MEETING_ID}/index.html"
+RENDERED_INDEX="$RENDERED_DIR/index.html"
+RENDERED_CATALOG="$RENDERED_DIR/catalog.json"
+RENDERED_MEETING_DIR="$RENDERED_DIR/meetings/$MEETING_ID"
 
 rm -f "$OUTPUT" "$REC_LOG" "$PUB_LOG" "$INSPECT_LOG" "$TRANSCRIBE_LOG"
 if [[ "$ARCHIVE_OUTPUT" != "$OUTPUT" ]]; then
@@ -320,6 +322,8 @@ for required in \
   "$ARTIFACT_DIR/transcript.words.v1.json" \
   "$ARTIFACT_DIR/captions.vtt" \
   "$ARTIFACT_DIR/manifest.json" \
+  "$RENDERED_CATALOG" \
+  "$RENDERED_MEETING_DIR/manifest.json" \
   "$RENDERED_INDEX"; do
   if [[ ! -s "$required" ]]; then
     echo "expected output missing or empty: $required" >&2
@@ -334,4 +338,6 @@ log "Transcriber log: $TRANSCRIBE_LOG"
 log "Meeting MKV: $OUTPUT"
 log "Meeting session id: $SESSION_ID"
 log "Artifact dir: $ARTIFACT_DIR"
-log "Rendered viewer: $RENDERED_INDEX"
+log "Viewer landing page: $RENDERED_INDEX"
+log "Viewer catalog: $RENDERED_CATALOG"
+log "Viewer meeting dir: $RENDERED_MEETING_DIR"

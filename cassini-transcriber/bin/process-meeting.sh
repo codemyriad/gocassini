@@ -54,6 +54,9 @@ MEETING_ID="$(basename "${INPUT_ABS}" .mkv)"
 ARTIFACT_DIR="${OUTPUT_ROOT_ABS}/${MEETING_ID}.artifact"
 RENDER_SOURCE_DIR="${OUTPUT_ROOT_ABS}/_viewer-source"
 RENDER_OUTPUT_DIR="${OUTPUT_ROOT_ABS}/${MEETING_ID}.rendered"
+RENDERED_INDEX="${RENDER_OUTPUT_DIR}/index.html"
+RENDERED_CATALOG="${RENDER_OUTPUT_DIR}/catalog.json"
+RENDERED_MEETING_DIR="${RENDER_OUTPUT_DIR}/meetings/${MEETING_ID}"
 
 mkdir -p "${OUTPUT_ROOT_ABS}"
 
@@ -75,10 +78,19 @@ fi
 
 mkdir -p "${RENDER_SOURCE_DIR}"
 ARTIFACT_MANIFEST="${ARTIFACT_DIR}/manifest.json"
-RENDERED_INDEX="${RENDER_OUTPUT_DIR}/${MEETING_ID}/index.html"
-if [[ -f "${RENDERED_INDEX}" && -f "${ARTIFACT_MANIFEST}" && "${RENDERED_INDEX}" -nt "${ARTIFACT_MANIFEST}" ]]; then
+VIEWER_DIST_INDEX="${VIEWER_DIR}/dist/index.html"
+if [[ -f "${RENDERED_INDEX}" \
+  && -f "${RENDERED_CATALOG}" \
+  && -f "${RENDERED_MEETING_DIR}/manifest.json" \
+  && -f "${ARTIFACT_MANIFEST}" \
+  && -f "${VIEWER_DIST_INDEX}" \
+  && "${RENDERED_INDEX}" -nt "${ARTIFACT_MANIFEST}" \
+  && "${RENDERED_INDEX}" -nt "${VIEWER_DIST_INDEX}" ]]; then
   echo "artifact_dir=${ARTIFACT_DIR}"
   echo "rendered_dir=${RENDER_OUTPUT_DIR}"
+  echo "viewer_index=${RENDERED_INDEX}"
+  echo "viewer_catalog=${RENDERED_CATALOG}"
+  echo "viewer_meeting_dir=${RENDERED_MEETING_DIR}"
   exit 0
 fi
 
@@ -93,3 +105,6 @@ fi
 
 echo "artifact_dir=${ARTIFACT_DIR}"
 echo "rendered_dir=${RENDER_OUTPUT_DIR}"
+echo "viewer_index=${RENDERED_INDEX}"
+echo "viewer_catalog=${RENDERED_CATALOG}"
+echo "viewer_meeting_dir=${RENDERED_MEETING_DIR}"

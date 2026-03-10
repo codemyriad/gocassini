@@ -840,9 +840,8 @@ func (r *Recorder) rememberParticipantIdentity(remoteSessionID, displayName, par
 	displayName = strings.TrimSpace(displayName)
 	participantID = strings.TrimSpace(participantID)
 
+	var shouldUpdateArtifact bool
 	r.sessionMu.Lock()
-	defer r.sessionMu.Unlock()
-
 	current := r.identityByRemote[remoteSessionID]
 	if displayName == "" {
 		displayName = current.DisplayName
@@ -858,9 +857,17 @@ func (r *Recorder) rememberParticipantIdentity(remoteSessionID, displayName, par
 	if session := r.sessionsByRemote[remoteSessionID]; session != nil {
 		if displayName != "" {
 			session.ParticipantName = displayName
+			shouldUpdateArtifact = true
 		}
 		if participantID != "" {
 			session.ParticipantID = participantID
+		}
+	}
+	r.sessionMu.Unlock()
+
+	if shouldUpdateArtifact && r.sessionArtifact != nil {
+		if err := r.sessionArtifact.updateParticipantDisplay(remoteSessionID, participantID, displayName); err != nil {
+			log.Printf("update participant display failed sid=%s: %v", remoteSessionID, err)
 		}
 	}
 }

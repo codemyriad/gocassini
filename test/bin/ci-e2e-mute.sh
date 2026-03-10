@@ -26,8 +26,8 @@ export PUB_USERS="${PUB_USERS:-3}"
 export CALL_NAME="${CALL_NAME:-CI Gocassini mute room}"
 
 CI_OUTPUT_BASE="/tmp/gocassini-ci-mute-$(date -u +%Y%m%dT%H%M%S)-$$"
-export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.requested-output}"
-export FINAL_OUTPUT="${FINAL_OUTPUT:-$CI_OUTPUT_BASE.mkv}"
+export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.mkv}"
+export FINAL_OUTPUT="${FINAL_OUTPUT:-$OUTPUT}"
 export REC_LOG="${REC_LOG:-/tmp/gocassini-ci-recorder-mute.log}"
 export PUB_LOG="${PUB_LOG:-/tmp/gocassini-ci-publisher-mute.log}"
 

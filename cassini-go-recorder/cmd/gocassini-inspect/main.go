@@ -47,7 +47,7 @@ type segmentChurnSummary struct {
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Fprintf(os.Stderr, "usage: %s <archive.csr|session.json|session-dir|meeting.mkv>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s <meeting.mkv|session.json|session-dir|archive.csr>\n", os.Args[0])
 		os.Exit(2)
 	}
 	path := os.Args[1]

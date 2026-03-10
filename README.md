@@ -4,7 +4,7 @@
 
 - input: Nextcloud Talk room
 - artifact: one `*.mkv` output per meeting
-- additional: per-run `.csr` archive; optional external JSON run report via `--write-report`
+- additional: per-run session artifact directory (`session.json`, `events.ndjson`, `streams/*.rtplog`) next to the MKV; optional legacy external JSON run report via `--write-report`
 
 The repository is intentionally CLI-first and automation-friendly.
 
@@ -26,11 +26,12 @@ go run ./cmd/gocassini \
   --mode talk \
   --call-url "$CALL_URL" \
   --name "CassiniRecorder" \
-  --output /tmp/meeting.csr \
-  --final-output /tmp/meeting.mkv
+  --output /tmp/meeting.mkv
 ```
 
-By default, talk mode now auto-terminates when all remote participants leave (with an 8s grace). Add `--duration <seconds>` only if you also want a hard cap.
+In talk mode, `--output` can point directly at the final `.mkv`. Keep `--final-output` only if you need a separate compatibility path.
+
+By default, talk mode auto-terminates when all remote participants leave (with a 30s grace). Add `--duration <seconds>` only if you also want a hard cap.
 `Ctrl-C` is handled gracefully so cleanup/remux/report still run before exit.
 
 Terminal 2: start 3 bots streaming the three-song set
@@ -116,10 +117,12 @@ cd /path/to/gocassini-repo-root
 ```
 
 - The script writes:
-  - `<output>.csr` (archive),
+  - `<output>` (meeting MKV),
   - session artifact directory at `<output_dir>/sessions/<id>/`.
-- Add `--write-report` to the recorder invocation if you also want the legacy
-  external JSON sidecar for debug/export workflows.
+- Add `--archive-output /tmp/legacy.csr` only if you explicitly need a separate
+  legacy requested-output path for compatibility tooling.
+- Add `--write-report` if you also want the legacy external JSON sidecar for
+  debug/export workflows.
 
 - To verify session artifacts in CI-style mode:
 
@@ -188,8 +191,7 @@ ExecStart=/usr/local/bin/gocassini \
   --mode talk \
   --call-url https://cloud.example.com/call/<ROOM_TOKEN> \
   --name GocassiniObserver \
-  --output /var/lib/gocassini/recording.csr \
-  --final-output /var/lib/gocassini/recording.mkv
+  --output /var/lib/gocassini/recording.mkv
 Restart=on-failure
 
 [Install]
@@ -240,7 +242,8 @@ GitHub Actions runs:
   - `pkg/core/store`: append-only stream packet log
   - `pkg/core/timeline`: timeline estimator API
   - `pkg/core/mux`: mux abstraction
-- Current recorder command still writes `.csr` through the legacy archive path. A staged migration keeps this stable while we add deterministic remux validation against the new schema.
+- Talk capture is now MKV-first and records session artifacts under `sessions/<id>/`.
+- Legacy `.csr` archives remain only for simulate-mode and compatibility-oriented tooling.
 
 ## Next steps
 

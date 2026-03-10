@@ -86,6 +86,13 @@ if [[ "${GPU_ENABLED}" == "1" ]]; then
   fi
 fi
 
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
+DOCKER_ARGS+=(
+  --user "${HOST_UID}:${HOST_GID}"
+  --env "HOME=/tmp/cassini-transcriber-home"
+)
+
 if [[ "${REBUILD}" == "1" ]] || ! "${DOCKER_BIN}" image inspect "${IMAGE_TAG}" >/dev/null 2>&1; then
   CASSINI_TRANSCRIBER_DEVICE="${BUILD_DEVICE}" \
     CASSINI_TRANSCRIBER_IMAGE="${IMAGE_TAG}" \

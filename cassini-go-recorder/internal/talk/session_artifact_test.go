@@ -443,3 +443,48 @@ func TestSessionArtifactOpenStreamUsesMappedParticipantID(t *testing.T) {
 		t.Fatalf("logical track participant_id mismatch: got=%q", logicalTracks[0].ParticipantID)
 	}
 }
+
+func TestSessionArtifactUpdateParticipantDisplayReplacesPlaceholder(t *testing.T) {
+	tmp := t.TempDir()
+	artifactPath := filepath.Join(tmp, "participant-upgrade.mkv")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	if err != nil {
+		t.Fatalf("create artifact: %v", err)
+	}
+	defer func() {
+		_ = artifact.close()
+	}()
+
+	desc := trackDescriptor{
+		kind:      "audio",
+		codec:     "audio/opus",
+		mid:       "mid-audio",
+		clockRate: 48000,
+	}
+	if _, err := artifact.openStream("sid-20", "user-20", "", desc, 1111, 111, time.Unix(0, 1000)); err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+
+	if err := artifact.updateParticipantDisplay("sid-20", "user-20", "Laurie Bream"); err != nil {
+		t.Fatalf("update participant display: %v", err)
+	}
+
+	artifact.mu.Lock()
+	participants := append([]session.Participant(nil), artifact.sessionMeta.Participants...)
+	artifact.mu.Unlock()
+
+	if len(participants) != 1 {
+		t.Fatalf("expected one participant, got=%d", len(participants))
+	}
+	if participants[0].Display != "Laurie Bream" {
+		t.Fatalf("unexpected participant display: got=%q", participants[0].Display)
+	}
+
+	raw, err := os.ReadFile(artifact.sessionPath)
+	if err != nil {
+		t.Fatalf("read session json: %v", err)
+	}
+	if !strings.Contains(string(raw), "Laurie Bream") {
+		t.Fatalf("expected persisted participant display in session json")
+	}
+}

@@ -14,17 +14,28 @@ First pass goals:
 This package is intentionally static-build friendly. `vite build` produces an `index.html` entry point that can be shipped with companion files such as:
 
 ```text
-meeting-artifact/
+meeting-library/
   index.html
+  catalog.json
   assets/...
-  meeting.webm
-  transcript.words.v1.json
-  captions.vtt
-  chapters.vtt
+  meetings/
+    <meeting-id>/
+      meeting.webm
+      transcript.words.v1.json
+      transcript.readable.v1.json
+      captions.vtt
+      chapters.vtt
+      manifest.json
 ```
 
+At runtime the app loads `catalog.json`, then fetches the selected meeting artifact from the
+directory listed in that catalog entry. If exactly one meeting is listed, the app opens it
+automatically. If several meetings are listed, the root `index.html` acts as the landing page and
+the per-meeting view is `index.html?meeting=<meeting-id>`.
+
 This publish-safe branch intentionally does not commit real meeting artifacts under `public/demo/`.
-To preview the UI, serve the built viewer from inside a meeting artifact directory or copy the artifact files next to the built `index.html`.
+To preview the runtime-catalog UI, serve the built viewer next to a generated `catalog.json` and
+artifact directories, or run the static export flow below.
 
 ## Contract with `cassini-transcriber`
 
@@ -58,21 +69,43 @@ cd cassini-viewer
 npm run export:meetings -- --source-dir /path/to/meeting-artifacts
 ```
 
-This writes:
+This writes one static app plus a runtime meeting catalog:
 
 ```text
 exports/static-meetings/
   index.html
-  daily-meeting--2026-03-04--12-36-53/
-    index.html
-    assets/...
-    meeting.webm
-    transcript.words.v1.json
-    transcript.readable.v1.json
-    captions.vtt
-    ...
+  catalog.json
+  assets/...
+  meetings/
+    daily-meeting--2026-03-04--12-36-53/
+      meeting.webm
+      transcript.words.v1.json
+      transcript.readable.v1.json
+      captions.vtt
+      ...
 ```
 
-Each meeting directory is standalone and can be copied to any static web server.
+The generated `catalog.json` looks like:
+
+```json
+{
+  "version": "cassini.viewer.catalog.v1",
+  "meetings": [
+    {
+      "id": "daily-meeting--2026-03-04--12-36-53",
+      "artifactPath": "./meetings/daily-meeting--2026-03-04--12-36-53",
+      "title": "Daily Meeting",
+      "dateLabel": "2026-03-04 12:36",
+      "speakerCount": 6,
+      "segmentCount": 42,
+      "digestDurationMs": 1830000
+    }
+  ]
+}
+```
+
+After the app has been built once, adding a new meeting to a deployed static site does not require
+rebuilding JavaScript. Copy a new artifact directory under `meetings/<meeting-id>/` and append a new
+entry to `catalog.json`.
 
 If `public/demo/` exists in your working tree, `--source-dir` is optional and defaults to that directory.

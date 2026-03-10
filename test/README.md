@@ -129,7 +129,8 @@ That flow will:
 - record the meeting into one MKV with the actual Go recorder
 - run `cassini-transcriber/bin/process-meeting.sh --bundle-viewer`
 - leave you with `meeting.webm`, `transcript.words.v1.json`, `captions.vtt`,
-  `manifest.json`, and a bundled static `index.html`
+  `manifest.json`, and a static viewer bundle rooted at `index.html` with
+  `catalog.json` plus `meetings/<meeting-id>/...` artifact files
 
 If you want to test the plumbing without installing the TTS model yet:
 
@@ -250,13 +251,15 @@ CALL_URL="$(./bin/create-room.sh --name "3-song-recorded" | tail -n1)"
 This generates:
 
 - raw recorder output MKV (`/tmp/three-songs.mkv`)
-- raw recorder archive CSR (`/tmp/three-songs.csr`)
+- session artifact directory under `/tmp/sessions/<meeting_id>/`
 - sync validation output (`verify-sync-from-report.sh`, auto-run unless `--skip-sync-check`)
 - recorder/publisher logs (`/tmp/three-songs.mkv.recorder.log`, `/tmp/three-songs.mkv.publisher.log`)
 
 The MKV is now the primary meeting artifact and carries Cassini metadata inside
 the container itself. Add `--write-report` to the recorder invocation if you
 also want the legacy external JSON sidecar for debug/export workflows.
+If you explicitly need a separate compatibility archive path, pass
+`--archive-output /tmp/three-songs.csr`.
 
 Run sync validation manually:
 

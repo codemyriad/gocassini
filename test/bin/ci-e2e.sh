@@ -35,8 +35,8 @@ fi
 export REC_DURATION PUB_DURATION
 
 CI_OUTPUT_BASE="/tmp/gocassini-ci-$(date -u +%Y%m%dT%H%M%S)-$$"
-export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.requested-output}"
-export FINAL_OUTPUT="${FINAL_OUTPUT:-$CI_OUTPUT_BASE.mkv}"
+export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.mkv}"
+export FINAL_OUTPUT="${FINAL_OUTPUT:-$OUTPUT}"
 export REC_LOG="${REC_LOG:-/tmp/gocassini-ci-recorder.log}"
 export PUB_LOG="${PUB_LOG:-/tmp/gocassini-ci-publisher.log}"
 
