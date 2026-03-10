@@ -12,17 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from .common import seconds_to_ms
-from .llm import (
-    LocalOllamaChatClient,
-    LocalOllamaConfig,
-    LocalTransformersChatClient,
-    LocalTransformersConfig,
-    OpenAICompatibleChatClient,
-    OpenAICompatibleConfig,
-    OpenWebUIChatClient,
-    OpenWebUIConfig,
-    build_readable_transcript_payload,
-)
+from .llm import build_readable_transcript_payload
+from .readable import create_readable_client, resolve_readable_backend
 from .speech_activity import TranscriptionChunk, detect_active_spans, plan_transcription_chunks
 from .timeline import TimeSpan, TimelineMap, build_digest_timeline_map
 from .transcription import (
@@ -806,36 +797,6 @@ def resolve_transcriber_backend(
         resolved_model = "large-v3"
 
     return resolved_backend, resolved_device, resolved_model
-
-
-def resolve_readable_backend(
-    *,
-    readable_backend: str,
-    readable_transcript_name: str | None,
-    api_base_url: str | None,
-    api_key: str | None,
-    api_model: str | None,
-    openwebui_base_url: str | None,
-    openwebui_email: str | None,
-    openwebui_password: str | None,
-    openwebui_model: str | None,
-    ollama_binary: str,
-) -> str:
-    if not readable_transcript_name:
-        return "none"
-
-    if readable_backend != "auto":
-        return readable_backend
-
-    if api_key and (api_model or api_base_url):
-        return "openai-compatible"
-    if all((openwebui_base_url, openwebui_email, openwebui_password, openwebui_model)):
-        return "openwebui"
-    if shutil.which(ollama_binary):
-        return "local-ollama"
-    return "none"
-
-
 def build_meeting_artifact(
     *,
     input_path: Path,
@@ -1042,84 +1003,27 @@ def build_meeting_artifact(
         transcriber.release_resources()
         readable_payload: dict[str, Any] | None = None
         if readable_output_path is not None:
-            if readable_backend == "none":
-                raise ValueError(
-                    "Readable transcript output was requested, but readable_backend=none"
-                )
-            if readable_backend == "openwebui":
-                missing_openwebui = [
-                    name
-                    for name, value in (
-                        ("openwebui_base_url", openwebui_base_url),
-                        ("openwebui_email", openwebui_email),
-                        ("openwebui_password", openwebui_password),
-                        ("openwebui_model", openwebui_model),
-                    )
-                    if not value
-                ]
-                if missing_openwebui:
-                    raise ValueError(
-                        "Readable transcript generation with Open WebUI requires: "
-                        + ", ".join(missing_openwebui)
-                    )
-                readable_client = OpenWebUIChatClient(
-                    OpenWebUIConfig(
-                        base_url=str(openwebui_base_url),
-                        email=str(openwebui_email),
-                        password=str(openwebui_password),
-                        model=str(openwebui_model),
-                        timeout_seconds=openwebui_timeout_seconds,
-                    )
-                )
-            elif readable_backend == "openai-compatible":
-                missing_api = [
-                    name
-                    for name, value in (
-                        ("api_base_url", api_base_url),
-                        ("api_key", api_key),
-                        ("api_model", api_model),
-                    )
-                    if not value
-                ]
-                if missing_api:
-                    raise ValueError(
-                        "Readable transcript generation with an OpenAI-compatible API requires: "
-                        + ", ".join(missing_api)
-                    )
-                readable_client = OpenAICompatibleChatClient(
-                    OpenAICompatibleConfig(
-                        base_url=str(api_base_url),
-                        api_key=str(api_key),
-                        model=str(api_model),
-                        timeout_seconds=api_timeout_seconds,
-                        app_name=api_app_name,
-                        site_url=api_site_url,
-                    )
-                )
-                readable_client.validate_environment()
-            elif readable_backend == "local-transformers":
-                readable_client = LocalTransformersChatClient(
-                    LocalTransformersConfig(
-                        model=local_llm_model,
-                        device=local_llm_device,
-                        download_root=(
-                            str(local_llm_download_root.resolve()) if local_llm_download_root else None
-                        ),
-                        max_new_tokens=local_llm_max_new_tokens,
-                    )
-                )
-                readable_client.validate_environment()
-            elif readable_backend == "local-ollama":
-                readable_client = LocalOllamaChatClient(
-                    LocalOllamaConfig(
-                        model=ollama_model,
-                        binary=ollama_binary,
-                        auto_pull=ollama_auto_pull,
-                    )
-                )
-                readable_client.validate_environment()
-            else:
-                raise ValueError(f"Unsupported readable transcript backend: {readable_backend}")
+            readable_client = create_readable_client(
+                readable_backend=readable_backend,
+                api_base_url=api_base_url,
+                api_key=api_key,
+                api_model=api_model,
+                api_timeout_seconds=api_timeout_seconds,
+                api_app_name=api_app_name,
+                api_site_url=api_site_url,
+                openwebui_base_url=openwebui_base_url,
+                openwebui_email=openwebui_email,
+                openwebui_password=openwebui_password,
+                openwebui_model=openwebui_model,
+                openwebui_timeout_seconds=openwebui_timeout_seconds,
+                local_llm_model=local_llm_model,
+                local_llm_device=local_llm_device,
+                local_llm_download_root=local_llm_download_root,
+                local_llm_max_new_tokens=local_llm_max_new_tokens,
+                ollama_model=ollama_model,
+                ollama_binary=ollama_binary,
+                ollama_auto_pull=ollama_auto_pull,
+            )
             readable_payload = build_readable_transcript_payload(
                 transcript_payload=transcript_payload,
                 client=readable_client,

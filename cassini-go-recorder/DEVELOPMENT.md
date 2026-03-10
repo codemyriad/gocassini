@@ -49,12 +49,12 @@ Run:
 ./e2e_with_publisher.sh
 ```
 
-This script starts the Go recorder and drives Go publisher clients through the shared
-`../test/bin/stream-video.sh` harness.
+This script starts the Go recorder and drives Go player clients through the shared
+`../cassini-player/bin/stream-video.sh` wrapper over the shared lab harness.
 
 ## Known Gaps
 
-- Resolution adaptation inside a single continuous publisher session is not yet simulated.
+- Resolution adaptation inside a single continuous player session is not yet simulated.
 - Explicit packet-loss/jitter shaping is not yet part of the harness.
 
 ## Planned Architecture Workstream

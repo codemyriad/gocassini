@@ -13,12 +13,13 @@ It is intentionally narrow: one job, one output contract, and strong behavior fo
 - Keep everything script-friendly and machine-friendly
 
 ## What this repo contains
-- `cmd/gocassini`: main recorder command
-- `cmd/gocassini-inspect`: archive inspection utility
-- `cmd/gocassini-remux`: offline remux from session artifacts (`session.json` + `streams/*.rtplog`)
-- `cmd/gocassini-upgrade-mkv`: upgrade older meeting MKVs plus legacy `.mkv.json` reports into MKV-v1
+- `cmd/gocassini`: main recorder command and primary product surface
+- `cmd/gocassini-inspect`: diagnostic inspection utility
+- `cmd/gocassini-remux`: diagnostic or recovery remux from session artifacts (`session.json` + `streams/*.rtplog`)
+- `cmd/gocassini-upgrade-mkv`: compatibility upgrader for older meeting MKVs plus legacy `.mkv.json` reports
 - `internal/`: codec-agnostic recorder, signaling, and Nextcloud Talk adapters
-- `test/`: local reproducible Nextcloud Talk stack + publisher harness
+- `../cassini-player/`: suite-level room player wrappers
+- `../test/`: local reproducible Nextcloud Talk lab and E2E harness
 - `docs/architecture-migration-status.md`: current migration goals, effort, and status
 
 ## Quickstart
@@ -63,7 +64,7 @@ cd ..
 This runs:
 - local Nextcloud Talk stack
 - room creation
-- publisher bot
+- player clients
 - recorder in live mode
 - output validation
 

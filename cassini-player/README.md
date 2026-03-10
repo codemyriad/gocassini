@@ -1,0 +1,54 @@
+# Cassini Player
+
+`cassini-player` is the room-streaming component of the Cassini suite.
+
+It joins a Talk room and plays deterministic media into it for demos, smoke
+tests, sync validation, and full-suite roundtrips.
+
+This package exposes the preferred suite-level player entry points. The current
+implementation stays intentionally thin and delegates to the existing lab
+scripts under `test/bin/`, which still own the local stack, fixture generation,
+and E2E harness behavior.
+
+## Tools
+
+- `bin/stream-video.sh`: generic one-or-more-client room player using local
+  sample media or explicit media prefixes.
+- `bin/stream-synthetic-meeting.sh`: play the synthetic multi-speaker meeting
+  fixture into a room.
+- `bin/stream-three-songs.sh`: deterministic three-client sync and mute-rotation
+  scenario.
+- `bin/stream-three-songs-until.sh`: retry loop for the three-song scenario
+  until a wall-clock stop time.
+
+## Typical flows
+
+Stream a simple local media set into a room:
+
+```bash
+./cassini-player/bin/stream-video.sh \
+  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>" \
+  --duration 20
+```
+
+Play the synthetic meeting fixture into a room:
+
+```bash
+./cassini-player/bin/stream-synthetic-meeting.sh \
+  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
+```
+
+Run the three-song sync scenario:
+
+```bash
+./cassini-player/bin/stream-three-songs.sh \
+  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
+```
+
+## Notes
+
+- The player currently reuses the Go rotator implementation and media
+  preparation flows from `test/`.
+- `test/` remains the lab and local-stack harness. `cassini-player` is the
+  preferred human-facing entry point when you want to drive room media without
+  thinking about the rest of the harness layout.

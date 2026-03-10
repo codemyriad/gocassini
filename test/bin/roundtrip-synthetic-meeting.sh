@@ -114,13 +114,13 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 GO_RECORDER_DIR="$REPO_ROOT/cassini-go-recorder"
-TRANSCRIBER_DIR="$REPO_ROOT/cassini-transcriber"
+PUBLISHER_DIR="$REPO_ROOT/cassini-publisher"
 if [[ ! -f "$GO_RECORDER_DIR/cmd/gocassini/main.go" ]]; then
   echo "go recorder not found: $GO_RECORDER_DIR" >&2
   exit 1
 fi
-if [[ ! -x "$TRANSCRIBER_DIR/bin/process-meeting.sh" ]]; then
-  echo "transcriber wrapper not found: $TRANSCRIBER_DIR/bin/process-meeting.sh" >&2
+if [[ ! -x "$PUBLISHER_DIR/bin/process-meeting.sh" ]]; then
+  echo "publisher wrapper not found: $PUBLISHER_DIR/bin/process-meeting.sh" >&2
   exit 1
 fi
 
@@ -190,7 +190,7 @@ fi
 REC_LOG="$OUTPUT_ROOT/recorder.log"
 PUB_LOG="$OUTPUT_ROOT/publisher.log"
 INSPECT_LOG="$OUTPUT_ROOT/inspect.log"
-TRANSCRIBE_LOG="$OUTPUT_ROOT/transcriber.log"
+PIPELINE_LOG="$OUTPUT_ROOT/artifact-pipeline.log"
 MEETING_ID="$(basename "$OUTPUT" .mkv)"
 ARTIFACT_DIR="$ARTIFACT_OUTPUT_ROOT/${MEETING_ID}.artifact"
 RENDERED_DIR="$ARTIFACT_OUTPUT_ROOT/${MEETING_ID}.rendered"
@@ -198,7 +198,7 @@ RENDERED_INDEX="$RENDERED_DIR/index.html"
 RENDERED_CATALOG="$RENDERED_DIR/catalog.json"
 RENDERED_MEETING_DIR="$RENDERED_DIR/meetings/$MEETING_ID"
 
-rm -f "$OUTPUT" "$REC_LOG" "$PUB_LOG" "$INSPECT_LOG" "$TRANSCRIBE_LOG"
+rm -f "$OUTPUT" "$REC_LOG" "$PUB_LOG" "$INSPECT_LOG" "$PIPELINE_LOG"
 if [[ "$ARCHIVE_OUTPUT" != "$OUTPUT" ]]; then
   rm -f "$ARCHIVE_OUTPUT"
 fi
@@ -308,14 +308,14 @@ fi
 ) >"$INSPECT_LOG" 2>&1
 
 (
-  cd "$TRANSCRIBER_DIR"
+  cd "$PUBLISHER_DIR"
   ./bin/process-meeting.sh \
     --input "$OUTPUT" \
     --output-root "$ARTIFACT_OUTPUT_ROOT" \
     --bundle-viewer \
     --device "$TRANSCRIBER_DEVICE" \
     --whisper-model "$WHISPER_MODEL"
-) >"$TRANSCRIBE_LOG" 2>&1
+) >"$PIPELINE_LOG" 2>&1
 
 for required in \
   "$ARTIFACT_DIR/meeting.webm" \
@@ -334,7 +334,7 @@ done
 log "Recorder log: $REC_LOG"
 log "Publisher log: $PUB_LOG"
 log "Inspect log: $INSPECT_LOG"
-log "Transcriber log: $TRANSCRIBE_LOG"
+log "Artifact pipeline log: $PIPELINE_LOG"
 log "Meeting MKV: $OUTPUT"
 log "Meeting session id: $SESSION_ID"
 log "Artifact dir: $ARTIFACT_DIR"

@@ -13,5 +13,5 @@ wait_for_nextcloud 420
 
 log "Stack is up."
 log "Create a room: $TEST_DIR/bin/create-room.sh --name 'Local room'"
-log "Stream media:  $TEST_DIR/bin/stream-video.sh --duration 20"
-log "Synthetic call: $TEST_DIR/bin/stream-synthetic-meeting.sh --call-url <CALL_URL>"
+log "Stream media:  $REPO_ROOT/cassini-player/bin/stream-video.sh --duration 20"
+log "Synthetic call: $REPO_ROOT/cassini-player/bin/stream-synthetic-meeting.sh --call-url <CALL_URL>"

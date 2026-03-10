@@ -62,11 +62,14 @@ npm run build
 
 ## Static export
 
-Build self-contained browser packages from a directory of meeting artifacts:
+The preferred suite-level entry point for static publishing lives in
+`cassini-publisher`. Build self-contained browser packages from a directory of
+meeting artifacts with:
 
 ```bash
-cd cassini-viewer
-npm run export:meetings -- --source-dir /path/to/meeting-artifacts
+./cassini-publisher/bin/export-static-meetings.sh \
+  --source-dir /path/to/meeting-artifacts \
+  --output-dir /tmp/static-meetings
 ```
 
 This writes one static app plus a runtime meeting catalog:
@@ -109,3 +112,11 @@ rebuilding JavaScript. Copy a new artifact directory under `meetings/<meeting-id
 entry to `catalog.json`.
 
 If `public/demo/` exists in your working tree, `--source-dir` is optional and defaults to that directory.
+
+For viewer-only development, the lower-level export implementation is still
+available from this package:
+
+```bash
+cd cassini-viewer
+npm run export:meetings -- --source-dir /path/to/meeting-artifacts
+```

@@ -4,7 +4,7 @@
 
 - input: Nextcloud Talk room
 - artifact: one `*.mkv` output per meeting
-- additional: per-run session artifact directory (`session.json`, `events.ndjson`, `streams/*.rtplog`) next to the MKV; optional legacy external JSON run report via `--write-report`
+- diagnostics: per-run session artifact directory (`session.json`, `events.ndjson`, `streams/*.rtplog`) next to the MKV; optional legacy external JSON run report via `--write-report`
 
 The repository is intentionally CLI-first and automation-friendly.
 
@@ -34,11 +34,10 @@ In talk mode, `--output` can point directly at the final `.mkv`. Keep `--final-o
 By default, talk mode auto-terminates when all remote participants leave (with a 30s grace). Add `--duration <seconds>` only if you also want a hard cap.
 `Ctrl-C` is handled gracefully so cleanup/remux/report still run before exit.
 
-Terminal 2: start 3 bots streaming the three-song set
+Terminal 2: start the Player with the three-song set
 
 ```bash
-cd test
-./bin/stream-three-songs.sh \
+./cassini-player/bin/stream-three-songs.sh \
   --call-url "$CALL_URL"
 ```
 
@@ -47,12 +46,29 @@ By default, rotator bots auto-exit once all non-bot participants leave (8s grace
 
 ## Repository layout
 
-- `cassini-go-recorder/`: recorder implementation and binaries.
-- `cassini-transcriber/`: MKV-to-audio+transcript artifact builder.
-- `cassini-viewer/`: static Svelte UI for listening to a meeting artifact.
-- `test/`: reproducible local Nextcloud Talk stack and publisher harness.
+- `cassini-go-recorder/`: Recorder and diagnostic utilities.
+- `cassini-transcriber/`: Transcriber and readable-transcript generation.
+- `cassini-readable/`: Standalone readable transcript cleanup wrappers.
+- `cassini-player/`: Player and suite-level room-streaming wrappers.
+- `cassini-publisher/`: Publisher and suite-level orchestration wrappers.
+- `cassini-viewer/`: Viewer runtime for published meeting artifacts.
+- `test/`: Lab, local stack, fixture generation, and E2E harness.
 - `.github/workflows/ci.yml`: unit + integration CI.
 - `media-kit.txt` / `media-kit.md`: brand direction and design principles.
+
+## Suite model
+
+The repo is organized as a small opinionated tool suite:
+
+- `Recorder`: capture one live room into one meeting `.mkv`.
+- `Transcriber`: turn a meeting recording into timed transcript artifacts.
+- `Publisher`: package artifacts into a static meeting library.
+- `Viewer`: render that library in the browser.
+- `Player`: join rooms and stream deterministic media for tests and demos.
+- `Lab`: local stack, fixture generation, roundtrip scripts, and validation.
+
+Diagnostics such as inspect, remux, upgrade, and drift verification are kept as
+supporting tools, not the main product boundary.
 
 ## Local testing
 
@@ -95,7 +111,7 @@ cd /path/to/gocassini-repo-root
 ./test/bin/ci-e2e.sh
 ```
 
-This uses `test/compose.yml` and starts a local Nextcloud Talk stack, creates a room, runs publishers, and validates recorder outputs.
+This uses `test/compose.yml` and starts a local Nextcloud Talk stack, creates a room, runs player clients, and validates recorder outputs.
 
 To validate A/V drift on a produced recording:
 
@@ -148,7 +164,7 @@ cp .envrc.example .envrc
 cd test
 ./bin/up.sh
 CALL_URL="$(./bin/create-room.sh --name "Smoke room" | tail -n1)"
-./bin/stream-video.sh --call-url "$CALL_URL" --duration 20
+../cassini-player/bin/stream-video.sh --call-url "$CALL_URL" --duration 20
 ./bin/down.sh --volumes
 ```
 

@@ -49,6 +49,16 @@ class OpenWebUIChatClient:
         self._config = config
         self._token: str | None = None
 
+    def validate_environment(self) -> None:
+        if not self._config.base_url.strip():
+            raise RuntimeError("Open WebUI readable transcript generation requires a base URL")
+        if not self._config.email.strip():
+            raise RuntimeError("Open WebUI readable transcript generation requires an email")
+        if not self._config.password.strip():
+            raise RuntimeError("Open WebUI readable transcript generation requires a password")
+        if not self._config.model.strip():
+            raise RuntimeError("Open WebUI readable transcript generation requires a model id")
+
     def rewrite_readable_records(
         self,
         records: list[ReadableTranscriptRecord],
