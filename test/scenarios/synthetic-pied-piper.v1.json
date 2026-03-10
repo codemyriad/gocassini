@@ -1,0 +1,224 @@
+{
+  "scenario_id": "synthetic-pied-piper-v1",
+  "title": "Synthetic Pied Piper Review",
+  "description": "A six-person product meeting inspired by Silicon Valley, with late joins, interruptions, abbreviations, filenames, dates, issue numbers, and action items.",
+  "duration_seconds": 172,
+  "participants": [
+    {
+      "id": "erlich",
+      "display_name": "Erlich Bachman",
+      "role": "Incubator Visionary",
+      "voice": "am_onyx",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#f97316"
+    },
+    {
+      "id": "monica",
+      "display_name": "Monica Hall",
+      "role": "Operations and Reality",
+      "voice": "af_sarah",
+      "lang_code": "a",
+      "join_delay_seconds": 1.6,
+      "theme_color": "#60a5fa"
+    },
+    {
+      "id": "richard",
+      "display_name": "Richard Hendricks",
+      "role": "Pied Piper C E O",
+      "voice": "am_liam",
+      "lang_code": "a",
+      "join_delay_seconds": 3.4,
+      "theme_color": "#34d399"
+    },
+    {
+      "id": "jack",
+      "display_name": "Jack Barker",
+      "role": "Executive Scale Theater",
+      "voice": "bm_daniel",
+      "lang_code": "b",
+      "join_delay_seconds": 6.0,
+      "theme_color": "#ef4444"
+    },
+    {
+      "id": "gavin",
+      "display_name": "Gavin Belson",
+      "role": "Hooli Gravitas",
+      "voice": "bm_george",
+      "lang_code": "b",
+      "join_delay_seconds": 8.3,
+      "theme_color": "#94a3b8"
+    },
+    {
+      "id": "laurie",
+      "display_name": "Laurie Bream",
+      "role": "Efficiency and Mild Terror",
+      "voice": "bf_emma",
+      "lang_code": "b",
+      "join_delay_seconds": 10.5,
+      "theme_color": "#facc15"
+    }
+  ],
+  "turns": [
+    {
+      "speaker": "erlich",
+      "start_seconds": 0.8,
+      "text": "Okay, people, welcome to the meeting where I save technology, culture, and probably this company. We need a synthetic call that sounds real, not like a haunted modem."
+    },
+    {
+      "speaker": "monica",
+      "start_seconds": 4.7,
+      "text": "Agenda. New meeting script, more recognizable voices, realistic joins, and enough technical vocabulary that the transcriber has to earn its salary."
+    },
+    {
+      "speaker": "richard",
+      "start_seconds": 9.0,
+      "text": "Also, the M K V is not the problem. We rendered the audio from the current file and it was perfectly in sync. The player was the liar."
+    },
+    {
+      "speaker": "jack",
+      "start_seconds": 14.3,
+      "text": "Excellent. Then we stop investigating a ghost and start productizing a result. One file, complete metadata, zero sidecars drifting around like loose paperwork."
+    },
+    {
+      "speaker": "gavin",
+      "start_seconds": 19.5,
+      "text": "At Hooli we call that integrated narrative packaging. You are calling it a container, which is adorable, but directionally correct."
+    },
+    {
+      "speaker": "laurie",
+      "start_seconds": 25.2,
+      "text": "If the file requires a second file, the first file is incomplete. If the player misleads the operator, the operator files the wrong bug."
+    },
+    {
+      "speaker": "erlich",
+      "start_seconds": 31.0,
+      "text": "Exactly. Finally, somebody in this room respects systems thinking and my natural leadership pheromones."
+    },
+    {
+      "speaker": "monica",
+      "start_seconds": 35.8,
+      "text": "For the fixture, we still need normal speech plus ugly tokens like Web R T C, R T P, R T C P, V P 8, Opus, F F mpeg, and J S O N."
+    },
+    {
+      "speaker": "richard",
+      "start_seconds": 41.7,
+      "text": "And one spoken filename: daily-meeting dash dash twenty twenty-six dash zero three dash ten dash pied-piper dot M K V. Maybe also cassini-report dot v one dot J S O N, just to say we do not need it anymore."
+    },
+    {
+      "speaker": "jack",
+      "start_seconds": 49.4,
+      "text": "Good. Add issue numbers. Bug one two seven was phantom sync panic. Task three zero nine is player credibility. Objective one is trust."
+    },
+    {
+      "speaker": "gavin",
+      "start_seconds": 55.0,
+      "text": "Trust is good. Dominance is better. Your player should make six tracks feel inevitable, like a keynote that cost too much."
+    },
+    {
+      "speaker": "richard",
+      "start_seconds": 60.2,
+      "text": "Wait, can we not turn the player into a keynote? It just needs per-participant mute, solo, scrub, and obvious late-join markers."
+    },
+    {
+      "speaker": "gavin",
+      "start_seconds": 64.8,
+      "text": "It also needs taste, Richard."
+    },
+    {
+      "speaker": "laurie",
+      "start_seconds": 66.0,
+      "text": "The player needs observability. If a viewer cannot see that I joined at ten point five seconds, they invent a sync defect because their interface is weak."
+    },
+    {
+      "speaker": "monica",
+      "start_seconds": 72.3,
+      "text": "Good. The scripted joins are Erlich at zero, me at one point six, Richard at three point four, Jack at six, Gavin at eight point three, Laurie at ten point five."
+    },
+    {
+      "speaker": "erlich",
+      "start_seconds": 78.5,
+      "text": "I would like the minutes to note that I was not early. I was strategically present."
+    },
+    {
+      "speaker": "jack",
+      "start_seconds": 83.8,
+      "text": "Denied. Next item: generation. It has to work locally with uv, cache the voice model, and keep a mock backend so plumbing tests do not download the moon."
+    },
+    {
+      "speaker": "richard",
+      "start_seconds": 90.3,
+      "text": "And after that we run the transcriber against real meetings, compare against the reference text, and stop benchmarking against beeps like it is nineteen ninety-eight."
+    },
+    {
+      "speaker": "gavin",
+      "start_seconds": 97.8,
+      "text": "At Hooli we benchmark against live traffic, legal exposure, and fear. Mostly fear. It is a very mature metric."
+    },
+    {
+      "speaker": "laurie",
+      "start_seconds": 104.2,
+      "text": "Fear is not a metric. Word error rate is a metric. So are diarization errors, clipped starts, and people talking over Erlich for quality assurance."
+    },
+    {
+      "speaker": "erlich",
+      "start_seconds": 109.8,
+      "text": "First of all, rude. Second, if you need overlap, I can absolutely be interrupted while explaining my vision."
+    },
+    {
+      "speaker": "monica",
+      "start_seconds": 111.0,
+      "text": "Perfect. Richard, cut in right now and complain that the viewer still hides too much."
+    },
+    {
+      "speaker": "richard",
+      "start_seconds": 112.0,
+      "text": "Yes, the viewer still hides too much. I need waveforms, join markers, and a way to inspect who is actually speaking."
+    },
+    {
+      "speaker": "jack",
+      "start_seconds": 118.6,
+      "text": "And I need fewer adjectives and more shipping. The final artifact should tell us everything without a scavenger hunt."
+    },
+    {
+      "speaker": "gavin",
+      "start_seconds": 124.7,
+      "text": "So the meeting file becomes the product. That is almost smart enough to be a Hooli memo."
+    },
+    {
+      "speaker": "laurie",
+      "start_seconds": 130.3,
+      "text": "No private data in the fixture. No hidden network dependency after the model is cached. No mystery files beside the M K V."
+    },
+    {
+      "speaker": "monica",
+      "start_seconds": 136.7,
+      "text": "Ending pass. Mention the date out loud: March tenth, twenty twenty-six. Mention the path slash tmp slash pied-piper slash final-review dot M K V. Keep it fun, not random."
+    },
+    {
+      "speaker": "erlich",
+      "start_seconds": 143.5,
+      "text": "Fine. On March tenth, twenty twenty-six, the large adult son of innovation personally delivered slash tmp slash pied-piper slash final-review dot M K V to history."
+    },
+    {
+      "speaker": "richard",
+      "start_seconds": 149.2,
+      "text": "Please do not make that the canonical transcript."
+    },
+    {
+      "speaker": "jack",
+      "start_seconds": 153.8,
+      "text": "Close the loop. Tighten the format, test the transcriber with real calls, and fix the player until no one can confuse U X failure with sync failure."
+    },
+    {
+      "speaker": "gavin",
+      "start_seconds": 160.0,
+      "text": "Congratulations. You finally found the difference between media engineering and vibe management."
+    },
+    {
+      "speaker": "laurie",
+      "start_seconds": 166.0,
+      "text": "Meeting over. Ship the fixture."
+    }
+  ]
+}

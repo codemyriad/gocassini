@@ -1,0 +1,2 @@
+# Core dependency for synthetic meeting fixture generation.
+numpy>=1.26,<3

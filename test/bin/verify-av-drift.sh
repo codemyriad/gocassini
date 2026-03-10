@@ -43,15 +43,8 @@ if [[ ! -f "$INPUT" ]]; then
   echo "recording not found: $INPUT" >&2
   exit 1
 fi
-if [[ -z "$REPORT" ]]; then
-  REPORT="${INPUT}.json"
-fi
-if [[ ! -f "$REPORT" ]]; then
-  echo "report not found: $REPORT" >&2
-  exit 1
-fi
 
-for cmd in jq ffprobe awk python3; do
+for cmd in ffprobe awk python3; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "$cmd is required" >&2
     exit 1
@@ -59,18 +52,20 @@ for cmd in jq ffprobe awk python3; do
 done
 
 PAIR_FILE="$(mktemp)"
+META_JSON="$(mktemp)"
 cleanup() {
-  rm -f "$PAIR_FILE"
+  rm -f "$PAIR_FILE" "$META_JSON"
 }
 trap cleanup EXIT
 
-python3 - "$REPORT" >"$PAIR_FILE" <<'PY'
+ffprobe -v error -show_streams -of json "$INPUT" >"$META_JSON"
+
+python3 - "$META_JSON" >"$PAIR_FILE" <<'PY'
 import json
 import re
 import sys
 
-report = json.load(open(sys.argv[1], "r", encoding="utf-8"))
-plans = ((report.get("artifact_remux") or {}).get("stream_plans") or [])
+meta = json.load(open(sys.argv[1], "r", encoding="utf-8"))
 by_group = {}
 
 def group_key(ltid: str) -> str:
@@ -81,17 +76,19 @@ def group_key(ltid: str) -> str:
     # Fallback for future LTID formats.
     return re.sub(r":(audio|video):", ":media:", ltid, count=1)
 
-for plan in plans:
-    if not isinstance(plan, dict):
+for stream in meta.get("streams", []):
+    if not isinstance(stream, dict):
         continue
-    ltid = str(plan.get("ltid") or "").strip()
-    kind = str(plan.get("kind") or "").strip().lower()
-    stream_id = str(plan.get("stream_id") or "").strip()
-    if not ltid or not kind or not stream_id:
+    kind = str(stream.get("codec_type") or "").strip().lower()
+    tags = stream.get("tags") or {}
+    ltid = str(tags.get("LTID") or tags.get("ltid") or "").strip()
+    stream_id = str(tags.get("STREAM_ID") or tags.get("stream_id") or "").strip()
+    index = stream.get("index")
+    if not ltid or not kind or not stream_id or kind not in {"audio", "video"}:
         continue
     group = group_key(ltid)
     entry = by_group.setdefault(group, {})
-    entry[kind] = stream_id
+    entry[kind] = {"stream_id": stream_id, "index": int(index)}
     entry.setdefault("ltid_audio", "")
     entry.setdefault("ltid_video", "")
     entry[f"ltid_{kind}"] = ltid
@@ -99,27 +96,18 @@ for plan in plans:
 for group, entry in sorted(by_group.items()):
     if "audio" in entry and "video" in entry:
         ltid_label = entry.get("ltid_video") or entry.get("ltid_audio") or group
-        print(f"{ltid_label}\t{entry['audio']}\t{entry['video']}")
+        print(
+            f"{ltid_label}\t"
+            f"{entry['audio']['stream_id']}\t{entry['audio']['index']}\t"
+            f"{entry['video']['stream_id']}\t{entry['video']['index']}"
+        )
 PY
 
 mapfile -t PAIRS <"$PAIR_FILE"
 if [[ "${#PAIRS[@]}" -eq 0 ]]; then
-  log "av drift check skipped: no audio/video pairs found in artifact_remux.stream_plans"
+  log "av drift check skipped: no paired LTID audio/video streams found in MKV metadata"
   exit 0
 fi
-
-META_JSON="$(mktemp)"
-trap 'rm -f "$PAIR_FILE" "$META_JSON"' EXIT
-ffprobe -v error -show_streams -of json "$INPUT" >"$META_JSON"
-
-stream_index_for_id() {
-  local stream_id="$1"
-  jq -r --arg sid "$stream_id" '
-    .streams[]
-    | select((.tags.stream_id // .tags.STREAM_ID // "") == $sid)
-    | .index
-  ' "$META_JSON" | head -n1
-}
 
 first_last_audio() {
   local index="$1"
@@ -144,15 +132,7 @@ first_last_video() {
 FAILURES=0
 log "av drift check: tolerance=${TOLERANCE}s min_elapsed=${MIN_ELAPSED}s pairs=${#PAIRS[@]}"
 for row in "${PAIRS[@]}"; do
-  IFS=$'\t' read -r LTID AUDIO_ID VIDEO_ID <<<"$row"
-
-  AUDIO_IDX="$(stream_index_for_id "$AUDIO_ID" || true)"
-  VIDEO_IDX="$(stream_index_for_id "$VIDEO_ID" || true)"
-  if [[ -z "$AUDIO_IDX" || -z "$VIDEO_IDX" ]]; then
-    echo "missing stream index for ltid=${LTID} audio_id=${AUDIO_ID} video_id=${VIDEO_ID}" >&2
-    FAILURES=$((FAILURES + 1))
-    continue
-  fi
+  IFS=$'\t' read -r LTID AUDIO_ID AUDIO_IDX VIDEO_ID VIDEO_IDX <<<"$row"
 
   AUDIO_FIRST_LAST="$(first_last_audio "$AUDIO_IDX" || true)"
   VIDEO_FIRST_LAST="$(first_last_video "$VIDEO_IDX" || true)"

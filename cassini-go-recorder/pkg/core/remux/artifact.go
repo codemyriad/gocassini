@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -36,6 +35,12 @@ type StreamPlan struct {
 	LTID                   string  `json:"ltid"`
 	Kind                   string  `json:"kind"`
 	Codec                  string  `json:"codec"`
+	ParticipantID          string  `json:"participant_id,omitempty"`
+	ParticipantName        string  `json:"participant_name,omitempty"`
+	MID                    string  `json:"mid,omitempty"`
+	RID                    string  `json:"rid,omitempty"`
+	ClockRate              uint32  `json:"clock_rate,omitempty"`
+	PT                     uint8   `json:"pt,omitempty"`
 	RTPPackets             int     `json:"rtp_packets"`
 	FirstRecvNS            uint64  `json:"first_recv_ns"`
 	FirstTimelineNS        int64   `json:"first_timeline_ns"`
@@ -84,7 +89,8 @@ func BuildFromSession(inputPath, outputPath string, opts BuildOptions) (BuildRes
 	}
 
 	planned := planSegments(segments)
-	if err := mergeSegments(outputPath, opts.Title, sess, segments, planned); err != nil {
+	streamPlans := buildStreamPlans(sess, segments, planned)
+	if err := mergeSegments(outputPath, opts.Title, sess, segments, streamPlans, workDir); err != nil {
 		return BuildResult{}, err
 	}
 
@@ -93,7 +99,7 @@ func BuildFromSession(inputPath, outputPath string, opts BuildOptions) (BuildRes
 		OutputPath:      outputPath,
 		WorkDir:         workDir,
 		Segments:        len(segments),
-		StreamPlans:     buildStreamPlans(segments, planned),
+		StreamPlans:     streamPlans,
 	}, nil
 }
 
@@ -262,67 +268,41 @@ func mergeSegments(
 	titleOverride string,
 	sess session.Session,
 	segments []segmentArtifact,
-	planned []PlannedInput,
+	streamPlans []StreamPlan,
+	workDir string,
 ) error {
-	if len(segments) == 1 {
-		return copyFile(segments[0].TempPath, outputPath)
-	}
-
 	pathByID := map[string]string{}
-	kindByID := map[string]string{}
 	for _, seg := range segments {
 		pathByID[seg.Stream.StreamID] = seg.TempPath
-		kindByID[seg.Stream.StreamID] = seg.Kind
-	}
-	logicalByLTID := map[string]session.LogicalTrack{}
-	for _, logical := range sess.LogicalTracks {
-		logicalByLTID[logical.LTID] = logical
-	}
-	participantDisplayByID := map[string]string{}
-	for _, participant := range sess.Participants {
-		participantDisplayByID[participant.PID] = participant.Display
 	}
 
 	args := []string{"-y", "-v", "error"}
-	for _, item := range planned {
-		if math.Abs(item.OffsetSeconds) > 1e-6 {
-			args = append(args, "-itsoffset", fmt.Sprintf("%.6f", item.OffsetSeconds))
+	for _, plan := range streamPlans {
+		if math.Abs(plan.OffsetSeconds) > 1e-6 {
+			args = append(args, "-itsoffset", fmt.Sprintf("%.6f", plan.OffsetSeconds))
 		}
-		args = append(args, "-i", pathByID[item.StreamID])
+		args = append(args, "-i", pathByID[plan.StreamID])
 	}
 
 	videoIndex := 0
 	audioIndex := 0
-	for idx, item := range planned {
-		kind := kindByID[item.StreamID]
-		logical := logicalByLTID[item.LTID]
-		participantID := strings.TrimSpace(logical.ParticipantID)
-		participantName := strings.TrimSpace(participantDisplayByID[participantID])
-		title := item.StreamID
-		if participantName != "" {
-			title = participantName
+	for idx, plan := range streamPlans {
+		streamTitle := plan.StreamID
+		if strings.TrimSpace(plan.ParticipantName) != "" {
+			streamTitle = plan.ParticipantName
 		}
-		streamMetadata := []string{
-			"ltid=" + item.LTID,
-			"stream_id=" + item.StreamID,
-		}
-		if participantID != "" {
-			streamMetadata = append(streamMetadata, "participant_id="+participantID)
-		}
-		if participantName != "" {
-			streamMetadata = append(streamMetadata, "participant_name="+participantName)
-		}
-		switch kind {
+		streamMetadata := streamMetadataEntries(plan)
+		switch plan.Kind {
 		case "video":
 			args = append(args, "-map", fmt.Sprintf("%d:v:0", idx))
-			args = append(args, fmt.Sprintf("-metadata:s:v:%d", videoIndex), "title="+title)
+			args = append(args, fmt.Sprintf("-metadata:s:v:%d", videoIndex), "title="+streamTitle)
 			for _, entry := range streamMetadata {
 				args = append(args, fmt.Sprintf("-metadata:s:v:%d", videoIndex), entry)
 			}
 			videoIndex++
 		case "audio":
 			args = append(args, "-map", fmt.Sprintf("%d:a:0", idx))
-			args = append(args, fmt.Sprintf("-metadata:s:a:%d", audioIndex), "title="+title)
+			args = append(args, fmt.Sprintf("-metadata:s:a:%d", audioIndex), "title="+streamTitle)
 			for _, entry := range streamMetadata {
 				args = append(args, fmt.Sprintf("-metadata:s:a:%d", audioIndex), entry)
 			}
@@ -335,10 +315,19 @@ func mergeSegments(
 		title = "Cassini Artifact Remux " + sess.SessionID
 	}
 
+	reportPath, err := writeEmbeddedReportFile(workDir, sess, streamPlans)
+	if err != nil {
+		return err
+	}
+
+	args = append(args, "-c", "copy")
+	for _, entry := range containerMetadataEntries(title, sess, streamPlans) {
+		args = append(args, "-metadata", entry)
+	}
 	args = append(args,
-		"-c", "copy",
-		"-metadata", "title="+title,
-		"-metadata", "session_id="+sess.SessionID,
+		"-attach", reportPath,
+		"-metadata:s:t:0", "mimetype=application/json",
+		"-metadata:s:t:0", "filename="+embeddedReportFile,
 		outputPath,
 	)
 	return runCommand("ffmpeg", args...)
@@ -367,10 +356,18 @@ func planSegments(segments []segmentArtifact) []PlannedInput {
 	return planned
 }
 
-func buildStreamPlans(segments []segmentArtifact, planned []PlannedInput) []StreamPlan {
+func buildStreamPlans(sess session.Session, segments []segmentArtifact, planned []PlannedInput) []StreamPlan {
 	segmentsByID := map[string]segmentArtifact{}
 	for _, seg := range segments {
 		segmentsByID[seg.Stream.StreamID] = seg
+	}
+	logicalByLTID := map[string]session.LogicalTrack{}
+	for _, logical := range sess.LogicalTracks {
+		logicalByLTID[logical.LTID] = logical
+	}
+	participantDisplayByID := map[string]string{}
+	for _, participant := range sess.Participants {
+		participantDisplayByID[participant.PID] = participant.Display
 	}
 
 	out := make([]StreamPlan, 0, len(planned))
@@ -379,11 +376,19 @@ func buildStreamPlans(segments []segmentArtifact, planned []PlannedInput) []Stre
 		if !ok {
 			continue
 		}
+		logical := logicalByLTID[item.LTID]
+		participantID := logical.ParticipantID
 		out = append(out, StreamPlan{
 			StreamID:               item.StreamID,
 			LTID:                   item.LTID,
 			Kind:                   item.Kind,
 			Codec:                  item.Codec,
+			ParticipantID:          participantID,
+			ParticipantName:        participantDisplayByID[participantID],
+			MID:                    seg.Stream.MID,
+			RID:                    seg.Stream.RID,
+			ClockRate:              seg.Stream.ClockRate,
+			PT:                     seg.Stream.PT,
 			RTPPackets:             seg.Packets,
 			FirstRecvNS:            seg.FirstNS,
 			FirstTimelineNS:        seg.FirstTimelineNS,
@@ -409,29 +414,6 @@ func runCommand(name string, args ...string) error {
 		return fmt.Errorf("%w: %s", err, errText)
 	}
 	return nil
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("open src file: %w", err)
-	}
-	defer func() {
-		_ = in.Close()
-	}()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return fmt.Errorf("create dst file: %w", err)
-	}
-	defer func() {
-		_ = out.Close()
-	}()
-
-	if _, err := io.Copy(out, in); err != nil {
-		return fmt.Errorf("copy file: %w", err)
-	}
-	return out.Close()
 }
 
 func probeMinStreamStartSeconds(path string) (float64, bool) {

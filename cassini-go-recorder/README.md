@@ -88,9 +88,13 @@ cd test
 - Final output: `.mkv` (single deliverable for playback/transcoding/transcription)
 - Final output compose path prefers session-artifact remux (`streams/*.rtplog`) and falls back to legacy intermediates if needed
   with timeline-aware offset planning from SR-corrected estimates.
-- Report: `<final>.json` with session and compose status
-  including `artifact_remux.stream_plans[]` with per-stream `timeline_adjust_ns`
-  and applied `offset_seconds`.
+- Final MKV embeds Cassini meeting metadata directly:
+  - container tags such as `SESSION_ID` and `CASSINI_FORMAT`,
+  - per-stream tags such as `LTID`, `STREAM_ID`, participant identity,
+    `offset_seconds`, and `timeline_adjust_ns`,
+  - attached portable JSON report (`cassini-report.v1.json`) for richer inspection.
+- Report: optional `<final>.json` legacy sidecar with session and compose status
+  when `--write-report` is enabled.
 - Intermediate per-session files: `<output>-segments-*` unless cleanup is enabled
 - `gocassini-inspect` prints legacy archive summaries; session artifacts are written next to `.mkv` and available at `<final>/../sessions/<id>/`.
   For session artifacts it also prints per-stream validation issues, `segment_churn` (`ssrc_changes`, `pt_changes`, `max_gap_ms`), and stream close reasons.

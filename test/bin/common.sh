@@ -41,6 +41,80 @@ log() {
   printf '[test] %s\n' "$*"
 }
 
+configure_python_runner() {
+  local requirements_file="${1:-}"
+  local uv_python="${UV_PYTHON:-3.12}"
+
+  PYTHON_RUNNER=()
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    if ! "$PYTHON_BIN" --version >/dev/null 2>&1; then
+      echo "python interpreter is not runnable: $PYTHON_BIN" >&2
+      return 1
+    fi
+    PYTHON_RUNNER=("$PYTHON_BIN")
+    return 0
+  fi
+
+  if command -v uv >/dev/null 2>&1; then
+    PYTHON_RUNNER=(uv run --python "$uv_python")
+    if [[ -n "$requirements_file" ]]; then
+      PYTHON_RUNNER+=(--with-requirements "$requirements_file")
+    fi
+    PYTHON_RUNNER+=(python)
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_RUNNER=(python3)
+    return 0
+  fi
+
+  echo "missing python runtime: set PYTHON_BIN or install uv/python3" >&2
+  return 1
+}
+
+cassini_session_id_from_mkv() {
+  local input="$1"
+  ffprobe -v error -show_entries format_tags -of default=nw=1 "$input" 2>/dev/null \
+    | awk -F= '/^TAG:(SESSION_ID|session_id)=/ {print $2; exit}'
+}
+
+cassini_session_dir_from_mkv() {
+  local input="$1"
+  local session_id
+  session_id="$(cassini_session_id_from_mkv "$input")"
+  if [[ -z "$session_id" ]]; then
+    return 1
+  fi
+  printf '%s/sessions/%s\n' "$(dirname "$input")" "$session_id"
+}
+
+cassini_session_json_from_mkv() {
+  local session_dir
+  session_dir="$(cassini_session_dir_from_mkv "$1")" || return 1
+  printf '%s/session.json\n' "$session_dir"
+}
+
+cassini_events_log_from_mkv() {
+  local session_dir
+  session_dir="$(cassini_session_dir_from_mkv "$1")" || return 1
+  printf '%s/events.ndjson\n' "$session_dir"
+}
+
+cassini_streams_dir_from_mkv() {
+  local session_dir
+  session_dir="$(cassini_session_dir_from_mkv "$1")" || return 1
+  printf '%s/streams\n' "$session_dir"
+}
+
+cassini_unique_participant_count_from_mkv() {
+  local input="$1"
+  ffprobe -v error -show_entries stream_tags -of default=nw=1 "$input" 2>/dev/null \
+    | awk -F= '/^TAG:(PARTICIPANT_ID|participant_id)=/ {print $2}' \
+    | sort -u \
+    | awk 'NF{count++} END {print count+0}'
+}
+
 compose() {
   local profile_args=()
   if [[ "$SPREED_PROFILE" == "full" ]]; then

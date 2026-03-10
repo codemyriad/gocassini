@@ -4,7 +4,7 @@
 
 - input: Nextcloud Talk room
 - artifact: one `*.mkv` output per meeting
-- additional: per-run `.csr` archive and JSON run report
+- additional: per-run `.csr` archive; optional external JSON run report via `--write-report`
 
 The repository is intentionally CLI-first and automation-friendly.
 
@@ -96,12 +96,11 @@ cd /path/to/gocassini-repo-root
 
 This uses `test/compose.yml` and starts a local Nextcloud Talk stack, creates a room, runs publishers, and validates recorder outputs.
 
-To validate A/V drift on a produced recording + report:
+To validate A/V drift on a produced recording:
 
 ```bash
 ./test/bin/verify-av-drift.sh \
-  --input /tmp/meeting.mkv \
-  --report /tmp/meeting.mkv.json
+  --input /tmp/meeting.mkv
 ```
 
 ### Record a reproducible three-song meeting
@@ -117,9 +116,10 @@ cd /path/to/gocassini-repo-root
 ```
 
 - The script writes:
-  - `<output>.json` (run report, includes session artifact paths),
   - `<output>.csr` (archive),
   - session artifact directory at `<output_dir>/sessions/<id>/`.
+- Add `--write-report` to the recorder invocation if you also want the legacy
+  external JSON sidecar for debug/export workflows.
 
 - To verify session artifacts in CI-style mode:
 

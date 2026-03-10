@@ -14,6 +14,7 @@
 *.csr
 *.mkv
 *.json
+!/test/scenarios/*.json
 gocassini-*.log
 *gocassini*.log
 

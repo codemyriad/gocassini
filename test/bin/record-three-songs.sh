@@ -67,7 +67,7 @@ if [[ -z "$OUTPUT" ]]; then
   OUTPUT="/tmp/three-songs-recording-$(date -u +%Y%m%d-%H%M%S).mkv"
 fi
 if [[ -z "$ARCHIVE_OUTPUT" ]]; then
-  ARCHIVE_OUTPUT="${OUTPUT%.*}.csr"
+  ARCHIVE_OUTPUT="$OUTPUT"
 fi
 
 if [[ -z "$RECORDER_DURATION" ]]; then
@@ -93,11 +93,15 @@ PUB_LOG="${OUTPUT}.publisher.log"
 REPORT_JSON="${OUTPUT}.json"
 
 mkdir -p "$(dirname "$OUTPUT")"
-mkdir -p "$(dirname "$ARCHIVE_OUTPUT")"
+if [[ "$ARCHIVE_OUTPUT" != "$OUTPUT" ]]; then
+  mkdir -p "$(dirname "$ARCHIVE_OUTPUT")"
+fi
 
 log "Starting recorder"
 log "  call: $CALL_URL"
-log "  archive output: $ARCHIVE_OUTPUT"
+if [[ "$ARCHIVE_OUTPUT" != "$OUTPUT" ]]; then
+  log "  recorder requested output: $ARCHIVE_OUTPUT"
+fi
 log "  output: $OUTPUT"
 log "  recorder duration: ${RECORDER_DURATION}s"
 (
@@ -144,11 +148,6 @@ if [[ ! -f "$OUTPUT" ]]; then
   echo "recording output not found: $OUTPUT" >&2
   exit 1
 fi
-if [[ ! -f "$ARCHIVE_OUTPUT" ]]; then
-  echo "recording archive output not found: $ARCHIVE_OUTPUT" >&2
-  exit 1
-fi
-
 if [[ "$SKIP_SYNC_CHECK" != "1" && -f "$REPORT_JSON" ]]; then
   "$SCRIPT_DIR/verify-sync-from-report.sh" \
     --recording "$OUTPUT" \
@@ -165,5 +164,4 @@ log "Publisher log: $PUB_LOG"
 if [[ -f "$REPORT_JSON" ]]; then
   log "Recorder report: $REPORT_JSON"
 fi
-log "Archive recording: $ARCHIVE_OUTPUT"
 log "Raw recording: $OUTPUT"

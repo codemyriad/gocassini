@@ -35,11 +35,10 @@ fi
 export REC_DURATION PUB_DURATION
 
 CI_OUTPUT_BASE="/tmp/gocassini-ci-$(date -u +%Y%m%dT%H%M%S)-$$"
-export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.csr}"
+export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.requested-output}"
 export FINAL_OUTPUT="${FINAL_OUTPUT:-$CI_OUTPUT_BASE.mkv}"
 export REC_LOG="${REC_LOG:-/tmp/gocassini-ci-recorder.log}"
 export PUB_LOG="${PUB_LOG:-/tmp/gocassini-ci-publisher.log}"
-export REPORT_JSON="${REPORT_JSON:-$FINAL_OUTPUT.json}"
 
 cleanup() {
   log "Cleaning up local test stack"
@@ -64,7 +63,6 @@ log "Running recorder + publisher end-to-end"
 
 "$SCRIPT_DIR/verify-av-drift.sh" \
   --input "$FINAL_OUTPUT" \
-  --report "$REPORT_JSON" \
   --tolerance 0.80 \
   --min-elapsed 5
 

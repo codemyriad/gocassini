@@ -30,7 +30,6 @@ export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.requested-output}"
 export FINAL_OUTPUT="${FINAL_OUTPUT:-$CI_OUTPUT_BASE.mkv}"
 export REC_LOG="${REC_LOG:-/tmp/gocassini-ci-recorder-mute.log}"
 export PUB_LOG="${PUB_LOG:-/tmp/gocassini-ci-publisher-mute.log}"
-export REPORT_JSON="${REPORT_JSON:-$FINAL_OUTPUT.json}"
 
 cleanup() {
   log "Cleaning up local test stack"
@@ -92,50 +91,24 @@ if (( AUDIO_COUNT < 1 )); then
   exit 1
 fi
 
-if [[ ! -f "$REPORT_JSON" ]]; then
-  log "Recorder report missing: $REPORT_JSON"
-  exit 1
-fi
-
-SESSION_COUNT="$(python3 - "$REPORT_JSON" <<'PY'
-import json
-import sys
-
-data = json.load(open(sys.argv[1]))
-session_outputs = data.get("session_outputs", [])
-active = [
-    s for s in session_outputs
-    if int(s.get("audio_packets", 0)) > 0 or int(s.get("video_packets", 0)) > 0
-]
-print(len(active))
-PY
-)"
-
 EXPECTED_SESSIONS="$PUB_USERS"
 if (( EXPECTED_SESSIONS < 1 )); then
   EXPECTED_SESSIONS=1
 fi
-if (( SESSION_COUNT < EXPECTED_SESSIONS )); then
-  log "Expected report to include at least ${EXPECTED_SESSIONS} active sessions, got ${SESSION_COUNT}"
+PARTICIPANT_COUNT="$(cassini_unique_participant_count_from_mkv "$FINAL_OUTPUT")"
+if (( PARTICIPANT_COUNT < EXPECTED_SESSIONS )); then
+  log "Expected MKV metadata to expose at least ${EXPECTED_SESSIONS} unique participants, got ${PARTICIPANT_COUNT}"
   exit 1
 fi
 
-"$SCRIPT_DIR/verify-session-artifact.sh" \
-  --final-output "$FINAL_OUTPUT" \
-  --report "$REPORT_JSON"
+"$SCRIPT_DIR/verify-session-artifact.sh" --final-output "$FINAL_OUTPUT"
 
-ARTIFACT_STREAM_COUNT="$(python3 - "$REPORT_JSON" <<'PY'
-import json
-import sys
-
-data = json.load(open(sys.argv[1]))
-artifact = data.get("session_artifact") or {}
-count = int(artifact.get("active_stream_count", 0) or 0)
-if count == 0:
-    count = int(artifact.get("stream_count", 0) or 0)
-print(count)
-PY
-)"
+STREAMS_DIR="$(cassini_streams_dir_from_mkv "$FINAL_OUTPUT" || true)"
+if [[ -z "$STREAMS_DIR" || ! -d "$STREAMS_DIR" ]]; then
+  log "Could not derive session artifact streams directory from MKV metadata"
+  exit 1
+fi
+ARTIFACT_STREAM_COUNT="$(find "$STREAMS_DIR" -type f -name '*.rtplog' | wc -l | tr -d ' ')"
 
 # Artifact stream floor should reflect how many publishers we intentionally launched.
 if (( ARTIFACT_STREAM_COUNT < EXPECTED_SESSIONS )); then

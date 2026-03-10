@@ -38,26 +38,30 @@ fi
 if [[ -z "$REPORT" ]]; then
   REPORT="${FINAL_OUTPUT}.json"
 fi
-if [[ ! -f "$REPORT" ]]; then
-  echo "missing recorder report: $REPORT" >&2
-  exit 1
-fi
-if ! command -v jq >/dev/null 2>&1; then
-  echo "jq is required" >&2
-  exit 1
-fi
 
-SESSION_JSON="$(jq -r '.session_artifact.session_json // empty' "$REPORT")"
-EVENTS_PATH="$(jq -r '.session_artifact.events_ndjson // empty' "$REPORT")"
-STREAMS_DIR="$(jq -r '.session_artifact.streams_dir // empty' "$REPORT")"
-ENABLED="$(jq -r '.session_artifact.enabled // false' "$REPORT")"
+SESSION_JSON="$(cassini_session_json_from_mkv "$FINAL_OUTPUT" || true)"
+EVENTS_PATH="$(cassini_events_log_from_mkv "$FINAL_OUTPUT" || true)"
+STREAMS_DIR="$(cassini_streams_dir_from_mkv "$FINAL_OUTPUT" || true)"
 
-if [[ "$ENABLED" != "true" ]]; then
-  echo "session artifact not enabled according to report; skipping"
-  exit 0
-fi
 if [[ -z "$SESSION_JSON" || -z "$EVENTS_PATH" || -z "$STREAMS_DIR" ]]; then
-  echo "incomplete session artifact metadata in report" >&2
+  if [[ -f "$REPORT" ]]; then
+    if ! command -v jq >/dev/null 2>&1; then
+      echo "jq is required to read legacy report fallback: $REPORT" >&2
+      exit 1
+    fi
+    SESSION_JSON="$(jq -r '.session_artifact.session_json // empty' "$REPORT")"
+    EVENTS_PATH="$(jq -r '.session_artifact.events_ndjson // empty' "$REPORT")"
+    STREAMS_DIR="$(jq -r '.session_artifact.streams_dir // empty' "$REPORT")"
+    ENABLED="$(jq -r '.session_artifact.enabled // false' "$REPORT")"
+    if [[ "$ENABLED" != "true" ]]; then
+      echo "session artifact not enabled according to report; skipping"
+      exit 0
+    fi
+  fi
+fi
+
+if [[ -z "$SESSION_JSON" || -z "$EVENTS_PATH" || -z "$STREAMS_DIR" ]]; then
+  echo "could not derive session artifact paths from mkv metadata or legacy report" >&2
   exit 1
 fi
 

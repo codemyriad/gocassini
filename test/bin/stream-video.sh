@@ -99,8 +99,8 @@ if [[ -z "$CALL_URL" ]]; then
   fi
 fi
 
-if ! [[ "$USERS" =~ ^[0-9]+$ ]] || (( USERS < 1 || USERS > 3 )); then
-  echo "--users must be an integer between 1 and 3" >&2
+if ! [[ "$USERS" =~ ^[0-9]+$ ]] || (( USERS < 1 )); then
+  echo "--users must be a positive integer" >&2
   exit 1
 fi
 

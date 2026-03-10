@@ -1,8 +1,10 @@
 package remux
 
 import (
+	"encoding/json"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -144,7 +146,16 @@ func TestBuildStreamPlansIncludesTimelineAdjustments(t *testing.T) {
 		},
 	}
 
-	got := buildStreamPlans(segments, planned)
+	sess := session.Session{
+		LogicalTracks: []session.LogicalTrack{
+			{LTID: "ltid-video", Kind: "video", ParticipantID: "alice", MID: "0"},
+			{LTID: "ltid-audio", Kind: "audio", ParticipantID: "alice", MID: "1"},
+		},
+		Participants: []session.Participant{
+			{PID: "alice", Display: "Alice"},
+		},
+	}
+	got := buildStreamPlans(sess, segments, planned)
 	if len(got) != 2 {
 		t.Fatalf("stream plans len: got=%d want=2", len(got))
 	}
@@ -160,6 +171,201 @@ func TestBuildStreamPlansIncludesTimelineAdjustments(t *testing.T) {
 	if got[1].StreamID != "s_000002" || got[1].TimelineAdjustNS != 0 {
 		t.Fatalf("unexpected second stream plan: %+v", got[1])
 	}
+	if got[0].ParticipantID != "alice" || got[0].ParticipantName != "Alice" {
+		t.Fatalf("missing participant metadata in plan: %+v", got[0])
+	}
+	if got[0].MID != "" || got[1].MID != "" {
+		t.Fatalf("unexpected MID values without stream metadata: video=%q audio=%q", got[0].MID, got[1].MID)
+	}
+}
+
+func TestMergeSegmentsEmbedsCassiniMetadata(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not available")
+	}
+
+	tmp := t.TempDir()
+	inputPath := filepath.Join(tmp, "input.mkv")
+	if err := runCommand(
+		"ffmpeg",
+		"-y",
+		"-v", "error",
+		"-f", "lavfi",
+		"-i", "anullsrc=r=48000:cl=stereo",
+		"-t", "0.1",
+		"-c:a", "libopus",
+		inputPath,
+	); err != nil {
+		t.Fatalf("create input mkv: %v", err)
+	}
+
+	sess := session.Session{
+		Version:        1,
+		SessionID:      "meeting_20260310T120000Z",
+		StartedWallUTC: "2026-03-10T12:00:00Z",
+		Platform: session.Platform{
+			Name:       "nextcloudtalk",
+			Deployment: "custom",
+			RecorderIdentity: session.RecorderIdentity{
+				Display: "Recorder",
+				Silent:  true,
+			},
+		},
+		Participants: []session.Participant{
+			{PID: "silviot", Display: "Silvio"},
+		},
+		LogicalTracks: []session.LogicalTrack{
+			{
+				LTID:          "p:silviot:audio:janus",
+				Kind:          "audio",
+				Source:        "janus",
+				ParticipantID: "silviot",
+				MID:           "0",
+			},
+		},
+		PacketStreams: []session.PacketStream{
+			{
+				StreamID:    "s_000001",
+				LTID:        "p:silviot:audio:janus",
+				MID:         "0",
+				PrimarySSRC: 1234,
+				Codec:       "audio/opus",
+				ClockRate:   48000,
+				PT:          111,
+			},
+		},
+	}
+	segments := []segmentArtifact{
+		{
+			Stream:           sess.PacketStreams[0],
+			Kind:             "audio",
+			TempPath:         inputPath,
+			FirstNS:          1_000,
+			FirstTimelineNS:  251_000,
+			TimelineAdjustNS: 250_000,
+			Packets:          12,
+			TimelineProfile: timelineProfile{
+				Samples:             12,
+				RawDurationNS:       100_000_000,
+				CorrectedDurationNS: 100_250_000,
+			},
+		},
+	}
+	plans := []StreamPlan{
+		{
+			StreamID:               "s_000001",
+			LTID:                   "p:silviot:audio:janus",
+			Kind:                   "audio",
+			Codec:                  "audio/opus",
+			ParticipantID:          "silviot",
+			ParticipantName:        "Silvio",
+			MID:                    "0",
+			ClockRate:              48000,
+			PT:                     111,
+			RTPPackets:             12,
+			FirstRecvNS:            1_000,
+			FirstTimelineNS:        251_000,
+			TimelineAdjustNS:       250_000,
+			TimelineSamples:        12,
+			TimelineRawDurationNS:  100_000_000,
+			TimelineCorrDurationNS: 100_250_000,
+			SourceStartSeconds:     0.0,
+			OffsetSeconds:          0.0,
+		},
+	}
+
+	outputPath := filepath.Join(tmp, "out.mkv")
+	if err := mergeSegments(outputPath, "Cassini Test Meeting", sess, segments, plans, tmp); err != nil {
+		t.Fatalf("merge segments: %v", err)
+	}
+
+	raw, err := exec.Command(
+		"ffprobe",
+		"-v", "error",
+		"-show_entries", "format_tags:stream=index,codec_type:stream_tags",
+		"-of", "json",
+		outputPath,
+	).Output()
+	if err != nil {
+		t.Fatalf("ffprobe output: %v", err)
+	}
+
+	var meta struct {
+		Streams []struct {
+			Index     int               `json:"index"`
+			CodecType string            `json:"codec_type"`
+			Tags      map[string]string `json:"tags"`
+		} `json:"streams"`
+		Format struct {
+			Tags map[string]string `json:"tags"`
+		} `json:"format"`
+	}
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		t.Fatalf("parse ffprobe json: %v", err)
+	}
+
+	if got := tagValue(meta.Format.Tags, "SESSION_ID", "session_id"); got != sess.SessionID {
+		t.Fatalf("session_id tag mismatch: got=%q want=%q", got, sess.SessionID)
+	}
+	if got := tagValue(meta.Format.Tags, "CASSINI_FORMAT", "cassini_format"); got != MeetingFormatVersion {
+		t.Fatalf("cassini_format tag mismatch: got=%q want=%q", got, MeetingFormatVersion)
+	}
+	if got := tagValue(meta.Format.Tags, "CASSINI_EMBEDDED_REPORT", "cassini_embedded_report"); got != embeddedReportFile {
+		t.Fatalf("embedded report tag mismatch: got=%q want=%q", got, embeddedReportFile)
+	}
+
+	var audioTags map[string]string
+	var attachmentTags map[string]string
+	for _, stream := range meta.Streams {
+		switch stream.CodecType {
+		case "audio":
+			audioTags = stream.Tags
+		case "attachment":
+			attachmentTags = stream.Tags
+		}
+	}
+	if audioTags == nil {
+		t.Fatalf("expected audio stream metadata")
+	}
+	if tagValue(audioTags, "STREAM_ID", "stream_id") != "s_000001" {
+		t.Fatalf("stream_id tag missing from audio stream: %v", audioTags)
+	}
+	if tagValue(audioTags, "OFFSET_SECONDS", "offset_seconds") != "0.000000" {
+		t.Fatalf("offset_seconds tag mismatch: %v", audioTags)
+	}
+	if tagValue(audioTags, "TIMELINE_ADJUST_NS", "timeline_adjust_ns") != "250000" {
+		t.Fatalf("timeline_adjust_ns tag mismatch: %v", audioTags)
+	}
+	if tagValue(audioTags, "PARTICIPANT_NAME", "participant_name") != "Silvio" {
+		t.Fatalf("participant_name tag mismatch: %v", audioTags)
+	}
+	if tagValue(attachmentTags, "FILENAME", "filename") != embeddedReportFile {
+		t.Fatalf("attachment filename mismatch: %v", attachmentTags)
+	}
+	if tagValue(attachmentTags, "MIMETYPE", "mimetype") != "application/json" {
+		t.Fatalf("attachment mimetype mismatch: %v", attachmentTags)
+	}
+
+	reportBody, err := os.ReadFile(filepath.Join(tmp, embeddedReportFile))
+	if err != nil {
+		t.Fatalf("read embedded report source: %v", err)
+	}
+	var report embeddedReport
+	if err := json.Unmarshal(reportBody, &report); err != nil {
+		t.Fatalf("parse embedded report json: %v", err)
+	}
+	if report.Schema != embeddedReportSchema {
+		t.Fatalf("unexpected embedded report schema: %q", report.Schema)
+	}
+	if report.Session.SessionID != sess.SessionID {
+		t.Fatalf("unexpected embedded report session id: %q", report.Session.SessionID)
+	}
+	if len(report.Artifact.StreamPlans) != 1 || report.Artifact.StreamPlans[0].StreamID != "s_000001" {
+		t.Fatalf("unexpected embedded report plans: %+v", report.Artifact.StreamPlans)
+	}
 }
 
 func sessionPacket(streamID, ltid, codec string) session.PacketStream {
@@ -168,4 +374,13 @@ func sessionPacket(streamID, ltid, codec string) session.PacketStream {
 		LTID:     ltid,
 		Codec:    codec,
 	}
+}
+
+func tagValue(tags map[string]string, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := tags[key]; ok && value != "" {
+			return value
+		}
+	}
+	return ""
 }

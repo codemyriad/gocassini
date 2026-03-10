@@ -35,7 +35,6 @@ FINAL_OUTPUT="${FINAL_OUTPUT:-$CI_OUTPUT_BASE.mkv}"
 REC_LOG="${REC_LOG:-/tmp/gocassini-ci-rejoin-recorder.log}"
 PHASE1_LOG="${PHASE1_LOG:-/tmp/gocassini-ci-rejoin-phase1.log}"
 PHASE2_LOG="${PHASE2_LOG:-/tmp/gocassini-ci-rejoin-phase2.log}"
-REPORT_JSON="${FINAL_OUTPUT}.json"
 
 cleanup() {
   log "Cleaning up local test stack"
@@ -52,7 +51,7 @@ CALL_URL="$(create_room_with_retry "$CALL_NAME")"
 log "Test room URL: $CALL_URL"
 export CALL_URL
 
-rm -f "$OUTPUT" "$FINAL_OUTPUT" "$REC_LOG" "$PHASE1_LOG" "$PHASE2_LOG" "$REPORT_JSON"
+rm -f "$OUTPUT" "$FINAL_OUTPUT" "$REC_LOG" "$PHASE1_LOG" "$PHASE2_LOG"
 mkdir -p "$(dirname "$OUTPUT")"
 
 (
@@ -100,11 +99,6 @@ if [[ ! -f "$FINAL_OUTPUT" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$REPORT_JSON" ]]; then
-  log "[FAIL] missing run report: $REPORT_JSON"
-  exit 1
-fi
-
 if (( $(stat -c '%s' "$FINAL_OUTPUT") <= 1024 )); then
   log "[FAIL] final mkv unexpectedly small"
   exit 1
@@ -143,28 +137,19 @@ if [[ ! -f "$PHASE1_LOG" || ! -f "$PHASE2_LOG" ]]; then
   exit 1
 fi
 
-"$SCRIPT_DIR/verify-session-artifact.sh" \
-  --final-output "$FINAL_OUTPUT" \
-  --report "$REPORT_JSON"
+"$SCRIPT_DIR/verify-session-artifact.sh" --final-output "$FINAL_OUTPUT"
 
 "$SCRIPT_DIR/verify-av-drift.sh" \
   --input "$FINAL_OUTPUT" \
-  --report "$REPORT_JSON" \
   --tolerance 0.80 \
   --min-elapsed 5
 
-ARTIFACT_STREAM_COUNT="$(python3 - "$REPORT_JSON" <<'PY'
-import json
-import sys
-
-data = json.load(open(sys.argv[1]))
-artifact = data.get("session_artifact") or {}
-count = int(artifact.get("active_stream_count", 0) or 0)
-if count == 0:
-    count = int(artifact.get("stream_count", 0) or 0)
-print(count)
-PY
-)"
+STREAMS_DIR="$(cassini_streams_dir_from_mkv "$FINAL_OUTPUT" || true)"
+if [[ -z "$STREAMS_DIR" || ! -d "$STREAMS_DIR" ]]; then
+  log "[FAIL] could not derive session artifact streams directory from MKV metadata"
+  exit 1
+fi
+ARTIFACT_STREAM_COUNT="$(find "$STREAMS_DIR" -type f -name '*.rtplog' | wc -l | tr -d ' ')"
 if (( ARTIFACT_STREAM_COUNT < 1 )); then
   log "[FAIL] expected at least one active artifact stream, got ${ARTIFACT_STREAM_COUNT}"
   exit 1

@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TEST_DIR="$ROOT_DIR/../test"
+# shellcheck source=../test/bin/common.sh
+source "$TEST_DIR/bin/common.sh"
 
 CALL_URL="${CALL_URL:-}"
 CALL_NAME="${CALL_NAME:-Cassini Go E2E room}"
@@ -160,35 +162,29 @@ echo "--- key recorder lines ---"
 rg -n "talk bootstrap|subscribing to remote session|remote track:|ICE state=connected|duration reached|run error|composed final multi-track output|kept intermediate files" "$REC_LOG" -S || true
 
 if [[ "$CHECK_SESSION_ARTIFACT" == "1" ]]; then
-  "$TEST_DIR/bin/verify-session-artifact.sh" \
-    --final-output "$FINAL_OUTPUT" \
-    --report "${FINAL_OUTPUT}.json"
+  "$TEST_DIR/bin/verify-session-artifact.sh" --final-output "$FINAL_OUTPUT"
 fi
 
 if [[ "$CHECK_ARTIFACT_REMUX" == "1" ]]; then
-  if command -v jq >/dev/null 2>&1; then
-    SESSION_JSON="$(jq -r '.session_artifact.session_json // empty' "${FINAL_OUTPUT}.json")"
-    if [[ -n "$SESSION_JSON" && -f "$SESSION_JSON" ]]; then
-      REMUX_OUTPUT="${FINAL_OUTPUT%.mkv}.artifact-remux.mkv"
-      (
-        cd "$ROOT_DIR"
-        go run ./cmd/gocassini-remux \
-          --session "$SESSION_JSON" \
-          --output "$REMUX_OUTPUT"
-      )
-      if [[ ! -s "$REMUX_OUTPUT" ]]; then
-        echo "[FAIL] artifact remux output missing or empty: $REMUX_OUTPUT"
-        exit 1
-      fi
-      echo "--- artifact remux streams ---"
-      ffprobe -v error \
-        -show_entries stream=index,codec_type,codec_name,start_time,duration \
-        -of compact=p=0:nk=1 "$REMUX_OUTPUT" | sed -n '1,120p'
-    else
-      echo "[WARN] session artifact json missing in report; skipping artifact remux check"
+  SESSION_JSON="$(cassini_session_json_from_mkv "$FINAL_OUTPUT" || true)"
+  if [[ -n "$SESSION_JSON" && -f "$SESSION_JSON" ]]; then
+    REMUX_OUTPUT="${FINAL_OUTPUT%.mkv}.artifact-remux.mkv"
+    (
+      cd "$ROOT_DIR"
+      go run ./cmd/gocassini-remux \
+        --session "$SESSION_JSON" \
+        --output "$REMUX_OUTPUT"
+    )
+    if [[ ! -s "$REMUX_OUTPUT" ]]; then
+      echo "[FAIL] artifact remux output missing or empty: $REMUX_OUTPUT"
+      exit 1
     fi
+    echo "--- artifact remux streams ---"
+    ffprobe -v error \
+      -show_entries stream=index,codec_type,codec_name,start_time,duration \
+      -of compact=p=0:nk=1 "$REMUX_OUTPUT" | sed -n '1,120p'
   else
-    echo "[WARN] jq not available; skipping artifact remux check"
+    echo "[WARN] session artifact json could not be derived from mkv metadata; skipping artifact remux check"
   fi
 fi
 

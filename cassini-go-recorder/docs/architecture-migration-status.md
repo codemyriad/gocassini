@@ -1,87 +1,112 @@
-# Architecture Migration Status (2026-03-04)
+# Architecture Migration Status (2026-03-10)
 
-## Goals
+## Current conclusion
 
-1. Make drift bugs reproducible from packet truth without rerunning meetings.
-2. Segment streams aggressively on RTP identity churn (SSRC/PT) so timeline seams
-   are explicit.
-3. Expose diagnostics that explain churn/gaps/validation issues quickly.
-4. Keep local E2E checks representative of real Talk behavior.
+We did not find a recorder sync defect.
 
-## Implemented in this cycle
+- The current multitrack MKV output is internally consistent.
+- Audio rendered from the current MKV is in sync and sounds correct on real
+  meeting data.
+- The apparent "sync issue" was a tooling problem: we could not find a good
+  multitrack audio/video player that represented these files reliably enough
+  for debugging.
+
+That changes the framing of the work. The recorder/remux path is not currently
+blocked on drift. The real gaps are artifact format discipline, transcription
+quality on real data, and playback UX.
+
+## Implemented so far
 
 1. Segment-aware session artifact capture:
 - stream logs rotate on SSRC/PT changes and preserve logical-track mapping.
-- `session.json` packet streams now include `pt`.
-- live capture now records RTCP alongside RTP in `streams/*.rtplog`.
+- `session.json` packet streams include payload type metadata.
+- live capture records RTCP alongside RTP in `streams/*.rtplog`.
 - mixed RTP/RTCP writes enforce monotonic per-stream receive timestamps.
 
-2. Deterministic inspection upgrades:
-- `gocassini-inspect` prints per-stream identity (`ssrc`, `pt`) and validation
-  issue counts.
-- `gocassini-inspect` now reports per-stream RTP/RTCP timeline delta metrics
-  (`mean_abs`, `max_abs`, `last`) for faster drift triage.
-- `segment_churn` summary added per logical track (`segments`, `ssrc_changes`,
-  `pt_changes`, `max_gap_ms`).
-- stream close reasons are aggregated from `events.ndjson`.
+2. Deterministic inspection and remux:
+- `gocassini-inspect` reports per-stream identity, validation issue counts,
+  churn summaries, and RTP/RTCP timeline delta metrics.
+- `cmd/gocassini-remux` rebuilds multitrack MKV directly from preserved session
+  artifacts.
+- recorder final compose uses the artifact remux path first, with legacy merge
+  retained as fallback.
+- remux offset planning uses bounded timeline-derived start adjustments and the
+  recorder report persists the applied per-stream plan.
 
-2.5. Offline artifact remux:
-- added `cmd/gocassini-remux` to rebuild multitrack MKV directly from
-  `session.json` + `streams/*.rtplog` (Opus + VP8/VP9/H264/AV1 paths).
-- recorder final-output compose now uses the same artifact remux path first,
-  then falls back to legacy intermediate merge if remux fails.
-- remux offset planning now uses bounded timeline-derived start adjustments
-  (SR-aware), so stitching is informed by corrected timeline estimates.
-- recorder reports now persist exact per-stream applied adjustments and offsets
-  under `artifact_remux.stream_plans[]`.
-- local E2E now exercises this artifact-based remux step.
-
-2.6. Timeline correction:
-- `pkg/core/timeline` now applies bounded SR-aware slope/intercept correction on
-  top of receive-time canonical mapping.
-- deterministic tests verify correction reduces synthetic long-run drift and keeps
-  PTS monotonic under noisy SR input.
-
-3. Validation package:
-- added `pkg/core/validate` for `.rtplog` invariants:
-  - monotonic `recvMonoNS`
-  - RTP unmarshal sanity
-  - payload-type consistency vs stream header snapshot
+3. Timeline and validation hardening:
+- `pkg/core/timeline` applies bounded SR-aware correction on top of receive-time
+  mapping.
+- deterministic tests cover long-run correction behavior and monotonic PTS under
+  noisy sender reports.
+- `pkg/core/validate` checks `.rtplog` invariants such as monotonic receive
+  time, RTP decode sanity, and payload-type consistency.
 
 4. Local E2E hardening:
-- room creation retries made observable (`stderr`) and more resilient.
-- one-time bootstrap refresh on OCS `statuscode 996`.
-- bootstrap now auto-resolves container-reachable signaling URL for Docker runs.
-- fixed `e2e_with_publisher.sh` artifact verifier path bug.
-- fixed `verify-session-artifact.sh` index filename logic (`<stream>.idx`).
+- room creation/bootstrap behavior is more resilient and more observable.
+- local E2E covers baseline, mute, and leave/rejoin behavior.
+- session artifact verification covers `session.json`, `events.ndjson`,
+  `streams/*.rtplog`, and `.idx` sidecars.
 
 ## Evidence
 
-- unit/integration tests:
-  - `go test ./...` passes in `cassini-go-recorder`.
-- local live E2E:
-  - `./test/bin/ci-e2e.sh` covers the baseline single-publisher path.
-  - `./test/bin/ci-e2e-mute.sh` covers multi-publisher mute behavior.
-  - `./test/bin/ci-e2e-rejoin.sh` covers leave/rejoin behavior.
-  - session artifact verification passes (`streams`, `events`, `.idx` sidecars).
+- `go test ./...` passes in `cassini-go-recorder`.
+- local live E2E covers the baseline and multi-participant cases.
+- preserved session artifacts allow deterministic replay and inspection.
+- most importantly: real meeting MKVs produce correct mixed audio without
+  observable sync problems.
 
-## Debug-time impact
+## What changed in our priorities
 
-Current expected triage path for drift:
+The earlier migration plan assumed we were chasing a recorder drift problem.
+That was the wrong primary problem.
 
-1. inspect session artifact (`gocassini-inspect session.json`)
-2. locate churn seams/issues (`segment_churn`, validation output)
-3. remux/replay from existing logs
+We now treat the current MKV as basically correct and shift effort to the
+places where the product still feels unfinished:
 
-This should continue reducing drift incident investigation from "rerun live call"
-to "replay deterministic artifact", typically cutting triage from hours to tens
-of minutes.
+1. tighten "our format" for a meeting artifact
+2. test and tune the transcriber on more real meetings
+3. improve the player so multitrack playback is trustworthy and pleasant
 
-## Remaining migration work
+## Current goals
 
-1. Add optional output metadata embedding for per-stream adjustment summaries so
-   forensic context survives when JSON sidecars are unavailable.
-2. Extend artifact remux audio codec coverage beyond Opus where deployment
-   requires it.
-3. Add richer depacketization/remux modules for broader codec/container support
-   and participant-level layout rendering.
+1. Single meeting artifact:
+- stop treating `meeting.mkv` plus `meeting.mkv.json` as the long-term public
+  contract.
+- make the MKV the primary durable artifact and embed more of the portable
+  metadata directly into it.
+- keep host-local or privacy-sensitive details out of embedded metadata when
+  they do not belong in the artifact.
+
+2. Better transcription with real data:
+- run the transcriber on a larger set of real meetings instead of only synthetic
+  or short samples.
+- use those runs to tune chunking, silence reduction, speaker handling, and
+  output quality.
+- treat transcription evaluation as a product loop, not just a pipeline demo.
+
+3. Better playback:
+- accept that generic multitrack players are not a reliable source of truth for
+  Cassini artifacts.
+- improve `cassini-viewer` or related tooling around our actual meeting format:
+  sparse tracks, late joins, repeated segments, and participant-centric review.
+- optimize for trustworthy inspection first, polish second.
+
+## Near-term migration work
+
+1. Tighten the MKV format:
+- embed additional per-stream metadata in the MKV itself, especially values that
+  help explain composition and playback behavior.
+- move toward a single-file artifact, with the sidecar becoming optional debug
+  output rather than the default contract.
+- prefer structured metadata that survives file moves and offline sharing.
+
+2. Expand transcriber evaluation:
+- build a small but representative corpus of real meetings.
+- measure where current transcription output fails and tune from observed data.
+- keep the artifact bundle and transcript outputs easy to inspect side by side.
+
+3. Nail the player:
+- make playback semantics match the artifact semantics.
+- make it easy to inspect per-participant tracks, joins/leaves, and derived
+  mixed outputs.
+- stop using weak third-party player behavior as evidence of recorder defects.

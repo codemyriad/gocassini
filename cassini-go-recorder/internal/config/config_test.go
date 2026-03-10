@@ -85,3 +85,32 @@ func TestFromFlagsRejectsNegativeRoomEmptyGrace(t *testing.T) {
 		t.Fatalf("expected error for negative room-empty-grace")
 	}
 }
+
+func TestFromFlagsReportIsDisabledByDefault(t *testing.T) {
+	cfg, err := FromFlags([]string{
+		"--mode", "talk",
+		"--call-url", "https://cloud.example.com/call/roomtoken",
+		"--output", "/tmp/out.csr",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.WriteReport {
+		t.Fatalf("expected write-report to default to false")
+	}
+}
+
+func TestFromFlagsAcceptsWriteReport(t *testing.T) {
+	cfg, err := FromFlags([]string{
+		"--mode", "talk",
+		"--call-url", "https://cloud.example.com/call/roomtoken",
+		"--output", "/tmp/out.csr",
+		"--write-report",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.WriteReport {
+		t.Fatalf("expected write-report to be true")
+	}
+}

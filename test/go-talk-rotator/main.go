@@ -2114,8 +2114,8 @@ func run() error {
 	)
 
 	flag.StringVar(&callURL, "call-url", "", "Talk call URL")
-	flag.Var(&videoFiles, "video", "Path to IVF video file (repeat 1-3x)")
-	flag.Var(&audioFiles, "audio", "Path to OGG Opus audio file (repeat 1-3x)")
+	flag.Var(&videoFiles, "video", "Path to IVF video file (repeat once per participant)")
+	flag.Var(&audioFiles, "audio", "Path to OGG Opus audio file (repeat once per participant)")
 	flag.Var(&names, "name", "Bot name (repeat up to video count)")
 	flag.Var(&joinDelaySecs, "join-delay", "Join delay in seconds (repeat up to video count)")
 	flag.Var(&audioReadySec, "audio-ready-after", "Audio can become audible after N seconds from stream start (repeat up to video count)")
@@ -2132,8 +2132,8 @@ func run() error {
 		return errors.New("missing --call-url")
 	}
 	participantCount := len(videoFiles)
-	if participantCount < 1 || participantCount > 3 {
-		return fmt.Errorf("--video must be passed between 1 and 3 times, got %d", participantCount)
+	if participantCount < 1 {
+		return fmt.Errorf("--video must be passed at least once, got %d", participantCount)
 	}
 	if len(audioFiles) != participantCount {
 		return fmt.Errorf("--audio must be passed exactly as many times as --video (%d), got %d", participantCount, len(audioFiles))
@@ -2174,17 +2174,20 @@ func run() error {
 		return err
 	}
 
-	defaultNames := []string{"SongBot-Giulia", "SongBot-Vibrazioni", "SongBot-Frankie"}
-	defaultJoinDelaySecs := []float64{0, 4, 8}
-
-	resolvedNames := append([]string{}, defaultNames[:participantCount]...)
+	resolvedNames := make([]string, participantCount)
+	for i := 0; i < participantCount; i++ {
+		resolvedNames[i] = fmt.Sprintf("SongBot-%d", i+1)
+	}
 	for i := 0; i < len(names) && i < participantCount; i++ {
 		if trimmed := strings.TrimSpace(names[i]); trimmed != "" {
 			resolvedNames[i] = trimmed
 		}
 	}
 
-	resolvedJoinDelays := append([]float64{}, defaultJoinDelaySecs[:participantCount]...)
+	resolvedJoinDelays := make([]float64, participantCount)
+	for i := 0; i < participantCount; i++ {
+		resolvedJoinDelays[i] = float64(i * 4)
+	}
 	for i := 0; i < len(joinDelaySecs) && i < participantCount; i++ {
 		if joinDelaySecs[i] < 0 {
 			return fmt.Errorf("join delay must be >= 0 (idx=%d value=%.3f)", i, joinDelaySecs[i])

@@ -4,7 +4,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DOCKER_BIN="${DOCKER_BIN:-docker}"
-IMAGE_TAG="${CASSINI_TRANSCRIBER_IMAGE:-cassini-transcriber:nvidia}"
 CACHE_ROOT="${CASSINI_CACHE_ROOT:-${HOME}/.cache/cassini-transcriber}"
 
 INPUT_PATH=""
@@ -67,10 +66,6 @@ INPUT_NAME="$(basename "${INPUT_ABS}")"
 
 mkdir -p "${OUTPUT_ABS}" "${CACHE_ROOT}/whisper"
 
-if [[ "${REBUILD}" == "1" ]] || ! "${DOCKER_BIN}" image inspect "${IMAGE_TAG}" >/dev/null 2>&1; then
-  "${PROJECT_DIR}/bin/docker-build.sh"
-fi
-
 GPU_ENABLED=0
 if [[ "${DEVICE}" == "cuda" ]]; then
   GPU_ENABLED=1
@@ -79,10 +74,22 @@ elif [[ "${DEVICE}" == "auto" ]] && command -v nvidia-smi >/dev/null 2>&1; then
 fi
 
 WHISPER_DEVICE="cpu"
+IMAGE_TAG="${CASSINI_TRANSCRIBER_IMAGE:-cassini-transcriber:cpu}"
+BUILD_DEVICE="cpu"
 DOCKER_ARGS=(run --rm)
 if [[ "${GPU_ENABLED}" == "1" ]]; then
   DOCKER_ARGS+=(--gpus all)
   WHISPER_DEVICE="cuda"
+  BUILD_DEVICE="cuda"
+  if [[ -z "${CASSINI_TRANSCRIBER_IMAGE:-}" ]]; then
+    IMAGE_TAG="cassini-transcriber:nvidia"
+  fi
+fi
+
+if [[ "${REBUILD}" == "1" ]] || ! "${DOCKER_BIN}" image inspect "${IMAGE_TAG}" >/dev/null 2>&1; then
+  CASSINI_TRANSCRIBER_DEVICE="${BUILD_DEVICE}" \
+    CASSINI_TRANSCRIBER_IMAGE="${IMAGE_TAG}" \
+    "${PROJECT_DIR}/bin/docker-build.sh"
 fi
 
 if ! contains_arg --transcriber-backend "${EXTRA_ARGS[@]}"; then

@@ -8,6 +8,7 @@ This directory is the reproducible E2E harness for Nextcloud Talk/Spreed testing
 - create rooms quickly
 - run publisher tests (single stream and 3-stream sync test)
 - prepare deterministic media inputs for sync validation
+- generate meeting-like spoken fixtures for transcription and player validation
 
 All generated media/runtime artifacts stay outside git-tracked content.
 
@@ -20,8 +21,12 @@ All generated media/runtime artifacts stay outside git-tracked content.
   - `bootstrap.sh`: Nextcloud/Talk bootstrap and app settings
   - `create-room.sh`: create Talk room and print call URL
   - `prepare-media.sh`: small local sample media assets (`.mp4` + `.ivf` + `.ogg` + `.ulaw`)
+  - `prepare-synthetic-meeting.sh`: meeting-like multi-speaker media fixture generation
+  - `prepare-synthetic-meeting.py`: TTS-backed generator used by the shell wrapper
   - `prepare-youtube-set.sh`: YouTube download + alignment + WebRTC transcode
-  - `stream-video.sh`: basic publisher flow (1-3 clients) using Go rotator + local sample assets
+  - `stream-synthetic-meeting.sh`: publish the synthetic meeting fixture with realistic names and join delays
+  - `stream-video.sh`: basic publisher flow (one or more clients) using Go rotator + local sample assets
+  - `roundtrip-synthetic-meeting.sh`: record a real Talk meeting MKV, then build the transcriber + viewer artifact bundle
   - `stream-three-songs.sh`: 3-client synchronized publisher flow (Go rotator)
   - `stream-three-songs-until.sh`: retrying loop for continuous cloud/local soak until a wall-clock time
   - `record-three-songs.sh`: Go recorder + 3-client stream capture in one command
@@ -46,6 +51,94 @@ One-command smoke test:
 cd test
 ./bin/smoke.sh
 ```
+
+## Synthetic Meeting Fixture
+
+The synthetic meeting fixture is intended to feel closer to a real engineering
+call than the old bars-and-tone sample. It gives us:
+
+- spoken language instead of synthetic sine audio
+- stable participant names and join delays
+- overlaps, abbreviations, dates, filenames, and code terms
+- a repeatable reference transcript for transcriber tuning
+
+Recommended local setup:
+
+```bash
+uv run --python 3.12 --with-requirements test/requirements-tts.txt python --version
+```
+
+The wrappers default to `uv run --python 3.12`, so they can provision a
+compatible interpreter on demand. The realistic backend uses `kokoro-onnx`
+under the hood and caches its model files on first run under
+`$XDG_CACHE_HOME/gocassini/kokoro-onnx` (or `~/.cache/gocassini/kokoro-onnx`).
+Override the Python version if needed:
+
+```bash
+UV_PYTHON=3.12 ./bin/prepare-synthetic-meeting.sh
+```
+
+If you want to force a specific preinstalled interpreter instead:
+
+```bash
+PYTHON_BIN=/path/to/python3.12 ./bin/prepare-synthetic-meeting.sh
+```
+
+Generate the fixture only:
+
+```bash
+cd test
+./bin/prepare-synthetic-meeting.sh
+```
+
+This writes a scenario-driven generated media set under
+`test/media/processed/synthetic-pied-piper-v1/`, including:
+
+- one media prefix per participant (`.mp4`, `.ivf`, `.ogg`)
+- `manifest.json`
+- `reference.txt`
+
+The tracked inputs for this flow live in `test/scenarios/` plus the generator
+scripts; the rendered media stays gitignored.
+
+Publish it into a room:
+
+```bash
+cd test
+CALL_URL="$(./bin/create-room.sh --name "Synthetic Pied Piper Review" | tail -n1)"
+./bin/stream-synthetic-meeting.sh --call-url "$CALL_URL"
+```
+
+The current default scenario is a six-person Pied Piper review. The publisher
+uses the scenario join delays both for room entry and for media timeline
+alignment, so late-join playback lands on the intended absolute meeting time
+instead of being delayed twice.
+
+Run the full cloud/local roundtrip in one command:
+
+```bash
+cd test
+./bin/roundtrip-synthetic-meeting.sh \
+  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
+```
+
+That flow will:
+
+- generate or reuse the synthetic meeting media
+- publish it into the real Talk room
+- record the meeting into one MKV with the actual Go recorder
+- run `cassini-transcriber/bin/process-meeting.sh --bundle-viewer`
+- leave you with `meeting.webm`, `transcript.words.v1.json`, `captions.vtt`,
+  `manifest.json`, and a bundled static `index.html`
+
+If you want to test the plumbing without installing the TTS model yet:
+
+```bash
+./bin/prepare-synthetic-meeting.sh --backend mock --force
+```
+
+That mock path uses only the lightweight core requirements, so it stays fast
+even when the full Kokoro stack is not installed yet.
 
 ## Three-Stream Sync Test (Go)
 
@@ -158,13 +251,17 @@ This generates:
 
 - raw recorder output MKV (`/tmp/three-songs.mkv`)
 - raw recorder archive CSR (`/tmp/three-songs.csr`)
-- recorder JSON report (`/tmp/three-songs.mkv.json`)
 - sync validation output (`verify-sync-from-report.sh`, auto-run unless `--skip-sync-check`)
 - recorder/publisher logs (`/tmp/three-songs.mkv.recorder.log`, `/tmp/three-songs.mkv.publisher.log`)
+
+The MKV is now the primary meeting artifact and carries Cassini metadata inside
+the container itself. Add `--write-report` to the recorder invocation if you
+also want the legacy external JSON sidecar for debug/export workflows.
 
 Run sync validation manually:
 
 ```bash
+# requires the legacy sidecar; run recorder with --write-report first
 ./bin/verify-sync-from-report.sh \
   --recording /tmp/three-songs.mkv \
   --report /tmp/three-songs.mkv.json \

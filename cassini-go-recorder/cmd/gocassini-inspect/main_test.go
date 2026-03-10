@@ -234,3 +234,36 @@ func TestUnwrap32(t *testing.T) {
 		t.Fatalf("expected unwrap to increase, got=%d last=%d", got, last)
 	}
 }
+
+func TestDetectMeetingMKVPath(t *testing.T) {
+	tmp := t.TempDir()
+	mkvPath := filepath.Join(tmp, "meeting.mkv")
+	if err := os.WriteFile(mkvPath, []byte("not-a-real-mkv"), 0o644); err != nil {
+		t.Fatalf("write mkv stub: %v", err)
+	}
+
+	got, ok := detectMeetingMKVPath(mkvPath)
+	if !ok {
+		t.Fatalf("expected mkv path to be detected")
+	}
+	if got != mkvPath {
+		t.Fatalf("detectMeetingMKVPath mismatch: got=%q want=%q", got, mkvPath)
+	}
+
+	if _, ok := detectMeetingMKVPath(tmp); ok {
+		t.Fatalf("did not expect directory to be treated as meeting mkv")
+	}
+}
+
+func TestMetadataTagPrefersFirstPresentValue(t *testing.T) {
+	tags := map[string]string{
+		"SESSION_ID": "abc",
+		"title":      "Cassini",
+	}
+	if got := metadataTag(tags, "session_id", "SESSION_ID"); got != "abc" {
+		t.Fatalf("metadataTag mismatch: got=%q want=abc", got)
+	}
+	if got := metadataTag(tags, "TITLE", "title"); got != "Cassini" {
+		t.Fatalf("metadataTag title mismatch: got=%q want=Cassini", got)
+	}
+}

@@ -26,6 +26,7 @@ type Config struct {
 	RequestOfferInterval    time.Duration
 	MaxRequestOfferAttempts int
 	TurnMode                string
+	WriteReport             bool
 }
 
 func FromFlags(args []string) (Config, error) {
@@ -53,6 +54,7 @@ func FromFlags(args []string) (Config, error) {
 	fs.Float64Var(&requestOfferIntervalSeconds, "request-offer-interval", 2.0, "seconds between requestoffer retries (0 disables)")
 	fs.IntVar(&cfg.MaxRequestOfferAttempts, "max-request-offer-attempts", 8, "max requestoffer attempts per session (0 disables limit)")
 	fs.StringVar(&cfg.TurnMode, "turn-mode", "all", "TURN usage mode: off, udp-only, all")
+	fs.BoolVar(&cfg.WriteReport, "write-report", false, "write legacy external JSON sidecar report next to the final MKV")
 
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err

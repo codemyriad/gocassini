@@ -8,8 +8,10 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"gocassini/internal/cassette"
 	"gocassini/pkg/core/session"
@@ -45,7 +47,7 @@ type segmentChurnSummary struct {
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Fprintf(os.Stderr, "usage: %s <archive.csr|session.json|session-dir>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s <archive.csr|session.json|session-dir|meeting.mkv>\n", os.Args[0])
 		os.Exit(2)
 	}
 	path := os.Args[1]
@@ -53,6 +55,12 @@ func main() {
 	if artifactPath, ok := detectSessionArtifactPath(path); ok {
 		if err := inspectSessionArtifact(artifactPath); err != nil {
 			exitErr(fmt.Errorf("read session artifact: %w", err))
+		}
+		return
+	}
+	if meetingPath, ok := detectMeetingMKVPath(path); ok {
+		if err := inspectMeetingMKV(meetingPath); err != nil {
+			exitErr(fmt.Errorf("inspect meeting mkv: %w", err))
 		}
 		return
 	}
@@ -282,6 +290,93 @@ func inspectSessionArtifact(sessionPath string) error {
 	return nil
 }
 
+func inspectMeetingMKV(path string) error {
+	raw, err := exec.Command(
+		"ffprobe",
+		"-v", "error",
+		"-show_entries", "format=nb_streams:format_tags:stream=index,codec_type,codec_name,start_time,duration:stream_tags",
+		"-of", "json",
+		path,
+	).Output()
+	if err != nil {
+		return fmt.Errorf("ffprobe mkv: %w", err)
+	}
+
+	var meta struct {
+		Streams []struct {
+			Index     int               `json:"index"`
+			CodecType string            `json:"codec_type"`
+			CodecName string            `json:"codec_name"`
+			StartTime string            `json:"start_time"`
+			Duration  string            `json:"duration"`
+			Tags      map[string]string `json:"tags"`
+		} `json:"streams"`
+		Format struct {
+			NBStreams int               `json:"nb_streams"`
+			Tags      map[string]string `json:"tags"`
+		} `json:"format"`
+	}
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return fmt.Errorf("parse ffprobe mkv json: %w", err)
+	}
+
+	sessionID := metadataTag(meta.Format.Tags, "SESSION_ID", "session_id")
+	formatVersion := metadataTag(meta.Format.Tags, "CASSINI_FORMAT", "cassini_format")
+	title := metadataTag(meta.Format.Tags, "title", "TITLE")
+	reportAttachment := metadataTag(meta.Format.Tags, "CASSINI_EMBEDDED_REPORT", "cassini_embedded_report")
+	if sessionID == "" {
+		sessionID = "-"
+	}
+	if formatVersion == "" {
+		formatVersion = "-"
+	}
+	if title == "" {
+		title = "-"
+	}
+	if reportAttachment == "" {
+		reportAttachment = "-"
+	}
+
+	fmt.Printf(
+		"meeting=%s session=%s format=%s streams=%d title=%s embedded_report=%s\n",
+		path,
+		sessionID,
+		formatVersion,
+		meta.Format.NBStreams,
+		title,
+		reportAttachment,
+	)
+
+	for _, stream := range meta.Streams {
+		switch strings.ToLower(strings.TrimSpace(stream.CodecType)) {
+		case "audio", "video":
+			fmt.Printf(
+				"stream=%d kind=%s codec=%s start=%s duration=%s ltid=%s stream_id=%s participant_id=%s participant_name=%s offset_s=%s adjust_ns=%s\n",
+				stream.Index,
+				blankDash(stream.CodecType),
+				blankDash(stream.CodecName),
+				blankDash(stream.StartTime),
+				blankDash(stream.Duration),
+				blankDash(metadataTag(stream.Tags, "LTID", "ltid")),
+				blankDash(metadataTag(stream.Tags, "STREAM_ID", "stream_id")),
+				blankDash(metadataTag(stream.Tags, "PARTICIPANT_ID", "participant_id")),
+				blankDash(metadataTag(stream.Tags, "PARTICIPANT_NAME", "participant_name")),
+				blankDash(metadataTag(stream.Tags, "OFFSET_SECONDS", "offset_seconds")),
+				blankDash(metadataTag(stream.Tags, "TIMELINE_ADJUST_NS", "timeline_adjust_ns")),
+			)
+		case "attachment":
+			fmt.Printf(
+				"attachment=%d filename=%s mimetype=%s\n",
+				stream.Index,
+				blankDash(metadataTag(stream.Tags, "FILENAME", "filename")),
+				blankDash(metadataTag(stream.Tags, "MIMETYPE", "mimetype")),
+			)
+		}
+	}
+
+	return nil
+}
+
 type streamSummary struct {
 	rtp                    int
 	rtcp                   int
@@ -502,6 +597,33 @@ func detectSessionArtifactPath(path string) (string, bool) {
 		return path, true
 	}
 	return "", false
+}
+
+func detectMeetingMKVPath(path string) (string, bool) {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return "", false
+	}
+	if strings.EqualFold(filepath.Ext(path), ".mkv") {
+		return path, true
+	}
+	return "", false
+}
+
+func metadataTag(tags map[string]string, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := tags[key]; ok && strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func blankDash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return value
 }
 
 func countLines(reader io.Reader) (int, error) {

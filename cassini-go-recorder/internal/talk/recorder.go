@@ -353,11 +353,6 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 		r.sessionArtifact = nil
 	}
 
-	r.sessionMu.Lock()
-	sessions := make([]*sessionCapture, len(r.sessionOrder))
-	copy(sessions, r.sessionOrder)
-	r.sessionMu.Unlock()
-
 	if err := r.composeFinalOutput(); err != nil {
 		composeErrText = err.Error()
 		if firstErr == nil {
@@ -379,21 +374,28 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 		}
 	}
 
-	reportPath := deriveReportPath(r.finalOutputPath, r.cfg.OutputPath)
-	if err := r.writeReport(
-		reportPath,
-		sessions,
-		composeOK,
-		composeErrText,
-		intermediateCleaned,
-		artifactSummary,
-	); err != nil {
-		if firstErr == nil {
-			firstErr = err
+	if r.cfg.WriteReport {
+		r.sessionMu.Lock()
+		sessions := make([]*sessionCapture, len(r.sessionOrder))
+		copy(sessions, r.sessionOrder)
+		r.sessionMu.Unlock()
+
+		reportPath := deriveReportPath(r.finalOutputPath, r.cfg.OutputPath)
+		if err := r.writeReport(
+			reportPath,
+			sessions,
+			composeOK,
+			composeErrText,
+			intermediateCleaned,
+			artifactSummary,
+		); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			log.Printf("write report failed: %v", err)
+		} else {
+			log.Printf("wrote report: %s", reportPath)
 		}
-		log.Printf("write report failed: %v", err)
-	} else {
-		log.Printf("wrote report: %s", reportPath)
 	}
 
 	return firstErr
@@ -1592,22 +1594,7 @@ func buildArtifactRemuxReport(result *coreremux.BuildResult) map[string]any {
 		return map[string]any{"used": false}
 	}
 
-	totalAdjustNS := int64(0)
-	maxAbsAdjustNS := int64(0)
-	adjustedStreams := 0
-	for _, plan := range result.StreamPlans {
-		totalAdjustNS += plan.TimelineAdjustNS
-		absAdjust := plan.TimelineAdjustNS
-		if absAdjust < 0 {
-			absAdjust = -absAdjust
-		}
-		if absAdjust > maxAbsAdjustNS {
-			maxAbsAdjustNS = absAdjust
-		}
-		if plan.TimelineAdjustNS != 0 {
-			adjustedStreams++
-		}
-	}
+	totalAdjustNS, maxAbsAdjustNS, adjustedStreams := coreremux.SummarizePlanAdjustments(result.StreamPlans)
 
 	return map[string]any{
 		"used":              true,

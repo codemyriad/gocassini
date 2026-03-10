@@ -54,12 +54,18 @@ Recorder reports now include applied remux plans:
 - `artifact_remux.stream_plans[].offset_seconds`
 - aggregate stats (`adjusted_streams`, `max_abs_adjust_ns`)
 
+The final MKV now also embeds the portable subset of that information directly:
+
+- container tags such as `SESSION_ID`, `CASSINI_FORMAT`, and embedded report filename
+- per-stream tags such as `LTID`, `STREAM_ID`, participant identity,
+  `timeline_adjust_ns`, and `offset_seconds`
+- an attached portable JSON report (`cassini-report.v1.json`)
+
 Drift verification helper:
 
 ```bash
 ./test/bin/verify-av-drift.sh \
-  --input /tmp/meeting.mkv \
-  --report /tmp/meeting.mkv.json
+  --input /tmp/meeting.mkv
 ```
 
 This checks paired audio/video track elapsed timelines and fails when absolute
