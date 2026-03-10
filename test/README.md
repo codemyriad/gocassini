@@ -12,6 +12,9 @@ This directory is the reproducible E2E lab for Nextcloud Talk/Spreed testing:
 
 All generated media/runtime artifacts stay outside git-tracked content.
 
+Unless noted otherwise, command snippets below assume you are running from
+`test/`.
+
 The preferred suite-level player entry points now live under
 `../cassini-player/bin/`. The scripts in `test/bin/` remain the underlying lab
 implementation plus local-stack operators.
@@ -19,6 +22,10 @@ implementation plus local-stack operators.
 The preferred suite-level diagnostics entry points now live under
 `../cassini-diagnostics/bin/`. The verification scripts in `test/bin/` remain
 the underlying lab and CI implementation.
+
+The preferred suite-level lab entry points now live under
+`../cassini-lab/bin/`. The scripts in `test/bin/` remain the underlying lab
+implementation and local-stack internals.
 
 ## Structure
 
@@ -49,17 +56,15 @@ the underlying lab and CI implementation.
 ## Quickstart
 
 ```bash
-cd test
-./bin/up.sh
-CALL_URL="$(./bin/create-room.sh --name "Local smoke room" | tail -n1)"
+../cassini-lab/bin/up.sh
+CALL_URL="$(../cassini-lab/bin/create-room.sh --name "Local smoke room" | tail -n1)"
 ../cassini-player/bin/stream-video.sh --call-url "$CALL_URL" --duration 20
 ```
 
 One-command smoke test:
 
 ```bash
-cd test
-./bin/smoke.sh
+../cassini-lab/bin/smoke.sh
 ```
 
 ## Synthetic Meeting Fixture
@@ -85,20 +90,19 @@ under the hood and caches its model files on first run under
 Override the Python version if needed:
 
 ```bash
-UV_PYTHON=3.12 ./bin/prepare-synthetic-meeting.sh
+UV_PYTHON=3.12 ../cassini-lab/bin/prepare-synthetic-meeting.sh
 ```
 
 If you want to force a specific preinstalled interpreter instead:
 
 ```bash
-PYTHON_BIN=/path/to/python3.12 ./bin/prepare-synthetic-meeting.sh
+PYTHON_BIN=/path/to/python3.12 ../cassini-lab/bin/prepare-synthetic-meeting.sh
 ```
 
 Generate the fixture only:
 
 ```bash
-cd test
-./bin/prepare-synthetic-meeting.sh
+../cassini-lab/bin/prepare-synthetic-meeting.sh
 ```
 
 This writes a scenario-driven generated media set under
@@ -114,8 +118,7 @@ scripts; the rendered media stays gitignored.
 Play it into a room:
 
 ```bash
-cd test
-CALL_URL="$(./bin/create-room.sh --name "Synthetic Pied Piper Review" | tail -n1)"
+CALL_URL="$(../cassini-lab/bin/create-room.sh --name "Synthetic Pied Piper Review" | tail -n1)"
 ../cassini-player/bin/stream-synthetic-meeting.sh --call-url "$CALL_URL"
 ```
 
@@ -127,8 +130,7 @@ instead of being delayed twice.
 Run the full cloud/local roundtrip in one command:
 
 ```bash
-cd test
-./bin/roundtrip-synthetic-meeting.sh \
+../cassini-lab/bin/roundtrip-synthetic-meeting.sh \
   --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
 ```
 
@@ -145,7 +147,7 @@ That flow will:
 If you want to test the plumbing without installing the TTS model yet:
 
 ```bash
-./bin/prepare-synthetic-meeting.sh --backend mock --force
+../cassini-lab/bin/prepare-synthetic-meeting.sh --backend mock --force
 ```
 
 That mock path uses only the lightweight core requirements, so it stays fast
@@ -175,9 +177,8 @@ Default display names:
 - `Frankie Hi-NRG MC - Chiedi Chiedi`
 
 ```bash
-cd test
-./bin/up.sh
-CALL_URL="$(./bin/create-room.sh --name "3-song room" | tail -n1)"
+../cassini-lab/bin/up.sh
+CALL_URL="$(../cassini-lab/bin/create-room.sh --name "3-song room" | tail -n1)"
 ../cassini-player/bin/stream-three-songs.sh --call-url "$CALL_URL"
 ```
 
@@ -212,10 +213,9 @@ Custom labels:
 Prep only:
 
 ```bash
-cd test
-./bin/prepare-youtube-set.sh
+../cassini-lab/bin/prepare-youtube-set.sh
 # force redownload/rebuild if needed
-./bin/prepare-youtube-set.sh --force
+../cassini-lab/bin/prepare-youtube-set.sh --force
 ```
 
 Cloud room test:
@@ -249,9 +249,8 @@ You can also pass an absolute stop time:
 Recorder + capture in one command:
 
 ```bash
-cd test
-CALL_URL="$(./bin/create-room.sh --name "3-song-recorded" | tail -n1)"
-./bin/record-three-songs.sh \
+CALL_URL="$(../cassini-lab/bin/create-room.sh --name "3-song-recorded" | tail -n1)"
+../cassini-lab/bin/record-three-songs.sh \
   --call-url "$CALL_URL" \
   --duration 180 \
   --skip-prepare \
@@ -287,27 +286,27 @@ Default is `SPREED_PROFILE=full`.
 
 ```bash
 # Full media path (default): Janus + signaling + coturn + nats
-SPREED_PROFILE=full ./bin/up.sh
+SPREED_PROFILE=full ../cassini-lab/bin/up.sh
 
 # Base services only: Nextcloud + Postgres
-SPREED_PROFILE=base ./bin/up.sh
+SPREED_PROFILE=base ../cassini-lab/bin/up.sh
 ```
 
 ## CI integration smoke
 
-Use `./bin/ci-e2e.sh` for the full Nextcloud + recorder + player run used by GitHub Actions.
+Use `../cassini-lab/bin/ci-e2e.sh` for the full Nextcloud + recorder + player run used by GitHub Actions.
 
 ```bash
-./bin/ci-e2e.sh
+../cassini-lab/bin/ci-e2e.sh
 ```
 
 ### CI integration scenarios
 
 The repository runs three local integration scripts in GitHub Actions:
 
-- `./test/bin/ci-e2e.sh` (baseline single-player flow)
-- `./test/bin/ci-e2e-mute.sh` (mute-aware 3-player flow)
-- `./test/bin/ci-e2e-rejoin.sh` (leave/rejoin flow with two player phases)
+- `./cassini-lab/bin/ci-e2e.sh` (baseline single-player flow)
+- `./cassini-lab/bin/ci-e2e-mute.sh` (mute-aware 3-player flow)
+- `./cassini-lab/bin/ci-e2e-rejoin.sh` (leave/rejoin flow with two player phases)
 
 Scenario assertions are intentionally artifact-centric:
 
@@ -327,9 +326,9 @@ All scenarios use the local Compose stack in this repository:
 You can run them locally the same way as CI:
 
 ```bash
-./test/bin/ci-e2e.sh
-./test/bin/ci-e2e-mute.sh
-./test/bin/ci-e2e-rejoin.sh
+./cassini-lab/bin/ci-e2e.sh
+./cassini-lab/bin/ci-e2e-mute.sh
+./cassini-lab/bin/ci-e2e-rejoin.sh
 ```
 
 Both CI entrypoints use bounded retry when creating the temporary Talk room to
@@ -342,7 +341,6 @@ Docker runs (gateway address instead of host-loopback).
 ## Teardown
 
 ```bash
-cd test
-./bin/down.sh            # keep volumes
-./bin/down.sh --volumes  # remove volumes
+../cassini-lab/bin/down.sh            # keep volumes
+../cassini-lab/bin/down.sh --volumes  # remove volumes
 ```

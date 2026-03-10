@@ -20,7 +20,8 @@ It is intentionally narrow: one job, one output contract, and strong behavior fo
 - `../cassini-diagnostics/`: preferred suite-level diagnostics wrappers
 - `internal/`: codec-agnostic recorder, signaling, and Nextcloud Talk adapters
 - `../cassini-player/`: suite-level room player wrappers
-- `../test/`: local reproducible Nextcloud Talk lab and E2E harness
+- `../cassini-lab/`: suite-level local stack and validation wrappers
+- `../test/`: local reproducible Nextcloud Talk lab implementation and E2E internals
 - `docs/architecture-migration-status.md`: current migration goals, effort, and status
 
 ## Quickstart
@@ -72,7 +73,7 @@ Or use the suite-level wrappers from repo root:
 
 ```bash
 cd ..
-./test/bin/ci-e2e.sh
+./cassini-lab/bin/ci-e2e.sh
 ```
 
 This runs:
@@ -94,8 +95,7 @@ If `CALL_URL` is unset, it reuses `test/runtime/last_call_url` or creates a fres
 Clean up:
 
 ```bash
-cd test
-./bin/down.sh --volumes
+../cassini-lab/bin/down.sh --volumes
 ```
 
 ## Output contract

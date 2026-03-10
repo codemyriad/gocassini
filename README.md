@@ -51,9 +51,10 @@ By default, rotator bots auto-exit once all non-bot participants leave (8s grace
 - `cassini-transcriber/`: Transcriber and readable-transcript generation.
 - `cassini-readable/`: Standalone readable transcript cleanup wrappers.
 - `cassini-player/`: Player and suite-level room-streaming wrappers.
+- `cassini-lab/`: Local stack, fixtures, and validation wrappers.
 - `cassini-publisher/`: Publisher and suite-level orchestration wrappers.
 - `cassini-viewer/`: Viewer runtime for published meeting artifacts.
-- `test/`: Lab, local stack, fixture generation, and E2E harness.
+- `test/`: Lab implementation, fixtures, and E2E internals.
 - `.github/workflows/ci.yml`: unit + integration CI.
 - `media-kit.txt` / `media-kit.md`: brand direction and design principles.
 
@@ -110,7 +111,7 @@ go run ./cmd/gocassini --mode simulate --output /tmp/gocassini.csr
 
 ```bash
 cd /path/to/gocassini-repo-root
-./test/bin/ci-e2e.sh
+./cassini-lab/bin/ci-e2e.sh
 ```
 
 This uses `test/compose.yml` and starts a local Nextcloud Talk stack, creates a room, runs player clients, and validates recorder outputs.
@@ -128,7 +129,7 @@ To validate A/V drift on a produced recording:
 
 ```bash
 cd /path/to/gocassini-repo-root
-./test/bin/record-three-songs.sh \
+./cassini-lab/bin/record-three-songs.sh \
   --duration 300 \
   --output /tmp/three-songs-full.mkv \
   --recorder-duration 360
@@ -163,11 +164,10 @@ cp .envrc.example .envrc
 ### Live smoke in local stack
 
 ```bash
-cd test
-./bin/up.sh
-CALL_URL="$(./bin/create-room.sh --name "Smoke room" | tail -n1)"
-../cassini-player/bin/stream-video.sh --call-url "$CALL_URL" --duration 20
-./bin/down.sh --volumes
+./cassini-lab/bin/up.sh
+CALL_URL="$(./cassini-lab/bin/create-room.sh --name "Smoke room" | tail -n1)"
+./cassini-player/bin/stream-video.sh --call-url "$CALL_URL" --duration 20
+./cassini-lab/bin/down.sh --volumes
 ```
 
 ## Deploying the recorder service to a server
@@ -249,9 +249,9 @@ GitHub Actions runs:
 - unit tests for `cassini-transcriber`
 - unit tests for `test/go-talk-rotator`
 - integration tests against local Nextcloud harness:
-  - `./test/bin/ci-e2e.sh`
-  - `./test/bin/ci-e2e-mute.sh`
-  - `./test/bin/ci-e2e-rejoin.sh`
+  - `./cassini-lab/bin/ci-e2e.sh`
+  - `./cassini-lab/bin/ci-e2e-mute.sh`
+  - `./cassini-lab/bin/ci-e2e-rejoin.sh`
 
 ### Migration status
 
