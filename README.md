@@ -32,15 +32,15 @@ In talk mode, `--output` can point directly at the final `.mkv`. Keep `--final-o
 By default, talk mode auto-terminates when all remote participants leave (with a 30s grace). Add `--duration <seconds>` only if you also want a hard cap.
 `Ctrl-C` is handled gracefully so cleanup/remux/report still run before exit.
 
-Terminal 2: start the Player with the three-song set
+Terminal 2: start the Player with the showcase meeting
 
 ```bash
-./cassini-player/bin/stream-three-songs.sh \
+./cassini-player/bin/stream-showcase-meeting.sh \
   --call-url "$CALL_URL"
 ```
 
-If media is already prepared locally, add `--skip-prepare` to `stream-three-songs.sh`.
-By default, rotator bots auto-exit once all non-bot participants leave (8s grace). Disable with `--stop-when-room-empty=false`.
+By default, the showcase fixture will prepare its media on demand the first
+time you run it.
 
 ## Repository layout
 
@@ -143,31 +143,17 @@ To validate A/V drift on a produced recording:
   --input /tmp/meeting.mkv
 ```
 
-### Record a reproducible three-song meeting
+### Showcase roundtrip
 
-- Capture a full recorder run against the three-song publisher scenario:
-
-```bash
-cd /path/to/gocassini-repo-root
-./cassini-lab/bin/record-three-songs.sh \
-  --duration 300 \
-  --output /tmp/three-songs-full.mkv \
-  --recorder-duration 360
-```
-
-- The script writes:
-  - `<output>` (meeting MKV),
-  - session artifact directory at `<output_dir>/sessions/<id>/`.
-- Add `--archive-output /tmp/legacy.csr` only if you explicitly need a separate
-  legacy requested-output path for compatibility tooling.
-- Add `--write-report` if you also want the legacy external JSON sidecar for
-  debug/export workflows.
-
-- To verify session artifacts in CI-style mode:
+Use the showcase meeting when you want a demo-quality end-to-end artifact:
 
 ```bash
-./cassini-diagnostics/bin/verify-session-artifact.sh --final-output /tmp/three-songs-full.mkv
+./cassini-lab/bin/roundtrip-showcase-meeting.sh \
+  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
 ```
+
+That flow generates the fixture if needed, plays it into the room, records the
+meeting, and runs the publisher pipeline to produce the final artifact bundle.
 
 ### Local private config (`.envrc`)
 
@@ -270,8 +256,8 @@ GitHub Actions runs:
 - unit tests for `test/go-talk-rotator`
 - integration tests against local Nextcloud harness:
   - `./cassini-lab/bin/ci-e2e.sh`
-  - `./cassini-lab/bin/ci-e2e-mute.sh`
-  - `./cassini-lab/bin/ci-e2e-rejoin.sh`
+
+Additional harness-specific CI variants remain under `test/bin/`.
 
 ### Migration status
 

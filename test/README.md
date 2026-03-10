@@ -64,10 +64,29 @@ One-command smoke test:
 ../cassini-lab/bin/smoke.sh
 ```
 
-## Synthetic Meeting Fixture
+## Showcase Meeting
 
-The synthetic meeting fixture is intended to feel closer to a real engineering
-call than the old bars-and-tone sample. It gives us:
+The preferred demo and cleanup-evaluation sample is the showcase meeting:
+
+```bash
+../cassini-lab/bin/prepare-showcase-meeting.sh
+CALL_URL="$(../cassini-lab/bin/create-room.sh --name "Lantern Festival Demo" | tail -n1)"
+../cassini-player/bin/stream-showcase-meeting.sh --call-url "$CALL_URL"
+```
+
+Roundtrip it end to end with:
+
+```bash
+../cassini-lab/bin/roundtrip-showcase-meeting.sh \
+  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
+```
+
+That showcase scenario is still synthetic, but it is written more like a real
+meeting and is the better sample for judging transcript cleanup quality.
+
+## Harness Fixture
+
+The original synthetic fixture remains useful for harness coverage. It gives us:
 
 - spoken language instead of synthetic sine audio
 - stable participant names and join delays
@@ -87,19 +106,19 @@ under the hood and caches its model files on first run under
 Override the Python version if needed:
 
 ```bash
-UV_PYTHON=3.12 ../cassini-lab/bin/prepare-synthetic-meeting.sh
+UV_PYTHON=3.12 ./bin/prepare-synthetic-meeting.sh
 ```
 
 If you want to force a specific preinstalled interpreter instead:
 
 ```bash
-PYTHON_BIN=/path/to/python3.12 ../cassini-lab/bin/prepare-synthetic-meeting.sh
+PYTHON_BIN=/path/to/python3.12 ./bin/prepare-synthetic-meeting.sh
 ```
 
 Generate the fixture only:
 
 ```bash
-../cassini-lab/bin/prepare-synthetic-meeting.sh
+./bin/prepare-synthetic-meeting.sh
 ```
 
 This writes a scenario-driven generated media set under
@@ -119,8 +138,8 @@ best demo or cleanup-evaluation sample.
 Play it into a room:
 
 ```bash
-CALL_URL="$(../cassini-lab/bin/create-room.sh --name "Synthetic Pied Piper Review" | tail -n1)"
-../cassini-player/bin/stream-synthetic-meeting.sh --call-url "$CALL_URL"
+CALL_URL="$(./bin/create-room.sh --name "Synthetic Pied Piper Review" | tail -n1)"
+./bin/stream-synthetic-meeting.sh --call-url "$CALL_URL"
 ```
 
 The current default scenario is a six-person Pied Piper review. The player
@@ -128,28 +147,10 @@ uses the scenario join delays both for room entry and for media timeline
 alignment, so late-join playback lands on the intended absolute meeting time
 instead of being delayed twice.
 
-If you want the more natural showcase fixture instead:
-
-```bash
-../cassini-lab/bin/prepare-showcase-meeting.sh
-CALL_URL="$(../cassini-lab/bin/create-room.sh --name "Lantern Festival Demo" | tail -n1)"
-../cassini-player/bin/stream-showcase-meeting.sh --call-url "$CALL_URL"
-```
-
-That showcase scenario is still synthetic, but it is written more like a real
-meeting and is the better sample for judging transcript cleanup quality.
-
 Run the full cloud/local roundtrip in one command:
 
 ```bash
-../cassini-lab/bin/roundtrip-synthetic-meeting.sh \
-  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
-```
-
-Showcase roundtrip:
-
-```bash
-../cassini-lab/bin/roundtrip-showcase-meeting.sh \
+./bin/roundtrip-synthetic-meeting.sh \
   --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
 ```
 
@@ -166,7 +167,7 @@ That flow will:
 If you want to test the plumbing without installing the TTS model yet:
 
 ```bash
-../cassini-lab/bin/prepare-synthetic-meeting.sh --backend mock --force
+./bin/prepare-synthetic-meeting.sh --backend mock --force
 ```
 
 That mock path uses only the lightweight core requirements, so it stays fast
@@ -232,9 +233,9 @@ Custom labels:
 Prep only:
 
 ```bash
-../cassini-lab/bin/prepare-youtube-set.sh
+./bin/prepare-youtube-set.sh
 # force redownload/rebuild if needed
-../cassini-lab/bin/prepare-youtube-set.sh --force
+./bin/prepare-youtube-set.sh --force
 ```
 
 Cloud room test:
@@ -250,7 +251,7 @@ Continuous retry loop (for on/off manual validation windows):
 
 ```bash
 cd test
-../cassini-player/bin/stream-three-songs-until.sh \
+./bin/stream-three-songs-until.sh \
   --call-url "https://cloud.example.com/call/<ROOM_TOKEN>" \
   --until "08:00" \
   --skip-prepare
@@ -259,7 +260,7 @@ cd test
 You can also pass an absolute stop time:
 
 ```bash
-../cassini-player/bin/stream-three-songs-until.sh \
+./bin/stream-three-songs-until.sh \
   --call-url "https://cloud.example.com/call/<ROOM_TOKEN>" \
   --until "2026-03-03 08:00" \
   --skip-prepare
@@ -268,8 +269,8 @@ You can also pass an absolute stop time:
 Recorder + capture in one command:
 
 ```bash
-CALL_URL="$(../cassini-lab/bin/create-room.sh --name "3-song-recorded" | tail -n1)"
-../cassini-lab/bin/record-three-songs.sh \
+CALL_URL="$(./bin/create-room.sh --name "3-song-recorded" | tail -n1)"
+./bin/record-three-songs.sh \
   --call-url "$CALL_URL" \
   --duration 180 \
   --skip-prepare \
@@ -313,7 +314,7 @@ SPREED_PROFILE=base ../cassini-lab/bin/up.sh
 
 ## CI integration smoke
 
-Use `../cassini-lab/bin/ci-e2e.sh` for the full Nextcloud + recorder + player run used by GitHub Actions.
+Use `../cassini-lab/bin/ci-e2e.sh` for the baseline full Nextcloud + recorder + player run used by GitHub Actions.
 
 ```bash
 ../cassini-lab/bin/ci-e2e.sh
@@ -321,11 +322,12 @@ Use `../cassini-lab/bin/ci-e2e.sh` for the full Nextcloud + recorder + player ru
 
 ### CI integration scenarios
 
-The repository runs three local integration scripts in GitHub Actions:
+The repository runs one curated suite-level CI entry point plus two additional
+harness-specific variants:
 
-- `./cassini-lab/bin/ci-e2e.sh` (baseline single-player flow)
-- `./cassini-lab/bin/ci-e2e-mute.sh` (mute-aware 3-player flow)
-- `./cassini-lab/bin/ci-e2e-rejoin.sh` (leave/rejoin flow with two player phases)
+- `../cassini-lab/bin/ci-e2e.sh` (baseline single-player flow)
+- `./bin/ci-e2e-mute.sh` (mute-aware 3-player flow)
+- `./bin/ci-e2e-rejoin.sh` (leave/rejoin flow with two player phases)
 
 Scenario assertions are intentionally artifact-centric:
 
@@ -345,9 +347,9 @@ All scenarios use the local Compose stack in this repository:
 You can run them locally the same way as CI:
 
 ```bash
-./cassini-lab/bin/ci-e2e.sh
-./cassini-lab/bin/ci-e2e-mute.sh
-./cassini-lab/bin/ci-e2e-rejoin.sh
+../cassini-lab/bin/ci-e2e.sh
+./bin/ci-e2e-mute.sh
+./bin/ci-e2e-rejoin.sh
 ```
 
 Both CI entrypoints use bounded retry when creating the temporary Talk room to

@@ -14,14 +14,10 @@ and E2E harness behavior.
 
 - `bin/stream-video.sh`: generic one-or-more-client room player using local
   sample media or explicit media prefixes.
-- `bin/stream-synthetic-meeting.sh`: play the synthetic multi-speaker meeting
-  fixture into a room.
 - `bin/stream-showcase-meeting.sh`: play the more natural showcase meeting
   fixture into a room.
 - `bin/stream-three-songs.sh`: deterministic three-client sync and mute-rotation
   scenario.
-- `bin/stream-three-songs-until.sh`: retry loop for the three-song scenario
-  until a wall-clock stop time.
 
 ## Typical flows
 
@@ -31,13 +27,6 @@ Stream a simple local media set into a room:
 ./cassini-player/bin/stream-video.sh \
   --call-url "https://cloud.example.com/call/<ROOM_TOKEN>" \
   --duration 20
-```
-
-Play the synthetic meeting fixture into a room:
-
-```bash
-./cassini-player/bin/stream-synthetic-meeting.sh \
-  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
 ```
 
 Play the showcase meeting fixture into a room:
@@ -61,3 +50,6 @@ Run the three-song sync scenario:
 - `test/` remains the lab and local-stack harness. `cassini-player` is the
   preferred human-facing entry point when you want to drive room media without
   thinking about the rest of the harness layout.
+- The older synthetic fixture and the continuous three-song soak loop remain
+  available under `test/bin/` as harness-level flows rather than curated
+  suite-level commands.

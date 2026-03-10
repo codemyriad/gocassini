@@ -6,7 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SCENARIO="$REPO_ROOT/test/scenarios/showcase-lantern-festival.v1.json"
 OUTPUT_DIR="$REPO_ROOT/test/media/processed/showcase-lantern-festival-v1"
 
-exec "$SCRIPT_DIR/prepare-synthetic-meeting.sh" \
+exec "$REPO_ROOT/test/bin/prepare-synthetic-meeting.sh" \
   --scenario "$SCENARIO" \
   --output-dir "$OUTPUT_DIR" \
   "$@"
