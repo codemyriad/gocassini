@@ -61,4 +61,4 @@ This script starts the Go recorder and drives Go player clients through the shar
 
 - keep Talk capture MKV-first while tightening the embedded metadata contract
 - keep compatibility diagnostics between legacy `.csr` paths and session-artifact truth where still useful
-- continue expanding session artifact/event diagnostics as first-class debug artifacts
+- continue expanding session artifact/event diagnostics as first-class debug artifacts behind the `cassini-diagnostics` surface

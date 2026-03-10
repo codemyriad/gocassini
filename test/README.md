@@ -16,6 +16,10 @@ The preferred suite-level player entry points now live under
 `../cassini-player/bin/`. The scripts in `test/bin/` remain the underlying lab
 implementation plus local-stack operators.
 
+The preferred suite-level diagnostics entry points now live under
+`../cassini-diagnostics/bin/`. The verification scripts in `test/bin/` remain
+the underlying lab and CI implementation.
+
 ## Structure
 
 - `compose.yml`: local stack (Nextcloud + Postgres + optional full WebRTC services)
@@ -35,6 +39,8 @@ implementation plus local-stack operators.
   - `stream-three-songs-until.sh`: retrying loop for continuous cloud/local soak until a wall-clock time
   - `record-three-songs.sh`: Go recorder + 3-client stream capture in one command
   - `verify-sync-from-report.sh`: compare final MKV stream start offsets against recorder report expectations
+  - `verify-av-drift.sh`: compare paired audio/video elapsed time in a final MKV
+  - `verify-session-artifact.sh`: validate session artifact structure beside a final MKV
   - `smoke.sh`: end-to-end smoke run
 - `go-talk-rotator/`: Go room player used by the streaming scenarios
 - `media/`: test inputs (`raw/`, `aligned/`, `webrtc/`) (gitignored except placeholders)
@@ -269,7 +275,7 @@ Run sync validation manually:
 
 ```bash
 # requires the legacy sidecar; run recorder with --write-report first
-./bin/verify-sync-from-report.sh \
+../cassini-diagnostics/bin/verify-sync-from-report.sh \
   --recording /tmp/three-songs.mkv \
   --report /tmp/three-songs.mkv.json \
   --tolerance 0.35

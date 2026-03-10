@@ -46,7 +46,8 @@ By default, rotator bots auto-exit once all non-bot participants leave (8s grace
 
 ## Repository layout
 
-- `cassini-go-recorder/`: Recorder and diagnostic utilities.
+- `cassini-go-recorder/`: Recorder and lower-level recorder-native diagnostics.
+- `cassini-diagnostics/`: Diagnostics and recovery wrappers for artifacts.
 - `cassini-transcriber/`: Transcriber and readable-transcript generation.
 - `cassini-readable/`: Standalone readable transcript cleanup wrappers.
 - `cassini-player/`: Player and suite-level room-streaming wrappers.
@@ -66,9 +67,10 @@ The repo is organized as a small opinionated tool suite:
 - `Viewer`: render that library in the browser.
 - `Player`: join rooms and stream deterministic media for tests and demos.
 - `Lab`: local stack, fixture generation, roundtrip scripts, and validation.
+- `Diagnostics`: inspect, verify, remux, and compatibility-recovery tools.
 
-Diagnostics such as inspect, remux, upgrade, and drift verification are kept as
-supporting tools, not the main product boundary.
+`Diagnostics` is intentionally a supporting surface, not the main product
+boundary.
 
 ## Local testing
 
@@ -95,7 +97,7 @@ For the local MKV-to-audio+transcript path, see
 ```bash
 cd cassini-go-recorder
 go run ./cmd/gocassini --mode simulate --output /tmp/gocassini.csr
-go run ./cmd/gocassini-inspect /tmp/gocassini.csr
+../cassini-diagnostics/bin/inspect-artifact.sh /tmp/gocassini.csr
 ```
 
 ### Debugging and architecture notes
@@ -116,7 +118,7 @@ This uses `test/compose.yml` and starts a local Nextcloud Talk stack, creates a 
 To validate A/V drift on a produced recording:
 
 ```bash
-./test/bin/verify-av-drift.sh \
+./cassini-diagnostics/bin/verify-av-drift.sh \
   --input /tmp/meeting.mkv
 ```
 
@@ -143,7 +145,7 @@ cd /path/to/gocassini-repo-root
 - To verify session artifacts in CI-style mode:
 
 ```bash
-./test/bin/verify-session-artifact.sh --final-output /tmp/three-songs-full.mkv
+./cassini-diagnostics/bin/verify-session-artifact.sh --final-output /tmp/three-songs-full.mkv
 ```
 
 ### Local private config (`.envrc`)

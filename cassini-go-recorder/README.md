@@ -17,6 +17,7 @@ It is intentionally narrow: one job, one output contract, and strong behavior fo
 - `cmd/gocassini-inspect`: diagnostic inspection utility
 - `cmd/gocassini-remux`: diagnostic or recovery remux from session artifacts (`session.json` + `streams/*.rtplog`)
 - `cmd/gocassini-upgrade-mkv`: compatibility upgrader for older meeting MKVs plus legacy `.mkv.json` reports
+- `../cassini-diagnostics/`: preferred suite-level diagnostics wrappers
 - `internal/`: codec-agnostic recorder, signaling, and Nextcloud Talk adapters
 - `../cassini-player/`: suite-level room player wrappers
 - `../test/`: local reproducible Nextcloud Talk lab and E2E harness
@@ -27,7 +28,7 @@ It is intentionally narrow: one job, one output contract, and strong behavior fo
 ```bash
 cd cassini-go-recorder
 go run ./cmd/gocassini --mode simulate --output /tmp/gocassini.csr
-go run ./cmd/gocassini-inspect /tmp/gocassini.csr
+../cassini-diagnostics/bin/inspect-artifact.sh /tmp/gocassini.csr
 ```
 
 ## Live Talk capture
@@ -45,13 +46,26 @@ In talk mode, `--output` can point directly at the final `.mkv`. Keep `--final-o
 
 By default, talk mode auto-terminates when all remote participants leave (`--stop-when-room-empty=true`, `--room-empty-grace=30s`). Add `--duration <seconds>` only if you need a hard time limit.
 
-Use `--help` on each command to inspect all options:
+Use `--help` on the flag-driven commands:
 
 ```bash
 go run ./cmd/gocassini --help
-go run ./cmd/gocassini-inspect --help
 go run ./cmd/gocassini-remux --help
 go run ./cmd/gocassini-upgrade-mkv --help
+```
+
+`gocassini-inspect` is positional rather than flag-driven:
+
+```bash
+go run ./cmd/gocassini-inspect /tmp/meeting.mkv
+```
+
+Or use the suite-level wrappers from repo root:
+
+```bash
+./cassini-diagnostics/bin/inspect-artifact.sh /tmp/meeting.mkv
+./cassini-diagnostics/bin/remux-session.sh --session /tmp/sessions/<id>/session.json --output /tmp/remux.mkv
+./cassini-diagnostics/bin/upgrade-meeting-mkv.sh --input /path/to/meeting.mkv
 ```
 
 ## Integration test helper
