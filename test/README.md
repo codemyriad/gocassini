@@ -15,17 +15,14 @@ All generated media/runtime artifacts stay outside git-tracked content.
 Unless noted otherwise, command snippets below assume you are running from
 `test/`.
 
-The preferred suite-level player entry points now live under
-`../cassini-player/bin/`. The scripts in `test/bin/` remain the underlying lab
-implementation plus local-stack operators.
+Preferred suite-level entry points:
 
-The preferred suite-level diagnostics entry points now live under
-`../cassini-diagnostics/bin/`. The verification scripts in `test/bin/` remain
-the underlying lab and CI implementation.
+- `../cassini-player/bin/`: room-media scenarios
+- `../cassini-diagnostics/bin/`: verification and artifact checks
+- `../cassini-lab/bin/`: local stack, fixture generation, and roundtrips
 
-The preferred suite-level lab entry points now live under
-`../cassini-lab/bin/`. The scripts in `test/bin/` remain the underlying lab
-implementation and local-stack internals.
+The scripts in `test/bin/` remain the underlying lab implementation and local
+stack internals.
 
 ## Structure
 
@@ -115,6 +112,10 @@ This writes a scenario-driven generated media set under
 The tracked inputs for this flow live in `test/scenarios/` plus the generator
 scripts; the rendered media stays gitignored.
 
+The current default scenario is intentionally still harness-oriented. It is
+good for repeatable timing, joins, and transcript plumbing, but it is not the
+best demo or cleanup-evaluation sample.
+
 Play it into a room:
 
 ```bash
@@ -127,10 +128,28 @@ uses the scenario join delays both for room entry and for media timeline
 alignment, so late-join playback lands on the intended absolute meeting time
 instead of being delayed twice.
 
+If you want the more natural showcase fixture instead:
+
+```bash
+../cassini-lab/bin/prepare-showcase-meeting.sh
+CALL_URL="$(../cassini-lab/bin/create-room.sh --name "Lantern Festival Demo" | tail -n1)"
+../cassini-player/bin/stream-showcase-meeting.sh --call-url "$CALL_URL"
+```
+
+That showcase scenario is still synthetic, but it is written more like a real
+meeting and is the better sample for judging transcript cleanup quality.
+
 Run the full cloud/local roundtrip in one command:
 
 ```bash
 ../cassini-lab/bin/roundtrip-synthetic-meeting.sh \
+  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
+```
+
+Showcase roundtrip:
+
+```bash
+../cassini-lab/bin/roundtrip-showcase-meeting.sh \
   --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
 ```
 

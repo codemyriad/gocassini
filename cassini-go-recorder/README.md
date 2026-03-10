@@ -13,6 +13,7 @@ It is intentionally narrow: one job, one output contract, and strong behavior fo
 - Keep everything script-friendly and machine-friendly
 
 ## What this repo contains
+- `../cassini-recorder/`: preferred suite-level recorder wrappers
 - `cmd/gocassini`: main recorder command and primary product surface
 - `cmd/gocassini-inspect`: diagnostic inspection utility
 - `cmd/gocassini-remux`: diagnostic or recovery remux from session artifacts (`session.json` + `streams/*.rtplog`)

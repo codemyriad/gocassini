@@ -16,6 +16,8 @@ and E2E harness behavior.
   sample media or explicit media prefixes.
 - `bin/stream-synthetic-meeting.sh`: play the synthetic multi-speaker meeting
   fixture into a room.
+- `bin/stream-showcase-meeting.sh`: play the more natural showcase meeting
+  fixture into a room.
 - `bin/stream-three-songs.sh`: deterministic three-client sync and mute-rotation
   scenario.
 - `bin/stream-three-songs-until.sh`: retry loop for the three-song scenario
@@ -35,6 +37,13 @@ Play the synthetic meeting fixture into a room:
 
 ```bash
 ./cassini-player/bin/stream-synthetic-meeting.sh \
+  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
+```
+
+Play the showcase meeting fixture into a room:
+
+```bash
+./cassini-player/bin/stream-showcase-meeting.sh \
   --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
 ```
 

@@ -1,0 +1,249 @@
+{
+  "scenario_id": "showcase-lantern-festival-v1",
+  "title": "Lantern Festival Booth Run-through",
+  "description": "A six-person team call about a public demo booth, written to sound more like a natural meeting than the harness-oriented Pied Piper fixture. It includes interruptions, corrections, dates, URLs, filenames, issue numbers, and action items.",
+  "duration_seconds": 182,
+  "participants": [
+    {
+      "id": "mira",
+      "display_name": "Mira Chen",
+      "role": "Product Lead",
+      "voice": "af_sarah",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#60a5fa"
+    },
+    {
+      "id": "leo",
+      "display_name": "Leo Rossi",
+      "role": "Founder",
+      "voice": "am_onyx",
+      "lang_code": "a",
+      "join_delay_seconds": 1.4,
+      "theme_color": "#f97316"
+    },
+    {
+      "id": "ben",
+      "display_name": "Ben Fischer",
+      "role": "Backend Engineer",
+      "voice": "am_liam",
+      "lang_code": "a",
+      "join_delay_seconds": 3.2,
+      "theme_color": "#34d399"
+    },
+    {
+      "id": "ana",
+      "display_name": "Ana Morales",
+      "role": "Design Lead",
+      "voice": "bf_emma",
+      "lang_code": "b",
+      "join_delay_seconds": 5.0,
+      "theme_color": "#facc15"
+    },
+    {
+      "id": "noah",
+      "display_name": "Noah Patel",
+      "role": "Operations",
+      "voice": "bm_daniel",
+      "lang_code": "b",
+      "join_delay_seconds": 7.6,
+      "theme_color": "#a78bfa"
+    },
+    {
+      "id": "jules",
+      "display_name": "Jules Okafor",
+      "role": "Partnerships",
+      "voice": "bm_george",
+      "lang_code": "b",
+      "join_delay_seconds": 10.2,
+      "theme_color": "#f472b6"
+    }
+  ],
+  "turns": [
+    {
+      "speaker": "mira",
+      "start_seconds": 0.9,
+      "text": "Morning. Sorry, two goals today: lock the booth run-through for Friday's lantern festival and make sure nobody is still demoing last week's build."
+    },
+    {
+      "speaker": "leo",
+      "start_seconds": 5.0,
+      "text": "And please, this time, nobody says beta out loud to the mayor."
+    },
+    {
+      "speaker": "ben",
+      "start_seconds": 8.6,
+      "text": "I fixed the Q R code bug from issue two one four. The iPad was caching the old redirect and making me look cursed."
+    },
+    {
+      "speaker": "ana",
+      "start_seconds": 14.0,
+      "text": "You did look cursed. Also the sign still says open at five thirty. Doors are at five, soft start at four thirty, right?"
+    },
+    {
+      "speaker": "noah",
+      "start_seconds": 20.1,
+      "text": "Correct. Crew call is four fifteen on Friday, April seventeenth. Public opens at five. Weather says light wind, which is fine unless the paper lantern wall turns into a kite."
+    },
+    {
+      "speaker": "jules",
+      "start_seconds": 27.4,
+      "text": "I need one clean line for partners. Something shorter than immersive neighborhood story booth with adaptive audio. Nobody can say that while holding noodles."
+    },
+    {
+      "speaker": "mira",
+      "start_seconds": 33.8,
+      "text": "Use make a tiny night market story, send it to your friends, leave smiling. It is a little corny, but in a good way."
+    },
+    {
+      "speaker": "leo",
+      "start_seconds": 39.9,
+      "text": "Corny is fine. Corporate is not. We are one folding table away from being a school fundraiser."
+    },
+    {
+      "speaker": "ana",
+      "start_seconds": 45.0,
+      "text": "Speaking of the table, the final print file is lantern-booth-v7 dot pdf. Please stop opening v5 and asking why the moon mascot looks seasick."
+    },
+    {
+      "speaker": "ben",
+      "start_seconds": 52.2,
+      "text": "Wait, is v7 the one with the bigger Q R code, or the one where the map pin moved?"
+    },
+    {
+      "speaker": "ana",
+      "start_seconds": 55.8,
+      "text": "Bigger Q R code, warmer yellow, less haunted moon."
+    },
+    {
+      "speaker": "mira",
+      "start_seconds": 58.5,
+      "text": "Good. Ben, walk us through the actual flow as if a stranger walks up with zero context."
+    },
+    {
+      "speaker": "ben",
+      "start_seconds": 63.3,
+      "text": "Okay. They scan the code, land on demo dot lanternlane dot example slash hello, pick three prompts, record a twenty-second story, and get a digital keepsake."
+    },
+    {
+      "speaker": "jules",
+      "start_seconds": 70.8,
+      "text": "That already sounds better than postcard-style summary. People hear postcard and think printer, and we are absolutely not bringing a printer."
+    },
+    {
+      "speaker": "leo",
+      "start_seconds": 75.6,
+      "text": "Please God, no printer."
+    },
+    {
+      "speaker": "ben",
+      "start_seconds": 77.1,
+      "text": "Right. After that, the optional text message says your lantern story is ready, not the weird insurance sentence that was stuck in staging."
+    },
+    {
+      "speaker": "noah",
+      "start_seconds": 83.8,
+      "text": "We still need offline fallback. If the network drops, the staff tablet should open local-demo dot html and save recordings to slash tmp slash lantern slash queue."
+    },
+    {
+      "speaker": "ana",
+      "start_seconds": 90.8,
+      "text": "Can we not say slash tmp to the public?"
+    },
+    {
+      "speaker": "leo",
+      "start_seconds": 92.2,
+      "text": "Absolutely not. The public gets magic. We get slash tmp."
+    },
+    {
+      "speaker": "jules",
+      "start_seconds": 95.0,
+      "text": "Also, tiny note, the volunteer script reads like airport safety instructions. Line three says maintain forward queue progress. Nobody talks like that."
+    },
+    {
+      "speaker": "mira",
+      "start_seconds": 101.4,
+      "text": "Fair. Replace it with if there is a line, invite people to start thinking about their three prompts while they wait."
+    },
+    {
+      "speaker": "noah",
+      "start_seconds": 107.3,
+      "text": "And add a line about kids. If they are under thirteen, we need the postcard version with no phone number."
+    },
+    {
+      "speaker": "ana",
+      "start_seconds": 112.9,
+      "text": "I can make that more obvious on screen. Right now the privacy note is technically correct and spiritually invisible."
+    },
+    {
+      "speaker": "leo",
+      "start_seconds": 118.6,
+      "text": "That is the nicest way anyone has ever called legal text useless."
+    },
+    {
+      "speaker": "ben",
+      "start_seconds": 121.8,
+      "text": "One actual risk. The old audio normalization bug still clips if somebody shouts directly into the iPad. It is way better, not perfect."
+    },
+    {
+      "speaker": "mira",
+      "start_seconds": 128.0,
+      "text": "How imperfect is not perfect?"
+    },
+    {
+      "speaker": "ben",
+      "start_seconds": 129.6,
+      "text": "Festival imperfect, not demo-day imperfect. If someone screams woo into the mic, the waveform gets crunchy for about half a second."
+    },
+    {
+      "speaker": "jules",
+      "start_seconds": 135.7,
+      "text": "Honestly, that sounds on brand for a lantern festival."
+    },
+    {
+      "speaker": "noah",
+      "start_seconds": 138.2,
+      "text": "Please write down backup battery counts before we joke ourselves into failure. I have six U S B C packs, two extension reels, and one adapter that everyone will forget."
+    },
+    {
+      "speaker": "ana",
+      "start_seconds": 145.7,
+      "text": "I am not forgetting the adapter. I am taping it to the table with my name on it."
+    },
+    {
+      "speaker": "leo",
+      "start_seconds": 149.6,
+      "text": "Put my name on it too. Shared custody."
+    },
+    {
+      "speaker": "mira",
+      "start_seconds": 152.1,
+      "text": "Final checks. Friday, April seventeenth. Crew at four fifteen. Soft start at four thirty. Public at five. Demo U R L demo dot lanternlane dot example slash hello. Print file lantern-booth-v7 dot pdf."
+    },
+    {
+      "speaker": "ben",
+      "start_seconds": 160.7,
+      "text": "And branch hotfix slash kiosk-offline-two needs review before lunch."
+    },
+    {
+      "speaker": "jules",
+      "start_seconds": 164.1,
+      "text": "I will rewrite the volunteer sheet in human language and send v3 before eleven."
+    },
+    {
+      "speaker": "noah",
+      "start_seconds": 167.9,
+      "text": "I will post the load-in checklist in the folder called festival-ops dash final, which means it is definitely not final."
+    },
+    {
+      "speaker": "ana",
+      "start_seconds": 173.4,
+      "text": "No file named final is ever final."
+    },
+    {
+      "speaker": "leo",
+      "start_seconds": 176.0,
+      "text": "Great. We are prepared, which is suspicious. End meeting before reality notices."
+    }
+  ]
+}

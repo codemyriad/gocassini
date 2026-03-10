@@ -21,9 +21,7 @@ export CALL_URL="https://cloud.example.com/call/<ROOM_TOKEN>"
 Terminal 1: start recorder
 
 ```bash
-cd cassini-go-recorder
-go run ./cmd/gocassini \
-  --mode talk \
+./cassini-recorder/bin/record-talk.sh \
   --call-url "$CALL_URL" \
   --name "CassiniRecorder" \
   --output /tmp/meeting.mkv
@@ -46,7 +44,8 @@ By default, rotator bots auto-exit once all non-bot participants leave (8s grace
 
 ## Repository layout
 
-- `cassini-go-recorder/`: Recorder and lower-level recorder-native diagnostics.
+- `cassini-recorder/`: Recorder and suite-level capture wrappers.
+- `cassini-go-recorder/`: Go recorder implementation and lower-level native diagnostics.
 - `cassini-diagnostics/`: Diagnostics and recovery wrappers for artifacts.
 - `cassini-transcriber/`: Transcriber and readable-transcript generation.
 - `cassini-readable/`: Standalone readable transcript cleanup wrappers.
@@ -73,6 +72,28 @@ The repo is organized as a small opinionated tool suite:
 `Diagnostics` is intentionally a supporting surface, not the main product
 boundary.
 
+## Showcase Meeting
+
+The repository now has two synthetic meeting tracks:
+
+- the default `synthetic-pied-piper` fixture, which is still useful for harness
+  coverage,
+- the `showcase-lantern-festival` fixture, which is written to sound more like
+  a natural meeting and is the better demo/cleanup example.
+
+Generate the showcase fixture:
+
+```bash
+./cassini-lab/bin/prepare-showcase-meeting.sh
+```
+
+If you already have a room and want to play it live:
+
+```bash
+./cassini-player/bin/stream-showcase-meeting.sh \
+  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
+```
+
 ## Local testing
 
 ### Unit tests
@@ -96,9 +117,8 @@ For the local MKV-to-audio+transcript path, see
 ### Recorder smoke test (no real call)
 
 ```bash
-cd cassini-go-recorder
-go run ./cmd/gocassini --mode simulate --output /tmp/gocassini.csr
-../cassini-diagnostics/bin/inspect-artifact.sh /tmp/gocassini.csr
+./cassini-recorder/bin/simulate.sh --output /tmp/gocassini.csr
+./cassini-diagnostics/bin/inspect-artifact.sh /tmp/gocassini.csr
 ```
 
 ### Debugging and architecture notes

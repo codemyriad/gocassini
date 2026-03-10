@@ -17,9 +17,12 @@ This package is intentionally separate from `cassini-player`:
 - `bin/create-room.sh`: create a room in the local stack.
 - `bin/smoke.sh`: one-command local smoke run.
 - `bin/prepare-synthetic-meeting.sh`: generate the synthetic meeting fixture.
+- `bin/prepare-showcase-meeting.sh`: generate the more natural showcase fixture.
 - `bin/prepare-youtube-set.sh`: prepare the three-song sync fixture set.
 - `bin/roundtrip-synthetic-meeting.sh`: full recorder-to-publisher roundtrip on
   the synthetic meeting.
+- `bin/roundtrip-showcase-meeting.sh`: full recorder-to-publisher roundtrip on
+  the showcase meeting.
 - `bin/record-three-songs.sh`: record the three-song player scenario.
 - `bin/ci-e2e.sh`, `bin/ci-e2e-mute.sh`, `bin/ci-e2e-rejoin.sh`: CI-style local
   integration scenarios.
@@ -39,6 +42,12 @@ Run the local smoke flow:
 ./cassini-lab/bin/smoke.sh
 ```
 
+Generate the showcase meeting fixture:
+
+```bash
+./cassini-lab/bin/prepare-showcase-meeting.sh
+```
+
 Run the baseline CI-style integration scenario:
 
 ```bash
@@ -50,3 +59,6 @@ Run the baseline CI-style integration scenario:
 - The current implementation is intentionally thin and delegates to `test/bin/`.
 - `test/` remains the implementation home for the lab harness, fixtures, and
   local stack internals.
+- The current default synthetic fixture is still harness-oriented. Use the
+  showcase meeting wrappers when you want something closer to a demo or cleanup
+  evaluation sample.
