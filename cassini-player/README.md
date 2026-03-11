@@ -2,12 +2,18 @@
 
 `cassini-player` is the room-streaming component of the Cassini suite.
 
+For normal use from this repo checkout, prefer the root product CLI:
+
+```bash
+./bin/cassini dev player ...
+```
+
 It joins a Talk room and plays deterministic media into it for demos, smoke
 tests, sync validation, and full-suite roundtrips.
 
 This package exposes the preferred suite-level player entry points. The current
 implementation stays intentionally thin and delegates to the existing lab
-scripts under `test/bin/`, which still own the local stack, fixture generation,
+scripts under `harness/bin/`, which still own the local stack, fixture generation,
 and E2E harness behavior.
 
 ## Tools
@@ -46,10 +52,10 @@ Run the three-song sync scenario:
 ## Notes
 
 - The player currently reuses the Go rotator implementation and media
-  preparation flows from `test/`.
-- `test/` remains the lab and local-stack harness. `cassini-player` is the
+  preparation flows from `harness/`.
+- `harness/` remains the lab and local-stack harness. `cassini-player` is the
   preferred human-facing entry point when you want to drive room media without
   thinking about the rest of the harness layout.
 - The older synthetic fixture and the continuous three-song soak loop remain
-  available under `test/bin/` as harness-level flows rather than curated
+  available under `harness/bin/` as harness-level flows rather than curated
   suite-level commands.

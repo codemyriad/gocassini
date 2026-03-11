@@ -16,7 +16,7 @@ jobs:
       matrix:
         module:
           - cassini-go-recorder
-          - test/go-talk-rotator
+          - harness/go-talk-rotator
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -68,7 +68,7 @@ jobs:
           go-version-file: cassini-go-recorder/go.mod
           cache-dependency-path: |
             cassini-go-recorder/go.sum
-            test/go-talk-rotator/go.sum
+            harness/go-talk-rotator/go.sum
       - name: Install runtime tools
         run: |
           sudo apt-get update
@@ -82,4 +82,4 @@ jobs:
           NEXTCLOUD_URL: "http://127.0.0.1:28080"
           SIGNALING_URL: "http://127.0.0.1:28082"
           BOT_PASSWORD: "ci-bot-password"
-        run: ./test/bin/${{ matrix.script }}
+        run: ./harness/bin/${{ matrix.script }}

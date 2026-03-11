@@ -3,6 +3,12 @@
 `cassini-diagnostics` is the supporting diagnostics surface of the Cassini
 suite.
 
+For normal use from this repo checkout, prefer the root product CLI:
+
+```bash
+./bin/cassini inspect ...
+```
+
 It owns the artifact inspection, verification, remux, and compatibility
 recovery entry points that sit beside the main happy path:
 
@@ -51,7 +57,7 @@ Validate recorder output:
 ## Notes
 
 - The recorder-native implementations still live in `cassini-go-recorder/cmd/`.
-- The verification scripts still live under `test/bin/` because they are shared
+- The verification scripts still live under `harness/bin/` because they are shared
   with the lab and CI harness.
 - `verify-sync-from-report.sh` still depends on the legacy external recorder
   report, so it is a compatibility tool rather than part of the long-term MKV

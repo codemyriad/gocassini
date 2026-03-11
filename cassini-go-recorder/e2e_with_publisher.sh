@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TEST_DIR="$ROOT_DIR/../test"
-# shellcheck source=../test/bin/common.sh
-source "$TEST_DIR/bin/common.sh"
+HARNESS_DIR="$ROOT_DIR/../harness"
+# shellcheck source=../harness/bin/common.sh
+source "$HARNESS_DIR/bin/common.sh"
 
 CALL_URL="${CALL_URL:-}"
 CALL_NAME="${CALL_NAME:-Cassini Go E2E room}"
@@ -39,20 +39,20 @@ CHECK_ARTIFACT_REMUX="${CHECK_ARTIFACT_REMUX:-1}"
 
 rm -f "$OUTPUT" "$FINAL_OUTPUT" "$REC_LOG" "$PUB_LOG"
 
-if [[ -z "$CALL_URL" && -f "$TEST_DIR/runtime/last_call_url" ]]; then
-  CALL_URL="$(cat "$TEST_DIR/runtime/last_call_url")"
+if [[ -z "$CALL_URL" && -f "$HARNESS_DIR/runtime/last_call_url" ]]; then
+  CALL_URL="$(cat "$HARNESS_DIR/runtime/last_call_url")"
 fi
 
 if [[ -z "$CALL_URL" ]]; then
-  if [[ ! -x "$TEST_DIR/bin/create-room.sh" ]]; then
+  if [[ ! -x "$HARNESS_DIR/bin/create-room.sh" ]]; then
     echo "missing CALL_URL and local create-room helper is unavailable" >&2
-    echo "set CALL_URL or run ./test/bin/ci-e2e.sh" >&2
+    echo "set CALL_URL or run ./harness/bin/ci-e2e.sh" >&2
     exit 1
   fi
 
   echo "CALL_URL not provided, creating room in local test stack..."
-  if ! CALL_URL="$("$TEST_DIR/bin/create-room.sh" --name "$CALL_NAME" | tail -n1)"; then
-    echo "could not create local room. Start local stack with ./test/bin/up.sh or use ./test/bin/ci-e2e.sh" >&2
+  if ! CALL_URL="$("$HARNESS_DIR/bin/create-room.sh" --name "$CALL_NAME" | tail -n1)"; then
+    echo "could not create local room. Start local stack with ./harness/bin/up.sh or use ./harness/bin/ci-e2e.sh" >&2
     exit 1
   fi
 fi
@@ -101,7 +101,7 @@ REC_PID=$!
 sleep "$START_DELAY"
 
 (
-  cd "$TEST_DIR"
+  cd "$HARNESS_DIR"
   STREAM_ARGS=(
     --call-url "$CALL_URL"
     --users "$PUB_USERS"

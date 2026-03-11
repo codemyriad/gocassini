@@ -9,12 +9,23 @@
 !/test/media/raw/.gitkeep
 /test/media/youtube/*
 /test/media/sample.*
+/harness/runtime/*
+!/harness/runtime/.gitkeep
+/harness/media/processed/*
+!/harness/media/processed/.gitkeep
+/harness/media/aligned/*
+!/harness/media/aligned/.gitkeep
+/harness/media/raw/*
+!/harness/media/raw/.gitkeep
+/harness/media/youtube/*
+/harness/media/sample.*
 
 # Local recorder artifacts
 *.csr
 *.mkv
 *.json
 !/test/scenarios/*.json
+!/harness/scenarios/*.json
 gocassini-*.log
 *gocassini*.log
 

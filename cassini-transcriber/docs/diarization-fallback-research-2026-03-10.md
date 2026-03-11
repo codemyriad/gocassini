@@ -320,7 +320,7 @@ These are the questions that matter most before locking the design:
 
 ## Suggested Experiments In This Repo
 
-Cassini already has a useful synthetic meeting generator in `test/bin/prepare-synthetic-meeting.py`, and it emits a manifest with both `participants` and per-turn references. That makes it possible to build repeatable mixed-audio evaluation cases inside this repo.
+Cassini already has a useful synthetic meeting generator in `harness/bin/prepare-synthetic-meeting.py`, and it emits a manifest with both `participants` and per-turn references. That makes it possible to build repeatable mixed-audio evaluation cases inside this repo.
 
 Recommended experiment set:
 
@@ -358,7 +358,7 @@ Cassini repo context:
 - `cassini-transcriber/docs/architecture.md`
 - `cassini-transcriber/cassini_transcriber/pipeline.py`
 - `cassini-transcriber/cassini_transcriber/cli.py`
-- `test/bin/prepare-synthetic-meeting.py`
+- `harness/bin/prepare-synthetic-meeting.py`
 
 Primary external sources:
 

@@ -6,6 +6,8 @@ PUBLISHER_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${PUBLISHER_DIR}/.." && pwd)"
 VIEWER_DIR="${REPO_ROOT}/cassini-viewer"
 
+echo "warning: cassini-publisher/bin/export-static-meetings.sh is deprecated; prefer ./bin/cassini publish ... for .meeting bundles" >&2
+
 if ! command -v npm >/dev/null 2>&1; then
   echo "npm is required to export static meetings" >&2
   exit 1

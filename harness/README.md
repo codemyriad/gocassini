@@ -1,4 +1,8 @@
-# Local Talk Test Harness (`test/`)
+# Local Talk Test Harness (`harness/`)
+
+If you are using Cassini as a product from this repo checkout, start from the
+repo root and use the harness through `./bin/cassini dev ...` rather than
+calling harness scripts first.
 
 ## Purpose
 
@@ -13,15 +17,17 @@ This directory is the reproducible E2E lab for Nextcloud Talk/Spreed testing:
 All generated media/runtime artifacts stay outside git-tracked content.
 
 Unless noted otherwise, command snippets below assume you are running from
-`test/`.
+`harness/`.
 
-Preferred suite-level entry points:
+Preferred product-facing entry points:
 
-- `../cassini-player/bin/`: room-media scenarios
-- `../cassini-diagnostics/bin/`: verification and artifact checks
-- `../cassini-lab/bin/`: local stack, fixture generation, and roundtrips
+- `../bin/cassini dev stack ...`
+- `../bin/cassini dev room create`
+- `../bin/cassini dev fixture prepare-showcase`
+- `../bin/cassini dev player ...`
+- `../bin/cassini dev smoke`
 
-The scripts in `test/bin/` remain the underlying lab implementation and local
+The scripts in `harness/bin/` remain the underlying lab implementation and local
 stack internals.
 
 ## Structure
@@ -53,15 +59,15 @@ stack internals.
 ## Quickstart
 
 ```bash
-../cassini-lab/bin/up.sh
-CALL_URL="$(../cassini-lab/bin/create-room.sh --name "Local smoke room" | tail -n1)"
-../cassini-player/bin/stream-video.sh --call-url "$CALL_URL" --duration 20
+../bin/cassini dev stack up
+CALL_URL="$(../bin/cassini dev room create --name "Local smoke room" | tail -n1)"
+../bin/cassini dev player video --call-url "$CALL_URL" --duration 20
 ```
 
 One-command smoke test:
 
 ```bash
-../cassini-lab/bin/smoke.sh
+../bin/cassini dev smoke
 ```
 
 ## Showcase Meeting
@@ -69,9 +75,9 @@ One-command smoke test:
 The preferred demo and cleanup-evaluation sample is the showcase meeting:
 
 ```bash
-../cassini-lab/bin/prepare-showcase-meeting.sh
-CALL_URL="$(../cassini-lab/bin/create-room.sh --name "Lantern Festival Demo" | tail -n1)"
-../cassini-player/bin/stream-showcase-meeting.sh --call-url "$CALL_URL"
+../bin/cassini dev fixture prepare-showcase
+CALL_URL="$(../bin/cassini dev room create --name "Lantern Festival Demo" | tail -n1)"
+../bin/cassini dev player showcase --call-url "$CALL_URL"
 ```
 
 Roundtrip it end to end with:
@@ -96,7 +102,7 @@ The original synthetic fixture remains useful for harness coverage. It gives us:
 Recommended local setup:
 
 ```bash
-uv run --python 3.12 --with-requirements test/requirements-tts.txt python --version
+uv run --python 3.12 --with-requirements harness/requirements-tts.txt python --version
 ```
 
 The wrappers default to `uv run --python 3.12`, so they can provision a
@@ -122,13 +128,13 @@ Generate the fixture only:
 ```
 
 This writes a scenario-driven generated media set under
-`test/media/processed/synthetic-pied-piper-v1/`, including:
+`harness/media/processed/synthetic-pied-piper-v1/`, including:
 
 - one media prefix per participant (`.mp4`, `.ivf`, `.ogg`)
 - `manifest.json`
 - `reference.txt`
 
-The tracked inputs for this flow live in `test/scenarios/` plus the generator
+The tracked inputs for this flow live in `harness/scenarios/` plus the generator
 scripts; the rendered media stays gitignored.
 
 The current default scenario is intentionally still harness-oriented. It is

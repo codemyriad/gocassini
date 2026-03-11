@@ -8,6 +8,8 @@ TRANSCRIBER_DIR="${REPO_ROOT}/cassini-transcriber"
 RUNNER="${TRANSCRIBER_DIR}/bin/docker-run-local.sh"
 EXPORTER="${PUBLISHER_DIR}/bin/export-static-meetings.sh"
 
+echo "warning: cassini-publisher/bin/process-meeting.sh is deprecated; prefer ./bin/cassini build ... and ./bin/cassini publish ..." >&2
+
 INPUT_PATH=""
 OUTPUT_ROOT=""
 BUNDLE_VIEWER=0

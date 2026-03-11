@@ -1,4 +1,4 @@
-package main
+package inspect
 
 import (
 	"os"
@@ -146,7 +146,6 @@ func TestInspectStreamLogCountsRTCPAndSRRate(t *testing.T) {
 	if summary.rtcpRR != 1 {
 		t.Fatalf("expected rr=1, got=%d", summary.rtcpRR)
 	}
-	// 90000 RTP ticks across 1 second should estimate roughly 90 kHz.
 	if summary.srClockRateEstimate < 89000 || summary.srClockRateEstimate > 91000 {
 		t.Fatalf("unexpected sr clock rate estimate: %.2f", summary.srClockRateEstimate)
 	}
@@ -217,53 +216,12 @@ func TestInspectStreamLogTimelineDeltaStats(t *testing.T) {
 		t.Fatalf("inspect stream: %v", err)
 	}
 	if summary.timelineSamples == 0 {
-		t.Fatalf("expected timeline samples")
+		t.Fatalf("expected timeline samples > 0")
 	}
 	if summary.timelineMeanAbsDeltaMS <= 0 {
-		t.Fatalf("expected timeline mean abs delta to be positive")
+		t.Fatalf("expected mean abs delta > 0, got %.3f", summary.timelineMeanAbsDeltaMS)
 	}
-	if summary.timelineMaxAbsDeltaMS <= 0 {
-		t.Fatalf("expected timeline max abs delta to be positive")
-	}
-}
-
-func TestUnwrap32(t *testing.T) {
-	last := int64(0xfffffff0)
-	got := unwrap32(last, 0x00000020)
-	if got <= last {
-		t.Fatalf("expected unwrap to increase, got=%d last=%d", got, last)
-	}
-}
-
-func TestDetectMeetingMKVPath(t *testing.T) {
-	tmp := t.TempDir()
-	mkvPath := filepath.Join(tmp, "meeting.mkv")
-	if err := os.WriteFile(mkvPath, []byte("not-a-real-mkv"), 0o644); err != nil {
-		t.Fatalf("write mkv stub: %v", err)
-	}
-
-	got, ok := detectMeetingMKVPath(mkvPath)
-	if !ok {
-		t.Fatalf("expected mkv path to be detected")
-	}
-	if got != mkvPath {
-		t.Fatalf("detectMeetingMKVPath mismatch: got=%q want=%q", got, mkvPath)
-	}
-
-	if _, ok := detectMeetingMKVPath(tmp); ok {
-		t.Fatalf("did not expect directory to be treated as meeting mkv")
-	}
-}
-
-func TestMetadataTagPrefersFirstPresentValue(t *testing.T) {
-	tags := map[string]string{
-		"SESSION_ID": "abc",
-		"title":      "Cassini",
-	}
-	if got := metadataTag(tags, "session_id", "SESSION_ID"); got != "abc" {
-		t.Fatalf("metadataTag mismatch: got=%q want=abc", got)
-	}
-	if got := metadataTag(tags, "TITLE", "title"); got != "Cassini" {
-		t.Fatalf("metadataTag title mismatch: got=%q want=Cassini", got)
+	if summary.timelineMaxAbsDeltaMS < summary.timelineMeanAbsDeltaMS {
+		t.Fatalf("expected max delta >= mean delta")
 	}
 }

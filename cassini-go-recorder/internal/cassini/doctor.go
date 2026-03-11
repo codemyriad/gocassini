@@ -1,0 +1,296 @@
+package cassini
+
+import (
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"os/user"
+	"path/filepath"
+	"syscall"
+)
+
+const (
+	minTempFreeWarn = int64(5 << 30)
+	minTempFreeFail = int64(1 << 30)
+	minWorkFreeWarn = int64(10 << 30)
+	minWorkFreeFail = int64(2 << 30)
+)
+
+type doctorStatus string
+
+const (
+	doctorOK   doctorStatus = "ok"
+	doctorWarn doctorStatus = "warn"
+	doctorFail doctorStatus = "fail"
+)
+
+type doctorCheck struct {
+	status  doctorStatus
+	summary string
+	advice  string
+}
+
+func runDoctor(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("cassini doctor", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	target := "all"
+	fs.StringVar(&target, "target", "all", "check set: all, record, build")
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), `Usage:
+  cassini doctor
+  cassini doctor --target record
+  cassini doctor --target build
+
+`+"\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintf(stderr, "doctor does not accept positional arguments: %v\n", fs.Args())
+		return 2
+	}
+
+	checks := collectDoctorChecks(target)
+	hasFail := false
+	hasWarn := false
+	for _, check := range checks {
+		fmt.Fprintf(stdout, "%s %s\n", check.status, check.summary)
+		if check.advice != "" {
+			fmt.Fprintf(stdout, "fix %s\n", check.advice)
+		}
+		if check.status == doctorFail {
+			hasFail = true
+		}
+		if check.status == doctorWarn {
+			hasWarn = true
+		}
+	}
+	switch {
+	case hasFail:
+		fmt.Fprintln(stdout, "result fail")
+		return 1
+	case hasWarn:
+		fmt.Fprintln(stdout, "result warn")
+		return 0
+	default:
+		fmt.Fprintln(stdout, "result ok")
+		return 0
+	}
+}
+
+func collectDoctorChecks(target string) []doctorCheck {
+	if target != "all" && target != "record" && target != "build" {
+		return []doctorCheck{{status: doctorFail, summary: fmt.Sprintf("unsupported doctor target %q", target)}}
+	}
+
+	checks := []doctorCheck{}
+	if wd, err := os.Getwd(); err != nil {
+		checks = append(checks, doctorCheck{status: doctorFail, summary: fmt.Sprintf("working directory unavailable: %v", err)})
+	} else {
+		checks = append(checks, doctorCheck{
+			status:  doctorOK,
+			summary: fmt.Sprintf("working directory %s", wd),
+		})
+		checks = append(checks, writableDirCheck(wd, "working directory"))
+		checks = append(checks, freeSpaceCheck(wd, "working directory", minWorkFreeWarn, minWorkFreeFail))
+	}
+
+	tmp := os.TempDir()
+	checks = append(checks, writableDirCheck(tmp, "temporary directory"))
+	checks = append(checks, freeSpaceCheck(tmp, "temporary directory", minTempFreeWarn, minTempFreeFail))
+
+	if target == "all" || target == "build" {
+		checks = append(checks, commandCheck("ffmpeg"))
+		checks = append(checks, commandCheck("ffprobe"))
+		checks = append(checks, dockerCheck())
+		checks = append(checks, transcriberRunnerCheck())
+		checks = append(checks, transcriberCacheChecks()...)
+	}
+
+	return checks
+}
+
+func transcriberRunnerCheck() doctorCheck {
+	path, err := transcriberRunnerPath()
+	if err != nil {
+		return doctorCheck{
+			status:  doctorFail,
+			summary: fmt.Sprintf("transcriber runner unavailable: %v", err),
+			advice:  "run from a full repo checkout or set CASSINI_TRANSCRIBER_RUNNER to an executable runner script",
+		}
+	}
+	return doctorCheck{status: doctorOK, summary: fmt.Sprintf("transcriber runner available at %s", path)}
+}
+
+func writableDirCheck(path string, label string) doctorCheck {
+	info, err := os.Stat(path)
+	if err != nil {
+		return doctorCheck{
+			status:  doctorFail,
+			summary: fmt.Sprintf("%s not accessible: %v", label, err),
+			advice:  fmt.Sprintf("create %s or choose a path you can write to", path),
+		}
+	}
+	if !info.IsDir() {
+		return doctorCheck{
+			status:  doctorFail,
+			summary: fmt.Sprintf("%s is not a directory: %s", label, path),
+			advice:  fmt.Sprintf("replace %s with a writable directory", path),
+		}
+	}
+	probePath := filepath.Join(path, ".cassini-doctor-write-test")
+	if err := os.WriteFile(probePath, []byte("ok\n"), 0o644); err != nil {
+		return doctorCheck{
+			status:  doctorFail,
+			summary: fmt.Sprintf("%s is not writable: %s (%v)", label, path, err),
+			advice:  writableDirAdvice(label, path),
+		}
+	}
+	_ = os.Remove(probePath)
+	return doctorCheck{status: doctorOK, summary: fmt.Sprintf("%s writable: %s", label, path)}
+}
+
+func freeSpaceCheck(path string, label string, warnBytes int64, failBytes int64) doctorCheck {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return doctorCheck{status: doctorFail, summary: fmt.Sprintf("could not read free space for %s: %v", path, err)}
+	}
+	freeBytes := int64(stat.Bavail) * int64(stat.Bsize)
+	summary := fmt.Sprintf("%s free space: %s available at %s", label, formatBytes(freeBytes), path)
+	switch {
+	case freeBytes < failBytes:
+		return doctorCheck{status: doctorFail, summary: summary, advice: fmt.Sprintf("free space in %s before running Cassini again", path)}
+	case freeBytes < warnBytes:
+		return doctorCheck{status: doctorWarn, summary: summary, advice: fmt.Sprintf("consider freeing space in %s to avoid mid-run failures", path)}
+	default:
+		return doctorCheck{status: doctorOK, summary: summary}
+	}
+}
+
+func commandCheck(name string) doctorCheck {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return doctorCheck{
+			status:  doctorFail,
+			summary: fmt.Sprintf("%s not found in PATH", name),
+			advice:  fmt.Sprintf("install %s and ensure it is available on PATH", name),
+		}
+	}
+	return doctorCheck{status: doctorOK, summary: fmt.Sprintf("%s available at %s", name, path)}
+}
+
+func dockerCheck() doctorCheck {
+	path, err := exec.LookPath("docker")
+	if err != nil {
+		return doctorCheck{
+			status:  doctorFail,
+			summary: "docker not found in PATH",
+			advice:  "install Docker and ensure the docker CLI is on PATH",
+		}
+	}
+	cmd := exec.Command(path, "info", "--format", "{{.ServerVersion}}")
+	if err := cmd.Run(); err != nil {
+		return doctorCheck{
+			status:  doctorFail,
+			summary: fmt.Sprintf("docker installed but not usable: %v", err),
+			advice:  "start the Docker daemon or Docker Desktop, then rerun cassini doctor",
+		}
+	}
+	return doctorCheck{status: doctorOK, summary: fmt.Sprintf("docker usable via %s", path)}
+}
+
+func transcriberCacheChecks() []doctorCheck {
+	root := defaultTranscriberCacheRoot()
+	whisperRoot := filepath.Join(root, "whisper")
+	checks := []doctorCheck{
+		parentWritableCheck(root, "transcriber cache root"),
+		parentWritableCheck(whisperRoot, "whisper cache root"),
+	}
+
+	locksDir := filepath.Join(whisperRoot, ".locks")
+	if info, err := os.Stat(locksDir); err == nil && info.IsDir() {
+		check := writableDirCheck(locksDir, "whisper lock directory")
+		if check.status != doctorOK {
+			check.advice = fmt.Sprintf("make %s writable, remove and recreate it, or set CASSINI_CACHE_ROOT to a writable cache directory", locksDir)
+		}
+		checks = append(checks, check)
+	} else {
+		check := parentWritableCheck(locksDir, "whisper lock directory parent")
+		if check.status != doctorOK {
+			check.advice = fmt.Sprintf("ensure %s can be created, or set CASSINI_CACHE_ROOT to a writable cache directory", locksDir)
+		}
+		checks = append(checks, check)
+	}
+	return checks
+}
+
+func parentWritableCheck(path string, label string) doctorCheck {
+	if info, err := os.Stat(path); err == nil {
+		if !info.IsDir() {
+			return doctorCheck{status: doctorFail, summary: fmt.Sprintf("%s is not a directory: %s", label, path)}
+		}
+		return writableDirCheck(path, label)
+	}
+
+	parent := filepath.Dir(path)
+	for parent != "" && parent != "." {
+		if info, err := os.Stat(parent); err == nil && info.IsDir() {
+			return writableDirCheck(parent, label+" parent")
+		}
+		next := filepath.Dir(parent)
+		if next == parent {
+			break
+		}
+		parent = next
+	}
+	return doctorCheck{status: doctorFail, summary: fmt.Sprintf("%s parent path not accessible: %s", label, path)}
+}
+
+func writableDirAdvice(label string, path string) string {
+	switch label {
+	case "working directory":
+		return "change into a writable working directory or fix directory permissions before running Cassini"
+	case "temporary directory":
+		return "free space or permissions in the system temp directory, or run with TMPDIR set to a writable location"
+	case "transcriber cache root", "whisper cache root", "whisper lock directory", "whisper lock directory parent":
+		return fmt.Sprintf("make %s writable or set CASSINI_CACHE_ROOT to a writable cache directory", path)
+	default:
+		return fmt.Sprintf("make %s writable or choose a different writable path", path)
+	}
+}
+
+func defaultTranscriberCacheRoot() string {
+	if value := os.Getenv("CASSINI_CACHE_ROOT"); value != "" {
+		return value
+	}
+	currentUser, err := user.Current()
+	if err == nil && currentUser.HomeDir != "" {
+		return filepath.Join(currentUser.HomeDir, ".cache", "cassini-transcriber")
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		return filepath.Join(home, ".cache", "cassini-transcriber")
+	}
+	return filepath.Join(".", ".cache", "cassini-transcriber")
+}
+
+func formatBytes(value int64) string {
+	const unit = 1024
+	if value < unit {
+		return fmt.Sprintf("%d B", value)
+	}
+	div, exp := int64(unit), 0
+	for n := value / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(value)/float64(div), "KMGTPE"[exp])
+}

@@ -8,6 +8,17 @@
 - one derived `captions.vtt`,
 - one small `manifest.json` with digest/transcript summary metadata.
 
+If you are using Cassini as a product from this repo checkout, the user-facing
+entry point is the root CLI:
+
+```bash
+./bin/cassini doctor
+./bin/cassini build ./runs/meeting.run --out ./meetings/meeting.meeting
+```
+
+This README is for the transcriber worker and its lower-level implementation
+surface.
+
 The pipeline assumes the source MKV carries one audio stream per participant and uses each audio stream title as the speaker label when available.
 
 The intended production design is documented in [docs/architecture.md](docs/architecture.md).

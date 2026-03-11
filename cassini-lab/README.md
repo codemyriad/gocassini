@@ -3,6 +3,12 @@
 `cassini-lab` is the local-stack and end-to-end harness surface of the Cassini
 suite.
 
+For normal use from this repo checkout, prefer the root product CLI:
+
+```bash
+./bin/cassini dev ...
+```
+
 It owns the reproducible local Talk environment, fixture-oriented roundtrips,
 and CI-style validation entry points used to exercise the rest of the suite.
 
@@ -50,12 +56,12 @@ Run the baseline CI-style integration scenario:
 
 ## Notes
 
-- The current implementation is intentionally thin and delegates to `test/bin/`.
-- `test/` remains the implementation home for the lab harness, fixtures, and
+- The current implementation is intentionally thin and delegates to `harness/bin/`.
+- `harness/` remains the implementation home for the lab harness, fixtures, and
   local stack internals.
 - The current default synthetic fixture is still harness-oriented. Use the
   showcase meeting wrappers when you want something closer to a demo or cleanup
   evaluation sample.
 - More specialized harness flows such as the old synthetic fixture roundtrip,
   the three-song capture flow, and the extra CI variants remain available under
-  `test/bin/`.
+  `harness/bin/`.

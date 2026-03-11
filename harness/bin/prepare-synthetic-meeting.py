@@ -91,7 +91,7 @@ class KokoroBackend(TTSBackend):
             from kokoro_onnx import Kokoro
         except ImportError as exc:
             raise SystemExit(
-                "kokoro-onnx is not installed. Run via uv with test/requirements-tts.txt, "
+                "kokoro-onnx is not installed. Run via uv with harness/requirements-tts.txt, "
                 "or use --backend mock."
             ) from exc
         asset_dir = Path(os_environ("KOKORO_ONNX_ASSET_DIR", str(DEFAULT_KOKORO_ASSET_DIR))).resolve()

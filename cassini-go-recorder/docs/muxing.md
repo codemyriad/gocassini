@@ -65,7 +65,7 @@ The final MKV now also embeds the portable subset of that information directly:
 Drift verification helper:
 
 ```bash
-./test/bin/verify-av-drift.sh \
+./harness/bin/verify-av-drift.sh \
   --input /tmp/meeting.mkv
 ```
 

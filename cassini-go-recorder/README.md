@@ -3,34 +3,45 @@
 `gocassini` is a CLI-first meeting recorder for Nextcloud Talk.
 It is intentionally narrow: one job, one output contract, and strong behavior for automation.
 
+If you are using Cassini as a product from this repo checkout, start at the
+root and use [`./bin/cassini`](../README.md):
+
+```bash
+./bin/cassini record --call "$CALL_URL" --out "./My Meetings/Weekly Sync.opus"
+./bin/cassini inspect "./My Meetings/Weekly Sync.opus"
+```
+
+This README is for recorder-module internals, compatibility tooling, and the
+lower-level Go commands that still exist behind the product CLI.
+
 ## Current scope (v1)
 - Capture audio/video RTP streams from Nextcloud Talk meetings
 - Persist a per-session artifact directory with `session.json`, `streams/*.rtplog`, and `events.ndjson`
-- Compose a multi-track MKV (`.mkv`) as the primary deliverable
-- Embed portable Cassini meeting metadata directly in the final MKV
+- Compose a multi-track MKV (`.mkv`) as the recorder's internal primary deliverable
+- Feed the higher-level Cassini product flow that now ends in a portable `.opus` meeting file
 - Keep legacy `.csr` archive handling only for simulate mode and compatibility tooling
 - Keep intermediate files deterministic and optionally cleanable
 - Keep everything script-friendly and machine-friendly
 
 ## What this repo contains
-- `../cassini-recorder/`: preferred suite-level recorder wrappers
-- `cmd/gocassini`: main recorder command and primary product surface
+- `../cassini-recorder/`: legacy recorder wrappers
+- `cmd/gocassini`: lower-level recorder command behind the `cassini record` product surface
 - `cmd/gocassini-inspect`: diagnostic inspection utility
 - `cmd/gocassini-remux`: diagnostic or recovery remux from session artifacts (`session.json` + `streams/*.rtplog`)
 - `cmd/gocassini-upgrade-mkv`: compatibility upgrader for older meeting MKVs plus legacy `.mkv.json` reports
-- `../cassini-diagnostics/`: preferred suite-level diagnostics wrappers
+- `../cassini-diagnostics/`: legacy diagnostics wrappers
 - `internal/`: codec-agnostic recorder, signaling, and Nextcloud Talk adapters
 - `../cassini-player/`: suite-level room player wrappers
 - `../cassini-lab/`: suite-level local stack and validation wrappers
-- `../test/`: local reproducible Nextcloud Talk lab implementation and E2E internals
+- `../harness/`: local reproducible Nextcloud Talk lab implementation and E2E internals
 - `docs/architecture-migration-status.md`: current migration goals, effort, and status
 
-## Quickstart
+## Internal Quickstart
 
 ```bash
 cd cassini-go-recorder
 go run ./cmd/gocassini --mode simulate --output /tmp/gocassini.csr
-../cassini-diagnostics/bin/inspect-artifact.sh /tmp/gocassini.csr
+../bin/cassini inspect /tmp/gocassini.csr
 ```
 
 ## Live Talk capture
@@ -91,7 +102,7 @@ cd cassini-go-recorder
 ./e2e_with_publisher.sh
 ```
 
-If `CALL_URL` is unset, it reuses `test/runtime/last_call_url` or creates a fresh room in the local test stack.
+If `CALL_URL` is unset, it reuses `harness/runtime/last_call_url` or creates a fresh room in the local test stack.
 
 Clean up:
 

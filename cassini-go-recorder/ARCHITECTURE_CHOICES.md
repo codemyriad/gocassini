@@ -79,4 +79,4 @@ Estimated impact for a typical drift incident:
 - after: ~10-30 minutes (inspect + remux from existing session artifact)
 
 These are engineering targets, not guarantees, and are validated through the
-deterministic + local E2E harness in `test/bin`.
+deterministic + local E2E harness in `harness/bin`.

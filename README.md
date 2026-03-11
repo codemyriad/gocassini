@@ -1,274 +1,174 @@
-# Gocassini
+# Cassini
 
-`gocassini` is a CLI meeting recorder focused on one deterministic contract:
+`cassini` is the product CLI for recording Nextcloud Talk meetings into one
+portable meeting file that can later be loaded in the web app.
 
-- input: Nextcloud Talk room
-- artifact: one `*.mkv` output per meeting
-- diagnostics: per-run session artifact directory (`session.json`, `events.ndjson`, `streams/*.rtplog`) next to the MKV; optional legacy external JSON run report via `--write-report`
+The normal user flow is:
 
-The repository is intentionally CLI-first and automation-friendly.
+1. point Cassini at a meeting
+2. let Cassini record and process it
+3. end up with one portable `.opus` file
 
-## Get Up And Running
+Cassini still uses `.run`, `.meeting`, and `.site` artifacts internally, but
+those are now implementation detail and debugging surfaces rather than the main
+product story.
 
-Use two terminals from repo root.
+## Repo Entry Point
 
-Set your call URL in each terminal (or source it from `.envrc`):
+From this source checkout, use:
+
+```bash
+./bin/cassini
+```
+
+That wrapper builds the current `cassini` CLI from the Go module and runs it
+from your current working directory.
+
+## First Commands
+
+See what the product exposes:
+
+```bash
+./bin/cassini --help
+```
+
+Validate the environment before expensive work starts:
+
+```bash
+./bin/cassini doctor
+```
+
+If `doctor` reports an unwritable transcriber cache or Whisper lock directory,
+fix that path or point Cassini at a writable cache root before building:
+
+```bash
+export CASSINI_CACHE_ROOT="$PWD/.cache/cassini-transcriber"
+./bin/cassini doctor
+```
+
+## Main Flow
+
+Set your Talk room URL:
 
 ```bash
 export CALL_URL="https://cloud.example.com/call/<ROOM_TOKEN>"
 ```
 
-Terminal 1: start recorder
+Record a meeting and let Cassini finish with one portable file:
 
 ```bash
-./cassini-recorder/bin/record-talk.sh \
-  --call-url "$CALL_URL" \
-  --name "CassiniRecorder" \
-  --output /tmp/meeting.mkv
+./bin/cassini record --call "$CALL_URL" --out "./My Meetings/2026-03-11 Weekly Sync.opus"
 ```
 
-In talk mode, `--output` can point directly at the final `.mkv`. Keep `--final-output` only if you need a separate compatibility path.
+If Cassini fails after capture or during processing, fix the issue and rerun the
+same command with the same `--out` path. Cassini now keeps resumable state in a
+hidden `.cassini-work/` directory next to the target file and will reuse the
+finished recording or finished meeting artifact when possible.
 
-By default, talk mode auto-terminates when all remote participants leave (with a 30s grace). Add `--duration <seconds>` only if you also want a hard cap.
-`Ctrl-C` is handled gracefully so cleanup/remux/report still run before exit.
-
-Terminal 2: start the Player with the showcase meeting
+Inspect the resulting file:
 
 ```bash
-./cassini-player/bin/stream-showcase-meeting.sh \
-  --call-url "$CALL_URL"
+./bin/cassini inspect "./My Meetings/2026-03-11 Weekly Sync.opus"
 ```
 
-By default, the showcase fixture will prepare its media on demand the first
-time you run it.
-
-## Repository layout
-
-- `cassini-recorder/`: Recorder and suite-level capture wrappers.
-- `cassini-go-recorder/`: Go recorder implementation and lower-level native diagnostics.
-- `cassini-diagnostics/`: Diagnostics and recovery wrappers for artifacts.
-- `cassini-transcriber/`: Transcriber and readable-transcript generation.
-- `cassini-readable/`: Standalone readable transcript cleanup wrappers.
-- `cassini-player/`: Player and suite-level room-streaming wrappers.
-- `cassini-lab/`: Local stack, fixtures, and validation wrappers.
-- `cassini-publisher/`: Publisher and suite-level orchestration wrappers.
-- `cassini-viewer/`: Viewer runtime for published meeting artifacts.
-- `test/`: Lab implementation, fixtures, and E2E internals.
-- `.github/workflows/ci.yml`: unit + integration CI.
-- `media-kit.txt` / `media-kit.md`: brand direction and design principles.
-
-## Suite model
-
-The repo is organized as a small opinionated tool suite:
-
-- `Recorder`: capture one live room into one meeting `.mkv`.
-- `Transcriber`: turn a meeting recording into timed transcript artifacts.
-- `Publisher`: package artifacts into a static meeting library.
-- `Viewer`: render that library in the browser.
-- `Player`: join rooms and stream deterministic media for tests and demos.
-- `Lab`: local stack, fixture generation, roundtrip scripts, and validation.
-- `Diagnostics`: inspect, verify, remux, and compatibility-recovery tools.
-
-`Diagnostics` is intentionally a supporting surface, not the main product
-boundary.
-
-## Showcase Meeting
-
-The repository now has two synthetic meeting tracks:
-
-- the default `synthetic-pied-piper` fixture, which is still useful for harness
-  coverage,
-- the `showcase-lantern-festival` fixture, which is written to sound more like
-  a natural meeting and is the better demo/cleanup example.
-
-Generate the showcase fixture:
+If you already have an existing recording, build the portable file from that:
 
 ```bash
-./cassini-lab/bin/prepare-showcase-meeting.sh
+./bin/cassini build /path/to/meeting.mkv --out "./My Meetings/Imported Meeting.opus"
 ```
 
-If you already have a room and want to play it live:
+## Try It Without A Real Call
+
+The user-facing portable-file path currently needs a real meeting.
+
+For local smoke and diagnostics, simulate mode still writes a debug `.run`
+bundle:
 
 ```bash
-./cassini-player/bin/stream-showcase-meeting.sh \
-  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
+./bin/cassini record --simulate --out ./runs/demo.run
+./bin/cassini inspect ./runs/demo.run
 ```
 
-## Local testing
-
-### Unit tests
+Browse an already-generated sample site from this checkout:
 
 ```bash
-cd cassini-go-recorder
-go test ./...
+./bin/cassini serve ./cassini-viewer/exports/static-meetings
 ```
+
+## Advanced Flow
+
+If you want to keep the internal working artifacts visible, you can still use
+the explicit pipeline:
 
 ```bash
-python3 -m unittest discover -s cassini-transcriber/tests -t cassini-transcriber
+./bin/cassini record --call "$CALL_URL" --out ./runs/weekly-sync.run
+./bin/cassini build ./runs/weekly-sync.run --out ./meetings/weekly-sync.meeting
+./bin/cassini publish ./meetings --out ./site
+./bin/cassini serve ./site
 ```
 
-For the local MKV-to-audio+transcript path, see
-`cassini-transcriber/README.md`. That README now includes:
-
-- automatic backend selection (`http` vs local GPU vs local CPU),
-- a Docker-based one-command runner,
-- current benchmark numbers for the test meeting.
-
-### Recorder smoke test (no real call)
+Inspect any primary Cassini artifact:
 
 ```bash
-./cassini-recorder/bin/simulate.sh --output /tmp/gocassini.csr
-./cassini-diagnostics/bin/inspect-artifact.sh /tmp/gocassini.csr
+./bin/cassini inspect "./My Meetings/2026-03-11 Weekly Sync.opus"
+./bin/cassini inspect ./runs/weekly-sync.run
+./bin/cassini inspect ./meetings/weekly-sync.meeting
+./bin/cassini inspect ./site
 ```
 
-### Debugging and architecture notes
+## Harness Commands
 
-- `cassini-go-recorder/docs/formats.md`: packet truth format and planned migration to stream-session layout.
-- `cassini-go-recorder/docs/timelines.md`: timing model and drift handling strategy.
-- `cassini-go-recorder/docs/muxing.md`: remux design and back-end strategy.
-
-### Full local integration test (real Nextcloud stack)
+The local stack and showcase/demo flows now live under `cassini dev`:
 
 ```bash
-cd /path/to/gocassini-repo-root
-./cassini-lab/bin/ci-e2e.sh
+./bin/cassini dev stack up
+./bin/cassini dev room create --name "Local room"
+./bin/cassini dev smoke
+./bin/cassini dev fixture prepare-showcase
+./bin/cassini dev player showcase --call-url "$CALL_URL"
 ```
 
-This uses `test/compose.yml` and starts a local Nextcloud Talk stack, creates a room, runs player clients, and validates recorder outputs.
+## Current Constraints
 
-To validate A/V drift on a produced recording:
+- `cassini build` currently uses the existing transcriber runner under
+  `cassini-transcriber/bin/docker-run-local.sh`.
+- `cassini publish` currently uses the existing static exporter under
+  `cassini-publisher/bin/export-static-meetings.sh`.
+- `cassini doctor` should be run before `record --out ...opus` or `build --out ...opus`;
+  it catches cache and runtime issues early.
+- In this checkout, the current doctor output is expected to fail if the
+  Whisper cache lock directory is not writable.
 
-```bash
-./cassini-diagnostics/bin/verify-av-drift.sh \
-  --input /tmp/meeting.mkv
+## Product Commands
+
+```text
+./bin/cassini doctor
+./bin/cassini record
+./bin/cassini build
+./bin/cassini publish
+./bin/cassini serve
+./bin/cassini inspect
 ```
 
-### Showcase roundtrip
+## Legacy Surface
 
-Use the showcase meeting when you want a demo-quality end-to-end artifact:
+Older wrappers under directories such as:
 
-```bash
-./cassini-lab/bin/roundtrip-showcase-meeting.sh \
-  --call-url "https://cloud.example.com/call/<ROOM_TOKEN>"
-```
+- `cassini-recorder/`
+- `cassini-diagnostics/`
+- `cassini-publisher/`
+- `cassini-lab/`
+- `cassini-player/`
 
-That flow generates the fixture if needed, plays it into the room, records the
-meeting, and runs the publisher pipeline to produce the final artifact bundle.
+are now legacy shims or implementation surfaces. They are being deprecated in
+favor of `./bin/cassini`.
 
-### Local private config (`.envrc`)
+The local harness implementation now lives under `harness/`, and it is now
+being surfaced through `./bin/cassini dev ...` rather than taught as a peer
+product.
 
-For private values (for example a cloud `CALL_URL`), keep them outside git:
+## Docs In This Branch
 
-```bash
-cd /path/to/gocassini-repo-root
-cp .envrc.example .envrc
-# edit .envrc with your real values
-```
-
-`.envrc` is gitignored.
-
-### Live smoke in local stack
-
-```bash
-./cassini-lab/bin/up.sh
-CALL_URL="$(./cassini-lab/bin/create-room.sh --name "Smoke room" | tail -n1)"
-./cassini-player/bin/stream-video.sh --call-url "$CALL_URL" --duration 20
-./cassini-lab/bin/down.sh --volumes
-```
-
-## Deploying the recorder service to a server
-
-### 1) DNS and external dependencies
-
-Create DNS records first:
-
-- `A` record for the target host, for example `gocassini.example.com`.
-- Ensure TLS termination is in place if you will expose HTTPS endpoints.
-- Ensure recorder host can resolve and reach Nextcloud Talk URLs and TURN/Signaling endpoints.
-
-### 2) Build and install on the server
-
-```bash
-ssh deployer@<server>
-sudo mkdir -p /opt/gocassini
-sudo chown "$USER":"$USER" /opt/gocassini
-git clone <repo-url> /opt/gocassini
-
-cd /opt/gocassini/cassini-go-recorder
-go build -o /usr/local/bin/gocassini ./cmd/gocassini
-go build -o /usr/local/bin/gocassini-inspect ./cmd/gocassini-inspect
-```
-
-### 3) Run in production
-
-Create a service file (`/etc/systemd/system/gocassini.service`) with one recorder job per conference policy (or run it manually for each capture event).
-
-```bash
-cat >/tmp/gocassini.service <<'EOF'
-[Unit]
-Description=Gocassini Meeting Recorder
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/gocassini \
-  --mode talk \
-  --call-url https://cloud.example.com/call/<ROOM_TOKEN> \
-  --name GocassiniObserver \
-  --output /var/lib/gocassini/recording.mkv
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo mv /tmp/gocassini.service /etc/systemd/system/gocassini.service
-sudo mkdir -p /var/lib/gocassini
-sudo systemctl daemon-reload
-sudo systemctl enable --now gocassini
-```
-
-Replace placeholders with your actual room tokens / orchestration wrapper.
-Add `--duration <seconds>` to `ExecStart` only if you also want a hard cap in addition to auto-stop-on-empty-room.
-
-### 4) If your operator is Salt
-
-The same deployment should be applied from Salt instead of manual `scp`+`systemctl`.
-
-- Put repository checkout, binaries, and unit file under your Salt file roots.
-- Add a Salt state to install dependencies (`golang`, `ffmpeg`, `docker` if using local test stack).
-- Add a Salt state to copy `/etc/systemd/system/gocassini.service`.
-- Add a Salt state to enable and start the service.
-- Apply by targeting the recorder nodes:
-
-```bash
-salt '*' state.apply gocassini.recorder
-```
-
-`gocassini.recorder` is your state ID; replace with your actual environment state name.
-
-## CI
-
-GitHub Actions runs:
-
-- unit tests for `cassini-go-recorder`
-- unit tests for `cassini-transcriber`
-- unit tests for `test/go-talk-rotator`
-- integration tests against local Nextcloud harness:
-  - `./cassini-lab/bin/ci-e2e.sh`
-
-Additional harness-specific CI variants remain under `test/bin/`.
-
-### Migration status
-
-- The repository now has new core packages (`pkg/core/...`) that define the long-term architecture:
-  - `pkg/core/session`: immutable schema for session-level metadata
-  - `pkg/core/store`: append-only stream packet log
-  - `pkg/core/timeline`: timeline estimator API
-  - `pkg/core/mux`: mux abstraction
-- Talk capture is now MKV-first and records session artifacts under `sessions/<id>/`.
-- Legacy `.csr` archives remain only for simulate-mode and compatibility-oriented tooling.
-
-## Next steps
-
-This project currently supports Nextcloud Talk as the only provider and keeps the extension path explicit in code and docs for future providers.
+- [DX_REARCHITECTURE.md](DX_REARCHITECTURE.md): replacement product boundary
+- [DX_EXECUTION_PLAN.md](DX_EXECUTION_PLAN.md): staged execution plan
+- [USER_REVIEW_NOTES.md](USER_REVIEW_NOTES.md): original DX review findings
