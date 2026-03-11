@@ -23,10 +23,11 @@ type portablePackOptions struct {
 }
 
 type portableMeetingSource struct {
-	MeetingDir string
-	AudioPath  string
-	Transcript portableTranscriptArtifact
-	Artifact   portableMeetingArtifact
+	MeetingDir         string
+	AudioPath          string
+	Transcript         portableTranscriptArtifact
+	ReadableTranscript map[string]any
+	Artifact           portableMeetingArtifact
 }
 
 type portableMeetingArtifact struct {
@@ -36,8 +37,9 @@ type portableMeetingArtifact struct {
 		DurationMS int64  `json:"durationMs"`
 	} `json:"source"`
 	Files struct {
-		Audio      string `json:"audio"`
-		Transcript string `json:"transcript"`
+		Audio              string `json:"audio"`
+		Transcript         string `json:"transcript"`
+		ReadableTranscript string `json:"readableTranscript"`
 	} `json:"files"`
 	SpeakerCount int `json:"speakerCount"`
 	WordCount    int `json:"wordCount"`
@@ -247,12 +249,43 @@ func loadPortableMeetingSource(meetingDir string) (portableMeetingSource, error)
 		return portableMeetingSource{}, fmt.Errorf("parse transcript artifact: %w", err)
 	}
 
+	readableTranscript, err := loadPortableReadableTranscript(rootDir, artifact.Files.ReadableTranscript)
+	if err != nil {
+		return portableMeetingSource{}, err
+	}
+
 	return portableMeetingSource{
-		MeetingDir: rootDir,
-		AudioPath:  audioPath,
-		Transcript: transcript,
-		Artifact:   artifact,
+		MeetingDir:         rootDir,
+		AudioPath:          audioPath,
+		Transcript:         transcript,
+		ReadableTranscript: readableTranscript,
+		Artifact:           artifact,
 	}, nil
+}
+
+func loadPortableReadableTranscript(rootDir string, artifactPath string) (map[string]any, error) {
+	readableName := strings.TrimSpace(artifactPath)
+	if readableName == "" {
+		defaultPath := filepath.Join(rootDir, "transcript.readable.v1.json")
+		if _, err := os.Stat(defaultPath); err == nil {
+			readableName = "transcript.readable.v1.json"
+		} else if os.IsNotExist(err) {
+			return nil, nil
+		} else {
+			return nil, fmt.Errorf("stat readable transcript artifact: %w", err)
+		}
+	}
+
+	rawReadable, err := os.ReadFile(filepath.Join(rootDir, readableName))
+	if err != nil {
+		return nil, fmt.Errorf("read readable transcript artifact: %w", err)
+	}
+
+	var readable map[string]any
+	if err := json.Unmarshal(rawReadable, &readable); err != nil {
+		return nil, fmt.Errorf("parse readable transcript artifact: %w", err)
+	}
+	return readable, nil
 }
 
 func computePortableAudioIntegrity(audioPath string) (portableAudioIntegrity, error) {
@@ -350,6 +383,9 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 			Items:     items,
 		},
 	})
+	if source.ReadableTranscript != nil {
+		manifest.ReadableTranscript = source.ReadableTranscript
+	}
 	return manifest, nil
 }
 

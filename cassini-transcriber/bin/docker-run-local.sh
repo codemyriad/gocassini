@@ -11,6 +11,8 @@ OUTPUT_DIR=""
 DEVICE="auto"
 REBUILD=0
 EXTRA_ARGS=()
+READABLE_PROVIDER=0
+OLLAMA_BIN="${CASSINI_OLLAMA_BINARY:-ollama}"
 
 contains_arg() {
   local needle="$1"
@@ -22,6 +24,13 @@ contains_arg() {
     fi
   done
   return 1
+}
+
+add_env_if_set() {
+  local name="$1"
+  if [[ -n "${!name:-}" ]]; then
+    DOCKER_ARGS+=(--env "${name}=${!name}")
+  fi
 }
 
 while [[ $# -gt 0 ]]; do
@@ -108,11 +117,60 @@ fi
 if ! contains_arg --whisper-download-root "${EXTRA_ARGS[@]}"; then
   EXTRA_ARGS+=(--whisper-download-root /models/whisper)
 fi
-if ! contains_arg --readable-backend "${EXTRA_ARGS[@]}" && ! contains_arg --readable-transcript-name "${EXTRA_ARGS[@]}"; then
-  EXTRA_ARGS+=(--readable-backend none)
-fi
 if ! contains_arg --keep-work-dir "${EXTRA_ARGS[@]}" && ! contains_arg --work-dir "${EXTRA_ARGS[@]}"; then
   EXTRA_ARGS+=(--keep-work-dir)
+fi
+
+for passthrough_env in \
+  CASSINI_READABLE_BACKEND \
+  CASSINI_READABLE_TRANSCRIPT_NAME \
+  CASSINI_API_BASE_URL \
+  CASSINI_API_KEY \
+  CASSINI_API_MODEL \
+  CASSINI_API_TIMEOUT_SECONDS \
+  CASSINI_API_APP_NAME \
+  CASSINI_API_SITE_URL \
+  OPENAI_BASE_URL \
+  OPENAI_API_KEY \
+  OPENAI_MODEL \
+  OPENROUTER_API_KEY \
+  OPENROUTER_MODEL \
+  CASSINI_OLLAMA_MODEL \
+  CASSINI_OLLAMA_BINARY \
+  OPENWEBUI_BASE_URL \
+  OPENWEBUI_EMAIL \
+  OPENWEBUI_PASSWORD \
+  OPENWEBUI_MODEL
+do
+  add_env_if_set "${passthrough_env}"
+done
+
+if ! command -v "${OLLAMA_BIN}" >/dev/null 2>&1 && [[ -x /usr/local/bin/ollama ]]; then
+  OLLAMA_BIN=/usr/local/bin/ollama
+fi
+
+if contains_arg --readable-backend "${EXTRA_ARGS[@]}" || contains_arg --readable-transcript-name "${EXTRA_ARGS[@]}"; then
+  READABLE_PROVIDER=1
+elif [[ -n "${CASSINI_API_KEY:-}" || -n "${OPENAI_API_KEY:-}" || -n "${OPENROUTER_API_KEY:-}" ]]; then
+  READABLE_PROVIDER=1
+elif [[ -n "${OPENWEBUI_BASE_URL:-}" && -n "${OPENWEBUI_EMAIL:-}" && -n "${OPENWEBUI_PASSWORD:-}" && -n "${OPENWEBUI_MODEL:-}" ]]; then
+  READABLE_PROVIDER=1
+elif [[ -x "${OLLAMA_BIN}" ]] && curl -fsS http://127.0.0.1:11434/v1/models >/dev/null 2>&1; then
+  READABLE_PROVIDER=1
+  DOCKER_ARGS+=(--add-host host.docker.internal:host-gateway)
+  if [[ -z "${CASSINI_API_BASE_URL:-}" && -z "${OPENAI_BASE_URL:-}" ]]; then
+    DOCKER_ARGS+=(--env "CASSINI_API_BASE_URL=http://host.docker.internal:11434/v1")
+  fi
+  if [[ -z "${CASSINI_API_KEY:-}" && -z "${OPENAI_API_KEY:-}" && -z "${OPENROUTER_API_KEY:-}" ]]; then
+    DOCKER_ARGS+=(--env "CASSINI_API_KEY=ollama")
+  fi
+  if [[ -z "${CASSINI_API_MODEL:-}" && -z "${OPENAI_MODEL:-}" && -z "${OPENROUTER_MODEL:-}" ]]; then
+    DOCKER_ARGS+=(--env "CASSINI_API_MODEL=${CASSINI_OLLAMA_MODEL:-qwen35-9b-q4:latest}")
+  fi
+fi
+
+if [[ "${READABLE_PROVIDER}" == "1" ]] && ! contains_arg --readable-transcript-name "${EXTRA_ARGS[@]}"; then
+  EXTRA_ARGS+=(--readable-transcript-name transcript.readable.v1.json)
 fi
 
 DOCKER_ARGS+=(
