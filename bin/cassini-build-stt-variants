@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+SOURCE_DIR="${HOME}/cassini-recordings"
+OUTPUT_DIR="${REPO_ROOT}/media/cassini-variants-stt"
+CACHE_ROOT="${CASSINI_CACHE_ROOT:-${HOME}/cassini-cache}"
+VARIANT="all"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  cassini-build-stt-variants [--source-dir DIR] [--output-dir DIR] [--cache-root DIR] [--variant NAME]
+
+Variants:
+  all
+  whisper-small-en
+  whisper-large-v3
+  parakeet-ctc-0.6b
+
+The script expects local raw .mkv meeting recordings. It builds portable .opus
+artifacts via the canon cassini CLI and skips artifacts that already exist.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --source-dir)
+      SOURCE_DIR="$2"
+      shift 2
+      ;;
+    --output-dir)
+      OUTPUT_DIR="$2"
+      shift 2
+      ;;
+    --cache-root)
+      CACHE_ROOT="$2"
+      shift 2
+      ;;
+    --variant)
+      VARIANT="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+SOURCE_DIR="$(readlink -f "$SOURCE_DIR")"
+OUTPUT_DIR="$(readlink -m "$OUTPUT_DIR")"
+CACHE_ROOT="$(readlink -m "$CACHE_ROOT")"
+
+if [[ ! -d "$SOURCE_DIR" ]]; then
+  echo "source directory not found: $SOURCE_DIR" >&2
+  exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR" "$CACHE_ROOT/whisper/.locks"
+
+check_health() {
+  local url="$1"
+  local label="$2"
+  if ! curl -fsS "${url}/healthz" >/dev/null; then
+    echo "service unavailable for ${label}: ${url}/healthz" >&2
+    exit 1
+  fi
+}
+
+build_one() {
+  local source_path="$1"
+  local suffix="$2"
+  local engine="$3"
+  local model_id="$4"
+  local service_port="$5"
+
+  local base_name out_path
+  base_name="$(basename "$source_path" .mkv)"
+  out_path="${OUTPUT_DIR}/${base_name}--stt-${suffix}.opus"
+
+  if [[ -f "$out_path" ]]; then
+    printf 'skip %s -> %s\n' "$base_name" "$(basename "$out_path")"
+    return 0
+  fi
+
+  printf 'build %s -> %s\n' "$base_name" "$(basename "$out_path")"
+  env \
+    CASSINI_CACHE_ROOT="$CACHE_ROOT" \
+    CASSINI_TRANSCRIBER_BACKEND=http \
+    CASSINI_TRANSCRIBER_URL="http://host.docker.internal:${service_port}/v1/transcribe" \
+    CASSINI_TRANSCRIBER_ENGINE="$engine" \
+    CASSINI_TRANSCRIBER_MODEL_ID="$model_id" \
+    CASSINI_READABLE_BACKEND=none \
+    "${REPO_ROOT}/bin/cassini" build "$source_path" -out "$out_path"
+}
+
+build_variant() {
+  local variant_name="$1"
+  local label engine model_id service_port suffix local_health_url
+
+  case "$variant_name" in
+    whisper-small-en)
+      label="Whisper small.en"
+      engine="faster-whisper"
+      model_id="small.en"
+      service_port="29175"
+      suffix="whisper-small-en"
+      local_health_url="http://127.0.0.1:29175"
+      ;;
+    whisper-large-v3)
+      label="Whisper large-v3"
+      engine="faster-whisper"
+      model_id="large-v3"
+      service_port="29176"
+      suffix="whisper-large-v3"
+      local_health_url="http://127.0.0.1:29176"
+      ;;
+    parakeet-ctc-0.6b)
+      label="Parakeet ctc-0.6b"
+      engine="parakeet-nemo"
+      model_id="nvidia/parakeet-ctc-0.6b"
+      service_port="29177"
+      suffix="parakeet-ctc-0.6b"
+      local_health_url="http://127.0.0.1:29177"
+      ;;
+    *)
+      echo "unsupported variant: $variant_name" >&2
+      exit 2
+      ;;
+  esac
+
+  check_health "$local_health_url" "$label"
+
+  mapfile -t mkvs < <(find "$SOURCE_DIR" -maxdepth 1 -type f -name '*.mkv' | sort)
+  if [[ "${#mkvs[@]}" -eq 0 ]]; then
+    echo "no .mkv recordings found in $SOURCE_DIR" >&2
+    exit 1
+  fi
+
+  for source_path in "${mkvs[@]}"; do
+    build_one "$source_path" "$suffix" "$engine" "$model_id" "$service_port"
+  done
+}
+
+if [[ "$VARIANT" == "all" ]]; then
+  build_variant whisper-small-en
+  build_variant whisper-large-v3
+  build_variant parakeet-ctc-0.6b
+else
+  build_variant "$VARIANT"
+fi

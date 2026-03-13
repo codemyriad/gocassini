@@ -140,6 +140,13 @@ class ManifestTests(unittest.TestCase):
             readable_name="transcript.readable.v1.json",
             captions_name="captions.vtt",
             timeline_name="timeline.map.v1.json",
+            provenance={
+                "speechToText": {
+                    "backend": "local-whisper",
+                    "engine": "faster-whisper",
+                    "model": "large-v3",
+                }
+            },
             speaker_count=4,
             chunk_count=12,
             segment_count=34,
@@ -159,6 +166,7 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(manifest["wordCount"], 567)
         self.assertEqual(manifest["timelineSegmentCount"], 89)
         self.assertEqual(manifest["silenceReductionMs"], 25_000)
+        self.assertEqual(manifest["provenance"]["speechToText"]["model"], "large-v3")
 
 
 class TimelineIntegrationTests(unittest.TestCase):

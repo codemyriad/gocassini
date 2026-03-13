@@ -44,6 +44,10 @@ class CLITests(unittest.TestCase):
             "small",
             "--whisper-device",
             "cuda",
+            "--transcriber-engine",
+            "faster-whisper",
+            "--transcriber-model-id",
+            "small",
         ]
         with (
             patch.object(sys, "argv", argv),
@@ -72,6 +76,8 @@ class CLITests(unittest.TestCase):
         self.assertEqual(kwargs["transcriber_backend"], "local-whisper")
         self.assertEqual(kwargs["whisper_model"], "small")
         self.assertEqual(kwargs["whisper_device"], "cuda")
+        self.assertEqual(kwargs["transcriber_engine"], "faster-whisper")
+        self.assertEqual(kwargs["transcriber_model_id"], "small")
 
     def test_readable_backend_none_disables_readable_output(self) -> None:
         argv = [

@@ -108,10 +108,10 @@ if [[ "${REBUILD}" == "1" ]] || ! "${DOCKER_BIN}" image inspect "${IMAGE_TAG}" >
     "${PROJECT_DIR}/bin/docker-build.sh"
 fi
 
-if ! contains_arg --transcriber-backend "${EXTRA_ARGS[@]}"; then
+if ! contains_arg --transcriber-backend "${EXTRA_ARGS[@]}" && [[ -z "${CASSINI_TRANSCRIBER_BACKEND:-}" && -z "${CASSINI_TRANSCRIBER_URL:-}" ]]; then
   EXTRA_ARGS+=(--transcriber-backend local-whisper)
 fi
-if ! contains_arg --whisper-device "${EXTRA_ARGS[@]}"; then
+if ! contains_arg --whisper-device "${EXTRA_ARGS[@]}" && [[ -z "${CASSINI_WHISPER_DEVICE:-}" ]]; then
   EXTRA_ARGS+=(--whisper-device "${WHISPER_DEVICE}")
 fi
 if ! contains_arg --whisper-download-root "${EXTRA_ARGS[@]}"; then
@@ -121,7 +121,18 @@ if ! contains_arg --keep-work-dir "${EXTRA_ARGS[@]}" && ! contains_arg --work-di
   EXTRA_ARGS+=(--keep-work-dir)
 fi
 
+if [[ -n "${CASSINI_TRANSCRIBER_URL:-}" ]] || contains_arg --transcriber-url "${EXTRA_ARGS[@]}"; then
+  DOCKER_ARGS+=(--add-host host.docker.internal:host-gateway)
+fi
+
 for passthrough_env in \
+  CASSINI_TRANSCRIBER_BACKEND \
+  CASSINI_TRANSCRIBER_URL \
+  CASSINI_TRANSCRIBER_ENGINE \
+  CASSINI_TRANSCRIBER_MODEL_ID \
+  CASSINI_WHISPER_MODEL \
+  CASSINI_WHISPER_DEVICE \
+  CASSINI_WHISPER_LANGUAGE \
   CASSINI_READABLE_BACKEND \
   CASSINI_READABLE_TRANSCRIPT_NAME \
   CASSINI_API_BASE_URL \

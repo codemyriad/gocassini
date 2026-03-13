@@ -6,7 +6,7 @@
 - one canonical `transcript.words.v1.json`,
 - one optional cleaned `transcript.readable.v1.json`,
 - one derived `captions.vtt`,
-- one small `manifest.json` with digest/transcript summary metadata.
+- one small `manifest.json` with digest/transcript summary metadata and provenance for the STT and cleanup steps.
 
 If you are using Cassini as a product from this repo checkout, the user-facing
 entry point is the root CLI:
@@ -136,6 +136,7 @@ Useful flags:
 
 - `--keep-work-dir` keeps extracted per-speaker WAV files and raw transcription responses.
 - `--transcriber-backend` supports `auto`, `http`, and `local-whisper`.
+- `--transcriber-engine` and `--transcriber-model-id` let HTTP-backed STT runs record the real engine and model used, for example `parakeet` vs Whisper.
 - `--whisper-model auto` currently resolves to `large-v3` because quality is preferred over speed by default.
 - `--whisper-device auto` prefers `cuda` when NVIDIA is available, else `cpu`.
 - `--whisper-download-root` controls local model cache placement.
@@ -172,8 +173,14 @@ Local runtime environment variables:
 export CASSINI_TRANSCRIBER_BACKEND=local-whisper
 export CASSINI_WHISPER_MODEL=auto
 export CASSINI_WHISPER_DEVICE=auto
+export CASSINI_TRANSCRIBER_ENGINE=faster-whisper
+export CASSINI_TRANSCRIBER_MODEL_ID=large-v3
 export CASSINI_READABLE_BACKEND=none
 ```
+
+For HTTP STT services that front multiple recognizers, set both
+`CASSINI_TRANSCRIBER_ENGINE` and `CASSINI_TRANSCRIBER_MODEL_ID` so the resulting
+artifact and portable `.opus` can later be inspected and compared accurately.
 
 OpenRouter-backed readable transcript run:
 

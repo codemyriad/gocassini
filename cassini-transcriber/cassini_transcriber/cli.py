@@ -51,6 +51,16 @@ def parse_args() -> argparse.Namespace:
         help="Optional forced Whisper language code such as 'en'",
     )
     parser.add_argument(
+        "--transcriber-engine",
+        default=os.getenv("CASSINI_TRANSCRIBER_ENGINE"),
+        help="Optional explicit STT engine label for provenance, especially for opaque HTTP backends",
+    )
+    parser.add_argument(
+        "--transcriber-model-id",
+        default=os.getenv("CASSINI_TRANSCRIBER_MODEL_ID"),
+        help="Optional explicit STT model id for provenance, especially for opaque HTTP backends",
+    )
+    parser.add_argument(
         "--readable-backend",
         choices=(
             "auto",
@@ -335,6 +345,8 @@ def main() -> int:
         whisper_device=args.whisper_device,
         whisper_download_root=args.whisper_download_root,
         whisper_language=args.whisper_language,
+        transcriber_engine=args.transcriber_engine,
+        transcriber_model_id=args.transcriber_model_id,
         audio_name=args.audio_name,
         transcript_name=args.transcript_name,
         readable_transcript_name=args.readable_transcript_name,

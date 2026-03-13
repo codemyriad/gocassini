@@ -13,6 +13,11 @@ from typing import Any
 
 from .common import seconds_to_ms
 from .llm import build_readable_transcript_payload
+from .provenance import (
+    build_artifact_provenance,
+    build_readable_cleanup_provenance,
+    build_speech_to_text_provenance,
+)
 from .readable import create_readable_client, resolve_readable_backend
 from .speech_activity import TranscriptionChunk, detect_active_spans, plan_transcription_chunks
 from .timeline import TimeSpan, TimelineMap, build_digest_timeline_map
@@ -724,6 +729,7 @@ def build_manifest(
     readable_name: str | None,
     captions_name: str,
     timeline_name: str | None,
+    provenance: dict[str, Any] | None,
     speaker_count: int,
     chunk_count: int,
     segment_count: int,
@@ -742,7 +748,7 @@ def build_manifest(
     if timeline_name:
         files["timeline"] = timeline_name
 
-    return {
+    manifest = {
         "version": "cassini.meeting-artifact.v1",
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "source": {
@@ -758,6 +764,9 @@ def build_manifest(
         "digestDurationMs": digest_duration_ms,
         "silenceReductionMs": max(0, source_duration_ms - digest_duration_ms),
     }
+    if provenance:
+        manifest["provenance"] = provenance
+    return manifest
 
 
 def has_nvidia_gpu() -> bool:
@@ -797,6 +806,8 @@ def resolve_transcriber_backend(
         resolved_model = "large-v3"
 
     return resolved_backend, resolved_device, resolved_model
+
+
 def build_meeting_artifact(
     *,
     input_path: Path,
@@ -807,6 +818,8 @@ def build_meeting_artifact(
     whisper_device: str = "auto",
     whisper_download_root: Path | None = None,
     whisper_language: str | None = None,
+    transcriber_engine: str | None = None,
+    transcriber_model_id: str | None = None,
     audio_name: str = "meeting.webm",
     transcript_name: str = "transcript.words.v1.json",
     readable_transcript_name: str | None = None,
@@ -1031,6 +1044,30 @@ def build_meeting_artifact(
                 max_window_ms=readable_max_window_ms,
                 max_window_words=readable_max_window_words,
             )
+        speech_to_text_provenance = build_speech_to_text_provenance(
+            backend=transcriber_backend,
+            transcriber_url=transcriber_url,
+            whisper_model=whisper_model,
+            whisper_device=whisper_device,
+            whisper_language=whisper_language,
+            explicit_engine=transcriber_engine,
+            explicit_model=transcriber_model_id,
+        )
+        readable_cleanup_provenance = build_readable_cleanup_provenance(
+            backend=readable_backend,
+            readable_source="generated" if readable_payload is not None else "disabled",
+            openwebui_base_url=openwebui_base_url,
+            openwebui_model=openwebui_model,
+            api_base_url=api_base_url,
+            api_model=api_model,
+            local_llm_model=local_llm_model,
+            local_llm_device=local_llm_device,
+            ollama_model=ollama_model,
+        )
+        artifact_provenance = build_artifact_provenance(
+            speech_to_text=speech_to_text_provenance,
+            readable_cleanup=readable_cleanup_provenance,
+        )
 
         transcript_output_path.write_text(
             json.dumps(transcript_payload, indent=2, ensure_ascii=False) + "\n",
@@ -1056,6 +1093,7 @@ def build_meeting_artifact(
                 readable_name=readable_transcript_name,
                 captions_name=captions_name,
                 timeline_name=timeline_name,
+                provenance=artifact_provenance,
                 speaker_count=len(speakers),
                 chunk_count=chunk_count,
                 segment_count=len(finalized_segments),
