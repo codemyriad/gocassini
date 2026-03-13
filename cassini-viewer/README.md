@@ -63,8 +63,13 @@ npm run build
 ## Static export
 
 The preferred suite-level entry point for static publishing lives in
-`cassini-publisher`. Build self-contained browser packages from a directory of
-meeting artifacts with:
+`cassini-publisher`. Build self-contained browser packages from:
+
+- directories that already contain `manifest.json`-style meeting artifacts, or
+- processed `.opus` recordings produced by `cassini` (`.opus` files that contain
+  embedded Cassini metadata)
+
+From either source, export a ready-to-serve catalog with:
 
 ```bash
 ./cassini-publisher/bin/export-static-meetings.sh \
@@ -81,12 +86,16 @@ exports/static-meetings/
   assets/...
   meetings/
     daily-meeting--2026-03-04--12-36-53/
-      meeting.webm
+      meeting.opus
       transcript.words.v1.json
       transcript.readable.v1.json
-      captions.vtt
+      captions.vtt (optional)
       ...
 ```
+
+Portable `.opus` inputs are decoded in the exporter and turned into the same
+`transcript.words.v1` contract that the viewer expects, so no extra preprocessing
+is required.
 
 The generated `catalog.json` looks like:
 

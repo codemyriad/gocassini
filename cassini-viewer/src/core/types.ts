@@ -50,6 +50,42 @@ export interface ReadableTranscriptV1 {
   sourceTranscriptVersion?: string;
 }
 
+export type DisplayTranscriptTokenAlignment = "source" | "interpolated" | "none";
+export type DisplayTranscriptTokenKind = "word" | "punctuation";
+
+export interface DisplayTranscriptToken {
+  text: string;
+  spaceBefore: boolean;
+  kind: DisplayTranscriptTokenKind;
+  sourceWordIds: string[];
+  startMs?: number;
+  endMs?: number;
+  alignment?: DisplayTranscriptTokenAlignment;
+}
+
+export interface DisplayTranscriptBlock {
+  id: string;
+  speaker?: string;
+  speakerLabel: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+  sourceSegmentIds: string[];
+  wordCount: number;
+  timedWordCount: number;
+  timingCoverage: number;
+  tokens: DisplayTranscriptToken[];
+}
+
+export interface DisplayTranscriptV1 {
+  version: "transcript.display.v1";
+  media: TranscriptMedia;
+  speakers: TranscriptSpeaker[];
+  blocks: DisplayTranscriptBlock[];
+  sourceTranscriptVersion?: string;
+  sourceReadableTranscriptVersion?: string;
+}
+
 export interface IndexedWord extends TranscriptWord {
   id: string;
   segmentId: string;

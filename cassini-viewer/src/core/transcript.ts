@@ -1,4 +1,7 @@
 import type {
+  DisplayTranscriptBlock,
+  DisplayTranscriptToken,
+  DisplayTranscriptV1,
   IndexedSegment,
   IndexedWord,
   ReadableTranscriptSegment,
@@ -137,6 +140,97 @@ function validateReadableSegment(
   };
 }
 
+function validateDisplayToken(input: unknown, blockId: string, tokenIndex: number): DisplayTranscriptToken {
+  const token = asObject(input, `display block ${blockId} token ${tokenIndex}`);
+  const kind = asString(token.kind, `display block ${blockId} token ${tokenIndex} kind`);
+  if (kind !== "word" && kind !== "punctuation") {
+    fail(`display block ${blockId} token ${tokenIndex} kind must be "word" or "punctuation"`);
+  }
+  const startMs = token.startMs === undefined
+    ? undefined
+    : asInteger(token.startMs, `display block ${blockId} token ${tokenIndex} startMs`);
+  const endMs = token.endMs === undefined
+    ? undefined
+    : asInteger(token.endMs, `display block ${blockId} token ${tokenIndex} endMs`);
+  if ((startMs === undefined) !== (endMs === undefined)) {
+    fail(`display block ${blockId} token ${tokenIndex} must provide both startMs and endMs`);
+  }
+  if (startMs !== undefined && endMs !== undefined && startMs > endMs) {
+    fail(`display block ${blockId} token ${tokenIndex} startMs must be <= endMs`);
+  }
+  const alignment = asOptionalString(
+    token.alignment,
+    `display block ${blockId} token ${tokenIndex} alignment`,
+  );
+  if (
+    alignment !== undefined &&
+    alignment !== "source" &&
+    alignment !== "interpolated" &&
+    alignment !== "none"
+  ) {
+    fail(
+      `display block ${blockId} token ${tokenIndex} alignment must be "source", "interpolated", or "none"`,
+    );
+  }
+  if (!Array.isArray(token.sourceWordIds)) {
+    fail(`display block ${blockId} token ${tokenIndex} sourceWordIds must be an array`);
+  }
+  return {
+    text: asString(token.text, `display block ${blockId} token ${tokenIndex} text`),
+    spaceBefore: Boolean(token.spaceBefore),
+    kind,
+    sourceWordIds: token.sourceWordIds.map((value, sourceIndex) =>
+      asString(value, `display block ${blockId} token ${tokenIndex} sourceWordIds[${sourceIndex}]`),
+    ),
+    startMs,
+    endMs,
+    alignment,
+  };
+}
+
+function validateDisplayBlock(
+  input: unknown,
+  blockIndex: number,
+  speakerIds: Set<string>,
+): DisplayTranscriptBlock {
+  const block = asObject(input, `display block ${blockIndex}`);
+  const id = asString(block.id, `display block ${blockIndex} id`);
+  const speaker = asOptionalString(block.speaker, `display block ${blockIndex} speaker`);
+  if (speaker && !speakerIds.has(speaker)) {
+    fail(`display block ${id} references unknown speaker ${speaker}`);
+  }
+  const startMs = asInteger(block.startMs, `display block ${id} startMs`);
+  const endMs = asInteger(block.endMs, `display block ${id} endMs`);
+  if (startMs > endMs) {
+    fail(`display block ${id} startMs must be <= endMs`);
+  }
+  if (!Array.isArray(block.sourceSegmentIds)) {
+    fail(`display block ${id} sourceSegmentIds must be an array`);
+  }
+  if (!Array.isArray(block.tokens)) {
+    fail(`display block ${id} tokens must be an array`);
+  }
+  const timingCoverage = asOptionalNumber(block.timingCoverage, `display block ${id} timingCoverage`);
+  if (timingCoverage !== undefined && (timingCoverage < 0 || timingCoverage > 1)) {
+    fail(`display block ${id} timingCoverage must be between 0 and 1`);
+  }
+  return {
+    id,
+    speaker,
+    speakerLabel: asString(block.speakerLabel, `display block ${id} speakerLabel`),
+    startMs,
+    endMs,
+    text: asString(block.text, `display block ${id} text`),
+    sourceSegmentIds: block.sourceSegmentIds.map((value, sourceIndex) =>
+      asString(value, `display block ${id} sourceSegmentIds[${sourceIndex}]`),
+    ),
+    wordCount: asInteger(block.wordCount, `display block ${id} wordCount`),
+    timedWordCount: asInteger(block.timedWordCount, `display block ${id} timedWordCount`),
+    timingCoverage: timingCoverage ?? 0,
+    tokens: block.tokens.map((token, tokenIndex) => validateDisplayToken(token, id, tokenIndex)),
+  };
+}
+
 export function validateTranscriptWordsV1(input: unknown): TranscriptWordsV1 {
   const root = asObject(input, "transcript");
   if (root.version !== "transcript.words.v1") {
@@ -229,6 +323,58 @@ export function validateReadableTranscriptV1(input: unknown): ReadableTranscript
     sourceTranscriptVersion: asOptionalString(
       root.sourceTranscriptVersion,
       "readable sourceTranscriptVersion",
+    ),
+  };
+}
+
+export function validateDisplayTranscriptV1(input: unknown): DisplayTranscriptV1 {
+  const root = asObject(input, "display transcript");
+  if (root.version !== "transcript.display.v1") {
+    fail(`version must be "transcript.display.v1"`);
+  }
+
+  const media = asObject(root.media, "display media");
+  const speakersRaw = root.speakers;
+  if (!Array.isArray(speakersRaw)) {
+    fail("display speakers must be an array");
+  }
+  const speakers = speakersRaw.map((speaker, speakerIndex) => {
+    const item = asObject(speaker, `display speaker ${speakerIndex}`);
+    return {
+      id: asString(item.id, `display speaker ${speakerIndex} id`),
+      label: asString(item.label, `display speaker ${speakerIndex} label`),
+    } satisfies TranscriptSpeaker;
+  });
+
+  const speakerIds = new Set<string>();
+  for (const speaker of speakers) {
+    if (speakerIds.has(speaker.id)) {
+      fail(`display speaker id ${speaker.id} is duplicated`);
+    }
+    speakerIds.add(speaker.id);
+  }
+
+  const blocksRaw = root.blocks;
+  if (!Array.isArray(blocksRaw)) {
+    fail("display blocks must be an array");
+  }
+
+  return {
+    version: "transcript.display.v1",
+    media: {
+      src: asString(media.src, "display media.src"),
+      durationMs: asInteger(media.durationMs, "display media.durationMs"),
+      sha256: asOptionalString(media.sha256, "display media.sha256"),
+    },
+    speakers,
+    blocks: blocksRaw.map((block, blockIndex) => validateDisplayBlock(block, blockIndex, speakerIds)),
+    sourceTranscriptVersion: asOptionalString(
+      root.sourceTranscriptVersion,
+      "display sourceTranscriptVersion",
+    ),
+    sourceReadableTranscriptVersion: asOptionalString(
+      root.sourceReadableTranscriptVersion,
+      "display sourceReadableTranscriptVersion",
     ),
   };
 }

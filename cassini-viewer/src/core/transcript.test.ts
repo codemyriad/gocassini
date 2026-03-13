@@ -5,6 +5,7 @@ import {
   getActiveWord,
   parseTimeHash,
   searchSegments,
+  validateDisplayTranscriptV1,
   validateTranscriptWordsV1,
 } from "./transcript";
 
@@ -51,6 +52,65 @@ describe("transcript core", () => {
   it("validates a transcript.words.v1 payload", () => {
     expect(fixture.media.src).toBe("meeting.webm");
     expect(fixture.segments).toHaveLength(2);
+  });
+
+  it("validates a transcript.display.v1 payload", () => {
+    const display = validateDisplayTranscriptV1({
+      version: "transcript.display.v1",
+      media: {
+        src: "meeting.webm",
+        durationMs: 18000,
+      },
+      speakers: [
+        { id: "spk_1", label: "Alice" },
+        { id: "spk_2", label: "Bob" },
+      ],
+      blocks: [
+        {
+          id: "dseg_1",
+          speaker: "spk_1",
+          speakerLabel: "Alice",
+          startMs: 1000,
+          endMs: 4500,
+          text: "Hello everyone.",
+          sourceSegmentIds: ["seg_1"],
+          wordCount: 2,
+          timedWordCount: 2,
+          timingCoverage: 1,
+          tokens: [
+            {
+              text: "Hello",
+              spaceBefore: false,
+              kind: "word",
+              sourceWordIds: ["seg_1:w0"],
+              startMs: 1000,
+              endMs: 1350,
+              alignment: "source",
+            },
+            {
+              text: "everyone",
+              spaceBefore: true,
+              kind: "word",
+              sourceWordIds: ["seg_1:w1"],
+              startMs: 1400,
+              endMs: 1950,
+              alignment: "source",
+            },
+            {
+              text: ".",
+              spaceBefore: false,
+              kind: "punctuation",
+              sourceWordIds: [],
+              alignment: "none",
+            },
+          ],
+        },
+      ],
+      sourceTranscriptVersion: "transcript.words.v1",
+      sourceReadableTranscriptVersion: "transcript.readable.v1",
+    });
+
+    expect(display.blocks[0]?.tokens[1]?.text).toBe("everyone");
   });
 
   it("prefers the latest overlapping segment as active", () => {

@@ -5,6 +5,8 @@
     parseTimeHash,
   } from "./core/transcript";
   import type {
+    DisplayTranscriptToken,
+    DisplayTranscriptV1,
     IndexedWord,
     ReadableTranscriptV1,
     TranscriptIndex,
@@ -26,11 +28,13 @@
     startMs: number;
     endMs: number;
     text: string;
+    tokens: DisplayTranscriptToken[];
     words: IndexedWord[];
     sourceSegmentIds: string[];
   }
 
   let transcriptIndex: TranscriptIndex | null = null;
+  let displayTranscript: DisplayTranscriptV1 | null = null;
   let readableTranscript: ReadableTranscriptV1 | null = null;
   let audioSrc = "";
   let captionsSrc: string | null = null;
@@ -56,10 +60,14 @@
   const CONTINUATION_GAP_MS = 60_000;
 
   $: speakers = transcriptIndex?.transcript.speakers ?? [];
-  $: displaySegments = transcriptIndex ? buildDisplaySegments(transcriptIndex, readableTranscript) : [];
+  $: displaySegments = transcriptIndex
+    ? buildDisplaySegments(transcriptIndex, readableTranscript, displayTranscript)
+    : [];
   $: visibleSegments = displaySegments;
   $: activeSegment = getActiveDisplaySegment(displaySegments, currentTimeMs);
+  $: activeToken = getActiveDisplayToken(activeSegment, currentTimeMs);
   $: activeWord = getActiveDisplayWord(activeSegment, currentTimeMs);
+  $: hasPrecomputedDisplay = displayTranscript !== null;
   $: documentTitle = activeMeeting
     ? `${activeMeeting.title} | Cassini Viewer`
     : catalogMeetings.length > 0
@@ -129,6 +137,7 @@
     playing = false;
     currentTimeMs = 0;
     transcriptIndex = artifact.index;
+    displayTranscript = artifact.displayTranscript;
     readableTranscript = artifact.readableTranscript;
     audioSrc = artifact.audioSrc;
     captionsSrc = artifact.captionsSrc;
@@ -146,6 +155,7 @@
     playing = false;
     currentTimeMs = 0;
     transcriptIndex = null;
+    displayTranscript = null;
     readableTranscript = null;
     audioSrc = "";
     captionsSrc = null;
@@ -294,7 +304,22 @@
   function buildDisplaySegments(
     index: TranscriptIndex,
     readable: ReadableTranscriptV1 | null,
+    display: DisplayTranscriptV1 | null,
   ): DisplaySegment[] {
+    if (display) {
+      return display.blocks.map((block) => ({
+        id: block.id,
+        speaker: block.speaker,
+        speakerLabel: normalizeSpeakerLabel(block.speakerLabel),
+        startMs: block.startMs,
+        endMs: block.endMs,
+        text: block.text,
+        tokens: block.tokens,
+        words: [],
+        sourceSegmentIds: [...block.sourceSegmentIds],
+      }));
+    }
+
     if (!readable) {
       return index.segments.map((segment) => ({
         id: segment.id,
@@ -303,6 +328,7 @@
         startMs: segment.startMs,
         endMs: segment.endMs,
         text: segment.text,
+        tokens: [],
         words: segment.words,
         sourceSegmentIds: [segment.id],
       }));
@@ -324,6 +350,7 @@
         startMs: segment.startMs,
         endMs: segment.endMs,
         text: segment.text,
+        tokens: [],
         words,
         sourceSegmentIds: [...segment.sourceSegmentIds],
       };
@@ -347,11 +374,33 @@
     return winner;
   }
 
+  function getActiveDisplayToken(
+    segment: DisplaySegment | null,
+    timeMs: number,
+  ): DisplayTranscriptToken | null {
+    if (!segment || segment.tokens.length === 0) {
+      return null;
+    }
+    let winner: DisplayTranscriptToken | null = null;
+    for (const token of segment.tokens) {
+      if (token.startMs === undefined || token.endMs === undefined) {
+        continue;
+      }
+      if (token.startMs <= timeMs && timeMs <= token.endMs) {
+        return token;
+      }
+      if (token.startMs <= timeMs) {
+        winner = token;
+      }
+    }
+    return winner;
+  }
+
   function getActiveDisplayWord(
     segment: DisplaySegment | null,
     timeMs: number,
   ): IndexedWord | null {
-    if (!segment || !showExactWords) {
+    if (!segment || !showExactWords || segment.tokens.length > 0) {
       return null;
     }
     let winner: IndexedWord | null = null;
@@ -408,7 +457,13 @@
     <div class="info-strip">
       <span class="info-pill">
         {#if transcriptIndex}
-          {readableTranscript ? "Readable + exact timing" : "Canonical timing"}
+          {#if displayTranscript}
+            Cleaned text + word timing
+          {:else if readableTranscript}
+            Readable + exact timing
+          {:else}
+            Canonical timing
+          {/if}
         {:else if catalogMeetings.length > 0}
           Runtime catalog
         {:else}
@@ -465,7 +520,9 @@
         <div>
           <p class="eyebrow">Transcript</p>
           <p class="transcript-summary">
-            {#if activeMeeting && readableTranscript}
+            {#if activeMeeting && displayTranscript}
+              Cleaned transcript with word-level playback highlighting. Click a word or time stamp to seek.
+            {:else if activeMeeting && readableTranscript}
               Readable transcript first. Click any passage to seek. Press space to play or pause.
             {:else if activeMeeting}
               Canonical timed transcript. Click any passage to seek the audio. Press space to play or pause.
@@ -519,11 +576,38 @@
                 </button>
               </div>
 
-              <button class="segment-text" on:click={() => seekTo(segment.startMs)} type="button">
-                {segment.text}
-              </button>
+              {#if segment.tokens.length > 0}
+                <div class="segment-text token-flow">
+                  {#each segment.tokens as token}
+                    {#if token.startMs !== undefined && token.endMs !== undefined}
+                      <button
+                        class:active-token={segment.id === activeSegment?.id && token === activeToken}
+                        class:interpolated-token={token.alignment === "interpolated"}
+                        class:space-before={token.spaceBefore}
+                        class="token-button"
+                        on:click={() => seekTo(token.startMs ?? segment.startMs)}
+                        type="button"
+                      >
+                        {token.text}
+                      </button>
+                    {:else}
+                      <span
+                        class:space-before={token.spaceBefore}
+                        class:untimed-word={token.kind === "word"}
+                        class="token-text"
+                      >
+                        {token.text}
+                      </span>
+                    {/if}
+                  {/each}
+                </div>
+              {:else}
+                <button class="segment-text" on:click={() => seekTo(segment.startMs)} type="button">
+                  {segment.text}
+                </button>
+              {/if}
 
-              {#if showExactWords && segment.words.length > 0}
+              {#if !hasPrecomputedDisplay && showExactWords && segment.words.length > 0}
                 <div class="word-row">
                   {#each segment.words as word}
                     <button
@@ -600,7 +684,7 @@
             Auto-scroll: off
           {/if}
         </button>
-        {#if readableTranscript}
+        {#if readableTranscript && !hasPrecomputedDisplay}
           <button on:click={() => (showExactWords = !showExactWords)} type="button">
             {showExactWords ? "Exact words: on" : "Exact words: off"}
           </button>
@@ -766,6 +850,7 @@
   .player-actions button,
   .speaker-tag,
   .time-chip,
+  .token-button,
   .word {
     border: 1px solid rgba(93, 82, 66, 0.16);
     border-radius: 0.8rem;
@@ -780,6 +865,7 @@
   .player-actions button:hover,
   .speaker-tag:hover,
   .time-chip:hover,
+  .token-button:hover,
   .word:hover {
     transform: translateY(-1px);
     border-color: rgba(130, 96, 42, 0.4);
@@ -909,6 +995,52 @@
     outline: 2px solid rgba(180, 112, 58, 0.38);
     outline-offset: 4px;
     border-radius: 0.4rem;
+  }
+
+  .token-flow {
+    display: block;
+  }
+
+  .token-button,
+  .token-text {
+    display: inline;
+    padding: 0;
+    border: none;
+    background: none;
+    border-radius: 0.4rem;
+    font: inherit;
+    font-size: 1.06rem;
+    line-height: 1.72;
+    color: #2f2d27;
+  }
+
+  .token-button {
+    cursor: pointer;
+  }
+
+  .token-button.space-before,
+  .token-text.space-before {
+    margin-left: 0.28em;
+  }
+
+  .token-button:hover {
+    background: rgba(236, 208, 171, 0.3);
+  }
+
+  .token-button.active-token {
+    background: rgba(236, 208, 171, 0.88);
+    box-shadow: inset 0 0 0 1px rgba(186, 96, 44, 0.34);
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 0.16em;
+  }
+
+  .token-button.interpolated-token {
+    border-bottom: 1px dashed rgba(186, 96, 44, 0.45);
+  }
+
+  .token-text.untimed-word {
+    color: #544c40;
   }
 
   .word-row {

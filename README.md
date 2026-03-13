@@ -95,6 +95,19 @@ Browse an already-generated sample site from this checkout:
 ./bin/cassini serve ./cassini-viewer/exports/static-meetings
 ```
 
+If you have processed `.opus` recordings, build a browser view of them in one step:
+
+```bash
+cd cassini-viewer
+npm install
+npm run build
+node ./scripts/export-static-meetings.mjs \
+  --source-dir /path/to/your/processed-opus \
+  --output-dir /tmp/cassini-opus-view
+cd ..
+./bin/cassini serve /tmp/cassini-opus-view
+```
+
 ## Advanced Flow
 
 If you want to keep the internal working artifacts visible, you can still use
