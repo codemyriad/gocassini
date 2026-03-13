@@ -47,6 +47,9 @@ func TestInspectPathPortableMeetingOpus(t *testing.T) {
 	if !strings.Contains(out.String(), "payload encoding=base64url+gzip+utf8json") {
 		t.Fatalf("expected gzip payload encoding, got %q", out.String())
 	}
+	if !strings.Contains(out.String(), "speech_to_text backend=local-whisper engine=faster-whisper model=large-v3") {
+		t.Fatalf("expected speech-to-text provenance, got %q", out.String())
+	}
 }
 
 func TestInspectPathPortableMeetingOpusDetectsStaleAudio(t *testing.T) {
@@ -160,6 +163,21 @@ func createPortableOpusFixture(t *testing.T, outPath string, stale bool) string 
 			Items: []portable.TranscriptItem{
 				{Speaker: "spk1", StartMS: 0, EndMS: 120, Text: "Hello"},
 				{Speaker: "spk1", StartMS: 140, EndMS: 260, Text: "team"},
+			},
+		},
+		Provenance: &portable.Provenance{
+			SpeechToText: &portable.ProcessingStep{
+				Backend:  "local-whisper",
+				Engine:   "faster-whisper",
+				Model:    "large-v3",
+				Device:   "cuda",
+				Language: "en",
+			},
+			ReadableCleanup: &portable.ProcessingStep{
+				Backend: "local-llama-cli",
+				Engine:  "llama.cpp",
+				Model:   "model-Q4_K_M.gguf",
+				Source:  "generated",
 			},
 		},
 	})

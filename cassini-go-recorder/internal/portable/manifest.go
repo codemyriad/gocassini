@@ -33,10 +33,29 @@ type Manifest struct {
 	Integrity          Integrity        `json:"integrity"`
 	Speakers           []Speaker        `json:"speakers"`
 	Transcript         Transcript       `json:"transcript"`
+	Provenance         *Provenance      `json:"provenance,omitempty"`
 	ReadableTranscript map[string]any   `json:"readableTranscript,omitempty"`
 	Chapters           []Chapter        `json:"chapters,omitempty"`
 	Summary            map[string]any   `json:"summary,omitempty"`
 	Attachments        []map[string]any `json:"attachments,omitempty"`
+}
+
+type Provenance struct {
+	SpeechToText      *ProcessingStep `json:"speechToText,omitempty"`
+	ReadableCleanup   *ProcessingStep `json:"readableCleanup,omitempty"`
+	DisplayTranscript *ProcessingStep `json:"displayTranscript,omitempty"`
+}
+
+type ProcessingStep struct {
+	Backend  string `json:"backend,omitempty"`
+	Engine   string `json:"engine,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Device   string `json:"device,omitempty"`
+	Language string `json:"language,omitempty"`
+	BaseURL  string `json:"baseUrl,omitempty"`
+	Host     string `json:"host,omitempty"`
+	Source   string `json:"source,omitempty"`
+	Version  string `json:"version,omitempty"`
 }
 
 type Meeting struct {
@@ -213,11 +232,42 @@ func BuildOpusTags(manifest Manifest, payload EncodedPayload) map[string]string 
 		tags["LANGUAGE"] = language
 		tags["CASSINI_TRANSCRIPT_LANGUAGE"] = language
 	}
+	if manifest.Provenance != nil {
+		applyProcessingStepTags(tags, "CASSINI_STT", manifest.Provenance.SpeechToText)
+		applyProcessingStepTags(tags, "CASSINI_READABLE", manifest.Provenance.ReadableCleanup)
+	}
 
 	for idx, chunk := range payload.Chunks {
 		tags[fmt.Sprintf("CASSINI_PAYLOAD_%03d", idx)] = chunk
 	}
 	return tags
+}
+
+func applyProcessingStepTags(tags map[string]string, prefix string, step *ProcessingStep) {
+	if step == nil {
+		return
+	}
+	if value := firstNonEmpty(step.Backend); value != "" {
+		tags[prefix+"_BACKEND"] = value
+	}
+	if value := firstNonEmpty(step.Engine); value != "" {
+		tags[prefix+"_ENGINE"] = value
+	}
+	if value := firstNonEmpty(step.Model); value != "" {
+		tags[prefix+"_MODEL"] = value
+	}
+	if value := firstNonEmpty(step.Device); value != "" {
+		tags[prefix+"_DEVICE"] = value
+	}
+	if value := firstNonEmpty(step.Language); value != "" {
+		tags[prefix+"_LANGUAGE"] = value
+	}
+	if value := firstNonEmpty(step.Host); value != "" {
+		tags[prefix+"_HOST"] = value
+	}
+	if value := firstNonEmpty(step.Source); value != "" {
+		tags[prefix+"_SOURCE"] = value
+	}
 }
 
 func firstNonEmpty(values ...string) string {

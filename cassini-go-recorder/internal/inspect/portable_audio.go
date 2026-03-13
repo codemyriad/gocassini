@@ -158,9 +158,29 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 		audio.Container, audio.Codec, integrity.SampleRate, integrity.Channels, integrity.DurationMS, blankDash(integrity.PCMHashSHA256))
 	fmt.Fprintf(out, "payload encoding=%s schema=%s chunks=%d raw_bytes=%d compressed_bytes=%d sha256=%s language=%s\n",
 		payload.Encoding, blankDash(payload.Schema), payload.ChunkCount, payload.RawBytes, payload.CompressedBytes, blankDash(payload.SHA256), language)
+	if manifest.Provenance != nil {
+		printProcessingStep(out, "speech_to_text", manifest.Provenance.SpeechToText)
+		printProcessingStep(out, "readable_cleanup", manifest.Provenance.ReadableCleanup)
+	}
 	for _, warning := range integrity.Warnings {
 		fmt.Fprintf(out, "warning=%s\n", warning)
 	}
+}
+
+func printProcessingStep(out io.Writer, label string, step *portable.ProcessingStep) {
+	if step == nil {
+		return
+	}
+	fmt.Fprintf(out, "%s backend=%s engine=%s model=%s device=%s language=%s source=%s host=%s\n",
+		label,
+		blankDash(step.Backend),
+		blankDash(step.Engine),
+		blankDash(step.Model),
+		blankDash(step.Device),
+		blankDash(step.Language),
+		blankDash(step.Source),
+		blankDash(step.Host),
+	)
 }
 
 func probePortableAudio(path string) (probedPortableAudio, error) {

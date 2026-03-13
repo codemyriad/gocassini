@@ -134,6 +134,14 @@ The following tags are RECOMMENDED summary tags:
 - `CASSINI_SPEAKER_COUNT=<decimal integer>`
 - `CASSINI_WORD_COUNT=<decimal integer>`
 - `CASSINI_TRANSCRIPT_LANGUAGE=<BCP-47 tag or simple language code>`
+- `CASSINI_STT_BACKEND=<stt backend>`
+- `CASSINI_STT_ENGINE=<stt engine>`
+- `CASSINI_STT_MODEL=<stt model>`
+- `CASSINI_STT_DEVICE=<stt device>`
+- `CASSINI_READABLE_BACKEND=<cleanup backend>`
+- `CASSINI_READABLE_ENGINE=<cleanup engine>`
+- `CASSINI_READABLE_MODEL=<cleanup model>`
+- `CASSINI_READABLE_SOURCE=<generated|embedded|disabled>`
 
 ### Payload chunk tags
 
@@ -196,6 +204,7 @@ The top-level fields are:
 
 Optional fields:
 
+- `provenance`
 - `readableTranscript`
 - `chapters`
 - `summary`
@@ -263,6 +272,29 @@ The embedded transcript is the source of truth.
 
 Derived views such as readable transcript and captions MUST be treated as
 optional derived material.
+
+### `provenance`
+
+The optional `provenance` object SHOULD record which systems generated Cassini's
+metadata layers so users can inspect a file and see what produced it.
+
+V1 producers SHOULD populate:
+
+- `speechToText`
+- `readableCleanup`
+- `displayTranscript`
+
+Each processing step MAY include:
+
+- `backend`
+- `engine`
+- `model`
+- `device`
+- `language`
+- `baseUrl`
+- `host`
+- `source`
+- `version`
 
 ## Integrity Rules
 

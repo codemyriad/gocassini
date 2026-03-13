@@ -36,7 +36,8 @@ type portableMeetingArtifact struct {
 		Basename   string `json:"basename"`
 		DurationMS int64  `json:"durationMs"`
 	} `json:"source"`
-	Files struct {
+	Provenance *portable.Provenance `json:"provenance"`
+	Files      struct {
 		Audio              string `json:"audio"`
 		Transcript         string `json:"transcript"`
 		ReadableTranscript string `json:"readableTranscript"`
@@ -382,6 +383,7 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 			WordCount: len(items),
 			Items:     items,
 		},
+		Provenance: source.Artifact.Provenance,
 	})
 	if source.ReadableTranscript != nil {
 		manifest.ReadableTranscript = source.ReadableTranscript

@@ -49,6 +49,20 @@ func TestLoadPortableMeetingSourceIncludesReadableTranscript(t *testing.T) {
 			"basename":   "meeting.mkv",
 			"durationMs": 1234,
 		},
+		"provenance": map[string]any{
+			"speechToText": map[string]any{
+				"backend": "local-whisper",
+				"engine":  "faster-whisper",
+				"model":   "large-v3",
+				"device":  "cuda",
+			},
+			"readableCleanup": map[string]any{
+				"backend": "local-llama-cli",
+				"engine":  "llama.cpp",
+				"model":   "model-Q4_K_M.gguf",
+				"source":  "generated",
+			},
+		},
 		"files": map[string]any{
 			"audio":              "meeting.webm",
 			"transcript":         "transcript.words.v1.json",
@@ -81,6 +95,12 @@ func TestLoadPortableMeetingSourceIncludesReadableTranscript(t *testing.T) {
 	}
 	if got := manifest.ReadableTranscript["version"]; got != "transcript.readable.v1" {
 		t.Fatalf("expected readable transcript in manifest, got %v", got)
+	}
+	if manifest.Provenance == nil || manifest.Provenance.SpeechToText == nil {
+		t.Fatalf("expected provenance to be carried into portable manifest")
+	}
+	if got := manifest.Provenance.SpeechToText.Model; got != "large-v3" {
+		t.Fatalf("expected speech to text model provenance, got %q", got)
 	}
 }
 
