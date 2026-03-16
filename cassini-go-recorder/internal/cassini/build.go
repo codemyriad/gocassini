@@ -7,11 +7,18 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"gocassini/internal/transcribe"
 )
+
+// buildArtifactFn is the function used to transcribe an MKV into a bundle
+// directory. Overridable in tests.
+var buildArtifactFn = func(ctx context.Context, mkvPath, outputDir string, cfg transcribe.BuildConfig, stdout io.Writer) error {
+	return transcribe.BuildMeetingArtifact(ctx, mkvPath, outputDir, cfg, stdout)
+}
 
 type buildOptions struct {
 	inputPath string
@@ -31,7 +38,7 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs.StringVar(&opts.outDir, "out", "", "output .meeting bundle directory or portable .opus file")
 	fs.StringVar(&opts.device, "device", "auto", "transcriber device: auto, cpu, cuda")
 	fs.BoolVar(&opts.keepWork, "keep-work", false, "keep transcriber work files inside the meeting bundle")
-	fs.BoolVar(&opts.rebuild, "rebuild-image", false, "force rebuild of the transcriber container image")
+	fs.BoolVar(&opts.rebuild, "rebuild-image", false, "ignored (kept for compatibility)")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini build ./runs/meeting.run --out "./2026-03-11 Weekly Sync.opus"
@@ -233,30 +240,6 @@ func resolveBuildInput(inputPath string) (buildInput, error) {
 	}, nil
 }
 
-func transcriberRunnerPath() (string, error) {
-	if override := os.Getenv("CASSINI_TRANSCRIBER_RUNNER"); override != "" {
-		resolved, err := filepath.Abs(override)
-		if err != nil {
-			return "", fmt.Errorf("resolve CASSINI_TRANSCRIBER_RUNNER: %w", err)
-		}
-		return resolved, nil
-	}
-
-	repoRoot, err := findRepoRoot()
-	if err != nil {
-		return "", err
-	}
-	path := filepath.Join(repoRoot, "cassini-transcriber", "bin", "docker-run-local.sh")
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", fmt.Errorf("transcriber runner not found at %s: %w", path, err)
-	}
-	if info.Mode()&0o111 == 0 {
-		return "", fmt.Errorf("transcriber runner is not executable: %s", path)
-	}
-	return path, nil
-}
-
 func runDoctorChecks(target string, stdout io.Writer) error {
 	checks := collectDoctorChecks(target)
 	hasFail := false
@@ -278,31 +261,12 @@ func runDoctorChecks(target string, stdout io.Writer) error {
 func executeBuildIntoBundle(ctx context.Context, input buildInput, bundle MeetingBundle, opts buildOptions, stdout, stderr io.Writer) error {
 	_ = UpdateMeetingBundleSource(bundle, input.SourceKind, input.SourcePath, "build")
 
-	runnerPath, err := transcriberRunnerPath()
-	if err != nil {
-		_ = UpdateMeetingBundleStatus(bundle, bundleStateFailed, "resolve-runner", err.Error())
-		return fmt.Errorf("resolve transcriber runner: %w", err)
-	}
+	cfg := transcribe.DefaultBuildConfig()
+	cfg.Device = opts.device
 
-	cmdArgs := []string{
-		"--input", input.RecordingPath,
-		"--output-dir", bundle.RootDir,
-		"--device", opts.device,
-	}
-	if opts.rebuild {
-		cmdArgs = append(cmdArgs, "--rebuild")
-	}
-	cmd := exec.CommandContext(ctx, runnerPath, cmdArgs...)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	cmd.Env = os.Environ()
-	if err := cmd.Run(); err != nil {
+	if err := buildArtifactFn(ctx, input.RecordingPath, bundle.RootDir, cfg, stdout); err != nil {
 		_ = UpdateMeetingBundleStatus(bundle, bundleStateFailed, "build", err.Error())
 		return fmt.Errorf("build failed: %w", err)
-	}
-
-	if !opts.keepWork {
-		_ = os.RemoveAll(filepath.Join(bundle.RootDir, "_work"))
 	}
 
 	if err := FinalizeMeetingBundle(bundle, MeetingBundleManifest{

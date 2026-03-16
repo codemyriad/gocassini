@@ -42,7 +42,7 @@ func findRepoRootFrom(start string) (string, error) {
 
 func validateRepoRoot(root string) error {
 	required := []string{
-		filepath.Join(root, "cassini-transcriber", "bin", "docker-run-local.sh"),
+		filepath.Join(root, "cassini-go-recorder"),
 		filepath.Join(root, "cassini-viewer"),
 	}
 	for _, path := range required {

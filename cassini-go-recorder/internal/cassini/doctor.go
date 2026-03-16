@@ -10,6 +10,8 @@ import (
 	"os/user"
 	"path/filepath"
 	"syscall"
+
+	"gocassini/internal/transcribe"
 )
 
 const (
@@ -110,24 +112,10 @@ func collectDoctorChecks(target string) []doctorCheck {
 	if target == "all" || target == "build" {
 		checks = append(checks, commandCheck("ffmpeg"))
 		checks = append(checks, commandCheck("ffprobe"))
-		checks = append(checks, dockerCheck())
-		checks = append(checks, transcriberRunnerCheck())
-		checks = append(checks, transcriberCacheChecks()...)
+		checks = append(checks, sttModelCacheChecks()...)
 	}
 
 	return checks
-}
-
-func transcriberRunnerCheck() doctorCheck {
-	path, err := transcriberRunnerPath()
-	if err != nil {
-		return doctorCheck{
-			status:  doctorFail,
-			summary: fmt.Sprintf("transcriber runner unavailable: %v", err),
-			advice:  "run from a full repo checkout or set CASSINI_TRANSCRIBER_RUNNER to an executable runner script",
-		}
-	}
-	return doctorCheck{status: doctorOK, summary: fmt.Sprintf("transcriber runner available at %s", path)}
 }
 
 func writableDirCheck(path string, label string) doctorCheck {
@@ -187,45 +175,19 @@ func commandCheck(name string) doctorCheck {
 	return doctorCheck{status: doctorOK, summary: fmt.Sprintf("%s available at %s", name, path)}
 }
 
-func dockerCheck() doctorCheck {
-	path, err := exec.LookPath("docker")
-	if err != nil {
-		return doctorCheck{
-			status:  doctorFail,
-			summary: "docker not found in PATH",
-			advice:  "install Docker and ensure the docker CLI is on PATH",
-		}
-	}
-	cmd := exec.Command(path, "info", "--format", "{{.ServerVersion}}")
-	if err := cmd.Run(); err != nil {
-		return doctorCheck{
-			status:  doctorFail,
-			summary: fmt.Sprintf("docker installed but not usable: %v", err),
-			advice:  "start the Docker daemon or Docker Desktop, then rerun cassini doctor",
-		}
-	}
-	return doctorCheck{status: doctorOK, summary: fmt.Sprintf("docker usable via %s", path)}
-}
-
-func transcriberCacheChecks() []doctorCheck {
-	root := defaultTranscriberCacheRoot()
-	whisperRoot := filepath.Join(root, "whisper")
+func sttModelCacheChecks() []doctorCheck {
+	cacheRoot := defaultCassiniCacheRoot()
 	checks := []doctorCheck{
-		parentWritableCheck(root, "transcriber cache root"),
-		parentWritableCheck(whisperRoot, "whisper cache root"),
+		parentWritableCheck(cacheRoot, "cassini cache root"),
 	}
 
-	locksDir := filepath.Join(whisperRoot, ".locks")
-	if info, err := os.Stat(locksDir); err == nil && info.IsDir() {
-		check := writableDirCheck(locksDir, "whisper lock directory")
-		if check.status != doctorOK {
-			check.advice = fmt.Sprintf("make %s writable, remove and recreate it, or set CASSINI_CACHE_ROOT to a writable cache directory", locksDir)
-		}
-		checks = append(checks, check)
+	modelDir := filepath.Join(cacheRoot, "models", string(transcribe.ModelParakeet110M))
+	if info, err := os.Stat(modelDir); err == nil && info.IsDir() {
+		checks = append(checks, writableDirCheck(modelDir, "STT model cache"))
 	} else {
-		check := parentWritableCheck(locksDir, "whisper lock directory parent")
+		check := parentWritableCheck(modelDir, "STT model cache parent")
 		if check.status != doctorOK {
-			check.advice = fmt.Sprintf("ensure %s can be created, or set CASSINI_CACHE_ROOT to a writable cache directory", locksDir)
+			check.advice = fmt.Sprintf("ensure %s can be created, or set CASSINI_CACHE_ROOT to a writable cache directory", modelDir)
 		}
 		checks = append(checks, check)
 	}
@@ -260,26 +222,26 @@ func writableDirAdvice(label string, path string) string {
 		return "change into a writable working directory or fix directory permissions before running Cassini"
 	case "temporary directory":
 		return "free space or permissions in the system temp directory, or run with TMPDIR set to a writable location"
-	case "transcriber cache root", "whisper cache root", "whisper lock directory", "whisper lock directory parent":
+	case "cassini cache root", "STT model cache", "STT model cache parent":
 		return fmt.Sprintf("make %s writable or set CASSINI_CACHE_ROOT to a writable cache directory", path)
 	default:
 		return fmt.Sprintf("make %s writable or choose a different writable path", path)
 	}
 }
 
-func defaultTranscriberCacheRoot() string {
+func defaultCassiniCacheRoot() string {
 	if value := os.Getenv("CASSINI_CACHE_ROOT"); value != "" {
 		return value
 	}
 	currentUser, err := user.Current()
 	if err == nil && currentUser.HomeDir != "" {
-		return filepath.Join(currentUser.HomeDir, ".cache", "cassini-transcriber")
+		return filepath.Join(currentUser.HomeDir, ".cache", "cassini")
 	}
 	home, err := os.UserHomeDir()
 	if err == nil && home != "" {
-		return filepath.Join(home, ".cache", "cassini-transcriber")
+		return filepath.Join(home, ".cache", "cassini")
 	}
-	return filepath.Join(".", ".cache", "cassini-transcriber")
+	return filepath.Join(".", ".cache", "cassini")
 }
 
 func formatBytes(value int64) string {

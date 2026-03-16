@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 # Process all MKV recordings in /mnt/data/cassini/recordings/ into portable
-# .opus files in /mnt/data/cassini/processed/ using the cassini-transcriber
-# Docker container (requires NVIDIA GPU via container 100).
+# .opus files in /mnt/data/cassini/processed/ using the native cassini binary
+# with sherpa-onnx for STT.
 #
-# Run this from INSIDE the ai-worker container (CT 100) where Docker is
-# available, or via: sudo pct exec 100 -- bash /workspace/gocassini/ops/process-recordings.sh
+# Set OPENROUTER_API_KEY for LLM-based readable transcript cleanup.
+# Set DEVICE=cuda to use GPU acceleration (default: cpu).
+#
+# Can be run on any host that has ffmpeg, or from inside container 100:
+#   sudo pct exec 100 -- bash /workspace/gocassini/ops/process-recordings.sh
 set -euo pipefail
 
 RECORDINGS_DIR="${RECORDINGS_DIR:-/mnt/data/cassini/recordings}"
 PROCESSED_DIR="${PROCESSED_DIR:-/mnt/data/cassini/processed}"
 CASSINI_BIN="${CASSINI_BIN:-/workspace/gocassini/bin/cassini-bin}"
-DEVICE="${DEVICE:-cuda}"
+DEVICE="${DEVICE:-cpu}"
 
-export CASSINI_TRANSCRIBER_RUNNER="/workspace/gocassini/cassini-transcriber/bin/docker-run-local.sh"
-export CASSINI_CACHE_ROOT="/mnt/data/cassini/.cache"
+export CASSINI_CACHE_ROOT="${CASSINI_CACHE_ROOT:-/mnt/data/cassini/.cache}"
 
 if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
   echo "warn: OPENROUTER_API_KEY not set — readable transcript (LLM cleanup) will be skipped" >&2

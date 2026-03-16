@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"gocassini/internal/config"
+	"gocassini/internal/transcribe"
 )
 
 func TestRootHelpExitsZero(t *testing.T) {
@@ -148,37 +150,15 @@ func TestBuildHelpExitsZero(t *testing.T) {
 
 func TestBuildUsesRunnerOverrideAndWritesMeetingManifest(t *testing.T) {
 	tmp := t.TempDir()
-	runner := filepath.Join(tmp, "fake-runner.sh")
-	if err := os.WriteFile(runner, []byte(`#!/usr/bin/env bash
-set -euo pipefail
-OUTPUT_DIR=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --output-dir)
-      OUTPUT_DIR="$2"
-      shift 2
-      ;;
-    *)
-      shift
-      ;;
-  esac
-done
-mkdir -p "$OUTPUT_DIR"
-printf 'fake' >"$OUTPUT_DIR/meeting.webm"
-printf '{}' >"$OUTPUT_DIR/transcript.words.v1.json"
-printf '{}' >"$OUTPUT_DIR/manifest.json"
-`), 0o755); err != nil {
-		t.Fatalf("write fake runner: %v", err)
-	}
 
 	input := filepath.Join(tmp, "source.mkv")
 	if err := os.WriteFile(input, []byte("fake-mkv"), 0o644); err != nil {
 		t.Fatalf("write input: %v", err)
 	}
 
-	cacheRoot := filepath.Join(tmp, "cache")
-	t.Setenv("CASSINI_TRANSCRIBER_RUNNER", runner)
-	t.Setenv("CASSINI_CACHE_ROOT", cacheRoot)
+	prev := buildArtifactFn
+	buildArtifactFn = fakeSuccessBuildFn(t)
+	t.Cleanup(func() { buildArtifactFn = prev })
 
 	outDir := filepath.Join(tmp, "meeting.meeting")
 	var stdout bytes.Buffer
@@ -204,16 +184,15 @@ func TestBuildPortableUsesRunnerOverrideAndWritesPortableMeeting(t *testing.T) {
 	requireFFMediaTools(t)
 
 	tmp := t.TempDir()
-	runner := writePortableMeetingRunner(t, tmp)
 
 	input := filepath.Join(tmp, "source.mkv")
 	if err := os.WriteFile(input, []byte("fake-mkv"), 0o644); err != nil {
 		t.Fatalf("write input: %v", err)
 	}
 
-	cacheRoot := filepath.Join(tmp, "cache")
-	t.Setenv("CASSINI_TRANSCRIBER_RUNNER", runner)
-	t.Setenv("CASSINI_CACHE_ROOT", cacheRoot)
+	prev := buildArtifactFn
+	buildArtifactFn = fakeSuccessBuildFn(t)
+	t.Cleanup(func() { buildArtifactFn = prev })
 
 	outFile := filepath.Join(tmp, "Weekly Sync.opus")
 	var stdout bytes.Buffer
@@ -241,20 +220,15 @@ func TestBuildPortableNoopsWhenOutputAlreadyReady(t *testing.T) {
 	requireFFMediaTools(t)
 
 	tmp := t.TempDir()
-	successRunner := writePortableMeetingRunner(t, tmp)
-	failingRunner := filepath.Join(tmp, "fail-runner.sh")
-	if err := os.WriteFile(failingRunner, []byte("#!/usr/bin/env bash\nexit 9\n"), 0o755); err != nil {
-		t.Fatalf("write failing runner: %v", err)
-	}
 
 	input := filepath.Join(tmp, "source.mkv")
 	if err := os.WriteFile(input, []byte("fake-mkv"), 0o644); err != nil {
 		t.Fatalf("write input: %v", err)
 	}
 
-	cacheRoot := filepath.Join(tmp, "cache")
-	t.Setenv("CASSINI_CACHE_ROOT", cacheRoot)
-	t.Setenv("CASSINI_TRANSCRIBER_RUNNER", successRunner)
+	prev := buildArtifactFn
+	buildArtifactFn = fakeSuccessBuildFn(t)
+	t.Cleanup(func() { buildArtifactFn = prev })
 
 	outFile := filepath.Join(tmp, "Weekly Sync.opus")
 	var stdout bytes.Buffer
@@ -264,7 +238,9 @@ func TestBuildPortableNoopsWhenOutputAlreadyReady(t *testing.T) {
 		t.Fatalf("expected first build success, got code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
 	}
 
-	t.Setenv("CASSINI_TRANSCRIBER_RUNNER", failingRunner)
+	buildArtifactFn = func(_ context.Context, _, _ string, _ transcribe.BuildConfig, _ io.Writer) error {
+		return fmt.Errorf("build should not be called on second run")
+	}
 	stdout.Reset()
 	stderr.Reset()
 	code = Run(context.Background(), []string{"build", input, "--out", outFile}, &stdout, &stderr)
@@ -280,10 +256,9 @@ func TestRecordPortableWritesPortableMeetingArtifact(t *testing.T) {
 	requireFFMediaTools(t)
 
 	tmp := t.TempDir()
-	runner := writePortableMeetingRunner(t, tmp)
-	cacheRoot := filepath.Join(tmp, "cache")
-	t.Setenv("CASSINI_TRANSCRIBER_RUNNER", runner)
-	t.Setenv("CASSINI_CACHE_ROOT", cacheRoot)
+	prev := buildArtifactFn
+	buildArtifactFn = fakeSuccessBuildFn(t)
+	t.Cleanup(func() { buildArtifactFn = prev })
 
 	prevRecorder := runRecorderApp
 	runRecorderApp = func(_ context.Context, cfg config.Config) error {
@@ -322,19 +297,12 @@ func TestRecordPortableResumesFromReadyRunAfterBuildFailure(t *testing.T) {
 	requireFFMediaTools(t)
 
 	tmp := t.TempDir()
-	failingRunner := filepath.Join(tmp, "fail-runner.sh")
-	if err := os.WriteFile(failingRunner, []byte(`#!/usr/bin/env bash
-set -euo pipefail
-echo "boom" >&2
-exit 7
-`), 0o755); err != nil {
-		t.Fatalf("write failing runner: %v", err)
-	}
-	successRunner := writePortableMeetingRunner(t, tmp)
 
-	cacheRoot := filepath.Join(tmp, "cache")
-	t.Setenv("CASSINI_CACHE_ROOT", cacheRoot)
-	t.Setenv("CASSINI_TRANSCRIBER_RUNNER", failingRunner)
+	prev := buildArtifactFn
+	t.Cleanup(func() { buildArtifactFn = prev })
+	buildArtifactFn = func(_ context.Context, _, _ string, _ transcribe.BuildConfig, _ io.Writer) error {
+		return fmt.Errorf("boom")
+	}
 
 	prevRecorder := runRecorderApp
 	recordCalls := 0
@@ -360,7 +328,7 @@ exit 7
 		t.Fatalf("expected work_dir path on failure, got stderr=%q", stderr.String())
 	}
 
-	t.Setenv("CASSINI_TRANSCRIBER_RUNNER", successRunner)
+	buildArtifactFn = fakeSuccessBuildFn(t)
 	stdout.Reset()
 	stderr.Reset()
 	code = Run(context.Background(), []string{"record", "--call", "https://example.test/room/demo", "--out", outFile}, &stdout, &stderr)
@@ -407,13 +375,11 @@ func TestBuildPortableResumesFromReadyMeetingWorkspace(t *testing.T) {
 		t.Fatalf("write ready meeting bundle: %v", err)
 	}
 
-	failingRunner := filepath.Join(tmp, "fail-runner.sh")
-	if err := os.WriteFile(failingRunner, []byte("#!/usr/bin/env bash\nexit 9\n"), 0o755); err != nil {
-		t.Fatalf("write failing runner: %v", err)
+	prev := buildArtifactFn
+	buildArtifactFn = func(_ context.Context, _, _ string, _ transcribe.BuildConfig, _ io.Writer) error {
+		return fmt.Errorf("build should not be called when workspace is ready")
 	}
-	cacheRoot := filepath.Join(tmp, "cache")
-	t.Setenv("CASSINI_CACHE_ROOT", cacheRoot)
-	t.Setenv("CASSINI_TRANSCRIBER_RUNNER", failingRunner)
+	t.Cleanup(func() { buildArtifactFn = prev })
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -667,80 +633,29 @@ func requireFFMediaTools(t *testing.T) {
 	}
 }
 
-func writePortableMeetingRunner(t *testing.T, dir string) string {
+// fakeSuccessBuildFn returns a buildArtifactFn that creates minimal valid
+// meeting bundle files using ffmpeg (a short sine tone for audio).
+func fakeSuccessBuildFn(t *testing.T) func(context.Context, string, string, transcribe.BuildConfig, io.Writer) error {
 	t.Helper()
-	path := filepath.Join(dir, "portable-runner.sh")
-	if err := os.WriteFile(path, []byte(`#!/usr/bin/env bash
-set -euo pipefail
-OUTPUT_DIR=""
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --output-dir)
-      OUTPUT_DIR="$2"
-      shift 2
-      ;;
-    *)
-      shift
-      ;;
-  esac
-done
-mkdir -p "$OUTPUT_DIR"
-ffmpeg -y -v error -f lavfi -i "sine=frequency=660:sample_rate=48000:duration=0.25" -c:a libopus -application voip "$OUTPUT_DIR/meeting.webm"
-cat >"$OUTPUT_DIR/transcript.words.v1.json" <<'JSON'
-{
-  "version": "transcript.words.v1",
-  "media": {
-    "src": "meeting.webm",
-    "durationMs": 250
-  },
-  "speakers": [
-    {
-      "id": "spk_host",
-      "label": "Host"
-    }
-  ],
-  "segments": [
-    {
-      "speaker": "spk_host",
-      "startMs": 0,
-      "endMs": 200,
-      "text": "hello team",
-      "words": [
-        {
-          "text": "hello",
-          "startMs": 0,
-          "endMs": 80
-        },
-        {
-          "text": "team",
-          "startMs": 100,
-          "endMs": 200
-        }
-      ]
-    }
-  ]
-}
-JSON
-cat >"$OUTPUT_DIR/manifest.json" <<'JSON'
-{
-  "version": "cassini.meeting-artifact.v1",
-  "generatedAt": "2026-03-11T10:00:00Z",
-  "source": {
-    "basename": "source.mkv",
-    "durationMs": 250
-  },
-  "files": {
-    "audio": "meeting.webm",
-    "transcript": "transcript.words.v1.json"
-  },
-  "speakerCount": 1,
-  "wordCount": 2
-}
-JSON
-`), 0o755); err != nil {
-		t.Fatalf("write portable runner: %v", err)
+	return func(_ context.Context, _, outputDir string, _ transcribe.BuildConfig, _ io.Writer) error {
+		if err := os.MkdirAll(outputDir, 0o755); err != nil {
+			return err
+		}
+		if output, err := exec.Command(
+			"ffmpeg", "-y", "-v", "error",
+			"-f", "lavfi", "-i", "sine=frequency=660:sample_rate=48000:duration=0.25",
+			"-c:a", "libopus", "-application", "voip",
+			filepath.Join(outputDir, "meeting.webm"),
+		).CombinedOutput(); err != nil {
+			return fmt.Errorf("fake build audio: %w: %s", err, strings.TrimSpace(string(output)))
+		}
+		transcript := `{"version":"transcript.words.v1","media":{"src":"meeting.webm","durationMs":250},"speakers":[{"id":"spk_host","label":"Host"}],"segments":[{"speaker":"spk_host","startMs":0,"endMs":200,"text":"hello team","words":[{"text":"hello","startMs":0,"endMs":80},{"text":"team","startMs":100,"endMs":200}]}]}`
+		if err := os.WriteFile(filepath.Join(outputDir, "transcript.words.v1.json"), []byte(transcript), 0o644); err != nil {
+			return err
+		}
+		manifest := `{"kind":"cassini.meeting-artifact.v1","version":"1","generatedAt":"2026-03-11T10:00:00Z","source":{"basename":"source.mkv","durationMs":250},"files":{"audio":"meeting.webm","transcript":"transcript.words.v1.json"},"speakerCount":1,"wordCount":2}`
+		return os.WriteFile(filepath.Join(outputDir, "manifest.json"), []byte(manifest), 0o644)
 	}
-	return path
 }
 
 func writeReadyMeetingBundleFixture(meetingDir string, sourcePath string) error {
