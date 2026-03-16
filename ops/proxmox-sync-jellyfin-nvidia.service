@@ -1,0 +1,14 @@
+[Unit]
+Description=Sync NVIDIA passthrough for Jellyfin CT 103
+Documentation=/home/silvio/gocassini/docs/proxmox-jellyfin-nvidia.md
+DefaultDependencies=no
+After=local-fs.target
+Before=pve-guests.service pve-container@103.service
+Wants=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/proxmox-sync-jellyfin-nvidia.sh 103
+
+[Install]
+WantedBy=multi-user.target

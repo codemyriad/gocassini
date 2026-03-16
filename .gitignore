@@ -44,3 +44,4 @@ __pycache__/
 
 # Private local media captures
 /media/
+bin/cassini-bin
