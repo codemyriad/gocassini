@@ -42,17 +42,53 @@ func NewRecognizer(paths ModelPaths, provider string, numThreads int) (*Recogniz
 	return &Recognizer{r: r}, nil
 }
 
+// maxChunkSamples is the maximum number of 16 kHz samples per ASR chunk.
+// Parakeet TDT CTC crashes on very long inputs; 30 s per chunk is safe.
+const maxChunkSamples = 16000 * 30
+
 // Transcribe runs ASR on the given float32 samples (16 kHz, mono, [-1,1]).
+// Long audio is split into 30-second chunks; word timestamps are adjusted
+// by the chunk offset so they refer to the full recording.
 // Returns a slice of Word with millisecond timestamps.
 func (r *Recognizer) Transcribe(samples []float32, sampleRate int) ([]Word, error) {
-	stream := sherpa.NewOfflineStream(r.r)
-	defer sherpa.DeleteOfflineStream(stream)
+	if len(samples) == 0 {
+		return nil, nil
+	}
 
-	stream.AcceptWaveform(sampleRate, samples)
-	r.r.Decode(stream)
-	result := stream.GetResult()
+	var allWords []Word
+	for start := 0; start < len(samples); start += maxChunkSamples {
+		end := start + maxChunkSamples
+		if end > len(samples) {
+			end = len(samples)
+		}
+		chunk := samples[start:end]
 
-	return tokensToWords(result.Tokens, result.Timestamps, result.Durations), nil
+		stream := sherpa.NewOfflineStream(r.r)
+		if stream == nil {
+			return nil, fmt.Errorf("failed to create offline stream for chunk at offset %d", start)
+		}
+		stream.AcceptWaveform(sampleRate, chunk)
+		r.r.Decode(stream)
+		result := stream.GetResult()
+		var words []Word
+		if result != nil {
+			// Copy result data before deleting the stream — result may point
+			// into stream-owned memory.
+			words = tokensToWords(result.Tokens, result.Timestamps, result.Durations)
+		}
+		sherpa.DeleteOfflineStream(stream)
+
+		// Offset timestamps by the chunk start time in ms.
+		if start > 0 {
+			offsetMS := int64(start) * 1000 / int64(sampleRate)
+			for i := range words {
+				words[i].StartMS += offsetMS
+				words[i].EndMS += offsetMS
+			}
+		}
+		allWords = append(allWords, words...)
+	}
+	return allWords, nil
 }
 
 // Close frees the underlying recognizer.

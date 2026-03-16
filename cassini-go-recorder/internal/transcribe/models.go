@@ -126,7 +126,8 @@ func downloadAndExtract(url, destDir string, progress io.Writer) error {
 		}
 
 		// Strip the top-level directory from the tar path.
-		name := hdr.Name
+		// Handles both "dir/file" and "./dir/file" tar conventions.
+		name := strings.TrimPrefix(hdr.Name, "./")
 		if idx := strings.Index(name, "/"); idx >= 0 {
 			name = name[idx+1:]
 		}
