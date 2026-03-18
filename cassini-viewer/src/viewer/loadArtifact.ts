@@ -10,6 +10,12 @@ import type {
   TranscriptIndex,
   TranscriptWordsV1,
 } from "../core/types";
+import {
+  buildDisplayTranscriptFromArtifacts,
+  buildReadableTranscriptFromPortable,
+  buildTranscriptWordsFromPortable,
+  extractPortableManifestFromArrayBuffer,
+} from "./portable";
 
 export interface LoadedArtifact {
   transcript: TranscriptWordsV1;
@@ -45,6 +51,35 @@ export async function loadArtifactFromDirectory(basePath: string): Promise<Loade
     captionsPath: `${basePath}/captions.vtt`,
     chaptersPath: `${basePath}/chapters.vtt`,
   });
+}
+
+export async function loadPortableArtifactFromAudioPath(audioPath: string): Promise<LoadedArtifact> {
+  const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
+  const response = await fetch(resolvedAudioPath);
+  if (!response.ok) {
+    throw new Error(`Could not load ${resolvedAudioPath}.`);
+  }
+
+  const portable = await extractPortableManifestFromArrayBuffer(await response.arrayBuffer());
+  const transcript = validateTranscriptWordsV1(
+    buildTranscriptWordsFromPortable(portable, resolvedAudioPath) as unknown,
+  );
+  const readableTranscript = validateReadableTranscriptV1(
+    buildReadableTranscriptFromPortable(portable, transcript) as unknown,
+  );
+  const displayTranscript = validateDisplayTranscriptV1(
+    buildDisplayTranscriptFromArtifacts(transcript, readableTranscript) as unknown,
+  );
+
+  return {
+    transcript,
+    displayTranscript,
+    readableTranscript,
+    index: buildTranscriptIndex(transcript),
+    audioSrc: resolvedAudioPath,
+    captionsSrc: null,
+    chaptersSrc: null,
+  };
 }
 
 async function loadArtifactFromPaths(paths: {

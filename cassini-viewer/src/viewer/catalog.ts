@@ -1,11 +1,12 @@
 export interface MeetingCatalogEntry {
   id: string;
-  artifactPath: string;
   title: string;
   dateLabel: string;
-  speakerCount: number;
-  segmentCount: number;
-  digestDurationMs: number;
+  artifactPath?: string;
+  audioPath?: string;
+  speakerCount?: number;
+  segmentCount?: number;
+  digestDurationMs?: number;
 }
 
 export interface MeetingCatalog {
@@ -46,18 +47,23 @@ function validateMeetingCatalogEntry(value: unknown, index: number): MeetingCata
   }
 
   const id = requireNonEmptyString(value.id, `catalog entry ${index} id`);
-  const artifactPath = requireNonEmptyString(value.artifactPath, `catalog entry ${index} artifactPath`);
   const title = requireNonEmptyString(value.title, `catalog entry ${index} title`);
   const dateLabel = requireNonEmptyString(value.dateLabel, `catalog entry ${index} dateLabel`);
+  const artifactPath = optionalNonEmptyString(value.artifactPath, `catalog entry ${index} artifactPath`);
+  const audioPath = optionalNonEmptyString(value.audioPath, `catalog entry ${index} audioPath`);
+  if (!artifactPath && !audioPath) {
+    throw new Error(`catalog entry ${index} must define artifactPath or audioPath`);
+  }
 
   return {
     id,
     artifactPath,
+    audioPath,
     title,
     dateLabel,
-    speakerCount: requireNumber(value.speakerCount, `catalog entry ${index} speakerCount`),
-    segmentCount: requireNumber(value.segmentCount, `catalog entry ${index} segmentCount`),
-    digestDurationMs: requireNumber(value.digestDurationMs, `catalog entry ${index} digestDurationMs`),
+    speakerCount: optionalNumber(value.speakerCount, `catalog entry ${index} speakerCount`),
+    segmentCount: optionalNumber(value.segmentCount, `catalog entry ${index} segmentCount`),
+    digestDurationMs: optionalNumber(value.digestDurationMs, `catalog entry ${index} digestDurationMs`),
   };
 }
 
@@ -73,6 +79,20 @@ function requireNumber(value: unknown, label: string): number {
     throw new Error(`${label} must be a finite number`);
   }
   return value;
+}
+
+function optionalNonEmptyString(value: unknown, label: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return requireNonEmptyString(value, label);
+}
+
+function optionalNumber(value: unknown, label: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return requireNumber(value, label);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

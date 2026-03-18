@@ -25,6 +25,23 @@ describe("validateMeetingCatalog", () => {
     );
   });
 
+  it("accepts audio-backed meeting entries with runtime metadata", () => {
+    const catalog = validateMeetingCatalog({
+      version: "cassini.viewer.catalog.v1",
+      meetings: [
+        {
+          id: "daily-meeting-2026-03-18--12:30",
+          audioPath: "./daily-meeting-2026-03-18--12:30.opus",
+          title: "Daily Meeting",
+          dateLabel: "2026-03-18 12:30",
+        },
+      ],
+    });
+
+    expect(catalog.meetings[0]?.audioPath).toBe("./daily-meeting-2026-03-18--12:30.opus");
+    expect(catalog.meetings[0]?.speakerCount).toBeUndefined();
+  });
+
   it("rejects invalid catalog versions", () => {
     expect(() =>
       validateMeetingCatalog({

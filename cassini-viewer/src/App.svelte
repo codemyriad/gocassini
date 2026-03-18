@@ -14,6 +14,7 @@
   import {
     loadArtifactFromDirectory,
     loadBundledArtifact,
+    loadPortableArtifactFromAudioPath,
     type LoadedArtifact,
   } from "./viewer/loadArtifact";
   import {
@@ -171,12 +172,22 @@
     loading = true;
     errorMessage = "";
     try {
-      const artifact = await loadArtifactFromDirectory(meeting.artifactPath);
-      selectedMeetingId = meeting.id;
-      activeMeeting = meeting;
+      const artifact = meeting.artifactPath
+        ? await loadArtifactFromDirectory(meeting.artifactPath)
+        : meeting.audioPath
+          ? await loadPortableArtifactFromAudioPath(meeting.audioPath)
+          : (() => {
+              throw new Error(`Meeting ${meeting.id} is missing artifactPath and audioPath`);
+            })();
+      const enrichedMeeting = mergeMeetingRuntimeSummary(meeting, artifact);
+      catalogMeetings = catalogMeetings.map((entry) =>
+        entry.id === enrichedMeeting.id ? enrichedMeeting : entry,
+      );
+      selectedMeetingId = enrichedMeeting.id;
+      activeMeeting = enrichedMeeting;
       applyArtifact(artifact);
       const url = new URL(window.location.href);
-      url.searchParams.set("meeting", meeting.id);
+      url.searchParams.set("meeting", enrichedMeeting.id);
       window.history.replaceState({}, "", url);
     } catch (error) {
       resetLoadedArtifact();
@@ -299,6 +310,32 @@
 
   function loadMeetingButtonLabel(meeting: MeetingCatalogEntry): string {
     return `${meeting.title} - ${meeting.dateLabel}`;
+  }
+
+  function formatMeetingMeta(meeting: MeetingCatalogEntry): string {
+    const details: string[] = [];
+    if (typeof meeting.speakerCount === "number") {
+      details.push(`${meeting.speakerCount} speakers`);
+    }
+    if (typeof meeting.segmentCount === "number") {
+      details.push(`${meeting.segmentCount} segments`);
+    }
+    if (typeof meeting.digestDurationMs === "number") {
+      details.push(formatClockTime(meeting.digestDurationMs));
+    }
+    return details.length > 0 ? details.join(", ") : "Metadata loads in the browser";
+  }
+
+  function mergeMeetingRuntimeSummary(
+    meeting: MeetingCatalogEntry,
+    artifact: LoadedArtifact,
+  ): MeetingCatalogEntry {
+    return {
+      ...meeting,
+      speakerCount: artifact.transcript.speakers.length,
+      segmentCount: artifact.transcript.segments.length,
+      digestDurationMs: artifact.transcript.media.durationMs,
+    };
   }
 
   function buildDisplaySegments(
@@ -496,11 +533,7 @@
                 type="button"
               >
                 <span class="meeting-title">{loadMeetingButtonLabel(meeting)}</span>
-                <span class="meeting-meta">
-                  {meeting.speakerCount} speakers, {meeting.segmentCount} segments, {formatClockTime(
-                    meeting.digestDurationMs,
-                  )}
-                </span>
+                <span class="meeting-meta">{formatMeetingMeta(meeting)}</span>
               </button>
             {/each}
           </div>

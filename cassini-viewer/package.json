@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "export:meetings": "npm run build && node ./scripts/export-static-meetings.mjs",
+    "export:portable-runtime": "npm run build && node ./scripts/export-runtime-portable-site.mjs",
     "preview": "vite preview",
     "test": "vitest run"
   },
