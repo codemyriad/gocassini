@@ -112,8 +112,11 @@ export function buildReadableTranscriptFromPortable(
   const speakers = normalizeSpeakers(portable.speakers || transcript.speakers || []);
   const validSpeakerIds = new Set(speakers.map((speaker) => speaker.id));
 
+  // Older portable meetings accidentally embedded cleaned transcripts with the
+  // raw transcript version tag. The field name is still authoritative here, so
+  // accept either tag when a readable segment payload is present.
   if (
-    provided.version === "transcript.readable.v1" &&
+    (provided.version === "transcript.readable.v1" || provided.version === "transcript.words.v1") &&
     Array.isArray(provided.segments)
   ) {
     return {

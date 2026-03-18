@@ -289,9 +289,12 @@ export function buildReadableTranscriptFromPortable(portable, transcript) {
   const speakers = normalizeSpeakers(portable.speakers || transcript.speakers || []);
   const validSpeakerIds = new Set(speakers.map((speaker) => speaker.id));
 
+  // Some already-published portable meetings stored cleaned transcript payloads
+  // under the readableTranscript field but stamped them with the raw transcript
+  // version. We still want to recover that cleaned text during export.
   if (
     provided &&
-    provided.version === "transcript.readable.v1" &&
+    (provided.version === "transcript.readable.v1" || provided.version === "transcript.words.v1") &&
     Array.isArray(provided.segments)
   ) {
     return {

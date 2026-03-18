@@ -110,7 +110,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 
 	// --- 7. Write word-level transcript ---
 	transcriptPath := filepath.Join(outputDir, "transcript.words.v1.json")
-	if err := writeTranscriptWithHash(transcriptPath, streams, segments, audioDurationMS, sha256hex); err != nil {
+	if err := writeTranscriptWithHash(transcriptPath, "transcript.words.v1", streams, segments, audioDurationMS, sha256hex); err != nil {
 		return fmt.Errorf("write transcript: %w", err)
 	}
 
@@ -172,7 +172,10 @@ func writeReadableArtifacts(outputDir string, streams []AudioStream, segments []
 	applied := ApplyReadableText(segments, readableSegs)
 
 	readablePath := filepath.Join(outputDir, "transcript.readable.v1.json")
-	if err := writeTranscriptWithHash(readablePath, streams, applied, audioDurationMS, sha256hex); err != nil {
+	// Readable cleanup produces a distinct artifact contract from the raw word
+	// transcript. If we stamp it as transcript.words.v1, downstream loaders will
+	// ignore the cleaned content and fall back to raw ASR text.
+	if err := writeTranscriptWithHash(readablePath, "transcript.readable.v1", streams, applied, audioDurationMS, sha256hex); err != nil {
 		return false, fmt.Errorf("write readable transcript: %w", err)
 	}
 
@@ -204,8 +207,9 @@ func envBool(name string) bool {
 	}
 }
 
-// writeTranscriptWithHash writes a transcript JSON file, embedding the audio SHA-256.
-func writeTranscriptWithHash(path string, streams []AudioStream, segments []Segment, audioDurationMS int64, sha256hex string) error {
+// writeTranscriptWithHash writes a transcript JSON file, embedding the audio
+// SHA-256 and the caller-specified transcript version.
+func writeTranscriptWithHash(path string, version string, streams []AudioStream, segments []Segment, audioDurationMS int64, sha256hex string) error {
 	// Build the file the normal way, then patch the sha256 in via the raw struct.
 	// WriteTranscriptJSON doesn't accept a sha256 param, so we build the struct manually.
 	type wordEntry struct {
@@ -262,7 +266,7 @@ func writeTranscriptWithHash(path string, streams []AudioStream, segments []Segm
 	}
 
 	d := doc{
-		Version:  "transcript.words.v1",
+		Version:  version,
 		Media:    mediaEntry{Src: "meeting.webm", DurationMS: audioDurationMS, SHA256: sha256hex},
 		Speakers: speakers,
 		Segments: segs,
