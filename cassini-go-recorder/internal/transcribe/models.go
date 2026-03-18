@@ -16,17 +16,32 @@ type ModelID string
 
 const (
 	// ModelParakeet110M is the NeMo Parakeet TDT CTC 110M int8 model.
-	// Best accuracy for English with real word-level timestamps.
+	// Kept for reference; the default is now the larger 0.6B model.
 	ModelParakeet110M ModelID = "parakeet-tdt-ctc-110m-en-int8"
 
-	defaultModelID = ModelParakeet110M
+	// ModelParakeet06B is the NeMo Parakeet TDT 0.6B v2 int8 transducer model.
+	// Significantly better accuracy than 110M; uses encoder+decoder+joiner architecture.
+	ModelParakeet06B ModelID = "parakeet-tdt-0.6b-v2-int8"
+
+	defaultModelID = ModelParakeet06B
+
+	// sileroVADURL is the Silero VAD model (single .onnx file, ~630 KB).
+	sileroVADURL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
 )
 
 type modelSpec struct {
-	URL      string
-	ModelFile  string // relative path inside tarball to the .onnx file
-	TokensFile string // relative path inside tarball to tokens.txt
-	ModelType  string // sherpa-onnx model type string
+	URL string
+
+	// CTC models: single model file.
+	ModelFile string
+
+	// Transducer models: three separate files.
+	EncoderFile string
+	DecoderFile string
+	JoinerFile  string
+
+	TokensFile string
+	ModelType  string // sherpa-onnx model type hint
 	SampleRate int
 	FeatureDim int
 }
@@ -41,11 +56,27 @@ var knownModels = map[ModelID]modelSpec{
 		SampleRate: 16000,
 		FeatureDim: 80,
 	},
+	ModelParakeet06B: {
+		URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
+			"sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2",
+		EncoderFile: "encoder.int8.onnx",
+		DecoderFile: "decoder.int8.onnx",
+		JoinerFile:  "joiner.int8.onnx",
+		TokensFile:  "tokens.txt",
+		ModelType:   "nemo_transducer",
+		SampleRate:  16000,
+		FeatureDim:  80,
+	},
 }
 
 // ModelPaths holds resolved filesystem paths for a downloaded model.
 type ModelPaths struct {
-	ModelFile  string
+	// CTC models set ModelFile; transducer models set Encoder/Decoder/Joiner.
+	ModelFile   string
+	EncoderFile string
+	DecoderFile string
+	JoinerFile  string
+
 	TokensFile string
 	ModelType  string
 	SampleRate int
@@ -62,17 +93,10 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 	}
 
 	modelDir := filepath.Join(cacheDir, "models", string(id))
-	modelFile := filepath.Join(modelDir, spec.ModelFile)
-	tokensFile := filepath.Join(modelDir, spec.TokensFile)
 
-	if fileExists(modelFile) && fileExists(tokensFile) {
-		return ModelPaths{
-			ModelFile:  modelFile,
-			TokensFile: tokensFile,
-			ModelType:  spec.ModelType,
-			SampleRate: spec.SampleRate,
-			FeatureDim: spec.FeatureDim,
-		}, nil
+	paths := resolveModelPaths(modelDir, spec)
+	if allExist(requiredModelFiles(paths, spec)) {
+		return paths, nil
 	}
 
 	if err := os.MkdirAll(modelDir, 0o755); err != nil {
@@ -84,20 +108,62 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 		return ModelPaths{}, fmt.Errorf("download model %s: %w", id, err)
 	}
 
-	if !fileExists(modelFile) {
-		return ModelPaths{}, fmt.Errorf("model file not found after extraction: %s", modelFile)
+	for _, f := range requiredModelFiles(paths, spec) {
+		if !fileExists(f) {
+			return ModelPaths{}, fmt.Errorf("model file not found after extraction: %s", f)
+		}
 	}
-	if !fileExists(tokensFile) {
-		return ModelPaths{}, fmt.Errorf("tokens file not found after extraction: %s", tokensFile)
-	}
+	return paths, nil
+}
 
-	return ModelPaths{
-		ModelFile:  modelFile,
-		TokensFile: tokensFile,
+// EnsureVAD downloads the Silero VAD model if not already cached,
+// returning its path.
+func EnsureVAD(cacheDir string, progress io.Writer) (string, error) {
+	vadPath := filepath.Join(cacheDir, "vad", "silero_vad.onnx")
+	if fileExists(vadPath) {
+		return vadPath, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(vadPath), 0o755); err != nil {
+		return "", fmt.Errorf("create vad dir: %w", err)
+	}
+	fmt.Fprintf(progress, "downloading Silero VAD from %s\n", sileroVADURL)
+	if err := downloadFile(sileroVADURL, vadPath); err != nil {
+		return "", fmt.Errorf("download VAD: %w", err)
+	}
+	return vadPath, nil
+}
+
+func resolveModelPaths(modelDir string, spec modelSpec) ModelPaths {
+	p := ModelPaths{
+		TokensFile: filepath.Join(modelDir, spec.TokensFile),
 		ModelType:  spec.ModelType,
 		SampleRate: spec.SampleRate,
 		FeatureDim: spec.FeatureDim,
-	}, nil
+	}
+	if spec.EncoderFile != "" {
+		p.EncoderFile = filepath.Join(modelDir, spec.EncoderFile)
+		p.DecoderFile = filepath.Join(modelDir, spec.DecoderFile)
+		p.JoinerFile = filepath.Join(modelDir, spec.JoinerFile)
+	} else {
+		p.ModelFile = filepath.Join(modelDir, spec.ModelFile)
+	}
+	return p
+}
+
+func requiredModelFiles(paths ModelPaths, spec modelSpec) []string {
+	if spec.EncoderFile != "" {
+		return []string{paths.EncoderFile, paths.DecoderFile, paths.JoinerFile, paths.TokensFile}
+	}
+	return []string{paths.ModelFile, paths.TokensFile}
+}
+
+func allExist(files []string) bool {
+	for _, f := range files {
+		if !fileExists(f) {
+			return false
+		}
+	}
+	return true
 }
 
 func downloadAndExtract(url, destDir string, progress io.Writer) error {
@@ -151,6 +217,26 @@ func downloadAndExtract(url, destDir string, progress io.Writer) error {
 		fmt.Fprintf(progress, "  extracted: %s\n", name)
 	}
 	return nil
+}
+
+func downloadFile(url, destPath string) error {
+	resp, err := http.Get(url) //nolint:gosec
+	if err != nil {
+		return fmt.Errorf("HTTP GET: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
+	}
+	f, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func fileExists(path string) bool {

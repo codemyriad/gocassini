@@ -146,7 +146,7 @@ type provStep struct {
 }
 
 // WriteManifest writes manifest.json summarising the build.
-func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []AudioStream, segments []Segment, llmModel string, hasReadable bool) error {
+func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []AudioStream, segments []Segment, sttModelID ModelID, llmModel string, hasReadable bool) error {
 	wordCount := 0
 	for _, seg := range segments {
 		wordCount += len(seg.Words)
@@ -164,7 +164,7 @@ func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []Audi
 	prov := &provenanceInfo{
 		SpeechToText: &provStep{
 			Backend: "sherpa-onnx",
-			Model:   string(ModelParakeet110M),
+			Model:   string(sttModelID),
 		},
 	}
 	if hasReadable {

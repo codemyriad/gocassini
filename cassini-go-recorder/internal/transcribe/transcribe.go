@@ -60,16 +60,21 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		return fmt.Errorf("get audio duration: %w", err)
 	}
 
-	// --- 3. Download / verify STT model ---
+	// --- 3. Download / verify STT model and VAD ---
 	fmt.Fprintf(stdout, "  ensuring model %s is cached...\n", cfg.ModelID)
 	modelPaths, err := EnsureModel(cfg.CacheDir, cfg.ModelID, stdout)
 	if err != nil {
 		return fmt.Errorf("ensure model: %w", err)
 	}
 
+	vadPath, err := EnsureVAD(cfg.CacheDir, stdout)
+	if err != nil {
+		return fmt.Errorf("ensure VAD model: %w", err)
+	}
+
 	// --- 4. Create recognizer ---
 	fmt.Fprintf(stdout, "  loading recognizer (device=%s)...\n", cfg.Device)
-	rec, err := NewRecognizer(modelPaths, cfg.Device, cfg.NumThreads)
+	rec, err := NewRecognizer(modelPaths, vadPath, cfg.Device, cfg.NumThreads)
 	if err != nil {
 		return fmt.Errorf("create recognizer: %w", err)
 	}
@@ -132,7 +137,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// --- 9. Write manifest ---
 	manifestPath := filepath.Join(outputDir, "manifest.json")
 	srcBasename := filepath.Base(mkvPath)
-	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, streams, segments, cfg.LLM.Model, hasReadable); err != nil {
+	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, streams, segments, cfg.ModelID, cfg.LLM.Model, hasReadable); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 

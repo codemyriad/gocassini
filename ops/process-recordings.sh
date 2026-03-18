@@ -14,8 +14,10 @@ RECORDINGS_DIR="${RECORDINGS_DIR:-/mnt/data/cassini/recordings}"
 PROCESSED_DIR="${PROCESSED_DIR:-/mnt/data/cassini/processed}"
 CASSINI_BIN="${CASSINI_BIN:-/workspace/gocassini/bin/cassini-bin}"
 DEVICE="${DEVICE:-cpu}"
+CASSINI_LIB_DIR="${CASSINI_LIB_DIR:-$(dirname "$CASSINI_BIN")}"
 
 export CASSINI_CACHE_ROOT="${CASSINI_CACHE_ROOT:-/mnt/data/cassini/.cache}"
+export LD_LIBRARY_PATH="${CASSINI_LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
   echo "warn: OPENROUTER_API_KEY not set — readable transcript (LLM cleanup) will be skipped" >&2

@@ -14,21 +14,41 @@ type Word struct {
 	EndMS   int64
 }
 
-// Recognizer wraps a sherpa-onnx offline recognizer.
+// Recognizer wraps a sherpa-onnx offline recognizer with Silero VAD segmentation.
 type Recognizer struct {
-	r *sherpa.OfflineRecognizer
+	r          *sherpa.OfflineRecognizer
+	vad        *sherpa.VoiceActivityDetector
+	sampleRate int
 }
 
-// NewRecognizer creates an offline recognizer from the given model paths.
-// provider is "cpu" or "cuda".
-func NewRecognizer(paths ModelPaths, provider string, numThreads int) (*Recognizer, error) {
+// vadChunkSamples is the number of samples fed to the VAD per call (5 seconds at 16 kHz).
+const vadChunkSamples = 16000 * 5
+
+// maxSafeSegmentSamples is the safety-fallback split size (55 seconds at 16 kHz).
+// VAD MaxSpeechDuration=25s keeps segments short, but pathological silence-free
+// speech could still exceed that; 55s gives a comfortable ONNX-safe ceiling.
+const maxSafeSegmentSamples = 16000 * 55
+
+// NewRecognizer creates an offline recognizer from the given model paths and a
+// Silero VAD model. provider is "cpu" or "cuda"; vadModelPath is the path to
+// silero_vad.onnx.
+func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads int) (*Recognizer, error) {
 	if numThreads < 1 {
 		numThreads = 4
 	}
+
 	cfg := sherpa.OfflineRecognizerConfig{}
 	cfg.FeatConfig.SampleRate = paths.SampleRate
 	cfg.FeatConfig.FeatureDim = paths.FeatureDim
-	cfg.ModelConfig.NemoCTC.Model = paths.ModelFile
+	if paths.EncoderFile != "" {
+		// Transducer model (encoder + decoder + joiner).
+		cfg.ModelConfig.Transducer.Encoder = paths.EncoderFile
+		cfg.ModelConfig.Transducer.Decoder = paths.DecoderFile
+		cfg.ModelConfig.Transducer.Joiner = paths.JoinerFile
+	} else {
+		// CTC model (single model file).
+		cfg.ModelConfig.NemoCTC.Model = paths.ModelFile
+	}
 	cfg.ModelConfig.Tokens = paths.TokensFile
 	cfg.ModelConfig.ModelType = paths.ModelType
 	cfg.ModelConfig.NumThreads = numThreads
@@ -39,25 +59,75 @@ func NewRecognizer(paths ModelPaths, provider string, numThreads int) (*Recogniz
 	if r == nil {
 		return nil, fmt.Errorf("failed to create sherpa-onnx recognizer (check model paths and provider %q)", provider)
 	}
-	return &Recognizer{r: r}, nil
+
+	vadCfg := sherpa.VadModelConfig{}
+	vadCfg.SileroVad.Model = vadModelPath
+	vadCfg.SileroVad.Threshold = 0.5
+	vadCfg.SileroVad.MinSilenceDuration = 0.5
+	vadCfg.SileroVad.MinSpeechDuration = 0.25
+	vadCfg.SileroVad.WindowSize = 512
+	vadCfg.SileroVad.MaxSpeechDuration = 25.0
+	vadCfg.SampleRate = paths.SampleRate
+	vadCfg.NumThreads = numThreads
+	vadCfg.Provider = provider
+	vadCfg.Debug = 0
+
+	vad := sherpa.NewVoiceActivityDetector(&vadCfg, 60.0)
+	if vad == nil {
+		sherpa.DeleteOfflineRecognizer(r)
+		return nil, fmt.Errorf("failed to create Silero VAD (check model path: %s)", vadModelPath)
+	}
+
+	return &Recognizer{r: r, vad: vad, sampleRate: paths.SampleRate}, nil
 }
 
-// maxChunkSamples is the maximum number of 16 kHz samples per ASR chunk.
-// Parakeet TDT CTC crashes on very long inputs; 30 s per chunk is safe.
-const maxChunkSamples = 16000 * 30
-
-// Transcribe runs ASR on the given float32 samples (16 kHz, mono, [-1,1]).
-// Long audio is split into 30-second chunks; word timestamps are adjusted
-// by the chunk offset so they refer to the full recording.
-// Returns a slice of Word with millisecond timestamps.
+// Transcribe runs VAD-segmented ASR on the given float32 samples (16 kHz, mono, [-1,1]).
+// Silero VAD detects speech segments at natural silence boundaries; each segment is
+// then passed to the ASR model. Word timestamps refer to the full recording timeline.
 func (r *Recognizer) Transcribe(samples []float32, sampleRate int) ([]Word, error) {
 	if len(samples) == 0 {
 		return nil, nil
 	}
 
+	r.vad.Reset()
+
+	// Feed audio to the VAD in 5-second chunks.
+	for off := 0; off < len(samples); off += vadChunkSamples {
+		end := off + vadChunkSamples
+		if end > len(samples) {
+			end = len(samples)
+		}
+		r.vad.AcceptWaveform(samples[off:end])
+	}
+	r.vad.Flush()
+
 	var allWords []Word
-	for start := 0; start < len(samples); start += maxChunkSamples {
-		end := start + maxChunkSamples
+	for !r.vad.IsEmpty() {
+		seg := r.vad.Front()
+		r.vad.Pop()
+		if seg == nil || len(seg.Samples) == 0 {
+			continue
+		}
+
+		// seg.Start is the sample index of the segment start within the full recording.
+		segOffsetMS := int64(seg.Start) * 1000 / int64(sampleRate)
+
+		words, err := r.transcribeSegment(seg.Samples, sampleRate, segOffsetMS)
+		if err != nil {
+			return nil, err
+		}
+		allWords = append(allWords, words...)
+	}
+	return allWords, nil
+}
+
+// transcribeSegment transcribes a single VAD speech segment, splitting into sub-chunks
+// if the segment exceeds maxSafeSegmentSamples. segOffsetMS is the ms position of
+// seg[0] within the full recording.
+func (r *Recognizer) transcribeSegment(samples []float32, sampleRate int, segOffsetMS int64) ([]Word, error) {
+	var allWords []Word
+	for start := 0; start < len(samples); start += maxSafeSegmentSamples {
+		end := start + maxSafeSegmentSamples
 		if end > len(samples) {
 			end = len(samples)
 		}
@@ -65,7 +135,7 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int) ([]Word, erro
 
 		stream := sherpa.NewOfflineStream(r.r)
 		if stream == nil {
-			return nil, fmt.Errorf("failed to create offline stream for chunk at offset %d", start)
+			return nil, fmt.Errorf("failed to create offline stream")
 		}
 		stream.AcceptWaveform(sampleRate, chunk)
 		r.r.Decode(stream)
@@ -78,22 +148,21 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int) ([]Word, erro
 		}
 		sherpa.DeleteOfflineStream(stream)
 
-		// Offset timestamps by the chunk start time in ms.
-		if start > 0 {
-			offsetMS := int64(start) * 1000 / int64(sampleRate)
-			for i := range words {
-				words[i].StartMS += offsetMS
-				words[i].EndMS += offsetMS
-			}
+		// Offset timestamps: chunk start within segment + segment start within recording.
+		chunkOffsetMS := segOffsetMS + int64(start)*1000/int64(sampleRate)
+		for i := range words {
+			words[i].StartMS += chunkOffsetMS
+			words[i].EndMS += chunkOffsetMS
 		}
 		allWords = append(allWords, words...)
 	}
 	return allWords, nil
 }
 
-// Close frees the underlying recognizer.
+// Close frees the underlying recognizer and VAD.
 func (r *Recognizer) Close() {
 	sherpa.DeleteOfflineRecognizer(r.r)
+	sherpa.DeleteVoiceActivityDetector(r.vad)
 }
 
 // tokensToWords converts BPE/char tokens with per-token timestamps into
