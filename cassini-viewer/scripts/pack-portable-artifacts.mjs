@@ -22,10 +22,15 @@ export async function main(argv = process.argv.slice(2)) {
 
   mkdirSync(outputDir, { recursive: true });
   for (const artifactDir of artifactDirs) {
-    const outputPath = join(outputDir, `${basename(artifactDir)}.opus`);
+    const outputPath = join(outputDir, `${canonicalPortableMeetingName(artifactDir)}.opus`);
     const result = await packArtifactDirectory(artifactDir, outputPath);
     console.log(`${result.status} ${outputPath}`);
   }
+}
+
+export function canonicalPortableMeetingName(artifactDir) {
+  const name = basename(artifactDir);
+  return name.endsWith(".meeting") ? name.slice(0, -".meeting".length) : name;
 }
 
 export function parseArgs(argv) {

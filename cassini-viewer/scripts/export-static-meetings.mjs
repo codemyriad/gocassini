@@ -315,6 +315,32 @@ function extractPortableReadableWords(segment, segmentId) {
   });
 }
 
+function extractTranscriptArtifactWords(segment, segmentId) {
+  // Go transcript artifacts do not currently ship per-word IDs. Synthesize
+  // stable IDs here so cleaned display tokens can align back to exact source
+  // words and preserve word seek in exported sites.
+  if (!Array.isArray(segment?.words)) {
+    return [];
+  }
+  return segment.words.flatMap((word, index) => {
+    const text = safeToString(word?.text).trim();
+    if (!text) {
+      return [];
+    }
+    const startMs = safeToInt(word?.startMs, NaN);
+    const endMs = safeToInt(word?.endMs, startMs);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+      return [];
+    }
+    return [{
+      id: typeof word?.id === "string" && word.id.trim() !== "" ? word.id : `${segmentId}:w_${index}`,
+      text,
+      startMs,
+      endMs,
+    }];
+  });
+}
+
 export function buildReadableTranscriptFromPortable(portable, transcript) {
   const provided = portable.readableTranscript;
   const speakers = normalizeSpeakers(portable.speakers || transcript.speakers || []);
@@ -832,8 +858,13 @@ export function buildDisplayTranscriptFromArtifacts(transcript, readable) {
         segmentById,
         transcriptSegments,
       });
-      const sourceWordsFromTranscript = sourceSegments.flatMap((segment) =>
-        Array.isArray(segment.words) ? segment.words.filter((word) => word && typeof word === "object") : [],
+      const sourceWordsFromTranscript = sourceSegments.flatMap((segment, index) =>
+        extractTranscriptArtifactWords(
+          segment,
+          typeof segment?.id === "string" && segment.id.trim() !== ""
+            ? segment.id
+            : `seg_${String(index).padStart(6, "0")}`,
+        ),
       );
       const sourceWordsFromReadable = extractPortableReadableWords(
         block,

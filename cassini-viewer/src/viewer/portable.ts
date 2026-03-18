@@ -141,6 +141,35 @@ function extractPortableReadableWords(
   });
 }
 
+function extractTranscriptArtifactWords(
+  value: Record<string, unknown>,
+  segmentId: string,
+): TranscriptWordsV1["segments"][number]["words"] {
+  // Runtime portable files need the same synthetic source-word IDs as export
+  // so cleaned-word seek still lands on exact transcript timings in the UI.
+  if (!Array.isArray(value.words)) {
+    return [];
+  }
+  return value.words.flatMap((wordValue, index) => {
+    const word = asRecord(wordValue);
+    const text = safeToString(word.text).trim();
+    if (!text) {
+      return [];
+    }
+    const startMs = safeToInt(word.startMs, Number.NaN);
+    const endMs = safeToInt(word.endMs, startMs);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+      return [];
+    }
+    return [{
+      id: typeof word.id === "string" && word.id.trim() !== "" ? word.id : `${segmentId}:w_${index}`,
+      text,
+      startMs,
+      endMs,
+    }];
+  });
+}
+
 export function buildReadableTranscriptFromPortable(
   portable: PortableMeetingManifest,
   transcript: TranscriptWordsV1,
@@ -544,8 +573,13 @@ export function buildDisplayTranscriptFromArtifacts(
         segmentById,
         transcriptSegments,
       });
-      const sourceWordsFromTranscript = sourceSegments.flatMap((segment) =>
-        Array.isArray(segment.words) ? segment.words.filter((word) => word && typeof word === "object") : [],
+      const sourceWordsFromTranscript = sourceSegments.flatMap((segment, index) =>
+        extractTranscriptArtifactWords(
+          asRecord(segment as unknown),
+          typeof segment.id === "string" && segment.id.trim() !== ""
+            ? segment.id
+            : `seg_${String(index).padStart(6, "0")}`,
+        ),
       );
       const sourceWordsFromReadable = extractPortableReadableWords(
         asRecord(block),

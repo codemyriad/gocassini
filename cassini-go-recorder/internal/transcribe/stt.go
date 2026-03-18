@@ -200,9 +200,6 @@ func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
 			dur = float64(durations[i]) * 1000
 		}
 		end := ts + dur
-		if end > lastEndMs || i == 0 {
-			lastEndMs = end
-		}
 
 		// BPE word-start marker (▁) or plain space token signals word boundary.
 		if strings.HasPrefix(tok, "▁") || tok == " " || tok == "<space>" {
@@ -213,17 +210,54 @@ func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
 					wordStartMs = ts
 				}
 				curText.WriteString(clean)
+				if dur > 0 {
+					// Word-start markers belong to the new word only; updating the
+					// running end time here avoids smearing the previous word's end.
+					lastEndMs = end
+				}
 			}
 		} else {
 			if wordStartMs < 0 {
 				wordStartMs = ts
 			}
 			curText.WriteString(tok)
-		}
-		if dur > 0 {
-			lastEndMs = end
+			if dur > 0 {
+				lastEndMs = end
+			}
 		}
 	}
 	flush()
-	return words
+	return splitMultiWordTokens(words)
+}
+
+func splitMultiWordTokens(words []Word) []Word {
+	out := make([]Word, 0, len(words))
+	for _, word := range words {
+		parts := strings.Fields(word.Text)
+		if len(parts) <= 1 {
+			out = append(out, word)
+			continue
+		}
+
+		// Some sherpa models now emit phrase-sized "tokens" with one shared time
+		// span. Split those into real word entries here so downstream display
+		// alignment and seek can anchor cleaned text to individual source words.
+		span := word.EndMS - word.StartMS
+		if span <= 0 {
+			span = int64(len(parts))
+		}
+		for index, part := range parts {
+			start := word.StartMS + (span*int64(index))/int64(len(parts))
+			end := word.StartMS + (span*int64(index+1))/int64(len(parts))
+			if end < start {
+				end = start
+			}
+			out = append(out, Word{
+				Text:    part,
+				StartMS: start,
+				EndMS:   end,
+			})
+		}
+	}
+	return out
 }

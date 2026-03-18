@@ -144,6 +144,58 @@ describe("buildReadableTranscriptFromPortable", () => {
     expect(wordTokens[5]).toMatchObject({ text: "very", startMs: 2400, endMs: 2800 });
   });
 
+  it("synthesizes source word ids for transcript artifact words that omit them", () => {
+    const transcript = {
+      version: "transcript.words.v1" as const,
+      media: { src: "meeting.opus", durationMs: 4_000, sha256: "" },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      segments: [
+        {
+          speaker: "spk_1",
+          startMs: 1000,
+          endMs: 2200,
+          text: "hello there",
+          words: [
+            { text: "hello", startMs: 1000, endMs: 1500 },
+            { text: "there", startMs: 1500, endMs: 2000 },
+          ],
+        },
+      ],
+    };
+    const readable = {
+      version: "transcript.readable.v1" as const,
+      media: { src: "meeting.opus", durationMs: 4_000 },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      segments: [
+        {
+          id: "rseg_1",
+          speaker: "spk_1",
+          startMs: 1000,
+          endMs: 2200,
+          text: "Hello there.",
+        },
+      ],
+    };
+
+    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
+
+    expect(display.blocks[0]?.tokens[0]).toMatchObject({
+      text: "Hello",
+      sourceWordIds: ["seg_000000:w_0"],
+      startMs: 1000,
+      endMs: 1500,
+      alignment: "source",
+    });
+    expect(display.blocks[0]?.tokens[1]).toMatchObject({
+      text: "there",
+      sourceWordIds: ["seg_000000:w_1"],
+      startMs: 1500,
+      endMs: 2000,
+      alignment: "source",
+    });
+    expect(display.blocks[0]?.timingCoverage).toBe(1);
+  });
+
   it("splits synthetic readable blocks around interruptions from other speakers", () => {
     const portable = {
       meeting: { durationMs: 110_000 },

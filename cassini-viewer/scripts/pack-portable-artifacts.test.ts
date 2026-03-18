@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { buildPortableManifestFromArtifact, flattenPortableTranscriptItems } from "./pack-portable-artifacts.mjs";
+import {
+  buildPortableManifestFromArtifact,
+  canonicalPortableMeetingName,
+  flattenPortableTranscriptItems,
+} from "./pack-portable-artifacts.mjs";
 
 describe("flattenPortableTranscriptItems", () => {
   it("preserves exact word timing when source transcript has words", () => {
@@ -72,5 +76,19 @@ describe("buildPortableManifestFromArtifact", () => {
     ]);
     expect(manifest.readableTranscript?.version).toBe("transcript.readable.v1");
     expect(manifest.displayTranscript?.version).toBe("transcript.display.v1");
+  });
+});
+
+describe("canonicalPortableMeetingName", () => {
+  it("strips the bundle suffix from meeting artifact directories", () => {
+    expect(canonicalPortableMeetingName("/tmp/daily-meeting-2026-03-12--12:29.meeting")).toBe(
+      "daily-meeting-2026-03-12--12:29",
+    );
+  });
+
+  it("leaves plain directory names unchanged", () => {
+    expect(canonicalPortableMeetingName("/tmp/daily-meeting-2026-03-12--12:29")).toBe(
+      "daily-meeting-2026-03-12--12:29",
+    );
   });
 });
