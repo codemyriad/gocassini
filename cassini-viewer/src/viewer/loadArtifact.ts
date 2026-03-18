@@ -15,6 +15,7 @@ import {
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
   extractPortableManifestFromArrayBuffer,
+  type PortableMeetingManifest,
 } from "./portable";
 
 export interface LoadedArtifact {
@@ -27,11 +28,19 @@ export interface LoadedArtifact {
   chaptersSrc: string | null;
 }
 
+export interface PortableMeetingSummary {
+  speakerCount: number;
+  segmentCount: number;
+  digestDurationMs: number;
+}
+
 const DEFAULT_TRANSCRIPT_PATH = "./transcript.words.v1.json";
 const DEFAULT_DISPLAY_TRANSCRIPT_PATH = "./transcript.display.v1.json";
 const DEFAULT_READABLE_TRANSCRIPT_PATH = "./transcript.readable.v1.json";
 const DEFAULT_CAPTIONS_PATH = "./captions.vtt";
 const DEFAULT_CHAPTERS_PATH = "./chapters.vtt";
+const PORTABLE_METADATA_RANGE_END = 262143;
+const portableManifestCache = new Map<string, Promise<PortableMeetingManifest>>();
 
 export async function loadBundledArtifact(): Promise<LoadedArtifact> {
   return loadArtifactFromPaths({
@@ -55,12 +64,7 @@ export async function loadArtifactFromDirectory(basePath: string): Promise<Loade
 
 export async function loadPortableArtifactFromAudioPath(audioPath: string): Promise<LoadedArtifact> {
   const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
-  const response = await fetch(resolvedAudioPath);
-  if (!response.ok) {
-    throw new Error(`Could not load ${resolvedAudioPath}.`);
-  }
-
-  const portable = await extractPortableManifestFromArrayBuffer(await response.arrayBuffer());
+  const portable = await loadPortableManifestFromAudioPath(audioPath);
   const transcript = validateTranscriptWordsV1(
     buildTranscriptWordsFromPortable(portable, resolvedAudioPath) as unknown,
   );
@@ -79,6 +83,16 @@ export async function loadPortableArtifactFromAudioPath(audioPath: string): Prom
     audioSrc: resolvedAudioPath,
     captionsSrc: null,
     chaptersSrc: null,
+  };
+}
+
+export async function loadPortableMeetingSummary(audioPath: string): Promise<PortableMeetingSummary> {
+  const portable = await loadPortableManifestFromAudioPath(audioPath);
+  const transcript = buildTranscriptWordsFromPortable(portable);
+  return {
+    speakerCount: transcript.speakers.length,
+    segmentCount: transcript.segments.length,
+    digestDurationMs: transcript.media.durationMs,
   };
 }
 
@@ -128,6 +142,47 @@ function resolveAssetUrl(assetPath: string, transcriptUrl: URL): string {
 
 function resolveDocumentAssetUrl(assetPath: string): string {
   return new URL(assetPath, window.location.href).toString();
+}
+
+async function loadPortableManifestFromAudioPath(audioPath: string): Promise<PortableMeetingManifest> {
+  const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
+  let manifestPromise = portableManifestCache.get(resolvedAudioPath);
+  if (!manifestPromise) {
+    manifestPromise = fetchPortableManifest(resolvedAudioPath);
+    portableManifestCache.set(resolvedAudioPath, manifestPromise);
+  }
+  try {
+    return await manifestPromise;
+  } catch (error) {
+    portableManifestCache.delete(resolvedAudioPath);
+    throw error;
+  }
+}
+
+async function fetchPortableManifest(audioUrl: string): Promise<PortableMeetingManifest> {
+  const partialResponse = await fetch(audioUrl, {
+    headers: {
+      Range: `bytes=0-${PORTABLE_METADATA_RANGE_END}`,
+    },
+  });
+  if (!partialResponse.ok) {
+    throw new Error(`Could not load ${audioUrl}.`);
+  }
+
+  const partialBuffer = await partialResponse.arrayBuffer();
+  try {
+    return await extractPortableManifestFromArrayBuffer(partialBuffer);
+  } catch (error) {
+    if (partialResponse.status !== 206 && !partialResponse.headers.get("content-range")) {
+      throw error;
+    }
+  }
+
+  const fullResponse = await fetch(audioUrl);
+  if (!fullResponse.ok) {
+    throw new Error(`Could not load ${audioUrl}.`);
+  }
+  return extractPortableManifestFromArrayBuffer(await fullResponse.arrayBuffer());
 }
 
 async function probeOptionalAsset(path: string): Promise<string | null> {

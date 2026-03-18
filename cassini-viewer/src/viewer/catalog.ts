@@ -21,7 +21,11 @@ export async function loadMeetingCatalog(path = DEFAULT_CATALOG_PATH): Promise<M
   if (!response.ok) {
     return null;
   }
-  return validateMeetingCatalog((await response.json()) as unknown);
+  const catalog = validateMeetingCatalog((await response.json()) as unknown);
+  return {
+    ...catalog,
+    meetings: sortMeetingCatalogEntries(catalog.meetings),
+  };
 }
 
 export function validateMeetingCatalog(value: unknown): MeetingCatalog {
@@ -67,6 +71,16 @@ function validateMeetingCatalogEntry(value: unknown, index: number): MeetingCata
   };
 }
 
+export function sortMeetingCatalogEntries(meetings: MeetingCatalogEntry[]): MeetingCatalogEntry[] {
+  return [...meetings].sort((left, right) => {
+    const dateComparison = compareDescending(normalizeDateLabel(right.dateLabel), normalizeDateLabel(left.dateLabel));
+    if (dateComparison !== 0) {
+      return dateComparison;
+    }
+    return compareDescending(right.id, left.id);
+  });
+}
+
 function requireNonEmptyString(value: unknown, label: string): string {
   if (typeof value !== "string" || value.trim() === "") {
     throw new Error(`${label} must be a non-empty string`);
@@ -93,6 +107,14 @@ function optionalNumber(value: unknown, label: string): number | undefined {
     return undefined;
   }
   return requireNumber(value, label);
+}
+
+function normalizeDateLabel(value: string): string {
+  return value.trim();
+}
+
+function compareDescending(left: string, right: string): number {
+  return left.localeCompare(right);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

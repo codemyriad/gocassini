@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { validateMeetingCatalog } from "./catalog";
+import { sortMeetingCatalogEntries, validateMeetingCatalog } from "./catalog";
 
 describe("validateMeetingCatalog", () => {
   it("accepts a valid runtime meeting catalog", () => {
@@ -40,6 +40,35 @@ describe("validateMeetingCatalog", () => {
 
     expect(catalog.meetings[0]?.audioPath).toBe("./daily-meeting-2026-03-18--12:30.opus");
     expect(catalog.meetings[0]?.speakerCount).toBeUndefined();
+  });
+
+  it("sorts meetings newest first", () => {
+    const sorted = sortMeetingCatalogEntries([
+      {
+        id: "daily-meeting--2026-03-05--12:38:29",
+        audioPath: "./daily-meeting--2026-03-05--12:38:29.opus",
+        title: "Daily Meeting",
+        dateLabel: "2026-03-05 12:38",
+      },
+      {
+        id: "daily-meeting-2026-03-18--12:30",
+        audioPath: "./daily-meeting-2026-03-18--12:30.opus",
+        title: "Daily Meeting",
+        dateLabel: "2026-03-18 12:30",
+      },
+      {
+        id: "daily-meeting-2026-03-12--12:29",
+        audioPath: "./daily-meeting-2026-03-12--12:29.opus",
+        title: "Daily Meeting",
+        dateLabel: "2026-03-12 12:29",
+      },
+    ]);
+
+    expect(sorted.map((meeting) => meeting.id)).toEqual([
+      "daily-meeting-2026-03-18--12:30",
+      "daily-meeting-2026-03-12--12:29",
+      "daily-meeting--2026-03-05--12:38:29",
+    ]);
   });
 
   it("rejects invalid catalog versions", () => {

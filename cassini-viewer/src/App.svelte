@@ -15,10 +15,13 @@
     loadArtifactFromDirectory,
     loadBundledArtifact,
     loadPortableArtifactFromAudioPath,
+    loadPortableMeetingSummary,
     type LoadedArtifact,
+    type PortableMeetingSummary,
   } from "./viewer/loadArtifact";
   import {
     loadMeetingCatalog,
+    sortMeetingCatalogEntries,
     type MeetingCatalogEntry,
   } from "./viewer/catalog";
 
@@ -58,6 +61,7 @@
   let selectedMeetingId = "";
   let activeMeeting: MeetingCatalogEntry | null = null;
   let showExactWords = false;
+  let catalogHydrationGeneration = 0;
   const CONTINUATION_GAP_MS = 60_000;
   const SEEK_BACKWARD_MS = 15_000;
   const SEEK_FORWARD_MS = 30_000;
@@ -110,6 +114,7 @@
         const catalog = await loadMeetingCatalog();
         if (catalog?.meetings.length) {
           catalogMeetings = catalog.meetings;
+          void hydrateCatalogMeetingMetadata(catalog.meetings);
           selectedMeetingId = meetingId ?? "";
           const selected =
             catalog.meetings.find((meeting) => meeting.id === meetingId) ??
@@ -355,17 +360,16 @@
   }
 
   function formatMeetingMeta(meeting: MeetingCatalogEntry): string {
-    const details: string[] = [];
-    if (typeof meeting.speakerCount === "number") {
-      details.push(`${meeting.speakerCount} speakers`);
+    if (
+      typeof meeting.speakerCount !== "number" ||
+      typeof meeting.segmentCount !== "number" ||
+      typeof meeting.digestDurationMs !== "number"
+    ) {
+      return "Loading...";
     }
-    if (typeof meeting.segmentCount === "number") {
-      details.push(`${meeting.segmentCount} segments`);
-    }
-    if (typeof meeting.digestDurationMs === "number") {
-      details.push(formatClockTime(meeting.digestDurationMs));
-    }
-    return details.length > 0 ? details.join(", ") : "Metadata loads in the browser";
+    return `${meeting.speakerCount} speakers, ${meeting.segmentCount} segments, ${formatClockTime(
+      meeting.digestDurationMs,
+    )}`;
   }
 
   function mergeMeetingRuntimeSummary(
@@ -378,6 +382,51 @@
       segmentCount: artifact.transcript.segments.length,
       digestDurationMs: artifact.transcript.media.durationMs,
     };
+  }
+
+  async function hydrateCatalogMeetingMetadata(meetings: MeetingCatalogEntry[]) {
+    const generation = ++catalogHydrationGeneration;
+    for (const meeting of meetings) {
+      if (generation !== catalogHydrationGeneration) {
+        return;
+      }
+      if (
+        !meeting.audioPath ||
+        (typeof meeting.speakerCount === "number" &&
+          typeof meeting.segmentCount === "number" &&
+          typeof meeting.digestDurationMs === "number")
+      ) {
+        continue;
+      }
+      try {
+        const summary = await loadPortableMeetingSummary(meeting.audioPath);
+        if (generation !== catalogHydrationGeneration) {
+          return;
+        }
+        applyMeetingSummary(meeting.id, summary);
+      } catch {
+        // Keep the entry in loading state if background hydration fails.
+      }
+    }
+  }
+
+  function applyMeetingSummary(meetingId: string, summary: PortableMeetingSummary) {
+    catalogMeetings = sortMeetingCatalogEntries(
+      catalogMeetings.map((entry) =>
+        entry.id === meetingId
+          ? {
+              ...entry,
+              ...summary,
+            }
+          : entry,
+      ),
+    );
+    if (activeMeeting?.id === meetingId) {
+      activeMeeting = {
+        ...activeMeeting,
+        ...summary,
+      };
+    }
   }
 
   function buildDisplaySegments(

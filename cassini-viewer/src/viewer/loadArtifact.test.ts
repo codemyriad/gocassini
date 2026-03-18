@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { gzipSync } from "node:zlib";
 
-import { loadArtifactFromDirectory, loadPortableArtifactFromAudioPath } from "./loadArtifact";
+import {
+  loadArtifactFromDirectory,
+  loadPortableArtifactFromAudioPath,
+  loadPortableMeetingSummary,
+} from "./loadArtifact";
 
 const transcriptFixture = {
   version: "transcript.words.v1",
@@ -141,11 +145,18 @@ describe("loadArtifactFromDirectory", () => {
       },
     };
     const portableBytes = buildPortableOpusFixture(portableFixture);
-    globalThis.fetch = vi.fn(async (input: string | URL) => {
+    globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith(".opus")) {
+        expect(init?.headers).toMatchObject({
+          Range: "bytes=0-262143",
+        });
         return {
           ok: true,
+          status: 206,
+          headers: new Headers({
+            "content-range": "bytes 0-1999/2000",
+          }),
           arrayBuffer: async () =>
             portableBytes.buffer.slice(
               portableBytes.byteOffset,
@@ -163,6 +174,57 @@ describe("loadArtifactFromDirectory", () => {
     expect(artifact.transcript.segments[0]?.text).toBe("hello there");
     expect(artifact.readableTranscript?.segments).toHaveLength(1);
     expect(artifact.displayTranscript?.blocks).toHaveLength(1);
+  });
+
+  it("loads portable meeting summary counts from embedded metadata", async () => {
+    globalThis.window = {
+      location: {
+        href: "http://127.0.0.1:8765/",
+        protocol: "http:",
+      },
+    } as Window;
+    const portableFixture = {
+      meeting: {
+        durationMs: 4200,
+      },
+      speakers: [
+        { id: "spk_1", label: "Alice" },
+        { id: "spk_2", label: "Bob" },
+      ],
+      transcript: {
+        items: [
+          { id: "seg_1", speaker: "spk_1", startMs: 0, endMs: 1000, text: "hello" },
+          { id: "seg_2", speaker: "spk_2", startMs: 1100, endMs: 2000, text: "there" },
+        ],
+      },
+    };
+    const portableBytes = buildPortableOpusFixture(portableFixture);
+    globalThis.fetch = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.endsWith(".opus")) {
+        return {
+          ok: true,
+          status: 206,
+          headers: new Headers({
+            "content-range": "bytes 0-1999/2000",
+          }),
+          arrayBuffer: async () =>
+            portableBytes.buffer.slice(
+              portableBytes.byteOffset,
+              portableBytes.byteOffset + portableBytes.byteLength,
+            ),
+        } as Response;
+      }
+      return { ok: false } as Response;
+    }) as typeof fetch;
+
+    const summary = await loadPortableMeetingSummary("./meeting.opus");
+
+    expect(summary).toEqual({
+      speakerCount: 2,
+      segmentCount: 2,
+      digestDurationMs: 4200,
+    });
   });
 });
 
