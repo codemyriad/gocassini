@@ -21,16 +21,19 @@ var buildArtifactFn = func(ctx context.Context, mkvPath, outputDir string, cfg t
 }
 
 type buildOptions struct {
-	inputPath string
-	outDir    string
-	device    string
-	keepWork  bool
-	rebuild   bool
+	inputPath             string
+	outDir                string
+	device                string
+	keepWork              bool
+	rebuild               bool
+	strictReadableCleanup bool
 }
 
 func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	defaultBuildCfg := transcribe.DefaultBuildConfig()
 	opts := buildOptions{
-		device: "auto",
+		device:                "auto",
+		strictReadableCleanup: defaultBuildCfg.StrictReadableCleanup,
 	}
 
 	fs := flag.NewFlagSet("cassini build", flag.ContinueOnError)
@@ -39,6 +42,7 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs.StringVar(&opts.device, "device", "auto", "transcriber device: auto, cpu, cuda")
 	fs.BoolVar(&opts.keepWork, "keep-work", false, "keep transcriber work files inside the meeting bundle")
 	fs.BoolVar(&opts.rebuild, "rebuild-image", false, "ignored (kept for compatibility)")
+	fs.BoolVar(&opts.strictReadableCleanup, "strict-readable-cleanup", opts.strictReadableCleanup, "fail if readable cleanup errors instead of skipping readable artifacts")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini build ./runs/meeting.run --out "./2026-03-11 Weekly Sync.opus"
@@ -263,6 +267,7 @@ func executeBuildIntoBundle(ctx context.Context, input buildInput, bundle Meetin
 
 	cfg := transcribe.DefaultBuildConfig()
 	cfg.Device = opts.device
+	cfg.StrictReadableCleanup = opts.strictReadableCleanup
 
 	if err := buildArtifactFn(ctx, input.RecordingPath, bundle.RootDir, cfg, stdout); err != nil {
 		_ = UpdateMeetingBundleStatus(bundle, bundleStateFailed, "build", err.Error())

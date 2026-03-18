@@ -6,16 +6,20 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // BuildConfig holds runtime options for the transcription pipeline.
 type BuildConfig struct {
-	Device     string    // "cpu" or "cuda"
-	ModelID    ModelID   // defaults to ModelParakeet110M
-	CacheDir   string    // root cache directory, e.g. ~/.cache/cassini
-	LLM        LLMConfig // optional; if not configured, skip readable cleanup
-	NumThreads int       // 0 = use default (4)
+	Device                string    // "cpu" or "cuda"
+	ModelID               ModelID   // defaults to ModelParakeet110M
+	CacheDir              string    // root cache directory, e.g. ~/.cache/cassini
+	LLM                   LLMConfig // optional; if not configured, skip readable cleanup
+	StrictReadableCleanup bool      // fail the build if readable cleanup cannot complete
+	NumThreads            int       // 0 = use default (4)
 }
+
+var readableCleanupFn = ReadableCleanup
 
 // BuildMeetingArtifact transcribes an MKV recording and writes all meeting
 // bundle artifacts to outputDir:
@@ -111,27 +115,9 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	}
 
 	// --- 8. Optional: LLM readable cleanup ---
-	hasReadable := false
-	if cfg.LLM.IsConfigured() {
-		fmt.Fprintln(stdout, "  running LLM readable cleanup...")
-		readableSegs, err := ReadableCleanup(cfg.LLM, segments)
-		if err != nil {
-			// Non-fatal: log and skip readable artifacts.
-			fmt.Fprintf(stdout, "  warn: LLM cleanup failed: %v — skipping readable transcript\n", err)
-		} else {
-			applied := ApplyReadableText(segments, readableSegs)
-
-			readablePath := filepath.Join(outputDir, "transcript.readable.v1.json")
-			if err := writeTranscriptWithHash(readablePath, streams, applied, audioDurationMS, sha256hex); err != nil {
-				return fmt.Errorf("write readable transcript: %w", err)
-			}
-
-			captionsPath := filepath.Join(outputDir, "captions.vtt")
-			if err := WriteCaptionsVTT(captionsPath, streams, applied); err != nil {
-				return fmt.Errorf("write captions: %w", err)
-			}
-			hasReadable = true
-		}
+	hasReadable, err := writeReadableArtifacts(outputDir, streams, segments, audioDurationMS, sha256hex, cfg, stdout)
+	if err != nil {
+		return err
 	}
 
 	// --- 9. Write manifest ---
@@ -161,10 +147,40 @@ func DefaultBuildConfig() BuildConfig {
 		llm.Model = model
 	}
 	return BuildConfig{
-		Device:  "cpu",
-		ModelID: defaultModelID,
-		LLM:     llm,
+		Device:                "cpu",
+		ModelID:               defaultModelID,
+		LLM:                   llm,
+		StrictReadableCleanup: envBool("CASSINI_READABLE_STRICT_BATCHES"),
 	}
+}
+
+func writeReadableArtifacts(outputDir string, streams []AudioStream, segments []Segment, audioDurationMS int64, sha256hex string, cfg BuildConfig, stdout io.Writer) (bool, error) {
+	if !cfg.LLM.IsConfigured() {
+		return false, nil
+	}
+
+	fmt.Fprintln(stdout, "  running LLM readable cleanup...")
+	readableSegs, err := readableCleanupFn(cfg.LLM, segments)
+	if err != nil {
+		if cfg.StrictReadableCleanup {
+			return false, fmt.Errorf("readable cleanup: %w", err)
+		}
+		fmt.Fprintf(stdout, "  warn: LLM cleanup failed: %v — skipping readable transcript\n", err)
+		return false, nil
+	}
+
+	applied := ApplyReadableText(segments, readableSegs)
+
+	readablePath := filepath.Join(outputDir, "transcript.readable.v1.json")
+	if err := writeTranscriptWithHash(readablePath, streams, applied, audioDurationMS, sha256hex); err != nil {
+		return false, fmt.Errorf("write readable transcript: %w", err)
+	}
+
+	captionsPath := filepath.Join(outputDir, "captions.vtt")
+	if err := WriteCaptionsVTT(captionsPath, streams, applied); err != nil {
+		return false, fmt.Errorf("write captions: %w", err)
+	}
+	return true, nil
 }
 
 // defaultCacheDir returns the default cache directory for models.
@@ -177,6 +193,15 @@ func defaultCacheDir() string {
 		return filepath.Join(".", ".cache", "cassini")
 	}
 	return filepath.Join(home, ".cache", "cassini")
+}
+
+func envBool(name string) bool {
+	switch strings.TrimSpace(strings.ToLower(os.Getenv(name))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // writeTranscriptWithHash writes a transcript JSON file, embedding the audio SHA-256.

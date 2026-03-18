@@ -180,6 +180,64 @@ func TestBuildUsesRunnerOverrideAndWritesMeetingManifest(t *testing.T) {
 	}
 }
 
+func TestBuildPassesStrictReadableCleanupFlag(t *testing.T) {
+	tmp := t.TempDir()
+
+	input := filepath.Join(tmp, "source.mkv")
+	if err := os.WriteFile(input, []byte("fake-mkv"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	prev := buildArtifactFn
+	var gotCfg transcribe.BuildConfig
+	buildArtifactFn = func(ctx context.Context, inputPath, outputDir string, cfg transcribe.BuildConfig, stdout io.Writer) error {
+		gotCfg = cfg
+		return fakeSuccessBuildFn(t)(ctx, inputPath, outputDir, cfg, stdout)
+	}
+	t.Cleanup(func() { buildArtifactFn = prev })
+
+	outDir := filepath.Join(tmp, "meeting.meeting")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"build", input, "--out", outDir, "--strict-readable-cleanup"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected build success, got code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	if !gotCfg.StrictReadableCleanup {
+		t.Fatalf("expected strict readable cleanup flag to be forwarded")
+	}
+}
+
+func TestBuildUsesStrictReadableCleanupEnvDefault(t *testing.T) {
+	t.Setenv("CASSINI_READABLE_STRICT_BATCHES", "true")
+
+	tmp := t.TempDir()
+
+	input := filepath.Join(tmp, "source.mkv")
+	if err := os.WriteFile(input, []byte("fake-mkv"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	prev := buildArtifactFn
+	var gotCfg transcribe.BuildConfig
+	buildArtifactFn = func(ctx context.Context, inputPath, outputDir string, cfg transcribe.BuildConfig, stdout io.Writer) error {
+		gotCfg = cfg
+		return fakeSuccessBuildFn(t)(ctx, inputPath, outputDir, cfg, stdout)
+	}
+	t.Cleanup(func() { buildArtifactFn = prev })
+
+	outDir := filepath.Join(tmp, "meeting.meeting")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"build", input, "--out", outDir}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected build success, got code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	if !gotCfg.StrictReadableCleanup {
+		t.Fatalf("expected strict readable cleanup env default to be forwarded")
+	}
+}
+
 func TestBuildPortableUsesRunnerOverrideAndWritesPortableMeeting(t *testing.T) {
 	requireFFMediaTools(t)
 
