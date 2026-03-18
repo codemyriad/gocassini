@@ -59,6 +59,8 @@
   let activeMeeting: MeetingCatalogEntry | null = null;
   let showExactWords = false;
   const CONTINUATION_GAP_MS = 60_000;
+  const SEEK_BACKWARD_MS = 15_000;
+  const SEEK_FORWARD_MS = 30_000;
 
   $: speakers = transcriptIndex?.transcript.speakers ?? [];
   $: displaySegments = transcriptIndex
@@ -69,6 +71,11 @@
   $: activeToken = getActiveDisplayToken(activeSegment, currentTimeMs);
   $: activeWord = getActiveDisplayWord(activeSegment, currentTimeMs);
   $: hasPrecomputedDisplay = displayTranscript !== null;
+  $: safeDurationMs = asFiniteMilliseconds(durationMs);
+  $: clampedDurationMs = Math.max(0, safeDurationMs);
+  $: clampedCurrentTimeMs = Math.min(Math.max(0, asFiniteMilliseconds(currentTimeMs)), clampedDurationMs || 0);
+  $: remainingMs = Math.max(0, clampedDurationMs - clampedCurrentTimeMs);
+  $: playbackProgress = clampedDurationMs > 0 ? (clampedCurrentTimeMs / clampedDurationMs) * 100 : 0;
   $: documentTitle = activeMeeting
     ? `${activeMeeting.title} | Cassini Viewer`
     : catalogMeetings.length > 0
@@ -200,7 +207,7 @@
   }
 
   function syncPlaybackTime() {
-    currentTimeMs = Math.round((audioEl?.currentTime ?? 0) * 1000);
+    currentTimeMs = asFiniteMilliseconds(Math.round((audioEl?.currentTime ?? 0) * 1000));
     if (playing) {
       animationFrameId = window.requestAnimationFrame(syncPlaybackTime);
     }
@@ -219,11 +226,15 @@
   }
 
   function handleLoadedMetadata() {
-    durationMs = Math.round((audioEl?.duration ?? 0) * 1000) || durationMs;
+    syncDurationFromMedia();
     if (pendingSeekMs !== null) {
       seekTo(pendingSeekMs);
       pendingSeekMs = null;
     }
+  }
+
+  function handleDurationChange() {
+    syncDurationFromMedia();
   }
 
   function handlePlay() {
@@ -253,11 +264,42 @@
   }
 
   function seekTo(ms: number) {
+    const nextTimeMs = Math.min(Math.max(0, ms), clampedDurationMs || ms);
+    currentTimeMs = nextTimeMs;
     if (!audioEl) {
+      pendingSeekMs = nextTimeMs;
       return;
     }
-    audioEl.currentTime = Math.max(0, ms) / 1000;
+    if (audioEl.readyState === 0) {
+      pendingSeekMs = nextTimeMs;
+      audioEl.load();
+      return;
+    }
+    audioEl.currentTime = nextTimeMs / 1000;
     syncPlaybackTime();
+  }
+
+  function seekBy(deltaMs: number) {
+    seekTo(currentTimeMs + deltaMs);
+  }
+
+  function handleTimelineInput(event: Event) {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLInputElement)) {
+      return;
+    }
+    seekTo(Number(target.value));
+  }
+
+  function syncDurationFromMedia() {
+    const reportedDurationMs = asFiniteMilliseconds(Math.round((audioEl?.duration ?? 0) * 1000));
+    if (reportedDurationMs > 0) {
+      durationMs = Math.max(durationMs, reportedDurationMs);
+    }
+  }
+
+  function asFiniteMilliseconds(value: number): number {
+    return Number.isFinite(value) ? value : 0;
   }
 
   function segmentDomId(segmentId: string): string {
@@ -678,25 +720,64 @@
       </div>
 
       {#if audioSrc}
-        <audio
-          bind:this={audioEl}
-          class="dock-audio"
-          controls
-          preload="metadata"
-          src={audioSrc}
-          on:ended={handlePause}
-          on:loadedmetadata={handleLoadedMetadata}
-          on:pause={handlePause}
-          on:play={handlePlay}
-          on:timeupdate={handleTimeUpdate}
-        >
-          {#if captionsSrc}
-            <track kind="captions" src={captionsSrc} label="Captions" default />
-          {/if}
-          {#if chaptersSrc}
-            <track kind="chapters" src={chaptersSrc} label="Chapters" />
-          {/if}
-        </audio>
+        <div class="player-shell">
+          <audio
+            bind:this={audioEl}
+            class="engine-audio"
+            preload="metadata"
+            src={audioSrc}
+            on:durationchange={handleDurationChange}
+            on:ended={handlePause}
+            on:loadedmetadata={handleLoadedMetadata}
+            on:pause={handlePause}
+            on:play={handlePlay}
+            on:timeupdate={handleTimeUpdate}
+          >
+            {#if captionsSrc}
+              <track kind="captions" src={captionsSrc} label="Captions" default />
+            {/if}
+            {#if chaptersSrc}
+              <track kind="chapters" src={chaptersSrc} label="Chapters" />
+            {/if}
+          </audio>
+
+          <div class="player-controls">
+            <div class="player-buttons">
+              <button class="transport-button transport-primary" on:click={togglePlayback} type="button">
+                {#if playing}
+                  Pause
+                {:else}
+                  Play
+                {/if}
+              </button>
+              <button class="transport-button" on:click={() => seekBy(-SEEK_BACKWARD_MS)} type="button">
+                -15s
+              </button>
+              <button class="transport-button" on:click={() => seekBy(SEEK_FORWARD_MS)} type="button">
+                +30s
+              </button>
+            </div>
+
+            <div class="timeline-wrap">
+              <div class="timeline-stats">
+                <span>{formatClockTime(clampedCurrentTimeMs)} elapsed</span>
+                <span>{formatClockTime(clampedDurationMs)} total</span>
+                <span>-{formatClockTime(remainingMs)} remaining</span>
+              </div>
+              <input
+                aria-label="Seek within meeting"
+                class="timeline-slider"
+                max={Math.max(clampedDurationMs, 1)}
+                min="0"
+                on:input={handleTimelineInput}
+                step="250"
+                style={`--player-progress: ${playbackProgress}%`}
+                type="range"
+                value={Math.min(clampedCurrentTimeMs, Math.max(clampedDurationMs, 1))}
+              />
+            </div>
+          </div>
+        </div>
       {:else}
         <p class="muted">
           {#if catalogMeetings.length > 0}
@@ -1140,9 +1221,116 @@
     line-height: 1.35;
   }
 
-  .dock-audio {
-    width: 100%;
+  .player-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.7rem;
     min-width: 0;
+  }
+
+  .engine-audio {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .player-controls {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.85rem;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .player-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+  }
+
+  .transport-button {
+    padding: 0.68rem 0.82rem;
+    border: 1px solid rgba(93, 82, 66, 0.16);
+    border-radius: 0.8rem;
+    background: rgba(255, 255, 255, 0.92);
+    color: inherit;
+    font-weight: 700;
+    transition:
+      transform 120ms ease,
+      border-color 120ms ease,
+      background 120ms ease;
+  }
+
+  .transport-button:hover {
+    transform: translateY(-1px);
+    border-color: rgba(130, 96, 42, 0.4);
+  }
+
+  .transport-primary {
+    background: linear-gradient(135deg, rgba(198, 134, 73, 0.96), rgba(173, 98, 43, 0.96));
+    border-color: rgba(138, 82, 32, 0.55);
+    color: #fffaf4;
+  }
+
+  .timeline-wrap {
+    display: grid;
+    gap: 0.38rem;
+    min-width: 0;
+  }
+
+  .timeline-stats {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.8rem;
+    color: #665d51;
+    font-size: 0.86rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .timeline-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 0.8rem;
+    border-radius: 999px;
+    background:
+      linear-gradient(
+        90deg,
+        rgba(194, 126, 59, 0.95) 0%,
+        rgba(194, 126, 59, 0.95) var(--player-progress, 0%),
+        rgba(126, 114, 90, 0.18) var(--player-progress, 0%),
+        rgba(126, 114, 90, 0.18) 100%
+      );
+    outline: none;
+    cursor: pointer;
+  }
+
+  .timeline-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 1rem;
+    height: 1rem;
+    border-radius: 50%;
+    border: 2px solid rgba(157, 92, 39, 0.92);
+    background: #fffaf4;
+    box-shadow: 0 2px 8px rgba(87, 72, 40, 0.18);
+  }
+
+  .timeline-slider::-moz-range-thumb {
+    width: 1rem;
+    height: 1rem;
+    border-radius: 50%;
+    border: 2px solid rgba(157, 92, 39, 0.92);
+    background: #fffaf4;
+    box-shadow: 0 2px 8px rgba(87, 72, 40, 0.18);
+  }
+
+  .timeline-slider::-moz-range-track {
+    height: 0.8rem;
+    border-radius: 999px;
+    background: transparent;
   }
 
   .player-actions {
@@ -1187,8 +1375,17 @@
       gap: 0.75rem;
     }
 
+    .player-controls {
+      grid-template-columns: 1fr;
+    }
+
     .player-actions {
       justify-content: flex-start;
+    }
+
+    .timeline-stats {
+      flex-direction: column;
+      gap: 0.2rem;
     }
   }
 </style>
