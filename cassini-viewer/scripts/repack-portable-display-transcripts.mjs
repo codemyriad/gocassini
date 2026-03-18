@@ -111,7 +111,7 @@ export function repackPortableMeeting(path) {
   return { status: "rewrite" };
 }
 
-function normalizePortableReadableTranscript(portable) {
+export function normalizePortableReadableTranscript(portable) {
   if (
     portable?.readableTranscript &&
     typeof portable.readableTranscript === "object" &&
@@ -133,7 +133,7 @@ function normalizePortableReadableTranscript(portable) {
   return portable;
 }
 
-function rewritePortableTags(inputPath, outputPath, tags) {
+export function rewritePortableTags(inputPath, outputPath, tags) {
   const args = [
     "-v",
     "error",
@@ -154,7 +154,7 @@ function rewritePortableTags(inputPath, outputPath, tags) {
   execFileSync("ffmpeg", args, { stdio: "inherit" });
 }
 
-function normalizeManifest(manifest) {
+export function normalizeManifest(manifest) {
   const next = structuredClone(manifest);
   next.kind = "cassini-portable-meeting";
   next.version = 1;
@@ -172,7 +172,7 @@ function normalizeManifest(manifest) {
   return next;
 }
 
-function encodeManifest(manifest, chunkSize) {
+export function encodeManifest(manifest, chunkSize) {
   const normalized = normalizeManifest(manifest);
   const json = Buffer.from(JSON.stringify(normalized), "utf8");
   const gzip = gzipSync(json);
@@ -190,7 +190,7 @@ function encodeManifest(manifest, chunkSize) {
   };
 }
 
-function buildOpusTags(manifest, payload) {
+export function buildOpusTags(manifest, payload) {
   const normalized = normalizeManifest(manifest);
   const tags = {
     TITLE: normalized.meeting?.title ?? "",

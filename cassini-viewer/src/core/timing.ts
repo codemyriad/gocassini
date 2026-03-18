@@ -4,17 +4,12 @@ export interface TimedRange {
 }
 
 export function getActiveTimedRange<T extends TimedRange>(items: readonly T[], timeMs: number): T | null {
-  let winner: T | null = null;
   for (const item of items) {
     if (containsPlaybackTime(item, timeMs)) {
-      winner = item;
-      continue;
-    }
-    if (item.startMs <= timeMs) {
-      winner = item;
+      return item;
     }
   }
-  return winner;
+  return null;
 }
 
 export function containsPlaybackTime(range: TimedRange, timeMs: number): boolean {

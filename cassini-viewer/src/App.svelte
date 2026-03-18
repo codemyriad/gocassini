@@ -498,13 +498,7 @@
     segments: DisplaySegment[],
     timeMs: number,
   ): DisplaySegment | null {
-    let winner: DisplaySegment | null = null;
-    for (const segment of segments) {
-      if (segment.startMs <= timeMs && timeMs <= segment.endMs) {
-        winner = segment;
-      }
-    }
-    return winner;
+    return getActiveTimedRange(segments, timeMs);
   }
 
   function getActiveDisplayToken(

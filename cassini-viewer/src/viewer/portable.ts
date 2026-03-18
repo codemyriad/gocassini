@@ -210,6 +210,304 @@ export function buildReadableTranscriptFromPortable(
   };
 }
 
+interface DisplaySourceBlock {
+  id: string;
+  speaker?: string;
+  speakerLabel: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+  sourceSegmentIds: string[];
+  words: TranscriptWordsV1["segments"][number]["words"];
+}
+
+interface TimeWindow {
+  startMs: number;
+  endMs: number;
+}
+
+function buildReadableDisplaySourceBlocks(
+  readable: ReadableTranscriptV1,
+  speakerLabels: Map<string, string>,
+): DisplaySourceBlock[] {
+  const baseBlocks = readable.segments.map((segment, index) => {
+    const segmentRecord = asRecord(segment as unknown);
+    const blockId =
+      typeof segment.id === "string" && segment.id.trim() !== ""
+        ? segment.id
+        : `rseg_${String(index).padStart(6, "0")}`;
+    return {
+      id: blockId,
+      speaker: segment.speaker,
+      speakerLabel: segment.speaker
+        ? speakerLabels.get(segment.speaker) || segment.speaker
+        : "Unknown speaker",
+      startMs: safeToInt(segment.startMs, 0),
+      endMs: safeToInt(segment.endMs, safeToInt(segment.startMs, 0)),
+      text: typeof segment.text === "string" ? segment.text : "",
+      sourceSegmentIds: Array.isArray(segment.sourceSegmentIds) ? [...segment.sourceSegmentIds] : [],
+      words: extractPortableReadableWords(segmentRecord, blockId),
+    } satisfies DisplaySourceBlock;
+  });
+  return splitReadableBlocksOnInterruptions(baseBlocks);
+}
+
+function splitReadableBlocksOnInterruptions(blocks: DisplaySourceBlock[]): DisplaySourceBlock[] {
+  return blocks.flatMap((block, blockIndex) => splitReadableBlockOnInterruptions(block, blockIndex, blocks));
+}
+
+function splitReadableBlockOnInterruptions(
+  block: DisplaySourceBlock,
+  blockIndex: number,
+  allBlocks: DisplaySourceBlock[],
+): DisplaySourceBlock[] {
+  if (block.words.length === 0 || !block.speaker) {
+    return [block];
+  }
+
+  const interruptions = mergeTimeWindows(
+    allBlocks
+      .filter((other, index) => index !== blockIndex && other.speaker && other.speaker !== block.speaker)
+      .map((other) => ({
+        startMs: Math.max(block.startMs, other.startMs),
+        endMs: Math.min(block.endMs, other.endMs),
+      }))
+      .filter((window) => window.endMs - window.startMs >= 400),
+  );
+  const windows = subtractTimeWindows(
+    {
+      startMs: block.startMs,
+      endMs: block.endMs,
+    },
+    interruptions,
+  ).filter((window) => window.endMs - window.startMs >= 250);
+
+  if (windows.length <= 1) {
+    return [block];
+  }
+
+  const uniformlyInterpolated = wordsLookUniformlyInterpolated(block.words, block.startMs, block.endMs);
+  const counts = uniformlyInterpolated
+    ? allocateWordCountsAcrossWindows(block.words.length, windows)
+    : assignWordsToWindows(block.words, windows);
+  const plan = windows
+    .map((window, index) => ({
+      window,
+      count: counts[index] ?? 0,
+    }))
+    .filter((entry) => entry.count > 0);
+
+  if (plan.length <= 1) {
+    return [block];
+  }
+
+  const textParts = splitTextByWordCounts(block.text, plan.map((entry) => entry.count));
+  const derivedBlocks: DisplaySourceBlock[] = [];
+  let wordOffset = 0;
+  for (let index = 0; index < plan.length; index += 1) {
+    const { window, count } = plan[index]!;
+    const words = block.words.slice(wordOffset, wordOffset + count);
+    wordOffset += count;
+    if (words.length === 0) {
+      continue;
+    }
+    const timedWords = uniformlyInterpolated ? retimeWordsWithinWindow(words, window) : words;
+    derivedBlocks.push({
+      ...block,
+      id: `${block.id}__split_${String(index).padStart(2, "0")}`,
+      startMs: timedWords[0]?.startMs ?? window.startMs,
+      endMs: timedWords[timedWords.length - 1]?.endMs ?? window.endMs,
+      text: textParts[index] ?? rebuildTextFromWords(timedWords),
+      words: timedWords,
+    });
+  }
+
+  return derivedBlocks.length > 0 ? derivedBlocks : [block];
+}
+
+function mergeTimeWindows(windows: TimeWindow[]): TimeWindow[] {
+  const sorted = [...windows].sort((left, right) => left.startMs - right.startMs);
+  const merged: TimeWindow[] = [];
+  for (const window of sorted) {
+    const previous = merged.at(-1);
+    if (!previous || window.startMs > previous.endMs) {
+      merged.push({ ...window });
+      continue;
+    }
+    previous.endMs = Math.max(previous.endMs, window.endMs);
+  }
+  return merged;
+}
+
+function subtractTimeWindows(range: TimeWindow, removals: TimeWindow[]): TimeWindow[] {
+  const windows: TimeWindow[] = [];
+  let cursor = range.startMs;
+  for (const removal of removals) {
+    if (removal.endMs <= cursor) {
+      continue;
+    }
+    if (removal.startMs > cursor) {
+      windows.push({
+        startMs: cursor,
+        endMs: Math.min(removal.startMs, range.endMs),
+      });
+    }
+    cursor = Math.max(cursor, removal.endMs);
+    if (cursor >= range.endMs) {
+      break;
+    }
+  }
+  if (cursor < range.endMs) {
+    windows.push({
+      startMs: cursor,
+      endMs: range.endMs,
+    });
+  }
+  return windows.filter((window) => window.endMs > window.startMs);
+}
+
+function wordsLookUniformlyInterpolated(
+  words: TranscriptWordsV1["segments"][number]["words"],
+  startMs: number,
+  endMs: number,
+): boolean {
+  if (words.length === 0) {
+    return false;
+  }
+  const span = Math.max(0, endMs - startMs);
+  const toleranceMs = Math.max(25, Math.floor(span / Math.max(words.length, 1) / 5));
+  return words.every((word, index) => {
+    const expectedStart = words.length <= 1
+      ? startMs
+      : startMs + Math.floor((span * index) / words.length);
+    const expectedEnd = words.length <= 1
+      ? endMs
+      : startMs + Math.floor((span * (index + 1)) / words.length);
+    return (
+      Math.abs(safeToInt(word.startMs, expectedStart) - expectedStart) <= toleranceMs &&
+      Math.abs(safeToInt(word.endMs, expectedEnd) - expectedEnd) <= toleranceMs
+    );
+  });
+}
+
+function allocateWordCountsAcrossWindows(totalWords: number, windows: TimeWindow[]): number[] {
+  const totalDuration = windows.reduce((sum, window) => sum + Math.max(0, window.endMs - window.startMs), 0);
+  if (totalDuration <= 0) {
+    return windows.map((_, index) => (index === windows.length - 1 ? totalWords : 0));
+  }
+
+  const counts = windows.map((window) =>
+    Math.floor((totalWords * Math.max(0, window.endMs - window.startMs)) / totalDuration),
+  );
+  let assigned = counts.reduce((sum, count) => sum + count, 0);
+  const rankedRemainders = windows
+    .map((window, index) => ({
+      index,
+      remainder:
+        ((totalWords * Math.max(0, window.endMs - window.startMs)) / totalDuration) - (counts[index] ?? 0),
+    }))
+    .sort((left, right) => right.remainder - left.remainder);
+  for (const { index } of rankedRemainders) {
+    if (assigned >= totalWords) {
+      break;
+    }
+    counts[index] = (counts[index] ?? 0) + 1;
+    assigned += 1;
+  }
+  if (assigned < totalWords) {
+    counts[counts.length - 1] = (counts[counts.length - 1] ?? 0) + (totalWords - assigned);
+  }
+  return counts;
+}
+
+function assignWordsToWindows(
+  words: TranscriptWordsV1["segments"][number]["words"],
+  windows: TimeWindow[],
+): number[] {
+  const counts = windows.map(() => 0);
+  for (const word of words) {
+    const midpoint = Math.floor((safeToInt(word.startMs, 0) + safeToInt(word.endMs, 0)) / 2);
+    let winnerIndex = windows.findIndex((window) => midpoint >= window.startMs && midpoint < window.endMs);
+    if (winnerIndex < 0) {
+      winnerIndex = windows.reduce((bestIndex, window, index) => {
+        const bestWindow = windows[bestIndex]!;
+        const bestDistance = distanceToWindow(midpoint, bestWindow);
+        const nextDistance = distanceToWindow(midpoint, window);
+        return nextDistance < bestDistance ? index : bestIndex;
+      }, 0);
+    }
+    counts[winnerIndex] = (counts[winnerIndex] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function distanceToWindow(value: number, window: TimeWindow): number {
+  if (value < window.startMs) {
+    return window.startMs - value;
+  }
+  if (value > window.endMs) {
+    return value - window.endMs;
+  }
+  return 0;
+}
+
+function retimeWordsWithinWindow(
+  words: TranscriptWordsV1["segments"][number]["words"],
+  window: TimeWindow,
+): TranscriptWordsV1["segments"][number]["words"] {
+  if (words.length === 0) {
+    return [];
+  }
+  const span = Math.max(0, window.endMs - window.startMs);
+  return words.map((word, index) => ({
+    ...word,
+    startMs: words.length <= 1 ? window.startMs : window.startMs + Math.floor((span * index) / words.length),
+    endMs: words.length <= 1 ? window.endMs : window.startMs + Math.floor((span * (index + 1)) / words.length),
+  }));
+}
+
+function splitTextByWordCounts(text: string, counts: number[]): string[] {
+  const tokens = tokenizeDisplayText(text);
+  const parts: string[] = [];
+  let tokenStart = 0;
+  for (const count of counts) {
+    let tokenEnd = tokenStart;
+    let wordsSeen = 0;
+    while (tokenEnd < tokens.length && wordsSeen < count) {
+      if (tokens[tokenEnd]?.kind === "word") {
+        wordsSeen += 1;
+      }
+      tokenEnd += 1;
+    }
+    while (tokenEnd < tokens.length && tokens[tokenEnd]?.kind !== "word") {
+      tokenEnd += 1;
+    }
+    parts.push(rebuildTextFromTokens(tokens.slice(tokenStart, tokenEnd)));
+    tokenStart = tokenEnd;
+  }
+  if (parts.length > 0 && tokenStart < tokens.length) {
+    parts[parts.length - 1] = `${parts[parts.length - 1]}${rebuildTextFromTokens(tokens.slice(tokenStart))}`;
+  }
+  return parts;
+}
+
+function rebuildTextFromTokens(
+  tokens: Array<{ text: string; spaceBefore: boolean }>,
+): string {
+  let text = "";
+  for (const token of tokens) {
+    if (token.spaceBefore && text !== "") {
+      text += " ";
+    }
+    text += token.text;
+  }
+  return text;
+}
+
+function rebuildTextFromWords(words: TranscriptWordsV1["segments"][number]["words"]): string {
+  return words.map((word) => word.text).join(" ");
+}
+
 export function buildDisplayTranscriptFromArtifacts(
   transcript: TranscriptWordsV1,
   readable: ReadableTranscriptV1 | null,
@@ -220,7 +518,7 @@ export function buildDisplayTranscriptFromArtifacts(
   const segmentById = new Map(transcriptSegments.map((segment) => [segment.id, segment]));
   const sourceBlocks =
     readable && readable.version === "transcript.readable.v1" && Array.isArray(readable.segments)
-      ? readable.segments
+      ? buildReadableDisplaySourceBlocks(readable, speakerLabels)
       : transcriptSegments.map((segment) => ({
           id: `d_${segment.id}`,
           speaker: segment.speaker,
@@ -229,6 +527,7 @@ export function buildDisplayTranscriptFromArtifacts(
           endMs: segment.endMs,
           text: segment.text,
           sourceSegmentIds: [segment.id],
+          words: [],
         }));
 
   return {

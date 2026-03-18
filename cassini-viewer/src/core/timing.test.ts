@@ -15,14 +15,23 @@ describe("timing helpers", () => {
     expect(getActiveTimedRange(words, 1450)?.id).toBe("w3");
   });
 
-  it("falls back to the last started range after the final end time", () => {
+  it("goes inactive outside all timed ranges", () => {
     const words = [
       { id: "w1", startMs: 1000, endMs: 1200 },
       { id: "w2", startMs: 1200, endMs: 1450 },
     ];
 
-    expect(getActiveTimedRange(words, 1450)?.id).toBe("w2");
-    expect(getActiveTimedRange(words, 2000)?.id).toBe("w2");
+    expect(getActiveTimedRange(words, 1450)).toBeNull();
+    expect(getActiveTimedRange(words, 2000)).toBeNull();
+  });
+
+  it("goes inactive across gaps between timed ranges", () => {
+    const words = [
+      { id: "w1", startMs: 1000, endMs: 1200 },
+      { id: "w2", startMs: 1400, endMs: 1450 },
+    ];
+
+    expect(getActiveTimedRange(words, 1300)).toBeNull();
   });
 
   it("supports zero-length point ranges", () => {

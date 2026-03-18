@@ -143,4 +143,81 @@ describe("buildReadableTranscriptFromPortable", () => {
     expect(wordTokens[0]).toMatchObject({ text: "And", startMs: 1000, endMs: 1200 });
     expect(wordTokens[5]).toMatchObject({ text: "very", startMs: 2400, endMs: 2800 });
   });
+
+  it("splits synthetic readable blocks around interruptions from other speakers", () => {
+    const portable = {
+      meeting: { durationMs: 110_000 },
+      speakers: [
+        { id: "spk_chima", label: "chima" },
+        { id: "spk_silvio", label: "Silvio" },
+      ],
+      transcript: {
+        items: [
+          {
+            id: "seg_chima",
+            speaker: "spk_chima",
+            startMs: 54_981,
+            endMs: 83_541,
+            text: "Actually, I was wondering if I should have pinged you in the afternoon, and I didn't because I was busy doing something else. It's a pity, Chris, you're ruining everything.",
+          },
+          {
+            id: "seg_silvio",
+            speaker: "spk_silvio",
+            startMs: 64_837,
+            endMs: 78_757,
+            text: "Telling Mattia off about homework.",
+          },
+        ],
+      },
+      readableTranscript: {
+        version: "transcript.readable.v1",
+        speakers: [
+          { id: "spk_chima", label: "chima" },
+          { id: "spk_silvio", label: "Silvio" },
+        ],
+        segments: [
+          {
+            id: "readable_000002",
+            speaker: "spk_chima",
+            startMs: 54_981,
+            endMs: 83_541,
+            text: "Actually, I was wondering if I should have pinged you in the afternoon, and I didn't because I was busy doing something else. It's a pity, Chris, you're ruining everything.",
+            words: [
+              "Actually,","I","was","wondering","if","I","should","have","pinged","you","in","the","afternoon,","and","I","didn't","because","I","was","busy","doing","something","else.","It's","a","pity,","Chris,","you're","ruining","everything.",
+            ].map((text, index, words) => ({
+              text,
+              startMs: 54_981 + Math.floor(((83_541 - 54_981) * index) / words.length),
+              endMs: 54_981 + Math.floor(((83_541 - 54_981) * (index + 1)) / words.length),
+            })),
+          },
+          {
+            id: "readable_000003",
+            speaker: "spk_silvio",
+            startMs: 64_837,
+            endMs: 78_757,
+            text: "Telling Mattia off about homework.",
+            words: [
+              { text: "Telling", startMs: 64_837, endMs: 65_470 },
+              { text: "Mattia", startMs: 65_470, endMs: 66_102 },
+              { text: "off", startMs: 66_102, endMs: 66_735 },
+              { text: "about", startMs: 66_735, endMs: 67_368 },
+              { text: "homework.", startMs: 67_368, endMs: 68_001 },
+            ],
+          },
+        ],
+      },
+    };
+
+    const transcript = buildTranscriptWordsFromPortable(portable as never);
+    const readable = buildReadableTranscriptFromPortable(portable as never, transcript);
+    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
+    const chimaBlocks = display.blocks.filter((block) => block.speaker === "spk_chima");
+
+    expect(chimaBlocks).toHaveLength(2);
+    expect(chimaBlocks[0]?.text).toContain("Actually, I was wondering");
+    expect(chimaBlocks[0]?.text).not.toContain("It's a pity");
+    expect(chimaBlocks[0]?.endMs).toBeLessThanOrEqual(64_837);
+    expect(chimaBlocks[1]?.text).toContain("It's a pity, Chris, you're ruining everything.");
+    expect(chimaBlocks[1]?.startMs).toBeGreaterThanOrEqual(78_757);
+  });
 });

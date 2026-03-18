@@ -9,6 +9,8 @@
     "export:meetings": "npm run build && node ./scripts/export-static-meetings.mjs",
     "export:portable-runtime": "npm run build && node ./scripts/export-runtime-portable-site.mjs",
     "materialize:display": "node ./scripts/materialize-display-transcripts.mjs",
+    "pack:portable-artifacts": "node ./scripts/pack-portable-artifacts.mjs",
+    "reprocess:portable": "node ./scripts/reprocess-portable-meetings.mjs",
     "preview": "vite preview",
     "test": "vitest run"
   },
