@@ -789,14 +789,23 @@
       {/if}
 
       <div class="player-actions">
-        <button on:click={toggleFollowPlayback} type="button">
-          {#if followPlayback && manualScrollLock}
-            Resume auto-scroll
-          {:else if followPlayback}
-            Auto-scroll: on
-          {:else}
-            Auto-scroll: off
-          {/if}
+        <button
+          aria-checked={followPlayback && !manualScrollLock}
+          class="switch-button"
+          on:click={toggleFollowPlayback}
+          role="switch"
+          type="button"
+        >
+          <span class="switch-label">
+            {#if followPlayback && manualScrollLock}
+              Resume auto-scroll
+            {:else}
+              Auto-scroll
+            {/if}
+          </span>
+          <span class:checked={followPlayback && !manualScrollLock} class="switch-track">
+            <span class="switch-thumb"></span>
+          </span>
         </button>
         {#if readableTranscript && !hasPrecomputedDisplay}
           <button on:click={() => (showExactWords = !showExactWords)} type="button">
@@ -987,6 +996,68 @@
 
   .player-actions button {
     padding: 0.68rem 0.82rem;
+  }
+
+  .switch-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.58rem 0.78rem;
+    border: 1px solid rgba(93, 82, 66, 0.16);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.92);
+    color: inherit;
+    font-weight: 600;
+    transition:
+      transform 120ms ease,
+      border-color 120ms ease,
+      background 120ms ease;
+  }
+
+  .switch-button:hover {
+    transform: translateY(-1px);
+    border-color: rgba(130, 96, 42, 0.4);
+  }
+
+  .switch-button:focus-visible {
+    outline: 2px solid rgba(180, 112, 58, 0.38);
+    outline-offset: 3px;
+  }
+
+  .switch-label {
+    white-space: nowrap;
+  }
+
+  .switch-track {
+    position: relative;
+    width: 2.6rem;
+    height: 1.45rem;
+    border-radius: 999px;
+    background: rgba(126, 114, 90, 0.22);
+    box-shadow: inset 0 0 0 1px rgba(93, 82, 66, 0.12);
+    transition: background 120ms ease;
+    flex: 0 0 auto;
+  }
+
+  .switch-track.checked {
+    background: rgba(194, 126, 59, 0.92);
+    box-shadow: inset 0 0 0 1px rgba(157, 92, 39, 0.35);
+  }
+
+  .switch-thumb {
+    position: absolute;
+    top: 0.14rem;
+    left: 0.16rem;
+    width: 1.15rem;
+    height: 1.15rem;
+    border-radius: 50%;
+    background: #fffaf4;
+    box-shadow: 0 1px 4px rgba(87, 72, 40, 0.2);
+    transition: transform 120ms ease;
+  }
+
+  .switch-track.checked .switch-thumb {
+    transform: translateX(1.14rem);
   }
 
   .muted {
