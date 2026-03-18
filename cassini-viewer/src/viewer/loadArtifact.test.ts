@@ -307,6 +307,88 @@ describe("loadArtifactFromDirectory", () => {
     expect(artifact.displayTranscript?.blocks[0]?.tokens[0]?.text).toBe("Custom");
   });
 
+  it("recovers word timing from portable readable transcript words when display data is absent", async () => {
+    globalThis.window = {
+      location: {
+        href: "http://127.0.0.1:8765/?meeting=meeting-word-timed",
+        protocol: "http:",
+      },
+    } as Window;
+    const portableFixture = {
+      meeting: {
+        durationMs: 5000,
+      },
+      audio: {
+        sha256: "abc123",
+      },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      transcript: {
+        items: [
+          {
+            id: "seg_1",
+            speaker: "spk_1",
+            startMs: 1000,
+            endMs: 5000,
+            text: "And I think they'll be very happy with it.",
+          },
+        ],
+      },
+      readableTranscript: {
+        version: "transcript.readable.v1",
+        speakers: [{ id: "spk_1", label: "Alice" }],
+        segments: [
+          {
+            id: "rseg_1",
+            speaker: "spk_1",
+            startMs: 1000,
+            endMs: 5000,
+            text: "And I think they'll be very happy with it.",
+            words: [
+              { text: "And", startMs: 1000, endMs: 1200 },
+              { text: "I", startMs: 1200, endMs: 1400 },
+              { text: "think", startMs: 1400, endMs: 1800 },
+              { text: "they'll", startMs: 1800, endMs: 2200 },
+              { text: "be", startMs: 2200, endMs: 2400 },
+              { text: "very", startMs: 2400, endMs: 2800 },
+              { text: "happy", startMs: 2800, endMs: 3300 },
+              { text: "with", startMs: 3300, endMs: 3600 },
+              { text: "it.", startMs: 3600, endMs: 4000 },
+            ],
+          },
+        ],
+      },
+    };
+    const portableBytes = buildPortableOpusFixture(portableFixture);
+    globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(".opus")) {
+        expect(init?.headers).toMatchObject({
+          Range: "bytes=0-262143",
+        });
+        return {
+          ok: true,
+          status: 206,
+          headers: new Headers({
+            "content-range": "bytes 0-1999/2000",
+          }),
+          arrayBuffer: async () =>
+            portableBytes.buffer.slice(
+              portableBytes.byteOffset,
+              portableBytes.byteOffset + portableBytes.byteLength,
+            ),
+        } as Response;
+      }
+      return { ok: false } as Response;
+    }) as typeof fetch;
+
+    const artifact = await loadPortableArtifactFromAudioPath("./meeting-word-timed.opus");
+    const wordTokens = artifact.displayTranscript?.blocks[0]?.tokens.filter((token) => token.kind === "word") ?? [];
+
+    expect(artifact.timingPrecision.level).toBe("word");
+    expect(wordTokens[0]).toMatchObject({ text: "And", startMs: 1000, endMs: 1200 });
+    expect(wordTokens[5]).toMatchObject({ text: "very", startMs: 2400, endMs: 2800 });
+  });
+
   it("loads portable meeting summary counts from embedded metadata", async () => {
     globalThis.window = {
       location: {

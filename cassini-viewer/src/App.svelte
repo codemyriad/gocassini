@@ -17,6 +17,9 @@
     loadBundledArtifact,
     loadPortableArtifactFromAudioPath,
     loadPortableMeetingSummary,
+    type ArtifactMetadata,
+    type ArtifactMetadataRow,
+    type ArtifactTimingPrecision,
     type LoadedArtifact,
     type PortableMeetingSummary,
   } from "./viewer/loadArtifact";
@@ -44,6 +47,8 @@
   let audioSrc = "";
   let captionsSrc: string | null = null;
   let chaptersSrc: string | null = null;
+  let timingPrecision: ArtifactTimingPrecision | null = null;
+  let artifactMetadata: ArtifactMetadata | null = null;
   let errorMessage = "";
   let loading = true;
   let catalogMeetings: MeetingCatalogEntry[] = [];
@@ -64,8 +69,6 @@
   let showExactWords = false;
   let catalogHydrationGeneration = 0;
   const CONTINUATION_GAP_MS = 60_000;
-  const SEEK_BACKWARD_MS = 15_000;
-  const SEEK_FORWARD_MS = 30_000;
 
   $: speakers = transcriptIndex?.transcript.speakers ?? [];
   $: displaySegments = transcriptIndex
@@ -76,6 +79,7 @@
   $: activeToken = getActiveDisplayToken(activeSegment, currentTimeMs);
   $: activeWord = getActiveDisplayWord(activeSegment, currentTimeMs);
   $: hasPrecomputedDisplay = displayTranscript !== null;
+  $: metadataSections = artifactMetadata?.sections ?? [];
   $: safeDurationMs = asFiniteMilliseconds(durationMs);
   $: clampedDurationMs = Math.max(0, safeDurationMs);
   $: clampedCurrentTimeMs = Math.min(Math.max(0, asFiniteMilliseconds(currentTimeMs)), clampedDurationMs || 0);
@@ -156,6 +160,8 @@
     audioSrc = artifact.audioSrc;
     captionsSrc = artifact.captionsSrc;
     chaptersSrc = artifact.chaptersSrc;
+    timingPrecision = artifact.timingPrecision;
+    artifactMetadata = artifact.metadata;
     durationMs = artifact.index.transcript.media.durationMs;
     errorMessage = "";
     showExactWords = false;
@@ -174,6 +180,8 @@
     audioSrc = "";
     captionsSrc = null;
     chaptersSrc = null;
+    timingPrecision = null;
+    artifactMetadata = null;
     durationMs = 0;
     showExactWords = false;
     manualScrollLock = false;
@@ -283,10 +291,6 @@
     }
     audioEl.currentTime = nextTimeMs / 1000;
     syncPlaybackTime();
-  }
-
-  function seekBy(deltaMs: number) {
-    seekTo(currentTimeMs + deltaMs);
   }
 
   function handleTimelineInput(event: Event) {
@@ -543,6 +547,67 @@
     }
     return current.startMs - previous.endMs <= CONTINUATION_GAP_MS;
   }
+
+  function hasTimedTokens(segment: DisplaySegment): boolean {
+    return segment.tokens.some((token) => token.startMs !== undefined && token.endMs !== undefined);
+  }
+
+  function formatArtifactMode(): string {
+    if (!transcriptIndex) {
+      return catalogMeetings.length > 0 ? "Runtime catalog" : "Viewer ready";
+    }
+    if (displayTranscript) {
+      return "Cleaned display transcript";
+    }
+    if (readableTranscript) {
+      return "Readable transcript";
+    }
+    return "Canonical transcript";
+  }
+
+  function describeTranscriptInteraction(): string {
+    if (!activeMeeting && catalogMeetings.length > 0) {
+      return "Choose a meeting from the library to load its audio, transcript, and timing data.";
+    }
+    if (!transcriptIndex) {
+      return "Load a meeting artifact to inspect its transcript and timing.";
+    }
+    if (displayTranscript) {
+      if (timingPrecision?.level === "word") {
+        return "Cleaned transcript with word-level playback highlighting. Click a word or time stamp to seek.";
+      }
+      if (timingPrecision?.level === "mixed") {
+        return "Cleaned transcript with mixed timing precision. Timed words stay clickable; rewritten text falls back to passage timing.";
+      }
+      return "Cleaned transcript with passage timing. Click a passage or time stamp to seek without fake word precision.";
+    }
+    if (readableTranscript) {
+      return "Readable transcript first. Click any passage to seek. Press space to play or pause.";
+    }
+    return "Canonical timed transcript. Click any passage to seek the audio. Press space to play or pause.";
+  }
+
+  function formatMetadataLabel(label: string): string {
+    return label
+      .split(".")
+      .map((part) =>
+        part
+          .replace(/[_-]+/g, " ")
+          .replace(/([a-z])([A-Z])/g, "$1 $2")
+          .replace(/\s+/g, " ")
+          .trim()
+          .replace(/\b\w/g, (match) => match.toUpperCase()),
+      )
+      .join(" / ");
+  }
+
+  function metadataSectionStartsOpen(title: string): boolean {
+    return title === "Artifact" || title === "Meeting" || title === "Provenance" || title === "Transcript";
+  }
+
+  function metadataRowKey(sectionTitle: string, row: ArtifactMetadataRow): string {
+    return `${sectionTitle}:${row.label}`;
+  }
 </script>
 
 <svelte:head>
@@ -570,20 +635,17 @@
     </div>
     <div class="info-strip">
       <span class="info-pill">
-        {#if transcriptIndex}
-          {#if displayTranscript}
-            Cleaned text + word timing
-          {:else if readableTranscript}
-            Readable + exact timing
-          {:else}
-            Canonical timing
-          {/if}
-        {:else if catalogMeetings.length > 0}
-          Runtime catalog
-        {:else}
-          Viewer ready
-        {/if}
+        {formatArtifactMode()}
       </span>
+      {#if transcriptIndex && timingPrecision}
+        <span
+          class:info-pill-warning={timingPrecision.level !== "word"}
+          class="info-pill info-pill-subtle"
+          title={timingPrecision.detail}
+        >
+          {timingPrecision.label}
+        </span>
+      {/if}
       <span class="info-pill">
         {#if transcriptIndex}
           {formatClockTime(currentTimeMs)} / {formatClockTime(durationMs)}
@@ -629,19 +691,7 @@
       <div class="transcript-header">
         <div>
           <p class="eyebrow">Transcript</p>
-          <p class="transcript-summary">
-            {#if activeMeeting && displayTranscript}
-              Cleaned transcript with word-level playback highlighting. Click a word or time stamp to seek.
-            {:else if activeMeeting && readableTranscript}
-              Readable transcript first. Click any passage to seek. Press space to play or pause.
-            {:else if activeMeeting}
-              Canonical timed transcript. Click any passage to seek the audio. Press space to play or pause.
-            {:else if catalogMeetings.length > 0}
-              Choose a meeting from the library to load its audio, transcript, and timing data.
-            {:else}
-              Load a meeting artifact to inspect its transcript and timing.
-            {/if}
-          </p>
+          <p class="transcript-summary">{describeTranscriptInteraction()}</p>
         </div>
         {#if manualScrollLock}
           <span class="lock-pill">Auto-scroll paused</span>
@@ -686,7 +736,7 @@
                 </button>
               </div>
 
-              {#if segment.tokens.length > 0}
+              {#if segment.tokens.length > 0 && hasTimedTokens(segment)}
                 <div class="segment-text token-flow">
                   {#each segment.tokens as token}{#if token.startMs !== undefined && token.endMs !== undefined}<button
                         class:active-token={segment.id === activeSegment?.id && token === activeToken}
@@ -718,6 +768,49 @@
             </article>
           {/each}
         </div>
+
+        {#if transcriptIndex && (timingPrecision || artifactMetadata)}
+          <section class="meeting-footer">
+            <div class="meeting-footer-header">
+              <div>
+                <p class="eyebrow">Meeting metadata</p>
+                <p class="meeting-footer-copy">
+                  {timingPrecision?.detail ??
+                    "Artifact metadata is shown as provided, so older files can remain usable with reduced timing precision."}
+                </p>
+              </div>
+              {#if timingPrecision}
+                <span
+                  class:info-pill-warning={timingPrecision.level !== "word"}
+                  class="info-pill info-pill-subtle"
+                  title={timingPrecision.detail}
+                >
+                  {timingPrecision.label}
+                </span>
+              {/if}
+            </div>
+
+            {#if artifactMetadata}
+              <div class="metadata-sections">
+                {#each metadataSections as section}
+                  <details class="metadata-section" open={metadataSectionStartsOpen(section.title)}>
+                    <summary>{section.title}</summary>
+                    <dl class="metadata-grid">
+                      {#each section.rows as row (metadataRowKey(section.title, row))}
+                        <dt>{formatMetadataLabel(row.label)}</dt>
+                        <dd>{row.value}</dd>
+                      {/each}
+                    </dl>
+                  </details>
+                {/each}
+                <details class="metadata-section">
+                  <summary>Raw JSON</summary>
+                  <pre class="metadata-raw">{artifactMetadata.rawJson}</pre>
+                </details>
+              </div>
+            {/if}
+          </section>
+        {/if}
       {/if}
     </main>
   </div>
@@ -768,12 +861,6 @@
                 {:else}
                   Play
                 {/if}
-              </button>
-              <button class="transport-button" on:click={() => seekBy(-SEEK_BACKWARD_MS)} type="button">
-                -15s
-              </button>
-              <button class="transport-button" on:click={() => seekBy(SEEK_FORWARD_MS)} type="button">
-                +30s
               </button>
             </div>
 
@@ -919,6 +1006,17 @@
     color: #544c40;
     font-size: 0.9rem;
     font-weight: 600;
+  }
+
+  .info-pill-subtle {
+    color: #64584a;
+    background: rgba(252, 249, 243, 0.8);
+    font-weight: 500;
+  }
+
+  .info-pill-warning {
+    border-color: rgba(180, 112, 58, 0.22);
+    color: #7a5b2e;
   }
 
   .layout {
@@ -1120,6 +1218,85 @@
   .transcript-list {
     display: grid;
     gap: 0.6rem;
+  }
+
+  .meeting-footer {
+    display: grid;
+    gap: 0.8rem;
+    padding-top: 0.15rem;
+    border-top: 1px solid rgba(84, 78, 55, 0.1);
+  }
+
+  .meeting-footer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.8rem;
+  }
+
+  .meeting-footer-copy {
+    margin: 0;
+    color: #665d51;
+    line-height: 1.5;
+    font-size: 0.93rem;
+    max-width: 72ch;
+  }
+
+  .metadata-sections {
+    display: grid;
+    gap: 0.65rem;
+  }
+
+  .metadata-section {
+    border: 1px solid rgba(84, 78, 55, 0.1);
+    border-radius: 0.9rem;
+    background: rgba(255, 255, 255, 0.58);
+    overflow: hidden;
+  }
+
+  .metadata-section summary {
+    cursor: pointer;
+    padding: 0.8rem 0.9rem;
+    font-weight: 700;
+    color: #483f34;
+    list-style: none;
+  }
+
+  .metadata-section summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .metadata-grid {
+    display: grid;
+    grid-template-columns: minmax(10rem, 16rem) minmax(0, 1fr);
+    gap: 0.55rem 0.9rem;
+    padding: 0 0.9rem 0.9rem;
+    margin: 0;
+  }
+
+  .metadata-grid dt {
+    margin: 0;
+    color: #665d51;
+    font-size: 0.88rem;
+    line-height: 1.4;
+  }
+
+  .metadata-grid dd {
+    margin: 0;
+    color: #2f2d27;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+
+  .metadata-raw {
+    margin: 0;
+    padding: 0 0.9rem 0.9rem;
+    color: #3c362d;
+    font-size: 0.84rem;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
   .segment {
@@ -1442,6 +1619,11 @@
 
     .transcript-panel {
       padding: 1rem;
+    }
+
+    .meeting-footer-header,
+    .metadata-grid {
+      grid-template-columns: 1fr;
     }
 
     .segment {

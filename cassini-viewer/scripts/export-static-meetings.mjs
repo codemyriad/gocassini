@@ -256,7 +256,11 @@ export function buildTranscriptWordsFromPortable(portable) {
     const startMs = safeToInt(item?.startMs, 0);
     const endMs = safeToInt(item?.endMs, startMs);
     const text = typeof item?.text === "string" ? item.text : "";
-    const words = splitTextIntoWords(text, startMs, endMs);
+    // Portable meetings may contain either true word-level transcript items or
+    // older segment-level text spans. Only the single-word case is safe to turn
+    // back into a timed transcript word. Multi-word spans would fabricate
+    // uniform word timings that were never produced by ASR.
+    const words = isSinglePortableWord(text) ? splitTextIntoWords(text, startMs, endMs) : [];
     const speaker = typeof item?.speaker === "string" && item.speaker.trim() !== "" ? item.speaker : undefined;
 
     return {
@@ -284,6 +288,33 @@ export function buildTranscriptWordsFromPortable(portable) {
   };
 }
 
+function isSinglePortableWord(text) {
+  return typeof text === "string" && text.trim().split(/\s+/).filter(Boolean).length <= 1;
+}
+
+function extractPortableReadableWords(segment, segmentId) {
+  if (!Array.isArray(segment?.words)) {
+    return [];
+  }
+  return segment.words.flatMap((word, index) => {
+    const text = safeToString(word?.text).trim();
+    if (!text) {
+      return [];
+    }
+    const startMs = safeToInt(word?.startMs, NaN);
+    const endMs = safeToInt(word?.endMs, startMs);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+      return [];
+    }
+    return [{
+      id: typeof word?.id === "string" && word.id.trim() !== "" ? word.id : `${segmentId}:w_${index}`,
+      text,
+      startMs,
+      endMs,
+    }];
+  });
+}
+
 export function buildReadableTranscriptFromPortable(portable, transcript) {
   const provided = portable.readableTranscript;
   const speakers = normalizeSpeakers(portable.speakers || transcript.speakers || []);
@@ -306,6 +337,10 @@ export function buildReadableTranscriptFromPortable(portable, transcript) {
       },
       speakers: normalizeSpeakers(provided.speakers || speakers),
       segments: provided.segments.map((segment, index) => {
+        const segmentId =
+          typeof segment?.id === "string" && segment.id.trim() !== ""
+            ? segment.id
+            : `readable_${String(index).padStart(6, "0")}`;
         const sourceSegmentIds = Array.isArray(segment?.sourceSegmentIds)
           ? segment.sourceSegmentIds.filter((value) => typeof value === "string" && value.trim() !== "")
           : [];
@@ -313,16 +348,15 @@ export function buildReadableTranscriptFromPortable(portable, transcript) {
           typeof segment?.speaker === "string" && segment.speaker.trim() !== "" && validSpeakerIds.has(segment.speaker)
             ? segment.speaker
             : undefined;
+        const words = extractPortableReadableWords(segment, segmentId);
         return {
-          id:
-            typeof segment?.id === "string" && segment.id.trim() !== ""
-              ? segment.id
-              : `readable_${String(index).padStart(6, "0")}`,
+          id: segmentId,
           speaker,
           startMs: safeToInt(segment?.startMs, 0),
           endMs: safeToInt(segment?.endMs, safeToInt(segment?.startMs, 0)),
           text: typeof segment?.text === "string" ? segment.text : "",
           sourceSegmentIds,
+          ...(words.length > 0 ? { words } : {}),
         };
       }),
       sourceTranscriptVersion: provided.sourceTranscriptVersion ?? "transcript.words.v1",
@@ -547,9 +581,14 @@ export function buildDisplayTranscriptFromArtifacts(transcript, readable) {
         segmentById,
         transcriptSegments,
       });
-      const sourceWords = sourceSegments.flatMap((segment) =>
+      const sourceWordsFromTranscript = sourceSegments.flatMap((segment) =>
         Array.isArray(segment.words) ? segment.words.filter((word) => word && typeof word === "object") : [],
       );
+      const sourceWordsFromReadable = extractPortableReadableWords(
+        block,
+        `block_${String(blockIndex).padStart(6, "0")}`,
+      );
+      const sourceWords = sourceWordsFromTranscript.length > 0 ? sourceWordsFromTranscript : sourceWordsFromReadable;
       const sourceWordById = new Map(
         sourceWords
           .filter((word) => typeof word.id === "string" && word.id.trim() !== "")
