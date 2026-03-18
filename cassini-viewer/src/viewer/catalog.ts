@@ -17,14 +17,22 @@ export interface MeetingCatalog {
 const DEFAULT_CATALOG_PATH = "./catalog.json";
 
 export async function loadMeetingCatalog(path = DEFAULT_CATALOG_PATH): Promise<MeetingCatalog | null> {
-  const response = await fetch(path);
+  const response = await fetch(path === DEFAULT_CATALOG_PATH ? resolveAppAssetUrl(path) : path);
   if (!response.ok) {
     return null;
   }
   const catalog = validateMeetingCatalog((await response.json()) as unknown);
   return {
     ...catalog,
-    meetings: sortMeetingCatalogEntries(catalog.meetings),
+    meetings: sortMeetingCatalogEntries(
+      catalog.meetings.map((meeting) => ({
+        ...meeting,
+        artifactPath: meeting.artifactPath
+          ? resolveCatalogAssetUrl(meeting.artifactPath, response.url)
+          : undefined,
+        audioPath: meeting.audioPath ? resolveCatalogAssetUrl(meeting.audioPath, response.url) : undefined,
+      })),
+    ),
   };
 }
 
@@ -115,6 +123,15 @@ function normalizeDateLabel(value: string): string {
 
 function compareDescending(left: string, right: string): number {
   return left.localeCompare(right);
+}
+
+function resolveAppAssetUrl(assetPath: string): string {
+  const baseUrl = new URL(import.meta.env.BASE_URL || "/", window.location.href);
+  return new URL(assetPath, baseUrl).toString();
+}
+
+function resolveCatalogAssetUrl(assetPath: string, catalogUrl: string): string {
+  return new URL(assetPath, catalogUrl).toString();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -12,6 +12,7 @@ import type {
   TranscriptWord,
   TranscriptWordsV1,
 } from "./types";
+import { getActiveTimedRange } from "./timing";
 
 function fail(message: string): never {
   throw new Error(message);
@@ -459,17 +460,7 @@ export function getActiveWord(segment: IndexedSegment | null, timeMs: number): I
   if (!segment) {
     return null;
   }
-
-  let winner: IndexedWord | null = null;
-  for (const word of segment.words) {
-    if (word.startMs <= timeMs && timeMs <= word.endMs) {
-      return word;
-    }
-    if (word.startMs <= timeMs) {
-      winner = word;
-    }
-  }
-  return winner;
+  return getActiveTimedRange(segment.words, timeMs);
 }
 
 export function filterSegmentsBySpeaker(

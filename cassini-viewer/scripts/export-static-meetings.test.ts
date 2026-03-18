@@ -261,4 +261,101 @@ describe("describeMeeting", () => {
     expect(block.timedWordCount).toBe(block.wordCount);
     expect(probablyToken?.startMs).toBeGreaterThanOrEqual(8000);
   });
+
+  it("leaves rewritten cleaned words untimed instead of fabricating precision", () => {
+    const transcript = {
+      version: "transcript.words.v1",
+      media: { src: "meeting.opus", durationMs: 6000 },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      segments: [
+        {
+          id: "seg_1",
+          speaker: "spk_1",
+          startMs: 1000,
+          endMs: 3500,
+          text: "we should buy this now",
+          words: [
+            { id: "w_1", text: "we", startMs: 1000, endMs: 1300 },
+            { id: "w_2", text: "should", startMs: 1300, endMs: 1700 },
+            { id: "w_3", text: "buy", startMs: 1700, endMs: 2200 },
+            { id: "w_4", text: "this", startMs: 2200, endMs: 2700 },
+            { id: "w_5", text: "now", startMs: 2700, endMs: 3200 },
+          ],
+        },
+      ],
+    };
+    const readable = {
+      version: "transcript.readable.v1",
+      media: { src: "meeting.opus", durationMs: 6000 },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      segments: [
+        {
+          id: "rseg_1",
+          speaker: "spk_1",
+          startMs: 1000,
+          endMs: 3500,
+          text: "We should purchase this now.",
+          sourceSegmentIds: ["seg_1"],
+        },
+      ],
+    };
+
+    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
+    const purchaseToken = display.blocks[0]?.tokens.find((token) => token.text === "purchase");
+
+    expect(purchaseToken?.alignment).toBe("none");
+    expect(purchaseToken?.sourceWordIds).toEqual([]);
+    expect(purchaseToken?.startMs).toBeUndefined();
+    expect(purchaseToken?.endMs).toBeUndefined();
+    expect(display.blocks[0]?.timedWordCount).toBe(4);
+    expect(display.blocks[0]?.wordCount).toBe(5);
+    expect(display.blocks[0]?.timingCoverage).toBe(0.8);
+  });
+
+  it("keeps contraction-expansion tokens untimed when there is no exact ASR match", () => {
+    const transcript = {
+      version: "transcript.words.v1",
+      media: { src: "meeting.opus", durationMs: 4000 },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      segments: [
+        {
+          id: "seg_1",
+          speaker: "spk_1",
+          startMs: 1000,
+          endMs: 2600,
+          text: "we're not done",
+          words: [
+            { id: "w_1", text: "we're", startMs: 1000, endMs: 1500 },
+            { id: "w_2", text: "not", startMs: 1500, endMs: 1900 },
+            { id: "w_3", text: "done", startMs: 1900, endMs: 2400 },
+          ],
+        },
+      ],
+    };
+    const readable = {
+      version: "transcript.readable.v1",
+      media: { src: "meeting.opus", durationMs: 4000 },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      segments: [
+        {
+          id: "rseg_1",
+          speaker: "spk_1",
+          startMs: 1000,
+          endMs: 2600,
+          text: "We are not done.",
+          sourceSegmentIds: ["seg_1"],
+        },
+      ],
+    };
+
+    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
+    const weToken = display.blocks[0]?.tokens.find((token) => token.text === "We");
+    const areToken = display.blocks[0]?.tokens.find((token) => token.text === "are");
+
+    expect(weToken?.startMs).toBeUndefined();
+    expect(areToken?.startMs).toBeUndefined();
+    expect(display.blocks[0]?.timedWordCount).toBe(2);
+    expect(display.blocks[0]?.wordCount).toBe(4);
+    expect(display.blocks[0]?.timingCoverage).toBe(0.5);
+  });
 });

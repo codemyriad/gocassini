@@ -244,13 +244,19 @@ export function buildDisplayTranscriptFromArtifacts(
           alignment: "none" as const,
         };
       });
-      interpolateUnmatchedWordTokens(tokens, fallbackStartMs, fallbackEndMs);
       const wordCount = tokens.filter((token) => token.kind === "word").length;
       const timedWordCount = tokens.filter(
-        (token) => token.kind === "word" && Number.isInteger(token.startMs) && Number.isInteger(token.endMs),
+        (token) =>
+          token.kind === "word" &&
+          token.alignment === "source" &&
+          Number.isInteger(token.startMs) &&
+          Number.isInteger(token.endMs),
       ).length;
       const timedTokens = tokens.filter(
-        (token) => Number.isInteger(token.startMs) && Number.isInteger(token.endMs),
+        (token) =>
+          token.alignment === "source" &&
+          Number.isInteger(token.startMs) &&
+          Number.isInteger(token.endMs),
       );
       return {
         id:
@@ -897,57 +903,6 @@ function reconstructLcsAlignment({
     }
   }
   return targetIndexToSourceWordIds;
-}
-
-function interpolateUnmatchedWordTokens(
-  tokens: Array<{
-    kind: "word" | "punctuation";
-    startMs?: number;
-    endMs?: number;
-  }>,
-  fallbackStartMs: number,
-  fallbackEndMs: number,
-): void {
-  const wordPositions = tokens.flatMap((token, index) => (token.kind === "word" ? [index] : []));
-  const untimedPositions = wordPositions.filter((index) => !Number.isInteger(tokens[index]?.startMs));
-  if (untimedPositions.length === 0) {
-    return;
-  }
-
-  const timedPositions = wordPositions.filter((index) => Number.isInteger(tokens[index]?.startMs));
-  if (timedPositions.length === 0) {
-    for (let offset = 0; offset < untimedPositions.length; offset += 1) {
-      const position = untimedPositions[offset];
-      const startMs =
-        fallbackStartMs + Math.floor(((fallbackEndMs - fallbackStartMs) * offset) / untimedPositions.length);
-      const endMs =
-        fallbackStartMs + Math.floor(((fallbackEndMs - fallbackStartMs) * (offset + 1)) / untimedPositions.length);
-      if (tokens[position]) {
-        tokens[position].startMs = startMs;
-        tokens[position].endMs = Math.max(startMs, endMs);
-      }
-    }
-    return;
-  }
-
-  for (let offset = 0; offset < untimedPositions.length; offset += 1) {
-    const position = untimedPositions[offset];
-    const previousTimed = [...timedPositions].reverse().find((index) => index < position);
-    const nextTimed = timedPositions.find((index) => index > position);
-    const startBoundary = previousTimed !== undefined ? safeToInt(tokens[previousTimed]?.endMs, fallbackStartMs) : fallbackStartMs;
-    const endBoundary = nextTimed !== undefined ? safeToInt(tokens[nextTimed]?.startMs, fallbackEndMs) : fallbackEndMs;
-    const gapUntimedPositions = untimedPositions.filter((index) => index >= (previousTimed ?? -1) && index <= (nextTimed ?? Number.MAX_SAFE_INTEGER));
-    const gapOffset = gapUntimedPositions.indexOf(position);
-    const startMs =
-      startBoundary + Math.floor(((endBoundary - startBoundary) * gapOffset) / Math.max(1, gapUntimedPositions.length));
-    const endMs =
-      startBoundary +
-      Math.floor(((endBoundary - startBoundary) * (gapOffset + 1)) / Math.max(1, gapUntimedPositions.length));
-    if (tokens[position]) {
-      tokens[position].startMs = startMs;
-      tokens[position].endMs = Math.max(startMs, endMs);
-    }
-  }
 }
 
 function joinSegmentTexts(segments: Array<{ text?: string }>): string {

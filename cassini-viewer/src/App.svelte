@@ -4,6 +4,7 @@
     formatClockTime,
     parseTimeHash,
   } from "./core/transcript";
+  import { getActiveTimedRange } from "./core/timing";
   import type {
     DisplayTranscriptToken,
     DisplayTranscriptV1,
@@ -509,19 +510,13 @@
     if (!segment || segment.tokens.length === 0) {
       return null;
     }
-    let winner: DisplayTranscriptToken | null = null;
-    for (const token of segment.tokens) {
-      if (token.startMs === undefined || token.endMs === undefined) {
-        continue;
-      }
-      if (token.startMs <= timeMs && timeMs <= token.endMs) {
-        return token;
-      }
-      if (token.startMs <= timeMs) {
-        winner = token;
-      }
-    }
-    return winner;
+    return getActiveTimedRange(
+      segment.tokens.filter(
+        (token): token is DisplayTranscriptToken & { startMs: number; endMs: number } =>
+          token.startMs !== undefined && token.endMs !== undefined,
+      ),
+      timeMs,
+    );
   }
 
   function getActiveDisplayWord(
@@ -531,16 +526,7 @@
     if (!segment || !showExactWords || segment.tokens.length > 0) {
       return null;
     }
-    let winner: IndexedWord | null = null;
-    for (const word of segment.words) {
-      if (word.startMs <= timeMs && timeMs <= word.endMs) {
-        return word;
-      }
-      if (word.startMs <= timeMs) {
-        winner = word;
-      }
-    }
-    return winner;
+    return getActiveTimedRange(segment.words, timeMs);
   }
 
   function isSpeakerContinuation(segments: DisplaySegment[], index: number): boolean {

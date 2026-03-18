@@ -1,8 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { sortMeetingCatalogEntries, validateMeetingCatalog } from "./catalog";
+import { loadMeetingCatalog, sortMeetingCatalogEntries, validateMeetingCatalog } from "./catalog";
 
 describe("validateMeetingCatalog", () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.window = originalWindow;
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
   it("accepts a valid runtime meeting catalog", () => {
     const catalog = validateMeetingCatalog({
       version: "cassini.viewer.catalog.v1",
@@ -97,5 +106,43 @@ describe("validateMeetingCatalog", () => {
         ],
       }),
     ).toThrow(/artifactPath/i);
+  });
+
+  it("loads the default catalog from the app base on nested routes", async () => {
+    const calls: string[] = [];
+    globalThis.window = {
+      location: {
+        href: "http://127.0.0.1:8765/preview/",
+      },
+    } as Window;
+    globalThis.fetch = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === "http://127.0.0.1:8765/catalog.json") {
+        return {
+          ok: true,
+          url,
+          json: async () => ({
+            version: "cassini.viewer.catalog.v1",
+            meetings: [
+              {
+                id: "meeting-a",
+                audioPath: "./meeting-a.opus",
+                title: "Meeting A",
+                dateLabel: "2026-03-18 12:30",
+              },
+            ],
+          }),
+        } as Response;
+      }
+      return { ok: false } as Response;
+    }) as typeof fetch;
+
+    const catalog = await loadMeetingCatalog();
+
+    expect(catalog?.meetings).toHaveLength(1);
+    expect(catalog?.meetings[0]?.audioPath).toBe("http://127.0.0.1:8765/meeting-a.opus");
+    expect(calls).toContain("http://127.0.0.1:8765/catalog.json");
+    expect(calls).not.toContain("http://127.0.0.1:8765/preview/catalog.json");
   });
 });

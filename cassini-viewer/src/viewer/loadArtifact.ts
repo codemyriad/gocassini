@@ -44,11 +44,11 @@ const portableManifestCache = new Map<string, Promise<PortableMeetingManifest>>(
 
 export async function loadBundledArtifact(): Promise<LoadedArtifact> {
   return loadArtifactFromPaths({
-    transcriptPath: DEFAULT_TRANSCRIPT_PATH,
-    displayTranscriptPath: DEFAULT_DISPLAY_TRANSCRIPT_PATH,
-    readableTranscriptPath: DEFAULT_READABLE_TRANSCRIPT_PATH,
-    captionsPath: DEFAULT_CAPTIONS_PATH,
-    chaptersPath: DEFAULT_CHAPTERS_PATH,
+    transcriptPath: resolveAppAssetUrl(DEFAULT_TRANSCRIPT_PATH),
+    displayTranscriptPath: resolveAppAssetUrl(DEFAULT_DISPLAY_TRANSCRIPT_PATH),
+    readableTranscriptPath: resolveAppAssetUrl(DEFAULT_READABLE_TRANSCRIPT_PATH),
+    captionsPath: resolveAppAssetUrl(DEFAULT_CAPTIONS_PATH),
+    chaptersPath: resolveAppAssetUrl(DEFAULT_CHAPTERS_PATH),
   });
 }
 
@@ -138,6 +138,11 @@ async function loadArtifactFromPaths(paths: {
 
 function resolveAssetUrl(assetPath: string, transcriptUrl: URL): string {
   return new URL(assetPath, transcriptUrl).toString();
+}
+
+function resolveAppAssetUrl(assetPath: string): string {
+  const baseUrl = new URL(import.meta.env.BASE_URL || "/", window.location.href);
+  return new URL(assetPath, baseUrl).toString();
 }
 
 function resolveDocumentAssetUrl(assetPath: string): string {

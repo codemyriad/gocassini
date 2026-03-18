@@ -3,6 +3,7 @@ import { gzipSync } from "node:zlib";
 
 import {
   loadArtifactFromDirectory,
+  loadBundledArtifact,
   loadPortableArtifactFromAudioPath,
   loadPortableMeetingSummary,
 } from "./loadArtifact";
@@ -115,6 +116,42 @@ describe("loadArtifactFromDirectory", () => {
     expect(calls).not.toContain(
       "http://127.0.0.1:8765/meetings/demo-meeting/meetings/demo-meeting/transcript.display.v1.json",
     );
+  });
+
+  it("loads bundled artifacts from the app base when opened on a nested route", async () => {
+    const calls: string[] = [];
+    globalThis.window = {
+      location: {
+        href: "http://127.0.0.1:8765/preview/",
+        protocol: "http:",
+      },
+    } as Window;
+    globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push(url);
+      if (init?.method === "HEAD") {
+        return { ok: true } as Response;
+      }
+      if (url === "http://127.0.0.1:8765/transcript.words.v1.json") {
+        return {
+          ok: true,
+          json: async () => transcriptFixture,
+        } as Response;
+      }
+      if (url === "http://127.0.0.1:8765/transcript.display.v1.json") {
+        return {
+          ok: true,
+          json: async () => displayFixture,
+        } as Response;
+      }
+      return { ok: false } as Response;
+    }) as typeof fetch;
+
+    const artifact = await loadBundledArtifact();
+
+    expect(artifact.transcript.segments).toHaveLength(1);
+    expect(calls).toContain("http://127.0.0.1:8765/transcript.words.v1.json");
+    expect(calls).not.toContain("http://127.0.0.1:8765/preview/transcript.words.v1.json");
   });
 
   it("loads a portable opus meeting directly from its audio path", async () => {

@@ -586,13 +586,19 @@ export function buildDisplayTranscriptFromArtifacts(transcript, readable) {
           alignment: token.kind === "punctuation" ? "none" : "none",
         };
       });
-      interpolateUnmatchedWordTokens(tokens, fallbackStartMs, fallbackEndMs);
       const wordCount = tokens.filter((token) => token.kind === "word").length;
       const timedWordCount = tokens.filter(
-        (token) => token.kind === "word" && Number.isInteger(token.startMs) && Number.isInteger(token.endMs),
+        (token) =>
+          token.kind === "word" &&
+          token.alignment === "source" &&
+          Number.isInteger(token.startMs) &&
+          Number.isInteger(token.endMs),
       ).length;
       const timedTokens = tokens.filter(
-        (token) => Number.isInteger(token.startMs) && Number.isInteger(token.endMs),
+        (token) =>
+          token.alignment === "source" &&
+          Number.isInteger(token.startMs) &&
+          Number.isInteger(token.endMs),
       );
       return {
         id:
@@ -1035,65 +1041,6 @@ function reconstructLcsAlignment({ sourceWords, sourceNorms, targetWordPositions
     }
   }
   return matched;
-}
-
-function interpolateUnmatchedWordTokens(tokens, blockStartMs, blockEndMs) {
-  const wordPositions = tokens
-    .map((token, index) => ({ token, index }))
-    .filter(({ token }) => token.kind === "word")
-    .map(({ index }) => index);
-  for (let positionIndex = 0; positionIndex < wordPositions.length; positionIndex += 1) {
-    const tokenIndex = wordPositions[positionIndex];
-    const token = tokens[tokenIndex];
-    if (Number.isInteger(token.startMs) && Number.isInteger(token.endMs)) {
-      continue;
-    }
-    const previousTimed = findTimedToken(tokens, wordPositions, positionIndex, -1);
-    const nextTimed = findTimedToken(tokens, wordPositions, positionIndex, 1);
-    let spanStart = previousTimed ? safeToInt(previousTimed.endMs, blockStartMs) : blockStartMs;
-    let spanEnd = nextTimed ? safeToInt(nextTimed.startMs, blockEndMs) : blockEndMs;
-    if (spanEnd <= spanStart) {
-      spanEnd = Math.max(spanStart + 1, blockEndMs);
-    }
-    let startRank = positionIndex;
-    while (startRank > 0) {
-      const candidate = tokens[wordPositions[startRank - 1]];
-      if (Number.isInteger(candidate.startMs) && Number.isInteger(candidate.endMs)) {
-        break;
-      }
-      startRank -= 1;
-    }
-    let endRank = positionIndex;
-    while (endRank + 1 < wordPositions.length) {
-      const candidate = tokens[wordPositions[endRank + 1]];
-      if (Number.isInteger(candidate.startMs) && Number.isInteger(candidate.endMs)) {
-        break;
-      }
-      endRank += 1;
-    }
-    const runSize = endRank - startRank + 1;
-    const runOffset = positionIndex - startRank;
-    token.startMs = spanStart + Math.floor(((spanEnd - spanStart) * runOffset) / runSize);
-    token.endMs = spanStart + Math.floor(((spanEnd - spanStart) * (runOffset + 1)) / runSize);
-    if (token.endMs <= token.startMs) {
-      token.endMs = token.startMs + 1;
-    }
-    token.alignment = "interpolated";
-  }
-}
-
-function findTimedToken(tokens, wordPositions, startPosition, direction) {
-  for (
-    let positionIndex = startPosition + direction;
-    positionIndex >= 0 && positionIndex < wordPositions.length;
-    positionIndex += direction
-  ) {
-    const token = tokens[wordPositions[positionIndex]];
-    if (Number.isInteger(token.startMs) && Number.isInteger(token.endMs)) {
-      return token;
-    }
-  }
-  return null;
 }
 
 function safeToString(value) {
