@@ -49,7 +49,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// --- 2. Mix down to meeting.webm ---
 	webmPath := filepath.Join(outputDir, "meeting.webm")
 	fmt.Fprintln(stdout, "  mixing audio to meeting.webm...")
-	if err := MixDownToWebM(mkvPath, len(streams), webmPath); err != nil {
+	if err := MixDownToWebM(mkvPath, streams, webmPath); err != nil {
 		return fmt.Errorf("mix audio: %w", err)
 	}
 
@@ -93,7 +93,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		default:
 		}
 		fmt.Fprintf(stdout, "  transcribing %s (stream index %d)...\n", stream.SpeakerLabel, stream.Index)
-		samples, err := ExtractSpeakerFloats(mkvPath, stream.Index)
+		samples, err := ExtractSpeakerFloats(mkvPath, stream)
 		if err != nil {
 			return fmt.Errorf("extract audio for %s: %w", stream.SpeakerLabel, err)
 		}
