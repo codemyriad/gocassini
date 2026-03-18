@@ -688,28 +688,16 @@
 
               {#if segment.tokens.length > 0}
                 <div class="segment-text token-flow">
-                  {#each segment.tokens as token}
-                    {#if token.startMs !== undefined && token.endMs !== undefined}
-                      <button
+                  {#each segment.tokens as token}{#if token.startMs !== undefined && token.endMs !== undefined}<button
                         class:active-token={segment.id === activeSegment?.id && token === activeToken}
                         class:interpolated-token={token.alignment === "interpolated"}
-                        class:space-before={token.spaceBefore}
                         class="token-button"
                         on:click={() => seekTo(token.startMs ?? segment.startMs)}
                         type="button"
-                      >
-                        {token.text}
-                      </button>
-                    {:else}
-                      <span
-                        class:space-before={token.spaceBefore}
+                      >{token.spaceBefore ? ` ${token.text}` : token.text}</button>{:else}<span
                         class:untimed-word={token.kind === "word"}
                         class="token-text"
-                      >
-                        {token.text}
-                      </span>
-                    {/if}
-                  {/each}
+                      >{token.spaceBefore ? ` ${token.text}` : token.text}</span>{/if}{/each}
                 </div>
               {:else}
                 <button class="segment-text" on:click={() => seekTo(segment.startMs)} type="button">
@@ -719,16 +707,12 @@
 
               {#if !hasPrecomputedDisplay && showExactWords && segment.words.length > 0}
                 <div class="word-row">
-                  {#each segment.words as word}
-                    <button
+                  {#each segment.words as word, wordIndex}<button
                       class:active-word={segment.id === activeSegment?.id && word.id === activeWord?.id}
                       class="word"
                       on:click={() => seekTo(word.startMs)}
                       type="button"
-                    >
-                      {word.text}
-                    </button>
-                  {/each}
+                    >{wordIndex > 0 ? ` ${word.text}` : word.text}</button>{/each}
                 </div>
               {/if}
             </article>
@@ -1231,16 +1215,12 @@
     font: inherit;
     font-size: 1.06rem;
     line-height: 1.72;
+    white-space: pre-wrap;
     color: #2f2d27;
   }
 
   .token-button {
     cursor: pointer;
-  }
-
-  .token-button.space-before,
-  .token-text.space-before {
-    margin-left: 0.28em;
   }
 
   .token-button:hover {
@@ -1264,18 +1244,18 @@
   }
 
   .word-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.42rem;
+    display: block;
     margin-top: 0.8rem;
     padding-top: 0.75rem;
     border-top: 1px solid rgba(84, 78, 55, 0.1);
+    line-height: 1.72;
   }
 
   .word {
-    padding: 0.38rem 0.54rem;
-    line-height: 1.2;
+    padding: 0.1rem 0.18rem;
+    line-height: inherit;
     font-size: 0.92rem;
+    white-space: pre-wrap;
   }
 
   .word.active-word {
