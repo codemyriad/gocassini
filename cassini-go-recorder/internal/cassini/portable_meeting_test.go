@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestLoadPortableMeetingSourceIncludesReadableTranscript(t *testing.T) {
+func TestLoadPortableMeetingSourceIncludesReadableAndDisplayTranscripts(t *testing.T) {
 	root := t.TempDir()
 
 	if err := os.WriteFile(filepath.Join(root, "meeting.webm"), []byte("audio"), 0o644); err != nil {
@@ -43,6 +43,50 @@ func TestLoadPortableMeetingSourceIncludesReadableTranscript(t *testing.T) {
 			{"speaker": "speaker-1", "text": "Hello world."},
 		},
 	})
+	writePortableJSONFixture(t, filepath.Join(root, "transcript.display.v1.json"), map[string]any{
+		"version": "transcript.display.v1",
+		"media": map[string]any{
+			"src":        "meeting.webm",
+			"durationMs": 1234,
+		},
+		"speakers": []map[string]any{
+			{"id": "speaker-1", "label": "Speaker 1"},
+		},
+		"blocks": []map[string]any{
+			{
+				"id":                "block-1",
+				"speaker":           "speaker-1",
+				"speakerLabel":      "Speaker 1",
+				"startMs":           0,
+				"endMs":             1000,
+				"text":              "Hello world.",
+				"sourceSegmentIds":  []string{"seg_1"},
+				"wordCount":         2,
+				"timedWordCount":    2,
+				"timingCoverage":    1,
+				"tokens": []map[string]any{
+					{
+						"text":          "Hello",
+						"spaceBefore":   false,
+						"kind":          "word",
+						"sourceWordIds": []string{"seg_1:w_0"},
+						"startMs":       0,
+						"endMs":         500,
+						"alignment":     "source",
+					},
+					{
+						"text":          "world",
+						"spaceBefore":   true,
+						"kind":          "word",
+						"sourceWordIds": []string{"seg_1:w_1"},
+						"startMs":       500,
+						"endMs":         1000,
+						"alignment":     "source",
+					},
+				},
+			},
+		},
+	})
 	writePortableJSONFixture(t, filepath.Join(root, "manifest.json"), map[string]any{
 		"generatedAt": "2026-03-11T00:00:00Z",
 		"source": map[string]any{
@@ -67,6 +111,7 @@ func TestLoadPortableMeetingSourceIncludesReadableTranscript(t *testing.T) {
 			"audio":              "meeting.webm",
 			"transcript":         "transcript.words.v1.json",
 			"readableTranscript": "transcript.readable.v1.json",
+			"displayTranscript":  "transcript.display.v1.json",
 		},
 		"speakerCount": 1,
 		"wordCount":    2,
@@ -78,6 +123,9 @@ func TestLoadPortableMeetingSourceIncludesReadableTranscript(t *testing.T) {
 	}
 	if got := source.ReadableTranscript["version"]; got != "transcript.readable.v1" {
 		t.Fatalf("expected readable transcript to load, got %v", got)
+	}
+	if got := source.DisplayTranscript["version"]; got != "transcript.display.v1" {
+		t.Fatalf("expected display transcript to load, got %v", got)
 	}
 
 	manifest, err := buildPortableMeetingManifest(source, portableAudioIntegrity{
@@ -95,6 +143,9 @@ func TestLoadPortableMeetingSourceIncludesReadableTranscript(t *testing.T) {
 	}
 	if got := manifest.ReadableTranscript["version"]; got != "transcript.readable.v1" {
 		t.Fatalf("expected readable transcript in manifest, got %v", got)
+	}
+	if got := manifest.DisplayTranscript["version"]; got != "transcript.display.v1" {
+		t.Fatalf("expected display transcript in manifest, got %v", got)
 	}
 	if manifest.Provenance == nil || manifest.Provenance.SpeechToText == nil {
 		t.Fatalf("expected provenance to be carried into portable manifest")

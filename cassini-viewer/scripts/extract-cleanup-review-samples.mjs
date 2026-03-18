@@ -28,7 +28,7 @@ export async function main(argv = process.argv.slice(2)) {
     const portable = await extractPortableManifestFromArrayBuffer(readFileSync(join(sourceDir, name)));
     const transcript = buildTranscriptWordsFromPortable(portable, name);
     const readable = buildReadableTranscriptFromPortable(portable, transcript);
-    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
+    const display = portable.displayTranscript ?? buildDisplayTranscriptFromArtifacts(transcript, readable);
     const segmentById = new Map(transcript.segments.map((segment) => [segment.id, segment]));
 
     for (const block of display.blocks) {

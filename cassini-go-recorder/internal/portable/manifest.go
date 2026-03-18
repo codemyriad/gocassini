@@ -35,6 +35,7 @@ type Manifest struct {
 	Transcript         Transcript       `json:"transcript"`
 	Provenance         *Provenance      `json:"provenance,omitempty"`
 	ReadableTranscript map[string]any   `json:"readableTranscript,omitempty"`
+	DisplayTranscript  map[string]any   `json:"displayTranscript,omitempty"`
 	Chapters           []Chapter        `json:"chapters,omitempty"`
 	Summary            map[string]any   `json:"summary,omitempty"`
 	Attachments        []map[string]any `json:"attachments,omitempty"`

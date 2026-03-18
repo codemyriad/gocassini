@@ -24,6 +24,14 @@ export interface PortableMeetingManifest {
     segments?: unknown[];
     sourceTranscriptVersion?: string;
   };
+  displayTranscript?: {
+    version?: string;
+    media?: unknown;
+    speakers?: unknown[];
+    blocks?: unknown[];
+    sourceTranscriptVersion?: string;
+    sourceReadableTranscriptVersion?: string;
+  };
   provenance?: unknown;
 }
 

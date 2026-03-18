@@ -213,6 +213,100 @@ describe("loadArtifactFromDirectory", () => {
     expect(artifact.displayTranscript?.blocks).toHaveLength(1);
   });
 
+  it("prefers an embedded display transcript from the portable manifest", async () => {
+    globalThis.window = {
+      location: {
+        href: "http://127.0.0.1:8765/?meeting=meeting-a",
+        protocol: "http:",
+      },
+    } as Window;
+    const portableFixture = {
+      meeting: {
+        durationMs: 3000,
+      },
+      audio: {
+        sha256: "abc123",
+      },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      transcript: {
+        items: [
+          {
+            id: "seg_1",
+            speaker: "spk_1",
+            startMs: 1000,
+            endMs: 1500,
+            text: "hello there",
+          },
+        ],
+      },
+      displayTranscript: {
+        ...displayFixture,
+        blocks: [
+          {
+            ...displayFixture.blocks[0],
+            text: "Custom display.",
+            tokens: [
+              {
+                text: "Custom",
+                spaceBefore: false,
+                kind: "word",
+                sourceWordIds: ["w_1"],
+                startMs: 1000,
+                endMs: 1250,
+                alignment: "source",
+              },
+              {
+                text: "display",
+                spaceBefore: true,
+                kind: "word",
+                sourceWordIds: ["w_1"],
+                startMs: 1250,
+                endMs: 1500,
+                alignment: "source",
+              },
+              {
+                text: ".",
+                spaceBefore: false,
+                kind: "punctuation",
+                sourceWordIds: [],
+                alignment: "none",
+              },
+            ],
+            wordCount: 2,
+            timedWordCount: 2,
+          },
+        ],
+      },
+    };
+    const portableBytes = buildPortableOpusFixture(portableFixture);
+    globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(".opus")) {
+        expect(init?.headers).toMatchObject({
+          Range: "bytes=0-262143",
+        });
+        return {
+          ok: true,
+          status: 206,
+          headers: new Headers({
+            "content-range": "bytes 0-1999/2000",
+          }),
+          arrayBuffer: async () =>
+            portableBytes.buffer.slice(
+              portableBytes.byteOffset,
+              portableBytes.byteOffset + portableBytes.byteLength,
+            ),
+        } as Response;
+      }
+      return { ok: false } as Response;
+    }) as typeof fetch;
+
+    const artifact = await loadPortableArtifactFromAudioPath("./meeting-a.opus");
+
+    expect(artifact.displayTranscript?.blocks[0]?.text).toBe("Custom display.");
+    expect(artifact.displayTranscript?.blocks[0]?.tokens[0]?.text).toBe("Custom");
+  });
+
   it("loads portable meeting summary counts from embedded metadata", async () => {
     globalThis.window = {
       location: {

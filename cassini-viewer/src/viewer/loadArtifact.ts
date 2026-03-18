@@ -72,7 +72,8 @@ export async function loadPortableArtifactFromAudioPath(audioPath: string): Prom
     buildReadableTranscriptFromPortable(portable, transcript) as unknown,
   );
   const displayTranscript = validateDisplayTranscriptV1(
-    buildDisplayTranscriptFromArtifacts(transcript, readableTranscript) as unknown,
+    (portable.displayTranscript ??
+      buildDisplayTranscriptFromArtifacts(transcript, readableTranscript)) as unknown,
   );
 
   return {

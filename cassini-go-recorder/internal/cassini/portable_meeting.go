@@ -27,6 +27,7 @@ type portableMeetingSource struct {
 	AudioPath          string
 	Transcript         portableTranscriptArtifact
 	ReadableTranscript map[string]any
+	DisplayTranscript  map[string]any
 	Artifact           portableMeetingArtifact
 }
 
@@ -41,6 +42,7 @@ type portableMeetingArtifact struct {
 		Audio              string `json:"audio"`
 		Transcript         string `json:"transcript"`
 		ReadableTranscript string `json:"readableTranscript"`
+		DisplayTranscript  string `json:"displayTranscript"`
 	} `json:"files"`
 	SpeakerCount int `json:"speakerCount"`
 	WordCount    int `json:"wordCount"`
@@ -254,12 +256,17 @@ func loadPortableMeetingSource(meetingDir string) (portableMeetingSource, error)
 	if err != nil {
 		return portableMeetingSource{}, err
 	}
+	displayTranscript, err := loadPortableDisplayTranscript(rootDir, artifact.Files.DisplayTranscript)
+	if err != nil {
+		return portableMeetingSource{}, err
+	}
 
 	return portableMeetingSource{
 		MeetingDir:         rootDir,
 		AudioPath:          audioPath,
 		Transcript:         transcript,
 		ReadableTranscript: readableTranscript,
+		DisplayTranscript:  displayTranscript,
 		Artifact:           artifact,
 	}, nil
 }
@@ -287,6 +294,31 @@ func loadPortableReadableTranscript(rootDir string, artifactPath string) (map[st
 		return nil, fmt.Errorf("parse readable transcript artifact: %w", err)
 	}
 	return readable, nil
+}
+
+func loadPortableDisplayTranscript(rootDir string, artifactPath string) (map[string]any, error) {
+	displayName := strings.TrimSpace(artifactPath)
+	if displayName == "" {
+		defaultPath := filepath.Join(rootDir, "transcript.display.v1.json")
+		if _, err := os.Stat(defaultPath); err == nil {
+			displayName = "transcript.display.v1.json"
+		} else if os.IsNotExist(err) {
+			return nil, nil
+		} else {
+			return nil, fmt.Errorf("stat display transcript artifact: %w", err)
+		}
+	}
+
+	rawDisplay, err := os.ReadFile(filepath.Join(rootDir, displayName))
+	if err != nil {
+		return nil, fmt.Errorf("read display transcript artifact: %w", err)
+	}
+
+	var display map[string]any
+	if err := json.Unmarshal(rawDisplay, &display); err != nil {
+		return nil, fmt.Errorf("parse display transcript artifact: %w", err)
+	}
+	return display, nil
 }
 
 func computePortableAudioIntegrity(audioPath string) (portableAudioIntegrity, error) {
@@ -387,6 +419,9 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 	})
 	if source.ReadableTranscript != nil {
 		manifest.ReadableTranscript = source.ReadableTranscript
+	}
+	if source.DisplayTranscript != nil {
+		manifest.DisplayTranscript = source.DisplayTranscript
 	}
 	return manifest, nil
 }

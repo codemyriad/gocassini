@@ -139,7 +139,7 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir }) 
     const audioPath = join(targetMeetingDir, "meeting.opus");
     const transcript = buildTranscriptWordsFromPortable(portable);
     const readable = buildReadableTranscriptFromPortable(portable, transcript);
-    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
+    const display = portable.displayTranscript ?? buildDisplayTranscriptFromArtifacts(transcript, readable);
     const mediaDurationMs = safeToInt(portable.meeting?.durationMs, 0);
 
     cpSync(sourcePath, audioPath);
