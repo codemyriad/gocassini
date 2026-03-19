@@ -201,11 +201,16 @@ func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
 		}
 		end := ts + dur
 
-		// BPE word-start marker (▁) or plain space token signals word boundary.
-		if strings.HasPrefix(tok, "▁") || tok == " " || tok == "<space>" {
+		// Sherpa marks word starts in a few different ways depending on the
+		// model: SentencePiece-style ▁ prefixes, standalone space tokens, and
+		// literal leading spaces like " So". Missing the last form collapses an
+		// entire phrase into one long token, which destroys the original pause
+		// structure and leads to visibly wrong seek points in the UI.
+		if strings.HasPrefix(tok, "▁") || strings.HasPrefix(tok, " ") || tok == "<space>" {
 			flush()
 			clean := strings.TrimPrefix(tok, "▁")
-			if clean != "" && clean != " " {
+			clean = strings.TrimLeft(clean, " ")
+			if clean != "" {
 				if wordStartMs < 0 {
 					wordStartMs = ts
 				}
