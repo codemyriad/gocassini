@@ -52,6 +52,29 @@ func TestTokensToWordsRespectsLeadingSpaceWordStarts(t *testing.T) {
 	}
 }
 
+func TestTokensToWordsKeepsZeroDurationWordStartsNonNegative(t *testing.T) {
+	got := tokensToWords(
+		[]string{"decompression", " so", " i"},
+		[]float32{1325.205, 1325.925, 1326.005},
+		[]float32{0.56, 0, 0.08},
+	)
+
+	want := []Word{
+		{Text: "decompression", StartMS: 1325205, EndMS: 1325765},
+		{Text: "so", StartMS: 1325925, EndMS: 1325925},
+		{Text: "i", StartMS: 1326005, EndMS: 1326085},
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("word count mismatch: got=%d want=%d (%#v)", len(got), len(want), got)
+	}
+	for index := range want {
+		if !sameWordWithinMillisecond(got[index], want[index]) {
+			t.Fatalf("word %d mismatch: got=%#v want=%#v", index, got[index], want[index])
+		}
+	}
+}
+
 func sameWordWithinMillisecond(got, want Word) bool {
 	return got.Text == want.Text && absInt64(got.StartMS-want.StartMS) <= 1 && absInt64(got.EndMS-want.EndMS) <= 1
 }

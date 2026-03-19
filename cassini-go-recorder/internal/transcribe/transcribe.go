@@ -210,6 +210,10 @@ func envBool(name string) bool {
 // writeTranscriptWithHash writes a transcript JSON file, embedding the audio
 // SHA-256 and the caller-specified transcript version.
 func writeTranscriptWithHash(path string, version string, streams []AudioStream, segments []Segment, audioDurationMS int64, sha256hex string) error {
+	if err := ValidateSegments(segments); err != nil {
+		return err
+	}
+
 	// Build the file the normal way, then patch the sha256 in via the raw struct.
 	// WriteTranscriptJSON doesn't accept a sha256 param, so we build the struct manually.
 	type wordEntry struct {

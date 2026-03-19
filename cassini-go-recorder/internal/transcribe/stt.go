@@ -181,10 +181,14 @@ func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
 	flush := func() {
 		text := strings.TrimSpace(curText.String())
 		if text != "" {
+			endMs := lastEndMs
+			if endMs < wordStartMs {
+				endMs = wordStartMs
+			}
 			words = append(words, Word{
 				Text:    text,
 				StartMS: int64(wordStartMs),
-				EndMS:   int64(lastEndMs),
+				EndMS:   int64(endMs),
 			})
 		}
 		curText.Reset()
@@ -215,24 +219,31 @@ func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
 					wordStartMs = ts
 				}
 				curText.WriteString(clean)
-				if dur > 0 {
-					// Word-start markers belong to the new word only; updating the
-					// running end time here avoids smearing the previous word's end.
-					lastEndMs = end
-				}
+				// Some models emit zero-duration boundary tokens. Keep the running
+				// word end at least at the latest token timestamp so we never flush
+				// a new word with the previous word's end time.
+				lastEndMs = maxFloat64(lastEndMs, ts, end)
 			}
 		} else {
 			if wordStartMs < 0 {
 				wordStartMs = ts
 			}
 			curText.WriteString(tok)
-			if dur > 0 {
-				lastEndMs = end
-			}
+			lastEndMs = maxFloat64(lastEndMs, ts, end)
 		}
 	}
 	flush()
 	return splitMultiWordTokens(words)
+}
+
+func maxFloat64(values ...float64) float64 {
+	max := values[0]
+	for _, value := range values[1:] {
+		if value > max {
+			max = value
+		}
+	}
+	return max
 }
 
 func splitMultiWordTokens(words []Word) []Word {

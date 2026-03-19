@@ -45,6 +45,10 @@ type wordEntry struct {
 
 // WriteTranscriptJSON writes transcript.words.v1.json.
 func WriteTranscriptJSON(path string, streams []AudioStream, segments []Segment, audioDurationMS int64) error {
+	if err := ValidateSegments(segments); err != nil {
+		return err
+	}
+
 	var speakers []speakerEntry
 	seen := map[string]bool{}
 	for _, seg := range segments {
@@ -294,6 +298,35 @@ func DurationMsFromSegments(segments []Segment) int64 {
 		}
 	}
 	return max
+}
+
+// ValidateSegments enforces the transcript contract before we persist or pack
+// artifacts. Producer bugs must fail here instead of leaking invalid timing
+// downstream.
+func ValidateSegments(segments []Segment) error {
+	for segIndex, seg := range segments {
+		if seg.StartMS > seg.EndMS {
+			return fmt.Errorf("segment %d startMs must be <= endMs (got %d > %d)", segIndex, seg.StartMS, seg.EndMS)
+		}
+		for wordIndex, word := range seg.Words {
+			if word.StartMS > word.EndMS {
+				return fmt.Errorf("segment %d word %d %q startMs must be <= endMs (got %d > %d)", segIndex, wordIndex, word.Text, word.StartMS, word.EndMS)
+			}
+			if word.StartMS < seg.StartMS || word.EndMS > seg.EndMS {
+				return fmt.Errorf(
+					"segment %d word %d %q must stay within segment bounds (segment=%d-%d word=%d-%d)",
+					segIndex,
+					wordIndex,
+					word.Text,
+					seg.StartMS,
+					seg.EndMS,
+					word.StartMS,
+					word.EndMS,
+				)
+			}
+		}
+	}
+	return nil
 }
 
 // ApplyReadableText replaces segment text with LLM-cleaned text while
