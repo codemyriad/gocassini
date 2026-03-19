@@ -26,6 +26,7 @@ The viewer package includes:
 It reads a portable `.opus`, finds a target token inside a passage, extracts a clip around that token,
 transcribes it with the OpenAI audio API, and prints:
 
+- whether the token is timed at all,
 - the clicked token timing,
 - the nearby token context,
 - nearby transcript items,
@@ -62,6 +63,12 @@ Good output looks like:
 - `heard_context_overlap: high`
 - clip text near `two or three days of work a month`
 
+Also acceptable:
+
+- `token_is_timed: no`
+- for rewritten edge words with no exact anchor on one side
+- this means the viewer is intentionally avoiding fake word precision
+
 Bad output looks like:
 
 - `heard_contains_target: no`
@@ -91,5 +98,6 @@ Examples:
 
 - `three` vs `few` can still be acceptable if the rest of the clip matches `days of work a month`
 - `three` landing on `automates it for them` is not acceptable
+- `publish` or `can` becoming untimed is acceptable if the alternative was seeking into unrelated speech
 
 Treat this audit as the required double-check whenever cleaned-token alignment or seek behavior changes.

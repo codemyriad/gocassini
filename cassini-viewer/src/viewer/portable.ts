@@ -768,6 +768,12 @@ function interpolateUntimedWordRuns(
     const runTokenIndexes = wordTokenIndexes.slice(runStart, cursor);
     const prevTimedToken = runStart > 0 ? next[wordTokenIndexes[runStart - 1]] : null;
     const nextTimedToken = cursor < wordTokenIndexes.length ? next[wordTokenIndexes[cursor]] : null;
+    const hasPrevAnchor = tokenHasTiming(prevTimedToken);
+    const hasNextAnchor = tokenHasTiming(nextTimedToken);
+    const isEntirelyUntimedBlock = !hasPrevAnchor && !hasNextAnchor && runTokenIndexes.length === wordTokenIndexes.length;
+    if (!isEntirelyUntimedBlock && (!hasPrevAnchor || !hasNextAnchor)) {
+      continue;
+    }
     const { startMs, endMs } = resolveInterpolatedSpan({
       prevTimedToken,
       nextTimedToken,

@@ -16,6 +16,10 @@ export async function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
   const manifest = loadPortableManifest(options.audioPath);
   const match = findTargetToken(manifest, options.snippet, options.word, options.occurrence);
+  if (!match.hasTiming) {
+    printAudit({ options, manifest, match, transcription: null });
+    return;
+  }
   const clipPath = extractAudioClip({
     audioPath: options.audioPath,
     startMs: Math.max(0, match.token.startMs - options.beforeMs),
@@ -168,16 +172,18 @@ function findTargetToken(manifest, snippet, word, occurrence) {
       if (seen !== occurrence) {
         continue;
       }
-      if (!Number.isInteger(token?.startMs) || !Number.isInteger(token?.endMs)) {
-        throw new Error(`matched token ${JSON.stringify(token?.text)} does not have timing`);
-      }
       return {
         block,
         blockIndex,
         token,
         tokenIndex,
+        hasTiming: Number.isInteger(token?.startMs) && Number.isInteger(token?.endMs),
         contextTokens: tokens.slice(Math.max(0, tokenIndex - 6), Math.min(tokens.length, tokenIndex + 7)),
-        nearbyTranscriptItems: findNearbyTranscriptItems(manifest, token.startMs, 1200),
+        nearbyTranscriptItems: findNearbyTranscriptItems(
+          manifest,
+          Number.isInteger(token?.startMs) ? token.startMs : safeToInt(block?.startMs, 0),
+          1200,
+        ),
       };
     }
   }
@@ -254,6 +260,16 @@ function printAudit({ options, match, transcription }) {
   console.log(
     `token: [${match.tokenIndex}] ${JSON.stringify(match.token.text)} ${match.token.startMs}-${match.token.endMs} alignment=${match.token.alignment ?? "unset"} source=${match.token.sourceWordIds?.join(",") || "-"}`,
   );
+  if (!match.hasTiming) {
+    console.log("token_is_timed: no");
+    console.log(`context_tokens: ${match.contextTokens.map((token) => token?.text ?? "").join(" ")}`);
+    console.log("nearby_transcript_items:");
+    for (const item of match.nearbyTranscriptItems) {
+      console.log(`  ${item.startMs}-${item.endMs} ${JSON.stringify(item.text ?? "")}`);
+    }
+    return;
+  }
+  console.log("token_is_timed: yes");
   console.log(`heard: ${JSON.stringify(heardText)}`);
   console.log(`heard_contains_target: ${heardContainsTarget ? "yes" : "no"}`);
   console.log(`heard_context_overlap: ${contextOverlap.matched}/${contextOverlap.total}`);

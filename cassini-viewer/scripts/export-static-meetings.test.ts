@@ -641,6 +641,64 @@ describe("describeMeeting", () => {
     expect(display.blocks[0]?.timingCoverage).toBe(1);
   });
 
+  it("leaves edge-only rewritten cleaned words untimed without two-sided anchors", () => {
+    const transcript = {
+      version: "transcript.words.v1",
+      media: { src: "meeting.opus", durationMs: 6000 },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      segments: [
+        {
+          id: "seg_1",
+          speaker: "spk_1",
+          startMs: 1000,
+          endMs: 3000,
+          text: "yeah because it was fine",
+          words: [
+            { id: "w_1", text: "yeah", startMs: 1000, endMs: 1300 },
+            { id: "w_2", text: "because", startMs: 1300, endMs: 1700 },
+            { id: "w_3", text: "it", startMs: 1700, endMs: 1900 },
+            { id: "w_4", text: "was", startMs: 1900, endMs: 2200 },
+            { id: "w_5", text: "fine", startMs: 2200, endMs: 2600 },
+          ],
+        },
+      ],
+    };
+    const readable = {
+      version: "transcript.readable.v1",
+      media: { src: "meeting.opus", durationMs: 6000 },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      segments: [
+        {
+          id: "rseg_1",
+          speaker: "spk_1",
+          startMs: 1000,
+          endMs: 3000,
+          text: "Please publish this. Yeah, because it was fine. Later extras.",
+          sourceSegmentIds: ["seg_1"],
+        },
+      ],
+    };
+
+    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
+    const wordTokens = display.blocks[0]?.tokens.filter((token) => token.kind === "word") ?? [];
+    const publishToken = wordTokens.find((token) => token.text === "publish");
+    const yeahToken = wordTokens.find((token) => token.text === "Yeah");
+    const laterToken = wordTokens.find((token) => token.text === "Later");
+
+    expect(publishToken?.startMs).toBeUndefined();
+    expect(publishToken?.endMs).toBeUndefined();
+    expect(publishToken?.alignment).toBe("none");
+    expect(yeahToken?.startMs).toBe(1000);
+    expect(yeahToken?.endMs).toBe(1300);
+    expect(yeahToken?.alignment).toBe("source");
+    expect(laterToken?.startMs).toBeUndefined();
+    expect(laterToken?.endMs).toBeUndefined();
+    expect(laterToken?.alignment).toBe("none");
+    expect(display.blocks[0]?.timedWordCount).toBe(5);
+    expect(display.blocks[0]?.wordCount).toBe(10);
+    expect(display.blocks[0]?.timingCoverage).toBe(0.5);
+  });
+
   it("keeps short fully rewritten cleaned blocks seekable via interpolated timing", () => {
     const transcript = {
       version: "transcript.words.v1",
@@ -748,7 +806,7 @@ describe("describeMeeting", () => {
     expect(display.blocks[0]?.timingCoverage).toBe(1);
   });
 
-  it("interpolates contraction-expansion tokens when there is no exact ASR match", () => {
+  it("leaves contraction-expansion edge tokens untimed when there is no exact ASR match", () => {
     const transcript = {
       version: "transcript.words.v1",
       media: { src: "meeting.opus", durationMs: 4000 },
@@ -788,18 +846,14 @@ describe("describeMeeting", () => {
     const weToken = display.blocks[0]?.tokens.find((token) => token.text === "We");
     const areToken = display.blocks[0]?.tokens.find((token) => token.text === "are");
 
-    expect(weToken).toMatchObject({
-      alignment: "interpolated",
-      startMs: 1000,
-      endMs: 1250,
-    });
-    expect(areToken).toMatchObject({
-      alignment: "interpolated",
-      startMs: 1250,
-      endMs: 1500,
-    });
-    expect(display.blocks[0]?.timedWordCount).toBe(4);
+    expect(weToken?.alignment).toBe("none");
+    expect(weToken?.startMs).toBeUndefined();
+    expect(weToken?.endMs).toBeUndefined();
+    expect(areToken?.alignment).toBe("none");
+    expect(areToken?.startMs).toBeUndefined();
+    expect(areToken?.endMs).toBeUndefined();
+    expect(display.blocks[0]?.timedWordCount).toBe(2);
     expect(display.blocks[0]?.wordCount).toBe(4);
-    expect(display.blocks[0]?.timingCoverage).toBe(1);
+    expect(display.blocks[0]?.timingCoverage).toBe(0.5);
   });
 });
