@@ -887,7 +887,7 @@ export function buildDisplayTranscriptFromArtifacts(transcript, readable) {
         : sourceSegments.length > 0
           ? safeToInt(sourceSegments[sourceSegments.length - 1]?.endMs, safeToInt(block.endMs, fallbackStartMs))
           : safeToInt(block.endMs, fallbackStartMs);
-      const tokens = alignment.tokens.map((token) => {
+      const exactTokens = alignment.tokens.map((token) => {
         const matchedWords = token.sourceWordIds
           .map((wordId) => sourceWordById.get(wordId))
           .filter(Boolean);
@@ -910,17 +910,16 @@ export function buildDisplayTranscriptFromArtifacts(transcript, readable) {
           alignment: token.kind === "punctuation" ? "none" : "none",
         };
       });
+      const tokens = interpolateUntimedWordRuns(exactTokens, fallbackStartMs, fallbackEndMs);
       const wordCount = tokens.filter((token) => token.kind === "word").length;
       const timedWordCount = tokens.filter(
         (token) =>
           token.kind === "word" &&
-          token.alignment === "source" &&
           Number.isInteger(token.startMs) &&
           Number.isInteger(token.endMs),
       ).length;
       const timedTokens = tokens.filter(
         (token) =>
-          token.alignment === "source" &&
           Number.isInteger(token.startMs) &&
           Number.isInteger(token.endMs),
       );
@@ -950,6 +949,82 @@ export function buildDisplayTranscriptFromArtifacts(transcript, readable) {
     sourceTranscriptVersion: transcript.version,
     sourceReadableTranscriptVersion: readable?.version,
   };
+}
+
+function interpolateUntimedWordRuns(tokens, fallbackStartMs, fallbackEndMs) {
+  const next = tokens.map((token) => ({ ...token, sourceWordIds: [...token.sourceWordIds] }));
+  const wordTokenIndexes = next
+    .map((token, index) => (token.kind === "word" ? index : -1))
+    .filter((index) => index >= 0);
+
+  let cursor = 0;
+  while (cursor < wordTokenIndexes.length) {
+    const tokenIndex = wordTokenIndexes[cursor];
+    if (tokenHasTiming(next[tokenIndex])) {
+      cursor += 1;
+      continue;
+    }
+
+    const runStart = cursor;
+    while (cursor < wordTokenIndexes.length && !tokenHasTiming(next[wordTokenIndexes[cursor]])) {
+      cursor += 1;
+    }
+    const runTokenIndexes = wordTokenIndexes.slice(runStart, cursor);
+    const prevTimedToken = runStart > 0 ? next[wordTokenIndexes[runStart - 1]] : null;
+    const nextTimedToken = cursor < wordTokenIndexes.length ? next[wordTokenIndexes[cursor]] : null;
+    const { startMs, endMs } = resolveInterpolatedSpan({
+      prevTimedToken,
+      nextTimedToken,
+      fallbackStartMs,
+      fallbackEndMs,
+    });
+    const span = Math.max(0, endMs - startMs);
+
+    // Preserve exact source matches when we have them, but keep rewritten runs
+    // seekable by spreading them across the surrounding source span.
+    for (let index = 0; index < runTokenIndexes.length; index += 1) {
+      const runTokenIndex = runTokenIndexes[index];
+      const tokenStart = runTokenIndexes.length <= 1
+        ? startMs
+        : startMs + Math.floor((span * index) / runTokenIndexes.length);
+      const tokenEnd = runTokenIndexes.length <= 1
+        ? endMs
+        : startMs + Math.floor((span * (index + 1)) / runTokenIndexes.length);
+      next[runTokenIndex] = {
+        ...next[runTokenIndex],
+        startMs: tokenStart,
+        endMs: Math.max(tokenEnd, tokenStart),
+        alignment: "interpolated",
+      };
+    }
+  }
+
+  return next;
+}
+
+function resolveInterpolatedSpan({ prevTimedToken, nextTimedToken, fallbackStartMs, fallbackEndMs }) {
+  let startMs = tokenHasTiming(prevTimedToken) ? safeToInt(prevTimedToken.endMs, fallbackStartMs) : fallbackStartMs;
+  let endMs = tokenHasTiming(nextTimedToken) ? safeToInt(nextTimedToken.startMs, fallbackEndMs) : fallbackEndMs;
+
+  if (endMs <= startMs) {
+    const altStartMs = tokenHasTiming(prevTimedToken)
+      ? safeToInt(prevTimedToken.startMs, fallbackStartMs)
+      : fallbackStartMs;
+    const altEndMs = tokenHasTiming(nextTimedToken)
+      ? safeToInt(nextTimedToken.endMs, fallbackEndMs)
+      : fallbackEndMs;
+    startMs = Math.min(altStartMs, altEndMs);
+    endMs = Math.max(altStartMs, altEndMs);
+  }
+
+  return {
+    startMs,
+    endMs: Math.max(endMs, startMs),
+  };
+}
+
+function tokenHasTiming(token) {
+  return Boolean(token) && Number.isInteger(token.startMs) && Number.isInteger(token.endMs);
 }
 
 export function splitTextIntoWords(text, startMs, endMs) {

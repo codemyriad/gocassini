@@ -50,7 +50,7 @@ describe("buildReadableTranscriptFromPortable", () => {
     expect(display.blocks[0]?.text).toBe("Hello there.");
   });
 
-  it("does not fabricate word timings from multi-word portable transcript items", () => {
+  it("interpolates word timings from multi-word portable transcript items", () => {
     const portable = {
       meeting: { durationMs: 10_000 },
       speakers: [{ id: "spk_1", label: "Chris" }],
@@ -87,9 +87,19 @@ describe("buildReadableTranscriptFromPortable", () => {
     const timedWords = display.blocks[0]?.tokens.filter((token) => token.kind === "word" && token.startMs !== undefined);
 
     expect(transcript.segments[0]?.words).toEqual([]);
-    expect(timedWords).toEqual([]);
-    expect(display.blocks[0]?.timedWordCount).toBe(0);
+    expect(timedWords?.[0]).toMatchObject({
+      text: "And",
+      alignment: "interpolated",
+      startMs: 1000,
+    });
+    expect(timedWords?.at(-1)).toMatchObject({
+      text: "it",
+      alignment: "interpolated",
+      endMs: 5000,
+    });
+    expect(display.blocks[0]?.timedWordCount).toBe(9);
     expect(display.blocks[0]?.wordCount).toBe(9);
+    expect(display.blocks[0]?.timingCoverage).toBe(1);
   });
 
   it("recovers word timings from readable transcript words embedded in portable manifests", () => {
@@ -271,5 +281,112 @@ describe("buildReadableTranscriptFromPortable", () => {
     expect(chimaBlocks[0]?.endMs).toBeLessThanOrEqual(64_837);
     expect(chimaBlocks[1]?.text).toContain("It's a pity, Chris, you're ruining everything.");
     expect(chimaBlocks[1]?.startMs).toBeGreaterThanOrEqual(78_757);
+  });
+
+  it("keeps short fully rewritten cleaned blocks seekable via interpolated timing", () => {
+    const transcript = {
+      version: "transcript.words.v1" as const,
+      media: { src: "meeting.opus", durationMs: 4_000, sha256: "" },
+      speakers: [{ id: "spk_1", label: "Silvio" }],
+      segments: [
+        {
+          id: "seg_1",
+          speaker: "spk_1",
+          startMs: 127_398,
+          endMs: 128_197,
+          text: "Mexicans",
+          words: [
+            { id: "w_1", text: "Mexicans", startMs: 127_398, endMs: 128_197 },
+          ],
+        },
+      ],
+    };
+    const readable = {
+      version: "transcript.readable.v1" as const,
+      media: { src: "meeting.opus", durationMs: 4_000 },
+      speakers: [{ id: "spk_1", label: "Silvio" }],
+      segments: [
+        {
+          id: "rseg_1",
+          speaker: "spk_1",
+          startMs: 127_398,
+          endMs: 128_197,
+          text: "Makes sense.",
+          sourceSegmentIds: ["seg_1"],
+        },
+      ],
+    };
+
+    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
+    const wordTokens = display.blocks[0]?.tokens.filter((token) => token.kind === "word") ?? [];
+
+    expect(wordTokens).toMatchObject([
+      {
+        text: "Makes",
+        alignment: "interpolated",
+        startMs: 127_398,
+      },
+      {
+        text: "sense",
+        alignment: "interpolated",
+        endMs: 128_197,
+      },
+    ]);
+    expect(wordTokens.every((token) => Number.isInteger(token.startMs) && Number.isInteger(token.endMs))).toBe(true);
+    expect(display.blocks[0]?.timedWordCount).toBe(2);
+    expect(display.blocks[0]?.wordCount).toBe(2);
+    expect(display.blocks[0]?.timingCoverage).toBe(1);
+  });
+
+  it("interpolates rewritten cleaned words between exact anchors", () => {
+    const transcript = {
+      version: "transcript.words.v1" as const,
+      media: { src: "meeting.opus", durationMs: 6_000, sha256: "" },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      segments: [
+        {
+          id: "seg_1",
+          speaker: "spk_1",
+          startMs: 1000,
+          endMs: 3500,
+          text: "we should buy this now",
+          words: [
+            { id: "w_1", text: "we", startMs: 1000, endMs: 1300 },
+            { id: "w_2", text: "should", startMs: 1300, endMs: 1700 },
+            { id: "w_3", text: "buy", startMs: 1700, endMs: 2200 },
+            { id: "w_4", text: "this", startMs: 2200, endMs: 2700 },
+            { id: "w_5", text: "now", startMs: 2700, endMs: 3200 },
+          ],
+        },
+      ],
+    };
+    const readable = {
+      version: "transcript.readable.v1" as const,
+      media: { src: "meeting.opus", durationMs: 6_000 },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      segments: [
+        {
+          id: "rseg_1",
+          speaker: "spk_1",
+          startMs: 1000,
+          endMs: 3500,
+          text: "We should purchase this now.",
+          sourceSegmentIds: ["seg_1"],
+        },
+      ],
+    };
+
+    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
+    const purchaseToken = display.blocks[0]?.tokens.find((token) => token.text === "purchase");
+
+    expect(purchaseToken).toMatchObject({
+      alignment: "interpolated",
+      sourceWordIds: [],
+      startMs: 1700,
+      endMs: 2200,
+    });
+    expect(display.blocks[0]?.timedWordCount).toBe(5);
+    expect(display.blocks[0]?.wordCount).toBe(5);
+    expect(display.blocks[0]?.timingCoverage).toBe(1);
   });
 });

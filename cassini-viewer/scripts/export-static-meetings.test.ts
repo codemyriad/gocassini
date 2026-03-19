@@ -190,7 +190,7 @@ describe("describeMeeting", () => {
     expect(display.blocks[0]?.text).toBe("Hello there.");
   });
 
-  it("does not fabricate word timings from multi-word portable transcript items", () => {
+  it("interpolates word timings from multi-word portable transcript items", () => {
     const portable = {
       meeting: { durationMs: 10_000 },
       speakers: [{ id: "spk_1", label: "Chris" }],
@@ -227,9 +227,19 @@ describe("describeMeeting", () => {
     const timedWords = display.blocks[0]?.tokens.filter((token) => token.kind === "word" && token.startMs !== undefined);
 
     expect(transcript.segments[0]?.words).toEqual([]);
-    expect(timedWords).toEqual([]);
-    expect(display.blocks[0]?.timedWordCount).toBe(0);
+    expect(timedWords?.[0]).toMatchObject({
+      text: "And",
+      alignment: "interpolated",
+      startMs: 1000,
+    });
+    expect(timedWords?.at(-1)).toMatchObject({
+      text: "it",
+      alignment: "interpolated",
+      endMs: 5000,
+    });
+    expect(display.blocks[0]?.timedWordCount).toBe(9);
     expect(display.blocks[0]?.wordCount).toBe(9);
+    expect(display.blocks[0]?.timingCoverage).toBe(1);
   });
 
   it("recovers word timings from readable transcript words embedded in portable manifests", () => {
@@ -477,7 +487,7 @@ describe("describeMeeting", () => {
     expect(probablyToken?.startMs).toBeGreaterThanOrEqual(8000);
   });
 
-  it("leaves rewritten cleaned words untimed instead of fabricating precision", () => {
+  it("interpolates rewritten cleaned words between exact anchors", () => {
     const transcript = {
       version: "transcript.words.v1",
       media: { src: "meeting.opus", durationMs: 6000 },
@@ -518,13 +528,68 @@ describe("describeMeeting", () => {
     const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
     const purchaseToken = display.blocks[0]?.tokens.find((token) => token.text === "purchase");
 
-    expect(purchaseToken?.alignment).toBe("none");
+    expect(purchaseToken?.alignment).toBe("interpolated");
     expect(purchaseToken?.sourceWordIds).toEqual([]);
-    expect(purchaseToken?.startMs).toBeUndefined();
-    expect(purchaseToken?.endMs).toBeUndefined();
-    expect(display.blocks[0]?.timedWordCount).toBe(4);
+    expect(purchaseToken?.startMs).toBe(1700);
+    expect(purchaseToken?.endMs).toBe(2200);
+    expect(display.blocks[0]?.timedWordCount).toBe(5);
     expect(display.blocks[0]?.wordCount).toBe(5);
-    expect(display.blocks[0]?.timingCoverage).toBe(0.8);
+    expect(display.blocks[0]?.timingCoverage).toBe(1);
+  });
+
+  it("keeps short fully rewritten cleaned blocks seekable via interpolated timing", () => {
+    const transcript = {
+      version: "transcript.words.v1",
+      media: { src: "meeting.opus", durationMs: 4000 },
+      speakers: [{ id: "spk_1", label: "Silvio" }],
+      segments: [
+        {
+          id: "seg_1",
+          speaker: "spk_1",
+          startMs: 127398,
+          endMs: 128197,
+          text: "Mexicans",
+          words: [
+            { id: "w_1", text: "Mexicans", startMs: 127398, endMs: 128197 },
+          ],
+        },
+      ],
+    };
+    const readable = {
+      version: "transcript.readable.v1",
+      media: { src: "meeting.opus", durationMs: 4000 },
+      speakers: [{ id: "spk_1", label: "Silvio" }],
+      segments: [
+        {
+          id: "rseg_1",
+          speaker: "spk_1",
+          startMs: 127398,
+          endMs: 128197,
+          text: "Makes sense.",
+          sourceSegmentIds: ["seg_1"],
+        },
+      ],
+    };
+
+    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
+    const wordTokens = display.blocks[0]?.tokens.filter((token) => token.kind === "word") ?? [];
+
+    expect(wordTokens).toMatchObject([
+      {
+        text: "Makes",
+        alignment: "interpolated",
+        startMs: 127398,
+      },
+      {
+        text: "sense",
+        alignment: "interpolated",
+        endMs: 128197,
+      },
+    ]);
+    expect(wordTokens.every((token) => Number.isInteger(token.startMs) && Number.isInteger(token.endMs))).toBe(true);
+    expect(display.blocks[0]?.timedWordCount).toBe(2);
+    expect(display.blocks[0]?.wordCount).toBe(2);
+    expect(display.blocks[0]?.timingCoverage).toBe(1);
   });
 
   it("synthesizes source word ids for transcript artifact words that omit them", () => {
@@ -579,7 +644,7 @@ describe("describeMeeting", () => {
     expect(display.blocks[0]?.timingCoverage).toBe(1);
   });
 
-  it("keeps contraction-expansion tokens untimed when there is no exact ASR match", () => {
+  it("interpolates contraction-expansion tokens when there is no exact ASR match", () => {
     const transcript = {
       version: "transcript.words.v1",
       media: { src: "meeting.opus", durationMs: 4000 },
@@ -619,10 +684,18 @@ describe("describeMeeting", () => {
     const weToken = display.blocks[0]?.tokens.find((token) => token.text === "We");
     const areToken = display.blocks[0]?.tokens.find((token) => token.text === "are");
 
-    expect(weToken?.startMs).toBeUndefined();
-    expect(areToken?.startMs).toBeUndefined();
-    expect(display.blocks[0]?.timedWordCount).toBe(2);
+    expect(weToken).toMatchObject({
+      alignment: "interpolated",
+      startMs: 1000,
+      endMs: 1250,
+    });
+    expect(areToken).toMatchObject({
+      alignment: "interpolated",
+      startMs: 1250,
+      endMs: 1500,
+    });
+    expect(display.blocks[0]?.timedWordCount).toBe(4);
     expect(display.blocks[0]?.wordCount).toBe(4);
-    expect(display.blocks[0]?.timingCoverage).toBe(0.5);
+    expect(display.blocks[0]?.timingCoverage).toBe(1);
   });
 });
