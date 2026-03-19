@@ -126,7 +126,8 @@ function compareDescending(left: string, right: string): number {
 }
 
 function resolveAppAssetUrl(assetPath: string): string {
-  const baseUrl = new URL(import.meta.env.BASE_URL || "/", window.location.href);
+  const base = import.meta.env.BASE_URL;
+  const baseUrl = base && base !== "/" ? new URL(base, window.location.href) : new URL(window.location.href);
   return new URL(assetPath, baseUrl).toString();
 }
 
