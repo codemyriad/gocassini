@@ -371,6 +371,110 @@ describe("describeMeeting", () => {
     expect(chimaBlocks[1]?.startMs).toBeGreaterThanOrEqual(78_757);
   });
 
+  it("uses exact transcript words when splitting readable blocks around interruptions", () => {
+    const chimaWords = [
+      ["Actually,", 54_981, 55_381],
+      ["I", 55_381, 55_541],
+      ["was", 55_541, 55_701],
+      ["wondering", 55_701, 56_182],
+      ["if", 56_182, 56_342],
+      ["I", 56_342, 56_582],
+      ["should", 56_582, 56_822],
+      ["have", 56_822, 57_062],
+      ["pinged", 57_062, 57_462],
+      ["you", 57_462, 57_702],
+      ["in", 57_701, 57_941],
+      ["the", 57_942, 58_102],
+      ["afternoon,", 58_102, 58_742],
+      ["and", 58_742, 58_901],
+      ["I", 58_901, 59_061],
+      ["didn't", 59_061, 59_462],
+      ["because", 59_462, 59_861],
+      ["I", 59_861, 60_022],
+      ["was", 60_022, 60_261],
+      ["busy", 60_261, 60_621],
+      ["doing", 60_621, 61_021],
+      ["something", 61_021, 61_541],
+      ["else.", 61_541, 62_021],
+      ["It's", 77_541, 77_861],
+      ["a", 77_861, 78_021],
+      ["pity,", 78_021, 78_502],
+      ["Chris,", 78_501, 79_061],
+      ["you're", 79_061, 79_542],
+      ["ruining", 79_542, 80_102],
+      ["everything.", 80_102, 80_742],
+    ];
+    const portable = {
+      meeting: { durationMs: 110_000 },
+      speakers: [
+        { id: "spk_chima", label: "chima" },
+        { id: "spk_silvio", label: "Silvio" },
+      ],
+      transcript: {
+        items: [
+          ...chimaWords.map(([text, startMs, endMs], index) => ({
+            id: `seg_chima_${index}`,
+            speaker: "spk_chima",
+            startMs,
+            endMs,
+            text,
+          })),
+          {
+            id: "seg_silvio",
+            speaker: "spk_silvio",
+            startMs: 64_837,
+            endMs: 78_757,
+            text: "Telling Mattia off about homework.",
+          },
+        ],
+      },
+      readableTranscript: {
+        version: "transcript.readable.v1",
+        speakers: [
+          { id: "spk_chima", label: "chima" },
+          { id: "spk_silvio", label: "Silvio" },
+        ],
+        segments: [
+          {
+            id: "readable_000002",
+            speaker: "spk_chima",
+            startMs: 54_981,
+            endMs: 83_541,
+            text: "Actually, I was wondering if I should have pinged you in the afternoon, and I didn't because I was busy doing something else. It's a pity, Chris, you're ruining everything.",
+            sourceSegmentIds: chimaWords.map((_, index) => `seg_chima_${index}`),
+            words: [
+              "Actually,","I","was","wondering","if","I","should","have","pinged","you","in","the","afternoon,","and","I","didn't","because","I","was","busy","doing","something","else.","It's","a","pity,","Chris,","you're","ruining","everything.",
+            ].map((text, index, words) => ({
+              text,
+              startMs: 54_981 + Math.floor(((83_541 - 54_981) * index) / words.length),
+              endMs: 54_981 + Math.floor(((83_541 - 54_981) * (index + 1)) / words.length),
+            })),
+          },
+          {
+            id: "readable_000003",
+            speaker: "spk_silvio",
+            startMs: 64_837,
+            endMs: 78_757,
+            text: "Telling Mattia off about homework.",
+            sourceSegmentIds: ["seg_silvio"],
+          },
+        ],
+      },
+    };
+
+    const transcript = buildTranscriptWordsFromPortable(portable);
+    const readable = buildReadableTranscriptFromPortable(portable, transcript);
+    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
+    const chimaBlocks = display.blocks.filter((block) => block.speaker === "spk_chima");
+
+    expect(chimaBlocks).toHaveLength(2);
+    expect(chimaBlocks[0]?.text).toContain("doing something else.");
+    expect(chimaBlocks[0]?.text).not.toContain("It's a pity");
+    expect(chimaBlocks[0]?.endMs).toBe(62_021);
+    expect(chimaBlocks[1]?.text).toBe("It's a pity, Chris, you're ruining everything.");
+    expect(chimaBlocks[1]?.startMs).toBe(77_541);
+  });
+
   it("builds a viewer-ready display transcript with timed cleaned tokens", () => {
     const transcript = {
       version: "transcript.words.v1",

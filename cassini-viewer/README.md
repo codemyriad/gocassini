@@ -60,6 +60,26 @@ npm test
 npm run build
 ```
 
+## Mechanical Timing Audit
+
+When click-to-seek timing changes, do not rely only on JSON inspection or the UI highlight.
+Double-check the final behavior mechanically by auditing the clicked token against the audio clip at its assigned timestamp.
+
+The documented workflow lives at:
+
+- [mechanical-timing-audit.md](/home/silvio/dev/gocassini/cassini-viewer/docs/mechanical-timing-audit.md)
+
+Quick entry point:
+
+```bash
+fish -lc 'cd /home/silvio/dev/gocassini/cassini-viewer && npm run audit:portable-token -- \
+  --audio ./exports/viewer-demo/meetings/daily-meeting-2026-03-18--12:30.opus \
+  --snippet "two or two or three days of work a month" \
+  --word three'
+```
+
+Use this against the exact `.opus` file the UI serves before considering a timing fix done.
+
 ## Static export
 
 The preferred suite-level entry point for static publishing lives in

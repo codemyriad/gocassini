@@ -248,6 +248,7 @@ interface DisplaySourceBlock {
   text: string;
   sourceSegmentIds: string[];
   words: TranscriptWordsV1["segments"][number]["words"];
+  sourceWords: TranscriptWordsV1["segments"][number]["words"];
 }
 
 interface TimeWindow {
@@ -258,13 +259,16 @@ interface TimeWindow {
 function buildReadableDisplaySourceBlocks(
   readable: ReadableTranscriptV1,
   speakerLabels: Map<string, string>,
+  transcriptSegments: TranscriptWordsV1["segments"],
 ): DisplaySourceBlock[] {
+  const segmentById = new Map((Array.isArray(transcriptSegments) ? transcriptSegments : []).map((segment) => [segment.id, segment]));
   const baseBlocks = readable.segments.map((segment, index) => {
     const segmentRecord = asRecord(segment as unknown);
     const blockId =
       typeof segment.id === "string" && segment.id.trim() !== ""
         ? segment.id
         : `rseg_${String(index).padStart(6, "0")}`;
+    const sourceSegmentIds = Array.isArray(segment.sourceSegmentIds) ? [...segment.sourceSegmentIds] : [];
     return {
       id: blockId,
       speaker: segment.speaker,
@@ -274,11 +278,59 @@ function buildReadableDisplaySourceBlocks(
       startMs: safeToInt(segment.startMs, 0),
       endMs: safeToInt(segment.endMs, safeToInt(segment.startMs, 0)),
       text: typeof segment.text === "string" ? segment.text : "",
-      sourceSegmentIds: Array.isArray(segment.sourceSegmentIds) ? [...segment.sourceSegmentIds] : [],
+      sourceSegmentIds,
       words: extractPortableReadableWords(segmentRecord, blockId),
+      sourceWords: collectReadableSourceWords({
+        segment,
+        sourceSegmentIds,
+        segmentById,
+        transcriptSegments,
+      }),
     } satisfies DisplaySourceBlock;
   });
   return splitReadableBlocksOnInterruptions(baseBlocks);
+}
+
+function collectReadableSourceWords({
+  segment,
+  sourceSegmentIds,
+  segmentById,
+  transcriptSegments,
+}: {
+  segment: ReadableTranscriptV1["segments"][number];
+  sourceSegmentIds: string[];
+  segmentById: Map<string, TranscriptWordsV1["segments"][number]>;
+  transcriptSegments: TranscriptWordsV1["segments"];
+}): TranscriptWordsV1["segments"][number]["words"] {
+  const resolved = sourceSegmentIds
+    .map((segmentId) => segmentById.get(segmentId))
+    .filter((candidate): candidate is TranscriptWordsV1["segments"][number] => Boolean(candidate));
+  const candidates = resolved.length > 0
+    ? resolved
+    : (Array.isArray(transcriptSegments) ? transcriptSegments : []).filter((candidate) => {
+        const startMs = safeToInt(candidate?.startMs, 0);
+        const endMs = safeToInt(candidate?.endMs, startMs);
+        if (endMs < safeToInt(segment?.startMs, 0) || startMs > safeToInt(segment?.endMs, startMs)) {
+          return false;
+        }
+        if (typeof segment?.speaker === "string" && candidate?.speaker && candidate.speaker !== segment.speaker) {
+          return false;
+        }
+        return true;
+      });
+  return candidates.flatMap((candidate) =>
+    Array.isArray(candidate?.words)
+      ? candidate.words
+          .filter((word) => word && typeof word === "object")
+          .map((word, index) => ({
+            id: typeof word.id === "string" && word.id.trim() !== "" ? word.id : `${candidate.id}:w_${index}`,
+            text: safeToString(word.text).trim(),
+            startMs: safeToInt(word.startMs, Number.NaN),
+            endMs: safeToInt(word.endMs, safeToInt(word.startMs, Number.NaN)),
+          }))
+          .filter((word) => word.text && Number.isFinite(word.startMs) && Number.isFinite(word.endMs))
+      : [],
+  );
 }
 
 function splitReadableBlocksOnInterruptions(blocks: DisplaySourceBlock[]): DisplaySourceBlock[] {
@@ -315,10 +367,16 @@ function splitReadableBlockOnInterruptions(
     return [block];
   }
 
+  const transcriptWordCounts =
+    Array.isArray(block.sourceWords) && block.sourceWords.length > 0
+      ? assignWordsToWindows(block.sourceWords, windows)
+      : null;
   const uniformlyInterpolated = wordsLookUniformlyInterpolated(block.words, block.startMs, block.endMs);
-  const counts = uniformlyInterpolated
-    ? allocateWordCountsAcrossWindows(block.words.length, windows)
-    : assignWordsToWindows(block.words, windows);
+  const counts = transcriptWordCounts && transcriptWordCounts.some((count) => count > 0)
+    ? transcriptWordCounts
+    : uniformlyInterpolated
+      ? allocateWordCountsAcrossWindows(block.words.length, windows)
+      : assignWordsToWindows(block.words, windows);
   const plan = windows
     .map((window, index) => ({
       window,
@@ -333,10 +391,15 @@ function splitReadableBlockOnInterruptions(
   const textParts = splitTextByWordCounts(block.text, plan.map((entry) => entry.count));
   const derivedBlocks: DisplaySourceBlock[] = [];
   let wordOffset = 0;
+  let sourceWordOffset = 0;
   for (let index = 0; index < plan.length; index += 1) {
     const { window, count } = plan[index]!;
     const words = block.words.slice(wordOffset, wordOffset + count);
+    const sourceWords = Array.isArray(block.sourceWords)
+      ? block.sourceWords.slice(sourceWordOffset, sourceWordOffset + count)
+      : [];
     wordOffset += count;
+    sourceWordOffset += count;
     if (words.length === 0) {
       continue;
     }
@@ -344,10 +407,14 @@ function splitReadableBlockOnInterruptions(
     derivedBlocks.push({
       ...block,
       id: `${block.id}__split_${String(index).padStart(2, "0")}`,
-      startMs: timedWords[0]?.startMs ?? window.startMs,
-      endMs: timedWords[timedWords.length - 1]?.endMs ?? window.endMs,
+      startMs: sourceWords[0]?.startMs ?? timedWords[0]?.startMs ?? window.startMs,
+      endMs: sourceWords[sourceWords.length - 1]?.endMs ?? timedWords[timedWords.length - 1]?.endMs ?? window.endMs,
       text: textParts[index] ?? rebuildTextFromWords(timedWords),
       words: timedWords,
+      sourceWords,
+      sourceSegmentIds: sourceWords.length > 0
+        ? [...new Set(sourceWords.map((word) => String(word.id ?? "").split(":")[0]).filter(Boolean))]
+        : block.sourceSegmentIds,
     });
   }
 
@@ -547,7 +614,7 @@ export function buildDisplayTranscriptFromArtifacts(
   const segmentById = new Map(transcriptSegments.map((segment) => [segment.id, segment]));
   const sourceBlocks =
     readable && readable.version === "transcript.readable.v1" && Array.isArray(readable.segments)
-      ? buildReadableDisplaySourceBlocks(readable, speakerLabels)
+      ? buildReadableDisplaySourceBlocks(readable, speakerLabels, transcriptSegments)
       : transcriptSegments.map((segment) => ({
           id: `d_${segment.id}`,
           speaker: segment.speaker,
@@ -557,6 +624,7 @@ export function buildDisplayTranscriptFromArtifacts(
           text: segment.text,
           sourceSegmentIds: [segment.id],
           words: [],
+          sourceWords: Array.isArray(segment.words) ? segment.words : [],
         }));
 
   return {
