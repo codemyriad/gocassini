@@ -17,6 +17,35 @@ If it lands on a different phrase, the timing is wrong even if the UI token look
 Repeated words and long cleaned passages can make alignment bugs hard to see by inspecting JSON alone.
 This audit checks the final user-visible behavior directly: "when I click this word, what audio do I hear?"
 
+## Ground Truth
+
+The ground truth for timing is the source ASR transcript:
+
+- `transcript.words.v1`
+- or the equivalent source words reconstructed from a portable manifest
+
+Those source word timestamps are the only authoritative word-level timing we have.
+Everything in the cleaned display transcript must be judged against them.
+
+The cleaned transcript is allowed to reword, merge, split, or paraphrase text, but that does **not**
+create new ground-truth word timings. If a cleaned token cannot be defended against the ASR words,
+it must stay untimed.
+
+## Programmatic Acceptance Rules
+
+Treat these as the invariants for cleaned-token timing:
+
+1. A cleaned token may be `alignment=source` only when it maps back to one or more ASR source words.
+2. A cleaned token may be `alignment=interpolated` only when it sits between two exact source anchors **and**
+   the cleaned run has lexical overlap with the ASR words in that source gap.
+3. A fully rewritten block must stay untimed at the word level.
+4. A pure insertion with no overlapping ASR gap words must stay untimed.
+5. A synonym substitution with no lexical overlap to the ASR gap must stay untimed.
+6. If there is doubt, prefer `token_is_timed: no` over fake precision.
+
+This is the practical rule: cleaned-word timing is progressive enhancement, not a promise.
+When we cannot prove a word timestamp from ASR evidence, we fall back to passage timing.
+
 ## Tool
 
 The viewer package includes:
@@ -33,6 +62,9 @@ transcribes it with the OpenAI audio API, and prints:
 - the clip transcription,
 - whether the clip includes the target word,
 - a simple context-overlap score.
+
+If the portable file does not embed `displayTranscript`, the tool now materializes the display transcript first.
+That matters because many regressions happen in the runtime reconstruction path rather than in the packaged file itself.
 
 ## Prerequisites
 
@@ -66,7 +98,7 @@ Good output looks like:
 Also acceptable:
 
 - `token_is_timed: no`
-- for rewritten edge words with no exact anchor on one side
+- for rewritten words whose timing cannot be defended from the ASR source words
 - this means the viewer is intentionally avoiding fake word precision
 
 Bad output looks like:
@@ -82,12 +114,34 @@ Run this audit:
 1. before changing alignment logic, to capture the failure,
 2. after rebuilding the affected portable or bundle,
 3. against the exact file the UI serves.
+4. on at least one known-good source-aligned token in the same meeting,
+5. on at least one previously bad rewritten token that should now be untimed.
 
 For local viewer development, the dev server serves files from:
 
 - [exports/viewer-demo](/home/silvio/dev/gocassini/cassini-viewer/exports/viewer-demo)
 
 So the audit should point at the `.opus` file in `exports/viewer-demo/meetings/` if you are validating `http://localhost:5173/`.
+
+## Regression Checklist
+
+Any change to cleaned display timing is incomplete until all of these are true:
+
+1. Unit tests cover the failure shape in both:
+   - [portable.test.ts](/home/silvio/dev/gocassini/cassini-viewer/src/viewer/portable.test.ts)
+   - [export-static-meetings.test.ts](/home/silvio/dev/gocassini/cassini-viewer/scripts/export-static-meetings.test.ts)
+2. The mechanical audit reproduces the pre-fix failure on the bad artifact.
+3. After the fix, the bad token becomes either:
+   - correctly timed into the right phrase, or
+   - intentionally untimed
+4. A nearby exact-source token in the same meeting still audits correctly.
+5. The check is run against the exact `.opus` file shipped to the UI.
+
+Do not merge timing work on the strength of JSON inspection alone.
+The required proof is:
+
+- ASR-grounded alignment invariants in tests
+- mechanical clip audit on the shipped artifact
 
 ## Interpretation
 

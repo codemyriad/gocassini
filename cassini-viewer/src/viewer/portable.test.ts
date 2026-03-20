@@ -50,7 +50,7 @@ describe("buildReadableTranscriptFromPortable", () => {
     expect(display.blocks[0]?.text).toBe("Hello there.");
   });
 
-  it("interpolates word timings from multi-word portable transcript items", () => {
+  it("leaves multi-word portable transcript items passage-timed instead of faking word timing", () => {
     const portable = {
       meeting: { durationMs: 10_000 },
       speakers: [{ id: "spk_1", label: "Chris" }],
@@ -87,19 +87,10 @@ describe("buildReadableTranscriptFromPortable", () => {
     const timedWords = display.blocks[0]?.tokens.filter((token) => token.kind === "word" && token.startMs !== undefined);
 
     expect(transcript.segments[0]?.words).toEqual([]);
-    expect(timedWords?.[0]).toMatchObject({
-      text: "And",
-      alignment: "interpolated",
-      startMs: 1000,
-    });
-    expect(timedWords?.at(-1)).toMatchObject({
-      text: "it",
-      alignment: "interpolated",
-      endMs: 5000,
-    });
-    expect(display.blocks[0]?.timedWordCount).toBe(9);
+    expect(timedWords).toEqual([]);
+    expect(display.blocks[0]?.timedWordCount).toBe(0);
     expect(display.blocks[0]?.wordCount).toBe(9);
-    expect(display.blocks[0]?.timingCoverage).toBe(1);
+    expect(display.blocks[0]?.timingCoverage).toBe(0);
   });
 
   it("recovers word timings from readable transcript words embedded in portable manifests", () => {
@@ -387,7 +378,7 @@ describe("buildReadableTranscriptFromPortable", () => {
     expect(chimaBlocks[1]?.startMs).toBe(77_541);
   });
 
-  it("keeps short fully rewritten cleaned blocks seekable via interpolated timing", () => {
+  it("leaves fully rewritten cleaned blocks untimed at the word level", () => {
     const transcript = {
       version: "transcript.words.v1" as const,
       media: { src: "meeting.opus", durationMs: 4_000, sha256: "" },
@@ -427,22 +418,20 @@ describe("buildReadableTranscriptFromPortable", () => {
     expect(wordTokens).toMatchObject([
       {
         text: "Makes",
-        alignment: "interpolated",
-        startMs: 127_398,
+        alignment: "none",
       },
       {
         text: "sense",
-        alignment: "interpolated",
-        endMs: 128_197,
+        alignment: "none",
       },
     ]);
-    expect(wordTokens.every((token) => Number.isInteger(token.startMs) && Number.isInteger(token.endMs))).toBe(true);
-    expect(display.blocks[0]?.timedWordCount).toBe(2);
+    expect(wordTokens.every((token) => token.startMs === undefined && token.endMs === undefined)).toBe(true);
+    expect(display.blocks[0]?.timedWordCount).toBe(0);
     expect(display.blocks[0]?.wordCount).toBe(2);
-    expect(display.blocks[0]?.timingCoverage).toBe(1);
+    expect(display.blocks[0]?.timingCoverage).toBe(0);
   });
 
-  it("interpolates rewritten cleaned words between exact anchors", () => {
+  it("leaves inserted cleaned words untimed when the ASR gap has no lexical overlap", () => {
     const transcript = {
       version: "transcript.words.v1" as const,
       media: { src: "meeting.opus", durationMs: 6_000, sha256: "" },
@@ -453,13 +442,12 @@ describe("buildReadableTranscriptFromPortable", () => {
           speaker: "spk_1",
           startMs: 1000,
           endMs: 3500,
-          text: "we should buy this now",
+          text: "we should buy now",
           words: [
             { id: "w_1", text: "we", startMs: 1000, endMs: 1300 },
             { id: "w_2", text: "should", startMs: 1300, endMs: 1700 },
             { id: "w_3", text: "buy", startMs: 1700, endMs: 2200 },
-            { id: "w_4", text: "this", startMs: 2200, endMs: 2700 },
-            { id: "w_5", text: "now", startMs: 2700, endMs: 3200 },
+            { id: "w_4", text: "now", startMs: 2700, endMs: 3200 },
           ],
         },
       ],
@@ -474,24 +462,73 @@ describe("buildReadableTranscriptFromPortable", () => {
           speaker: "spk_1",
           startMs: 1000,
           endMs: 3500,
-          text: "We should purchase this now.",
+          text: "We should buy it now.",
           sourceSegmentIds: ["seg_1"],
         },
       ],
     };
 
     const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
-    const purchaseToken = display.blocks[0]?.tokens.find((token) => token.text === "purchase");
+    const insertedToken = display.blocks[0]?.tokens.find((token) => token.text === "it");
 
-    expect(purchaseToken).toMatchObject({
-      alignment: "interpolated",
-      sourceWordIds: [],
-      startMs: 1700,
-      endMs: 2200,
-    });
-    expect(display.blocks[0]?.timedWordCount).toBe(5);
+    expect(insertedToken?.alignment).toBe("none");
+    expect(insertedToken?.sourceWordIds).toEqual([]);
+    expect(insertedToken?.startMs).toBeUndefined();
+    expect(insertedToken?.endMs).toBeUndefined();
+    expect(display.blocks[0]?.timedWordCount).toBe(4);
     expect(display.blocks[0]?.wordCount).toBe(5);
-    expect(display.blocks[0]?.timingCoverage).toBe(1);
+    expect(display.blocks[0]?.timingCoverage).toBe(0.8);
+  });
+
+  it("leaves paraphrased runs untimed when exact anchor overlap is weak", () => {
+    const transcript = {
+      version: "transcript.words.v1" as const,
+      media: { src: "meeting.opus", durationMs: 4_000, sha256: "" },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      segments: [
+        {
+          id: "seg_1",
+          speaker: "spk_1",
+          startMs: 1000,
+          endMs: 2600,
+          text: "to it if they need to",
+          words: [
+            { id: "w_1", text: "to", startMs: 1000, endMs: 1200 },
+            { id: "w_2", text: "it", startMs: 1200, endMs: 1400 },
+            { id: "w_3", text: "if", startMs: 1400, endMs: 1600 },
+            { id: "w_4", text: "they", startMs: 1600, endMs: 1800 },
+            { id: "w_5", text: "need", startMs: 1800, endMs: 2000 },
+            { id: "w_6", text: "to", startMs: 2000, endMs: 2200 },
+          ],
+        },
+      ],
+    };
+    const readable = {
+      version: "transcript.readable.v1" as const,
+      media: { src: "meeting.opus", durationMs: 4_000 },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      segments: [
+        {
+          id: "rseg_1",
+          speaker: "spk_1",
+          startMs: 1000,
+          endMs: 2600,
+          text: "To approach it using greenfield to determine.",
+          sourceSegmentIds: ["seg_1"],
+        },
+      ],
+    };
+
+    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
+    const usingToken = display.blocks[0]?.tokens.find((token) => token.text === "using");
+    const greenfieldToken = display.blocks[0]?.tokens.find((token) => token.text === "greenfield");
+
+    expect(usingToken?.alignment).toBe("none");
+    expect(usingToken?.startMs).toBeUndefined();
+    expect(usingToken?.endMs).toBeUndefined();
+    expect(greenfieldToken?.alignment).toBe("none");
+    expect(greenfieldToken?.startMs).toBeUndefined();
+    expect(greenfieldToken?.endMs).toBeUndefined();
   });
 
   it("leaves edge-only rewritten cleaned words untimed without two-sided anchors", () => {

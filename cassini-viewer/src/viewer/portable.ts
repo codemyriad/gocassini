@@ -659,6 +659,11 @@ export function buildDisplayTranscriptFromArtifacts(
           .filter((word): word is NonNullable<typeof word> & { id: string } => typeof word.id === "string" && word.id.trim() !== "")
           .map((word) => [word.id, word]),
       );
+      const sourceWordIndexById = new Map(
+        sourceWords
+          .filter((word): word is NonNullable<typeof word> & { id: string } => typeof word.id === "string" && word.id.trim() !== "")
+          .map((word, index) => [word.id, index]),
+      );
       const alignment = alignReadableTokensToSourceWords(
         sourceWords,
         typeof block.text === "string" ? block.text : "",
@@ -701,7 +706,13 @@ export function buildDisplayTranscriptFromArtifacts(
           alignment: "none" as const,
         };
       });
-      const tokens = interpolateUntimedWordRuns(exactTokens, fallbackStartMs, fallbackEndMs);
+      const tokens = interpolateUntimedWordRuns(
+        exactTokens,
+        fallbackStartMs,
+        fallbackEndMs,
+        sourceWords,
+        sourceWordIndexById,
+      );
       const wordCount = tokens.filter((token) => token.kind === "word").length;
       const timedWordCount = tokens.filter(
         (token) =>
@@ -747,6 +758,8 @@ function interpolateUntimedWordRuns(
   tokens: DisplayTranscriptV1["blocks"][number]["tokens"],
   fallbackStartMs: number,
   fallbackEndMs: number,
+  sourceWords: Array<{ text?: string }>,
+  sourceWordIndexById: Map<string, number>,
 ): DisplayTranscriptV1["blocks"][number]["tokens"] {
   const next = tokens.map((token) => ({ ...token, sourceWordIds: [...token.sourceWordIds] }));
   const wordTokenIndexes = next
@@ -770,8 +783,19 @@ function interpolateUntimedWordRuns(
     const nextTimedToken = cursor < wordTokenIndexes.length ? next[wordTokenIndexes[cursor]] : null;
     const hasPrevAnchor = tokenHasTiming(prevTimedToken);
     const hasNextAnchor = tokenHasTiming(nextTimedToken);
-    const isEntirelyUntimedBlock = !hasPrevAnchor && !hasNextAnchor && runTokenIndexes.length === wordTokenIndexes.length;
-    if (!isEntirelyUntimedBlock && (!hasPrevAnchor || !hasNextAnchor)) {
+    if (!hasPrevAnchor || !hasNextAnchor) {
+      continue;
+    }
+    if (
+      !shouldInterpolateUntimedRun({
+        tokens: next,
+        runTokenIndexes,
+        prevTimedToken,
+        nextTimedToken,
+        sourceWords,
+        sourceWordIndexById,
+      })
+    ) {
       continue;
     }
     const { startMs, endMs } = resolveInterpolatedSpan({
@@ -804,6 +828,66 @@ function interpolateUntimedWordRuns(
   }
 
   return next;
+}
+
+function shouldInterpolateUntimedRun({
+  tokens,
+  runTokenIndexes,
+  prevTimedToken,
+  nextTimedToken,
+  sourceWords,
+  sourceWordIndexById,
+}: {
+  tokens: DisplayTranscriptV1["blocks"][number]["tokens"];
+  runTokenIndexes: number[];
+  prevTimedToken: DisplayTranscriptV1["blocks"][number]["tokens"][number] | null;
+  nextTimedToken: DisplayTranscriptV1["blocks"][number]["tokens"][number] | null;
+  sourceWords: Array<{ text?: string }>;
+  sourceWordIndexById: Map<string, number>;
+}): boolean {
+  const prevIndexes = resolveTokenSourceIndexes(prevTimedToken, sourceWordIndexById);
+  const nextIndexes = resolveTokenSourceIndexes(nextTimedToken, sourceWordIndexById);
+  if (prevIndexes.length === 0 || nextIndexes.length === 0) {
+    return false;
+  }
+
+  const prevEndIndex = Math.max(...prevIndexes);
+  const nextStartIndex = Math.min(...nextIndexes);
+  if (nextStartIndex <= prevEndIndex) {
+    return false;
+  }
+
+  const runWords = runTokenIndexes
+    .map((tokenIndex) => normalizeAlignmentToken(tokens[tokenIndex]?.text ?? ""))
+    .filter(Boolean);
+  if (runWords.length === 0) {
+    return false;
+  }
+
+  const sourceGapWords = sourceWords
+    .slice(prevEndIndex + 1, nextStartIndex)
+    .map((word) => normalizeAlignmentToken(word?.text ?? ""))
+    .filter(Boolean);
+  if (sourceGapWords.length === 0) {
+    return false;
+  }
+
+  const sourceGapSet = new Set(sourceGapWords);
+  const intersectionCount = runWords.filter((word) => sourceGapSet.has(word)).length;
+  const overlap = intersectionCount / Math.max(runWords.length, sourceGapWords.length);
+  return intersectionCount > 0 && overlap >= 0.5 && Math.abs(runWords.length - sourceGapWords.length) <= 2;
+}
+
+function resolveTokenSourceIndexes(
+  token: DisplayTranscriptV1["blocks"][number]["tokens"][number] | null | undefined,
+  sourceWordIndexById: Map<string, number>,
+): number[] {
+  if (!token || !Array.isArray(token.sourceWordIds)) {
+    return [];
+  }
+  return token.sourceWordIds
+    .map((wordId) => sourceWordIndexById.get(wordId))
+    .filter((index): index is number => Number.isInteger(index));
 }
 
 function resolveInterpolatedSpan({

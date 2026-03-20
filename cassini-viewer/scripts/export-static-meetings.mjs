@@ -95,10 +95,7 @@ export function main(argv = process.argv.slice(2)) {
   console.log(`viewer index -> ${join(outputDir, "index.html")}`);
   console.log(`viewer catalog -> ${join(outputDir, "catalog.json")}`);
   for (const meeting of meetings) {
-    const target = meeting.audioPath
-      ? join(outputDir, "meetings", `${meeting.id}.opus`)
-      : join(outputDir, "meetings", meeting.id);
-    console.log(`${meeting.id} -> ${target}`);
+    console.log(`${meeting.id} -> ${join(outputDir, "meetings", meeting.id)}`);
   }
 }
 
@@ -132,40 +129,81 @@ export function rewriteIndexHtmlForCatalog(indexHtml) {
 }
 
 export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir }) {
-  const { title, dateLabel } = describeMeeting(meetingId);
+  const sourceMeetingDir = sourceType === "portable" ? null : sourcePath;
+  const targetMeetingDir = join(outputDir, "meetings", meetingId);
+
+  mkdirSync(targetMeetingDir, { recursive: true });
 
   if (sourceType === "portable") {
     const portable = extractPortableManifest(sourcePath);
+    const audioPath = join(targetMeetingDir, "meeting.opus");
     const transcript = buildTranscriptWordsFromPortable(portable);
-    const targetFileName = `${meetingId}.opus`;
-    cpSync(sourcePath, join(outputDir, "meetings", targetFileName));
-    const sttVariantLabel = describeSpeechToTextVariant({ provenance: portable.provenance }) || describeVariantSuffix(meetingId);
-    return {
-      id: meetingId,
-      audioPath: `./meetings/${targetFileName}`,
-      title: sttVariantLabel ? `${title} (${sttVariantLabel})` : title,
-      dateLabel,
-      speakerCount: transcript.speakers?.length ?? 0,
-      segmentCount: transcript.segments?.length ?? 0,
-      digestDurationMs: transcript.media?.durationMs ?? 0,
-    };
+    const readable = buildReadableTranscriptFromPortable(portable, transcript);
+    const display = portable.displayTranscript ?? buildDisplayTranscriptFromArtifacts(transcript, readable);
+    const mediaDurationMs = safeToInt(portable.meeting?.durationMs, 0);
+
+    cpSync(sourcePath, audioPath);
+
+    writeFileSync(
+      join(targetMeetingDir, "transcript.words.v1.json"),
+      `${JSON.stringify(transcript, null, 2)}\n`,
+      "utf8",
+    );
+    writeFileSync(
+      join(targetMeetingDir, "transcript.readable.v1.json"),
+      `${JSON.stringify(readable, null, 2)}\n`,
+      "utf8",
+    );
+    writeFileSync(
+      join(targetMeetingDir, "transcript.display.v1.json"),
+      `${JSON.stringify(display, null, 2)}\n`,
+      "utf8",
+    );
+    writeFileSync(
+      join(targetMeetingDir, "manifest.json"),
+      `${JSON.stringify(
+        {
+          kind: "meeting",
+          version: "cassini.meeting.v1",
+          created_at_utc: portable.meeting?.createdAtUTC ?? "",
+          state: "ready",
+          stage: "ready",
+          source_kind: "portable-opus",
+          source_path: sourcePath,
+          speakerCount: transcript.speakers?.length ?? 0,
+          segmentCount: transcript.segments?.length ?? 0,
+          digestDurationMs: mediaDurationMs,
+          provenance: portable.provenance ?? undefined,
+          files: {
+            audio: "meeting.opus",
+            transcript: "transcript.words.v1.json",
+            display_transcript: "transcript.display.v1.json",
+            readable_transcript: "transcript.readable.v1.json",
+            artifact_manifest: "manifest.json",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+  } else {
+    const manifest = readManifest(sourceMeetingDir, meetingId);
+    copyPublicMeetingFiles(sourceMeetingDir, targetMeetingDir, manifest);
+    ensureDisplayTranscript(targetMeetingDir);
   }
 
-  const targetMeetingDir = join(outputDir, "meetings", meetingId);
-  mkdirSync(targetMeetingDir, { recursive: true });
-  const manifest = readManifest(sourcePath, meetingId);
-  copyPublicMeetingFiles(sourcePath, targetMeetingDir, manifest);
-  ensureDisplayTranscript(targetMeetingDir);
-  const targetManifest = readManifest(targetMeetingDir, meetingId);
-  const sttVariantLabel = describeSpeechToTextVariant(targetManifest) || describeVariantSuffix(meetingId);
+  const { title, dateLabel } = describeMeeting(meetingId);
+  const manifest = readManifest(targetMeetingDir, meetingId);
+  const sttVariantLabel = describeSpeechToTextVariant(manifest) || describeVariantSuffix(meetingId);
   return {
     id: meetingId,
     artifactPath: `./meetings/${meetingId}`,
     title: sttVariantLabel ? `${title} (${sttVariantLabel})` : title,
     dateLabel,
-    speakerCount: targetManifest.speakerCount ?? 0,
-    segmentCount: targetManifest.segmentCount ?? 0,
-    digestDurationMs: targetManifest.digestDurationMs ?? 0,
+    speakerCount: manifest.speakerCount ?? 0,
+    segmentCount: manifest.segmentCount ?? 0,
+    digestDurationMs: manifest.digestDurationMs ?? 0,
   };
 }
 
@@ -894,6 +932,11 @@ export function buildDisplayTranscriptFromArtifacts(transcript, readable) {
           .filter((word) => typeof word.id === "string" && word.id.trim() !== "")
           .map((word) => [word.id, word]),
       );
+      const sourceWordIndexById = new Map(
+        sourceWords
+          .filter((word) => typeof word.id === "string" && word.id.trim() !== "")
+          .map((word, index) => [word.id, index]),
+      );
       const alignment = alignReadableTokensToSourceWords(sourceWords, typeof block.text === "string" ? block.text : "");
       const fallbackStartMs = sourceWords.length > 0
         ? safeToInt(sourceWords[0]?.startMs, safeToInt(block.startMs, 0))
@@ -928,7 +971,13 @@ export function buildDisplayTranscriptFromArtifacts(transcript, readable) {
           alignment: token.kind === "punctuation" ? "none" : "none",
         };
       });
-      const tokens = interpolateUntimedWordRuns(exactTokens, fallbackStartMs, fallbackEndMs);
+      const tokens = interpolateUntimedWordRuns(
+        exactTokens,
+        fallbackStartMs,
+        fallbackEndMs,
+        sourceWords,
+        sourceWordIndexById,
+      );
       const wordCount = tokens.filter((token) => token.kind === "word").length;
       const timedWordCount = tokens.filter(
         (token) =>
@@ -969,7 +1018,7 @@ export function buildDisplayTranscriptFromArtifacts(transcript, readable) {
   };
 }
 
-function interpolateUntimedWordRuns(tokens, fallbackStartMs, fallbackEndMs) {
+function interpolateUntimedWordRuns(tokens, fallbackStartMs, fallbackEndMs, sourceWords, sourceWordIndexById) {
   const next = tokens.map((token) => ({ ...token, sourceWordIds: [...token.sourceWordIds] }));
   const wordTokenIndexes = next
     .map((token, index) => (token.kind === "word" ? index : -1))
@@ -992,8 +1041,17 @@ function interpolateUntimedWordRuns(tokens, fallbackStartMs, fallbackEndMs) {
     const nextTimedToken = cursor < wordTokenIndexes.length ? next[wordTokenIndexes[cursor]] : null;
     const hasPrevAnchor = tokenHasTiming(prevTimedToken);
     const hasNextAnchor = tokenHasTiming(nextTimedToken);
-    const isEntirelyUntimedBlock = !hasPrevAnchor && !hasNextAnchor && runTokenIndexes.length === wordTokenIndexes.length;
-    if (!isEntirelyUntimedBlock && (!hasPrevAnchor || !hasNextAnchor)) {
+    if (!hasPrevAnchor || !hasNextAnchor) {
+      continue;
+    }
+    if (!shouldInterpolateUntimedRun({
+      tokens: next,
+      runTokenIndexes,
+      prevTimedToken,
+      nextTimedToken,
+      sourceWords,
+      sourceWordIndexById,
+    })) {
       continue;
     }
     const { startMs, endMs } = resolveInterpolatedSpan({
@@ -1024,6 +1082,57 @@ function interpolateUntimedWordRuns(tokens, fallbackStartMs, fallbackEndMs) {
   }
 
   return next;
+}
+
+function shouldInterpolateUntimedRun({
+  tokens,
+  runTokenIndexes,
+  prevTimedToken,
+  nextTimedToken,
+  sourceWords,
+  sourceWordIndexById,
+}) {
+  const prevIndexes = resolveTokenSourceIndexes(prevTimedToken, sourceWordIndexById);
+  const nextIndexes = resolveTokenSourceIndexes(nextTimedToken, sourceWordIndexById);
+  if (prevIndexes.length === 0 || nextIndexes.length === 0) {
+    return false;
+  }
+
+  const prevEndIndex = Math.max(...prevIndexes);
+  const nextStartIndex = Math.min(...nextIndexes);
+  if (nextStartIndex <= prevEndIndex) {
+    return false;
+  }
+
+  const runWords = runTokenIndexes
+    .map((tokenIndex) => normalizeAlignmentToken(tokens[tokenIndex]?.text ?? ""))
+    .filter(Boolean);
+  if (runWords.length === 0) {
+    return false;
+  }
+
+  const sourceGapWords = sourceWords
+    .slice(prevEndIndex + 1, nextStartIndex)
+    .map((word) => normalizeAlignmentToken(word?.text ?? ""))
+    .filter(Boolean);
+
+  if (sourceGapWords.length === 0) {
+    return false;
+  }
+
+  const sourceGapSet = new Set(sourceGapWords);
+  const intersectionCount = runWords.filter((word) => sourceGapSet.has(word)).length;
+  const overlap = intersectionCount / Math.max(runWords.length, sourceGapWords.length);
+  return intersectionCount > 0 && overlap >= 0.5 && Math.abs(runWords.length - sourceGapWords.length) <= 2;
+}
+
+function resolveTokenSourceIndexes(token, sourceWordIndexById) {
+  if (!token || !Array.isArray(token.sourceWordIds)) {
+    return [];
+  }
+  return token.sourceWordIds
+    .map((wordId) => sourceWordIndexById.get(wordId))
+    .filter((index) => Number.isInteger(index));
 }
 
 function resolveInterpolatedSpan({ prevTimedToken, nextTimedToken, fallbackStartMs, fallbackEndMs }) {

@@ -4,6 +4,12 @@ import { tmpdir } from "node:os";
 import { resolve, basename, join } from "node:path";
 import { gunzipSync } from "node:zlib";
 
+import {
+  buildDisplayTranscriptFromArtifacts,
+  buildReadableTranscriptFromPortable,
+  buildTranscriptWordsFromPortable,
+} from "./export-static-meetings.mjs";
+
 const DEFAULT_BEFORE_MS = 600;
 const DEFAULT_AFTER_MS = 1400;
 const DEFAULT_MODEL = "gpt-4o-mini-transcribe";
@@ -14,7 +20,7 @@ if (process.argv[1] && resolve(process.argv[1]) === new URL(import.meta.url).pat
 
 export async function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
-  const manifest = loadPortableManifest(options.audioPath);
+  const manifest = loadPortableManifestWithDisplay(options.audioPath);
   const match = findTargetToken(manifest, options.snippet, options.word, options.occurrence);
   if (!match.hasTiming) {
     printAudit({ options, manifest, match, transcription: null });
@@ -150,6 +156,19 @@ function loadPortableManifest(audioPath) {
     encoded += chunk;
   }
   return JSON.parse(gunzipSync(Buffer.from(encoded, "base64url")).toString("utf8"));
+}
+
+function loadPortableManifestWithDisplay(audioPath) {
+  const manifest = loadPortableManifest(audioPath);
+  if (Array.isArray(manifest?.displayTranscript?.blocks) && manifest.displayTranscript.blocks.length > 0) {
+    return manifest;
+  }
+  const transcript = buildTranscriptWordsFromPortable(manifest);
+  const readable = buildReadableTranscriptFromPortable(manifest, transcript);
+  return {
+    ...manifest,
+    displayTranscript: buildDisplayTranscriptFromArtifacts(transcript, readable),
+  };
 }
 
 function findTargetToken(manifest, snippet, word, occurrence) {
