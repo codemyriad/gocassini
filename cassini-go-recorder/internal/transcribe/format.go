@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"gocassini/internal/meetingtime"
 )
 
 // --- transcript.words.v1.json ---
@@ -127,8 +129,9 @@ type artifactManifest struct {
 }
 
 type artifactSource struct {
-	Basename   string `json:"basename"`
-	DurationMS int64  `json:"durationMs"`
+	Basename        string `json:"basename"`
+	DurationMS      int64  `json:"durationMs"`
+	RecordedAtLocal string `json:"recordedAtLocal,omitempty"`
 }
 
 type artifactFiles struct {
@@ -182,7 +185,11 @@ func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []Audi
 		Kind:         "cassini.meeting-artifact.v1",
 		Version:      "1",
 		GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
-		Source:       artifactSource{Basename: srcBasename, DurationMS: srcDurationMS},
+		Source: artifactSource{
+			Basename:        srcBasename,
+			DurationMS:      srcDurationMS,
+			RecordedAtLocal: meetingtime.InferRecordedAtLocal(srcBasename),
+		},
 		Files:        files,
 		SpeakerCount: len(streams),
 		WordCount:    wordCount,

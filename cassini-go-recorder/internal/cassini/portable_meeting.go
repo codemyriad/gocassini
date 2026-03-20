@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"gocassini/internal/meetingtime"
 	"gocassini/internal/portable"
 )
 
@@ -34,8 +35,9 @@ type portableMeetingSource struct {
 type portableMeetingArtifact struct {
 	GeneratedAt string `json:"generatedAt"`
 	Source      struct {
-		Basename   string `json:"basename"`
-		DurationMS int64  `json:"durationMs"`
+		Basename        string `json:"basename"`
+		DurationMS      int64  `json:"durationMs"`
+		RecordedAtLocal string `json:"recordedAtLocal"`
 	} `json:"source"`
 	Provenance *portable.Provenance `json:"provenance"`
 	Files      struct {
@@ -384,13 +386,20 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 	if createdAt == "" {
 		createdAt = time.Now().UTC().Format(time.RFC3339)
 	}
+	recordedAtLocal := strings.TrimSpace(source.Artifact.Source.RecordedAtLocal)
+	if recordedAtLocal == "" {
+		recordedAtLocal = meetingtime.InferRecordedAtLocal(source.Artifact.Source.Basename)
+	}
+	processedAtUTC := strings.TrimSpace(source.Artifact.GeneratedAt)
 
 	manifest := portable.NormalizeManifest(portable.Manifest{
 		Meeting: portable.Meeting{
-			ID:           portable.MeetingIDFromPCMHash(audio.PCMSHA256),
-			Title:        title,
-			CreatedAtUTC: createdAt,
-			DurationMS:   audio.DurationMS,
+			ID:              portable.MeetingIDFromPCMHash(audio.PCMSHA256),
+			Title:           title,
+			CreatedAtUTC:    createdAt,
+			RecordedAtLocal: recordedAtLocal,
+			ProcessedAtUTC:  processedAtUTC,
+			DurationMS:      audio.DurationMS,
 		},
 		Audio: portable.Audio{
 			Container:   "ogg",

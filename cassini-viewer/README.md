@@ -80,6 +80,26 @@ fish -lc 'cd /home/silvio/dev/gocassini/cassini-viewer && npm run audit:portable
 
 Use this against the exact `.opus` file the UI serves before considering a timing fix done.
 
+## Metadata Contract
+
+Portable meetings are expected to carry enough metadata for the viewer to answer the basic user questions without showing raw JSON:
+
+- when the meeting was recorded
+- how long it is
+- who is speaking
+- when the file was processed
+- which speech-to-text and cleanup pipeline produced the transcript
+
+For current Cassini files, the important fields are:
+
+- `meeting.recordedAtLocal`: local wall-clock recording time shown as `Recorded`
+- `meeting.processedAtUtc`: processing/export time shown as `Processed`
+- `meeting.createdAtUtc`: portable file creation time
+- `speakers`: rendered as readable speaker chips, not raw JSON
+- `provenance.*`: rendered in the `Processing` section
+
+The recorder now writes `source.recordedAtLocal` into `manifest.json`, and portable packing copies it into the embedded portable manifest. If an older artifact is missing that field, the portable repacker infers it from the standard Cassini timestamped filename so existing meetings can be upgraded without rerunning ASR.
+
 ## Static export
 
 The preferred suite-level entry point for static publishing lives in

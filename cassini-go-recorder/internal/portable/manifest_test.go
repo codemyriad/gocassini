@@ -5,10 +5,12 @@ import "testing"
 func TestBuildOpusTagsIncludesProcessingProvenanceSummary(t *testing.T) {
 	manifest := NormalizeManifest(Manifest{
 		Meeting: Meeting{
-			ID:           "meeting-1",
-			Title:        "Weekly Sync",
-			CreatedAtUTC: "2026-03-13T10:00:00Z",
-			DurationMS:   1000,
+			ID:              "meeting-1",
+			Title:           "Weekly Sync",
+			CreatedAtUTC:    "2026-03-13T10:00:00Z",
+			RecordedAtLocal: "2026-03-13T11:00:00",
+			ProcessedAtUTC:  "2026-03-13T10:02:00Z",
+			DurationMS:      1000,
 		},
 		Audio: Audio{
 			Container:   "ogg",
@@ -71,5 +73,11 @@ func TestBuildOpusTagsIncludesProcessingProvenanceSummary(t *testing.T) {
 	}
 	if got := tags["CASSINI_READABLE_SOURCE"]; got != "generated" {
 		t.Fatalf("expected CASSINI_READABLE_SOURCE, got %q", got)
+	}
+	if got := tags["CASSINI_RECORDED_AT_LOCAL"]; got != "2026-03-13T11:00:00" {
+		t.Fatalf("expected CASSINI_RECORDED_AT_LOCAL, got %q", got)
+	}
+	if got := tags["CASSINI_PROCESSED_AT"]; got != "2026-03-13T10:02:00Z" {
+		t.Fatalf("expected CASSINI_PROCESSED_AT, got %q", got)
 	}
 }

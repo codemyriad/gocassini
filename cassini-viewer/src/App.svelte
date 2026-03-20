@@ -596,7 +596,7 @@
   }
 
   function metadataSectionStartsOpen(title: string): boolean {
-    return title === "Artifact" || title === "Meeting" || title === "Provenance" || title === "Transcript";
+    return title === "Meeting" || title === "Processing";
   }
 
   function metadataRowKey(sectionTitle: string, row: ArtifactMetadataRow): string {
@@ -792,7 +792,19 @@
                     <dl class="metadata-grid">
                       {#each section.rows as row (metadataRowKey(section.title, row))}
                         <dt>{formatMetadataLabel(row.label)}</dt>
-                        <dd>{row.value}</dd>
+                        <dd>
+                          {#if row.values && row.values.length > 0}
+                            <div class="metadata-tags">
+                              {#each row.values as value}
+                                <span class="metadata-tag">{value}</span>
+                              {/each}
+                            </div>
+                          {:else if row.tone === "code"}
+                            <code class="metadata-code">{row.value}</code>
+                          {:else}
+                            {row.value}
+                          {/if}
+                        </dd>
                       {/each}
                     </dl>
                   </details>
@@ -1281,6 +1293,35 @@
     font-size: 0.9rem;
     line-height: 1.5;
     overflow-wrap: anywhere;
+  }
+
+  .metadata-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .metadata-tag {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.9rem;
+    padding: 0.3rem 0.65rem;
+    border-radius: 999px;
+    border: 1px solid rgba(93, 82, 66, 0.14);
+    background: rgba(247, 243, 236, 0.92);
+    color: #473f34;
+    font-size: 0.86rem;
+    font-weight: 600;
+  }
+
+  .metadata-code {
+    display: inline-block;
+    padding: 0.12rem 0.35rem;
+    border-radius: 0.4rem;
+    background: rgba(91, 83, 71, 0.08);
+    color: #40382e;
+    font-size: 0.84rem;
+    font-family: "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
   }
 
   .metadata-raw {

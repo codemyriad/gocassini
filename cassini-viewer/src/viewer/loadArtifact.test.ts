@@ -213,6 +213,91 @@ describe("loadArtifactFromDirectory", () => {
     expect(artifact.displayTranscript?.blocks).toHaveLength(1);
   });
 
+  it("builds user-facing metadata for portable meetings", async () => {
+    globalThis.window = {
+      location: {
+        href: "http://127.0.0.1:8765/?meeting=daily-meeting-2026-03-10--12:30",
+        protocol: "http:",
+      },
+    } as Window;
+    const portableFixture = {
+      meeting: {
+        id: "mtg_abc123",
+        durationMs: 1_046_260,
+        createdAtUtc: "2026-03-19T09:43:13Z",
+        recordedAtLocal: "2026-03-10T12:30:00",
+        processedAtUtc: "2026-03-19T09:43:13Z",
+      },
+      audio: {
+        codec: "opus",
+        sampleRate: 48_000,
+        channels: 1,
+        sha256: "abc123",
+      },
+      provenance: {
+        speechToText: {
+          backend: "sherpa-onnx",
+          model: "parakeet-tdt-0.6b-v2-int8",
+        },
+      },
+      speakers: [
+        { id: "spk_chris", label: "Chris" },
+        { id: "spk_alex", label: "Alex" },
+      ],
+      transcript: {
+        items: [
+          {
+            id: "seg_1",
+            speaker: "spk_chris",
+            startMs: 1000,
+            endMs: 1500,
+            text: "hello there",
+          },
+        ],
+      },
+    };
+    const portableBytes = buildPortableOpusFixture(portableFixture);
+    globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(".opus")) {
+        expect(init?.headers).toMatchObject({
+          Range: "bytes=0-262143",
+        });
+        return {
+          ok: true,
+          status: 206,
+          headers: new Headers({
+            "content-range": "bytes 0-1999/2000",
+          }),
+          arrayBuffer: async () =>
+            portableBytes.buffer.slice(
+              portableBytes.byteOffset,
+              portableBytes.byteOffset + portableBytes.byteLength,
+            ),
+        } as Response;
+      }
+      return { ok: false } as Response;
+    }) as typeof fetch;
+
+    const artifact = await loadPortableArtifactFromAudioPath("./daily-meeting-2026-03-10--12:30.opus");
+    const meetingSection = artifact.metadata?.sections.find((section) => section.title === "Meeting");
+    const processingSection = artifact.metadata?.sections.find((section) => section.title === "Processing");
+
+    expect(meetingSection?.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Recorded", value: "March 10, 2026 at 12:30 PM" }),
+        expect.objectContaining({ label: "Duration", value: "17:26" }),
+        expect.objectContaining({ label: "Speakers", values: ["Chris", "Alex"] }),
+      ]),
+    );
+    expect(processingSection?.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Processed", value: "March 19, 2026 at 9:43 AM UTC" }),
+        expect.objectContaining({ label: "Speech to text", value: "sherpa-onnx · parakeet-tdt-0.6b-v2-int8" }),
+      ]),
+    );
+  });
+
   it("prefers an embedded display transcript from the portable manifest", async () => {
     globalThis.window = {
       location: {

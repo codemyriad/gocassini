@@ -60,12 +60,14 @@ type ProcessingStep struct {
 }
 
 type Meeting struct {
-	ID           string `json:"id"`
-	Title        string `json:"title"`
-	CreatedAtUTC string `json:"createdAtUtc"`
-	DurationMS   int64  `json:"durationMs"`
-	Language     string `json:"language,omitempty"`
-	Summary      string `json:"summary,omitempty"`
+	ID              string `json:"id"`
+	Title           string `json:"title"`
+	CreatedAtUTC    string `json:"createdAtUtc"`
+	RecordedAtLocal string `json:"recordedAtLocal,omitempty"`
+	ProcessedAtUTC  string `json:"processedAtUtc,omitempty"`
+	DurationMS      int64  `json:"durationMs"`
+	Language        string `json:"language,omitempty"`
+	Summary         string `json:"summary,omitempty"`
 }
 
 type Audio struct {
@@ -226,6 +228,12 @@ func BuildOpusTags(manifest Manifest, payload EncodedPayload) map[string]string 
 		"CASSINI_CREATED_AT":          manifest.Meeting.CreatedAtUTC,
 		"CASSINI_SPEAKER_COUNT":       fmt.Sprintf("%d", len(manifest.Speakers)),
 		"CASSINI_WORD_COUNT":          fmt.Sprintf("%d", manifest.Transcript.WordCount),
+	}
+	if manifest.Meeting.RecordedAtLocal != "" {
+		tags["CASSINI_RECORDED_AT_LOCAL"] = manifest.Meeting.RecordedAtLocal
+	}
+	if manifest.Meeting.ProcessedAtUTC != "" {
+		tags["CASSINI_PROCESSED_AT"] = manifest.Meeting.ProcessedAtUTC
 	}
 
 	language := firstNonEmpty(manifest.Transcript.Language, manifest.Meeting.Language)

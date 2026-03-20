@@ -4,6 +4,7 @@ import {
   buildPortableManifestFromArtifact,
   canonicalPortableMeetingName,
   flattenPortableTranscriptItems,
+  inferRecordedAtLocal,
 } from "./pack-portable-artifacts.mjs";
 
 describe("flattenPortableTranscriptItems", () => {
@@ -34,6 +35,9 @@ describe("buildPortableManifestFromArtifact", () => {
       audioPath: "/tmp/meeting.opus",
       manifest: {
         generatedAt: "2026-03-18T12:00:00Z",
+        source: {
+          basename: "daily-meeting-2026-03-12--12:29.mkv",
+        },
         provenance: {
           speechToText: {
             backend: "sherpa-onnx",
@@ -76,6 +80,16 @@ describe("buildPortableManifestFromArtifact", () => {
     ]);
     expect(manifest.readableTranscript?.version).toBe("transcript.readable.v1");
     expect(manifest.displayTranscript?.version).toBe("transcript.display.v1");
+    expect(manifest.meeting.recordedAtLocal).toBe("2026-03-12T12:29:00");
+    expect(manifest.meeting.processedAtUtc).toBe("2026-03-18T12:00:00Z");
+  });
+});
+
+describe("inferRecordedAtLocal", () => {
+  it("parses the meeting timestamp from common Cassini names", () => {
+    expect(inferRecordedAtLocal("daily-meeting-2026-03-10--12:30.mkv")).toBe("2026-03-10T12:30:00");
+    expect(inferRecordedAtLocal("daily-meeting--2026-03-05--12:38:29.opus")).toBe("2026-03-05T12:38:29");
+    expect(inferRecordedAtLocal("demo--20260310T123045")).toBe("2026-03-10T12:30:45");
   });
 });
 

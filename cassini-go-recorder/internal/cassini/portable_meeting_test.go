@@ -90,8 +90,9 @@ func TestLoadPortableMeetingSourceIncludesReadableAndDisplayTranscripts(t *testi
 	writePortableJSONFixture(t, filepath.Join(root, "manifest.json"), map[string]any{
 		"generatedAt": "2026-03-11T00:00:00Z",
 		"source": map[string]any{
-			"basename":   "meeting.mkv",
-			"durationMs": 1234,
+			"basename":        "daily-meeting-2026-03-11--12:30.mkv",
+			"durationMs":      1234,
+			"recordedAtLocal": "2026-03-11T12:30:00",
 		},
 		"provenance": map[string]any{
 			"speechToText": map[string]any{
@@ -152,6 +153,12 @@ func TestLoadPortableMeetingSourceIncludesReadableAndDisplayTranscripts(t *testi
 	}
 	if got := manifest.Provenance.SpeechToText.Model; got != "large-v3" {
 		t.Fatalf("expected speech to text model provenance, got %q", got)
+	}
+	if got := manifest.Meeting.RecordedAtLocal; got != "2026-03-11T12:30:00" {
+		t.Fatalf("expected recordedAtLocal in portable manifest, got %q", got)
+	}
+	if got := manifest.Meeting.ProcessedAtUTC; got != "2026-03-11T00:00:00Z" {
+		t.Fatalf("expected processedAtUtc in portable manifest, got %q", got)
 	}
 }
 

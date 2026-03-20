@@ -8,8 +8,11 @@ import type {
 export interface PortableMeetingManifest {
   meeting?: {
     durationMs?: number;
-    createdAtUTC?: string;
+    createdAtUtc?: string;
+    recordedAtLocal?: string;
+    processedAtUtc?: string;
     title?: string;
+    id?: string;
   };
   audio?: {
     sha256?: string;

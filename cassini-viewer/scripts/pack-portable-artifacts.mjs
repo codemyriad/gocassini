@@ -94,6 +94,11 @@ export async function packArtifactDirectory(artifactDir, outputPath) {
 export function buildPortableManifestFromArtifact(artifact, outputPath, audioIdentity) {
   const title = basename(outputPath, extname(outputPath)) || basename(artifact.rootDir);
   const createdAtUtc = safeToString(artifact.manifest?.generatedAt) || new Date().toISOString();
+  const recordedAtLocal =
+    safeToString(artifact.manifest?.source?.recordedAtLocal) ||
+    inferRecordedAtLocal(
+      safeToString(artifact.manifest?.source?.basename) || canonicalPortableMeetingName(artifact.rootDir),
+    );
   const transcript = artifact.transcript;
   const readableTranscript = artifact.readableTranscript ?? {
     version: "transcript.readable.v1",
@@ -110,6 +115,8 @@ export function buildPortableManifestFromArtifact(artifact, outputPath, audioIde
       id: audioIdentity.pcmSha256 ? `mtg_${audioIdentity.pcmSha256}` : "",
       title,
       createdAtUtc,
+      recordedAtLocal,
+      processedAtUtc: createdAtUtc,
       durationMs: audioIdentity.durationMs,
     },
     audio: {
@@ -279,4 +286,25 @@ function safeToInt(value, fallback) {
 
 function safeToString(value) {
   return typeof value === "string" ? value : "";
+}
+
+export function inferRecordedAtLocal(value) {
+  const raw = safeToString(value).trim();
+  const text = raw ? basename(raw, extname(raw)) : "";
+  if (!text) {
+    return "";
+  }
+  const compact = /^(.*)--(\d{8})T(\d{2})(\d{2})(\d{2})$/.exec(text);
+  if (compact) {
+    return `${compact[2].slice(0, 4)}-${compact[2].slice(4, 6)}-${compact[2].slice(6, 8)}T${compact[3]}:${compact[4]}:${compact[5]}`;
+  }
+  const doubled = /^(.*)--(\d{4})-(\d{2})-(\d{2})--(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(text);
+  if (doubled) {
+    return `${doubled[2]}-${doubled[3]}-${doubled[4]}T${doubled[5]}:${doubled[6]}:${doubled[7] || "00"}`;
+  }
+  const embedded = /^(.*)-(\d{4})-(\d{2})-(\d{2})--(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(text);
+  if (embedded) {
+    return `${embedded[2]}-${embedded[3]}-${embedded[4]}T${embedded[5]}:${embedded[6]}:${embedded[7] || "00"}`;
+  }
+  return "";
 }

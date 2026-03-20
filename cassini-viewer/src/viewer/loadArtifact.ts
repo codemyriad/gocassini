@@ -40,7 +40,9 @@ export interface ArtifactTimingPrecision {
 
 export interface ArtifactMetadataRow {
   label: string;
-  value: string;
+  value?: string;
+  values?: string[];
+  tone?: "normal" | "code";
 }
 
 export interface ArtifactMetadataSection {
@@ -116,7 +118,7 @@ export async function loadPortableArtifactFromAudioPath(audioPath: string): Prom
     timingPrecision: classifyArtifactTimingPrecision(transcript, displayTranscript),
     metadata: buildArtifactMetadata(
       "portable-opus",
-      buildPortableMetadataRaw(portable, displayTranscript, readableTranscript),
+      buildPortableMetadataRaw(portable, transcript, displayTranscript, readableTranscript),
     ),
   };
 }
@@ -331,6 +333,7 @@ function asLooseObject(input: unknown): Record<string, unknown> {
 
 function buildPortableMetadataRaw(
   portable: PortableMeetingManifest,
+  transcript: TranscriptWordsV1,
   displayTranscript: DisplayTranscriptV1 | null,
   readableTranscript: ReadableTranscriptV1 | null,
 ): Record<string, unknown> {
@@ -338,8 +341,10 @@ function buildPortableMetadataRaw(
     meeting: portable.meeting ?? {},
     audio: portable.audio ?? {},
     integrity: (portable as Record<string, unknown>).integrity ?? {},
-    transcript: {
-      ...(asMaybeObject(portable.transcript) ?? {}),
+    stats: {
+      speakers: transcript.speakers.length,
+      passages: displayTranscript?.blocks.length ?? transcript.segments.length,
+      words: transcript.segments.reduce((count, segment) => count + segment.words.length, 0),
       sourceTranscriptVersion: displayTranscript?.sourceTranscriptVersion ?? "transcript.words.v1",
       sourceReadableTranscriptVersion:
         displayTranscript?.sourceReadableTranscriptVersion ??
@@ -360,10 +365,14 @@ function buildDirectoryMetadataRaw(
   const base = manifest ? structuredClone(manifest) : {};
   return {
     ...base,
-    transcript: {
-      media: transcript.media,
+    audio: {
+      durationMs: transcript.media.durationMs,
+      sha256: transcript.media.sha256,
+      src: transcript.media.src,
+    },
+    stats: {
       speakers: transcript.speakers.length,
-      segments: transcript.segments.length,
+      passages: displayTranscript?.blocks.length ?? transcript.segments.length,
       words: transcript.segments.reduce((count, segment) => count + segment.words.length, 0),
       sourceTranscriptVersion: displayTranscript?.sourceTranscriptVersion ?? transcript.version,
       sourceReadableTranscriptVersion:
@@ -371,6 +380,7 @@ function buildDirectoryMetadataRaw(
         readableTranscript?.version ??
         undefined,
     },
+    speakers: transcript.speakers,
   };
 }
 
@@ -395,36 +405,147 @@ function buildArtifactMetadata(
 
 function buildMetadataSections(raw: Record<string, unknown>): ArtifactMetadataSection[] {
   const sections: ArtifactMetadataSection[] = [];
-  const summaryRows: ArtifactMetadataRow[] = [];
-
-  for (const [key, value] of Object.entries(raw)) {
-    if (value === undefined || value === null) {
-      continue;
-    }
-    const objectValue = asMaybeObject(value);
-    if (objectValue) {
-      const rows = flattenObjectRows(objectValue);
-      if (rows.length > 0) {
-        sections.push({
-          title: toTitleCase(key),
-          rows,
-        });
-      }
-      continue;
-    }
-    summaryRows.push({
-      label: toTitleCase(key),
-      value: formatMetadataValue(value),
-    });
+  const meetingRows = buildMeetingMetadataRows(raw);
+  if (meetingRows.length > 0) {
+    sections.push({ title: "Meeting", rows: meetingRows });
   }
-
-  if (summaryRows.length > 0) {
-    sections.unshift({
-      title: "Artifact",
-      rows: summaryRows,
-    });
+  const processingRows = buildProcessingMetadataRows(raw);
+  if (processingRows.length > 0) {
+    sections.push({ title: "Processing", rows: processingRows });
+  }
+  const technicalRows = buildTechnicalMetadataRows(raw);
+  if (technicalRows.length > 0) {
+    sections.push({ title: "Technical", rows: technicalRows });
+  }
+  if (sections.length === 0) {
+    const fallbackRows = flattenObjectRows(raw);
+    if (fallbackRows.length > 0) {
+      sections.push({ title: "Artifact", rows: fallbackRows });
+    }
   }
   return sections;
+}
+
+function buildMeetingMetadataRows(raw: Record<string, unknown>): ArtifactMetadataRow[] {
+  const rows: ArtifactMetadataRow[] = [];
+  const meeting = asMaybeObject(raw.meeting);
+  const source = asMaybeObject(raw.source);
+  const stats = asMaybeObject(raw.stats);
+  const recordedAtLocal =
+    asNonEmptyString(meeting?.recordedAtLocal) ??
+    asNonEmptyString(source?.recordedAtLocal);
+  const createdAtUtc =
+    asNonEmptyString(meeting?.createdAtUtc) ??
+    asNonEmptyString(meeting?.createdAtUTC);
+  const durationMs =
+    asFiniteNumber(meeting?.durationMs) ??
+    asFiniteNumber(asMaybeObject(raw.audio)?.durationMs) ??
+    asFiniteNumber(source?.durationMs);
+  const speakerNames = normalizeSpeakerNames(raw.speakers);
+  const passages = asFiniteNumber(stats?.passages);
+
+  if (recordedAtLocal) {
+    rows.push({
+      label: "Recorded",
+      value: formatLocalTimestamp(recordedAtLocal),
+    });
+  } else if (createdAtUtc) {
+    rows.push({
+      label: "Created",
+      value: formatUtcTimestamp(createdAtUtc),
+    });
+  }
+  if (durationMs !== null) {
+    rows.push({
+      label: "Duration",
+      value: formatDurationMs(durationMs),
+    });
+  }
+  if (speakerNames.length > 0) {
+    rows.push({
+      label: speakerNames.length === 1 ? "Speaker" : "Speakers",
+      values: speakerNames,
+    });
+  } else if (asFiniteNumber(stats?.speakers) !== null) {
+    rows.push({
+      label: "Speakers",
+      value: `${asFiniteNumber(stats?.speakers)} total`,
+    });
+  }
+  if (passages !== null) {
+    rows.push({
+      label: "Passages",
+      value: `${passages}`,
+    });
+  }
+  return rows;
+}
+
+function buildProcessingMetadataRows(raw: Record<string, unknown>): ArtifactMetadataRow[] {
+  const rows: ArtifactMetadataRow[] = [];
+  const meeting = asMaybeObject(raw.meeting);
+  const processedAtUtc =
+    asNonEmptyString(meeting?.processedAtUtc) ??
+    asNonEmptyString(meeting?.processedAtUTC) ??
+    asNonEmptyString(raw.generatedAt);
+  const provenance = asMaybeObject(raw.provenance);
+  const stats = asMaybeObject(raw.stats);
+
+  if (processedAtUtc) {
+    rows.push({
+      label: "Processed",
+      value: formatUtcTimestamp(processedAtUtc),
+    });
+  }
+
+  const stt = describeProcessingStep(asMaybeObject(provenance?.speechToText));
+  if (stt) {
+    rows.push({ label: "Speech to text", value: stt });
+  }
+  const readableCleanup = describeProcessingStep(asMaybeObject(provenance?.readableCleanup));
+  if (readableCleanup) {
+    rows.push({ label: "Readable cleanup", value: readableCleanup });
+  }
+  const displayTranscript = describeProcessingStep(asMaybeObject(provenance?.displayTranscript));
+  if (displayTranscript) {
+    rows.push({ label: "Display alignment", value: displayTranscript });
+  }
+
+  const sourceTranscriptVersion = asNonEmptyString(stats?.sourceTranscriptVersion);
+  if (sourceTranscriptVersion) {
+    rows.push({ label: "Source transcript", value: sourceTranscriptVersion });
+  }
+  const sourceReadableTranscriptVersion = asNonEmptyString(stats?.sourceReadableTranscriptVersion);
+  if (sourceReadableTranscriptVersion) {
+    rows.push({ label: "Readable transcript", value: sourceReadableTranscriptVersion });
+  }
+  return rows;
+}
+
+function buildTechnicalMetadataRows(raw: Record<string, unknown>): ArtifactMetadataRow[] {
+  const rows: ArtifactMetadataRow[] = [];
+  const meeting = asMaybeObject(raw.meeting);
+  const audio = asMaybeObject(raw.audio);
+  const source = asMaybeObject(raw.source);
+  const stats = asMaybeObject(raw.stats);
+
+  const sourceFile = asNonEmptyString(source?.basename);
+  if (sourceFile) {
+    rows.push({ label: "Source file", value: sourceFile, tone: "code" });
+  }
+  const meetingId = asNonEmptyString(meeting?.id);
+  if (meetingId) {
+    rows.push({ label: "Meeting ID", value: meetingId, tone: "code" });
+  }
+  const audioSummary = formatAudioSummary(audio);
+  if (audioSummary) {
+    rows.push({ label: "Audio", value: audioSummary });
+  }
+  const wordCount = asFiniteNumber(stats?.words);
+  if (wordCount !== null) {
+    rows.push({ label: "Words", value: `${wordCount}` });
+  }
+  return rows;
 }
 
 function flattenObjectRows(
@@ -476,6 +597,118 @@ function asMaybeObject(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function asFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function asNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
+function normalizeSpeakerNames(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((speaker) => asMaybeObject(speaker))
+    .map((speaker) => {
+      const label = asNonEmptyString(speaker?.label);
+      const id = asNonEmptyString(speaker?.id);
+      return humanizeSpeakerLabel(label ?? id ?? "");
+    })
+    .filter(Boolean);
+}
+
+function humanizeSpeakerLabel(value: string): string {
+  return value
+    .trim()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function formatDurationMs(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatLocalTimestamp(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value.trim());
+  if (!match) {
+    return value;
+  }
+  const [, year, month, day, hour, minute, second = "00"] = match;
+  const asDate = new Date(Date.UTC(
+    Number.parseInt(year, 10),
+    Number.parseInt(month, 10) - 1,
+    Number.parseInt(day, 10),
+    Number.parseInt(hour, 10),
+    Number.parseInt(minute, 10),
+    Number.parseInt(second, 10),
+  ));
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "long",
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(asDate);
+}
+
+function formatUtcTimestamp(value: string): string {
+  const asDate = new Date(value);
+  if (Number.isNaN(asDate.getTime())) {
+    return value;
+  }
+  return `${new Intl.DateTimeFormat("en-US", {
+    dateStyle: "long",
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(asDate)} UTC`;
+}
+
+function describeProcessingStep(step: Record<string, unknown> | null): string {
+  if (!step) {
+    return "";
+  }
+  const parts = [
+    asNonEmptyString(step.backend),
+    asNonEmptyString(step.engine),
+    asNonEmptyString(step.model),
+    asNonEmptyString(step.device),
+    asNonEmptyString(step.version),
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function formatAudioSummary(audio: Record<string, unknown> | null): string {
+  if (!audio) {
+    return "";
+  }
+  const parts: string[] = [];
+  const codec = asNonEmptyString(audio.codec);
+  if (codec) {
+    parts.push(codec.toUpperCase());
+  }
+  const sampleRate = asFiniteNumber(audio.sampleRate);
+  if (sampleRate !== null) {
+    parts.push(`${Math.round(sampleRate / 1000)} kHz`);
+  }
+  const channels = asFiniteNumber(audio.channels);
+  if (channels === 1) {
+    parts.push("mono");
+  } else if (channels === 2) {
+    parts.push("stereo");
+  } else if (channels !== null) {
+    parts.push(`${channels} channels`);
+  }
+  return parts.join(" · ");
+}
+
 function toTitleCase(value: string): string {
   return value
     .replace(/[_-]+/g, " ")
@@ -498,13 +731,14 @@ export async function readTranscriptFile(file: File): Promise<LoadedArtifact> {
     chaptersSrc: null,
     timingPrecision: classifyArtifactTimingPrecision(transcript, null),
     metadata: buildArtifactMetadata("transcript-file", {
-      transcript: {
-        media: transcript.media,
+      audio: transcript.media,
+      stats: {
         speakers: transcript.speakers.length,
-        segments: transcript.segments.length,
+        passages: transcript.segments.length,
         words: transcript.segments.reduce((count, segment) => count + segment.words.length, 0),
         sourceTranscriptVersion: transcript.version,
       },
+      speakers: transcript.speakers,
     }),
   };
 }
