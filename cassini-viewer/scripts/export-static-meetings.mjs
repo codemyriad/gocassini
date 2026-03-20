@@ -95,7 +95,8 @@ export function main(argv = process.argv.slice(2)) {
   console.log(`viewer index -> ${join(outputDir, "index.html")}`);
   console.log(`viewer catalog -> ${join(outputDir, "catalog.json")}`);
   for (const meeting of meetings) {
-    console.log(`${meeting.id} -> ${join(outputDir, "meetings", meeting.id)}`);
+    const meetingRef = meeting.audioPath ? `${meeting.id}.opus` : meeting.id;
+    console.log(`${meeting.id} -> ${join(outputDir, "meetings", meetingRef)}`);
   }
 }
 
@@ -125,85 +126,46 @@ export function parseArgs(argv) {
 }
 
 export function rewriteIndexHtmlForCatalog(indexHtml) {
-  return indexHtml.replace(/(src|href)="\/assets\//g, '$1="./assets/');
+  // Vite is configured with base: "./" so asset paths are already relative.
+  // This function is kept for compatibility but performs no transformation.
+  return indexHtml;
 }
 
 export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir }) {
-  const sourceMeetingDir = sourceType === "portable" ? null : sourcePath;
-  const targetMeetingDir = join(outputDir, "meetings", meetingId);
-
-  mkdirSync(targetMeetingDir, { recursive: true });
+  const { title, dateLabel } = describeMeeting(meetingId);
 
   if (sourceType === "portable") {
     const portable = extractPortableManifest(sourcePath);
-    const audioPath = join(targetMeetingDir, "meeting.opus");
     const transcript = buildTranscriptWordsFromPortable(portable);
-    const readable = buildReadableTranscriptFromPortable(portable, transcript);
-    const display = portable.displayTranscript ?? buildDisplayTranscriptFromArtifacts(transcript, readable);
-    const mediaDurationMs = safeToInt(portable.meeting?.durationMs, 0);
-
-    cpSync(sourcePath, audioPath);
-
-    writeFileSync(
-      join(targetMeetingDir, "transcript.words.v1.json"),
-      `${JSON.stringify(transcript, null, 2)}\n`,
-      "utf8",
-    );
-    writeFileSync(
-      join(targetMeetingDir, "transcript.readable.v1.json"),
-      `${JSON.stringify(readable, null, 2)}\n`,
-      "utf8",
-    );
-    writeFileSync(
-      join(targetMeetingDir, "transcript.display.v1.json"),
-      `${JSON.stringify(display, null, 2)}\n`,
-      "utf8",
-    );
-    writeFileSync(
-      join(targetMeetingDir, "manifest.json"),
-      `${JSON.stringify(
-        {
-          kind: "meeting",
-          version: "cassini.meeting.v1",
-          created_at_utc: portable.meeting?.createdAtUTC ?? "",
-          state: "ready",
-          stage: "ready",
-          source_kind: "portable-opus",
-          source_path: sourcePath,
-          speakerCount: transcript.speakers?.length ?? 0,
-          segmentCount: transcript.segments?.length ?? 0,
-          digestDurationMs: mediaDurationMs,
-          provenance: portable.provenance ?? undefined,
-          files: {
-            audio: "meeting.opus",
-            transcript: "transcript.words.v1.json",
-            display_transcript: "transcript.display.v1.json",
-            readable_transcript: "transcript.readable.v1.json",
-            artifact_manifest: "manifest.json",
-          },
-        },
-        null,
-        2,
-      )}\n`,
-      "utf8",
-    );
-  } else {
-    const manifest = readManifest(sourceMeetingDir, meetingId);
-    copyPublicMeetingFiles(sourceMeetingDir, targetMeetingDir, manifest);
-    ensureDisplayTranscript(targetMeetingDir);
+    const targetFileName = `${meetingId}.opus`;
+    cpSync(sourcePath, join(outputDir, "meetings", targetFileName));
+    const sttVariantLabel = describeSpeechToTextVariant({ provenance: portable.provenance }) || describeVariantSuffix(meetingId);
+    return {
+      id: meetingId,
+      audioPath: `./meetings/${targetFileName}`,
+      title: sttVariantLabel ? `${title} (${sttVariantLabel})` : title,
+      dateLabel,
+      speakerCount: transcript.speakers?.length ?? 0,
+      segmentCount: transcript.segments?.length ?? 0,
+      digestDurationMs: transcript.media?.durationMs ?? 0,
+    };
   }
 
-  const { title, dateLabel } = describeMeeting(meetingId);
-  const manifest = readManifest(targetMeetingDir, meetingId);
-  const sttVariantLabel = describeSpeechToTextVariant(manifest) || describeVariantSuffix(meetingId);
+  const targetMeetingDir = join(outputDir, "meetings", meetingId);
+  mkdirSync(targetMeetingDir, { recursive: true });
+  const manifest = readManifest(sourcePath, meetingId);
+  copyPublicMeetingFiles(sourcePath, targetMeetingDir, manifest);
+  ensureDisplayTranscript(targetMeetingDir);
+  const targetManifest = readManifest(targetMeetingDir, meetingId);
+  const sttVariantLabel = describeSpeechToTextVariant(targetManifest) || describeVariantSuffix(meetingId);
   return {
     id: meetingId,
     artifactPath: `./meetings/${meetingId}`,
     title: sttVariantLabel ? `${title} (${sttVariantLabel})` : title,
     dateLabel,
-    speakerCount: manifest.speakerCount ?? 0,
-    segmentCount: manifest.segmentCount ?? 0,
-    digestDurationMs: manifest.digestDurationMs ?? 0,
+    speakerCount: targetManifest.speakerCount ?? 0,
+    segmentCount: targetManifest.segmentCount ?? 0,
+    digestDurationMs: targetManifest.digestDurationMs ?? 0,
   };
 }
 

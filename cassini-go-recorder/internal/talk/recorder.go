@@ -698,6 +698,12 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, er
 	existing := r.subscribers[remoteSessionID]
 	r.mu.Unlock()
 	if existing != nil {
+		if existing.resetIfExhausted() {
+			log.Printf("retrying requestoffer for %s (participant joined call)", remoteSessionID)
+			if err := existing.requestOffer(); err != nil {
+				log.Printf("requestoffer retry failed for %s: %v", remoteSessionID, err)
+			}
+		}
 		return existing, nil
 	}
 
@@ -1301,6 +1307,21 @@ func (p *subscriberPeer) hasOffer() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.offerReceived
+}
+
+// resetIfExhausted resets the requestoffer attempt counter when the remote
+// participant has transitioned into the call. Returns true if a reset was
+// performed (i.e. attempts were exhausted and no offer was received yet).
+func (p *subscriberPeer) resetIfExhausted() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.offerExhaustedLogged || p.offerReceived {
+		return false
+	}
+	p.requestOfferAttempts = 0
+	p.offerExhaustedLogged = false
+	p.awaitingOfferSince = time.Time{}
+	return true
 }
 
 func (p *subscriberPeer) currentSIDValue() string {

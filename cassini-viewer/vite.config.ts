@@ -62,4 +62,5 @@ function contentTypeFor(filePath: string): string {
 
 export default defineConfig({
   plugins: [svelte(), serveViewerDemoAssets()],
+  base: "./",
 });
