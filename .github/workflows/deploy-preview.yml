@@ -106,7 +106,7 @@ jobs:
           RECORDINGS_DIR: /mnt/data/cassini/raw
           PROCESSED_DIR: /mnt/data/cassini/processed-${{ github.run_id }}
           DEVICE: cuda
-              CASSINI_BIN: /opt/cassini/bin/cassini-bin
+          CASSINI_BIN: /opt/cassini/bin/cassini-bin
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: bash ops/process-recordings.sh
 
