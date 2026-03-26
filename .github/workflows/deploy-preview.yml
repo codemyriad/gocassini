@@ -73,16 +73,16 @@ jobs:
           fi
 
       # ── UI-only path ────────────────────────────────────────────────────────
-      # Download main's already-processed recordings to a run-specific temp dir
-      # so the export script can read meeting metadata. catalog.json references
-      # them via absolute URLs pointing at main/; no recordings are uploaded to
-      # the branch prefix in R2.
-      - name: Download main recordings from R2 (UI-only)
+      # Download main's processed meetings (opus files) to a temp dir so the
+      # export script can read meeting metadata via ffprobe. catalog.json will
+      # reference them via absolute URLs pointing at main/meetings/; no
+      # recordings are uploaded to the branch prefix in R2.
+      - name: Download main meetings from R2 (UI-only)
         if: env.FINAL_CHANGE_TYPE == 'ui'
         run: |
           MAIN_CACHE=/tmp/cassini-main-${{ github.run_id }}
           mkdir -p "$MAIN_CACHE"
-          rclone copy codemyriad:cassini-processed/main/recordings/ "$MAIN_CACHE/"
+          rclone copy codemyriad:cassini-processed/main/meetings/ "$MAIN_CACHE/"
           echo "MAIN_RECORDINGS_CACHE=$MAIN_CACHE" >> $GITHUB_ENV
 
       - name: Build and export viewer (UI-only)
@@ -102,15 +102,18 @@ jobs:
             codemyriad:cassini-processed/${{ env.ENCODED_BRANCH }}/
 
       # ── Processing path ─────────────────────────────────────────────────────
+      # Download raw MKVs → GPU transcription → export viewer + meetings →
+      # upload everything as one unit. Meetings land at <branch>/meetings/
+      # (same path the viewer references in catalog.json), so future UI-only
+      # branches can reference this branch's meetings via --recordings-base-url.
       - name: Download raw recordings (processing)
         if: env.FINAL_CHANGE_TYPE == 'processing'
         run: |
           RAW_DIR=/tmp/cassini-raw-${{ github.run_id }}
-          mkdir -p "$RAW_DIR"
+          PROC_DIR=/tmp/cassini-processed-${{ github.run_id }}
+          mkdir -p "$RAW_DIR" "$PROC_DIR"
           rclone copy codemyriad:cassini-raw/daily/ "$RAW_DIR/"
           echo "RAW_DIR=$RAW_DIR" >> $GITHUB_ENV
-          PROC_DIR=/tmp/cassini-processed-${{ github.run_id }}
-          mkdir -p "$PROC_DIR"
           echo "PROC_DIR=$PROC_DIR" >> $GITHUB_ENV
 
       - name: Process recordings with GPU
@@ -132,13 +135,14 @@ jobs:
             --source-dir "${{ env.PROC_DIR }}" \
             --output-dir "${{ env.EXPORT_DIR }}"
 
-      - name: Upload recordings and viewer (processing)
+      # Upload the full export (viewer + meetings/ with opus files) as one unit.
+      # No separate recordings upload needed — opus files are already at
+      # EXPORT_DIR/meetings/ from the export step above.
+      - name: Upload viewer and meetings (processing)
         if: env.FINAL_CHANGE_TYPE == 'processing'
         run: |
           rclone copy "${{ env.EXPORT_DIR }}/" \
             codemyriad:cassini-processed/${{ env.ENCODED_BRANCH }}/
-          rclone copy "${{ env.PROC_DIR }}/" \
-            codemyriad:cassini-processed/${{ env.ENCODED_BRANCH }}/recordings/
           HASH=$(git rev-parse HEAD:cassini-transcriber HEAD:cassini-go-recorder | sha256sum | cut -c1-16)
           echo "$HASH" | rclone rcat codemyriad:cassini-processed/${{ env.ENCODED_BRANCH }}/.processing-hash
 
