@@ -49,6 +49,7 @@ jobs:
         run: |
           ENCODED=$(echo "$BRANCH" | sed 's|/|--|g')
           echo "ENCODED_BRANCH=$ENCODED" >> $GITHUB_ENV
+          echo "EXPORT_DIR=/tmp/cassini-export-${{ github.run_id }}" >> $GITHUB_ENV
 
       # Stage 2 hash check: even when processing paths changed, skip GPU work if
       # the tree hashes match main (e.g. branch was rebased without touching those files).
@@ -72,12 +73,17 @@ jobs:
           fi
 
       # ── UI-only path ────────────────────────────────────────────────────────
-      # Sync main's already-processed recordings so the export script can read
-      # meeting metadata. The catalog.json will reference them via absolute URLs;
-      # no recordings are uploaded to the branch prefix.
-      - name: Sync main recordings from R2 (UI-only)
+      # Download main's already-processed recordings to a run-specific temp dir
+      # so the export script can read meeting metadata. catalog.json references
+      # them via absolute URLs pointing at main/; no recordings are uploaded to
+      # the branch prefix in R2.
+      - name: Download main recordings from R2 (UI-only)
         if: env.FINAL_CHANGE_TYPE == 'ui'
-        run: rclone sync codemyriad:cassini-processed/main/recordings/ /mnt/data/cassini/processed/
+        run: |
+          MAIN_CACHE=/tmp/cassini-main-${{ github.run_id }}
+          mkdir -p "$MAIN_CACHE"
+          rclone copy codemyriad:cassini-processed/main/recordings/ "$MAIN_CACHE/"
+          echo "MAIN_RECORDINGS_CACHE=$MAIN_CACHE" >> $GITHUB_ENV
 
       - name: Build and export viewer (UI-only)
         if: env.FINAL_CHANGE_TYPE == 'ui'
@@ -85,26 +91,33 @@ jobs:
         run: |
           npm ci
           npm run export:meetings -- \
-            --source-dir /mnt/data/cassini/processed/ \
-            --output-dir /tmp/cassini-export-${{ github.run_id }} \
+            --source-dir "${{ env.MAIN_RECORDINGS_CACHE }}" \
+            --output-dir "${{ env.EXPORT_DIR }}" \
             --recordings-base-url https://view.meetings.codemyriad.io/main/
 
       - name: Upload viewer (UI-only)
         if: env.FINAL_CHANGE_TYPE == 'ui'
         run: |
-          rclone copy /tmp/cassini-export-${{ github.run_id }}/ \
+          rclone copy "${{ env.EXPORT_DIR }}/" \
             codemyriad:cassini-processed/${{ env.ENCODED_BRANCH }}/
 
       # ── Processing path ─────────────────────────────────────────────────────
       - name: Download raw recordings (processing)
         if: env.FINAL_CHANGE_TYPE == 'processing'
-        run: rclone sync codemyriad:cassini-raw/daily/ /mnt/data/cassini/raw/
+        run: |
+          RAW_DIR=/tmp/cassini-raw-${{ github.run_id }}
+          mkdir -p "$RAW_DIR"
+          rclone copy codemyriad:cassini-raw/daily/ "$RAW_DIR/"
+          echo "RAW_DIR=$RAW_DIR" >> $GITHUB_ENV
+          PROC_DIR=/tmp/cassini-processed-${{ github.run_id }}
+          mkdir -p "$PROC_DIR"
+          echo "PROC_DIR=$PROC_DIR" >> $GITHUB_ENV
 
       - name: Process recordings with GPU
         if: env.FINAL_CHANGE_TYPE == 'processing'
         env:
-          RECORDINGS_DIR: /mnt/data/cassini/raw
-          PROCESSED_DIR: /mnt/data/cassini/processed-${{ github.run_id }}
+          RECORDINGS_DIR: ${{ env.RAW_DIR }}
+          PROCESSED_DIR: ${{ env.PROC_DIR }}
           DEVICE: cuda
           CASSINI_BIN: /opt/cassini/bin/cassini-bin
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -116,15 +129,15 @@ jobs:
         run: |
           npm ci
           npm run export:meetings -- \
-            --source-dir /mnt/data/cassini/processed-${{ github.run_id }} \
-            --output-dir /tmp/cassini-export-${{ github.run_id }}
+            --source-dir "${{ env.PROC_DIR }}" \
+            --output-dir "${{ env.EXPORT_DIR }}"
 
       - name: Upload recordings and viewer (processing)
         if: env.FINAL_CHANGE_TYPE == 'processing'
         run: |
-          rclone copy /tmp/cassini-export-${{ github.run_id }}/ \
+          rclone copy "${{ env.EXPORT_DIR }}/" \
             codemyriad:cassini-processed/${{ env.ENCODED_BRANCH }}/
-          rclone copy /mnt/data/cassini/processed-${{ github.run_id }}/ \
+          rclone copy "${{ env.PROC_DIR }}/" \
             codemyriad:cassini-processed/${{ env.ENCODED_BRANCH }}/recordings/
           HASH=$(git rev-parse HEAD:cassini-transcriber HEAD:cassini-go-recorder | sha256sum | cut -c1-16)
           echo "$HASH" | rclone rcat codemyriad:cassini-processed/${{ env.ENCODED_BRANCH }}/.processing-hash
@@ -134,4 +147,6 @@ jobs:
         if: always()
         run: |
           rm -rf /tmp/cassini-export-${{ github.run_id }}
-          rm -rf /mnt/data/cassini/processed-${{ github.run_id }}
+          rm -rf /tmp/cassini-main-${{ github.run_id }}
+          rm -rf /tmp/cassini-raw-${{ github.run_id }}
+          rm -rf /tmp/cassini-processed-${{ github.run_id }}
