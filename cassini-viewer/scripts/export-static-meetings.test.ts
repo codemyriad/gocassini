@@ -7,6 +7,7 @@ import {
   describeVariantSuffix,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
+  parseArgs,
 } from "./export-static-meetings.mjs";
 
 describe("describeMeeting", () => {
@@ -944,5 +945,48 @@ describe("describeMeeting", () => {
     expect(display.blocks[0]?.timedWordCount).toBe(2);
     expect(display.blocks[0]?.wordCount).toBe(4);
     expect(display.blocks[0]?.timingCoverage).toBe(0.5);
+  });
+});
+
+describe("parseArgs", () => {
+  it("returns null recordingsBaseUrl when flag is absent", () => {
+    const { recordingsBaseUrl } = parseArgs([]);
+    expect(recordingsBaseUrl).toBeNull();
+  });
+
+  it("parses --recordings-base-url and normalises trailing slash", () => {
+    const { recordingsBaseUrl } = parseArgs([
+      "--recordings-base-url",
+      "https://view.meetings.codemyriad.io/main",
+    ]);
+    expect(recordingsBaseUrl).toBe("https://view.meetings.codemyriad.io/main/");
+  });
+
+  it("preserves trailing slash when already present", () => {
+    const { recordingsBaseUrl } = parseArgs([
+      "--recordings-base-url",
+      "https://view.meetings.codemyriad.io/main/",
+    ]);
+    expect(recordingsBaseUrl).toBe("https://view.meetings.codemyriad.io/main/");
+  });
+
+  it("throws when --recordings-base-url has no value", () => {
+    expect(() => parseArgs(["--recordings-base-url"])).toThrow(
+      "missing value for --recordings-base-url",
+    );
+  });
+
+  it("parses --recordings-base-url alongside --source-dir and --output-dir", () => {
+    const { recordingsBaseUrl, sourceDir, outputDir } = parseArgs([
+      "--source-dir",
+      "/tmp/source",
+      "--output-dir",
+      "/tmp/out",
+      "--recordings-base-url",
+      "https://view.meetings.codemyriad.io/main/",
+    ]);
+    expect(recordingsBaseUrl).toBe("https://view.meetings.codemyriad.io/main/");
+    expect(sourceDir).toContain("/tmp/source");
+    expect(outputDir).toContain("/tmp/out");
   });
 });

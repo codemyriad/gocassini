@@ -17,7 +17,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 }
 
 export function main(argv = process.argv.slice(2)) {
-  const { outputDir, sourceDir } = parseArgs(argv);
+  const { outputDir, sourceDir, recordingsBaseUrl } = parseArgs(argv);
   const distIndexPath = join(distDir, "index.html");
 
   if (!existsSync(distIndexPath)) {
@@ -83,6 +83,7 @@ export function main(argv = process.argv.slice(2)) {
       sourcePath,
       sourceType,
       outputDir,
+      recordingsBaseUrl,
     }),
   );
 
@@ -103,6 +104,7 @@ export function main(argv = process.argv.slice(2)) {
 export function parseArgs(argv) {
   let outputDir = defaultOutputDir;
   let sourceDir = defaultSourceDir;
+  let recordingsBaseUrl = null;
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === "--output-dir") {
       const next = argv[index + 1];
@@ -120,9 +122,18 @@ export function parseArgs(argv) {
       }
       sourceDir = resolve(viewerDir, next);
       index += 1;
+      continue;
+    }
+    if (argv[index] === "--recordings-base-url") {
+      const next = argv[index + 1];
+      if (!next) {
+        throw new Error("missing value for --recordings-base-url");
+      }
+      recordingsBaseUrl = next.endsWith("/") ? next : `${next}/`;
+      index += 1;
     }
   }
-  return { outputDir, sourceDir };
+  return { outputDir, sourceDir, recordingsBaseUrl };
 }
 
 export function rewriteIndexHtmlForCatalog(indexHtml) {
@@ -131,23 +142,39 @@ export function rewriteIndexHtmlForCatalog(indexHtml) {
   return indexHtml;
 }
 
-export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir }) {
+export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, recordingsBaseUrl = null }) {
   const { title, dateLabel } = describeMeeting(meetingId);
 
   if (sourceType === "portable") {
     const portable = extractPortableManifest(sourcePath);
     const transcript = buildTranscriptWordsFromPortable(portable);
     const targetFileName = `${meetingId}.opus`;
-    cpSync(sourcePath, join(outputDir, "meetings", targetFileName));
+    if (!recordingsBaseUrl) {
+      cpSync(sourcePath, join(outputDir, "meetings", targetFileName));
+    }
     const sttVariantLabel = describeSpeechToTextVariant({ provenance: portable.provenance }) || describeVariantSuffix(meetingId);
     return {
       id: meetingId,
-      audioPath: `./meetings/${targetFileName}`,
+      audioPath: recordingsBaseUrl ? `${recordingsBaseUrl}meetings/${targetFileName}` : `./meetings/${targetFileName}`,
       title: sttVariantLabel ? `${title} (${sttVariantLabel})` : title,
       dateLabel,
       speakerCount: transcript.speakers?.length ?? 0,
       segmentCount: transcript.segments?.length ?? 0,
       digestDurationMs: transcript.media?.durationMs ?? 0,
+    };
+  }
+
+  if (recordingsBaseUrl) {
+    const manifest = readManifest(sourcePath, meetingId);
+    const sttVariantLabel = describeSpeechToTextVariant(manifest) || describeVariantSuffix(meetingId);
+    return {
+      id: meetingId,
+      artifactPath: `${recordingsBaseUrl}meetings/${meetingId}`,
+      title: sttVariantLabel ? `${title} (${sttVariantLabel})` : title,
+      dateLabel,
+      speakerCount: manifest.speakerCount ?? 0,
+      segmentCount: manifest.segmentCount ?? 0,
+      digestDurationMs: manifest.digestDurationMs ?? 0,
     };
   }
 
