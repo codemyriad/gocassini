@@ -3,6 +3,12 @@ name: Deploy Preview
 on:
   push:
     branches: ['**']
+  workflow_dispatch:
+    inputs:
+      force_reprocess:
+        description: 'Reprocess all recordings from scratch (clears local cache)'
+        type: boolean
+        default: false
 
 # Serialize all deploy jobs on george — every push gets deployed, none are
 # cancelled. This prevents concurrent jobs from racing over shared disk paths.
@@ -22,6 +28,11 @@ jobs:
       - id: detect
         name: Detect change type
         run: |
+          # Manual dispatch with force_reprocess always goes through processing path
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "change_type=processing" >> $GITHUB_OUTPUT
+            exit 0
+          fi
           CHANGED=$(git diff origin/main...HEAD --name-only)
           if echo "$CHANGED" | grep -qE "^(cassini-transcriber|cassini-go-recorder)/"; then
             echo "change_type=processing" >> $GITHUB_OUTPUT
@@ -35,6 +46,10 @@ jobs:
     env:
       BRANCH: ${{ github.ref_name }}
       CHANGE_TYPE: ${{ needs.detect.outputs.change_type }}
+      # Persistent dirs — survive between runs so process-recordings.sh can
+      # skip already-processed files on incremental runs.
+      RAW_DIR: /mnt/data/cassini/ci-raw
+      PROC_DIR: /mnt/data/cassini/ci-processed
       # R2 credentials injected from GitHub Secrets — no rclone.conf needed on the runner
       RCLONE_CONFIG_CODEMYRIAD_TYPE: s3
       RCLONE_CONFIG_CODEMYRIAD_PROVIDER: Cloudflare
@@ -73,10 +88,6 @@ jobs:
           fi
 
       # ── UI-only path ────────────────────────────────────────────────────────
-      # Download main's processed meetings (opus files) to a temp dir so the
-      # export script can read meeting metadata via ffprobe. catalog.json will
-      # reference them via absolute URLs pointing at main/meetings/; no
-      # recordings are uploaded to the branch prefix in R2.
       - name: Download main meetings from R2 (UI-only)
         if: env.FINAL_CHANGE_TYPE == 'ui'
         run: |
@@ -102,19 +113,15 @@ jobs:
             codemyriad:cassini-processed/${{ env.ENCODED_BRANCH }}/
 
       # ── Processing path ─────────────────────────────────────────────────────
-      # Download raw MKVs → GPU transcription → export viewer + meetings →
-      # upload everything as one unit. Meetings land at <branch>/meetings/
-      # (same path the viewer references in catalog.json), so future UI-only
-      # branches can reference this branch's meetings via --recordings-base-url.
+      - name: Clear processing cache (force reprocess)
+        if: env.FINAL_CHANGE_TYPE == 'processing' && github.event.inputs.force_reprocess == 'true'
+        run: rm -rf "$RAW_DIR"/* "$PROC_DIR"/*
+
       - name: Download raw recordings (processing)
         if: env.FINAL_CHANGE_TYPE == 'processing'
         run: |
-          RAW_DIR=/tmp/cassini-raw-${{ github.run_id }}
-          PROC_DIR=/tmp/cassini-processed-${{ github.run_id }}
           mkdir -p "$RAW_DIR" "$PROC_DIR"
           rclone copy codemyriad:cassini-raw/daily/ "$RAW_DIR/"
-          echo "RAW_DIR=$RAW_DIR" >> $GITHUB_ENV
-          echo "PROC_DIR=$PROC_DIR" >> $GITHUB_ENV
 
       - name: Process recordings with GPU
         if: env.FINAL_CHANGE_TYPE == 'processing'
@@ -135,9 +142,6 @@ jobs:
             --source-dir "${{ env.PROC_DIR }}" \
             --output-dir "${{ env.EXPORT_DIR }}"
 
-      # Upload the full export (viewer + meetings/ with opus files) as one unit.
-      # No separate recordings upload needed — opus files are already at
-      # EXPORT_DIR/meetings/ from the export step above.
       - name: Upload viewer and meetings (processing)
         if: env.FINAL_CHANGE_TYPE == 'processing'
         run: |
@@ -152,5 +156,3 @@ jobs:
         run: |
           rm -rf /tmp/cassini-export-${{ github.run_id }}
           rm -rf /tmp/cassini-main-${{ github.run_id }}
-          rm -rf /tmp/cassini-raw-${{ github.run_id }}
-          rm -rf /tmp/cassini-processed-${{ github.run_id }}
