@@ -81,7 +81,9 @@ jobs:
 
       - name: Resolve final change type
         run: |
-          if [ "${{ steps.hash_check.outputs.ui_override }}" = "true" ]; then
+          # workflow_dispatch always processes — it was triggered because new raw footage
+          # exists, so the hash check optimisation does not apply.
+          if [ "${{ steps.hash_check.outputs.ui_override }}" = "true" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
             echo "FINAL_CHANGE_TYPE=ui" >> $GITHUB_ENV
           else
             echo "FINAL_CHANGE_TYPE=$CHANGE_TYPE" >> $GITHUB_ENV
