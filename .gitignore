@@ -39,9 +39,11 @@ __pycache__/
 *.pyc
 
 # Local developer environment (private, non-committed)
+.env
 .envrc
 .env.local
 
 # Private local media captures
 /media/
+/cassini-viewer/exports/viewer-demo/
 bin/cassini-bin

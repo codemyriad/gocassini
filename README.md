@@ -136,10 +136,32 @@ The local stack and showcase/demo flows now live under `cassini dev`:
 ```bash
 ./bin/cassini dev stack up
 ./bin/cassini dev room create --name "Local room"
+cp envrc.example .envrc
+direnv allow
 ./bin/cassini dev smoke
 ./bin/cassini dev fixture prepare-showcase
 ./bin/cassini dev player showcase --call-url "$CALL_URL"
 ```
+
+For local viewer development, pull demo data directly into the viewer dev
+server root. Set `DEMO_DATA_URL` in a gitignored `.envrc` or export it in your
+shell, then run:
+
+```bash
+cd cassini-viewer
+npm install
+npm run build
+npm run demo-data:pull
+npm run dev
+```
+
+Use `npm run demo-data:clean` to remove the pulled bundle.
+
+The demo-data pull downloads `index.html`, referenced `assets/*`, `catalog.json`, and each meeting directory into
+`cassini-viewer/exports/viewer-demo`, which is where the Vite dev server already
+serves `/catalog.json` and `/meetings/*` from. Meeting file names are read from
+each meeting's `manifest.json`, so `DEMO_DATA_URL` remains the only required
+setting.
 
 ## Current Constraints
 

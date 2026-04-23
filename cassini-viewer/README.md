@@ -49,7 +49,20 @@ The schema snapshot used for this bootstrap lives at [schema/transcript-words-v1
 ```bash
 cd cassini-viewer
 npm install
+npm run demo-data:pull
 npm run dev
+```
+
+`npm run demo-data:pull` downloads a hosted static viewer bundle into
+`exports/viewer-demo`, which is where the Vite dev server serves `/catalog.json`
+and `/meetings/*` from. Set `DEMO_DATA_URL` first via your shell or a gitignored
+`.envrc`.
+
+To clear the pulled bundle:
+
+```bash
+cd cassini-viewer
+npm run demo-data:clean
 ```
 
 ## Validation
