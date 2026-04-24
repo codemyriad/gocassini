@@ -53,10 +53,12 @@ npm run demo-data:pull
 npm run dev
 ```
 
+Before pulling demo data, check `../.envrc.example` and set `DEMO_DATA_URL` in
+your local gitignored `.envrc` or shell.
+
 `npm run demo-data:pull` downloads a hosted static viewer bundle into
 `exports/viewer-demo`, which is where the Vite dev server serves `/catalog.json`
-and `/meetings/*` from. Set `DEMO_DATA_URL` first via your shell or a gitignored
-`.envrc`.
+and `/meetings/*` from.
 
 To clear the pulled bundle:
 
@@ -64,6 +66,15 @@ To clear the pulled bundle:
 cd cassini-viewer
 npm run demo-data:clean
 ```
+
+Current demo-data behavior and limitations:
+
+- `npm run demo-data:pull` refreshes `exports/viewer-demo` from `DEMO_DATA_URL`.
+- `npm run demo-data:clean` removes the pulled viewer demo bundle.
+- The pulled `summary.md` content is currently dummy data sourced from the
+  lantern festival fixture and is written into every other meeting when pulled.
+- Audio currently does not work on the Vite dev server. Treat that as a known
+  local-dev limitation for now.
 
 ## Validation
 
