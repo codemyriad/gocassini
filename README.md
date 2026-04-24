@@ -38,11 +38,11 @@ Validate the environment before expensive work starts:
 ./bin/cassini doctor
 ```
 
-If `doctor` reports an unwritable transcriber cache or Whisper lock directory,
+If `doctor` reports an unwritable Cassini cache or model directory,
 fix that path or point Cassini at a writable cache root before building:
 
 ```bash
-export CASSINI_CACHE_ROOT="$PWD/.cache/cassini-transcriber"
+export CASSINI_CACHE_ROOT="$PWD/.cache/cassini"
 ./bin/cassini doctor
 ```
 
@@ -143,14 +143,15 @@ The local stack and showcase/demo flows now live under `cassini dev`:
 
 ## Current Constraints
 
-- `cassini build` currently uses the existing transcriber runner under
-  `cassini-transcriber/bin/docker-run-local.sh`.
-- `cassini publish` currently uses the existing static exporter under
+- `cassini build` now uses the native Go transcription pipeline in
+  `cassini-go-recorder/internal/transcribe`.
+- `cassini publish` currently uses the static exporter under
   `cassini-publisher/bin/export-static-meetings.sh`.
 - `cassini doctor` should be run before `record --out ...opus` or `build --out ...opus`;
-  it catches cache and runtime issues early.
+  it catches cache, media-tool, and runtime issues early.
 - In this checkout, the current doctor output is expected to fail if the
-  Whisper cache lock directory is not writable.
+  Cassini cache or model directories are not writable, or if required media
+  tools like `ffmpeg`/`ffprobe` are unavailable.
 
 ## Product Commands
 

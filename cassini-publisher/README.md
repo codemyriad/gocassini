@@ -3,34 +3,33 @@
 `cassini-publisher` is the orchestration and packaging layer of the Cassini
 suite.
 
-It owns the opinionated flows that turn lower-level tool outputs into something
-you can hand to humans:
+It owns the opinionated flow that turns existing Cassini meeting outputs into
+something you can hand to humans:
 
-- transcribe one meeting and optionally bundle a browsable static site,
-- export a directory of meeting artifacts into one publishable meeting library.
+- export a directory of meeting artifacts or processed portable meetings into
+  one publishable meeting library.
 
 It does not:
 
 - capture calls live: that is `cassini-go-recorder`,
-- run ASR or generate transcript artifacts: that is `cassini-transcriber`,
+- run ASR or generate transcript artifacts: that now happens inside
+  `cassini build` via the native Go pipeline,
 - render the browser UI at runtime: that is `cassini-viewer`.
 
 ## Tools
 
-- `bin/process-meeting.sh`: transcribe one meeting MKV into an artifact
-  directory, with optional static viewer bundle output.
 - `bin/export-static-meetings.sh`: package one or more existing artifact
   directories into a static meeting library using the viewer build.
 
 ## Typical flows
 
-Transcribe one meeting and build a static site for it:
+First build meetings with the product CLI, then publish them:
 
 ```bash
-./cassini-publisher/bin/process-meeting.sh \
-  --input /path/to/meeting.mkv \
-  --output-root /tmp/cassini-results \
-  --bundle-viewer
+./bin/cassini build /path/to/meeting.mkv --out /tmp/meetings/weekly-sync.meeting
+./cassini-publisher/bin/export-static-meetings.sh \
+  --source-dir /tmp/meetings \
+  --output-dir /tmp/static-meetings
 ```
 
 Publish an existing artifact library:

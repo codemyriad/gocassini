@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-READABLE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-REPO_ROOT="$(cd "${READABLE_DIR}/.." && pwd)"
-TRANSCRIBER_DIR="${REPO_ROOT}/cassini-transcriber"
+cat >&2 <<'EOF'
+This wrapper is obsolete.
 
-cd "${TRANSCRIBER_DIR}"
-python3 ./bin/compare-readable-models.py "$@"
+The old Python-based cassini-transcriber package was removed.
+There is currently no standalone model-comparison CLI in this worktree.
+
+If model comparison is still needed, it should be rebuilt on top of the native
+Go readable-cleanup pipeline in cassini-go-recorder/internal/transcribe.
+EOF
+
+exit 1

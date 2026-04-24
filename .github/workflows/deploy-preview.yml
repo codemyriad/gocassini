@@ -34,7 +34,7 @@ jobs:
             exit 0
           fi
           CHANGED=$(git diff origin/main...HEAD --name-only)
-          if echo "$CHANGED" | grep -qE "^(cassini-transcriber|cassini-go-recorder)/"; then
+          if echo "$CHANGED" | grep -qE "^(cassini-go-recorder/|ops/process-recordings\.sh$|bin/cassini$)"; then
             echo "change_type=processing" >> $GITHUB_OUTPUT
           else
             echo "change_type=ui" >> $GITHUB_OUTPUT
@@ -71,7 +71,7 @@ jobs:
       - name: Stage-2 processing hash check
         id: hash_check
         run: |
-          BRANCH_HASH=$(git rev-parse HEAD:cassini-transcriber HEAD:cassini-go-recorder | sha256sum | cut -c1-16)
+          BRANCH_HASH=$(git rev-parse HEAD:cassini-go-recorder HEAD:ops/process-recordings.sh HEAD:bin/cassini | sha256sum | cut -c1-16)
           MAIN_HASH=$(rclone cat codemyriad:cassini-processed/main/.processing-hash 2>/dev/null || echo "")
           if [ "$BRANCH_HASH" = "$MAIN_HASH" ] && [ -n "$MAIN_HASH" ]; then
             echo "ui_override=true" >> $GITHUB_OUTPUT
@@ -149,7 +149,7 @@ jobs:
         run: |
           rclone copy "${{ env.EXPORT_DIR }}/" \
             codemyriad:cassini-processed/${{ env.ENCODED_BRANCH }}/
-          HASH=$(git rev-parse HEAD:cassini-transcriber HEAD:cassini-go-recorder | sha256sum | cut -c1-16)
+          HASH=$(git rev-parse HEAD:cassini-go-recorder HEAD:ops/process-recordings.sh HEAD:bin/cassini | sha256sum | cut -c1-16)
           echo "$HASH" | rclone rcat codemyriad:cassini-processed/${{ env.ENCODED_BRANCH }}/.processing-hash
 
       # ── Cleanup ─────────────────────────────────────────────────────────────
