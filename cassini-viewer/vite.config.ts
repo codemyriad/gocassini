@@ -30,11 +30,21 @@ function serveViewerDemoAssets(): Plugin {
         try {
           stat = fs.statSync(filePath);
         } catch {
-          next();
+          // NOTE: returning 404 when an artifact is missing (e.g. summary.md) so that:
+          // - the load function knows the summary isn't there - default to `null`
+          // - the dev server doesn't fall back to HTML (probably serving svelte app with fallback path)
+          // TODO: This is noisy and should probably be handled in a different way, but out of scope for now
+          res.statusCode = 404;
+          res.end("Not Found");
           return;
         }
         if (!stat.isFile()) {
-          next();
+          // NOTE: returning 404 when an artifact is missing (e.g. summary.md) so that:
+          // - the load function knows the summary isn't there - default to `null`
+          // - the dev server doesn't fall back to HTML (probably serving svelte app with fallback path)
+          // TODO: This is noisy and should probably be handled in a different way, but out of scope for now
+          res.statusCode = 404;
+          res.end("Not Found");
           return;
         }
 

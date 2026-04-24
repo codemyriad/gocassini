@@ -82,6 +82,7 @@ describe("loadArtifactFromDirectory", () => {
 
   it("loads display transcript from the document-relative artifact path", async () => {
     const calls: string[] = [];
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     globalThis.window = {
       location: {
         href: "http://127.0.0.1:8765/?meeting=daily-meeting--2026-03-05--12:38:29",
@@ -106,16 +107,99 @@ describe("loadArtifactFromDirectory", () => {
           json: async () => displayFixture,
         } as Response;
       }
+      if (url.endsWith("/summary.md")) {
+        return {
+          ok: true,
+          text: async () => "# Meeting Summary\n",
+        } as Response;
+      }
       return { ok: false } as Response;
     }) as typeof fetch;
 
     const artifact = await loadArtifactFromDirectory("./meetings/demo-meeting");
 
     expect(artifact.displayTranscript?.blocks).toHaveLength(1);
+    expect(artifact.summary).toBe("# Meeting Summary\n");
+    expect(consoleSpy).toHaveBeenCalledWith("# Meeting Summary\n");
     expect(calls).toContain("http://127.0.0.1:8765/meetings/demo-meeting/transcript.display.v1.json");
+    expect(calls).toContain("http://127.0.0.1:8765/meetings/demo-meeting/summary.md");
     expect(calls).not.toContain(
       "http://127.0.0.1:8765/meetings/demo-meeting/meetings/demo-meeting/transcript.display.v1.json",
     );
+  });
+
+  it("logs null when no summary is present", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    globalThis.window = {
+      location: {
+        href: "http://127.0.0.1:8765/?meeting=daily-meeting--2026-03-05--12:38:29",
+        protocol: "http:",
+      },
+    } as Window;
+    globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "HEAD") {
+        return { ok: true } as Response;
+      }
+      if (url.endsWith("/transcript.words.v1.json")) {
+        return {
+          ok: true,
+          json: async () => transcriptFixture,
+        } as Response;
+      }
+      if (url.endsWith("/transcript.display.v1.json")) {
+        return {
+          ok: true,
+          json: async () => displayFixture,
+        } as Response;
+      }
+      return { ok: false } as Response;
+    }) as typeof fetch;
+
+    const artifact = await loadArtifactFromDirectory("./meetings/demo-meeting");
+
+    expect(artifact.summary).toBeNull();
+    expect(consoleSpy).toHaveBeenCalledWith(null);
+  });
+
+  it("treats 404 summary responses as missing summaries", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    globalThis.window = {
+      location: {
+        href: "http://127.0.0.1:8765/?meeting=daily-meeting--2026-03-05--12:38:29",
+        protocol: "http:",
+      },
+    } as Window;
+    globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "HEAD") {
+        return { ok: true } as Response;
+      }
+      if (url.endsWith("/transcript.words.v1.json")) {
+        return {
+          ok: true,
+          json: async () => transcriptFixture,
+        } as Response;
+      }
+      if (url.endsWith("/transcript.display.v1.json")) {
+        return {
+          ok: true,
+          json: async () => displayFixture,
+        } as Response;
+      }
+      if (url.endsWith("/summary.md")) {
+        return {
+          ok: false,
+          status: 404,
+        } as Response;
+      }
+      return { ok: false } as Response;
+    }) as typeof fetch;
+
+    const artifact = await loadArtifactFromDirectory("./meetings/demo-meeting");
+
+    expect(artifact.summary).toBeNull();
+    expect(consoleSpy).toHaveBeenCalledWith(null);
   });
 
   it("loads bundled artifacts from the app base when opened on a nested route", async () => {

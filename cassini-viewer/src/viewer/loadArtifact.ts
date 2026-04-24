@@ -22,6 +22,7 @@ export interface LoadedArtifact {
   transcript: TranscriptWordsV1;
   displayTranscript: DisplayTranscriptV1 | null;
   readableTranscript: ReadableTranscriptV1 | null;
+  summary: string | null;
   index: TranscriptIndex;
   audioSrc: string;
   captionsSrc: string | null;
@@ -65,6 +66,7 @@ export interface PortableMeetingSummary {
 const DEFAULT_TRANSCRIPT_PATH = "./transcript.words.v1.json";
 const DEFAULT_DISPLAY_TRANSCRIPT_PATH = "./transcript.display.v1.json";
 const DEFAULT_READABLE_TRANSCRIPT_PATH = "./transcript.readable.v1.json";
+const DEFAULT_SUMMARY_PATH = "./summary.md";
 const DEFAULT_CAPTIONS_PATH = "./captions.vtt";
 const DEFAULT_CHAPTERS_PATH = "./chapters.vtt";
 const PORTABLE_METADATA_RANGE_END = 262143;
@@ -75,6 +77,7 @@ export async function loadBundledArtifact(): Promise<LoadedArtifact> {
     transcriptPath: resolveAppAssetUrl(DEFAULT_TRANSCRIPT_PATH),
     displayTranscriptPath: resolveAppAssetUrl(DEFAULT_DISPLAY_TRANSCRIPT_PATH),
     readableTranscriptPath: resolveAppAssetUrl(DEFAULT_READABLE_TRANSCRIPT_PATH),
+    summaryPath: resolveAppAssetUrl(DEFAULT_SUMMARY_PATH),
     manifestPath: resolveAppAssetUrl("./manifest.json"),
     captionsPath: resolveAppAssetUrl(DEFAULT_CAPTIONS_PATH),
     chaptersPath: resolveAppAssetUrl(DEFAULT_CHAPTERS_PATH),
@@ -86,6 +89,7 @@ export async function loadArtifactFromDirectory(basePath: string): Promise<Loade
     transcriptPath: `${basePath}/transcript.words.v1.json`,
     displayTranscriptPath: `${basePath}/transcript.display.v1.json`,
     readableTranscriptPath: `${basePath}/transcript.readable.v1.json`,
+    summaryPath: `${basePath}/summary.md`,
     manifestPath: `${basePath}/manifest.json`,
     captionsPath: `${basePath}/captions.vtt`,
     chaptersPath: `${basePath}/chapters.vtt`,
@@ -111,6 +115,7 @@ export async function loadPortableArtifactFromAudioPath(audioPath: string): Prom
     transcript,
     displayTranscript,
     readableTranscript,
+    summary: null,
     index: buildTranscriptIndex(transcript),
     audioSrc: resolvedAudioPath,
     captionsSrc: null,
@@ -137,6 +142,7 @@ async function loadArtifactFromPaths(paths: {
   transcriptPath: string;
   displayTranscriptPath?: string;
   readableTranscriptPath?: string;
+  summaryPath?: string;
   captionsPath?: string;
   chaptersPath?: string;
   manifestPath?: string;
@@ -157,11 +163,14 @@ async function loadArtifactFromPaths(paths: {
   const readableTranscript = paths.readableTranscriptPath
     ? await probeOptionalJson(paths.readableTranscriptPath, validateReadableTranscriptV1)
     : null;
+  const summary = paths.summaryPath ? await probeOptionalText(paths.summaryPath) : null;
   const manifest = paths.manifestPath ? await probeOptionalJson(paths.manifestPath, asLooseObject) : null;
+  console.log(summary);
   return {
     transcript,
     displayTranscript,
     readableTranscript,
+    summary,
     index: buildTranscriptIndex(transcript),
     audioSrc: paths.audioPath
       ? resolveDocumentAssetUrl(paths.audioPath)
@@ -319,6 +328,22 @@ async function probeOptionalJson<T>(
       return null;
     }
     return validate((await response.json()) as unknown);
+  } catch {
+    return null;
+  }
+}
+
+async function probeOptionalText(assetPath: string): Promise<string | null> {
+  if (window.location.protocol === "file:") {
+    return null;
+  }
+  const path = resolveDocumentAssetUrl(assetPath);
+  try {
+    const response = await fetch(path);
+    if (!response.ok) {
+      return null;
+    }
+    return await response.text();
   } catch {
     return null;
   }
