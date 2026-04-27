@@ -705,7 +705,9 @@
     </div>
   </header>
 
-  <div class="layout">
+  <div
+    class="grid items-start gap-4 grid-cols-1 min-[980px]:grid-cols-[minmax(240px,290px)_minmax(0,1fr)]"
+  >
     <aside
       class="flex flex-col gap-3 content-start min-[980px]:sticky min-[980px]:top-4 min-[980px]:min-h-[calc(100vh-2rem)]"
     >
@@ -862,13 +864,15 @@
         </div>
 
         {#if transcriptIndex && (timingPrecision || artifactMetadata)}
-          <section class="meeting-footer">
-            <div class="meeting-footer-header">
+          <section class="grid gap-3 pt-1 border-t border-base-300">
+            <div
+              class="flex justify-between items-start gap-3 max-[980px]:grid max-[980px]:grid-cols-1"
+            >
               <div>
                 <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">
                   Meeting metadata
                 </p>
-                <p class="meeting-footer-copy">
+                <p class="text-base-content/70 leading-normal text-sm max-w-[72ch]">
                   {timingPrecision?.detail ??
                     "Artifact metadata is shown as provided, so older files can remain usable with reduced timing precision."}
                 </p>
@@ -887,33 +891,48 @@
             </div>
 
             {#if artifactMetadata}
-              <div class="metadata-sections">
+              <div class="grid gap-2.5">
                 {#each metadataSections as section}
-                  <details class="metadata-section" open={metadataSectionStartsOpen(section.title)}>
-                    <summary>{section.title}</summary>
-                    <dl class="metadata-grid">
-                      {#each section.rows as row (metadataRowKey(section.title, row))}
-                        <dt>{formatMetadataLabel(row.label)}</dt>
-                        <dd>
-                          {#if row.values && row.values.length > 0}
-                            <div class="metadata-tags">
-                              {#each row.values as value}
-                                <span class="metadata-tag">{value}</span>
-                              {/each}
-                            </div>
-                          {:else if row.tone === "code"}
-                            <code class="metadata-code">{row.value}</code>
-                          {:else}
-                            {row.value}
-                          {/if}
-                        </dd>
-                      {/each}
-                    </dl>
+                  <details
+                    class="collapse collapse-arrow bg-base-200"
+                    open={metadataSectionStartsOpen(section.title)}
+                  >
+                    <summary class="collapse-title text-sm font-bold">{section.title}</summary>
+                    <div class="collapse-content">
+                      <dl
+                        class="grid grid-cols-[minmax(10rem,16rem)_minmax(0,1fr)] gap-y-2 gap-x-3.5 m-0 max-[980px]:grid-cols-1"
+                      >
+                        {#each section.rows as row (metadataRowKey(section.title, row))}
+                          <dt class="m-0 text-base-content/70 text-sm leading-snug">
+                            {formatMetadataLabel(row.label)}
+                          </dt>
+                          <dd class="m-0 text-base-content text-sm leading-normal break-words">
+                            {#if row.values && row.values.length > 0}
+                              <div class="flex flex-wrap gap-1.5">
+                                {#each row.values as value}
+                                  <span class="badge badge-outline">{value}</span>
+                                {/each}
+                              </div>
+                            {:else if row.tone === "code"}
+                              <code
+                                class="inline-block px-1.5 py-0.5 rounded bg-base-300 text-base-content text-xs font-mono"
+                                >{row.value}</code
+                              >
+                            {:else}
+                              {row.value}
+                            {/if}
+                          </dd>
+                        {/each}
+                      </dl>
+                    </div>
                   </details>
                 {/each}
-                <details class="metadata-section">
-                  <summary>Raw JSON</summary>
-                  <pre class="metadata-raw">{artifactMetadata.rawJson}</pre>
+                <details class="collapse collapse-arrow bg-base-200">
+                  <summary class="collapse-title text-sm font-bold">Raw JSON</summary>
+                  <div class="collapse-content">
+                    <pre
+                      class="m-0 text-base-content text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">{artifactMetadata.rawJson}</pre>
+                  </div>
                 </details>
               </div>
             {/if}
@@ -923,11 +942,15 @@
     </main>
   </div>
 
-  <footer class="player-dock">
-    <div class="player-card card bg-base-100 shadow">
-      <div class="player-meta">
+  <footer
+    class="fixed inset-x-0 bottom-0 z-30 px-4 pt-4 pb-4 bg-gradient-to-b from-base-200/0 via-base-200/80 to-base-200 pointer-events-none"
+  >
+    <div
+      class="card bg-base-100 shadow max-w-[1600px] mx-auto px-4 py-3 grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3.5 items-center pointer-events-auto max-[980px]:grid-cols-1 max-[980px]:gap-3"
+    >
+      <div class="grid gap-1 min-w-[11rem]">
         <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Player</p>
-        <strong>
+        <strong class="text-base-content text-[0.96rem]">
           {#if activeMeeting}
             {activeMeeting.title}
           {:else if catalogMeetings.length > 0}
@@ -936,14 +959,14 @@
             Manual artifact
           {/if}
         </strong>
-        <p class="player-hint">Space toggles play and pause.</p>
+        <p class="m-0 text-base-content/70 text-sm leading-snug">Space toggles play and pause.</p>
       </div>
 
       {#if audioSrc}
-        <div class="player-shell">
+        <div class="grid gap-2.5 min-w-0">
           <audio
             bind:this={audioEl}
-            class="engine-audio"
+            class="sr-only"
             preload="metadata"
             src={audioSrc}
             on:durationchange={handleDurationChange}
@@ -961,9 +984,15 @@
             {/if}
           </audio>
 
-          <div class="player-controls">
-            <div class="player-buttons">
-              <button class="transport-button transport-primary" on:click={togglePlayback} type="button">
+          <div
+            class="grid grid-cols-[auto_minmax(0,1fr)] gap-3.5 items-center min-w-0 max-[980px]:grid-cols-1"
+          >
+            <div class="flex flex-wrap gap-1.5">
+              <button
+                class="btn btn-warning btn-md font-bold"
+                on:click={togglePlayback}
+                type="button"
+              >
                 {#if playing}
                   Pause
                 {:else}
@@ -972,20 +1001,21 @@
               </button>
             </div>
 
-            <div class="timeline-wrap">
-              <div class="timeline-stats">
+            <div class="grid gap-1.5 min-w-0">
+              <div
+                class="flex justify-between gap-3 text-base-content/70 text-sm tabular-nums max-[980px]:flex-col max-[980px]:gap-0.5"
+              >
                 <span>{formatClockTime(clampedCurrentTimeMs)} elapsed</span>
                 <span>{formatClockTime(clampedDurationMs)} total</span>
                 <span>-{formatClockTime(remainingMs)} remaining</span>
               </div>
               <input
                 aria-label="Seek within meeting"
-                class="timeline-slider"
+                class="range range-warning range-sm w-full"
                 max={Math.max(clampedDurationMs, 1)}
                 min="0"
                 on:input={handleTimelineInput}
                 step="250"
-                style={`--player-progress: ${playbackProgress}%`}
                 type="range"
                 value={Math.min(clampedCurrentTimeMs, Math.max(clampedDurationMs, 1))}
               />
@@ -1002,27 +1032,41 @@
         </p>
       {/if}
 
-      <div class="player-actions">
+      <div class="flex flex-wrap justify-end gap-2 max-[980px]:justify-start">
         <button
           aria-checked={followPlayback && !manualScrollLock}
-          class="switch-button"
+          class="btn btn-ghost btn-sm rounded-full inline-flex items-center gap-2 normal-case"
           on:click={toggleFollowPlayback}
           role="switch"
           type="button"
         >
-          <span class="switch-label">
+          <span class="whitespace-nowrap">
             {#if followPlayback && manualScrollLock}
               Resume auto-scroll
             {:else}
               Auto-scroll
             {/if}
           </span>
-          <span class:checked={followPlayback && !manualScrollLock} class="switch-track">
-            <span class="switch-thumb"></span>
+          <span
+            class="relative inline-block w-10 h-5 rounded-full transition-colors flex-none {followPlayback &&
+            !manualScrollLock
+              ? 'bg-warning'
+              : 'bg-base-300'}"
+          >
+            <span
+              class="absolute top-[2px] left-[2px] w-4 h-4 rounded-full bg-base-100 shadow transition-transform {followPlayback &&
+              !manualScrollLock
+                ? 'translate-x-[20px]'
+                : ''}"
+            ></span>
           </span>
         </button>
         {#if readableTranscript && !hasPrecomputedDisplay}
-          <button on:click={() => (showExactWords = !showExactWords)} type="button">
+          <button
+            class="btn btn-ghost btn-sm rounded-full"
+            on:click={() => (showExactWords = !showExactWords)}
+            type="button"
+          >
             {showExactWords ? "Exact words: on" : "Exact words: off"}
           </button>
         {/if}
@@ -1031,390 +1075,3 @@
   </footer>
 </div>
 
-<style>
-  .layout {
-    display: grid;
-    align-items: start;
-    grid-template-columns: minmax(240px, 290px) minmax(0, 1fr);
-    gap: 1rem;
-  }
-
-  .player-actions button {
-    border: 1px solid rgba(93, 82, 66, 0.16);
-    border-radius: 0.8rem;
-    background: rgba(255, 255, 255, 0.92);
-    color: inherit;
-    transition:
-      transform 120ms ease,
-      border-color 120ms ease,
-      background 120ms ease;
-  }
-
-  .player-actions button:hover {
-    transform: translateY(-1px);
-    border-color: rgba(130, 96, 42, 0.4);
-  }
-
-  .player-actions button {
-    padding: 0.68rem 0.82rem;
-  }
-
-  .switch-button {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.7rem;
-    padding: 0.58rem 0.78rem;
-    border: 1px solid rgba(93, 82, 66, 0.16);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.92);
-    color: inherit;
-    font-weight: 600;
-    transition:
-      transform 120ms ease,
-      border-color 120ms ease,
-      background 120ms ease;
-  }
-
-  .switch-button:hover {
-    transform: translateY(-1px);
-    border-color: rgba(130, 96, 42, 0.4);
-  }
-
-  .switch-button:focus-visible {
-    outline: 2px solid rgba(180, 112, 58, 0.38);
-    outline-offset: 3px;
-  }
-
-  .switch-label {
-    white-space: nowrap;
-  }
-
-  .switch-track {
-    position: relative;
-    width: 2.6rem;
-    height: 1.45rem;
-    border-radius: 999px;
-    background: rgba(126, 114, 90, 0.22);
-    box-shadow: inset 0 0 0 1px rgba(93, 82, 66, 0.12);
-    transition: background 120ms ease;
-    flex: 0 0 auto;
-  }
-
-  .switch-track.checked {
-    background: rgba(194, 126, 59, 0.92);
-    box-shadow: inset 0 0 0 1px rgba(157, 92, 39, 0.35);
-  }
-
-  .switch-thumb {
-    position: absolute;
-    top: 0.14rem;
-    left: 0.16rem;
-    width: 1.15rem;
-    height: 1.15rem;
-    border-radius: 50%;
-    background: #fffaf4;
-    box-shadow: 0 1px 4px rgba(87, 72, 40, 0.2);
-    transition: transform 120ms ease;
-  }
-
-  .switch-track.checked .switch-thumb {
-    transform: translateX(1.14rem);
-  }
-
-  .meeting-footer {
-    display: grid;
-    gap: 0.8rem;
-    padding-top: 0.15rem;
-    border-top: 1px solid rgba(84, 78, 55, 0.1);
-  }
-
-  .meeting-footer-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 0.8rem;
-  }
-
-  .meeting-footer-copy {
-    margin: 0;
-    color: #665d51;
-    line-height: 1.5;
-    font-size: 0.93rem;
-    max-width: 72ch;
-  }
-
-  .metadata-sections {
-    display: grid;
-    gap: 0.65rem;
-  }
-
-  .metadata-section {
-    border: 1px solid rgba(84, 78, 55, 0.1);
-    border-radius: 0.9rem;
-    background: rgba(255, 255, 255, 0.58);
-    overflow: hidden;
-  }
-
-  .metadata-section summary {
-    cursor: pointer;
-    padding: 0.8rem 0.9rem;
-    font-weight: 700;
-    color: #483f34;
-    list-style: none;
-  }
-
-  .metadata-section summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .metadata-grid {
-    display: grid;
-    grid-template-columns: minmax(10rem, 16rem) minmax(0, 1fr);
-    gap: 0.55rem 0.9rem;
-    padding: 0 0.9rem 0.9rem;
-    margin: 0;
-  }
-
-  .metadata-grid dt {
-    margin: 0;
-    color: #665d51;
-    font-size: 0.88rem;
-    line-height: 1.4;
-  }
-
-  .metadata-grid dd {
-    margin: 0;
-    color: #2f2d27;
-    font-size: 0.9rem;
-    line-height: 1.5;
-    overflow-wrap: anywhere;
-  }
-
-  .metadata-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-  }
-
-  .metadata-tag {
-    display: inline-flex;
-    align-items: center;
-    min-height: 1.9rem;
-    padding: 0.3rem 0.65rem;
-    border-radius: 999px;
-    border: 1px solid rgba(93, 82, 66, 0.14);
-    background: rgba(247, 243, 236, 0.92);
-    color: #473f34;
-    font-size: 0.86rem;
-    font-weight: 600;
-  }
-
-  .metadata-code {
-    display: inline-block;
-    padding: 0.12rem 0.35rem;
-    border-radius: 0.4rem;
-    background: rgba(91, 83, 71, 0.08);
-    color: #40382e;
-    font-size: 0.84rem;
-    font-family: "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
-  }
-
-  .metadata-raw {
-    margin: 0;
-    padding: 0 0.9rem 0.9rem;
-    color: #3c362d;
-    font-size: 0.84rem;
-    line-height: 1.55;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-
-  .player-dock {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 30;
-    padding: 1rem 1rem 1.1rem;
-    background:
-      linear-gradient(180deg, rgba(221, 215, 196, 0) 0%, rgba(221, 215, 196, 0.78) 35%, rgba(221, 215, 196, 0.96) 100%);
-    pointer-events: none;
-  }
-
-  .player-card {
-    max-width: 1600px;
-    margin: 0 auto;
-    padding: 0.85rem 1rem;
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    gap: 0.9rem;
-    align-items: center;
-    pointer-events: auto;
-  }
-
-  .player-meta {
-    display: grid;
-    gap: 0.2rem;
-    min-width: 11rem;
-  }
-
-  .player-meta strong {
-    font-size: 0.96rem;
-    color: #383228;
-  }
-
-  .player-hint {
-    margin: 0;
-    color: #665d51;
-    font-size: 0.88rem;
-    line-height: 1.35;
-  }
-
-  .player-shell {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.7rem;
-    min-width: 0;
-  }
-
-  .engine-audio {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  .player-controls {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 0.85rem;
-    align-items: center;
-    min-width: 0;
-  }
-
-  .player-buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem;
-  }
-
-  .transport-button {
-    padding: 0.68rem 0.82rem;
-    border: 1px solid rgba(93, 82, 66, 0.16);
-    border-radius: 0.8rem;
-    background: rgba(255, 255, 255, 0.92);
-    color: inherit;
-    font-weight: 700;
-    transition:
-      transform 120ms ease,
-      border-color 120ms ease,
-      background 120ms ease;
-  }
-
-  .transport-button:hover {
-    transform: translateY(-1px);
-    border-color: rgba(130, 96, 42, 0.4);
-  }
-
-  .transport-primary {
-    background: linear-gradient(135deg, rgba(198, 134, 73, 0.96), rgba(173, 98, 43, 0.96));
-    border-color: rgba(138, 82, 32, 0.55);
-    color: #fffaf4;
-  }
-
-  .timeline-wrap {
-    display: grid;
-    gap: 0.38rem;
-    min-width: 0;
-  }
-
-  .timeline-stats {
-    display: flex;
-    justify-content: space-between;
-    gap: 0.8rem;
-    color: #665d51;
-    font-size: 0.86rem;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .timeline-slider {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 100%;
-    height: 0.8rem;
-    border-radius: 999px;
-    background:
-      linear-gradient(
-        90deg,
-        rgba(194, 126, 59, 0.95) 0%,
-        rgba(194, 126, 59, 0.95) var(--player-progress, 0%),
-        rgba(126, 114, 90, 0.18) var(--player-progress, 0%),
-        rgba(126, 114, 90, 0.18) 100%
-      );
-    outline: none;
-    cursor: pointer;
-  }
-
-  .timeline-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 1rem;
-    height: 1rem;
-    border-radius: 50%;
-    border: 2px solid rgba(157, 92, 39, 0.92);
-    background: #fffaf4;
-    box-shadow: 0 2px 8px rgba(87, 72, 40, 0.18);
-  }
-
-  .timeline-slider::-moz-range-thumb {
-    width: 1rem;
-    height: 1rem;
-    border-radius: 50%;
-    border: 2px solid rgba(157, 92, 39, 0.92);
-    background: #fffaf4;
-    box-shadow: 0 2px 8px rgba(87, 72, 40, 0.18);
-  }
-
-  .timeline-slider::-moz-range-track {
-    height: 0.8rem;
-    border-radius: 999px;
-    background: transparent;
-  }
-
-  .player-actions {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 0.55rem;
-  }
-
-  @media (max-width: 980px) {
-    .layout {
-      grid-template-columns: 1fr;
-    }
-
-    .meeting-footer-header,
-    .metadata-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .player-card {
-      grid-template-columns: 1fr;
-      gap: 0.75rem;
-    }
-
-    .player-controls {
-      grid-template-columns: 1fr;
-    }
-
-    .player-actions {
-      justify-content: flex-start;
-    }
-
-    .timeline-stats {
-      flex-direction: column;
-      gap: 0.2rem;
-    }
-  }
-</style>
