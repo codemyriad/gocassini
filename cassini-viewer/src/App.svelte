@@ -661,11 +661,13 @@
   />
 </svelte:head>
 
-<div class="shell">
-  <header class="masthead panel">
-    <div class="masthead-copy">
-      <p class="eyebrow">Cassini Viewer</p>
-      <h1>
+<div class="max-w-[1600px] mx-auto px-4 pb-40 max-[980px]:pb-48">
+  <header
+    class="card bg-base-100 shadow flex flex-row flex-wrap items-start justify-between gap-x-6 gap-y-4 p-4 sm:p-5 mb-4"
+  >
+    <div class="min-w-0">
+      <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Cassini Viewer</p>
+      <h1 class="text-3xl sm:text-4xl font-bold leading-tight max-w-[26ch]">
         {#if activeMeeting}
           {activeMeeting.title}, {activeMeeting.dateLabel}
         {:else if catalogMeetings.length > 0}
@@ -674,22 +676,24 @@
           Meeting transcript viewer
         {/if}
       </h1>
-      <p class="masthead-meta">{mastheadSummary}</p>
+      <p class="text-base-content/70 mt-2">{mastheadSummary}</p>
     </div>
-    <div class="info-strip">
-      <span class="info-pill">
+    <div class="flex flex-wrap justify-end gap-2 min-w-[min(100%,23rem)]">
+      <span class="badge badge-outline badge-lg">
         {formatArtifactMode()}
       </span>
       {#if transcriptIndex && timingPrecision}
         <span
-          class:info-pill-warning={timingPrecision.level !== "word"}
-          class="info-pill info-pill-subtle"
+          class:badge-warning={timingPrecision.level !== "word"}
+          class:badge-ghost={timingPrecision.level === "word"}
+          class:badge-outline={timingPrecision.level !== "word"}
+          class="badge badge-lg"
           title={timingPrecision.detail}
         >
           {timingPrecision.label}
         </span>
       {/if}
-      <span class="info-pill">
+      <span class="badge badge-outline badge-lg">
         {#if transcriptIndex}
           {formatClockTime(currentTimeMs)} / {formatClockTime(durationMs)}
         {:else if catalogMeetings.length > 0}
@@ -702,20 +706,28 @@
   </header>
 
   <div class="layout">
-    <aside class="sidebar">
+    <aside
+      class="flex flex-col gap-3 content-start min-[980px]:sticky min-[980px]:top-4 min-[980px]:min-h-[calc(100vh-2rem)]"
+    >
       {#if catalogMeetings.length > 0}
-        <section class="panel">
-          <h2>Meetings</h2>
-          <div class="meeting-list">
+        <section class="card bg-base-100 shadow p-4">
+          <h2 class="text-xs font-bold uppercase tracking-widest text-base-content/60 mb-3">
+            Meetings
+          </h2>
+          <div class="grid gap-2.5">
             {#each catalogMeetings as meeting}
               <button
-                class:active-meeting={meeting.id === selectedMeetingId}
-                class="meeting-card"
                 on:click={() => loadCatalogMeeting(meeting)}
                 type="button"
+                class="grid gap-1 w-full p-3 text-left rounded-2xl border bg-base-100 hover:border-primary/40 hover:-translate-y-px transition-[transform,border-color,background-color] {meeting.id ===
+                selectedMeetingId
+                  ? 'border-primary bg-primary/5'
+                  : 'border-base-300'}"
               >
-                <span class="meeting-title">{loadMeetingButtonLabel(meeting)}</span>
-                <span class="meeting-meta">{formatMeetingMeta(meeting)}</span>
+                <span class="font-bold">{loadMeetingButtonLabel(meeting)}</span>
+                <span class="text-base-content/70 text-sm leading-snug">
+                  {formatMeetingMeta(meeting)}
+                </span>
               </button>
             {/each}
           </div>
@@ -723,14 +735,16 @@
       {/if}
 
       {#if errorMessage}
-        <section class="panel warning">
-          <h2>Load note</h2>
-          <p>{errorMessage}</p>
+        <section class="alert alert-warning items-start">
+          <div>
+            <h2 class="text-xs font-bold uppercase tracking-widest mb-1">Load note</h2>
+            <p>{errorMessage}</p>
+          </div>
         </section>
       {/if}
 
       <button
-        class="btn btn-ghost btn-sm"
+        class="btn btn-ghost btn-sm mt-auto self-start"
         on:click={toggleTheme}
         aria-label="Toggle light or dark theme"
         type="button"
@@ -739,10 +753,10 @@
       </button>
     </aside>
 
-    <main class="panel transcript-panel">
+    <main class="card bg-base-100 shadow transcript-panel">
       <div class="transcript-header">
         <div>
-          <p class="eyebrow">Transcript</p>
+          <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Transcript</p>
           <p class="transcript-summary">{describeTranscriptInteraction()}</p>
         </div>
         {#if manualScrollLock}
@@ -825,7 +839,9 @@
           <section class="meeting-footer">
             <div class="meeting-footer-header">
               <div>
-                <p class="eyebrow">Meeting metadata</p>
+                <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">
+                  Meeting metadata
+                </p>
                 <p class="meeting-footer-copy">
                   {timingPrecision?.detail ??
                     "Artifact metadata is shown as provided, so older files can remain usable with reduced timing precision."}
@@ -833,8 +849,10 @@
               </div>
               {#if timingPrecision}
                 <span
-                  class:info-pill-warning={timingPrecision.level !== "word"}
-                  class="info-pill info-pill-subtle"
+                  class:badge-warning={timingPrecision.level !== "word"}
+                  class:badge-ghost={timingPrecision.level === "word"}
+                  class:badge-outline={timingPrecision.level !== "word"}
+                  class="badge badge-lg"
                   title={timingPrecision.detail}
                 >
                   {timingPrecision.label}
@@ -880,9 +898,9 @@
   </div>
 
   <footer class="player-dock">
-    <div class="player-card panel">
+    <div class="player-card card bg-base-100 shadow">
       <div class="player-meta">
-        <p class="eyebrow">Player</p>
+        <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Player</p>
         <strong>
           {#if activeMeeting}
             {activeMeeting.title}
@@ -988,167 +1006,11 @@
 </div>
 
 <style>
-  .shell {
-    max-width: 1600px;
-    margin: 0 auto;
-    padding: 1rem 1rem 9.5rem;
-  }
-
-  .eyebrow {
-    margin: 0 0 0.35rem;
-    text-transform: uppercase;
-    letter-spacing: 0.18em;
-    font-size: 0.76rem;
-    color: #7a6849;
-  }
-
-  h1,
-  h2 {
-    margin: 0;
-    font-family: Georgia, "Times New Roman", serif;
-    line-height: 1.05;
-  }
-
-  h1 {
-    font-size: clamp(1.8rem, 3vw, 2.85rem);
-    max-width: 26ch;
-  }
-
-  h2 {
-    font-size: clamp(1.15rem, 1.6vw, 1.5rem);
-  }
-
-  .panel {
-    border: 1px solid rgba(84, 78, 55, 0.16);
-    border-radius: 1.1rem;
-    background: rgba(255, 252, 247, 0.78);
-    box-shadow: 0 12px 30px rgba(87, 72, 40, 0.08);
-    backdrop-filter: blur(8px);
-  }
-
-  .panel {
-    padding: 0.95rem 1rem;
-  }
-
-  .masthead {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 1rem 1.4rem;
-    margin-bottom: 1rem;
-    padding: 1rem 1.15rem;
-  }
-
-  .masthead-copy {
-    min-width: 0;
-  }
-
-  .masthead-meta {
-    margin: 0.5rem 0 0;
-    color: #665d51;
-    font-size: 0.98rem;
-    line-height: 1.5;
-  }
-
-  .info-strip {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 0.45rem;
-    min-width: min(100%, 23rem);
-  }
-
-  .info-pill {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 2.3rem;
-    padding: 0.5rem 0.8rem;
-    border-radius: 999px;
-    border: 1px solid rgba(130, 114, 82, 0.15);
-    background: rgba(255, 255, 255, 0.72);
-    color: #544c40;
-    font-size: 0.9rem;
-    font-weight: 600;
-  }
-
-  .info-pill-subtle {
-    color: #64584a;
-    background: rgba(252, 249, 243, 0.8);
-    font-weight: 500;
-  }
-
-  .info-pill-warning {
-    border-color: rgba(180, 112, 58, 0.22);
-    color: #7a5b2e;
-  }
-
   .layout {
     display: grid;
     align-items: start;
     grid-template-columns: minmax(240px, 290px) minmax(0, 1fr);
     gap: 1rem;
-  }
-
-  .sidebar {
-    display: grid;
-    gap: 0.85rem;
-    align-content: start;
-    position: sticky;
-    top: 1rem;
-  }
-
-  .sidebar .panel h2 {
-    font-family: ui-sans-serif, system-ui, sans-serif;
-    font-size: 0.76rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.16em;
-    color: #7a6849;
-    margin-bottom: 0.75rem;
-  }
-
-  .warning {
-    border-color: rgba(180, 96, 60, 0.35);
-  }
-
-  .meeting-list {
-    display: grid;
-    gap: 0.6rem;
-  }
-
-  .meeting-card {
-    display: grid;
-    gap: 0.34rem;
-    width: 100%;
-    padding: 0.8rem 0.85rem;
-    text-align: left;
-    border: 1px solid rgba(93, 82, 66, 0.16);
-    border-radius: 1rem;
-    background:
-      linear-gradient(120deg, rgba(255, 255, 255, 0.94), rgba(246, 239, 229, 0.8)),
-      rgba(255, 255, 255, 0.92);
-    color: inherit;
-  }
-
-  .meeting-card:hover {
-    border-color: rgba(130, 96, 42, 0.34);
-    transform: translateY(-1px);
-  }
-
-  .meeting-card.active-meeting {
-    border-color: rgba(180, 112, 58, 0.45);
-    box-shadow: inset 0 0 0 1px rgba(180, 112, 58, 0.2);
-  }
-
-  .meeting-title {
-    font-weight: 700;
-  }
-
-  .meeting-meta {
-    color: #665d51;
-    font-size: 0.89rem;
-    line-height: 1.45;
   }
 
   .player-actions button,
@@ -1697,17 +1559,8 @@
   }
 
   @media (max-width: 980px) {
-    .masthead,
     .layout {
       grid-template-columns: 1fr;
-    }
-
-    .masthead {
-      flex-direction: column;
-    }
-
-    .sidebar {
-      position: static;
     }
 
     .transcript-panel {
@@ -1725,10 +1578,6 @@
 
     .segment-text {
       font-size: 1rem;
-    }
-
-    .shell {
-      padding-bottom: 11.5rem;
     }
 
     .player-card {
