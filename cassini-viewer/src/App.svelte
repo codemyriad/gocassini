@@ -753,21 +753,21 @@
       </button>
     </aside>
 
-    <main class="card bg-base-100 shadow transcript-panel">
-      <div class="transcript-header">
+    <main class="card bg-base-100 shadow flex flex-col gap-3.5 p-4 sm:p-5">
+      <div class="flex justify-between items-start gap-4 pb-1.5 border-b border-base-300">
         <div>
           <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Transcript</p>
-          <p class="transcript-summary">{describeTranscriptInteraction()}</p>
+          <p class="text-base-content/70 leading-normal">{describeTranscriptInteraction()}</p>
         </div>
         {#if manualScrollLock}
-          <span class="lock-pill">Auto-scroll paused</span>
+          <span class="badge badge-neutral">Auto-scroll paused</span>
         {/if}
       </div>
 
       {#if loading}
-        <p class="muted">Loading transcript bootstrap...</p>
+        <p class="text-base-content/70 text-sm leading-normal">Loading transcript bootstrap...</p>
       {:else if visibleSegments.length === 0}
-        <p class="muted">
+        <p class="text-base-content/70 text-sm leading-normal">
           {#if catalogMeetings.length > 0}
             Select a meeting to load its audio and transcript.
           {:else}
@@ -778,7 +778,7 @@
         <div
           bind:this={transcriptPane}
           aria-label="Transcript"
-          class="transcript-list"
+          class="grid gap-2.5"
           on:touchmove={() => (manualScrollLock = true)}
           on:wheel={() => (manualScrollLock = true)}
           role="log"
@@ -786,46 +786,72 @@
           {#each visibleSegments as segment, segmentIndex}
             <article
               aria-current={segment.id === activeSegment?.id ? "true" : undefined}
-              class:active={segment.id === activeSegment?.id}
-              class:continuation-segment={isSpeakerContinuation(visibleSegments, segmentIndex)}
-              class="segment"
+              class="p-4 rounded-2xl border shadow-sm transition-shadow {segment.id ===
+              activeSegment?.id
+                ? 'border-warning bg-warning/10 shadow-md'
+                : 'border-base-300 bg-base-100'} {isSpeakerContinuation(
+                visibleSegments,
+                segmentIndex,
+              )
+                ? 'pt-3'
+                : ''}"
               id={segmentDomId(segment.id)}
             >
-              <div class="segment-meta">
+              <div
+                class="flex items-center gap-2.5 mb-1.5 {isSpeakerContinuation(
+                  visibleSegments,
+                  segmentIndex,
+                )
+                  ? 'justify-end'
+                  : 'justify-between'}"
+              >
                 {#if !isSpeakerContinuation(visibleSegments, segmentIndex)}
-                  <button class="speaker-tag" on:click={() => seekTo(segment.startMs)} type="button">
-                    {segment.speakerLabel}
-                  </button>
+                  <span class="badge badge-lg font-bold">{segment.speakerLabel}</span>
                 {/if}
-                <button class="time-chip" on:click={() => seekTo(segment.startMs)} type="button">
+                <button
+                  class="btn btn-ghost btn-sm rounded-full font-semibold text-base-content/70"
+                  on:click={() => seekTo(segment.startMs)}
+                  type="button"
+                >
                   {formatClockTime(segment.startMs)}
                 </button>
               </div>
 
               {#if segment.tokens.length > 0 && hasTimedTokens(segment)}
-                <div class="segment-text token-flow">
+                <div class="text-[1.06rem] leading-[1.72]">
                   {#each segment.tokens as token}{#if token.startMs !== undefined && token.endMs !== undefined}<button
-                        class:active-token={segment.id === activeSegment?.id && token === activeToken}
-                        class:interpolated-token={token.alignment === "interpolated"}
-                        class="token-button"
+                        class="inline p-0 border-0 bg-transparent rounded text-[1.06rem] leading-[1.72] whitespace-pre-wrap cursor-pointer hover:bg-warning/20 {segment.id ===
+                          activeSegment?.id && token === activeToken
+                          ? 'bg-warning/40 ring-1 ring-warning font-bold underline underline-offset-2'
+                          : ''} {token.alignment === 'interpolated'
+                          ? 'border-b border-dashed border-warning/60'
+                          : ''}"
                         on:click={() => seekTo(token.startMs ?? segment.startMs)}
                         type="button"
                       >{token.spaceBefore ? ` ${token.text}` : token.text}</button>{:else}<span
-                        class:untimed-word={token.kind === "word"}
-                        class="token-text"
+                        class="inline rounded text-[1.06rem] leading-[1.72] whitespace-pre-wrap {token.kind ===
+                        'word'
+                          ? 'text-base-content/70'
+                          : 'text-base-content'}"
                       >{token.spaceBefore ? ` ${token.text}` : token.text}</span>{/if}{/each}
                 </div>
               {:else}
-                <button class="segment-text" on:click={() => seekTo(segment.startMs)} type="button">
+                <button
+                  class="block w-full p-0 border-0 bg-transparent text-left text-base-content text-[1.06rem] leading-[1.72] focus-visible:outline-2 focus-visible:outline-warning/60 focus-visible:outline-offset-4 focus-visible:rounded"
+                  on:click={() => seekTo(segment.startMs)}
+                  type="button"
+                >
                   {segment.text}
                 </button>
               {/if}
 
               {#if !hasPrecomputedDisplay && showExactWords && segment.words.length > 0}
-                <div class="word-row">
+                <div class="block mt-3 pt-3 border-t border-base-300 leading-[1.72]">
                   {#each segment.words as word, wordIndex}<button
-                      class:active-word={segment.id === activeSegment?.id && word.id === activeWord?.id}
-                      class="word"
+                      class="inline-block px-1 py-0.5 rounded text-[0.92rem] border hover:border-warning/60 hover:bg-warning/10 hover:-translate-y-px transition whitespace-pre-wrap {segment.id ===
+                        activeSegment?.id && word.id === activeWord?.id
+                        ? 'border-warning bg-warning/40 font-bold underline underline-offset-2'
+                        : 'border-base-300 bg-base-100'}"
                       on:click={() => seekTo(word.startMs)}
                       type="button"
                     >{wordIndex > 0 ? ` ${word.text}` : word.text}</button>{/each}
@@ -967,7 +993,7 @@
           </div>
         </div>
       {:else}
-        <p class="muted">
+        <p class="text-base-content/70 text-sm leading-normal">
           {#if catalogMeetings.length > 0}
             Select a meeting to load its audio source.
           {:else}
