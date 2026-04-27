@@ -84,8 +84,56 @@
   }
 
   function handleBackToList() {
+    pushMeetingUrl("");
     resetLoadedArtifact();
     activeMeeting = null;
+    errorMessage = "";
+  }
+
+  function pushMeetingUrl(meetingId: string) {
+    const url = new URL(window.location.href);
+    if (meetingId) {
+      url.searchParams.set("meeting", meetingId);
+    } else {
+      url.searchParams.delete("meeting");
+    }
+    url.hash = "";
+    window.history.pushState({}, "", url);
+  }
+
+  function seedListHistoryEntry(meetingId: string) {
+    const incomingUrl = new URL(window.location.href);
+    const listUrl = new URL(incomingUrl.toString());
+    listUrl.searchParams.delete("meeting");
+    listUrl.hash = "";
+    window.history.replaceState({}, "", listUrl);
+    const meetingUrl = new URL(incomingUrl.toString());
+    meetingUrl.searchParams.set("meeting", meetingId);
+    window.history.pushState({}, "", meetingUrl);
+  }
+
+  function handlePopState() {
+    const url = new URL(window.location.href);
+    const urlMeetingId = url.searchParams.get("meeting") ?? "";
+    if (urlMeetingId === selectedMeetingId) {
+      return;
+    }
+    if (urlMeetingId) {
+      const meeting = catalogMeetings.find((entry) => entry.id === urlMeetingId);
+      if (meeting) {
+        pendingSeekMs = parseTimeHash(window.location.hash);
+        void loadMeetingArtifact(meeting);
+      } else {
+        resetLoadedArtifact();
+        activeMeeting = null;
+        selectedMeetingId = urlMeetingId;
+        errorMessage = `Meeting not found in catalog: ${urlMeetingId}`;
+      }
+    } else {
+      resetLoadedArtifact();
+      activeMeeting = null;
+      errorMessage = "";
+    }
   }
 
   function readStoredTheme(): ThemeMode | null {
@@ -159,6 +207,7 @@
 
   onMount(async () => {
     window.addEventListener("keydown", handleWindowKeydown);
+    window.addEventListener("popstate", handlePopState);
     const stored = readStoredTheme();
     if (stored !== null) {
       applyTheme(stored);
@@ -175,7 +224,7 @@
       viewportMedia.addEventListener("change", handleViewportChange);
     }
     pendingSeekMs = parseTimeHash(window.location.hash);
-    const meetingId = new URL(window.location.href).searchParams.get("meeting");
+    const initialMeetingId = new URL(window.location.href).searchParams.get("meeting");
     const viewerConfig = window as typeof window & {
       __CASSINI_VIEWER_ARTIFACT_MODE__?: string;
     };
@@ -186,14 +235,23 @@
         if (catalog?.meetings.length) {
           catalogMeetings = catalog.meetings;
           void hydrateCatalogMeetingMetadata(catalog.meetings);
-          selectedMeetingId = meetingId ?? "";
+          const requested = initialMeetingId
+            ? catalog.meetings.find((meeting) => meeting.id === initialMeetingId) ?? null
+            : null;
           const selected =
-            catalog.meetings.find((meeting) => meeting.id === meetingId) ??
-            (catalog.meetings.length === 1 ? catalog.meetings[0] : null);
+            requested ??
+            (initialMeetingId === null && catalog.meetings.length === 1
+              ? catalog.meetings[0]
+              : null);
           if (selected) {
-            await loadCatalogMeeting(selected);
-          } else if (meetingId) {
-            errorMessage = `Meeting not found in catalog: ${meetingId}`;
+            const loaded = await loadMeetingArtifact(selected);
+            if (loaded) {
+              seedListHistoryEntry(loaded.id);
+            }
+          } else if (initialMeetingId) {
+            selectedMeetingId = initialMeetingId;
+            errorMessage = `Meeting not found in catalog: ${initialMeetingId}`;
+            seedListHistoryEntry(initialMeetingId);
           }
           loading = false;
           return;
@@ -212,6 +270,7 @@
 
   onDestroy(() => {
     window.removeEventListener("keydown", handleWindowKeydown);
+    window.removeEventListener("popstate", handlePopState);
     prefersDarkMedia?.removeEventListener("change", handlePrefersColorSchemeChange);
     viewportMedia?.removeEventListener("change", handleViewportChange);
     stopPlaybackClock();
@@ -257,7 +316,9 @@
     selectedMeetingId = "";
   }
 
-  async function loadCatalogMeeting(meeting: MeetingCatalogEntry) {
+  async function loadMeetingArtifact(
+    meeting: MeetingCatalogEntry,
+  ): Promise<MeetingCatalogEntry | null> {
     loading = true;
     errorMessage = "";
     try {
@@ -275,16 +336,22 @@
       selectedMeetingId = enrichedMeeting.id;
       activeMeeting = enrichedMeeting;
       applyArtifact(artifact);
-      const url = new URL(window.location.href);
-      url.searchParams.set("meeting", enrichedMeeting.id);
-      window.history.replaceState({}, "", url);
+      return enrichedMeeting;
     } catch (error) {
       resetLoadedArtifact();
       activeMeeting = null;
       selectedMeetingId = "";
       errorMessage = error instanceof Error ? error.message : String(error);
+      return null;
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadCatalogMeeting(meeting: MeetingCatalogEntry) {
+    const loaded = await loadMeetingArtifact(meeting);
+    if (loaded) {
+      pushMeetingUrl(loaded.id);
     }
   }
 
@@ -710,7 +777,7 @@
         </div>
       {/if}
 
-      {#if errorMessage}
+      {#if errorMessage && !selectedMeetingId}
         <section class="alert alert-warning items-start">
           <div>
             <h2 class="text-xs font-bold uppercase tracking-widest mb-1">Load note</h2>
@@ -746,6 +813,16 @@
         </button>
       {/if}
 
+      {#if selectedMeetingId && !transcriptIndex && errorMessage}
+        <div class="grid place-items-center flex-1 p-4">
+          <div class="card bg-base-100 shadow-sm max-w-md">
+            <div class="card-body items-center text-center">
+              <h2 class="text-xl font-bold">Meeting not found</h2>
+              <p class="text-base-content/70 mt-2">{errorMessage}</p>
+            </div>
+          </div>
+        </div>
+      {:else}
       <header
         class="card bg-base-100 shadow flex flex-row flex-wrap items-start justify-between gap-x-6 gap-y-4 p-4 sm:p-5 m-4 mb-0"
       >
@@ -1106,6 +1183,7 @@
           </div>
         </div>
       </footer>
+      {/if}
     </section>
   {/if}
 </div>
