@@ -70,6 +70,44 @@
   let catalogHydrationGeneration = 0;
   const CONTINUATION_GAP_MS = 60_000;
 
+  type ThemeMode = "light" | "dark";
+  const THEME_STORAGE_KEY = "cassini-theme";
+  let themeMode: ThemeMode = "light";
+  let prefersDarkMedia: MediaQueryList | null = null;
+
+  function readStoredTheme(): ThemeMode | null {
+    try {
+      const value = localStorage.getItem(THEME_STORAGE_KEY);
+      return value === "light" || value === "dark" ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function applyTheme(mode: ThemeMode) {
+    themeMode = mode;
+    document.documentElement.setAttribute("data-theme", mode);
+  }
+
+  function setTheme(mode: ThemeMode) {
+    applyTheme(mode);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, mode);
+    } catch {
+      // localStorage unavailable; in-memory state still applies
+    }
+  }
+
+  function toggleTheme() {
+    setTheme(themeMode === "dark" ? "light" : "dark");
+  }
+
+  function handlePrefersColorSchemeChange(event: MediaQueryListEvent) {
+    if (readStoredTheme() === null) {
+      applyTheme(event.matches ? "dark" : "light");
+    }
+  }
+
   $: speakers = transcriptIndex?.transcript.speakers ?? [];
   $: displaySegments = transcriptIndex
     ? buildDisplaySegments(transcriptIndex, readableTranscript, displayTranscript)
@@ -108,6 +146,16 @@
 
   onMount(async () => {
     window.addEventListener("keydown", handleWindowKeydown);
+    const stored = readStoredTheme();
+    if (stored !== null) {
+      applyTheme(stored);
+    } else if (typeof window.matchMedia === "function") {
+      prefersDarkMedia = window.matchMedia("(prefers-color-scheme: dark)");
+      applyTheme(prefersDarkMedia.matches ? "dark" : "light");
+      prefersDarkMedia.addEventListener("change", handlePrefersColorSchemeChange);
+    } else {
+      applyTheme("light");
+    }
     pendingSeekMs = parseTimeHash(window.location.hash);
     const meetingId = new URL(window.location.href).searchParams.get("meeting");
     const viewerConfig = window as typeof window & {
@@ -146,6 +194,7 @@
 
   onDestroy(() => {
     window.removeEventListener("keydown", handleWindowKeydown);
+    prefersDarkMedia?.removeEventListener("change", handlePrefersColorSchemeChange);
     stopPlaybackClock();
   });
 
@@ -679,6 +728,15 @@
           <p>{errorMessage}</p>
         </section>
       {/if}
+
+      <button
+        class="btn btn-ghost btn-sm"
+        on:click={toggleTheme}
+        aria-label="Toggle light or dark theme"
+        type="button"
+      >
+        {themeMode === "dark" ? "☀ Light" : "🌙 Dark"}
+      </button>
     </aside>
 
     <main class="panel transcript-panel">
