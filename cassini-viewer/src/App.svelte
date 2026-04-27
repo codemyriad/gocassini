@@ -1039,11 +1039,7 @@
     gap: 1rem;
   }
 
-  .player-actions button,
-  .speaker-tag,
-  .time-chip,
-  .token-button,
-  .word {
+  .player-actions button {
     border: 1px solid rgba(93, 82, 66, 0.16);
     border-radius: 0.8rem;
     background: rgba(255, 255, 255, 0.92);
@@ -1054,11 +1050,7 @@
       background 120ms ease;
   }
 
-  .player-actions button:hover,
-  .speaker-tag:hover,
-  .time-chip:hover,
-  .token-button:hover,
-  .word:hover {
+  .player-actions button:hover {
     transform: translateY(-1px);
     border-color: rgba(130, 96, 42, 0.4);
   }
@@ -1127,49 +1119,6 @@
 
   .switch-track.checked .switch-thumb {
     transform: translateX(1.14rem);
-  }
-
-  .muted {
-    margin: 0;
-    color: #665d51;
-    line-height: 1.5;
-    font-size: 0.93rem;
-  }
-
-  .transcript-panel {
-    display: grid;
-    gap: 0.9rem;
-    align-content: start;
-    padding: 1.1rem 1.2rem 1.2rem;
-  }
-
-  .transcript-header {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    align-items: flex-start;
-    padding-bottom: 0.4rem;
-    border-bottom: 1px solid rgba(84, 78, 55, 0.1);
-  }
-
-  .transcript-summary {
-    margin: 0;
-    color: #665d51;
-    line-height: 1.5;
-    font-size: 0.98rem;
-  }
-
-  .lock-pill {
-    padding: 0.45rem 0.72rem;
-    border-radius: 999px;
-    background: rgba(201, 170, 113, 0.24);
-    color: #6c5128;
-    font-size: 0.9rem;
-  }
-
-  .transcript-list {
-    display: grid;
-    gap: 0.6rem;
   }
 
   .meeting-footer {
@@ -1278,150 +1227,6 @@
     line-height: 1.55;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-  }
-
-  .segment {
-    padding: 0.95rem 1.05rem 1rem;
-    border-radius: 1rem;
-    border: 1px solid rgba(84, 78, 55, 0.12);
-    background: rgba(255, 255, 255, 0.7);
-    box-shadow: 0 4px 12px rgba(87, 72, 40, 0.04);
-  }
-
-  .segment.active {
-    border-color: rgba(180, 112, 58, 0.42);
-    background:
-      linear-gradient(90deg, rgba(220, 188, 136, 0.18), transparent 32%),
-      rgba(255, 255, 255, 0.92);
-    box-shadow: 0 8px 18px rgba(155, 115, 62, 0.08);
-  }
-
-  .segment.continuation-segment {
-    padding-top: 0.72rem;
-  }
-
-  .segment-meta {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.65rem;
-    margin-bottom: 0.45rem;
-  }
-
-  .continuation-segment .segment-meta {
-    justify-content: flex-end;
-  }
-
-  .speaker-tag,
-  .time-chip {
-    display: inline-flex;
-    align-items: center;
-    min-height: 2rem;
-    padding: 0.42rem 0.7rem;
-    border-radius: 999px;
-    font: inherit;
-    line-height: 1;
-  }
-
-  .speaker-tag {
-    font-size: 0.84rem;
-    font-weight: 700;
-    background: rgba(243, 236, 227, 0.96);
-  }
-
-  .time-chip {
-    font-size: 0.83rem;
-    font-weight: 600;
-    color: #5b5347;
-  }
-
-  .segment-text {
-    width: 100%;
-    padding: 0;
-    border: none;
-    background: none;
-    text-align: left;
-    color: #2f2d27;
-    font: inherit;
-    font-size: 1.06rem;
-    line-height: 1.72;
-  }
-
-  .segment-text:hover {
-    transform: none;
-    border-color: transparent;
-    background: none;
-  }
-
-  .segment-text:focus-visible {
-    outline: 2px solid rgba(180, 112, 58, 0.38);
-    outline-offset: 4px;
-    border-radius: 0.4rem;
-  }
-
-  .token-flow {
-    display: block;
-  }
-
-  .token-button,
-  .token-text {
-    display: inline;
-    padding: 0;
-    border: none;
-    background: none;
-    border-radius: 0.4rem;
-    font: inherit;
-    font-size: 1.06rem;
-    line-height: 1.72;
-    white-space: pre-wrap;
-    color: #2f2d27;
-  }
-
-  .token-button {
-    cursor: pointer;
-  }
-
-  .token-button:hover {
-    background: rgba(236, 208, 171, 0.3);
-  }
-
-  .token-button.active-token {
-    background: rgba(236, 208, 171, 0.88);
-    box-shadow: inset 0 0 0 1px rgba(186, 96, 44, 0.34);
-    font-weight: 700;
-    text-decoration: underline;
-    text-underline-offset: 0.16em;
-  }
-
-  .token-button.interpolated-token {
-    border-bottom: 1px dashed rgba(186, 96, 44, 0.45);
-  }
-
-  .token-text.untimed-word {
-    color: #544c40;
-  }
-
-  .word-row {
-    display: block;
-    margin-top: 0.8rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid rgba(84, 78, 55, 0.1);
-    line-height: 1.72;
-  }
-
-  .word {
-    padding: 0.1rem 0.18rem;
-    line-height: inherit;
-    font-size: 0.92rem;
-    white-space: pre-wrap;
-  }
-
-  .word.active-word {
-    border-color: rgba(186, 96, 44, 0.5);
-    background: rgba(236, 208, 171, 0.88);
-    font-weight: 700;
-    text-decoration: underline;
-    text-underline-offset: 0.18em;
   }
 
   .player-dock {
@@ -1589,21 +1394,9 @@
       grid-template-columns: 1fr;
     }
 
-    .transcript-panel {
-      padding: 1rem;
-    }
-
     .meeting-footer-header,
     .metadata-grid {
       grid-template-columns: 1fr;
-    }
-
-    .segment {
-      padding: 0.85rem 0.9rem 0.92rem;
-    }
-
-    .segment-text {
-      font-size: 1rem;
     }
 
     .player-card {
