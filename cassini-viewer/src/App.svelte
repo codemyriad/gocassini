@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
+  import { fly } from "svelte/transition";
+  import { cubicInOut } from "svelte/easing";
   import {
     formatClockTime,
     parseTimeHash,
@@ -79,8 +81,33 @@
   let isDesktop = false;
   let viewportMedia: MediaQueryList | null = null;
 
-  function handleViewportChange(event: MediaQueryListEvent) {
+  let viewportChanging = false;
+
+  async function handleViewportChange(event: MediaQueryListEvent) {
+    viewportChanging = true;
     isDesktop = event.matches;
+    await tick();
+    viewportChanging = false;
+  }
+
+  let prefersReducedMotion = false;
+  let reducedMotionMedia: MediaQueryList | null = null;
+  let mountComplete = false;
+
+  function handleReducedMotionChange(event: MediaQueryListEvent) {
+    prefersReducedMotion = event.matches;
+  }
+
+  function regionFlyConfig(direction: -1 | 1) {
+    if (prefersReducedMotion || isDesktop || !mountComplete || viewportChanging) {
+      return { duration: 0 };
+    }
+    return {
+      x: direction * window.innerWidth,
+      duration: 600,
+      easing: cubicInOut,
+      opacity: 1,
+    };
   }
 
   function handleBackToList() {
@@ -222,6 +249,9 @@
       viewportMedia = window.matchMedia(DESKTOP_MEDIA_QUERY);
       isDesktop = viewportMedia.matches;
       viewportMedia.addEventListener("change", handleViewportChange);
+      reducedMotionMedia = window.matchMedia("(prefers-reduced-motion: reduce)");
+      prefersReducedMotion = reducedMotionMedia.matches;
+      reducedMotionMedia.addEventListener("change", handleReducedMotionChange);
     }
     pendingSeekMs = parseTimeHash(window.location.hash);
     const initialMeetingId = new URL(window.location.href).searchParams.get("meeting");
@@ -265,6 +295,7 @@
       errorMessage = error instanceof Error ? error.message : String(error);
     } finally {
       loading = false;
+      mountComplete = true;
     }
   });
 
@@ -273,6 +304,7 @@
     window.removeEventListener("popstate", handlePopState);
     prefersDarkMedia?.removeEventListener("change", handlePrefersColorSchemeChange);
     viewportMedia?.removeEventListener("change", handleViewportChange);
+    reducedMotionMedia?.removeEventListener("change", handleReducedMotionChange);
     stopPlaybackClock();
   });
 
@@ -747,11 +779,12 @@
   />
 </svelte:head>
 
-<div class="grid grid-cols-1 md:grid-cols-[340px_1fr] min-h-screen bg-base-200">
+<div class="grid grid-cols-1 md:grid-cols-[340px_1fr] min-h-screen bg-base-200 overflow-x-clip">
   {#if isDesktop || !selectedMeetingId}
     <section
       aria-label="Meeting list"
-      class="meeting-list flex flex-col gap-3 p-4 md:h-screen md:overflow-y-auto md:sticky md:top-0 md:border-r md:border-base-300"
+      class="meeting-list flex flex-col gap-3 p-4 row-start-1 col-start-1 h-screen overflow-y-auto md:sticky md:top-0 md:border-r md:border-base-300"
+      transition:fly={regionFlyConfig(-1)}
     >
       <h2 class="text-xs font-bold uppercase tracking-widest text-base-content/60 px-1 mt-1">
         Meetings
@@ -800,7 +833,8 @@
   {#if isDesktop || selectedMeetingId}
     <section
       aria-label="Meeting view"
-      class="meeting-viewer flex flex-col md:h-screen md:overflow-y-auto"
+      class="meeting-viewer flex flex-col row-start-1 col-start-1 md:col-start-2 h-screen overflow-y-auto"
+      transition:fly={regionFlyConfig(1)}
     >
       {#if !isDesktop}
         <button
@@ -813,12 +847,20 @@
         </button>
       {/if}
 
-      {#if selectedMeetingId && !transcriptIndex && errorMessage}
+      {#if !transcriptIndex && selectedMeetingId && errorMessage}
         <div class="grid place-items-center flex-1 p-4">
           <div class="card bg-base-100 shadow-sm max-w-md">
             <div class="card-body items-center text-center">
               <h2 class="text-xl font-bold">Meeting not found</h2>
               <p class="text-base-content/70 mt-2">{errorMessage}</p>
+            </div>
+          </div>
+        </div>
+      {:else if !transcriptIndex}
+        <div class="grid place-items-center flex-1 p-4">
+          <div class="card bg-base-100 shadow-sm max-w-md">
+            <div class="card-body items-center text-center">
+              <p class="text-base-content/60">Select a meeting to view</p>
             </div>
           </div>
         </div>
@@ -829,13 +871,9 @@
         <div class="min-w-0">
           <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Cassini Viewer</p>
           <h1 class="text-3xl sm:text-4xl font-bold leading-tight max-w-[26ch]">
-            {#if activeMeeting}
-              {activeMeeting.title}, {activeMeeting.dateLabel}
-            {:else if catalogMeetings.length > 0}
-              Cassini meeting library
-            {:else}
-              Meeting transcript viewer
-            {/if}
+            {activeMeeting
+              ? `${activeMeeting.title}, ${activeMeeting.dateLabel}`
+              : "Meeting transcript viewer"}
           </h1>
           <p class="text-base-content/70 mt-2">{mastheadSummary}</p>
         </div>
@@ -855,13 +893,9 @@
             </span>
           {/if}
           <span class="badge badge-outline badge-lg">
-            {#if transcriptIndex}
-              {formatClockTime(currentTimeMs)} / {formatClockTime(durationMs)}
-            {:else if catalogMeetings.length > 0}
-              Choose a meeting
-            {:else}
-              Waiting for artifact
-            {/if}
+            {transcriptIndex
+              ? `${formatClockTime(currentTimeMs)} / ${formatClockTime(durationMs)}`
+              : "Waiting for artifact"}
           </span>
         </div>
       </header>
@@ -880,13 +914,7 @@
         {#if loading}
           <p class="text-base-content/70 text-sm leading-normal">Loading transcript bootstrap...</p>
         {:else if visibleSegments.length === 0}
-          <p class="text-base-content/70 text-sm leading-normal">
-            {#if catalogMeetings.length > 0}
-              Select a meeting to load its audio and transcript.
-            {:else}
-              No transcript loaded yet.
-            {/if}
-          </p>
+          <p class="text-base-content/70 text-sm leading-normal">No transcript loaded yet.</p>
         {:else}
           <div
             bind:this={transcriptPane}
@@ -1059,13 +1087,7 @@
           <div class="grid gap-1 min-w-[11rem]">
             <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Player</p>
             <strong class="text-base-content text-[0.96rem]">
-              {#if activeMeeting}
-                {activeMeeting.title}
-              {:else if catalogMeetings.length > 0}
-                Meeting library
-              {:else}
-                Manual artifact
-              {/if}
+              {activeMeeting ? activeMeeting.title : "Manual artifact"}
             </strong>
             <p class="m-0 text-base-content/70 text-sm leading-snug">Space toggles play and pause.</p>
           </div>
@@ -1132,14 +1154,6 @@
                 </div>
               </div>
             </div>
-          {:else}
-            <p class="text-base-content/70 text-sm leading-normal">
-              {#if catalogMeetings.length > 0}
-                Select a meeting to load its audio source.
-              {:else}
-                No audio source available for this artifact.
-              {/if}
-            </p>
           {/if}
 
           <div class="flex flex-wrap justify-end gap-2 max-[980px]:justify-start">
