@@ -75,6 +75,19 @@
   let themeMode: ThemeMode = "light";
   let prefersDarkMedia: MediaQueryList | null = null;
 
+  const DESKTOP_MEDIA_QUERY = "(min-width: 768px)";
+  let isDesktop = false;
+  let viewportMedia: MediaQueryList | null = null;
+
+  function handleViewportChange(event: MediaQueryListEvent) {
+    isDesktop = event.matches;
+  }
+
+  function handleBackToList() {
+    resetLoadedArtifact();
+    activeMeeting = null;
+  }
+
   function readStoredTheme(): ThemeMode | null {
     try {
       const value = localStorage.getItem(THEME_STORAGE_KEY);
@@ -156,6 +169,11 @@
     } else {
       applyTheme("light");
     }
+    if (typeof window.matchMedia === "function") {
+      viewportMedia = window.matchMedia(DESKTOP_MEDIA_QUERY);
+      isDesktop = viewportMedia.matches;
+      viewportMedia.addEventListener("change", handleViewportChange);
+    }
     pendingSeekMs = parseTimeHash(window.location.hash);
     const meetingId = new URL(window.location.href).searchParams.get("meeting");
     const viewerConfig = window as typeof window & {
@@ -195,6 +213,7 @@
   onDestroy(() => {
     window.removeEventListener("keydown", handleWindowKeydown);
     prefersDarkMedia?.removeEventListener("change", handlePrefersColorSchemeChange);
+    viewportMedia?.removeEventListener("change", handleViewportChange);
     stopPlaybackClock();
   });
 
@@ -661,79 +680,34 @@
   />
 </svelte:head>
 
-<div class="max-w-[1600px] mx-auto px-4 pb-40 max-[980px]:pb-48">
-  <header
-    class="card bg-base-100 shadow flex flex-row flex-wrap items-start justify-between gap-x-6 gap-y-4 p-4 sm:p-5 mb-4"
-  >
-    <div class="min-w-0">
-      <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Cassini Viewer</p>
-      <h1 class="text-3xl sm:text-4xl font-bold leading-tight max-w-[26ch]">
-        {#if activeMeeting}
-          {activeMeeting.title}, {activeMeeting.dateLabel}
-        {:else if catalogMeetings.length > 0}
-          Cassini meeting library
-        {:else}
-          Meeting transcript viewer
-        {/if}
-      </h1>
-      <p class="text-base-content/70 mt-2">{mastheadSummary}</p>
-    </div>
-    <div class="flex flex-wrap justify-end gap-2 min-w-[min(100%,23rem)]">
-      <span class="badge badge-outline badge-lg">
-        {formatArtifactMode()}
-      </span>
-      {#if transcriptIndex && timingPrecision}
-        <span
-          class:badge-warning={timingPrecision.level !== "word"}
-          class:badge-ghost={timingPrecision.level === "word"}
-          class:badge-outline={timingPrecision.level !== "word"}
-          class="badge badge-lg"
-          title={timingPrecision.detail}
-        >
-          {timingPrecision.label}
-        </span>
-      {/if}
-      <span class="badge badge-outline badge-lg">
-        {#if transcriptIndex}
-          {formatClockTime(currentTimeMs)} / {formatClockTime(durationMs)}
-        {:else if catalogMeetings.length > 0}
-          Choose a meeting
-        {:else}
-          Waiting for artifact
-        {/if}
-      </span>
-    </div>
-  </header>
-
-  <div
-    class="grid items-start gap-4 grid-cols-1 min-[980px]:grid-cols-[minmax(240px,290px)_minmax(0,1fr)]"
-  >
-    <aside
-      class="flex flex-col gap-3 content-start min-[980px]:sticky min-[980px]:top-4 min-[980px]:min-h-[calc(100vh-2rem)]"
+<div class="grid grid-cols-1 md:grid-cols-[340px_1fr] min-h-screen bg-base-200">
+  {#if isDesktop || !selectedMeetingId}
+    <section
+      aria-label="Meeting list"
+      class="meeting-list flex flex-col gap-3 p-4 md:h-screen md:overflow-y-auto md:sticky md:top-0 md:border-r md:border-base-300"
     >
+      <h2 class="text-xs font-bold uppercase tracking-widest text-base-content/60 px-1 mt-1">
+        Meetings
+      </h2>
+
       {#if catalogMeetings.length > 0}
-        <section class="card bg-base-100 shadow p-4">
-          <h2 class="text-xs font-bold uppercase tracking-widest text-base-content/60 mb-3">
-            Meetings
-          </h2>
-          <div class="grid gap-2.5">
-            {#each catalogMeetings as meeting}
-              <button
-                on:click={() => loadCatalogMeeting(meeting)}
-                type="button"
-                class="grid gap-1 w-full p-3 text-left rounded-2xl border bg-base-100 hover:border-primary/40 hover:-translate-y-px transition-[transform,border-color,background-color] {meeting.id ===
-                selectedMeetingId
-                  ? 'border-primary bg-primary/5'
-                  : 'border-base-300'}"
-              >
-                <span class="font-bold">{loadMeetingButtonLabel(meeting)}</span>
-                <span class="text-base-content/70 text-sm leading-snug">
-                  {formatMeetingMeta(meeting)}
-                </span>
-              </button>
-            {/each}
-          </div>
-        </section>
+        <div class="grid gap-2.5">
+          {#each catalogMeetings as meeting}
+            <button
+              on:click={() => loadCatalogMeeting(meeting)}
+              type="button"
+              class="grid gap-1 w-full p-3 text-left rounded-2xl border bg-base-100 hover:border-primary/40 hover:-translate-y-px transition-[transform,border-color,background-color] {meeting.id ===
+              selectedMeetingId
+                ? 'border-primary bg-primary/5'
+                : 'border-base-300'}"
+            >
+              <span class="font-bold">{loadMeetingButtonLabel(meeting)}</span>
+              <span class="text-base-content/70 text-sm leading-snug">
+                {formatMeetingMeta(meeting)}
+              </span>
+            </button>
+          {/each}
+        </div>
       {/if}
 
       {#if errorMessage}
@@ -753,325 +727,386 @@
       >
         {themeMode === "dark" ? "☀ Light" : "🌙 Dark"}
       </button>
-    </aside>
+    </section>
+  {/if}
 
-    <main class="card bg-base-100 shadow flex flex-col gap-3.5 p-4 sm:p-5">
-      <div class="flex justify-between items-start gap-4 pb-1.5 border-b border-base-300">
-        <div>
-          <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Transcript</p>
-          <p class="text-base-content/70 leading-normal">{describeTranscriptInteraction()}</p>
-        </div>
-        {#if manualScrollLock}
-          <span class="badge badge-neutral">Auto-scroll paused</span>
-        {/if}
-      </div>
-
-      {#if loading}
-        <p class="text-base-content/70 text-sm leading-normal">Loading transcript bootstrap...</p>
-      {:else if visibleSegments.length === 0}
-        <p class="text-base-content/70 text-sm leading-normal">
-          {#if catalogMeetings.length > 0}
-            Select a meeting to load its audio and transcript.
-          {:else}
-            No transcript loaded yet.
-          {/if}
-        </p>
-      {:else}
-        <div
-          bind:this={transcriptPane}
-          aria-label="Transcript"
-          class="grid gap-2.5"
-          on:touchmove={() => (manualScrollLock = true)}
-          on:wheel={() => (manualScrollLock = true)}
-          role="log"
+  {#if isDesktop || selectedMeetingId}
+    <section
+      aria-label="Meeting view"
+      class="meeting-viewer flex flex-col md:h-screen md:overflow-y-auto"
+    >
+      {#if !isDesktop}
+        <button
+          on:click={handleBackToList}
+          class="md:hidden sticky top-0 z-30 btn btn-ghost btn-sm self-start m-3 bg-base-100/90 backdrop-blur shadow-sm"
+          type="button"
+          aria-label="Back to meeting list"
         >
-          {#each visibleSegments as segment, segmentIndex}
-            <article
-              aria-current={segment.id === activeSegment?.id ? "true" : undefined}
-              class="p-4 rounded-2xl border shadow-sm transition-shadow {segment.id ===
-              activeSegment?.id
-                ? 'border-warning bg-warning/10 shadow-md'
-                : 'border-base-300 bg-base-100'} {isSpeakerContinuation(
-                visibleSegments,
-                segmentIndex,
-              )
-                ? 'pt-3'
-                : ''}"
-              id={segmentDomId(segment.id)}
+          ← Meetings
+        </button>
+      {/if}
+
+      <header
+        class="card bg-base-100 shadow flex flex-row flex-wrap items-start justify-between gap-x-6 gap-y-4 p-4 sm:p-5 m-4 mb-0"
+      >
+        <div class="min-w-0">
+          <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Cassini Viewer</p>
+          <h1 class="text-3xl sm:text-4xl font-bold leading-tight max-w-[26ch]">
+            {#if activeMeeting}
+              {activeMeeting.title}, {activeMeeting.dateLabel}
+            {:else if catalogMeetings.length > 0}
+              Cassini meeting library
+            {:else}
+              Meeting transcript viewer
+            {/if}
+          </h1>
+          <p class="text-base-content/70 mt-2">{mastheadSummary}</p>
+        </div>
+        <div class="flex flex-wrap justify-end gap-2 min-w-[min(100%,23rem)]">
+          <span class="badge badge-outline badge-lg">
+            {formatArtifactMode()}
+          </span>
+          {#if transcriptIndex && timingPrecision}
+            <span
+              class:badge-warning={timingPrecision.level !== "word"}
+              class:badge-ghost={timingPrecision.level === "word"}
+              class:badge-outline={timingPrecision.level !== "word"}
+              class="badge badge-lg"
+              title={timingPrecision.detail}
             >
-              <div
-                class="flex items-center gap-2.5 mb-1.5 {isSpeakerContinuation(
+              {timingPrecision.label}
+            </span>
+          {/if}
+          <span class="badge badge-outline badge-lg">
+            {#if transcriptIndex}
+              {formatClockTime(currentTimeMs)} / {formatClockTime(durationMs)}
+            {:else if catalogMeetings.length > 0}
+              Choose a meeting
+            {:else}
+              Waiting for artifact
+            {/if}
+          </span>
+        </div>
+      </header>
+
+      <main class="card bg-base-100 shadow flex flex-col gap-3.5 p-4 sm:p-5 m-4">
+        <div class="flex justify-between items-start gap-4 pb-1.5 border-b border-base-300">
+          <div>
+            <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Transcript</p>
+            <p class="text-base-content/70 leading-normal">{describeTranscriptInteraction()}</p>
+          </div>
+          {#if manualScrollLock}
+            <span class="badge badge-neutral">Auto-scroll paused</span>
+          {/if}
+        </div>
+
+        {#if loading}
+          <p class="text-base-content/70 text-sm leading-normal">Loading transcript bootstrap...</p>
+        {:else if visibleSegments.length === 0}
+          <p class="text-base-content/70 text-sm leading-normal">
+            {#if catalogMeetings.length > 0}
+              Select a meeting to load its audio and transcript.
+            {:else}
+              No transcript loaded yet.
+            {/if}
+          </p>
+        {:else}
+          <div
+            bind:this={transcriptPane}
+            aria-label="Transcript"
+            class="grid gap-2.5"
+            on:touchmove={() => (manualScrollLock = true)}
+            on:wheel={() => (manualScrollLock = true)}
+            role="log"
+          >
+            {#each visibleSegments as segment, segmentIndex}
+              <article
+                aria-current={segment.id === activeSegment?.id ? "true" : undefined}
+                class="p-4 rounded-2xl border shadow-sm transition-shadow {segment.id ===
+                activeSegment?.id
+                  ? 'border-warning bg-warning/10 shadow-md'
+                  : 'border-base-300 bg-base-100'} {isSpeakerContinuation(
                   visibleSegments,
                   segmentIndex,
                 )
-                  ? 'justify-end'
-                  : 'justify-between'}"
+                  ? 'pt-3'
+                  : ''}"
+                id={segmentDomId(segment.id)}
               >
-                {#if !isSpeakerContinuation(visibleSegments, segmentIndex)}
-                  <span class="badge badge-lg font-bold">{segment.speakerLabel}</span>
-                {/if}
-                <button
-                  class="btn btn-ghost btn-sm rounded-full font-semibold text-base-content/70"
-                  on:click={() => seekTo(segment.startMs)}
-                  type="button"
+                <div
+                  class="flex items-center gap-2.5 mb-1.5 {isSpeakerContinuation(
+                    visibleSegments,
+                    segmentIndex,
+                  )
+                    ? 'justify-end'
+                    : 'justify-between'}"
                 >
-                  {formatClockTime(segment.startMs)}
-                </button>
-              </div>
-
-              {#if segment.tokens.length > 0 && hasTimedTokens(segment)}
-                <div class="text-[1.06rem] leading-[1.72]">
-                  {#each segment.tokens as token}{#if token.startMs !== undefined && token.endMs !== undefined}<button
-                        class="inline p-0 border-0 bg-transparent rounded text-[1.06rem] leading-[1.72] whitespace-pre-wrap cursor-pointer hover:bg-warning/20 {segment.id ===
-                          activeSegment?.id && token === activeToken
-                          ? 'bg-warning/40 ring-1 ring-warning font-bold underline underline-offset-2'
-                          : ''} {token.alignment === 'interpolated'
-                          ? 'border-b border-dashed border-warning/60'
-                          : ''}"
-                        on:click={() => seekTo(token.startMs ?? segment.startMs)}
-                        type="button"
-                      >{token.spaceBefore ? ` ${token.text}` : token.text}</button>{:else}<span
-                        class="inline rounded text-[1.06rem] leading-[1.72] whitespace-pre-wrap {token.kind ===
-                        'word'
-                          ? 'text-base-content/70'
-                          : 'text-base-content'}"
-                      >{token.spaceBefore ? ` ${token.text}` : token.text}</span>{/if}{/each}
-                </div>
-              {:else}
-                <button
-                  class="block w-full p-0 border-0 bg-transparent text-left text-base-content text-[1.06rem] leading-[1.72] focus-visible:outline-2 focus-visible:outline-warning/60 focus-visible:outline-offset-4 focus-visible:rounded"
-                  on:click={() => seekTo(segment.startMs)}
-                  type="button"
-                >
-                  {segment.text}
-                </button>
-              {/if}
-
-              {#if !hasPrecomputedDisplay && showExactWords && segment.words.length > 0}
-                <div class="block mt-3 pt-3 border-t border-base-300 leading-[1.72]">
-                  {#each segment.words as word, wordIndex}<button
-                      class="inline-block px-1 py-0.5 rounded text-[0.92rem] border hover:border-warning/60 hover:bg-warning/10 hover:-translate-y-px transition whitespace-pre-wrap {segment.id ===
-                        activeSegment?.id && word.id === activeWord?.id
-                        ? 'border-warning bg-warning/40 font-bold underline underline-offset-2'
-                        : 'border-base-300 bg-base-100'}"
-                      on:click={() => seekTo(word.startMs)}
-                      type="button"
-                    >{wordIndex > 0 ? ` ${word.text}` : word.text}</button>{/each}
-                </div>
-              {/if}
-            </article>
-          {/each}
-        </div>
-
-        {#if transcriptIndex && (timingPrecision || artifactMetadata)}
-          <section class="grid gap-3 pt-1 border-t border-base-300">
-            <div
-              class="flex justify-between items-start gap-3 max-[980px]:grid max-[980px]:grid-cols-1"
-            >
-              <div>
-                <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">
-                  Meeting metadata
-                </p>
-                <p class="text-base-content/70 leading-normal text-sm max-w-[72ch]">
-                  {timingPrecision?.detail ??
-                    "Artifact metadata is shown as provided, so older files can remain usable with reduced timing precision."}
-                </p>
-              </div>
-              {#if timingPrecision}
-                <span
-                  class:badge-warning={timingPrecision.level !== "word"}
-                  class:badge-ghost={timingPrecision.level === "word"}
-                  class:badge-outline={timingPrecision.level !== "word"}
-                  class="badge badge-lg"
-                  title={timingPrecision.detail}
-                >
-                  {timingPrecision.label}
-                </span>
-              {/if}
-            </div>
-
-            {#if artifactMetadata}
-              <div class="grid gap-2.5">
-                {#each metadataSections as section}
-                  <details
-                    class="collapse collapse-arrow bg-base-200"
-                    open={metadataSectionStartsOpen(section.title)}
+                  {#if !isSpeakerContinuation(visibleSegments, segmentIndex)}
+                    <span class="badge badge-lg font-bold">{segment.speakerLabel}</span>
+                  {/if}
+                  <button
+                    class="btn btn-ghost btn-sm rounded-full font-semibold text-base-content/70"
+                    on:click={() => seekTo(segment.startMs)}
+                    type="button"
                   >
-                    <summary class="collapse-title text-sm font-bold">{section.title}</summary>
+                    {formatClockTime(segment.startMs)}
+                  </button>
+                </div>
+
+                {#if segment.tokens.length > 0 && hasTimedTokens(segment)}
+                  <div class="text-[1.06rem] leading-[1.72]">
+                    {#each segment.tokens as token}{#if token.startMs !== undefined && token.endMs !== undefined}<button
+                          class="inline p-0 border-0 bg-transparent rounded text-[1.06rem] leading-[1.72] whitespace-pre-wrap cursor-pointer hover:bg-warning/20 {segment.id ===
+                            activeSegment?.id && token === activeToken
+                            ? 'bg-warning/40 ring-1 ring-warning font-bold underline underline-offset-2'
+                            : ''} {token.alignment === 'interpolated'
+                            ? 'border-b border-dashed border-warning/60'
+                            : ''}"
+                          on:click={() => seekTo(token.startMs ?? segment.startMs)}
+                          type="button"
+                        >{token.spaceBefore ? ` ${token.text}` : token.text}</button>{:else}<span
+                          class="inline rounded text-[1.06rem] leading-[1.72] whitespace-pre-wrap {token.kind ===
+                          'word'
+                            ? 'text-base-content/70'
+                            : 'text-base-content'}"
+                        >{token.spaceBefore ? ` ${token.text}` : token.text}</span>{/if}{/each}
+                  </div>
+                {:else}
+                  <button
+                    class="block w-full p-0 border-0 bg-transparent text-left text-base-content text-[1.06rem] leading-[1.72] focus-visible:outline-2 focus-visible:outline-warning/60 focus-visible:outline-offset-4 focus-visible:rounded"
+                    on:click={() => seekTo(segment.startMs)}
+                    type="button"
+                  >
+                    {segment.text}
+                  </button>
+                {/if}
+
+                {#if !hasPrecomputedDisplay && showExactWords && segment.words.length > 0}
+                  <div class="block mt-3 pt-3 border-t border-base-300 leading-[1.72]">
+                    {#each segment.words as word, wordIndex}<button
+                        class="inline-block px-1 py-0.5 rounded text-[0.92rem] border hover:border-warning/60 hover:bg-warning/10 hover:-translate-y-px transition whitespace-pre-wrap {segment.id ===
+                          activeSegment?.id && word.id === activeWord?.id
+                          ? 'border-warning bg-warning/40 font-bold underline underline-offset-2'
+                          : 'border-base-300 bg-base-100'}"
+                        on:click={() => seekTo(word.startMs)}
+                        type="button"
+                      >{wordIndex > 0 ? ` ${word.text}` : word.text}</button>{/each}
+                  </div>
+                {/if}
+              </article>
+            {/each}
+          </div>
+
+          {#if transcriptIndex && (timingPrecision || artifactMetadata)}
+            <section class="grid gap-3 pt-1 border-t border-base-300">
+              <div
+                class="flex justify-between items-start gap-3 max-[980px]:grid max-[980px]:grid-cols-1"
+              >
+                <div>
+                  <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">
+                    Meeting metadata
+                  </p>
+                  <p class="text-base-content/70 leading-normal text-sm max-w-[72ch]">
+                    {timingPrecision?.detail ??
+                      "Artifact metadata is shown as provided, so older files can remain usable with reduced timing precision."}
+                  </p>
+                </div>
+                {#if timingPrecision}
+                  <span
+                    class:badge-warning={timingPrecision.level !== "word"}
+                    class:badge-ghost={timingPrecision.level === "word"}
+                    class:badge-outline={timingPrecision.level !== "word"}
+                    class="badge badge-lg"
+                    title={timingPrecision.detail}
+                  >
+                    {timingPrecision.label}
+                  </span>
+                {/if}
+              </div>
+
+              {#if artifactMetadata}
+                <div class="grid gap-2.5">
+                  {#each metadataSections as section}
+                    <details
+                      class="collapse collapse-arrow bg-base-200"
+                      open={metadataSectionStartsOpen(section.title)}
+                    >
+                      <summary class="collapse-title text-sm font-bold">{section.title}</summary>
+                      <div class="collapse-content">
+                        <dl
+                          class="grid grid-cols-[minmax(10rem,16rem)_minmax(0,1fr)] gap-y-2 gap-x-3.5 m-0 max-[980px]:grid-cols-1"
+                        >
+                          {#each section.rows as row (metadataRowKey(section.title, row))}
+                            <dt class="m-0 text-base-content/70 text-sm leading-snug">
+                              {formatMetadataLabel(row.label)}
+                            </dt>
+                            <dd class="m-0 text-base-content text-sm leading-normal break-words">
+                              {#if row.values && row.values.length > 0}
+                                <div class="flex flex-wrap gap-1.5">
+                                  {#each row.values as value}
+                                    <span class="badge badge-outline">{value}</span>
+                                  {/each}
+                                </div>
+                              {:else if row.tone === "code"}
+                                <code
+                                  class="inline-block px-1.5 py-0.5 rounded bg-base-300 text-base-content text-xs font-mono"
+                                  >{row.value}</code
+                                >
+                              {:else}
+                                {row.value}
+                              {/if}
+                            </dd>
+                          {/each}
+                        </dl>
+                      </div>
+                    </details>
+                  {/each}
+                  <details class="collapse collapse-arrow bg-base-200">
+                    <summary class="collapse-title text-sm font-bold">Raw JSON</summary>
                     <div class="collapse-content">
-                      <dl
-                        class="grid grid-cols-[minmax(10rem,16rem)_minmax(0,1fr)] gap-y-2 gap-x-3.5 m-0 max-[980px]:grid-cols-1"
-                      >
-                        {#each section.rows as row (metadataRowKey(section.title, row))}
-                          <dt class="m-0 text-base-content/70 text-sm leading-snug">
-                            {formatMetadataLabel(row.label)}
-                          </dt>
-                          <dd class="m-0 text-base-content text-sm leading-normal break-words">
-                            {#if row.values && row.values.length > 0}
-                              <div class="flex flex-wrap gap-1.5">
-                                {#each row.values as value}
-                                  <span class="badge badge-outline">{value}</span>
-                                {/each}
-                              </div>
-                            {:else if row.tone === "code"}
-                              <code
-                                class="inline-block px-1.5 py-0.5 rounded bg-base-300 text-base-content text-xs font-mono"
-                                >{row.value}</code
-                              >
-                            {:else}
-                              {row.value}
-                            {/if}
-                          </dd>
-                        {/each}
-                      </dl>
+                      <pre
+                        class="m-0 text-base-content text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">{artifactMetadata.rawJson}</pre>
                     </div>
                   </details>
-                {/each}
-                <details class="collapse collapse-arrow bg-base-200">
-                  <summary class="collapse-title text-sm font-bold">Raw JSON</summary>
-                  <div class="collapse-content">
-                    <pre
-                      class="m-0 text-base-content text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">{artifactMetadata.rawJson}</pre>
-                  </div>
-                </details>
-              </div>
-            {/if}
-          </section>
-        {/if}
-      {/if}
-    </main>
-  </div>
-
-  <footer
-    class="fixed inset-x-0 bottom-0 z-30 px-4 pt-4 pb-4 bg-gradient-to-b from-base-200/0 via-base-200/80 to-base-200 pointer-events-none"
-  >
-    <div
-      class="card bg-base-100 shadow max-w-[1600px] mx-auto px-4 py-3 grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3.5 items-center pointer-events-auto max-[980px]:grid-cols-1 max-[980px]:gap-3"
-    >
-      <div class="grid gap-1 min-w-[11rem]">
-        <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Player</p>
-        <strong class="text-base-content text-[0.96rem]">
-          {#if activeMeeting}
-            {activeMeeting.title}
-          {:else if catalogMeetings.length > 0}
-            Meeting library
-          {:else}
-            Manual artifact
+                </div>
+              {/if}
+            </section>
           {/if}
-        </strong>
-        <p class="m-0 text-base-content/70 text-sm leading-snug">Space toggles play and pause.</p>
-      </div>
+        {/if}
+      </main>
 
-      {#if audioSrc}
-        <div class="grid gap-2.5 min-w-0">
-          <audio
-            bind:this={audioEl}
-            class="sr-only"
-            preload="metadata"
-            src={audioSrc}
-            on:durationchange={handleDurationChange}
-            on:ended={handlePause}
-            on:loadedmetadata={handleLoadedMetadata}
-            on:pause={handlePause}
-            on:play={handlePlay}
-            on:timeupdate={handleTimeUpdate}
-          >
-            {#if captionsSrc}
-              <track kind="captions" src={captionsSrc} label="Captions" default />
-            {/if}
-            {#if chaptersSrc}
-              <track kind="chapters" src={chaptersSrc} label="Chapters" />
-            {/if}
-          </audio>
+      <footer class="sticky bottom-0 z-20 mt-auto px-4 pb-4 pt-2 bg-base-200/95 backdrop-blur">
+        <div
+          class="card bg-base-100 shadow px-4 py-3 grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3.5 items-center max-[980px]:grid-cols-1 max-[980px]:gap-3"
+        >
+          <div class="grid gap-1 min-w-[11rem]">
+            <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Player</p>
+            <strong class="text-base-content text-[0.96rem]">
+              {#if activeMeeting}
+                {activeMeeting.title}
+              {:else if catalogMeetings.length > 0}
+                Meeting library
+              {:else}
+                Manual artifact
+              {/if}
+            </strong>
+            <p class="m-0 text-base-content/70 text-sm leading-snug">Space toggles play and pause.</p>
+          </div>
 
-          <div
-            class="grid grid-cols-[auto_minmax(0,1fr)] gap-3.5 items-center min-w-0 max-[980px]:grid-cols-1"
-          >
-            <div class="flex flex-wrap gap-1.5">
+          {#if audioSrc}
+            <div class="grid gap-2.5 min-w-0">
+              {#key selectedMeetingId}
+                <audio
+                  bind:this={audioEl}
+                  class="sr-only"
+                  preload="metadata"
+                  src={audioSrc}
+                  on:durationchange={handleDurationChange}
+                  on:ended={handlePause}
+                  on:loadedmetadata={handleLoadedMetadata}
+                  on:pause={handlePause}
+                  on:play={handlePlay}
+                  on:timeupdate={handleTimeUpdate}
+                >
+                  {#if captionsSrc}
+                    <track kind="captions" src={captionsSrc} label="Captions" default />
+                  {/if}
+                  {#if chaptersSrc}
+                    <track kind="chapters" src={chaptersSrc} label="Chapters" />
+                  {/if}
+                </audio>
+              {/key}
+
+              <div
+                class="grid grid-cols-[auto_minmax(0,1fr)] gap-3.5 items-center min-w-0 max-[980px]:grid-cols-1"
+              >
+                <div class="flex flex-wrap gap-1.5">
+                  <button
+                    class="btn btn-warning btn-md font-bold"
+                    on:click={togglePlayback}
+                    type="button"
+                  >
+                    {#if playing}
+                      Pause
+                    {:else}
+                      Play
+                    {/if}
+                  </button>
+                </div>
+
+                <div class="grid gap-1.5 min-w-0">
+                  <div
+                    class="flex justify-between gap-3 text-base-content/70 text-sm tabular-nums max-[980px]:flex-col max-[980px]:gap-0.5"
+                  >
+                    <span>{formatClockTime(clampedCurrentTimeMs)} elapsed</span>
+                    <span>{formatClockTime(clampedDurationMs)} total</span>
+                    <span>-{formatClockTime(remainingMs)} remaining</span>
+                  </div>
+                  <input
+                    aria-label="Seek within meeting"
+                    class="range range-warning range-sm w-full"
+                    max={Math.max(clampedDurationMs, 1)}
+                    min="0"
+                    on:input={handleTimelineInput}
+                    step="250"
+                    type="range"
+                    value={Math.min(clampedCurrentTimeMs, Math.max(clampedDurationMs, 1))}
+                  />
+                </div>
+              </div>
+            </div>
+          {:else}
+            <p class="text-base-content/70 text-sm leading-normal">
+              {#if catalogMeetings.length > 0}
+                Select a meeting to load its audio source.
+              {:else}
+                No audio source available for this artifact.
+              {/if}
+            </p>
+          {/if}
+
+          <div class="flex flex-wrap justify-end gap-2 max-[980px]:justify-start">
+            <button
+              aria-checked={followPlayback && !manualScrollLock}
+              class="btn btn-ghost btn-sm rounded-full inline-flex items-center gap-2 normal-case"
+              on:click={toggleFollowPlayback}
+              role="switch"
+              type="button"
+            >
+              <span class="whitespace-nowrap">
+                {#if followPlayback && manualScrollLock}
+                  Resume auto-scroll
+                {:else}
+                  Auto-scroll
+                {/if}
+              </span>
+              <span
+                class="relative inline-block w-10 h-5 rounded-full transition-colors flex-none {followPlayback &&
+                !manualScrollLock
+                  ? 'bg-warning'
+                  : 'bg-base-300'}"
+              >
+                <span
+                  class="absolute top-[2px] left-[2px] w-4 h-4 rounded-full bg-base-100 shadow transition-transform {followPlayback &&
+                  !manualScrollLock
+                    ? 'translate-x-[20px]'
+                    : ''}"
+                ></span>
+              </span>
+            </button>
+            {#if readableTranscript && !hasPrecomputedDisplay}
               <button
-                class="btn btn-warning btn-md font-bold"
-                on:click={togglePlayback}
+                class="btn btn-ghost btn-sm rounded-full"
+                on:click={() => (showExactWords = !showExactWords)}
                 type="button"
               >
-                {#if playing}
-                  Pause
-                {:else}
-                  Play
-                {/if}
+                {showExactWords ? "Exact words: on" : "Exact words: off"}
               </button>
-            </div>
-
-            <div class="grid gap-1.5 min-w-0">
-              <div
-                class="flex justify-between gap-3 text-base-content/70 text-sm tabular-nums max-[980px]:flex-col max-[980px]:gap-0.5"
-              >
-                <span>{formatClockTime(clampedCurrentTimeMs)} elapsed</span>
-                <span>{formatClockTime(clampedDurationMs)} total</span>
-                <span>-{formatClockTime(remainingMs)} remaining</span>
-              </div>
-              <input
-                aria-label="Seek within meeting"
-                class="range range-warning range-sm w-full"
-                max={Math.max(clampedDurationMs, 1)}
-                min="0"
-                on:input={handleTimelineInput}
-                step="250"
-                type="range"
-                value={Math.min(clampedCurrentTimeMs, Math.max(clampedDurationMs, 1))}
-              />
-            </div>
+            {/if}
           </div>
         </div>
-      {:else}
-        <p class="text-base-content/70 text-sm leading-normal">
-          {#if catalogMeetings.length > 0}
-            Select a meeting to load its audio source.
-          {:else}
-            No audio source available for this artifact.
-          {/if}
-        </p>
-      {/if}
-
-      <div class="flex flex-wrap justify-end gap-2 max-[980px]:justify-start">
-        <button
-          aria-checked={followPlayback && !manualScrollLock}
-          class="btn btn-ghost btn-sm rounded-full inline-flex items-center gap-2 normal-case"
-          on:click={toggleFollowPlayback}
-          role="switch"
-          type="button"
-        >
-          <span class="whitespace-nowrap">
-            {#if followPlayback && manualScrollLock}
-              Resume auto-scroll
-            {:else}
-              Auto-scroll
-            {/if}
-          </span>
-          <span
-            class="relative inline-block w-10 h-5 rounded-full transition-colors flex-none {followPlayback &&
-            !manualScrollLock
-              ? 'bg-warning'
-              : 'bg-base-300'}"
-          >
-            <span
-              class="absolute top-[2px] left-[2px] w-4 h-4 rounded-full bg-base-100 shadow transition-transform {followPlayback &&
-              !manualScrollLock
-                ? 'translate-x-[20px]'
-                : ''}"
-            ></span>
-          </span>
-        </button>
-        {#if readableTranscript && !hasPrecomputedDisplay}
-          <button
-            class="btn btn-ghost btn-sm rounded-full"
-            on:click={() => (showExactWords = !showExactWords)}
-            type="button"
-          >
-            {showExactWords ? "Exact words: on" : "Exact words: off"}
-          </button>
-        {/if}
-      </div>
-    </div>
-  </footer>
+      </footer>
+    </section>
+  {/if}
 </div>
 
