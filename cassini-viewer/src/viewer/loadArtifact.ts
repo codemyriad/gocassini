@@ -165,7 +165,6 @@ async function loadArtifactFromPaths(paths: {
     : null;
   const summary = paths.summaryPath ? await probeOptionalText(paths.summaryPath) : null;
   const manifest = paths.manifestPath ? await probeOptionalJson(paths.manifestPath, asLooseObject) : null;
-  console.log(summary);
   return {
     transcript,
     displayTranscript,

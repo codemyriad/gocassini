@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import { fade, fly } from "svelte/transition";
-  import { cubicInOut, cubicOut } from "svelte/easing";
+  import { cubicInOut, cubicOut, quintOut } from "svelte/easing";
+  import { marked } from "marked";
+  import DOMPurify from "dompurify";
   import { Sun, Moon, Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape } from "@lucide/svelte";
   import {
     formatClockTime,
@@ -47,6 +49,7 @@
   let transcriptIndex: TranscriptIndex | null = null;
   let displayTranscript: DisplayTranscriptV1 | null = null;
   let readableTranscript: ReadableTranscriptV1 | null = null;
+  let summaryMarkdown: string | null = null;
   let audioSrc = "";
   let captionsSrc: string | null = null;
   let chaptersSrc: string | null = null;
@@ -125,6 +128,23 @@
     // snapping into view near the end — pure linear opacity reads as a
     // "click" when the card bg is close to the page bg.
     return prefersReducedMotion ? { duration: 0 } : { duration: 320, easing: cubicOut };
+  }
+
+  function contentFlyInConfig() {
+    // Load-in only: slide content up from below while fading in (svelte/fly
+    // animates opacity by default). quintOut gives a snappy start with a
+    // pronounced deceleration so the content settles into place rather than
+    // drifting. Load-out keeps a plain fade so the previous content doesn't
+    // visibly travel downward when switching.
+    return prefersReducedMotion ? { duration: 0 } : { y: 120, duration: 560, easing: quintOut };
+  }
+
+  function renderSummaryHtml(markdown: string | null): string {
+    if (typeof markdown !== "string" || markdown.trim() === "") {
+      return "";
+    }
+    const rawHtml = marked.parse(markdown, { async: false }) as string;
+    return DOMPurify.sanitize(rawHtml, { USE_PROFILES: { html: true } });
   }
 
   function handleBackToList() {
@@ -223,6 +243,7 @@
     }
   }
 
+  $: summaryHtml = renderSummaryHtml(summaryMarkdown);
   $: speakers = transcriptIndex?.transcript.speakers ?? [];
   $: displaySegments = transcriptIndex
     ? buildDisplaySegments(transcriptIndex, readableTranscript, displayTranscript)
@@ -350,6 +371,7 @@
     transcriptIndex = artifact.index;
     displayTranscript = artifact.displayTranscript;
     readableTranscript = artifact.readableTranscript;
+    summaryMarkdown = artifact.summary;
     audioSrc = artifact.audioSrc;
     captionsSrc = artifact.captionsSrc;
     chaptersSrc = artifact.chaptersSrc;
@@ -370,6 +392,7 @@
     transcriptIndex = null;
     displayTranscript = null;
     readableTranscript = null;
+    summaryMarkdown = null;
     audioSrc = "";
     captionsSrc = null;
     chaptersSrc = null;
@@ -1013,7 +1036,7 @@
           </div>
         </div>
       {:else if transcriptIndex}
-      <div transition:fade={contentFadeConfig()}>
+      <div in:fly={contentFlyInConfig()} out:fade={contentFadeConfig()}>
       <header class="m-4 mb-8 md:mx-8 md:mb-0 min-w-0">
         <h1 class="text-3xl font-bold mb-3">
           {activeMeeting
@@ -1043,9 +1066,39 @@
       </header>
 
       <main class="flex flex-col gap-3.5 m-4 md:m-8">
+        {#if summaryHtml}
+          <section class="flex flex-col gap-3.5 mb-4">
+            <div class="pb-1">
+              <p class="text-xl text-base-content font-semibold flex gap-2 items-center">Summary</p>
+            </div>
+            <!-- Markdown rendered via {@html} can't receive Svelte-scoped
+                 styles, so per-tag styling is expressed through Tailwind's
+                 arbitrary descendant selectors on the wrapper. -->
+            <div
+              class="text-base leading-relaxed text-base-content p-4 mb-8 bg-base-100/50 border-l-4 border-primary
+                [&>*+*]:mt-3.5
+                [&>h1:first-child]:mt-0 [&>h2:first-child]:mt-0 [&>h3:first-child]:mt-0 [&>h4:first-child]:mt-0
+                [&_h1]:text-xl [&_h1]:font-semibold [&_h1]:mt-6 [&_h1]:leading-tight
+                [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:mt-5 [&_h2]:leading-tight
+                [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:leading-tight
+                [&_h4]:text-base [&_h4]:font-semibold [&_h4]:mt-4
+                [&_strong]:font-semibold [&_em]:italic
+                [&_a]:text-primary [&_a]:underline [&_a]:underline-offset-2 [&_a:hover]:decoration-2
+                [&_ul]:pl-6 [&_ul]:grid [&_ul]:gap-1.5 [&_ul]:list-disc
+                [&_ol]:pl-6 [&_ol]:grid [&_ol]:gap-1.5 [&_ol]:list-decimal
+                [&_li]:marker:text-base-content/55
+                [&_code]:font-mono [&_code]:text-[0.875em] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:bg-base-300
+                [&_pre]:font-mono [&_pre]:text-sm [&_pre]:p-3 [&_pre]:rounded-lg [&_pre]:bg-base-300 [&_pre]:overflow-x-auto
+                [&_pre_code]:p-0 [&_pre_code]:bg-transparent [&_pre_code]:text-[1em]
+                [&_blockquote]:border-l-[3px] [&_blockquote]:border-primary/60 [&_blockquote]:pl-3.5 [&_blockquote]:py-0.5 [&_blockquote]:text-base-content/80
+                [&_hr]:border-0 [&_hr]:border-t [&_hr]:border-base-300"
+            >{@html summaryHtml}</div>
+          </section>
+        {/if}
+
         <div class="flex justify-between items-start gap-4 pb-1.5 border-b border-base-300">
           <div>
-            <p class="text-lg font-medium text-base-content">Transcript</p>
+            <p class="text-xl font-semibold text-base-content">Transcript</p>
             <p class="text-xs text-base-content/70 leading-normal">{describeTranscriptInteraction()}</p>
           </div>
         </div>
@@ -1233,7 +1286,7 @@
       <!-- right-[15px] matches the scrollbar gutter on the sibling scroll
            container so the player aligns with transcript content's right edge. -->
       <footer
-        class="absolute bottom-0 left-0 right-0 md:right-[15px] z-30 px-4 pb-4 pt-2 pointer-events-none [will-change:opacity]"
+        class="absolute bottom-0 left-0 right-0 md:right-[15px] z-30 p-2 md:px-4 md:pb-4 pointer-events-none [will-change:opacity]"
         transition:fade={playerFadeConfig()}
       >
         <div class="card bg-base-100 shadow-2xl p-2 border border-base-300 pointer-events-auto relative">
