@@ -170,6 +170,32 @@ html.theme-switching *::after {
   scrollbar-gutter: stable;
 }
 
+/* GPU-composited loading spinner. DaisyUI's loading-spinner uses a mask
+ * animation that runs on the main thread, so it visibly stalls when the
+ * meeting view performs the heavy synchronous transcript mount right
+ * before disappearing. transform-rotate on its own layer keeps spinning
+ * even when the main thread is briefly blocked. */
+.cassini-spinner {
+  display: inline-block;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 4px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: cassini-spinner-spin 0.9s linear infinite;
+  will-change: transform;
+}
+@keyframes cassini-spinner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cassini-spinner {
+    animation-duration: 2s;
+  }
+}
+
 /* Consistent keyboard focus ring across all interactive elements.
  * `:where()` keeps specificity at 0 so any per-element override still wins. */
 :where(

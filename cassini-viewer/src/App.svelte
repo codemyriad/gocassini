@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { fly } from "svelte/transition";
-  import { cubicInOut } from "svelte/easing";
+  import { fade, fly } from "svelte/transition";
+  import { cubicInOut, cubicOut } from "svelte/easing";
   import { Sun, Moon, Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape } from "@lucide/svelte";
   import {
     formatClockTime,
@@ -114,6 +114,17 @@
       easing: cubicInOut,
       opacity: 1,
     };
+  }
+
+  function contentFadeConfig() {
+    return prefersReducedMotion ? { duration: 0 } : { duration: 180 };
+  }
+
+  function playerFadeConfig() {
+    // cubicOut so the card materializes early in the transition rather than
+    // snapping into view near the end — pure linear opacity reads as a
+    // "click" when the card bg is close to the page bg.
+    return prefersReducedMotion ? { duration: 0 } : { duration: 320, easing: cubicOut };
   }
 
   function handleBackToList() {
@@ -374,6 +385,12 @@
   async function loadMeetingArtifact(
     meeting: MeetingCatalogEntry,
   ): Promise<MeetingCatalogEntry | null> {
+    // Drop stale artifact + select the new meeting synchronously so the
+    // viewer immediately shows a loading state for *this* meeting rather
+    // than the previous meeting's masthead/transcript bleeding through.
+    resetLoadedArtifact();
+    selectedMeetingId = meeting.id;
+    activeMeeting = meeting;
     loading = true;
     errorMessage = "";
     try {
@@ -404,10 +421,8 @@
   }
 
   async function loadCatalogMeeting(meeting: MeetingCatalogEntry) {
-    const loaded = await loadMeetingArtifact(meeting);
-    if (loaded) {
-      pushMeetingUrl(loaded.id);
-    }
+    pushMeetingUrl(meeting.id);
+    await loadMeetingArtifact(meeting);
   }
 
   function syncPlaybackTime() {
@@ -997,14 +1012,8 @@
             </div>
           </div>
         </div>
-      {:else if !transcriptIndex}
-        <div class="grid place-items-center min-h-[28rem] m-4 border-2 border-dashed border-base-300 rounded-lg">
-          <div class="flex flex-col items-center gap-2 text-base-content">
-            <CassetteTape size={28} strokeWidth={1.5} aria-hidden="true" />
-            <p class="text-lg">Select a meeting to view</p>
-          </div>
-        </div>
-      {:else}
+      {:else if transcriptIndex}
+      <div transition:fade={contentFadeConfig()}>
       <header class="m-4 mb-8 md:mx-8 md:mb-0 min-w-0">
         <h1 class="text-3xl font-bold mb-3">
           {activeMeeting
@@ -1041,9 +1050,7 @@
           </div>
         </div>
 
-        {#if loading}
-          <p class="text-base-content/70 text-sm leading-normal">Loading transcript bootstrap...</p>
-        {:else if visibleSegments.length === 0}
+        {#if visibleSegments.length === 0}
           <p class="text-base-content/70 text-sm leading-normal">No transcript loaded yet.</p>
         {:else}
           <div
@@ -1199,14 +1206,37 @@
           {/if}
         {/if}
       </main>
+      </div>
       {/if}
       </div>
+
+      {#if loading && selectedMeetingId}
+        <div
+          class="absolute inset-0 z-10 grid place-items-center bg-base-200 pointer-events-none"
+          transition:fade={contentFadeConfig()}
+        >
+          <div class="flex flex-col items-center gap-3 text-base-content">
+            <span class="cassini-spinner text-primary" aria-hidden="true"></span>
+            <p class="text-base">Loading meeting…</p>
+          </div>
+        </div>
+      {:else if !transcriptIndex && !selectedMeetingId && isDesktop}
+        <div class="absolute inset-0 z-10 grid place-items-center pointer-events-none">
+          <div class="flex flex-col items-center gap-2 text-base-content">
+            <CassetteTape size={28} strokeWidth={1.5} aria-hidden="true" />
+            <p class="text-base">Select a meeting to view</p>
+          </div>
+        </div>
+      {/if}
 
       {#if transcriptIndex && audioSrc}
       <!-- right-[15px] matches the scrollbar gutter on the sibling scroll
            container so the player aligns with transcript content's right edge. -->
-      <footer class="absolute bottom-0 left-0 right-0 md:right-[15px] z-30 px-4 pb-4 pt-2 pointer-events-none">
-        <div class="card bg-base-100/80 backdrop-blur-md shadow-2xl p-2 border border-base-300 pointer-events-auto relative">
+      <footer
+        class="absolute bottom-0 left-0 right-0 md:right-[15px] z-30 px-4 pb-4 pt-2 pointer-events-none [will-change:opacity]"
+        transition:fade={playerFadeConfig()}
+      >
+        <div class="card bg-base-100 shadow-2xl p-2 border border-base-300 pointer-events-auto relative">
           {#if audioSrc}
             {#key selectedMeetingId}
               <audio
