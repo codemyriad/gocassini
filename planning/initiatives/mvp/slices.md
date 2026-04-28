@@ -4,7 +4,7 @@ shaping: true
 
 # MVP — Slices
 
-Derived from `planning/initiatives/mvp/initiative.md`, selected shape **B: Webhook worker around the existing Cassini pipeline**.
+Derived from `planning/initiatives/mvp/shaping.md`, selected shape **B: Webhook worker around the existing Cassini pipeline**.
 
 This document breaks the remaining MVP work into delegable implementation slices. The existing viewer/library flow is a verified baseline, but V7 and V8 intentionally refactor the viewer shell in place before/alongside summary UX work.
 

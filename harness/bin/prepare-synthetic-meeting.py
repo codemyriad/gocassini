@@ -18,11 +18,22 @@ from typing import Any
 import numpy as np
 
 
-DEFAULT_SCENARIO = Path(__file__).resolve().parent.parent / "scenarios" / "synthetic-pied-piper.v1.json"
-DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "media" / "processed" / "synthetic-pied-piper-v1"
-DEFAULT_KOKORO_ASSET_DIR = Path(
-    os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
-) / "gocassini" / "kokoro-onnx"
+DEFAULT_SCENARIO = (
+    Path(__file__).resolve().parent.parent
+    / "scenarios"
+    / "synthetic-pied-piper.v1.json"
+)
+DEFAULT_OUTPUT_DIR = (
+    Path(__file__).resolve().parent.parent
+    / "media"
+    / "processed"
+    / "synthetic-pied-piper-v1"
+)
+DEFAULT_KOKORO_ASSET_DIR = (
+    Path(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache")))
+    / "gocassini"
+    / "kokoro-onnx"
+)
 KOKORO_MODEL_URL = (
     "https://github.com/thewh1teagle/kokoro-onnx/releases/download/"
     "model-files-v1.0/kokoro-v1.0.int8.onnx"
@@ -31,6 +42,11 @@ KOKORO_VOICES_URL = (
     "https://github.com/thewh1teagle/kokoro-onnx/releases/download/"
     "model-files-v1.0/voices-v1.0.bin"
 )
+
+# On Mac you'd install ffmpeg-full and add it to PATH
+# This way we're ensuring the correct binary (ffmpeg-full, with drawtext, is loaded)
+FFMPEG_BIN = os.getenv("FFMPEG_BIN", "ffmpeg")
+FFPROBE_BIN = os.getenv("FFPROBE_BIN", "ffprobe")
 
 
 @dataclass(frozen=True)
@@ -62,7 +78,9 @@ class MockBackend(TTSBackend):
         word_count = max(1, len(text.split()))
         duration_seconds = max(1.2, word_count * 0.26)
         samples = int(round(duration_seconds * sample_rate))
-        t = np.linspace(0.0, duration_seconds, samples, endpoint=False, dtype=np.float32)
+        t = np.linspace(
+            0.0, duration_seconds, samples, endpoint=False, dtype=np.float32
+        )
         base_freq = {
             "erlich": 172.0,
             "monica": 214.0,
@@ -94,7 +112,9 @@ class KokoroBackend(TTSBackend):
                 "kokoro-onnx is not installed. Run via uv with harness/requirements-tts.txt, "
                 "or use --backend mock."
             ) from exc
-        asset_dir = Path(os_environ("KOKORO_ONNX_ASSET_DIR", str(DEFAULT_KOKORO_ASSET_DIR))).resolve()
+        asset_dir = Path(
+            os_environ("KOKORO_ONNX_ASSET_DIR", str(DEFAULT_KOKORO_ASSET_DIR))
+        ).resolve()
         model_path, voices_path = ensure_kokoro_assets(asset_dir)
         self._engine: Any = Kokoro(str(model_path), str(voices_path))
 
@@ -115,16 +135,28 @@ class KokoroBackend(TTSBackend):
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate meeting-like media fixtures with local TTS.")
-    parser.add_argument("--scenario", default=str(DEFAULT_SCENARIO), help="path to scenario JSON")
-    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR), help="directory for generated assets")
+    parser = argparse.ArgumentParser(
+        description="Generate meeting-like media fixtures with local TTS."
+    )
+    parser.add_argument(
+        "--scenario", default=str(DEFAULT_SCENARIO), help="path to scenario JSON"
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=str(DEFAULT_OUTPUT_DIR),
+        help="directory for generated assets",
+    )
     parser.add_argument(
         "--backend",
         choices=("kokoro", "mock"),
         default="kokoro",
         help="TTS backend to use; mock is useful for smoke tests",
     )
-    parser.add_argument("--force", action="store_true", help="regenerate outputs even when the manifest already exists")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="regenerate outputs even when the manifest already exists",
+    )
     return parser.parse_args()
 
 
@@ -155,9 +187,13 @@ def load_scenario(path: Path) -> tuple[dict[str, Any], list[Participant], list[T
     return raw, participants, turns
 
 
-def validate_scenario(raw: dict[str, Any], participants: list[Participant], turns: list[Turn]) -> None:
+def validate_scenario(
+    raw: dict[str, Any], participants: list[Participant], turns: list[Turn]
+) -> None:
     participant_ids = {participant.participant_id for participant in participants}
-    participant_by_id = {participant.participant_id: participant for participant in participants}
+    participant_by_id = {
+        participant.participant_id: participant for participant in participants
+    }
     if not participant_ids:
         raise SystemExit("scenario has no participants")
     for turn in turns:
@@ -239,7 +275,9 @@ def run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
-def render_video(prefix: Path, participant: Participant, title: str, wav_path: Path) -> Path:
+def render_video(
+    prefix: Path, participant: Participant, title: str, wav_path: Path
+) -> Path:
     mp4_path = prefix.with_suffix(".mp4")
     wave_primary, wave_secondary = waveform_colors(participant.theme_color)
     lines = [
@@ -262,85 +300,81 @@ def render_video(prefix: Path, participant: Participant, title: str, wav_path: P
         f"[bg]drawbox=x=80:y=520:w=1120:h=140:color=white@0.08:t=2[plate];"
         f"[plate][w]overlay=80:520[outv]"
     )
-    run(
-        [
-            "ffmpeg",
-            "-y",
-            "-v",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=c=0x111827:s=1280x720:r=30",
-            "-i",
-            str(wav_path),
-            "-filter_complex",
-            filter_graph,
-            "-map",
-            "[outv]",
-            "-map",
-            "1:a:0",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-shortest",
-            str(mp4_path),
-        ]
-    )
+    run([
+        FFMPEG_BIN,
+        "-y",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=0x111827:s=1280x720:r=30",
+        "-i",
+        str(wav_path),
+        "-filter_complex",
+        filter_graph,
+        "-map",
+        "[outv]",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-shortest",
+        str(mp4_path),
+    ])
     return mp4_path
 
 
-def render_publish_assets(prefix: Path, mp4_path: Path, wav_path: Path) -> dict[str, str]:
+def render_publish_assets(
+    prefix: Path, mp4_path: Path, wav_path: Path
+) -> dict[str, str]:
     ivf_path = prefix.with_suffix(".ivf")
     ogg_path = prefix.with_suffix(".ogg")
-    run(
-        [
-            "ffmpeg",
-            "-y",
-            "-v",
-            "error",
-            "-i",
-            str(mp4_path),
-            "-an",
-            "-c:v",
-            "libvpx",
-            "-b:v",
-            "1800k",
-            "-deadline",
-            "realtime",
-            "-cpu-used",
-            "5",
-            "-f",
-            "ivf",
-            str(ivf_path),
-        ]
-    )
-    run(
-        [
-            "ffmpeg",
-            "-y",
-            "-v",
-            "error",
-            "-i",
-            str(wav_path),
-            "-c:a",
-            "libopus",
-            "-b:a",
-            "96k",
-            "-ac",
-            "1",
-            "-ar",
-            "48000",
-            "-f",
-            "ogg",
-            str(ogg_path),
-        ]
-    )
+    run([
+        FFMPEG_BIN,
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        str(mp4_path),
+        "-an",
+        "-c:v",
+        "libvpx",
+        "-b:v",
+        "1800k",
+        "-deadline",
+        "realtime",
+        "-cpu-used",
+        "5",
+        "-f",
+        "ivf",
+        str(ivf_path),
+    ])
+    run([
+        FFMPEG_BIN,
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        str(wav_path),
+        "-c:a",
+        "libopus",
+        "-b:a",
+        "96k",
+        "-ac",
+        "1",
+        "-ar",
+        "48000",
+        "-f",
+        "ogg",
+        str(ogg_path),
+    ])
     return {
         "mp4_preview": str(mp4_path),
         "video_ivf": str(ivf_path),
@@ -389,7 +423,11 @@ def main() -> None:
     output_dir = Path(args.output_dir).resolve()
     manifest_path = output_dir / "manifest.json"
 
-    if not args.force and manifest_path.is_file() and cached_manifest_is_complete(manifest_path):
+    if (
+        not args.force
+        and manifest_path.is_file()
+        and cached_manifest_is_complete(manifest_path)
+    ):
         print(manifest_path)
         return
 
@@ -404,7 +442,9 @@ def main() -> None:
     else:
         backend = KokoroBackend()
 
-    turns_by_speaker: dict[str, list[Turn]] = {participant.participant_id: [] for participant in participants}
+    turns_by_speaker: dict[str, list[Turn]] = {
+        participant.participant_id: [] for participant in participants
+    }
     for turn in turns:
         turns_by_speaker[turn.speaker].append(turn)
 
@@ -419,7 +459,10 @@ def main() -> None:
             turn_sr, audio = backend.synthesize(participant, turn.text)
             if turn_sr != sample_rate:
                 audio = resample_linear(audio, turn_sr, sample_rate)
-            synthesized[(participant.participant_id, turn.start_seconds)] = (audio, len(audio) / sample_rate)
+            synthesized[(participant.participant_id, turn.start_seconds)] = (
+                audio,
+                len(audio) / sample_rate,
+            )
 
     max_end = duration_seconds
     for turn in turns:
@@ -432,7 +475,9 @@ def main() -> None:
         previous_end = -1
         actual_turns: list[dict[str, Any]] = []
         for turn in turns_by_speaker[participant.participant_id]:
-            audio, actual_duration = synthesized[(participant.participant_id, turn.start_seconds)]
+            audio, actual_duration = synthesized[
+                (participant.participant_id, turn.start_seconds)
+            ]
             start_index = int(round(turn.start_seconds * sample_rate))
             end_index = start_index + audio.size
             if start_index < previous_end:
@@ -446,15 +491,13 @@ def main() -> None:
                 track = expanded
             track[start_index:end_index] += audio
             previous_end = end_index
-            actual_turns.append(
-                {
-                    "speaker": participant.participant_id,
-                    "display_name": participant.display_name,
-                    "start_seconds": round(turn.start_seconds, 3),
-                    "actual_duration_seconds": round(actual_duration, 3),
-                    "text": turn.text,
-                }
-            )
+            actual_turns.append({
+                "speaker": participant.participant_id,
+                "display_name": participant.display_name,
+                "start_seconds": round(turn.start_seconds, 3),
+                "actual_duration_seconds": round(actual_duration, 3),
+                "text": turn.text,
+            })
             manifest_turns.append(actual_turns[-1])
 
         peak = float(np.max(np.abs(track))) if track.size else 0.0
@@ -464,21 +507,21 @@ def main() -> None:
         prefix = output_dir / participant.participant_id
         wav_path = work_dir / f"{participant.participant_id}.wav"
         write_wav(wav_path, sample_rate, track)
-        mp4_path = render_video(prefix, participant, str(raw_scenario["title"]), wav_path)
-        output_paths = render_publish_assets(prefix, mp4_path, wav_path)
-        participant_entries.append(
-            {
-                "id": participant.participant_id,
-                "display_name": participant.display_name,
-                "role": participant.role,
-                "voice": participant.voice,
-                "lang_code": participant.lang_code,
-                "join_delay_seconds": participant.join_delay_seconds,
-                "media_prefix": str(prefix),
-                "turn_count": len(actual_turns),
-                "paths": output_paths,
-            }
+        mp4_path = render_video(
+            prefix, participant, str(raw_scenario["title"]), wav_path
         )
+        output_paths = render_publish_assets(prefix, mp4_path, wav_path)
+        participant_entries.append({
+            "id": participant.participant_id,
+            "display_name": participant.display_name,
+            "role": participant.role,
+            "voice": participant.voice,
+            "lang_code": participant.lang_code,
+            "join_delay_seconds": participant.join_delay_seconds,
+            "media_prefix": str(prefix),
+            "turn_count": len(actual_turns),
+            "paths": output_paths,
+        })
 
     manifest_turns.sort(key=lambda item: (item["start_seconds"], item["speaker"]))
     reference_path = output_dir / "reference.txt"
@@ -499,14 +542,22 @@ def main() -> None:
     print(manifest_path)
 
 
-def resample_linear(audio: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
+def resample_linear(
+    audio: np.ndarray, source_rate: int, target_rate: int
+) -> np.ndarray:
     if source_rate == target_rate or audio.size == 0:
         return audio.astype(np.float32, copy=False)
     duration = audio.size / float(source_rate)
     target_samples = max(1, int(round(duration * target_rate)))
-    source_positions = np.linspace(0.0, duration, audio.size, endpoint=False, dtype=np.float64)
-    target_positions = np.linspace(0.0, duration, target_samples, endpoint=False, dtype=np.float64)
-    resampled = np.interp(target_positions, source_positions, audio.astype(np.float64, copy=False))
+    source_positions = np.linspace(
+        0.0, duration, audio.size, endpoint=False, dtype=np.float64
+    )
+    target_positions = np.linspace(
+        0.0, duration, target_samples, endpoint=False, dtype=np.float64
+    )
+    resampled = np.interp(
+        target_positions, source_positions, audio.astype(np.float64, copy=False)
+    )
     return resampled.astype(np.float32)
 
 
@@ -525,7 +576,12 @@ def cached_manifest_is_complete(manifest_path: Path) -> bool:
         paths = participant.get("paths") or {}
         if not prefix or not isinstance(paths, dict):
             return False
-        required = [f"{prefix}.ivf", f"{prefix}.ogg", f"{prefix}.mp4", paths.get("wav_source")]
+        required = [
+            f"{prefix}.ivf",
+            f"{prefix}.ogg",
+            f"{prefix}.mp4",
+            paths.get("wav_source"),
+        ]
         for raw_path in required:
             if not raw_path or not Path(raw_path).is_file():
                 return False
