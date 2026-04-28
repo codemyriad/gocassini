@@ -37,10 +37,12 @@ This publish-safe branch intentionally does not commit real meeting artifacts un
 To preview the runtime-catalog UI, serve the built viewer next to a generated `catalog.json` and
 artifact directories, or run the static export flow below.
 
-## Contract with `cassini-transcriber`
+## Contract with Cassini meeting artifacts
 
 The viewer does not infer transcript structure from loose text.
-It expects the canonical `transcript.words.v1` JSON contract and treats that as the source of truth for transcript rendering and click-to-seek behavior.
+It expects the canonical `transcript.words.v1` JSON contract produced by the
+Cassini build pipeline and treats that as the source of truth for transcript
+rendering and click-to-seek behavior.
 
 The schema snapshot used for this bootstrap lives at [schema/transcript-words-v1.schema.json](schema/transcript-words-v1.schema.json).
 
