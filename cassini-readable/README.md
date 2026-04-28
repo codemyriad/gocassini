@@ -6,45 +6,33 @@ suite.
 It takes a canonical `transcript.words.v1.json` transcript and produces a
 `transcript.readable.v1.json` presentation transcript.
 
-This component is intentionally narrower than the full transcriber:
+This component was originally a standalone wrapper around the old Python
+transcriber package.
 
-- input: canonical transcript JSON,
-- output: readable transcript JSON,
-- optional LLM cleanup backends,
-- optional passthrough mode when no cleanup backend is available.
+That Python package has been retired. Readable transcript generation now lives
+inside the native Go build pipeline in `cassini-go-recorder/internal/transcribe`
+and is exercised through `cassini build`.
 
-The current implementation uses the runtime and prompt logic that also powers
-readable transcript generation inside `cassini-transcriber`.
+## Current status
 
-## Tools
+- product flow: supported through `./bin/cassini build`
+- standalone readable-only CLI in this worktree: not currently exposed
+- old shell wrappers in `bin/`: retained only as deprecation stubs
 
-- `bin/build-readable-transcript.sh`: build one readable transcript from one
-  canonical transcript.
-- `bin/compare-models.sh`: compare OpenAI-compatible readable cleanup models on
-  an existing canonical transcript.
+## Recommended usage
 
-## Usage
-
-Standalone readable transcript generation:
+Build a meeting artifact or portable meeting through the product CLI:
 
 ```bash
-./cassini-readable/bin/build-readable-transcript.sh \
-  --input-transcript /path/to/transcript.words.v1.json
+./bin/cassini build /path/to/meeting.mkv --out /tmp/meeting.meeting
 ```
 
-If no cleanup backend is configured, this tool can still emit a readable
-transcript in `--readable-backend none` mode by windowing the source transcript
-without LLM rewriting.
-
-Model comparison on an existing transcript:
-
-```bash
-./cassini-readable/bin/compare-models.sh \
-  --input /path/to/transcript.words.v1.json
-```
+If you specifically need a standalone readable-transcript CLI again, it should
+be reintroduced on top of the native Go pipeline rather than revived from the
+removed `cassini-transcriber` package.
 
 ## Scope note
 
 The local model training harness is currently being developed separately in the
-`gocassini-second` worktree. This package is the runtime-facing readable tool in
-the main repo.
+`gocassini-second` worktree. This directory is no longer the runtime-facing
+readable tool in the main repo.
