@@ -70,6 +70,44 @@
   let catalogHydrationGeneration = 0;
   const CONTINUATION_GAP_MS = 60_000;
 
+  type ThemeMode = "light" | "dark";
+  const THEME_STORAGE_KEY = "cassini-theme";
+  let themeMode: ThemeMode = "light";
+  let prefersDarkMedia: MediaQueryList | null = null;
+
+  function readStoredTheme(): ThemeMode | null {
+    try {
+      const value = localStorage.getItem(THEME_STORAGE_KEY);
+      return value === "light" || value === "dark" ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function applyTheme(mode: ThemeMode) {
+    themeMode = mode;
+    document.documentElement.setAttribute("data-theme", mode);
+  }
+
+  function setTheme(mode: ThemeMode) {
+    applyTheme(mode);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, mode);
+    } catch {
+      // localStorage unavailable; in-memory state still applies
+    }
+  }
+
+  function toggleTheme() {
+    setTheme(themeMode === "dark" ? "light" : "dark");
+  }
+
+  function handlePrefersColorSchemeChange(event: MediaQueryListEvent) {
+    if (readStoredTheme() === null) {
+      applyTheme(event.matches ? "dark" : "light");
+    }
+  }
+
   $: speakers = transcriptIndex?.transcript.speakers ?? [];
   $: displaySegments = transcriptIndex
     ? buildDisplaySegments(transcriptIndex, readableTranscript, displayTranscript)
@@ -108,6 +146,16 @@
 
   onMount(async () => {
     window.addEventListener("keydown", handleWindowKeydown);
+    const stored = readStoredTheme();
+    if (stored !== null) {
+      applyTheme(stored);
+    } else if (typeof window.matchMedia === "function") {
+      prefersDarkMedia = window.matchMedia("(prefers-color-scheme: dark)");
+      applyTheme(prefersDarkMedia.matches ? "dark" : "light");
+      prefersDarkMedia.addEventListener("change", handlePrefersColorSchemeChange);
+    } else {
+      applyTheme("light");
+    }
     pendingSeekMs = parseTimeHash(window.location.hash);
     const meetingId = new URL(window.location.href).searchParams.get("meeting");
     const viewerConfig = window as typeof window & {
@@ -146,6 +194,7 @@
 
   onDestroy(() => {
     window.removeEventListener("keydown", handleWindowKeydown);
+    prefersDarkMedia?.removeEventListener("change", handlePrefersColorSchemeChange);
     stopPlaybackClock();
   });
 
@@ -612,11 +661,13 @@
   />
 </svelte:head>
 
-<div class="shell">
-  <header class="masthead panel">
-    <div class="masthead-copy">
-      <p class="eyebrow">Cassini Viewer</p>
-      <h1>
+<div class="max-w-[1600px] mx-auto px-4 pb-40 max-[980px]:pb-48">
+  <header
+    class="card bg-base-100 shadow flex flex-row flex-wrap items-start justify-between gap-x-6 gap-y-4 p-4 sm:p-5 mb-4"
+  >
+    <div class="min-w-0">
+      <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Cassini Viewer</p>
+      <h1 class="text-3xl sm:text-4xl font-bold leading-tight max-w-[26ch]">
         {#if activeMeeting}
           {activeMeeting.title}, {activeMeeting.dateLabel}
         {:else if catalogMeetings.length > 0}
@@ -625,22 +676,24 @@
           Meeting transcript viewer
         {/if}
       </h1>
-      <p class="masthead-meta">{mastheadSummary}</p>
+      <p class="text-base-content/70 mt-2">{mastheadSummary}</p>
     </div>
-    <div class="info-strip">
-      <span class="info-pill">
+    <div class="flex flex-wrap justify-end gap-2 min-w-[min(100%,23rem)]">
+      <span class="badge badge-outline badge-lg">
         {formatArtifactMode()}
       </span>
       {#if transcriptIndex && timingPrecision}
         <span
-          class:info-pill-warning={timingPrecision.level !== "word"}
-          class="info-pill info-pill-subtle"
+          class:badge-warning={timingPrecision.level !== "word"}
+          class:badge-ghost={timingPrecision.level === "word"}
+          class:badge-outline={timingPrecision.level !== "word"}
+          class="badge badge-lg"
           title={timingPrecision.detail}
         >
           {timingPrecision.label}
         </span>
       {/if}
-      <span class="info-pill">
+      <span class="badge badge-outline badge-lg">
         {#if transcriptIndex}
           {formatClockTime(currentTimeMs)} / {formatClockTime(durationMs)}
         {:else if catalogMeetings.length > 0}
@@ -652,21 +705,31 @@
     </div>
   </header>
 
-  <div class="layout">
-    <aside class="sidebar">
+  <div
+    class="grid items-start gap-4 grid-cols-1 min-[980px]:grid-cols-[minmax(240px,290px)_minmax(0,1fr)]"
+  >
+    <aside
+      class="flex flex-col gap-3 content-start min-[980px]:sticky min-[980px]:top-4 min-[980px]:min-h-[calc(100vh-2rem)]"
+    >
       {#if catalogMeetings.length > 0}
-        <section class="panel">
-          <h2>Meetings</h2>
-          <div class="meeting-list">
+        <section class="card bg-base-100 shadow p-4">
+          <h2 class="text-xs font-bold uppercase tracking-widest text-base-content/60 mb-3">
+            Meetings
+          </h2>
+          <div class="grid gap-2.5">
             {#each catalogMeetings as meeting}
               <button
-                class:active-meeting={meeting.id === selectedMeetingId}
-                class="meeting-card"
                 on:click={() => loadCatalogMeeting(meeting)}
                 type="button"
+                class="grid gap-1 w-full p-3 text-left rounded-2xl border bg-base-100 hover:border-primary/40 hover:-translate-y-px transition-[transform,border-color,background-color] {meeting.id ===
+                selectedMeetingId
+                  ? 'border-primary bg-primary/5'
+                  : 'border-base-300'}"
               >
-                <span class="meeting-title">{loadMeetingButtonLabel(meeting)}</span>
-                <span class="meeting-meta">{formatMeetingMeta(meeting)}</span>
+                <span class="font-bold">{loadMeetingButtonLabel(meeting)}</span>
+                <span class="text-base-content/70 text-sm leading-snug">
+                  {formatMeetingMeta(meeting)}
+                </span>
               </button>
             {/each}
           </div>
@@ -674,28 +737,39 @@
       {/if}
 
       {#if errorMessage}
-        <section class="panel warning">
-          <h2>Load note</h2>
-          <p>{errorMessage}</p>
+        <section class="alert alert-warning items-start">
+          <div>
+            <h2 class="text-xs font-bold uppercase tracking-widest mb-1">Load note</h2>
+            <p>{errorMessage}</p>
+          </div>
         </section>
       {/if}
+
+      <button
+        class="btn btn-ghost btn-sm mt-auto self-start"
+        on:click={toggleTheme}
+        aria-label="Toggle light or dark theme"
+        type="button"
+      >
+        {themeMode === "dark" ? "☀ Light" : "🌙 Dark"}
+      </button>
     </aside>
 
-    <main class="panel transcript-panel">
-      <div class="transcript-header">
+    <main class="card bg-base-100 shadow flex flex-col gap-3.5 p-4 sm:p-5">
+      <div class="flex justify-between items-start gap-4 pb-1.5 border-b border-base-300">
         <div>
-          <p class="eyebrow">Transcript</p>
-          <p class="transcript-summary">{describeTranscriptInteraction()}</p>
+          <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Transcript</p>
+          <p class="text-base-content/70 leading-normal">{describeTranscriptInteraction()}</p>
         </div>
         {#if manualScrollLock}
-          <span class="lock-pill">Auto-scroll paused</span>
+          <span class="badge badge-neutral">Auto-scroll paused</span>
         {/if}
       </div>
 
       {#if loading}
-        <p class="muted">Loading transcript bootstrap...</p>
+        <p class="text-base-content/70 text-sm leading-normal">Loading transcript bootstrap...</p>
       {:else if visibleSegments.length === 0}
-        <p class="muted">
+        <p class="text-base-content/70 text-sm leading-normal">
           {#if catalogMeetings.length > 0}
             Select a meeting to load its audio and transcript.
           {:else}
@@ -706,7 +780,7 @@
         <div
           bind:this={transcriptPane}
           aria-label="Transcript"
-          class="transcript-list"
+          class="grid gap-2.5"
           on:touchmove={() => (manualScrollLock = true)}
           on:wheel={() => (manualScrollLock = true)}
           role="log"
@@ -714,46 +788,72 @@
           {#each visibleSegments as segment, segmentIndex}
             <article
               aria-current={segment.id === activeSegment?.id ? "true" : undefined}
-              class:active={segment.id === activeSegment?.id}
-              class:continuation-segment={isSpeakerContinuation(visibleSegments, segmentIndex)}
-              class="segment"
+              class="p-4 rounded-2xl border shadow-sm transition-shadow {segment.id ===
+              activeSegment?.id
+                ? 'border-warning bg-warning/10 shadow-md'
+                : 'border-base-300 bg-base-100'} {isSpeakerContinuation(
+                visibleSegments,
+                segmentIndex,
+              )
+                ? 'pt-3'
+                : ''}"
               id={segmentDomId(segment.id)}
             >
-              <div class="segment-meta">
+              <div
+                class="flex items-center gap-2.5 mb-1.5 {isSpeakerContinuation(
+                  visibleSegments,
+                  segmentIndex,
+                )
+                  ? 'justify-end'
+                  : 'justify-between'}"
+              >
                 {#if !isSpeakerContinuation(visibleSegments, segmentIndex)}
-                  <button class="speaker-tag" on:click={() => seekTo(segment.startMs)} type="button">
-                    {segment.speakerLabel}
-                  </button>
+                  <span class="badge badge-lg font-bold">{segment.speakerLabel}</span>
                 {/if}
-                <button class="time-chip" on:click={() => seekTo(segment.startMs)} type="button">
+                <button
+                  class="btn btn-ghost btn-sm rounded-full font-semibold text-base-content/70"
+                  on:click={() => seekTo(segment.startMs)}
+                  type="button"
+                >
                   {formatClockTime(segment.startMs)}
                 </button>
               </div>
 
               {#if segment.tokens.length > 0 && hasTimedTokens(segment)}
-                <div class="segment-text token-flow">
+                <div class="text-[1.06rem] leading-[1.72]">
                   {#each segment.tokens as token}{#if token.startMs !== undefined && token.endMs !== undefined}<button
-                        class:active-token={segment.id === activeSegment?.id && token === activeToken}
-                        class:interpolated-token={token.alignment === "interpolated"}
-                        class="token-button"
+                        class="inline p-0 border-0 bg-transparent rounded text-[1.06rem] leading-[1.72] whitespace-pre-wrap cursor-pointer hover:bg-warning/20 {segment.id ===
+                          activeSegment?.id && token === activeToken
+                          ? 'bg-warning/40 ring-1 ring-warning font-bold underline underline-offset-2'
+                          : ''} {token.alignment === 'interpolated'
+                          ? 'border-b border-dashed border-warning/60'
+                          : ''}"
                         on:click={() => seekTo(token.startMs ?? segment.startMs)}
                         type="button"
                       >{token.spaceBefore ? ` ${token.text}` : token.text}</button>{:else}<span
-                        class:untimed-word={token.kind === "word"}
-                        class="token-text"
+                        class="inline rounded text-[1.06rem] leading-[1.72] whitespace-pre-wrap {token.kind ===
+                        'word'
+                          ? 'text-base-content/70'
+                          : 'text-base-content'}"
                       >{token.spaceBefore ? ` ${token.text}` : token.text}</span>{/if}{/each}
                 </div>
               {:else}
-                <button class="segment-text" on:click={() => seekTo(segment.startMs)} type="button">
+                <button
+                  class="block w-full p-0 border-0 bg-transparent text-left text-base-content text-[1.06rem] leading-[1.72] focus-visible:outline-2 focus-visible:outline-warning/60 focus-visible:outline-offset-4 focus-visible:rounded"
+                  on:click={() => seekTo(segment.startMs)}
+                  type="button"
+                >
                   {segment.text}
                 </button>
               {/if}
 
               {#if !hasPrecomputedDisplay && showExactWords && segment.words.length > 0}
-                <div class="word-row">
+                <div class="block mt-3 pt-3 border-t border-base-300 leading-[1.72]">
                   {#each segment.words as word, wordIndex}<button
-                      class:active-word={segment.id === activeSegment?.id && word.id === activeWord?.id}
-                      class="word"
+                      class="inline-block px-1 py-0.5 rounded text-[0.92rem] border hover:border-warning/60 hover:bg-warning/10 hover:-translate-y-px transition whitespace-pre-wrap {segment.id ===
+                        activeSegment?.id && word.id === activeWord?.id
+                        ? 'border-warning bg-warning/40 font-bold underline underline-offset-2'
+                        : 'border-base-300 bg-base-100'}"
                       on:click={() => seekTo(word.startMs)}
                       type="button"
                     >{wordIndex > 0 ? ` ${word.text}` : word.text}</button>{/each}
@@ -764,19 +864,25 @@
         </div>
 
         {#if transcriptIndex && (timingPrecision || artifactMetadata)}
-          <section class="meeting-footer">
-            <div class="meeting-footer-header">
+          <section class="grid gap-3 pt-1 border-t border-base-300">
+            <div
+              class="flex justify-between items-start gap-3 max-[980px]:grid max-[980px]:grid-cols-1"
+            >
               <div>
-                <p class="eyebrow">Meeting metadata</p>
-                <p class="meeting-footer-copy">
+                <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">
+                  Meeting metadata
+                </p>
+                <p class="text-base-content/70 leading-normal text-sm max-w-[72ch]">
                   {timingPrecision?.detail ??
                     "Artifact metadata is shown as provided, so older files can remain usable with reduced timing precision."}
                 </p>
               </div>
               {#if timingPrecision}
                 <span
-                  class:info-pill-warning={timingPrecision.level !== "word"}
-                  class="info-pill info-pill-subtle"
+                  class:badge-warning={timingPrecision.level !== "word"}
+                  class:badge-ghost={timingPrecision.level === "word"}
+                  class:badge-outline={timingPrecision.level !== "word"}
+                  class="badge badge-lg"
                   title={timingPrecision.detail}
                 >
                   {timingPrecision.label}
@@ -785,33 +891,48 @@
             </div>
 
             {#if artifactMetadata}
-              <div class="metadata-sections">
+              <div class="grid gap-2.5">
                 {#each metadataSections as section}
-                  <details class="metadata-section" open={metadataSectionStartsOpen(section.title)}>
-                    <summary>{section.title}</summary>
-                    <dl class="metadata-grid">
-                      {#each section.rows as row (metadataRowKey(section.title, row))}
-                        <dt>{formatMetadataLabel(row.label)}</dt>
-                        <dd>
-                          {#if row.values && row.values.length > 0}
-                            <div class="metadata-tags">
-                              {#each row.values as value}
-                                <span class="metadata-tag">{value}</span>
-                              {/each}
-                            </div>
-                          {:else if row.tone === "code"}
-                            <code class="metadata-code">{row.value}</code>
-                          {:else}
-                            {row.value}
-                          {/if}
-                        </dd>
-                      {/each}
-                    </dl>
+                  <details
+                    class="collapse collapse-arrow bg-base-200"
+                    open={metadataSectionStartsOpen(section.title)}
+                  >
+                    <summary class="collapse-title text-sm font-bold">{section.title}</summary>
+                    <div class="collapse-content">
+                      <dl
+                        class="grid grid-cols-[minmax(10rem,16rem)_minmax(0,1fr)] gap-y-2 gap-x-3.5 m-0 max-[980px]:grid-cols-1"
+                      >
+                        {#each section.rows as row (metadataRowKey(section.title, row))}
+                          <dt class="m-0 text-base-content/70 text-sm leading-snug">
+                            {formatMetadataLabel(row.label)}
+                          </dt>
+                          <dd class="m-0 text-base-content text-sm leading-normal break-words">
+                            {#if row.values && row.values.length > 0}
+                              <div class="flex flex-wrap gap-1.5">
+                                {#each row.values as value}
+                                  <span class="badge badge-outline">{value}</span>
+                                {/each}
+                              </div>
+                            {:else if row.tone === "code"}
+                              <code
+                                class="inline-block px-1.5 py-0.5 rounded bg-base-300 text-base-content text-xs font-mono"
+                                >{row.value}</code
+                              >
+                            {:else}
+                              {row.value}
+                            {/if}
+                          </dd>
+                        {/each}
+                      </dl>
+                    </div>
                   </details>
                 {/each}
-                <details class="metadata-section">
-                  <summary>Raw JSON</summary>
-                  <pre class="metadata-raw">{artifactMetadata.rawJson}</pre>
+                <details class="collapse collapse-arrow bg-base-200">
+                  <summary class="collapse-title text-sm font-bold">Raw JSON</summary>
+                  <div class="collapse-content">
+                    <pre
+                      class="m-0 text-base-content text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">{artifactMetadata.rawJson}</pre>
+                  </div>
                 </details>
               </div>
             {/if}
@@ -821,11 +942,15 @@
     </main>
   </div>
 
-  <footer class="player-dock">
-    <div class="player-card panel">
-      <div class="player-meta">
-        <p class="eyebrow">Player</p>
-        <strong>
+  <footer
+    class="fixed inset-x-0 bottom-0 z-30 px-4 pt-4 pb-4 bg-gradient-to-b from-base-200/0 via-base-200/80 to-base-200 pointer-events-none"
+  >
+    <div
+      class="card bg-base-100 shadow max-w-[1600px] mx-auto px-4 py-3 grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3.5 items-center pointer-events-auto max-[980px]:grid-cols-1 max-[980px]:gap-3"
+    >
+      <div class="grid gap-1 min-w-[11rem]">
+        <p class="text-xs uppercase tracking-widest text-base-content/60 mb-1.5">Player</p>
+        <strong class="text-base-content text-[0.96rem]">
           {#if activeMeeting}
             {activeMeeting.title}
           {:else if catalogMeetings.length > 0}
@@ -834,14 +959,14 @@
             Manual artifact
           {/if}
         </strong>
-        <p class="player-hint">Space toggles play and pause.</p>
+        <p class="m-0 text-base-content/70 text-sm leading-snug">Space toggles play and pause.</p>
       </div>
 
       {#if audioSrc}
-        <div class="player-shell">
+        <div class="grid gap-2.5 min-w-0">
           <audio
             bind:this={audioEl}
-            class="engine-audio"
+            class="sr-only"
             preload="metadata"
             src={audioSrc}
             on:durationchange={handleDurationChange}
@@ -859,9 +984,15 @@
             {/if}
           </audio>
 
-          <div class="player-controls">
-            <div class="player-buttons">
-              <button class="transport-button transport-primary" on:click={togglePlayback} type="button">
+          <div
+            class="grid grid-cols-[auto_minmax(0,1fr)] gap-3.5 items-center min-w-0 max-[980px]:grid-cols-1"
+          >
+            <div class="flex flex-wrap gap-1.5">
+              <button
+                class="btn btn-warning btn-md font-bold"
+                on:click={togglePlayback}
+                type="button"
+              >
                 {#if playing}
                   Pause
                 {:else}
@@ -870,20 +1001,21 @@
               </button>
             </div>
 
-            <div class="timeline-wrap">
-              <div class="timeline-stats">
+            <div class="grid gap-1.5 min-w-0">
+              <div
+                class="flex justify-between gap-3 text-base-content/70 text-sm tabular-nums max-[980px]:flex-col max-[980px]:gap-0.5"
+              >
                 <span>{formatClockTime(clampedCurrentTimeMs)} elapsed</span>
                 <span>{formatClockTime(clampedDurationMs)} total</span>
                 <span>-{formatClockTime(remainingMs)} remaining</span>
               </div>
               <input
                 aria-label="Seek within meeting"
-                class="timeline-slider"
+                class="range range-warning range-sm w-full"
                 max={Math.max(clampedDurationMs, 1)}
                 min="0"
                 on:input={handleTimelineInput}
                 step="250"
-                style={`--player-progress: ${playbackProgress}%`}
                 type="range"
                 value={Math.min(clampedCurrentTimeMs, Math.max(clampedDurationMs, 1))}
               />
@@ -891,7 +1023,7 @@
           </div>
         </div>
       {:else}
-        <p class="muted">
+        <p class="text-base-content/70 text-sm leading-normal">
           {#if catalogMeetings.length > 0}
             Select a meeting to load its audio source.
           {:else}
@@ -900,27 +1032,41 @@
         </p>
       {/if}
 
-      <div class="player-actions">
+      <div class="flex flex-wrap justify-end gap-2 max-[980px]:justify-start">
         <button
           aria-checked={followPlayback && !manualScrollLock}
-          class="switch-button"
+          class="btn btn-ghost btn-sm rounded-full inline-flex items-center gap-2 normal-case"
           on:click={toggleFollowPlayback}
           role="switch"
           type="button"
         >
-          <span class="switch-label">
+          <span class="whitespace-nowrap">
             {#if followPlayback && manualScrollLock}
               Resume auto-scroll
             {:else}
               Auto-scroll
             {/if}
           </span>
-          <span class:checked={followPlayback && !manualScrollLock} class="switch-track">
-            <span class="switch-thumb"></span>
+          <span
+            class="relative inline-block w-10 h-5 rounded-full transition-colors flex-none {followPlayback &&
+            !manualScrollLock
+              ? 'bg-warning'
+              : 'bg-base-300'}"
+          >
+            <span
+              class="absolute top-[2px] left-[2px] w-4 h-4 rounded-full bg-base-100 shadow transition-transform {followPlayback &&
+              !manualScrollLock
+                ? 'translate-x-[20px]'
+                : ''}"
+            ></span>
           </span>
         </button>
         {#if readableTranscript && !hasPrecomputedDisplay}
-          <button on:click={() => (showExactWords = !showExactWords)} type="button">
+          <button
+            class="btn btn-ghost btn-sm rounded-full"
+            on:click={() => (showExactWords = !showExactWords)}
+            type="button"
+          >
             {showExactWords ? "Exact words: on" : "Exact words: off"}
           </button>
         {/if}
@@ -929,766 +1075,3 @@
   </footer>
 </div>
 
-<style>
-  .shell {
-    max-width: 1600px;
-    margin: 0 auto;
-    padding: 1rem 1rem 9.5rem;
-  }
-
-  .eyebrow {
-    margin: 0 0 0.35rem;
-    text-transform: uppercase;
-    letter-spacing: 0.18em;
-    font-size: 0.76rem;
-    color: #7a6849;
-  }
-
-  h1,
-  h2 {
-    margin: 0;
-    font-family: Georgia, "Times New Roman", serif;
-    line-height: 1.05;
-  }
-
-  h1 {
-    font-size: clamp(1.8rem, 3vw, 2.85rem);
-    max-width: 26ch;
-  }
-
-  h2 {
-    font-size: clamp(1.15rem, 1.6vw, 1.5rem);
-  }
-
-  .panel {
-    border: 1px solid rgba(84, 78, 55, 0.16);
-    border-radius: 1.1rem;
-    background: rgba(255, 252, 247, 0.78);
-    box-shadow: 0 12px 30px rgba(87, 72, 40, 0.08);
-    backdrop-filter: blur(8px);
-  }
-
-  .panel {
-    padding: 0.95rem 1rem;
-  }
-
-  .masthead {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 1rem 1.4rem;
-    margin-bottom: 1rem;
-    padding: 1rem 1.15rem;
-  }
-
-  .masthead-copy {
-    min-width: 0;
-  }
-
-  .masthead-meta {
-    margin: 0.5rem 0 0;
-    color: #665d51;
-    font-size: 0.98rem;
-    line-height: 1.5;
-  }
-
-  .info-strip {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 0.45rem;
-    min-width: min(100%, 23rem);
-  }
-
-  .info-pill {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 2.3rem;
-    padding: 0.5rem 0.8rem;
-    border-radius: 999px;
-    border: 1px solid rgba(130, 114, 82, 0.15);
-    background: rgba(255, 255, 255, 0.72);
-    color: #544c40;
-    font-size: 0.9rem;
-    font-weight: 600;
-  }
-
-  .info-pill-subtle {
-    color: #64584a;
-    background: rgba(252, 249, 243, 0.8);
-    font-weight: 500;
-  }
-
-  .info-pill-warning {
-    border-color: rgba(180, 112, 58, 0.22);
-    color: #7a5b2e;
-  }
-
-  .layout {
-    display: grid;
-    align-items: start;
-    grid-template-columns: minmax(240px, 290px) minmax(0, 1fr);
-    gap: 1rem;
-  }
-
-  .sidebar {
-    display: grid;
-    gap: 0.85rem;
-    align-content: start;
-    position: sticky;
-    top: 1rem;
-  }
-
-  .sidebar .panel h2 {
-    font-family: ui-sans-serif, system-ui, sans-serif;
-    font-size: 0.76rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.16em;
-    color: #7a6849;
-    margin-bottom: 0.75rem;
-  }
-
-  .warning {
-    border-color: rgba(180, 96, 60, 0.35);
-  }
-
-  .meeting-list {
-    display: grid;
-    gap: 0.6rem;
-  }
-
-  .meeting-card {
-    display: grid;
-    gap: 0.34rem;
-    width: 100%;
-    padding: 0.8rem 0.85rem;
-    text-align: left;
-    border: 1px solid rgba(93, 82, 66, 0.16);
-    border-radius: 1rem;
-    background:
-      linear-gradient(120deg, rgba(255, 255, 255, 0.94), rgba(246, 239, 229, 0.8)),
-      rgba(255, 255, 255, 0.92);
-    color: inherit;
-  }
-
-  .meeting-card:hover {
-    border-color: rgba(130, 96, 42, 0.34);
-    transform: translateY(-1px);
-  }
-
-  .meeting-card.active-meeting {
-    border-color: rgba(180, 112, 58, 0.45);
-    box-shadow: inset 0 0 0 1px rgba(180, 112, 58, 0.2);
-  }
-
-  .meeting-title {
-    font-weight: 700;
-  }
-
-  .meeting-meta {
-    color: #665d51;
-    font-size: 0.89rem;
-    line-height: 1.45;
-  }
-
-  .player-actions button,
-  .speaker-tag,
-  .time-chip,
-  .token-button,
-  .word {
-    border: 1px solid rgba(93, 82, 66, 0.16);
-    border-radius: 0.8rem;
-    background: rgba(255, 255, 255, 0.92);
-    color: inherit;
-    transition:
-      transform 120ms ease,
-      border-color 120ms ease,
-      background 120ms ease;
-  }
-
-  .player-actions button:hover,
-  .speaker-tag:hover,
-  .time-chip:hover,
-  .token-button:hover,
-  .word:hover {
-    transform: translateY(-1px);
-    border-color: rgba(130, 96, 42, 0.4);
-  }
-
-  .player-actions button {
-    padding: 0.68rem 0.82rem;
-  }
-
-  .switch-button {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.7rem;
-    padding: 0.58rem 0.78rem;
-    border: 1px solid rgba(93, 82, 66, 0.16);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.92);
-    color: inherit;
-    font-weight: 600;
-    transition:
-      transform 120ms ease,
-      border-color 120ms ease,
-      background 120ms ease;
-  }
-
-  .switch-button:hover {
-    transform: translateY(-1px);
-    border-color: rgba(130, 96, 42, 0.4);
-  }
-
-  .switch-button:focus-visible {
-    outline: 2px solid rgba(180, 112, 58, 0.38);
-    outline-offset: 3px;
-  }
-
-  .switch-label {
-    white-space: nowrap;
-  }
-
-  .switch-track {
-    position: relative;
-    width: 2.6rem;
-    height: 1.45rem;
-    border-radius: 999px;
-    background: rgba(126, 114, 90, 0.22);
-    box-shadow: inset 0 0 0 1px rgba(93, 82, 66, 0.12);
-    transition: background 120ms ease;
-    flex: 0 0 auto;
-  }
-
-  .switch-track.checked {
-    background: rgba(194, 126, 59, 0.92);
-    box-shadow: inset 0 0 0 1px rgba(157, 92, 39, 0.35);
-  }
-
-  .switch-thumb {
-    position: absolute;
-    top: 0.14rem;
-    left: 0.16rem;
-    width: 1.15rem;
-    height: 1.15rem;
-    border-radius: 50%;
-    background: #fffaf4;
-    box-shadow: 0 1px 4px rgba(87, 72, 40, 0.2);
-    transition: transform 120ms ease;
-  }
-
-  .switch-track.checked .switch-thumb {
-    transform: translateX(1.14rem);
-  }
-
-  .muted {
-    margin: 0;
-    color: #665d51;
-    line-height: 1.5;
-    font-size: 0.93rem;
-  }
-
-  .transcript-panel {
-    display: grid;
-    gap: 0.9rem;
-    align-content: start;
-    padding: 1.1rem 1.2rem 1.2rem;
-  }
-
-  .transcript-header {
-    display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    align-items: flex-start;
-    padding-bottom: 0.4rem;
-    border-bottom: 1px solid rgba(84, 78, 55, 0.1);
-  }
-
-  .transcript-summary {
-    margin: 0;
-    color: #665d51;
-    line-height: 1.5;
-    font-size: 0.98rem;
-  }
-
-  .lock-pill {
-    padding: 0.45rem 0.72rem;
-    border-radius: 999px;
-    background: rgba(201, 170, 113, 0.24);
-    color: #6c5128;
-    font-size: 0.9rem;
-  }
-
-  .transcript-list {
-    display: grid;
-    gap: 0.6rem;
-  }
-
-  .meeting-footer {
-    display: grid;
-    gap: 0.8rem;
-    padding-top: 0.15rem;
-    border-top: 1px solid rgba(84, 78, 55, 0.1);
-  }
-
-  .meeting-footer-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 0.8rem;
-  }
-
-  .meeting-footer-copy {
-    margin: 0;
-    color: #665d51;
-    line-height: 1.5;
-    font-size: 0.93rem;
-    max-width: 72ch;
-  }
-
-  .metadata-sections {
-    display: grid;
-    gap: 0.65rem;
-  }
-
-  .metadata-section {
-    border: 1px solid rgba(84, 78, 55, 0.1);
-    border-radius: 0.9rem;
-    background: rgba(255, 255, 255, 0.58);
-    overflow: hidden;
-  }
-
-  .metadata-section summary {
-    cursor: pointer;
-    padding: 0.8rem 0.9rem;
-    font-weight: 700;
-    color: #483f34;
-    list-style: none;
-  }
-
-  .metadata-section summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .metadata-grid {
-    display: grid;
-    grid-template-columns: minmax(10rem, 16rem) minmax(0, 1fr);
-    gap: 0.55rem 0.9rem;
-    padding: 0 0.9rem 0.9rem;
-    margin: 0;
-  }
-
-  .metadata-grid dt {
-    margin: 0;
-    color: #665d51;
-    font-size: 0.88rem;
-    line-height: 1.4;
-  }
-
-  .metadata-grid dd {
-    margin: 0;
-    color: #2f2d27;
-    font-size: 0.9rem;
-    line-height: 1.5;
-    overflow-wrap: anywhere;
-  }
-
-  .metadata-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-  }
-
-  .metadata-tag {
-    display: inline-flex;
-    align-items: center;
-    min-height: 1.9rem;
-    padding: 0.3rem 0.65rem;
-    border-radius: 999px;
-    border: 1px solid rgba(93, 82, 66, 0.14);
-    background: rgba(247, 243, 236, 0.92);
-    color: #473f34;
-    font-size: 0.86rem;
-    font-weight: 600;
-  }
-
-  .metadata-code {
-    display: inline-block;
-    padding: 0.12rem 0.35rem;
-    border-radius: 0.4rem;
-    background: rgba(91, 83, 71, 0.08);
-    color: #40382e;
-    font-size: 0.84rem;
-    font-family: "SFMono-Regular", "Cascadia Code", "Roboto Mono", monospace;
-  }
-
-  .metadata-raw {
-    margin: 0;
-    padding: 0 0.9rem 0.9rem;
-    color: #3c362d;
-    font-size: 0.84rem;
-    line-height: 1.55;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-
-  .segment {
-    padding: 0.95rem 1.05rem 1rem;
-    border-radius: 1rem;
-    border: 1px solid rgba(84, 78, 55, 0.12);
-    background: rgba(255, 255, 255, 0.7);
-    box-shadow: 0 4px 12px rgba(87, 72, 40, 0.04);
-  }
-
-  .segment.active {
-    border-color: rgba(180, 112, 58, 0.42);
-    background:
-      linear-gradient(90deg, rgba(220, 188, 136, 0.18), transparent 32%),
-      rgba(255, 255, 255, 0.92);
-    box-shadow: 0 8px 18px rgba(155, 115, 62, 0.08);
-  }
-
-  .segment.continuation-segment {
-    padding-top: 0.72rem;
-  }
-
-  .segment-meta {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.65rem;
-    margin-bottom: 0.45rem;
-  }
-
-  .continuation-segment .segment-meta {
-    justify-content: flex-end;
-  }
-
-  .speaker-tag,
-  .time-chip {
-    display: inline-flex;
-    align-items: center;
-    min-height: 2rem;
-    padding: 0.42rem 0.7rem;
-    border-radius: 999px;
-    font: inherit;
-    line-height: 1;
-  }
-
-  .speaker-tag {
-    font-size: 0.84rem;
-    font-weight: 700;
-    background: rgba(243, 236, 227, 0.96);
-  }
-
-  .time-chip {
-    font-size: 0.83rem;
-    font-weight: 600;
-    color: #5b5347;
-  }
-
-  .segment-text {
-    width: 100%;
-    padding: 0;
-    border: none;
-    background: none;
-    text-align: left;
-    color: #2f2d27;
-    font: inherit;
-    font-size: 1.06rem;
-    line-height: 1.72;
-  }
-
-  .segment-text:hover {
-    transform: none;
-    border-color: transparent;
-    background: none;
-  }
-
-  .segment-text:focus-visible {
-    outline: 2px solid rgba(180, 112, 58, 0.38);
-    outline-offset: 4px;
-    border-radius: 0.4rem;
-  }
-
-  .token-flow {
-    display: block;
-  }
-
-  .token-button,
-  .token-text {
-    display: inline;
-    padding: 0;
-    border: none;
-    background: none;
-    border-radius: 0.4rem;
-    font: inherit;
-    font-size: 1.06rem;
-    line-height: 1.72;
-    white-space: pre-wrap;
-    color: #2f2d27;
-  }
-
-  .token-button {
-    cursor: pointer;
-  }
-
-  .token-button:hover {
-    background: rgba(236, 208, 171, 0.3);
-  }
-
-  .token-button.active-token {
-    background: rgba(236, 208, 171, 0.88);
-    box-shadow: inset 0 0 0 1px rgba(186, 96, 44, 0.34);
-    font-weight: 700;
-    text-decoration: underline;
-    text-underline-offset: 0.16em;
-  }
-
-  .token-button.interpolated-token {
-    border-bottom: 1px dashed rgba(186, 96, 44, 0.45);
-  }
-
-  .token-text.untimed-word {
-    color: #544c40;
-  }
-
-  .word-row {
-    display: block;
-    margin-top: 0.8rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid rgba(84, 78, 55, 0.1);
-    line-height: 1.72;
-  }
-
-  .word {
-    padding: 0.1rem 0.18rem;
-    line-height: inherit;
-    font-size: 0.92rem;
-    white-space: pre-wrap;
-  }
-
-  .word.active-word {
-    border-color: rgba(186, 96, 44, 0.5);
-    background: rgba(236, 208, 171, 0.88);
-    font-weight: 700;
-    text-decoration: underline;
-    text-underline-offset: 0.18em;
-  }
-
-  .player-dock {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 30;
-    padding: 1rem 1rem 1.1rem;
-    background:
-      linear-gradient(180deg, rgba(221, 215, 196, 0) 0%, rgba(221, 215, 196, 0.78) 35%, rgba(221, 215, 196, 0.96) 100%);
-    pointer-events: none;
-  }
-
-  .player-card {
-    max-width: 1600px;
-    margin: 0 auto;
-    padding: 0.85rem 1rem;
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    gap: 0.9rem;
-    align-items: center;
-    pointer-events: auto;
-  }
-
-  .player-meta {
-    display: grid;
-    gap: 0.2rem;
-    min-width: 11rem;
-  }
-
-  .player-meta strong {
-    font-size: 0.96rem;
-    color: #383228;
-  }
-
-  .player-hint {
-    margin: 0;
-    color: #665d51;
-    font-size: 0.88rem;
-    line-height: 1.35;
-  }
-
-  .player-shell {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.7rem;
-    min-width: 0;
-  }
-
-  .engine-audio {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  .player-controls {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 0.85rem;
-    align-items: center;
-    min-width: 0;
-  }
-
-  .player-buttons {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem;
-  }
-
-  .transport-button {
-    padding: 0.68rem 0.82rem;
-    border: 1px solid rgba(93, 82, 66, 0.16);
-    border-radius: 0.8rem;
-    background: rgba(255, 255, 255, 0.92);
-    color: inherit;
-    font-weight: 700;
-    transition:
-      transform 120ms ease,
-      border-color 120ms ease,
-      background 120ms ease;
-  }
-
-  .transport-button:hover {
-    transform: translateY(-1px);
-    border-color: rgba(130, 96, 42, 0.4);
-  }
-
-  .transport-primary {
-    background: linear-gradient(135deg, rgba(198, 134, 73, 0.96), rgba(173, 98, 43, 0.96));
-    border-color: rgba(138, 82, 32, 0.55);
-    color: #fffaf4;
-  }
-
-  .timeline-wrap {
-    display: grid;
-    gap: 0.38rem;
-    min-width: 0;
-  }
-
-  .timeline-stats {
-    display: flex;
-    justify-content: space-between;
-    gap: 0.8rem;
-    color: #665d51;
-    font-size: 0.86rem;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .timeline-slider {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 100%;
-    height: 0.8rem;
-    border-radius: 999px;
-    background:
-      linear-gradient(
-        90deg,
-        rgba(194, 126, 59, 0.95) 0%,
-        rgba(194, 126, 59, 0.95) var(--player-progress, 0%),
-        rgba(126, 114, 90, 0.18) var(--player-progress, 0%),
-        rgba(126, 114, 90, 0.18) 100%
-      );
-    outline: none;
-    cursor: pointer;
-  }
-
-  .timeline-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 1rem;
-    height: 1rem;
-    border-radius: 50%;
-    border: 2px solid rgba(157, 92, 39, 0.92);
-    background: #fffaf4;
-    box-shadow: 0 2px 8px rgba(87, 72, 40, 0.18);
-  }
-
-  .timeline-slider::-moz-range-thumb {
-    width: 1rem;
-    height: 1rem;
-    border-radius: 50%;
-    border: 2px solid rgba(157, 92, 39, 0.92);
-    background: #fffaf4;
-    box-shadow: 0 2px 8px rgba(87, 72, 40, 0.18);
-  }
-
-  .timeline-slider::-moz-range-track {
-    height: 0.8rem;
-    border-radius: 999px;
-    background: transparent;
-  }
-
-  .player-actions {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 0.55rem;
-  }
-
-  @media (max-width: 980px) {
-    .masthead,
-    .layout {
-      grid-template-columns: 1fr;
-    }
-
-    .masthead {
-      flex-direction: column;
-    }
-
-    .sidebar {
-      position: static;
-    }
-
-    .transcript-panel {
-      padding: 1rem;
-    }
-
-    .meeting-footer-header,
-    .metadata-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .segment {
-      padding: 0.85rem 0.9rem 0.92rem;
-    }
-
-    .segment-text {
-      font-size: 1rem;
-    }
-
-    .shell {
-      padding-bottom: 11.5rem;
-    }
-
-    .player-card {
-      grid-template-columns: 1fr;
-      gap: 0.75rem;
-    }
-
-    .player-controls {
-      grid-template-columns: 1fr;
-    }
-
-    .player-actions {
-      justify-content: flex-start;
-    }
-
-    .timeline-stats {
-      flex-direction: column;
-      gap: 0.2rem;
-    }
-  }
-</style>

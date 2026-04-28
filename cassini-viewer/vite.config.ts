@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { defineConfig, type Plugin } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
+import tailwindcss from "@tailwindcss/vite";
 
 const viewerDemoRoot = path.resolve(__dirname, "exports/viewer-demo");
 
@@ -71,6 +72,6 @@ function contentTypeFor(filePath: string): string {
 }
 
 export default defineConfig({
-  plugins: [svelte(), serveViewerDemoAssets()],
+  plugins: [tailwindcss(), svelte(), serveViewerDemoAssets()],
   base: "./",
 });
