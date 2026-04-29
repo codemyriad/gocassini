@@ -33,6 +33,7 @@ type Config struct {
 	BindAddr         string
 	DBPath           string
 	WorkRoot         string
+	SiteRoot         string
 	FixturePath      string
 	FixtureURL       string
 	CassiniBin       string
@@ -41,17 +42,19 @@ type Config struct {
 }
 
 type Runtime struct {
-	ctx         context.Context
-	store       *Store
-	cfg         Config
-	logger      *log.Logger
-	stdout      io.Writer
-	stderr      io.Writer
-	recordSlots chan struct{}
-	buildQueue  chan buildTask
-	fixtureMu   sync.Mutex
-	recordJobFn func(context.Context, Job, TriggerRequest) (string, error)
-	buildJobFn  func(context.Context, buildTask) (string, error)
+	ctx          context.Context
+	store        *Store
+	cfg          Config
+	logger       *log.Logger
+	stdout       io.Writer
+	stderr       io.Writer
+	recordSlots  chan struct{}
+	buildQueue   chan buildTask
+	publishQueue chan publishTask
+	fixtureMu    sync.Mutex
+	recordJobFn  func(context.Context, Job, TriggerRequest) (string, error)
+	buildJobFn   func(context.Context, buildTask) (string, error)
+	publishJobFn func(context.Context, publishTask) (string, error)
 }
 
 type TriggerRequest struct {
@@ -103,6 +106,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "listening -> http://%s\n", listener.Addr().String())
 	logger.Printf("db -> %s", cfg.DBPath)
 	logger.Printf("work_root -> %s", cfg.WorkRoot)
+	logger.Printf("site_root -> %s", cfg.SiteRoot)
 	logger.Printf("fixture_path -> %s", cfg.FixturePath)
 	logger.Printf("fixture_url -> %s", cfg.FixtureURL)
 	logger.Printf("cassini_bin -> %s", cfg.CassiniBin)
@@ -149,6 +153,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	defaultDataRoot := filepath.Join(repoRoot, "cassini-operator", ".runtime")
 	defaultDBPath := filepath.Join(defaultDataRoot, "jobs.sqlite3")
 	defaultWorkRoot := filepath.Join(defaultDataRoot, "jobs")
+	defaultSiteRoot := filepath.Join(defaultDataRoot, "site")
 	defaultFixturePath := filepath.Join(defaultDataRoot, "operator-fixture.mkv")
 	defaultMaxRecordWorkers, err := parsePositiveIntEnv("MAX_RECORD_WORKERS", defaultRecordWorkerCount)
 	if err != nil {
@@ -166,7 +171,8 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	cfg := Config{RepoRoot: repoRoot}
 	fs.StringVar(&cfg.BindAddr, "bind", defaultBind, "HTTP bind address")
 	fs.StringVar(&cfg.DBPath, "db", defaultDBPath, "SQLite database path")
-	fs.StringVar(&cfg.WorkRoot, "work-root", defaultWorkRoot, "per-job artifact root")
+	fs.StringVar(&cfg.WorkRoot, "work-root", envOrDefault("WORK_ROOT", defaultWorkRoot), "per-job artifact root")
+	fs.StringVar(&cfg.SiteRoot, "site-root", envOrDefault("SITE_ROOT", defaultSiteRoot), "published site output root")
 	fs.StringVar(&cfg.FixturePath, "fixture-path", envOrDefault("FIXTURE_PATH", defaultFixturePath), "fixture MKV path")
 	fs.StringVar(&cfg.FixtureURL, "fixture-url", strings.TrimSpace(os.Getenv("FIXTURE_URL")), "fixture download URL (used when fixture path is missing)")
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", defaultCassiniBin, "Cassini CLI binary path")
@@ -197,6 +203,7 @@ Flags:
 
 	cfg.DBPath = resolveRepoRelativePath(repoRoot, cfg.DBPath)
 	cfg.WorkRoot = resolveRepoRelativePath(repoRoot, cfg.WorkRoot)
+	cfg.SiteRoot = resolveRepoRelativePath(repoRoot, cfg.SiteRoot)
 	cfg.FixturePath = resolveRepoRelativePath(repoRoot, cfg.FixturePath)
 	cfg.CassiniBin = resolveRepoRelativePath(repoRoot, cfg.CassiniBin)
 	cfg.FixtureURL = strings.TrimSpace(cfg.FixtureURL)
@@ -252,18 +259,21 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		queueCapacity = 16
 	}
 	rt := &Runtime{
-		ctx:         ctx,
-		store:       store,
-		cfg:         cfg,
-		logger:      logger,
-		stdout:      stdout,
-		stderr:      stderr,
-		recordSlots: make(chan struct{}, cfg.MaxRecordWorkers),
-		buildQueue:  make(chan buildTask, queueCapacity),
+		ctx:          ctx,
+		store:        store,
+		cfg:          cfg,
+		logger:       logger,
+		stdout:       stdout,
+		stderr:       stderr,
+		recordSlots:  make(chan struct{}, cfg.MaxRecordWorkers),
+		buildQueue:   make(chan buildTask, queueCapacity),
+		publishQueue: make(chan publishTask, 16),
 	}
 	rt.recordJobFn = rt.recordFromFixture
 	rt.buildJobFn = rt.executeBuildCLI
+	rt.publishJobFn = rt.executePublishCLI
 	rt.startBuildWorkers()
+	rt.startPublishWorker()
 	return rt
 }
 

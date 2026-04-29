@@ -105,7 +105,7 @@ func TestLoadConfigRejectsMissingCassiniBin(t *testing.T) {
 	}
 }
 
-func TestCreateJobReturnsULIDAndCompletesBuildStage(t *testing.T) {
+func TestCreateJobReturnsULIDAndCompletesPublishStage(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
@@ -134,19 +134,33 @@ func TestCreateJobReturnsULIDAndCompletesBuildStage(t *testing.T) {
 	if job.ArtifactMeetingPath == nil {
 		t.Fatalf("expected artifact_meeting_path to be set")
 	}
+	if job.ArtifactSitePath == nil {
+		t.Fatalf("expected artifact_site_path to be set")
+	}
 	if job.BuildQueuedAt == nil || job.BuildStartedAt == nil || job.BuildFinishedAt == nil {
 		t.Fatalf("expected build timestamps to be set, got job=%#v", job)
+	}
+	if job.PublishQueuedAt == nil || job.PublishStartedAt == nil || job.PublishFinishedAt == nil {
+		t.Fatalf("expected publish timestamps to be set, got job=%#v", job)
 	}
 	if _, err := os.Stat(filepath.Join(*job.ArtifactRunPath, "recording.mkv")); err != nil {
 		t.Fatalf("expected recording.mkv in run bundle: %v", err)
 	}
-	manifestPath := filepath.Join(*job.ArtifactMeetingPath, "cassini.json")
-	raw, err := os.ReadFile(manifestPath)
+	meetingManifestPath := filepath.Join(*job.ArtifactMeetingPath, "cassini.json")
+	raw, err := os.ReadFile(meetingManifestPath)
 	if err != nil {
 		t.Fatalf("read meeting manifest: %v", err)
 	}
 	if !strings.Contains(string(raw), `"kind": "meeting"`) {
 		t.Fatalf("unexpected meeting manifest: %s", string(raw))
+	}
+	siteManifestPath := filepath.Join(*job.ArtifactSitePath, "cassini.json")
+	raw, err = os.ReadFile(siteManifestPath)
+	if err != nil {
+		t.Fatalf("read site manifest: %v", err)
+	}
+	if !strings.Contains(string(raw), `"kind": "site"`) {
+		t.Fatalf("unexpected site manifest: %s", string(raw))
 	}
 }
 
@@ -262,6 +276,48 @@ func TestBuildFailurePersistsLightweightErrorDetail(t *testing.T) {
 	}
 }
 
+func TestPublishFailurePersistsLightweightErrorDetail(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rt.publishJobFn = func(ctx context.Context, task publishTask) (string, error) {
+		sitePath := rt.cfg.SiteRoot
+		if err := os.MkdirAll(sitePath, 0o755); err != nil {
+			return sitePath, err
+		}
+		manifest := `{
+  "kind": "site",
+  "version": "cassini.site.v1",
+  "state": "failed",
+  "stage": "publish",
+  "error": "exporter exploded"
+}`
+		if err := os.WriteFile(filepath.Join(sitePath, "cassini.json"), []byte(manifest), 0o644); err != nil {
+			return sitePath, err
+		}
+		return sitePath, errors.New("exit status 1")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/publish-fail"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	job := waitForJobState(t, rt.store, resp.ID, "failed")
+	if job.ArtifactSitePath == nil {
+		t.Fatalf("expected artifact_site_path for partial bundle")
+	}
+	if job.Error == nil || *job.Error != "publish stage publish: exporter exploded" {
+		t.Fatalf("unexpected error detail: %#v", job.Error)
+	}
+}
+
 func newTestRuntime(t *testing.T) (*Runtime, func()) {
 	t.Helper()
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
@@ -282,6 +338,7 @@ func newTestRuntime(t *testing.T) (*Runtime, func()) {
 		BindAddr:         "127.0.0.1:0",
 		DBPath:           filepath.Join(tmp, "jobs.sqlite3"),
 		WorkRoot:         filepath.Join(tmp, "jobs"),
+		SiteRoot:         filepath.Join(tmp, "site"),
 		FixturePath:      fixturePath,
 		CassiniBin:       filepath.Join(repoRoot, "bin", "cassini"),
 		MaxRecordWorkers: 1,
@@ -293,6 +350,12 @@ func newTestRuntime(t *testing.T) (*Runtime, func()) {
 			return meetingPath, err
 		}
 		return meetingPath, nil
+	}
+	rt.publishJobFn = func(ctx context.Context, task publishTask) (string, error) {
+		if err := writeReadySiteBundleFixture(rt.cfg.SiteRoot, rt.cfg.WorkRoot); err != nil {
+			return rt.cfg.SiteRoot, err
+		}
+		return rt.cfg.SiteRoot, nil
 	}
 	return rt, func() { _ = store.Close() }
 }
@@ -365,6 +428,31 @@ func writeReadyMeetingBundleFixture(meetingDir string, sourcePath string) error 
   }
 }`
 	return os.WriteFile(filepath.Join(meetingDir, "cassini.json"), []byte(manifest), 0o644)
+}
+
+func writeReadySiteBundleFixture(siteDir string, sourcePath string) error {
+	if err := os.MkdirAll(filepath.Join(siteDir, "meetings", "demo"), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(siteDir, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(siteDir, "catalog.json"), []byte(`{"meetings":[{"id":"demo"}]}`), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(siteDir, "meetings", "demo", "manifest.json"), []byte(`{}`), 0o644); err != nil {
+		return err
+	}
+	manifest := `{
+  "kind": "site",
+  "version": "cassini.site.v1",
+  "state": "ready",
+  "stage": "ready",
+  "source_path": "` + sourcePath + `",
+  "catalog_path": "catalog.json",
+  "meeting_count": 1
+}`
+	return os.WriteFile(filepath.Join(siteDir, "cassini.json"), []byte(manifest), 0o644)
 }
 
 func insertJob(t *testing.T, db *sql.DB, id, createdAt string) {

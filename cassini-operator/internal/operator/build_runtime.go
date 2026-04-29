@@ -52,11 +52,14 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		}
 		return
 	}
-	if err := rt.store.MarkBuildSucceeded(context.Background(), task.JobID, artifactMeetingPath, finishedAt); err != nil {
-		rt.logger.Printf("build success update failed id=%s worker=%d: %v", task.JobID, workerIndex, err)
+	if err := rt.enqueuePublishJob(task.JobID, artifactMeetingPath, finishedAt); err != nil {
+		rt.logger.Printf("publish queue update failed id=%s worker=%d: %v", task.JobID, workerIndex, err)
+		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, rt.cfg.SiteRoot, err.Error(), finishedAt); updateErr != nil {
+			rt.logger.Printf("publish queue failure update failed id=%s worker=%d: %v", task.JobID, workerIndex, updateErr)
+		}
 		return
 	}
-	rt.logger.Printf("build succeeded id=%s worker=%d meeting=%s", task.JobID, workerIndex, artifactMeetingPath)
+	rt.logger.Printf("build succeeded id=%s worker=%d meeting=%s publish_queued_at=%s", task.JobID, workerIndex, artifactMeetingPath, finishedAt)
 }
 
 func (rt *Runtime) enqueueBuildJob(jobID, artifactRunPath, queuedAt string) error {
