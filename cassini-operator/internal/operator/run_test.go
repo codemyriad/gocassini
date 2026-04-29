@@ -105,6 +105,54 @@ func TestLoadConfigRejectsMissingCassiniBin(t *testing.T) {
 	}
 }
 
+func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "queued-record", Stage: "record", State: "queued", CreatedAt: "2026-04-29T10:00:00Z"})
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "running-build", Stage: "build", State: "running", CreatedAt: "2026-04-29T10:01:00Z"})
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "queued-publish", Stage: "publish", State: "queued", CreatedAt: "2026-04-29T10:02:00Z"})
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "done-success", Stage: "done", State: "succeeded", CreatedAt: "2026-04-29T10:03:00Z", CompletedAt: strPtr("2026-04-29T10:04:00Z")})
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "done-failed", Stage: "done", State: "failed", CreatedAt: "2026-04-29T10:05:00Z", CompletedAt: strPtr("2026-04-29T10:06:00Z")})
+
+	interruptedAt := "2026-04-29T11:00:00Z"
+	count, err := rt.store.MarkIncompleteJobsInterrupted(context.Background(), interruptedAt)
+	if err != nil {
+		t.Fatalf("MarkIncompleteJobsInterrupted() error = %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("count = %d, want 3", count)
+	}
+
+	queuedRecord := mustGetJob(t, rt.store, "queued-record")
+	if queuedRecord.Stage != "record" || queuedRecord.State != "interrupted" {
+		t.Fatalf("unexpected queued record job = %#v", queuedRecord)
+	}
+	if queuedRecord.InterruptedAt == nil || *queuedRecord.InterruptedAt != interruptedAt {
+		t.Fatalf("unexpected interrupted_at for queued record = %#v", queuedRecord.InterruptedAt)
+	}
+
+	runningBuild := mustGetJob(t, rt.store, "running-build")
+	if runningBuild.Stage != "build" || runningBuild.State != "interrupted" {
+		t.Fatalf("unexpected running build job = %#v", runningBuild)
+	}
+
+	queuedPublish := mustGetJob(t, rt.store, "queued-publish")
+	if queuedPublish.Stage != "publish" || queuedPublish.State != "interrupted" {
+		t.Fatalf("unexpected queued publish job = %#v", queuedPublish)
+	}
+
+	doneSuccess := mustGetJob(t, rt.store, "done-success")
+	if doneSuccess.State != "succeeded" || doneSuccess.InterruptedAt != nil {
+		t.Fatalf("completed success should be unchanged, got %#v", doneSuccess)
+	}
+
+	doneFailed := mustGetJob(t, rt.store, "done-failed")
+	if doneFailed.State != "failed" || doneFailed.InterruptedAt != nil {
+		t.Fatalf("completed failed should be unchanged, got %#v", doneFailed)
+	}
+}
+
 func TestCreateJobReturnsULIDAndCompletesPublishStage(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -455,21 +503,50 @@ func writeReadySiteBundleFixture(siteDir string, sourcePath string) error {
 	return os.WriteFile(filepath.Join(siteDir, "cassini.json"), []byte(manifest), 0o644)
 }
 
+type seededJobRow struct {
+	ID          string
+	Stage       string
+	State       string
+	CreatedAt   string
+	CompletedAt *string
+}
+
 func insertJob(t *testing.T, db *sql.DB, id, createdAt string) {
 	t.Helper()
+	seedJobRow(t, db, seededJobRow{ID: id, Stage: "record", State: "queued", CreatedAt: createdAt})
+}
+
+func seedJobRow(t *testing.T, db *sql.DB, row seededJobRow) {
+	t.Helper()
+	completedAt := any(nil)
+	if row.CompletedAt != nil {
+		completedAt = *row.CompletedAt
+	}
 	if _, err := db.Exec(`
 INSERT INTO jobs (
   id, provider, request_json, stage, state,
-  created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id,
+  created_at, updated_at, completed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		row.ID,
 		"nextcloud-talk",
 		`{"platform":"nextcloud-talk","url":"https://example.test/call"}`,
-		"record",
-		"queued",
-		createdAt,
-		createdAt,
+		row.Stage,
+		row.State,
+		row.CreatedAt,
+		row.CreatedAt,
+		completedAt,
 	); err != nil {
-		t.Fatalf("insert job %s: %v", id, err)
+		t.Fatalf("insert job %s: %v", row.ID, err)
 	}
 }
+
+func mustGetJob(t *testing.T, store *Store, id string) Job {
+	t.Helper()
+	job, err := store.GetJob(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetJob(%s) error = %v", id, err)
+	}
+	return job
+}
+
+func strPtr(v string) *string { return &v }

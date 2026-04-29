@@ -84,6 +84,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer store.Close()
+	if interrupted, err := store.MarkIncompleteJobsInterrupted(context.Background(), nowUTCString()); err != nil {
+		fmt.Fprintf(stderr, "mark interrupted jobs: %v\n", err)
+		return 1
+	} else if interrupted > 0 {
+		logger.Printf("startup interrupted_jobs -> %d", interrupted)
+	}
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 
