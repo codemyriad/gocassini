@@ -35,7 +35,9 @@ type Config struct {
 	WorkRoot         string
 	FixturePath      string
 	FixtureURL       string
+	CassiniBin       string
 	MaxRecordWorkers int
+	MaxBuildWorkers  int
 }
 
 type Runtime struct {
@@ -43,9 +45,13 @@ type Runtime struct {
 	store       *Store
 	cfg         Config
 	logger      *log.Logger
+	stdout      io.Writer
+	stderr      io.Writer
 	recordSlots chan struct{}
+	buildQueue  chan buildTask
 	fixtureMu   sync.Mutex
 	recordJobFn func(context.Context, Job, TriggerRequest) (string, error)
+	buildJobFn  func(context.Context, buildTask) (string, error)
 }
 
 type TriggerRequest struct {
@@ -76,7 +82,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	defer store.Close()
 
-	runtime := NewRuntime(ctx, store, cfg, logger)
+	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/jobs", runtime.jobsHandler)
@@ -99,7 +105,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("work_root -> %s", cfg.WorkRoot)
 	logger.Printf("fixture_path -> %s", cfg.FixturePath)
 	logger.Printf("fixture_url -> %s", cfg.FixtureURL)
+	logger.Printf("cassini_bin -> %s", cfg.CassiniBin)
 	logger.Printf("max_record_workers -> %d", cfg.MaxRecordWorkers)
+	logger.Printf("max_build_workers -> %d", cfg.MaxBuildWorkers)
 
 	serveErrCh := make(chan error, 1)
 	go func() {
@@ -146,6 +154,11 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	if err != nil {
 		return Config{}, 2, err
 	}
+	defaultMaxBuildWorkers, err := parsePositiveIntEnv("MAX_BUILD_WORKERS", defaultBuildWorkerCount)
+	if err != nil {
+		return Config{}, 2, err
+	}
+	defaultCassiniBin := envOrDefault("CASSINI_BIN", filepath.Join(repoRoot, "bin", "cassini"))
 
 	fs := flag.NewFlagSet("cassini-operator", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -156,7 +169,9 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.StringVar(&cfg.WorkRoot, "work-root", defaultWorkRoot, "per-job artifact root")
 	fs.StringVar(&cfg.FixturePath, "fixture-path", envOrDefault("FIXTURE_PATH", defaultFixturePath), "fixture MKV path")
 	fs.StringVar(&cfg.FixtureURL, "fixture-url", strings.TrimSpace(os.Getenv("FIXTURE_URL")), "fixture download URL (used when fixture path is missing)")
+	fs.StringVar(&cfg.CassiniBin, "cassini-bin", defaultCassiniBin, "Cassini CLI binary path")
 	fs.IntVar(&cfg.MaxRecordWorkers, "max-record-workers", defaultMaxRecordWorkers, "maximum concurrent record workers")
+	fs.IntVar(&cfg.MaxBuildWorkers, "max-build-workers", defaultMaxBuildWorkers, "maximum concurrent build workers")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Cassini Operator runs the V1 job API and worker runtime.
 
@@ -183,9 +198,16 @@ Flags:
 	cfg.DBPath = resolveRepoRelativePath(repoRoot, cfg.DBPath)
 	cfg.WorkRoot = resolveRepoRelativePath(repoRoot, cfg.WorkRoot)
 	cfg.FixturePath = resolveRepoRelativePath(repoRoot, cfg.FixturePath)
+	cfg.CassiniBin = resolveRepoRelativePath(repoRoot, cfg.CassiniBin)
 	cfg.FixtureURL = strings.TrimSpace(cfg.FixtureURL)
 	if cfg.MaxRecordWorkers < 1 {
 		return Config{}, 2, errors.New("--max-record-workers must be >= 1")
+	}
+	if cfg.MaxBuildWorkers < 1 {
+		return Config{}, 2, errors.New("--max-build-workers must be >= 1")
+	}
+	if err := validateExecutable(cfg.CassiniBin); err != nil {
+		return Config{}, 2, fmt.Errorf("cassini binary: %w", err)
 	}
 	if !strings.HasSuffix(strings.ToLower(cfg.FixturePath), ".mkv") {
 		return Config{}, 2, fmt.Errorf("fixture path must end with .mkv: %s", cfg.FixturePath)
@@ -224,15 +246,24 @@ func resolveRepoRelativePath(repoRoot, path string) string {
 	return filepath.Join(repoRoot, path)
 }
 
-func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logger) *Runtime {
+func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logger, stdout, stderr io.Writer) *Runtime {
+	queueCapacity := cfg.MaxBuildWorkers * 16
+	if queueCapacity < 16 {
+		queueCapacity = 16
+	}
 	rt := &Runtime{
 		ctx:         ctx,
 		store:       store,
 		cfg:         cfg,
 		logger:      logger,
+		stdout:      stdout,
+		stderr:      stderr,
 		recordSlots: make(chan struct{}, cfg.MaxRecordWorkers),
+		buildQueue:  make(chan buildTask, queueCapacity),
 	}
 	rt.recordJobFn = rt.recordFromFixture
+	rt.buildJobFn = rt.executeBuildCLI
+	rt.startBuildWorkers()
 	return rt
 }
 
@@ -343,11 +374,14 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		}
 		return
 	}
-	if err := rt.store.MarkRecordSucceeded(context.Background(), job.ID, artifactRunPath, finishedAt); err != nil {
-		rt.logger.Printf("record success update failed id=%s: %v", job.ID, err)
+	if err := rt.enqueueBuildJob(job.ID, artifactRunPath, finishedAt); err != nil {
+		rt.logger.Printf("build queue update failed id=%s: %v", job.ID, err)
+		if updateErr := rt.store.MarkBuildFailed(context.Background(), job.ID, "", err.Error(), finishedAt); updateErr != nil {
+			rt.logger.Printf("build queue failure update failed id=%s: %v", job.ID, updateErr)
+		}
 		return
 	}
-	rt.logger.Printf("record succeeded id=%s run=%s", job.ID, artifactRunPath)
+	rt.logger.Printf("record succeeded id=%s run=%s build_queued_at=%s", job.ID, artifactRunPath, finishedAt)
 }
 
 func (rt *Runtime) recordFromFixture(ctx context.Context, job Job, req TriggerRequest) (string, error) {

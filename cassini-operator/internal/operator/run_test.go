@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -87,7 +88,24 @@ func TestListJobsOrdersNewestFirst(t *testing.T) {
 	}
 }
 
-func TestCreateJobReturnsULIDAndCompletesRecordStage(t *testing.T) {
+func TestLoadConfigRejectsMissingCassiniBin(t *testing.T) {
+	repoRoot := makeFakeOperatorRepoRoot(t)
+	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
+	t.Setenv("CASSINI_BIN", filepath.Join(repoRoot, "bin", "missing-cassini"))
+
+	_, exitCode, err := loadConfig(nil, ioDiscard{})
+	if err == nil {
+		t.Fatalf("expected loadConfig error")
+	}
+	if exitCode != 2 {
+		t.Fatalf("exitCode = %d, want 2 err=%v", exitCode, err)
+	}
+	if !strings.Contains(err.Error(), "cassini binary") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateJobReturnsULIDAndCompletesBuildStage(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
@@ -113,16 +131,22 @@ func TestCreateJobReturnsULIDAndCompletesRecordStage(t *testing.T) {
 	if job.ArtifactRunPath == nil {
 		t.Fatalf("expected artifact_run_path to be set")
 	}
+	if job.ArtifactMeetingPath == nil {
+		t.Fatalf("expected artifact_meeting_path to be set")
+	}
+	if job.BuildQueuedAt == nil || job.BuildStartedAt == nil || job.BuildFinishedAt == nil {
+		t.Fatalf("expected build timestamps to be set, got job=%#v", job)
+	}
 	if _, err := os.Stat(filepath.Join(*job.ArtifactRunPath, "recording.mkv")); err != nil {
 		t.Fatalf("expected recording.mkv in run bundle: %v", err)
 	}
-	manifestPath := filepath.Join(*job.ArtifactRunPath, "cassini.json")
+	manifestPath := filepath.Join(*job.ArtifactMeetingPath, "cassini.json")
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
-		t.Fatalf("read manifest: %v", err)
+		t.Fatalf("read meeting manifest: %v", err)
 	}
-	if !strings.Contains(string(raw), `"kind": "run"`) || !strings.Contains(string(raw), `"format": "mkv"`) {
-		t.Fatalf("unexpected manifest: %s", string(raw))
+	if !strings.Contains(string(raw), `"kind": "meeting"`) {
+		t.Fatalf("unexpected meeting manifest: %s", string(raw))
 	}
 }
 
@@ -196,6 +220,48 @@ func TestCreateJobReturnsBusyWithoutCreatingRow(t *testing.T) {
 	<-done
 }
 
+func TestBuildFailurePersistsLightweightErrorDetail(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
+		meetingPath := filepath.Join(rt.cfg.WorkRoot, task.JobID+".meeting")
+		if err := os.MkdirAll(meetingPath, 0o755); err != nil {
+			return meetingPath, err
+		}
+		manifest := `{
+  "kind": "meeting",
+  "version": "cassini.meeting.v1",
+  "state": "failed",
+  "stage": "build",
+  "error": "transcriber exploded"
+}`
+		if err := os.WriteFile(filepath.Join(meetingPath, "cassini.json"), []byte(manifest), 0o644); err != nil {
+			return meetingPath, err
+		}
+		return meetingPath, errors.New("exit status 1")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/fail"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	job := waitForJobState(t, rt.store, resp.ID, "failed")
+	if job.ArtifactMeetingPath == nil {
+		t.Fatalf("expected artifact_meeting_path for partial bundle")
+	}
+	if job.Error == nil || *job.Error != "build stage build: transcriber exploded" {
+		t.Fatalf("unexpected error detail: %#v", job.Error)
+	}
+}
+
 func newTestRuntime(t *testing.T) (*Runtime, func()) {
 	t.Helper()
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
@@ -217,8 +283,17 @@ func newTestRuntime(t *testing.T) (*Runtime, func()) {
 		DBPath:           filepath.Join(tmp, "jobs.sqlite3"),
 		WorkRoot:         filepath.Join(tmp, "jobs"),
 		FixturePath:      fixturePath,
+		CassiniBin:       filepath.Join(repoRoot, "bin", "cassini"),
 		MaxRecordWorkers: 1,
-	}, logger)
+		MaxBuildWorkers:  1,
+	}, logger, ioDiscard{}, ioDiscard{})
+	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
+		meetingPath := filepath.Join(rt.cfg.WorkRoot, task.JobID+".meeting")
+		if err := writeReadyMeetingBundleFixture(meetingPath, task.ArtifactRunPath); err != nil {
+			return meetingPath, err
+		}
+		return meetingPath, nil
+	}
 	return rt, func() { _ = store.Close() }
 }
 
@@ -243,6 +318,54 @@ func waitForJobState(t *testing.T, store *Store, id, wantState string) Job {
 type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }
+
+func makeFakeOperatorRepoRoot(t *testing.T) string {
+	t.Helper()
+	repoRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repoRoot, "cassini-go-recorder"), 0o755); err != nil {
+		t.Fatalf("mkdir fake cassini-go-recorder: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "cassini-go-recorder", "go.mod"), []byte("module fake\n"), 0o644); err != nil {
+		t.Fatalf("write fake go.mod: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, "bin"), 0o755); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "bin", "cassini"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake bin/cassini: %v", err)
+	}
+	return repoRoot
+}
+
+func writeReadyMeetingBundleFixture(meetingDir string, sourcePath string) error {
+	if err := os.MkdirAll(meetingDir, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(meetingDir, "meeting.webm"), []byte("webm"), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(meetingDir, "transcript.words.v1.json"), []byte(`{"version":"transcript.words.v1"}`), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(meetingDir, "manifest.json"), []byte(`{"version":"cassini.meeting-artifact.v1"}`), 0o644); err != nil {
+		return err
+	}
+	manifest := `{
+  "kind": "meeting",
+  "version": "cassini.meeting.v1",
+  "state": "ready",
+  "stage": "ready",
+  "source_kind": "run",
+  "source_path": "` + sourcePath + `",
+  "artifact_manifest": "manifest.json",
+  "files": {
+    "audio": "meeting.webm",
+    "transcript": "transcript.words.v1.json",
+    "artifact_manifest": "manifest.json"
+  }
+}`
+	return os.WriteFile(filepath.Join(meetingDir, "cassini.json"), []byte(manifest), 0o644)
+}
 
 func insertJob(t *testing.T, db *sql.DB, id, createdAt string) {
 	t.Helper()
