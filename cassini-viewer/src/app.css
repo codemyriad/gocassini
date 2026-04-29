@@ -1,8 +1,147 @@
 @import "tailwindcss";
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Plugin registration
+ *
+ * autumn = light (default), forest = dark (auto-applied when prefers-color-scheme: dark).
+ * The `@plugin "daisyui/theme"` blocks below redefine these themes inline so
+ * every token is visible and tunable in this file.
+ * ────────────────────────────────────────────────────────────────────────── */
+
 @plugin "daisyui" {
-  themes: light --default, dark --prefersdark;
+  themes:
+    forrest-light --default,
+    forrest-dark --prefersdark;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Tailwind v4 design tokens (@theme)
+ *
+ * These power Tailwind utilities (font-sans, rounded-md, etc.).
+ * Reference: https://tailwindcss.com/docs/theme
+ * ────────────────────────────────────────────────────────────────────────── */
+
+@theme {
+  /* Typography ------------------------------------------------------------- */
+  --font-sans:
+    ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+
+  /* Spacing scale base (1 unit = --spacing) -------------------------------- */
+  --spacing: 0.25rem;
+
+  /* Radii (Tailwind utilities) --------------------------------------------- */
+  --radius-xs: 0.125rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+  --radius-3xl: 1.5rem;
+  --radius-4xl: 2rem;
+
+  /* Breakpoints ------------------------------------------------------------ */
+  --breakpoint-sm: 40rem;
+  --breakpoint-md: 48rem;
+  --breakpoint-lg: 64rem;
+  --breakpoint-xl: 80rem;
+  --breakpoint-2xl: 96rem;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * DaisyUI light theme — autumn
+ *
+ * Reference: https://daisyui.com/docs/themes/#list-of-all-color-names
+ * Token format: oklch (perceptually uniform). hex / rgb / hsl also work.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+@plugin "daisyui/theme" {
+  name: "forrest-light";
+  default: true;
+  prefersdark: false;
+  color-scheme: light;
+
+  --color-base-100: oklch(99.2% 0.008 104.031);
+  --color-base-200: oklch(91.8% 0.016 103.394);
+  --color-base-300: oklch(85.8% 0.014 103.384);
+  --color-base-content: oklch(13.1% 0.029 65.152);
+  --color-primary: oklch(70.5% 0.147 152.3);
+  --color-primary-content: oklch(0% 0 0);
+  --color-secondary: oklch(73.4% 0.148 237.323);
+  --color-secondary-content: oklch(13.955% 0.027 168.327);
+  --color-accent: oklch(81% 0.111 293.571);
+  --color-accent-content: oklch(14.125% 0.023 185.713);
+  --color-neutral: oklch(14% 0 0);
+  --color-neutral-content: oklch(91.8% 0.016 103.394);
+  --color-info: oklch(99.2% 0.008 104.031);
+  --color-info-content: oklch(13.844% 0.019 207.284);
+  --color-success: oklch(70.5% 0.147 152.3);
+  --color-success-content: oklch(0% 0 0);
+  --color-warning: oklch(82% 0.189 84.429);
+  --color-warning-content: oklch(0% 0 0);
+  --color-error: oklch(76.6% 0.221 32.8);
+  --color-error-content: oklch(0% 0 0);
+
+  /* Geometry / depth ------------------------------------------------------ */
+  --radius-selector: 0.32rem; /* checkbox, toggle, badge, small UI    */
+  --radius-field: 0.5rem; /* button, input, select, tab           */
+  --radius-box: 0.5rem; /* card, modal, alert, large container  */
+  --size-selector: 0.25rem; /* base size for small UI elements      */
+  --size-field: 0.25rem; /* base size for inputs, buttons        */
+  --border: 1px; /* default border width                 */
+  --depth: 1; /* 0 = flat, 1 = subtle 3D shadows      */
+  --noise: 0; /* 0 = clean, 1 = subtle background noise */
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * DaisyUI dark theme — forest
+ * ────────────────────────────────────────────────────────────────────────── */
+
+@plugin "daisyui/theme" {
+  name: "forrest-dark";
+  default: false;
+  prefersdark: true;
+  color-scheme: dark;
+
+  --color-base-100: oklch(26% 0 0);
+  --color-base-200: oklch(14% 0 0);
+  --color-base-300: oklch(36% 0 0);
+  --color-base-content: oklch(91.8% 0.016 103.394);
+  --color-primary: oklch(58% 0.147 152.3);
+  --color-primary-content: oklch(0% 0 0);
+  --color-secondary: oklch(73.4% 0.148 237.323);
+  --color-secondary-content: oklch(13.955% 0.027 168.327);
+  --color-accent: oklch(81% 0.111 293.571);
+  --color-accent-content: oklch(14.125% 0.023 185.713);
+  --color-neutral: oklch(91.8% 0.016 103.394);
+  --color-neutral-content: oklch(26% 0 0);
+  --color-info: oklch(36% 0 0);
+  --color-info-content: oklch(91.8% 0.016 103.394);
+  --color-success: oklch(70.5% 0.147 152.3);
+  --color-success-content: oklch(0% 0 0);
+  --color-warning: oklch(82% 0.189 84.429);
+  --color-warning-content: oklch(0% 0 0);
+  --color-error: oklch(76.6% 0.221 32.8);
+  --color-error-content: oklch(0% 0 0);
+
+  /* Geometry / depth (kept in sync with the autumn block) ----------------- */
+  --radius-selector: 0.32rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.5rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Global resets
+ * ────────────────────────────────────────────────────────────────────────── */
 
 html,
 body,
@@ -12,4 +151,66 @@ body,
 
 body {
   min-height: 100vh;
+}
+
+/* Suppress transitions during theme swap to avoid cascading animation
+ * across thousands of transcript tokens. Toggled by App.svelte's setTheme. */
+html.theme-switching,
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* Scroll containers reserve their scrollbar gutter at all times, so content
+ * width never shifts as the scrollbar appears/disappears. Applied directly
+ * in CSS rather than via Tailwind arbitrary class to guarantee it lands. */
+.scroll-stable {
+  scrollbar-gutter: stable;
+}
+
+/* GPU-composited loading spinner. DaisyUI's loading-spinner uses a mask
+ * animation that runs on the main thread, so it visibly stalls when the
+ * meeting view performs the heavy synchronous transcript mount right
+ * before disappearing. transform-rotate on its own layer keeps spinning
+ * even when the main thread is briefly blocked. */
+.cassini-spinner {
+  display: inline-block;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 4px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: cassini-spinner-spin 0.9s linear infinite;
+  will-change: transform;
+}
+@keyframes cassini-spinner-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cassini-spinner {
+    animation-duration: 2s;
+  }
+}
+
+/* Consistent keyboard focus ring across all interactive elements.
+ * `:where()` keeps specificity at 0 so any per-element override still wins. */
+:where(
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  summary,
+  [role="button"],
+  [role="switch"],
+  [role="checkbox"],
+  [role="link"],
+  [tabindex]:not([tabindex="-1"])
+):focus-visible {
+  outline: 2px solid var(--color-base-content);
+  outline-offset: 2px;
 }
