@@ -4,6 +4,9 @@ shaping: true
 
 # V1 — Shaping
 
+> Historical shaping document: the selected shape described here has now been implemented through S5.
+> For the final implemented shape and validation notes, see `implementation.md`, `testing.md`, and `../../../../../cassini-operator/README.md`.
+
 This document shapes **V1: Trigger jobs, job records, and publish refresh**.
 
 It stays within the slice boundary already defined in:

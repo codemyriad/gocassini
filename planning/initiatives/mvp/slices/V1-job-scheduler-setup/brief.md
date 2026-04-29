@@ -1,5 +1,8 @@
 # V1 Brief — Trigger jobs, job records, and publish refresh
 
+> Historical planning brief: the V1 operator flow described here has now been implemented through S5.
+> For the final implemented shape and validation notes, see `implementation.md`, `testing.md`, and `../../../../../cassini-operator/README.md`.
+
 ## What this slice is
 
 V1 is the first backend control-plane slice for the MVP.

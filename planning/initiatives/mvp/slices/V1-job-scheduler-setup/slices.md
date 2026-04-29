@@ -8,6 +8,25 @@ Derived from `planning/initiatives/mvp/slices/V1-job-scheduler-setup/shaping.md`
 
 This document is the ground truth for the V1 breadboard and for the implementation slices that build it in testable increments.
 
+## Current implementation status
+
+The shaped V1 operator flow is now implemented through **S5**.
+
+That means the current code path is the full runtime described by the later slices:
+- `POST /jobs?provider=nextcloud-talk`
+- record placeholder from a fixture `.mkv`
+- queued build through `cassini build`
+- queued sequential publish through `cassini publish`
+- full persisted job rows through `GET /jobs` and `GET /jobs/:id`
+- startup interruption marking for any non-terminal persisted job
+
+The temporary slice cutlines below are still useful as implementation history, but they are now historical rather than current runtime behavior.
+
+For the final implemented shape, see also:
+- `implementation.md`
+- `testing.md`
+- `../../../../../cassini-operator/README.md`
+
 ## Breadboard
 
 ### UI Affordances
@@ -98,11 +117,11 @@ Two slices intentionally use temporary terminal cutlines so they can be tested b
 
 | # | Slice | New affordances | Depends On | Verify after done |
 |---|-------|------------------|------------|-------------------|
-| **S1** | **Bootstrap and read surface** | **U1, U3, U4, N1, N3, N11** | **—** | **Start the operator via direct binary and `cassini operator start`; `GET /jobs` returns `[]`; `GET /jobs/:id` returns not found.** |
-| **S2** | **Trigger admission and record-compatible `.run` artifact** | **U2, N2, N4, N5** | **S1** | **`POST /jobs?provider=nextcloud-talk` returns a ULID; the job runs record-only to `done/succeeded`; `artifact_run_path` points to a fresh build-compatible `.run`.** |
-| **S3** | **Build queue and meeting artifact generation** | **N6, N7, N10, N12** | **S2** | **A posted job now flows record → build → `done`; `artifact_meeting_path` is populated; build failures persist lightweight error text.** |
-| **S4** | **Publish queue and hosted output refresh** | **N8, N9** | **S3** | **A posted job now flows record → build → publish → `done`; `artifact_site_path` is populated and the hosted library refreshes.** |
-| **S5** | **Restart recovery and final operational semantics** | **N13** | **S4** | **Restarting the operator marks queued/running jobs as `interrupted` while preserving stage; completed jobs stay unchanged.** |
+| **S1** | **Bootstrap and read surface** | **U1, U3, U4, N1, N3, N11** | **—** | **Implemented. Start the operator via direct binary and `cassini operator start`; `GET /jobs` returns `[]`; `GET /jobs/:id` returns not found.** |
+| **S2** | **Trigger admission and record-compatible `.run` artifact** | **U2, N2, N4, N5** | **S1** | **Implemented. Accepted jobs persist ULID ids and materialize a fresh build-compatible `.run`.** |
+| **S3** | **Build queue and meeting artifact generation** | **N6, N7, N10, N12** | **S2** | **Implemented. Accepted jobs now flow through build; `artifact_meeting_path` is populated and build failures persist lightweight error text.** |
+| **S4** | **Publish queue and hosted output refresh** | **N8, N9** | **S3** | **Implemented. Accepted jobs now flow through publish; `artifact_site_path` is populated and the hosted library refreshes.** |
+| **S5** | **Restart recovery and final operational semantics** | **N13** | **S4** | **Implemented. Restarting the operator marks queued/running jobs as `interrupted` while preserving stage; completed jobs stay unchanged.** |
 
 ## Affordance allocation by slice
 
