@@ -18,7 +18,7 @@ V1 now has a selected implementation shape with several decisions already made:
 - `GET /jobs` and `GET /jobs/:id` should both return full persisted job rows, including transition timestamp fields, and `GET /jobs` should return newest first
 - the service entrypoint should be `cassini operator`
 - fixture configuration uses `FIXTURE_URL` and `FIXTURE_PATH`; startup verifies `FIXTURE_PATH` ends with `.mkv`
-- `FIXTURE_PATH` should default sensibly to `harness/runtime/operator-fixture.mkv`
+- `FIXTURE_PATH` should default sensibly to `<reporoot>/cassini-operator/.runtime/operator-fixture.mkv`
 - if `FIXTURE_PATH` exists, workers reuse it; otherwise they fetch `FIXTURE_URL` into `FIXTURE_PATH` and then copy it into a fresh per-job `.run`
 - V1 uses a single `jobs` table only; no separate events table is needed for the happy path
 - job ids should be ULIDs
@@ -49,7 +49,7 @@ Identify the cleanest V1 implementation path that fits current repo patterns and
 | **V1-S2** | Does the selected SQLite `jobs` schema (ULID + current stage/state + per-stage timestamps + artifact paths) need any adjustment in practice? |
 | **V1-S3** | Given that V1 marks every non-completed job, including queued jobs, as interrupted while preserving the last stage, what exact startup update/query logic should implement that cleanly? |
 | **V1-S4** | How should the V1 record placeholder turn a fixture MKV into a fresh per-job `.run` artifact that the existing build path accepts as normal input? |
-| **V1-S5** | What is the exact `FIXTURE_URL` / `FIXTURE_PATH` contract for V1, including the default path `harness/runtime/operator-fixture.mkv`, `.mkv` startup validation, and fetch-when-missing behavior? |
+| **V1-S5** | What is the exact `FIXTURE_URL` / `FIXTURE_PATH` contract for V1, including the default path `<reporoot>/cassini-operator/.runtime/operator-fixture.mkv`, `.mkv` startup validation, and fetch-when-missing behavior? |
 | **V1-S6** | Which existing Go helpers should the service call directly for build and publish, and what small helper extraction is needed from CLI-shaped code to make that boundary clean? |
 | **V1-S7** | What is the minimum request/response contract for `POST /jobs?provider=nextcloud-talk`, `GET /jobs`, and `GET /jobs/:id` now that both read endpoints should return full persisted job rows with transition timestamp fields, the POST body is minimal, and list ordering is newest first? |
 | **V1-S8** | What exact configuration surface should V1 expose for local/demo use: bind address, SQLite path, `FIXTURE_URL`, `FIXTURE_PATH`, work/artifact roots, published-site root, max record workers, max build workers, and any protection-boundary assumptions? |

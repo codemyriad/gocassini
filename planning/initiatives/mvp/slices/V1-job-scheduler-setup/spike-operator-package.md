@@ -150,7 +150,7 @@ Concretely:
 Recommended V1 fixture defaults:
 
 - `FIXTURE_PATH` must end with `.mkv`
-- default `FIXTURE_PATH` to `harness/runtime/operator-fixture.mkv`
+- default `FIXTURE_PATH` to `<reporoot>/cassini-operator/.runtime/operator-fixture.mkv`
 - fetch lazily on first record-stage use, not at startup
 - guard acquisition with a process-local mutex
 - if local fixture exists, reuse it

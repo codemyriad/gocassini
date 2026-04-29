@@ -132,7 +132,7 @@ Instead:
 
 - the record worker uses `FIXTURE_PATH` if present, otherwise pulls `FIXTURE_URL` into `FIXTURE_PATH`
 - startup verifies `FIXTURE_PATH` ends with `.mkv`
-- `FIXTURE_PATH` defaults sensibly to `harness/runtime/operator-fixture.mkv`
+- `FIXTURE_PATH` defaults sensibly to `<reporoot>/cassini-operator/.runtime/operator-fixture.mkv`
 - it materializes a fresh per-job `.run` artifact (`recording.mkv` + `cassini.json`) as if recording had happened
 - build then runs the real `cassini build` flow via CLI invocation from `cassini-operator`
 - publish then runs the real `cassini publish` flow via CLI invocation from `cassini-operator`
@@ -231,6 +231,7 @@ Known:
 - startup verifies `FIXTURE_PATH` ends with `.mkv`
 - if `FIXTURE_PATH` exists, workers reuse it
 - if `FIXTURE_PATH` does not exist, workers fetch `FIXTURE_URL` into `FIXTURE_PATH`
+- the default local operator SQLite/work/fixture artifacts live under `<reporoot>/cassini-operator/.runtime/`
 
 Still open:
 

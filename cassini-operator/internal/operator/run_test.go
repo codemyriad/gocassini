@@ -4,10 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/oklog/ulid/v2"
 )
 
 func TestOpenStoreEnsuresSchemaAndEmptyList(t *testing.T) {
@@ -30,16 +36,12 @@ func TestOpenStoreEnsuresSchemaAndEmptyList(t *testing.T) {
 }
 
 func TestJobsHandlerReturnsEmptyArray(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "jobs.sqlite3")
-	store, err := OpenStore(path)
-	if err != nil {
-		t.Fatalf("OpenStore() error = %v", err)
-	}
-	defer store.Close()
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
 	rec := httptest.NewRecorder()
-	jobsHandler(store).ServeHTTP(rec, req)
+	rt.jobsHandler(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
@@ -54,16 +56,12 @@ func TestJobsHandlerReturnsEmptyArray(t *testing.T) {
 }
 
 func TestJobDetailHandlerReturnsNotFound(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "jobs.sqlite3")
-	store, err := OpenStore(path)
-	if err != nil {
-		t.Fatalf("OpenStore() error = %v", err)
-	}
-	defer store.Close()
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/jobs/missing", nil)
 	rec := httptest.NewRecorder()
-	jobDetailHandler(store).ServeHTTP(rec, req)
+	rt.jobDetailHandler(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
@@ -71,17 +69,13 @@ func TestJobDetailHandlerReturnsNotFound(t *testing.T) {
 }
 
 func TestListJobsOrdersNewestFirst(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "jobs.sqlite3")
-	store, err := OpenStore(path)
-	if err != nil {
-		t.Fatalf("OpenStore() error = %v", err)
-	}
-	defer store.Close()
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
 
-	insertJob(t, store.db, "01A", "2026-04-29T10:00:00Z")
-	insertJob(t, store.db, "01B", "2026-04-29T11:00:00Z")
+	insertJob(t, rt.store.db, "01A", "2026-04-29T10:00:00Z")
+	insertJob(t, rt.store.db, "01B", "2026-04-29T11:00:00Z")
 
-	jobs, err := store.ListJobs(context.Background())
+	jobs, err := rt.store.ListJobs(context.Background())
 	if err != nil {
 		t.Fatalf("ListJobs() error = %v", err)
 	}
@@ -92,6 +86,163 @@ func TestListJobsOrdersNewestFirst(t *testing.T) {
 		t.Fatalf("unexpected order: %#v", jobs)
 	}
 }
+
+func TestCreateJobReturnsULIDAndCompletesRecordStage(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/call"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if _, err := ulid.Parse(resp.ID); err != nil {
+		t.Fatalf("response id %q is not a ulid: %v", resp.ID, err)
+	}
+
+	job := waitForJobState(t, rt.store, resp.ID, "succeeded")
+	if job.Stage != "done" {
+		t.Fatalf("stage = %q, want done", job.Stage)
+	}
+	if job.ArtifactRunPath == nil {
+		t.Fatalf("expected artifact_run_path to be set")
+	}
+	if _, err := os.Stat(filepath.Join(*job.ArtifactRunPath, "recording.mkv")); err != nil {
+		t.Fatalf("expected recording.mkv in run bundle: %v", err)
+	}
+	manifestPath := filepath.Join(*job.ArtifactRunPath, "cassini.json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if !strings.Contains(string(raw), `"kind": "run"`) || !strings.Contains(string(raw), `"format": "mkv"`) {
+		t.Fatalf("unexpected manifest: %s", string(raw))
+	}
+}
+
+func TestCreateJobRejectsUnknownProvider(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=zoom", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/call"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	jobs, err := rt.store.ListJobs(context.Background())
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("expected no jobs after unknown provider, got %d", len(jobs))
+	}
+}
+
+func TestCreateJobRejectsInvalidBody(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+}
+
+func TestCreateJobReturnsBusyWithoutCreatingRow(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	block := make(chan struct{})
+	done := make(chan struct{})
+	rt.recordJobFn = func(ctx context.Context, job Job, req TriggerRequest) (string, error) {
+		defer close(done)
+		<-block
+		return filepath.Join(rt.cfg.WorkRoot, job.ID+".run"), nil
+	}
+
+	req1 := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/one"}`))
+	rec1 := httptest.NewRecorder()
+	rt.jobsHandler(rec1, req1)
+	if rec1.Code != http.StatusAccepted {
+		t.Fatalf("first status = %d, want %d body=%s", rec1.Code, http.StatusAccepted, rec1.Body.String())
+	}
+
+	req2 := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/two"}`))
+	rec2 := httptest.NewRecorder()
+	rt.jobsHandler(rec2, req2)
+	if rec2.Code != http.StatusServiceUnavailable {
+		t.Fatalf("second status = %d, want %d body=%s", rec2.Code, http.StatusServiceUnavailable, rec2.Body.String())
+	}
+
+	jobs, err := rt.store.ListJobs(context.Background())
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected exactly one persisted job, got %d", len(jobs))
+	}
+	close(block)
+	<-done
+}
+
+func newTestRuntime(t *testing.T) (*Runtime, func()) {
+	t.Helper()
+	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
+	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
+
+	tmp := t.TempDir()
+	fixturePath := filepath.Join(tmp, "fixture.mkv")
+	if err := os.WriteFile(fixturePath, []byte("fake-mkv"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	store, err := OpenStore(filepath.Join(tmp, "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	logger := log.New(ioDiscard{}, "", 0)
+	rt := NewRuntime(context.Background(), store, Config{
+		RepoRoot:         repoRoot,
+		BindAddr:         "127.0.0.1:0",
+		DBPath:           filepath.Join(tmp, "jobs.sqlite3"),
+		WorkRoot:         filepath.Join(tmp, "jobs"),
+		FixturePath:      fixturePath,
+		MaxRecordWorkers: 1,
+	}, logger)
+	return rt, func() { _ = store.Close() }
+}
+
+func waitForJobState(t *testing.T, store *Store, id, wantState string) Job {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		job, err := store.GetJob(context.Background(), id)
+		if err == nil && job.State == wantState {
+			return job
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	job, err := store.GetJob(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetJob(%s) error = %v", id, err)
+	}
+	t.Fatalf("job %s did not reach state %q, last job = %#v", id, wantState, job)
+	return Job{}
+}
+
+type ioDiscard struct{}
+
+func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }
 
 func insertJob(t *testing.T, db *sql.DB, id, createdAt string) {
 	t.Helper()

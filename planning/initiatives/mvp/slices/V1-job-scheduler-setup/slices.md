@@ -178,6 +178,7 @@ This gives a runnable shell you can verify before any background job execution e
 - separate `cassini-operator` package/module exists
 - `cassini operator start` resolves `CASSINI_OPERATOR_BIN` or `<reporoot>/bin/cassini-operator` and fail-fast validates executability
 - operator opens/creates the SQLite database and ensures the single `jobs` table exists
+- operator defaults its SQLite/work/fixture artifacts into `<reporoot>/cassini-operator/.runtime/`
 - `GET /jobs` and `GET /jobs/:id` are reachable and return JSON responses from SQLite
 - operator emits logs to stdout/stderr by default
 
@@ -230,7 +231,7 @@ Until S3 exists, **record success is terminal** for the slice. A successful job 
 - only `provider=nextcloud-talk` is accepted
 - valid requests are persisted with ULID ids and original `request_json`
 - record worker count is capped; overflow returns busy without inserting a job row
-- `FIXTURE_PATH` defaults to `harness/runtime/operator-fixture.mkv` and is lazily acquired via `.part` + atomic rename
+- `FIXTURE_PATH` defaults to `<reporoot>/cassini-operator/.runtime/operator-fixture.mkv` and is lazily acquired via `.part` + atomic rename
 - per-job `.run` creation uses `PrepareRunBundle(..., false)` + fixture copy + `FinalizeRunBundle(...)`
 - successful jobs persist `artifact_run_path` and record-stage timestamps
 
