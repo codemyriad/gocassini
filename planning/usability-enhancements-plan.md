@@ -79,8 +79,8 @@ Cassini metadata.
 
 The normative format is defined in:
 
-- [PORTABLE_MEETING_FORMAT.md](PORTABLE_MEETING_FORMAT.md)
-- [cassini-portable-meeting-manifest-v1.schema.json](spec/cassini-portable-meeting-manifest-v1.schema.json)
+- [Portable meeting format](../docs/portable-meeting-format.md)
+- [cassini-portable-meeting-manifest-v1.schema.json](../spec/cassini-portable-meeting-manifest-v1.schema.json)
 
 ## Product Surface Users Should See
 
