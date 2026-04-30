@@ -54,6 +54,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runDev(ctx, args[1:], stdout, stderr)
 	case "inspect":
 		return runInspect(args[1:], stdout, stderr)
+	case "operator":
+		return runOperator(args[1:], stdout, stderr)
 	case "publish":
 		return runPublish(ctx, args[1:], stdout, stderr)
 	case "record":
@@ -320,6 +322,7 @@ Usage:
   cassini build <run-or-mkv> --out "./Meeting.opus"
   cassini dev ...
   cassini inspect <path>
+  cassini operator start [args...]
   cassini publish ./meetings --out ./site
   cassini record --call <CALL_URL> --out "./Meeting.opus"
   cassini record --simulate --out ./runs/demo.run
@@ -330,6 +333,7 @@ Commands:
   dev      Access the local harness namespace
   doctor   Validate the local environment before expensive work starts
   inspect  Inspect a run, meeting, site, or lower-level Cassini artifact
+  operator Launch the separate cassini-operator binary
   publish  Publish one or more meeting bundles as a static site
   record   Record a meeting into one portable artifact
   serve    Serve a static Cassini site locally

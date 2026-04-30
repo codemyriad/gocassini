@@ -10,3 +10,5 @@ export NEXTCLOUD_STATUS_URL="${NEXTCLOUD_URL}/status.php"
 
 # Required for `cassini-viewer` demo-data:* scripts.
 export DEMO_DATA_URL="https://example.com/cassini-demo-site"
+# .mkv for operator e2e simulation (download of this simulates the record step)
+export FIXTURE_URL="https://example.com/cassini-demo-site"

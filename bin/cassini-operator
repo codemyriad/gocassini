@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-MODULE_DIR="$REPO_ROOT/cassini-go-recorder"
+MODULE_DIR="$REPO_ROOT/cassini-operator"
 export CASSINI_REPO_ROOT="$REPO_ROOT"
 
 TMP_DIR="$(mktemp -d)"
@@ -12,5 +12,5 @@ cleanup() {
 }
 trap cleanup EXIT
 
-go -C "$MODULE_DIR" build -o "$TMP_DIR/cassini" ./cmd/cassini
-exec "$TMP_DIR/cassini" "$@"
+go -C "$MODULE_DIR" build -o "$TMP_DIR/cassini-operator" ./cmd/cassini-operator
+exec "$TMP_DIR/cassini-operator" "$@"

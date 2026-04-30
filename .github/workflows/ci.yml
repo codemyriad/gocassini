@@ -16,6 +16,7 @@ jobs:
       matrix:
         module:
           - cassini-go-recorder
+          - cassini-operator
           - harness/go-talk-rotator
     steps:
       - name: Checkout

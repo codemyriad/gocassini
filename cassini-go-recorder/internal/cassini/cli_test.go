@@ -80,6 +80,49 @@ func TestDevHelpExitsZero(t *testing.T) {
 	}
 }
 
+func TestOperatorHelpExitsZero(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run(context.Background(), []string{"operator", "--help"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "cassini operator start") {
+		t.Fatalf("expected operator usage in stdout, got %q", stdout.String())
+	}
+}
+
+func TestOperatorStartLaunchesResolvedBinary(t *testing.T) {
+	tmp := t.TempDir()
+	binPath := filepath.Join(tmp, "cassini-operator")
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write operator bin: %v", err)
+	}
+	prevExec := operatorExecFn
+	operatorExecFn = func(argv0 string, argv []string, envv []string) error {
+		if argv0 != binPath {
+			t.Fatalf("argv0 = %q, want %q", argv0, binPath)
+		}
+		if len(argv) != 3 || argv[1] != "--bind" || argv[2] != "127.0.0.1:9090" {
+			t.Fatalf("argv = %#v", argv)
+		}
+		return nil
+	}
+	defer func() { operatorExecFn = prevExec }()
+	t.Setenv("CASSINI_OPERATOR_BIN", binPath)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"operator", "start", "--bind", "127.0.0.1:9090"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "operator -> "+binPath) {
+		t.Fatalf("expected launch line, got %q", stdout.String())
+	}
+}
+
 func TestInspectRunBundleUsesBundleManifest(t *testing.T) {
 	tmp := t.TempDir()
 	runDir := filepath.Join(tmp, "demo.run")
