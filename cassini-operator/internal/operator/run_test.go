@@ -212,6 +212,158 @@ func TestCreateJobReturnsULIDAndCompletesPublishStage(t *testing.T) {
 	}
 }
 
+func TestCreateJobRunsDoctorAndRecordWithNormalizedDefaults(t *testing.T) {
+	rt, cleanup, logPath, _ := newCLITestRuntime(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/live"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	job := waitForJobState(t, rt.store, resp.ID, "succeeded")
+
+	if !strings.Contains(job.RequestJSON, `"guestName":"CassiniRecorder"`) {
+		t.Fatalf("expected normalized guestName in request_json, got %s", job.RequestJSON)
+	}
+	if !strings.Contains(job.RequestJSON, `"stopWhenRoomEmpty":true`) {
+		t.Fatalf("expected normalized stopWhenRoomEmpty in request_json, got %s", job.RequestJSON)
+	}
+	if !strings.Contains(job.RequestJSON, `"roomEmptyGrace":30`) {
+		t.Fatalf("expected normalized roomEmptyGrace in request_json, got %s", job.RequestJSON)
+	}
+	logText := readFileString(t, logPath)
+	if !strings.Contains(logText, "doctor --target record") {
+		t.Fatalf("expected doctor invocation, got %s", logText)
+	}
+	if !strings.Contains(logText, "record --call https://example.test/live") {
+		t.Fatalf("expected record invocation, got %s", logText)
+	}
+	if !strings.Contains(logText, "--name CassiniRecorder") {
+		t.Fatalf("expected default guest name flag, got %s", logText)
+	}
+	if strings.Contains(logText, "--duration") {
+		t.Fatalf("did not expect duration flag by default, got %s", logText)
+	}
+	if strings.Contains(logText, "--room-empty-grace") {
+		t.Fatalf("did not expect room-empty-grace flag by default, got %s", logText)
+	}
+	if strings.Contains(logText, "--stop-when-room-empty=") {
+		t.Fatalf("did not expect explicit stop-when-room-empty flag by default, got %s", logText)
+	}
+}
+
+func TestCreateJobPassesExplicitRecordOptions(t *testing.T) {
+	rt, cleanup, logPath, _ := newCLITestRuntime(t)
+	defer cleanup()
+
+	body := `{"platform":"nextcloud-talk","url":"https://example.test/live","guestName":"Guesty","duration":12,"stopWhenRoomEmpty":false,"roomEmptyGrace":7.5}`
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	_ = waitForJobState(t, rt.store, resp.ID, "succeeded")
+
+	logText := readFileString(t, logPath)
+	for _, want := range []string{
+		"--name Guesty",
+		"--duration 12",
+		"--stop-when-room-empty=false",
+		"--room-empty-grace 7.5",
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("expected %q in log, got %s", want, logText)
+		}
+	}
+}
+
+func TestStopJobAcceptsRunningRecordAndCompletesPublishStage(t *testing.T) {
+	rt, cleanup, logPath, startedPath := newCLITestRuntime(t)
+	defer cleanup()
+	t.Setenv("FAKE_RECORD_WAIT_FOR_SIGNAL", "1")
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/stop-me"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	waitForFile(t, startedPath)
+	waitForRecordState(t, rt.store, resp.ID, "running")
+
+	stopReq := httptest.NewRequest(http.MethodPost, "/jobs/"+resp.ID+"/stop", nil)
+	stopRec := httptest.NewRecorder()
+	rt.jobDetailHandler(stopRec, stopReq)
+	if stopRec.Code != http.StatusAccepted {
+		t.Fatalf("first stop status = %d, want %d body=%s", stopRec.Code, http.StatusAccepted, stopRec.Body.String())
+	}
+
+	stopReq2 := httptest.NewRequest(http.MethodPost, "/jobs/"+resp.ID+"/stop", nil)
+	stopRec2 := httptest.NewRecorder()
+	rt.jobDetailHandler(stopRec2, stopReq2)
+	if stopRec2.Code != http.StatusAccepted {
+		t.Fatalf("second stop status = %d, want %d body=%s", stopRec2.Code, http.StatusAccepted, stopRec2.Body.String())
+	}
+
+	job := waitForJobState(t, rt.store, resp.ID, "succeeded")
+	if job.Stage != "done" {
+		t.Fatalf("stage = %q, want done", job.Stage)
+	}
+	logText := readFileString(t, logPath)
+	if !strings.Contains(logText, "record --call https://example.test/stop-me") {
+		t.Fatalf("expected record invocation, got %s", logText)
+	}
+}
+
+func TestStopJobReturnsNotFoundAndConflict(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	missingReq := httptest.NewRequest(http.MethodPost, "/jobs/missing/stop", nil)
+	missingRec := httptest.NewRecorder()
+	rt.jobDetailHandler(missingRec, missingReq)
+	if missingRec.Code != http.StatusNotFound {
+		t.Fatalf("missing stop status = %d, want %d body=%s", missingRec.Code, http.StatusNotFound, missingRec.Body.String())
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/call"}`))
+	createRec := httptest.NewRecorder()
+	rt.jobsHandler(createRec, createReq)
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, want %d body=%s", createRec.Code, http.StatusAccepted, createRec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	_ = waitForJobState(t, rt.store, resp.ID, "succeeded")
+
+	stopReq := httptest.NewRequest(http.MethodPost, "/jobs/"+resp.ID+"/stop", nil)
+	stopRec := httptest.NewRecorder()
+	rt.jobDetailHandler(stopRec, stopReq)
+	if stopRec.Code != http.StatusConflict {
+		t.Fatalf("stop status = %d, want %d body=%s", stopRec.Code, http.StatusConflict, stopRec.Body.String())
+	}
+}
+
 func TestCreateJobRejectsUnknownProvider(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -366,15 +518,73 @@ func TestPublishFailurePersistsLightweightErrorDetail(t *testing.T) {
 	}
 }
 
-func newTestRuntime(t *testing.T) (*Runtime, func()) {
+func newCLITestRuntime(t *testing.T) (*Runtime, func(), string, string) {
 	t.Helper()
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
 
 	tmp := t.TempDir()
-	fixturePath := filepath.Join(tmp, "fixture.mkv")
-	if err := os.WriteFile(fixturePath, []byte("fake-mkv"), 0o644); err != nil {
-		t.Fatalf("write fixture: %v", err)
+	logPath := filepath.Join(tmp, "cassini.log")
+	startedPath := filepath.Join(tmp, "record.started")
+	t.Setenv("FAKE_CASSINI_LOG", logPath)
+	t.Setenv("FAKE_RECORD_STARTED_FILE", startedPath)
+	cassiniBin := filepath.Join(tmp, "fake-cassini.sh")
+	if err := os.WriteFile(cassiniBin, []byte(`#!/bin/sh
+set -eu
+LOG_FILE="${FAKE_CASSINI_LOG:-}"
+if [ -n "$LOG_FILE" ]; then
+  printf '%s\n' "$*" >> "$LOG_FILE"
+fi
+cmd="${1:-}"
+if [ "$#" -gt 0 ]; then
+  shift
+fi
+write_run() {
+  out="$1"
+  mkdir -p "$out"
+  printf 'recording' > "$out/recording.mkv"
+  cat > "$out/cassini.json" <<'EOF'
+{"kind":"run","version":"cassini.run.v1","state":"ready","stage":"ready","source_mode":"talk","recording":{"path":"recording.mkv","format":"mkv"}}
+EOF
+}
+case "$cmd" in
+  doctor)
+    if [ "${FAKE_CASSINI_DOCTOR_FAIL:-0}" = "1" ]; then
+      exit 1
+    fi
+    exit 0
+    ;;
+  record)
+    out=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --out)
+          out="$2"
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    [ -n "$out" ]
+    if [ -n "${FAKE_RECORD_STARTED_FILE:-}" ]; then
+      : > "$FAKE_RECORD_STARTED_FILE"
+    fi
+    if [ "${FAKE_RECORD_WAIT_FOR_SIGNAL:-0}" = "1" ]; then
+      trap 'write_run "$out"; exit 0' TERM
+      while :; do sleep 0.1; done
+    fi
+    write_run "$out"
+    exit 0
+    ;;
+  *)
+    echo "unexpected command: $cmd" >&2
+    exit 1
+    ;;
+esac
+`), 0o755); err != nil {
+		t.Fatalf("write fake cassini bin: %v", err)
 	}
 	store, err := OpenStore(filepath.Join(tmp, "jobs.sqlite3"))
 	if err != nil {
@@ -387,11 +597,61 @@ func newTestRuntime(t *testing.T) (*Runtime, func()) {
 		DBPath:           filepath.Join(tmp, "jobs.sqlite3"),
 		WorkRoot:         filepath.Join(tmp, "jobs"),
 		SiteRoot:         filepath.Join(tmp, "site"),
-		FixturePath:      fixturePath,
+		CassiniBin:       cassiniBin,
+		MaxRecordWorkers: 1,
+		MaxBuildWorkers:  1,
+	}, logger, ioDiscard{}, ioDiscard{})
+	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
+		meetingPath := filepath.Join(rt.cfg.WorkRoot, task.JobID+".meeting")
+		if err := writeReadyMeetingBundleFixture(meetingPath, task.ArtifactRunPath); err != nil {
+			return meetingPath, err
+		}
+		return meetingPath, nil
+	}
+	rt.publishJobFn = func(ctx context.Context, task publishTask) (string, error) {
+		if err := writeReadySiteBundleFixture(rt.cfg.SiteRoot, rt.cfg.WorkRoot); err != nil {
+			return rt.cfg.SiteRoot, err
+		}
+		return rt.cfg.SiteRoot, nil
+	}
+	return rt, func() { _ = store.Close() }, logPath, startedPath
+}
+
+func newTestRuntime(t *testing.T) (*Runtime, func()) {
+	t.Helper()
+	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
+	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
+
+	tmp := t.TempDir()
+	store, err := OpenStore(filepath.Join(tmp, "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	logger := log.New(ioDiscard{}, "", 0)
+	rt := NewRuntime(context.Background(), store, Config{
+		RepoRoot:         repoRoot,
+		BindAddr:         "127.0.0.1:0",
+		DBPath:           filepath.Join(tmp, "jobs.sqlite3"),
+		WorkRoot:         filepath.Join(tmp, "jobs"),
+		SiteRoot:         filepath.Join(tmp, "site"),
 		CassiniBin:       filepath.Join(repoRoot, "bin", "cassini"),
 		MaxRecordWorkers: 1,
 		MaxBuildWorkers:  1,
 	}, logger, ioDiscard{}, ioDiscard{})
+	rt.recordJobFn = func(ctx context.Context, job Job, req TriggerRequest) (string, error) {
+		runPath := filepath.Join(rt.cfg.WorkRoot, job.ID+".run")
+		bundle, err := PrepareRunBundle(runPath, false)
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(bundle.RecordingPath, []byte("fake-mkv"), 0o644); err != nil {
+			return "", err
+		}
+		if err := FinalizeRunBundle(bundle, RunManifest{SourceMode: "talk", RecorderName: req.GuestName}); err != nil {
+			return "", err
+		}
+		return bundle.RootDir, nil
+	}
 	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
 		meetingPath := filepath.Join(rt.cfg.WorkRoot, task.JobID+".meeting")
 		if err := writeReadyMeetingBundleFixture(meetingPath, task.ArtifactRunPath); err != nil {
@@ -424,6 +684,45 @@ func waitForJobState(t *testing.T, store *Store, id, wantState string) Job {
 	}
 	t.Fatalf("job %s did not reach state %q, last job = %#v", id, wantState, job)
 	return Job{}
+}
+
+func waitForRecordState(t *testing.T, store *Store, id, wantState string) Job {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		job, err := store.GetJob(context.Background(), id)
+		if err == nil && job.Stage == "record" && job.State == wantState {
+			return job
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	job, err := store.GetJob(context.Background(), id)
+	if err != nil {
+		t.Fatalf("GetJob(%s) error = %v", id, err)
+	}
+	t.Fatalf("job %s did not reach record/%q, last job = %#v", id, wantState, job)
+	return Job{}
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("file %s was not created in time", path)
+}
+
+func readFileString(t *testing.T, path string) string {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(body)
 }
 
 type ioDiscard struct{}

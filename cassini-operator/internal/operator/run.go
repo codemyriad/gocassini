@@ -34,8 +34,6 @@ type Config struct {
 	DBPath           string
 	WorkRoot         string
 	SiteRoot         string
-	FixturePath      string
-	FixtureURL       string
 	CassiniBin       string
 	MaxRecordWorkers int
 	MaxBuildWorkers  int
@@ -51,15 +49,22 @@ type Runtime struct {
 	recordSlots  chan struct{}
 	buildQueue   chan buildTask
 	publishQueue chan publishTask
-	fixtureMu    sync.Mutex
+	recordMu     sync.Mutex
+	recordJobs   map[string]*recordProcessState
 	recordJobFn  func(context.Context, Job, TriggerRequest) (string, error)
 	buildJobFn   func(context.Context, buildTask) (string, error)
 	publishJobFn func(context.Context, publishTask) (string, error)
 }
 
 type TriggerRequest struct {
-	Platform string `json:"platform"`
-	URL      string `json:"url"`
+	Platform              string  `json:"platform"`
+	URL                   string  `json:"url"`
+	GuestName             string  `json:"guestName"`
+	DurationSeconds       *int    `json:"duration,omitempty"`
+	StopWhenRoomEmpty     bool    `json:"stopWhenRoomEmpty"`
+	RoomEmptyGraceSeconds float64 `json:"roomEmptyGrace"`
+	StopWhenRoomEmptySet  bool    `json:"-"`
+	RoomEmptyGraceSet     bool    `json:"-"`
 }
 
 type createJobResponse struct {
@@ -113,8 +118,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("db -> %s", cfg.DBPath)
 	logger.Printf("work_root -> %s", cfg.WorkRoot)
 	logger.Printf("site_root -> %s", cfg.SiteRoot)
-	logger.Printf("fixture_path -> %s", cfg.FixturePath)
-	logger.Printf("fixture_url -> %s", cfg.FixtureURL)
 	logger.Printf("cassini_bin -> %s", cfg.CassiniBin)
 	logger.Printf("max_record_workers -> %d", cfg.MaxRecordWorkers)
 	logger.Printf("max_build_workers -> %d", cfg.MaxBuildWorkers)
@@ -160,7 +163,6 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	defaultDBPath := filepath.Join(defaultDataRoot, "jobs.sqlite3")
 	defaultWorkRoot := filepath.Join(defaultDataRoot, "jobs")
 	defaultSiteRoot := filepath.Join(defaultDataRoot, "site")
-	defaultFixturePath := filepath.Join(defaultDataRoot, "operator-fixture.mkv")
 	defaultMaxRecordWorkers, err := parsePositiveIntEnv("MAX_RECORD_WORKERS", defaultRecordWorkerCount)
 	if err != nil {
 		return Config{}, 2, err
@@ -179,13 +181,11 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.StringVar(&cfg.DBPath, "db", defaultDBPath, "SQLite database path")
 	fs.StringVar(&cfg.WorkRoot, "work-root", envOrDefault("WORK_ROOT", defaultWorkRoot), "per-job artifact root")
 	fs.StringVar(&cfg.SiteRoot, "site-root", envOrDefault("SITE_ROOT", defaultSiteRoot), "published site output root")
-	fs.StringVar(&cfg.FixturePath, "fixture-path", envOrDefault("FIXTURE_PATH", defaultFixturePath), "fixture MKV path")
-	fs.StringVar(&cfg.FixtureURL, "fixture-url", strings.TrimSpace(os.Getenv("FIXTURE_URL")), "fixture download URL (used when fixture path is missing)")
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", defaultCassiniBin, "Cassini CLI binary path")
 	fs.IntVar(&cfg.MaxRecordWorkers, "max-record-workers", defaultMaxRecordWorkers, "maximum concurrent record workers")
 	fs.IntVar(&cfg.MaxBuildWorkers, "max-build-workers", defaultMaxBuildWorkers, "maximum concurrent build workers")
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), `Cassini Operator runs the V1 job API and worker runtime.
+		fmt.Fprint(fs.Output(), `Cassini Operator runs the V2 live-record job API and worker runtime.
 
 Usage:
   cassini-operator
@@ -210,9 +210,7 @@ Flags:
 	cfg.DBPath = resolveRepoRelativePath(repoRoot, cfg.DBPath)
 	cfg.WorkRoot = resolveRepoRelativePath(repoRoot, cfg.WorkRoot)
 	cfg.SiteRoot = resolveRepoRelativePath(repoRoot, cfg.SiteRoot)
-	cfg.FixturePath = resolveRepoRelativePath(repoRoot, cfg.FixturePath)
 	cfg.CassiniBin = resolveRepoRelativePath(repoRoot, cfg.CassiniBin)
-	cfg.FixtureURL = strings.TrimSpace(cfg.FixtureURL)
 	if cfg.MaxRecordWorkers < 1 {
 		return Config{}, 2, errors.New("--max-record-workers must be >= 1")
 	}
@@ -221,9 +219,6 @@ Flags:
 	}
 	if err := validateExecutable(cfg.CassiniBin); err != nil {
 		return Config{}, 2, fmt.Errorf("cassini binary: %w", err)
-	}
-	if !strings.HasSuffix(strings.ToLower(cfg.FixturePath), ".mkv") {
-		return Config{}, 2, fmt.Errorf("fixture path must end with .mkv: %s", cfg.FixturePath)
 	}
 
 	return cfg, 0, nil
@@ -274,8 +269,9 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		recordSlots:  make(chan struct{}, cfg.MaxRecordWorkers),
 		buildQueue:   make(chan buildTask, queueCapacity),
 		publishQueue: make(chan publishTask, 16),
+		recordJobs:   map[string]*recordProcessState{},
 	}
-	rt.recordJobFn = rt.recordFromFixture
+	rt.recordJobFn = rt.executeRecordCLI
 	rt.buildJobFn = rt.executeBuildCLI
 	rt.publishJobFn = rt.executePublishCLI
 	rt.startBuildWorkers()
@@ -357,18 +353,22 @@ func decodeTriggerRequest(body io.ReadCloser) (string, TriggerRequest, error) {
 	if err != nil {
 		return "", TriggerRequest{}, fmt.Errorf("read request body: %w", err)
 	}
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" {
+	if strings.TrimSpace(string(raw)) == "" {
 		return "", TriggerRequest{}, errors.New("request body is required")
 	}
-	var req TriggerRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	var input triggerRequestInput
+	if err := json.Unmarshal(raw, &input); err != nil {
 		return "", TriggerRequest{}, fmt.Errorf("invalid request JSON: %w", err)
 	}
-	if strings.TrimSpace(req.URL) == "" {
-		return "", TriggerRequest{}, errors.New("url is required")
+	req, err := parseTriggerRequest(input)
+	if err != nil {
+		return "", TriggerRequest{}, err
 	}
-	return trimmed, req, nil
+	requestBody, err := encodeTriggerRequest(req)
+	if err != nil {
+		return "", TriggerRequest{}, err
+	}
+	return requestBody, req, nil
 }
 
 func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
@@ -398,102 +398,6 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		return
 	}
 	rt.logger.Printf("record succeeded id=%s run=%s build_queued_at=%s", job.ID, artifactRunPath, finishedAt)
-}
-
-func (rt *Runtime) recordFromFixture(ctx context.Context, job Job, req TriggerRequest) (string, error) {
-	fixturePath, err := rt.ensureFixture(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	runPath := filepath.Join(rt.cfg.WorkRoot, job.ID+".run")
-	bundle, err := PrepareRunBundle(runPath, false)
-	if err != nil {
-		return "", fmt.Errorf("prepare run bundle: %w", err)
-	}
-	if err := copyFile(fixturePath, bundle.RecordingPath); err != nil {
-		_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", err.Error())
-		return "", fmt.Errorf("copy fixture to run bundle: %w", err)
-	}
-	if err := FinalizeRunBundle(bundle, RunManifest{SourceMode: "talk", RecorderName: "CassiniOperatorFixture"}); err != nil {
-		return "", fmt.Errorf("finalize run bundle: %w", err)
-	}
-	return bundle.RootDir, nil
-}
-
-func (rt *Runtime) ensureFixture(ctx context.Context) (string, error) {
-	rt.fixtureMu.Lock()
-	defer rt.fixtureMu.Unlock()
-
-	if info, err := os.Stat(rt.cfg.FixturePath); err == nil {
-		if info.IsDir() {
-			return "", fmt.Errorf("fixture path is a directory: %s", rt.cfg.FixturePath)
-		}
-		return rt.cfg.FixturePath, nil
-	} else if !os.IsNotExist(err) {
-		return "", fmt.Errorf("stat fixture: %w", err)
-	}
-	if rt.cfg.FixtureURL == "" {
-		return "", fmt.Errorf("fixture missing at %s and FIXTURE_URL is not set", rt.cfg.FixturePath)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(rt.cfg.FixturePath), 0o755); err != nil {
-		return "", fmt.Errorf("create fixture dir: %w", err)
-	}
-	partPath := rt.cfg.FixturePath + ".part"
-	_ = os.Remove(partPath)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rt.cfg.FixtureURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("build fixture request: %w", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("download fixture: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("download fixture: unexpected status %s", resp.Status)
-	}
-
-	out, err := os.Create(partPath)
-	if err != nil {
-		return "", fmt.Errorf("create fixture temp file: %w", err)
-	}
-	if _, err := io.Copy(out, resp.Body); err != nil {
-		_ = out.Close()
-		return "", fmt.Errorf("write fixture temp file: %w", err)
-	}
-	if err := out.Close(); err != nil {
-		return "", fmt.Errorf("close fixture temp file: %w", err)
-	}
-	if err := os.Rename(partPath, rt.cfg.FixturePath); err != nil {
-		return "", fmt.Errorf("activate fixture: %w", err)
-	}
-	return rt.cfg.FixturePath, nil
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("open source: %w", err)
-	}
-	defer in.Close()
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return fmt.Errorf("create destination dir: %w", err)
-	}
-	out, err := os.Create(dst)
-	if err != nil {
-		return fmt.Errorf("create destination: %w", err)
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return fmt.Errorf("copy bytes: %w", err)
-	}
-	if err := out.Close(); err != nil {
-		return fmt.Errorf("close destination: %w", err)
-	}
-	return nil
 }
 
 func findRepoRoot() (string, error) {
@@ -817,13 +721,21 @@ func nullableStringPtr(v sql.NullString) *string {
 }
 
 func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w, http.MethodGet)
+	id, action, ok := parseJobPath(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/jobs/")
-	if id == "" || id == r.URL.Path || strings.Contains(id, "/") {
-		http.NotFound(w, r)
+	if action == "stop" {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		rt.handleStopJob(w, r, id)
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	job, err := rt.store.GetJob(r.Context(), id)
