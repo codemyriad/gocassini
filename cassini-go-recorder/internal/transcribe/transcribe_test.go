@@ -42,12 +42,15 @@ func TestWriteReadableArtifactsSkipsCleanupFailuresByDefault(t *testing.T) {
 	}
 	t.Cleanup(func() { readableCleanupFn = prev })
 
-	hasReadable, err := writeReadableArtifacts(tmp, streams, segments, 900, "abc123", cfg, &stdout)
+	cleaned, hasReadable, err := writeReadableArtifacts(tmp, streams, segments, 900, "abc123", cfg, &stdout)
 	if err != nil {
 		t.Fatalf("expected cleanup failure to be skipped, got %v", err)
 	}
 	if hasReadable {
 		t.Fatalf("expected no readable artifacts when cleanup fails")
+	}
+	if cleaned != nil {
+		t.Fatalf("expected nil cleaned segments when cleanup fails, got %v", cleaned)
 	}
 	if !strings.Contains(stdout.String(), "warn: LLM cleanup failed: boom") {
 		t.Fatalf("expected warning in stdout, got %q", stdout.String())
@@ -90,12 +93,15 @@ func TestWriteReadableArtifactsFailsWhenStrict(t *testing.T) {
 	}
 	t.Cleanup(func() { readableCleanupFn = prev })
 
-	hasReadable, err := writeReadableArtifacts(tmp, streams, segments, 900, "abc123", cfg, &stdout)
+	cleaned, hasReadable, err := writeReadableArtifacts(tmp, streams, segments, 900, "abc123", cfg, &stdout)
 	if err == nil {
 		t.Fatalf("expected strict cleanup failure to abort")
 	}
 	if hasReadable {
 		t.Fatalf("expected readable artifacts to be absent on strict failure")
+	}
+	if cleaned != nil {
+		t.Fatalf("expected nil cleaned segments on strict failure, got %v", cleaned)
 	}
 	if !strings.Contains(err.Error(), "readable cleanup: boom") {
 		t.Fatalf("expected wrapped cleanup error, got %v", err)
@@ -147,12 +153,18 @@ func TestWriteReadableArtifactsWritesReadableTranscriptVersion(t *testing.T) {
 	}
 	t.Cleanup(func() { readableCleanupFn = prev })
 
-	hasReadable, err := writeReadableArtifacts(tmp, streams, segments, 900, "abc123", cfg, &bytes.Buffer{})
+	cleaned, hasReadable, err := writeReadableArtifacts(tmp, streams, segments, 900, "abc123", cfg, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("expected readable artifacts, got %v", err)
 	}
 	if !hasReadable {
 		t.Fatalf("expected readable artifacts to be reported")
+	}
+	if len(cleaned) == 0 {
+		t.Fatalf("expected cleaned segments to be returned")
+	}
+	if cleaned[0].Text != "Hello there." {
+		t.Fatalf("expected cleaned text on returned segment, got %q", cleaned[0].Text)
 	}
 
 	raw, err := os.ReadFile(filepath.Join(tmp, "transcript.readable.v1.json"))
