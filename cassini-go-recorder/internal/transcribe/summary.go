@@ -9,6 +9,16 @@ import (
 //go:embed templates/summary.v0.md
 var summaryV0Template string
 
+//go:embed templates/summary-prompt.v0.md
+var summaryV0Prompt string
+
+// summaryTemplatePlaceholder is the literal token in summary-prompt.v0.md
+// where the V0 structure template is spliced in at runtime. If the prompt
+// file ever stops containing this token, summarySystemPrompt becomes a no-op
+// for the template and the existing TestSummarySystemPromptPinsTemplateAndRules
+// test will fail because the headings disappear from the prompt.
+const summaryTemplatePlaceholder = "{{TEMPLATE}}"
+
 // BuildMeetingSummary calls the LLM to produce a meeting summary that follows
 // the V0 markdown template. Speaker labels from streams are used so the model
 // can attribute action items by name. Returns the raw markdown body to be
@@ -37,18 +47,7 @@ func BuildMeetingSummary(cfg LLMConfig, streams []AudioStream, segments []Segmen
 }
 
 func summarySystemPrompt(template string) string {
-	var sb strings.Builder
-	sb.WriteString("You are a meeting-summary editor. Given a transcript of a meeting, produce a summary that follows the Markdown template below exactly.\n\n")
-	sb.WriteString("Rules:\n")
-	sb.WriteString("- Preserve every heading verbatim, in the same order: \"# Meeting Summary\", \"## Overview\", \"## Key Points\", \"## Decisions\", \"## Action Items\", \"## Open Questions\", \"## Next Step\".\n")
-	sb.WriteString("- Match each section's format: paragraph for Overview and Next Step; bullet list for Key Points, Decisions, and Open Questions; checkbox list for Action Items in the form \"- [ ] Owner - action item, due date if known\".\n")
-	sb.WriteString("- Replace the placeholder text under each heading with content drawn from the transcript. Do not invent details that the transcript does not support.\n")
-	sb.WriteString("- For Action Items, use the speaker's actual label as the owner when the transcript shows who committed to the item; use \"Unassigned\" otherwise.\n")
-	sb.WriteString("- If a section has no relevant content, write \"None.\" on a single line under the heading. Do not omit the heading.\n")
-	sb.WriteString("- Output ONLY the filled markdown. No preamble, no commentary, no code fences, no surrounding quotes.\n\n")
-	sb.WriteString("Template:\n\n")
-	sb.WriteString(template)
-	return sb.String()
+	return strings.Replace(summaryV0Prompt, summaryTemplatePlaceholder, template, 1)
 }
 
 func formatTranscriptForSummary(streams []AudioStream, segments []Segment) string {
