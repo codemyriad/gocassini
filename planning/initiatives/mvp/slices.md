@@ -36,7 +36,7 @@ The following affordances exist and are verified working in the current repo. Th
 |---|-------|-----------|------------|------|
 | V0 | Prep: summary template and dev demo data pull | — | — | Summary `.md` template committed; developer sets `DEMO_DATA_URL` in gitignored `.env`/`.envrc`; pull script fetches two full meetings; dev server starts against pulled data. |
 | V1 | Trigger jobs, job records, and publish refresh | B2.1, B2.2, B3.3, B6.1 (partial) | — | `POST /jobs` creates a background job, `GET /jobs/:id` shows status, and a seeded artifact set is published into the library. |
-| V2 | Live Nextcloud Talk recording worker | B3.1, B3.2 | V1 | Trigger a real Talk meeting job, let it finish, and see the new meeting appear in the hosted library. |
+| V2 | Live Nextcloud Talk recording worker | B3.1, B3.2 | V1 | Trigger a real Talk meeting job, including a clean operator-requested stop path, and see the new meeting appear in the hosted library after build/publish. |
 | V3 | Summary display UX | B5.2 | V0, V7 | Open a seed meeting in the viewer and see the summary rendered in a polished panel; open a meeting without a summary and see a clean fallback. |
 | V4 | Summary generation in core pipeline | B5.1, B5.3, B5.4 | V0 | Run `cassini build` (or equivalent post-processing) on a meeting artifact and get a generated summary in the agreed template format alongside the transcript. |
 | V5 | Failure inspection and rerun flow | B6.1, B6.2 | V1 | A failed job preserves logs/status, `POST /jobs/:id/rerun` requeues it, and a successful rerun updates the hosted output. |
@@ -261,7 +261,7 @@ This establishes the operator flow and all the state we need for later live reco
 
 ### Objective
 
-Replace the seeded-artifact shortcut with the real meeting capture path: the worker should run the existing Cassini pipeline against a real Talk URL.
+Replace the seeded-artifact shortcut with the real meeting capture path: the worker should run the existing Cassini pipeline against a real Talk URL, including the happy-path stop controls needed to end recording cleanly and still continue through build/publish.
 
 ### Why this slice exists
 
@@ -282,12 +282,13 @@ This is the step that proves the venture brief's core promise: trigger a real me
 
 ### Delegate brief
 
-**Wire the background job runner to the real Cassini capture/build path.** The endpoint contract from V1 stays the same; only the worker behavior changes from seeded artifact publishing to live meeting processing.
+**Wire the background job runner to the real Cassini capture/build path.** Keep the V1 control-plane backbone, but extend the live record stage with the happy-path stop behavior V2 needs: room-empty and duration controls, plus an explicit operator stop request that cleanly ends recording and still continues into build/publish.
 
 ### Demo
 
 - trigger a real Nextcloud Talk meeting job
 - worker runs preflight and capture/build commands
+- stop the recording either through the normal recorder controls or an explicit operator stop request
 - finished meeting artifact appears in `S2`
 - publish refresh makes the new meeting appear in the hosted library
 
