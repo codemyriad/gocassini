@@ -413,6 +413,14 @@ Serve the published site if you want to inspect the output:
 
 If the viewer looks broken, that is currently expected and is being investigated separately. The important thing for operator work is that the published data path exists and continues to update.
 
+## Schema migrations
+
+On normal startup the operator:
+- baselines pre-migration V1-shaped DBs onto the initial schema version
+- auto-applies pending **up** migrations only
+- never auto-runs down migrations
+- fails fast if migration history is inconsistent
+
 ## Job model
 
 A job row stores:

@@ -470,40 +470,6 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) ensureSchema() error {
-	const schema = `
-CREATE TABLE IF NOT EXISTS jobs (
-  id TEXT PRIMARY KEY NOT NULL,
-  provider TEXT NOT NULL,
-  request_json TEXT NOT NULL,
-  stage TEXT NOT NULL,
-  state TEXT NOT NULL,
-  artifact_run_path TEXT,
-  artifact_meeting_path TEXT,
-  artifact_site_path TEXT,
-  error TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  record_queued_at TEXT,
-  record_started_at TEXT,
-  record_finished_at TEXT,
-  build_queued_at TEXT,
-  build_started_at TEXT,
-  build_finished_at TEXT,
-  publish_queued_at TEXT,
-  publish_started_at TEXT,
-  publish_finished_at TEXT,
-  interrupted_at TEXT,
-  completed_at TEXT
-);
-CREATE INDEX IF NOT EXISTS jobs_created_desc ON jobs(created_at DESC, id DESC);
-`
-	if _, err := s.db.Exec(schema); err != nil {
-		return fmt.Errorf("ensure schema: %w", err)
-	}
-	return nil
-}
-
 type Job struct {
 	ID                  string  `json:"id"`
 	Provider            string  `json:"provider"`

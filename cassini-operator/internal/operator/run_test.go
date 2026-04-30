@@ -34,6 +34,77 @@ func TestOpenStoreEnsuresSchemaAndEmptyList(t *testing.T) {
 	if len(jobs) != 0 {
 		t.Fatalf("expected empty jobs list, got %d", len(jobs))
 	}
+	if versions := migrationVersions(t, store.db); len(versions) != 1 || versions[0] != 1 {
+		t.Fatalf("expected baseline migration version [1], got %v", versions)
+	}
+}
+
+func TestOpenStoreBaselinesLegacySchemaDatabase(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+
+	path := filepath.Join(t.TempDir(), "jobs.sqlite3")
+	seedLegacyV1Database(t, path)
+
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+
+	if versions := migrationVersions(t, store.db); len(versions) != 1 || versions[0] != 1 {
+		t.Fatalf("expected baseline migration version [1], got %v", versions)
+	}
+	job := mustGetJob(t, store, "legacy-job")
+	if job.Provider != "nextcloud-talk" || job.Stage != "record" || job.State != "queued" {
+		t.Fatalf("unexpected legacy job after baseline = %#v", job)
+	}
+}
+
+func TestStoreMigrateDownToRemovesJobsSchema(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+
+	path := filepath.Join(t.TempDir(), "jobs.sqlite3")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+
+	if err := store.migrateDownTo(0); err != nil {
+		t.Fatalf("migrateDownTo(0) error = %v", err)
+	}
+	if exists := sqliteTableExists(t, store.db, "jobs"); exists {
+		t.Fatalf("expected jobs table to be removed after down migration")
+	}
+	if versions := migrationVersions(t, store.db); len(versions) != 0 {
+		t.Fatalf("expected no applied migration versions after down migration, got %v", versions)
+	}
+}
+
+func TestOpenStoreRejectsUnknownAppliedMigrationVersion(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+
+	path := filepath.Join(t.TempDir(), "jobs.sqlite3")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql open: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+CREATE TABLE schema_migrations (
+  version INTEGER PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL,
+  applied_at TEXT NOT NULL
+);
+INSERT INTO schema_migrations (version, name, applied_at)
+VALUES (9999, 'future', '2026-04-30T00:00:00Z');
+`); err != nil {
+		t.Fatalf("seed schema_migrations: %v", err)
+	}
+
+	if _, err := OpenStore(path); err == nil || !strings.Contains(err.Error(), "unknown applied migration version 9999") {
+		t.Fatalf("expected unknown applied migration error, got %v", err)
+	}
 }
 
 func TestJobsHandlerReturnsEmptyArray(t *testing.T) {
@@ -723,6 +794,91 @@ func readFileString(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(body)
+}
+
+func migrationVersions(t *testing.T, db *sql.DB) []int {
+	t.Helper()
+	rows, err := db.Query(`SELECT version FROM schema_migrations ORDER BY version ASC`)
+	if err != nil {
+		t.Fatalf("query schema_migrations: %v", err)
+	}
+	defer rows.Close()
+
+	var versions []int
+	for rows.Next() {
+		var version int
+		if err := rows.Scan(&version); err != nil {
+			t.Fatalf("scan schema_migrations: %v", err)
+		}
+		versions = append(versions, version)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate schema_migrations: %v", err)
+	}
+	return versions
+}
+
+func sqliteTableExists(t *testing.T, db *sql.DB, name string) bool {
+	t.Helper()
+	var found string
+	err := db.QueryRow(`
+SELECT name
+FROM sqlite_master
+WHERE type = 'table' AND name = ?
+LIMIT 1`, name).Scan(&found)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false
+	}
+	t.Fatalf("query sqlite_master for %s: %v", name, err)
+	return false
+}
+
+func seedLegacyV1Database(t *testing.T, path string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql open: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS jobs (
+  id TEXT PRIMARY KEY NOT NULL,
+  provider TEXT NOT NULL,
+  request_json TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  state TEXT NOT NULL,
+  artifact_run_path TEXT,
+  artifact_meeting_path TEXT,
+  artifact_site_path TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  record_queued_at TEXT,
+  record_started_at TEXT,
+  record_finished_at TEXT,
+  build_queued_at TEXT,
+  build_started_at TEXT,
+  build_finished_at TEXT,
+  publish_queued_at TEXT,
+  publish_started_at TEXT,
+  publish_finished_at TEXT,
+  interrupted_at TEXT,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS jobs_created_desc ON jobs(created_at DESC, id DESC);
+INSERT INTO jobs (
+  id, provider, request_json, stage, state,
+  created_at, updated_at, record_queued_at
+) VALUES (
+  'legacy-job', 'nextcloud-talk', '{"platform":"nextcloud-talk","url":"https://example.test/legacy"}', 'record', 'queued',
+  '2026-04-29T10:00:00Z', '2026-04-29T10:00:00Z', '2026-04-29T10:00:00Z'
+);
+`); err != nil {
+		t.Fatalf("seed legacy V1 database: %v", err)
+	}
 }
 
 type ioDiscard struct{}
