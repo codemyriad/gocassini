@@ -15,17 +15,22 @@ type BuildConfig struct {
 	ModelID               ModelID   // defaults to ModelParakeet110M
 	CacheDir              string    // root cache directory, e.g. ~/.cache/cassini
 	LLM                   LLMConfig // optional; if not configured, skip readable cleanup
+	SummaryLLM            LLMConfig // optional; if not configured, skip summary generation
 	StrictReadableCleanup bool      // fail the build if readable cleanup cannot complete
 	NumThreads            int       // 0 = use default (4)
 }
 
-var readableCleanupFn = ReadableCleanup
+var (
+	readableCleanupFn     = ReadableCleanup
+	buildMeetingSummaryFn = BuildMeetingSummary
+)
 
 // BuildMeetingArtifact transcribes an MKV recording and writes all meeting
 // bundle artifacts to outputDir:
 //   - meeting.webm          — mono 48 kHz Opus mix of all speakers
 //   - transcript.words.v1.json
 //   - transcript.readable.v1.json + captions.vtt  (if LLM configured)
+//   - summary.md            — V0 template format (if SummaryLLM configured)
 //   - manifest.json
 func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg BuildConfig, stdout io.Writer) error {
 	if cfg.ModelID == "" {
@@ -115,12 +120,21 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	}
 
 	// --- 8. Optional: LLM readable cleanup ---
-	hasReadable, err := writeReadableArtifacts(outputDir, streams, segments, audioDurationMS, sha256hex, cfg, stdout)
+	cleanedSegs, hasReadable, err := writeReadableArtifacts(outputDir, streams, segments, audioDurationMS, sha256hex, cfg, stdout)
 	if err != nil {
 		return err
 	}
 
-	// --- 9. Write manifest ---
+	// --- 9. Optional: meeting summary generation ---
+	summaryInput := segments
+	if hasReadable {
+		summaryInput = cleanedSegs
+	}
+	if err := writeSummaryArtifact(outputDir, streams, summaryInput, cfg, stdout); err != nil {
+		return err
+	}
+
+	// --- 10. Write manifest ---
 	manifestPath := filepath.Join(outputDir, "manifest.json")
 	srcBasename := filepath.Base(mkvPath)
 	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, streams, segments, cfg.ModelID, cfg.LLM.Model, hasReadable); err != nil {
@@ -146,27 +160,34 @@ func DefaultBuildConfig() BuildConfig {
 	if model := os.Getenv("LLM_MODEL"); model != "" {
 		llm.Model = model
 	}
+
+	summaryLLM := llm
+	if model := os.Getenv("SUMMARY_MODEL"); model != "" {
+		summaryLLM.Model = model
+	}
+
 	return BuildConfig{
 		Device:                "cpu",
 		ModelID:               defaultModelID,
 		LLM:                   llm,
+		SummaryLLM:            summaryLLM,
 		StrictReadableCleanup: envBool("CASSINI_READABLE_STRICT_BATCHES"),
 	}
 }
 
-func writeReadableArtifacts(outputDir string, streams []AudioStream, segments []Segment, audioDurationMS int64, sha256hex string, cfg BuildConfig, stdout io.Writer) (bool, error) {
+func writeReadableArtifacts(outputDir string, streams []AudioStream, segments []Segment, audioDurationMS int64, sha256hex string, cfg BuildConfig, stdout io.Writer) ([]Segment, bool, error) {
 	if !cfg.LLM.IsConfigured() {
-		return false, nil
+		return nil, false, nil
 	}
 
 	fmt.Fprintln(stdout, "  running LLM readable cleanup...")
 	readableSegs, err := readableCleanupFn(cfg.LLM, segments)
 	if err != nil {
 		if cfg.StrictReadableCleanup {
-			return false, fmt.Errorf("readable cleanup: %w", err)
+			return nil, false, fmt.Errorf("readable cleanup: %w", err)
 		}
 		fmt.Fprintf(stdout, "  warn: LLM cleanup failed: %v — skipping readable transcript\n", err)
-		return false, nil
+		return nil, false, nil
 	}
 
 	applied := ApplyReadableText(segments, readableSegs)
@@ -176,14 +197,33 @@ func writeReadableArtifacts(outputDir string, streams []AudioStream, segments []
 	// transcript. If we stamp it as transcript.words.v1, downstream loaders will
 	// ignore the cleaned content and fall back to raw ASR text.
 	if err := writeTranscriptWithHash(readablePath, "transcript.readable.v1", streams, applied, audioDurationMS, sha256hex); err != nil {
-		return false, fmt.Errorf("write readable transcript: %w", err)
+		return nil, false, fmt.Errorf("write readable transcript: %w", err)
 	}
 
 	captionsPath := filepath.Join(outputDir, "captions.vtt")
 	if err := WriteCaptionsVTT(captionsPath, streams, applied); err != nil {
-		return false, fmt.Errorf("write captions: %w", err)
+		return nil, false, fmt.Errorf("write captions: %w", err)
 	}
-	return true, nil
+	return applied, true, nil
+}
+
+func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Segment, cfg BuildConfig, stdout io.Writer) error {
+	if !cfg.SummaryLLM.IsConfigured() {
+		return nil
+	}
+
+	fmt.Fprintln(stdout, "  generating meeting summary...")
+	body, err := buildMeetingSummaryFn(cfg.SummaryLLM, streams, segments)
+	if err != nil {
+		fmt.Fprintf(stdout, "  warn: summary generation failed: %v — skipping summary\n", err)
+		return nil
+	}
+
+	summaryPath := filepath.Join(outputDir, "summary.md")
+	if err := os.WriteFile(summaryPath, []byte(body), 0o644); err != nil {
+		return fmt.Errorf("write summary: %w", err)
+	}
+	return nil
 }
 
 // defaultCacheDir returns the default cache directory for models.
