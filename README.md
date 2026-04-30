@@ -203,8 +203,9 @@ The local harness implementation now lives under `harness/`, and it is now
 being surfaced through `./bin/cassini dev ...` rather than taught as a peer
 product.
 
-## Docs In This Branch
+## Docs
 
-- [DX_REARCHITECTURE.md](DX_REARCHITECTURE.md): replacement product boundary
-- [DX_EXECUTION_PLAN.md](DX_EXECUTION_PLAN.md): staged execution plan
-- [USER_REVIEW_NOTES.md](USER_REVIEW_NOTES.md): original DX review findings
+- System overview: [docs/architecture.md](docs/architecture.md)
+- Cross-cutting reference: [docs/portable-meeting-format.md](docs/portable-meeting-format.md), [docs/audio-glossary.md](docs/audio-glossary.md)
+- Component deep-dives: [cassini-go-recorder/docs/](cassini-go-recorder/docs/), [cassini-transcriber/docs/](cassini-transcriber/docs/), [cassini-viewer/docs/](cassini-viewer/docs/)
+- Planning and review notes: [planning/](planning/) — DX rearchitecture, execution plan, user review findings, MVP initiative
