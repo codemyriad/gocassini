@@ -51,7 +51,7 @@ type Runtime struct {
 	publishQueue chan publishTask
 	recordMu     sync.Mutex
 	recordJobs   map[string]*recordProcessState
-	recordJobFn  func(context.Context, Job, TriggerRequest) (string, error)
+	recordJobFn  func(context.Context, Job, TriggerRequest) (recordResult, error)
 	buildJobFn   func(context.Context, buildTask) (string, error)
 	publishJobFn func(context.Context, publishTask) (string, error)
 }
@@ -381,23 +381,30 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 	}
 	rt.logger.Printf("record started id=%s", job.ID)
 
-	artifactRunPath, err := rt.recordJobFn(rt.ctx, job, req)
+	result, err := rt.recordJobFn(rt.ctx, job, req)
 	finishedAt := nowUTCString()
 	if err != nil {
 		rt.logger.Printf("record failed id=%s: %v", job.ID, err)
-		if updateErr := rt.store.MarkRecordFailed(context.Background(), job.ID, err.Error(), finishedAt); updateErr != nil {
+		if updateErr := rt.store.MarkRecordFailed(context.Background(), job.ID, err.Error(), result, finishedAt); updateErr != nil {
 			rt.logger.Printf("record fail update failed id=%s: %v", job.ID, updateErr)
 		}
 		return
 	}
-	if err := rt.enqueueBuildJob(job.ID, artifactRunPath, finishedAt); err != nil {
+	if updateErr := rt.store.UpdateRecordOutcome(context.Background(), job.ID, result, finishedAt); updateErr != nil {
+		rt.logger.Printf("record outcome update failed id=%s: %v", job.ID, updateErr)
+		if failErr := rt.store.MarkRecordFailed(context.Background(), job.ID, updateErr.Error(), result, finishedAt); failErr != nil {
+			rt.logger.Printf("record outcome failure update failed id=%s: %v", job.ID, failErr)
+		}
+		return
+	}
+	if err := rt.enqueueBuildJob(job.ID, result.ArtifactRunPath, finishedAt); err != nil {
 		rt.logger.Printf("build queue update failed id=%s: %v", job.ID, err)
 		if updateErr := rt.store.MarkBuildFailed(context.Background(), job.ID, "", err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("build queue failure update failed id=%s: %v", job.ID, updateErr)
 		}
 		return
 	}
-	rt.logger.Printf("record succeeded id=%s run=%s build_queued_at=%s", job.ID, artifactRunPath, finishedAt)
+	rt.logger.Printf("record succeeded id=%s run=%s build_queued_at=%s stop_reason=%s", job.ID, result.ArtifactRunPath, finishedAt, strings.TrimSpace(result.StopReason))
 }
 
 func findRepoRoot() (string, error) {
@@ -480,6 +487,11 @@ type Job struct {
 	ArtifactMeetingPath *string `json:"artifact_meeting_path"`
 	ArtifactSitePath    *string `json:"artifact_site_path"`
 	Error               *string `json:"error"`
+	StopReason          *string `json:"stop_reason"`
+	StopRequestedAt     *string `json:"stop_requested_at"`
+	StopSignalSentAt    *string `json:"stop_signal_sent_at"`
+	RecordExitCode      *int    `json:"record_exit_code"`
+	RecordStopDetail    *string `json:"record_stop_detail"`
 	CreatedAt           string  `json:"created_at"`
 	UpdatedAt           string  `json:"updated_at"`
 	RecordQueuedAt      *string `json:"record_queued_at"`
@@ -527,22 +539,38 @@ WHERE id = ?`, "record", "running", startedAt, startedAt, id)
 	return nil
 }
 
-func (s *Store) MarkRecordSucceeded(ctx context.Context, id, artifactRunPath, finishedAt string) error {
+func (s *Store) MarkRecordStopRequested(ctx context.Context, id, requestedAt, signalSentAt string) error {
 	_, err := s.db.ExecContext(ctx, `
 UPDATE jobs
-SET stage = ?, state = ?, artifact_run_path = ?, updated_at = ?, record_finished_at = ?, completed_at = ?, error = NULL
-WHERE id = ?`, "done", "succeeded", artifactRunPath, finishedAt, finishedAt, finishedAt, id)
+SET stop_requested_at = COALESCE(stop_requested_at, ?),
+    stop_signal_sent_at = COALESCE(stop_signal_sent_at, ?),
+    updated_at = ?
+WHERE id = ?`, requestedAt, signalSentAt, signalSentAt, id)
 	if err != nil {
-		return fmt.Errorf("update record success: %w", err)
+		return fmt.Errorf("update record stop request: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) MarkRecordFailed(ctx context.Context, id, errText, finishedAt string) error {
+func (s *Store) UpdateRecordOutcome(ctx context.Context, id string, result recordResult, updatedAt string) error {
 	_, err := s.db.ExecContext(ctx, `
 UPDATE jobs
-SET stage = ?, state = ?, error = ?, updated_at = ?, record_finished_at = ?, completed_at = ?
-WHERE id = ?`, "done", "failed", strings.TrimSpace(errText), finishedAt, finishedAt, finishedAt, id)
+SET stop_reason = ?,
+    record_exit_code = ?,
+    record_stop_detail = ?,
+    updated_at = ?
+WHERE id = ?`, nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(result.StopDetail), updatedAt, id)
+	if err != nil {
+		return fmt.Errorf("update record outcome: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) MarkRecordFailed(ctx context.Context, id, errText string, result recordResult, finishedAt string) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE jobs
+SET stage = ?, state = ?, error = ?, stop_reason = ?, record_exit_code = ?, record_stop_detail = ?, updated_at = ?, record_finished_at = ?, completed_at = ?
+WHERE id = ?`, "done", "failed", strings.TrimSpace(errText), nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(firstNonEmpty(result.StopDetail, errText)), finishedAt, finishedAt, finishedAt, id)
 	if err != nil {
 		return fmt.Errorf("update record failure: %w", err)
 	}
@@ -556,10 +584,35 @@ func stringOrNil(value *string) any {
 	return *value
 }
 
+func nullableString(value string) any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func intOrNil(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func (s *Store) ListJobs(ctx context.Context) ([]Job, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, provider, request_json, stage, state,
        artifact_run_path, artifact_meeting_path, artifact_site_path, error,
+       stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
        build_queued_at, build_started_at, build_finished_at,
@@ -593,6 +646,7 @@ func (s *Store) GetJob(ctx context.Context, id string) (Job, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT id, provider, request_json, stage, state,
        artifact_run_path, artifact_meeting_path, artifact_site_path, error,
+       stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
        build_queued_at, build_started_at, build_finished_at,
@@ -617,6 +671,11 @@ func scanJob(scanner rowScanner) (Job, error) {
 	var artifactMeetingPath sql.NullString
 	var artifactSitePath sql.NullString
 	var jobError sql.NullString
+	var stopReason sql.NullString
+	var stopRequestedAt sql.NullString
+	var stopSignalSentAt sql.NullString
+	var recordExitCode sql.NullInt64
+	var recordStopDetail sql.NullString
 	var recordQueuedAt sql.NullString
 	var recordStartedAt sql.NullString
 	var recordFinishedAt sql.NullString
@@ -639,6 +698,11 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&artifactMeetingPath,
 		&artifactSitePath,
 		&jobError,
+		&stopReason,
+		&stopRequestedAt,
+		&stopSignalSentAt,
+		&recordExitCode,
+		&recordStopDetail,
 		&job.CreatedAt,
 		&job.UpdatedAt,
 		&recordQueuedAt,
@@ -664,6 +728,11 @@ func scanJob(scanner rowScanner) (Job, error) {
 	job.ArtifactMeetingPath = nullableStringPtr(artifactMeetingPath)
 	job.ArtifactSitePath = nullableStringPtr(artifactSitePath)
 	job.Error = nullableStringPtr(jobError)
+	job.StopReason = nullableStringPtr(stopReason)
+	job.StopRequestedAt = nullableStringPtr(stopRequestedAt)
+	job.StopSignalSentAt = nullableStringPtr(stopSignalSentAt)
+	job.RecordExitCode = nullableIntPtr(recordExitCode)
+	job.RecordStopDetail = nullableStringPtr(recordStopDetail)
 	job.RecordQueuedAt = nullableStringPtr(recordQueuedAt)
 	job.RecordStartedAt = nullableStringPtr(recordStartedAt)
 	job.RecordFinishedAt = nullableStringPtr(recordFinishedAt)
@@ -683,6 +752,14 @@ func nullableStringPtr(v sql.NullString) *string {
 		return nil
 	}
 	value := v.String
+	return &value
+}
+
+func nullableIntPtr(v sql.NullInt64) *int {
+	if !v.Valid {
+		return nil
+	}
+	value := int(v.Int64)
 	return &value
 }
 

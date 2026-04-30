@@ -34,8 +34,8 @@ func TestOpenStoreEnsuresSchemaAndEmptyList(t *testing.T) {
 	if len(jobs) != 0 {
 		t.Fatalf("expected empty jobs list, got %d", len(jobs))
 	}
-	if versions := migrationVersions(t, store.db); len(versions) != 1 || versions[0] != 1 {
-		t.Fatalf("expected baseline migration version [1], got %v", versions)
+	if versions := migrationVersions(t, store.db); len(versions) != 2 || versions[0] != 1 || versions[1] != 2 {
+		t.Fatalf("expected migration versions [1 2], got %v", versions)
 	}
 }
 
@@ -51,8 +51,8 @@ func TestOpenStoreBaselinesLegacySchemaDatabase(t *testing.T) {
 	}
 	defer store.Close()
 
-	if versions := migrationVersions(t, store.db); len(versions) != 1 || versions[0] != 1 {
-		t.Fatalf("expected baseline migration version [1], got %v", versions)
+	if versions := migrationVersions(t, store.db); len(versions) != 2 || versions[0] != 1 || versions[1] != 2 {
+		t.Fatalf("expected migration versions [1 2], got %v", versions)
 	}
 	job := mustGetJob(t, store, "legacy-job")
 	if job.Provider != "nextcloud-talk" || job.Stage != "record" || job.State != "queued" {
@@ -262,6 +262,15 @@ func TestCreateJobReturnsULIDAndCompletesPublishStage(t *testing.T) {
 	if job.PublishQueuedAt == nil || job.PublishStartedAt == nil || job.PublishFinishedAt == nil {
 		t.Fatalf("expected publish timestamps to be set, got job=%#v", job)
 	}
+	if job.StopReason == nil || *job.StopReason != "room_empty" {
+		t.Fatalf("expected room_empty stop reason, got %#v", job.StopReason)
+	}
+	if job.RecordExitCode == nil || *job.RecordExitCode != 0 {
+		t.Fatalf("expected record exit code 0, got %#v", job.RecordExitCode)
+	}
+	if job.RecordStopDetail == nil || !strings.Contains(*job.RecordStopDetail, "room empty") {
+		t.Fatalf("expected room empty stop detail, got %#v", job.RecordStopDetail)
+	}
 	if _, err := os.Stat(filepath.Join(*job.ArtifactRunPath, "recording.mkv")); err != nil {
 		t.Fatalf("expected recording.mkv in run bundle: %v", err)
 	}
@@ -280,6 +289,33 @@ func TestCreateJobReturnsULIDAndCompletesPublishStage(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"kind": "site"`) {
 		t.Fatalf("unexpected site manifest: %s", string(raw))
+	}
+}
+
+func TestJobDetailHandlerIncludesStopMetadata(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	createReq := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/read-surface"}`))
+	createRec := httptest.NewRecorder()
+	rt.jobsHandler(createRec, createReq)
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, want %d body=%s", createRec.Code, http.StatusAccepted, createRec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	_ = waitForJobState(t, rt.store, resp.ID, "succeeded")
+
+	detailReq := httptest.NewRequest(http.MethodGet, "/jobs/"+resp.ID, nil)
+	detailRec := httptest.NewRecorder()
+	rt.jobDetailHandler(detailRec, detailReq)
+	if detailRec.Code != http.StatusOK {
+		t.Fatalf("detail status = %d, want %d body=%s", detailRec.Code, http.StatusOK, detailRec.Body.String())
+	}
+	if !strings.Contains(detailRec.Body.String(), `"stop_reason":"room_empty"`) {
+		t.Fatalf("expected stop_reason in detail response, got %s", detailRec.Body.String())
 	}
 }
 
@@ -398,6 +434,15 @@ func TestStopJobAcceptsRunningRecordAndCompletesPublishStage(t *testing.T) {
 	if job.Stage != "done" {
 		t.Fatalf("stage = %q, want done", job.Stage)
 	}
+	if job.StopReason == nil || *job.StopReason != "operator_requested" {
+		t.Fatalf("expected operator_requested stop reason, got %#v", job.StopReason)
+	}
+	if job.StopRequestedAt == nil || job.StopSignalSentAt == nil {
+		t.Fatalf("expected stop request timestamps, got job=%#v", job)
+	}
+	if job.RecordExitCode == nil || *job.RecordExitCode != 0 {
+		t.Fatalf("expected record exit code 0, got %#v", job.RecordExitCode)
+	}
 	logText := readFileString(t, logPath)
 	if !strings.Contains(logText, "record --call https://example.test/stop-me") {
 		t.Fatalf("expected record invocation, got %s", logText)
@@ -474,10 +519,10 @@ func TestCreateJobReturnsBusyWithoutCreatingRow(t *testing.T) {
 
 	block := make(chan struct{})
 	done := make(chan struct{})
-	rt.recordJobFn = func(ctx context.Context, job Job, req TriggerRequest) (string, error) {
+	rt.recordJobFn = func(ctx context.Context, job Job, req TriggerRequest) (recordResult, error) {
 		defer close(done)
 		<-block
-		return filepath.Join(rt.cfg.WorkRoot, job.ID+".run"), nil
+		return recordResult{ArtifactRunPath: filepath.Join(rt.cfg.WorkRoot, job.ID+".run")}, nil
 	}
 
 	req1 := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/one"}`))
@@ -709,19 +754,19 @@ func newTestRuntime(t *testing.T) (*Runtime, func()) {
 		MaxRecordWorkers: 1,
 		MaxBuildWorkers:  1,
 	}, logger, ioDiscard{}, ioDiscard{})
-	rt.recordJobFn = func(ctx context.Context, job Job, req TriggerRequest) (string, error) {
+	rt.recordJobFn = func(ctx context.Context, job Job, req TriggerRequest) (recordResult, error) {
 		runPath := filepath.Join(rt.cfg.WorkRoot, job.ID+".run")
 		bundle, err := PrepareRunBundle(runPath, false)
 		if err != nil {
-			return "", err
+			return recordResult{}, err
 		}
 		if err := os.WriteFile(bundle.RecordingPath, []byte("fake-mkv"), 0o644); err != nil {
-			return "", err
+			return recordResult{}, err
 		}
 		if err := FinalizeRunBundle(bundle, RunManifest{SourceMode: "talk", RecorderName: req.GuestName}); err != nil {
-			return "", err
+			return recordResult{}, err
 		}
-		return bundle.RootDir, nil
+		return recordResult{ArtifactRunPath: bundle.RootDir, StopReason: "room_empty", ExitCode: intPtr(0), StopDetail: "room empty for 30s after remote participants left"}, nil
 	}
 	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
 		meetingPath := filepath.Join(rt.cfg.WorkRoot, task.JobID+".meeting")
@@ -1005,3 +1050,5 @@ func mustGetJob(t *testing.T, store *Store, id string) Job {
 }
 
 func strPtr(v string) *string { return &v }
+
+func intPtr(v int) *int { return &v }

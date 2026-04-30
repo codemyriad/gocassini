@@ -265,7 +265,7 @@ Behavior:
 GET /jobs
 ```
 
-Returns full persisted job rows ordered newest first.
+Returns full persisted job rows ordered newest first, including stop metadata such as `stop_reason`, `stop_requested_at`, `stop_signal_sent_at`, `record_exit_code`, and `record_stop_detail`.
 
 ### Get one job
 
@@ -273,7 +273,7 @@ Returns full persisted job rows ordered newest first.
 GET /jobs/:id
 ```
 
-Returns the full persisted row for that job.
+Returns the full persisted row for that job, including any persisted stop metadata.
 
 ## Runtime defaults
 
@@ -431,6 +431,7 @@ A job row stores:
 - `state`
 - artifact paths for `.run`, `.meeting`, and site output
 - lightweight `error`
+- stop metadata: `stop_reason`, `stop_requested_at`, `stop_signal_sent_at`, `record_exit_code`, `record_stop_detail`
 - per-stage timestamps
 - `interrupted_at`
 - `completed_at`

@@ -1,11 +1,13 @@
 package operator
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,6 +30,13 @@ type recordProcessState struct {
 	stopInProgress bool
 }
 
+type recordResult struct {
+	ArtifactRunPath string
+	StopReason      string
+	StopDetail      string
+	ExitCode        *int
+}
+
 type triggerRequestInput struct {
 	Platform          string   `json:"platform"`
 	URL               string   `json:"url"`
@@ -37,14 +46,14 @@ type triggerRequestInput struct {
 	RoomEmptyGraceSec *float64 `json:"roomEmptyGrace,omitempty"`
 }
 
-func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerRequest) (string, error) {
+func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerRequest) (recordResult, error) {
 	if err := rt.runRecordDoctor(); err != nil {
-		return "", err
+		return recordResult{}, err
 	}
 
 	runPath := filepath.Join(rt.cfg.WorkRoot, job.ID+".run")
 	if err := os.MkdirAll(filepath.Dir(runPath), 0o755); err != nil {
-		return "", fmt.Errorf("create run parent dir: %w", err)
+		return recordResult{}, fmt.Errorf("create run parent dir: %w", err)
 	}
 
 	args := []string{
@@ -63,25 +72,36 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 		args = append(args, "--room-empty-grace", formatSeconds(req.RoomEmptyGraceSeconds))
 	}
 
+	var logCapture bytes.Buffer
 	cmd := exec.Command(rt.cfg.CassiniBin, args...)
-	cmd.Stdout = writerOrDiscard(rt.stdout)
-	cmd.Stderr = writerOrDiscard(rt.stderr)
+	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), &logCapture)
+	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), &logCapture)
 	cmd.Env = os.Environ()
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("cassini record start: %w", err)
+		return recordResult{}, fmt.Errorf("cassini record start: %w", err)
 	}
 
 	state := rt.registerRecordProcess(job.ID, cmd.Process)
 	defer rt.completeRecordProcess(job.ID)
 	go rt.stopRecordProcessOnShutdown(job.ID, state)
 
-	if err := cmd.Wait(); err != nil {
-		return "", fmt.Errorf("cassini record: %w", err)
+	runErr := cmd.Wait()
+	result := recordResult{
+		ArtifactRunPath: runPath,
+		ExitCode:        exitCodeFromRunError(runErr),
+		StopDetail:      recordStopDetail(logCapture.String()),
+	}
+	result.StopReason = classifyRecordStopReason(state.stopInProgress, result.ExitCode, result.StopDetail, runErr)
+	if runErr != nil {
+		if result.StopDetail == "" {
+			result.StopDetail = strings.TrimSpace(runErr.Error())
+		}
+		return result, fmt.Errorf("cassini record: %w", runErr)
 	}
 	if _, err := os.Stat(filepath.Join(runPath, "cassini.json")); err != nil {
-		return "", fmt.Errorf("record output missing cassini.json: %w", err)
+		return result, fmt.Errorf("record output missing cassini.json: %w", err)
 	}
-	return runPath, nil
+	return result, nil
 }
 
 func (rt *Runtime) runRecordDoctor() error {
@@ -161,8 +181,14 @@ func (rt *Runtime) handleStopJob(w http.ResponseWriter, r *http.Request, id stri
 		writeJSON(w, http.StatusAccepted, recordStopResponse{ID: id})
 		return
 	}
+	requestedAt := nowUTCString()
+	signalSentAt := nowUTCString()
 	if err := state.process.Signal(syscall.SIGTERM); err != nil && !isExitedProcessError(err) {
 		writeJSONError(w, http.StatusConflict, fmt.Sprintf("stop job: %v", err))
+		return
+	}
+	if err := rt.store.MarkRecordStopRequested(r.Context(), id, requestedAt, signalSentAt); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("update stop request: %v", err))
 		return
 	}
 	go rt.enforceRecordStop(id, state)
@@ -228,6 +254,68 @@ func isExitedProcessError(err error) bool {
 	}
 	var errno syscall.Errno
 	return errors.As(err, &errno) && errno == syscall.ESRCH
+}
+
+func exitCodeFromRunError(err error) *int {
+	if err == nil {
+		code := 0
+		return &code
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		code := exitErr.ExitCode()
+		return &code
+	}
+	return nil
+}
+
+func recordStopDetail(logs string) string {
+	for _, line := range reverseLogLines(logs) {
+		line = strings.TrimSpace(line)
+		if idx := strings.Index(line, "talk recorder stopping:"); idx >= 0 {
+			return strings.TrimSpace(line[idx+len("talk recorder stopping:"):])
+		}
+	}
+	return ""
+}
+
+func reverseLogLines(logs string) []string {
+	lines := strings.Split(logs, "\n")
+	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
+		lines[i], lines[j] = lines[j], lines[i]
+	}
+	return lines
+}
+
+func classifyRecordStopReason(stopAccepted bool, exitCode *int, stopDetail string, runErr error) string {
+	if stopAccepted && runErr == nil {
+		return "operator_requested"
+	}
+	combined := strings.ToLower(strings.TrimSpace(stopDetail))
+	if combined == "" && runErr != nil {
+		combined = strings.ToLower(strings.TrimSpace(runErr.Error()))
+	} else if runErr != nil {
+		combined = combined + " " + strings.ToLower(strings.TrimSpace(runErr.Error()))
+	}
+	switch {
+	case strings.Contains(combined, "room empty"):
+		return "room_empty"
+	case strings.Contains(combined, "duration limit reached"):
+		return "duration_limit"
+	case strings.Contains(combined, "signaling connection error"):
+		return "signaling_connection_error"
+	case strings.Contains(combined, "signaling room join failed"),
+		strings.Contains(combined, "all signaling hello attempts failed"),
+		strings.Contains(combined, "signaling settings failed"),
+		strings.Contains(combined, "missing signaling server"),
+		strings.Contains(combined, "hello response missing signaling sessionid"),
+		strings.Contains(combined, "join call failed"):
+		return "join_failed"
+	case exitCode != nil && *exitCode != 0:
+		return "record_process_exit_nonzero"
+	default:
+		return ""
+	}
 }
 
 func parseTriggerRequest(input triggerRequestInput) (TriggerRequest, error) {
