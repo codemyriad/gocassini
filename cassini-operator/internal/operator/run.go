@@ -34,8 +34,6 @@ type Config struct {
 	DBPath           string
 	WorkRoot         string
 	SiteRoot         string
-	FixturePath      string
-	FixtureURL       string
 	CassiniBin       string
 	MaxRecordWorkers int
 	MaxBuildWorkers  int
@@ -51,15 +49,22 @@ type Runtime struct {
 	recordSlots  chan struct{}
 	buildQueue   chan buildTask
 	publishQueue chan publishTask
-	fixtureMu    sync.Mutex
-	recordJobFn  func(context.Context, Job, TriggerRequest) (string, error)
+	recordMu     sync.Mutex
+	recordJobs   map[string]*recordProcessState
+	recordJobFn  func(context.Context, Job, TriggerRequest) (recordResult, error)
 	buildJobFn   func(context.Context, buildTask) (string, error)
 	publishJobFn func(context.Context, publishTask) (string, error)
 }
 
 type TriggerRequest struct {
-	Platform string `json:"platform"`
-	URL      string `json:"url"`
+	Platform              string  `json:"platform"`
+	URL                   string  `json:"url"`
+	GuestName             string  `json:"guestName"`
+	DurationSeconds       *int    `json:"duration,omitempty"`
+	StopWhenRoomEmpty     bool    `json:"stopWhenRoomEmpty"`
+	RoomEmptyGraceSeconds float64 `json:"roomEmptyGrace"`
+	StopWhenRoomEmptySet  bool    `json:"-"`
+	RoomEmptyGraceSet     bool    `json:"-"`
 }
 
 type createJobResponse struct {
@@ -113,8 +118,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("db -> %s", cfg.DBPath)
 	logger.Printf("work_root -> %s", cfg.WorkRoot)
 	logger.Printf("site_root -> %s", cfg.SiteRoot)
-	logger.Printf("fixture_path -> %s", cfg.FixturePath)
-	logger.Printf("fixture_url -> %s", cfg.FixtureURL)
 	logger.Printf("cassini_bin -> %s", cfg.CassiniBin)
 	logger.Printf("max_record_workers -> %d", cfg.MaxRecordWorkers)
 	logger.Printf("max_build_workers -> %d", cfg.MaxBuildWorkers)
@@ -160,7 +163,6 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	defaultDBPath := filepath.Join(defaultDataRoot, "jobs.sqlite3")
 	defaultWorkRoot := filepath.Join(defaultDataRoot, "jobs")
 	defaultSiteRoot := filepath.Join(defaultDataRoot, "site")
-	defaultFixturePath := filepath.Join(defaultDataRoot, "operator-fixture.mkv")
 	defaultMaxRecordWorkers, err := parsePositiveIntEnv("MAX_RECORD_WORKERS", defaultRecordWorkerCount)
 	if err != nil {
 		return Config{}, 2, err
@@ -179,13 +181,11 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.StringVar(&cfg.DBPath, "db", defaultDBPath, "SQLite database path")
 	fs.StringVar(&cfg.WorkRoot, "work-root", envOrDefault("WORK_ROOT", defaultWorkRoot), "per-job artifact root")
 	fs.StringVar(&cfg.SiteRoot, "site-root", envOrDefault("SITE_ROOT", defaultSiteRoot), "published site output root")
-	fs.StringVar(&cfg.FixturePath, "fixture-path", envOrDefault("FIXTURE_PATH", defaultFixturePath), "fixture MKV path")
-	fs.StringVar(&cfg.FixtureURL, "fixture-url", strings.TrimSpace(os.Getenv("FIXTURE_URL")), "fixture download URL (used when fixture path is missing)")
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", defaultCassiniBin, "Cassini CLI binary path")
 	fs.IntVar(&cfg.MaxRecordWorkers, "max-record-workers", defaultMaxRecordWorkers, "maximum concurrent record workers")
 	fs.IntVar(&cfg.MaxBuildWorkers, "max-build-workers", defaultMaxBuildWorkers, "maximum concurrent build workers")
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), `Cassini Operator runs the V1 job API and worker runtime.
+		fmt.Fprint(fs.Output(), `Cassini Operator runs the V2 live-record job API and worker runtime.
 
 Usage:
   cassini-operator
@@ -210,9 +210,7 @@ Flags:
 	cfg.DBPath = resolveRepoRelativePath(repoRoot, cfg.DBPath)
 	cfg.WorkRoot = resolveRepoRelativePath(repoRoot, cfg.WorkRoot)
 	cfg.SiteRoot = resolveRepoRelativePath(repoRoot, cfg.SiteRoot)
-	cfg.FixturePath = resolveRepoRelativePath(repoRoot, cfg.FixturePath)
 	cfg.CassiniBin = resolveRepoRelativePath(repoRoot, cfg.CassiniBin)
-	cfg.FixtureURL = strings.TrimSpace(cfg.FixtureURL)
 	if cfg.MaxRecordWorkers < 1 {
 		return Config{}, 2, errors.New("--max-record-workers must be >= 1")
 	}
@@ -221,9 +219,6 @@ Flags:
 	}
 	if err := validateExecutable(cfg.CassiniBin); err != nil {
 		return Config{}, 2, fmt.Errorf("cassini binary: %w", err)
-	}
-	if !strings.HasSuffix(strings.ToLower(cfg.FixturePath), ".mkv") {
-		return Config{}, 2, fmt.Errorf("fixture path must end with .mkv: %s", cfg.FixturePath)
 	}
 
 	return cfg, 0, nil
@@ -274,8 +269,9 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		recordSlots:  make(chan struct{}, cfg.MaxRecordWorkers),
 		buildQueue:   make(chan buildTask, queueCapacity),
 		publishQueue: make(chan publishTask, 16),
+		recordJobs:   map[string]*recordProcessState{},
 	}
-	rt.recordJobFn = rt.recordFromFixture
+	rt.recordJobFn = rt.executeRecordCLI
 	rt.buildJobFn = rt.executeBuildCLI
 	rt.publishJobFn = rt.executePublishCLI
 	rt.startBuildWorkers()
@@ -357,18 +353,22 @@ func decodeTriggerRequest(body io.ReadCloser) (string, TriggerRequest, error) {
 	if err != nil {
 		return "", TriggerRequest{}, fmt.Errorf("read request body: %w", err)
 	}
-	trimmed := strings.TrimSpace(string(raw))
-	if trimmed == "" {
+	if strings.TrimSpace(string(raw)) == "" {
 		return "", TriggerRequest{}, errors.New("request body is required")
 	}
-	var req TriggerRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
+	var input triggerRequestInput
+	if err := json.Unmarshal(raw, &input); err != nil {
 		return "", TriggerRequest{}, fmt.Errorf("invalid request JSON: %w", err)
 	}
-	if strings.TrimSpace(req.URL) == "" {
-		return "", TriggerRequest{}, errors.New("url is required")
+	req, err := parseTriggerRequest(input)
+	if err != nil {
+		return "", TriggerRequest{}, err
 	}
-	return trimmed, req, nil
+	requestBody, err := encodeTriggerRequest(req)
+	if err != nil {
+		return "", TriggerRequest{}, err
+	}
+	return requestBody, req, nil
 }
 
 func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
@@ -381,119 +381,30 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 	}
 	rt.logger.Printf("record started id=%s", job.ID)
 
-	artifactRunPath, err := rt.recordJobFn(rt.ctx, job, req)
+	result, err := rt.recordJobFn(rt.ctx, job, req)
 	finishedAt := nowUTCString()
 	if err != nil {
 		rt.logger.Printf("record failed id=%s: %v", job.ID, err)
-		if updateErr := rt.store.MarkRecordFailed(context.Background(), job.ID, err.Error(), finishedAt); updateErr != nil {
+		if updateErr := rt.store.MarkRecordFailed(context.Background(), job.ID, err.Error(), result, finishedAt); updateErr != nil {
 			rt.logger.Printf("record fail update failed id=%s: %v", job.ID, updateErr)
 		}
 		return
 	}
-	if err := rt.enqueueBuildJob(job.ID, artifactRunPath, finishedAt); err != nil {
+	if updateErr := rt.store.UpdateRecordOutcome(context.Background(), job.ID, result, finishedAt); updateErr != nil {
+		rt.logger.Printf("record outcome update failed id=%s: %v", job.ID, updateErr)
+		if failErr := rt.store.MarkRecordFailed(context.Background(), job.ID, updateErr.Error(), result, finishedAt); failErr != nil {
+			rt.logger.Printf("record outcome failure update failed id=%s: %v", job.ID, failErr)
+		}
+		return
+	}
+	if err := rt.enqueueBuildJob(job.ID, result.ArtifactRunPath, finishedAt); err != nil {
 		rt.logger.Printf("build queue update failed id=%s: %v", job.ID, err)
 		if updateErr := rt.store.MarkBuildFailed(context.Background(), job.ID, "", err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("build queue failure update failed id=%s: %v", job.ID, updateErr)
 		}
 		return
 	}
-	rt.logger.Printf("record succeeded id=%s run=%s build_queued_at=%s", job.ID, artifactRunPath, finishedAt)
-}
-
-func (rt *Runtime) recordFromFixture(ctx context.Context, job Job, req TriggerRequest) (string, error) {
-	fixturePath, err := rt.ensureFixture(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	runPath := filepath.Join(rt.cfg.WorkRoot, job.ID+".run")
-	bundle, err := PrepareRunBundle(runPath, false)
-	if err != nil {
-		return "", fmt.Errorf("prepare run bundle: %w", err)
-	}
-	if err := copyFile(fixturePath, bundle.RecordingPath); err != nil {
-		_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", err.Error())
-		return "", fmt.Errorf("copy fixture to run bundle: %w", err)
-	}
-	if err := FinalizeRunBundle(bundle, RunManifest{SourceMode: "talk", RecorderName: "CassiniOperatorFixture"}); err != nil {
-		return "", fmt.Errorf("finalize run bundle: %w", err)
-	}
-	return bundle.RootDir, nil
-}
-
-func (rt *Runtime) ensureFixture(ctx context.Context) (string, error) {
-	rt.fixtureMu.Lock()
-	defer rt.fixtureMu.Unlock()
-
-	if info, err := os.Stat(rt.cfg.FixturePath); err == nil {
-		if info.IsDir() {
-			return "", fmt.Errorf("fixture path is a directory: %s", rt.cfg.FixturePath)
-		}
-		return rt.cfg.FixturePath, nil
-	} else if !os.IsNotExist(err) {
-		return "", fmt.Errorf("stat fixture: %w", err)
-	}
-	if rt.cfg.FixtureURL == "" {
-		return "", fmt.Errorf("fixture missing at %s and FIXTURE_URL is not set", rt.cfg.FixturePath)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(rt.cfg.FixturePath), 0o755); err != nil {
-		return "", fmt.Errorf("create fixture dir: %w", err)
-	}
-	partPath := rt.cfg.FixturePath + ".part"
-	_ = os.Remove(partPath)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rt.cfg.FixtureURL, nil)
-	if err != nil {
-		return "", fmt.Errorf("build fixture request: %w", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("download fixture: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("download fixture: unexpected status %s", resp.Status)
-	}
-
-	out, err := os.Create(partPath)
-	if err != nil {
-		return "", fmt.Errorf("create fixture temp file: %w", err)
-	}
-	if _, err := io.Copy(out, resp.Body); err != nil {
-		_ = out.Close()
-		return "", fmt.Errorf("write fixture temp file: %w", err)
-	}
-	if err := out.Close(); err != nil {
-		return "", fmt.Errorf("close fixture temp file: %w", err)
-	}
-	if err := os.Rename(partPath, rt.cfg.FixturePath); err != nil {
-		return "", fmt.Errorf("activate fixture: %w", err)
-	}
-	return rt.cfg.FixturePath, nil
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("open source: %w", err)
-	}
-	defer in.Close()
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return fmt.Errorf("create destination dir: %w", err)
-	}
-	out, err := os.Create(dst)
-	if err != nil {
-		return fmt.Errorf("create destination: %w", err)
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return fmt.Errorf("copy bytes: %w", err)
-	}
-	if err := out.Close(); err != nil {
-		return fmt.Errorf("close destination: %w", err)
-	}
-	return nil
+	rt.logger.Printf("record succeeded id=%s run=%s build_queued_at=%s stop_reason=%s", job.ID, result.ArtifactRunPath, finishedAt, strings.TrimSpace(result.StopReason))
 }
 
 func findRepoRoot() (string, error) {
@@ -566,40 +477,6 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) ensureSchema() error {
-	const schema = `
-CREATE TABLE IF NOT EXISTS jobs (
-  id TEXT PRIMARY KEY NOT NULL,
-  provider TEXT NOT NULL,
-  request_json TEXT NOT NULL,
-  stage TEXT NOT NULL,
-  state TEXT NOT NULL,
-  artifact_run_path TEXT,
-  artifact_meeting_path TEXT,
-  artifact_site_path TEXT,
-  error TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  record_queued_at TEXT,
-  record_started_at TEXT,
-  record_finished_at TEXT,
-  build_queued_at TEXT,
-  build_started_at TEXT,
-  build_finished_at TEXT,
-  publish_queued_at TEXT,
-  publish_started_at TEXT,
-  publish_finished_at TEXT,
-  interrupted_at TEXT,
-  completed_at TEXT
-);
-CREATE INDEX IF NOT EXISTS jobs_created_desc ON jobs(created_at DESC, id DESC);
-`
-	if _, err := s.db.Exec(schema); err != nil {
-		return fmt.Errorf("ensure schema: %w", err)
-	}
-	return nil
-}
-
 type Job struct {
 	ID                  string  `json:"id"`
 	Provider            string  `json:"provider"`
@@ -610,6 +487,11 @@ type Job struct {
 	ArtifactMeetingPath *string `json:"artifact_meeting_path"`
 	ArtifactSitePath    *string `json:"artifact_site_path"`
 	Error               *string `json:"error"`
+	StopReason          *string `json:"stop_reason"`
+	StopRequestedAt     *string `json:"stop_requested_at"`
+	StopSignalSentAt    *string `json:"stop_signal_sent_at"`
+	RecordExitCode      *int    `json:"record_exit_code"`
+	RecordStopDetail    *string `json:"record_stop_detail"`
 	CreatedAt           string  `json:"created_at"`
 	UpdatedAt           string  `json:"updated_at"`
 	RecordQueuedAt      *string `json:"record_queued_at"`
@@ -657,22 +539,38 @@ WHERE id = ?`, "record", "running", startedAt, startedAt, id)
 	return nil
 }
 
-func (s *Store) MarkRecordSucceeded(ctx context.Context, id, artifactRunPath, finishedAt string) error {
+func (s *Store) MarkRecordStopRequested(ctx context.Context, id, requestedAt, signalSentAt string) error {
 	_, err := s.db.ExecContext(ctx, `
 UPDATE jobs
-SET stage = ?, state = ?, artifact_run_path = ?, updated_at = ?, record_finished_at = ?, completed_at = ?, error = NULL
-WHERE id = ?`, "done", "succeeded", artifactRunPath, finishedAt, finishedAt, finishedAt, id)
+SET stop_requested_at = COALESCE(stop_requested_at, ?),
+    stop_signal_sent_at = COALESCE(stop_signal_sent_at, ?),
+    updated_at = ?
+WHERE id = ?`, requestedAt, signalSentAt, signalSentAt, id)
 	if err != nil {
-		return fmt.Errorf("update record success: %w", err)
+		return fmt.Errorf("update record stop request: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) MarkRecordFailed(ctx context.Context, id, errText, finishedAt string) error {
+func (s *Store) UpdateRecordOutcome(ctx context.Context, id string, result recordResult, updatedAt string) error {
 	_, err := s.db.ExecContext(ctx, `
 UPDATE jobs
-SET stage = ?, state = ?, error = ?, updated_at = ?, record_finished_at = ?, completed_at = ?
-WHERE id = ?`, "done", "failed", strings.TrimSpace(errText), finishedAt, finishedAt, finishedAt, id)
+SET stop_reason = ?,
+    record_exit_code = ?,
+    record_stop_detail = ?,
+    updated_at = ?
+WHERE id = ?`, nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(result.StopDetail), updatedAt, id)
+	if err != nil {
+		return fmt.Errorf("update record outcome: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) MarkRecordFailed(ctx context.Context, id, errText string, result recordResult, finishedAt string) error {
+	_, err := s.db.ExecContext(ctx, `
+UPDATE jobs
+SET stage = ?, state = ?, error = ?, stop_reason = ?, record_exit_code = ?, record_stop_detail = ?, updated_at = ?, record_finished_at = ?, completed_at = ?
+WHERE id = ?`, "done", "failed", strings.TrimSpace(errText), nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(firstNonEmpty(result.StopDetail, errText)), finishedAt, finishedAt, finishedAt, id)
 	if err != nil {
 		return fmt.Errorf("update record failure: %w", err)
 	}
@@ -686,10 +584,35 @@ func stringOrNil(value *string) any {
 	return *value
 }
 
+func nullableString(value string) any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func intOrNil(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func (s *Store) ListJobs(ctx context.Context) ([]Job, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, provider, request_json, stage, state,
        artifact_run_path, artifact_meeting_path, artifact_site_path, error,
+       stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
        build_queued_at, build_started_at, build_finished_at,
@@ -723,6 +646,7 @@ func (s *Store) GetJob(ctx context.Context, id string) (Job, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT id, provider, request_json, stage, state,
        artifact_run_path, artifact_meeting_path, artifact_site_path, error,
+       stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
        build_queued_at, build_started_at, build_finished_at,
@@ -747,6 +671,11 @@ func scanJob(scanner rowScanner) (Job, error) {
 	var artifactMeetingPath sql.NullString
 	var artifactSitePath sql.NullString
 	var jobError sql.NullString
+	var stopReason sql.NullString
+	var stopRequestedAt sql.NullString
+	var stopSignalSentAt sql.NullString
+	var recordExitCode sql.NullInt64
+	var recordStopDetail sql.NullString
 	var recordQueuedAt sql.NullString
 	var recordStartedAt sql.NullString
 	var recordFinishedAt sql.NullString
@@ -769,6 +698,11 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&artifactMeetingPath,
 		&artifactSitePath,
 		&jobError,
+		&stopReason,
+		&stopRequestedAt,
+		&stopSignalSentAt,
+		&recordExitCode,
+		&recordStopDetail,
 		&job.CreatedAt,
 		&job.UpdatedAt,
 		&recordQueuedAt,
@@ -794,6 +728,11 @@ func scanJob(scanner rowScanner) (Job, error) {
 	job.ArtifactMeetingPath = nullableStringPtr(artifactMeetingPath)
 	job.ArtifactSitePath = nullableStringPtr(artifactSitePath)
 	job.Error = nullableStringPtr(jobError)
+	job.StopReason = nullableStringPtr(stopReason)
+	job.StopRequestedAt = nullableStringPtr(stopRequestedAt)
+	job.StopSignalSentAt = nullableStringPtr(stopSignalSentAt)
+	job.RecordExitCode = nullableIntPtr(recordExitCode)
+	job.RecordStopDetail = nullableStringPtr(recordStopDetail)
 	job.RecordQueuedAt = nullableStringPtr(recordQueuedAt)
 	job.RecordStartedAt = nullableStringPtr(recordStartedAt)
 	job.RecordFinishedAt = nullableStringPtr(recordFinishedAt)
@@ -816,14 +755,30 @@ func nullableStringPtr(v sql.NullString) *string {
 	return &value
 }
 
+func nullableIntPtr(v sql.NullInt64) *int {
+	if !v.Valid {
+		return nil
+	}
+	value := int(v.Int64)
+	return &value
+}
+
 func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w, http.MethodGet)
+	id, action, ok := parseJobPath(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/jobs/")
-	if id == "" || id == r.URL.Path || strings.Contains(id, "/") {
-		http.NotFound(w, r)
+	if action == "stop" {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		rt.handleStopJob(w, r, id)
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	job, err := rt.store.GetJob(r.Context(), id)

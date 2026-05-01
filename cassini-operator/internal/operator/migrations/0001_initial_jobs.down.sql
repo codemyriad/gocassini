@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS jobs_created_desc;
+DROP TABLE IF EXISTS jobs;

@@ -272,7 +272,7 @@ The remaining MVP work (V0–V8):
 
 0. **V0 — Prep** — commit two full demo meeting artifacts and a summary `.md` template to the repo. Unblocks V3 and V4.
 1. **V1 — Trigger + jobs** — add the HTTP/job surface so recording can be started remotely.
-2. **V2 — Live capture** — wire the worker to the real Cassini recording pipeline.
+2. **V2 — Live capture** — wire the worker to the real Cassini recording pipeline, including happy-path stop controls that still continue into build/publish.
 3. **V3 — Summary display UX** — build the summary panel in the viewer against V0 demo data on top of V7's design-system foundation.
 4. **V4 — Summary generation** — extend the core Cassini pipeline with LLM summary generation in V0 template format.
 5. **V5 — Failure handling** — make failed jobs inspectable and rerunnable.

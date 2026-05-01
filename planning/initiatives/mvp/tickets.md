@@ -221,12 +221,14 @@ The publish/serve/browser baseline is verified working: meeting list, single-mee
 **Scope**
 - Run preflight validation before expensive work starts
 - Run the existing Cassini recording/build path from the worker
+- Support the happy-path stop controls needed for live capture, including an explicit operator stop request that ends recording cleanly and still continues into build/publish
 - Persist resulting meeting artifacts in the publish input area
 - Ensure publish refresh makes new meetings appear in the viewer library
 - Validate the full path against a real Talk room / harness-backed environment
 
 **Out of scope**
 - Summary generation
+- Non-happy-path stop/failure handling beyond the clean stop → build → publish flow
 - Rerun/recovery enhancements beyond basic job completion/failure
 - Packaging/docs work
 
@@ -236,6 +238,7 @@ The publish/serve/browser baseline is verified working: meeting list, single-mee
 **Acceptance criteria**
 - A queued job can target a real Nextcloud Talk meeting URL
 - The worker runs the existing Cassini preflight and capture/build path
+- An explicit operator stop request can stop a running recording cleanly and still continue through build/publish
 - The resulting meeting artifact is stored in the publish input area
 - Publish refresh makes the newly processed meeting appear in the hosted library
 - The flow is demonstrable against a real or harness-backed Talk meeting
@@ -243,6 +246,7 @@ The publish/serve/browser baseline is verified working: meeting list, single-mee
 **Demo / QA checklist**
 - Trigger a real meeting job
 - Observe worker preflight and capture/build execution
+- Stop a running recording through the operator and confirm the job still proceeds into build/publish
 - Confirm a new meeting artifact lands in storage
 - Confirm the published library shows the new meeting
 - Open the new meeting in the viewer
@@ -253,8 +257,9 @@ The publish/serve/browser baseline is verified working: meeting list, single-mee
 - harness-backed E2E verification
 
 **Implementation notes**
-- Keep the endpoint contract from V1 stable; only the worker internals should shift from seeded to live processing
+- Keep the endpoint contract from V1 as stable as possible while adding the happy-path stop behavior V2 needs
 - Reuse the existing Cassini CLI/artifact flow instead of rebuilding it in-process
+- Treat explicit operator stop as a clean recording completion mode for V2, not as V5-style failure handling
 
 **Traceability**
 - Slice: V2

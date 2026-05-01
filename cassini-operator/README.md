@@ -1,39 +1,45 @@
 # Cassini Operator
 
-`cassini-operator` is the separate long-running control-plane binary for the MVP job flow.
+`cassini-operator` is the long-running control-plane binary for Cassini's operator-backed meeting pipeline.
 
-It is intentionally a scheduling and persistence wrapper around existing Cassini CLI behavior.
-The operator does **not** reimplement build/publish orchestration itself. Instead, it:
+It is intentionally an orchestration and persistence wrapper around the existing Cassini CLI.
+The operator does **not** implement live recording, build, or publish logic itself. Instead, it:
 - accepts and persists jobs
 - applies stage-specific concurrency rules
-- invokes `cassini build` and `cassini publish`
-- reads persisted bundle manifests back on failure for lightweight error reporting
+- runs `cassini doctor --target record`
+- invokes `cassini record`, `cassini build`, and `cassini publish`
+- persists lightweight job state and stop metadata
+- reads downstream bundle manifests back on failure for lightweight error reporting
 
-That boundary is deliberate. It lets the operator reuse the orchestration already baked into the Cassini CLI without a hard refactor of recorder internals.
+That boundary is deliberate. It keeps the operator focused on admission, lifecycle control, queueing, persistence, and observability while reusing the recorder/build/publish behavior already implemented in Cassini.
 
-## Current scope (V1)
+## Current scope (V2 runtime)
 
-- `POST /jobs?provider=nextcloud-talk` to accept work
-- `GET /jobs` and `GET /jobs/:id` to inspect full persisted job rows
-- SQLite persistence in one `jobs` table
-- record placeholder from a fixture `.mkv`
-- queued build stage via `cassini build`
-- sequential publish stage via `cassini publish`
+The current operator runtime supports:
+- `POST /jobs?provider=nextcloud-talk` for live Nextcloud Talk recording jobs
+- `POST /jobs/:id/stop` for intentional stop during the record stage
+- `GET /jobs` and `GET /jobs/:id` for full persisted job-row inspection
+- real live record via `cassini doctor --target record` then `cassini record`
+- queued build via `cassini build`
+- queued publish via `cassini publish`
+- versioned SQLite schema migrations tracked in `schema_migrations`
+- persisted stop metadata on the job row
 - startup interruption marking for any non-terminal persisted job
 
-This is intentionally not real Nextcloud Talk capture yet. V1 proves the control-plane and artifact pipeline first.
+This is the implemented V2 operator slice: real Talk capture, explicit stop happy path, migration-backed persistence, and the existing build/publish backbone.
 
 ## Operator architecture
 
-The current runtime is a single process with one HTTP server and one in-process scheduler/runtime.
+The runtime is still one process with one HTTP server and one in-process scheduler/runtime.
 
 ```mermaid
 flowchart TD
-  HTTP["HTTP server\nPOST /jobs\nGET /jobs\nGET /jobs/:id"] --> RT["main runtime\nvalidation\nadmission\nstate transitions"]
+  HTTP["HTTP API\nPOST /jobs\nPOST /jobs/:id/stop\nGET /jobs\nGET /jobs/:id"] --> RT["main runtime\nvalidation\nadmission\nstate transitions"]
   RT --> DB[("SQLite jobs DB")]
-  RT --> FIX["fixture cache\nFIXTURE_PATH / FIXTURE_URL\nmutex + lazy fetch"]
+  RT --> MIG["migration runner\nembedded SQL\nschema_migrations"]
 
-  RT --> REC["record runtime\nfixed slots\nno queue"]
+  RT --> REC["record runtime\nlive cassini record\nfixed slots"]
+  REC --> REG["live record registry\nprocess handle + stop state"]
   REC --> RUN["per-job .run bundle\n<work-root>/<job-id>.run"]
   REC --> BQ["build queue"]
 
@@ -41,13 +47,12 @@ flowchart TD
   BUILD --> MEET["meeting bundle\n<work-root>/<job-id>.meeting"]
   BUILD --> PQ["publish queue"]
 
-  PQ --> PUB["publish runtime\nconcurrency flattened to 1"]
+  PQ --> PUB["publish runtime\nsingle worker"]
   PUB --> SITE["published site\n<site-root>"]
 
-  BUILD --> CLI["Cassini CLI\ncassini build / publish"]
+  REC --> CLI["Cassini CLI\ndoctor / record / build / publish"]
+  BUILD --> CLI
   PUB --> CLI
-  CLI --> BUILD
-  CLI --> PUB
 
   BUILD --> MAN1["failure extractor\nmeeting cassini.json"]
   PUB --> MAN2["failure extractor\nsite cassini.json"]
@@ -60,33 +65,36 @@ flowchart TD
 
 - **record runtime**
   - fixed-slot admission only
-  - no queue
+  - no durable queue
   - overflow returns busy and creates no job row
 - **build runtime**
   - queue-backed
   - configurable worker pool
 - **publish runtime**
   - queue-backed
-  - concurrency intentionally flattened to one worker
+  - intentionally flattened to one worker
   - every publish refreshes the shared site root serially
 
 ## Pipeline flowcharts
 
-### Startup interruption check
+### Startup migration + interruption flow
 
-Before the operator starts serving new traffic, it marks any non-terminal persisted job as interrupted.
+On startup the operator first settles schema, then marks any non-terminal persisted job as interrupted.
 
 ```mermaid
 flowchart TD
   A["process start"] --> B["open SQLite store"]
-  B --> C{"job state is succeeded or failed?"}
-  C -->|yes| D["leave row unchanged"]
-  C -->|no| E["set state=interrupted\npreserve stage\nset interrupted_at + updated_at"]
-  D --> F["start HTTP server + runtimes"]
-  E --> F
+  B --> C["load embedded migrations"]
+  C --> D["baseline legacy V1 DB if needed"]
+  D --> E["apply pending up migrations only"]
+  E --> F{"job state is succeeded or failed?"}
+  F -->|yes| G["leave row unchanged"]
+  F -->|no| H["set state=interrupted\npreserve stage\nset interrupted_at + updated_at"]
+  G --> I["start HTTP server + runtimes"]
+  H --> I
 ```
 
-### Job start / reject flow
+### Job admission flow
 
 ```mermaid
 flowchart TD
@@ -94,62 +102,112 @@ flowchart TD
   B -->|no| R1["400 reject\nno job row"]
   B -->|yes| C{"record slot available?"}
   C -->|no| R2["503 busy\nno job row"]
-  C -->|yes| D["insert queued record job row\nULID + request_json"]
+  C -->|yes| D["normalize request\ninsert queued job row\nULID + request_json"]
   D --> E["start async record work"]
   E --> F["return 202 + job id"]
 ```
 
-### Build enqueue flow
+### Live record happy path
 
 ```mermaid
 flowchart TD
-  A["record runtime starts"] --> B["ensure fixture .mkv"]
-  B --> C["prepare fresh .run bundle"]
-  C --> D{"record placeholder succeeded?"}
-  D -->|no| E["mark job done/failed"]
-  D -->|yes| F["persist artifact_run_path\nrecord_finished_at"]
-  F --> G["set stage=build state=queued\nset build_queued_at"]
-  G --> H["push into build queue"]
-  H --> I["build worker picks task"]
-  I --> J["run cassini build <job>.run --out <job>.meeting"]
+  A["record worker starts"] --> B["cassini doctor --target record"]
+  B --> C{"doctor succeeded?"}
+  C -->|no| D["mark job done/failed"]
+  C -->|yes| E["run cassini record --call ... --out <job>.run"]
+  E --> F{"usable .run finalized?"}
+  F -->|no| G["mark job done/failed"]
+  F -->|yes| H["persist artifact_run_path\nrecord_finished_at\nstop metadata"]
+  H --> I["set stage=build state=queued\nset build_queued_at"]
+  I --> J["push into build queue"]
+  J --> K["build worker picks task"]
 ```
 
-### Publish flow
+### Explicit stop happy path
 
 ```mermaid
 flowchart TD
-  A["build worker finishes successfully"] --> B["persist artifact_meeting_path\nbuild_finished_at"]
-  B --> C["set stage=publish state=queued\nset publish_queued_at"]
-  C --> D["push into publish queue"]
-  D --> E["single publish worker picks task"]
-  E --> F["run cassini publish <work-root> --out <site-root>"]
-  F --> G{"publish succeeded?"}
-  G -->|yes| H["persist artifact_site_path\npublish_finished_at\ncompleted_at\nstate=succeeded"]
-  G -->|no| I["read partial site cassini.json when present\npersist lightweight error\nstate=failed"]
+  A["POST /jobs/:id/stop"] --> B{"job is record/running?"}
+  B -->|no unknown| N1["404 not found"]
+  B -->|no wrong state| N2["409 not stoppable"]
+  B -->|yes| C{"stop already in progress?"}
+  C -->|yes| D["202 accepted"]
+  C -->|no| E["persist stop_requested_at\nstop_signal_sent_at"]
+  E --> F["send SIGTERM to cassini record"]
+  F --> G{"process exits within grace?"}
+  G -->|yes| H["classify operator_requested if .run finalized"]
+  G -->|no| I["hard kill fallback"]
+  H --> J["continue to build/publish if usable .run exists"]
+  I --> K["fail honestly if usable .run does not exist"]
 ```
 
-## Current demo implementation
+### Build + publish flow
+
+```mermaid
+flowchart TD
+  A["build worker starts"] --> B["run cassini build <job>.run --out <job>.meeting"]
+  B --> C{"build succeeded?"}
+  C -->|no| D["read partial meeting cassini.json when present\npersist lightweight error\nstate=failed"]
+  C -->|yes| E["persist artifact_meeting_path\nbuild_finished_at"]
+  E --> F["set stage=publish state=queued\nset publish_queued_at"]
+  F --> G["single publish worker picks task"]
+  G --> H["run cassini publish <work-root> --out <site-root>"]
+  H --> I{"publish succeeded?"}
+  I -->|no| J["read partial site cassini.json when present\npersist lightweight error\nstate=failed"]
+  I -->|yes| K["persist artifact_site_path\npublish_finished_at\ncompleted_at\nstate=succeeded"]
+```
+
+## Current implementation
 
 ### Record stage
 
-The current record stage does **not** record a live meeting.
+The V1 fixture-backed record placeholder is no longer used by the operator runtime.
 
-Instead it uses a fixture `.mkv`:
-- if `FIXTURE_PATH` already exists, it is reused
-- otherwise the operator lazily fetches `FIXTURE_URL`
-- the download goes to `FIXTURE_PATH.part`
-- then the file is atomically renamed into place
-- one process-local mutex guards fixture acquisition
+The current record stage:
+- validates and normalizes the V2 trigger body
+- defaults `guestName` to `CassiniRecorder`
+- defaults `stopWhenRoomEmpty` to `true`
+- defaults `roomEmptyGrace` to `30`
+- runs `cassini doctor --target record`
+- runs `cassini record --call <url> --out <job>.run --name <guestName>`
+- forwards `--duration`, `--stop-when-room-empty`, and `--room-empty-grace` only when explicitly requested
+- keeps one canonical `.run` bundle per job under `<work-root>`
 
-For each accepted job, record creates:
-- `<work-root>/<job-id>.run/recording.mkv`
-- `<work-root>/<job-id>.run/cassini.json`
+### Stop model
 
-The `.run` bundle is finalized as a normal talk-mode run bundle so downstream build sees a standard build-compatible input.
+The explicit stop path is now part of the happy path.
+
+The operator:
+- keeps an in-memory registry of live record subprocesses
+- accepts stop only while the job is `record/running`
+- records `stop_requested_at` and `stop_signal_sent_at`
+- sends `SIGTERM` first
+- waits a bounded grace period
+- falls back to hard kill only if the subprocess does not exit
+- continues into build/publish if the recorder finalized a usable `.run`
+
+The operator persists stop metadata on the job row rather than mutating recorder-owned filesystem artifacts.
+
+### Stop classification
+
+The persisted stop model currently distinguishes:
+- `room_empty`
+- `duration_limit`
+- `operator_requested`
+- `signaling_connection_error`
+- `join_failed`
+- `record_process_exit_nonzero`
+
+`operator_requested` is intentionally operator-owned classification:
+- if the operator accepted stop
+- sent SIGTERM
+- and the recorder finalized cleanly
+- the job is still `done/succeeded`
+- and `stop_reason=operator_requested` carries the distinction
 
 ### Build stage
 
-Build uses the Cassini CLI directly:
+Build still uses the Cassini CLI directly:
 
 ```bash
 cassini build <work-root>/<job-id>.run --out <work-root>/<job-id>.meeting
@@ -165,38 +223,25 @@ The operator persists that directory in `artifact_meeting_path`.
 
 ### Publish stage
 
-Publish also uses the Cassini CLI directly:
+Publish also still uses the Cassini CLI directly:
 
 ```bash
 cassini publish <work-root> --out <site-root>
 ```
 
 Important detail: publish refreshes the site from the **whole work root**, not just the current job.
-That means the published site includes all ready meeting bundles currently present under `<work-root>`.
+That means the published site includes every ready meeting bundle currently present under `<work-root>`.
 
 The operator persists the shared site output path in `artifact_site_path`.
 
-### Published site status today
-
-The current published site output is still useful for pipeline work, but the UI is not in a healthy state yet.
-
-Today:
-- the publish step writes site data and manifests
-- the site can still be served and inspected
-- the viewer/UI is currently broken
-- that UI issue is being looked at separately
-- it should not block or change further operator-pipeline development
-
-In other words: the data path is what matters for the operator effort, and that path is working.
-
 ## Why the operator shells out to Cassini CLI
 
-The operator is intentionally a scheduling wrapper, not a second implementation of build/publish.
+The operator is intentionally an orchestration wrapper, not a second implementation of recorder/build/publish behavior.
 
 That gives a few benefits:
 - reuse existing Cassini orchestration as-is
-- preserve current doctor/build/publish behavior
-- avoid pulling recorder internals across the sibling module boundary
+- preserve current doctor/record/build/publish behavior
+- avoid pulling recorder internals across the sibling-module boundary
 - keep the operator focused on admission, queueing, persistence, and state transitions
 
 This also works well on failure because the CLI already writes bundle manifests such as `cassini.json`.
@@ -215,7 +260,7 @@ By default the operator resolves `CASSINI_BIN` to:
 ```
 
 That wrapper script currently builds a fresh temporary Cassini binary on each call before executing it.
-In development this is actually helpful:
+In development this is helpful because:
 - it simulates real stage latency
 - it exercises the same shell boundary the operator will use in practice
 - it avoids hiding integration assumptions behind an in-process shortcut
@@ -248,7 +293,11 @@ Content-Type: application/json
 
 {
   "platform": "nextcloud-talk",
-  "url": "https://example.test/call"
+  "url": "https://example.test/call",
+  "guestName": "CassiniRecorder",
+  "duration": 120,
+  "stopWhenRoomEmpty": true,
+  "roomEmptyGrace": 30
 }
 ```
 
@@ -256,8 +305,23 @@ Behavior:
 - accepts only `provider=nextcloud-talk`
 - requires `platform="nextcloud-talk"`
 - requires `url`
+- supports optional `guestName`, `duration`, `stopWhenRoomEmpty`, and `roomEmptyGrace`
+- normalizes defaults to `guestName=CassiniRecorder`, `stopWhenRoomEmpty=true`, `roomEmptyGrace=30`
 - returns `202` with a ULID job id
 - returns `503` with no job row when record capacity is full
+
+### Stop a running job
+
+```http
+POST /jobs/:id/stop
+```
+
+Behavior:
+- returns `404` for unknown jobs
+- returns `409` when the job is not in `record/running`
+- returns `202` when stop is accepted or already in progress
+- sends `SIGTERM` to the live `cassini record` subprocess
+- continues to build/publish when the run finalizes cleanly
 
 ### List jobs
 
@@ -265,7 +329,7 @@ Behavior:
 GET /jobs
 ```
 
-Returns full persisted job rows ordered newest first.
+Returns full persisted job rows ordered newest first, including stop metadata such as `stop_reason`, `stop_requested_at`, `stop_signal_sent_at`, `record_exit_code`, and `record_stop_detail`.
 
 ### Get one job
 
@@ -273,7 +337,7 @@ Returns full persisted job rows ordered newest first.
 GET /jobs/:id
 ```
 
-Returns the full persisted row for that job.
+Returns the full persisted row for that job, including any persisted stop metadata.
 
 ## Runtime defaults
 
@@ -288,15 +352,6 @@ By default the operator keeps its runtime-owned state under:
 | SQLite DB | `cassini-operator/.runtime/jobs.sqlite3` |
 | Work root | `cassini-operator/.runtime/jobs` |
 | Published site root | `cassini-operator/.runtime/site` |
-| Fixture path | `cassini-operator/.runtime/operator-fixture.mkv` |
-
-The database lives at:
-
-```text
-cassini-operator/.runtime/jobs.sqlite3
-```
-
-unless overridden with `--db`.
 
 ## Config surface
 
@@ -305,8 +360,6 @@ Flags:
 - `--db`
 - `--work-root`
 - `--site-root`
-- `--fixture-path`
-- `--fixture-url`
 - `--cassini-bin`
 - `--max-record-workers`
 - `--max-build-workers`
@@ -317,70 +370,60 @@ Environment:
 - `CASSINI_BIN`
 - `WORK_ROOT`
 - `SITE_ROOT`
-- `FIXTURE_PATH`
-- `FIXTURE_URL`
 - `MAX_RECORD_WORKERS`
 - `MAX_BUILD_WORKERS`
 
 ## How to run locally
 
-### Requirements
-
-For the current demo flow, you typically need:
-- a repo checkout
-- Go available locally if you use `./bin/cassini` and `./bin/cassini-operator`
-- a reachable fixture `.mkv` URL for `FIXTURE_URL`, or a prewarmed local `FIXTURE_PATH`
-- optional: a prebuilt Cassini binary if you do not want the default wrapper behavior
-
-### Demo run with `FIXTURE_URL`
+### Start the local Talk stack
 
 From repo root:
 
 ```bash
+./bin/cassini dev stack up
+```
+
+Create a room:
+
+```bash
+CALL_URL="$(./bin/cassini dev room create --name "Operator V2 validation" | tail -n1)"
+echo "$CALL_URL"
+```
+
+### Start the operator
+
+```bash
 rm -rf cassini-operator/.runtime
 mkdir -p cassini-operator/.runtime
-
-ffmpeg -loglevel error -y \
-  -f lavfi -i sine=frequency=440:duration=1 \
-  -c:a pcm_s16le \
-  cassini-operator/.runtime/source-fixture.mkv
-```
-
-Serve the fixture in one terminal:
-
-```bash
-cd cassini-operator/.runtime
-python3 -m http.server 19081
-```
-
-Start the operator in another terminal:
-
-```bash
-cd <reporoot>
-FIXTURE_URL="http://127.0.0.1:19081/source-fixture.mkv" \
 ./bin/cassini operator start --bind 127.0.0.1:19080
 ```
-
-### Trigger a job
-
-```bash
-curl -s -X POST \
-  'http://127.0.0.1:19080/jobs?provider=nextcloud-talk' \
-  -H 'content-type: application/json' \
-  -d '{"platform":"nextcloud-talk","url":"https://example.test/call"}'
-```
-
-### What to observe
 
 Startup logs should print lines like:
 - `db -> ...`
 - `work_root -> ...`
 - `site_root -> ...`
-- `fixture_path -> ...`
-- `fixture_url -> ...`
 - `cassini_bin -> ...`
 - `max_record_workers -> ...`
 - `max_build_workers -> ...`
+
+### Trigger a live job
+
+```bash
+curl -s -X POST \
+  'http://127.0.0.1:19080/jobs?provider=nextcloud-talk' \
+  -H 'content-type: application/json' \
+  -d "{\"platform\":\"nextcloud-talk\",\"url\":\"$CALL_URL\"}"
+```
+
+Join the meeting in the browser and speak normally.
+
+### Stop a running job if needed
+
+```bash
+curl -s -X POST http://127.0.0.1:19080/jobs/<job-id>/stop
+```
+
+### What to observe
 
 Read job state:
 
@@ -401,8 +444,8 @@ Watch for transitions such as:
 Inspect produced artifacts:
 
 ```bash
-find cassini-operator/.runtime/jobs -maxdepth 2 -type f | sort
-find cassini-operator/.runtime/site -maxdepth 3 -type f | sort
+find cassini-operator/.runtime/jobs -maxdepth 2 | sort
+find cassini-operator/.runtime/site -maxdepth 3 | sort
 ```
 
 Serve the published site if you want to inspect the output:
@@ -411,7 +454,18 @@ Serve the published site if you want to inspect the output:
 ./bin/cassini serve ./cassini-operator/.runtime/site
 ```
 
-If the viewer looks broken, that is currently expected and is being investigated separately. The important thing for operator work is that the published data path exists and continues to update.
+## Schema migrations
+
+On normal startup the operator:
+- loads embedded numbered SQL migrations
+- baselines pre-migration V1-shaped DBs onto the initial schema version when needed
+- auto-applies pending **up** migrations only
+- never auto-runs down migrations
+- fails fast if migration history is inconsistent
+
+The current migration set includes:
+- `0001_initial_jobs.*.sql`
+- `0002_record_stop_metadata.*.sql`
 
 ## Job model
 
@@ -423,6 +477,12 @@ A job row stores:
 - `state`
 - artifact paths for `.run`, `.meeting`, and site output
 - lightweight `error`
+- stop metadata:
+  - `stop_reason`
+  - `stop_requested_at`
+  - `stop_signal_sent_at`
+  - `record_exit_code`
+  - `record_stop_detail`
 - per-stage timestamps
 - `interrupted_at`
 - `completed_at`
@@ -442,6 +502,40 @@ A job row stores:
 - `failed`
 - `interrupted`
 
+## Worker semantics
+
+### Record stage
+
+- capped by `max-record-workers`
+- overflow returns busy and inserts no job row
+- runs `cassini doctor --target record`
+- runs `cassini record --call <url> --out <job>.run --name <guestName>`
+- forwards optional `duration`, `stopWhenRoomEmpty`, and `roomEmptyGrace` only when explicitly requested
+- keeps one canonical per-job `.run` bundle for downstream build
+
+### Build stage
+
+- queue-backed
+- configurable worker count
+- runs `cassini build <job>.run --out <job>.meeting`
+
+### Publish stage
+
+- queue-backed
+- always processed by one publish worker
+- runs `cassini publish <work-root> --out <site-root>`
+
+## Failure reporting
+
+The operator keeps logging on stdout/stderr.
+
+For build/publish failures it also tries to recover lightweight failure detail from partial bundle manifests:
+- build reads partial meeting `cassini.json`
+- publish reads partial site `cassini.json`
+- stored error shape prefers manifest `stage` + manifest `error`
+
+For record-stage observability, the operator persists stop metadata and subprocess exit metadata on the job row.
+
 ## Restart semantics
 
 On startup the operator marks every non-terminal job as interrupted before serving new work:
@@ -450,7 +544,7 @@ On startup the operator marks every non-terminal job as interrupted before servi
 - last `stage` is preserved
 - completed `succeeded` and `failed` jobs are left unchanged
 
-This is intentionally honest rather than resumptive. Automatic retry/resume is not part of V1.
+This is intentionally honest rather than resumptive. Automatic retry/resume is not part of the current V2 scope.
 
 ## Testing
 
@@ -459,6 +553,7 @@ Repo-local automated checks:
 ```bash
 cd cassini-operator
 go test ./...
+go build ./...
 
 cd ../cassini-go-recorder
 go test ./internal/cassini/...
@@ -466,6 +561,6 @@ go test ./internal/cassini/...
 
 CI also runs operator unit tests through `.github/workflows/ci.yml`.
 
-For the shaped V1 validation flow, see:
-- `planning/initiatives/mvp/slices/V1-job-scheduler-setup/implementation.md`
-- `planning/initiatives/mvp/slices/V1-job-scheduler-setup/testing.md`
+For the implemented V2 reflection and validation path, see:
+- `planning/initiatives/mvp/slices/V2-live-nextcloud-talk-recording/implementation.md`
+- `planning/initiatives/mvp/slices/V2-live-nextcloud-talk-recording/testing.md`
