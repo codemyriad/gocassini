@@ -51,9 +51,17 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 		return recordResult{}, err
 	}
 
-	runPath := filepath.Join(rt.cfg.WorkRoot, job.ID+".run")
+	runPath := attemptRunPath(rt.cfg.WorkRoot, job.ID, job.CurrentAttemptNumber)
 	if err := os.MkdirAll(filepath.Dir(runPath), 0o755); err != nil {
 		return recordResult{}, fmt.Errorf("create run parent dir: %w", err)
+	}
+	logPath, logFile, err := openAttemptLogFile(rt.cfg.WorkRoot, job.ID, job.CurrentAttemptNumber, "record")
+	if err != nil {
+		return recordResult{}, err
+	}
+	defer logFile.Close()
+	if err := rt.store.SetAttemptStageLogPath(context.Background(), job.ID, job.CurrentAttemptNumber, "record", logPath); err != nil {
+		return recordResult{}, err
 	}
 
 	args := []string{
@@ -74,8 +82,8 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 
 	var logCapture bytes.Buffer
 	cmd := exec.Command(rt.cfg.CassiniBin, args...)
-	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), &logCapture)
-	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), &logCapture)
+	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile, &logCapture)
+	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile, &logCapture)
 	cmd.Env = os.Environ()
 	if err := cmd.Start(); err != nil {
 		return recordResult{}, fmt.Errorf("cassini record start: %w", err)
@@ -211,7 +219,7 @@ func parseJobPath(path string) (id string, action string, ok bool) {
 		if parts[0] == "" || parts[1] == "" {
 			return "", "", false
 		}
-		if parts[1] != "stop" {
+		if parts[1] != "stop" && parts[1] != "rerun" {
 			return "", "", false
 		}
 		return parts[0], parts[1], true
@@ -357,6 +365,22 @@ func parseTriggerRequest(input triggerRequestInput) (TriggerRequest, error) {
 	return req, nil
 }
 
+func decodeStoredTriggerRequest(raw string) (TriggerRequest, error) {
+	var req TriggerRequest
+	if err := json.Unmarshal([]byte(raw), &req); err != nil {
+		return TriggerRequest{}, fmt.Errorf("decode stored request JSON: %w", err)
+	}
+	req.Platform = strings.TrimSpace(req.Platform)
+	req.URL = strings.TrimSpace(req.URL)
+	req.GuestName = strings.TrimSpace(req.GuestName)
+	if req.Platform == "" || req.URL == "" || req.GuestName == "" {
+		return TriggerRequest{}, errors.New("stored request is missing required fields")
+	}
+	req.StopWhenRoomEmptySet = !req.StopWhenRoomEmpty
+	req.RoomEmptyGraceSet = req.RoomEmptyGraceSeconds != defaultRoomEmptySec
+	return req, nil
+}
+
 func encodeTriggerRequest(req TriggerRequest) (string, error) {
 	body, err := marshalCompactJSON(req)
 	if err != nil {
@@ -379,4 +403,56 @@ var jsonMarshal = func(v any) ([]byte, error) {
 
 type recordStopResponse struct {
 	ID string `json:"id"`
+}
+
+type rerunJobResponse struct {
+	ID            string `json:"id"`
+	AttemptNumber int    `json:"attempt_number"`
+}
+
+func (rt *Runtime) handleRerunJob(w http.ResponseWriter, r *http.Request, id string) {
+	job, err := rt.store.GetJob(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "job not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("get job: %v", err))
+		return
+	}
+	if job.Stage != "done" || job.State != "failed" {
+		writeJSONError(w, http.StatusConflict, "job is not eligible for rerun")
+		return
+	}
+
+	select {
+	case rt.recordSlots <- struct{}{}:
+	default:
+		rt.logger.Printf("rerun busy id=%s", id)
+		writeJSONError(w, http.StatusServiceUnavailable, "max record workers exceeded")
+		return
+	}
+
+	req, err := decodeStoredTriggerRequest(job.RequestJSON)
+	if err != nil {
+		<-rt.recordSlots
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("decode stored request: %v", err))
+		return
+	}
+
+	queuedAt := nowUTCString()
+	rerunJob, err := rt.store.QueueRerunAttempt(r.Context(), job, queuedAt)
+	if err != nil {
+		<-rt.recordSlots
+		if errors.Is(err, ErrJobNotEligibleForRerun) {
+			writeJSONError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("queue rerun attempt: %v", err))
+		return
+	}
+
+	rt.logger.Printf("rerun accepted id=%s attempt=%d", rerunJob.ID, rerunJob.CurrentAttemptNumber)
+	go rt.runRecordJob(rerunJob, req)
+	writeJSON(w, http.StatusAccepted, rerunJobResponse{ID: rerunJob.ID, AttemptNumber: rerunJob.CurrentAttemptNumber})
 }

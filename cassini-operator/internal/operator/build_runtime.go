@@ -14,6 +14,7 @@ const defaultBuildWorkerCount = 1
 
 type buildTask struct {
 	JobID           string
+	AttemptNumber   int
 	ArtifactRunPath string
 }
 
@@ -40,33 +41,33 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		rt.logger.Printf("build start update failed id=%s worker=%d: %v", task.JobID, workerIndex, err)
 		return
 	}
-	rt.logger.Printf("build started id=%s worker=%d run=%s", task.JobID, workerIndex, task.ArtifactRunPath)
+	rt.logger.Printf("build started id=%s attempt=%d worker=%d run=%s", task.JobID, task.AttemptNumber, workerIndex, task.ArtifactRunPath)
 
 	artifactMeetingPath, err := rt.buildJobFn(rt.ctx, task)
 	finishedAt := nowUTCString()
 	if err != nil {
 		detail := rt.extractBuildFailureDetail(artifactMeetingPath, err)
-		rt.logger.Printf("build failed id=%s worker=%d: %s", task.JobID, workerIndex, detail)
+		rt.logger.Printf("build failed id=%s attempt=%d worker=%d: %s", task.JobID, task.AttemptNumber, workerIndex, detail)
 		if updateErr := rt.store.MarkBuildFailed(context.Background(), task.JobID, artifactMeetingPath, detail, finishedAt); updateErr != nil {
-			rt.logger.Printf("build fail update failed id=%s worker=%d: %v", task.JobID, workerIndex, updateErr)
+			rt.logger.Printf("build fail update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
 		}
 		return
 	}
-	if err := rt.enqueuePublishJob(task.JobID, artifactMeetingPath, finishedAt); err != nil {
-		rt.logger.Printf("publish queue update failed id=%s worker=%d: %v", task.JobID, workerIndex, err)
+	if err := rt.enqueuePublishJob(task.JobID, task.AttemptNumber, artifactMeetingPath, finishedAt); err != nil {
+		rt.logger.Printf("publish queue update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, err)
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, rt.cfg.SiteRoot, err.Error(), finishedAt); updateErr != nil {
-			rt.logger.Printf("publish queue failure update failed id=%s worker=%d: %v", task.JobID, workerIndex, updateErr)
+			rt.logger.Printf("publish queue failure update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
 		}
 		return
 	}
-	rt.logger.Printf("build succeeded id=%s worker=%d meeting=%s publish_queued_at=%s", task.JobID, workerIndex, artifactMeetingPath, finishedAt)
+	rt.logger.Printf("build succeeded id=%s attempt=%d worker=%d meeting=%s publish_queued_at=%s", task.JobID, task.AttemptNumber, workerIndex, artifactMeetingPath, finishedAt)
 }
 
-func (rt *Runtime) enqueueBuildJob(jobID, artifactRunPath, queuedAt string) error {
+func (rt *Runtime) enqueueBuildJob(jobID string, attemptNumber int, artifactRunPath, queuedAt string) error {
 	if err := rt.store.MarkBuildQueued(context.Background(), jobID, artifactRunPath, queuedAt); err != nil {
 		return err
 	}
-	task := buildTask{JobID: jobID, ArtifactRunPath: artifactRunPath}
+	task := buildTask{JobID: jobID, AttemptNumber: attemptNumber, ArtifactRunPath: artifactRunPath}
 	select {
 	case rt.buildQueue <- task:
 		return nil
@@ -79,14 +80,22 @@ func (rt *Runtime) enqueueBuildJob(jobID, artifactRunPath, queuedAt string) erro
 }
 
 func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string, error) {
-	meetingPath := filepath.Join(rt.cfg.WorkRoot, task.JobID+".meeting")
+	meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 	if err := os.MkdirAll(filepath.Dir(meetingPath), 0o755); err != nil {
 		return meetingPath, fmt.Errorf("create meeting parent dir: %w", err)
 	}
+	logPath, logFile, err := openAttemptLogFile(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber, "build")
+	if err != nil {
+		return meetingPath, err
+	}
+	defer logFile.Close()
+	if err := rt.store.SetAttemptStageLogPath(context.Background(), task.JobID, task.AttemptNumber, "build", logPath); err != nil {
+		return meetingPath, err
+	}
 
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "build", task.ArtifactRunPath, "--out", meetingPath)
-	cmd.Stdout = writerOrDiscard(rt.stdout)
-	cmd.Stderr = writerOrDiscard(rt.stderr)
+	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
+	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
 	cmd.Env = os.Environ()
 	if err := cmd.Run(); err != nil {
 		return meetingPath, fmt.Errorf("cassini build: %w", err)

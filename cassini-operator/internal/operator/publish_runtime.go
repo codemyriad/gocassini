@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,7 +11,8 @@ import (
 )
 
 type publishTask struct {
-	JobID string
+	JobID         string
+	AttemptNumber int
 }
 
 func (rt *Runtime) startPublishWorker() {
@@ -34,30 +36,30 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		rt.logger.Printf("publish start update failed id=%s: %v", task.JobID, err)
 		return
 	}
-	rt.logger.Printf("publish started id=%s input=%s site=%s", task.JobID, rt.cfg.WorkRoot, rt.cfg.SiteRoot)
+	rt.logger.Printf("publish started id=%s attempt=%d input=%s site=%s", task.JobID, task.AttemptNumber, rt.cfg.WorkRoot, rt.cfg.SiteRoot)
 
 	artifactSitePath, err := rt.publishJobFn(rt.ctx, task)
 	finishedAt := nowUTCString()
 	if err != nil {
 		detail := rt.extractSiteFailureDetail(artifactSitePath, err)
-		rt.logger.Printf("publish failed id=%s: %s", task.JobID, detail)
+		rt.logger.Printf("publish failed id=%s attempt=%d: %s", task.JobID, task.AttemptNumber, detail)
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, artifactSitePath, detail, finishedAt); updateErr != nil {
-			rt.logger.Printf("publish fail update failed id=%s: %v", task.JobID, updateErr)
+			rt.logger.Printf("publish fail update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
 		}
 		return
 	}
 	if err := rt.store.MarkPublishSucceeded(context.Background(), task.JobID, artifactSitePath, finishedAt); err != nil {
-		rt.logger.Printf("publish success update failed id=%s: %v", task.JobID, err)
+		rt.logger.Printf("publish success update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
 		return
 	}
-	rt.logger.Printf("publish succeeded id=%s site=%s", task.JobID, artifactSitePath)
+	rt.logger.Printf("publish succeeded id=%s attempt=%d site=%s", task.JobID, task.AttemptNumber, artifactSitePath)
 }
 
-func (rt *Runtime) enqueuePublishJob(jobID, artifactMeetingPath, queuedAt string) error {
+func (rt *Runtime) enqueuePublishJob(jobID string, attemptNumber int, artifactMeetingPath, queuedAt string) error {
 	if err := rt.store.MarkPublishQueued(context.Background(), jobID, artifactMeetingPath, queuedAt); err != nil {
 		return err
 	}
-	task := publishTask{JobID: jobID}
+	task := publishTask{JobID: jobID, AttemptNumber: attemptNumber}
 	select {
 	case rt.publishQueue <- task:
 		return nil
@@ -73,10 +75,18 @@ func (rt *Runtime) executePublishCLI(ctx context.Context, task publishTask) (str
 	if err := os.MkdirAll(filepath.Dir(rt.cfg.SiteRoot), 0o755); err != nil {
 		return rt.cfg.SiteRoot, fmt.Errorf("create site parent dir: %w", err)
 	}
+	logPath, logFile, err := openAttemptLogFile(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber, "publish")
+	if err != nil {
+		return rt.cfg.SiteRoot, err
+	}
+	defer logFile.Close()
+	if err := rt.store.SetAttemptStageLogPath(context.Background(), task.JobID, task.AttemptNumber, "publish", logPath); err != nil {
+		return rt.cfg.SiteRoot, err
+	}
 
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "publish", rt.cfg.WorkRoot, "--out", rt.cfg.SiteRoot)
-	cmd.Stdout = writerOrDiscard(rt.stdout)
-	cmd.Stderr = writerOrDiscard(rt.stderr)
+	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
+	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
 	cmd.Env = os.Environ()
 	if err := cmd.Run(); err != nil {
 		return rt.cfg.SiteRoot, fmt.Errorf("cassini publish: %w", err)

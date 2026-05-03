@@ -8,25 +8,27 @@ The operator does **not** implement live recording, build, or publish logic itse
 - applies stage-specific concurrency rules
 - runs `cassini doctor --target record`
 - invokes `cassini record`, `cassini build`, and `cassini publish`
-- persists lightweight job state and stop metadata
+- persists logical job summaries, attempt history, and stop metadata
 - reads downstream bundle manifests back on failure for lightweight error reporting
 
 That boundary is deliberate. It keeps the operator focused on admission, lifecycle control, queueing, persistence, and observability while reusing the recorder/build/publish behavior already implemented in Cassini.
 
-## Current scope (V2 runtime)
+## Current scope (V5 runtime)
 
 The current operator runtime supports:
 - `POST /jobs?provider=nextcloud-talk` for live Nextcloud Talk recording jobs
 - `POST /jobs/:id/stop` for intentional stop during the record stage
-- `GET /jobs` and `GET /jobs/:id` for full persisted job-row inspection
+- `POST /jobs/:id/rerun` for explicit rerun of failed jobs
+- `GET /jobs` for logical-job summaries
+- `GET /jobs/:id` for logical-job summary plus attempt history
 - real live record via `cassini doctor --target record` then `cassini record`
 - queued build via `cassini build`
 - queued publish via `cassini publish`
 - versioned SQLite schema migrations tracked in `schema_migrations`
-- persisted stop metadata on the job row
-- startup interruption marking for any non-terminal persisted job
+- persisted stop metadata on both the current attempt summary and attempt history
+- startup interruption marking for any non-terminal persisted job and attempt
 
-This is the implemented V2 operator slice: real Talk capture, explicit stop happy path, migration-backed persistence, and the existing build/publish backbone.
+This is the implemented V5 operator slice: real Talk capture, explicit stop happy path, migration-backed persistence, failure inspection, explicit rerun, and the existing build/publish backbone.
 
 ## Operator architecture
 
@@ -34,17 +36,17 @@ The runtime is still one process with one HTTP server and one in-process schedul
 
 ```mermaid
 flowchart TD
-  HTTP["HTTP API\nPOST /jobs\nPOST /jobs/:id/stop\nGET /jobs\nGET /jobs/:id"] --> RT["main runtime\nvalidation\nadmission\nstate transitions"]
-  RT --> DB[("SQLite jobs DB")]
+  HTTP["HTTP API\nPOST /jobs\nPOST /jobs/:id/stop\nPOST /jobs/:id/rerun\nGET /jobs\nGET /jobs/:id"] --> RT["main runtime\nvalidation\nadmission\nstate transitions"]
+  RT --> DB[("SQLite jobs + job_attempts DB")]
   RT --> MIG["migration runner\nembedded SQL\nschema_migrations"]
 
   RT --> REC["record runtime\nlive cassini record\nfixed slots"]
   REC --> REG["live record registry\nprocess handle + stop state"]
-  REC --> RUN["per-job .run bundle\n<work-root>/<job-id>.run"]
+  REC --> RUN["per-attempt .run bundle\n<work-root>/<job-id>--attempt-XXX.run"]
   REC --> BQ["build queue"]
 
   BQ --> BUILD["build runtime\nworker pool\nmax-build-workers"]
-  BUILD --> MEET["meeting bundle\n<work-root>/<job-id>.meeting"]
+  BUILD --> MEET["per-attempt meeting bundle\n<work-root>/<job-id>--attempt-XXX.meeting"]
   BUILD --> PQ["publish queue"]
 
   PQ --> PUB["publish runtime\nsingle worker"]
@@ -79,7 +81,7 @@ flowchart TD
 
 ### Startup migration + interruption flow
 
-On startup the operator first settles schema, then marks any non-terminal persisted job as interrupted.
+On startup the operator first settles schema, then marks any non-terminal persisted job and current attempt as interrupted.
 
 ```mermaid
 flowchart TD
@@ -102,9 +104,23 @@ flowchart TD
   B -->|no| R1["400 reject\nno job row"]
   B -->|yes| C{"record slot available?"}
   C -->|no| R2["503 busy\nno job row"]
-  C -->|yes| D["normalize request\ninsert queued job row\nULID + request_json"]
+  C -->|yes| D["normalize request\ninsert queued job row + attempt 1"]
   D --> E["start async record work"]
   E --> F["return 202 + job id"]
+```
+
+### Explicit rerun flow
+
+```mermaid
+flowchart TD
+  A["POST /jobs/:id/rerun"] --> B{"job is done/failed?"}
+  B -->|no unknown| N1["404 not found"]
+  B -->|no wrong state| N2["409 not eligible"]
+  B -->|yes but slots full| N3["503 busy\nno new attempt"]
+  B -->|yes and slot available| C["copy preserved request_json\ninsert attempt N+1"]
+  C --> D["update jobs summary\ncurrent_attempt_number + rerun_count"]
+  D --> E["start async record work for attempt N+1"]
+  E --> F["return 202 + job id + attempt number"]
 ```
 
 ### Live record happy path
@@ -169,9 +185,9 @@ The current record stage:
 - defaults `stopWhenRoomEmpty` to `true`
 - defaults `roomEmptyGrace` to `30`
 - runs `cassini doctor --target record`
-- runs `cassini record --call <url> --out <job>.run --name <guestName>`
+- runs `cassini record --call <url> --out <job>--attempt-XXX.run --name <guestName>`
 - forwards `--duration`, `--stop-when-room-empty`, and `--room-empty-grace` only when explicitly requested
-- keeps one canonical `.run` bundle per job under `<work-root>`
+- keeps one canonical `.run` bundle per attempt under `<work-root>`
 
 ### Stop model
 
@@ -186,7 +202,7 @@ The operator:
 - falls back to hard kill only if the subprocess does not exit
 - continues into build/publish if the recorder finalized a usable `.run`
 
-The operator persists stop metadata on the job row rather than mutating recorder-owned filesystem artifacts.
+The operator persists stop metadata on the current attempt summary and attempt history rather than mutating recorder-owned filesystem artifacts.
 
 ### Stop classification
 
@@ -210,16 +226,16 @@ The persisted stop model currently distinguishes:
 Build still uses the Cassini CLI directly:
 
 ```bash
-cassini build <work-root>/<job-id>.run --out <work-root>/<job-id>.meeting
+cassini build <work-root>/<job-id>--attempt-XXX.run --out <work-root>/<job-id>--attempt-XXX.meeting
 ```
 
 That produces a meeting bundle at:
 
 ```text
-<work-root>/<job-id>.meeting/
+<work-root>/<job-id>--attempt-XXX.meeting/
 ```
 
-The operator persists that directory in `artifact_meeting_path`.
+The operator persists that directory in the active attempt row and mirrors the current or winning attempt path onto `jobs.artifact_meeting_path`.
 
 ### Publish stage
 
@@ -230,9 +246,9 @@ cassini publish <work-root> --out <site-root>
 ```
 
 Important detail: publish refreshes the site from the **whole work root**, not just the current job.
-That means the published site includes every ready meeting bundle currently present under `<work-root>`.
+That means the published site includes every ready meeting bundle currently present under `<work-root>`, including successful rerun outputs from later attempts.
 
-The operator persists the shared site output path in `artifact_site_path`.
+The operator persists the shared site output path in the active attempt row and mirrors the winning path onto `jobs.artifact_site_path`.
 
 ## Why the operator shells out to Cassini CLI
 
@@ -323,6 +339,21 @@ Behavior:
 - sends `SIGTERM` to the live `cassini record` subprocess
 - continues to build/publish when the run finalizes cleanly
 
+### Rerun a failed job
+
+```http
+POST /jobs/:id/rerun
+```
+
+Behavior:
+- returns `404` for unknown jobs
+- returns `409` when the job is not in `done/failed`
+- returns `503` when record capacity is full and no new attempt is created
+- returns `202` with the logical job id plus the new `attempt_number`
+- reuses the preserved normalized `request_json`
+- starts a fresh attempt from `record` again
+- preserves older attempts rather than overwriting them
+
 ### List jobs
 
 ```http
@@ -330,6 +361,7 @@ GET /jobs
 ```
 
 Returns full persisted job rows ordered newest first, including stop metadata such as `stop_reason`, `stop_requested_at`, `stop_signal_sent_at`, `record_exit_code`, and `record_stop_detail`.
+These are logical-job summary rows, not full attempt-history payloads.
 
 ### Get one job
 
@@ -338,6 +370,22 @@ GET /jobs/:id
 ```
 
 Returns the full persisted row for that job, including any persisted stop metadata.
+In V5 this response is wrapped as:
+
+```json
+{
+  "job": { "... logical job summary ..." },
+  "attempts": [
+    { "... newest attempt ..." },
+    { "... older preserved attempt ..." }
+  ]
+}
+```
+
+The `attempts` array is ordered newest first and includes attempt-scoped artifact paths, stop metadata, failure summaries, and log-path fields such as:
+- `record_log_path`
+- `build_log_path`
+- `publish_log_path`
 
 ## Runtime defaults
 
@@ -466,15 +514,22 @@ On normal startup the operator:
 The current migration set includes:
 - `0001_initial_jobs.*.sql`
 - `0002_record_stop_metadata.*.sql`
+- `0003_job_attempts.*.sql`
 
 ## Job model
 
-A job row stores:
+The operator now uses two persistence levels.
+
+### `jobs` summary row
+
+A logical job summary row stores:
 - stable ULID `id`
 - original `request_json`
 - `provider`
 - `stage`
 - `state`
+- `current_attempt_number`
+- `rerun_count`
 - artifact paths for `.run`, `.meeting`, and site output
 - lightweight `error`
 - stop metadata:
@@ -483,6 +538,33 @@ A job row stores:
   - `stop_signal_sent_at`
   - `record_exit_code`
   - `record_stop_detail`
+- per-stage timestamps
+- `interrupted_at`
+- `completed_at`
+
+These fields describe the current or winning attempt for the logical job.
+
+### `job_attempts` history row
+
+An attempt row stores:
+- `job_id`
+- `attempt_number`
+- `trigger_kind` (`initial` or `rerun`)
+- preserved normalized `request_json`
+- `stage`
+- `state`
+- attempt-scoped artifact paths for `.run`, `.meeting`, and shared site output
+- lightweight `error`
+- stop metadata:
+  - `stop_reason`
+  - `stop_requested_at`
+  - `stop_signal_sent_at`
+  - `record_exit_code`
+  - `record_stop_detail`
+- attempt log-path fields:
+  - `record_log_path`
+  - `build_log_path`
+  - `publish_log_path`
 - per-stage timestamps
 - `interrupted_at`
 - `completed_at`
@@ -509,15 +591,15 @@ A job row stores:
 - capped by `max-record-workers`
 - overflow returns busy and inserts no job row
 - runs `cassini doctor --target record`
-- runs `cassini record --call <url> --out <job>.run --name <guestName>`
+- runs `cassini record --call <url> --out <job>--attempt-XXX.run --name <guestName>`
 - forwards optional `duration`, `stopWhenRoomEmpty`, and `roomEmptyGrace` only when explicitly requested
-- keeps one canonical per-job `.run` bundle for downstream build
+- keeps one canonical per-attempt `.run` bundle for downstream build
 
 ### Build stage
 
 - queue-backed
 - configurable worker count
-- runs `cassini build <job>.run --out <job>.meeting`
+- runs `cassini build <job>--attempt-XXX.run --out <job>--attempt-XXX.meeting`
 
 ### Publish stage
 
@@ -535,16 +617,17 @@ For build/publish failures it also tries to recover lightweight failure detail f
 - stored error shape prefers manifest `stage` + manifest `error`
 
 For record-stage observability, the operator persists stop metadata and subprocess exit metadata on the job row.
+For V5 inspection, the operator also persists attempt-scoped history and log-path fields on `job_attempts`.
 
 ## Restart semantics
 
-On startup the operator marks every non-terminal job as interrupted before serving new work:
+On startup the operator marks every non-terminal job and attempt as interrupted before serving new work:
 - queued jobs become `interrupted`
 - running jobs become `interrupted`
 - last `stage` is preserved
 - completed `succeeded` and `failed` jobs are left unchanged
 
-This is intentionally honest rather than resumptive. Automatic retry/resume is not part of the current V2 scope.
+This is intentionally honest rather than resumptive. Automatic retry/resume is still not part of the operator scope; V5 adds explicit rerun instead.
 
 ## Testing
 
@@ -564,3 +647,8 @@ CI also runs operator unit tests through `.github/workflows/ci.yml`.
 For the implemented V2 reflection and validation path, see:
 - `planning/initiatives/mvp/slices/V2-live-nextcloud-talk-recording/implementation.md`
 - `planning/initiatives/mvp/slices/V2-live-nextcloud-talk-recording/testing.md`
+
+For the implemented V5 shaping and slice plan, see:
+- `planning/initiatives/mvp/slices/V5-failure-inspection-and-rerun-flow/brief.md`
+- `planning/initiatives/mvp/slices/V5-failure-inspection-and-rerun-flow/shaping.md`
+- `planning/initiatives/mvp/slices/V5-failure-inspection-and-rerun-flow/slices.md`
