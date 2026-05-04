@@ -50,7 +50,7 @@ When we cannot prove a word timestamp from ASR evidence, we fall back to passage
 
 The viewer package includes:
 
-- [audit-portable-token-audio.mjs](/home/silvio/dev/gocassini/cassini-viewer/scripts/audit-portable-token-audio.mjs)
+- `cassini-viewer/scripts/audit-portable-token-audio.mjs`
 
 It reads a portable `.opus`, finds a target token inside a passage, extracts a clip around that token,
 transcribes it with the OpenAI audio API, and prints:
@@ -75,7 +75,7 @@ That matters because many regressions happen in the runtime reconstruction path 
 On this machine the API key is available in `fish`, so the most reliable invocation is:
 
 ```bash
-fish -lc 'cd /home/silvio/dev/gocassini/cassini-viewer && npm run audit:portable-token -- ...'
+fish -lc 'cd cassini-viewer && npm run audit:portable-token -- ...'
 ```
 
 ## Example
@@ -83,7 +83,7 @@ fish -lc 'cd /home/silvio/dev/gocassini/cassini-viewer && npm run audit:portable
 Audit the March 18 `three` click target:
 
 ```bash
-fish -lc 'cd /home/silvio/dev/gocassini/cassini-viewer && npm run audit:portable-token -- \
+fish -lc 'cd cassini-viewer && npm run audit:portable-token -- \
   --audio ./exports/viewer-demo/meetings/daily-meeting-2026-03-18--12:30.opus \
   --snippet "two or two or three days of work a month" \
   --word three'
@@ -119,7 +119,7 @@ Run this audit:
 
 For local viewer development, the dev server serves files from:
 
-- [exports/viewer-demo](/home/silvio/dev/gocassini/cassini-viewer/exports/viewer-demo)
+- `cassini-viewer/exports/viewer-demo`
 
 So the audit should point at the `.opus` file in `exports/viewer-demo/meetings/` if you are validating `http://localhost:5173/`.
 
@@ -128,8 +128,8 @@ So the audit should point at the `.opus` file in `exports/viewer-demo/meetings/`
 Any change to cleaned display timing is incomplete until all of these are true:
 
 1. Unit tests cover the failure shape in both:
-   - [portable.test.ts](/home/silvio/dev/gocassini/cassini-viewer/src/viewer/portable.test.ts)
-   - [export-static-meetings.test.ts](/home/silvio/dev/gocassini/cassini-viewer/scripts/export-static-meetings.test.ts)
+   - `cassini-viewer/src/viewer/portable.test.ts`
+   - `cassini-viewer/scripts/export-static-meetings.test.ts`
 2. The mechanical audit reproduces the pre-fix failure on the bad artifact.
 3. After the fix, the bad token becomes either:
    - correctly timed into the right phrase, or

@@ -4,7 +4,7 @@ shaping: true
 
 # Viewer UX Restructure — Slices
 
-Companion to [viewer-ux-restructure-shaping.md](viewer-ux-restructure-shaping.md). Breaks **Shape A** (two-place master-detail, URL-synced, slide transitions) into 3 vertical slices.
+Companion to [D249 - viewer-ux-restructure-shaping.md](D249 - viewer-ux-restructure-shaping.md). Breaks **Shape A** (two-place master-detail, URL-synced, slide transitions) into 3 vertical slices.
 
 ## Note on "Vertical" for This Ticket
 
@@ -112,7 +112,7 @@ Converts V1's direct state mutation to URL-driven navigation. Browser back now w
 
 **Changes in App.svelte:**
 
-1. **Split the existing `replaceState` call** (currently at [App.svelte:210-212](../src/App.svelte)). Introduce two modes:
+1. **Split the existing `replaceState` call** (currently around the URL write in `cassini-viewer/src/App.svelte`). Introduce two modes:
    - `replaceMeetingUrl(id)` — uses `replaceState`, called only during initial hydration to normalize the URL
    - `pushMeetingUrl(id | null)` — uses `pushState`, called on user-initiated selection OR back-to-list
 2. **Update `loadCatalogMeeting(meeting)`**: replace the existing `replaceState` line with a call to `pushMeetingUrl(meeting.id)`
