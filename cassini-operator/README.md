@@ -392,14 +392,14 @@ The `attempts` array is ordered newest first and includes attempt-scoped artifac
 By default the operator keeps its runtime-owned state under:
 
 ```text
-<reporoot>/cassini-operator/.runtime/
+<reporoot>/cassini-operator/runtime/
 ```
 
 | Path | Default |
 |---|---|
-| SQLite DB | `cassini-operator/.runtime/jobs.sqlite3` |
-| Work root | `cassini-operator/.runtime/jobs` |
-| Published site root | `cassini-operator/.runtime/site` |
+| SQLite DB | `cassini-operator/runtime/jobs.sqlite3` |
+| Work root | `cassini-operator/runtime/jobs` |
+| Published site root | `cassini-operator/runtime/site` |
 
 ## Config surface
 
@@ -441,8 +441,8 @@ echo "$CALL_URL"
 ### Start the operator
 
 ```bash
-rm -rf cassini-operator/.runtime
-mkdir -p cassini-operator/.runtime
+rm -rf cassini-operator/runtime
+mkdir -p cassini-operator/runtime
 ./bin/cassini operator start --bind 127.0.0.1:19080
 ```
 
@@ -492,14 +492,14 @@ Watch for transitions such as:
 Inspect produced artifacts:
 
 ```bash
-find cassini-operator/.runtime/jobs -maxdepth 2 | sort
-find cassini-operator/.runtime/site -maxdepth 3 | sort
+find cassini-operator/runtime/jobs -maxdepth 2 | sort
+find cassini-operator/runtime/site -maxdepth 3 | sort
 ```
 
 Serve the published site if you want to inspect the output:
 
 ```bash
-./bin/cassini serve ./cassini-operator/.runtime/site
+./bin/cassini serve ./cassini-operator/runtime/site
 ```
 
 ## Schema migrations

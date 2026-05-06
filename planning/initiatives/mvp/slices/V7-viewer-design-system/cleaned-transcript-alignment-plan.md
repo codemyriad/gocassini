@@ -27,14 +27,14 @@ This is intentionally:
 Relevant code:
 
 - recorder cleanup and transcript writing:
-  - [transcribe.go](/home/silvio/dev/gocassini/cassini-go-recorder/internal/transcribe/transcribe.go)
-  - [llm.go](/home/silvio/dev/gocassini/cassini-go-recorder/internal/transcribe/llm.go)
-  - [format.go](/home/silvio/dev/gocassini/cassini-go-recorder/internal/transcribe/format.go)
+  - `cassini-go-recorder/internal/transcribe/transcribe.go`
+  - `cassini-go-recorder/internal/transcribe/llm.go`
+  - `cassini-go-recorder/internal/transcribe/format.go`
 - viewer/runtime alignment:
-  - [portable.ts](/home/silvio/dev/gocassini/cassini-viewer/src/viewer/portable.ts)
-  - [loadArtifact.ts](/home/silvio/dev/gocassini/cassini-viewer/src/viewer/loadArtifact.ts)
+  - `cassini-viewer/src/viewer/portable.ts`
+  - `cassini-viewer/src/viewer/loadArtifact.ts`
 - static export alignment:
-  - [export-static-meetings.mjs](/home/silvio/dev/gocassini/cassini-viewer/scripts/export-static-meetings.mjs)
+  - `cassini-viewer/scripts/export-static-meetings.mjs`
 
 ### What we learned
 
@@ -73,15 +73,15 @@ These changes are implemented but not yet committed:
 
 Files changed:
 
-- [portable.ts](/home/silvio/dev/gocassini/cassini-viewer/src/viewer/portable.ts)
-- [export-static-meetings.mjs](/home/silvio/dev/gocassini/cassini-viewer/scripts/export-static-meetings.mjs)
-- [export-static-meetings.test.ts](/home/silvio/dev/gocassini/cassini-viewer/scripts/export-static-meetings.test.ts)
-- [extract-cleanup-review-samples.mjs](/home/silvio/dev/gocassini/cassini-viewer/scripts/extract-cleanup-review-samples.mjs)
+- `cassini-viewer/src/viewer/portable.ts`
+- `cassini-viewer/scripts/export-static-meetings.mjs`
+- `cassini-viewer/scripts/export-static-meetings.test.ts`
+- `cassini-viewer/scripts/extract-cleanup-review-samples.mjs`
 
 Generated review corpus:
 
-- [cleanup-review-samples.md](/home/silvio/dev/gocassini/cassini-viewer/exports/cleanup-review-samples.md)
-- [cleanup-review-samples.json](/home/silvio/dev/gocassini/cassini-viewer/exports/cleanup-review-samples.json)
+- `cassini-viewer/exports/cleanup-review-samples.md`
+- `cassini-viewer/exports/cleanup-review-samples.json`
 
 ## Recommended Product Contract
 
@@ -173,7 +173,7 @@ Likely improvements:
 ## Immediate Next Steps
 
 1. User reviews and edits examples from:
-   - [cleanup-review-samples.md](/home/silvio/dev/gocassini/cassini-viewer/exports/cleanup-review-samples.md)
+   - `cassini-viewer/exports/cleanup-review-samples.md`
 2. Replace current samples with improved ASR/cleanup data from existing meetings.
 3. Convert reviewed examples into golden fixtures.
 4. Remove remaining browser-side dependence on recomputing cleaned-token alignment when precomputed display data is available.
@@ -183,14 +183,14 @@ Likely improvements:
 Generate review samples:
 
 ```bash
-cd /home/silvio/dev/gocassini/cassini-viewer
+cd cassini-viewer
 node ./scripts/extract-cleanup-review-samples.mjs --limit 20
 ```
 
 Run tests:
 
 ```bash
-cd /home/silvio/dev/gocassini/cassini-viewer
+cd cassini-viewer
 npm test
 ```
 

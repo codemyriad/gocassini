@@ -93,12 +93,12 @@ Double-check the final behavior mechanically by auditing the clicked token again
 
 The documented workflow lives at:
 
-- [mechanical-timing-audit.md](/home/silvio/dev/gocassini/cassini-viewer/docs/mechanical-timing-audit.md)
+- [planning/initiatives/mvp/slices/V7-viewer-design-system/mechanical-timing-audit.md](planning/initiatives/mvp/slices/V7-viewer-design-system/mechanical-timing-audit.md)
 
 Quick entry point:
 
 ```bash
-fish -lc 'cd /home/silvio/dev/gocassini/cassini-viewer && npm run audit:portable-token -- \
+fish -lc 'cd cassini-viewer && npm run audit:portable-token -- \
   --audio ./exports/viewer-demo/meetings/daily-meeting-2026-03-18--12:30.opus \
   --snippet "two or two or three days of work a month" \
   --word three'

@@ -164,7 +164,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 		return Config{}, 1, fmt.Errorf("resolve repo root: %w", err)
 	}
 
-	defaultDataRoot := filepath.Join(repoRoot, "cassini-operator", ".runtime")
+	defaultDataRoot := filepath.Join(repoRoot, "cassini-operator", "runtime")
 	defaultDBPath := filepath.Join(defaultDataRoot, "jobs.sqlite3")
 	defaultWorkRoot := filepath.Join(defaultDataRoot, "jobs")
 	defaultSiteRoot := filepath.Join(defaultDataRoot, "site")
@@ -195,7 +195,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 Usage:
   cassini-operator
   cassini-operator --bind 127.0.0.1:8080
-  cassini-operator --db ./cassini-operator/.runtime/jobs.sqlite3
+  cassini-operator --db ./cassini-operator/runtime/jobs.sqlite3
 
 Flags:
 `)

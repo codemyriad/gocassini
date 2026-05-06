@@ -76,7 +76,7 @@ The viewer's styling layer has three specific issues that make future additions 
 - **No theme layer**: colors, radii, typography are literal values scattered through the `<style>` block. Any visual change is a find-and-replace across ~760 lines.
 - **No shared primitives**: every `.panel` / `.pill` instance is a fresh CSS block, even though they want to be the same thing.
 
-The domain code ([src/core](../src/core), [src/viewer](../src/viewer)) is *fine* — cleanly factored, well-tested. The problem is strictly the styling layer.
+The domain code in `cassini-viewer/src/core` and `cassini-viewer/src/viewer` is *fine* — cleanly factored, well-tested. The problem is strictly the styling layer.
 
 ---
 
@@ -106,7 +106,7 @@ V3 (and any later addition) then adds its own markup section inside App.svelte u
 | **R1** | **Preservation** | |
 | R1.1 | Viewer remains a static-build SPA — one `index.html`, one JS bundle, static-hostable | Must-have |
 | R1.2 | Existing vitest suites (core, viewer) still pass | Must-have |
-| R1.3 | Existing serve paths keep working — `cassini serve`, `npm run dev` + the [viewer-demo assets plugin](../vite.config.ts) | Must-have |
+| R1.3 | Existing serve paths keep working — `cassini serve`, `npm run dev` + the viewer-demo assets plugin in `cassini-viewer/vite.config.ts` | Must-have |
 | R1.4 | Current interaction behaviors preserved — active-segment highlight, auto-scroll lock, speaker continuation spacing, click-to-seek timing | Must-have |
 | 🟡 **R2** | **Design system** | |
 | R2.1 | Shared primitives (card/panel, badge/pill, button) replace bespoke per-feature CSS | Must-have |
@@ -125,7 +125,7 @@ V3 (and any later addition) then adds its own markup section inside App.svelte u
 
 | Part | Mechanism |
 |---|---|
-| CURRENT.1 | Entire UI in [App.svelte](../src/App.svelte) (1,694 lines) |
+| CURRENT.1 | Entire UI in `cassini-viewer/src/App.svelte` (1,694 lines) |
 | CURRENT.2 | ~760 lines of handwritten scoped CSS, ~100 selectors |
 | CURRENT.3 | No shared primitives; every `.panel` / `.info-pill` is an independent block |
 | CURRENT.4 | Colors/radii/typography inline as literal values |
@@ -153,7 +153,7 @@ V3 (and any later addition) then adds its own markup section inside App.svelte u
 | Part | Mechanism | Flag |
 |---|---|:---:|
 | **B1** | **Decompose `App.svelte`** — same as A1 | |
-| **B2** | **Install Tailwind + DaisyUI + postcss** — wire into [vite.config.ts](../vite.config.ts), add `postcss.config.js`, `tailwind.config.js` | |
+| **B2** | **Install Tailwind + DaisyUI + postcss** — wire into `cassini-viewer/vite.config.ts`, add `postcss.config.js`, `tailwind.config.js` | |
 | **B3** | **Enable stock DaisyUI themes** — use Daisy's stock light + dark themes, no custom theme authoring | |
 | **B4** | **Port each component's styles** — replace bespoke CSS with Tailwind utilities + Daisy `card`/`badge`/`btn` primitives during the same extraction | |
 | **B5** | **Preserve interaction behaviors** — re-derive active-segment highlight, scroll-lock visuals, continuation spacing in Tailwind/Daisy | ⚠️ |
@@ -182,7 +182,7 @@ V3 (and any later addition) then adds its own markup section inside App.svelte u
 
 | Part | Mechanism | Flag |
 |---|---|:---:|
-| **D1** | **Install Tailwind + DaisyUI + postcss** — wire into [vite.config.ts](../vite.config.ts), add `postcss.config.js`, `tailwind.config.js` | |
+| **D1** | **Install Tailwind + DaisyUI + postcss** — wire into `cassini-viewer/vite.config.ts`, add `postcss.config.js`, `tailwind.config.js` | |
 | **D2** | **Enable stock DaisyUI themes** — `data-theme` binding on `<html>`, ship Daisy's stock `light` and `dark` themes, no custom theme authoring | |
 | **D3** | **Light/dark control** — `prefers-color-scheme` default, inline `<ThemeToggle />` markup in App.svelte's sidebar bottom-left (not extracted as a component), localStorage persistence | |
 | **D4** | **In-place CSS migration** — port App.svelte's `<style>` block (~760 lines) and `app.css` gradient to Tailwind utilities + Daisy primitives directly in existing markup. No element extraction, no DOM restructure. | |
@@ -260,7 +260,7 @@ Single place, single file. Nothing is extracted into components. The breadboard 
 
 ### Existing affordances (unchanged)
 
-Every UI and code affordance already present in [App.svelte](../src/App.svelte) stays exactly where it is — same element, same event handler, same scope. Listed here for traceability. **None are extracted; none change wiring.** The only thing that changes is their `class` attributes (bespoke → Tailwind + Daisy) and scoped `<style>` rules (removed).
+Every UI and code affordance already present in `cassini-viewer/src/App.svelte` stays exactly where it is — same element, same event handler, same scope. Listed here for traceability. **None are extracted; none change wiring.** The only thing that changes is their `class` attributes (bespoke → Tailwind + Daisy) and scoped `<style>` rules (removed).
 
 Zones: **Masthead** (title, meta summary, info-pills), **MeetingCatalog** (meeting list), **WarningBanner** (error panel), **TranscriptPane** (header, segments, speaker tags, tokens, scroll-lock indicator), **MetadataSections** (expandable details), **PlayerBar footer** (audio element, transport, timeline, auto-scroll switch, exact-words toggle).
 
@@ -294,8 +294,8 @@ Note: S7 is a plain `let` binding in App.svelte's script, not a Svelte writable 
 
 | What | From | Replaced by |
 |---|---|---|
-| `<style>` block (~760 lines) | [App.svelte](../src/App.svelte:932) | `class` attributes using Tailwind + Daisy primitives |
-| Radial-gradient background | [app.css](../src/app.css:6-9) | Daisy theme body background |
+| `<style>` block (~760 lines) | `cassini-viewer/src/App.svelte` (around line 932 at shaping time) | `class` attributes using Tailwind + Daisy primitives |
+| Radial-gradient background | `cassini-viewer/src/app.css` (around lines 6–9 at shaping time) | Daisy theme body background |
 | Bespoke selectors: `.panel`, `.info-pill`, `.masthead`, `.meeting-card`, `.segment`, `.speaker-tag`, `.transcript-list`, `.player-dock`, `.player-card`, `.transport-button`, `.timeline-slider`, `.switch-button`, `.metadata-section`, `.info-strip`, `.player-actions`, etc. | Tailwind utilities + Daisy `card` / `badge` / `alert` / `menu` / `btn` / `range` / `toggle` / `collapse` |
 | Georgia / Trebuchet font stack | app.css `:root` | Daisy default fonts |
 | Handcoded focus-visible outline | app.css | Daisy / Tailwind focus utilities |
@@ -341,7 +341,7 @@ flowchart TB
     class html browser
 ```
 
-Slicing of the breadboard into per-slice implementation lives in the companion [viewer-refactor-slices.md](viewer-refactor-slices.md).
+Slicing of the breadboard into per-slice implementation lives in the companion [D248 - viewer-refactor-slices.md](D248 - viewer-refactor-slices.md).
 
 ---
 
@@ -362,7 +362,7 @@ Captured here so it's visible in the shaping, but **not** part of this ticket. T
 
 ## Next Steps
 
-Shape D is selected. Slice breakdown and per-slice mitigation detail live in the companion [viewer-refactor-slices.md](viewer-refactor-slices.md).
+Shape D is selected. Slice breakdown and per-slice mitigation detail live in the companion [D248 - viewer-refactor-slices.md](D248 - viewer-refactor-slices.md).
 
 Slice sketch (see slices doc for detail):
 
