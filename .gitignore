@@ -19,7 +19,7 @@
 !/harness/media/raw/.gitkeep
 /harness/media/youtube/*
 /harness/media/sample.*
-/cassini-operator/.runtime/*
+/cassini-operator/runtime/*
 
 # Local recorder artifacts
 *.csr

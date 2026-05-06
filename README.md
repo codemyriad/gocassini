@@ -136,7 +136,7 @@ The local stack and showcase/demo flows now live under `cassini dev`:
 ```bash
 ./bin/cassini dev stack up
 ./bin/cassini dev room create --name "Local room"
-cp envrc.example .envrc
+cp .envrc.example .envrc
 direnv allow
 ./bin/cassini dev smoke
 ./bin/cassini dev fixture prepare-showcase
