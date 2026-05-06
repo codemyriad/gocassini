@@ -12,26 +12,41 @@ Current slice status:
 
 ## Config
 
-Set `CASSINI_OPERATOR_URL` before starting the dev server or build:
+The browser talks to a same-origin operator proxy path, not to the operator origin directly.
+
+- `CASSINI_OPERATOR_BASE_PATH` — public path the browser calls. Defaults to `/operator`.
+- `CASSINI_OPERATOR_URL` — upstream operator origin for the Vite dev/preview proxy.
+
+Development example:
 
 ```bash
 cd cassini-control-panel
-export CASSINI_OPERATOR_URL=http://127.0.0.1:19080
+export CASSINI_OPERATOR_URL=http://127.0.0.1:4000
 npm run dev
 ```
 
-If `CASSINI_OPERATOR_URL` is missing, the app fails clearly on load.
+Optional custom public path:
+
+```bash
+export CASSINI_OPERATOR_BASE_PATH=/api/operator
+```
 
 ## Development
 
 ```bash
 cd cassini-control-panel
-npm run dev
+CASSINI_OPERATOR_URL=http://127.0.0.1:4000 npm run dev
 ```
 
-## Build
+This serves the app on Vite and proxies `/operator/*` (or your custom base path) to the upstream operator.
+The browser never needs cross-origin access to `cassini-operator`.
+
+## Build / preview
 
 ```bash
 cd cassini-control-panel
 npm run build
+CASSINI_OPERATOR_URL=http://127.0.0.1:4000 npm run preview
 ```
+
+For non-Vite hosting (for example Docker behind nginx/caddy/traefik), serve the built assets and proxy `CASSINI_OPERATOR_BASE_PATH` to the operator there as the same-origin route.

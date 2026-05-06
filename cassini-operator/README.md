@@ -302,6 +302,9 @@ export CASSINI_OPERATOR_BIN=/abs/path/to/prebuilt/cassini-operator
 
 ## HTTP API
 
+The operator API is intended to sit behind a same-origin UI proxy (for example the control panel Vite server or a deployment reverse proxy).
+It does not need to emit browser CORS headers itself.
+
 ### Create a job
 
 ```http

@@ -11,7 +11,7 @@
 
   const POLL_INTERVAL_MS = 2000;
 
-  let operatorUrl = "";
+  let operatorBasePath = "";
   let operatorClient: OperatorClient | null = null;
   let eventSource: EventSource | null = null;
   let hasSeenStreamOpen = false;
@@ -34,8 +34,8 @@
   onMount(async () => {
     try {
       const config = loadConfig();
-      operatorUrl = config.operatorUrl;
-      operatorClient = new OperatorClient(config.operatorUrl);
+      operatorBasePath = config.operatorBasePath;
+      operatorClient = new OperatorClient(config.operatorBasePath);
       await refreshJobs();
       openEventStream();
     } catch (error) {
@@ -321,7 +321,7 @@
         </div>
       </div>
       <div class="text-xs text-base-content/60">
-        Operator URL: <code>{operatorUrl || "(not configured)"}</code>
+        Operator proxy path: <code>{operatorBasePath || "(not configured)"}</code>
       </div>
     </header>
 

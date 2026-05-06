@@ -1,11 +1,17 @@
 export interface PanelConfig {
-  operatorUrl: string;
+  operatorBasePath: string;
 }
 
 export function loadConfig(): PanelConfig {
-  const operatorUrl = __CASSINI_OPERATOR_URL__.trim();
-  if (operatorUrl === "") {
-    throw new Error("Missing CASSINI_OPERATOR_URL. Start the control panel with that environment variable set.");
+  const operatorBasePath = normalizeOperatorBasePath(__CASSINI_OPERATOR_BASE_PATH__);
+  return { operatorBasePath };
+}
+
+function normalizeOperatorBasePath(value: string): string {
+  const trimmed = value.trim();
+  const normalized = (trimmed === "" ? "/operator" : trimmed).replace(/\/+$/, "") || "/";
+  if (!normalized.startsWith("/")) {
+    throw new Error("CASSINI_OPERATOR_BASE_PATH must be a root-relative path such as /operator.");
   }
-  return { operatorUrl: operatorUrl.replace(/\/+$/, "") };
+  return normalized;
 }

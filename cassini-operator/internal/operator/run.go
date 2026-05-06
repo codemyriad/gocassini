@@ -110,7 +110,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	mux.HandleFunc("/events", runtime.eventsHandler)
 
 	server := &http.Server{
-		Handler:           requestLogger(logger, corsMiddleware(mux)),
+		Handler:           requestLogger(logger, mux),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -930,19 +930,6 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 func requestLogger(logger *log.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		logger.Printf("%s %s", r.Method, r.URL.RequestURI())
-		next.ServeHTTP(w, r)
-	})
-}
-
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
 		next.ServeHTTP(w, r)
 	})
 }
