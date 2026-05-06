@@ -1,4 +1,19 @@
-import type { Job, JobDetailResponse } from "./types";
+import type { Job, JobAttempt, JobDetailResponse } from "./types";
+
+export interface OperatorStateChangeEvent {
+  type: string;
+  job_id: string;
+  attempt_number?: number;
+  at: string;
+  job: Job;
+  attempt?: JobAttempt;
+}
+
+interface OperatorStreamHandlers {
+  onOpen?: () => void;
+  onError?: () => void;
+  onStateChange: (event: OperatorStateChangeEvent) => void;
+}
 
 interface CreateJobResponse {
   id: string;
@@ -50,6 +65,25 @@ export class OperatorClient {
     return this.#request<StopJobResponse>(`/jobs/${encodeURIComponent(jobId)}/stop`, {
       method: "POST",
     });
+  }
+
+  openEventStream(handlers: OperatorStreamHandlers): EventSource {
+    const eventSource = new EventSource(`${this.#baseUrl}/events`);
+    const handleMessage = (event: MessageEvent<string>) => {
+      const payload = JSON.parse(event.data) as OperatorStateChangeEvent;
+      handlers.onStateChange(payload);
+    };
+    eventSource.onopen = () => {
+      handlers.onOpen?.();
+    };
+    eventSource.onerror = () => {
+      handlers.onError?.();
+    };
+    eventSource.onmessage = handleMessage;
+    eventSource.addEventListener("job.created", handleMessage as EventListener);
+    eventSource.addEventListener("job.updated", handleMessage as EventListener);
+    eventSource.addEventListener("attempt.updated", handleMessage as EventListener);
+    return eventSource;
   }
 
   async #request<T>(path: string, init?: RequestInit): Promise<T> {

@@ -4,11 +4,11 @@
 
 Current slice status:
 
-- snapshot-driven jobs history from `GET /jobs`
-- snapshot-driven selected run detail from `GET /jobs/:id`
+- jobs history from `GET /jobs` kept warm by `GET /events`
+- selected run detail from `GET /jobs/:id` updated from the same tagged SSE feed
 - start job via `POST /jobs?provider=nextcloud-talk`
 - stop eligible record-stage jobs via `POST /jobs/:id/stop`
-- polling-based snapshot refresh while the selected job is active
+- snapshot refresh on stream reconnect, with polling fallback while disconnected
 
 ## Config
 

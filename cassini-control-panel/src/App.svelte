@@ -1,14 +1,22 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { List, RefreshCw, Server, Square, TriangleAlert } from "@lucide/svelte";
+  import { List, PlugZap, RefreshCw, Server, Square, TriangleAlert } from "@lucide/svelte";
   import { loadConfig } from "./operator/config";
-  import { OperatorClient, OperatorHttpError } from "./operator/client";
+  import {
+    OperatorClient,
+    OperatorHttpError,
+    type OperatorStateChangeEvent,
+  } from "./operator/client";
   import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
 
   const POLL_INTERVAL_MS = 2000;
 
   let operatorUrl = "";
   let operatorClient: OperatorClient | null = null;
+  let eventSource: EventSource | null = null;
+  let hasSeenStreamOpen = false;
+  let streamStatus: "idle" | "connecting" | "connected" | "reconnecting" | "disconnected" = "idle";
+
   let configError = "";
   let jobsError = "";
   let detailError = "";
@@ -29,6 +37,7 @@
       operatorUrl = config.operatorUrl;
       operatorClient = new OperatorClient(config.operatorUrl);
       await refreshJobs();
+      openEventStream();
     } catch (error) {
       configError = error instanceof Error ? error.message : String(error);
       loadingJobs = false;
@@ -37,6 +46,7 @@
 
   onDestroy(() => {
     clearPolling();
+    closeEventStream();
   });
 
   async function refreshJobs() {
@@ -46,7 +56,7 @@
     loadingJobs = true;
     jobsError = "";
     try {
-      jobs = await operatorClient.listJobs();
+      jobs = sortJobs(await operatorClient.listJobs());
       if (jobs.length === 0) {
         selectedJobId = "";
         selectedJob = null;
@@ -127,9 +137,86 @@
     }
   }
 
+  function openEventStream() {
+    if (!operatorClient || typeof EventSource === "undefined") {
+      streamStatus = "disconnected";
+      updatePolling();
+      return;
+    }
+    closeEventStream();
+    streamStatus = hasSeenStreamOpen ? "reconnecting" : "connecting";
+    eventSource = operatorClient.openEventStream({
+      onOpen: () => {
+        hasSeenStreamOpen = true;
+        streamStatus = "connected";
+        void refreshJobs();
+      },
+      onError: () => {
+        streamStatus = hasSeenStreamOpen ? "reconnecting" : "connecting";
+        updatePolling();
+      },
+      onStateChange: (event) => {
+        applyStateChangeEvent(event);
+      },
+    });
+    updatePolling();
+  }
+
+  function closeEventStream() {
+    eventSource?.close();
+    eventSource = null;
+  }
+
+  function applyStateChangeEvent(event: OperatorStateChangeEvent) {
+    jobsError = "";
+    applyEventToJobsHistory(event);
+    applyEventToSelectedJob(event);
+  }
+
+  function applyEventToJobsHistory(event: OperatorStateChangeEvent) {
+    const nextJobs = jobs.filter((job) => job.id !== event.job.id);
+    nextJobs.push(event.job);
+    jobs = sortJobs(nextJobs);
+  }
+
+  function applyEventToSelectedJob(event: OperatorStateChangeEvent) {
+    if (selectedJobId !== event.job_id) {
+      return;
+    }
+    detailError = "";
+    if (!selectedJob) {
+      void selectJob(event.job_id, { allowJobsRefresh: false });
+      return;
+    }
+    selectedJob = {
+      job: event.job,
+      attempts: upsertAttempt(selectedJob.attempts, event.attempt),
+    };
+    updatePolling();
+  }
+
+  function upsertAttempt(attempts: JobAttempt[], nextAttempt?: JobAttempt): JobAttempt[] {
+    if (!nextAttempt) {
+      return attempts;
+    }
+    const remaining = attempts.filter((attempt) => attempt.attempt_number !== nextAttempt.attempt_number);
+    remaining.push(nextAttempt);
+    return remaining.sort((a, b) => b.attempt_number - a.attempt_number);
+  }
+
+  function sortJobs(nextJobs: Job[]): Job[] {
+    return [...nextJobs].sort((left, right) => {
+      const created = right.created_at.localeCompare(left.created_at);
+      if (created !== 0) {
+        return created;
+      }
+      return right.id.localeCompare(left.id);
+    });
+  }
+
   function updatePolling() {
     clearPolling();
-    if (!selectedJob || !isJobActive(selectedJob.job)) {
+    if (!selectedJob || !isJobActive(selectedJob.job) || streamStatus === "connected") {
       return;
     }
     pollTimer = window.setTimeout(async () => {
@@ -186,6 +273,18 @@
     }
   }
 
+  function streamStatusTone(status: typeof streamStatus): "badge-success" | "badge-warning" | "badge-neutral" {
+    switch (status) {
+      case "connected":
+        return "badge-success";
+      case "reconnecting":
+      case "connecting":
+        return "badge-warning";
+      default:
+        return "badge-neutral";
+    }
+  }
+
   $: canStartJob = !submittingStart && meetingUrl.trim() !== "";
   $: canStopSelectedJob =
     !submittingStop &&
@@ -204,15 +303,21 @@
 <div class="min-h-screen bg-base-200 text-base-content">
   <div class="mx-auto flex min-h-screen max-w-7xl flex-col gap-6 px-4 py-6 lg:px-6">
     <header class="flex flex-col gap-3 rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-      <div class="flex items-center gap-3">
-        <div class="rounded-box border border-base-300 bg-base-200 p-2">
-          <Server size={18} aria-hidden="true" />
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div class="rounded-box border border-base-300 bg-base-200 p-2">
+            <Server size={18} aria-hidden="true" />
+          </div>
+          <div>
+            <h1 class="text-xl font-semibold">Cassini Control Panel</h1>
+            <p class="text-sm text-base-content/70">
+              Live history, trigger, and stop controls over the existing operator API.
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 class="text-xl font-semibold">Cassini Control Panel</h1>
-          <p class="text-sm text-base-content/70">
-            Snapshot-driven history, trigger, and stop controls over the existing operator API.
-          </p>
+        <div class="flex items-center gap-2 text-sm">
+          <PlugZap size={16} aria-hidden="true" />
+          <span class={`badge ${streamStatusTone(streamStatus)}`}>{streamStatus}</span>
         </div>
       </div>
       <div class="text-xs text-base-content/60">
@@ -247,7 +352,7 @@
               {/if}
             </button>
             <p class="text-xs text-base-content/60 lg:text-right">
-              Uses <code>POST /jobs?provider=nextcloud-talk</code> and refreshes snapshots while active.
+              Uses <code>POST /jobs?provider=nextcloud-talk</code> and reconciles snapshots on stream reconnect.
             </p>
           </div>
         </div>
@@ -263,7 +368,7 @@
               <List size={16} aria-hidden="true" />
               <div>
                 <h2 class="font-semibold">Jobs history</h2>
-                <p class="text-xs text-base-content/60">Newest-first logical runs from <code>GET /jobs</code>.</p>
+                <p class="text-xs text-base-content/60">Newest-first logical runs from <code>GET /jobs</code> + <code>GET /events</code>.</p>
               </div>
             </div>
             <button class="btn btn-ghost btn-sm" on:click={refreshJobs} type="button" aria-label="Refresh jobs">
@@ -320,7 +425,7 @@
           <header class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">
             <div>
               <h2 class="font-semibold">Selected run detail</h2>
-              <p class="text-xs text-base-content/60">Summary row + attempt history from <code>GET /jobs/:id</code>.</p>
+              <p class="text-xs text-base-content/60">Summary row + attempt history from snapshots and live tagged events.</p>
             </div>
             <button
               class="btn btn-outline btn-sm"

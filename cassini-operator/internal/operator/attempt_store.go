@@ -95,6 +95,7 @@ SET %s = ?, updated_at = ?
 WHERE job_id = ? AND attempt_number = ?`, column), path, nowUTCString(), jobID, attemptNumber); err != nil {
 		return fmt.Errorf("update attempt %s log path: %w", stage, err)
 	}
+	s.emitStateChange(ctx, "attempt.updated", jobID, attemptNumber)
 	return nil
 }
 
@@ -166,6 +167,7 @@ WHERE id = ?`,
 	if err := tx.Commit(); err != nil {
 		return Job{}, fmt.Errorf("commit rerun attempt: %w", err)
 	}
+	s.emitStateChange(ctx, "job.updated", job.ID, nextAttemptNumber)
 	return s.GetJob(ctx, job.ID)
 }
 

@@ -21,6 +21,7 @@ The current operator runtime supports:
 - `POST /jobs/:id/rerun` for explicit rerun of failed jobs
 - `GET /jobs` for logical-job summaries
 - `GET /jobs/:id` for logical-job summary plus attempt history
+- `GET /events` for tagged SSE job/attempt state-change events emitted from successful persisted operator writes
 - real live record via `cassini doctor --target record` then `cassini record`
 - queued build via `cassini build`
 - queued publish via `cassini publish`
@@ -36,7 +37,7 @@ The runtime is still one process with one HTTP server and one in-process schedul
 
 ```mermaid
 flowchart TD
-  HTTP["HTTP API\nPOST /jobs\nPOST /jobs/:id/stop\nPOST /jobs/:id/rerun\nGET /jobs\nGET /jobs/:id"] --> RT["main runtime\nvalidation\nadmission\nstate transitions"]
+  HTTP["HTTP API\nPOST /jobs\nPOST /jobs/:id/stop\nPOST /jobs/:id/rerun\nGET /jobs\nGET /jobs/:id\nGET /events"] --> RT["main runtime\nvalidation\nadmission\nstate transitions"]
   RT --> DB[("SQLite jobs + job_attempts DB")]
   RT --> MIG["migration runner\nembedded SQL\nschema_migrations"]
 
@@ -386,6 +387,21 @@ The `attempts` array is ordered newest first and includes attempt-scoped artifac
 - `record_log_path`
 - `build_log_path`
 - `publish_log_path`
+
+### Event stream
+
+```http
+GET /events
+Accept: text/event-stream
+```
+
+Returns a broadcast SSE feed of tagged structured state-change events.
+
+Current v1 event model:
+- emitted after successful persisted job/attempt state writes
+- uses event names such as `job.created`, `job.updated`, and `attempt.updated`
+- payloads carry the current `job` summary row and, when relevant, the current `attempt`
+- intended to be consumed together with snapshot reads from `GET /jobs` and `GET /jobs/:id`
 
 ## Runtime defaults
 
