@@ -1,5 +1,13 @@
 import type { Job, JobDetailResponse } from "./types";
 
+interface CreateJobResponse {
+  id: string;
+}
+
+interface StopJobResponse {
+  id: string;
+}
+
 export class OperatorHttpError extends Error {
   status: number;
 
@@ -23,6 +31,25 @@ export class OperatorClient {
 
   async getJobDetail(jobId: string): Promise<JobDetailResponse> {
     return this.#request<JobDetailResponse>(`/jobs/${encodeURIComponent(jobId)}`);
+  }
+
+  async startJob(url: string): Promise<CreateJobResponse> {
+    return this.#request<CreateJobResponse>("/jobs?provider=nextcloud-talk", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        platform: "nextcloud-talk",
+        url,
+      }),
+    });
+  }
+
+  async stopJob(jobId: string): Promise<StopJobResponse> {
+    return this.#request<StopJobResponse>(`/jobs/${encodeURIComponent(jobId)}/stop`, {
+      method: "POST",
+    });
   }
 
   async #request<T>(path: string, init?: RequestInit): Promise<T> {

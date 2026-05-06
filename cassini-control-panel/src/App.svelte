@@ -1,21 +1,27 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { List, RefreshCw, Server, TriangleAlert } from "@lucide/svelte";
+  import { onDestroy, onMount } from "svelte";
+  import { List, RefreshCw, Server, Square, TriangleAlert } from "@lucide/svelte";
   import { loadConfig } from "./operator/config";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
+
+  const POLL_INTERVAL_MS = 2000;
 
   let operatorUrl = "";
   let operatorClient: OperatorClient | null = null;
   let configError = "";
   let jobsError = "";
   let detailError = "";
+  let actionError = "";
   let loadingJobs = true;
   let loadingDetail = false;
+  let submittingStart = false;
+  let submittingStop = false;
   let jobs: Job[] = [];
   let selectedJobId = "";
   let selectedJob: JobDetailResponse | null = null;
   let meetingUrl = "";
+  let pollTimer = 0;
 
   onMount(async () => {
     try {
@@ -27,6 +33,10 @@
       configError = error instanceof Error ? error.message : String(error);
       loadingJobs = false;
     }
+  });
+
+  onDestroy(() => {
+    clearPolling();
   });
 
   async function refreshJobs() {
@@ -50,6 +60,7 @@
       jobsError = asMessage(error);
     } finally {
       loadingJobs = false;
+      updatePolling();
     }
   }
 
@@ -73,7 +84,68 @@
       selectedJob = null;
     } finally {
       loadingDetail = false;
+      updatePolling();
     }
+  }
+
+  async function handleStartJob() {
+    const trimmedUrl = meetingUrl.trim();
+    if (!operatorClient || trimmedUrl === "") {
+      actionError = "Meeting URL is required.";
+      return;
+    }
+    submittingStart = true;
+    actionError = "";
+    try {
+      const { id } = await operatorClient.startJob(trimmedUrl);
+      meetingUrl = "";
+      await refreshJobs();
+      await selectJob(id, { allowJobsRefresh: false });
+    } catch (error) {
+      actionError = asMessage(error);
+    } finally {
+      submittingStart = false;
+      updatePolling();
+    }
+  }
+
+  async function handleStopJob() {
+    if (!operatorClient || !selectedJob?.job || !canStopSelectedJob) {
+      return;
+    }
+    submittingStop = true;
+    actionError = "";
+    try {
+      await operatorClient.stopJob(selectedJob.job.id);
+      await refreshJobs();
+      await selectJob(selectedJob.job.id, { allowJobsRefresh: false });
+    } catch (error) {
+      actionError = asMessage(error);
+    } finally {
+      submittingStop = false;
+      updatePolling();
+    }
+  }
+
+  function updatePolling() {
+    clearPolling();
+    if (!selectedJob || !isJobActive(selectedJob.job)) {
+      return;
+    }
+    pollTimer = window.setTimeout(async () => {
+      await refreshJobs();
+    }, POLL_INTERVAL_MS);
+  }
+
+  function clearPolling() {
+    if (pollTimer !== 0) {
+      window.clearTimeout(pollTimer);
+      pollTimer = 0;
+    }
+  }
+
+  function isJobActive(job: Job): boolean {
+    return job.stage !== "done";
   }
 
   function asMessage(error: unknown): string {
@@ -104,6 +176,21 @@
   function attemptStageLabel(attempt: JobAttempt): string {
     return `${attempt.attempt_number} · ${attempt.stage} / ${attempt.state}`;
   }
+
+  function requestUrlLabel(requestJSON: string): string {
+    try {
+      const payload = JSON.parse(requestJSON) as { url?: unknown };
+      return typeof payload.url === "string" && payload.url.trim() !== "" ? payload.url : "—";
+    } catch {
+      return "—";
+    }
+  }
+
+  $: canStartJob = !submittingStart && meetingUrl.trim() !== "";
+  $: canStopSelectedJob =
+    !submittingStop &&
+    selectedJob?.job.stage === "record" &&
+    selectedJob?.job.state === "running";
 </script>
 
 <svelte:head>
@@ -123,7 +210,9 @@
         </div>
         <div>
           <h1 class="text-xl font-semibold">Cassini Control Panel</h1>
-          <p class="text-sm text-base-content/70">Snapshot history shell for operator jobs and selected-run detail.</p>
+          <p class="text-sm text-base-content/70">
+            Snapshot-driven history, trigger, and stop controls over the existing operator API.
+          </p>
         </div>
       </div>
       <div class="text-xs text-base-content/60">
@@ -149,10 +238,22 @@
             />
           </label>
           <div class="flex flex-col gap-2">
-            <button class="btn btn-primary" disabled type="button">Start job (slice 2)</button>
-            <p class="text-xs text-base-content/60 lg:text-right">Input lands in slice 1; submit action lands in slice 2.</p>
+            <button class="btn btn-primary" disabled={!canStartJob} type="button" on:click={handleStartJob}>
+              {#if submittingStart}
+                <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
+                Starting…
+              {:else}
+                Start job
+              {/if}
+            </button>
+            <p class="text-xs text-base-content/60 lg:text-right">
+              Uses <code>POST /jobs?provider=nextcloud-talk</code> and refreshes snapshots while active.
+            </p>
           </div>
         </div>
+        {#if actionError}
+          <div class="mt-3 alert alert-error text-sm">{actionError}</div>
+        {/if}
       </section>
 
       <div class="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(22rem,30rem)_minmax(0,1fr)]">
@@ -193,9 +294,15 @@
                           <p class="truncate font-mono text-xs">{job.id}</p>
                           <p class="text-sm font-medium">{formatStageState(job)}</p>
                         </div>
-                        <span class="badge badge-outline">Attempt {job.current_attempt_number}</span>
+                        <div class="flex items-center gap-2">
+                          {#if isJobActive(job)}
+                            <span class="badge badge-warning badge-outline">Active</span>
+                          {/if}
+                          <span class="badge badge-outline">Attempt {job.current_attempt_number}</span>
+                        </div>
                       </div>
                       <div class="text-xs text-base-content/70">
+                        <p class="truncate">{requestUrlLabel(job.request_json)}</p>
                         <p>Updated {formatTimestamp(job.updated_at)}</p>
                         {#if job.error}
                           <p class="truncate text-error">{job.error}</p>
@@ -210,9 +317,25 @@
         </section>
 
         <section class="flex min-h-[24rem] flex-col rounded-box border border-base-300 bg-base-100 shadow-sm">
-          <header class="border-b border-base-300 px-4 py-3">
-            <h2 class="font-semibold">Selected run detail</h2>
-            <p class="text-xs text-base-content/60">Summary row + attempt history from <code>GET /jobs/:id</code>.</p>
+          <header class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">
+            <div>
+              <h2 class="font-semibold">Selected run detail</h2>
+              <p class="text-xs text-base-content/60">Summary row + attempt history from <code>GET /jobs/:id</code>.</p>
+            </div>
+            <button
+              class="btn btn-outline btn-sm"
+              disabled={!canStopSelectedJob}
+              type="button"
+              on:click={handleStopJob}
+            >
+              {#if submittingStop}
+                <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
+                Stopping…
+              {:else}
+                <Square size={14} aria-hidden="true" />
+                Stop
+              {/if}
+            </button>
           </header>
 
           {#if detailError}
@@ -237,8 +360,16 @@
                       <dd class="text-sm">{selectedJob.job.provider}</dd>
                     </div>
                     <div>
+                      <dt class="text-xs uppercase tracking-wide text-base-content/60">Meeting URL</dt>
+                      <dd class="text-sm break-all">{requestUrlLabel(selectedJob.job.request_json)}</dd>
+                    </div>
+                    <div>
                       <dt class="text-xs uppercase tracking-wide text-base-content/60">Current attempt</dt>
                       <dd class="text-sm">{selectedJob.job.current_attempt_number}</dd>
+                    </div>
+                    <div>
+                      <dt class="text-xs uppercase tracking-wide text-base-content/60">Reruns</dt>
+                      <dd class="text-sm">{selectedJob.job.rerun_count}</dd>
                     </div>
                     <div>
                       <dt class="text-xs uppercase tracking-wide text-base-content/60">Created</dt>
@@ -257,6 +388,12 @@
                       <dd class="text-sm">{formatTimestamp(selectedJob.job.interrupted_at)}</dd>
                     </div>
                   </dl>
+                  {#if selectedJob.job.stop_reason || selectedJob.job.stop_requested_at}
+                    <div class="rounded-box border border-base-300 bg-base-100 p-3 text-sm">
+                      <p><span class="font-medium">Stop reason:</span> {selectedJob.job.stop_reason ?? "—"}</p>
+                      <p><span class="font-medium">Stop requested:</span> {formatTimestamp(selectedJob.job.stop_requested_at)}</p>
+                    </div>
+                  {/if}
                   {#if selectedJob.job.error}
                     <div class="alert alert-error text-sm">{selectedJob.job.error}</div>
                   {/if}

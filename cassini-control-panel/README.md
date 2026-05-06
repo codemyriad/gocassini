@@ -6,7 +6,9 @@ Current slice status:
 
 - snapshot-driven jobs history from `GET /jobs`
 - snapshot-driven selected run detail from `GET /jobs/:id`
-- meeting URL input shell (submit action lands in the next slice)
+- start job via `POST /jobs?provider=nextcloud-talk`
+- stop eligible record-stage jobs via `POST /jobs/:id/stop`
+- polling-based snapshot refresh while the selected job is active
 
 ## Config
 
