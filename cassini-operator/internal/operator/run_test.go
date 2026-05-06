@@ -34,8 +34,11 @@ func TestOpenStoreEnsuresSchemaAndEmptyList(t *testing.T) {
 	if len(jobs) != 0 {
 		t.Fatalf("expected empty jobs list, got %d", len(jobs))
 	}
-	if versions := migrationVersions(t, store.db); len(versions) != 2 || versions[0] != 1 || versions[1] != 2 {
-		t.Fatalf("expected migration versions [1 2], got %v", versions)
+	if versions := migrationVersions(t, store.db); len(versions) != 3 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 {
+		t.Fatalf("expected migration versions [1 2 3], got %v", versions)
+	}
+	if !sqliteTableExists(t, store.db, "job_attempts") {
+		t.Fatalf("expected job_attempts table to exist")
 	}
 }
 
@@ -51,12 +54,19 @@ func TestOpenStoreBaselinesLegacySchemaDatabase(t *testing.T) {
 	}
 	defer store.Close()
 
-	if versions := migrationVersions(t, store.db); len(versions) != 2 || versions[0] != 1 || versions[1] != 2 {
-		t.Fatalf("expected migration versions [1 2], got %v", versions)
+	if versions := migrationVersions(t, store.db); len(versions) != 3 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 {
+		t.Fatalf("expected migration versions [1 2 3], got %v", versions)
 	}
 	job := mustGetJob(t, store, "legacy-job")
 	if job.Provider != "nextcloud-talk" || job.Stage != "record" || job.State != "queued" {
 		t.Fatalf("unexpected legacy job after baseline = %#v", job)
+	}
+	attempts, err := store.ListJobAttempts(context.Background(), "legacy-job")
+	if err != nil {
+		t.Fatalf("ListJobAttempts() error = %v", err)
+	}
+	if len(attempts) != 1 || attempts[0].AttemptNumber != 1 || attempts[0].TriggerKind != "initial" {
+		t.Fatalf("unexpected legacy attempts after baseline = %#v", attempts)
 	}
 }
 
@@ -202,6 +212,13 @@ func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
 	if queuedRecord.InterruptedAt == nil || *queuedRecord.InterruptedAt != interruptedAt {
 		t.Fatalf("unexpected interrupted_at for queued record = %#v", queuedRecord.InterruptedAt)
 	}
+	queuedRecordAttempts, err := rt.store.ListJobAttempts(context.Background(), "queued-record")
+	if err != nil {
+		t.Fatalf("ListJobAttempts() error = %v", err)
+	}
+	if len(queuedRecordAttempts) != 1 || queuedRecordAttempts[0].State != "interrupted" {
+		t.Fatalf("unexpected queued-record attempts = %#v", queuedRecordAttempts)
+	}
 
 	runningBuild := mustGetJob(t, rt.store, "running-build")
 	if runningBuild.Stage != "build" || runningBuild.State != "interrupted" {
@@ -244,6 +261,12 @@ func TestCreateJobReturnsULIDAndCompletesPublishStage(t *testing.T) {
 	}
 
 	job := waitForJobState(t, rt.store, resp.ID, "succeeded")
+	if job.CurrentAttemptNumber != 1 {
+		t.Fatalf("current_attempt_number = %d, want 1", job.CurrentAttemptNumber)
+	}
+	if job.RerunCount != 0 {
+		t.Fatalf("rerun_count = %d, want 0", job.RerunCount)
+	}
 	if job.Stage != "done" {
 		t.Fatalf("stage = %q, want done", job.Stage)
 	}
@@ -290,6 +313,19 @@ func TestCreateJobReturnsULIDAndCompletesPublishStage(t *testing.T) {
 	if !strings.Contains(string(raw), `"kind": "site"`) {
 		t.Fatalf("unexpected site manifest: %s", string(raw))
 	}
+	attempts, err := rt.store.ListJobAttempts(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatalf("ListJobAttempts() error = %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("expected 1 attempt, got %d", len(attempts))
+	}
+	if attempts[0].AttemptNumber != 1 || attempts[0].TriggerKind != "initial" {
+		t.Fatalf("unexpected first attempt = %#v", attempts[0])
+	}
+	if attempts[0].RequestJSON != job.RequestJSON {
+		t.Fatalf("attempt request_json mismatch: attempt=%s job=%s", attempts[0].RequestJSON, job.RequestJSON)
+	}
 }
 
 func TestJobDetailHandlerIncludesStopMetadata(t *testing.T) {
@@ -314,8 +350,104 @@ func TestJobDetailHandlerIncludesStopMetadata(t *testing.T) {
 	if detailRec.Code != http.StatusOK {
 		t.Fatalf("detail status = %d, want %d body=%s", detailRec.Code, http.StatusOK, detailRec.Body.String())
 	}
-	if !strings.Contains(detailRec.Body.String(), `"stop_reason":"room_empty"`) {
-		t.Fatalf("expected stop_reason in detail response, got %s", detailRec.Body.String())
+	var detail jobDetailResponse
+	if err := json.Unmarshal(detailRec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode detail response: %v", err)
+	}
+	if detail.Job.ID != resp.ID {
+		t.Fatalf("detail job id = %q, want %q", detail.Job.ID, resp.ID)
+	}
+	if detail.Job.StopReason == nil || *detail.Job.StopReason != "room_empty" {
+		t.Fatalf("expected stop_reason on detail job, got %#v", detail.Job.StopReason)
+	}
+	if len(detail.Attempts) != 1 {
+		t.Fatalf("expected 1 attempt in detail response, got %d", len(detail.Attempts))
+	}
+	if detail.Attempts[0].AttemptNumber != 1 {
+		t.Fatalf("expected attempt 1 in detail response, got %#v", detail.Attempts[0])
+	}
+}
+
+func TestJobDetailHandlerIncludesAttemptHistoryAfterRerun(t *testing.T) {
+	rt, cleanup, _, _ := newCLITestRuntime(t)
+	defer cleanup()
+
+	buildCalls := 0
+	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
+		buildCalls++
+		meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
+		if buildCalls == 1 {
+			if err := os.MkdirAll(meetingPath, 0o755); err != nil {
+				return meetingPath, err
+			}
+			manifest := `{
+  "kind": "meeting",
+  "version": "cassini.meeting.v1",
+  "state": "failed",
+  "stage": "build",
+  "error": "transcriber exploded"
+}`
+			if err := os.WriteFile(filepath.Join(meetingPath, "cassini.json"), []byte(manifest), 0o644); err != nil {
+				return meetingPath, err
+			}
+			return meetingPath, errors.New("exit status 1")
+		}
+		if err := writeReadyMeetingBundleFixture(meetingPath, task.ArtifactRunPath); err != nil {
+			return meetingPath, err
+		}
+		return meetingPath, nil
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/detail-rerun"}`))
+	createRec := httptest.NewRecorder()
+	rt.jobsHandler(createRec, createReq)
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, want %d body=%s", createRec.Code, http.StatusAccepted, createRec.Body.String())
+	}
+	var createResp createJobResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	_ = waitForJobState(t, rt.store, createResp.ID, "failed")
+
+	rerunReq := httptest.NewRequest(http.MethodPost, "/jobs/"+createResp.ID+"/rerun", nil)
+	rerunRec := httptest.NewRecorder()
+	rt.jobDetailHandler(rerunRec, rerunReq)
+	if rerunRec.Code != http.StatusAccepted {
+		t.Fatalf("rerun status = %d, want %d body=%s", rerunRec.Code, http.StatusAccepted, rerunRec.Body.String())
+	}
+	_ = waitForJobState(t, rt.store, createResp.ID, "succeeded")
+
+	detailReq := httptest.NewRequest(http.MethodGet, "/jobs/"+createResp.ID, nil)
+	detailRec := httptest.NewRecorder()
+	rt.jobDetailHandler(detailRec, detailReq)
+	if detailRec.Code != http.StatusOK {
+		t.Fatalf("detail status = %d, want %d body=%s", detailRec.Code, http.StatusOK, detailRec.Body.String())
+	}
+	var detail jobDetailResponse
+	if err := json.Unmarshal(detailRec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode detail response: %v", err)
+	}
+	if detail.Job.CurrentAttemptNumber != 2 {
+		t.Fatalf("current_attempt_number = %d, want 2", detail.Job.CurrentAttemptNumber)
+	}
+	if detail.Job.RerunCount != 1 {
+		t.Fatalf("rerun_count = %d, want 1", detail.Job.RerunCount)
+	}
+	if len(detail.Attempts) != 2 {
+		t.Fatalf("expected 2 attempts, got %d", len(detail.Attempts))
+	}
+	if detail.Attempts[0].AttemptNumber != 2 || detail.Attempts[0].State != "succeeded" {
+		t.Fatalf("unexpected latest attempt = %#v", detail.Attempts[0])
+	}
+	if detail.Attempts[1].AttemptNumber != 1 || detail.Attempts[1].State != "failed" {
+		t.Fatalf("unexpected original failed attempt = %#v", detail.Attempts[1])
+	}
+	if detail.Attempts[0].RecordLogPath == nil {
+		t.Fatalf("expected record log path on rerun attempt, got %#v", detail.Attempts[0])
+	}
+	if detail.Attempts[1].Error == nil || *detail.Attempts[1].Error == "" {
+		t.Fatalf("expected persisted error on first failed attempt, got %#v", detail.Attempts[1].Error)
 	}
 }
 
@@ -480,6 +612,143 @@ func TestStopJobReturnsNotFoundAndConflict(t *testing.T) {
 	}
 }
 
+func TestRerunFailedJobCreatesSecondAttemptAndPreservesFirst(t *testing.T) {
+	rt, cleanup, logPath, _ := newCLITestRuntime(t)
+	defer cleanup()
+
+	buildCalls := 0
+	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
+		buildCalls++
+		meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
+		if buildCalls == 1 {
+			if err := os.MkdirAll(meetingPath, 0o755); err != nil {
+				return meetingPath, err
+			}
+			manifest := `{
+  "kind": "meeting",
+  "version": "cassini.meeting.v1",
+  "state": "failed",
+  "stage": "build",
+  "error": "transcriber exploded"
+}`
+			if err := os.WriteFile(filepath.Join(meetingPath, "cassini.json"), []byte(manifest), 0o644); err != nil {
+				return meetingPath, err
+			}
+			return meetingPath, errors.New("exit status 1")
+		}
+		if err := writeReadyMeetingBundleFixture(meetingPath, task.ArtifactRunPath); err != nil {
+			return meetingPath, err
+		}
+		return meetingPath, nil
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/rerun-me"}`))
+	createRec := httptest.NewRecorder()
+	rt.jobsHandler(createRec, createReq)
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, want %d body=%s", createRec.Code, http.StatusAccepted, createRec.Body.String())
+	}
+	var createResp createJobResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	failedJob := waitForJobState(t, rt.store, createResp.ID, "failed")
+	if failedJob.CurrentAttemptNumber != 1 {
+		t.Fatalf("failed job current_attempt_number = %d, want 1", failedJob.CurrentAttemptNumber)
+	}
+	failedAttempts, err := rt.store.ListJobAttempts(context.Background(), createResp.ID)
+	if err != nil {
+		t.Fatalf("ListJobAttempts() error = %v", err)
+	}
+	if len(failedAttempts) != 1 {
+		t.Fatalf("expected 1 failed attempt, got %d", len(failedAttempts))
+	}
+	firstAttempt := failedAttempts[0]
+	if firstAttempt.State != "failed" || firstAttempt.AttemptNumber != 1 {
+		t.Fatalf("unexpected first failed attempt = %#v", firstAttempt)
+	}
+
+	rerunReq := httptest.NewRequest(http.MethodPost, "/jobs/"+createResp.ID+"/rerun", nil)
+	rerunRec := httptest.NewRecorder()
+	rt.jobDetailHandler(rerunRec, rerunReq)
+	if rerunRec.Code != http.StatusAccepted {
+		t.Fatalf("rerun status = %d, want %d body=%s", rerunRec.Code, http.StatusAccepted, rerunRec.Body.String())
+	}
+	var rerunResp rerunJobResponse
+	if err := json.Unmarshal(rerunRec.Body.Bytes(), &rerunResp); err != nil {
+		t.Fatalf("decode rerun response: %v", err)
+	}
+	if rerunResp.AttemptNumber != 2 {
+		t.Fatalf("rerun attempt_number = %d, want 2", rerunResp.AttemptNumber)
+	}
+
+	succeededJob := waitForJobState(t, rt.store, createResp.ID, "succeeded")
+	if succeededJob.CurrentAttemptNumber != 2 {
+		t.Fatalf("succeeded job current_attempt_number = %d, want 2", succeededJob.CurrentAttemptNumber)
+	}
+	if succeededJob.RerunCount != 1 {
+		t.Fatalf("succeeded job rerun_count = %d, want 1", succeededJob.RerunCount)
+	}
+	if succeededJob.ArtifactRunPath == nil || !strings.Contains(*succeededJob.ArtifactRunPath, "attempt-002.run") {
+		t.Fatalf("expected attempt-002 run path, got %#v", succeededJob.ArtifactRunPath)
+	}
+	attempts, err := rt.store.ListJobAttempts(context.Background(), createResp.ID)
+	if err != nil {
+		t.Fatalf("ListJobAttempts() error = %v", err)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("expected 2 attempts after rerun, got %d", len(attempts))
+	}
+	if attempts[0].AttemptNumber != 2 || attempts[0].State != "succeeded" {
+		t.Fatalf("unexpected rerun attempt = %#v", attempts[0])
+	}
+	if attempts[1].AttemptNumber != 1 || attempts[1].State != "failed" {
+		t.Fatalf("unexpected preserved first attempt = %#v", attempts[1])
+	}
+	if attempts[0].RecordLogPath == nil || !strings.Contains(*attempts[0].RecordLogPath, "attempt-002.logs") {
+		t.Fatalf("expected rerun record log path, got %#v", attempts[0].RecordLogPath)
+	}
+	if attempts[1].ArtifactMeetingPath == nil || attempts[0].ArtifactMeetingPath == nil || *attempts[1].ArtifactMeetingPath == *attempts[0].ArtifactMeetingPath {
+		t.Fatalf("expected distinct meeting artifact paths across attempts, got %#v and %#v", attempts[1].ArtifactMeetingPath, attempts[0].ArtifactMeetingPath)
+	}
+	logText := readFileString(t, logPath)
+	if !strings.Contains(logText, "record --call https://example.test/rerun-me") {
+		t.Fatalf("expected rerun record invocation in log, got %s", logText)
+	}
+}
+
+func TestRerunRejectsUnknownAndNonFailedJobs(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	missingReq := httptest.NewRequest(http.MethodPost, "/jobs/missing/rerun", nil)
+	missingRec := httptest.NewRecorder()
+	rt.jobDetailHandler(missingRec, missingReq)
+	if missingRec.Code != http.StatusNotFound {
+		t.Fatalf("missing rerun status = %d, want %d body=%s", missingRec.Code, http.StatusNotFound, missingRec.Body.String())
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/call"}`))
+	createRec := httptest.NewRecorder()
+	rt.jobsHandler(createRec, createReq)
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, want %d body=%s", createRec.Code, http.StatusAccepted, createRec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	_ = waitForJobState(t, rt.store, resp.ID, "succeeded")
+
+	rerunReq := httptest.NewRequest(http.MethodPost, "/jobs/"+resp.ID+"/rerun", nil)
+	rerunRec := httptest.NewRecorder()
+	rt.jobDetailHandler(rerunRec, rerunReq)
+	if rerunRec.Code != http.StatusConflict {
+		t.Fatalf("rerun status = %d, want %d body=%s", rerunRec.Code, http.StatusConflict, rerunRec.Body.String())
+	}
+}
+
 func TestCreateJobRejectsUnknownProvider(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -522,7 +791,7 @@ func TestCreateJobReturnsBusyWithoutCreatingRow(t *testing.T) {
 	rt.recordJobFn = func(ctx context.Context, job Job, req TriggerRequest) (recordResult, error) {
 		defer close(done)
 		<-block
-		return recordResult{ArtifactRunPath: filepath.Join(rt.cfg.WorkRoot, job.ID+".run")}, nil
+		return recordResult{ArtifactRunPath: attemptRunPath(rt.cfg.WorkRoot, job.ID, job.CurrentAttemptNumber)}, nil
 	}
 
 	req1 := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/one"}`))
@@ -555,7 +824,7 @@ func TestBuildFailurePersistsLightweightErrorDetail(t *testing.T) {
 	defer cleanup()
 
 	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
-		meetingPath := filepath.Join(rt.cfg.WorkRoot, task.JobID+".meeting")
+		meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 		if err := os.MkdirAll(meetingPath, 0o755); err != nil {
 			return meetingPath, err
 		}
@@ -718,7 +987,7 @@ esac
 		MaxBuildWorkers:  1,
 	}, logger, ioDiscard{}, ioDiscard{})
 	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
-		meetingPath := filepath.Join(rt.cfg.WorkRoot, task.JobID+".meeting")
+		meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 		if err := writeReadyMeetingBundleFixture(meetingPath, task.ArtifactRunPath); err != nil {
 			return meetingPath, err
 		}
@@ -755,7 +1024,7 @@ func newTestRuntime(t *testing.T) (*Runtime, func()) {
 		MaxBuildWorkers:  1,
 	}, logger, ioDiscard{}, ioDiscard{})
 	rt.recordJobFn = func(ctx context.Context, job Job, req TriggerRequest) (recordResult, error) {
-		runPath := filepath.Join(rt.cfg.WorkRoot, job.ID+".run")
+		runPath := attemptRunPath(rt.cfg.WorkRoot, job.ID, job.CurrentAttemptNumber)
 		bundle, err := PrepareRunBundle(runPath, false)
 		if err != nil {
 			return recordResult{}, err
@@ -769,7 +1038,7 @@ func newTestRuntime(t *testing.T) (*Runtime, func()) {
 		return recordResult{ArtifactRunPath: bundle.RootDir, StopReason: "room_empty", ExitCode: intPtr(0), StopDetail: "room empty for 30s after remote participants left"}, nil
 	}
 	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
-		meetingPath := filepath.Join(rt.cfg.WorkRoot, task.JobID+".meeting")
+		meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 		if err := writeReadyMeetingBundleFixture(meetingPath, task.ArtifactRunPath); err != nil {
 			return meetingPath, err
 		}
@@ -1037,6 +1306,24 @@ INSERT INTO jobs (
 		completedAt,
 	); err != nil {
 		t.Fatalf("insert job %s: %v", row.ID, err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO job_attempts (
+  job_id, attempt_number, trigger_kind, request_json,
+  stage, state,
+  created_at, updated_at, completed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		row.ID,
+		1,
+		"initial",
+		`{"platform":"nextcloud-talk","url":"https://example.test/call"}`,
+		row.Stage,
+		row.State,
+		row.CreatedAt,
+		row.CreatedAt,
+		completedAt,
+	); err != nil {
+		t.Fatalf("insert initial attempt for %s: %v", row.ID, err)
 	}
 }
 

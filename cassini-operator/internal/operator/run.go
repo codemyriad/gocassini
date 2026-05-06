@@ -71,6 +71,11 @@ type createJobResponse struct {
 	ID string `json:"id"`
 }
 
+type jobDetailResponse struct {
+	Job      Job          `json:"job"`
+	Attempts []JobAttempt `json:"attempts"`
+}
+
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger := log.New(stderr, "cassini-operator: ", log.LstdFlags)
 
@@ -327,14 +332,16 @@ func (rt *Runtime) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 	jobID := ulid.Make().String()
 	now := nowUTCString()
 	job := Job{
-		ID:             jobID,
-		Provider:       provider,
-		RequestJSON:    requestBody,
-		Stage:          "record",
-		State:          "queued",
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		RecordQueuedAt: &now,
+		ID:                   jobID,
+		Provider:             provider,
+		RequestJSON:          requestBody,
+		Stage:                "record",
+		State:                "queued",
+		CurrentAttemptNumber: 1,
+		RerunCount:           0,
+		CreatedAt:            now,
+		UpdatedAt:            now,
+		RecordQueuedAt:       &now,
 	}
 	if err := rt.store.InsertQueuedJob(r.Context(), job); err != nil {
 		<-rt.recordSlots
@@ -397,7 +404,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		}
 		return
 	}
-	if err := rt.enqueueBuildJob(job.ID, result.ArtifactRunPath, finishedAt); err != nil {
+	if err := rt.enqueueBuildJob(job.ID, job.CurrentAttemptNumber, result.ArtifactRunPath, finishedAt); err != nil {
 		rt.logger.Printf("build queue update failed id=%s: %v", job.ID, err)
 		if updateErr := rt.store.MarkBuildFailed(context.Background(), job.ID, "", err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("build queue failure update failed id=%s: %v", job.ID, updateErr)
@@ -460,6 +467,8 @@ func OpenStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sql open: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping db: %w", err)
@@ -478,46 +487,57 @@ func (s *Store) Close() error {
 }
 
 type Job struct {
-	ID                  string  `json:"id"`
-	Provider            string  `json:"provider"`
-	RequestJSON         string  `json:"request_json"`
-	Stage               string  `json:"stage"`
-	State               string  `json:"state"`
-	ArtifactRunPath     *string `json:"artifact_run_path"`
-	ArtifactMeetingPath *string `json:"artifact_meeting_path"`
-	ArtifactSitePath    *string `json:"artifact_site_path"`
-	Error               *string `json:"error"`
-	StopReason          *string `json:"stop_reason"`
-	StopRequestedAt     *string `json:"stop_requested_at"`
-	StopSignalSentAt    *string `json:"stop_signal_sent_at"`
-	RecordExitCode      *int    `json:"record_exit_code"`
-	RecordStopDetail    *string `json:"record_stop_detail"`
-	CreatedAt           string  `json:"created_at"`
-	UpdatedAt           string  `json:"updated_at"`
-	RecordQueuedAt      *string `json:"record_queued_at"`
-	RecordStartedAt     *string `json:"record_started_at"`
-	RecordFinishedAt    *string `json:"record_finished_at"`
-	BuildQueuedAt       *string `json:"build_queued_at"`
-	BuildStartedAt      *string `json:"build_started_at"`
-	BuildFinishedAt     *string `json:"build_finished_at"`
-	PublishQueuedAt     *string `json:"publish_queued_at"`
-	PublishStartedAt    *string `json:"publish_started_at"`
-	PublishFinishedAt   *string `json:"publish_finished_at"`
-	InterruptedAt       *string `json:"interrupted_at"`
-	CompletedAt         *string `json:"completed_at"`
+	ID                   string  `json:"id"`
+	Provider             string  `json:"provider"`
+	RequestJSON          string  `json:"request_json"`
+	Stage                string  `json:"stage"`
+	State                string  `json:"state"`
+	CurrentAttemptNumber int     `json:"current_attempt_number"`
+	RerunCount           int     `json:"rerun_count"`
+	ArtifactRunPath      *string `json:"artifact_run_path"`
+	ArtifactMeetingPath  *string `json:"artifact_meeting_path"`
+	ArtifactSitePath     *string `json:"artifact_site_path"`
+	Error                *string `json:"error"`
+	StopReason           *string `json:"stop_reason"`
+	StopRequestedAt      *string `json:"stop_requested_at"`
+	StopSignalSentAt     *string `json:"stop_signal_sent_at"`
+	RecordExitCode       *int    `json:"record_exit_code"`
+	RecordStopDetail     *string `json:"record_stop_detail"`
+	CreatedAt            string  `json:"created_at"`
+	UpdatedAt            string  `json:"updated_at"`
+	RecordQueuedAt       *string `json:"record_queued_at"`
+	RecordStartedAt      *string `json:"record_started_at"`
+	RecordFinishedAt     *string `json:"record_finished_at"`
+	BuildQueuedAt        *string `json:"build_queued_at"`
+	BuildStartedAt       *string `json:"build_started_at"`
+	BuildFinishedAt      *string `json:"build_finished_at"`
+	PublishQueuedAt      *string `json:"publish_queued_at"`
+	PublishStartedAt     *string `json:"publish_started_at"`
+	PublishFinishedAt    *string `json:"publish_finished_at"`
+	InterruptedAt        *string `json:"interrupted_at"`
+	CompletedAt          *string `json:"completed_at"`
 }
 
 func (s *Store) InsertQueuedJob(ctx context.Context, job Job) error {
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin insert job: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, `
 INSERT INTO jobs (
   id, provider, request_json, stage, state,
+  current_attempt_number, rerun_count,
   created_at, updated_at, record_queued_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job.ID,
 		job.Provider,
 		job.RequestJSON,
 		job.Stage,
 		job.State,
+		job.CurrentAttemptNumber,
+		job.RerunCount,
 		job.CreatedAt,
 		job.UpdatedAt,
 		stringOrNil(job.RecordQueuedAt),
@@ -525,22 +545,53 @@ INSERT INTO jobs (
 	if err != nil {
 		return fmt.Errorf("insert job: %w", err)
 	}
+	if err := insertInitialAttemptTx(tx, job); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit insert job: %w", err)
+	}
 	return nil
 }
 
 func (s *Store) MarkRecordRunning(ctx context.Context, id, startedAt string) error {
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin record running update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, `
 UPDATE jobs
 SET stage = ?, state = ?, updated_at = ?, record_started_at = ?
 WHERE id = ?`, "record", "running", startedAt, startedAt, id)
 	if err != nil {
 		return fmt.Errorf("update record running: %w", err)
 	}
+	attemptNumber, err := currentAttemptNumberTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE job_attempts
+SET stage = ?, state = ?, updated_at = ?, record_started_at = ?
+WHERE job_id = ? AND attempt_number = ?`, "record", "running", startedAt, startedAt, id, attemptNumber); err != nil {
+		return fmt.Errorf("update attempt record running: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit record running update: %w", err)
+	}
 	return nil
 }
 
 func (s *Store) MarkRecordStopRequested(ctx context.Context, id, requestedAt, signalSentAt string) error {
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin stop request update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, `
 UPDATE jobs
 SET stop_requested_at = COALESCE(stop_requested_at, ?),
     stop_signal_sent_at = COALESCE(stop_signal_sent_at, ?),
@@ -549,11 +600,32 @@ WHERE id = ?`, requestedAt, signalSentAt, signalSentAt, id)
 	if err != nil {
 		return fmt.Errorf("update record stop request: %w", err)
 	}
+	attemptNumber, err := currentAttemptNumberTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE job_attempts
+SET stop_requested_at = COALESCE(stop_requested_at, ?),
+    stop_signal_sent_at = COALESCE(stop_signal_sent_at, ?),
+    updated_at = ?
+WHERE job_id = ? AND attempt_number = ?`, requestedAt, signalSentAt, signalSentAt, id, attemptNumber); err != nil {
+		return fmt.Errorf("update attempt stop request: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit stop request update: %w", err)
+	}
 	return nil
 }
 
 func (s *Store) UpdateRecordOutcome(ctx context.Context, id string, result recordResult, updatedAt string) error {
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin record outcome update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, `
 UPDATE jobs
 SET stop_reason = ?,
     record_exit_code = ?,
@@ -563,16 +635,51 @@ WHERE id = ?`, nullableString(result.StopReason), intOrNil(result.ExitCode), nul
 	if err != nil {
 		return fmt.Errorf("update record outcome: %w", err)
 	}
+	attemptNumber, err := currentAttemptNumberTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE job_attempts
+SET stop_reason = ?,
+    record_exit_code = ?,
+    record_stop_detail = ?,
+    updated_at = ?
+WHERE job_id = ? AND attempt_number = ?`, nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(result.StopDetail), updatedAt, id, attemptNumber); err != nil {
+		return fmt.Errorf("update attempt record outcome: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit record outcome update: %w", err)
+	}
 	return nil
 }
 
 func (s *Store) MarkRecordFailed(ctx context.Context, id, errText string, result recordResult, finishedAt string) error {
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin record failure update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, `
 UPDATE jobs
 SET stage = ?, state = ?, error = ?, stop_reason = ?, record_exit_code = ?, record_stop_detail = ?, updated_at = ?, record_finished_at = ?, completed_at = ?
 WHERE id = ?`, "done", "failed", strings.TrimSpace(errText), nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(firstNonEmpty(result.StopDetail, errText)), finishedAt, finishedAt, finishedAt, id)
 	if err != nil {
 		return fmt.Errorf("update record failure: %w", err)
+	}
+	attemptNumber, err := currentAttemptNumberTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE job_attempts
+SET stage = ?, state = ?, error = ?, stop_reason = ?, record_exit_code = ?, record_stop_detail = ?, updated_at = ?, record_finished_at = ?, completed_at = ?
+WHERE job_id = ? AND attempt_number = ?`, "done", "failed", strings.TrimSpace(errText), nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(firstNonEmpty(result.StopDetail, errText)), finishedAt, finishedAt, finishedAt, id, attemptNumber); err != nil {
+		return fmt.Errorf("update attempt record failure: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit record failure update: %w", err)
 	}
 	return nil
 }
@@ -611,6 +718,7 @@ func firstNonEmpty(values ...string) string {
 func (s *Store) ListJobs(ctx context.Context) ([]Job, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, provider, request_json, stage, state,
+       current_attempt_number, rerun_count,
        artifact_run_path, artifact_meeting_path, artifact_site_path, error,
        stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
        created_at, updated_at,
@@ -645,6 +753,7 @@ ORDER BY created_at DESC, id DESC`)
 func (s *Store) GetJob(ctx context.Context, id string) (Job, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT id, provider, request_json, stage, state,
+       current_attempt_number, rerun_count,
        artifact_run_path, artifact_meeting_path, artifact_site_path, error,
        stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
        created_at, updated_at,
@@ -694,6 +803,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&job.RequestJSON,
 		&job.Stage,
 		&job.State,
+		&job.CurrentAttemptNumber,
+		&job.RerunCount,
 		&artifactRunPath,
 		&artifactMeetingPath,
 		&artifactSitePath,
@@ -777,6 +888,14 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 		rt.handleStopJob(w, r, id)
 		return
 	}
+	if action == "rerun" {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		rt.handleRerunJob(w, r, id)
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeMethodNotAllowed(w, http.MethodGet)
 		return
@@ -790,7 +909,12 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("get job: %v", err))
 		return
 	}
-	writeJSON(w, http.StatusOK, job)
+	attempts, err := rt.store.ListJobAttempts(r.Context(), id)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("list job attempts: %v", err))
+		return
+	}
+	writeJSON(w, http.StatusOK, jobDetailResponse{Job: job, Attempts: attempts})
 }
 
 func requestLogger(logger *log.Logger, next http.Handler) http.Handler {
