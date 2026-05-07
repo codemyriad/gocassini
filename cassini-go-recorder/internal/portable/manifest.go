@@ -25,26 +25,34 @@ const (
 )
 
 type Manifest struct {
-	Kind               string           `json:"kind"`
-	Version            int              `json:"version"`
-	Profile            string           `json:"profile"`
-	Meeting            Meeting          `json:"meeting"`
-	Audio              Audio            `json:"audio"`
-	Integrity          Integrity        `json:"integrity"`
-	Speakers           []Speaker        `json:"speakers"`
-	Transcript         Transcript       `json:"transcript"`
-	Provenance         *Provenance      `json:"provenance,omitempty"`
-	ReadableTranscript map[string]any   `json:"readableTranscript,omitempty"`
-	DisplayTranscript  map[string]any   `json:"displayTranscript,omitempty"`
-	Chapters           []Chapter        `json:"chapters,omitempty"`
-	Summary            map[string]any   `json:"summary,omitempty"`
-	Attachments        []map[string]any `json:"attachments,omitempty"`
+	Kind       string     `json:"kind"`
+	Version    int        `json:"version"`
+	Profile    string     `json:"profile"`
+	Meeting    Meeting    `json:"meeting"`
+	Audio      Audio      `json:"audio"`
+	Integrity  Integrity  `json:"integrity"`
+	Speakers   []Speaker  `json:"speakers"`
+	Transcript Transcript `json:"transcript"`
+	Provenance *Provenance `json:"provenance,omitempty"`
+	ReadableTranscript map[string]any `json:"readableTranscript,omitempty"`
+	DisplayTranscript  map[string]any `json:"displayTranscript,omitempty"`
+	Chapters           []Chapter      `json:"chapters,omitempty"`
+	// Summary holds metadata about the meeting summary artifact (model,
+	// templateVersion, format). Schema is intentionally open: map[string]any
+	// lets future producers add keys without breaking decoders. The actual
+	// summary.md content lives in Attachments, not here.
+	//
+	// Distinct from Meeting.Summary — see the doc comment on that field for
+	// the split. Background: planning/initiatives/mvp/slices/V4-summary-generation/followup-plan.md.
+	Summary     map[string]any   `json:"summary,omitempty"`
+	Attachments []map[string]any `json:"attachments,omitempty"`
 }
 
 type Provenance struct {
 	SpeechToText      *ProcessingStep `json:"speechToText,omitempty"`
 	ReadableCleanup   *ProcessingStep `json:"readableCleanup,omitempty"`
 	DisplayTranscript *ProcessingStep `json:"displayTranscript,omitempty"`
+	MeetingSummary    *ProcessingStep `json:"meetingSummary,omitempty"`
 }
 
 type ProcessingStep struct {
@@ -67,7 +75,14 @@ type Meeting struct {
 	ProcessedAtUTC  string `json:"processedAtUtc,omitempty"`
 	DurationMS      int64  `json:"durationMs"`
 	Language        string `json:"language,omitempty"`
-	Summary         string `json:"summary,omitempty"`
+	// Summary is reserved for surfacing summary content as a *meeting attribute*
+	// (e.g. a TL;DR readable without unpacking the gzipped payload). Currently
+	// left empty — picking a meaning (TL;DR? full markdown? first heading?)
+	// commits the schema, and no consumer has asked yet. Distinct from
+	// Manifest.Summary which is metadata about the summary artifact.
+	//
+	// Background: planning/initiatives/mvp/slices/V4-summary-generation/followup-plan.md.
+	Summary string `json:"summary,omitempty"`
 }
 
 type Audio struct {
