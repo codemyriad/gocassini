@@ -166,6 +166,11 @@ func DefaultBuildConfig() BuildConfig {
 	if model := os.Getenv("SUMMARY_MODEL"); model != "" {
 		summaryLLM.Model = model
 	}
+	if envBool("CASSINI_SUMMARY_DISABLED") {
+		// Disable summary independently of readable cleanup. IsConfigured()
+		// requires both APIKey and BaseURL, so blanking the key is sufficient.
+		summaryLLM.APIKey = ""
+	}
 
 	return BuildConfig{
 		Device:                "cpu",

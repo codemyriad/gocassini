@@ -153,6 +153,31 @@ func TestFormatTranscriptForSummaryUsesLabels(t *testing.T) {
 	}
 }
 
+func TestDefaultBuildConfigSummaryDisabledToggle(t *testing.T) {
+	// Both LLM and SummaryLLM would be configured from OPENROUTER_API_KEY alone,
+	// but CASSINI_SUMMARY_DISABLED should disable the summary side independently.
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("CASSINI_SUMMARY_DISABLED", "1")
+
+	cfg := DefaultBuildConfig()
+	if !cfg.LLM.IsConfigured() {
+		t.Error("expected LLM to remain configured when only summary is disabled")
+	}
+	if cfg.SummaryLLM.IsConfigured() {
+		t.Error("expected SummaryLLM to be unconfigured when CASSINI_SUMMARY_DISABLED=1")
+	}
+}
+
+func TestDefaultBuildConfigSummaryEnabledByDefault(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("CASSINI_SUMMARY_DISABLED", "")
+
+	cfg := DefaultBuildConfig()
+	if !cfg.SummaryLLM.IsConfigured() {
+		t.Error("expected SummaryLLM to be configured when CASSINI_SUMMARY_DISABLED is unset")
+	}
+}
+
 func TestStripMarkdownFencesUnwrapsOuterFence(t *testing.T) {
 	cases := map[string]string{
 		"```markdown\n# Hi\n```":   "# Hi",
