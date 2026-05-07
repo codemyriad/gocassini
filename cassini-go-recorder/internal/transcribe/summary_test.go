@@ -21,8 +21,12 @@ func TestWriteSummaryArtifactSkipsWhenLLMNotConfigured(t *testing.T) {
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
 	var stdout bytes.Buffer
-	if err := writeSummaryArtifact(tmp, nil, sampleSegments(), cfg, &stdout); err != nil {
+	hasSummary, err := writeSummaryArtifact(tmp, nil, sampleSegments(), cfg, &stdout)
+	if err != nil {
 		t.Fatalf("expected no error when summary disabled, got %v", err)
+	}
+	if hasSummary {
+		t.Fatal("expected hasSummary=false when summary disabled")
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "summary.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected no summary.md when summary disabled, stat err=%v", err)
@@ -49,8 +53,12 @@ func TestWriteSummaryArtifactWarnsAndSkipsOnError(t *testing.T) {
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
 	var stdout bytes.Buffer
-	if err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &stdout); err != nil {
+	hasSummary, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &stdout)
+	if err != nil {
 		t.Fatalf("expected summary failure to be swallowed, got %v", err)
+	}
+	if hasSummary {
+		t.Fatal("expected hasSummary=false on warn-and-skip path")
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "summary.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected no summary.md after failure, stat err=%v", err)
@@ -77,8 +85,12 @@ func TestWriteSummaryArtifactWritesSummaryMd(t *testing.T) {
 	}
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
-	if err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &bytes.Buffer{}); err != nil {
+	hasSummary, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &bytes.Buffer{})
+	if err != nil {
 		t.Fatalf("expected success, got %v", err)
+	}
+	if !hasSummary {
+		t.Fatal("expected hasSummary=true after writing summary.md")
 	}
 	got, err := os.ReadFile(filepath.Join(tmp, "summary.md"))
 	if err != nil {
