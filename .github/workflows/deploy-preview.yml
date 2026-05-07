@@ -1,55 +1,24 @@
 name: Deploy Preview
 
 on:
-  push:
-    branches: ['**']
-  workflow_dispatch:
-    inputs:
-      force_reprocess:
-        description: 'Reprocess all recordings from scratch (clears local cache)'
-        type: boolean
-        default: false
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
 
-# Serialize all deploy jobs on george — every push gets deployed, none are
+# Serialize all deploy jobs on george — every PR update gets deployed, none are
 # cancelled. This prevents concurrent jobs from racing over shared disk paths.
 concurrency:
   group: george-deploy
   cancel-in-progress: false
 
 jobs:
-  detect:
-    runs-on: ubuntu-latest
-    outputs:
-      change_type: ${{ steps.detect.outputs.change_type }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - id: detect
-        name: Detect change type
-        run: |
-          # Manual dispatch with force_reprocess always goes through processing path
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "change_type=processing" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-          CHANGED=$(git diff origin/main...HEAD --name-only)
-          if echo "$CHANGED" | grep -qE "^(cassini-go-recorder/|ops/process-recordings\.sh$|bin/cassini$)"; then
-            echo "change_type=processing" >> $GITHUB_OUTPUT
-          else
-            echo "change_type=ui" >> $GITHUB_OUTPUT
-          fi
-
   deploy:
-    needs: detect
     runs-on: [self-hosted, george]
     env:
-      BRANCH: ${{ github.ref_name }}
-      CHANGE_TYPE: ${{ needs.detect.outputs.change_type }}
-      # Persistent dirs — survive between runs so process-recordings.sh can
-      # skip already-processed files on incremental runs.
-      RAW_DIR: /mnt/data/cassini/ci-raw
-      PROC_DIR: /mnt/data/cassini/ci-processed
+      BRANCH: ${{ github.head_ref }}
+      PREVIEW_ROOT: /mnt/data/cassini/previews
       # R2 credentials injected from GitHub Secrets — no rclone.conf needed on the runner
       RCLONE_CONFIG_CODEMYRIAD_TYPE: s3
       RCLONE_CONFIG_CODEMYRIAD_PROVIDER: Cloudflare
@@ -60,97 +29,55 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cassini-viewer/package-lock.json
+
       - name: Encode branch name for R2 key prefix
         run: |
           ENCODED=$(echo "$BRANCH" | sed 's|/|--|g')
           echo "ENCODED_BRANCH=$ENCODED" >> $GITHUB_ENV
+          echo "BRANCH_PREVIEW_ROOT=${{ env.PREVIEW_ROOT }}/$ENCODED" >> $GITHUB_ENV
+          echo "RAW_DIR=${{ env.PREVIEW_ROOT }}/$ENCODED/raw" >> $GITHUB_ENV
+          echo "PROC_DIR=${{ env.PREVIEW_ROOT }}/$ENCODED/processed" >> $GITHUB_ENV
+          echo "CASSINI_CACHE_ROOT=${{ env.PREVIEW_ROOT }}/$ENCODED/.cache" >> $GITHUB_ENV
           echo "EXPORT_DIR=/tmp/cassini-export-${{ github.run_id }}" >> $GITHUB_ENV
+          echo "CASSINI_BUILD_DIR=/tmp/cassini-build-${{ github.run_id }}" >> $GITHUB_ENV
 
-      # Stage 2 hash check: even when processing paths changed, skip GPU work if
-      # the tree hashes match main (e.g. branch was rebased without touching those files).
-      - name: Stage-2 processing hash check
-        id: hash_check
+      - name: Runner preflight
         run: |
-          BRANCH_HASH=$(git rev-parse HEAD:cassini-go-recorder HEAD:ops/process-recordings.sh HEAD:bin/cassini | sha256sum | cut -c1-16)
-          MAIN_HASH=$(rclone cat codemyriad:cassini-processed/main/.processing-hash 2>/dev/null || echo "")
-          if [ "$BRANCH_HASH" = "$MAIN_HASH" ] && [ -n "$MAIN_HASH" ]; then
-            echo "ui_override=true" >> $GITHUB_OUTPUT
-          else
-            echo "ui_override=false" >> $GITHUB_OUTPUT
-          fi
+          set -euo pipefail
+          for cmd in git rclone ffmpeg ffprobe node npm; do
+            command -v "$cmd" >/dev/null || {
+              echo "missing required command: $cmd" >&2
+              exit 1
+            }
+          done
+          mkdir -p "$RAW_DIR" "$PROC_DIR" "$CASSINI_CACHE_ROOT"
 
-      - name: Resolve final change type
-        run: |
-          # workflow_dispatch always processes — it was triggered because new raw footage
-          # exists, so the hash check optimisation does not apply.
-          if [ "${{ steps.hash_check.outputs.ui_override }}" = "true" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
-            echo "FINAL_CHANGE_TYPE=ui" >> $GITHUB_ENV
-          else
-            echo "FINAL_CHANGE_TYPE=$CHANGE_TYPE" >> $GITHUB_ENV
-          fi
-
-      # ── UI-only path ────────────────────────────────────────────────────────
-      - name: Download main meetings from R2 (UI-only)
-        if: env.FINAL_CHANGE_TYPE == 'ui'
+      - name: Download main meetings from R2
         run: |
           MAIN_CACHE=/tmp/cassini-main-${{ github.run_id }}
           mkdir -p "$MAIN_CACHE"
           rclone copy codemyriad:cassini-processed/main/meetings/ "$MAIN_CACHE/"
           echo "MAIN_RECORDINGS_CACHE=$MAIN_CACHE" >> $GITHUB_ENV
 
-      - name: Build and export viewer (UI-only)
-        if: env.FINAL_CHANGE_TYPE == 'ui'
+      - name: Build and export viewer
         working-directory: cassini-viewer
         run: |
           npm ci
           npm run export:meetings -- \
-            --source-dir "${{ env.MAIN_RECORDINGS_CACHE }}" \
-            --output-dir "${{ env.EXPORT_DIR }}" \
+            --source-dir "$MAIN_RECORDINGS_CACHE" \
+            --output-dir "$EXPORT_DIR" \
             --recordings-base-url https://view.meetings.codemyriad.io/main/
 
-      - name: Upload viewer (UI-only)
-        if: env.FINAL_CHANGE_TYPE == 'ui'
+      - name: Upload viewer
         run: |
-          rclone copy "${{ env.EXPORT_DIR }}/" \
-            codemyriad:cassini-processed/${{ env.ENCODED_BRANCH }}/
-
-      # ── Processing path ─────────────────────────────────────────────────────
-      - name: Clear processing cache (force reprocess)
-        if: env.FINAL_CHANGE_TYPE == 'processing' && github.event.inputs.force_reprocess == 'true'
-        run: rm -rf "$RAW_DIR"/* "$PROC_DIR"/*
-
-      - name: Download raw recordings (processing)
-        if: env.FINAL_CHANGE_TYPE == 'processing'
-        run: |
-          mkdir -p "$RAW_DIR" "$PROC_DIR"
-          rclone copy codemyriad:cassini-raw/daily/ "$RAW_DIR/"
-
-      - name: Process recordings with GPU
-        if: env.FINAL_CHANGE_TYPE == 'processing'
-        env:
-          RECORDINGS_DIR: ${{ env.RAW_DIR }}
-          PROCESSED_DIR: ${{ env.PROC_DIR }}
-          DEVICE: cuda
-          CASSINI_BIN: /opt/cassini/bin/cassini-bin
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-        run: bash ops/process-recordings.sh
-
-      - name: Build and export viewer (processing)
-        if: env.FINAL_CHANGE_TYPE == 'processing'
-        working-directory: cassini-viewer
-        run: |
-          npm ci
-          npm run export:meetings -- \
-            --source-dir "${{ env.PROC_DIR }}" \
-            --output-dir "${{ env.EXPORT_DIR }}"
-
-      - name: Upload viewer and meetings (processing)
-        if: env.FINAL_CHANGE_TYPE == 'processing'
-        run: |
-          rclone copy "${{ env.EXPORT_DIR }}/" \
-            codemyriad:cassini-processed/${{ env.ENCODED_BRANCH }}/
-          HASH=$(git rev-parse HEAD:cassini-go-recorder HEAD:ops/process-recordings.sh HEAD:bin/cassini | sha256sum | cut -c1-16)
-          echo "$HASH" | rclone rcat codemyriad:cassini-processed/${{ env.ENCODED_BRANCH }}/.processing-hash
+          rclone copy "${EXPORT_DIR}/" \
+            "codemyriad:cassini-processed/${ENCODED_BRANCH}/"
 
       # ── Cleanup ─────────────────────────────────────────────────────────────
       - name: Cleanup temp files
