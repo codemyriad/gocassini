@@ -139,11 +139,13 @@ type artifactFiles struct {
 	Transcript         string `json:"transcript"`
 	ReadableTranscript string `json:"readableTranscript,omitempty"`
 	Captions           string `json:"captions,omitempty"`
+	Summary            string `json:"summary,omitempty"`
 }
 
 type provenanceInfo struct {
 	SpeechToText    *provStep `json:"speechToText,omitempty"`
 	ReadableCleanup *provStep `json:"readableCleanup,omitempty"`
+	MeetingSummary  *provStep `json:"meetingSummary,omitempty"`
 }
 
 type provStep struct {
@@ -153,7 +155,7 @@ type provStep struct {
 }
 
 // WriteManifest writes manifest.json summarising the build.
-func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []AudioStream, segments []Segment, sttModelID ModelID, llmModel string, hasReadable bool) error {
+func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []AudioStream, segments []Segment, sttModelID ModelID, llmModel string, hasReadable bool, summaryModel string, hasSummary bool) error {
 	wordCount := 0
 	for _, seg := range segments {
 		wordCount += len(seg.Words)
@@ -167,6 +169,9 @@ func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []Audi
 		files.ReadableTranscript = "transcript.readable.v1.json"
 		files.Captions = "captions.vtt"
 	}
+	if hasSummary {
+		files.Summary = "summary.md"
+	}
 
 	prov := &provenanceInfo{
 		SpeechToText: &provStep{
@@ -178,6 +183,12 @@ func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []Audi
 		prov.ReadableCleanup = &provStep{
 			Backend: "openai-compatible",
 			Model:   llmModel,
+		}
+	}
+	if hasSummary {
+		prov.MeetingSummary = &provStep{
+			Backend: "openai-compatible",
+			Model:   summaryModel,
 		}
 	}
 
