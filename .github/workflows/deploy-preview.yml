@@ -6,20 +6,86 @@ on:
       - opened
       - synchronize
       - reopened
+  workflow_dispatch:
+    inputs:
+      run_processing:
+        description: Reprocess branch artifacts before publishing the preview
+        type: boolean
+        default: false
 
-# Serialize all deploy jobs on george — every PR update gets deployed, none are
-# cancelled. This prevents concurrent jobs from racing over shared disk paths.
 concurrency:
   group: george-deploy
   cancel-in-progress: false
 
 jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      branch: ${{ steps.detect.outputs.branch }}
+      encoded_branch: ${{ steps.detect.outputs.encoded_branch }}
+      should_run: ${{ steps.detect.outputs.should_run }}
+      should_process: ${{ steps.detect.outputs.should_process }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: detect
+        name: Detect branch mode and relevant changes
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BRANCH="${{ github.head_ref }}"
+            BASE_REF="${{ github.event.pull_request.base.ref }}"
+          else
+            BRANCH="${{ github.ref_name }}"
+            BASE_REF="main"
+          fi
+
+          git fetch origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          CHANGED="$(git diff "origin/${BASE_REF}...HEAD" --name-only || true)"
+
+          ui_changed=false
+          processing_changed=false
+
+          if echo "$CHANGED" | grep -qE '^(cassini-viewer/|\.github/workflows/deploy-preview\.yml$)'; then
+            ui_changed=true
+          fi
+
+          if echo "$CHANGED" | grep -qE '^(cassini-go-recorder/|ops/process-recordings\.sh$|bin/cassini$|\.github/workflows/deploy-preview\.yml$)'; then
+            processing_changed=true
+          fi
+
+          run_processing_requested="${{ github.event.inputs.run_processing || 'false' }}"
+          should_process=false
+          should_run=false
+
+          if [ "$processing_changed" = "true" ] || [ "$run_processing_requested" = "true" ]; then
+            should_process=true
+            should_run=true
+          fi
+
+          if [ "$ui_changed" = "true" ]; then
+            should_run=true
+          fi
+
+          ENCODED_BRANCH="$(echo "$BRANCH" | sed 's|/|--|g')"
+
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "encoded_branch=$ENCODED_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
+          echo "should_process=$should_process" >> "$GITHUB_OUTPUT"
+
   deploy:
+    needs: detect
+    if: needs.detect.outputs.should_run == 'true'
     runs-on: [self-hosted, george]
     env:
-      BRANCH: ${{ github.head_ref }}
+      BRANCH: ${{ needs.detect.outputs.branch }}
+      ENCODED_BRANCH: ${{ needs.detect.outputs.encoded_branch }}
+      SHOULD_PROCESS: ${{ needs.detect.outputs.should_process }}
       PREVIEW_ROOT: /mnt/data/cassini/previews
-      # R2 credentials injected from GitHub Secrets — no rclone.conf needed on the runner
       RCLONE_CONFIG_CODEMYRIAD_TYPE: s3
       RCLONE_CONFIG_CODEMYRIAD_PROVIDER: Cloudflare
       RCLONE_CONFIG_CODEMYRIAD_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -29,6 +95,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Go
+        if: env.SHOULD_PROCESS == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: cassini-go-recorder/go.mod
+          cache-dependency-path: cassini-go-recorder/go.sum
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -36,16 +109,16 @@ jobs:
           cache: npm
           cache-dependency-path: cassini-viewer/package-lock.json
 
-      - name: Encode branch name for R2 key prefix
+      - name: Prepare branch-scoped paths
         run: |
-          ENCODED=$(echo "$BRANCH" | sed 's|/|--|g')
-          echo "ENCODED_BRANCH=$ENCODED" >> $GITHUB_ENV
-          echo "BRANCH_PREVIEW_ROOT=${{ env.PREVIEW_ROOT }}/$ENCODED" >> $GITHUB_ENV
-          echo "RAW_DIR=${{ env.PREVIEW_ROOT }}/$ENCODED/raw" >> $GITHUB_ENV
-          echo "PROC_DIR=${{ env.PREVIEW_ROOT }}/$ENCODED/processed" >> $GITHUB_ENV
-          echo "CASSINI_CACHE_ROOT=${{ env.PREVIEW_ROOT }}/$ENCODED/.cache" >> $GITHUB_ENV
-          echo "EXPORT_DIR=/tmp/cassini-export-${{ github.run_id }}" >> $GITHUB_ENV
-          echo "CASSINI_BUILD_DIR=/tmp/cassini-build-${{ github.run_id }}" >> $GITHUB_ENV
+          echo "BRANCH_PREVIEW_ROOT=${PREVIEW_ROOT}/${ENCODED_BRANCH}" >> "$GITHUB_ENV"
+          echo "RAW_DIR=${PREVIEW_ROOT}/${ENCODED_BRANCH}/raw" >> "$GITHUB_ENV"
+          echo "PROC_DIR=${PREVIEW_ROOT}/${ENCODED_BRANCH}/processed" >> "$GITHUB_ENV"
+          echo "CASSINI_CACHE_ROOT=${PREVIEW_ROOT}/${ENCODED_BRANCH}/.cache" >> "$GITHUB_ENV"
+          echo "SOURCE_CACHE=/tmp/cassini-source-${{ github.run_id }}" >> "$GITHUB_ENV"
+          echo "SOURCE_RECORDINGS_BASE_URL=https://view.meetings.codemyriad.io/${ENCODED_BRANCH}/" >> "$GITHUB_ENV"
+          echo "EXPORT_DIR=/tmp/cassini-export-${{ github.run_id }}" >> "$GITHUB_ENV"
+          echo "CASSINI_BUILD_DIR=/tmp/cassini-build-${{ github.run_id }}" >> "$GITHUB_ENV"
 
       - name: Runner preflight
         run: |
@@ -56,32 +129,83 @@ jobs:
               exit 1
             }
           done
-          mkdir -p "$RAW_DIR" "$PROC_DIR" "$CASSINI_CACHE_ROOT"
+          if [ "$SHOULD_PROCESS" = "true" ]; then
+            command -v nvidia-smi >/dev/null || {
+              echo "missing required command: nvidia-smi" >&2
+              exit 1
+            }
+            nvidia-smi >/dev/null
+          fi
+          mkdir -p "$RAW_DIR" "$PROC_DIR" "$CASSINI_CACHE_ROOT" "$SOURCE_CACHE"
 
-      - name: Download main meetings from R2
+      - name: Resolve artifact source for UI-only preview
+        if: env.SHOULD_PROCESS != 'true'
         run: |
-          MAIN_CACHE=/tmp/cassini-main-${{ github.run_id }}
-          mkdir -p "$MAIN_CACHE"
-          rclone copy codemyriad:cassini-processed/main/meetings/ "$MAIN_CACHE/"
-          echo "MAIN_RECORDINGS_CACHE=$MAIN_CACHE" >> $GITHUB_ENV
+          set -euo pipefail
+          if rclone ls "codemyriad:cassini-processed/${ENCODED_BRANCH}/meetings/" >/dev/null 2>&1; then
+            rclone copy "codemyriad:cassini-processed/${ENCODED_BRANCH}/meetings/" "$SOURCE_CACHE/"
+            if find "$SOURCE_CACHE" -mindepth 1 -maxdepth 1 | grep -q .; then
+              echo "SOURCE_RECORDINGS_BASE_URL=https://view.meetings.codemyriad.io/${ENCODED_BRANCH}/" >> "$GITHUB_ENV"
+              exit 0
+            fi
+          fi
+          rclone copy "codemyriad:cassini-processed/main/meetings/" "$SOURCE_CACHE/"
+          echo "SOURCE_RECORDINGS_BASE_URL=https://view.meetings.codemyriad.io/main/" >> "$GITHUB_ENV"
 
-      - name: Build and export viewer
+      - name: Download raw recordings
+        if: env.SHOULD_PROCESS == 'true'
+        run: |
+          mkdir -p "$RAW_DIR" "$PROC_DIR"
+          rclone copy codemyriad:cassini-raw/daily/ "$RAW_DIR/"
+
+      - name: Build cassini from checked-out commit
+        if: env.SHOULD_PROCESS == 'true'
+        run: |
+          mkdir -p "$CASSINI_BUILD_DIR"
+          go -C cassini-go-recorder build \
+            -o "$CASSINI_BUILD_DIR/cassini" \
+            ./cmd/cassini
+
+      - name: Process recordings with GPU
+        if: env.SHOULD_PROCESS == 'true'
+        env:
+          DEVICE: cuda
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          RECORDINGS_DIR="$RAW_DIR" \
+          PROCESSED_DIR="$PROC_DIR" \
+          CASSINI_BIN="$CASSINI_BUILD_DIR/cassini" \
+          CASSINI_CACHE_ROOT="$CASSINI_CACHE_ROOT" \
+          bash ops/process-recordings.sh
+
+      - name: Export branch preview bundle
         working-directory: cassini-viewer
         run: |
           npm ci
+          if [ "$SHOULD_PROCESS" = "true" ]; then
+            SOURCE_DIR="$PROC_DIR"
+            RECORDINGS_BASE_URL="https://view.meetings.codemyriad.io/${ENCODED_BRANCH}/"
+          else
+            SOURCE_DIR="$SOURCE_CACHE"
+            RECORDINGS_BASE_URL="$SOURCE_RECORDINGS_BASE_URL"
+          fi
           npm run export:meetings -- \
-            --source-dir "$MAIN_RECORDINGS_CACHE" \
+            --source-dir "$SOURCE_DIR" \
             --output-dir "$EXPORT_DIR" \
-            --recordings-base-url https://view.meetings.codemyriad.io/main/
+            --recordings-base-url "$RECORDINGS_BASE_URL"
 
-      - name: Upload viewer
+      - name: Publish branch preview bundle
         run: |
           rclone copy "${EXPORT_DIR}/" \
             "codemyriad:cassini-processed/${ENCODED_BRANCH}/"
+          if [ "$SHOULD_PROCESS" = "true" ]; then
+            HASH=$(git rev-parse HEAD:cassini-go-recorder HEAD:ops/process-recordings.sh HEAD:bin/cassini | sha256sum | cut -c1-16)
+            echo "$HASH" | rclone rcat "codemyriad:cassini-processed/${ENCODED_BRANCH}/.processing-hash"
+          fi
 
-      # ── Cleanup ─────────────────────────────────────────────────────────────
       - name: Cleanup temp files
         if: always()
         run: |
           rm -rf /tmp/cassini-export-${{ github.run_id }}
-          rm -rf /tmp/cassini-main-${{ github.run_id }}
+          rm -rf /tmp/cassini-build-${{ github.run_id }}
+          rm -rf /tmp/cassini-source-${{ github.run_id }}
