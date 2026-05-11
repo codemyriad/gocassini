@@ -178,6 +178,20 @@ func TestDefaultBuildConfigSummaryEnabledByDefault(t *testing.T) {
 	}
 }
 
+func TestDefaultBuildConfigSummaryModelOverride(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("LLM_MODEL", "cleanup-model")
+	t.Setenv("SUMMARY_MODEL", "summary-model")
+
+	cfg := DefaultBuildConfig()
+	if cfg.LLM.Model != "cleanup-model" {
+		t.Fatalf("expected LLM model override to apply to readable cleanup, got %q", cfg.LLM.Model)
+	}
+	if cfg.SummaryLLM.Model != "summary-model" {
+		t.Fatalf("expected SUMMARY_MODEL override to apply to summary, got %q", cfg.SummaryLLM.Model)
+	}
+}
+
 func TestStripMarkdownFencesUnwrapsOuterFence(t *testing.T) {
 	cases := map[string]string{
 		"```markdown\n# Hi\n```":   "# Hi",

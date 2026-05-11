@@ -280,7 +280,7 @@ func TestWriteManifestIncludesRuntimeSummaryFields(t *testing.T) {
 		},
 	}
 
-	if err := WriteManifest(path, "source.mkv", 1200, streams, segments, ModelParakeet06B, "openai/gpt-4o-mini", true); err != nil {
+	if err := WriteManifest(path, "source.mkv", 1200, streams, segments, ModelParakeet06B, "openai/gpt-4o-mini", true, "", false); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 
