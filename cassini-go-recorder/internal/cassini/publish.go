@@ -148,6 +148,13 @@ func stagePublishInput(inputPath string) (string, string, error) {
 			})
 			return nil
 		}
+		if err := validateReadyMeetingBundleContents(bundle.RootDir); err != nil {
+			skipped = append(skipped, publishSkippedBundle{
+				Path:   bundle.RootDir,
+				Reason: fmt.Sprintf("invalid ready bundle: %v", err),
+			})
+			return nil
+		}
 		sourceDir := bundle.RootDir
 		name := filepath.Base(sourceDir)
 		trimmed := strings.TrimSuffix(name, ".meeting")

@@ -142,7 +142,7 @@ fi
 "$SCRIPT_DIR/verify-av-drift.sh" \
   --input "$FINAL_OUTPUT" \
   --tolerance 0.80 \
-  --min-elapsed 5
+  --min-elapsed 15
 
 STREAMS_DIR="$(cassini_streams_dir_from_mkv "$FINAL_OUTPUT" || true)"
 if [[ -z "$STREAMS_DIR" || ! -d "$STREAMS_DIR" ]]; then

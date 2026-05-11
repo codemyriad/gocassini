@@ -817,6 +817,8 @@ func TestCreateJobReturnsBusyWithoutCreatingRow(t *testing.T) {
 	}
 	close(block)
 	<-done
+	// Let the async build/publish pipeline drain before TempDir cleanup runs.
+	_ = waitForJobState(t, rt.store, jobs[0].ID, "succeeded")
 }
 
 func TestBuildFailurePersistsLightweightErrorDetail(t *testing.T) {
@@ -900,6 +902,99 @@ func TestPublishFailurePersistsLightweightErrorDetail(t *testing.T) {
 	}
 	if job.Error == nil || *job.Error != "publish stage publish: exporter exploded" {
 		t.Fatalf("unexpected error detail: %#v", job.Error)
+	}
+}
+
+func TestCreateJobPublishesJobCreatedEvent(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	events, unsubscribe := rt.events.Subscribe()
+	defer unsubscribe()
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/events"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("unexpected status: got %d want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case event := <-events:
+			if event.Type != "job.created" || event.JobID != resp.ID {
+				continue
+			}
+			if event.Job.ID != resp.ID {
+				t.Fatalf("unexpected job id in event: got %s want %s", event.Job.ID, resp.ID)
+			}
+			if event.Attempt == nil || event.Attempt.AttemptNumber != 1 {
+				t.Fatalf("expected attempt 1 in event, got %#v", event.Attempt)
+			}
+			return
+		case <-deadline:
+			t.Fatal("timed out waiting for job.created event")
+		}
+	}
+}
+
+func TestEventsHandlerStreamsPublishedEvents(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan struct{})
+	req := httptest.NewRequest(http.MethodGet, "/events", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	go func() {
+		rt.eventsHandler(rec, req)
+		close(finished)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	rt.publishStateChangeEvent(StateChangeEvent{
+		Type:  "job.updated",
+		JobID: "job-123",
+		At:    nowUTCString(),
+		Job: Job{
+			ID:        "job-123",
+			Stage:     "record",
+			State:     "running",
+			CreatedAt: nowUTCString(),
+			UpdatedAt: nowUTCString(),
+		},
+	})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(rec.Body.String(), "event: job.updated") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case <-finished:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for events handler to finish")
+	}
+
+	if got := rec.Header().Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("unexpected content type: got %q want %q", got, "text/event-stream")
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: job.updated") {
+		t.Fatalf("expected job.updated event in body, got %q", body)
+	}
+	if !strings.Contains(body, `"job_id":"job-123"`) {
+		t.Fatalf("expected job id in body, got %q", body)
 	}
 }
 

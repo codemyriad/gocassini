@@ -260,66 +260,12 @@ func writeTranscriptWithHash(path string, version string, streams []AudioStream,
 		return err
 	}
 
-	// Build the file the normal way, then patch the sha256 in via the raw struct.
-	// WriteTranscriptJSON doesn't accept a sha256 param, so we build the struct manually.
-	type wordEntry struct {
-		Text    string `json:"text"`
-		StartMS int64  `json:"startMs"`
-		EndMS   int64  `json:"endMs"`
+	switch version {
+	case transcriptWordsVersion:
+		return writeJSON(path, buildTranscriptFile(streams, segments, audioDurationMS, sha256hex))
+	case readableTranscriptVersion:
+		return writeJSON(path, buildReadableTranscriptFile(streams, segments, audioDurationMS, sha256hex))
+	default:
+		return fmt.Errorf("unsupported transcript version %q", version)
 	}
-	type segmentEntry struct {
-		Speaker string      `json:"speaker"`
-		StartMS int64       `json:"startMs"`
-		EndMS   int64       `json:"endMs"`
-		Text    string      `json:"text"`
-		Words   []wordEntry `json:"words"`
-	}
-	type speakerEntry struct {
-		ID    string `json:"id"`
-		Label string `json:"label"`
-	}
-	type mediaEntry struct {
-		Src        string `json:"src"`
-		DurationMS int64  `json:"durationMs"`
-		SHA256     string `json:"sha256,omitempty"`
-	}
-	type doc struct {
-		Version  string         `json:"version"`
-		Media    mediaEntry     `json:"media"`
-		Speakers []speakerEntry `json:"speakers"`
-		Segments []segmentEntry `json:"segments"`
-	}
-
-	seen := map[string]bool{}
-	var speakers []speakerEntry
-	for _, seg := range segments {
-		if !seen[seg.SpeakerID] {
-			seen[seg.SpeakerID] = true
-			label := labelForSpeaker(seg.SpeakerID, streams)
-			speakers = append(speakers, speakerEntry{ID: seg.SpeakerID, Label: label})
-		}
-	}
-
-	var segs []segmentEntry
-	for _, seg := range segments {
-		ws := make([]wordEntry, len(seg.Words))
-		for i, w := range seg.Words {
-			ws[i] = wordEntry{Text: w.Text, StartMS: w.StartMS, EndMS: w.EndMS}
-		}
-		segs = append(segs, segmentEntry{
-			Speaker: seg.SpeakerID,
-			StartMS: seg.StartMS,
-			EndMS:   seg.EndMS,
-			Text:    seg.Text,
-			Words:   ws,
-		})
-	}
-
-	d := doc{
-		Version:  version,
-		Media:    mediaEntry{Src: "meeting.webm", DurationMS: audioDurationMS, SHA256: sha256hex},
-		Speakers: speakers,
-		Segments: segs,
-	}
-	return writeJSON(path, d)
 }

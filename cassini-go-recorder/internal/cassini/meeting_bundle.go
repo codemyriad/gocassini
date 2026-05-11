@@ -57,6 +57,10 @@ func PrepareMeetingBundle(outDir string) (MeetingBundle, error) {
 }
 
 func FinalizeMeetingBundle(bundle MeetingBundle, meta MeetingBundleManifest) error {
+	if err := validateReadyMeetingBundleContents(bundle.RootDir); err != nil {
+		return fmt.Errorf("validate ready meeting bundle: %w", err)
+	}
+
 	meta.State = bundleStateReady
 	meta.Stage = "ready"
 	meta.Error = ""
@@ -126,6 +130,42 @@ func maybeAddMeetingFile(files map[string]string, rootDir string, key string, na
 	if _, err := os.Stat(filepath.Join(rootDir, name)); err == nil {
 		files[key] = name
 	}
+}
+
+func validateReadyMeetingBundleContents(rootDir string) error {
+	requiredFiles := []string{"meeting.webm", "transcript.words.v1.json", "manifest.json"}
+	missing := make([]string, 0, len(requiredFiles))
+	for _, name := range requiredFiles {
+		if _, err := os.Stat(filepath.Join(rootDir, name)); err != nil {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required files: %s", strings.Join(missing, ", "))
+	}
+
+	type artifactManifest struct {
+		Files map[string]string `json:"files"`
+	}
+	manifestPath := filepath.Join(rootDir, "manifest.json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return fmt.Errorf("read artifact manifest: %w", err)
+	}
+	var manifest artifactManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return fmt.Errorf("parse artifact manifest: %w", err)
+	}
+	for key, relativePath := range manifest.Files {
+		relativePath = strings.TrimSpace(relativePath)
+		if relativePath == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(rootDir, relativePath)); err != nil {
+			return fmt.Errorf("artifact manifest declares missing %s file: %s", key, relativePath)
+		}
+	}
+	return nil
 }
 
 func UpdateMeetingBundleStatus(bundle MeetingBundle, state string, stage string, errText string) error {

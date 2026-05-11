@@ -172,13 +172,134 @@ func TestWriteReadableArtifactsWritesReadableTranscriptVersion(t *testing.T) {
 		t.Fatalf("read readable transcript: %v", err)
 	}
 
-	var payload struct {
-		Version string `json:"version"`
-	}
+	var payload map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatalf("parse readable transcript: %v", err)
 	}
-	if payload.Version != "transcript.readable.v1" {
-		t.Fatalf("expected readable transcript version, got %q", payload.Version)
+	if got := payload["version"]; got != readableTranscriptVersion {
+		t.Fatalf("expected readable transcript version, got %#v", got)
+	}
+	if got := payload["sourceTranscriptVersion"]; got != transcriptWordsVersion {
+		t.Fatalf("expected source transcript version %q, got %#v", transcriptWordsVersion, got)
+	}
+	segmentsValue, ok := payload["segments"].([]any)
+	if !ok || len(segmentsValue) != 1 {
+		t.Fatalf("expected one readable segment, got %#v", payload["segments"])
+	}
+	firstSegment, ok := segmentsValue[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected object readable segment, got %#v", segmentsValue[0])
+	}
+	if got := firstSegment["id"]; got != "r_seg_000000" {
+		t.Fatalf("expected readable segment id r_seg_000000, got %#v", got)
+	}
+	sourceIDs, ok := firstSegment["sourceSegmentIds"].([]any)
+	if !ok || len(sourceIDs) != 1 || sourceIDs[0] != "seg_000000" {
+		t.Fatalf("expected readable sourceSegmentIds [seg_000000], got %#v", firstSegment["sourceSegmentIds"])
+	}
+	if _, ok := firstSegment["words"]; ok {
+		t.Fatalf("expected readable segment to omit words, got %#v", firstSegment["words"])
+	}
+}
+
+func TestWriteTranscriptWithHashWritesViewerCompatibleTranscriptContract(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "transcript.words.v1.json")
+	streams := []AudioStream{{SpeakerID: "spk_alex", SpeakerLabel: "Alex"}}
+	segments := []Segment{
+		{
+			SpeakerID: "spk_alex",
+			StartMS:   0,
+			EndMS:     900,
+			Text:      "hello there",
+			Words: []Word{
+				{Text: "hello", StartMS: 0, EndMS: 400},
+				{Text: "there", StartMS: 450, EndMS: 900},
+			},
+		},
+	}
+
+	if err := writeTranscriptWithHash(path, transcriptWordsVersion, streams, segments, 900, "abc123"); err != nil {
+		t.Fatalf("write transcript with hash: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+
+	var payload struct {
+		Version string `json:"version"`
+		Media   struct {
+			SHA256 string `json:"sha256"`
+		} `json:"media"`
+		Segments []struct {
+			ID    string `json:"id"`
+			Words []struct {
+				ID string `json:"id"`
+			} `json:"words"`
+		} `json:"segments"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("parse transcript: %v", err)
+	}
+	if payload.Version != transcriptWordsVersion {
+		t.Fatalf("expected transcript version %q, got %q", transcriptWordsVersion, payload.Version)
+	}
+	if payload.Media.SHA256 != "abc123" {
+		t.Fatalf("expected transcript sha256 abc123, got %q", payload.Media.SHA256)
+	}
+	if len(payload.Segments) != 1 {
+		t.Fatalf("expected one transcript segment, got %d", len(payload.Segments))
+	}
+	if payload.Segments[0].ID != "seg_000000" {
+		t.Fatalf("expected transcript segment id seg_000000, got %q", payload.Segments[0].ID)
+	}
+	if len(payload.Segments[0].Words) != 2 {
+		t.Fatalf("expected two transcript words, got %d", len(payload.Segments[0].Words))
+	}
+	if payload.Segments[0].Words[0].ID != "seg_000000:w_0" {
+		t.Fatalf("expected first transcript word id seg_000000:w_0, got %q", payload.Segments[0].Words[0].ID)
+	}
+}
+
+func TestWriteManifestIncludesRuntimeSummaryFields(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "manifest.json")
+	streams := []AudioStream{{SpeakerID: "spk_alex", SpeakerLabel: "Alex"}}
+	segments := []Segment{
+		{
+			SpeakerID: "spk_alex",
+			StartMS:   0,
+			EndMS:     900,
+			Text:      "hello there",
+			Words: []Word{
+				{Text: "hello", StartMS: 0, EndMS: 400},
+				{Text: "there", StartMS: 450, EndMS: 900},
+			},
+		},
+	}
+
+	if err := WriteManifest(path, "source.mkv", 1200, streams, segments, ModelParakeet06B, "openai/gpt-4o-mini", true); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+
+	var payload struct {
+		SegmentCount     int   `json:"segmentCount"`
+		DigestDurationMS int64 `json:"digestDurationMs"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	if payload.SegmentCount != 1 {
+		t.Fatalf("expected segmentCount 1, got %d", payload.SegmentCount)
+	}
+	if payload.DigestDurationMS != 1200 {
+		t.Fatalf("expected digestDurationMs 1200, got %d", payload.DigestDurationMS)
 	}
 }

@@ -64,6 +64,6 @@ log "Running recorder + publisher end-to-end"
 "$SCRIPT_DIR/verify-av-drift.sh" \
   --input "$FINAL_OUTPUT" \
   --tolerance 0.80 \
-  --min-elapsed 5
+  --min-elapsed 15
 
 log "CI integration run complete"
