@@ -116,7 +116,7 @@ jobs:
           echo "PROC_DIR=${PREVIEW_ROOT}/${ENCODED_BRANCH}/processed" >> "$GITHUB_ENV"
           echo "CASSINI_CACHE_ROOT=${PREVIEW_ROOT}/${ENCODED_BRANCH}/.cache" >> "$GITHUB_ENV"
           echo "SOURCE_CACHE=/tmp/cassini-source-${{ github.run_id }}" >> "$GITHUB_ENV"
-          echo "SOURCE_RECORDINGS_BASE_URL=https://view.meetings.codemyriad.io/${ENCODED_BRANCH}/" >> "$GITHUB_ENV"
+          echo "SOURCE_RECORDINGS_BASE_URL=https://view.meetings.codemyriad.io/main/" >> "$GITHUB_ENV"
           echo "EXPORT_DIR=/tmp/cassini-export-${{ github.run_id }}" >> "$GITHUB_ENV"
           echo "CASSINI_BUILD_DIR=/tmp/cassini-build-${{ github.run_id }}" >> "$GITHUB_ENV"
 
@@ -138,19 +138,11 @@ jobs:
           fi
           mkdir -p "$RAW_DIR" "$PROC_DIR" "$CASSINI_CACHE_ROOT" "$SOURCE_CACHE"
 
-      - name: Resolve artifact source for UI-only preview
+      - name: Download main artifacts for UI-only preview
         if: env.SHOULD_PROCESS != 'true'
         run: |
           set -euo pipefail
-          if rclone ls "codemyriad:cassini-processed/${ENCODED_BRANCH}/meetings/" >/dev/null 2>&1; then
-            rclone copy "codemyriad:cassini-processed/${ENCODED_BRANCH}/meetings/" "$SOURCE_CACHE/"
-            if find "$SOURCE_CACHE" -mindepth 1 -maxdepth 1 | grep -q .; then
-              echo "SOURCE_RECORDINGS_BASE_URL=https://view.meetings.codemyriad.io/${ENCODED_BRANCH}/" >> "$GITHUB_ENV"
-              exit 0
-            fi
-          fi
           rclone copy "codemyriad:cassini-processed/main/meetings/" "$SOURCE_CACHE/"
-          echo "SOURCE_RECORDINGS_BASE_URL=https://view.meetings.codemyriad.io/main/" >> "$GITHUB_ENV"
 
       - name: Download raw recordings
         if: env.SHOULD_PROCESS == 'true'
@@ -177,6 +169,12 @@ jobs:
           CASSINI_BIN="$CASSINI_BUILD_DIR/cassini" \
           CASSINI_CACHE_ROOT="$CASSINI_CACHE_ROOT" \
           bash ops/process-recordings.sh
+
+      - name: Upload branch meeting artifacts
+        if: env.SHOULD_PROCESS == 'true'
+        run: |
+          rclone copy "${PROC_DIR}/" \
+            "codemyriad:cassini-processed/${ENCODED_BRANCH}/meetings/"
 
       - name: Export branch preview bundle
         working-directory: cassini-viewer
