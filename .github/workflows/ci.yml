@@ -68,9 +68,6 @@ jobs:
       - name: Run recorder integration test against local Nextcloud
         env:
           SPREED_PROFILE: full
-          REC_DURATION: 22
-          PUB_DURATION: 18
-          PUB_USERS: 1
           NEXTCLOUD_URL: "http://127.0.0.1:28080"
           SIGNALING_URL: "http://127.0.0.1:28082"
           BOT_PASSWORD: "ci-bot-password"
