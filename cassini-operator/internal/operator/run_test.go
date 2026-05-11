@@ -817,6 +817,8 @@ func TestCreateJobReturnsBusyWithoutCreatingRow(t *testing.T) {
 	}
 	close(block)
 	<-done
+	// Let the async build/publish pipeline drain before TempDir cleanup runs.
+	_ = waitForJobState(t, rt.store, jobs[0].ID, "succeeded")
 }
 
 func TestBuildFailurePersistsLightweightErrorDetail(t *testing.T) {

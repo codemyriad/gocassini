@@ -20,6 +20,9 @@ It does not:
 
 - `bin/export-static-meetings.sh`: package one or more existing artifact
   directories into a static meeting library using the viewer build.
+- `bin/merge-published-sites.sh`: merge two existing published site roots into
+  one combined site, preserving the viewer shell and merging `catalog.json` plus
+  referenced meeting artifacts.
 
 ## Typical flows
 
@@ -38,6 +41,15 @@ Publish an existing artifact library:
 ./cassini-publisher/bin/export-static-meetings.sh \
   --source-dir /path/to/meeting-artifacts \
   --output-dir /tmp/static-meetings
+```
+
+Merge two published sites into one combined output:
+
+```bash
+./cassini-publisher/bin/merge-published-sites.sh \
+  --primary-dir /path/to/site-a \
+  --secondary-dir /path/to/site-b \
+  --output-dir /tmp/merged-site
 ```
 
 ## Notes

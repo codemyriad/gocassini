@@ -13,11 +13,24 @@ import (
 
 // --- transcript.words.v1.json ---
 
+const (
+	transcriptWordsVersion    = "transcript.words.v1"
+	readableTranscriptVersion = "transcript.readable.v1"
+)
+
 type transcriptFile struct {
-	Version string          `json:"version"`
-	Media   transcriptMedia `json:"media"`
-	Speakers []speakerEntry `json:"speakers"`
-	Segments []segmentEntry `json:"segments"`
+	Version  string                   `json:"version"`
+	Media    transcriptMedia          `json:"media"`
+	Speakers []speakerEntry           `json:"speakers"`
+	Segments []transcriptSegmentEntry `json:"segments"`
+}
+
+type readableTranscriptFile struct {
+	Version                 string                 `json:"version"`
+	Media                   transcriptMedia        `json:"media"`
+	Speakers                []speakerEntry         `json:"speakers"`
+	SourceTranscriptVersion string                 `json:"sourceTranscriptVersion,omitempty"`
+	Segments                []readableSegmentEntry `json:"segments"`
 }
 
 type transcriptMedia struct {
@@ -31,15 +44,26 @@ type speakerEntry struct {
 	Label string `json:"label"`
 }
 
-type segmentEntry struct {
-	Speaker string      `json:"speaker"`
+type transcriptSegmentEntry struct {
+	ID      string      `json:"id"`
+	Speaker string      `json:"speaker,omitempty"`
 	StartMS int64       `json:"startMs"`
 	EndMS   int64       `json:"endMs"`
 	Text    string      `json:"text"`
 	Words   []wordEntry `json:"words"`
 }
 
+type readableSegmentEntry struct {
+	ID               string   `json:"id"`
+	Speaker          string   `json:"speaker,omitempty"`
+	StartMS          int64    `json:"startMs"`
+	EndMS            int64    `json:"endMs"`
+	Text             string   `json:"text"`
+	SourceSegmentIDs []string `json:"sourceSegmentIds"`
+}
+
 type wordEntry struct {
+	ID      string `json:"id"`
 	Text    string `json:"text"`
 	StartMS int64  `json:"startMs"`
 	EndMS   int64  `json:"endMs"`
@@ -50,46 +74,101 @@ func WriteTranscriptJSON(path string, streams []AudioStream, segments []Segment,
 	if err := ValidateSegments(segments); err != nil {
 		return err
 	}
+	return writeJSON(path, buildTranscriptFile(streams, segments, audioDurationMS, ""))
+}
 
+// WriteReadableTranscriptJSON writes transcript.readable.v1.json using the
+// readable transcript contract expected by the viewer.
+func WriteReadableTranscriptJSON(path string, streams []AudioStream, segments []Segment, audioDurationMS int64) error {
+	if err := ValidateSegments(segments); err != nil {
+		return err
+	}
+	return writeJSON(path, buildReadableTranscriptFile(streams, segments, audioDurationMS, ""))
+}
+
+func buildTranscriptFile(streams []AudioStream, segments []Segment, audioDurationMS int64, sha256hex string) transcriptFile {
+	return transcriptFile{
+		Version:  transcriptWordsVersion,
+		Media:    transcriptMedia{Src: "meeting.webm", DurationMS: audioDurationMS, SHA256: sha256hex},
+		Speakers: buildSpeakerEntries(streams, segments),
+		Segments: buildTranscriptSegmentEntries(segments),
+	}
+}
+
+func buildReadableTranscriptFile(streams []AudioStream, segments []Segment, audioDurationMS int64, sha256hex string) readableTranscriptFile {
+	return readableTranscriptFile{
+		Version:                 readableTranscriptVersion,
+		Media:                   transcriptMedia{Src: "meeting.webm", DurationMS: audioDurationMS, SHA256: sha256hex},
+		Speakers:                buildSpeakerEntries(streams, segments),
+		SourceTranscriptVersion: transcriptWordsVersion,
+		Segments:                buildReadableSegmentEntries(segments),
+	}
+}
+
+func buildSpeakerEntries(streams []AudioStream, segments []Segment) []speakerEntry {
 	var speakers []speakerEntry
 	seen := map[string]bool{}
 	for _, seg := range segments {
-		if !seen[seg.SpeakerID] {
-			seen[seg.SpeakerID] = true
-			label := labelForSpeaker(seg.SpeakerID, streams)
-			speakers = append(speakers, speakerEntry{ID: seg.SpeakerID, Label: label})
+		if seg.SpeakerID == "" || seen[seg.SpeakerID] {
+			continue
 		}
+		seen[seg.SpeakerID] = true
+		label := labelForSpeaker(seg.SpeakerID, streams)
+		speakers = append(speakers, speakerEntry{ID: seg.SpeakerID, Label: label})
 	}
+	return speakers
+}
 
-	var entries []segmentEntry
-	for _, seg := range segments {
+func buildTranscriptSegmentEntries(segments []Segment) []transcriptSegmentEntry {
+	entries := make([]transcriptSegmentEntry, len(segments))
+	for segIndex, seg := range segments {
+		segmentID := transcriptSegmentID(segIndex)
 		words := make([]wordEntry, len(seg.Words))
-		for i, w := range seg.Words {
-			words[i] = wordEntry{Text: w.Text, StartMS: w.StartMS, EndMS: w.EndMS}
+		for wordIndex, w := range seg.Words {
+			words[wordIndex] = wordEntry{
+				ID:      transcriptWordID(segmentID, wordIndex),
+				Text:    w.Text,
+				StartMS: w.StartMS,
+				EndMS:   w.EndMS,
+			}
 		}
-		entries = append(entries, segmentEntry{
+		entries[segIndex] = transcriptSegmentEntry{
+			ID:      segmentID,
 			Speaker: seg.SpeakerID,
 			StartMS: seg.StartMS,
 			EndMS:   seg.EndMS,
 			Text:    seg.Text,
 			Words:   words,
-		})
+		}
 	}
-
-	doc := transcriptFile{
-		Version:  "transcript.words.v1",
-		Media:    transcriptMedia{Src: "meeting.webm", DurationMS: audioDurationMS},
-		Speakers: speakers,
-		Segments: entries,
-	}
-	return writeJSON(path, doc)
+	return entries
 }
 
-// WriteReadableTranscriptJSON writes transcript.readable.v1.json with the
-// same structure but cleaned text (words still have original timestamps).
-func WriteReadableTranscriptJSON(path string, streams []AudioStream, segments []Segment, audioDurationMS int64) error {
-	// Reuse the same format; readable segments have cleaned .Text but original .Words timestamps.
-	return WriteTranscriptJSON(path, streams, segments, audioDurationMS)
+func buildReadableSegmentEntries(segments []Segment) []readableSegmentEntry {
+	entries := make([]readableSegmentEntry, len(segments))
+	for segIndex, seg := range segments {
+		entries[segIndex] = readableSegmentEntry{
+			ID:               readableSegmentID(segIndex),
+			Speaker:          seg.SpeakerID,
+			StartMS:          seg.StartMS,
+			EndMS:            seg.EndMS,
+			Text:             seg.Text,
+			SourceSegmentIDs: []string{transcriptSegmentID(segIndex)},
+		}
+	}
+	return entries
+}
+
+func transcriptSegmentID(index int) string {
+	return fmt.Sprintf("seg_%06d", index)
+}
+
+func readableSegmentID(index int) string {
+	return fmt.Sprintf("r_seg_%06d", index)
+}
+
+func transcriptWordID(segmentID string, wordIndex int) string {
+	return fmt.Sprintf("%s:w_%d", segmentID, wordIndex)
 }
 
 // --- captions.vtt ---
@@ -118,14 +197,16 @@ func vttTime(ms int64) string {
 // --- manifest.json ---
 
 type artifactManifest struct {
-	Kind         string          `json:"kind"`
-	Version      string          `json:"version"`
-	GeneratedAt  string          `json:"generatedAt"`
-	Source       artifactSource  `json:"source"`
-	Files        artifactFiles   `json:"files"`
-	SpeakerCount int             `json:"speakerCount"`
-	WordCount    int             `json:"wordCount"`
-	Provenance   *provenanceInfo `json:"provenance,omitempty"`
+	Kind             string          `json:"kind"`
+	Version          string          `json:"version"`
+	GeneratedAt      string          `json:"generatedAt"`
+	Source           artifactSource  `json:"source"`
+	Files            artifactFiles   `json:"files"`
+	SpeakerCount     int             `json:"speakerCount"`
+	SegmentCount     int             `json:"segmentCount,omitempty"`
+	DigestDurationMS int64           `json:"digestDurationMs,omitempty"`
+	WordCount        int             `json:"wordCount"`
+	Provenance       *provenanceInfo `json:"provenance,omitempty"`
 }
 
 type artifactSource struct {
@@ -182,18 +263,20 @@ func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []Audi
 	}
 
 	doc := artifactManifest{
-		Kind:         "cassini.meeting-artifact.v1",
-		Version:      "1",
-		GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
+		Kind:        "cassini.meeting-artifact.v1",
+		Version:     "1",
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Source: artifactSource{
 			Basename:        srcBasename,
 			DurationMS:      srcDurationMS,
 			RecordedAtLocal: meetingtime.InferRecordedAtLocal(srcBasename),
 		},
-		Files:        files,
-		SpeakerCount: len(streams),
-		WordCount:    wordCount,
-		Provenance:   prov,
+		Files:            files,
+		SpeakerCount:     len(streams),
+		SegmentCount:     len(segments),
+		DigestDurationMS: srcDurationMS,
+		WordCount:        wordCount,
+		Provenance:       prov,
 	}
 	return writeJSON(path, doc)
 }
