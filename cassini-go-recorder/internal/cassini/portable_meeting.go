@@ -3,6 +3,7 @@ package cassini
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -29,6 +30,7 @@ type portableMeetingSource struct {
 	Transcript         portableTranscriptArtifact
 	ReadableTranscript map[string]any
 	DisplayTranscript  map[string]any
+	SummaryMarkdown    []byte
 	Artifact           portableMeetingArtifact
 }
 
@@ -45,6 +47,7 @@ type portableMeetingArtifact struct {
 		Transcript         string `json:"transcript"`
 		ReadableTranscript string `json:"readableTranscript"`
 		DisplayTranscript  string `json:"displayTranscript"`
+		Summary            string `json:"summary"`
 	} `json:"files"`
 	SpeakerCount int `json:"speakerCount"`
 	WordCount    int `json:"wordCount"`
@@ -262,6 +265,10 @@ func loadPortableMeetingSource(meetingDir string) (portableMeetingSource, error)
 	if err != nil {
 		return portableMeetingSource{}, err
 	}
+	summaryMarkdown, err := loadPortableSummaryMarkdown(rootDir, artifact.Files.Summary)
+	if err != nil {
+		return portableMeetingSource{}, err
+	}
 
 	return portableMeetingSource{
 		MeetingDir:         rootDir,
@@ -269,8 +276,27 @@ func loadPortableMeetingSource(meetingDir string) (portableMeetingSource, error)
 		Transcript:         transcript,
 		ReadableTranscript: readableTranscript,
 		DisplayTranscript:  displayTranscript,
+		SummaryMarkdown:    summaryMarkdown,
 		Artifact:           artifact,
 	}, nil
+}
+
+func loadPortableSummaryMarkdown(rootDir string, artifactPath string) ([]byte, error) {
+	name := strings.TrimSpace(artifactPath)
+	if name == "" {
+		// No summary listed in manifest.json. Don't fall back to a default
+		// path: absence of the manifest entry is the signal that the artifact
+		// directory was built without summaries.
+		return nil, nil
+	}
+	raw, err := os.ReadFile(filepath.Join(rootDir, name))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read summary artifact: %w", err)
+	}
+	return raw, nil
 }
 
 func loadPortableReadableTranscript(rootDir string, artifactPath string) (map[string]any, error) {
@@ -432,7 +458,28 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 	if source.DisplayTranscript != nil {
 		manifest.DisplayTranscript = source.DisplayTranscript
 	}
+	if len(source.SummaryMarkdown) > 0 {
+		manifest.Summary = buildPortableSummaryMetadata(source.Artifact.Provenance)
+		manifest.Attachments = append(manifest.Attachments, map[string]any{
+			"name":          "summary.md",
+			"mime":          "text/markdown",
+			"contentBase64": base64.StdEncoding.EncodeToString(source.SummaryMarkdown),
+		})
+	}
 	return manifest, nil
+}
+
+func buildPortableSummaryMetadata(prov *portable.Provenance) map[string]any {
+	meta := map[string]any{
+		"format":          "markdown",
+		"templateVersion": "v0",
+	}
+	if prov != nil && prov.MeetingSummary != nil {
+		if model := strings.TrimSpace(prov.MeetingSummary.Model); model != "" {
+			meta["model"] = model
+		}
+	}
+	return meta
 }
 
 func flattenPortableTranscriptItems(transcript portableTranscriptArtifact) []portable.TranscriptItem {

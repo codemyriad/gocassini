@@ -21,8 +21,12 @@ func TestWriteSummaryArtifactSkipsWhenLLMNotConfigured(t *testing.T) {
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
 	var stdout bytes.Buffer
-	if err := writeSummaryArtifact(tmp, nil, sampleSegments(), cfg, &stdout); err != nil {
+	hasSummary, err := writeSummaryArtifact(tmp, nil, sampleSegments(), cfg, &stdout)
+	if err != nil {
 		t.Fatalf("expected no error when summary disabled, got %v", err)
+	}
+	if hasSummary {
+		t.Fatal("expected hasSummary=false when summary disabled")
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "summary.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected no summary.md when summary disabled, stat err=%v", err)
@@ -49,8 +53,12 @@ func TestWriteSummaryArtifactWarnsAndSkipsOnError(t *testing.T) {
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
 	var stdout bytes.Buffer
-	if err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &stdout); err != nil {
+	hasSummary, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &stdout)
+	if err != nil {
 		t.Fatalf("expected summary failure to be swallowed, got %v", err)
+	}
+	if hasSummary {
+		t.Fatal("expected hasSummary=false on warn-and-skip path")
 	}
 	if _, err := os.Stat(filepath.Join(tmp, "summary.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected no summary.md after failure, stat err=%v", err)
@@ -77,8 +85,12 @@ func TestWriteSummaryArtifactWritesSummaryMd(t *testing.T) {
 	}
 	t.Cleanup(func() { buildMeetingSummaryFn = prev })
 
-	if err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &bytes.Buffer{}); err != nil {
+	hasSummary, err := writeSummaryArtifact(tmp, sampleStreams(), sampleSegments(), cfg, &bytes.Buffer{})
+	if err != nil {
 		t.Fatalf("expected success, got %v", err)
+	}
+	if !hasSummary {
+		t.Fatal("expected hasSummary=true after writing summary.md")
 	}
 	got, err := os.ReadFile(filepath.Join(tmp, "summary.md"))
 	if err != nil {
@@ -138,6 +150,45 @@ func TestFormatTranscriptForSummaryUsesLabels(t *testing.T) {
 	want := "Alex: hello there\nChris: hi back\n"
 	if got != want {
 		t.Fatalf("transcript formatting mismatch\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
+func TestDefaultBuildConfigSummaryDisabledToggle(t *testing.T) {
+	// Both LLM and SummaryLLM would be configured from OPENROUTER_API_KEY alone,
+	// but CASSINI_SUMMARY_DISABLED should disable the summary side independently.
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("CASSINI_SUMMARY_DISABLED", "1")
+
+	cfg := DefaultBuildConfig()
+	if !cfg.LLM.IsConfigured() {
+		t.Error("expected LLM to remain configured when only summary is disabled")
+	}
+	if cfg.SummaryLLM.IsConfigured() {
+		t.Error("expected SummaryLLM to be unconfigured when CASSINI_SUMMARY_DISABLED=1")
+	}
+}
+
+func TestDefaultBuildConfigSummaryEnabledByDefault(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("CASSINI_SUMMARY_DISABLED", "")
+
+	cfg := DefaultBuildConfig()
+	if !cfg.SummaryLLM.IsConfigured() {
+		t.Error("expected SummaryLLM to be configured when CASSINI_SUMMARY_DISABLED is unset")
+	}
+}
+
+func TestDefaultBuildConfigSummaryModelOverride(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	t.Setenv("LLM_MODEL", "cleanup-model")
+	t.Setenv("SUMMARY_MODEL", "summary-model")
+
+	cfg := DefaultBuildConfig()
+	if cfg.LLM.Model != "cleanup-model" {
+		t.Fatalf("expected LLM model override to apply to readable cleanup, got %q", cfg.LLM.Model)
+	}
+	if cfg.SummaryLLM.Model != "summary-model" {
+		t.Fatalf("expected SUMMARY_MODEL override to apply to summary, got %q", cfg.SummaryLLM.Model)
 	}
 }
 

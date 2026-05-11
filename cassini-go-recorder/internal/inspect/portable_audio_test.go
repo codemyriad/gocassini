@@ -3,6 +3,7 @@ package inspect
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"os/exec"
@@ -32,7 +33,7 @@ func TestInspectPathPortableMeetingOpus(t *testing.T) {
 	requireFFMediaTools(t)
 
 	tmp := t.TempDir()
-	path := createPortableOpusFixture(t, filepath.Join(tmp, "meeting.opus"), false)
+	path := createPortableOpusFixture(t, filepath.Join(tmp, "meeting.opus"), portableFixtureOptions{})
 
 	var out bytes.Buffer
 	if err := InspectPath(&out, path); err != nil {
@@ -50,13 +51,49 @@ func TestInspectPathPortableMeetingOpus(t *testing.T) {
 	if !strings.Contains(out.String(), "speech_to_text backend=local-whisper engine=faster-whisper model=large-v3") {
 		t.Fatalf("expected speech-to-text provenance, got %q", out.String())
 	}
+	if strings.Contains(out.String(), "meeting_summary ") {
+		t.Errorf("did not expect meeting_summary line when summary absent, got %q", out.String())
+	}
+	if strings.Contains(out.String(), "summary ") {
+		t.Errorf("did not expect summary metadata line when summary absent, got %q", out.String())
+	}
+	if strings.Contains(out.String(), "attachment ") {
+		t.Errorf("did not expect attachment line when summary absent, got %q", out.String())
+	}
+}
+
+func TestInspectPathPortableMeetingOpusSurfacesSummary(t *testing.T) {
+	requireFFMediaTools(t)
+
+	tmp := t.TempDir()
+	path := createPortableOpusFixture(t, filepath.Join(tmp, "with-summary.opus"), portableFixtureOptions{
+		withSummary: true,
+	})
+
+	var out bytes.Buffer
+	if err := InspectPath(&out, path); err != nil {
+		t.Fatalf("inspect portable opus: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "meeting_summary backend=openai-compatible") {
+		t.Errorf("expected meeting_summary provenance line, got %q", got)
+	}
+	if !strings.Contains(got, "model=summary-model") {
+		t.Errorf("expected summary model in meeting_summary line, got %q", got)
+	}
+	if !strings.Contains(got, "summary format=markdown model=summary-model templateVersion=v0\n") {
+		t.Errorf("expected summary metadata line with sorted keys, got %q", got)
+	}
+	if !strings.Contains(got, "attachment name=summary.md mime=text/markdown bytes=") {
+		t.Errorf("expected attachment line for summary.md, got %q", got)
+	}
 }
 
 func TestInspectPathPortableMeetingOpusDetectsStaleAudio(t *testing.T) {
 	requireFFMediaTools(t)
 
 	tmp := t.TempDir()
-	path := createPortableOpusFixture(t, filepath.Join(tmp, "stale.opus"), true)
+	path := createPortableOpusFixture(t, filepath.Join(tmp, "stale.opus"), portableFixtureOptions{stale: true})
 
 	var out bytes.Buffer
 	if err := InspectPath(&out, path); err != nil {
@@ -96,7 +133,12 @@ func createTestOpus(t *testing.T, outPath string) string {
 	return outPath
 }
 
-func createPortableOpusFixture(t *testing.T, outPath string, stale bool) string {
+type portableFixtureOptions struct {
+	stale       bool
+	withSummary bool
+}
+
+func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtureOptions) string {
 	t.Helper()
 
 	basePath := createTestOpus(t, filepath.Join(filepath.Dir(outPath), "base.opus"))
@@ -124,7 +166,7 @@ func createPortableOpusFixture(t *testing.T, outPath string, stale bool) string 
 	pcmSHA := hex.EncodeToString(pcmSum[:])
 	sampleCount := int64(len(pcmBytes) / (2 * channels))
 	durationMS := int64(sampleCount * 1000 / int64(sampleRate))
-	if stale {
+	if opts.stale {
 		pcmSHA = strings.Repeat("0", 64)
 	}
 
@@ -181,6 +223,22 @@ func createPortableOpusFixture(t *testing.T, outPath string, stale bool) string 
 			},
 		},
 	})
+	if opts.withSummary {
+		manifest.Provenance.MeetingSummary = &portable.ProcessingStep{
+			Backend: "openai-compatible",
+			Model:   "summary-model",
+		}
+		manifest.Summary = map[string]any{
+			"model":           "summary-model",
+			"format":          "markdown",
+			"templateVersion": "v0",
+		}
+		manifest.Attachments = append(manifest.Attachments, map[string]any{
+			"name":          "summary.md",
+			"mime":          "text/markdown",
+			"contentBase64": base64.StdEncoding.EncodeToString([]byte("# Meeting Summary\n")),
+		})
+	}
 	payload, err := portable.EncodeManifest(manifest, 256)
 	if err != nil {
 		t.Fatalf("encode manifest: %v", err)

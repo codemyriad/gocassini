@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -161,9 +162,48 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	if manifest.Provenance != nil {
 		printProcessingStep(out, "speech_to_text", manifest.Provenance.SpeechToText)
 		printProcessingStep(out, "readable_cleanup", manifest.Provenance.ReadableCleanup)
+		printProcessingStep(out, "meeting_summary", manifest.Provenance.MeetingSummary)
 	}
+	printSummaryMetadata(out, manifest.Summary)
+	printAttachments(out, manifest.Attachments)
 	for _, warning := range integrity.Warnings {
 		fmt.Fprintf(out, "warning=%s\n", warning)
+	}
+}
+
+func printSummaryMetadata(out io.Writer, summary map[string]any) {
+	if len(summary) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(summary))
+	for k := range summary {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	fmt.Fprint(out, "summary")
+	for _, k := range keys {
+		fmt.Fprintf(out, " %s=%s", k, blankDash(fmt.Sprintf("%v", summary[k])))
+	}
+	fmt.Fprintln(out)
+}
+
+func printAttachments(out io.Writer, attachments []map[string]any) {
+	for _, att := range attachments {
+		name, _ := att["name"].(string)
+		mime, _ := att["mime"].(string)
+		size := -1
+		if encoded, ok := att["contentBase64"].(string); ok {
+			if raw, err := base64.StdEncoding.DecodeString(encoded); err == nil {
+				size = len(raw)
+			}
+		}
+		bytesField := "-"
+		if size >= 0 {
+			bytesField = fmt.Sprintf("%d", size)
+		}
+		fmt.Fprintf(out, "attachment name=%s mime=%s bytes=%s\n",
+			blankDash(name), blankDash(mime), bytesField)
 	}
 }
 

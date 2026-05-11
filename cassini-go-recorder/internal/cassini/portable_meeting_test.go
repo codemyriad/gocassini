@@ -1,6 +1,7 @@
 package cassini
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -160,6 +161,148 @@ func TestLoadPortableMeetingSourceIncludesReadableAndDisplayTranscripts(t *testi
 	if got := manifest.Meeting.ProcessedAtUTC; got != "2026-03-11T00:00:00Z" {
 		t.Fatalf("expected processedAtUtc in portable manifest, got %q", got)
 	}
+}
+
+func TestPortableManifestEmbedsSummaryWhenPresent(t *testing.T) {
+	root := t.TempDir()
+	writePortableMinimalFixture(t, root)
+
+	const summaryBody = "# Meeting Summary\n\n## Overview\n\nDemo overview.\n"
+	if err := os.WriteFile(filepath.Join(root, "summary.md"), []byte(summaryBody), 0o644); err != nil {
+		t.Fatalf("write summary.md: %v", err)
+	}
+	writePortableJSONFixture(t, filepath.Join(root, "manifest.json"), map[string]any{
+		"generatedAt": "2026-03-11T00:00:00Z",
+		"source": map[string]any{
+			"basename":   "src.mkv",
+			"durationMs": 1234,
+		},
+		"provenance": map[string]any{
+			"speechToText": map[string]any{"backend": "stt", "model": "stt-model"},
+			"meetingSummary": map[string]any{
+				"backend": "openai-compatible",
+				"model":   "summary-model",
+			},
+		},
+		"files": map[string]any{
+			"audio":      "meeting.webm",
+			"transcript": "transcript.words.v1.json",
+			"summary":    "summary.md",
+		},
+		"speakerCount": 1,
+		"wordCount":    2,
+	})
+
+	source, err := loadPortableMeetingSource(root)
+	if err != nil {
+		t.Fatalf("loadPortableMeetingSource: %v", err)
+	}
+	if string(source.SummaryMarkdown) != summaryBody {
+		t.Fatalf("summary markdown not loaded; got %q", string(source.SummaryMarkdown))
+	}
+
+	manifest, err := buildPortableMeetingManifest(source, portableAudioIntegrity{
+		SampleRate:  48000,
+		Channels:    1,
+		SampleCount: 59232,
+		DurationMS:  1234,
+		PCMSHA256:   "pcm-sha",
+	}, filepath.Join(root, "meeting.opus"), portablePackOptions{Title: "Meeting"})
+	if err != nil {
+		t.Fatalf("buildPortableMeetingManifest: %v", err)
+	}
+
+	if got := manifest.Summary["model"]; got != "summary-model" {
+		t.Errorf("manifest.Summary.model = %v, want summary-model", got)
+	}
+	if got := manifest.Summary["format"]; got != "markdown" {
+		t.Errorf("manifest.Summary.format = %v, want markdown", got)
+	}
+	if got := manifest.Summary["templateVersion"]; got != "v0" {
+		t.Errorf("manifest.Summary.templateVersion = %v, want v0", got)
+	}
+
+	if len(manifest.Attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(manifest.Attachments))
+	}
+	att := manifest.Attachments[0]
+	if att["name"] != "summary.md" {
+		t.Errorf("attachment.name = %v, want summary.md", att["name"])
+	}
+	if att["mime"] != "text/markdown" {
+		t.Errorf("attachment.mime = %v, want text/markdown", att["mime"])
+	}
+	encoded, _ := att["contentBase64"].(string)
+	decoded, decodeErr := base64.StdEncoding.DecodeString(encoded)
+	if decodeErr != nil {
+		t.Fatalf("decode attachment content: %v", decodeErr)
+	}
+	if string(decoded) != summaryBody {
+		t.Errorf("attachment content mismatch: got %q want %q", string(decoded), summaryBody)
+	}
+}
+
+func TestPortableManifestOmitsSummaryWhenAbsent(t *testing.T) {
+	root := t.TempDir()
+	writePortableMinimalFixture(t, root)
+	writePortableJSONFixture(t, filepath.Join(root, "manifest.json"), map[string]any{
+		"generatedAt": "2026-03-11T00:00:00Z",
+		"source": map[string]any{
+			"basename":   "src.mkv",
+			"durationMs": 1234,
+		},
+		"files": map[string]any{
+			"audio":      "meeting.webm",
+			"transcript": "transcript.words.v1.json",
+		},
+		"speakerCount": 1,
+		"wordCount":    2,
+	})
+
+	source, err := loadPortableMeetingSource(root)
+	if err != nil {
+		t.Fatalf("loadPortableMeetingSource: %v", err)
+	}
+	if source.SummaryMarkdown != nil {
+		t.Fatalf("expected no summary loaded; got %q", string(source.SummaryMarkdown))
+	}
+
+	manifest, err := buildPortableMeetingManifest(source, portableAudioIntegrity{
+		SampleRate: 48000, Channels: 1, SampleCount: 59232, DurationMS: 1234, PCMSHA256: "pcm-sha",
+	}, filepath.Join(root, "meeting.opus"), portablePackOptions{Title: "Meeting"})
+	if err != nil {
+		t.Fatalf("buildPortableMeetingManifest: %v", err)
+	}
+	if manifest.Summary != nil {
+		t.Errorf("expected manifest.Summary nil when absent, got %v", manifest.Summary)
+	}
+	if len(manifest.Attachments) != 0 {
+		t.Errorf("expected no attachments when no summary, got %v", manifest.Attachments)
+	}
+}
+
+// writePortableMinimalFixture creates the audio + transcript files needed by
+// loadPortableMeetingSource. The caller is responsible for writing manifest.json.
+func writePortableMinimalFixture(t *testing.T, root string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, "meeting.webm"), []byte("audio"), 0o644); err != nil {
+		t.Fatalf("write audio: %v", err)
+	}
+	writePortableJSONFixture(t, filepath.Join(root, "transcript.words.v1.json"), map[string]any{
+		"version": "transcript.words.v1",
+		"media":   map[string]any{"src": "meeting.webm", "durationMs": 1234, "sha256": "abc"},
+		"speakers": []map[string]any{{"id": "speaker-1", "label": "Speaker 1"}},
+		"segments": []map[string]any{{
+			"speaker": "speaker-1",
+			"startMs": 0,
+			"endMs":   1000,
+			"text":    "hello world",
+			"words": []map[string]any{
+				{"text": "hello", "startMs": 0, "endMs": 500},
+				{"text": "world", "startMs": 500, "endMs": 1000},
+			},
+		}},
+	})
 }
 
 func writePortableJSONFixture(t *testing.T, path string, payload any) {

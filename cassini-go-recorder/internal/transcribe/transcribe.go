@@ -130,14 +130,15 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	if hasReadable {
 		summaryInput = cleanedSegs
 	}
-	if err := writeSummaryArtifact(outputDir, streams, summaryInput, cfg, stdout); err != nil {
+	hasSummary, err := writeSummaryArtifact(outputDir, streams, summaryInput, cfg, stdout)
+	if err != nil {
 		return err
 	}
 
 	// --- 10. Write manifest ---
 	manifestPath := filepath.Join(outputDir, "manifest.json")
 	srcBasename := filepath.Base(mkvPath)
-	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, streams, segments, cfg.ModelID, cfg.LLM.Model, hasReadable); err != nil {
+	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, streams, segments, cfg.ModelID, cfg.LLM.Model, hasReadable, cfg.SummaryLLM.Model, hasSummary); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 
@@ -164,6 +165,11 @@ func DefaultBuildConfig() BuildConfig {
 	summaryLLM := llm
 	if model := os.Getenv("SUMMARY_MODEL"); model != "" {
 		summaryLLM.Model = model
+	}
+	if envBool("CASSINI_SUMMARY_DISABLED") {
+		// Disable summary independently of readable cleanup. IsConfigured()
+		// requires both APIKey and BaseURL, so blanking the key is sufficient.
+		summaryLLM.APIKey = ""
 	}
 
 	return BuildConfig{
@@ -207,23 +213,23 @@ func writeReadableArtifacts(outputDir string, streams []AudioStream, segments []
 	return applied, true, nil
 }
 
-func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Segment, cfg BuildConfig, stdout io.Writer) error {
+func writeSummaryArtifact(outputDir string, streams []AudioStream, segments []Segment, cfg BuildConfig, stdout io.Writer) (bool, error) {
 	if !cfg.SummaryLLM.IsConfigured() {
-		return nil
+		return false, nil
 	}
 
 	fmt.Fprintln(stdout, "  generating meeting summary...")
 	body, err := buildMeetingSummaryFn(cfg.SummaryLLM, streams, segments)
 	if err != nil {
 		fmt.Fprintf(stdout, "  warn: summary generation failed: %v — skipping summary\n", err)
-		return nil
+		return false, nil
 	}
 
 	summaryPath := filepath.Join(outputDir, "summary.md")
 	if err := os.WriteFile(summaryPath, []byte(body), 0o644); err != nil {
-		return fmt.Errorf("write summary: %w", err)
+		return false, fmt.Errorf("write summary: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 // defaultCacheDir returns the default cache directory for models.
