@@ -223,6 +223,44 @@ func TestBuildUsesRunnerOverrideAndWritesMeetingManifest(t *testing.T) {
 	}
 }
 
+func TestBuildRejectsArtifactOutputsMissingRequiredFiles(t *testing.T) {
+	tmp := t.TempDir()
+
+	input := filepath.Join(tmp, "source.mkv")
+	if err := os.WriteFile(input, []byte("fake-mkv"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	prev := buildArtifactFn
+	buildArtifactFn = func(_ context.Context, _, outputDir string, _ transcribe.BuildConfig, _ io.Writer) error {
+		if err := os.MkdirAll(outputDir, 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(outputDir, "transcript.words.v1.json"), []byte(`{"version":"transcript.words.v1"}`), 0o644); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(outputDir, "manifest.json"), []byte(`{"files":{"audio":"meeting.webm","transcript":"transcript.words.v1.json"}}`), 0o644)
+	}
+	t.Cleanup(func() { buildArtifactFn = prev })
+
+	outDir := filepath.Join(tmp, "meeting.meeting")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"build", input, "--out", outDir}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("expected build failure for invalid artifact output, stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "validate ready meeting bundle") {
+		t.Fatalf("expected ready-bundle validation error, got stderr=%q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "missing required files: meeting.webm") {
+		t.Fatalf("expected missing-audio detail, got stderr=%q", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "cassini.json")); err != nil {
+		t.Fatalf("expected partial meeting manifest for failed build, got err=%v", err)
+	}
+}
+
 func TestBuildPassesStrictReadableCleanupFlag(t *testing.T) {
 	tmp := t.TempDir()
 
@@ -677,6 +715,49 @@ func TestPublishRejectsPartialMeetingBundle(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "broken.meeting (failed:doctor: build blocked by doctor failures)") {
 		t.Fatalf("expected skipped partial bundle details, got stderr=%q", stderr.String())
+	}
+}
+
+func TestPublishRejectsReadyMeetingBundleMissingDeclaredFiles(t *testing.T) {
+	tmp := t.TempDir()
+	meetingsDir := filepath.Join(tmp, "meetings")
+	if err := os.MkdirAll(meetingsDir, 0o755); err != nil {
+		t.Fatalf("mkdir meetings dir: %v", err)
+	}
+	meetingDir := filepath.Join(meetingsDir, "broken.meeting")
+	if err := os.MkdirAll(meetingDir, 0o755); err != nil {
+		t.Fatalf("mkdir meeting dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(meetingDir, "cassini.json"), []byte(`{
+  "kind": "meeting",
+  "version": "cassini.meeting.v1",
+  "state": "ready",
+  "stage": "ready",
+  "source_kind": "mkv",
+  "source_path": "/tmp/source.mkv"
+}
+`), 0o644); err != nil {
+		t.Fatalf("write meeting manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(meetingDir, "transcript.words.v1.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write transcript: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(meetingDir, "manifest.json"), []byte(`{"files":{"audio":"meeting.webm","transcript":"transcript.words.v1.json"}}`), 0o644); err != nil {
+		t.Fatalf("write artifact manifest: %v", err)
+	}
+
+	outDir := filepath.Join(tmp, "site")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"publish", meetingsDir, "--out", outDir}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("expected publish failure for invalid ready bundle, stdout=%q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "no ready meeting bundles found") {
+		t.Fatalf("expected no-ready-bundles error, got stderr=%q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "broken.meeting (invalid ready bundle: missing required files: meeting.webm)") {
+		t.Fatalf("expected invalid-ready-bundle details, got stderr=%q", stderr.String())
 	}
 }
 
