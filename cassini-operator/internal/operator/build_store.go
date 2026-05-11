@@ -33,6 +33,7 @@ WHERE job_id = ? AND attempt_number = ?`, "build", "queued", artifactRunPath, qu
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit build queued update: %w", err)
 	}
+	s.emitStateChange(ctx, "job.updated", id, attemptNumber)
 	return nil
 }
 
@@ -63,6 +64,7 @@ WHERE job_id = ? AND attempt_number = ?`, "build", "running", startedAt, started
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit build running update: %w", err)
 	}
+	s.emitStateChange(ctx, "job.updated", id, attemptNumber)
 	return nil
 }
 
@@ -93,6 +95,7 @@ WHERE job_id = ? AND attempt_number = ?`, "done", "succeeded", artifactMeetingPa
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit build success update: %w", err)
 	}
+	s.emitStateChange(ctx, "job.updated", id, attemptNumber)
 	return nil
 }
 
@@ -124,6 +127,7 @@ WHERE job_id = ? AND attempt_number = ?`, "done", "failed", strings.TrimSpace(er
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("commit build failure update: %w", err)
 		}
+		s.emitStateChange(ctx, "job.updated", id, attemptNumber)
 		return nil
 	}
 	_, err = tx.ExecContext(ctx, `
@@ -142,5 +146,6 @@ WHERE job_id = ? AND attempt_number = ?`, "done", "failed", artifactMeetingPath,
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit build failure update: %w", err)
 	}
+	s.emitStateChange(ctx, "job.updated", id, attemptNumber)
 	return nil
 }

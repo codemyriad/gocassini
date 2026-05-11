@@ -49,6 +49,7 @@ type Runtime struct {
 	recordSlots  chan struct{}
 	buildQueue   chan buildTask
 	publishQueue chan publishTask
+	events       *eventHub
 	recordMu     sync.Mutex
 	recordJobs   map[string]*recordProcessState
 	recordJobFn  func(context.Context, Job, TriggerRequest) (recordResult, error)
@@ -106,6 +107,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/jobs", runtime.jobsHandler)
 	mux.HandleFunc("/jobs/", runtime.jobDetailHandler)
+	mux.HandleFunc("/events", runtime.eventsHandler)
 
 	server := &http.Server{
 		Handler:           requestLogger(logger, mux),
@@ -274,8 +276,10 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		recordSlots:  make(chan struct{}, cfg.MaxRecordWorkers),
 		buildQueue:   make(chan buildTask, queueCapacity),
 		publishQueue: make(chan publishTask, 16),
+		events:       newEventHub(),
 		recordJobs:   map[string]*recordProcessState{},
 	}
+	store.SetStateChangePublisher(rt.publishStateChangeEvent)
 	rt.recordJobFn = rt.executeRecordCLI
 	rt.buildJobFn = rt.executeBuildCLI
 	rt.publishJobFn = rt.executePublishCLI
@@ -452,7 +456,8 @@ func looksLikeRepoRoot(dir string) bool {
 }
 
 type Store struct {
-	db *sql.DB
+	db                   *sql.DB
+	stateChangePublisher stateChangePublisher
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -551,6 +556,7 @@ INSERT INTO jobs (
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit insert job: %w", err)
 	}
+	s.emitStateChange(ctx, "job.created", job.ID, 1)
 	return nil
 }
 
@@ -581,6 +587,7 @@ WHERE job_id = ? AND attempt_number = ?`, "record", "running", startedAt, starte
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit record running update: %w", err)
 	}
+	s.emitStateChange(ctx, "job.updated", id, attemptNumber)
 	return nil
 }
 
@@ -615,6 +622,7 @@ WHERE job_id = ? AND attempt_number = ?`, requestedAt, signalSentAt, signalSentA
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit stop request update: %w", err)
 	}
+	s.emitStateChange(ctx, "attempt.updated", id, attemptNumber)
 	return nil
 }
 
@@ -651,6 +659,7 @@ WHERE job_id = ? AND attempt_number = ?`, nullableString(result.StopReason), int
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit record outcome update: %w", err)
 	}
+	s.emitStateChange(ctx, "attempt.updated", id, attemptNumber)
 	return nil
 }
 
@@ -681,6 +690,7 @@ WHERE job_id = ? AND attempt_number = ?`, "done", "failed", strings.TrimSpace(er
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit record failure update: %w", err)
 	}
+	s.emitStateChange(ctx, "attempt.updated", id, attemptNumber)
 	return nil
 }
 

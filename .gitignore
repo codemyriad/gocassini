@@ -48,3 +48,6 @@ __pycache__/
 /media/
 /cassini-viewer/exports/viewer-demo/
 bin/cassini-bin
+
+# Vite temp artefacts
+*/.vite/*
