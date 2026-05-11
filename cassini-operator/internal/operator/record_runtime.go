@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -35,6 +36,15 @@ type recordResult struct {
 	StopReason      string
 	StopDetail      string
 	ExitCode        *int
+}
+
+type recordLiveSignalWriter struct {
+	target io.Writer
+	marker []byte
+	mu     sync.Mutex
+	tail   []byte
+	once   sync.Once
+	liveCh chan struct{}
 }
 
 type triggerRequestInput struct {
@@ -66,7 +76,7 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 
 	args := []string{
 		"record",
-		"--call", req.URL,
+		"--call", req.effectiveCallURL(),
 		"--out", runPath,
 		"--name", req.GuestName,
 	}
@@ -81,9 +91,20 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 	}
 
 	var logCapture bytes.Buffer
+	liveCh := make(chan struct{}, 1)
+	stdoutWriter := newRecordLiveSignalWriter(
+		io.MultiWriter(writerOrDiscard(rt.stdout), logFile, &logCapture),
+		[]byte("talk recorder running:"),
+		liveCh,
+	)
+	stderrWriter := newRecordLiveSignalWriter(
+		io.MultiWriter(writerOrDiscard(rt.stderr), logFile, &logCapture),
+		[]byte("talk recorder running:"),
+		liveCh,
+	)
 	cmd := exec.Command(rt.cfg.CassiniBin, args...)
-	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile, &logCapture)
-	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile, &logCapture)
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
 	cmd.Env = os.Environ()
 	if err := cmd.Start(); err != nil {
 		return recordResult{}, fmt.Errorf("cassini record start: %w", err)
@@ -93,7 +114,25 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 	defer rt.completeRecordProcess(job.ID)
 	go rt.stopRecordProcessOnShutdown(job.ID, state)
 
-	runErr := cmd.Wait()
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
+	var runErr error
+	select {
+	case <-liveCh:
+		if err := rt.notifyTalkStartedForJob(job.ID); err != nil {
+			if signalErr := state.process.Signal(syscall.SIGTERM); signalErr != nil && !isExitedProcessError(signalErr) {
+				rt.logger.Printf("record stop after talk started callback failure failed id=%s: %v", job.ID, signalErr)
+			}
+			runErr = <-waitCh
+			return recordResult{}, fmt.Errorf("talk started callback: %w", err)
+		}
+		runErr = <-waitCh
+	case runErr = <-waitCh:
+	}
+
 	result := recordResult{
 		ArtifactRunPath: runPath,
 		ExitCode:        exitCodeFromRunError(runErr),
@@ -287,6 +326,46 @@ func recordStopDetail(logs string) string {
 	return ""
 }
 
+func newRecordLiveSignalWriter(target io.Writer, marker []byte, liveCh chan struct{}) io.Writer {
+	return &recordLiveSignalWriter{
+		target: target,
+		marker: marker,
+		liveCh: liveCh,
+	}
+}
+
+func (w *recordLiveSignalWriter) Write(p []byte) (int, error) {
+	n, err := w.target.Write(p)
+	w.signalIfMarkerSeen(p)
+	return n, err
+}
+
+func (w *recordLiveSignalWriter) signalIfMarkerSeen(p []byte) {
+	if len(w.marker) == 0 {
+		return
+	}
+
+	w.mu.Lock()
+	combined := append(append([]byte{}, w.tail...), p...)
+	if maxTail := len(w.marker) - 1; maxTail > 0 {
+		if len(combined) > maxTail {
+			w.tail = append(w.tail[:0], combined[len(combined)-maxTail:]...)
+		} else {
+			w.tail = append(w.tail[:0], combined...)
+		}
+	}
+	w.mu.Unlock()
+
+	if bytes.Contains(combined, w.marker) {
+		w.once.Do(func() {
+			select {
+			case w.liveCh <- struct{}{}:
+			default:
+			}
+		})
+	}
+}
+
 func reverseLogLines(logs string) []string {
 	lines := strings.Split(logs, "\n")
 	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
@@ -329,6 +408,8 @@ func classifyRecordStopReason(stopAccepted bool, exitCode *int, stopDetail strin
 func parseTriggerRequest(input triggerRequestInput) (TriggerRequest, error) {
 	req := TriggerRequest{
 		Platform:              strings.TrimSpace(input.Platform),
+		BaseURL:               "",
+		RoomToken:             "",
 		URL:                   strings.TrimSpace(input.URL),
 		GuestName:             defaultGuestName,
 		StopWhenRoomEmpty:     true,
@@ -337,7 +418,7 @@ func parseTriggerRequest(input triggerRequestInput) (TriggerRequest, error) {
 	if req.Platform == "" {
 		return TriggerRequest{}, errors.New("platform is required")
 	}
-	if req.URL == "" {
+	if req.URL == "" && (strings.TrimSpace(req.BaseURL) == "" || strings.TrimSpace(req.RoomToken) == "") {
 		return TriggerRequest{}, errors.New("url is required")
 	}
 	if input.GuestName != nil {
@@ -371,9 +452,11 @@ func decodeStoredTriggerRequest(raw string) (TriggerRequest, error) {
 		return TriggerRequest{}, fmt.Errorf("decode stored request JSON: %w", err)
 	}
 	req.Platform = strings.TrimSpace(req.Platform)
+	req.BaseURL = strings.TrimSpace(req.BaseURL)
+	req.RoomToken = strings.TrimSpace(req.RoomToken)
 	req.URL = strings.TrimSpace(req.URL)
 	req.GuestName = strings.TrimSpace(req.GuestName)
-	if req.Platform == "" || req.URL == "" || req.GuestName == "" {
+	if req.Platform == "" || req.GuestName == "" || req.effectiveCallURL() == "" {
 		return TriggerRequest{}, errors.New("stored request is missing required fields")
 	}
 	req.StopWhenRoomEmptySet = !req.StopWhenRoomEmpty
@@ -399,6 +482,34 @@ func marshalCompactJSON(payload any) ([]byte, error) {
 
 var jsonMarshal = func(v any) ([]byte, error) {
 	return json.Marshal(v)
+}
+
+var errRecordBusy = errors.New("max record workers exceeded")
+
+func recordAcceptError(err error) (status int, message string) {
+	if errors.Is(err, errRecordBusy) {
+		return http.StatusServiceUnavailable, errRecordBusy.Error()
+	}
+	return http.StatusInternalServerError, err.Error()
+}
+
+func (req TriggerRequest) effectiveCallURL() string {
+	if strings.TrimSpace(req.URL) != "" {
+		return strings.TrimSpace(req.URL)
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(req.BaseURL), "/")
+	roomToken := strings.TrimSpace(req.RoomToken)
+	if baseURL == "" || roomToken == "" {
+		return ""
+	}
+	return baseURL + "/call/" + roomToken
+}
+
+func (req TriggerRequest) logTarget() string {
+	if strings.TrimSpace(req.RoomToken) != "" {
+		return strings.TrimRight(strings.TrimSpace(req.BaseURL), "/") + " room=" + strings.TrimSpace(req.RoomToken)
+	}
+	return strings.TrimSpace(req.URL)
 }
 
 type recordStopResponse struct {

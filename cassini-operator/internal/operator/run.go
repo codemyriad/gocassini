@@ -35,6 +35,7 @@ type Config struct {
 	WorkRoot         string
 	SiteRoot         string
 	CassiniBin       string
+	TalkSharedSecret string
 	MaxRecordWorkers int
 	MaxBuildWorkers  int
 }
@@ -52,6 +53,8 @@ type Runtime struct {
 	events       *eventHub
 	recordMu     sync.Mutex
 	recordJobs   map[string]*recordProcessState
+	talkRooms    map[string]*talkRoomState
+	talkJobs     map[string]*talkRoomState
 	recordJobFn  func(context.Context, Job, TriggerRequest) (recordResult, error)
 	buildJobFn   func(context.Context, buildTask) (string, error)
 	publishJobFn func(context.Context, publishTask) (string, error)
@@ -59,6 +62,8 @@ type Runtime struct {
 
 type TriggerRequest struct {
 	Platform              string  `json:"platform"`
+	BaseURL               string  `json:"baseURL,omitempty"`
+	RoomToken             string  `json:"roomToken,omitempty"`
 	URL                   string  `json:"url"`
 	GuestName             string  `json:"guestName"`
 	DurationSeconds       *int    `json:"duration,omitempty"`
@@ -108,6 +113,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	mux.HandleFunc("/jobs", runtime.jobsHandler)
 	mux.HandleFunc("/jobs/", runtime.jobDetailHandler)
 	mux.HandleFunc("/events", runtime.eventsHandler)
+	mux.HandleFunc("/api/v1/welcome", runtime.talkWelcomeHandler)
+	mux.HandleFunc("/api/v1/room/", runtime.talkRoomHandler)
+	mux.HandleFunc("/healthz", runtime.healthzHandler)
 
 	server := &http.Server{
 		Handler:           requestLogger(logger, mux),
@@ -126,6 +134,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("work_root -> %s", cfg.WorkRoot)
 	logger.Printf("site_root -> %s", cfg.SiteRoot)
 	logger.Printf("cassini_bin -> %s", cfg.CassiniBin)
+	logger.Printf("talk_shared_secret_set -> %t", strings.TrimSpace(cfg.TalkSharedSecret) != "")
 	logger.Printf("max_record_workers -> %d", cfg.MaxRecordWorkers)
 	logger.Printf("max_build_workers -> %d", cfg.MaxBuildWorkers)
 
@@ -189,6 +198,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.StringVar(&cfg.WorkRoot, "work-root", envOrDefault("WORK_ROOT", defaultWorkRoot), "per-job artifact root")
 	fs.StringVar(&cfg.SiteRoot, "site-root", envOrDefault("SITE_ROOT", defaultSiteRoot), "published site output root")
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", defaultCassiniBin, "Cassini CLI binary path")
+	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefault("TALK_RECORDING_SECRET", ""), "shared secret for Talk recording backend requests")
 	fs.IntVar(&cfg.MaxRecordWorkers, "max-record-workers", defaultMaxRecordWorkers, "maximum concurrent record workers")
 	fs.IntVar(&cfg.MaxBuildWorkers, "max-build-workers", defaultMaxBuildWorkers, "maximum concurrent build workers")
 	fs.Usage = func() {
@@ -278,6 +288,8 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		publishQueue: make(chan publishTask, 16),
 		events:       newEventHub(),
 		recordJobs:   map[string]*recordProcessState{},
+		talkRooms:    map[string]*talkRoomState{},
+		talkJobs:     map[string]*talkRoomState{},
 	}
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
 	rt.recordJobFn = rt.executeRecordCLI
@@ -324,38 +336,15 @@ func (rt *Runtime) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("platform must be %q", nextcloudTalkProvider))
 		return
 	}
-
-	select {
-	case rt.recordSlots <- struct{}{}:
-	default:
-		rt.logger.Printf("busy provider=%s url=%s", provider, req.URL)
-		writeJSONError(w, http.StatusServiceUnavailable, "max record workers exceeded")
+	resp, err := rt.acceptRecordJob(r.Context(), provider, requestBody, req)
+	if err != nil {
+		status, msg := recordAcceptError(err)
+		rt.logger.Printf("reject provider=%s target=%s err=%v", provider, req.logTarget(), err)
+		writeJSONError(w, status, msg)
 		return
 	}
-
-	jobID := ulid.Make().String()
-	now := nowUTCString()
-	job := Job{
-		ID:                   jobID,
-		Provider:             provider,
-		RequestJSON:          requestBody,
-		Stage:                "record",
-		State:                "queued",
-		CurrentAttemptNumber: 1,
-		RerunCount:           0,
-		CreatedAt:            now,
-		UpdatedAt:            now,
-		RecordQueuedAt:       &now,
-	}
-	if err := rt.store.InsertQueuedJob(r.Context(), job); err != nil {
-		<-rt.recordSlots
-		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("create job: %v", err))
-		return
-	}
-
-	rt.logger.Printf("accepted id=%s provider=%s url=%s", jobID, provider, req.URL)
-	go rt.runRecordJob(job, req)
-	writeJSON(w, http.StatusAccepted, createJobResponse{ID: jobID})
+	rt.logger.Printf("accepted id=%s provider=%s target=%s", resp.ID, provider, req.logTarget())
+	writeJSON(w, http.StatusAccepted, resp)
 }
 
 func decodeTriggerRequest(body io.ReadCloser) (string, TriggerRequest, error) {
@@ -384,6 +373,7 @@ func decodeTriggerRequest(body io.ReadCloser) (string, TriggerRequest, error) {
 
 func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 	defer func() { <-rt.recordSlots }()
+	defer rt.clearTalkRoomJobByID(job.ID)
 
 	startedAt := nowUTCString()
 	if err := rt.store.MarkRecordRunning(context.Background(), job.ID, startedAt); err != nil {
@@ -396,6 +386,11 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 	finishedAt := nowUTCString()
 	if err != nil {
 		rt.logger.Printf("record failed id=%s: %v", job.ID, err)
+		if talkState, ok := rt.lookupTalkJobState(job.ID); ok {
+			if notifyErr := rt.notifyTalkFailed(talkState); notifyErr != nil {
+				rt.logger.Printf("talk failed callback failed id=%s: %v", job.ID, notifyErr)
+			}
+		}
 		if updateErr := rt.store.MarkRecordFailed(context.Background(), job.ID, err.Error(), result, finishedAt); updateErr != nil {
 			rt.logger.Printf("record fail update failed id=%s: %v", job.ID, updateErr)
 		}
@@ -408,6 +403,23 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		}
 		return
 	}
+	if talkState, ok := rt.lookupTalkJobState(job.ID); ok {
+		if err := rt.notifyTalkStopped(talkState); err != nil {
+			rt.logger.Printf("talk stopped callback failed id=%s: %v", job.ID, err)
+			if updateErr := rt.store.MarkRecordFailed(context.Background(), job.ID, err.Error(), result, finishedAt); updateErr != nil {
+				rt.logger.Printf("record fail update failed id=%s: %v", job.ID, updateErr)
+			}
+			return
+		}
+		recordingPath := filepath.Join(result.ArtifactRunPath, "recording.mkv")
+		if err := rt.uploadTalkRecording(talkState, recordingPath); err != nil {
+			rt.logger.Printf("talk upload failed id=%s: %v", job.ID, err)
+			if updateErr := rt.store.MarkRecordFailed(context.Background(), job.ID, err.Error(), result, finishedAt); updateErr != nil {
+				rt.logger.Printf("record fail update failed id=%s: %v", job.ID, updateErr)
+			}
+			return
+		}
+	}
 	if err := rt.enqueueBuildJob(job.ID, job.CurrentAttemptNumber, result.ArtifactRunPath, finishedAt); err != nil {
 		rt.logger.Printf("build queue update failed id=%s: %v", job.ID, err)
 		if updateErr := rt.store.MarkBuildFailed(context.Background(), job.ID, "", err.Error(), finishedAt); updateErr != nil {
@@ -416,6 +428,36 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		return
 	}
 	rt.logger.Printf("record succeeded id=%s run=%s build_queued_at=%s stop_reason=%s", job.ID, result.ArtifactRunPath, finishedAt, strings.TrimSpace(result.StopReason))
+}
+
+func (rt *Runtime) acceptRecordJob(ctx context.Context, provider, requestBody string, req TriggerRequest) (createJobResponse, error) {
+	select {
+	case rt.recordSlots <- struct{}{}:
+	default:
+		return createJobResponse{}, errRecordBusy
+	}
+
+	jobID := ulid.Make().String()
+	now := nowUTCString()
+	job := Job{
+		ID:                   jobID,
+		Provider:             provider,
+		RequestJSON:          requestBody,
+		Stage:                "record",
+		State:                "queued",
+		CurrentAttemptNumber: 1,
+		RerunCount:           0,
+		CreatedAt:            now,
+		UpdatedAt:            now,
+		RecordQueuedAt:       &now,
+	}
+	if err := rt.store.InsertQueuedJob(ctx, job); err != nil {
+		<-rt.recordSlots
+		return createJobResponse{}, fmt.Errorf("create job: %w", err)
+	}
+
+	go rt.runRecordJob(job, req)
+	return createJobResponse{ID: jobID}, nil
 }
 
 func findRepoRoot() (string, error) {

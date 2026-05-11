@@ -1048,6 +1048,7 @@ case "$cmd" in
       esac
     done
     [ -n "$out" ]
+    printf '%s\n' "talk recorder running: room=fake duration_limit=0s stop_when_room_empty=true room_empty_grace=30s final=$out/recording.mkv segments=$out/segments"
     if [ -n "${FAKE_RECORD_STARTED_FILE:-}" ]; then
       : > "$FAKE_RECORD_STARTED_FILE"
     fi
