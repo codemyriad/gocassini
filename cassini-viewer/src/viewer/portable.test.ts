@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { gzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
 
 import {
   buildDisplayTranscriptFromArtifacts,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
+  loadPortableTranscriptBody,
+  type PortablePayloadRef,
 } from "./portable";
 
 describe("buildReadableTranscriptFromPortable", () => {
@@ -589,5 +593,94 @@ describe("buildReadableTranscriptFromPortable", () => {
     expect(display.blocks[0]?.timedWordCount).toBe(5);
     expect(display.blocks[0]?.wordCount).toBe(10);
     expect(display.blocks[0]?.timingCoverage).toBe(0.5);
+  });
+});
+
+function encodeTranscriptBodyAsTags(
+  bodyJSON: unknown,
+  prefix: string,
+  chunkSize = 4096,
+): { tags: Record<string, string>; payloadRef: PortablePayloadRef } {
+  const json = JSON.stringify(bodyJSON);
+  const raw = new TextEncoder().encode(json);
+  const gzip = gzipSync(raw);
+  const b64url = Buffer.from(gzip)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  const chunks: string[] = [];
+  for (let offset = 0; offset < b64url.length; offset += chunkSize) {
+    chunks.push(b64url.slice(offset, offset + chunkSize));
+  }
+  const tags: Record<string, string> = {};
+  chunks.forEach((chunk, index) => {
+    tags[`${prefix}${String(index).padStart(3, "0")}`] = chunk;
+  });
+  const sha256 = createHash("sha256").update(raw).digest("hex");
+  return {
+    tags,
+    payloadRef: {
+      prefix,
+      chunkCount: chunks.length,
+      sha256,
+      rawBytes: raw.byteLength,
+      gzipBytes: gzip.byteLength,
+      mime: "application/vnd.cassini.transcript-words+json",
+      encoding: "base64url+gzip+utf8json",
+    },
+  };
+}
+
+describe("loadPortableTranscriptBody (v2 transport)", () => {
+  it("round-trips a transcript body through the chunk set and verifies sha256", async () => {
+    const body = {
+      format: "cassini.words.v1",
+      language: "en",
+      wordCount: 2,
+      items: [
+        { speaker: "speaker_0", startMs: 0, endMs: 400, text: "hello" },
+        { speaker: "speaker_0", startMs: 400, endMs: 800, text: "world" },
+      ],
+    };
+    const { tags, payloadRef } = encodeTranscriptBodyAsTags(body, "CASSINI_TX_PARAKEET_PAYLOAD_");
+
+    const decoded = await loadPortableTranscriptBody(tags, payloadRef);
+
+    expect(decoded).toEqual(body);
+  });
+
+  it("throws when sha256 in payloadRef does not match the decoded body", async () => {
+    const body = { format: "cassini.words.v1", wordCount: 0, items: [] };
+    const { tags, payloadRef } = encodeTranscriptBodyAsTags(body, "CASSINI_TX_CANARY_PAYLOAD_");
+    const tampered: PortablePayloadRef = {
+      ...payloadRef,
+      sha256: "0".repeat(64),
+    };
+
+    await expect(loadPortableTranscriptBody(tags, tampered)).rejects.toThrow(/sha256 mismatch/);
+  });
+
+  it("throws when a numbered chunk is missing from the tag map", async () => {
+    const body = { format: "cassini.words.v1", wordCount: 0, items: [] };
+    const { tags, payloadRef } = encodeTranscriptBodyAsTags(body, "CASSINI_TX_PARAKEET_PAYLOAD_");
+    delete tags[`${payloadRef.prefix}000`];
+
+    await expect(loadPortableTranscriptBody(tags, payloadRef)).rejects.toThrow(
+      /missing transcript payload chunk/,
+    );
+  });
+
+  it("rejects payloadRef with non-positive chunkCount", async () => {
+    const ref: PortablePayloadRef = {
+      prefix: "CASSINI_TX_BAD_PAYLOAD_",
+      chunkCount: 0,
+      sha256: "0".repeat(64),
+      rawBytes: 0,
+      gzipBytes: 0,
+      mime: "application/json",
+      encoding: "base64url+gzip+utf8json",
+    };
+    await expect(loadPortableTranscriptBody({}, ref)).rejects.toThrow(/invalid chunkCount/);
   });
 });

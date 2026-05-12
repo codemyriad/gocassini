@@ -69,7 +69,11 @@ const DEFAULT_READABLE_TRANSCRIPT_PATH = "./transcript.readable.v1.json";
 const DEFAULT_SUMMARY_PATH = "./summary.md";
 const DEFAULT_CAPTIONS_PATH = "./captions.vtt";
 const DEFAULT_CHAPTERS_PATH = "./chapters.vtt";
-const PORTABLE_METADATA_RANGE_END = 262143;
+// 1 MB - 1. v2 manifests carry an index + per-transcript chunk sets in the
+// OpusTags header; a single transcript runs ~220 KB compressed, so 256 KB
+// stopped covering common cases and was forcing the full-file fallback. 1 MB
+// covers ~4 typical transcripts before the fallback kicks in.
+const PORTABLE_METADATA_RANGE_END = 1048575;
 const portableManifestCache = new Map<string, Promise<PortableMeetingManifest>>();
 
 export async function loadBundledArtifact(): Promise<LoadedArtifact> {

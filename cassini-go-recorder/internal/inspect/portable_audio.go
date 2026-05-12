@@ -90,12 +90,13 @@ func inspectPortableAudio(out io.Writer, path string) error {
 	}
 
 	tags := mergePortableTags(meta.Format.Tags, stream.Tags)
-	if metadataTag(tags, "CASSINI_FORMAT") == "" {
+	formatTag := metadataTag(tags, "CASSINI_FORMAT")
+	if formatTag == "" {
 		printPlainPortableAudio(out, audioSummary, "plain-audio", "")
 		return nil
 	}
-	if !strings.EqualFold(metadataTag(tags, "CASSINI_FORMAT"), portable.Format) {
-		printPlainPortableAudio(out, audioSummary, "unknown-cassini-format", fmt.Sprintf("unsupported CASSINI_FORMAT=%s", metadataTag(tags, "CASSINI_FORMAT")))
+	if !strings.EqualFold(formatTag, portable.Format) && !strings.EqualFold(formatTag, portable.FormatV2) {
+		printPlainPortableAudio(out, audioSummary, "unknown-cassini-format", fmt.Sprintf("unsupported CASSINI_FORMAT=%s", formatTag))
 		return nil
 	}
 
@@ -143,7 +144,25 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	title := blankDash(manifest.Meeting.Title)
 	meetingID := blankDash(manifest.Meeting.ID)
 	createdAt := blankDash(manifest.Meeting.CreatedAtUTC)
-	language := blankDash(firstNonEmpty(manifest.Transcript.Language, manifest.Meeting.Language))
+	wordCount := manifest.Transcript.WordCount
+	language := firstNonEmpty(manifest.Transcript.Language, manifest.Meeting.Language)
+	if manifest.Version == 2 {
+		// v2 stores transcript bodies in separate chunk sets; the main payload
+		// only carries descriptors. Sum word counts from those descriptors and
+		// fall back to the default raw-ASR transcript's language tag.
+		wordCount = 0
+		for _, entry := range manifest.Transcripts {
+			wordCount += entry.WordCount
+		}
+		if language == "" {
+			for _, entry := range manifest.Transcripts {
+				if entry.Default && entry.Language != "" {
+					language = entry.Language
+					break
+				}
+			}
+		}
+	}
 	if integrity.SampleRate == 0 {
 		integrity.SampleRate = audio.SampleRate
 	}
@@ -154,11 +173,19 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 		integrity.DurationMS = audio.DurationMS
 	}
 	fmt.Fprintf(out, "portable_meeting=%s title=%s meeting_id=%s created_at=%s speakers=%d words=%d duration_ms=%d cassini=%s\n",
-		path, title, meetingID, createdAt, len(manifest.Speakers), manifest.Transcript.WordCount, manifest.Meeting.DurationMS, integrity.Status)
+		path, title, meetingID, createdAt, len(manifest.Speakers), wordCount, manifest.Meeting.DurationMS, integrity.Status)
 	fmt.Fprintf(out, "audio container=%s codec=%s sample_rate=%d channels=%d duration_ms=%d pcm_sha256=%s\n",
 		audio.Container, audio.Codec, integrity.SampleRate, integrity.Channels, integrity.DurationMS, blankDash(integrity.PCMHashSHA256))
 	fmt.Fprintf(out, "payload encoding=%s schema=%s chunks=%d raw_bytes=%d compressed_bytes=%d sha256=%s language=%s\n",
-		payload.Encoding, blankDash(payload.Schema), payload.ChunkCount, payload.RawBytes, payload.CompressedBytes, blankDash(payload.SHA256), language)
+		payload.Encoding, blankDash(payload.Schema), payload.ChunkCount, payload.RawBytes, payload.CompressedBytes, blankDash(payload.SHA256), blankDash(language))
+	if manifest.Version == 2 {
+		for _, entry := range manifest.Transcripts {
+			printPortableTranscriptEntry(out, "transcript", entry)
+		}
+		for _, entry := range manifest.ReadableTranscripts {
+			printPortableTranscriptEntry(out, "readable_transcript", entry)
+		}
+	}
 	if manifest.Provenance != nil {
 		printProcessingStep(out, "speech_to_text", manifest.Provenance.SpeechToText)
 		printProcessingStep(out, "readable_cleanup", manifest.Provenance.ReadableCleanup)
@@ -169,6 +196,28 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	for _, warning := range integrity.Warnings {
 		fmt.Fprintf(out, "warning=%s\n", warning)
 	}
+}
+
+func printPortableTranscriptEntry(out io.Writer, label string, entry portable.TranscriptEntry) {
+	defaultMarker := "no"
+	if entry.Default {
+		defaultMarker = "yes"
+	}
+	source := entry.SourceTranscriptID
+	if source == "" {
+		source = "-"
+	}
+	fmt.Fprintf(out, "%s id=%s role=%s default=%s format=%s language=%s word_count=%d source=%s sha256=%s\n",
+		label,
+		blankDash(entry.ID),
+		blankDash(entry.Role),
+		defaultMarker,
+		blankDash(entry.Format),
+		blankDash(entry.Language),
+		entry.WordCount,
+		source,
+		blankDash(entry.PayloadRef.SHA256),
+	)
 }
 
 func printSummaryMetadata(out io.Writer, summary map[string]any) {
@@ -302,7 +351,7 @@ func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portabl
 	if manifest.Kind != "cassini-portable-meeting" {
 		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("unexpected payload kind %q", manifest.Kind)
 	}
-	if manifest.Version != 1 {
+	if manifest.Version != 1 && manifest.Version != 2 {
 		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("unsupported payload version %d", manifest.Version)
 	}
 	if manifest.Profile != portable.Profile {

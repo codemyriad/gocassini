@@ -189,7 +189,7 @@ or new encoding value, not an undocumented variation.
 
 The decompressed payload MUST be a JSON object conforming to:
 
-- [cassini-portable-meeting-manifest-v1.schema.json](/home/silvio/dev/gocassini/spec/cassini-portable-meeting-manifest-v1.schema.json)
+- [`spec/cassini-portable-meeting-manifest-v1.schema.json`](../spec/cassini-portable-meeting-manifest-v1.schema.json)
 
 The top-level fields are:
 
@@ -479,3 +479,143 @@ advantage in Cassini's expected size range.
 Cassini v1 portable meetings should be ordinary `.opus` audio files with
 self-describing, `gzip`-compressed Cassini JSON embedded in OpusTags and guarded
 by strict audio integrity checks.
+
+---
+
+# v2 (Multi-Transcription)
+
+Date: 2026-05-12
+
+Status: Spec landed. Producer and viewer support roll out behind a feature flag.
+
+## What v2 changes
+
+v2 lets a single `.opus` file carry **multiple transcripts of the same audio**
+(e.g. parakeet + canary, or raw ASR + human-corrected) so the viewer can switch
+or compare without producing duplicate files. The audio profile, integrity
+rules, OpusTag transport, and decode steps from v1 stay the same. The only
+structural change is in how transcript bodies are addressed.
+
+## File identification
+
+A v2 file MUST set:
+
+- `CASSINI_FORMAT=org.cassini.portable-meeting/2`
+- `CASSINI_PAYLOAD_SCHEMA=https://cassini.local/spec/cassini-portable-meeting-manifest-v2.schema.json`
+
+All other v1 descriptor tags still apply.
+
+## Manifest shape (v2)
+
+The decompressed `CASSINI_PAYLOAD_*` body MUST conform to
+[`spec/cassini-portable-meeting-manifest-v2.schema.json`](../spec/cassini-portable-meeting-manifest-v2.schema.json).
+Notable differences from v1:
+
+| v1 | v2 |
+|---|---|
+| `transcript: object` (single, required) | `transcripts: array` (1..N), required |
+| `readableTranscript: object` (optional, single) | `readableTranscripts: array` (0..N), optional |
+| `provenance.speechToText: ProcessingStep` | `provenance.speechToText: map<transcriptId, ProcessingStep>` |
+| `provenance.readableCleanup: ProcessingStep` | `provenance.readableCleanup: map<transcriptId, ProcessingStep>` |
+| transcript body inlined under `transcript.items` | each transcript body lives in its own OpusTag chunk set; the manifest entry holds a `payloadRef` |
+
+The transcript `id` doubles as the provenance map key. A transcript entry with
+`id: "canary"` resolves to `provenance.speechToText.canary`.
+
+A transcript entry:
+
+```jsonc
+{
+  "id":      "canary",                    // ^[a-z0-9][a-z0-9_-]{0,31}$, unique in file
+  "role":    "raw-asr",                   // raw-asr | human-corrected | translation
+  "default": true,                        // exactly one default per role
+  "format":  "cassini.words.v1",
+  "language": "en",
+  "wordCount": 9224,
+  "createdAtUtc": "2026-05-12T...",
+  "payloadRef": {
+    "prefix":     "CASSINI_TX_CANARY_PAYLOAD_",
+    "chunkCount": 14,
+    "sha256":     "...",                  // sha256 of decompressed body JSON
+    "rawBytes":   718432,
+    "gzipBytes":  221110,
+    "mime":       "application/vnd.cassini.transcript-words+json",
+    "encoding":   "base64url+gzip+utf8json"
+  }
+}
+```
+
+Readable transcripts use the same shape with `role` from `{readable-cleanup,
+display}` and a required `sourceTranscriptId` pointing at the raw-ASR entry
+they derive from.
+
+## OpusTag layout (v2)
+
+In addition to the v1 tags:
+
+```text
+CASSINI_FORMAT=org.cassini.portable-meeting/2
+CASSINI_PAYLOAD_SCHEMA=https://cassini.local/spec/cassini-portable-meeting-manifest-v2.schema.json
+
+# main manifest (index + provenance + meeting metadata; small)
+CASSINI_PAYLOAD_*
+
+# discoverable from ffprobe alone
+CASSINI_TRANSCRIPT_IDS=<comma-separated ids>
+CASSINI_TRANSCRIPT_DEFAULT=<id of default raw-asr transcript>
+
+# one chunk set per transcript body; the UPPER_SNAKE form of the id replaces -
+CASSINI_TX_<UPPER_ID>_PAYLOAD_MIME=application/vnd.cassini.transcript-words+json
+CASSINI_TX_<UPPER_ID>_PAYLOAD_ENCODING=base64url+gzip+utf8json
+CASSINI_TX_<UPPER_ID>_PAYLOAD_CHUNK_COUNT=<N>
+CASSINI_TX_<UPPER_ID>_PAYLOAD_SHA256=<hex>
+CASSINI_TX_<UPPER_ID>_PAYLOAD_RAW_BYTES=<N>
+CASSINI_TX_<UPPER_ID>_PAYLOAD_GZIP_BYTES=<N>
+CASSINI_TX_<UPPER_ID>_PAYLOAD_000..N=<chunks>
+```
+
+Each per-transcript chunk set follows the same base64url + gzip + UTF-8 JSON
+encoding as v1's main payload. Bodies remain `cassini.words.v1` JSON unchanged
+— v2 is purely a transport change for them.
+
+## Producer rules (v2)
+
+Producers writing v2 files MUST:
+
+- Emit exactly one `default: true` transcript per role.
+- Reject transcript ids that match reserved v1 descriptor names: `payload`,
+  `format`, `audio`, `meeting`, `integrity`, `transcript`, `provenance`,
+  `summary`, `attachments`.
+- Compute `payloadRef.sha256` against the decompressed body JSON bytes
+  (not the gzip or base64url forms).
+- Include a `provenance.speechToText.<id>` entry for every transcript entry
+  with `role: raw-asr`; same shape for cleanup-role entries under
+  `readableCleanup`.
+
+Producers MUST NOT write a top-level `transcript` field in v2 files. v1
+consumers reading a v2 file SHOULD detect `version: 2` and surface a
+"newer format" message rather than guessing at the index shape.
+
+## Consumer rules (v2)
+
+v2 consumers MUST:
+
+- Detect `version: 2` and use the v2 loader path.
+- For each transcript displayed, resolve the `payloadRef` to its OpusTag chunk
+  set, concatenate, base64url-decode, gzip-decompress, parse as UTF-8 JSON,
+  and verify the SHA-256 matches `payloadRef.sha256`.
+- Honor the `default: true` flag when picking the initial transcript.
+- Continue to read v1 (`version: 1`) files as a single-transcript virtual
+  array (synthesized `raw-asr` entry from `transcript`, optional synthesized
+  `readable-cleanup` from `readableTranscript`).
+
+## Reserved transcript ids
+
+The producer MUST reject any transcript id from this list (case-insensitive
+after lowercasing) to avoid OpusTag namespace collisions:
+
+```text
+payload, format, audio, meeting, integrity, transcript, provenance,
+summary, attachments
+```
+

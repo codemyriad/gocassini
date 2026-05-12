@@ -264,7 +264,7 @@ describe("loadArtifactFromDirectory", () => {
       const url = String(input);
       if (url.endsWith(".opus")) {
         expect(init?.headers).toMatchObject({
-          Range: "bytes=0-262143",
+          Range: "bytes=0-1048575",
         });
         return {
           ok: true,
@@ -339,7 +339,7 @@ describe("loadArtifactFromDirectory", () => {
       const url = String(input);
       if (url.endsWith(".opus")) {
         expect(init?.headers).toMatchObject({
-          Range: "bytes=0-262143",
+          Range: "bytes=0-1048575",
         });
         return {
           ok: true,
@@ -446,7 +446,7 @@ describe("loadArtifactFromDirectory", () => {
       const url = String(input);
       if (url.endsWith(".opus")) {
         expect(init?.headers).toMatchObject({
-          Range: "bytes=0-262143",
+          Range: "bytes=0-1048575",
         });
         return {
           ok: true,
@@ -526,7 +526,7 @@ describe("loadArtifactFromDirectory", () => {
       const url = String(input);
       if (url.endsWith(".opus")) {
         expect(init?.headers).toMatchObject({
-          Range: "bytes=0-262143",
+          Range: "bytes=0-1048575",
         });
         return {
           ok: true,
