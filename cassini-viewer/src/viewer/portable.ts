@@ -5,7 +5,30 @@ import type {
   TranscriptWordsV1,
 } from "../core/types";
 
+export interface PortablePayloadRef {
+  prefix: string;
+  chunkCount: number;
+  sha256: string;
+  rawBytes?: number;
+  gzipBytes?: number;
+  mime?: string;
+  encoding?: string;
+}
+
+export interface PortableTranscriptEntry {
+  id: string;
+  role: string;
+  default?: boolean;
+  format: string;
+  language?: string;
+  wordCount?: number;
+  sourceTranscriptId?: string;
+  createdAtUtc?: string;
+  payloadRef: PortablePayloadRef;
+}
+
 export interface PortableMeetingManifest {
+  version?: number;
   meeting?: {
     durationMs?: number;
     createdAtUtc?: string;
@@ -36,6 +59,8 @@ export interface PortableMeetingManifest {
     sourceReadableTranscriptVersion?: string;
   };
   provenance?: unknown;
+  transcripts?: PortableTranscriptEntry[];
+  readableTranscripts?: PortableTranscriptEntry[];
 }
 
 export async function extractPortableManifestFromArrayBuffer(
@@ -43,6 +68,23 @@ export async function extractPortableManifestFromArrayBuffer(
 ): Promise<PortableMeetingManifest> {
   const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
   const tags = parseOpusCommentTags(bytes);
+  const indexManifest = await readMainPortablePayload(tags);
+  const version = typeof indexManifest.version === "number" ? indexManifest.version : 1;
+
+  if (version === 1) {
+    return indexManifest;
+  }
+  if (version === 2) {
+    return await resolvePortableV2DefaultBodies(indexManifest, tags);
+  }
+  throw new Error(
+    `portable opus file uses unsupported manifest version ${version}; please update the viewer`,
+  );
+}
+
+async function readMainPortablePayload(
+  tags: Record<string, string>,
+): Promise<PortableMeetingManifest> {
   const chunkCount = safeToInt(tags.CASSINI_PAYLOAD_CHUNK_COUNT, 0);
   if (chunkCount <= 0) {
     throw new Error("missing or invalid CASSINI_PAYLOAD_CHUNK_COUNT");
@@ -61,6 +103,94 @@ export async function extractPortableManifestFromArrayBuffer(
   const compressed = decodeBase64Url(encoded);
   const rawManifest = await gunzipBytes(compressed);
   return JSON.parse(new TextDecoder().decode(rawManifest)) as PortableMeetingManifest;
+}
+
+async function resolvePortableV2DefaultBodies(
+  indexManifest: PortableMeetingManifest,
+  tags: Record<string, string>,
+): Promise<PortableMeetingManifest> {
+  const transcripts = Array.isArray(indexManifest.transcripts) ? indexManifest.transcripts : [];
+  if (transcripts.length === 0) {
+    throw new Error("portable v2 manifest has no transcripts[]");
+  }
+  const defaultTranscript = pickDefaultTranscript(transcripts);
+  const transcriptBody = await loadPortableTranscriptBody(tags, defaultTranscript.payloadRef);
+  indexManifest.transcript = transcriptBody as PortableMeetingManifest["transcript"];
+
+  const readableTranscripts = Array.isArray(indexManifest.readableTranscripts)
+    ? indexManifest.readableTranscripts
+    : [];
+  if (readableTranscripts.length > 0) {
+    const defaultReadable =
+      readableTranscripts.find((entry) => entry.default) ?? readableTranscripts[0];
+    if (defaultReadable) {
+      const readableBody = await loadPortableTranscriptBody(tags, defaultReadable.payloadRef);
+      indexManifest.readableTranscript = readableBody as PortableMeetingManifest["readableTranscript"];
+    }
+  }
+
+  return indexManifest;
+}
+
+function pickDefaultTranscript(
+  transcripts: PortableTranscriptEntry[],
+): PortableTranscriptEntry {
+  const flagged = transcripts.find((entry) => entry.default);
+  return flagged ?? transcripts[0]!;
+}
+
+/**
+ * Resolves a per-transcript chunk set from the OpusTags map, base64url-decodes,
+ * gzip-decompresses, verifies the SHA-256 against payloadRef.sha256, and parses
+ * the resulting UTF-8 JSON. Throws on any integrity failure.
+ */
+export async function loadPortableTranscriptBody(
+  tags: Record<string, string>,
+  payloadRef: PortablePayloadRef,
+): Promise<unknown> {
+  if (!payloadRef || typeof payloadRef.prefix !== "string" || payloadRef.prefix === "") {
+    throw new Error("portable v2 transcript payloadRef is missing a prefix");
+  }
+  const chunkCount = typeof payloadRef.chunkCount === "number" ? payloadRef.chunkCount : 0;
+  if (chunkCount <= 0) {
+    throw new Error(`portable v2 transcript ${payloadRef.prefix} has invalid chunkCount`);
+  }
+
+  let encoded = "";
+  for (let index = 0; index < chunkCount; index += 1) {
+    const key = `${payloadRef.prefix}${String(index).padStart(3, "0")}`;
+    const chunk = tags[key];
+    if (!chunk) {
+      throw new Error(`missing transcript payload chunk ${key}`);
+    }
+    encoded += chunk;
+  }
+
+  const compressed = decodeBase64Url(encoded);
+  const raw = await gunzipBytes(compressed);
+  const expected = typeof payloadRef.sha256 === "string" ? payloadRef.sha256.toLowerCase() : "";
+  if (expected) {
+    const actual = await sha256Hex(raw);
+    if (actual !== expected) {
+      throw new Error(
+        `portable v2 transcript ${payloadRef.prefix} sha256 mismatch (expected ${expected}, got ${actual})`,
+      );
+    }
+  }
+  return JSON.parse(new TextDecoder().decode(raw)) as unknown;
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  // crypto.subtle.digest accepts BufferSource; the Uint8Array's backing
+  // ArrayBuffer satisfies it, so pass that explicitly to avoid TS narrowing
+  // the generic ArrayBufferLike to SharedArrayBuffer.
+  const digest = await crypto.subtle.digest("SHA-256", bytes.buffer as ArrayBuffer);
+  const view = new Uint8Array(digest);
+  let hex = "";
+  for (let index = 0; index < view.length; index += 1) {
+    hex += view[index]!.toString(16).padStart(2, "0");
+  }
+  return hex;
 }
 
 export function buildTranscriptWordsFromPortable(
