@@ -6,6 +6,9 @@ on:
       - opened
       - synchronize
       - reopened
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       run_processing:
@@ -38,13 +41,23 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BRANCH="${{ github.head_ref }}"
             BASE_REF="${{ github.event.pull_request.base.ref }}"
+            git fetch origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            CHANGED="$(git diff "origin/${BASE_REF}...HEAD" --name-only || true)"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            BRANCH="${{ github.ref_name }}"
+            BEFORE_SHA="${{ github.event.before }}"
+            HEAD_SHA="${{ github.sha }}"
+            if [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+              CHANGED="$(git diff "${BEFORE_SHA}..${HEAD_SHA}" --name-only || true)"
+            else
+              CHANGED="$(git show --pretty='' --name-only "${HEAD_SHA}" || true)"
+            fi
           else
             BRANCH="${{ github.ref_name }}"
             BASE_REF="main"
+            git fetch origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            CHANGED="$(git diff "origin/${BASE_REF}...HEAD" --name-only || true)"
           fi
-
-          git fetch origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}"
-          CHANGED="$(git diff "origin/${BASE_REF}...HEAD" --name-only || true)"
 
           ui_changed=false
           processing_changed=false
