@@ -24,13 +24,40 @@ func portableMeetingV2Enabled() bool {
 	}
 }
 
-// buildPortableMeetingV2Tags derives the v2 OpusTag map from a v1-shaped
-// Manifest. Step 3 of the rollout emits a single transcript entry (id
-// "raw-asr") from the bundle's existing transcript.words.v1.json file.
-// Multi-transcript bundle input arrives in step 4.
+// buildPortableMeetingV2Tags is the simple case: derive a v2 OpusTag map
+// from a v1-shaped Manifest's single inline transcript. Used by tests and
+// kept as a thin wrapper over the full source-aware builder below.
 func buildPortableMeetingV2Tags(manifest portable.Manifest) (map[string]string, error) {
-	transcripts := []portable.TranscriptInput{
-		{
+	return buildPortableMeetingV2TagsFromSource(manifest, portableMeetingSource{})
+}
+
+// buildPortableMeetingV2TagsFromSource builds the v2 OpusTag map for a
+// portable meeting bundle. If the bundle has source.AdditionalTranscripts
+// (v2 multi-transcript manifest.json), each entry becomes a separate v2
+// transcript with its own provenance. Otherwise the bundle's single
+// transcript.words.v1.json is synthesized as one raw-asr entry.
+func buildPortableMeetingV2TagsFromSource(manifest portable.Manifest, source portableMeetingSource) (map[string]string, error) {
+	transcripts, defaultID, err := assembleV2TranscriptInputs(manifest, source)
+	if err != nil {
+		return nil, err
+	}
+
+	encoded, err := portable.EncodeManifestV2(manifest, transcripts, portable.DefaultPayloadChunkSize)
+	if err != nil {
+		return nil, fmt.Errorf("encode portable v2 manifest: %w", err)
+	}
+	return portable.BuildOpusTagsV2(manifest, encoded, defaultID), nil
+}
+
+// assembleV2TranscriptInputs returns the list of transcript inputs plus the
+// id of the default raw-ASR entry. The default rule: if any input declares
+// Default=true, that's the default; otherwise the first raw-ASR input wins.
+func assembleV2TranscriptInputs(manifest portable.Manifest, source portableMeetingSource) ([]portable.TranscriptInput, string, error) {
+	additional := source.AdditionalTranscripts
+	if len(additional) == 0 {
+		// v1 single-transcript bundle: synthesize one raw-asr entry from the
+		// inline manifest.Transcript that the v1 builder already populated.
+		input := portable.TranscriptInput{
 			ID:           portable.RoleRawASR,
 			Role:         portable.RoleRawASR,
 			Default:      true,
@@ -43,14 +70,62 @@ func buildPortableMeetingV2Tags(manifest portable.Manifest) (map[string]string, 
 				Items:     manifest.Transcript.Items,
 			},
 			Provenance: provenanceSpeechToText(manifest),
-		},
+		}
+		return []portable.TranscriptInput{input}, portable.RoleRawASR, nil
 	}
 
-	encoded, err := portable.EncodeManifestV2(manifest, transcripts, portable.DefaultPayloadChunkSize)
-	if err != nil {
-		return nil, fmt.Errorf("encode portable v2 manifest: %w", err)
+	inputs := make([]portable.TranscriptInput, 0, len(additional))
+	for _, entry := range additional {
+		role := entry.Role
+		if role == "" {
+			role = portable.RoleRawASR
+		}
+		items := flattenPortableTranscriptItems(entry.Transcript)
+		body := portable.TranscriptBody{
+			Format:    "cassini.words.v1",
+			Language:  entry.Language,
+			WordCount: len(items),
+			Items:     items,
+		}
+		inputs = append(inputs, portable.TranscriptInput{
+			ID:           entry.ID,
+			Role:         role,
+			Default:      entry.Default,
+			Language:     entry.Language,
+			CreatedAtUTC: manifest.Meeting.ProcessedAtUTC,
+			Body:         body,
+			Provenance:   entry.Provenance,
+		})
 	}
-	return portable.BuildOpusTagsV2(manifest, encoded, portable.RoleRawASR), nil
+
+	defaultID := pickV2DefaultRawID(inputs)
+	if defaultID == "" {
+		return nil, "", fmt.Errorf("v2 multi-transcript bundle has no raw-ASR entry to use as default")
+	}
+	return inputs, defaultID, nil
+}
+
+func pickV2DefaultRawID(inputs []portable.TranscriptInput) string {
+	for _, input := range inputs {
+		if input.Default && isRawRole(input.Role) {
+			return input.ID
+		}
+	}
+	for _, input := range inputs {
+		if isRawRole(input.Role) {
+			return input.ID
+		}
+	}
+	return ""
+}
+
+func isRawRole(role string) bool {
+	switch role {
+	case portable.RoleRawASR, portable.RoleHumanCorrected, portable.RoleTranslation:
+		return true
+	default:
+		return false
+	}
 }
 
 func provenanceSpeechToText(manifest portable.Manifest) *portable.ProcessingStep {

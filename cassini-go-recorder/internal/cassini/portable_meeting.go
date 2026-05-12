@@ -32,6 +32,21 @@ type portableMeetingSource struct {
 	DisplayTranscript  map[string]any
 	SummaryMarkdown    []byte
 	Artifact           portableMeetingArtifact
+	// AdditionalTranscripts is populated when the bundle's manifest.json
+	// includes files.transcripts[]. Each entry already has its file loaded
+	// off disk. Empty in v1 bundles.
+	AdditionalTranscripts []portableNamedTranscript
+}
+
+// portableNamedTranscript pairs a loaded transcript file with the v2 metadata
+// the producer needs (id, role, default, provenance).
+type portableNamedTranscript struct {
+	ID         string
+	Role       string
+	Default    bool
+	Language   string
+	Provenance *portable.ProcessingStep
+	Transcript portableTranscriptArtifact
 }
 
 type portableMeetingArtifact struct {
@@ -43,14 +58,30 @@ type portableMeetingArtifact struct {
 	} `json:"source"`
 	Provenance *portable.Provenance `json:"provenance"`
 	Files      struct {
-		Audio              string `json:"audio"`
-		Transcript         string `json:"transcript"`
-		ReadableTranscript string `json:"readableTranscript"`
-		DisplayTranscript  string `json:"displayTranscript"`
-		Summary            string `json:"summary"`
+		Audio              string                            `json:"audio"`
+		Transcript         string                            `json:"transcript"`
+		ReadableTranscript string                            `json:"readableTranscript"`
+		DisplayTranscript  string                            `json:"displayTranscript"`
+		Summary            string                            `json:"summary"`
+		Transcripts        []portableMeetingTranscriptInputFile `json:"transcripts,omitempty"`
 	} `json:"files"`
 	SpeakerCount int `json:"speakerCount"`
 	WordCount    int `json:"wordCount"`
+}
+
+// portableMeetingTranscriptInputFile describes one transcript file in a v2
+// multi-transcript bundle. Present in manifest.json under `files.transcripts`.
+// When this list is non-empty and CASSINI_FORMAT_V2 is on, the packer emits a
+// v2 file with one entry per element; the singular `files.transcript` is
+// ignored. When the list is empty, the v1-style single-transcript path
+// applies (see loadPortableMeetingSource).
+type portableMeetingTranscriptInputFile struct {
+	ID         string                  `json:"id"`
+	Path       string                  `json:"path"`
+	Role       string                  `json:"role"`
+	Default    bool                    `json:"default,omitempty"`
+	Language   string                  `json:"language,omitempty"`
+	Provenance *portable.ProcessingStep `json:"provenance,omitempty"`
 }
 
 type portableTranscriptArtifact struct {
@@ -194,7 +225,7 @@ func packMeetingBundle(ctx context.Context, meetingDir string, outPath string, o
 
 	var opusTags map[string]string
 	if portableMeetingV2Enabled() {
-		opusTags, err = buildPortableMeetingV2Tags(manifest)
+		opusTags, err = buildPortableMeetingV2TagsFromSource(manifest, source)
 		if err != nil {
 			return err
 		}
@@ -281,15 +312,51 @@ func loadPortableMeetingSource(meetingDir string) (portableMeetingSource, error)
 		return portableMeetingSource{}, err
 	}
 
+	additional, err := loadPortableAdditionalTranscripts(rootDir, artifact.Files.Transcripts)
+	if err != nil {
+		return portableMeetingSource{}, err
+	}
+
 	return portableMeetingSource{
-		MeetingDir:         rootDir,
-		AudioPath:          audioPath,
-		Transcript:         transcript,
-		ReadableTranscript: readableTranscript,
-		DisplayTranscript:  displayTranscript,
-		SummaryMarkdown:    summaryMarkdown,
-		Artifact:           artifact,
+		MeetingDir:            rootDir,
+		AudioPath:             audioPath,
+		Transcript:            transcript,
+		ReadableTranscript:    readableTranscript,
+		DisplayTranscript:     displayTranscript,
+		SummaryMarkdown:       summaryMarkdown,
+		Artifact:              artifact,
+		AdditionalTranscripts: additional,
 	}, nil
+}
+
+func loadPortableAdditionalTranscripts(rootDir string, entries []portableMeetingTranscriptInputFile) ([]portableNamedTranscript, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	loaded := make([]portableNamedTranscript, 0, len(entries))
+	for _, entry := range entries {
+		path := strings.TrimSpace(entry.Path)
+		if path == "" {
+			return nil, fmt.Errorf("multi-transcript entry %q has empty path", entry.ID)
+		}
+		raw, err := os.ReadFile(filepath.Join(rootDir, path))
+		if err != nil {
+			return nil, fmt.Errorf("read transcript file %s: %w", path, err)
+		}
+		var transcript portableTranscriptArtifact
+		if err := json.Unmarshal(raw, &transcript); err != nil {
+			return nil, fmt.Errorf("parse transcript file %s: %w", path, err)
+		}
+		loaded = append(loaded, portableNamedTranscript{
+			ID:         entry.ID,
+			Role:       entry.Role,
+			Default:    entry.Default,
+			Language:   entry.Language,
+			Provenance: entry.Provenance,
+			Transcript: transcript,
+		})
+	}
+	return loaded, nil
 }
 
 func loadPortableSummaryMarkdown(rootDir string, artifactPath string) ([]byte, error) {
