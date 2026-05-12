@@ -127,12 +127,11 @@ The v1 `CASSINI_DECODE_HINT` extends to mention the two-layer decode: concatenat
 
 ## Compatibility
 
-**v1-aware consumers reading a v2 file.** Producer choice via a profile flag:
+**v1-aware consumers reading a v2 file: strict profile.** v2 producers do not write a top-level `transcript` mirror. v1 readers see `version: 2` and surface "newer format; cannot fully render." This means the viewer (step 3 in the rollout) must ship to production before producer step 2 enables v2 emission — otherwise users with the older viewer cached see a broken file. The producer's v2-emission path is feature-flagged off until the v2-capable viewer is live.
 
-- *Compat profile* (default during rollout). v2 producer also writes a top-level `transcript` field mirroring the default body — exactly v1 shape. v1 readers see a working single-transcript file; v2 readers ignore the mirror and resolve `payloadRef` for the real bodies. Cost: one inlined-transcript-worth of bytes in the main payload. Note: neither the Go producer nor the TS consumer currently validates against the v1 schema's `additionalProperties: false` at runtime, so extra fields are tolerated in practice; the schema URL bump prevents a strict v2 validator from mis-checking a v2 file against the v1 schema.
-- *Strict profile.* Main manifest omits the mirror. v1 readers see `version: 2` and SHOULD surface "newer format; cannot fully render" rather than guess.
+(Considered and rejected: a compat profile that mirrored the default transcript inline so v1 viewers still rendered. Cost was tolerable, but it complicated the schema and the consumer logic, and we control both ends of the pipeline today — no third-party v1 reader is in the wild that we need to keep happy.)
 
-**v2-aware consumers reading a v1 file.** `version: 1` keeps working unchanged: the v2 loader treats the v1 top-level `transcript` / `readableTranscript` as a single-entry virtual array with synthesized ids.
+**v2-aware consumers reading a v1 file.** `version: 1` keeps working unchanged: the v2 loader treats the v1 top-level `transcript` / `readableTranscript` as a single-entry virtual array with synthesized ids. This shim is the only backward direction we maintain.
 
 ## Code impact
 
@@ -156,19 +155,21 @@ The v1 `CASSINI_DECODE_HINT` extends to mention the two-layer decode: concatenat
 1. **Required `sourceTranscriptId`?** Required for `role: readable-cleanup` and `role: display` (a cleanup without a known source ASR is ambiguous to align). Optional for `human-corrected` and `translation`.
 2. **Default selection across roles.** One default per role (so the viewer picks a default raw-ASR and a default readable independently), or one global default? Leaning per role.
 3. **Inline tiny bodies?** A 30 KB transcript through its own chunk set is overhead. We could allow `payloadRef.inline: true` later; not worth it for v2.0.
-4. **Mirror readable too?** If compat profile mirrors the default raw-ASR transcript, should it also mirror the default readable? Yes for parity, at the cost of more inlined bytes.
-5. **OpusTag aggregate size with many transcripts.** Ogg has no hard limit, but some tools handle very large comment headers poorly. Validate against `ffprobe`, `mediainfo`, and other tag tooling with a 5-transcript file before declaring v2 stable.
-6. **Viewer initial-range size.** Decide whether to widen `PORTABLE_METADATA_RANGE_END`, or just rely on the full-file fallback when the index is past 256 KB.
+4. **OpusTag aggregate size with many transcripts.** Ogg has no hard limit, but some tools handle very large comment headers poorly. Validate against `ffprobe`, `mediainfo`, and other tag tooling with a 5-transcript file before declaring v2 stable.
+5. **Viewer initial-range size.** Decide whether to widen `PORTABLE_METADATA_RANGE_END`, or just rely on the full-file fallback when the index is past 256 KB.
+6. **Reserved transcript ids.** Block ids that collide with descriptor tag names (`payload`, `format`, etc.) at the producer level rather than discovering it at decode time.
 
 ## Rollout
 
-Each step independently shippable:
+Order matters under the strict profile: v2-capable viewer ships before producers start writing v2. Each step independently shippable:
 
 1. **Spec & schema.** v2 schema JSON, v2 section in `docs/portable-meeting-format.md`, no code yet.
-2. **Producer compat profile.** Emit v2 files with one transcript, compat profile on by default; v1 viewer must still open them. Exercises the new tag layout end-to-end without user-visible change.
-3. **Consumer.** Viewer detects `version: 2` and uses the new loader path; still shows one transcript until step 4.
-4. **Producer multi-transcript.** Bundle reader accepts multiple word-transcript inputs; wire to D-277's side-by-side artifact.
+2. **Consumer.** Viewer detects `version: 2` and uses the new loader path. Ships to production before any producer emits v2. v1 files still work via the synthesized-array shim.
+3. **Producer v2 emission (feature-flagged off by default).** Recorder can emit v2 files with one transcript; flag stays off in production until the v2 viewer is live.
+4. **Producer multi-transcript.** Bundle reader accepts multiple word-transcript inputs; wire to D-277's side-by-side artifact. Flip the feature flag.
 5. **Viewer switch/compare UI.** Transcript switcher first, diff view later. Design-led.
+
+See the companion build plan in [`docs/proposals/multi-transcription-format-plan.md`](./multi-transcription-format-plan.md) for file-level changes, test coverage, and parallelization.
 
 ## Success criteria
 
