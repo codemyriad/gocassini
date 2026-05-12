@@ -191,10 +191,21 @@ func packMeetingBundle(ctx context.Context, meetingDir string, outPath string, o
 	if err != nil {
 		return err
 	}
-	payload, err := portable.EncodeManifest(manifest, portable.DefaultPayloadChunkSize)
-	if err != nil {
-		return err
+
+	var opusTags map[string]string
+	if portableMeetingV2Enabled() {
+		opusTags, err = buildPortableMeetingV2Tags(manifest)
+		if err != nil {
+			return err
+		}
+	} else {
+		payload, err := portable.EncodeManifest(manifest, portable.DefaultPayloadChunkSize)
+		if err != nil {
+			return err
+		}
+		opusTags = portable.BuildOpusTags(manifest, payload)
 	}
+
 	finalStagePath, err := createPortableStagePath(resolvedOut)
 	if err != nil {
 		return err
@@ -202,7 +213,7 @@ func packMeetingBundle(ctx context.Context, meetingDir string, outPath string, o
 	defer func() {
 		_ = os.Remove(finalStagePath)
 	}()
-	if err := writePortableMeetingFile(ctx, stagedAudioPath, finalStagePath, portable.BuildOpusTags(manifest, payload)); err != nil {
+	if err := writePortableMeetingFile(ctx, stagedAudioPath, finalStagePath, opusTags); err != nil {
 		return err
 	}
 	if err := verifyPortableMeetingFile(finalStagePath, manifest); err != nil {

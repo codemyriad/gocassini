@@ -13,15 +13,28 @@ import (
 
 const (
 	Format                  = "org.cassini.portable-meeting/1"
+	FormatV2                = "org.cassini.portable-meeting/2"
 	Profile                 = "ogg-opus"
 	PayloadMIME             = "application/vnd.cassini.portable-meeting+json"
+	PayloadMIMEV2           = "application/vnd.cassini.portable-meeting+json"
 	PayloadEncoding         = "base64url+gzip+utf8json"
 	PayloadSchema           = "https://cassini.local/spec/cassini-portable-meeting-manifest-v1.schema.json"
+	PayloadSchemaV2         = "https://cassini.local/spec/cassini-portable-meeting-manifest-v2.schema.json"
 	AudioPCMFormat          = "s16le"
 	AudioMatchPolicy        = "exact-pcm"
 	DefaultPayloadChunkSize = 4096
 	Description             = "Cassini portable meeting file. Decode CASSINI_PAYLOAD_*: base64url -> gzip -> UTF-8 JSON."
 	DecodeHint              = "Concatenate CASSINI_PAYLOAD_000..N, base64url decode, gzip decompress, parse UTF-8 JSON."
+	DecodeHintV2            = "Concatenate CASSINI_PAYLOAD_000..N for the manifest; for a transcript body concatenate CASSINI_TX_<ID>_PAYLOAD_000..N. Each chunk set: base64url decode, gzip decompress, parse UTF-8 JSON."
+
+	TranscriptBodyMIMEWords    = "application/vnd.cassini.transcript-words+json"
+	TranscriptBodyMIMEReadable = "application/vnd.cassini.transcript-readable+json"
+
+	RoleRawASR           = "raw-asr"
+	RoleReadableCleanup  = "readable-cleanup"
+	RoleDisplay          = "display"
+	RoleHumanCorrected   = "human-corrected"
+	RoleTranslation      = "translation"
 )
 
 type Manifest struct {
@@ -32,7 +45,14 @@ type Manifest struct {
 	Audio      Audio      `json:"audio"`
 	Integrity  Integrity  `json:"integrity"`
 	Speakers   []Speaker  `json:"speakers"`
+	// v1 wire: required field; v2 wire never includes it (omitempty on a
+	// non-pointer struct is a no-op, so v1 writes always render this — fine).
 	Transcript Transcript `json:"transcript"`
+	// V2-only descriptor arrays. Populated when reading v2 files; ignored on
+	// v1 writes. v2 writes happen through manifestV2Wire (see manifest_v2.go),
+	// so these fields never appear in v2-produced JSON either.
+	Transcripts         []TranscriptEntry `json:"transcripts,omitempty"`
+	ReadableTranscripts []TranscriptEntry `json:"readableTranscripts,omitempty"`
 	Provenance *Provenance `json:"provenance,omitempty"`
 	ReadableTranscript map[string]any `json:"readableTranscript,omitempty"`
 	DisplayTranscript  map[string]any `json:"displayTranscript,omitempty"`
