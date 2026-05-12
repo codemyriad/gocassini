@@ -189,7 +189,7 @@ or new encoding value, not an undocumented variation.
 
 The decompressed payload MUST be a JSON object conforming to:
 
-- [cassini-portable-meeting-manifest-v1.schema.json](/home/silvio/dev/gocassini/spec/cassini-portable-meeting-manifest-v1.schema.json)
+- [`spec/cassini-portable-meeting-manifest-v1.schema.json`](../spec/cassini-portable-meeting-manifest-v1.schema.json)
 
 The top-level fields are:
 
@@ -508,7 +508,7 @@ All other v1 descriptor tags still apply.
 ## Manifest shape (v2)
 
 The decompressed `CASSINI_PAYLOAD_*` body MUST conform to
-[`spec/cassini-portable-meeting-manifest-v2.schema.json`](/home/silvio/dev/gocassini/spec/cassini-portable-meeting-manifest-v2.schema.json).
+[`spec/cassini-portable-meeting-manifest-v2.schema.json`](../spec/cassini-portable-meeting-manifest-v2.schema.json).
 Notable differences from v1:
 
 | v1 | v2 |
