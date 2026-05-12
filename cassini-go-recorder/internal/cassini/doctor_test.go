@@ -5,12 +5,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gocassini/internal/transcribe"
 )
 
 func TestSTTModelCacheChecksIncludeRemediationForUnwritableModelDir(t *testing.T) {
 	tmp := t.TempDir()
 	cacheRoot := filepath.Join(tmp, "cache")
-	modelDir := filepath.Join(cacheRoot, "models", "parakeet-tdt-0.6b-v2-int8")
+	modelDir := filepath.Join(cacheRoot, "models", string(transcribe.DefaultModelID()))
 	if err := os.MkdirAll(modelDir, 0o755); err != nil {
 		t.Fatalf("mkdir model dir: %v", err)
 	}

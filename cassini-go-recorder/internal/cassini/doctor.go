@@ -181,7 +181,7 @@ func sttModelCacheChecks() []doctorCheck {
 		parentWritableCheck(cacheRoot, "cassini cache root"),
 	}
 
-	modelDir := filepath.Join(cacheRoot, "models", string(transcribe.ModelParakeet06B))
+	modelDir := filepath.Join(cacheRoot, "models", string(transcribe.DefaultModelID()))
 	if info, err := os.Stat(modelDir); err == nil && info.IsDir() {
 		checks = append(checks, writableDirCheck(modelDir, "STT model cache"))
 	} else {
