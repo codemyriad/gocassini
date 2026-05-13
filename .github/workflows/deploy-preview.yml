@@ -206,9 +206,14 @@ jobs:
           cache: npm
           cache-dependency-path: cassini-viewer/package-lock.json
 
-      - name: Install rclone
+      - name: Install rclone + ffmpeg
         run: |
           set -euo pipefail
+          # ffmpeg supplies ffprobe, which cassini-viewer's export-static-meetings
+          # invokes per .opus to read its tags. ubuntu-latest doesn't ship it on
+          # PATH by default for this action context.
+          sudo apt-get update -y >/dev/null
+          sudo apt-get install -y --no-install-recommends ffmpeg >/dev/null
           curl -fsSL https://rclone.org/install.sh | sudo bash
 
       - name: Prepare paths
