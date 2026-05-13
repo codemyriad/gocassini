@@ -81,6 +81,29 @@ func TestWriteManifestRecordsSummaryWhenPresent(t *testing.T) {
 	}
 }
 
+func TestWriteTranscriptJSONEmitsEmptySpeakersArrayForSilentRecording(t *testing.T) {
+	tmp := t.TempDir()
+	wordsPath := filepath.Join(tmp, "transcript.words.v1.json")
+	readablePath := filepath.Join(tmp, "transcript.readable.v1.json")
+
+	if err := WriteTranscriptJSON(wordsPath, nil, nil, 45049); err != nil {
+		t.Fatalf("WriteTranscriptJSON: %v", err)
+	}
+	if err := WriteReadableTranscriptJSON(readablePath, nil, nil, 45049); err != nil {
+		t.Fatalf("WriteReadableTranscriptJSON: %v", err)
+	}
+
+	for _, path := range []string{wordsPath, readablePath} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if !strings.Contains(string(raw), `"speakers": []`) {
+			t.Errorf("%s must serialize speakers as [] for silent recordings (viewer validator rejects null), got:\n%s", filepath.Base(path), raw)
+		}
+	}
+}
+
 func TestWriteManifestOmitsSummaryWhenAbsent(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "manifest.json")

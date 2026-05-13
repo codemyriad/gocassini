@@ -73,8 +73,6 @@ Current demo-data behavior and limitations:
 
 - `npm run demo-data:pull` refreshes `exports/viewer-demo` from `DEMO_DATA_URL`.
 - `npm run demo-data:clean` removes the pulled viewer demo bundle.
-- The pulled `summary.md` content is currently dummy data sourced from the
-  lantern festival fixture and is written into every other meeting when pulled.
 - Audio currently does not work on the Vite dev server. Treat that as a known
   local-dev limitation for now.
 
