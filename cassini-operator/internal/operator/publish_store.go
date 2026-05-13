@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func (s *Store) MarkPublishQueued(ctx context.Context, id, artifactMeetingPath, queuedAt string) error {
+func (s *Store) MarkPublishQueued(ctx context.Context, id, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin publish queued update: %w", err)
@@ -16,7 +16,7 @@ func (s *Store) MarkPublishQueued(ctx context.Context, id, artifactMeetingPath, 
 	_, err = tx.ExecContext(ctx, `
 UPDATE jobs
 SET stage = ?, state = ?, artifact_meeting_path = ?, updated_at = ?, build_finished_at = ?, publish_queued_at = ?, completed_at = NULL, error = NULL
-WHERE id = ?`, "publish", "queued", artifactMeetingPath, queuedAt, queuedAt, queuedAt, id)
+WHERE id = ?`, "publish", "queued", jobArtifactMeetingPath, queuedAt, queuedAt, queuedAt, id)
 	if err != nil {
 		return fmt.Errorf("update publish queued: %w", err)
 	}
@@ -27,7 +27,7 @@ WHERE id = ?`, "publish", "queued", artifactMeetingPath, queuedAt, queuedAt, que
 	if _, err := tx.ExecContext(ctx, `
 UPDATE job_attempts
 SET stage = ?, state = ?, artifact_meeting_path = ?, updated_at = ?, build_finished_at = ?, publish_queued_at = ?, completed_at = NULL, error = NULL
-WHERE job_id = ? AND attempt_number = ?`, "publish", "queued", artifactMeetingPath, queuedAt, queuedAt, queuedAt, id, attemptNumber); err != nil {
+WHERE job_id = ? AND attempt_number = ?`, "publish", "queued", attemptArtifactMeetingPath, queuedAt, queuedAt, queuedAt, id, attemptNumber); err != nil {
 		return fmt.Errorf("update attempt publish queued: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

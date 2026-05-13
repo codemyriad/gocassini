@@ -241,7 +241,7 @@ func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
 	}
 }
 
-func TestCreateJobReturnsULIDAndCompletesRecordStageWithCanonicalRun(t *testing.T) {
+func TestCreateJobReturnsULIDAndCompletesPublishStageWithCanonicalAndAttemptArtifacts(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
@@ -276,17 +276,20 @@ func TestCreateJobReturnsULIDAndCompletesRecordStageWithCanonicalRun(t *testing.
 	if !strings.Contains(*job.ArtifactRunPath, filepath.Join("current", resp.ID+".run")) {
 		t.Fatalf("expected canonical current run path, got %#v", job.ArtifactRunPath)
 	}
-	if job.ArtifactMeetingPath != nil {
-		t.Fatalf("did not expect artifact_meeting_path in slice I1, got %#v", job.ArtifactMeetingPath)
+	if job.ArtifactMeetingPath == nil {
+		t.Fatalf("expected canonical artifact_meeting_path to be set")
 	}
-	if job.ArtifactSitePath != nil {
-		t.Fatalf("did not expect artifact_site_path in slice I1, got %#v", job.ArtifactSitePath)
+	if !strings.Contains(*job.ArtifactMeetingPath, filepath.Join("current", resp.ID+".meeting")) {
+		t.Fatalf("expected canonical current meeting path, got %#v", job.ArtifactMeetingPath)
 	}
-	if job.BuildQueuedAt != nil || job.BuildStartedAt != nil || job.BuildFinishedAt != nil {
-		t.Fatalf("did not expect build timestamps in slice I1, got job=%#v", job)
+	if job.ArtifactSitePath == nil {
+		t.Fatalf("expected artifact_site_path to be set")
 	}
-	if job.PublishQueuedAt != nil || job.PublishStartedAt != nil || job.PublishFinishedAt != nil {
-		t.Fatalf("did not expect publish timestamps in slice I1, got job=%#v", job)
+	if job.BuildQueuedAt == nil || job.BuildStartedAt == nil || job.BuildFinishedAt == nil {
+		t.Fatalf("expected build timestamps to be set, got job=%#v", job)
+	}
+	if job.PublishQueuedAt == nil || job.PublishStartedAt == nil || job.PublishFinishedAt == nil {
+		t.Fatalf("expected publish timestamps to be set, got job=%#v", job)
 	}
 	if job.StopReason == nil || *job.StopReason != "room_empty" {
 		t.Fatalf("expected room_empty stop reason, got %#v", job.StopReason)
@@ -315,6 +318,12 @@ func TestCreateJobReturnsULIDAndCompletesRecordStageWithCanonicalRun(t *testing.
 	}
 	if !strings.Contains(*attempts[0].ArtifactRunPath, filepath.Join("runs", resp.ID+"--attempt-001.run")) {
 		t.Fatalf("expected retained attempt-local run path, got %#v", attempts[0].ArtifactRunPath)
+	}
+	if attempts[0].ArtifactMeetingPath == nil {
+		t.Fatalf("expected attempt-local artifact_meeting_path on attempt 1")
+	}
+	if !strings.Contains(*attempts[0].ArtifactMeetingPath, filepath.Join("runs", resp.ID+"--attempt-001.meeting")) {
+		t.Fatalf("expected attempt-local meeting path, got %#v", attempts[0].ArtifactMeetingPath)
 	}
 	if attempts[0].RequestJSON != job.RequestJSON {
 		t.Fatalf("attempt request_json mismatch: attempt=%s job=%s", attempts[0].RequestJSON, job.RequestJSON)
@@ -524,7 +533,7 @@ func TestCreateJobPassesExplicitRecordOptions(t *testing.T) {
 	}
 }
 
-func TestStopJobAcceptsRunningRecordAndCompletesTerminalRecordStage(t *testing.T) {
+func TestStopJobAcceptsRunningRecordAndCompletesPublishStage(t *testing.T) {
 	rt, cleanup, logPath, startedPath := newCLITestRuntime(t)
 	defer cleanup()
 	t.Setenv("FAKE_RECORD_WAIT_FOR_SIGNAL", "1")
@@ -564,8 +573,11 @@ func TestStopJobAcceptsRunningRecordAndCompletesTerminalRecordStage(t *testing.T
 	if job.ArtifactRunPath == nil || !strings.Contains(*job.ArtifactRunPath, filepath.Join("current", resp.ID+".run")) {
 		t.Fatalf("expected canonical current run path, got %#v", job.ArtifactRunPath)
 	}
-	if job.ArtifactMeetingPath != nil || job.ArtifactSitePath != nil {
-		t.Fatalf("did not expect build/publish artifacts in slice I1, got job=%#v", job)
+	if job.ArtifactMeetingPath == nil || !strings.Contains(*job.ArtifactMeetingPath, filepath.Join("current", resp.ID+".meeting")) {
+		t.Fatalf("expected canonical current meeting path, got %#v", job.ArtifactMeetingPath)
+	}
+	if job.ArtifactSitePath == nil {
+		t.Fatalf("expected artifact_site_path after publish, got job=%#v", job)
 	}
 	if job.StopReason == nil || *job.StopReason != "operator_requested" {
 		t.Fatalf("expected operator_requested stop reason, got %#v", job.StopReason)
@@ -884,8 +896,6 @@ func TestRecordFailureRetainsAttemptRunWithoutCanonicalRun(t *testing.T) {
 }
 
 func TestBuildFailurePersistsLightweightErrorDetail(t *testing.T) {
-	t.Skip("covered in slice I2")
-
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
@@ -919,17 +929,28 @@ func TestBuildFailurePersistsLightweightErrorDetail(t *testing.T) {
 	}
 
 	job := waitForJobState(t, rt.store, resp.ID, "failed")
-	if job.ArtifactMeetingPath == nil {
-		t.Fatalf("expected artifact_meeting_path for partial bundle")
+	if job.ArtifactRunPath == nil || !strings.Contains(*job.ArtifactRunPath, filepath.Join("current", resp.ID+".run")) {
+		t.Fatalf("expected canonical run path to remain on failed build job, got %#v", job.ArtifactRunPath)
+	}
+	if job.ArtifactMeetingPath != nil {
+		t.Fatalf("did not expect canonical meeting path on initial build failure, got %#v", job.ArtifactMeetingPath)
 	}
 	if job.Error == nil || *job.Error != "build stage build: transcriber exploded" {
 		t.Fatalf("unexpected error detail: %#v", job.Error)
 	}
+	attempts, err := rt.store.ListJobAttempts(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatalf("ListJobAttempts() error = %v", err)
+	}
+	if len(attempts) != 1 || attempts[0].ArtifactMeetingPath == nil {
+		t.Fatalf("expected partial attempt-local meeting bundle on first attempt, got %#v", attempts)
+	}
+	if !strings.Contains(*attempts[0].ArtifactMeetingPath, filepath.Join("runs", resp.ID+"--attempt-001.meeting")) {
+		t.Fatalf("expected attempt-local partial meeting path, got %#v", attempts[0].ArtifactMeetingPath)
+	}
 }
 
 func TestPublishFailurePersistsLightweightErrorDetail(t *testing.T) {
-	t.Skip("covered in slice I2")
-
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
@@ -963,6 +984,9 @@ func TestPublishFailurePersistsLightweightErrorDetail(t *testing.T) {
 	}
 
 	job := waitForJobState(t, rt.store, resp.ID, "failed")
+	if job.ArtifactMeetingPath == nil || !strings.Contains(*job.ArtifactMeetingPath, filepath.Join("current", resp.ID+".meeting")) {
+		t.Fatalf("expected canonical meeting path to remain on publish failure, got %#v", job.ArtifactMeetingPath)
+	}
 	if job.ArtifactSitePath == nil {
 		t.Fatalf("expected artifact_site_path for partial bundle")
 	}
@@ -1155,7 +1179,7 @@ esac
 		return meetingPath, nil
 	}
 	rt.publishJobFn = func(ctx context.Context, task publishTask) (string, error) {
-		if err := writeReadySiteBundleFixture(rt.cfg.SiteRoot, rt.cfg.WorkRoot); err != nil {
+		if err := writeReadySiteBundleFixture(rt.cfg.SiteRoot, currentRoot(rt.cfg.WorkRoot)); err != nil {
 			return rt.cfg.SiteRoot, err
 		}
 		return rt.cfg.SiteRoot, nil
@@ -1206,7 +1230,7 @@ func newTestRuntime(t *testing.T) (*Runtime, func()) {
 		return meetingPath, nil
 	}
 	rt.publishJobFn = func(ctx context.Context, task publishTask) (string, error) {
-		if err := writeReadySiteBundleFixture(rt.cfg.SiteRoot, rt.cfg.WorkRoot); err != nil {
+		if err := writeReadySiteBundleFixture(rt.cfg.SiteRoot, currentRoot(rt.cfg.WorkRoot)); err != nil {
 			return rt.cfg.SiteRoot, err
 		}
 		return rt.cfg.SiteRoot, nil

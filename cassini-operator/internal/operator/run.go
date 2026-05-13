@@ -409,14 +409,21 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		}
 		return
 	}
-	if updateErr := rt.store.MarkRecordSucceededTerminal(context.Background(), job.ID, canonicalRunPath, result.ArtifactRunPath, result, finishedAt); updateErr != nil {
-		rt.logger.Printf("record success update failed id=%s: %v", job.ID, updateErr)
+	if updateErr := rt.store.UpdateRecordOutcome(context.Background(), job.ID, result, finishedAt); updateErr != nil {
+		rt.logger.Printf("record outcome update failed id=%s: %v", job.ID, updateErr)
 		if failErr := rt.store.MarkRecordFailed(context.Background(), job.ID, updateErr.Error(), result, finishedAt); failErr != nil {
-			rt.logger.Printf("record success failure update failed id=%s: %v", job.ID, failErr)
+			rt.logger.Printf("record outcome failure update failed id=%s: %v", job.ID, failErr)
 		}
 		return
 	}
-	rt.logger.Printf("record succeeded id=%s attempt_run=%s canonical_run=%s stop_reason=%s", job.ID, result.ArtifactRunPath, canonicalRunPath, strings.TrimSpace(result.StopReason))
+	if err := rt.enqueueBuildJob(job.ID, job.CurrentAttemptNumber, canonicalRunPath, result.ArtifactRunPath, finishedAt); err != nil {
+		rt.logger.Printf("build queue update failed id=%s: %v", job.ID, err)
+		if updateErr := rt.store.MarkBuildFailed(context.Background(), job.ID, "", err.Error(), finishedAt); updateErr != nil {
+			rt.logger.Printf("build queue failure update failed id=%s: %v", job.ID, updateErr)
+		}
+		return
+	}
+	rt.logger.Printf("record succeeded id=%s attempt_run=%s canonical_run=%s build_queued_at=%s stop_reason=%s", job.ID, result.ArtifactRunPath, canonicalRunPath, finishedAt, strings.TrimSpace(result.StopReason))
 }
 
 func findRepoRoot() (string, error) {
