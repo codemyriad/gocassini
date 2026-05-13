@@ -6,20 +6,40 @@ import (
 	"path/filepath"
 )
 
+func currentRoot(workRoot string) string {
+	return filepath.Join(workRoot, "current")
+}
+
+func runsRoot(workRoot string) string {
+	return filepath.Join(workRoot, "runs")
+}
+
+func currentStagingRoot(workRoot string) string {
+	return filepath.Join(currentRoot(workRoot), ".staging")
+}
+
+func canonicalRunPath(workRoot, jobID string) string {
+	return filepath.Join(currentRoot(workRoot), jobID+".run")
+}
+
+func canonicalMeetingPath(workRoot, jobID string) string {
+	return filepath.Join(currentRoot(workRoot), jobID+".meeting")
+}
+
 func attemptBaseName(jobID string, attemptNumber int) string {
 	return fmt.Sprintf("%s--attempt-%03d", jobID, attemptNumber)
 }
 
 func attemptRunPath(workRoot, jobID string, attemptNumber int) string {
-	return filepath.Join(workRoot, attemptBaseName(jobID, attemptNumber)+".run")
+	return filepath.Join(runsRoot(workRoot), attemptBaseName(jobID, attemptNumber)+".run")
 }
 
 func attemptMeetingPath(workRoot, jobID string, attemptNumber int) string {
-	return filepath.Join(workRoot, attemptBaseName(jobID, attemptNumber)+".meeting")
+	return filepath.Join(runsRoot(workRoot), attemptBaseName(jobID, attemptNumber)+".meeting")
 }
 
 func attemptLogsDir(workRoot, jobID string, attemptNumber int) string {
-	return filepath.Join(workRoot, attemptBaseName(jobID, attemptNumber)+".logs")
+	return filepath.Join(runsRoot(workRoot), attemptBaseName(jobID, attemptNumber)+".logs")
 }
 
 func attemptLogPath(workRoot, jobID string, attemptNumber int, stage string) string {

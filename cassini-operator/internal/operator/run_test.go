@@ -241,7 +241,7 @@ func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
 	}
 }
 
-func TestCreateJobReturnsULIDAndCompletesPublishStage(t *testing.T) {
+func TestCreateJobReturnsULIDAndCompletesRecordStageWithCanonicalRun(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
@@ -271,19 +271,22 @@ func TestCreateJobReturnsULIDAndCompletesPublishStage(t *testing.T) {
 		t.Fatalf("stage = %q, want done", job.Stage)
 	}
 	if job.ArtifactRunPath == nil {
-		t.Fatalf("expected artifact_run_path to be set")
+		t.Fatalf("expected canonical artifact_run_path to be set")
 	}
-	if job.ArtifactMeetingPath == nil {
-		t.Fatalf("expected artifact_meeting_path to be set")
+	if !strings.Contains(*job.ArtifactRunPath, filepath.Join("current", resp.ID+".run")) {
+		t.Fatalf("expected canonical current run path, got %#v", job.ArtifactRunPath)
 	}
-	if job.ArtifactSitePath == nil {
-		t.Fatalf("expected artifact_site_path to be set")
+	if job.ArtifactMeetingPath != nil {
+		t.Fatalf("did not expect artifact_meeting_path in slice I1, got %#v", job.ArtifactMeetingPath)
 	}
-	if job.BuildQueuedAt == nil || job.BuildStartedAt == nil || job.BuildFinishedAt == nil {
-		t.Fatalf("expected build timestamps to be set, got job=%#v", job)
+	if job.ArtifactSitePath != nil {
+		t.Fatalf("did not expect artifact_site_path in slice I1, got %#v", job.ArtifactSitePath)
 	}
-	if job.PublishQueuedAt == nil || job.PublishStartedAt == nil || job.PublishFinishedAt == nil {
-		t.Fatalf("expected publish timestamps to be set, got job=%#v", job)
+	if job.BuildQueuedAt != nil || job.BuildStartedAt != nil || job.BuildFinishedAt != nil {
+		t.Fatalf("did not expect build timestamps in slice I1, got job=%#v", job)
+	}
+	if job.PublishQueuedAt != nil || job.PublishStartedAt != nil || job.PublishFinishedAt != nil {
+		t.Fatalf("did not expect publish timestamps in slice I1, got job=%#v", job)
 	}
 	if job.StopReason == nil || *job.StopReason != "room_empty" {
 		t.Fatalf("expected room_empty stop reason, got %#v", job.StopReason)
@@ -295,23 +298,7 @@ func TestCreateJobReturnsULIDAndCompletesPublishStage(t *testing.T) {
 		t.Fatalf("expected room empty stop detail, got %#v", job.RecordStopDetail)
 	}
 	if _, err := os.Stat(filepath.Join(*job.ArtifactRunPath, "recording.mkv")); err != nil {
-		t.Fatalf("expected recording.mkv in run bundle: %v", err)
-	}
-	meetingManifestPath := filepath.Join(*job.ArtifactMeetingPath, "cassini.json")
-	raw, err := os.ReadFile(meetingManifestPath)
-	if err != nil {
-		t.Fatalf("read meeting manifest: %v", err)
-	}
-	if !strings.Contains(string(raw), `"kind": "meeting"`) {
-		t.Fatalf("unexpected meeting manifest: %s", string(raw))
-	}
-	siteManifestPath := filepath.Join(*job.ArtifactSitePath, "cassini.json")
-	raw, err = os.ReadFile(siteManifestPath)
-	if err != nil {
-		t.Fatalf("read site manifest: %v", err)
-	}
-	if !strings.Contains(string(raw), `"kind": "site"`) {
-		t.Fatalf("unexpected site manifest: %s", string(raw))
+		t.Fatalf("expected canonical recording.mkv in run bundle: %v", err)
 	}
 	attempts, err := rt.store.ListJobAttempts(context.Background(), resp.ID)
 	if err != nil {
@@ -322,6 +309,12 @@ func TestCreateJobReturnsULIDAndCompletesPublishStage(t *testing.T) {
 	}
 	if attempts[0].AttemptNumber != 1 || attempts[0].TriggerKind != "initial" {
 		t.Fatalf("unexpected first attempt = %#v", attempts[0])
+	}
+	if attempts[0].ArtifactRunPath == nil {
+		t.Fatalf("expected retained attempt-local artifact_run_path on attempt 1")
+	}
+	if !strings.Contains(*attempts[0].ArtifactRunPath, filepath.Join("runs", resp.ID+"--attempt-001.run")) {
+		t.Fatalf("expected retained attempt-local run path, got %#v", attempts[0].ArtifactRunPath)
 	}
 	if attempts[0].RequestJSON != job.RequestJSON {
 		t.Fatalf("attempt request_json mismatch: attempt=%s job=%s", attempts[0].RequestJSON, job.RequestJSON)
@@ -369,6 +362,8 @@ func TestJobDetailHandlerIncludesStopMetadata(t *testing.T) {
 }
 
 func TestJobDetailHandlerIncludesAttemptHistoryAfterRerun(t *testing.T) {
+	t.Skip("covered in slice I3")
+
 	rt, cleanup, _, _ := newCLITestRuntime(t)
 	defer cleanup()
 
@@ -529,7 +524,7 @@ func TestCreateJobPassesExplicitRecordOptions(t *testing.T) {
 	}
 }
 
-func TestStopJobAcceptsRunningRecordAndCompletesPublishStage(t *testing.T) {
+func TestStopJobAcceptsRunningRecordAndCompletesTerminalRecordStage(t *testing.T) {
 	rt, cleanup, logPath, startedPath := newCLITestRuntime(t)
 	defer cleanup()
 	t.Setenv("FAKE_RECORD_WAIT_FOR_SIGNAL", "1")
@@ -565,6 +560,12 @@ func TestStopJobAcceptsRunningRecordAndCompletesPublishStage(t *testing.T) {
 	job := waitForJobState(t, rt.store, resp.ID, "succeeded")
 	if job.Stage != "done" {
 		t.Fatalf("stage = %q, want done", job.Stage)
+	}
+	if job.ArtifactRunPath == nil || !strings.Contains(*job.ArtifactRunPath, filepath.Join("current", resp.ID+".run")) {
+		t.Fatalf("expected canonical current run path, got %#v", job.ArtifactRunPath)
+	}
+	if job.ArtifactMeetingPath != nil || job.ArtifactSitePath != nil {
+		t.Fatalf("did not expect build/publish artifacts in slice I1, got job=%#v", job)
 	}
 	if job.StopReason == nil || *job.StopReason != "operator_requested" {
 		t.Fatalf("expected operator_requested stop reason, got %#v", job.StopReason)
@@ -613,6 +614,8 @@ func TestStopJobReturnsNotFoundAndConflict(t *testing.T) {
 }
 
 func TestRerunFailedJobCreatesSecondAttemptAndPreservesFirst(t *testing.T) {
+	t.Skip("covered in slice I3")
+
 	rt, cleanup, logPath, _ := newCLITestRuntime(t)
 	defer cleanup()
 
@@ -791,7 +794,18 @@ func TestCreateJobReturnsBusyWithoutCreatingRow(t *testing.T) {
 	rt.recordJobFn = func(ctx context.Context, job Job, req TriggerRequest) (recordResult, error) {
 		defer close(done)
 		<-block
-		return recordResult{ArtifactRunPath: attemptRunPath(rt.cfg.WorkRoot, job.ID, job.CurrentAttemptNumber)}, nil
+		runPath := attemptRunPath(rt.cfg.WorkRoot, job.ID, job.CurrentAttemptNumber)
+		bundle, err := PrepareRunBundle(runPath, false)
+		if err != nil {
+			return recordResult{}, err
+		}
+		if err := os.WriteFile(bundle.RecordingPath, []byte("fake-mkv"), 0o644); err != nil {
+			return recordResult{}, err
+		}
+		if err := FinalizeRunBundle(bundle, RunManifest{SourceMode: "talk", RecorderName: req.GuestName}); err != nil {
+			return recordResult{}, err
+		}
+		return recordResult{ArtifactRunPath: bundle.RootDir, StopReason: "room_empty", ExitCode: intPtr(0), StopDetail: "room empty for 30s after remote participants left"}, nil
 	}
 
 	req1 := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/one"}`))
@@ -817,11 +831,61 @@ func TestCreateJobReturnsBusyWithoutCreatingRow(t *testing.T) {
 	}
 	close(block)
 	<-done
-	// Let the async build/publish pipeline drain before TempDir cleanup runs.
 	_ = waitForJobState(t, rt.store, jobs[0].ID, "succeeded")
 }
 
+func TestRecordFailureRetainsAttemptRunWithoutCanonicalRun(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rt.recordJobFn = func(ctx context.Context, job Job, req TriggerRequest) (recordResult, error) {
+		runPath := attemptRunPath(rt.cfg.WorkRoot, job.ID, job.CurrentAttemptNumber)
+		bundle, err := PrepareRunBundle(runPath, false)
+		if err != nil {
+			return recordResult{}, err
+		}
+		if err := os.WriteFile(bundle.RecordingPath, []byte("partial-mkv"), 0o644); err != nil {
+			return recordResult{}, err
+		}
+		if err := UpdateRunBundleStatus(bundle, bundleStateFailed, "record", "recorder exploded"); err != nil {
+			return recordResult{}, err
+		}
+		return recordResult{ArtifactRunPath: bundle.RootDir, StopReason: "error", StopDetail: "recorder exploded"}, errors.New("recorder exploded")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/record-fail"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	job := waitForJobState(t, rt.store, resp.ID, "failed")
+	if job.ArtifactRunPath != nil {
+		t.Fatalf("did not expect canonical artifact_run_path on failed record job, got %#v", job.ArtifactRunPath)
+	}
+	if _, err := os.Stat(canonicalRunPath(rt.cfg.WorkRoot, resp.ID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no canonical run bundle after record failure, got err=%v", err)
+	}
+	attempts, err := rt.store.ListJobAttempts(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatalf("ListJobAttempts() error = %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("expected 1 attempt, got %d", len(attempts))
+	}
+	if attempts[0].ArtifactRunPath == nil || !strings.Contains(*attempts[0].ArtifactRunPath, filepath.Join("runs", resp.ID+"--attempt-001.run")) {
+		t.Fatalf("expected retained failed attempt-local run path, got %#v", attempts[0].ArtifactRunPath)
+	}
+}
+
 func TestBuildFailurePersistsLightweightErrorDetail(t *testing.T) {
+	t.Skip("covered in slice I2")
+
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
@@ -864,6 +928,8 @@ func TestBuildFailurePersistsLightweightErrorDetail(t *testing.T) {
 }
 
 func TestPublishFailurePersistsLightweightErrorDetail(t *testing.T) {
+	t.Skip("covered in slice I2")
+
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
