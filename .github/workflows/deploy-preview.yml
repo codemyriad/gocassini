@@ -324,22 +324,15 @@ jobs:
 
       - name: Select latest N recordings
         run: |
-          set -uo pipefail
+          set -euo pipefail
           : "${PREVIEW_COUNT:?PREVIEW_COUNT must be set when should_process=true}"
-          echo "=== diagnostic: rclone listings ==="
-          echo "--- top-level buckets/dirs in codemyriad: ---"
-          rclone lsd codemyriad: 2>&1 | head -20 || true
-          echo "--- listing codemyriad:cassini-raw/ ---"
-          rclone lsf codemyriad:cassini-raw/ 2>&1 | head -20 || true
-          echo "--- listing codemyriad:cassini-raw/daily/ ---"
-          rclone lsf codemyriad:cassini-raw/daily/ 2>&1 | head -20 || true
-          echo "=== /diagnostic ==="
-          # Use grep instead of --include so filter behavior is explicit
+          # Bucket holds YYYY-MM-DD.mkv files (one per recorded day). Lexical
+          # sort matches chronological for that pattern.
           rclone lsf codemyriad:cassini-raw/daily/ \
-            | grep -E '^daily-meeting-.*\.mkv$' \
+            | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}.*\.mkv$' \
             | sort -r | head -n "$PREVIEW_COUNT" > "$PREVIEW_FILES"
           if [ ! -s "$PREVIEW_FILES" ]; then
-            echo "::error::no daily-meeting-*.mkv recordings found in codemyriad:cassini-raw/daily/" >&2
+            echo "::error::no YYYY-MM-DD*.mkv recordings found in codemyriad:cassini-raw/daily/" >&2
             exit 1
           fi
           echo "selected $(wc -l < "$PREVIEW_FILES") recording(s):"
