@@ -384,8 +384,8 @@
         {/if}
       </section>
 
-      <div class="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(22rem,30rem)_minmax(0,1fr)]">
-        <section class="flex min-h-[24rem] flex-col rounded-box border border-base-300 bg-base-100 shadow-sm">
+      <div class="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
+        <section class="min-w-0 overflow-hidden flex min-h-[24rem] flex-col rounded-box border border-base-300 bg-base-100 shadow-sm">
           <header class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">
             <div class="flex items-center gap-2">
               <List size={16} aria-hidden="true" />
@@ -408,28 +408,28 @@
           {:else if jobs.length === 0}
             <div class="flex flex-1 items-center justify-center p-6 text-sm text-base-content/60">No jobs yet.</div>
           {:else}
-            <div class="min-h-0 flex-1 overflow-y-auto p-3">
-              <div class="grid gap-2">
+            <div class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-3">
+              <div class="grid min-w-0 gap-2">
                 {#each jobs as job}
                   <button
-                    class="card border border-base-300 bg-base-100 text-left transition hover:border-primary {job.id === selectedJobId ? 'border-primary bg-primary/5' : ''}"
+                    class="card w-full min-w-0 overflow-hidden border border-base-300 bg-base-100 text-left transition hover:border-primary {job.id === selectedJobId ? 'border-primary bg-primary/5' : ''}"
                     type="button"
                     on:click={() => selectJob(job.id)}
                   >
-                    <div class="card-body gap-2 p-4">
-                      <div class="flex items-start justify-between gap-3">
-                        <div class="min-w-0">
+                    <div class="card-body min-w-0 gap-2 p-4">
+                      <div class="flex min-w-0 items-start justify-between gap-3">
+                        <div class="min-w-0 flex-1">
                           <p class="truncate font-mono text-xs">{job.id}</p>
-                          <p class="text-sm font-medium">{formatStageState(job)}</p>
+                          <p class="truncate text-sm font-medium">{formatStageState(job)}</p>
                         </div>
-                        <div class="flex items-center gap-2">
+                        <div class="shrink-0 flex items-center gap-2">
                           {#if isJobActive(job)}
                             <span class="badge badge-warning badge-outline">Active</span>
                           {/if}
                           <span class="badge badge-outline">Attempt {job.current_attempt_number}</span>
                         </div>
                       </div>
-                      <div class="text-xs text-base-content/70">
+                      <div class="min-w-0 text-xs text-base-content/70">
                         <p class="truncate">{requestUrlLabel(job.request_json)}</p>
                         <p>Updated {formatTimestamp(job.updated_at)}</p>
                         {#if job.error}
