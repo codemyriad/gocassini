@@ -63,19 +63,39 @@ export interface PortableMeetingManifest {
   readableTranscripts?: PortableTranscriptEntry[];
 }
 
+export interface PortableTranscriptDescriptor {
+  id: string;
+  role: string;
+  // Short, always-unique button label. Derived from the transcript id, which the
+  // producer chose for human consumption — guaranteed distinguishable even when
+  // two transcripts share an engine (e.g. both sherpa-onnx for parakeet+canary).
+  label: string;
+  // Long-form tooltip text: engine/backend/model from provenance.speechToText,
+  // intended for the title attribute. Empty when provenance is absent.
+  description: string;
+  language?: string;
+  isDefault: boolean;
+}
+
+export interface ExtractedPortableManifest {
+  manifest: PortableMeetingManifest;
+  tags: Record<string, string>;
+}
+
 export async function extractPortableManifestFromArrayBuffer(
   value: ArrayBuffer | Uint8Array,
-): Promise<PortableMeetingManifest> {
+): Promise<ExtractedPortableManifest> {
   const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
   const tags = parseOpusCommentTags(bytes);
   const indexManifest = await readMainPortablePayload(tags);
   const version = typeof indexManifest.version === "number" ? indexManifest.version : 1;
 
   if (version === 1) {
-    return indexManifest;
+    return { manifest: indexManifest, tags };
   }
   if (version === 2) {
-    return await resolvePortableV2DefaultBodies(indexManifest, tags);
+    const manifest = await resolvePortableV2DefaultBodies(indexManifest, tags);
+    return { manifest, tags };
   }
   throw new Error(
     `portable opus file uses unsupported manifest version ${version}; please update the viewer`,
@@ -137,6 +157,102 @@ function pickDefaultTranscript(
 ): PortableTranscriptEntry {
   const flagged = transcripts.find((entry) => entry.default);
   return flagged ?? transcripts[0]!;
+}
+
+/**
+ * Returns the readableTranscripts[] entry whose sourceTranscriptId matches the
+ * given raw transcript id, falling back to the default-flagged entry, then the
+ * first entry. Returns null when no readable transcripts are present.
+ */
+export function pickReadableForTranscript(
+  manifest: PortableMeetingManifest,
+  transcriptId: string,
+): PortableTranscriptEntry | null {
+  const readables = Array.isArray(manifest.readableTranscripts)
+    ? manifest.readableTranscripts
+    : [];
+  if (readables.length === 0) {
+    return null;
+  }
+  const paired = readables.find((entry) => entry.sourceTranscriptId === transcriptId);
+  if (paired) {
+    return paired;
+  }
+  const flagged = readables.find((entry) => entry.default);
+  return flagged ?? readables[0]!;
+}
+
+/**
+ * Builds a descriptor for a transcript entry suitable for the viewer switcher UI.
+ * The label always uses a humanized form of the transcript id — engine/backend/
+ * model are demoted to the description field for tooltips, since producers can
+ * reuse the same engine for multiple transcripts (e.g. sherpa-onnx running both
+ * parakeet and canary models) which would otherwise collide.
+ */
+export function describeTranscript(
+  entry: PortableTranscriptEntry,
+  manifest: PortableMeetingManifest,
+  isDefault: boolean,
+): PortableTranscriptDescriptor {
+  const provenance = asRecord((manifest.provenance as unknown) ?? {});
+  const speechToText = asRecord(provenance.speechToText ?? {});
+  const step = asRecord(speechToText[entry.id] ?? {});
+  const descriptionParts = [
+    safeToString(step.engine),
+    safeToString(step.model),
+    safeToString(step.backend),
+    safeToString(step.device),
+  ].filter(Boolean);
+  return {
+    id: entry.id,
+    role: entry.role,
+    label: humanizeTranscriptId(entry.id),
+    description: descriptionParts.join(" · "),
+    language: entry.language,
+    isDefault,
+  };
+}
+
+/**
+ * Lists the transcripts available in this manifest as UI descriptors. v1
+ * manifests get a single synthetic descriptor so the switcher logic is uniform.
+ */
+export function listAvailableTranscripts(
+  manifest: PortableMeetingManifest,
+): PortableTranscriptDescriptor[] {
+  const transcripts = Array.isArray(manifest.transcripts) ? manifest.transcripts : [];
+  if (transcripts.length === 0) {
+    return [
+      {
+        id: "default",
+        role: "asr",
+        label: "Transcript",
+        description: "",
+        isDefault: true,
+      },
+    ];
+  }
+  const defaultEntry = pickDefaultTranscript(transcripts);
+  return transcripts.map((entry) => describeTranscript(entry, manifest, entry === defaultEntry));
+}
+
+/**
+ * Returns the id of the transcript that the producer marked as default, or
+ * `"default"` for v1 manifests.
+ */
+export function getDefaultTranscriptId(manifest: PortableMeetingManifest): string {
+  const transcripts = Array.isArray(manifest.transcripts) ? manifest.transcripts : [];
+  if (transcripts.length === 0) {
+    return "default";
+  }
+  return pickDefaultTranscript(transcripts).id;
+}
+
+function humanizeTranscriptId(value: string): string {
+  return value
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
 /**

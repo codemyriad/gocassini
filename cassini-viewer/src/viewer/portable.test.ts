@@ -6,8 +6,14 @@ import {
   buildDisplayTranscriptFromArtifacts,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
+  describeTranscript,
+  getDefaultTranscriptId,
+  listAvailableTranscripts,
   loadPortableTranscriptBody,
+  pickReadableForTranscript,
+  type PortableMeetingManifest,
   type PortablePayloadRef,
+  type PortableTranscriptEntry,
 } from "./portable";
 
 describe("buildReadableTranscriptFromPortable", () => {
@@ -682,5 +688,117 @@ describe("loadPortableTranscriptBody (v2 transport)", () => {
       encoding: "base64url+gzip+utf8json",
     };
     await expect(loadPortableTranscriptBody({}, ref)).rejects.toThrow(/invalid chunkCount/);
+  });
+});
+
+function makeTranscriptEntry(
+  overrides: Partial<PortableTranscriptEntry> & { id: string },
+): PortableTranscriptEntry {
+  return {
+    role: "raw-asr",
+    format: "cassini.words.v1",
+    payloadRef: {
+      prefix: `CASSINI_TX_${overrides.id.toUpperCase()}_PAYLOAD_`,
+      chunkCount: 1,
+      sha256: "0".repeat(64),
+    },
+    ...overrides,
+  };
+}
+
+describe("listAvailableTranscripts / describeTranscript", () => {
+  it("returns a synthetic single-entry list for v1 manifests", () => {
+    const list = listAvailableTranscripts({} as PortableMeetingManifest);
+    expect(list).toEqual([
+      { id: "default", role: "asr", label: "Transcript", description: "", isDefault: true },
+    ]);
+    expect(getDefaultTranscriptId({} as PortableMeetingManifest)).toBe("default");
+  });
+
+  it("labels v2 transcripts from the transcript id, not the engine name", () => {
+    const manifest: PortableMeetingManifest = {
+      version: 2,
+      transcripts: [
+        makeTranscriptEntry({ id: "parakeet" }),
+        makeTranscriptEntry({ id: "canary", default: true }),
+      ],
+      provenance: {
+        speechToText: {
+          parakeet: { engine: "sherpa-onnx", model: "parakeet-tdt-0.6b-v2-int8" },
+          canary: { engine: "sherpa-onnx", model: "canary-1b-v2" },
+        },
+      } as unknown,
+    };
+    const list = listAvailableTranscripts(manifest);
+    // Labels come from the transcript id so they stay distinct even when both
+    // entries share an engine — this is the parakeet+canary demo case.
+    expect(list.map((entry) => entry.label)).toEqual(["Parakeet", "Canary"]);
+    // Engine/model/backend land in description for the tooltip.
+    expect(list[0]?.description).toContain("sherpa-onnx");
+    expect(list[0]?.description).toContain("parakeet-tdt-0.6b-v2-int8");
+    expect(list[1]?.description).toContain("canary-1b-v2");
+    expect(getDefaultTranscriptId(manifest)).toBe("canary");
+  });
+
+  it("keeps labels unique when two transcripts share engine, backend, and model fields", () => {
+    // Regression: an older version of describeTranscript labeled by engine
+    // first, so two sherpa-onnx transcripts both rendered as "sherpa-onnx".
+    const manifest: PortableMeetingManifest = {
+      version: 2,
+      transcripts: [
+        makeTranscriptEntry({ id: "tx-a" }),
+        makeTranscriptEntry({ id: "tx-b" }),
+      ],
+      provenance: {
+        speechToText: {
+          "tx-a": { engine: "shared", backend: "shared", model: "shared" },
+          "tx-b": { engine: "shared", backend: "shared", model: "shared" },
+        },
+      } as unknown,
+    };
+    const labels = listAvailableTranscripts(manifest).map((entry) => entry.label);
+    expect(new Set(labels).size).toBe(2);
+    expect(labels).toEqual(["Tx A", "Tx B"]);
+  });
+
+  it("humanizes transcript ids that contain hyphens and underscores", () => {
+    const entry = makeTranscriptEntry({ id: "whisper-large-v3_en" });
+    const descriptor = describeTranscript(entry, { version: 2 } as PortableMeetingManifest, false);
+    expect(descriptor.label).toBe("Whisper Large V3 En");
+    expect(descriptor.description).toBe("");
+  });
+});
+
+describe("pickReadableForTranscript", () => {
+  const manifest: PortableMeetingManifest = {
+    version: 2,
+    readableTranscripts: [
+      {
+        id: "readable-paired-canary",
+        role: "readable-cleanup",
+        format: "cassini.readable.v1",
+        sourceTranscriptId: "canary",
+        payloadRef: { prefix: "X_", chunkCount: 1, sha256: "0".repeat(64) },
+      },
+      {
+        id: "readable-default",
+        role: "readable-cleanup",
+        format: "cassini.readable.v1",
+        default: true,
+        payloadRef: { prefix: "Y_", chunkCount: 1, sha256: "0".repeat(64) },
+      },
+    ],
+  };
+
+  it("matches sourceTranscriptId", () => {
+    expect(pickReadableForTranscript(manifest, "canary")?.id).toBe("readable-paired-canary");
+  });
+
+  it("falls back to the default-flagged entry", () => {
+    expect(pickReadableForTranscript(manifest, "parakeet")?.id).toBe("readable-default");
+  });
+
+  it("returns null when no readable transcripts are present", () => {
+    expect(pickReadableForTranscript({} as PortableMeetingManifest, "anything")).toBeNull();
   });
 });
