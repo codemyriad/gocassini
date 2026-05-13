@@ -106,7 +106,7 @@ func buildReadableTranscriptFile(streams []AudioStream, segments []Segment, audi
 }
 
 func buildSpeakerEntries(streams []AudioStream, segments []Segment) []speakerEntry {
-	var speakers []speakerEntry
+	speakers := []speakerEntry{}
 	seen := map[string]bool{}
 	for _, seg := range segments {
 		if seg.SpeakerID == "" || seen[seg.SpeakerID] {
