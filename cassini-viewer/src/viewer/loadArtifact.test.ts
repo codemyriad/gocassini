@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { gzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
 
 import {
   loadArtifactFromDirectory,
   loadBundledArtifact,
   loadPortableArtifactFromAudioPath,
   loadPortableMeetingSummary,
+  switchPortableTranscript,
 } from "./loadArtifact";
 
 const transcriptFixture = {
@@ -604,7 +606,228 @@ describe("loadArtifactFromDirectory", () => {
   });
 });
 
-function buildPortableOpusFixture(manifest: object): Uint8Array {
+describe("switchPortableTranscript", () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.window = originalWindow;
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  function buildDualTranscriptFixture() {
+    const parakeetBody = {
+      version: "transcript.words.v1",
+      media: { src: "meeting.opus", durationMs: 3000, sha256: "abc" },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      items: [
+        { id: "seg_1", speaker: "spk_1", startMs: 1000, endMs: 1400, text: "parakeet" },
+      ],
+    };
+    const canaryBody = {
+      version: "transcript.words.v1",
+      media: { src: "meeting.opus", durationMs: 3000, sha256: "abc" },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      items: [
+        { id: "seg_1", speaker: "spk_1", startMs: 1000, endMs: 1400, text: "canary" },
+      ],
+    };
+    const parakeetPayload = encodeBodyForOpusTags(parakeetBody, "CASSINI_TX_PARAKEET_PAYLOAD_");
+    const canaryPayload = encodeBodyForOpusTags(canaryBody, "CASSINI_TX_CANARY_PAYLOAD_");
+    const indexManifest = {
+      version: 2,
+      meeting: { durationMs: 3000 },
+      audio: { sha256: "abc" },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      transcripts: [
+        {
+          id: "parakeet",
+          role: "raw-asr",
+          format: "cassini.words.v1",
+          payloadRef: parakeetPayload.payloadRef,
+        },
+        {
+          id: "canary",
+          role: "raw-asr",
+          default: true,
+          format: "cassini.words.v1",
+          payloadRef: canaryPayload.payloadRef,
+        },
+      ],
+      provenance: {
+        speechToText: {
+          parakeet: { engine: "Parakeet" },
+          canary: { engine: "Canary" },
+        },
+      },
+    };
+    const extraTags = { ...parakeetPayload.tags, ...canaryPayload.tags };
+    return buildPortableOpusFixture(indexManifest, extraTags);
+  }
+
+  function mockFetchReturning(bytes: Uint8Array) {
+    return vi.fn(async () => ({
+      ok: true,
+      status: 206,
+      headers: new Headers({ "content-range": "bytes 0-1999/2000" }),
+      arrayBuffer: async () =>
+        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    }) as Response) as typeof fetch;
+  }
+
+  it("loads the producer-default transcript and exposes available transcripts", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=v2-fixture", protocol: "http:" },
+    } as Window;
+    globalThis.fetch = mockFetchReturning(buildDualTranscriptFixture());
+
+    const artifact = await loadPortableArtifactFromAudioPath("./v2-fixture.opus");
+
+    expect(artifact.currentTranscriptId).toBe("canary");
+    expect(artifact.availableTranscripts.map((t) => t.id)).toEqual(["parakeet", "canary"]);
+    expect(artifact.transcript.segments[0]?.text).toBe("canary");
+  });
+
+  it("switches to an alternate transcript and caches the body on round-trip", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=v2-fixture-switch", protocol: "http:" },
+    } as Window;
+    const fixture = buildDualTranscriptFixture();
+    const fetchMock = mockFetchReturning(fixture);
+    globalThis.fetch = fetchMock;
+
+    await loadPortableArtifactFromAudioPath("./v2-fixture-switch.opus");
+    const fetchCountAfterLoad = (fetchMock as unknown as { mock: { calls: unknown[] } }).mock.calls
+      .length;
+
+    const switched = await switchPortableTranscript("./v2-fixture-switch.opus", "parakeet");
+    expect(switched.currentTranscriptId).toBe("parakeet");
+    expect(switched.transcript.segments[0]?.text).toBe("parakeet");
+    // No additional fetch — body decoded from cached tags map.
+    expect((fetchMock as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(
+      fetchCountAfterLoad,
+    );
+
+    const back = await switchPortableTranscript("./v2-fixture-switch.opus", "canary");
+    expect(back.currentTranscriptId).toBe("canary");
+    expect(back.transcript.segments[0]?.text).toBe("canary");
+  });
+
+  it("throws for an unknown transcript id", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=v2-fixture-unknown", protocol: "http:" },
+    } as Window;
+    globalThis.fetch = mockFetchReturning(buildDualTranscriptFixture());
+
+    await loadPortableArtifactFromAudioPath("./v2-fixture-unknown.opus");
+
+    await expect(
+      switchPortableTranscript("./v2-fixture-unknown.opus", "whisper"),
+    ).rejects.toThrow(/no transcript with id "whisper"/);
+  });
+
+  it("throws if called before the meeting is loaded", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/", protocol: "http:" },
+    } as Window;
+    await expect(
+      switchPortableTranscript("./never-loaded.opus", "parakeet"),
+    ).rejects.toThrow(/before the portable meeting was loaded/);
+  });
+
+  it("surfaces a sha256 mismatch on the alternate body so the UI can show it", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=v2-fixture-sha", protocol: "http:" },
+    } as Window;
+    // Build a fixture where the alternate (parakeet) payloadRef carries a
+    // bogus sha256 so the integrity check fails when we try to switch to it.
+    const parakeetBody = {
+      version: "transcript.words.v1",
+      media: { src: "meeting.opus", durationMs: 3000, sha256: "abc" },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      items: [{ id: "seg_1", speaker: "spk_1", startMs: 1000, endMs: 1400, text: "parakeet" }],
+    };
+    const canaryBody = {
+      ...parakeetBody,
+      items: [{ id: "seg_1", speaker: "spk_1", startMs: 1000, endMs: 1400, text: "canary" }],
+    };
+    const parakeetPayload = encodeBodyForOpusTags(parakeetBody, "CASSINI_TX_PARAKEET_PAYLOAD_");
+    const canaryPayload = encodeBodyForOpusTags(canaryBody, "CASSINI_TX_CANARY_PAYLOAD_");
+    const manifest = {
+      version: 2,
+      meeting: { durationMs: 3000 },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      transcripts: [
+        {
+          id: "parakeet",
+          role: "raw-asr",
+          format: "cassini.words.v1",
+          payloadRef: { ...parakeetPayload.payloadRef, sha256: "0".repeat(64) },
+        },
+        {
+          id: "canary",
+          role: "raw-asr",
+          default: true,
+          format: "cassini.words.v1",
+          payloadRef: canaryPayload.payloadRef,
+        },
+      ],
+    };
+    const fixture = buildPortableOpusFixture(manifest, {
+      ...parakeetPayload.tags,
+      ...canaryPayload.tags,
+    });
+    globalThis.fetch = mockFetchReturning(fixture);
+
+    await loadPortableArtifactFromAudioPath("./v2-fixture-sha.opus");
+
+    await expect(
+      switchPortableTranscript("./v2-fixture-sha.opus", "parakeet"),
+    ).rejects.toThrow(/sha256 mismatch/);
+  });
+});
+
+function encodeBodyForOpusTags(
+  body: unknown,
+  prefix: string,
+): { tags: Record<string, string>; payloadRef: { prefix: string; chunkCount: number; sha256: string; rawBytes: number; gzipBytes: number; mime: string; encoding: string } } {
+  const raw = Buffer.from(JSON.stringify(body), "utf8");
+  const gzip = gzipSync(raw);
+  const encoded = gzip
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+  const chunkSize = 4096;
+  const tags: Record<string, string> = {};
+  let chunkCount = 0;
+  for (let offset = 0; offset < encoded.length; offset += chunkSize) {
+    tags[`${prefix}${String(chunkCount).padStart(3, "0")}`] = encoded.slice(offset, offset + chunkSize);
+    chunkCount += 1;
+  }
+  if (chunkCount === 0) {
+    tags[`${prefix}000`] = "";
+    chunkCount = 1;
+  }
+  return {
+    tags,
+    payloadRef: {
+      prefix,
+      chunkCount,
+      sha256: createHash("sha256").update(raw).digest("hex"),
+      rawBytes: raw.byteLength,
+      gzipBytes: gzip.byteLength,
+      mime: "application/vnd.cassini.transcript-words+json",
+      encoding: "base64url+gzip+utf8json",
+    },
+  };
+}
+
+function buildPortableOpusFixture(
+  manifest: object,
+  extraTags: Record<string, string> = {},
+): Uint8Array {
   const rawJson = Buffer.from(JSON.stringify(manifest), "utf8");
   const compressed = gzipSync(rawJson);
   const encoded = compressed
@@ -615,6 +838,7 @@ function buildPortableOpusFixture(manifest: object): Uint8Array {
   const tags = {
     CASSINI_PAYLOAD_CHUNK_COUNT: "1",
     CASSINI_PAYLOAD_000: encoded,
+    ...extraTags,
   };
   const opusHead = buildOpusHeadPacket();
   const opusTags = buildOpusTagsPacket(tags);

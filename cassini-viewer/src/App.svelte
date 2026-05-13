@@ -22,12 +22,14 @@
     loadBundledArtifact,
     loadPortableArtifactFromAudioPath,
     loadPortableMeetingSummary,
+    switchPortableTranscript,
     type ArtifactMetadata,
     type ArtifactMetadataRow,
     type ArtifactTimingPrecision,
     type LoadedArtifact,
     type PortableMeetingSummary,
   } from "./viewer/loadArtifact";
+  import type { PortableTranscriptDescriptor } from "./viewer/portable";
   import {
     loadMeetingCatalog,
     sortMeetingCatalogEntries,
@@ -55,6 +57,14 @@
   let chaptersSrc: string | null = null;
   let timingPrecision: ArtifactTimingPrecision | null = null;
   let artifactMetadata: ArtifactMetadata | null = null;
+  let availableTranscripts: PortableTranscriptDescriptor[] = [];
+  let currentTranscriptId = "";
+  let defaultTranscriptId = "";
+  let transcriptSwitchPending = false;
+  // Inline error for transcript-switch failures (e.g. SHA mismatch on an
+  // alternate body). Kept separate from `errorMessage` so it shows next to the
+  // switcher instead of taking over the whole "meeting failed to load" state.
+  let transcriptSwitchError = "";
   let errorMessage = "";
   let loading = true;
   let catalogMeetings: MeetingCatalogEntry[] = [];
@@ -161,14 +171,20 @@
     } else {
       url.searchParams.delete("meeting");
     }
+    // tx applies to a specific meeting; drop it on any meeting navigation so
+    // the next meeting opens on its producer-default transcript.
+    url.searchParams.delete("tx");
     url.hash = "";
     window.history.pushState({}, "", url);
   }
 
   function seedListHistoryEntry(meetingId: string) {
+    // The "list" entry below the current page in the back stack never carries
+    // a transcript selection; tx is per-meeting state.
     const incomingUrl = new URL(window.location.href);
     const listUrl = new URL(incomingUrl.toString());
     listUrl.searchParams.delete("meeting");
+    listUrl.searchParams.delete("tx");
     listUrl.hash = "";
     window.history.replaceState({}, "", listUrl);
     const meetingUrl = new URL(incomingUrl.toString());
@@ -377,10 +393,32 @@
     chaptersSrc = artifact.chaptersSrc;
     timingPrecision = artifact.timingPrecision;
     artifactMetadata = artifact.metadata;
+    availableTranscripts = artifact.availableTranscripts;
+    currentTranscriptId = artifact.currentTranscriptId;
+    defaultTranscriptId =
+      artifact.availableTranscripts.find((entry) => entry.isDefault)?.id ?? artifact.currentTranscriptId;
     durationMs = artifact.index.transcript.media.durationMs;
     errorMessage = "";
     showExactWords = false;
     manualScrollLock = false;
+    lastAutoScrollSegmentId = "";
+  }
+
+  function applySwitchedTranscript(artifact: LoadedArtifact) {
+    // Audio is not paused during a switch — it keeps playing through the
+    // ~100-300ms rebuild. We deliberately do NOT touch audioEl.currentTime
+    // here: writing back a value captured before the await would rewind
+    // playback by the duration of the switch (audible stutter). The
+    // requestAnimationFrame loop already keeps `currentTimeMs` synced with
+    // `audioEl.currentTime`, so the transcript highlight tracks correctly
+    // as soon as the new index renders.
+    transcriptIndex = artifact.index;
+    displayTranscript = artifact.displayTranscript;
+    readableTranscript = artifact.readableTranscript;
+    timingPrecision = artifact.timingPrecision;
+    artifactMetadata = artifact.metadata;
+    availableTranscripts = artifact.availableTranscripts;
+    currentTranscriptId = artifact.currentTranscriptId;
     lastAutoScrollSegmentId = "";
   }
 
@@ -398,11 +436,86 @@
     chaptersSrc = null;
     timingPrecision = null;
     artifactMetadata = null;
+    availableTranscripts = [];
+    currentTranscriptId = "";
+    defaultTranscriptId = "";
+    transcriptSwitchPending = false;
+    transcriptSwitchError = "";
     durationMs = 0;
     showExactWords = false;
     manualScrollLock = false;
     lastAutoScrollSegmentId = "";
     selectedMeetingId = "";
+  }
+
+  async function handleTranscriptSwitch(targetId: string) {
+    if (
+      transcriptSwitchPending ||
+      !activeMeeting?.audioPath ||
+      targetId === currentTranscriptId ||
+      !availableTranscripts.some((entry) => entry.id === targetId)
+    ) {
+      return;
+    }
+    transcriptSwitchPending = true;
+    transcriptSwitchError = "";
+    try {
+      const next = await switchPortableTranscript(activeMeeting.audioPath, targetId);
+      applySwitchedTranscript(next);
+      writeTranscriptUrlParam(targetId);
+    } catch (error) {
+      // Surface inline next to the switcher; previous transcript stays visible.
+      transcriptSwitchError = `Couldn't load that transcript: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+    } finally {
+      transcriptSwitchPending = false;
+    }
+  }
+
+  function dismissTranscriptSwitchError() {
+    transcriptSwitchError = "";
+  }
+
+  function writeTranscriptUrlParam(targetId: string) {
+    const url = new URL(window.location.href);
+    if (targetId && targetId !== defaultTranscriptId) {
+      url.searchParams.set("tx", targetId);
+    } else {
+      url.searchParams.delete("tx");
+    }
+    window.history.replaceState({}, "", url);
+  }
+
+  function clearTranscriptUrlParam() {
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("tx")) {
+      url.searchParams.delete("tx");
+      window.history.replaceState({}, "", url);
+    }
+  }
+
+  async function maybeApplyUrlTranscript(meeting: MeetingCatalogEntry) {
+    const requested = new URL(window.location.href).searchParams.get("tx");
+    if (!requested || !meeting.audioPath) {
+      return;
+    }
+    if (!availableTranscripts.some((entry) => entry.id === requested)) {
+      clearTranscriptUrlParam();
+      return;
+    }
+    if (requested === currentTranscriptId) {
+      return;
+    }
+    transcriptSwitchPending = true;
+    try {
+      const next = await switchPortableTranscript(meeting.audioPath, requested);
+      applySwitchedTranscript(next);
+    } catch {
+      clearTranscriptUrlParam();
+    } finally {
+      transcriptSwitchPending = false;
+    }
   }
 
   async function loadMeetingArtifact(
@@ -431,6 +544,7 @@
       selectedMeetingId = enrichedMeeting.id;
       activeMeeting = enrichedMeeting;
       applyArtifact(artifact);
+      await maybeApplyUrlTranscript(enrichedMeeting);
       return enrichedMeeting;
     } catch (error) {
       resetLoadedArtifact();
@@ -999,11 +1113,49 @@
           </button>
         {/if}
 
-        <!-- Status info: artifact mode, timing precision. -->
+        <!-- Status info: artifact mode, transcript switcher, timing precision. -->
         <div class="ml-auto flex items-center gap-1 text-base-content/70">
           <span class="badge badge-xs badge-outline px-1">
             {formatArtifactMode()}
           </span>
+          {#if transcriptSwitchError}
+            <button
+              type="button"
+              class="badge badge-xs badge-error gap-1 px-1"
+              title={transcriptSwitchError}
+              aria-label={`Dismiss switch error: ${transcriptSwitchError}`}
+              on:click={dismissTranscriptSwitchError}
+            >
+              <span>Switch failed</span>
+              <span aria-hidden="true">×</span>
+            </button>
+          {/if}
+          {#if transcriptIndex && availableTranscripts.length > 1}
+            <div
+              class="join"
+              role="group"
+              aria-label="Choose transcript"
+            >
+              {#each availableTranscripts as descriptor (descriptor.id)}
+                <button
+                  type="button"
+                  class="join-item btn btn-xs"
+                  class:btn-primary={descriptor.id === currentTranscriptId}
+                  class:btn-ghost={descriptor.id !== currentTranscriptId}
+                  disabled={transcriptSwitchPending && descriptor.id !== currentTranscriptId}
+                  aria-pressed={descriptor.id === currentTranscriptId}
+                  title={[
+                    descriptor.label,
+                    descriptor.description,
+                    descriptor.isDefault ? "(producer default)" : "",
+                  ].filter(Boolean).join(" — ")}
+                  on:click={() => void handleTranscriptSwitch(descriptor.id)}
+                >
+                  {descriptor.label}
+                </button>
+              {/each}
+            </div>
+          {/if}
           {#if transcriptIndex && timingPrecision}
             <span
               class:badge-warning={timingPrecision.level !== "word"}
