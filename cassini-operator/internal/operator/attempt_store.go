@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 )
 
 var ErrJobNotEligibleForRerun = errors.New("job is not eligible for rerun")
@@ -109,10 +111,11 @@ func (s *Store) QueueRerunAttempt(ctx context.Context, job Job, queuedAt string)
 	var state string
 	var requestJSON string
 	var currentAttemptNumber int
+	var artifactRunPath sql.NullString
 	if err := tx.QueryRowContext(ctx, `
-SELECT state, request_json, current_attempt_number
+SELECT state, request_json, current_attempt_number, artifact_run_path
 FROM jobs
-WHERE id = ?`, job.ID).Scan(&state, &requestJSON, &currentAttemptNumber); err != nil {
+WHERE id = ?`, job.ID).Scan(&state, &requestJSON, &currentAttemptNumber, &artifactRunPath); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Job{}, err
 		}
@@ -122,19 +125,30 @@ WHERE id = ?`, job.ID).Scan(&state, &requestJSON, &currentAttemptNumber); err !=
 		return Job{}, ErrJobNotEligibleForRerun
 	}
 
+	readyRunPath := strings.TrimSpace(artifactRunPath.String)
+	if readyRunPath == "" {
+		return Job{}, ErrJobNotEligibleForRerun
+	}
+	manifest, err := readRunManifest(filepath.Join(readyRunPath, "cassini.json"))
+	if err != nil || manifest.State != bundleStateReady || manifest.Stage != "ready" {
+		return Job{}, ErrJobNotEligibleForRerun
+	}
+
 	nextAttemptNumber := currentAttemptNumber + 1
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO job_attempts (
   job_id, attempt_number, trigger_kind, request_json,
   stage, state,
-  created_at, updated_at, record_queued_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  artifact_run_path,
+  created_at, updated_at, build_queued_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job.ID,
 		nextAttemptNumber,
 		"rerun",
 		requestJSON,
-		"record",
+		"build",
 		"queued",
+		readyRunPath,
 		queuedAt,
 		queuedAt,
 		queuedAt,
@@ -146,17 +160,16 @@ INSERT INTO job_attempts (
 UPDATE jobs
 SET stage = ?, state = ?,
     current_attempt_number = ?, rerun_count = ?,
-    artifact_run_path = NULL, artifact_meeting_path = NULL, artifact_site_path = NULL,
+    artifact_run_path = ?,
     error = NULL,
-    stop_reason = NULL, stop_requested_at = NULL, stop_signal_sent_at = NULL, record_exit_code = NULL, record_stop_detail = NULL,
     updated_at = ?,
-    record_queued_at = ?, record_started_at = NULL, record_finished_at = NULL,
-    build_queued_at = NULL, build_started_at = NULL, build_finished_at = NULL,
+    build_queued_at = ?, build_started_at = NULL, build_finished_at = NULL,
     publish_queued_at = NULL, publish_started_at = NULL, publish_finished_at = NULL,
     interrupted_at = NULL, completed_at = NULL
 WHERE id = ?`,
-		"record", "queued",
+		"build", "queued",
 		nextAttemptNumber, nextAttemptNumber-1,
+		readyRunPath,
 		queuedAt,
 		queuedAt,
 		job.ID,

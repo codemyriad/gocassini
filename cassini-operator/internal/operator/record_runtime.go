@@ -425,25 +425,9 @@ func (rt *Runtime) handleRerunJob(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 
-	select {
-	case rt.recordSlots <- struct{}{}:
-	default:
-		rt.logger.Printf("rerun busy id=%s", id)
-		writeJSONError(w, http.StatusServiceUnavailable, "max record workers exceeded")
-		return
-	}
-
-	req, err := decodeStoredTriggerRequest(job.RequestJSON)
-	if err != nil {
-		<-rt.recordSlots
-		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("decode stored request: %v", err))
-		return
-	}
-
 	queuedAt := nowUTCString()
 	rerunJob, err := rt.store.QueueRerunAttempt(r.Context(), job, queuedAt)
 	if err != nil {
-		<-rt.recordSlots
 		if errors.Is(err, ErrJobNotEligibleForRerun) {
 			writeJSONError(w, http.StatusConflict, err.Error())
 			return
@@ -451,8 +435,21 @@ func (rt *Runtime) handleRerunJob(w http.ResponseWriter, r *http.Request, id str
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("queue rerun attempt: %v", err))
 		return
 	}
+	if rerunJob.ArtifactRunPath == nil || strings.TrimSpace(*rerunJob.ArtifactRunPath) == "" {
+		writeJSONError(w, http.StatusConflict, ErrJobNotEligibleForRerun.Error())
+		return
+	}
 
-	rt.logger.Printf("rerun accepted id=%s attempt=%d", rerunJob.ID, rerunJob.CurrentAttemptNumber)
-	go rt.runRecordJob(rerunJob, req)
-	writeJSON(w, http.StatusAccepted, rerunJobResponse{ID: rerunJob.ID, AttemptNumber: rerunJob.CurrentAttemptNumber})
+	task := buildTask{JobID: rerunJob.ID, AttemptNumber: rerunJob.CurrentAttemptNumber, ArtifactRunPath: *rerunJob.ArtifactRunPath}
+	select {
+	case rt.buildQueue <- task:
+		rt.logger.Printf("rerun accepted id=%s attempt=%d run=%s", rerunJob.ID, rerunJob.CurrentAttemptNumber, task.ArtifactRunPath)
+		writeJSON(w, http.StatusAccepted, rerunJobResponse{ID: rerunJob.ID, AttemptNumber: rerunJob.CurrentAttemptNumber})
+	case <-rt.ctx.Done():
+		if updateErr := rt.store.MarkBuildFailed(context.Background(), rerunJob.ID, "", "build queue stopped", nowUTCString()); updateErr != nil {
+			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("queue rerun attempt: %v", updateErr))
+			return
+		}
+		writeJSONError(w, http.StatusServiceUnavailable, "build queue stopped")
+	}
 }
