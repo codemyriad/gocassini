@@ -357,7 +357,9 @@ jobs:
       - name: Process recordings with GPU
         env:
           DEVICE: cuda
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # test-only: OPENROUTER_API_KEY intentionally omitted on this branch
+          # because LLM cleanup is hitting a 1ms word-range inversion on the
+          # current parakeet-v3 + v2-int8 + LLM combination. PR 1 keeps the key.
         run: |
           set -euo pipefail
           RECORDINGS_DIR="$RAW_DIR" \
@@ -365,6 +367,19 @@ jobs:
           CASSINI_BIN="${GITHUB_WORKSPACE}/cassini-go-recorder/dist/cassini-bin" \
           CASSINI_CACHE_ROOT="$CASSINI_CACHE_ROOT" \
           bash ops/process-recordings.sh
+
+      - name: Verify at least one meeting was processed
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          opus=("$PROC_DIR"/*.opus)
+          if [ ${#opus[@]} -eq 0 ]; then
+            echo "::error::process-recordings.sh produced no .opus files in $PROC_DIR" >&2
+            echo "::error::all selected recordings failed; see 'Process recordings with GPU' for the per-meeting reason" >&2
+            exit 1
+          fi
+          echo "produced ${#opus[@]} meeting opus file(s):"
+          for f in "${opus[@]}"; do echo "  $(basename "$f") ($(du -h "$f" | cut -f1))"; done
 
       - name: Upload branch meeting artifacts
         run: |
