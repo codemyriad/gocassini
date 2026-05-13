@@ -1,5 +1,22 @@
 name: Deploy Preview
 
+# Branch-preview pipeline. Behavior:
+#   * UI-only changes always publish a per-branch viewer pointed at main's
+#     processed meetings (cheap, runs on ubuntu-latest, parallel across branches).
+#   * Processing changes (cassini-go-recorder, ops/process-recordings.sh,
+#     bin/cassini, or this workflow) DO NOT auto-reprocess. They publish a
+#     UI-only preview unless the developer opts in by:
+#       - including [preview] or [preview:N] in the HEAD commit message, OR
+#       - dispatching the workflow with run_processing set to a positive int
+#         or 'true' (=> default N=3).
+#   * Opt-in processing runs latest-N daily-meeting-*.mkv recordings on the
+#     self-hosted GPU runner (george). Concurrency: george-gpu workflow-wide
+#     (single GPU); UI runs branch-ui-<ref> per-branch (parallel).
+#   * Fork PRs are rejected at the detect job: a self-hosted GPU runner must
+#     never execute commits from untrusted forks.
+#
+# See docs/branch-previews.md for the full validation matrix.
+
 on:
   pull_request:
     types:
@@ -12,37 +29,50 @@ on:
   workflow_dispatch:
     inputs:
       run_processing:
-        description: Reprocess branch artifacts before publishing the preview
-        type: boolean
-        default: false
-
-concurrency:
-  group: george-deploy
-  cancel-in-progress: false
+        description: >-
+          'true' processes the latest 3 recordings (default N=3).
+          'false' or empty publishes a UI-only preview.
+          A positive integer processes that many of the latest recordings.
+        type: string
+        default: 'false'
 
 jobs:
   detect:
+    # Hard-stop fork PRs before any logic runs. A fork PR with [preview] in a
+    # commit message could otherwise consume GPU time on the self-hosted runner.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
       branch: ${{ steps.detect.outputs.branch }}
       encoded_branch: ${{ steps.detect.outputs.encoded_branch }}
       should_run: ${{ steps.detect.outputs.should_run }}
       should_process: ${{ steps.detect.outputs.should_process }}
+      preview_count: ${{ steps.detect.outputs.preview_count }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - id: detect
-        name: Detect branch mode and relevant changes
+        name: Detect branch mode, marker, and relevant changes
+        env:
+          # Forwarded so the shell parser doesn't have to template at multiple sites.
+          DISPATCH_INPUT: ${{ github.event.inputs.run_processing }}
         run: |
           set -euo pipefail
 
+          # ---- branch + changed-files + HEAD commit message detection ----
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BRANCH="${{ github.head_ref }}"
             BASE_REF="${{ github.event.pull_request.base.ref }}"
             git fetch origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}"
             CHANGED="$(git diff "origin/${BASE_REF}...HEAD" --name-only || true)"
+            # actions/checkout@v4 checks out the synthetic merge ref. The PR head SHA
+            # is reachable as the merge ref's parent (fetch-depth: 0 above guarantees
+            # the depth). Read the head commit message via git show.
+            HEAD_MSG="$(git show -s --format=%B "${{ github.event.pull_request.head.sha }}" 2>/dev/null || true)"
           elif [ "${{ github.event_name }}" = "push" ]; then
             BRANCH="${{ github.ref_name }}"
             BEFORE_SHA="${{ github.event.before }}"
@@ -52,11 +82,13 @@ jobs:
             else
               CHANGED="$(git show --pretty='' --name-only "${HEAD_SHA}" || true)"
             fi
+            HEAD_MSG="$(git show -s --format=%B "${HEAD_SHA}" 2>/dev/null || true)"
           else
             BRANCH="${{ github.ref_name }}"
             BASE_REF="main"
             git fetch origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}"
             CHANGED="$(git diff "origin/${BASE_REF}...HEAD" --name-only || true)"
+            HEAD_MSG=""
           fi
 
           ui_changed=false
@@ -65,39 +97,170 @@ jobs:
           if echo "$CHANGED" | grep -qE '^(cassini-viewer/|\.github/workflows/deploy-preview\.yml$)'; then
             ui_changed=true
           fi
-
           if echo "$CHANGED" | grep -qE '^(cassini-go-recorder/|ops/process-recordings\.sh$|bin/cassini$|\.github/workflows/deploy-preview\.yml$)'; then
             processing_changed=true
           fi
 
-          run_processing_requested="${{ github.event.inputs.run_processing || 'false' }}"
+          # ---- determine PREVIEW_COUNT from marker or dispatch input ----
+          PREVIEW_COUNT=""
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            case "$DISPATCH_INPUT" in
+              ""|false|False|FALSE)
+                PREVIEW_COUNT=""
+                ;;
+              true|True|TRUE)
+                PREVIEW_COUNT="3"
+                ;;
+              *)
+                if [[ "$DISPATCH_INPUT" =~ ^[0-9]+$ ]] && [ "$DISPATCH_INPUT" -gt 0 ]; then
+                  PREVIEW_COUNT="$DISPATCH_INPUT"
+                else
+                  echo "::error::run_processing must be 'true', 'false', or a positive integer (got: $DISPATCH_INPUT)" >&2
+                  exit 2
+                fi
+                ;;
+            esac
+          else
+            # Scan HEAD commit message for [preview:N] first, then [preview].
+            # [preview:0] is treated as no-marker (UI-only).
+            if [[ "$HEAD_MSG" =~ \[preview:([0-9]+)\] ]]; then
+              n="${BASH_REMATCH[1]}"
+              if [ "$n" -gt 0 ]; then
+                PREVIEW_COUNT="$n"
+              fi
+            elif [[ "$HEAD_MSG" =~ \[preview\] ]]; then
+              PREVIEW_COUNT="3"
+            fi
+          fi
+
+          # ---- gating ----
           should_process=false
           should_run=false
 
-          if [ "$processing_changed" = "true" ] || [ "$run_processing_requested" = "true" ]; then
+          # Auto-process when processing files changed AND the marker is set.
+          if [ "$processing_changed" = "true" ] && [ -n "$PREVIEW_COUNT" ]; then
             should_process=true
-            should_run=true
+          fi
+          # workflow_dispatch with a positive count forces processing regardless
+          # of which files changed (lets the user re-process on demand).
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "$PREVIEW_COUNT" ]; then
+            should_process=true
           fi
 
-          if [ "$ui_changed" = "true" ]; then
+          # should_run drives "publish anything at all." UI-only previews use
+          # main's processed artifacts; processing previews use the branch's
+          # newly-processed artifacts.
+          if [ "$ui_changed" = "true" ] || [ "$processing_changed" = "true" ]; then
+            should_run=true
+          fi
+          # workflow_dispatch is an explicit user action: always publish.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             should_run=true
           fi
 
           ENCODED_BRANCH="$(echo "$BRANCH" | sed 's|/|--|g')"
 
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-          echo "encoded_branch=$ENCODED_BRANCH" >> "$GITHUB_OUTPUT"
-          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
-          echo "should_process=$should_process" >> "$GITHUB_OUTPUT"
+          {
+            echo "branch=$BRANCH"
+            echo "encoded_branch=$ENCODED_BRANCH"
+            echo "should_run=$should_run"
+            echo "should_process=$should_process"
+            echo "preview_count=$PREVIEW_COUNT"
+          } >> "$GITHUB_OUTPUT"
 
-  deploy:
+          echo "detect summary:"
+          echo "  branch=$BRANCH  encoded=$ENCODED_BRANCH"
+          echo "  ui_changed=$ui_changed  processing_changed=$processing_changed"
+          echo "  preview_count=${PREVIEW_COUNT:-<unset>}  should_process=$should_process  should_run=$should_run"
+
+  deploy-ui:
+    # UI-only path: pulls main's processed artifacts, rebuilds the per-branch
+    # viewer, and publishes. Runs on github-hosted (free, parallel) so a GPU
+    # run on george cannot block a UI-only preview from another branch.
     needs: detect
-    if: needs.detect.outputs.should_run == 'true'
-    runs-on: [self-hosted, george]
+    if: >-
+      needs.detect.outputs.should_run == 'true' &&
+      needs.detect.outputs.should_process != 'true'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: branch-ui-${{ github.ref }}
+      cancel-in-progress: false
     env:
       BRANCH: ${{ needs.detect.outputs.branch }}
       ENCODED_BRANCH: ${{ needs.detect.outputs.encoded_branch }}
-      SHOULD_PROCESS: ${{ needs.detect.outputs.should_process }}
+      SOURCE_RECORDINGS_BASE_URL: https://view.meetings.codemyriad.io/main/
+      RCLONE_CONFIG_CODEMYRIAD_TYPE: s3
+      RCLONE_CONFIG_CODEMYRIAD_PROVIDER: Cloudflare
+      RCLONE_CONFIG_CODEMYRIAD_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      RCLONE_CONFIG_CODEMYRIAD_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      RCLONE_CONFIG_CODEMYRIAD_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
+      RCLONE_CONFIG_CODEMYRIAD_ACL: private
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cassini-viewer/package-lock.json
+
+      - name: Install rclone
+        run: |
+          set -euo pipefail
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+
+      - name: Prepare paths
+        run: |
+          {
+            echo "SOURCE_CACHE=/tmp/cassini-source-${{ github.run_id }}"
+            echo "EXPORT_DIR=/tmp/cassini-export-${{ github.run_id }}"
+          } >> "$GITHUB_ENV"
+          mkdir -p "/tmp/cassini-source-${{ github.run_id }}"
+
+      - name: Download main artifacts
+        run: |
+          set -euo pipefail
+          rclone copy "codemyriad:cassini-processed/main/meetings/" "$SOURCE_CACHE/"
+
+      - name: Export branch preview bundle
+        working-directory: cassini-viewer
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run export:meetings -- \
+            --source-dir "$SOURCE_CACHE" \
+            --output-dir "$EXPORT_DIR" \
+            --recordings-base-url "$SOURCE_RECORDINGS_BASE_URL"
+
+      - name: Publish branch preview bundle
+        run: |
+          set -euo pipefail
+          rclone copy "${EXPORT_DIR}/" \
+            "codemyriad:cassini-processed/${ENCODED_BRANCH}/"
+
+      - name: Cleanup temp files
+        if: always()
+        run: |
+          rm -rf "/tmp/cassini-export-${{ github.run_id }}" || true
+          rm -rf "/tmp/cassini-source-${{ github.run_id }}" || true
+
+  deploy-gpu:
+    # Processing path: builds GPU cassini-bin, downloads latest-N raw recordings,
+    # runs sherpa-onnx STT on the LXC's NVIDIA GPU, publishes branch artifacts +
+    # viewer. Serialized via the workflow-wide george-gpu concurrency group
+    # (single GPU, ~8 GB VRAM headroom).
+    needs: detect
+    if: needs.detect.outputs.should_process == 'true'
+    runs-on: [self-hosted, george]
+    concurrency:
+      group: george-gpu
+      cancel-in-progress: false
+    env:
+      BRANCH: ${{ needs.detect.outputs.branch }}
+      ENCODED_BRANCH: ${{ needs.detect.outputs.encoded_branch }}
+      PREVIEW_COUNT: ${{ needs.detect.outputs.preview_count }}
       PREVIEW_ROOT: /mnt/data/cassini/previews
       RCLONE_CONFIG_CODEMYRIAD_TYPE: s3
       RCLONE_CONFIG_CODEMYRIAD_PROVIDER: Cloudflare
@@ -109,7 +272,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Go
-        if: env.SHOULD_PROCESS == 'true'
         uses: actions/setup-go@v5
         with:
           go-version-file: cassini-go-recorder/go.mod
@@ -124,99 +286,130 @@ jobs:
 
       - name: Prepare branch-scoped paths
         run: |
-          echo "BRANCH_PREVIEW_ROOT=${PREVIEW_ROOT}/${ENCODED_BRANCH}" >> "$GITHUB_ENV"
-          echo "RAW_DIR=${PREVIEW_ROOT}/${ENCODED_BRANCH}/raw" >> "$GITHUB_ENV"
-          echo "PROC_DIR=${PREVIEW_ROOT}/${ENCODED_BRANCH}/processed" >> "$GITHUB_ENV"
-          echo "CASSINI_CACHE_ROOT=${PREVIEW_ROOT}/${ENCODED_BRANCH}/.cache" >> "$GITHUB_ENV"
-          echo "SOURCE_CACHE=/tmp/cassini-source-${{ github.run_id }}" >> "$GITHUB_ENV"
-          echo "SOURCE_RECORDINGS_BASE_URL=https://view.meetings.codemyriad.io/main/" >> "$GITHUB_ENV"
-          echo "EXPORT_DIR=/tmp/cassini-export-${{ github.run_id }}" >> "$GITHUB_ENV"
-          echo "CASSINI_BUILD_DIR=/tmp/cassini-build-${{ github.run_id }}" >> "$GITHUB_ENV"
+          {
+            echo "BRANCH_PREVIEW_ROOT=${PREVIEW_ROOT}/${ENCODED_BRANCH}"
+            echo "RAW_DIR=${PREVIEW_ROOT}/${ENCODED_BRANCH}/raw"
+            echo "PROC_DIR=${PREVIEW_ROOT}/${ENCODED_BRANCH}/processed"
+            echo "CASSINI_CACHE_ROOT=${PREVIEW_ROOT}/${ENCODED_BRANCH}/.cache"
+            echo "EXPORT_DIR=/tmp/cassini-export-${{ github.run_id }}"
+            echo "PREVIEW_FILES=/tmp/preview-files-${{ github.run_id }}.txt"
+          } >> "$GITHUB_ENV"
 
       - name: Runner preflight
         run: |
           set -euo pipefail
-          for cmd in git rclone ffmpeg ffprobe node npm; do
+          for cmd in git rclone ffmpeg ffprobe node npm nvidia-smi; do
             command -v "$cmd" >/dev/null || {
               echo "missing required command: $cmd" >&2
               exit 1
             }
           done
-          if [ "$SHOULD_PROCESS" = "true" ]; then
-            command -v nvidia-smi >/dev/null || {
-              echo "missing required command: nvidia-smi" >&2
-              exit 1
-            }
-            nvidia-smi >/dev/null
-          fi
-          mkdir -p "$RAW_DIR" "$PROC_DIR" "$CASSINI_CACHE_ROOT" "$SOURCE_CACHE"
+          nvidia-smi >/dev/null
+          mkdir -p "$RAW_DIR" "$PROC_DIR" "$CASSINI_CACHE_ROOT"
 
-      - name: Download main artifacts for UI-only preview
-        if: env.SHOULD_PROCESS != 'true'
+      - name: Build cassini-bin with GPU support
+        working-directory: cassini-go-recorder
         run: |
           set -euo pipefail
-          rclone copy "codemyriad:cassini-processed/main/meetings/" "$SOURCE_CACHE/"
+          bash scripts/build-cassini-bin-gpu.sh
 
-      - name: Download raw recordings
-        if: env.SHOULD_PROCESS == 'true'
+      - name: Clean per-branch RAW and PROC directories
         run: |
+          set -euo pipefail
+          # Each preview produces exactly the latest-N selection. Stale opus
+          # from earlier runs would clutter the published viewer's catalog;
+          # stale raw .mkv wastes disk. Wipe per-branch dirs before each run.
+          rm -rf "$RAW_DIR"/* "$PROC_DIR"/* || true
           mkdir -p "$RAW_DIR" "$PROC_DIR"
-          rclone copy codemyriad:cassini-raw/daily/ "$RAW_DIR/"
 
-      - name: Build cassini from checked-out commit
-        if: env.SHOULD_PROCESS == 'true'
+      - name: Select latest N recordings
         run: |
-          mkdir -p "$CASSINI_BUILD_DIR"
-          go -C cassini-go-recorder build \
-            -o "$CASSINI_BUILD_DIR/cassini" \
-            ./cmd/cassini
+          set -euo pipefail
+          : "${PREVIEW_COUNT:?PREVIEW_COUNT must be set when should_process=true}"
+          # The cassini-raw/daily/ bucket holds YYYY-MM-DD.mkv files (one per
+          # recorded day). Lexical sort matches chronological for that pattern.
+          rclone lsf codemyriad:cassini-raw/daily/ \
+            | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}.*\.mkv$' \
+            | sort -r | head -n "$PREVIEW_COUNT" > "$PREVIEW_FILES"
+          if [ ! -s "$PREVIEW_FILES" ]; then
+            echo "::error::no YYYY-MM-DD*.mkv recordings found in codemyriad:cassini-raw/daily/" >&2
+            exit 1
+          fi
+          echo "selected $(wc -l < "$PREVIEW_FILES") recording(s):"
+          sed 's/^/  /' "$PREVIEW_FILES"
+
+      - name: Download selected raw recordings
+        run: |
+          set -euo pipefail
+          rclone copy codemyriad:cassini-raw/daily/ "$RAW_DIR/" \
+            --files-from "$PREVIEW_FILES"
+
+      - name: Configure multi-transcript pass (parakeet-v3 branch only)
+        if: needs.detect.outputs.branch == 'parakeet-v3'
+        run: |
+          # TODO: remove this gate once parakeet-v3 merges. After the merge,
+          # the producer flip (v2 default) covers format selection. Additional
+          # models should then come from per-branch config or stay unset.
+          echo "CASSINI_STT_ADDITIONAL_MODELS=parakeet-tdt-0.6b-v2-int8" >> "$GITHUB_ENV"
 
       - name: Process recordings with GPU
-        if: env.SHOULD_PROCESS == 'true'
         env:
           DEVICE: cuda
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
+          set -euo pipefail
           RECORDINGS_DIR="$RAW_DIR" \
           PROCESSED_DIR="$PROC_DIR" \
-          CASSINI_BIN="$CASSINI_BUILD_DIR/cassini" \
+          CASSINI_BIN="${GITHUB_WORKSPACE}/cassini-go-recorder/dist/cassini-bin" \
           CASSINI_CACHE_ROOT="$CASSINI_CACHE_ROOT" \
           bash ops/process-recordings.sh
 
-      - name: Upload branch meeting artifacts
-        if: env.SHOULD_PROCESS == 'true'
+      - name: Verify at least one meeting was processed
         run: |
+          set -euo pipefail
+          # process-recordings.sh isolates per-meeting failures and exits 0
+          # even when every meeting fails. Without this check, the Upload step
+          # would silently rclone-copy an empty PROC_DIR and the Export step
+          # would blow up minutes later on a confusing 'no meetings' error.
+          shopt -s nullglob
+          opus=("$PROC_DIR"/*.opus)
+          if [ ${#opus[@]} -eq 0 ]; then
+            echo "::error::process-recordings.sh produced no .opus files in $PROC_DIR" >&2
+            echo "::error::all selected recordings failed; see 'Process recordings with GPU' above for the per-meeting reason" >&2
+            exit 1
+          fi
+          echo "produced ${#opus[@]} meeting opus file(s):"
+          for f in "${opus[@]}"; do echo "  $(basename "$f") ($(du -h "$f" | cut -f1))"; done
+
+      - name: Upload branch meeting artifacts
+        run: |
+          set -euo pipefail
+          # Exclude the per-meeting .cassini-work/ scratch directories that
+          # process-recordings.sh leaves behind under PROC_DIR for resumption.
           rclone copy "${PROC_DIR}/" \
-            "codemyriad:cassini-processed/${ENCODED_BRANCH}/meetings/"
+            "codemyriad:cassini-processed/${ENCODED_BRANCH}/meetings/" \
+            --exclude '.cassini-work/**'
 
       - name: Export branch preview bundle
         working-directory: cassini-viewer
         run: |
+          set -euo pipefail
           npm ci
-          if [ "$SHOULD_PROCESS" = "true" ]; then
-            SOURCE_DIR="$PROC_DIR"
-            RECORDINGS_BASE_URL="https://view.meetings.codemyriad.io/${ENCODED_BRANCH}/"
-          else
-            SOURCE_DIR="$SOURCE_CACHE"
-            RECORDINGS_BASE_URL="$SOURCE_RECORDINGS_BASE_URL"
-          fi
           npm run export:meetings -- \
-            --source-dir "$SOURCE_DIR" \
+            --source-dir "$PROC_DIR" \
             --output-dir "$EXPORT_DIR" \
-            --recordings-base-url "$RECORDINGS_BASE_URL"
+            --recordings-base-url "https://view.meetings.codemyriad.io/${ENCODED_BRANCH}/"
 
       - name: Publish branch preview bundle
         run: |
+          set -euo pipefail
           rclone copy "${EXPORT_DIR}/" \
             "codemyriad:cassini-processed/${ENCODED_BRANCH}/"
-          if [ "$SHOULD_PROCESS" = "true" ]; then
-            HASH=$(git rev-parse HEAD:cassini-go-recorder HEAD:ops/process-recordings.sh HEAD:bin/cassini | sha256sum | cut -c1-16)
-            echo "$HASH" | rclone rcat "codemyriad:cassini-processed/${ENCODED_BRANCH}/.processing-hash"
-          fi
+          HASH="$(git rev-parse HEAD:cassini-go-recorder HEAD:ops/process-recordings.sh HEAD:bin/cassini | sha256sum | cut -c1-16)"
+          echo "$HASH" | rclone rcat "codemyriad:cassini-processed/${ENCODED_BRANCH}/.processing-hash"
 
       - name: Cleanup temp files
         if: always()
         run: |
-          rm -rf /tmp/cassini-export-${{ github.run_id }}
-          rm -rf /tmp/cassini-build-${{ github.run_id }}
-          rm -rf /tmp/cassini-source-${{ github.run_id }}
+          rm -rf "/tmp/cassini-export-${{ github.run_id }}" || true
+          rm -f "/tmp/preview-files-${{ github.run_id }}.txt" || true
