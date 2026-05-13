@@ -201,6 +201,7 @@ Lanes after step 1 (spec) lands:
 
 ## NOT in scope
 
+- **Viewer cache retention policy** — step 5 ships with module-level `portableManifestCache` + `portableBodyCache` that grow unbounded across a session. Acceptable for current one-or-two-meetings-per-session usage. A future control-panel surface will let users decide retention policy (e.g. "keep last N meetings", "prune on tab idle", "clear on demand") and prune accordingly. Owner: control-panel work, not this PR.
 - **Viewer compare/diff UI** — step 5; design-led; separate plan.
 - **Backfilling existing v1 files to v2** — v1 → v2 shim covers reading; no rewrite of historical files. If/when we need it, separate effort.
 - **Confidence scores, alternative hypotheses, phonetic data** — proposal flags as future. Format already accommodates per-body `format` versioning so a `cassini.words.v2` body type can be added later without rebuilding any of this.

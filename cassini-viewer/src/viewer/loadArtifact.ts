@@ -14,8 +14,16 @@ import {
   buildDisplayTranscriptFromArtifacts,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
+  describeTranscript,
   extractPortableManifestFromArrayBuffer,
+  getDefaultTranscriptId,
+  listAvailableTranscripts,
+  loadPortableTranscriptBody,
+  pickReadableForTranscript,
+  type ExtractedPortableManifest,
   type PortableMeetingManifest,
+  type PortableTranscriptDescriptor,
+  type PortableTranscriptEntry,
 } from "./portable";
 
 export interface LoadedArtifact {
@@ -29,6 +37,8 @@ export interface LoadedArtifact {
   chaptersSrc: string | null;
   timingPrecision: ArtifactTimingPrecision;
   metadata: ArtifactMetadata | null;
+  availableTranscripts: PortableTranscriptDescriptor[];
+  currentTranscriptId: string;
 }
 
 export type ArtifactTimingPrecisionLevel = "word" | "mixed" | "segment";
@@ -74,7 +84,10 @@ const DEFAULT_CHAPTERS_PATH = "./chapters.vtt";
 // stopped covering common cases and was forcing the full-file fallback. 1 MB
 // covers ~4 typical transcripts before the fallback kicks in.
 const PORTABLE_METADATA_RANGE_END = 1048575;
-const portableManifestCache = new Map<string, Promise<PortableMeetingManifest>>();
+const portableManifestCache = new Map<string, Promise<ExtractedPortableManifest>>();
+// Body cache keyed by audioUrl → transcriptId → parsed body. Lets the switcher
+// round-trip A → B → A without re-fetching or re-decompressing payloads.
+const portableBodyCache = new Map<string, Map<string, unknown>>();
 
 export async function loadBundledArtifact(): Promise<LoadedArtifact> {
   return loadArtifactFromPaths({
@@ -102,44 +115,182 @@ export async function loadArtifactFromDirectory(basePath: string): Promise<Loade
 
 export async function loadPortableArtifactFromAudioPath(audioPath: string): Promise<LoadedArtifact> {
   const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
-  const portable = await loadPortableManifestFromAudioPath(audioPath);
+  const extracted = await loadPortableManifestFromAudioPath(audioPath);
+  const { manifest } = extracted;
+  const availableTranscripts = listAvailableTranscripts(manifest);
+  const currentTranscriptId = getDefaultTranscriptId(manifest);
+  primeBodyCache(resolvedAudioPath, manifest, currentTranscriptId);
+  return buildPortableLoadedArtifact({
+    manifest,
+    audioSrc: resolvedAudioPath,
+    availableTranscripts,
+    currentTranscriptId,
+  });
+}
+
+export async function loadPortableMeetingSummary(audioPath: string): Promise<PortableMeetingSummary> {
+  const { manifest } = await loadPortableManifestFromAudioPath(audioPath);
+  const transcript = buildTranscriptWordsFromPortable(manifest);
+  return {
+    speakerCount: transcript.speakers.length,
+    segmentCount: transcript.segments.length,
+    digestDurationMs: transcript.media.durationMs,
+  };
+}
+
+/**
+ * Switches the active transcript on an already-loaded portable meeting. Resolves
+ * the alternate body (and its paired readable) from the cached OpusTags, then
+ * re-runs the build pipeline. Caches parsed bodies per (audioUrl, transcriptId).
+ * Throws if the transcript id is not present in the manifest.
+ */
+export async function switchPortableTranscript(
+  audioPath: string,
+  transcriptId: string,
+): Promise<LoadedArtifact> {
+  const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
+  const cached = portableManifestCache.get(resolvedAudioPath);
+  if (!cached) {
+    throw new Error(
+      "switchPortableTranscript called before the portable meeting was loaded; load the meeting first.",
+    );
+  }
+  const { manifest, tags } = await cached;
+  const transcripts = Array.isArray(manifest.transcripts) ? manifest.transcripts : [];
+  if (transcripts.length === 0) {
+    if (transcriptId !== "default") {
+      throw new Error(
+        `portable meeting only has a single transcript; cannot switch to "${transcriptId}"`,
+      );
+    }
+    const availableTranscripts = listAvailableTranscripts(manifest);
+    return buildPortableLoadedArtifact({
+      manifest,
+      audioSrc: resolvedAudioPath,
+      availableTranscripts,
+      currentTranscriptId: "default",
+    });
+  }
+  const entry = transcripts.find((candidate) => candidate.id === transcriptId);
+  if (!entry) {
+    throw new Error(`portable meeting has no transcript with id "${transcriptId}"`);
+  }
+  const transcriptBody = (await loadCachedTranscriptBody(
+    resolvedAudioPath,
+    transcriptId,
+    tags,
+    entry,
+  )) as PortableMeetingManifest["transcript"];
+  const readableEntry = pickReadableForTranscript(manifest, transcriptId);
+  let readableBody: PortableMeetingManifest["readableTranscript"] | undefined;
+  if (readableEntry) {
+    readableBody = (await loadCachedTranscriptBody(
+      resolvedAudioPath,
+      readableEntry.id,
+      tags,
+      readableEntry,
+    )) as PortableMeetingManifest["readableTranscript"];
+  }
+  const swappedManifest: PortableMeetingManifest = {
+    ...manifest,
+    transcript: transcriptBody,
+    readableTranscript: readableBody,
+    // The producer's pre-rendered displayTranscript only matches the default
+    // transcript; suppress it when switching so we re-derive from the new body.
+    displayTranscript: transcriptId === getDefaultTranscriptId(manifest)
+      ? manifest.displayTranscript
+      : undefined,
+  };
+  const availableTranscripts = listAvailableTranscripts(manifest);
+  return buildPortableLoadedArtifact({
+    manifest: swappedManifest,
+    audioSrc: resolvedAudioPath,
+    availableTranscripts,
+    currentTranscriptId: transcriptId,
+  });
+}
+
+function buildPortableLoadedArtifact({
+  manifest,
+  audioSrc,
+  availableTranscripts,
+  currentTranscriptId,
+}: {
+  manifest: PortableMeetingManifest;
+  audioSrc: string;
+  availableTranscripts: PortableTranscriptDescriptor[];
+  currentTranscriptId: string;
+}): LoadedArtifact {
   const transcript = validateTranscriptWordsV1(
-    buildTranscriptWordsFromPortable(portable, resolvedAudioPath) as unknown,
+    buildTranscriptWordsFromPortable(manifest, audioSrc) as unknown,
   );
-  const rawReadableTranscript = buildReadableTranscriptFromPortable(portable, transcript);
+  const rawReadableTranscript = buildReadableTranscriptFromPortable(manifest, transcript);
   const displayTranscript = validateDisplayTranscriptV1(
-    (portable.displayTranscript ??
+    (manifest.displayTranscript ??
       buildDisplayTranscriptFromArtifacts(transcript, rawReadableTranscript)) as unknown,
   );
   const readableTranscript = validateReadableTranscriptV1(
     rawReadableTranscript as unknown,
   );
-
   return {
     transcript,
     displayTranscript,
     readableTranscript,
     summary: null,
     index: buildTranscriptIndex(transcript),
-    audioSrc: resolvedAudioPath,
+    audioSrc,
     captionsSrc: null,
     chaptersSrc: null,
     timingPrecision: classifyArtifactTimingPrecision(transcript, displayTranscript),
     metadata: buildArtifactMetadata(
       "portable-opus",
-      buildPortableMetadataRaw(portable, transcript, displayTranscript, readableTranscript),
+      buildPortableMetadataRaw(manifest, transcript, displayTranscript, readableTranscript),
     ),
+    availableTranscripts,
+    currentTranscriptId,
   };
 }
 
-export async function loadPortableMeetingSummary(audioPath: string): Promise<PortableMeetingSummary> {
-  const portable = await loadPortableManifestFromAudioPath(audioPath);
-  const transcript = buildTranscriptWordsFromPortable(portable);
-  return {
-    speakerCount: transcript.speakers.length,
-    segmentCount: transcript.segments.length,
-    digestDurationMs: transcript.media.durationMs,
-  };
+function primeBodyCache(
+  audioUrl: string,
+  manifest: PortableMeetingManifest,
+  currentTranscriptId: string,
+): void {
+  // The initial extract already eager-resolved the default raw + readable
+  // bodies into manifest.transcript / manifest.readableTranscript. Seed the
+  // body cache with those so a round-trip back to default skips re-decoding.
+  let bucket = portableBodyCache.get(audioUrl);
+  if (!bucket) {
+    bucket = new Map();
+    portableBodyCache.set(audioUrl, bucket);
+  }
+  if (manifest.transcript && !bucket.has(currentTranscriptId)) {
+    bucket.set(currentTranscriptId, manifest.transcript);
+  }
+  const readableEntry = pickReadableForTranscript(manifest, currentTranscriptId);
+  if (readableEntry && manifest.readableTranscript && !bucket.has(readableEntry.id)) {
+    bucket.set(readableEntry.id, manifest.readableTranscript);
+  }
+}
+
+async function loadCachedTranscriptBody(
+  audioUrl: string,
+  bodyId: string,
+  tags: Record<string, string>,
+  entry: PortableTranscriptEntry,
+): Promise<unknown> {
+  let bucket = portableBodyCache.get(audioUrl);
+  if (!bucket) {
+    bucket = new Map();
+    portableBodyCache.set(audioUrl, bucket);
+  }
+  const cached = bucket.get(bodyId);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const body = await loadPortableTranscriptBody(tags, entry.payloadRef);
+  bucket.set(bodyId, body);
+  return body;
 }
 
 async function loadArtifactFromPaths(paths: {
@@ -189,8 +340,14 @@ async function loadArtifactFromPaths(paths: {
       paths.audioPath ? "manual-artifact" : "artifact-directory",
       buildDirectoryMetadataRaw(manifest, transcript, displayTranscript, readableTranscript),
     ),
+    availableTranscripts: SYNTHETIC_SINGLE_TRANSCRIPT,
+    currentTranscriptId: "default",
   };
 }
+
+const SYNTHETIC_SINGLE_TRANSCRIPT: PortableTranscriptDescriptor[] = [
+  { id: "default", role: "asr", label: "Transcript", description: "", isDefault: true },
+];
 
 export function classifyArtifactTimingPrecision(
   transcript: TranscriptWordsV1,
@@ -264,7 +421,7 @@ function resolveDocumentAssetUrl(assetPath: string): string {
   return new URL(assetPath, window.location.href).toString();
 }
 
-async function loadPortableManifestFromAudioPath(audioPath: string): Promise<PortableMeetingManifest> {
+async function loadPortableManifestFromAudioPath(audioPath: string): Promise<ExtractedPortableManifest> {
   const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
   let manifestPromise = portableManifestCache.get(resolvedAudioPath);
   if (!manifestPromise) {
@@ -275,11 +432,12 @@ async function loadPortableManifestFromAudioPath(audioPath: string): Promise<Por
     return await manifestPromise;
   } catch (error) {
     portableManifestCache.delete(resolvedAudioPath);
+    portableBodyCache.delete(resolvedAudioPath);
     throw error;
   }
 }
 
-async function fetchPortableManifest(audioUrl: string): Promise<PortableMeetingManifest> {
+async function fetchPortableManifest(audioUrl: string): Promise<ExtractedPortableManifest> {
   const partialResponse = await fetch(audioUrl, {
     headers: {
       Range: `bytes=0-${PORTABLE_METADATA_RANGE_END}`,
@@ -753,6 +911,7 @@ export async function readTranscriptFile(file: File): Promise<LoadedArtifact> {
     transcript,
     displayTranscript: null,
     readableTranscript: null,
+    summary: null,
     index: buildTranscriptIndex(transcript),
     audioSrc: transcript.media.src,
     captionsSrc: null,
@@ -768,5 +927,7 @@ export async function readTranscriptFile(file: File): Promise<LoadedArtifact> {
       },
       speakers: transcript.speakers,
     }),
+    availableTranscripts: SYNTHETIC_SINGLE_TRANSCRIPT,
+    currentTranscriptId: "default",
   };
 }
