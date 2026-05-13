@@ -342,7 +342,9 @@ jobs:
             --files-from "$PREVIEW_FILES"
 
       - name: Configure multi-transcript pass (parakeet-v3 branch only)
-        if: needs.detect.outputs.branch == 'parakeet-v3'
+        if: >-
+          needs.detect.outputs.branch == 'parakeet-v3' ||
+          needs.detect.outputs.branch == 'test/parakeet-v3-preview-integration'
         run: |
           # TODO: remove this gate once parakeet-v3 merges. After the merge,
           # the producer flip (v2 default) covers format selection. Additional
