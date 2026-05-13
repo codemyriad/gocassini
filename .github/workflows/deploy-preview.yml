@@ -324,9 +324,19 @@ jobs:
 
       - name: Select latest N recordings
         run: |
-          set -euo pipefail
+          set -uo pipefail
           : "${PREVIEW_COUNT:?PREVIEW_COUNT must be set when should_process=true}"
-          rclone lsf codemyriad:cassini-raw/daily/ --include 'daily-meeting-*.mkv' \
+          echo "=== diagnostic: rclone listings ==="
+          echo "--- top-level buckets/dirs in codemyriad: ---"
+          rclone lsd codemyriad: 2>&1 | head -20 || true
+          echo "--- listing codemyriad:cassini-raw/ ---"
+          rclone lsf codemyriad:cassini-raw/ 2>&1 | head -20 || true
+          echo "--- listing codemyriad:cassini-raw/daily/ ---"
+          rclone lsf codemyriad:cassini-raw/daily/ 2>&1 | head -20 || true
+          echo "=== /diagnostic ==="
+          # Use grep instead of --include so filter behavior is explicit
+          rclone lsf codemyriad:cassini-raw/daily/ \
+            | grep -E '^daily-meeting-.*\.mkv$' \
             | sort -r | head -n "$PREVIEW_COUNT" > "$PREVIEW_FILES"
           if [ ! -s "$PREVIEW_FILES" ]; then
             echo "::error::no daily-meeting-*.mkv recordings found in codemyriad:cassini-raw/daily/" >&2
