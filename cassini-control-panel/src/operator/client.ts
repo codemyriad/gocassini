@@ -23,6 +23,11 @@ interface StopJobResponse {
   id: string;
 }
 
+interface RerunJobResponse {
+  id: string;
+  attempt_number: number;
+}
+
 export class OperatorHttpError extends Error {
   status: number;
 
@@ -63,6 +68,12 @@ export class OperatorClient {
 
   async stopJob(jobId: string): Promise<StopJobResponse> {
     return this.#request<StopJobResponse>(`/jobs/${encodeURIComponent(jobId)}/stop`, {
+      method: "POST",
+    });
+  }
+
+  async rerunJob(jobId: string): Promise<RerunJobResponse> {
+    return this.#request<RerunJobResponse>(`/jobs/${encodeURIComponent(jobId)}/rerun`, {
       method: "POST",
     });
   }

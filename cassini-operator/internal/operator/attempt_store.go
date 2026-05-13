@@ -121,7 +121,7 @@ WHERE id = ?`, job.ID).Scan(&state, &requestJSON, &currentAttemptNumber, &artifa
 		}
 		return Job{}, fmt.Errorf("load job for rerun: %w", err)
 	}
-	if state != "failed" {
+	if state != "failed" && state != "succeeded" {
 		return Job{}, ErrJobNotEligibleForRerun
 	}
 

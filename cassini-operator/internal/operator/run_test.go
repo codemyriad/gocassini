@@ -927,9 +927,160 @@ func TestRerunFromPublishFailureRebuildsInsteadOfPublishOnly(t *testing.T) {
 	}
 }
 
-func TestRerunRejectsUnknownAndNonFailedJobs(t *testing.T) {
-	rt, cleanup := newTestRuntime(t)
+func TestRerunSucceededJobCreatesFreshDownstreamAttempt(t *testing.T) {
+	rt, cleanup, logPath, _ := newCLITestRuntime(t)
 	defer cleanup()
+
+	secondBuildStarted := make(chan buildTask, 1)
+	releaseSecondBuild := make(chan struct{})
+	buildCalls := 0
+	rt.buildJobFn = func(ctx context.Context, task buildTask) (string, error) {
+		buildCalls++
+		meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
+		if buildCalls == 2 {
+			select {
+			case secondBuildStarted <- task:
+			default:
+			}
+			<-releaseSecondBuild
+		}
+		if err := writeReadyMeetingBundleFixture(meetingPath, task.ArtifactRunPath); err != nil {
+			return meetingPath, err
+		}
+		return meetingPath, nil
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/rerun-succeeded"}`))
+	createRec := httptest.NewRecorder()
+	rt.jobsHandler(createRec, createReq)
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, want %d body=%s", createRec.Code, http.StatusAccepted, createRec.Body.String())
+	}
+	var createResp createJobResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	initialJob := waitForJobState(t, rt.store, createResp.ID, "succeeded")
+	if initialJob.ArtifactRunPath == nil || !strings.Contains(*initialJob.ArtifactRunPath, filepath.Join("current", createResp.ID+".run")) {
+		t.Fatalf("expected canonical run path on initial success, got %#v", initialJob.ArtifactRunPath)
+	}
+	if initialJob.ArtifactMeetingPath == nil || !strings.Contains(*initialJob.ArtifactMeetingPath, filepath.Join("current", createResp.ID+".meeting")) {
+		t.Fatalf("expected canonical meeting path on initial success, got %#v", initialJob.ArtifactMeetingPath)
+	}
+	if initialJob.ArtifactSitePath == nil {
+		t.Fatalf("expected site artifact on initial success, got %#v", initialJob.ArtifactSitePath)
+	}
+
+	rerunReq := httptest.NewRequest(http.MethodPost, "/jobs/"+createResp.ID+"/rerun", nil)
+	rerunRec := httptest.NewRecorder()
+	rt.jobDetailHandler(rerunRec, rerunReq)
+	if rerunRec.Code != http.StatusAccepted {
+		t.Fatalf("rerun status = %d, want %d body=%s", rerunRec.Code, http.StatusAccepted, rerunRec.Body.String())
+	}
+	var rerunResp rerunJobResponse
+	if err := json.Unmarshal(rerunRec.Body.Bytes(), &rerunResp); err != nil {
+		t.Fatalf("decode rerun response: %v", err)
+	}
+	if rerunResp.AttemptNumber != 2 {
+		t.Fatalf("rerun attempt_number = %d, want 2", rerunResp.AttemptNumber)
+	}
+
+	var rerunBuildTask buildTask
+	select {
+	case rerunBuildTask = <-secondBuildStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for successful-job rerun build to start")
+	}
+	if rerunBuildTask.AttemptNumber != 2 {
+		t.Fatalf("rerun build attempt_number = %d, want 2", rerunBuildTask.AttemptNumber)
+	}
+	if rerunBuildTask.ArtifactRunPath != *initialJob.ArtifactRunPath {
+		t.Fatalf("rerun build run path = %q, want %q", rerunBuildTask.ArtifactRunPath, *initialJob.ArtifactRunPath)
+	}
+
+	jobWhileRerunning := waitForJobStageState(t, rt.store, createResp.ID, "build", "running")
+	if jobWhileRerunning.CurrentAttemptNumber != 2 {
+		t.Fatalf("rerun job current_attempt_number = %d, want 2", jobWhileRerunning.CurrentAttemptNumber)
+	}
+	if jobWhileRerunning.RerunCount != 1 {
+		t.Fatalf("rerun job rerun_count = %d, want 1", jobWhileRerunning.RerunCount)
+	}
+	if jobWhileRerunning.ArtifactRunPath == nil || *jobWhileRerunning.ArtifactRunPath != *initialJob.ArtifactRunPath {
+		t.Fatalf("expected canonical run path to be preserved during successful rerun, got %#v", jobWhileRerunning.ArtifactRunPath)
+	}
+	if jobWhileRerunning.ArtifactMeetingPath == nil || *jobWhileRerunning.ArtifactMeetingPath != *initialJob.ArtifactMeetingPath {
+		t.Fatalf("expected canonical meeting path to remain visible during successful rerun, got %#v", jobWhileRerunning.ArtifactMeetingPath)
+	}
+	if jobWhileRerunning.ArtifactSitePath == nil || *jobWhileRerunning.ArtifactSitePath != *initialJob.ArtifactSitePath {
+		t.Fatalf("expected site path to remain visible during successful rerun, got %#v", jobWhileRerunning.ArtifactSitePath)
+	}
+	if jobWhileRerunning.RecordFinishedAt == nil || initialJob.RecordFinishedAt == nil || *jobWhileRerunning.RecordFinishedAt != *initialJob.RecordFinishedAt {
+		t.Fatalf("expected record timestamps to be preserved across successful rerun, job=%#v initial=%#v", jobWhileRerunning, initialJob)
+	}
+
+	attemptsWhileRerunning, err := rt.store.ListJobAttempts(context.Background(), createResp.ID)
+	if err != nil {
+		t.Fatalf("ListJobAttempts() error = %v", err)
+	}
+	if len(attemptsWhileRerunning) != 2 {
+		t.Fatalf("expected 2 attempts during successful rerun, got %d", len(attemptsWhileRerunning))
+	}
+	rerunAttempt := attemptsWhileRerunning[0]
+	if rerunAttempt.AttemptNumber != 2 || rerunAttempt.TriggerKind != "rerun" || rerunAttempt.Stage != "build" || rerunAttempt.State != "running" {
+		t.Fatalf("unexpected rerun attempt while running = %#v", rerunAttempt)
+	}
+	if rerunAttempt.ArtifactRunPath == nil || *rerunAttempt.ArtifactRunPath != *initialJob.ArtifactRunPath {
+		t.Fatalf("expected canonical run source on successful rerun attempt, got %#v", rerunAttempt.ArtifactRunPath)
+	}
+	if rerunAttempt.RecordQueuedAt != nil || rerunAttempt.RecordStartedAt != nil || rerunAttempt.RecordFinishedAt != nil || rerunAttempt.RecordLogPath != nil {
+		t.Fatalf("did not expect record fields on successful rerun attempt, got %#v", rerunAttempt)
+	}
+	if _, err := os.Stat(attemptRunPath(rt.cfg.WorkRoot, createResp.ID, 2)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected successful rerun to avoid creating attempt-local run bundle, err=%v", err)
+	}
+
+	close(releaseSecondBuild)
+
+	succeededJob := waitForJobState(t, rt.store, createResp.ID, "succeeded")
+	if succeededJob.CurrentAttemptNumber != 2 {
+		t.Fatalf("succeeded job current_attempt_number = %d, want 2", succeededJob.CurrentAttemptNumber)
+	}
+	if succeededJob.RerunCount != 1 {
+		t.Fatalf("succeeded job rerun_count = %d, want 1", succeededJob.RerunCount)
+	}
+	if succeededJob.ArtifactRunPath == nil || *succeededJob.ArtifactRunPath != *initialJob.ArtifactRunPath {
+		t.Fatalf("expected canonical run path after successful rerun, got %#v", succeededJob.ArtifactRunPath)
+	}
+	attempts, err := rt.store.ListJobAttempts(context.Background(), createResp.ID)
+	if err != nil {
+		t.Fatalf("ListJobAttempts() error = %v", err)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("expected 2 attempts after successful rerun, got %d", len(attempts))
+	}
+	if attempts[0].AttemptNumber != 2 || attempts[0].TriggerKind != "rerun" || attempts[0].State != "succeeded" {
+		t.Fatalf("unexpected rerun attempt = %#v", attempts[0])
+	}
+	if attempts[1].AttemptNumber != 1 || attempts[1].State != "succeeded" {
+		t.Fatalf("unexpected preserved first attempt = %#v", attempts[1])
+	}
+	if attempts[0].RecordLogPath != nil {
+		t.Fatalf("did not expect record log path on successful rerun attempt, got %#v", attempts[0].RecordLogPath)
+	}
+	if buildCalls != 2 {
+		t.Fatalf("build call count = %d, want 2", buildCalls)
+	}
+	logText := readFileString(t, logPath)
+	if got := strings.Count(logText, "record --call https://example.test/rerun-succeeded"); got != 1 {
+		t.Fatalf("expected exactly one record invocation across successful rerun flow, got %d log=%s", got, logText)
+	}
+}
+
+func TestRerunRejectsUnknownAndActiveJobs(t *testing.T) {
+	rt, cleanup, _, startedPath := newCLITestRuntime(t)
+	defer cleanup()
+	t.Setenv("FAKE_RECORD_WAIT_FOR_SIGNAL", "1")
 
 	missingReq := httptest.NewRequest(http.MethodPost, "/jobs/missing/rerun", nil)
 	missingRec := httptest.NewRecorder()
@@ -938,7 +1089,7 @@ func TestRerunRejectsUnknownAndNonFailedJobs(t *testing.T) {
 		t.Fatalf("missing rerun status = %d, want %d body=%s", missingRec.Code, http.StatusNotFound, missingRec.Body.String())
 	}
 
-	createReq := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/call"}`))
+	createReq := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/running-rerun"}`))
 	createRec := httptest.NewRecorder()
 	rt.jobsHandler(createRec, createReq)
 	if createRec.Code != http.StatusAccepted {
@@ -948,7 +1099,8 @@ func TestRerunRejectsUnknownAndNonFailedJobs(t *testing.T) {
 	if err := json.Unmarshal(createRec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	_ = waitForJobState(t, rt.store, resp.ID, "succeeded")
+	waitForFile(t, startedPath)
+	_ = waitForRecordState(t, rt.store, resp.ID, "running")
 
 	rerunReq := httptest.NewRequest(http.MethodPost, "/jobs/"+resp.ID+"/rerun", nil)
 	rerunRec := httptest.NewRecorder()
@@ -956,6 +1108,14 @@ func TestRerunRejectsUnknownAndNonFailedJobs(t *testing.T) {
 	if rerunRec.Code != http.StatusConflict {
 		t.Fatalf("rerun status = %d, want %d body=%s", rerunRec.Code, http.StatusConflict, rerunRec.Body.String())
 	}
+
+	stopReq := httptest.NewRequest(http.MethodPost, "/jobs/"+resp.ID+"/stop", nil)
+	stopRec := httptest.NewRecorder()
+	rt.jobDetailHandler(stopRec, stopReq)
+	if stopRec.Code != http.StatusAccepted {
+		t.Fatalf("stop status = %d, want %d body=%s", stopRec.Code, http.StatusAccepted, stopRec.Body.String())
+	}
+	_ = waitForJobState(t, rt.store, resp.ID, "succeeded")
 }
 
 func TestRerunRejectsFailedRecordWithoutCanonicalRun(t *testing.T) {

@@ -420,7 +420,7 @@ func (rt *Runtime) handleRerunJob(w http.ResponseWriter, r *http.Request, id str
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("get job: %v", err))
 		return
 	}
-	if job.Stage != "done" || job.State != "failed" {
+	if job.Stage != "done" || (job.State != "failed" && job.State != "succeeded") {
 		writeJSONError(w, http.StatusConflict, "job is not eligible for rerun")
 		return
 	}

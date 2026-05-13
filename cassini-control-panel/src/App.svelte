@@ -25,6 +25,7 @@
   let loadingDetail = false;
   let submittingStart = false;
   let submittingStop = false;
+  let submittingRerun = false;
   let jobs: Job[] = [];
   let selectedJobId = "";
   let selectedJob: JobDetailResponse | null = null;
@@ -133,6 +134,24 @@
       actionError = asMessage(error);
     } finally {
       submittingStop = false;
+      updatePolling();
+    }
+  }
+
+  async function handleRerunJob() {
+    if (!operatorClient || !selectedJob?.job || !canRerunSelectedJob) {
+      return;
+    }
+    submittingRerun = true;
+    actionError = "";
+    try {
+      await operatorClient.rerunJob(selectedJob.job.id);
+      await refreshJobs();
+      await selectJob(selectedJob.job.id, { allowJobsRefresh: false });
+    } catch (error) {
+      actionError = asMessage(error);
+    } finally {
+      submittingRerun = false;
       updatePolling();
     }
   }
@@ -290,6 +309,10 @@
     !submittingStop &&
     selectedJob?.job.stage === "record" &&
     selectedJob?.job.state === "running";
+  $: canRerunSelectedJob =
+    !submittingRerun &&
+    selectedJob?.job.stage === "done" &&
+    !!selectedJob?.job.artifact_run_path;
 </script>
 
 <svelte:head>
@@ -427,20 +450,36 @@
               <h2 class="font-semibold">Selected run detail</h2>
               <p class="text-xs text-base-content/60">Summary row + attempt history from snapshots and live tagged events.</p>
             </div>
-            <button
-              class="btn btn-outline btn-sm"
-              disabled={!canStopSelectedJob}
-              type="button"
-              on:click={handleStopJob}
-            >
-              {#if submittingStop}
-                <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
-                Stopping…
-              {:else}
-                <Square size={14} aria-hidden="true" />
-                Stop
-              {/if}
-            </button>
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                class="btn btn-outline btn-sm"
+                disabled={!canRerunSelectedJob}
+                type="button"
+                on:click={handleRerunJob}
+              >
+                {#if submittingRerun}
+                  <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
+                  Rerunning…
+                {:else}
+                  <RefreshCw size={14} aria-hidden="true" />
+                  Rerun
+                {/if}
+              </button>
+              <button
+                class="btn btn-outline btn-sm"
+                disabled={!canStopSelectedJob}
+                type="button"
+                on:click={handleStopJob}
+              >
+                {#if submittingStop}
+                  <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
+                  Stopping…
+                {:else}
+                  <Square size={14} aria-hidden="true" />
+                  Stop
+                {/if}
+              </button>
+            </div>
           </header>
 
           {#if detailError}
