@@ -490,6 +490,13 @@ func inspectSiteBundle(out io.Writer, bundle LoadedSiteBundle) {
 	if strings.TrimSpace(bundle.Manifest.Error) != "" {
 		fmt.Fprintf(out, "error=%s\n", bundle.Manifest.Error)
 	}
+	if strings.TrimSpace(bundle.Manifest.PublishedByJobID) != "" {
+		publishedAt := strings.TrimSpace(bundle.Manifest.PublishedAtUTC)
+		if publishedAt == "" {
+			publishedAt = "-"
+		}
+		fmt.Fprintf(out, "published_by_job_id=%s attempt=%d published_at_utc=%s\n", bundle.Manifest.PublishedByJobID, bundle.Manifest.PublishedByAttemptNumber, publishedAt)
+	}
 }
 
 func inspectLooseBundleDir(out io.Writer, path string) (bool, error) {

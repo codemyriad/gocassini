@@ -51,7 +51,8 @@ flowchart TD
   BUILD --> PQ["publish queue"]
 
   PQ --> PUB["publish runtime\nsingle worker"]
-  PUB --> SITE["published site\n<site-root>"]
+  PUB --> PSITE["per-attempt site bundle\n<work-root>/<job-id>--attempt-XXX.site"]
+  PSITE --> SITE["live published site\n<site-root>"]
 
   REC --> CLI["Cassini CLI\ndoctor / record / build / publish"]
   BUILD --> CLI
@@ -168,10 +169,10 @@ flowchart TD
   C -->|yes| E["persist artifact_meeting_path\nbuild_finished_at"]
   E --> F["set stage=publish state=queued\nset publish_queued_at"]
   F --> G["single publish worker picks task"]
-  G --> H["run cassini publish <work-root> --out <site-root>"]
+  G --> H["run cassini publish <work-root>/current --out <job>--attempt-XXX.site"]
   H --> I{"publish succeeded?"}
-  I -->|no| J["read partial site cassini.json when present\npersist lightweight error\nstate=failed"]
-  I -->|yes| K["persist artifact_site_path\npublish_finished_at\ncompleted_at\nstate=succeeded"]
+  I -->|no| J["read retained partial attempt site cassini.json\npersist lightweight error\nstate=failed"]
+  I -->|yes| K["promote/copy attempt site into <site-root>\nwrite lineage in live cassini.json\npersist artifact_site_path\npublish_finished_at\ncompleted_at\nstate=succeeded"]
 ```
 
 ## Current implementation
@@ -240,16 +241,29 @@ The operator persists that directory in the active attempt row and mirrors the c
 
 ### Publish stage
 
-Publish also still uses the Cassini CLI directly:
+Publish still uses the Cassini CLI directly, but now targets an attempt-scoped retained site bundle first:
 
 ```bash
-cassini publish <work-root> --out <site-root>
+cassini publish <work-root>/current --out <work-root>/runs/<job-id>--attempt-XXX.site
 ```
 
-Important detail: publish refreshes the site from the **whole work root**, not just the current job.
-That means the published site includes every ready meeting bundle currently present under `<work-root>`, including successful rerun outputs from later attempts.
+On success, the operator promotes a copy of that retained attempt site into the live shared site root:
 
-The operator persists the shared site output path in the active attempt row and mirrors the winning path onto `jobs.artifact_site_path`.
+```text
+<site-root>/
+```
+
+Important details:
+- the publish worker is still serialized to one worker
+- every attempt keeps its own `.site` bundle for inspection
+- failed publishes leave the current live `<site-root>` untouched
+- successful publishes update the live `<site-root>` from the retained attempt-local `.site` bundle
+- the live `cassini.json` gets optional lineage fields:
+  - `published_by_job_id`
+  - `published_by_attempt_number`
+  - `published_at_utc`
+
+The operator persists the retained attempt-local `.site` path on the attempt row and mirrors the live shared site path onto `jobs.artifact_site_path`.
 
 ## Why the operator shells out to Cassini CLI
 
@@ -549,7 +563,7 @@ A logical job summary row stores:
 - `state`
 - `current_attempt_number`
 - `rerun_count`
-- artifact paths for `.run`, `.meeting`, and site output
+- artifact paths for `.run`, `.meeting`, and the live shared site output
 - lightweight `error`
 - stop metadata:
   - `stop_reason`
@@ -572,7 +586,7 @@ An attempt row stores:
 - preserved normalized `request_json`
 - `stage`
 - `state`
-- attempt-scoped artifact paths for `.run`, `.meeting`, and shared site output
+- attempt-scoped artifact paths for `.run`, `.meeting`, and retained `.site` output
 - lightweight `error`
 - stop metadata:
   - `stop_reason`
@@ -624,7 +638,8 @@ An attempt row stores:
 
 - queue-backed
 - always processed by one publish worker
-- runs `cassini publish <work-root> --out <site-root>`
+- runs `cassini publish <work-root>/current --out <work-root>/runs/<job-id>--attempt-XXX.site`
+- on success, promotes a copy of that retained attempt site into `<site-root>`
 
 ## Failure reporting
 

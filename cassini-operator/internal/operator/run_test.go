@@ -285,6 +285,22 @@ func TestCreateJobReturnsULIDAndCompletesPublishStageWithCanonicalAndAttemptArti
 	if job.ArtifactSitePath == nil {
 		t.Fatalf("expected artifact_site_path to be set")
 	}
+	if *job.ArtifactSitePath != rt.cfg.SiteRoot {
+		t.Fatalf("expected shared live site path, got %#v want %q", job.ArtifactSitePath, rt.cfg.SiteRoot)
+	}
+	liveSiteManifest, ok, err := LoadSiteBundleManifest(*job.ArtifactSitePath)
+	if err != nil {
+		t.Fatalf("LoadSiteBundleManifest() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected live site bundle manifest at %s", *job.ArtifactSitePath)
+	}
+	if liveSiteManifest.PublishedByJobID != resp.ID || liveSiteManifest.PublishedByAttemptNumber != 1 {
+		t.Fatalf("unexpected live site lineage = %#v", liveSiteManifest)
+	}
+	if strings.TrimSpace(liveSiteManifest.PublishedAtUTC) == "" {
+		t.Fatalf("expected live site published_at_utc in manifest = %#v", liveSiteManifest)
+	}
 	if job.BuildQueuedAt == nil || job.BuildStartedAt == nil || job.BuildFinishedAt == nil {
 		t.Fatalf("expected build timestamps to be set, got job=%#v", job)
 	}
@@ -324,6 +340,12 @@ func TestCreateJobReturnsULIDAndCompletesPublishStageWithCanonicalAndAttemptArti
 	}
 	if !strings.Contains(*attempts[0].ArtifactMeetingPath, filepath.Join("runs", resp.ID+"--attempt-001.meeting")) {
 		t.Fatalf("expected attempt-local meeting path, got %#v", attempts[0].ArtifactMeetingPath)
+	}
+	if attempts[0].ArtifactSitePath == nil {
+		t.Fatalf("expected attempt-local artifact_site_path on attempt 1")
+	}
+	if !strings.Contains(*attempts[0].ArtifactSitePath, filepath.Join("runs", resp.ID+"--attempt-001.site")) {
+		t.Fatalf("expected retained attempt-local site path, got %#v", attempts[0].ArtifactSitePath)
 	}
 	if attempts[0].RequestJSON != job.RequestJSON {
 		t.Fatalf("attempt request_json mismatch: attempt=%s job=%s", attempts[0].RequestJSON, job.RequestJSON)
@@ -847,9 +869,10 @@ func TestRerunFromPublishFailureRebuildsInsteadOfPublishOnly(t *testing.T) {
 	}
 	rt.publishJobFn = func(ctx context.Context, task publishTask) (string, error) {
 		publishCalls++
+		sitePath := attemptSitePath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 		if publishCalls == 1 {
-			if err := os.MkdirAll(rt.cfg.SiteRoot, 0o755); err != nil {
-				return rt.cfg.SiteRoot, err
+			if err := os.MkdirAll(sitePath, 0o755); err != nil {
+				return sitePath, err
 			}
 			manifest := `{
   "kind": "site",
@@ -858,15 +881,15 @@ func TestRerunFromPublishFailureRebuildsInsteadOfPublishOnly(t *testing.T) {
   "stage": "publish",
   "error": "exporter exploded"
 }`
-			if err := os.WriteFile(filepath.Join(rt.cfg.SiteRoot, "cassini.json"), []byte(manifest), 0o644); err != nil {
-				return rt.cfg.SiteRoot, err
+			if err := os.WriteFile(filepath.Join(sitePath, "cassini.json"), []byte(manifest), 0o644); err != nil {
+				return sitePath, err
 			}
-			return rt.cfg.SiteRoot, errors.New("exit status 1")
+			return sitePath, errors.New("exit status 1")
 		}
-		if err := writeReadySiteBundleFixture(rt.cfg.SiteRoot, currentRoot(rt.cfg.WorkRoot)); err != nil {
-			return rt.cfg.SiteRoot, err
+		if err := writeReadySiteBundleFixture(sitePath, currentRoot(rt.cfg.WorkRoot)); err != nil {
+			return sitePath, err
 		}
-		return rt.cfg.SiteRoot, nil
+		return sitePath, nil
 	}
 
 	createReq := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/publish-rerun"}`))
@@ -920,6 +943,9 @@ func TestRerunFromPublishFailureRebuildsInsteadOfPublishOnly(t *testing.T) {
 	}
 	if attempts[0].PublishQueuedAt == nil || attempts[0].PublishStartedAt == nil || attempts[0].PublishFinishedAt == nil {
 		t.Fatalf("expected publish timestamps on rerun attempt, got %#v", attempts[0])
+	}
+	if attempts[0].ArtifactSitePath == nil || !strings.Contains(*attempts[0].ArtifactSitePath, filepath.Join("runs", createResp.ID+"--attempt-002.site")) {
+		t.Fatalf("expected rerun attempt-local site path, got %#v", attempts[0].ArtifactSitePath)
 	}
 	logText := readFileString(t, logPath)
 	if got := strings.Count(logText, "record --call https://example.test/publish-rerun"); got != 1 {
@@ -1052,6 +1078,16 @@ func TestRerunSucceededJobCreatesFreshDownstreamAttempt(t *testing.T) {
 	if succeededJob.ArtifactRunPath == nil || *succeededJob.ArtifactRunPath != *initialJob.ArtifactRunPath {
 		t.Fatalf("expected canonical run path after successful rerun, got %#v", succeededJob.ArtifactRunPath)
 	}
+	liveSiteManifest, ok, err := LoadSiteBundleManifest(rt.cfg.SiteRoot)
+	if err != nil {
+		t.Fatalf("LoadSiteBundleManifest() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected live site bundle manifest after successful rerun")
+	}
+	if liveSiteManifest.PublishedByJobID != createResp.ID || liveSiteManifest.PublishedByAttemptNumber != 2 {
+		t.Fatalf("unexpected live site lineage after successful rerun = %#v", liveSiteManifest)
+	}
 	attempts, err := rt.store.ListJobAttempts(context.Background(), createResp.ID)
 	if err != nil {
 		t.Fatalf("ListJobAttempts() error = %v", err)
@@ -1068,12 +1104,120 @@ func TestRerunSucceededJobCreatesFreshDownstreamAttempt(t *testing.T) {
 	if attempts[0].RecordLogPath != nil {
 		t.Fatalf("did not expect record log path on successful rerun attempt, got %#v", attempts[0].RecordLogPath)
 	}
+	if attempts[0].ArtifactSitePath == nil || !strings.Contains(*attempts[0].ArtifactSitePath, filepath.Join("runs", createResp.ID+"--attempt-002.site")) {
+		t.Fatalf("expected successful rerun attempt-local site path, got %#v", attempts[0].ArtifactSitePath)
+	}
+	if attempts[1].ArtifactSitePath == nil || !strings.Contains(*attempts[1].ArtifactSitePath, filepath.Join("runs", createResp.ID+"--attempt-001.site")) {
+		t.Fatalf("expected preserved first attempt-local site path, got %#v", attempts[1].ArtifactSitePath)
+	}
 	if buildCalls != 2 {
 		t.Fatalf("build call count = %d, want 2", buildCalls)
 	}
 	logText := readFileString(t, logPath)
 	if got := strings.Count(logText, "record --call https://example.test/rerun-succeeded"); got != 1 {
 		t.Fatalf("expected exactly one record invocation across successful rerun flow, got %d log=%s", got, logText)
+	}
+}
+
+func TestFailedRerunPreservesPreviouslyDeployedSite(t *testing.T) {
+	rt, cleanup, logPath, _ := newCLITestRuntime(t)
+	defer cleanup()
+
+	publishCalls := 0
+	rt.publishJobFn = func(ctx context.Context, task publishTask) (string, error) {
+		publishCalls++
+		sitePath := attemptSitePath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
+		if publishCalls == 1 {
+			if err := writeReadySiteBundleFixture(sitePath, currentRoot(rt.cfg.WorkRoot)); err != nil {
+				return sitePath, err
+			}
+			return sitePath, nil
+		}
+		if err := os.MkdirAll(sitePath, 0o755); err != nil {
+			return sitePath, err
+		}
+		manifest := `{
+  "kind": "site",
+  "version": "cassini.site.v1",
+  "state": "failed",
+  "stage": "publish",
+  "error": "exporter exploded"
+}`
+		if err := os.WriteFile(filepath.Join(sitePath, "cassini.json"), []byte(manifest), 0o644); err != nil {
+			return sitePath, err
+		}
+		return sitePath, errors.New("exit status 1")
+	}
+
+	createReq := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/rerun-preserve-site"}`))
+	createRec := httptest.NewRecorder()
+	rt.jobsHandler(createRec, createReq)
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, want %d body=%s", createRec.Code, http.StatusAccepted, createRec.Body.String())
+	}
+	var createResp createJobResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	initialJob := waitForJobState(t, rt.store, createResp.ID, "succeeded")
+	if initialJob.ArtifactSitePath == nil || *initialJob.ArtifactSitePath != rt.cfg.SiteRoot {
+		t.Fatalf("expected shared live site path on initial success, got %#v", initialJob.ArtifactSitePath)
+	}
+	initialLiveManifest, ok, err := LoadSiteBundleManifest(rt.cfg.SiteRoot)
+	if err != nil {
+		t.Fatalf("LoadSiteBundleManifest(initial) error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected initial live site manifest")
+	}
+	if initialLiveManifest.PublishedByJobID != createResp.ID || initialLiveManifest.PublishedByAttemptNumber != 1 {
+		t.Fatalf("unexpected initial live site lineage = %#v", initialLiveManifest)
+	}
+
+	rerunReq := httptest.NewRequest(http.MethodPost, "/jobs/"+createResp.ID+"/rerun", nil)
+	rerunRec := httptest.NewRecorder()
+	rt.jobDetailHandler(rerunRec, rerunReq)
+	if rerunRec.Code != http.StatusAccepted {
+		t.Fatalf("rerun status = %d, want %d body=%s", rerunRec.Code, http.StatusAccepted, rerunRec.Body.String())
+	}
+
+	failedJob := waitForJobState(t, rt.store, createResp.ID, "failed")
+	if failedJob.ArtifactSitePath == nil || *failedJob.ArtifactSitePath != rt.cfg.SiteRoot {
+		t.Fatalf("expected previous live site path to remain visible after failed rerun, got %#v", failedJob.ArtifactSitePath)
+	}
+	liveManifest, ok, err := LoadSiteBundleManifest(rt.cfg.SiteRoot)
+	if err != nil {
+		t.Fatalf("LoadSiteBundleManifest(after failed rerun) error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected live site manifest after failed rerun")
+	}
+	if liveManifest.PublishedByJobID != createResp.ID || liveManifest.PublishedByAttemptNumber != 1 {
+		t.Fatalf("expected live site lineage to remain on attempt 1, got %#v", liveManifest)
+	}
+	attempts, err := rt.store.ListJobAttempts(context.Background(), createResp.ID)
+	if err != nil {
+		t.Fatalf("ListJobAttempts() error = %v", err)
+	}
+	if len(attempts) != 2 {
+		t.Fatalf("expected 2 attempts, got %d", len(attempts))
+	}
+	if attempts[0].AttemptNumber != 2 || attempts[0].State != "failed" {
+		t.Fatalf("unexpected latest failed rerun attempt = %#v", attempts[0])
+	}
+	if attempts[0].ArtifactSitePath == nil || !strings.Contains(*attempts[0].ArtifactSitePath, filepath.Join("runs", createResp.ID+"--attempt-002.site")) {
+		t.Fatalf("expected failed rerun to retain attempt-local site path, got %#v", attempts[0].ArtifactSitePath)
+	}
+	if attempts[1].ArtifactSitePath == nil || !strings.Contains(*attempts[1].ArtifactSitePath, filepath.Join("runs", createResp.ID+"--attempt-001.site")) {
+		t.Fatalf("expected initial successful attempt-local site path, got %#v", attempts[1].ArtifactSitePath)
+	}
+	if publishCalls != 2 {
+		t.Fatalf("publish call count = %d, want 2", publishCalls)
+	}
+	logText := readFileString(t, logPath)
+	if got := strings.Count(logText, "record --call https://example.test/rerun-preserve-site"); got != 1 {
+		t.Fatalf("expected exactly one record invocation across failed rerun flow, got %d log=%s", got, logText)
 	}
 }
 
@@ -1344,7 +1488,7 @@ func TestPublishFailurePersistsLightweightErrorDetail(t *testing.T) {
 	defer cleanup()
 
 	rt.publishJobFn = func(ctx context.Context, task publishTask) (string, error) {
-		sitePath := rt.cfg.SiteRoot
+		sitePath := attemptSitePath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 		if err := os.MkdirAll(sitePath, 0o755); err != nil {
 			return sitePath, err
 		}
@@ -1376,11 +1520,21 @@ func TestPublishFailurePersistsLightweightErrorDetail(t *testing.T) {
 	if job.ArtifactMeetingPath == nil || !strings.Contains(*job.ArtifactMeetingPath, filepath.Join("current", resp.ID+".meeting")) {
 		t.Fatalf("expected canonical meeting path to remain on publish failure, got %#v", job.ArtifactMeetingPath)
 	}
-	if job.ArtifactSitePath == nil {
-		t.Fatalf("expected artifact_site_path for partial bundle")
+	if job.ArtifactSitePath != nil {
+		t.Fatalf("did not expect shared artifact_site_path on initial publish failure, got %#v", job.ArtifactSitePath)
 	}
 	if job.Error == nil || *job.Error != "publish stage publish: exporter exploded" {
 		t.Fatalf("unexpected error detail: %#v", job.Error)
+	}
+	attempts, err := rt.store.ListJobAttempts(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatalf("ListJobAttempts() error = %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("expected 1 attempt, got %d", len(attempts))
+	}
+	if attempts[0].ArtifactSitePath == nil || !strings.Contains(*attempts[0].ArtifactSitePath, filepath.Join("runs", resp.ID+"--attempt-001.site")) {
+		t.Fatalf("expected retained attempt-local partial site path, got %#v", attempts[0].ArtifactSitePath)
 	}
 }
 
@@ -1568,10 +1722,11 @@ esac
 		return meetingPath, nil
 	}
 	rt.publishJobFn = func(ctx context.Context, task publishTask) (string, error) {
-		if err := writeReadySiteBundleFixture(rt.cfg.SiteRoot, currentRoot(rt.cfg.WorkRoot)); err != nil {
-			return rt.cfg.SiteRoot, err
+		sitePath := attemptSitePath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
+		if err := writeReadySiteBundleFixture(sitePath, currentRoot(rt.cfg.WorkRoot)); err != nil {
+			return sitePath, err
 		}
-		return rt.cfg.SiteRoot, nil
+		return sitePath, nil
 	}
 	return rt, func() { _ = store.Close() }, logPath, startedPath
 }
@@ -1619,10 +1774,11 @@ func newTestRuntime(t *testing.T) (*Runtime, func()) {
 		return meetingPath, nil
 	}
 	rt.publishJobFn = func(ctx context.Context, task publishTask) (string, error) {
-		if err := writeReadySiteBundleFixture(rt.cfg.SiteRoot, currentRoot(rt.cfg.WorkRoot)); err != nil {
-			return rt.cfg.SiteRoot, err
+		sitePath := attemptSitePath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
+		if err := writeReadySiteBundleFixture(sitePath, currentRoot(rt.cfg.WorkRoot)); err != nil {
+			return sitePath, err
 		}
-		return rt.cfg.SiteRoot, nil
+		return sitePath, nil
 	}
 	return rt, func() { _ = store.Close() }
 }

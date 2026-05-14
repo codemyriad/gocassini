@@ -63,7 +63,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	}
 	if err := rt.enqueuePublishJob(task.JobID, task.AttemptNumber, canonicalMeetingPath, attemptMeetingPath, finishedAt); err != nil {
 		rt.logger.Printf("publish queue update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, err)
-		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, rt.cfg.SiteRoot, err.Error(), finishedAt); updateErr != nil {
+		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, "", "", err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("publish queue failure update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
 		}
 		return
