@@ -41,7 +41,8 @@ By default the bundle uses Docker-managed named volumes:
 - `cassini_operator_state`
 - `cassini_published_site`
 
-The operator writes the published site root and the viewer mounts the same root read-only.
+The shared published-site storage is mounted at `/srv/cassini-site`.
+The live deployed site is the child directory `/srv/cassini-site/published`, so the operator can atomically swap `published/` during promotion while the viewer mounts the same shared storage read-only.
 
 ## Bind-mount override
 
@@ -49,7 +50,7 @@ If you want host-visible storage instead of the default named volumes, set absol
 
 ```dotenv
 CASSINI_OPERATOR_STATE_STORAGE=/absolute/path/to/cassini-operator-state
-CASSINI_PUBLISHED_SITE_STORAGE=/absolute/path/to/cassini-published-site
+CASSINI_PUBLISHED_SITE_STORAGE=/absolute/path/to/cassini-published-site-storage
 ```
 
 Then run the same command:
