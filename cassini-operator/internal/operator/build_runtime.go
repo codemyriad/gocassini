@@ -43,31 +43,39 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	}
 	rt.logger.Printf("build started id=%s attempt=%d worker=%d run=%s", task.JobID, task.AttemptNumber, workerIndex, task.ArtifactRunPath)
 
-	artifactMeetingPath, err := rt.buildJobFn(rt.ctx, task)
+	attemptMeetingPath, err := rt.buildJobFn(rt.ctx, task)
 	finishedAt := nowUTCString()
 	if err != nil {
-		detail := rt.extractBuildFailureDetail(artifactMeetingPath, err)
+		detail := rt.extractBuildFailureDetail(attemptMeetingPath, err)
 		rt.logger.Printf("build failed id=%s attempt=%d worker=%d: %s", task.JobID, task.AttemptNumber, workerIndex, detail)
-		if updateErr := rt.store.MarkBuildFailed(context.Background(), task.JobID, artifactMeetingPath, detail, finishedAt); updateErr != nil {
+		if updateErr := rt.store.MarkBuildFailed(context.Background(), task.JobID, attemptMeetingPath, detail, finishedAt); updateErr != nil {
 			rt.logger.Printf("build fail update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
 		}
 		return
 	}
-	if err := rt.enqueuePublishJob(task.JobID, task.AttemptNumber, artifactMeetingPath, finishedAt); err != nil {
+	canonicalMeetingPath, promoteErr := promoteMeetingBundle(rt.cfg.WorkRoot, attemptMeetingPath, task.JobID)
+	if promoteErr != nil {
+		rt.logger.Printf("build promote failed id=%s attempt=%d worker=%d meeting=%s: %v", task.JobID, task.AttemptNumber, workerIndex, attemptMeetingPath, promoteErr)
+		if updateErr := rt.store.MarkBuildFailed(context.Background(), task.JobID, attemptMeetingPath, promoteErr.Error(), finishedAt); updateErr != nil {
+			rt.logger.Printf("build promote failure update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
+		}
+		return
+	}
+	if err := rt.enqueuePublishJob(task.JobID, task.AttemptNumber, canonicalMeetingPath, attemptMeetingPath, finishedAt); err != nil {
 		rt.logger.Printf("publish queue update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, err)
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, rt.cfg.SiteRoot, err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("publish queue failure update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
 		}
 		return
 	}
-	rt.logger.Printf("build succeeded id=%s attempt=%d worker=%d meeting=%s publish_queued_at=%s", task.JobID, task.AttemptNumber, workerIndex, artifactMeetingPath, finishedAt)
+	rt.logger.Printf("build succeeded id=%s attempt=%d worker=%d attempt_meeting=%s canonical_meeting=%s publish_queued_at=%s", task.JobID, task.AttemptNumber, workerIndex, attemptMeetingPath, canonicalMeetingPath, finishedAt)
 }
 
-func (rt *Runtime) enqueueBuildJob(jobID string, attemptNumber int, artifactRunPath, queuedAt string) error {
-	if err := rt.store.MarkBuildQueued(context.Background(), jobID, artifactRunPath, queuedAt); err != nil {
+func (rt *Runtime) enqueueBuildJob(jobID string, attemptNumber int, jobArtifactRunPath, attemptArtifactRunPath, queuedAt string) error {
+	if err := rt.store.MarkBuildQueued(context.Background(), jobID, jobArtifactRunPath, attemptArtifactRunPath, queuedAt); err != nil {
 		return err
 	}
-	task := buildTask{JobID: jobID, AttemptNumber: attemptNumber, ArtifactRunPath: artifactRunPath}
+	task := buildTask{JobID: jobID, AttemptNumber: attemptNumber, ArtifactRunPath: jobArtifactRunPath}
 	select {
 	case rt.buildQueue <- task:
 		return nil

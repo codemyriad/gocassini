@@ -36,7 +36,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		rt.logger.Printf("publish start update failed id=%s: %v", task.JobID, err)
 		return
 	}
-	rt.logger.Printf("publish started id=%s attempt=%d input=%s site=%s", task.JobID, task.AttemptNumber, rt.cfg.WorkRoot, rt.cfg.SiteRoot)
+	rt.logger.Printf("publish started id=%s attempt=%d input=%s site=%s", task.JobID, task.AttemptNumber, currentRoot(rt.cfg.WorkRoot), rt.cfg.SiteRoot)
 
 	artifactSitePath, err := rt.publishJobFn(rt.ctx, task)
 	finishedAt := nowUTCString()
@@ -55,8 +55,8 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	rt.logger.Printf("publish succeeded id=%s attempt=%d site=%s", task.JobID, task.AttemptNumber, artifactSitePath)
 }
 
-func (rt *Runtime) enqueuePublishJob(jobID string, attemptNumber int, artifactMeetingPath, queuedAt string) error {
-	if err := rt.store.MarkPublishQueued(context.Background(), jobID, artifactMeetingPath, queuedAt); err != nil {
+func (rt *Runtime) enqueuePublishJob(jobID string, attemptNumber int, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt string) error {
+	if err := rt.store.MarkPublishQueued(context.Background(), jobID, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt); err != nil {
 		return err
 	}
 	task := publishTask{JobID: jobID, AttemptNumber: attemptNumber}
@@ -84,7 +84,7 @@ func (rt *Runtime) executePublishCLI(ctx context.Context, task publishTask) (str
 		return rt.cfg.SiteRoot, err
 	}
 
-	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "publish", rt.cfg.WorkRoot, "--out", rt.cfg.SiteRoot)
+	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "publish", currentRoot(rt.cfg.WorkRoot), "--out", rt.cfg.SiteRoot)
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
 	cmd.Env = os.Environ()

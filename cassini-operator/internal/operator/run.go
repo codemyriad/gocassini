@@ -401,6 +401,14 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		}
 		return
 	}
+	canonicalRunPath, promoteErr := promoteRunBundle(rt.cfg.WorkRoot, result.ArtifactRunPath, job.ID)
+	if promoteErr != nil {
+		rt.logger.Printf("record promote failed id=%s run=%s: %v", job.ID, result.ArtifactRunPath, promoteErr)
+		if failErr := rt.store.MarkRecordFailed(context.Background(), job.ID, promoteErr.Error(), result, finishedAt); failErr != nil {
+			rt.logger.Printf("record promote failure update failed id=%s: %v", job.ID, failErr)
+		}
+		return
+	}
 	if updateErr := rt.store.UpdateRecordOutcome(context.Background(), job.ID, result, finishedAt); updateErr != nil {
 		rt.logger.Printf("record outcome update failed id=%s: %v", job.ID, updateErr)
 		if failErr := rt.store.MarkRecordFailed(context.Background(), job.ID, updateErr.Error(), result, finishedAt); failErr != nil {
@@ -408,14 +416,14 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		}
 		return
 	}
-	if err := rt.enqueueBuildJob(job.ID, job.CurrentAttemptNumber, result.ArtifactRunPath, finishedAt); err != nil {
+	if err := rt.enqueueBuildJob(job.ID, job.CurrentAttemptNumber, canonicalRunPath, result.ArtifactRunPath, finishedAt); err != nil {
 		rt.logger.Printf("build queue update failed id=%s: %v", job.ID, err)
 		if updateErr := rt.store.MarkBuildFailed(context.Background(), job.ID, "", err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("build queue failure update failed id=%s: %v", job.ID, updateErr)
 		}
 		return
 	}
-	rt.logger.Printf("record succeeded id=%s run=%s build_queued_at=%s stop_reason=%s", job.ID, result.ArtifactRunPath, finishedAt, strings.TrimSpace(result.StopReason))
+	rt.logger.Printf("record succeeded id=%s attempt_run=%s canonical_run=%s build_queued_at=%s stop_reason=%s", job.ID, result.ArtifactRunPath, canonicalRunPath, finishedAt, strings.TrimSpace(result.StopReason))
 }
 
 func findRepoRoot() (string, error) {
@@ -663,6 +671,59 @@ WHERE job_id = ? AND attempt_number = ?`, nullableString(result.StopReason), int
 	return nil
 }
 
+func (s *Store) MarkRecordSucceededTerminal(ctx context.Context, id, canonicalRunPath, attemptRunPath string, result recordResult, finishedAt string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin record success update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, `
+UPDATE jobs
+SET stage = ?, state = ?,
+    artifact_run_path = ?, artifact_meeting_path = NULL, artifact_site_path = NULL,
+    error = NULL,
+    stop_reason = ?, record_exit_code = ?, record_stop_detail = ?,
+    updated_at = ?, record_finished_at = ?, completed_at = ?,
+    build_queued_at = NULL, build_started_at = NULL, build_finished_at = NULL,
+    publish_queued_at = NULL, publish_started_at = NULL, publish_finished_at = NULL,
+    interrupted_at = NULL
+WHERE id = ?`,
+		"done", "succeeded",
+		canonicalRunPath,
+		nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(result.StopDetail),
+		finishedAt, finishedAt, finishedAt,
+		id)
+	if err != nil {
+		return fmt.Errorf("update record success: %w", err)
+	}
+	attemptNumber, err := currentAttemptNumberTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE job_attempts
+SET stage = ?, state = ?,
+    artifact_run_path = ?,
+    error = NULL,
+    stop_reason = ?, record_exit_code = ?, record_stop_detail = ?,
+    updated_at = ?, record_finished_at = ?, completed_at = ?,
+    interrupted_at = NULL
+WHERE job_id = ? AND attempt_number = ?`,
+		"done", "succeeded",
+		attemptRunPath,
+		nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(result.StopDetail),
+		finishedAt, finishedAt, finishedAt,
+		id, attemptNumber); err != nil {
+		return fmt.Errorf("update attempt record success: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit record success update: %w", err)
+	}
+	s.emitStateChange(ctx, "job.updated", id, attemptNumber)
+	return nil
+}
+
 func (s *Store) MarkRecordFailed(ctx context.Context, id, errText string, result recordResult, finishedAt string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -683,8 +744,8 @@ WHERE id = ?`, "done", "failed", strings.TrimSpace(errText), nullableString(resu
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE job_attempts
-SET stage = ?, state = ?, error = ?, stop_reason = ?, record_exit_code = ?, record_stop_detail = ?, updated_at = ?, record_finished_at = ?, completed_at = ?
-WHERE job_id = ? AND attempt_number = ?`, "done", "failed", strings.TrimSpace(errText), nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(firstNonEmpty(result.StopDetail, errText)), finishedAt, finishedAt, finishedAt, id, attemptNumber); err != nil {
+SET stage = ?, state = ?, artifact_run_path = ?, error = ?, stop_reason = ?, record_exit_code = ?, record_stop_detail = ?, updated_at = ?, record_finished_at = ?, completed_at = ?
+WHERE job_id = ? AND attempt_number = ?`, "done", "failed", nullableString(result.ArtifactRunPath), strings.TrimSpace(errText), nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(firstNonEmpty(result.StopDetail, errText)), finishedAt, finishedAt, finishedAt, id, attemptNumber); err != nil {
 		return fmt.Errorf("update attempt record failure: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
