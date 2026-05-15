@@ -68,7 +68,7 @@ WHERE job_id = ? AND attempt_number = ?`, "publish", "running", startedAt, start
 	return nil
 }
 
-func (s *Store) MarkPublishSucceeded(ctx context.Context, id, artifactSitePath, finishedAt string) error {
+func (s *Store) MarkPublishSucceeded(ctx context.Context, id, jobArtifactSitePath, attemptArtifactSitePath, finishedAt string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin publish success update: %w", err)
@@ -78,7 +78,7 @@ func (s *Store) MarkPublishSucceeded(ctx context.Context, id, artifactSitePath, 
 	_, err = tx.ExecContext(ctx, `
 UPDATE jobs
 SET stage = ?, state = ?, artifact_site_path = ?, updated_at = ?, publish_finished_at = ?, completed_at = ?, error = NULL
-WHERE id = ?`, "done", "succeeded", artifactSitePath, finishedAt, finishedAt, finishedAt, id)
+WHERE id = ?`, "done", "succeeded", jobArtifactSitePath, finishedAt, finishedAt, finishedAt, id)
 	if err != nil {
 		return fmt.Errorf("update publish success: %w", err)
 	}
@@ -89,7 +89,7 @@ WHERE id = ?`, "done", "succeeded", artifactSitePath, finishedAt, finishedAt, fi
 	if _, err := tx.ExecContext(ctx, `
 UPDATE job_attempts
 SET stage = ?, state = ?, artifact_site_path = ?, updated_at = ?, publish_finished_at = ?, completed_at = ?, error = NULL
-WHERE job_id = ? AND attempt_number = ?`, "done", "succeeded", artifactSitePath, finishedAt, finishedAt, finishedAt, id, attemptNumber); err != nil {
+WHERE job_id = ? AND attempt_number = ?`, "done", "succeeded", attemptArtifactSitePath, finishedAt, finishedAt, finishedAt, id, attemptNumber); err != nil {
 		return fmt.Errorf("update attempt publish success: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -99,8 +99,9 @@ WHERE job_id = ? AND attempt_number = ?`, "done", "succeeded", artifactSitePath,
 	return nil
 }
 
-func (s *Store) MarkPublishFailed(ctx context.Context, id, artifactSitePath, errText, finishedAt string) error {
-	artifactSitePath = strings.TrimSpace(artifactSitePath)
+func (s *Store) MarkPublishFailed(ctx context.Context, id, jobArtifactSitePath, attemptArtifactSitePath, errText, finishedAt string) error {
+	jobArtifactSitePath = strings.TrimSpace(jobArtifactSitePath)
+	attemptArtifactSitePath = strings.TrimSpace(attemptArtifactSitePath)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin publish failure update: %w", err)
@@ -110,7 +111,7 @@ func (s *Store) MarkPublishFailed(ctx context.Context, id, artifactSitePath, err
 	if err != nil {
 		return err
 	}
-	if artifactSitePath == "" {
+	if jobArtifactSitePath == "" {
 		_, err := tx.ExecContext(ctx, `
 UPDATE jobs
 SET stage = ?, state = ?, error = ?, updated_at = ?, publish_finished_at = ?, completed_at = ?
@@ -120,8 +121,8 @@ WHERE id = ?`, "done", "failed", strings.TrimSpace(errText), finishedAt, finishe
 		}
 		if _, err := tx.ExecContext(ctx, `
 UPDATE job_attempts
-SET stage = ?, state = ?, error = ?, updated_at = ?, publish_finished_at = ?, completed_at = ?
-WHERE job_id = ? AND attempt_number = ?`, "done", "failed", strings.TrimSpace(errText), finishedAt, finishedAt, finishedAt, id, attemptNumber); err != nil {
+SET stage = ?, state = ?, artifact_site_path = ?, error = ?, updated_at = ?, publish_finished_at = ?, completed_at = ?
+WHERE job_id = ? AND attempt_number = ?`, "done", "failed", nullableString(attemptArtifactSitePath), strings.TrimSpace(errText), finishedAt, finishedAt, finishedAt, id, attemptNumber); err != nil {
 			return fmt.Errorf("update attempt publish failure: %w", err)
 		}
 		if err := tx.Commit(); err != nil {
@@ -133,14 +134,14 @@ WHERE job_id = ? AND attempt_number = ?`, "done", "failed", strings.TrimSpace(er
 	_, err = tx.ExecContext(ctx, `
 UPDATE jobs
 SET stage = ?, state = ?, artifact_site_path = ?, error = ?, updated_at = ?, publish_finished_at = ?, completed_at = ?
-WHERE id = ?`, "done", "failed", artifactSitePath, strings.TrimSpace(errText), finishedAt, finishedAt, finishedAt, id)
+WHERE id = ?`, "done", "failed", jobArtifactSitePath, strings.TrimSpace(errText), finishedAt, finishedAt, finishedAt, id)
 	if err != nil {
 		return fmt.Errorf("update publish failure: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE job_attempts
 SET stage = ?, state = ?, artifact_site_path = ?, error = ?, updated_at = ?, publish_finished_at = ?, completed_at = ?
-WHERE job_id = ? AND attempt_number = ?`, "done", "failed", artifactSitePath, strings.TrimSpace(errText), finishedAt, finishedAt, finishedAt, id, attemptNumber); err != nil {
+WHERE job_id = ? AND attempt_number = ?`, "done", "failed", nullableString(attemptArtifactSitePath), strings.TrimSpace(errText), finishedAt, finishedAt, finishedAt, id, attemptNumber); err != nil {
 		return fmt.Errorf("update attempt publish failure: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

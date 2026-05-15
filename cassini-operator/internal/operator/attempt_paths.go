@@ -38,6 +38,14 @@ func attemptMeetingPath(workRoot, jobID string, attemptNumber int) string {
 	return filepath.Join(runsRoot(workRoot), attemptBaseName(jobID, attemptNumber)+".meeting")
 }
 
+func attemptSitePath(workRoot, jobID string, attemptNumber int) string {
+	return filepath.Join(runsRoot(workRoot), attemptBaseName(jobID, attemptNumber)+".site")
+}
+
+func siteStagingRoot(siteRoot string) string {
+	return filepath.Clean(siteRoot) + ".staging"
+}
+
 func attemptLogsDir(workRoot, jobID string, attemptNumber int) string {
 	return filepath.Join(runsRoot(workRoot), attemptBaseName(jobID, attemptNumber)+".logs")
 }

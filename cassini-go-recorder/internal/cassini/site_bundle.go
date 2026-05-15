@@ -17,15 +17,18 @@ type SiteBundle struct {
 }
 
 type SiteBundleManifest struct {
-	Kind         string `json:"kind"`
-	Version      string `json:"version"`
-	CreatedAtUTC string `json:"created_at_utc"`
-	State        string `json:"state,omitempty"`
-	Stage        string `json:"stage,omitempty"`
-	Error        string `json:"error,omitempty"`
-	SourcePath   string `json:"source_path"`
-	CatalogPath  string `json:"catalog_path,omitempty"`
-	MeetingCount int    `json:"meeting_count,omitempty"`
+	Kind                     string `json:"kind"`
+	Version                  string `json:"version"`
+	CreatedAtUTC             string `json:"created_at_utc"`
+	State                    string `json:"state,omitempty"`
+	Stage                    string `json:"stage,omitempty"`
+	Error                    string `json:"error,omitempty"`
+	SourcePath               string `json:"source_path"`
+	CatalogPath              string `json:"catalog_path,omitempty"`
+	MeetingCount             int    `json:"meeting_count,omitempty"`
+	PublishedByJobID         string `json:"published_by_job_id,omitempty"`
+	PublishedByAttemptNumber int    `json:"published_by_attempt_number,omitempty"`
+	PublishedAtUTC           string `json:"published_at_utc,omitempty"`
 }
 
 type LoadedSiteBundle struct {
