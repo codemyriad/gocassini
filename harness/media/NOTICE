@@ -1,0 +1,31 @@
+Test fixture attribution
+========================
+
+File: parakeet-smoke.mkv
+  Duration: 14.225s
+  Format:   Matroska container, FLAC audio, 16 kHz mono
+  Source:   LibriSpeech ASR corpus (test-clean split, id 6930-75918-0001)
+  Speaker:  6930  Chapter: 75918
+  Text:     "THE ENGLISH FORWARDED TO THE FRENCH BASKETS OF FLOWERS OF WHICH THEY
+            HAD MADE A PLENTIFUL PROVISION TO GREET THE ARRIVAL OF THE YOUNG
+            PRINCESS THE FRENCH IN RETURN INVITED THE ENGLISH TO A SUPPER WHICH
+            WAS TO BE GIVEN THE NEXT DAY"
+  License:  CC-BY 4.0
+            https://creativecommons.org/licenses/by/4.0/
+  Origin:   Vassil Panayotov, Daniel Povey et al.,
+            "LibriSpeech: an ASR corpus based on public domain audio books",
+            ICASSP 2015. https://www.openslr.org/12/
+
+Why LibriSpeech instead of Mozilla Common Voice:
+  The eng-review for bundled-parakeet-images (D5) chose Mozilla Common Voice.
+  As of October 2025, Mozilla Common Voice is no longer freely downloadable —
+  Mozilla moved distribution to the Mozilla Data Collective (gated registration).
+  LibriSpeech is the closest substitute that remains freely accessible without
+  account creation: real spoken English, permissive license (CC-BY 4.0 vs CC0),
+  short individual clips. Attribution is required under CC-BY; this NOTICE file
+  satisfies the requirement.
+
+Regeneration:
+  scripts/fetch-smoke-fixture.sh re-derives this file from the LibriSpeech
+  test-clean dataset on Hugging Face. Run it if the binary is ever lost or
+  needs to be replaced with a different sample.

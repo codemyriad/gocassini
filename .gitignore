@@ -27,6 +27,8 @@
 *.json
 !/test/scenarios/*.json
 !/harness/scenarios/*.json
+# Test fixtures (small, committed for deterministic CI)
+!/harness/media/parakeet-smoke.mkv
 gocassini-*.log
 *gocassini*.log
 
