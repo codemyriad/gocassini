@@ -309,6 +309,13 @@ jobs:
           IMAGE_REF: ${{ steps.ref.outputs.ref }}
         run: ./harness/bin/ci-transcribe-smoke-exapp.sh
 
+      - name: Run dual-variant transcript verify (CUDA = v3 fp32)
+        env:
+          IMAGE_REF: ${{ steps.ref.outputs.ref }}
+          # v3 fp32 lands near the LibriSpeech reference cleanly on this clip.
+          MIN_LEVENSHTEIN: "0.85"
+        run: ./harness/bin/ci-e2e-v3-transcript-verify.sh
+
   transcribe-smoke:
     name: Smoke transcription (bundled model, no download)
     runs-on: ubuntu-latest
@@ -336,6 +343,16 @@ jobs:
         env:
           IMAGE_REF: ${{ steps.ref.outputs.ref }}
         run: ./harness/bin/ci-transcribe-smoke-exapp.sh
+
+      - name: Run dual-variant transcript verify (CPU = v3 int8)
+        env:
+          IMAGE_REF: ${{ steps.ref.outputs.ref }}
+          # v3 int8 (CPU) drops the soft opening on this clip — sherpa-onnx's
+          # streaming VAD does not pick up the early words. The threshold is
+          # a smoke floor that catches "model loaded but produced gibberish"
+          # without gating on absolute WER. Investigation tracked separately.
+          MIN_LEVENSHTEIN: "0.50"
+        run: ./harness/bin/ci-e2e-v3-transcript-verify.sh
 
   e2e-container:
     name: E2E container HTTP plane + middleware + lifecycle (no Nextcloud)
