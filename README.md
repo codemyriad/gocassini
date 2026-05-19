@@ -129,6 +129,14 @@ Inspect any primary Cassini artifact:
 ./bin/cassini inspect ./site
 ```
 
+## Deployment Bundle
+
+For the repo-root Docker Compose deployment bundle, see:
+
+- [deployment/README.md](deployment/README.md)
+
+From there you can bring up the packaged operator, control panel, and viewer with `docker compose up --build`.
+
 ## Harness Commands
 
 The local stack and showcase/demo flows now live under `cassini dev`:
