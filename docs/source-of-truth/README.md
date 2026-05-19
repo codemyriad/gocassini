@@ -18,6 +18,7 @@ Humans should update this layer first. Audience-specific docs under `docs/genera
 4. [Control panel](./control-panel.md)
 5. [Viewer](./viewer.md)
 6. [Deployment](./deployment.md)
+7. [Local development](./local-development.md)
 
 ## Cassini in one page
 

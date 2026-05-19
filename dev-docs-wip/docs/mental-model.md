@@ -1,6 +1,6 @@
 # Cassini mental model
 
-This page gives you the smallest useful model of the system.
+Cassini is easiest to understand as a small set of durable artifacts and a few strict runtime boundaries.
 
 If you have not already run the happy path, do that first:
 
@@ -54,6 +54,8 @@ In local end-to-end development, you usually run two stacks at once.
 ### 1. Harness
 
 The harness gives you a local Nextcloud Talk environment to record against.
+
+When you take that path, prefer `./bin/cassini dev ...` entrypoints over raw harness `docker compose`, use `127.0.0.1` rather than `localhost` even in the browser, and note that the local harness currently does not work on macOS because of networking issues.
 
 Think of it as the local lab for:
 
@@ -172,7 +174,6 @@ They are intentionally separate applications.
 For more terms, including audio/container terminology, see:
 
 - [Glossary](./reference/glossary.md)
-- repo reference: `docs/audio-glossary.md`
 
 ## Where to go next
 

@@ -43,6 +43,7 @@ That directory holds the main Cassini narrative for:
 - control panel
 - viewer
 - deployment
+- local development
 
 ## Current structures
 

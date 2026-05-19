@@ -12,7 +12,7 @@ For a deeper media-focused glossary, see the repo-level reference:
 A Nextcloud Talk meeting URL that Cassini can join and record.
 
 ### Harness
-The local development and test lab for Nextcloud Talk. It lets you bring up a local Talk stack, create rooms, and run smoke or fixture flows.
+The local development and test lab for Nextcloud Talk. It lets you bring up a local Talk stack, create rooms, and run smoke or fixture flows. Prefer the `./bin/cassini dev ...` entrypoints, use `127.0.0.1` rather than `localhost`, and note that the local harness currently does not work on macOS because of networking issues.
 
 ### Operator
 Cassini’s long-running control-plane service. It persists jobs and attempts and runs record/build/publish through CLI subprocesses.

@@ -139,7 +139,15 @@ From there you can bring up the packaged operator, control panel, and viewer wit
 
 ## Harness Commands
 
-The local stack and showcase/demo flows now live under `cassini dev`:
+The local stack and showcase/demo flows now live under `cassini dev`.
+
+Important local harness notes:
+
+- prefer `./bin/cassini dev stack up` over raw harness `docker compose`, because the wrapper runs the harness scripts and additional setup after Compose starts
+- use `127.0.0.1`, not `localhost`, for local harness URLs, including in the browser
+- the local harness currently does not work on macOS because of networking issues in the harness stack
+
+Main commands:
 
 ```bash
 ./bin/cassini dev stack up

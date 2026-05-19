@@ -34,6 +34,12 @@ That walkthrough lives here:
 
 - [Quick start](./quick-start.md)
 
+Important note before you take that path:
+
+- use the `./bin/cassini dev ...` entrypoints for the harness rather than raw harness `docker compose`
+- use `127.0.0.1`, not `localhost`, for local harness URLs, including in the browser
+- the local harness currently does not work on macOS because of networking issues
+
 ## The main system picture
 
 At a high level, Cassini is a file-driven pipeline:

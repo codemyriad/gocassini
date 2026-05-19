@@ -1,6 +1,6 @@
 # Running the local developer stack
 
-This page explains the two local stacks you usually run together during development:
+During development you usually run two local stacks together:
 
 1. the **harness** for local Nextcloud Talk
 2. the **deployment bundle** for operator, control panel, and viewer
@@ -46,6 +46,13 @@ For local end-to-end testing, you normally run both.
 ## Start and stop commands
 
 ### Harness
+
+Important harness notes before you start:
+
+- prefer `./bin/cassini dev stack up`, `down`, and `status` over raw harness `docker compose`
+- the `cassini dev` path runs the harness scripts and additional setup after Compose starts
+- use `127.0.0.1`, not `localhost`, for local harness URLs, including in the browser
+- the local harness currently does not work on macOS because of networking issues in the harness stack
 
 From the repo root:
 
@@ -187,7 +194,7 @@ If you want host-visible storage, set bind-mount paths in `deployment/.env`.
 
 A normal local startup looks like this:
 
-1. start the harness
+1. start the harness with `./bin/cassini dev stack up`
 2. create or open a Talk room
 3. start the deployment bundle
 4. open the control panel and viewer

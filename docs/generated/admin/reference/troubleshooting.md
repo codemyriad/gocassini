@@ -1,5 +1,20 @@
 # Troubleshooting
 
+## The optional local harness verification path is not working on macOS
+
+### Meaning
+
+This is a known current limitation of the local harness.
+
+### Why it happens
+
+The harness currently has networking issues on macOS.
+
+### What to do
+
+- do not assume the harness-based local end-to-end flow will work on macOS right now
+- when you do use that optional harness path, prefer `./bin/cassini dev ...` entrypoints and `127.0.0.1` addresses, including in the browser
+
 ## The deployment bundle has port conflicts
 
 ### Symptom

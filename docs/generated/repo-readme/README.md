@@ -37,6 +37,14 @@ The same architecture also supports the simpler product-facing story of one port
 - `deployment/` — packaged Compose topology
 - `harness/` — local stack and smoke flows
 
+## Local harness note
+
+When you work against the local Talk harness:
+
+- prefer `./bin/cassini dev stack up` over raw harness `docker compose`
+- use `127.0.0.1`, not `localhost`, even from the browser
+- note that the local harness currently does not work on macOS because of networking issues
+
 ## Docs map
 
 - developer docs: [`docs/generated/developer/README.md`](../developer/README.md)

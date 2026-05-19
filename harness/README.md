@@ -27,6 +27,12 @@ Preferred product-facing entry points:
 - `../bin/cassini dev player ...`
 - `../bin/cassini dev smoke`
 
+Important current notes:
+
+- Prefer the `cassini dev` entry points over raw harness `docker compose` as the normal documented path. The wrapper runs the harness scripts and additional setup after Compose starts.
+- For local harness URLs, use `127.0.0.1`, not `localhost`, including in the browser.
+- The local harness currently does not work on macOS because of networking issues in the harness stack.
+
 The scripts in `harness/bin/` remain the underlying lab implementation and local
 stack internals.
 

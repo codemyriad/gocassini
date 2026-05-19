@@ -1,13 +1,5 @@
 # Cassini developer docs
 
-This is a top-down guide to the Cassini codebase and runtime.
-
-It is written for a developer who:
-
-- is technically comfortable
-- is new to this project
-- should be able to get value quickly without already knowing Cassini, WebRTC, or audio-processing details
-
 ## Start here
 
 - New to Cassini: [Start here](./start-here.md)
@@ -67,5 +59,7 @@ Cassini records a Nextcloud Talk meeting, turns that recording into reusable mee
 
 - the **harness**, which gives you a local Nextcloud Talk environment
 - the **deployment bundle**, which gives you the operator, control panel, and viewer
+
+For the harness path, prefer `./bin/cassini dev ...` entrypoints over raw harness `docker compose`, use `127.0.0.1` rather than `localhost` even in the browser, and note that the local harness currently does not work on macOS because of networking issues.
 
 The easiest way to understand the project is to run the happy path first, then read downward into how the pieces fit together.

@@ -47,6 +47,8 @@ Each arrow corresponds to a durable artifact written to disk. Failures are recov
 | [`cassini-viewer/`](../cassini-viewer/) | Svelte | Browser app for one meeting artifact at a time — playback, transcript, search, summary panel | [`cassini-viewer/docs/architecture-overview.md`](../cassini-viewer/docs/architecture-overview.md) |
 | [`harness/`](../harness/) | Mixed | Local development stack: synthetic meetings, fixture generation, smoke tests | [`harness/README.md`](../harness/README.md) |
 
+For the local harness path, prefer `./bin/cassini dev ...` entrypoints over raw harness `docker compose`, use `127.0.0.1` rather than `localhost`, and note that the harness currently does not work on macOS because of networking issues.
+
 The recorder is the architectural center of gravity: live capture, the multitrack MKV, and the post-recording transcription pipeline all live there. Other components consume what the recorder produces.
 
 ## Key data contracts

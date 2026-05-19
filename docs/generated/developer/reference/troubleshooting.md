@@ -38,11 +38,33 @@ Open:
 
 - `http://127.0.0.1:28080/`
 
+Use `127.0.0.1` here, not `localhost`, including in the browser.
+
 Or run:
 
 ```bash
 ./bin/cassini dev stack status
 ```
+
+Also remember:
+
+- `./bin/cassini dev stack up` is the preferred path for the harness because it runs the harness scripts and additional setup after Compose starts
+- raw harness `docker compose` is for debugging harness internals, not the normal first-run path
+
+## The local harness path is not working on macOS
+
+### Meaning
+
+This is a known current limitation.
+
+### Why it happens
+
+The local harness currently has networking issues on macOS.
+
+### What to do
+
+- do not assume the harness quickstart will work on macOS right now
+- if you only need the packaged operator/control-panel/viewer stack, work with the deployment bundle separately
 
 ## The deployment bundle has port conflicts
 

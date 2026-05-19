@@ -23,6 +23,12 @@ Why Go? In this checkout, `./bin/cassini` builds a temporary Cassini binary befo
 
 > Command note: these docs use `./bin/cassini` from the repo root. If you have an equivalent installed wrapper named `cassini`, you can use that instead.
 
+Important notes for this harness-based quickstart:
+
+- use `./bin/cassini dev stack up`, not raw harness `docker compose`, because the wrapper runs the harness scripts and additional setup after Compose starts
+- use `127.0.0.1`, not `localhost`, for local harness URLs, including in the browser
+- this harness-based quickstart currently does not work on macOS because of networking issues in the harness stack
+
 ## 1. Start the local Talk harness
 
 From the repo root:
@@ -33,9 +39,13 @@ From the repo root:
 
 This starts the local Nextcloud Talk stack used for development.
 
+Do not swap this for raw harness `docker compose` unless you are intentionally debugging harness internals.
+
 If you want to confirm it is up, open:
 
 - `http://127.0.0.1:28080/`
+
+Use `127.0.0.1` here, not `localhost`.
 
 The local harness uses the default Nextcloud admin credentials:
 

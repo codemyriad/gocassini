@@ -47,6 +47,12 @@ CALL_URL="$(./bin/cassini dev room create --name \"Cassini local demo\" | tail -
 echo "$CALL_URL"
 ```
 
+Important notes for this optional harness path:
+
+- prefer `./bin/cassini dev stack up` over raw harness `docker compose`, because the wrapper runs the harness scripts and additional setup after Compose starts
+- use `127.0.0.1`, not `localhost`, for local harness URLs, including in the browser
+- the local harness currently does not work on macOS because of networking issues in the harness stack
+
 Then:
 
 1. open the Talk room URL in the browser

@@ -8,6 +8,7 @@ sourceOfTruth:
     - docs/portable-meeting-format.md
     - docs/audio-glossary.md
     - deployment/README.md
+    - harness/README.md
     - cassini-go-recorder/docs/
     - cassini-transcriber/docs/
     - cassini-viewer/docs/
@@ -29,6 +30,7 @@ docsets:
       - docs/source-of-truth/README.md
       - docs/source-of-truth/core-flows-and-artifacts.md
       - docs/source-of-truth/system-architecture.md
+      - docs/source-of-truth/local-development.md
     outputs:
       - docs/generated/repo-readme/README.md
     notes: Draft repo landing page generated without replacing the live root README yet.
@@ -43,6 +45,7 @@ docsets:
       - docs/source-of-truth/control-panel.md
       - docs/source-of-truth/viewer.md
       - docs/source-of-truth/deployment.md
+      - docs/source-of-truth/local-development.md
       - dev-docs-wip/structure.md
       - dev-docs-wip/docs/
     outputs:
@@ -73,6 +76,7 @@ docsets:
       - docs/source-of-truth/control-panel.md
       - docs/source-of-truth/viewer.md
       - docs/source-of-truth/deployment.md
+      - docs/source-of-truth/local-development.md
       - deployment/README.md
     outputs:
       - docs/generated/admin/README.md
@@ -97,6 +101,7 @@ docsets:
       - docs/source-of-truth/core-flows-and-artifacts.md
       - docs/source-of-truth/system-architecture.md
       - docs/source-of-truth/deployment.md
+      - docs/source-of-truth/local-development.md
     outputs:
       - docs/generated/microsite/README.md
       - docs/generated/microsite/site-map.md

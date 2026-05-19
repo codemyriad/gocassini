@@ -26,6 +26,8 @@ Do not think of the harness as part of the deployed Cassini product. It is a dev
 
 From the repo root, use the `cassini dev` wrapper rather than calling harness scripts directly.
 
+That is the preferred documented path because it runs the harness scripts rather than only starting containers, and startup includes additional setup after Compose comes up.
+
 Main commands:
 
 ```bash
@@ -71,10 +73,18 @@ The local Nextcloud/Talk UI is served at:
 
 - `http://127.0.0.1:28080/`
 
+Use `127.0.0.1` here, not `localhost`, including in the browser.
+
 Default admin credentials:
 
 - username: `admin`
 - password: `admin`
+
+## Current limitation
+
+The local harness currently does not work on macOS because of networking issues in the harness stack.
+
+If you are teaching or documenting a harness-based local flow, call this out near the first harness step rather than leaving it only to troubleshooting.
 
 ## What lives under `harness/`
 

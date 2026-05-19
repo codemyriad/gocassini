@@ -7,7 +7,7 @@ Use this when the source of truth has changed and every derivative docset should
 - `docs/docsets.yaml`
 - all structure files referenced there
 - `docs/source-of-truth/README.md` and the relevant linked source docs
-- supporting references listed in `docsets.yaml` when needed
+- supporting references listed in `docs/docsets.yaml` when needed
 
 ## Process
 
