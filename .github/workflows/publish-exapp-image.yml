@@ -1,0 +1,213 @@
+name: Build + publish ExApp image
+
+on:
+  push:
+    branches:
+      - main
+      - installable-nextcloud-app
+    tags:
+      - 'v*'
+  pull_request:
+    paths:
+      - 'appinfo/info.xml'
+      - 'deployment/Dockerfile.exapp'
+      - 'deployment/exapp-start.sh'
+      - 'deployment/exapp-healthcheck.sh'
+      - 'cassini-operator/**'
+      - 'cassini-go-recorder/**'
+      - 'cassini-publisher/bin/**'
+      - 'cassini-viewer/**'
+      - 'cassini-control-panel/**'
+      - '.github/workflows/publish-exapp-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository_owner }}/gocassini
+  # The CPU-only image is the same artifact retagged for -cuda / -rocm so admins on
+  # GPU-tagged AppAPI daemons can still install (no GPU acceleration in v1).
+  EXTRA_ALIAS_SUFFIXES: '-cuda -rocm'
+
+jobs:
+  validate-manifest:
+    name: Validate appinfo/info.xml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install xmllint
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
+      - name: Wellformed XML check
+        run: xmllint --noout appinfo/info.xml
+      - name: Required-fields sanity check
+        run: |
+          set -euo pipefail
+          for field in '<id>gocassini</id>' '<external-app>' '<docker-install>' '<routes>'; do
+            if ! grep -qF "$field" appinfo/info.xml; then
+              echo "appinfo/info.xml missing required marker: $field" >&2
+              exit 1
+            fi
+          done
+          # No PUT/POST verbs allowed in <routes> for /enabled or /init —
+          # those are AppAPI lifecycle callbacks, not proxied browser routes.
+          if grep -qE '<url>\^?/enabled' appinfo/info.xml || grep -qE '<url>\^?/init' appinfo/info.xml; then
+            echo "appinfo/info.xml must not declare /enabled or /init under <routes>" >&2
+            echo "they are lifecycle callbacks, not browser routes" >&2
+            exit 1
+          fi
+
+  build-image:
+    name: Build ExApp image
+    runs-on: ubuntu-latest
+    needs: validate-manifest
+    outputs:
+      image_ref: ${{ steps.meta.outputs.tags }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        run: |
+          set -euo pipefail
+          SHA="${GITHUB_SHA::12}"
+          REF="${{ env.REGISTRY }}/${{ env.IMAGE }}"
+          TAGS=()
+          TAGS+=("${REF}:sha-${SHA}")
+          case "${GITHUB_EVENT_NAME}" in
+            push)
+              if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+                VERSION="${GITHUB_REF##refs/tags/}"
+                TAGS+=("${REF}:${VERSION}" "${REF}:latest")
+                for suffix in ${EXTRA_ALIAS_SUFFIXES}; do
+                  TAGS+=("${REF}:${VERSION}${suffix}")
+                  TAGS+=("${REF}:latest${suffix}")
+                done
+              else
+                BRANCH="${GITHUB_REF##refs/heads/}"
+                SAFE_BRANCH="$(echo "${BRANCH}" | tr '/' '-' | tr -c 'A-Za-z0-9._-' '-')"
+                TAGS+=("${REF}:branch-${SAFE_BRANCH}")
+                if [[ "${BRANCH}" == "main" ]]; then
+                  TAGS+=("${REF}:latest")
+                  for suffix in ${EXTRA_ALIAS_SUFFIXES}; do
+                    TAGS+=("${REF}:latest${suffix}")
+                  done
+                fi
+              fi
+              ;;
+            pull_request)
+              # PR builds: load locally for the smoke job, do not push.
+              ;;
+            workflow_dispatch)
+              TAGS+=("${REF}:dispatch-$(date -u +%Y%m%d%H%M%S)")
+              ;;
+          esac
+          {
+            echo "tags<<EOF"
+            for t in "${TAGS[@]}"; do echo "$t"; done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          # Primary tag used by the smoke job (PR builds use the sha tag too).
+          echo "primary=${TAGS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Build (and push when not a PR)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/Dockerfile.exapp
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save image tarball for downstream jobs
+        if: github.event_name == 'pull_request'
+        run: |
+          docker save "${{ steps.meta.outputs.primary }}" -o /tmp/exapp-image.tar
+
+      - name: Upload image artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: exapp-image
+          path: /tmp/exapp-image.tar
+          retention-days: 3
+
+  smoke:
+    name: Smoke test image (HTTP plane, dev-mode)
+    runs-on: ubuntu-latest
+    needs: build-image
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore image (PR builds)
+        if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@v4
+        with:
+          name: exapp-image
+          path: /tmp
+
+      - name: Load image (PR builds)
+        if: github.event_name == 'pull_request'
+        run: docker load -i /tmp/exapp-image.tar
+
+      - name: Resolve image ref
+        id: ref
+        run: |
+          set -euo pipefail
+          # First tag from build-image is the canonical sha-tagged ref.
+          PRIMARY=$(echo "${{ needs.build-image.outputs.image_ref }}" | head -n1)
+          echo "ref=${PRIMARY}" >> "$GITHUB_OUTPUT"
+
+      - name: Run smoke test
+        env:
+          IMAGE_REF: ${{ steps.ref.outputs.ref }}
+        run: ./harness/bin/ci-smoke-exapp.sh
+
+  e2e-install:
+    name: E2E install + enable against Nextcloud + AppAPI
+    runs-on: ubuntu-latest
+    needs: build-image
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore image (PR builds)
+        if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@v4
+        with:
+          name: exapp-image
+          path: /tmp
+
+      - name: Load image (PR builds)
+        if: github.event_name == 'pull_request'
+        run: docker load -i /tmp/exapp-image.tar
+
+      - name: Resolve image ref
+        id: ref
+        run: |
+          PRIMARY=$(echo "${{ needs.build-image.outputs.image_ref }}" | head -n1)
+          echo "ref=${PRIMARY}" >> "$GITHUB_OUTPUT"
+
+      - name: Run end-to-end install test
+        env:
+          IMAGE_REF: ${{ steps.ref.outputs.ref }}
+        run: ./harness/bin/ci-e2e-exapp.sh
