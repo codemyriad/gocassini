@@ -25,7 +25,7 @@ export async function main(argv = process.argv.slice(2)) {
   const examples = [];
   for (const name of meetings) {
     const meetingId = name.slice(0, -extname(name).length) || name;
-    const portable = await extractPortableManifestFromArrayBuffer(readFileSync(join(sourceDir, name)));
+    const { manifest: portable } = await extractPortableManifestFromArrayBuffer(readFileSync(join(sourceDir, name)));
     const transcript = buildTranscriptWordsFromPortable(portable, name);
     const readable = buildReadableTranscriptFromPortable(portable, transcript);
     const display = portable.displayTranscript ?? buildDisplayTranscriptFromArtifacts(transcript, readable);
