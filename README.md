@@ -213,6 +213,8 @@ product.
 
 ## Docs
 
+- Documentation workflow: [docs/README.md](docs/README.md) — source of truth, audience structures, and generated outputs
+- Canonical source of truth: [docs/source-of-truth/](docs/source-of-truth/)
 - System overview: [docs/architecture.md](docs/architecture.md)
 - Cross-cutting reference: [docs/portable-meeting-format.md](docs/portable-meeting-format.md), [docs/audio-glossary.md](docs/audio-glossary.md)
 - Component deep-dives: [cassini-go-recorder/docs/](cassini-go-recorder/docs/), [cassini-transcriber/docs/](cassini-transcriber/docs/), [cassini-viewer/docs/](cassini-viewer/docs/)

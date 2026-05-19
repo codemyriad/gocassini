@@ -1,0 +1,64 @@
+version: 1
+
+sourceOfTruth:
+  root: docs/source-of-truth
+  entrypoint: docs/source-of-truth/README.md
+  supportingReferences:
+    - docs/architecture.md
+    - docs/portable-meeting-format.md
+    - docs/audio-glossary.md
+    - deployment/README.md
+    - cassini-go-recorder/docs/
+    - cassini-transcriber/docs/
+    - cassini-viewer/docs/
+
+rules:
+  - Update docs/source-of-truth first.
+  - Treat docs/generated as derivative output.
+  - Prefer omission over invention.
+  - Keep each output tightly scoped to its audience and purpose.
+
+docsets:
+  - id: repo-readme
+    structure: docs/structures/repo-readme.md
+    primarySources:
+      - docs/source-of-truth/README.md
+      - docs/source-of-truth/core-flows-and-artifacts.md
+      - docs/source-of-truth/system-architecture.md
+    outputs:
+      - docs/generated/repo-readme/README.md
+    notes: Draft repo landing page generated without replacing the live root README yet.
+
+  - id: developer-docs
+    structure: docs/structures/developer-docs.md
+    primarySources:
+      - docs/source-of-truth/README.md
+      - docs/source-of-truth/core-flows-and-artifacts.md
+      - docs/source-of-truth/system-architecture.md
+      - docs/source-of-truth/operator.md
+    outputs:
+      - docs/generated/developer/README.md
+    notes: Developer-facing orientation and codebase map.
+
+  - id: admin-docs
+    structure: docs/structures/admin-docs.md
+    primarySources:
+      - docs/source-of-truth/README.md
+      - docs/source-of-truth/operator.md
+      - docs/source-of-truth/control-panel.md
+      - docs/source-of-truth/deployment.md
+    outputs:
+      - docs/generated/admin/README.md
+    notes: Deployment, runtime, and operations-oriented docs.
+
+  - id: microsite-docs
+    structure: docs/structures/microsite-docs.md
+    primarySources:
+      - docs/source-of-truth/README.md
+      - docs/source-of-truth/core-flows-and-artifacts.md
+      - docs/source-of-truth/system-architecture.md
+      - docs/source-of-truth/deployment.md
+    outputs:
+      - docs/generated/microsite/README.md
+      - docs/generated/microsite/site-map.md
+    notes: Public-facing narrative and information architecture draft.
