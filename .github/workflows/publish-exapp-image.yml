@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+      # WIP integration branch — pushes from here also publish :latest and
+      # :latest-cuda. While this branch is open, "latest" tracks the
+      # combined-PRs WIP, not main. Drop the branch once it merges to main.
+      - e2e-v3-cpu-gpu
     tags:
       - 'v*'
   pull_request:
@@ -105,7 +109,10 @@ jobs:
                 # newline into a trailing hyphen on the tag.
                 SAFE_BRANCH="$(printf '%s' "${BRANCH}" | tr '/' '-' | tr -c 'A-Za-z0-9._-' '-')"
                 TAGS+=("${REF}:branch-${SAFE_BRANCH}")
-                if [[ "${BRANCH}" == "main" ]]; then
+                # main + e2e-v3-cpu-gpu both publish :latest. The integration
+                # branch is the current "tip of WIP" and supersedes main until
+                # it merges; drop it from this list when the merge lands.
+                if [[ "${BRANCH}" == "main" || "${BRANCH}" == "e2e-v3-cpu-gpu" ]]; then
                   TAGS+=("${REF}:latest")
                   for suffix in ${EXTRA_ALIAS_SUFFIXES}; do
                     TAGS+=("${REF}:latest${suffix}")
@@ -234,7 +241,9 @@ jobs:
                 BRANCH="${GITHUB_REF##refs/heads/}"
                 SAFE_BRANCH="$(printf '%s' "${BRANCH}" | tr '/' '-' | tr -c 'A-Za-z0-9._-' '-')"
                 TAGS+=("${REF}:branch-${SAFE_BRANCH}-cuda")
-                if [[ "${BRANCH}" == "main" ]]; then
+                # main + e2e-v3-cpu-gpu both publish :latest-cuda. Drop the
+                # integration branch from this list when the merge lands.
+                if [[ "${BRANCH}" == "main" || "${BRANCH}" == "e2e-v3-cpu-gpu" ]]; then
                   TAGS+=("${REF}:latest-cuda" "${REF}:cuda")
                 fi
               fi
@@ -421,8 +430,10 @@ jobs:
       - transcribe-smoke-cuda
       - e2e-container
       - e2e-install
-    # Only prune after a successful push that actually pushed to ghcr.
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+    # Only prune after a successful push that actually pushed to ghcr — any
+    # of the branches that publish :latest (main + the integration WIP) plus
+    # version tags.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/e2e-v3-cpu-gpu' || startsWith(github.ref, 'refs/tags/'))
     permissions:
       packages: write
     steps:
