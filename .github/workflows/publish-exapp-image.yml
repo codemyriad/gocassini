@@ -27,9 +27,12 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE: ${{ github.repository_owner }}/gocassini
-  # The CPU-only image is the same artifact retagged for -cuda / -rocm so admins on
-  # GPU-tagged AppAPI daemons can still install (no GPU acceleration in v1).
-  EXTRA_ALIAS_SUFFIXES: '-cuda -rocm'
+  # The CPU image is also published as :latest-rocm so ROCm-tagged AppAPI daemons
+  # still install — real ROCm support is deferred (sherpa-onnx ships no upstream
+  # ROCm artifact). Real CUDA support lands in a follow-up PR with its own
+  # Dockerfile.exapp.cuda; until then the -cuda tag is NOT aliased so we do not
+  # advertise GPU acceleration we cannot honor.
+  EXTRA_ALIAS_SUFFIXES: '-rocm'
 
 jobs:
   validate-manifest:
@@ -192,6 +195,34 @@ jobs:
           IMAGE_REF: ${{ steps.ref.outputs.ref }}
         run: ./harness/bin/ci-smoke-exapp.sh
 
+  transcribe-smoke:
+    name: Smoke transcription (bundled model, no download)
+    runs-on: ubuntu-latest
+    needs: build-image
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: exapp-image
+          path: /tmp
+
+      - name: Load image
+        run: docker load -i /tmp/exapp-image.tar
+
+      - name: Resolve image ref
+        id: ref
+        run: |
+          set -euo pipefail
+          PRIMARY=$(echo "${{ needs.build-image.outputs.image_ref }}" | head -n1)
+          echo "ref=${PRIMARY}" >> "$GITHUB_OUTPUT"
+
+      - name: Run transcribe smoke
+        env:
+          IMAGE_REF: ${{ steps.ref.outputs.ref }}
+        run: ./harness/bin/ci-transcribe-smoke-exapp.sh
+
   e2e-container:
     name: E2E container HTTP plane + middleware + lifecycle (no Nextcloud)
     runs-on: ubuntu-latest
@@ -254,6 +285,7 @@ jobs:
     needs:
       - build-image
       - smoke
+      - transcribe-smoke
       - e2e-container
       - e2e-install
     # Only prune after a successful push that actually pushed to ghcr.
@@ -286,7 +318,9 @@ jobs:
             "/orgs/${OWNER}/packages/container/${PACKAGE}/versions" \
             > "$tmp/versions.json"
 
-          # Versions worth keeping outright (any named tag).
+          # Versions worth keeping outright (any named tag). `latest-cuda` stays
+          # in the keep-list so PR #32's real CUDA image is protected once it
+          # starts being published; for now nothing pushes that tag.
           jq -r '
             .[]
             | .metadata.container.tags as $tags

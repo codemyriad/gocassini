@@ -16,14 +16,25 @@ type ModelID string
 
 const (
 	// ModelParakeet110M is the NeMo Parakeet TDT CTC 110M int8 model.
-	// Kept for reference; the default is now the larger 0.6B model.
+	// Kept for reference; superseded by 0.6B.
 	ModelParakeet110M ModelID = "parakeet-tdt-ctc-110m-en-int8"
 
 	// ModelParakeet06B is the NeMo Parakeet TDT 0.6B v2 int8 transducer model.
-	// Significantly better accuracy than 110M; uses encoder+decoder+joiner architecture.
+	// Kept for reference; superseded by v3.
 	ModelParakeet06B ModelID = "parakeet-tdt-0.6b-v2-int8"
 
-	defaultModelID = ModelParakeet06B
+	// ModelParakeet06BV3Int8 is the NeMo Parakeet TDT 0.6B v3 int8 transducer
+	// model. CPU-bundled default starting with the bundled-images work.
+	// Uses encoder+decoder+joiner architecture and feature dim 128 (v3 quirk;
+	// v2 used 80).
+	ModelParakeet06BV3Int8 ModelID = "parakeet-tdt-0.6b-v3-int8"
+
+	// ModelParakeet06BV3 is the NeMo Parakeet TDT 0.6B v3 fp32 transducer
+	// model. CUDA-bundled default; same architecture as v3 int8.
+	ModelParakeet06BV3 ModelID = "parakeet-tdt-0.6b-v3"
+
+	// DefaultModelID is the model selected when BuildConfig.ModelID is empty.
+	DefaultModelID = ModelParakeet06BV3Int8
 
 	// sileroVADURL is the Silero VAD model (single .onnx file, ~630 KB).
 	sileroVADURL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
@@ -67,6 +78,28 @@ var knownModels = map[ModelID]modelSpec{
 		SampleRate:  16000,
 		FeatureDim:  80,
 	},
+	ModelParakeet06BV3Int8: {
+		URL: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/" +
+			"sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
+		EncoderFile: "encoder.int8.onnx",
+		DecoderFile: "decoder.int8.onnx",
+		JoinerFile:  "joiner.int8.onnx",
+		TokensFile:  "tokens.txt",
+		ModelType:   "nemo_transducer",
+		SampleRate:  16000,
+		FeatureDim:  128,
+	},
+	ModelParakeet06BV3: {
+		URL: "https://assets.gocassini.codemyriad.io/" +
+			"sherpa-onnx-nemo-parakeet-tdt-0.6b-v3.tar.bz2",
+		EncoderFile: "encoder.onnx",
+		DecoderFile: "decoder.onnx",
+		JoinerFile:  "joiner.onnx",
+		TokensFile:  "tokens.txt",
+		ModelType:   "nemo_transducer",
+		SampleRate:  16000,
+		FeatureDim:  128,
+	},
 }
 
 // ModelPaths holds resolved filesystem paths for a downloaded model.
@@ -97,6 +130,22 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 	paths := resolveModelPaths(modelDir, spec)
 	if allExist(requiredModelFiles(paths, spec)) {
 		return paths, nil
+	}
+
+	// Production images (Nextcloud ExApp, etc.) bundle the default model into
+	// the image and set CASSINI_DISALLOW_MODEL_DOWNLOAD=1 so that a missing
+	// bundled file fails loudly instead of silently triggering a multi-hundred-
+	// MiB download from a container that may have no network egress.
+	if envBool("CASSINI_DISALLOW_MODEL_DOWNLOAD") {
+		missing := []string{}
+		for _, f := range requiredModelFiles(paths, spec) {
+			if !fileExists(f) {
+				missing = append(missing, f)
+			}
+		}
+		return ModelPaths{}, fmt.Errorf(
+			"model %s missing required files and CASSINI_DISALLOW_MODEL_DOWNLOAD=1; "+
+				"missing: %s", id, strings.Join(missing, ", "))
 	}
 
 	if err := os.MkdirAll(modelDir, 0o755); err != nil {

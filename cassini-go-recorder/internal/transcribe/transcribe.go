@@ -34,7 +34,7 @@ var (
 //   - manifest.json
 func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg BuildConfig, stdout io.Writer) error {
 	if cfg.ModelID == "" {
-		cfg.ModelID = defaultModelID
+		cfg.ModelID = DefaultModelID
 	}
 	if cfg.Device == "" || cfg.Device == "auto" {
 		cfg.Device = "cpu"
@@ -174,7 +174,7 @@ func DefaultBuildConfig() BuildConfig {
 
 	return BuildConfig{
 		Device:                "cpu",
-		ModelID:               defaultModelID,
+		ModelID:               DefaultModelID,
 		LLM:                   llm,
 		SummaryLLM:            summaryLLM,
 		StrictReadableCleanup: envBool("CASSINI_READABLE_STRICT_BATCHES"),

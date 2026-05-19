@@ -13,6 +13,41 @@
 
 ARG FRP_VERSION=0.61.1
 
+# Default bundled model for the CPU image. The CUDA variant overrides these in
+# Dockerfile.exapp.cuda (per PR #32). Keep the model id in sync with
+# transcribe.ModelParakeet06BV3Int8 — that is what the recorder will look for
+# at runtime under ${CASSINI_CACHE_ROOT}/models/${CASSINI_BUNDLED_MODEL_ID}/.
+ARG CASSINI_BUNDLED_MODEL_ID=parakeet-tdt-0.6b-v3-int8
+ARG CASSINI_BUNDLED_MODEL_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2
+
+FROM debian:bookworm-slim AS model-fetcher
+ARG CASSINI_BUNDLED_MODEL_ID
+ARG CASSINI_BUNDLED_MODEL_URL
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl tar bzip2 \
+ && rm -rf /var/lib/apt/lists/*
+# Download + extract in a single layer so the archive never lands in the
+# final image's filesystem. Files copied to /out/<id>/ get COPY'd into the
+# runtime stage as their own layer.
+RUN set -eux; \
+ mkdir -p "/out/${CASSINI_BUNDLED_MODEL_ID}"; \
+ curl -fSL "${CASSINI_BUNDLED_MODEL_URL}" -o /tmp/model.tar.bz2; \
+ tar -xjf /tmp/model.tar.bz2 -C /tmp; \
+ src_dir=$(find /tmp -maxdepth 1 -type d -name 'sherpa-onnx-*' | head -n1); \
+ test -n "$src_dir" || (echo "no extracted dir found under /tmp:" >&2; ls /tmp >&2; exit 1); \
+ for f in encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt; do \
+   test -f "$src_dir/$f" || (echo "missing $f in extracted archive" >&2; exit 1); \
+   cp "$src_dir/$f" "/out/${CASSINI_BUNDLED_MODEL_ID}/"; \
+ done; \
+ rm -rf /tmp/model.tar.bz2 "$src_dir"; \
+ printf '%s\n' \
+   "NeMo Parakeet TDT 0.6B v3 int8 (sherpa-onnx repack)" \
+   "Source: ${CASSINI_BUNDLED_MODEL_URL}" \
+   "License: cc-by-4.0 (NVIDIA Parakeet, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)" \
+   "Bundled in: ghcr.io/codemyriad/gocassini" \
+   > "/out/${CASSINI_BUNDLED_MODEL_ID}/NOTICE"; \
+ ls -la "/out/${CASSINI_BUNDLED_MODEL_ID}/"
+
 FROM golang:1.24-bookworm AS go-builder
 WORKDIR /src
 
@@ -79,6 +114,8 @@ RUN set -eux; \
  /out/frpc --version
 
 FROM node:22-bookworm-slim
+ARG CASSINI_BUNDLED_MODEL_ID
+ENV CASSINI_STT_MODEL=${CASSINI_BUNDLED_MODEL_ID}
 RUN apt-get update \
  && apt-get install -y --no-install-recommends bash ca-certificates curl ffmpeg tini \
  && rm -rf /var/lib/apt/lists/*
@@ -91,18 +128,23 @@ ENV CASSINI_BIN=/usr/local/bin/cassini \
     CASSINI_OPERATOR_DB_PATH=/var/lib/cassini-operator/jobs.sqlite3 \
     CASSINI_OPERATOR_WORK_ROOT=/var/lib/cassini-operator/jobs \
     CASSINI_OPERATOR_SITE_ROOT=/srv/cassini-site/published \
-    CASSINI_CACHE_ROOT=/var/lib/cassini-operator/cache \
+    CASSINI_CACHE_ROOT=/opt/cassini/cache \
     CASSINI_CONTROL_PANEL_DIST=/opt/cassini/cassini-control-panel/dist \
     CASSINI_VIEWER_DIST=/opt/cassini/cassini-viewer/dist \
     TMPDIR=/var/lib/cassini-operator/tmp \
     APP_HOST=0.0.0.0 \
     APP_PORT=8080 \
-    CASSINI_APPAPI_REQUIRED=true
+    CASSINI_APPAPI_REQUIRED=true \
+    CASSINI_STT_DEVICE=cpu \
+    CASSINI_DISALLOW_MODEL_DOWNLOAD=1
 
 COPY --from=go-builder /out/cassini /usr/local/bin/cassini
 COPY --from=go-builder /out/cassini-operator /usr/local/bin/cassini-operator
 COPY --from=go-builder /out/lib /opt/cassini/lib
 COPY --from=frpc-fetcher /out/frpc /usr/local/bin/frpc
+# Bundled default STT model (CPU variant). Lives outside /var/lib/cassini-operator
+# so the AppAPI/compose persistent volume mount doesn't mask it at runtime.
+COPY --from=model-fetcher /out /opt/cassini/cache/models
 COPY cassini-publisher/bin/export-static-meetings.sh /opt/cassini/cassini-publisher/bin/export-static-meetings.sh
 COPY cassini-viewer/package.json /opt/cassini/cassini-viewer/package.json
 COPY cassini-viewer/scripts/export-static-meetings.mjs /opt/cassini/cassini-viewer/scripts/export-static-meetings.mjs
@@ -123,7 +165,6 @@ RUN printf '%s\n' /opt/cassini/lib > /etc/ld.so.conf.d/cassini.conf \
  && mkdir -p \
    /var/lib/cassini-operator \
    /var/lib/cassini-operator/jobs \
-   /var/lib/cassini-operator/cache \
    /var/lib/cassini-operator/tmp \
    /srv/cassini-site/published
 
