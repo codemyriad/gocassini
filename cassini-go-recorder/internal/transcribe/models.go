@@ -166,11 +166,18 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 }
 
 // EnsureVAD downloads the Silero VAD model if not already cached,
-// returning its path.
+// returning its path. Honors CASSINI_DISALLOW_MODEL_DOWNLOAD: production
+// images (where VAD is also bundled) get a clear error instead of a
+// runtime download.
 func EnsureVAD(cacheDir string, progress io.Writer) (string, error) {
 	vadPath := filepath.Join(cacheDir, "vad", "silero_vad.onnx")
 	if fileExists(vadPath) {
 		return vadPath, nil
+	}
+	if envBool("CASSINI_DISALLOW_MODEL_DOWNLOAD") {
+		return "", fmt.Errorf(
+			"silero VAD missing at %s and CASSINI_DISALLOW_MODEL_DOWNLOAD=1; "+
+				"rebuild the image with the VAD model bundled", vadPath)
 	}
 	if err := os.MkdirAll(filepath.Dir(vadPath), 0o755); err != nil {
 		return "", fmt.Errorf("create vad dir: %w", err)

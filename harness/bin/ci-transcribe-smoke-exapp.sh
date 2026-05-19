@@ -19,7 +19,7 @@ set -euo pipefail
 
 : "${IMAGE_REF:?IMAGE_REF must be set (e.g. ghcr.io/codemyriad/gocassini:sha-abc)}"
 
-REPO_ROOT=$(git rev-parse --show-toplevel)
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 FIXTURE_HOST="${REPO_ROOT}/harness/media/parakeet-smoke.mkv"
 if [[ ! -s "${FIXTURE_HOST}" ]]; then
   echo "[transcribe-smoke] FAIL fixture missing or empty: ${FIXTURE_HOST}" >&2
@@ -61,7 +61,16 @@ read_env() {
 
 CACHE_ROOT=$(read_env CASSINI_CACHE_ROOT)
 MODEL_ID=$(read_env CASSINI_STT_MODEL)
+DEVICE=$(read_env CASSINI_STT_DEVICE)
 DISALLOW=$(read_env CASSINI_DISALLOW_MODEL_DOWNLOAD)
+: "${DEVICE:=cpu}"
+
+# CUDA images need GPU exposed via CDI. Set DOCKER_RUN_GPU=1 to opt-in (or
+# set CASSINI_STT_DEVICE=cuda in the image ENV — we honor either).
+GPU_FLAGS=()
+if [[ "${DEVICE}" == "cuda" || "${DOCKER_RUN_GPU:-0}" == "1" ]]; then
+  GPU_FLAGS=(--device nvidia.com/gpu=all)
+fi
 
 if [[ -z "${CACHE_ROOT}" ]]; then
   log "FAIL image does not set CASSINI_CACHE_ROOT in ENV"
@@ -77,10 +86,13 @@ if [[ "${DISALLOW}" != "1" && "${DISALLOW}" != "true" ]]; then
 fi
 
 MODEL_DIR="${CACHE_ROOT}/models/${MODEL_ID}"
+VAD_PATH="${CACHE_ROOT}/vad/silero_vad.onnx"
 log "image ref:       ${IMAGE_REF}"
 log "cache root:      ${CACHE_ROOT}"
 log "model id:        ${MODEL_ID}"
 log "model dir:       ${MODEL_DIR}"
+log "device:          ${DEVICE}"
+log "vad path:        ${VAD_PATH}"
 
 # Image creation time as Unix seconds.
 IMG_CREATED_ISO=$(docker inspect --format='{{.Created}}' "${IMAGE_REF}")
@@ -89,16 +101,22 @@ log "image created:   ${IMG_CREATED_ISO}  (ts=${IMG_CREATED_TS})"
 
 # Start the container with the entrypoint overridden so we have a quiet host
 # to docker-exec into (no operator startup, no frpc dial-out, no listener).
-log "starting container ${CONTAINER_NAME}"
+log "starting container ${CONTAINER_NAME} ${GPU_FLAGS[*]:-(cpu)}"
 docker run -d --rm \
   --name "${CONTAINER_NAME}" \
+  "${GPU_FLAGS[@]}" \
   --entrypoint /bin/sh \
   "${IMAGE_REF}" \
   -c 'tail -f /dev/null' >/dev/null
 
 # ---- Assertion 1: model files exist BEFORE any cassini operation runs ----
 log "asserting bundled model files exist at ${MODEL_DIR}"
-expected_files=(encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt NOTICE)
+if [[ "${MODEL_ID}" == *-int8 ]]; then
+  expected_files=(encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt NOTICE)
+else
+  # fp32 (CUDA) variants: unsuffixed onnx + external weights sidecar
+  expected_files=(encoder.onnx encoder.weights decoder.onnx joiner.onnx tokens.txt NOTICE)
+fi
 for f in "${expected_files[@]}"; do
   if ! docker exec "${CONTAINER_NAME}" test -s "${MODEL_DIR}/${f}"; then
     log "FAIL bundled file missing or empty: ${MODEL_DIR}/${f}"
@@ -108,28 +126,38 @@ for f in "${expected_files[@]}"; do
   log "OK   present ${MODEL_DIR}/${f}"
 done
 
+# VAD is bundled separately at ${CACHE_ROOT}/vad/silero_vad.onnx
+if ! docker exec "${CONTAINER_NAME}" test -s "${VAD_PATH}"; then
+  log "FAIL bundled VAD missing or empty: ${VAD_PATH}"
+  exit 1
+fi
+log "OK   present ${VAD_PATH}"
+
 # ---- Assertion 4: bundled file mtimes are <= image creation time ----
 # (positive proof the file came from the image build, not container start)
-ENC_MTIME=$(docker exec "${CONTAINER_NAME}" stat -c %Y "${MODEL_DIR}/encoder.int8.onnx")
+if [[ "${MODEL_ID}" == *-int8 ]]; then
+  enc_file="${MODEL_DIR}/encoder.int8.onnx"
+else
+  enc_file="${MODEL_DIR}/encoder.onnx"
+fi
+ENC_MTIME=$(docker exec "${CONTAINER_NAME}" stat -c %Y "${enc_file}")
 if (( ENC_MTIME > IMG_CREATED_TS + 5 )); then
-  log "FAIL encoder.int8.onnx mtime (${ENC_MTIME}) is newer than image creation (${IMG_CREATED_TS})"
+  log "FAIL ${enc_file} mtime (${ENC_MTIME}) is newer than image creation (${IMG_CREATED_TS})"
   log "     this indicates the file was written AFTER the image was built (runtime download?)"
   exit 1
 fi
-log "OK   encoder.int8.onnx mtime (${ENC_MTIME}) <= image created (${IMG_CREATED_TS})"
+log "OK   ${enc_file} mtime (${ENC_MTIME}) <= image created (${IMG_CREATED_TS})"
 
 # ---- Assertion 2 + 3: `cassini build` succeeds + no download log line ----
 docker exec "${CONTAINER_NAME}" mkdir -p /tmp/smoke-in /tmp/smoke-out
 docker cp "${FIXTURE_HOST}" "${CONTAINER_NAME}:/tmp/smoke-in/parakeet-smoke.mkv"
 
-log "running cassini build on the fixture (device=cpu)"
-# Capture stdout+stderr separately so we can grep for "downloading model"
-# without false positives from progress-bar control chars on stderr.
+log "running cassini build on the fixture (device=${DEVICE})"
 set +e
 docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini build \
   /tmp/smoke-in/parakeet-smoke.mkv \
   --out /tmp/smoke-out \
-  --device cpu \
+  --device "${DEVICE}" \
   > "${LOG_DIR}/build.log" 2>&1
 BUILD_RC=$?
 set -e
@@ -139,12 +167,14 @@ if [[ ${BUILD_RC} -ne 0 ]]; then
 fi
 log "OK   cassini build exited 0"
 
-if grep -qi 'downloading model' "${LOG_DIR}/build.log"; then
-  log "FAIL build log contains 'downloading model' — bundled model was NOT used"
-  grep -i 'downloading model' "${LOG_DIR}/build.log" | sed 's/^/    /'
+# Any "downloading ..." string in the log means the bundled assets were
+# bypassed — either the STT model OR the VAD. Both must be in-image.
+if grep -qiE 'downloading (model|silero)' "${LOG_DIR}/build.log"; then
+  log "FAIL build log contains a 'downloading ...' line — bundled assets were NOT used"
+  grep -iE 'downloading (model|silero)' "${LOG_DIR}/build.log" | sed 's/^/    /'
   exit 1
 fi
-log "OK   build log contains no 'downloading model' line"
+log "OK   build log contains no 'downloading ...' line (STT model + VAD both bundled)"
 
 # ---- Assertion 2 (cont): meeting bundle has content ----
 OUT_FILES=$(docker exec "${CONTAINER_NAME}" find /tmp/smoke-out -type f -size +0)

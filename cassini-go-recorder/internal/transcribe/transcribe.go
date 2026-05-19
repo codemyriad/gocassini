@@ -173,12 +173,31 @@ func DefaultBuildConfig() BuildConfig {
 	}
 
 	return BuildConfig{
-		Device:                "cpu",
-		ModelID:               DefaultModelID,
+		Device:                defaultDevice(),
+		ModelID:               defaultModel(),
 		LLM:                   llm,
 		SummaryLLM:            summaryLLM,
 		StrictReadableCleanup: envBool("CASSINI_READABLE_STRICT_BATCHES"),
 	}
+}
+
+// defaultModel returns the model id selected by CASSINI_STT_MODEL if set
+// (used by the bundled-image variants to pick a non-default model without a
+// code change), or DefaultModelID otherwise.
+func defaultModel() ModelID {
+	if v := strings.TrimSpace(os.Getenv("CASSINI_STT_MODEL")); v != "" {
+		return ModelID(v)
+	}
+	return DefaultModelID
+}
+
+// defaultDevice returns the device selected by CASSINI_STT_DEVICE if set
+// (cpu / cuda / auto), or "cpu" if unset.
+func defaultDevice() string {
+	if v := strings.TrimSpace(os.Getenv("CASSINI_STT_DEVICE")); v != "" {
+		return v
+	}
+	return "cpu"
 }
 
 func writeReadableArtifacts(outputDir string, streams []AudioStream, segments []Segment, audioDurationMS int64, sha256hex string, cfg BuildConfig, stdout io.Writer) ([]Segment, bool, error) {

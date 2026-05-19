@@ -179,6 +179,9 @@ func commandCheck(name string) doctorCheck {
 func sttModelCacheChecks() []doctorCheck {
 	cacheRoot := defaultCassiniCacheRoot()
 	modelID := transcribe.DefaultModelID
+	if v := strings.TrimSpace(os.Getenv("CASSINI_STT_MODEL")); v != "" {
+		modelID = transcribe.ModelID(v)
+	}
 
 	checks := []doctorCheck{
 		{status: doctorOK, summary: fmt.Sprintf("STT model id: %s", modelID)},
@@ -213,9 +216,12 @@ func modelFilesCheck(modelDir string, modelID transcribe.ModelID) doctorCheck {
 		"tokens.txt",
 	}
 	if modelID == transcribe.ModelParakeet06BV3 {
-		// fp32 (CUDA) variant ships unsuffixed onnx files.
+		// fp32 (CUDA) variant ships unsuffixed onnx files plus an external
+		// weights sidecar that the encoder.onnx references via external_data.
+		// Without encoder.weights, sherpa fails to load the encoder.
 		required = []string{
 			"encoder.onnx",
+			"encoder.weights",
 			"decoder.onnx",
 			"joiner.onnx",
 			"tokens.txt",
