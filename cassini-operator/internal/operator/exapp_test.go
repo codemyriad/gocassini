@@ -305,6 +305,48 @@ func TestNewHTTPHandlerLifecycleAlsoBehindMiddleware(t *testing.T) {
 	}
 }
 
+func TestNewHTTPHandlerHeartbeatBypassesMiddleware(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.BasePath = "/operator"
+
+	tmp := t.TempDir()
+	// Active middleware: heartbeat must still pass without AppAPI headers,
+	// because AppAPI's reachability probe does not send them.
+	exappCfg := ExAppConfig{
+		Active: true, AppID: "gocassini", AppVersion: "0.1.0", AppSecret: "shh",
+	}
+	handler := newHTTPHandlerWithStateDir(log.New(&bytes.Buffer{}, "", 0), rt, exappCfg, tmp)
+
+	r := httptest.NewRequest(http.MethodGet, "/heartbeat", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /heartbeat no auth: got %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("GET /heartbeat content-type: got %q, want application/json", ct)
+	}
+	if !strings.Contains(w.Body.String(), `"status":"ok"`) {
+		t.Fatalf("GET /heartbeat body: got %q, want status=ok JSON", w.Body.String())
+	}
+
+	// HEAD also OK (used by some probes); other verbs rejected.
+	rh := httptest.NewRequest(http.MethodHead, "/heartbeat", nil)
+	wh := httptest.NewRecorder()
+	handler.ServeHTTP(wh, rh)
+	if wh.Code != http.StatusOK {
+		t.Fatalf("HEAD /heartbeat: got %d, want 200", wh.Code)
+	}
+
+	rp := httptest.NewRequest(http.MethodPost, "/heartbeat", nil)
+	wp := httptest.NewRecorder()
+	handler.ServeHTTP(wp, rp)
+	if wp.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /heartbeat: got %d, want 405", wp.Code)
+	}
+}
+
 // newHTTPHandlerWithStateDir is a test-only variant that overrides where the
 // lifecycle state file is written. Production code derives this from cfg.DBPath.
 func newHTTPHandlerWithStateDir(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig, stateDir string) http.Handler {
@@ -317,5 +359,9 @@ func newHTTPHandlerWithStateDir(logger *log.Logger, rt *Runtime, exappCfg ExAppC
 	exappCfg.installRoutes(root, stateDir, logger)
 	mountBasePathOnto(root, rt.cfg.BasePath, api)
 
-	return requestLogger(logger, exappCfg.wrap(root, logger))
+	outer := http.NewServeMux()
+	outer.Handle("/heartbeat", heartbeatHandler())
+	outer.Handle("/", exappCfg.wrap(root, logger))
+
+	return requestLogger(logger, outer)
 }

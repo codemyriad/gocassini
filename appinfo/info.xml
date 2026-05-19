@@ -30,58 +30,69 @@ logged-in user.]]></description>
     </docker-install>
 
     <routes>
+      <!--
+        Route URL patterns are interpreted by AppAPI as PCRE expressions
+        wrapped with `/.../i` delimiters (see ExAppProxyController.php
+        passesExAppProxyRoutesChecks). Two consequences:
+          - No leading slash. The proxy strips /apps/app_api/proxy/<appid>/
+            before matching, so the path it sees is e.g. "viewer/", not
+            "/viewer/".
+          - Every internal `/` must be escaped as `\/`. An unescaped `/`
+            closes the delimiter and PHP raises "Unknown modifier" errors.
+      -->
+
       <!-- ADMIN: control-panel UI -->
       <route>
-        <url>^/control-panel/?$</url>
+        <url>^control-panel\/?$</url>
         <verb>GET</verb>
         <access_level>ADMIN</access_level>
       </route>
       <route>
-        <url>^/control-panel/.+$</url>
+        <url>^control-panel\/.+$</url>
         <verb>GET,HEAD</verb>
         <access_level>ADMIN</access_level>
       </route>
 
       <!-- ADMIN: operator JSON API -->
       <route>
-        <url>^/operator/jobs/?$</url>
+        <url>^operator\/jobs\/?$</url>
         <verb>GET,POST</verb>
         <access_level>ADMIN</access_level>
       </route>
       <route>
-        <url>^/operator/jobs/[^/]+/?$</url>
+        <url>^operator\/jobs\/[^\/]+\/?$</url>
         <verb>GET</verb>
         <access_level>ADMIN</access_level>
       </route>
       <route>
-        <url>^/operator/jobs/[^/]+/stop/?$</url>
+        <url>^operator\/jobs\/[^\/]+\/stop\/?$</url>
         <verb>POST</verb>
         <access_level>ADMIN</access_level>
       </route>
       <route>
-        <url>^/operator/jobs/[^/]+/rerun/?$</url>
+        <url>^operator\/jobs\/[^\/]+\/rerun\/?$</url>
         <verb>POST</verb>
         <access_level>ADMIN</access_level>
       </route>
       <route>
-        <url>^/operator/events/?$</url>
+        <url>^operator\/events\/?$</url>
         <verb>GET</verb>
         <access_level>ADMIN</access_level>
       </route>
 
       <!-- USER: viewer SPA + published recordings (org-wide archive per D10) -->
       <route>
-        <url>^/viewer/?$</url>
+        <url>^viewer\/?$</url>
         <verb>GET</verb>
         <access_level>USER</access_level>
       </route>
       <route>
-        <url>^/viewer/.+$</url>
+        <url>^viewer\/.+$</url>
         <verb>GET,HEAD</verb>
         <access_level>USER</access_level>
       </route>
       <route>
-        <url>^/published/.+$</url>
+        <url>^published\/.+$</url>
         <verb>GET,HEAD</verb>
         <access_level>USER</access_level>
       </route>

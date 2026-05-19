@@ -1,6 +1,9 @@
 package operator
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"cassini-operator/internal/operator/appapi"
 )
@@ -54,6 +58,7 @@ const (
 	envAppAPIRequired     = "CASSINI_APPAPI_REQUIRED"
 	envControlPanelDist   = "CASSINI_CONTROL_PANEL_DIST"
 	envViewerDist         = "CASSINI_VIEWER_DIST"
+	envNextcloudURL       = "NEXTCLOUD_URL"
 	defaultExAppBindHost  = "0.0.0.0"
 	defaultExAppBindPort  = "8080"
 	controlPanelURLPrefix = "/control-panel"
@@ -68,6 +73,7 @@ type ExAppConfig struct {
 	AppID            string
 	AppVersion       string
 	AppSecret        string
+	NextcloudURL     string // optional; if set, /init reports progress=100 back via OCS
 	ControlPanelDist string
 	ViewerDist       string
 	PublishedDir     string // operator SiteRoot, served read-only at /published
@@ -82,6 +88,7 @@ func LoadExAppConfig() (ExAppConfig, error) {
 		AppID:            strings.TrimSpace(os.Getenv(envAppID)),
 		AppVersion:       strings.TrimSpace(os.Getenv(envAppVersion)),
 		AppSecret:        os.Getenv(envAppSecret),
+		NextcloudURL:     strings.TrimSpace(os.Getenv(envNextcloudURL)),
 		ControlPanelDist: strings.TrimSpace(os.Getenv(envControlPanelDist)),
 		ViewerDist:       strings.TrimSpace(os.Getenv(envViewerDist)),
 	}
@@ -141,8 +148,9 @@ func (c ExAppConfig) applyToBindAddr(existing string) string {
 // directory of the operator DB).
 func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger *log.Logger) {
 	lifecycle := &LifecycleHandlers{
-		Store:  NewFileLifecycleStore(filepath.Join(stateDir, "app-state.json")),
-		Logger: logger,
+		Store:                NewFileLifecycleStore(filepath.Join(stateDir, "app-state.json")),
+		Logger:               logger,
+		InitProgressReporter: c.initProgressReporter(logger),
 	}
 	lifecycle.Register(root)
 
@@ -157,6 +165,72 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 	if c.PublishedDir != "" {
 		root.Handle(publishedURLPrefix+"/", publishedHandler(c.PublishedDir, publishedURLPrefix, logger))
 	}
+}
+
+// initProgressReporter returns a callback that PUTs `progress=100` to AppAPI's
+// OCS endpoint so the install command's `--wait-finish` poll can proceed. We
+// have no async setup work — Cassini doesn't pre-download models — so the
+// reporter fires once and signals completion immediately.
+//
+// Returns nil when NEXTCLOUD_URL or APP_SECRET is unset; in that mode /init
+// answers 200 but no callback is sent. That is fine for local dev and for the
+// container-level e2e (which has no Nextcloud to call back to); the
+// install-E2E path always injects both.
+func (c ExAppConfig) initProgressReporter(logger *log.Logger) func() {
+	if c.NextcloudURL == "" || c.AppSecret == "" || c.AppID == "" {
+		return nil
+	}
+	nextcloudURL := strings.TrimRight(c.NextcloudURL, "/")
+	statusURL := nextcloudURL + "/ocs/v1.php/apps/app_api/apps/status/" + c.AppID
+	auth := base64.StdEncoding.EncodeToString([]byte(":" + c.AppSecret))
+	client := &http.Client{Timeout: 10 * time.Second}
+	return func() {
+		body := bytes.NewBufferString(`{"progress":100,"error":""}`)
+		req, err := http.NewRequest(http.MethodPut, statusURL, body)
+		if err != nil {
+			logger.Printf("init progress: build request: %v", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("OCS-APIRequest", "true")
+		req.Header.Set("AUTHORIZATION-APP-API", auth)
+		req.Header.Set("EX-APP-ID", c.AppID)
+		req.Header.Set("EX-APP-VERSION", c.AppVersion)
+		resp, err := client.Do(req)
+		if err != nil {
+			logger.Printf("init progress: PUT %s: %v", statusURL, err)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			logger.Printf("init progress: PUT %s -> %d", statusURL, resp.StatusCode)
+			return
+		}
+		logger.Printf("init progress: reported progress=100 to %s", statusURL)
+	}
+}
+
+// heartbeatHandler answers AppAPI's reachability probe with 200 {"status":"ok"}.
+// AppAPI hits GET /heartbeat without any AppAPI auth headers for non-HaRP
+// deploys (see app_api's AppAPIService::heartbeatExApp), so this handler MUST
+// be mounted outside the AppAPI middleware wrap — otherwise registration fails
+// with "heartbeat check failed" after the 10-minute retry window.
+func heartbeatHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
 }
 
 // wrap wraps the given handler with the AppAPI middleware when this build is

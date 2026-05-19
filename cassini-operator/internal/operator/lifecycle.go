@@ -91,6 +91,10 @@ type LifecycleHandlers struct {
 	Store  LifecycleStore
 	Logger *log.Logger
 	NowUTC func() string
+	// InitProgressReporter is called once /init has run, in a goroutine so
+	// the HTTP response can return immediately. It signals progress=100 to
+	// AppAPI via the OCS endpoint. Nil disables the callback (dev / tests).
+	InitProgressReporter func()
 }
 
 func (h *LifecycleHandlers) logger() *log.Logger {
@@ -184,6 +188,12 @@ func (h *LifecycleHandlers) handleInit(w http.ResponseWriter, r *http.Request) {
 	h.logger().Printf("lifecycle init: ok")
 	// AppAPI doesn't require a specific body shape on init success — empty is fine.
 	writeJSON(w, http.StatusOK, struct{}{})
+	// AppAPI's --wait-finish polls until init_progress=100; the container has
+	// to report that back via OCS. We have no async setup work, so signal 100
+	// immediately, in a goroutine so the response above isn't blocked.
+	if h.InitProgressReporter != nil {
+		go h.InitProgressReporter()
+	}
 }
 
 func parseEnabledFlag(raw string) (bool, error) {

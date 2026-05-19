@@ -369,7 +369,14 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, api)
 
-	return requestLogger(logger, exappCfg.wrap(root, logger))
+	// /heartbeat must answer 200 without auth headers — AppAPI's reachability
+	// probe does not carry AppAPI headers for non-HaRP deploys. Mount it on an
+	// outer mux so the AppAPI middleware never sees it.
+	outer := http.NewServeMux()
+	outer.Handle("/heartbeat", heartbeatHandler())
+	outer.Handle("/", exappCfg.wrap(root, logger))
+
+	return requestLogger(logger, outer)
 }
 
 // mountBasePathOnto registers the operator api mux under basePath on the given
