@@ -178,7 +178,7 @@ func commandCheck(name string) doctorCheck {
 
 func sttModelCacheChecks() []doctorCheck {
 	cacheRoot := defaultCassiniCacheRoot()
-	modelID := transcribe.DefaultModelID
+	modelID := transcribe.DefaultModelID()
 	if v := strings.TrimSpace(os.Getenv("CASSINI_STT_MODEL")); v != "" {
 		modelID = transcribe.ModelID(v)
 	}

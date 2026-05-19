@@ -216,11 +216,23 @@ type artifactSource struct {
 }
 
 type artifactFiles struct {
-	Audio              string `json:"audio"`
-	Transcript         string `json:"transcript"`
-	ReadableTranscript string `json:"readableTranscript,omitempty"`
-	Captions           string `json:"captions,omitempty"`
-	Summary            string `json:"summary,omitempty"`
+	Audio              string                  `json:"audio"`
+	Transcript         string                  `json:"transcript"`
+	Transcripts        []artifactTranscriptRef `json:"transcripts,omitempty"`
+	ReadableTranscript string                  `json:"readableTranscript,omitempty"`
+	Captions           string                  `json:"captions,omitempty"`
+	Summary            string                  `json:"summary,omitempty"`
+}
+
+// artifactTranscriptRef matches the v2 portable-meeting consumer's
+// portableMeetingTranscriptInputFile shape under files.transcripts[].
+type artifactTranscriptRef struct {
+	ID         string    `json:"id"`
+	Path       string    `json:"path"`
+	Role       string    `json:"role"`
+	Default    bool      `json:"default,omitempty"`
+	Language   string    `json:"language,omitempty"`
+	Provenance *provStep `json:"provenance,omitempty"`
 }
 
 type provenanceInfo struct {
@@ -235,8 +247,10 @@ type provStep struct {
 	Device  string `json:"device,omitempty"`
 }
 
-// WriteManifest writes manifest.json summarising the build.
-func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []AudioStream, segments []Segment, sttModelID ModelID, llmModel string, hasReadable bool, summaryModel string, hasSummary bool) error {
+// WriteManifest writes manifest.json summarising the build. additional carries
+// extra transcript files produced by secondary STT models; each becomes a
+// files.transcripts[] entry alongside the primary transcript.words.v1.json.
+func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []AudioStream, segments []Segment, sttModelID ModelID, llmModel string, hasReadable bool, summaryModel string, hasSummary bool, additional []AdditionalTranscript) error {
 	wordCount := 0
 	for _, seg := range segments {
 		wordCount += len(seg.Words)
@@ -245,6 +259,19 @@ func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []Audi
 	files := artifactFiles{
 		Audio:      "meeting.webm",
 		Transcript: "transcript.words.v1.json",
+	}
+	if len(additional) > 0 {
+		primaryID := sanitizeTranscriptID(string(sttModelID))
+		files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
+			ID: primaryID, Path: "transcript.words.v1.json", Role: "raw-asr", Default: true,
+			Provenance: &provStep{Backend: "sherpa-onnx", Model: string(sttModelID)},
+		})
+		for _, extra := range additional {
+			files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
+				ID: extra.ID, Path: extra.Path, Role: "raw-asr",
+				Provenance: &provStep{Backend: "sherpa-onnx", Model: string(extra.ModelID)},
+			})
+		}
 	}
 	if hasReadable {
 		files.ReadableTranscript = "transcript.readable.v1.json"

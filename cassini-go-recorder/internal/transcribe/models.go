@@ -24,17 +24,18 @@ const (
 	ModelParakeet06B ModelID = "parakeet-tdt-0.6b-v2-int8"
 
 	// ModelParakeet06BV3Int8 is the NeMo Parakeet TDT 0.6B v3 int8 transducer
-	// model. CPU-bundled default starting with the bundled-images work.
-	// Uses encoder+decoder+joiner architecture and feature dim 128 (v3 quirk;
+	// model. CPU-bundled default in the gocassini ExApp image. Uses
+	// encoder+decoder+joiner architecture with feature dim 128 (v3 quirk;
 	// v2 used 80).
 	ModelParakeet06BV3Int8 ModelID = "parakeet-tdt-0.6b-v3-int8"
 
-	// ModelParakeet06BV3 is the NeMo Parakeet TDT 0.6B v3 fp32 transducer
-	// model. CUDA-bundled default; same architecture as v3 int8.
+	// ModelParakeet06BV3 is the NeMo Parakeet TDT 0.6B v3 fp32 transducer model.
+	// CUDA-bundled default; same architecture as v3 int8. Exported from the
+	// official .nemo via scripts/nemo/parakeet-tdt-0.6b-v3/export_onnx.py.
+	// Runs ~2× faster than CPU at fp32 on CUDA; int8 fragments under CUDA EP.
 	ModelParakeet06BV3 ModelID = "parakeet-tdt-0.6b-v3"
 
-	// DefaultModelID is the model selected when BuildConfig.ModelID is empty.
-	DefaultModelID = ModelParakeet06BV3Int8
+	defaultModelID = ModelParakeet06BV3Int8
 
 	// sileroVADURL is the Silero VAD model (single .onnx file, ~630 KB).
 	sileroVADURL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
@@ -101,6 +102,9 @@ var knownModels = map[ModelID]modelSpec{
 		FeatureDim:  128,
 	},
 }
+
+// DefaultModelID returns the model ID used when no model is explicitly configured.
+func DefaultModelID() ModelID { return defaultModelID }
 
 // ModelPaths holds resolved filesystem paths for a downloaded model.
 type ModelPaths struct {
