@@ -195,6 +195,120 @@ jobs:
           IMAGE_REF: ${{ steps.ref.outputs.ref }}
         run: ./harness/bin/ci-smoke-exapp.sh
 
+  build-image-cuda:
+    name: Build CUDA ExApp image (GPU runner)
+    runs-on: [self-hosted, Linux, X64, gpu]
+    needs: validate-manifest
+    outputs:
+      image_ref: ${{ steps.meta.outputs.tags }}
+      primary:   ${{ steps.meta.outputs.primary }}
+      digest:    ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute CUDA image tags
+        id: meta
+        run: |
+          set -euo pipefail
+          SHA="${GITHUB_SHA::12}"
+          REF="${{ env.REGISTRY }}/${{ env.IMAGE }}"
+          TAGS=()
+          TAGS+=("${REF}:sha-${SHA}-cuda")
+          case "${GITHUB_EVENT_NAME}" in
+            push)
+              if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+                VERSION="${GITHUB_REF##refs/tags/}"
+                TAGS+=("${REF}:${VERSION}-cuda" "${REF}:latest-cuda" "${REF}:cuda")
+              else
+                BRANCH="${GITHUB_REF##refs/heads/}"
+                SAFE_BRANCH="$(printf '%s' "${BRANCH}" | tr '/' '-' | tr -c 'A-Za-z0-9._-' '-')"
+                TAGS+=("${REF}:branch-${SAFE_BRANCH}-cuda")
+                if [[ "${BRANCH}" == "main" ]]; then
+                  TAGS+=("${REF}:latest-cuda" "${REF}:cuda")
+                fi
+              fi
+              ;;
+            pull_request) ;;
+            workflow_dispatch)
+              TAGS+=("${REF}:dispatch-$(date -u +%Y%m%d%H%M%S)-cuda")
+              ;;
+          esac
+          {
+            echo "tags<<EOF"
+            for t in "${TAGS[@]}"; do echo "$t"; done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "primary=${TAGS[0]}" >> "$GITHUB_OUTPUT"
+
+      # The CUDA image is ~5 GiB (fp32 model + cuDNN runtime + CUDA EP), large
+      # enough that the type=gha cache backend can become unreliable. Keep the
+      # build local-load + tarball-via-artifact pattern matches the CPU job;
+      # type=registry cache could be added later if cold-build time becomes a
+      # real pain on the GPU runner.
+      - name: Build CUDA image (local load)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/Dockerfile.exapp.cuda
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+
+      - name: Push CUDA tags to ghcr (non-PR)
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            [[ -z "${tag}" ]] && continue
+            echo "Pushing ${tag}"
+            docker push "${tag}"
+          done <<<"${{ steps.meta.outputs.tags }}"
+
+      - name: Save image tarball
+        run: docker save "${{ steps.meta.outputs.primary }}" -o /tmp/exapp-cuda-image.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: exapp-cuda-image
+          path: /tmp/exapp-cuda-image.tar
+          retention-days: 3
+
+  transcribe-smoke-cuda:
+    name: Smoke transcription on GPU (bundled fp32 model + CUDA EP)
+    runs-on: [self-hosted, Linux, X64, gpu]
+    needs: build-image-cuda
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image ref
+        id: ref
+        run: |
+          set -euo pipefail
+          # build-image-cuda built locally and pushed if non-PR; the tarball
+          # was also uploaded for cross-job reuse but we're on the same
+          # runner so the image is already in the local daemon.
+          PRIMARY="${{ needs.build-image-cuda.outputs.primary }}"
+          echo "ref=${PRIMARY}" >> "$GITHUB_OUTPUT"
+
+      - name: Run CUDA transcribe smoke
+        env:
+          IMAGE_REF: ${{ steps.ref.outputs.ref }}
+        run: ./harness/bin/ci-transcribe-smoke-exapp.sh
+
   transcribe-smoke:
     name: Smoke transcription (bundled model, no download)
     runs-on: ubuntu-latest
@@ -284,8 +398,10 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - build-image
+      - build-image-cuda
       - smoke
       - transcribe-smoke
+      - transcribe-smoke-cuda
       - e2e-container
       - e2e-install
     # Only prune after a successful push that actually pushed to ghcr.
