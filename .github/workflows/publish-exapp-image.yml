@@ -124,26 +124,38 @@ jobs:
           # Primary tag used by the smoke job (PR builds use the sha tag too).
           echo "primary=${TAGS[0]}" >> "$GITHUB_OUTPUT"
 
-      - name: Build (and push when not a PR)
+      # Build always loads the image into the local docker daemon so the
+      # downstream smoke/e2e jobs can restore it from a tarball artifact —
+      # works uniformly for push, pull_request, and workflow_dispatch
+      # events without relying on registry pull from private ghcr.
+      - name: Build image (local load)
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: deployment/Dockerfile.exapp
           platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
+          push: false
+          load: true
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Save image tarball for downstream jobs
-        if: github.event_name == 'pull_request'
+      - name: Push image tags to ghcr (non-PR)
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            [[ -z "${tag}" ]] && continue
+            echo "Pushing ${tag}"
+            docker push "${tag}"
+          done <<<"${{ steps.meta.outputs.tags }}"
+
+      - name: Save image tarball
         run: |
           docker save "${{ steps.meta.outputs.primary }}" -o /tmp/exapp-image.tar
 
       - name: Upload image artifact
-        if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: exapp-image
@@ -157,15 +169,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Restore image (PR builds)
-        if: github.event_name == 'pull_request'
+      - name: Restore image artifact
         uses: actions/download-artifact@v4
         with:
           name: exapp-image
           path: /tmp
 
-      - name: Load image (PR builds)
-        if: github.event_name == 'pull_request'
+      - name: Load image
         run: docker load -i /tmp/exapp-image.tar
 
       - name: Resolve image ref
@@ -190,15 +200,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Restore image (PR builds)
-        if: github.event_name == 'pull_request'
+      - name: Restore image artifact
         uses: actions/download-artifact@v4
         with:
           name: exapp-image
           path: /tmp
 
-      - name: Load image (PR builds)
-        if: github.event_name == 'pull_request'
+      - name: Load image
         run: docker load -i /tmp/exapp-image.tar
 
       - name: Resolve image ref
