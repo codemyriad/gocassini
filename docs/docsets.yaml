@@ -11,12 +11,16 @@ sourceOfTruth:
     - cassini-go-recorder/docs/
     - cassini-transcriber/docs/
     - cassini-viewer/docs/
+    - dev-docs-wip/
 
 rules:
   - Update docs/source-of-truth first.
   - Treat docs/generated as derivative output.
   - Prefer omission over invention.
   - Keep each output tightly scoped to its audience and purpose.
+  - Generated docs must not reference docs/source-of-truth.
+  - Generated docs should read as standalone deliverables, not as process artifacts.
+  - Generated docs should not open with audience or generation meta-framing.
 
 docsets:
   - id: repo-readme
@@ -36,9 +40,30 @@ docsets:
       - docs/source-of-truth/core-flows-and-artifacts.md
       - docs/source-of-truth/system-architecture.md
       - docs/source-of-truth/operator.md
+      - docs/source-of-truth/control-panel.md
+      - docs/source-of-truth/viewer.md
+      - docs/source-of-truth/deployment.md
+      - dev-docs-wip/structure.md
+      - dev-docs-wip/docs/
     outputs:
       - docs/generated/developer/README.md
-    notes: Developer-facing orientation and codebase map.
+      - docs/generated/developer/start-here.md
+      - docs/generated/developer/quick-start.md
+      - docs/generated/developer/mental-model.md
+      - docs/generated/developer/local-developer-stack.md
+      - docs/generated/developer/operator-stack.md
+      - docs/generated/developer/core-pipeline.md
+      - docs/generated/developer/components/README.md
+      - docs/generated/developer/components/control-panel.md
+      - docs/generated/developer/components/viewer.md
+      - docs/generated/developer/components/harness.md
+      - docs/generated/developer/reference/README.md
+      - docs/generated/developer/reference/api.md
+      - docs/generated/developer/reference/configuration.md
+      - docs/generated/developer/reference/artifacts-and-filesystem.md
+      - docs/generated/developer/reference/glossary.md
+      - docs/generated/developer/reference/troubleshooting.md
+    notes: Multi-page developer orientation and reference docset.
 
   - id: admin-docs
     structure: docs/structures/admin-docs.md
@@ -46,10 +71,24 @@ docsets:
       - docs/source-of-truth/README.md
       - docs/source-of-truth/operator.md
       - docs/source-of-truth/control-panel.md
+      - docs/source-of-truth/viewer.md
       - docs/source-of-truth/deployment.md
+      - deployment/README.md
     outputs:
       - docs/generated/admin/README.md
-    notes: Deployment, runtime, and operations-oriented docs.
+      - docs/generated/admin/start-here.md
+      - docs/generated/admin/quick-start.md
+      - docs/generated/admin/system-overview.md
+      - docs/generated/admin/deployment-stack.md
+      - docs/generated/admin/operator-runtime.md
+      - docs/generated/admin/storage-and-promotion.md
+      - docs/generated/admin/day-2-operations.md
+      - docs/generated/admin/reference/README.md
+      - docs/generated/admin/reference/api.md
+      - docs/generated/admin/reference/configuration.md
+      - docs/generated/admin/reference/storage-and-filesystem.md
+      - docs/generated/admin/reference/troubleshooting.md
+    notes: Multi-page deployment and operations docset.
 
   - id: microsite-docs
     structure: docs/structures/microsite-docs.md

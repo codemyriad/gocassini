@@ -1,4 +1,4 @@
-# Cassini microsite draft
+# Cassini overview
 
 ## Cassini at a glance
 
@@ -69,5 +69,5 @@ Today Cassini is strongest in the technical pipeline itself:
 ## Read next
 
 - [`site-map.md`](./site-map.md)
-- [`docs/source-of-truth/README.md`](../../source-of-truth/README.md)
-- [`docs/architecture.md`](../../architecture.md)
+- [`docs/generated/developer/README.md`](../developer/README.md)
+- [`docs/generated/admin/README.md`](../admin/README.md)

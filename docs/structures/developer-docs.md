@@ -6,42 +6,76 @@ Developers changing code in this repo.
 
 ## Outcome
 
-They should be able to understand the system boundaries, find the relevant component, run the common local flows, and know which artifact contracts matter before they edit code.
+A developer should be able to:
 
-## Suggested flow
+- get Cassini running locally
+- understand the product/runtime shape before diving into code
+- find the right subsystem quickly
+- understand which artifact contracts and boundaries matter before making changes
 
-1. What Cassini is at the product and architecture level
-2. The artifact pipeline and operating modes
-3. Repo/component map
-4. Local development entry points and common commands
-5. Cross-cutting contracts and constraints
-6. Recommended deeper reading by component
+## Shape
 
-A single landing page is enough to start; expand into a small docset only when the audience needs more separation.
+This docset should feel like a top-down developer guide rather than a single reference page.
+
+Use this progression:
+
+1. **Entry and reading paths**
+   - `README.md`
+   - fast paths based on intent
+2. **Onboarding/task docs**
+   - `start-here.md`
+   - `quick-start.md`
+3. **Explanation docs**
+   - `mental-model.md`
+   - `local-developer-stack.md`
+   - `operator-stack.md`
+   - `core-pipeline.md`
+4. **Component docs**
+   - `components/README.md`
+   - focused component pages
+5. **Reference docs**
+   - `reference/README.md`
+   - API, configuration, artifacts/filesystem, glossary, troubleshooting
 
 ## Include
 
-- `.run`, `.meeting`, `.site`, and portable `.opus` relationships
-- CLI vs operator responsibilities
-- component responsibilities across recorder, publisher, operator, control panel, viewer, and harness
-- local development commands that are already part of the repo story
-- links to component deep-dives and specs
+- the happy path to a visible end-to-end result
+- the artifact pipeline and operating modes
+- component and runtime boundaries
+- local harness and deployment-bundle workflows
+- operator/runtime semantics that affect development
+- concrete commands and repo paths
+- cross-links downward from overview pages into deeper pages
 
 ## Exclude
 
-- admin-only deployment detail that does not affect code changes
-- public-facing product messaging
-- speculative roadmap content unless the source explicitly treats it as current context
+- audience declarations inside the generated docs
+- generation meta such as “this was generated from...”
+- admin-only operational detail that does not help code changes
+- large dumps of raw implementation detail on the first pages
 
 ## Tone and framing
 
-Technical, direct, and repo-oriented. Prefer concrete paths, commands, and contracts.
+- Quick success first.
+- Conceptual depth later.
+- Reference last.
+- Assume technical comfort, but do not assume prior Cassini vocabulary.
+- Introduce terms like `.run`, `.meeting`, `.opus`, `attempt`, and `current/` before relying on them heavily.
 
 ## Candidate outputs
 
-- `README.md` for the developer docset
-- optional follow-on pages for architecture or local development later
+- `README.md`
+- `start-here.md`
+- `quick-start.md`
+- `mental-model.md`
+- `local-developer-stack.md`
+- `operator-stack.md`
+- `core-pipeline.md`
+- `components/*`
+- `reference/*`
 
 ## Notes for the writer/agent
 
-Optimize for helping someone decide where to read code next. When in doubt, keep the artifact contracts and component boundaries visible.
+- The opening of each page should start with the content, not with an explanation of who the doc is for.
+- The generated docset should stand on its own without pointing readers back to `docs/source-of-truth/`.
+- Prefer the page map and reading flow found in `dev-docs-wip/`.

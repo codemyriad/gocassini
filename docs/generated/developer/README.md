@@ -1,106 +1,63 @@
 # Cassini developer docs
 
-This is a developer-facing entrypoint generated from the repo's source-of-truth docs.
+## Start here
 
-## What Cassini is
+- New to Cassini: [Start here](./start-here.md)
+- Want to see it working first: [Quick start](./quick-start.md)
+- Want the system picture: [Mental model](./mental-model.md)
 
-Cassini is a file-driven meeting pipeline centered on the `cassini` CLI.
+## Suggested reading order
 
-At the system level, the core flow is:
+1. [Start here](./start-here.md)
+2. [Quick start](./quick-start.md)
+3. [Mental model](./mental-model.md)
+4. [Running the local developer stack](./local-developer-stack.md)
+5. [Operator stack](./operator-stack.md)
+6. [Core pipeline](./core-pipeline.md)
+7. [Component pages](./components/README.md)
+8. [Reference](./reference/README.md)
 
-```text
-Nextcloud Talk room
-  -> .run bundle
-  -> .meeting bundle
-  -> .site bundle
-  -> viewer site
-```
+## Fast paths
 
-For the product-facing path, that same pipeline can also end as one portable `.opus` file per meeting.
+### I want to get Cassini running end to end
 
-## The main mental model
+Read:
 
-Cassini has two layers:
+1. [Quick start](./quick-start.md)
+2. [Mental model](./mental-model.md)
+3. [Operator stack](./operator-stack.md)
 
-- **product layer** — the `cassini` CLI for standalone use
-- **operator layer** — a long-running service that orchestrates the same pipeline asynchronously
+### I want to work on the runtime or orchestration layer
 
-The key boundary is durable artifacts. Stages hand off through files, not hidden in-memory state.
+Read:
 
-## Core artifacts
+1. [Mental model](./mental-model.md)
+2. [Running the local developer stack](./local-developer-stack.md)
+3. [Operator stack](./operator-stack.md)
+4. [Operator API reference](./reference/api.md)
 
-- **`.run`** — captured source media from a meeting
-- **`.meeting`** — built meeting artifact with media, transcript, manifest, and optional readable/summary outputs
-- **`.site`** — static viewer site built from one or more ready meetings
-- **portable `.opus`** — single-file packaging layered over the same capture/build story
+### I want to work on the media pipeline
 
-## Repo map
+Read:
 
-| Path | Role |
-|---|---|
-| `bin/cassini` | main repo entrypoint for the CLI |
-| `cassini-go-recorder/` | live Talk capture, build pipeline, portable packing, CLI implementation |
-| `cassini-publisher/` | static-site export |
-| `cassini-operator/` | orchestration, persistence, scheduling, SSE, reruns |
-| `cassini-control-panel/` | browser UI for operating jobs |
-| `cassini-viewer/` | read-only browser playback/transcript surface |
-| `deployment/` | packaged Docker Compose topology |
-| `harness/` | local dev stack, fixtures, smoke flows |
+1. [Mental model](./mental-model.md)
+2. [Core pipeline](./core-pipeline.md)
+3. [Artifacts and filesystem](./reference/artifacts-and-filesystem.md)
+4. [Glossary](./reference/glossary.md)
 
-## Common local entry points
+### I want to work on the browser apps
 
-### CLI
+Read:
 
-```bash
-./bin/cassini --help
-./bin/cassini doctor
-./bin/cassini record --help
-./bin/cassini build --help
-./bin/cassini publish --help
-```
+1. [Quick start](./quick-start.md)
+2. [Control panel](./components/control-panel.md)
+3. [Viewer](./components/viewer.md)
 
-### Operator-backed stack
+## What Cassini is, in one paragraph
 
-```bash
-cd deployment
-docker compose up --build
-```
+Cassini records a Nextcloud Talk meeting, turns that recording into reusable meeting artifacts, and publishes those artifacts into a static browser-readable site. In local development, you usually run two stacks together:
 
-### Local harness flows
+- the **harness**, which gives you a local Nextcloud Talk environment
+- the **deployment bundle**, which gives you the operator, control panel, and viewer
 
-```bash
-./bin/cassini dev stack up
-./bin/cassini dev smoke
-```
-
-### Viewer dev flow
-
-```bash
-cd cassini-viewer
-npm install
-npm run build
-npm run dev
-```
-
-## Boundaries that matter before editing code
-
-- The operator **orchestrates** record/build/publish; it does not reimplement them.
-- The control panel talks only to the operator API.
-- The viewer reads only static published files.
-- Publish is library-oriented: it exports from a set of ready meetings, not just one active job.
-- Portable `.opus` output is a packaging form, not a separate recording pipeline.
-
-## Read next
-
-Start with the source-of-truth set:
-
-1. [`docs/source-of-truth/core-flows-and-artifacts.md`](../../source-of-truth/core-flows-and-artifacts.md)
-2. [`docs/source-of-truth/system-architecture.md`](../../source-of-truth/system-architecture.md)
-3. [`docs/source-of-truth/operator.md`](../../source-of-truth/operator.md)
-
-Then use deeper references as needed:
-
-- [`docs/architecture.md`](../../architecture.md)
-- [`docs/portable-meeting-format.md`](../../portable-meeting-format.md)
-- [`cassini-go-recorder/docs/`](../../../cassini-go-recorder/docs/)
-- [`cassini-viewer/docs/`](../../../cassini-viewer/docs/)
+The easiest way to understand the project is to run the happy path first, then read downward into how the pieces fit together.

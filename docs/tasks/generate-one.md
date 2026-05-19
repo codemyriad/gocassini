@@ -27,6 +27,9 @@ Use this when updating a single audience/output target.
 - Reorganize and condense freely, but do not silently change meaning.
 - Preserve paths, command names, and important constraints.
 - If the source is missing something important, note the gap instead of guessing.
+- Do not mention `docs/source-of-truth/` inside generated docs.
+- Do not open generated docs with audience declarations or generation meta.
+- Make the output read like standalone documentation for the target audience.
 
 ## Deliverable
 

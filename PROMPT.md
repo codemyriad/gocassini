@@ -13,5 +13,7 @@ When you need repo-level documentation context:
 
 - Update source-of-truth docs before derivative docs.
 - Keep generated docs aligned with their audience structure.
+- Generated docs must not reference `docs/source-of-truth/`.
+- Generated docs should not open with audience or generation meta-framing.
 - Prefer current product surfaces over legacy repo history unless legacy context is explicitly relevant.
 - When the source of truth is thin, note the gap instead of inventing detail.

@@ -34,3 +34,5 @@ Name one file or a small collection of files this structure might produce.
 ## Notes for the writer/agent
 
 Any audience-specific rules, tradeoffs, or reminders.
+
+Generated docs should start with the documentation flow itself, not with audience declarations or generation/process meta.

@@ -1,6 +1,6 @@
 # Documentation workflow
 
-This repo now separates documentation into three layers:
+This repo separates documentation into three layers:
 
 1. **Source of truth** — manually maintained repo knowledge
 2. **Structures** — audience/output sketches that shape what gets included and how it flows
@@ -22,6 +22,9 @@ docs/
 
 - Update `docs/source-of-truth/` first.
 - Treat `docs/generated/` as derivative output.
+- Generated docs should read as standalone deliverables for their target audience.
+- Generated docs must not reference `docs/source-of-truth/`.
+- Generated docs should not open with audience or generation meta-framing such as “this documentation was written for...” or “this was generated from...”.
 - Keep structure files lightweight and adaptable; they are guides, not rigid schemas.
 - When source coverage is thin, prefer omission or an explicit gap note over invention.
 - Use supporting references only to deepen or verify the source of truth, not to override it casually.
@@ -55,7 +58,6 @@ That directory holds the main Cassini narrative for:
 - [generated/developer/README.md](./generated/developer/README.md)
 - [generated/admin/README.md](./generated/admin/README.md)
 - [generated/microsite/README.md](./generated/microsite/README.md)
-- [generated/microsite/site-map.md](./generated/microsite/site-map.md)
 
 ## How to regenerate one docset
 
@@ -64,6 +66,7 @@ That directory holds the main Cassini narrative for:
 3. Read the docset's `primarySources` plus the source-of-truth entrypoint.
 4. Update only that docset's declared outputs.
 5. Keep the audience boundary tight.
+6. Make the resulting docs read as deployable standalone docs.
 
 Reusable task brief:
 
@@ -83,4 +86,4 @@ Reusable task brief:
 2. Sketch the new audience, outcome, flow, include/exclude rules, and candidate outputs.
 3. Register it in [docsets.yaml](./docsets.yaml).
 4. Generate its outputs into `docs/generated/<target>/`.
-5. Promote the generated docs elsewhere in the repo only when you want that target to become the public surface.
+5. Keep the generated output self-contained for that audience.

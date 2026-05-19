@@ -6,42 +6,73 @@ Someone deploying, operating, or troubleshooting the operator-backed Cassini sta
 
 ## Outcome
 
-They should understand the deployed topology, the runtime flow, the persistent storage model, the main configuration knobs, and the operational consequences of the current design.
+An operator/admin should be able to:
 
-## Suggested flow
+- bring up the packaged stack
+- understand what each service owns
+- understand job, attempt, and publish behavior
+- reason about storage, promotion, and failure isolation
+- find the exact API/configuration/runtime details when needed
 
-1. What the deployed stack contains
-2. Service topology and boundaries
-3. Runtime job flow from trigger to published site
-4. Storage and persistence model
-5. Configuration surface
-6. Common operational tasks
-7. Failure behavior and current limitations
-8. Links to deeper operator/deployment reference
+## Shape
+
+This docset should mirror the developer-docs layered feel, but with operational concerns first.
+
+Use this progression:
+
+1. **Entry and reading paths**
+   - `README.md`
+   - fast paths based on intent
+2. **Onboarding/task docs**
+   - `start-here.md`
+   - `quick-start.md`
+3. **Explanation docs**
+   - `system-overview.md`
+   - `deployment-stack.md`
+   - `operator-runtime.md`
+   - `storage-and-promotion.md`
+   - `day-2-operations.md`
+4. **Reference docs**
+   - `reference/README.md`
+   - API, configuration, storage/filesystem, troubleshooting
 
 ## Include
 
 - operator, control panel, and viewer roles
-- shared storage and live-site promotion model
-- jobs, attempts, reruns, and publish serialization
-- Docker Compose quickstart and public surfaces
-- operational constraints that affect expectations
+- Compose topology and browser surfaces
+- storage boundaries and live-site promotion
+- jobs, attempts, concurrency, reruns, and stop behavior
+- practical start/inspect/recover flows
+- operational limitations that affect expectations
 
 ## Exclude
 
-- detailed UI walkthroughs unless they affect operations
-- low-level media-processing internals
-- marketing/product framing that does not help run the system
+- audience declarations inside the generated docs
+- generation meta such as “this was generated from...”
+- low-level media-processing internals unless they affect operations
+- developer-oriented codebase tours
 
 ## Tone and framing
 
-Operational, pragmatic, and expectation-setting. Prioritize safe mental models over exhaustive implementation detail.
+- Operational and pragmatic first.
+- Explain the mental model before the full reference.
+- Keep safe expectations visible: what is durable, what is retriable, what is not automatically resumed.
+- Make failure boundaries and current limitations explicit.
 
 ## Candidate outputs
 
-- an admin landing page
-- later, a runbook or troubleshooting page if needed
+- `README.md`
+- `start-here.md`
+- `quick-start.md`
+- `system-overview.md`
+- `deployment-stack.md`
+- `operator-runtime.md`
+- `storage-and-promotion.md`
+- `day-2-operations.md`
+- `reference/*`
 
 ## Notes for the writer/agent
 
-Assume the reader cares about what runs where, what is durable, what can be retried, and what failure looks like. Keep the distinction between control-plane behavior and media-processing behavior clear.
+- The opening of each page should start with the operational content, not with an explanation of who the doc is for.
+- The generated docset should stand on its own without pointing readers back to `docs/source-of-truth/`.
+- Shape this docset as the admin/operations counterpart to the developer-docs flow.

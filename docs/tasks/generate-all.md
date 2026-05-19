@@ -27,6 +27,9 @@ Use this when the source of truth has changed and every derivative docset should
 - Do not force the same section order onto every audience.
 - Prefer omission over invention.
 - If a target needs a different file split, keep the content aligned but adapt the packaging.
+- Do not mention `docs/source-of-truth/` inside generated docs.
+- Do not open generated docs with audience declarations or generation meta.
+- Make each docset read like a standalone deployable set of docs.
 
 ## Deliverable
 

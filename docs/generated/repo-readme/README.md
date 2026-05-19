@@ -39,12 +39,8 @@ The same architecture also supports the simpler product-facing story of one port
 
 ## Docs map
 
-- documentation workflow: [`docs/README.md`](../../README.md)
-- source of truth: [`docs/source-of-truth/`](../../source-of-truth/)
+- developer docs: [`docs/generated/developer/README.md`](../developer/README.md)
+- admin docs: [`docs/generated/admin/README.md`](../admin/README.md)
+- microsite draft: [`docs/generated/microsite/README.md`](../microsite/README.md)
 - system overview: [`docs/architecture.md`](../../architecture.md)
-- generated developer docs: [`docs/generated/developer/README.md`](../developer/README.md)
-- generated admin docs: [`docs/generated/admin/README.md`](../admin/README.md)
-
-## Notes
-
-This file is a generated draft for the repo README shape. It does not replace the live root `README.md` yet.
+- deployment bundle: [`deployment/README.md`](../../../deployment/README.md)
