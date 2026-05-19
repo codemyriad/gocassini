@@ -1,0 +1,133 @@
+# Dockerfile for the Nextcloud ExApp build of Cassini.
+#
+# Layout shipped to the container:
+#   /usr/local/bin/cassini                         recorder CLI (Go)
+#   /usr/local/bin/cassini-operator                operator HTTP server (Go)
+#   /usr/local/bin/frpc                            FRP client for the HaRP tunnel
+#   /usr/local/bin/cassini-exapp-entrypoint.sh     writes frpc.toml, launches frpc, exec operator
+#   /usr/local/bin/healthcheck.sh                  liveness probe
+#   /opt/cassini/lib                               sherpa-onnx native libs
+#   /opt/cassini/cassini-control-panel/dist        Svelte admin UI build
+#   /opt/cassini/cassini-viewer/dist               Viewer SPA build
+#   /opt/cassini/cassini-publisher/bin/...         Node publish runner (unchanged from operator image)
+
+ARG FRP_VERSION=0.61.1
+
+FROM golang:1.24-bookworm AS go-builder
+WORKDIR /src
+
+COPY cassini-go-recorder/go.mod cassini-go-recorder/go.sum ./cassini-go-recorder/
+COPY cassini-operator/go.mod cassini-operator/go.sum ./cassini-operator/
+RUN go -C cassini-go-recorder mod download \
+ && go -C cassini-operator mod download
+
+COPY cassini-go-recorder ./cassini-go-recorder
+COPY cassini-operator ./cassini-operator
+RUN set -eux; \
+ mkdir -p /out/lib; \
+ go -C cassini-go-recorder build -o /out/cassini ./cmd/cassini; \
+ go -C cassini-operator build -o /out/cassini-operator ./cmd/cassini-operator; \
+ sherpa_root="$(go list -C cassini-go-recorder -m -f '{{.Dir}}' github.com/k2-fsa/sherpa-onnx-go-linux)"; \
+ case "$(go env GOARCH)" in \
+   amd64) sherpa_triplet='x86_64-unknown-linux-gnu' ;; \
+   arm64) sherpa_triplet='aarch64-unknown-linux-gnu' ;; \
+   arm) sherpa_triplet='arm-unknown-linux-gnueabihf' ;; \
+   *) echo "unsupported GOARCH: $(go env GOARCH)" >&2; exit 1 ;; \
+ esac; \
+ cp "$sherpa_root/lib/$sherpa_triplet/libsherpa-onnx-c-api.so" /out/lib/; \
+ cp "$sherpa_root/lib/$sherpa_triplet/libonnxruntime.so" /out/lib/
+
+FROM node:22-bookworm AS viewer-builder
+WORKDIR /src/cassini-viewer
+COPY cassini-viewer/package.json cassini-viewer/package-lock.json ./
+RUN npm ci
+COPY cassini-viewer/ ./
+ENV VITE_BASE=/viewer/
+ENV VITE_PUBLISHED_BASE=/published
+RUN npm run build
+
+FROM node:22-bookworm AS control-panel-builder
+WORKDIR /src/cassini-control-panel
+COPY cassini-control-panel/package.json cassini-control-panel/package-lock.json ./
+RUN npm ci
+COPY cassini-control-panel/ ./
+# control-panel is served at /control-panel/ inside the ExApp container.
+# CASSINI_OPERATOR_BASE_PATH is set at runtime by the container; the build only needs the
+# Vite base path so asset URLs resolve under /control-panel/.
+ENV VITE_BASE=/control-panel/
+ENV CASSINI_OPERATOR_BASE_PATH=/operator
+RUN npm run build
+
+FROM debian:bookworm-slim AS frpc-fetcher
+ARG FRP_VERSION
+ARG TARGETARCH=amd64
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl tar \
+ && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+ case "${TARGETARCH:-amd64}" in \
+   amd64) frp_arch=amd64 ;; \
+   arm64) frp_arch=arm64 ;; \
+   arm)   frp_arch=arm ;; \
+   *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+ esac; \
+ curl -fSL "https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/frp_${FRP_VERSION}_linux_${frp_arch}.tar.gz" -o /tmp/frp.tgz; \
+ mkdir -p /out; \
+ tar -xzf /tmp/frp.tgz -C /tmp; \
+ cp "/tmp/frp_${FRP_VERSION}_linux_${frp_arch}/frpc" /out/frpc; \
+ chmod +x /out/frpc; \
+ /out/frpc --version
+
+FROM node:22-bookworm-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends bash ca-certificates curl ffmpeg tini \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /var/lib/cassini-operator
+ENV CASSINI_BIN=/usr/local/bin/cassini \
+    CASSINI_LIB_DIR=/opt/cassini/lib \
+    LD_LIBRARY_PATH=/opt/cassini/lib \
+    CASSINI_EXPORTER_RUNNER=/opt/cassini/cassini-publisher/bin/export-static-meetings.sh \
+    CASSINI_OPERATOR_DB_PATH=/var/lib/cassini-operator/jobs.sqlite3 \
+    CASSINI_OPERATOR_WORK_ROOT=/var/lib/cassini-operator/jobs \
+    CASSINI_OPERATOR_SITE_ROOT=/srv/cassini-site/published \
+    CASSINI_CACHE_ROOT=/var/lib/cassini-operator/cache \
+    CASSINI_CONTROL_PANEL_DIST=/opt/cassini/cassini-control-panel/dist \
+    CASSINI_VIEWER_DIST=/opt/cassini/cassini-viewer/dist \
+    TMPDIR=/var/lib/cassini-operator/tmp \
+    APP_HOST=0.0.0.0 \
+    APP_PORT=8080 \
+    CASSINI_APPAPI_REQUIRED=true
+
+COPY --from=go-builder /out/cassini /usr/local/bin/cassini
+COPY --from=go-builder /out/cassini-operator /usr/local/bin/cassini-operator
+COPY --from=go-builder /out/lib /opt/cassini/lib
+COPY --from=frpc-fetcher /out/frpc /usr/local/bin/frpc
+COPY cassini-publisher/bin/export-static-meetings.sh /opt/cassini/cassini-publisher/bin/export-static-meetings.sh
+COPY cassini-viewer/package.json /opt/cassini/cassini-viewer/package.json
+COPY cassini-viewer/scripts/export-static-meetings.mjs /opt/cassini/cassini-viewer/scripts/export-static-meetings.mjs
+COPY --from=viewer-builder /src/cassini-viewer/dist /opt/cassini/cassini-viewer/dist
+COPY --from=control-panel-builder /src/cassini-control-panel/dist /opt/cassini/cassini-control-panel/dist
+COPY deployment/exapp-start.sh /usr/local/bin/cassini-exapp-entrypoint.sh
+COPY deployment/exapp-healthcheck.sh /usr/local/bin/healthcheck.sh
+
+RUN printf '%s\n' /opt/cassini/lib > /etc/ld.so.conf.d/cassini.conf \
+ && ldconfig \
+ && chmod +x \
+   /usr/local/bin/cassini \
+   /usr/local/bin/cassini-operator \
+   /usr/local/bin/frpc \
+   /usr/local/bin/cassini-exapp-entrypoint.sh \
+   /usr/local/bin/healthcheck.sh \
+   /opt/cassini/cassini-publisher/bin/export-static-meetings.sh \
+ && mkdir -p \
+   /var/lib/cassini-operator \
+   /var/lib/cassini-operator/jobs \
+   /var/lib/cassini-operator/cache \
+   /var/lib/cassini-operator/tmp \
+   /srv/cassini-site/published
+
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["/usr/local/bin/healthcheck.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/cassini-exapp-entrypoint.sh"]

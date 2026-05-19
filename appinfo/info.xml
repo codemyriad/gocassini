@@ -1,0 +1,90 @@
+<?xml version="1.0"?>
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+  <id>gocassini</id>
+  <name>Cassini</name>
+  <summary>Record, transcribe, and publish Nextcloud Talk meetings.</summary>
+  <description><![CDATA[Cassini joins a Nextcloud Talk room as a bot, records the call,
+transcribes and summarizes it, and publishes a readable static site that any
+logged-in user can browse. Recording control and job history live in the
+admin-only control panel; the published meeting archive is visible to every
+logged-in user.]]></description>
+  <version>0.1.0</version>
+  <licence>agpl</licence>
+  <author>codemyriad</author>
+  <namespace>Cassini</namespace>
+  <category>integration</category>
+  <website>https://github.com/codemyriad/gocassini</website>
+  <bugs>https://github.com/codemyriad/gocassini/issues</bugs>
+  <repository>https://github.com/codemyriad/gocassini</repository>
+
+  <dependencies>
+    <nextcloud min-version="30" max-version="35"/>
+  </dependencies>
+
+  <external-app>
+    <docker-install>
+      <registry>ghcr.io</registry>
+      <image>codemyriad/gocassini</image>
+      <image-tag>latest</image-tag>
+    </docker-install>
+
+    <routes>
+      <!-- ADMIN: control-panel UI -->
+      <route>
+        <url>^/control-panel/?$</url>
+        <verb>GET</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^/control-panel/.+$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+
+      <!-- ADMIN: operator JSON API -->
+      <route>
+        <url>^/operator/jobs/?$</url>
+        <verb>GET,POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^/operator/jobs/[^/]+/?$</url>
+        <verb>GET</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^/operator/jobs/[^/]+/stop/?$</url>
+        <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^/operator/jobs/[^/]+/rerun/?$</url>
+        <verb>POST</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <route>
+        <url>^/operator/events/?$</url>
+        <verb>GET</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+
+      <!-- USER: viewer SPA + published recordings (org-wide archive per D10) -->
+      <route>
+        <url>^/viewer/?$</url>
+        <verb>GET</verb>
+        <access_level>USER</access_level>
+      </route>
+      <route>
+        <url>^/viewer/.+$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>USER</access_level>
+      </route>
+      <route>
+        <url>^/published/.+$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>USER</access_level>
+      </route>
+    </routes>
+  </external-app>
+</info>
