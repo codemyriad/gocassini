@@ -146,7 +146,10 @@ docker pull "$IMAGE_REF" >>"$LOG_DIR/docker.log" 2>&1 || true
 # AppAPI lifecycle env (so the operator's middleware works) plus the
 # Talk-recording-backend shared secret (so the HMAC adapter accepts
 # Talk's POSTs).
-docker run -d --rm \
+# Override the default entrypoint (exapp-start.sh) which expects HaRP env
+# vars (HP_FRP_ADDRESS etc) that we don't have outside a real AppAPI deploy.
+# Run cassini-operator directly — same pattern as ci-e2e-install-exapp.sh.
+docker run -d \
   --name "$CONTAINER_NAME" \
   --network "${PROJECT_NAME}_default" \
   -e "APP_HOST=0.0.0.0" \
@@ -154,24 +157,28 @@ docker run -d --rm \
   -e "APP_ID=$APP_ID" \
   -e "APP_VERSION=$APP_VERSION" \
   -e "APP_SECRET=$APP_SECRET" \
-  -e "AA_VERSION=4.1.0" \
+  -e "AA_VERSION=5.0.0" \
   -e "NEXTCLOUD_URL=$NC_URL_INTERNAL" \
   -e "TALK_RECORDING_SECRET=$TALK_RECORDING_SECRET" \
   -e "CASSINI_OPERATOR_BIND_ADDR=0.0.0.0:8080" \
+  -e "CASSINI_OPERATOR_BASE_PATH=/operator" \
   -e "CASSINI_APPAPI_REQUIRED=true" \
+  --entrypoint /usr/local/bin/cassini-operator \
   "$IMAGE_REF" \
   >>"$LOG_DIR/docker.log" 2>&1
 
-# Wait for /heartbeat to answer.
+# Wait for /heartbeat to answer. Image ships curl, not wget.
 log "waiting for cassini-exapp /heartbeat"
 DEADLINE=$(( SECONDS + 60 ))
-until docker exec "$CONTAINER_NAME" \
-    sh -c 'wget -qO- http://127.0.0.1:8080/heartbeat' >/dev/null 2>&1; do
-  if (( SECONDS > DEADLINE )); then
-    fail "cassini-exapp /heartbeat did not respond"
-  fi
+HB_OK=0
+while (( SECONDS < DEADLINE )); do
+  status=$(docker exec "$CONTAINER_NAME" \
+    curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/heartbeat \
+    2>/dev/null || echo 000)
+  if [[ "$status" == "200" ]]; then HB_OK=1; break; fi
   sleep 2
 done
+[[ $HB_OK -eq 1 ]] || fail "cassini-exapp /heartbeat never reached 200"
 log "OK cassini-exapp heartbeat 200"
 
 # ============================================================================
@@ -195,9 +202,9 @@ fi
 log "OK Talk reaches gocassini /api/v1/welcome"
 
 # ============================================================================
-# Phase 5 (DRAFT): create a Talk room and stream scenario audio in
+# Phase 5: create Talk room + start scenario audio bots
 # ============================================================================
-phase 5 "Create Talk room + start scenario audio (DRAFT)"
+phase 5 "Create Talk room + start scenario audio bots"
 
 if [[ ! -d "$SCENARIO_MEDIA_DIR" ]]; then
   fail "scenario media not found: $SCENARIO_MEDIA_DIR
@@ -206,55 +213,198 @@ if [[ ! -d "$SCENARIO_MEDIA_DIR" ]]; then
        --output-dir $SCENARIO_MEDIA_DIR"
 fi
 
-# Create the Talk room as admin via OCS.
+# Create a Talk public room as admin via OCS (roomType=3 = public).
 ROOM_NAME="cassini-talk-rec-e2e-$(date +%s)"
 ROOM_RESP=$(curl -sf -u admin:admin \
   -H "OCS-APIRequest: true" \
+  -H "Accept: application/json" \
   -H "Content-Type: application/json" \
-  -d "{\"roomType\":2,\"roomName\":\"$ROOM_NAME\"}" \
+  -d "{\"roomType\":3,\"roomName\":\"$ROOM_NAME\"}" \
   "$NC_URL_HOST/ocs/v2.php/apps/spreed/api/v4/room" \
   || fail "OCS create room failed")
 ROOM_TOKEN=$(printf '%s' "$ROOM_RESP" | python3 -c \
   "import json,sys; print(json.load(sys.stdin)['ocs']['data']['token'])" \
-  || fail "could not parse room token")
-log "room token: $ROOM_TOKEN"
-
+  || fail "could not parse room token from: $ROOM_RESP")
 CALL_URL="$NC_URL_HOST/call/$ROOM_TOKEN"
+log "room token: $ROOM_TOKEN"
+log "call URL:   $CALL_URL"
 
-log "TODO: stream audio bots into $CALL_URL using scenario $SCENARIO_NAME"
-log "  (drafted; needs verification that bot streamer can reach signaling"
-log "   on the docker-compose network from outside the network)"
+# Stream scenario audio into the call. The synthetic-meeting streamer
+# launches go-talk-rotator bots (one per scenario participant) that
+# join the call as guests and play their pre-rendered OGG track.
+# Bots reach Talk's signaling via the host-network services on
+# 127.0.0.1, same as ci-e2e-rejoin.sh's stream-video.sh.
+BOT_LOG="$LOG_DIR/bots.log"
+(
+  CALL_URL="$CALL_URL" \
+  SCENARIO="$SCENARIO_PATH" \
+  OUTPUT_DIR="$SCENARIO_MEDIA_DIR" \
+  PREPARE=0 \
+  "$HARNESS_DIR/bin/stream-synthetic-meeting.sh" \
+    --call-url "$CALL_URL"
+) >"$BOT_LOG" 2>&1 &
+BOT_PID=$!
+log "bot streamer pid=$BOT_PID (log: $BOT_LOG)"
+
+# Wait for at least one bot to actually be in the call before triggering
+# recording — Talk rejects recording start with 400 when there's no active
+# call. Poll Talk's "active call" state via OCS.
+log "waiting for at least one participant in call (up to 90s)"
+DEADLINE=$(( SECONDS + 90 ))
+PARTICIPANTS=0
+while (( SECONDS < DEADLINE )); do
+  PEEK=$(curl -sf -u admin:admin \
+    -H "OCS-APIRequest: true" \
+    -H "Accept: application/json" \
+    "$NC_URL_HOST/ocs/v2.php/apps/spreed/api/v4/room/$ROOM_TOKEN" \
+    2>/dev/null || true)
+  if [[ -n "$PEEK" ]]; then
+    PARTICIPANTS=$(printf '%s' "$PEEK" | python3 -c \
+      "import json,sys; d=json.load(sys.stdin)['ocs']['data']; print(d.get('activeSince') and d.get('hasCall') and 1 or 0)" \
+      2>/dev/null || echo 0)
+  fi
+  if [[ "$PARTICIPANTS" == "1" ]]; then break; fi
+  sleep 3
+done
+if [[ "$PARTICIPANTS" != "1" ]]; then
+  log "WARN: no active call detected after 90s; bot log tail:"
+  tail -n 30 "$BOT_LOG" | sed 's/^/    /' || true
+  # Continue anyway — Talk's reject behavior is informative
+fi
+log "OK active call detected (or proceeding anyway)"
 
 # ============================================================================
-# Phase 6 (DRAFT): trigger Talk recording via OCS
+# Phase 6: trigger Talk recording via OCS; Talk fires HMAC POST at gocassini
 # ============================================================================
-phase 6 "Trigger Talk recording via OCS (DRAFT)"
+phase 6 "Trigger Talk recording via OCS POST /apps/spreed/api/v1/recording"
 
-# Status: 1 = audio+video, 2 = audio only.
-log "TODO: POST $NC_URL_HOST/ocs/v2.php/apps/spreed/api/v1/recording/$ROOM_TOKEN"
-log "      status=2 (audio only)"
-log "  Talk will then POST /api/v1/room/$ROOM_TOKEN at gocassini with HMAC"
-log "  headers Talk-Recording-Backend / Talk-Recording-Random /"
-log "  Talk-Recording-Checksum. Operator validates, accepts the job, and"
-log "  spawns 'cassini record --call $CALL_URL'."
+# Status: 1 = audio+video, 2 = audio only. Audio-only is enough for the
+# transcript check and produces a smaller MKV.
+TRIGGER_RESP=$(curl -sf -u admin:admin \
+  -H "OCS-APIRequest: true" \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{"status":2}' \
+  "$NC_URL_HOST/ocs/v2.php/apps/spreed/api/v1/recording/$ROOM_TOKEN" \
+  || fail "OCS recording start failed; Talk side rejected the request")
+log "OCS recording trigger response: ${TRIGGER_RESP:0:200}"
+
+# Within a few seconds Talk should call /api/v1/room/$ROOM_TOKEN on
+# gocassini with the HMAC headers. Confirm by tailing the operator log.
+log "waiting for operator to log Talk-started callback (up to 30s)"
+DEADLINE=$(( SECONDS + 30 ))
+until docker logs "$CONTAINER_NAME" 2>&1 | grep -q "accepted id="; do
+  if (( SECONDS > DEADLINE )); then
+    log "operator log tail:"
+    docker logs "$CONTAINER_NAME" 2>&1 | tail -n 40 | sed 's/^/    /'
+    fail "operator never accepted the Talk-triggered record job"
+  fi
+  sleep 2
+done
+JOB_ID=$(docker logs "$CONTAINER_NAME" 2>&1 \
+  | grep -oE 'accepted id=[A-Z0-9]+' | head -n1 | cut -d= -f2)
+log "OK operator accepted Talk-triggered job: $JOB_ID"
 
 # ============================================================================
-# Phase 7 (DRAFT): wait for the publish + read transcript
+# Phase 7: wait for the recording lifecycle to complete; pull transcript
 # ============================================================================
-phase 7 "Wait for publish + read transcript (DRAFT)"
+phase 7 "Wait for record → upload → build → publish; pull transcript"
 
-log "TODO: poll cassini-exapp /srv/cassini-site/published/ for the new bundle"
-log "      then docker cp transcript.words.v1.json out"
+# Total budget: bot audio plays for $RECORD_DURATION_SECONDS seconds, then
+# recorder stops on empty room (default 8s grace), then upload to Talk,
+# then build (transcribe v3 int8 on 30s of audio takes ~10-20s on CPU),
+# then publish. Generous timeout:
+PUBLISH_DEADLINE=$(( SECONDS + RECORD_DURATION_SECONDS + 180 ))
+log "waiting for /srv/cassini-site/published/meeting-* (up to $((PUBLISH_DEADLINE - SECONDS))s)"
+PUBLISHED_DIR=""
+while (( SECONDS < PUBLISH_DEADLINE )); do
+  CANDIDATE=$(docker exec "$CONTAINER_NAME" \
+    sh -c 'ls -d /srv/cassini-site/published/meeting-* 2>/dev/null | head -n1' \
+    || true)
+  if [[ -n "$CANDIDATE" ]] && \
+     docker exec "$CONTAINER_NAME" test -s "$CANDIDATE/transcript.words.v1.json"; then
+    PUBLISHED_DIR="$CANDIDATE"
+    break
+  fi
+  sleep 4
+done
+[[ -n "$PUBLISHED_DIR" ]] || fail "published bundle never appeared"
+log "OK published bundle: $PUBLISHED_DIR"
+
+# Pull the transcript out so phase 8 can read it.
+TRANSCRIPT_HOST="$LOG_DIR/transcript.words.v1.json"
+docker cp "$CONTAINER_NAME:$PUBLISHED_DIR/transcript.words.v1.json" "$TRANSCRIPT_HOST"
+log "OK transcript pulled: $TRANSCRIPT_HOST ($(wc -c <"$TRANSCRIPT_HOST") bytes)"
+
+# Bot streamer should have exited by now (or we kill it).
+wait "$BOT_PID" 2>/dev/null || true
 
 # ============================================================================
-# Phase 8 (DRAFT): Levenshtein check
+# Phase 8: Levenshtein-check transcript vs scenario expected text
 # ============================================================================
-phase 8 "Levenshtein check vs scenario expected text (DRAFT)"
+phase 8 "Levenshtein-check transcript vs scenario expected text"
 
-log "TODO: concat scenario turns → expected text;"
-log "      compute Levenshtein ratio vs got;"
-log "      assert >= $MIN_LEVENSHTEIN"
+EXPECTED_TEXT=$(python3 - "$SCENARIO_PATH" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+print(" ".join(t["text"] for t in data.get("turns", [])))
+PY
+)
+if [[ -z "$EXPECTED_TEXT" ]]; then
+  fail "could not derive expected text from $SCENARIO_PATH"
+fi
 
-log "DRAFT END — phases 1-4 are wired and assert; 5-8 are placeholders"
-log "Next iteration: get phase 5 (bot audio into Talk call from this script"
-log "context) and phase 6 (OCS recording trigger) working, then 7/8 follow"
+python3 - "$TRANSCRIPT_HOST" "$EXPECTED_TEXT" "$MIN_LEVENSHTEIN" <<'PY'
+import json, re, sys, unicodedata
+
+transcript_path, expected, min_ratio = sys.argv[1], sys.argv[2], float(sys.argv[3])
+
+def normalise(text: str) -> str:
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9 ]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+def lev(a: str, b: str) -> int:
+    if len(a) < len(b):
+        a, b = b, a
+    if not b:
+        return len(a)
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i]
+        for j, cb in enumerate(b, 1):
+            curr.append(min(curr[j-1]+1, prev[j]+1, prev[j-1] + (0 if ca == cb else 1)))
+        prev = curr
+    return prev[-1]
+
+with open(transcript_path) as f:
+    data = json.load(f)
+
+words = []
+for segment in data.get("segments", []):
+    for w in segment.get("words", []):
+        if (w.get("text") or "").strip():
+            words.append(w["text"])
+got = normalise(" ".join(words))
+want = normalise(expected)
+
+if not got:
+    print("[talk-rec-e2e] FAIL transcript empty after normalisation")
+    sys.exit(1)
+
+distance = lev(got, want)
+ratio = 1.0 - distance / max(len(got), len(want))
+print(f"[talk-rec-e2e] expected ({len(want)} chars): {want[:120]!r}...")
+print(f"[talk-rec-e2e] got      ({len(got)} chars): {got[:120]!r}...")
+print(f"[talk-rec-e2e] edit-distance={distance} ratio={ratio:.4f} threshold={min_ratio:.2f}")
+if ratio < min_ratio:
+    print(f"[talk-rec-e2e] FAIL Levenshtein ratio {ratio:.4f} < threshold {min_ratio:.2f}")
+    sys.exit(1)
+print(f"[talk-rec-e2e] OK   Levenshtein ratio {ratio:.4f} >= threshold {min_ratio:.2f}")
+PY
+
+log "FULL TALK-DRIVEN E2E PASSED — Talk record-button → gocassini → transcript"
