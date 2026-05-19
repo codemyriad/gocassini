@@ -90,18 +90,11 @@ operator and the control-panel as separate services without AppAPI
 middleware (no `APP_SECRET` env). Use this path while developing on the
 operator or UI.
 
-To exercise the ExApp Dockerfile locally:
+## Testing the image
 
-```bash
-docker build -f deployment/Dockerfile.exapp -t cassini-exapp:local .
-IMAGE_REF=cassini-exapp:local ./harness/bin/ci-smoke-exapp.sh
-IMAGE_REF=cassini-exapp:local ./harness/bin/ci-e2e-exapp.sh
-```
-
-The smoke test runs the image in dev mode (no AppAPI auth). The E2E test
-runs it with `APP_SECRET` set and verifies the middleware accepts valid
-AppAPI headers and rejects invalid ones, including across a container
-restart.
+See [`docs/exapp-test-locally.md`](./exapp-test-locally.md) for three tiers:
+image-only checks (no Nextcloud), manual install against a local Nextcloud,
+and the production-shaped HaRP-fronted install (deferred).
 
 ## CI
 
