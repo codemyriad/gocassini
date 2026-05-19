@@ -9,6 +9,7 @@ describe("validateMeetingCatalog", () => {
   afterEach(() => {
     globalThis.window = originalWindow;
     globalThis.fetch = originalFetch;
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -106,6 +107,51 @@ describe("validateMeetingCatalog", () => {
         ],
       }),
     ).toThrow(/artifactPath/i);
+  });
+
+  it("redirects catalog fetch to VITE_PUBLISHED_BASE when set", async () => {
+    // The Nextcloud ExApp build serves the viewer SPA at /viewer/ while the
+    // published archive (catalog + recordings) lives at /published/. The
+    // viewer must follow VITE_PUBLISHED_BASE so it doesn't fetch
+    // /viewer/catalog.json (which would 404 because the SPA is there).
+    vi.stubEnv("VITE_PUBLISHED_BASE", "/published");
+
+    const calls: string[] = [];
+    globalThis.window = {
+      location: {
+        href: "http://nextcloud.example.com/index.php/apps/app_api/proxy/gocassini/viewer/",
+      },
+    } as Window;
+    globalThis.fetch = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === "http://nextcloud.example.com/published/catalog.json") {
+        return {
+          ok: true,
+          url,
+          json: async () => ({
+            version: "cassini.viewer.catalog.v1",
+            meetings: [
+              {
+                id: "meeting-x",
+                audioPath: "./meeting-x.opus",
+                title: "Meeting X",
+                dateLabel: "2026-05-19 10:00",
+              },
+            ],
+          }),
+        } as Response;
+      }
+      return { ok: false } as Response;
+    }) as typeof fetch;
+
+    const catalog = await loadMeetingCatalog();
+
+    expect(catalog?.meetings).toHaveLength(1);
+    expect(catalog?.meetings[0]?.audioPath).toBe(
+      "http://nextcloud.example.com/published/meeting-x.opus",
+    );
+    expect(calls).toEqual(["http://nextcloud.example.com/published/catalog.json"]);
   });
 
   it("loads the default catalog from the app base on nested routes", async () => {
