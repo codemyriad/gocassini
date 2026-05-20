@@ -198,45 +198,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to ghcr.io (for pull on push events)
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Restore image artifact (PR only)
-        if: github.event_name == 'pull_request'
-        uses: actions/download-artifact@v4
-        with:
-          name: exapp-image
-          path: /tmp
-
-      - name: Load or pull image
-        env:
-          IMAGE_REF_LIST: ${{ needs.build-image.outputs.image_ref }}
-        run: |
-          set -euo pipefail
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            docker load -i /tmp/exapp-image.tar
-          else
-            PRIMARY=$(echo "$IMAGE_REF_LIST" | head -n1)
-            echo "Pulling $PRIMARY"
-            docker pull "$PRIMARY"
-          fi
-
-      - name: Resolve image ref
-        id: ref
-        run: |
-          set -euo pipefail
-          # First tag from build-image is the canonical sha-tagged ref.
-          PRIMARY=$(echo "${{ needs.build-image.outputs.image_ref }}" | head -n1)
-          echo "ref=${PRIMARY}" >> "$GITHUB_OUTPUT"
+          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run smoke test
         env:
-          IMAGE_REF: ${{ steps.ref.outputs.ref }}
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-smoke-exapp.sh
 
   build-image-cuda:
@@ -389,49 +360,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to ghcr.io (for pull on push events)
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Restore image artifact (PR only)
-        if: github.event_name == 'pull_request'
-        uses: actions/download-artifact@v4
-        with:
-          name: exapp-image
-          path: /tmp
-
-      - name: Load or pull image
-        env:
-          IMAGE_REF_LIST: ${{ needs.build-image.outputs.image_ref }}
-        run: |
-          set -euo pipefail
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            docker load -i /tmp/exapp-image.tar
-          else
-            PRIMARY=$(echo "$IMAGE_REF_LIST" | head -n1)
-            echo "Pulling $PRIMARY"
-            docker pull "$PRIMARY"
-          fi
-
-      - name: Resolve image ref
-        id: ref
-        run: |
-          set -euo pipefail
-          PRIMARY=$(echo "${{ needs.build-image.outputs.image_ref }}" | head -n1)
-          echo "ref=${PRIMARY}" >> "$GITHUB_OUTPUT"
+          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run transcribe smoke
         env:
-          IMAGE_REF: ${{ steps.ref.outputs.ref }}
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-transcribe-smoke-exapp.sh
 
       - name: Run dual-variant transcript verify (CPU = v3 int8)
         env:
-          IMAGE_REF: ${{ steps.ref.outputs.ref }}
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
           # v3 int8 (CPU) drops the soft opening on this clip — sherpa-onnx's
           # streaming VAD does not pick up the early words. The threshold is
           # a smoke floor that catches "model loaded but produced gibberish"
@@ -447,43 +390,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to ghcr.io (for pull on push events)
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Restore image artifact (PR only)
-        if: github.event_name == 'pull_request'
-        uses: actions/download-artifact@v4
-        with:
-          name: exapp-image
-          path: /tmp
-
-      - name: Load or pull image
-        env:
-          IMAGE_REF_LIST: ${{ needs.build-image.outputs.image_ref }}
-        run: |
-          set -euo pipefail
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            docker load -i /tmp/exapp-image.tar
-          else
-            PRIMARY=$(echo "$IMAGE_REF_LIST" | head -n1)
-            echo "Pulling $PRIMARY"
-            docker pull "$PRIMARY"
-          fi
-
-      - name: Resolve image ref
-        id: ref
-        run: |
-          PRIMARY=$(echo "${{ needs.build-image.outputs.image_ref }}" | head -n1)
-          echo "ref=${PRIMARY}" >> "$GITHUB_OUTPUT"
+          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run container-level e2e
         env:
-          IMAGE_REF: ${{ steps.ref.outputs.ref }}
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-e2e-exapp.sh
 
   e2e-install:
@@ -494,43 +410,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to ghcr.io (for pull on push events)
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Restore image artifact (PR only)
-        if: github.event_name == 'pull_request'
-        uses: actions/download-artifact@v4
-        with:
-          name: exapp-image
-          path: /tmp
-
-      - name: Load or pull image
-        env:
-          IMAGE_REF_LIST: ${{ needs.build-image.outputs.image_ref }}
-        run: |
-          set -euo pipefail
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            docker load -i /tmp/exapp-image.tar
-          else
-            PRIMARY=$(echo "$IMAGE_REF_LIST" | head -n1)
-            echo "Pulling $PRIMARY"
-            docker pull "$PRIMARY"
-          fi
-
-      - name: Resolve image ref
-        id: ref
-        run: |
-          PRIMARY=$(echo "${{ needs.build-image.outputs.image_ref }}" | head -n1)
-          echo "ref=${PRIMARY}" >> "$GITHUB_OUTPUT"
+          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run install e2e against a fresh Nextcloud + AppAPI
         env:
-          IMAGE_REF: ${{ steps.ref.outputs.ref }}
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-e2e-install-exapp.sh
 
   # Full Talk-driven roundtrip: bot streamers join a Talk call, Talk's
@@ -566,39 +455,15 @@ jobs:
             echo "::error::checkout@v4 should have materialized it (lfs: true is set). Check repo LFS quota." >&2
             exit 1
           fi
-      - name: Log in to ghcr.io (for pull on push events)
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Restore image artifact (PR only)
-        if: github.event_name == 'pull_request'
-        uses: actions/download-artifact@v4
-        with:
-          name: exapp-image
-          path: /tmp
-      - name: Load or pull image
-        env:
-          IMAGE_REF_LIST: ${{ needs.build-image.outputs.image_ref }}
-        run: |
-          set -euo pipefail
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            docker load -i /tmp/exapp-image.tar
-          else
-            PRIMARY=$(echo "$IMAGE_REF_LIST" | head -n1)
-            echo "Pulling $PRIMARY"
-            docker pull "$PRIMARY"
-          fi
-      - name: Resolve image ref
-        id: ref
-        run: |
-          PRIMARY=$(echo "${{ needs.build-image.outputs.image_ref }}" | head -n1)
-          echo "ref=${PRIMARY}" >> "$GITHUB_OUTPUT"
+          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Run Talk-driven e2e (CPU)
         env:
-          IMAGE_REF: ${{ steps.ref.outputs.ref }}
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
           # 75s gives the rotator several cycles per bot, enough that at
           # least one participant track captures a multi-word verbatim
           # slice of the scenario script.

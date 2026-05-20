@@ -1,0 +1,79 @@
+name: Load ExApp image
+description: |
+  Make the ExApp image built by build-image (or build-image-cuda) available
+  in the local docker daemon, regardless of event type.
+
+  - PR builds: restore the image tarball uploaded as an artifact and
+    `docker load` it. Tarball-via-artifact is required because PRs do not
+    push to ghcr.
+  - Push / workflow_dispatch / scheduled builds: `docker login` to ghcr
+    and `docker pull` the primary sha-tagged ref.
+
+  Outputs the primary ref (first line of `image-ref-list`) for the caller
+  to thread into its smoke / e2e step.
+
+inputs:
+  image-ref-list:
+    description: Multi-line list of image tags from the upstream build job.
+    required: true
+  artifact-name:
+    description: GitHub artifact name carrying the docker-saved tarball on PR builds.
+    required: false
+    default: exapp-image
+  registry:
+    description: Container registry hostname for ghcr login.
+    required: false
+    default: ghcr.io
+  github-token:
+    description: |
+      GitHub token used to docker-login on push events. Composite actions
+      cannot read repo secrets, so callers must pass secrets.GITHUB_TOKEN.
+    required: true
+
+outputs:
+  ref:
+    description: Primary image ref (first tag in image-ref-list).
+    value: ${{ steps.resolve.outputs.ref }}
+
+runs:
+  using: composite
+  steps:
+    - name: Log in to ghcr.io (for pull on push events)
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ github.actor }}
+        password: ${{ inputs.github-token }}
+
+    - name: Restore image artifact (PR only)
+      if: github.event_name == 'pull_request'
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: /tmp
+
+    - name: Load or pull image
+      shell: bash
+      env:
+        IMAGE_REF_LIST: ${{ inputs.image-ref-list }}
+        EVENT_NAME: ${{ github.event_name }}
+      run: |
+        set -euo pipefail
+        PRIMARY=$(printf '%s\n' "$IMAGE_REF_LIST" | head -n1)
+        if [[ "$EVENT_NAME" == "pull_request" ]]; then
+          docker load -i /tmp/exapp-image.tar
+        else
+          echo "Pulling $PRIMARY"
+          docker pull "$PRIMARY"
+        fi
+
+    - name: Resolve image ref
+      id: resolve
+      shell: bash
+      env:
+        IMAGE_REF_LIST: ${{ inputs.image-ref-list }}
+      run: |
+        set -euo pipefail
+        PRIMARY=$(printf '%s\n' "$IMAGE_REF_LIST" | head -n1)
+        echo "ref=${PRIMARY}" >> "$GITHUB_OUTPUT"
