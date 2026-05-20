@@ -3,6 +3,7 @@ package operator
 import (
 	"bytes"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,9 +18,11 @@ import (
 )
 
 const (
-	talkRecordingBackendHeader  = "Talk-Recording-Backend"
-	talkRecordingRandomHeader   = "Talk-Recording-Random"
-	talkRecordingChecksumHeader = "Talk-Recording-Checksum"
+	talkRecordingBackendHeader     = "Talk-Recording-Backend"
+	talkRecordingRandomHeader      = "Talk-Recording-Random"
+	talkRecordingChecksumHeader    = "Talk-Recording-Checksum"
+	talkRecordingRandomOCSHeader   = "TALK_RECORDING_RANDOM"
+	talkRecordingChecksumOCSHeader = "TALK_RECORDING_CHECKSUM"
 )
 
 type talkWelcomeResponse struct {
@@ -53,6 +56,30 @@ type talkStartData struct {
 
 type talkStopData struct {
 	Actor *talkActorData `json:"actor,omitempty"`
+}
+
+func (d *talkStopData) UnmarshalJSON(body []byte) error {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 || bytes.Equal(body, []byte("null")) {
+		return nil
+	}
+	if body[0] == '[' {
+		var items []json.RawMessage
+		if err := json.Unmarshal(body, &items); err != nil {
+			return err
+		}
+		if len(items) == 0 {
+			return nil
+		}
+		body = items[0]
+	}
+	type stopData talkStopData
+	var parsed stopData
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return err
+	}
+	*d = talkStopData(parsed)
+	return nil
 }
 
 type talkActorData struct {
@@ -166,8 +193,9 @@ func (rt *Runtime) handleTalkStart(w http.ResponseWriter, r *http.Request, auth 
 		return
 	}
 
-	baseURL := strings.TrimRight(auth.BackendURL, "/")
-	roomKey := talkRoomKey(baseURL, token)
+	publicBaseURL := strings.TrimRight(auth.BackendURL, "/")
+	operatorBaseURL := rt.operatorTalkBackendURL(publicBaseURL)
+	roomKey := talkRoomKey(publicBaseURL, token)
 	if _, exists := rt.lookupTalkRoomState(roomKey); exists {
 		writeJSON(w, http.StatusOK, map[string]any{})
 		return
@@ -175,7 +203,8 @@ func (rt *Runtime) handleTalkStart(w http.ResponseWriter, r *http.Request, auth 
 
 	req := TriggerRequest{
 		Platform:              nextcloudTalkProvider,
-		BaseURL:               baseURL,
+		BaseURL:               publicBaseURL,
+		TalkConnectURL:        operatorBaseURL,
 		RoomToken:             token,
 		GuestName:             defaultGuestName,
 		StopWhenRoomEmpty:     true,
@@ -196,7 +225,7 @@ func (rt *Runtime) handleTalkStart(w http.ResponseWriter, r *http.Request, auth 
 	rt.bindTalkRoomState(&talkRoomState{
 		RoomKey:    roomKey,
 		JobID:      resp.ID,
-		BackendURL: baseURL,
+		BackendURL: operatorBaseURL,
 		RoomToken:  token,
 		Owner:      strings.TrimSpace(payload.Start.Owner),
 		Status:     payload.Start.Status,
@@ -230,8 +259,8 @@ func (rt *Runtime) validateTalkRequest(r *http.Request, body []byte) (talkReques
 
 	auth := talkRequestAuth{
 		BackendURL: strings.TrimSpace(r.Header.Get(talkRecordingBackendHeader)),
-		Random:     strings.TrimSpace(r.Header.Get(talkRecordingRandomHeader)),
-		Checksum:   strings.TrimSpace(r.Header.Get(talkRecordingChecksumHeader)),
+		Random:     firstHeaderValue(r, talkRecordingRandomHeader, talkRecordingRandomOCSHeader),
+		Checksum:   firstHeaderValue(r, talkRecordingChecksumHeader, talkRecordingChecksumOCSHeader),
 	}
 	if auth.BackendURL == "" {
 		return talkRequestAuth{}, fmt.Errorf("missing %s header", talkRecordingBackendHeader)
@@ -251,11 +280,28 @@ func (rt *Runtime) validateTalkRequest(r *http.Request, body []byte) (talkReques
 	return auth, nil
 }
 
+func firstHeaderValue(r *http.Request, names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(r.Header.Get(name)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func talkChecksum(secret, random string, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(random))
 	_, _ = mac.Write(body)
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func talkRandom() string {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(fmt.Sprintf("generate talk recording random: %v", err))
+	}
+	return hex.EncodeToString(b[:])
 }
 
 func writeTalkAuthError(w http.ResponseWriter, status int, message string) {
@@ -278,6 +324,13 @@ func marshalJSONBody(payload any) []byte {
 
 func talkRoomKey(baseURL, roomToken string) string {
 	return strings.TrimRight(strings.TrimSpace(baseURL), "/") + "|" + strings.TrimSpace(roomToken)
+}
+
+func (rt *Runtime) operatorTalkBackendURL(requestBackendURL string) string {
+	if override := strings.TrimRight(strings.TrimSpace(rt.cfg.TalkBackendURL), "/"); override != "" {
+		return override
+	}
+	return strings.TrimRight(strings.TrimSpace(requestBackendURL), "/")
 }
 
 func (rt *Runtime) bindTalkRoomState(state *talkRoomState) {
@@ -371,7 +424,7 @@ func (rt *Runtime) postTalkJSON(backendURL, path string, payload any) error {
 	if err != nil {
 		return fmt.Errorf("marshal talk JSON payload: %w", err)
 	}
-	random := "cassini-operator-json"
+	random := talkRandom()
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(backendURL, "/")+path, strings.NewReader(string(body)))
 	if err != nil {
 		return fmt.Errorf("build talk JSON request: %w", err)
@@ -406,7 +459,7 @@ func (rt *Runtime) uploadTalkRecording(state *talkRoomState, filePath string) er
 		return fmt.Errorf("close multipart writer: %w", err)
 	}
 
-	random := "cassini-operator-upload"
+	random := talkRandom()
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(state.BackendURL, "/")+"/ocs/v2.php/apps/spreed/api/v1/recording/"+state.RoomToken+"/store", &body)
 	if err != nil {
 		return fmt.Errorf("build recording upload request: %w", err)

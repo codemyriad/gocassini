@@ -11,6 +11,7 @@ D-263 now covers the first Nextcloud-facing productization step for Cassini unde
 - keep Nextcloud Talk's native recording UX
 - configure Cassini as the recording backend behind that UX
 - keep Cassini as the recording and downstream artifact owner
+- test the backend lifecycle separately from real browser/WebRTC media capture
 - avoid building a custom Talk meeting button
 
 This is not the custom-trigger path anymore.
@@ -266,6 +267,33 @@ A reviewer should be able to:
 5. confirm Cassini starts recording that room
 6. click Talk's native `Stop recording`
 7. confirm Cassini finalizes the recording flow correctly
+
+## Test strategy
+
+D-263 needs two different test shapes because they answer different questions.
+
+The local manual acceptance test is the full product proof:
+
+1. start Nextcloud, HPS/signaling, and Cassini services locally
+2. join a Talk call through a browser
+3. start recording through Talk's native recording control, or by enabling automatic recording when the meeting starts
+4. stop recording explicitly, or leave the call and let room-empty auto-stop end the recording
+5. confirm Cassini operator stops, finalizes, processes, publishes, and the meeting is visible in Cassini viewer
+
+This manual path is where media failures such as `no remuxable streams found in session artifact` belong. That error means the lifecycle reached Cassini, but the real browser/signaling/WebRTC/remux path did not produce usable media streams.
+
+The automated Nextcloud integration test should be narrower:
+
+1. create a Talk room in a real local Nextcloud test stack
+2. start recording through the Talk recording integration
+3. ensure Cassini receives the signed backend start request and starts a recording job
+4. avoid real media capture by using a fake/noop recorder executor or deterministic synthetic run artifact
+5. stop recording through Talk
+6. ensure Cassini receives the stop request, reports the expected callbacks, and the operator pipeline progresses
+
+The automated test is not a substitute for the manual media acceptance test. It verifies that the Nextcloud/Talk recording-backend integration works without making WebRTC media capture a prerequisite for every integration run.
+
+See `planning/initiatives/mvp/slices/D-263-nextcloud-app-recording/test-strategy.md` for the detailed test split.
 
 ## Likely code areas
 

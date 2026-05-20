@@ -20,6 +20,13 @@ else
   unset OC_PASS
 fi
 
+log "Ensuring local operator-facing trusted domains"
+occ config:system:set trusted_domains 3 --value="host.docker.internal"
+gateway="$(docker network inspect "${PROJECT_NAME}_default" -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
+if [[ -n "$gateway" ]]; then
+  occ config:system:set trusted_domains 4 --value="$gateway"
+fi
+
 if [[ "$SPREED_PROFILE" != "full" ]]; then
   log "Skipping signaling/TURN wiring because profile is '$SPREED_PROFILE'"
   exit 0
@@ -53,7 +60,6 @@ fi
 
 effective_recording_url="${CASSINI_TALK_RECORDING_URL:-}"
 if [[ -z "$effective_recording_url" || "$effective_recording_url" == "http://127.0.0.1:4000" || "$effective_recording_url" == "http://localhost:4000" ]]; then
-  gateway="$(docker network inspect "${PROJECT_NAME}_default" -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
   if [[ -n "$gateway" ]]; then
     effective_recording_url="http://$gateway:4000"
   else

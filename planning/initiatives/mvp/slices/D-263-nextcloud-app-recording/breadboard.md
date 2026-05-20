@@ -24,6 +24,7 @@ This document is the ground truth for the D-263 affordance map under the selecte
 | P4 | Cassini Operator Talk Surface | The Talk-specific HTTP surface inside `cassini-operator` that accepts backend requests and verifies auth/signatures. |
 | P5 | Cassini Runtime Control | `cassini-operator` orchestration that maps Talk backend lifecycle events into recording start/stop behavior. |
 | P6 | Cassini Recorder Pipeline | Existing live recording path and downstream artifact pipeline. |
+| P7 | D-263 Test Harness | Local automated integration harness that exercises real Nextcloud/Talk recording lifecycle while replacing only the media recorder with a deterministic fake/noop executor. |
 
 ## UI Affordances
 
@@ -48,6 +49,8 @@ This document is the ground truth for the D-263 affordance map under the selecte
 | **N7** | **P5 Cassini Runtime Control** | **Map Talk stop requests and health checks into Cassini-side readiness/finalization behavior.** | **N8, N9** |
 | **N8** | **P6 Cassini Recorder Pipeline** | **Cassini-side finalization and result handling: produce the final meeting `.mkv` for Talk `/store` while preserving richer downstream Cassini outputs.** | |
 | **N9** | **P6 Cassini Recorder Pipeline** | **Existing live recording subprocess flow: join the Talk room, capture media, and continue into Cassini's downstream artifacts.** | |
+| **N10** | **P7 D-263 Test Harness** | **Automated Nextcloud integration test: create a real Talk room, start recording, observe Cassini job start, stop recording, and assert lifecycle/pipeline progression without requiring real media capture.** | **N3, N4, N6, N7, N8** |
+| **N11** | **P7/P6 Manual Acceptance** | **Local manual media acceptance: browser participant, HPS/signaling, recorder media capture, remux, operator processing, and Cassini viewer visibility.** | **N9, N8** |
 
 ## Wiring by Place
 
@@ -59,6 +62,7 @@ This document is the ground truth for the D-263 affordance map under the selecte
 | **P4 Cassini Operator Talk Surface** | **N2 → N4** (health/auth validation) **; N4 → N6** (start request handling) **; N4 → N7** (stop/health handling) |
 | **P5 Cassini Runtime Control** | **N6 → N9** (start existing live record path) **; N7 → N9** (stop/finalize live record path) **; N7 → N8** (health/finalization/result path) |
 | **P6 Cassini Recorder Pipeline** | **N9** is the existing live recording path **; N8** is the result/finalization path that must remain compatible with both Talk and Cassini outputs. |
+| **P7 D-263 Test Harness** | **N10** proves the real Nextcloud/Talk backend lifecycle with a fake/noop media executor **; N11** proves the full local media path manually. |
 
 ```mermaid
 flowchart TD
@@ -94,6 +98,11 @@ flowchart TD
     N9["N9 existing live record pipeline"]
   end
 
+  subgraph P7["P7 D-263 Test Harness"]
+    N10["N10 automated Nextcloud lifecycle test"]
+    N11["N11 manual media acceptance"]
+  end
+
   U1 --> N1
   U2 --> N1
   U3 --> N2
@@ -109,6 +118,10 @@ flowchart TD
   N7 --> N9
   N7 --> N8
   N5 --> N8
+  N10 --> N3
+  N10 --> N8
+  N11 --> N9
+  N11 --> N8
 ```
 
 ## Affordance notes
@@ -120,6 +133,7 @@ flowchart TD
 | **N5 / N8** | The result/store seam is now narrowed: Talk should receive Cassini's final meeting `.mkv`, while portable `.opus` and viewer outputs remain downstream Cassini artifacts. |
 | **N6 / N7 / N9** | Cassini should reuse as much of the existing live recording path as possible rather than inventing a second recording implementation. |
 | **P1 / N1 / N2** | The official recording server docs imply recording UI is contingent on proper Talk backend configuration and broader Talk deployment prerequisites, especially signaling. |
+| **N10 / N11** | Automated tests should validate the real Talk lifecycle without real media capture; manual acceptance should validate the full browser/WebRTC/remux/viewer path. |
 
 ## Main cutlines this breadboard implies
 
@@ -137,6 +151,10 @@ flowchart TD
 3. **Result/store compatibility**
    - satisfy Talk's recording-backend lifecycle
    - preserve Cassini downstream artifact ownership
+
+4. **Test strategy**
+   - automated Nextcloud/Talk lifecycle test with fake/noop media executor
+   - manual real-media acceptance test for browser/HPS/WebRTC/remux/viewer behavior
 
 ## Suggested next move
 

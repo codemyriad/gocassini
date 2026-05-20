@@ -34,12 +34,17 @@ The checked-in `.env` exposes the deployment-facing contract:
 - `CASSINI_MAX_RECORD_WORKERS`
 - `CASSINI_MAX_BUILD_WORKERS`
 - `CASSINI_TALK_RECORDING_SECRET`
+- `CASSINI_TALK_BACKEND_URL`
 
 When using Cassini as a Nextcloud Talk recording backend, configure Talk with the
 same `CASSINI_TALK_RECORDING_SECRET` value and a backend URL that is reachable
 from the Nextcloud container. For the repo harness this is usually the Docker
 bridge gateway, for example `http://172.17.0.1:4000`, not
 `http://127.0.0.1:4000`.
+
+If Talk advertises a public Nextcloud URL such as `http://localhost:28080`, set
+`CASSINI_TALK_BACKEND_URL` to the URL the operator container can use to reach
+that same Nextcloud instance, for example `http://host.docker.internal:28080`.
 
 ## Storage defaults
 

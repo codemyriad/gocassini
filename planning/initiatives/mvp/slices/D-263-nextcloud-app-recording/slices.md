@@ -8,6 +8,7 @@ Derived from:
 
 - `planning/initiatives/mvp/slices/D-263-nextcloud-app-recording/shaping.md`
 - `planning/initiatives/mvp/slices/D-263-nextcloud-app-recording/breadboard.md`
+- `planning/initiatives/mvp/slices/D-263-nextcloud-app-recording/test-strategy.md`
 
 This document is the ground truth for the D-263 implementation slices.
 
@@ -17,6 +18,8 @@ The selected D-263 shape is:
 - Cassini as the Talk recording backend
 - Talk-specific adapter inside `cassini-operator`
 - minimal admin setup around backend URL, secret, and readiness
+- automated Nextcloud lifecycle coverage without requiring real media capture
+- manual local acceptance for the full browser/WebRTC/remux/viewer path
 - no custom Talk meeting button
 
 The official `nextcloud-talk-recording` server is used as a reference for:
@@ -57,6 +60,7 @@ So the implementation target is:
 | S1 | Backend auth and readiness foundation | Talk can trust and reach the Cassini backend, and operators can validate readiness before using it. |
 | S2 | Talk start/stop lifecycle compatibility | Native Talk recording actions start and stop Cassini recording correctly for the target room. |
 | S3 | Recording result/store compatibility | Cassini finalization satisfies Talk backend expectations without losing Cassini's downstream artifact model. |
+| S4 | D-263 test strategy | Automated integration proves Nextcloud/Talk lifecycle and manual acceptance proves real media capture/viewer behavior. |
 
 ## Breadboard
 
@@ -80,6 +84,7 @@ These slices are ordered so each one leaves behind a real, testable system incre
 | **I1** | **Backend auth + readiness foundation** | **S1** | **U1, U2, U3, N1, N2, N4** | **—** | **Talk/Cassini backend setup can be configured and a backend readiness/auth check succeeds without starting a recording.** |
 | **I2** | **Talk start/stop lifecycle compatibility** | **S2** | **U4, U5, N3, N6, N7, N9** | **I1** | **Talk's native record controls start and stop the Cassini live recording flow for the correct room.** |
 | **I3** | **Recording result/store compatibility** | **S3** | **N5, N8** | **I2** | **Cassini finalization satisfies Talk backend lifecycle expectations while preserving Cassini's downstream artifact path.** |
+| **I4** | **Automated Nextcloud lifecycle test + manual acceptance checklist** | **S4** | **N10, N11** | **I1, I2, I3** | **A real local Nextcloud integration test validates start/stop/pipeline progression without real media, and a documented manual path validates browser/WebRTC/remux/viewer behavior.** |
 
 ## Affordance allocation by slice
 
@@ -99,6 +104,8 @@ These slices are ordered so each one leaves behind a real, testable system incre
 | **N7** | **I2** | Cassini stop/health mapping from Talk backend request. |
 | **N8** | **I3** | Cassini finalization/result handling compatible with Talk. |
 | **N9** | **I2** | Existing Cassini live record pipeline reused behind Talk backend events. |
+| **N10** | **I4** | Automated Nextcloud lifecycle test with fake/noop media executor. |
+| **N11** | **I4** | Manual local media acceptance path. |
 
 ## Dependency tree
 
@@ -106,6 +113,7 @@ These slices are ordered so each one leaves behind a real, testable system incre
 flowchart TD
   I1["I1 backend auth + readiness foundation"] --> I2["I2 Talk start/stop lifecycle compatibility"]
   I2 --> I3["I3 recording result/store compatibility"]
+  I3 --> I4["I4 automated lifecycle test + manual acceptance checklist"]
 ```
 
 ## Slice details
@@ -250,6 +258,85 @@ The current spike conclusion for this seam is:
 - Cassini does not lose the outputs needed for its artifact/transcription/viewer pipeline
 - the result/store compatibility path is documented clearly enough for operators
 
+## I4: Automated Nextcloud lifecycle test + manual acceptance checklist
+
+### Objective
+
+Make D-263 testable in two complementary ways:
+
+- an automated local Nextcloud integration test that validates the real Talk recording-backend lifecycle without depending on WebRTC media capture
+- a manual local acceptance checklist that validates the complete browser/HPS/WebRTC/remux/operator/viewer path
+
+### Why this slice exists
+
+The system can fail in two different places:
+
+- Talk lifecycle integration can fail before Cassini starts or stops correctly
+- real media capture can fail after Cassini has successfully joined the lifecycle
+
+The observed `no remuxable streams found in session artifact` failure is in the second category. It should remain a blocker for full local acceptance, but it should not prevent automated tests from proving that Nextcloud can drive the Cassini Talk backend lifecycle.
+
+### Includes
+
+- **N10** automated Nextcloud lifecycle test
+- **N11** manual local media acceptance checklist
+
+The automated test should:
+
+1. create a Talk room in a real local Nextcloud stack
+2. start recording through Talk's recording integration
+3. assert Cassini receives the signed backend start request
+4. assert Cassini creates and starts the expected recording job
+5. substitute only the media recorder with a fake/noop executor or deterministic synthetic artifact path
+6. stop recording through Talk
+7. assert Cassini receives stop, reports callbacks, and advances the operator pipeline
+
+The manual checklist should:
+
+1. start the local Nextcloud/HPS/signaling and Cassini services manually
+2. join the room through a browser
+3. start recording through Talk's native controls or automatic recording setting
+4. leave the room or stop recording explicitly
+5. verify recorder session events, offers/media packet capture, remux success, operator completion, and Cassini viewer visibility
+
+### Activated wiring
+
+- **N10 → N3**
+- **N10 → N4**
+- **N10 → N6**
+- **N10 → N7**
+- **N10 → N8**
+- **N11 → N9**
+- **N11 → N8**
+
+### Verify
+
+Automated:
+
+1. Run the D-263 Nextcloud integration test.
+2. Confirm a real Nextcloud Talk room is created.
+3. Confirm recording start reaches Cassini and creates a job.
+4. Confirm the fake/noop media executor starts and stays running until stop.
+5. Confirm recording stop reaches Cassini.
+6. Confirm the operator pipeline progresses without requiring real WebRTC media.
+
+Manual:
+
+1. Run the complete local browser recording flow.
+2. Confirm the recorder joins the same HPS/backend identity as the browser participant.
+3. Confirm session artifact contains participant/session and stream/packet evidence.
+4. Confirm final remux succeeds.
+5. Confirm the resulting meeting is visible in Cassini viewer.
+
+### Acceptance criteria
+
+- automated integration tests cover real Nextcloud/Talk recording start and stop against Cassini
+- automated tests keep the Talk HTTP backend surface real
+- automated tests replace only the media capture executor
+- automated tests do not assert real viewer playback
+- manual acceptance documents the full media path and catches `no remuxable streams found in session artifact`
+- failures are classified clearly as either Talk lifecycle failures or real media capture/remux failures
+
 ## Suggested next move
 
 Use these slices as the implementation plan for the revised D-263 architecture.
@@ -259,3 +346,4 @@ If you want a minimal build order:
 1. **I1** backend auth + readiness foundation
 2. **I2** Talk start/stop lifecycle compatibility
 3. **I3** recording result/store compatibility
+4. **I4** automated lifecycle test + manual acceptance checklist

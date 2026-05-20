@@ -29,6 +29,7 @@ The goal here is to choose a concrete implementation shape for:
 | R6 | D-263 must stay narrowly scoped to recording-backend integration and admin setup; viewer embedding and broad Nextcloud productization stay out of this cut. | Must-have |
 | R7 | The selected shape should leave a clean extension path for later viewer/artifact integration without forcing that into the first implementation. | Must-have |
 | R8 | The selected shape should fit the way Nextcloud expects recording backends to be deployed: an external HTTP API, typically behind reverse-proxy TLS, within a Talk deployment that already satisfies signaling prerequisites. | Must-have |
+| R9 | The test plan must separate automated Nextcloud/Talk lifecycle coverage from manual real-media acceptance so WebRTC media failures do not obscure backend integration regressions. | Must-have |
 
 ---
 
@@ -84,6 +85,7 @@ The goal here is to choose a concrete implementation shape for:
 | R6 | D-263 must stay narrowly scoped to recording-backend integration and admin setup; viewer embedding and broad Nextcloud productization stay out of this cut. | Must-have | ✅ | ❌ | ✅ |
 | R7 | The selected shape should leave a clean extension path for later viewer/artifact integration without forcing that into the first implementation. | Must-have | ✅ | ✅ | ✅ |
 | R8 | The selected shape should fit the way Nextcloud expects recording backends to be deployed: an external HTTP API, typically behind reverse-proxy TLS, within a Talk deployment that already satisfies signaling prerequisites. | Must-have | ✅ | ⚠️ | ⚠️ |
+| R9 | The test plan must separate automated Nextcloud/Talk lifecycle coverage from manual real-media acceptance so WebRTC media failures do not obscure backend integration regressions. | Must-have | ✅ | ⚠️ | ⚠️ |
 
 **Notes:**
 - B fails R0 and R2 because it bypasses the native Talk recording controls entirely.
@@ -118,6 +120,7 @@ Why A fits best:
 | **A7** | Use `baseURL + roomToken` as the native execution identity for Talk-driven runs; keep full call URLs as a CLI convenience only. | |
 | **A8** | Upload Cassini's final meeting `.mkv` to Talk `/store`; keep portable `.opus` and richer viewer artifacts downstream from that contract. | |
 | **A9** | Treat the official `nextcloud-talk-recording` server as a protocol and deployment reference, not as the recorder architecture to copy. | |
+| **A10** | Test Talk lifecycle integration with a real local Nextcloud stack and a fake/noop recording executor, while reserving real browser/WebRTC/remux proof for a separate manual acceptance path. | |
 
 ## Deferred from this D-263 cut
 
@@ -204,6 +207,10 @@ while avoiding protocol confusion between:
 
 1. **Optional thin app scope**
    - We still need to decide whether D-263 needs a Nextcloud app at all or whether Talk admin configuration plus documentation is enough for the first cut.
+
+2. **Automated recording executor seam**
+   - We need to choose whether the local Nextcloud integration test swaps in a fake `cassini` binary, a supported simulate/noop recorder mode, or an operator-level test executor.
+   - The selected seam must keep the Talk HTTP backend surface real and substitute only the media-capture work.
 
 ## Suggested next move
 
