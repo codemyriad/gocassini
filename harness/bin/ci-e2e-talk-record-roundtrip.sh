@@ -175,9 +175,23 @@ mkdir -p "$LOG_DIR/site"
 # Override the default entrypoint (exapp-start.sh) which expects HaRP env
 # vars (HP_FRP_ADDRESS etc) that we don't have outside a real AppAPI deploy.
 # Run cassini-operator directly — same pattern as ci-e2e-install-exapp.sh.
+# Detect CUDA variant from the image tag so the harness works against both
+# CPU and GPU exapp images without a separate runbook. The CUDA image tags
+# end in -cuda (per .github/workflows/publish-exapp-image.yml) and the
+# CUDA-built sherpa-onnx requires `--gpus all` plus CASSINI_STT_DEVICE=cuda
+# to actually exercise the GPU code path.
+GPU_ARGS=()
+STT_DEVICE_ENV=()
+if [[ "$IMAGE_REF" == *cuda* || "${TALK_E2E_USE_GPU:-0}" == "1" ]]; then
+  GPU_ARGS=(--gpus all)
+  STT_DEVICE_ENV=(-e "CASSINI_STT_DEVICE=cuda")
+  log "GPU mode: passing --gpus all and CASSINI_STT_DEVICE=cuda"
+fi
+
 docker run -d \
   --name "$CONTAINER_NAME" \
   --network host \
+  "${GPU_ARGS[@]}" \
   -v "$LOG_DIR/operator-work:/var/lib/cassini-operator" \
   -v "$LOG_DIR/site:/srv/cassini-site" \
   -e "APP_HOST=0.0.0.0" \
@@ -191,6 +205,7 @@ docker run -d \
   -e "CASSINI_OPERATOR_BIND_ADDR=0.0.0.0:${OPERATOR_HOST_PORT}" \
   -e "CASSINI_OPERATOR_BASE_PATH=/operator" \
   -e "CASSINI_APPAPI_REQUIRED=true" \
+  "${STT_DEVICE_ENV[@]}" \
   --entrypoint /usr/local/bin/cassini-operator \
   "$IMAGE_REF" \
   >>"$LOG_DIR/docker.log" 2>&1
