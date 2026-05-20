@@ -436,6 +436,18 @@ jobs:
             echo "::error::checkout@v4 should have materialized it (lfs: true is set). Check repo LFS quota." >&2
             exit 1
           fi
+      - name: Install ffmpeg
+        # The bot streamer (prepare-synthetic-meeting.sh) shells out to
+        # ffmpeg to remux/transcode the vendored fixture clips into the
+        # RTP-friendly streams the bots feed into the call. ubuntu-latest
+        # does not ship ffmpeg by default; without this step the bot log
+        # tail shows "ffmpeg is required" and phase 5 fails with no
+        # participants joining the call within 90s.
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y >/dev/null
+          sudo apt-get install -y --no-install-recommends ffmpeg >/dev/null
+          ffmpeg -version | head -1
       - name: Load ExApp image
         id: load
         uses: ./.github/actions/load-exapp-image
