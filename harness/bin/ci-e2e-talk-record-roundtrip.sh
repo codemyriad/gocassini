@@ -367,11 +367,11 @@ phase 7 "Wait for record → upload → build → publish; pull transcript"
 # then build (transcribe v3 int8 on 30s of audio takes ~10-20s on CPU),
 # then publish. Generous timeout:
 PUBLISH_DEADLINE=$(( SECONDS + RECORD_DURATION_SECONDS + 180 ))
-log "waiting for /srv/cassini-site/published/meeting-* (up to $((PUBLISH_DEADLINE - SECONDS))s)"
+log "waiting for /srv/cassini-site/published/meetings/<id>/transcript.words.v1.json (up to $((PUBLISH_DEADLINE - SECONDS))s)"
 PUBLISHED_DIR=""
 while (( SECONDS < PUBLISH_DEADLINE )); do
   CANDIDATE=$(docker exec "$CONTAINER_NAME" \
-    sh -c 'ls -d /srv/cassini-site/published/meeting-* 2>/dev/null | head -n1' \
+    sh -c 'ls -d /srv/cassini-site/published/meetings/*/ 2>/dev/null | head -n1 | sed "s|/$||"' \
     || true)
   if [[ -n "$CANDIDATE" ]] && \
      docker exec "$CONTAINER_NAME" test -s "$CANDIDATE/transcript.words.v1.json"; then
