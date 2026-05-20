@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
+import { gzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
 
 import {
   buildDisplayTranscriptFromArtifacts,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
+  describeTranscript,
+  getDefaultTranscriptId,
+  listAvailableTranscripts,
+  loadPortableTranscriptBody,
+  pickReadableForTranscript,
+  type PortableMeetingManifest,
+  type PortablePayloadRef,
+  type PortableTranscriptEntry,
 } from "./portable";
 
 describe("buildReadableTranscriptFromPortable", () => {
@@ -589,5 +599,206 @@ describe("buildReadableTranscriptFromPortable", () => {
     expect(display.blocks[0]?.timedWordCount).toBe(5);
     expect(display.blocks[0]?.wordCount).toBe(10);
     expect(display.blocks[0]?.timingCoverage).toBe(0.5);
+  });
+});
+
+function encodeTranscriptBodyAsTags(
+  bodyJSON: unknown,
+  prefix: string,
+  chunkSize = 4096,
+): { tags: Record<string, string>; payloadRef: PortablePayloadRef } {
+  const json = JSON.stringify(bodyJSON);
+  const raw = new TextEncoder().encode(json);
+  const gzip = gzipSync(raw);
+  const b64url = Buffer.from(gzip)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  const chunks: string[] = [];
+  for (let offset = 0; offset < b64url.length; offset += chunkSize) {
+    chunks.push(b64url.slice(offset, offset + chunkSize));
+  }
+  const tags: Record<string, string> = {};
+  chunks.forEach((chunk, index) => {
+    tags[`${prefix}${String(index).padStart(3, "0")}`] = chunk;
+  });
+  const sha256 = createHash("sha256").update(raw).digest("hex");
+  return {
+    tags,
+    payloadRef: {
+      prefix,
+      chunkCount: chunks.length,
+      sha256,
+      rawBytes: raw.byteLength,
+      gzipBytes: gzip.byteLength,
+      mime: "application/vnd.cassini.transcript-words+json",
+      encoding: "base64url+gzip+utf8json",
+    },
+  };
+}
+
+describe("loadPortableTranscriptBody (v2 transport)", () => {
+  it("round-trips a transcript body through the chunk set and verifies sha256", async () => {
+    const body = {
+      format: "cassini.words.v1",
+      language: "en",
+      wordCount: 2,
+      items: [
+        { speaker: "speaker_0", startMs: 0, endMs: 400, text: "hello" },
+        { speaker: "speaker_0", startMs: 400, endMs: 800, text: "world" },
+      ],
+    };
+    const { tags, payloadRef } = encodeTranscriptBodyAsTags(body, "CASSINI_TX_PARAKEET_PAYLOAD_");
+
+    const decoded = await loadPortableTranscriptBody(tags, payloadRef);
+
+    expect(decoded).toEqual(body);
+  });
+
+  it("throws when sha256 in payloadRef does not match the decoded body", async () => {
+    const body = { format: "cassini.words.v1", wordCount: 0, items: [] };
+    const { tags, payloadRef } = encodeTranscriptBodyAsTags(body, "CASSINI_TX_CANARY_PAYLOAD_");
+    const tampered: PortablePayloadRef = {
+      ...payloadRef,
+      sha256: "0".repeat(64),
+    };
+
+    await expect(loadPortableTranscriptBody(tags, tampered)).rejects.toThrow(/sha256 mismatch/);
+  });
+
+  it("throws when a numbered chunk is missing from the tag map", async () => {
+    const body = { format: "cassini.words.v1", wordCount: 0, items: [] };
+    const { tags, payloadRef } = encodeTranscriptBodyAsTags(body, "CASSINI_TX_PARAKEET_PAYLOAD_");
+    delete tags[`${payloadRef.prefix}000`];
+
+    await expect(loadPortableTranscriptBody(tags, payloadRef)).rejects.toThrow(
+      /missing transcript payload chunk/,
+    );
+  });
+
+  it("rejects payloadRef with non-positive chunkCount", async () => {
+    const ref: PortablePayloadRef = {
+      prefix: "CASSINI_TX_BAD_PAYLOAD_",
+      chunkCount: 0,
+      sha256: "0".repeat(64),
+      rawBytes: 0,
+      gzipBytes: 0,
+      mime: "application/json",
+      encoding: "base64url+gzip+utf8json",
+    };
+    await expect(loadPortableTranscriptBody({}, ref)).rejects.toThrow(/invalid chunkCount/);
+  });
+});
+
+function makeTranscriptEntry(
+  overrides: Partial<PortableTranscriptEntry> & { id: string },
+): PortableTranscriptEntry {
+  return {
+    role: "raw-asr",
+    format: "cassini.words.v1",
+    payloadRef: {
+      prefix: `CASSINI_TX_${overrides.id.toUpperCase()}_PAYLOAD_`,
+      chunkCount: 1,
+      sha256: "0".repeat(64),
+    },
+    ...overrides,
+  };
+}
+
+describe("listAvailableTranscripts / describeTranscript", () => {
+  it("returns a synthetic single-entry list for v1 manifests", () => {
+    const list = listAvailableTranscripts({} as PortableMeetingManifest);
+    expect(list).toEqual([
+      { id: "default", role: "asr", label: "Transcript", description: "", isDefault: true },
+    ]);
+    expect(getDefaultTranscriptId({} as PortableMeetingManifest)).toBe("default");
+  });
+
+  it("labels v2 transcripts from the transcript id, not the engine name", () => {
+    const manifest: PortableMeetingManifest = {
+      version: 2,
+      transcripts: [
+        makeTranscriptEntry({ id: "parakeet" }),
+        makeTranscriptEntry({ id: "canary", default: true }),
+      ],
+      provenance: {
+        speechToText: {
+          parakeet: { engine: "sherpa-onnx", model: "parakeet-tdt-0.6b-v2-int8" },
+          canary: { engine: "sherpa-onnx", model: "canary-1b-v2" },
+        },
+      } as unknown,
+    };
+    const list = listAvailableTranscripts(manifest);
+    // Labels come from the transcript id so they stay distinct even when both
+    // entries share an engine — this is the parakeet+canary demo case.
+    expect(list.map((entry) => entry.label)).toEqual(["Parakeet", "Canary"]);
+    // Engine/model/backend land in description for the tooltip.
+    expect(list[0]?.description).toContain("sherpa-onnx");
+    expect(list[0]?.description).toContain("parakeet-tdt-0.6b-v2-int8");
+    expect(list[1]?.description).toContain("canary-1b-v2");
+    expect(getDefaultTranscriptId(manifest)).toBe("canary");
+  });
+
+  it("keeps labels unique when two transcripts share engine, backend, and model fields", () => {
+    // Regression: an older version of describeTranscript labeled by engine
+    // first, so two sherpa-onnx transcripts both rendered as "sherpa-onnx".
+    const manifest: PortableMeetingManifest = {
+      version: 2,
+      transcripts: [
+        makeTranscriptEntry({ id: "tx-a" }),
+        makeTranscriptEntry({ id: "tx-b" }),
+      ],
+      provenance: {
+        speechToText: {
+          "tx-a": { engine: "shared", backend: "shared", model: "shared" },
+          "tx-b": { engine: "shared", backend: "shared", model: "shared" },
+        },
+      } as unknown,
+    };
+    const labels = listAvailableTranscripts(manifest).map((entry) => entry.label);
+    expect(new Set(labels).size).toBe(2);
+    expect(labels).toEqual(["Tx A", "Tx B"]);
+  });
+
+  it("humanizes transcript ids that contain hyphens and underscores", () => {
+    const entry = makeTranscriptEntry({ id: "whisper-large-v3_en" });
+    const descriptor = describeTranscript(entry, { version: 2 } as PortableMeetingManifest, false);
+    expect(descriptor.label).toBe("Whisper Large V3 En");
+    expect(descriptor.description).toBe("");
+  });
+});
+
+describe("pickReadableForTranscript", () => {
+  const manifest: PortableMeetingManifest = {
+    version: 2,
+    readableTranscripts: [
+      {
+        id: "readable-paired-canary",
+        role: "readable-cleanup",
+        format: "cassini.readable.v1",
+        sourceTranscriptId: "canary",
+        payloadRef: { prefix: "X_", chunkCount: 1, sha256: "0".repeat(64) },
+      },
+      {
+        id: "readable-default",
+        role: "readable-cleanup",
+        format: "cassini.readable.v1",
+        default: true,
+        payloadRef: { prefix: "Y_", chunkCount: 1, sha256: "0".repeat(64) },
+      },
+    ],
+  };
+
+  it("matches sourceTranscriptId", () => {
+    expect(pickReadableForTranscript(manifest, "canary")?.id).toBe("readable-paired-canary");
+  });
+
+  it("falls back to the default-flagged entry", () => {
+    expect(pickReadableForTranscript(manifest, "parakeet")?.id).toBe("readable-default");
+  });
+
+  it("returns null when no readable transcripts are present", () => {
+    expect(pickReadableForTranscript({} as PortableMeetingManifest, "anything")).toBeNull();
   });
 });
