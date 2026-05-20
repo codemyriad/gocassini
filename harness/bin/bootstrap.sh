@@ -24,12 +24,22 @@ log "Ensuring local operator-facing trusted domains"
 # The Nextcloud image's entrypoint already populates trusted_domains 1..4
 # from NEXTCLOUD_TRUSTED_DOMAINS (typically localhost, 127.0.0.1, nextcloud,
 # host.docker.internal). Writing to those low indices clobbers the
-# image-supplied entries — most importantly "nextcloud" itself, which the
-# ExApp container uses to reach Nextcloud over the compose network. Without
-# it, any in-network POST/PUT from the ExApp returns Nextcloud's "Access
-# through untrusted domain" 400 page — which is how install-E2E was hanging
-# (operator's init_progress=100 callback got 400, AppAPI --wait-finish polled
-# forever). Append our additions at high indices instead.
+# image-supplied entries — most importantly "nextcloud" itself.
+#
+# In the install-e2e harness path we use a manual-install AppAPI daemon, so
+# the ExApp container talks to Nextcloud directly at http://nextcloud/ over
+# the compose network rather than through a HaRP/frpc tunnel. Clobbering
+# "nextcloud" from trusted_domains makes any in-network POST/PUT from the
+# ExApp return Nextcloud's "Access through untrusted domain" 400 page —
+# which is how install-E2E was hanging (operator's init_progress=100
+# callback got 400, AppAPI --wait-finish polled forever).
+#
+# Production ExApp deploys route through HaRP/frpc (see deployment/exapp-
+# start.sh) so the container reaches Nextcloud at its public URL, not via
+# the compose-network hostname; trusted_domains there carries the public
+# hostname instead. This bootstrap only runs in the harness.
+#
+# Append our additions at high indices to preserve the image's defaults.
 occ config:system:set trusted_domains 10 --value="host.docker.internal"
 gateway="$(docker network inspect "${PROJECT_NAME}_default" -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
 if [[ -n "$gateway" ]]; then
