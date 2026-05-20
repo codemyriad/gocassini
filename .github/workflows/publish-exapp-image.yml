@@ -324,7 +324,7 @@ jobs:
 
       - name: Run dual-variant transcript verify (CUDA = v3 fp32)
         env:
-          IMAGE_REF: ${{ steps.ref.outputs.ref }}
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
           # Empirically on this clip fp32 (CUDA) lands at ratio 0.6565 —
           # essentially identical to int8 (CPU at 0.6391). The first ~6s of
           # the LibriSpeech clip is dropped by sherpa-onnx's streaming VAD
