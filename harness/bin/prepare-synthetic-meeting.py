@@ -511,6 +511,14 @@ def main() -> None:
             prefix, participant, str(raw_scenario["title"]), wav_path
         )
         output_paths = render_publish_assets(prefix, mp4_path, wav_path)
+        # Store paths relative to output_dir so the manifest is portable.
+        # The streamer joins these with $OUTPUT_DIR at runtime; committing
+        # absolute paths from one developer's machine would break CI and
+        # every other contributor.
+        rel_paths = {
+            key: str(Path(value).relative_to(output_dir))
+            for key, value in output_paths.items()
+        }
         participant_entries.append({
             "id": participant.participant_id,
             "display_name": participant.display_name,
@@ -518,9 +526,9 @@ def main() -> None:
             "voice": participant.voice,
             "lang_code": participant.lang_code,
             "join_delay_seconds": participant.join_delay_seconds,
-            "media_prefix": str(prefix),
+            "media_prefix": participant.participant_id,
             "turn_count": len(actual_turns),
-            "paths": output_paths,
+            "paths": rel_paths,
         })
 
     manifest_turns.sort(key=lambda item: (item["start_seconds"], item["speaker"]))
@@ -533,8 +541,9 @@ def main() -> None:
         "description": raw_scenario.get("description", ""),
         "backend": args.backend,
         "duration_seconds": round(max_end, 3),
-        "scenario_path": str(scenario_path),
-        "reference_path": str(reference_path),
+        # Scenario lives outside output_dir; store basename for documentation.
+        "scenario_path": scenario_path.name,
+        "reference_path": reference_path.relative_to(output_dir).as_posix(),
         "participants": participant_entries,
         "turns": manifest_turns,
     }

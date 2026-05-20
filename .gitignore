@@ -33,6 +33,7 @@
 !/harness/scenarios/*.json
 # Test fixtures (small, committed for deterministic CI)
 !/harness/media/parakeet-smoke.mkv
+!/harness/media/processed/showcase-lantern-festival-v1/manifest.json
 !/spec/*.json
 !/spec/**/*.json
 gocassini-*.log
