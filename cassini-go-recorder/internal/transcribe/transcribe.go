@@ -90,6 +90,16 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	if err != nil {
 		return err
 	}
+
+	// Per-participant Talk recordings can carry sparse / DTX-encoded audio
+	// that defeats the VAD even when the mixed timeline clearly contains
+	// speech. Fall back to transcribing the already-mixed meeting.webm under
+	// a synthetic "merged" speaker so the bundle still ships usable content.
+	streams, segments, err = ensureMergedFallback(ctx, webmPath, streams, segments, modelPaths, vadPath, cfg.Device, cfg.NumThreads, stdout)
+	if err != nil {
+		return err
+	}
+
 	if err := writeTranscriptWithHash(filepath.Join(outputDir, "transcript.words.v1.json"), "transcript.words.v1", streams, segments, audioDurationMS, sha256hex); err != nil {
 		return fmt.Errorf("write transcript: %w", err)
 	}
@@ -134,6 +144,59 @@ type AdditionalTranscript struct {
 	ID      string  // sanitised model id, suitable for tag namespace (a-z 0-9 - _, max 32 chars)
 	Path    string  // relative to outputDir, e.g. transcript-parakeet-tdt-06b-v2-int8.words.v1.json
 	ModelID ModelID // raw STT model id, kept for provenance
+}
+
+// ensureMergedFallback transcribes the already-mixed meeting.webm under a
+// synthetic "merged" speaker when the per-participant pass found nothing.
+// Talk-recorder per-participant tracks can be sparse (DTX, comfort-noise
+// frames between speaking turns) in ways that defeat the VAD even though
+// the same audio sums to a clearly-transcribable mix; rather than ship an
+// empty transcript in that case, fall back to the mix. Returns the
+// (possibly extended) streams + segments. Does nothing when the
+// per-participant pass already produced content.
+func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioStream, segments []Segment, modelPaths ModelPaths, vadPath, device string, numThreads int, stdout io.Writer) ([]AudioStream, []Segment, error) {
+	if CountWords(segments) > 0 {
+		return streams, segments, nil
+	}
+	fmt.Fprintln(stdout, "  per-participant transcription empty; transcribing mixed track as fallback...")
+
+	mergedStream := AudioStream{
+		Index:        -1,
+		SpeakerID:    "merged",
+		SpeakerLabel: "Everyone",
+		Channels:     1,
+		StartTimeMS:  0,
+	}
+
+	rec, err := NewRecognizer(modelPaths, vadPath, device, numThreads)
+	if err != nil {
+		return streams, segments, fmt.Errorf("create recognizer for merged fallback: %w", err)
+	}
+	defer rec.Close()
+
+	select {
+	case <-ctx.Done():
+		return streams, segments, ctx.Err()
+	default:
+	}
+
+	samples, err := ExtractMixedFloats(webmPath)
+	if err != nil {
+		return streams, segments, fmt.Errorf("extract mixed audio: %w", err)
+	}
+	words, err := rec.Transcribe(samples, modelPaths.SampleRate)
+	if err != nil {
+		return streams, segments, fmt.Errorf("transcribe merged fallback: %w", err)
+	}
+	fmt.Fprintf(stdout, "    merged: %d words\n", len(words))
+	if len(words) == 0 {
+		return streams, segments, nil
+	}
+
+	mergedSegs := AssembleSegments(mergedStream.SpeakerID, words, 0, 0)
+	extendedStreams := append(append([]AudioStream(nil), streams...), mergedStream)
+	mergedSegments := MergeAndSortSegments([][]Segment{segments, mergedSegs})
+	return extendedStreams, mergedSegments, nil
 }
 
 // transcribePass runs one full transcription pass over every speaker stream

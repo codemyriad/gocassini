@@ -656,12 +656,32 @@ func (r *Recorder) handleParticipantsEvent(update map[string]any) error {
 			continue
 		}
 		r.rememberParticipantIdentity(sessionID, identity.DisplayName, identity.ParticipantID)
-		if _, err := r.ensureSubscriber(sessionID); err != nil {
+		peer, err := r.ensureSubscriber(sessionID)
+		if err != nil {
 			return err
 		}
+		r.retryRequestOfferForCallTransition(peer)
 	}
 
 	return nil
+}
+
+// retryRequestOfferForCallTransition forces a fresh requestoffer when a
+// participants update tells us a session is now in the call. The first
+// requestoffer often races spreed's call-state propagation and gets
+// silently dropped at hub.go ("not in same call"); without this nudge
+// the recorder waits out the 8s response timeout × max-attempts before
+// retrying, which exceeds a typical short-recording window.
+func (r *Recorder) retryRequestOfferForCallTransition(peer *subscriberPeer) {
+	if peer == nil {
+		return
+	}
+	if !peer.clearOfferThrottleForCallTransition() {
+		return
+	}
+	if err := peer.requestOffer(); err != nil {
+		log.Printf("requestoffer retry after call transition failed for %s: %v", peer.remoteSessionID, err)
+	}
 }
 
 func (r *Recorder) handleSignalingData(data map[string]any) error {
@@ -791,9 +811,11 @@ func (r *Recorder) syncRemoteParticipants(active map[string]participantIdentity)
 
 	for remoteSessionID, identity := range active {
 		r.rememberParticipantIdentity(remoteSessionID, identity.DisplayName, identity.ParticipantID)
-		if _, err := r.ensureSubscriber(remoteSessionID); err != nil {
+		peer, err := r.ensureSubscriber(remoteSessionID)
+		if err != nil {
 			return err
 		}
+		r.retryRequestOfferForCallTransition(peer)
 	}
 
 	return nil
@@ -1325,6 +1347,24 @@ func (p *subscriberPeer) resetIfExhausted() bool {
 	}
 	p.requestOfferAttempts = 0
 	p.offerExhaustedLogged = false
+	p.awaitingOfferSince = time.Time{}
+	return true
+}
+
+// clearOfferThrottleForCallTransition drops the in-flight throttle so the
+// next requestOffer call sends immediately. Used when we learn the remote
+// participant has freshly entered the call — the first requestOffer
+// likely raced spreed's call-state propagation and was silently rejected
+// at hub.go ("not in the same call"). Returns true if a retry should be
+// attempted now. No-op when an offer was already received, when no
+// attempt has been made yet, or when attempts are exhausted (let
+// resetIfExhausted handle that case).
+func (p *subscriberPeer) clearOfferThrottleForCallTransition() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.offerReceived || p.requestOfferAttempts == 0 || p.offerExhaustedLogged {
+		return false
+	}
 	p.awaitingOfferSince = time.Time{}
 	return true
 }
