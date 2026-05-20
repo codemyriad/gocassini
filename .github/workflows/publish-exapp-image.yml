@@ -180,7 +180,7 @@ jobs:
         with:
           name: exapp-image
           path: /tmp/exapp-image.tar
-          retention-days: 3
+          retention-days: 1
 
   smoke:
     name: Smoke test image (HTTP plane, dev-mode)
@@ -230,8 +230,15 @@ jobs:
       - name: Free disk on self-hosted runner
         run: |
           df -h / | head -3
-          docker image prune -af --filter "until=30m" 2>&1 | tail -3 || true
-          docker buildx prune -af --filter "until=24h" 2>&1 | tail -3 || true
+          # A single CUDA build now consumes ~12 GiB of layers + ~4.7 GiB
+          # of buildx cache, so the "until=30m" / "until=24h" floors were
+          # protecting more state than we can afford on this 90 GiB
+          # rootfs. Be aggressive: drop every dangling image and every
+          # untagged buildx cache regardless of age. The active build
+          # already has its own buildx cache mount and will repopulate.
+          docker container prune -f 2>&1 | tail -2 || true
+          docker image prune -af 2>&1 | tail -2 || true
+          docker buildx prune -af 2>&1 | tail -2 || true
           df -h / | head -3
 
       - name: Set up Docker Buildx
@@ -315,7 +322,7 @@ jobs:
         with:
           name: exapp-cuda-image
           path: /tmp/exapp-cuda-image.tar
-          retention-days: 3
+          retention-days: 1
 
   transcribe-smoke-cuda:
     name: Smoke transcription on GPU (bundled fp32 model + CUDA EP)
