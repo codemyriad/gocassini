@@ -50,6 +50,7 @@ type recordLiveSignalWriter struct {
 type triggerRequestInput struct {
 	Platform          string   `json:"platform"`
 	URL               string   `json:"url"`
+	TalkConnectURL    string   `json:"talkConnectURL,omitempty"`
 	GuestName         *string  `json:"guestName,omitempty"`
 	DurationSeconds   *int     `json:"duration,omitempty"`
 	StopWhenRoomEmpty *bool    `json:"stopWhenRoomEmpty,omitempty"`
@@ -79,6 +80,9 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 		"--call", req.effectiveCallURL(),
 		"--out", runPath,
 		"--name", req.GuestName,
+	}
+	if connectURL := rt.recordConnectURL(req); connectURL != "" {
+		args = append(args, "--connect-url", connectURL)
 	}
 	if req.DurationSeconds != nil {
 		args = append(args, "--duration", strconv.Itoa(*req.DurationSeconds))
@@ -411,6 +415,7 @@ func parseTriggerRequest(input triggerRequestInput) (TriggerRequest, error) {
 		BaseURL:               "",
 		RoomToken:             "",
 		URL:                   strings.TrimSpace(input.URL),
+		TalkConnectURL:        strings.TrimRight(strings.TrimSpace(input.TalkConnectURL), "/"),
 		GuestName:             defaultGuestName,
 		StopWhenRoomEmpty:     true,
 		RoomEmptyGraceSeconds: defaultRoomEmptySec,
@@ -453,6 +458,7 @@ func decodeStoredTriggerRequest(raw string) (TriggerRequest, error) {
 	}
 	req.Platform = strings.TrimSpace(req.Platform)
 	req.BaseURL = strings.TrimSpace(req.BaseURL)
+	req.TalkConnectURL = strings.TrimRight(strings.TrimSpace(req.TalkConnectURL), "/")
 	req.RoomToken = strings.TrimSpace(req.RoomToken)
 	req.URL = strings.TrimSpace(req.URL)
 	req.GuestName = strings.TrimSpace(req.GuestName)
@@ -503,6 +509,14 @@ func (req TriggerRequest) effectiveCallURL() string {
 		return ""
 	}
 	return baseURL + "/call/" + roomToken
+}
+
+func (rt *Runtime) recordConnectURL(req TriggerRequest) string {
+	connectURL := strings.TrimRight(strings.TrimSpace(req.TalkConnectURL), "/")
+	if connectURL == "" && req.Platform == nextcloudTalkProvider {
+		connectURL = strings.TrimRight(strings.TrimSpace(rt.cfg.TalkBackendURL), "/")
+	}
+	return connectURL
 }
 
 func (req TriggerRequest) logTarget() string {

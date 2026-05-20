@@ -42,6 +42,21 @@ func TestFromFlagsTalkModeAcceptsCallURL(t *testing.T) {
 	}
 }
 
+func TestFromFlagsTalkModeAcceptsConnectURL(t *testing.T) {
+	cfg, err := FromFlags([]string{
+		"--mode", "talk",
+		"--call-url", "https://cloud.example.com/call/roomtoken",
+		"--connect-url", " http://host.docker.internal:28080/ ",
+		"--output", "/tmp/out.csr",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ConnectBaseURL != "http://host.docker.internal:28080" {
+		t.Fatalf("unexpected connect-url: %q", cfg.ConnectBaseURL)
+	}
+}
+
 func TestFromFlagsTalkModeAcceptsMKVOutputPath(t *testing.T) {
 	cfg, err := FromFlags([]string{
 		"--mode", "talk",

@@ -38,6 +38,7 @@ type Config struct {
 	SiteRoot         string
 	CassiniBin       string
 	TalkSharedSecret string
+	TalkBackendURL   string
 	MaxRecordWorkers int
 	MaxBuildWorkers  int
 }
@@ -65,6 +66,7 @@ type Runtime struct {
 type TriggerRequest struct {
 	Platform              string  `json:"platform"`
 	BaseURL               string  `json:"baseURL,omitempty"`
+	TalkConnectURL        string  `json:"talkConnectURL,omitempty"`
 	RoomToken             string  `json:"roomToken,omitempty"`
 	URL                   string  `json:"url"`
 	GuestName             string  `json:"guestName"`
@@ -211,7 +213,8 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.StringVar(&cfg.WorkRoot, "work-root", envOrDefaultAny([]string{"CASSINI_OPERATOR_WORK_ROOT", "WORK_ROOT"}, filepath.Join(defaultDataRoot, "jobs")), "per-job artifact root")
 	fs.StringVar(&cfg.SiteRoot, "site-root", envOrDefaultAny([]string{"CASSINI_OPERATOR_SITE_ROOT", "SITE_ROOT"}, filepath.Join(defaultDataRoot, "site")), "published site output root")
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", envOrDefaultAny([]string{"CASSINI_BIN"}, defaultCassiniBinPath(repoRoot)), "Cassini CLI binary path")
-	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
+	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
+	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
 	fs.IntVar(&cfg.MaxRecordWorkers, "max-record-workers", defaultMaxRecordWorkers, "maximum concurrent record workers")
 	fs.IntVar(&cfg.MaxBuildWorkers, "max-build-workers", defaultMaxBuildWorkers, "maximum concurrent build workers")
 	fs.Usage = func() {
@@ -249,6 +252,7 @@ Flags:
 	cfg.WorkRoot = resolveConfigPath(repoRoot, cfg.WorkRoot)
 	cfg.SiteRoot = resolveConfigPath(repoRoot, cfg.SiteRoot)
 	cfg.CassiniBin = resolveConfigPath(repoRoot, cfg.CassiniBin)
+	cfg.TalkBackendURL = strings.TrimRight(strings.TrimSpace(cfg.TalkBackendURL), "/")
 	if cfg.MaxRecordWorkers < 1 {
 		return Config{}, 2, errors.New("--max-record-workers must be >= 1")
 	}

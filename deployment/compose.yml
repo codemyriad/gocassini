@@ -9,6 +9,8 @@ services:
       CASSINI_MAX_RECORD_WORKERS: ${CASSINI_MAX_RECORD_WORKERS:-1}
       CASSINI_MAX_BUILD_WORKERS: ${CASSINI_MAX_BUILD_WORKERS:-1}
       CASSINI_OPERATOR_SITE_ROOT: /srv/cassini-site/published
+      CASSINI_TALK_RECORDING_SECRET: ${CASSINI_TALK_RECORDING_SECRET:-}
+      CASSINI_TALK_BACKEND_URL: ${CASSINI_TALK_BACKEND_URL:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
@@ -18,6 +20,8 @@ services:
       CASSINI_READABLE_STRICT_BATCHES: ${CASSINI_READABLE_STRICT_BATCHES:-}
     ports:
       - "${CASSINI_OPERATOR_PORT:-4000}:4000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ${CASSINI_OPERATOR_STATE_STORAGE:-cassini_operator_state}:/var/lib/cassini-operator
       - ${CASSINI_PUBLISHED_SITE_STORAGE:-cassini_published_site}:/srv/cassini-site

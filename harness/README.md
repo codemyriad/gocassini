@@ -326,6 +326,42 @@ Use `../cassini-lab/bin/ci-e2e.sh` for the baseline full Nextcloud + recorder + 
 ../cassini-lab/bin/ci-e2e.sh
 ```
 
+## D-263 Nextcloud Recording Lifecycle
+
+Use `harness/bin/d263-nextcloud-lifecycle.sh` to test the native Talk
+recording-backend lifecycle against a real local Nextcloud/Talk stack without
+requiring real browser media capture.
+
+The script:
+
+- starts a temporary `cassini-operator` on port `14000`
+- configures Talk's recording backend to call that operator
+- creates and activates a Talk room
+- starts recording through Nextcloud's Talk recording API
+- uses a fake `cassini` executable only for the media worker
+- stops recording through Nextcloud's Talk recording API
+- waits for the operator job to reach `done/succeeded`
+
+Run it after the harness stack is up:
+
+```bash
+harness/bin/up.sh
+harness/bin/d263-nextcloud-lifecycle.sh
+```
+
+Useful overrides:
+
+```bash
+OPERATOR_PORT=14001 harness/bin/d263-nextcloud-lifecycle.sh
+KEEP_RUNTIME=1 harness/bin/d263-nextcloud-lifecycle.sh
+CASSINI_OPERATOR_BIN=/abs/path/to/cassini-operator harness/bin/d263-nextcloud-lifecycle.sh
+```
+
+This is not the full media acceptance test. It validates the Nextcloud/Talk
+start/stop/backend lifecycle and operator pipeline handoff. Browser media,
+HPS/WebRTC packet capture, remux, and Cassini viewer playback still belong to
+the manual full-media path.
+
 ### CI integration scenarios
 
 The repository runs one curated suite-level CI entry point plus two additional

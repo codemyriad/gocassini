@@ -188,6 +188,53 @@ func TestTalkRoomStartAcceptsAuthenticatedRequest(t *testing.T) {
 	fakeTalk.assertUploadCount(t, 1)
 }
 
+func TestTalkRoomStartUsesConfiguredBackendURLForOperatorCalls(t *testing.T) {
+	rt, cleanup, logPath, _ := newCLITestRuntime(t)
+	defer cleanup()
+	rt.cfg.TalkSharedSecret = "secret-123"
+	fakeTalk := newFakeTalkServer(t)
+	defer fakeTalk.Close()
+	rt.cfg.TalkBackendURL = fakeTalk.server.URL
+
+	reqBody := `{"type":"start","start":{"owner":"chima","actor":{"type":"users","id":"chima"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/room/room123", strings.NewReader(reqBody))
+	req.Header.Set(talkRecordingBackendHeader, "http://localhost:28080")
+	req.Header.Set(talkRecordingRandomHeader, "random-seed")
+	req.Header.Set(talkRecordingChecksumHeader, talkChecksum(rt.cfg.TalkSharedSecret, "random-seed", []byte(reqBody)))
+	rec := httptest.NewRecorder()
+	rt.talkRoomHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	jobs, err := rt.store.ListJobs(req.Context())
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	_ = waitForJobState(t, rt.store, jobs[0].ID, "succeeded")
+	logText := readFileString(t, logPath)
+	if !strings.Contains(logText, "record --call http://localhost:28080/call/room123") {
+		t.Fatalf("expected public synthesized call URL in log, got %s", logText)
+	}
+	if !strings.Contains(logText, "--connect-url "+fakeTalk.server.URL) {
+		t.Fatalf("expected operator connect URL in log, got %s", logText)
+	}
+	if !strings.Contains(jobs[0].RequestJSON, `"baseURL":"http://localhost:28080"`) {
+		t.Fatalf("expected public base URL in request JSON, got %s", jobs[0].RequestJSON)
+	}
+	if !strings.Contains(jobs[0].RequestJSON, `"talkConnectURL":"`+fakeTalk.server.URL+`"`) {
+		t.Fatalf("expected connect URL in request JSON, got %s", jobs[0].RequestJSON)
+	}
+	if _, ok := rt.lookupTalkRoomState(talkRoomKey("http://localhost:28080", "room123")); ok {
+		t.Fatalf("expected public room mapping to be cleared after completion")
+	}
+	fakeTalk.assertEventTypes(t, []string{"started", "stopped"})
+	fakeTalk.assertUploadCount(t, 1)
+}
+
 func TestTalkRoomStartIsIdempotentForKnownRoom(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -248,6 +295,49 @@ func TestTalkRoomStopAcceptsAuthenticatedRequest(t *testing.T) {
 	waitForRecordState(t, rt.store, state.JobID, "running")
 
 	stopBody := `{"type":"stop","stop":{"actor":{"type":"users","id":"chima"}}}`
+	stopReq := httptest.NewRequest(http.MethodPost, "/api/v1/room/room123", strings.NewReader(stopBody))
+	stopReq.Header.Set(talkRecordingBackendHeader, fakeTalk.server.URL)
+	stopReq.Header.Set(talkRecordingRandomHeader, "random-stop")
+	stopReq.Header.Set(talkRecordingChecksumHeader, talkChecksum(rt.cfg.TalkSharedSecret, "random-stop", []byte(stopBody)))
+	stopRec := httptest.NewRecorder()
+	rt.talkRoomHandler(stopRec, stopReq)
+	if stopRec.Code != http.StatusAccepted {
+		t.Fatalf("stop status = %d, want %d body=%s", stopRec.Code, http.StatusAccepted, stopRec.Body.String())
+	}
+	_ = waitForJobState(t, rt.store, state.JobID, "succeeded")
+	if _, ok := rt.lookupTalkRoomState(talkRoomKey(fakeTalk.server.URL, "room123")); ok {
+		t.Fatalf("expected room mapping to be cleared after completion")
+	}
+	fakeTalk.assertEventTypes(t, []string{"started", "stopped"})
+	fakeTalk.assertUploadCount(t, 1)
+}
+
+func TestTalkRoomStopAcceptsEmptyArrayPayload(t *testing.T) {
+	rt, cleanup, _, startedPath := newCLITestRuntime(t)
+	defer cleanup()
+	rt.cfg.TalkSharedSecret = "secret-123"
+	t.Setenv("FAKE_RECORD_WAIT_FOR_SIGNAL", "1")
+	fakeTalk := newFakeTalkServer(t)
+	defer fakeTalk.Close()
+
+	startBody := `{"type":"start","start":{"owner":"chima","actor":{"type":"users","id":"chima"}}}`
+	startReq := httptest.NewRequest(http.MethodPost, "/api/v1/room/room123", strings.NewReader(startBody))
+	startReq.Header.Set(talkRecordingBackendHeader, fakeTalk.server.URL)
+	startReq.Header.Set(talkRecordingRandomHeader, "random-start")
+	startReq.Header.Set(talkRecordingChecksumHeader, talkChecksum(rt.cfg.TalkSharedSecret, "random-start", []byte(startBody)))
+	startRec := httptest.NewRecorder()
+	rt.talkRoomHandler(startRec, startReq)
+	if startRec.Code != http.StatusOK {
+		t.Fatalf("start status = %d, want %d body=%s", startRec.Code, http.StatusOK, startRec.Body.String())
+	}
+	waitForFile(t, startedPath)
+	state, ok := rt.lookupTalkRoomState(talkRoomKey(fakeTalk.server.URL, "room123"))
+	if !ok {
+		t.Fatalf("expected room mapping")
+	}
+	waitForRecordState(t, rt.store, state.JobID, "running")
+
+	stopBody := `{"type":"stop","stop":[]}`
 	stopReq := httptest.NewRequest(http.MethodPost, "/api/v1/room/room123", strings.NewReader(stopBody))
 	stopReq.Header.Set(talkRecordingBackendHeader, fakeTalk.server.URL)
 	stopReq.Header.Set(talkRecordingRandomHeader, "random-stop")
@@ -327,6 +417,15 @@ func newFakeTalkServer(t *testing.T) *fakeTalkServer {
 	ft := &fakeTalkServer{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ocs/v2.php/apps/spreed/api/v1/recording/backend", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get(talkRecordingRandomHeader); len(got) < 32 {
+			t.Fatalf("%s length = %d, want >= 32", talkRecordingRandomHeader, len(got))
+		}
+		if r.Header.Get(talkRecordingRandomHeader) == "" {
+			t.Fatalf("missing %s header", talkRecordingRandomHeader)
+		}
+		if r.Header.Get(talkRecordingChecksumHeader) == "" {
+			t.Fatalf("missing %s header", talkRecordingChecksumHeader)
+		}
 		body, _ := io.ReadAll(r.Body)
 		var payload map[string]any
 		if err := json.Unmarshal(body, &payload); err != nil {
@@ -340,6 +439,15 @@ func newFakeTalkServer(t *testing.T) *fakeTalkServer {
 		_, _ = w.Write([]byte(`{"ocs":{"meta":{"status":"ok","statuscode":200,"message":"OK"},"data":[]}}`))
 	})
 	mux.HandleFunc("/ocs/v2.php/apps/spreed/api/v1/recording/room123/store", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get(talkRecordingRandomHeader); len(got) < 32 {
+			t.Fatalf("%s length = %d, want >= 32", talkRecordingRandomHeader, len(got))
+		}
+		if r.Header.Get(talkRecordingRandomHeader) == "" {
+			t.Fatalf("missing %s header", talkRecordingRandomHeader)
+		}
+		if r.Header.Get(talkRecordingChecksumHeader) == "" {
+			t.Fatalf("missing %s header", talkRecordingChecksumHeader)
+		}
 		if err := r.ParseMultipartForm(1 << 20); err != nil {
 			t.Fatalf("parse multipart: %v", err)
 		}
