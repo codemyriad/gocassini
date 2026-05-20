@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -19,6 +20,7 @@ type Config struct {
 	StopWhenRoomEmpty       bool
 	RoomEmptyGrace          time.Duration
 	CallURL                 string
+	ConnectBaseURL          string
 	GuestName               string
 	JoinFlags               int
 	Insecure                bool
@@ -47,6 +49,7 @@ func FromFlags(args []string) (Config, error) {
 	fs.BoolVar(&cfg.StopWhenRoomEmpty, "stop-when-room-empty", true, "in talk mode, stop after all remote participants leave")
 	fs.Float64Var(&roomEmptyGraceSeconds, "room-empty-grace", 30.0, "seconds to wait before stopping after room becomes empty")
 	fs.StringVar(&cfg.CallURL, "call-url", "", "Nextcloud Talk call URL (required in talk mode)")
+	fs.StringVar(&cfg.ConnectBaseURL, "connect-url", "", "optional Nextcloud base URL used for HTTP/OCS requests when different from --call-url")
 	fs.StringVar(&cfg.GuestName, "name", "GocassiniObserver", "display name for the observer guest")
 	fs.IntVar(&cfg.JoinFlags, "join-flags", 1, "call join flags (must include bit 1)")
 	fs.BoolVar(&cfg.Insecure, "insecure", false, "disable TLS certificate verification (testing only)")
@@ -69,6 +72,9 @@ func FromFlags(args []string) (Config, error) {
 	}
 	if cfg.Mode == "talk" && cfg.CallURL == "" {
 		return Config{}, errors.New("call-url must be provided in talk mode")
+	}
+	if cfg.ConnectBaseURL != "" {
+		cfg.ConnectBaseURL = strings.TrimRight(strings.TrimSpace(cfg.ConnectBaseURL), "/")
 	}
 	if durationSeconds < 0 {
 		return Config{}, errors.New("duration must be >= 0")

@@ -20,6 +20,13 @@ else
   unset OC_PASS
 fi
 
+log "Ensuring local operator-facing trusted domains"
+occ config:system:set trusted_domains 3 --value="host.docker.internal"
+gateway="$(docker network inspect "${PROJECT_NAME}_default" -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
+if [[ -n "$gateway" ]]; then
+  occ config:system:set trusted_domains 4 --value="$gateway"
+fi
+
 if [[ "$SPREED_PROFILE" != "full" ]]; then
   log "Skipping signaling/TURN wiring because profile is '$SPREED_PROFILE'"
   exit 0
@@ -50,5 +57,19 @@ if occ_has "talk:turn:add"; then
   occ talk:turn:delete turn "$TURN_SERVER" udp,tcp >/dev/null 2>&1 || true
   occ talk:turn:add turn "$TURN_SERVER" udp,tcp --secret="$TURN_SHARED_SECRET"
 fi
+
+effective_recording_url="${CASSINI_TALK_RECORDING_URL:-}"
+if [[ -z "$effective_recording_url" || "$effective_recording_url" == "http://127.0.0.1:4000" || "$effective_recording_url" == "http://localhost:4000" ]]; then
+  if [[ -n "$gateway" ]]; then
+    effective_recording_url="http://$gateway:4000"
+  else
+    effective_recording_url="http://127.0.0.1:4000"
+  fi
+fi
+
+log "Configuring Talk recording backend: $effective_recording_url"
+recording_json=$(printf '{"servers":[{"server":"%s","verify":false}],"secret":"%s"}' "$effective_recording_url" "$CASSINI_TALK_RECORDING_SECRET")
+occ config:app:set spreed recording_servers --value="$recording_json"
+occ config:app:set spreed call_recording --value="yes"
 
 log "Bootstrap complete"

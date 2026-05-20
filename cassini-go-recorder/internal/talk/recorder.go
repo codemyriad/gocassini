@@ -33,8 +33,9 @@ const (
 type Recorder struct {
 	cfg config.Config
 
-	baseURL   string
-	roomToken string
+	baseURL        string
+	connectBaseURL string
+	roomToken      string
 
 	ocs      *nextcloud.OCSClient
 	settings *nextcloud.SignalingSettings
@@ -111,6 +112,10 @@ func (r *Recorder) run(ctx context.Context) error {
 		return err
 	}
 	r.baseURL = baseURL
+	r.connectBaseURL = strings.TrimRight(strings.TrimSpace(r.cfg.ConnectBaseURL), "/")
+	if r.connectBaseURL == "" {
+		r.connectBaseURL = baseURL
+	}
 	r.roomToken = roomToken
 	r.finalOutputPath = deriveFinalOutputPath(r.cfg.OutputPath, r.cfg.FinalOutputPath)
 
@@ -131,7 +136,7 @@ func (r *Recorder) run(ctx context.Context) error {
 	r.sessionPath = sessionArtifact.sessionPath
 	log.Printf("session artifact capture enabled: session_id=%s path=%s", sessionArtifact.sessionID, sessionArtifact.sessionDir)
 
-	r.ocs = nextcloud.NewOCSClient(r.baseURL, r.cfg.Insecure)
+	r.ocs = nextcloud.NewOCSClient(r.connectBaseURL, r.cfg.Insecure)
 	if err := r.bootstrap(ctx); err != nil {
 		_ = r.cleanup(context.Background())
 		return err
@@ -302,7 +307,7 @@ func (r *Recorder) bootstrap(ctx context.Context) error {
 		}
 	}
 
-	log.Printf("talk bootstrap complete: base=%s token=%s session=%s signaling_session=%s", r.baseURL, r.roomToken, r.nextcloudSessionID, r.signalingSessionID)
+	log.Printf("talk bootstrap complete: base=%s connect=%s token=%s session=%s signaling_session=%s", r.baseURL, r.connectBaseURL, r.roomToken, r.nextcloudSessionID, r.signalingSessionID)
 	return nil
 }
 
@@ -1575,6 +1580,7 @@ func (r *Recorder) writeReport(
 		"started_at":       r.startedAt.UTC().Format(time.RFC3339Nano),
 		"call_url":         r.cfg.CallURL,
 		"base_url":         r.baseURL,
+		"connect_base_url": r.connectBaseURL,
 		"room_token":       r.roomToken,
 		"guest_name":       r.cfg.GuestName,
 		"duration_seconds": int(r.cfg.Duration / time.Second),
