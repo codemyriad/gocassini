@@ -566,7 +566,6 @@ jobs:
           fi
       - name: Log in to ghcr.io (for pull on push events)
         if: steps.media-check.outputs.media == 'present' && github.event_name != 'pull_request'
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -574,12 +573,12 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Restore image artifact (PR only)
         if: steps.media-check.outputs.media == 'present' && github.event_name == 'pull_request'
-        if: github.event_name == 'pull_request'
         uses: actions/download-artifact@v4
         with:
           name: exapp-image
           path: /tmp
       - name: Load or pull image
+        if: steps.media-check.outputs.media == 'present'
         env:
           IMAGE_REF_LIST: ${{ needs.build-image.outputs.image_ref }}
         run: |
