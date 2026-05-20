@@ -554,14 +554,36 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - name: Check bot media availability
+      - name: Fetch bot media fixture
         id: media-check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIXTURE_TAG: harness-fixtures-lantern-v1-2026-05-20
+          FIXTURE_ASSET: lantern-fixtures-min.tar.zst
         run: |
           set -euo pipefail
+          mkdir -p harness/media/processed
+          # Reuse already-present media (self-hosted runner often has it from
+          # earlier local runs).
+          if [[ -s harness/media/processed/showcase-lantern-festival-v1/mira.ogg ]]; then
+            echo "media already present on runner"
+            echo "media=present" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Pull the release asset. Use the gh CLI so this works for both
+          # public and private repos — gh authenticates with the workflow
+          # token, which scopes to the same repo and can download release
+          # assets even when the repo is private.
+          tmp=$(mktemp -d)
+          gh release download "$FIXTURE_TAG" --repo codemyriad/gocassini \
+            --pattern "$FIXTURE_ASSET" \
+            --output "$tmp/fixtures.tar.zst"
+          tar --use-compress-program=zstd -xf "$tmp/fixtures.tar.zst" -C harness/media/processed
+          rm -rf "$tmp"
           if [[ -s harness/media/processed/showcase-lantern-festival-v1/mira.ogg ]]; then
             echo "media=present" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::Talk e2e bot media not present in CI runner — harness invocation will be skipped (transcribe-smoke covers the transcription smoke path)."
+            echo "::warning::Talk e2e fixture extracted but mira.ogg is missing — harness invocation will be skipped."
             echo "media=absent" >> "$GITHUB_OUTPUT"
           fi
       - name: Log in to ghcr.io (for pull on push events)
