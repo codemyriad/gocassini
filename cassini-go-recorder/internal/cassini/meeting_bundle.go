@@ -144,25 +144,52 @@ func validateReadyMeetingBundleContents(rootDir string) error {
 		return fmt.Errorf("missing required files: %s", strings.Join(missing, ", "))
 	}
 
-	type artifactManifest struct {
-		Files map[string]string `json:"files"`
+	// The artifact manifest's `files` map carries both scalar paths (audio,
+	// transcript, ...) and, in v2 multi-tx mode, a structured `transcripts`
+	// array. Decode permissively: validate string entries; recurse into the
+	// transcripts array's `path` fields; ignore any other shape.
+	type transcriptRef struct {
+		Path string `json:"path"`
 	}
 	manifestPath := filepath.Join(rootDir, "manifest.json")
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return fmt.Errorf("read artifact manifest: %w", err)
 	}
-	var manifest artifactManifest
-	if err := json.Unmarshal(raw, &manifest); err != nil {
+	var envelope struct {
+		Files map[string]json.RawMessage `json:"files"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return fmt.Errorf("parse artifact manifest: %w", err)
 	}
-	for key, relativePath := range manifest.Files {
-		relativePath = strings.TrimSpace(relativePath)
-		if relativePath == "" {
+	for key, raw := range envelope.Files {
+		if key == "transcripts" {
+			var refs []transcriptRef
+			if err := json.Unmarshal(raw, &refs); err != nil {
+				return fmt.Errorf("artifact manifest files.transcripts: %w", err)
+			}
+			for _, ref := range refs {
+				path := strings.TrimSpace(ref.Path)
+				if path == "" {
+					continue
+				}
+				if _, err := os.Stat(filepath.Join(rootDir, path)); err != nil {
+					return fmt.Errorf("artifact manifest declares missing transcripts entry: %s", path)
+				}
+			}
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(rootDir, relativePath)); err != nil {
-			return fmt.Errorf("artifact manifest declares missing %s file: %s", key, relativePath)
+		var path string
+		if err := json.Unmarshal(raw, &path); err != nil {
+			// Non-string, non-transcripts entries are not paths; skip.
+			continue
+		}
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(rootDir, path)); err != nil {
+			return fmt.Errorf("artifact manifest declares missing %s file: %s", key, path)
 		}
 	}
 	return nil

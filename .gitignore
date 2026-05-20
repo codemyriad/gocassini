@@ -27,6 +27,8 @@
 *.json
 !/test/scenarios/*.json
 !/harness/scenarios/*.json
+!/spec/*.json
+!/spec/**/*.json
 gocassini-*.log
 *gocassini*.log
 

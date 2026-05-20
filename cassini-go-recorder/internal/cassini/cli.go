@@ -23,6 +23,7 @@ var runRecorderApp = app.RunContext
 
 type recordOptions struct {
 	callURL           string
+	connectURL        string
 	outDir            string
 	name              string
 	durationSeconds   int
@@ -82,6 +83,7 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	fs := flag.NewFlagSet("cassini record", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.callURL, "call", "", "Nextcloud Talk call URL")
+	fs.StringVar(&opts.connectURL, "connect-url", "", "Nextcloud base URL for HTTP/OCS requests when different from --call")
 	fs.StringVar(&opts.outDir, "out", "", "output portable .opus file or debug .run bundle directory")
 	fs.StringVar(&opts.name, "name", defaultRecorderName, "display name for the recorder guest")
 	fs.IntVar(&opts.durationSeconds, "duration", 0, "hard runtime limit in seconds (0 disables fixed timeout)")
@@ -136,6 +138,7 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		StopWhenRoomEmpty:   opts.stopWhenRoomEmpty,
 		RoomEmptyGrace:      time.Duration(opts.roomEmptyGraceSec * float64(time.Second)),
 		CallURL:             opts.callURL,
+		ConnectBaseURL:      opts.connectURL,
 		GuestName:           opts.name,
 		JoinFlags:           1,
 		Insecure:            opts.insecure,
@@ -214,6 +217,7 @@ func runRecordPortable(ctx context.Context, opts recordOptions, stdout, stderr i
 		StopWhenRoomEmpty:   opts.stopWhenRoomEmpty,
 		RoomEmptyGrace:      time.Duration(opts.roomEmptyGraceSec * float64(time.Second)),
 		CallURL:             opts.callURL,
+		ConnectBaseURL:      opts.connectURL,
 		GuestName:           opts.name,
 		JoinFlags:           1,
 		Insecure:            opts.insecure,
