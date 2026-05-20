@@ -25,10 +25,8 @@ permissions:
   packages: write
 
 # Cancel any in-progress run for the same branch when a new push arrives.
-# The CUDA build runs on a single self-hosted GPU runner (george) with
-# ~90G of disk; back-to-back CUDA builds without this guard pile up
-# 11.9G images each and exhaust the LXC's rootfs. main + version tags
-# get one concurrency group each so they never cancel each other.
+# Pushes to main and to each version tag get their own concurrency group,
+# so a tag publish never cancels a main publish and vice-versa.
 concurrency:
   group: publish-exapp-image-${{ github.ref }}
   cancel-in-progress: true
