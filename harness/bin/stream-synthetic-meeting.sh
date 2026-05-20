@@ -9,7 +9,10 @@ CALL_URL="${CALL_URL:-}"
 SCENARIO="${SCENARIO:-$TEST_DIR/scenarios/synthetic-pied-piper.v1.json}"
 OUTPUT_DIR="${OUTPUT_DIR:-$MEDIA_DIR/processed/synthetic-pied-piper-v1}"
 BACKEND="${BACKEND:-kokoro}"
-PREPARE=1
+# Honor PREPARE from the env so callers pointing at pre-rendered LFS-vendored
+# fixtures can skip the ffmpeg+Kokoro generation step entirely. Defaults to 1
+# for backwards compatibility with manual invocations.
+PREPARE="${PREPARE:-1}"
 FORCE=0
 OVERRIDE_DURATION="${DURATION:-}"
 
