@@ -419,6 +419,19 @@ jobs:
     # the harness can run on a fresh CI checkout. Treat this job as a hard
     # gate now rather than an informational warning.
     steps:
+      - name: Ensure git-lfs is available
+        # ubuntu-latest ships git-lfs preinstalled, but self-hosted runners
+        # don't necessarily. Install via apt when missing so the workflow
+        # doesn't depend on host configuration.
+        run: |
+          set -euo pipefail
+          if command -v git-lfs >/dev/null 2>&1; then
+            git-lfs --version
+            exit 0
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends git-lfs
+          git lfs install --skip-repo
       - uses: actions/checkout@v4
         with:
           lfs: true
@@ -463,6 +476,18 @@ jobs:
     needs: build-image-cuda
     timeout-minutes: 25
     steps:
+      - name: Ensure git-lfs is available
+        # Self-hosted GPU runners don't ship git-lfs by default; install on
+        # demand so checkout@v4 with lfs: true succeeds.
+        run: |
+          set -euo pipefail
+          if command -v git-lfs >/dev/null 2>&1; then
+            git-lfs --version
+            exit 0
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends git-lfs
+          git lfs install --skip-repo
       - uses: actions/checkout@v4
         with:
           lfs: true
