@@ -8,16 +8,19 @@ import (
 )
 
 func TestPortableMeetingV2Enabled(t *testing.T) {
-	for _, value := range []string{"1", "true", "TRUE", "yes", "On"} {
-		t.Setenv("CASSINI_FORMAT_V2", value)
+	// v2 is the default — empty/falsy/unrecognized CASSINI_FORMAT_V1 leaves
+	// v2 on.
+	for _, value := range []string{"", "0", "false", "no", "off", "maybe"} {
+		t.Setenv("CASSINI_FORMAT_V1", value)
 		if !portableMeetingV2Enabled() {
-			t.Errorf("CASSINI_FORMAT_V2=%q should enable v2", value)
+			t.Errorf("CASSINI_FORMAT_V1=%q should leave v2 enabled", value)
 		}
 	}
-	for _, value := range []string{"", "0", "false", "no", "off", "maybe"} {
-		t.Setenv("CASSINI_FORMAT_V2", value)
+	// CASSINI_FORMAT_V1=truthy opts back into v1.
+	for _, value := range []string{"1", "true", "TRUE", "yes", "On"} {
+		t.Setenv("CASSINI_FORMAT_V1", value)
 		if portableMeetingV2Enabled() {
-			t.Errorf("CASSINI_FORMAT_V2=%q should not enable v2", value)
+			t.Errorf("CASSINI_FORMAT_V1=%q should disable v2 (use v1)", value)
 		}
 	}
 }

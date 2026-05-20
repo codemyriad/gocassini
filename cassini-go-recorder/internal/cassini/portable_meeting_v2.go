@@ -9,18 +9,19 @@ import (
 )
 
 // portableMeetingV2Enabled reports whether the producer should emit the v2
-// multi-transcription format. The flag stays off by default; flip it on with
-// CASSINI_FORMAT_V2=1 once the v2-aware viewer is live in production.
+// multi-transcription format. v2 is the default. Set CASSINI_FORMAT_V1=1 to
+// opt back into the legacy single-transcript v1 layout (kept around for
+// regression diffing during the v3 rollout; removable once that lands).
 //
 // Strict-profile rollout (see docs/proposals/multi-transcription-format-plan.md):
-// the viewer must ship to production before flipping this flag.
+// the v2-aware viewer is the published one, so emitting v2 by default is safe.
 func portableMeetingV2Enabled() bool {
-	value := strings.TrimSpace(os.Getenv("CASSINI_FORMAT_V2"))
+	value := strings.TrimSpace(os.Getenv("CASSINI_FORMAT_V1"))
 	switch strings.ToLower(value) {
 	case "1", "true", "yes", "on":
-		return true
-	default:
 		return false
+	default:
+		return true
 	}
 }
 

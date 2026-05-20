@@ -12,7 +12,8 @@ import (
 // BuildConfig holds runtime options for the transcription pipeline.
 type BuildConfig struct {
 	Device                string    // "cpu" or "cuda"
-	ModelID               ModelID   // defaults to ModelParakeet110M
+	ModelID               ModelID   // defaults to defaultModelID
+	AdditionalModels      []ModelID // run extra transcription passes; each becomes a sibling transcript file referenced from manifest.files.transcripts
 	CacheDir              string    // root cache directory, e.g. ~/.cache/cassini
 	LLM                   LLMConfig // optional; if not configured, skip readable cleanup
 	SummaryLLM            LLMConfig // optional; if not configured, skip summary generation
@@ -81,42 +82,21 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		return fmt.Errorf("ensure VAD model: %w", err)
 	}
 
-	// --- 4. Create recognizer ---
-	fmt.Fprintf(stdout, "  loading recognizer (device=%s)...\n", cfg.Device)
-	rec, err := NewRecognizer(modelPaths, vadPath, cfg.Device, cfg.NumThreads)
+	// --- 4. Transcribe with the primary model, then any additional models.
+	// The primary model writes the default transcript.words.v1.json (v1
+	// fallback). Each additional model writes a sibling transcript file and
+	// is recorded under manifest.files.transcripts for v2 multi-tx output.
+	segments, err := transcribePass(ctx, mkvPath, streams, modelPaths, vadPath, cfg.Device, cfg.NumThreads, stdout)
 	if err != nil {
-		return fmt.Errorf("create recognizer: %w", err)
+		return err
 	}
-	defer rec.Close()
-
-	// --- 5. Transcribe each speaker track ---
-	perSpeakerSegs := make([][]Segment, len(streams))
-	for i, stream := range streams {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		fmt.Fprintf(stdout, "  transcribing %s (stream index %d)...\n", stream.SpeakerLabel, stream.Index)
-		samples, err := ExtractSpeakerFloats(mkvPath, stream)
-		if err != nil {
-			return fmt.Errorf("extract audio for %s: %w", stream.SpeakerLabel, err)
-		}
-		words, err := rec.Transcribe(samples, modelPaths.SampleRate)
-		if err != nil {
-			return fmt.Errorf("transcribe %s: %w", stream.SpeakerLabel, err)
-		}
-		fmt.Fprintf(stdout, "    %s: %d words\n", stream.SpeakerLabel, len(words))
-		perSpeakerSegs[i] = AssembleSegments(stream.SpeakerID, words, 0, 0)
-	}
-
-	// --- 6. Merge and sort all segments ---
-	segments := MergeAndSortSegments(perSpeakerSegs)
-
-	// --- 7. Write word-level transcript ---
-	transcriptPath := filepath.Join(outputDir, "transcript.words.v1.json")
-	if err := writeTranscriptWithHash(transcriptPath, "transcript.words.v1", streams, segments, audioDurationMS, sha256hex); err != nil {
+	if err := writeTranscriptWithHash(filepath.Join(outputDir, "transcript.words.v1.json"), "transcript.words.v1", streams, segments, audioDurationMS, sha256hex); err != nil {
 		return fmt.Errorf("write transcript: %w", err)
+	}
+
+	additionalTranscripts, err := runAdditionalTranscripts(ctx, mkvPath, outputDir, streams, audioDurationMS, sha256hex, cfg, stdout)
+	if err != nil {
+		return err
 	}
 
 	// --- 8. Optional: LLM readable cleanup ---
@@ -138,12 +118,114 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// --- 10. Write manifest ---
 	manifestPath := filepath.Join(outputDir, "manifest.json")
 	srcBasename := filepath.Base(mkvPath)
-	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, streams, segments, cfg.ModelID, cfg.LLM.Model, hasReadable, cfg.SummaryLLM.Model, hasSummary); err != nil {
+	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, streams, segments, cfg.ModelID, cfg.LLM.Model, hasReadable, cfg.SummaryLLM.Model, hasSummary, additionalTranscripts); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 
 	fmt.Fprintf(stdout, "  done: %d segments, %d words\n", len(segments), CountWords(segments))
 	return nil
+}
+
+// AdditionalTranscript describes one extra transcript file emitted by a
+// secondary STT model. The producer turns these into manifest.files.transcripts
+// entries so the v2 portable-meeting packer can fan them out into separate
+// CASSINI_TX_<ID>_PAYLOAD_* tag sets.
+type AdditionalTranscript struct {
+	ID      string  // sanitised model id, suitable for tag namespace (a-z 0-9 - _, max 32 chars)
+	Path    string  // relative to outputDir, e.g. transcript-parakeet-tdt-06b-v2-int8.words.v1.json
+	ModelID ModelID // raw STT model id, kept for provenance
+}
+
+// transcribePass runs one full transcription pass over every speaker stream
+// using the given recognizer config. Returns merged + sorted segments.
+func transcribePass(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, device string, numThreads int, stdout io.Writer) ([]Segment, error) {
+	fmt.Fprintf(stdout, "  loading recognizer (device=%s)...\n", device)
+	rec, err := NewRecognizer(modelPaths, vadPath, device, numThreads)
+	if err != nil {
+		return nil, fmt.Errorf("create recognizer: %w", err)
+	}
+	defer rec.Close()
+
+	perSpeakerSegs := make([][]Segment, len(streams))
+	for i, stream := range streams {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		fmt.Fprintf(stdout, "  transcribing %s (stream index %d)...\n", stream.SpeakerLabel, stream.Index)
+		samples, err := ExtractSpeakerFloats(mkvPath, stream)
+		if err != nil {
+			return nil, fmt.Errorf("extract audio for %s: %w", stream.SpeakerLabel, err)
+		}
+		words, err := rec.Transcribe(samples, modelPaths.SampleRate)
+		if err != nil {
+			return nil, fmt.Errorf("transcribe %s: %w", stream.SpeakerLabel, err)
+		}
+		fmt.Fprintf(stdout, "    %s: %d words\n", stream.SpeakerLabel, len(words))
+		perSpeakerSegs[i] = AssembleSegments(stream.SpeakerID, words, 0, 0)
+	}
+	return MergeAndSortSegments(perSpeakerSegs), nil
+}
+
+// runAdditionalTranscripts re-transcribes the same audio with each model in
+// cfg.AdditionalModels and writes a sibling transcript file per model.
+func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, streams []AudioStream, audioDurationMS int64, sha256hex string, cfg BuildConfig, stdout io.Writer) ([]AdditionalTranscript, error) {
+	if len(cfg.AdditionalModels) == 0 {
+		return nil, nil
+	}
+	vadPath, err := EnsureVAD(cfg.CacheDir, stdout)
+	if err != nil {
+		return nil, fmt.Errorf("ensure VAD model: %w", err)
+	}
+	out := make([]AdditionalTranscript, 0, len(cfg.AdditionalModels))
+	seen := map[string]bool{sanitizeTranscriptID(string(cfg.ModelID)): true}
+	for _, modelID := range cfg.AdditionalModels {
+		if modelID == "" || modelID == cfg.ModelID {
+			continue
+		}
+		id := sanitizeTranscriptID(string(modelID))
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+
+		fmt.Fprintf(stdout, "  ensuring additional model %s is cached...\n", modelID)
+		modelPaths, err := EnsureModel(cfg.CacheDir, modelID, stdout)
+		if err != nil {
+			return nil, fmt.Errorf("ensure additional model %s: %w", modelID, err)
+		}
+		segs, err := transcribePass(ctx, mkvPath, streams, modelPaths, vadPath, cfg.Device, cfg.NumThreads, stdout)
+		if err != nil {
+			return nil, fmt.Errorf("additional transcribe %s: %w", modelID, err)
+		}
+		path := fmt.Sprintf("transcript-%s.words.v1.json", id)
+		if err := writeTranscriptWithHash(filepath.Join(outputDir, path), "transcript.words.v1", streams, segs, audioDurationMS, sha256hex); err != nil {
+			return nil, fmt.Errorf("write additional transcript %s: %w", id, err)
+		}
+		out = append(out, AdditionalTranscript{ID: id, Path: path, ModelID: modelID})
+	}
+	return out, nil
+}
+
+// sanitizeTranscriptID maps a model id to the format-v2 transcript-id regex
+// ^[a-z0-9][a-z0-9_-]{0,31}$. Dots and other unsupported runes become hyphens
+// and the result is truncated to 32 runes.
+func sanitizeTranscriptID(id string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(id) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-_")
+	if len(out) > 32 {
+		out = strings.TrimRight(out[:32], "-_")
+	}
+	return out
 }
 
 // DefaultBuildConfig returns a BuildConfig populated from standard environment
@@ -172,9 +254,26 @@ func DefaultBuildConfig() BuildConfig {
 		summaryLLM.APIKey = ""
 	}
 
+	primary := ModelID(strings.TrimSpace(os.Getenv("CASSINI_STT_MODEL")))
+	if primary == "" {
+		primary = defaultModelID
+	}
+
+	var additional []ModelID
+	if raw := strings.TrimSpace(os.Getenv("CASSINI_STT_ADDITIONAL_MODELS")); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			additional = append(additional, ModelID(part))
+		}
+	}
+
 	return BuildConfig{
 		Device:                "cpu",
-		ModelID:               defaultModelID,
+		ModelID:               primary,
+		AdditionalModels:      additional,
 		LLM:                   llm,
 		SummaryLLM:            summaryLLM,
 		StrictReadableCleanup: envBool("CASSINI_READABLE_STRICT_BATCHES"),

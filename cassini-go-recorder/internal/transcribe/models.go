@@ -23,7 +23,12 @@ const (
 	// Significantly better accuracy than 110M; uses encoder+decoder+joiner architecture.
 	ModelParakeet06B ModelID = "parakeet-tdt-0.6b-v2-int8"
 
-	defaultModelID = ModelParakeet06B
+	// ModelParakeet06BV3 is the NeMo Parakeet TDT 0.6B v3 fp32 transducer model.
+	// Exported from the official .nemo via scripts/nemo/parakeet-tdt-0.6b-v3/export_onnx.py.
+	// Runs ~2× faster than CPU at fp32 on CUDA; int8 fragments under CUDA EP and is slower.
+	ModelParakeet06BV3 ModelID = "parakeet-tdt-0.6b-v3"
+
+	defaultModelID = ModelParakeet06BV3
 
 	// sileroVADURL is the Silero VAD model (single .onnx file, ~630 KB).
 	sileroVADURL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx"
@@ -67,7 +72,20 @@ var knownModels = map[ModelID]modelSpec{
 		SampleRate:  16000,
 		FeatureDim:  80,
 	},
+	ModelParakeet06BV3: {
+		URL:         "https://assets.gocassini.codemyriad.io/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3.tar.bz2",
+		EncoderFile: "encoder.onnx",
+		DecoderFile: "decoder.onnx",
+		JoinerFile:  "joiner.onnx",
+		TokensFile:  "tokens.txt",
+		ModelType:   "nemo_transducer",
+		SampleRate:  16000,
+		FeatureDim:  128,
+	},
 }
+
+// DefaultModelID returns the model ID used when no model is explicitly configured.
+func DefaultModelID() ModelID { return defaultModelID }
 
 // ModelPaths holds resolved filesystem paths for a downloaded model.
 type ModelPaths struct {

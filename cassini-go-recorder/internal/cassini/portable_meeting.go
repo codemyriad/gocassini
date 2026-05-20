@@ -71,10 +71,11 @@ type portableMeetingArtifact struct {
 
 // portableMeetingTranscriptInputFile describes one transcript file in a v2
 // multi-transcript bundle. Present in manifest.json under `files.transcripts`.
-// When this list is non-empty and CASSINI_FORMAT_V2 is on, the packer emits a
-// v2 file with one entry per element; the singular `files.transcript` is
-// ignored. When the list is empty, the v1-style single-transcript path
-// applies (see loadPortableMeetingSource).
+// When this list is non-empty and v2 emission is enabled (the default; opt
+// out with CASSINI_FORMAT_V1=1), the packer emits a v2 file with one entry
+// per element; the singular `files.transcript` is ignored. When the list is
+// empty, a v2 file with one synthesized raw-asr entry is emitted (or a v1
+// file when CASSINI_FORMAT_V1=1 is set).
 type portableMeetingTranscriptInputFile struct {
 	ID         string                  `json:"id"`
 	Path       string                  `json:"path"`
