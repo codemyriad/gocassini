@@ -133,6 +133,21 @@ func (r *Recognizer) transcribeSegment(samples []float32, sampleRate int, segOff
 		}
 		chunk := samples[start:end]
 
+		// Parakeet TDT v3 returns zero tokens on speech chunks of ~6–9s
+		// that have no trailing silence — the decoder treats the
+		// abrupt end as mid-utterance and emits nothing. Pad short
+		// chunks (<10s) with 0.5s of silence so the decoder sees an
+		// utterance boundary. Longer chunks already include trailing
+		// silence and are unaffected; padding longer than ~0.5s starts
+		// trimming the LibriSpeech reference, so we keep the tail
+		// short.
+		const decoderTailPadMinSeconds = 10
+		if len(chunk) < decoderTailPadMinSeconds*sampleRate {
+			padded := make([]float32, len(chunk)+sampleRate/2) // +0.5s
+			copy(padded, chunk)
+			chunk = padded
+		}
+
 		stream := sherpa.NewOfflineStream(r.r)
 		if stream == nil {
 			return nil, fmt.Errorf("failed to create offline stream")
