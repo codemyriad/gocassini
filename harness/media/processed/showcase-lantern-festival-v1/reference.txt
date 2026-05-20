@@ -1,0 +1,37 @@
+[0.9s] Mira Chen: Morning. Sorry, two goals today: lock the booth run-through for Friday's lantern festival and make sure nobody is still demoing last week's build.
+[5.0s] Leo Rossi: And please, this time, nobody says beta out loud to the mayor.
+[8.6s] Ben Fischer: I fixed the Q R code bug from issue two one four. The iPad was caching the old redirect and making me look cursed.
+[14.0s] Ana Morales: You did look cursed. Also the sign still says open at five thirty. Doors are at five, soft start at four thirty, right?
+[20.1s] Noah Patel: Correct. Crew call is four fifteen on Friday, April seventeenth. Public opens at five. Weather says light wind, which is fine unless the paper lantern wall turns into a kite.
+[27.4s] Jules Okafor: I need one clean line for partners. Something shorter than immersive neighborhood story booth with adaptive audio. Nobody can say that while holding noodles.
+[33.8s] Mira Chen: Use make a tiny night market story, send it to your friends, leave smiling. It is a little corny, but in a good way.
+[39.9s] Leo Rossi: Corny is fine. Corporate is not. We are one folding table away from being a school fundraiser.
+[45.0s] Ana Morales: Speaking of the table, the final print file is lantern-booth-v7 dot pdf. Please stop opening v5 and asking why the moon mascot looks seasick.
+[52.2s] Ben Fischer: Wait, is v7 the one with the bigger Q R code, or the one where the map pin moved?
+[55.8s] Ana Morales: Bigger Q R code, warmer yellow, less haunted moon.
+[58.5s] Mira Chen: Good. Ben, walk us through the actual flow as if a stranger walks up with zero context.
+[63.3s] Ben Fischer: Okay. They scan the code, land on demo dot lanternlane dot example slash hello, pick three prompts, record a twenty-second story, and get a digital keepsake.
+[70.8s] Jules Okafor: That already sounds better than postcard-style summary. People hear postcard and think printer, and we are absolutely not bringing a printer.
+[75.6s] Leo Rossi: Please God, no printer.
+[77.1s] Ben Fischer: Right. After that, the optional text message says your lantern story is ready, not the weird insurance sentence that was stuck in staging.
+[83.8s] Noah Patel: We still need offline fallback. If the network drops, the staff tablet should open local-demo dot html and save recordings to slash tmp slash lantern slash queue.
+[90.8s] Ana Morales: Can we not say slash tmp to the public?
+[92.2s] Leo Rossi: Absolutely not. The public gets magic. We get slash tmp.
+[95.0s] Jules Okafor: Also, tiny note, the volunteer script reads like airport safety instructions. Line three says maintain forward queue progress. Nobody talks like that.
+[101.4s] Mira Chen: Fair. Replace it with if there is a line, invite people to start thinking about their three prompts while they wait.
+[107.3s] Noah Patel: And add a line about kids. If they are under thirteen, we need the postcard version with no phone number.
+[112.9s] Ana Morales: I can make that more obvious on screen. Right now the privacy note is technically correct and spiritually invisible.
+[118.6s] Leo Rossi: That is the nicest way anyone has ever called legal text useless.
+[121.8s] Ben Fischer: One actual risk. The old audio normalization bug still clips if somebody shouts directly into the iPad. It is way better, not perfect.
+[128.0s] Mira Chen: How imperfect is not perfect?
+[129.6s] Ben Fischer: Festival imperfect, not demo-day imperfect. If someone screams woo into the mic, the waveform gets crunchy for about half a second.
+[135.7s] Jules Okafor: Honestly, that sounds on brand for a lantern festival.
+[138.2s] Noah Patel: Please write down backup battery counts before we joke ourselves into failure. I have six U S B C packs, two extension reels, and one adapter that everyone will forget.
+[145.7s] Ana Morales: I am not forgetting the adapter. I am taping it to the table with my name on it.
+[149.6s] Leo Rossi: Put my name on it too. Shared custody.
+[152.1s] Mira Chen: Final checks. Friday, April seventeenth. Crew at four fifteen. Soft start at four thirty. Public at five. Demo U R L demo dot lanternlane dot example slash hello. Print file lantern-booth-v7 dot pdf.
+[160.7s] Ben Fischer: And branch hotfix slash kiosk-offline-two needs review before lunch.
+[164.1s] Jules Okafor: I will rewrite the volunteer sheet in human language and send v3 before eleven.
+[167.9s] Noah Patel: I will post the load-in checklist in the folder called festival-ops dash final, which means it is definitely not final.
+[173.4s] Ana Morales: No file named final is ever final.
+[176.0s] Leo Rossi: Great. We are prepared, which is suspicious. End meeting before reality notices.

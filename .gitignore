@@ -13,6 +13,10 @@
 !/harness/runtime/.gitkeep
 /harness/media/processed/*
 !/harness/media/processed/.gitkeep
+# Pinned bot fixture for the Talk-record e2e harness; stored via git-lfs
+# (see .gitattributes). Local regenerations under other scenario dirs
+# stay ignored.
+!/harness/media/processed/showcase-lantern-festival-v1/
 /harness/media/aligned/*
 !/harness/media/aligned/.gitkeep
 /harness/media/raw/*
