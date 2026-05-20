@@ -3,6 +3,7 @@ package operator
 import (
 	"bytes"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,23 @@ import (
 	"path/filepath"
 	"strings"
 )
+
+// talkRandomBytes is the byte length of the per-request random value sent
+// in Talk-Recording-Random; Talk rejects shorter values, so this is the
+// minimum the protocol guarantees to accept.
+const talkRandomBytes = 32
+
+// newTalkRandom returns a 64-hex-character random string for the
+// Talk-Recording-Random header. Spreed requires at least 32 characters
+// (and a fresh value per request) — using crypto/rand keeps the values
+// unique and unforgeable.
+func newTalkRandom() string {
+	buf := make([]byte, talkRandomBytes)
+	if _, err := rand.Read(buf); err != nil {
+		panic(fmt.Errorf("read random: %w", err))
+	}
+	return hex.EncodeToString(buf)
+}
 
 const (
 	talkRecordingBackendHeader  = "Talk-Recording-Backend"
@@ -371,7 +389,7 @@ func (rt *Runtime) postTalkJSON(backendURL, path string, payload any) error {
 	if err != nil {
 		return fmt.Errorf("marshal talk JSON payload: %w", err)
 	}
-	random := "cassini-operator-json"
+	random := newTalkRandom()
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(backendURL, "/")+path, strings.NewReader(string(body)))
 	if err != nil {
 		return fmt.Errorf("build talk JSON request: %w", err)
@@ -406,7 +424,7 @@ func (rt *Runtime) uploadTalkRecording(state *talkRoomState, filePath string) er
 		return fmt.Errorf("close multipart writer: %w", err)
 	}
 
-	random := "cassini-operator-upload"
+	random := newTalkRandom()
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(state.BackendURL, "/")+"/ocs/v2.php/apps/spreed/api/v1/recording/"+state.RoomToken+"/store", &body)
 	if err != nil {
 		return fmt.Errorf("build recording upload request: %w", err)

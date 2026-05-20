@@ -64,25 +64,37 @@ log()  { printf '[talk-rec-e2e] %s\n' "$*"; }
 fail() { log "FAIL: $*"; exit 1; }
 phase() { log "----- phase $1: $2 -----"; }
 
-compose() { docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@"; }
+compose() {
+  local profile_args=()
+  if [[ "${SPREED_PROFILE:-full}" == "full" ]]; then
+    profile_args+=(--profile full)
+  fi
+  docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "${profile_args[@]}" "$@"
+}
 occ()     { compose exec -T -u www-data nextcloud php occ "$@"; }
 
 # Bot streamer needs Nextcloud reachable from the host shell.
 NC_URL_HOST="http://127.0.0.1:${NEXTCLOUD_HOST_PORT}"
-# Inside the compose network, services use docker DNS by hostname.
-NC_URL_INTERNAL="${NC_URL_INTERNAL:-http://nextcloud}"
-# Talk dials the recording-backend URL configured below; from inside
-# Nextcloud's container that has to resolve to gocassini-exapp.
-TALK_BACKEND_URL_INTERNAL="${TALK_BACKEND_URL_INTERNAL:-http://${CONTAINER_NAME}:8080/api/v1}"
+# Operator runs with --network host so it sees the same loopback as
+# Nextcloud's published host port and signaling. NC_URL_INTERNAL is the
+# URL the operator (host-network) uses to reach Nextcloud.
+NC_URL_INTERNAL="${NC_URL_INTERNAL:-http://127.0.0.1:${NEXTCLOUD_HOST_PORT}}"
+# Operator listens on host port 28083 (avoids conflict with NC 28080,
+# signaling 28082). Talk inside the compose network reaches it via the
+# Docker bridge gateway.
+OPERATOR_HOST_PORT="${OPERATOR_HOST_PORT:-28083}"
+# Talk dials the recording-backend URL configured below; Talk is in the
+# compose network and reaches the host-network operator via the bridge
+# gateway. Note: Talk appends /api/v1/... paths itself; the configured
+# URL is the base only.
+TALK_BACKEND_URL_INTERNAL=""
 
 cleanup() {
   local rc=$?
   log "cleanup (rc=$rc)"
   docker logs "$CONTAINER_NAME" >"$LOG_DIR/cassini-exapp.log" 2>&1 || true
-  docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
   compose logs nextcloud >"$LOG_DIR/nextcloud.log" 2>&1 || true
   compose logs signaling >"$LOG_DIR/signaling.log" 2>&1 || true
-  compose down --volumes >/dev/null 2>&1 || true
   if [[ $rc -ne 0 ]]; then
     log "logs in $LOG_DIR"
     for f in cassini-exapp nextcloud signaling; do
@@ -91,7 +103,14 @@ cleanup() {
         tail -n 60 "$LOG_DIR/$f.log" | sed 's/^/    /' || true
       fi
     done
+    if [[ "${KEEP_ON_FAIL:-0}" == "1" ]]; then
+      log "KEEP_ON_FAIL=1 — leaving stack up for debugging"
+      log "  manual teardown: docker rm -f $CONTAINER_NAME; docker compose -p $PROJECT_NAME -f $COMPOSE_FILE down --volumes"
+      return 0
+    fi
   fi
+  docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  compose down --volumes >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -143,6 +162,13 @@ phase 3 "Start cassini-exapp ($IMAGE_REF) on the compose network"
 
 docker pull "$IMAGE_REF" >>"$LOG_DIR/docker.log" 2>&1 || true
 
+# Pre-create the bind-mount target subdirs so the operator's record doctor
+# finds /var/lib/cassini-operator/tmp (the image ships it, but our bind
+# mount replaces the image's dir). Same for /srv/cassini-site — without
+# the bind mount, publish promote hits overlayfs EXDEV on dir rename.
+mkdir -p "$LOG_DIR/operator-work/tmp" "$LOG_DIR/operator-work/jobs"
+mkdir -p "$LOG_DIR/site"
+
 # AppAPI lifecycle env (so the operator's middleware works) plus the
 # Talk-recording-backend shared secret (so the HMAC adapter accepts
 # Talk's POSTs).
@@ -151,35 +177,46 @@ docker pull "$IMAGE_REF" >>"$LOG_DIR/docker.log" 2>&1 || true
 # Run cassini-operator directly — same pattern as ci-e2e-install-exapp.sh.
 docker run -d \
   --name "$CONTAINER_NAME" \
-  --network "${PROJECT_NAME}_default" \
+  --network host \
+  -v "$LOG_DIR/operator-work:/var/lib/cassini-operator" \
+  -v "$LOG_DIR/site:/srv/cassini-site" \
   -e "APP_HOST=0.0.0.0" \
-  -e "APP_PORT=8080" \
+  -e "APP_PORT=${OPERATOR_HOST_PORT}" \
   -e "APP_ID=$APP_ID" \
   -e "APP_VERSION=$APP_VERSION" \
   -e "APP_SECRET=$APP_SECRET" \
   -e "AA_VERSION=5.0.0" \
   -e "NEXTCLOUD_URL=$NC_URL_INTERNAL" \
   -e "TALK_RECORDING_SECRET=$TALK_RECORDING_SECRET" \
-  -e "CASSINI_OPERATOR_BIND_ADDR=0.0.0.0:8080" \
+  -e "CASSINI_OPERATOR_BIND_ADDR=0.0.0.0:${OPERATOR_HOST_PORT}" \
   -e "CASSINI_OPERATOR_BASE_PATH=/operator" \
   -e "CASSINI_APPAPI_REQUIRED=true" \
   --entrypoint /usr/local/bin/cassini-operator \
   "$IMAGE_REF" \
   >>"$LOG_DIR/docker.log" 2>&1
 
-# Wait for /heartbeat to answer. Image ships curl, not wget.
+# Wait for /heartbeat to answer. Operator is on host network, listens on
+# OPERATOR_HOST_PORT directly on the host's loopback.
 log "waiting for cassini-exapp /heartbeat"
 DEADLINE=$(( SECONDS + 60 ))
 HB_OK=0
 while (( SECONDS < DEADLINE )); do
-  status=$(docker exec "$CONTAINER_NAME" \
-    curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/heartbeat \
-    2>/dev/null || echo 000)
+  status=$(curl -s -o /dev/null -w '%{http_code}' \
+    "http://127.0.0.1:${OPERATOR_HOST_PORT}/heartbeat" 2>/dev/null || echo 000)
   if [[ "$status" == "200" ]]; then HB_OK=1; break; fi
   sleep 2
 done
 [[ $HB_OK -eq 1 ]] || fail "cassini-exapp /heartbeat never reached 200"
 log "OK cassini-exapp heartbeat 200"
+
+# Resolve the docker bridge gateway IP for the compose network — that's
+# the address Talk (inside the compose network) uses to reach the
+# host-network operator.
+BRIDGE_GATEWAY=$(docker network inspect "${PROJECT_NAME}_default" \
+  -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null)
+[[ -n "$BRIDGE_GATEWAY" ]] || fail "could not resolve compose-network gateway"
+TALK_BACKEND_URL_INTERNAL="http://${BRIDGE_GATEWAY}:${OPERATOR_HOST_PORT}"
+log "operator reachable from compose network at: $TALK_BACKEND_URL_INTERNAL"
 
 # ============================================================================
 # Phase 4: configure Talk's recording_servers + verify /api/v1/welcome
@@ -195,7 +232,7 @@ occ config:app:set spreed recording_servers --value "$RECORDING_CFG" \
 # Talk welcome: GET /api/v1/welcome should answer {"version":1} from inside
 # the Nextcloud container (Talk's reachable target).
 WELCOME=$(compose exec -T nextcloud sh -c \
-  "curl -sf $TALK_BACKEND_URL_INTERNAL/welcome" 2>/dev/null || true)
+  "curl -sf $TALK_BACKEND_URL_INTERNAL/api/v1/welcome" 2>/dev/null || true)
 if [[ "$WELCOME" != *'"version":1'* ]]; then
   fail "Talk welcome from Nextcloud → gocassini failed (got: ${WELCOME:-<empty>})"
 fi
@@ -260,7 +297,7 @@ while (( SECONDS < DEADLINE )); do
     2>/dev/null || true)
   if [[ -n "$PEEK" ]]; then
     PARTICIPANTS=$(printf '%s' "$PEEK" | python3 -c \
-      "import json,sys; d=json.load(sys.stdin)['ocs']['data']; print(d.get('activeSince') and d.get('hasCall') and 1 or 0)" \
+      "import json,sys; d=json.load(sys.stdin)['ocs']['data']; print(1 if d.get('hasCall') else 0)" \
       2>/dev/null || echo 0)
   fi
   if [[ "$PARTICIPANTS" == "1" ]]; then break; fi
@@ -293,7 +330,7 @@ log "OCS recording trigger response: ${TRIGGER_RESP:0:200}"
 # gocassini with the HMAC headers. Confirm by tailing the operator log.
 log "waiting for operator to log Talk-started callback (up to 30s)"
 DEADLINE=$(( SECONDS + 30 ))
-until docker logs "$CONTAINER_NAME" 2>&1 | grep -q "accepted id="; do
+until docker logs "$CONTAINER_NAME" 2>&1 | grep -qE "record started id="; do
   if (( SECONDS > DEADLINE )); then
     log "operator log tail:"
     docker logs "$CONTAINER_NAME" 2>&1 | tail -n 40 | sed 's/^/    /'
@@ -302,8 +339,23 @@ until docker logs "$CONTAINER_NAME" 2>&1 | grep -q "accepted id="; do
   sleep 2
 done
 JOB_ID=$(docker logs "$CONTAINER_NAME" 2>&1 \
-  | grep -oE 'accepted id=[A-Z0-9]+' | head -n1 | cut -d= -f2)
+  | grep -oE 'record started id=[A-Z0-9]+' | head -n1 | sed 's/.*=//')
 log "OK operator accepted Talk-triggered job: $JOB_ID"
+
+# Let the recorder run for RECORD_DURATION_SECONDS, then trigger Talk's
+# stop (status=0) so the operator transitions record → upload → build →
+# publish. The Talk recording-backend protocol carries no duration: the
+# recorder runs until Talk sends stop OR the room becomes empty.
+log "recording for ${RECORD_DURATION_SECONDS}s before triggering Talk stop"
+sleep "$RECORD_DURATION_SECONDS"
+
+log "triggering Talk recording stop via OCS DELETE"
+STOP_RESP=$(curl -sf -u admin:admin -X DELETE \
+  -H "OCS-APIRequest: true" \
+  -H "Accept: application/json" \
+  "$NC_URL_HOST/ocs/v2.php/apps/spreed/api/v1/recording/$ROOM_TOKEN" \
+  || true)
+log "OCS recording stop response: ${STOP_RESP:0:200}"
 
 # ============================================================================
 # Phase 7: wait for the recording lifecycle to complete; pull transcript
