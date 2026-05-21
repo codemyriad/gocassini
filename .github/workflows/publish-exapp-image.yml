@@ -444,6 +444,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           lfs: true
+      - name: Force LFS smudge
+        # On ubuntu-latest the working tree is fresh, but on self-hosted
+        # runners the tree is reused across runs and checkout@v4 may skip
+        # smudging files it considers unchanged, leaving stale pointers.
+        # `git lfs pull` is idempotent and cheap, so we run it on both
+        # jobs to keep them symmetric.
+        run: git lfs pull
       - name: Confirm bot media fixture is materialized
         run: |
           set -euo pipefail
@@ -509,6 +516,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           lfs: true
+      - name: Force LFS smudge
+        # See sibling CPU job: self-hosted runners reuse the working tree
+        # so checkout@v4 may leave stale pointer files; `git lfs pull` is
+        # the idempotent recovery.
+        run: git lfs pull
       - name: Confirm bot media fixture is materialized
         run: |
           set -euo pipefail
