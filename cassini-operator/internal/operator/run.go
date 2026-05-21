@@ -29,7 +29,7 @@ const (
 	nextcloudTalkProvider        = "nextcloud-talk"
 	talkAuthModeGuestParticipant = "guest-participant"
 	talkAuthModeHPBInternal      = "hpb-internal"
-	defaultTalkAuthMode          = talkAuthModeGuestParticipant
+	defaultTalkAuthMode          = talkAuthModeHPBInternal
 )
 
 type Config struct {

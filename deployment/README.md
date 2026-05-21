@@ -43,8 +43,10 @@ from the Nextcloud container. For the repo harness this is usually the Docker
 bridge gateway, for example `http://172.17.0.1:4000`, not
 `http://127.0.0.1:4000`.
 
-For HPB-internal recording, also set `CASSINI_TALK_SIGNALING_INTERNAL_SECRET`
-to the standalone signaling server `internalsecret` value.
+Cassini now defaults Nextcloud Talk recording jobs to `hpb-internal` mode.
+For that mode, set `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` to the standalone
+signaling server `internalsecret` value. Use `talkAuthMode=guest-participant`
+only as an explicit fallback.
 
 If Talk advertises a public Nextcloud URL such as `http://localhost:28080`, set
 `CASSINI_TALK_BACKEND_URL` to the URL the operator container can use to reach

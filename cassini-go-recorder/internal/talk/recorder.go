@@ -336,7 +336,7 @@ func (r *Recorder) bootstrapInternalHPB(ctx context.Context) error {
 
 	wsServer := r.settings.PrimarySignalingServer()
 	if wsServer == "" {
-		return errors.New("signaling settings missing signaling server")
+		return errors.New("signaling settings missing signaling server (standalone signaling required)")
 	}
 
 	r.signaling = signaling.NewClient(toWSURL(wsServer), r.cfg.Insecure)
@@ -395,7 +395,7 @@ func (r *Recorder) bootstrapGuestParticipant(ctx context.Context) error {
 
 	wsServer := r.settings.PrimarySignalingServer()
 	if wsServer == "" {
-		return errors.New("signaling settings missing signaling server")
+		return errors.New("signaling settings missing signaling server (standalone signaling required)")
 	}
 
 	r.signaling = signaling.NewClient(toWSURL(wsServer), r.cfg.Insecure)
@@ -559,6 +559,9 @@ func (r *Recorder) hello(ctx context.Context) error {
 				log.Printf("hello version %s request failed (attempt %d/%d): %v", version, round, maxHelloRounds, err)
 				continue
 			}
+			if asString(resp["type"]) == "error" {
+				return r.explainHelloError(resp)
+			}
 			if asString(resp["type"]) != "hello" {
 				log.Printf("hello version %s returned type=%s (attempt %d/%d)", version, asString(resp["type"]), round, maxHelloRounds)
 				continue
@@ -568,6 +571,9 @@ func (r *Recorder) hello(ctx context.Context) error {
 			r.signalingSessionID = asString(helloMap["sessionid"])
 			if r.signalingSessionID == "" {
 				return errors.New("hello response missing signaling sessionid")
+			}
+			if r.talkAuthMode() == config.TalkAuthModeHPBInternal && !helloResponseHasFeature(resp, "mcu") {
+				return errors.New("signaling server did not advertise MCU/HPB support")
 			}
 			log.Printf("hello ok (version %s)", version)
 			return nil
@@ -585,6 +591,46 @@ func (r *Recorder) hello(ctx context.Context) error {
 	}
 
 	return errors.New("all signaling hello attempts failed")
+}
+
+func (r *Recorder) explainHelloError(resp map[string]any) error {
+	code, message := signalingErrorCodeMessage(resp)
+	switch code {
+	case "invalid_client_type":
+		return errors.New("internal clients are not supported by the signaling server; check that the signaling server internalsecret is configured")
+	case "invalid_token", "auth_failed":
+		if r.talkAuthMode() == config.TalkAuthModeHPBInternal {
+			return fmt.Errorf("internal signaling auth failed: code=%s message=%s", code, message)
+		}
+	}
+	return r.explainSignalingError("signaling hello failed", resp)
+}
+
+func (r *Recorder) explainSignalingError(prefix string, resp map[string]any) error {
+	code, message := signalingErrorCodeMessage(resp)
+	if code == "" && message == "" {
+		return fmt.Errorf("%s: %v", prefix, resp)
+	}
+	if message == "" {
+		return fmt.Errorf("%s: code=%s", prefix, code)
+	}
+	return fmt.Errorf("%s: code=%s message=%s", prefix, code, message)
+}
+
+func signalingErrorCodeMessage(resp map[string]any) (string, string) {
+	errorMap := asMap(resp["error"])
+	return asString(errorMap["code"]), strings.TrimSpace(asString(errorMap["message"]))
+}
+
+func helloResponseHasFeature(resp map[string]any, want string) bool {
+	helloMap := asMap(resp["hello"])
+	server := asMap(helloMap["server"])
+	for _, feature := range asSlice(server["features"]) {
+		if asString(feature) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Recorder) buildHelloRequest(version, backendURL string, authParams any) (map[string]any, error) {
@@ -655,7 +701,7 @@ func (r *Recorder) joinSignalingRoom(ctx context.Context) error {
 		return fmt.Errorf("signaling room join failed: %w", err)
 	}
 	if asString(resp["type"]) == "error" {
-		return fmt.Errorf("signaling room join returned error: %v", resp)
+		return r.explainSignalingError("signaling room join failed", resp)
 	}
 	log.Printf("joined signaling room")
 	return nil

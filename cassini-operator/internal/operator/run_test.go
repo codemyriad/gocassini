@@ -606,7 +606,7 @@ func TestCreateJobRunsDoctorAndRecordWithNormalizedDefaults(t *testing.T) {
 	if !strings.Contains(job.RequestJSON, `"roomEmptyGrace":30`) {
 		t.Fatalf("expected normalized roomEmptyGrace in request_json, got %s", job.RequestJSON)
 	}
-	if !strings.Contains(job.RequestJSON, `"talkAuthMode":"guest-participant"`) {
+	if !strings.Contains(job.RequestJSON, `"talkAuthMode":"hpb-internal"`) {
 		t.Fatalf("expected normalized talkAuthMode in request_json, got %s", job.RequestJSON)
 	}
 	logText := readFileString(t, logPath)
@@ -619,7 +619,7 @@ func TestCreateJobRunsDoctorAndRecordWithNormalizedDefaults(t *testing.T) {
 	if !strings.Contains(logText, "--name CassiniRecorder") {
 		t.Fatalf("expected default guest name flag, got %s", logText)
 	}
-	if !strings.Contains(logText, "--talk-auth-mode guest-participant") {
+	if !strings.Contains(logText, "--talk-auth-mode hpb-internal") {
 		t.Fatalf("expected talk auth mode flag, got %s", logText)
 	}
 	if strings.Contains(logText, "--duration") {
@@ -654,7 +654,7 @@ func TestCreateJobPassesExplicitRecordOptions(t *testing.T) {
 	logText := readFileString(t, logPath)
 	for _, want := range []string{
 		"--name Guesty",
-		"--talk-auth-mode guest-participant",
+		"--talk-auth-mode hpb-internal",
 		"--duration 12",
 		"--stop-when-room-empty=false",
 		"--room-empty-grace 7.5",
@@ -703,6 +703,32 @@ func TestCreateJobAcceptsExplicitTalkTargetWithoutURL(t *testing.T) {
 		if !strings.Contains(logText, want) {
 			t.Fatalf("expected %q in log, got %s", want, logText)
 		}
+	}
+}
+
+func TestCreateJobHonorsExplicitGuestFallbackTalkAuthMode(t *testing.T) {
+	rt, cleanup, logPath, _ := newCLITestRuntime(t)
+	defer cleanup()
+
+	body := `{"platform":"nextcloud-talk","url":"https://example.test/live","talkAuthMode":"guest-participant"}`
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	job := waitForJobState(t, rt.store, resp.ID, "succeeded")
+	if !strings.Contains(job.RequestJSON, `"talkAuthMode":"guest-participant"`) {
+		t.Fatalf("expected explicit guest fallback in request_json, got %s", job.RequestJSON)
+	}
+	logText := readFileString(t, logPath)
+	if !strings.Contains(logText, "--talk-auth-mode guest-participant") {
+		t.Fatalf("expected explicit guest fallback flag, got %s", logText)
 	}
 }
 

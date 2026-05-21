@@ -96,6 +96,29 @@ func TestRecordAcceptsExplicitTalkTargetFlags(t *testing.T) {
 	}
 }
 
+func TestRecordDefaultsTalkAuthModeToHPBInternal(t *testing.T) {
+	prevRecorder := runRecorderApp
+	var gotCfg config.Config
+	runRecorderApp = func(_ context.Context, cfg config.Config) error {
+		gotCfg = cfg
+		return os.WriteFile(cfg.OutputPath, []byte("fake-mkv"), 0o644)
+	}
+	defer func() {
+		runRecorderApp = prevRecorder
+	}()
+
+	tmp := t.TempDir()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"record", "--call", "https://example.test/call/demo", "--out", filepath.Join(tmp, "demo.run")}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	if gotCfg.TalkAuthMode != config.TalkAuthModeHPBInternal {
+		t.Fatalf("unexpected talk auth mode: %q", gotCfg.TalkAuthMode)
+	}
+}
+
 func TestDoctorHelpExitsZero(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

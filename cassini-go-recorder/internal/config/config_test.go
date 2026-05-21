@@ -73,6 +73,9 @@ func TestFromFlagsTalkModeAcceptsExplicitTalkTarget(t *testing.T) {
 	if cfg.TalkRoomToken != "roomtoken" {
 		t.Fatalf("unexpected talk-room-token: %q", cfg.TalkRoomToken)
 	}
+	if cfg.TalkAuthMode != TalkAuthModeHPBInternal {
+		t.Fatalf("unexpected talk-auth-mode: %q", cfg.TalkAuthMode)
+	}
 }
 
 func TestFromFlagsRejectsInvalidTalkAuthMode(t *testing.T) {

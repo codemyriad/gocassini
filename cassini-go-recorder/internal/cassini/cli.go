@@ -76,7 +76,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	opts := recordOptions{
 		name:              defaultRecorderName,
-		talkAuthMode:      config.TalkAuthModeGuestParticipant,
+		talkAuthMode:      config.TalkAuthModeHPBInternal,
 		stopWhenRoomEmpty: true,
 		roomEmptyGraceSec: 30,
 		turnMode:          "all",
@@ -89,7 +89,7 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	fs.StringVar(&opts.callURL, "call", "", "Nextcloud Talk call URL")
 	fs.StringVar(&opts.talkBaseURL, "talk-base-url", "", "Nextcloud base URL for the Talk room target")
 	fs.StringVar(&opts.talkRoomToken, "talk-room-token", "", "Nextcloud Talk room token for the Talk room target")
-	fs.StringVar(&opts.talkAuthMode, "talk-auth-mode", config.TalkAuthModeGuestParticipant, "Talk bootstrap/auth mode: guest-participant or hpb-internal")
+	fs.StringVar(&opts.talkAuthMode, "talk-auth-mode", config.TalkAuthModeHPBInternal, "Talk bootstrap/auth mode: guest-participant or hpb-internal")
 	fs.StringVar(&opts.connectURL, "connect-url", "", "Nextcloud base URL for HTTP/OCS requests when different from the Talk room target")
 	fs.StringVar(&opts.outDir, "out", "", "output portable .opus file or debug .run bundle directory")
 	fs.StringVar(&opts.name, "name", defaultRecorderName, "display name for the recorder guest")

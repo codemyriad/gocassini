@@ -426,9 +426,15 @@ func classifyRecordStopReason(stopAccepted bool, exitCode *int, stopDetail strin
 		return "signaling_connection_error"
 	case strings.Contains(combined, "signaling room join failed"),
 		strings.Contains(combined, "all signaling hello attempts failed"),
+		strings.Contains(combined, "signaling hello failed"),
 		strings.Contains(combined, "signaling settings failed"),
+		strings.Contains(combined, "recording-auth signaling settings failed"),
 		strings.Contains(combined, "missing signaling server"),
+		strings.Contains(combined, "standalone signaling required"),
 		strings.Contains(combined, "hello response missing signaling sessionid"),
+		strings.Contains(combined, "internal clients are not supported by the signaling server"),
+		strings.Contains(combined, "internal signaling auth failed"),
+		strings.Contains(combined, "signaling server did not advertise mcu/hpb support"),
 		strings.Contains(combined, "join call failed"):
 		return "join_failed"
 	case exitCode != nil && *exitCode != 0:

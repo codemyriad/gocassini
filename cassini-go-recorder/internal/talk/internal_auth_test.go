@@ -72,3 +72,17 @@ func TestRoomJoinRequestIncludesSessionIDForGuestMode(t *testing.T) {
 		t.Fatalf("sessionid = %#v", got)
 	}
 }
+
+func TestExplainHelloErrorForUnsupportedInternalClients(t *testing.T) {
+	r := &Recorder{cfg: config.Config{TalkAuthMode: config.TalkAuthModeHPBInternal}}
+	err := r.explainHelloError(map[string]any{
+		"type": "error",
+		"error": map[string]any{
+			"code":    "invalid_client_type",
+			"message": "unsupported",
+		},
+	})
+	if err == nil || err.Error() != "internal clients are not supported by the signaling server; check that the signaling server internalsecret is configured" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

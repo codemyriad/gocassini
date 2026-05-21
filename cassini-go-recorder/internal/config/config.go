@@ -74,7 +74,7 @@ func FromFlags(args []string) (Config, error) {
 	fs.StringVar(&cfg.CallURL, "call-url", "", "Nextcloud Talk call URL (required unless --talk-base-url and --talk-room-token are both provided in talk mode)")
 	fs.StringVar(&cfg.TalkBaseURL, "talk-base-url", "", "Nextcloud base URL for the Talk room target")
 	fs.StringVar(&cfg.TalkRoomToken, "talk-room-token", "", "Nextcloud Talk room token for the Talk room target")
-	fs.StringVar(&cfg.TalkAuthMode, "talk-auth-mode", TalkAuthModeGuestParticipant, "Talk bootstrap/auth mode: guest-participant or hpb-internal")
+	fs.StringVar(&cfg.TalkAuthMode, "talk-auth-mode", TalkAuthModeHPBInternal, "Talk bootstrap/auth mode: guest-participant or hpb-internal")
 	fs.StringVar(&cfg.ConnectBaseURL, "connect-url", "", "optional Nextcloud base URL used for HTTP/OCS requests when different from the Talk room target")
 	fs.StringVar(&cfg.GuestName, "name", "GocassiniObserver", "display name for the observer guest")
 	fs.IntVar(&cfg.JoinFlags, "join-flags", 1, "call join flags (must include bit 1)")
