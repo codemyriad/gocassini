@@ -235,4 +235,29 @@ assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "viewer/"        200
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "control-panel/" 404
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "operator/jobs"  404
 
+# --- 7c. Assert the admin UI actually loads (not just 200 + empty) --------
+#
+# A status-code-only check passes even when the proxy returns a placeholder
+# or an error page styled to look benign. The contract a Nextcloud admin
+# actually cares about is "I logged in as admin, opened the cassini admin
+# UI, and saw the real control panel." Pin that by fetching the body and
+# asserting it contains the SPA's title marker (cassini-control-panel/
+# index.html). If the SPA ever stops shipping in the image, or the proxy
+# silently degrades to an empty 200, this catches it.
+
+assert_admin_ui_loads() {
+  local body
+  body=$(curl -sS -u "admin:admin" "$PROXY/control-panel/")
+  if ! grep -qF "<title>Cassini Control Panel</title>" <<<"$body"; then
+    log "admin /control-panel/ body did not contain the expected SPA title."
+    log "first 200 chars of response:"
+    log "${body:0:200}"
+    fail "admin UI returned 200 but body is not the cassini SPA"
+  fi
+  log "OK   admin /control-panel/ returns the cassini SPA HTML"
+}
+
+log "checking that admin UI actually loads (body contains SPA title)"
+assert_admin_ui_loads
+
 log "install-e2e passed"
