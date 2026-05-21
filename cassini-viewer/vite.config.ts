@@ -73,5 +73,9 @@ function contentTypeFor(filePath: string): string {
 
 export default defineConfig({
   plugins: [tailwindcss(), svelte(), serveViewerDemoAssets()],
-  base: "./",
+  // Default base is relative so the existing stand-alone export flow works
+  // (serve from any subpath without rebuilds). Override at build time with
+  // VITE_BASE — the Nextcloud ExApp build uses VITE_BASE=/viewer/ so all
+  // asset URLs resolve correctly under the AppAPI proxy.
+  base: process.env.VITE_BASE ?? "./",
 });

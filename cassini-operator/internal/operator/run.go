@@ -98,6 +98,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return exitCode
 	}
 
+	exappCfg, err := LoadExAppConfig()
+	if err != nil {
+		fmt.Fprintf(stderr, "exapp config: %v\n", err)
+		return 1
+	}
+	cfg.BindAddr = exappCfg.applyToBindAddr(cfg.BindAddr)
+
 	store, err := OpenStore(cfg.DBPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "open store: %v\n", err)
@@ -113,8 +120,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 
+	exappCfg.PublishedDir = cfg.SiteRoot
+	warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.SiteRoot)
+
 	server := &http.Server{
-		Handler:           newHTTPHandler(logger, runtime),
+		Handler:           newHTTPHandler(logger, runtime, exappCfg),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -134,6 +144,17 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("talk_shared_secret_set -> %t", strings.TrimSpace(cfg.TalkSharedSecret) != "")
 	logger.Printf("max_record_workers -> %d", cfg.MaxRecordWorkers)
 	logger.Printf("max_build_workers -> %d", cfg.MaxBuildWorkers)
+	if exappCfg.Active {
+		logger.Printf("exapp_appapi -> active (app_id=%s app_version=%s)", exappCfg.AppID, exappCfg.AppVersion)
+	} else {
+		logger.Printf("exapp_appapi -> inactive (APP_SECRET unset)")
+	}
+	if exappCfg.ControlPanelDist != "" {
+		logger.Printf("exapp_control_panel_dist -> %s", exappCfg.ControlPanelDist)
+	}
+	if exappCfg.ViewerDist != "" {
+		logger.Printf("exapp_viewer_dist -> %s", exappCfg.ViewerDist)
+	}
 
 	serveErrCh := make(chan error, 1)
 	go func() {
@@ -349,26 +370,43 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	return rt
 }
 
-func newHTTPHandler(logger *log.Logger, rt *Runtime) http.Handler {
+func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.Handler {
 	api := http.NewServeMux()
 	api.HandleFunc("/jobs", rt.jobsHandler)
 	api.HandleFunc("/jobs/", rt.jobDetailHandler)
 	api.HandleFunc("/events", rt.eventsHandler)
-	api.HandleFunc("/api/v1/welcome", rt.talkWelcomeHandler)
-	api.HandleFunc("/api/v1/room/", rt.talkRoomHandler)
-	api.HandleFunc("/healthz", rt.healthzHandler)
-	return requestLogger(logger, mountBasePath(rt.cfg.BasePath, api))
+
+	root := http.NewServeMux()
+	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
+	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger)
+	// Operator JSON API under BasePath ("/" or "/operator", etc).
+	mountBasePathOnto(root, rt.cfg.BasePath, api)
+
+	// /heartbeat, /healthz, and the Talk recording-backend endpoints must answer
+	// without AppAPI auth headers — Talk uses its own HMAC scheme (Talk-Recording-
+	// Backend/Random/Checksum) and the heartbeat / healthz probes are unauthed.
+	// Mount them on an outer mux so the AppAPI middleware never sees them.
+	outer := http.NewServeMux()
+	outer.Handle("/heartbeat", heartbeatHandler())
+	outer.HandleFunc("/healthz", rt.healthzHandler)
+	outer.HandleFunc("/api/v1/welcome", rt.talkWelcomeHandler)
+	outer.HandleFunc("/api/v1/room/", rt.talkRoomHandler)
+	outer.Handle("/", exappCfg.wrap(root, logger))
+
+	return requestLogger(logger, outer)
 }
 
-func mountBasePath(basePath string, api http.Handler) http.Handler {
+// mountBasePathOnto registers the operator api mux under basePath on the given
+// root mux. When basePath is "/" the API is mounted at the root.
+func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler) {
 	if basePath == "" || basePath == "/" {
-		return api
+		root.Handle("/jobs", api)
+		root.Handle("/jobs/", api)
+		root.Handle("/events", api)
+		return
 	}
-
-	mux := http.NewServeMux()
-	mux.Handle(basePath, http.StripPrefix(basePath, api))
-	mux.Handle(basePath+"/", http.StripPrefix(basePath, api))
-	return mux
+	root.Handle(basePath, http.StripPrefix(basePath, api))
+	root.Handle(basePath+"/", http.StripPrefix(basePath, api))
 }
 
 func (rt *Runtime) jobsHandler(w http.ResponseWriter, r *http.Request) {

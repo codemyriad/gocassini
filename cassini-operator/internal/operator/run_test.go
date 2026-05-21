@@ -142,7 +142,7 @@ func TestHTTPHandlerMountsRoutesUnderConfiguredBasePath(t *testing.T) {
 	defer cleanup()
 	rt.cfg.BasePath = "/operator"
 
-	handler := newHTTPHandler(log.New(ioDiscard{}, "", 0), rt)
+	handler := newHTTPHandler(log.New(ioDiscard{}, "", 0), rt, ExAppConfig{})
 
 	prefixedReq := httptest.NewRequest(http.MethodGet, "/operator/jobs", nil)
 	prefixedRec := httptest.NewRecorder()

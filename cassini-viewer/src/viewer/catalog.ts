@@ -15,9 +15,11 @@ export interface MeetingCatalog {
 }
 
 const DEFAULT_CATALOG_PATH = "./catalog.json";
+const CATALOG_FILE_NAME = "catalog.json";
 
 export async function loadMeetingCatalog(path = DEFAULT_CATALOG_PATH): Promise<MeetingCatalog | null> {
-  const response = await fetch(path === DEFAULT_CATALOG_PATH ? resolveAppAssetUrl(path) : path);
+  const targetUrl = path === DEFAULT_CATALOG_PATH ? resolveCatalogUrl() : path;
+  const response = await fetch(targetUrl);
   if (!response.ok) {
     return null;
   }
@@ -129,6 +131,33 @@ function resolveAppAssetUrl(assetPath: string): string {
   const base = import.meta.env.BASE_URL;
   const baseUrl = base && base !== "/" ? new URL(base, window.location.href) : new URL(window.location.href);
   return new URL(assetPath, baseUrl).toString();
+}
+
+// resolveCatalogUrl returns the URL the viewer should hit for catalog.json.
+//
+// Default behavior: resolve relative to the SPA's BASE_URL (Vite base), so a
+// stand-alone exported site at https://example.com/foo/ fetches
+// https://example.com/foo/catalog.json — what the existing portable export
+// flow expects.
+//
+// When VITE_PUBLISHED_BASE is set at build time, the catalog (and by
+// extension every artifactPath / audioPath the catalog points at) is served
+// from a different URL prefix. The Nextcloud ExApp build sets this to
+// `/published` so the viewer SPA can live at /viewer/ while the published
+// archive stays at /published/.
+function resolveCatalogUrl(): string {
+  const publishedBase = readEnv("VITE_PUBLISHED_BASE");
+  if (!publishedBase) {
+    return resolveAppAssetUrl(DEFAULT_CATALOG_PATH);
+  }
+  const normalized = publishedBase.endsWith("/") ? publishedBase : `${publishedBase}/`;
+  return new URL(CATALOG_FILE_NAME, new URL(normalized, window.location.href)).toString();
+}
+
+function readEnv(name: string): string {
+  // import.meta.env exposes every VITE_* env baked in at build time.
+  const value = (import.meta.env as Record<string, unknown> | undefined)?.[name];
+  return typeof value === "string" ? value : "";
 }
 
 function resolveCatalogAssetUrl(assetPath: string, catalogUrl: string): string {

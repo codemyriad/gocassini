@@ -21,10 +21,19 @@ else
 fi
 
 log "Ensuring local operator-facing trusted domains"
-occ config:system:set trusted_domains 3 --value="host.docker.internal"
+# The Nextcloud image's entrypoint already populates trusted_domains 1..4
+# from NEXTCLOUD_TRUSTED_DOMAINS (typically localhost, 127.0.0.1, nextcloud,
+# host.docker.internal). Writing to those low indices clobbers the
+# image-supplied entries — most importantly "nextcloud" itself, which the
+# ExApp container uses to reach Nextcloud over the compose network. Without
+# it, any in-network POST/PUT from the ExApp returns Nextcloud's "Access
+# through untrusted domain" 400 page — which is how install-E2E was hanging
+# (operator's init_progress=100 callback got 400, AppAPI --wait-finish polled
+# forever). Append our additions at high indices instead.
+occ config:system:set trusted_domains 10 --value="host.docker.internal"
 gateway="$(docker network inspect "${PROJECT_NAME}_default" -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
 if [[ -n "$gateway" ]]; then
-  occ config:system:set trusted_domains 4 --value="$gateway"
+  occ config:system:set trusted_domains 11 --value="$gateway"
 fi
 
 if [[ "$SPREED_PROFILE" != "full" ]]; then

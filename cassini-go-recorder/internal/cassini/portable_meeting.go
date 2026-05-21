@@ -71,11 +71,9 @@ type portableMeetingArtifact struct {
 
 // portableMeetingTranscriptInputFile describes one transcript file in a v2
 // multi-transcript bundle. Present in manifest.json under `files.transcripts`.
-// When this list is non-empty and v2 emission is enabled (the default; opt
-// out with CASSINI_FORMAT_V1=1), the packer emits a v2 file with one entry
-// per element; the singular `files.transcript` is ignored. When the list is
-// empty, a v2 file with one synthesized raw-asr entry is emitted (or a v1
-// file when CASSINI_FORMAT_V1=1 is set).
+// When this list is non-empty the packer emits a v2 portable-meeting file with
+// one entry per element; the singular `files.transcript` is ignored. When the
+// list is empty, a v2 file with one synthesized raw-asr entry is emitted.
 type portableMeetingTranscriptInputFile struct {
 	ID         string                  `json:"id"`
 	Path       string                  `json:"path"`
@@ -224,18 +222,9 @@ func packMeetingBundle(ctx context.Context, meetingDir string, outPath string, o
 		return err
 	}
 
-	var opusTags map[string]string
-	if portableMeetingV2Enabled() {
-		opusTags, err = buildPortableMeetingV2TagsFromSource(manifest, source)
-		if err != nil {
-			return err
-		}
-	} else {
-		payload, err := portable.EncodeManifest(manifest, portable.DefaultPayloadChunkSize)
-		if err != nil {
-			return err
-		}
-		opusTags = portable.BuildOpusTags(manifest, payload)
+	opusTags, err := buildPortableMeetingV2TagsFromSource(manifest, source)
+	if err != nil {
+		return err
 	}
 
 	finalStagePath, err := createPortableStagePath(resolvedOut)

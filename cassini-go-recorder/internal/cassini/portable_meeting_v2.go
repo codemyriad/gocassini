@@ -2,28 +2,10 @@ package cassini
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"gocassini/internal/portable"
 )
-
-// portableMeetingV2Enabled reports whether the producer should emit the v2
-// multi-transcription format. v2 is the default. Set CASSINI_FORMAT_V1=1 to
-// opt back into the legacy single-transcript v1 layout (kept around for
-// regression diffing during the v3 rollout; removable once that lands).
-//
-// Strict-profile rollout (see docs/proposals/multi-transcription-format-plan.md):
-// the v2-aware viewer is the published one, so emitting v2 by default is safe.
-func portableMeetingV2Enabled() bool {
-	value := strings.TrimSpace(os.Getenv("CASSINI_FORMAT_V1"))
-	switch strings.ToLower(value) {
-	case "1", "true", "yes", "on":
-		return false
-	default:
-		return true
-	}
-}
 
 // buildPortableMeetingV2Tags is the simple case: derive a v2 OpusTag map
 // from a v1-shaped Manifest's single inline transcript. Used by tests and

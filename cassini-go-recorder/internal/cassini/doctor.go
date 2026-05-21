@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"gocassini/internal/transcribe"
@@ -177,11 +178,20 @@ func commandCheck(name string) doctorCheck {
 
 func sttModelCacheChecks() []doctorCheck {
 	cacheRoot := defaultCassiniCacheRoot()
+	modelID := transcribe.DefaultModelID()
+	if v := strings.TrimSpace(os.Getenv("CASSINI_STT_MODEL")); v != "" {
+		modelID = transcribe.ModelID(v)
+	}
+
 	checks := []doctorCheck{
+		{status: doctorOK, summary: fmt.Sprintf("STT model id: %s", modelID)},
+		{status: doctorOK, summary: fmt.Sprintf("STT device: %s", defaultSTTDevice())},
 		parentWritableCheck(cacheRoot, "cassini cache root"),
 	}
 
-	modelDir := filepath.Join(cacheRoot, "models", string(transcribe.DefaultModelID()))
+	modelDir := filepath.Join(cacheRoot, "models", string(modelID))
+	checks = append(checks, modelFilesCheck(modelDir, modelID))
+
 	if info, err := os.Stat(modelDir); err == nil && info.IsDir() {
 		checks = append(checks, writableDirCheck(modelDir, "STT model cache"))
 	} else {
@@ -192,6 +202,70 @@ func sttModelCacheChecks() []doctorCheck {
 		checks = append(checks, check)
 	}
 	return checks
+}
+
+// modelFilesCheck reports whether the required onnx + tokens files for the
+// given model id are present inside modelDir. In bundled-image deployments
+// (CASSINI_DISALLOW_MODEL_DOWNLOAD=1) a missing file is fatal at recorder
+// startup, so doctor surfaces it up front.
+func modelFilesCheck(modelDir string, modelID transcribe.ModelID) doctorCheck {
+	required := []string{
+		"encoder.int8.onnx",
+		"decoder.int8.onnx",
+		"joiner.int8.onnx",
+		"tokens.txt",
+	}
+	if modelID == transcribe.ModelParakeet06BV3 {
+		// fp32 (CUDA) variant ships unsuffixed onnx files plus an external
+		// weights sidecar that the encoder.onnx references via external_data.
+		// Without encoder.weights, sherpa fails to load the encoder.
+		required = []string{
+			"encoder.onnx",
+			"encoder.weights",
+			"decoder.onnx",
+			"joiner.onnx",
+			"tokens.txt",
+		}
+	}
+	missing := []string{}
+	for _, name := range required {
+		if !fileExists(filepath.Join(modelDir, name)) {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return doctorCheck{
+			status:  doctorOK,
+			summary: fmt.Sprintf("STT model files present in %s", modelDir),
+		}
+	}
+	disallow := os.Getenv("CASSINI_DISALLOW_MODEL_DOWNLOAD")
+	if disallow == "1" || disallow == "true" {
+		return doctorCheck{
+			status: doctorFail,
+			summary: fmt.Sprintf("STT model files missing in %s: %s (CASSINI_DISALLOW_MODEL_DOWNLOAD set)",
+				modelDir, strings.Join(missing, ", ")),
+			advice: fmt.Sprintf("rebuild the image with the model bundled at %s, or unset CASSINI_DISALLOW_MODEL_DOWNLOAD to allow runtime download",
+				modelDir),
+		}
+	}
+	return doctorCheck{
+		status: doctorWarn,
+		summary: fmt.Sprintf("STT model files missing in %s: %s (will be downloaded on first build)",
+			modelDir, strings.Join(missing, ", ")),
+	}
+}
+
+func defaultSTTDevice() string {
+	if v := os.Getenv("CASSINI_STT_DEVICE"); v != "" {
+		return v
+	}
+	return "cpu"
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func parentWritableCheck(path string, label string) doctorCheck {

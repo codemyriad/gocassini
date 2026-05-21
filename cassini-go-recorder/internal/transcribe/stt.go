@@ -2,6 +2,7 @@ package transcribe
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	sherpa "github.com/k2-fsa/sherpa-onnx-go/sherpa_onnx"
@@ -81,12 +82,37 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 	return &Recognizer{r: r, vad: vad, sampleRate: paths.SampleRate}, nil
 }
 
-// Transcribe runs VAD-segmented ASR on the given float32 samples (16 kHz, mono, [-1,1]).
-// Silero VAD detects speech segments at natural silence boundaries; each segment is
-// then passed to the ASR model. Word timestamps refer to the full recording timeline.
-func (r *Recognizer) Transcribe(samples []float32, sampleRate int) ([]Word, error) {
+// Transcribe runs ASR on the given float32 samples (16 kHz, mono, [-1,1]).
+//
+// When useVAD is true, Silero VAD chunks the input at natural silence
+// boundaries before each segment is sent to the ASR model. This is the
+// right choice for genuinely sparse speech (per-participant tracks where
+// each bot is muted ~25/30s per rotation, real meetings with pauses).
+//
+// When useVAD is false, the entire input is sent through transcribeSegment
+// as a single span (which still applies the maxSafeSegmentSamples=55s split).
+// Use this when the caller already knows the audio is dense and continuous
+// — the merged-fallback path against the rotated mix is the canonical case.
+// Silero with the default 0.5 threshold has been observed to reject loud
+// (-19 to -29 dB) dense audio in ~17-33% of CI runs; bypassing VAD where it
+// adds no value removes that failure surface.
+//
+// Word timestamps refer to the full recording timeline either way.
+func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) ([]Word, error) {
 	if len(samples) == 0 {
 		return nil, nil
+	}
+
+	if !useVAD {
+		words, err := r.transcribeSegment(samples, sampleRate, 0)
+		if err != nil {
+			return nil, err
+		}
+		if len(words) == 0 && len(samples) >= sampleRate*5 {
+			audioSeconds := float64(len(samples)) / float64(sampleRate)
+			log.Printf("transcribe: 0 words from %.1fs of audio (VAD bypassed); ASR returned no tokens", audioSeconds)
+		}
+		return words, nil
 	}
 
 	r.vad.Reset()
@@ -102,12 +128,16 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int) ([]Word, erro
 	r.vad.Flush()
 
 	var allWords []Word
+	var segCount int
+	var totalSpeechSamples int
 	for !r.vad.IsEmpty() {
 		seg := r.vad.Front()
 		r.vad.Pop()
 		if seg == nil || len(seg.Samples) == 0 {
 			continue
 		}
+		segCount++
+		totalSpeechSamples += len(seg.Samples)
 
 		// seg.Start is the sample index of the segment start within the full recording.
 		segOffsetMS := int64(seg.Start) * 1000 / int64(sampleRate)
@@ -117,6 +147,15 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int) ([]Word, erro
 			return nil, err
 		}
 		allWords = append(allWords, words...)
+	}
+	// When a non-trivial audio buffer produces zero words, we want enough
+	// information in the log to tell VAD-rejected-everything from
+	// ASR-returned-no-tokens — the e2e harness keeps observing this
+	// failure intermittently and the two cases have very different fixes.
+	if len(allWords) == 0 && len(samples) >= sampleRate*5 {
+		audioSeconds := float64(len(samples)) / float64(sampleRate)
+		speechSeconds := float64(totalSpeechSamples) / float64(sampleRate)
+		log.Printf("transcribe: 0 words from %.1fs of audio; VAD segments=%d totalling %.1fs of speech", audioSeconds, segCount, speechSeconds)
 	}
 	return allWords, nil
 }
@@ -132,6 +171,21 @@ func (r *Recognizer) transcribeSegment(samples []float32, sampleRate int, segOff
 			end = len(samples)
 		}
 		chunk := samples[start:end]
+
+		// Parakeet TDT v3 returns zero tokens on speech chunks of ~6–9s
+		// that have no trailing silence — the decoder treats the
+		// abrupt end as mid-utterance and emits nothing. Pad short
+		// chunks (<10s) with 0.5s of silence so the decoder sees an
+		// utterance boundary. Longer chunks already include trailing
+		// silence and are unaffected; padding longer than ~0.5s starts
+		// trimming the LibriSpeech reference, so we keep the tail
+		// short.
+		const decoderTailPadMinSeconds = 10
+		if len(chunk) < decoderTailPadMinSeconds*sampleRate {
+			padded := make([]float32, len(chunk)+sampleRate/2) // +0.5s
+			copy(padded, chunk)
+			chunk = padded
+		}
 
 		stream := sherpa.NewOfflineStream(r.r)
 		if stream == nil {

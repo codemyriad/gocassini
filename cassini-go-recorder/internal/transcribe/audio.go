@@ -114,6 +114,36 @@ func ExtractSpeakerFloats(mkv string, stream AudioStream) ([]float32, error) {
 	return samples, nil
 }
 
+// ExtractMixedFloats decodes the mixed meeting.webm (or any single-stream
+// audio file) as []float32 (16 kHz mono, normalised to [-1, 1]). Used by
+// the merged-fallback transcription path.
+func ExtractMixedFloats(audioPath string) ([]float32, error) {
+	cmd := exec.Command("ffmpeg",
+		"-v", "error",
+		"-y",
+		"-i", audioPath,
+		"-vn",
+		"-sn",
+		"-dn",
+		"-ac", "1",
+		"-ar", "16000",
+		"-f", "s16le",
+		"pipe:1",
+	)
+	raw, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ffmpeg extract mixed audio: %w", err)
+	}
+	samples := make([]float32, len(raw)/2)
+	for i := range samples {
+		lo := raw[i*2]
+		hi := raw[i*2+1]
+		s16 := int16(uint16(lo) | uint16(hi)<<8)
+		samples[i] = float32(s16) / 32768.0
+	}
+	return samples, nil
+}
+
 // MixDownToWebM mixes all audio streams from the MKV into a single-channel
 // 48 kHz Opus WebM file.
 func MixDownToWebM(mkv string, streams []AudioStream, outPath string) error {

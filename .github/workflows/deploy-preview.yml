@@ -349,14 +349,6 @@ jobs:
           rclone copy codemyriad:cassini-raw/daily/ "$RAW_DIR/" \
             --files-from "$PREVIEW_FILES"
 
-      - name: Configure multi-transcript pass (parakeet-v3 branch only)
-        if: needs.detect.outputs.branch == 'parakeet-v3'
-        run: |
-          # TODO: remove this gate once parakeet-v3 merges. After the merge,
-          # the producer flip (v2 default) covers format selection. Additional
-          # models should then come from per-branch config or stay unset.
-          echo "CASSINI_STT_ADDITIONAL_MODELS=parakeet-tdt-0.6b-v2-int8" >> "$GITHUB_ENV"
-
       - name: Process recordings with GPU
         env:
           DEVICE: cuda

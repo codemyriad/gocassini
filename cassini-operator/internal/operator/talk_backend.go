@@ -17,6 +17,23 @@ import (
 	"strings"
 )
 
+// talkRandomBytes is the byte length of the per-request random value sent
+// in Talk-Recording-Random; Talk rejects shorter values, so this is the
+// minimum the protocol guarantees to accept.
+const talkRandomBytes = 32
+
+// talkRandom returns a 64-hex-character random string for the
+// Talk-Recording-Random header. Spreed requires at least 32 characters
+// (and a fresh value per request) — using crypto/rand keeps the values
+// unique and unforgeable.
+func talkRandom() string {
+	buf := make([]byte, talkRandomBytes)
+	if _, err := rand.Read(buf); err != nil {
+		panic(fmt.Errorf("read random: %w", err))
+	}
+	return hex.EncodeToString(buf)
+}
+
 const (
 	talkRecordingBackendHeader     = "Talk-Recording-Backend"
 	talkRecordingRandomHeader      = "Talk-Recording-Random"
@@ -294,14 +311,6 @@ func talkChecksum(secret, random string, body []byte) string {
 	_, _ = mac.Write([]byte(random))
 	_, _ = mac.Write(body)
 	return hex.EncodeToString(mac.Sum(nil))
-}
-
-func talkRandom() string {
-	var b [32]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic(fmt.Sprintf("generate talk recording random: %v", err))
-	}
-	return hex.EncodeToString(b[:])
 }
 
 func writeTalkAuthError(w http.ResponseWriter, status int, message string) {

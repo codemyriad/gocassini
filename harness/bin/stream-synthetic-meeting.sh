@@ -9,7 +9,10 @@ CALL_URL="${CALL_URL:-}"
 SCENARIO="${SCENARIO:-$TEST_DIR/scenarios/synthetic-pied-piper.v1.json}"
 OUTPUT_DIR="${OUTPUT_DIR:-$MEDIA_DIR/processed/synthetic-pied-piper-v1}"
 BACKEND="${BACKEND:-kokoro}"
-PREPARE=1
+# Honor PREPARE from the env so callers pointing at pre-rendered LFS-vendored
+# fixtures can skip the ffmpeg+Kokoro generation step entirely. Defaults to 1
+# for backwards compatibility with manual invocations.
+PREPARE="${PREPARE:-1}"
 FORCE=0
 OVERRIDE_DURATION="${DURATION:-}"
 
@@ -96,21 +99,34 @@ if [[ ! -f "$MANIFEST_PATH" ]]; then
   exit 1
 fi
 
-readarray -t STREAM_ARGS < <("${PYTHON_RUNNER[@]}" - "$MANIFEST_PATH" "$OVERRIDE_DURATION" <<'PY'
+readarray -t STREAM_ARGS < <("${PYTHON_RUNNER[@]}" - "$MANIFEST_PATH" "$OVERRIDE_DURATION" "$OUTPUT_DIR" <<'PY'
 import json
 import math
+import os
 import sys
 
 manifest = json.load(open(sys.argv[1], "r", encoding="utf-8"))
 override_duration = (sys.argv[2] or "").strip()
+output_dir = sys.argv[3]
 participants = manifest["participants"]
 duration = override_duration or str(int(math.ceil(float(manifest["duration_seconds"]))))
+
+
+def resolve_prefix(value: str) -> str:
+    # Portable manifests store media_prefix relative to the output dir
+    # (just the participant id, like "mira"). Legacy manifests embed an
+    # absolute path baked at generation time. Honor both.
+    if os.path.isabs(value):
+        return value
+    return os.path.join(output_dir, value)
+
+
 print("--users")
 print(str(len(participants)))
 print("--duration")
 print(duration)
 print("--media-prefixes")
-print(",".join(p["media_prefix"] for p in participants))
+print(",".join(resolve_prefix(p["media_prefix"]) for p in participants))
 print("--names")
 print(",".join(p["display_name"] for p in participants))
 print("--join-delays")

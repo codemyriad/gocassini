@@ -1,0 +1,672 @@
+name: Build + publish ExApp image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    paths:
+      - 'appinfo/info.xml'
+      - 'deployment/Dockerfile.exapp'
+      - 'deployment/exapp-start.sh'
+      - 'deployment/exapp-healthcheck.sh'
+      - 'cassini-operator/**'
+      - 'cassini-go-recorder/**'
+      - 'cassini-publisher/bin/**'
+      - 'cassini-viewer/**'
+      - 'cassini-control-panel/**'
+      - '.github/workflows/publish-exapp-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+# Cancel any in-progress run for the same branch when a new push arrives.
+# Pushes to main and to each version tag get their own concurrency group,
+# so a tag publish never cancels a main publish and vice-versa.
+concurrency:
+  group: publish-exapp-image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository_owner }}/gocassini
+  # The CPU image is also published as :latest-rocm so ROCm-tagged AppAPI daemons
+  # still install — real ROCm support is deferred (sherpa-onnx ships no upstream
+  # ROCm artifact). Real CUDA support lands in a follow-up PR with its own
+  # Dockerfile.exapp.cuda; until then the -cuda tag is NOT aliased so we do not
+  # advertise GPU acceleration we cannot honor.
+  EXTRA_ALIAS_SUFFIXES: '-rocm'
+
+jobs:
+  validate-manifest:
+    name: Validate appinfo/info.xml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install xmllint
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
+      - name: Wellformed XML check
+        run: xmllint --noout appinfo/info.xml
+      - name: Required-fields sanity check
+        run: |
+          set -euo pipefail
+          for field in '<id>gocassini</id>' '<external-app>' '<docker-install>' '<routes>'; do
+            if ! grep -qF "$field" appinfo/info.xml; then
+              echo "appinfo/info.xml missing required marker: $field" >&2
+              exit 1
+            fi
+          done
+          # No PUT/POST verbs allowed in <routes> for /enabled or /init —
+          # those are AppAPI lifecycle callbacks, not proxied browser routes.
+          if grep -qE '<url>\^?/enabled' appinfo/info.xml || grep -qE '<url>\^?/init' appinfo/info.xml; then
+            echo "appinfo/info.xml must not declare /enabled or /init under <routes>" >&2
+            echo "they are lifecycle callbacks, not browser routes" >&2
+            exit 1
+          fi
+
+  build-image:
+    name: Build ExApp image
+    runs-on: ubuntu-latest
+    needs: validate-manifest
+    outputs:
+      image_ref: ${{ steps.meta.outputs.tags }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        run: |
+          set -euo pipefail
+          SHA="${GITHUB_SHA::12}"
+          REF="${{ env.REGISTRY }}/${{ env.IMAGE }}"
+          TAGS=()
+          TAGS+=("${REF}:sha-${SHA}")
+          case "${GITHUB_EVENT_NAME}" in
+            push)
+              if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+                VERSION="${GITHUB_REF##refs/tags/}"
+                TAGS+=("${REF}:${VERSION}" "${REF}:latest")
+                for suffix in ${EXTRA_ALIAS_SUFFIXES}; do
+                  TAGS+=("${REF}:${VERSION}${suffix}")
+                  TAGS+=("${REF}:latest${suffix}")
+                done
+              else
+                BRANCH="${GITHUB_REF##refs/heads/}"
+                # printf (no trailing newline) avoids `tr -c` turning the
+                # newline into a trailing hyphen on the tag.
+                SAFE_BRANCH="$(printf '%s' "${BRANCH}" | tr '/' '-' | tr -c 'A-Za-z0-9._-' '-')"
+                TAGS+=("${REF}:branch-${SAFE_BRANCH}")
+                if [[ "${BRANCH}" == "main" ]]; then
+                  TAGS+=("${REF}:latest")
+                  for suffix in ${EXTRA_ALIAS_SUFFIXES}; do
+                    TAGS+=("${REF}:latest${suffix}")
+                  done
+                fi
+              fi
+              ;;
+            pull_request)
+              # PR builds: load locally for the smoke job, do not push.
+              ;;
+            workflow_dispatch)
+              TAGS+=("${REF}:dispatch-$(date -u +%Y%m%d%H%M%S)")
+              ;;
+          esac
+          {
+            echo "tags<<EOF"
+            for t in "${TAGS[@]}"; do echo "$t"; done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          # Primary tag used by the smoke job (PR builds use the sha tag too).
+          echo "primary=${TAGS[0]}" >> "$GITHUB_OUTPUT"
+
+      # Build always loads the image into the local docker daemon so the
+      # downstream smoke/e2e jobs can restore it from a tarball artifact —
+      # works uniformly for push, pull_request, and workflow_dispatch
+      # events without relying on registry pull from private ghcr.
+      - name: Build image (local load)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/Dockerfile.exapp
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Push image tags to ghcr (non-PR)
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            [[ -z "${tag}" ]] && continue
+            echo "Pushing ${tag}"
+            docker push "${tag}"
+          done <<<"${{ steps.meta.outputs.tags }}"
+
+      # PR builds can't reach ghcr (push step is skipped), so they still
+      # need the artifact-based handoff. Push builds skip the artifact —
+      # GitHub's per-org artifact storage quota is small enough that two
+      # CUDA images (~4.7 GiB each) saturate it within a single business
+      # day, and on push the image is already at ghcr.io for any
+      # downstream job to docker pull.
+      - name: Save image tarball
+        if: github.event_name == 'pull_request'
+        run: |
+          docker save "${{ steps.meta.outputs.primary }}" -o /tmp/exapp-image.tar
+
+      - name: Upload image artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: exapp-image
+          path: /tmp/exapp-image.tar
+          retention-days: 1
+          if-no-files-found: ignore
+
+  smoke:
+    name: Smoke test image (HTTP plane, dev-mode)
+    runs-on: ubuntu-latest
+    needs: build-image
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
+        with:
+          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run smoke test
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+        run: ./harness/bin/ci-smoke-exapp.sh
+
+  build-image-cuda:
+    name: Build CUDA ExApp image
+    # CUDA Docker builds do not touch the GPU — they're just layer assembly.
+    # Running on ubuntu-latest frees the single self-hosted GPU runner for
+    # jobs that actually need it (transcribe-smoke-cuda, e2e-talk-record-cuda,
+    # deploy-preview's deploy-gpu).
+    runs-on: ubuntu-latest
+    needs: validate-manifest
+    # Fork PRs cannot push to ghcr (no credentials) and must never run
+    # downstream CUDA jobs on the self-hosted GPU runner. Skip the whole
+    # CUDA chain for them; same-repo PRs and pushes proceed normally.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    outputs:
+      image_ref: ${{ steps.meta.outputs.tags }}
+      primary:   ${{ steps.meta.outputs.primary }}
+      digest:    ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The CUDA image is ~5 GiB and the build needs additional scratch space
+      # for layers and the buildx cache. ubuntu-latest ships with ~14 GiB free
+      # by default; reclaim ~30 GiB by removing preinstalled toolchains we
+      # don't use (Android SDK, .NET, Haskell, CodeQL).
+      - name: Free disk on ubuntu-latest
+        run: |
+          set -euo pipefail
+          df -h / | head -3
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost \
+            /usr/local/share/powershell \
+            /usr/share/swift
+          sudo docker image prune -af 2>&1 | tail -2 || true
+          df -h / | head -3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute CUDA image tags
+        id: meta
+        run: |
+          set -euo pipefail
+          SHA="${GITHUB_SHA::12}"
+          REF="${{ env.REGISTRY }}/${{ env.IMAGE }}"
+          TAGS=()
+          TAGS+=("${REF}:sha-${SHA}-cuda")
+          case "${GITHUB_EVENT_NAME}" in
+            push)
+              if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+                VERSION="${GITHUB_REF##refs/tags/}"
+                TAGS+=("${REF}:${VERSION}-cuda" "${REF}:latest-cuda" "${REF}:cuda")
+              else
+                BRANCH="${GITHUB_REF##refs/heads/}"
+                SAFE_BRANCH="$(printf '%s' "${BRANCH}" | tr '/' '-' | tr -c 'A-Za-z0-9._-' '-')"
+                TAGS+=("${REF}:branch-${SAFE_BRANCH}-cuda")
+                if [[ "${BRANCH}" == "main" ]]; then
+                  TAGS+=("${REF}:latest-cuda" "${REF}:cuda")
+                fi
+              fi
+              ;;
+            pull_request) ;;
+            workflow_dispatch)
+              TAGS+=("${REF}:dispatch-$(date -u +%Y%m%d%H%M%S)-cuda")
+              ;;
+          esac
+          {
+            echo "tags<<EOF"
+            for t in "${TAGS[@]}"; do echo "$t"; done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "primary=${TAGS[0]}" >> "$GITHUB_OUTPUT"
+
+      # Build + push in one step. push: true is safe for same-repo PRs
+      # (job-level if: guarantees we are not running on a fork PR) and lets
+      # the downstream CUDA jobs docker-pull from ghcr instead of needing
+      # local-daemon co-location. cache scope is separate from the CPU
+      # build so layers don't cross-pollute.
+      - name: Build and push CUDA image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/Dockerfile.exapp.cuda
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha,scope=cuda
+          cache-to: type=gha,mode=max,scope=cuda
+
+  transcribe-smoke-cuda:
+    name: Smoke transcription on GPU (bundled fp32 model + CUDA EP)
+    runs-on: [self-hosted, Linux, X64, gpu]
+    needs: build-image-cuda
+    steps:
+      - name: Ensure git-lfs is available
+        # Repo now ships LFS-vendored bot fixtures (.gitattributes routes them
+        # through the lfs smudge filter). Even jobs that don't use those
+        # fixtures must have git-lfs in PATH or `git checkout` aborts on the
+        # smudge step. Self-hosted runner has no git-lfs by default and no
+        # passwordless sudo; install the standalone binary into ~/.local/bin.
+        run: |
+          set -euo pipefail
+          if command -v git-lfs >/dev/null 2>&1; then
+            git-lfs --version
+            exit 0
+          fi
+          GIT_LFS_VERSION="3.5.1"
+          tmpdir="$(mktemp -d)"
+          curl -fsSL \
+            "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz" \
+            | tar -xz -C "$tmpdir"
+          mkdir -p "$HOME/.local/bin"
+          install "$tmpdir/git-lfs-${GIT_LFS_VERSION}/git-lfs" "$HOME/.local/bin/git-lfs"
+          rm -rf "$tmpdir"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/git-lfs" install --skip-repo
+          "$HOME/.local/bin/git-lfs" --version
+      - uses: actions/checkout@v4
+
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
+        with:
+          image-ref-list: ${{ needs.build-image-cuda.outputs.image_ref }}
+          pr-source: registry
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run CUDA transcribe smoke
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+        run: ./harness/bin/ci-transcribe-smoke-exapp.sh
+
+      - name: Run dual-variant transcript verify (CUDA = v3 fp32)
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+          # Empirically on this clip fp32 (CUDA) lands at ratio 0.6565 —
+          # essentially identical to int8 (CPU at 0.6391). The first ~6s of
+          # the LibriSpeech clip is dropped by sherpa-onnx's streaming VAD
+          # regardless of model precision; fp32 doesn't recover those words.
+          # Smoke floor catches "loaded but gibberish" without gating WER.
+          # Tracked: investigate sherpa-onnx VAD softness on Parakeet v3.
+          MIN_LEVENSHTEIN: "0.50"
+        run: ./harness/bin/ci-e2e-v3-transcript-verify.sh
+
+  transcribe-smoke:
+    name: Smoke transcription (bundled model, no download)
+    runs-on: ubuntu-latest
+    needs: build-image
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
+        with:
+          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run transcribe smoke
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+        run: ./harness/bin/ci-transcribe-smoke-exapp.sh
+
+      - name: Run dual-variant transcript verify (CPU = v3 int8)
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+          # v3 int8 (CPU) drops the soft opening on this clip — sherpa-onnx's
+          # streaming VAD does not pick up the early words. The threshold is
+          # a smoke floor that catches "model loaded but produced gibberish"
+          # without gating on absolute WER. Investigation tracked separately.
+          MIN_LEVENSHTEIN: "0.50"
+        run: ./harness/bin/ci-e2e-v3-transcript-verify.sh
+
+  e2e-container:
+    name: E2E container HTTP plane + middleware + lifecycle (no Nextcloud)
+    runs-on: ubuntu-latest
+    needs: build-image
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
+        with:
+          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run container-level e2e
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+        run: ./harness/bin/ci-e2e-exapp.sh
+
+  e2e-install:
+    name: E2E install against real Nextcloud + AppAPI
+    runs-on: ubuntu-latest
+    needs: build-image
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
+        with:
+          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run install e2e against a fresh Nextcloud + AppAPI
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+        run: ./harness/bin/ci-e2e-install-exapp.sh
+
+  # Full Talk-driven roundtrip: bot streamers join a Talk call, Talk's
+  # native "record call" button fires, operator HMAC-authenticates,
+  # cassini-go-recorder joins the call as a guest, captures RTP for
+  # ~75s, then the build pipeline produces a meeting bundle. Phase 8
+  # asserts the published transcript contains a verbatim substring of
+  # the scenario script. Runs on both image variants so a regression
+  # in either the CPU or CUDA build path is caught before publish.
+  e2e-talk-record-cpu:
+    name: E2E Talk record-button roundtrip (CPU)
+    runs-on: ubuntu-latest
+    needs: build-image
+    timeout-minutes: 25
+    # Bot fixture set is now vendored via git-lfs (see .gitattributes), so
+    # the harness can run on a fresh CI checkout. Treat this job as a hard
+    # gate now rather than an informational warning.
+    steps:
+      - name: Ensure git-lfs is available
+        # ubuntu-latest ships git-lfs preinstalled, but self-hosted runners
+        # generally don't. Use the standalone binary into ~/.local/bin so the
+        # install path doesn't depend on sudo / apt — most self-hosted runners
+        # have no passwordless sudo.
+        run: |
+          set -euo pipefail
+          if command -v git-lfs >/dev/null 2>&1; then
+            git-lfs --version
+            exit 0
+          fi
+          GIT_LFS_VERSION="3.5.1"
+          tmpdir="$(mktemp -d)"
+          curl -fsSL \
+            "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz" \
+            | tar -xz -C "$tmpdir"
+          mkdir -p "$HOME/.local/bin"
+          install "$tmpdir/git-lfs-${GIT_LFS_VERSION}/git-lfs" "$HOME/.local/bin/git-lfs"
+          rm -rf "$tmpdir"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/git-lfs" install --skip-repo
+          "$HOME/.local/bin/git-lfs" --version
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Force LFS smudge
+        # On ubuntu-latest the working tree is fresh, but on self-hosted
+        # runners the tree is reused across runs and checkout@v4 may skip
+        # smudging files it considers unchanged, leaving stale pointers.
+        # `git lfs pull` is idempotent and cheap, so we run it on both
+        # jobs to keep them symmetric.
+        run: git lfs pull
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Confirm bot media fixture is materialized
+        run: |
+          set -euo pipefail
+          # The fixture is vendored under harness/media/processed/
+          # showcase-lantern-festival-v1/ via git-lfs (see .gitattributes).
+          # checkout@v4 with lfs: true above pulls LFS content, so the .ogg
+          # and .ivf files should be real content here, not 132-byte pointers.
+          # Hard-fail if not: a silent skip would let LFS regressions ship.
+          f=harness/media/processed/showcase-lantern-festival-v1/mira.ogg
+          if [[ ! -s "$f" ]] || [[ $(stat -c%s "$f") -le 10000 ]]; then
+            echo "::error::Talk e2e bot media missing or still an LFS pointer at $f" >&2
+            echo "::error::checkout@v4 should have materialized it (lfs: true is set). Check repo LFS quota." >&2
+            exit 1
+          fi
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
+        with:
+          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pre-pull compose stack images
+        # Pull the Nextcloud + Talk signaling stack images in a dedicated
+        # step so registry/network failures show up here (not buried inside
+        # the phase-1 harness step) and so the harness step's wall-clock
+        # reflects only the e2e logic, not image transfer time. Images live
+        # at the daemon level so no project name is required.
+        run: docker compose -f harness/compose.yml --profile full pull
+      - name: Run Talk-driven e2e (CPU)
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+          # 75s gives the rotator several cycles per bot, enough that at
+          # least one participant track captures a multi-word verbatim
+          # slice of the scenario script.
+          RECORD_DURATION_SECONDS: "75"
+          # Strict Levenshtein on the full 3.7KB scenario is dominated
+          # by missing content (most bots' tracks are sparse-RTP DTX
+          # silence today — see task #11); accept a verbatim word-run
+          # substring as proof the pipeline transcribed real speech.
+          MIN_LEVENSHTEIN: "0.40"
+          MIN_CAPTURED_RUN_WORDS: "5"
+        run: ./harness/bin/ci-e2e-talk-record-roundtrip.sh
+
+  e2e-talk-record-cuda:
+    name: E2E Talk record-button roundtrip (CUDA / GPU)
+    runs-on: [self-hosted, Linux, X64, gpu]
+    needs: build-image-cuda
+    timeout-minutes: 25
+    steps:
+      - name: Ensure git-lfs is available
+        # Self-hosted GPU runners don't ship git-lfs by default AND don't
+        # generally have passwordless sudo. Install the standalone binary
+        # into ~/.local/bin so this step is portable across runner types.
+        run: |
+          set -euo pipefail
+          if command -v git-lfs >/dev/null 2>&1; then
+            git-lfs --version
+            exit 0
+          fi
+          GIT_LFS_VERSION="3.5.1"
+          tmpdir="$(mktemp -d)"
+          curl -fsSL \
+            "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz" \
+            | tar -xz -C "$tmpdir"
+          mkdir -p "$HOME/.local/bin"
+          install "$tmpdir/git-lfs-${GIT_LFS_VERSION}/git-lfs" "$HOME/.local/bin/git-lfs"
+          rm -rf "$tmpdir"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/git-lfs" install --skip-repo
+          "$HOME/.local/bin/git-lfs" --version
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Force LFS smudge
+        # See sibling CPU job: self-hosted runners reuse the working tree
+        # so checkout@v4 may leave stale pointer files; `git lfs pull` is
+        # the idempotent recovery.
+        run: git lfs pull
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Confirm bot media fixture is materialized
+        run: |
+          set -euo pipefail
+          # See sibling CPU job — fixture is vendored via git-lfs.
+          # Hard-fail if not materialized; a silent skip would let LFS
+          # regressions ship.
+          f=harness/media/processed/showcase-lantern-festival-v1/mira.ogg
+          if [[ ! -s "$f" ]] || [[ $(stat -c%s "$f") -le 10000 ]]; then
+            echo "::error::Talk e2e bot media missing or still an LFS pointer at $f" >&2
+            echo "::error::checkout@v4 should have materialized it (lfs: true is set). Check repo LFS quota." >&2
+            exit 1
+          fi
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
+        with:
+          image-ref-list: ${{ needs.build-image-cuda.outputs.image_ref }}
+          pr-source: registry
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pre-pull compose stack images
+        # See sibling CPU job — splits image transfer time and registry
+        # failures out of the harness step.
+        run: docker compose -f harness/compose.yml --profile full pull
+      - name: Run Talk-driven e2e (GPU)
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+          RECORD_DURATION_SECONDS: "75"
+          MIN_LEVENSHTEIN: "0.40"
+          MIN_CAPTURED_RUN_WORDS: "5"
+        run: ./harness/bin/ci-e2e-talk-record-roundtrip.sh
+
+  prune-old-versions:
+    name: Prune old sha-tagged image versions
+    runs-on: ubuntu-latest
+    needs:
+      - build-image
+      - build-image-cuda
+      - smoke
+      - transcribe-smoke
+      - transcribe-smoke-cuda
+      - e2e-container
+      - e2e-install
+      - e2e-talk-record-cpu
+      - e2e-talk-record-cuda
+    # Only prune after a successful push that actually pushed to ghcr —
+    # main (publishes :latest) and version tags.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+    permissions:
+      packages: write
+    steps:
+      # For container packages, the GitHub API returns sha256 digests in
+      # `name` and the actual tags in `metadata.container.tags`. The
+      # delete-package-versions action's `ignore-versions` regex matches
+      # against `name` (the digest), which is useless here. Use a bash
+      # script that inspects tags explicitly: keep every version that
+      # carries a named tag (latest, latest-cuda, latest-rocm, v*); from
+      # the remainder (sha-*-only versions), keep the 10 newest and
+      # delete the rest.
+      - name: Prune
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE: gocassini
+          KEEP: 10
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+
+          # Fetch every version of the container package.
+          gh api --paginate \
+            -H "Accept: application/vnd.github+json" \
+            "/orgs/${OWNER}/packages/container/${PACKAGE}/versions" \
+            > "$tmp/versions.json"
+
+          # Versions worth keeping outright (any named tag). `latest-cuda` stays
+          # in the keep-list so PR #32's real CUDA image is protected once it
+          # starts being published; for now nothing pushes that tag.
+          jq -r '
+            .[]
+            | .metadata.container.tags as $tags
+            | select(
+                ($tags | any(. == "latest" or . == "latest-cuda" or . == "latest-rocm" or startswith("v")))
+              )
+            | "KEEP \(.id) tags=\($tags | join(","))"
+          ' "$tmp/versions.json" | tee "$tmp/keep.log" || true
+
+          # Candidate versions for pruning: tagged only with sha-* (or untagged).
+          # Sort newest -> oldest, skip the first $KEEP, delete the rest.
+          jq -r '
+            sort_by(.created_at) | reverse
+            | .[]
+            | .metadata.container.tags as $tags
+            | select(
+                ($tags | any(. == "latest" or . == "latest-cuda" or . == "latest-rocm" or startswith("v"))) | not
+              )
+            | "\(.id)\t\(.created_at)\t\($tags | join(","))"
+          ' "$tmp/versions.json" > "$tmp/candidates.tsv"
+
+          total=$(wc -l < "$tmp/candidates.tsv")
+          echo "Found ${total} sha-only / untagged versions; will keep newest ${KEEP}"
+
+          if [[ "${total}" -le "${KEEP}" ]]; then
+            echo "Nothing to prune."
+            exit 0
+          fi
+
+          tail -n +$((KEEP + 1)) "$tmp/candidates.tsv" | while IFS=$'\t' read -r id created tags; do
+            echo "DELETE id=${id} created=${created} tags=${tags}"
+            gh api -X DELETE \
+              -H "Accept: application/vnd.github+json" \
+              "/orgs/${OWNER}/packages/container/${PACKAGE}/versions/${id}"
+          done

@@ -35,7 +35,7 @@ var (
 //   - manifest.json
 func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg BuildConfig, stdout io.Writer) error {
 	if cfg.ModelID == "" {
-		cfg.ModelID = defaultModelID
+		cfg.ModelID = DefaultModelID()
 	}
 	if cfg.Device == "" || cfg.Device == "auto" {
 		cfg.Device = "cpu"
@@ -90,6 +90,16 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	if err != nil {
 		return err
 	}
+
+	// Per-participant Talk recordings can carry sparse / DTX-encoded audio
+	// that defeats the VAD even when the mixed timeline clearly contains
+	// speech. Fall back to transcribing the already-mixed meeting.webm under
+	// a synthetic "merged" speaker so the bundle still ships usable content.
+	streams, segments, err = ensureMergedFallback(ctx, webmPath, streams, segments, modelPaths, vadPath, cfg.Device, cfg.NumThreads, stdout)
+	if err != nil {
+		return err
+	}
+
 	if err := writeTranscriptWithHash(filepath.Join(outputDir, "transcript.words.v1.json"), "transcript.words.v1", streams, segments, audioDurationMS, sha256hex); err != nil {
 		return fmt.Errorf("write transcript: %w", err)
 	}
@@ -136,6 +146,79 @@ type AdditionalTranscript struct {
 	ModelID ModelID // raw STT model id, kept for provenance
 }
 
+// ensureMergedFallback transcribes the already-mixed meeting.webm under a
+// synthetic "merged" speaker when the per-participant pass found nothing.
+// Talk-recorder per-participant tracks can be sparse (DTX, comfort-noise
+// frames between speaking turns) in ways that defeat the VAD even though
+// the same audio sums to a clearly-transcribable mix; rather than ship an
+// empty transcript in that case, fall back to the mix. Returns the
+// (possibly extended) streams + segments. Does nothing when the
+// per-participant pass already produced content.
+// minWordsBeforeMergedFallback is the per-participant word threshold below
+// which we re-run transcription over the merged mix. The strict ==0 gate
+// was observed to skip fallback when a single stray word survived through
+// an otherwise-failing pass (CI matrix run #5: 1 word total, fallback
+// skipped, e2e word-run gate failed). 10 is conservative: well under the
+// passing-run baseline of ~12-14 verbatim words, well over the noise.
+const minWordsBeforeMergedFallback = 10
+
+// shouldFireMergedFallback decides whether the merged-mix fallback pass
+// is worth running. Extracted so the trigger threshold has a dedicated
+// regression test without needing a sherpa-onnx model + audio fixture.
+func shouldFireMergedFallback(segments []Segment) bool {
+	return CountWords(segments) < minWordsBeforeMergedFallback
+}
+
+func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioStream, segments []Segment, modelPaths ModelPaths, vadPath, device string, numThreads int, stdout io.Writer) ([]AudioStream, []Segment, error) {
+	if !shouldFireMergedFallback(segments) {
+		return streams, segments, nil
+	}
+	fmt.Fprintf(stdout, "  per-participant transcription thin (%d words); transcribing mixed track as fallback...\n", CountWords(segments))
+
+	mergedStream := AudioStream{
+		Index:        -1,
+		SpeakerID:    "merged",
+		SpeakerLabel: "Everyone",
+		Channels:     1,
+		StartTimeMS:  0,
+	}
+
+	rec, err := NewRecognizer(modelPaths, vadPath, device, numThreads)
+	if err != nil {
+		return streams, segments, fmt.Errorf("create recognizer for merged fallback: %w", err)
+	}
+	defer rec.Close()
+
+	select {
+	case <-ctx.Done():
+		return streams, segments, ctx.Err()
+	default:
+	}
+
+	samples, err := ExtractMixedFloats(webmPath)
+	if err != nil {
+		return streams, segments, fmt.Errorf("extract mixed audio: %w", err)
+	}
+	// useVAD=false: the merged mix is dense by construction (the rotator
+	// keeps the mix continuously audible). Silero with default threshold
+	// rejects this audio ~17-33% of runs in CI; the entire purpose of the
+	// fallback is to recover when VAD-gated transcription fails, so it
+	// must not itself depend on VAD.
+	words, err := rec.Transcribe(samples, modelPaths.SampleRate, false /*useVAD*/)
+	if err != nil {
+		return streams, segments, fmt.Errorf("transcribe merged fallback: %w", err)
+	}
+	fmt.Fprintf(stdout, "    merged: %d words\n", len(words))
+	if len(words) == 0 {
+		return streams, segments, nil
+	}
+
+	mergedSegs := AssembleSegments(mergedStream.SpeakerID, words, 0, 0)
+	extendedStreams := append(append([]AudioStream(nil), streams...), mergedStream)
+	mergedSegments := MergeAndSortSegments([][]Segment{segments, mergedSegs})
+	return extendedStreams, mergedSegments, nil
+}
+
 // transcribePass runs one full transcription pass over every speaker stream
 // using the given recognizer config. Returns merged + sorted segments.
 func transcribePass(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, device string, numThreads int, stdout io.Writer) ([]Segment, error) {
@@ -158,7 +241,7 @@ func transcribePass(ctx context.Context, mkvPath string, streams []AudioStream, 
 		if err != nil {
 			return nil, fmt.Errorf("extract audio for %s: %w", stream.SpeakerLabel, err)
 		}
-		words, err := rec.Transcribe(samples, modelPaths.SampleRate)
+		words, err := rec.Transcribe(samples, modelPaths.SampleRate, true /*useVAD*/)
 		if err != nil {
 			return nil, fmt.Errorf("transcribe %s: %w", stream.SpeakerLabel, err)
 		}
@@ -271,13 +354,22 @@ func DefaultBuildConfig() BuildConfig {
 	}
 
 	return BuildConfig{
-		Device:                "cpu",
+		Device:                defaultDevice(),
 		ModelID:               primary,
 		AdditionalModels:      additional,
 		LLM:                   llm,
 		SummaryLLM:            summaryLLM,
 		StrictReadableCleanup: envBool("CASSINI_READABLE_STRICT_BATCHES"),
 	}
+}
+
+// defaultDevice returns the device selected by CASSINI_STT_DEVICE if set
+// (cpu / cuda / auto), or "cpu" if unset.
+func defaultDevice() string {
+	if v := strings.TrimSpace(os.Getenv("CASSINI_STT_DEVICE")); v != "" {
+		return v
+	}
+	return "cpu"
 }
 
 func writeReadableArtifacts(outputDir string, streams []AudioStream, segments []Segment, audioDurationMS int64, sha256hex string, cfg BuildConfig, stdout io.Writer) ([]Segment, bool, error) {

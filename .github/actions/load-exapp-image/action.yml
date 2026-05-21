@@ -1,0 +1,92 @@
+name: Load ExApp image
+description: |
+  Make the ExApp image built by build-image (or build-image-cuda) available
+  in the local docker daemon, regardless of event type.
+
+  - PR builds: restore the image tarball uploaded as an artifact and
+    `docker load` it. Tarball-via-artifact is required because PRs do not
+    push to ghcr.
+  - Push / workflow_dispatch / scheduled builds: `docker login` to ghcr
+    and `docker pull` the primary sha-tagged ref.
+
+  Outputs the primary ref (first line of `image-ref-list`) for the caller
+  to thread into its smoke / e2e step.
+
+inputs:
+  image-ref-list:
+    description: Multi-line list of image tags from the upstream build job.
+    required: true
+  pr-source:
+    description: |
+      Where to fetch the image on pull_request events. `artifact` restores
+      the tarball uploaded by the build job (CPU image, ~1.4 GiB). `registry`
+      pulls from ghcr — the build job must have pushed the sha-tag for the
+      PR. Use `registry` for images too large for the GitHub artifact quota
+      (e.g. the ~5 GiB CUDA image).
+    required: false
+    default: artifact
+  artifact-name:
+    description: GitHub artifact name carrying the docker-saved tarball on PR builds.
+    required: false
+    default: exapp-image
+  registry:
+    description: Container registry hostname for ghcr login.
+    required: false
+    default: ghcr.io
+  github-token:
+    description: |
+      GitHub token used to docker-login when pulling from ghcr. Composite
+      actions cannot read repo secrets, so callers must pass
+      secrets.GITHUB_TOKEN.
+    required: true
+
+outputs:
+  ref:
+    description: Primary image ref (first tag in image-ref-list).
+    value: ${{ steps.resolve.outputs.ref }}
+
+runs:
+  using: composite
+  steps:
+    - name: Log in to ghcr.io (for registry pull)
+      if: github.event_name != 'pull_request' || inputs.pr-source == 'registry'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ github.actor }}
+        password: ${{ inputs.github-token }}
+
+    - name: Restore image artifact (PR + artifact source)
+      if: github.event_name == 'pull_request' && inputs.pr-source == 'artifact'
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: /tmp
+
+    - name: Load image from artifact tarball
+      if: github.event_name == 'pull_request' && inputs.pr-source == 'artifact'
+      shell: bash
+      run: |
+        set -euo pipefail
+        docker load -i /tmp/exapp-image.tar
+
+    - name: Pull image from registry
+      if: github.event_name != 'pull_request' || inputs.pr-source == 'registry'
+      shell: bash
+      env:
+        IMAGE_REF_LIST: ${{ inputs.image-ref-list }}
+      run: |
+        set -euo pipefail
+        PRIMARY=$(printf '%s\n' "$IMAGE_REF_LIST" | head -n1)
+        echo "Pulling $PRIMARY"
+        docker pull "$PRIMARY"
+
+    - name: Resolve image ref
+      id: resolve
+      shell: bash
+      env:
+        IMAGE_REF_LIST: ${{ inputs.image-ref-list }}
+      run: |
+        set -euo pipefail
+        PRIMARY=$(printf '%s\n' "$IMAGE_REF_LIST" | head -n1)
+        echo "ref=${PRIMARY}" >> "$GITHUB_OUTPUT"
