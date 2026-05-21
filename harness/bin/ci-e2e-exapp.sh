@@ -157,6 +157,23 @@ got=$(curl_with_headers GET '/control-panel/' \
   -H "EX-APP-VERSION: ${APP_VERSION}")
 assert_status "GET /control-panel/ WITH admin auth" 200 "${got}"
 
+# A 200 on the SPA root only proves the proxy didn't refuse — it doesn't
+# prove the SPA actually shipped in the image. Pin the body shape against
+# cassini-control-panel/index.html so a missing/broken bundle fails here
+# instead of surfacing later as a blank page in a real Nextcloud install.
+body=$(curl -sS -X GET \
+  -H "$(auth_header admin)" \
+  -H "EX-APP-ID: ${APP_ID}" \
+  -H "EX-APP-VERSION: ${APP_VERSION}" \
+  "http://127.0.0.1:${PORT}/control-panel/")
+if grep -qF "<title>Cassini Control Panel</title>" <<<"${body}"; then
+  log "OK   GET /control-panel/ returns the cassini SPA HTML (title marker present)"
+else
+  log "FAIL GET /control-panel/ body did not contain the SPA title marker"
+  log "first 200 chars of response: ${body:0:200}"
+  exit 1
+fi
+
 got=$(curl_with_headers GET '/control-panel/some/spa/route' \
   -H "$(auth_header admin)" \
   -H "EX-APP-ID: ${APP_ID}" \
