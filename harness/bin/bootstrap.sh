@@ -8,8 +8,8 @@ source "$SCRIPT_DIR/common.sh"
 wait_for_nextcloud 420
 
 log "Ensuring Talk app is installed/enabled"
-occ app:install spreed >/dev/null 2>&1 || true
-occ app:enable spreed >/dev/null 2>&1 || true
+occ_ignore_failure app:install spreed >/dev/null 2>&1
+occ_ignore_failure app:enable spreed >/dev/null 2>&1
 
 if occ user:info "$BOT_USER" >/dev/null 2>&1; then
   log "Bot user already exists: $BOT_USER"
@@ -47,13 +47,14 @@ if ! compose ps --services --filter status=running | grep -Fxq signaling; then
 fi
 
 effective_signaling_url="${SIGNALING_URL:-}"
-if [[ -z "$effective_signaling_url" || "$effective_signaling_url" == "http://127.0.0.1:18082" || "$effective_signaling_url" == "http://127.0.0.1:28082" ]]; then
+if [[ -z "$effective_signaling_url" || "$effective_signaling_url" == "http://127.0.0.1:18082" || "$effective_signaling_url" == "http://127.0.0.1:28082" || "$effective_signaling_url" == "http://signaling.localhost:28082" ]]; then
   effective_signaling_url="$(default_signaling_url)"
 fi
 
 if occ_has "talk:signaling:add"; then
   log "Configuring external signaling server: $effective_signaling_url"
-  occ talk:signaling:delete "$effective_signaling_url" >/dev/null 2>&1 || true
+  occ_ignore_failure config:app:delete spreed signaling_servers >/dev/null 2>&1
+  occ_ignore_failure talk:signaling:delete "$effective_signaling_url" >/dev/null 2>&1
   occ talk:signaling:add "$effective_signaling_url" "$SIGNALING_SHARED_SECRET"
 else
   log "No talk:signaling:add command; setting legacy app config"
@@ -63,7 +64,7 @@ fi
 
 if occ_has "talk:turn:add"; then
   log "Configuring TURN server: $TURN_SERVER"
-  occ talk:turn:delete turn "$TURN_SERVER" udp,tcp >/dev/null 2>&1 || true
+  occ_ignore_failure talk:turn:delete turn "$TURN_SERVER" udp,tcp >/dev/null 2>&1
   occ talk:turn:add turn "$TURN_SERVER" udp,tcp --secret="$TURN_SHARED_SECRET"
 fi
 

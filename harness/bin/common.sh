@@ -7,8 +7,13 @@ COMPOSE_FILE="$TEST_DIR/compose.yml"
 
 PROJECT_NAME="${PROJECT_NAME:-spreedtest}"
 SPREED_PROFILE="${SPREED_PROFILE:-full}"
+HARNESS_SIGNALING_HOST="${HARNESS_SIGNALING_HOST:-}"
 
 default_signaling_url() {
+  if [[ -n "$HARNESS_SIGNALING_HOST" ]]; then
+    echo "http://$HARNESS_SIGNALING_HOST:28082"
+    return
+  fi
   local gateway
   gateway="$(docker network inspect "${PROJECT_NAME}_default" -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
   if [[ -n "$gateway" ]]; then
@@ -30,6 +35,7 @@ BOT_PASSWORD="${BOT_PASSWORD:-zN4vQ9mT2Kp7R1x!}"
 # after Docker networking is up.
 SIGNALING_URL="${SIGNALING_URL:-}"
 SIGNALING_SHARED_SECRET="${SIGNALING_SHARED_SECRET:-7f4dca67263621ba7f9f9917e13de95a201f6f360be0d303e3008c2e6c8ad37d}"
+SIGNALING_INTERNAL_SECRET="${SIGNALING_INTERNAL_SECRET:-6f4dca67263621ba7f9f9917e13de95a201f6f360be0d303e3008c2e6c8ad37d}"
 TURN_SERVER="${TURN_SERVER:-127.0.0.1:13479}"
 TURN_SHARED_SECRET="${TURN_SHARED_SECRET:-3c04d2fc2f7fe39d48eb4dc77f652c8c778a4ea178b0e486529b284afca7b648}"
 CASSINI_TALK_RECORDING_URL="${CASSINI_TALK_RECORDING_URL:-}"
@@ -136,9 +142,22 @@ occ() {
   compose exec -T "${env_args[@]}" -u www-data nextcloud php occ "$@"
 }
 
+occ_ignore_failure() {
+  local had_errexit=0
+  if [[ $- == *e* ]]; then
+    had_errexit=1
+    set +e
+  fi
+  occ "$@"
+  if (( had_errexit )); then
+    set -e
+  fi
+  return 0
+}
+
 occ_has() {
   local command_name="$1"
-  occ list --raw 2>/dev/null | grep -Fxq "$command_name"
+  occ list --raw 2>/dev/null | awk '{print $1}' | grep -Fxq "$command_name"
 }
 
 wait_for_nextcloud() {

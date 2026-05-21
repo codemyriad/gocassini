@@ -161,3 +161,7 @@ Detailed affordance mapping for the selected shape now lives in:
 Implementation slicing for the selected shape now lives in:
 
 - `planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/slices.md`
+
+Validation handoff for the selected shape now lives in:
+
+- `planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/validation.md`

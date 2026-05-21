@@ -172,9 +172,13 @@ Implementation slicing for this breadboard now lives in:
 
 - `planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/slices.md`
 
+Validation handoff for the runtime proof path now lives in:
+
+- `planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/validation.md`
+
 The resulting slice cutlines are:
 
 - request/config surface
 - internal bootstrap/auth implementation
 - shared media-path integration + failure surfacing
-- later harness/runtime acceptance
+- harness/runtime validation handoff
