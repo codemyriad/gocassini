@@ -16,7 +16,11 @@ if [[ -f /tmp/frpc.pid ]]; then
   fi
 fi
 
-status=$(curl -fsS -o /dev/null -w '%{http_code}' "${PROBE_URL}" || echo 000)
+# Don't pass -f: curl -f makes any HTTP error a non-zero exit and discards
+# %{http_code}, which would mask the 401 we treat as healthy below. Just
+# -sS gets a successful curl exit on any well-formed HTTP response, and the
+# fallback "000" only triggers on actual transport-level errors.
+status=$(curl -sS -o /dev/null -w '%{http_code}' "${PROBE_URL}" 2>/dev/null || echo 000)
 case "${status}" in
   200|401) exit 0 ;;
   *)
