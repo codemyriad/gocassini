@@ -307,6 +307,29 @@ jobs:
     runs-on: [self-hosted, Linux, X64, gpu]
     needs: build-image-cuda
     steps:
+      - name: Ensure git-lfs is available
+        # Repo now ships LFS-vendored bot fixtures (.gitattributes routes them
+        # through the lfs smudge filter). Even jobs that don't use those
+        # fixtures must have git-lfs in PATH or `git checkout` aborts on the
+        # smudge step. Self-hosted runner has no git-lfs by default and no
+        # passwordless sudo; install the standalone binary into ~/.local/bin.
+        run: |
+          set -euo pipefail
+          if command -v git-lfs >/dev/null 2>&1; then
+            git-lfs --version
+            exit 0
+          fi
+          GIT_LFS_VERSION="3.5.1"
+          tmpdir="$(mktemp -d)"
+          curl -fsSL \
+            "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz" \
+            | tar -xz -C "$tmpdir"
+          mkdir -p "$HOME/.local/bin"
+          install "$tmpdir/git-lfs-${GIT_LFS_VERSION}/git-lfs" "$HOME/.local/bin/git-lfs"
+          rm -rf "$tmpdir"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/git-lfs" install --skip-repo
+          "$HOME/.local/bin/git-lfs" --version
       - uses: actions/checkout@v4
 
       - name: Load ExApp image
