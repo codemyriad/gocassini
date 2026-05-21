@@ -1,0 +1,65 @@
+[
+  {
+    "id": "gocassini",
+    "categories": ["integration"],
+    "userDocs": "",
+    "adminDocs": "https://github.com/codemyriad/gocassini#readme",
+    "developerDocs": "",
+    "issueTracker": "https://github.com/codemyriad/gocassini/issues",
+    "website": "https://github.com/codemyriad/gocassini",
+    "created": "2026-01-01T00:00:00Z",
+    "lastModified": "2026-05-21T00:00:00Z",
+    "releases": [
+      {
+        "version": "0.1.0",
+        "phpExtensions": [],
+        "databases": [],
+        "shellCommands": [],
+        "phpVersionSpec": "*",
+        "platformVersionSpec": ">=30.0.0 <36.0.0",
+        "minIntSize": 32,
+        "download": "http://mockstore/api/v1/releases/gocassini-0.1.0.tar.gz",
+        "created": "2026-05-21T00:00:00Z",
+        "licenses": ["agpl"],
+        "lastModified": "2026-05-21T00:00:00Z",
+        "isNightly": false,
+        "rawPhpVersionSpec": "*",
+        "rawPlatformVersionSpec": ">=30 <=35",
+        "signature": "",
+        "translations": {"en": {"changelog": "Initial mock-store release for local dogfood testing."}},
+        "signatureDigest": "sha512",
+        "aaIsSystem": false,
+        "deployMethods": [
+          {
+            "installType": "docker_install",
+            "installData": "{\"registry\": \"127.0.0.1:5001\", \"image\": \"codemyriad/gocassini\", \"image_tag\": \"latest\"}"
+          }
+        ],
+        "apiScopes": [
+          {"scopeName": "FILES"},
+          {"scopeName": "NOTIFICATIONS"},
+          {"scopeName": "TALK"}
+        ],
+        "environmentVariables": []
+      }
+    ],
+    "screenshots": [],
+    "translations": {
+      "en": {
+        "name": "Cassini",
+        "summary": "Record, transcribe, and publish Nextcloud Talk meetings.",
+        "description": "Cassini joins a Nextcloud Talk room as a bot, records the call, transcribes and summarizes it, and publishes a readable static site that any logged-in user can browse. Recording control and job history live in the admin-only control panel; the published meeting archive is visible to every logged-in user."
+      }
+    },
+    "isFeatured": true,
+    "authors": [
+      {"name": "codemyriad", "mail": "", "homepage": "https://github.com/codemyriad"}
+    ],
+    "ratingRecent": 0.5,
+    "ratingOverall": 0.5,
+    "ratingNumRecent": 0,
+    "ratingNumOverall": 0,
+    "certificate": "",
+    "discussion": "https://help.nextcloud.com"
+  }
+]

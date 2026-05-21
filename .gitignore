@@ -36,6 +36,9 @@
 !/harness/media/processed/showcase-lantern-festival-v1/manifest.json
 !/spec/*.json
 !/spec/**/*.json
+!/harness/mockstore/*.json
+# Dev-only release tarball baked at manual-test-setup.sh runtime.
+/harness/mockstore/releases/*.tar.gz
 gocassini-*.log
 *gocassini*.log
 
