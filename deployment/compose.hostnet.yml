@@ -1,0 +1,10 @@
+services:
+  cassini-operator:
+    # Local manual Talk recording needs the recorder process to share the host
+    # network namespace. This matches the Talk-driven E2E topology and lets
+    # HPS associate the recorder's signaling session with the same active call
+    # as the browser participant.
+    network_mode: host
+    ports: !reset []
+    environment:
+      CASSINI_TALK_BACKEND_URL: http://localhost:28080
