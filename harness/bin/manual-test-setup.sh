@@ -166,20 +166,30 @@ $(printf '\033[1;32m============================================================
 $(printf '\033[1;32m   Cassini App Store dogfood testbed ready                            \033[0m')
 $(printf '\033[1;32m======================================================================\033[0m')
 
-Admin install path:
-  Per the official Nextcloud ExApp Development Guide, the canonical
-  "install from the App Store as if it were published" pattern is:
+What admins actually do (post-publish):
+  Once Cassini is in the App Store, admins install it with one click
+  from the Apps page in the web UI, same as a regular PHP app. The
+  "Install" button calls app_api:app:register under the hood; admins
+  don't touch the CLI. The only one-time setup an admin has to do
+  before any ExApp will work is configure a Deploy Daemon (HaRP or
+  Docker Socket Proxy) from the AppAPI admin settings page. That's the
+  real friction point — link to the HaRP quickstart from the README.
+
+What you do during development (pre-publish):
+  Until Cassini is in the store, there's no "thing" handing Nextcloud
+  the info.xml on the admin's behalf. So you supply it manually via
+  occ. This is exactly the same code path the store-published install
+  would take, just with --info-xml pointing at a local file instead of
+  a store-fetched one. After publishing, this step disappears for your
+  users.
 
       docker compose -p cassini-exapp-test exec -u www-data nextcloud \\
           php occ app_api:app:register gocassini harp_local \\
               --info-xml /tmp/gocassini-info.xml \\
               --test-deploy-mode --wait-finish
 
-  --info-xml hands AppAPI the exact info.xml a published install would
-  fetch from apps.nextcloud.com. --test-deploy-mode lets you re-register
-  without unregistering first (the iteration sweet spot). HaRP daemon +
-  reverse-proxy + registry-to-local mapping mirror the production
-  topology; this command is the install trigger.
+  --test-deploy-mode lets you re-register without unregistering first
+  (iteration sweet spot per the ExApp dev guide).
 
   After it prints "ExApp gocassini deployed successfully":
   1. Open  http://127.0.0.1:28080/
