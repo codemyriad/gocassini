@@ -353,6 +353,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime) http.Handler {
 	api := http.NewServeMux()
 	api.HandleFunc("/jobs", rt.jobsHandler)
 	api.HandleFunc("/jobs/", rt.jobDetailHandler)
+	api.HandleFunc("/backfill-transcripts/eligible", rt.handleBackfillEligible)
 	api.HandleFunc("/events", rt.eventsHandler)
 	api.HandleFunc("/api/v1/welcome", rt.talkWelcomeHandler)
 	api.HandleFunc("/api/v1/room/", rt.talkRoomHandler)
@@ -1078,6 +1079,14 @@ func (rt *Runtime) jobDetailHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rt.handleRerunJob(w, r, id)
+		return
+	}
+	if action == "backfill-transcripts" {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		rt.handleBackfillTranscriptsJob(w, r, id)
 		return
 	}
 	if r.Method != http.MethodGet {

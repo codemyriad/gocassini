@@ -11,6 +11,16 @@ import (
 
 var ErrJobNotEligibleForRerun = errors.New("job is not eligible for rerun")
 
+// Trigger kinds for job attempts. "initial" marks the original record attempt;
+// "rerun" is the D-280 downstream-only rerun; "backfill-gpu" is a transcript-
+// append rerun that asks the build runner to enable the legacy CPU model
+// alongside the GPU default so the resulting v2 .opus has both transcripts.
+const (
+	TriggerKindInitial     = "initial"
+	TriggerKindRerun       = "rerun"
+	TriggerKindBackfillGPU = "backfill-gpu"
+)
+
 type JobAttempt struct {
 	JobID               string  `json:"job_id"`
 	AttemptNumber       int     `json:"attempt_number"`
@@ -102,6 +112,16 @@ WHERE job_id = ? AND attempt_number = ?`, column), path, nowUTCString(), jobID, 
 }
 
 func (s *Store) QueueRerunAttempt(ctx context.Context, job Job, queuedAt string) (Job, error) {
+	return s.QueueRerunAttemptWithKind(ctx, job, TriggerKindRerun, queuedAt)
+}
+
+// QueueRerunAttemptWithKind is QueueRerunAttempt parameterised by trigger kind
+// so callers (the regular rerun endpoint vs the backfill endpoint) can stamp
+// the attempt with the kind that downstream stages will key off.
+func (s *Store) QueueRerunAttemptWithKind(ctx context.Context, job Job, triggerKind string, queuedAt string) (Job, error) {
+	if strings.TrimSpace(triggerKind) == "" {
+		triggerKind = TriggerKindRerun
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Job{}, fmt.Errorf("begin rerun attempt: %w", err)
@@ -144,7 +164,7 @@ INSERT INTO job_attempts (
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job.ID,
 		nextAttemptNumber,
-		"rerun",
+		triggerKind,
 		requestJSON,
 		"build",
 		"queued",

@@ -262,7 +262,9 @@ func parseJobPath(path string) (id string, action string, ok bool) {
 		if parts[0] == "" || parts[1] == "" {
 			return "", "", false
 		}
-		if parts[1] != "stop" && parts[1] != "rerun" {
+		switch parts[1] {
+		case "stop", "rerun", "backfill-transcripts":
+		default:
 			return "", "", false
 		}
 		return parts[0], parts[1], true
@@ -565,7 +567,7 @@ func (rt *Runtime) handleRerunJob(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 
-	task := buildTask{JobID: rerunJob.ID, AttemptNumber: rerunJob.CurrentAttemptNumber, ArtifactRunPath: *rerunJob.ArtifactRunPath}
+	task := buildTask{JobID: rerunJob.ID, AttemptNumber: rerunJob.CurrentAttemptNumber, ArtifactRunPath: *rerunJob.ArtifactRunPath, TriggerKind: TriggerKindRerun}
 	select {
 	case rt.buildQueue <- task:
 		rt.logger.Printf("rerun accepted id=%s attempt=%d run=%s", rerunJob.ID, rerunJob.CurrentAttemptNumber, task.ArtifactRunPath)

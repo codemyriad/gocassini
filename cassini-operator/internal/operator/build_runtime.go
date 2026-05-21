@@ -16,6 +16,12 @@ type buildTask struct {
 	JobID           string
 	AttemptNumber   int
 	ArtifactRunPath string
+	// TriggerKind is the attempt's trigger kind (e.g. TriggerKindRerun,
+	// TriggerKindBackfillGPU). The build runner reads it to decide whether to
+	// inject per-attempt env additions, e.g. CASSINI_STT_ADDITIONAL_MODELS for
+	// the backfill case so the same audio is transcribed by both the GPU
+	// default model and the legacy CPU model.
+	TriggerKind string
 }
 
 func (rt *Runtime) startBuildWorkers() {
@@ -75,7 +81,7 @@ func (rt *Runtime) enqueueBuildJob(jobID string, attemptNumber int, jobArtifactR
 	if err := rt.store.MarkBuildQueued(context.Background(), jobID, jobArtifactRunPath, attemptArtifactRunPath, queuedAt); err != nil {
 		return err
 	}
-	task := buildTask{JobID: jobID, AttemptNumber: attemptNumber, ArtifactRunPath: jobArtifactRunPath}
+	task := buildTask{JobID: jobID, AttemptNumber: attemptNumber, ArtifactRunPath: jobArtifactRunPath, TriggerKind: TriggerKindInitial}
 	select {
 	case rt.buildQueue <- task:
 		return nil
@@ -86,6 +92,45 @@ func (rt *Runtime) enqueueBuildJob(jobID string, attemptNumber int, jobArtifactR
 		return fmt.Errorf("build queue stopped")
 	}
 }
+
+// buildEnvForAttempt computes the env that the build subprocess inherits.
+// Starts from the operator's process env and layers per-trigger-kind
+// additions on top. Defined as a method so it can be exercised by tests
+// without spawning an actual subprocess.
+func (rt *Runtime) buildEnvForAttempt(task buildTask) []string {
+	env := os.Environ()
+	additions := envAdditionsForTriggerKind(task.TriggerKind)
+	for k, v := range additions {
+		env = append(env, k+"="+v)
+	}
+	return env
+}
+
+// envAdditionsForTriggerKind returns env key/value pairs that the build
+// subprocess should have *on top of* the operator's process env for the given
+// trigger kind. The map is empty for kinds with no overrides.
+func envAdditionsForTriggerKind(kind string) map[string]string {
+	switch kind {
+	case TriggerKindBackfillGPU:
+		// The backfill rerun runs the same audio through both the current
+		// default model (set on the operator's process env, normally
+		// parakeet-tdt-0.6b-v3 GPU) and the legacy CPU parakeet, so the new
+		// v2 .opus carries both transcripts side by side. The recorder's
+		// transcribe pass reads this env var directly.
+		return map[string]string{
+			"CASSINI_STT_ADDITIONAL_MODELS": legacyBackfillAdditionalModel,
+		}
+	default:
+		return nil
+	}
+}
+
+// legacyBackfillAdditionalModel is the model id we ask the backfill rerun to
+// run *in addition to* the current STT default. Kept as a constant rather than
+// an env var so the contract is explicit: the user-facing intent is "give us
+// the old CPU transcript next to the new GPU one", not "let operators
+// reconfigure the backfill set per deploy".
+const legacyBackfillAdditionalModel = "parakeet-tdt-0.6b"
 
 func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string, error) {
 	meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
@@ -104,7 +149,7 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "build", task.ArtifactRunPath, "--out", meetingPath)
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
-	cmd.Env = os.Environ()
+	cmd.Env = rt.buildEnvForAttempt(task)
 	if err := cmd.Run(); err != nil {
 		return meetingPath, fmt.Errorf("cassini build: %w", err)
 	}
