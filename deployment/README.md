@@ -46,6 +46,18 @@ If Talk advertises a public Nextcloud URL such as `http://localhost:28080`, set
 `CASSINI_TALK_BACKEND_URL` to the URL the operator container can use to reach
 that same Nextcloud instance, for example `http://host.docker.internal:28080`.
 
+For local manual Talk recording against the repo Nextcloud harness, use the
+host-network override so the recorder and browser participant are seen by the
+high-performance signaling server as part of the same active call:
+
+```bash
+cd deployment
+docker compose -f compose.yml -f compose.hostnet.yml up -d --build
+```
+
+Then configure Talk's recording backend with the host gateway URL that the
+Nextcloud container can reach, for example `http://172.18.0.1:4000`.
+
 ## Storage defaults
 
 By default the bundle uses Docker-managed named volumes:
