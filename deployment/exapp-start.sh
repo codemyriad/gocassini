@@ -55,6 +55,11 @@ serverAddr = "${HP_FRP_ADDRESS}"
 serverPort = ${HP_FRP_PORT}
 loginFailExit = false
 transport.tls.enable = true
+# Fixed magic value, never deployment-specific. HaRP's start.sh generates
+# a self-signed cert with CN=harp.nc and SAN=DNS:harp.nc on every fresh
+# container start (hard-coded, no env override). frpc uses this string
+# for TLS hostname verification against that cert. Changing it produces
+# x509 verification failures.
 transport.tls.serverName = "harp.nc"
 ${frp_tls_block}
 metadatas.token = "${HP_SHARED_KEY}"

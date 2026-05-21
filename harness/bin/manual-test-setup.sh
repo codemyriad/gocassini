@@ -206,13 +206,26 @@ $(printf '\033[1;32m============================================================
 $(printf '\033[1;32m   Cassini App Store dogfood testbed ready                            \033[0m')
 $(printf '\033[1;32m======================================================================\033[0m')
 
-Admin install path (simulates the production App Store experience):
+Admin install path:
+  The "Deploy and enable" button you might expect from older AppAPI versions
+  does not exist in current Nextcloud (32 or 33) — AppAPI's admin page only
+  shows daemon configuration. The catalog/install UI was not in either the
+  33.0.0 or v33.0.3 cuts of the AppAPI code. The install path is CLI:
+
+      docker compose -p cassini-exapp-test exec -u www-data nextcloud \\
+          php occ app_api:app:register gocassini harp_local --wait-finish
+
+  Same code path the (missing) UI button would invoke. The mock catalog,
+  reverse proxy, HaRP daemon, and image registry stand up the production
+  topology; this command is the install trigger.
+
+  After it prints "ExApp gocassini deployed successfully":
   1. Open  http://127.0.0.1:28080/
   2. Log in as  admin / admin
-  3. Click avatar → Administration settings
-  4. Sidebar → Administration → External Apps   (the AppAPI page,
-     direct URL: http://127.0.0.1:28080/index.php/settings/apps/app-api-apps )
-  5. Find Cassini and click the green "Deploy and enable" button.
+  3. Navigate to the post-deploy URLs below to verify the proxy routes.
+
+  AppAPI daemon config is visible at:
+     http://127.0.0.1:28080/index.php/settings/admin/app_api
 
   AppAPI will pull 127.0.0.1:5001/codemyriad/gocassini:latest, spawn the
   ExApp container on the host Docker engine, exchange keys, and wire up
