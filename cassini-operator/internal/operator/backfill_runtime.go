@@ -42,8 +42,8 @@ type backfillEligibleResponse struct {
 }
 
 type backfillEligibleJob struct {
-	ID                  string `json:"id"`
-	CurrentAttemptCount int    `json:"transcripts"`
+	ID              string `json:"id"`
+	TranscriptCount int    `json:"transcripts"`
 }
 
 // handleBackfillTranscriptsJob queues a backfill rerun for a single job.
@@ -174,10 +174,12 @@ func stringFromPtr(p *string) string {
 }
 
 // handleBackfillEligible lists completed jobs whose canonical meeting bundle
-// currently publishes fewer than the threshold number of transcripts. The
-// response is ordered by job id so the control panel's iteration is stable
-// across polls. Jobs with broken or missing artifact manifests are reported
-// as eligible (count 0) — see countPublishedTranscripts for the rationale.
+// currently publishes fewer than the threshold number of transcripts.
+// Inherits the store's newest-first ordering from ListJobs — the control
+// panel's bulk driver takes a snapshot at the start of a run and iterates
+// that snapshot, so polling-order stability is not a contract this endpoint
+// has to preserve. Jobs with broken or missing artifact manifests are
+// reported as eligible (count 0) — see countPublishedTranscripts.
 func (rt *Runtime) handleBackfillEligible(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeMethodNotAllowed(w, http.MethodGet)
@@ -205,7 +207,7 @@ func (rt *Runtime) handleBackfillEligible(w http.ResponseWriter, r *http.Request
 		if count >= minTranscriptsForBackfillSkip {
 			continue
 		}
-		out = append(out, backfillEligibleJob{ID: job.ID, CurrentAttemptCount: count})
+		out = append(out, backfillEligibleJob{ID: job.ID, TranscriptCount: count})
 	}
 	writeJSON(w, http.StatusOK, backfillEligibleResponse{Jobs: out})
 }

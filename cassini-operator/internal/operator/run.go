@@ -138,6 +138,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("work_root -> %s", cfg.WorkRoot)
 	logger.Printf("site_root -> %s", cfg.SiteRoot)
 	logger.Printf("cassini_bin -> %s", cfg.CassiniBin)
+	logger.Printf("build_device -> %q (empty means recorder default)", cfg.BuildDevice)
 	logger.Printf("talk_shared_secret_set -> %t", strings.TrimSpace(cfg.TalkSharedSecret) != "")
 	logger.Printf("max_record_workers -> %d", cfg.MaxRecordWorkers)
 	logger.Printf("max_build_workers -> %d", cfg.MaxBuildWorkers)

@@ -47,7 +47,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		rt.logger.Printf("build start update failed id=%s worker=%d: %v", task.JobID, workerIndex, err)
 		return
 	}
-	rt.logger.Printf("build started id=%s attempt=%d worker=%d run=%s", task.JobID, task.AttemptNumber, workerIndex, task.ArtifactRunPath)
+	rt.logger.Printf("build started id=%s attempt=%d worker=%d kind=%s run=%s", task.JobID, task.AttemptNumber, workerIndex, task.TriggerKind, task.ArtifactRunPath)
 
 	attemptMeetingPath, err := rt.buildJobFn(rt.ctx, task)
 	finishedAt := nowUTCString()

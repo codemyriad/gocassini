@@ -251,8 +251,8 @@ func TestBackfillEligibleEndpointListsSingleTranscriptJobs(t *testing.T) {
 	if body.Jobs[0].ID != "job-eligible" {
 		t.Fatalf("expected eligible job to be job-eligible, got %+v", body.Jobs[0])
 	}
-	if body.Jobs[0].CurrentAttemptCount != 1 {
-		t.Fatalf("expected CurrentAttemptCount=1, got %d", body.Jobs[0].CurrentAttemptCount)
+	if body.Jobs[0].TranscriptCount != 1 {
+		t.Fatalf("expected TranscriptCount=1, got %d", body.Jobs[0].TranscriptCount)
 	}
 }
 

@@ -11,6 +11,12 @@
   import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
 
   const POLL_INTERVAL_MS = 2000;
+  // Upper bound for a single backfill build+publish. Each backfill re-runs
+  // both STT models on the recorded audio plus the LLM readable cleanup,
+  // and the cleanup is the dominant per-meeting cost. Real meetings on
+  // george have come in well under this; the cap exists to keep one stuck
+  // build from deadlocking the whole bulk loop.
+  const BACKFILL_JOB_TIMEOUT_MS = 30 * 60 * 1000;
 
   let operatorBasePath = "";
   let operatorClient: OperatorClient | null = null;
@@ -242,18 +248,19 @@
   // waitForJobTerminal polls the job's detail endpoint until the build+publish
   // chain reaches a terminal state. Uses POLL_INTERVAL_MS as the cadence; the
   // event stream also drives `selectedJob` reactively, but the bulk driver
-  // can't rely on whichever job happens to be selected.
+  // can't rely on whichever job happens to be selected. A 30-minute hard cap
+  // keeps a stuck build from deadlocking the whole bulk loop — operators can
+  // still cancel by hand, but the cap means walking away is safe.
   async function waitForJobTerminal(jobId: string): Promise<void> {
     if (!operatorClient) {
       return;
     }
+    const deadline = Date.now() + BACKFILL_JOB_TIMEOUT_MS;
     while (!backfillCancelRequested) {
-      let detail: JobDetailResponse;
-      try {
-        detail = await operatorClient.getJobDetail(jobId);
-      } catch (error) {
-        throw error;
+      if (Date.now() > deadline) {
+        throw new Error(`backfill for ${jobId} did not finish within ${Math.round(BACKFILL_JOB_TIMEOUT_MS / 60000)} minutes`);
       }
+      const detail = await operatorClient.getJobDetail(jobId);
       if (detail.job.stage === "done" && (detail.job.state === "succeeded" || detail.job.state === "failed")) {
         if (detail.job.state === "failed") {
           throw new Error(`backfill failed for ${jobId}: ${detail.job.error ?? "(no error message)"}`);
