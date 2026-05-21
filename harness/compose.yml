@@ -53,15 +53,6 @@ services:
     volumes:
       - ./nginx-frontproxy.conf:/etc/nginx/conf.d/default.conf:ro
 
-  # Local Docker registry. The Cassini ExApp image is built locally and
-  # pushed here so AppAPI's catalog can reference it as if it lived on a
-  # real registry, without us needing network egress or a published image.
-  registry:
-    image: registry:2
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:5001:5000"
-
   # AppAPI HaRP deploy daemon: the Nextcloud-recommended ExApp orchestrator
   # for NC 32+. Pulls images, spawns containers, and proxies traffic to
   # them via FRP tunnels. The Cassini ExApp image is HaRP-only — it
@@ -77,22 +68,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - appapi_harp_certs:/certs
-
-  # Mock Nextcloud App Store catalog server. Serves a hand-crafted
-  # appapi_apps.json that mimics https://apps.nextcloud.com/api/v1/ so
-  # AppAPI lists Cassini in its External Apps page exactly as it would
-  # after a real App Store submission. The admin then clicks the real
-  # "Deploy and enable" button. Reachable from the Nextcloud container
-  # at http://mockstore/api/v1/appapi_apps.json on the default network.
-  mockstore:
-    image: nginx:alpine
-    restart: unless-stopped
-    volumes:
-      - ./mockstore/appapi_apps.json:/usr/share/nginx/html/api/v1/appapi_apps.json:ro
-      # Release tarballs referenced from the catalog's "download" URL.
-      # Populated at setup time so the info.xml inside carries the local
-      # registry hostname instead of ghcr.io.
-      - ./mockstore/releases:/usr/share/nginx/html/api/v1/releases:ro
 
   nats:
     image: nats:2.11-alpine
