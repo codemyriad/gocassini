@@ -2,6 +2,7 @@ package transcribe
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	sherpa "github.com/k2-fsa/sherpa-onnx-go/sherpa_onnx"
@@ -102,12 +103,16 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int) ([]Word, erro
 	r.vad.Flush()
 
 	var allWords []Word
+	var segCount int
+	var totalSpeechSamples int
 	for !r.vad.IsEmpty() {
 		seg := r.vad.Front()
 		r.vad.Pop()
 		if seg == nil || len(seg.Samples) == 0 {
 			continue
 		}
+		segCount++
+		totalSpeechSamples += len(seg.Samples)
 
 		// seg.Start is the sample index of the segment start within the full recording.
 		segOffsetMS := int64(seg.Start) * 1000 / int64(sampleRate)
@@ -117,6 +122,15 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int) ([]Word, erro
 			return nil, err
 		}
 		allWords = append(allWords, words...)
+	}
+	// When a non-trivial audio buffer produces zero words, we want enough
+	// information in the log to tell VAD-rejected-everything from
+	// ASR-returned-no-tokens — the e2e harness keeps observing this
+	// failure intermittently and the two cases have very different fixes.
+	if len(allWords) == 0 && len(samples) >= sampleRate*5 {
+		audioSeconds := float64(len(samples)) / float64(sampleRate)
+		speechSeconds := float64(totalSpeechSamples) / float64(sampleRate)
+		log.Printf("transcribe: 0 words from %.1fs of audio; VAD segments=%d totalling %.1fs of speech", audioSeconds, segCount, speechSeconds)
 	}
 	return allWords, nil
 }
