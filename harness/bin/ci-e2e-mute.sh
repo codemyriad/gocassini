@@ -38,6 +38,15 @@ if (( PUB_DURATION < 48 )); then
 fi
 export REC_DURATION PUB_DURATION
 
+# stream-video.sh's default join-delay schedule is (i-1) seconds, so 3 bots
+# arrive at t=0/1/2. spreed's call-state propagation hasn't settled within
+# that 1s gap, so the recorder's first requestoffer for the middle bot can
+# race the hub's "not in the same call" silent-drop window. The recorder's
+# retry throttle (requestOfferResponseTimeout=8s) then prevents a fast
+# re-request, and the orphan subscriber never reaches ICE state=connected.
+# Match the spacing used by ci-e2e-talk-record-roundtrip.sh (~2-3s gaps).
+export JOIN_DELAYS="${JOIN_DELAYS:-0,3,6}"
+
 CI_OUTPUT_BASE="/tmp/gocassini-ci-mute-$(date -u +%Y%m%dT%H%M%S)-$$"
 export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.mkv}"
 export FINAL_OUTPUT="${FINAL_OUTPUT:-$OUTPUT}"
