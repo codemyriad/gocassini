@@ -445,7 +445,7 @@ func (rt *Runtime) postTalkJSON(backendURL, path string, payload any) error {
 	return rt.doTalkRequest(req)
 }
 
-func (rt *Runtime) uploadTalkRecording(state *talkRoomState, filePath string) error {
+func (rt *Runtime) uploadTalkRecording(state *talkRoomState, filePath, uploadName string) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("open recording for upload: %w", err)
@@ -457,7 +457,10 @@ func (rt *Runtime) uploadTalkRecording(state *talkRoomState, filePath string) er
 	if err := writer.WriteField("owner", state.Owner); err != nil {
 		return fmt.Errorf("write upload owner field: %w", err)
 	}
-	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+	if uploadName == "" {
+		uploadName = filepath.Base(filePath)
+	}
+	part, err := writer.CreateFormFile("file", uploadName)
 	if err != nil {
 		return fmt.Errorf("create upload form file: %w", err)
 	}

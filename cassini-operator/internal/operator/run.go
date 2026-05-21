@@ -529,7 +529,8 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 			return
 		}
 		recordingPath := filepath.Join(canonicalRunPath, "recording.mkv")
-		if err := rt.uploadTalkRecording(talkState, recordingPath); err != nil {
+		recordingName := talkRecordingUploadName(finishedAt)
+		if err := rt.uploadTalkRecording(talkState, recordingPath, recordingName); err != nil {
 			rt.logger.Printf("talk upload failed id=%s: %v", job.ID, err)
 			if updateErr := rt.store.MarkRecordFailed(context.Background(), job.ID, err.Error(), result, finishedAt); updateErr != nil {
 				rt.logger.Printf("record fail update failed id=%s: %v", job.ID, updateErr)
@@ -1165,4 +1166,12 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 func nowUTCString() string {
 	return time.Now().UTC().Format(time.RFC3339Nano)
+}
+
+func talkRecordingUploadName(timestamp string) string {
+	t, err := time.Parse(time.RFC3339Nano, timestamp)
+	if err != nil {
+		t = time.Now().UTC()
+	}
+	return "recording-" + t.UTC().Format("20060102T150405.000000000Z") + ".mkv"
 }
