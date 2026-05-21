@@ -28,6 +28,20 @@ interface RerunJobResponse {
   attempt_number: number;
 }
 
+interface BackfillJobResponse {
+  id: string;
+  attempt_number: number;
+}
+
+export interface BackfillEligibleJob {
+  id: string;
+  transcripts: number;
+}
+
+interface BackfillEligibleResponse {
+  jobs: BackfillEligibleJob[];
+}
+
 export class OperatorHttpError extends Error {
   status: number;
 
@@ -76,6 +90,20 @@ export class OperatorClient {
     return this.#request<RerunJobResponse>(`/jobs/${encodeURIComponent(jobId)}/rerun`, {
       method: "POST",
     });
+  }
+
+  async backfillJobTranscripts(jobId: string): Promise<BackfillJobResponse> {
+    return this.#request<BackfillJobResponse>(
+      `/jobs/${encodeURIComponent(jobId)}/backfill-transcripts`,
+      { method: "POST" },
+    );
+  }
+
+  async listBackfillEligibleJobs(): Promise<BackfillEligibleJob[]> {
+    const response = await this.#request<BackfillEligibleResponse>(
+      "/backfill-transcripts/eligible",
+    );
+    return response.jobs;
   }
 
   openEventStream(handlers: OperatorStreamHandlers): EventSource {

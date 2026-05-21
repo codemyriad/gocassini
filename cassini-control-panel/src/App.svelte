@@ -5,6 +5,7 @@
   import {
     OperatorClient,
     OperatorHttpError,
+    type BackfillEligibleJob,
     type OperatorStateChangeEvent,
   } from "./operator/client";
   import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
@@ -32,12 +33,24 @@
   let meetingUrl = "";
   let pollTimer = 0;
 
+  // Backfill bulk-driver state. The control panel iterates client-side over
+  // the eligible-jobs list returned by the operator, so the state machine and
+  // the cancel affordance live here rather than in the operator (which would
+  // otherwise need to persist a parallel queue for a one-shot migration).
+  let backfillEligible: BackfillEligibleJob[] = [];
+  let backfillRunning = false;
+  let backfillCancelRequested = false;
+  let backfillProgress: { done: number; total: number; currentJobId: string } = { done: 0, total: 0, currentJobId: "" };
+  let backfillStatusMessage = "";
+  let backfillError = "";
+
   onMount(async () => {
     try {
       const config = loadConfig();
       operatorBasePath = config.operatorBasePath;
       operatorClient = new OperatorClient(config.operatorBasePath);
       await refreshJobs();
+      await refreshBackfillEligible();
       openEventStream();
     } catch (error) {
       configError = error instanceof Error ? error.message : String(error);
@@ -153,6 +166,101 @@
     } finally {
       submittingRerun = false;
       updatePolling();
+    }
+  }
+
+  async function refreshBackfillEligible() {
+    if (!operatorClient) {
+      return;
+    }
+    try {
+      backfillEligible = await operatorClient.listBackfillEligibleJobs();
+    } catch (error) {
+      backfillError = asMessage(error);
+    }
+  }
+
+  async function handleStartBulkBackfill() {
+    if (!operatorClient || backfillRunning) {
+      return;
+    }
+    backfillError = "";
+    backfillStatusMessage = "";
+    await refreshBackfillEligible();
+    const targets = backfillEligible.slice();
+    if (targets.length === 0) {
+      backfillStatusMessage = "Nothing to backfill — every published meeting already has two or more transcripts.";
+      return;
+    }
+    if (!window.confirm(`Backfill GPU transcripts for ${targets.length} meeting(s)? Each one will be re-built on george and may take several minutes.`)) {
+      return;
+    }
+    backfillRunning = true;
+    backfillCancelRequested = false;
+    backfillProgress = { done: 0, total: targets.length, currentJobId: "" };
+    try {
+      for (const target of targets) {
+        if (backfillCancelRequested) {
+          backfillStatusMessage = `Cancelled after ${backfillProgress.done} of ${backfillProgress.total}.`;
+          break;
+        }
+        backfillProgress = { ...backfillProgress, currentJobId: target.id };
+        try {
+          await operatorClient.backfillJobTranscripts(target.id);
+        } catch (error) {
+          if (error instanceof OperatorHttpError && error.status === 409) {
+            // Race: another client (or a previous partial run) already
+            // backfilled this one. Skip and keep going.
+            backfillProgress = { ...backfillProgress, done: backfillProgress.done + 1 };
+            continue;
+          }
+          throw error;
+        }
+        await waitForJobTerminal(target.id);
+        backfillProgress = { ...backfillProgress, done: backfillProgress.done + 1 };
+      }
+      if (!backfillCancelRequested) {
+        backfillStatusMessage = `Backfilled ${backfillProgress.done} of ${backfillProgress.total}.`;
+      }
+    } catch (error) {
+      backfillError = asMessage(error);
+    } finally {
+      backfillRunning = false;
+      backfillProgress = { ...backfillProgress, currentJobId: "" };
+      await refreshJobs();
+      await refreshBackfillEligible();
+    }
+  }
+
+  function handleCancelBulkBackfill() {
+    if (!backfillRunning) {
+      return;
+    }
+    backfillCancelRequested = true;
+  }
+
+  // waitForJobTerminal polls the job's detail endpoint until the build+publish
+  // chain reaches a terminal state. Uses POLL_INTERVAL_MS as the cadence; the
+  // event stream also drives `selectedJob` reactively, but the bulk driver
+  // can't rely on whichever job happens to be selected.
+  async function waitForJobTerminal(jobId: string): Promise<void> {
+    if (!operatorClient) {
+      return;
+    }
+    while (!backfillCancelRequested) {
+      let detail: JobDetailResponse;
+      try {
+        detail = await operatorClient.getJobDetail(jobId);
+      } catch (error) {
+        throw error;
+      }
+      if (detail.job.stage === "done" && (detail.job.state === "succeeded" || detail.job.state === "failed")) {
+        if (detail.job.state === "failed") {
+          throw new Error(`backfill failed for ${jobId}: ${detail.job.error ?? "(no error message)"}`);
+        }
+        return;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, POLL_INTERVAL_MS));
     }
   }
 
@@ -381,6 +489,59 @@
         </div>
         {#if actionError}
           <div class="mt-3 alert alert-error text-sm">{actionError}</div>
+        {/if}
+      </section>
+
+      <section class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div class="min-w-0">
+            <h2 class="font-semibold">Backfill GPU transcripts</h2>
+            <p class="text-xs text-base-content/60">
+              Re-builds each published meeting that still has a single transcript,
+              adding the legacy CPU transcript next to the current GPU default.
+              Runs one job at a time so live recordings on george aren't starved.
+            </p>
+          </div>
+          <div class="flex flex-col items-stretch gap-2 lg:items-end">
+            {#if backfillRunning}
+              <button class="btn btn-outline btn-sm" type="button" on:click={handleCancelBulkBackfill} disabled={backfillCancelRequested}>
+                {#if backfillCancelRequested}
+                  Cancelling…
+                {:else}
+                  Cancel after current
+                {/if}
+              </button>
+            {:else}
+              <button
+                class="btn btn-outline btn-sm"
+                type="button"
+                on:click={handleStartBulkBackfill}
+                disabled={!operatorClient || backfillEligible.length === 0}
+              >
+                <RefreshCw size={14} aria-hidden="true" />
+                Backfill {backfillEligible.length} meeting{backfillEligible.length === 1 ? "" : "s"}
+              </button>
+            {/if}
+            <button class="btn btn-ghost btn-xs" type="button" on:click={refreshBackfillEligible} aria-label="Refresh eligible list">
+              Refresh list
+            </button>
+          </div>
+        </div>
+        {#if backfillRunning}
+          <div class="mt-3 text-xs text-base-content/70">
+            <p>
+              {backfillProgress.done} of {backfillProgress.total} done.
+              {#if backfillProgress.currentJobId}
+                Currently building <code class="font-mono">{backfillProgress.currentJobId}</code>.
+              {/if}
+            </p>
+            <progress class="progress progress-primary mt-1 w-full" value={backfillProgress.done} max={backfillProgress.total}></progress>
+          </div>
+        {:else if backfillStatusMessage}
+          <div class="mt-3 text-xs text-base-content/70">{backfillStatusMessage}</div>
+        {/if}
+        {#if backfillError}
+          <div class="mt-3 alert alert-error text-sm">{backfillError}</div>
         {/if}
       </section>
 
