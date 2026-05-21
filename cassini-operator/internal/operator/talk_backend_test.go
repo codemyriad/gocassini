@@ -186,6 +186,7 @@ func TestTalkRoomStartAcceptsAuthenticatedRequest(t *testing.T) {
 	}
 	fakeTalk.assertEventTypes(t, []string{"started", "stopped"})
 	fakeTalk.assertUploadCount(t, 1)
+	fakeTalk.assertUploadFilenames(t)
 }
 
 func TestTalkRoomStartUsesConfiguredBackendURLForOperatorCalls(t *testing.T) {
@@ -410,6 +411,7 @@ type fakeTalkServer struct {
 	mu      sync.Mutex
 	events  []string
 	uploads int
+	files   []string
 }
 
 func newFakeTalkServer(t *testing.T) *fakeTalkServer {
@@ -454,7 +456,7 @@ func newFakeTalkServer(t *testing.T) *fakeTalkServer {
 		if got := r.FormValue("owner"); got != "chima" {
 			t.Fatalf("owner = %q, want chima", got)
 		}
-		file, _, err := r.FormFile("file")
+		file, header, err := r.FormFile("file")
 		if err != nil {
 			t.Fatalf("form file: %v", err)
 		}
@@ -462,6 +464,7 @@ func newFakeTalkServer(t *testing.T) *fakeTalkServer {
 		_ = file.Close()
 		ft.mu.Lock()
 		ft.uploads++
+		ft.files = append(ft.files, header.Filename)
 		ft.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ocs":{"meta":{"status":"ok","statuscode":200,"message":"OK"},"data":[]}}`))
@@ -495,6 +498,55 @@ func (f *fakeTalkServer) assertUploadCount(t *testing.T, want int) {
 	if f.uploads != want {
 		t.Fatalf("uploads = %d, want %d", f.uploads, want)
 	}
+}
+
+func (f *fakeTalkServer) assertUploadFilenames(t *testing.T) {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, name := range f.files {
+		if !isTimestampedRecordingName(name) {
+			t.Fatalf("upload filename = %q, want recording-YYYYMMDDTHHMMSS.nnnnnnnnnZ.mkv", name)
+		}
+	}
+}
+
+func isTimestampedRecordingName(name string) bool {
+	if len(name) != len("recording-20060102T150405.000000000Z.mkv") {
+		return false
+	}
+	if !strings.HasPrefix(name, "recording-") || !strings.HasSuffix(name, "Z.mkv") {
+		return false
+	}
+	for i, ch := range name {
+		switch i {
+		case 18:
+			if ch != 'T' {
+				return false
+			}
+		case 25:
+			if ch != '.' {
+				return false
+			}
+		case 35:
+			if ch != 'Z' {
+				return false
+			}
+		case 36:
+			if ch != '.' {
+				return false
+			}
+		case 37, 38, 39:
+			if name[i] != "mkv"[i-37] {
+				return false
+			}
+		default:
+			if i >= 10 && i <= 34 && (ch < '0' || ch > '9') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 type assertErr string
