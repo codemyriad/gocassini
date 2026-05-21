@@ -55,16 +55,26 @@ serverAddr = "${HP_FRP_ADDRESS}"
 serverPort = ${HP_FRP_PORT}
 loginFailExit = false
 transport.tls.enable = true
+transport.tls.serverName = "harp.nc"
 ${frp_tls_block}
 metadatas.token = "${HP_SHARED_KEY}"
 
+# Register this ExApp as a TCP backend with HaRP. The remotePort, name, and
+# token are how HaRP's HAProxy correlates incoming /exapps/${APP_ID}/...
+# requests with this backend — without this registration HaRP responds 503
+# on every proxy hit, including AppAPI's heartbeat probe during install.
+#
+# No [proxies.plugin] block: frpc's plain TCP proxy already forwards to
+# localIP:localPort. The HaRP reference start.sh uses unix_domain_socket
+# because its example ExApp binds to a unix socket — cassini-operator
+# already binds to APP_HOST:APP_PORT (typically 127.0.0.1:APP_PORT under
+# HaRP), so plain TCP forwarding is the right thing here.
 [[proxies]]
 name = "${APP_ID}"
 type = "tcp"
 remotePort = ${APP_PORT}
-[proxies.plugin]
-type = "tcp"
-addr = "127.0.0.1:${APP_PORT}"
+localIP = "127.0.0.1"
+localPort = ${APP_PORT}
 EOF
 
 # Launch frpc in the background. tini (PID 1) reaps it on shutdown.
