@@ -181,8 +181,11 @@ func TestTalkRoomStartAcceptsAuthenticatedRequest(t *testing.T) {
 	}
 	_ = waitForJobState(t, rt.store, jobs[0].ID, "succeeded")
 	logText := readFileString(t, logPath)
-	if !strings.Contains(logText, "record --call "+fakeTalk.server.URL+"/call/room123") {
+	if !strings.Contains(logText, "--call "+fakeTalk.server.URL+"/call/room123") {
 		t.Fatalf("expected synthesized call URL in log, got %s", logText)
+	}
+	if !strings.Contains(logText, "--talk-auth-mode guest-participant") {
+		t.Fatalf("expected talk auth mode flag in log, got %s", logText)
 	}
 	fakeTalk.assertEventTypes(t, []string{"started", "stopped"})
 	fakeTalk.assertUploadCount(t, 1)
@@ -217,7 +220,7 @@ func TestTalkRoomStartUsesConfiguredBackendURLForOperatorCalls(t *testing.T) {
 	}
 	_ = waitForJobState(t, rt.store, jobs[0].ID, "succeeded")
 	logText := readFileString(t, logPath)
-	if !strings.Contains(logText, "record --call http://localhost:28080/call/room123") {
+	if !strings.Contains(logText, "--call http://localhost:28080/call/room123") {
 		t.Fatalf("expected public synthesized call URL in log, got %s", logText)
 	}
 	if !strings.Contains(logText, "--connect-url "+fakeTalk.server.URL) {
@@ -228,6 +231,9 @@ func TestTalkRoomStartUsesConfiguredBackendURLForOperatorCalls(t *testing.T) {
 	}
 	if !strings.Contains(jobs[0].RequestJSON, `"talkConnectURL":"`+fakeTalk.server.URL+`"`) {
 		t.Fatalf("expected connect URL in request JSON, got %s", jobs[0].RequestJSON)
+	}
+	if !strings.Contains(jobs[0].RequestJSON, `"talkAuthMode":"guest-participant"`) {
+		t.Fatalf("expected talk auth mode in request JSON, got %s", jobs[0].RequestJSON)
 	}
 	if _, ok := rt.lookupTalkRoomState(talkRoomKey("http://localhost:28080", "room123")); ok {
 		t.Fatalf("expected public room mapping to be cleared after completion")

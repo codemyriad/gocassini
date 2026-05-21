@@ -5,13 +5,13 @@ import (
 	"time"
 )
 
-func TestFromFlagsTalkModeRequiresCallURL(t *testing.T) {
+func TestFromFlagsTalkModeRequiresTalkTarget(t *testing.T) {
 	_, err := FromFlags([]string{
 		"--mode", "talk",
 		"--output", "/tmp/out.csr",
 	})
 	if err == nil {
-		t.Fatalf("expected error when --call-url is missing in talk mode")
+		t.Fatalf("expected error when talk target is missing in talk mode")
 	}
 }
 
@@ -54,6 +54,36 @@ func TestFromFlagsTalkModeAcceptsConnectURL(t *testing.T) {
 	}
 	if cfg.ConnectBaseURL != "http://host.docker.internal:28080" {
 		t.Fatalf("unexpected connect-url: %q", cfg.ConnectBaseURL)
+	}
+}
+
+func TestFromFlagsTalkModeAcceptsExplicitTalkTarget(t *testing.T) {
+	cfg, err := FromFlags([]string{
+		"--mode", "talk",
+		"--talk-base-url", "https://cloud.example.com/",
+		"--talk-room-token", "roomtoken",
+		"--output", "/tmp/out.csr",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.TalkBaseURL != "https://cloud.example.com" {
+		t.Fatalf("unexpected talk-base-url: %q", cfg.TalkBaseURL)
+	}
+	if cfg.TalkRoomToken != "roomtoken" {
+		t.Fatalf("unexpected talk-room-token: %q", cfg.TalkRoomToken)
+	}
+}
+
+func TestFromFlagsRejectsInvalidTalkAuthMode(t *testing.T) {
+	_, err := FromFlags([]string{
+		"--mode", "talk",
+		"--call-url", "https://cloud.example.com/call/roomtoken",
+		"--talk-auth-mode", "nope",
+		"--output", "/tmp/out.csr",
+	})
+	if err == nil {
+		t.Fatalf("expected invalid talk-auth-mode error")
 	}
 }
 

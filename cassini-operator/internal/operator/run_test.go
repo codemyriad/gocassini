@@ -606,15 +606,21 @@ func TestCreateJobRunsDoctorAndRecordWithNormalizedDefaults(t *testing.T) {
 	if !strings.Contains(job.RequestJSON, `"roomEmptyGrace":30`) {
 		t.Fatalf("expected normalized roomEmptyGrace in request_json, got %s", job.RequestJSON)
 	}
+	if !strings.Contains(job.RequestJSON, `"talkAuthMode":"guest-participant"`) {
+		t.Fatalf("expected normalized talkAuthMode in request_json, got %s", job.RequestJSON)
+	}
 	logText := readFileString(t, logPath)
 	if !strings.Contains(logText, "doctor --target record") {
 		t.Fatalf("expected doctor invocation, got %s", logText)
 	}
-	if !strings.Contains(logText, "record --call https://example.test/live") {
+	if !strings.Contains(logText, "--call https://example.test/live") {
 		t.Fatalf("expected record invocation, got %s", logText)
 	}
 	if !strings.Contains(logText, "--name CassiniRecorder") {
 		t.Fatalf("expected default guest name flag, got %s", logText)
+	}
+	if !strings.Contains(logText, "--talk-auth-mode guest-participant") {
+		t.Fatalf("expected talk auth mode flag, got %s", logText)
 	}
 	if strings.Contains(logText, "--duration") {
 		t.Fatalf("did not expect duration flag by default, got %s", logText)
@@ -648,9 +654,51 @@ func TestCreateJobPassesExplicitRecordOptions(t *testing.T) {
 	logText := readFileString(t, logPath)
 	for _, want := range []string{
 		"--name Guesty",
+		"--talk-auth-mode guest-participant",
 		"--duration 12",
 		"--stop-when-room-empty=false",
 		"--room-empty-grace 7.5",
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("expected %q in log, got %s", want, logText)
+		}
+	}
+}
+
+func TestCreateJobAcceptsExplicitTalkTargetWithoutURL(t *testing.T) {
+	rt, cleanup, logPath, _ := newCLITestRuntime(t)
+	defer cleanup()
+
+	body := `{"platform":"nextcloud-talk","baseURL":"https://example.test/","roomToken":"room-42","talkAuthMode":"hpb-internal"}`
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	job := waitForJobState(t, rt.store, resp.ID, "succeeded")
+	if !strings.Contains(job.RequestJSON, `"baseURL":"https://example.test"`) {
+		t.Fatalf("expected normalized baseURL in request_json, got %s", job.RequestJSON)
+	}
+	if !strings.Contains(job.RequestJSON, `"roomToken":"room-42"`) {
+		t.Fatalf("expected roomToken in request_json, got %s", job.RequestJSON)
+	}
+	if !strings.Contains(job.RequestJSON, `"talkAuthMode":"hpb-internal"`) {
+		t.Fatalf("expected talkAuthMode in request_json, got %s", job.RequestJSON)
+	}
+
+	logText := readFileString(t, logPath)
+	for _, want := range []string{
+		"record --out",
+		"--call https://example.test/call/room-42",
+		"--talk-base-url https://example.test",
+		"--talk-room-token room-42",
+		"--talk-auth-mode hpb-internal",
 	} {
 		if !strings.Contains(logText, want) {
 			t.Fatalf("expected %q in log, got %s", want, logText)
@@ -714,7 +762,7 @@ func TestStopJobAcceptsRunningRecordAndCompletesPublishStage(t *testing.T) {
 		t.Fatalf("expected record exit code 0, got %#v", job.RecordExitCode)
 	}
 	logText := readFileString(t, logPath)
-	if !strings.Contains(logText, "record --call https://example.test/stop-me") {
+	if !strings.Contains(logText, "--call https://example.test/stop-me") {
 		t.Fatalf("expected record invocation, got %s", logText)
 	}
 }
@@ -938,7 +986,7 @@ func TestRerunFailedJobCreatesSecondAttemptAndPreservesFirst(t *testing.T) {
 		t.Fatalf("expected rerun to avoid creating attempt-local run bundle after success, err=%v", err)
 	}
 	logText := readFileString(t, logPath)
-	if got := strings.Count(logText, "record --call https://example.test/rerun-me"); got != 1 {
+	if got := strings.Count(logText, "--call https://example.test/rerun-me"); got != 1 {
 		t.Fatalf("expected exactly one record invocation across initial run + rerun, got %d log=%s", got, logText)
 	}
 }
@@ -1038,7 +1086,7 @@ func TestRerunFromPublishFailureRebuildsInsteadOfPublishOnly(t *testing.T) {
 		t.Fatalf("expected rerun attempt-local site path, got %#v", attempts[0].ArtifactSitePath)
 	}
 	logText := readFileString(t, logPath)
-	if got := strings.Count(logText, "record --call https://example.test/publish-rerun"); got != 1 {
+	if got := strings.Count(logText, "--call https://example.test/publish-rerun"); got != 1 {
 		t.Fatalf("expected exactly one record invocation across publish rerun flow, got %d log=%s", got, logText)
 	}
 }
@@ -1204,7 +1252,7 @@ func TestRerunSucceededJobCreatesFreshDownstreamAttempt(t *testing.T) {
 		t.Fatalf("build call count = %d, want 2", buildCalls)
 	}
 	logText := readFileString(t, logPath)
-	if got := strings.Count(logText, "record --call https://example.test/rerun-succeeded"); got != 1 {
+	if got := strings.Count(logText, "--call https://example.test/rerun-succeeded"); got != 1 {
 		t.Fatalf("expected exactly one record invocation across successful rerun flow, got %d log=%s", got, logText)
 	}
 }
@@ -1306,7 +1354,7 @@ func TestFailedRerunPreservesPreviouslyDeployedSite(t *testing.T) {
 		t.Fatalf("publish call count = %d, want 2", publishCalls)
 	}
 	logText := readFileString(t, logPath)
-	if got := strings.Count(logText, "record --call https://example.test/rerun-preserve-site"); got != 1 {
+	if got := strings.Count(logText, "--call https://example.test/rerun-preserve-site"); got != 1 {
 		t.Fatalf("expected exactly one record invocation across failed rerun flow, got %d log=%s", got, logText)
 	}
 }

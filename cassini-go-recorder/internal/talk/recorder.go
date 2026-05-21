@@ -20,7 +20,11 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-const requestOfferResponseTimeout = 8 * time.Second
+const (
+	requestOfferResponseTimeout    = 8 * time.Second
+	talkRecordingSecretEnv         = "CASSINI_TALK_RECORDING_SECRET"
+	talkSignalingInternalSecretEnv = "CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
+)
 
 type roomEmptyTimerAction uint8
 
@@ -107,16 +111,14 @@ func Run(ctx context.Context, cfg config.Config) error {
 }
 
 func (r *Recorder) run(ctx context.Context) error {
-	baseURL, roomToken, err := nextcloud.ParseCallURL(r.cfg.CallURL)
-	if err != nil {
+	r.resolveProcessScopedTalkConfig()
+	if err := r.resolveTalkTarget(); err != nil {
 		return err
 	}
-	r.baseURL = baseURL
 	r.connectBaseURL = strings.TrimRight(strings.TrimSpace(r.cfg.ConnectBaseURL), "/")
 	if r.connectBaseURL == "" {
-		r.connectBaseURL = baseURL
+		r.connectBaseURL = r.baseURL
 	}
-	r.roomToken = roomToken
 	r.finalOutputPath = deriveFinalOutputPath(r.cfg.OutputPath, r.cfg.FinalOutputPath)
 
 	if err := ensureOutputDir(r.finalOutputPath); err != nil {
@@ -262,7 +264,84 @@ runLoop:
 	return nil
 }
 
+func (r *Recorder) resolveProcessScopedTalkConfig() {
+	r.cfg.TalkAuthMode = config.NormalizeTalkAuthMode(r.cfg.TalkAuthMode)
+	if strings.TrimSpace(r.cfg.TalkRecordingSecret) == "" {
+		r.cfg.TalkRecordingSecret = strings.TrimSpace(os.Getenv(talkRecordingSecretEnv))
+	}
+	if strings.TrimSpace(r.cfg.TalkSignalingInternalSecret) == "" {
+		r.cfg.TalkSignalingInternalSecret = strings.TrimSpace(os.Getenv(talkSignalingInternalSecretEnv))
+	}
+}
+
+func (r *Recorder) resolveTalkTarget() error {
+	callURL := strings.TrimSpace(r.cfg.CallURL)
+	talkBaseURL := strings.TrimRight(strings.TrimSpace(r.cfg.TalkBaseURL), "/")
+	talkRoomToken := strings.TrimSpace(r.cfg.TalkRoomToken)
+
+	if talkBaseURL != "" || talkRoomToken != "" {
+		if talkBaseURL == "" || talkRoomToken == "" {
+			return errors.New("talk target requires both talk base URL and room token")
+		}
+		if callURL != "" {
+			callBaseURL, callRoomToken, err := nextcloud.ParseCallURL(callURL)
+			if err != nil {
+				return err
+			}
+			if callBaseURL != talkBaseURL || callRoomToken != talkRoomToken {
+				return fmt.Errorf("call URL target %s room=%s does not match explicit talk target %s room=%s", callBaseURL, callRoomToken, talkBaseURL, talkRoomToken)
+			}
+		}
+		r.baseURL = talkBaseURL
+		r.roomToken = talkRoomToken
+		return nil
+	}
+
+	if callURL == "" {
+		return errors.New("call URL or explicit talk target is required")
+	}
+	baseURL, roomToken, err := nextcloud.ParseCallURL(callURL)
+	if err != nil {
+		return err
+	}
+	r.baseURL = baseURL
+	r.roomToken = roomToken
+	return nil
+}
+
+func (r *Recorder) talkAuthMode() string {
+	mode := config.NormalizeTalkAuthMode(r.cfg.TalkAuthMode)
+	if mode == "" {
+		return config.TalkAuthModeGuestParticipant
+	}
+	return mode
+}
+
+func (r *Recorder) validateInternalBootstrapConfig() error {
+	if strings.TrimSpace(r.cfg.TalkRecordingSecret) == "" {
+		return fmt.Errorf("talk auth mode %s requires %s to be set", config.TalkAuthModeHPBInternal, talkRecordingSecretEnv)
+	}
+	if strings.TrimSpace(r.cfg.TalkSignalingInternalSecret) == "" {
+		return fmt.Errorf("talk auth mode %s requires %s to be set", config.TalkAuthModeHPBInternal, talkSignalingInternalSecretEnv)
+	}
+	return nil
+}
+
 func (r *Recorder) bootstrap(ctx context.Context) error {
+	switch r.talkAuthMode() {
+	case config.TalkAuthModeGuestParticipant:
+		return r.bootstrapGuestParticipant(ctx)
+	case config.TalkAuthModeHPBInternal:
+		if err := r.validateInternalBootstrapConfig(); err != nil {
+			return err
+		}
+		return errors.New("talk auth mode hpb-internal is not implemented yet")
+	default:
+		return fmt.Errorf("unsupported talk auth mode %q", r.cfg.TalkAuthMode)
+	}
+}
+
+func (r *Recorder) bootstrapGuestParticipant(ctx context.Context) error {
 	if err := r.ocs.GetRoom(ctx, r.roomToken); err != nil {
 		return fmt.Errorf("room check failed: %w", err)
 	}
@@ -307,7 +386,7 @@ func (r *Recorder) bootstrap(ctx context.Context) error {
 		}
 	}
 
-	log.Printf("talk bootstrap complete: base=%s connect=%s token=%s session=%s signaling_session=%s", r.baseURL, r.connectBaseURL, r.roomToken, r.nextcloudSessionID, r.signalingSessionID)
+	log.Printf("talk bootstrap complete: auth_mode=%s base=%s connect=%s token=%s session=%s signaling_session=%s", r.talkAuthMode(), r.baseURL, r.connectBaseURL, r.roomToken, r.nextcloudSessionID, r.signalingSessionID)
 	return nil
 }
 
@@ -339,7 +418,7 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 		r.signaling = nil
 	}
 
-	if r.ocs != nil {
+	if r.ocs != nil && r.talkAuthMode() == config.TalkAuthModeGuestParticipant {
 		if err := r.ocs.LeaveCall(ctx, r.roomToken); err != nil {
 			log.Printf("leave call failed (continuing): %v", err)
 		}
@@ -1622,6 +1701,7 @@ func (r *Recorder) writeReport(
 		"base_url":         r.baseURL,
 		"connect_base_url": r.connectBaseURL,
 		"room_token":       r.roomToken,
+		"talk_auth_mode":   r.talkAuthMode(),
 		"guest_name":       r.cfg.GuestName,
 		"duration_seconds": int(r.cfg.Duration / time.Second),
 		"stop_when_room_empty": map[string]any{

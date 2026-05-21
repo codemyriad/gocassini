@@ -23,10 +23,13 @@ import (
 )
 
 const (
-	defaultBind              = "0.0.0.0:4000"
-	defaultOperatorBasePath  = "/"
-	defaultRecordWorkerCount = 1
-	nextcloudTalkProvider    = "nextcloud-talk"
+	defaultBind                  = "0.0.0.0:4000"
+	defaultOperatorBasePath      = "/"
+	defaultRecordWorkerCount     = 1
+	nextcloudTalkProvider        = "nextcloud-talk"
+	talkAuthModeGuestParticipant = "guest-participant"
+	talkAuthModeHPBInternal      = "hpb-internal"
+	defaultTalkAuthMode          = talkAuthModeGuestParticipant
 )
 
 type Config struct {
@@ -68,7 +71,8 @@ type TriggerRequest struct {
 	BaseURL               string  `json:"baseURL,omitempty"`
 	TalkConnectURL        string  `json:"talkConnectURL,omitempty"`
 	RoomToken             string  `json:"roomToken,omitempty"`
-	URL                   string  `json:"url"`
+	URL                   string  `json:"url,omitempty"`
+	TalkAuthMode          string  `json:"talkAuthMode"`
 	GuestName             string  `json:"guestName"`
 	DurationSeconds       *int    `json:"duration,omitempty"`
 	StopWhenRoomEmpty     bool    `json:"stopWhenRoomEmpty"`

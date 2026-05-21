@@ -49,7 +49,10 @@ type recordLiveSignalWriter struct {
 
 type triggerRequestInput struct {
 	Platform          string   `json:"platform"`
-	URL               string   `json:"url"`
+	BaseURL           string   `json:"baseURL,omitempty"`
+	RoomToken         string   `json:"roomToken,omitempty"`
+	URL               string   `json:"url,omitempty"`
+	TalkAuthMode      string   `json:"talkAuthMode,omitempty"`
 	TalkConnectURL    string   `json:"talkConnectURL,omitempty"`
 	GuestName         *string  `json:"guestName,omitempty"`
 	DurationSeconds   *int     `json:"duration,omitempty"`
@@ -58,6 +61,10 @@ type triggerRequestInput struct {
 }
 
 func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerRequest) (recordResult, error) {
+	req.TalkAuthMode = normalizeTalkAuthMode(req.TalkAuthMode)
+	if req.TalkAuthMode == "" {
+		req.TalkAuthMode = defaultTalkAuthMode
+	}
 	if err := rt.runRecordDoctor(); err != nil {
 		return recordResult{}, err
 	}
@@ -77,9 +84,18 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 
 	args := []string{
 		"record",
-		"--call", req.effectiveCallURL(),
 		"--out", runPath,
 		"--name", req.GuestName,
+		"--talk-auth-mode", req.TalkAuthMode,
+	}
+	if callURL := req.effectiveCallURL(); callURL != "" {
+		args = append(args, "--call", callURL)
+	}
+	if baseURL := strings.TrimSpace(req.BaseURL); baseURL != "" {
+		args = append(args, "--talk-base-url", strings.TrimRight(baseURL, "/"))
+	}
+	if roomToken := strings.TrimSpace(req.RoomToken); roomToken != "" {
+		args = append(args, "--talk-room-token", roomToken)
 	}
 	if connectURL := rt.recordConnectURL(req); connectURL != "" {
 		args = append(args, "--connect-url", connectURL)
@@ -168,6 +184,19 @@ func (rt *Runtime) runRecordDoctor() error {
 
 func formatSeconds(value float64) string {
 	return strconv.FormatFloat(value, 'f', -1, 64)
+}
+
+func normalizeTalkAuthMode(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func isValidTalkAuthMode(value string) bool {
+	switch normalizeTalkAuthMode(value) {
+	case talkAuthModeGuestParticipant, talkAuthModeHPBInternal:
+		return true
+	default:
+		return false
+	}
 }
 
 func (rt *Runtime) registerRecordProcess(jobID string, process *os.Process) *recordProcessState {
@@ -412,9 +441,10 @@ func classifyRecordStopReason(stopAccepted bool, exitCode *int, stopDetail strin
 func parseTriggerRequest(input triggerRequestInput) (TriggerRequest, error) {
 	req := TriggerRequest{
 		Platform:              strings.TrimSpace(input.Platform),
-		BaseURL:               "",
-		RoomToken:             "",
+		BaseURL:               strings.TrimRight(strings.TrimSpace(input.BaseURL), "/"),
+		RoomToken:             strings.TrimSpace(input.RoomToken),
 		URL:                   strings.TrimSpace(input.URL),
+		TalkAuthMode:          normalizeTalkAuthMode(input.TalkAuthMode),
 		TalkConnectURL:        strings.TrimRight(strings.TrimSpace(input.TalkConnectURL), "/"),
 		GuestName:             defaultGuestName,
 		StopWhenRoomEmpty:     true,
@@ -423,8 +453,17 @@ func parseTriggerRequest(input triggerRequestInput) (TriggerRequest, error) {
 	if req.Platform == "" {
 		return TriggerRequest{}, errors.New("platform is required")
 	}
-	if req.URL == "" && (strings.TrimSpace(req.BaseURL) == "" || strings.TrimSpace(req.RoomToken) == "") {
-		return TriggerRequest{}, errors.New("url is required")
+	if req.URL == "" && (req.BaseURL == "" || req.RoomToken == "") {
+		return TriggerRequest{}, errors.New("url or baseURL + roomToken is required")
+	}
+	if (req.BaseURL == "") != (req.RoomToken == "") {
+		return TriggerRequest{}, errors.New("baseURL and roomToken must be provided together")
+	}
+	if req.TalkAuthMode == "" {
+		req.TalkAuthMode = defaultTalkAuthMode
+	}
+	if !isValidTalkAuthMode(req.TalkAuthMode) {
+		return TriggerRequest{}, fmt.Errorf("talkAuthMode must be %q or %q", talkAuthModeGuestParticipant, talkAuthModeHPBInternal)
 	}
 	if input.GuestName != nil {
 		if value := strings.TrimSpace(*input.GuestName); value != "" {
@@ -457,12 +496,16 @@ func decodeStoredTriggerRequest(raw string) (TriggerRequest, error) {
 		return TriggerRequest{}, fmt.Errorf("decode stored request JSON: %w", err)
 	}
 	req.Platform = strings.TrimSpace(req.Platform)
-	req.BaseURL = strings.TrimSpace(req.BaseURL)
+	req.BaseURL = strings.TrimRight(strings.TrimSpace(req.BaseURL), "/")
 	req.TalkConnectURL = strings.TrimRight(strings.TrimSpace(req.TalkConnectURL), "/")
 	req.RoomToken = strings.TrimSpace(req.RoomToken)
 	req.URL = strings.TrimSpace(req.URL)
+	req.TalkAuthMode = normalizeTalkAuthMode(req.TalkAuthMode)
 	req.GuestName = strings.TrimSpace(req.GuestName)
-	if req.Platform == "" || req.GuestName == "" || req.effectiveCallURL() == "" {
+	if req.TalkAuthMode == "" {
+		req.TalkAuthMode = defaultTalkAuthMode
+	}
+	if req.Platform == "" || req.GuestName == "" || req.effectiveCallURL() == "" || !isValidTalkAuthMode(req.TalkAuthMode) {
 		return TriggerRequest{}, errors.New("stored request is missing required fields")
 	}
 	req.StopWhenRoomEmptySet = !req.StopWhenRoomEmpty
@@ -471,6 +514,10 @@ func decodeStoredTriggerRequest(raw string) (TriggerRequest, error) {
 }
 
 func encodeTriggerRequest(req TriggerRequest) (string, error) {
+	req.TalkAuthMode = normalizeTalkAuthMode(req.TalkAuthMode)
+	if req.TalkAuthMode == "" {
+		req.TalkAuthMode = defaultTalkAuthMode
+	}
 	body, err := marshalCompactJSON(req)
 	if err != nil {
 		return "", err
