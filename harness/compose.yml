@@ -34,26 +34,28 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    ports:
+      - "28080:80"
     volumes:
       - nextcloud_data:/var/www/html
       # Mounted so AppAPI's "docker-install" daemon can pull images and
       # spawn ExApp containers on the host Docker engine.
       - /var/run/docker.sock:/var/run/docker.sock
 
-  # Front reverse proxy. Mirrors the production topology HaRP expects:
+  # Internal reverse proxy. Mirrors the production topology HaRP expects:
   # /exapps/<appId>/... goes to HaRP (which forwards over FRP tunnel to
-  # the ExApp container), everything else goes to Nextcloud. The admin
-  # browser, AppAPI's internal heartbeat probe, and the ExApp container's
-  # callbacks all use this URL so a single host name resolves correctly
-  # for every direction of traffic.
+  # the ExApp container), everything else goes to Nextcloud. AppAPI's
+  # daemon nextcloud_url points at this service (via Docker DNS), so
+  # AppAPI's internal heartbeat probe, the ExApp container's callbacks,
+  # and NC's server-side proxy fetches all path-split correctly. No
+  # host port mapping — the browser hits Nextcloud directly on 28080;
+  # only NC's PHP and the ExApp container resolve "reverse-proxy" via
+  # the compose network.
   reverse-proxy:
     image: nginx:alpine
     restart: unless-stopped
     depends_on:
       - nextcloud
-      - appapi-harp
-    ports:
-      - "28080:80"
     volumes:
       - ./nginx-frontproxy.conf:/etc/nginx/conf.d/default.conf:ro
 
