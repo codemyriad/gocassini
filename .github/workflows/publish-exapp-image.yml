@@ -451,6 +451,9 @@ jobs:
         # `git lfs pull` is idempotent and cheap, so we run it on both
         # jobs to keep them symmetric.
         run: git lfs pull
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
       - name: Confirm bot media fixture is materialized
         run: |
           set -euo pipefail
@@ -521,6 +524,9 @@ jobs:
         # so checkout@v4 may leave stale pointer files; `git lfs pull` is
         # the idempotent recovery.
         run: git lfs pull
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
       - name: Confirm bot media fixture is materialized
         run: |
           set -euo pipefail
