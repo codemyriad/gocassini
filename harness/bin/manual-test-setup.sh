@@ -202,9 +202,34 @@ What you do during development (pre-publish):
 Standard user (for /viewer access after deploy):
   alice / Tn8mY3qVrJ2x!E2e
 
-Post-deploy URLs:
+Post-deploy URLs (ExApp UIs proxied through AppAPI):
   Admin control panel: http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini/control-panel/
   User viewer:         http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini/viewer/
+
+Testing the Talk record button:
+  bootstrap.sh already configured Nextcloud Talk's recording backend
+  (call_recording=yes, recording_servers pointed at the host gateway on
+  port 4000) so the "Start recording" button shows up in Talk calls.
+  But the dogfood ExApp deploy does NOT expose Talk's recording-server
+  protocol — the ExApp's info.xml routes only proxy /control-panel,
+  /operator, /viewer, /published. To actually exercise the record
+  button end-to-end you have to ALSO run cassini-operator standalone
+  on host port 4000, separately from the ExApp container:
+
+      CASSINI_OPERATOR_BIND_ADDR=0.0.0.0:4000 \\
+      CASSINI_TALK_RECORDING_SECRET=$(docker compose -p cassini-exapp-test \\
+          exec -T -u www-data nextcloud php occ \\
+          config:app:get spreed recording_servers | jq -r '.secret') \\
+      NEXTCLOUD_URL=http://127.0.0.1:28080 \\
+      ./bin/cassini operator
+
+  Then create a room in Talk, start a call, click "Start recording".
+  Talk dials gateway:4000 with the shared secret, cassini-operator
+  joins the call as a bot, records, and uploads the result.
+
+  If you just want to dogfood the ExApp UIs without the Talk record
+  button, skip the standalone operator entirely — use the admin
+  control panel above to kick off a recording from a Talk call URL.
 
 Tear down later:
   docker compose -p $PROJECT_NAME down --volumes
