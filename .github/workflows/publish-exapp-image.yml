@@ -497,6 +497,13 @@ jobs:
         with:
           image-ref-list: ${{ needs.build-image.outputs.image_ref }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pre-pull compose stack images
+        # Pull the Nextcloud + Talk signaling stack images in a dedicated
+        # step so registry/network failures show up here (not buried inside
+        # the phase-1 harness step) and so the harness step's wall-clock
+        # reflects only the e2e logic, not image transfer time. Images live
+        # at the daemon level so no project name is required.
+        run: docker compose -f harness/compose.yml --profile full pull
       - name: Run Talk-driven e2e (CPU)
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
@@ -569,6 +576,10 @@ jobs:
           image-ref-list: ${{ needs.build-image-cuda.outputs.image_ref }}
           pr-source: registry
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pre-pull compose stack images
+        # See sibling CPU job — splits image transfer time and registry
+        # failures out of the harness step.
+        run: docker compose -f harness/compose.yml --profile full pull
       - name: Run Talk-driven e2e (GPU)
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
