@@ -86,8 +86,8 @@ else
   log "2. Reusing existing $IMAGE_LOCAL image. (pass --build to force rebuild)"
 fi
 
-log "3. Starting nextcloud, db, registry, mockstore, appapi-harp..."
-"${COMPOSE[@]}" up -d nextcloud db registry mockstore appapi-harp
+log "3. Starting nextcloud, db, registry, mockstore, appapi-harp, reverse-proxy..."
+"${COMPOSE[@]}" up -d nextcloud db registry mockstore appapi-harp reverse-proxy
 
 log "4. Waiting for local registry..."
 for attempt in $(seq 1 30); do
@@ -158,13 +158,18 @@ log "12. Registering HaRP deploy daemon..."
 occ app_api:daemon:unregister docker_local >/dev/null 2>&1 || true
 occ app_api:daemon:unregister harp_local   >/dev/null 2>&1 || true
 # HP_SHARED_KEY must match the value in compose.yml's appapi-harp service.
+# nextcloud_url is BOTH the URL AppAPI uses internally for heartbeat
+# (${nc_url}/exapps/<appId>/heartbeat — must route to HaRP) AND the value
+# injected into the ExApp container as NEXTCLOUD_URL (callbacks to /index.
+# php/apps/app_api/... must reach NC). The reverse-proxy splits both paths,
+# so pointing the daemon at it satisfies both directions.
 occ app_api:daemon:register \
     harp_local \
     "HaRP (local)" \
     docker-install \
     http \
     "appapi-harp:8780" \
-    "http://nextcloud" \
+    "http://reverse-proxy" \
     --net="${PROJECT_NAME}_default" \
     --harp \
     --harp_frp_address "appapi-harp:8782" \
