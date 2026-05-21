@@ -165,3 +165,7 @@ Implementation slicing for the selected shape now lives in:
 Validation handoff for the selected shape now lives in:
 
 - `planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/validation.md`
+
+Implementation handoff for the selected shape now lives in:
+
+- `planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/implementation.md`

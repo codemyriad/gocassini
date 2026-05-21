@@ -86,9 +86,10 @@ That document is the truth for:
 These slices are ordered so each one leaves behind a real, testable increment.
 
 For MVP scope, **I4 is a validation/handoff slice rather than additional recorder/operator feature work**.
-It is satisfied by harness/deployment wiring plus a runnable validation artifact:
+It is satisfied by harness/deployment wiring plus runnable handoff artifacts:
 
 - `planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/validation.md`
+- `planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/implementation.md`
 
 One slice intentionally uses a temporary cutline:
 
@@ -337,7 +338,9 @@ That means the implementation plan still needs one dedicated place for:
 ### Includes
 
 - add harness/deployment support for signaling internal secret wiring
-- publish the runnable handoff artifact in `planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/validation.md`
+- publish the runnable handoff artifacts in:
+  - `planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/validation.md`
+  - `planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/implementation.md`
 - document the minimal local proof path for internal-mode recording on HPB
 - document the focused debugging checklist for runtime invalidation, especially around:
   - signaling settings fetch

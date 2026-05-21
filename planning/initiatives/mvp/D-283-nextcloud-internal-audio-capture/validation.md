@@ -4,6 +4,10 @@ shaping: true
 
 # D-283 — Validation handoff
 
+Implementation summary companion:
+
+- `planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/implementation.md`
+
 ## Status
 
 - **I1–I3 are the product implementation.**
