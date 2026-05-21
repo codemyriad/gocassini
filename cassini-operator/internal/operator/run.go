@@ -37,6 +37,13 @@ type Config struct {
 	WorkRoot         string
 	SiteRoot         string
 	CassiniBin       string
+	// BuildDevice is the value passed to `cassini build --device` for every
+	// build attempt the operator launches. Empty (or "auto") lets the
+	// recorder pick — which today resolves to "cpu". Set to "cuda" on the
+	// deployment that has a GPU runner (george). The backfill rerun does
+	// not override this; the env-additions path only swaps in the legacy
+	// model, not the device.
+	BuildDevice      string
 	TalkSharedSecret string
 	TalkBackendURL   string
 	MaxRecordWorkers int
@@ -192,6 +199,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.StringVar(&cfg.WorkRoot, "work-root", envOrDefaultAny([]string{"CASSINI_OPERATOR_WORK_ROOT", "WORK_ROOT"}, filepath.Join(defaultDataRoot, "jobs")), "per-job artifact root")
 	fs.StringVar(&cfg.SiteRoot, "site-root", envOrDefaultAny([]string{"CASSINI_OPERATOR_SITE_ROOT", "SITE_ROOT"}, filepath.Join(defaultDataRoot, "site")), "published site output root")
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", envOrDefaultAny([]string{"CASSINI_BIN"}, defaultCassiniBinPath(repoRoot)), "Cassini CLI binary path")
+	fs.StringVar(&cfg.BuildDevice, "build-device", envOrDefaultAny([]string{"CASSINI_BUILD_DEVICE"}, ""), "value passed to `cassini build --device` (auto, cpu, cuda). Empty means don't pass the flag.")
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
 	fs.IntVar(&cfg.MaxRecordWorkers, "max-record-workers", defaultMaxRecordWorkers, "maximum concurrent record workers")

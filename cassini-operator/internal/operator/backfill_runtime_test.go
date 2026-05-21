@@ -11,6 +11,42 @@ import (
 	"testing"
 )
 
+func TestBuildEnvForAttemptOverridesAdditionalModels(t *testing.T) {
+	rt := &Runtime{}
+	t.Setenv("CASSINI_STT_ADDITIONAL_MODELS", "canary-1b") // a different value on the parent
+	env := rt.buildEnvForAttempt(buildTask{TriggerKind: TriggerKindBackfillGPU})
+
+	occurrences := 0
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "CASSINI_STT_ADDITIONAL_MODELS=") {
+			occurrences++
+			want := "CASSINI_STT_ADDITIONAL_MODELS=" + legacyBackfillAdditionalModel
+			if kv != want {
+				t.Fatalf("env entry = %q, want %q", kv, want)
+			}
+		}
+	}
+	if occurrences != 1 {
+		t.Fatalf("expected exactly one CASSINI_STT_ADDITIONAL_MODELS entry, got %d", occurrences)
+	}
+}
+
+func TestBuildEnvForAttemptPassesThroughParentForNonOverrideKinds(t *testing.T) {
+	rt := &Runtime{}
+	t.Setenv("CASSINI_STT_ADDITIONAL_MODELS", "canary-1b")
+	env := rt.buildEnvForAttempt(buildTask{TriggerKind: TriggerKindRerun})
+	found := false
+	for _, kv := range env {
+		if kv == "CASSINI_STT_ADDITIONAL_MODELS=canary-1b" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected parent CASSINI_STT_ADDITIONAL_MODELS to pass through for rerun kind")
+	}
+}
+
 func TestEnvAdditionsForTriggerKind(t *testing.T) {
 	cases := []struct {
 		name    string

@@ -8,6 +8,10 @@ services:
       CASSINI_OPERATOR_BASE_PATH: ${CASSINI_OPERATOR_BASE_PATH:-/}
       CASSINI_MAX_RECORD_WORKERS: ${CASSINI_MAX_RECORD_WORKERS:-1}
       CASSINI_MAX_BUILD_WORKERS: ${CASSINI_MAX_BUILD_WORKERS:-1}
+      # Set to "cuda" on hosts with a GPU runner (e.g. george). Empty leaves
+      # the recorder's default in place (--device auto, which resolves to cpu).
+      CASSINI_BUILD_DEVICE: ${CASSINI_BUILD_DEVICE:-}
+      CASSINI_STT_ADDITIONAL_MODELS: ${CASSINI_STT_ADDITIONAL_MODELS:-}
       CASSINI_OPERATOR_SITE_ROOT: /srv/cassini-site/published
       CASSINI_TALK_RECORDING_SECRET: ${CASSINI_TALK_RECORDING_SECRET:-}
       CASSINI_TALK_BACKEND_URL: ${CASSINI_TALK_BACKEND_URL:-}

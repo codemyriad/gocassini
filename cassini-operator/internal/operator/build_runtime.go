@@ -94,12 +94,26 @@ func (rt *Runtime) enqueueBuildJob(jobID string, attemptNumber int, jobArtifactR
 }
 
 // buildEnvForAttempt computes the env that the build subprocess inherits.
-// Starts from the operator's process env and layers per-trigger-kind
-// additions on top. Defined as a method so it can be exercised by tests
-// without spawning an actual subprocess.
+// Starts from the operator's process env and replaces (or sets, if absent)
+// each key in the per-trigger-kind additions. Filtering before appending
+// means a backfill attempt's CASSINI_STT_ADDITIONAL_MODELS=<legacy CPU>
+// definitively overrides whatever the operator container was started with,
+// rather than relying on "last duplicate wins" semantics, which are not
+// guaranteed across platforms.
 func (rt *Runtime) buildEnvForAttempt(task buildTask) []string {
-	env := os.Environ()
 	additions := envAdditionsForTriggerKind(task.TriggerKind)
+	parent := os.Environ()
+	env := make([]string, 0, len(parent)+len(additions))
+	for _, kv := range parent {
+		key := kv
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			key = kv[:i]
+		}
+		if _, replaced := additions[key]; replaced {
+			continue
+		}
+		env = append(env, kv)
+	}
 	for k, v := range additions {
 		env = append(env, k+"="+v)
 	}
@@ -129,8 +143,9 @@ func envAdditionsForTriggerKind(kind string) map[string]string {
 // run *in addition to* the current STT default. Kept as a constant rather than
 // an env var so the contract is explicit: the user-facing intent is "give us
 // the old CPU transcript next to the new GPU one", not "let operators
-// reconfigure the backfill set per deploy".
-const legacyBackfillAdditionalModel = "parakeet-tdt-0.6b"
+// reconfigure the backfill set per deploy". The id is the recorder's
+// ModelParakeet06B — anything else lands as "unknown model" at runtime.
+const legacyBackfillAdditionalModel = "parakeet-tdt-0.6b-v2-int8"
 
 func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string, error) {
 	meetingPath := attemptMeetingPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
@@ -146,7 +161,11 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 		return meetingPath, err
 	}
 
-	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "build", task.ArtifactRunPath, "--out", meetingPath)
+	args := []string{"build", task.ArtifactRunPath, "--out", meetingPath}
+	if device := strings.TrimSpace(rt.cfg.BuildDevice); device != "" {
+		args = append(args, "--device", device)
+	}
+	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, args...)
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
 	cmd.Env = rt.buildEnvForAttempt(task)

@@ -43,6 +43,30 @@ No live harness run done as part of the spike; the read-only inventory is suffic
 - Stoppable: respect the existing job-stop machinery for the in-flight one; abandon the queue cleanly.
 - Control panel: a single "Backfill v1 meetings to v2 + GPU" button on the job list, with a progress indicator (`N of M complete`). Filter to surface only v1 jobs.
 
+### S3.5 — Operator-side device wiring (discovered mid-S4)
+
+Reading `executeBuildCLI` against `ops/process-recordings.sh` surfaced that
+the operator never passes `--device` to `cassini build` — it always lands on
+the recorder's default ("auto" → "cpu"). The CI preview path explicitly
+passes `--device cuda` via `ops/process-recordings.sh`; the operator's path
+on george does not. Without fixing this, backfill reruns would still run
+CPU, defeating the user's "transcribed using GPU" goal.
+
+Fix landed in this slice:
+
+- Operator `Config.BuildDevice` (env `CASSINI_BUILD_DEVICE`, flag
+  `--build-device`). Empty default: don't pass `--device`. Non-empty: passed
+  through as `--device <value>` on every `cassini build` invocation, not
+  just backfills.
+- `deployment/compose.yml` plumbs the env into the operator service so
+  george can set `CASSINI_BUILD_DEVICE=cuda` in its `.env`.
+- `deployment/compose.yml` also passes through `CASSINI_STT_ADDITIONAL_MODELS`
+  for completeness (e.g. opting *new* live recordings into multi-transcript
+  output too).
+- `buildEnvForAttempt` filter-then-append so the backfill kind's
+  `CASSINI_STT_ADDITIONAL_MODELS` definitively overrides the parent env,
+  not relying on "last duplicate wins" semantics.
+
 ### S4 — Harness e2e
 
 Extend the synthetic-meeting harness scenario:
