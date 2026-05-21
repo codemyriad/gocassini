@@ -82,12 +82,37 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 	return &Recognizer{r: r, vad: vad, sampleRate: paths.SampleRate}, nil
 }
 
-// Transcribe runs VAD-segmented ASR on the given float32 samples (16 kHz, mono, [-1,1]).
-// Silero VAD detects speech segments at natural silence boundaries; each segment is
-// then passed to the ASR model. Word timestamps refer to the full recording timeline.
-func (r *Recognizer) Transcribe(samples []float32, sampleRate int) ([]Word, error) {
+// Transcribe runs ASR on the given float32 samples (16 kHz, mono, [-1,1]).
+//
+// When useVAD is true, Silero VAD chunks the input at natural silence
+// boundaries before each segment is sent to the ASR model. This is the
+// right choice for genuinely sparse speech (per-participant tracks where
+// each bot is muted ~25/30s per rotation, real meetings with pauses).
+//
+// When useVAD is false, the entire input is sent through transcribeSegment
+// as a single span (which still applies the maxSafeSegmentSamples=55s split).
+// Use this when the caller already knows the audio is dense and continuous
+// — the merged-fallback path against the rotated mix is the canonical case.
+// Silero with the default 0.5 threshold has been observed to reject loud
+// (-19 to -29 dB) dense audio in ~17-33% of CI runs; bypassing VAD where it
+// adds no value removes that failure surface.
+//
+// Word timestamps refer to the full recording timeline either way.
+func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) ([]Word, error) {
 	if len(samples) == 0 {
 		return nil, nil
+	}
+
+	if !useVAD {
+		words, err := r.transcribeSegment(samples, sampleRate, 0)
+		if err != nil {
+			return nil, err
+		}
+		if len(words) == 0 && len(samples) >= sampleRate*5 {
+			audioSeconds := float64(len(samples)) / float64(sampleRate)
+			log.Printf("transcribe: 0 words from %.1fs of audio (VAD bypassed); ASR returned no tokens", audioSeconds)
+		}
+		return words, nil
 	}
 
 	r.vad.Reset()

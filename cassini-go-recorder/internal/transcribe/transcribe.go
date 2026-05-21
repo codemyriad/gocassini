@@ -154,11 +154,26 @@ type AdditionalTranscript struct {
 // empty transcript in that case, fall back to the mix. Returns the
 // (possibly extended) streams + segments. Does nothing when the
 // per-participant pass already produced content.
+// minWordsBeforeMergedFallback is the per-participant word threshold below
+// which we re-run transcription over the merged mix. The strict ==0 gate
+// was observed to skip fallback when a single stray word survived through
+// an otherwise-failing pass (CI matrix run #5: 1 word total, fallback
+// skipped, e2e word-run gate failed). 10 is conservative: well under the
+// passing-run baseline of ~12-14 verbatim words, well over the noise.
+const minWordsBeforeMergedFallback = 10
+
+// shouldFireMergedFallback decides whether the merged-mix fallback pass
+// is worth running. Extracted so the trigger threshold has a dedicated
+// regression test without needing a sherpa-onnx model + audio fixture.
+func shouldFireMergedFallback(segments []Segment) bool {
+	return CountWords(segments) < minWordsBeforeMergedFallback
+}
+
 func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioStream, segments []Segment, modelPaths ModelPaths, vadPath, device string, numThreads int, stdout io.Writer) ([]AudioStream, []Segment, error) {
-	if CountWords(segments) > 0 {
+	if !shouldFireMergedFallback(segments) {
 		return streams, segments, nil
 	}
-	fmt.Fprintln(stdout, "  per-participant transcription empty; transcribing mixed track as fallback...")
+	fmt.Fprintf(stdout, "  per-participant transcription thin (%d words); transcribing mixed track as fallback...\n", CountWords(segments))
 
 	mergedStream := AudioStream{
 		Index:        -1,
@@ -184,7 +199,12 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 	if err != nil {
 		return streams, segments, fmt.Errorf("extract mixed audio: %w", err)
 	}
-	words, err := rec.Transcribe(samples, modelPaths.SampleRate)
+	// useVAD=false: the merged mix is dense by construction (the rotator
+	// keeps the mix continuously audible). Silero with default threshold
+	// rejects this audio ~17-33% of runs in CI; the entire purpose of the
+	// fallback is to recover when VAD-gated transcription fails, so it
+	// must not itself depend on VAD.
+	words, err := rec.Transcribe(samples, modelPaths.SampleRate, false /*useVAD*/)
 	if err != nil {
 		return streams, segments, fmt.Errorf("transcribe merged fallback: %w", err)
 	}
@@ -221,7 +241,7 @@ func transcribePass(ctx context.Context, mkvPath string, streams []AudioStream, 
 		if err != nil {
 			return nil, fmt.Errorf("extract audio for %s: %w", stream.SpeakerLabel, err)
 		}
-		words, err := rec.Transcribe(samples, modelPaths.SampleRate)
+		words, err := rec.Transcribe(samples, modelPaths.SampleRate, true /*useVAD*/)
 		if err != nil {
 			return nil, fmt.Errorf("transcribe %s: %w", stream.SpeakerLabel, err)
 		}
