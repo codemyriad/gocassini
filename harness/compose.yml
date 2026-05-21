@@ -24,11 +24,11 @@ services:
       - db_data:/var/lib/postgresql/data
 
   nextcloud:
-    # Pinned to NC 33 (current latest). Docker Hub's :stable alias still
-    # points at 32.x as of May 2026; using :33 makes the testbed track the
-    # version the docs target rather than whichever Docker Hub considers
-    # "stable" at any moment.
-    image: nextcloud:33
+    # :latest tracks the current Nextcloud release (33.0.3 today; rolls
+    # forward when NC 34 ships). NOT :stable — that alias lags on Docker
+    # Hub (still resolves to 32.x as of May 2026 even though NC 33 has
+    # been the latest stable since Feb 2026).
+    image: nextcloud:latest
     restart: unless-stopped
     environment: *nextcloud-env
     depends_on:
