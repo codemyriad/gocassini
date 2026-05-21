@@ -25,6 +25,19 @@ export PUB_DURATION="${PUB_DURATION:-22}"
 export PUB_USERS="${PUB_USERS:-3}"
 export CALL_NAME="${CALL_NAME:-CI Gocassini mute room}"
 
+# 3-publisher ICE convergence is sequential and can stack 4-8s per subscriber
+# on shared CI runners; if the recorder window is too short, late subscribers
+# never reach ICE state=connected and their tracks never enter the MKV
+# metadata, tripping the EXPECTED_SESSIONS assertion below. Mirror the floor
+# pattern used in ci-e2e.sh, but with headroom proportional to PUB_USERS.
+if (( REC_DURATION < 60 )); then
+  REC_DURATION=60
+fi
+if (( PUB_DURATION < 48 )); then
+  PUB_DURATION=48
+fi
+export REC_DURATION PUB_DURATION
+
 CI_OUTPUT_BASE="/tmp/gocassini-ci-mute-$(date -u +%Y%m%dT%H%M%S)-$$"
 export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.mkv}"
 export FINAL_OUTPUT="${FINAL_OUTPUT:-$OUTPUT}"
