@@ -123,6 +123,10 @@ capture_logs() {
   compose logs --no-color nextcloud >"$LOG_DIR/nextcloud.log" 2>&1 || true
   compose logs --no-color appapi-harp >"$LOG_DIR/appapi-harp.log" 2>&1 || true
   compose logs --no-color reverse-proxy >"$LOG_DIR/reverse-proxy.log" 2>&1 || true
+  # NC application log is inside the container, not in docker stdout.
+  # Without this we can't see PHP exceptions, spreed errors, etc.
+  compose exec -T nextcloud cat /var/www/html/data/nextcloud.log \
+    >"$LOG_DIR/nextcloud-app.log" 2>&1 || true
   local network
   network="$(project_network)"
   docker network inspect "$network" >"$LOG_DIR/network.json" 2>&1 || true
@@ -153,8 +157,10 @@ cleanup() {
     tail -n 80 "$LOG_DIR/appapi-harp.log" 2>/dev/null | sed 's/^/    /' || true
     log "ExApp (gocassini operator) container log tail:"
     tail -n 120 "$LOG_DIR/container-nc_app_gocassini.log" 2>/dev/null | sed 's/^/    /' || true
-    log "nextcloud log tail:"
-    tail -n 80 "$LOG_DIR/nextcloud.log" 2>/dev/null | sed 's/^/    /' || true
+    log "nextcloud apache log tail:"
+    tail -n 60 "$LOG_DIR/nextcloud.log" 2>/dev/null | sed 's/^/    /' || true
+    log "nextcloud app log tail (PHP exceptions, spreed errors):"
+    tail -n 80 "$LOG_DIR/nextcloud-app.log" 2>/dev/null | sed 's/^/    /' || true
     log "bot streamer log tail:"
     tail -n 60 "$LOG_DIR/bots.log" 2>/dev/null | sed 's/^/    /' || true
   fi
@@ -254,7 +260,7 @@ run_app_register() {
     app_api:app:register "$APP_ID" "$DAEMON_NAME" \
       --info-xml /tmp/gocassini-info.xml \
       --env "CASSINI_TALK_RECORDING_SECRET=$CASSINI_TALK_RECORDING_SECRET" \
-      --env "CASSINI_TALK_BACKEND_URL=http://reverse-proxy" \
+      --env "CASSINI_TALK_BACKEND_URL=http://nextcloud" \
       --test-deploy-mode \
       --wait-finish \
     >"$LOG_DIR/register.log" 2>&1 &
@@ -337,16 +343,19 @@ log "installing + enabling app_api"
 occ app:install app_api >/dev/null 2>&1 || true
 occ app:enable app_api >/dev/null
 
-# Set NC's self-perceived URL to the in-network reverse-proxy hostname.
-# Without this, NC reports `http://127.0.0.1:28080` (the host port-forward)
-# in Talk-Recording-Backend headers, which is unreachable from inside the
-# AppAPI-deployed ExApp container. The recorder uses this URL for OCS
-# room-state checks and to construct the call URL it joins. Setting it
-# to `http://reverse-proxy` makes both reachable via Docker DNS from
-# inside the compose network; host-side curl tests still work because
-# they hit the published port directly, not the cli URL.
-log "setting Nextcloud overwrite.cli.url to http://reverse-proxy"
-occ config:system:set overwrite.cli.url --value="http://reverse-proxy" >/dev/null
+# Set NC's self-perceived URL to the in-network nextcloud service so the
+# recorder can dial NC directly (Docker DNS, port 80). Without this NC
+# reports `http://127.0.0.1:28080` (the host port-forward) in
+# Talk-Recording-Backend headers, which is unreachable from inside the
+# AppAPI-deployed ExApp container. We aim straight at the nextcloud
+# service rather than the reverse-proxy because the recorder's OCS
+# join flow (participants/active, recording/backend) is sensitive to
+# proxy header handling on the spreed side and returns 500s when those
+# requests arrive via a proxy that NC's trusted_proxies hasn't been
+# fine-tuned to expect. Host-side curl tests still hit NC via the
+# published port forward; nothing user-facing changes.
+log "setting Nextcloud overwrite.cli.url to http://nextcloud"
+occ config:system:set overwrite.cli.url --value="http://nextcloud" >/dev/null
 occ config:system:set trusted_proxies 0 --value="reverse-proxy" >/dev/null
 
 log "patching AppAPI CSP for ExApp proxy responses"
