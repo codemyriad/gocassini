@@ -17,6 +17,11 @@ on:
       - 'cassini-publisher/bin/**'
       - 'cassini-viewer/**'
       - 'cassini-control-panel/**'
+      - 'harness/bin/bootstrap.sh'
+      - 'harness/bin/ci-e2e-install-prod-path.sh'
+      - 'harness/bin/patch-csp.php'
+      - 'harness/compose.yml'
+      - 'harness/nginx-frontproxy.conf'
       - '.github/workflows/publish-exapp-image.yml'
   workflow_dispatch:
 
@@ -426,6 +431,34 @@ jobs:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-e2e-install-exapp.sh
 
+  e2e-install-prod-path:
+    name: E2E install via AppAPI HaRP prod path
+    runs-on: ubuntu-latest
+    needs: build-image
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install harness tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
+        with:
+          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull prod-path stack images
+        run: docker compose -f harness/compose.yml pull nextcloud db appapi-harp reverse-proxy
+
+      - name: Run production-path install e2e against fresh Nextcloud + AppAPI HaRP
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+        run: ./harness/bin/ci-e2e-install-prod-path.sh
+
   # Full Talk-driven roundtrip: bot streamers join a Talk call, Talk's
   # native "record call" button fires, operator HMAC-authenticates,
   # cassini-go-recorder joins the call as a guest, captures RTP for
@@ -599,6 +632,7 @@ jobs:
       - transcribe-smoke-cuda
       - e2e-container
       - e2e-install
+      - e2e-install-prod-path
       - e2e-talk-record-cpu
       - e2e-talk-record-cuda
     # Only prune after a successful push that actually pushed to ghcr —

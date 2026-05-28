@@ -35,7 +35,7 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "28080:80"
+      - "${NEXTCLOUD_HOST_PORT:-28080}:80"
     volumes:
       - nextcloud_data:/var/www/html
       # Mounted so AppAPI's "docker-install" daemon can pull images and
@@ -48,9 +48,9 @@ services:
   # daemon nextcloud_url points at this service (via Docker DNS), so
   # AppAPI's internal heartbeat probe, the ExApp container's callbacks,
   # and NC's server-side proxy fetches all path-split correctly. No
-  # host port mapping — the browser hits Nextcloud directly on 28080;
-  # only NC's PHP and the ExApp container resolve "reverse-proxy" via
-  # the compose network.
+  # host port mapping — the browser hits Nextcloud directly on the
+  # NEXTCLOUD_HOST_PORT mapping; only NC's PHP and the ExApp container
+  # resolve "reverse-proxy" via the compose network.
   reverse-proxy:
     image: nginx:alpine
     restart: unless-stopped
@@ -66,7 +66,6 @@ services:
   # which HaRP injects.
   appapi-harp:
     image: ghcr.io/nextcloud/nextcloud-appapi-harp:release
-    container_name: appapi-harp
     restart: unless-stopped
     environment:
       HP_SHARED_KEY: "dogfood-shared-key-not-secret"
