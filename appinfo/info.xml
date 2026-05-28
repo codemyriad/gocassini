@@ -29,6 +29,24 @@ logged-in user.]]></description>
       <image-tag>latest</image-tag>
     </docker-install>
 
+    <!--
+      Environment variables AppAPI may inject into the ExApp container at
+      install time. AppAPI's `app_api:app:register` `env` flag only
+      propagates KEYs that are declared here; undeclared keys are
+      silently dropped (see ExAppService::getAppInfo around the
+      array_key_exists check). Values are filtered out if empty, so a
+      missing env value leaves the var unset and the operator falls back
+      to its default (e.g. talk_shared_secret_set will be false).
+    -->
+    <environment-variables>
+      <variable>
+        <name>CASSINI_TALK_RECORDING_SECRET</name>
+        <display-name>Talk recording shared secret</display-name>
+        <description>HMAC shared secret used by Nextcloud Talk's recording-backend protocol. The operator verifies HMAC(secret, random + body) on every recording trigger; Talk signs requests with the same value stored in spreed's recording_servers config. Both sides must hold an identical non-empty value or the recording trigger returns 403. Provide at install time via the `env` flag on `app_api:app:register`.</description>
+        <default></default>
+      </variable>
+    </environment-variables>
+
     <routes>
       <!--
         Route URL patterns are interpreted by AppAPI as PCRE expressions

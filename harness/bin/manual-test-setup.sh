@@ -34,6 +34,22 @@ export PROJECT_NAME="cassini-exapp-test"
 # record a call end-to-end via the ExApp.
 export SPREED_PROFILE="${SPREED_PROFILE:-default}"
 
+# Talk recording shared secret. The operator inside the ExApp container
+# verifies an HMAC of (secret ‖ random ‖ body) on every Talk recording
+# trigger; Nextcloud Talk signs requests with the same secret stored in
+# spreed's recording_servers config. Both sides must hold the identical
+# value or the operator returns 403.
+#
+# AppAPI does not auto-inject app-specific env into ExApp containers, so
+# we pass this secret to the operator via `--env` on `app_api:app:register`
+# (see the install command in the banner below). bootstrap.sh writes the
+# same value into spreed's recording_servers JSON. Exporting it here lets
+# both paths see one value owned by the harness.
+#
+# Override with the env if you need a deterministic value across reruns;
+# otherwise a fresh per-run secret keeps installs unambiguous.
+export CASSINI_TALK_RECORDING_SECRET="${CASSINI_TALK_RECORDING_SECRET:-$(openssl rand -hex 32)}"
+
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$HARNESS_DIR/compose.yml")
 
 log() {
@@ -199,10 +215,20 @@ What you do during development (pre-publish):
       docker compose -p cassini-exapp-test exec -u www-data nextcloud \\
           php occ app_api:app:register gocassini harp_local \\
               --info-xml /tmp/gocassini-info.xml \\
+              --env CASSINI_TALK_RECORDING_SECRET=$CASSINI_TALK_RECORDING_SECRET \\
               --test-deploy-mode --wait-finish
 
   --test-deploy-mode lets you re-register without unregistering first
   (iteration sweet spot per the ExApp dev guide).
+
+  --env injects the same Talk recording secret bootstrap.sh wrote into
+  spreed's recording_servers config, so the operator's HMAC verification
+  succeeds when Talk fires the "Start recording" callback. Production
+  installs through the App Store admin UI do NOT currently support
+  custom --env passthrough; admins on that path must either use the CLI
+  install or set CASSINI_TALK_RECORDING_SECRET via the deploy-daemon's
+  env config. Auto-provisioning from the operator on first init is a
+  planned production-polish follow-up.
 
   After it prints "ExApp gocassini deployed successfully":
   1. Open  http://127.0.0.1:28080/
