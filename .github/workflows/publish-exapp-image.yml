@@ -525,6 +525,15 @@ jobs:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-e2e-record-prod-path.sh
 
+      - name: Upload prod-path record logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-record-prod-path-logs
+          path: /tmp/cassini-prod-record-e2e
+          if-no-files-found: warn
+          retention-days: 7
+
   # Full Talk-driven roundtrip: bot streamers join a Talk call, Talk's
   # native "record call" button fires, operator HMAC-authenticates,
   # cassini-go-recorder joins the call as a guest, captures RTP for

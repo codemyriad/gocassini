@@ -61,7 +61,11 @@ SCENARIO_NAME="${SCENARIO_NAME:-showcase-lantern-festival-v1}"
 SCENARIO_PATH="${SCENARIO_PATH:-$HARNESS_DIR/scenarios/showcase-lantern-festival.v1.json}"
 SCENARIO_MEDIA_DIR="${SCENARIO_MEDIA_DIR:-$HARNESS_DIR/media/processed/$SCENARIO_NAME}"
 RECORD_DURATION_SECONDS="${RECORD_DURATION_SECONDS:-40}"
-PUBLISH_TIMEOUT_SECONDS="${PUBLISH_TIMEOUT_SECONDS:-180}"
+# Budget = transcribe (parakeet CPU is roughly 5x realtime on
+# ubuntu-latest) + build + publish + slack. The legacy Talk-roundtrip
+# uses RECORD_DURATION + 180s and 75s recordings; we match that
+# proportionally with a generous floor for the 40s record path.
+PUBLISH_TIMEOUT_SECONDS="${PUBLISH_TIMEOUT_SECONDS:-360}"
 
 # Signaling host port — must match harness/compose.yml's `full` profile
 # mapping. Same as ci-e2e.sh / mute / rejoin.
@@ -147,8 +151,12 @@ cleanup() {
     log "logs saved under $LOG_DIR"
     log "appapi-harp log tail:"
     tail -n 80 "$LOG_DIR/appapi-harp.log" 2>/dev/null | sed 's/^/    /' || true
+    log "ExApp (gocassini operator) container log tail:"
+    tail -n 120 "$LOG_DIR/container-nc_app_gocassini.log" 2>/dev/null | sed 's/^/    /' || true
     log "nextcloud log tail:"
     tail -n 80 "$LOG_DIR/nextcloud.log" 2>/dev/null | sed 's/^/    /' || true
+    log "bot streamer log tail:"
+    tail -n 60 "$LOG_DIR/bots.log" 2>/dev/null | sed 's/^/    /' || true
   fi
 }
 trap cleanup EXIT
