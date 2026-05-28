@@ -45,6 +45,12 @@ logged-in user.]]></description>
         <description>HMAC shared secret used by Nextcloud Talk's recording-backend protocol. The operator verifies HMAC(secret, random + body) on every recording trigger; Talk signs requests with the same value stored in spreed's recording_servers config. Both sides must hold an identical non-empty value or the recording trigger returns 403. Provide at install time via the `env` flag on `app_api:app:register`.</description>
         <default></default>
       </variable>
+      <variable>
+        <name>CASSINI_TALK_BACKEND_URL</name>
+        <display-name>Operator-to-Nextcloud Talk backend URL</display-name>
+        <description>Overrides the URL the recorder uses to make OCS callbacks back to Nextcloud (room state checks, started/stopped notifications, recording upload). Nextcloud Talk forwards its own self-perceived URL in the `Talk-Recording-Backend` header, which on container-hosted deployments is often a host-port-forward address (e.g. `http://127.0.0.1:28080`) that the ExApp container cannot dial from its own network namespace. Set this to a URL the ExApp container can actually reach (typically the same URL AppAPI gives via `NEXTCLOUD_URL`). Leave unset on a deployment where Nextcloud's `overwrite.cli.url` already resolves correctly from inside the ExApp container.</description>
+        <default></default>
+      </variable>
     </environment-variables>
 
     <routes>

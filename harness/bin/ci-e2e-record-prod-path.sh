@@ -254,6 +254,7 @@ run_app_register() {
     app_api:app:register "$APP_ID" "$DAEMON_NAME" \
       --info-xml /tmp/gocassini-info.xml \
       --env "CASSINI_TALK_RECORDING_SECRET=$CASSINI_TALK_RECORDING_SECRET" \
+      --env "CASSINI_TALK_BACKEND_URL=http://reverse-proxy" \
       --test-deploy-mode \
       --wait-finish \
     >"$LOG_DIR/register.log" 2>&1 &
