@@ -65,6 +65,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg jq ripgrep
+      - name: Pre-pull Talk full-profile stack images
+        # Slice 5 R5.2: split docker compose pull out of `compose up`
+        # inside harness/bin/up.sh so the Actions UI shows accurate
+        # pull-vs-startup timing (~36s of pull was previously hidden
+        # inside the test step per slice-5-baseline.md).
+        run: docker compose -f harness/compose.yml --profile full pull
       - name: Run recorder integration test against local Nextcloud
         env:
           SPREED_PROFILE: full
