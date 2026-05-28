@@ -337,6 +337,18 @@ log "installing + enabling app_api"
 occ app:install app_api >/dev/null 2>&1 || true
 occ app:enable app_api >/dev/null
 
+# Set NC's self-perceived URL to the in-network reverse-proxy hostname.
+# Without this, NC reports `http://127.0.0.1:28080` (the host port-forward)
+# in Talk-Recording-Backend headers, which is unreachable from inside the
+# AppAPI-deployed ExApp container. The recorder uses this URL for OCS
+# room-state checks and to construct the call URL it joins. Setting it
+# to `http://reverse-proxy` makes both reachable via Docker DNS from
+# inside the compose network; host-side curl tests still work because
+# they hit the published port directly, not the cli URL.
+log "setting Nextcloud overwrite.cli.url to http://reverse-proxy"
+occ config:system:set overwrite.cli.url --value="http://reverse-proxy" >/dev/null
+occ config:system:set trusted_proxies 0 --value="reverse-proxy" >/dev/null
+
 log "patching AppAPI CSP for ExApp proxy responses"
 compose exec -T nextcloud php <"$SCRIPT_DIR/patch-csp.php" >"$LOG_DIR/patch-csp.log" 2>&1
 compose restart nextcloud >/dev/null
