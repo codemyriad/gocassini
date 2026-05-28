@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Production-path Talk-record E2E for Cassini ExApp.
+# Production-path E2E for Cassini ExApp: install + record + viewer.
 #
-# Covers (extends ci-e2e-install-prod-path.sh):
+# Covers (extends ci-e2e-install-prod-path.sh; D-290 Slices 2 + 3):
 #   - All of the install harness's coverage (Slice 1).
 #   - Nextcloud Talk record-button trigger routed through the AppAPI
 #     proxy + HaRP to the ExApp container's operator (Slice 2).
@@ -13,12 +13,19 @@
 #     captures audio, transcribes, publishes.
 #   - Published transcript artifact appears on disk inside the ExApp
 #     container at the expected canonical path.
+#   - A non-admin Nextcloud user (alice) loads the viewer SPA through
+#     the AppAPI proxy (USER access), reads the published meeting's
+#     transcript JSON through /published, and is correctly REFUSED on
+#     ADMIN-only routes like /operator/jobs (Slice 3; subsumes X2 I7b).
+#   - Anonymous (unauthenticated) GET on viewer/ is rejected — proves
+#     AppAPI's USER access level is enforced, not just declared.
 #
 # Does NOT cover:
 #   - Levenshtein quality of the transcript text. Independent test
 #     `ci-e2e-v3-transcript-verify.sh` gates that against bundled
 #     LibriSpeech (kept per R6.2).
-#   - Viewer fetch by a non-admin user. That's Slice 3 (phase=viewer).
+#   - Admin control-panel routes. Control-panel is being rewritten in
+#     a separate unit of work (R7.5).
 #   - The legacy AppAPI manual-install daemon path.
 #   - Direct container middleware tests that bypass HaRP.
 set -euo pipefail
@@ -308,6 +315,13 @@ compose exec -T nextcloud php <"$SCRIPT_DIR/patch-csp.php" >"$LOG_DIR/patch-csp.
 compose restart nextcloud >/dev/null
 wait_for_nextcloud_after_restart
 
+log "creating standard user alice for viewer-role assertions"
+ALICE_PASSWORD="${ALICE_PASSWORD:-Tn8mY3qVrJ2x!E2e}"
+export OC_PASS="$ALICE_PASSWORD"
+compose exec -T -e OC_PASS -u www-data nextcloud php occ user:add \
+  --password-from-env --display-name=Alice alice >/dev/null 2>&1 || true
+unset OC_PASS
+
 phase 3 "Register Cassini via AppAPI HaRP daemon"
 
 log "registering HaRP deploy daemon"
@@ -488,4 +502,59 @@ log "OK transcript pulled: $TRANSCRIPT_HOST (${SIZE} bytes, ${WORD_COUNT} words)
 wait "$BOT_PID" 2>/dev/null || true
 BOT_PID=""
 
-log "prod-path record e2e passed"
+# ============================================================================
+# Phase 7: viewer route exercised by a regular user (Slice 3)
+# ============================================================================
+phase 7 "Viewer route via proxy as non-admin user (alice)"
+
+VIEWER_URL="${NEXTCLOUD_URL}/index.php/apps/app_api/proxy/${APP_ID}/viewer/"
+OPERATOR_URL="${NEXTCLOUD_URL}/index.php/apps/app_api/proxy/${APP_ID}/operator/jobs"
+MEETING_ID="$(basename "$PUBLISHED_DIR")"
+PUBLISHED_URL="${NEXTCLOUD_URL}/index.php/apps/app_api/proxy/${APP_ID}/published/meetings/${MEETING_ID}/transcript.words.v1.json"
+
+# 1) Alice (USER access) loads the viewer SPA through the proxy.
+log "asserting alice can GET viewer/ through the AppAPI proxy"
+ALICE_VIEWER_BODY="$LOG_DIR/viewer-alice.html"
+CODE="$(curl -sS -u "alice:$ALICE_PASSWORD" \
+  -o "$ALICE_VIEWER_BODY" -w '%{http_code}' "$VIEWER_URL" || echo 000)"
+[[ "$CODE" == "200" ]] \
+  || fail "alice GET viewer/ expected 200, got $CODE (body in $ALICE_VIEWER_BODY)"
+[[ -s "$ALICE_VIEWER_BODY" ]] \
+  || fail "alice GET viewer/ returned empty body"
+log "OK alice loaded viewer/ (HTTP 200, $(wc -c <"$ALICE_VIEWER_BODY") bytes)"
+
+# 2) Anonymous (no auth) MUST NOT see the viewer. AppAPI's USER access
+# level requires NC session/basic-auth; without it the proxy refuses.
+log "asserting anonymous GET viewer/ is rejected"
+ANON_BODY="$LOG_DIR/viewer-anon.body"
+ANON_CODE="$(curl -sS -o "$ANON_BODY" -w '%{http_code}' "$VIEWER_URL" || echo 000)"
+[[ "$ANON_CODE" != "200" ]] \
+  || fail "anonymous GET viewer/ unexpectedly returned 200 (USER access not enforced)"
+log "OK anonymous GET viewer/ rejected (HTTP $ANON_CODE)"
+
+# 3) Alice (non-admin) MUST NOT reach ADMIN-only operator routes (X2 I7b).
+# AppAPI's ExAppProxyController returns 404 when the access_level check
+# fails — matches the legacy ci-e2e-install-exapp.sh assertion.
+log "asserting alice GET operator/jobs returns 404 (ADMIN-only route)"
+ALICE_OP_BODY="$LOG_DIR/operator-jobs-alice.body"
+ALICE_OP_CODE="$(curl -sS -u "alice:$ALICE_PASSWORD" \
+  -o "$ALICE_OP_BODY" -w '%{http_code}' "$OPERATOR_URL" || echo 000)"
+[[ "$ALICE_OP_CODE" == "404" ]] \
+  || fail "alice GET operator/jobs expected 404, got $ALICE_OP_CODE (ADMIN gate not enforced)"
+log "OK alice GET operator/jobs returns 404"
+
+# 4) Alice reads the published meeting's transcript through the proxy.
+# /published is USER access in info.xml, so this is the user-visible end
+# of the pipeline Slice 2 produced.
+log "asserting alice can read published transcript for meeting $MEETING_ID"
+ALICE_TRANSCRIPT="$LOG_DIR/published-transcript-alice.json"
+CODE="$(curl -sS -u "alice:$ALICE_PASSWORD" \
+  -o "$ALICE_TRANSCRIPT" -w '%{http_code}' "$PUBLISHED_URL" || echo 000)"
+[[ "$CODE" == "200" ]] \
+  || fail "alice GET published transcript expected 200, got $CODE (see $ALICE_TRANSCRIPT)"
+ALICE_WORDS="$(python3 -c "import json; print(len(json.load(open('$ALICE_TRANSCRIPT')).get('words', [])))" 2>/dev/null || echo 0)"
+[[ "$ALICE_WORDS" -gt 0 ]] \
+  || fail "alice's published transcript has zero words (expected >0)"
+log "OK alice read published transcript: $ALICE_WORDS words"
+
+log "prod-path record + viewer e2e passed"
