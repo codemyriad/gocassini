@@ -147,6 +147,26 @@ wait_for_nextcloud_after_restart() {
   fail "Nextcloud did not come back after restart"
 }
 
+# Wait for Nextcloud's first-run install to fully complete before we
+# perturb it (e.g. by restarting to pick up docker-socket group). NC's
+# entrypoint runs install asynchronously after the container starts;
+# status.php answers 200 from second 1 but only reports installed:true
+# once first-run install is complete. Restarting mid-install on
+# slower CI runners caused bootstrap to wait 7+ minutes for an
+# installed:true that never came.
+wait_for_nextcloud_installed() {
+  local end_time=$((SECONDS + 420))
+  log "waiting for Nextcloud first-run install (installed:true at $NEXTCLOUD_STATUS_URL)"
+  while (( SECONDS < end_time )); do
+    if curl -fsS "$NEXTCLOUD_STATUS_URL" 2>/dev/null | grep -q '"installed":true'; then
+      log "OK Nextcloud first-run install complete"
+      return 0
+    fi
+    sleep 2
+  done
+  fail "Nextcloud did not reach installed:true within 420s"
+}
+
 assert_appapi_metadata_json() {
   log "asserting AppAPI HaRP metadata returns JSON for enabled $APP_ID"
   local code url
@@ -318,6 +338,8 @@ docker tag "$IMAGE_REF" "$IMAGE_AS_PRODUCTION"
 
 log "starting Nextcloud + AppAPI HaRP prod-path stack"
 compose up -d nextcloud db appapi-harp reverse-proxy
+
+wait_for_nextcloud_installed
 
 log "granting Nextcloud access to the host Docker socket"
 SOCKET_GID="$(compose exec -T nextcloud stat -c '%g' /var/run/docker.sock)"

@@ -176,6 +176,22 @@ wait_for_nextcloud_after_restart() {
   fail "Nextcloud did not come back after restart"
 }
 
+# Wait for NC first-run install BEFORE we perturb it (docker-socket
+# group grant + restart). On slower CI runners NC's restart races with
+# its own first-run install, leaving status.php stuck at installed:false.
+wait_for_nextcloud_installed() {
+  local end_time=$((SECONDS + 420))
+  log "waiting for Nextcloud first-run install (installed:true at $NEXTCLOUD_STATUS_URL)"
+  while (( SECONDS < end_time )); do
+    if curl -fsS "$NEXTCLOUD_STATUS_URL" 2>/dev/null | grep -q '"installed":true'; then
+      log "OK Nextcloud first-run install complete"
+      return 0
+    fi
+    sleep 2
+  done
+  fail "Nextcloud did not reach installed:true within 420s"
+}
+
 assert_app_enabled() {
   log "asserting AppAPI reports $APP_ID as [enabled]"
   occ app_api:app:list >"$LOG_DIR/app-list.txt"
@@ -282,6 +298,8 @@ docker tag "$IMAGE_REF" "$IMAGE_AS_PRODUCTION"
 
 log "starting Nextcloud + AppAPI HaRP prod-path stack with full Talk topology"
 compose --profile full up -d nextcloud db appapi-harp reverse-proxy nats janus signaling coturn
+
+wait_for_nextcloud_installed
 
 log "granting Nextcloud access to the host Docker socket"
 SOCKET_GID="$(compose exec -T nextcloud stat -c '%g' /var/run/docker.sock)"
