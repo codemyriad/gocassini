@@ -49,16 +49,31 @@ func runDevStack(ctx context.Context, repoRoot string, args []string, stdout, st
 		fmt.Fprint(stderr, "usage: cassini dev stack <up|down|status> [args]\n")
 		return 2
 	}
+
+	harnessBin := filepath.Join("harness", "bin")
+	if devHarnessVMEnabled() && (args[0] == "up" || args[0] == "down") {
+		harnessBin = filepath.Join("harness", "vm", "bin")
+	}
+
 	switch args[0] {
 	case "up":
-		return runDevScript(ctx, repoRoot, filepath.Join("harness", "bin", "up.sh"), args[1:], stdout, stderr)
+		return runDevScript(ctx, repoRoot, filepath.Join(harnessBin, "up.sh"), args[1:], stdout, stderr)
 	case "down":
-		return runDevScript(ctx, repoRoot, filepath.Join("harness", "bin", "down.sh"), args[1:], stdout, stderr)
+		return runDevScript(ctx, repoRoot, filepath.Join(harnessBin, "down.sh"), args[1:], stdout, stderr)
 	case "status":
 		return runDevScript(ctx, repoRoot, filepath.Join("harness", "bin", "status.sh"), args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown dev stack command %q\n", args[0])
 		return 2
+	}
+}
+
+func devHarnessVMEnabled() bool {
+	switch os.Getenv("CASSINI_HARNESS_VM") {
+	case "true", "1", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 
