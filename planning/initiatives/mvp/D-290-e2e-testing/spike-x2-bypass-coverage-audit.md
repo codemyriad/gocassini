@@ -73,26 +73,36 @@ Pure reading. Grep `fail`, `assert_status`, `grep -q`, etc. in each script; clas
 
 ## Migration summary
 
-**5 items must move out of bypass scripts before retirement:**
+**Track A audit (2026-05-28): all five Go-unit-test migration items already covered by existing tests.** The bypass-script duplicates are pure redundancy and can be deleted in Slice 4 without writing new Go code. Two items still need to be added as Shape C phase assertions (I4, I7b).
 
-| Origin | Migration target |
-|---|---|
-| E1, E2, E3 (3 negative-auth cases on `/operator/jobs`) | One Go unit test in `cassini-operator/internal/operator/`, table-driven across the three header variants. |
-| E8 (`/init` replay idempotency) | Go unit test on `initHandler`. |
-| E12 (state survives container restart) | Go unit test on the operator persistence layer (faster than CI container restart). |
-| I4 (disable→enable lifecycle cycle) | Add as an extra assertion in Shape C's install phase (one `occ app_api:app:disable gocassini` then `occ app_api:app:enable gocassini`, assert state stays `enabled`). |
-| I7b (non-admin gets 404 on `/operator/jobs`) | Add as an extra assertion in Shape C's viewer phase (curl as `alice`, expect 404). |
+| Origin | Status | Existing coverage |
+|---|---|---|
+| 🟡 E1 (missing `AUTHORIZATION-APP-API` → 401) | ✅ already covered | `cassini-operator/internal/operator/appapi/middleware_test.go:94` `TestMiddlewareMissingHeader` |
+| 🟡 E2 (malformed header → 401) | ✅ already covered | `cassini-operator/internal/operator/appapi/middleware_test.go:108` `TestMiddlewareMalformedBase64` |
+| 🟡 E3 (wrong `APP_SECRET` → 401) | ✅ already covered | `cassini-operator/internal/operator/appapi/middleware_test.go:122` `TestMiddlewareWrongSecret` |
+| 🟡 E8 (`/init` replay idempotency) | ✅ already covered | `cassini-operator/internal/operator/lifecycle_test.go:177` `TestInitIdempotent` |
+| 🟡 E12 (state survives container restart) | ✅ already covered at unit level | `cassini-operator/internal/operator/lifecycle_test.go:138` `TestEnabledStateSurvivesRestart` (lifecycle JSON) + `run_test.go:45` `TestOpenStoreBaselinesLegacySchemaDatabase` (jobs SQLite re-open) + `run_test.go:120` `TestJobsHandlerReturnsEmptyArray` (handler returns 200 against the re-opened store). The "after `docker restart`" version in the bypass test was an integration test of those primitives — once they're unit-tested, the integration version is duplication. |
+| I4 (disable→enable lifecycle cycle) | **Add to Shape C install phase** | One `occ app_api:app:disable gocassini` then `occ app_api:app:enable gocassini`, assert state stays `enabled`. |
+| I7b (non-admin gets 404 on `/operator/jobs`) | **Add to Shape C viewer phase** | Curl as `alice`, expect 404. |
+
+Verified 2026-05-28 by running the existing test suite:
+
+```
+$ go test ./internal/operator/... -run "TestMiddlewareMissingHeader|TestMiddlewareMalformedBase64|TestMiddlewareWrongSecret|TestInitIdempotent|TestOpenStoreBaselinesLegacySchemaDatabase|TestJobsHandlerReturnsEmptyArray|TestEnabledStateSurvivesRestart" -v
+... 7 PASS ...
+```
 
 **Lantern-festival multi-bot transcript Levenshtein (T11) is conditionally interesting** — `ci-e2e-v3-transcript-verify.sh` already covers transcript quality against LibriSpeech, but the multi-bot case is qualitatively different. Decision deferred to Slice 4; the scenario fixtures stay in the repo regardless.
 
 ## Acceptance
 
-X2 complete. We can describe exactly what coverage the bypass tests give beyond Shape C, and we have a concrete migration target for each piece. The R3.2 ⚠️ in the Fit Check is lifted; Slice 4 (retire bypass tests) has a precondition list before it can land safely:
+X2 complete. We can describe exactly what coverage the bypass tests give beyond Shape C, and we have a concrete migration target for each piece. The R3.2 ⚠️ in the Fit Check is lifted; Slice 4 (retire bypass tests) has these preconditions before it can land safely:
 
-1. The 3 Go unit tests for E1/E2/E3, E8, E12 are written and green.
+1. ~~The 3 Go unit tests for E1/E2/E3, E8, E12 are written and green.~~ **Already covered by the existing test suite** (see Migration summary above). No new tests required.
 2. Shape C's install phase includes the disable→enable cycle (from I4).
 3. Shape C's viewer phase includes the forbidden-route assertion (from I7b).
 
 ## Status
 
 - 2026-05-28: Audit complete. Migration list captured above.
+- 2026-05-28 (Track A): Re-audit of "migrate to unit test" items found all five already covered by existing tests in `cassini-operator/internal/operator/{appapi/middleware_test.go, lifecycle_test.go, run_test.go}`. No new Go code needed for Slice 4 preconditions; only Shape C phase additions (I4, I7b) remain.
