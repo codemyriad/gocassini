@@ -35,6 +35,8 @@ func runDev(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runDevScript(ctx, repoRoot, filepath.Join("harness", "bin", "ci-e2e.sh"), args[1:], stdout, stderr)
 	case "fixture":
 		return runDevFixture(ctx, repoRoot, args[1:], stdout, stderr)
+	case "play":
+		return runDevPlay(ctx, repoRoot, args[1:], stdout, stderr)
 	case "player":
 		return runDevPlayer(ctx, repoRoot, args[1:], stdout, stderr)
 	default:
@@ -130,13 +132,23 @@ func runDevPlayer(ctx context.Context, repoRoot string, args []string, stdout, s
 	}
 }
 
+var runDevScriptExec = runDevScriptExecDefault
+
 func runDevScript(ctx context.Context, repoRoot string, relativeScript string, args []string, stdout, stderr io.Writer) int {
+	return runDevScriptWithEnv(ctx, repoRoot, relativeScript, args, nil, stdout, stderr)
+}
+
+func runDevScriptWithEnv(ctx context.Context, repoRoot string, relativeScript string, args []string, extraEnv []string, stdout, stderr io.Writer) int {
+	return runDevScriptExec(ctx, repoRoot, relativeScript, args, extraEnv, stdout, stderr)
+}
+
+func runDevScriptExecDefault(ctx context.Context, repoRoot string, relativeScript string, args []string, extraEnv []string, stdout, stderr io.Writer) int {
 	scriptPath := filepath.Join(repoRoot, relativeScript)
 	cmd := exec.CommandContext(ctx, scriptPath, args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Stdin = os.Stdin
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), extraEnv...)
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode()
@@ -156,6 +168,7 @@ Usage:
   cassini dev smoke
   cassini dev ci-e2e
   cassini dev fixture <prepare-showcase|stream-showcase>
+  cassini dev play --room <name> [--nextcloud-host <host-or-url>] [--mode single|full] [--duration <seconds>]
   cassini dev player <video|showcase|three-songs>
 `+"\n")
 }
