@@ -241,7 +241,7 @@ Shape C was rejected because this is still harness-specific and should not becom
 
 Recorded VM validation is defined in:
 
-- `planning/initiatives/mvp/play-commands/validation.md`
+- `planning/initiatives/mvp/D-288-play-commands/validation.md`
 
 The validation creates/resolves a room, starts a Cassini operator recording job, runs a 20-second `cassini dev play --duration 20` feed, and verifies the operator/viewer outputs.
 
