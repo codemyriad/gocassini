@@ -16,6 +16,8 @@ JOIN_DELAYS="${JOIN_DELAYS:-}"
 AUDIO_READY_AFTERS="${AUDIO_READY_AFTERS:-}"
 SYNC_SHIFTS="${SYNC_SHIFTS:-}"
 BOT_DURATIONS="${BOT_DURATIONS:-}"
+AUTH_USERS="${AUTH_USERS:-}"
+AUTH_PASSWORDS="${AUTH_PASSWORDS:-}"
 PREPARE="${PREPARE:-1}"
 ROTATE_SECONDS="${ROTATE_SECONDS:-5}"
 declare -a MEDIA_PREFIX_LIST=()
@@ -24,6 +26,8 @@ declare -a JOIN_DELAY_LIST=()
 declare -a AUDIO_READY_LIST=()
 declare -a SYNC_SHIFT_LIST=()
 declare -a BOT_DURATION_LIST=()
+declare -a AUTH_USER_LIST=()
+declare -a AUTH_PASSWORD_LIST=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -79,6 +83,14 @@ while [[ $# -gt 0 ]]; do
       BOT_DURATIONS="$2"
       shift 2
       ;;
+    --auth-users)
+      AUTH_USERS="$2"
+      shift 2
+      ;;
+    --auth-passwords)
+      AUTH_PASSWORDS="$2"
+      shift 2
+      ;;
     --skip-prepare)
       PREPARE=0
       shift
@@ -125,6 +137,8 @@ split_csv_into "$JOIN_DELAYS" JOIN_DELAY_LIST
 split_csv_into "$AUDIO_READY_AFTERS" AUDIO_READY_LIST
 split_csv_into "$SYNC_SHIFTS" SYNC_SHIFT_LIST
 split_csv_into "$BOT_DURATIONS" BOT_DURATION_LIST
+split_csv_into "$AUTH_USERS" AUTH_USER_LIST
+split_csv_into "$AUTH_PASSWORDS" AUTH_PASSWORD_LIST
 
 for pair in \
   "names:${#NAME_LIST[@]}" \
@@ -139,6 +153,17 @@ for pair in \
     exit 1
   fi
 done
+
+if (( ${#AUTH_USER_LIST[@]} > 0 || ${#AUTH_PASSWORD_LIST[@]} > 0 )); then
+  if (( ${#AUTH_USER_LIST[@]} != USERS )); then
+    echo "--auth-users count (${#AUTH_USER_LIST[@]}) must match --users ($USERS)" >&2
+    exit 1
+  fi
+  if (( ${#AUTH_PASSWORD_LIST[@]} != USERS )); then
+    echo "--auth-passwords count (${#AUTH_PASSWORD_LIST[@]}) must match --users ($USERS)" >&2
+    exit 1
+  fi
+fi
 
 if [[ -n "$MEDIA_PREFIXES" ]]; then
   split_csv_into "$MEDIA_PREFIXES" csv_media
@@ -195,6 +220,9 @@ log "Users: $USERS"
 if [[ "${#NAME_LIST[@]}" -gt 0 ]]; then
   log "Custom names configured: ${#NAME_LIST[@]}"
 fi
+if [[ "${#AUTH_USER_LIST[@]}" -gt 0 ]]; then
+  log "Authenticated users configured: ${#AUTH_USER_LIST[@]}"
+fi
 
 CMD_ARGS=(
   --call-url "$CALL_URL"
@@ -237,6 +265,10 @@ for ((i = 1; i <= USERS; i++)); do
   CMD_ARGS+=(--video "$video_file")
   CMD_ARGS+=(--audio "$audio_file")
   CMD_ARGS+=(--name "$bot_name")
+  if (( ${#AUTH_USER_LIST[@]} >= i )); then
+    CMD_ARGS+=(--auth-user "${AUTH_USER_LIST[$((i - 1))]}")
+    CMD_ARGS+=(--auth-password "${AUTH_PASSWORD_LIST[$((i - 1))]}")
+  fi
   CMD_ARGS+=(--join-delay "$join_delay")
   CMD_ARGS+=(--audio-ready-after "$audio_ready")
   CMD_ARGS+=(--sync-shift "$sync_shift")

@@ -107,11 +107,13 @@ func (s *signalingSettings) primaryServer() string {
 }
 
 type ocsClient struct {
-	baseURL string
-	http    *http.Client
+	baseURL  string
+	username string
+	password string
+	http     *http.Client
 }
 
-func newOCSClient(baseURL string, insecure bool) *ocsClient {
+func newOCSClient(baseURL string, insecure bool, username string, password string) *ocsClient {
 	jar, _ := cookiejar.New(nil)
 
 	baseTransport, ok := http.DefaultTransport.(*http.Transport)
@@ -124,7 +126,9 @@ func newOCSClient(baseURL string, insecure bool) *ocsClient {
 	}
 
 	return &ocsClient{
-		baseURL: strings.TrimRight(baseURL, "/"),
+		baseURL:  strings.TrimRight(baseURL, "/"),
+		username: strings.TrimSpace(username),
+		password: password,
 		http: &http.Client{
 			Timeout:   20 * time.Second,
 			Transport: transport,
@@ -144,9 +148,9 @@ func (c *ocsClient) getRoom(ctx context.Context, roomToken string) error {
 	return err
 }
 
-func (c *ocsClient) markParticipantActive(ctx context.Context, roomToken, displayName string) (string, error) {
+func (c *ocsClient) markParticipantActive(ctx context.Context, roomToken, displayName string, force bool) (string, error) {
 	payload := url.Values{}
-	payload.Set("force", "false")
+	payload.Set("force", strconv.FormatBool(force))
 	if displayName != "" {
 		payload.Set("displayName", displayName)
 	}
@@ -246,6 +250,9 @@ func (c *ocsClient) doRequest(ctx context.Context, method, path string, query ur
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("build request %s %s: %w", method, path, err)
+	}
+	if c.username != "" {
+		req.SetBasicAuth(c.username, c.password)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("OCS-APIRequest", "true")
@@ -497,6 +504,8 @@ type botConfig struct {
 	SyncShift  time.Duration
 	Duration   time.Duration
 	Insecure   bool
+	AuthUser   string
+	AuthPass   string
 	CallURLRaw string
 }
 
@@ -548,7 +557,7 @@ type bot struct {
 func newBot(cfg *botConfig) *bot {
 	return &bot{
 		cfg:         cfg,
-		http:        newOCSClient(cfg.BaseURL, cfg.Insecure),
+		http:        newOCSClient(cfg.BaseURL, cfg.Insecure, cfg.AuthUser, cfg.AuthPass),
 		callSID:     randomHex(16),
 		answerCh:    make(chan struct{}),
 		connectedCh: make(chan struct{}),
@@ -725,13 +734,20 @@ func (b *bot) joinConversation(ctx context.Context) error {
 	if err := b.http.getRoom(ctx, b.cfg.RoomToken); err != nil {
 		return fmt.Errorf("room check failed: %w", err)
 	}
-	sessionID, err := b.http.markParticipantActive(ctx, b.cfg.RoomToken, b.cfg.GuestName)
+	authenticated := strings.TrimSpace(b.cfg.AuthUser) != ""
+	displayName := b.cfg.GuestName
+	if authenticated {
+		displayName = ""
+	}
+	sessionID, err := b.http.markParticipantActive(ctx, b.cfg.RoomToken, displayName, authenticated)
 	if err != nil {
 		return fmt.Errorf("participants/active failed: %w", err)
 	}
 	b.nextcloudSessionID = sessionID
-	if err := b.http.setGuestName(ctx, b.cfg.RoomToken, b.cfg.GuestName); err != nil {
-		b.logf("guest display name not set (%v); continuing", err)
+	if !authenticated {
+		if err := b.http.setGuestName(ctx, b.cfg.RoomToken, b.cfg.GuestName); err != nil {
+			b.logf("guest display name not set (%v); continuing", err)
+		}
 	}
 	return nil
 }
@@ -2107,6 +2123,8 @@ func run() error {
 		audioReadySec     floatList
 		syncShiftSec      floatList
 		botDurationSec    floatList
+		authUsers         stringList
+		authPasswords     stringList
 		durationSec       float64
 		rotateSeconds     float64
 		stopWhenRoomEmpty bool
@@ -2121,6 +2139,8 @@ func run() error {
 	flag.Var(&audioReadySec, "audio-ready-after", "Audio can become audible after N seconds from stream start (repeat up to video count)")
 	flag.Var(&syncShiftSec, "sync-shift", "Per-bot media time shift in seconds (positive=forward, negative=backward, repeat up to video count)")
 	flag.Var(&botDurationSec, "bot-duration", "Per-bot duration in seconds (0 means until EOF, repeat up to video count)")
+	flag.Var(&authUsers, "auth-user", "Authenticated Nextcloud user id (repeat exactly once per participant when used)")
+	flag.Var(&authPasswords, "auth-password", "Authenticated Nextcloud password (repeat exactly once per participant when used)")
 	flag.Float64Var(&durationSec, "duration", 0, "Optional duration override in seconds for all bots")
 	flag.Float64Var(&rotateSeconds, "rotate-seconds", defaultRotateSeconds, "Audio rotation interval in seconds")
 	flag.BoolVar(&stopWhenRoomEmpty, "stop-when-room-empty", true, "Exit once all non-bot participants leave (after grace)")
@@ -2161,6 +2181,14 @@ func run() error {
 	}
 	if len(botDurationSec) > participantCount {
 		return fmt.Errorf("--bot-duration count (%d) exceeds participant count (%d)", len(botDurationSec), participantCount)
+	}
+	if len(authUsers) > 0 || len(authPasswords) > 0 {
+		if len(authUsers) != participantCount {
+			return fmt.Errorf("--auth-user count (%d) must match participant count (%d)", len(authUsers), participantCount)
+		}
+		if len(authPasswords) != participantCount {
+			return fmt.Errorf("--auth-password count (%d) must match participant count (%d)", len(authPasswords), participantCount)
+		}
 	}
 
 	for _, path := range append(append([]string{}, videoFiles...), audioFiles...) {
@@ -2229,6 +2257,12 @@ func run() error {
 
 	cfgs := make([]*botConfig, 0, participantCount)
 	for i := 0; i < participantCount; i++ {
+		authUser := ""
+		authPass := ""
+		if len(authUsers) > 0 {
+			authUser = strings.TrimSpace(authUsers[i])
+			authPass = authPasswords[i]
+		}
 		cfgs = append(cfgs, &botConfig{
 			Index:      i + 1,
 			BaseURL:    baseURL,
@@ -2241,6 +2275,8 @@ func run() error {
 			SyncShift:  time.Duration(resolvedSyncShift[i] * float64(time.Second)),
 			Duration:   resolvedDurations[i],
 			Insecure:   insecure,
+			AuthUser:   authUser,
+			AuthPass:   authPass,
 			CallURLRaw: callURL,
 		})
 	}
@@ -2251,9 +2287,14 @@ func run() error {
 		if cfg.Duration > 0 {
 			durationLabel = cfg.Duration.String()
 		}
+		authLabel := "guest"
+		if cfg.AuthUser != "" {
+			authLabel = cfg.AuthUser
+		}
 		log.Printf(
-			"[manager] plan bot=%s join=%s audio_ready=%s sync_shift=%s duration=%s video=%s audio=%s",
+			"[manager] plan bot=%s auth=%s join=%s audio_ready=%s sync_shift=%s duration=%s video=%s audio=%s",
 			cfg.GuestName,
+			authLabel,
 			cfg.JoinDelay,
 			cfg.AudioReady,
 			cfg.SyncShift,
