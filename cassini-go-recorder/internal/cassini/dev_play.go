@@ -22,10 +22,13 @@ const (
 	devPlayDefaultMode          = "full"
 	devPlaySingleMode           = "single"
 	devPlayFullMode             = "full"
-	devPlayDefaultSingleName    = "Mira Chen"
-	devPlayShowcaseScenarioRel  = "harness/scenarios/showcase-lantern-festival.v1.json"
-	devPlayShowcaseOutputDirRel = "harness/media/processed/showcase-lantern-festival-v1"
-	devPlayShowcaseSingleID     = "mira"
+	devPlayPiedPiperMediaLabel  = "synthetic-pied-piper-v1"
+	devPlayPiedPiperScenarioRel = "harness/scenarios/synthetic-pied-piper.v1.json"
+	devPlayPiedPiperOutputRel   = "harness/media/processed/synthetic-pied-piper-v1"
+	devPlayPiedPiperFirstID     = "erlich"
+	devPlayPiedPiperFirstName   = "Erlich Bachman"
+	devPlayPiedPiperSecondID    = "monica"
+	devPlayPiedPiperSecondName  = "Monica Hall"
 )
 
 var devPlayHTTPClient = &http.Client{Timeout: 20 * time.Second}
@@ -104,6 +107,10 @@ func runDevPlay(ctx context.Context, repoRoot string, args []string, stdout, std
 		return 1
 	}
 
+	if code := ensureDevPlayPiedPiperFixture(ctx, repoRoot, stdout, stderr); code != 0 {
+		return code
+	}
+
 	relScript, scriptArgs := devPlayScriptInvocation(repoRoot, target.CallURL, opts)
 	durationLabel := "whole"
 	if opts.durationSeconds > 0 {
@@ -113,7 +120,7 @@ func runDevPlay(ctx context.Context, repoRoot string, args []string, stdout, std
 	if target.Created {
 		createdLabel = "created"
 	}
-	fmt.Fprintf(stdout, "play -> room=%q room_state=%s call=%s mode=%s duration=%s media=showcase-lantern-festival-v1\n", target.RoomName, createdLabel, target.CallURL, opts.mode, durationLabel)
+	fmt.Fprintf(stdout, "play -> room=%q room_state=%s call=%s mode=%s duration=%s media=%s\n", target.RoomName, createdLabel, target.CallURL, opts.mode, durationLabel, devPlayPiedPiperMediaLabel)
 
 	extraEnv := []string{
 		"CALL_URL=" + target.CallURL,
@@ -232,15 +239,15 @@ func normalizeDevPlayBaseURL(flagValue string, envValue string) (string, error) 
 }
 
 func devPlayScriptInvocation(repoRoot string, callURL string, opts devPlayOptions) (string, []string) {
-	showcaseOutputDir := filepath.Join(repoRoot, devPlayShowcaseOutputDirRel)
+	fixtureOutputDir := filepath.Join(repoRoot, devPlayPiedPiperOutputRel)
 	if opts.mode == devPlaySingleMode {
 		duration := opts.durationSeconds
 		args := []string{
 			"--call-url", callURL,
 			"--users", "1",
 			"--duration", strconv.Itoa(duration),
-			"--media-prefix", filepath.Join(showcaseOutputDir, devPlayShowcaseSingleID),
-			"--names", devPlayDefaultSingleName,
+			"--media-prefix", filepath.Join(fixtureOutputDir, devPlayPiedPiperFirstID),
+			"--names", devPlayPiedPiperFirstName,
 			"--skip-prepare",
 		}
 		return filepath.Join("harness", "bin", "stream-video.sh"), args
@@ -248,14 +255,84 @@ func devPlayScriptInvocation(repoRoot string, callURL string, opts devPlayOption
 
 	args := []string{
 		"--call-url", callURL,
-		"--scenario", filepath.Join(repoRoot, devPlayShowcaseScenarioRel),
-		"--output-dir", showcaseOutputDir,
+		"--scenario", filepath.Join(repoRoot, devPlayPiedPiperScenarioRel),
+		"--output-dir", fixtureOutputDir,
 		"--skip-prepare",
 	}
 	if opts.durationSeconds > 0 {
 		args = append(args, "--duration", strconv.Itoa(opts.durationSeconds))
 	}
 	return filepath.Join("harness", "bin", "stream-synthetic-meeting.sh"), args
+}
+
+func ensureDevPlayPiedPiperFixture(ctx context.Context, repoRoot string, stdout, stderr io.Writer) int {
+	if devPlayPiedPiperFixtureComplete(repoRoot) {
+		return 0
+	}
+	fmt.Fprintf(stdout, "play -> preparing media=%s\n", devPlayPiedPiperMediaLabel)
+	args := []string{
+		"--scenario", filepath.Join(repoRoot, devPlayPiedPiperScenarioRel),
+		"--output-dir", filepath.Join(repoRoot, devPlayPiedPiperOutputRel),
+	}
+	return runDevScript(ctx, repoRoot, filepath.Join("harness", "bin", "prepare-synthetic-meeting.sh"), args, stdout, stderr)
+}
+
+type devPlaySyntheticManifest struct {
+	Participants []struct {
+		ID          string `json:"id"`
+		MediaPrefix string `json:"media_prefix"`
+	} `json:"participants"`
+}
+
+func devPlayPiedPiperFixtureComplete(repoRoot string) bool {
+	outputDir := filepath.Join(repoRoot, devPlayPiedPiperOutputRel)
+	manifestPath := filepath.Join(outputDir, "manifest.json")
+	body, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return false
+	}
+	var manifest devPlaySyntheticManifest
+	if err := json.Unmarshal(body, &manifest); err != nil {
+		return false
+	}
+	if len(manifest.Participants) == 0 {
+		return false
+	}
+	for _, participant := range manifest.Participants {
+		prefix := devPlayParticipantMediaPrefix(outputDir, participant.ID, participant.MediaPrefix)
+		if prefix == "" || !devPlayMediaPairExists(prefix) {
+			return false
+		}
+	}
+	return true
+}
+
+func devPlayParticipantMediaPrefix(outputDir string, participantID string, manifestPrefix string) string {
+	participantID = strings.TrimSpace(participantID)
+	manifestPrefix = strings.TrimSpace(manifestPrefix)
+	if participantID != "" {
+		return filepath.Join(outputDir, participantID)
+	}
+	if manifestPrefix == "" {
+		return ""
+	}
+	if filepath.IsAbs(manifestPrefix) {
+		if devPlayMediaPairExists(manifestPrefix) {
+			return manifestPrefix
+		}
+		return filepath.Join(outputDir, filepath.Base(manifestPrefix))
+	}
+	return filepath.Join(outputDir, manifestPrefix)
+}
+
+func devPlayMediaPairExists(prefix string) bool {
+	if _, err := os.Stat(prefix + ".ivf"); err != nil {
+		return false
+	}
+	if _, err := os.Stat(prefix + ".ogg"); err != nil {
+		return false
+	}
+	return true
 }
 
 func writeDevPlayRuntimeState(repoRoot string, roomToken string, callURL string) error {
