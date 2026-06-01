@@ -37,6 +37,8 @@ func runDev(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runDevFixture(ctx, repoRoot, args[1:], stdout, stderr)
 	case "play":
 		return runDevPlay(ctx, repoRoot, args[1:], stdout, stderr)
+	case "play-private":
+		return runDevPlayPrivate(ctx, repoRoot, args[1:], stdout, stderr)
 	case "player":
 		return runDevPlayer(ctx, repoRoot, args[1:], stdout, stderr)
 	default:
@@ -169,6 +171,7 @@ Usage:
   cassini dev ci-e2e
   cassini dev fixture <prepare-showcase|stream-showcase>
   cassini dev play --room <name> [--nextcloud-host <host-or-url>] [--mode single|full] [--duration <seconds>]
+  cassini dev play-private --scaffold-only [--nextcloud-host <host-or-url>]
   cassini dev player <video|showcase|three-songs>
 `+"\n")
 }
