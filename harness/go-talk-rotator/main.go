@@ -223,6 +223,31 @@ func (c *ocsClient) leaveParticipantActive(ctx context.Context, roomToken string
 	return err
 }
 
+func (c *ocsClient) startRecording(ctx context.Context, roomToken string, status string) error {
+	payload := url.Values{}
+	payload.Set("status", status)
+	_, err := c.request(ctx, http.MethodPost, fmt.Sprintf("/ocs/v2.php/apps/spreed/api/v1/recording/%s", roomToken), nil, payload)
+	return err
+}
+
+func (c *ocsClient) roomRecordingState(ctx context.Context, roomToken string) (int, error) {
+	raw, err := c.request(ctx, http.MethodGet, fmt.Sprintf("/ocs/v2.php/apps/spreed/api/v4/room/%s", roomToken), nil, nil)
+	if err != nil {
+		return 0, err
+	}
+	var data struct {
+		CallRecording any `json:"callRecording"`
+	}
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return 0, fmt.Errorf("decode room recording state: %w", err)
+	}
+	state, ok := asInt(data.CallRecording)
+	if !ok {
+		return 0, fmt.Errorf("room response missing numeric callRecording: %v", data.CallRecording)
+	}
+	return state, nil
+}
+
 func (c *ocsClient) request(ctx context.Context, method, path string, query url.Values, form url.Values) (json.RawMessage, error) {
 	var body io.Reader
 	var contentType string
@@ -492,21 +517,51 @@ func (c *signalingClient) emitConnectionError(err error) {
 	}
 }
 
+type mediaStartGate struct {
+	ready chan struct{}
+	once  sync.Once
+	err   error
+}
+
+func newMediaStartGate() *mediaStartGate {
+	return &mediaStartGate{ready: make(chan struct{})}
+}
+
+func (g *mediaStartGate) open(err error) {
+	g.once.Do(func() {
+		g.err = err
+		close(g.ready)
+	})
+}
+
+func (g *mediaStartGate) wait(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	case <-g.ready:
+		return g.err
+	}
+}
+
 type botConfig struct {
-	Index      int
-	BaseURL    string
-	RoomToken  string
-	GuestName  string
-	VideoPath  string
-	AudioPath  string
-	JoinDelay  time.Duration
-	AudioReady time.Duration
-	SyncShift  time.Duration
-	Duration   time.Duration
-	Insecure   bool
-	AuthUser   string
-	AuthPass   string
-	CallURLRaw string
+	Index                int
+	BaseURL              string
+	RoomToken            string
+	GuestName            string
+	VideoPath            string
+	AudioPath            string
+	JoinDelay            time.Duration
+	AudioReady           time.Duration
+	SyncShift            time.Duration
+	Duration             time.Duration
+	Insecure             bool
+	AuthUser             string
+	AuthPass             string
+	RecordingStarter     bool
+	RecordingStatus      string
+	RecordingPollTimeout time.Duration
+	MediaStartGate       *mediaStartGate
+	CallURLRaw           string
 }
 
 type bot struct {
@@ -626,7 +681,23 @@ func (b *bot) run(parent context.Context) (runErr error) {
 		return err
 	}
 	b.markConnected()
-	b.logf("connected and streaming")
+	b.logf("connected")
+
+	if b.cfg.RecordingStarter {
+		err := b.startRecordingAndWait(ctx)
+		if b.cfg.MediaStartGate != nil {
+			b.cfg.MediaStartGate.open(err)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if b.cfg.MediaStartGate != nil {
+		if err := b.cfg.MediaStartGate.wait(ctx); err != nil {
+			return err
+		}
+	}
+	b.logf("streaming media")
 
 	mediaCtx, mediaCancel := context.WithCancel(ctx)
 	b.mediaCancel = mediaCancel
@@ -864,6 +935,45 @@ func (b *bot) joinSignalingRoom(ctx context.Context) error {
 	}
 	b.logf("joined signaling room")
 	return nil
+}
+
+func (b *bot) startRecordingAndWait(ctx context.Context) error {
+	if strings.TrimSpace(b.cfg.AuthUser) == "" {
+		return errors.New("recording starter requires authenticated user credentials")
+	}
+	status := strings.TrimSpace(b.cfg.RecordingStatus)
+	if status == "" {
+		status = "1"
+	}
+	b.logf("starting Nextcloud Talk recording before media")
+	if err := b.http.startRecording(ctx, b.cfg.RoomToken, status); err != nil {
+		return fmt.Errorf("start recording: %w", err)
+	}
+	timeout := b.cfg.RecordingPollTimeout
+	if timeout <= 0 {
+		timeout = 90 * time.Second
+	}
+	pollCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	lastState := -1
+	for {
+		state, err := b.http.roomRecordingState(pollCtx, b.cfg.RoomToken)
+		if err != nil {
+			return fmt.Errorf("poll recording state: %w", err)
+		}
+		lastState = state
+		if state == 1 {
+			b.logf("recording active")
+			return nil
+		}
+		timer := time.NewTimer(500 * time.Millisecond)
+		select {
+		case <-pollCtx.Done():
+			timer.Stop()
+			return fmt.Errorf("recording did not become active before timeout; last callRecording=%d", lastState)
+		case <-timer.C:
+		}
+	}
 }
 
 func (b *bot) joinCall(ctx context.Context) error {
@@ -2114,21 +2224,25 @@ func main() {
 
 func run() error {
 	var (
-		callURL           string
-		insecure          bool
-		videoFiles        stringList
-		audioFiles        stringList
-		names             stringList
-		joinDelaySecs     floatList
-		audioReadySec     floatList
-		syncShiftSec      floatList
-		botDurationSec    floatList
-		authUsers         stringList
-		authPasswords     stringList
-		durationSec       float64
-		rotateSeconds     float64
-		stopWhenRoomEmpty bool
-		roomEmptyGraceSec float64
+		callURL               string
+		insecure              bool
+		videoFiles            stringList
+		audioFiles            stringList
+		names                 stringList
+		joinDelaySecs         floatList
+		audioReadySec         floatList
+		syncShiftSec          floatList
+		botDurationSec        floatList
+		authUsers             stringList
+		authPasswords         stringList
+		durationSec           float64
+		rotateSeconds         float64
+		stopWhenRoomEmpty     bool
+		recordBeforeMedia     bool
+		recordingStarterIndex int
+		recordingStatus       string
+		recordingTimeoutSec   float64
+		roomEmptyGraceSec     float64
 	)
 
 	flag.StringVar(&callURL, "call-url", "", "Talk call URL")
@@ -2144,6 +2258,10 @@ func run() error {
 	flag.Float64Var(&durationSec, "duration", 0, "Optional duration override in seconds for all bots")
 	flag.Float64Var(&rotateSeconds, "rotate-seconds", defaultRotateSeconds, "Audio rotation interval in seconds")
 	flag.BoolVar(&stopWhenRoomEmpty, "stop-when-room-empty", true, "Exit once all non-bot participants leave (after grace)")
+	flag.BoolVar(&recordBeforeMedia, "record-before-media", false, "Start Nextcloud Talk recording and wait until active before media samples are sent")
+	flag.IntVar(&recordingStarterIndex, "recording-starter-index", 1, "1-based participant index that starts recording when --record-before-media is set")
+	flag.StringVar(&recordingStatus, "recording-status", "1", "Nextcloud Talk recording status value")
+	flag.Float64Var(&recordingTimeoutSec, "recording-timeout", 90, "Seconds to wait for recording to become active")
 	flag.Float64Var(&roomEmptyGraceSec, "room-empty-grace-seconds", defaultRoomEmptyGrace.Seconds(), "Grace period before stopping after room empties")
 	flag.BoolVar(&insecure, "insecure", false, "Disable TLS verification")
 	flag.Parse()
@@ -2167,6 +2285,14 @@ func run() error {
 	if durationSec < 0 {
 		return errors.New("--duration must be >= 0")
 	}
+	if recordingTimeoutSec <= 0 {
+		return errors.New("--recording-timeout must be > 0")
+	}
+	if recordBeforeMedia {
+		if recordingStarterIndex < 1 || recordingStarterIndex > participantCount {
+			return fmt.Errorf("--recording-starter-index must be between 1 and participant count (%d)", participantCount)
+		}
+	}
 	if len(names) > participantCount {
 		return fmt.Errorf("--name count (%d) exceeds participant count (%d)", len(names), participantCount)
 	}
@@ -2189,6 +2315,9 @@ func run() error {
 		if len(authPasswords) != participantCount {
 			return fmt.Errorf("--auth-password count (%d) must match participant count (%d)", len(authPasswords), participantCount)
 		}
+	}
+	if recordBeforeMedia && len(authUsers) == 0 {
+		return errors.New("--record-before-media requires authenticated --auth-user/--auth-password credentials")
 	}
 
 	for _, path := range append(append([]string{}, videoFiles...), audioFiles...) {
@@ -2240,6 +2369,10 @@ func run() error {
 	if durationSec > 0 {
 		overrideDuration = time.Duration(durationSec * float64(time.Second))
 	}
+	var mediaGate *mediaStartGate
+	if recordBeforeMedia {
+		mediaGate = newMediaStartGate()
+	}
 	resolvedDurations := make([]time.Duration, participantCount)
 	for i := 0; i < participantCount; i++ {
 		resolvedDurations[i] = overrideDuration
@@ -2264,20 +2397,24 @@ func run() error {
 			authPass = authPasswords[i]
 		}
 		cfgs = append(cfgs, &botConfig{
-			Index:      i + 1,
-			BaseURL:    baseURL,
-			RoomToken:  roomToken,
-			GuestName:  resolvedNames[i],
-			VideoPath:  videoFiles[i],
-			AudioPath:  audioFiles[i],
-			JoinDelay:  time.Duration(resolvedJoinDelays[i] * float64(time.Second)),
-			AudioReady: time.Duration(resolvedAudioReady[i] * float64(time.Second)),
-			SyncShift:  time.Duration(resolvedSyncShift[i] * float64(time.Second)),
-			Duration:   resolvedDurations[i],
-			Insecure:   insecure,
-			AuthUser:   authUser,
-			AuthPass:   authPass,
-			CallURLRaw: callURL,
+			Index:                i + 1,
+			BaseURL:              baseURL,
+			RoomToken:            roomToken,
+			GuestName:            resolvedNames[i],
+			VideoPath:            videoFiles[i],
+			AudioPath:            audioFiles[i],
+			JoinDelay:            time.Duration(resolvedJoinDelays[i] * float64(time.Second)),
+			AudioReady:           time.Duration(resolvedAudioReady[i] * float64(time.Second)),
+			SyncShift:            time.Duration(resolvedSyncShift[i] * float64(time.Second)),
+			Duration:             resolvedDurations[i],
+			Insecure:             insecure,
+			AuthUser:             authUser,
+			AuthPass:             authPass,
+			RecordingStarter:     recordBeforeMedia && i+1 == recordingStarterIndex,
+			RecordingStatus:      recordingStatus,
+			RecordingPollTimeout: time.Duration(recordingTimeoutSec * float64(time.Second)),
+			MediaStartGate:       mediaGate,
+			CallURLRaw:           callURL,
 		})
 	}
 
@@ -2302,6 +2439,9 @@ func run() error {
 			cfg.VideoPath,
 			cfg.AudioPath,
 		)
+	}
+	if recordBeforeMedia {
+		log.Printf("[manager] recording gate enabled starter=%d timeout=%s", recordingStarterIndex, time.Duration(recordingTimeoutSec*float64(time.Second)))
 	}
 	log.Printf("[manager] rotating audible audio every %.2fs", rotateSeconds)
 	if stopWhenRoomEmpty {

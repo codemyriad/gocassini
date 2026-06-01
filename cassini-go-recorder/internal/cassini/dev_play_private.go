@@ -23,6 +23,13 @@ const (
 	devPlayPrivateUserPrefix            = "cassini-"
 	devPlayPrivateConversationSynthetic = "synthetic"
 	devPlayPrivateConversationAdmin     = "admin"
+	devPlayPrivateRecordingStatusVideo  = "1"
+	devPlayPrivateRecordingActive       = 1
+)
+
+var (
+	devPlayPrivateRecordingPollInterval = 500 * time.Millisecond
+	devPlayPrivateRecordingPollTimeout  = 90 * time.Second
 )
 
 type devPlayPrivateOptions struct {
@@ -142,8 +149,11 @@ func runDevPlayPrivate(ctx context.Context, repoRoot string, args []string, stdo
 		return 0
 	}
 
-	fmt.Fprintln(stderr, "play-private playback is not implemented yet; run --scaffold-only for this slice")
-	return 2
+	if err := runDevPlayPrivateConversation(ctx, repoRoot, opts, stdout, stderr); err != nil {
+		fmt.Fprintf(stderr, "play-private playback error: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func validateDevPlayPrivateOptions(opts *devPlayPrivateOptions) error {
@@ -181,7 +191,7 @@ Examples:
 `)
 	fmt.Fprintf(w, `Options:
   --scaffold-only     Create/reuse private playback users and 1:1 Talk conversations, then exit.
-  --conversation      Private playback target. Implemented in later slices; valid values are synthetic and admin.
+  --conversation      Private playback target. synthetic is implemented now; admin lands in the next slice.
   --nextcloud-host    Bare host/IP or full base URL. Defaults to CASSINI_HARNESS_HOST, then 127.0.0.1.
   --duration          Seconds to play for --conversation playback.
 
@@ -295,6 +305,177 @@ func buildDevPlayPrivateScaffoldState(repoRoot string, baseURL string, credentia
 	return state
 }
 
+func runDevPlayPrivateConversation(ctx context.Context, repoRoot string, opts devPlayPrivateOptions, stdout, stderr io.Writer) error {
+	state, err := readDevPlayPrivateScaffoldState(filepath.Join(repoRoot, devPlayPrivateScaffoldStateRel))
+	if err != nil {
+		return err
+	}
+	baseURL, err := resolveDevPlayPrivatePlaybackBaseURL(opts, state)
+	if err != nil {
+		return err
+	}
+	if opts.conversation != devPlayPrivateConversationSynthetic {
+		return fmt.Errorf("--conversation %s is implemented in a later slice", opts.conversation)
+	}
+	password, err := devPlayPrivatePasswordForState(state)
+	if err != nil {
+		return err
+	}
+	target, err := resolveDevPlayPrivateSyntheticTarget(repoRoot, baseURL, state, password)
+	if err != nil {
+		return err
+	}
+
+	client := newDevPlayPrivateOCSClient(baseURL, target.RecordingStarter.UserID, target.RecordingStarter.Password)
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := client.stopRecording(cleanupCtx, target.Token); err != nil {
+			fmt.Fprintf(stderr, "play-private cleanup warning: stop recording: %v\n", err)
+		}
+	}()
+
+	fmt.Fprintf(stdout, "play-private -> conversation=%s call=%s recording=player-gated duration=%s publishers=%s\n", opts.conversation, target.CallURL, devPlayPrivateDurationLabel(opts.durationSeconds), strings.Join(target.PublisherLabels(), ","))
+	if code := runDevScript(ctx, repoRoot, filepath.Join("harness", "bin", "stream-video.sh"), target.StreamVideoArgs(opts.durationSeconds), stdout, stderr); code != 0 {
+		return fmt.Errorf("authenticated media playback exited with code %d", code)
+	}
+	return nil
+}
+
+type devPlayPrivatePlaybackTarget struct {
+	Conversation     string
+	Token            string
+	CallURL          string
+	RecordingStarter devPlayPrivateActor
+	MediaPublishers  []devPlayPrivateActor
+	MediaPrefixes    []string
+}
+
+func (t devPlayPrivatePlaybackTarget) PublisherLabels() []string {
+	labels := make([]string, 0, len(t.MediaPublishers))
+	for _, publisher := range t.MediaPublishers {
+		labels = append(labels, publisher.UserID+":"+publisher.SpeakerID)
+	}
+	return labels
+}
+
+func (t devPlayPrivatePlaybackTarget) StreamVideoArgs(durationSeconds int) []string {
+	users := make([]string, 0, len(t.MediaPublishers))
+	passwords := make([]string, 0, len(t.MediaPublishers))
+	names := make([]string, 0, len(t.MediaPublishers))
+	for _, publisher := range t.MediaPublishers {
+		users = append(users, publisher.UserID)
+		passwords = append(passwords, publisher.Password)
+		names = append(names, publisher.DisplayName)
+	}
+	args := []string{
+		"--call-url", t.CallURL,
+		"--users", strconv.Itoa(len(t.MediaPublishers)),
+		"--duration", strconv.Itoa(durationSeconds),
+		"--media-prefixes", strings.Join(t.MediaPrefixes, ","),
+		"--names", strings.Join(names, ","),
+		"--auth-users", strings.Join(users, ","),
+		"--auth-passwords", strings.Join(passwords, ","),
+		"--record-before-media",
+		"--recording-starter-index", "1",
+		"--recording-timeout", strconv.Itoa(int(devPlayPrivateRecordingPollTimeout.Seconds())),
+		"--skip-prepare",
+	}
+	return args
+}
+
+func readDevPlayPrivateScaffoldState(path string) (devPlayPrivateScaffoldState, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return devPlayPrivateScaffoldState{}, fmt.Errorf("missing scaffold state %s; run `cassini dev play-private --scaffold-only`", path)
+		}
+		return devPlayPrivateScaffoldState{}, fmt.Errorf("read scaffold state: %w", err)
+	}
+	var state devPlayPrivateScaffoldState
+	if err := json.Unmarshal(body, &state); err != nil {
+		return devPlayPrivateScaffoldState{}, fmt.Errorf("decode scaffold state: %w", err)
+	}
+	if state.Version != 1 {
+		return devPlayPrivateScaffoldState{}, fmt.Errorf("unsupported scaffold state version %d; rerun `cassini dev play-private --scaffold-only`", state.Version)
+	}
+	return state, nil
+}
+
+func resolveDevPlayPrivatePlaybackBaseURL(opts devPlayPrivateOptions, state devPlayPrivateScaffoldState) (string, error) {
+	hasOverride := strings.TrimSpace(opts.nextcloudHost) != "" || strings.TrimSpace(os.Getenv("CASSINI_HARNESS_HOST")) != ""
+	if !hasOverride {
+		if strings.TrimSpace(state.BaseURL) == "" {
+			return "", errors.New("scaffold state missing baseUrl; rerun `cassini dev play-private --scaffold-only`")
+		}
+		return strings.TrimRight(state.BaseURL, "/"), nil
+	}
+	baseURL, err := normalizeDevPlayBaseURL(opts.nextcloudHost, os.Getenv("CASSINI_HARNESS_HOST"))
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimRight(state.BaseURL, "/") != baseURL {
+		return "", fmt.Errorf("scaffold state baseUrl %s does not match requested %s; rerun `cassini dev play-private --scaffold-only --nextcloud-host %s`", state.BaseURL, baseURL, opts.nextcloudHost)
+	}
+	return baseURL, nil
+}
+
+func devPlayPrivatePasswordForState(state devPlayPrivateScaffoldState) (string, error) {
+	source := strings.TrimSpace(state.CredentialSource)
+	switch source {
+	case "dev-fallback", "":
+		return devPlayPrivateFallbackPassword, nil
+	case "env:CASSINI_PLAY_SCAFFOLD_PASSWORD":
+		if value := strings.TrimSpace(os.Getenv("CASSINI_PLAY_SCAFFOLD_PASSWORD")); value != "" {
+			return value, nil
+		}
+		return "", errors.New("scaffold state was created with CASSINI_PLAY_SCAFFOLD_PASSWORD; set it before playback or rerun scaffold")
+	default:
+		return "", fmt.Errorf("unsupported scaffold credentialSource %q; rerun scaffold", source)
+	}
+}
+
+func resolveDevPlayPrivateSyntheticTarget(repoRoot string, baseURL string, state devPlayPrivateScaffoldState, password string) (devPlayPrivatePlaybackTarget, error) {
+	conversation, ok := state.conversation(devPlayPrivateConversationSynthetic)
+	if !ok || strings.TrimSpace(conversation.Token) == "" {
+		return devPlayPrivatePlaybackTarget{}, errors.New("scaffold state missing synthetic conversation; rerun `cassini dev play-private --scaffold-only`")
+	}
+	outputDir := strings.TrimSpace(state.Fixture.OutputDir)
+	if outputDir == "" {
+		outputDir = filepath.Join(repoRoot, devPlayPiedPiperOutputRel)
+	}
+	publishers := []devPlayPrivateActor{
+		{UserID: state.Users.Erlich.UserID, Password: password, DisplayName: state.Users.Erlich.DisplayName, SpeakerID: state.Users.Erlich.SpeakerID},
+		{UserID: state.Users.Monica.UserID, Password: password, DisplayName: state.Users.Monica.DisplayName, SpeakerID: state.Users.Monica.SpeakerID},
+	}
+	for i, publisher := range publishers {
+		if strings.TrimSpace(publisher.UserID) == "" || strings.TrimSpace(publisher.DisplayName) == "" || strings.TrimSpace(publisher.SpeakerID) == "" {
+			return devPlayPrivatePlaybackTarget{}, fmt.Errorf("scaffold state missing synthetic publisher %d fields; rerun scaffold", i+1)
+		}
+	}
+	mediaPrefixes := []string{
+		filepath.Join(outputDir, publishers[0].SpeakerID),
+		filepath.Join(outputDir, publishers[1].SpeakerID),
+	}
+	for _, prefix := range mediaPrefixes {
+		if !devPlayMediaPairExists(prefix) {
+			return devPlayPrivatePlaybackTarget{}, fmt.Errorf("missing media for %s; run `cassini dev play --room <room> --mode single` or rerun scaffold", prefix)
+		}
+	}
+	callURL := strings.TrimSpace(conversation.CallURL)
+	if callURL == "" {
+		callURL = strings.TrimRight(baseURL, "/") + "/call/" + conversation.Token
+	}
+	return devPlayPrivatePlaybackTarget{
+		Conversation:     devPlayPrivateConversationSynthetic,
+		Token:            conversation.Token,
+		CallURL:          callURL,
+		RecordingStarter: publishers[0],
+		MediaPublishers:  publishers,
+		MediaPrefixes:    mediaPrefixes,
+	}, nil
+}
+
 func writeDevPlayPrivateScaffoldState(path string, state devPlayPrivateScaffoldState) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create scaffold state dir: %w", err)
@@ -381,6 +562,105 @@ func (c devPlayPrivateOCSClient) ensureOneToOneConversation(ctx context.Context,
 	return "", errors.New("response did not include a room token")
 }
 
+func (c devPlayPrivateOCSClient) markParticipantActive(ctx context.Context, roomToken string, force bool) (string, error) {
+	form := url.Values{}
+	form.Set("force", strconv.FormatBool(force))
+	raw, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/ocs/v2.php/apps/spreed/api/v4/room/%s/participants/active", roomToken), form)
+	if err != nil {
+		return "", err
+	}
+	var data struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return "", fmt.Errorf("decode participants/active response: %w", err)
+	}
+	if strings.TrimSpace(data.SessionID) == "" {
+		return "", errors.New("participants/active response missing sessionId")
+	}
+	return data.SessionID, nil
+}
+
+func (c devPlayPrivateOCSClient) joinCall(ctx context.Context, roomToken string, flags int, recordingConsent bool) error {
+	payload := map[string]any{
+		"flags":            flags,
+		"silent":           false,
+		"recordingConsent": recordingConsent,
+		"silentFor":        []any{},
+	}
+	_, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/ocs/v2.php/apps/spreed/api/v4/call/%s", roomToken), payload)
+	return err
+}
+
+func (c devPlayPrivateOCSClient) leaveCall(ctx context.Context, roomToken string) error {
+	_, err := c.doJSON(ctx, http.MethodDelete, fmt.Sprintf("/ocs/v2.php/apps/spreed/api/v4/call/%s", roomToken), map[string]any{"all": false})
+	return err
+}
+
+func (c devPlayPrivateOCSClient) leaveParticipantActive(ctx context.Context, roomToken string) error {
+	_, err := c.do(ctx, http.MethodDelete, fmt.Sprintf("/ocs/v2.php/apps/spreed/api/v4/room/%s/participants/active", roomToken), nil)
+	return err
+}
+
+func (c devPlayPrivateOCSClient) startRecording(ctx context.Context, roomToken string) error {
+	form := url.Values{}
+	form.Set("status", devPlayPrivateRecordingStatusVideo)
+	_, err := c.do(ctx, http.MethodPost, fmt.Sprintf("/ocs/v2.php/apps/spreed/api/v1/recording/%s", roomToken), form)
+	return err
+}
+
+func (c devPlayPrivateOCSClient) stopRecording(ctx context.Context, roomToken string) error {
+	_, err := c.do(ctx, http.MethodDelete, fmt.Sprintf("/ocs/v2.php/apps/spreed/api/v1/recording/%s", roomToken), nil)
+	return err
+}
+
+func (c devPlayPrivateOCSClient) roomRecordingState(ctx context.Context, roomToken string) (int, error) {
+	raw, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/ocs/v2.php/apps/spreed/api/v4/room/%s", roomToken), nil)
+	if err != nil {
+		return 0, err
+	}
+	var data struct {
+		CallRecording any `json:"callRecording"`
+	}
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return 0, fmt.Errorf("decode room state: %w", err)
+	}
+	state, ok := intFromAny(data.CallRecording)
+	if !ok {
+		return 0, fmt.Errorf("room state missing numeric callRecording: %v", data.CallRecording)
+	}
+	return state, nil
+}
+
+func waitDevPlayPrivateRecordingActive(ctx context.Context, client devPlayPrivateOCSClient, roomToken string) error {
+	pollCtx, cancel := context.WithTimeout(ctx, devPlayPrivateRecordingPollTimeout)
+	defer cancel()
+	for {
+		state, err := client.roomRecordingState(pollCtx, roomToken)
+		if err != nil {
+			return fmt.Errorf("poll recording state: %w", err)
+		}
+		if state == devPlayPrivateRecordingActive {
+			return nil
+		}
+		timer := time.NewTimer(devPlayPrivateRecordingPollInterval)
+		select {
+		case <-pollCtx.Done():
+			timer.Stop()
+			return fmt.Errorf("recording did not become active before timeout; last callRecording=%d", state)
+		case <-timer.C:
+		}
+	}
+}
+
+func (c devPlayPrivateOCSClient) doJSON(ctx context.Context, method, path string, payload any) (json.RawMessage, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal JSON payload: %w", err)
+	}
+	return c.doWithBody(ctx, method, path, strings.NewReader(string(body)), "application/json")
+}
+
 func (c devPlayPrivateOCSClient) do(ctx context.Context, method, path string, form url.Values) (json.RawMessage, error) {
 	var body io.Reader
 	contentType := ""
@@ -388,6 +668,10 @@ func (c devPlayPrivateOCSClient) do(ctx context.Context, method, path string, fo
 		body = strings.NewReader(form.Encode())
 		contentType = "application/x-www-form-urlencoded"
 	}
+	return c.doWithBody(ctx, method, path, body, contentType)
+}
+
+func (c devPlayPrivateOCSClient) doWithBody(ctx context.Context, method, path string, body io.Reader, contentType string) (json.RawMessage, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
 		return nil, err
@@ -430,4 +714,26 @@ func devPlayPrivateDurationLabel(seconds int) string {
 		return "whole"
 	}
 	return strconv.Itoa(seconds) + "s"
+}
+
+func intFromAny(value any) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int64:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err == nil {
+			return int(parsed), true
+		}
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
 }

@@ -18,6 +18,9 @@ SYNC_SHIFTS="${SYNC_SHIFTS:-}"
 BOT_DURATIONS="${BOT_DURATIONS:-}"
 AUTH_USERS="${AUTH_USERS:-}"
 AUTH_PASSWORDS="${AUTH_PASSWORDS:-}"
+RECORD_BEFORE_MEDIA="${RECORD_BEFORE_MEDIA:-0}"
+RECORDING_STARTER_INDEX="${RECORDING_STARTER_INDEX:-1}"
+RECORDING_TIMEOUT="${RECORDING_TIMEOUT:-90}"
 PREPARE="${PREPARE:-1}"
 ROTATE_SECONDS="${ROTATE_SECONDS:-5}"
 declare -a MEDIA_PREFIX_LIST=()
@@ -89,6 +92,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --auth-passwords)
       AUTH_PASSWORDS="$2"
+      shift 2
+      ;;
+    --record-before-media)
+      RECORD_BEFORE_MEDIA=1
+      shift
+      ;;
+    --recording-starter-index)
+      RECORDING_STARTER_INDEX="$2"
+      shift 2
+      ;;
+    --recording-timeout)
+      RECORDING_TIMEOUT="$2"
       shift 2
       ;;
     --skip-prepare)
@@ -164,6 +179,16 @@ if (( ${#AUTH_USER_LIST[@]} > 0 || ${#AUTH_PASSWORD_LIST[@]} > 0 )); then
     exit 1
   fi
 fi
+if [[ "$RECORD_BEFORE_MEDIA" == "1" && "${#AUTH_USER_LIST[@]}" -eq 0 ]]; then
+  echo "--record-before-media requires --auth-users and --auth-passwords" >&2
+  exit 1
+fi
+if [[ "$RECORD_BEFORE_MEDIA" == "1" ]]; then
+  if ! [[ "$RECORDING_STARTER_INDEX" =~ ^[0-9]+$ ]] || (( RECORDING_STARTER_INDEX < 1 || RECORDING_STARTER_INDEX > USERS )); then
+    echo "--recording-starter-index must be between 1 and --users ($USERS)" >&2
+    exit 1
+  fi
+fi
 
 if [[ -n "$MEDIA_PREFIXES" ]]; then
   split_csv_into "$MEDIA_PREFIXES" csv_media
@@ -223,12 +248,20 @@ fi
 if [[ "${#AUTH_USER_LIST[@]}" -gt 0 ]]; then
   log "Authenticated users configured: ${#AUTH_USER_LIST[@]}"
 fi
+if [[ "$RECORD_BEFORE_MEDIA" == "1" ]]; then
+  log "Recording gate enabled: starter=$RECORDING_STARTER_INDEX timeout=${RECORDING_TIMEOUT}s"
+fi
 
 CMD_ARGS=(
   --call-url "$CALL_URL"
   --duration "$DURATION"
   --rotate-seconds "$ROTATE_SECONDS"
 )
+if [[ "$RECORD_BEFORE_MEDIA" == "1" ]]; then
+  CMD_ARGS+=(--record-before-media)
+  CMD_ARGS+=(--recording-starter-index "$RECORDING_STARTER_INDEX")
+  CMD_ARGS+=(--recording-timeout "$RECORDING_TIMEOUT")
+fi
 
 for ((i = 1; i <= USERS; i++)); do
   media_prefix="$(resolve_media_prefix "$i")"

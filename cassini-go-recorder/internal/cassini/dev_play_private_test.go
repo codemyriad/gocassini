@@ -3,12 +3,16 @@ package cassini
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -134,6 +138,90 @@ func TestDevPlayPrivateScaffoldIsIdempotentForExistingUsers(t *testing.T) {
 	}
 }
 
+func TestDevPlayPrivateSyntheticConversationStartsRecordingBeforePlaybackAndCleansUp(t *testing.T) {
+	t.Setenv("CASSINI_HARNESS_HOST", "")
+	fake := newDevPlayPrivatePlaybackFake(t)
+	server := httptest.NewServer(fake)
+	defer server.Close()
+
+	repoRoot := t.TempDir()
+	createCompleteDevPlayPiedPiperFixture(t, repoRoot)
+	state := buildDevPlayPrivateScaffoldState(
+		repoRoot,
+		server.URL,
+		"dev-fallback",
+		"admin",
+		devPlayPrivateActor{UserID: "cassini-erlich", Password: devPlayPrivateFallbackPassword, DisplayName: "Erlich Bachman", SpeakerID: "erlich"},
+		devPlayPrivateActor{UserID: "cassini-monica", Password: devPlayPrivateFallbackPassword, DisplayName: "Monica Hall", SpeakerID: "monica"},
+		"synthetic-token",
+		"admin-token",
+	)
+	if err := writeDevPlayPrivateScaffoldState(filepath.Join(repoRoot, devPlayPrivateScaffoldStateRel), state); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	var captured capturedDevScriptCall
+	prevExec := runDevScriptExec
+	runDevScriptExec = func(_ context.Context, repoRoot string, relativeScript string, args []string, extraEnv []string, _ io.Writer, _ io.Writer) int {
+		fake.appendEvent("stream")
+		captured = capturedDevScriptCall{repoRoot: repoRoot, relativeScript: relativeScript, args: append([]string{}, args...), extraEnv: append([]string{}, extraEnv...)}
+		return 0
+	}
+	t.Cleanup(func() { runDevScriptExec = prevExec })
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	code := runDevPlayPrivate(context.Background(), repoRoot, []string{"--conversation", "synthetic", "--duration", "11"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runDevPlayPrivate code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	wantEvents := []string{"stream", "stop-recording"}
+	if got := fake.eventsSnapshot(); !reflect.DeepEqual(got, wantEvents) {
+		t.Fatalf("events=%#v want %#v", got, wantEvents)
+	}
+	if captured.relativeScript != filepath.Join("harness", "bin", "stream-video.sh") {
+		t.Fatalf("script=%q", captured.relativeScript)
+	}
+	wantArgs := []string{
+		"--call-url", server.URL + "/call/synthetic-token",
+		"--users", "2",
+		"--duration", "11",
+		"--media-prefixes", filepath.Join(repoRoot, devPlayPiedPiperOutputRel, "erlich") + "," + filepath.Join(repoRoot, devPlayPiedPiperOutputRel, "monica"),
+		"--names", "Erlich Bachman,Monica Hall",
+		"--auth-users", "cassini-erlich,cassini-monica",
+		"--auth-passwords", devPlayPrivateFallbackPassword + "," + devPlayPrivateFallbackPassword,
+		"--record-before-media",
+		"--recording-starter-index", "1",
+		"--recording-timeout", "90",
+		"--skip-prepare",
+	}
+	if !reflect.DeepEqual(captured.args, wantArgs) {
+		t.Fatalf("stream args=%#v want %#v", captured.args, wantArgs)
+	}
+	if !strings.Contains(stdout.String(), "recording=player-gated") || !strings.Contains(stdout.String(), "publishers=cassini-erlich:erlich,cassini-monica:monica") {
+		t.Fatalf("stdout missing playback summary: %q", stdout.String())
+	}
+}
+
+func TestDevPlayPrivateConversationRequiresScaffoldState(t *testing.T) {
+	t.Setenv("CASSINI_HARNESS_HOST", "")
+	captured := captureDevScriptExec(t)
+	repoRoot := t.TempDir()
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	code := runDevPlayPrivate(context.Background(), repoRoot, []string{"--conversation", "synthetic"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("code=%d want 1 stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "run `cassini dev play-private --scaffold-only`") {
+		t.Fatalf("stderr missing scaffold remediation: %q", stderr.String())
+	}
+	if len(captured.calls) != 0 {
+		t.Fatalf("script should not run without scaffold state: %#v", captured.calls)
+	}
+}
+
 func TestDevPlayPrivateValidatesScaffoldOnlyAndConversationFlags(t *testing.T) {
 	repoRoot := t.TempDir()
 	captured := captureDevScriptExec(t)
@@ -162,6 +250,110 @@ func TestDevPlayPrivateValidatesScaffoldOnlyAndConversationFlags(t *testing.T) {
 	}
 	if len(captured.calls) != 0 {
 		t.Fatalf("scripts should not run on validation failure: %#v", captured.calls)
+	}
+}
+
+type devPlayPrivatePlaybackFake struct {
+	t         *testing.T
+	mu        sync.Mutex
+	events    []string
+	pollCount int
+}
+
+func newDevPlayPrivatePlaybackFake(t *testing.T) *devPlayPrivatePlaybackFake {
+	t.Helper()
+	return &devPlayPrivatePlaybackFake{t: t}
+}
+
+func (f *devPlayPrivatePlaybackFake) appendEvent(event string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, event)
+}
+
+func (f *devPlayPrivatePlaybackFake) eventsSnapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.events...)
+}
+
+func (f *devPlayPrivatePlaybackFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	user, password := requireBasicAuth(f.t, r)
+	if user != "cassini-erlich" || password != devPlayPrivateFallbackPassword {
+		f.t.Fatalf("playback auth=%s:%s", user, password)
+	}
+	switch r.URL.Path {
+	case "/ocs/v2.php/apps/spreed/api/v4/room/synthetic-token/participants/active":
+		switch r.Method {
+		case http.MethodPost:
+			if err := r.ParseForm(); err != nil {
+				f.t.Fatalf("parse active form: %v", err)
+			}
+			if got := r.Form.Get("force"); got != "true" {
+				f.t.Fatalf("force=%q want true", got)
+			}
+			f.appendEvent("active")
+			writeDevPlayOCSTestResponse(f.t, w, map[string]any{"sessionId": "starter-session"})
+		case http.MethodDelete:
+			f.appendEvent("leave-active")
+			writeDevPlayOCSTestResponse(f.t, w, map[string]any{})
+		default:
+			f.t.Fatalf("unexpected active method: %s", r.Method)
+		}
+	case "/ocs/v2.php/apps/spreed/api/v4/call/synthetic-token":
+		switch r.Method {
+		case http.MethodPost:
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				f.t.Fatalf("decode join call payload: %v", err)
+			}
+			if got, ok := payload["flags"].(float64); !ok || int(got) != 7 {
+				f.t.Fatalf("flags=%v want 7", payload["flags"])
+			}
+			if got, ok := payload["recordingConsent"].(bool); !ok || !got {
+				f.t.Fatalf("recordingConsent=%v want true", payload["recordingConsent"])
+			}
+			f.appendEvent("join-call")
+			writeDevPlayOCSTestResponse(f.t, w, map[string]any{})
+		case http.MethodDelete:
+			f.appendEvent("leave-call")
+			writeDevPlayOCSTestResponse(f.t, w, map[string]any{})
+		default:
+			f.t.Fatalf("unexpected call method: %s", r.Method)
+		}
+	case "/ocs/v2.php/apps/spreed/api/v1/recording/synthetic-token":
+		switch r.Method {
+		case http.MethodPost:
+			if err := r.ParseForm(); err != nil {
+				f.t.Fatalf("parse recording form: %v", err)
+			}
+			if got := r.Form.Get("status"); got != devPlayPrivateRecordingStatusVideo {
+				f.t.Fatalf("recording status=%q", got)
+			}
+			f.appendEvent("start-recording")
+			writeDevPlayOCSTestResponse(f.t, w, map[string]any{})
+		case http.MethodDelete:
+			f.appendEvent("stop-recording")
+			writeDevPlayOCSTestResponse(f.t, w, map[string]any{})
+		default:
+			f.t.Fatalf("unexpected recording method: %s", r.Method)
+		}
+	case "/ocs/v2.php/apps/spreed/api/v4/room/synthetic-token":
+		if r.Method != http.MethodGet {
+			f.t.Fatalf("unexpected room method: %s", r.Method)
+		}
+		f.mu.Lock()
+		f.pollCount++
+		poll := f.pollCount
+		f.events = append(f.events, "poll-"+strconv.Itoa(poll))
+		f.mu.Unlock()
+		state := 3
+		if poll >= 2 {
+			state = devPlayPrivateRecordingActive
+		}
+		writeDevPlayOCSTestResponse(f.t, w, map[string]any{"callRecording": state})
+	default:
+		f.t.Fatalf("unexpected playback path: %s", r.URL.Path)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sort"
 	"testing"
+	"time"
 )
 
 func TestHandleSignalingEventRoomAudience(t *testing.T) {
@@ -96,6 +97,62 @@ func TestOCSClientAddsBasicAuthWhenConfigured(t *testing.T) {
 	defer client.Close()
 	if err := client.getRoom(context.Background(), "room-token"); err != nil {
 		t.Fatalf("getRoom: %v", err)
+	}
+}
+
+func TestRecordingStarterStartsTalkRecordingAndPollsActive(t *testing.T) {
+	polls := 0
+	started := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, password, ok := r.BasicAuth()
+		if !ok || user != "cassini-erlich" || password != "pw" {
+			t.Fatalf("auth=%s:%s ok=%v", user, password, ok)
+		}
+		switch r.URL.Path {
+		case "/ocs/v2.php/apps/spreed/api/v1/recording/token":
+			if r.Method != http.MethodPost {
+				t.Fatalf("recording method=%s", r.Method)
+			}
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("parse recording form: %v", err)
+			}
+			if got := r.Form.Get("status"); got != "1" {
+				t.Fatalf("recording status=%q want 1", got)
+			}
+			started = true
+			writeOCSTestResponse(t, w, map[string]any{})
+		case "/ocs/v2.php/apps/spreed/api/v4/room/token":
+			if r.Method != http.MethodGet {
+				t.Fatalf("room method=%s", r.Method)
+			}
+			polls++
+			state := 3
+			if polls >= 2 {
+				state = 1
+			}
+			writeOCSTestResponse(t, w, map[string]any{"callRecording": state})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	b := newBot(&botConfig{
+		Index:                1,
+		BaseURL:              server.URL,
+		RoomToken:            "token",
+		GuestName:            "Erlich Bachman",
+		AuthUser:             "cassini-erlich",
+		AuthPass:             "pw",
+		RecordingStatus:      "1",
+		RecordingPollTimeout: time.Second,
+	})
+	defer b.http.Close()
+	if err := b.startRecordingAndWait(context.Background()); err != nil {
+		t.Fatalf("startRecordingAndWait: %v", err)
+	}
+	if !started || polls != 2 {
+		t.Fatalf("started=%v polls=%d want started true polls 2", started, polls)
 	}
 }
 
