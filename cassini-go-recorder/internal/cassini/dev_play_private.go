@@ -244,6 +244,13 @@ func scaffoldDevPlayPrivate(ctx context.Context, repoRoot string, opts devPlayPr
 	if err != nil {
 		return fmt.Errorf("ensure admin 1:1 conversation: %w", err)
 	}
+	erlichAdminToken, err := erlichClient.ensureOneToOneConversation(ctx, adminUser)
+	if err != nil {
+		return fmt.Errorf("ensure admin 1:1 conversation participant fill: %w", err)
+	}
+	if strings.TrimSpace(erlichAdminToken) != "" {
+		adminToken = erlichAdminToken
+	}
 
 	state := buildDevPlayPrivateScaffoldState(repoRoot, baseURL, passwordSource, adminUser, erlich, monica, syntheticToken, adminToken)
 	statePath := filepath.Join(repoRoot, devPlayPrivateScaffoldStateRel)
@@ -314,14 +321,11 @@ func runDevPlayPrivateConversation(ctx context.Context, repoRoot string, opts de
 	if err != nil {
 		return err
 	}
-	if opts.conversation != devPlayPrivateConversationSynthetic {
-		return fmt.Errorf("--conversation %s is implemented in a later slice", opts.conversation)
-	}
 	password, err := devPlayPrivatePasswordForState(state)
 	if err != nil {
 		return err
 	}
-	target, err := resolveDevPlayPrivateSyntheticTarget(repoRoot, baseURL, state, password)
+	target, err := resolveDevPlayPrivateTarget(repoRoot, baseURL, state, password, opts.conversation)
 	if err != nil {
 		return err
 	}
@@ -343,12 +347,15 @@ func runDevPlayPrivateConversation(ctx context.Context, repoRoot string, opts de
 }
 
 type devPlayPrivatePlaybackTarget struct {
-	Conversation     string
-	Token            string
-	CallURL          string
-	RecordingStarter devPlayPrivateActor
-	MediaPublishers  []devPlayPrivateActor
-	MediaPrefixes    []string
+	Conversation        string
+	Token               string
+	CallURL             string
+	RecordingStarter    devPlayPrivateActor
+	MediaPublishers     []devPlayPrivateActor
+	MediaPrefixes       []string
+	StreamActors        []devPlayPrivateActor
+	StreamMediaPrefixes []string
+	AudioReadyAfters    []string
 }
 
 func (t devPlayPrivatePlaybackTarget) PublisherLabels() []string {
@@ -360,28 +367,66 @@ func (t devPlayPrivatePlaybackTarget) PublisherLabels() []string {
 }
 
 func (t devPlayPrivatePlaybackTarget) StreamVideoArgs(durationSeconds int) []string {
-	users := make([]string, 0, len(t.MediaPublishers))
-	passwords := make([]string, 0, len(t.MediaPublishers))
-	names := make([]string, 0, len(t.MediaPublishers))
-	for _, publisher := range t.MediaPublishers {
-		users = append(users, publisher.UserID)
-		passwords = append(passwords, publisher.Password)
-		names = append(names, publisher.DisplayName)
+	actors := t.streamActors()
+	prefixes := t.streamMediaPrefixes()
+	users := make([]string, 0, len(actors))
+	passwords := make([]string, 0, len(actors))
+	names := make([]string, 0, len(actors))
+	for _, actor := range actors {
+		users = append(users, actor.UserID)
+		passwords = append(passwords, actor.Password)
+		names = append(names, actor.DisplayName)
 	}
 	args := []string{
 		"--call-url", t.CallURL,
-		"--users", strconv.Itoa(len(t.MediaPublishers)),
+		"--users", strconv.Itoa(len(actors)),
 		"--duration", strconv.Itoa(durationSeconds),
-		"--media-prefixes", strings.Join(t.MediaPrefixes, ","),
+		"--media-prefixes", strings.Join(prefixes, ","),
 		"--names", strings.Join(names, ","),
 		"--auth-users", strings.Join(users, ","),
 		"--auth-passwords", strings.Join(passwords, ","),
 		"--record-before-media",
-		"--recording-starter-index", "1",
+	}
+	if len(t.AudioReadyAfters) > 0 {
+		args = append(args, "--audio-ready-afters", strings.Join(t.AudioReadyAfters, ","))
+	}
+	if index := t.recordingStarterActorIndex(); index > 0 {
+		args = append(args, "--recording-starter-index", strconv.Itoa(index))
+	} else {
+		args = append(args,
+			"--recording-starter-auth-user", t.RecordingStarter.UserID,
+			"--recording-starter-auth-password", t.RecordingStarter.Password,
+			"--recording-starter-name", devPlayPrivateValueOr(t.RecordingStarter.DisplayName, t.RecordingStarter.UserID),
+		)
+	}
+	args = append(args,
 		"--recording-timeout", strconv.Itoa(int(devPlayPrivateRecordingPollTimeout.Seconds())),
 		"--skip-prepare",
-	}
+	)
 	return args
+}
+
+func (t devPlayPrivatePlaybackTarget) streamActors() []devPlayPrivateActor {
+	if len(t.StreamActors) > 0 {
+		return t.StreamActors
+	}
+	return t.MediaPublishers
+}
+
+func (t devPlayPrivatePlaybackTarget) streamMediaPrefixes() []string {
+	if len(t.StreamMediaPrefixes) > 0 {
+		return t.StreamMediaPrefixes
+	}
+	return t.MediaPrefixes
+}
+
+func (t devPlayPrivatePlaybackTarget) recordingStarterActorIndex() int {
+	for i, actor := range t.streamActors() {
+		if strings.TrimSpace(actor.UserID) == strings.TrimSpace(t.RecordingStarter.UserID) {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 func readDevPlayPrivateScaffoldState(path string) (devPlayPrivateScaffoldState, error) {
@@ -435,44 +480,71 @@ func devPlayPrivatePasswordForState(state devPlayPrivateScaffoldState) (string, 
 	}
 }
 
-func resolveDevPlayPrivateSyntheticTarget(repoRoot string, baseURL string, state devPlayPrivateScaffoldState, password string) (devPlayPrivatePlaybackTarget, error) {
-	conversation, ok := state.conversation(devPlayPrivateConversationSynthetic)
+func resolveDevPlayPrivateTarget(repoRoot string, baseURL string, state devPlayPrivateScaffoldState, password string, conversationName string) (devPlayPrivatePlaybackTarget, error) {
+	conversation, ok := state.conversation(conversationName)
 	if !ok || strings.TrimSpace(conversation.Token) == "" {
-		return devPlayPrivatePlaybackTarget{}, errors.New("scaffold state missing synthetic conversation; rerun `cassini dev play-private --scaffold-only`")
+		return devPlayPrivatePlaybackTarget{}, fmt.Errorf("scaffold state missing %s conversation; rerun `cassini dev play-private --scaffold-only`", conversationName)
 	}
 	outputDir := strings.TrimSpace(state.Fixture.OutputDir)
 	if outputDir == "" {
 		outputDir = filepath.Join(repoRoot, devPlayPiedPiperOutputRel)
 	}
-	publishers := []devPlayPrivateActor{
-		{UserID: state.Users.Erlich.UserID, Password: password, DisplayName: state.Users.Erlich.DisplayName, SpeakerID: state.Users.Erlich.SpeakerID},
-		{UserID: state.Users.Monica.UserID, Password: password, DisplayName: state.Users.Monica.DisplayName, SpeakerID: state.Users.Monica.SpeakerID},
+	erlich := devPlayPrivateActor{UserID: state.Users.Erlich.UserID, Password: password, DisplayName: state.Users.Erlich.DisplayName, SpeakerID: state.Users.Erlich.SpeakerID}
+	monica := devPlayPrivateActor{UserID: state.Users.Monica.UserID, Password: password, DisplayName: state.Users.Monica.DisplayName, SpeakerID: state.Users.Monica.SpeakerID}
+	adminUserID := devPlayPrivateValueOr(state.Users.Admin.UserID, envOrDefault("ADMIN_USER", "admin"))
+	admin := devPlayPrivateActor{UserID: adminUserID, Password: envOrDefault("ADMIN_PASSWORD", "admin"), DisplayName: adminUserID}
+
+	var recordingStarter devPlayPrivateActor
+	var publishers []devPlayPrivateActor
+	var streamActors []devPlayPrivateActor
+	var audioReadyAfters []string
+	switch conversationName {
+	case devPlayPrivateConversationSynthetic:
+		recordingStarter = erlich
+		publishers = []devPlayPrivateActor{erlich, monica}
+	case devPlayPrivateConversationAdmin:
+		recordingStarter = admin
+		publishers = []devPlayPrivateActor{erlich}
+		streamActors = []devPlayPrivateActor{admin, erlich}
+		audioReadyAfters = []string{"86400", "0"}
+	default:
+		return devPlayPrivatePlaybackTarget{}, fmt.Errorf("unsupported private conversation %q", conversationName)
+	}
+	if strings.TrimSpace(recordingStarter.UserID) == "" || strings.TrimSpace(recordingStarter.Password) == "" {
+		return devPlayPrivatePlaybackTarget{}, fmt.Errorf("recording starter credentials missing for %s", conversationName)
 	}
 	for i, publisher := range publishers {
 		if strings.TrimSpace(publisher.UserID) == "" || strings.TrimSpace(publisher.DisplayName) == "" || strings.TrimSpace(publisher.SpeakerID) == "" {
-			return devPlayPrivatePlaybackTarget{}, fmt.Errorf("scaffold state missing synthetic publisher %d fields; rerun scaffold", i+1)
+			return devPlayPrivatePlaybackTarget{}, fmt.Errorf("scaffold state missing %s publisher %d fields; rerun scaffold", conversationName, i+1)
 		}
 	}
-	mediaPrefixes := []string{
-		filepath.Join(outputDir, publishers[0].SpeakerID),
-		filepath.Join(outputDir, publishers[1].SpeakerID),
-	}
-	for _, prefix := range mediaPrefixes {
+	mediaPrefixes := make([]string, 0, len(publishers))
+	for _, publisher := range publishers {
+		prefix := filepath.Join(outputDir, publisher.SpeakerID)
 		if !devPlayMediaPairExists(prefix) {
 			return devPlayPrivatePlaybackTarget{}, fmt.Errorf("missing media for %s; run `cassini dev play --room <room> --mode single` or rerun scaffold", prefix)
 		}
+		mediaPrefixes = append(mediaPrefixes, prefix)
+	}
+	streamMediaPrefixes := append([]string{}, mediaPrefixes...)
+	if conversationName == devPlayPrivateConversationAdmin {
+		erlichPrefix := filepath.Join(outputDir, erlich.SpeakerID)
+		streamMediaPrefixes = []string{erlichPrefix, erlichPrefix}
 	}
 	callURL := strings.TrimSpace(conversation.CallURL)
 	if callURL == "" {
 		callURL = strings.TrimRight(baseURL, "/") + "/call/" + conversation.Token
 	}
 	return devPlayPrivatePlaybackTarget{
-		Conversation:     devPlayPrivateConversationSynthetic,
-		Token:            conversation.Token,
-		CallURL:          callURL,
-		RecordingStarter: publishers[0],
-		MediaPublishers:  publishers,
-		MediaPrefixes:    mediaPrefixes,
+		Conversation:        conversationName,
+		Token:               conversation.Token,
+		CallURL:             callURL,
+		RecordingStarter:    recordingStarter,
+		MediaPublishers:     publishers,
+		MediaPrefixes:       mediaPrefixes,
+		StreamActors:        streamActors,
+		StreamMediaPrefixes: streamMediaPrefixes,
+		AudioReadyAfters:    audioReadyAfters,
 	}, nil
 }
 
@@ -714,6 +786,13 @@ func devPlayPrivateDurationLabel(seconds int) string {
 		return "whole"
 	}
 	return strconv.Itoa(seconds) + "s"
+}
+
+func devPlayPrivateValueOr(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func intFromAny(value any) (int, bool) {

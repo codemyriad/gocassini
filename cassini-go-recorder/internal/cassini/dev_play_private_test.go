@@ -47,6 +47,9 @@ func TestDevPlayPrivateScaffoldCreatesUsersConversationsAndState(t *testing.T) {
 	if got := fake.roomCreates["admin->cassini-erlich"]; got != 1 {
 		t.Fatalf("admin room create count=%d want 1", got)
 	}
+	if got := fake.roomCreates["cassini-erlich->admin"]; got != 1 {
+		t.Fatalf("admin participant fill room create count=%d want 1", got)
+	}
 
 	statePath := filepath.Join(repoRoot, devPlayPrivateScaffoldStateRel)
 	stateBytes, err := os.ReadFile(statePath)
@@ -203,6 +206,70 @@ func TestDevPlayPrivateSyntheticConversationStartsRecordingBeforePlaybackAndClea
 	}
 }
 
+func TestDevPlayPrivateAdminConversationUsesSilentAdminRecordingStarter(t *testing.T) {
+	t.Setenv("CASSINI_HARNESS_HOST", "")
+	t.Setenv("ADMIN_PASSWORD", "adminpass")
+	fake := newDevPlayPrivatePlaybackFake(t)
+	server := httptest.NewServer(fake)
+	defer server.Close()
+
+	repoRoot := t.TempDir()
+	createCompleteDevPlayPiedPiperFixture(t, repoRoot)
+	state := buildDevPlayPrivateScaffoldState(
+		repoRoot,
+		server.URL,
+		"dev-fallback",
+		"admin",
+		devPlayPrivateActor{UserID: "cassini-erlich", Password: devPlayPrivateFallbackPassword, DisplayName: "Erlich Bachman", SpeakerID: "erlich"},
+		devPlayPrivateActor{UserID: "cassini-monica", Password: devPlayPrivateFallbackPassword, DisplayName: "Monica Hall", SpeakerID: "monica"},
+		"synthetic-token",
+		"admin-token",
+	)
+	if err := writeDevPlayPrivateScaffoldState(filepath.Join(repoRoot, devPlayPrivateScaffoldStateRel), state); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	var captured capturedDevScriptCall
+	prevExec := runDevScriptExec
+	runDevScriptExec = func(_ context.Context, repoRoot string, relativeScript string, args []string, extraEnv []string, _ io.Writer, _ io.Writer) int {
+		fake.appendEvent("stream")
+		captured = capturedDevScriptCall{repoRoot: repoRoot, relativeScript: relativeScript, args: append([]string{}, args...), extraEnv: append([]string{}, extraEnv...)}
+		return 0
+	}
+	t.Cleanup(func() { runDevScriptExec = prevExec })
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	code := runDevPlayPrivate(context.Background(), repoRoot, []string{"--conversation", "admin", "--duration", "12"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runDevPlayPrivate code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	wantEvents := []string{"stream", "stop-recording-admin"}
+	if got := fake.eventsSnapshot(); !reflect.DeepEqual(got, wantEvents) {
+		t.Fatalf("events=%#v want %#v", got, wantEvents)
+	}
+	wantArgs := []string{
+		"--call-url", server.URL + "/call/admin-token",
+		"--users", "2",
+		"--duration", "12",
+		"--media-prefixes", filepath.Join(repoRoot, devPlayPiedPiperOutputRel, "erlich") + "," + filepath.Join(repoRoot, devPlayPiedPiperOutputRel, "erlich"),
+		"--names", "admin,Erlich Bachman",
+		"--auth-users", "admin,cassini-erlich",
+		"--auth-passwords", "adminpass," + devPlayPrivateFallbackPassword,
+		"--record-before-media",
+		"--audio-ready-afters", "86400,0",
+		"--recording-starter-index", "1",
+		"--recording-timeout", "90",
+		"--skip-prepare",
+	}
+	if !reflect.DeepEqual(captured.args, wantArgs) {
+		t.Fatalf("stream args=%#v want %#v", captured.args, wantArgs)
+	}
+	if !strings.Contains(stdout.String(), "conversation=admin") || !strings.Contains(stdout.String(), "publishers=cassini-erlich:erlich") {
+		t.Fatalf("stdout missing admin playback summary: %q", stdout.String())
+	}
+}
+
 func TestDevPlayPrivateConversationRequiresScaffoldState(t *testing.T) {
 	t.Setenv("CASSINI_HARNESS_HOST", "")
 	captured := captureDevScriptExec(t)
@@ -279,6 +346,17 @@ func (f *devPlayPrivatePlaybackFake) eventsSnapshot() []string {
 
 func (f *devPlayPrivatePlaybackFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	user, password := requireBasicAuth(f.t, r)
+	if r.URL.Path == "/ocs/v2.php/apps/spreed/api/v1/recording/admin-token" {
+		if user != "admin" || password != "adminpass" {
+			f.t.Fatalf("admin playback auth=%s:%s", user, password)
+		}
+		if r.Method != http.MethodDelete {
+			f.t.Fatalf("unexpected admin recording method: %s", r.Method)
+		}
+		f.appendEvent("stop-recording-admin")
+		writeDevPlayOCSTestResponse(f.t, w, map[string]any{})
+		return
+	}
 	if user != "cassini-erlich" || password != devPlayPrivateFallbackPassword {
 		f.t.Fatalf("playback auth=%s:%s", user, password)
 	}
@@ -464,6 +542,11 @@ func (f *devPlayPrivateScaffoldFake) handleRoom(w http.ResponseWriter, r *http.R
 	case "admin->cassini-erlich":
 		if password != "adminpass" {
 			f.t.Fatalf("admin auth password=%q", password)
+		}
+		writeDevPlayOCSTestResponse(f.t, w, map[string]string{"token": "admin-token"})
+	case "cassini-erlich->admin":
+		if password != "test-scaffold-secret" && password != devPlayPrivateFallbackPassword {
+			f.t.Fatalf("erlich admin-fill auth password=%q", password)
 		}
 		writeDevPlayOCSTestResponse(f.t, w, map[string]string{"token": "admin-token"})
 	default:

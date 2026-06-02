@@ -20,6 +20,9 @@ AUTH_USERS="${AUTH_USERS:-}"
 AUTH_PASSWORDS="${AUTH_PASSWORDS:-}"
 RECORD_BEFORE_MEDIA="${RECORD_BEFORE_MEDIA:-0}"
 RECORDING_STARTER_INDEX="${RECORDING_STARTER_INDEX:-1}"
+RECORDING_STARTER_AUTH_USER="${RECORDING_STARTER_AUTH_USER:-}"
+RECORDING_STARTER_AUTH_PASSWORD="${RECORDING_STARTER_AUTH_PASSWORD:-}"
+RECORDING_STARTER_NAME="${RECORDING_STARTER_NAME:-}"
 RECORDING_TIMEOUT="${RECORDING_TIMEOUT:-90}"
 PREPARE="${PREPARE:-1}"
 ROTATE_SECONDS="${ROTATE_SECONDS:-5}"
@@ -102,6 +105,18 @@ while [[ $# -gt 0 ]]; do
       RECORDING_STARTER_INDEX="$2"
       shift 2
       ;;
+    --recording-starter-auth-user)
+      RECORDING_STARTER_AUTH_USER="$2"
+      shift 2
+      ;;
+    --recording-starter-auth-password)
+      RECORDING_STARTER_AUTH_PASSWORD="$2"
+      shift 2
+      ;;
+    --recording-starter-name)
+      RECORDING_STARTER_NAME="$2"
+      shift 2
+      ;;
     --recording-timeout)
       RECORDING_TIMEOUT="$2"
       shift 2
@@ -179,11 +194,21 @@ if (( ${#AUTH_USER_LIST[@]} > 0 || ${#AUTH_PASSWORD_LIST[@]} > 0 )); then
     exit 1
   fi
 fi
-if [[ "$RECORD_BEFORE_MEDIA" == "1" && "${#AUTH_USER_LIST[@]}" -eq 0 ]]; then
-  echo "--record-before-media requires --auth-users and --auth-passwords" >&2
+if [[ -n "$RECORDING_STARTER_AUTH_USER" || -n "$RECORDING_STARTER_AUTH_PASSWORD" ]]; then
+  if [[ -z "$RECORDING_STARTER_AUTH_USER" || -z "$RECORDING_STARTER_AUTH_PASSWORD" ]]; then
+    echo "--recording-starter-auth-user and --recording-starter-auth-password must be provided together" >&2
+    exit 1
+  fi
+  if [[ "$RECORD_BEFORE_MEDIA" != "1" ]]; then
+    echo "--recording-starter-auth-user requires --record-before-media" >&2
+    exit 1
+  fi
+fi
+if [[ "$RECORD_BEFORE_MEDIA" == "1" && "${#AUTH_USER_LIST[@]}" -eq 0 && -z "$RECORDING_STARTER_AUTH_USER" ]]; then
+  echo "--record-before-media requires --auth-users/--auth-passwords or --recording-starter-auth-user/--recording-starter-auth-password" >&2
   exit 1
 fi
-if [[ "$RECORD_BEFORE_MEDIA" == "1" ]]; then
+if [[ "$RECORD_BEFORE_MEDIA" == "1" && -z "$RECORDING_STARTER_AUTH_USER" ]]; then
   if ! [[ "$RECORDING_STARTER_INDEX" =~ ^[0-9]+$ ]] || (( RECORDING_STARTER_INDEX < 1 || RECORDING_STARTER_INDEX > USERS )); then
     echo "--recording-starter-index must be between 1 and --users ($USERS)" >&2
     exit 1
@@ -249,7 +274,11 @@ if [[ "${#AUTH_USER_LIST[@]}" -gt 0 ]]; then
   log "Authenticated users configured: ${#AUTH_USER_LIST[@]}"
 fi
 if [[ "$RECORD_BEFORE_MEDIA" == "1" ]]; then
-  log "Recording gate enabled: starter=$RECORDING_STARTER_INDEX timeout=${RECORDING_TIMEOUT}s"
+  if [[ -n "$RECORDING_STARTER_AUTH_USER" ]]; then
+    log "Recording gate enabled: external_starter=$RECORDING_STARTER_AUTH_USER timeout=${RECORDING_TIMEOUT}s"
+  else
+    log "Recording gate enabled: starter=$RECORDING_STARTER_INDEX timeout=${RECORDING_TIMEOUT}s"
+  fi
 fi
 
 CMD_ARGS=(
@@ -259,7 +288,15 @@ CMD_ARGS=(
 )
 if [[ "$RECORD_BEFORE_MEDIA" == "1" ]]; then
   CMD_ARGS+=(--record-before-media)
-  CMD_ARGS+=(--recording-starter-index "$RECORDING_STARTER_INDEX")
+  if [[ -n "$RECORDING_STARTER_AUTH_USER" ]]; then
+    CMD_ARGS+=(--recording-starter-auth-user "$RECORDING_STARTER_AUTH_USER")
+    CMD_ARGS+=(--recording-starter-auth-password "$RECORDING_STARTER_AUTH_PASSWORD")
+    if [[ -n "$RECORDING_STARTER_NAME" ]]; then
+      CMD_ARGS+=(--recording-starter-name "$RECORDING_STARTER_NAME")
+    fi
+  else
+    CMD_ARGS+=(--recording-starter-index "$RECORDING_STARTER_INDEX")
+  fi
   CMD_ARGS+=(--recording-timeout "$RECORDING_TIMEOUT")
 fi
 
