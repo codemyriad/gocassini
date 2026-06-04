@@ -773,7 +773,7 @@ func (b *bot) run(parent context.Context) (runErr error) {
 			return err
 		}
 	}
-	b.logf("streaming media")
+	b.logf("connected and streaming")
 
 	mediaCtx, mediaCancel := context.WithCancel(ctx)
 	b.mediaCancel = mediaCancel
