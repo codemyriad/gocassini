@@ -22,8 +22,20 @@ type Recognizer struct {
 	sampleRate int
 }
 
-// vadChunkSamples is the number of samples fed to the VAD per call (5 seconds at 16 kHz).
-const vadChunkSamples = 16000 * 5
+// vadWindowSamples is the number of samples fed to the VAD per AcceptWaveform
+// call. It MUST equal the configured SileroVad.WindowSize: sherpa-onnx's VAD
+// mis-tracks its sample position when calls aren't window-aligned (each call's
+// remainder samples desync the reported segment start/content from the real
+// audio), which surfaced as VAD segments full of silence and "0 words from
+// N s of audio" failures. See cmd/sttdebug for the reproduction harness.
+const vadWindowSamples = 512
+
+// vadDrainEverySamples controls how often queued speech segments are popped
+// and transcribed while feeding (every ~5 seconds at 16 kHz). Draining as we
+// go keeps the VAD's internal circular buffer small instead of letting whole
+// sparse tracks accumulate ("circular-buffer.cc Push:107 Overflow!" log
+// noise).
+const vadDrainEverySamples = 16000 * 5
 
 // maxSafeSegmentSamples is the safety-fallback split size (55 seconds at 16 kHz).
 // VAD MaxSpeechDuration=25s keeps segments short, but pathological silence-free
@@ -117,36 +129,56 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 
 	r.vad.Reset()
 
-	// Feed audio to the VAD in 5-second chunks.
-	for off := 0; off < len(samples); off += vadChunkSamples {
-		end := off + vadChunkSamples
+	var allWords []Word
+	var segCount int
+	var totalSpeechSamples int
+
+	// drainSegments transcribes every speech segment the VAD has queued so far.
+	drainSegments := func() error {
+		for !r.vad.IsEmpty() {
+			seg := r.vad.Front()
+			r.vad.Pop()
+			if seg == nil || len(seg.Samples) == 0 {
+				continue
+			}
+			segCount++
+			totalSpeechSamples += len(seg.Samples)
+
+			// seg.Start is the sample index of the segment start within the full recording.
+			segOffsetMS := int64(seg.Start) * 1000 / int64(sampleRate)
+
+			words, err := r.transcribeSegment(seg.Samples, sampleRate, segOffsetMS)
+			if err != nil {
+				return err
+			}
+			allWords = append(allWords, words...)
+		}
+		return nil
+	}
+
+	// Feed audio to the VAD strictly one window (512 samples) per call —
+	// anything else desyncs sherpa-onnx's internal sample accounting (see
+	// vadWindowSamples doc comment) and produces speech segments pointing at
+	// silence. Queued segments are drained every ~5 s of fed audio so the
+	// VAD's circular buffer stays small on long tracks.
+	sinceDrain := 0
+	for off := 0; off < len(samples); off += vadWindowSamples {
+		end := off + vadWindowSamples
 		if end > len(samples) {
 			end = len(samples)
 		}
 		r.vad.AcceptWaveform(samples[off:end])
+		sinceDrain += end - off
+		if sinceDrain >= vadDrainEverySamples {
+			sinceDrain = 0
+			if err := drainSegments(); err != nil {
+				return nil, err
+			}
+		}
 	}
 	r.vad.Flush()
-
-	var allWords []Word
-	var segCount int
-	var totalSpeechSamples int
-	for !r.vad.IsEmpty() {
-		seg := r.vad.Front()
-		r.vad.Pop()
-		if seg == nil || len(seg.Samples) == 0 {
-			continue
-		}
-		segCount++
-		totalSpeechSamples += len(seg.Samples)
-
-		// seg.Start is the sample index of the segment start within the full recording.
-		segOffsetMS := int64(seg.Start) * 1000 / int64(sampleRate)
-
-		words, err := r.transcribeSegment(seg.Samples, sampleRate, segOffsetMS)
-		if err != nil {
-			return nil, err
-		}
-		allWords = append(allWords, words...)
+	if err := drainSegments(); err != nil {
+		return nil, err
 	}
 	// When a non-trivial audio buffer produces zero words, we want enough
 	// information in the log to tell VAD-rejected-everything from
