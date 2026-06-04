@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sort"
 	"strings"
 
 	"gocassini/pkg/core/store"
@@ -45,8 +46,7 @@ func WriteElementaryFromRTPLog(logPath, codec string, clockRate uint32, outputPa
 	}()
 
 	var result WriteResult
-	var timeline recvTimeline
-	effectiveClockRate := effectiveClockRate(codec, clockRate)
+	emitter := newOrderedEmitter(w, effectiveClockRate(codec, clockRate), &result)
 	for {
 		record, err := reader.Next()
 		if err != nil {
@@ -64,8 +64,7 @@ func WriteElementaryFromRTPLog(logPath, codec string, clockRate uint32, outputPa
 			if err := packet.Unmarshal(record.WireBytes); err != nil {
 				return WriteResult{}, fmt.Errorf("unmarshal rtp packet: %w", err)
 			}
-			packet.Timestamp = timeline.rewrite(packet.Timestamp, record.RecvMonoNS, effectiveClockRate)
-			if err := w.WriteRTP(&packet); err != nil {
+			if err := emitter.push(&packet, record.RecvMonoNS); err != nil {
 				return WriteResult{}, fmt.Errorf("write rtp packet: %w", err)
 			}
 			if result.FirstRecvNS == 0 || record.RecvMonoNS < result.FirstRecvNS {
@@ -74,14 +73,124 @@ func WriteElementaryFromRTPLog(logPath, codec string, clockRate uint32, outputPa
 			if record.RecvMonoNS > result.LastRecvNS {
 				result.LastRecvNS = record.RecvMonoNS
 			}
-			result.RTPPackets++
 		}
+	}
+	if err := emitter.flush(); err != nil {
+		return WriteResult{}, fmt.Errorf("write rtp packet: %w", err)
 	}
 
 	if err := w.Close(); err != nil {
 		return WriteResult{}, fmt.Errorf("close writer: %w", err)
 	}
 	return result, nil
+}
+
+// reorderWindowPackets is how many packets the emitter buffers before
+// releasing the lowest-sequence one. Captured rtplogs store packets in
+// ARRIVAL order, and NACK-recovered retransmissions arrive hundreds of
+// packets after their sequence position. Feeding them to the depacketizer
+// in arrival order tears the frame they belong to — and every frame after
+// it until the next keyframe (which WebRTC senders emit ~100 s apart),
+// which is exactly the long "smeared face" corruption observed on real
+// Talk recordings. 512 packets ≈ several seconds of video, comfortably
+// above observed NACK round-trips.
+const reorderWindowPackets = 512
+
+// orderedEmitter restores RTP sequence order with a bounded look-ahead
+// window, drops duplicate retransmissions, and rewrites timestamps once per
+// frame (per distinct original RTP timestamp) so all packets of a frame stay
+// on one timestamp. The previous per-packet rewrite stamped each packet with
+// its own arrival time, which (a) spread one frame across several
+// timestamps and (b) pushed late retransmissions onto a *newer* monotonic
+// timestamp than the frame they belong to, corrupting reassembly.
+type orderedEmitter struct {
+	w         rtpWriter
+	clockRate uint32
+	result    *WriteResult
+
+	buf      []seqPacket // kept sorted by ext ascending
+	haveSeq  bool
+	highest  uint16
+	highExt  int64
+	lastEmit int64
+
+	timeline   recvTimeline
+	haveFrame  bool
+	frameTS    uint32 // original RTP timestamp of the current frame
+	frameNewTS uint32 // rewritten timestamp for that frame
+}
+
+type seqPacket struct {
+	ext    int64
+	recvNS uint64
+	pkt    *rtp.Packet
+}
+
+func newOrderedEmitter(w rtpWriter, clockRate uint32, result *WriteResult) *orderedEmitter {
+	return &orderedEmitter{w: w, clockRate: clockRate, result: result, lastEmit: math.MinInt64}
+}
+
+func (e *orderedEmitter) push(pkt *rtp.Packet, recvNS uint64) error {
+	var ext int64
+	if !e.haveSeq {
+		e.haveSeq = true
+		e.highest = pkt.SequenceNumber
+		e.highExt = int64(pkt.SequenceNumber)
+		ext = e.highExt
+	} else {
+		delta := int16(pkt.SequenceNumber - e.highest) // wrap-aware
+		ext = e.highExt + int64(delta)
+		if delta > 0 {
+			e.highest = pkt.SequenceNumber
+			e.highExt = ext
+		}
+	}
+
+	// Insert sorted by extended sequence (binary search; the buffer is
+	// almost always already ordered, so this is effectively an append).
+	idx := sort.Search(len(e.buf), func(i int) bool { return e.buf[i].ext > ext })
+	e.buf = append(e.buf, seqPacket{})
+	copy(e.buf[idx+1:], e.buf[idx:])
+	e.buf[idx] = seqPacket{ext: ext, recvNS: recvNS, pkt: pkt}
+
+	for len(e.buf) > reorderWindowPackets {
+		if err := e.emit(e.buf[0]); err != nil {
+			return err
+		}
+		e.buf = e.buf[1:]
+	}
+	return nil
+}
+
+func (e *orderedEmitter) flush() error {
+	for _, sp := range e.buf {
+		if err := e.emit(sp); err != nil {
+			return err
+		}
+	}
+	e.buf = nil
+	return nil
+}
+
+func (e *orderedEmitter) emit(sp seqPacket) error {
+	if sp.ext <= e.lastEmit && e.lastEmit != math.MinInt64 {
+		// Duplicate retransmission, or a packet that arrived too late for
+		// the reorder window. Either way the depacketizer already moved on.
+		return nil
+	}
+	e.lastEmit = sp.ext
+
+	if !e.haveFrame || sp.pkt.Timestamp != e.frameTS {
+		e.haveFrame = true
+		e.frameTS = sp.pkt.Timestamp
+		e.frameNewTS = e.timeline.rewrite(sp.pkt.Timestamp, sp.recvNS, e.clockRate)
+	}
+	sp.pkt.Timestamp = e.frameNewTS
+	if err := e.w.WriteRTP(sp.pkt); err != nil {
+		return err
+	}
+	e.result.RTPPackets++
+	return nil
 }
 
 func newRTPWriter(codec string, clockRate uint32, outputPath string) (rtpWriter, error) {

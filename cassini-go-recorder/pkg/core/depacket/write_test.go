@@ -410,3 +410,189 @@ func sampleH264Payload() []byte {
 	// SPS NALU (type 7) so h264 writer treats this as keyframe access unit.
 	return []byte{0x67, 0x42, 0x00, 0x1f, 0xe5, 0x88, 0x68}
 }
+
+// TestWriteElementaryFromRTPLogReordersRetransmissions reproduces the
+// "smeared video" bug: rtplogs store packets in ARRIVAL order, so a
+// NACK-recovered retransmission lands long after its sequence position.
+// The depacketizer must see packets in sequence order with stable per-frame
+// timestamps, or the frame containing the recovered packet (and everything
+// until the next keyframe) is corrupted. The test writes the same multi-
+// packet frames twice — once in order, once with one packet arriving 12
+// packets late — and requires byte-identical elementary output.
+func TestWriteElementaryFromRTPLogReordersRetransmissions(t *testing.T) {
+	tmp := t.TempDir()
+
+	type pkt struct {
+		seq    uint16
+		ts     uint32
+		marker bool
+		first  bool // first packet of its frame (VP8 S bit)
+		recvNS uint64
+	}
+
+	// Six frames of three packets each, 3000 ticks (30 ms) apart.
+	var ordered []pkt
+	seq := uint16(100)
+	recv := uint64(2_000_000_000)
+	for frame := 0; frame < 6; frame++ {
+		ts := uint32(90_000 + frame*3_000)
+		for part := 0; part < 3; part++ {
+			ordered = append(ordered, pkt{
+				seq:    seq,
+				ts:     ts,
+				marker: part == 2,
+				first:  part == 0,
+				recvNS: recv,
+			})
+			seq++
+			recv += 10_000_000
+		}
+	}
+
+	// Arrival order: packet index 4 (middle of frame 2) is lost on first
+	// transmission and arrives last, ~12 packets late, with a late recv time.
+	late := ordered[4]
+	late.recvNS = recv + 50_000_000
+	arrival := append(append([]pkt{}, ordered[:4]...), ordered[5:]...)
+	arrival = append(arrival, late)
+
+	writeLog := func(path string, pkts []pkt) error {
+		writer, err := store.NewWriter(path, store.StreamHeader{
+			StreamID:    "s_000001",
+			Codec:       "video/vp8",
+			ClockRate:   90000,
+			Direction:   "recvonly",
+			StartMonoNS: 1000,
+			PT:          96,
+		})
+		if err != nil {
+			return err
+		}
+		defer func() { _ = writer.Close() }()
+		for _, p := range pkts {
+			payload := []byte{0x00, 0xaa, byte(p.seq), byte(p.seq >> 8)}
+			if p.first {
+				payload[0] = 0x10 // VP8 descriptor S=1, PID=0
+				payload = append(payload, 0x9d, 0x01, 0x2a, 0x00, 0x00, 0x00)
+			}
+			packet := &rtp.Packet{
+				Header: rtp.Header{
+					Version:        2,
+					PayloadType:    96,
+					SequenceNumber: p.seq,
+					Timestamp:      p.ts,
+					SSRC:           7777,
+					Marker:         p.marker,
+				},
+				Payload: payload,
+			}
+			wire, err := packet.Marshal()
+			if err != nil {
+				return err
+			}
+			if err := writer.Write(store.Record{
+				RecvMonoNS: p.recvNS,
+				Kind:       store.KindRTP,
+				WireBytes:  wire,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	orderedLog := filepath.Join(tmp, "ordered.rtplog")
+	arrivalLog := filepath.Join(tmp, "arrival.rtplog")
+	if err := writeLog(orderedLog, ordered); err != nil {
+		t.Fatalf("write ordered log: %v", err)
+	}
+	if err := writeLog(arrivalLog, arrival); err != nil {
+		t.Fatalf("write arrival log: %v", err)
+	}
+
+	orderedOut := filepath.Join(tmp, "ordered.ivf")
+	arrivalOut := filepath.Join(tmp, "arrival.ivf")
+	orderedRes, err := WriteElementaryFromRTPLog(orderedLog, "video/vp8", 90000, orderedOut)
+	if err != nil {
+		t.Fatalf("write ordered elementary: %v", err)
+	}
+	arrivalRes, err := WriteElementaryFromRTPLog(arrivalLog, "video/vp8", 90000, arrivalOut)
+	if err != nil {
+		t.Fatalf("write arrival elementary: %v", err)
+	}
+	if orderedRes.RTPPackets != len(ordered) || arrivalRes.RTPPackets != len(ordered) {
+		t.Fatalf("rtp packet counts: ordered=%d arrival=%d want=%d",
+			orderedRes.RTPPackets, arrivalRes.RTPPackets, len(ordered))
+	}
+
+	orderedBytes, err := os.ReadFile(orderedOut)
+	if err != nil {
+		t.Fatalf("read ordered output: %v", err)
+	}
+	arrivalBytes, err := os.ReadFile(arrivalOut)
+	if err != nil {
+		t.Fatalf("read arrival output: %v", err)
+	}
+	if len(orderedBytes) <= 32 {
+		t.Fatalf("ordered output too small: %d bytes", len(orderedBytes))
+	}
+	if string(orderedBytes) != string(arrivalBytes) {
+		t.Fatalf("outputs differ: a late retransmission changed the elementary stream (ordered=%d bytes, arrival=%d bytes)",
+			len(orderedBytes), len(arrivalBytes))
+	}
+}
+
+// TestWriteElementaryFromRTPLogDropsDuplicateRetransmissions verifies that a
+// duplicate of an already-delivered packet (retransmission that raced the
+// original) is dropped instead of being fed to the depacketizer twice.
+func TestWriteElementaryFromRTPLogDropsDuplicateRetransmissions(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "dup.rtplog")
+	outPath := filepath.Join(tmp, "dup.ivf")
+
+	writer, err := store.NewWriter(logPath, store.StreamHeader{
+		StreamID:    "s_000001",
+		Codec:       "video/vp8",
+		ClockRate:   90000,
+		Direction:   "recvonly",
+		StartMonoNS: 1000,
+		PT:          96,
+	})
+	if err != nil {
+		t.Fatalf("new writer: %v", err)
+	}
+	seqs := []uint16{100, 101, 101, 102}
+	recv := uint64(2_000_000_000)
+	for _, s := range seqs {
+		packet := &rtp.Packet{
+			Header: rtp.Header{
+				Version:        2,
+				PayloadType:    96,
+				SequenceNumber: s,
+				Timestamp:      90_000,
+				SSRC:           7777,
+				Marker:         s == 102,
+			},
+			Payload: sampleVP8Payload(),
+		}
+		wire, err := packet.Marshal()
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if err := writer.Write(store.Record{RecvMonoNS: recv, Kind: store.KindRTP, WireBytes: wire}); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		recv += 10_000_000
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	result, err := WriteElementaryFromRTPLog(logPath, "video/vp8", 90000, outPath)
+	if err != nil {
+		t.Fatalf("write elementary: %v", err)
+	}
+	if result.RTPPackets != 3 {
+		t.Fatalf("rtp packets written: got=%d want=3 (duplicate must be dropped)", result.RTPPackets)
+	}
+}
