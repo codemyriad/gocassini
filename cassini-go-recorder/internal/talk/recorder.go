@@ -17,6 +17,7 @@ import (
 	"gocassini/internal/signaling"
 	coreremux "gocassini/pkg/core/remux"
 
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -1013,6 +1014,21 @@ func firstNonEmpty(scopes []map[string]any, keys ...string) string {
 	return ""
 }
 
+// sendPLI asks the sender behind remoteSessionID for a fresh keyframe on the
+// given video SSRC. Used when NACK recovery evidently failed (see pli.go) and
+// once at capture start so the recording never opens mid-GOP.
+func (r *Recorder) sendPLI(remoteSessionID string, ssrc uint32) {
+	r.mu.Lock()
+	peer := r.subscribers[remoteSessionID]
+	r.mu.Unlock()
+	if peer == nil || peer.pc == nil {
+		return
+	}
+	if err := peer.pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: ssrc}}); err != nil {
+		log.Printf("send PLI failed sid=%s ssrc=%d: %v", remoteSessionID, ssrc, err)
+	}
+}
+
 func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver, remoteSessionID string) {
 	kind := strings.ToLower(track.Kind().String())
 
@@ -1020,6 +1036,14 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 	if err != nil {
 		log.Printf("ensure session capture failed sid=%s: %v", remoteSessionID, err)
 		return
+	}
+
+	var gapTracker *pliGapTracker
+	if kind == "video" {
+		gapTracker = newPLIGapTracker()
+		// Ask for a keyframe up front: the sender is mid-GOP from our
+		// point of view, and its next voluntary keyframe can be ~100s out.
+		r.sendPLI(remoteSessionID, uint32(track.SSRC()))
 	}
 
 	streamCaptureID := ""
@@ -1121,6 +1145,11 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 			if err := r.sessionArtifact.writeRTP(activeStreamID, pkt, recv); err != nil {
 				log.Printf("session artifact packet write failed sid=%s stream=%s track=%s: %v", remoteSessionID, activeStreamID, track.ID(), err)
 			}
+		}
+
+		if gapTracker != nil && gapTracker.observe(pkt.SSRC, pkt.SequenceNumber, recv) {
+			log.Printf("video gap unhealed past NACK grace; sending PLI sid=%s track=%s ssrc=%d", remoteSessionID, track.ID(), pkt.SSRC)
+			r.sendPLI(remoteSessionID, pkt.SSRC)
 		}
 
 		r.sessionMu.Lock()
