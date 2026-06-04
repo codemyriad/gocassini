@@ -18,7 +18,13 @@ import (
 // arrive (in arrival order, retransmissions included). When a gap survives
 // longer than pliNACKGracePeriod — i.e. retransmission evidently isn't
 // coming — it asks the caller to send a PLI, forcing the sender to emit a
-// fresh keyframe and bound the damage to ~1 RTT.
+// fresh keyframe and bound the damage to roughly the grace period plus an
+// RTT, instead of the ~100 s keyframe cadence. Discontinuities (forward
+// jumps too wide to enumerate) and SSRC rotations also warrant a keyframe
+// request: the new sequence space is mid-GOP from our point of view. If
+// the throttle suppresses one of those requests, the debt is recorded in
+// pliDue and retried on subsequent packets until granted — otherwise the
+// request would be lost with no gap entries left to re-arm it.
 const (
 	// pliNACKGracePeriod is how long a sequence gap may stay unfilled
 	// before we conclude NACK recovery failed. Observed retransmissions
@@ -47,6 +53,10 @@ type pliGapTracker struct {
 	highest     uint16
 	missing     map[uint16]time.Time
 	lastPLI     time.Time
+	// pliDue, when non-zero, records a keyframe request that the throttle
+	// suppressed (discontinuity or SSRC rotation). Unlike enumerated gaps,
+	// those paths clear the missing map, so nothing else would retry.
+	pliDue time.Time
 }
 
 func newPLIGapTracker() *pliGapTracker {
@@ -56,14 +66,23 @@ func newPLIGapTracker() *pliGapTracker {
 // observe ingests one received packet (in arrival order) and reports
 // whether a PLI should be sent now. now is the packet arrival time.
 func (t *pliGapTracker) observe(ssrc uint32, seq uint16, now time.Time) bool {
-	if !t.initialized || ssrc != t.ssrc {
-		// First packet, or the simulcast/rejoin machinery rotated the
-		// stream — new sequence space, old gaps are meaningless.
+	if !t.initialized {
+		// First packet; onRemoteTrack already requested a keyframe at
+		// capture start, so just take the baseline.
 		t.initialized = true
 		t.ssrc = ssrc
 		t.highest = seq
-		clear(t.missing)
 		return false
+	}
+	if ssrc != t.ssrc {
+		// The simulcast/rejoin machinery rotated the stream — new sequence
+		// space, old gaps are meaningless. The new stream is mid-GOP from
+		// our point of view just like at capture start, so ask for a
+		// keyframe (deferred past the throttle if necessary).
+		t.ssrc = ssrc
+		t.highest = seq
+		clear(t.missing)
+		return t.deferOrRequestPLI(now)
 	}
 
 	switch diff := int16(seq - t.highest); {
@@ -72,10 +91,10 @@ func (t *pliGapTracker) observe(ssrc uint32, seq uint16, now time.Time) bool {
 	case diff > 1:
 		if int(diff) > pliMaxTrackedGap {
 			// Discontinuity, not enumerable loss: resync and ask for a
-			// keyframe immediately (subject to the usual throttle).
+			// keyframe (deferred past the throttle if necessary).
 			t.highest = seq
 			clear(t.missing)
-			return t.requestPLI(now)
+			return t.deferOrRequestPLI(now)
 		}
 		for s := t.highest + 1; s != seq; s++ {
 			t.missing[s] = now
@@ -83,9 +102,10 @@ func (t *pliGapTracker) observe(ssrc uint32, seq uint16, now time.Time) bool {
 		t.highest = seq
 	default:
 		// Reordered packet or NACK retransmission: the gap entry, if we
-		// were tracking one, is now healed.
+		// were tracking one, is now healed. Fall through to the sweep —
+		// another gap may have gone stale, or a deferred request may be
+		// owed, and neither should wait for the next in-order packet.
 		delete(t.missing, seq)
-		return false
 	}
 
 	stale := false
@@ -99,10 +119,20 @@ func (t *pliGapTracker) observe(ssrc uint32, seq uint16, now time.Time) bool {
 			stale = true
 		}
 	}
-	if !stale {
+	if !stale && t.pliDue.IsZero() {
 		return false
 	}
 	return t.requestPLI(now)
+}
+
+// deferOrRequestPLI requests a PLI now if the throttle allows; otherwise it
+// records the debt so subsequent packets retry until the request is granted.
+func (t *pliGapTracker) deferOrRequestPLI(now time.Time) bool {
+	if t.requestPLI(now) {
+		return true
+	}
+	t.pliDue = now
+	return false
 }
 
 func (t *pliGapTracker) requestPLI(now time.Time) bool {
@@ -110,5 +140,6 @@ func (t *pliGapTracker) requestPLI(now time.Time) bool {
 		return false
 	}
 	t.lastPLI = now
+	t.pliDue = time.Time{}
 	return true
 }
