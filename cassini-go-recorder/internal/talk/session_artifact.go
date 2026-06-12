@@ -3,6 +3,7 @@ package talk
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,11 @@ import (
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v4"
 )
+
+// errSessionArtifactClosed marks operations attempted after close(). Track
+// readers racing shutdown hit this benignly, so callers must not treat it
+// as a capture failure (and must stop retrying stream opens).
+var errSessionArtifactClosed = errors.New("session artifact is closed")
 
 type sessionCaptureArtifact struct {
 	sessionDir  string
@@ -35,6 +41,13 @@ type sessionCaptureArtifact struct {
 	streams      map[string]*sessionCaptureStream
 	logicalBy    map[string]string
 	participants map[string]int
+
+	// captureErrCount/firstCaptureErr make media loss sticky: any failure
+	// that loses packets (stream open, rtplog write, stream close/index)
+	// is remembered so close() fails the run instead of letting a silently
+	// truncated recording finalize as ready (D-357).
+	captureErrCount int
+	firstCaptureErr error
 }
 
 type sessionCaptureStream struct {
@@ -66,6 +79,8 @@ type sessionCaptureSummary struct {
 	StreamCount       int    `json:"stream_count"`
 	PacketCount       int    `json:"packet_count"`
 	ActiveStreamCount int    `json:"active_stream_count"`
+	CaptureErrorCount int    `json:"capture_error_count"`
+	FirstCaptureError string `json:"first_capture_error,omitempty"`
 }
 
 func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName string) (*sessionCaptureArtifact, error) {
@@ -152,7 +167,7 @@ func (a *sessionCaptureArtifact) openStream(
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
-		return "", fmt.Errorf("session artifact is closed")
+		return "", errSessionArtifactClosed
 	}
 
 	midSafe := sanitizeSessionPathPart(desc.mid)
@@ -179,7 +194,9 @@ func (a *sessionCaptureArtifact) openStream(
 	w, err := store.NewWriter(streamPath, header)
 	if err != nil {
 		a.mu.Unlock()
-		return "", fmt.Errorf("create stream writer: %w", err)
+		err = fmt.Errorf("create stream writer: %w", err)
+		a.noteCaptureFailure("open", streamID, err)
+		return "", err
 	}
 
 	state := &sessionCaptureStream{
@@ -219,15 +236,40 @@ func (a *sessionCaptureArtifact) openStream(
 	}, uint64(arrival.UnixNano())); err != nil {
 		_ = w.Close()
 		a.removeStream(streamID)
+		a.noteCaptureFailure("open", streamID, err)
 		return "", err
 	}
 
 	if err := a.persistSession(); err != nil {
 		_ = w.Close()
 		a.removeStream(streamID)
+		a.noteCaptureFailure("open", streamID, err)
 		return "", err
 	}
 	return streamID, nil
+}
+
+// noteCaptureFailure records a media-losing failure (sticky). The first
+// error is kept and surfaced by close() so the run is marked failed; the
+// callers still receive the error for per-call logging and handling.
+func (a *sessionCaptureArtifact) noteCaptureFailure(stage, streamID string, err error) {
+	if err == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.captureErrCount++
+	if a.firstCaptureErr == nil {
+		a.firstCaptureErr = fmt.Errorf("%s stream %s: %w", stage, streamID, err)
+	}
+}
+
+// captureFailure returns the first media-losing failure recorded during
+// the session, if any.
+func (a *sessionCaptureArtifact) captureFailure() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.firstCaptureErr
 }
 
 func (a *sessionCaptureArtifact) updateParticipantDisplay(remoteSessionID, participantID, participantName string) error {
@@ -277,6 +319,13 @@ func (a *sessionCaptureArtifact) writeRTP(streamID string, pkt *rtp.Packet, recv
 		Kind:       store.KindRTP,
 		WireBytes:  wire,
 	}); err != nil {
+		if a.streamCloseRace(stream, err) {
+			return fmt.Errorf("stream not writable: %s", streamID)
+		}
+		// A failed rtplog write loses media and can corrupt the record
+		// framing from this offset on; remember it so the run cannot
+		// finalize as ready.
+		a.noteCaptureFailure("write", streamID, err)
 		return err
 	}
 
@@ -324,6 +373,10 @@ func (a *sessionCaptureArtifact) writeRTCP(streamID string, packets []rtcp.Packe
 			Kind:       store.KindRTCP,
 			WireBytes:  wire,
 		}); err != nil {
+			if a.streamCloseRace(stream, err) {
+				return fmt.Errorf("stream not writable: %s", streamID)
+			}
+			a.noteCaptureFailure("write", streamID, err)
 			return err
 		}
 	}
@@ -332,6 +385,25 @@ func (a *sessionCaptureArtifact) writeRTCP(streamID string, packets []rtcp.Packe
 	stream.packetCount += len(wirePackets)
 	a.mu.Unlock()
 	return nil
+}
+
+// streamCloseRace reports whether a failed writer.Write lost a race
+// against a concurrent closeStream/close (SSRC/PT rotation racing the
+// RTCP reader, shutdown racing track readers) rather than hitting real
+// I/O trouble. The write happens outside a.mu, so a stream fetched as
+// writable can be closed before the write lands; the store writer then
+// rejects the record with ErrWriterClosed before touching the file. Such
+// packets were dropped by an intentional close — benign, like the
+// errSessionArtifactClosed path — and must not be recorded as media loss.
+// The stream flag is re-checked under a.mu as a second signal because it
+// flips before the writer itself closes.
+func (a *sessionCaptureArtifact) streamCloseRace(stream *sessionCaptureStream, err error) bool {
+	if errors.Is(err, store.ErrWriterClosed) {
+		return true
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return stream.closed
 }
 
 func (a *sessionCaptureArtifact) closeStream(streamID, reason string, endedAt time.Time) error {
@@ -353,12 +425,12 @@ func (a *sessionCaptureArtifact) closeStream(streamID, reason string, endedAt ti
 
 	var closeErr error
 	if writer != nil {
-		closeErr = writer.Close()
-	}
-	if err := store.BuildIndex(stream.logPath, stream.indexPath); err != nil {
-		if closeErr == nil {
-			closeErr = err
+		if err := writer.Close(); err != nil {
+			closeErr = fmt.Errorf("close stream log: %w", err)
 		}
+	}
+	if err := store.BuildIndex(stream.logPath, stream.indexPath); err != nil && closeErr == nil {
+		closeErr = fmt.Errorf("build stream index: %w", err)
 	}
 	if err := a.emitEvent(map[string]any{
 		"type":         "stream_closed",
@@ -367,6 +439,11 @@ func (a *sessionCaptureArtifact) closeStream(streamID, reason string, endedAt ti
 		"packet_count": packetCount,
 	}, uint64(endedAt.UnixNano())); err != nil && closeErr == nil {
 		closeErr = err
+	}
+	if closeErr != nil {
+		// A failed close means buffered packets never reached disk (or the
+		// stream cannot be read back); treat it as media loss.
+		a.noteCaptureFailure("close", streamID, closeErr)
 	}
 	return closeErr
 }
@@ -384,15 +461,18 @@ func (a *sessionCaptureArtifact) close() error {
 	a.closed = true
 	a.mu.Unlock()
 
+	var firstErr error
 	for _, stream := range streams {
-		_ = a.closeStream(stream.stream.StreamID, "recorder-close", time.Now())
+		if err := a.closeStream(stream.stream.StreamID, "recorder-close", time.Now()); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 
 	if err := a.emitEvent(map[string]any{
 		"type":   "session_closed",
 		"reason": "recorder-close",
-	}, uint64(time.Now().UnixNano())); err != nil {
-		return err
+	}, uint64(time.Now().UnixNano())); err != nil && firstErr == nil {
+		firstErr = err
 	}
 
 	a.mu.Lock()
@@ -403,18 +483,27 @@ func (a *sessionCaptureArtifact) close() error {
 	a.mu.Unlock()
 
 	if eventsWriter != nil {
-		if err := eventsWriter.Flush(); err != nil {
-			_ = eventsFile.Close()
-			return err
+		if err := eventsWriter.Flush(); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
 	if eventsFile != nil {
-		if err := eventsFile.Close(); err != nil {
-			return err
+		if err := eventsFile.Close(); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
 
-	return a.persistSession()
+	if err := a.persistSession(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+
+	// A media-losing failure recorded during capture outranks shutdown
+	// bookkeeping errors: it is the reason this recording must not be
+	// finalized as a complete success.
+	if err := a.captureFailure(); err != nil {
+		return fmt.Errorf("session capture lost media: %w", err)
+	}
+	return firstErr
 }
 
 func (a *sessionCaptureArtifact) summary() sessionCaptureSummary {
@@ -429,6 +518,10 @@ func (a *sessionCaptureArtifact) summary() sessionCaptureSummary {
 			activeStreams++
 		}
 	}
+	firstCaptureError := ""
+	if a.firstCaptureErr != nil {
+		firstCaptureError = a.firstCaptureErr.Error()
+	}
 	return sessionCaptureSummary{
 		Enabled:           a.sessionPath != "" && a.eventsPath != "",
 		Closed:            a.closed,
@@ -439,6 +532,8 @@ func (a *sessionCaptureArtifact) summary() sessionCaptureSummary {
 		StreamCount:       streamCount,
 		PacketCount:       packetCount,
 		ActiveStreamCount: activeStreams,
+		CaptureErrorCount: a.captureErrCount,
+		FirstCaptureError: firstCaptureError,
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gocassini/internal/config"
 	"gocassini/internal/talk"
@@ -95,6 +96,147 @@ func TestRecordExitCodeDistinguishesUnjoinableRooms(t *testing.T) {
 				t.Fatalf("expected record failure detail on stderr, got %q", stderr.String())
 			}
 		})
+	}
+}
+
+func TestRecordEnablesRequestOfferRetryDefaults(t *testing.T) {
+	// D-366: the product CLI never set RequestOfferInterval /
+	// MaxRequestOfferAttempts, so requestOfferLoop returned immediately
+	// and the per-peer offer retry machinery was disabled — a silent
+	// regression vs the legacy gocassini binary's 2s/8 flag defaults. A
+	// dropped initial requestoffer then silently lost that participant's
+	// media with exit 0.
+	prevRecorder := runRecorderApp
+	var gotCfg config.Config
+	runRecorderApp = func(_ context.Context, cfg config.Config) error {
+		gotCfg = cfg
+		return os.WriteFile(cfg.OutputPath, []byte("fake-mkv"), 0o644)
+	}
+	defer func() {
+		runRecorderApp = prevRecorder
+	}()
+
+	outDir := filepath.Join(t.TempDir(), "meeting.run")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"record", "--call", "https://example.test/call/demo", "--out", outDir}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected record success, got code=%d stderr=%q", code, stderr.String())
+	}
+
+	if gotCfg.RequestOfferInterval != 2*time.Second {
+		t.Fatalf("RequestOfferInterval = %v, want 2s (zero disables the requestoffer retry loop)", gotCfg.RequestOfferInterval)
+	}
+	if gotCfg.MaxRequestOfferAttempts != 8 {
+		t.Fatalf("MaxRequestOfferAttempts = %d, want 8", gotCfg.MaxRequestOfferAttempts)
+	}
+}
+
+func TestRecordPortableEnablesRequestOfferRetryDefaults(t *testing.T) {
+	requireFFMediaTools(t)
+
+	tmp := t.TempDir()
+	prev := buildArtifactFn
+	buildArtifactFn = fakeSuccessBuildFn(t)
+	t.Cleanup(func() { buildArtifactFn = prev })
+
+	prevRecorder := runRecorderApp
+	var gotCfg config.Config
+	runRecorderApp = func(_ context.Context, cfg config.Config) error {
+		gotCfg = cfg
+		return os.WriteFile(cfg.OutputPath, []byte("fake-mkv"), 0o644)
+	}
+	defer func() {
+		runRecorderApp = prevRecorder
+	}()
+
+	outFile := filepath.Join(tmp, "Retry Defaults Meeting.opus")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"record", "--call", "https://example.test/room/demo", "--out", outFile}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected record success, got code=%d stderr=%q", code, stderr.String())
+	}
+
+	if gotCfg.RequestOfferInterval != 2*time.Second {
+		t.Fatalf("RequestOfferInterval = %v, want 2s (zero disables the requestoffer retry loop)", gotCfg.RequestOfferInterval)
+	}
+	if gotCfg.MaxRequestOfferAttempts != 8 {
+		t.Fatalf("MaxRequestOfferAttempts = %d, want 8", gotCfg.MaxRequestOfferAttempts)
+	}
+}
+
+func TestRecordSalvagesAbnormalStopWithComposedRecording(t *testing.T) {
+	// D-357: a fatal mid-call failure (e.g. a websocket drop near the end
+	// of a long meeting) whose cleanup still composed a valid recording is
+	// tagged talk.ErrAbnormalStop by the recorder. The run bundle must be
+	// finalized as ready — with the stop reason recorded — so the operator
+	// can promote/build/upload it instead of stranding the recording.
+	prevRecorder := runRecorderApp
+	runRecorderApp = func(_ context.Context, cfg config.Config) error {
+		if err := os.WriteFile(cfg.OutputPath, []byte("fake-mkv"), 0o644); err != nil {
+			return err
+		}
+		return fmt.Errorf("%w: signaling connection error: ws closed", talk.ErrAbnormalStop)
+	}
+	defer func() {
+		runRecorderApp = prevRecorder
+	}()
+
+	outDir := filepath.Join(t.TempDir(), "meeting.run")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"record", "--call", "https://example.test/call/demo", "--out", outDir}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0 for salvaged recording, got %d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "record stopped early but composed a usable recording") {
+		t.Fatalf("expected early-stop notice on stderr, got %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "run -> "+outDir) {
+		t.Fatalf("expected finalized run path on stdout, got %q", stdout.String())
+	}
+
+	loaded, ok, err := LoadRunBundle(outDir)
+	if err != nil || !ok {
+		t.Fatalf("load run bundle: ok=%t err=%v", ok, err)
+	}
+	if loaded.Manifest.State != bundleStateReady {
+		t.Fatalf("expected bundle state %q, got %q", bundleStateReady, loaded.Manifest.State)
+	}
+	if !strings.Contains(loaded.Manifest.StopReason, "signaling connection error") {
+		t.Fatalf("expected abnormal stop reason in manifest, got %q", loaded.Manifest.StopReason)
+	}
+}
+
+func TestRecordAbnormalStopWithoutRecordingStaysFailed(t *testing.T) {
+	// The salvage path requires a composed recording on disk; an abnormal
+	// stop that produced nothing must keep failing the run.
+	prevRecorder := runRecorderApp
+	runRecorderApp = func(_ context.Context, _ config.Config) error {
+		return fmt.Errorf("%w: signaling connection error: ws closed", talk.ErrAbnormalStop)
+	}
+	defer func() {
+		runRecorderApp = prevRecorder
+	}()
+
+	outDir := filepath.Join(t.TempDir(), "meeting.run")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"record", "--call", "https://example.test/call/demo", "--out", outDir}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "record failed:") {
+		t.Fatalf("expected record failure detail on stderr, got %q", stderr.String())
+	}
+
+	loaded, ok, err := LoadRunBundle(outDir)
+	if err != nil || !ok {
+		t.Fatalf("load run bundle: ok=%t err=%v", ok, err)
+	}
+	if loaded.Manifest.State != bundleStateFailed {
+		t.Fatalf("expected bundle state %q, got %q", bundleStateFailed, loaded.Manifest.State)
 	}
 }
 

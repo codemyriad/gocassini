@@ -23,6 +23,11 @@ import (
 
 const requestOfferResponseTimeout = 8 * time.Second
 
+// inCallFlagInCall is bit 1 of the Talk in-call flags: the participant has
+// joined the call. Remaining bits (audio=2, video=4, SIP=8) describe what
+// the participant publishes, so call membership is exactly flags&1 != 0.
+const inCallFlagInCall = 1
+
 // ErrUnjoinable marks bootstrap failures where the Talk server definitively
 // rejected the recorder's attempt to join the room or call (HTTP 4xx), e.g.
 // a non-public conversation the guest recorder cannot see (404) or a call
@@ -30,6 +35,14 @@ const requestOfferResponseTimeout = 8 * time.Second
 // succeed, so callers should fail fast instead of leaving a doomed recording
 // session hanging while Talk shows it as active.
 var ErrUnjoinable = errors.New("talk room unjoinable")
+
+// ErrAbnormalStop tags fatal mid-call failures (e.g. the signaling
+// connection dropping) whose cleanup nevertheless finalized cleanly:
+// every capture stream closed without media loss and the final output
+// composed. The recording is usable, so callers may salvage it (finalize
+// the run bundle as ready, recording the stop reason) instead of
+// stranding an hour of valid footage over a last-minute disconnect.
+var ErrAbnormalStop = errors.New("talk recorder stopped abnormally")
 
 type roomEmptyTimerAction uint8
 
@@ -260,8 +273,10 @@ runLoop:
 					stopAndDrainTimer(roomEmptyTimer)
 				}
 				loopWG.Wait()
-				_ = r.cleanup(context.Background())
-				return err
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 12*time.Second)
+				cleanupErr := r.cleanup(cleanupCtx)
+				cleanupCancel()
+				return fatalRunError(err, cleanupErr)
 			}
 		case <-runCtx.Done():
 			stopReason = "context canceled"
@@ -288,6 +303,19 @@ runLoop:
 		return err
 	}
 	return nil
+}
+
+// fatalRunError merges a fatal run-loop error with the cleanup outcome.
+// When cleanup fully succeeded — capture streams closed without media
+// loss and the final output composed — the loop error is tagged with
+// ErrAbnormalStop so callers can salvage the usable recording. Any
+// cleanup failure means the output cannot be trusted as complete, so
+// both errors surface and the run stays failed.
+func fatalRunError(loopErr, cleanupErr error) error {
+	if cleanupErr != nil {
+		return errors.Join(loopErr, cleanupErr)
+	}
+	return fmt.Errorf("%w: %w", ErrAbnormalStop, loopErr)
 }
 
 // logBootstrapFailure emits the stderr markers operators and humans grep for
@@ -413,11 +441,15 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 
 	var artifactSummary *sessionCaptureSummary
 	if r.sessionArtifact != nil {
-		summary := r.sessionArtifact.summary()
-		artifactSummary = &summary
 		if err := r.sessionArtifact.close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
+		// Snapshot after close(): stream finalize (flush/BuildIndex)
+		// failures are recorded as capture failures during close, and
+		// the report's capture_error_count/first_capture_error must
+		// reflect the same media loss that fails the run.
+		summary := r.sessionArtifact.summary()
+		artifactSummary = &summary
 	}
 
 	if err := r.composeFinalOutput(); err != nil {
@@ -692,6 +724,15 @@ func (r *Recorder) handleRoomEvent(roomEvent map[string]any) error {
 	case "room":
 		switch eventType {
 		case "join":
+			// Room join events indicate signaling-room presence only — a
+			// user with the conversation window open, not necessarily in
+			// the call. Per the standalone signaling API, WebRTC peer
+			// connections are established from participants-update inCall
+			// flags (see handleParticipantsEvent), so only remember the
+			// identity here. Subscribing on join used to create dead peers
+			// whose requestoffers the server rejected ("not in same call")
+			// and whose presence blocked the room-empty autostop for as
+			// long as anyone kept a chat window open (D-365).
 			for _, item := range asSlice(roomEvent["join"]) {
 				joinItem := asMap(item)
 				if len(joinItem) == 0 {
@@ -702,9 +743,6 @@ func (r *Recorder) handleRoomEvent(roomEvent map[string]any) error {
 					continue
 				}
 				r.rememberParticipantIdentity(remoteSessionID, displayName, participantID)
-				if _, err := r.ensureSubscriber(remoteSessionID); err != nil {
-					return err
-				}
 			}
 		case "leave":
 			r.removeParticipantSessions(asSlice(roomEvent["leave"]))
@@ -739,8 +777,8 @@ func (r *Recorder) handleParticipantsEvent(update map[string]any) error {
 	if asBool(update["all"]) {
 		active := make(map[string]participantIdentity, len(users))
 		for _, raw := range users {
-			sessionID, identity, activeInCall := parseParticipantUpdate(asMap(raw))
-			if sessionID == "" || !activeInCall {
+			sessionID, identity, callState := parseParticipantUpdate(asMap(raw))
+			if sessionID == "" || callState != callStateInCall {
 				continue
 			}
 			active[sessionID] = identity
@@ -749,12 +787,19 @@ func (r *Recorder) handleParticipantsEvent(update map[string]any) error {
 	}
 
 	for _, raw := range users {
-		sessionID, identity, activeInCall := parseParticipantUpdate(asMap(raw))
+		sessionID, identity, callState := parseParticipantUpdate(asMap(raw))
 		if sessionID == "" {
 			continue
 		}
-		if !activeInCall {
+		switch callState {
+		case callStateNotInCall:
 			r.removeParticipantSessions([]any{sessionID})
+			continue
+		case callStateUnknown:
+			// The entry omits inCall: it describes room presence, not
+			// call membership. Neither create nor remove — a partial
+			// update without the field must not tear down the live
+			// subscriber of a participant still in the call.
 			continue
 		}
 		r.rememberParticipantIdentity(sessionID, identity.DisplayName, identity.ParticipantID)
@@ -1066,7 +1111,24 @@ func parseRoomJoinIdentity(joinItem map[string]any) (string, string, string) {
 	return remoteSessionID, displayName, participantID
 }
 
-func parseParticipantUpdate(user map[string]any) (string, participantIdentity, bool) {
+// participantCallState classifies a participants-update entry for the
+// subscribe/teardown decision.
+type participantCallState int
+
+const (
+	// callStateUnknown: the entry omits the inCall field, so it says
+	// nothing about call membership (room presence only). Neutral —
+	// neither create nor tear down a subscriber.
+	callStateUnknown participantCallState = iota
+	// callStateNotInCall: the entry explicitly reports the participant
+	// out of the call (in-call bit clear), or is an internal session
+	// that never gets a subscriber.
+	callStateNotInCall
+	// callStateInCall: the in-call bit is set; a subscriber should exist.
+	callStateInCall
+)
+
+func parseParticipantUpdate(user map[string]any) (string, participantIdentity, participantCallState) {
 	scopes := []map[string]any{
 		user,
 		asMap(user["session"]),
@@ -1082,13 +1144,23 @@ func parseParticipantUpdate(user map[string]any) (string, participantIdentity, b
 		"roomsessionid",
 	)
 	if sessionID == "" {
-		return "", participantIdentity{}, false
+		return "", participantIdentity{}, callStateUnknown
 	}
 	if asBool(user["internal"]) {
-		return sessionID, participantIdentity{}, false
+		return sessionID, participantIdentity{}, callStateNotInCall
 	}
-	if flags, ok := asInt(user["inCall"]); ok && flags == 0 {
-		return sessionID, participantIdentity{}, false
+	// Per the standalone signaling API, a participant is in the call iff
+	// the in-call bit of the inCall flags is set (bit 1; higher bits only
+	// describe published media / SIP). Updates without that bit must not
+	// produce subscribers (D-365); entries that omit inCall entirely
+	// describe room presence only and are neutral — they must not tear
+	// down a live subscriber either.
+	flags, ok := asInt(user["inCall"])
+	if !ok {
+		return sessionID, participantIdentity{}, callStateUnknown
+	}
+	if flags&inCallFlagInCall == 0 {
+		return sessionID, participantIdentity{}, callStateNotInCall
 	}
 
 	return sessionID, participantIdentity{
@@ -1111,7 +1183,7 @@ func parseParticipantUpdate(user map[string]any) (string, participantIdentity, b
 			"participantID",
 			"uid",
 		),
-	}, true
+	}, callStateInCall
 }
 
 func firstNonEmpty(scopes []map[string]any, keys ...string) string {
@@ -1163,22 +1235,6 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 	streamCaptureSSRC := uint32(track.SSRC())
 	streamCapturePT := uint8(track.PayloadType())
 	trackDesc := descriptorFromTrack(track)
-	if r.sessionArtifact != nil {
-		participantID, participantName := r.sessionIdentity(remoteSessionID)
-		streamCaptureID, err = r.sessionArtifact.openStream(
-			remoteSessionID,
-			participantID,
-			participantName,
-			trackDesc,
-			streamCaptureSSRC,
-			streamCapturePT,
-			time.Now(),
-		)
-		if err != nil {
-			log.Printf("session artifact stream open failed sid=%s kind=%s: %v", remoteSessionID, kind, err)
-			streamCaptureID = ""
-		}
-	}
 	getStreamCaptureID := func() string {
 		streamCaptureMu.RLock()
 		defer streamCaptureMu.RUnlock()
@@ -1188,6 +1244,36 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 		streamCaptureMu.Lock()
 		streamCaptureID = value
 		streamCaptureMu.Unlock()
+	}
+	// openCaptureStream (re)opens an rtplog stream for the given SSRC/PT.
+	// Open failures used to permanently disable capture for the track;
+	// callers now retry on later packets (throttled below) so a transient
+	// failure costs a slice of one track, not the rest of the meeting.
+	// Returns false without logging once the artifact is closed (shutdown).
+	openCaptureStream := func(ssrc uint32, pt uint8, at time.Time) bool {
+		participantID, participantName := r.sessionIdentity(remoteSessionID)
+		id, openErr := r.sessionArtifact.openStream(
+			remoteSessionID,
+			participantID,
+			participantName,
+			trackDesc,
+			ssrc,
+			pt,
+			at,
+		)
+		if openErr != nil {
+			if !errors.Is(openErr, errSessionArtifactClosed) {
+				log.Printf("session artifact stream open failed sid=%s kind=%s track=%s: %v", remoteSessionID, kind, track.ID(), openErr)
+			}
+			return false
+		}
+		setStreamCaptureID(id)
+		streamCaptureSSRC = ssrc
+		streamCapturePT = pt
+		return true
+	}
+	if r.sessionArtifact != nil {
+		openCaptureStream(streamCaptureSSRC, streamCapturePT, time.Now())
 	}
 
 	if r.sessionArtifact != nil && receiver != nil && r.addTrackReader() {
@@ -1212,6 +1298,7 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 	log.Printf("remote track: sid=%s kind=%s track=%s stream=%s codec=%s", remoteSessionID, kind, track.ID(), track.StreamID(), track.Codec().MimeType)
 
 	reason := "ended"
+	var nextStreamOpenAttempt time.Time
 	for {
 		recv := time.Now()
 		pkt, _, readErr := track.ReadRTP()
@@ -1228,37 +1315,31 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 			break
 		}
 
-		activeStreamID := getStreamCaptureID()
-		if activeStreamID != "" {
-			if pkt.SSRC != streamCaptureSSRC || pkt.PayloadType != streamCapturePT {
+		if r.sessionArtifact != nil {
+			activeStreamID := getStreamCaptureID()
+			if activeStreamID != "" && (pkt.SSRC != streamCaptureSSRC || pkt.PayloadType != streamCapturePT) {
 				rotateReason := streamSegmentRotationReason(streamCaptureSSRC, pkt.SSRC, streamCapturePT, pkt.PayloadType)
 				if err := r.sessionArtifact.closeStream(activeStreamID, rotateReason, recv); err != nil {
 					log.Printf("session artifact stream rotate-close failed sid=%s stream=%s track=%s: %v", remoteSessionID, activeStreamID, track.ID(), err)
 				}
-				participantID, participantName := r.sessionIdentity(remoteSessionID)
-				nextStreamID, openErr := r.sessionArtifact.openStream(
-					remoteSessionID,
-					participantID,
-					participantName,
-					trackDesc,
-					pkt.SSRC,
-					pkt.PayloadType,
-					recv,
-				)
-				if openErr != nil {
-					log.Printf("session artifact stream rotate-open failed sid=%s old_stream=%s track=%s: %v", remoteSessionID, activeStreamID, track.ID(), openErr)
-					setStreamCaptureID("")
+				setStreamCaptureID("")
+				activeStreamID = ""
+			}
+			if activeStreamID == "" && recv.After(nextStreamOpenAttempt) {
+				// (Re)open capture for this packet's SSRC/PT. This covers
+				// SSRC/PT rotation as well as recovery from earlier open
+				// failures; retries are throttled so a persistently failing
+				// disk is not hammered at packet rate.
+				if openCaptureStream(pkt.SSRC, pkt.PayloadType, recv) {
+					activeStreamID = getStreamCaptureID()
 				} else {
-					setStreamCaptureID(nextStreamID)
-					streamCaptureSSRC = pkt.SSRC
-					streamCapturePT = pkt.PayloadType
+					nextStreamOpenAttempt = recv.Add(time.Second)
 				}
 			}
-		}
-		activeStreamID = getStreamCaptureID()
-		if activeStreamID != "" {
-			if err := r.sessionArtifact.writeRTP(activeStreamID, pkt, recv); err != nil {
-				log.Printf("session artifact packet write failed sid=%s stream=%s track=%s: %v", remoteSessionID, activeStreamID, track.ID(), err)
+			if activeStreamID != "" {
+				if err := r.sessionArtifact.writeRTP(activeStreamID, pkt, recv); err != nil {
+					log.Printf("session artifact packet write failed sid=%s stream=%s track=%s: %v", remoteSessionID, activeStreamID, track.ID(), err)
+				}
 			}
 		}
 
@@ -1374,11 +1455,12 @@ func (r *Recorder) composeFinalOutputFromSessionArtifact() error {
 	}
 
 	log.Printf(
-		"composed final output from session artifact: session=%s output=%s work=%s segments=%d",
+		"composed final output from session artifact: session=%s output=%s work=%s segments=%d skipped=%d",
 		result.SessionJSONPath,
 		result.OutputPath,
 		result.WorkDir,
 		result.Segments,
+		len(result.SkippedStreams),
 	)
 	r.artifactRemux = &result
 	return nil
@@ -1749,6 +1831,8 @@ func (r *Recorder) writeReport(
 			"stream_count":        artifactSummary.StreamCount,
 			"packet_count":        artifactSummary.PacketCount,
 			"active_stream_count": artifactSummary.ActiveStreamCount,
+			"capture_error_count": artifactSummary.CaptureErrorCount,
+			"first_capture_error": artifactSummary.FirstCaptureError,
 		}
 	}
 
@@ -1758,6 +1842,18 @@ func (r *Recorder) writeReport(
 	warnings := make([]string, 0, 2)
 	if composeErr != "" {
 		warnings = append(warnings, "final compose failed: "+composeErr)
+	}
+	if artifactSummary != nil && artifactSummary.CaptureErrorCount > 0 {
+		warnings = append(warnings, fmt.Sprintf(
+			"capture lost media: %d error(s); first: %s",
+			artifactSummary.CaptureErrorCount,
+			artifactSummary.FirstCaptureError,
+		))
+	}
+	if r.artifactRemux != nil {
+		for _, skipped := range r.artifactRemux.SkippedStreams {
+			warnings = append(warnings, fmt.Sprintf("stream %s skipped during final compose: %s", skipped.StreamID, skipped.Reason))
+		}
 	}
 
 	type sessionOutput struct {
@@ -1846,6 +1942,7 @@ func buildArtifactRemuxReport(result *coreremux.BuildResult) map[string]any {
 		"work_dir":          result.WorkDir,
 		"segments":          result.Segments,
 		"stream_plans":      result.StreamPlans,
+		"skipped_streams":   result.SkippedStreams,
 		"adjusted_streams":  adjustedStreams,
 		"total_adjust_ns":   totalAdjustNS,
 		"max_abs_adjust_ns": maxAbsAdjustNS,
