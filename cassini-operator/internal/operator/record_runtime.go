@@ -601,25 +601,6 @@ func parseTriggerRequest(input triggerRequestInput) (TriggerRequest, error) {
 	return req, nil
 }
 
-func decodeStoredTriggerRequest(raw string) (TriggerRequest, error) {
-	var req TriggerRequest
-	if err := json.Unmarshal([]byte(raw), &req); err != nil {
-		return TriggerRequest{}, fmt.Errorf("decode stored request JSON: %w", err)
-	}
-	req.Platform = strings.TrimSpace(req.Platform)
-	req.BaseURL = strings.TrimSpace(req.BaseURL)
-	req.TalkConnectURL = strings.TrimRight(strings.TrimSpace(req.TalkConnectURL), "/")
-	req.RoomToken = strings.TrimSpace(req.RoomToken)
-	req.URL = strings.TrimSpace(req.URL)
-	req.GuestName = strings.TrimSpace(req.GuestName)
-	if req.Platform == "" || req.GuestName == "" || req.effectiveCallURL() == "" {
-		return TriggerRequest{}, errors.New("stored request is missing required fields")
-	}
-	req.StopWhenRoomEmptySet = !req.StopWhenRoomEmpty
-	req.RoomEmptyGraceSet = req.RoomEmptyGraceSeconds != defaultRoomEmptySec
-	return req, nil
-}
-
 func encodeTriggerRequest(req TriggerRequest) (string, error) {
 	body, err := marshalCompactJSON(req)
 	if err != nil {
@@ -719,6 +700,11 @@ func (rt *Runtime) handleRerunJob(w http.ResponseWriter, r *http.Request, id str
 	select {
 	case rt.buildQueue <- task:
 		rt.logger.Printf("rerun accepted id=%s attempt=%d run=%s", rerunJob.ID, rerunJob.CurrentAttemptNumber, task.ArtifactRunPath)
+		// Rerun is also the re-delivery path for Talk recordings that never
+		// reached Nextcloud (delivery failure or operator restart, D-352).
+		if rerunJob.TalkBinding != nil && rerunJob.TalkDeliveredAt == nil {
+			go rt.redeliverTalkRecording(rerunJob)
+		}
 		writeJSON(w, http.StatusAccepted, rerunJobResponse{ID: rerunJob.ID, AttemptNumber: rerunJob.CurrentAttemptNumber})
 	case <-rt.ctx.Done():
 		if updateErr := rt.store.MarkBuildFailed(context.Background(), rerunJob.ID, "", "build queue stopped", nowUTCString()); updateErr != nil {

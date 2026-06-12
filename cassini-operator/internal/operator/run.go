@@ -66,6 +66,13 @@ type Runtime struct {
 	// constants; tests shrink them to exercise stop enforcement quickly.
 	recordStopAckGrace      time.Duration
 	recordStopFinalizeGrace time.Duration
+	// Talk delivery tuning: dedicated bounded clients (a hung Nextcloud
+	// connection must not wedge the record slot, D-352), a bounded retry
+	// schedule, and the upload stall watchdog grace. Tests shrink them.
+	talkJSONClient   *http.Client
+	talkUploadClient *http.Client
+	talkRetryDelays  []time.Duration
+	talkUploadStall  time.Duration
 }
 
 type TriggerRequest struct {
@@ -116,14 +123,24 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer store.Close()
-	if interrupted, err := store.MarkIncompleteJobsInterrupted(context.Background(), nowUTCString()); err != nil {
+	interruptedAt := nowUTCString()
+	interrupted, err := store.MarkIncompleteJobsInterrupted(context.Background(), interruptedAt)
+	if err != nil {
 		fmt.Fprintf(stderr, "mark interrupted jobs: %v\n", err)
 		return 1
-	} else if interrupted > 0 {
+	}
+	if interrupted > 0 {
 		logger.Printf("startup interrupted_jobs -> %d", interrupted)
 	}
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
+	if interrupted > 0 {
+		// A restart mid-recording leaves spreed convinced the room is still
+		// recording; tell it the recording failed so the room state converges
+		// instead of waiting for a moderator's stop click to surface
+		// RECORDING_FAILED (D-352/D-362).
+		go runtime.NotifyInterruptedTalkRecordings(interruptedAt)
+	}
 
 	exappCfg.PublishedDir = cfg.SiteRoot
 	warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.SiteRoot)
@@ -391,6 +408,13 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 
 		recordStopAckGrace:      recordStopAckGrace,
 		recordStopFinalizeGrace: recordStopFinalizeGrace,
+
+		talkJSONClient: &http.Client{Timeout: talkJSONRequestTimeout},
+		talkUploadClient: &http.Client{
+			Transport: &http.Transport{ResponseHeaderTimeout: talkUploadResponseHeaderTimeout},
+		},
+		talkRetryDelays: talkDeliveryRetryDelays,
+		talkUploadStall: talkUploadStallGrace,
 	}
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
 	rt.recordJobFn = rt.executeRecordCLI
@@ -545,30 +569,20 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		}
 		return
 	}
-	if updateErr := rt.store.UpdateRecordOutcome(context.Background(), job.ID, result, finishedAt); updateErr != nil {
+	if updateErr := rt.store.UpdateRecordOutcome(context.Background(), job.ID, result, canonicalRunPath, finishedAt); updateErr != nil {
 		rt.logger.Printf("record outcome update failed id=%s: %v", job.ID, updateErr)
 		if failErr := rt.store.MarkRecordFailed(context.Background(), job.ID, updateErr.Error(), result, finishedAt); failErr != nil {
 			rt.logger.Printf("record outcome failure update failed id=%s: %v", job.ID, failErr)
 		}
 		return
 	}
+	// Talk delivery (stopped callback + recording upload) is retried with
+	// backoff but never fails the record stage: the recording is already
+	// safe in the canonical run bundle, so a Nextcloud hiccup must not
+	// strand it. Incomplete delivery leaves talk_delivered_at unset and
+	// rerun re-attempts it (D-352).
 	if talkState, ok := rt.lookupTalkJobState(job.ID); ok {
-		if err := rt.notifyTalkStopped(talkState); err != nil {
-			rt.logger.Printf("talk stopped callback failed id=%s: %v", job.ID, err)
-			if updateErr := rt.store.MarkRecordFailed(context.Background(), job.ID, err.Error(), result, finishedAt); updateErr != nil {
-				rt.logger.Printf("record fail update failed id=%s: %v", job.ID, updateErr)
-			}
-			return
-		}
-		recordingPath := filepath.Join(canonicalRunPath, "recording.mkv")
-		recordingName := talkRecordingUploadName(finishedAt)
-		if err := rt.uploadTalkRecording(talkState, recordingPath, recordingName); err != nil {
-			rt.logger.Printf("talk upload failed id=%s: %v", job.ID, err)
-			if updateErr := rt.store.MarkRecordFailed(context.Background(), job.ID, err.Error(), result, finishedAt); updateErr != nil {
-				rt.logger.Printf("record fail update failed id=%s: %v", job.ID, updateErr)
-			}
-			return
-		}
+		rt.deliverTalkRecording(job.ID, talkState, canonicalRunPath, finishedAt)
 	}
 	if err := rt.enqueueBuildJob(job.ID, job.CurrentAttemptNumber, canonicalRunPath, result.ArtifactRunPath, finishedAt); err != nil {
 		rt.logger.Printf("build queue update failed id=%s: %v", job.ID, err)
@@ -749,6 +763,11 @@ type Job struct {
 	PublishFinishedAt    *string `json:"publish_finished_at"`
 	InterruptedAt        *string `json:"interrupted_at"`
 	CompletedAt          *string `json:"completed_at"`
+	// TalkBinding is the persisted Talk room binding (backend URL, token,
+	// owner, actor) for jobs started through the Talk recording backend. It
+	// is internal plumbing for crash-safe delivery, not API surface.
+	TalkBinding     *string `json:"-"`
+	TalkDeliveredAt *string `json:"talk_delivered_at"`
 }
 
 func (s *Store) InsertQueuedJob(ctx context.Context, job Job) error {
@@ -854,7 +873,12 @@ WHERE job_id = ? AND attempt_number = ?`, requestedAt, signalSentAt, signalSentA
 	return nil
 }
 
-func (s *Store) UpdateRecordOutcome(ctx context.Context, id string, result recordResult, updatedAt string) error {
+// UpdateRecordOutcome persists the record stop metadata and — crucially for
+// crash/delivery durability (D-352) — the canonical run pointer as soon as
+// the promoted bundle exists. The pointer used to be written only when the
+// build was queued, so any failure between promotion and build-queue left a
+// fully recorded job that rerun rejected (409) forever.
+func (s *Store) UpdateRecordOutcome(ctx context.Context, id string, result recordResult, canonicalRunPath, updatedAt string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin record outcome update: %w", err)
@@ -866,8 +890,9 @@ UPDATE jobs
 SET stop_reason = ?,
     record_exit_code = ?,
     record_stop_detail = ?,
+    artifact_run_path = ?,
     updated_at = ?
-WHERE id = ?`, nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(result.StopDetail), updatedAt, id)
+WHERE id = ?`, nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(result.StopDetail), canonicalRunPath, updatedAt, id)
 	if err != nil {
 		return fmt.Errorf("update record outcome: %w", err)
 	}
@@ -880,8 +905,9 @@ UPDATE job_attempts
 SET stop_reason = ?,
     record_exit_code = ?,
     record_stop_detail = ?,
+    artifact_run_path = ?,
     updated_at = ?
-WHERE job_id = ? AND attempt_number = ?`, nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(result.StopDetail), updatedAt, id, attemptNumber); err != nil {
+WHERE job_id = ? AND attempt_number = ?`, nullableString(result.StopReason), intOrNil(result.ExitCode), nullableString(result.StopDetail), nullableString(result.ArtifactRunPath), updatedAt, id, attemptNumber); err != nil {
 		return fmt.Errorf("update attempt record outcome: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -1016,7 +1042,8 @@ SELECT id, provider, request_json, stage, state,
        record_queued_at, record_started_at, record_finished_at,
        build_queued_at, build_started_at, build_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
-       interrupted_at, completed_at
+       interrupted_at, completed_at,
+       talk_binding, talk_delivered_at
 FROM jobs
 ORDER BY created_at DESC, id DESC`)
 	if err != nil {
@@ -1051,7 +1078,8 @@ SELECT id, provider, request_json, stage, state,
        record_queued_at, record_started_at, record_finished_at,
        build_queued_at, build_started_at, build_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
-       interrupted_at, completed_at
+       interrupted_at, completed_at,
+       talk_binding, talk_delivered_at
 FROM jobs
 WHERE id = ?`, id)
 	job, err := scanJob(row)
@@ -1087,6 +1115,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 	var publishFinishedAt sql.NullString
 	var interruptedAt sql.NullString
 	var completedAt sql.NullString
+	var talkBinding sql.NullString
+	var talkDeliveredAt sql.NullString
 
 	err := scanner.Scan(
 		&job.ID,
@@ -1118,6 +1148,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&publishFinishedAt,
 		&interruptedAt,
 		&completedAt,
+		&talkBinding,
+		&talkDeliveredAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1146,6 +1178,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 	job.PublishFinishedAt = nullableStringPtr(publishFinishedAt)
 	job.InterruptedAt = nullableStringPtr(interruptedAt)
 	job.CompletedAt = nullableStringPtr(completedAt)
+	job.TalkBinding = nullableStringPtr(talkBinding)
+	job.TalkDeliveredAt = nullableStringPtr(talkDeliveredAt)
 	return job, nil
 }
 

@@ -1,11 +1,15 @@
 package operator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -457,12 +461,247 @@ func TestTalkRoomStartClearsRoomStateWhenJobFailsInstantly(t *testing.T) {
 	fakeTalk.assertEventTypes(t, []string{"failed"})
 }
 
+func TestTalkDeliveryRetriesTransientUploadFailure(t *testing.T) {
+	rt, cleanup, _, _ := newCLITestRuntime(t)
+	defer cleanup()
+	rt.cfg.TalkSharedSecret = "secret-123"
+	rt.talkRetryDelays = []time.Duration{10 * time.Millisecond}
+	fakeTalk := newFakeTalkServer(t)
+	defer fakeTalk.Close()
+	fakeTalk.setStoreFailures(1)
+
+	reqBody := `{"type":"start","start":{"owner":"chima","actor":{"type":"users","id":"chima"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/room/room123", strings.NewReader(reqBody))
+	req.Header.Set(talkRecordingBackendHeader, fakeTalk.server.URL)
+	req.Header.Set(talkRecordingRandomHeader, "random-seed")
+	req.Header.Set(talkRecordingChecksumHeader, talkChecksum(rt.cfg.TalkSharedSecret, "random-seed", []byte(reqBody)))
+	rec := httptest.NewRecorder()
+	rt.talkRoomHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	jobs, err := rt.store.ListJobs(req.Context())
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	job := waitForJobState(t, rt.store, jobs[0].ID, "succeeded")
+	if job.TalkBinding == nil || !strings.Contains(*job.TalkBinding, `"room_token":"room123"`) {
+		t.Fatalf("expected persisted talk binding, got %#v", job.TalkBinding)
+	}
+	if job.TalkDeliveredAt == nil {
+		t.Fatalf("expected talk_delivered_at after retried upload, got nil")
+	}
+	fakeTalk.assertEventTypes(t, []string{"started", "stopped"})
+	fakeTalk.assertUploadCount(t, 1)
+	if got := fakeTalk.storeRequestCount(); got != 2 {
+		t.Fatalf("store requests = %d, want 2 (one 500 + one retry)", got)
+	}
+}
+
+func TestTalkDeliveryFailureKeepsPipelineAndRerunRedelivers(t *testing.T) {
+	rt, cleanup, _, _ := newCLITestRuntime(t)
+	defer cleanup()
+	rt.cfg.TalkSharedSecret = "secret-123"
+	rt.talkRetryDelays = []time.Duration{time.Millisecond}
+	fakeTalk := newFakeTalkServer(t)
+	defer fakeTalk.Close()
+	fakeTalk.setStoreFailures(-1)
+
+	reqBody := `{"type":"start","start":{"owner":"chima","actor":{"type":"users","id":"chima"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/room/room123", strings.NewReader(reqBody))
+	req.Header.Set(talkRecordingBackendHeader, fakeTalk.server.URL)
+	req.Header.Set(talkRecordingRandomHeader, "random-seed")
+	req.Header.Set(talkRecordingChecksumHeader, talkChecksum(rt.cfg.TalkSharedSecret, "random-seed", []byte(reqBody)))
+	rec := httptest.NewRecorder()
+	rt.talkRoomHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	jobs, err := rt.store.ListJobs(req.Context())
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+
+	// A fully recorded job must not fail because Nextcloud rejected the
+	// upload: the pipeline continues to build/publish, the recording stays in
+	// the canonical run bundle, and talk_delivered_at stays unset.
+	job := waitForJobState(t, rt.store, jobs[0].ID, "succeeded")
+	if job.Stage != "done" {
+		t.Fatalf("stage = %q, want done", job.Stage)
+	}
+	if job.TalkDeliveredAt != nil {
+		t.Fatalf("expected talk_delivered_at to stay unset after failed delivery, got %#v", job.TalkDeliveredAt)
+	}
+	if got := fakeTalk.storeRequestCount(); got != 2 {
+		t.Fatalf("store requests = %d, want 2 (initial + one retry)", got)
+	}
+	fakeTalk.assertUploadCount(t, 0)
+
+	// Rerun re-delivers using the persisted binding once Nextcloud recovers.
+	fakeTalk.setStoreFailures(0)
+	rerunReq := httptest.NewRequest(http.MethodPost, "/jobs/"+job.ID+"/rerun", nil)
+	rerunRec := httptest.NewRecorder()
+	rt.jobDetailHandler(rerunRec, rerunReq)
+	if rerunRec.Code != http.StatusAccepted {
+		t.Fatalf("rerun status = %d, want %d body=%s", rerunRec.Code, http.StatusAccepted, rerunRec.Body.String())
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		current := mustGetJob(t, rt.store, job.ID)
+		if current.TalkDeliveredAt != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected rerun to redeliver the recording, job = %#v", current)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	_ = waitForJobState(t, rt.store, job.ID, "succeeded")
+	fakeTalk.assertUploadCount(t, 1)
+}
+
+func TestTalkStoppedCallbackTimeoutDoesNotWedgeJob(t *testing.T) {
+	rt, cleanup, _, _ := newCLITestRuntime(t)
+	defer cleanup()
+	rt.cfg.TalkSharedSecret = "secret-123"
+	rt.talkRetryDelays = []time.Duration{time.Millisecond}
+	rt.talkJSONClient = &http.Client{Timeout: 50 * time.Millisecond}
+	fakeTalk := newFakeTalkServer(t)
+	defer fakeTalk.Close()
+	fakeTalk.setStoppedDelay(300 * time.Millisecond)
+
+	reqBody := `{"type":"start","start":{"owner":"chima","actor":{"type":"users","id":"chima"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/room/room123", strings.NewReader(reqBody))
+	req.Header.Set(talkRecordingBackendHeader, fakeTalk.server.URL)
+	req.Header.Set(talkRecordingRandomHeader, "random-seed")
+	req.Header.Set(talkRecordingChecksumHeader, talkChecksum(rt.cfg.TalkSharedSecret, "random-seed", []byte(reqBody)))
+	rec := httptest.NewRecorder()
+	rt.talkRoomHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	jobs, err := rt.store.ListJobs(req.Context())
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+
+	// The stopped callback hangs server-side; the bounded client + retries
+	// must give up and let the pipeline finish instead of wedging the only
+	// record slot. Delivery stays incomplete for rerun to pick up.
+	job := waitForJobState(t, rt.store, jobs[0].ID, "succeeded")
+	if job.TalkDeliveredAt != nil {
+		t.Fatalf("expected incomplete delivery after stopped-callback timeouts, got %#v", job.TalkDeliveredAt)
+	}
+	fakeTalk.assertUploadCount(t, 0)
+}
+
+func TestUploadTalkRecordingCancelsStalledUpload(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.talkUploadStall = 100 * time.Millisecond
+
+	release := make(chan struct{})
+	var once sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Never read the request body: the upload stalls once the socket
+		// buffers fill, and the watchdog must cancel it.
+		<-release
+	}))
+	defer server.Close()
+	defer once.Do(func() { close(release) })
+
+	recordingPath := filepath.Join(t.TempDir(), "recording.mkv")
+	if err := os.WriteFile(recordingPath, bytes.Repeat([]byte("x"), 8<<20), 0o644); err != nil {
+		t.Fatalf("write fixture recording: %v", err)
+	}
+
+	start := time.Now()
+	err := rt.uploadTalkRecording(talkRoomState{
+		BackendURL: server.URL,
+		RoomToken:  "room123",
+		Owner:      "chima",
+	}, recordingPath, "recording.mkv")
+	once.Do(func() { close(release) })
+	if err == nil {
+		t.Fatal("expected stalled upload to fail")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("stalled upload took %s to cancel, want well under the test deadline", elapsed)
+	}
+}
+
+func TestTalkUploadContentLengthMatchesEncodedBody(t *testing.T) {
+	const owner = "chima"
+	const uploadName = "recording-20260612T000000.000000000Z.mkv"
+	payload := "0123456789abcdef"
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := streamTalkUpload(writer, owner, uploadName, strings.NewReader(payload)); err != nil {
+		t.Fatalf("streamTalkUpload() error = %v", err)
+	}
+	got, err := talkUploadContentLength(writer.Boundary(), owner, uploadName, int64(len(payload)))
+	if err != nil {
+		t.Fatalf("talkUploadContentLength() error = %v", err)
+	}
+	if want := int64(body.Len()); got != want {
+		t.Fatalf("content length = %d, want %d", got, want)
+	}
+}
+
+func TestNotifyInterruptedTalkRecordingsSendsFailedCallback(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.TalkSharedSecret = "secret-123"
+	rt.talkRetryDelays = []time.Duration{time.Millisecond}
+	fakeTalk := newFakeTalkServer(t)
+	defer fakeTalk.Close()
+
+	// A recording was running when the operator died: the job row survives
+	// with its persisted Talk binding, spreed still believes the room is
+	// recording.
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "talk-interrupted", Stage: "record", State: "running", CreatedAt: "2026-06-12T10:00:00Z"})
+	binding := `{"backend_url":"` + fakeTalk.server.URL + `","room_token":"room123","owner":"chima"}`
+	if err := rt.store.SetJobTalkBinding(context.Background(), "talk-interrupted", binding); err != nil {
+		t.Fatalf("SetJobTalkBinding() error = %v", err)
+	}
+
+	interruptedAt := nowUTCString()
+	count, err := rt.store.MarkIncompleteJobsInterrupted(context.Background(), interruptedAt)
+	if err != nil {
+		t.Fatalf("MarkIncompleteJobsInterrupted() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("interrupted count = %d, want 1", count)
+	}
+
+	rt.NotifyInterruptedTalkRecordings(interruptedAt)
+	fakeTalk.assertEventTypes(t, []string{"failed"})
+}
+
 type fakeTalkServer struct {
 	server  *httptest.Server
 	mu      sync.Mutex
 	events  []string
 	uploads int
 	files   []string
+	// storeFailures injects HTTP 500 responses on the store (upload)
+	// endpoint: n > 0 fails the next n requests, -1 fails every request.
+	storeFailures int
+	storeRequests int
+	// stoppedDelay holds "stopped" callbacks open before responding, to
+	// exercise the client-side timeout.
+	stoppedDelay time.Duration
 }
 
 func newFakeTalkServer(t *testing.T) *fakeTalkServer {
@@ -471,45 +710,66 @@ func newFakeTalkServer(t *testing.T) *fakeTalkServer {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ocs/v2.php/apps/spreed/api/v1/recording/backend", func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get(talkRecordingRandomHeader); len(got) < 32 {
-			t.Fatalf("%s length = %d, want >= 32", talkRecordingRandomHeader, len(got))
+			t.Errorf("%s length = %d, want >= 32", talkRecordingRandomHeader, len(got))
 		}
 		if r.Header.Get(talkRecordingRandomHeader) == "" {
-			t.Fatalf("missing %s header", talkRecordingRandomHeader)
+			t.Errorf("missing %s header", talkRecordingRandomHeader)
 		}
 		if r.Header.Get(talkRecordingChecksumHeader) == "" {
-			t.Fatalf("missing %s header", talkRecordingChecksumHeader)
+			t.Errorf("missing %s header", talkRecordingChecksumHeader)
 		}
 		body, _ := io.ReadAll(r.Body)
 		var payload map[string]any
 		if err := json.Unmarshal(body, &payload); err != nil {
-			t.Fatalf("decode backend payload: %v", err)
+			t.Errorf("decode backend payload: %v", err)
 		}
 		eventType, _ := payload["type"].(string)
 		ft.mu.Lock()
 		ft.events = append(ft.events, eventType)
+		stoppedDelay := ft.stoppedDelay
 		ft.mu.Unlock()
+		if eventType == "stopped" && stoppedDelay > 0 {
+			time.Sleep(stoppedDelay)
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ocs":{"meta":{"status":"ok","statuscode":200,"message":"OK"},"data":[]}}`))
 	})
 	mux.HandleFunc("/ocs/v2.php/apps/spreed/api/v1/recording/room123/store", func(w http.ResponseWriter, r *http.Request) {
+		ft.mu.Lock()
+		ft.storeRequests++
+		fail := ft.storeFailures != 0
+		if ft.storeFailures > 0 {
+			ft.storeFailures--
+		}
+		ft.mu.Unlock()
+		if fail {
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		if got := r.Header.Get(talkRecordingRandomHeader); len(got) < 32 {
-			t.Fatalf("%s length = %d, want >= 32", talkRecordingRandomHeader, len(got))
+			t.Errorf("%s length = %d, want >= 32", talkRecordingRandomHeader, len(got))
 		}
 		if r.Header.Get(talkRecordingRandomHeader) == "" {
-			t.Fatalf("missing %s header", talkRecordingRandomHeader)
+			t.Errorf("missing %s header", talkRecordingRandomHeader)
 		}
 		if r.Header.Get(talkRecordingChecksumHeader) == "" {
-			t.Fatalf("missing %s header", talkRecordingChecksumHeader)
+			t.Errorf("missing %s header", talkRecordingChecksumHeader)
+		}
+		if r.ContentLength <= 0 {
+			t.Errorf("upload Content-Length = %d, want > 0", r.ContentLength)
 		}
 		if err := r.ParseMultipartForm(1 << 20); err != nil {
-			t.Fatalf("parse multipart: %v", err)
+			t.Errorf("parse multipart: %v", err)
 		}
 		if got := r.FormValue("owner"); got != "chima" {
-			t.Fatalf("owner = %q, want chima", got)
+			t.Errorf("owner = %q, want chima", got)
 		}
 		file, header, err := r.FormFile("file")
 		if err != nil {
-			t.Fatalf("form file: %v", err)
+			t.Errorf("form file: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
 		_, _ = io.ReadAll(file)
 		_ = file.Close()
@@ -526,6 +786,24 @@ func newFakeTalkServer(t *testing.T) *fakeTalkServer {
 
 func (f *fakeTalkServer) Close() {
 	f.server.Close()
+}
+
+func (f *fakeTalkServer) setStoreFailures(n int) {
+	f.mu.Lock()
+	f.storeFailures = n
+	f.mu.Unlock()
+}
+
+func (f *fakeTalkServer) setStoppedDelay(d time.Duration) {
+	f.mu.Lock()
+	f.stoppedDelay = d
+	f.mu.Unlock()
+}
+
+func (f *fakeTalkServer) storeRequestCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.storeRequests
 }
 
 func (f *fakeTalkServer) assertEventTypes(t *testing.T, want []string) {

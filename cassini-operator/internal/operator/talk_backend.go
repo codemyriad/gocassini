@@ -2,6 +2,7 @@ package operator
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -12,9 +13,12 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"time"
 )
 
 // talkRandomBytes is the byte length of the per-request random value sent
@@ -41,6 +45,29 @@ const (
 	talkRecordingRandomOCSHeader   = "TALK_RECORDING_RANDOM"
 	talkRecordingChecksumOCSHeader = "TALK_RECORDING_CHECKSUM"
 )
+
+// Talk delivery runs while the only record slot is still held, so every
+// request to Nextcloud must be bounded: one hung connection through
+// http.DefaultClient used to wedge all recording capacity until restart
+// (D-352).
+const (
+	// talkJSONRequestTimeout bounds the small JSON callbacks
+	// (started/stopped/failed) end to end.
+	talkJSONRequestTimeout = 30 * time.Second
+	// talkUploadResponseHeaderTimeout bounds how long Nextcloud may take to
+	// answer after the recording body has been fully uploaded (it moves the
+	// file into the owner's storage before responding).
+	talkUploadResponseHeaderTimeout = 5 * time.Minute
+	// talkUploadStallGrace is how long the upload body may make no progress
+	// before the stall watchdog cancels the request; an overall timeout
+	// would cap legitimate long uploads of big recordings.
+	talkUploadStallGrace = 2 * time.Minute
+)
+
+// talkDeliveryRetryDelays is the bounded backoff schedule for delivery
+// requests; transient failures (transport errors, 5xx) are retried, 4xx
+// responses are definitive.
+var talkDeliveryRetryDelays = []time.Duration{2 * time.Second, 10 * time.Second, 30 * time.Second}
 
 type talkWelcomeResponse struct {
 	Version int `json:"version"`
@@ -256,6 +283,14 @@ func (rt *Runtime) handleTalkStart(w http.ResponseWriter, r *http.Request, auth 
 	// race past this bind, leaving a permanently stale "already recording"
 	// room entry (D-364).
 	rt.bindTalkRoomJob(state, resp.ID)
+	// Persist the binding so a restart mid-recording can still clean up the
+	// spreed room state and a rerun can re-deliver the recording (D-352).
+	// Failure to persist degrades recovery but must not block the start.
+	if bindingJSON, err := encodeTalkBinding(state); err != nil {
+		rt.logger.Printf("talk binding encode failed id=%s: %v", resp.ID, err)
+	} else if err := rt.store.SetJobTalkBinding(r.Context(), resp.ID, bindingJSON); err != nil {
+		rt.logger.Printf("talk binding persist failed id=%s: %v", resp.ID, err)
+	}
 	startRecord()
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
@@ -485,23 +520,69 @@ func (rt *Runtime) postTalkJSON(backendURL, path string, payload any) error {
 	req.Header.Set("OCS-ApiRequest", "true")
 	req.Header.Set(talkRecordingRandomHeader, random)
 	req.Header.Set(talkRecordingChecksumHeader, talkChecksum(rt.cfg.TalkSharedSecret, random, body))
-	return rt.doTalkRequest(req)
+	return rt.doTalkRequest(rt.talkJSONClient, req)
 }
 
+// uploadTalkRecording streams the recording to spreed's store endpoint. The
+// multipart body is piped instead of buffered — buffering the whole MKV in
+// memory was an OOM on the success path of long recordings (D-352) — with
+// the exact Content-Length precomputed so the request stays
+// protocol-compatible (the checksum covers only the room token, matching the
+// reference nextcloud-talk-recording uploader). A stall watchdog cancels the
+// request when no body bytes move for talkUploadStall; once the body is
+// fully written, the client's ResponseHeaderTimeout bounds the wait.
 func (rt *Runtime) uploadTalkRecording(state talkRoomState, filePath, uploadName string) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("open recording for upload: %w", err)
 	}
 	defer file.Close()
-
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	if err := writer.WriteField("owner", state.Owner); err != nil {
-		return fmt.Errorf("write upload owner field: %w", err)
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat recording for upload: %w", err)
 	}
 	if uploadName == "" {
 		uploadName = filepath.Base(filePath)
+	}
+
+	pipeReader, pipeWriter := io.Pipe()
+	writer := multipart.NewWriter(pipeWriter)
+	contentLength, err := talkUploadContentLength(writer.Boundary(), state.Owner, uploadName, info.Size())
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	activity := newUploadActivity()
+	watchdogDone := make(chan struct{})
+	defer close(watchdogDone)
+	go watchUploadActivity(activity, rt.talkUploadStall, cancel, watchdogDone)
+
+	go func() {
+		pipeWriter.CloseWithError(streamTalkUpload(writer, state.Owner, uploadName, file))
+	}()
+
+	random := talkRandom()
+	endpoint := strings.TrimRight(state.BackendURL, "/") + "/ocs/v2.php/apps/spreed/api/v1/recording/" + state.RoomToken + "/store"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &uploadActivityReader{reader: pipeReader, activity: activity})
+	if err != nil {
+		return fmt.Errorf("build recording upload request: %w", err)
+	}
+	req.ContentLength = contentLength
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("OCS-ApiRequest", "true")
+	req.Header.Set(talkRecordingRandomHeader, random)
+	req.Header.Set(talkRecordingChecksumHeader, talkChecksum(rt.cfg.TalkSharedSecret, random, []byte(state.RoomToken)))
+	return rt.doTalkRequest(rt.talkUploadClient, req)
+}
+
+// streamTalkUpload writes the multipart upload body; it runs in a goroutine
+// feeding the request pipe and must produce exactly the bytes
+// talkUploadContentLength accounted for.
+func streamTalkUpload(writer *multipart.Writer, owner, uploadName string, file io.Reader) error {
+	if err := writer.WriteField("owner", owner); err != nil {
+		return fmt.Errorf("write upload owner field: %w", err)
 	}
 	part, err := writer.CreateFormFile("file", uploadName)
 	if err != nil {
@@ -513,28 +594,272 @@ func (rt *Runtime) uploadTalkRecording(state talkRoomState, filePath, uploadName
 	if err := writer.Close(); err != nil {
 		return fmt.Errorf("close multipart writer: %w", err)
 	}
-
-	random := talkRandom()
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(state.BackendURL, "/")+"/ocs/v2.php/apps/spreed/api/v1/recording/"+state.RoomToken+"/store", &body)
-	if err != nil {
-		return fmt.Errorf("build recording upload request: %w", err)
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("OCS-ApiRequest", "true")
-	req.Header.Set(talkRecordingRandomHeader, random)
-	req.Header.Set(talkRecordingChecksumHeader, talkChecksum(rt.cfg.TalkSharedSecret, random, []byte(state.RoomToken)))
-	return rt.doTalkRequest(req)
+	return nil
 }
 
-func (rt *Runtime) doTalkRequest(req *http.Request) error {
-	resp, err := http.DefaultClient.Do(req)
+// talkUploadContentLength precomputes the multipart body size: the framing
+// around an empty file part (using the same boundary and field names as the
+// streamed body) plus the file size.
+func talkUploadContentLength(boundary, owner, uploadName string, fileSize int64) (int64, error) {
+	var framing bytes.Buffer
+	writer := multipart.NewWriter(&framing)
+	if err := writer.SetBoundary(boundary); err != nil {
+		return 0, fmt.Errorf("set upload boundary: %w", err)
+	}
+	if err := streamTalkUpload(writer, owner, uploadName, strings.NewReader("")); err != nil {
+		return 0, err
+	}
+	return int64(framing.Len()) + fileSize, nil
+}
+
+// uploadActivity tracks progress of the streamed upload body so the watchdog
+// can tell a slow-but-moving upload from a stalled connection.
+type uploadActivity struct {
+	lastReadNS atomic.Int64
+	bodyDone   atomic.Bool
+}
+
+func newUploadActivity() *uploadActivity {
+	activity := &uploadActivity{}
+	activity.touch()
+	return activity
+}
+
+func (a *uploadActivity) touch() {
+	a.lastReadNS.Store(time.Now().UnixNano())
+}
+
+func (a *uploadActivity) idleFor() time.Duration {
+	return time.Duration(time.Now().UnixNano() - a.lastReadNS.Load())
+}
+
+// uploadActivityReader is the request body: the transport reads from it as
+// fast as the connection drains, so successful reads are a progress signal.
+type uploadActivityReader struct {
+	reader   io.Reader
+	activity *uploadActivity
+}
+
+func (r *uploadActivityReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		r.activity.touch()
+	}
+	if errors.Is(err, io.EOF) {
+		r.activity.bodyDone.Store(true)
+	}
+	return n, err
+}
+
+// watchUploadActivity cancels a stalled upload: no body progress for the
+// stall grace while the body is still being streamed. After the body is
+// fully written it exits and leaves the response wait to the client's
+// ResponseHeaderTimeout.
+func watchUploadActivity(activity *uploadActivity, stall time.Duration, cancel context.CancelFunc, done <-chan struct{}) {
+	if stall <= 0 {
+		return
+	}
+	ticker := time.NewTicker(stall / 4)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			if activity.bodyDone.Load() {
+				return
+			}
+			if activity.idleFor() >= stall {
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+// talkHTTPError is a non-2xx response from Nextcloud; only 5xx responses are
+// worth retrying.
+type talkHTTPError struct {
+	Status int
+	Body   string
+}
+
+func (e *talkHTTPError) Error() string {
+	return fmt.Sprintf("talk request failed: HTTP %d: %s", e.Status, e.Body)
+}
+
+func isRetryableTalkError(err error) bool {
+	var httpErr *talkHTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.Status >= 500
+	}
+	// Transport-level failures (timeouts, refused/stalled connections) are
+	// retryable; anything else (local file errors, request building) is not.
+	var urlErr *url.Error
+	return errors.As(err, &urlErr)
+}
+
+// withTalkRetry runs fn with the runtime's bounded backoff schedule. 4xx
+// responses are definitive and returned immediately.
+func (rt *Runtime) withTalkRetry(jobID, op string, fn func() error) error {
+	var err error
+	for attempt := 0; ; attempt++ {
+		if err = fn(); err == nil {
+			return nil
+		}
+		if attempt >= len(rt.talkRetryDelays) || !isRetryableTalkError(err) {
+			return err
+		}
+		delay := rt.talkRetryDelays[attempt]
+		rt.logger.Printf("talk %s failed id=%s (attempt %d/%d): %v; retrying in %s", op, jobID, attempt+1, len(rt.talkRetryDelays)+1, err, delay)
+		time.Sleep(delay)
+	}
+}
+
+func (rt *Runtime) doTalkRequest(client *http.Client, req *http.Request) error {
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("talk request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("talk request failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return &talkHTTPError{Status: resp.StatusCode, Body: strings.TrimSpace(string(body))}
 	}
 	return nil
+}
+
+// talkJobBinding is the durable subset of talkRoomState persisted on the
+// jobs row, so an operator restart mid-recording can still clean up the
+// spreed room state and a rerun can re-deliver the recording (D-352). The
+// in-memory binding alone meant a restart left the room stuck "recording"
+// and orphaned the upload forever.
+type talkJobBinding struct {
+	BackendURL string         `json:"backend_url"`
+	RoomToken  string         `json:"room_token"`
+	Owner      string         `json:"owner"`
+	Status     int            `json:"status,omitempty"`
+	StartActor *talkActorData `json:"start_actor,omitempty"`
+}
+
+func encodeTalkBinding(state *talkRoomState) (string, error) {
+	body, err := json.Marshal(talkJobBinding{
+		BackendURL: state.BackendURL,
+		RoomToken:  state.RoomToken,
+		Owner:      state.Owner,
+		Status:     state.Status,
+		StartActor: state.StartActor,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode talk binding: %w", err)
+	}
+	return string(body), nil
+}
+
+func decodeTalkBinding(raw string) (talkRoomState, error) {
+	var binding talkJobBinding
+	if err := json.Unmarshal([]byte(raw), &binding); err != nil {
+		return talkRoomState{}, fmt.Errorf("decode talk binding: %w", err)
+	}
+	if strings.TrimSpace(binding.BackendURL) == "" || strings.TrimSpace(binding.RoomToken) == "" {
+		return talkRoomState{}, errors.New("talk binding is missing backend URL or room token")
+	}
+	return talkRoomState{
+		BackendURL: binding.BackendURL,
+		RoomToken:  binding.RoomToken,
+		Owner:      binding.Owner,
+		Status:     binding.Status,
+		StartActor: binding.StartActor,
+	}, nil
+}
+
+// deliverTalkRecording sends spreed the stopped callback and uploads the
+// recording, both with bounded retries. Failures are logged but never fail
+// the record stage: the recording is already safe in the canonical run
+// bundle, the pipeline continues to build/publish, and a rerun re-attempts
+// delivery while talk_delivered_at is unset (D-352).
+func (rt *Runtime) deliverTalkRecording(jobID string, state talkRoomState, runPath, finishedAt string) {
+	if err := rt.withTalkRetry(jobID, "stopped callback", func() error {
+		return rt.notifyTalkStopped(state)
+	}); err != nil {
+		rt.logger.Printf("talk stopped callback failed id=%s: %v (rerun re-attempts delivery)", jobID, err)
+		return
+	}
+	rt.uploadAndMarkTalkDelivered(jobID, state, runPath, finishedAt)
+}
+
+func (rt *Runtime) uploadAndMarkTalkDelivered(jobID string, state talkRoomState, runPath, finishedAt string) {
+	recordingPath := filepath.Join(runPath, "recording.mkv")
+	uploadName := talkRecordingUploadName(finishedAt)
+	if err := rt.withTalkRetry(jobID, "recording upload", func() error {
+		return rt.uploadTalkRecording(state, recordingPath, uploadName)
+	}); err != nil {
+		rt.logger.Printf("talk upload failed id=%s recording=%s: %v (rerun re-attempts delivery)", jobID, recordingPath, err)
+		return
+	}
+	if err := rt.store.MarkTalkDelivered(context.Background(), jobID, nowUTCString()); err != nil {
+		rt.logger.Printf("talk delivered update failed id=%s: %v", jobID, err)
+	}
+}
+
+// redeliverTalkRecording re-runs Talk delivery during a rerun of a job whose
+// recording never reached Nextcloud (delivery failure or operator restart).
+// The stopped callback is best-effort here — spreed's room state has usually
+// been cleaned up already by the startup failed callback or a moderator stop
+// — the upload is what matters.
+func (rt *Runtime) redeliverTalkRecording(job Job) {
+	if job.TalkBinding == nil || job.TalkDeliveredAt != nil {
+		return
+	}
+	state, err := decodeTalkBinding(*job.TalkBinding)
+	if err != nil {
+		rt.logger.Printf("talk redelivery skipped id=%s: %v", job.ID, err)
+		return
+	}
+	if job.ArtifactRunPath == nil || strings.TrimSpace(*job.ArtifactRunPath) == "" {
+		return
+	}
+	runPath := *job.ArtifactRunPath
+	if _, err := os.Stat(filepath.Join(runPath, "recording.mkv")); err != nil {
+		rt.logger.Printf("talk redelivery skipped id=%s: %v", job.ID, err)
+		return
+	}
+	if err := rt.withTalkRetry(job.ID, "stopped callback", func() error {
+		return rt.notifyTalkStopped(state)
+	}); err != nil {
+		rt.logger.Printf("talk stopped callback failed during redelivery id=%s: %v", job.ID, err)
+	}
+	finishedAt := ""
+	if job.RecordFinishedAt != nil {
+		finishedAt = *job.RecordFinishedAt
+	}
+	rt.uploadAndMarkTalkDelivered(job.ID, state, runPath, finishedAt)
+}
+
+// NotifyInterruptedTalkRecordings tells spreed that recordings interrupted
+// by an operator restart failed. Without it the room stays "recording"
+// forever, surfacing only as RECORDING_FAILED when a moderator eventually
+// clicks stop (D-352/D-362). Only jobs interrupted by the current startup
+// sweep are notified, so older history cannot clobber a newer recording in
+// the same room.
+func (rt *Runtime) NotifyInterruptedTalkRecordings(interruptedAt string) {
+	jobs, err := rt.store.ListInterruptedTalkRecordJobs(context.Background(), interruptedAt)
+	if err != nil {
+		rt.logger.Printf("list interrupted talk jobs failed: %v", err)
+		return
+	}
+	for _, job := range jobs {
+		state, err := decodeTalkBinding(job.Binding)
+		if err != nil {
+			rt.logger.Printf("talk failed callback skipped id=%s: %v", job.ID, err)
+			continue
+		}
+		if err := rt.withTalkRetry(job.ID, "failed callback", func() error {
+			return rt.notifyTalkFailed(state)
+		}); err != nil {
+			rt.logger.Printf("talk failed callback for interrupted job failed id=%s room=%s: %v", job.ID, state.RoomToken, err)
+			continue
+		}
+		rt.logger.Printf("talk failed callback sent for interrupted job id=%s room=%s", job.ID, state.RoomToken)
+	}
 }
