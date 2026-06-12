@@ -18,7 +18,11 @@ default_signaling_url() {
   echo "http://127.0.0.1:28082"
 }
 
-NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://127.0.0.1:28080}"
+# Follows NEXTCLOUD_HOST_PORT (compose.yml's published-port variable) so
+# scripts that re-scope the host port — ci-e2e-talk-record-roundtrip.sh
+# exports a per-run port to dodge stale-run collisions (gh issue #51) —
+# get a matching URL in every callee that sources this file.
+NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://127.0.0.1:${NEXTCLOUD_HOST_PORT:-28080}}"
 NEXTCLOUD_STATUS_URL="${NEXTCLOUD_STATUS_URL:-$NEXTCLOUD_URL/status.php}"
 
 ADMIN_USER="${ADMIN_USER:-admin}"

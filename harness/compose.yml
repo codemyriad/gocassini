@@ -35,7 +35,11 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "28080:80"
+      # Default 28080 for local/manual use. CI e2e runs that bring up a
+      # throwaway PID-scoped project (ci-e2e-talk-record-roundtrip.sh)
+      # export a run-scoped port instead so a leaked stack from an older
+      # cancelled run can never hold the port hostage (gh issue #51).
+      - "${NEXTCLOUD_HOST_PORT:-28080}:80"
     volumes:
       - nextcloud_data:/var/www/html
       # Mounted so AppAPI's "docker-install" daemon can pull images and
@@ -107,7 +111,10 @@ services:
       - janus
       - nextcloud
     volumes:
-      - ./config/signaling.conf:/config/server.conf:ro
+      # The signaling server whitelists Nextcloud backend URLs; the stock
+      # config pins port 28080. Runs that re-scope NEXTCLOUD_HOST_PORT
+      # render a per-run copy and point SIGNALING_CONF at it.
+      - ${SIGNALING_CONF:-./config/signaling.conf}:/config/server.conf:ro
 
   coturn:
     image: coturn/coturn:4.6-alpine

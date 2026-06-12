@@ -26,9 +26,13 @@
 #      Talk store → build → publish)
 #   7. Read the published transcript from the gocassini container
 #      (/srv/cassini-site/published/meeting-*/transcript.words.v1.json)
-#   8. Levenshtein-check against the scenario's expected text
+#   8. Read the uploaded recording back from the room owner's Nextcloud
+#      files over WebDAV (spreed stores it under
+#      <attachment folder>/Recording/<room token>/) and assert existence,
+#      .mkv extension and a sane minimum size
+#   9. Levenshtein-check against the scenario's expected text
 #
-# Status: draft. Phases 1-4 are scripted; 5-8 need iteration. Each phase
+# Status: draft. Phases 1-4 are scripted; 5-9 need iteration. Each phase
 # is gated so partial runs surface useful debug instead of cascading
 # failures.
 
@@ -55,10 +59,28 @@ SCENARIO_MEDIA_DIR="${SCENARIO_MEDIA_DIR:-$HARNESS_DIR/media/processed/showcase-
 RECORD_DURATION_SECONDS="${RECORD_DURATION_SECONDS:-40}"
 MIN_LEVENSHTEIN="${MIN_LEVENSHTEIN:-0.40}"
 
-NEXTCLOUD_HOST_PORT="${NEXTCLOUD_HOST_PORT:-28080}"
+# Host port for Nextcloud. Run-scoped by default (28100-28999, derived
+# from the PID like PROJECT_NAME) so a leaked stack from an older,
+# cancelled run can never block bringup with "port is already allocated"
+# (gh issue #51). The stale-run sweep below removes such leaks anyway;
+# the run-scoped port is belt-and-braces on top of it. The exported value
+# flows into compose.yml's "${NEXTCLOUD_HOST_PORT:-28080}:80" mapping and
+# into common.sh's NEXTCLOUD_URL default for callees (bootstrap.sh,
+# stream-synthetic-meeting.sh). Other harness flows keep the stock 28080.
+NEXTCLOUD_HOST_PORT="${NEXTCLOUD_HOST_PORT:-$(( 28100 + $$ % 900 ))}"
+export NEXTCLOUD_HOST_PORT
 CONTAINER_NAME="${CONTAINER_NAME:-cassini-talk-rec-e2e-app}"
 LOG_DIR="${LOG_DIR:-/tmp/cassini-talk-rec-e2e-$$}"
 mkdir -p "$LOG_DIR"
+
+# The standalone signaling server only accepts sessions for backend URLs
+# in its allowlist; the stock config pins port 28080. Render a per-run
+# copy with our run-scoped port; compose.yml mounts it via
+# ${SIGNALING_CONF:-./config/signaling.conf}.
+SIGNALING_CONF="$LOG_DIR/signaling.conf"
+sed "s|:28080\$|:${NEXTCLOUD_HOST_PORT}|" \
+  "$HARNESS_DIR/config/signaling.conf" >"$SIGNALING_CONF"
+export SIGNALING_CONF
 
 log()  { printf '[talk-rec-e2e] %s\n' "$*"; }
 fail() { log "FAIL: $*"; exit 1; }
@@ -92,6 +114,10 @@ TALK_BACKEND_URL_INTERNAL=""
 cleanup() {
   local rc=$?
   log "cleanup (rc=$rc)"
+  # Stop the bot streamer first so it doesn't keep dialing a dying stack.
+  if [[ -n "${BOT_PID:-}" ]]; then
+    kill "$BOT_PID" >/dev/null 2>&1 || true
+  fi
   docker logs "$CONTAINER_NAME" >"$LOG_DIR/cassini-exapp.log" 2>&1 || true
   compose logs nextcloud >"$LOG_DIR/nextcloud.log" 2>&1 || true
   compose logs signaling >"$LOG_DIR/signaling.log" 2>&1 || true
@@ -113,6 +139,59 @@ cleanup() {
   compose down --volumes >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+# A cancelled CI run delivers SIGINT (then SIGTERM) to the job's process
+# group. Without handlers bash dies on the signal WITHOUT running the EXIT
+# trap, and the restart: unless-stopped compose stack leaks (gh issue #51).
+# `exit` inside a signal trap fires the EXIT trap exactly once; the
+# stale-run sweep below is the backstop for the case where the runner
+# SIGKILLs us before cleanup finishes.
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# ---- Stale-run sweep (gh issue #51) ----------------------------------------
+# PROJECT_NAME is PID-scoped, the compose services are restart:
+# unless-stopped, and a hard-cancelled run never finishes its cleanup trap.
+# The leaked project outlives the run and — because the next run gets a
+# fresh PID — no later `compose down` ever reaps it; one such leak held
+# host port 28080 on the GPU runner for 11 days. Sweep every container
+# matching our naming prefix or compose-project label, plus the matching
+# compose networks/volumes, BEFORE bringing anything up.
+#
+# Safety: this cannot kill a concurrently-running sibling job. A GitHub
+# runner process executes one job at a time (ubuntu-latest VMs are
+# ephemeral and single-job; the self-hosted GPU box runs a single runner
+# process, and GPU work is additionally serialized via the george-gpu
+# concurrency group), and the sweep runs before this run creates anything
+# — so every match is by definition debris from a previous, dead run. If
+# you run two roundtrips concurrently on a workstation that assumption
+# breaks: skip the sweep with CASSINI_E2E_SKIP_SWEEP=1.
+sweep_stale_runs() {
+  local stale
+  stale=$(
+    {
+      # By container name: compose services (cassini-talk-rec-e2e-<pid>-*)
+      # and the fixed-name exapp container (cassini-talk-rec-e2e-app).
+      docker ps -aq --filter "name=cassini-talk-rec-e2e-" 2>/dev/null
+      # By compose project label: catches services with a fixed
+      # container_name that doesn't carry the project prefix (appapi-harp).
+      docker ps -a --format '{{.ID}}\t{{.Label "com.docker.compose.project"}}' 2>/dev/null \
+        | awk -F'\t' '$2 ~ /^cassini-talk-rec-e2e-/ {print $1}'
+    } | sort -u
+  ) || true
+  if [[ -n "$stale" ]]; then
+    log "sweeping stale e2e containers from previous runs: $(tr '\n' ' ' <<<"$stale")"
+    xargs -r docker rm -f <<<"$stale" >/dev/null 2>&1 || true
+  fi
+  docker network ls --format '{{.Name}}' 2>/dev/null \
+    | grep -E '^cassini-talk-rec-e2e-' \
+    | xargs -r docker network rm >/dev/null 2>&1 || true
+  docker volume ls -q 2>/dev/null \
+    | grep -E '^cassini-talk-rec-e2e-' \
+    | xargs -r docker volume rm >/dev/null 2>&1 || true
+}
+if [[ "${CASSINI_E2E_SKIP_SWEEP:-0}" != "1" ]]; then
+  sweep_stale_runs
+fi
 
 # ============================================================================
 # Phase 1: bring up Nextcloud + Talk signaling stack (compose full profile)
@@ -407,9 +486,91 @@ log "OK transcript pulled: $TRANSCRIPT_HOST ($(wc -c <"$TRANSCRIPT_HOST") bytes)
 wait "$BOT_PID" 2>/dev/null || true
 
 # ============================================================================
-# Phase 8: Levenshtein-check transcript vs scenario expected text
+# Phase 8: read the uploaded MKV back from the owner's Nextcloud files
 # ============================================================================
-phase 8 "Levenshtein-check transcript vs scenario expected text"
+phase 8 "Assert the uploaded MKV landed in the owner's Nextcloud files (WebDAV)"
+
+# The operator uploads the recording to Talk's OCS store endpoint with
+# owner=<the user that hit the OCS recording-start endpoint in phase 6>,
+# i.e. admin. spreed files recordings into the owner's Talk attachment
+# folder: <attachment folder>/Recording/<room token>/<upload name>,
+# defaulting to /Talk/Recording/<token>/ (spreed lib/Config.php
+# getRecordingFolder() + lib/Service/RecordingService.php). Phase 7
+# already waited for publish, which the operator sequences strictly after
+# the Talk-store upload, so no polling here: the file either landed or
+# the user-visible contract regressed (misfiled, wrong owner, zero
+# bytes) even though the record stage reported success.
+RECORDING_OWNER="${RECORDING_OWNER:-admin}"
+RECORDING_OWNER_PASSWORD="${RECORDING_OWNER_PASSWORD:-admin}"
+MIN_RECORDING_BYTES="${MIN_RECORDING_BYTES:-10000}"
+DAV_RECORDING_DIR="$NC_URL_HOST/remote.php/dav/files/$RECORDING_OWNER/Talk/Recording/$ROOM_TOKEN"
+
+DAV_PROPFIND="$LOG_DIR/dav-recording-propfind.xml"
+DAV_STATUS=$(curl -s -o "$DAV_PROPFIND" -w '%{http_code}' \
+  -u "$RECORDING_OWNER:$RECORDING_OWNER_PASSWORD" \
+  -X PROPFIND -H "Depth: 1" -H "Content-Type: application/xml" \
+  --data '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:getcontentlength/></d:prop></d:propfind>' \
+  "$DAV_RECORDING_DIR/" || true)
+if [[ "$DAV_STATUS" != "207" ]]; then
+  sed 's/^/    /' "$DAV_PROPFIND" 2>/dev/null | head -n 20 || true
+  fail "PROPFIND $DAV_RECORDING_DIR/ returned HTTP $DAV_STATUS — recording never landed in ${RECORDING_OWNER}'s files"
+fi
+
+MKV_ENTRY=$(python3 - "$DAV_PROPFIND" "$MIN_RECORDING_BYTES" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+propfind_path, min_bytes = sys.argv[1], int(sys.argv[2])
+ns = {"d": "DAV:"}
+mkvs = []
+for resp in ET.parse(propfind_path).getroot().findall("d:response", ns):
+    href = (resp.findtext("d:href", "", ns) or "").strip()
+    if not href.lower().endswith(".mkv"):
+        continue
+    sizes = [
+        int(el.text)
+        for el in resp.iter("{DAV:}getcontentlength")
+        if (el.text or "").strip().isdigit()
+    ]
+    mkvs.append((href, sizes[0] if sizes else -1))
+
+if len(mkvs) != 1:
+    print(
+        f"[talk-rec-e2e] FAIL expected exactly one .mkv in the recording "
+        f"folder, found {len(mkvs)}: {mkvs}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+href, size = mkvs[0]
+if size < min_bytes:
+    print(
+        f"[talk-rec-e2e] FAIL recording {href} is {size} bytes "
+        f"(< {min_bytes} floor)",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+print(f"{href}\t{size}")
+PY
+) || fail "uploaded recording missing or too small in ${RECORDING_OWNER}'s files (PROPFIND response: $DAV_PROPFIND)"
+MKV_HREF=${MKV_ENTRY%%$'\t'*}
+MKV_SIZE=${MKV_ENTRY##*$'\t'}
+log "OK recording in owner's files: $MKV_HREF ($MKV_SIZE bytes)"
+
+# Existence via PROPFIND is necessary but not sufficient — stream the
+# bytes back as the owner to prove the file is actually readable.
+READBACK="$LOG_DIR/recording-readback.mkv"
+READ_BYTES=$(curl -sf -u "$RECORDING_OWNER:$RECORDING_OWNER_PASSWORD" \
+  -o "$READBACK" -w '%{size_download}' "$NC_URL_HOST$MKV_HREF") \
+  || fail "WebDAV GET $MKV_HREF as $RECORDING_OWNER failed"
+if [[ "$READ_BYTES" != "$MKV_SIZE" ]]; then
+  fail "WebDAV GET $MKV_HREF returned $READ_BYTES bytes but PROPFIND advertised $MKV_SIZE"
+fi
+log "OK recording readable via WebDAV GET ($READ_BYTES bytes)"
+
+# ============================================================================
+# Phase 9: Levenshtein-check transcript vs scenario expected text
+# ============================================================================
+phase 9 "Levenshtein-check transcript vs scenario expected text"
 
 EXPECTED_TEXT=$(python3 - "$SCENARIO_PATH" <<'PY'
 import json, sys
