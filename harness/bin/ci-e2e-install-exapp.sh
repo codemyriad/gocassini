@@ -102,6 +102,9 @@ occ app_api:daemon:register \
 # --- 4. Run the Cassini ExApp container -----------------------------------
 
 log "starting Cassini ExApp container ($IMAGE_REF)"
+# No CASSINI_OPERATOR_BASE_PATH injection: a real AppAPI deploy never sets
+# CASSINI_* vars, so this test relies on the /operator default baked into the
+# runtime image and must catch the image ever losing it.
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run -d \
   --name "$CONTAINER_NAME" \
@@ -113,7 +116,6 @@ docker run -d \
   -e APP_SECRET="$APP_SECRET" \
   -e AA_VERSION=5.0.0 \
   -e CASSINI_APPAPI_REQUIRED=true \
-  -e CASSINI_OPERATOR_BASE_PATH=/operator \
   -e NEXTCLOUD_URL="$NEXTCLOUD_URL_INTERNAL" \
   --entrypoint /usr/local/bin/cassini-operator \
   "$IMAGE_REF" >/dev/null
