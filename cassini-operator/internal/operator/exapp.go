@@ -35,6 +35,9 @@ import (
 //     SPA, and the published meeting archive from on-disk paths set via
 //     CASSINI_CONTROL_PANEL_DIST / CASSINI_VIEWER_DIST / the operator's
 //     SiteRoot.
+//   - When AppAPI's persistent volume is mounted (APP_PERSISTENT_STORAGE),
+//     data paths left unset or still at their baked image defaults are
+//     redirected under it (see exAppDataPathDefault).
 //
 // Routing shape inside the ExApp container:
 //
@@ -50,20 +53,32 @@ import (
 // what compose.yml expects for local dev.
 
 const (
-	envAppHost            = "APP_HOST"
-	envAppPort            = "APP_PORT"
-	envAppID              = "APP_ID"
-	envAppVersion         = "APP_VERSION"
-	envAppSecret          = "APP_SECRET"
-	envAppAPIRequired     = "CASSINI_APPAPI_REQUIRED"
-	envControlPanelDist   = "CASSINI_CONTROL_PANEL_DIST"
-	envViewerDist         = "CASSINI_VIEWER_DIST"
-	envNextcloudURL       = "NEXTCLOUD_URL"
-	defaultExAppBindHost  = "0.0.0.0"
-	defaultExAppBindPort  = "8080"
-	controlPanelURLPrefix = "/control-panel"
-	viewerURLPrefix       = "/viewer"
-	publishedURLPrefix    = "/published"
+	envAppHost              = "APP_HOST"
+	envAppPort              = "APP_PORT"
+	envAppID                = "APP_ID"
+	envAppVersion           = "APP_VERSION"
+	envAppSecret            = "APP_SECRET"
+	envAppPersistentStorage = "APP_PERSISTENT_STORAGE"
+	envAppAPIRequired       = "CASSINI_APPAPI_REQUIRED"
+	envControlPanelDist     = "CASSINI_CONTROL_PANEL_DIST"
+	envViewerDist           = "CASSINI_VIEWER_DIST"
+	envNextcloudURL         = "NEXTCLOUD_URL"
+	defaultExAppBindHost    = "0.0.0.0"
+	defaultExAppBindPort    = "8080"
+	controlPanelURLPrefix   = "/control-panel"
+	viewerURLPrefix         = "/viewer"
+	publishedURLPrefix      = "/published"
+)
+
+// Data paths baked as ENV defaults in deployment/Dockerfile.exapp{,.cuda}.
+// exAppDataPathDefault treats an env value equal to one of these as "not
+// explicitly configured" so it can redirect the path under the AppAPI
+// persistent volume. Keep in sync with the Dockerfiles (and with the
+// effective_data_path mirror in deployment/exapp-start.sh).
+const (
+	imageDefaultDBPath   = "/var/lib/cassini-operator/jobs.sqlite3"
+	imageDefaultWorkRoot = "/var/lib/cassini-operator/jobs"
+	imageDefaultSiteRoot = "/srv/cassini-site/published"
 )
 
 // ExAppConfig holds the AppAPI-derived runtime values resolved from env vars.
@@ -116,6 +131,35 @@ func LoadExAppConfig() (ExAppConfig, error) {
 		cfg.BindAddr = net.JoinHostPort(host, defaultExAppBindPort)
 	}
 	return cfg, nil
+}
+
+// persistentStorageRoot returns the mount path of the volume AppAPI creates
+// for every docker-deployed ExApp (APP_PERSISTENT_STORAGE, e.g.
+// /nc_app_gocassini_data — see app_api's DockerActions::buildDefaultExAppVolume
+// and buildDeployEnvs). Empty outside an AppAPI docker deploy.
+func persistentStorageRoot() string {
+	return strings.TrimSpace(os.Getenv(envAppPersistentStorage))
+}
+
+// exAppDataPathDefault resolves the default for one of the operator's data
+// paths (job DB, work root, site root). AppAPI's docker deploy mounts exactly
+// one volume — the APP_PERSISTENT_STORAGE path — so when that volume is
+// present, any path left unset or still at its baked image default is
+// redirected under it; otherwise the data would land on container overlayfs
+// and be destroyed on every app update or recreate. Precedence:
+//
+//  1. an explicit env override (any value other than the baked image default)
+//  2. <persistRoot>/<persistRel> when APP_PERSISTENT_STORAGE is set
+//  3. the baked image default, when set in env
+//  4. fallback (the repo-root derived dev default)
+func exAppDataPathDefault(persistRoot, envValue, imageDefault, persistRel, fallback string) string {
+	if persistRoot != "" && (envValue == "" || envValue == imageDefault) {
+		return filepath.Join(persistRoot, persistRel)
+	}
+	if envValue != "" {
+		return envValue
+	}
+	return fallback
 }
 
 func parseBoolEnv(name string) (bool, error) {
@@ -368,4 +412,3 @@ func filesystemType(path string) (string, error) {
 	}
 	return bestType, nil
 }
-

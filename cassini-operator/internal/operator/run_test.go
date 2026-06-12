@@ -276,6 +276,63 @@ func TestLoadConfigAllowsExplicitPathsOutsideRepo(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRedirectsBakedDefaultsUnderPersistentStorage(t *testing.T) {
+	// Simulate the ExApp container: AppAPI mounted its persistent volume and
+	// the image baked the ephemeral data paths into env (Dockerfile.exapp).
+	// All three roots must redirect under APP_PERSISTENT_STORAGE.
+	repoRoot := makeFakeOperatorRepoRoot(t)
+	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
+	t.Setenv("APP_PERSISTENT_STORAGE", "/nc_app_gocassini_data")
+	t.Setenv("CASSINI_OPERATOR_DB_PATH", "/var/lib/cassini-operator/jobs.sqlite3")
+	t.Setenv("CASSINI_OPERATOR_WORK_ROOT", "/var/lib/cassini-operator/jobs")
+	t.Setenv("CASSINI_OPERATOR_SITE_ROOT", "/srv/cassini-site/published")
+
+	cfg, exitCode, err := loadConfig(nil, ioDiscard{})
+	if err != nil {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0", exitCode)
+	}
+	if cfg.DBPath != "/nc_app_gocassini_data/operator/jobs.sqlite3" {
+		t.Fatalf("dbPath = %q, want under APP_PERSISTENT_STORAGE", cfg.DBPath)
+	}
+	if cfg.WorkRoot != "/nc_app_gocassini_data/operator/jobs" {
+		t.Fatalf("workRoot = %q, want under APP_PERSISTENT_STORAGE", cfg.WorkRoot)
+	}
+	if cfg.SiteRoot != "/nc_app_gocassini_data/site/published" {
+		t.Fatalf("siteRoot = %q, want under APP_PERSISTENT_STORAGE", cfg.SiteRoot)
+	}
+}
+
+func TestLoadConfigKeepsExplicitPathsDespitePersistentStorage(t *testing.T) {
+	// Admin override: paths set to anything other than the baked image
+	// defaults stay untouched even when APP_PERSISTENT_STORAGE is mounted.
+	repoRoot := makeFakeOperatorRepoRoot(t)
+	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
+	t.Setenv("APP_PERSISTENT_STORAGE", "/nc_app_gocassini_data")
+	t.Setenv("CASSINI_OPERATOR_DB_PATH", "/mnt/big-disk/jobs.sqlite3")
+	t.Setenv("CASSINI_OPERATOR_WORK_ROOT", "/mnt/big-disk/jobs")
+	t.Setenv("CASSINI_OPERATOR_SITE_ROOT", "/mnt/big-disk/site/published")
+
+	cfg, exitCode, err := loadConfig(nil, ioDiscard{})
+	if err != nil {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0", exitCode)
+	}
+	if cfg.DBPath != "/mnt/big-disk/jobs.sqlite3" {
+		t.Fatalf("dbPath = %q, want explicit override", cfg.DBPath)
+	}
+	if cfg.WorkRoot != "/mnt/big-disk/jobs" {
+		t.Fatalf("workRoot = %q, want explicit override", cfg.WorkRoot)
+	}
+	if cfg.SiteRoot != "/mnt/big-disk/site/published" {
+		t.Fatalf("siteRoot = %q, want explicit override", cfg.SiteRoot)
+	}
+}
+
 func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()

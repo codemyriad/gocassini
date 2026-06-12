@@ -89,8 +89,27 @@ FRPC_PID=$!
 echo "${FRPC_PID}" >/tmp/frpc.pid
 log "frpc pid=${FRPC_PID}"
 
-# Storage sanity warnings — non-fatal, helps admins notice missing volume mounts.
-for path in /var/lib/cassini-operator /srv/cassini-site; do
+# Storage sanity warnings — non-fatal, helps admins notice missing persistence.
+# Mirrors the operator's default resolution (exAppDataPathDefault in
+# cassini-operator/internal/operator/exapp.go): when AppAPI's persistent
+# volume is mounted (APP_PERSISTENT_STORAGE), data paths left unset or still
+# at their baked image defaults are redirected under it; explicit overrides
+# are checked as-is.
+effective_data_path() {
+  local value="$1" image_default="$2" persist_rel="$3"
+  if [[ -n "${APP_PERSISTENT_STORAGE:-}" && ( -z "${value}" || "${value}" == "${image_default}" ) ]]; then
+    printf '%s/%s' "${APP_PERSISTENT_STORAGE%/}" "${persist_rel}"
+  else
+    printf '%s' "${value:-${image_default}}"
+  fi
+}
+
+db_path=$(effective_data_path "${CASSINI_OPERATOR_DB_PATH:-}" /var/lib/cassini-operator/jobs.sqlite3 operator/jobs.sqlite3)
+work_root=$(effective_data_path "${CASSINI_OPERATOR_WORK_ROOT:-${WORK_ROOT:-}}" /var/lib/cassini-operator/jobs operator/jobs)
+site_root=$(effective_data_path "${CASSINI_OPERATOR_SITE_ROOT:-${SITE_ROOT:-}}" /srv/cassini-site/published site/published)
+
+for path in "$(dirname "${db_path}")" "${work_root}" "${site_root}"; do
+  mkdir -p "${path}" 2>/dev/null || true
   fs=$(stat -f -c '%T' "${path}" 2>/dev/null || echo unknown)
   if [[ "${fs}" == "tmpfs" || "${fs}" == "overlayfs" || "${fs}" == "overlay" ]]; then
     log "WARNING: ${path} is on ${fs} — mount a persistent volume or recordings will be lost on restart"

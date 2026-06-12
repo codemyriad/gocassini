@@ -9,9 +9,10 @@ enforcement.
 
 - Nextcloud **30 or newer** with the **AppAPI** app installed and a registered
   deploy daemon (Docker or Podman).
-- A persistent volume for `/var/lib/cassini-operator` and `/srv/cassini-site`
-  on the daemon host. Without persistent storage, job history and published
-  recordings are lost on container recreate.
+
+Persistent storage is automatic: AppAPI creates a named volume for every
+docker-deployed ExApp and the operator stores all durable data under it
+(see [Persistent storage](#persistent-storage)).
 
 ## Image variants
 
@@ -51,19 +52,35 @@ the container outside AppAPI for development you must supply them yourself:
 | `APP_SECRET` | Shared secret with AppAPI; enables AppAPI auth middleware |
 | `AA_VERSION` | AppAPI version Nextcloud is running |
 | `HP_FRP_ADDRESS` / `HP_FRP_PORT` / `HP_SHARED_KEY` | HaRP tunnel parameters used by `frpc` |
+| `APP_PERSISTENT_STORAGE` | Mount path of AppAPI's persistent volume; the operator defaults its data roots under it |
 | `CASSINI_APPAPI_REQUIRED=true` | Makes the operator refuse to start without `APP_SECRET` (set in the ExApp Dockerfile) |
 
-## Required volumes
+## Persistent storage
 
-Mount persistent volumes on the daemon host:
+AppAPI's docker deploy creates a named volume (`nc_app_gocassini_data`),
+mounts it in the container at `/nc_app_gocassini_data`, and exposes that
+path as `APP_PERSISTENT_STORAGE`. The operator stores all durable data
+under it:
 
 ```
-/var/lib/cassini-operator   # SQLite job DB + per-attempt artifacts
-/srv/cassini-site           # Published meeting site root (read by the viewer)
+$APP_PERSISTENT_STORAGE/operator/jobs.sqlite3    # SQLite job DB
+$APP_PERSISTENT_STORAGE/operator/app-state.json  # AppAPI lifecycle state
+$APP_PERSISTENT_STORAGE/operator/jobs            # per-attempt artifacts (raw recordings)
+$APP_PERSISTENT_STORAGE/site/published           # published meeting site (read by the viewer)
 ```
 
-The container logs a warning at startup if it detects these paths on
-ephemeral filesystems (overlay or tmpfs).
+No manual volume mounts are required — job history, recordings, and the
+published site survive app updates and container recreates.
+
+Setting `CASSINI_OPERATOR_DB_PATH`, `CASSINI_OPERATOR_WORK_ROOT`, or
+`CASSINI_OPERATOR_SITE_ROOT` to a non-default path overrides the
+corresponding location (mount your own volume there). The container logs a
+warning at startup when an effective data path sits on an ephemeral
+filesystem (overlay or tmpfs).
+
+Outside AppAPI (plain `docker run` without `APP_PERSISTENT_STORAGE`) the
+image defaults apply: `/var/lib/cassini-operator` for the DB + work root and
+`/srv/cassini-site/published` for the site — mount volumes there yourself.
 
 ## Access policy
 

@@ -96,6 +96,34 @@ func TestLoadExAppConfigAppPortAloneUsesDefaultHost(t *testing.T) {
 	}
 }
 
+func TestExAppDataPathDefault(t *testing.T) {
+	const (
+		persist  = "/nc_app_gocassini_data"
+		fallback = "/repo/cassini-operator/runtime/jobs.sqlite3"
+	)
+	cases := []struct {
+		name        string
+		persistRoot string
+		envValue    string
+		want        string
+	}{
+		{"no persist, no env, fallback wins", "", "", fallback},
+		{"no persist, env wins", "", "/data/jobs.sqlite3", "/data/jobs.sqlite3"},
+		{"persist, env unset, redirected", persist, "", persist + "/operator/jobs.sqlite3"},
+		{"persist, env at baked image default, redirected", persist, imageDefaultDBPath, persist + "/operator/jobs.sqlite3"},
+		{"persist, explicit env override wins", persist, "/mnt/big-disk/jobs.sqlite3", "/mnt/big-disk/jobs.sqlite3"},
+		{"persist with trailing slash, redirected", persist + "/", "", persist + "/operator/jobs.sqlite3"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := exAppDataPathDefault(tc.persistRoot, tc.envValue, imageDefaultDBPath, "operator/jobs.sqlite3", fallback)
+			if got != tc.want {
+				t.Fatalf("exAppDataPathDefault() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestApplyToBindAddrPreservesExistingWhenNoExAppEnv(t *testing.T) {
 	// REGRESSION: existing -bind flag / CASSINI_OPERATOR_BIND_ADDR still wins
 	// when APP_HOST/APP_PORT are unset.
