@@ -157,6 +157,12 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /var/lib/cassini-operator
+# CASSINI_OPERATOR_{DB_PATH,WORK_ROOT,SITE_ROOT} are fallbacks for runs
+# without AppAPI (smoke tests, e2e harness, plain docker run). Under an
+# AppAPI deploy the operator treats these exact values as "not explicitly
+# configured" and redirects them under APP_PERSISTENT_STORAGE — keep them
+# in sync with the imageDefault* constants in
+# cassini-operator/internal/operator/exapp.go.
 ENV CASSINI_BIN=/usr/local/bin/cassini \
     CASSINI_LIB_DIR=/opt/cassini/lib \
     LD_LIBRARY_PATH=/opt/cassini/lib \

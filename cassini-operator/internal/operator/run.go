@@ -140,6 +140,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("db -> %s", cfg.DBPath)
 	logger.Printf("work_root -> %s", cfg.WorkRoot)
 	logger.Printf("site_root -> %s", cfg.SiteRoot)
+	if persistRoot := persistentStorageRoot(); persistRoot != "" {
+		logger.Printf("app_persistent_storage -> %s", persistRoot)
+	}
 	logger.Printf("cassini_bin -> %s", cfg.CassiniBin)
 	logger.Printf("talk_shared_secret_set -> %t", strings.TrimSpace(cfg.TalkSharedSecret) != "")
 	logger.Printf("max_record_workers -> %d", cfg.MaxRecordWorkers)
@@ -209,9 +212,22 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	cfg := Config{RepoRoot: repoRoot}
 	fs.StringVar(&cfg.BindAddr, "bind", envOrDefaultAny([]string{"CASSINI_OPERATOR_BIND_ADDR"}, defaultBind), "HTTP bind address")
 	fs.StringVar(&cfg.BasePath, "base-path", envOrDefaultAny([]string{"CASSINI_OPERATOR_BASE_PATH"}, defaultOperatorBasePath), "HTTP route prefix")
-	fs.StringVar(&cfg.DBPath, "db", envOrDefaultAny([]string{"CASSINI_OPERATOR_DB_PATH"}, filepath.Join(defaultDataRoot, "jobs.sqlite3")), "SQLite database path")
-	fs.StringVar(&cfg.WorkRoot, "work-root", envOrDefaultAny([]string{"CASSINI_OPERATOR_WORK_ROOT", "WORK_ROOT"}, filepath.Join(defaultDataRoot, "jobs")), "per-job artifact root")
-	fs.StringVar(&cfg.SiteRoot, "site-root", envOrDefaultAny([]string{"CASSINI_OPERATOR_SITE_ROOT", "SITE_ROOT"}, filepath.Join(defaultDataRoot, "site")), "published site output root")
+	// Data path defaults are persistent-storage aware: under an AppAPI docker
+	// deploy (APP_PERSISTENT_STORAGE set) paths left unset or still at their
+	// baked image defaults land on the AppAPI volume instead of overlayfs.
+	persistRoot := persistentStorageRoot()
+	fs.StringVar(&cfg.DBPath, "db", exAppDataPathDefault(persistRoot,
+		envOrDefaultAny([]string{"CASSINI_OPERATOR_DB_PATH"}, ""),
+		imageDefaultDBPath, "operator/jobs.sqlite3",
+		filepath.Join(defaultDataRoot, "jobs.sqlite3")), "SQLite database path")
+	fs.StringVar(&cfg.WorkRoot, "work-root", exAppDataPathDefault(persistRoot,
+		envOrDefaultAny([]string{"CASSINI_OPERATOR_WORK_ROOT", "WORK_ROOT"}, ""),
+		imageDefaultWorkRoot, "operator/jobs",
+		filepath.Join(defaultDataRoot, "jobs")), "per-job artifact root")
+	fs.StringVar(&cfg.SiteRoot, "site-root", exAppDataPathDefault(persistRoot,
+		envOrDefaultAny([]string{"CASSINI_OPERATOR_SITE_ROOT", "SITE_ROOT"}, ""),
+		imageDefaultSiteRoot, "site/published",
+		filepath.Join(defaultDataRoot, "site")), "published site output root")
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", envOrDefaultAny([]string{"CASSINI_BIN"}, defaultCassiniBinPath(repoRoot)), "Cassini CLI binary path")
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
