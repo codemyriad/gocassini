@@ -8,6 +8,12 @@ COMPOSE_FILE="$TEST_DIR/compose.yml"
 PROJECT_NAME="${PROJECT_NAME:-spreedtest}"
 SPREED_PROFILE="${SPREED_PROFILE:-full}"
 
+# Nextcloud server image for the compose stack. Empty selects the pinned
+# default in compose.yml; CI's NC-compatibility matrix leg overrides it
+# (e.g. NEXTCLOUD_IMAGE=nextcloud:33). Exported because docker compose
+# resolves ${NEXTCLOUD_IMAGE:-...} from its own process environment.
+export NEXTCLOUD_IMAGE="${NEXTCLOUD_IMAGE:-}"
+
 default_signaling_url() {
   local gateway
   gateway="$(docker network inspect "${PROJECT_NAME}_default" -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
