@@ -3,6 +3,7 @@ package operator
 import (
 	"bytes"
 	"encoding/base64"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -109,6 +110,79 @@ func TestApplyToBindAddrOverridesWhenExAppEnvSet(t *testing.T) {
 	cfg := ExAppConfig{BindAddr: "0.0.0.0:8080"}
 	if got := cfg.applyToBindAddr("0.0.0.0:4000"); got != "0.0.0.0:8080" {
 		t.Fatalf("APP_PORT did not win: got %q", got)
+	}
+}
+
+// --- Init progress reporter ---
+
+func TestInitProgressReporterPutsToExAppStatus(t *testing.T) {
+	var gotMethod, gotPath, gotBody, gotAuth, gotAppID, gotAppVersion, gotOCS string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotBody = string(body)
+		gotAuth = r.Header.Get("AUTHORIZATION-APP-API")
+		gotAppID = r.Header.Get("EX-APP-ID")
+		gotAppVersion = r.Header.Get("EX-APP-VERSION")
+		gotOCS = r.Header.Get("OCS-APIRequest")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := ExAppConfig{
+		NextcloudURL: srv.URL + "/", // trailing slash must be normalized away
+		AppID:        "gocassini",
+		AppVersion:   "0.1.0",
+		AppSecret:    "shh",
+	}
+	reporter := cfg.initProgressReporter(log.New(&bytes.Buffer{}, "", 0))
+	if reporter == nil {
+		t.Fatal("expected reporter when NEXTCLOUD_URL, APP_SECRET, and APP_ID are set")
+	}
+	reporter()
+
+	if gotMethod != http.MethodPut {
+		t.Fatalf("method = %q, want PUT", gotMethod)
+	}
+	// AppAPI 3.0.0 deprecated /ocs/v1.php/apps/app_api/apps/status/{appId};
+	// the replacement resolves the app from the EX-APP-ID header instead of
+	// a path segment.
+	if want := "/ocs/v2.php/apps/app_api/ex-app/status"; gotPath != want {
+		t.Fatalf("path = %q, want %q", gotPath, want)
+	}
+	if want := `{"progress":100,"error":""}`; gotBody != want {
+		t.Fatalf("body = %q, want %q", gotBody, want)
+	}
+	if wantAuth := base64.StdEncoding.EncodeToString([]byte(":shh")); gotAuth != wantAuth {
+		t.Fatalf("AUTHORIZATION-APP-API = %q, want %q", gotAuth, wantAuth)
+	}
+	if gotAppID != "gocassini" {
+		t.Fatalf("EX-APP-ID = %q, want gocassini", gotAppID)
+	}
+	if gotAppVersion != "0.1.0" {
+		t.Fatalf("EX-APP-VERSION = %q, want 0.1.0", gotAppVersion)
+	}
+	if gotOCS != "true" {
+		t.Fatalf("OCS-APIRequest = %q, want true", gotOCS)
+	}
+}
+
+func TestInitProgressReporterNilWhenUnconfigured(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  ExAppConfig
+	}{
+		{"no nextcloud url", ExAppConfig{AppID: "gocassini", AppSecret: "shh"}},
+		{"no secret", ExAppConfig{NextcloudURL: "http://nc.local", AppID: "gocassini"}},
+		{"no app id", ExAppConfig{NextcloudURL: "http://nc.local", AppSecret: "shh"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.cfg.initProgressReporter(log.New(&bytes.Buffer{}, "", 0)) != nil {
+				t.Fatal("expected nil reporter")
+			}
+		})
 	}
 }
 
