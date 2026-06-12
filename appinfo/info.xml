@@ -31,6 +31,42 @@ logged-in user.]]></description>
       <image-tag>latest</image-tag>
     </docker-install>
 
+    <!--
+      Environment variables AppAPI passes into the container. Declaring them
+      here is mandatory for them to be settable at all: AppAPI's
+      ExAppService merges admin-supplied deploy options (the External Apps
+      admin UI, or repeated `env KEY=VALUE` options on
+      `occ app_api:app:register`) into this declared set and silently drops
+      undeclared keys. See docs/exapp-install.md for the install steps.
+    -->
+    <environment-variables>
+      <variable>
+        <name>CASSINI_TALK_RECORDING_SECRET</name>
+        <display-name>Talk recording shared secret</display-name>
+        <description>Shared secret for Nextcloud Talk's recording backend protocol. Must match the "secret" in Talk's recording_servers setting (occ config:app:set spreed recording_servers). Required for the Talk "Start recording" button: without it the operator rejects every recording request.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_TALK_BACKEND_URL</name>
+        <display-name>Talk backend URL override (optional)</display-name>
+        <description>Base URL the operator uses to call back into Nextcloud Talk (recording started/stopped notifications and recording upload). Leave empty to use the backend URL Talk sends with each recording request, which is correct for almost every deployment.</description>
+      </variable>
+      <variable>
+        <name>OPENROUTER_API_KEY</name>
+        <display-name>LLM API key (optional)</display-name>
+        <description>API key for transcript cleanup and meeting summaries, sent to OpenRouter or any OpenAI-compatible endpoint (see LLM_BASE_URL). Leave empty to publish raw transcripts without summaries.</description>
+      </variable>
+      <variable>
+        <name>LLM_BASE_URL</name>
+        <display-name>LLM base URL (optional)</display-name>
+        <description>OpenAI-compatible API base URL used for transcript cleanup and meeting summaries. Defaults to https://openrouter.ai/api/v1 when OPENROUTER_API_KEY is set.</description>
+      </variable>
+      <variable>
+        <name>LLM_MODEL</name>
+        <display-name>LLM model (optional)</display-name>
+        <description>Model identifier for transcript cleanup and meeting summaries (default: openai/gpt-4o-mini).</description>
+      </variable>
+    </environment-variables>
+
     <routes>
       <!--
         Route URL patterns are interpreted by AppAPI as PCRE expressions

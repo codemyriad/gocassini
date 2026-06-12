@@ -181,7 +181,13 @@ func (c ExAppConfig) initProgressReporter(logger *log.Logger) func() {
 		return nil
 	}
 	nextcloudURL := strings.TrimRight(c.NextcloudURL, "/")
-	statusURL := nextcloudURL + "/ocs/v1.php/apps/app_api/apps/status/" + c.AppID
+	// PUT /ocs/v2.php/apps/app_api/ex-app/status replaced the per-app
+	// /ocs/v1.php/.../apps/status/{appId} route, deprecated in AppAPI 3.0.0
+	// (upstream now calls it setAppInitProgressDeprecated). AppAPI resolves
+	// the app from the EX-APP-ID header we already send. v2 also returns real
+	// HTTP status codes where v1 wrapped failures in HTTP 200, so the >=300
+	// check below actually catches failures.
+	statusURL := nextcloudURL + "/ocs/v2.php/apps/app_api/ex-app/status"
 	auth := base64.StdEncoding.EncodeToString([]byte(":" + c.AppSecret))
 	client := &http.Client{Timeout: 10 * time.Second}
 	return func() {
@@ -199,12 +205,15 @@ func (c ExAppConfig) initProgressReporter(logger *log.Logger) func() {
 		req.Header.Set("EX-APP-VERSION", c.AppVersion)
 		resp, err := client.Do(req)
 		if err != nil {
-			logger.Printf("init progress: PUT %s: %v", statusURL, err)
+			// Loud on purpose: until this PUT lands, `app_api:app:register
+			// --wait-finish` polls forever and the install appears hung.
+			logger.Printf("ERROR: init progress: PUT %s: %v — registration --wait-finish will hang until its timeout", statusURL, err)
 			return
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode >= 300 {
-			logger.Printf("init progress: PUT %s -> %d", statusURL, resp.StatusCode)
+			snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			logger.Printf("ERROR: init progress: PUT %s -> %d: %s — registration --wait-finish will hang until its timeout", statusURL, resp.StatusCode, strings.TrimSpace(string(snippet)))
 			return
 		}
 		logger.Printf("init progress: reported progress=100 to %s", statusURL)
@@ -368,4 +377,3 @@ func filesystemType(path string) (string, error) {
 	}
 	return bestType, nil
 }
-
