@@ -24,11 +24,24 @@ services:
       - db_data:/var/lib/postgresql/data
 
   nextcloud:
-    # :latest tracks the current Nextcloud release (33.0.3 today; rolls
-    # forward when NC 34 ships). NOT :stable — that alias lags on Docker
-    # Hub (still resolves to 32.x as of May 2026 even though NC 33 has
-    # been the latest stable since Feb 2026).
-    image: nextcloud:latest
+    # Pinned to the current Nextcloud release so an upstream image push is
+    # distinguishable from a product regression when an e2e leg goes red.
+    # NOT :stable — that alias lags on Docker Hub (it stayed on 32.x for
+    # months after NC 33 shipped). NOT :latest — it silently jumps majors
+    # (it moved 33 -> 34 in June 2026), which would make "works with NC33"
+    # coverage vanish without any diff in this repo.
+    #
+    # NEXTCLOUD_IMAGE overrides the default; CI's NC33 compatibility leg
+    # sets it to nextcloud:33 (see .github/workflows/ci.yml integration
+    # matrix).
+    #
+    # Bump procedure: pick the newest x.y.z tag that nextcloud:latest
+    # resolves to on https://hub.docker.com/_/nextcloud, update the
+    # default below, run a full-profile e2e
+    # (SPREED_PROFILE=full harness/bin/ci-e2e.sh), and keep the ci.yml
+    # compatibility leg pointed at the oldest Nextcloud major that
+    # appinfo/info.xml supports.
+    image: ${NEXTCLOUD_IMAGE:-nextcloud:34.0.0}
     restart: unless-stopped
     environment: *nextcloud-env
     depends_on:
@@ -76,14 +89,23 @@ services:
       - appapi_harp_certs:/certs
 
   nats:
-    image: nats:2.11-alpine
+    # Pinned patch release (was nats:2.11-alpine, which resolved to this
+    # tag when pinned). Bump alongside the rest of the stack after a green
+    # full-profile e2e run.
+    image: nats:2.11.17-alpine
     profiles: ["full"]
     restart: unless-stopped
     network_mode: host
     command: ["-js", "-a", "127.0.0.1", "-p", "14222"]
 
   janus:
-    image: canyan/janus-gateway:latest
+    # Pinned by digest: this repo publishes no release tags, only mutable
+    # :latest / :master / master_<sha> tags, so the digest is the only
+    # immutable reference. It is what :latest resolved to when pinned
+    # (last pushed 2023; :master is newer but untested here). Bump by
+    # resolving the new digest (docker buildx imagetools inspect
+    # canyan/janus-gateway:latest) after a green full-profile e2e run.
+    image: canyan/janus-gateway:latest@sha256:80970d0b1c407222e2f88d7a6d31a16686fb9a5145a491b4b4d843ee40ee4ce1
     profiles: ["full"]
     restart: unless-stopped
     network_mode: host
@@ -96,7 +118,11 @@ services:
       - ./config/janus/janus.plugin.videoroom.jcfg:/usr/local/etc/janus/janus.plugin.videoroom.jcfg:ro
 
   signaling:
-    image: strukturag/nextcloud-spreed-signaling:latest
+    # Pinned release (was :latest, which resolved to 2.1.1 when pinned).
+    # Bump to the newest release tag on
+    # https://hub.docker.com/r/strukturag/nextcloud-spreed-signaling after
+    # a green full-profile e2e run.
+    image: strukturag/nextcloud-spreed-signaling:2.1.1
     profiles: ["full"]
     restart: unless-stopped
     network_mode: host
@@ -110,7 +136,9 @@ services:
       - ./config/signaling.conf:/config/server.conf:ro
 
   coturn:
-    image: coturn/coturn:4.6-alpine
+    # Pinned patch release (was coturn/coturn:4.6-alpine, which resolved
+    # to this tag when pinned).
+    image: coturn/coturn:4.6.3-alpine
     profiles: ["full"]
     restart: unless-stopped
     network_mode: host
