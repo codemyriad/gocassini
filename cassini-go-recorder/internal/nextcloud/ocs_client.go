@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +29,34 @@ type ocsEnvelope struct {
 		} `json:"meta"`
 		Data json.RawMessage `json:"data"`
 	} `json:"ocs"`
+}
+
+// OCSError describes an OCS request the Talk server answered with a failure.
+// It keeps the HTTP status so callers can distinguish definitive client-side
+// rejections (4xx) from transient server or transport problems.
+type OCSError struct {
+	Method     string
+	Path       string
+	HTTPStatus int
+	OCSStatus  string
+	OCSCode    int
+	Message    string
+}
+
+func (e *OCSError) Error() string {
+	if e.HTTPStatus >= 400 {
+		return fmt.Sprintf("%s %s failed: HTTP %d, status=%s code=%d message=%q", e.Method, e.Path, e.HTTPStatus, e.OCSStatus, e.OCSCode, e.Message)
+	}
+	return fmt.Sprintf("%s %s failed: status=%s code=%d message=%q", e.Method, e.Path, e.OCSStatus, e.OCSCode, e.Message)
+}
+
+// IsClientError reports whether err wraps an OCS request the server rejected
+// with an HTTP 4xx status. Such rejections are definitive — for example a
+// room the guest recorder cannot see (404) or a call join refused because
+// recording consent is required (400) — so retrying cannot succeed.
+func IsClientError(err error) bool {
+	var ocsErr *OCSError
+	return errors.As(err, &ocsErr) && ocsErr.HTTPStatus >= 400 && ocsErr.HTTPStatus < 500
 }
 
 type SignalingSettings struct {
@@ -122,9 +151,12 @@ func (c *OCSClient) FetchSignalingSettings(ctx context.Context, roomToken string
 
 func (c *OCSClient) JoinCall(ctx context.Context, roomToken string, joinFlags int) error {
 	payload := map[string]any{
-		"flags":            joinFlags,
-		"silent":           false,
-		"recordingConsent": false,
+		"flags":  joinFlags,
+		"silent": false,
+		// The recorder is the recording, so always affirm recording consent.
+		// Instances enforcing config => call => recording-consent reject a
+		// join without it (HTTP 400); Talk accepts the flag either way.
+		"recordingConsent": true,
 		"silentFor":        []any{},
 	}
 	_, err := c.requestJSON(ctx, http.MethodPost, fmt.Sprintf("/ocs/v2.php/apps/spreed/api/v4/call/%s", roomToken), nil, payload)
@@ -208,11 +240,15 @@ func (c *OCSClient) doRequest(
 		return nil, fmt.Errorf("decode OCS envelope %s %s: %w", method, path, err)
 	}
 
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("%s %s failed: HTTP %d, status=%s code=%d message=%q", method, path, resp.StatusCode, env.OCS.Meta.Status, env.OCS.Meta.StatusCode, env.OCS.Meta.Message)
-	}
-	if env.OCS.Meta.Status != "ok" {
-		return nil, fmt.Errorf("%s %s failed: status=%s code=%d message=%q", method, path, env.OCS.Meta.Status, env.OCS.Meta.StatusCode, env.OCS.Meta.Message)
+	if resp.StatusCode >= 400 || env.OCS.Meta.Status != "ok" {
+		return nil, &OCSError{
+			Method:     method,
+			Path:       path,
+			HTTPStatus: resp.StatusCode,
+			OCSStatus:  env.OCS.Meta.Status,
+			OCSCode:    env.OCS.Meta.StatusCode,
+			Message:    env.OCS.Meta.Message,
+		}
 	}
 
 	return env.OCS.Data, nil
