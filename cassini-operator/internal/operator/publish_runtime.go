@@ -17,7 +17,31 @@ type publishTask struct {
 }
 
 func (rt *Runtime) startPublishWorker() {
+	// Reconcile leftover promotion staging before any worker can promote
+	// again: a crash between replaceStagedDirectory's two renames leaves the
+	// destination (including the live published site) missing with only the
+	// ".backup" copy surviving in the staging root.
+	rt.reconcilePromotionLeftovers()
 	go rt.publishWorker()
+}
+
+func (rt *Runtime) reconcilePromotionLeftovers() {
+	var stagingRoots []string
+	if strings.TrimSpace(rt.cfg.WorkRoot) != "" {
+		stagingRoots = append(stagingRoots, currentStagingRoot(rt.cfg.WorkRoot))
+	}
+	if strings.TrimSpace(rt.cfg.SiteRoot) != "" {
+		stagingRoots = append(stagingRoots, siteStagingRoot(rt.cfg.SiteRoot))
+	}
+	for _, stagingRoot := range stagingRoots {
+		actions, err := reconcilePromotionStaging(stagingRoot)
+		for _, action := range actions {
+			rt.logger.Printf("startup promotion reconcile: %s", action)
+		}
+		if err != nil {
+			rt.logger.Printf("startup promotion reconcile failed root=%s: %v", stagingRoot, err)
+		}
+	}
 }
 
 func (rt *Runtime) publishWorker() {

@@ -196,7 +196,7 @@ func writeRunManifest(bundle RunBundle, meta RunManifest) error {
 		return fmt.Errorf("marshal run manifest: %w", err)
 	}
 	body = append(body, '\n')
-	if err := os.WriteFile(bundle.ManifestPath, body, 0o644); err != nil {
+	if err := writeFileAtomic(bundle.ManifestPath, body, 0o644); err != nil {
 		return fmt.Errorf("write run manifest: %w", err)
 	}
 	return nil
