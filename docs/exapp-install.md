@@ -105,7 +105,7 @@ If `occ` runs inside a container, copy the manifest in first
 (`docker cp /tmp/gocassini-info.xml <nc-container>:/tmp/`) or pass the raw URL
 directly to `--info-xml`.
 
-`<daemon-name>` is the first column of `occ app_api:daemon:list`. AppAPI
+`<daemon-name>` is the `Name` column of `occ app_api:daemon:list`. AppAPI
 pulls the image, creates the persistent volume, starts the container
 (`nc_app_gocassini`), and enables the app once the container answers its
 heartbeat and reports init completion.
