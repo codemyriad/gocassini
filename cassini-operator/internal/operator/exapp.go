@@ -2,6 +2,7 @@ package operator
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -47,6 +48,8 @@ import (
 //   ├── /control-panel, /control-panel/*   admin SPA static (ADMIN per manifest)
 //   ├── /viewer, /viewer/*                 viewer SPA static  (USER per manifest)
 //   ├── /published/*                       site archive       (USER per manifest)
+//   ├── /ui/<entry>.js                      top-menu bootstrap (per manifest)
+//   ├── /img/app.svg                        navigation icon    (USER per manifest)
 //   └── <BasePath>/jobs, /jobs/, /events   operator JSON API  (ADMIN per manifest)
 //
 // When APP_SECRET is unset the middleware is a no-op pass-through, which is
@@ -69,6 +72,65 @@ const (
 	viewerURLPrefix         = "/viewer"
 	publishedURLPrefix      = "/published"
 )
+
+// ExApp UI (Nextcloud navigation) wiring. AppAPI renders a top-menu entry for
+// every item an ExApp registers via POST /ocs/v2.php/apps/app_api/api/v1/ui/
+// top-menu; clicking it opens AppAPI's embedded page (/apps/app_api/embedded/
+// <app-id>/<entry>), a bare <div id="content"> plus the scripts registered for
+// that entry via .../api/v1/ui/script. Both the scripts and the entry icon are
+// fetched by the browser THROUGH the AppAPI proxy, so each path served below
+// must also be declared in appinfo/info.xml <routes>.
+const (
+	ocsUITopMenuPath = "/ocs/v2.php/apps/app_api/api/v1/ui/top-menu"
+	ocsUIScriptPath  = "/ocs/v2.php/apps/app_api/api/v1/ui/script"
+	uiAssetURLPrefix = "/ui"
+	navIconURLPath   = "/img/app.svg"
+)
+
+// Embedded UI assets. app.svg mirrors the repo-root img/app.svg (go:embed
+// cannot reach outside the module); top-menu.js derives which SPA to iframe
+// from its own URL, so one script serves every top-menu entry.
+var (
+	//go:embed exappassets/top-menu.js
+	topMenuBootstrapJS []byte
+	//go:embed exappassets/app.svg
+	navIconSVG []byte
+)
+
+// uiTopMenuRegistration is the JSON body of AppAPI's OCSUi#registerExAppMenuEntry.
+type uiTopMenuRegistration struct {
+	Name          string `json:"name"`
+	DisplayName   string `json:"displayName"`
+	Icon          string `json:"icon"`
+	AdminRequired int    `json:"adminRequired"`
+}
+
+// uiScriptRegistration is the JSON body of AppAPI's OCSUi#setExAppScript.
+// Path is relative to the ExApp root, without the ".js" suffix — Nextcloud
+// appends it when loading the script on the embedded page.
+type uiScriptRegistration struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+// topMenuEntries declares the navigation entries uiRegistrar registers.
+// Each entry Name doubles as the URL prefix of the SPA it opens: the
+// bootstrap script served at /ui/<name>.js iframes <proxy base>/<name>/.
+var topMenuEntries = []uiTopMenuRegistration{
+	{
+		Name:          strings.TrimPrefix(viewerURLPrefix, "/"),
+		DisplayName:   "Cassini",
+		Icon:          strings.TrimPrefix(navIconURLPath, "/"),
+		AdminRequired: 0,
+	},
+	{
+		Name:          strings.TrimPrefix(controlPanelURLPrefix, "/"),
+		DisplayName:   "Cassini Admin",
+		Icon:          strings.TrimPrefix(navIconURLPath, "/"),
+		AdminRequired: 1,
+	},
+}
 
 // Data paths baked as ENV defaults in deployment/Dockerfile.exapp{,.cuda}.
 // exAppDataPathDefault treats an env value equal to one of these as "not
@@ -195,8 +257,16 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 		Store:                NewFileLifecycleStore(filepath.Join(stateDir, "app-state.json")),
 		Logger:               logger,
 		InitProgressReporter: c.initProgressReporter(logger),
+		UIRegistrar:          c.uiRegistrar(logger),
 	}
 	lifecycle.Register(root)
+
+	// ExApp UI assets referenced by the top-menu registration (uiRegistrar):
+	// AppAPI's embedded page and navigation bar fetch both through the proxy.
+	// Always mounted — they are embedded in the binary and harmless outside
+	// an AppAPI deploy.
+	root.Handle(uiAssetURLPrefix+"/", uiAssetHandler())
+	root.Handle(navIconURLPath, embeddedAssetHandler(navIconSVG, "image/svg+xml"))
 
 	if c.ControlPanelDist != "" {
 		root.Handle(controlPanelURLPrefix, spaHandler(c.ControlPanelDist, controlPanelURLPrefix, logger))
@@ -232,7 +302,6 @@ func (c ExAppConfig) initProgressReporter(logger *log.Logger) func() {
 	// HTTP status codes where v1 wrapped failures in HTTP 200, so the >=300
 	// check below actually catches failures.
 	statusURL := nextcloudURL + "/ocs/v2.php/apps/app_api/ex-app/status"
-	auth := base64.StdEncoding.EncodeToString([]byte(":" + c.AppSecret))
 	client := &http.Client{Timeout: 10 * time.Second}
 	return func() {
 		body := bytes.NewBufferString(`{"progress":100,"error":""}`)
@@ -241,12 +310,7 @@ func (c ExAppConfig) initProgressReporter(logger *log.Logger) func() {
 			logger.Printf("init progress: build request: %v", err)
 			return
 		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "application/json")
-		req.Header.Set("OCS-APIRequest", "true")
-		req.Header.Set("AUTHORIZATION-APP-API", auth)
-		req.Header.Set("EX-APP-ID", c.AppID)
-		req.Header.Set("EX-APP-VERSION", c.AppVersion)
+		c.setAppAPIOCSHeaders(req)
 		resp, err := client.Do(req)
 		if err != nil {
 			// Loud on purpose: until this PUT lands, `app_api:app:register
@@ -262,6 +326,135 @@ func (c ExAppConfig) initProgressReporter(logger *log.Logger) func() {
 		}
 		logger.Printf("init progress: reported progress=100 to %s", statusURL)
 	}
+}
+
+// setAppAPIOCSHeaders sets the headers AppAPI's #[AppAPIAuth] attribute
+// validates on OCS calls from an ExApp back into Nextcloud, plus the JSON
+// content negotiation every such call uses.
+func (c ExAppConfig) setAppAPIOCSHeaders(req *http.Request) {
+	auth := base64.StdEncoding.EncodeToString([]byte(":" + c.AppSecret))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("OCS-APIRequest", "true")
+	req.Header.Set("AUTHORIZATION-APP-API", auth)
+	req.Header.Set("EX-APP-ID", c.AppID)
+	req.Header.Set("EX-APP-VERSION", c.AppVersion)
+}
+
+// uiRegistrar returns a callback that registers the Nextcloud navigation
+// entries (topMenuEntries) and their bootstrap scripts via AppAPI's ExApp UI
+// OCS API. Both endpoints upsert (insertOrUpdate server-side), so re-running
+// on every enable is idempotent. Per AppAPI's ExApp lifecycle docs, UI
+// registration belongs in the /enabled handler; entries persist while the app
+// is disabled but AppAPI only renders them for enabled apps, so there is
+// nothing to unregister on disable.
+//
+// Returns nil when NEXTCLOUD_URL, APP_SECRET, or APP_ID is unset — same
+// dev/local-e2e escape hatch as initProgressReporter.
+func (c ExAppConfig) uiRegistrar(logger *log.Logger) func() {
+	if c.NextcloudURL == "" || c.AppSecret == "" || c.AppID == "" {
+		return nil
+	}
+	nextcloudURL := strings.TrimRight(c.NextcloudURL, "/")
+	type ocsCall struct {
+		what    string
+		url     string
+		payload any
+	}
+	var calls []ocsCall
+	for _, entry := range topMenuEntries {
+		calls = append(calls,
+			ocsCall{
+				what:    fmt.Sprintf("top-menu entry %q", entry.Name),
+				url:     nextcloudURL + ocsUITopMenuPath,
+				payload: entry,
+			},
+			ocsCall{
+				what: fmt.Sprintf("top-menu script for %q", entry.Name),
+				url:  nextcloudURL + ocsUIScriptPath,
+				payload: uiScriptRegistration{
+					Type: "top_menu",
+					Name: entry.Name,
+					// Served by uiAssetHandler; ".js" appended by Nextcloud.
+					Path: strings.TrimPrefix(uiAssetURLPrefix, "/") + "/" + entry.Name,
+				},
+			},
+		)
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	return func() {
+		failures := 0
+		for _, call := range calls {
+			payload, err := json.Marshal(call.payload)
+			if err != nil {
+				logger.Printf("ERROR: exapp ui: encode %s: %v", call.what, err)
+				failures++
+				continue
+			}
+			req, err := http.NewRequest(http.MethodPost, call.url, bytes.NewReader(payload))
+			if err != nil {
+				logger.Printf("ERROR: exapp ui: build request for %s: %v", call.what, err)
+				failures++
+				continue
+			}
+			c.setAppAPIOCSHeaders(req)
+			resp, err := client.Do(req)
+			if err != nil {
+				logger.Printf("ERROR: exapp ui: register %s: POST %s: %v", call.what, call.url, err)
+				failures++
+				continue
+			}
+			if resp.StatusCode >= 300 {
+				snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+				logger.Printf("ERROR: exapp ui: register %s: POST %s -> %d: %s", call.what, call.url, resp.StatusCode, strings.TrimSpace(string(snippet)))
+				failures++
+			}
+			resp.Body.Close()
+		}
+		if failures > 0 {
+			logger.Printf("ERROR: exapp ui: %d/%d registrations failed — navigation entries may be missing; disable and re-enable the app to retry", failures, len(calls))
+			return
+		}
+		logger.Printf("exapp ui: registered Nextcloud navigation entries: %q (users), %q (admins)", topMenuEntries[0].Name, topMenuEntries[1].Name)
+	}
+}
+
+// uiAssetHandler serves the embedded top-menu bootstrap script at
+// /ui/<entry>.js for every entry in topMenuEntries. Anything else under /ui/
+// is a 404. The proxy fetches these with the requesting user's access level,
+// enforced by the matching info.xml routes.
+func uiAssetHandler() http.Handler {
+	known := make(map[string]bool, len(topMenuEntries))
+	for _, entry := range topMenuEntries {
+		known[uiAssetURLPrefix+"/"+entry.Name+".js"] = true
+	}
+	script := embeddedAssetHandler(topMenuBootstrapJS, "text/javascript; charset=utf-8")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !known[r.URL.Path] {
+			http.NotFound(w, r)
+			return
+		}
+		script.ServeHTTP(w, r)
+	})
+}
+
+// embeddedAssetHandler serves a single in-binary asset with the given
+// content type. GET/HEAD only.
+func embeddedAssetHandler(content []byte, contentType string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_, _ = w.Write(content)
+	})
 }
 
 // heartbeatHandler answers AppAPI's reachability probe with 200 {"status":"ok"}.

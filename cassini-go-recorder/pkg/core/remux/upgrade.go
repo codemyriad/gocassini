@@ -26,13 +26,14 @@ type legacyRecorderReport struct {
 		SessionID string `json:"session_id"`
 	} `json:"session_artifact"`
 	ArtifactRemux struct {
-		Used                  bool         `json:"used"`
-		Segments              int          `json:"segments"`
-		AdjustedStreams       int          `json:"adjusted_streams"`
-		TotalAdjustNS         int64        `json:"total_adjust_ns"`
-		MaxAbsAdjustNS        int64        `json:"max_abs_adjust_ns"`
-		MeanAdjustNSPerStream int64        `json:"mean_adjust_ns_per_stream"`
-		StreamPlans           []StreamPlan `json:"stream_plans"`
+		Used                  bool            `json:"used"`
+		Segments              int             `json:"segments"`
+		AdjustedStreams       int             `json:"adjusted_streams"`
+		TotalAdjustNS         int64           `json:"total_adjust_ns"`
+		MaxAbsAdjustNS        int64           `json:"max_abs_adjust_ns"`
+		MeanAdjustNSPerStream int64           `json:"mean_adjust_ns_per_stream"`
+		StreamPlans           []StreamPlan    `json:"stream_plans"`
+		SkippedStreams        []SkippedStream `json:"skipped_streams"`
 	} `json:"artifact_remux"`
 }
 
@@ -112,7 +113,7 @@ func UpgradeLegacyMeetingMKV(inputPath, reportPath, outputPath string, opts Upgr
 	if err != nil {
 		return err
 	}
-	reportFile, err := writeEmbeddedReportFile(workDir, sess, report.ArtifactRemux.StreamPlans)
+	reportFile, err := writeEmbeddedReportFile(workDir, sess, report.ArtifactRemux.StreamPlans, report.ArtifactRemux.SkippedStreams)
 	if err != nil {
 		return err
 	}

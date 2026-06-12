@@ -64,18 +64,19 @@ type embeddedPacketStream struct {
 }
 
 type embeddedArtifactPlan struct {
-	Used                  bool         `json:"used"`
-	Segments              int          `json:"segments"`
-	AdjustedStreams       int          `json:"adjusted_streams"`
-	TotalAdjustNS         int64        `json:"total_adjust_ns"`
-	MaxAbsAdjustNS        int64        `json:"max_abs_adjust_ns"`
-	MeanAdjustNSPerStream int64        `json:"mean_adjust_ns_per_stream"`
-	EmbeddedReportFile    string       `json:"embedded_report_file"`
-	PortableMeetingFormat string       `json:"portable_meeting_format"`
-	StreamPlans           []StreamPlan `json:"stream_plans"`
+	Used                  bool            `json:"used"`
+	Segments              int             `json:"segments"`
+	AdjustedStreams       int             `json:"adjusted_streams"`
+	TotalAdjustNS         int64           `json:"total_adjust_ns"`
+	MaxAbsAdjustNS        int64           `json:"max_abs_adjust_ns"`
+	MeanAdjustNSPerStream int64           `json:"mean_adjust_ns_per_stream"`
+	EmbeddedReportFile    string          `json:"embedded_report_file"`
+	PortableMeetingFormat string          `json:"portable_meeting_format"`
+	StreamPlans           []StreamPlan    `json:"stream_plans"`
+	SkippedStreams        []SkippedStream `json:"skipped_streams,omitempty"`
 }
 
-func buildEmbeddedReport(sess session.Session, plans []StreamPlan) embeddedReport {
+func buildEmbeddedReport(sess session.Session, plans []StreamPlan, skipped []SkippedStream) embeddedReport {
 	totalAdjustNS, maxAbsAdjustNS, adjustedStreams := SummarizePlanAdjustments(plans)
 
 	logicalTracks := make([]embeddedLogicalTrack, 0, len(sess.LogicalTracks))
@@ -132,11 +133,12 @@ func buildEmbeddedReport(sess session.Session, plans []StreamPlan) embeddedRepor
 			EmbeddedReportFile:    embeddedReportFile,
 			PortableMeetingFormat: MeetingFormatVersion,
 			StreamPlans:           append([]StreamPlan(nil), plans...),
+			SkippedStreams:        append([]SkippedStream(nil), skipped...),
 		},
 	}
 }
 
-func writeEmbeddedReportFile(workDir string, sess session.Session, plans []StreamPlan) (string, error) {
+func writeEmbeddedReportFile(workDir string, sess session.Session, plans []StreamPlan, skipped []SkippedStream) (string, error) {
 	if strings.TrimSpace(workDir) == "" {
 		return "", fmt.Errorf("embedded report requires a work dir")
 	}
@@ -145,7 +147,7 @@ func writeEmbeddedReportFile(workDir string, sess session.Session, plans []Strea
 	}
 
 	reportPath := filepath.Join(workDir, embeddedReportFile)
-	body, err := json.MarshalIndent(buildEmbeddedReport(sess, plans), "", "  ")
+	body, err := json.MarshalIndent(buildEmbeddedReport(sess, plans, skipped), "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal embedded report: %w", err)
 	}

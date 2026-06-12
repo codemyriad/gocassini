@@ -118,6 +118,12 @@ type LifecycleHandlers struct {
 	// the HTTP response can return immediately. It signals progress=100 to
 	// AppAPI via the OCS endpoint. Nil disables the callback (dev / tests).
 	InitProgressReporter func()
+	// UIRegistrar is called after PUT /enabled?enabled=1 has been persisted,
+	// in a goroutine for the same reason as InitProgressReporter: it calls
+	// back into Nextcloud (AppAPI's ExApp UI OCS API, see uiRegistrar in
+	// exapp.go), which can deadlock a single-worker PHP setup if done before
+	// the /enabled response is written. Nil disables it (dev / tests).
+	UIRegistrar func()
 }
 
 func (h *LifecycleHandlers) logger() *log.Logger {
@@ -181,6 +187,13 @@ func (h *LifecycleHandlers) handleEnabled(w http.ResponseWriter, r *http.Request
 	h.logger().Printf("lifecycle enabled -> %v", enabled)
 	// AppAPI expects `{"error": ""}` on success, `{"error": "..."}` to refuse.
 	writeJSON(w, http.StatusOK, map[string]string{"error": ""})
+	// AppAPI's lifecycle docs have ExApps register their UI (top-menu
+	// entries) "during the enabled method call". Registration is an upsert,
+	// so re-enabling just refreshes it; on disable AppAPI hides the entries
+	// itself, so there is nothing to undo.
+	if enabled && h.UIRegistrar != nil {
+		go h.UIRegistrar()
+	}
 }
 
 func (h *LifecycleHandlers) handleInit(w http.ResponseWriter, r *http.Request) {

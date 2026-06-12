@@ -180,9 +180,14 @@ All of these must pass before the Talk handoff:
 
 1. `occ app_api:daemon:list` shows the daemon and its **Test deploy** passes.
 2. `occ app_api:app:list` shows `gocassini` enabled.
-3. The container runs the intended image:
+3. The Nextcloud app menu shows a **Cassini** entry for every logged-in user
+   (opens the viewer) and a **Cassini Admin** entry for admins only (opens
+   the control panel). The app registers both with AppAPI when it is
+   enabled; if they are missing, check the container log for `exapp ui:`
+   errors, then disable and re-enable the app to retry the registration.
+4. The container runs the intended image:
    `docker inspect nc_app_gocassini --format '{{.Config.Image}}'`.
-4. The Talk welcome endpoint answers through the AppAPI proxy (it is a PUBLIC
+5. The Talk welcome endpoint answers through the AppAPI proxy (it is a PUBLIC
    route, so plain curl works):
 
    ```bash
@@ -190,11 +195,13 @@ All of these must pass before the Talk handoff:
    # → {"version":1}
    ```
 
-5. The admin control panel renders for an admin user:
+6. The admin control panel renders for an admin user (the **Cassini Admin**
+   menu entry, or directly):
    `https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/control-panel/`
-6. The viewer renders for a normal logged-in user:
+7. The viewer renders for a normal logged-in user (the **Cassini** menu
+   entry, or directly):
    `https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/viewer/`
-7. The doctor/status endpoint reports `"ok": true` (ADMIN route — use an
+8. The doctor/status endpoint reports `"ok": true` (ADMIN route — use an
    admin login with an app password):
 
    ```bash
@@ -206,7 +213,7 @@ All of these must pass before the Talk handoff:
    device is actually usable, whether the Talk recording secret is configured
    (never the value), and DB/storage health — the same answers that used to
    require shell access into the container.
-8. CUDA installs only: the image tag ends in `-cuda` and the container can see
+9. CUDA installs only: the image tag ends in `-cuda` and the container can see
    the GPU — `docker exec nc_app_gocassini nvidia-smi`. The status endpoint in
    the previous step must show `"device": "cuda"` with `"device_usable": true`;
    a CUDA container without GPU access also logs
@@ -332,8 +339,12 @@ The manifest declares per-route access levels enforced by Nextcloud's proxy:
 |---|---|---|
 | `/control-panel/*` | ADMIN | Svelte admin UI for starting and monitoring jobs |
 | `/operator/jobs`, `/operator/jobs/...`, `/operator/events` | ADMIN | Operator JSON + SSE API |
+| `/operator/status` | ADMIN | Doctor/status endpoint (version, device usability, Talk config, DB/storage health) |
 | `/viewer/*` | USER | Viewer SPA |
 | `/published/*` | USER | Published meeting bundles (catalog + recordings) |
+| `/ui/viewer.js` | USER | Bootstrap script behind the **Cassini** navigation entry |
+| `/ui/control-panel.js` | ADMIN | Bootstrap script behind the **Cassini Admin** navigation entry |
+| `/img/app.svg` | USER | Navigation icon |
 | `/api/v1/welcome`, `/api/v1/room/*` | PUBLIC | Talk recording-backend protocol (HMAC-authenticated by Talk itself) |
 
 USER means any logged-in Nextcloud user. v1 ships an **org-wide recording

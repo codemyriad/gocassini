@@ -4,7 +4,19 @@ services:
     # network namespace. This matches the Talk-driven E2E topology and lets
     # HPS associate the recorder's signaling session with the same active call
     # as the browser participant.
+    #
+    # WARNING: dev-only override. With host networking the operator listens on
+    # 0.0.0.0:4000 on the host directly, bypassing the loopback-only port
+    # binding of compose.yml, so its unauthenticated job API is reachable from
+    # any interface.
     network_mode: host
     ports: !reset []
     environment:
       CASSINI_TALK_BACKEND_URL: http://localhost:28080
+
+  cassini-control-panel:
+    environment:
+      # On the host network the operator leaves the compose network, so the
+      # service name no longer resolves; go through the host gateway to the
+      # operator's fixed host listener on port 4000.
+      CASSINI_OPERATOR_URL: http://host.docker.internal:4000
