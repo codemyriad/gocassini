@@ -71,8 +71,12 @@ IMAGE_LOCAL="cassini-exapp:e2e-v3-cpu-gpu"
 # the daemon's `--registry-from=ghcr.io --registry-to=local` mapping below,
 # this lets AppAPI use info.xml verbatim (same registry/image/tag the
 # production App Store install would use) without us hosting a local
-# registry or rewriting info.xml.
-IMAGE_AS_PRODUCTION="ghcr.io/codemyriad/gocassini:latest"
+# registry or rewriting info.xml. The tag must therefore match info.xml's
+# <image-tag> exactly — it is version-pinned (no longer `latest`), so derive
+# it from the manifest instead of hardcoding it.
+source "$SCRIPT_DIR/lib-exapp-image.sh"
+IMAGE_TAG="$(exapp_image_tag "$PROJECT_ROOT/appinfo/info.xml")"
+IMAGE_AS_PRODUCTION="ghcr.io/codemyriad/gocassini:${IMAGE_TAG}"
 
 if [[ "$FORCE_BUILD" == "true" ]] || ! docker image inspect "$IMAGE_LOCAL" >/dev/null 2>&1; then
   log "2. Building Cassini ExApp image..."
@@ -81,6 +85,7 @@ else
   log "2. Reusing existing $IMAGE_LOCAL image. (pass --build to force rebuild)"
 fi
 docker tag "$IMAGE_LOCAL" "$IMAGE_AS_PRODUCTION"
+success "✓ Tagged $IMAGE_LOCAL as $IMAGE_AS_PRODUCTION (info.xml <image-tag>)"
 
 log "3. Starting nextcloud, db, appapi-harp, reverse-proxy..."
 "${COMPOSE[@]}" up -d nextcloud db appapi-harp reverse-proxy

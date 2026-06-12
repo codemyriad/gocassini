@@ -64,19 +64,37 @@ CI publishes to `ghcr.io/codemyriad/gocassini`:
 
 | Tag | What it is |
 |---|---|
-| `latest` | CPU image, current `main` |
-| `latest-cuda` | **Real CUDA build** (CUDA 12 / cuDNN 9 sherpa-onnx, fp32 Parakeet model, `CASSINI_STT_DEVICE=cuda`) |
-| `latest-rocm` | Alias of the CPU image so ROCm-tagged daemons get a working install — **no ROCm acceleration** |
-| `sha-<12-hex>` / `sha-<12-hex>-cuda` | Commit-pinned builds of the above |
-| `v*` / `v*-cuda` | Release tags, published when a version tag is cut |
+| `X.Y.Z` | CPU release build. Immutable by convention; matches `<version>`/`<image-tag>` in `appinfo/info.xml` |
+| `X.Y.Z-cuda` | CUDA release build (CUDA 12 / cuDNN 9 sherpa-onnx, fp32 Parakeet model, `CASSINI_STT_DEVICE=cuda`) |
+| `X.Y.Z-rocm` | Alias of the CPU build so ROCm-tagged daemons install; no ROCm acceleration yet |
+| `sha-<shortsha>` / `sha-<shortsha>-cuda` | Every pushed commit, for pinning a specific build |
+| `latest` / `latest-cuda` / `latest-rocm` | Convenience tags — fine for demos, **not** for production installs |
+
+`appinfo/info.xml` pins `<image-tag>` to the release version, so a default
+AppAPI install (and any later reinstall) pulls exactly the build the
+registered app version was cut from instead of whatever `latest` points at
+that day.
+
+### Cutting a release
+
+```
+./scripts/bump-exapp-version.sh 0.2.0   # bumps <version> + <image-tag> together
+git commit -am "release: 0.2.0"
+git tag v0.2.0
+git push origin main v0.2.0
+```
+
+The tag push publishes `0.2.0`, `0.2.0-cuda`, and `0.2.0-rocm`. CI refuses to
+publish when the git tag and the manifest version disagree, or when
+`<image-tag>` drifts from `<version>`.
 
 You don't select the `-cuda` tag by hand: when the deploy daemon's compute
 device is CUDA, AppAPI automatically tries `<image-tag>-cuda` first and falls
 back to the plain tag.
 
-For production, pin: the checked-in manifest tracks `latest`, so for a
-reproducible install download `appinfo/info.xml`, set `<image-tag>` to a
-`sha-…` (or release) tag, and register from that local copy.
+The checked-in manifest already pins the current release; to install a
+different build, download `appinfo/info.xml`, set `<image-tag>` to the
+desired `sha-…` or release tag, and register from that local copy.
 
 ## Step 3 — Register the app
 
@@ -93,7 +111,7 @@ URL; pin a tag or commit SHA, not a moving branch):
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/codemyriad/gocassini/<tag-or-sha>/appinfo/info.xml" \
     -o /tmp/gocassini-info.xml
-# Production: also set <image-tag> in the copy to the matching sha-…/release tag (Step 2)
+# Optional: override <image-tag> in the copy to a specific sha-… build (Step 2)
 
 occ app_api:app:register gocassini <daemon-name> \
     --info-xml /tmp/gocassini-info.xml \
@@ -338,6 +356,9 @@ and the production-shaped HaRP-fronted install
 
 ## CI
 
-`.github/workflows/publish-exapp-image.yml` validates the manifest, builds
-the CPU and CUDA images, runs smoke + e2e jobs, and on `main` or version tags
-pushes the tag set from Step 2 to `ghcr.io/codemyriad/gocassini`.
+`.github/workflows/publish-exapp-image.yml` validates the manifest (including
+that `<image-tag>` equals `<version>` and, on release tags, that the git tag
+matches the manifest), builds the CPU and CUDA images, runs the smoke and
+e2e suites, and pushes to `ghcr.io/codemyriad/gocassini`: `sha-<shortsha>`
+[+`-cuda`] on every push, `latest`-family tags on `main`, and the immutable
+`X.Y.Z`-family release tags on `vX.Y.Z` tag pushes.

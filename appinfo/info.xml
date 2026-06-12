@@ -28,7 +28,11 @@ logged-in user.]]></description>
     <docker-install>
       <registry>ghcr.io</registry>
       <image>codemyriad/gocassini</image>
-      <image-tag>latest</image-tag>
+      <!-- Pinned to <version> so installs are reproducible: AppAPI pulls the
+           exact build this manifest was released with, never a moving
+           `latest`. CI rejects a manifest where the two disagree; bump both
+           together with scripts/bump-exapp-version.sh. -->
+      <image-tag>0.1.0</image-tag>
     </docker-install>
 
     <!--
