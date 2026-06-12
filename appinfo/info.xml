@@ -96,6 +96,28 @@ logged-in user.]]></description>
         <verb>GET,HEAD</verb>
         <access_level>USER</access_level>
       </route>
+
+      <!--
+        PUBLIC: Talk recording-backend protocol. Lets the "Start recording"
+        button in Talk reach Cassini through the AppAPI proxy when Cassini
+        is deployed as an ExApp. Authentication is Talk's own HMAC over
+        secret + Talk-Recording-Random + request body (verified by the
+        operator's talk_backend.go) — independent of any NC session, hence
+        PUBLIC at the AppAPI layer. Configure Talk's recording_servers to
+        point at ${nc_url}/index.php/apps/app_api/proxy/gocassini and the
+        record button works the same way it would against a standalone
+        cassini-operator bot.
+      -->
+      <route>
+        <url>^api\/v1\/welcome$</url>
+        <verb>GET</verb>
+        <access_level>PUBLIC</access_level>
+      </route>
+      <route>
+        <url>^api\/v1\/room\/[^\/]+$</url>
+        <verb>POST</verb>
+        <access_level>PUBLIC</access_level>
+      </route>
     </routes>
   </external-app>
 </info>
