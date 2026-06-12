@@ -36,9 +36,8 @@ env:
   IMAGE: ${{ github.repository_owner }}/gocassini
   # The CPU image is also published as :latest-rocm so ROCm-tagged AppAPI daemons
   # still install — real ROCm support is deferred (sherpa-onnx ships no upstream
-  # ROCm artifact). Real CUDA support lands in a follow-up PR with its own
-  # Dockerfile.exapp.cuda; until then the -cuda tag is NOT aliased so we do not
-  # advertise GPU acceleration we cannot honor.
+  # ROCm artifact). The -cuda tags are NOT aliases: build-image-cuda below
+  # builds the real CUDA image from deployment/Dockerfile.exapp.cuda.
   EXTRA_ALIAS_SUFFIXES: '-rocm'
 
 jobs:
