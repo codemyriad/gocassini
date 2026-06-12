@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"os"
 	"os/exec"
@@ -198,6 +199,11 @@ func buildSegmentMKVs(
 				return nil, fmt.Errorf("depacketize stream %s: %w", stream.StreamID, err)
 			}
 			continue
+		}
+		if writeResult.TruncatedTail {
+			// Crash-truncated final record (recorder killed mid-write);
+			// everything before it depacketized fine, so keep the stream.
+			log.Printf("stream %s rtplog ended in a truncated record; recovered %d rtp packets", stream.StreamID, writeResult.RTPPackets)
 		}
 		if writeResult.RTPPackets == 0 {
 			continue

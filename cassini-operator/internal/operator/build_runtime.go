@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 const defaultBuildWorkerCount = 1
@@ -105,6 +106,10 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
 	cmd.Env = os.Environ()
+	// Kill the whole process group on ctx cancel so transcriber/ffmpeg
+	// grandchildren don't outlive the build.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return killProcessGroup(cmd.Process) }
 	if err := cmd.Run(); err != nil {
 		return meetingPath, fmt.Errorf("cassini build: %w", err)
 	}

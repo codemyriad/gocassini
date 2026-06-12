@@ -21,6 +21,10 @@ type WriteResult struct {
 	RTCPPackets int
 	FirstRecvNS uint64
 	LastRecvNS  uint64
+	// TruncatedTail is set when the rtplog ended in a partially written
+	// record (recorder crashed mid-write); everything before it was
+	// depacketized normally.
+	TruncatedTail bool
 }
 
 type rtpWriter interface {
@@ -78,6 +82,7 @@ func WriteElementaryFromRTPLog(logPath, codec string, clockRate uint32, outputPa
 	if err := emitter.flush(); err != nil {
 		return WriteResult{}, fmt.Errorf("write rtp packet: %w", err)
 	}
+	result.TruncatedTail = reader.Truncated()
 
 	if err := w.Close(); err != nil {
 		return WriteResult{}, fmt.Errorf("close writer: %w", err)

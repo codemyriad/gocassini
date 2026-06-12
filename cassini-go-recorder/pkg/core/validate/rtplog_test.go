@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -107,6 +108,64 @@ func TestCheckLogAcceptsWellFormedLog(t *testing.T) {
 	}
 	if report.IssueCount != 0 {
 		t.Fatalf("expected no issues, got=%v", report.Issues)
+	}
+}
+
+func TestCheckLogFlagsTruncatedTailWithoutFailing(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "stream.rtplog")
+	writer, err := store.NewWriter(logPath, store.StreamHeader{
+		StreamID:    "s_000003",
+		Codec:       "video/vp8",
+		ClockRate:   90000,
+		Direction:   "recvonly",
+		StartMonoNS: 1_000_000_000,
+		PT:          96,
+	})
+	if err != nil {
+		t.Fatalf("new writer: %v", err)
+	}
+	if err := writer.Write(store.Record{
+		RecvMonoNS: 1_100_000_000,
+		Kind:       store.KindRTP,
+		WireBytes:  mustPacket(t, 96, 2000, 11, 12345),
+	}); err != nil {
+		t.Fatalf("write first record: %v", err)
+	}
+	if err := writer.Write(store.Record{
+		RecvMonoNS: 1_200_000_000,
+		Kind:       store.KindRTP,
+		WireBytes:  mustPacket(t, 96, 2030, 12, 12345),
+	}); err != nil {
+		t.Fatalf("write second record: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	// Cut into the final record to simulate a recorder killed mid-write.
+	info, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatalf("stat log: %v", err)
+	}
+	if err := os.Truncate(logPath, info.Size()-5); err != nil {
+		t.Fatalf("truncate log: %v", err)
+	}
+
+	report, err := CheckLog(logPath)
+	if err != nil {
+		t.Fatalf("check log on truncated tail: %v", err)
+	}
+	if report.RTP != 1 {
+		t.Fatalf("rtp records = %d, want 1 complete record", report.RTP)
+	}
+	foundTruncated := false
+	for _, issue := range report.Issues {
+		if issue.Code == IssueTruncatedTail {
+			foundTruncated = true
+		}
+	}
+	if !foundTruncated {
+		t.Fatalf("expected truncated_tail issue, got=%v", report.Issues)
 	}
 }
 

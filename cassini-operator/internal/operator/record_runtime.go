@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -22,13 +23,35 @@ import (
 const (
 	defaultGuestName    = "CassiniRecorder"
 	defaultRoomEmptySec = 30.0
-	recordStopGrace     = 10 * time.Second
+	// recordRunningMarker and recordStoppingMarker are printed by `cassini
+	// record`; the operator watches the child's output for them.
+	recordRunningMarker  = "talk recorder running:"
+	recordStoppingMarker = "talk recorder stopping:"
+	// recordStopAckGrace is how long a SIGTERMed recorder may stay silent
+	// before acknowledging the stop (recordStoppingMarker) without being
+	// presumed wedged; output activity extends it.
+	recordStopAckGrace = 10 * time.Second
+	// recordStopFinalizeGrace caps the stop as a whole. After acknowledging
+	// SIGTERM the recorder composes the final MKV (depacketize + ffmpeg per
+	// stream + merge), which scales with recording length and routinely
+	// exceeds any flat few-second grace; SIGKILLing mid-compose destroys the
+	// recording (D-350), so the ceiling is generous.
+	recordStopFinalizeGrace = 30 * time.Minute
+	// recordShutdownWait bounds how long operator shutdown waits for
+	// in-flight record jobs; per-process stop enforcement guarantees the
+	// recorder is gone within the finalize grace, so this only adds slack
+	// for post-record bookkeeping (promotion, callbacks, upload).
+	recordShutdownWait = recordStopFinalizeGrace + time.Minute
 )
 
 type recordProcessState struct {
 	process        *os.Process
 	done           chan struct{}
 	stopInProgress bool
+	// stopping is closed when the recorder prints recordStoppingMarker,
+	// i.e. it acknowledged SIGTERM and started finalizing.
+	stopping chan struct{}
+	output   *recordOutputActivity
 }
 
 type recordResult struct {
@@ -39,12 +62,38 @@ type recordResult struct {
 }
 
 type recordLiveSignalWriter struct {
-	target io.Writer
+	target   io.Writer
+	activity *recordOutputActivity
+	mu       sync.Mutex
+	watches  []*recordMarkerWatch
+}
+
+// recordMarkerWatch scans one output stream for a marker, buffering a tail so
+// markers split across writes are still found, and fires signal on a match.
+type recordMarkerWatch struct {
 	marker []byte
-	mu     sync.Mutex
+	signal func()
 	tail   []byte
-	once   sync.Once
-	liveCh chan struct{}
+}
+
+// recordOutputActivity tracks when the recorder last wrote to stdout/stderr;
+// stop enforcement uses it to tell a busy recorder from a wedged one.
+type recordOutputActivity struct {
+	lastWriteNS atomic.Int64
+}
+
+func newRecordOutputActivity() *recordOutputActivity {
+	activity := &recordOutputActivity{}
+	activity.touch()
+	return activity
+}
+
+func (a *recordOutputActivity) touch() {
+	a.lastWriteNS.Store(time.Now().UnixNano())
+}
+
+func (a *recordOutputActivity) idleFor() time.Duration {
+	return time.Duration(time.Now().UnixNano() - a.lastWriteNS.Load())
 }
 
 type triggerRequestInput struct {
@@ -95,26 +144,35 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 	}
 
 	var logCapture bytes.Buffer
-	liveCh := make(chan struct{}, 1)
+	liveCh := make(chan struct{})
+	stoppingCh := make(chan struct{})
+	signalLive := closeOnce(liveCh)
+	signalStopping := closeOnce(stoppingCh)
+	activity := newRecordOutputActivity()
 	stdoutWriter := newRecordLiveSignalWriter(
 		io.MultiWriter(writerOrDiscard(rt.stdout), logFile, &logCapture),
-		[]byte("talk recorder running:"),
-		liveCh,
+		activity,
+		newRecordMarkerWatch(recordRunningMarker, signalLive),
+		newRecordMarkerWatch(recordStoppingMarker, signalStopping),
 	)
 	stderrWriter := newRecordLiveSignalWriter(
 		io.MultiWriter(writerOrDiscard(rt.stderr), logFile, &logCapture),
-		[]byte("talk recorder running:"),
-		liveCh,
+		activity,
+		newRecordMarkerWatch(recordRunningMarker, signalLive),
+		newRecordMarkerWatch(recordStoppingMarker, signalStopping),
 	)
 	cmd := exec.Command(rt.cfg.CassiniBin, args...)
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stderrWriter
 	cmd.Env = os.Environ()
+	// Run the recorder in its own process group so a hard kill also reaps
+	// ffmpeg children spawned during compose instead of leaking them.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		return recordResult{}, fmt.Errorf("cassini record start: %w", err)
 	}
 
-	state := rt.registerRecordProcess(job.ID, cmd.Process)
+	state := rt.registerRecordProcess(job.ID, cmd.Process, stoppingCh, activity)
 	defer rt.completeRecordProcess(job.ID)
 	go rt.stopRecordProcessOnShutdown(job.ID, state)
 
@@ -170,10 +228,15 @@ func formatSeconds(value float64) string {
 	return strconv.FormatFloat(value, 'f', -1, 64)
 }
 
-func (rt *Runtime) registerRecordProcess(jobID string, process *os.Process) *recordProcessState {
+func (rt *Runtime) registerRecordProcess(jobID string, process *os.Process, stopping chan struct{}, output *recordOutputActivity) *recordProcessState {
+	if output == nil {
+		output = newRecordOutputActivity()
+	}
 	state := &recordProcessState{
-		process: process,
-		done:    make(chan struct{}),
+		process:  process,
+		done:     make(chan struct{}),
+		stopping: stopping,
+		output:   output,
 	}
 	rt.recordMu.Lock()
 	if rt.recordJobs == nil {
@@ -276,24 +339,73 @@ func (rt *Runtime) stopRecordProcessOnShutdown(jobID string, state *recordProces
 	case <-rt.ctx.Done():
 		if err := state.process.Signal(syscall.SIGTERM); err != nil && !isExitedProcessError(err) {
 			rt.logger.Printf("record shutdown stop failed id=%s: %v", jobID, err)
+			return
 		}
+		// Operator shutdown finalizes like a user stop: wait for the
+		// recorder to compose the final MKV, hard-kill only on no progress.
+		rt.enforceRecordStop(jobID, state)
 	case <-state.done:
 	}
 }
 
+// enforceRecordStop hard-kills a stop-requested recorder only when it stops
+// making progress. On SIGTERM the recorder acknowledges with
+// recordStoppingMarker and then composes the final MKV, which scales with the
+// recording length — far beyond any flat grace — so SIGKILLing on a fixed
+// timer destroyed long recordings mid-compose (D-350). The short ack grace
+// (extended while the child keeps writing output) catches a wedged recorder;
+// an acknowledged finalization only has the generous overall ceiling.
 func (rt *Runtime) enforceRecordStop(jobID string, state *recordProcessState) {
-	timer := time.NewTimer(recordStopGrace)
-	defer timer.Stop()
-	select {
-	case <-state.done:
-		return
-	case <-timer.C:
+	overall := time.NewTimer(rt.recordStopFinalizeGrace)
+	defer overall.Stop()
+	ackTimer := time.NewTimer(rt.recordStopAckGrace)
+	defer ackTimer.Stop()
+	ackCh := ackTimer.C
+	stopping := state.stopping
+	for {
+		select {
+		case <-state.done:
+			return
+		case <-stopping:
+			// Stop acknowledged: the recorder is finalizing. Only the
+			// overall ceiling applies from here.
+			ackTimer.Stop()
+			ackCh = nil
+			stopping = nil
+		case <-ackCh:
+			if idle := state.output.idleFor(); idle < rt.recordStopAckGrace {
+				ackTimer.Reset(rt.recordStopAckGrace - idle)
+				continue
+			}
+			rt.hardKillRecordProcess(jobID, state, fmt.Sprintf("no stop acknowledgement within %s", rt.recordStopAckGrace))
+			return
+		case <-overall.C:
+			rt.hardKillRecordProcess(jobID, state, fmt.Sprintf("stop exceeded finalize grace %s", rt.recordStopFinalizeGrace))
+			return
+		}
 	}
-	if err := state.process.Kill(); err != nil && !isExitedProcessError(err) {
+}
+
+func (rt *Runtime) hardKillRecordProcess(jobID string, state *recordProcessState, reason string) {
+	if err := killProcessGroup(state.process); err != nil && !isExitedProcessError(err) {
 		rt.logger.Printf("record hard kill failed id=%s: %v", jobID, err)
 		return
 	}
-	rt.logger.Printf("record hard-killed id=%s after stop grace %s", jobID, recordStopGrace)
+	rt.logger.Printf("record hard-killed id=%s: %s", jobID, reason)
+}
+
+// killProcessGroup SIGKILLs the child's process group (record/build/publish
+// children run with Setpgid) so ffmpeg-style grandchildren die with it
+// instead of leaking, falling back to the lone process when the group is
+// already gone.
+func killProcessGroup(process *os.Process) error {
+	if process == nil {
+		return os.ErrProcessDone
+	}
+	if err := syscall.Kill(-process.Pid, syscall.SIGKILL); err == nil {
+		return nil
+	}
+	return process.Kill()
 }
 
 func isExitedProcessError(err error) bool {
@@ -323,50 +435,66 @@ func exitCodeFromRunError(err error) *int {
 func recordStopDetail(logs string) string {
 	for _, line := range reverseLogLines(logs) {
 		line = strings.TrimSpace(line)
-		if idx := strings.Index(line, "talk recorder stopping:"); idx >= 0 {
-			return strings.TrimSpace(line[idx+len("talk recorder stopping:"):])
+		if idx := strings.Index(line, recordStoppingMarker); idx >= 0 {
+			return strings.TrimSpace(line[idx+len(recordStoppingMarker):])
 		}
 	}
 	return ""
 }
 
-func newRecordLiveSignalWriter(target io.Writer, marker []byte, liveCh chan struct{}) io.Writer {
+func newRecordLiveSignalWriter(target io.Writer, activity *recordOutputActivity, watches ...*recordMarkerWatch) io.Writer {
 	return &recordLiveSignalWriter{
-		target: target,
-		marker: marker,
-		liveCh: liveCh,
+		target:   target,
+		activity: activity,
+		watches:  watches,
+	}
+}
+
+func newRecordMarkerWatch(marker string, signal func()) *recordMarkerWatch {
+	return &recordMarkerWatch{
+		marker: []byte(marker),
+		signal: signal,
+	}
+}
+
+// closeOnce returns a func that closes ch exactly once; the stdout and stderr
+// watchers for one marker share it so either stream can fire the signal.
+func closeOnce(ch chan struct{}) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() { close(ch) })
 	}
 }
 
 func (w *recordLiveSignalWriter) Write(p []byte) (int, error) {
 	n, err := w.target.Write(p)
-	w.signalIfMarkerSeen(p)
+	if w.activity != nil {
+		w.activity.touch()
+	}
+	w.mu.Lock()
+	for _, watch := range w.watches {
+		watch.observe(p)
+	}
+	w.mu.Unlock()
 	return n, err
 }
 
-func (w *recordLiveSignalWriter) signalIfMarkerSeen(p []byte) {
-	if len(w.marker) == 0 {
+func (watch *recordMarkerWatch) observe(p []byte) {
+	if len(watch.marker) == 0 {
 		return
 	}
 
-	w.mu.Lock()
-	combined := append(append([]byte{}, w.tail...), p...)
-	if maxTail := len(w.marker) - 1; maxTail > 0 {
+	combined := append(append([]byte{}, watch.tail...), p...)
+	if maxTail := len(watch.marker) - 1; maxTail > 0 {
 		if len(combined) > maxTail {
-			w.tail = append(w.tail[:0], combined[len(combined)-maxTail:]...)
+			watch.tail = append(watch.tail[:0], combined[len(combined)-maxTail:]...)
 		} else {
-			w.tail = append(w.tail[:0], combined...)
+			watch.tail = append(watch.tail[:0], combined...)
 		}
 	}
-	w.mu.Unlock()
 
-	if bytes.Contains(combined, w.marker) {
-		w.once.Do(func() {
-			select {
-			case w.liveCh <- struct{}{}:
-			default:
-			}
-		})
+	if bytes.Contains(combined, watch.marker) {
+		watch.signal()
 	}
 }
 

@@ -776,6 +776,127 @@ func TestStopJobAcceptsRunningRecordAndCompletesPublishStage(t *testing.T) {
 	}
 }
 
+func TestStopJobWaitsOutSlowFinalizationWithoutHardKill(t *testing.T) {
+	rt, cleanup, _, startedPath := newCLITestRuntime(t)
+	defer cleanup()
+	// Shrink the ack grace far below the simulated compose time: the stop
+	// must still succeed because the recorder acknowledged the SIGTERM
+	// before going quiet to finalize.
+	rt.recordStopAckGrace = 200 * time.Millisecond
+	t.Setenv("FAKE_RECORD_WAIT_FOR_SIGNAL", "1")
+	t.Setenv("FAKE_RECORD_FINALIZE_DELAY", "1")
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/slow-finalize"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	waitForFile(t, startedPath)
+	waitForRecordState(t, rt.store, resp.ID, "running")
+
+	stopReq := httptest.NewRequest(http.MethodPost, "/jobs/"+resp.ID+"/stop", nil)
+	stopRec := httptest.NewRecorder()
+	rt.jobDetailHandler(stopRec, stopReq)
+	if stopRec.Code != http.StatusAccepted {
+		t.Fatalf("stop status = %d, want %d body=%s", stopRec.Code, http.StatusAccepted, stopRec.Body.String())
+	}
+
+	job := waitForJobState(t, rt.store, resp.ID, "succeeded")
+	if job.StopReason == nil || *job.StopReason != "operator_requested" {
+		t.Fatalf("expected operator_requested stop reason, got %#v", job.StopReason)
+	}
+	if job.RecordExitCode == nil || *job.RecordExitCode != 0 {
+		t.Fatalf("expected record exit code 0 (no hard kill), got %#v", job.RecordExitCode)
+	}
+	if job.RecordStopDetail == nil || *job.RecordStopDetail != "stop requested" {
+		t.Fatalf("expected stop detail from stopping marker, got %#v", job.RecordStopDetail)
+	}
+}
+
+func TestStopJobHardKillsRecorderThatIgnoresSigterm(t *testing.T) {
+	rt, cleanup, _, startedPath := newCLITestRuntime(t)
+	defer cleanup()
+	rt.recordStopAckGrace = 200 * time.Millisecond
+	t.Setenv("FAKE_RECORD_IGNORE_TERM", "1")
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/wedged"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	waitForFile(t, startedPath)
+	waitForRecordState(t, rt.store, resp.ID, "running")
+
+	stopReq := httptest.NewRequest(http.MethodPost, "/jobs/"+resp.ID+"/stop", nil)
+	stopRec := httptest.NewRecorder()
+	rt.jobDetailHandler(stopRec, stopReq)
+	if stopRec.Code != http.StatusAccepted {
+		t.Fatalf("stop status = %d, want %d body=%s", stopRec.Code, http.StatusAccepted, stopRec.Body.String())
+	}
+
+	// Without the stopping acknowledgement the recorder must be hard-killed
+	// once it goes quiet past the ack grace; the kill surfaces as a failed
+	// record stage (waitForJobState bounds how long that may take).
+	job := waitForJobState(t, rt.store, resp.ID, "failed")
+	if job.Stage != "done" {
+		t.Fatalf("stage = %q, want done", job.Stage)
+	}
+	if job.Error == nil || !strings.Contains(*job.Error, "signal: killed") {
+		t.Fatalf("expected hard-kill error, got %#v", job.Error)
+	}
+}
+
+func TestShutdownWaitsForRecordFinalizationBeforeReturning(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt, cleanup, _, startedPath := newCLITestRuntimeWithContext(t, ctx)
+	defer cleanup()
+	t.Setenv("FAKE_RECORD_WAIT_FOR_SIGNAL", "1")
+	t.Setenv("FAKE_RECORD_FINALIZE_DELAY", "1")
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/shutdown-me"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	waitForFile(t, startedPath)
+	waitForRecordState(t, rt.store, resp.ID, "running")
+
+	// Operator shutdown: SIGTERM the recorder, then wait for the slow
+	// finalization to complete instead of abandoning it.
+	cancel()
+	if !rt.WaitForRecordJobs(5 * time.Second) {
+		t.Fatal("WaitForRecordJobs timed out; record job abandoned on shutdown")
+	}
+
+	job, err := rt.store.GetJob(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatalf("GetJob(%s) error = %v", resp.ID, err)
+	}
+	if job.RecordFinishedAt == nil {
+		t.Fatalf("expected record stage to finish during shutdown, got job=%#v", job)
+	}
+	recordingPath := filepath.Join(canonicalRunPath(rt.cfg.WorkRoot, resp.ID), "recording.mkv")
+	if _, err := os.Stat(recordingPath); err != nil {
+		t.Fatalf("expected promoted recording at %s: %v", recordingPath, err)
+	}
+}
+
 func TestStopJobReturnsNotFoundAndConflict(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -1779,6 +1900,10 @@ func TestEventsHandlerStreamsPublishedEvents(t *testing.T) {
 }
 
 func newCLITestRuntime(t *testing.T) (*Runtime, func(), string, string) {
+	return newCLITestRuntimeWithContext(t, context.Background())
+}
+
+func newCLITestRuntimeWithContext(t *testing.T, ctx context.Context) (*Runtime, func(), string, string) {
 	t.Helper()
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
@@ -1807,6 +1932,15 @@ write_run() {
 {"kind":"run","version":"cassini.run.v1","state":"ready","stage":"ready","source_mode":"talk","recording":{"path":"recording.mkv","format":"mkv"}}
 EOF
 }
+finalize_run() {
+  out="$1"
+  printf '%s\n' "talk recorder stopping: stop requested"
+  if [ -n "${FAKE_RECORD_FINALIZE_DELAY:-}" ]; then
+    sleep "$FAKE_RECORD_FINALIZE_DELAY"
+  fi
+  write_run "$out"
+  exit 0
+}
 case "$cmd" in
   doctor)
     if [ "${FAKE_CASSINI_DOCTOR_FAIL:-0}" = "1" ]; then
@@ -1832,8 +1966,12 @@ case "$cmd" in
     if [ -n "${FAKE_RECORD_STARTED_FILE:-}" ]; then
       : > "$FAKE_RECORD_STARTED_FILE"
     fi
+    if [ "${FAKE_RECORD_IGNORE_TERM:-0}" = "1" ]; then
+      trap '' TERM
+      while :; do sleep 0.1; done
+    fi
     if [ "${FAKE_RECORD_WAIT_FOR_SIGNAL:-0}" = "1" ]; then
-      trap 'write_run "$out"; exit 0' TERM
+      trap 'finalize_run "$out"' TERM
       while :; do sleep 0.1; done
     fi
     write_run "$out"
@@ -1852,7 +1990,7 @@ esac
 		t.Fatalf("OpenStore() error = %v", err)
 	}
 	logger := log.New(ioDiscard{}, "", 0)
-	rt := NewRuntime(context.Background(), store, Config{
+	rt := NewRuntime(ctx, store, Config{
 		RepoRoot:         repoRoot,
 		BindAddr:         "127.0.0.1:0",
 		DBPath:           filepath.Join(tmp, "jobs.sqlite3"),
