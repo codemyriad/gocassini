@@ -19,7 +19,9 @@ logged-in user.]]></description>
   <repository>https://github.com/codemyriad/gocassini</repository>
 
   <dependencies>
-    <nextcloud min-version="30" max-version="35"/>
+    <!-- HaRP (the recommended AppAPI deploy daemon) requires NC 32+; older
+         releases only offer daemon types this image was never tested on. -->
+    <nextcloud min-version="32" max-version="35"/>
   </dependencies>
 
   <external-app>

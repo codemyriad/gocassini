@@ -61,9 +61,9 @@ services:
 
   # AppAPI HaRP deploy daemon: the Nextcloud-recommended ExApp orchestrator
   # for NC 32+. Pulls images, spawns containers, and proxies traffic to
-  # them via FRP tunnels. The Cassini ExApp image is HaRP-only — it
-  # crashes on startup without HP_FRP_ADDRESS/PORT/SHARED_KEY env vars
-  # which HaRP injects.
+  # them via FRP tunnels. HaRP injects HP_FRP_ADDRESS/PORT/SHARED_KEY at
+  # deploy; the Cassini entrypoint starts its frpc tunnel when those are
+  # present and runs tunnel-less otherwise.
   appapi-harp:
     image: ghcr.io/nextcloud/nextcloud-appapi-harp:release
     container_name: appapi-harp

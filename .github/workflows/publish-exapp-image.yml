@@ -406,6 +406,30 @@ jobs:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-e2e-exapp.sh
 
+  e2e-entrypoint:
+    name: E2E container real entrypoint + HEALTHCHECK (AppAPI env, no overrides)
+    runs-on: ubuntu-latest
+    needs: build-image
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
+        with:
+          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Unlike the smoke/e2e jobs above, this boots the image via its real
+      # ENTRYPOINT with only AppAPI-shaped env (no --entrypoint override, no
+      # CASSINI_* injection, no HP_*) and waits for the image HEALTHCHECK to
+      # report healthy — the production boot contract a real install hits.
+      - name: Run real-entrypoint e2e
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+        run: ./harness/bin/ci-e2e-entrypoint-exapp.sh
+
   e2e-install:
     name: E2E install against real Nextcloud + AppAPI
     runs-on: ubuntu-latest
@@ -598,6 +622,7 @@ jobs:
       - transcribe-smoke
       - transcribe-smoke-cuda
       - e2e-container
+      - e2e-entrypoint
       - e2e-install
       - e2e-talk-record-cpu
       - e2e-talk-record-cuda
