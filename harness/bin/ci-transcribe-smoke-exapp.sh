@@ -11,6 +11,17 @@
 #   3. The build logs contain NO "downloading model" line (negative proof).
 #   4. The bundled file mtimes are <= the image's Created timestamp (positive
 #      proof the file was baked, not written at container start).
+#   5. (CUDA images only, D-363) the GPU was ACTUALLY used:
+#      - negative proof: no sherpa-onnx "... Fallback to cpu!" line in the
+#        build log (sherpa-onnx logs that — and exits 0 — when the bundled
+#        onnxruntime has no CUDA provider; it logs nothing on success), and
+#      - positive proof: a process from this smoke's container appeared in
+#        `nvidia-smi --query-compute-apps` (i.e. held a CUDA context) while
+#        the build was running.
+#      Silent CPU fallback is the documented CUDA failure mode: a CUDA
+#      release that transcribes on CPU must fail this smoke, not ship.
+#      Set CASSINI_SMOKE_GPU_ASSERT=0 to skip assertion 5 (e.g. exotic local
+#      setups where the GPU is reachable but host nvidia-smi is not).
 #
 # Run after build-image in CI. Locally:
 #   IMAGE_REF=ghcr.io/codemyriad/gocassini:branch-foo ./harness/bin/ci-transcribe-smoke-exapp.sh
@@ -33,9 +44,16 @@ mkdir -p "${LOG_DIR}"
 
 log() { printf '[transcribe-smoke] %s\n' "$*"; }
 
+# Background nvidia-smi/docker-top sampler (assertion 5); started right
+# before the build when GPU_ASSERT=1.
+GPU_SAMPLER_PID=""
+
 cleanup() {
   local rc=$?
   log "cleanup (rc=${rc})"
+  if [[ -n "${GPU_SAMPLER_PID}" ]]; then
+    kill "${GPU_SAMPLER_PID}" 2>/dev/null || true
+  fi
   docker logs "${CONTAINER_NAME}" > "${LOG_DIR}/container.log" 2>&1 || true
   if [[ ${rc} -ne 0 ]]; then
     log "container log:"
@@ -70,6 +88,19 @@ DISALLOW=$(read_env CASSINI_DISALLOW_MODEL_DOWNLOAD)
 GPU_FLAGS=()
 if [[ "${DEVICE}" == "cuda" || "${DOCKER_RUN_GPU:-0}" == "1" ]]; then
   GPU_FLAGS=(--device nvidia.com/gpu=all)
+fi
+
+# Assertion 5 (see header): prove the GPU is actually used when the image
+# says device=cuda. Needs the host's nvidia-smi to observe compute apps.
+GPU_ASSERT=0
+if [[ "${DEVICE}" == "cuda" && "${CASSINI_SMOKE_GPU_ASSERT:-1}" == "1" ]]; then
+  GPU_ASSERT=1
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    log "FAIL device=cuda but nvidia-smi is not on the host PATH"
+    log "     the CUDA smoke must prove real GPU use (D-363); install the driver"
+    log "     utilities or set CASSINI_SMOKE_GPU_ASSERT=0 to skip the assertion"
+    exit 1
+  fi
 fi
 
 if [[ -z "${CACHE_ROOT}" ]]; then
@@ -152,6 +183,29 @@ log "OK   ${enc_file} mtime (${ENC_MTIME}) <= image created (${IMG_CREATED_TS})"
 docker exec "${CONTAINER_NAME}" mkdir -p /tmp/smoke-in /tmp/smoke-out
 docker cp "${FIXTURE_HOST}" "${CONTAINER_NAME}:/tmp/smoke-in/parakeet-smoke.mkv"
 
+# While the build runs, sample (a) the host PIDs of processes inside OUR
+# container (docker top) and (b) the host-visible CUDA compute apps
+# (nvidia-smi). Assertion 5b later intersects the two: matching on container
+# PIDs rather than process names means a concurrently-running cassini
+# elsewhere on a shared GPU runner (e.g. a stale deploy-preview container)
+# cannot fake a pass. The recognizer holds its CUDA context for the whole
+# transcription stage, so 0.5s sampling cannot miss it.
+GPU_SAMPLE_LOG="${LOG_DIR}/gpu-compute-apps.csv"
+CONTAINER_PIDS_LOG="${LOG_DIR}/container-pids.log"
+if (( GPU_ASSERT )); then
+  log "sampling nvidia-smi compute apps during the build (GPU-use proof)"
+  : > "${GPU_SAMPLE_LOG}"
+  : > "${CONTAINER_PIDS_LOG}"
+  (
+    while :; do
+      docker top "${CONTAINER_NAME}" 2>/dev/null | awk 'NR > 1 { print $2 }' >> "${CONTAINER_PIDS_LOG}" || true
+      nvidia-smi --query-compute-apps=pid,process_name --format=csv,noheader >> "${GPU_SAMPLE_LOG}" 2>/dev/null || true
+      sleep 0.5
+    done
+  ) &
+  GPU_SAMPLER_PID=$!
+fi
+
 log "running cassini build on the fixture (device=${DEVICE})"
 set +e
 docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini build \
@@ -161,6 +215,12 @@ docker exec "${CONTAINER_NAME}" /usr/local/bin/cassini build \
   > "${LOG_DIR}/build.log" 2>&1
 BUILD_RC=$?
 set -e
+
+if [[ -n "${GPU_SAMPLER_PID}" ]]; then
+  kill "${GPU_SAMPLER_PID}" 2>/dev/null || true
+  wait "${GPU_SAMPLER_PID}" 2>/dev/null || true
+  GPU_SAMPLER_PID=""
+fi
 if [[ ${BUILD_RC} -ne 0 ]]; then
   log "FAIL cassini build exited ${BUILD_RC}"
   exit 1
@@ -175,6 +235,44 @@ if grep -qiE 'downloading (model|silero)' "${LOG_DIR}/build.log"; then
   exit 1
 fi
 log "OK   build log contains no 'downloading ...' line (STT model + VAD both bundled)"
+
+# ---- Assertion 5 (CUDA only): the GPU was ACTUALLY used ----
+if (( GPU_ASSERT )); then
+  # 5a. Negative proof. sherpa-onnx v1.13.1 (csrc/session.cc) logs
+  #     "Please compile with -DSHERPA_ONNX_ENABLE_GPU=ON. Available
+  #     providers: %s. Fallback to cpu!" to stderr — and carries on, exit 0 —
+  #     when the bundled onnxruntime has no CUDA provider. It logs NOTHING on
+  #     the success path, so the positive proof below is empirical instead.
+  if grep -qiE 'fallback to cpu' "${LOG_DIR}/build.log"; then
+    log "FAIL device=cuda but sherpa-onnx fell back to CPU:"
+    grep -iE 'fallback to cpu' "${LOG_DIR}/build.log" | sed 's/^/    /'
+    log "     the image's onnxruntime has no usable CUDA provider — check the"
+    log "     sherpa-cuda-fetcher lib swap in deployment/Dockerfile.exapp.cuda"
+    exit 1
+  fi
+  log "OK   build log has no sherpa-onnx CPU-fallback line"
+
+  # 5b. Positive proof: at least one host PID observed inside our container
+  #     (docker top) also showed up as an nvidia-smi compute app — i.e. the
+  #     build held a CUDA context. Catches every silent-fallback variant,
+  #     including ones that don't log (wrong --device wiring, EP registered
+  #     but unused, future sherpa-onnx log changes).
+  GPU_HITS=$(awk -F', *' '
+    NR == FNR { if ($1 != "") pids[$1] = 1; next }
+    ($1 != "" && $1 in pids) { print }
+  ' "${CONTAINER_PIDS_LOG}" "${GPU_SAMPLE_LOG}" | sort -u)
+  if [[ -z "${GPU_HITS}" ]]; then
+    log "FAIL device=cuda but no process from this container appeared in"
+    log "     'nvidia-smi --query-compute-apps' while the build ran —"
+    log "     transcription silently ran on the CPU (D-363)"
+    log "     compute apps observed on the host during the build:"
+    sort -u "${GPU_SAMPLE_LOG}" | sed 's/^/    /'
+    log "     (empty = nothing touched the GPU at all)"
+    exit 1
+  fi
+  log "OK   GPU was used by this container during the build (pid, process):"
+  printf '%s\n' "${GPU_HITS}" | sed 's/^/    /'
+fi
 
 # ---- Assertion 2 (cont): meeting bundle has content ----
 OUT_FILES=$(docker exec "${CONTAINER_NAME}" find /tmp/smoke-out -type f -size +0)

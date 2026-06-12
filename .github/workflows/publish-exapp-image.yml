@@ -7,9 +7,14 @@ on:
     tags:
       - 'v*'
   pull_request:
+    # Every path this workflow executes or builds from must be listed here —
+    # path filters are exact (no implicit globbing), so a missing entry lets
+    # a PR that edits e.g. a harness script merge green and first fail on
+    # main (happened with PR #36).
     paths:
       - 'appinfo/info.xml'
       - 'deployment/Dockerfile.exapp'
+      - 'deployment/Dockerfile.exapp.cuda'
       - 'deployment/exapp-start.sh'
       - 'deployment/exapp-healthcheck.sh'
       - 'cassini-operator/**'
@@ -17,6 +22,11 @@ on:
       - 'cassini-publisher/bin/**'
       - 'cassini-viewer/**'
       - 'cassini-control-panel/**'
+      # Harness scripts, compose stack, scenarios and media fixtures are
+      # executed by the smoke/e2e jobs below.
+      - 'harness/**'
+      # Composite action every job uses to hand the built image around.
+      - '.github/actions/**'
       - '.github/workflows/publish-exapp-image.yml'
   workflow_dispatch:
 
@@ -426,6 +436,31 @@ jobs:
           # without gating on absolute WER. Investigation tracked separately.
           MIN_LEVENSHTEIN: "0.50"
         run: ./harness/bin/ci-e2e-v3-transcript-verify.sh
+
+      - name: Materialize short-clip fixture (selective LFS pull)
+        # The short-clip regression below slices a single LFS-vendored bot
+        # track (mira.ogg, ~630 KB). A selective pull fetches just that
+        # object instead of the ~100 MB the full showcase fixture set would
+        # cost with `lfs: true` on the checkout — keeps the LFS bandwidth
+        # quota flat. ubuntu-latest ships git-lfs preinstalled.
+        run: git lfs pull --include="harness/media/processed/showcase-lantern-festival-v1/mira.ogg"
+
+      - name: Install host ffmpeg for clip slicing
+        # The regression script slices the source track on the host with
+        # `ffmpeg -c copy` (stream copy, no re-encode — cheap). Same apt
+        # install ci.yml's harness jobs use; ubuntu-latest has no ffmpeg.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Run short-clip ASR regression (decoder pad-tail guard)
+        # Guards the Parakeet TDT v3 short-clip zero-token fix
+        # (cassini-go-recorder/internal/transcribe/stt.go transcribeSegment
+        # pad-tail logic): clean 6-9s clips with no trailing silence must
+        # not transcribe to zero words. Its failure signature matches flake
+        # #50 — if this step trips while the Talk roundtrip stays green,
+        # the regression localizes to the decoder, not the media path.
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+        run: ./harness/bin/ci-transcribe-short-clip-regression.sh
 
   e2e-container:
     name: E2E container HTTP plane + middleware + lifecycle (no Nextcloud)
