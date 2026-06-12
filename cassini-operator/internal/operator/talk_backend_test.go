@@ -689,6 +689,150 @@ func TestNotifyInterruptedTalkRecordingsSendsFailedCallback(t *testing.T) {
 	fakeTalk.assertEventTypes(t, []string{"failed"})
 }
 
+func TestNotifyInterruptedTalkRecordingsNotifiesEachInterruptionOnce(t *testing.T) {
+	// Regression: the startup sweep used to re-stamp already-interrupted jobs
+	// (state NOT IN succeeded/failed matches 'interrupted'), so a Talk job
+	// interrupted by crash epoch 1 that was never rerun got a fresh
+	// interrupted_at on every restart and spreed received the same failed
+	// callback forever. Two consecutive startups must yield exactly one
+	// callback.
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.TalkSharedSecret = "secret-123"
+	rt.talkRetryDelays = []time.Duration{time.Millisecond}
+	fakeTalk := newFakeTalkServer(t)
+	defer fakeTalk.Close()
+
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "talk-interrupted", Stage: "record", State: "running", CreatedAt: "2026-06-12T10:00:00Z"})
+	binding := `{"backend_url":"` + fakeTalk.server.URL + `","room_token":"room123","owner":"chima"}`
+	if err := rt.store.SetJobTalkBinding(context.Background(), "talk-interrupted", binding); err != nil {
+		t.Fatalf("SetJobTalkBinding() error = %v", err)
+	}
+
+	// First startup after the crash: the sweep stamps the job and the notify
+	// pass sends spreed exactly one failed callback.
+	firstSweep := "2026-06-12T11:00:00Z"
+	count, err := rt.store.MarkIncompleteJobsInterrupted(context.Background(), firstSweep)
+	if err != nil {
+		t.Fatalf("MarkIncompleteJobsInterrupted() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("first sweep count = %d, want 1", count)
+	}
+	rt.NotifyInterruptedTalkRecordings(firstSweep)
+	fakeTalk.assertEventTypes(t, []string{"failed"})
+
+	// Second startup: the job is still interrupted (a mid-recording Talk job
+	// has no canonical run, so it is never rerun). The sweep must not
+	// re-stamp it, and the notify pass must not re-send the callback.
+	secondSweep := "2026-06-12T12:00:00Z"
+	count, err = rt.store.MarkIncompleteJobsInterrupted(context.Background(), secondSweep)
+	if err != nil {
+		t.Fatalf("MarkIncompleteJobsInterrupted() error = %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("second sweep count = %d, want 0 (interrupted jobs must not be re-stamped)", count)
+	}
+	job := mustGetJob(t, rt.store, "talk-interrupted")
+	if job.InterruptedAt == nil || *job.InterruptedAt != firstSweep {
+		t.Fatalf("interrupted_at = %#v, want first sweep epoch %q", job.InterruptedAt, firstSweep)
+	}
+	attempts, err := rt.store.ListJobAttempts(context.Background(), "talk-interrupted")
+	if err != nil {
+		t.Fatalf("ListJobAttempts() error = %v", err)
+	}
+	if len(attempts) != 1 || attempts[0].InterruptedAt == nil || *attempts[0].InterruptedAt != firstSweep {
+		t.Fatalf("attempt interrupted_at not preserved at first sweep epoch, got %#v", attempts)
+	}
+	rt.NotifyInterruptedTalkRecordings(secondSweep)
+	fakeTalk.assertEventTypes(t, []string{"failed"})
+}
+
+func TestNotifyInterruptedTalkRecordingsSkipsRoomWithLiveRecording(t *testing.T) {
+	// Regression: the failed callback is keyed only by room token, so sending
+	// it while a NEW recording is live in the same room would mark the live
+	// recording failed in spreed (D-352).
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.TalkSharedSecret = "secret-123"
+	rt.talkRetryDelays = []time.Duration{time.Millisecond}
+	fakeTalk := newFakeTalkServer(t)
+	defer fakeTalk.Close()
+
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "talk-interrupted", Stage: "record", State: "running", CreatedAt: "2026-06-12T10:00:00Z"})
+	binding := `{"backend_url":"` + fakeTalk.server.URL + `","room_token":"room123","owner":"chima"}`
+	if err := rt.store.SetJobTalkBinding(context.Background(), "talk-interrupted", binding); err != nil {
+		t.Fatalf("SetJobTalkBinding() error = %v", err)
+	}
+	interruptedAt := nowUTCString()
+	if _, err := rt.store.MarkIncompleteJobsInterrupted(context.Background(), interruptedAt); err != nil {
+		t.Fatalf("MarkIncompleteJobsInterrupted() error = %v", err)
+	}
+
+	// A moderator restarted recording in the same room before the notify
+	// goroutine got to this job.
+	live := &talkRoomState{
+		RoomKey:    talkRoomKey(fakeTalk.server.URL, "room123"),
+		BackendURL: fakeTalk.server.URL,
+		RoomToken:  "room123",
+		Owner:      "chima",
+	}
+	if !rt.reserveTalkRoom(live) {
+		t.Fatalf("expected to reserve live room state")
+	}
+	rt.bindTalkRoomJob(live, "job-live")
+
+	rt.NotifyInterruptedTalkRecordings(interruptedAt)
+	fakeTalk.assertEventTypes(t, nil)
+}
+
+func TestRedeliverTalkRecordingSkipsStoppedCallbackWhenRoomIsLive(t *testing.T) {
+	// Regression: redelivery of an old job's recording must not send a
+	// room-scoped stopped callback while a NEW recording is live in the same
+	// room — spreed would mark the live recording stopped while its recorder
+	// keeps running (D-352). The upload itself still proceeds: the store
+	// endpoint never touches room recording state.
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.TalkSharedSecret = "secret-123"
+	rt.talkRetryDelays = []time.Duration{time.Millisecond}
+	fakeTalk := newFakeTalkServer(t)
+	defer fakeTalk.Close()
+
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "talk-undelivered", Stage: "done", State: "succeeded", CreatedAt: "2026-06-12T10:00:00Z", CompletedAt: strPtr("2026-06-12T10:30:00Z")})
+	binding := `{"backend_url":"` + fakeTalk.server.URL + `","room_token":"room123","owner":"chima"}`
+	if err := rt.store.SetJobTalkBinding(context.Background(), "talk-undelivered", binding); err != nil {
+		t.Fatalf("SetJobTalkBinding() error = %v", err)
+	}
+	runPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(runPath, "recording.mkv"), []byte("old-recording"), 0o644); err != nil {
+		t.Fatalf("write fixture recording: %v", err)
+	}
+
+	// A newer recording is live in the same room when the rerun redelivers.
+	live := &talkRoomState{
+		RoomKey:    talkRoomKey(fakeTalk.server.URL, "room123"),
+		BackendURL: fakeTalk.server.URL,
+		RoomToken:  "room123",
+		Owner:      "chima",
+	}
+	if !rt.reserveTalkRoom(live) {
+		t.Fatalf("expected to reserve live room state")
+	}
+	rt.bindTalkRoomJob(live, "job-live")
+
+	job := mustGetJob(t, rt.store, "talk-undelivered")
+	job.ArtifactRunPath = &runPath
+	rt.redeliverTalkRecording(job)
+
+	fakeTalk.assertEventTypes(t, nil)
+	fakeTalk.assertUploadCount(t, 1)
+	redelivered := mustGetJob(t, rt.store, "talk-undelivered")
+	if redelivered.TalkDeliveredAt == nil {
+		t.Fatalf("expected talk_delivered_at after upload-only redelivery, got nil")
+	}
+}
+
 type fakeTalkServer struct {
 	server  *httptest.Server
 	mu      sync.Mutex

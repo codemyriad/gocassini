@@ -449,6 +449,32 @@ func (rt *Runtime) updateTalkStopActor(jobID string, actor *talkActorData) {
 	rt.recordMu.Unlock()
 }
 
+// errTalkRoomLive marks a stale room-scoped callback that was skipped because
+// another job is currently recording in the same room. It is not retryable
+// (neither a talkHTTPError nor a url.Error), so withTalkRetry returns it
+// immediately.
+var errTalkRoomLive = errors.New("another recording is live in this room")
+
+// talkRoomLiveWithOtherJob reports whether the room token currently has a
+// live in-memory recording owned by a different job (or one still being
+// reserved). Stale stopped/failed callbacks for an old job are keyed only by
+// room token, so sending them while a newer recording is live would tell
+// spreed the LIVE recording stopped/failed (D-352). The persisted binding
+// does not retain the in-memory RoomKey — it is derived from the
+// spreed-supplied public backend URL while the binding may hold the
+// cfg.TalkBackendURL override — so the match is by room token; tokens are
+// unique per Nextcloud instance and an operator serves a single instance.
+func (rt *Runtime) talkRoomLiveWithOtherJob(roomToken, jobID string) (string, bool) {
+	rt.recordMu.Lock()
+	defer rt.recordMu.Unlock()
+	for _, state := range rt.talkRooms {
+		if state.RoomToken == roomToken && state.JobID != jobID {
+			return state.JobID, true
+		}
+	}
+	return "", false
+}
+
 func (rt *Runtime) clearTalkRoomJobByID(jobID string) {
 	rt.recordMu.Lock()
 	if state, ok := rt.talkJobs[jobID]; ok {
@@ -824,10 +850,23 @@ func (rt *Runtime) redeliverTalkRecording(job Job) {
 		rt.logger.Printf("talk redelivery skipped id=%s: %v", job.ID, err)
 		return
 	}
+	// The stopped callback is room-scoped: if a NEWER recording is live in the
+	// same room, sending it would mark the live recording stopped in spreed
+	// while its recorder keeps running. Re-check before every attempt — the
+	// retry backoff is long enough for a moderator to start a fresh recording
+	// mid-loop. The upload below still proceeds: the store endpoint only files
+	// the recording into the owner's storage and never touches room state.
 	if err := rt.withTalkRetry(job.ID, "stopped callback", func() error {
+		if liveJobID, live := rt.talkRoomLiveWithOtherJob(state.RoomToken, job.ID); live {
+			return fmt.Errorf("%w: job %s is recording in room %s", errTalkRoomLive, liveJobID, state.RoomToken)
+		}
 		return rt.notifyTalkStopped(state)
 	}); err != nil {
-		rt.logger.Printf("talk stopped callback failed during redelivery id=%s: %v", job.ID, err)
+		if errors.Is(err, errTalkRoomLive) {
+			rt.logger.Printf("talk stopped callback skipped during redelivery id=%s room=%s: %v", job.ID, state.RoomToken, err)
+		} else {
+			rt.logger.Printf("talk stopped callback failed during redelivery id=%s: %v", job.ID, err)
+		}
 	}
 	finishedAt := ""
 	if job.RecordFinishedAt != nil {
@@ -854,12 +893,24 @@ func (rt *Runtime) NotifyInterruptedTalkRecordings(interruptedAt string) {
 			rt.logger.Printf("talk failed callback skipped id=%s: %v", job.ID, err)
 			continue
 		}
-		if err := rt.withTalkRetry(job.ID, "failed callback", func() error {
+		// The failed callback is room-scoped: this goroutine can lag minutes
+		// behind startup (each earlier job may burn the full retry schedule),
+		// long enough for a moderator to restart recording in the same room.
+		// Re-check the live binding before every attempt so a stale callback
+		// never clobbers the new recording's status in spreed (D-352).
+		err = rt.withTalkRetry(job.ID, "failed callback", func() error {
+			if liveJobID, live := rt.talkRoomLiveWithOtherJob(state.RoomToken, job.ID); live {
+				return fmt.Errorf("%w: job %s is recording in room %s", errTalkRoomLive, liveJobID, state.RoomToken)
+			}
 			return rt.notifyTalkFailed(state)
-		}); err != nil {
+		})
+		switch {
+		case errors.Is(err, errTalkRoomLive):
+			rt.logger.Printf("talk failed callback skipped for interrupted job id=%s room=%s: %v", job.ID, state.RoomToken, err)
+		case err != nil:
 			rt.logger.Printf("talk failed callback for interrupted job failed id=%s room=%s: %v", job.ID, state.RoomToken, err)
-			continue
+		default:
+			rt.logger.Printf("talk failed callback sent for interrupted job id=%s room=%s", job.ID, state.RoomToken)
 		}
-		rt.logger.Printf("talk failed callback sent for interrupted job id=%s room=%s", job.ID, state.RoomToken)
 	}
 }
