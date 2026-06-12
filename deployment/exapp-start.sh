@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Entrypoint for the Nextcloud ExApp build of Cassini.
-# Reads HaRP tunnel parameters from env, writes /tmp/frpc.toml, launches frpc,
-# then execs cassini-operator with the AppAPI middleware enabled.
+# When HaRP tunnel parameters are present in env, writes /tmp/frpc.toml and
+# launches frpc before exec'ing cassini-operator with the AppAPI middleware
+# enabled. AppAPI injects HP_* only for HaRP daemons without direct connect
+# (app_api DockerActions::buildDeployParams) — on Docker Socket Proxy daemons,
+# HaRP direct-connect, and manual installs the operator is exec'd directly.
 set -euo pipefail
 
 log() {
@@ -16,41 +19,40 @@ require_env() {
   fi
 }
 
-# AppAPI injects these on container start. Without them frpc cannot connect to HaRP
-# and the operator cannot verify proxied requests.
+# AppAPI injects these on container start for every daemon flavor. Without
+# them the operator cannot verify proxied requests.
 require_env APP_SECRET
 require_env APP_ID
 require_env APP_VERSION
-require_env AA_VERSION
-require_env HP_FRP_ADDRESS
-require_env HP_FRP_PORT
-require_env HP_SHARED_KEY
 
 # APP_HOST/APP_PORT default to 0.0.0.0:8080 via Dockerfile ENV but allow override.
 : "${APP_HOST:=0.0.0.0}"
 : "${APP_PORT:=8080}"
 
-log "APP_ID=${APP_ID} APP_VERSION=${APP_VERSION} AA_VERSION=${AA_VERSION}"
-log "HaRP frps=${HP_FRP_ADDRESS}:${HP_FRP_PORT}"
+log "APP_ID=${APP_ID} APP_VERSION=${APP_VERSION} AA_VERSION=${AA_VERSION:-unset}"
 log "operator bind ${APP_HOST}:${APP_PORT}"
-if command -v frpc >/dev/null 2>&1; then
-  frpc_version=$(frpc --version 2>/dev/null || echo unknown)
-  log "frpc ${frpc_version}"
-fi
 
-# Optional mutual TLS when /certs/frp is mounted by the deploy daemon.
-frp_tls_block=""
-if [[ -d /certs/frp ]]; then
-  frp_tls_block=$(cat <<EOF
+start_frpc() {
+  log "HaRP frps=${HP_FRP_ADDRESS}:${HP_FRP_PORT}"
+  if command -v frpc >/dev/null 2>&1; then
+    local frpc_version
+    frpc_version=$(frpc --version 2>/dev/null || echo unknown)
+    log "frpc ${frpc_version}"
+  fi
+
+  # Optional mutual TLS when /certs/frp is mounted by the deploy daemon.
+  local frp_tls_block=""
+  if [[ -d /certs/frp ]]; then
+    frp_tls_block=$(cat <<EOF
 transport.tls.certFile = "/certs/frp/client.crt"
 transport.tls.keyFile  = "/certs/frp/client.key"
 transport.tls.trustedCaFile = "/certs/frp/ca.crt"
 EOF
 )
-  log "mutual TLS enabled (/certs/frp present)"
-fi
+    log "mutual TLS enabled (/certs/frp present)"
+  fi
 
-cat >/tmp/frpc.toml <<EOF
+  cat >/tmp/frpc.toml <<EOF
 serverAddr = "${HP_FRP_ADDRESS}"
 serverPort = ${HP_FRP_PORT}
 loginFailExit = false
@@ -82,12 +84,25 @@ localIP = "127.0.0.1"
 localPort = ${APP_PORT}
 EOF
 
-# Launch frpc in the background. tini (PID 1) reaps it on shutdown.
-log "launching frpc"
-frpc -c /tmp/frpc.toml &
-FRPC_PID=$!
-echo "${FRPC_PID}" >/tmp/frpc.pid
-log "frpc pid=${FRPC_PID}"
+  # Launch frpc in the background. tini (PID 1) reaps it on shutdown.
+  log "launching frpc"
+  frpc -c /tmp/frpc.toml &
+  local frpc_pid=$!
+  echo "${frpc_pid}" >/tmp/frpc.pid
+  log "frpc pid=${frpc_pid}"
+}
+
+# HaRP tunnel parameters. Partial HP_* env is a deploy-daemon misconfiguration,
+# so require the full set as soon as any one of them is present.
+if [[ -n "${HP_FRP_ADDRESS:-}" || -n "${HP_FRP_PORT:-}" || -n "${HP_SHARED_KEY:-}" ]]; then
+  require_env HP_FRP_ADDRESS
+  require_env HP_FRP_PORT
+  require_env HP_SHARED_KEY
+  start_frpc
+else
+  log "no HaRP env (HP_FRP_ADDRESS/HP_FRP_PORT/HP_SHARED_KEY unset) — assuming direct-reachable daemon, skipping frpc"
+  rm -f /tmp/frpc.pid
+fi
 
 # Storage sanity warnings — non-fatal, helps admins notice missing volume mounts.
 for path in /var/lib/cassini-operator /srv/cassini-site; do
