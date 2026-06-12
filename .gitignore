@@ -52,7 +52,6 @@ __pycache__/
 .env
 .envrc
 .env.local
-!deployment/.env
 
 # Private local media captures
 /media/
