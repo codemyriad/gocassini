@@ -37,6 +37,9 @@ SIGNALING_SHARED_SECRET="${SIGNALING_SHARED_SECRET:-7f4dca67263621ba7f9f9917e13d
 TURN_SERVER="${TURN_SERVER:-127.0.0.1:13479}"
 TURN_SHARED_SECRET="${TURN_SHARED_SECRET:-3c04d2fc2f7fe39d48eb4dc77f652c8c778a4ea178b0e486529b284afca7b648}"
 CASSINI_TALK_RECORDING_URL="${CASSINI_TALK_RECORDING_URL:-}"
+# DEV-ONLY fallback for the local harness loop. This value is committed and
+# public in repo history; never use it (or any committed value) for a real
+# deployment — generate one with `openssl rand -hex 32` instead.
 CASSINI_TALK_RECORDING_SECRET="${CASSINI_TALK_RECORDING_SECRET:-9a2a9c0b7f4e43b7a2c6e19d6a4b8f8073b0174ee2f8425d99e8e33f7d60fb42}"
 
 RUNTIME_DIR="$TEST_DIR/runtime"
