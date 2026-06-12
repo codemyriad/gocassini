@@ -676,7 +676,13 @@ func (rt *Runtime) handleRerunJob(w http.ResponseWriter, r *http.Request, id str
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("get job: %v", err))
 		return
 	}
-	if job.Stage != "done" || (job.State != "failed" && job.State != "succeeded") {
+	// Terminal jobs (done/failed, done/succeeded) are rerunnable, and so are
+	// jobs the startup sweep marked interrupted at any stage: rerun is the
+	// documented recovery path after an operator restart (D-362). Whether an
+	// interrupted job actually has a ready canonical run to rebuild from is
+	// checked by QueueRerunAttempt.
+	terminal := job.Stage == "done" && (job.State == "failed" || job.State == "succeeded")
+	if !terminal && job.State != "interrupted" {
 		writeJSONError(w, http.StatusConflict, "job is not eligible for rerun")
 		return
 	}

@@ -1530,6 +1530,80 @@ func TestRerunRejectsUnknownAndActiveJobs(t *testing.T) {
 	_ = waitForJobState(t, rt.store, resp.ID, "succeeded")
 }
 
+func TestRerunInterruptedJobWithReadyRunSucceeds(t *testing.T) {
+	rt, cleanup, _, _ := newCLITestRuntime(t)
+	defer cleanup()
+
+	createReq := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/interrupted-rerun"}`))
+	createRec := httptest.NewRecorder()
+	rt.jobsHandler(createRec, createReq)
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, want %d body=%s", createRec.Code, http.StatusAccepted, createRec.Body.String())
+	}
+	var createResp createJobResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	_ = waitForJobState(t, rt.store, createResp.ID, "succeeded")
+
+	// Simulate the startup sweep after a crash mid-build: the job is frozen
+	// at stage build, state interrupted, with a perfectly ready canonical
+	// run bundle on disk (the empirical D-362 repro).
+	interruptedAt := "2026-06-12T10:00:00Z"
+	if _, err := rt.store.db.Exec(`
+UPDATE jobs
+SET stage = 'build', state = 'interrupted', interrupted_at = ?, completed_at = NULL,
+    build_finished_at = NULL, publish_queued_at = NULL, publish_started_at = NULL, publish_finished_at = NULL
+WHERE id = ?`, interruptedAt, createResp.ID); err != nil {
+		t.Fatalf("mark job interrupted: %v", err)
+	}
+	if _, err := rt.store.db.Exec(`
+UPDATE job_attempts
+SET stage = 'build', state = 'interrupted', interrupted_at = ?, completed_at = NULL
+WHERE job_id = ?`, interruptedAt, createResp.ID); err != nil {
+		t.Fatalf("mark attempt interrupted: %v", err)
+	}
+
+	rerunReq := httptest.NewRequest(http.MethodPost, "/jobs/"+createResp.ID+"/rerun", nil)
+	rerunRec := httptest.NewRecorder()
+	rt.jobDetailHandler(rerunRec, rerunReq)
+	if rerunRec.Code != http.StatusAccepted {
+		t.Fatalf("rerun status = %d, want %d body=%s", rerunRec.Code, http.StatusAccepted, rerunRec.Body.String())
+	}
+	var rerunResp rerunJobResponse
+	if err := json.Unmarshal(rerunRec.Body.Bytes(), &rerunResp); err != nil {
+		t.Fatalf("decode rerun response: %v", err)
+	}
+	if rerunResp.AttemptNumber != 2 {
+		t.Fatalf("rerun attempt_number = %d, want 2", rerunResp.AttemptNumber)
+	}
+
+	job := waitForJobState(t, rt.store, createResp.ID, "succeeded")
+	if job.CurrentAttemptNumber != 2 || job.RerunCount != 1 {
+		t.Fatalf("expected attempt 2 / rerun_count 1 after interrupted rerun, got %#v", job)
+	}
+	if job.InterruptedAt != nil {
+		t.Fatalf("expected interrupted_at to be cleared after rerun, got %#v", job.InterruptedAt)
+	}
+}
+
+func TestRerunRejectsInterruptedRecordJobWithoutCanonicalRun(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	// A job interrupted mid-recording has no canonical run to rebuild from:
+	// the rerun gate lets interrupted jobs through, but the ready-run check
+	// must still reject it.
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "interrupted-record", Stage: "record", State: "interrupted", CreatedAt: "2026-06-12T10:00:00Z"})
+
+	rerunReq := httptest.NewRequest(http.MethodPost, "/jobs/interrupted-record/rerun", nil)
+	rerunRec := httptest.NewRecorder()
+	rt.jobDetailHandler(rerunRec, rerunReq)
+	if rerunRec.Code != http.StatusConflict {
+		t.Fatalf("rerun status = %d, want %d body=%s", rerunRec.Code, http.StatusConflict, rerunRec.Body.String())
+	}
+}
+
 func TestRerunRejectsFailedRecordWithoutCanonicalRun(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()

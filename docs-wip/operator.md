@@ -238,11 +238,14 @@ POST /jobs/:id/rerun
 
 Behavior:
 
-- valid only for terminal jobs (`done/failed` or `done/succeeded`)
+- valid for terminal jobs (`done/failed` or `done/succeeded`) and for jobs
+  marked `interrupted` by the startup sweep
 - requires a canonical ready `.run`
 - creates a new attempt
 - queues that attempt directly at `build/queued`
 - returns `202` with the new attempt number
+- for Talk-triggered jobs whose recording never reached Nextcloud, also
+  re-attempts delivery (stopped callback + upload) from the canonical `.run`
 
 Current reruns are downstream-only. They do not re-record the meeting.
 
