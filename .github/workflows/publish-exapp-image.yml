@@ -34,17 +34,21 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE: ${{ github.repository_owner }}/gocassini
-  # The CPU image is also published as :latest-rocm so ROCm-tagged AppAPI daemons
-  # still install — real ROCm support is deferred (sherpa-onnx ships no upstream
-  # ROCm artifact). Real CUDA support lands in a follow-up PR with its own
-  # Dockerfile.exapp.cuda; until then the -cuda tag is NOT aliased so we do not
-  # advertise GPU acceleration we cannot honor.
+  # The CPU image is also aliased with these suffixes (:latest-rocm,
+  # :X.Y.Z-rocm) so ROCm-tagged AppAPI daemons still install — real ROCm
+  # support is deferred (sherpa-onnx ships no upstream ROCm artifact).
+  # -cuda tags are NOT aliases of the CPU image: they come from the
+  # dedicated CUDA build (build-image-cuda below).
   EXTRA_ALIAS_SUFFIXES: '-rocm'
 
 jobs:
   validate-manifest:
     name: Validate appinfo/info.xml
     runs-on: ubuntu-latest
+    outputs:
+      # <version> from appinfo/info.xml — the single source of truth for
+      # release image tags (:X.Y.Z, :X.Y.Z-cuda).
+      app_version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - name: Install xmllint
@@ -67,6 +71,37 @@ jobs:
             echo "they are lifecycle callbacks, not browser routes" >&2
             exit 1
           fi
+      - name: Version pin consistency check
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="$(xmllint --xpath 'string(/info/version)' appinfo/info.xml)"
+          IMAGE_TAG="$(xmllint --xpath 'string(/info/external-app/docker-install/image-tag)' appinfo/info.xml)"
+          echo "info.xml version=${VERSION} image-tag=${IMAGE_TAG}"
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "appinfo/info.xml <version> must be X.Y.Z, got: '${VERSION}'" >&2
+            exit 1
+          fi
+          # Reproducible installs (D-360): the manifest must pin the image to
+          # the release version, never a floating tag like latest — a
+          # reinstall must pull the exact build the app version was cut from.
+          if [[ "${IMAGE_TAG}" != "${VERSION}" ]]; then
+            echo "appinfo/info.xml <image-tag> (${IMAGE_TAG}) must equal <version> (${VERSION})" >&2
+            echo "run scripts/bump-exapp-version.sh <version> to bump both together" >&2
+            exit 1
+          fi
+          # A release tag must match the manifest it ships: tagging v0.2.0
+          # with info.xml still at 0.1.0 would publish image tags that
+          # contradict the app version AppAPI registers.
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF##refs/tags/}"
+            if [[ "${TAG}" != "v${VERSION}" ]]; then
+              echo "git tag ${TAG} does not match appinfo/info.xml <version> ${VERSION} (expected v${VERSION})" >&2
+              echo "run scripts/bump-exapp-version.sh before tagging a release" >&2
+              exit 1
+            fi
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
   build-image:
     name: Build ExApp image
@@ -100,7 +135,11 @@ jobs:
           case "${GITHUB_EVENT_NAME}" in
             push)
               if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-                VERSION="${GITHUB_REF##refs/tags/}"
+                # Release tags come from appinfo/info.xml <version>, not the
+                # git ref: validate-manifest guarantees the git tag is
+                # v<version> and that <image-tag> matches, so the published
+                # :X.Y.Z tag is exactly what a pinned AppAPI install pulls.
+                VERSION="${{ needs.validate-manifest.outputs.app_version }}"
                 TAGS+=("${REF}:${VERSION}" "${REF}:latest")
                 for suffix in ${EXTRA_ALIAS_SUFFIXES}; do
                   TAGS+=("${REF}:${VERSION}${suffix}")
@@ -262,7 +301,9 @@ jobs:
           case "${GITHUB_EVENT_NAME}" in
             push)
               if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-                VERSION="${GITHUB_REF##refs/tags/}"
+                # Same source of truth as the CPU build: appinfo/info.xml
+                # <version>, validated against the git tag upstream.
+                VERSION="${{ needs.validate-manifest.outputs.app_version }}"
                 TAGS+=("${REF}:${VERSION}-cuda" "${REF}:latest-cuda" "${REF}:cuda")
               else
                 BRANCH="${GITHUB_REF##refs/heads/}"
@@ -637,9 +678,9 @@ jobs:
       # delete-package-versions action's `ignore-versions` regex matches
       # against `name` (the digest), which is useless here. Use a bash
       # script that inspects tags explicitly: keep every version that
-      # carries a named tag (latest, latest-cuda, latest-rocm, v*); from
-      # the remainder (sha-*-only versions), keep the 10 newest and
-      # delete the rest.
+      # carries a named tag (latest*, cuda, release versions X.Y.Z[-suffix],
+      # legacy v*); from the remainder (sha-*-only versions), keep the 10
+      # newest and delete the rest.
       - name: Prune
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -657,14 +698,14 @@ jobs:
             "/orgs/${OWNER}/packages/container/${PACKAGE}/versions" \
             > "$tmp/versions.json"
 
-          # Versions worth keeping outright (any named tag). `latest-cuda` stays
-          # in the keep-list so PR #32's real CUDA image is protected once it
-          # starts being published; for now nothing pushes that tag.
+          # Versions worth keeping outright (any named tag). Release tags
+          # X.Y.Z[-cuda|-rocm] must survive forever — they are the
+          # reproducible install pins referenced by appinfo/info.xml.
           jq -r '
             .[]
             | .metadata.container.tags as $tags
             | select(
-                ($tags | any(. == "latest" or . == "latest-cuda" or . == "latest-rocm" or startswith("v")))
+                ($tags | any(. == "latest" or . == "latest-cuda" or . == "latest-rocm" or . == "cuda" or startswith("v") or test("^[0-9]+\\.[0-9]+\\.[0-9]+")))
               )
             | "KEEP \(.id) tags=\($tags | join(","))"
           ' "$tmp/versions.json" | tee "$tmp/keep.log" || true
@@ -676,7 +717,7 @@ jobs:
             | .[]
             | .metadata.container.tags as $tags
             | select(
-                ($tags | any(. == "latest" or . == "latest-cuda" or . == "latest-rocm" or startswith("v"))) | not
+                ($tags | any(. == "latest" or . == "latest-cuda" or . == "latest-rocm" or . == "cuda" or startswith("v") or test("^[0-9]+\\.[0-9]+\\.[0-9]+"))) | not
               )
             | "\(.id)\t\(.created_at)\t\($tags | join(","))"
           ' "$tmp/versions.json" > "$tmp/candidates.tsv"

@@ -14,19 +14,35 @@ Persistent storage is automatic: AppAPI creates a named volume for every
 docker-deployed ExApp and the operator stores all durable data under it
 (see [Persistent storage](#persistent-storage)).
 
-## Image variants
+## Image variants and tags
 
-The image is published at:
+Images are published to `ghcr.io/codemyriad/gocassini`:
+
+| Tag | What it is |
+|---|---|
+| `X.Y.Z` | CPU release build. Immutable; matches `<version>`/`<image-tag>` in `appinfo/info.xml` |
+| `X.Y.Z-cuda` | CUDA release build (GPU-accelerated transcription, fp32 model) |
+| `X.Y.Z-rocm` | Alias of the CPU build so ROCm-tagged daemons install; no ROCm acceleration yet |
+| `sha-<shortsha>` / `sha-<shortsha>-cuda` | Every pushed commit (`main` and release tags), for pinning a specific build |
+| `latest` / `latest-cuda` / `latest-rocm` | Convenience tags tracking `main` — fine for demos, **not** for production installs |
+
+`appinfo/info.xml` pins `<image-tag>` to the release version, so a default
+AppAPI install (and any later reinstall) pulls exactly the build the
+registered app version was cut from instead of whatever `latest` points at
+that day.
+
+### Cutting a release
 
 ```
-ghcr.io/codemyriad/gocassini:latest
-ghcr.io/codemyriad/gocassini:<version-tag>
+./scripts/bump-exapp-version.sh 0.2.0   # bumps <version> + <image-tag> together
+git commit -am "release: 0.2.0"
+git tag v0.2.0
+git push origin main v0.2.0
 ```
 
-For AppAPI compatibility, identical CPU-only images are also published at
-`-cuda` and `-rocm` suffixes. GPU acceleration is **not** active in v1; the
-suffix variants exist only so admins on GPU-tagged daemons get a working
-install. Real GPU variants are tracked as a TODO.
+The tag push publishes `0.2.0`, `0.2.0-cuda`, and `0.2.0-rocm`. CI refuses to
+publish when the git tag and the manifest version disagree, or when
+`<image-tag>` drifts from `<version>`.
 
 ## Install via AppAPI admin UI
 
@@ -34,7 +50,8 @@ In Nextcloud → Settings → External Apps:
 
 1. Click **Register an external app from a Docker image**.
 2. Image: `ghcr.io/codemyriad/gocassini`
-3. Tag: `latest`
+3. Tag: the release version (e.g. `0.1.0`), matching `<image-tag>` in the
+   manifest. `latest` works for throwaway demos but is not reproducible.
 4. AppAPI will pull the image, set up a HaRP tunnel, and run the container.
 5. Once the daemon reports the image is up, enable the app. Nextcloud calls
    `PUT /enabled` on the container; a 200 response activates the app.
@@ -151,7 +168,9 @@ and the production-shaped HaRP-fronted install (deferred).
 
 ## CI
 
-`.github/workflows/publish-exapp-image.yml` validates the manifest, builds
-the image, runs the smoke test, attempts the E2E (continue-on-error while
-the harness stabilizes), and on `main` or version tags pushes to
-`ghcr.io/codemyriad/gocassini`.
+`.github/workflows/publish-exapp-image.yml` validates the manifest (including
+that `<image-tag>` equals `<version>` and, on release tags, that the git tag
+matches the manifest), builds the CPU and CUDA images, runs the smoke and
+e2e suites, and pushes to `ghcr.io/codemyriad/gocassini`: `sha-<shortsha>`
+[+`-cuda`] on every push, `latest`-family tags on `main`, and the immutable
+`X.Y.Z`-family release tags on `vX.Y.Z` tag pushes.
