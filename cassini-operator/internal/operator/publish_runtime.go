@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 type publishTask struct {
@@ -104,6 +105,10 @@ func (rt *Runtime) executePublishCLI(ctx context.Context, task publishTask) (str
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
 	cmd.Env = os.Environ()
+	// Kill the whole process group on ctx cancel so exporter grandchildren
+	// don't outlive the publish.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return killProcessGroup(cmd.Process) }
 	if err := cmd.Run(); err != nil {
 		return attemptSiteDir, fmt.Errorf("cassini publish: %w", err)
 	}

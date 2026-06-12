@@ -56,11 +56,16 @@ type Runtime struct {
 	events       *eventHub
 	recordMu     sync.Mutex
 	recordJobs   map[string]*recordProcessState
+	recordWG     sync.WaitGroup
 	talkRooms    map[string]*talkRoomState
 	talkJobs     map[string]*talkRoomState
 	recordJobFn  func(context.Context, Job, TriggerRequest) (recordResult, error)
 	buildJobFn   func(context.Context, buildTask) (string, error)
 	publishJobFn func(context.Context, publishTask) (string, error)
+	// recordStopAckGrace and recordStopFinalizeGrace default to the package
+	// constants; tests shrink them to exercise stop enforcement quickly.
+	recordStopAckGrace      time.Duration
+	recordStopFinalizeGrace time.Duration
 }
 
 type TriggerRequest struct {
@@ -176,6 +181,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		if err := <-serveErrCh; err != nil {
 			fmt.Fprintf(stderr, "serve: %v\n", err)
 			return 1
+		}
+		// The operator is the container's main process: returning while a
+		// record job is still finalizing would SIGKILL the recorder
+		// mid-compose and destroy the recording (D-350). In-flight stops are
+		// enforced per process, so this wait is bounded.
+		if !runtime.WaitForRecordJobs(recordShutdownWait) {
+			logger.Printf("shutdown abandoned record jobs still running after %s", recordShutdownWait)
 		}
 		return 0
 	case err := <-serveErrCh:
@@ -360,6 +372,9 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		recordJobs:   map[string]*recordProcessState{},
 		talkRooms:    map[string]*talkRoomState{},
 		talkJobs:     map[string]*talkRoomState{},
+
+		recordStopAckGrace:      recordStopAckGrace,
+		recordStopFinalizeGrace: recordStopFinalizeGrace,
 	}
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
 	rt.recordJobFn = rt.executeRecordCLI
@@ -481,6 +496,7 @@ func decodeTriggerRequest(body io.ReadCloser) (string, TriggerRequest, error) {
 }
 
 func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
+	defer rt.recordWG.Done()
 	defer func() { <-rt.recordSlots }()
 	defer rt.clearTalkRoomJobByID(job.ID)
 
@@ -574,8 +590,28 @@ func (rt *Runtime) acceptRecordJob(ctx context.Context, provider, requestBody st
 		return createJobResponse{}, fmt.Errorf("create job: %w", err)
 	}
 
+	rt.recordWG.Add(1)
 	go rt.runRecordJob(job, req)
 	return createJobResponse{ID: jobID}, nil
+}
+
+// WaitForRecordJobs blocks until in-flight record jobs — including their
+// post-record bookkeeping (bundle promotion, Talk callbacks, build enqueue)
+// — have finished, or the timeout elapses. Operator shutdown calls this so
+// the process does not exit, SIGKILLing recorder children mid-compose, while
+// a recording is still being finalized (D-350).
+func (rt *Runtime) WaitForRecordJobs(timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		rt.recordWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 func findRepoRoot() (string, error) {
