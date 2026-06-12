@@ -34,7 +34,7 @@ The CLI is implemented in `cassini-go-recorder/cmd/cassini` and dispatches into 
                                                                       cassini-viewer (browser)
 ```
 
-Each arrow corresponds to a durable artifact written to disk. Failures are recoverable: rerun the same command and Cassini reuses the last good artifact.
+Each arrow corresponds to a durable artifact written to disk. For portable `.opus` outputs, failures are recoverable: rerun the same command and Cassini resumes from the last good artifact in the output's workspace. Directory-bundle outputs do not resume — they require an empty (or absent) `--out` directory on every run.
 
 ## Components
 

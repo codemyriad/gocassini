@@ -45,9 +45,11 @@ const (
 )
 
 type recordProcessState struct {
-	process        *os.Process
-	done           chan struct{}
-	stopInProgress bool
+	process *os.Process
+	done    chan struct{}
+	// stopInProgress is set by stop requests under recordMu but read by the
+	// record goroutine without it, so it must be atomic (D-364).
+	stopInProgress atomic.Bool
 	// stopping is closed when the recorder prints recordStoppingMarker,
 	// i.e. it acknowledged SIGTERM and started finalizing.
 	stopping chan struct{}
@@ -74,6 +76,27 @@ type recordMarkerWatch struct {
 	marker []byte
 	signal func()
 	tail   []byte
+}
+
+// syncBuffer is a mutex-guarded bytes.Buffer. The record path hands one
+// shared capture sink to both the stdout and stderr pipelines, which os/exec
+// pumps from two goroutines — a bare bytes.Buffer there is a data race that
+// corrupts stop-detail classification at best and panics at worst (D-364).
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // recordOutputActivity tracks when the recorder last wrote to stdout/stderr;
@@ -143,20 +166,23 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 		args = append(args, "--room-empty-grace", formatSeconds(req.RoomEmptyGraceSeconds))
 	}
 
-	var logCapture bytes.Buffer
+	// logCapture is shared by the stdout and stderr pipelines; os/exec pumps
+	// distinct writers from separate goroutines, so the sink must serialize
+	// its writes (D-364).
+	logCapture := &syncBuffer{}
 	liveCh := make(chan struct{})
 	stoppingCh := make(chan struct{})
 	signalLive := closeOnce(liveCh)
 	signalStopping := closeOnce(stoppingCh)
 	activity := newRecordOutputActivity()
 	stdoutWriter := newRecordLiveSignalWriter(
-		io.MultiWriter(writerOrDiscard(rt.stdout), logFile, &logCapture),
+		io.MultiWriter(writerOrDiscard(rt.stdout), logFile, logCapture),
 		activity,
 		newRecordMarkerWatch(recordRunningMarker, signalLive),
 		newRecordMarkerWatch(recordStoppingMarker, signalStopping),
 	)
 	stderrWriter := newRecordLiveSignalWriter(
-		io.MultiWriter(writerOrDiscard(rt.stderr), logFile, &logCapture),
+		io.MultiWriter(writerOrDiscard(rt.stderr), logFile, logCapture),
 		activity,
 		newRecordMarkerWatch(recordRunningMarker, signalLive),
 		newRecordMarkerWatch(recordStoppingMarker, signalStopping),
@@ -200,7 +226,7 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 		ExitCode:        exitCodeFromRunError(runErr),
 		StopDetail:      recordStopDetail(logCapture.String()),
 	}
-	result.StopReason = classifyRecordStopReason(state.stopInProgress, result.ExitCode, result.StopDetail, runErr)
+	result.StopReason = classifyRecordStopReason(state.stopInProgress.Load(), result.ExitCode, result.StopDetail, runErr)
 	if runErr != nil {
 		if result.StopDetail == "" {
 			result.StopDetail = strings.TrimSpace(runErr.Error())
@@ -259,16 +285,12 @@ func (rt *Runtime) completeRecordProcess(jobID string) {
 
 func (rt *Runtime) beginRecordStop(jobID string) (*recordProcessState, bool) {
 	rt.recordMu.Lock()
-	defer rt.recordMu.Unlock()
 	state := rt.recordJobs[jobID]
+	rt.recordMu.Unlock()
 	if state == nil {
 		return nil, false
 	}
-	alreadyStopping := state.stopInProgress
-	if !alreadyStopping {
-		state.stopInProgress = true
-	}
-	return state, alreadyStopping
+	return state, state.stopInProgress.Swap(true)
 }
 
 func (rt *Runtime) handleStopJob(w http.ResponseWriter, r *http.Request, id string) {
@@ -528,6 +550,10 @@ func classifyRecordStopReason(stopAccepted bool, exitCode *int, stopDetail strin
 		strings.Contains(combined, "signaling settings failed"),
 		strings.Contains(combined, "missing signaling server"),
 		strings.Contains(combined, "hello response missing signaling sessionid"),
+		// The recorder wraps definitive HTTP 4xx join rejections in
+		// ErrUnjoinable ("talk room unjoinable") and prints it on the
+		// "talk recorder stopping:" line the operator scrapes (D-374).
+		strings.Contains(combined, "talk room unjoinable"),
 		strings.Contains(combined, "join call failed"):
 		return "join_failed"
 	case exitCode != nil && *exitCode != 0:
@@ -576,25 +602,6 @@ func parseTriggerRequest(input triggerRequestInput) (TriggerRequest, error) {
 		req.RoomEmptyGraceSeconds = *input.RoomEmptyGraceSec
 		req.RoomEmptyGraceSet = true
 	}
-	return req, nil
-}
-
-func decodeStoredTriggerRequest(raw string) (TriggerRequest, error) {
-	var req TriggerRequest
-	if err := json.Unmarshal([]byte(raw), &req); err != nil {
-		return TriggerRequest{}, fmt.Errorf("decode stored request JSON: %w", err)
-	}
-	req.Platform = strings.TrimSpace(req.Platform)
-	req.BaseURL = strings.TrimSpace(req.BaseURL)
-	req.TalkConnectURL = strings.TrimRight(strings.TrimSpace(req.TalkConnectURL), "/")
-	req.RoomToken = strings.TrimSpace(req.RoomToken)
-	req.URL = strings.TrimSpace(req.URL)
-	req.GuestName = strings.TrimSpace(req.GuestName)
-	if req.Platform == "" || req.GuestName == "" || req.effectiveCallURL() == "" {
-		return TriggerRequest{}, errors.New("stored request is missing required fields")
-	}
-	req.StopWhenRoomEmptySet = !req.StopWhenRoomEmpty
-	req.RoomEmptyGraceSet = req.RoomEmptyGraceSeconds != defaultRoomEmptySec
 	return req, nil
 }
 
@@ -673,7 +680,13 @@ func (rt *Runtime) handleRerunJob(w http.ResponseWriter, r *http.Request, id str
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("get job: %v", err))
 		return
 	}
-	if job.Stage != "done" || (job.State != "failed" && job.State != "succeeded") {
+	// Terminal jobs (done/failed, done/succeeded) are rerunnable, and so are
+	// jobs the startup sweep marked interrupted at any stage: rerun is the
+	// documented recovery path after an operator restart (D-362). Whether an
+	// interrupted job actually has a ready canonical run to rebuild from is
+	// checked by QueueRerunAttempt.
+	terminal := job.Stage == "done" && (job.State == "failed" || job.State == "succeeded")
+	if !terminal && job.State != "interrupted" {
 		writeJSONError(w, http.StatusConflict, "job is not eligible for rerun")
 		return
 	}
@@ -697,6 +710,11 @@ func (rt *Runtime) handleRerunJob(w http.ResponseWriter, r *http.Request, id str
 	select {
 	case rt.buildQueue <- task:
 		rt.logger.Printf("rerun accepted id=%s attempt=%d run=%s", rerunJob.ID, rerunJob.CurrentAttemptNumber, task.ArtifactRunPath)
+		// Rerun is also the re-delivery path for Talk recordings that never
+		// reached Nextcloud (delivery failure or operator restart, D-352).
+		if rerunJob.TalkBinding != nil && rerunJob.TalkDeliveredAt == nil {
+			go rt.redeliverTalkRecording(rerunJob)
+		}
 		writeJSON(w, http.StatusAccepted, rerunJobResponse{ID: rerunJob.ID, AttemptNumber: rerunJob.CurrentAttemptNumber})
 	case <-rt.ctx.Done():
 		if updateErr := rt.store.MarkBuildFailed(context.Background(), rerunJob.ID, "", "build queue stopped", nowUTCString()); updateErr != nil {

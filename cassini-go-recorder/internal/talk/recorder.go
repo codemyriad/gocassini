@@ -23,6 +23,14 @@ import (
 
 const requestOfferResponseTimeout = 8 * time.Second
 
+// ErrUnjoinable marks bootstrap failures where the Talk server definitively
+// rejected the recorder's attempt to join the room or call (HTTP 4xx), e.g.
+// a non-public conversation the guest recorder cannot see (404) or a call
+// join refused because recording consent is required (400). Retrying cannot
+// succeed, so callers should fail fast instead of leaving a doomed recording
+// session hanging while Talk shows it as active.
+var ErrUnjoinable = errors.New("talk room unjoinable")
+
 type roomEmptyTimerAction uint8
 
 const (
@@ -61,6 +69,15 @@ type Recorder struct {
 
 	mu          sync.Mutex
 	subscribers map[string]*subscriberPeer
+	// stopping is set by cleanup() under mu; once true ensureSubscriber
+	// refuses to create peers (no resurrecting subscribers into the
+	// drained map) and addTrackReader refuses new capture goroutines.
+	stopping bool
+
+	// trackWG counts per-track capture goroutines spawned from pion
+	// callbacks (see addTrackReader) so cleanup() can join them before
+	// tearing shared state down.
+	trackWG sync.WaitGroup
 
 	subscriberUpdates chan struct{}
 }
@@ -139,6 +156,7 @@ func (r *Recorder) run(ctx context.Context) error {
 
 	r.ocs = nextcloud.NewOCSClient(r.connectBaseURL, r.cfg.Insecure)
 	if err := r.bootstrap(ctx); err != nil {
+		logBootstrapFailure(err)
 		_ = r.cleanup(context.Background())
 		return err
 	}
@@ -147,10 +165,17 @@ func (r *Recorder) run(ctx context.Context) error {
 	defer cancel()
 	errCh := make(chan error, 3)
 
+	// loopWG joins eventLoop/requestOfferLoop so cleanup() never runs
+	// while either loop still dereferences recorder state. errCh is
+	// buffered, so the sends below cannot block the joins.
+	var loopWG sync.WaitGroup
+	loopWG.Add(2)
 	go func() {
+		defer loopWG.Done()
 		errCh <- r.eventLoop(runCtx)
 	}()
 	go func() {
+		defer loopWG.Done()
 		errCh <- r.requestOfferLoop(runCtx)
 	}()
 
@@ -234,6 +259,7 @@ runLoop:
 				if roomEmptyTimer != nil {
 					stopAndDrainTimer(roomEmptyTimer)
 				}
+				loopWG.Wait()
 				_ = r.cleanup(context.Background())
 				return err
 			}
@@ -254,6 +280,7 @@ runLoop:
 	}
 
 	cancel()
+	loopWG.Wait()
 
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cleanupCancel()
@@ -263,14 +290,36 @@ runLoop:
 	return nil
 }
 
+// logBootstrapFailure emits the stderr markers operators and humans grep for
+// when the recorder gives up before the "talk recorder running:" liveness
+// line: a dedicated unjoinable marker for definitive join rejections, plus
+// the "talk recorder stopping:" line the operator scrapes into the job's
+// stop detail for classification.
+func logBootstrapFailure(err error) {
+	if errors.Is(err, ErrUnjoinable) {
+		log.Printf("talk recorder unjoinable: %v", err)
+	}
+	log.Printf("talk recorder stopping: %v", err)
+}
+
+// wrapUnjoinable tags definitive HTTP 4xx join rejections with ErrUnjoinable
+// so callers can fail fast with a distinct exit code; other errors pass
+// through unchanged.
+func wrapUnjoinable(err error) error {
+	if nextcloud.IsClientError(err) {
+		return fmt.Errorf("%w: %w", ErrUnjoinable, err)
+	}
+	return err
+}
+
 func (r *Recorder) bootstrap(ctx context.Context) error {
 	if err := r.ocs.GetRoom(ctx, r.roomToken); err != nil {
-		return fmt.Errorf("room check failed: %w", err)
+		return fmt.Errorf("room check failed: %w", wrapUnjoinable(err))
 	}
 
 	nextcloudSessionID, err := r.ocs.MarkParticipantActive(ctx, r.roomToken, r.cfg.GuestName)
 	if err != nil {
-		return fmt.Errorf("participants/active failed: %w", err)
+		return fmt.Errorf("participants/active failed: %w", wrapUnjoinable(err))
 	}
 	r.nextcloudSessionID = nextcloudSessionID
 
@@ -301,11 +350,12 @@ func (r *Recorder) bootstrap(ctx context.Context) error {
 		return err
 	}
 	if err := r.ocs.JoinCall(ctx, r.roomToken, r.cfg.JoinFlags); err != nil {
-		if strings.Contains(err.Error(), "code=404") {
-			log.Printf("join call returned 404 on this deployment; continuing with signaling-room only mode")
-		} else {
-			return fmt.Errorf("join call failed: %w", err)
-		}
+		// A 4xx here is definitive: the conversation is not joinable for
+		// the guest recorder (404) or the join was refused (e.g. recording
+		// consent enforcement, 400). Fail fast instead of lingering in a
+		// signaling-room-only session that records nothing while Talk shows
+		// an active recording.
+		return fmt.Errorf("join call failed: %w", wrapUnjoinable(err))
 	}
 
 	log.Printf("talk bootstrap complete: base=%s connect=%s token=%s session=%s signaling_session=%s", r.baseURL, r.connectBaseURL, r.roomToken, r.nextcloudSessionID, r.signalingSessionID)
@@ -319,6 +369,7 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 	intermediateCleaned := false
 
 	r.mu.Lock()
+	r.stopping = true
 	peers := make([]*subscriberPeer, 0, len(r.subscribers))
 	for _, p := range r.subscribers {
 		peers = append(peers, p)
@@ -332,12 +383,23 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 		}
 	}
 
+	// Closing the peers unwinds their track readers (ReadRTP/ReadRTCP
+	// return once the transport is gone); join them before closing the
+	// session artifact so in-flight writes land and no goroutine observes
+	// a half-torn-down recorder.
+	r.waitForTrackReaders(ctx, 5*time.Second)
+
+	// Note: r.signaling and r.sessionArtifact are intentionally never
+	// nil-ed here. Both are assigned once before any goroutine starts;
+	// stragglers (pion callbacks, readers past the bounded join above)
+	// may still dereference them, and their post-close methods degrade
+	// to errors instead of the nil-pointer panic a concurrent nil-write
+	// would cause.
 	if r.signaling != nil {
 		_ = r.signaling.Send(map[string]any{"type": "bye", "bye": map[string]any{}})
 		if err := r.signaling.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
-		r.signaling = nil
 	}
 
 	if r.ocs != nil {
@@ -356,7 +418,6 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 		if err := r.sessionArtifact.close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
-		r.sessionArtifact = nil
 	}
 
 	if err := r.composeFinalOutput(); err != nil {
@@ -381,9 +442,14 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 	}
 
 	if r.cfg.WriteReport {
+		// Snapshot value copies under sessionMu: a track reader that
+		// outlived the bounded join above could still be bumping packet
+		// counters on the shared sessionCapture structs.
 		r.sessionMu.Lock()
-		sessions := make([]*sessionCapture, len(r.sessionOrder))
-		copy(sessions, r.sessionOrder)
+		sessions := make([]sessionCapture, 0, len(r.sessionOrder))
+		for _, s := range r.sessionOrder {
+			sessions = append(sessions, *s)
+		}
 		r.sessionMu.Unlock()
 
 		reportPath := deriveReportPath(r.finalOutputPath, r.cfg.OutputPath)
@@ -405,6 +471,41 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 	}
 
 	return firstErr
+}
+
+// addTrackReader registers a capture goroutine with the recorder so
+// cleanup() can join it. Returns false once shutdown has begun; the
+// caller must not spawn the goroutine then. Gating Add on r.stopping
+// keeps the WaitGroup sound: the counter can only leave zero before
+// cleanup() starts waiting.
+func (r *Recorder) addTrackReader() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopping {
+		return false
+	}
+	r.trackWG.Add(1)
+	return true
+}
+
+// waitForTrackReaders joins the capture goroutines registered via
+// addTrackReader, bounded by ctx and a fallback timeout so a stuck
+// reader cannot park shutdown forever.
+func (r *Recorder) waitForTrackReaders(ctx context.Context, timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		r.trackWG.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		log.Printf("track capture goroutines still running at cleanup deadline; continuing")
+	case <-timer.C:
+		log.Printf("track capture goroutines still running after %s; continuing cleanup", timeout)
+	}
 }
 
 func (r *Recorder) hello(ctx context.Context) error {
@@ -541,7 +642,7 @@ func (r *Recorder) eventLoop(ctx context.Context) error {
 					data["from"] = sid
 				}
 			}
-			if err := r.handleSignalingData(data); err != nil {
+			if err := r.handleSignalingData(ctx, data); err != nil {
 				return err
 			}
 		}
@@ -685,7 +786,7 @@ func (r *Recorder) retryRequestOfferForCallTransition(peer *subscriberPeer) {
 	}
 }
 
-func (r *Recorder) handleSignalingData(data map[string]any) error {
+func (r *Recorder) handleSignalingData(ctx context.Context, data map[string]any) error {
 	roomType := asString(data["roomType"])
 	if roomType != "" && roomType != "video" {
 		return nil
@@ -708,7 +809,7 @@ func (r *Recorder) handleSignalingData(data map[string]any) error {
 	if peer == nil {
 		return nil
 	}
-	if err := peer.handleMessage(data); err != nil {
+	if err := peer.handleMessage(ctx, data); err != nil {
 		log.Printf("subscriber signaling handling failed sid=%s type=%s: %v", fromSession, msgType, err)
 		return nil
 	}
@@ -721,6 +822,10 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, er
 	}
 
 	r.mu.Lock()
+	if r.stopping {
+		r.mu.Unlock()
+		return nil, nil
+	}
 	existing := r.subscribers[remoteSessionID]
 	r.mu.Unlock()
 	if existing != nil {
@@ -739,6 +844,13 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, er
 	}
 
 	r.mu.Lock()
+	if r.stopping {
+		// cleanup() drained the map while we were building the peer;
+		// registering it now would resurrect a subscriber nobody closes.
+		r.mu.Unlock()
+		_ = peer.close()
+		return nil, nil
+	}
 	if current := r.subscribers[remoteSessionID]; current != nil {
 		r.mu.Unlock()
 		_ = peer.close()
@@ -1052,10 +1164,11 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 	streamCapturePT := uint8(track.PayloadType())
 	trackDesc := descriptorFromTrack(track)
 	if r.sessionArtifact != nil {
+		participantID, participantName := r.sessionIdentity(remoteSessionID)
 		streamCaptureID, err = r.sessionArtifact.openStream(
 			remoteSessionID,
-			session.ParticipantID,
-			session.ParticipantName,
+			participantID,
+			participantName,
 			trackDesc,
 			streamCaptureSSRC,
 			streamCapturePT,
@@ -1077,8 +1190,9 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 		streamCaptureMu.Unlock()
 	}
 
-	if r.sessionArtifact != nil && receiver != nil {
+	if r.sessionArtifact != nil && receiver != nil && r.addTrackReader() {
 		go func() {
+			defer r.trackWG.Done()
 			for {
 				packets, _, readErr := receiver.ReadRTCP()
 				if readErr != nil {
@@ -1121,10 +1235,11 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 				if err := r.sessionArtifact.closeStream(activeStreamID, rotateReason, recv); err != nil {
 					log.Printf("session artifact stream rotate-close failed sid=%s stream=%s track=%s: %v", remoteSessionID, activeStreamID, track.ID(), err)
 				}
+				participantID, participantName := r.sessionIdentity(remoteSessionID)
 				nextStreamID, openErr := r.sessionArtifact.openStream(
 					remoteSessionID,
-					session.ParticipantID,
-					session.ParticipantName,
+					participantID,
+					participantName,
 					trackDesc,
 					pkt.SSRC,
 					pkt.PayloadType,
@@ -1186,6 +1301,20 @@ func streamSegmentRotationReason(prevSSRC, nextSSRC uint32, prevPT, nextPT uint8
 	default:
 		return "segment-rotate:unknown"
 	}
+}
+
+// sessionIdentity returns a locked snapshot of the participant identity
+// for a capture session. Track readers must not read sessionCapture
+// name/ID fields directly: rememberParticipantIdentity rewrites them
+// under sessionMu when a display name arrives late.
+func (r *Recorder) sessionIdentity(remoteSessionID string) (participantID, participantName string) {
+	r.sessionMu.Lock()
+	defer r.sessionMu.Unlock()
+	session := r.sessionsByRemote[remoteSessionID]
+	if session == nil {
+		return "", ""
+	}
+	return session.ParticipantID, session.ParticipantName
 }
 
 func (r *Recorder) ensureSessionCapture(remoteSessionID string) (*sessionCapture, error) {
@@ -1292,7 +1421,13 @@ func (r *Recorder) newSubscriberPeer(remoteSessionID string) (*subscriberPeer, e
 		}
 	})
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		go r.onRemoteTrack(context.Background(), track, receiver, remoteSessionID)
+		if !r.addTrackReader() {
+			return
+		}
+		go func() {
+			defer r.trackWG.Done()
+			r.onRemoteTrack(context.Background(), track, receiver, remoteSessionID)
+		}()
 	})
 
 	return peer, nil
@@ -1420,7 +1555,7 @@ func (p *subscriberPeer) sendEndOfCandidates(reason string) error {
 	return p.owner.sendPeerMessage(p.remoteSessionID, "endOfCandidates", map[string]any{}, sid)
 }
 
-func (p *subscriberPeer) handleMessage(data map[string]any) error {
+func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any) error {
 	msgType := asString(data["type"])
 	payload := asMap(data["payload"])
 
@@ -1455,6 +1590,11 @@ func (p *subscriberPeer) handleMessage(data map[string]any) error {
 
 		select {
 		case <-gatherComplete:
+		case <-ctx.Done():
+			// Shutdown must not be parked behind ICE gathering; the
+			// answer below still goes out with whatever gathered so far
+			// (Send degrades to an error once signaling is closed).
+			log.Printf("ICE gather interrupted by shutdown for subscriber %s; continuing", p.remoteSessionID)
 		case <-time.After(4 * time.Second):
 			log.Printf("ICE gather timeout for subscriber %s; continuing", p.remoteSessionID)
 		}
@@ -1591,7 +1731,7 @@ func ensureOutputDir(path string) error {
 
 func (r *Recorder) writeReport(
 	reportPath string,
-	sessions []*sessionCapture,
+	sessions []sessionCapture,
 	composeOK bool,
 	composeErr string,
 	intermediateCleaned bool,

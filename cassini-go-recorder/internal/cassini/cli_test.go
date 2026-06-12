@@ -3,6 +3,7 @@ package cassini
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"gocassini/internal/config"
+	"gocassini/internal/talk"
 	"gocassini/internal/transcribe"
 )
 
@@ -51,6 +53,48 @@ func TestRecordRejectsSimulatePortableOutput(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--simulate currently only supports .run output") {
 		t.Fatalf("expected simulate portable validation error, got %q", stderr.String())
+	}
+}
+
+func TestRecordExitCodeDistinguishesUnjoinableRooms(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantCode int
+	}{
+		{
+			name:     "unjoinable room fails with the distinct exit code",
+			err:      fmt.Errorf("room check failed: %w", talk.ErrUnjoinable),
+			wantCode: exitUnjoinable,
+		},
+		{
+			name:     "generic recorder failure keeps the default exit code",
+			err:      errors.New("signaling settings failed: boom"),
+			wantCode: 1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			prevRecorder := runRecorderApp
+			runRecorderApp = func(_ context.Context, _ config.Config) error {
+				return tc.err
+			}
+			defer func() {
+				runRecorderApp = prevRecorder
+			}()
+
+			outDir := filepath.Join(t.TempDir(), "meeting.run")
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			code := Run(context.Background(), []string{"record", "--call", "https://example.test/call/demo", "--out", outDir}, &stdout, &stderr)
+			if code != tc.wantCode {
+				t.Fatalf("expected exit code %d, got %d stderr=%q", tc.wantCode, code, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "record failed: "+tc.err.Error()) {
+				t.Fatalf("expected record failure detail on stderr, got %q", stderr.String())
+			}
+		})
 	}
 }
 

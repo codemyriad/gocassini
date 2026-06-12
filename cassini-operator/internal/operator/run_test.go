@@ -34,8 +34,8 @@ func TestOpenStoreEnsuresSchemaAndEmptyList(t *testing.T) {
 	if len(jobs) != 0 {
 		t.Fatalf("expected empty jobs list, got %d", len(jobs))
 	}
-	if versions := migrationVersions(t, store.db); len(versions) != 3 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 {
-		t.Fatalf("expected migration versions [1 2 3], got %v", versions)
+	if versions := migrationVersions(t, store.db); len(versions) != 4 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 {
+		t.Fatalf("expected migration versions [1 2 3 4], got %v", versions)
 	}
 	if !sqliteTableExists(t, store.db, "job_attempts") {
 		t.Fatalf("expected job_attempts table to exist")
@@ -54,8 +54,8 @@ func TestOpenStoreBaselinesLegacySchemaDatabase(t *testing.T) {
 	}
 	defer store.Close()
 
-	if versions := migrationVersions(t, store.db); len(versions) != 3 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 {
-		t.Fatalf("expected migration versions [1 2 3], got %v", versions)
+	if versions := migrationVersions(t, store.db); len(versions) != 4 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 {
+		t.Fatalf("expected migration versions [1 2 3 4], got %v", versions)
 	}
 	job := mustGetJob(t, store, "legacy-job")
 	if job.Provider != "nextcloud-talk" || job.Stage != "record" || job.State != "queued" {
@@ -1530,6 +1530,80 @@ func TestRerunRejectsUnknownAndActiveJobs(t *testing.T) {
 	_ = waitForJobState(t, rt.store, resp.ID, "succeeded")
 }
 
+func TestRerunInterruptedJobWithReadyRunSucceeds(t *testing.T) {
+	rt, cleanup, _, _ := newCLITestRuntime(t)
+	defer cleanup()
+
+	createReq := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/interrupted-rerun"}`))
+	createRec := httptest.NewRecorder()
+	rt.jobsHandler(createRec, createReq)
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, want %d body=%s", createRec.Code, http.StatusAccepted, createRec.Body.String())
+	}
+	var createResp createJobResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	_ = waitForJobState(t, rt.store, createResp.ID, "succeeded")
+
+	// Simulate the startup sweep after a crash mid-build: the job is frozen
+	// at stage build, state interrupted, with a perfectly ready canonical
+	// run bundle on disk (the empirical D-362 repro).
+	interruptedAt := "2026-06-12T10:00:00Z"
+	if _, err := rt.store.db.Exec(`
+UPDATE jobs
+SET stage = 'build', state = 'interrupted', interrupted_at = ?, completed_at = NULL,
+    build_finished_at = NULL, publish_queued_at = NULL, publish_started_at = NULL, publish_finished_at = NULL
+WHERE id = ?`, interruptedAt, createResp.ID); err != nil {
+		t.Fatalf("mark job interrupted: %v", err)
+	}
+	if _, err := rt.store.db.Exec(`
+UPDATE job_attempts
+SET stage = 'build', state = 'interrupted', interrupted_at = ?, completed_at = NULL
+WHERE job_id = ?`, interruptedAt, createResp.ID); err != nil {
+		t.Fatalf("mark attempt interrupted: %v", err)
+	}
+
+	rerunReq := httptest.NewRequest(http.MethodPost, "/jobs/"+createResp.ID+"/rerun", nil)
+	rerunRec := httptest.NewRecorder()
+	rt.jobDetailHandler(rerunRec, rerunReq)
+	if rerunRec.Code != http.StatusAccepted {
+		t.Fatalf("rerun status = %d, want %d body=%s", rerunRec.Code, http.StatusAccepted, rerunRec.Body.String())
+	}
+	var rerunResp rerunJobResponse
+	if err := json.Unmarshal(rerunRec.Body.Bytes(), &rerunResp); err != nil {
+		t.Fatalf("decode rerun response: %v", err)
+	}
+	if rerunResp.AttemptNumber != 2 {
+		t.Fatalf("rerun attempt_number = %d, want 2", rerunResp.AttemptNumber)
+	}
+
+	job := waitForJobState(t, rt.store, createResp.ID, "succeeded")
+	if job.CurrentAttemptNumber != 2 || job.RerunCount != 1 {
+		t.Fatalf("expected attempt 2 / rerun_count 1 after interrupted rerun, got %#v", job)
+	}
+	if job.InterruptedAt != nil {
+		t.Fatalf("expected interrupted_at to be cleared after rerun, got %#v", job.InterruptedAt)
+	}
+}
+
+func TestRerunRejectsInterruptedRecordJobWithoutCanonicalRun(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	// A job interrupted mid-recording has no canonical run to rebuild from:
+	// the rerun gate lets interrupted jobs through, but the ready-run check
+	// must still reject it.
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "interrupted-record", Stage: "record", State: "interrupted", CreatedAt: "2026-06-12T10:00:00Z"})
+
+	rerunReq := httptest.NewRequest(http.MethodPost, "/jobs/interrupted-record/rerun", nil)
+	rerunRec := httptest.NewRecorder()
+	rt.jobDetailHandler(rerunRec, rerunReq)
+	if rerunRec.Code != http.StatusConflict {
+		t.Fatalf("rerun status = %d, want %d body=%s", rerunRec.Code, http.StatusConflict, rerunRec.Body.String())
+	}
+}
+
 func TestRerunRejectsFailedRecordWithoutCanonicalRun(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -1848,54 +1922,59 @@ func TestEventsHandlerStreamsPublishedEvents(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Serve the handler over a real HTTP server and read the stream
+	// through the connection: polling httptest.ResponseRecorder.Body
+	// while the handler goroutine writes to it is a data race.
+	srv := httptest.NewServer(http.HandlerFunc(rt.eventsHandler))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	finished := make(chan struct{})
-	req := httptest.NewRequest(http.MethodGet, "/events", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
-	go func() {
-		rt.eventsHandler(rec, req)
-		close(finished)
-	}()
-
-	time.Sleep(20 * time.Millisecond)
-	rt.publishStateChangeEvent(StateChangeEvent{
-		Type:  "job.updated",
-		JobID: "job-123",
-		At:    nowUTCString(),
-		Job: Job{
-			ID:        "job-123",
-			Stage:     "record",
-			State:     "running",
-			CreatedAt: nowUTCString(),
-			UpdatedAt: nowUTCString(),
-		},
-	})
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if strings.Contains(rec.Body.String(), "event: job.updated") {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/events", nil)
+	if err != nil {
+		t.Fatalf("build /events request: %v", err)
 	}
-
-	cancel()
-	select {
-	case <-finished:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for events handler to finish")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events failed: %v", err)
 	}
+	defer resp.Body.Close()
 
-	if got := rec.Header().Get("Content-Type"); got != "text/event-stream" {
+	if got := resp.Header.Get("Content-Type"); got != "text/event-stream" {
 		t.Fatalf("unexpected content type: got %q want %q", got, "text/event-stream")
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "event: job.updated") {
-		t.Fatalf("expected job.updated event in body, got %q", body)
-	}
-	if !strings.Contains(body, `"job_id":"job-123"`) {
-		t.Fatalf("expected job id in body, got %q", body)
+
+	var body strings.Builder
+	buf := make([]byte, 1024)
+	published := false
+	for {
+		n, readErr := resp.Body.Read(buf)
+		body.Write(buf[:n])
+		// The ": connected" comment is written after the handler
+		// subscribed to the hub, so publishing once it arrives cannot
+		// race the subscription and drop the event.
+		if !published && strings.Contains(body.String(), ": connected") {
+			rt.publishStateChangeEvent(StateChangeEvent{
+				Type:  "job.updated",
+				JobID: "job-123",
+				At:    nowUTCString(),
+				Job: Job{
+					ID:        "job-123",
+					Stage:     "record",
+					State:     "running",
+					CreatedAt: nowUTCString(),
+					UpdatedAt: nowUTCString(),
+				},
+			})
+			published = true
+		}
+		got := body.String()
+		if strings.Contains(got, "event: job.updated") && strings.Contains(got, `"job_id":"job-123"`) {
+			break
+		}
+		if readErr != nil {
+			t.Fatalf("event stream ended before job.updated arrived: read error = %v, body = %q", readErr, got)
+		}
 	}
 }
 

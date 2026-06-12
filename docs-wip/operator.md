@@ -238,11 +238,14 @@ POST /jobs/:id/rerun
 
 Behavior:
 
-- valid only for terminal jobs (`done/failed` or `done/succeeded`)
+- valid for terminal jobs (`done/failed` or `done/succeeded`) and for jobs
+  marked `interrupted` by the startup sweep
 - requires a canonical ready `.run`
 - creates a new attempt
 - queues that attempt directly at `build/queued`
 - returns `202` with the new attempt number
+- for Talk-triggered jobs whose recording never reached Nextcloud, also
+  re-attempts delivery (stopped callback + upload) from the canonical `.run`
 
 Current reruns are downstream-only. They do not re-record the meeting.
 
@@ -266,6 +269,36 @@ Each event carries:
 - the current `attempt` when available
 
 The control panel consumes this together with snapshot reads from `GET /jobs` and `GET /jobs/:id`.
+
+## Talk recording backend
+
+The operator also implements Nextcloud Talk's recording-backend protocol, so the Talk "Start recording" button can create and stop jobs directly.
+
+Endpoints (always mounted at the root, never under the operator base path):
+
+- `GET /api/v1/welcome` — protocol handshake; answers `{"version":1}`
+- `POST /api/v1/room/{token}` — start/stop commands from Talk
+
+Authentication is Talk's own HMAC scheme: a checksum over the shared secret (`CASSINI_TALK_RECORDING_SECRET`), the `Talk-Recording-Random` header, and the request body. It is independent of any Nextcloud session, which is why these routes are PUBLIC at the AppAPI proxy layer.
+
+Behavior:
+
+- a start command synthesizes a record job for the room's call URL and binds the Talk room state to that job
+- the operator notifies Talk back over `/ocs/v2.php/apps/spreed/api/v1/recording/backend` (`started` / `stopped` / `failed`)
+- after the job's recording is finalized, the audio file is uploaded to Talk's `recording/{token}/store` endpoint on behalf of the requesting owner
+
+Limitation: the recorder joins calls as a guest, so only public conversations are recordable (see [docs/exapp-install.md](../docs/exapp-install.md)).
+
+## ExApp (Nextcloud AppAPI) surface
+
+When the operator runs as the Nextcloud ExApp image, AppAPI wiring layers on top of the regular runtime (`cassini-operator/internal/operator/exapp.go`):
+
+- `APP_HOST` / `APP_PORT` override the bind address; `APP_SECRET` activates the AppAPI auth middleware around every route
+- lifecycle callbacks `PUT /enabled` and `POST /init` are mounted at the root, plus `GET /heartbeat` outside the middleware wrap (AppAPI probes it unauthenticated)
+- static prefixes serve the control panel (`/control-panel`), the viewer SPA (`/viewer`), and the published archive (`/published`)
+- when AppAPI's persistent volume is mounted (`APP_PERSISTENT_STORAGE`), the default DB, work-root, and site-root paths are redirected under it
+
+The install and Talk-handoff runbook is [docs/exapp-install.md](../docs/exapp-install.md).
 
 ## Runtime management
 

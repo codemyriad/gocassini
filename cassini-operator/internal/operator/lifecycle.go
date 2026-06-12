@@ -36,6 +36,10 @@ type LifecycleState struct {
 type LifecycleStore interface {
 	Load() (LifecycleState, error)
 	Save(LifecycleState) error
+	// Update applies fn to the stored state as one atomic read-modify-write.
+	// The handlers must use it instead of separate Load/Save calls, whose
+	// distinct lock scopes let concurrent handlers lose updates (D-364).
+	Update(fn func(*LifecycleState)) error
 }
 
 type fileLifecycleStore struct {
@@ -52,6 +56,27 @@ func NewFileLifecycleStore(path string) LifecycleStore {
 func (s *fileLifecycleStore) Load() (LifecycleState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.loadLocked()
+}
+
+func (s *fileLifecycleStore) Save(state LifecycleState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveLocked(state)
+}
+
+func (s *fileLifecycleStore) Update(fn func(*LifecycleState)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	fn(&state)
+	return s.saveLocked(state)
+}
+
+func (s *fileLifecycleStore) loadLocked() (LifecycleState, error) {
 	raw, err := os.ReadFile(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -69,9 +94,7 @@ func (s *fileLifecycleStore) Load() (LifecycleState, error) {
 	return st, nil
 }
 
-func (s *fileLifecycleStore) Save(state LifecycleState) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *fileLifecycleStore) saveLocked(state LifecycleState) error {
 	payload, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("encode lifecycle state: %w", err)
@@ -150,15 +173,8 @@ func (h *LifecycleHandlers) handleEnabled(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	current, err := h.Store.Load()
-	if err != nil {
-		h.logger().Printf("lifecycle enabled: load state: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "load state failed"})
-		return
-	}
-	current.Enabled = enabled
-	if err := h.Store.Save(current); err != nil {
-		h.logger().Printf("lifecycle enabled: save state: %v", err)
+	if err := h.Store.Update(func(st *LifecycleState) { st.Enabled = enabled }); err != nil {
+		h.logger().Printf("lifecycle enabled: update state: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save state failed"})
 		return
 	}
@@ -173,15 +189,8 @@ func (h *LifecycleHandlers) handleInit(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	current, err := h.Store.Load()
-	if err != nil {
-		h.logger().Printf("lifecycle init: load state: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "load state failed"})
-		return
-	}
-	current.LastInitAt = h.now()
-	if err := h.Store.Save(current); err != nil {
-		h.logger().Printf("lifecycle init: save state: %v", err)
+	if err := h.Store.Update(func(st *LifecycleState) { st.LastInitAt = h.now() }); err != nil {
+		h.logger().Printf("lifecycle init: update state: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "save state failed"})
 		return
 	}
