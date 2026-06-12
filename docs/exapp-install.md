@@ -1,95 +1,267 @@
 # Installing Cassini as a Nextcloud ExApp
 
-Cassini ships as a Nextcloud AppAPI external app. The container exposes the
-admin control-panel, the recording viewer, and the operator JSON API over a
-single HTTP port; Nextcloud's AppAPI proxy fronts it with access-level
+This is the **production install guide**. Cassini ships as a Nextcloud AppAPI
+external app: one container exposes the admin control-panel, the recording
+viewer, the published meeting archive, and the Talk recording backend over a
+single HTTP port; Nextcloud's AppAPI proxy fronts it with per-route access
 enforcement.
+
+The flow is deliberately two-phase and reversible:
+
+1. **Install and verify the ExApp** — deploy daemon, app registration,
+   proxy-route checks. Talk is untouched.
+2. **Hand Nextcloud Talk's recording over to Cassini** — back up the current
+   backend, switch, run a controlled test, keep the rollback command ready.
+
+All `occ …` commands below are shorthand for however your deployment invokes
+occ (e.g. `sudo -u www-data php occ …` or
+`docker exec -u www-data <nc-container> php occ …`).
+
+The standalone Docker Compose bundle under `deployment/` is **not** the app
+install — see [Standalone operator (dev/staging only)](#standalone-operator-devstaging-only).
 
 ## Prerequisites
 
-- Nextcloud **30 or newer** with the **AppAPI** app installed and a registered
-  deploy daemon (Docker or Podman).
+- Nextcloud **32 or newer** (the manifest's `min-version`; Cassini targets and
+  is tested against Nextcloud 33+) with the **AppAPI** app installed and
+  enabled.
+- A registered AppAPI **deploy daemon** (next section).
+- A Docker engine for the ExApp container. For GPU transcription it needs the
+  NVIDIA driver + Container Toolkit (see [GPU transcription](#gpu-transcription-cuda)).
 
 Persistent storage is automatic: AppAPI creates a named volume for every
 docker-deployed ExApp and the operator stores all durable data under it
 (see [Persistent storage](#persistent-storage)).
 
-## Image variants
+## Step 1 — Register a deploy daemon (HaRP)
 
-The image is published at:
+Use a **HaRP** daemon. Upstream AppAPI recommends HaRP; the older Docker
+Socket Proxy daemon is deprecated and scheduled for removal in Nextcloud 35.
 
+Run HaRP next to a Docker engine (full options in the
+[HaRP README](https://github.com/nextcloud/HaRP)):
+
+```bash
+docker run \
+  -e HP_SHARED_KEY="<generate-a-strong-ascii-key>" \
+  -e NC_INSTANCE_URL="https://cloud.example.com" \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$(pwd)"/certs:/certs \
+  --name appapi-harp -h appapi-harp \
+  --restart unless-stopped \
+  -p 8780:8780 -p 8782:8782 \
+  -d ghcr.io/nextcloud/nextcloud-appapi-harp:release
 ```
-ghcr.io/codemyriad/gocassini:latest
-ghcr.io/codemyriad/gocassini:<version-tag>
+
+Then register it in Nextcloud → Administration settings → AppAPI →
+**Register Daemon** (template "HaRP Proxy"), and run **Test deploy** from the
+daemon's three-dot menu before going further. `occ app_api:daemon:list` should
+show it afterwards.
+
+## Step 2 — Pick an image tag
+
+CI publishes to `ghcr.io/codemyriad/gocassini`:
+
+| Tag | What it is |
+|---|---|
+| `latest` | CPU image, current `main` |
+| `latest-cuda` | **Real CUDA build** (CUDA 12 / cuDNN 9 sherpa-onnx, fp32 Parakeet model, `CASSINI_STT_DEVICE=cuda`) |
+| `latest-rocm` | Alias of the CPU image so ROCm-tagged daemons get a working install — **no ROCm acceleration** |
+| `sha-<12-hex>` / `sha-<12-hex>-cuda` | Commit-pinned builds of the above |
+| `v*` / `v*-cuda` | Release tags, published when a version tag is cut |
+
+You don't select the `-cuda` tag by hand: when the deploy daemon's compute
+device is CUDA, AppAPI automatically tries `<image-tag>-cuda` first and falls
+back to the plain tag.
+
+For production, pin: the checked-in manifest tracks `latest`, so for a
+reproducible install download `appinfo/info.xml`, set `<image-tag>` to a
+`sha-…` (or release) tag, and register from that local copy.
+
+## Step 3 — Register the app
+
+Generate a fresh Talk recording secret — never reuse a value from this repo or
+its examples:
+
+```bash
+CASSINI_SECRET="$(openssl rand -hex 32)"
 ```
 
-For AppAPI compatibility, identical CPU-only images are also published at
-`-cuda` and `-rocm` suffixes. GPU acceleration is **not** active in v1; the
-suffix variants exist only so admins on GPU-tagged daemons get a working
-install. Real GPU variants are tracked as a TODO.
+Register from a pinned manifest (`--info-xml` accepts a local path or a raw
+URL; pin a tag or commit SHA, not a moving branch):
 
-## Install via AppAPI admin UI
+```bash
+curl -fsSL "https://raw.githubusercontent.com/codemyriad/gocassini/<tag-or-sha>/appinfo/info.xml" \
+    -o /tmp/gocassini-info.xml
+# Production: also set <image-tag> in the copy to the matching sha-…/release tag (Step 2)
 
-In Nextcloud → Settings → External Apps:
+occ app_api:app:register gocassini <daemon-name> \
+    --info-xml /tmp/gocassini-info.xml \
+    --env CASSINI_TALK_RECORDING_SECRET="${CASSINI_SECRET}" \
+    --wait-finish
+```
 
-1. Click **Register an external app from a Docker image**.
-2. Image: `ghcr.io/codemyriad/gocassini`
-3. Tag: `latest`
-4. AppAPI will pull the image, set up a HaRP tunnel, and run the container.
-5. Once the daemon reports the image is up, enable the app. Nextcloud calls
-   `PUT /enabled` on the container; a 200 response activates the app.
+If `occ` runs inside a container, copy the manifest in first
+(`docker cp /tmp/gocassini-info.xml <nc-container>:/tmp/`) or pass the raw URL
+directly to `--info-xml`.
 
-## Required environment
+`<daemon-name>` is the `Name` column of `occ app_api:daemon:list`. AppAPI
+pulls the image, creates the persistent volume, starts the container
+(`nc_app_gocassini`), and enables the app once the container answers its
+heartbeat and reports init completion.
 
-AppAPI provides these automatically when it spawns the container; if you run
-the container outside AppAPI for development you must supply them yourself:
+### App configuration (`--env`)
+
+These variables are declared under `<environment-variables>` in
+`appinfo/info.xml`. That declaration is what makes them settable at all:
+AppAPI only passes declared variables to the container, and `--env` values
+for undeclared keys are **silently dropped**. Set them at registration time,
+either on the command line as above or in the External Apps admin UI (Deploy
+Options).
+
+| Variable | Required | What it does |
+|---|---|---|
+| `CASSINI_TALK_RECORDING_SECRET` | For the Talk record button | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (Step 5). Unset, the operator rejects every recording request |
+| `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped notifications, recording upload). Leave empty to use the backend URL Talk sends with each request |
+| `OPENROUTER_API_KEY` | No | API key for LLM transcript cleanup + meeting summaries. Unset, raw transcripts are published without summaries |
+| `LLM_BASE_URL` | No | OpenAI-compatible API base URL; defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
+| `LLM_MODEL` | No | Model for cleanup/summaries (default `openai/gpt-4o-mini`) |
+
+### Runtime environment reference
+
+AppAPI injects these on every container start, regardless of daemon flavor.
+You only supply them yourself when running the image outside AppAPI (dev,
+smoke tests):
 
 | Variable | What it does |
 |---|---|
 | `APP_HOST` / `APP_PORT` | Bind address inside the container (default `0.0.0.0:8080`) |
 | `APP_ID` | Must match the `<id>` in `appinfo/info.xml` (`gocassini`) |
 | `APP_VERSION` | Must match the `<version>` in the manifest |
-| `APP_SECRET` | Shared secret with AppAPI; enables AppAPI auth middleware |
+| `APP_SECRET` | Shared secret with AppAPI; enables the AppAPI auth middleware |
 | `AA_VERSION` | AppAPI version Nextcloud is running |
-| `HP_FRP_ADDRESS` / `HP_FRP_PORT` / `HP_SHARED_KEY` | HaRP tunnel parameters used by `frpc` |
+| `NEXTCLOUD_URL` | Base URL the app uses to call back into Nextcloud (init-progress report, OCS calls). Without it, `--wait-finish` hangs until its timeout |
 | `APP_PERSISTENT_STORAGE` | Mount path of AppAPI's persistent volume; the operator defaults its data roots under it |
-| `CASSINI_APPAPI_REQUIRED=true` | Makes the operator refuse to start without `APP_SECRET` (set in the ExApp Dockerfile) |
+| `COMPUTE_DEVICE` | `cpu` / `cuda` / `rocm`, from the daemon's compute-device setting |
 
-## App-specific environment
+**HaRP-tunnel-only** variables — AppAPI injects these only when deploying
+through a HaRP daemon without direct connect; the entrypoint starts `frpc`
+when they are present and runs the operator directly otherwise (Docker Socket
+Proxy daemons, HaRP direct-connect, manual installs):
 
-These variables are declared under `<environment-variables>` in
-`appinfo/info.xml`. That declaration is what makes them settable in an AppAPI
-deployment: AppAPI only passes declared variables to the container, and
-`--env` values for undeclared keys are **silently dropped**. Set them at
-registration time, either in the External Apps admin UI (Deploy Options) or
-on the command line:
+| Variable | What it does |
+|---|---|
+| `HP_FRP_ADDRESS` / `HP_FRP_PORT` / `HP_SHARED_KEY` | HaRP tunnel parameters used by `frpc` |
 
-```
-occ app_api:app:register gocassini <daemon-name> \
-    --env CASSINI_TALK_RECORDING_SECRET=<secret> \
-    --env OPENROUTER_API_KEY=<key> \
-    --wait-finish
-```
+`CASSINI_APPAPI_REQUIRED=true` is baked into the ExApp image (not injected by
+AppAPI); it makes the operator refuse to start without `APP_SECRET`.
 
-| Variable | Required | What it does |
-|---|---|---|
-| `CASSINI_TALK_RECORDING_SECRET` | For the Talk record button | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (below). Unset, the operator rejects every recording request |
-| `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped notifications, recording upload). Leave empty to use the backend URL Talk sends with each request |
-| `OPENROUTER_API_KEY` | No | API key for LLM transcript cleanup + meeting summaries. Unset, raw transcripts are published without summaries |
-| `LLM_BASE_URL` | No | OpenAI-compatible API base URL; defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
-| `LLM_MODEL` | No | Model for cleanup/summaries (default `openai/gpt-4o-mini`) |
+## Step 4 — Verify the install (before touching Talk)
 
-## Connect the Talk record button
+All of these must pass before the Talk handoff:
 
-Point Talk's recording backend at the AppAPI proxy with the same secret you
-registered the app with. The `api/v1/welcome` and `api/v1/room/*` routes are
-declared PUBLIC in the manifest, so Talk's recording protocol (authenticated
-by its own HMAC, not a Nextcloud session) passes through the proxy:
+1. `occ app_api:daemon:list` shows the daemon and its **Test deploy** passes.
+2. `occ app_api:app:list` shows `gocassini` enabled.
+3. The container runs the intended image:
+   `docker inspect nc_app_gocassini --format '{{.Config.Image}}'`.
+4. The Talk welcome endpoint answers through the AppAPI proxy (it is a PUBLIC
+   route, so plain curl works):
 
-```
+   ```bash
+   curl -fsS https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/api/v1/welcome
+   # → {"version":1}
+   ```
+
+5. The admin control panel renders for an admin user:
+   `https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/control-panel/`
+6. The viewer renders for a normal logged-in user:
+   `https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/viewer/`
+7. CUDA installs only: the image tag ends in `-cuda` and the container can see
+   the GPU — `docker exec nc_app_gocassini nvidia-smi`.
+
+## Step 5 — Talk handoff (reversible)
+
+Point Talk's recording backend at the AppAPI proxy base. The `api/v1/welcome`
+and `api/v1/room/*` routes are declared PUBLIC in the manifest, so Talk's
+recording protocol (authenticated by its own HMAC, not a Nextcloud session)
+passes through the proxy.
+
+**Back up the current backend first**, then switch:
+
+```bash
+# 0. Back up (empty output = no recording backend configured)
+occ config:app:get spreed recording_servers | tee /root/recording_servers.backup
+
+# 1. Switch — same secret you registered the app with in Step 3
 occ config:app:set spreed recording_servers --value='{"servers":[{"server":"https://cloud.example.com/index.php/apps/app_api/proxy/gocassini","verify":true}],"secret":"<secret>"}'
 occ config:app:set spreed call_recording --value=yes
 ```
+
+**Controlled test** — use a non-critical, *public* room:
+
+1. Create a public test conversation, join the call.
+2. Start recording. A `CassiniRecorder` guest joins within ~10–15 s and the
+   recording indicator turns on.
+3. Speak for a minute, stop the recording, leave the call.
+4. Watch the job progress through record → build → publish in the control
+   panel. The audio file is uploaded back to Talk (stored in the recording
+   owner's attachments folder, with a notification to share it into the
+   chat); the transcript/summary appears in the viewer.
+
+**Rollback** — restore the saved value and Talk records through the previous
+backend again; the Cassini ExApp can stay installed:
+
+```bash
+occ config:app:set spreed recording_servers --value="$(cat /root/recording_servers.backup)"
+# or, if there was no recording backend before:
+occ config:app:delete spreed recording_servers
+```
+
+Keep the previous backend running until your test recording passes.
+
+### Known limitation: public conversations only
+
+The recorder joins calls as an anonymous guest, and Talk only admits guests
+into **public** conversations — so the record button currently works in
+public rooms only; group and one-to-one conversations cannot be recorded.
+The recorder is also visible in the call as a `CassiniRecorder` guest
+participant. Supporting non-public conversations (the hidden internal-client
+join used by the reference recorder) is tracked as follow-up work.
+
+## GPU transcription (CUDA)
+
+`latest-cuda` is a real CUDA build: CUDA-enabled sherpa-onnx/onnxruntime
+libraries, the fp32 Parakeet model, and `CASSINI_STT_DEVICE=cuda` baked in.
+The GPU accelerates the **transcription (build) stage**; live call capture is
+CPU-bound either way.
+
+To use it, set the deploy daemon's **Compute device** to CUDA. AppAPI then
+pulls `<image-tag>-cuda` automatically and attaches the host's NVIDIA GPUs to
+the container via Docker device requests. The Docker engine running the ExApp
+needs the NVIDIA driver + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/);
+verify with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`
+on that engine before registering the app.
+
+### Remote GPU node
+
+If the Nextcloud host has no GPU, HaRP can drive a **remote Docker engine**
+over its FRP tunnel (see "Remote Docker Engines" in the
+[HaRP README](https://github.com/nextcloud/HaRP)):
+
+1. Install Docker + NVIDIA Container Toolkit on the GPU node.
+2. Copy the client certificates from the HaRP container's `/certs/frp` and
+   run `frpc` on the GPU node to tunnel its Docker socket back to HaRP
+   (one remote port per engine, 24001–24099).
+3. Register a second deploy daemon for that engine with Compute device =
+   CUDA, and register (or re-register) `gocassini` against it.
+
+**Docker-in-LXC note:** if the GPU "node" is an LXC container running Docker
+(e.g. on Proxmox), the NVIDIA stack must work *inside* the LXC: the
+`/dev/nvidia*` devices have to be passed through and their cgroup device
+majors kept in sync across host reboots — see
+[`docs/proxmox-jellyfin-nvidia.md`](./proxmox-jellyfin-nvidia.md) for the
+device-major pitfalls. `nvidia-smi` and `docker run --gpus all … nvidia-smi`
+must both succeed inside the LXC before you register the daemon.
 
 ## Persistent storage
 
@@ -128,6 +300,7 @@ The manifest declares per-route access levels enforced by Nextcloud's proxy:
 | `/operator/jobs`, `/operator/jobs/...`, `/operator/events` | ADMIN | Operator JSON + SSE API |
 | `/viewer/*` | USER | Viewer SPA |
 | `/published/*` | USER | Published meeting bundles (catalog + recordings) |
+| `/api/v1/welcome`, `/api/v1/room/*` | PUBLIC | Talk recording-backend protocol (HMAC-authenticated by Talk itself) |
 
 USER means any logged-in Nextcloud user. v1 ships an **org-wide recording
 archive** — anyone who can log in to your Nextcloud can browse every
@@ -136,22 +309,35 @@ published meeting. Per-recording ACLs are a future enhancement.
 `PUT /enabled` and `POST /init` are AppAPI **lifecycle callbacks**, not
 proxied browser routes; they do not appear in `<routes>`.
 
-## Local development
+## Uninstall
 
-`deployment/compose.yml` continues to work for local dev: it brings up the
-operator and the control-panel as separate services without AppAPI
-middleware (no `APP_SECRET` env). Use this path while developing on the
-operator or UI.
+Restore Talk's previous recording backend first (see the rollback command in
+Step 5), then:
+
+```bash
+occ app_api:app:unregister gocassini            # keeps the data volume
+occ app_api:app:unregister gocassini --rm-data  # also deletes recordings + job history
+```
+
+## Standalone operator (dev/staging only)
+
+`deployment/compose.yml` brings up the operator, control panel, and viewer as
+plain Compose services. That bundle is for **development, staging, and
+diagnostics** — it can satisfy Talk's recording-backend API, but it does not
+register an ExApp, does not expose anything through the AppAPI proxy, adds
+nothing to the Nextcloud UI, and bypasses the AppAPI auth middleware (no
+`APP_SECRET`). Do not document or deploy it as the production app install.
+See [`deployment/README.md`](../deployment/README.md).
 
 ## Testing the image
 
 See [`docs/exapp-test-locally.md`](./exapp-test-locally.md) for three tiers:
 image-only checks (no Nextcloud), manual install against a local Nextcloud,
-and the production-shaped HaRP-fronted install (deferred).
+and the production-shaped HaRP-fronted install
+([`harness/bin/manual-test-setup.sh`](../harness/bin/manual-test-setup.sh)).
 
 ## CI
 
 `.github/workflows/publish-exapp-image.yml` validates the manifest, builds
-the image, runs the smoke test, attempts the E2E (continue-on-error while
-the harness stabilizes), and on `main` or version tags pushes to
-`ghcr.io/codemyriad/gocassini`.
+the CPU and CUDA images, runs smoke + e2e jobs, and on `main` or version tags
+pushes the tag set from Step 2 to `ghcr.io/codemyriad/gocassini`.
