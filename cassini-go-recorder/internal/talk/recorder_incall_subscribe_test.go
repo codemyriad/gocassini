@@ -101,51 +101,107 @@ func TestParticipantsUpdateWithoutInCallBitDoesNotSubscribe(t *testing.T) {
 
 func TestParseParticipantUpdateRequiresInCallBit(t *testing.T) {
 	tests := []struct {
-		name       string
-		user       map[string]any
-		wantInCall bool
+		name      string
+		user      map[string]any
+		wantState participantCallState
 	}{
 		{
-			name:       "in-call bit set",
-			user:       map[string]any{"sessionId": "s1", "inCall": float64(1)},
-			wantInCall: true,
+			name:      "in-call bit set",
+			user:      map[string]any{"sessionId": "s1", "inCall": float64(1)},
+			wantState: callStateInCall,
 		},
 		{
-			name:       "in-call with published media",
-			user:       map[string]any{"sessionId": "s1", "inCall": float64(7)},
-			wantInCall: true,
+			name:      "in-call with published media",
+			user:      map[string]any{"sessionId": "s1", "inCall": float64(7)},
+			wantState: callStateInCall,
 		},
 		{
-			name:       "explicitly out of call",
-			user:       map[string]any{"sessionId": "s1", "inCall": float64(0)},
-			wantInCall: false,
+			name:      "explicitly out of call",
+			user:      map[string]any{"sessionId": "s1", "inCall": float64(0)},
+			wantState: callStateNotInCall,
 		},
 		{
-			name:       "inCall flags missing means room presence only",
-			user:       map[string]any{"sessionId": "s1", "displayName": "Alice"},
-			wantInCall: false,
+			// Missing inCall is neutral: it must not subscribe, and it
+			// must not remove a live subscriber either (a hypothetical
+			// partial update omitting the field is not an out-of-call
+			// signal).
+			name:      "inCall flags missing means room presence only",
+			user:      map[string]any{"sessionId": "s1", "displayName": "Alice"},
+			wantState: callStateUnknown,
 		},
 		{
-			name:       "media bits without the in-call bit",
-			user:       map[string]any{"sessionId": "s1", "inCall": float64(2)},
-			wantInCall: false,
+			name:      "media bits without the in-call bit",
+			user:      map[string]any{"sessionId": "s1", "inCall": float64(2)},
+			wantState: callStateNotInCall,
 		},
 		{
-			name:       "internal sessions never subscribe",
-			user:       map[string]any{"sessionId": "s1", "internal": true, "inCall": float64(1)},
-			wantInCall: false,
+			name:      "internal sessions never subscribe",
+			user:      map[string]any{"sessionId": "s1", "internal": true, "inCall": float64(1)},
+			wantState: callStateNotInCall,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			sessionID, _, inCall := parseParticipantUpdate(tc.user)
+			sessionID, _, state := parseParticipantUpdate(tc.user)
 			if sessionID != "s1" {
 				t.Fatalf("unexpected session id: %q", sessionID)
 			}
-			if inCall != tc.wantInCall {
-				t.Fatalf("inCall mismatch: got=%t want=%t", inCall, tc.wantInCall)
+			if state != tc.wantState {
+				t.Fatalf("call state mismatch: got=%d want=%d", state, tc.wantState)
 			}
 		})
+	}
+}
+
+func TestParticipantsUpdateWithoutInCallFieldDoesNotRemoveSubscriber(t *testing.T) {
+	r := newInCallSubscribeTestRecorder()
+
+	if err := r.handleParticipantsEvent(map[string]any{
+		"changed": []any{
+			map[string]any{
+				"sessionId":   "alice-session",
+				"displayName": "Alice",
+				"userId":      "alice",
+				"inCall":      float64(1),
+			},
+		},
+	}); err != nil {
+		t.Fatalf("handleParticipantsEvent() error = %v", err)
+	}
+	t.Cleanup(func() { r.removeParticipantSessions([]any{"alice-session"}) })
+	if got := r.subscriberCount(); got != 1 {
+		t.Fatalf("expected the inCall transition to create one subscriber, got %d", got)
+	}
+
+	// A partial update omitting inCall says nothing about call
+	// membership; the live subscriber must survive it.
+	if err := r.handleParticipantsEvent(map[string]any{
+		"changed": []any{
+			map[string]any{
+				"sessionId":   "alice-session",
+				"displayName": "Alice Renamed",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("handleParticipantsEvent() error = %v", err)
+	}
+	if got := r.subscriberCount(); got != 1 {
+		t.Fatalf("participants update without an inCall field tore down the subscriber: got %d, want 1", got)
+	}
+
+	// Only an explicit inCall with the in-call bit clear removes.
+	if err := r.handleParticipantsEvent(map[string]any{
+		"changed": []any{
+			map[string]any{
+				"sessionId": "alice-session",
+				"inCall":    float64(0),
+			},
+		},
+	}); err != nil {
+		t.Fatalf("handleParticipantsEvent() error = %v", err)
+	}
+	if got := r.subscriberCount(); got != 0 {
+		t.Fatalf("explicit inCall=0 should remove the subscriber, got %d", got)
 	}
 }

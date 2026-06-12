@@ -441,11 +441,15 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 
 	var artifactSummary *sessionCaptureSummary
 	if r.sessionArtifact != nil {
-		summary := r.sessionArtifact.summary()
-		artifactSummary = &summary
 		if err := r.sessionArtifact.close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
+		// Snapshot after close(): stream finalize (flush/BuildIndex)
+		// failures are recorded as capture failures during close, and
+		// the report's capture_error_count/first_capture_error must
+		// reflect the same media loss that fails the run.
+		summary := r.sessionArtifact.summary()
+		artifactSummary = &summary
 	}
 
 	if err := r.composeFinalOutput(); err != nil {
@@ -773,8 +777,8 @@ func (r *Recorder) handleParticipantsEvent(update map[string]any) error {
 	if asBool(update["all"]) {
 		active := make(map[string]participantIdentity, len(users))
 		for _, raw := range users {
-			sessionID, identity, activeInCall := parseParticipantUpdate(asMap(raw))
-			if sessionID == "" || !activeInCall {
+			sessionID, identity, callState := parseParticipantUpdate(asMap(raw))
+			if sessionID == "" || callState != callStateInCall {
 				continue
 			}
 			active[sessionID] = identity
@@ -783,12 +787,19 @@ func (r *Recorder) handleParticipantsEvent(update map[string]any) error {
 	}
 
 	for _, raw := range users {
-		sessionID, identity, activeInCall := parseParticipantUpdate(asMap(raw))
+		sessionID, identity, callState := parseParticipantUpdate(asMap(raw))
 		if sessionID == "" {
 			continue
 		}
-		if !activeInCall {
+		switch callState {
+		case callStateNotInCall:
 			r.removeParticipantSessions([]any{sessionID})
+			continue
+		case callStateUnknown:
+			// The entry omits inCall: it describes room presence, not
+			// call membership. Neither create nor remove — a partial
+			// update without the field must not tear down the live
+			// subscriber of a participant still in the call.
 			continue
 		}
 		r.rememberParticipantIdentity(sessionID, identity.DisplayName, identity.ParticipantID)
@@ -1100,7 +1111,24 @@ func parseRoomJoinIdentity(joinItem map[string]any) (string, string, string) {
 	return remoteSessionID, displayName, participantID
 }
 
-func parseParticipantUpdate(user map[string]any) (string, participantIdentity, bool) {
+// participantCallState classifies a participants-update entry for the
+// subscribe/teardown decision.
+type participantCallState int
+
+const (
+	// callStateUnknown: the entry omits the inCall field, so it says
+	// nothing about call membership (room presence only). Neutral —
+	// neither create nor tear down a subscriber.
+	callStateUnknown participantCallState = iota
+	// callStateNotInCall: the entry explicitly reports the participant
+	// out of the call (in-call bit clear), or is an internal session
+	// that never gets a subscriber.
+	callStateNotInCall
+	// callStateInCall: the in-call bit is set; a subscriber should exist.
+	callStateInCall
+)
+
+func parseParticipantUpdate(user map[string]any) (string, participantIdentity, participantCallState) {
 	scopes := []map[string]any{
 		user,
 		asMap(user["session"]),
@@ -1116,18 +1144,23 @@ func parseParticipantUpdate(user map[string]any) (string, participantIdentity, b
 		"roomsessionid",
 	)
 	if sessionID == "" {
-		return "", participantIdentity{}, false
+		return "", participantIdentity{}, callStateUnknown
 	}
 	if asBool(user["internal"]) {
-		return sessionID, participantIdentity{}, false
+		return sessionID, participantIdentity{}, callStateNotInCall
 	}
 	// Per the standalone signaling API, a participant is in the call iff
 	// the in-call bit of the inCall flags is set (bit 1; higher bits only
-	// describe published media / SIP). Updates without that bit — including
-	// entries that omit inCall entirely — describe room presence, not call
-	// membership, and must not produce subscribers (D-365).
-	if flags, ok := asInt(user["inCall"]); !ok || flags&inCallFlagInCall == 0 {
-		return sessionID, participantIdentity{}, false
+	// describe published media / SIP). Updates without that bit must not
+	// produce subscribers (D-365); entries that omit inCall entirely
+	// describe room presence only and are neutral — they must not tear
+	// down a live subscriber either.
+	flags, ok := asInt(user["inCall"])
+	if !ok {
+		return sessionID, participantIdentity{}, callStateUnknown
+	}
+	if flags&inCallFlagInCall == 0 {
+		return sessionID, participantIdentity{}, callStateNotInCall
 	}
 
 	return sessionID, participantIdentity{
@@ -1150,7 +1183,7 @@ func parseParticipantUpdate(user map[string]any) (string, participantIdentity, b
 			"participantID",
 			"uid",
 		),
-	}, true
+	}, callStateInCall
 }
 
 func firstNonEmpty(scopes []map[string]any, keys ...string) string {

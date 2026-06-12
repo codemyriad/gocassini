@@ -4,11 +4,18 @@ import (
 	"bufio"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"os"
 	"sync"
 )
+
+// ErrWriterClosed is returned by Write once the writer has been closed.
+// The writer rejects the record before touching the file, so callers that
+// race a deliberate Close (e.g. stream rotation) can match it with
+// errors.Is to tell a benign drop from a media-losing I/O failure.
+var ErrWriterClosed = errors.New("writer is closed")
 
 type Writer struct {
 	mu     sync.Mutex
@@ -81,7 +88,7 @@ func (w *Writer) Write(rec Record) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {
-		return fmt.Errorf("writer is closed")
+		return ErrWriterClosed
 	}
 
 	if rec.Kind != KindRTP && rec.Kind != KindRTCP {

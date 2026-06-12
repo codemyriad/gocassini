@@ -147,6 +147,38 @@ func TestSessionArtifactWriteAfterStreamCloseIsNotMediaLoss(t *testing.T) {
 	}
 }
 
+func TestSessionArtifactWriteRacingStreamCloseIsNotMediaLoss(t *testing.T) {
+	artifact := newMediaErrorTestArtifact(t)
+
+	streamID, err := artifact.openStream("remote-1", "user-1", "Alice", mediaErrorTestDescriptor(), 1234, 111, time.Now())
+	if err != nil {
+		t.Fatalf("open stream: %v", err)
+	}
+
+	// Simulate the closeStream race: writeRTP fetches the writer under
+	// a.mu, then a concurrent closeStream closes that writer before the
+	// write lands. The store writer rejects the record with
+	// ErrWriterClosed without touching the file — a correctly-dropped
+	// packet, not media loss.
+	artifact.mu.Lock()
+	writer := artifact.streams[streamID].writer
+	artifact.mu.Unlock()
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	pkt := &rtp.Packet{
+		Header:  rtp.Header{Version: 2, SSRC: 1234, PayloadType: 111},
+		Payload: []byte{1, 2, 3},
+	}
+	if err := artifact.writeRTP(streamID, pkt, time.Now()); err == nil {
+		t.Fatalf("expected write on a closed writer to error")
+	}
+	if got := artifact.summary().CaptureErrorCount; got != 0 {
+		t.Fatalf("write racing stream close was recorded as media loss: capture_error_count=%d", got)
+	}
+}
+
 func TestFatalRunErrorTagsSalvageableRuns(t *testing.T) {
 	loopErr := errors.New("signaling connection error: ws closed")
 

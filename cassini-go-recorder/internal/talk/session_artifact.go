@@ -319,6 +319,9 @@ func (a *sessionCaptureArtifact) writeRTP(streamID string, pkt *rtp.Packet, recv
 		Kind:       store.KindRTP,
 		WireBytes:  wire,
 	}); err != nil {
+		if a.streamCloseRace(stream, err) {
+			return fmt.Errorf("stream not writable: %s", streamID)
+		}
 		// A failed rtplog write loses media and can corrupt the record
 		// framing from this offset on; remember it so the run cannot
 		// finalize as ready.
@@ -370,6 +373,9 @@ func (a *sessionCaptureArtifact) writeRTCP(streamID string, packets []rtcp.Packe
 			Kind:       store.KindRTCP,
 			WireBytes:  wire,
 		}); err != nil {
+			if a.streamCloseRace(stream, err) {
+				return fmt.Errorf("stream not writable: %s", streamID)
+			}
 			a.noteCaptureFailure("write", streamID, err)
 			return err
 		}
@@ -379,6 +385,25 @@ func (a *sessionCaptureArtifact) writeRTCP(streamID string, packets []rtcp.Packe
 	stream.packetCount += len(wirePackets)
 	a.mu.Unlock()
 	return nil
+}
+
+// streamCloseRace reports whether a failed writer.Write lost a race
+// against a concurrent closeStream/close (SSRC/PT rotation racing the
+// RTCP reader, shutdown racing track readers) rather than hitting real
+// I/O trouble. The write happens outside a.mu, so a stream fetched as
+// writable can be closed before the write lands; the store writer then
+// rejects the record with ErrWriterClosed before touching the file. Such
+// packets were dropped by an intentional close — benign, like the
+// errSessionArtifactClosed path — and must not be recorded as media loss.
+// The stream flag is re-checked under a.mu as a second signal because it
+// flips before the writer itself closes.
+func (a *sessionCaptureArtifact) streamCloseRace(stream *sessionCaptureStream, err error) bool {
+	if errors.Is(err, store.ErrWriterClosed) {
+		return true
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return stream.closed
 }
 
 func (a *sessionCaptureArtifact) closeStream(streamID, reason string, endedAt time.Time) error {
