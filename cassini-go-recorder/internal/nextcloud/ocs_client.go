@@ -53,10 +53,17 @@ func (e *OCSError) Error() string {
 // IsClientError reports whether err wraps an OCS request the server rejected
 // with an HTTP 4xx status. Such rejections are definitive — for example a
 // room the guest recorder cannot see (404) or a call join refused because
-// recording consent is required (400) — so retrying cannot succeed.
+// recording consent is required (400) — so retrying cannot succeed. HTTP 429
+// is excluded: it is Nextcloud's bruteforce/rate-limit throttling, the one
+// 4xx a retry can outwait. 409 on participants/active signals an existing
+// session and would support force-join, but the recorder uses a fresh guest
+// actor per process, so it cannot collide with itself and 409 stays
+// definitive here.
 func IsClientError(err error) bool {
 	var ocsErr *OCSError
-	return errors.As(err, &ocsErr) && ocsErr.HTTPStatus >= 400 && ocsErr.HTTPStatus < 500
+	return errors.As(err, &ocsErr) &&
+		ocsErr.HTTPStatus >= 400 && ocsErr.HTTPStatus < 500 &&
+		ocsErr.HTTPStatus != http.StatusTooManyRequests
 }
 
 type SignalingSettings struct {

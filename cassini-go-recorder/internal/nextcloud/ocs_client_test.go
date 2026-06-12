@@ -57,6 +57,12 @@ func TestRequestErrorsExposeHTTPStatus(t *testing.T) {
 			wantClientError: true,
 		},
 		{
+			name:            "rate limiting is not a client error",
+			status:          http.StatusTooManyRequests,
+			body:            `{"ocs":{"meta":{"status":"error","statuscode":429,"message":"throttled"},"data":[]}}`,
+			wantClientError: false,
+		},
+		{
 			name:            "server failure is not a client error",
 			status:          http.StatusInternalServerError,
 			body:            `{"ocs":{"meta":{"status":"error","statuscode":500,"message":"boom"},"data":[]}}`,
