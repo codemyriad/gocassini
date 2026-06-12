@@ -173,7 +173,7 @@ func writeSiteManifest(bundle SiteBundle, meta SiteBundleManifest) error {
 		return fmt.Errorf("marshal site manifest: %w", err)
 	}
 	body = append(body, '\n')
-	if err := os.WriteFile(bundle.ManifestPath, body, 0o644); err != nil {
+	if err := writeFileAtomic(bundle.ManifestPath, body, 0o644); err != nil {
 		return fmt.Errorf("write site manifest: %w", err)
 	}
 	return nil
