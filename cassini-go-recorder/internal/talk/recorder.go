@@ -23,6 +23,11 @@ import (
 
 const requestOfferResponseTimeout = 8 * time.Second
 
+// inCallFlagInCall is bit 1 of the Talk in-call flags: the participant has
+// joined the call. Remaining bits (audio=2, video=4, SIP=8) describe what
+// the participant publishes, so call membership is exactly flags&1 != 0.
+const inCallFlagInCall = 1
+
 // ErrUnjoinable marks bootstrap failures where the Talk server definitively
 // rejected the recorder's attempt to join the room or call (HTTP 4xx), e.g.
 // a non-public conversation the guest recorder cannot see (404) or a call
@@ -715,6 +720,15 @@ func (r *Recorder) handleRoomEvent(roomEvent map[string]any) error {
 	case "room":
 		switch eventType {
 		case "join":
+			// Room join events indicate signaling-room presence only — a
+			// user with the conversation window open, not necessarily in
+			// the call. Per the standalone signaling API, WebRTC peer
+			// connections are established from participants-update inCall
+			// flags (see handleParticipantsEvent), so only remember the
+			// identity here. Subscribing on join used to create dead peers
+			// whose requestoffers the server rejected ("not in same call")
+			// and whose presence blocked the room-empty autostop for as
+			// long as anyone kept a chat window open (D-365).
 			for _, item := range asSlice(roomEvent["join"]) {
 				joinItem := asMap(item)
 				if len(joinItem) == 0 {
@@ -725,9 +739,6 @@ func (r *Recorder) handleRoomEvent(roomEvent map[string]any) error {
 					continue
 				}
 				r.rememberParticipantIdentity(remoteSessionID, displayName, participantID)
-				if _, err := r.ensureSubscriber(remoteSessionID); err != nil {
-					return err
-				}
 			}
 		case "leave":
 			r.removeParticipantSessions(asSlice(roomEvent["leave"]))
@@ -1110,7 +1121,12 @@ func parseParticipantUpdate(user map[string]any) (string, participantIdentity, b
 	if asBool(user["internal"]) {
 		return sessionID, participantIdentity{}, false
 	}
-	if flags, ok := asInt(user["inCall"]); ok && flags == 0 {
+	// Per the standalone signaling API, a participant is in the call iff
+	// the in-call bit of the inCall flags is set (bit 1; higher bits only
+	// describe published media / SIP). Updates without that bit — including
+	// entries that omit inCall entirely — describe room presence, not call
+	// membership, and must not produce subscribers (D-365).
+	if flags, ok := asInt(user["inCall"]); !ok || flags&inCallFlagInCall == 0 {
 		return sessionID, participantIdentity{}, false
 	}
 
