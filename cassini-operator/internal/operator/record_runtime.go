@@ -45,9 +45,11 @@ const (
 )
 
 type recordProcessState struct {
-	process        *os.Process
-	done           chan struct{}
-	stopInProgress bool
+	process *os.Process
+	done    chan struct{}
+	// stopInProgress is set by stop requests under recordMu but read by the
+	// record goroutine without it, so it must be atomic (D-364).
+	stopInProgress atomic.Bool
 	// stopping is closed when the recorder prints recordStoppingMarker,
 	// i.e. it acknowledged SIGTERM and started finalizing.
 	stopping chan struct{}
@@ -74,6 +76,27 @@ type recordMarkerWatch struct {
 	marker []byte
 	signal func()
 	tail   []byte
+}
+
+// syncBuffer is a mutex-guarded bytes.Buffer. The record path hands one
+// shared capture sink to both the stdout and stderr pipelines, which os/exec
+// pumps from two goroutines — a bare bytes.Buffer there is a data race that
+// corrupts stop-detail classification at best and panics at worst (D-364).
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // recordOutputActivity tracks when the recorder last wrote to stdout/stderr;
@@ -143,20 +166,23 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 		args = append(args, "--room-empty-grace", formatSeconds(req.RoomEmptyGraceSeconds))
 	}
 
-	var logCapture bytes.Buffer
+	// logCapture is shared by the stdout and stderr pipelines; os/exec pumps
+	// distinct writers from separate goroutines, so the sink must serialize
+	// its writes (D-364).
+	logCapture := &syncBuffer{}
 	liveCh := make(chan struct{})
 	stoppingCh := make(chan struct{})
 	signalLive := closeOnce(liveCh)
 	signalStopping := closeOnce(stoppingCh)
 	activity := newRecordOutputActivity()
 	stdoutWriter := newRecordLiveSignalWriter(
-		io.MultiWriter(writerOrDiscard(rt.stdout), logFile, &logCapture),
+		io.MultiWriter(writerOrDiscard(rt.stdout), logFile, logCapture),
 		activity,
 		newRecordMarkerWatch(recordRunningMarker, signalLive),
 		newRecordMarkerWatch(recordStoppingMarker, signalStopping),
 	)
 	stderrWriter := newRecordLiveSignalWriter(
-		io.MultiWriter(writerOrDiscard(rt.stderr), logFile, &logCapture),
+		io.MultiWriter(writerOrDiscard(rt.stderr), logFile, logCapture),
 		activity,
 		newRecordMarkerWatch(recordRunningMarker, signalLive),
 		newRecordMarkerWatch(recordStoppingMarker, signalStopping),
@@ -200,7 +226,7 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 		ExitCode:        exitCodeFromRunError(runErr),
 		StopDetail:      recordStopDetail(logCapture.String()),
 	}
-	result.StopReason = classifyRecordStopReason(state.stopInProgress, result.ExitCode, result.StopDetail, runErr)
+	result.StopReason = classifyRecordStopReason(state.stopInProgress.Load(), result.ExitCode, result.StopDetail, runErr)
 	if runErr != nil {
 		if result.StopDetail == "" {
 			result.StopDetail = strings.TrimSpace(runErr.Error())
@@ -259,16 +285,12 @@ func (rt *Runtime) completeRecordProcess(jobID string) {
 
 func (rt *Runtime) beginRecordStop(jobID string) (*recordProcessState, bool) {
 	rt.recordMu.Lock()
-	defer rt.recordMu.Unlock()
 	state := rt.recordJobs[jobID]
+	rt.recordMu.Unlock()
 	if state == nil {
 		return nil, false
 	}
-	alreadyStopping := state.stopInProgress
-	if !alreadyStopping {
-		state.stopInProgress = true
-	}
-	return state, alreadyStopping
+	return state, state.stopInProgress.Swap(true)
 }
 
 func (rt *Runtime) handleStopJob(w http.ResponseWriter, r *http.Request, id string) {

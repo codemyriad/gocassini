@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestTalkWelcomeHandlerReturnsVersion(t *testing.T) {
@@ -242,13 +243,16 @@ func TestTalkRoomStartIsIdempotentForKnownRoom(t *testing.T) {
 	rt.cfg.TalkSharedSecret = "secret-123"
 	fakeTalk := newFakeTalkServer(t)
 	defer fakeTalk.Close()
-	rt.bindTalkRoomState(&talkRoomState{
+	state := &talkRoomState{
 		RoomKey:    talkRoomKey(fakeTalk.server.URL, "room123"),
-		JobID:      "job-1",
 		BackendURL: fakeTalk.server.URL,
 		RoomToken:  "room123",
 		Owner:      "chima",
-	})
+	}
+	if !rt.reserveTalkRoom(state) {
+		t.Fatalf("expected to reserve fresh room state")
+	}
+	rt.bindTalkRoomJob(state, "job-1")
 
 	reqBody := `{"type":"start","start":{"owner":"chima","actor":{"type":"users","id":"chima"}}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/room/room123", strings.NewReader(reqBody))
@@ -403,6 +407,53 @@ func TestTalkRoomStartFailureSendsFailedCallback(t *testing.T) {
 		t.Fatalf("expected 1 job, got %d", len(jobs))
 	}
 	_ = waitForJobState(t, rt.store, jobs[0].ID, "failed")
+	fakeTalk.assertEventTypes(t, []string{"failed"})
+}
+
+func TestTalkRoomStartClearsRoomStateWhenJobFailsInstantly(t *testing.T) {
+	// Regression for D-364: the room binding used to be created after the
+	// record goroutine was spawned, so a job that failed before the bind left
+	// a permanently stale "already recording" entry. The binding now happens
+	// before the goroutine starts, so its deferred cleanup always finds it.
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.TalkSharedSecret = "secret-123"
+	fakeTalk := newFakeTalkServer(t)
+	defer fakeTalk.Close()
+	rt.recordJobFn = func(_ context.Context, _ Job, _ TriggerRequest) (recordResult, error) {
+		return recordResult{}, assertErr("instant failure")
+	}
+
+	reqBody := `{"type":"start","start":{"owner":"chima","actor":{"type":"users","id":"chima"}}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/room/room123", strings.NewReader(reqBody))
+	req.Header.Set(talkRecordingBackendHeader, fakeTalk.server.URL)
+	req.Header.Set(talkRecordingRandomHeader, "random-seed")
+	req.Header.Set(talkRecordingChecksumHeader, talkChecksum(rt.cfg.TalkSharedSecret, "random-seed", []byte(reqBody)))
+	rec := httptest.NewRecorder()
+	rt.talkRoomHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	jobs, err := rt.store.ListJobs(req.Context())
+	if err != nil {
+		t.Fatalf("ListJobs() error = %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	_ = waitForJobState(t, rt.store, jobs[0].ID, "failed")
+	roomKey := talkRoomKey(fakeTalk.server.URL, "room123")
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, ok := rt.lookupTalkRoomState(roomKey); !ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected stale room binding to be cleared after instant job failure")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	fakeTalk.assertEventTypes(t, []string{"failed"})
 }
 

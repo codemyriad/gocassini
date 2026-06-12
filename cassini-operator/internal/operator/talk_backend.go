@@ -213,7 +213,17 @@ func (rt *Runtime) handleTalkStart(w http.ResponseWriter, r *http.Request, auth 
 	publicBaseURL := strings.TrimRight(auth.BackendURL, "/")
 	operatorBaseURL := rt.operatorTalkBackendURL(publicBaseURL)
 	roomKey := talkRoomKey(publicBaseURL, token)
-	if _, exists := rt.lookupTalkRoomState(roomKey); exists {
+	state := &talkRoomState{
+		RoomKey:    roomKey,
+		BackendURL: operatorBaseURL,
+		RoomToken:  token,
+		Owner:      strings.TrimSpace(payload.Start.Owner),
+		Status:     payload.Start.Status,
+		StartActor: payload.Start.Actor,
+	}
+	// Claim the room key in the same critical section as the duplicate check
+	// so concurrent duplicate starts cannot both pass the lookup (D-364).
+	if !rt.reserveTalkRoom(state) {
 		writeJSON(w, http.StatusOK, map[string]any{})
 		return
 	}
@@ -229,25 +239,24 @@ func (rt *Runtime) handleTalkStart(w http.ResponseWriter, r *http.Request, auth 
 	}
 	requestBody, err := encodeTriggerRequest(req)
 	if err != nil {
+		rt.releaseTalkRoom(roomKey)
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	resp, err := rt.acceptRecordJob(r.Context(), nextcloudTalkProvider, requestBody, req)
+	resp, startRecord, err := rt.prepareRecordJob(r.Context(), nextcloudTalkProvider, requestBody, req)
 	if err != nil {
+		rt.releaseTalkRoom(roomKey)
 		status, msg := recordAcceptError(err)
 		writeJSONError(w, status, msg)
 		return
 	}
-	rt.bindTalkRoomState(&talkRoomState{
-		RoomKey:    roomKey,
-		JobID:      resp.ID,
-		BackendURL: operatorBaseURL,
-		RoomToken:  token,
-		Owner:      strings.TrimSpace(payload.Start.Owner),
-		Status:     payload.Start.Status,
-		StartActor: payload.Start.Actor,
-	})
+	// Bind the job ID before the record goroutine exists: its deferred
+	// cleanup is keyed by job ID, and a job that fails instantly used to
+	// race past this bind, leaving a permanently stale "already recording"
+	// room entry (D-364).
+	rt.bindTalkRoomJob(state, resp.ID)
+	startRecord()
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -342,25 +351,59 @@ func (rt *Runtime) operatorTalkBackendURL(requestBackendURL string) string {
 	return strings.TrimRight(strings.TrimSpace(requestBackendURL), "/")
 }
 
-func (rt *Runtime) bindTalkRoomState(state *talkRoomState) {
+// reserveTalkRoom claims a room key for a recording about to be accepted.
+// The duplicate-start check and the map insert share one critical section so
+// two concurrent starts for the same room cannot both pass the lookup.
+func (rt *Runtime) reserveTalkRoom(state *talkRoomState) bool {
 	rt.recordMu.Lock()
+	defer rt.recordMu.Unlock()
+	if _, exists := rt.talkRooms[state.RoomKey]; exists {
+		return false
+	}
 	rt.talkRooms[state.RoomKey] = state
-	rt.talkJobs[state.JobID] = state
+	return true
+}
+
+// bindTalkRoomJob attaches the accepted job ID to a reserved room state. It
+// must run before the record goroutine is started: the goroutine's deferred
+// cleanup is keyed by job ID.
+func (rt *Runtime) bindTalkRoomJob(state *talkRoomState, jobID string) {
+	rt.recordMu.Lock()
+	state.JobID = jobID
+	rt.talkJobs[jobID] = state
 	rt.recordMu.Unlock()
 }
 
-func (rt *Runtime) lookupTalkRoomState(roomKey string) (*talkRoomState, bool) {
+// releaseTalkRoom drops a reservation whose record job was never accepted.
+func (rt *Runtime) releaseTalkRoom(roomKey string) {
 	rt.recordMu.Lock()
+	delete(rt.talkRooms, roomKey)
+	rt.recordMu.Unlock()
+}
+
+// lookupTalkRoomState and lookupTalkJobState return snapshot copies: the
+// stored state is mutated under recordMu (JobID, StopActor), so handing out
+// the shared pointer would let the record goroutine read those fields
+// unsynchronized (D-364). The actor pointers inside the copy are safe to
+// share — actors are replaced wholesale, never mutated in place.
+func (rt *Runtime) lookupTalkRoomState(roomKey string) (talkRoomState, bool) {
+	rt.recordMu.Lock()
+	defer rt.recordMu.Unlock()
 	state, ok := rt.talkRooms[roomKey]
-	rt.recordMu.Unlock()
-	return state, ok
+	if !ok {
+		return talkRoomState{}, false
+	}
+	return *state, true
 }
 
-func (rt *Runtime) lookupTalkJobState(jobID string) (*talkRoomState, bool) {
+func (rt *Runtime) lookupTalkJobState(jobID string) (talkRoomState, bool) {
 	rt.recordMu.Lock()
+	defer rt.recordMu.Unlock()
 	state, ok := rt.talkJobs[jobID]
-	rt.recordMu.Unlock()
-	return state, ok
+	if !ok {
+		return talkRoomState{}, false
+	}
+	return *state, true
 }
 
 func (rt *Runtime) updateTalkStopActor(jobID string, actor *talkActorData) {
@@ -380,7 +423,7 @@ func (rt *Runtime) clearTalkRoomJobByID(jobID string) {
 	rt.recordMu.Unlock()
 }
 
-func (rt *Runtime) notifyTalkStarted(state *talkRoomState) error {
+func (rt *Runtime) notifyTalkStarted(state talkRoomState) error {
 	payload := map[string]any{
 		"type": "started",
 		"started": map[string]any{
@@ -403,7 +446,7 @@ func (rt *Runtime) notifyTalkStartedForJob(jobID string) error {
 	return rt.notifyTalkStarted(state)
 }
 
-func (rt *Runtime) notifyTalkStopped(state *talkRoomState) error {
+func (rt *Runtime) notifyTalkStopped(state talkRoomState) error {
 	stopped := map[string]any{
 		"token": state.RoomToken,
 	}
@@ -419,7 +462,7 @@ func (rt *Runtime) notifyTalkStopped(state *talkRoomState) error {
 	})
 }
 
-func (rt *Runtime) notifyTalkFailed(state *talkRoomState) error {
+func (rt *Runtime) notifyTalkFailed(state talkRoomState) error {
 	return rt.postTalkJSON(state.BackendURL, "/ocs/v2.php/apps/spreed/api/v1/recording/backend", map[string]any{
 		"type": "failed",
 		"failed": map[string]string{
@@ -445,7 +488,7 @@ func (rt *Runtime) postTalkJSON(backendURL, path string, payload any) error {
 	return rt.doTalkRequest(req)
 }
 
-func (rt *Runtime) uploadTalkRecording(state *talkRoomState, filePath, uploadName string) error {
+func (rt *Runtime) uploadTalkRecording(state talkRoomState, filePath, uploadName string) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("open recording for upload: %w", err)

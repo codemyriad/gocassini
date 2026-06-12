@@ -581,10 +581,24 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 }
 
 func (rt *Runtime) acceptRecordJob(ctx context.Context, provider, requestBody string, req TriggerRequest) (createJobResponse, error) {
+	resp, startRecord, err := rt.prepareRecordJob(ctx, provider, requestBody, req)
+	if err != nil {
+		return createJobResponse{}, err
+	}
+	startRecord()
+	return resp, nil
+}
+
+// prepareRecordJob reserves a record slot and persists the queued job but
+// does not spawn the record goroutine: the returned start func does. Callers
+// that must attach state the goroutine's deferred cleanup depends on — the
+// Talk room binding, keyed by job ID — do so between prepare and start, so a
+// fast-failing job can never race past a not-yet-bound room entry (D-364).
+func (rt *Runtime) prepareRecordJob(ctx context.Context, provider, requestBody string, req TriggerRequest) (createJobResponse, func(), error) {
 	select {
 	case rt.recordSlots <- struct{}{}:
 	default:
-		return createJobResponse{}, errRecordBusy
+		return createJobResponse{}, nil, errRecordBusy
 	}
 
 	jobID := ulid.Make().String()
@@ -603,12 +617,14 @@ func (rt *Runtime) acceptRecordJob(ctx context.Context, provider, requestBody st
 	}
 	if err := rt.store.InsertQueuedJob(ctx, job); err != nil {
 		<-rt.recordSlots
-		return createJobResponse{}, fmt.Errorf("create job: %w", err)
+		return createJobResponse{}, nil, fmt.Errorf("create job: %w", err)
 	}
 
-	rt.recordWG.Add(1)
-	go rt.runRecordJob(job, req)
-	return createJobResponse{ID: jobID}, nil
+	startRecord := func() {
+		rt.recordWG.Add(1)
+		go rt.runRecordJob(job, req)
+	}
+	return createJobResponse{ID: jobID}, startRecord, nil
 }
 
 // WaitForRecordJobs blocks until in-flight record jobs — including their
