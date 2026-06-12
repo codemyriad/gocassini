@@ -64,6 +64,41 @@ type recordOptions struct {
 	simPackets        int
 }
 
+// Requestoffer retry defaults, matching the legacy gocassini binary's
+// flag defaults (internal/config: -request-offer-interval=2,
+// -max-request-offer-attempts=8). Leaving the interval zero disables
+// requestOfferLoop entirely, so a single dropped initial requestoffer —
+// the race the recorder documents around spreed's call-state propagation
+// — would silently lose that participant's media for the whole run.
+const (
+	defaultRequestOfferInterval    = 2 * time.Second
+	defaultMaxRequestOfferAttempts = 8
+)
+
+// recordConfig builds the recorder configuration shared by the .run and
+// portable record paths, including the retry defaults the product CLI
+// must not lose vs the legacy binary (D-366).
+func recordConfig(opts recordOptions, recordingPath string) config.Config {
+	return config.Config{
+		Mode:                    "talk",
+		OutputPath:              recordingPath,
+		CleanupIntermediate:     !opts.keepIntermediate,
+		Duration:                time.Duration(opts.durationSeconds) * time.Second,
+		StopWhenRoomEmpty:       opts.stopWhenRoomEmpty,
+		RoomEmptyGrace:          time.Duration(opts.roomEmptyGraceSec * float64(time.Second)),
+		CallURL:                 opts.callURL,
+		ConnectBaseURL:          opts.connectURL,
+		GuestName:               opts.name,
+		JoinFlags:               1,
+		Insecure:                opts.insecure,
+		RequestOfferInterval:    defaultRequestOfferInterval,
+		MaxRequestOfferAttempts: defaultMaxRequestOfferAttempts,
+		TurnMode:                opts.turnMode,
+		SimTracks:               opts.simTracks,
+		SimPackets:              opts.simPackets,
+	}
+}
+
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		printRootUsage(stdout)
@@ -157,22 +192,7 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return 1
 	}
 
-	cfg := config.Config{
-		Mode:                "talk",
-		OutputPath:          bundle.RecordingPath,
-		CleanupIntermediate: !opts.keepIntermediate,
-		Duration:            time.Duration(opts.durationSeconds) * time.Second,
-		StopWhenRoomEmpty:   opts.stopWhenRoomEmpty,
-		RoomEmptyGrace:      time.Duration(opts.roomEmptyGraceSec * float64(time.Second)),
-		CallURL:             opts.callURL,
-		ConnectBaseURL:      opts.connectURL,
-		GuestName:           opts.name,
-		JoinFlags:           1,
-		Insecure:            opts.insecure,
-		TurnMode:            opts.turnMode,
-		SimTracks:           opts.simTracks,
-		SimPackets:          opts.simPackets,
-	}
+	cfg := recordConfig(opts, bundle.RecordingPath)
 	if opts.simulate {
 		cfg.Mode = "simulate"
 	}
@@ -243,22 +263,7 @@ func runRecordPortable(ctx context.Context, opts recordOptions, stdout, stderr i
 		return 1
 	}
 
-	cfg := config.Config{
-		Mode:                "talk",
-		OutputPath:          bundle.RecordingPath,
-		CleanupIntermediate: !opts.keepIntermediate,
-		Duration:            time.Duration(opts.durationSeconds) * time.Second,
-		StopWhenRoomEmpty:   opts.stopWhenRoomEmpty,
-		RoomEmptyGrace:      time.Duration(opts.roomEmptyGraceSec * float64(time.Second)),
-		CallURL:             opts.callURL,
-		ConnectBaseURL:      opts.connectURL,
-		GuestName:           opts.name,
-		JoinFlags:           1,
-		Insecure:            opts.insecure,
-		TurnMode:            opts.turnMode,
-		SimTracks:           opts.simTracks,
-		SimPackets:          opts.simPackets,
-	}
+	cfg := recordConfig(opts, bundle.RecordingPath)
 
 	if !reusedRun {
 		_ = UpdateRunBundleStatus(bundle, bundleStatePreparing, "record", "")
