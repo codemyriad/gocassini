@@ -160,6 +160,30 @@ logged-in user.]]></description>
         <verb>POST</verb>
         <access_level>PUBLIC</access_level>
       </route>
+
+      <!--
+        ExApp UI assets behind the Nextcloud navigation entries the operator
+        registers when the app is enabled (uiRegistrar in exapp.go). AppAPI's
+        embedded top-menu page loads ui/<entry>.js through this proxy, and the
+        navigation bar fetches the icon the same way, so each path needs a
+        route. The control-panel bootstrap is ADMIN like the SPA it iframes;
+        the icon is USER because every logged-in user sees the viewer entry.
+      -->
+      <route>
+        <url>^img\/app\.svg$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>USER</access_level>
+      </route>
+      <route>
+        <url>^ui\/viewer\.js$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>USER</access_level>
+      </route>
+      <route>
+        <url>^ui\/control-panel\.js$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>ADMIN</access_level>
+      </route>
     </routes>
   </external-app>
 </info>

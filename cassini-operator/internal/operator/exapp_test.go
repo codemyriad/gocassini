@@ -3,6 +3,7 @@ package operator
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -211,6 +212,204 @@ func TestInitProgressReporterNilWhenUnconfigured(t *testing.T) {
 				t.Fatal("expected nil reporter")
 			}
 		})
+	}
+}
+
+// --- ExApp UI registrar (Nextcloud navigation entries) ---
+
+type recordedOCSCall struct {
+	Method string
+	Path   string
+	Body   map[string]any
+	Auth   string
+	AppID  string
+	OCS    string
+}
+
+func TestUIRegistrarRegistersTopMenuEntriesAndScripts(t *testing.T) {
+	var calls []recordedOCSCall
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		calls = append(calls, recordedOCSCall{
+			Method: r.Method,
+			Path:   r.URL.Path,
+			Body:   body,
+			Auth:   r.Header.Get("AUTHORIZATION-APP-API"),
+			AppID:  r.Header.Get("EX-APP-ID"),
+			OCS:    r.Header.Get("OCS-APIRequest"),
+		})
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := ExAppConfig{
+		NextcloudURL: srv.URL + "/", // trailing slash must be normalized away
+		AppID:        "gocassini",
+		AppVersion:   "0.1.0",
+		AppSecret:    "shh",
+	}
+	registrar := cfg.uiRegistrar(log.New(&bytes.Buffer{}, "", 0))
+	if registrar == nil {
+		t.Fatal("expected registrar when NEXTCLOUD_URL, APP_SECRET, and APP_ID are set")
+	}
+	registrar()
+
+	if len(calls) != 4 {
+		t.Fatalf("got %d OCS calls, want 4 (2 top-menu + 2 script): %+v", len(calls), calls)
+	}
+	wantAuth := base64.StdEncoding.EncodeToString([]byte(":shh"))
+	for i, c := range calls {
+		if c.Method != http.MethodPost {
+			t.Errorf("call %d: method = %q, want POST", i, c.Method)
+		}
+		if c.Auth != wantAuth {
+			t.Errorf("call %d: AUTHORIZATION-APP-API = %q, want %q", i, c.Auth, wantAuth)
+		}
+		if c.AppID != "gocassini" {
+			t.Errorf("call %d: EX-APP-ID = %q, want gocassini", i, c.AppID)
+		}
+		if c.OCS != "true" {
+			t.Errorf("call %d: OCS-APIRequest = %q, want true", i, c.OCS)
+		}
+	}
+
+	// Calls 0/2 register the entries, calls 1/3 their bootstrap scripts.
+	wantTopMenu := []struct {
+		name          string
+		adminRequired float64 // JSON numbers decode to float64
+	}{{"viewer", 0}, {"control-panel", 1}}
+	for i, want := range wantTopMenu {
+		c := calls[i*2]
+		if c.Path != "/ocs/v2.php/apps/app_api/api/v1/ui/top-menu" {
+			t.Fatalf("call %d path = %q, want the ui/top-menu OCS route", i*2, c.Path)
+		}
+		if c.Body["name"] != want.name {
+			t.Errorf("top-menu %d: name = %v, want %q", i, c.Body["name"], want.name)
+		}
+		if c.Body["adminRequired"] != want.adminRequired {
+			t.Errorf("top-menu %q: adminRequired = %v, want %v", want.name, c.Body["adminRequired"], want.adminRequired)
+		}
+		if c.Body["icon"] != "img/app.svg" {
+			t.Errorf("top-menu %q: icon = %v, want img/app.svg", want.name, c.Body["icon"])
+		}
+		if disp, _ := c.Body["displayName"].(string); disp == "" {
+			t.Errorf("top-menu %q: displayName missing", want.name)
+		}
+
+		s := calls[i*2+1]
+		if s.Path != "/ocs/v2.php/apps/app_api/api/v1/ui/script" {
+			t.Fatalf("call %d path = %q, want the ui/script OCS route", i*2+1, s.Path)
+		}
+		if s.Body["type"] != "top_menu" {
+			t.Errorf("script %q: type = %v, want top_menu", want.name, s.Body["type"])
+		}
+		if s.Body["name"] != want.name {
+			t.Errorf("script %d: name = %v, want %q", i, s.Body["name"], want.name)
+		}
+		// Path is relative to the ExApp root, ".js" appended by Nextcloud.
+		if wantPath := "ui/" + want.name; s.Body["path"] != wantPath {
+			t.Errorf("script %q: path = %v, want %q", want.name, s.Body["path"], wantPath)
+		}
+	}
+}
+
+func TestUIRegistrarNilWhenUnconfigured(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  ExAppConfig
+	}{
+		{"no nextcloud url", ExAppConfig{AppID: "gocassini", AppSecret: "shh"}},
+		{"no secret", ExAppConfig{NextcloudURL: "http://nc.local", AppID: "gocassini"}},
+		{"no app id", ExAppConfig{NextcloudURL: "http://nc.local", AppSecret: "shh"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.cfg.uiRegistrar(log.New(&bytes.Buffer{}, "", 0)) != nil {
+				t.Fatal("expected nil registrar")
+			}
+		})
+	}
+}
+
+func TestUIRegistrarLogsErrorOnOCSFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"ocs":{"meta":{"message":"Top Menu entry could not be registered"}}}`, http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	var logBuf bytes.Buffer
+	cfg := ExAppConfig{NextcloudURL: srv.URL, AppID: "gocassini", AppVersion: "0.1.0", AppSecret: "shh"}
+	cfg.uiRegistrar(log.New(&logBuf, "", 0))()
+
+	if !strings.Contains(logBuf.String(), "ERROR: exapp ui") {
+		t.Fatalf("log output %q should contain an exapp ui ERROR line", logBuf.String())
+	}
+}
+
+// The bootstrap script paths sent to AppAPI must be served by the operator
+// itself: AppAPI rewrites them to proxy fetches of /ui/<entry>.js. This guards
+// the registrar JSON and the asset routes against drifting apart.
+func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
+	root := http.NewServeMux()
+	ExAppConfig{}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
+
+	for _, entry := range topMenuEntries {
+		// Same URL AppAPI's ExAppUiMiddleware rewrites the script src to,
+		// minus the proxy prefix the operator never sees.
+		r := httptest.NewRequest(http.MethodGet, "/ui/"+entry.Name+".js", nil)
+		w := httptest.NewRecorder()
+		root.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET /ui/%s.js: got %d, want 200", entry.Name, w.Code)
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
+			t.Fatalf("GET /ui/%s.js: Content-Type %q does not include javascript", entry.Name, ct)
+		}
+		if !strings.Contains(w.Body.String(), "iframe") {
+			t.Fatalf("GET /ui/%s.js: bootstrap body does not build an iframe", entry.Name)
+		}
+
+		// And the icon each entry references must resolve too.
+		ri := httptest.NewRequest(http.MethodGet, "/"+entry.Icon, nil)
+		wi := httptest.NewRecorder()
+		root.ServeHTTP(wi, ri)
+		if wi.Code != http.StatusOK {
+			t.Fatalf("GET /%s: got %d, want 200", entry.Icon, wi.Code)
+		}
+		if ct := wi.Header().Get("Content-Type"); !strings.Contains(ct, "svg") {
+			t.Fatalf("GET /%s: Content-Type %q does not include svg", entry.Icon, ct)
+		}
+	}
+}
+
+func TestUIAssetHandlerUnknownPathAndMethod(t *testing.T) {
+	root := http.NewServeMux()
+	ExAppConfig{}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
+
+	r := httptest.NewRequest(http.MethodGet, "/ui/other.js", nil)
+	w := httptest.NewRecorder()
+	root.ServeHTTP(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("GET /ui/other.js: got %d, want 404", w.Code)
+	}
+
+	rp := httptest.NewRequest(http.MethodPost, "/ui/viewer.js", nil)
+	wp := httptest.NewRecorder()
+	root.ServeHTTP(wp, rp)
+	if wp.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /ui/viewer.js: got %d, want 405", wp.Code)
+	}
+
+	rh := httptest.NewRequest(http.MethodHead, "/img/app.svg", nil)
+	wh := httptest.NewRecorder()
+	root.ServeHTTP(wh, rh)
+	if wh.Code != http.StatusOK {
+		t.Fatalf("HEAD /img/app.svg: got %d, want 200", wh.Code)
+	}
+	if wh.Body.Len() != 0 {
+		t.Fatalf("HEAD /img/app.svg: body should be empty, got %d bytes", wh.Body.Len())
 	}
 }
 
