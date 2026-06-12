@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Healthcheck for the Cassini ExApp container.
-# Reports healthy when frpc is alive AND the operator HTTP endpoint responds
-# with 401 (AppAPI middleware active, refusing requests without the header).
+# Reports healthy when the operator HTTP endpoint responds with 401 (AppAPI
+# middleware active, refusing requests without the header) and — only when the
+# entrypoint launched frpc, i.e. a HaRP deploy — frpc is still alive.
 # 200 is also acceptable in case middleware is disabled (local dev image).
 set -euo pipefail
 

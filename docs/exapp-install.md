@@ -55,6 +55,42 @@ the container outside AppAPI for development you must supply them yourself:
 | `APP_PERSISTENT_STORAGE` | Mount path of AppAPI's persistent volume; the operator defaults its data roots under it |
 | `CASSINI_APPAPI_REQUIRED=true` | Makes the operator refuse to start without `APP_SECRET` (set in the ExApp Dockerfile) |
 
+## App-specific environment
+
+These variables are declared under `<environment-variables>` in
+`appinfo/info.xml`. That declaration is what makes them settable in an AppAPI
+deployment: AppAPI only passes declared variables to the container, and
+`--env` values for undeclared keys are **silently dropped**. Set them at
+registration time, either in the External Apps admin UI (Deploy Options) or
+on the command line:
+
+```
+occ app_api:app:register gocassini <daemon-name> \
+    --env CASSINI_TALK_RECORDING_SECRET=<secret> \
+    --env OPENROUTER_API_KEY=<key> \
+    --wait-finish
+```
+
+| Variable | Required | What it does |
+|---|---|---|
+| `CASSINI_TALK_RECORDING_SECRET` | For the Talk record button | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (below). Unset, the operator rejects every recording request |
+| `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped notifications, recording upload). Leave empty to use the backend URL Talk sends with each request |
+| `OPENROUTER_API_KEY` | No | API key for LLM transcript cleanup + meeting summaries. Unset, raw transcripts are published without summaries |
+| `LLM_BASE_URL` | No | OpenAI-compatible API base URL; defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
+| `LLM_MODEL` | No | Model for cleanup/summaries (default `openai/gpt-4o-mini`) |
+
+## Connect the Talk record button
+
+Point Talk's recording backend at the AppAPI proxy with the same secret you
+registered the app with. The `api/v1/welcome` and `api/v1/room/*` routes are
+declared PUBLIC in the manifest, so Talk's recording protocol (authenticated
+by its own HMAC, not a Nextcloud session) passes through the proxy:
+
+```
+occ config:app:set spreed recording_servers --value='{"servers":[{"server":"https://cloud.example.com/index.php/apps/app_api/proxy/gocassini","verify":true}],"secret":"<secret>"}'
+occ config:app:set spreed call_recording --value=yes
+```
+
 ## Persistent storage
 
 AppAPI's docker deploy creates a named volume (`nc_app_gocassini_data`),

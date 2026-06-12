@@ -180,6 +180,13 @@ ENV CASSINI_BIN=/usr/local/bin/cassini \
     CASSINI_STT_DEVICE=cuda \
     CASSINI_DISALLOW_MODEL_DOWNLOAD=1
 
+# AppAPI deploys inject only APP_*/HP_*/NEXTCLOUD_URL (see app_api
+# DockerActions::buildDeployEnvs) — never CASSINI_*. Bake the base path the
+# manifest route ACLs (^operator\/...) and the control-panel bundle assume,
+# or the operator falls back to BasePath "/" and every /operator/* request
+# 404s in a real install.
+ENV CASSINI_OPERATOR_BASE_PATH=/operator
+
 COPY --from=go-builder /out/cassini /usr/local/bin/cassini
 COPY --from=go-builder /out/cassini-operator /usr/local/bin/cassini-operator
 # CPU libs first…
