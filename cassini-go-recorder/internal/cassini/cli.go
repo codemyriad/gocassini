@@ -15,11 +15,27 @@ import (
 	"gocassini/internal/app"
 	"gocassini/internal/config"
 	inspectpkg "gocassini/internal/inspect"
+	"gocassini/internal/talk"
 )
 
 const defaultRecorderName = "CassiniRecorder"
 
+// exitUnjoinable is returned by `cassini record` when the Talk server
+// definitively rejected the join (HTTP 4xx — e.g. a non-public room the
+// guest recorder cannot see, or a refused call join). It lets callers such
+// as the operator distinguish doomed jobs from generic recorder failures.
+const exitUnjoinable = 3
+
 var runRecorderApp = app.RunContext
+
+// recordFailureExitCode maps recorder failures to the record exit code,
+// reserving exitUnjoinable for definitive Talk join rejections.
+func recordFailureExitCode(err error) int {
+	if errors.Is(err, talk.ErrUnjoinable) {
+		return exitUnjoinable
+	}
+	return 1
+}
 
 type recordOptions struct {
 	callURL           string
@@ -156,7 +172,7 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", err.Error())
 		fmt.Fprintf(stderr, "record failed: %v\n", err)
 		fmt.Fprintf(stderr, "partial_run -> %s\n", bundle.RootDir)
-		return 1
+		return recordFailureExitCode(err)
 	}
 
 	fmt.Fprintln(stdout, "[3/3] Finalizing run bundle")
@@ -234,7 +250,7 @@ func runRecordPortable(ctx context.Context, opts recordOptions, stdout, stderr i
 			_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", err.Error())
 			fmt.Fprintf(stderr, "record failed: %v\n", err)
 			printPortableResumeHint(stderr, workspace.RootDir, outPath)
-			return 1
+			return recordFailureExitCode(err)
 		}
 		if err := FinalizeRunBundle(bundle, RunManifest{
 			SourceMode:   cfg.Mode,

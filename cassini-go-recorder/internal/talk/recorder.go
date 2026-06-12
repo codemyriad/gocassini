@@ -23,6 +23,14 @@ import (
 
 const requestOfferResponseTimeout = 8 * time.Second
 
+// ErrUnjoinable marks bootstrap failures where the Talk server definitively
+// rejected the recorder's attempt to join the room or call (HTTP 4xx), e.g.
+// a non-public conversation the guest recorder cannot see (404) or a call
+// join refused because recording consent is required (400). Retrying cannot
+// succeed, so callers should fail fast instead of leaving a doomed recording
+// session hanging while Talk shows it as active.
+var ErrUnjoinable = errors.New("talk room unjoinable")
+
 type roomEmptyTimerAction uint8
 
 const (
@@ -139,6 +147,7 @@ func (r *Recorder) run(ctx context.Context) error {
 
 	r.ocs = nextcloud.NewOCSClient(r.connectBaseURL, r.cfg.Insecure)
 	if err := r.bootstrap(ctx); err != nil {
+		logBootstrapFailure(err)
 		_ = r.cleanup(context.Background())
 		return err
 	}
@@ -263,14 +272,36 @@ runLoop:
 	return nil
 }
 
+// logBootstrapFailure emits the stderr markers operators and humans grep for
+// when the recorder gives up before the "talk recorder running:" liveness
+// line: a dedicated unjoinable marker for definitive join rejections, plus
+// the "talk recorder stopping:" line the operator scrapes into the job's
+// stop detail for classification.
+func logBootstrapFailure(err error) {
+	if errors.Is(err, ErrUnjoinable) {
+		log.Printf("talk recorder unjoinable: %v", err)
+	}
+	log.Printf("talk recorder stopping: %v", err)
+}
+
+// wrapUnjoinable tags definitive HTTP 4xx join rejections with ErrUnjoinable
+// so callers can fail fast with a distinct exit code; other errors pass
+// through unchanged.
+func wrapUnjoinable(err error) error {
+	if nextcloud.IsClientError(err) {
+		return fmt.Errorf("%w: %w", ErrUnjoinable, err)
+	}
+	return err
+}
+
 func (r *Recorder) bootstrap(ctx context.Context) error {
 	if err := r.ocs.GetRoom(ctx, r.roomToken); err != nil {
-		return fmt.Errorf("room check failed: %w", err)
+		return fmt.Errorf("room check failed: %w", wrapUnjoinable(err))
 	}
 
 	nextcloudSessionID, err := r.ocs.MarkParticipantActive(ctx, r.roomToken, r.cfg.GuestName)
 	if err != nil {
-		return fmt.Errorf("participants/active failed: %w", err)
+		return fmt.Errorf("participants/active failed: %w", wrapUnjoinable(err))
 	}
 	r.nextcloudSessionID = nextcloudSessionID
 
@@ -301,11 +332,12 @@ func (r *Recorder) bootstrap(ctx context.Context) error {
 		return err
 	}
 	if err := r.ocs.JoinCall(ctx, r.roomToken, r.cfg.JoinFlags); err != nil {
-		if strings.Contains(err.Error(), "code=404") {
-			log.Printf("join call returned 404 on this deployment; continuing with signaling-room only mode")
-		} else {
-			return fmt.Errorf("join call failed: %w", err)
-		}
+		// A 4xx here is definitive: the conversation is not joinable for
+		// the guest recorder (404) or the join was refused (e.g. recording
+		// consent enforcement, 400). Fail fast instead of lingering in a
+		// signaling-room-only session that records nothing while Talk shows
+		// an active recording.
+		return fmt.Errorf("join call failed: %w", wrapUnjoinable(err))
 	}
 
 	log.Printf("talk bootstrap complete: base=%s connect=%s token=%s session=%s signaling_session=%s", r.baseURL, r.connectBaseURL, r.roomToken, r.nextcloudSessionID, r.signalingSessionID)
