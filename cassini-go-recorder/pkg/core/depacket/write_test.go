@@ -201,6 +201,42 @@ func TestWriteElementaryFromRTPLogH264(t *testing.T) {
 	}
 }
 
+func TestWriteElementaryFromRTPLogTruncatedTailIsEndOfStream(t *testing.T) {
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "crashed.rtplog")
+	outPath := filepath.Join(tmp, "crashed.ogg")
+	if err := writeSampleLog(logPath, 111, sampleOpusPayload); err != nil {
+		t.Fatalf("write sample log: %v", err)
+	}
+	// Cut into the trailing RTCP record (17 bytes) to simulate a recorder
+	// killed mid-write; the preceding RTP records are intact.
+	info, err := os.Stat(logPath)
+	if err != nil {
+		t.Fatalf("stat log: %v", err)
+	}
+	if err := os.Truncate(logPath, info.Size()-5); err != nil {
+		t.Fatalf("truncate log: %v", err)
+	}
+
+	result, err := WriteElementaryFromRTPLog(logPath, "audio/opus", 48000, outPath)
+	if err != nil {
+		t.Fatalf("write elementary from truncated log: %v", err)
+	}
+	if result.RTPPackets != 2 {
+		t.Fatalf("rtp packet count: got=%d want=2", result.RTPPackets)
+	}
+	if !result.TruncatedTail {
+		t.Fatalf("expected truncated tail flag")
+	}
+	outInfo, err := os.Stat(outPath)
+	if err != nil {
+		t.Fatalf("stat output: %v", err)
+	}
+	if outInfo.Size() <= 0 {
+		t.Fatalf("empty output file")
+	}
+}
+
 func TestWriteElementaryFromRTPLogUnsupportedCodec(t *testing.T) {
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "stream.rtplog")

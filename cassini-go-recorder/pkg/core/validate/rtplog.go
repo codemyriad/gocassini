@@ -16,6 +16,7 @@ const (
 	IssueRecvNonMonotonic  IssueCode = "recv_non_monotonic"
 	IssueRTPUnmarshal      IssueCode = "rtp_unmarshal_failed"
 	IssuePayloadTypeChange IssueCode = "payload_type_mismatch"
+	IssueTruncatedTail     IssueCode = "truncated_tail"
 )
 
 type Issue struct {
@@ -107,6 +108,14 @@ func CheckLog(path string) (LogReport, error) {
 			report.RTCP++
 		}
 		index++
+	}
+	if reader.Truncated() {
+		report.addIssue(Issue{
+			Code:        IssueTruncatedTail,
+			Message:     "log ended in a partially written record (recorder crashed mid-write); preceding records are intact",
+			RecordIndex: index,
+			RecvMonoNS:  prevRecv,
+		})
 	}
 
 	report.IssueCount = len(report.Issues)
