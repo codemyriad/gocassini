@@ -1848,54 +1848,59 @@ func TestEventsHandlerStreamsPublishedEvents(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Serve the handler over a real HTTP server and read the stream
+	// through the connection: polling httptest.ResponseRecorder.Body
+	// while the handler goroutine writes to it is a data race.
+	srv := httptest.NewServer(http.HandlerFunc(rt.eventsHandler))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	finished := make(chan struct{})
-	req := httptest.NewRequest(http.MethodGet, "/events", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
-	go func() {
-		rt.eventsHandler(rec, req)
-		close(finished)
-	}()
-
-	time.Sleep(20 * time.Millisecond)
-	rt.publishStateChangeEvent(StateChangeEvent{
-		Type:  "job.updated",
-		JobID: "job-123",
-		At:    nowUTCString(),
-		Job: Job{
-			ID:        "job-123",
-			Stage:     "record",
-			State:     "running",
-			CreatedAt: nowUTCString(),
-			UpdatedAt: nowUTCString(),
-		},
-	})
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if strings.Contains(rec.Body.String(), "event: job.updated") {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/events", nil)
+	if err != nil {
+		t.Fatalf("build /events request: %v", err)
 	}
-
-	cancel()
-	select {
-	case <-finished:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for events handler to finish")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events failed: %v", err)
 	}
+	defer resp.Body.Close()
 
-	if got := rec.Header().Get("Content-Type"); got != "text/event-stream" {
+	if got := resp.Header.Get("Content-Type"); got != "text/event-stream" {
 		t.Fatalf("unexpected content type: got %q want %q", got, "text/event-stream")
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "event: job.updated") {
-		t.Fatalf("expected job.updated event in body, got %q", body)
-	}
-	if !strings.Contains(body, `"job_id":"job-123"`) {
-		t.Fatalf("expected job id in body, got %q", body)
+
+	var body strings.Builder
+	buf := make([]byte, 1024)
+	published := false
+	for {
+		n, readErr := resp.Body.Read(buf)
+		body.Write(buf[:n])
+		// The ": connected" comment is written after the handler
+		// subscribed to the hub, so publishing once it arrives cannot
+		// race the subscription and drop the event.
+		if !published && strings.Contains(body.String(), ": connected") {
+			rt.publishStateChangeEvent(StateChangeEvent{
+				Type:  "job.updated",
+				JobID: "job-123",
+				At:    nowUTCString(),
+				Job: Job{
+					ID:        "job-123",
+					Stage:     "record",
+					State:     "running",
+					CreatedAt: nowUTCString(),
+					UpdatedAt: nowUTCString(),
+				},
+			})
+			published = true
+		}
+		got := body.String()
+		if strings.Contains(got, "event: job.updated") && strings.Contains(got, `"job_id":"job-123"`) {
+			break
+		}
+		if readErr != nil {
+			t.Fatalf("event stream ended before job.updated arrived: read error = %v, body = %q", readErr, got)
+		}
 	}
 }
 

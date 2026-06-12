@@ -34,9 +34,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+      - name: Vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
       - name: Run unit tests
         working-directory: ${{ matrix.module }}
-        run: go test ./...
+        run: go test -race ./...
 
   integration:
     name: Integration (local Nextcloud Talk)
