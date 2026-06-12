@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newTestHandlers(t *testing.T) (*LifecycleHandlers, string) {
@@ -190,6 +191,38 @@ func TestInitIdempotent(t *testing.T) {
 	}
 	if st.LastInitAt == "" {
 		t.Fatalf("LastInitAt not persisted")
+	}
+}
+
+func TestEnabledTrueTriggersUIRegistrar(t *testing.T) {
+	h, _ := newTestHandlers(t)
+	called := make(chan struct{}, 1)
+	h.UIRegistrar = func() { called <- struct{}{} }
+
+	w := putEnabled(t, h, "enabled=1", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	select {
+	case <-called:
+	case <-time.After(2 * time.Second):
+		t.Fatal("UIRegistrar not called after enabled=1")
+	}
+}
+
+func TestEnabledFalseDoesNotTriggerUIRegistrar(t *testing.T) {
+	h, _ := newTestHandlers(t)
+	called := make(chan struct{}, 1)
+	h.UIRegistrar = func() { called <- struct{}{} }
+
+	w := putEnabled(t, h, "enabled=0", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	select {
+	case <-called:
+		t.Fatal("UIRegistrar called on enabled=0; UI registration belongs to enable only")
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 

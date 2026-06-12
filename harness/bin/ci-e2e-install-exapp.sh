@@ -170,7 +170,10 @@ JSON=$(jq -nc \
        {url: "^operator\\/events\\/?$",             verb: "GET",      access_level: 2},
        {url: "^viewer\\/?$",                        verb: "GET",      access_level: 1},
        {url: "^viewer\\/.+$",                       verb: "GET,HEAD", access_level: 1},
-       {url: "^published\\/.+$",                    verb: "GET,HEAD", access_level: 1}
+       {url: "^published\\/.+$",                    verb: "GET,HEAD", access_level: 1},
+       {url: "^img\\/app\\.svg$",                   verb: "GET,HEAD", access_level: 1},
+       {url: "^ui\\/viewer\\.js$",                  verb: "GET,HEAD", access_level: 1},
+       {url: "^ui\\/control-panel\\.js$",           verb: "GET,HEAD", access_level: 2}
      ]
    }')
 
@@ -199,6 +202,36 @@ state=$(docker exec "$CONTAINER_NAME" cat /var/lib/cassini-operator/app-state.js
   || echo '{}')
 echo "$state" | grep -q '"enabled":true' \
   || fail "container state not enabled after cycle: $state"
+
+# --- 6b. Assert the Nextcloud navigation registration landed ---------------
+#
+# The /enabled handler registers the top-menu entries (viewer for users,
+# control-panel for admins) in a goroutine after answering AppAPI, so poll
+# briefly. GET /api/v1/ui/top-menu is AppAPI-authenticated with the same
+# shared secret the app was registered with; 200 = entry exists, 404 = not.
+
+AUTH_B64=$(printf ':%s' "$APP_SECRET" | base64 | tr -d '\n')
+assert_top_menu_registered() {
+  local name="$1" status=000
+  for attempt in $(seq 1 30); do
+    status=$(curl -s -o /dev/null -w '%{http_code}' \
+      -H "AUTHORIZATION-APP-API: $AUTH_B64" \
+      -H "EX-APP-ID: $APP_ID" \
+      -H "EX-APP-VERSION: $APP_VERSION" \
+      -H "OCS-APIRequest: true" \
+      "http://127.0.0.1:${NEXTCLOUD_HOST_PORT}/ocs/v2.php/apps/app_api/api/v1/ui/top-menu?name=${name}")
+    if [[ "$status" == "200" ]]; then
+      log "OK   top-menu entry \"$name\" registered (after ${attempt}s)"
+      return 0
+    fi
+    sleep 1
+  done
+  fail "top-menu entry \"$name\" not registered after 30s (last=$status)"
+}
+
+log "checking Nextcloud navigation (top-menu) registration"
+assert_top_menu_registered viewer
+assert_top_menu_registered control-panel
 
 # --- 7. Create a regular test user (admin already exists) -----------------
 
@@ -231,11 +264,15 @@ log "checking proxied route access for admin"
 assert_status admin   "admin:admin"                       "control-panel/" 200
 assert_status admin   "admin:admin"                       "operator/jobs"  200
 assert_status admin   "admin:admin"                       "viewer/"        200
+assert_status admin   "admin:admin"                       "ui/control-panel.js" 200
 
 log "checking proxied route access for $TEST_USER (USER tier)"
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "viewer/"        200
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "control-panel/" 404
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "operator/jobs"  404
+assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/viewer.js"   200
+assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/control-panel.js" 404
+assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "img/app.svg"    200
 
 # --- 7c. Assert the admin UI actually loads (not just 200 + empty) --------
 #
