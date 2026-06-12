@@ -236,9 +236,15 @@ func PCMsha256FromWebM(webmPath string) (string, int64, error) {
 	pw.Close()
 
 	h := sha256.New()
-	n, _ := io.Copy(h, pr)
+	n, copyErr := io.Copy(h, pr)
 	pr.Close()
-	_ = cmd.Wait()
+	waitErr := cmd.Wait()
+	if copyErr != nil {
+		return "", 0, fmt.Errorf("read decoded pcm: %w", copyErr)
+	}
+	if waitErr != nil {
+		return "", 0, fmt.Errorf("ffmpeg pcm decode failed: %w", waitErr)
+	}
 
 	return fmt.Sprintf("%x", h.Sum(nil)), n / 2, nil // n bytes / 2 bytes per s16 sample
 }

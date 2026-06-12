@@ -1,7 +1,9 @@
 package remux
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"math"
 	"os"
 	"os/exec"
@@ -87,6 +89,63 @@ func TestBuildFromSessionNoRemuxableStreams(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no remuxable streams") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "s_000001") || !strings.Contains(err.Error(), "unsupported codec") {
+		t.Fatalf("expected error to explain why each stream was skipped, got: %v", err)
+	}
+}
+
+// TestBuildSegmentMKVsRecordsSkippedStreams pins the D-357 observability
+// fix: in non-strict mode (the live recorder path) broken/missing streams
+// used to be dropped with a bare `continue` — a participant silently
+// vanished from the final MKV. Every skip must now be logged and recorded.
+func TestBuildSegmentMKVsRecordsSkippedStreams(t *testing.T) {
+	tmp := t.TempDir()
+	sessionDir := filepath.Join(tmp, "session-c")
+	streamsDir := filepath.Join(sessionDir, "streams")
+	if err := os.MkdirAll(streamsDir, 0o755); err != nil {
+		t.Fatalf("mkdir streams dir: %v", err)
+	}
+	sessionJSON := filepath.Join(sessionDir, "session.json")
+	if err := os.WriteFile(sessionJSON, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write session json: %v", err)
+	}
+
+	sess := session.Session{
+		PacketStreams: []session.PacketStream{
+			// Unsupported codec: no elementary extension.
+			{StreamID: "s_000001", LTID: "lt-a", Codec: "audio/pcmu", ClockRate: 8000},
+			// Supported codec but its rtplog never made it to disk.
+			{StreamID: "s_000002", LTID: "lt-b", Codec: "audio/opus", ClockRate: 48000},
+		},
+	}
+
+	var logBuf bytes.Buffer
+	prevOut := log.Writer()
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(prevOut)
+
+	segments, skipped, err := buildSegmentMKVs(sessionJSON, sess, tmp, false)
+	if err != nil {
+		t.Fatalf("buildSegmentMKVs() error = %v", err)
+	}
+	if len(segments) != 0 {
+		t.Fatalf("expected no segments, got %d", len(segments))
+	}
+	if len(skipped) != 2 {
+		t.Fatalf("expected 2 skipped streams, got %+v", skipped)
+	}
+	if skipped[0].StreamID != "s_000001" || !strings.Contains(skipped[0].Reason, "unsupported codec") {
+		t.Fatalf("unexpected first skip: %+v", skipped[0])
+	}
+	if skipped[1].StreamID != "s_000002" || !strings.Contains(skipped[1].Reason, "stream log missing") {
+		t.Fatalf("unexpected second skip: %+v", skipped[1])
+	}
+	logs := logBuf.String()
+	for _, streamID := range []string{"s_000001", "s_000002"} {
+		if !strings.Contains(logs, "skipping stream "+streamID) {
+			t.Fatalf("expected a skip log line for %s, got logs: %q", streamID, logs)
+		}
 	}
 }
 
@@ -278,7 +337,8 @@ func TestMergeSegmentsEmbedsCassiniMetadata(t *testing.T) {
 	}
 
 	outputPath := filepath.Join(tmp, "out.mkv")
-	if err := mergeSegments(outputPath, "Cassini Test Meeting", sess, segments, plans, tmp); err != nil {
+	skipped := []SkippedStream{{StreamID: "s_000002", Reason: "stream log missing: boom"}}
+	if err := mergeSegments(outputPath, "Cassini Test Meeting", sess, segments, plans, skipped, tmp); err != nil {
 		t.Fatalf("merge segments: %v", err)
 	}
 
@@ -365,6 +425,9 @@ func TestMergeSegmentsEmbedsCassiniMetadata(t *testing.T) {
 	}
 	if len(report.Artifact.StreamPlans) != 1 || report.Artifact.StreamPlans[0].StreamID != "s_000001" {
 		t.Fatalf("unexpected embedded report plans: %+v", report.Artifact.StreamPlans)
+	}
+	if len(report.Artifact.SkippedStreams) != 1 || report.Artifact.SkippedStreams[0].StreamID != "s_000002" {
+		t.Fatalf("expected skipped stream s_000002 in embedded report, got: %+v", report.Artifact.SkippedStreams)
 	}
 }
 

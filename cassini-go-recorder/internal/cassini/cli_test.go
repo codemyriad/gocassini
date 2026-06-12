@@ -98,6 +98,80 @@ func TestRecordExitCodeDistinguishesUnjoinableRooms(t *testing.T) {
 	}
 }
 
+func TestRecordSalvagesAbnormalStopWithComposedRecording(t *testing.T) {
+	// D-357: a fatal mid-call failure (e.g. a websocket drop near the end
+	// of a long meeting) whose cleanup still composed a valid recording is
+	// tagged talk.ErrAbnormalStop by the recorder. The run bundle must be
+	// finalized as ready — with the stop reason recorded — so the operator
+	// can promote/build/upload it instead of stranding the recording.
+	prevRecorder := runRecorderApp
+	runRecorderApp = func(_ context.Context, cfg config.Config) error {
+		if err := os.WriteFile(cfg.OutputPath, []byte("fake-mkv"), 0o644); err != nil {
+			return err
+		}
+		return fmt.Errorf("%w: signaling connection error: ws closed", talk.ErrAbnormalStop)
+	}
+	defer func() {
+		runRecorderApp = prevRecorder
+	}()
+
+	outDir := filepath.Join(t.TempDir(), "meeting.run")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"record", "--call", "https://example.test/call/demo", "--out", outDir}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0 for salvaged recording, got %d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "record stopped early but composed a usable recording") {
+		t.Fatalf("expected early-stop notice on stderr, got %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "run -> "+outDir) {
+		t.Fatalf("expected finalized run path on stdout, got %q", stdout.String())
+	}
+
+	loaded, ok, err := LoadRunBundle(outDir)
+	if err != nil || !ok {
+		t.Fatalf("load run bundle: ok=%t err=%v", ok, err)
+	}
+	if loaded.Manifest.State != bundleStateReady {
+		t.Fatalf("expected bundle state %q, got %q", bundleStateReady, loaded.Manifest.State)
+	}
+	if !strings.Contains(loaded.Manifest.StopReason, "signaling connection error") {
+		t.Fatalf("expected abnormal stop reason in manifest, got %q", loaded.Manifest.StopReason)
+	}
+}
+
+func TestRecordAbnormalStopWithoutRecordingStaysFailed(t *testing.T) {
+	// The salvage path requires a composed recording on disk; an abnormal
+	// stop that produced nothing must keep failing the run.
+	prevRecorder := runRecorderApp
+	runRecorderApp = func(_ context.Context, _ config.Config) error {
+		return fmt.Errorf("%w: signaling connection error: ws closed", talk.ErrAbnormalStop)
+	}
+	defer func() {
+		runRecorderApp = prevRecorder
+	}()
+
+	outDir := filepath.Join(t.TempDir(), "meeting.run")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"record", "--call", "https://example.test/call/demo", "--out", outDir}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "record failed:") {
+		t.Fatalf("expected record failure detail on stderr, got %q", stderr.String())
+	}
+
+	loaded, ok, err := LoadRunBundle(outDir)
+	if err != nil || !ok {
+		t.Fatalf("load run bundle: ok=%t err=%v", ok, err)
+	}
+	if loaded.Manifest.State != bundleStateFailed {
+		t.Fatalf("expected bundle state %q, got %q", bundleStateFailed, loaded.Manifest.State)
+	}
+}
+
 func TestDoctorHelpExitsZero(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

@@ -29,6 +29,16 @@ type BuildResult struct {
 	WorkDir         string
 	Segments        int
 	StreamPlans     []StreamPlan
+	SkippedStreams  []SkippedStream
+}
+
+// SkippedStream records a packet stream from the session artifact that was
+// left out of the final output in non-strict mode. Silent drops used to be
+// invisible (a participant simply vanished from the MKV); now every skip
+// is logged and surfaced in the build result and the embedded report.
+type SkippedStream struct {
+	StreamID string `json:"stream_id"`
+	Reason   string `json:"reason"`
 }
 
 type StreamPlan struct {
@@ -81,17 +91,20 @@ func BuildFromSession(inputPath, outputPath string, opts BuildOptions) (BuildRes
 	}
 	defer cleanup()
 
-	segments, err := buildSegmentMKVs(sessionJSON, sess, workDir, opts.StrictCodecs)
+	segments, skipped, err := buildSegmentMKVs(sessionJSON, sess, workDir, opts.StrictCodecs)
 	if err != nil {
 		return BuildResult{}, err
 	}
 	if len(segments) == 0 {
+		if len(skipped) > 0 {
+			return BuildResult{}, fmt.Errorf("no remuxable streams found in session artifact (%s)", summarizeSkippedStreams(skipped))
+		}
 		return BuildResult{}, errors.New("no remuxable streams found in session artifact")
 	}
 
 	planned := planSegments(segments)
 	streamPlans := buildStreamPlans(sess, segments, planned)
-	if err := mergeSegments(outputPath, opts.Title, sess, segments, streamPlans, workDir); err != nil {
+	if err := mergeSegments(outputPath, opts.Title, sess, segments, streamPlans, skipped, workDir); err != nil {
 		return BuildResult{}, err
 	}
 
@@ -101,7 +114,16 @@ func BuildFromSession(inputPath, outputPath string, opts BuildOptions) (BuildRes
 		WorkDir:         workDir,
 		Segments:        len(segments),
 		StreamPlans:     streamPlans,
+		SkippedStreams:  skipped,
 	}, nil
+}
+
+func summarizeSkippedStreams(skipped []SkippedStream) string {
+	parts := make([]string, 0, len(skipped))
+	for _, skip := range skipped {
+		parts = append(parts, fmt.Sprintf("%s: %s", skip.StreamID, skip.Reason))
+	}
+	return strings.Join(parts, "; ")
 }
 
 func ResolveSessionJSONPath(input string) (string, error) {
@@ -160,7 +182,7 @@ func buildSegmentMKVs(
 	sess session.Session,
 	workDir string,
 	strictCodecs bool,
-) ([]segmentArtifact, error) {
+) ([]segmentArtifact, []SkippedStream, error) {
 	baseDir := filepath.Dir(sessionJSON)
 	streamsDir := filepath.Join(baseDir, "streams")
 
@@ -170,7 +192,17 @@ func buildSegmentMKVs(
 	}
 
 	out := make([]segmentArtifact, 0, len(sess.PacketStreams))
+	var skipped []SkippedStream
 	for _, stream := range sess.PacketStreams {
+		// In non-strict mode broken/missing streams are skipped instead of
+		// failing the whole build, but never silently: each skip is logged
+		// and recorded so the report shows which participants are missing
+		// from the final output and why.
+		skip := func(reason string) {
+			log.Printf("remux: skipping stream %s: %s", stream.StreamID, reason)
+			skipped = append(skipped, SkippedStream{StreamID: stream.StreamID, Reason: reason})
+		}
+
 		codec := strings.ToLower(strings.TrimSpace(stream.Codec))
 		kind := logicalByLTID[stream.LTID].Kind
 		if kind == "" {
@@ -179,16 +211,18 @@ func buildSegmentMKVs(
 		ext := ElementaryExtension(codec)
 		if ext == "" {
 			if strictCodecs {
-				return nil, fmt.Errorf("unsupported codec for stream %s: %s", stream.StreamID, stream.Codec)
+				return nil, nil, fmt.Errorf("unsupported codec for stream %s: %s", stream.StreamID, stream.Codec)
 			}
+			skip(fmt.Sprintf("unsupported codec: %s", stream.Codec))
 			continue
 		}
 
 		logPath := filepath.Join(streamsDir, stream.StreamID+".rtplog")
 		if _, err := os.Stat(logPath); err != nil {
 			if strictCodecs {
-				return nil, fmt.Errorf("stream log missing for %s: %w", stream.StreamID, err)
+				return nil, nil, fmt.Errorf("stream log missing for %s: %w", stream.StreamID, err)
 			}
+			skip(fmt.Sprintf("stream log missing: %v", err))
 			continue
 		}
 
@@ -196,8 +230,9 @@ func buildSegmentMKVs(
 		writeResult, err := depacket.WriteElementaryFromRTPLog(logPath, codec, stream.ClockRate, elementaryPath)
 		if err != nil {
 			if strictCodecs {
-				return nil, fmt.Errorf("depacketize stream %s: %w", stream.StreamID, err)
+				return nil, nil, fmt.Errorf("depacketize stream %s: %w", stream.StreamID, err)
 			}
+			skip(fmt.Sprintf("depacketize failed: %v", err))
 			continue
 		}
 		if writeResult.TruncatedTail {
@@ -206,20 +241,23 @@ func buildSegmentMKVs(
 			log.Printf("stream %s rtplog ended in a truncated record; recovered %d rtp packets", stream.StreamID, writeResult.RTPPackets)
 		}
 		if writeResult.RTPPackets == 0 {
+			skip("no rtp packets decoded")
 			continue
 		}
 
 		segmentPath := filepath.Join(workDir, stream.StreamID+".mkv")
 		if err := composeSingleTrackMKV(elementaryPath, segmentPath, kind); err != nil {
 			if strictCodecs {
-				return nil, fmt.Errorf("compose stream %s mkv: %w", stream.StreamID, err)
+				return nil, nil, fmt.Errorf("compose stream %s mkv: %w", stream.StreamID, err)
 			}
+			skip(fmt.Sprintf("single-track compose failed: %v", err))
 			continue
 		}
 		if !probeHasUsableStream(segmentPath) {
 			if strictCodecs {
-				return nil, fmt.Errorf("compose stream %s mkv: unusable segment output", stream.StreamID)
+				return nil, nil, fmt.Errorf("compose stream %s mkv: unusable segment output", stream.StreamID)
 			}
+			skip("composed segment has no usable stream")
 			continue
 		}
 
@@ -247,7 +285,7 @@ func buildSegmentMKVs(
 			seg.FirstTimelineNS = 0
 		}
 	}
-	return out, nil
+	return out, skipped, nil
 }
 
 func composeSingleTrackMKV(inputPath, outputPath, kind string) error {
@@ -275,6 +313,7 @@ func mergeSegments(
 	sess session.Session,
 	segments []segmentArtifact,
 	streamPlans []StreamPlan,
+	skipped []SkippedStream,
 	workDir string,
 ) error {
 	pathByID := map[string]string{}
@@ -321,7 +360,7 @@ func mergeSegments(
 		title = "Cassini Artifact Remux " + sess.SessionID
 	}
 
-	reportPath, err := writeEmbeddedReportFile(workDir, sess, streamPlans)
+	reportPath, err := writeEmbeddedReportFile(workDir, sess, streamPlans, skipped)
 	if err != nil {
 		return err
 	}

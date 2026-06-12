@@ -30,6 +30,10 @@ type RunManifest struct {
 	RecorderName string           `json:"recorder_name,omitempty"`
 	Recording    RunRecordingFile `json:"recording"`
 	Session      *RunSessionDir   `json:"session,omitempty"`
+	// StopReason records why a ready recording stopped abnormally (e.g. a
+	// signaling drop mid-call). The bundle is still finalized as ready —
+	// the composed recording is valid — but the early stop stays visible.
+	StopReason string `json:"stop_reason,omitempty"`
 }
 
 type LoadedRunBundle struct {

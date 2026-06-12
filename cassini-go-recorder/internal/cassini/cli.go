@@ -37,6 +37,17 @@ func recordFailureExitCode(err error) int {
 	return 1
 }
 
+// salvageableRecording reports whether a failed record run still produced
+// a finalizable recording: the recorder tagged the failure as an abnormal
+// stop whose cleanup finalized cleanly (capture closed without media loss
+// and the final MKV composed), and the composed recording is present in
+// the bundle. Such runs are finalized as ready — with the stop reason
+// recorded in the manifest — instead of stranding a valid recording over
+// a late mid-call failure (D-357).
+func salvageableRecording(err error, bundle RunBundle) bool {
+	return errors.Is(err, talk.ErrAbnormalStop) && runBundleRecordingExists(bundle)
+}
+
 type recordOptions struct {
 	callURL           string
 	connectURL        string
@@ -168,18 +179,25 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	_ = UpdateRunBundleStatus(bundle, bundleStatePreparing, "record", "")
 
 	fmt.Fprintln(stdout, "[2/3] Recording")
-	if err := runRecorderApp(ctx, cfg); err != nil {
-		_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", err.Error())
-		fmt.Fprintf(stderr, "record failed: %v\n", err)
+	recordErr := runRecorderApp(ctx, cfg)
+	if recordErr != nil && !salvageableRecording(recordErr, bundle) {
+		_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())
+		fmt.Fprintf(stderr, "record failed: %v\n", recordErr)
 		fmt.Fprintf(stderr, "partial_run -> %s\n", bundle.RootDir)
-		return recordFailureExitCode(err)
+		return recordFailureExitCode(recordErr)
+	}
+
+	manifest := RunManifest{
+		SourceMode:   cfg.Mode,
+		RecorderName: opts.name,
+	}
+	if recordErr != nil {
+		manifest.StopReason = recordErr.Error()
+		fmt.Fprintf(stderr, "record stopped early but composed a usable recording: %v\n", recordErr)
 	}
 
 	fmt.Fprintln(stdout, "[3/3] Finalizing run bundle")
-	if err := FinalizeRunBundle(bundle, RunManifest{
-		SourceMode:   cfg.Mode,
-		RecorderName: opts.name,
-	}); err != nil {
+	if err := FinalizeRunBundle(bundle, manifest); err != nil {
 		_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "finalize", err.Error())
 		fmt.Fprintf(stderr, "finalize run bundle: %v\n", err)
 		fmt.Fprintf(stderr, "partial_run -> %s\n", bundle.RootDir)
@@ -246,16 +264,22 @@ func runRecordPortable(ctx context.Context, opts recordOptions, stdout, stderr i
 		_ = UpdateRunBundleStatus(bundle, bundleStatePreparing, "record", "")
 
 		fmt.Fprintln(stdout, "[3/5] Recording meeting")
-		if err := runRecorderApp(ctx, cfg); err != nil {
-			_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", err.Error())
-			fmt.Fprintf(stderr, "record failed: %v\n", err)
+		recordErr := runRecorderApp(ctx, cfg)
+		if recordErr != nil && !salvageableRecording(recordErr, bundle) {
+			_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())
+			fmt.Fprintf(stderr, "record failed: %v\n", recordErr)
 			printPortableResumeHint(stderr, workspace.RootDir, outPath)
-			return recordFailureExitCode(err)
+			return recordFailureExitCode(recordErr)
 		}
-		if err := FinalizeRunBundle(bundle, RunManifest{
+		manifest := RunManifest{
 			SourceMode:   cfg.Mode,
 			RecorderName: opts.name,
-		}); err != nil {
+		}
+		if recordErr != nil {
+			manifest.StopReason = recordErr.Error()
+			fmt.Fprintf(stderr, "record stopped early but composed a usable recording: %v\n", recordErr)
+		}
+		if err := FinalizeRunBundle(bundle, manifest); err != nil {
 			_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "finalize", err.Error())
 			fmt.Fprintf(stderr, "finalize run bundle: %v\n", err)
 			printPortableResumeHint(stderr, workspace.RootDir, outPath)
