@@ -194,8 +194,24 @@ All of these must pass before the Talk handoff:
    `https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/control-panel/`
 6. The viewer renders for a normal logged-in user:
    `https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/viewer/`
-7. CUDA installs only: the image tag ends in `-cuda` and the container can see
-   the GPU — `docker exec nc_app_gocassini nvidia-smi`.
+7. The doctor/status endpoint reports `"ok": true` (ADMIN route — use an
+   admin login with an app password):
+
+   ```bash
+   curl -fsS -u admin:<app-password> \
+     https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/operator/status
+   ```
+
+   It reports the app version, the STT device (`cpu`/`cuda`) and whether that
+   device is actually usable, whether the Talk recording secret is configured
+   (never the value), and DB/storage health — the same answers that used to
+   require shell access into the container.
+8. CUDA installs only: the image tag ends in `-cuda` and the container can see
+   the GPU — `docker exec nc_app_gocassini nvidia-smi`. The status endpoint in
+   the previous step must show `"device": "cuda"` with `"device_usable": true`;
+   a CUDA container without GPU access also logs
+   `ERROR: stt_device cuda is not usable` at startup instead of silently
+   falling back to CPU.
 
 ## Step 5 — Talk handoff (reversible)
 

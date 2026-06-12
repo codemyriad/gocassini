@@ -171,7 +171,9 @@ func (rt *Runtime) healthzHandler(w http.ResponseWriter, r *http.Request) {
 	switch check {
 	case "shallow":
 	case "record":
-		if err := rt.runRecordDoctor(); err != nil {
+		// The deep check execs `cassini doctor`; the endpoint is unauthenticated,
+		// so the probe is singleflighted, TTL-cached, and exec-bounded (D-376).
+		if err := rt.recordHealth.check(); err != nil {
 			resp.OK = false
 			resp.Error = err.Error()
 			status = http.StatusServiceUnavailable

@@ -38,8 +38,16 @@ func (rt *Runtime) buildWorker(index int) {
 
 func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	startedAt := nowUTCString()
-	if err := rt.store.MarkBuildRunning(context.Background(), task.JobID, startedAt); err != nil {
+	claimed, err := rt.store.ClaimBuildRunning(context.Background(), task.JobID, startedAt)
+	if err != nil {
 		rt.logger.Printf("build start update failed id=%s worker=%d: %v", task.JobID, workerIndex, err)
+		return
+	}
+	if !claimed {
+		// Duplicate delivery (direct enqueue plus a requeue-dispatcher
+		// re-scan) or the job state changed since queueing; another worker
+		// owns it (D-367).
+		rt.logger.Printf("build claim skipped id=%s attempt=%d worker=%d: job is not build/queued", task.JobID, task.AttemptNumber, workerIndex)
 		return
 	}
 	rt.logger.Printf("build started id=%s attempt=%d worker=%d run=%s", task.JobID, task.AttemptNumber, workerIndex, task.ArtifactRunPath)
@@ -62,7 +70,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		}
 		return
 	}
-	if err := rt.enqueuePublishJob(task.JobID, task.AttemptNumber, canonicalMeetingPath, attemptMeetingPath, finishedAt); err != nil {
+	if err := rt.enqueuePublishJobNonBlocking(task.JobID, task.AttemptNumber, canonicalMeetingPath, attemptMeetingPath, finishedAt); err != nil {
 		rt.logger.Printf("publish queue update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, err)
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, "", "", err.Error(), finishedAt); updateErr != nil {
 			rt.logger.Printf("publish queue failure update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, updateErr)
@@ -72,6 +80,10 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	rt.logger.Printf("build succeeded id=%s attempt=%d worker=%d attempt_meeting=%s canonical_meeting=%s publish_queued_at=%s", task.JobID, task.AttemptNumber, workerIndex, attemptMeetingPath, canonicalMeetingPath, finishedAt)
 }
 
+// enqueueBuildJob durably marks the job build/queued and hands it to a worker
+// without ever blocking the caller: the DB row is the source of truth and the
+// requeue dispatcher re-delivers any task the channel could not accept (full
+// queue) or never saw (operator restart) (D-367).
 func (rt *Runtime) enqueueBuildJob(jobID string, attemptNumber int, jobArtifactRunPath, attemptArtifactRunPath, queuedAt string) error {
 	if err := rt.store.MarkBuildQueued(context.Background(), jobID, jobArtifactRunPath, attemptArtifactRunPath, queuedAt); err != nil {
 		return err
@@ -79,13 +91,11 @@ func (rt *Runtime) enqueueBuildJob(jobID string, attemptNumber int, jobArtifactR
 	task := buildTask{JobID: jobID, AttemptNumber: attemptNumber, ArtifactRunPath: jobArtifactRunPath}
 	select {
 	case rt.buildQueue <- task:
-		return nil
-	case <-rt.ctx.Done():
-		if err := rt.store.MarkBuildFailed(context.Background(), jobID, "", "build queue stopped", nowUTCString()); err != nil {
-			return err
-		}
-		return fmt.Errorf("build queue stopped")
+	default:
+		rt.logger.Printf("build queue full id=%s attempt=%d: durably queued for the requeue dispatcher", jobID, attemptNumber)
+		rt.kickRequeueScan()
 	}
+	return nil
 }
 
 func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string, error) {

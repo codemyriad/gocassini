@@ -240,11 +240,24 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 }
 
 func (rt *Runtime) runRecordDoctor() error {
-	cmd := exec.Command(rt.cfg.CassiniBin, "doctor", "--target", "record")
+	return rt.runRecordDoctorContext(context.Background())
+}
+
+// runRecordDoctorContext runs `cassini doctor --target record` bounded by ctx
+// so callers like the throttled /healthz?check=record probe can enforce an
+// exec timeout on a wedged doctor (D-376). The doctor runs in its own process
+// group so a cancel reaps any children with it.
+func (rt *Runtime) runRecordDoctorContext(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "doctor", "--target", "record")
 	cmd.Stdout = writerOrDiscard(rt.stdout)
 	cmd.Stderr = writerOrDiscard(rt.stderr)
 	cmd.Env = os.Environ()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return killProcessGroup(cmd.Process) }
 	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("cassini doctor --target record: %w (%v)", ctxErr, err)
+		}
 		return fmt.Errorf("cassini doctor --target record: %w", err)
 	}
 	return nil
@@ -327,6 +340,7 @@ func (rt *Runtime) handleStopJob(w http.ResponseWriter, r *http.Request, id stri
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("update stop request: %v", err))
 		return
 	}
+	rt.logger.Printf("stop requested id=%s user=%s", id, appapiUserForLog(r))
 	go rt.enforceRecordStop(id, state)
 	writeJSON(w, http.StatusAccepted, recordStopResponse{ID: id})
 }
@@ -706,21 +720,20 @@ func (rt *Runtime) handleRerunJob(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 
+	// The rerun is already durably queued (build/queued row); never block the
+	// admin's HTTP request on a full worker queue — the requeue dispatcher
+	// re-delivers tasks the channel cannot accept right now (D-367).
 	task := buildTask{JobID: rerunJob.ID, AttemptNumber: rerunJob.CurrentAttemptNumber, ArtifactRunPath: *rerunJob.ArtifactRunPath}
 	select {
 	case rt.buildQueue <- task:
-		rt.logger.Printf("rerun accepted id=%s attempt=%d run=%s", rerunJob.ID, rerunJob.CurrentAttemptNumber, task.ArtifactRunPath)
-		// Rerun is also the re-delivery path for Talk recordings that never
-		// reached Nextcloud (delivery failure or operator restart, D-352).
-		if rerunJob.TalkBinding != nil && rerunJob.TalkDeliveredAt == nil {
-			go rt.redeliverTalkRecording(rerunJob)
-		}
-		writeJSON(w, http.StatusAccepted, rerunJobResponse{ID: rerunJob.ID, AttemptNumber: rerunJob.CurrentAttemptNumber})
-	case <-rt.ctx.Done():
-		if updateErr := rt.store.MarkBuildFailed(context.Background(), rerunJob.ID, "", "build queue stopped", nowUTCString()); updateErr != nil {
-			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("queue rerun attempt: %v", updateErr))
-			return
-		}
-		writeJSONError(w, http.StatusServiceUnavailable, "build queue stopped")
+	default:
+		rt.kickRequeueScan()
 	}
+	rt.logger.Printf("rerun accepted id=%s attempt=%d run=%s user=%s", rerunJob.ID, rerunJob.CurrentAttemptNumber, task.ArtifactRunPath, appapiUserForLog(r))
+	// Rerun is also the re-delivery path for Talk recordings that never
+	// reached Nextcloud (delivery failure or operator restart, D-352).
+	if rerunJob.TalkBinding != nil && rerunJob.TalkDeliveredAt == nil {
+		go rt.redeliverTalkRecording(rerunJob)
+	}
+	writeJSON(w, http.StatusAccepted, rerunJobResponse{ID: rerunJob.ID, AttemptNumber: rerunJob.CurrentAttemptNumber})
 }

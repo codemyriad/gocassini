@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,8 @@ import (
 
 	"github.com/oklog/ulid/v2"
 	_ "modernc.org/sqlite"
+
+	"cassini-operator/internal/operator/appapi"
 )
 
 const (
@@ -41,6 +44,10 @@ type Config struct {
 	TalkBackendURL   string
 	MaxRecordWorkers int
 	MaxBuildWorkers  int
+	// APIToken (CASSINI_OPERATOR_API_TOKEN) optionally guards the operator
+	// JSON API with bearer auth for standalone deploys; empty disables it
+	// and AppAPI-authenticated requests bypass it (D-376).
+	APIToken string
 }
 
 type Runtime struct {
@@ -73,6 +80,21 @@ type Runtime struct {
 	talkUploadClient *http.Client
 	talkRetryDelays  []time.Duration
 	talkUploadStall  time.Duration
+	// requeueKick nudges the requeue dispatcher to re-scan the DB for
+	// queued build/publish rows the channels could not accept (D-367).
+	requeueKick chan struct{}
+	// publishJobTimeout bounds one `cassini publish` run; without it a hung
+	// publish wedges the single publish worker forever (D-367). Tests shrink it.
+	publishJobTimeout time.Duration
+	// computeProbe reports whether the configured STT device is usable; the
+	// default is cached after the first call — GPU visibility cannot change
+	// within a container's lifetime (D-363). Tests stub it.
+	computeProbe func() (usable bool, detail string)
+	// recordHealth throttles the deep /healthz?check=record doctor exec with
+	// singleflight + a short TTL cache + an exec timeout, so the unauthenticated
+	// health endpoint cannot fan out doctor subprocesses (D-376).
+	recordHealth        *ttlProbe
+	recordHealthTimeout time.Duration
 }
 
 type TriggerRequest struct {
@@ -169,6 +191,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("talk_shared_secret_set -> %t", strings.TrimSpace(cfg.TalkSharedSecret) != "")
 	logger.Printf("max_record_workers -> %d", cfg.MaxRecordWorkers)
 	logger.Printf("max_build_workers -> %d", cfg.MaxBuildWorkers)
+	logger.Printf("operator_api_token_auth -> %t", cfg.APIToken != "")
+	// A CUDA image without GPU access must fail loudly, not silently fall
+	// back to CPU (D-363).
+	runtime.logComputeDeviceStatus()
 	if exappCfg.Active {
 		logger.Printf("exapp_appapi -> active (app_id=%s app_version=%s)", exappCfg.AppID, exappCfg.AppVersion)
 	} else {
@@ -284,6 +310,9 @@ Flags:
 	if fs.NArg() != 0 {
 		return Config{}, 2, fmt.Errorf("unexpected positional arguments: %v", fs.Args())
 	}
+
+	// Env-only on purpose: a flag would leak the token into process listings.
+	cfg.APIToken = strings.TrimSpace(os.Getenv("CASSINI_OPERATOR_API_TOKEN"))
 
 	cfg.BindAddr = strings.TrimSpace(cfg.BindAddr)
 	if cfg.BindAddr == "" {
@@ -415,13 +444,30 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		},
 		talkRetryDelays: talkDeliveryRetryDelays,
 		talkUploadStall: talkUploadStallGrace,
+
+		requeueKick:         make(chan struct{}, 1),
+		publishJobTimeout:   defaultPublishJobTimeout,
+		recordHealthTimeout: recordHealthProbeTimeout,
 	}
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
 	rt.recordJobFn = rt.executeRecordCLI
 	rt.buildJobFn = rt.executeBuildCLI
-	rt.publishJobFn = rt.executePublishCLI
+	rt.publishJobFn = rt.executePublishCLIWithTimeout
+	rt.computeProbe = sync.OnceValues(func() (bool, string) {
+		return probeComputeDevice(configuredSTTDevice())
+	})
+	rt.recordHealth = newTTLProbe(recordHealthProbeTTL, func() error {
+		probeCtx := rt.ctx
+		if timeout := rt.recordHealthTimeout; timeout > 0 {
+			var cancel context.CancelFunc
+			probeCtx, cancel = context.WithTimeout(probeCtx, timeout)
+			defer cancel()
+		}
+		return rt.runRecordDoctorContext(probeCtx)
+	})
 	rt.startBuildWorkers()
 	rt.startPublishWorker()
+	go rt.requeueDispatcher()
 	return rt
 }
 
@@ -430,12 +476,22 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/jobs", rt.jobsHandler)
 	api.HandleFunc("/jobs/", rt.jobDetailHandler)
 	api.HandleFunc("/events", rt.eventsHandler)
+	api.HandleFunc("/status", rt.statusHandler)
+
+	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
+	// off by default). Requests that already passed the AppAPI middleware are
+	// untouched, so an ExApp deploy may set the token for direct port access
+	// without breaking the Nextcloud proxy path (D-376).
+	var apiHandler http.Handler = api
+	if strings.TrimSpace(rt.cfg.APIToken) != "" {
+		apiHandler = requireBearerToken(strings.TrimSpace(rt.cfg.APIToken), api)
+	}
 
 	root := http.NewServeMux()
 	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
 	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger)
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
-	mountBasePathOnto(root, rt.cfg.BasePath, api)
+	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler)
 
 	// /heartbeat, /healthz, and the Talk recording-backend endpoints must answer
 	// without AppAPI auth headers — Talk uses its own HMAC scheme (Talk-Recording-
@@ -458,10 +514,45 @@ func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler) {
 		root.Handle("/jobs", api)
 		root.Handle("/jobs/", api)
 		root.Handle("/events", api)
+		root.Handle("/status", api)
 		return
 	}
 	root.Handle(basePath, http.StripPrefix(basePath, api))
 	root.Handle(basePath+"/", http.StripPrefix(basePath, api))
+}
+
+// requireBearerToken guards an API handler with a static bearer token for
+// standalone deployments where no AppAPI middleware fronts the operator.
+// Requests carrying a verified AppAPI identity pass through untouched; token
+// comparison is constant-time and the token value is never logged (D-376).
+func requireBearerToken(token string, next http.Handler) http.Handler {
+	expected := []byte(token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if appapi.Authenticated(r.Context()) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		const prefix = "Bearer "
+		auth := r.Header.Get("Authorization")
+		if len(auth) <= len(prefix) ||
+			!strings.EqualFold(auth[:len(prefix)], prefix) ||
+			subtle.ConstantTimeCompare([]byte(strings.TrimSpace(auth[len(prefix):])), expected) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="cassini-operator"`)
+			writeJSONError(w, http.StatusUnauthorized, "missing or invalid bearer token")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// appapiUserForLog returns the AppAPI-authenticated user id for job-mutation
+// log lines, or "-" when the request carried no user (standalone deploy or
+// system request) (D-376).
+func appapiUserForLog(r *http.Request) string {
+	if user := appapi.UserID(r.Context()); user != "" {
+		return user
+	}
+	return "-"
 }
 
 func (rt *Runtime) jobsHandler(w http.ResponseWriter, r *http.Request) {
@@ -503,11 +594,11 @@ func (rt *Runtime) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 	resp, err := rt.acceptRecordJob(r.Context(), provider, requestBody, req)
 	if err != nil {
 		status, msg := recordAcceptError(err)
-		rt.logger.Printf("reject provider=%s target=%s err=%v", provider, req.logTarget(), err)
+		rt.logger.Printf("reject provider=%s target=%s user=%s err=%v", provider, req.logTarget(), appapiUserForLog(r), err)
 		writeJSONError(w, status, msg)
 		return
 	}
-	rt.logger.Printf("accepted id=%s provider=%s target=%s", resp.ID, provider, req.logTarget())
+	rt.logger.Printf("accepted id=%s provider=%s target=%s user=%s", resp.ID, provider, req.logTarget(), appapiUserForLog(r))
 	writeJSON(w, http.StatusAccepted, resp)
 }
 
@@ -537,7 +628,12 @@ func decodeTriggerRequest(body io.ReadCloser) (string, TriggerRequest, error) {
 
 func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 	defer rt.recordWG.Done()
-	defer func() { <-rt.recordSlots }()
+	// The record slot is freed as soon as the record subprocess exits (the
+	// releaseSlot call below): post-record bookkeeping — Talk delivery with
+	// its retry schedule, the build handoff — must not hold recording
+	// capacity hostage (D-367). The deferred call covers early-error returns.
+	releaseSlot := sync.OnceFunc(func() { <-rt.recordSlots })
+	defer releaseSlot()
 	defer rt.clearTalkRoomJobByID(job.ID)
 
 	startedAt := nowUTCString()
@@ -548,6 +644,7 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 	rt.logger.Printf("record started id=%s", job.ID)
 
 	result, err := rt.recordJobFn(rt.ctx, job, req)
+	releaseSlot()
 	finishedAt := nowUTCString()
 	if err != nil {
 		rt.logger.Printf("record failed id=%s: %v", job.ID, err)

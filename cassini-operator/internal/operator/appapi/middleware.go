@@ -43,10 +43,24 @@ type Config struct {
 // where no user is involved.
 type userIDContextKey struct{}
 
+// authenticatedContextKey marks a request whose AppAPI headers Middleware
+// verified, whether or not a user id was present (system/lifecycle requests
+// carry an empty user id).
+type authenticatedContextKey struct{}
+
 // UserID returns the AppAPI-authenticated user id attached to the request
 // context by Middleware, or "" when the request was not authenticated.
 func UserID(ctx context.Context) string {
 	v, _ := ctx.Value(userIDContextKey{}).(string)
+	return v
+}
+
+// Authenticated reports whether Middleware verified the request's AppAPI
+// headers. It is false for requests served without an active middleware
+// (e.g. a standalone deploy without APP_SECRET), which lets callers layer
+// additional auth only on the unauthenticated path.
+func Authenticated(ctx context.Context) bool {
+	v, _ := ctx.Value(authenticatedContextKey{}).(bool)
 	return v
 }
 
@@ -85,11 +99,11 @@ func (c Config) Middleware(next http.Handler) http.Handler {
 			http.Error(w, errInvalidAuth.Error(), http.StatusUnauthorized)
 			return
 		}
+		ctx := context.WithValue(r.Context(), authenticatedContextKey{}, true)
 		if userID != "" {
-			ctx := context.WithValue(r.Context(), userIDContextKey{}, userID)
-			r = r.WithContext(ctx)
+			ctx = context.WithValue(ctx, userIDContextKey{}, userID)
 		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

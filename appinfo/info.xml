@@ -69,6 +69,11 @@ logged-in user.]]></description>
         <display-name>LLM model (optional)</display-name>
         <description>Model identifier for transcript cleanup and meeting summaries (default: openai/gpt-4o-mini).</description>
       </variable>
+      <variable>
+        <name>CASSINI_OPERATOR_API_TOKEN</name>
+        <display-name>Operator API bearer token (optional)</display-name>
+        <description>When set, direct (non-proxied) requests to the operator job API must send "Authorization: Bearer &lt;token&gt;". Requests proxied through Nextcloud are authenticated by AppAPI and are unaffected. Leave empty to keep the API reachable only through the AppAPI proxy authentication.</description>
+      </variable>
     </environment-variables>
 
     <routes>
@@ -118,6 +123,13 @@ logged-in user.]]></description>
       </route>
       <route>
         <url>^operator\/events\/?$</url>
+        <verb>GET</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <!-- ADMIN: doctor/status endpoint (version, STT device usability,
+           Talk config presence, DB/storage health — never secret values) -->
+      <route>
+        <url>^operator\/status\/?$</url>
         <verb>GET</verb>
         <access_level>ADMIN</access_level>
       </route>
