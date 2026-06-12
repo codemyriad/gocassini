@@ -550,6 +550,10 @@ func classifyRecordStopReason(stopAccepted bool, exitCode *int, stopDetail strin
 		strings.Contains(combined, "signaling settings failed"),
 		strings.Contains(combined, "missing signaling server"),
 		strings.Contains(combined, "hello response missing signaling sessionid"),
+		// The recorder wraps definitive HTTP 4xx join rejections in
+		// ErrUnjoinable ("talk room unjoinable") and prints it on the
+		// "talk recorder stopping:" line the operator scrapes (D-374).
+		strings.Contains(combined, "talk room unjoinable"),
 		strings.Contains(combined, "join call failed"):
 		return "join_failed"
 	case exitCode != nil && *exitCode != 0:
