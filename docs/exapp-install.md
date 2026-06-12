@@ -201,8 +201,24 @@ All of these must pass before the Talk handoff:
 7. The viewer renders for a normal logged-in user (the **Cassini** menu
    entry, or directly):
    `https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/viewer/`
-8. CUDA installs only: the image tag ends in `-cuda` and the container can see
-   the GPU — `docker exec nc_app_gocassini nvidia-smi`.
+8. The doctor/status endpoint reports `"ok": true` (ADMIN route — use an
+   admin login with an app password):
+
+   ```bash
+   curl -fsS -u admin:<app-password> \
+     https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/operator/status
+   ```
+
+   It reports the app version, the STT device (`cpu`/`cuda`) and whether that
+   device is actually usable, whether the Talk recording secret is configured
+   (never the value), and DB/storage health — the same answers that used to
+   require shell access into the container.
+9. CUDA installs only: the image tag ends in `-cuda` and the container can see
+   the GPU — `docker exec nc_app_gocassini nvidia-smi`. The status endpoint in
+   the previous step must show `"device": "cuda"` with `"device_usable": true`;
+   a CUDA container without GPU access also logs
+   `ERROR: stt_device cuda is not usable` at startup instead of silently
+   falling back to CPU.
 
 ## Step 5 — Talk handoff (reversible)
 
@@ -323,6 +339,7 @@ The manifest declares per-route access levels enforced by Nextcloud's proxy:
 |---|---|---|
 | `/control-panel/*` | ADMIN | Svelte admin UI for starting and monitoring jobs |
 | `/operator/jobs`, `/operator/jobs/...`, `/operator/events` | ADMIN | Operator JSON + SSE API |
+| `/operator/status` | ADMIN | Doctor/status endpoint (version, device usability, Talk config, DB/storage health) |
 | `/viewer/*` | USER | Viewer SPA |
 | `/published/*` | USER | Published meeting bundles (catalog + recordings) |
 | `/ui/viewer.js` | USER | Bootstrap script behind the **Cassini** navigation entry |

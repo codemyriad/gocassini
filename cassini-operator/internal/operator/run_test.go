@@ -339,6 +339,7 @@ func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
 
 	seedJobRow(t, rt.store.db, seededJobRow{ID: "queued-record", Stage: "record", State: "queued", CreatedAt: "2026-04-29T10:00:00Z"})
 	seedJobRow(t, rt.store.db, seededJobRow{ID: "running-build", Stage: "build", State: "running", CreatedAt: "2026-04-29T10:01:00Z"})
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "queued-build", Stage: "build", State: "queued", CreatedAt: "2026-04-29T10:01:30Z"})
 	seedJobRow(t, rt.store.db, seededJobRow{ID: "queued-publish", Stage: "publish", State: "queued", CreatedAt: "2026-04-29T10:02:00Z"})
 	seedJobRow(t, rt.store.db, seededJobRow{ID: "done-success", Stage: "done", State: "succeeded", CreatedAt: "2026-04-29T10:03:00Z", CompletedAt: strPtr("2026-04-29T10:04:00Z")})
 	seedJobRow(t, rt.store.db, seededJobRow{ID: "done-failed", Stage: "done", State: "failed", CreatedAt: "2026-04-29T10:05:00Z", CompletedAt: strPtr("2026-04-29T10:06:00Z")})
@@ -348,8 +349,8 @@ func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarkIncompleteJobsInterrupted() error = %v", err)
 	}
-	if count != 3 {
-		t.Fatalf("count = %d, want 3", count)
+	if count != 2 {
+		t.Fatalf("count = %d, want 2", count)
 	}
 
 	queuedRecord := mustGetJob(t, rt.store, "queued-record")
@@ -372,9 +373,16 @@ func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
 		t.Fatalf("unexpected running build job = %#v", runningBuild)
 	}
 
+	// Queued build/publish rows survive a restart untouched: their inputs are
+	// durable on disk and the requeue dispatcher re-delivers them (D-367).
+	queuedBuild := mustGetJob(t, rt.store, "queued-build")
+	if queuedBuild.Stage != "build" || queuedBuild.State != "queued" || queuedBuild.InterruptedAt != nil {
+		t.Fatalf("queued build job should stay queued, got %#v", queuedBuild)
+	}
+
 	queuedPublish := mustGetJob(t, rt.store, "queued-publish")
-	if queuedPublish.Stage != "publish" || queuedPublish.State != "interrupted" {
-		t.Fatalf("unexpected queued publish job = %#v", queuedPublish)
+	if queuedPublish.Stage != "publish" || queuedPublish.State != "queued" || queuedPublish.InterruptedAt != nil {
+		t.Fatalf("queued publish job should stay queued, got %#v", queuedPublish)
 	}
 
 	doneSuccess := mustGetJob(t, rt.store, "done-success")
@@ -2022,6 +2030,9 @@ finalize_run() {
 }
 case "$cmd" in
   doctor)
+    if [ "${FAKE_CASSINI_DOCTOR_HANG:-0}" = "1" ]; then
+      sleep 60
+    fi
     if [ "${FAKE_CASSINI_DOCTOR_FAIL:-0}" = "1" ]; then
       exit 1
     fi
@@ -2098,6 +2109,11 @@ esac
 
 func newTestRuntime(t *testing.T) (*Runtime, func()) {
 	t.Helper()
+	return newTestRuntimeWithLogger(t, log.New(ioDiscard{}, "", 0))
+}
+
+func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func()) {
+	t.Helper()
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
 
@@ -2106,7 +2122,6 @@ func newTestRuntime(t *testing.T) (*Runtime, func()) {
 	if err != nil {
 		t.Fatalf("OpenStore() error = %v", err)
 	}
-	logger := log.New(ioDiscard{}, "", 0)
 	rt := NewRuntime(context.Background(), store, Config{
 		RepoRoot:         repoRoot,
 		BindAddr:         "127.0.0.1:0",
