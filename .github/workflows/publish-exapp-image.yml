@@ -764,7 +764,28 @@ jobs:
           # substring as proof the pipeline transcribed real speech.
           MIN_LEVENSHTEIN: "0.40"
           MIN_CAPTURED_RUN_WORDS: "5"
+          # Pin LOG_DIR to a stable path so the failure-artifact step below
+          # can find the pulled transcript + recorder stdout deterministically
+          # (the harness default is a PID-suffixed /tmp dir).
+          LOG_DIR: ${{ runner.temp }}/cassini-talk-rec-e2e
         run: ./harness/bin/ci-e2e-talk-record-roundtrip.sh
+      - name: Upload transcript + recorder logs on failure
+        if: failure()
+        # D-50: the CPU merged-fallback transcript gate flakes near the
+        # MIN_CAPTURED_RUN_WORDS floor. Capturing the published transcript
+        # JSON and the recorder stdout lets a future reviewer tell a genuine
+        # "always got 1 word" regression from a sporadic flake without
+        # re-running CI. transcript.words.v1.json is pulled in phase 8 (so it
+        # exists for the content-gate failure we care about) and cassini-exapp.log
+        # is written by the harness cleanup trap on every exit.
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-talk-record-cpu-debug
+          path: |
+            ${{ runner.temp }}/cassini-talk-rec-e2e/transcript.words.v1.json
+            ${{ runner.temp }}/cassini-talk-rec-e2e/cassini-exapp.log
+          if-no-files-found: warn
+          retention-days: 14
 
   e2e-talk-record-cuda:
     name: E2E Talk record-button roundtrip (CUDA / GPU)
