@@ -82,7 +82,11 @@ WORKDIR /src/cassini-viewer
 COPY cassini-viewer/package.json cassini-viewer/package-lock.json ./
 RUN npm ci
 COPY cassini-viewer/ ./
-ENV VITE_BASE=/viewer/
+# Relative base so the viewer SPA resolves its own assets under whatever
+# mount it is served at (direct /viewer/ or the AppAPI proxy prefix
+# /index.php/apps/app_api/proxy/<appid>/viewer/). The published archive base
+# stays /published; catalog.ts prepends the runtime proxy prefix to it.
+ENV VITE_BASE=./
 ENV VITE_PUBLISHED_BASE=/published
 RUN npm run build
 

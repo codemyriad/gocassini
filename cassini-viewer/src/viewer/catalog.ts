@@ -151,7 +151,43 @@ function resolveCatalogUrl(): string {
     return resolveAppAssetUrl(DEFAULT_CATALOG_PATH);
   }
   const normalized = publishedBase.endsWith("/") ? publishedBase : `${publishedBase}/`;
-  return new URL(CATALOG_FILE_NAME, new URL(normalized, window.location.href)).toString();
+  // A root-absolute VITE_PUBLISHED_BASE (the ExApp build sets `/published`)
+  // bypasses the Nextcloud AppAPI proxy prefix: served at
+  // /index.php/apps/app_api/proxy/<appid>/viewer/, an origin-absolute
+  // /published/catalog.json 404s. Prepend the runtime proxy prefix (everything
+  // before the /viewer mount) so the published archive resolves under the same
+  // mount as the SPA. Standalone exports use a relative base and skip this.
+  const withPrefix = normalized.startsWith("/")
+    ? joinProxyPrefix(proxyPrefixFromPathname(window.location.pathname), normalized)
+    : normalized;
+  return new URL(CATALOG_FILE_NAME, new URL(withPrefix, window.location.href)).toString();
+}
+
+// proxyPrefixFromPathname derives the path prefix in front of the /viewer mount.
+// Served directly by the operator the SPA lives at /viewer/, but through the
+// AppAPI proxy it lives at /index.php/apps/app_api/proxy/<appid>/viewer/ —
+// everything before /viewer is the prefix the published archive must share.
+// Mirrors cassini-control-panel/src/operator/config.ts.
+function proxyPrefixFromPathname(pathname: string): string {
+  if (!pathname) {
+    return "";
+  }
+  const marker = "/viewer";
+  const idx = pathname.indexOf(`${marker}/`);
+  if (idx > 0) {
+    return pathname.slice(0, idx);
+  }
+  if (idx < 0 && pathname.endsWith(marker)) {
+    return pathname.slice(0, pathname.length - marker.length);
+  }
+  return "";
+}
+
+function joinProxyPrefix(prefix: string, basePath: string): string {
+  if (prefix === "") {
+    return basePath;
+  }
+  return basePath === "/" ? prefix : prefix + basePath;
 }
 
 function readEnv(name: string): string {

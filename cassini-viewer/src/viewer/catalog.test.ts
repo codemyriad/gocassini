@@ -109,23 +109,25 @@ describe("validateMeetingCatalog", () => {
     ).toThrow(/artifactPath/i);
   });
 
-  it("redirects catalog fetch to VITE_PUBLISHED_BASE when set", async () => {
+  it("resolves VITE_PUBLISHED_BASE under the AppAPI proxy prefix", async () => {
     // The Nextcloud ExApp build serves the viewer SPA at /viewer/ while the
-    // published archive (catalog + recordings) lives at /published/. The
-    // viewer must follow VITE_PUBLISHED_BASE so it doesn't fetch
-    // /viewer/catalog.json (which would 404 because the SPA is there).
+    // published archive (catalog + recordings) lives at /published/. Through
+    // the AppAPI proxy both live under /index.php/apps/app_api/proxy/<appid>/,
+    // so a root-absolute /published/catalog.json would drop the proxy prefix
+    // and 404 on Nextcloud. The viewer must prepend the runtime proxy prefix
+    // (everything before /viewer) to the published base.
     vi.stubEnv("VITE_PUBLISHED_BASE", "/published");
 
+    const proxied =
+      "http://nextcloud.example.com/index.php/apps/app_api/proxy/gocassini";
     const calls: string[] = [];
     globalThis.window = {
-      location: {
-        href: "http://nextcloud.example.com/index.php/apps/app_api/proxy/gocassini/viewer/",
-      },
+      location: { href: `${proxied}/viewer/`, pathname: "/index.php/apps/app_api/proxy/gocassini/viewer/" },
     } as Window;
     globalThis.fetch = vi.fn(async (input: string | URL) => {
       const url = String(input);
       calls.push(url);
-      if (url === "http://nextcloud.example.com/published/catalog.json") {
+      if (url === `${proxied}/published/catalog.json`) {
         return {
           ok: true,
           url,
@@ -148,10 +150,40 @@ describe("validateMeetingCatalog", () => {
     const catalog = await loadMeetingCatalog();
 
     expect(catalog?.meetings).toHaveLength(1);
-    expect(catalog?.meetings[0]?.audioPath).toBe(
-      "http://nextcloud.example.com/published/meeting-x.opus",
-    );
-    expect(calls).toEqual(["http://nextcloud.example.com/published/catalog.json"]);
+    expect(catalog?.meetings[0]?.audioPath).toBe(`${proxied}/published/meeting-x.opus`);
+    expect(calls).toEqual([`${proxied}/published/catalog.json`]);
+  });
+
+  it("uses VITE_PUBLISHED_BASE verbatim when served at the origin root", async () => {
+    // Direct operator serving (not behind the proxy): SPA at /viewer/, archive
+    // at /published/ — no proxy prefix to prepend.
+    vi.stubEnv("VITE_PUBLISHED_BASE", "/published");
+
+    const calls: string[] = [];
+    globalThis.window = {
+      location: { href: "http://operator.example.com/viewer/", pathname: "/viewer/" },
+    } as Window;
+    globalThis.fetch = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === "http://operator.example.com/published/catalog.json") {
+        return {
+          ok: true,
+          url,
+          json: async () => ({
+            version: "cassini.viewer.catalog.v1",
+            meetings: [
+              { id: "m1", audioPath: "./m1.opus", title: "M1", dateLabel: "2026-05-19 10:00" },
+            ],
+          }),
+        } as Response;
+      }
+      return { ok: false } as Response;
+    }) as typeof fetch;
+
+    const catalog = await loadMeetingCatalog();
+    expect(catalog?.meetings).toHaveLength(1);
+    expect(calls).toEqual(["http://operator.example.com/published/catalog.json"]);
   });
 
   it("loads the default catalog from the app base on nested routes", async () => {
