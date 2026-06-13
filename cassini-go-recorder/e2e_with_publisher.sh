@@ -168,7 +168,11 @@ ffprobe -v error \
   -of compact=p=0:nk=1 "$FINAL_OUTPUT" | sed -n '1,120p'
 
 echo "--- key recorder lines ---"
-rg -n "talk bootstrap|subscribing to remote session|remote track:|ICE state=connected|duration reached|run error|composed final multi-track output|kept intermediate files" "$REC_LOG" -S || true
+# Match every "ICE state=" transition (not just =connected): the recorder logs
+# each subscriber ICE transition, so surfacing failed/disconnected/checking states
+# reveals which sessions never reached ICE-connected (and thus captured no media)
+# when the multi-participant assertion in ci-e2e-mute.sh comes up short (flake D-052).
+rg -n "talk bootstrap|subscribing to remote session|remote track:|ICE state=|duration reached|run error|composed final multi-track output|kept intermediate files" "$REC_LOG" -S || true
 
 if [[ "$CHECK_SESSION_ARTIFACT" == "1" ]]; then
   "$TEST_DIR/bin/verify-session-artifact.sh" --final-output "$FINAL_OUTPUT"
