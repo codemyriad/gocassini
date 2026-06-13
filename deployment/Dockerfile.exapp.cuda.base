@@ -1,0 +1,99 @@
+# Base image for the CUDA variant of the Cassini ExApp (D-375).
+#
+# Holds the slow-changing, input-stable substrate: the nvidia CUDA runtime, the
+# apt layer, the ~2.3GB fp32 Parakeet model + Silero VAD, and the sherpa-onnx
+# CUDA native libs. The CI job `build-cuda-base` tags this
+# ghcr.io/codemyriad/gocassini-cuda-base:<hash-of-inputs> and builds+pushes it
+# only when that tag does not already exist, so an unchanged base is never
+# rebuilt or re-fetched. Dockerfile.exapp.cuda then builds the thin per-commit
+# app (Go binaries + SPAs) FROM this image.
+#
+# The CI content hash is computed over: the three asset URLs below, the resolved
+# digest of the nvidia/cuda base, and this file's bytes. Keep
+# CASSINI_BUNDLED_MODEL_ID in sync with Dockerfile.exapp.cuda's ARG of the same
+# name (the app sets CASSINI_STT_MODEL from it; this base bakes the model dir
+# under that id).
+
+ARG CASSINI_BUNDLED_MODEL_ID=parakeet-tdt-0.6b-v3
+ARG CASSINI_BUNDLED_MODEL_URL=https://assets.gocassini.codemyriad.io/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3.tar.bz2
+ARG SHERPA_CUDA_VERSION=v1.13.1
+ARG SHERPA_CUDA_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.1/sherpa-onnx-v1.13.1-cuda-12.x-cudnn-9.x-linux-x64-gpu.tar.bz2
+
+# ---- Stage: model-fetcher (downloads + extracts the fp32 model) ----
+FROM debian:bookworm-slim AS model-fetcher
+ARG CASSINI_BUNDLED_MODEL_ID
+ARG CASSINI_BUNDLED_MODEL_URL
+ARG SILERO_VAD_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl tar bzip2 \
+ && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+ model_dir="/out/models/${CASSINI_BUNDLED_MODEL_ID}"; \
+ mkdir -p "$model_dir" /out/vad /tmp/extract; \
+ curl -fSL "${CASSINI_BUNDLED_MODEL_URL}" -o /tmp/model.tar.bz2; \
+ tar -xjf /tmp/model.tar.bz2 -C /tmp/extract; \
+ # Archive top-level may be "sherpa-onnx-*" (int8 repacks) or just the model
+ # id (fp32 release on assets.gocassini.codemyriad.io). Don't rely on name.
+ src_dir=$(find /tmp/extract -mindepth 1 -maxdepth 1 -type d | head -n1); \
+ test -n "$src_dir" || (echo "no extracted dir under /tmp/extract:" >&2; ls /tmp/extract >&2; exit 1); \
+ # Required core files (must exist).
+ for f in encoder.onnx decoder.onnx joiner.onnx tokens.txt; do \
+   test -f "$src_dir/$f" || (echo "missing $f in extracted archive" >&2; ls "$src_dir" >&2; exit 1); \
+   cp "$src_dir/$f" "$model_dir/"; \
+ done; \
+ # Optional sidecars present in fp32 builds (external onnx weights, BPE vocab
+ # for some tokenizers). Copy if present — sherpa will fail to load the encoder
+ # without encoder.weights when the onnx references it via external_data.
+ for f in encoder.weights bpe.vocab; do \
+   if [ -f "$src_dir/$f" ]; then \
+     cp "$src_dir/$f" "$model_dir/"; \
+   fi; \
+ done; \
+ rm -rf /tmp/model.tar.bz2 /tmp/extract; \
+ printf '%s\n' \
+   "NeMo Parakeet TDT 0.6B v3 fp32 (sherpa-onnx repack, CUDA variant)" \
+   "Source: ${CASSINI_BUNDLED_MODEL_URL}" \
+   "License: cc-by-4.0 (NVIDIA Parakeet, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)" \
+   "Bundled in: ghcr.io/codemyriad/gocassini (CUDA variant)" \
+   > "$model_dir/NOTICE"; \
+ # Bundle Silero VAD alongside the STT model so the recorder doesn't dial out.
+ curl -fSL "${SILERO_VAD_URL}" -o /out/vad/silero_vad.onnx; \
+ ls -la "$model_dir/" /out/vad/
+
+# ---- Stage: sherpa-cuda-fetcher (CUDA-enabled native libs) ----
+FROM debian:bookworm-slim AS sherpa-cuda-fetcher
+ARG SHERPA_CUDA_URL
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl tar bzip2 \
+ && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+ curl -fSL "${SHERPA_CUDA_URL}" -o /tmp/sherpa.tar.bz2; \
+ mkdir -p /tmp/sherpa-extract; \
+ tar -xjf /tmp/sherpa.tar.bz2 -C /tmp/sherpa-extract; \
+ src_dir=$(find /tmp/sherpa-extract -maxdepth 1 -type d -name 'sherpa-onnx-*' | head -n1); \
+ test -n "$src_dir" || (echo "no extracted dir" >&2; ls /tmp/sherpa-extract >&2; exit 1); \
+ mkdir -p /out/lib; \
+ # The four .so files the Go binding + onnxruntime need at runtime. This is the
+ # complete CUDA set; the app image no longer ships CPU placeholder libs.
+ cp "$src_dir/lib/libsherpa-onnx-c-api.so"            /out/lib/; \
+ cp "$src_dir/lib/libonnxruntime.so"                  /out/lib/; \
+ cp "$src_dir/lib/libonnxruntime_providers_cuda.so"   /out/lib/; \
+ cp "$src_dir/lib/libonnxruntime_providers_shared.so" /out/lib/; \
+ rm -rf /tmp/sherpa.tar.bz2 /tmp/sherpa-extract; \
+ ls -la /out/lib/
+
+# ---- Base substrate: nvidia/cuda runtime + node + ffmpeg + model + CUDA libs ----
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+LABEL io.gocassini.image-role=base-cuda
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      bash ca-certificates curl ffmpeg tini gnupg \
+ && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && rm -rf /var/lib/apt/lists/*
+
+# The fat layers every per-commit app build reuses: the 4 CUDA .so (complete
+# set, supersedes the CPU libs the app no longer ships) and the model + VAD.
+COPY --from=sherpa-cuda-fetcher /out/lib /opt/cassini/lib
+COPY --from=model-fetcher /out /opt/cassini/cache

@@ -15,6 +15,7 @@ on:
       - 'appinfo/info.xml'
       - 'deployment/Dockerfile.exapp'
       - 'deployment/Dockerfile.exapp.cuda'
+      - 'deployment/Dockerfile.exapp.cuda.base'
       - 'deployment/exapp-start.sh'
       - 'deployment/exapp-healthcheck.sh'
       - 'cassini-operator/**'
@@ -250,14 +251,137 @@ jobs:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-smoke-exapp.sh
 
+  build-cuda-base:
+    name: Build CUDA base image (model + CUDA libs)
+    # The fat, slow-changing substrate (~2.3GB fp32 model + CUDA native libs +
+    # nvidia runtime + apt) lives in a separate image tagged by a content hash
+    # of its inputs. Build+push it only when that exact hash is absent from
+    # ghcr, so an unchanged base is never rebuilt or re-downloaded; the
+    # per-commit CUDA app build reuses it via FROM (D-375). Stays on
+    # ubuntu-latest — no GPU needed, keeps george free.
+    runs-on: ubuntu-latest
+    needs: validate-manifest
+    # Same fork-PR guard as build-image-cuda: pushing the base needs ghcr creds,
+    # and the whole CUDA chain is skipped for forks.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    outputs:
+      base_ref: ${{ steps.base.outputs.base_ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk on ubuntu-latest
+        run: |
+          set -euo pipefail
+          sudo rm -rf \
+            /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+            /usr/local/share/powershell /usr/share/swift
+          sudo docker image prune -af 2>&1 | tail -1 || true
+          df -h / | head -2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve base ref + check existence
+        id: base
+        # The hash covers every input that defines the base's bytes: the asset
+        # URLs (read from the base Dockerfile's ARG defaults — single source of
+        # truth), a best-effort content fingerprint of each (so an in-place
+        # overwrite of a non-versioned URL still moves the hash), the resolved
+        # nvidia base digest (catches silent upstream re-pushes), and the base
+        # Dockerfile's own bytes. No timestamps/random — fully reproducible.
+        run: |
+          set -euo pipefail
+          DF=deployment/Dockerfile.exapp.cuda.base
+          APP_DF=deployment/Dockerfile.exapp.cuda
+          # Read an ARG default from a Dockerfile, failing loudly if the line is
+          # absent or empty — a renamed ARG must not silently yield a wrong hash.
+          df_get() {
+            local v
+            v="$(grep -E "^ARG $2=" "$1" | head -1 | sed "s/^ARG $2=//")" \
+              || { echo "ARG $2 not found in $1" >&2; exit 1; }
+            test -n "$v" || { echo "ARG $2 empty in $1" >&2; exit 1; }
+            printf '%s' "$v"
+          }
+          MODEL_ID="$(df_get "$DF" CASSINI_BUNDLED_MODEL_ID)"
+          MODEL_URL="$(df_get "$DF" CASSINI_BUNDLED_MODEL_URL)"
+          SHERPA_URL="$(df_get "$DF" SHERPA_CUDA_URL)"
+          VAD_URL="$(df_get "$DF" SILERO_VAD_URL)"
+
+          # The app Dockerfile independently sets CASSINI_STT_MODEL from its own
+          # CASSINI_BUNDLED_MODEL_ID. If it drifts from the base's, the runtime
+          # points at a model dir the base never baked — a model-less image that
+          # builds green and fails at first transcribe. Enforce equality.
+          APP_MODEL_ID="$(df_get "$APP_DF" CASSINI_BUNDLED_MODEL_ID)"
+          if [ "$MODEL_ID" != "$APP_MODEL_ID" ]; then
+            echo "CASSINI_BUNDLED_MODEL_ID mismatch: base=$MODEL_ID app=$APP_MODEL_ID" >&2
+            exit 1
+          fi
+
+          # Pin the nvidia base by digest (catches silent upstream re-pushes).
+          # Retry: Docker Hub anonymous manifest reads occasionally rate-limit.
+          NV_REF="nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04"
+          NV_DIGEST=""
+          for attempt in 1 2 3; do
+            if NV_DIGEST="$(docker buildx imagetools inspect "$NV_REF" --format '{{json .Manifest.Digest}}' | tr -d '"')" \
+               && [ -n "$NV_DIGEST" ]; then
+              break
+            fi
+            echo "nvidia digest resolve attempt ${attempt} failed; retrying" >&2
+            sleep 5
+          done
+          test -n "$NV_DIGEST" || { echo "could not resolve ${NV_REF} digest" >&2; exit 1; }
+
+          fp() { curl -fsSL -I "$1" 2>/dev/null | tr -d '\r' \
+                 | awk -F': ' 'tolower($1)=="etag"||tolower($1)=="last-modified"{print $2; exit}' || true; }
+
+          BASE_HASH="$(printf '%s\n' \
+            "$MODEL_ID" "$MODEL_URL" "$(fp "$MODEL_URL")" \
+            "$SHERPA_URL" "$(fp "$SHERPA_URL")" \
+            "$VAD_URL" "$(fp "$VAD_URL")" \
+            "$NV_DIGEST" \
+            "$(sha256sum "$DF" | cut -d' ' -f1)" \
+            | sha256sum | cut -c1-16)"
+          BASE_REF="${{ env.REGISTRY }}/${{ github.repository_owner }}/gocassini-cuda-base:${BASE_HASH}"
+          echo "base_ref=${BASE_REF}" >> "$GITHUB_OUTPUT"
+          echo "Base ref: ${BASE_REF}"
+
+          if docker buildx imagetools inspect "$BASE_REF" >/dev/null 2>&1; then
+            echo "Base already present in registry — no rebuild, no re-download."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Base absent — will build and push once."
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build + push base image
+        if: steps.base.outputs.build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/Dockerfile.exapp.cuda.base
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.base.outputs.base_ref }}
+
   build-image-cuda:
     name: Build CUDA ExApp image
     # CUDA Docker builds do not touch the GPU — they're just layer assembly.
     # Running on ubuntu-latest frees the single self-hosted GPU runner for
     # jobs that actually need it (transcribe-smoke-cuda, e2e-talk-record-cuda,
-    # deploy-preview's deploy-gpu).
+    # deploy-preview's deploy-gpu). Only the thin per-commit layers build here;
+    # the fat base comes prebuilt from build-cuda-base via FROM (D-375).
     runs-on: ubuntu-latest
-    needs: validate-manifest
+    needs: [validate-manifest, build-cuda-base]
     # Fork PRs cannot push to ghcr (no credentials) and must never run
     # downstream CUDA jobs on the self-hosted GPU runner. Skip the whole
     # CUDA chain for them; same-repo PRs and pushes proceed normally.
@@ -338,9 +462,12 @@ jobs:
 
       # Build + push in one step. push: true is safe for same-repo PRs
       # (job-level if: guarantees we are not running on a fork PR) and lets
-      # the downstream CUDA jobs docker-pull from ghcr instead of needing
-      # local-daemon co-location. cache scope is separate from the CPU
-      # build so layers don't cross-pollute.
+      # the downstream CUDA jobs docker-pull from ghcr. FROM the prebuilt base
+      # (D-375): only the thin per-commit layers build here; the 2.3GB model +
+      # CUDA libs come from build-cuda-base, so an unchanged base is neither
+      # re-downloaded from origin nor re-extracted. Registry cache (on ghcr)
+      # replaces the flaky type=gha export (the "error writing layer blob:
+      # not_found" seen on PR #59); PRs read the cache, only pushes write it.
       - name: Build and push CUDA image
         id: build
         uses: docker/build-push-action@v6
@@ -349,9 +476,11 @@ jobs:
           file: deployment/Dockerfile.exapp.cuda
           platforms: linux/amd64
           push: true
+          build-args: |
+            BASE_IMAGE=${{ needs.build-cuda-base.outputs.base_ref }}
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha,scope=cuda
-          cache-to: type=gha,mode=max,scope=cuda
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}-buildcache:cuda
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}-buildcache:cuda,mode=max', env.REGISTRY, env.IMAGE) || '' }}
 
   transcribe-smoke-cuda:
     name: Smoke transcription on GPU (bundled fp32 model + CUDA EP)
@@ -726,6 +855,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - build-image
+      - build-cuda-base
       - build-image-cuda
       - smoke
       - transcribe-smoke
@@ -799,6 +929,45 @@ jobs:
           fi
 
           tail -n +$((KEEP + 1)) "$tmp/candidates.tsv" | while IFS=$'\t' read -r id created tags; do
+            echo "DELETE id=${id} created=${created} tags=${tags}"
+            gh api -X DELETE \
+              -H "Accept: application/vnd.github+json" \
+              "/orgs/${OWNER}/packages/container/${PACKAGE}/versions/${id}"
+          done
+
+      # The CUDA base package (D-375) is content-hash-tagged only — no
+      # keep-forever named tags. Base rebuilds are rare (only on a model/sherpa/
+      # nvidia-base/Dockerfile change), so keeping the newest few covers any
+      # in-flight rollback while not letting hashes accumulate forever.
+      - name: Prune old CUDA base versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE: gocassini-cuda-base
+          KEEP: 5
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+
+          # The package may not exist yet on the very first base build cycle.
+          if ! gh api --paginate \
+              -H "Accept: application/vnd.github+json" \
+              "/orgs/${OWNER}/packages/container/${PACKAGE}/versions" \
+              > "$tmp/versions.json" 2>/dev/null; then
+            echo "Package ${PACKAGE} not found yet — nothing to prune."
+            exit 0
+          fi
+
+          jq -r 'sort_by(.created_at) | reverse | .[] | "\(.id)\t\(.created_at)\t\(.metadata.container.tags | join(","))"' \
+            "$tmp/versions.json" > "$tmp/all.tsv"
+          total=$(wc -l < "$tmp/all.tsv")
+          echo "Found ${total} base versions; keeping newest ${KEEP}"
+          if [[ "${total}" -le "${KEEP}" ]]; then
+            echo "Nothing to prune."
+            exit 0
+          fi
+          tail -n +$((KEEP + 1)) "$tmp/all.tsv" | while IFS=$'\t' read -r id created tags; do
             echo "DELETE id=${id} created=${created} tags=${tags}"
             gh api -X DELETE \
               -H "Accept: application/vnd.github+json" \
