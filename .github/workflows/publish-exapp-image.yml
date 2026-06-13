@@ -408,6 +408,24 @@ jobs:
           MIN_LEVENSHTEIN: "0.50"
         run: ./harness/bin/ci-e2e-v3-transcript-verify.sh
 
+      - name: Reclaim docker disk (post-job)
+        if: always()
+        # The self-hosted GPU runner accumulates multi-GB CUDA image layers
+        # across PRs; one CI-heavy day filled its disk and killed GPU jobs at
+        # image load (D-377). Only one job runs on this runner at a time, and
+        # prune -a only removes images/containers nothing references, so this
+        # is safe. A host-side hourly cron is the primary guard; this trims
+        # right after each heavy job so bursts can't outrun the cron.
+        run: |
+          docker container prune -f --filter until=2h || true
+          docker image prune -af --filter until=6h || true
+          docker builder prune -af --filter until=6h || true
+          if [ "$(df --output=pcent / | tail -1 | tr -dc 0-9)" -ge 85 ]; then
+            docker image prune -af || true
+            docker builder prune -af || true
+          fi
+          df -h / | tail -1
+
   transcribe-smoke:
     name: Smoke transcription (bundled model, no download)
     runs-on: ubuntu-latest
@@ -687,6 +705,21 @@ jobs:
           MIN_LEVENSHTEIN: "0.40"
           MIN_CAPTURED_RUN_WORDS: "5"
         run: ./harness/bin/ci-e2e-talk-record-roundtrip.sh
+
+      - name: Reclaim docker disk (post-job)
+        if: always()
+        # See transcribe-smoke-cuda — same self-hosted GPU runner, same D-377
+        # disk-exhaustion guard. The roundtrip script already sweeps its own
+        # compose stacks; this trims accumulated image layers on top.
+        run: |
+          docker container prune -f --filter until=2h || true
+          docker image prune -af --filter until=6h || true
+          docker builder prune -af --filter until=6h || true
+          if [ "$(df --output=pcent / | tail -1 | tr -dc 0-9)" -ge 85 ]; then
+            docker image prune -af || true
+            docker builder prune -af || true
+          fi
+          df -h / | tail -1
 
   prune-old-versions:
     name: Prune old sha-tagged image versions
