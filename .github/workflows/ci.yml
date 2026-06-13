@@ -90,3 +90,21 @@ jobs:
           BOT_PASSWORD: "ci-bot-password"
           NEXTCLOUD_IMAGE: ${{ matrix.nextcloud_image }}
         run: ./harness/bin/${{ matrix.script }}
+
+      # On a mute-leg failure capture the recorder/publisher logs and the session
+      # artifact dir so an intermittent "got <3 participants" run (flake D-052) can
+      # be triaged from the funnel summary + per-subscriber ICE transitions instead
+      # of re-rolling CI. ci-e2e-mute.sh pins REC_LOG/PUB_LOG to fixed /tmp paths and
+      # writes its session artifact under /tmp/sessions/ (alongside /tmp/gocassini-ci-mute-*.mkv).
+      - name: Upload mute integration diagnostics
+        if: ${{ failure() && matrix.script == 'ci-e2e-mute.sh' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mute-diagnostics
+          path: |
+            /tmp/gocassini-ci-recorder-mute.log
+            /tmp/gocassini-ci-publisher-mute.log
+            /tmp/gocassini-ci-mute-*.mkv
+            /tmp/sessions/
+          retention-days: 7
+          if-no-files-found: ignore
