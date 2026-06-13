@@ -141,14 +141,17 @@ SUBS_ICE_CONNECTED=0
 TRACKS_CAPTURED=0
 SUMMARY_RTPLOGS=0
 if [[ -f "$REC_LOG" ]]; then
-  SUBS_ATTEMPTED="$(rg -c "subscribing to remote session " "$REC_LOG" || true)"
+  # rg exits 1 on no match; under `set -euo pipefail` an unguarded pipeline
+  # would abort the script — and this summary must survive the very failure it
+  # diagnoses (zero subscribers/tracks). Guard each so it reports 0, not aborts.
+  SUBS_ATTEMPTED="$(rg -c "subscribing to remote session " "$REC_LOG" || echo 0)"
   # Distinct sessions that reached ICE-connected (a session can log the
   # transition more than once across renegotiations).
   SUBS_ICE_CONNECTED="$(rg -o "subscriber \S+ ICE state=connected" "$REC_LOG" 2>/dev/null \
-    | awk '{print $2}' | sort -u | awk 'NF{n++} END {print n+0}')"
+    | awk '{print $2}' | sort -u | awk 'NF{n++} END {print n+0}' || true)"
   # Distinct sessions that produced at least one remote track.
   TRACKS_CAPTURED="$(rg -o "remote track: sid=\S+" "$REC_LOG" 2>/dev/null \
-    | sed 's/^remote track: sid=//' | sort -u | awk 'NF{n++} END {print n+0}')"
+    | sed 's/^remote track: sid=//' | sort -u | awk 'NF{n++} END {print n+0}' || true)"
 fi
 SUMMARY_STREAMS_DIR="$(cassini_streams_dir_from_mkv "$FINAL_OUTPUT" 2>/dev/null || true)"
 if [[ -n "$SUMMARY_STREAMS_DIR" && -d "$SUMMARY_STREAMS_DIR" ]]; then
