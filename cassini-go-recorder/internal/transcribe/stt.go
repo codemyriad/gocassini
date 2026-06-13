@@ -30,6 +30,20 @@ const vadChunkSamples = 16000 * 5
 // speech could still exceed that; 55s gives a comfortable ONNX-safe ceiling.
 const maxSafeSegmentSamples = 16000 * 55
 
+// nonVADWindowSamples / nonVADWindowOverlapSamples define the fixed sliding
+// window used by the non-VAD (useVAD=false) chunked decode. The merged-mix
+// fallback feeds ~75s of dense audio with no silence boundaries; decoding it
+// as one or two huge spans makes the int8 Parakeet decoder land a single
+// low-confidence result whose word run is unstable across runs. Splitting into
+// short (~15s) windows keeps each int8 decode short and high-confidence, so one
+// bad span can no longer zero the whole transcript. The 0.5s overlap ensures a
+// word straddling a window boundary is captured by at least one window; the
+// overlap is de-duplicated by word timestamp (see transcribeNonVADChunked).
+const (
+	nonVADWindowSamples        = 16000 * 15 // 15s window at 16 kHz
+	nonVADWindowOverlapSamples = 16000 / 2  // 0.5s overlap at 16 kHz
+)
+
 // NewRecognizer creates an offline recognizer from the given model paths and a
 // Silero VAD model. provider is "cpu" or "cuda"; vadModelPath is the path to
 // silero_vad.onnx.
@@ -89,13 +103,18 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 // right choice for genuinely sparse speech (per-participant tracks where
 // each bot is muted ~25/30s per rotation, real meetings with pauses).
 //
-// When useVAD is false, the entire input is sent through transcribeSegment
-// as a single span (which still applies the maxSafeSegmentSamples=55s split).
-// Use this when the caller already knows the audio is dense and continuous
-// — the merged-fallback path against the rotated mix is the canonical case.
-// Silero with the default 0.5 threshold has been observed to reject loud
-// (-19 to -29 dB) dense audio in ~17-33% of CI runs; bypassing VAD where it
-// adds no value removes that failure surface.
+// When useVAD is false, the input is split into fixed overlapping windows
+// (~15s window, ~0.5s overlap) and each window is decoded through
+// transcribeSegment, with words de-duplicated across the overlap region by
+// timestamp (see transcribeNonVADChunked). Use this when the caller already
+// knows the audio is dense and continuous — the merged-fallback path against
+// the rotated mix is the canonical case. A single full-length decode of that
+// ~75s mix lands one giant low-confidence int8 span whose verbatim word run is
+// unstable run-to-run; short windows keep each int8 decode short and
+// high-confidence so one bad span can't zero the whole transcript. Bypassing
+// VAD also removes the Silero failure surface — its default 0.5 threshold has
+// been observed to reject loud (-19 to -29 dB) dense audio in ~17-33% of CI
+// runs.
 //
 // Word timestamps refer to the full recording timeline either way.
 func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) ([]Word, error) {
@@ -104,7 +123,7 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 	}
 
 	if !useVAD {
-		words, err := r.transcribeSegment(samples, sampleRate, 0)
+		words, err := r.transcribeNonVADChunked(samples, sampleRate)
 		if err != nil {
 			return nil, err
 		}
@@ -211,6 +230,116 @@ func (r *Recognizer) transcribeSegment(samples []float32, sampleRate int, segOff
 		allWords = append(allWords, words...)
 	}
 	return allWords, nil
+}
+
+// transcribeNonVADChunked decodes dense, silence-free audio (the merged-mix
+// fallback case) by sliding a fixed window over the input instead of handing
+// the whole buffer to a single decode. Each window is transcribed via the same
+// transcribeSegment / NewOfflineStream path the VAD segments use — so it still
+// gets the per-segment decoder tail pad — and its words already carry
+// full-recording timestamps because we pass the window start as segOffsetMS.
+// Adjacent windows overlap by nonVADWindowOverlapSamples so a word straddling a
+// boundary is captured by at least one window; the overlap is de-duplicated by
+// timestamp in dedupOverlappingWords.
+func (r *Recognizer) transcribeNonVADChunked(samples []float32, sampleRate int) ([]Word, error) {
+	windowSamples := scaleSamples(nonVADWindowSamples, sampleRate)
+	overlapSamples := scaleSamples(nonVADWindowOverlapSamples, sampleRate)
+
+	overlapMS := int64(overlapSamples) * 1000 / int64(sampleRate)
+
+	var allWords []Word
+	firstWindow := true
+	for _, win := range nonVADWindowBounds(len(samples), windowSamples, overlapSamples) {
+		windowStartMS := int64(win.start) * 1000 / int64(sampleRate)
+		words, err := r.transcribeSegment(samples[win.start:win.end], sampleRate, windowStartMS)
+		if err != nil {
+			return nil, err
+		}
+		// Drop words that fall inside the region already covered by the
+		// previous window's tail (the overlap [windowStartMS, windowStartMS+
+		// overlapMS]). dedupOverlappingWords cuts at the overlap midpoint, so a
+		// word emitted by both windows is kept exactly once.
+		allWords = dedupOverlappingWords(allWords, words, firstWindow, windowStartMS, overlapMS)
+		firstWindow = false
+	}
+	return allWords, nil
+}
+
+// windowBound is a half-open [start,end) sample range for one decode window.
+type windowBound struct {
+	start int
+	end   int
+}
+
+// nonVADWindowBounds returns the sliding-window sample ranges covering
+// [0,total). Each window is windowSamples long (the last is shorter) and starts
+// overlapSamples before the end of the previous window, i.e. the stride is
+// windowSamples-overlapSamples. A non-positive or oversized window collapses to
+// a single full-length window so the function never returns zero windows for a
+// non-empty input and never loops forever.
+func nonVADWindowBounds(total, windowSamples, overlapSamples int) []windowBound {
+	if total <= 0 {
+		return nil
+	}
+	if windowSamples <= 0 || windowSamples >= total {
+		return []windowBound{{start: 0, end: total}}
+	}
+	stride := windowSamples - overlapSamples
+	if stride <= 0 {
+		stride = windowSamples
+	}
+	var bounds []windowBound
+	for start := 0; start < total; start += stride {
+		end := start + windowSamples
+		if end >= total {
+			bounds = append(bounds, windowBound{start: start, end: total})
+			break
+		}
+		bounds = append(bounds, windowBound{start: start, end: end})
+	}
+	return bounds
+}
+
+// dedupOverlappingWords merges the next window's words into acc, de-duplicating
+// the overlap region [windowStartMS, windowStartMS+overlapMS] that both windows
+// decoded. The cut is the overlap midpoint: the earlier window (already in acc)
+// owns words that start before the cut, the later window (next) owns words that
+// start at or after it. We therefore trim acc's trailing words that start at/after
+// the cut and keep next's words that start at/after the cut, so a word emitted by
+// both windows survives exactly once and the seam falls in a low-traffic point of
+// the overlap. firstWindow keeps the first window's words verbatim (no preceding
+// overlap). Keeping the rule a pure timestamp comparison makes it deterministic
+// and model-free for testing.
+func dedupOverlappingWords(acc, next []Word, firstWindow bool, windowStartMS, overlapMS int64) []Word {
+	if firstWindow {
+		return append(acc, next...)
+	}
+	cutMS := windowStartMS + overlapMS/2
+	// Trim acc's tail that reaches into the later window's half of the overlap.
+	trimmed := len(acc)
+	for trimmed > 0 && acc[trimmed-1].StartMS >= cutMS {
+		trimmed--
+	}
+	acc = acc[:trimmed]
+	// Append next's words from the cut onward (its share of the overlap plus the
+	// rest of the window).
+	for _, w := range next {
+		if w.StartMS < cutMS {
+			continue
+		}
+		acc = append(acc, w)
+	}
+	return acc
+}
+
+// scaleSamples rescales a sample count defined at 16 kHz to the given sample
+// rate so the window/overlap durations stay constant if a model ever reports a
+// different rate. At the canonical 16 kHz it is the identity.
+func scaleSamples(samplesAt16k, sampleRate int) int {
+	if sampleRate == 16000 || sampleRate <= 0 {
+		return samplesAt16k
+	}
+	return samplesAt16k * sampleRate / 16000
 }
 
 // Close frees the underlying recognizer and VAD.
