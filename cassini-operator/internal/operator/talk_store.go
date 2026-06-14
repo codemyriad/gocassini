@@ -37,6 +37,33 @@ func (s *Store) JobOwner(ctx context.Context, id string) (string, bool, error) {
 	return strings.TrimSpace(b.Owner), true, nil
 }
 
+// MarkTalkArtifactsDelivered records that the rich meeting artifacts (clean
+// audio, and the readable summary when present) reached the recording owner's
+// Nextcloud files. A rerun skips re-delivery once it is set.
+func (s *Store) MarkTalkArtifactsDelivered(ctx context.Context, id, deliveredAt string) error {
+	if _, err := s.db.ExecContext(ctx, `
+UPDATE jobs
+SET talk_artifacts_delivered_at = ?, updated_at = ?
+WHERE id = ?`, deliveredAt, nowUTCString(), id); err != nil {
+		return fmt.Errorf("update talk artifacts delivered: %w", err)
+	}
+	return nil
+}
+
+// TalkArtifactsDelivered reports whether the rich meeting artifacts have already
+// been delivered to the owner's Nextcloud files for job id.
+func (s *Store) TalkArtifactsDelivered(ctx context.Context, id string) (bool, error) {
+	var at sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT talk_artifacts_delivered_at FROM jobs WHERE id = ?`, id).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("query talk artifacts delivered: %w", err)
+	}
+	return at.Valid && strings.TrimSpace(at.String) != "", nil
+}
+
 // SetJobTalkBinding persists the Talk room binding for a job started through
 // the Talk recording backend (D-352). The binding is written once at start
 // time and never cleared: it documents which room the recording belongs to

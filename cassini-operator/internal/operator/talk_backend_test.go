@@ -950,6 +950,14 @@ func (f *fakeTalkServer) storeRequestCount() int {
 	return f.storeRequests
 }
 
+func (f *fakeTalkServer) uploadedFiles() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.files))
+	copy(out, f.files)
+	return out
+}
+
 func (f *fakeTalkServer) assertEventTypes(t *testing.T, want []string) {
 	t.Helper()
 	f.mu.Lock()

@@ -70,6 +70,15 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		}
 		return
 	}
+	// Deliver the rich artifacts (clean audio, and the readable summary when
+	// present) to the recording owner's Nextcloud files now that the build
+	// produced them — before publish, so the pipeline stays deterministic and
+	// the files are filed when the site links them. Best-effort and bounded by
+	// the Talk client timeouts/retries; like the raw-recording delivery it never
+	// fails the build (D-352 shape).
+	if rt.cfg.DeliverMeetingArtifacts {
+		rt.deliverTalkMeetingArtifacts(task.JobID, canonicalMeetingPath)
+	}
 	if err := rt.enqueuePublishJobNonBlocking(task.JobID, task.AttemptNumber, canonicalMeetingPath, attemptMeetingPath, finishedAt); err != nil {
 		rt.logger.Printf("publish queue update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, err)
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, "", "", err.Error(), finishedAt); updateErr != nil {

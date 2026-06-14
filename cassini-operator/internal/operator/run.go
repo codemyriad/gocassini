@@ -48,6 +48,12 @@ type Config struct {
 	// JSON API with bearer auth for standalone deploys; empty disables it
 	// and AppAPI-authenticated requests bypass it (D-376).
 	APIToken string
+	// DeliverMeetingArtifacts uploads the rich meeting artifacts (clean audio,
+	// and the readable summary when present) to the recording owner's Nextcloud
+	// files after build, alongside the raw recording. Defaults to true in the
+	// operator binary (CASSINI_DELIVER_MEETING_ARTIFACTS); the zero value is
+	// false so test runtimes opt in explicitly.
+	DeliverMeetingArtifacts bool
 }
 
 type Runtime struct {
@@ -314,6 +320,17 @@ Flags:
 
 	// Env-only on purpose: a flag would leak the token into process listings.
 	cfg.APIToken = strings.TrimSpace(os.Getenv("CASSINI_OPERATOR_API_TOKEN"))
+
+	// Deliver the rich meeting artifacts to the owner's Nextcloud files by
+	// default; CASSINI_DELIVER_MEETING_ARTIFACTS=false turns it off.
+	cfg.DeliverMeetingArtifacts = true
+	if raw := strings.TrimSpace(os.Getenv("CASSINI_DELIVER_MEETING_ARTIFACTS")); raw != "" {
+		v, parseErr := strconv.ParseBool(raw)
+		if parseErr != nil {
+			return Config{}, 2, fmt.Errorf("invalid CASSINI_DELIVER_MEETING_ARTIFACTS=%q: %w", raw, parseErr)
+		}
+		cfg.DeliverMeetingArtifacts = v
+	}
 
 	cfg.BindAddr = strings.TrimSpace(cfg.BindAddr)
 	if cfg.BindAddr == "" {
@@ -1374,4 +1391,14 @@ func talkRecordingUploadName(timestamp string) string {
 		t = time.Now().UTC()
 	}
 	return "recording-" + t.UTC().Format("20060102T150405.000000000Z") + ".mkv"
+}
+
+// talkArtifactUploadName names a rich meeting artifact for the owner's files,
+// e.g. talkArtifactUploadName("meeting", ".webm", ts) -> meeting-<ts>.webm.
+func talkArtifactUploadName(kind, ext, timestamp string) string {
+	t, err := time.Parse(time.RFC3339Nano, timestamp)
+	if err != nil {
+		t = time.Now().UTC()
+	}
+	return kind + "-" + t.UTC().Format("20060102T150405.000000000Z") + ext
 }

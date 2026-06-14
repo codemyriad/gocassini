@@ -830,6 +830,88 @@ func (rt *Runtime) uploadAndMarkTalkDelivered(jobID string, state talkRoomState,
 	}
 }
 
+// talkMeetingArtifact names a rich artifact in the meeting bundle and how it is
+// presented in the owner's Nextcloud files.
+type talkMeetingArtifact struct {
+	bundleFile string // file name inside the meeting bundle
+	uploadKind string // ts-named upload prefix, e.g. "meeting" -> meeting-<ts>.webm
+	ext        string
+	required   bool // when true, its absence/failure leaves delivery incomplete
+}
+
+// talkMeetingArtifacts is the set delivered to the owner's Files after build.
+// The clean audio is always produced; the readable summary needs an LLM and is
+// delivered only when present.
+var talkMeetingArtifacts = []talkMeetingArtifact{
+	{bundleFile: "meeting.webm", uploadKind: "meeting", ext: ".webm", required: true},
+	{bundleFile: "summary.md", uploadKind: "meeting-summary", ext: ".md", required: false},
+}
+
+// deliverTalkMeetingArtifacts uploads the rich meeting artifacts (clean audio,
+// and the readable summary when present) to the recording owner's Nextcloud
+// files after the build stage produces them. Talk's store endpoint files each
+// upload into the owner's Talk/Recording/<token> folder and offers to share it
+// into the conversation — the same blessed path the raw recording already uses,
+// so access is governed by Nextcloud sharing, not the operator. Best-effort and
+// idempotent: a Nextcloud hiccup never fails the pipeline, and the work is
+// skipped once talk_artifacts_delivered_at is set (a rerun re-attempts it while
+// unset).
+func (rt *Runtime) deliverTalkMeetingArtifacts(jobID, meetingPath string) {
+	job, err := rt.store.GetJob(context.Background(), jobID)
+	if err != nil {
+		rt.logger.Printf("talk artifact delivery skipped id=%s: %v", jobID, err)
+		return
+	}
+	if job.TalkBinding == nil {
+		return // not a Talk-originated job: there is no owner to deliver to
+	}
+	delivered, err := rt.store.TalkArtifactsDelivered(context.Background(), jobID)
+	if err != nil {
+		rt.logger.Printf("talk artifact delivery check failed id=%s: %v", jobID, err)
+		return
+	}
+	if delivered {
+		return
+	}
+	state, err := decodeTalkBinding(*job.TalkBinding)
+	if err != nil {
+		rt.logger.Printf("talk artifact delivery skipped id=%s: %v", jobID, err)
+		return
+	}
+	finishedAt := nowUTCString()
+	if job.BuildFinishedAt != nil {
+		finishedAt = *job.BuildFinishedAt
+	}
+	complete := true
+	for _, art := range talkMeetingArtifacts {
+		src := filepath.Join(meetingPath, art.bundleFile)
+		if _, statErr := os.Stat(src); statErr != nil {
+			if art.required {
+				rt.logger.Printf("talk artifact missing id=%s file=%s: %v", jobID, art.bundleFile, statErr)
+				complete = false
+			}
+			continue
+		}
+		uploadName := talkArtifactUploadName(art.uploadKind, art.ext, finishedAt)
+		if err := rt.withTalkRetry(jobID, "artifact upload "+art.bundleFile, func() error {
+			return rt.uploadTalkRecording(state, src, uploadName)
+		}); err != nil {
+			rt.logger.Printf("talk artifact upload failed id=%s file=%s: %v (rerun re-attempts delivery)", jobID, art.bundleFile, err)
+			if art.required {
+				complete = false
+			}
+			continue
+		}
+		rt.logger.Printf("talk artifact delivered id=%s file=%s as=%s owner=%s", jobID, art.bundleFile, uploadName, state.Owner)
+	}
+	if !complete {
+		return // leave talk_artifacts_delivered_at unset so a rerun re-attempts
+	}
+	if err := rt.store.MarkTalkArtifactsDelivered(context.Background(), jobID, nowUTCString()); err != nil {
+		rt.logger.Printf("talk artifacts delivered update failed id=%s: %v", jobID, err)
+	}
+}
+
 // redeliverTalkRecording re-runs Talk delivery during a rerun of a job whose
 // recording never reached Nextcloud (delivery failure or operator restart).
 // The stopped callback is best-effort here — spreed's room state has usually
