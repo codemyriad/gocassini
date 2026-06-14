@@ -144,6 +144,7 @@ Options).
 | `OPENROUTER_API_KEY` | No | API key for LLM transcript cleanup + meeting summaries. Unset, raw transcripts are published without summaries |
 | `LLM_BASE_URL` | No | OpenAI-compatible API base URL; defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
 | `LLM_MODEL` | No | Model for cleanup/summaries (default `openai/gpt-4o-mini`) |
+| `CASSINI_DELIVER_MEETING_ARTIFACTS` | No | Deliver the clean audio + readable summary to the owner's `Talk/Recording` folder after build (default `true`). `false` uploads only the raw recording |
 
 ### Runtime environment reference
 
@@ -245,9 +246,11 @@ occ config:app:set spreed call_recording --value=yes
    recording indicator turns on.
 3. Speak for a minute, stop the recording, leave the call.
 4. Watch the job progress through record → build → publish in the control
-   panel. The audio file is uploaded back to Talk (stored in the recording
-   owner's attachments folder, with a notification to share it into the
-   chat); the transcript/summary appears in the viewer.
+   panel. The raw recording is uploaded back to Talk (stored in the recording
+   owner's `Talk/Recording/<token>` folder, with a notification to share it
+   into the chat); after build, the clean audio — and the readable summary when
+   an LLM is configured — are delivered to the same folder. The transcript also
+   appears in the owner-scoped viewer.
 
 **Rollback** — restore the saved value and Talk records through the previous
 backend again; the Cassini ExApp can stay installed:
@@ -331,15 +334,14 @@ Outside AppAPI (plain `docker run` without `APP_PERSISTENT_STORAGE`) the
 image defaults apply: `/var/lib/cassini-operator` for the DB + work root and
 `/srv/cassini-site/published` for the site — mount volumes there yourself.
 
-**Two copies, and what to back up.** Each recording exists in two places: the
-raw `.mkv` that Cassini uploads into the **room owner's `Talk/Recordings`
-folder in Nextcloud Files** (quota-counted and part of your normal Files
-backups — see [Step 5](#step-5--talk-handoff-reversible)), and the
-operator's own copy plus the derived artifacts (transcript, summary, viewer
-site) under `nc_app_gocassini_data`. The transcript, summary, and site live
-**only** in that volume — they are not in Nextcloud's Files backups — so back
-up `nc_app_gocassini_data` separately if you want to keep them. Deleting one
-copy does not affect the other.
+**What lands where, and what to back up.** Cassini delivers the user-facing
+files into the **room owner's `Talk/Recording/<token>` folder in Nextcloud
+Files** (quota-counted and part of your normal Files backups): the raw `.mkv`,
+the clean audio, and — when an LLM is configured — the readable summary. The
+operator also keeps its own working copy plus the published viewer site under
+the `nc_app_gocassini_data` volume; the site and job history live **only** in
+that volume (not in Nextcloud's Files backups), so back it up separately if you
+want to keep them. Deleting a file in one place does not affect the other.
 
 **Retention.** There is no automatic retention or pruning yet: recordings and
 job history accumulate until removed manually (delete the Files `.mkv`, or

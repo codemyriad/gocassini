@@ -272,7 +272,22 @@ larger Talk-integration work shaped:
     `docs/exapp-install.md`). This realizes the "owner-gated by default"
     decision within today's architecture and removes the #1 risk (org-wide
     exposure) — no live Talk server required.
-- **Shaped, not built (needs a live Talk/Nextcloud to build+verify):** native
-  delivery of the rich bundle into the owner's Files via Talk + offer-to-share,
-  auto-share opt-in, the delete/erasure endpoint, and retention controls
-  (phases 3 and 5–7 above).
+- **Shipped:** **Nextcloud-native delivery** of the rich artifacts (option C).
+  After build, the clean audio (`meeting.webm`, always) and the readable summary
+  (`summary.md`, when an LLM produced one) are uploaded to the owner's
+  `Talk/Recording/<token>` folder via Talk's store endpoint — the same blessed
+  path the raw recording uses, so access is governed by Nextcloud sharing and
+  Talk's "share to chat?" offer comes for free.
+  - `deliverTalkMeetingArtifacts` (`talk_backend.go`) hooks synchronously at
+    build success, before publish (deterministic; never fails the build).
+    Idempotent via `talk_artifacts_delivered_at` (migration `0005`).
+  - Gated by `CASSINI_DELIVER_MEETING_ARTIFACTS` (default true; declared in
+    `info.xml` so admins can disable it).
+  - Tests: direct delivery + idempotency unit tests, a full
+    record→build→publish integration test (`talk_artifacts_delivery_test.go`),
+    **and** the live-Talk roundtrip e2e now asserts the clean `.webm` lands in
+    the owner's Files over WebDAV (`harness/bin/ci-e2e-talk-record-roundtrip.sh`).
+- **Shaped, not built:** auto-share opt-in (the store endpoint already *offers*
+  to share; auto-creating the room share is the remaining opt-in), the
+  delete/erasure endpoint, retention controls, and superseding the raw `.mkv`
+  with the clean bundle to avoid two files per meeting (§9). Phases 6–7 above.

@@ -573,6 +573,63 @@ if [[ "$READ_BYTES" != "$MKV_SIZE" ]]; then
 fi
 log "OK recording readable via WebDAV GET ($READ_BYTES bytes)"
 
+# The build stage additionally delivers the clean audio (meeting.webm) to the
+# SAME folder, sequenced strictly before publish — which phase 7 already waited
+# for — so it is present without extra polling, just like the raw recording
+# (CASSINI_DELIVER_MEETING_ARTIFACTS, default on). Reuse the depth-1 PROPFIND
+# already fetched above; it lists every file in the folder.
+log "asserting the clean audio (.webm) also landed in ${RECORDING_OWNER}'s files"
+MIN_ARTIFACT_BYTES="${MIN_ARTIFACT_BYTES:-1000}"
+WEBM_ENTRY=$(python3 - "$DAV_PROPFIND" "$MIN_ARTIFACT_BYTES" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+propfind_path, min_bytes = sys.argv[1], int(sys.argv[2])
+ns = {"d": "DAV:"}
+webms = []
+for resp in ET.parse(propfind_path).getroot().findall("d:response", ns):
+    href = (resp.findtext("d:href", "", ns) or "").strip()
+    if not href.lower().endswith(".webm"):
+        continue
+    sizes = [
+        int(el.text)
+        for el in resp.iter("{DAV:}getcontentlength")
+        if (el.text or "").strip().isdigit()
+    ]
+    webms.append((href, sizes[0] if sizes else -1))
+
+if len(webms) != 1:
+    print(
+        f"[talk-rec-e2e] FAIL expected exactly one .webm (clean audio) in the "
+        f"recording folder, found {len(webms)}: {webms}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+href, size = webms[0]
+if size < min_bytes:
+    print(
+        f"[talk-rec-e2e] FAIL clean audio {href} is {size} bytes "
+        f"(< {min_bytes} floor)",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+print(f"{href}\t{size}")
+PY
+) || fail "clean audio (.webm) missing or too small in ${RECORDING_OWNER}'s files (PROPFIND: $DAV_PROPFIND)"
+WEBM_HREF=${WEBM_ENTRY%%$'\t'*}
+WEBM_SIZE=${WEBM_ENTRY##*$'\t'}
+log "OK clean audio in owner's files: $WEBM_HREF ($WEBM_SIZE bytes)"
+
+# Existence is necessary but not sufficient — stream it back as the owner.
+WEBM_READBACK="$LOG_DIR/clean-audio-readback.webm"
+WEBM_READ_BYTES=$(curl -sf -u "$RECORDING_OWNER:$RECORDING_OWNER_PASSWORD" \
+  -o "$WEBM_READBACK" -w '%{size_download}' "$NC_URL_HOST$WEBM_HREF") \
+  || fail "WebDAV GET $WEBM_HREF as $RECORDING_OWNER failed"
+if [[ "$WEBM_READ_BYTES" != "$WEBM_SIZE" ]]; then
+  fail "WebDAV GET $WEBM_HREF returned $WEBM_READ_BYTES bytes but PROPFIND advertised $WEBM_SIZE"
+fi
+log "OK clean audio readable via WebDAV GET ($WEBM_READ_BYTES bytes)"
+
 # ============================================================================
 # Phase 9: Levenshtein-check transcript vs scenario expected text
 # ============================================================================

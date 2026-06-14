@@ -7,7 +7,7 @@
   <description><![CDATA[Cassini joins a Nextcloud Talk room as a bot, records the call,
 transcribes and summarizes it, and makes a readable transcript and summary
 available to the people the recording belongs to. The raw recording is filed
-into the call owner's Talk/Recordings folder in Nextcloud Files, the same place
+into the call owner's Talk/Recording folder in Nextcloud Files, the same place
 Talk's built-in recorder uses. Recording control and job history live in the
 admin-only control panel; in the viewer each user sees only the recordings they
 own — recordings are owner-private, not an org-wide archive.]]></description>
@@ -75,6 +75,11 @@ own — recordings are owner-private, not an org-wide archive.]]></description>
         <name>CASSINI_OPERATOR_API_TOKEN</name>
         <display-name>Operator API bearer token (optional)</display-name>
         <description>When set, direct (non-proxied) requests to the operator job API must send "Authorization: Bearer &lt;token&gt;". Requests proxied through Nextcloud are authenticated by AppAPI and are unaffected. Leave empty to keep the API reachable only through the AppAPI proxy authentication.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_DELIVER_MEETING_ARTIFACTS</name>
+        <display-name>Deliver meeting artifacts to Files (optional)</display-name>
+        <description>When true (the default), the clean audio and the readable meeting summary (when an LLM produced one) are uploaded to the recording owner's Talk/Recording folder in Nextcloud Files after processing, alongside the raw recording, and offered to share into the conversation. Set to false to upload only the raw recording.</description>
       </variable>
     </environment-variables>
 
