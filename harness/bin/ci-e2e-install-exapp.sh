@@ -173,7 +173,9 @@ JSON=$(jq -nc \
        {url: "^published\\/.+$",                    verb: "GET,HEAD", access_level: 1},
        {url: "^img\\/app\\.svg$",                   verb: "GET,HEAD", access_level: 1},
        {url: "^ui\\/viewer\\.js$",                  verb: "GET,HEAD", access_level: 1},
-       {url: "^ui\\/control-panel\\.js$",           verb: "GET,HEAD", access_level: 2}
+       {url: "^ui\\/viewer\\.css$",                 verb: "GET,HEAD", access_level: 1},
+       {url: "^ui\\/control-panel\\.js$",           verb: "GET,HEAD", access_level: 2},
+       {url: "^ui\\/control-panel\\.css$",          verb: "GET,HEAD", access_level: 2}
      ]
    }')
 
@@ -265,6 +267,7 @@ assert_status admin   "admin:admin"                       "control-panel/" 200
 assert_status admin   "admin:admin"                       "operator/jobs"  200
 assert_status admin   "admin:admin"                       "viewer/"        200
 assert_status admin   "admin:admin"                       "ui/control-panel.js" 200
+assert_status admin   "admin:admin"                       "ui/control-panel.css" 200
 
 log "checking proxied route access for $TEST_USER (USER tier)"
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "viewer/"        200
@@ -272,6 +275,7 @@ assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "control-panel/" 404
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "operator/jobs"  404
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/viewer.js"   200
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/control-panel.js" 404
+assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/control-panel.css" 404
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "img/app.svg"    200
 
 # --- 7c. Assert the admin UI actually loads (not just 200 + empty) --------
@@ -368,6 +372,50 @@ if ! grep -qE "proxy/${APP_ID}/ui/viewer\.css" <<<"$embedded_body"; then
   fail "embedded viewer page does not reference the proxied ui/viewer.css stylesheet (broken ui/style registration?)"
 fi
 log "OK   embedded viewer page 200 with a nonce'd proxy ui/viewer.js and ui/viewer.css"
+
+# --- 7e. Embedded control-panel wiring (D-382) ----------------------------
+#
+# Same shape as the viewer check above, for the admin control panel: it now
+# renders directly on AppAPI's nonce'd embedded page from a self-mounting IIFE
+# + stylesheet (the D-382 embedded build), not an iframe of proxied SPA HTML
+# (which AppAPI's default-src 'none' CSP blocked, leaving the panel blank).
+# The control-panel entry is ADMIN tier, so use the admin Basic creds (the
+# regular e2euser would 404 on the embedded route). HONEST LIMIT: this proves
+# registered+served+page-references-nonce'd-script, NOT pixel render (no
+# headless browser in repo).
+CP_EMBEDDED_URL="$NC_BASE/index.php/apps/app_api/embedded/${APP_ID}/control-panel"
+log "checking embedded control-panel page $CP_EMBEDDED_URL"
+cp_embedded_status=$(curl -sS -u "admin:admin" \
+  -o "$LOG_DIR/embedded-control-panel.html" -w '%{http_code}' "$CP_EMBEDDED_URL")
+if [[ "$cp_embedded_status" != "200" ]]; then
+  log "first 300 chars of embedded response:"
+  log "$(head -c 300 "$LOG_DIR/embedded-control-panel.html" 2>/dev/null)"
+  fail "embedded control-panel page expected 200 got $cp_embedded_status"
+fi
+
+# Assert the nonce is ON THE SAME <script> tag that loads control-panel.js —
+# under CSP strict-dynamic only a nonce'd script runs; a raw host-allowlisted
+# src is ignored, so a nonce elsewhere on the page is not sufficient. Attribute
+# order is not guaranteed, so isolate the control-panel.js <script> tag and
+# require nonce= within it. Also assert the registered ui/style
+# (ui/control-panel.css) <link> is present, else the panel renders unstyled.
+cp_embedded_body=$(cat "$LOG_DIR/embedded-control-panel.html")
+cp_script_tag=$(grep -oE "<script[^>]*proxy/${APP_ID}/ui/control-panel\.js[^>]*>" <<<"$cp_embedded_body" | head -1)
+if [[ -z "$cp_script_tag" ]]; then
+  log "embedded page did not reference the registered ui/control-panel.js; first 400 chars:"
+  log "$(head -c 400 "$LOG_DIR/embedded-control-panel.html")"
+  fail "embedded control-panel page does not reference the proxied ui/control-panel.js bundle"
+fi
+if ! grep -qE 'nonce="[^"]+"' <<<"$cp_script_tag"; then
+  log "control-panel.js script tag was: $cp_script_tag"
+  fail "the ui/control-panel.js <script> tag is not nonce'd (CSP strict-dynamic would block the panel)"
+fi
+if ! grep -qE "proxy/${APP_ID}/ui/control-panel\.css" <<<"$cp_embedded_body"; then
+  log "embedded page did not reference the registered ui/control-panel.css; first 400 chars:"
+  log "$(head -c 400 "$LOG_DIR/embedded-control-panel.html")"
+  fail "embedded control-panel page does not reference the proxied ui/control-panel.css stylesheet (broken ui/style registration?)"
+fi
+log "OK   embedded control-panel page 200 with a nonce'd proxy ui/control-panel.js and ui/control-panel.css"
 
 log "checking proxied catalog $PROXY/published/catalog.json"
 catalog_status=$(curl -sS -u "$TEST_USER:$TEST_USER_PASSWORD" \
