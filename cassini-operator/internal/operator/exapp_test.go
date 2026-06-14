@@ -256,8 +256,10 @@ func TestUIRegistrarRegistersTopMenuEntriesAndScripts(t *testing.T) {
 	}
 	registrar()
 
-	if len(calls) != 4 {
-		t.Fatalf("got %d OCS calls, want 4 (2 top-menu + 2 script): %+v", len(calls), calls)
+	// 2 top-menu + 2 script + 1 style (the viewer also registers its ui/style
+	// for the embedded build; control-panel iframes its own SPA, no style).
+	if len(calls) != 5 {
+		t.Fatalf("got %d OCS calls, want 5 (2 top-menu + 2 script + 1 viewer style): %+v", len(calls), calls)
 	}
 	wantAuth := base64.StdEncoding.EncodeToString([]byte(":shh"))
 	for i, c := range calls {
@@ -275,42 +277,76 @@ func TestUIRegistrarRegistersTopMenuEntriesAndScripts(t *testing.T) {
 		}
 	}
 
-	// Calls 0/2 register the entries, calls 1/3 their bootstrap scripts.
-	wantTopMenu := []struct {
-		name          string
-		adminRequired float64 // JSON numbers decode to float64
-	}{{"viewer", 0}, {"control-panel", 1}}
-	for i, want := range wantTopMenu {
-		c := calls[i*2]
+	// uiRegistrar emits per-entry calls in order: for the viewer (entry 0) the
+	// top-menu, script, then style; for control-panel (entry 1) the top-menu
+	// then script. So the call sequence is:
+	//   [0] viewer        top-menu
+	//   [1] viewer        script
+	//   [2] viewer        style
+	//   [3] control-panel top-menu
+	//   [4] control-panel script
+	assertTopMenu := func(idx int, name string, adminRequired float64) {
+		c := calls[idx]
 		if c.Path != "/ocs/v2.php/apps/app_api/api/v1/ui/top-menu" {
-			t.Fatalf("call %d path = %q, want the ui/top-menu OCS route", i*2, c.Path)
+			t.Fatalf("call %d path = %q, want the ui/top-menu OCS route", idx, c.Path)
 		}
-		if c.Body["name"] != want.name {
-			t.Errorf("top-menu %d: name = %v, want %q", i, c.Body["name"], want.name)
+		if c.Body["name"] != name {
+			t.Errorf("top-menu %q: name = %v", name, c.Body["name"])
 		}
-		if c.Body["adminRequired"] != want.adminRequired {
-			t.Errorf("top-menu %q: adminRequired = %v, want %v", want.name, c.Body["adminRequired"], want.adminRequired)
+		if c.Body["adminRequired"] != adminRequired {
+			t.Errorf("top-menu %q: adminRequired = %v, want %v", name, c.Body["adminRequired"], adminRequired)
 		}
 		if c.Body["icon"] != "img/app.svg" {
-			t.Errorf("top-menu %q: icon = %v, want img/app.svg", want.name, c.Body["icon"])
+			t.Errorf("top-menu %q: icon = %v, want img/app.svg", name, c.Body["icon"])
 		}
 		if disp, _ := c.Body["displayName"].(string); disp == "" {
-			t.Errorf("top-menu %q: displayName missing", want.name)
+			t.Errorf("top-menu %q: displayName missing", name)
 		}
-
-		s := calls[i*2+1]
+	}
+	assertScript := func(idx int, name string) {
+		s := calls[idx]
 		if s.Path != "/ocs/v2.php/apps/app_api/api/v1/ui/script" {
-			t.Fatalf("call %d path = %q, want the ui/script OCS route", i*2+1, s.Path)
+			t.Fatalf("call %d path = %q, want the ui/script OCS route", idx, s.Path)
 		}
 		if s.Body["type"] != "top_menu" {
-			t.Errorf("script %q: type = %v, want top_menu", want.name, s.Body["type"])
+			t.Errorf("script %q: type = %v, want top_menu", name, s.Body["type"])
 		}
-		if s.Body["name"] != want.name {
-			t.Errorf("script %d: name = %v, want %q", i, s.Body["name"], want.name)
+		if s.Body["name"] != name {
+			t.Errorf("script %q: name = %v", name, s.Body["name"])
 		}
 		// Path is relative to the ExApp root, ".js" appended by Nextcloud.
-		if wantPath := "ui/" + want.name; s.Body["path"] != wantPath {
-			t.Errorf("script %q: path = %v, want %q", want.name, s.Body["path"], wantPath)
+		if wantPath := "ui/" + name; s.Body["path"] != wantPath {
+			t.Errorf("script %q: path = %v, want %q", name, s.Body["path"], wantPath)
+		}
+	}
+
+	assertTopMenu(0, "viewer", 0)
+	assertScript(1, "viewer")
+
+	// Call 2: the viewer ui/style. Path is "ui/viewer" WITH NO extension —
+	// AppAPI appends ".css" (registering "ui/viewer.css" would 404 as
+	// "ui/viewer.css.css"). This is the D-381 contract.
+	style := calls[2]
+	if style.Path != "/ocs/v2.php/apps/app_api/api/v1/ui/style" {
+		t.Fatalf("call 2 path = %q, want the ui/style OCS route", style.Path)
+	}
+	if style.Body["type"] != "top_menu" {
+		t.Errorf("style: type = %v, want top_menu", style.Body["type"])
+	}
+	if style.Body["name"] != "viewer" {
+		t.Errorf("style: name = %v, want viewer", style.Body["name"])
+	}
+	if style.Body["path"] != "ui/viewer" {
+		t.Errorf("style: path = %v, want ui/viewer (no extension)", style.Body["path"])
+	}
+
+	assertTopMenu(3, "control-panel", 1)
+	assertScript(4, "control-panel")
+
+	// The control-panel entry must NOT register a ui/style.
+	for i, c := range calls {
+		if c.Path == "/ocs/v2.php/apps/app_api/api/v1/ui/style" && c.Body["name"] != "viewer" {
+			t.Errorf("call %d: unexpected ui/style registration for %v", i, c.Body["name"])
 		}
 	}
 }
@@ -348,30 +384,71 @@ func TestUIRegistrarLogsErrorOnOCSFailure(t *testing.T) {
 	}
 }
 
-// The bootstrap script paths sent to AppAPI must be served by the operator
-// itself: AppAPI rewrites them to proxy fetches of /ui/<entry>.js. This guards
-// the registrar JSON and the asset routes against drifting apart.
+// The asset paths sent to AppAPI must be served by the operator itself: AppAPI
+// rewrites them to proxy fetches of /ui/<entry>.{js,css}. This guards the
+// registrar JSON and the asset routes against drifting apart.
+//
+// D-381: the viewer entry now serves its embedded build (a self-mounting IIFE
+// + stylesheet from <ViewerDist>/embedded/), NOT the iframe bootstrap. The
+// control-panel entry still serves the iframe bootstrap.
 func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
+	viewerDist := t.TempDir()
+	// Stand in for the baked-in embedded viewer build. The marker strings are
+	// what a real embedded.ts compiles down to references of (it mounts into an
+	// #app under #content) — assert the served body is the embedded bundle, not
+	// an iframe bootstrap.
+	writeFile(t, filepath.Join(viewerDist, "embedded", "embedded.js"),
+		`(function(){/* embedded viewer */ var app=document.getElementById("app"); /* mount #app */})();`)
+	writeFile(t, filepath.Join(viewerDist, "embedded", "embedded.css"),
+		`#app{display:block}`)
+
 	root := http.NewServeMux()
-	ExAppConfig{}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
+	ExAppConfig{ViewerDist: viewerDist}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
 
+	// --- viewer: embedded IIFE + CSS, served from disk, NOT an iframe ---
+	rj := httptest.NewRequest(http.MethodGet, "/ui/viewer.js", nil)
+	wj := httptest.NewRecorder()
+	root.ServeHTTP(wj, rj)
+	if wj.Code != http.StatusOK {
+		t.Fatalf("GET /ui/viewer.js: got %d, want 200", wj.Code)
+	}
+	if ct := wj.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
+		t.Fatalf("GET /ui/viewer.js: Content-Type %q does not include javascript", ct)
+	}
+	body := wj.Body.String()
+	if strings.Contains(body, "iframe") {
+		t.Fatalf("GET /ui/viewer.js: viewer must serve the embedded IIFE, not an iframe bootstrap")
+	}
+	if !strings.Contains(body, "#app") {
+		t.Fatalf("GET /ui/viewer.js: body does not reference the embedded mount target (#app): %q", body)
+	}
+
+	rc := httptest.NewRequest(http.MethodGet, "/ui/viewer.css", nil)
+	wc := httptest.NewRecorder()
+	root.ServeHTTP(wc, rc)
+	if wc.Code != http.StatusOK {
+		t.Fatalf("GET /ui/viewer.css: got %d, want 200", wc.Code)
+	}
+	if ct := wc.Header().Get("Content-Type"); !strings.Contains(ct, "css") {
+		t.Fatalf("GET /ui/viewer.css: Content-Type %q does not include css", ct)
+	}
+
+	// --- control-panel: still the iframe bootstrap ---
+	rb := httptest.NewRequest(http.MethodGet, "/ui/control-panel.js", nil)
+	wb := httptest.NewRecorder()
+	root.ServeHTTP(wb, rb)
+	if wb.Code != http.StatusOK {
+		t.Fatalf("GET /ui/control-panel.js: got %d, want 200", wb.Code)
+	}
+	if ct := wb.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
+		t.Fatalf("GET /ui/control-panel.js: Content-Type %q does not include javascript", ct)
+	}
+	if !strings.Contains(wb.Body.String(), "iframe") {
+		t.Fatalf("GET /ui/control-panel.js: bootstrap body does not build an iframe")
+	}
+
+	// --- every entry's icon must resolve ---
 	for _, entry := range topMenuEntries {
-		// Same URL AppAPI's ExAppUiMiddleware rewrites the script src to,
-		// minus the proxy prefix the operator never sees.
-		r := httptest.NewRequest(http.MethodGet, "/ui/"+entry.Name+".js", nil)
-		w := httptest.NewRecorder()
-		root.ServeHTTP(w, r)
-		if w.Code != http.StatusOK {
-			t.Fatalf("GET /ui/%s.js: got %d, want 200", entry.Name, w.Code)
-		}
-		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
-			t.Fatalf("GET /ui/%s.js: Content-Type %q does not include javascript", entry.Name, ct)
-		}
-		if !strings.Contains(w.Body.String(), "iframe") {
-			t.Fatalf("GET /ui/%s.js: bootstrap body does not build an iframe", entry.Name)
-		}
-
-		// And the icon each entry references must resolve too.
 		ri := httptest.NewRequest(http.MethodGet, "/"+entry.Icon, nil)
 		wi := httptest.NewRecorder()
 		root.ServeHTTP(wi, ri)
@@ -380,6 +457,23 @@ func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
 		}
 		if ct := wi.Header().Get("Content-Type"); !strings.Contains(ct, "svg") {
 			t.Fatalf("GET /%s: Content-Type %q does not include svg", entry.Icon, ct)
+		}
+	}
+}
+
+// When CASSINI_VIEWER_DIST is unset (or the embedded build is missing), the
+// viewer ui asset routes degrade to 503 rather than 404/200-empty, mirroring
+// the SPA handler's "assets not bundled" behavior.
+func TestUIViewerAssetUnavailableWithoutDist(t *testing.T) {
+	root := http.NewServeMux()
+	ExAppConfig{}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
+
+	for _, path := range []string{"/ui/viewer.js", "/ui/viewer.css"} {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		root.ServeHTTP(w, r)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("GET %s without ViewerDist: got %d, want 503", path, w.Code)
 		}
 	}
 }

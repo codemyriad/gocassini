@@ -15,7 +15,6 @@ export interface MeetingCatalog {
 }
 
 const DEFAULT_CATALOG_PATH = "./catalog.json";
-const CATALOG_FILE_NAME = "catalog.json";
 
 export async function loadMeetingCatalog(path = DEFAULT_CATALOG_PATH): Promise<MeetingCatalog | null> {
   const targetUrl = path === DEFAULT_CATALOG_PATH ? resolveCatalogUrl() : path;
@@ -135,29 +134,36 @@ function resolveAppAssetUrl(assetPath: string): string {
 
 // resolveCatalogUrl returns the URL the viewer should hit for catalog.json.
 //
-// Default behavior: resolve relative to the SPA's BASE_URL (Vite base), so a
+// Embedded mode (highest precedence): when src/embedded.ts has captured the
+// AppAPI proxy base into window.__CASSINI_VIEWER_BASE__ (e.g.
+// "/index.php/apps/app_api/proxy/gocassini/"), the published archive is served
+// by the operator at "<base>published/". Resolving catalog.json there — rather
+// than relative to the embedded page's own pathname (which is the Nextcloud
+// /index.php/apps/app_api/embedded/... route, not the proxy) — is what makes
+// the fetch land. artifactPath / audioPath follow automatically because they
+// resolve against the fetched catalog's response.url.
+//
+// Standalone mode: resolve relative to the SPA's BASE_URL (Vite base), so a
 // stand-alone exported site at https://example.com/foo/ fetches
 // https://example.com/foo/catalog.json — what the existing portable export
 // flow expects.
-//
-// When VITE_PUBLISHED_BASE is set at build time, the catalog (and by
-// extension every artifactPath / audioPath the catalog points at) is served
-// from a different URL prefix. The Nextcloud ExApp build sets this to
-// `/published` so the viewer SPA can live at /viewer/ while the published
-// archive stays at /published/.
 function resolveCatalogUrl(): string {
-  const publishedBase = readEnv("VITE_PUBLISHED_BASE");
-  if (!publishedBase) {
-    return resolveAppAssetUrl(DEFAULT_CATALOG_PATH);
+  const viewerBase = readViewerBase();
+  if (viewerBase) {
+    return new URL("published/catalog.json", viewerBase).toString();
   }
-  const normalized = publishedBase.endsWith("/") ? publishedBase : `${publishedBase}/`;
-  return new URL(CATALOG_FILE_NAME, new URL(normalized, window.location.href)).toString();
+  return resolveAppAssetUrl(DEFAULT_CATALOG_PATH);
 }
 
-function readEnv(name: string): string {
-  // import.meta.env exposes every VITE_* env baked in at build time.
-  const value = (import.meta.env as Record<string, unknown> | undefined)?.[name];
-  return typeof value === "string" ? value : "";
+// readViewerBase reads the AppAPI proxy base set by src/embedded.ts. Returns
+// an absolute URL the catalog/asset paths resolve against, or "" outside the
+// embedded build.
+function readViewerBase(): string {
+  const base = typeof window !== "undefined" ? window.__CASSINI_VIEWER_BASE__ : undefined;
+  if (typeof base !== "string" || base === "") {
+    return "";
+  }
+  return new URL(base, window.location.href).toString();
 }
 
 function resolveCatalogAssetUrl(assetPath: string, catalogUrl: string): string {

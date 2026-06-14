@@ -299,4 +299,88 @@ assert_admin_ui_loads() {
 log "checking that admin UI actually loads (body contains SPA title)"
 assert_admin_ui_loads
 
+# --- 7d. Embedded viewer wiring (D-381) -----------------------------------
+#
+# The viewer renders INSIDE Nextcloud on AppAPI's embedded page
+# (/index.php/apps/app_api/embedded/<app>/viewer), which carries a permissive
+# nonce CSP — not an iframe of proxied HTML. This asserts the wiring HTTP-level
+# (HONEST LIMIT: proves registered+served+page-references-nonce'd-script+
+# catalog-reachable, NOT pixel render — there is no headless browser in repo):
+#   1. Seed a catalog so /published/catalog.json is reachable.
+#   2. The embedded page (as the test user) is 200 AND references the
+#      registered, nonce'd <script src=".../proxy/<app>/ui/viewer.js">.
+#   3. The proxied catalog is 200 + a valid cassini.viewer.catalog.v1.
+
+# SiteRoot inside the container: the operator serves /published/ from
+# CASSINI_OPERATOR_SITE_ROOT. This e2e runs the container without
+# APP_PERSISTENT_STORAGE, so the baked image default applies unchanged; read it
+# from the container env rather than hardcoding.
+SITE_ROOT=$(docker exec "$CONTAINER_NAME" printenv CASSINI_OPERATOR_SITE_ROOT 2>/dev/null || true)
+SITE_ROOT="${SITE_ROOT:-/srv/cassini-site/published}"
+
+log "seeding catalog at ${SITE_ROOT}/catalog.json inside the container"
+docker exec "$CONTAINER_NAME" sh -c \
+  'mkdir -p "$1" && printf "%s" "{\"version\":\"cassini.viewer.catalog.v1\",\"meetings\":[]}" > "$1/catalog.json"' \
+  _ "$SITE_ROOT" \
+  || fail "could not seed catalog into the container at $SITE_ROOT"
+
+# A plain Basic GET on the embedded page can 302 to the login flow, so use a
+# cookie-jar login (like d263-nextcloud-lifecycle.sh) for the test user.
+NC_BASE="http://127.0.0.1:${NEXTCLOUD_HOST_PORT}"
+# The embedded page is a regular authenticated Nextcloud route (served by the
+# app_api PHP app, not the ExApp proxy). Nextcloud's BasicAuth middleware
+# authenticates GETs per-request, so reuse the same HTTP Basic creds the proxy
+# route checks above already use successfully (a cookie-jar login flow is
+# brittle and was not establishing a session). The viewer entry is USER tier,
+# so the regular e2euser can open it.
+EMBEDDED_URL="$NC_BASE/index.php/apps/app_api/embedded/${APP_ID}/viewer"
+log "checking embedded viewer page $EMBEDDED_URL"
+embedded_status=$(curl -sS -u "$TEST_USER:$TEST_USER_PASSWORD" \
+  -o "$LOG_DIR/embedded-viewer.html" -w '%{http_code}' "$EMBEDDED_URL")
+if [[ "$embedded_status" != "200" ]]; then
+  log "first 300 chars of embedded response:"
+  log "$(head -c 300 "$LOG_DIR/embedded-viewer.html" 2>/dev/null)"
+  fail "embedded viewer page expected 200 got $embedded_status"
+fi
+
+# The registered ui/script is injected as a Nextcloud-nonce'd
+# <script ... nonce="…" src=".../proxy/<app>/ui/viewer.js">. Assert the nonce is
+# ON THE SAME <script> tag that loads viewer.js — under CSP strict-dynamic only
+# a nonce'd script runs; a raw host-allowlisted src is ignored, so a nonce
+# elsewhere on the page is not sufficient. Attribute order is not guaranteed, so
+# isolate the viewer.js <script> tag and require nonce= within it. Also assert
+# the registered ui/style (ui/viewer.css) <link> is present, else the viewer
+# renders unstyled (a broken ui/style registration).
+embedded_body=$(cat "$LOG_DIR/embedded-viewer.html")
+viewer_script_tag=$(grep -oE "<script[^>]*proxy/${APP_ID}/ui/viewer\.js[^>]*>" <<<"$embedded_body" | head -1)
+if [[ -z "$viewer_script_tag" ]]; then
+  log "embedded page did not reference the registered ui/viewer.js; first 400 chars:"
+  log "$(head -c 400 "$LOG_DIR/embedded-viewer.html")"
+  fail "embedded viewer page does not reference the proxied ui/viewer.js bundle"
+fi
+if ! grep -qE 'nonce="[^"]+"' <<<"$viewer_script_tag"; then
+  log "viewer.js script tag was: $viewer_script_tag"
+  fail "the ui/viewer.js <script> tag is not nonce'd (CSP strict-dynamic would block the viewer)"
+fi
+if ! grep -qE "proxy/${APP_ID}/ui/viewer\.css" <<<"$embedded_body"; then
+  log "embedded page did not reference the registered ui/viewer.css; first 400 chars:"
+  log "$(head -c 400 "$LOG_DIR/embedded-viewer.html")"
+  fail "embedded viewer page does not reference the proxied ui/viewer.css stylesheet (broken ui/style registration?)"
+fi
+log "OK   embedded viewer page 200 with a nonce'd proxy ui/viewer.js and ui/viewer.css"
+
+log "checking proxied catalog $PROXY/published/catalog.json"
+catalog_status=$(curl -sS -u "$TEST_USER:$TEST_USER_PASSWORD" \
+  -o "$LOG_DIR/published-catalog.json" -w '%{http_code}' "$PROXY/published/catalog.json")
+if [[ "$catalog_status" != "200" ]]; then
+  fail "proxied catalog expected 200 got $catalog_status"
+fi
+catalog_version=$(jq -r '.version' "$LOG_DIR/published-catalog.json" 2>/dev/null || echo "")
+if [[ "$catalog_version" != "cassini.viewer.catalog.v1" ]]; then
+  log "catalog body:"
+  log "$(head -c 300 "$LOG_DIR/published-catalog.json" 2>/dev/null)"
+  fail "proxied catalog is not a valid cassini.viewer.catalog.v1 (version=$catalog_version)"
+fi
+log "OK   proxied /published/catalog.json 200 and is a valid cassini.viewer.catalog.v1"
+
 log "install-e2e passed"

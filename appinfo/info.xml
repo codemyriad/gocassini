@@ -191,6 +191,14 @@ logged-in user.]]></description>
         <verb>GET,HEAD</verb>
         <access_level>USER</access_level>
       </route>
+      <!-- The viewer renders directly on AppAPI's embedded page (D-381), so its
+           stylesheet is registered as a ui/style and fetched through the proxy
+           too. USER, like the viewer JS. -->
+      <route>
+        <url>^ui\/viewer\.css$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>USER</access_level>
+      </route>
       <route>
         <url>^ui\/control-panel\.js$</url>
         <verb>GET,HEAD</verb>

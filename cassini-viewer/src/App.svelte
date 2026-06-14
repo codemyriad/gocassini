@@ -35,6 +35,7 @@
     sortMeetingCatalogEntries,
     type MeetingCatalogEntry,
   } from "./viewer/catalog";
+  import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "./viewer/hashRouting";
 
   interface DisplaySegment {
     id: string;
@@ -157,6 +158,16 @@
     return DOMPurify.sanitize(rawHtml, { USE_PROFILES: { html: true } });
   }
 
+  // Routing is hash-only (see src/viewer/hashRouting.ts for why and the wire
+  // format). These thin wrappers bind the pure helpers to the live location.
+  function currentViewerHash() {
+    return readViewerHash(window.location.hash);
+  }
+
+  function viewerHref(hash: string): string {
+    return viewerUrlWithHash(window.location.href, hash);
+  }
+
   function handleBackToList() {
     pushMeetingUrl("");
     resetLoadedArtifact();
@@ -165,36 +176,20 @@
   }
 
   function pushMeetingUrl(meetingId: string) {
-    const url = new URL(window.location.href);
-    if (meetingId) {
-      url.searchParams.set("meeting", meetingId);
-    } else {
-      url.searchParams.delete("meeting");
-    }
-    // tx applies to a specific meeting; drop it on any meeting navigation so
-    // the next meeting opens on its producer-default transcript.
-    url.searchParams.delete("tx");
-    url.hash = "";
-    window.history.pushState({}, "", url);
+    // tx applies to a specific meeting; dropping it (we never carry it forward)
+    // means the next meeting opens on its producer-default transcript.
+    window.history.pushState({}, "", viewerHref(buildViewerHash({ meeting: meetingId })));
   }
 
   function seedListHistoryEntry(meetingId: string) {
     // The "list" entry below the current page in the back stack never carries
     // a transcript selection; tx is per-meeting state.
-    const incomingUrl = new URL(window.location.href);
-    const listUrl = new URL(incomingUrl.toString());
-    listUrl.searchParams.delete("meeting");
-    listUrl.searchParams.delete("tx");
-    listUrl.hash = "";
-    window.history.replaceState({}, "", listUrl);
-    const meetingUrl = new URL(incomingUrl.toString());
-    meetingUrl.searchParams.set("meeting", meetingId);
-    window.history.pushState({}, "", meetingUrl);
+    window.history.replaceState({}, "", viewerHref(buildViewerHash({})));
+    window.history.pushState({}, "", viewerHref(buildViewerHash({ meeting: meetingId })));
   }
 
   function handlePopState() {
-    const url = new URL(window.location.href);
-    const urlMeetingId = url.searchParams.get("meeting") ?? "";
+    const { meeting: urlMeetingId } = currentViewerHash();
     if (urlMeetingId === selectedMeetingId) {
       return;
     }
@@ -306,6 +301,11 @@
   onMount(async () => {
     window.addEventListener("keydown", handleWindowKeydown);
     window.addEventListener("popstate", handlePopState);
+    // Back/forward across hash-only history entries fires popstate; some paths
+    // (e.g. manual hash edits, or browsers that only emit hashchange for
+    // hash-only nav) surface as hashchange. handlePopState early-returns when
+    // the hash meeting already matches, so handling both is idempotent.
+    window.addEventListener("hashchange", handlePopState);
     const stored = readStoredTheme();
     if (stored !== null) {
       applyTheme(stored);
@@ -325,7 +325,7 @@
       reducedMotionMedia.addEventListener("change", handleReducedMotionChange);
     }
     pendingSeekMs = parseTimeHash(window.location.hash);
-    const initialMeetingId = new URL(window.location.href).searchParams.get("meeting");
+    const initialMeetingId = currentViewerHash().meeting || null;
     const viewerConfig = window as typeof window & {
       __CASSINI_VIEWER_ARTIFACT_MODE__?: string;
     };
@@ -333,7 +333,13 @@
     try {
       if (!preferBundledArtifact) {
         const catalog = await loadMeetingCatalog();
-        if (catalog?.meetings.length) {
+        // A successfully-loaded catalog — even an empty one (fresh install,
+        // meetings: []) — means catalog/list mode. Only fall through to the
+        // single bundled-artifact path when there is NO catalog at all (null),
+        // e.g. a standalone single-meeting export. Treating an empty catalog as
+        // "no catalog" would resolve bundled fallback files against the proxy
+        // root and surface a load error instead of an empty meeting list.
+        if (catalog) {
           catalogMeetings = catalog.meetings;
           void hydrateCatalogMeetingMetadata(catalog.meetings);
           const requested = initialMeetingId
@@ -373,6 +379,7 @@
   onDestroy(() => {
     window.removeEventListener("keydown", handleWindowKeydown);
     window.removeEventListener("popstate", handlePopState);
+    window.removeEventListener("hashchange", handlePopState);
     prefersDarkMedia?.removeEventListener("change", handlePrefersColorSchemeChange);
     viewportMedia?.removeEventListener("change", handleViewportChange);
     reducedMotionMedia?.removeEventListener("change", handleReducedMotionChange);
@@ -478,25 +485,28 @@
   }
 
   function writeTranscriptUrlParam(targetId: string) {
-    const url = new URL(window.location.href);
-    if (targetId && targetId !== defaultTranscriptId) {
-      url.searchParams.set("tx", targetId);
-    } else {
-      url.searchParams.delete("tx");
-    }
-    window.history.replaceState({}, "", url);
+    const current = currentViewerHash();
+    const tx = targetId && targetId !== defaultTranscriptId ? targetId : "";
+    window.history.replaceState(
+      {},
+      "",
+      viewerHref(buildViewerHash({ meeting: current.meeting, tx })),
+    );
   }
 
   function clearTranscriptUrlParam() {
-    const url = new URL(window.location.href);
-    if (url.searchParams.has("tx")) {
-      url.searchParams.delete("tx");
-      window.history.replaceState({}, "", url);
+    const current = currentViewerHash();
+    if (current.tx) {
+      window.history.replaceState(
+        {},
+        "",
+        viewerHref(buildViewerHash({ meeting: current.meeting })),
+      );
     }
   }
 
   async function maybeApplyUrlTranscript(meeting: MeetingCatalogEntry) {
-    const requested = new URL(window.location.href).searchParams.get("tx");
+    const requested = currentViewerHash().tx;
     if (!requested || !meeting.audioPath) {
       return;
     }

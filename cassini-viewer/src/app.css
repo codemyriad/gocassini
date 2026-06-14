@@ -141,6 +141,15 @@
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Global resets
+ *
+ * TODO visual-QA (D-381): in the AppAPI embedded build this CSS is registered
+ * as the viewer ui/style and applies on Nextcloud's embedded page, where the
+ * daisyUI-generated :root theme tokens and these html/body rules share the
+ * document with NC chrome. The embedded host markup is a bare
+ * <div id="content"> and the SPA mounts a self-contained #app inside it, so
+ * render-correctness holds; remaining global token bleed onto NC chrome is a
+ * pixel-polish concern deferred from v1 (scope under #app via PostCSS prefix
+ * or a daisyUI theme root once verified against live NC styling).
  * ────────────────────────────────────────────────────────────────────────── */
 
 html,

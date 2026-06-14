@@ -109,23 +109,30 @@ describe("validateMeetingCatalog", () => {
     ).toThrow(/artifactPath/i);
   });
 
-  it("redirects catalog fetch to VITE_PUBLISHED_BASE when set", async () => {
-    // The Nextcloud ExApp build serves the viewer SPA at /viewer/ while the
-    // published archive (catalog + recordings) lives at /published/. The
-    // viewer must follow VITE_PUBLISHED_BASE so it doesn't fetch
-    // /viewer/catalog.json (which would 404 because the SPA is there).
-    vi.stubEnv("VITE_PUBLISHED_BASE", "/published");
-
+  it("resolves the catalog against window.__CASSINI_VIEWER_BASE__ in the embedded build", async () => {
+    // On AppAPI's embedded page the SPA runs at the Nextcloud route
+    // /index.php/apps/app_api/embedded/gocassini/viewer, but the published
+    // archive (catalog + recordings) is served by the operator THROUGH the
+    // proxy at <base>published/, where <base> is the proxy base
+    // src/embedded.ts captured into window.__CASSINI_VIEWER_BASE__. Resolving
+    // relative to the embedded-page pathname would 404; the viewer-base branch
+    // must win.
+    const viewerBase =
+      "http://nextcloud.example.com/index.php/apps/app_api/proxy/gocassini/";
     const calls: string[] = [];
     globalThis.window = {
       location: {
-        href: "http://nextcloud.example.com/index.php/apps/app_api/proxy/gocassini/viewer/",
+        href:
+          "http://nextcloud.example.com/index.php/apps/app_api/embedded/gocassini/viewer",
       },
+      __CASSINI_VIEWER_BASE__: viewerBase,
     } as Window;
+    const wantCatalogUrl =
+      "http://nextcloud.example.com/index.php/apps/app_api/proxy/gocassini/published/catalog.json";
     globalThis.fetch = vi.fn(async (input: string | URL) => {
       const url = String(input);
       calls.push(url);
-      if (url === "http://nextcloud.example.com/published/catalog.json") {
+      if (url === wantCatalogUrl) {
         return {
           ok: true,
           url,
@@ -148,10 +155,11 @@ describe("validateMeetingCatalog", () => {
     const catalog = await loadMeetingCatalog();
 
     expect(catalog?.meetings).toHaveLength(1);
+    // audioPath follows the fetched catalog's response.url automatically.
     expect(catalog?.meetings[0]?.audioPath).toBe(
-      "http://nextcloud.example.com/published/meeting-x.opus",
+      "http://nextcloud.example.com/index.php/apps/app_api/proxy/gocassini/published/meeting-x.opus",
     );
-    expect(calls).toEqual(["http://nextcloud.example.com/published/catalog.json"]);
+    expect(calls).toEqual([wantCatalogUrl]);
   });
 
   it("loads the default catalog from the app base on nested routes", async () => {

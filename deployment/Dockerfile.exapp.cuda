@@ -45,9 +45,10 @@ WORKDIR /src/cassini-viewer
 COPY cassini-viewer/package.json cassini-viewer/package-lock.json ./
 RUN npm ci
 COPY cassini-viewer/ ./
-ENV VITE_BASE=/viewer/
-ENV VITE_PUBLISHED_BASE=/published
-RUN npm run build
+# See Dockerfile.exapp for why VITE_BASE=./ and build:all (standalone dist/ +
+# embedded dist/embedded/{embedded.js,embedded.css} served at /ui/viewer.{js,css}).
+ENV VITE_BASE=./
+RUN npm run build:all
 
 FROM node:22-bookworm AS control-panel-builder
 WORKDIR /src/cassini-control-panel
