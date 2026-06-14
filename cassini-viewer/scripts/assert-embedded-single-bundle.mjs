@@ -24,27 +24,45 @@ function fail(message) {
   process.exit(1);
 }
 
-let entries;
+// Walk the WHOLE dist/embedded tree (not just the top level): a future
+// dependency that introduced code-splitting or a worker would emit an extra
+// .js under dist/embedded/assets/* which a top-level-only scan would miss while
+// still shipping a script AppAPI's strict-dynamic CSP won't trust.
+function walk(dir) {
+  let found = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      found = found.concat(walk(full));
+    } else {
+      found.push(full);
+    }
+  }
+  return found;
+}
+
+let allFiles;
 try {
-  entries = readdirSync(distDir);
+  allFiles = walk(distDir);
 } catch (error) {
   fail(`cannot read ${distDir}: ${error.message}. Did 'vite build --config vite.embedded.config.ts' run?`);
 }
 
-const jsFiles = entries.filter((name) => name.endsWith(".js"));
-const cssFiles = entries.filter((name) => name.endsWith(".css"));
+const rel = (p) => p.slice(distDir.length + 1);
+const jsFiles = allFiles.filter((p) => p.endsWith(".js")).map(rel);
+const cssFiles = allFiles.filter((p) => p.endsWith(".css")).map(rel);
 
 if (jsFiles.length !== 1) {
-  fail(`expected exactly one .js bundle in ${distDir}, found ${jsFiles.length}: ${jsFiles.join(", ") || "(none)"}`);
+  fail(`expected exactly one .js bundle under ${distDir}, found ${jsFiles.length}: ${jsFiles.join(", ") || "(none)"}`);
 }
 if (cssFiles.length !== 1) {
-  fail(`expected exactly one .css bundle in ${distDir}, found ${cssFiles.length}: ${cssFiles.join(", ") || "(none)"}`);
+  fail(`expected exactly one .css bundle under ${distDir}, found ${cssFiles.length}: ${cssFiles.join(", ") || "(none)"}`);
 }
 if (jsFiles[0] !== "embedded.js") {
-  fail(`expected the JS bundle to be named embedded.js, found ${jsFiles[0]}`);
+  fail(`expected the JS bundle to be embedded.js, found ${jsFiles[0]}`);
 }
 if (cssFiles[0] !== "embedded.css") {
-  fail(`expected the CSS bundle to be named embedded.css, found ${cssFiles[0]}`);
+  fail(`expected the CSS bundle to be embedded.css, found ${cssFiles[0]}`);
 }
 
 const jsPath = join(distDir, jsFiles[0]);

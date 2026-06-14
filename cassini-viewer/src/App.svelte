@@ -333,7 +333,13 @@
     try {
       if (!preferBundledArtifact) {
         const catalog = await loadMeetingCatalog();
-        if (catalog?.meetings.length) {
+        // A successfully-loaded catalog — even an empty one (fresh install,
+        // meetings: []) — means catalog/list mode. Only fall through to the
+        // single bundled-artifact path when there is NO catalog at all (null),
+        // e.g. a standalone single-meeting export. Treating an empty catalog as
+        // "no catalog" would resolve bundled fallback files against the proxy
+        // root and surface a load error instead of an empty meeting list.
+        if (catalog) {
           catalogMeetings = catalog.meetings;
           void hydrateCatalogMeetingMetadata(catalog.meetings);
           const requested = initialMeetingId

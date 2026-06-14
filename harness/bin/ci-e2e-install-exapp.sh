@@ -360,20 +360,30 @@ if [[ "$embedded_status" != "200" ]]; then
 fi
 
 # The registered ui/script is injected as a Nextcloud-nonce'd
-# <script ... nonce="…" src=".../proxy/<app>/ui/viewer.js">. Assert BOTH the
-# nonce and the proxied viewer.js src are present (CSP strict-dynamic only runs
-# a nonce'd, programmatically-trusted script; a raw host-allowlisted src would
-# be ignored). Order of nonce/src attributes is not guaranteed, so check each.
+# <script ... nonce="…" src=".../proxy/<app>/ui/viewer.js">. Assert the nonce is
+# ON THE SAME <script> tag that loads viewer.js — under CSP strict-dynamic only
+# a nonce'd script runs; a raw host-allowlisted src is ignored, so a nonce
+# elsewhere on the page is not sufficient. Attribute order is not guaranteed, so
+# isolate the viewer.js <script> tag and require nonce= within it. Also assert
+# the registered ui/style (ui/viewer.css) <link> is present, else the viewer
+# renders unstyled (a broken ui/style registration).
 embedded_body=$(cat "$LOG_DIR/embedded-viewer.html")
-if ! grep -qE 'nonce="[^"]+"' <<<"$embedded_body"; then
-  fail "embedded viewer page has no nonce'd <script> (CSP strict-dynamic would block the viewer)"
-fi
-if ! grep -qE "proxy/${APP_ID}/ui/viewer\.js" <<<"$embedded_body"; then
+viewer_script_tag=$(grep -oE "<script[^>]*proxy/${APP_ID}/ui/viewer\.js[^>]*>" <<<"$embedded_body" | head -1)
+if [[ -z "$viewer_script_tag" ]]; then
   log "embedded page did not reference the registered ui/viewer.js; first 400 chars:"
   log "$(head -c 400 "$LOG_DIR/embedded-viewer.html")"
   fail "embedded viewer page does not reference the proxied ui/viewer.js bundle"
 fi
-log "OK   embedded viewer page 200 and references a nonce'd proxy ui/viewer.js"
+if ! grep -qE 'nonce="[^"]+"' <<<"$viewer_script_tag"; then
+  log "viewer.js script tag was: $viewer_script_tag"
+  fail "the ui/viewer.js <script> tag is not nonce'd (CSP strict-dynamic would block the viewer)"
+fi
+if ! grep -qE "proxy/${APP_ID}/ui/viewer\.css" <<<"$embedded_body"; then
+  log "embedded page did not reference the registered ui/viewer.css; first 400 chars:"
+  log "$(head -c 400 "$LOG_DIR/embedded-viewer.html")"
+  fail "embedded viewer page does not reference the proxied ui/viewer.css stylesheet (broken ui/style registration?)"
+fi
+log "OK   embedded viewer page 200 with a nonce'd proxy ui/viewer.js and ui/viewer.css"
 
 log "checking proxied catalog $PROXY/published/catalog.json"
 catalog_status=$(curl -sS -u "$TEST_USER:$TEST_USER_PASSWORD" \
