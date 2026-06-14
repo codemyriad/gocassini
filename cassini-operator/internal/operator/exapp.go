@@ -49,7 +49,7 @@ import (
 //   ├── /viewer, /viewer/*                 viewer SPA static  (USER per manifest)
 //   ├── /published/*                       site archive       (USER per manifest)
 //   ├── /ui/viewer.js, /ui/viewer.css       embedded viewer build (USER per manifest)
-//   ├── /ui/control-panel.js                iframe bootstrap   (ADMIN per manifest)
+//   ├── /ui/control-panel.js, /ui/control-panel.css  embedded control-panel build (ADMIN per manifest)
 //   ├── /img/app.svg                        navigation icon    (USER per manifest)
 //   └── <BasePath>/jobs, /jobs/, /events   operator JSON API  (ADMIN per manifest)
 //
@@ -87,24 +87,24 @@ const (
 	ocsUIStylePath   = "/ocs/v2.php/apps/app_api/api/v1/ui/style"
 	uiAssetURLPrefix = "/ui"
 	navIconURLPath   = "/img/app.svg"
-	// Filenames of the embedded-viewer build (vite.embedded.config.ts) under
-	// <CASSINI_VIEWER_DIST>/embedded/, served at /ui/viewer.js + /ui/viewer.css.
-	embeddedViewerSubdir  = "embedded"
-	embeddedViewerJSFile  = "embedded.js"
-	embeddedViewerCSSFile = "embedded.css"
+	// Filenames of the embedded builds (vite.embedded.config.ts in both
+	// cassini-viewer and cassini-control-panel) under <DIST>/embedded/, served
+	// at /ui/viewer.{js,css} (from CASSINI_VIEWER_DIST) and
+	// /ui/control-panel.{js,css} (from CASSINI_CONTROL_PANEL_DIST).
+	embeddedSubdir  = "embedded"
+	embeddedJSFile  = "embedded.js"
+	embeddedCSSFile = "embedded.css"
 )
 
 // Embedded UI assets. app.svg mirrors the repo-root img/app.svg (go:embed
-// cannot reach outside the module). top-menu.js is the iframe bootstrap used
-// ONLY by the control-panel entry: AppAPI's embedded page CSP is
-// script-src-elem 'strict-dynamic' 'nonce-…', which allows a same-host iframe
-// (control-panel works fine inside one), so the admin SPA can stay iframed.
-// The VIEWER entry does NOT use this bootstrap — its embedded build is served
-// at /ui/viewer.js as a self-mounting IIFE (D-381), because the SPA must run
-// directly on the nonce'd embedded page rather than inside a frame.
+// cannot reach outside the module). Neither top-menu entry uses an iframe
+// bootstrap any more: both the viewer (D-381) and the control panel (D-382)
+// ship a self-mounting IIFE + stylesheet (the embedded builds), served at
+// /ui/<entry>.js + /ui/<entry>.css and registered as that entry's ui/script +
+// ui/style. They run DIRECTLY on AppAPI's nonce'd embedded page rather than
+// inside a frame, because AppAPI's strict default-src 'none' CSP blocks an
+// iframe of the proxied SPA HTML (which is what left the panel blank before).
 var (
-	//go:embed exappassets/top-menu.js
-	topMenuBootstrapJS []byte
 	//go:embed exappassets/app.svg
 	navIconSVG []byte
 )
@@ -138,12 +138,12 @@ type uiStyleRegistration struct {
 }
 
 // topMenuEntries declares the navigation entries uiRegistrar registers.
-// Each entry Name doubles as the URL prefix the entry's asset lives under:
-//   - control-panel: /ui/control-panel.js is the iframe bootstrap that frames
-//     <proxy base>/control-panel/ (the admin SPA stays iframed).
-//   - viewer: /ui/viewer.js is the embedded viewer IIFE that mounts directly on
-//     the AppAPI embedded page, plus /ui/viewer.css registered as its ui/style
-//     (D-381). It does NOT iframe <proxy base>/viewer/.
+// Each entry Name doubles as the URL prefix the entry's asset lives under;
+// both entries now mount their SPA directly on the AppAPI embedded page from a
+// self-mounting IIFE + stylesheet (their embedded builds), NOT an iframe:
+//   - viewer: /ui/viewer.{js,css} is the embedded viewer build (D-381).
+//   - control-panel: /ui/control-panel.{js,css} is the embedded control-panel
+//     build (D-382). It does NOT iframe <proxy base>/control-panel/.
 var topMenuEntries = []uiTopMenuRegistration{
 	{
 		Name:          strings.TrimPrefix(viewerURLPrefix, "/"),
@@ -389,13 +389,15 @@ func (c ExAppConfig) uiRegistrar(logger *log.Logger) func() {
 		url     string
 		payload any
 	}
-	viewerEntryName := strings.TrimPrefix(viewerURLPrefix, "/")
 	var calls []ocsCall
 	for _, entry := range topMenuEntries {
 		// Path is relative to the ExApp root WITHOUT extension; AppAPI appends
 		// ".js" (script) / ".css" (style). Both resolve to "ui/<name>", served
 		// by uiAssetHandler at /ui/<name>.js and /ui/<name>.css.
 		assetPath := strings.TrimPrefix(uiAssetURLPrefix, "/") + "/" + entry.Name
+		// Both entries now mount their SPA directly on the embedded page from a
+		// self-mounting IIFE + stylesheet (viewer D-381, control-panel D-382), so
+		// each registers a ui/script AND a ui/style.
 		calls = append(calls,
 			ocsCall{
 				what:    fmt.Sprintf("top-menu entry %q", entry.Name),
@@ -411,12 +413,7 @@ func (c ExAppConfig) uiRegistrar(logger *log.Logger) func() {
 					Path: assetPath,
 				},
 			},
-		)
-		// The viewer mounts its SPA directly on the embedded page (D-381), so it
-		// also needs its stylesheet registered as a ui/style. The control-panel
-		// entry iframes its own SPA (which carries its own CSS), so it doesn't.
-		if entry.Name == viewerEntryName {
-			calls = append(calls, ocsCall{
+			ocsCall{
 				what: fmt.Sprintf("top-menu style for %q", entry.Name),
 				url:  nextcloudURL + ocsUIStylePath,
 				payload: uiStyleRegistration{
@@ -424,8 +421,8 @@ func (c ExAppConfig) uiRegistrar(logger *log.Logger) func() {
 					Name: entry.Name,
 					Path: assetPath,
 				},
-			})
-		}
+			},
+		)
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	return func() {
@@ -467,56 +464,50 @@ func (c ExAppConfig) uiRegistrar(logger *log.Logger) func() {
 
 // uiAssetHandler serves the ExApp UI assets AppAPI loads on the embedded page:
 //
-//   - /ui/viewer.js  + /ui/viewer.css : the embedded viewer build (D-381), a
-//     self-mounting IIFE + its stylesheet, read from <ViewerDist>/embedded/.
-//     The viewer runs DIRECTLY on the nonce'd embedded page (no iframe).
-//   - /ui/control-panel.js : the iframe bootstrap (control-panel stays iframed).
+//   - /ui/viewer.js  + /ui/viewer.css        : the embedded viewer build
+//     (D-381), read from <ViewerDist>/embedded/.
+//   - /ui/control-panel.js + /ui/control-panel.css : the embedded control-panel
+//     build (D-382), read from <ControlPanelDist>/embedded/.
 //
-// Anything else under /ui/ is a 404. The proxy fetches these with the
-// requesting user's access level, enforced by the matching info.xml routes.
+// Each is a self-mounting IIFE + its stylesheet that runs DIRECTLY on the
+// nonce'd embedded page (no iframe). Anything else under /ui/ is a 404. The
+// proxy fetches these with the requesting user's access level, enforced by the
+// matching info.xml routes.
 func (c ExAppConfig) uiAssetHandler(logger *log.Logger) http.Handler {
-	bootstrap := embeddedAssetHandler(topMenuBootstrapJS, "text/javascript; charset=utf-8")
 	viewerEntryName := strings.TrimPrefix(viewerURLPrefix, "/")
-
-	// Map of /ui/<name>.js -> iframe-bootstrap handler, for every entry EXCEPT
-	// the viewer (whose JS is the embedded IIFE served from disk below).
-	bootstrapKnown := make(map[string]bool, len(topMenuEntries))
-	for _, entry := range topMenuEntries {
-		if entry.Name == viewerEntryName {
-			continue
-		}
-		bootstrapKnown[uiAssetURLPrefix+"/"+entry.Name+".js"] = true
-	}
+	controlPanelEntryName := strings.TrimPrefix(controlPanelURLPrefix, "/")
 
 	viewerJSPath := uiAssetURLPrefix + "/" + viewerEntryName + ".js"
 	viewerCSSPath := uiAssetURLPrefix + "/" + viewerEntryName + ".css"
+	controlPanelJSPath := uiAssetURLPrefix + "/" + controlPanelEntryName + ".js"
+	controlPanelCSSPath := uiAssetURLPrefix + "/" + controlPanelEntryName + ".css"
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case viewerJSPath:
-			c.serveEmbeddedViewerAsset(w, r, embeddedViewerJSFile, "text/javascript; charset=utf-8", logger)
-			return
+			c.serveEmbeddedAsset(w, r, c.ViewerDist, envViewerDist, embeddedJSFile, "text/javascript; charset=utf-8", logger)
 		case viewerCSSPath:
-			c.serveEmbeddedViewerAsset(w, r, embeddedViewerCSSFile, "text/css; charset=utf-8", logger)
-			return
+			c.serveEmbeddedAsset(w, r, c.ViewerDist, envViewerDist, embeddedCSSFile, "text/css; charset=utf-8", logger)
+		case controlPanelJSPath:
+			c.serveEmbeddedAsset(w, r, c.ControlPanelDist, envControlPanelDist, embeddedJSFile, "text/javascript; charset=utf-8", logger)
+		case controlPanelCSSPath:
+			c.serveEmbeddedAsset(w, r, c.ControlPanelDist, envControlPanelDist, embeddedCSSFile, "text/css; charset=utf-8", logger)
+		default:
+			http.NotFound(w, r)
 		}
-		if bootstrapKnown[r.URL.Path] {
-			bootstrap.ServeHTTP(w, r)
-			return
-		}
-		http.NotFound(w, r)
 	})
 }
 
-// serveEmbeddedViewerAsset streams one file of the embedded viewer build from
-// <ViewerDist>/embedded/<file>. The embedded build is baked into the image
-// alongside the standalone viewer dist (see deployment/Dockerfile.exapp). 503
-// when CASSINI_VIEWER_DIST is unset or the file is missing, mirroring how the
-// SPA handler degrades when assets aren't bundled.
-func (c ExAppConfig) serveEmbeddedViewerAsset(
+// serveEmbeddedAsset streams one file of an embedded build from
+// <dist>/embedded/<file>. The embedded builds are baked into the image
+// alongside their standalone dists (see deployment/Dockerfile.exapp). 503 when
+// the dist env (distEnv, e.g. CASSINI_VIEWER_DIST / CASSINI_CONTROL_PANEL_DIST)
+// is unset or the file is missing, mirroring how the SPA handler degrades when
+// assets aren't bundled.
+func (c ExAppConfig) serveEmbeddedAsset(
 	w http.ResponseWriter,
 	r *http.Request,
-	file, contentType string,
+	dist, distEnv, file, contentType string,
 	logger *log.Logger,
 ) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -524,26 +515,26 @@ func (c ExAppConfig) serveEmbeddedViewerAsset(
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if c.ViewerDist == "" {
+	if dist == "" {
 		if logger != nil {
-			logger.Printf("ui asset: CASSINI_VIEWER_DIST unset; cannot serve %s", file)
+			logger.Printf("ui asset: %s unset; cannot serve %s", distEnv, file)
 		}
-		http.Error(w, "viewer assets not bundled in this image", http.StatusServiceUnavailable)
+		http.Error(w, "ui assets not bundled in this image", http.StatusServiceUnavailable)
 		return
 	}
-	full := filepath.Join(c.ViewerDist, embeddedViewerSubdir, file)
+	full := filepath.Join(dist, embeddedSubdir, file)
 	f, err := os.Open(full)
 	if err != nil {
 		if logger != nil {
 			logger.Printf("ui asset: open %s: %v", full, err)
 		}
-		http.Error(w, "viewer assets not bundled in this image", http.StatusServiceUnavailable)
+		http.Error(w, "ui assets not bundled in this image", http.StatusServiceUnavailable)
 		return
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil || info.IsDir() {
-		http.Error(w, "viewer assets not bundled in this image", http.StatusServiceUnavailable)
+		http.Error(w, "ui assets not bundled in this image", http.StatusServiceUnavailable)
 		return
 	}
 	w.Header().Set("Content-Type", contentType)
