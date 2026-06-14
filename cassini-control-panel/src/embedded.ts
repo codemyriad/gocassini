@@ -34,9 +34,41 @@ import "./app.css";
 //   "   …/index.php/apps/app_api/proxy/gocassini/"
 export const CONTROL_PANEL_JS_SRC_PATTERN = /^(.*)\/ui\/control-panel\.js(?:\?.*)?$/;
 
+// rootRelativeBaseFrom turns a (possibly absolute) script src into a
+// root-relative proxy base ending in a trailing slash. In a real DOM,
+// HTMLScriptElement.src reflects the RESOLVED ABSOLUTE URL (scheme+host), e.g.
+// "https://nc.example.com/index.php/apps/app_api/proxy/gocassini/ui/control-panel.js".
+// We MUST keep only the path: operator/config.ts treats
+// window.__CASSINI_CONFIG__.operatorBasePath as authoritative and runs it
+// through a STRICT root-relative validator (normalizeOperatorBasePath throws on
+// anything that does not start with "/"). A root-relative base also keeps the
+// operator fetch/EventSource same-origin (CSP `connect-src 'self'`) through the
+// AppAPI proxy. So strip the origin here: the absolute src would otherwise reach
+// loadConfig() and throw, rendering the config-error alert — the exact
+// blank/broken-panel bug D-382 fixes. (This is the one place the control panel
+// diverges from the viewer, which can keep the absolute base because its code
+// joins it via `new URL(...)`.)
+//   "https://nc.example.com/…/proxy/gocassini/ui/control-panel.js"
+//     -> "/index.php/apps/app_api/proxy/gocassini/"
+function rootRelativeBaseFrom(matchedPrefix: string): string {
+  // matchedPrefix is everything before "/ui/control-panel.js"; URL-parse it to
+  // drop scheme+host when present, falling back to the raw value for an
+  // already-relative src (dev/standalone).
+  let path = matchedPrefix;
+  try {
+    // A second arg makes parsing succeed for relative prefixes too; we only
+    // ever read .pathname, so the placeholder origin is never stored.
+    path = new URL(matchedPrefix, "http://placeholder.invalid/").pathname;
+  } catch {
+    // Keep the raw prefix if it is not a parseable URL.
+  }
+  return path.endsWith("/") ? path : path + "/";
+}
+
 // captureProxyBaseFrom scans the given script list for the registered
-// ui/control-panel.js entry and returns the proxy base (with trailing slash),
-// or null when not found. Pure (no globals) so it is unit-testable in node.
+// ui/control-panel.js entry and returns the proxy base as a ROOT-RELATIVE path
+// (origin stripped) with a trailing slash, or null when not found. Pure (no
+// globals) so it is unit-testable in node.
 export function captureProxyBaseFrom(
   scripts: ArrayLike<{ src?: string }> | null | undefined,
 ): string | null {
@@ -50,7 +82,7 @@ export function captureProxyBaseFrom(
     }
     const match = CONTROL_PANEL_JS_SRC_PATTERN.exec(src);
     if (match) {
-      return match[1] + "/";
+      return rootRelativeBaseFrom(match[1]);
     }
   }
   return null;

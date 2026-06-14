@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   captureOperatorBasePath,
   captureProxyBaseFrom,
   ensureAppRoot,
 } from "./embedded";
+import { loadConfig } from "./operator/config";
 
 // These tests run in the default (node) Vitest environment — no jsdom/happy-dom
 // dependency — by exercising embedded.ts's pure helpers against hand-rolled
@@ -14,7 +15,11 @@ import {
 // window.__CASSINI_CONFIG__.operatorBasePath, and #app creation under #content.
 
 describe("captureProxyBaseFrom", () => {
-  it("derives the proxy base from the registered ui/control-panel.js src", () => {
+  it("derives a ROOT-RELATIVE proxy base from the registered ui/control-panel.js src", () => {
+    // In a real DOM, script.src is the resolved ABSOLUTE URL. We must strip the
+    // origin so operator/config.ts's strict root-relative validator accepts it
+    // (an absolute value would throw and render the config-error alert — the
+    // very D-382 blank-panel bug).
     const scripts = [
       { src: "https://nc.example.com/index.php/csrfprotection.js" },
       {
@@ -22,7 +27,7 @@ describe("captureProxyBaseFrom", () => {
       },
     ];
     expect(captureProxyBaseFrom(scripts)).toBe(
-      "https://nc.example.com/index.php/apps/app_api/proxy/gocassini/",
+      "/index.php/apps/app_api/proxy/gocassini/",
     );
   });
 
@@ -33,7 +38,7 @@ describe("captureProxyBaseFrom", () => {
       },
     ];
     expect(captureProxyBaseFrom(scripts)).toBe(
-      "https://nc.example.com/index.php/apps/app_api/proxy/gocassini/",
+      "/index.php/apps/app_api/proxy/gocassini/",
     );
   });
 
@@ -69,7 +74,7 @@ describe("captureOperatorBasePath", () => {
     captureOperatorBasePath(doc, win);
 
     expect(win.__CASSINI_CONFIG__?.operatorBasePath).toBe(
-      "https://nc.example.com/index.php/apps/app_api/proxy/gocassini/operator",
+      "/index.php/apps/app_api/proxy/gocassini/operator",
     );
   });
 
@@ -86,7 +91,7 @@ describe("captureOperatorBasePath", () => {
     captureOperatorBasePath(doc, win);
 
     expect(win.__CASSINI_CONFIG__?.operatorBasePath).toBe(
-      "https://nc.example.com/index.php/apps/app_api/proxy/gocassini/operator",
+      "/index.php/apps/app_api/proxy/gocassini/operator",
     );
   });
 
@@ -95,6 +100,57 @@ describe("captureOperatorBasePath", () => {
     const win = {} as Window;
     captureOperatorBasePath(doc, win);
     expect(win.__CASSINI_CONFIG__).toBeUndefined();
+  });
+});
+
+// Integration: captureOperatorBasePath -> loadConfig together. The unit tests
+// above pin the captured value in isolation; this one wires the captured base
+// through operator/config.ts the same way App.svelte's onMount does, against a
+// REALISTIC absolute script.src (what a real DOM exposes). It is the regression
+// guard for D-382: an origin-bearing operatorBasePath makes
+// normalizeOperatorBasePath throw, which renders the config-error alert (the
+// blank/broken panel D-382 fixes). loadConfig() reads the global `window`, so
+// stub it here and restore afterward.
+describe("captureOperatorBasePath -> loadConfig integration", () => {
+  const originalWindow = (globalThis as { window?: Window }).window;
+
+  afterEach(() => {
+    if (originalWindow === undefined) {
+      delete (globalThis as { window?: Window }).window;
+    } else {
+      (globalThis as { window?: Window }).window = originalWindow;
+    }
+  });
+
+  it("loadConfig accepts the captured embedded base without throwing and yields a usable root-relative operator path", () => {
+    const doc = {
+      scripts: [
+        {
+          src: "https://nc.example.com/index.php/apps/app_api/proxy/gocassini/ui/control-panel.js",
+        },
+      ],
+    } as unknown as Document;
+    // Embedded page URL — proxyPrefixFromPathname's /control-panel fallback does
+    // NOT apply here (it would be wrong); the runtime config must win.
+    const win = {
+      location: {
+        pathname: "/index.php/apps/app_api/embedded/gocassini/control-panel",
+      },
+    } as unknown as Window;
+    (globalThis as { window?: Window }).window = win;
+
+    captureOperatorBasePath(doc, win);
+
+    let config: ReturnType<typeof loadConfig> | undefined;
+    expect(() => {
+      config = loadConfig();
+    }).not.toThrow();
+    // Root-relative same-origin path that hits the AppAPI proxy (CSP
+    // connect-src 'self'); no scheme/host that the validator would reject.
+    expect(config?.operatorBasePath).toBe(
+      "/index.php/apps/app_api/proxy/gocassini/operator",
+    );
+    expect(config?.operatorBasePath.startsWith("/")).toBe(true);
   });
 });
 
