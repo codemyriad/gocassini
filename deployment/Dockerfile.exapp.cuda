@@ -55,9 +55,13 @@ WORKDIR /src/cassini-control-panel
 COPY cassini-control-panel/package.json cassini-control-panel/package-lock.json ./
 RUN npm ci
 COPY cassini-control-panel/ ./
+# See Dockerfile.exapp for why build:all (standalone dist/ + embedded
+# dist/embedded/{embedded.js,embedded.css} served at /ui/control-panel.{js,css},
+# D-382) and why VITE_BASE / CASSINI_OPERATOR_BASE_PATH apply only to the
+# standalone build.
 ENV VITE_BASE=/control-panel/
 ENV CASSINI_OPERATOR_BASE_PATH=/operator
-RUN npm run build
+RUN npm run build:all
 
 # ---- Stage: frpc-fetcher (identical to CPU image) ----
 FROM debian:bookworm-slim AS frpc-fetcher
