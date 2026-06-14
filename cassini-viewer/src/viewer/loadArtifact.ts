@@ -412,13 +412,36 @@ function resolveAssetUrl(assetPath: string, transcriptUrl: URL): string {
 }
 
 function resolveAppAssetUrl(assetPath: string): string {
+  const viewerBase = readViewerBase();
+  if (viewerBase) {
+    return new URL(assetPath, viewerBase).toString();
+  }
   const base = import.meta.env.BASE_URL;
   const baseUrl = base && base !== "/" ? new URL(base, window.location.href) : new URL(window.location.href);
   return new URL(assetPath, baseUrl).toString();
 }
 
 function resolveDocumentAssetUrl(assetPath: string): string {
+  const viewerBase = readViewerBase();
+  if (viewerBase) {
+    return new URL(assetPath, viewerBase).toString();
+  }
   return new URL(assetPath, window.location.href).toString();
+}
+
+// readViewerBase mirrors catalog.ts: returns the AppAPI proxy base captured by
+// src/embedded.ts (resolved to an absolute URL), or "" outside the embedded
+// build. Asset paths in the embedded viewer are published-archive paths the
+// operator serves under "<base>published/...", which catalog.ts already
+// rewrites into absolute URLs via the fetched catalog's response.url — but
+// bundled/document-relative fallbacks must still resolve against the proxy
+// base rather than the Nextcloud embedded-page pathname.
+function readViewerBase(): string {
+  const base = typeof window !== "undefined" ? window.__CASSINI_VIEWER_BASE__ : undefined;
+  if (typeof base !== "string" || base === "") {
+    return "";
+  }
+  return new URL(base, window.location.href).toString();
 }
 
 async function loadPortableManifestFromAudioPath(audioPath: string): Promise<ExtractedPortableManifest> {
