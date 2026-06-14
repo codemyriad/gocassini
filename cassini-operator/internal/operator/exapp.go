@@ -84,7 +84,6 @@ const (
 const (
 	ocsUITopMenuPath = "/ocs/v2.php/apps/app_api/api/v1/ui/top-menu"
 	ocsUIScriptPath  = "/ocs/v2.php/apps/app_api/api/v1/ui/script"
-	ocsUIStylePath   = "/ocs/v2.php/apps/app_api/api/v1/ui/style"
 	uiAssetURLPrefix = "/ui"
 	navIconURLPath   = "/img/app.svg"
 	// Filenames of the embedded builds (vite.embedded.config.ts in both
@@ -99,11 +98,17 @@ const (
 // Embedded UI assets. app.svg mirrors the repo-root img/app.svg (go:embed
 // cannot reach outside the module). Neither top-menu entry uses an iframe
 // bootstrap any more: both the viewer (D-381) and the control panel (D-382)
-// ship a self-mounting IIFE + stylesheet (the embedded builds), served at
-// /ui/<entry>.js + /ui/<entry>.css and registered as that entry's ui/script +
-// ui/style. They run DIRECTLY on AppAPI's nonce'd embedded page rather than
-// inside a frame, because AppAPI's strict default-src 'none' CSP blocks an
-// iframe of the proxied SPA HTML (which is what left the panel blank before).
+// ship a self-mounting IIFE (the embedded builds), served at /ui/<entry>.js and
+// registered as that entry's ui/script. They run DIRECTLY on AppAPI's nonce'd
+// embedded page rather than inside a frame, because AppAPI's strict
+// default-src 'none' CSP blocks an iframe of the proxied SPA HTML (which is what
+// left the panel blank before).
+//
+// The stylesheet is served at /ui/<entry>.css but is NOT registered as a global
+// ui/style: embedded.ts fetches it into the SPA's own shadow root (D-383), so
+// Tailwind/daisyUI stay scoped to the SPA and do not bleed onto Nextcloud chrome
+// (or inherit from it). The /ui/<entry>.css route stays in appinfo/info.xml so
+// the shadow stylesheet link is reachable through the proxy.
 var (
 	//go:embed exappassets/app.svg
 	navIconSVG []byte
@@ -121,17 +126,6 @@ type uiTopMenuRegistration struct {
 // Path is relative to the ExApp root, without the ".js" suffix — Nextcloud
 // appends it when loading the script on the embedded page.
 type uiScriptRegistration struct {
-	Type string `json:"type"`
-	Name string `json:"name"`
-	Path string `json:"path"`
-}
-
-// uiStyleRegistration is the JSON body of AppAPI's OCSUi#setExAppStyle. Like
-// the script registration, Path is relative to the ExApp root WITHOUT the
-// ".css" suffix — AppAPI appends it when loading the stylesheet on the embedded
-// page. So Path "ui/viewer" makes AppAPI request "ui/viewer.css" (registering
-// "ui/viewer.css" here would 404 as "ui/viewer.css.css").
-type uiStyleRegistration struct {
 	Type string `json:"type"`
 	Name string `json:"name"`
 	Path string `json:"path"`
@@ -395,9 +389,12 @@ func (c ExAppConfig) uiRegistrar(logger *log.Logger) func() {
 		// ".js" (script) / ".css" (style). Both resolve to "ui/<name>", served
 		// by uiAssetHandler at /ui/<name>.js and /ui/<name>.css.
 		assetPath := strings.TrimPrefix(uiAssetURLPrefix, "/") + "/" + entry.Name
-		// Both entries now mount their SPA directly on the embedded page from a
-		// self-mounting IIFE + stylesheet (viewer D-381, control-panel D-382), so
-		// each registers a ui/script AND a ui/style.
+		// Both entries mount their SPA directly on the embedded page from a
+		// self-mounting IIFE (viewer D-381, control-panel D-382), so each
+		// registers a ui/script. The stylesheet is NOT registered as a global
+		// ui/style: embedded.ts injects it into the SPA's shadow root (D-383) so
+		// it does not bleed onto Nextcloud chrome. It is still served at
+		// /ui/<entry>.css (info.xml route) for the shadow link to fetch.
 		calls = append(calls,
 			ocsCall{
 				what:    fmt.Sprintf("top-menu entry %q", entry.Name),
@@ -408,15 +405,6 @@ func (c ExAppConfig) uiRegistrar(logger *log.Logger) func() {
 				what: fmt.Sprintf("top-menu script for %q", entry.Name),
 				url:  nextcloudURL + ocsUIScriptPath,
 				payload: uiScriptRegistration{
-					Type: "top_menu",
-					Name: entry.Name,
-					Path: assetPath,
-				},
-			},
-			ocsCall{
-				what: fmt.Sprintf("top-menu style for %q", entry.Name),
-				url:  nextcloudURL + ocsUIStylePath,
-				payload: uiStyleRegistration{
 					Type: "top_menu",
 					Name: entry.Name,
 					Path: assetPath,

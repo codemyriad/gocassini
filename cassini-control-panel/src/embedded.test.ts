@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   captureOperatorBasePath,
   captureProxyBaseFrom,
-  ensureAppRoot,
+  controlPanelStylesheetHref,
+  ensureShadowAppRoot,
 } from "./embedded";
 import { loadConfig } from "./operator/config";
 
@@ -154,23 +155,47 @@ describe("captureOperatorBasePath -> loadConfig integration", () => {
   });
 });
 
-describe("ensureAppRoot", () => {
-  // Minimal DOM stub: enough surface for ensureAppRoot's getElementById /
-  // createElement / appendChild walk, modelling AppAPI's bare <div id="content">.
-  function makeStubDoc(opts: { withContent: boolean }) {
-    const created: StubEl[] = [];
-    interface StubEl {
-      id: string;
-      children: StubEl[];
-      appendChild(child: StubEl): void;
-    }
-    const makeEl = (id: string): StubEl => ({
+describe("ensureShadowAppRoot", () => {
+  // Minimal DOM stub modelling AppAPI's bare <div id="content"> plus the open
+  // shadow root the panel mounts into.
+  interface ShadowStub {
+    children: StubEl[];
+    appendChild(child: StubEl): void;
+    getElementById(id: string): StubEl | null;
+  }
+  interface StubEl {
+    id: string;
+    rel?: string;
+    href?: string;
+    children: StubEl[];
+    shadowRoot: ShadowStub | null;
+    appendChild(child: StubEl): void;
+    attachShadow(init: { mode: string }): ShadowStub;
+  }
+  function makeEl(id: string): StubEl {
+    return {
       id,
       children: [],
+      shadowRoot: null,
       appendChild(child: StubEl) {
         this.children.push(child);
       },
-    });
+      attachShadow(_init: { mode: string }): ShadowStub {
+        const shadow: ShadowStub = {
+          children: [],
+          appendChild(child: StubEl) {
+            this.children.push(child);
+          },
+          getElementById(id: string): StubEl | null {
+            return this.children.find((c) => c.id === id) ?? null;
+          },
+        };
+        this.shadowRoot = shadow;
+        return shadow;
+      },
+    };
+  }
+  function makeStubDoc(opts: { withContent: boolean }) {
     const content = opts.withContent ? makeEl("content") : null;
     const body = makeEl("");
     const doc = {
@@ -178,9 +203,8 @@ describe("ensureAppRoot", () => {
         if (id === "content") {
           return content;
         }
-        // #app only exists after ensureAppRoot creates + appends it.
-        const everything = [content, body].filter(Boolean) as StubEl[];
-        for (const root of everything) {
+        const roots = [content, body].filter(Boolean) as StubEl[];
+        for (const root of roots) {
           if (root.id === id) {
             return root;
           }
@@ -192,30 +216,64 @@ describe("ensureAppRoot", () => {
         return null;
       },
       createElement(_tag: string): StubEl {
-        const el = makeEl("");
-        created.push(el);
-        return el;
+        return makeEl("");
       },
       body,
     } as unknown as Document;
     return { doc, content, body };
   }
 
-  it("creates #app inside #content when present", () => {
+  it("mounts #app inside a shadow root under #content and injects the stylesheet", () => {
     const { doc, content } = makeStubDoc({ withContent: true });
-    const appRoot = ensureAppRoot(doc);
-    expect(appRoot.id).toBe("app");
-    expect((content as unknown as { children: { id: string }[] }).children).toContainEqual(
-      expect.objectContaining({ id: "app" }),
+    const cssHref =
+      "/index.php/apps/app_api/proxy/gocassini/ui/control-panel.css";
+    const appRoot = ensureShadowAppRoot(doc, cssHref) as unknown as StubEl;
+
+    const host = (content as unknown as StubEl).children.find(
+      (c) => c.id === "cassini-shadow-host",
     );
+    expect(host).toBeDefined();
+    // #app is in the shadow tree, NOT a light-DOM child — proving isolation.
+    expect(host?.children.some((c) => c.id === "app")).toBe(false);
+    expect(appRoot.id).toBe("app");
+    const shadow = host?.shadowRoot;
+    expect(shadow?.children.some((c) => c.id === "app")).toBe(true);
+    const link = shadow?.children.find((c) => c.rel === "stylesheet");
+    expect(link?.href).toBe(cssHref);
   });
 
   it("falls back to <body> when #content is absent", () => {
     const { doc, body } = makeStubDoc({ withContent: false });
-    const appRoot = ensureAppRoot(doc);
+    const appRoot = ensureShadowAppRoot(
+      doc,
+      "/index.php/apps/app_api/proxy/gocassini/ui/control-panel.css",
+    ) as unknown as StubEl;
     expect(appRoot.id).toBe("app");
-    expect((body as unknown as { children: { id: string }[] }).children).toContainEqual(
-      expect.objectContaining({ id: "app" }),
+    const host = (body as unknown as StubEl).children.find(
+      (c) => c.id === "cassini-shadow-host",
     );
+    expect(host?.shadowRoot?.children.some((c) => c.id === "app")).toBe(true);
+  });
+});
+
+describe("controlPanelStylesheetHref", () => {
+  it("derives <base>ui/control-panel.css from the registered script src", () => {
+    const doc = {
+      scripts: [
+        {
+          src: "https://nc.example.com/index.php/apps/app_api/proxy/gocassini/ui/control-panel.js",
+        },
+      ],
+    } as unknown as Document;
+    // Root-relative (origin stripped) — matches captureProxyBaseFrom's contract
+    // and keeps the stylesheet fetch same-origin through the AppAPI proxy.
+    expect(controlPanelStylesheetHref(doc)).toBe(
+      "/index.php/apps/app_api/proxy/gocassini/ui/control-panel.css",
+    );
+  });
+
+  it("falls back to a relative href when no matching script is present", () => {
+    const doc = { scripts: [{ src: "https://nc.example.com/x.js" }] } as unknown as Document;
+    expect(controlPanelStylesheetHref(doc)).toBe("ui/control-panel.css");
   });
 });

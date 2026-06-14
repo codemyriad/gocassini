@@ -274,6 +274,9 @@ assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "viewer/"        200
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "control-panel/" 404
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "operator/jobs"  404
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/viewer.js"   200
+# ui/viewer.css must be proxy-reachable at USER tier: D-383 injects it into the
+# viewer's shadow root via a runtime <link>, so the proxy has to serve it.
+assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/viewer.css"  200
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/control-panel.js" 404
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/control-panel.css" 404
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "img/app.svg"    200
@@ -352,9 +355,12 @@ fi
 # ON THE SAME <script> tag that loads viewer.js — under CSP strict-dynamic only
 # a nonce'd script runs; a raw host-allowlisted src is ignored, so a nonce
 # elsewhere on the page is not sufficient. Attribute order is not guaranteed, so
-# isolate the viewer.js <script> tag and require nonce= within it. Also assert
-# the registered ui/style (ui/viewer.css) <link> is present, else the viewer
-# renders unstyled (a broken ui/style registration).
+# isolate the viewer.js <script> tag and require nonce= within it.
+#
+# D-383: the stylesheet is NO LONGER a global ui/style <link> on the page — the
+# IIFE injects it into the SPA's shadow root at runtime — so we do NOT assert a
+# page-level ui/viewer.css <link> here. That the stylesheet is served + proxy-
+# reachable is covered by the ui/viewer.css route check in section 6 above.
 embedded_body=$(cat "$LOG_DIR/embedded-viewer.html")
 viewer_script_tag=$(grep -oE "<script[^>]*proxy/${APP_ID}/ui/viewer\.js[^>]*>" <<<"$embedded_body" | head -1)
 if [[ -z "$viewer_script_tag" ]]; then
@@ -366,12 +372,7 @@ if ! grep -qE 'nonce="[^"]+"' <<<"$viewer_script_tag"; then
   log "viewer.js script tag was: $viewer_script_tag"
   fail "the ui/viewer.js <script> tag is not nonce'd (CSP strict-dynamic would block the viewer)"
 fi
-if ! grep -qE "proxy/${APP_ID}/ui/viewer\.css" <<<"$embedded_body"; then
-  log "embedded page did not reference the registered ui/viewer.css; first 400 chars:"
-  log "$(head -c 400 "$LOG_DIR/embedded-viewer.html")"
-  fail "embedded viewer page does not reference the proxied ui/viewer.css stylesheet (broken ui/style registration?)"
-fi
-log "OK   embedded viewer page 200 with a nonce'd proxy ui/viewer.js and ui/viewer.css"
+log "OK   embedded viewer page 200 with a nonce'd proxy ui/viewer.js (CSS injected into the shadow root)"
 
 # --- 7e. Embedded control-panel wiring (D-382) ----------------------------
 #
@@ -397,8 +398,12 @@ fi
 # under CSP strict-dynamic only a nonce'd script runs; a raw host-allowlisted
 # src is ignored, so a nonce elsewhere on the page is not sufficient. Attribute
 # order is not guaranteed, so isolate the control-panel.js <script> tag and
-# require nonce= within it. Also assert the registered ui/style
-# (ui/control-panel.css) <link> is present, else the panel renders unstyled.
+# require nonce= within it.
+#
+# D-383: as with the viewer, the stylesheet is injected into the panel's shadow
+# root at runtime, not a page-level ui/style <link>, so we do NOT assert a
+# page-level ui/control-panel.css <link>. The ui/control-panel.css route check in
+# section 6 (admin 200 / user 404) covers that the stylesheet is served + gated.
 cp_embedded_body=$(cat "$LOG_DIR/embedded-control-panel.html")
 cp_script_tag=$(grep -oE "<script[^>]*proxy/${APP_ID}/ui/control-panel\.js[^>]*>" <<<"$cp_embedded_body" | head -1)
 if [[ -z "$cp_script_tag" ]]; then
@@ -410,12 +415,7 @@ if ! grep -qE 'nonce="[^"]+"' <<<"$cp_script_tag"; then
   log "control-panel.js script tag was: $cp_script_tag"
   fail "the ui/control-panel.js <script> tag is not nonce'd (CSP strict-dynamic would block the panel)"
 fi
-if ! grep -qE "proxy/${APP_ID}/ui/control-panel\.css" <<<"$cp_embedded_body"; then
-  log "embedded page did not reference the registered ui/control-panel.css; first 400 chars:"
-  log "$(head -c 400 "$LOG_DIR/embedded-control-panel.html")"
-  fail "embedded control-panel page does not reference the proxied ui/control-panel.css stylesheet (broken ui/style registration?)"
-fi
-log "OK   embedded control-panel page 200 with a nonce'd proxy ui/control-panel.js and ui/control-panel.css"
+log "OK   embedded control-panel page 200 with a nonce'd proxy ui/control-panel.js (CSS injected into the shadow root)"
 
 log "checking proxied catalog $PROXY/published/catalog.json"
 catalog_status=$(curl -sS -u "$TEST_USER:$TEST_USER_PASSWORD" \

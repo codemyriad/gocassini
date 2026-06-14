@@ -256,12 +256,12 @@ func TestUIRegistrarRegistersTopMenuEntriesAndScripts(t *testing.T) {
 	}
 	registrar()
 
-	// 2 top-menu + 2 script + 2 style: both the viewer (D-381) and the
-	// control-panel (D-382) mount their SPA directly on the embedded page from a
-	// self-mounting IIFE + stylesheet, so each registers a ui/script AND a
-	// ui/style.
-	if len(calls) != 6 {
-		t.Fatalf("got %d OCS calls, want 6 (2 top-menu + 2 script + 2 style): %+v", len(calls), calls)
+	// 2 top-menu + 2 script: both the viewer (D-381) and the control-panel
+	// (D-382) mount their SPA directly on the embedded page from a self-mounting
+	// IIFE, so each registers a ui/script. No ui/style is registered — D-383
+	// injects the stylesheet into the SPA's shadow root instead of a global link.
+	if len(calls) != 4 {
+		t.Fatalf("got %d OCS calls, want 4 (2 top-menu + 2 script): %+v", len(calls), calls)
 	}
 	wantAuth := base64.StdEncoding.EncodeToString([]byte(":shh"))
 	for i, c := range calls {
@@ -280,13 +280,11 @@ func TestUIRegistrarRegistersTopMenuEntriesAndScripts(t *testing.T) {
 	}
 
 	// uiRegistrar emits per-entry calls in order — for each entry the top-menu,
-	// then script, then style — so the call sequence is:
+	// then script — so the call sequence is:
 	//   [0] viewer        top-menu
 	//   [1] viewer        script
-	//   [2] viewer        style
-	//   [3] control-panel top-menu
-	//   [4] control-panel script
-	//   [5] control-panel style
+	//   [2] control-panel top-menu
+	//   [3] control-panel script
 	assertTopMenu := func(idx int, name string, adminRequired float64) {
 		c := calls[idx]
 		if c.Path != "/ocs/v2.php/apps/app_api/api/v1/ui/top-menu" {
@@ -322,32 +320,11 @@ func TestUIRegistrarRegistersTopMenuEntriesAndScripts(t *testing.T) {
 		}
 	}
 
-	// The ui/style Path is "ui/<name>" WITH NO extension — AppAPI appends ".css"
-	// (registering "ui/<name>.css" would 404 as "ui/<name>.css.css"). This is
-	// the D-381 / D-382 contract; both entries register a style now.
-	assertStyle := func(idx int, name string) {
-		s := calls[idx]
-		if s.Path != "/ocs/v2.php/apps/app_api/api/v1/ui/style" {
-			t.Fatalf("call %d path = %q, want the ui/style OCS route", idx, s.Path)
-		}
-		if s.Body["type"] != "top_menu" {
-			t.Errorf("style %q: type = %v, want top_menu", name, s.Body["type"])
-		}
-		if s.Body["name"] != name {
-			t.Errorf("style %q: name = %v", name, s.Body["name"])
-		}
-		if wantPath := "ui/" + name; s.Body["path"] != wantPath {
-			t.Errorf("style %q: path = %v, want %q (no extension)", name, s.Body["path"], wantPath)
-		}
-	}
-
 	assertTopMenu(0, "viewer", 0)
 	assertScript(1, "viewer")
-	assertStyle(2, "viewer")
 
-	assertTopMenu(3, "control-panel", 1)
-	assertScript(4, "control-panel")
-	assertStyle(5, "control-panel")
+	assertTopMenu(2, "control-panel", 1)
+	assertScript(3, "control-panel")
 }
 
 func TestUIRegistrarNilWhenUnconfigured(t *testing.T) {

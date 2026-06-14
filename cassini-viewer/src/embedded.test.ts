@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { captureViewerBase, captureViewerBaseFrom, ensureAppRoot } from "./embedded";
+import { captureViewerBase, captureViewerBaseFrom, ensureShadowAppRoot } from "./embedded";
 
 // These tests run in the default (node) Vitest environment — no jsdom/happy-dom
 // dependency — by exercising embedded.ts's pure helpers against hand-rolled
@@ -74,23 +74,48 @@ describe("captureViewerBase", () => {
   });
 });
 
-describe("ensureAppRoot", () => {
-  // Minimal DOM stub: enough surface for ensureAppRoot's getElementById /
-  // createElement / appendChild walk, modelling AppAPI's bare <div id="content">.
-  function makeStubDoc(opts: { withContent: boolean }) {
-    const created: StubEl[] = [];
-    interface StubEl {
-      id: string;
-      children: StubEl[];
-      appendChild(child: StubEl): void;
-    }
-    const makeEl = (id: string): StubEl => ({
+describe("ensureShadowAppRoot", () => {
+  // Minimal DOM stub: enough surface for ensureShadowAppRoot's getElementById /
+  // createElement / appendChild / attachShadow walk, modelling AppAPI's bare
+  // <div id="content"> plus the open shadow root the SPA mounts into.
+  interface ShadowStub {
+    children: StubEl[];
+    appendChild(child: StubEl): void;
+    getElementById(id: string): StubEl | null;
+  }
+  interface StubEl {
+    id: string;
+    rel?: string;
+    href?: string;
+    children: StubEl[];
+    shadowRoot: ShadowStub | null;
+    appendChild(child: StubEl): void;
+    attachShadow(init: { mode: string }): ShadowStub;
+  }
+  function makeEl(id: string): StubEl {
+    return {
       id,
       children: [],
+      shadowRoot: null,
       appendChild(child: StubEl) {
         this.children.push(child);
       },
-    });
+      attachShadow(_init: { mode: string }): ShadowStub {
+        const shadow: ShadowStub = {
+          children: [],
+          appendChild(child: StubEl) {
+            this.children.push(child);
+          },
+          getElementById(id: string): StubEl | null {
+            return this.children.find((c) => c.id === id) ?? null;
+          },
+        };
+        this.shadowRoot = shadow;
+        return shadow;
+      },
+    };
+  }
+  function makeStubDoc(opts: { withContent: boolean }) {
     const content = opts.withContent ? makeEl("content") : null;
     const body = makeEl("");
     const doc = {
@@ -98,9 +123,10 @@ describe("ensureAppRoot", () => {
         if (id === "content") {
           return content;
         }
-        // #app only exists after ensureAppRoot creates + appends it.
-        const everything = [content, body].filter(Boolean) as StubEl[];
-        for (const root of everything) {
+        // #cassini-shadow-host only exists after ensureShadowAppRoot appends it;
+        // #app lives in the shadow tree, which document.getElementById can't see.
+        const roots = [content, body].filter(Boolean) as StubEl[];
+        for (const root of roots) {
           if (root.id === id) {
             return root;
           }
@@ -112,30 +138,55 @@ describe("ensureAppRoot", () => {
         return null;
       },
       createElement(_tag: string): StubEl {
-        const el = makeEl("");
-        created.push(el);
-        return el;
+        return makeEl("");
       },
       body,
     } as unknown as Document;
     return { doc, content, body };
   }
 
-  it("creates #app inside #content when present", () => {
+  it("mounts #app inside a shadow root under #content and injects the stylesheet", () => {
     const { doc, content } = makeStubDoc({ withContent: true });
-    const appRoot = ensureAppRoot(doc);
-    expect(appRoot.id).toBe("app");
-    expect((content as unknown as { children: { id: string }[] }).children).toContainEqual(
-      expect.objectContaining({ id: "app" }),
+    const cssHref =
+      "https://nc.example.com/index.php/apps/app_api/proxy/gocassini/ui/viewer.css";
+    const appRoot = ensureShadowAppRoot(doc, cssHref) as unknown as StubEl;
+
+    // The shadow HOST is in the light DOM under #content; #app is NOT (it lives
+    // in the shadow tree), proving the SPA is isolated from NC chrome.
+    const host = (content as unknown as StubEl).children.find(
+      (c) => c.id === "cassini-shadow-host",
     );
+    expect(host).toBeDefined();
+    expect(host?.children.some((c) => c.id === "app")).toBe(false);
+    const shadow = host?.shadowRoot;
+    expect(shadow).not.toBeNull();
+    expect(appRoot.id).toBe("app");
+    // #app and a <link rel=stylesheet href=.../ui/viewer.css> live in the shadow.
+    expect(shadow?.children.some((c) => c.id === "app")).toBe(true);
+    const link = shadow?.children.find((c) => c.rel === "stylesheet");
+    expect(link?.href).toBe(cssHref);
   });
 
   it("falls back to <body> when #content is absent", () => {
     const { doc, body } = makeStubDoc({ withContent: false });
-    const appRoot = ensureAppRoot(doc);
+    const appRoot = ensureShadowAppRoot(
+      doc,
+      "https://nc.example.com/index.php/apps/app_api/proxy/gocassini/ui/viewer.css",
+    ) as unknown as StubEl;
     expect(appRoot.id).toBe("app");
-    expect((body as unknown as { children: { id: string }[] }).children).toContainEqual(
-      expect.objectContaining({ id: "app" }),
+    const host = (body as unknown as StubEl).children.find(
+      (c) => c.id === "cassini-shadow-host",
     );
+    expect(host?.shadowRoot?.children.some((c) => c.id === "app")).toBe(true);
+  });
+
+  it("omits the stylesheet link when no css href is given (degraded mount)", () => {
+    const { doc, content } = makeStubDoc({ withContent: true });
+    ensureShadowAppRoot(doc, "");
+    const host = (content as unknown as StubEl).children.find(
+      (c) => c.id === "cassini-shadow-host",
+    );
+    expect(host?.shadowRoot?.children.some((c) => c.rel === "stylesheet")).toBe(false);
+    expect(host?.shadowRoot?.children.some((c) => c.id === "app")).toBe(true);
   });
 });

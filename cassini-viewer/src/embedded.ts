@@ -15,6 +15,14 @@
 // document.scripts for our own /ui/viewer.js src. The capture runs at
 // top-level synchronous eval (before mount) so catalog.ts / loadArtifact.ts
 // see window.__CASSINI_VIEWER_BASE__ during onMount.
+//
+// CSS isolation (D-383): the SPA is mounted INSIDE an open shadow root and its
+// bundled stylesheet (served by the operator at <base>ui/viewer.css) is
+// injected INTO that shadow — not registered as a global Nextcloud ui/style
+// link. This scopes Tailwind Preflight + daisyUI to the SPA: the SPA no longer
+// bleeds onto NC chrome, and NC's chrome no longer bleeds into the SPA. The
+// daisyUI theme tokens are emitted on :host (app.css `root: :where(:root,:host)`)
+// so they inherit across the shadow boundary.
 
 import { mount } from "svelte";
 import App from "./App.svelte";
@@ -59,23 +67,47 @@ export function captureViewerBase(doc: Document, win: Window): void {
   }
 }
 
-// ensureAppRoot returns the #app element the SPA mounts into, creating it
-// inside the embedded template's <div id="content"> (falling back to <body>
-// if the host markup ever changes). Pure w.r.t. the passed document.
-export function ensureAppRoot(doc: Document): HTMLElement {
-  let appRoot = doc.getElementById("app");
-  if (appRoot) {
-    return appRoot;
+// ensureShadowAppRoot creates the shadow host inside the embedded template's
+// <div id="content"> (falling back to <body>), attaches an OPEN shadow root,
+// injects the bundled stylesheet at cssHref INTO the shadow (so Tailwind/daisyUI
+// are scoped to the SPA and do not leak to/from NC chrome), and returns the #app
+// element — inside the shadow — the SPA mounts into. cssHref is the operator-
+// served, proxy-allowed "<base>ui/viewer.css" (CSP style-src 'self' permits it).
+// Idempotent: re-uses an existing shadow host if one is already present.
+export function ensureShadowAppRoot(doc: Document, cssHref: string): HTMLElement {
+  const existingHost = doc.getElementById("cassini-shadow-host");
+  const host = existingHost ?? doc.createElement("div");
+  if (!existingHost) {
+    host.id = "cassini-shadow-host";
+    (doc.getElementById("content") ?? doc.body).appendChild(host);
   }
-  const host = doc.getElementById("content") ?? doc.body;
+  const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+  let appRoot = shadow.getElementById?.("app") ?? null;
+  if (appRoot) {
+    return appRoot as HTMLElement;
+  }
+  if (cssHref) {
+    const link = doc.createElement("link");
+    link.rel = "stylesheet";
+    link.href = cssHref;
+    shadow.appendChild(link);
+  }
   appRoot = doc.createElement("div");
-  appRoot.id = "app";
-  host.appendChild(appRoot);
-  return appRoot;
+  (appRoot as HTMLElement).id = "app";
+  shadow.appendChild(appRoot);
+  return appRoot as HTMLElement;
+}
+
+// viewerStylesheetHref builds the shadow stylesheet URL from the captured proxy
+// base. Falls back to a relative "ui/viewer.css" if the base is somehow absent
+// (the SPA still mounts; only styling would degrade).
+function viewerStylesheetHref(win: Window): string {
+  const base = win.__CASSINI_VIEWER_BASE__;
+  return base ? base + "ui/viewer.css" : "ui/viewer.css";
 }
 
 function mountEmbeddedViewer(): void {
-  mount(App, { target: ensureAppRoot(document) });
+  mount(App, { target: ensureShadowAppRoot(document, viewerStylesheetHref(window)) });
 }
 
 function bootstrap(): void {
