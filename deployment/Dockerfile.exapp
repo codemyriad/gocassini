@@ -98,12 +98,19 @@ COPY cassini-control-panel/package.json cassini-control-panel/package-lock.json 
 RUN npm ci
 COPY cassini-control-panel/ ./
 # control-panel is served at /control-panel/ inside the ExApp container.
-# CASSINI_OPERATOR_BASE_PATH bakes the operator API path into the SPA bundle;
-# the runtime stage sets the same value as a real ENV (AppAPI injects no
-# CASSINI_* vars). VITE_BASE makes asset URLs resolve under /control-panel/.
+# CASSINI_OPERATOR_BASE_PATH bakes the operator API path into the STANDALONE
+# SPA bundle; the runtime stage sets the same value as a real ENV (AppAPI
+# injects no CASSINI_* vars). VITE_BASE makes the standalone asset URLs resolve
+# under /control-panel/. build:all emits BOTH the standalone dist/ and the
+# embedded dist/embedded/{embedded.js,embedded.css} (in that order so the
+# standalone build doesn't wipe dist/embedded); the embedded assets are what the
+# operator serves at /ui/control-panel.{js,css} (D-382). The embedded build uses
+# base ./ and sets the operator base path at runtime from the captured proxy
+# base (src/embedded.ts), so VITE_BASE / CASSINI_OPERATOR_BASE_PATH don't apply
+# there.
 ENV VITE_BASE=/control-panel/
 ENV CASSINI_OPERATOR_BASE_PATH=/operator
-RUN npm run build
+RUN npm run build:all
 
 FROM debian:bookworm-slim AS frpc-fetcher
 ARG FRP_VERSION

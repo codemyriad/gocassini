@@ -256,10 +256,12 @@ func TestUIRegistrarRegistersTopMenuEntriesAndScripts(t *testing.T) {
 	}
 	registrar()
 
-	// 2 top-menu + 2 script + 1 style (the viewer also registers its ui/style
-	// for the embedded build; control-panel iframes its own SPA, no style).
-	if len(calls) != 5 {
-		t.Fatalf("got %d OCS calls, want 5 (2 top-menu + 2 script + 1 viewer style): %+v", len(calls), calls)
+	// 2 top-menu + 2 script + 2 style: both the viewer (D-381) and the
+	// control-panel (D-382) mount their SPA directly on the embedded page from a
+	// self-mounting IIFE + stylesheet, so each registers a ui/script AND a
+	// ui/style.
+	if len(calls) != 6 {
+		t.Fatalf("got %d OCS calls, want 6 (2 top-menu + 2 script + 2 style): %+v", len(calls), calls)
 	}
 	wantAuth := base64.StdEncoding.EncodeToString([]byte(":shh"))
 	for i, c := range calls {
@@ -277,14 +279,14 @@ func TestUIRegistrarRegistersTopMenuEntriesAndScripts(t *testing.T) {
 		}
 	}
 
-	// uiRegistrar emits per-entry calls in order: for the viewer (entry 0) the
-	// top-menu, script, then style; for control-panel (entry 1) the top-menu
-	// then script. So the call sequence is:
+	// uiRegistrar emits per-entry calls in order — for each entry the top-menu,
+	// then script, then style — so the call sequence is:
 	//   [0] viewer        top-menu
 	//   [1] viewer        script
 	//   [2] viewer        style
 	//   [3] control-panel top-menu
 	//   [4] control-panel script
+	//   [5] control-panel style
 	assertTopMenu := func(idx int, name string, adminRequired float64) {
 		c := calls[idx]
 		if c.Path != "/ocs/v2.php/apps/app_api/api/v1/ui/top-menu" {
@@ -320,35 +322,32 @@ func TestUIRegistrarRegistersTopMenuEntriesAndScripts(t *testing.T) {
 		}
 	}
 
+	// The ui/style Path is "ui/<name>" WITH NO extension — AppAPI appends ".css"
+	// (registering "ui/<name>.css" would 404 as "ui/<name>.css.css"). This is
+	// the D-381 / D-382 contract; both entries register a style now.
+	assertStyle := func(idx int, name string) {
+		s := calls[idx]
+		if s.Path != "/ocs/v2.php/apps/app_api/api/v1/ui/style" {
+			t.Fatalf("call %d path = %q, want the ui/style OCS route", idx, s.Path)
+		}
+		if s.Body["type"] != "top_menu" {
+			t.Errorf("style %q: type = %v, want top_menu", name, s.Body["type"])
+		}
+		if s.Body["name"] != name {
+			t.Errorf("style %q: name = %v", name, s.Body["name"])
+		}
+		if wantPath := "ui/" + name; s.Body["path"] != wantPath {
+			t.Errorf("style %q: path = %v, want %q (no extension)", name, s.Body["path"], wantPath)
+		}
+	}
+
 	assertTopMenu(0, "viewer", 0)
 	assertScript(1, "viewer")
-
-	// Call 2: the viewer ui/style. Path is "ui/viewer" WITH NO extension —
-	// AppAPI appends ".css" (registering "ui/viewer.css" would 404 as
-	// "ui/viewer.css.css"). This is the D-381 contract.
-	style := calls[2]
-	if style.Path != "/ocs/v2.php/apps/app_api/api/v1/ui/style" {
-		t.Fatalf("call 2 path = %q, want the ui/style OCS route", style.Path)
-	}
-	if style.Body["type"] != "top_menu" {
-		t.Errorf("style: type = %v, want top_menu", style.Body["type"])
-	}
-	if style.Body["name"] != "viewer" {
-		t.Errorf("style: name = %v, want viewer", style.Body["name"])
-	}
-	if style.Body["path"] != "ui/viewer" {
-		t.Errorf("style: path = %v, want ui/viewer (no extension)", style.Body["path"])
-	}
+	assertStyle(2, "viewer")
 
 	assertTopMenu(3, "control-panel", 1)
 	assertScript(4, "control-panel")
-
-	// The control-panel entry must NOT register a ui/style.
-	for i, c := range calls {
-		if c.Path == "/ocs/v2.php/apps/app_api/api/v1/ui/style" && c.Body["name"] != "viewer" {
-			t.Errorf("call %d: unexpected ui/style registration for %v", i, c.Body["name"])
-		}
-	}
+	assertStyle(5, "control-panel")
 }
 
 func TestUIRegistrarNilWhenUnconfigured(t *testing.T) {
@@ -388,64 +387,57 @@ func TestUIRegistrarLogsErrorOnOCSFailure(t *testing.T) {
 // rewrites them to proxy fetches of /ui/<entry>.{js,css}. This guards the
 // registrar JSON and the asset routes against drifting apart.
 //
-// D-381: the viewer entry now serves its embedded build (a self-mounting IIFE
-// + stylesheet from <ViewerDist>/embedded/), NOT the iframe bootstrap. The
-// control-panel entry still serves the iframe bootstrap.
+// D-381 + D-382: BOTH the viewer and control-panel entries now serve their
+// embedded build (a self-mounting IIFE + stylesheet from <Dist>/embedded/),
+// NOT an iframe bootstrap.
 func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
 	viewerDist := t.TempDir()
-	// Stand in for the baked-in embedded viewer build. The marker strings are
-	// what a real embedded.ts compiles down to references of (it mounts into an
-	// #app under #content) — assert the served body is the embedded bundle, not
-	// an iframe bootstrap.
+	controlPanelDist := t.TempDir()
+	// Stand in for the baked-in embedded builds. The marker strings are what a
+	// real embedded.ts compiles down to references of (it mounts into an #app
+	// under #content) — assert the served body is the embedded bundle, not an
+	// iframe bootstrap.
 	writeFile(t, filepath.Join(viewerDist, "embedded", "embedded.js"),
 		`(function(){/* embedded viewer */ var app=document.getElementById("app"); /* mount #app */})();`)
 	writeFile(t, filepath.Join(viewerDist, "embedded", "embedded.css"),
 		`#app{display:block}`)
+	writeFile(t, filepath.Join(controlPanelDist, "embedded", "embedded.js"),
+		`(function(){/* embedded control-panel */ var app=document.getElementById("app"); /* mount #app */})();`)
+	writeFile(t, filepath.Join(controlPanelDist, "embedded", "embedded.css"),
+		`#app{display:block}`)
 
 	root := http.NewServeMux()
-	ExAppConfig{ViewerDist: viewerDist}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
+	ExAppConfig{ViewerDist: viewerDist, ControlPanelDist: controlPanelDist}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
+
+	// assertEmbeddedAsset checks an embedded JS/CSS route serves the on-disk
+	// bundle (right content type, references #app, never an iframe bootstrap).
+	assertEmbeddedAsset := func(path, wantCT string, wantAppMarker bool) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		root.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s: got %d, want 200", path, w.Code)
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, wantCT) {
+			t.Fatalf("GET %s: Content-Type %q does not include %q", path, ct, wantCT)
+		}
+		body := w.Body.String()
+		if strings.Contains(body, "iframe") {
+			t.Fatalf("GET %s: must serve the embedded IIFE, not an iframe bootstrap", path)
+		}
+		if wantAppMarker && !strings.Contains(body, "#app") {
+			t.Fatalf("GET %s: body does not reference the embedded mount target (#app): %q", path, body)
+		}
+	}
 
 	// --- viewer: embedded IIFE + CSS, served from disk, NOT an iframe ---
-	rj := httptest.NewRequest(http.MethodGet, "/ui/viewer.js", nil)
-	wj := httptest.NewRecorder()
-	root.ServeHTTP(wj, rj)
-	if wj.Code != http.StatusOK {
-		t.Fatalf("GET /ui/viewer.js: got %d, want 200", wj.Code)
-	}
-	if ct := wj.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
-		t.Fatalf("GET /ui/viewer.js: Content-Type %q does not include javascript", ct)
-	}
-	body := wj.Body.String()
-	if strings.Contains(body, "iframe") {
-		t.Fatalf("GET /ui/viewer.js: viewer must serve the embedded IIFE, not an iframe bootstrap")
-	}
-	if !strings.Contains(body, "#app") {
-		t.Fatalf("GET /ui/viewer.js: body does not reference the embedded mount target (#app): %q", body)
-	}
+	assertEmbeddedAsset("/ui/viewer.js", "javascript", true)
+	assertEmbeddedAsset("/ui/viewer.css", "css", false)
 
-	rc := httptest.NewRequest(http.MethodGet, "/ui/viewer.css", nil)
-	wc := httptest.NewRecorder()
-	root.ServeHTTP(wc, rc)
-	if wc.Code != http.StatusOK {
-		t.Fatalf("GET /ui/viewer.css: got %d, want 200", wc.Code)
-	}
-	if ct := wc.Header().Get("Content-Type"); !strings.Contains(ct, "css") {
-		t.Fatalf("GET /ui/viewer.css: Content-Type %q does not include css", ct)
-	}
-
-	// --- control-panel: still the iframe bootstrap ---
-	rb := httptest.NewRequest(http.MethodGet, "/ui/control-panel.js", nil)
-	wb := httptest.NewRecorder()
-	root.ServeHTTP(wb, rb)
-	if wb.Code != http.StatusOK {
-		t.Fatalf("GET /ui/control-panel.js: got %d, want 200", wb.Code)
-	}
-	if ct := wb.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
-		t.Fatalf("GET /ui/control-panel.js: Content-Type %q does not include javascript", ct)
-	}
-	if !strings.Contains(wb.Body.String(), "iframe") {
-		t.Fatalf("GET /ui/control-panel.js: bootstrap body does not build an iframe")
-	}
+	// --- control-panel: embedded IIFE + CSS, served from disk, NOT an iframe ---
+	assertEmbeddedAsset("/ui/control-panel.js", "javascript", true)
+	assertEmbeddedAsset("/ui/control-panel.css", "css", false)
 
 	// --- every entry's icon must resolve ---
 	for _, entry := range topMenuEntries {
@@ -461,19 +453,22 @@ func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
 	}
 }
 
-// When CASSINI_VIEWER_DIST is unset (or the embedded build is missing), the
-// viewer ui asset routes degrade to 503 rather than 404/200-empty, mirroring
-// the SPA handler's "assets not bundled" behavior.
-func TestUIViewerAssetUnavailableWithoutDist(t *testing.T) {
+// When CASSINI_VIEWER_DIST / CASSINI_CONTROL_PANEL_DIST is unset (or the
+// embedded build is missing), the ui asset routes degrade to 503 rather than
+// 404/200-empty, mirroring the SPA handler's "assets not bundled" behavior.
+func TestUIEmbeddedAssetUnavailableWithoutDist(t *testing.T) {
 	root := http.NewServeMux()
 	ExAppConfig{}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
 
-	for _, path := range []string{"/ui/viewer.js", "/ui/viewer.css"} {
+	for _, path := range []string{
+		"/ui/viewer.js", "/ui/viewer.css",
+		"/ui/control-panel.js", "/ui/control-panel.css",
+	} {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		w := httptest.NewRecorder()
 		root.ServeHTTP(w, r)
 		if w.Code != http.StatusServiceUnavailable {
-			t.Fatalf("GET %s without ViewerDist: got %d, want 503", path, w.Code)
+			t.Fatalf("GET %s without dist: got %d, want 503", path, w.Code)
 		}
 	}
 }
