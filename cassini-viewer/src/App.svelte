@@ -90,12 +90,23 @@
   type ThemeMode = "forrest-light" | "forrest-dark";
   const THEME_STORAGE_KEY = "cassini-theme";
   let themeMode: ThemeMode = "forrest-light";
+  // theme + theme-switching live on the .cassini-root wrapper (data-theme /
+  // class:theme-switching), NOT on document.documentElement — in the embedded
+  // build the SPA renders inside a shadow root, so the document's <html> is
+  // outside it and daisyUI's [data-theme] rule (scoped to the shadow stylesheet)
+  // could never match it. The wrapper is in-tree in both builds.
+  let themeSwitching = false;
   let prefersDarkMedia: MediaQueryList | null = null;
 
   let shortcutsDialog: HTMLDialogElement | null = null;
   function openShortcutsDialog() {
     shortcutsDialog?.showModal();
   }
+
+  // The .cassini-root wrapper; used to resolve element lookups against the
+  // component's ROOT NODE — the shadow root in the embedded build, the document
+  // in standalone — since document.getElementById can't see shadow-tree nodes.
+  let rootEl: HTMLElement | undefined;
 
   const DESKTOP_MEDIA_QUERY = "(min-width: 768px)";
   let isDesktop = false;
@@ -221,20 +232,22 @@
   }
 
   function applyTheme(mode: ThemeMode) {
+    // data-theme is bound on the .cassini-root wrapper; updating themeMode is
+    // all that's needed (no document.documentElement — it's outside the shadow
+    // root in the embedded build).
     themeMode = mode;
-    document.documentElement.setAttribute("data-theme", mode);
   }
 
   function setTheme(mode: ThemeMode) {
     // Suppress per-element transitions during the theme swap so the
     // attribute change applies in a single paint instead of cascading
-    // animations across every transcript token.
-    const root = document.documentElement;
-    root.classList.add("theme-switching");
+    // animations across every transcript token. theme-switching is bound on the
+    // .cassini-root wrapper via class:theme-switching.
+    themeSwitching = true;
     applyTheme(mode);
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        root.classList.remove("theme-switching");
+        themeSwitching = false;
       });
     });
     try {
@@ -670,7 +683,12 @@
 
   async function scrollSegmentIntoView(segmentId: string, behavior: ScrollBehavior) {
     await tick();
-    const element = document.getElementById(segmentDomId(segmentId));
+    // In the embedded build the segment <article>s live inside the shadow root,
+    // where document.getElementById can't reach them — resolve against the
+    // component's root node (ShadowRoot embedded / Document standalone).
+    const id = segmentDomId(segmentId);
+    const root = rootEl?.getRootNode() as Document | ShadowRoot | undefined;
+    const element = root?.getElementById?.(id) ?? document.getElementById(id);
     element?.scrollIntoView({ behavior, block: "center" });
   }
 
@@ -1015,6 +1033,12 @@
   />
 </svelte:head>
 
+<!-- .cassini-root carries the daisyUI theme (data-theme) and the theme-switching
+     transition-suppression for the whole app. It lives here (in-tree), not on
+     document.documentElement, so it works inside the embedded build's shadow
+     root. The <dialog> below is wrapped too so [data-theme] styles it (showModal
+     keeps it in-tree for inheritance even when promoted to the top layer). -->
+<div bind:this={rootEl} class="cassini-root" data-theme={themeMode} class:theme-switching={themeSwitching}>
 <div class="grid grid-cols-1 md:grid-cols-[400px_1fr] min-h-screen bg-base-200 overflow-x-clip">
   {#if isDesktop || !selectedMeetingId}
     <section
@@ -1579,4 +1603,5 @@
     <button type="submit">close</button>
   </form>
 </dialog>
+</div><!-- /.cassini-root -->
 
