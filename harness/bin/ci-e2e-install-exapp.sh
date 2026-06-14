@@ -327,31 +327,15 @@ docker exec "$CONTAINER_NAME" sh -c \
 # A plain Basic GET on the embedded page can 302 to the login flow, so use a
 # cookie-jar login (like d263-nextcloud-lifecycle.sh) for the test user.
 NC_BASE="http://127.0.0.1:${NEXTCLOUD_HOST_PORT}"
-COOKIE_JAR="$LOG_DIR/${TEST_USER}.cookies"
-
-nc_login() {
-  local user="$1" pass="$2" token page
-  # 1. GET the login page to obtain a session cookie + requesttoken.
-  page=$(curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" "$NC_BASE/index.php/login")
-  token=$(sed -n 's/.*data-requesttoken="\([^"]*\)".*/\1/p' <<<"$page" | head -n1)
-  if [[ -z "$token" ]]; then
-    token=$(sed -n 's/.*name="requesttoken" value="\([^"]*\)".*/\1/p' <<<"$page" | head -n1)
-  fi
-  [[ -n "$token" ]] || fail "could not extract requesttoken from the NC login page"
-  # 2. POST credentials; -L follows the post-login redirect.
-  curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" -L \
-    --data-urlencode "user=$user" \
-    --data-urlencode "password=$pass" \
-    --data-urlencode "requesttoken=$token" \
-    "$NC_BASE/index.php/login" -o /dev/null
-}
-
-log "logging in $TEST_USER via cookie jar for the embedded-page check"
-nc_login "$TEST_USER" "$TEST_USER_PASSWORD"
-
+# The embedded page is a regular authenticated Nextcloud route (served by the
+# app_api PHP app, not the ExApp proxy). Nextcloud's BasicAuth middleware
+# authenticates GETs per-request, so reuse the same HTTP Basic creds the proxy
+# route checks above already use successfully (a cookie-jar login flow is
+# brittle and was not establishing a session). The viewer entry is USER tier,
+# so the regular e2euser can open it.
 EMBEDDED_URL="$NC_BASE/index.php/apps/app_api/embedded/${APP_ID}/viewer"
 log "checking embedded viewer page $EMBEDDED_URL"
-embedded_status=$(curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+embedded_status=$(curl -sS -u "$TEST_USER:$TEST_USER_PASSWORD" \
   -o "$LOG_DIR/embedded-viewer.html" -w '%{http_code}' "$EMBEDDED_URL")
 if [[ "$embedded_status" != "200" ]]; then
   log "first 300 chars of embedded response:"
