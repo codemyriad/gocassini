@@ -331,6 +331,22 @@ Outside AppAPI (plain `docker run` without `APP_PERSISTENT_STORAGE`) the
 image defaults apply: `/var/lib/cassini-operator` for the DB + work root and
 `/srv/cassini-site/published` for the site — mount volumes there yourself.
 
+**Two copies, and what to back up.** Each recording exists in two places: the
+raw `.mkv` that Cassini uploads into the **room owner's `Talk/Recordings`
+folder in Nextcloud Files** (quota-counted and part of your normal Files
+backups — see [Step 5](#step-5--talk-handoff-reversible)), and the
+operator's own copy plus the derived artifacts (transcript, summary, viewer
+site) under `nc_app_gocassini_data`. The transcript, summary, and site live
+**only** in that volume — they are not in Nextcloud's Files backups — so back
+up `nc_app_gocassini_data` separately if you want to keep them. Deleting one
+copy does not affect the other.
+
+**Retention.** There is no automatic retention or pruning yet: recordings and
+job history accumulate until removed manually (delete the Files `.mkv`, or
+`occ app_api:app:unregister --rm-data` to wipe the whole volume). Plan disk
+accordingly. Retention controls are tracked in
+[`planning/storage-and-access-shaping.md`](../planning/storage-and-access-shaping.md).
+
 ## Access policy
 
 The manifest declares per-route access levels enforced by Nextcloud's proxy:
@@ -341,15 +357,26 @@ The manifest declares per-route access levels enforced by Nextcloud's proxy:
 | `/operator/jobs`, `/operator/jobs/...`, `/operator/events` | ADMIN | Operator JSON + SSE API |
 | `/operator/status` | ADMIN | Doctor/status endpoint (version, device usability, Talk config, DB/storage health) |
 | `/viewer/*` | USER | Viewer SPA |
-| `/published/*` | USER | Published meeting bundles (catalog + recordings) |
+| `/published/*` | USER | Published meeting bundles — **owner-scoped** (each user sees only recordings they own) |
 | `/ui/viewer.js` | USER | Bootstrap script behind the **Cassini** navigation entry |
 | `/ui/control-panel.js` | ADMIN | Bootstrap script behind the **Cassini Admin** navigation entry |
 | `/img/app.svg` | USER | Navigation icon |
 | `/api/v1/welcome`, `/api/v1/room/*` | PUBLIC | Talk recording-backend protocol (HMAC-authenticated by Talk itself) |
 
-USER means any logged-in Nextcloud user. v1 ships an **org-wide recording
-archive** — anyone who can log in to your Nextcloud can browse every
-published meeting. Per-recording ACLs are a future enhancement.
+`USER` means the AppAPI proxy admits any logged-in Nextcloud user — but the
+operator then **scopes the published archive to the caller**. The viewer's
+`catalog.json` lists only the meetings that user owns (the recording's Talk
+`owner`, persisted on the job), and another owner's per-meeting assets return
+`404`. A logged-in user who has recorded nothing sees an empty archive;
+recordings created outside Talk's record button (no owner) are shown to nobody
+through the archive. This reverses the original org-wide model (D10): recordings
+are owner-private.
+
+Sharing a recording with other people currently goes through Nextcloud Files on
+the raw `.mkv` (see [Talk handoff](#step-5--talk-handoff-reversible) and
+[Persistent storage](#persistent-storage)) — richer in-Nextcloud delivery of the
+transcript/summary (deliver-to-Files + share-into-conversation) is tracked as
+follow-up; see [`planning/storage-and-access-shaping.md`](../planning/storage-and-access-shaping.md).
 
 `PUT /enabled` and `POST /init` are AppAPI **lifecycle callbacks**, not
 proxied browser routes; they do not appear in `<routes>`.

@@ -165,6 +165,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	exappCfg.PublishedDir = cfg.SiteRoot
+	exappCfg.JobOwners = store // scope the published archive to the calling user
 	warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.SiteRoot)
 
 	server := &http.Server{

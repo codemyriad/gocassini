@@ -5,10 +5,12 @@
   <name>Cassini</name>
   <summary>Record, transcribe, and publish Nextcloud Talk meetings.</summary>
   <description><![CDATA[Cassini joins a Nextcloud Talk room as a bot, records the call,
-transcribes and summarizes it, and publishes a readable static site that any
-logged-in user can browse. Recording control and job history live in the
-admin-only control panel; the published meeting archive is visible to every
-logged-in user.]]></description>
+transcribes and summarizes it, and makes a readable transcript and summary
+available to the people the recording belongs to. The raw recording is filed
+into the call owner's Talk/Recordings folder in Nextcloud Files, the same place
+Talk's built-in recorder uses. Recording control and job history live in the
+admin-only control panel; in the viewer each user sees only the recordings they
+own — recordings are owner-private, not an org-wide archive.]]></description>
   <version>0.1.0</version>
   <licence>agpl</licence>
   <author>codemyriad</author>
@@ -134,7 +136,11 @@ logged-in user.]]></description>
         <access_level>ADMIN</access_level>
       </route>
 
-      <!-- USER: viewer SPA + published recordings (org-wide archive per D10) -->
+      <!-- USER: viewer SPA + published recordings. The proxy admits any
+           logged-in user; the operator then scopes the archive to the caller
+           (publishedHandler in exapp.go): catalog.json lists only the meetings
+           that user owns, and another owner's per-meeting assets 404. Reverses
+           the original org-wide D10 model. -->
       <route>
         <url>^viewer\/?$</url>
         <verb>GET</verb>

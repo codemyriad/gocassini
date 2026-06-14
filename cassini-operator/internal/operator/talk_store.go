@@ -2,8 +2,40 @@ package operator
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 )
+
+// JobOwner returns the Nextcloud user id that owns job id's recording, derived
+// from the persisted Talk binding (talk_binding). found is false when no such
+// job exists; owner is "" when the job exists but carries no Talk binding —
+// e.g. a job created directly via the operator API rather than Talk's record
+// button. Unowned recordings are treated as visible to nobody by the published
+// archive's owner scoping, which is the safe default.
+func (s *Store) JobOwner(ctx context.Context, id string) (string, bool, error) {
+	var binding sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT talk_binding FROM jobs WHERE id = ?`, id).Scan(&binding)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("query job owner: %w", err)
+	}
+	if !binding.Valid || strings.TrimSpace(binding.String) == "" {
+		return "", true, nil
+	}
+	var b struct {
+		Owner string `json:"owner"`
+	}
+	if err := json.Unmarshal([]byte(binding.String), &b); err != nil {
+		// A malformed binding must not leak the recording: treat as unowned.
+		return "", true, nil
+	}
+	return strings.TrimSpace(b.Owner), true, nil
+}
 
 // SetJobTalkBinding persists the Talk room binding for a job started through
 // the Talk recording backend (D-352). The binding is written once at start

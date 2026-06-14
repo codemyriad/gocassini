@@ -55,6 +55,13 @@ func UserID(ctx context.Context) string {
 	return v
 }
 
+// ContextWithUserID returns a copy of ctx carrying the AppAPI-authenticated
+// user id. Middleware uses it on the inbound path; tests use it to simulate a
+// proxied request without constructing the full AUTHORIZATION-APP-API header.
+func ContextWithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, userIDContextKey{}, userID)
+}
+
 // Authenticated reports whether Middleware verified the request's AppAPI
 // headers. It is false for requests served without an active middleware
 // (e.g. a standalone deploy without APP_SECRET), which lets callers layer
@@ -101,7 +108,7 @@ func (c Config) Middleware(next http.Handler) http.Handler {
 		}
 		ctx := context.WithValue(r.Context(), authenticatedContextKey{}, true)
 		if userID != "" {
-			ctx = context.WithValue(ctx, userIDContextKey{}, userID)
+			ctx = ContextWithUserID(ctx, userID)
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

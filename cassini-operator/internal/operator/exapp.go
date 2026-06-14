@@ -2,6 +2,7 @@ package operator
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
@@ -175,6 +176,9 @@ type ExAppConfig struct {
 	ControlPanelDist string
 	ViewerDist       string
 	PublishedDir     string // operator SiteRoot, served read-only at /published
+	// JobOwners scopes the published archive to the calling Nextcloud user.
+	// nil disables scoping (standalone/dev), serving the archive unscoped.
+	JobOwners JobOwnerLookup
 }
 
 // LoadExAppConfig reads ExApp env vars and decides whether the AppAPI build
@@ -299,7 +303,7 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 		root.Handle(viewerURLPrefix+"/", spaHandler(c.ViewerDist, viewerURLPrefix, logger))
 	}
 	if c.PublishedDir != "" {
-		root.Handle(publishedURLPrefix+"/", publishedHandler(c.PublishedDir, publishedURLPrefix, logger))
+		root.Handle(publishedURLPrefix+"/", publishedHandler(c.PublishedDir, publishedURLPrefix, logger, c.JobOwners))
 	}
 }
 
@@ -640,9 +644,32 @@ func serveSPAIndex(w http.ResponseWriter, r *http.Request, indexPath string, log
 	http.ServeContent(w, r, "index.html", info.ModTime(), f)
 }
 
+// JobOwnerLookup resolves the Nextcloud user id that owns a recording, keyed by
+// job id — which is also the published meeting id (cassini publish names each
+// meeting directory after the job's `<id>.meeting` bundle, trimmed). *Store
+// implements it via the persisted Talk binding.
+type JobOwnerLookup interface {
+	JobOwner(ctx context.Context, id string) (owner string, found bool, err error)
+}
+
+const publishedCatalogFile = "catalog.json"
+
 // publishedHandler serves files from `dir` under urlPrefix. No SPA fallback —
 // missing files 404. Used for the published meeting archive.
-func publishedHandler(dir, urlPrefix string, logger *log.Logger) http.Handler {
+//
+// When both an AppAPI-authenticated caller and an owner lookup are present, the
+// archive is scoped to the caller (D10 reversal — recordings are owner-private,
+// not an org-wide archive):
+//   - GET /published/catalog.json is rewritten to list only the meetings the
+//     caller owns;
+//   - GET /published/<jobID>/... (per-meeting assets) is hidden (404) from
+//     anyone but the owner;
+//   - site-shell paths (index.html, assets/*, and any leading segment that is
+//     not a known job id) are served unscoped.
+//
+// With no caller identity (standalone/dev without AppAPI) or no lookup wired,
+// the archive is served unscoped — preserving the pre-scoping behaviour.
+func publishedHandler(dir, urlPrefix string, logger *log.Logger, owners JobOwnerLookup) http.Handler {
 	fileServer := http.StripPrefix(urlPrefix, http.FileServer(http.Dir(dir)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -650,8 +677,110 @@ func publishedHandler(dir, urlPrefix string, logger *log.Logger) http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		caller := appapi.UserID(r.Context())
+		if owners == nil || caller == "" {
+			// Nothing to scope by — serve unscoped (standalone/dev path).
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+		rel := strings.TrimPrefix(r.URL.Path, urlPrefix)
+		rel = strings.TrimPrefix(rel, "/")
+		if rel == publishedCatalogFile {
+			serveScopedCatalog(w, r, filepath.Join(dir, publishedCatalogFile), owners, caller, fileServer, logger)
+			return
+		}
+		// A per-meeting asset's leading path segment is the job id.
+		seg := rel
+		if i := strings.IndexByte(rel, '/'); i >= 0 {
+			seg = rel[:i]
+		}
+		if seg != "" {
+			owner, found, err := owners.JobOwner(r.Context(), seg)
+			if err != nil {
+				if logger != nil {
+					logger.Printf("published scope: owner lookup failed id=%s: %v", seg, err)
+				}
+				http.Error(w, "lookup failed", http.StatusInternalServerError)
+				return
+			}
+			if found && owner != caller {
+				// A known meeting the caller doesn't own — hide its existence.
+				http.NotFound(w, r)
+				return
+			}
+		}
 		fileServer.ServeHTTP(w, r)
 	})
+}
+
+// serveScopedCatalog reads catalog.json from path and writes it back with the
+// meetings array filtered to those owned by caller. Top-level fields and each
+// kept meeting's fields are preserved verbatim. A missing catalog falls through
+// to the file server (404); a malformed catalog yields an empty meetings list
+// rather than leaking the unfiltered archive.
+func serveScopedCatalog(w http.ResponseWriter, r *http.Request, path string, owners JobOwnerLookup, caller string, fileServer http.Handler, logger *log.Logger) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		fileServer.ServeHTTP(w, r) // not published yet -> 404
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		if logger != nil {
+			logger.Printf("published scope: malformed catalog %s: %v", path, err)
+		}
+		writeEmptyCatalog(w, r)
+		return
+	}
+	var meetings []json.RawMessage
+	if rawMeetings, ok := doc["meetings"]; ok {
+		_ = json.Unmarshal(rawMeetings, &meetings)
+	}
+	kept := make([]json.RawMessage, 0, len(meetings))
+	for _, m := range meetings {
+		var idHolder struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(m, &idHolder); err != nil || strings.TrimSpace(idHolder.ID) == "" {
+			continue
+		}
+		owner, found, err := owners.JobOwner(r.Context(), idHolder.ID)
+		if err != nil {
+			if logger != nil {
+				logger.Printf("published scope: owner lookup failed id=%s: %v", idHolder.ID, err)
+			}
+			continue // hide on error
+		}
+		if found && owner == caller {
+			kept = append(kept, m)
+		}
+	}
+	keptJSON, err := json.Marshal(kept)
+	if err != nil {
+		writeEmptyCatalog(w, r)
+		return
+	}
+	doc["meetings"] = keptJSON
+	out, err := json.Marshal(doc)
+	if err != nil {
+		writeEmptyCatalog(w, r)
+		return
+	}
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	_, _ = w.Write(out)
+}
+
+func writeEmptyCatalog(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodHead {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	_, _ = w.Write([]byte(`{"version":"cassini.viewer.catalog.v1","meetings":[]}`))
 }
 
 // warnIfEphemeral logs a warning when a path looks like it's on an ephemeral
