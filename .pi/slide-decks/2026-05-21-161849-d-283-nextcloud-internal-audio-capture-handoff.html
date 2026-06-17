@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>D-283 — Nextcloud internal audio capture handoff</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: #121933;
+    --panel-2: #182247;
+    --text: #eef3ff;
+    --muted: #a9b6d3;
+    --accent: #76e3ff;
+    --accent-2: #84f7b4;
+    --warn: #ffd166;
+    --danger: #ff8f8f;
+    --border: rgba(255,255,255,0.12);
+    --shadow: 0 20px 60px rgba(0,0,0,0.35);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: radial-gradient(circle at top, #15214b 0%, var(--bg) 45%);
+    color: var(--text);
+    font: 16px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+  .deck { height: 100vh; width: 100vw; position: relative; }
+  .slide {
+    display: none;
+    height: 100vh;
+    width: 100vw;
+    padding: 56px 64px 72px;
+    overflow: auto;
+  }
+  .slide.active { display: block; }
+  .eyebrow {
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 12px;
+    font-weight: 700;
+    margin-bottom: 14px;
+  }
+  h1, h2, h3 { margin: 0 0 16px; line-height: 1.08; }
+  h1 { font-size: 44px; }
+  h2 { font-size: 34px; }
+  h3 { font-size: 22px; }
+  p, li { color: var(--text); }
+  .muted, .muted p, .muted li { color: var(--muted); }
+  .grid { display: grid; gap: 18px; }
+  .g2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .g3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+  .card {
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    padding: 20px 22px;
+    box-shadow: var(--shadow);
+  }
+  .hero {
+    display: grid;
+    grid-template-columns: 1.2fr 0.8fr;
+    gap: 24px;
+    align-items: stretch;
+    margin-top: 18px;
+  }
+  .big {
+    font-size: 20px;
+    color: var(--muted);
+    max-width: 900px;
+  }
+  .pillrow { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+  .pill {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 8px 12px;
+    color: var(--muted);
+    background: rgba(255,255,255,0.04);
+    font-size: 14px;
+  }
+  .stat { font-size: 32px; font-weight: 800; margin-bottom: 6px; }
+  .label { color: var(--muted); font-size: 14px; }
+  ul { margin: 10px 0 0 22px; }
+  li { margin: 8px 0; }
+  .compare {
+    display: grid;
+    grid-template-columns: 1fr 80px 1fr;
+    gap: 18px;
+    align-items: start;
+    margin-top: 16px;
+  }
+  .arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    font-size: 36px;
+    height: 100%;
+  }
+  .boxlist { display: flex; flex-direction: column; gap: 10px; }
+  .box {
+    padding: 12px 14px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.04);
+  }
+  .flow {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0,1fr));
+    gap: 12px;
+    align-items: center;
+    margin-top: 18px;
+  }
+  .flow .node {
+    padding: 16px;
+    border-radius: 16px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    min-height: 88px;
+  }
+  .flow .node strong { display: block; margin-bottom: 6px; }
+  .flow .join { text-align: center; color: var(--accent); font-size: 26px; }
+  table {
+    width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 15px;
+    border-radius: 14px; overflow: hidden;
+  }
+  th, td { border: 1px solid var(--border); padding: 10px 12px; vertical-align: top; }
+  th { text-align: left; background: rgba(255,255,255,0.06); }
+  code, pre {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  }
+  code { color: var(--accent-2); }
+  pre {
+    white-space: pre-wrap;
+    margin: 0;
+    padding: 16px;
+    border-radius: 16px;
+    background: #0a1228;
+    border: 1px solid var(--border);
+    color: #dbe5ff;
+    overflow: auto;
+  }
+  .small { font-size: 14px; }
+  .tiny { font-size: 12px; color: var(--muted); }
+  .ok { color: var(--accent-2); }
+  .warn { color: var(--warn); }
+  .danger { color: var(--danger); }
+  .footer {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 18px;
+    background: rgba(5,8,18,0.72);
+    border-top: 1px solid var(--border);
+    backdrop-filter: blur(8px);
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .progress {
+    position: absolute;
+    left: 0; bottom: 44px; height: 4px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    width: 0%;
+  }
+  .kbd { border: 1px solid var(--border); padding: 2px 8px; border-radius: 8px; background: rgba(255,255,255,0.04); }
+  .sources { columns: 2; column-gap: 24px; }
+  .sources li { break-inside: avoid; }
+  @media (max-width: 1100px) {
+    .hero, .g2, .g3, .compare, .flow { grid-template-columns: 1fr; }
+    .arrow, .flow .join { display: none; }
+    .sources { columns: 1; }
+    .slide { padding: 34px 24px 70px; }
+    h1 { font-size: 34px; }
+    h2 { font-size: 28px; }
+  }
+</style>
+</head>
+<body>
+<div class="deck">
+  <div class="progress" id="progress"></div>
+
+  <section class="slide active" data-title="Title">
+    <div class="eyebrow">Handoff deck</div>
+    <h1>D-283 — Nextcloud internal audio capture</h1>
+    <p class="big">MVP handoff for the shift from guest-participant bootstrap to HPB internal-client bootstrap, while keeping Cassini’s existing per-participant capture pipeline.</p>
+    <div class="hero">
+      <div class="card">
+        <h3>Bottom line</h3>
+        <ul>
+          <li><span class="ok">I1–I3 are implemented.</span></li>
+          <li><span class="ok">I4 was intentionally cut to minimal validation + harness wiring.</span></li>
+          <li><span class="warn">Final runtime proof still belongs on a known-good HPB harness.</span></li>
+        </ul>
+        <div class="pillrow">
+          <div class="pill">Default mode: <code>hpb-internal</code></div>
+          <div class="pill">Fallback: <code>guest-participant</code></div>
+          <div class="pill">Scope: standalone signaling + HPB only</div>
+        </div>
+      </div>
+      <div class="grid">
+        <div class="card"><div class="stat">4</div><div class="label">implementation commits</div></div>
+        <div class="card"><div class="stat">27</div><div class="label">files changed since slice 1</div></div>
+        <div class="card"><div class="stat">1067+</div><div class="label">insertions across code, tests, docs, harness</div></div>
+      </div>
+    </div>
+    <div class="pillrow">
+      <div class="pill">Commits: <code>f74c3ea</code> · <code>3574953</code> · <code>fdafc59</code> · <code>3a886df</code></div>
+      <div class="pill">Implementation doc: <code>planning/.../implementation.md</code></div>
+      <div class="pill">Validation doc: <code>planning/.../validation.md</code></div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Research">
+    <div class="eyebrow">Upstream research</div>
+    <h2>What the research doc changed</h2>
+    <div class="compare">
+      <div class="card">
+        <h3>Old Cassini model</h3>
+        <div class="boxlist">
+          <div class="box"><code>GetRoom</code></div>
+          <div class="box"><code>MarkParticipantActive</code></div>
+          <div class="box"><code>SetGuestName</code></div>
+          <div class="box">normal signaling <code>helloAuthParams</code></div>
+          <div class="box">join room with <code>sessionid</code></div>
+          <div class="box"><code>JoinCall</code></div>
+        </div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="card">
+        <h3>Official recorder model</h3>
+        <div class="boxlist">
+          <div class="box">signed recording-auth fetch to <code>/signaling/settings</code></div>
+          <div class="box">internal signaling <code>hello</code> with <code>internalsecret</code></div>
+          <div class="box">send internal <code>incall</code></div>
+          <div class="box">join room <strong>without</strong> Nextcloud <code>sessionid</code></div>
+          <div class="box">hidden/internal client instead of invited participant</div>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:18px;">
+      <h3>Key conclusion from <code>nextcloud_record_auth_gpt.md</code></h3>
+      <p class="muted">Copy the official recorder’s <strong>trust chain</strong>, not its mixed-media capture architecture. D-283 is a <strong>bootstrap/auth change</strong>, not a new recording pipeline.</p>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Planned shape">
+    <div class="eyebrow">Planning docs</div>
+    <h2>What shaping selected</h2>
+    <div class="grid g2">
+      <div class="card">
+        <h3>Selected shape A</h3>
+        <ul>
+          <li>add <code>talkAuthMode</code></li>
+          <li>run internal HPB mode beside guest mode</li>
+          <li>make internal mode the final default</li>
+          <li>reuse subscriber / <code>requestoffer</code> / <code>OnTrack</code> / remux</li>
+          <li>fail closed, no silent fallback</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Rejected options</h3>
+        <ul>
+          <li><strong>B:</strong> replacing guest flow entirely was too aggressive</li>
+          <li><strong>C:</strong> limiting internal mode to Talk-backend starts was too narrow</li>
+        </ul>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Planning source</th><th>What it contributed</th></tr></thead>
+      <tbody>
+        <tr><td><code>shaping.md</code></td><td>selected product shape and locked decisions</td></tr>
+        <tr><td><code>breadboarding.md</code></td><td>system places/wiring across CLI, operator, recorder, OCS, signaling, harness</td></tr>
+        <tr><td><code>slices.md</code></td><td>I1–I4 cutline and acceptance boundaries</td></tr>
+        <tr><td><code>validation.md</code></td><td>minimal proof flow and runtime debug seam</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="slide" data-title="Implementation by slice">
+    <div class="eyebrow">What actually shipped</div>
+    <h2>Slices planned vs delivered</h2>
+    <table>
+      <thead>
+        <tr><th>Slice</th><th>Planned</th><th>Delivered</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>I1</strong></td>
+          <td>mode/config/target foundation</td>
+          <td>added <code>talkAuthMode</code>, native Talk target, new internal-secret config, fail-closed validation</td>
+        </tr>
+        <tr>
+          <td><strong>I2</strong></td>
+          <td>internal HPB bootstrap</td>
+          <td>recording-auth settings fetch, internal <code>hello</code>, <code>internal/incall</code>, room join without <code>sessionid</code>, reuse of existing media path</td>
+        </tr>
+        <tr>
+          <td><strong>I3</strong></td>
+          <td>default flip + product integration</td>
+          <td><code>hpb-internal</code> defaulted on CLI/operator, Talk backend forced internal, clearer failure surfacing, explicit guest fallback only</td>
+        </tr>
+        <tr>
+          <td><strong>I4</strong></td>
+          <td>runtime proof path</td>
+          <td>kept minimal: harness secret wiring, bootstrap fixes, validation handoff docs; no new recorder/operator feature path</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="slide" data-title="Recorder changes">
+    <div class="eyebrow">Recorder</div>
+    <h2>The recorder changed bootstrap, not capture architecture</h2>
+    <div class="flow">
+      <div class="node"><strong>CLI/config</strong><span class="small">new <code>--talk-auth-mode</code>, <code>--talk-base-url</code>, <code>--talk-room-token</code></span></div>
+      <div class="join">→</div>
+      <div class="node"><strong>bootstrap selector</strong><span class="small">guest vs <code>hpb-internal</code></span></div>
+      <div class="join">→</div>
+      <div class="node"><strong>shared media path</strong><span class="small"><code>ensureSubscriber</code> / <code>requestoffer</code> / <code>OnTrack</code></span></div>
+    </div>
+    <div class="grid g2" style="margin-top:18px;">
+      <div class="card">
+        <h3>New internal path</h3>
+        <ul>
+          <li><code>FetchRecordingSignalingSettings(...)</code></li>
+          <li>internal <code>hello</code> HMAC via <code>TalkSignalingInternalSecret</code></li>
+          <li><code>sendInternalInCall()</code></li>
+          <li><code>roomJoinRequest()</code> without <code>sessionid</code></li>
+          <li>reject if signaling does not advertise MCU/HPB support</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>What stayed the same</h3>
+        <ul>
+          <li>room / participants event handling</li>
+          <li>per-remote-session subscriber creation</li>
+          <li>session artifacts</li>
+          <li>speaker-attributed downstream value</li>
+          <li>multi-track remux output</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Operator changes">
+    <div class="eyebrow">Operator</div>
+    <h2>Operator surfaces now tell the truth about the auth mode</h2>
+    <div class="grid g2">
+      <div class="card">
+        <h3>Request normalization</h3>
+        <ul>
+          <li>persist <code>talkAuthMode</code> in request JSON</li>
+          <li>support native <code>baseURL + roomToken</code> target</li>
+          <li>default generic Nextcloud jobs to <code>hpb-internal</code></li>
+          <li>keep <code>guest-participant</code> only as explicit fallback</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Talk recording backend</h3>
+        <ul>
+          <li>existing backend adapter reused</li>
+          <li>Talk-native starts force <code>talkAuthMode=hpb-internal</code></li>
+          <li>operator-visible failures classify bootstrap/auth issues as <code>join_failed</code></li>
+        </ul>
+      </div>
+    </div>
+    <pre style="margin-top:18px;">POST /jobs?provider=nextcloud-talk
+{
+  "platform": "nextcloud-talk",
+  "baseURL": "https://cloud.example.test",
+  "roomToken": "room-42",
+  "talkAuthMode": "hpb-internal"
+}</pre>
+  </section>
+
+  <section class="slide" data-title="What changed in files">
+    <div class="eyebrow">Actual repo updates</div>
+    <h2>High-signal files touched</h2>
+    <div class="grid g3">
+      <div class="card">
+        <h3>Recorder</h3>
+        <ul class="small">
+          <li><code>internal/config/config.go</code></li>
+          <li><code>internal/cassini/cli.go</code></li>
+          <li><code>internal/nextcloud/ocs_client.go</code></li>
+          <li><code>internal/nextcloud/recording_auth.go</code></li>
+          <li><code>internal/talk/internal_auth.go</code></li>
+          <li><code>internal/talk/recorder.go</code></li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Operator</h3>
+        <ul class="small">
+          <li><code>internal/operator/run.go</code></li>
+          <li><code>internal/operator/record_runtime.go</code></li>
+          <li><code>internal/operator/talk_backend.go</code></li>
+          <li><code>README.md</code></li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Deployment / harness / docs</h3>
+        <ul class="small">
+          <li><code>deployment/.env</code></li>
+          <li><code>deployment/README.md</code></li>
+          <li><code>harness/config/signaling.conf</code></li>
+          <li><code>harness/bin/common.sh</code></li>
+          <li><code>harness/bin/bootstrap.sh</code></li>
+          <li><code>harness/README.md</code></li>
+          <li><code>planning/.../implementation.md</code></li>
+          <li><code>planning/.../validation.md</code></li>
+        </ul>
+      </div>
+    </div>
+    <div class="card" style="margin-top:18px;">
+      <h3>Test coverage added/updated</h3>
+      <p class="muted">CLI/config tests, recording-auth header tests, internal hello / room-join tests, operator request normalization tests, Talk backend tests.</p>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Migration">
+    <div class="eyebrow">Migration for an existing instance</div>
+    <h2>What operators must change</h2>
+    <table>
+      <thead><tr><th>Step</th><th>Required change</th><th>Why it matters</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>set signaling <code>[clients].internalsecret</code> and restart signaling</td><td>internal <code>hello</code> depends on internal-client auth</td></tr>
+        <tr><td>2</td><td>set <code>CASSINI_TALK_SIGNALING_INTERNAL_SECRET</code> to the same value</td><td>recorder and signaling must share the same secret</td></tr>
+        <tr><td>3</td><td>keep <code>CASSINI_TALK_RECORDING_SECRET</code> correct</td><td>used for signed recording-auth requests to Nextcloud</td></tr>
+        <tr><td>4</td><td>ensure Talk advertises a signaling URL reachable from both Nextcloud and the recorder</td><td>most likely migration pitfall</td></tr>
+        <tr><td>5</td><td>keep/set <code>CASSINI_TALK_BACKEND_URL</code> or <code>connect-url</code> when public and runtime URLs differ</td><td>lets operator/recorder reach the same Nextcloud instance honestly</td></tr>
+        <tr><td>6</td><td>expect default behavior to move to <code>hpb-internal</code></td><td>generic jobs and Talk backend starts no longer rely on guest mode implicitly</td></tr>
+      </tbody>
+    </table>
+    <div class="card" style="margin-top:18px;">
+      <h3>Transitional fallback</h3>
+      <p class="muted">If rollout needs a temporary escape hatch, use <code>--talk-auth-mode guest-participant</code> or request JSON <code>"talkAuthMode": "guest-participant"</code>. There is intentionally <strong>no automatic fallback</strong>.</p>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Validation">
+    <div class="eyebrow">Validation state</div>
+    <h2>What we verified vs what teammates still need to run</h2>
+    <div class="grid g2">
+      <div class="card">
+        <h3>Verified here</h3>
+        <ul>
+          <li><code>go test ./internal/config ./internal/cassini ./internal/nextcloud ./internal/talk</code></li>
+          <li><code>go test ./internal/operator</code></li>
+          <li><code>./harness/bin/bootstrap.sh</code> succeeds</li>
+          <li><code>./harness/bin/create-room.sh</code> succeeds</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Still to run on a good HPB harness</h3>
+        <ul>
+          <li>default internal-mode recording proof</li>
+          <li>internal <code>hello</code> + <code>incall</code> + room join sequence</li>
+          <li>participant discovery and subscriber reuse</li>
+          <li>optional explicit guest fallback check</li>
+        </ul>
+      </div>
+    </div>
+    <pre style="margin-top:18px;">source harness/bin/common.sh
+./harness/bin/bootstrap.sh
+CALL_URL="$(./harness/bin/create-room.sh --name "D-283 validation" | tail -n1)"
+./bin/cassini dev player video --call-url "$CALL_URL" --duration 20 &
+CASSINI_TALK_RECORDING_SECRET="$CASSINI_TALK_RECORDING_SECRET" \
+CASSINI_TALK_SIGNALING_INTERNAL_SECRET="$SIGNALING_INTERNAL_SECRET" \
+./bin/cassini record --call "$CALL_URL" --duration 15 --out /tmp/d283-validation.run</pre>
+    <p class="tiny">See <code>planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/validation.md</code> for the full checklist.</p>
+  </section>
+
+  <section class="slide" data-title="Risks">
+    <div class="eyebrow">Known limits</div>
+    <h2>What D-283 does not try to solve</h2>
+    <div class="grid g2">
+      <div class="card">
+        <h3>Explicit non-goals</h3>
+        <ul>
+          <li>non-HPB or internal-signaling-only Talk support</li>
+          <li>per-backend URL→secret mapping</li>
+          <li>a new recording architecture</li>
+          <li>automatic guest fallback</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Residual risk</h3>
+        <ul>
+          <li>runtime invalidation is now expected to be narrow</li>
+          <li>likely seam: room event timing / payload handling after internal join</li>
+          <li>if local proof fails due to topology, treat that as harness work first</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card" style="margin-top:18px;">
+      <h3>Decision quality</h3>
+      <p class="muted">The planning docs were correct to treat D-283 as an auth/bootstrap migration. The risky part left is operational proof, not product-shape redesign.</p>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Sources">
+    <div class="eyebrow">Sources examined</div>
+    <h2>Docs and code used for this handoff</h2>
+    <ul class="sources small">
+      <li><code>planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/nextcloud_record_auth_gpt.md</code></li>
+      <li><code>planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/shaping.md</code></li>
+      <li><code>planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/breadboarding.md</code></li>
+      <li><code>planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/slices.md</code></li>
+      <li><code>planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/implementation.md</code></li>
+      <li><code>planning/initiatives/mvp/D-283-nextcloud-internal-audio-capture/validation.md</code></li>
+      <li><code>cassini-go-recorder/internal/config/config.go</code></li>
+      <li><code>cassini-go-recorder/internal/cassini/cli.go</code></li>
+      <li><code>cassini-go-recorder/internal/nextcloud/ocs_client.go</code></li>
+      <li><code>cassini-go-recorder/internal/nextcloud/recording_auth.go</code></li>
+      <li><code>cassini-go-recorder/internal/talk/internal_auth.go</code></li>
+      <li><code>cassini-go-recorder/internal/talk/recorder.go</code></li>
+      <li><code>cassini-operator/internal/operator/run.go</code></li>
+      <li><code>cassini-operator/internal/operator/record_runtime.go</code></li>
+      <li><code>cassini-operator/internal/operator/talk_backend.go</code></li>
+      <li><code>deployment/README.md</code></li>
+      <li><code>harness/README.md</code></li>
+      <li><code>harness/bin/bootstrap.sh</code></li>
+      <li><code>harness/bin/common.sh</code></li>
+      <li><code>harness/config/signaling.conf</code></li>
+    </ul>
+    <div class="card" style="margin-top:18px;">
+      <h3>Navigation</h3>
+      <p class="muted">Use <span class="kbd">←</span> <span class="kbd">→</span> or space/backspace to move. Press <span class="kbd">Home</span> for the first slide and <span class="kbd">End</span> for the last.</p>
+    </div>
+  </section>
+
+  <div class="footer">
+    <div id="title">Title</div>
+    <div>D-283 handoff deck</div>
+    <div><span id="count">1 / 10</span></div>
+  </div>
+</div>
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  let index = 0;
+  const title = document.getElementById('title');
+  const count = document.getElementById('count');
+  const progress = document.getElementById('progress');
+
+  function render() {
+    slides.forEach((slide, i) => slide.classList.toggle('active', i === index));
+    title.textContent = slides[index].dataset.title || `Slide ${index + 1}`;
+    count.textContent = `${index + 1} / ${slides.length}`;
+    progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+    slides[index].scrollTop = 0;
+  }
+
+  function next() { if (index < slides.length - 1) { index += 1; render(); } }
+  function prev() { if (index > 0) { index -= 1; render(); } }
+
+  document.addEventListener('keydown', (event) => {
+    if (["ArrowRight", "PageDown", " "].includes(event.key)) { event.preventDefault(); next(); }
+    if (["ArrowLeft", "PageUp", "Backspace"].includes(event.key)) { event.preventDefault(); prev(); }
+    if (event.key === 'Home') { index = 0; render(); }
+    if (event.key === 'End') { index = slides.length - 1; render(); }
+  });
+
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('a, button, details, summary')) return;
+    const x = event.clientX / window.innerWidth;
+    if (x > 0.58) next(); else if (x < 0.42) prev();
+  });
+
+  render();
+</script>
+</body>
+</html>

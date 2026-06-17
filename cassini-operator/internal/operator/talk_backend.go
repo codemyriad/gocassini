@@ -262,6 +262,7 @@ func (rt *Runtime) handleTalkStart(w http.ResponseWriter, r *http.Request, auth 
 		BaseURL:               publicBaseURL,
 		TalkConnectURL:        operatorBaseURL,
 		RoomToken:             token,
+		TalkAuthMode:          talkAuthModeHPBInternal,
 		GuestName:             defaultGuestName,
 		StopWhenRoomEmpty:     true,
 		RoomEmptyGraceSeconds: defaultRoomEmptySec,

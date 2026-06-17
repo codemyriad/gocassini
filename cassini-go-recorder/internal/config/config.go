@@ -8,27 +8,50 @@ import (
 	"time"
 )
 
+const (
+	TalkAuthModeGuestParticipant = "guest-participant"
+	TalkAuthModeHPBInternal      = "hpb-internal"
+)
+
 type Config struct {
-	Mode                    string
-	OutputPath              string
-	FinalOutputPath         string
-	SegmentsDir             string
-	CleanupIntermediate     bool
-	SimTracks               int
-	SimPackets              int
-	Duration                time.Duration
-	StopWhenRoomEmpty       bool
-	RoomEmptyGrace          time.Duration
-	CallURL                 string
-	ConnectBaseURL          string
-	GuestName               string
-	JoinFlags               int
-	Insecure                bool
-	DebugSignaling          bool
-	RequestOfferInterval    time.Duration
-	MaxRequestOfferAttempts int
-	TurnMode                string
-	WriteReport             bool
+	Mode                        string
+	OutputPath                  string
+	FinalOutputPath             string
+	SegmentsDir                 string
+	CleanupIntermediate         bool
+	SimTracks                   int
+	SimPackets                  int
+	Duration                    time.Duration
+	StopWhenRoomEmpty           bool
+	RoomEmptyGrace              time.Duration
+	CallURL                     string
+	TalkBaseURL                 string
+	TalkRoomToken               string
+	TalkAuthMode                string
+	ConnectBaseURL              string
+	GuestName                   string
+	JoinFlags                   int
+	Insecure                    bool
+	DebugSignaling              bool
+	RequestOfferInterval        time.Duration
+	MaxRequestOfferAttempts     int
+	TurnMode                    string
+	WriteReport                 bool
+	TalkRecordingSecret         string
+	TalkSignalingInternalSecret string
+}
+
+func NormalizeTalkAuthMode(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func ValidTalkAuthMode(value string) bool {
+	switch NormalizeTalkAuthMode(value) {
+	case TalkAuthModeGuestParticipant, TalkAuthModeHPBInternal:
+		return true
+	default:
+		return false
+	}
 }
 
 func FromFlags(args []string) (Config, error) {
@@ -48,8 +71,11 @@ func FromFlags(args []string) (Config, error) {
 	fs.IntVar(&durationSeconds, "duration", 0, "hard runtime limit in seconds (0 disables fixed timeout)")
 	fs.BoolVar(&cfg.StopWhenRoomEmpty, "stop-when-room-empty", true, "in talk mode, stop after all remote participants leave")
 	fs.Float64Var(&roomEmptyGraceSeconds, "room-empty-grace", 30.0, "seconds to wait before stopping after room becomes empty")
-	fs.StringVar(&cfg.CallURL, "call-url", "", "Nextcloud Talk call URL (required in talk mode)")
-	fs.StringVar(&cfg.ConnectBaseURL, "connect-url", "", "optional Nextcloud base URL used for HTTP/OCS requests when different from --call-url")
+	fs.StringVar(&cfg.CallURL, "call-url", "", "Nextcloud Talk call URL (required unless --talk-base-url and --talk-room-token are both provided in talk mode)")
+	fs.StringVar(&cfg.TalkBaseURL, "talk-base-url", "", "Nextcloud base URL for the Talk room target")
+	fs.StringVar(&cfg.TalkRoomToken, "talk-room-token", "", "Nextcloud Talk room token for the Talk room target")
+	fs.StringVar(&cfg.TalkAuthMode, "talk-auth-mode", TalkAuthModeHPBInternal, "Talk bootstrap/auth mode: guest-participant or hpb-internal")
+	fs.StringVar(&cfg.ConnectBaseURL, "connect-url", "", "optional Nextcloud base URL used for HTTP/OCS requests when different from the Talk room target")
 	fs.StringVar(&cfg.GuestName, "name", "GocassiniObserver", "display name for the observer guest")
 	fs.IntVar(&cfg.JoinFlags, "join-flags", 1, "call join flags (must include bit 1)")
 	fs.BoolVar(&cfg.Insecure, "insecure", false, "disable TLS certificate verification (testing only)")
@@ -70,9 +96,13 @@ func FromFlags(args []string) (Config, error) {
 	if cfg.Mode != "simulate" && cfg.Mode != "talk" {
 		return Config{}, fmt.Errorf("unsupported mode %q", cfg.Mode)
 	}
-	if cfg.Mode == "talk" && cfg.CallURL == "" {
-		return Config{}, errors.New("call-url must be provided in talk mode")
+	if cfg.Mode == "talk" && cfg.CallURL == "" && (strings.TrimSpace(cfg.TalkBaseURL) == "" || strings.TrimSpace(cfg.TalkRoomToken) == "") {
+		return Config{}, errors.New("call-url or talk-base-url + talk-room-token must be provided in talk mode")
 	}
+	cfg.CallURL = strings.TrimSpace(cfg.CallURL)
+	cfg.TalkBaseURL = strings.TrimRight(strings.TrimSpace(cfg.TalkBaseURL), "/")
+	cfg.TalkRoomToken = strings.TrimSpace(cfg.TalkRoomToken)
+	cfg.TalkAuthMode = NormalizeTalkAuthMode(cfg.TalkAuthMode)
 	if cfg.ConnectBaseURL != "" {
 		cfg.ConnectBaseURL = strings.TrimRight(strings.TrimSpace(cfg.ConnectBaseURL), "/")
 	}
@@ -81,6 +111,12 @@ func FromFlags(args []string) (Config, error) {
 	}
 	if cfg.OutputPath == "" {
 		return Config{}, errors.New("output path must not be empty")
+	}
+	if (cfg.TalkBaseURL == "") != (cfg.TalkRoomToken == "") {
+		return Config{}, errors.New("talk-base-url and talk-room-token must be provided together")
+	}
+	if cfg.TalkAuthMode != "" && !ValidTalkAuthMode(cfg.TalkAuthMode) {
+		return Config{}, fmt.Errorf("invalid talk-auth-mode %q", cfg.TalkAuthMode)
 	}
 	if cfg.SimTracks < 1 {
 		return Config{}, errors.New("sim-tracks must be >= 1")

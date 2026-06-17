@@ -21,7 +21,11 @@ import (
 	"github.com/pion/webrtc/v4"
 )
 
-const requestOfferResponseTimeout = 8 * time.Second
+const (
+	requestOfferResponseTimeout    = 8 * time.Second
+	talkRecordingSecretEnv         = "CASSINI_TALK_RECORDING_SECRET"
+	talkSignalingInternalSecretEnv = "CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
+)
 
 // inCallFlagInCall is bit 1 of the Talk in-call flags: the participant has
 // joined the call. Remaining bits (audio=2, video=4, SIP=8) describe what
@@ -138,16 +142,14 @@ func Run(ctx context.Context, cfg config.Config) error {
 }
 
 func (r *Recorder) run(ctx context.Context) error {
-	baseURL, roomToken, err := nextcloud.ParseCallURL(r.cfg.CallURL)
-	if err != nil {
+	r.resolveProcessScopedTalkConfig()
+	if err := r.resolveTalkTarget(); err != nil {
 		return err
 	}
-	r.baseURL = baseURL
 	r.connectBaseURL = strings.TrimRight(strings.TrimSpace(r.cfg.ConnectBaseURL), "/")
 	if r.connectBaseURL == "" {
-		r.connectBaseURL = baseURL
+		r.connectBaseURL = r.baseURL
 	}
-	r.roomToken = roomToken
 	r.finalOutputPath = deriveFinalOutputPath(r.cfg.OutputPath, r.cfg.FinalOutputPath)
 
 	if err := ensureOutputDir(r.finalOutputPath); err != nil {
@@ -305,6 +307,100 @@ runLoop:
 	return nil
 }
 
+func (r *Recorder) resolveProcessScopedTalkConfig() {
+	r.cfg.TalkAuthMode = config.NormalizeTalkAuthMode(r.cfg.TalkAuthMode)
+	if strings.TrimSpace(r.cfg.TalkRecordingSecret) == "" {
+		r.cfg.TalkRecordingSecret = strings.TrimSpace(os.Getenv(talkRecordingSecretEnv))
+	}
+	if strings.TrimSpace(r.cfg.TalkSignalingInternalSecret) == "" {
+		r.cfg.TalkSignalingInternalSecret = strings.TrimSpace(os.Getenv(talkSignalingInternalSecretEnv))
+	}
+}
+
+func (r *Recorder) resolveTalkTarget() error {
+	callURL := strings.TrimSpace(r.cfg.CallURL)
+	talkBaseURL := strings.TrimRight(strings.TrimSpace(r.cfg.TalkBaseURL), "/")
+	talkRoomToken := strings.TrimSpace(r.cfg.TalkRoomToken)
+
+	if talkBaseURL != "" || talkRoomToken != "" {
+		if talkBaseURL == "" || talkRoomToken == "" {
+			return errors.New("talk target requires both talk base URL and room token")
+		}
+		if callURL != "" {
+			callBaseURL, callRoomToken, err := nextcloud.ParseCallURL(callURL)
+			if err != nil {
+				return err
+			}
+			if callBaseURL != talkBaseURL || callRoomToken != talkRoomToken {
+				return fmt.Errorf("call URL target %s room=%s does not match explicit talk target %s room=%s", callBaseURL, callRoomToken, talkBaseURL, talkRoomToken)
+			}
+		}
+		r.baseURL = talkBaseURL
+		r.roomToken = talkRoomToken
+		return nil
+	}
+
+	if callURL == "" {
+		return errors.New("call URL or explicit talk target is required")
+	}
+	baseURL, roomToken, err := nextcloud.ParseCallURL(callURL)
+	if err != nil {
+		return err
+	}
+	r.baseURL = baseURL
+	r.roomToken = roomToken
+	return nil
+}
+
+func (r *Recorder) talkAuthMode() string {
+	mode := config.NormalizeTalkAuthMode(r.cfg.TalkAuthMode)
+	if mode == "" {
+		return config.TalkAuthModeGuestParticipant
+	}
+	return mode
+}
+
+func (r *Recorder) validateInternalBootstrapConfig() error {
+	if strings.TrimSpace(r.cfg.TalkRecordingSecret) == "" {
+		return fmt.Errorf("talk auth mode %s requires %s to be set", config.TalkAuthModeHPBInternal, talkRecordingSecretEnv)
+	}
+	if strings.TrimSpace(r.cfg.TalkSignalingInternalSecret) == "" {
+		return fmt.Errorf("talk auth mode %s requires %s to be set", config.TalkAuthModeHPBInternal, talkSignalingInternalSecretEnv)
+	}
+	return nil
+}
+
+func (r *Recorder) bootstrapInternalHPB(ctx context.Context) error {
+	settings, err := r.ocs.FetchRecordingSignalingSettings(ctx, r.roomToken, r.cfg.TalkRecordingSecret)
+	if err != nil {
+		return fmt.Errorf("recording-auth signaling settings failed: %w", err)
+	}
+	r.settings = settings
+
+	wsServer := r.settings.PrimarySignalingServer()
+	if wsServer == "" {
+		return errors.New("signaling settings missing signaling server (standalone signaling required)")
+	}
+
+	r.signaling = signaling.NewClient(toWSURL(wsServer), r.cfg.Insecure)
+	if err := r.signaling.Connect(ctx); err != nil {
+		return err
+	}
+
+	if err := r.hello(ctx); err != nil {
+		return err
+	}
+	if err := r.sendInternalInCall(); err != nil {
+		return err
+	}
+	if err := r.joinSignalingRoom(ctx); err != nil {
+		return err
+	}
+
+	log.Printf("talk bootstrap complete: auth_mode=%s base=%s connect=%s token=%s signaling_session=%s", r.talkAuthMode(), r.baseURL, r.connectBaseURL, r.roomToken, r.signalingSessionID)
+	return nil
+}
+
 // fatalRunError merges a fatal run-loop error with the cleanup outcome.
 // When cleanup fully succeeded — capture streams closed without media
 // loss and the final output composed — the loop error is tagged with
@@ -341,6 +437,20 @@ func wrapUnjoinable(err error) error {
 }
 
 func (r *Recorder) bootstrap(ctx context.Context) error {
+	switch r.talkAuthMode() {
+	case config.TalkAuthModeGuestParticipant:
+		return r.bootstrapGuestParticipant(ctx)
+	case config.TalkAuthModeHPBInternal:
+		if err := r.validateInternalBootstrapConfig(); err != nil {
+			return err
+		}
+		return r.bootstrapInternalHPB(ctx)
+	default:
+		return fmt.Errorf("unsupported talk auth mode %q", r.cfg.TalkAuthMode)
+	}
+}
+
+func (r *Recorder) bootstrapGuestParticipant(ctx context.Context) error {
 	if err := r.ocs.GetRoom(ctx, r.roomToken); err != nil {
 		return fmt.Errorf("room check failed: %w", wrapUnjoinable(err))
 	}
@@ -363,7 +473,7 @@ func (r *Recorder) bootstrap(ctx context.Context) error {
 
 	wsServer := r.settings.PrimarySignalingServer()
 	if wsServer == "" {
-		return errors.New("signaling settings missing signaling server")
+		return errors.New("signaling settings missing signaling server (standalone signaling required)")
 	}
 
 	r.signaling = signaling.NewClient(toWSURL(wsServer), r.cfg.Insecure)
@@ -386,7 +496,7 @@ func (r *Recorder) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("join call failed: %w", wrapUnjoinable(err))
 	}
 
-	log.Printf("talk bootstrap complete: base=%s connect=%s token=%s session=%s signaling_session=%s", r.baseURL, r.connectBaseURL, r.roomToken, r.nextcloudSessionID, r.signalingSessionID)
+	log.Printf("talk bootstrap complete: auth_mode=%s base=%s connect=%s token=%s session=%s signaling_session=%s", r.talkAuthMode(), r.baseURL, r.connectBaseURL, r.roomToken, r.nextcloudSessionID, r.signalingSessionID)
 	return nil
 }
 
@@ -430,7 +540,7 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 		}
 	}
 
-	if r.ocs != nil {
+	if r.ocs != nil && r.talkAuthMode() == config.TalkAuthModeGuestParticipant {
 		if err := r.ocs.LeaveCall(ctx, r.roomToken); err != nil {
 			log.Printf("leave call failed (continuing): %v", err)
 		}
@@ -559,34 +669,32 @@ func (r *Recorder) hello(ctx context.Context) error {
 
 	backendURL := strings.TrimRight(r.baseURL, "/") + "/ocs/v2.php/apps/spreed/api/v3/signaling/backend"
 	authParamsByVersion := make(map[string]any, len(versions))
-	for _, version := range versions {
-		authRaw := helloAuth[version]
-		var authParams any
-		if err := json.Unmarshal(authRaw, &authParams); err != nil {
-			return fmt.Errorf("decode helloAuthParams[%s]: %w", version, err)
+	if r.talkAuthMode() != config.TalkAuthModeHPBInternal {
+		for _, version := range versions {
+			authRaw := helloAuth[version]
+			var authParams any
+			if err := json.Unmarshal(authRaw, &authParams); err != nil {
+				return fmt.Errorf("decode helloAuthParams[%s]: %w", version, err)
+			}
+			authParamsByVersion[version] = authParams
 		}
-		authParamsByVersion[version] = authParams
 	}
 
 	const maxHelloRounds = 3
 	for round := 1; round <= maxHelloRounds; round++ {
 		for _, version := range versions {
-			req := map[string]any{
-				"type": "hello",
-				"hello": map[string]any{
-					"version": version,
-					"auth": map[string]any{
-						"url":    backendURL,
-						"params": authParamsByVersion[version],
-					},
-					"features": []any{"chat-relay"},
-				},
+			req, err := r.buildHelloRequest(version, backendURL, authParamsByVersion[version])
+			if err != nil {
+				return err
 			}
 
 			resp, err := r.signaling.Request(ctx, req, 15*time.Second)
 			if err != nil {
 				log.Printf("hello version %s request failed (attempt %d/%d): %v", version, round, maxHelloRounds, err)
 				continue
+			}
+			if asString(resp["type"]) == "error" {
+				return r.explainHelloError(resp)
 			}
 			if asString(resp["type"]) != "hello" {
 				log.Printf("hello version %s returned type=%s (attempt %d/%d)", version, asString(resp["type"]), round, maxHelloRounds)
@@ -597,6 +705,9 @@ func (r *Recorder) hello(ctx context.Context) error {
 			r.signalingSessionID = asString(helloMap["sessionid"])
 			if r.signalingSessionID == "" {
 				return errors.New("hello response missing signaling sessionid")
+			}
+			if r.talkAuthMode() == config.TalkAuthModeHPBInternal && !helloResponseHasFeature(resp, "mcu") {
+				return errors.New("signaling server did not advertise MCU/HPB support")
 			}
 			log.Printf("hello ok (version %s)", version)
 			return nil
@@ -616,20 +727,115 @@ func (r *Recorder) hello(ctx context.Context) error {
 	return errors.New("all signaling hello attempts failed")
 }
 
-func (r *Recorder) joinSignalingRoom(ctx context.Context) error {
-	req := map[string]any{
-		"type": "room",
-		"room": map[string]any{
-			"roomid":    r.roomToken,
-			"sessionid": r.nextcloudSessionID,
+func (r *Recorder) explainHelloError(resp map[string]any) error {
+	code, message := signalingErrorCodeMessage(resp)
+	switch code {
+	case "invalid_client_type":
+		return errors.New("internal clients are not supported by the signaling server; check that the signaling server internalsecret is configured")
+	case "invalid_token", "auth_failed":
+		if r.talkAuthMode() == config.TalkAuthModeHPBInternal {
+			return fmt.Errorf("internal signaling auth failed: code=%s message=%s", code, message)
+		}
+	}
+	return r.explainSignalingError("signaling hello failed", resp)
+}
+
+func (r *Recorder) explainSignalingError(prefix string, resp map[string]any) error {
+	code, message := signalingErrorCodeMessage(resp)
+	if code == "" && message == "" {
+		return fmt.Errorf("%s: %v", prefix, resp)
+	}
+	if message == "" {
+		return fmt.Errorf("%s: code=%s", prefix, code)
+	}
+	return fmt.Errorf("%s: code=%s message=%s", prefix, code, message)
+}
+
+func signalingErrorCodeMessage(resp map[string]any) (string, string) {
+	errorMap := asMap(resp["error"])
+	return asString(errorMap["code"]), strings.TrimSpace(asString(errorMap["message"]))
+}
+
+func helloResponseHasFeature(resp map[string]any, want string) bool {
+	helloMap := asMap(resp["hello"])
+	server := asMap(helloMap["server"])
+	for _, feature := range asSlice(server["features"]) {
+		if asString(feature) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Recorder) buildHelloRequest(version, backendURL string, authParams any) (map[string]any, error) {
+	auth := map[string]any{
+		"url": backendURL,
+	}
+	if r.talkAuthMode() == config.TalkAuthModeHPBInternal {
+		internalAuthParams, err := buildInternalHelloAuthParams(r.baseURL, r.cfg.TalkSignalingInternalSecret)
+		if err != nil {
+			return nil, err
+		}
+		auth["type"] = "internal"
+		auth["params"] = internalAuthParams
+	} else {
+		auth["params"] = authParams
+	}
+
+	return map[string]any{
+		"type": "hello",
+		"hello": map[string]any{
+			"version": version,
+			"auth":    auth,
+			"features": []any{
+				"chat-relay",
+			},
+		},
+	}, nil
+}
+
+func (r *Recorder) internalInCallRequest() map[string]any {
+	return map[string]any{
+		"type": "internal",
+		"internal": map[string]any{
+			"type": "incall",
+			"incall": map[string]any{
+				"incall": 1,
+			},
 		},
 	}
-	resp, err := r.signaling.Request(ctx, req, 15*time.Second)
+}
+
+func (r *Recorder) sendInternalInCall() error {
+	if r.talkAuthMode() != config.TalkAuthModeHPBInternal {
+		return nil
+	}
+	if err := r.signaling.Send(r.internalInCallRequest()); err != nil {
+		return fmt.Errorf("internal incall failed: %w", err)
+	}
+	return nil
+}
+
+func (r *Recorder) roomJoinRequest() map[string]any {
+	room := map[string]any{
+		"roomid": r.roomToken,
+	}
+	if r.talkAuthMode() != config.TalkAuthModeHPBInternal {
+		room["sessionid"] = r.nextcloudSessionID
+	}
+	return map[string]any{
+		"type": "room",
+		"room": room,
+	}
+}
+
+func (r *Recorder) joinSignalingRoom(ctx context.Context) error {
+	resp, err := r.signaling.Request(ctx, r.roomJoinRequest(), 15*time.Second)
 	if err != nil {
 		return fmt.Errorf("signaling room join failed: %w", err)
 	}
 	if asString(resp["type"]) == "error" {
-		return fmt.Errorf("signaling room join returned error: %v", resp)
+		return r.explainSignalingError("signaling room join failed", resp)
 	}
 	log.Printf("joined signaling room")
 	return nil
@@ -1887,6 +2093,7 @@ func (r *Recorder) writeReport(
 		"base_url":         r.baseURL,
 		"connect_base_url": r.connectBaseURL,
 		"room_token":       r.roomToken,
+		"talk_auth_mode":   r.talkAuthMode(),
 		"guest_name":       r.cfg.GuestName,
 		"duration_seconds": int(r.cfg.Duration / time.Second),
 		"stop_when_room_empty": map[string]any{

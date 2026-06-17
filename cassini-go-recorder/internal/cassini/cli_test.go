@@ -57,6 +57,71 @@ func TestRecordRejectsSimulatePortableOutput(t *testing.T) {
 	}
 }
 
+func TestRecordRejectsInvalidTalkAuthMode(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run(context.Background(), []string{"record", "--call", "https://example.test/call/demo", "--talk-auth-mode", "nope", "--out", "demo.run"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("expected exit code 2, got %d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "invalid --talk-auth-mode") {
+		t.Fatalf("expected talk-auth-mode validation error, got %q", stderr.String())
+	}
+}
+
+func TestRecordAcceptsExplicitTalkTargetFlags(t *testing.T) {
+	prevRecorder := runRecorderApp
+	var gotCfg config.Config
+	runRecorderApp = func(_ context.Context, cfg config.Config) error {
+		gotCfg = cfg
+		return os.WriteFile(cfg.OutputPath, []byte("fake-mkv"), 0o644)
+	}
+	defer func() {
+		runRecorderApp = prevRecorder
+	}()
+
+	tmp := t.TempDir()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"record", "--talk-base-url", "https://example.test/", "--talk-room-token", "demo", "--talk-auth-mode", "hpb-internal", "--out", filepath.Join(tmp, "demo.run")}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	if gotCfg.TalkBaseURL != "https://example.test/" {
+		t.Fatalf("unexpected talk base url: %q", gotCfg.TalkBaseURL)
+	}
+	if gotCfg.TalkRoomToken != "demo" {
+		t.Fatalf("unexpected talk room token: %q", gotCfg.TalkRoomToken)
+	}
+	if gotCfg.TalkAuthMode != "hpb-internal" {
+		t.Fatalf("unexpected talk auth mode: %q", gotCfg.TalkAuthMode)
+	}
+}
+
+func TestRecordDefaultsTalkAuthModeToHPBInternal(t *testing.T) {
+	prevRecorder := runRecorderApp
+	var gotCfg config.Config
+	runRecorderApp = func(_ context.Context, cfg config.Config) error {
+		gotCfg = cfg
+		return os.WriteFile(cfg.OutputPath, []byte("fake-mkv"), 0o644)
+	}
+	defer func() {
+		runRecorderApp = prevRecorder
+	}()
+
+	tmp := t.TempDir()
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"record", "--call", "https://example.test/call/demo", "--out", filepath.Join(tmp, "demo.run")}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+	if gotCfg.TalkAuthMode != config.TalkAuthModeHPBInternal {
+		t.Fatalf("unexpected talk auth mode: %q", gotCfg.TalkAuthMode)
+	}
+}
+
 func TestRecordExitCodeDistinguishesUnjoinableRooms(t *testing.T) {
 	tests := []struct {
 		name     string

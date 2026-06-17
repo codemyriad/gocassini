@@ -183,11 +183,14 @@ The V1 fixture-backed record placeholder is no longer used by the operator runti
 
 The current record stage:
 - validates and normalizes the V2 trigger body
+- defaults `talkAuthMode` to `hpb-internal`
+- keeps `guest-participant` as an explicit fallback mode only
 - defaults `guestName` to `CassiniRecorder`
 - defaults `stopWhenRoomEmpty` to `true`
 - defaults `roomEmptyGrace` to `30`
 - runs `cassini doctor --target record`
-- runs `cassini record --call <url> --out <job>--attempt-XXX.run --name <guestName>`
+- runs `cassini record --talk-auth-mode <mode> --call <url> --out <job>--attempt-XXX.run --name <guestName>`
+- forwards explicit `baseURL` / `roomToken` as the native Talk target when present
 - forwards `--duration`, `--stop-when-room-empty`, and `--room-empty-grace` only when explicitly requested
 - keeps one canonical `.run` bundle per attempt under `<work-root>`
 
@@ -328,6 +331,7 @@ Content-Type: application/json
 {
   "platform": "nextcloud-talk",
   "url": "https://example.test/call",
+  "talkAuthMode": "hpb-internal",
   "guestName": "CassiniRecorder",
   "duration": 120,
   "stopWhenRoomEmpty": true,
@@ -338,9 +342,10 @@ Content-Type: application/json
 Behavior:
 - accepts only `provider=nextcloud-talk`
 - requires `platform="nextcloud-talk"`
-- requires `url`
-- supports optional `guestName`, `duration`, `stopWhenRoomEmpty`, and `roomEmptyGrace`
-- normalizes defaults to `guestName=CassiniRecorder`, `stopWhenRoomEmpty=true`, `roomEmptyGrace=30`
+- requires `url` or `baseURL + roomToken`
+- supports optional `talkAuthMode`, `talkConnectURL`, `guestName`, `duration`, `stopWhenRoomEmpty`, and `roomEmptyGrace`
+- normalizes defaults to `talkAuthMode=hpb-internal`, `guestName=CassiniRecorder`, `stopWhenRoomEmpty=true`, `roomEmptyGrace=30`
+- `talkAuthMode=guest-participant` remains available as the explicit fallback
 - returns `202` with a ULID job id
 - returns `503` with no job row when record capacity is full
 
@@ -624,7 +629,8 @@ An attempt row stores:
 - capped by `max-record-workers`
 - overflow returns busy and inserts no job row
 - runs `cassini doctor --target record`
-- runs `cassini record --call <url> --out <job>--attempt-XXX.run --name <guestName>`
+- runs `cassini record --talk-auth-mode <mode> --call <url> --out <job>--attempt-XXX.run --name <guestName>`
+- forwards optional native Talk target fields `baseURL` / `roomToken` when present
 - forwards optional `duration`, `stopWhenRoomEmpty`, and `roomEmptyGrace` only when explicitly requested
 - keeps one canonical per-attempt `.run` bundle for downstream build
 

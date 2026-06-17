@@ -156,6 +156,26 @@ func (c *OCSClient) FetchSignalingSettings(ctx context.Context, roomToken string
 	return &out, nil
 }
 
+func (c *OCSClient) FetchRecordingSignalingSettings(ctx context.Context, roomToken, recordingSecret string) (*SignalingSettings, error) {
+	query := url.Values{}
+	query.Set("token", roomToken)
+
+	headers, err := talkRecordingAuthHeaders(recordingSecret, nil)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := c.requestWithHeaders(ctx, http.MethodGet, "/ocs/v2.php/apps/spreed/api/v3/signaling/settings", query, nil, headers)
+	if err != nil {
+		return nil, err
+	}
+
+	var out SignalingSettings
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("decode signaling settings: %w", err)
+	}
+	return &out, nil
+}
+
 func (c *OCSClient) JoinCall(ctx context.Context, roomToken string, joinFlags int) error {
 	payload := map[string]any{
 		"flags":  joinFlags,
@@ -191,13 +211,17 @@ func (s *SignalingSettings) PrimarySignalingServer() string {
 }
 
 func (c *OCSClient) request(ctx context.Context, method, path string, query url.Values, form url.Values) (json.RawMessage, error) {
+	return c.requestWithHeaders(ctx, method, path, query, form, nil)
+}
+
+func (c *OCSClient) requestWithHeaders(ctx context.Context, method, path string, query url.Values, form url.Values, headers http.Header) (json.RawMessage, error) {
 	var body io.Reader
 	var contentType string
 	if form != nil {
 		body = bytes.NewBufferString(form.Encode())
 		contentType = "application/x-www-form-urlencoded"
 	}
-	return c.doRequest(ctx, method, path, query, body, contentType)
+	return c.doRequest(ctx, method, path, query, body, contentType, headers)
 }
 
 func (c *OCSClient) requestJSON(ctx context.Context, method, path string, query url.Values, payload any) (json.RawMessage, error) {
@@ -205,7 +229,7 @@ func (c *OCSClient) requestJSON(ctx context.Context, method, path string, query 
 	if err != nil {
 		return nil, fmt.Errorf("marshal JSON payload for %s %s: %w", method, path, err)
 	}
-	return c.doRequest(ctx, method, path, query, bytes.NewReader(bodyBytes), "application/json")
+	return c.doRequest(ctx, method, path, query, bytes.NewReader(bodyBytes), "application/json", nil)
 }
 
 func (c *OCSClient) doRequest(
@@ -214,6 +238,7 @@ func (c *OCSClient) doRequest(
 	query url.Values,
 	body io.Reader,
 	contentType string,
+	headers http.Header,
 ) (json.RawMessage, error) {
 	reqURL := c.baseURL + path
 	if len(query) > 0 {
@@ -227,6 +252,11 @@ func (c *OCSClient) doRequest(
 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("OCS-APIRequest", "true")
+	for key, values := range headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}

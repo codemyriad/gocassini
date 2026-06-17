@@ -50,6 +50,9 @@ func salvageableRecording(err error, bundle RunBundle) bool {
 
 type recordOptions struct {
 	callURL           string
+	talkBaseURL       string
+	talkRoomToken     string
+	talkAuthMode      string
 	connectURL        string
 	outDir            string
 	name              string
@@ -87,6 +90,9 @@ func recordConfig(opts recordOptions, recordingPath string) config.Config {
 		StopWhenRoomEmpty:       opts.stopWhenRoomEmpty,
 		RoomEmptyGrace:          time.Duration(opts.roomEmptyGraceSec * float64(time.Second)),
 		CallURL:                 opts.callURL,
+		TalkBaseURL:             opts.talkBaseURL,
+		TalkRoomToken:           opts.talkRoomToken,
+		TalkAuthMode:            opts.talkAuthMode,
 		ConnectBaseURL:          opts.connectURL,
 		GuestName:               opts.name,
 		JoinFlags:               1,
@@ -135,6 +141,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	opts := recordOptions{
 		name:              defaultRecorderName,
+		talkAuthMode:      config.TalkAuthModeHPBInternal,
 		stopWhenRoomEmpty: true,
 		roomEmptyGraceSec: 30,
 		turnMode:          "all",
@@ -145,7 +152,10 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	fs := flag.NewFlagSet("cassini record", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.callURL, "call", "", "Nextcloud Talk call URL")
-	fs.StringVar(&opts.connectURL, "connect-url", "", "Nextcloud base URL for HTTP/OCS requests when different from --call")
+	fs.StringVar(&opts.talkBaseURL, "talk-base-url", "", "Nextcloud base URL for the Talk room target")
+	fs.StringVar(&opts.talkRoomToken, "talk-room-token", "", "Nextcloud Talk room token for the Talk room target")
+	fs.StringVar(&opts.talkAuthMode, "talk-auth-mode", config.TalkAuthModeHPBInternal, "Talk bootstrap/auth mode: guest-participant or hpb-internal")
+	fs.StringVar(&opts.connectURL, "connect-url", "", "Nextcloud base URL for HTTP/OCS requests when different from the Talk room target")
 	fs.StringVar(&opts.outDir, "out", "", "output portable .opus file or debug .run bundle directory")
 	fs.StringVar(&opts.name, "name", defaultRecorderName, "display name for the recorder guest")
 	fs.IntVar(&opts.durationSeconds, "duration", 0, "hard runtime limit in seconds (0 disables fixed timeout)")
@@ -160,7 +170,7 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini record --call <CALL_URL> --out "./2026-03-11 Weekly Sync.opus"
-  cassini record --call <CALL_URL> --out ./runs/meeting.run
+  cassini record --talk-base-url <BASE_URL> --talk-room-token <ROOM_TOKEN> --out ./runs/meeting.run
   cassini record --simulate --out ./runs/demo.run
 
 `+"\n")
@@ -337,11 +347,17 @@ func validateRecordOptions(opts recordOptions) error {
 	if isPortableMeetingOutput(opts.outDir) && opts.simulate {
 		return errors.New("--simulate currently only supports .run output")
 	}
-	if opts.simulate && opts.callURL != "" {
-		return errors.New("--call and --simulate cannot be used together")
+	if opts.simulate && (opts.callURL != "" || opts.talkBaseURL != "" || opts.talkRoomToken != "") {
+		return errors.New("--call/--talk-base-url/--talk-room-token and --simulate cannot be used together")
 	}
-	if !opts.simulate && opts.callURL == "" {
-		return errors.New("either --call or --simulate is required")
+	if !opts.simulate && opts.callURL == "" && (strings.TrimSpace(opts.talkBaseURL) == "" || strings.TrimSpace(opts.talkRoomToken) == "") {
+		return errors.New("either --call, --talk-base-url + --talk-room-token, or --simulate is required")
+	}
+	if (strings.TrimSpace(opts.talkBaseURL) == "") != (strings.TrimSpace(opts.talkRoomToken) == "") {
+		return errors.New("--talk-base-url and --talk-room-token must be provided together")
+	}
+	if opts.talkAuthMode != "" && !config.ValidTalkAuthMode(opts.talkAuthMode) {
+		return fmt.Errorf("invalid --talk-auth-mode %q", opts.talkAuthMode)
 	}
 	if opts.durationSeconds < 0 {
 		return errors.New("--duration must be >= 0")

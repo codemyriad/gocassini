@@ -70,6 +70,51 @@ One-command smoke test:
 ../bin/cassini dev smoke
 ```
 
+## D-283 internal HPB proof
+
+The harness now carries a standalone signaling `internalsecret` in:
+
+- `config/signaling.conf`
+- `bin/common.sh` as `SIGNALING_INTERNAL_SECRET`
+
+If you change `config/signaling.conf`, restart the `signaling` service before
+running the proof path.
+
+Minimal proof flow from the repo root:
+
+```bash
+source harness/bin/common.sh
+
+docker compose -p spreedtest -f harness/compose.yml up -d nextcloud signaling
+# Optional: export HARNESS_SIGNALING_HOST=signaling.localhost if your harness
+# needs a shared host/container alias instead of the default gateway URL.
+./harness/bin/bootstrap.sh
+CALL_URL="$(./harness/bin/create-room.sh --name "D-283 internal proof" | tail -n1)"
+./bin/cassini dev player video --call-url "$CALL_URL" --duration 20 &
+PLAYER_PID=$!
+
+CASSINI_TALK_RECORDING_SECRET="$CASSINI_TALK_RECORDING_SECRET" \
+CASSINI_TALK_SIGNALING_INTERNAL_SECRET="$SIGNALING_INTERNAL_SECRET" \
+./bin/cassini record --call "$CALL_URL" --duration 15 --out /tmp/d283-internal.run
+
+wait "$PLAYER_PID"
+```
+
+Notes:
+
+- `cassini record` now defaults to `hpb-internal` mode for Talk recordings.
+- use `--talk-auth-mode guest-participant` only when you intentionally want the legacy fallback path.
+- if the run ends with `no remuxable streams`, treat that as a media-routing / runtime acceptance issue, not necessarily an auth/bootstrap failure.
+
+Focused debug checklist for internal-mode failures:
+
+1. confirm `CASSINI_TALK_RECORDING_SECRET` is set
+2. confirm `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` matches signaling `internalsecret`
+3. confirm Talk signaling settings advertise a reachable standalone signaling URL for both Nextcloud and the recorder
+4. if `hello` fails with `invalid_client_type`, the signaling server did not pick up `internalsecret`
+5. if `hello` fails with `invalid_token` / `auth_failed`, the internal secret does not match
+6. if join succeeds but no streams arrive, inspect the room `join` / participants events, subscriber creation, and `requestoffer` seam
+
 ## Showcase Meeting
 
 The preferred demo and cleanup-evaluation sample is the showcase meeting:
