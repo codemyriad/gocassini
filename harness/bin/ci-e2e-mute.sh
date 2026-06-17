@@ -43,10 +43,13 @@ export JOIN_DELAYS="${JOIN_DELAYS:-0,4,8}"
 export REC_DURATION="${REC_DURATION:-50}"
 
 # Per-bot publish windows are sized so every bot is still sending media deep into
-# the recorder's capture window. join_delay is slept *before* the per-bot duration
-# timer starts, so each bot streams for roughly [START_DELAY+join+connect,
-# +duration]. With START_DELAY=6 and joins at +0/+4/+8 these durations land all
-# three publishing together from ~t=16s until ~t=44s, fully inside REC_DURATION=50.
+# the recorder's capture window. The rotator exits on media EOF even if
+# --bot-duration is longer, so this script prepares a mute-specific long fixture
+# below instead of relying on the default 15s sample. join_delay is slept *before*
+# the per-bot duration timer starts, so each bot streams for roughly
+# [START_DELAY+join+connect, +duration]. With START_DELAY=6 and joins at +0/+4/+8
+# these durations land all three publishing together from ~t=16s until ~t=44s,
+# fully inside REC_DURATION=50.
 #   bot1: join@6  stream@~8  +36 -> ~44
 #   bot2: join@10 stream@~12 +32 -> ~44
 #   bot3: join@14 stream@~16 +28 -> ~44
@@ -56,6 +59,13 @@ export REC_DURATION="${REC_DURATION:-50}"
 export BOT_DURATIONS="${BOT_DURATIONS:-36,32,28}"
 export PUB_DURATION="${PUB_DURATION:-36}"
 export CALL_NAME="${CALL_NAME:-CI Gocassini mute room}"
+
+PREPARE_MUTE_MEDIA=0
+if [[ -z "${MEDIA_PREFIX:-}" && -z "${MEDIA_PREFIXES:-}" ]]; then
+  export MUTE_MEDIA_PREFIX="${MUTE_MEDIA_PREFIX:-$MEDIA_DIR/sample-mute}"
+  export MUTE_MEDIA_DURATION="${MUTE_MEDIA_DURATION:-45}"
+  PREPARE_MUTE_MEDIA=1
+fi
 
 CI_OUTPUT_BASE="/tmp/gocassini-ci-mute-$(date -u +%Y%m%dT%H%M%S)-$$"
 export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.mkv}"
@@ -69,6 +79,15 @@ cleanup() {
 }
 
 trap cleanup EXIT INT TERM
+
+if [[ "$PREPARE_MUTE_MEDIA" == "1" ]]; then
+  log "Preparing mute media fixture (${MUTE_MEDIA_DURATION}s): $MUTE_MEDIA_PREFIX"
+  "$SCRIPT_DIR/prepare-media.sh" \
+    --prefix "$MUTE_MEDIA_PREFIX" \
+    --duration "$MUTE_MEDIA_DURATION" \
+    --force
+  export MEDIA_PREFIX="$MUTE_MEDIA_PREFIX"
+fi
 
 log "Starting local Nextcloud Talk stack for CI (mute rotation)"
 "$SCRIPT_DIR/up.sh"

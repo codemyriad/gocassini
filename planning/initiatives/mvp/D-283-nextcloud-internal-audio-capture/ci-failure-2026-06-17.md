@@ -59,3 +59,16 @@ recording-auth signaling settings failed: ... dial tcp 127.0.0.1:28080: connect:
 - Export `CASSINI_TALK_RECORDING_SECRET` from `harness/bin/common.sh` so direct harness recorder processes inherit it.
 - Derive and export `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` from the harness `SIGNALING_INTERNAL_SECRET` default.
 - Pass `CASSINI_TALK_RECORDING_SECRET` and `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` into the ExApp roundtrip container so the operator-launched recorder inherits them.
+
+## Follow-up mute failure
+
+After the auth fix, CI run `27685953004` passed the direct `ci-e2e.sh`, `ci-e2e.sh` on Nextcloud 33, and `ci-e2e-rejoin.sh` jobs. `ci-e2e-mute.sh` then failed at its participant-count assertion:
+
+```text
+mute capture summary: publishers=3 subscribers_attempted=3 ice_connected=2 tracks_captured=2 rtplogs=4
+Expected MKV metadata to expose at least 3 unique participants, got 2
+```
+
+The uploaded diagnostics showed all three publishers connected and sent media, but the second recorder subscriber stayed in ICE `checking` until that bot exited. The test comments expected `--bot-duration` to keep bots alive for 28-36s, but the rotator exits on media EOF and the default harness sample is only about 15s long.
+
+The fix is to have `ci-e2e-mute.sh` generate and use a dedicated 45s mute fixture when no caller-supplied media prefix is present. That makes the existing `BOT_DURATIONS` values effective and keeps each publisher alive long enough for delayed recorder ICE setup under CI load.
