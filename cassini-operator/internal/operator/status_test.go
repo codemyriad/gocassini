@@ -1,0 +1,348 @@
+package operator
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"log"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+func TestStatusHandlerReportsHealthyCPU(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	t.Setenv("APP_VERSION", "9.9.9")
+	t.Setenv("CASSINI_STT_DEVICE", "")
+	t.Setenv("CASSINI_STT_MODEL", "test-model")
+	rt.cfg.TalkSharedSecret = "super-secret-value"
+
+	req := httptest.NewRequest(http.MethodGet, "/status", nil)
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if !resp.OK {
+		t.Fatalf("expected ok=true, got %#v", resp)
+	}
+	if resp.Version != "9.9.9" || resp.ImageTag != "9.9.9" {
+		t.Fatalf("version/image_tag = %q/%q, want 9.9.9", resp.Version, resp.ImageTag)
+	}
+	if resp.STT.Device != "cpu" || !resp.STT.DeviceUsable {
+		t.Fatalf("unexpected stt status: %#v", resp.STT)
+	}
+	if resp.STT.ModelID != "test-model" {
+		t.Fatalf("model_id = %q, want test-model", resp.STT.ModelID)
+	}
+	if !resp.Talk.SecretConfigured || resp.Talk.BackendURLOverrideConfigured {
+		t.Fatalf("unexpected talk status: %#v", resp.Talk)
+	}
+	if !resp.DB.OK || !resp.Storage.WorkRoot.OK || !resp.Storage.SiteRoot.OK {
+		t.Fatalf("unexpected db/storage status: db=%#v storage=%#v", resp.DB, resp.Storage)
+	}
+	// The endpoint must report secret presence only, never the value.
+	if strings.Contains(rec.Body.String(), "super-secret-value") {
+		t.Fatal("status response leaked the Talk shared secret")
+	}
+}
+
+func TestStatusHandlerReportsCudaUnusable(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	t.Setenv("CASSINI_STT_DEVICE", "cuda")
+	rt.computeProbe = func() (bool, string) { return false, "no NVIDIA device visible" }
+
+	req := httptest.NewRequest(http.MethodGet, "/status", nil)
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.OK {
+		t.Fatalf("expected ok=false, got %#v", resp)
+	}
+	if resp.STT.Device != "cuda" || resp.STT.DeviceUsable {
+		t.Fatalf("unexpected stt status: %#v", resp.STT)
+	}
+	if !strings.Contains(resp.STT.Detail, "no NVIDIA device visible") {
+		t.Fatalf("expected actionable detail, got %q", resp.STT.Detail)
+	}
+}
+
+func TestStatusHandlerMountedUnderBasePath(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.BasePath = "/operator"
+	handler := newHTTPHandler(log.New(ioDiscard{}, "", 0), rt, ExAppConfig{})
+
+	prefixed := httptest.NewRequest(http.MethodGet, "/operator/status", nil)
+	prefixedRec := httptest.NewRecorder()
+	handler.ServeHTTP(prefixedRec, prefixed)
+	if prefixedRec.Code != http.StatusOK {
+		t.Fatalf("prefixed status = %d, want %d body=%s", prefixedRec.Code, http.StatusOK, prefixedRec.Body.String())
+	}
+
+	root := httptest.NewRequest(http.MethodGet, "/status", nil)
+	rootRec := httptest.NewRecorder()
+	handler.ServeHTTP(rootRec, root)
+	if rootRec.Code != http.StatusNotFound {
+		t.Fatalf("root status = %d, want %d", rootRec.Code, http.StatusNotFound)
+	}
+
+	rt.cfg.BasePath = "/"
+	rootHandler := newHTTPHandler(log.New(ioDiscard{}, "", 0), rt, ExAppConfig{})
+	rootMounted := httptest.NewRequest(http.MethodGet, "/status", nil)
+	rootMountedRec := httptest.NewRecorder()
+	rootHandler.ServeHTTP(rootMountedRec, rootMounted)
+	if rootMountedRec.Code != http.StatusOK {
+		t.Fatalf("root-mounted status = %d, want %d body=%s", rootMountedRec.Code, http.StatusOK, rootMountedRec.Body.String())
+	}
+}
+
+func TestProbeComputeDeviceCPUVariants(t *testing.T) {
+	for _, device := range []string{"", "cpu", "CPU", "auto"} {
+		usable, detail := probeComputeDevice(device)
+		if !usable {
+			t.Fatalf("probeComputeDevice(%q) = unusable (%s), want usable", device, detail)
+		}
+	}
+	usable, detail := probeComputeDevice("tpu")
+	if usable || !strings.Contains(detail, "unknown CASSINI_STT_DEVICE") {
+		t.Fatalf("probeComputeDevice(tpu) = %t %q, want unusable with actionable detail", usable, detail)
+	}
+}
+
+func TestLogComputeDeviceStatusLoudWhenUnusable(t *testing.T) {
+	t.Setenv("CASSINI_STT_DEVICE", "cuda")
+	buf := &syncBuffer{}
+	rt := &Runtime{
+		logger:       log.New(buf, "", 0),
+		computeProbe: func() (bool, string) { return false, "GPU absent" },
+	}
+	rt.logComputeDeviceStatus()
+	out := buf.String()
+	if !strings.Contains(out, "ERROR") || !strings.Contains(out, "cuda") || !strings.Contains(out, "GPU absent") {
+		t.Fatalf("expected loud unusable-device log, got %q", out)
+	}
+}
+
+func TestTTLProbeSingleflightAndTTL(t *testing.T) {
+	var runs atomic.Int32
+	gate := make(chan struct{})
+	probe := newTTLProbe(80*time.Millisecond, func() error {
+		runs.Add(1)
+		<-gate
+		return nil
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = probe.check()
+		}()
+	}
+	time.Sleep(20 * time.Millisecond) // let callers pile up behind the inflight run
+	close(gate)
+	wg.Wait()
+	if got := runs.Load(); got != 1 {
+		t.Fatalf("concurrent checks ran the probe %d times, want 1", got)
+	}
+
+	time.Sleep(100 * time.Millisecond) // expire the TTL
+	if err := probe.check(); err != nil {
+		t.Fatalf("check after TTL error = %v", err)
+	}
+	if got := runs.Load(); got != 2 {
+		t.Fatalf("post-TTL check ran the probe %d times total, want 2", got)
+	}
+}
+
+func TestHealthzRecordCheckSingleflightAndCached(t *testing.T) {
+	rt, cleanup, logPath, _ := newCLITestRuntime(t)
+	defer cleanup()
+
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/healthz?check=record", nil)
+		rec := httptest.NewRecorder()
+		rt.healthzHandler(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+	}
+
+	logText := readFileString(t, logPath)
+	if got := strings.Count(logText, "doctor --target record"); got != 1 {
+		t.Fatalf("doctor invocations = %d, want 1 (TTL cache + singleflight), log:\n%s", got, logText)
+	}
+}
+
+func TestHealthzRecordCheckBoundsWedgedDoctor(t *testing.T) {
+	rt, cleanup, _, _ := newCLITestRuntime(t)
+	defer cleanup()
+	t.Setenv("FAKE_CASSINI_DOCTOR_HANG", "1")
+	rt.recordHealthTimeout = 300 * time.Millisecond
+
+	start := time.Now()
+	req := httptest.NewRequest(http.MethodGet, "/healthz?check=record", nil)
+	rec := httptest.NewRecorder()
+	rt.healthzHandler(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("wedged doctor was not bounded: took %s", elapsed)
+	}
+	if !strings.Contains(rec.Body.String(), "deadline") {
+		t.Fatalf("expected deadline error in body, got %s", rec.Body.String())
+	}
+}
+
+func encodeAppAPIAuth(userID, secret string) string {
+	return base64.StdEncoding.EncodeToString([]byte(userID + ":" + secret))
+}
+
+func TestBearerTokenGuardsStandaloneJobAPI(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.APIToken = "sekrit-token"
+	handler := newHTTPHandler(log.New(ioDiscard{}, "", 0), rt, ExAppConfig{})
+
+	noAuth := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	noAuthRec := httptest.NewRecorder()
+	handler.ServeHTTP(noAuthRec, noAuth)
+	if noAuthRec.Code != http.StatusUnauthorized {
+		t.Fatalf("no-auth status = %d, want %d", noAuthRec.Code, http.StatusUnauthorized)
+	}
+
+	wrong := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	wrong.Header.Set("Authorization", "Bearer nope")
+	wrongRec := httptest.NewRecorder()
+	handler.ServeHTTP(wrongRec, wrong)
+	if wrongRec.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong-token status = %d, want %d", wrongRec.Code, http.StatusUnauthorized)
+	}
+
+	right := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	right.Header.Set("Authorization", "Bearer sekrit-token")
+	rightRec := httptest.NewRecorder()
+	handler.ServeHTTP(rightRec, right)
+	if rightRec.Code != http.StatusOK {
+		t.Fatalf("right-token status = %d, want %d body=%s", rightRec.Code, http.StatusOK, rightRec.Body.String())
+	}
+
+	// Unauthenticated infrastructure endpoints are unaffected.
+	health := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	healthRec := httptest.NewRecorder()
+	handler.ServeHTTP(healthRec, health)
+	if healthRec.Code != http.StatusOK {
+		t.Fatalf("healthz status = %d, want %d", healthRec.Code, http.StatusOK)
+	}
+}
+
+func TestBearerTokenOffByDefault(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	handler := newHTTPHandler(log.New(ioDiscard{}, "", 0), rt, ExAppConfig{})
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (bearer auth must be off by default)", rec.Code, http.StatusOK)
+	}
+}
+
+func TestBearerTokenSkipsAppAPIAuthenticatedRequests(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.APIToken = "sekrit-token"
+	exapp := ExAppConfig{Active: true, AppID: "gocassini", AppVersion: "0.1.0", AppSecret: "app-secret"}
+	handler := newHTTPHandler(log.New(ioDiscard{}, "", 0), rt, exapp)
+
+	// A request the AppAPI middleware authenticated needs no bearer token:
+	// the Nextcloud proxy path keeps working with the token set.
+	proxied := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	proxied.Header.Set("AUTHORIZATION-APP-API", encodeAppAPIAuth("admin", "app-secret"))
+	proxied.Header.Set("EX-APP-ID", "gocassini")
+	proxied.Header.Set("EX-APP-VERSION", "0.1.0")
+	proxiedRec := httptest.NewRecorder()
+	handler.ServeHTTP(proxiedRec, proxied)
+	if proxiedRec.Code != http.StatusOK {
+		t.Fatalf("proxied status = %d, want %d body=%s", proxiedRec.Code, http.StatusOK, proxiedRec.Body.String())
+	}
+
+	// Without AppAPI headers the middleware itself rejects the request.
+	bare := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	bareRec := httptest.NewRecorder()
+	handler.ServeHTTP(bareRec, bare)
+	if bareRec.Code != http.StatusUnauthorized {
+		t.Fatalf("bare status = %d, want %d", bareRec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestJobMutationLogsIncludeAppAPIUser(t *testing.T) {
+	logBuf := &syncBuffer{}
+	logger := log.New(logBuf, "", 0)
+	rt, cleanup := newTestRuntimeWithLogger(t, logger)
+	defer cleanup()
+	exapp := ExAppConfig{Active: true, AppID: "gocassini", AppVersion: "0.1.0", AppSecret: "app-secret"}
+	handler := newHTTPHandler(logger, rt, exapp)
+
+	withAuth := func(req *http.Request) *http.Request {
+		req.Header.Set("AUTHORIZATION-APP-API", encodeAppAPIAuth("alice", "app-secret"))
+		req.Header.Set("EX-APP-ID", "gocassini")
+		req.Header.Set("EX-APP-VERSION", "0.1.0")
+		return req
+	}
+
+	create := withAuth(httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/call"}`)))
+	createRec := httptest.NewRecorder()
+	handler.ServeHTTP(createRec, create)
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, want %d body=%s", createRec.Code, http.StatusAccepted, createRec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	waitForJobState(t, rt.store, resp.ID, "succeeded")
+
+	rerun := withAuth(httptest.NewRequest(http.MethodPost, "/jobs/"+resp.ID+"/rerun", nil))
+	rerunRec := httptest.NewRecorder()
+	handler.ServeHTTP(rerunRec, rerun)
+	if rerunRec.Code != http.StatusAccepted {
+		t.Fatalf("rerun status = %d, want %d body=%s", rerunRec.Code, http.StatusAccepted, rerunRec.Body.String())
+	}
+	waitForJobState(t, rt.store, resp.ID, "succeeded")
+
+	logText := logBuf.String()
+	assertLogLineWithUser := func(prefix string) {
+		t.Helper()
+		for _, line := range strings.Split(logText, "\n") {
+			if strings.Contains(line, prefix) && strings.Contains(line, "user=alice") {
+				return
+			}
+		}
+		t.Fatalf("no %q log line carrying user=alice, log:\n%s", prefix, logText)
+	}
+	assertLogLineWithUser("accepted id=" + resp.ID)
+	assertLogLineWithUser("rerun accepted id=" + resp.ID)
+}

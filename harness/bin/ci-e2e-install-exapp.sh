@@ -102,6 +102,9 @@ occ app_api:daemon:register \
 # --- 4. Run the Cassini ExApp container -----------------------------------
 
 log "starting Cassini ExApp container ($IMAGE_REF)"
+# No CASSINI_OPERATOR_BASE_PATH injection: a real AppAPI deploy never sets
+# CASSINI_* vars, so this test relies on the /operator default baked into the
+# runtime image and must catch the image ever losing it.
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run -d \
   --name "$CONTAINER_NAME" \
@@ -113,7 +116,6 @@ docker run -d \
   -e APP_SECRET="$APP_SECRET" \
   -e AA_VERSION=5.0.0 \
   -e CASSINI_APPAPI_REQUIRED=true \
-  -e CASSINI_OPERATOR_BASE_PATH=/operator \
   -e NEXTCLOUD_URL="$NEXTCLOUD_URL_INTERNAL" \
   --entrypoint /usr/local/bin/cassini-operator \
   "$IMAGE_REF" >/dev/null
@@ -168,7 +170,12 @@ JSON=$(jq -nc \
        {url: "^operator\\/events\\/?$",             verb: "GET",      access_level: 2},
        {url: "^viewer\\/?$",                        verb: "GET",      access_level: 1},
        {url: "^viewer\\/.+$",                       verb: "GET,HEAD", access_level: 1},
-       {url: "^published\\/.+$",                    verb: "GET,HEAD", access_level: 1}
+       {url: "^published\\/.+$",                    verb: "GET,HEAD", access_level: 1},
+       {url: "^img\\/app\\.svg$",                   verb: "GET,HEAD", access_level: 1},
+       {url: "^ui\\/viewer\\.js$",                  verb: "GET,HEAD", access_level: 1},
+       {url: "^ui\\/viewer\\.css$",                 verb: "GET,HEAD", access_level: 1},
+       {url: "^ui\\/control-panel\\.js$",           verb: "GET,HEAD", access_level: 2},
+       {url: "^ui\\/control-panel\\.css$",          verb: "GET,HEAD", access_level: 2}
      ]
    }')
 
@@ -197,6 +204,36 @@ state=$(docker exec "$CONTAINER_NAME" cat /var/lib/cassini-operator/app-state.js
   || echo '{}')
 echo "$state" | grep -q '"enabled":true' \
   || fail "container state not enabled after cycle: $state"
+
+# --- 6b. Assert the Nextcloud navigation registration landed ---------------
+#
+# The /enabled handler registers the top-menu entries (viewer for users,
+# control-panel for admins) in a goroutine after answering AppAPI, so poll
+# briefly. GET /api/v1/ui/top-menu is AppAPI-authenticated with the same
+# shared secret the app was registered with; 200 = entry exists, 404 = not.
+
+AUTH_B64=$(printf ':%s' "$APP_SECRET" | base64 | tr -d '\n')
+assert_top_menu_registered() {
+  local name="$1" status=000
+  for attempt in $(seq 1 30); do
+    status=$(curl -s -o /dev/null -w '%{http_code}' \
+      -H "AUTHORIZATION-APP-API: $AUTH_B64" \
+      -H "EX-APP-ID: $APP_ID" \
+      -H "EX-APP-VERSION: $APP_VERSION" \
+      -H "OCS-APIRequest: true" \
+      "http://127.0.0.1:${NEXTCLOUD_HOST_PORT}/ocs/v2.php/apps/app_api/api/v1/ui/top-menu?name=${name}")
+    if [[ "$status" == "200" ]]; then
+      log "OK   top-menu entry \"$name\" registered (after ${attempt}s)"
+      return 0
+    fi
+    sleep 1
+  done
+  fail "top-menu entry \"$name\" not registered after 30s (last=$status)"
+}
+
+log "checking Nextcloud navigation (top-menu) registration"
+assert_top_menu_registered viewer
+assert_top_menu_registered control-panel
 
 # --- 7. Create a regular test user (admin already exists) -----------------
 
@@ -229,11 +266,20 @@ log "checking proxied route access for admin"
 assert_status admin   "admin:admin"                       "control-panel/" 200
 assert_status admin   "admin:admin"                       "operator/jobs"  200
 assert_status admin   "admin:admin"                       "viewer/"        200
+assert_status admin   "admin:admin"                       "ui/control-panel.js" 200
+assert_status admin   "admin:admin"                       "ui/control-panel.css" 200
 
 log "checking proxied route access for $TEST_USER (USER tier)"
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "viewer/"        200
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "control-panel/" 404
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "operator/jobs"  404
+assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/viewer.js"   200
+# ui/viewer.css must be proxy-reachable at USER tier: D-383 injects it into the
+# viewer's shadow root via a runtime <link>, so the proxy has to serve it.
+assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/viewer.css"  200
+assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/control-panel.js" 404
+assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/control-panel.css" 404
+assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "img/app.svg"    200
 
 # --- 7c. Assert the admin UI actually loads (not just 200 + empty) --------
 #
@@ -259,5 +305,130 @@ assert_admin_ui_loads() {
 
 log "checking that admin UI actually loads (body contains SPA title)"
 assert_admin_ui_loads
+
+# --- 7d. Embedded viewer wiring (D-381) -----------------------------------
+#
+# The viewer renders INSIDE Nextcloud on AppAPI's embedded page
+# (/index.php/apps/app_api/embedded/<app>/viewer), which carries a permissive
+# nonce CSP — not an iframe of proxied HTML. This asserts the wiring HTTP-level
+# (HONEST LIMIT: proves registered+served+page-references-nonce'd-script+
+# catalog-reachable, NOT pixel render — there is no headless browser in repo):
+#   1. Seed a catalog so /published/catalog.json is reachable.
+#   2. The embedded page (as the test user) is 200 AND references the
+#      registered, nonce'd <script src=".../proxy/<app>/ui/viewer.js">.
+#   3. The proxied catalog is 200 + a valid cassini.viewer.catalog.v1.
+
+# SiteRoot inside the container: the operator serves /published/ from
+# CASSINI_OPERATOR_SITE_ROOT. This e2e runs the container without
+# APP_PERSISTENT_STORAGE, so the baked image default applies unchanged; read it
+# from the container env rather than hardcoding.
+SITE_ROOT=$(docker exec "$CONTAINER_NAME" printenv CASSINI_OPERATOR_SITE_ROOT 2>/dev/null || true)
+SITE_ROOT="${SITE_ROOT:-/srv/cassini-site/published}"
+
+log "seeding catalog at ${SITE_ROOT}/catalog.json inside the container"
+docker exec "$CONTAINER_NAME" sh -c \
+  'mkdir -p "$1" && printf "%s" "{\"version\":\"cassini.viewer.catalog.v1\",\"meetings\":[]}" > "$1/catalog.json"' \
+  _ "$SITE_ROOT" \
+  || fail "could not seed catalog into the container at $SITE_ROOT"
+
+# A plain Basic GET on the embedded page can 302 to the login flow, so use a
+# cookie-jar login (like d263-nextcloud-lifecycle.sh) for the test user.
+NC_BASE="http://127.0.0.1:${NEXTCLOUD_HOST_PORT}"
+# The embedded page is a regular authenticated Nextcloud route (served by the
+# app_api PHP app, not the ExApp proxy). Nextcloud's BasicAuth middleware
+# authenticates GETs per-request, so reuse the same HTTP Basic creds the proxy
+# route checks above already use successfully (a cookie-jar login flow is
+# brittle and was not establishing a session). The viewer entry is USER tier,
+# so the regular e2euser can open it.
+EMBEDDED_URL="$NC_BASE/index.php/apps/app_api/embedded/${APP_ID}/viewer"
+log "checking embedded viewer page $EMBEDDED_URL"
+embedded_status=$(curl -sS -u "$TEST_USER:$TEST_USER_PASSWORD" \
+  -o "$LOG_DIR/embedded-viewer.html" -w '%{http_code}' "$EMBEDDED_URL")
+if [[ "$embedded_status" != "200" ]]; then
+  log "first 300 chars of embedded response:"
+  log "$(head -c 300 "$LOG_DIR/embedded-viewer.html" 2>/dev/null)"
+  fail "embedded viewer page expected 200 got $embedded_status"
+fi
+
+# The registered ui/script is injected as a Nextcloud-nonce'd
+# <script ... nonce="…" src=".../proxy/<app>/ui/viewer.js">. Assert the nonce is
+# ON THE SAME <script> tag that loads viewer.js — under CSP strict-dynamic only
+# a nonce'd script runs; a raw host-allowlisted src is ignored, so a nonce
+# elsewhere on the page is not sufficient. Attribute order is not guaranteed, so
+# isolate the viewer.js <script> tag and require nonce= within it.
+#
+# D-383: the stylesheet is NO LONGER a global ui/style <link> on the page — the
+# IIFE injects it into the SPA's shadow root at runtime — so we do NOT assert a
+# page-level ui/viewer.css <link> here. That the stylesheet is served + proxy-
+# reachable is covered by the ui/viewer.css route check in section 6 above.
+embedded_body=$(cat "$LOG_DIR/embedded-viewer.html")
+viewer_script_tag=$(grep -oE "<script[^>]*proxy/${APP_ID}/ui/viewer\.js[^>]*>" <<<"$embedded_body" | head -1)
+if [[ -z "$viewer_script_tag" ]]; then
+  log "embedded page did not reference the registered ui/viewer.js; first 400 chars:"
+  log "$(head -c 400 "$LOG_DIR/embedded-viewer.html")"
+  fail "embedded viewer page does not reference the proxied ui/viewer.js bundle"
+fi
+if ! grep -qE 'nonce="[^"]+"' <<<"$viewer_script_tag"; then
+  log "viewer.js script tag was: $viewer_script_tag"
+  fail "the ui/viewer.js <script> tag is not nonce'd (CSP strict-dynamic would block the viewer)"
+fi
+log "OK   embedded viewer page 200 with a nonce'd proxy ui/viewer.js (CSS injected into the shadow root)"
+
+# --- 7e. Embedded control-panel wiring (D-382) ----------------------------
+#
+# Same shape as the viewer check above, for the admin control panel: it now
+# renders directly on AppAPI's nonce'd embedded page from a self-mounting IIFE
+# + stylesheet (the D-382 embedded build), not an iframe of proxied SPA HTML
+# (which AppAPI's default-src 'none' CSP blocked, leaving the panel blank).
+# The control-panel entry is ADMIN tier, so use the admin Basic creds (the
+# regular e2euser would 404 on the embedded route). HONEST LIMIT: this proves
+# registered+served+page-references-nonce'd-script, NOT pixel render (no
+# headless browser in repo).
+CP_EMBEDDED_URL="$NC_BASE/index.php/apps/app_api/embedded/${APP_ID}/control-panel"
+log "checking embedded control-panel page $CP_EMBEDDED_URL"
+cp_embedded_status=$(curl -sS -u "admin:admin" \
+  -o "$LOG_DIR/embedded-control-panel.html" -w '%{http_code}' "$CP_EMBEDDED_URL")
+if [[ "$cp_embedded_status" != "200" ]]; then
+  log "first 300 chars of embedded response:"
+  log "$(head -c 300 "$LOG_DIR/embedded-control-panel.html" 2>/dev/null)"
+  fail "embedded control-panel page expected 200 got $cp_embedded_status"
+fi
+
+# Assert the nonce is ON THE SAME <script> tag that loads control-panel.js —
+# under CSP strict-dynamic only a nonce'd script runs; a raw host-allowlisted
+# src is ignored, so a nonce elsewhere on the page is not sufficient. Attribute
+# order is not guaranteed, so isolate the control-panel.js <script> tag and
+# require nonce= within it.
+#
+# D-383: as with the viewer, the stylesheet is injected into the panel's shadow
+# root at runtime, not a page-level ui/style <link>, so we do NOT assert a
+# page-level ui/control-panel.css <link>. The ui/control-panel.css route check in
+# section 6 (admin 200 / user 404) covers that the stylesheet is served + gated.
+cp_embedded_body=$(cat "$LOG_DIR/embedded-control-panel.html")
+cp_script_tag=$(grep -oE "<script[^>]*proxy/${APP_ID}/ui/control-panel\.js[^>]*>" <<<"$cp_embedded_body" | head -1)
+if [[ -z "$cp_script_tag" ]]; then
+  log "embedded page did not reference the registered ui/control-panel.js; first 400 chars:"
+  log "$(head -c 400 "$LOG_DIR/embedded-control-panel.html")"
+  fail "embedded control-panel page does not reference the proxied ui/control-panel.js bundle"
+fi
+if ! grep -qE 'nonce="[^"]+"' <<<"$cp_script_tag"; then
+  log "control-panel.js script tag was: $cp_script_tag"
+  fail "the ui/control-panel.js <script> tag is not nonce'd (CSP strict-dynamic would block the panel)"
+fi
+log "OK   embedded control-panel page 200 with a nonce'd proxy ui/control-panel.js (CSS injected into the shadow root)"
+
+log "checking proxied catalog $PROXY/published/catalog.json"
+catalog_status=$(curl -sS -u "$TEST_USER:$TEST_USER_PASSWORD" \
+  -o "$LOG_DIR/published-catalog.json" -w '%{http_code}' "$PROXY/published/catalog.json")
+if [[ "$catalog_status" != "200" ]]; then
+  fail "proxied catalog expected 200 got $catalog_status"
+fi
+catalog_version=$(jq -r '.version' "$LOG_DIR/published-catalog.json" 2>/dev/null || echo "")
+if [[ "$catalog_version" != "cassini.viewer.catalog.v1" ]]; then
+  log "catalog body:"
+  log "$(head -c 300 "$LOG_DIR/published-catalog.json" 2>/dev/null)"
+  fail "proxied catalog is not a valid cassini.viewer.catalog.v1 (version=$catalog_version)"
+fi
+log "OK   proxied /published/catalog.json 200 and is a valid cassini.viewer.catalog.v1"
 
 log "install-e2e passed"

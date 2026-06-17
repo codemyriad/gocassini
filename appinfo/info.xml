@@ -19,15 +19,62 @@ logged-in user.]]></description>
   <repository>https://github.com/codemyriad/gocassini</repository>
 
   <dependencies>
-    <nextcloud min-version="30" max-version="35"/>
+    <!-- HaRP (the recommended AppAPI deploy daemon) requires NC 32+; older
+         releases only offer daemon types this image was never tested on. -->
+    <nextcloud min-version="32" max-version="35"/>
   </dependencies>
 
   <external-app>
     <docker-install>
       <registry>ghcr.io</registry>
       <image>codemyriad/gocassini</image>
-      <image-tag>latest</image-tag>
+      <!-- Pinned to <version> so installs are reproducible: AppAPI pulls the
+           exact build this manifest was released with, never a moving
+           `latest`. CI rejects a manifest where the two disagree; bump both
+           together with scripts/bump-exapp-version.sh. -->
+      <image-tag>0.1.0</image-tag>
     </docker-install>
+
+    <!--
+      Environment variables AppAPI passes into the container. Declaring them
+      here is mandatory for them to be settable at all: AppAPI's
+      ExAppService merges admin-supplied deploy options (the External Apps
+      admin UI, or repeated `env KEY=VALUE` options on
+      `occ app_api:app:register`) into this declared set and silently drops
+      undeclared keys. See docs/exapp-install.md for the install steps.
+    -->
+    <environment-variables>
+      <variable>
+        <name>CASSINI_TALK_RECORDING_SECRET</name>
+        <display-name>Talk recording shared secret</display-name>
+        <description>Shared secret for Nextcloud Talk's recording backend protocol. Must match the "secret" in Talk's recording_servers setting (occ config:app:set spreed recording_servers). Required for the Talk "Start recording" button: without it the operator rejects every recording request.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_TALK_BACKEND_URL</name>
+        <display-name>Talk backend URL override (optional)</display-name>
+        <description>Base URL the operator uses to call back into Nextcloud Talk (recording started/stopped notifications and recording upload). Leave empty to use the backend URL Talk sends with each recording request, which is correct for almost every deployment.</description>
+      </variable>
+      <variable>
+        <name>OPENROUTER_API_KEY</name>
+        <display-name>LLM API key (optional)</display-name>
+        <description>API key for transcript cleanup and meeting summaries, sent to OpenRouter or any OpenAI-compatible endpoint (see LLM_BASE_URL). Leave empty to publish raw transcripts without summaries.</description>
+      </variable>
+      <variable>
+        <name>LLM_BASE_URL</name>
+        <display-name>LLM base URL (optional)</display-name>
+        <description>OpenAI-compatible API base URL used for transcript cleanup and meeting summaries. Defaults to https://openrouter.ai/api/v1 when OPENROUTER_API_KEY is set.</description>
+      </variable>
+      <variable>
+        <name>LLM_MODEL</name>
+        <display-name>LLM model (optional)</display-name>
+        <description>Model identifier for transcript cleanup and meeting summaries (default: openai/gpt-4o-mini).</description>
+      </variable>
+      <variable>
+        <name>CASSINI_OPERATOR_API_TOKEN</name>
+        <display-name>Operator API bearer token (optional)</display-name>
+        <description>When set, direct (non-proxied) requests to the operator job API must send "Authorization: Bearer &lt;token&gt;". Requests proxied through Nextcloud are authenticated by AppAPI and are unaffected. Leave empty to keep the API reachable only through the AppAPI proxy authentication.</description>
+      </variable>
+    </environment-variables>
 
     <routes>
       <!--
@@ -79,6 +126,13 @@ logged-in user.]]></description>
         <verb>GET</verb>
         <access_level>ADMIN</access_level>
       </route>
+      <!-- ADMIN: doctor/status endpoint (version, STT device usability,
+           Talk config presence, DB/storage health — never secret values) -->
+      <route>
+        <url>^operator\/status\/?$</url>
+        <verb>GET</verb>
+        <access_level>ADMIN</access_level>
+      </route>
 
       <!-- USER: viewer SPA + published recordings (org-wide archive per D10) -->
       <route>
@@ -95,6 +149,71 @@ logged-in user.]]></description>
         <url>^published\/.+$</url>
         <verb>GET,HEAD</verb>
         <access_level>USER</access_level>
+      </route>
+
+      <!--
+        PUBLIC: Talk recording-backend protocol. Lets the "Start recording"
+        button in Talk reach Cassini through the AppAPI proxy when Cassini
+        is deployed as an ExApp. Authentication is Talk's own HMAC over
+        secret + Talk-Recording-Random + request body (verified by the
+        operator's talk_backend.go) — independent of any NC session, hence
+        PUBLIC at the AppAPI layer. Configure Talk's recording_servers to
+        point at ${nc_url}/index.php/apps/app_api/proxy/gocassini and the
+        record button works the same way it would against a standalone
+        cassini-operator bot.
+      -->
+      <route>
+        <url>^api\/v1\/welcome$</url>
+        <verb>GET</verb>
+        <access_level>PUBLIC</access_level>
+      </route>
+      <route>
+        <url>^api\/v1\/room\/[^\/]+$</url>
+        <verb>POST</verb>
+        <access_level>PUBLIC</access_level>
+      </route>
+
+      <!--
+        ExApp UI assets behind the Nextcloud navigation entries the operator
+        registers when the app is enabled (uiRegistrar in exapp.go). AppAPI's
+        embedded top-menu page loads ui/<entry>.{js,css} through this proxy, and
+        the navigation bar fetches the icon the same way, so each path needs a
+        route. Both entries render their SPA directly on the embedded page from
+        an embedded build (viewer D-381, control-panel D-382): the viewer
+        JS/CSS are USER, the control-panel JS/CSS are ADMIN (same tier as the
+        admin SPA); the icon is USER because every logged-in user sees the
+        viewer entry.
+      -->
+      <route>
+        <url>^img\/app\.svg$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>USER</access_level>
+      </route>
+      <route>
+        <url>^ui\/viewer\.js$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>USER</access_level>
+      </route>
+      <!-- The viewer renders directly on AppAPI's embedded page (D-381), so its
+           stylesheet is registered as a ui/style and fetched through the proxy
+           too. USER, like the viewer JS. -->
+      <route>
+        <url>^ui\/viewer\.css$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>USER</access_level>
+      </route>
+      <route>
+        <url>^ui\/control-panel\.js$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <!-- The control panel renders directly on AppAPI's embedded page (D-382),
+           so its stylesheet is registered as a ui/style and fetched through the
+           proxy too. ADMIN, like the control-panel JS. -->
+      <route>
+        <url>^ui\/control-panel\.css$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>ADMIN</access_level>
       </route>
     </routes>
   </external-app>

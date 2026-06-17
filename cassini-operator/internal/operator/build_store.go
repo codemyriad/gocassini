@@ -37,35 +37,76 @@ WHERE job_id = ? AND attempt_number = ?`, "build", "queued", attemptArtifactRunP
 	return nil
 }
 
-func (s *Store) MarkBuildRunning(ctx context.Context, id, startedAt string) error {
+// ClaimBuildRunning transitions a job from build/queued to build/running,
+// returning false (without error) when the job is not claimable — e.g. a
+// duplicate queue delivery after the requeue dispatcher re-scanned a row that
+// another worker already picked up (D-367). The conditional UPDATE is the
+// claim: SQLite serializes it, so exactly one worker wins.
+func (s *Store) ClaimBuildRunning(ctx context.Context, id, startedAt string) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin build running update: %w", err)
+		return false, fmt.Errorf("begin build running update: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	_, err = tx.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 UPDATE jobs
-SET stage = ?, state = ?, updated_at = ?, build_started_at = ?
-WHERE id = ?`, "build", "running", startedAt, startedAt, id)
+SET state = ?, updated_at = ?, build_started_at = ?
+WHERE id = ? AND stage = ? AND state = ?`, "running", startedAt, startedAt, id, "build", "queued")
 	if err != nil {
-		return fmt.Errorf("update build running: %w", err)
+		return false, fmt.Errorf("update build running: %w", err)
+	}
+	claimed, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("build running rows affected: %w", err)
+	}
+	if claimed == 0 {
+		return false, nil
 	}
 	attemptNumber, err := currentAttemptNumberTx(ctx, tx, id)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE job_attempts
 SET stage = ?, state = ?, updated_at = ?, build_started_at = ?
 WHERE job_id = ? AND attempt_number = ?`, "build", "running", startedAt, startedAt, id, attemptNumber); err != nil {
-		return fmt.Errorf("update attempt build running: %w", err)
+		return false, fmt.Errorf("update attempt build running: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit build running update: %w", err)
+		return false, fmt.Errorf("commit build running update: %w", err)
 	}
 	s.emitStateChange(ctx, "job.updated", id, attemptNumber)
-	return nil
+	return true, nil
+}
+
+// ListQueuedBuildTasks returns the durable build backlog: jobs whose row says
+// build/queued with a canonical run bundle pointer. The requeue dispatcher
+// feeds these to workers when the in-memory channel dropped them (full queue)
+// or never saw them (operator restart) (D-367).
+func (s *Store) ListQueuedBuildTasks(ctx context.Context) ([]buildTask, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, current_attempt_number, artifact_run_path
+FROM jobs
+WHERE stage = 'build' AND state = 'queued' AND artifact_run_path IS NOT NULL
+ORDER BY build_queued_at ASC, id ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("query queued build jobs: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []buildTask
+	for rows.Next() {
+		var task buildTask
+		if err := rows.Scan(&task.JobID, &task.AttemptNumber, &task.ArtifactRunPath); err != nil {
+			return nil, fmt.Errorf("scan queued build job: %w", err)
+		}
+		tasks = append(tasks, task)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate queued build jobs: %w", err)
+	}
+	return tasks, nil
 }
 
 func (s *Store) MarkBuildSucceeded(ctx context.Context, id, jobArtifactMeetingPath, attemptArtifactMeetingPath, finishedAt string) error {

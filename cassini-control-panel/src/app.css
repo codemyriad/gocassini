@@ -1,9 +1,32 @@
 @import "tailwindcss";
 
 @plugin "daisyui" {
+  /* root: emit theme tokens on BOTH :root (standalone) and :host (the AppAPI
+   * embedded build, where embedded.ts renders the SPA inside an open shadow
+   * root). Custom properties on :host inherit across the shadow boundary; :root
+   * inside a shadow-scoped stylesheet matches nothing. See src/embedded.ts. */
+  root: ":where(:root, :host)";
   themes: light --default, dark --prefersdark;
 }
 
+/* Shadow-boundary reset — active only in the embedded (shadow) build, where
+ * :host is the shadow host; inert in standalone (no shadow host). Re-establishes
+ * the base typography Tailwind Preflight's (now shadow-inert) html/body rules
+ * would set, and resets inherited props at the boundary so NC chrome does not
+ * bleed into the panel. */
+:host {
+  display: block;
+  min-height: 100%;
+  font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+  line-height: 1.5;
+  color: var(--color-base-content);
+  background-color: var(--color-base-100);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Inert in the embedded (shadow) build — no html/body inside a shadow tree —
+ * so this no longer bleeds onto Nextcloud; applies normally in standalone. */
 html,
 body,
 #app {

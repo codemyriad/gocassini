@@ -129,9 +129,17 @@ Inspect any primary Cassini artifact:
 ./bin/cassini inspect ./site
 ```
 
+## Installing On Nextcloud
+
+The production install path is the Nextcloud AppAPI ExApp — registration,
+Talk recording handoff, verification checklist, and GPU setup are covered in:
+
+- [docs/exapp-install.md](docs/exapp-install.md)
+
 ## Deployment Bundle
 
-For the repo-root Docker Compose deployment bundle, see:
+For the repo-root Docker Compose deployment bundle (development and staging —
+not the Nextcloud app install), see:
 
 - [deployment/README.md](deployment/README.md)
 

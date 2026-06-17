@@ -15,11 +15,38 @@ import (
 	"gocassini/internal/app"
 	"gocassini/internal/config"
 	inspectpkg "gocassini/internal/inspect"
+	"gocassini/internal/talk"
 )
 
 const defaultRecorderName = "CassiniRecorder"
 
+// exitUnjoinable is returned by `cassini record` when the Talk server
+// definitively rejected the join (HTTP 4xx — e.g. a non-public room the
+// guest recorder cannot see, or a refused call join). It lets callers such
+// as the operator distinguish doomed jobs from generic recorder failures.
+const exitUnjoinable = 3
+
 var runRecorderApp = app.RunContext
+
+// recordFailureExitCode maps recorder failures to the record exit code,
+// reserving exitUnjoinable for definitive Talk join rejections.
+func recordFailureExitCode(err error) int {
+	if errors.Is(err, talk.ErrUnjoinable) {
+		return exitUnjoinable
+	}
+	return 1
+}
+
+// salvageableRecording reports whether a failed record run still produced
+// a finalizable recording: the recorder tagged the failure as an abnormal
+// stop whose cleanup finalized cleanly (capture closed without media loss
+// and the final MKV composed), and the composed recording is present in
+// the bundle. Such runs are finalized as ready — with the stop reason
+// recorded in the manifest — instead of stranding a valid recording over
+// a late mid-call failure (D-357).
+func salvageableRecording(err error, bundle RunBundle) bool {
+	return errors.Is(err, talk.ErrAbnormalStop) && runBundleRecordingExists(bundle)
+}
 
 type recordOptions struct {
 	callURL           string
@@ -38,6 +65,44 @@ type recordOptions struct {
 	simulate          bool
 	simTracks         int
 	simPackets        int
+}
+
+// Requestoffer retry defaults, matching the legacy gocassini binary's
+// flag defaults (internal/config: -request-offer-interval=2,
+// -max-request-offer-attempts=8). Leaving the interval zero disables
+// requestOfferLoop entirely, so a single dropped initial requestoffer —
+// the race the recorder documents around spreed's call-state propagation
+// — would silently lose that participant's media for the whole run.
+const (
+	defaultRequestOfferInterval    = 2 * time.Second
+	defaultMaxRequestOfferAttempts = 8
+)
+
+// recordConfig builds the recorder configuration shared by the .run and
+// portable record paths, including the retry defaults the product CLI
+// must not lose vs the legacy binary (D-366).
+func recordConfig(opts recordOptions, recordingPath string) config.Config {
+	return config.Config{
+		Mode:                    "talk",
+		OutputPath:              recordingPath,
+		CleanupIntermediate:     !opts.keepIntermediate,
+		Duration:                time.Duration(opts.durationSeconds) * time.Second,
+		StopWhenRoomEmpty:       opts.stopWhenRoomEmpty,
+		RoomEmptyGrace:          time.Duration(opts.roomEmptyGraceSec * float64(time.Second)),
+		CallURL:                 opts.callURL,
+		TalkBaseURL:             opts.talkBaseURL,
+		TalkRoomToken:           opts.talkRoomToken,
+		TalkAuthMode:            opts.talkAuthMode,
+		ConnectBaseURL:          opts.connectURL,
+		GuestName:               opts.name,
+		JoinFlags:               1,
+		Insecure:                opts.insecure,
+		RequestOfferInterval:    defaultRequestOfferInterval,
+		MaxRequestOfferAttempts: defaultMaxRequestOfferAttempts,
+		TurnMode:                opts.turnMode,
+		SimTracks:               opts.simTracks,
+		SimPackets:              opts.simPackets,
+	}
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -137,43 +202,32 @@ func runRecord(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return 1
 	}
 
-	cfg := config.Config{
-		Mode:                "talk",
-		OutputPath:          bundle.RecordingPath,
-		CleanupIntermediate: !opts.keepIntermediate,
-		Duration:            time.Duration(opts.durationSeconds) * time.Second,
-		StopWhenRoomEmpty:   opts.stopWhenRoomEmpty,
-		RoomEmptyGrace:      time.Duration(opts.roomEmptyGraceSec * float64(time.Second)),
-		CallURL:             opts.callURL,
-		TalkBaseURL:         opts.talkBaseURL,
-		TalkRoomToken:       opts.talkRoomToken,
-		TalkAuthMode:        opts.talkAuthMode,
-		ConnectBaseURL:      opts.connectURL,
-		GuestName:           opts.name,
-		JoinFlags:           1,
-		Insecure:            opts.insecure,
-		TurnMode:            opts.turnMode,
-		SimTracks:           opts.simTracks,
-		SimPackets:          opts.simPackets,
-	}
+	cfg := recordConfig(opts, bundle.RecordingPath)
 	if opts.simulate {
 		cfg.Mode = "simulate"
 	}
 	_ = UpdateRunBundleStatus(bundle, bundleStatePreparing, "record", "")
 
 	fmt.Fprintln(stdout, "[2/3] Recording")
-	if err := runRecorderApp(ctx, cfg); err != nil {
-		_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", err.Error())
-		fmt.Fprintf(stderr, "record failed: %v\n", err)
+	recordErr := runRecorderApp(ctx, cfg)
+	if recordErr != nil && !salvageableRecording(recordErr, bundle) {
+		_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())
+		fmt.Fprintf(stderr, "record failed: %v\n", recordErr)
 		fmt.Fprintf(stderr, "partial_run -> %s\n", bundle.RootDir)
-		return 1
+		return recordFailureExitCode(recordErr)
+	}
+
+	manifest := RunManifest{
+		SourceMode:   cfg.Mode,
+		RecorderName: opts.name,
+	}
+	if recordErr != nil {
+		manifest.StopReason = recordErr.Error()
+		fmt.Fprintf(stderr, "record stopped early but composed a usable recording: %v\n", recordErr)
 	}
 
 	fmt.Fprintln(stdout, "[3/3] Finalizing run bundle")
-	if err := FinalizeRunBundle(bundle, RunManifest{
-		SourceMode:   cfg.Mode,
-		RecorderName: opts.name,
-	}); err != nil {
+	if err := FinalizeRunBundle(bundle, manifest); err != nil {
 		_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "finalize", err.Error())
 		fmt.Fprintf(stderr, "finalize run bundle: %v\n", err)
 		fmt.Fprintf(stderr, "partial_run -> %s\n", bundle.RootDir)
@@ -219,40 +273,28 @@ func runRecordPortable(ctx context.Context, opts recordOptions, stdout, stderr i
 		return 1
 	}
 
-	cfg := config.Config{
-		Mode:                "talk",
-		OutputPath:          bundle.RecordingPath,
-		CleanupIntermediate: !opts.keepIntermediate,
-		Duration:            time.Duration(opts.durationSeconds) * time.Second,
-		StopWhenRoomEmpty:   opts.stopWhenRoomEmpty,
-		RoomEmptyGrace:      time.Duration(opts.roomEmptyGraceSec * float64(time.Second)),
-		CallURL:             opts.callURL,
-		TalkBaseURL:         opts.talkBaseURL,
-		TalkRoomToken:       opts.talkRoomToken,
-		TalkAuthMode:        opts.talkAuthMode,
-		ConnectBaseURL:      opts.connectURL,
-		GuestName:           opts.name,
-		JoinFlags:           1,
-		Insecure:            opts.insecure,
-		TurnMode:            opts.turnMode,
-		SimTracks:           opts.simTracks,
-		SimPackets:          opts.simPackets,
-	}
+	cfg := recordConfig(opts, bundle.RecordingPath)
 
 	if !reusedRun {
 		_ = UpdateRunBundleStatus(bundle, bundleStatePreparing, "record", "")
 
 		fmt.Fprintln(stdout, "[3/5] Recording meeting")
-		if err := runRecorderApp(ctx, cfg); err != nil {
-			_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", err.Error())
-			fmt.Fprintf(stderr, "record failed: %v\n", err)
+		recordErr := runRecorderApp(ctx, cfg)
+		if recordErr != nil && !salvageableRecording(recordErr, bundle) {
+			_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "record", recordErr.Error())
+			fmt.Fprintf(stderr, "record failed: %v\n", recordErr)
 			printPortableResumeHint(stderr, workspace.RootDir, outPath)
-			return 1
+			return recordFailureExitCode(recordErr)
 		}
-		if err := FinalizeRunBundle(bundle, RunManifest{
+		manifest := RunManifest{
 			SourceMode:   cfg.Mode,
 			RecorderName: opts.name,
-		}); err != nil {
+		}
+		if recordErr != nil {
+			manifest.StopReason = recordErr.Error()
+			fmt.Fprintf(stderr, "record stopped early but composed a usable recording: %v\n", recordErr)
+		}
+		if err := FinalizeRunBundle(bundle, manifest); err != nil {
 			_ = UpdateRunBundleStatus(bundle, bundleStateFailed, "finalize", err.Error())
 			fmt.Fprintf(stderr, "finalize run bundle: %v\n", err)
 			printPortableResumeHint(stderr, workspace.RootDir, outPath)

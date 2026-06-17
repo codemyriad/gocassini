@@ -34,8 +34,8 @@ func TestOpenStoreEnsuresSchemaAndEmptyList(t *testing.T) {
 	if len(jobs) != 0 {
 		t.Fatalf("expected empty jobs list, got %d", len(jobs))
 	}
-	if versions := migrationVersions(t, store.db); len(versions) != 3 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 {
-		t.Fatalf("expected migration versions [1 2 3], got %v", versions)
+	if versions := migrationVersions(t, store.db); len(versions) != 4 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 {
+		t.Fatalf("expected migration versions [1 2 3 4], got %v", versions)
 	}
 	if !sqliteTableExists(t, store.db, "job_attempts") {
 		t.Fatalf("expected job_attempts table to exist")
@@ -54,8 +54,8 @@ func TestOpenStoreBaselinesLegacySchemaDatabase(t *testing.T) {
 	}
 	defer store.Close()
 
-	if versions := migrationVersions(t, store.db); len(versions) != 3 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 {
-		t.Fatalf("expected migration versions [1 2 3], got %v", versions)
+	if versions := migrationVersions(t, store.db); len(versions) != 4 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 {
+		t.Fatalf("expected migration versions [1 2 3 4], got %v", versions)
 	}
 	job := mustGetJob(t, store, "legacy-job")
 	if job.Provider != "nextcloud-talk" || job.Stage != "record" || job.State != "queued" {
@@ -276,12 +276,70 @@ func TestLoadConfigAllowsExplicitPathsOutsideRepo(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRedirectsBakedDefaultsUnderPersistentStorage(t *testing.T) {
+	// Simulate the ExApp container: AppAPI mounted its persistent volume and
+	// the image baked the ephemeral data paths into env (Dockerfile.exapp).
+	// All three roots must redirect under APP_PERSISTENT_STORAGE.
+	repoRoot := makeFakeOperatorRepoRoot(t)
+	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
+	t.Setenv("APP_PERSISTENT_STORAGE", "/nc_app_gocassini_data")
+	t.Setenv("CASSINI_OPERATOR_DB_PATH", "/var/lib/cassini-operator/jobs.sqlite3")
+	t.Setenv("CASSINI_OPERATOR_WORK_ROOT", "/var/lib/cassini-operator/jobs")
+	t.Setenv("CASSINI_OPERATOR_SITE_ROOT", "/srv/cassini-site/published")
+
+	cfg, exitCode, err := loadConfig(nil, ioDiscard{})
+	if err != nil {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0", exitCode)
+	}
+	if cfg.DBPath != "/nc_app_gocassini_data/operator/jobs.sqlite3" {
+		t.Fatalf("dbPath = %q, want under APP_PERSISTENT_STORAGE", cfg.DBPath)
+	}
+	if cfg.WorkRoot != "/nc_app_gocassini_data/operator/jobs" {
+		t.Fatalf("workRoot = %q, want under APP_PERSISTENT_STORAGE", cfg.WorkRoot)
+	}
+	if cfg.SiteRoot != "/nc_app_gocassini_data/site/published" {
+		t.Fatalf("siteRoot = %q, want under APP_PERSISTENT_STORAGE", cfg.SiteRoot)
+	}
+}
+
+func TestLoadConfigKeepsExplicitPathsDespitePersistentStorage(t *testing.T) {
+	// Admin override: paths set to anything other than the baked image
+	// defaults stay untouched even when APP_PERSISTENT_STORAGE is mounted.
+	repoRoot := makeFakeOperatorRepoRoot(t)
+	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
+	t.Setenv("APP_PERSISTENT_STORAGE", "/nc_app_gocassini_data")
+	t.Setenv("CASSINI_OPERATOR_DB_PATH", "/mnt/big-disk/jobs.sqlite3")
+	t.Setenv("CASSINI_OPERATOR_WORK_ROOT", "/mnt/big-disk/jobs")
+	t.Setenv("CASSINI_OPERATOR_SITE_ROOT", "/mnt/big-disk/site/published")
+
+	cfg, exitCode, err := loadConfig(nil, ioDiscard{})
+	if err != nil {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0", exitCode)
+	}
+	if cfg.DBPath != "/mnt/big-disk/jobs.sqlite3" {
+		t.Fatalf("dbPath = %q, want explicit override", cfg.DBPath)
+	}
+	if cfg.WorkRoot != "/mnt/big-disk/jobs" {
+		t.Fatalf("workRoot = %q, want explicit override", cfg.WorkRoot)
+	}
+	if cfg.SiteRoot != "/mnt/big-disk/site/published" {
+		t.Fatalf("siteRoot = %q, want explicit override", cfg.SiteRoot)
+	}
+}
+
 func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
 	seedJobRow(t, rt.store.db, seededJobRow{ID: "queued-record", Stage: "record", State: "queued", CreatedAt: "2026-04-29T10:00:00Z"})
 	seedJobRow(t, rt.store.db, seededJobRow{ID: "running-build", Stage: "build", State: "running", CreatedAt: "2026-04-29T10:01:00Z"})
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "queued-build", Stage: "build", State: "queued", CreatedAt: "2026-04-29T10:01:30Z"})
 	seedJobRow(t, rt.store.db, seededJobRow{ID: "queued-publish", Stage: "publish", State: "queued", CreatedAt: "2026-04-29T10:02:00Z"})
 	seedJobRow(t, rt.store.db, seededJobRow{ID: "done-success", Stage: "done", State: "succeeded", CreatedAt: "2026-04-29T10:03:00Z", CompletedAt: strPtr("2026-04-29T10:04:00Z")})
 	seedJobRow(t, rt.store.db, seededJobRow{ID: "done-failed", Stage: "done", State: "failed", CreatedAt: "2026-04-29T10:05:00Z", CompletedAt: strPtr("2026-04-29T10:06:00Z")})
@@ -291,8 +349,8 @@ func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MarkIncompleteJobsInterrupted() error = %v", err)
 	}
-	if count != 3 {
-		t.Fatalf("count = %d, want 3", count)
+	if count != 2 {
+		t.Fatalf("count = %d, want 2", count)
 	}
 
 	queuedRecord := mustGetJob(t, rt.store, "queued-record")
@@ -315,9 +373,16 @@ func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
 		t.Fatalf("unexpected running build job = %#v", runningBuild)
 	}
 
+	// Queued build/publish rows survive a restart untouched: their inputs are
+	// durable on disk and the requeue dispatcher re-delivers them (D-367).
+	queuedBuild := mustGetJob(t, rt.store, "queued-build")
+	if queuedBuild.Stage != "build" || queuedBuild.State != "queued" || queuedBuild.InterruptedAt != nil {
+		t.Fatalf("queued build job should stay queued, got %#v", queuedBuild)
+	}
+
 	queuedPublish := mustGetJob(t, rt.store, "queued-publish")
-	if queuedPublish.Stage != "publish" || queuedPublish.State != "interrupted" {
-		t.Fatalf("unexpected queued publish job = %#v", queuedPublish)
+	if queuedPublish.Stage != "publish" || queuedPublish.State != "queued" || queuedPublish.InterruptedAt != nil {
+		t.Fatalf("queued publish job should stay queued, got %#v", queuedPublish)
 	}
 
 	doneSuccess := mustGetJob(t, rt.store, "done-success")
@@ -790,6 +855,127 @@ func TestStopJobAcceptsRunningRecordAndCompletesPublishStage(t *testing.T) {
 	logText := readFileString(t, logPath)
 	if !strings.Contains(logText, "--call https://example.test/stop-me") {
 		t.Fatalf("expected record invocation, got %s", logText)
+	}
+}
+
+func TestStopJobWaitsOutSlowFinalizationWithoutHardKill(t *testing.T) {
+	rt, cleanup, _, startedPath := newCLITestRuntime(t)
+	defer cleanup()
+	// Shrink the ack grace far below the simulated compose time: the stop
+	// must still succeed because the recorder acknowledged the SIGTERM
+	// before going quiet to finalize.
+	rt.recordStopAckGrace = 200 * time.Millisecond
+	t.Setenv("FAKE_RECORD_WAIT_FOR_SIGNAL", "1")
+	t.Setenv("FAKE_RECORD_FINALIZE_DELAY", "1")
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/slow-finalize"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	waitForFile(t, startedPath)
+	waitForRecordState(t, rt.store, resp.ID, "running")
+
+	stopReq := httptest.NewRequest(http.MethodPost, "/jobs/"+resp.ID+"/stop", nil)
+	stopRec := httptest.NewRecorder()
+	rt.jobDetailHandler(stopRec, stopReq)
+	if stopRec.Code != http.StatusAccepted {
+		t.Fatalf("stop status = %d, want %d body=%s", stopRec.Code, http.StatusAccepted, stopRec.Body.String())
+	}
+
+	job := waitForJobState(t, rt.store, resp.ID, "succeeded")
+	if job.StopReason == nil || *job.StopReason != "operator_requested" {
+		t.Fatalf("expected operator_requested stop reason, got %#v", job.StopReason)
+	}
+	if job.RecordExitCode == nil || *job.RecordExitCode != 0 {
+		t.Fatalf("expected record exit code 0 (no hard kill), got %#v", job.RecordExitCode)
+	}
+	if job.RecordStopDetail == nil || *job.RecordStopDetail != "stop requested" {
+		t.Fatalf("expected stop detail from stopping marker, got %#v", job.RecordStopDetail)
+	}
+}
+
+func TestStopJobHardKillsRecorderThatIgnoresSigterm(t *testing.T) {
+	rt, cleanup, _, startedPath := newCLITestRuntime(t)
+	defer cleanup()
+	rt.recordStopAckGrace = 200 * time.Millisecond
+	t.Setenv("FAKE_RECORD_IGNORE_TERM", "1")
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/wedged"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	waitForFile(t, startedPath)
+	waitForRecordState(t, rt.store, resp.ID, "running")
+
+	stopReq := httptest.NewRequest(http.MethodPost, "/jobs/"+resp.ID+"/stop", nil)
+	stopRec := httptest.NewRecorder()
+	rt.jobDetailHandler(stopRec, stopReq)
+	if stopRec.Code != http.StatusAccepted {
+		t.Fatalf("stop status = %d, want %d body=%s", stopRec.Code, http.StatusAccepted, stopRec.Body.String())
+	}
+
+	// Without the stopping acknowledgement the recorder must be hard-killed
+	// once it goes quiet past the ack grace; the kill surfaces as a failed
+	// record stage (waitForJobState bounds how long that may take).
+	job := waitForJobState(t, rt.store, resp.ID, "failed")
+	if job.Stage != "done" {
+		t.Fatalf("stage = %q, want done", job.Stage)
+	}
+	if job.Error == nil || !strings.Contains(*job.Error, "signal: killed") {
+		t.Fatalf("expected hard-kill error, got %#v", job.Error)
+	}
+}
+
+func TestShutdownWaitsForRecordFinalizationBeforeReturning(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt, cleanup, _, startedPath := newCLITestRuntimeWithContext(t, ctx)
+	defer cleanup()
+	t.Setenv("FAKE_RECORD_WAIT_FOR_SIGNAL", "1")
+	t.Setenv("FAKE_RECORD_FINALIZE_DELAY", "1")
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/shutdown-me"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	waitForFile(t, startedPath)
+	waitForRecordState(t, rt.store, resp.ID, "running")
+
+	// Operator shutdown: SIGTERM the recorder, then wait for the slow
+	// finalization to complete instead of abandoning it.
+	cancel()
+	if !rt.WaitForRecordJobs(5 * time.Second) {
+		t.Fatal("WaitForRecordJobs timed out; record job abandoned on shutdown")
+	}
+
+	job, err := rt.store.GetJob(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatalf("GetJob(%s) error = %v", resp.ID, err)
+	}
+	if job.RecordFinishedAt == nil {
+		t.Fatalf("expected record stage to finish during shutdown, got job=%#v", job)
+	}
+	recordingPath := filepath.Join(canonicalRunPath(rt.cfg.WorkRoot, resp.ID), "recording.mkv")
+	if _, err := os.Stat(recordingPath); err != nil {
+		t.Fatalf("expected promoted recording at %s: %v", recordingPath, err)
 	}
 }
 
@@ -1426,6 +1612,80 @@ func TestRerunRejectsUnknownAndActiveJobs(t *testing.T) {
 	_ = waitForJobState(t, rt.store, resp.ID, "succeeded")
 }
 
+func TestRerunInterruptedJobWithReadyRunSucceeds(t *testing.T) {
+	rt, cleanup, _, _ := newCLITestRuntime(t)
+	defer cleanup()
+
+	createReq := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/interrupted-rerun"}`))
+	createRec := httptest.NewRecorder()
+	rt.jobsHandler(createRec, createReq)
+	if createRec.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d, want %d body=%s", createRec.Code, http.StatusAccepted, createRec.Body.String())
+	}
+	var createResp createJobResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &createResp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	_ = waitForJobState(t, rt.store, createResp.ID, "succeeded")
+
+	// Simulate the startup sweep after a crash mid-build: the job is frozen
+	// at stage build, state interrupted, with a perfectly ready canonical
+	// run bundle on disk (the empirical D-362 repro).
+	interruptedAt := "2026-06-12T10:00:00Z"
+	if _, err := rt.store.db.Exec(`
+UPDATE jobs
+SET stage = 'build', state = 'interrupted', interrupted_at = ?, completed_at = NULL,
+    build_finished_at = NULL, publish_queued_at = NULL, publish_started_at = NULL, publish_finished_at = NULL
+WHERE id = ?`, interruptedAt, createResp.ID); err != nil {
+		t.Fatalf("mark job interrupted: %v", err)
+	}
+	if _, err := rt.store.db.Exec(`
+UPDATE job_attempts
+SET stage = 'build', state = 'interrupted', interrupted_at = ?, completed_at = NULL
+WHERE job_id = ?`, interruptedAt, createResp.ID); err != nil {
+		t.Fatalf("mark attempt interrupted: %v", err)
+	}
+
+	rerunReq := httptest.NewRequest(http.MethodPost, "/jobs/"+createResp.ID+"/rerun", nil)
+	rerunRec := httptest.NewRecorder()
+	rt.jobDetailHandler(rerunRec, rerunReq)
+	if rerunRec.Code != http.StatusAccepted {
+		t.Fatalf("rerun status = %d, want %d body=%s", rerunRec.Code, http.StatusAccepted, rerunRec.Body.String())
+	}
+	var rerunResp rerunJobResponse
+	if err := json.Unmarshal(rerunRec.Body.Bytes(), &rerunResp); err != nil {
+		t.Fatalf("decode rerun response: %v", err)
+	}
+	if rerunResp.AttemptNumber != 2 {
+		t.Fatalf("rerun attempt_number = %d, want 2", rerunResp.AttemptNumber)
+	}
+
+	job := waitForJobState(t, rt.store, createResp.ID, "succeeded")
+	if job.CurrentAttemptNumber != 2 || job.RerunCount != 1 {
+		t.Fatalf("expected attempt 2 / rerun_count 1 after interrupted rerun, got %#v", job)
+	}
+	if job.InterruptedAt != nil {
+		t.Fatalf("expected interrupted_at to be cleared after rerun, got %#v", job.InterruptedAt)
+	}
+}
+
+func TestRerunRejectsInterruptedRecordJobWithoutCanonicalRun(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	// A job interrupted mid-recording has no canonical run to rebuild from:
+	// the rerun gate lets interrupted jobs through, but the ready-run check
+	// must still reject it.
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "interrupted-record", Stage: "record", State: "interrupted", CreatedAt: "2026-06-12T10:00:00Z"})
+
+	rerunReq := httptest.NewRequest(http.MethodPost, "/jobs/interrupted-record/rerun", nil)
+	rerunRec := httptest.NewRecorder()
+	rt.jobDetailHandler(rerunRec, rerunReq)
+	if rerunRec.Code != http.StatusConflict {
+		t.Fatalf("rerun status = %d, want %d body=%s", rerunRec.Code, http.StatusConflict, rerunRec.Body.String())
+	}
+}
+
 func TestRerunRejectsFailedRecordWithoutCanonicalRun(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -1744,58 +2004,67 @@ func TestEventsHandlerStreamsPublishedEvents(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Serve the handler over a real HTTP server and read the stream
+	// through the connection: polling httptest.ResponseRecorder.Body
+	// while the handler goroutine writes to it is a data race.
+	srv := httptest.NewServer(http.HandlerFunc(rt.eventsHandler))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	finished := make(chan struct{})
-	req := httptest.NewRequest(http.MethodGet, "/events", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
-	go func() {
-		rt.eventsHandler(rec, req)
-		close(finished)
-	}()
-
-	time.Sleep(20 * time.Millisecond)
-	rt.publishStateChangeEvent(StateChangeEvent{
-		Type:  "job.updated",
-		JobID: "job-123",
-		At:    nowUTCString(),
-		Job: Job{
-			ID:        "job-123",
-			Stage:     "record",
-			State:     "running",
-			CreatedAt: nowUTCString(),
-			UpdatedAt: nowUTCString(),
-		},
-	})
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if strings.Contains(rec.Body.String(), "event: job.updated") {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/events", nil)
+	if err != nil {
+		t.Fatalf("build /events request: %v", err)
 	}
-
-	cancel()
-	select {
-	case <-finished:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for events handler to finish")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events failed: %v", err)
 	}
+	defer resp.Body.Close()
 
-	if got := rec.Header().Get("Content-Type"); got != "text/event-stream" {
+	if got := resp.Header.Get("Content-Type"); got != "text/event-stream" {
 		t.Fatalf("unexpected content type: got %q want %q", got, "text/event-stream")
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "event: job.updated") {
-		t.Fatalf("expected job.updated event in body, got %q", body)
-	}
-	if !strings.Contains(body, `"job_id":"job-123"`) {
-		t.Fatalf("expected job id in body, got %q", body)
+
+	var body strings.Builder
+	buf := make([]byte, 1024)
+	published := false
+	for {
+		n, readErr := resp.Body.Read(buf)
+		body.Write(buf[:n])
+		// The ": connected" comment is written after the handler
+		// subscribed to the hub, so publishing once it arrives cannot
+		// race the subscription and drop the event.
+		if !published && strings.Contains(body.String(), ": connected") {
+			rt.publishStateChangeEvent(StateChangeEvent{
+				Type:  "job.updated",
+				JobID: "job-123",
+				At:    nowUTCString(),
+				Job: Job{
+					ID:        "job-123",
+					Stage:     "record",
+					State:     "running",
+					CreatedAt: nowUTCString(),
+					UpdatedAt: nowUTCString(),
+				},
+			})
+			published = true
+		}
+		got := body.String()
+		if strings.Contains(got, "event: job.updated") && strings.Contains(got, `"job_id":"job-123"`) {
+			break
+		}
+		if readErr != nil {
+			t.Fatalf("event stream ended before job.updated arrived: read error = %v, body = %q", readErr, got)
+		}
 	}
 }
 
 func newCLITestRuntime(t *testing.T) (*Runtime, func(), string, string) {
+	return newCLITestRuntimeWithContext(t, context.Background())
+}
+
+func newCLITestRuntimeWithContext(t *testing.T, ctx context.Context) (*Runtime, func(), string, string) {
 	t.Helper()
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
@@ -1824,8 +2093,20 @@ write_run() {
 {"kind":"run","version":"cassini.run.v1","state":"ready","stage":"ready","source_mode":"talk","recording":{"path":"recording.mkv","format":"mkv"}}
 EOF
 }
+finalize_run() {
+  out="$1"
+  printf '%s\n' "talk recorder stopping: stop requested"
+  if [ -n "${FAKE_RECORD_FINALIZE_DELAY:-}" ]; then
+    sleep "$FAKE_RECORD_FINALIZE_DELAY"
+  fi
+  write_run "$out"
+  exit 0
+}
 case "$cmd" in
   doctor)
+    if [ "${FAKE_CASSINI_DOCTOR_HANG:-0}" = "1" ]; then
+      sleep 60
+    fi
     if [ "${FAKE_CASSINI_DOCTOR_FAIL:-0}" = "1" ]; then
       exit 1
     fi
@@ -1849,8 +2130,12 @@ case "$cmd" in
     if [ -n "${FAKE_RECORD_STARTED_FILE:-}" ]; then
       : > "$FAKE_RECORD_STARTED_FILE"
     fi
+    if [ "${FAKE_RECORD_IGNORE_TERM:-0}" = "1" ]; then
+      trap '' TERM
+      while :; do sleep 0.1; done
+    fi
     if [ "${FAKE_RECORD_WAIT_FOR_SIGNAL:-0}" = "1" ]; then
-      trap 'write_run "$out"; exit 0' TERM
+      trap 'finalize_run "$out"' TERM
       while :; do sleep 0.1; done
     fi
     write_run "$out"
@@ -1869,7 +2154,7 @@ esac
 		t.Fatalf("OpenStore() error = %v", err)
 	}
 	logger := log.New(ioDiscard{}, "", 0)
-	rt := NewRuntime(context.Background(), store, Config{
+	rt := NewRuntime(ctx, store, Config{
 		RepoRoot:         repoRoot,
 		BindAddr:         "127.0.0.1:0",
 		DBPath:           filepath.Join(tmp, "jobs.sqlite3"),
@@ -1898,6 +2183,11 @@ esac
 
 func newTestRuntime(t *testing.T) (*Runtime, func()) {
 	t.Helper()
+	return newTestRuntimeWithLogger(t, log.New(ioDiscard{}, "", 0))
+}
+
+func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func()) {
+	t.Helper()
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
 
@@ -1906,7 +2196,6 @@ func newTestRuntime(t *testing.T) (*Runtime, func()) {
 	if err != nil {
 		t.Fatalf("OpenStore() error = %v", err)
 	}
-	logger := log.New(ioDiscard{}, "", 0)
 	rt := NewRuntime(context.Background(), store, Config{
 		RepoRoot:         repoRoot,
 		BindAddr:         "127.0.0.1:0",

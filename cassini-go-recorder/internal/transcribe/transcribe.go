@@ -203,7 +203,9 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 	// keeps the mix continuously audible). Silero with default threshold
 	// rejects this audio ~17-33% of runs in CI; the entire purpose of the
 	// fallback is to recover when VAD-gated transcription fails, so it
-	// must not itself depend on VAD.
+	// must not itself depend on VAD. Transcribe(useVAD=false) decodes this
+	// ~75s mix in short overlapping windows (see transcribeNonVADChunked) so
+	// no single low-confidence int8 span can zero the whole transcript.
 	words, err := rec.Transcribe(samples, modelPaths.SampleRate, false /*useVAD*/)
 	if err != nil {
 		return streams, segments, fmt.Errorf("transcribe merged fallback: %w", err)

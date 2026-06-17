@@ -10,10 +10,11 @@ This folder is the repo-root Docker Compose bundle for:
 
 ```bash
 cd deployment
+cp .env.example .env   # optional: only needed to change defaults or set secrets
 docker compose up --build
 ```
 
-Default browser surfaces from the checked-in `.env`:
+Default browser surfaces (published on loopback only):
 
 - control panel: `http://127.0.0.1:4173/`
 - operator API: `http://127.0.0.1:4000/`
@@ -23,10 +24,32 @@ The control panel talks to the operator through the shared same-origin API path 
 With the default `CASSINI_OPERATOR_BASE_PATH=/`, the browser uses `/jobs` and `/events` on the control-panel origin.
 If you change it to `/operator`, the browser uses `/operator/jobs` and `/operator/events` instead.
 
+## Network exposure
+
+The operator job API has no authentication of its own: anyone who can reach
+`http://<host>:4000` can create jobs (point the recorder bot at arbitrary
+URLs), stop recordings, and read all job metadata. Because of that, all
+published ports bind to `127.0.0.1` by default.
+
+If you really need to expose the bundle on another interface, set
+`CASSINI_PUBLISH_ADDRESS` in `.env` (for example to a LAN or Docker bridge
+address). Keep in mind:
+
+- Docker port publishing bypasses host firewalls such as ufw/firewalld; the
+  port is reachable as soon as it is published.
+- `CASSINI_PUBLISH_ADDRESS=0.0.0.0` exposes the unauthenticated operator API
+  to every network the host is attached to. Put a reverse proxy with
+  authentication in front of it before doing that on a shared network.
+- The `compose.hostnet.yml` override (below) is dev-only: with host networking
+  the operator listens on `0.0.0.0:4000` directly, ignoring
+  `CASSINI_PUBLISH_ADDRESS`.
+
 ## Public bundle knobs
 
-The checked-in `.env` exposes the deployment-facing contract:
+The tracked `.env.example` documents the deployment-facing contract (copy it
+to `.env` and edit):
 
+- `CASSINI_PUBLISH_ADDRESS`
 - `CASSINI_OPERATOR_PORT`
 - `CASSINI_CONTROL_PANEL_PORT`
 - `CASSINI_VIEWER_PORT`
@@ -37,11 +60,30 @@ The checked-in `.env` exposes the deployment-facing contract:
 - `CASSINI_TALK_SIGNALING_INTERNAL_SECRET`
 - `CASSINI_TALK_BACKEND_URL`
 
+### Talk recording secret
+
+Generate a fresh secret per deployment and configure Talk with the same value:
+
+```bash
+openssl rand -hex 32
+```
+
+> **Warning — rotate the old default.** Earlier revisions of this repository
+> committed a concrete `CASSINI_TALK_RECORDING_SECRET` value in
+> `deployment/.env`, and the local harness (`harness/bin/common.sh`) still
+> uses that value as its dev-only fallback. The value is permanently visible
+> in git history, so any real deployment that adopted it must rotate to a
+> freshly generated secret (update both the operator `.env` and the Talk
+> recording-backend configuration).
+
 When using Cassini as a Nextcloud Talk recording backend, configure Talk with the
 same `CASSINI_TALK_RECORDING_SECRET` value and a backend URL that is reachable
 from the Nextcloud container. For the repo harness this is usually the Docker
 bridge gateway, for example `http://172.17.0.1:4000`, not
-`http://127.0.0.1:4000`.
+`http://127.0.0.1:4000`. With the default loopback port binding a
+containerized Nextcloud cannot reach the bridge gateway address, so either set
+`CASSINI_PUBLISH_ADDRESS` to that gateway address (for example `172.17.0.1`)
+or use the host-network override below.
 
 Cassini now defaults Nextcloud Talk recording jobs to `hpb-internal` mode.
 For that mode, set `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` to the standalone
@@ -54,7 +96,8 @@ that same Nextcloud instance, for example `http://host.docker.internal:28080`.
 
 For local manual Talk recording against the repo Nextcloud harness, use the
 host-network override so the recorder and browser participant are seen by the
-high-performance signaling server as part of the same active call:
+high-performance signaling server as part of the same active call (dev-only:
+this exposes the operator on all host interfaces, see "Network exposure"):
 
 ```bash
 cd deployment
@@ -92,7 +135,7 @@ docker compose up --build
 
 ## Optional capability pass-through
 
-The bundle also passes these optional operator capability envs through when you set them in `.env`:
+The bundle also passes these optional operator capability envs through when you set them in `.env` (see `.env.example`):
 
 - `OPENROUTER_API_KEY`
 - `OPENROUTER_BASE_URL`

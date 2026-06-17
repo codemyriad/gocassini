@@ -9,6 +9,14 @@
  * ────────────────────────────────────────────────────────────────────────── */
 
 @plugin "daisyui" {
+  /* root: emit the theme custom-properties on BOTH :root (standalone export)
+   * AND :host (the AppAPI embedded build, where embedded.ts renders the SPA
+   * inside an open shadow root). Custom properties set on :host inherit across
+   * the shadow boundary into the SPA; :root inside a shadow-scoped stylesheet
+   * would match nothing. :where() keeps specificity 0 (daisyUI's default). In
+   * standalone :host matches nothing; in the shadow :root matches nothing — so
+   * one declaration serves both contexts. See src/embedded.ts. */
+  root: ":where(:root, :host)";
   themes:
     forrest-light --default,
     forrest-dark --prefersdark;
@@ -141,7 +149,43 @@
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Global resets
- * ────────────────────────────────────────────────────────────────────────── */
+ *
+ * D-383: in the AppAPI embedded build this CSS is injected INTO the SPA's open
+ * shadow root (src/embedded.ts), not registered as a global ui/style link, so
+ * every selector below is scoped to the shadow tree. The html/body rules match
+ * nothing there (no html/body inside a shadow tree) and Tailwind Preflight's
+ * `*` reset only touches shadow elements — so nothing bleeds onto Nextcloud
+ * chrome, and NC's chrome no longer bleeds into the SPA. The :host block
+ * re-establishes the base typography Preflight's (now-inert) html/body rules
+ * would have set, and resets inherited properties at the shadow boundary. In
+ * the standalone export the very same file runs in the document: :host matches
+ * nothing and the html/body rules apply as before. ────────────────────────── */
+
+/* Shadow-boundary reset — active only in the embedded (shadow) build, where
+ * :host is the shadow host; inert in standalone (no shadow host). Only
+ * structure + Tailwind @theme tokens here: --font-sans is emitted by Tailwind
+ * v4 on :root,:host so it resolves on :host, but the daisyUI COLOR tokens are
+ * not on :host in this app (the viewer's themes come from @plugin
+ * "daisyui/theme" blocks, which emit on :root + [data-theme=…]) — so the themed
+ * color/background live on .cassini-root below, which carries data-theme. */
+:host {
+  display: block;
+  min-height: 100%;
+  font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* .cassini-root carries data-theme (App.svelte), so the daisyUI [data-theme=…]
+ * rule defines the full theme on it — every app node lives inside it. Set the
+ * inherited base color/background here so they resolve in BOTH the embedded
+ * (shadow) build (where :host has no daisyUI color tokens) and standalone. */
+.cassini-root {
+  min-height: 100%;
+  color: var(--color-base-content);
+  background-color: var(--color-base-100);
+}
 
 html,
 body,
@@ -154,11 +198,14 @@ body {
 }
 
 /* Suppress transitions during theme swap to avoid cascading animation
- * across thousands of transcript tokens. Toggled by App.svelte's setTheme. */
-html.theme-switching,
-html.theme-switching *,
-html.theme-switching *::before,
-html.theme-switching *::after {
+ * across thousands of transcript tokens. Toggled by App.svelte's setTheme,
+ * which adds .theme-switching to the .cassini-root wrapper (data-theme also
+ * lives there now — not on document.documentElement, which is outside the
+ * shadow root in the embedded build). */
+.cassini-root.theme-switching,
+.cassini-root.theme-switching *,
+.cassini-root.theme-switching *::before,
+.cassini-root.theme-switching *::after {
   transition: none !important;
   animation: none !important;
 }

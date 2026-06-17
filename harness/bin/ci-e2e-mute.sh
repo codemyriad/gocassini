@@ -20,9 +20,41 @@ export SIGNALING_SHARED_SECRET="${SIGNALING_SHARED_SECRET:-7f4dca67263621ba7f9f9
 export TURN_SERVER="${TURN_SERVER:-127.0.0.1:13479}"
 export TURN_SHARED_SECRET="${TURN_SHARED_SECRET:-3c04d2fc2f7fe39d48eb4dc77f652c8c778a4ea178b0e486529b284afca7b648}"
 
-export REC_DURATION="${REC_DURATION:-36}"
-export PUB_DURATION="${PUB_DURATION:-22}"
 export PUB_USERS="${PUB_USERS:-3}"
+
+# Flake D-052 mitigation: serialize the publishers' ICE negotiations.
+#
+# With the rotator default join_delay=i-1 the three publishers join ~0/1/2s
+# apart, so all three ICE negotiations hit janus near-simultaneously. Under CI
+# CPU load only some reach ICE-connected inside REC_DURATION, and the recorder's
+# onRemoteTrack (and thus media capture) only fires after ICE+track. A session
+# that never ICE-connects contributes zero captured media, collapsing the unique
+# participant / rtplog count below the >=PUB_USERS assertion (seen as "got 1/2").
+#
+# JOIN_DELAYS staggers the joins ~4s apart so the negotiations are spread out and
+# each publisher gets a clean ICE window. e2e_with_publisher.sh plumbs JOIN_DELAYS
+# -> stream-video.sh --join-delays -> rotator --join-delay (per bot).
+export JOIN_DELAYS="${JOIN_DELAYS:-0,4,8}"
+
+# REC_DURATION must outlast the last joiner's (+8s) join + ICE budget plus its
+# whole publish window. With START_DELAY=6 the +8s bot starts joining at ~t=14s,
+# connects a few seconds later under load, and must keep streaming well inside the
+# capture window, so give the recorder a comfortable 50s.
+export REC_DURATION="${REC_DURATION:-50}"
+
+# Per-bot publish windows are sized so every bot is still sending media deep into
+# the recorder's capture window. join_delay is slept *before* the per-bot duration
+# timer starts, so each bot streams for roughly [START_DELAY+join+connect,
+# +duration]. With START_DELAY=6 and joins at +0/+4/+8 these durations land all
+# three publishing together from ~t=16s until ~t=44s, fully inside REC_DURATION=50.
+#   bot1: join@6  stream@~8  +36 -> ~44
+#   bot2: join@10 stream@~12 +32 -> ~44
+#   bot3: join@14 stream@~16 +28 -> ~44
+# BOT_DURATIONS (plumbed via e2e_with_publisher.sh -> stream-video.sh
+# --bot-durations -> rotator --bot-duration) takes precedence over PUB_DURATION
+# per bot; PUB_DURATION stays as a fallback for any bot without an explicit value.
+export BOT_DURATIONS="${BOT_DURATIONS:-36,32,28}"
+export PUB_DURATION="${PUB_DURATION:-36}"
 export CALL_NAME="${CALL_NAME:-CI Gocassini mute room}"
 
 CI_OUTPUT_BASE="/tmp/gocassini-ci-mute-$(date -u +%Y%m%dT%H%M%S)-$$"
@@ -71,6 +103,61 @@ if ! rg -q "media stats: " "$PUB_LOG"; then
   log "No publisher media stats found; media pipeline may not have started"
   exit 1
 fi
+
+# Per-bot publisher-health gate.
+#
+# A single "media stats:" line proves only that *one* publisher reached its media
+# pipeline; it cannot tell a sporadic load flake (some publisher dropped out) from
+# a systematic regression. Require every launched bot to log its own media stats so
+# a publisher-side dropout is attributed to the specific bot instead of silently
+# passing on another bot's output.
+#
+# Bot names mirror e2e_with_publisher.sh, which calls stream-video.sh with
+# --name-prefix "CassiniGoE2E" and no --names, so bots are CassiniGoE2E1..N.
+PUB_NAME_PREFIX="${PUB_NAME_PREFIX:-CassiniGoE2E}"
+missing_pub_health=()
+for ((bot_idx = 1; bot_idx <= PUB_USERS; bot_idx++)); do
+  bot_name="${PUB_NAME_PREFIX}${bot_idx}"
+  # Match the rotator's per-bot prefix "[bot NN <name>] ... media stats:".
+  if ! rg -q "\[bot [0-9]+ ${bot_name}\] media stats: " "$PUB_LOG"; then
+    missing_pub_health+=("$bot_name")
+  fi
+done
+if (( ${#missing_pub_health[@]} > 0 )); then
+  log "Publisher media stats missing for bot(s): ${missing_pub_health[*]} (expected all ${PUB_USERS} publishers to send media)"
+  exit 1
+fi
+
+# Per-run capture-funnel summary (always emitted before the count assertions).
+#
+# Surfaces the subscriber funnel from the recorder log so a systematic
+# "always got 1" regression is distinct from a sporadic CI-load flake:
+#   subscribers attempted -> ICE-connected -> tracks captured -> rtplogs written.
+# Counts are diagnostic-only and never fail the run; the assertions below own
+# pass/fail. Recorder log strings: "subscribing to remote session <sid>",
+# "subscriber <sid> ICE state=connected", "remote track: sid=<sid> ...".
+SUBS_ATTEMPTED=0
+SUBS_ICE_CONNECTED=0
+TRACKS_CAPTURED=0
+SUMMARY_RTPLOGS=0
+if [[ -f "$REC_LOG" ]]; then
+  # rg exits 1 on no match; under `set -euo pipefail` an unguarded pipeline
+  # would abort the script — and this summary must survive the very failure it
+  # diagnoses (zero subscribers/tracks). Guard each so it reports 0, not aborts.
+  SUBS_ATTEMPTED="$(rg -c "subscribing to remote session " "$REC_LOG" || echo 0)"
+  # Distinct sessions that reached ICE-connected (a session can log the
+  # transition more than once across renegotiations).
+  SUBS_ICE_CONNECTED="$(rg -o "subscriber \S+ ICE state=connected" "$REC_LOG" 2>/dev/null \
+    | awk '{print $2}' | sort -u | awk 'NF{n++} END {print n+0}' || true)"
+  # Distinct sessions that produced at least one remote track.
+  TRACKS_CAPTURED="$(rg -o "remote track: sid=\S+" "$REC_LOG" 2>/dev/null \
+    | sed 's/^remote track: sid=//' | sort -u | awk 'NF{n++} END {print n+0}' || true)"
+fi
+SUMMARY_STREAMS_DIR="$(cassini_streams_dir_from_mkv "$FINAL_OUTPUT" 2>/dev/null || true)"
+if [[ -n "$SUMMARY_STREAMS_DIR" && -d "$SUMMARY_STREAMS_DIR" ]]; then
+  SUMMARY_RTPLOGS="$(find "$SUMMARY_STREAMS_DIR" -type f -name '*.rtplog' | wc -l | tr -d ' ')"
+fi
+log "mute capture summary: publishers=${PUB_USERS} subscribers_attempted=${SUBS_ATTEMPTED} ice_connected=${SUBS_ICE_CONNECTED} tracks_captured=${TRACKS_CAPTURED} rtplogs=${SUMMARY_RTPLOGS}"
 
 if [[ ! -f "$FINAL_OUTPUT" ]]; then
   log "Missing final output: $FINAL_OUTPUT"

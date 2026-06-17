@@ -500,7 +500,11 @@ export function formatClockTime(ms: number): string {
 }
 
 export function parseTimeHash(hash: string): number | null {
-  const match = hash.match(/#t=([0-9]+(?:\.[0-9]+)?)(ms|s)?$/);
+  // The seek time is the last param in the viewer's hash. It may be preceded by
+  // `#` (bare deep-link "#t=12.5") or `&` (combined "#meeting=…&t=12500ms" —
+  // hashRouting.buildViewerHash always writes t= last). Anchored at
+  // end-of-string either way.
+  const match = hash.match(/[#&]t=([0-9]+(?:\.[0-9]+)?)(ms|s)?$/);
   if (!match) {
     return null;
   }

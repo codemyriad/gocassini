@@ -9,6 +9,12 @@ PROJECT_NAME="${PROJECT_NAME:-spreedtest}"
 SPREED_PROFILE="${SPREED_PROFILE:-full}"
 HARNESS_SIGNALING_HOST="${HARNESS_SIGNALING_HOST:-}"
 
+# Nextcloud server image for the compose stack. Empty selects the pinned
+# default in compose.yml; CI's NC-compatibility matrix leg overrides it
+# (e.g. NEXTCLOUD_IMAGE=nextcloud:33). Exported because docker compose
+# resolves ${NEXTCLOUD_IMAGE:-...} from its own process environment.
+export NEXTCLOUD_IMAGE="${NEXTCLOUD_IMAGE:-}"
+
 default_signaling_url() {
   if [[ -n "$HARNESS_SIGNALING_HOST" ]]; then
     echo "http://$HARNESS_SIGNALING_HOST:28082"
@@ -23,7 +29,11 @@ default_signaling_url() {
   echo "http://127.0.0.1:28082"
 }
 
-NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://127.0.0.1:28080}"
+# Follows NEXTCLOUD_HOST_PORT (compose.yml's published-port variable) so
+# scripts that re-scope the host port — ci-e2e-talk-record-roundtrip.sh
+# exports a per-run port to dodge stale-run collisions (gh issue #51) —
+# get a matching URL in every callee that sources this file.
+NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://127.0.0.1:${NEXTCLOUD_HOST_PORT:-28080}}"
 NEXTCLOUD_STATUS_URL="${NEXTCLOUD_STATUS_URL:-$NEXTCLOUD_URL/status.php}"
 
 ADMIN_USER="${ADMIN_USER:-admin}"
@@ -39,6 +49,9 @@ SIGNALING_INTERNAL_SECRET="${SIGNALING_INTERNAL_SECRET:-6f4dca67263621ba7f9f9917
 TURN_SERVER="${TURN_SERVER:-127.0.0.1:13479}"
 TURN_SHARED_SECRET="${TURN_SHARED_SECRET:-3c04d2fc2f7fe39d48eb4dc77f652c8c778a4ea178b0e486529b284afca7b648}"
 CASSINI_TALK_RECORDING_URL="${CASSINI_TALK_RECORDING_URL:-}"
+# DEV-ONLY fallback for the local harness loop. This value is committed and
+# public in repo history; never use it (or any committed value) for a real
+# deployment — generate one with `openssl rand -hex 32` instead.
 CASSINI_TALK_RECORDING_SECRET="${CASSINI_TALK_RECORDING_SECRET:-9a2a9c0b7f4e43b7a2c6e19d6a4b8f8073b0174ee2f8425d99e8e33f7d60fb42}"
 
 RUNTIME_DIR="$TEST_DIR/runtime"

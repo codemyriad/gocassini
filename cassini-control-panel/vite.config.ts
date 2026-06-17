@@ -16,6 +16,21 @@ export default defineConfig(({ mode }) => {
     define: {
       __CASSINI_OPERATOR_BASE_PATH__: JSON.stringify(operatorBasePath),
     },
+    // Pin a single JS + single CSS bundle in lock-step with
+    // vite.embedded.config.ts. The control panel has no code-split /
+    // dynamic-import / worker / wasm today, so this is effectively a no-op now;
+    // pinning it keeps the standalone and embedded builds from silently
+    // diverging into multi-chunk output if a future dependency introduces a
+    // dynamic import.
+    build: {
+      cssCodeSplit: false,
+      rollupOptions: {
+        output: {
+          inlineDynamicImports: true,
+          manualChunks: undefined,
+        },
+      },
+    },
     server: {
       cors: true,
       proxy,

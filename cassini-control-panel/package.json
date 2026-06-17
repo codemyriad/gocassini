@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "build:embedded": "vite build --config vite.embedded.config.ts && node ./scripts/assert-embedded-single-bundle.mjs",
+    "build:all": "npm run build && npm run build:embedded",
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@lucide/svelte": "^1.11.0",
@@ -16,6 +19,7 @@
     "svelte": "^5.53.7",
     "tailwindcss": "^4.2.4",
     "typescript": "^5.9.3",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18"
   }
 }
