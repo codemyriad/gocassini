@@ -54,10 +54,17 @@ func (h *eventHub) Subscribe() (<-chan StateChangeEvent, func()) {
 func (h *eventHub) Publish(event StateChangeEvent) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for _, subscriber := range h.subscribers {
+	for id, subscriber := range h.subscribers {
 		select {
 		case subscriber <- event:
 		default:
+			// Overflowed subscriber: close it so the SSE handler ends the
+			// stream and the client (EventSource) reconnects and resyncs
+			// from a fresh snapshot, instead of silently losing events
+			// (D-367). Deleting before closing keeps a later unsubscribe
+			// from double-closing the channel.
+			delete(h.subscribers, id)
+			close(subscriber)
 		}
 	}
 }

@@ -5,6 +5,22 @@ import (
 	"fmt"
 )
 
+// MarkIncompleteJobsInterrupted stamps every job that was in flight when the
+// operator died as interrupted at the current startup epoch. Jobs already in
+// state 'interrupted' are excluded: their interrupted_at must keep the epoch
+// of the crash that actually cut them short, because
+// ListInterruptedTalkRecordJobs filters on the current sweep timestamp to
+// notify each interruption exactly once — re-stamping would re-send spreed a
+// failed callback for the same dead job on every restart (D-352/D-362).
+// QueueRerunAttempt clears interrupted_at when a job is rerun, so nothing
+// depends on refreshing the stamp.
+//
+// Queued build/publish rows are also excluded: their inputs (the canonical
+// run/meeting bundles) are durable on disk and the requeue dispatcher
+// re-delivers them after a restart, so marking them interrupted would strand
+// resumable work (D-367). Only record-stage jobs (whose recorder process died
+// with the operator) and running build/publish jobs (whose subprocess died)
+// are truly interrupted.
 func (s *Store) MarkIncompleteJobsInterrupted(ctx context.Context, interruptedAt string) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -15,14 +31,16 @@ func (s *Store) MarkIncompleteJobsInterrupted(ctx context.Context, interruptedAt
 	result, err := tx.ExecContext(ctx, `
 UPDATE jobs
 SET state = ?, updated_at = ?, interrupted_at = ?
-WHERE state NOT IN (?, ?)`, "interrupted", interruptedAt, interruptedAt, "succeeded", "failed")
+WHERE state NOT IN (?, ?, ?)
+  AND NOT (state = 'queued' AND stage IN ('build', 'publish'))`, "interrupted", interruptedAt, interruptedAt, "succeeded", "failed", "interrupted")
 	if err != nil {
 		return 0, fmt.Errorf("mark incomplete jobs interrupted: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE job_attempts
 SET state = ?, updated_at = ?, interrupted_at = ?
-WHERE state NOT IN (?, ?)`, "interrupted", interruptedAt, interruptedAt, "succeeded", "failed"); err != nil {
+WHERE state NOT IN (?, ?, ?)
+  AND NOT (state = 'queued' AND stage IN ('build', 'publish'))`, "interrupted", interruptedAt, interruptedAt, "succeeded", "failed", "interrupted"); err != nil {
 		return 0, fmt.Errorf("mark incomplete attempts interrupted: %w", err)
 	}
 	count, err := result.RowsAffected()

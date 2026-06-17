@@ -35,6 +35,7 @@
     sortMeetingCatalogEntries,
     type MeetingCatalogEntry,
   } from "./viewer/catalog";
+  import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "./viewer/hashRouting";
 
   interface DisplaySegment {
     id: string;
@@ -89,12 +90,23 @@
   type ThemeMode = "forrest-light" | "forrest-dark";
   const THEME_STORAGE_KEY = "cassini-theme";
   let themeMode: ThemeMode = "forrest-light";
+  // theme + theme-switching live on the .cassini-root wrapper (data-theme /
+  // class:theme-switching), NOT on document.documentElement — in the embedded
+  // build the SPA renders inside a shadow root, so the document's <html> is
+  // outside it and daisyUI's [data-theme] rule (scoped to the shadow stylesheet)
+  // could never match it. The wrapper is in-tree in both builds.
+  let themeSwitching = false;
   let prefersDarkMedia: MediaQueryList | null = null;
 
   let shortcutsDialog: HTMLDialogElement | null = null;
   function openShortcutsDialog() {
     shortcutsDialog?.showModal();
   }
+
+  // The .cassini-root wrapper; used to resolve element lookups against the
+  // component's ROOT NODE — the shadow root in the embedded build, the document
+  // in standalone — since document.getElementById can't see shadow-tree nodes.
+  let rootEl: HTMLElement | undefined;
 
   const DESKTOP_MEDIA_QUERY = "(min-width: 768px)";
   let isDesktop = false;
@@ -157,6 +169,16 @@
     return DOMPurify.sanitize(rawHtml, { USE_PROFILES: { html: true } });
   }
 
+  // Routing is hash-only (see src/viewer/hashRouting.ts for why and the wire
+  // format). These thin wrappers bind the pure helpers to the live location.
+  function currentViewerHash() {
+    return readViewerHash(window.location.hash);
+  }
+
+  function viewerHref(hash: string): string {
+    return viewerUrlWithHash(window.location.href, hash);
+  }
+
   function handleBackToList() {
     pushMeetingUrl("");
     resetLoadedArtifact();
@@ -165,36 +187,20 @@
   }
 
   function pushMeetingUrl(meetingId: string) {
-    const url = new URL(window.location.href);
-    if (meetingId) {
-      url.searchParams.set("meeting", meetingId);
-    } else {
-      url.searchParams.delete("meeting");
-    }
-    // tx applies to a specific meeting; drop it on any meeting navigation so
-    // the next meeting opens on its producer-default transcript.
-    url.searchParams.delete("tx");
-    url.hash = "";
-    window.history.pushState({}, "", url);
+    // tx applies to a specific meeting; dropping it (we never carry it forward)
+    // means the next meeting opens on its producer-default transcript.
+    window.history.pushState({}, "", viewerHref(buildViewerHash({ meeting: meetingId })));
   }
 
   function seedListHistoryEntry(meetingId: string) {
     // The "list" entry below the current page in the back stack never carries
     // a transcript selection; tx is per-meeting state.
-    const incomingUrl = new URL(window.location.href);
-    const listUrl = new URL(incomingUrl.toString());
-    listUrl.searchParams.delete("meeting");
-    listUrl.searchParams.delete("tx");
-    listUrl.hash = "";
-    window.history.replaceState({}, "", listUrl);
-    const meetingUrl = new URL(incomingUrl.toString());
-    meetingUrl.searchParams.set("meeting", meetingId);
-    window.history.pushState({}, "", meetingUrl);
+    window.history.replaceState({}, "", viewerHref(buildViewerHash({})));
+    window.history.pushState({}, "", viewerHref(buildViewerHash({ meeting: meetingId })));
   }
 
   function handlePopState() {
-    const url = new URL(window.location.href);
-    const urlMeetingId = url.searchParams.get("meeting") ?? "";
+    const { meeting: urlMeetingId } = currentViewerHash();
     if (urlMeetingId === selectedMeetingId) {
       return;
     }
@@ -226,20 +232,22 @@
   }
 
   function applyTheme(mode: ThemeMode) {
+    // data-theme is bound on the .cassini-root wrapper; updating themeMode is
+    // all that's needed (no document.documentElement — it's outside the shadow
+    // root in the embedded build).
     themeMode = mode;
-    document.documentElement.setAttribute("data-theme", mode);
   }
 
   function setTheme(mode: ThemeMode) {
     // Suppress per-element transitions during the theme swap so the
     // attribute change applies in a single paint instead of cascading
-    // animations across every transcript token.
-    const root = document.documentElement;
-    root.classList.add("theme-switching");
+    // animations across every transcript token. theme-switching is bound on the
+    // .cassini-root wrapper via class:theme-switching.
+    themeSwitching = true;
     applyTheme(mode);
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        root.classList.remove("theme-switching");
+        themeSwitching = false;
       });
     });
     try {
@@ -306,6 +314,11 @@
   onMount(async () => {
     window.addEventListener("keydown", handleWindowKeydown);
     window.addEventListener("popstate", handlePopState);
+    // Back/forward across hash-only history entries fires popstate; some paths
+    // (e.g. manual hash edits, or browsers that only emit hashchange for
+    // hash-only nav) surface as hashchange. handlePopState early-returns when
+    // the hash meeting already matches, so handling both is idempotent.
+    window.addEventListener("hashchange", handlePopState);
     const stored = readStoredTheme();
     if (stored !== null) {
       applyTheme(stored);
@@ -325,7 +338,7 @@
       reducedMotionMedia.addEventListener("change", handleReducedMotionChange);
     }
     pendingSeekMs = parseTimeHash(window.location.hash);
-    const initialMeetingId = new URL(window.location.href).searchParams.get("meeting");
+    const initialMeetingId = currentViewerHash().meeting || null;
     const viewerConfig = window as typeof window & {
       __CASSINI_VIEWER_ARTIFACT_MODE__?: string;
     };
@@ -333,7 +346,13 @@
     try {
       if (!preferBundledArtifact) {
         const catalog = await loadMeetingCatalog();
-        if (catalog?.meetings.length) {
+        // A successfully-loaded catalog — even an empty one (fresh install,
+        // meetings: []) — means catalog/list mode. Only fall through to the
+        // single bundled-artifact path when there is NO catalog at all (null),
+        // e.g. a standalone single-meeting export. Treating an empty catalog as
+        // "no catalog" would resolve bundled fallback files against the proxy
+        // root and surface a load error instead of an empty meeting list.
+        if (catalog) {
           catalogMeetings = catalog.meetings;
           void hydrateCatalogMeetingMetadata(catalog.meetings);
           const requested = initialMeetingId
@@ -373,6 +392,7 @@
   onDestroy(() => {
     window.removeEventListener("keydown", handleWindowKeydown);
     window.removeEventListener("popstate", handlePopState);
+    window.removeEventListener("hashchange", handlePopState);
     prefersDarkMedia?.removeEventListener("change", handlePrefersColorSchemeChange);
     viewportMedia?.removeEventListener("change", handleViewportChange);
     reducedMotionMedia?.removeEventListener("change", handleReducedMotionChange);
@@ -478,25 +498,28 @@
   }
 
   function writeTranscriptUrlParam(targetId: string) {
-    const url = new URL(window.location.href);
-    if (targetId && targetId !== defaultTranscriptId) {
-      url.searchParams.set("tx", targetId);
-    } else {
-      url.searchParams.delete("tx");
-    }
-    window.history.replaceState({}, "", url);
+    const current = currentViewerHash();
+    const tx = targetId && targetId !== defaultTranscriptId ? targetId : "";
+    window.history.replaceState(
+      {},
+      "",
+      viewerHref(buildViewerHash({ meeting: current.meeting, tx })),
+    );
   }
 
   function clearTranscriptUrlParam() {
-    const url = new URL(window.location.href);
-    if (url.searchParams.has("tx")) {
-      url.searchParams.delete("tx");
-      window.history.replaceState({}, "", url);
+    const current = currentViewerHash();
+    if (current.tx) {
+      window.history.replaceState(
+        {},
+        "",
+        viewerHref(buildViewerHash({ meeting: current.meeting })),
+      );
     }
   }
 
   async function maybeApplyUrlTranscript(meeting: MeetingCatalogEntry) {
-    const requested = new URL(window.location.href).searchParams.get("tx");
+    const requested = currentViewerHash().tx;
     if (!requested || !meeting.audioPath) {
       return;
     }
@@ -660,7 +683,12 @@
 
   async function scrollSegmentIntoView(segmentId: string, behavior: ScrollBehavior) {
     await tick();
-    const element = document.getElementById(segmentDomId(segmentId));
+    // In the embedded build the segment <article>s live inside the shadow root,
+    // where document.getElementById can't reach them — resolve against the
+    // component's root node (ShadowRoot embedded / Document standalone).
+    const id = segmentDomId(segmentId);
+    const root = rootEl?.getRootNode() as Document | ShadowRoot | undefined;
+    const element = root?.getElementById?.(id) ?? document.getElementById(id);
     element?.scrollIntoView({ behavior, block: "center" });
   }
 
@@ -1005,6 +1033,12 @@
   />
 </svelte:head>
 
+<!-- .cassini-root carries the daisyUI theme (data-theme) and the theme-switching
+     transition-suppression for the whole app. It lives here (in-tree), not on
+     document.documentElement, so it works inside the embedded build's shadow
+     root. The <dialog> below is wrapped too so [data-theme] styles it (showModal
+     keeps it in-tree for inheritance even when promoted to the top layer). -->
+<div bind:this={rootEl} class="cassini-root" data-theme={themeMode} class:theme-switching={themeSwitching}>
 <div class="grid grid-cols-1 md:grid-cols-[400px_1fr] min-h-screen bg-base-200 overflow-x-clip">
   {#if isDesktop || !selectedMeetingId}
     <section
@@ -1569,4 +1603,5 @@
     <button type="submit">close</button>
   </form>
 </dialog>
+</div><!-- /.cassini-root -->
 

@@ -43,6 +43,20 @@ if [[ ! -s "$SOURCE_OGG" ]]; then
   exit 1
 fi
 
+# The fixture is vendored via git-lfs; a checkout without LFS content leaves
+# a ~132-byte text pointer that passes the -s check above but is not audio.
+if head -c 100 "$SOURCE_OGG" | grep -q 'git-lfs'; then
+  echo "FAIL: SOURCE_OGG is still a git-lfs pointer, not audio: $SOURCE_OGG" >&2
+  echo "  Run: git lfs pull --include=\"harness/media/processed/showcase-lantern-festival-v1/mira.ogg\"" >&2
+  exit 1
+fi
+
+# Slicing happens on the host (the container only remuxes + transcribes).
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "FAIL: host ffmpeg is required to slice $SOURCE_OGG (apt-get install ffmpeg)" >&2
+  exit 1
+fi
+
 mkdir -p "$WORK_DIR"
 
 cleanup() {

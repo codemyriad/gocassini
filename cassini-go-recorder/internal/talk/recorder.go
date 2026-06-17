@@ -17,10 +17,32 @@ import (
 	"gocassini/internal/signaling"
 	coreremux "gocassini/pkg/core/remux"
 
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v4"
 )
 
 const requestOfferResponseTimeout = 8 * time.Second
+
+// inCallFlagInCall is bit 1 of the Talk in-call flags: the participant has
+// joined the call. Remaining bits (audio=2, video=4, SIP=8) describe what
+// the participant publishes, so call membership is exactly flags&1 != 0.
+const inCallFlagInCall = 1
+
+// ErrUnjoinable marks bootstrap failures where the Talk server definitively
+// rejected the recorder's attempt to join the room or call (HTTP 4xx), e.g.
+// a non-public conversation the guest recorder cannot see (404) or a call
+// join refused because recording consent is required (400). Retrying cannot
+// succeed, so callers should fail fast instead of leaving a doomed recording
+// session hanging while Talk shows it as active.
+var ErrUnjoinable = errors.New("talk room unjoinable")
+
+// ErrAbnormalStop tags fatal mid-call failures (e.g. the signaling
+// connection dropping) whose cleanup nevertheless finalized cleanly:
+// every capture stream closed without media loss and the final output
+// composed. The recording is usable, so callers may salvage it (finalize
+// the run bundle as ready, recording the stop reason) instead of
+// stranding an hour of valid footage over a last-minute disconnect.
+var ErrAbnormalStop = errors.New("talk recorder stopped abnormally")
 
 type roomEmptyTimerAction uint8
 
@@ -60,6 +82,15 @@ type Recorder struct {
 
 	mu          sync.Mutex
 	subscribers map[string]*subscriberPeer
+	// stopping is set by cleanup() under mu; once true ensureSubscriber
+	// refuses to create peers (no resurrecting subscribers into the
+	// drained map) and addTrackReader refuses new capture goroutines.
+	stopping bool
+
+	// trackWG counts per-track capture goroutines spawned from pion
+	// callbacks (see addTrackReader) so cleanup() can join them before
+	// tearing shared state down.
+	trackWG sync.WaitGroup
 
 	subscriberUpdates chan struct{}
 }
@@ -138,6 +169,7 @@ func (r *Recorder) run(ctx context.Context) error {
 
 	r.ocs = nextcloud.NewOCSClient(r.connectBaseURL, r.cfg.Insecure)
 	if err := r.bootstrap(ctx); err != nil {
+		logBootstrapFailure(err)
 		_ = r.cleanup(context.Background())
 		return err
 	}
@@ -146,10 +178,17 @@ func (r *Recorder) run(ctx context.Context) error {
 	defer cancel()
 	errCh := make(chan error, 3)
 
+	// loopWG joins eventLoop/requestOfferLoop so cleanup() never runs
+	// while either loop still dereferences recorder state. errCh is
+	// buffered, so the sends below cannot block the joins.
+	var loopWG sync.WaitGroup
+	loopWG.Add(2)
 	go func() {
+		defer loopWG.Done()
 		errCh <- r.eventLoop(runCtx)
 	}()
 	go func() {
+		defer loopWG.Done()
 		errCh <- r.requestOfferLoop(runCtx)
 	}()
 
@@ -233,8 +272,11 @@ runLoop:
 				if roomEmptyTimer != nil {
 					stopAndDrainTimer(roomEmptyTimer)
 				}
-				_ = r.cleanup(context.Background())
-				return err
+				loopWG.Wait()
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 12*time.Second)
+				cleanupErr := r.cleanup(cleanupCtx)
+				cleanupCancel()
+				return fatalRunError(err, cleanupErr)
 			}
 		case <-runCtx.Done():
 			stopReason = "context canceled"
@@ -253,6 +295,7 @@ runLoop:
 	}
 
 	cancel()
+	loopWG.Wait()
 
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cleanupCancel()
@@ -262,14 +305,49 @@ runLoop:
 	return nil
 }
 
+// fatalRunError merges a fatal run-loop error with the cleanup outcome.
+// When cleanup fully succeeded — capture streams closed without media
+// loss and the final output composed — the loop error is tagged with
+// ErrAbnormalStop so callers can salvage the usable recording. Any
+// cleanup failure means the output cannot be trusted as complete, so
+// both errors surface and the run stays failed.
+func fatalRunError(loopErr, cleanupErr error) error {
+	if cleanupErr != nil {
+		return errors.Join(loopErr, cleanupErr)
+	}
+	return fmt.Errorf("%w: %w", ErrAbnormalStop, loopErr)
+}
+
+// logBootstrapFailure emits the stderr markers operators and humans grep for
+// when the recorder gives up before the "talk recorder running:" liveness
+// line: a dedicated unjoinable marker for definitive join rejections, plus
+// the "talk recorder stopping:" line the operator scrapes into the job's
+// stop detail for classification.
+func logBootstrapFailure(err error) {
+	if errors.Is(err, ErrUnjoinable) {
+		log.Printf("talk recorder unjoinable: %v", err)
+	}
+	log.Printf("talk recorder stopping: %v", err)
+}
+
+// wrapUnjoinable tags definitive HTTP 4xx join rejections with ErrUnjoinable
+// so callers can fail fast with a distinct exit code; other errors pass
+// through unchanged.
+func wrapUnjoinable(err error) error {
+	if nextcloud.IsClientError(err) {
+		return fmt.Errorf("%w: %w", ErrUnjoinable, err)
+	}
+	return err
+}
+
 func (r *Recorder) bootstrap(ctx context.Context) error {
 	if err := r.ocs.GetRoom(ctx, r.roomToken); err != nil {
-		return fmt.Errorf("room check failed: %w", err)
+		return fmt.Errorf("room check failed: %w", wrapUnjoinable(err))
 	}
 
 	nextcloudSessionID, err := r.ocs.MarkParticipantActive(ctx, r.roomToken, r.cfg.GuestName)
 	if err != nil {
-		return fmt.Errorf("participants/active failed: %w", err)
+		return fmt.Errorf("participants/active failed: %w", wrapUnjoinable(err))
 	}
 	r.nextcloudSessionID = nextcloudSessionID
 
@@ -300,11 +378,12 @@ func (r *Recorder) bootstrap(ctx context.Context) error {
 		return err
 	}
 	if err := r.ocs.JoinCall(ctx, r.roomToken, r.cfg.JoinFlags); err != nil {
-		if strings.Contains(err.Error(), "code=404") {
-			log.Printf("join call returned 404 on this deployment; continuing with signaling-room only mode")
-		} else {
-			return fmt.Errorf("join call failed: %w", err)
-		}
+		// A 4xx here is definitive: the conversation is not joinable for
+		// the guest recorder (404) or the join was refused (e.g. recording
+		// consent enforcement, 400). Fail fast instead of lingering in a
+		// signaling-room-only session that records nothing while Talk shows
+		// an active recording.
+		return fmt.Errorf("join call failed: %w", wrapUnjoinable(err))
 	}
 
 	log.Printf("talk bootstrap complete: base=%s connect=%s token=%s session=%s signaling_session=%s", r.baseURL, r.connectBaseURL, r.roomToken, r.nextcloudSessionID, r.signalingSessionID)
@@ -318,6 +397,7 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 	intermediateCleaned := false
 
 	r.mu.Lock()
+	r.stopping = true
 	peers := make([]*subscriberPeer, 0, len(r.subscribers))
 	for _, p := range r.subscribers {
 		peers = append(peers, p)
@@ -331,12 +411,23 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 		}
 	}
 
+	// Closing the peers unwinds their track readers (ReadRTP/ReadRTCP
+	// return once the transport is gone); join them before closing the
+	// session artifact so in-flight writes land and no goroutine observes
+	// a half-torn-down recorder.
+	r.waitForTrackReaders(ctx, 5*time.Second)
+
+	// Note: r.signaling and r.sessionArtifact are intentionally never
+	// nil-ed here. Both are assigned once before any goroutine starts;
+	// stragglers (pion callbacks, readers past the bounded join above)
+	// may still dereference them, and their post-close methods degrade
+	// to errors instead of the nil-pointer panic a concurrent nil-write
+	// would cause.
 	if r.signaling != nil {
 		_ = r.signaling.Send(map[string]any{"type": "bye", "bye": map[string]any{}})
 		if err := r.signaling.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
-		r.signaling = nil
 	}
 
 	if r.ocs != nil {
@@ -350,12 +441,15 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 
 	var artifactSummary *sessionCaptureSummary
 	if r.sessionArtifact != nil {
-		summary := r.sessionArtifact.summary()
-		artifactSummary = &summary
 		if err := r.sessionArtifact.close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
-		r.sessionArtifact = nil
+		// Snapshot after close(): stream finalize (flush/BuildIndex)
+		// failures are recorded as capture failures during close, and
+		// the report's capture_error_count/first_capture_error must
+		// reflect the same media loss that fails the run.
+		summary := r.sessionArtifact.summary()
+		artifactSummary = &summary
 	}
 
 	if err := r.composeFinalOutput(); err != nil {
@@ -380,9 +474,14 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 	}
 
 	if r.cfg.WriteReport {
+		// Snapshot value copies under sessionMu: a track reader that
+		// outlived the bounded join above could still be bumping packet
+		// counters on the shared sessionCapture structs.
 		r.sessionMu.Lock()
-		sessions := make([]*sessionCapture, len(r.sessionOrder))
-		copy(sessions, r.sessionOrder)
+		sessions := make([]sessionCapture, 0, len(r.sessionOrder))
+		for _, s := range r.sessionOrder {
+			sessions = append(sessions, *s)
+		}
 		r.sessionMu.Unlock()
 
 		reportPath := deriveReportPath(r.finalOutputPath, r.cfg.OutputPath)
@@ -404,6 +503,41 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 	}
 
 	return firstErr
+}
+
+// addTrackReader registers a capture goroutine with the recorder so
+// cleanup() can join it. Returns false once shutdown has begun; the
+// caller must not spawn the goroutine then. Gating Add on r.stopping
+// keeps the WaitGroup sound: the counter can only leave zero before
+// cleanup() starts waiting.
+func (r *Recorder) addTrackReader() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.stopping {
+		return false
+	}
+	r.trackWG.Add(1)
+	return true
+}
+
+// waitForTrackReaders joins the capture goroutines registered via
+// addTrackReader, bounded by ctx and a fallback timeout so a stuck
+// reader cannot park shutdown forever.
+func (r *Recorder) waitForTrackReaders(ctx context.Context, timeout time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		r.trackWG.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		log.Printf("track capture goroutines still running at cleanup deadline; continuing")
+	case <-timer.C:
+		log.Printf("track capture goroutines still running after %s; continuing cleanup", timeout)
+	}
 }
 
 func (r *Recorder) hello(ctx context.Context) error {
@@ -540,7 +674,7 @@ func (r *Recorder) eventLoop(ctx context.Context) error {
 					data["from"] = sid
 				}
 			}
-			if err := r.handleSignalingData(data); err != nil {
+			if err := r.handleSignalingData(ctx, data); err != nil {
 				return err
 			}
 		}
@@ -590,6 +724,15 @@ func (r *Recorder) handleRoomEvent(roomEvent map[string]any) error {
 	case "room":
 		switch eventType {
 		case "join":
+			// Room join events indicate signaling-room presence only — a
+			// user with the conversation window open, not necessarily in
+			// the call. Per the standalone signaling API, WebRTC peer
+			// connections are established from participants-update inCall
+			// flags (see handleParticipantsEvent), so only remember the
+			// identity here. Subscribing on join used to create dead peers
+			// whose requestoffers the server rejected ("not in same call")
+			// and whose presence blocked the room-empty autostop for as
+			// long as anyone kept a chat window open (D-365).
 			for _, item := range asSlice(roomEvent["join"]) {
 				joinItem := asMap(item)
 				if len(joinItem) == 0 {
@@ -600,9 +743,6 @@ func (r *Recorder) handleRoomEvent(roomEvent map[string]any) error {
 					continue
 				}
 				r.rememberParticipantIdentity(remoteSessionID, displayName, participantID)
-				if _, err := r.ensureSubscriber(remoteSessionID); err != nil {
-					return err
-				}
 			}
 		case "leave":
 			r.removeParticipantSessions(asSlice(roomEvent["leave"]))
@@ -637,8 +777,8 @@ func (r *Recorder) handleParticipantsEvent(update map[string]any) error {
 	if asBool(update["all"]) {
 		active := make(map[string]participantIdentity, len(users))
 		for _, raw := range users {
-			sessionID, identity, activeInCall := parseParticipantUpdate(asMap(raw))
-			if sessionID == "" || !activeInCall {
+			sessionID, identity, callState := parseParticipantUpdate(asMap(raw))
+			if sessionID == "" || callState != callStateInCall {
 				continue
 			}
 			active[sessionID] = identity
@@ -647,12 +787,19 @@ func (r *Recorder) handleParticipantsEvent(update map[string]any) error {
 	}
 
 	for _, raw := range users {
-		sessionID, identity, activeInCall := parseParticipantUpdate(asMap(raw))
+		sessionID, identity, callState := parseParticipantUpdate(asMap(raw))
 		if sessionID == "" {
 			continue
 		}
-		if !activeInCall {
+		switch callState {
+		case callStateNotInCall:
 			r.removeParticipantSessions([]any{sessionID})
+			continue
+		case callStateUnknown:
+			// The entry omits inCall: it describes room presence, not
+			// call membership. Neither create nor remove — a partial
+			// update without the field must not tear down the live
+			// subscriber of a participant still in the call.
 			continue
 		}
 		r.rememberParticipantIdentity(sessionID, identity.DisplayName, identity.ParticipantID)
@@ -684,7 +831,7 @@ func (r *Recorder) retryRequestOfferForCallTransition(peer *subscriberPeer) {
 	}
 }
 
-func (r *Recorder) handleSignalingData(data map[string]any) error {
+func (r *Recorder) handleSignalingData(ctx context.Context, data map[string]any) error {
 	roomType := asString(data["roomType"])
 	if roomType != "" && roomType != "video" {
 		return nil
@@ -707,7 +854,7 @@ func (r *Recorder) handleSignalingData(data map[string]any) error {
 	if peer == nil {
 		return nil
 	}
-	if err := peer.handleMessage(data); err != nil {
+	if err := peer.handleMessage(ctx, data); err != nil {
 		log.Printf("subscriber signaling handling failed sid=%s type=%s: %v", fromSession, msgType, err)
 		return nil
 	}
@@ -720,6 +867,10 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, er
 	}
 
 	r.mu.Lock()
+	if r.stopping {
+		r.mu.Unlock()
+		return nil, nil
+	}
 	existing := r.subscribers[remoteSessionID]
 	r.mu.Unlock()
 	if existing != nil {
@@ -738,6 +889,13 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, er
 	}
 
 	r.mu.Lock()
+	if r.stopping {
+		// cleanup() drained the map while we were building the peer;
+		// registering it now would resurrect a subscriber nobody closes.
+		r.mu.Unlock()
+		_ = peer.close()
+		return nil, nil
+	}
 	if current := r.subscribers[remoteSessionID]; current != nil {
 		r.mu.Unlock()
 		_ = peer.close()
@@ -953,7 +1111,24 @@ func parseRoomJoinIdentity(joinItem map[string]any) (string, string, string) {
 	return remoteSessionID, displayName, participantID
 }
 
-func parseParticipantUpdate(user map[string]any) (string, participantIdentity, bool) {
+// participantCallState classifies a participants-update entry for the
+// subscribe/teardown decision.
+type participantCallState int
+
+const (
+	// callStateUnknown: the entry omits the inCall field, so it says
+	// nothing about call membership (room presence only). Neutral —
+	// neither create nor tear down a subscriber.
+	callStateUnknown participantCallState = iota
+	// callStateNotInCall: the entry explicitly reports the participant
+	// out of the call (in-call bit clear), or is an internal session
+	// that never gets a subscriber.
+	callStateNotInCall
+	// callStateInCall: the in-call bit is set; a subscriber should exist.
+	callStateInCall
+)
+
+func parseParticipantUpdate(user map[string]any) (string, participantIdentity, participantCallState) {
 	scopes := []map[string]any{
 		user,
 		asMap(user["session"]),
@@ -969,13 +1144,23 @@ func parseParticipantUpdate(user map[string]any) (string, participantIdentity, b
 		"roomsessionid",
 	)
 	if sessionID == "" {
-		return "", participantIdentity{}, false
+		return "", participantIdentity{}, callStateUnknown
 	}
 	if asBool(user["internal"]) {
-		return sessionID, participantIdentity{}, false
+		return sessionID, participantIdentity{}, callStateNotInCall
 	}
-	if flags, ok := asInt(user["inCall"]); ok && flags == 0 {
-		return sessionID, participantIdentity{}, false
+	// Per the standalone signaling API, a participant is in the call iff
+	// the in-call bit of the inCall flags is set (bit 1; higher bits only
+	// describe published media / SIP). Updates without that bit must not
+	// produce subscribers (D-365); entries that omit inCall entirely
+	// describe room presence only and are neutral — they must not tear
+	// down a live subscriber either.
+	flags, ok := asInt(user["inCall"])
+	if !ok {
+		return sessionID, participantIdentity{}, callStateUnknown
+	}
+	if flags&inCallFlagInCall == 0 {
+		return sessionID, participantIdentity{}, callStateNotInCall
 	}
 
 	return sessionID, participantIdentity{
@@ -998,7 +1183,7 @@ func parseParticipantUpdate(user map[string]any) (string, participantIdentity, b
 			"participantID",
 			"uid",
 		),
-	}, true
+	}, callStateInCall
 }
 
 func firstNonEmpty(scopes []map[string]any, keys ...string) string {
@@ -1013,6 +1198,21 @@ func firstNonEmpty(scopes []map[string]any, keys ...string) string {
 	return ""
 }
 
+// sendPLI asks the sender behind remoteSessionID for a fresh keyframe on the
+// given video SSRC. Used when NACK recovery evidently failed (see pli.go) and
+// once at capture start so the recording never opens mid-GOP.
+func (r *Recorder) sendPLI(remoteSessionID string, ssrc uint32) {
+	r.mu.Lock()
+	peer := r.subscribers[remoteSessionID]
+	r.mu.Unlock()
+	if peer == nil || peer.pc == nil {
+		return
+	}
+	if err := peer.pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: ssrc}}); err != nil {
+		log.Printf("send PLI failed sid=%s ssrc=%d: %v", remoteSessionID, ssrc, err)
+	}
+}
+
 func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver, remoteSessionID string) {
 	kind := strings.ToLower(track.Kind().String())
 
@@ -1022,26 +1222,19 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 		return
 	}
 
+	var gapTracker *pliGapTracker
+	if kind == "video" {
+		gapTracker = newPLIGapTracker()
+		// Ask for a keyframe up front: the sender is mid-GOP from our
+		// point of view, and its next voluntary keyframe can be ~100s out.
+		r.sendPLI(remoteSessionID, uint32(track.SSRC()))
+	}
+
 	streamCaptureID := ""
 	var streamCaptureMu sync.RWMutex
 	streamCaptureSSRC := uint32(track.SSRC())
 	streamCapturePT := uint8(track.PayloadType())
 	trackDesc := descriptorFromTrack(track)
-	if r.sessionArtifact != nil {
-		streamCaptureID, err = r.sessionArtifact.openStream(
-			remoteSessionID,
-			session.ParticipantID,
-			session.ParticipantName,
-			trackDesc,
-			streamCaptureSSRC,
-			streamCapturePT,
-			time.Now(),
-		)
-		if err != nil {
-			log.Printf("session artifact stream open failed sid=%s kind=%s: %v", remoteSessionID, kind, err)
-			streamCaptureID = ""
-		}
-	}
 	getStreamCaptureID := func() string {
 		streamCaptureMu.RLock()
 		defer streamCaptureMu.RUnlock()
@@ -1052,9 +1245,40 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 		streamCaptureID = value
 		streamCaptureMu.Unlock()
 	}
+	// openCaptureStream (re)opens an rtplog stream for the given SSRC/PT.
+	// Open failures used to permanently disable capture for the track;
+	// callers now retry on later packets (throttled below) so a transient
+	// failure costs a slice of one track, not the rest of the meeting.
+	// Returns false without logging once the artifact is closed (shutdown).
+	openCaptureStream := func(ssrc uint32, pt uint8, at time.Time) bool {
+		participantID, participantName := r.sessionIdentity(remoteSessionID)
+		id, openErr := r.sessionArtifact.openStream(
+			remoteSessionID,
+			participantID,
+			participantName,
+			trackDesc,
+			ssrc,
+			pt,
+			at,
+		)
+		if openErr != nil {
+			if !errors.Is(openErr, errSessionArtifactClosed) {
+				log.Printf("session artifact stream open failed sid=%s kind=%s track=%s: %v", remoteSessionID, kind, track.ID(), openErr)
+			}
+			return false
+		}
+		setStreamCaptureID(id)
+		streamCaptureSSRC = ssrc
+		streamCapturePT = pt
+		return true
+	}
+	if r.sessionArtifact != nil {
+		openCaptureStream(streamCaptureSSRC, streamCapturePT, time.Now())
+	}
 
-	if r.sessionArtifact != nil && receiver != nil {
+	if r.sessionArtifact != nil && receiver != nil && r.addTrackReader() {
 		go func() {
+			defer r.trackWG.Done()
 			for {
 				packets, _, readErr := receiver.ReadRTCP()
 				if readErr != nil {
@@ -1074,6 +1298,7 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 	log.Printf("remote track: sid=%s kind=%s track=%s stream=%s codec=%s", remoteSessionID, kind, track.ID(), track.StreamID(), track.Codec().MimeType)
 
 	reason := "ended"
+	var nextStreamOpenAttempt time.Time
 	for {
 		recv := time.Now()
 		pkt, _, readErr := track.ReadRTP()
@@ -1090,37 +1315,37 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 			break
 		}
 
-		activeStreamID := getStreamCaptureID()
-		if activeStreamID != "" {
-			if pkt.SSRC != streamCaptureSSRC || pkt.PayloadType != streamCapturePT {
+		if r.sessionArtifact != nil {
+			activeStreamID := getStreamCaptureID()
+			if activeStreamID != "" && (pkt.SSRC != streamCaptureSSRC || pkt.PayloadType != streamCapturePT) {
 				rotateReason := streamSegmentRotationReason(streamCaptureSSRC, pkt.SSRC, streamCapturePT, pkt.PayloadType)
 				if err := r.sessionArtifact.closeStream(activeStreamID, rotateReason, recv); err != nil {
 					log.Printf("session artifact stream rotate-close failed sid=%s stream=%s track=%s: %v", remoteSessionID, activeStreamID, track.ID(), err)
 				}
-				nextStreamID, openErr := r.sessionArtifact.openStream(
-					remoteSessionID,
-					session.ParticipantID,
-					session.ParticipantName,
-					trackDesc,
-					pkt.SSRC,
-					pkt.PayloadType,
-					recv,
-				)
-				if openErr != nil {
-					log.Printf("session artifact stream rotate-open failed sid=%s old_stream=%s track=%s: %v", remoteSessionID, activeStreamID, track.ID(), openErr)
-					setStreamCaptureID("")
+				setStreamCaptureID("")
+				activeStreamID = ""
+			}
+			if activeStreamID == "" && recv.After(nextStreamOpenAttempt) {
+				// (Re)open capture for this packet's SSRC/PT. This covers
+				// SSRC/PT rotation as well as recovery from earlier open
+				// failures; retries are throttled so a persistently failing
+				// disk is not hammered at packet rate.
+				if openCaptureStream(pkt.SSRC, pkt.PayloadType, recv) {
+					activeStreamID = getStreamCaptureID()
 				} else {
-					setStreamCaptureID(nextStreamID)
-					streamCaptureSSRC = pkt.SSRC
-					streamCapturePT = pkt.PayloadType
+					nextStreamOpenAttempt = recv.Add(time.Second)
+				}
+			}
+			if activeStreamID != "" {
+				if err := r.sessionArtifact.writeRTP(activeStreamID, pkt, recv); err != nil {
+					log.Printf("session artifact packet write failed sid=%s stream=%s track=%s: %v", remoteSessionID, activeStreamID, track.ID(), err)
 				}
 			}
 		}
-		activeStreamID = getStreamCaptureID()
-		if activeStreamID != "" {
-			if err := r.sessionArtifact.writeRTP(activeStreamID, pkt, recv); err != nil {
-				log.Printf("session artifact packet write failed sid=%s stream=%s track=%s: %v", remoteSessionID, activeStreamID, track.ID(), err)
-			}
+
+		if gapTracker != nil && gapTracker.observe(pkt.SSRC, pkt.SequenceNumber, recv) {
+			log.Printf("video gap unhealed past NACK grace; sending PLI sid=%s track=%s ssrc=%d", remoteSessionID, track.ID(), pkt.SSRC)
+			r.sendPLI(remoteSessionID, pkt.SSRC)
 		}
 
 		r.sessionMu.Lock()
@@ -1157,6 +1382,20 @@ func streamSegmentRotationReason(prevSSRC, nextSSRC uint32, prevPT, nextPT uint8
 	default:
 		return "segment-rotate:unknown"
 	}
+}
+
+// sessionIdentity returns a locked snapshot of the participant identity
+// for a capture session. Track readers must not read sessionCapture
+// name/ID fields directly: rememberParticipantIdentity rewrites them
+// under sessionMu when a display name arrives late.
+func (r *Recorder) sessionIdentity(remoteSessionID string) (participantID, participantName string) {
+	r.sessionMu.Lock()
+	defer r.sessionMu.Unlock()
+	session := r.sessionsByRemote[remoteSessionID]
+	if session == nil {
+		return "", ""
+	}
+	return session.ParticipantID, session.ParticipantName
 }
 
 func (r *Recorder) ensureSessionCapture(remoteSessionID string) (*sessionCapture, error) {
@@ -1216,11 +1455,12 @@ func (r *Recorder) composeFinalOutputFromSessionArtifact() error {
 	}
 
 	log.Printf(
-		"composed final output from session artifact: session=%s output=%s work=%s segments=%d",
+		"composed final output from session artifact: session=%s output=%s work=%s segments=%d skipped=%d",
 		result.SessionJSONPath,
 		result.OutputPath,
 		result.WorkDir,
 		result.Segments,
+		len(result.SkippedStreams),
 	)
 	r.artifactRemux = &result
 	return nil
@@ -1263,7 +1503,13 @@ func (r *Recorder) newSubscriberPeer(remoteSessionID string) (*subscriberPeer, e
 		}
 	})
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		go r.onRemoteTrack(context.Background(), track, receiver, remoteSessionID)
+		if !r.addTrackReader() {
+			return
+		}
+		go func() {
+			defer r.trackWG.Done()
+			r.onRemoteTrack(context.Background(), track, receiver, remoteSessionID)
+		}()
 	})
 
 	return peer, nil
@@ -1391,7 +1637,7 @@ func (p *subscriberPeer) sendEndOfCandidates(reason string) error {
 	return p.owner.sendPeerMessage(p.remoteSessionID, "endOfCandidates", map[string]any{}, sid)
 }
 
-func (p *subscriberPeer) handleMessage(data map[string]any) error {
+func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any) error {
 	msgType := asString(data["type"])
 	payload := asMap(data["payload"])
 
@@ -1426,6 +1672,11 @@ func (p *subscriberPeer) handleMessage(data map[string]any) error {
 
 		select {
 		case <-gatherComplete:
+		case <-ctx.Done():
+			// Shutdown must not be parked behind ICE gathering; the
+			// answer below still goes out with whatever gathered so far
+			// (Send degrades to an error once signaling is closed).
+			log.Printf("ICE gather interrupted by shutdown for subscriber %s; continuing", p.remoteSessionID)
 		case <-time.After(4 * time.Second):
 			log.Printf("ICE gather timeout for subscriber %s; continuing", p.remoteSessionID)
 		}
@@ -1562,7 +1813,7 @@ func ensureOutputDir(path string) error {
 
 func (r *Recorder) writeReport(
 	reportPath string,
-	sessions []*sessionCapture,
+	sessions []sessionCapture,
 	composeOK bool,
 	composeErr string,
 	intermediateCleaned bool,
@@ -1580,6 +1831,8 @@ func (r *Recorder) writeReport(
 			"stream_count":        artifactSummary.StreamCount,
 			"packet_count":        artifactSummary.PacketCount,
 			"active_stream_count": artifactSummary.ActiveStreamCount,
+			"capture_error_count": artifactSummary.CaptureErrorCount,
+			"first_capture_error": artifactSummary.FirstCaptureError,
 		}
 	}
 
@@ -1589,6 +1842,18 @@ func (r *Recorder) writeReport(
 	warnings := make([]string, 0, 2)
 	if composeErr != "" {
 		warnings = append(warnings, "final compose failed: "+composeErr)
+	}
+	if artifactSummary != nil && artifactSummary.CaptureErrorCount > 0 {
+		warnings = append(warnings, fmt.Sprintf(
+			"capture lost media: %d error(s); first: %s",
+			artifactSummary.CaptureErrorCount,
+			artifactSummary.FirstCaptureError,
+		))
+	}
+	if r.artifactRemux != nil {
+		for _, skipped := range r.artifactRemux.SkippedStreams {
+			warnings = append(warnings, fmt.Sprintf("stream %s skipped during final compose: %s", skipped.StreamID, skipped.Reason))
+		}
 	}
 
 	type sessionOutput struct {
@@ -1677,6 +1942,7 @@ func buildArtifactRemuxReport(result *coreremux.BuildResult) map[string]any {
 		"work_dir":          result.WorkDir,
 		"segments":          result.Segments,
 		"stream_plans":      result.StreamPlans,
+		"skipped_streams":   result.SkippedStreams,
 		"adjusted_streams":  adjustedStreams,
 		"total_adjust_ns":   totalAdjustNS,
 		"max_abs_adjust_ns": maxAbsAdjustNS,

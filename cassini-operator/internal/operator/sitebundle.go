@@ -65,7 +65,7 @@ func WriteSiteBundleLineage(path string, lineage SiteBundleLineage) error {
 		return fmt.Errorf("marshal site bundle manifest: %w", err)
 	}
 	body = append(body, '\n')
-	if err := os.WriteFile(filepath.Join(path, "cassini.json"), body, 0o644); err != nil {
+	if err := writeFileAtomic(filepath.Join(path, "cassini.json"), body, 0o644); err != nil {
 		return fmt.Errorf("write site bundle manifest: %w", err)
 	}
 	return nil

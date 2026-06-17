@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -22,13 +23,37 @@ import (
 const (
 	defaultGuestName    = "CassiniRecorder"
 	defaultRoomEmptySec = 30.0
-	recordStopGrace     = 10 * time.Second
+	// recordRunningMarker and recordStoppingMarker are printed by `cassini
+	// record`; the operator watches the child's output for them.
+	recordRunningMarker  = "talk recorder running:"
+	recordStoppingMarker = "talk recorder stopping:"
+	// recordStopAckGrace is how long a SIGTERMed recorder may stay silent
+	// before acknowledging the stop (recordStoppingMarker) without being
+	// presumed wedged; output activity extends it.
+	recordStopAckGrace = 10 * time.Second
+	// recordStopFinalizeGrace caps the stop as a whole. After acknowledging
+	// SIGTERM the recorder composes the final MKV (depacketize + ffmpeg per
+	// stream + merge), which scales with recording length and routinely
+	// exceeds any flat few-second grace; SIGKILLing mid-compose destroys the
+	// recording (D-350), so the ceiling is generous.
+	recordStopFinalizeGrace = 30 * time.Minute
+	// recordShutdownWait bounds how long operator shutdown waits for
+	// in-flight record jobs; per-process stop enforcement guarantees the
+	// recorder is gone within the finalize grace, so this only adds slack
+	// for post-record bookkeeping (promotion, callbacks, upload).
+	recordShutdownWait = recordStopFinalizeGrace + time.Minute
 )
 
 type recordProcessState struct {
-	process        *os.Process
-	done           chan struct{}
-	stopInProgress bool
+	process *os.Process
+	done    chan struct{}
+	// stopInProgress is set by stop requests under recordMu but read by the
+	// record goroutine without it, so it must be atomic (D-364).
+	stopInProgress atomic.Bool
+	// stopping is closed when the recorder prints recordStoppingMarker,
+	// i.e. it acknowledged SIGTERM and started finalizing.
+	stopping chan struct{}
+	output   *recordOutputActivity
 }
 
 type recordResult struct {
@@ -39,12 +64,59 @@ type recordResult struct {
 }
 
 type recordLiveSignalWriter struct {
-	target io.Writer
+	target   io.Writer
+	activity *recordOutputActivity
+	mu       sync.Mutex
+	watches  []*recordMarkerWatch
+}
+
+// recordMarkerWatch scans one output stream for a marker, buffering a tail so
+// markers split across writes are still found, and fires signal on a match.
+type recordMarkerWatch struct {
 	marker []byte
-	mu     sync.Mutex
+	signal func()
 	tail   []byte
-	once   sync.Once
-	liveCh chan struct{}
+}
+
+// syncBuffer is a mutex-guarded bytes.Buffer. The record path hands one
+// shared capture sink to both the stdout and stderr pipelines, which os/exec
+// pumps from two goroutines — a bare bytes.Buffer there is a data race that
+// corrupts stop-detail classification at best and panics at worst (D-364).
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// recordOutputActivity tracks when the recorder last wrote to stdout/stderr;
+// stop enforcement uses it to tell a busy recorder from a wedged one.
+type recordOutputActivity struct {
+	lastWriteNS atomic.Int64
+}
+
+func newRecordOutputActivity() *recordOutputActivity {
+	activity := &recordOutputActivity{}
+	activity.touch()
+	return activity
+}
+
+func (a *recordOutputActivity) touch() {
+	a.lastWriteNS.Store(time.Now().UnixNano())
+}
+
+func (a *recordOutputActivity) idleFor() time.Duration {
+	return time.Duration(time.Now().UnixNano() - a.lastWriteNS.Load())
 }
 
 type triggerRequestInput struct {
@@ -94,27 +166,39 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 		args = append(args, "--room-empty-grace", formatSeconds(req.RoomEmptyGraceSeconds))
 	}
 
-	var logCapture bytes.Buffer
-	liveCh := make(chan struct{}, 1)
+	// logCapture is shared by the stdout and stderr pipelines; os/exec pumps
+	// distinct writers from separate goroutines, so the sink must serialize
+	// its writes (D-364).
+	logCapture := &syncBuffer{}
+	liveCh := make(chan struct{})
+	stoppingCh := make(chan struct{})
+	signalLive := closeOnce(liveCh)
+	signalStopping := closeOnce(stoppingCh)
+	activity := newRecordOutputActivity()
 	stdoutWriter := newRecordLiveSignalWriter(
-		io.MultiWriter(writerOrDiscard(rt.stdout), logFile, &logCapture),
-		[]byte("talk recorder running:"),
-		liveCh,
+		io.MultiWriter(writerOrDiscard(rt.stdout), logFile, logCapture),
+		activity,
+		newRecordMarkerWatch(recordRunningMarker, signalLive),
+		newRecordMarkerWatch(recordStoppingMarker, signalStopping),
 	)
 	stderrWriter := newRecordLiveSignalWriter(
-		io.MultiWriter(writerOrDiscard(rt.stderr), logFile, &logCapture),
-		[]byte("talk recorder running:"),
-		liveCh,
+		io.MultiWriter(writerOrDiscard(rt.stderr), logFile, logCapture),
+		activity,
+		newRecordMarkerWatch(recordRunningMarker, signalLive),
+		newRecordMarkerWatch(recordStoppingMarker, signalStopping),
 	)
 	cmd := exec.Command(rt.cfg.CassiniBin, args...)
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stderrWriter
 	cmd.Env = os.Environ()
+	// Run the recorder in its own process group so a hard kill also reaps
+	// ffmpeg children spawned during compose instead of leaking them.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		return recordResult{}, fmt.Errorf("cassini record start: %w", err)
 	}
 
-	state := rt.registerRecordProcess(job.ID, cmd.Process)
+	state := rt.registerRecordProcess(job.ID, cmd.Process, stoppingCh, activity)
 	defer rt.completeRecordProcess(job.ID)
 	go rt.stopRecordProcessOnShutdown(job.ID, state)
 
@@ -142,7 +226,7 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 		ExitCode:        exitCodeFromRunError(runErr),
 		StopDetail:      recordStopDetail(logCapture.String()),
 	}
-	result.StopReason = classifyRecordStopReason(state.stopInProgress, result.ExitCode, result.StopDetail, runErr)
+	result.StopReason = classifyRecordStopReason(state.stopInProgress.Load(), result.ExitCode, result.StopDetail, runErr)
 	if runErr != nil {
 		if result.StopDetail == "" {
 			result.StopDetail = strings.TrimSpace(runErr.Error())
@@ -156,11 +240,24 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 }
 
 func (rt *Runtime) runRecordDoctor() error {
-	cmd := exec.Command(rt.cfg.CassiniBin, "doctor", "--target", "record")
+	return rt.runRecordDoctorContext(context.Background())
+}
+
+// runRecordDoctorContext runs `cassini doctor --target record` bounded by ctx
+// so callers like the throttled /healthz?check=record probe can enforce an
+// exec timeout on a wedged doctor (D-376). The doctor runs in its own process
+// group so a cancel reaps any children with it.
+func (rt *Runtime) runRecordDoctorContext(ctx context.Context) error {
+	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "doctor", "--target", "record")
 	cmd.Stdout = writerOrDiscard(rt.stdout)
 	cmd.Stderr = writerOrDiscard(rt.stderr)
 	cmd.Env = os.Environ()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return killProcessGroup(cmd.Process) }
 	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("cassini doctor --target record: %w (%v)", ctxErr, err)
+		}
 		return fmt.Errorf("cassini doctor --target record: %w", err)
 	}
 	return nil
@@ -170,10 +267,15 @@ func formatSeconds(value float64) string {
 	return strconv.FormatFloat(value, 'f', -1, 64)
 }
 
-func (rt *Runtime) registerRecordProcess(jobID string, process *os.Process) *recordProcessState {
+func (rt *Runtime) registerRecordProcess(jobID string, process *os.Process, stopping chan struct{}, output *recordOutputActivity) *recordProcessState {
+	if output == nil {
+		output = newRecordOutputActivity()
+	}
 	state := &recordProcessState{
-		process: process,
-		done:    make(chan struct{}),
+		process:  process,
+		done:     make(chan struct{}),
+		stopping: stopping,
+		output:   output,
 	}
 	rt.recordMu.Lock()
 	if rt.recordJobs == nil {
@@ -196,16 +298,12 @@ func (rt *Runtime) completeRecordProcess(jobID string) {
 
 func (rt *Runtime) beginRecordStop(jobID string) (*recordProcessState, bool) {
 	rt.recordMu.Lock()
-	defer rt.recordMu.Unlock()
 	state := rt.recordJobs[jobID]
+	rt.recordMu.Unlock()
 	if state == nil {
 		return nil, false
 	}
-	alreadyStopping := state.stopInProgress
-	if !alreadyStopping {
-		state.stopInProgress = true
-	}
-	return state, alreadyStopping
+	return state, state.stopInProgress.Swap(true)
 }
 
 func (rt *Runtime) handleStopJob(w http.ResponseWriter, r *http.Request, id string) {
@@ -242,6 +340,7 @@ func (rt *Runtime) handleStopJob(w http.ResponseWriter, r *http.Request, id stri
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("update stop request: %v", err))
 		return
 	}
+	rt.logger.Printf("stop requested id=%s user=%s", id, appapiUserForLog(r))
 	go rt.enforceRecordStop(id, state)
 	writeJSON(w, http.StatusAccepted, recordStopResponse{ID: id})
 }
@@ -276,24 +375,73 @@ func (rt *Runtime) stopRecordProcessOnShutdown(jobID string, state *recordProces
 	case <-rt.ctx.Done():
 		if err := state.process.Signal(syscall.SIGTERM); err != nil && !isExitedProcessError(err) {
 			rt.logger.Printf("record shutdown stop failed id=%s: %v", jobID, err)
+			return
 		}
+		// Operator shutdown finalizes like a user stop: wait for the
+		// recorder to compose the final MKV, hard-kill only on no progress.
+		rt.enforceRecordStop(jobID, state)
 	case <-state.done:
 	}
 }
 
+// enforceRecordStop hard-kills a stop-requested recorder only when it stops
+// making progress. On SIGTERM the recorder acknowledges with
+// recordStoppingMarker and then composes the final MKV, which scales with the
+// recording length — far beyond any flat grace — so SIGKILLing on a fixed
+// timer destroyed long recordings mid-compose (D-350). The short ack grace
+// (extended while the child keeps writing output) catches a wedged recorder;
+// an acknowledged finalization only has the generous overall ceiling.
 func (rt *Runtime) enforceRecordStop(jobID string, state *recordProcessState) {
-	timer := time.NewTimer(recordStopGrace)
-	defer timer.Stop()
-	select {
-	case <-state.done:
-		return
-	case <-timer.C:
+	overall := time.NewTimer(rt.recordStopFinalizeGrace)
+	defer overall.Stop()
+	ackTimer := time.NewTimer(rt.recordStopAckGrace)
+	defer ackTimer.Stop()
+	ackCh := ackTimer.C
+	stopping := state.stopping
+	for {
+		select {
+		case <-state.done:
+			return
+		case <-stopping:
+			// Stop acknowledged: the recorder is finalizing. Only the
+			// overall ceiling applies from here.
+			ackTimer.Stop()
+			ackCh = nil
+			stopping = nil
+		case <-ackCh:
+			if idle := state.output.idleFor(); idle < rt.recordStopAckGrace {
+				ackTimer.Reset(rt.recordStopAckGrace - idle)
+				continue
+			}
+			rt.hardKillRecordProcess(jobID, state, fmt.Sprintf("no stop acknowledgement within %s", rt.recordStopAckGrace))
+			return
+		case <-overall.C:
+			rt.hardKillRecordProcess(jobID, state, fmt.Sprintf("stop exceeded finalize grace %s", rt.recordStopFinalizeGrace))
+			return
+		}
 	}
-	if err := state.process.Kill(); err != nil && !isExitedProcessError(err) {
+}
+
+func (rt *Runtime) hardKillRecordProcess(jobID string, state *recordProcessState, reason string) {
+	if err := killProcessGroup(state.process); err != nil && !isExitedProcessError(err) {
 		rt.logger.Printf("record hard kill failed id=%s: %v", jobID, err)
 		return
 	}
-	rt.logger.Printf("record hard-killed id=%s after stop grace %s", jobID, recordStopGrace)
+	rt.logger.Printf("record hard-killed id=%s: %s", jobID, reason)
+}
+
+// killProcessGroup SIGKILLs the child's process group (record/build/publish
+// children run with Setpgid) so ffmpeg-style grandchildren die with it
+// instead of leaking, falling back to the lone process when the group is
+// already gone.
+func killProcessGroup(process *os.Process) error {
+	if process == nil {
+		return os.ErrProcessDone
+	}
+	if err := syscall.Kill(-process.Pid, syscall.SIGKILL); err == nil {
+		return nil
+	}
+	return process.Kill()
 }
 
 func isExitedProcessError(err error) bool {
@@ -323,50 +471,66 @@ func exitCodeFromRunError(err error) *int {
 func recordStopDetail(logs string) string {
 	for _, line := range reverseLogLines(logs) {
 		line = strings.TrimSpace(line)
-		if idx := strings.Index(line, "talk recorder stopping:"); idx >= 0 {
-			return strings.TrimSpace(line[idx+len("talk recorder stopping:"):])
+		if idx := strings.Index(line, recordStoppingMarker); idx >= 0 {
+			return strings.TrimSpace(line[idx+len(recordStoppingMarker):])
 		}
 	}
 	return ""
 }
 
-func newRecordLiveSignalWriter(target io.Writer, marker []byte, liveCh chan struct{}) io.Writer {
+func newRecordLiveSignalWriter(target io.Writer, activity *recordOutputActivity, watches ...*recordMarkerWatch) io.Writer {
 	return &recordLiveSignalWriter{
-		target: target,
-		marker: marker,
-		liveCh: liveCh,
+		target:   target,
+		activity: activity,
+		watches:  watches,
+	}
+}
+
+func newRecordMarkerWatch(marker string, signal func()) *recordMarkerWatch {
+	return &recordMarkerWatch{
+		marker: []byte(marker),
+		signal: signal,
+	}
+}
+
+// closeOnce returns a func that closes ch exactly once; the stdout and stderr
+// watchers for one marker share it so either stream can fire the signal.
+func closeOnce(ch chan struct{}) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() { close(ch) })
 	}
 }
 
 func (w *recordLiveSignalWriter) Write(p []byte) (int, error) {
 	n, err := w.target.Write(p)
-	w.signalIfMarkerSeen(p)
+	if w.activity != nil {
+		w.activity.touch()
+	}
+	w.mu.Lock()
+	for _, watch := range w.watches {
+		watch.observe(p)
+	}
+	w.mu.Unlock()
 	return n, err
 }
 
-func (w *recordLiveSignalWriter) signalIfMarkerSeen(p []byte) {
-	if len(w.marker) == 0 {
+func (watch *recordMarkerWatch) observe(p []byte) {
+	if len(watch.marker) == 0 {
 		return
 	}
 
-	w.mu.Lock()
-	combined := append(append([]byte{}, w.tail...), p...)
-	if maxTail := len(w.marker) - 1; maxTail > 0 {
+	combined := append(append([]byte{}, watch.tail...), p...)
+	if maxTail := len(watch.marker) - 1; maxTail > 0 {
 		if len(combined) > maxTail {
-			w.tail = append(w.tail[:0], combined[len(combined)-maxTail:]...)
+			watch.tail = append(watch.tail[:0], combined[len(combined)-maxTail:]...)
 		} else {
-			w.tail = append(w.tail[:0], combined...)
+			watch.tail = append(watch.tail[:0], combined...)
 		}
 	}
-	w.mu.Unlock()
 
-	if bytes.Contains(combined, w.marker) {
-		w.once.Do(func() {
-			select {
-			case w.liveCh <- struct{}{}:
-			default:
-			}
-		})
+	if bytes.Contains(combined, watch.marker) {
+		watch.signal()
 	}
 }
 
@@ -400,6 +564,10 @@ func classifyRecordStopReason(stopAccepted bool, exitCode *int, stopDetail strin
 		strings.Contains(combined, "signaling settings failed"),
 		strings.Contains(combined, "missing signaling server"),
 		strings.Contains(combined, "hello response missing signaling sessionid"),
+		// The recorder wraps definitive HTTP 4xx join rejections in
+		// ErrUnjoinable ("talk room unjoinable") and prints it on the
+		// "talk recorder stopping:" line the operator scrapes (D-374).
+		strings.Contains(combined, "talk room unjoinable"),
 		strings.Contains(combined, "join call failed"):
 		return "join_failed"
 	case exitCode != nil && *exitCode != 0:
@@ -448,25 +616,6 @@ func parseTriggerRequest(input triggerRequestInput) (TriggerRequest, error) {
 		req.RoomEmptyGraceSeconds = *input.RoomEmptyGraceSec
 		req.RoomEmptyGraceSet = true
 	}
-	return req, nil
-}
-
-func decodeStoredTriggerRequest(raw string) (TriggerRequest, error) {
-	var req TriggerRequest
-	if err := json.Unmarshal([]byte(raw), &req); err != nil {
-		return TriggerRequest{}, fmt.Errorf("decode stored request JSON: %w", err)
-	}
-	req.Platform = strings.TrimSpace(req.Platform)
-	req.BaseURL = strings.TrimSpace(req.BaseURL)
-	req.TalkConnectURL = strings.TrimRight(strings.TrimSpace(req.TalkConnectURL), "/")
-	req.RoomToken = strings.TrimSpace(req.RoomToken)
-	req.URL = strings.TrimSpace(req.URL)
-	req.GuestName = strings.TrimSpace(req.GuestName)
-	if req.Platform == "" || req.GuestName == "" || req.effectiveCallURL() == "" {
-		return TriggerRequest{}, errors.New("stored request is missing required fields")
-	}
-	req.StopWhenRoomEmptySet = !req.StopWhenRoomEmpty
-	req.RoomEmptyGraceSet = req.RoomEmptyGraceSeconds != defaultRoomEmptySec
 	return req, nil
 }
 
@@ -545,7 +694,13 @@ func (rt *Runtime) handleRerunJob(w http.ResponseWriter, r *http.Request, id str
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("get job: %v", err))
 		return
 	}
-	if job.Stage != "done" || (job.State != "failed" && job.State != "succeeded") {
+	// Terminal jobs (done/failed, done/succeeded) are rerunnable, and so are
+	// jobs the startup sweep marked interrupted at any stage: rerun is the
+	// documented recovery path after an operator restart (D-362). Whether an
+	// interrupted job actually has a ready canonical run to rebuild from is
+	// checked by QueueRerunAttempt.
+	terminal := job.Stage == "done" && (job.State == "failed" || job.State == "succeeded")
+	if !terminal && job.State != "interrupted" {
 		writeJSONError(w, http.StatusConflict, "job is not eligible for rerun")
 		return
 	}
@@ -565,16 +720,20 @@ func (rt *Runtime) handleRerunJob(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 
+	// The rerun is already durably queued (build/queued row); never block the
+	// admin's HTTP request on a full worker queue — the requeue dispatcher
+	// re-delivers tasks the channel cannot accept right now (D-367).
 	task := buildTask{JobID: rerunJob.ID, AttemptNumber: rerunJob.CurrentAttemptNumber, ArtifactRunPath: *rerunJob.ArtifactRunPath}
 	select {
 	case rt.buildQueue <- task:
-		rt.logger.Printf("rerun accepted id=%s attempt=%d run=%s", rerunJob.ID, rerunJob.CurrentAttemptNumber, task.ArtifactRunPath)
-		writeJSON(w, http.StatusAccepted, rerunJobResponse{ID: rerunJob.ID, AttemptNumber: rerunJob.CurrentAttemptNumber})
-	case <-rt.ctx.Done():
-		if updateErr := rt.store.MarkBuildFailed(context.Background(), rerunJob.ID, "", "build queue stopped", nowUTCString()); updateErr != nil {
-			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("queue rerun attempt: %v", updateErr))
-			return
-		}
-		writeJSONError(w, http.StatusServiceUnavailable, "build queue stopped")
+	default:
+		rt.kickRequeueScan()
 	}
+	rt.logger.Printf("rerun accepted id=%s attempt=%d run=%s user=%s", rerunJob.ID, rerunJob.CurrentAttemptNumber, task.ArtifactRunPath, appapiUserForLog(r))
+	// Rerun is also the re-delivery path for Talk recordings that never
+	// reached Nextcloud (delivery failure or operator restart, D-352).
+	if rerunJob.TalkBinding != nil && rerunJob.TalkDeliveredAt == nil {
+		go rt.redeliverTalkRecording(rerunJob)
+	}
+	writeJSON(w, http.StatusAccepted, rerunJobResponse{ID: rerunJob.ID, AttemptNumber: rerunJob.CurrentAttemptNumber})
 }

@@ -4,6 +4,11 @@ services:
       context: ..
       dockerfile: deployment/Dockerfile.operator
     restart: unless-stopped
+    # Reap zombie ffmpeg/recorder grandchildren (the operator is otherwise
+    # PID 1) and give in-flight recordings time to finalize on stop: the
+    # operator waits up to recordShutdownWait (31m) before exiting (D-350).
+    init: true
+    stop_grace_period: 32m
     environment:
       CASSINI_OPERATOR_BASE_PATH: ${CASSINI_OPERATOR_BASE_PATH:-/}
       CASSINI_MAX_RECORD_WORKERS: ${CASSINI_MAX_RECORD_WORKERS:-1}
@@ -18,8 +23,11 @@ services:
       SUMMARY_MODEL: ${SUMMARY_MODEL:-}
       CASSINI_SUMMARY_DISABLED: ${CASSINI_SUMMARY_DISABLED:-}
       CASSINI_READABLE_STRICT_BATCHES: ${CASSINI_READABLE_STRICT_BATCHES:-}
+    # The operator job API is unauthenticated, so published ports bind to
+    # loopback by default. Docker port publishing bypasses host firewalls
+    # (ufw/firewalld); only widen CASSINI_PUBLISH_ADDRESS deliberately.
     ports:
-      - "${CASSINI_OPERATOR_PORT:-4000}:4000"
+      - "${CASSINI_PUBLISH_ADDRESS:-127.0.0.1}:${CASSINI_OPERATOR_PORT:-4000}:4000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -35,11 +43,14 @@ services:
       - cassini-operator
     environment:
       CASSINI_OPERATOR_BASE_PATH: ${CASSINI_OPERATOR_BASE_PATH:-/}
-      CASSINI_OPERATOR_URL: http://host.docker.internal:${CASSINI_OPERATOR_PORT:-4000}
+      # Reach the operator over the compose network instead of hairpinning
+      # through the host: published ports bind to loopback by default, so the
+      # host-gateway path would not work. compose.hostnet.yml overrides this.
+      CASSINI_OPERATOR_URL: http://cassini-operator:4000
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "${CASSINI_CONTROL_PANEL_PORT:-4173}:4173"
+      - "${CASSINI_PUBLISH_ADDRESS:-127.0.0.1}:${CASSINI_CONTROL_PANEL_PORT:-4173}:4173"
 
   cassini-viewer:
     build:
@@ -49,7 +60,7 @@ services:
     depends_on:
       - cassini-operator
     ports:
-      - "${CASSINI_VIEWER_PORT:-8765}:8765"
+      - "${CASSINI_PUBLISH_ADDRESS:-127.0.0.1}:${CASSINI_VIEWER_PORT:-8765}:8765"
     volumes:
       - ${CASSINI_PUBLISHED_SITE_STORAGE:-cassini_published_site}:/srv/cassini-site:ro
 

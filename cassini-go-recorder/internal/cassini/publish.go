@@ -65,7 +65,7 @@ func runPublish(ctx context.Context, args []string, stdout, stderr io.Writer) in
 
 	fmt.Fprintln(stdout, "[2/4] Staging meeting bundles")
 	_ = UpdateSiteBundleStatus(site, bundleStatePreparing, "stage-input", "")
-	stagingRoot, sourceSummary, err := stagePublishInput(opts.inputPath)
+	stagingRoot, sourceSummary, skippedBundles, err := stagePublishInput(opts.inputPath)
 	if err != nil {
 		_ = UpdateSiteBundleStatus(site, bundleStateFailed, "stage-input", err.Error())
 		fmt.Fprintf(stderr, "stage publish input: %v\n", err)
@@ -75,6 +75,9 @@ func runPublish(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	defer func() {
 		_ = os.RemoveAll(stagingRoot)
 	}()
+	for _, item := range skippedBundles {
+		fmt.Fprintf(stdout, "skipped %s (%s)\n", item.Path, item.Reason)
+	}
 
 	runnerPath, err := exporterRunnerPath()
 	if err != nil {
@@ -132,10 +135,10 @@ func exporterRunnerPath() (string, error) {
 	return path, nil
 }
 
-func stagePublishInput(inputPath string) (string, string, error) {
+func stagePublishInput(inputPath string) (string, string, []publishSkippedBundle, error) {
 	stagingRoot, err := os.MkdirTemp("", "cassini-publish-source-")
 	if err != nil {
-		return "", "", fmt.Errorf("create publish staging dir: %w", err)
+		return "", "", nil, fmt.Errorf("create publish staging dir: %w", err)
 	}
 
 	added := map[string]string{}
@@ -173,33 +176,40 @@ func stagePublishInput(inputPath string) (string, string, error) {
 	}
 
 	if bundle, ok, err := LoadMeetingBundle(inputPath); err != nil {
-		_ = os.RemoveAll(stagingRoot)
-		return "", "", err
+		// A corrupt manifest must not abort the publish outright: record it
+		// and fall through to the directory scan so sibling bundles still ship.
+		skipped = append(skipped, publishSkippedBundle{
+			Path:   inputPath,
+			Reason: fmt.Sprintf("unreadable bundle manifest: %v", err),
+		})
 	} else if ok {
 		if err := addMeeting(bundle); err != nil {
 			_ = os.RemoveAll(stagingRoot)
-			return "", "", err
+			return "", "", nil, err
 		}
 		if len(added) == 0 {
 			_ = os.RemoveAll(stagingRoot)
-			return "", "", summarizeSkippedMeetings(inputPath, skipped)
+			return "", "", nil, summarizeSkippedMeetings(inputPath, skipped)
 		}
-		return stagingRoot, bundle.RootDir, nil
+		return stagingRoot, bundle.RootDir, skipped, nil
 	}
 
 	root, err := filepath.Abs(inputPath)
 	if err != nil {
 		_ = os.RemoveAll(stagingRoot)
-		return "", "", fmt.Errorf("resolve publish input path: %w", err)
+		return "", "", nil, fmt.Errorf("resolve publish input path: %w", err)
 	}
 	if strings.EqualFold(filepath.Ext(root), ".meeting") {
 		_ = os.RemoveAll(stagingRoot)
-		return "", "", fmt.Errorf("meeting bundle is partial or missing cassini.json: %s", root)
+		if len(skipped) > 0 {
+			return "", "", nil, summarizeSkippedMeetings(root, skipped)
+		}
+		return "", "", nil, fmt.Errorf("meeting bundle is partial or missing cassini.json: %s", root)
 	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		_ = os.RemoveAll(stagingRoot)
-		return "", "", fmt.Errorf("read publish input directory: %w", err)
+		return "", "", nil, fmt.Errorf("read publish input directory: %w", err)
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -207,12 +217,17 @@ func stagePublishInput(inputPath string) (string, string, error) {
 		}
 		candidate := filepath.Join(root, entry.Name())
 		if bundle, ok, err := LoadMeetingBundle(candidate); err != nil {
-			_ = os.RemoveAll(stagingRoot)
-			return "", "", err
+			// One corrupt cassini.json (meeting or otherwise; the manifest is
+			// parsed before the Kind filter) must not abort the publish of
+			// every other bundle.
+			skipped = append(skipped, publishSkippedBundle{
+				Path:   candidate,
+				Reason: fmt.Sprintf("unreadable bundle manifest: %v", err),
+			})
 		} else if ok {
 			if err := addMeeting(bundle); err != nil {
 				_ = os.RemoveAll(stagingRoot)
-				return "", "", err
+				return "", "", nil, err
 			}
 		} else if strings.EqualFold(filepath.Ext(candidate), ".meeting") {
 			skipped = append(skipped, publishSkippedBundle{
@@ -224,11 +239,11 @@ func stagePublishInput(inputPath string) (string, string, error) {
 	if len(added) == 0 {
 		_ = os.RemoveAll(stagingRoot)
 		if len(skipped) > 0 {
-			return "", "", summarizeSkippedMeetings(root, skipped)
+			return "", "", nil, summarizeSkippedMeetings(root, skipped)
 		}
-		return "", "", fmt.Errorf("no meeting bundles found in %s", root)
+		return "", "", nil, fmt.Errorf("no meeting bundles found in %s", root)
 	}
-	return stagingRoot, root, nil
+	return stagingRoot, root, skipped, nil
 }
 
 func meetingBundleStatusReason(manifest MeetingBundleManifest) string {

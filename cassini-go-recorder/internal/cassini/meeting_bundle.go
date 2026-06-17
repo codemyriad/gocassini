@@ -97,12 +97,12 @@ func LoadMeetingBundle(path string) (LoadedMeetingBundle, bool, error) {
 		if os.IsNotExist(err) {
 			return LoadedMeetingBundle{}, false, nil
 		}
-		return LoadedMeetingBundle{}, false, fmt.Errorf("read meeting bundle manifest: %w", err)
+		return LoadedMeetingBundle{}, false, fmt.Errorf("read meeting bundle manifest %s: %w", manifestPath, err)
 	}
 
 	var manifest MeetingBundleManifest
 	if err := json.Unmarshal(raw, &manifest); err != nil {
-		return LoadedMeetingBundle{}, false, fmt.Errorf("parse meeting bundle manifest: %w", err)
+		return LoadedMeetingBundle{}, false, fmt.Errorf("parse meeting bundle manifest %s: %w", manifestPath, err)
 	}
 	if !strings.EqualFold(manifest.Kind, "meeting") {
 		return LoadedMeetingBundle{}, false, nil
@@ -242,7 +242,7 @@ func writeMeetingManifest(bundle MeetingBundle, meta MeetingBundleManifest) erro
 		return fmt.Errorf("marshal meeting manifest: %w", err)
 	}
 	body = append(body, '\n')
-	if err := os.WriteFile(bundle.ManifestPath, body, 0o644); err != nil {
+	if err := writeFileAtomic(bundle.ManifestPath, body, 0o644); err != nil {
 		return fmt.Errorf("write meeting manifest: %w", err)
 	}
 	return nil

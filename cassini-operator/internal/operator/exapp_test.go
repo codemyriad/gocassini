@@ -3,6 +3,8 @@ package operator
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -96,6 +98,34 @@ func TestLoadExAppConfigAppPortAloneUsesDefaultHost(t *testing.T) {
 	}
 }
 
+func TestExAppDataPathDefault(t *testing.T) {
+	const (
+		persist  = "/nc_app_gocassini_data"
+		fallback = "/repo/cassini-operator/runtime/jobs.sqlite3"
+	)
+	cases := []struct {
+		name        string
+		persistRoot string
+		envValue    string
+		want        string
+	}{
+		{"no persist, no env, fallback wins", "", "", fallback},
+		{"no persist, env wins", "", "/data/jobs.sqlite3", "/data/jobs.sqlite3"},
+		{"persist, env unset, redirected", persist, "", persist + "/operator/jobs.sqlite3"},
+		{"persist, env at baked image default, redirected", persist, imageDefaultDBPath, persist + "/operator/jobs.sqlite3"},
+		{"persist, explicit env override wins", persist, "/mnt/big-disk/jobs.sqlite3", "/mnt/big-disk/jobs.sqlite3"},
+		{"persist with trailing slash, redirected", persist + "/", "", persist + "/operator/jobs.sqlite3"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := exAppDataPathDefault(tc.persistRoot, tc.envValue, imageDefaultDBPath, "operator/jobs.sqlite3", fallback)
+			if got != tc.want {
+				t.Fatalf("exAppDataPathDefault() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestApplyToBindAddrPreservesExistingWhenNoExAppEnv(t *testing.T) {
 	// REGRESSION: existing -bind flag / CASSINI_OPERATOR_BIND_ADDR still wins
 	// when APP_HOST/APP_PORT are unset.
@@ -109,6 +139,343 @@ func TestApplyToBindAddrOverridesWhenExAppEnvSet(t *testing.T) {
 	cfg := ExAppConfig{BindAddr: "0.0.0.0:8080"}
 	if got := cfg.applyToBindAddr("0.0.0.0:4000"); got != "0.0.0.0:8080" {
 		t.Fatalf("APP_PORT did not win: got %q", got)
+	}
+}
+
+// --- Init progress reporter ---
+
+func TestInitProgressReporterPutsToExAppStatus(t *testing.T) {
+	var gotMethod, gotPath, gotBody, gotAuth, gotAppID, gotAppVersion, gotOCS string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotBody = string(body)
+		gotAuth = r.Header.Get("AUTHORIZATION-APP-API")
+		gotAppID = r.Header.Get("EX-APP-ID")
+		gotAppVersion = r.Header.Get("EX-APP-VERSION")
+		gotOCS = r.Header.Get("OCS-APIRequest")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := ExAppConfig{
+		NextcloudURL: srv.URL + "/", // trailing slash must be normalized away
+		AppID:        "gocassini",
+		AppVersion:   "0.1.0",
+		AppSecret:    "shh",
+	}
+	reporter := cfg.initProgressReporter(log.New(&bytes.Buffer{}, "", 0))
+	if reporter == nil {
+		t.Fatal("expected reporter when NEXTCLOUD_URL, APP_SECRET, and APP_ID are set")
+	}
+	reporter()
+
+	if gotMethod != http.MethodPut {
+		t.Fatalf("method = %q, want PUT", gotMethod)
+	}
+	// AppAPI 3.0.0 deprecated /ocs/v1.php/apps/app_api/apps/status/{appId};
+	// the replacement resolves the app from the EX-APP-ID header instead of
+	// a path segment.
+	if want := "/ocs/v2.php/apps/app_api/ex-app/status"; gotPath != want {
+		t.Fatalf("path = %q, want %q", gotPath, want)
+	}
+	if want := `{"progress":100,"error":""}`; gotBody != want {
+		t.Fatalf("body = %q, want %q", gotBody, want)
+	}
+	if wantAuth := base64.StdEncoding.EncodeToString([]byte(":shh")); gotAuth != wantAuth {
+		t.Fatalf("AUTHORIZATION-APP-API = %q, want %q", gotAuth, wantAuth)
+	}
+	if gotAppID != "gocassini" {
+		t.Fatalf("EX-APP-ID = %q, want gocassini", gotAppID)
+	}
+	if gotAppVersion != "0.1.0" {
+		t.Fatalf("EX-APP-VERSION = %q, want 0.1.0", gotAppVersion)
+	}
+	if gotOCS != "true" {
+		t.Fatalf("OCS-APIRequest = %q, want true", gotOCS)
+	}
+}
+
+func TestInitProgressReporterNilWhenUnconfigured(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  ExAppConfig
+	}{
+		{"no nextcloud url", ExAppConfig{AppID: "gocassini", AppSecret: "shh"}},
+		{"no secret", ExAppConfig{NextcloudURL: "http://nc.local", AppID: "gocassini"}},
+		{"no app id", ExAppConfig{NextcloudURL: "http://nc.local", AppSecret: "shh"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.cfg.initProgressReporter(log.New(&bytes.Buffer{}, "", 0)) != nil {
+				t.Fatal("expected nil reporter")
+			}
+		})
+	}
+}
+
+// --- ExApp UI registrar (Nextcloud navigation entries) ---
+
+type recordedOCSCall struct {
+	Method string
+	Path   string
+	Body   map[string]any
+	Auth   string
+	AppID  string
+	OCS    string
+}
+
+func TestUIRegistrarRegistersTopMenuEntriesAndScripts(t *testing.T) {
+	var calls []recordedOCSCall
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		calls = append(calls, recordedOCSCall{
+			Method: r.Method,
+			Path:   r.URL.Path,
+			Body:   body,
+			Auth:   r.Header.Get("AUTHORIZATION-APP-API"),
+			AppID:  r.Header.Get("EX-APP-ID"),
+			OCS:    r.Header.Get("OCS-APIRequest"),
+		})
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	cfg := ExAppConfig{
+		NextcloudURL: srv.URL + "/", // trailing slash must be normalized away
+		AppID:        "gocassini",
+		AppVersion:   "0.1.0",
+		AppSecret:    "shh",
+	}
+	registrar := cfg.uiRegistrar(log.New(&bytes.Buffer{}, "", 0))
+	if registrar == nil {
+		t.Fatal("expected registrar when NEXTCLOUD_URL, APP_SECRET, and APP_ID are set")
+	}
+	registrar()
+
+	// 2 top-menu + 2 script: both the viewer (D-381) and the control-panel
+	// (D-382) mount their SPA directly on the embedded page from a self-mounting
+	// IIFE, so each registers a ui/script. No ui/style is registered — D-383
+	// injects the stylesheet into the SPA's shadow root instead of a global link.
+	if len(calls) != 4 {
+		t.Fatalf("got %d OCS calls, want 4 (2 top-menu + 2 script): %+v", len(calls), calls)
+	}
+	wantAuth := base64.StdEncoding.EncodeToString([]byte(":shh"))
+	for i, c := range calls {
+		if c.Method != http.MethodPost {
+			t.Errorf("call %d: method = %q, want POST", i, c.Method)
+		}
+		if c.Auth != wantAuth {
+			t.Errorf("call %d: AUTHORIZATION-APP-API = %q, want %q", i, c.Auth, wantAuth)
+		}
+		if c.AppID != "gocassini" {
+			t.Errorf("call %d: EX-APP-ID = %q, want gocassini", i, c.AppID)
+		}
+		if c.OCS != "true" {
+			t.Errorf("call %d: OCS-APIRequest = %q, want true", i, c.OCS)
+		}
+	}
+
+	// uiRegistrar emits per-entry calls in order — for each entry the top-menu,
+	// then script — so the call sequence is:
+	//   [0] viewer        top-menu
+	//   [1] viewer        script
+	//   [2] control-panel top-menu
+	//   [3] control-panel script
+	assertTopMenu := func(idx int, name string, adminRequired float64) {
+		c := calls[idx]
+		if c.Path != "/ocs/v2.php/apps/app_api/api/v1/ui/top-menu" {
+			t.Fatalf("call %d path = %q, want the ui/top-menu OCS route", idx, c.Path)
+		}
+		if c.Body["name"] != name {
+			t.Errorf("top-menu %q: name = %v", name, c.Body["name"])
+		}
+		if c.Body["adminRequired"] != adminRequired {
+			t.Errorf("top-menu %q: adminRequired = %v, want %v", name, c.Body["adminRequired"], adminRequired)
+		}
+		if c.Body["icon"] != "img/app.svg" {
+			t.Errorf("top-menu %q: icon = %v, want img/app.svg", name, c.Body["icon"])
+		}
+		if disp, _ := c.Body["displayName"].(string); disp == "" {
+			t.Errorf("top-menu %q: displayName missing", name)
+		}
+	}
+	assertScript := func(idx int, name string) {
+		s := calls[idx]
+		if s.Path != "/ocs/v2.php/apps/app_api/api/v1/ui/script" {
+			t.Fatalf("call %d path = %q, want the ui/script OCS route", idx, s.Path)
+		}
+		if s.Body["type"] != "top_menu" {
+			t.Errorf("script %q: type = %v, want top_menu", name, s.Body["type"])
+		}
+		if s.Body["name"] != name {
+			t.Errorf("script %q: name = %v", name, s.Body["name"])
+		}
+		// Path is relative to the ExApp root, ".js" appended by Nextcloud.
+		if wantPath := "ui/" + name; s.Body["path"] != wantPath {
+			t.Errorf("script %q: path = %v, want %q", name, s.Body["path"], wantPath)
+		}
+	}
+
+	assertTopMenu(0, "viewer", 0)
+	assertScript(1, "viewer")
+
+	assertTopMenu(2, "control-panel", 1)
+	assertScript(3, "control-panel")
+}
+
+func TestUIRegistrarNilWhenUnconfigured(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  ExAppConfig
+	}{
+		{"no nextcloud url", ExAppConfig{AppID: "gocassini", AppSecret: "shh"}},
+		{"no secret", ExAppConfig{NextcloudURL: "http://nc.local", AppID: "gocassini"}},
+		{"no app id", ExAppConfig{NextcloudURL: "http://nc.local", AppSecret: "shh"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.cfg.uiRegistrar(log.New(&bytes.Buffer{}, "", 0)) != nil {
+				t.Fatal("expected nil registrar")
+			}
+		})
+	}
+}
+
+func TestUIRegistrarLogsErrorOnOCSFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"ocs":{"meta":{"message":"Top Menu entry could not be registered"}}}`, http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	var logBuf bytes.Buffer
+	cfg := ExAppConfig{NextcloudURL: srv.URL, AppID: "gocassini", AppVersion: "0.1.0", AppSecret: "shh"}
+	cfg.uiRegistrar(log.New(&logBuf, "", 0))()
+
+	if !strings.Contains(logBuf.String(), "ERROR: exapp ui") {
+		t.Fatalf("log output %q should contain an exapp ui ERROR line", logBuf.String())
+	}
+}
+
+// The asset paths sent to AppAPI must be served by the operator itself: AppAPI
+// rewrites them to proxy fetches of /ui/<entry>.{js,css}. This guards the
+// registrar JSON and the asset routes against drifting apart.
+//
+// D-381 + D-382: BOTH the viewer and control-panel entries now serve their
+// embedded build (a self-mounting IIFE + stylesheet from <Dist>/embedded/),
+// NOT an iframe bootstrap.
+func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
+	viewerDist := t.TempDir()
+	controlPanelDist := t.TempDir()
+	// Stand in for the baked-in embedded builds. The marker strings are what a
+	// real embedded.ts compiles down to references of (it mounts into an #app
+	// under #content) — assert the served body is the embedded bundle, not an
+	// iframe bootstrap.
+	writeFile(t, filepath.Join(viewerDist, "embedded", "embedded.js"),
+		`(function(){/* embedded viewer */ var app=document.getElementById("app"); /* mount #app */})();`)
+	writeFile(t, filepath.Join(viewerDist, "embedded", "embedded.css"),
+		`#app{display:block}`)
+	writeFile(t, filepath.Join(controlPanelDist, "embedded", "embedded.js"),
+		`(function(){/* embedded control-panel */ var app=document.getElementById("app"); /* mount #app */})();`)
+	writeFile(t, filepath.Join(controlPanelDist, "embedded", "embedded.css"),
+		`#app{display:block}`)
+
+	root := http.NewServeMux()
+	ExAppConfig{ViewerDist: viewerDist, ControlPanelDist: controlPanelDist}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
+
+	// assertEmbeddedAsset checks an embedded JS/CSS route serves the on-disk
+	// bundle (right content type, references #app, never an iframe bootstrap).
+	assertEmbeddedAsset := func(path, wantCT string, wantAppMarker bool) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		root.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s: got %d, want 200", path, w.Code)
+		}
+		if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, wantCT) {
+			t.Fatalf("GET %s: Content-Type %q does not include %q", path, ct, wantCT)
+		}
+		body := w.Body.String()
+		if strings.Contains(body, "iframe") {
+			t.Fatalf("GET %s: must serve the embedded IIFE, not an iframe bootstrap", path)
+		}
+		if wantAppMarker && !strings.Contains(body, "#app") {
+			t.Fatalf("GET %s: body does not reference the embedded mount target (#app): %q", path, body)
+		}
+	}
+
+	// --- viewer: embedded IIFE + CSS, served from disk, NOT an iframe ---
+	assertEmbeddedAsset("/ui/viewer.js", "javascript", true)
+	assertEmbeddedAsset("/ui/viewer.css", "css", false)
+
+	// --- control-panel: embedded IIFE + CSS, served from disk, NOT an iframe ---
+	assertEmbeddedAsset("/ui/control-panel.js", "javascript", true)
+	assertEmbeddedAsset("/ui/control-panel.css", "css", false)
+
+	// --- every entry's icon must resolve ---
+	for _, entry := range topMenuEntries {
+		ri := httptest.NewRequest(http.MethodGet, "/"+entry.Icon, nil)
+		wi := httptest.NewRecorder()
+		root.ServeHTTP(wi, ri)
+		if wi.Code != http.StatusOK {
+			t.Fatalf("GET /%s: got %d, want 200", entry.Icon, wi.Code)
+		}
+		if ct := wi.Header().Get("Content-Type"); !strings.Contains(ct, "svg") {
+			t.Fatalf("GET /%s: Content-Type %q does not include svg", entry.Icon, ct)
+		}
+	}
+}
+
+// When CASSINI_VIEWER_DIST / CASSINI_CONTROL_PANEL_DIST is unset (or the
+// embedded build is missing), the ui asset routes degrade to 503 rather than
+// 404/200-empty, mirroring the SPA handler's "assets not bundled" behavior.
+func TestUIEmbeddedAssetUnavailableWithoutDist(t *testing.T) {
+	root := http.NewServeMux()
+	ExAppConfig{}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
+
+	for _, path := range []string{
+		"/ui/viewer.js", "/ui/viewer.css",
+		"/ui/control-panel.js", "/ui/control-panel.css",
+	} {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		root.ServeHTTP(w, r)
+		if w.Code != http.StatusServiceUnavailable {
+			t.Fatalf("GET %s without dist: got %d, want 503", path, w.Code)
+		}
+	}
+}
+
+func TestUIAssetHandlerUnknownPathAndMethod(t *testing.T) {
+	root := http.NewServeMux()
+	ExAppConfig{}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
+
+	r := httptest.NewRequest(http.MethodGet, "/ui/other.js", nil)
+	w := httptest.NewRecorder()
+	root.ServeHTTP(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("GET /ui/other.js: got %d, want 404", w.Code)
+	}
+
+	rp := httptest.NewRequest(http.MethodPost, "/ui/viewer.js", nil)
+	wp := httptest.NewRecorder()
+	root.ServeHTTP(wp, rp)
+	if wp.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /ui/viewer.js: got %d, want 405", wp.Code)
+	}
+
+	rh := httptest.NewRequest(http.MethodHead, "/img/app.svg", nil)
+	wh := httptest.NewRecorder()
+	root.ServeHTTP(wh, rh)
+	if wh.Code != http.StatusOK {
+		t.Fatalf("HEAD /img/app.svg: got %d, want 200", wh.Code)
+	}
+	if wh.Body.Len() != 0 {
+		t.Fatalf("HEAD /img/app.svg: body should be empty, got %d bytes", wh.Body.Len())
 	}
 }
 

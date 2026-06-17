@@ -2,6 +2,7 @@ package operator
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -35,6 +36,9 @@ import (
 //     SPA, and the published meeting archive from on-disk paths set via
 //     CASSINI_CONTROL_PANEL_DIST / CASSINI_VIEWER_DIST / the operator's
 //     SiteRoot.
+//   - When AppAPI's persistent volume is mounted (APP_PERSISTENT_STORAGE),
+//     data paths left unset or still at their baked image defaults are
+//     redirected under it (see exAppDataPathDefault).
 //
 // Routing shape inside the ExApp container:
 //
@@ -44,26 +48,120 @@ import (
 //   ├── /control-panel, /control-panel/*   admin SPA static (ADMIN per manifest)
 //   ├── /viewer, /viewer/*                 viewer SPA static  (USER per manifest)
 //   ├── /published/*                       site archive       (USER per manifest)
+//   ├── /ui/viewer.js, /ui/viewer.css       embedded viewer build (USER per manifest)
+//   ├── /ui/control-panel.js, /ui/control-panel.css  embedded control-panel build (ADMIN per manifest)
+//   ├── /img/app.svg                        navigation icon    (USER per manifest)
 //   └── <BasePath>/jobs, /jobs/, /events   operator JSON API  (ADMIN per manifest)
 //
 // When APP_SECRET is unset the middleware is a no-op pass-through, which is
 // what compose.yml expects for local dev.
 
 const (
-	envAppHost            = "APP_HOST"
-	envAppPort            = "APP_PORT"
-	envAppID              = "APP_ID"
-	envAppVersion         = "APP_VERSION"
-	envAppSecret          = "APP_SECRET"
-	envAppAPIRequired     = "CASSINI_APPAPI_REQUIRED"
-	envControlPanelDist   = "CASSINI_CONTROL_PANEL_DIST"
-	envViewerDist         = "CASSINI_VIEWER_DIST"
-	envNextcloudURL       = "NEXTCLOUD_URL"
-	defaultExAppBindHost  = "0.0.0.0"
-	defaultExAppBindPort  = "8080"
-	controlPanelURLPrefix = "/control-panel"
-	viewerURLPrefix       = "/viewer"
-	publishedURLPrefix    = "/published"
+	envAppHost              = "APP_HOST"
+	envAppPort              = "APP_PORT"
+	envAppID                = "APP_ID"
+	envAppVersion           = "APP_VERSION"
+	envAppSecret            = "APP_SECRET"
+	envAppPersistentStorage = "APP_PERSISTENT_STORAGE"
+	envAppAPIRequired       = "CASSINI_APPAPI_REQUIRED"
+	envControlPanelDist     = "CASSINI_CONTROL_PANEL_DIST"
+	envViewerDist           = "CASSINI_VIEWER_DIST"
+	envNextcloudURL         = "NEXTCLOUD_URL"
+	defaultExAppBindHost    = "0.0.0.0"
+	defaultExAppBindPort    = "8080"
+	controlPanelURLPrefix   = "/control-panel"
+	viewerURLPrefix         = "/viewer"
+	publishedURLPrefix      = "/published"
+)
+
+// ExApp UI (Nextcloud navigation) wiring. AppAPI renders a top-menu entry for
+// every item an ExApp registers via POST /ocs/v2.php/apps/app_api/api/v1/ui/
+// top-menu; clicking it opens AppAPI's embedded page (/apps/app_api/embedded/
+// <app-id>/<entry>), a bare <div id="content"> plus the scripts registered for
+// that entry via .../api/v1/ui/script. Both the scripts and the entry icon are
+// fetched by the browser THROUGH the AppAPI proxy, so each path served below
+// must also be declared in appinfo/info.xml <routes>.
+const (
+	ocsUITopMenuPath = "/ocs/v2.php/apps/app_api/api/v1/ui/top-menu"
+	ocsUIScriptPath  = "/ocs/v2.php/apps/app_api/api/v1/ui/script"
+	uiAssetURLPrefix = "/ui"
+	navIconURLPath   = "/img/app.svg"
+	// Filenames of the embedded builds (vite.embedded.config.ts in both
+	// cassini-viewer and cassini-control-panel) under <DIST>/embedded/, served
+	// at /ui/viewer.{js,css} (from CASSINI_VIEWER_DIST) and
+	// /ui/control-panel.{js,css} (from CASSINI_CONTROL_PANEL_DIST).
+	embeddedSubdir  = "embedded"
+	embeddedJSFile  = "embedded.js"
+	embeddedCSSFile = "embedded.css"
+)
+
+// Embedded UI assets. app.svg mirrors the repo-root img/app.svg (go:embed
+// cannot reach outside the module). Neither top-menu entry uses an iframe
+// bootstrap any more: both the viewer (D-381) and the control panel (D-382)
+// ship a self-mounting IIFE (the embedded builds), served at /ui/<entry>.js and
+// registered as that entry's ui/script. They run DIRECTLY on AppAPI's nonce'd
+// embedded page rather than inside a frame, because AppAPI's strict
+// default-src 'none' CSP blocks an iframe of the proxied SPA HTML (which is what
+// left the panel blank before).
+//
+// The stylesheet is served at /ui/<entry>.css but is NOT registered as a global
+// ui/style: embedded.ts fetches it into the SPA's own shadow root (D-383), so
+// Tailwind/daisyUI stay scoped to the SPA and do not bleed onto Nextcloud chrome
+// (or inherit from it). The /ui/<entry>.css route stays in appinfo/info.xml so
+// the shadow stylesheet link is reachable through the proxy.
+var (
+	//go:embed exappassets/app.svg
+	navIconSVG []byte
+)
+
+// uiTopMenuRegistration is the JSON body of AppAPI's OCSUi#registerExAppMenuEntry.
+type uiTopMenuRegistration struct {
+	Name          string `json:"name"`
+	DisplayName   string `json:"displayName"`
+	Icon          string `json:"icon"`
+	AdminRequired int    `json:"adminRequired"`
+}
+
+// uiScriptRegistration is the JSON body of AppAPI's OCSUi#setExAppScript.
+// Path is relative to the ExApp root, without the ".js" suffix — Nextcloud
+// appends it when loading the script on the embedded page.
+type uiScriptRegistration struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+// topMenuEntries declares the navigation entries uiRegistrar registers.
+// Each entry Name doubles as the URL prefix the entry's asset lives under;
+// both entries now mount their SPA directly on the AppAPI embedded page from a
+// self-mounting IIFE + stylesheet (their embedded builds), NOT an iframe:
+//   - viewer: /ui/viewer.{js,css} is the embedded viewer build (D-381).
+//   - control-panel: /ui/control-panel.{js,css} is the embedded control-panel
+//     build (D-382). It does NOT iframe <proxy base>/control-panel/.
+var topMenuEntries = []uiTopMenuRegistration{
+	{
+		Name:          strings.TrimPrefix(viewerURLPrefix, "/"),
+		DisplayName:   "Cassini",
+		Icon:          strings.TrimPrefix(navIconURLPath, "/"),
+		AdminRequired: 0,
+	},
+	{
+		Name:          strings.TrimPrefix(controlPanelURLPrefix, "/"),
+		DisplayName:   "Cassini Admin",
+		Icon:          strings.TrimPrefix(navIconURLPath, "/"),
+		AdminRequired: 1,
+	},
+}
+
+// Data paths baked as ENV defaults in deployment/Dockerfile.exapp{,.cuda}.
+// exAppDataPathDefault treats an env value equal to one of these as "not
+// explicitly configured" so it can redirect the path under the AppAPI
+// persistent volume. Keep in sync with the Dockerfiles (and with the
+// effective_data_path mirror in deployment/exapp-start.sh).
+const (
+	imageDefaultDBPath   = "/var/lib/cassini-operator/jobs.sqlite3"
+	imageDefaultWorkRoot = "/var/lib/cassini-operator/jobs"
+	imageDefaultSiteRoot = "/srv/cassini-site/published"
 )
 
 // ExAppConfig holds the AppAPI-derived runtime values resolved from env vars.
@@ -118,6 +216,35 @@ func LoadExAppConfig() (ExAppConfig, error) {
 	return cfg, nil
 }
 
+// persistentStorageRoot returns the mount path of the volume AppAPI creates
+// for every docker-deployed ExApp (APP_PERSISTENT_STORAGE, e.g.
+// /nc_app_gocassini_data — see app_api's DockerActions::buildDefaultExAppVolume
+// and buildDeployEnvs). Empty outside an AppAPI docker deploy.
+func persistentStorageRoot() string {
+	return strings.TrimSpace(os.Getenv(envAppPersistentStorage))
+}
+
+// exAppDataPathDefault resolves the default for one of the operator's data
+// paths (job DB, work root, site root). AppAPI's docker deploy mounts exactly
+// one volume — the APP_PERSISTENT_STORAGE path — so when that volume is
+// present, any path left unset or still at its baked image default is
+// redirected under it; otherwise the data would land on container overlayfs
+// and be destroyed on every app update or recreate. Precedence:
+//
+//  1. an explicit env override (any value other than the baked image default)
+//  2. <persistRoot>/<persistRel> when APP_PERSISTENT_STORAGE is set
+//  3. the baked image default, when set in env
+//  4. fallback (the repo-root derived dev default)
+func exAppDataPathDefault(persistRoot, envValue, imageDefault, persistRel, fallback string) string {
+	if persistRoot != "" && (envValue == "" || envValue == imageDefault) {
+		return filepath.Join(persistRoot, persistRel)
+	}
+	if envValue != "" {
+		return envValue
+	}
+	return fallback
+}
+
 func parseBoolEnv(name string) (bool, error) {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
@@ -151,8 +278,17 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 		Store:                NewFileLifecycleStore(filepath.Join(stateDir, "app-state.json")),
 		Logger:               logger,
 		InitProgressReporter: c.initProgressReporter(logger),
+		UIRegistrar:          c.uiRegistrar(logger),
 	}
 	lifecycle.Register(root)
+
+	// ExApp UI assets referenced by the top-menu registration (uiRegistrar):
+	// AppAPI's embedded page and navigation bar fetch these through the proxy.
+	// Always mounted — the iframe bootstrap + icon are embedded in the binary
+	// and harmless outside an AppAPI deploy; the viewer JS/CSS come from the
+	// on-disk embedded build when CASSINI_VIEWER_DIST is set.
+	root.Handle(uiAssetURLPrefix+"/", c.uiAssetHandler(logger))
+	root.Handle(navIconURLPath, embeddedAssetHandler(navIconSVG, "image/svg+xml"))
 
 	if c.ControlPanelDist != "" {
 		root.Handle(controlPanelURLPrefix, spaHandler(c.ControlPanelDist, controlPanelURLPrefix, logger))
@@ -181,8 +317,13 @@ func (c ExAppConfig) initProgressReporter(logger *log.Logger) func() {
 		return nil
 	}
 	nextcloudURL := strings.TrimRight(c.NextcloudURL, "/")
-	statusURL := nextcloudURL + "/ocs/v1.php/apps/app_api/apps/status/" + c.AppID
-	auth := base64.StdEncoding.EncodeToString([]byte(":" + c.AppSecret))
+	// PUT /ocs/v2.php/apps/app_api/ex-app/status replaced the per-app
+	// /ocs/v1.php/.../apps/status/{appId} route, deprecated in AppAPI 3.0.0
+	// (upstream now calls it setAppInitProgressDeprecated). AppAPI resolves
+	// the app from the EX-APP-ID header we already send. v2 also returns real
+	// HTTP status codes where v1 wrapped failures in HTTP 200, so the >=300
+	// check below actually catches failures.
+	statusURL := nextcloudURL + "/ocs/v2.php/apps/app_api/ex-app/status"
 	client := &http.Client{Timeout: 10 * time.Second}
 	return func() {
 		body := bytes.NewBufferString(`{"progress":100,"error":""}`)
@@ -191,24 +332,220 @@ func (c ExAppConfig) initProgressReporter(logger *log.Logger) func() {
 			logger.Printf("init progress: build request: %v", err)
 			return
 		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Accept", "application/json")
-		req.Header.Set("OCS-APIRequest", "true")
-		req.Header.Set("AUTHORIZATION-APP-API", auth)
-		req.Header.Set("EX-APP-ID", c.AppID)
-		req.Header.Set("EX-APP-VERSION", c.AppVersion)
+		c.setAppAPIOCSHeaders(req)
 		resp, err := client.Do(req)
 		if err != nil {
-			logger.Printf("init progress: PUT %s: %v", statusURL, err)
+			// Loud on purpose: until this PUT lands, `app_api:app:register
+			// --wait-finish` polls forever and the install appears hung.
+			logger.Printf("ERROR: init progress: PUT %s: %v — registration --wait-finish will hang until its timeout", statusURL, err)
 			return
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode >= 300 {
-			logger.Printf("init progress: PUT %s -> %d", statusURL, resp.StatusCode)
+			snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			logger.Printf("ERROR: init progress: PUT %s -> %d: %s — registration --wait-finish will hang until its timeout", statusURL, resp.StatusCode, strings.TrimSpace(string(snippet)))
 			return
 		}
 		logger.Printf("init progress: reported progress=100 to %s", statusURL)
 	}
+}
+
+// setAppAPIOCSHeaders sets the headers AppAPI's #[AppAPIAuth] attribute
+// validates on OCS calls from an ExApp back into Nextcloud, plus the JSON
+// content negotiation every such call uses.
+func (c ExAppConfig) setAppAPIOCSHeaders(req *http.Request) {
+	auth := base64.StdEncoding.EncodeToString([]byte(":" + c.AppSecret))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("OCS-APIRequest", "true")
+	req.Header.Set("AUTHORIZATION-APP-API", auth)
+	req.Header.Set("EX-APP-ID", c.AppID)
+	req.Header.Set("EX-APP-VERSION", c.AppVersion)
+}
+
+// uiRegistrar returns a callback that registers the Nextcloud navigation
+// entries (topMenuEntries) and their bootstrap scripts via AppAPI's ExApp UI
+// OCS API. Both endpoints upsert (insertOrUpdate server-side), so re-running
+// on every enable is idempotent. Per AppAPI's ExApp lifecycle docs, UI
+// registration belongs in the /enabled handler; entries persist while the app
+// is disabled but AppAPI only renders them for enabled apps, so there is
+// nothing to unregister on disable.
+//
+// Returns nil when NEXTCLOUD_URL, APP_SECRET, or APP_ID is unset — same
+// dev/local-e2e escape hatch as initProgressReporter.
+func (c ExAppConfig) uiRegistrar(logger *log.Logger) func() {
+	if c.NextcloudURL == "" || c.AppSecret == "" || c.AppID == "" {
+		return nil
+	}
+	nextcloudURL := strings.TrimRight(c.NextcloudURL, "/")
+	type ocsCall struct {
+		what    string
+		url     string
+		payload any
+	}
+	var calls []ocsCall
+	for _, entry := range topMenuEntries {
+		// Path is relative to the ExApp root WITHOUT extension; AppAPI appends
+		// ".js" (script) / ".css" (style). Both resolve to "ui/<name>", served
+		// by uiAssetHandler at /ui/<name>.js and /ui/<name>.css.
+		assetPath := strings.TrimPrefix(uiAssetURLPrefix, "/") + "/" + entry.Name
+		// Both entries mount their SPA directly on the embedded page from a
+		// self-mounting IIFE (viewer D-381, control-panel D-382), so each
+		// registers a ui/script. The stylesheet is NOT registered as a global
+		// ui/style: embedded.ts injects it into the SPA's shadow root (D-383) so
+		// it does not bleed onto Nextcloud chrome. It is still served at
+		// /ui/<entry>.css (info.xml route) for the shadow link to fetch.
+		calls = append(calls,
+			ocsCall{
+				what:    fmt.Sprintf("top-menu entry %q", entry.Name),
+				url:     nextcloudURL + ocsUITopMenuPath,
+				payload: entry,
+			},
+			ocsCall{
+				what: fmt.Sprintf("top-menu script for %q", entry.Name),
+				url:  nextcloudURL + ocsUIScriptPath,
+				payload: uiScriptRegistration{
+					Type: "top_menu",
+					Name: entry.Name,
+					Path: assetPath,
+				},
+			},
+		)
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	return func() {
+		failures := 0
+		for _, call := range calls {
+			payload, err := json.Marshal(call.payload)
+			if err != nil {
+				logger.Printf("ERROR: exapp ui: encode %s: %v", call.what, err)
+				failures++
+				continue
+			}
+			req, err := http.NewRequest(http.MethodPost, call.url, bytes.NewReader(payload))
+			if err != nil {
+				logger.Printf("ERROR: exapp ui: build request for %s: %v", call.what, err)
+				failures++
+				continue
+			}
+			c.setAppAPIOCSHeaders(req)
+			resp, err := client.Do(req)
+			if err != nil {
+				logger.Printf("ERROR: exapp ui: register %s: POST %s: %v", call.what, call.url, err)
+				failures++
+				continue
+			}
+			if resp.StatusCode >= 300 {
+				snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+				logger.Printf("ERROR: exapp ui: register %s: POST %s -> %d: %s", call.what, call.url, resp.StatusCode, strings.TrimSpace(string(snippet)))
+				failures++
+			}
+			resp.Body.Close()
+		}
+		if failures > 0 {
+			logger.Printf("ERROR: exapp ui: %d/%d registrations failed — navigation entries may be missing; disable and re-enable the app to retry", failures, len(calls))
+			return
+		}
+		logger.Printf("exapp ui: registered Nextcloud navigation entries: %q (users), %q (admins)", topMenuEntries[0].Name, topMenuEntries[1].Name)
+	}
+}
+
+// uiAssetHandler serves the ExApp UI assets AppAPI loads on the embedded page:
+//
+//   - /ui/viewer.js  + /ui/viewer.css        : the embedded viewer build
+//     (D-381), read from <ViewerDist>/embedded/.
+//   - /ui/control-panel.js + /ui/control-panel.css : the embedded control-panel
+//     build (D-382), read from <ControlPanelDist>/embedded/.
+//
+// Each is a self-mounting IIFE + its stylesheet that runs DIRECTLY on the
+// nonce'd embedded page (no iframe). Anything else under /ui/ is a 404. The
+// proxy fetches these with the requesting user's access level, enforced by the
+// matching info.xml routes.
+func (c ExAppConfig) uiAssetHandler(logger *log.Logger) http.Handler {
+	viewerEntryName := strings.TrimPrefix(viewerURLPrefix, "/")
+	controlPanelEntryName := strings.TrimPrefix(controlPanelURLPrefix, "/")
+
+	viewerJSPath := uiAssetURLPrefix + "/" + viewerEntryName + ".js"
+	viewerCSSPath := uiAssetURLPrefix + "/" + viewerEntryName + ".css"
+	controlPanelJSPath := uiAssetURLPrefix + "/" + controlPanelEntryName + ".js"
+	controlPanelCSSPath := uiAssetURLPrefix + "/" + controlPanelEntryName + ".css"
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case viewerJSPath:
+			c.serveEmbeddedAsset(w, r, c.ViewerDist, envViewerDist, embeddedJSFile, "text/javascript; charset=utf-8", logger)
+		case viewerCSSPath:
+			c.serveEmbeddedAsset(w, r, c.ViewerDist, envViewerDist, embeddedCSSFile, "text/css; charset=utf-8", logger)
+		case controlPanelJSPath:
+			c.serveEmbeddedAsset(w, r, c.ControlPanelDist, envControlPanelDist, embeddedJSFile, "text/javascript; charset=utf-8", logger)
+		case controlPanelCSSPath:
+			c.serveEmbeddedAsset(w, r, c.ControlPanelDist, envControlPanelDist, embeddedCSSFile, "text/css; charset=utf-8", logger)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// serveEmbeddedAsset streams one file of an embedded build from
+// <dist>/embedded/<file>. The embedded builds are baked into the image
+// alongside their standalone dists (see deployment/Dockerfile.exapp). 503 when
+// the dist env (distEnv, e.g. CASSINI_VIEWER_DIST / CASSINI_CONTROL_PANEL_DIST)
+// is unset or the file is missing, mirroring how the SPA handler degrades when
+// assets aren't bundled.
+func (c ExAppConfig) serveEmbeddedAsset(
+	w http.ResponseWriter,
+	r *http.Request,
+	dist, distEnv, file, contentType string,
+	logger *log.Logger,
+) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if dist == "" {
+		if logger != nil {
+			logger.Printf("ui asset: %s unset; cannot serve %s", distEnv, file)
+		}
+		http.Error(w, "ui assets not bundled in this image", http.StatusServiceUnavailable)
+		return
+	}
+	full := filepath.Join(dist, embeddedSubdir, file)
+	f, err := os.Open(full)
+	if err != nil {
+		if logger != nil {
+			logger.Printf("ui asset: open %s: %v", full, err)
+		}
+		http.Error(w, "ui assets not bundled in this image", http.StatusServiceUnavailable)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		http.Error(w, "ui assets not bundled in this image", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	http.ServeContent(w, r, file, info.ModTime(), f)
+}
+
+// embeddedAssetHandler serves a single in-binary asset with the given
+// content type. GET/HEAD only.
+func embeddedAssetHandler(content []byte, contentType string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_, _ = w.Write(content)
+	})
 }
 
 // heartbeatHandler answers AppAPI's reachability probe with 200 {"status":"ok"}.
@@ -368,4 +705,3 @@ func filesystemType(path string) (string, error) {
 	}
 	return bestType, nil
 }
-

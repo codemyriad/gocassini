@@ -12,12 +12,13 @@ import (
 )
 
 type Reader struct {
-	file   *os.File
-	buffer *bufio.Reader
-	header StreamHeader
-	flags  uint16
-	closed bool
-	useCRC bool
+	file      *os.File
+	buffer    *bufio.Reader
+	header    StreamHeader
+	flags     uint16
+	closed    bool
+	useCRC    bool
+	truncated bool
 }
 
 type Header struct {
@@ -94,15 +95,24 @@ func (r *Reader) Next() (Record, error) {
 		if errors.Is(err, io.EOF) {
 			return Record{}, io.EOF
 		}
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			return Record{}, r.markTruncatedTail()
+		}
 		return Record{}, fmt.Errorf("read recv timestamp: %w", err)
 	}
 
 	k, err := r.buffer.ReadByte()
 	if err != nil {
+		if isTruncatedTail(err) {
+			return Record{}, r.markTruncatedTail()
+		}
 		return Record{}, fmt.Errorf("read record kind: %w", err)
 	}
 	var n uint32
 	if err := binary.Read(r.buffer, binary.BigEndian, &n); err != nil {
+		if isTruncatedTail(err) {
+			return Record{}, r.markTruncatedTail()
+		}
 		return Record{}, fmt.Errorf("read record length: %w", err)
 	}
 	if n == 0 {
@@ -110,12 +120,18 @@ func (r *Reader) Next() (Record, error) {
 	}
 	wire := make([]byte, n)
 	if _, err := io.ReadFull(r.buffer, wire); err != nil {
+		if isTruncatedTail(err) {
+			return Record{}, r.markTruncatedTail()
+		}
 		return Record{}, fmt.Errorf("read record bytes: %w", err)
 	}
 
 	if r.useCRC {
 		var c uint32
 		if err := binary.Read(r.buffer, binary.BigEndian, &c); err != nil {
+			if isTruncatedTail(err) {
+				return Record{}, r.markTruncatedTail()
+			}
 			return Record{}, fmt.Errorf("read crc: %w", err)
 		}
 		if crc32.ChecksumIEEE(wire) != c {
@@ -128,6 +144,29 @@ func (r *Reader) Next() (Record, error) {
 		Kind:       StreamKind(k),
 		WireBytes:  wire,
 	}, nil
+}
+
+// Truncated reports whether the log ended in a partially written final
+// record. A recorder killed mid-write (SIGKILL, OOM, crash) loses at most
+// the buffered tail of each rtplog; every complete record before it is
+// intact, so Next treats a truncated tail as end-of-stream instead of an
+// error to keep crashed sessions rebuildable.
+func (r *Reader) Truncated() bool {
+	return r.truncated
+}
+
+// markTruncatedTail flags the partially written final record and reports
+// clean end-of-stream to the caller.
+func (r *Reader) markTruncatedTail() error {
+	r.truncated = true
+	return io.EOF
+}
+
+// isTruncatedTail matches the short-read errors a crash-truncated final
+// record produces. io.EOF mid-record means a field is missing entirely;
+// io.ErrUnexpectedEOF means a field was cut short.
+func isTruncatedTail(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func (r *Reader) Close() error {

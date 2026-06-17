@@ -1,0 +1,9 @@
+self-hosted-runner:
+  # Custom labels of the self-hosted runners, declared so actionlint can
+  # validate runs-on lists instead of flagging them as unknown:
+  #   gpu    — the GPU runner (transcribe-smoke-cuda, e2e-talk-record-cuda,
+  #            deploy-preview's deploy-gpu)
+  #   george — the deploy-preview host
+  labels:
+    - gpu
+    - george

@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -37,6 +38,16 @@ WHERE job_id = ? AND attempt_number = ?`, "publish", "queued", attemptArtifactMe
 	return nil
 }
 
+// errPublishNotClaimable marks a publish task whose jobs row is no longer
+// publish/queued — a duplicate queue delivery (direct enqueue plus a
+// requeue-dispatcher re-scan) or a state change since queueing. The publish
+// worker treats it as a skip, never a re-run (D-367).
+var errPublishNotClaimable = errors.New("job is not publish/queued (already claimed by another delivery or state changed)")
+
+// MarkPublishRunning claims a job for the publish worker: only a
+// publish/queued row transitions to running. The conditional UPDATE is the
+// claim — SQLite serializes it, so duplicate deliveries surface as
+// errPublishNotClaimable instead of running publish twice (D-367).
 func (s *Store) MarkPublishRunning(ctx context.Context, id, startedAt string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -44,12 +55,19 @@ func (s *Store) MarkPublishRunning(ctx context.Context, id, startedAt string) er
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	_, err = tx.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 UPDATE jobs
-SET stage = ?, state = ?, updated_at = ?, publish_started_at = ?
-WHERE id = ?`, "publish", "running", startedAt, startedAt, id)
+SET state = ?, updated_at = ?, publish_started_at = ?
+WHERE id = ? AND stage = ? AND state = ?`, "running", startedAt, startedAt, id, "publish", "queued")
 	if err != nil {
 		return fmt.Errorf("update publish running: %w", err)
+	}
+	claimed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("publish running rows affected: %w", err)
+	}
+	if claimed == 0 {
+		return errPublishNotClaimable
 	}
 	attemptNumber, err := currentAttemptNumberTx(ctx, tx, id)
 	if err != nil {
@@ -66,6 +84,34 @@ WHERE job_id = ? AND attempt_number = ?`, "publish", "running", startedAt, start
 	}
 	s.emitStateChange(ctx, "job.updated", id, attemptNumber)
 	return nil
+}
+
+// ListQueuedPublishTasks returns the durable publish backlog (publish/queued
+// rows) for the requeue dispatcher: tasks the channel dropped (full queue) or
+// never saw (operator restart) (D-367).
+func (s *Store) ListQueuedPublishTasks(ctx context.Context) ([]publishTask, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, current_attempt_number
+FROM jobs
+WHERE stage = 'publish' AND state = 'queued'
+ORDER BY publish_queued_at ASC, id ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("query queued publish jobs: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []publishTask
+	for rows.Next() {
+		var task publishTask
+		if err := rows.Scan(&task.JobID, &task.AttemptNumber); err != nil {
+			return nil, fmt.Errorf("scan queued publish job: %w", err)
+		}
+		tasks = append(tasks, task)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate queued publish jobs: %w", err)
+	}
+	return tasks, nil
 }
 
 func (s *Store) MarkPublishSucceeded(ctx context.Context, id, jobArtifactSitePath, attemptArtifactSitePath, finishedAt string) error {

@@ -82,9 +82,15 @@ WORKDIR /src/cassini-viewer
 COPY cassini-viewer/package.json cassini-viewer/package-lock.json ./
 RUN npm ci
 COPY cassini-viewer/ ./
-ENV VITE_BASE=/viewer/
-ENV VITE_PUBLISHED_BASE=/published
-RUN npm run build
+# VITE_BASE=./ keeps standalone asset URLs relative (served at /viewer/ by the
+# operator's SPA handler). The embedded build's runtime proxy base comes from
+# window.__CASSINI_VIEWER_BASE__ (captured by src/embedded.ts), so no VITE_BASE
+# / VITE_PUBLISHED_BASE bake-in is needed there. build:all emits BOTH the
+# standalone dist/ and the embedded dist/embedded/{embedded.js,embedded.css}
+# (in that order so the standalone build doesn't wipe dist/embedded); the
+# embedded assets are what the operator serves at /ui/viewer.{js,css}.
+ENV VITE_BASE=./
+RUN npm run build:all
 
 FROM node:22-bookworm AS control-panel-builder
 WORKDIR /src/cassini-control-panel
@@ -92,11 +98,19 @@ COPY cassini-control-panel/package.json cassini-control-panel/package-lock.json 
 RUN npm ci
 COPY cassini-control-panel/ ./
 # control-panel is served at /control-panel/ inside the ExApp container.
-# CASSINI_OPERATOR_BASE_PATH is set at runtime by the container; the build only needs the
-# Vite base path so asset URLs resolve under /control-panel/.
+# CASSINI_OPERATOR_BASE_PATH bakes the operator API path into the STANDALONE
+# SPA bundle; the runtime stage sets the same value as a real ENV (AppAPI
+# injects no CASSINI_* vars). VITE_BASE makes the standalone asset URLs resolve
+# under /control-panel/. build:all emits BOTH the standalone dist/ and the
+# embedded dist/embedded/{embedded.js,embedded.css} (in that order so the
+# standalone build doesn't wipe dist/embedded); the embedded assets are what the
+# operator serves at /ui/control-panel.{js,css} (D-382). The embedded build uses
+# base ./ and sets the operator base path at runtime from the captured proxy
+# base (src/embedded.ts), so VITE_BASE / CASSINI_OPERATOR_BASE_PATH don't apply
+# there.
 ENV VITE_BASE=/control-panel/
 ENV CASSINI_OPERATOR_BASE_PATH=/operator
-RUN npm run build
+RUN npm run build:all
 
 FROM debian:bookworm-slim AS frpc-fetcher
 ARG FRP_VERSION
@@ -126,6 +140,12 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /var/lib/cassini-operator
+# CASSINI_OPERATOR_{DB_PATH,WORK_ROOT,SITE_ROOT} are fallbacks for runs
+# without AppAPI (smoke tests, e2e harness, plain docker run). Under an
+# AppAPI deploy the operator treats these exact values as "not explicitly
+# configured" and redirects them under APP_PERSISTENT_STORAGE — keep them
+# in sync with the imageDefault* constants in
+# cassini-operator/internal/operator/exapp.go.
 ENV CASSINI_BIN=/usr/local/bin/cassini \
     CASSINI_LIB_DIR=/opt/cassini/lib \
     LD_LIBRARY_PATH=/opt/cassini/lib \
@@ -142,6 +162,13 @@ ENV CASSINI_BIN=/usr/local/bin/cassini \
     CASSINI_APPAPI_REQUIRED=true \
     CASSINI_STT_DEVICE=cpu \
     CASSINI_DISALLOW_MODEL_DOWNLOAD=1
+
+# AppAPI deploys inject only APP_*/HP_*/NEXTCLOUD_URL (see app_api
+# DockerActions::buildDeployEnvs) — never CASSINI_*. Bake the base path the
+# manifest route ACLs (^operator\/...) and the control-panel bundle assume,
+# or the operator falls back to BasePath "/" and every /operator/* request
+# 404s in a real install.
+ENV CASSINI_OPERATOR_BASE_PATH=/operator
 
 COPY --from=go-builder /out/cassini /usr/local/bin/cassini
 COPY --from=go-builder /out/cassini-operator /usr/local/bin/cassini-operator

@@ -7,9 +7,15 @@ on:
     tags:
       - 'v*'
   pull_request:
+    # Every path this workflow executes or builds from must be listed here —
+    # path filters are exact (no implicit globbing), so a missing entry lets
+    # a PR that edits e.g. a harness script merge green and first fail on
+    # main (happened with PR #36).
     paths:
       - 'appinfo/info.xml'
       - 'deployment/Dockerfile.exapp'
+      - 'deployment/Dockerfile.exapp.cuda'
+      - 'deployment/Dockerfile.exapp.cuda.base'
       - 'deployment/exapp-start.sh'
       - 'deployment/exapp-healthcheck.sh'
       - 'cassini-operator/**'
@@ -17,6 +23,11 @@ on:
       - 'cassini-publisher/bin/**'
       - 'cassini-viewer/**'
       - 'cassini-control-panel/**'
+      # Harness scripts, compose stack, scenarios and media fixtures are
+      # executed by the smoke/e2e jobs below.
+      - 'harness/**'
+      # Composite action every job uses to hand the built image around.
+      - '.github/actions/**'
       - '.github/workflows/publish-exapp-image.yml'
   workflow_dispatch:
 
@@ -34,17 +45,21 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE: ${{ github.repository_owner }}/gocassini
-  # The CPU image is also published as :latest-rocm so ROCm-tagged AppAPI daemons
-  # still install — real ROCm support is deferred (sherpa-onnx ships no upstream
-  # ROCm artifact). Real CUDA support lands in a follow-up PR with its own
-  # Dockerfile.exapp.cuda; until then the -cuda tag is NOT aliased so we do not
-  # advertise GPU acceleration we cannot honor.
+  # The CPU image is also aliased with these suffixes (:latest-rocm,
+  # :X.Y.Z-rocm) so ROCm-tagged AppAPI daemons still install — real ROCm
+  # support is deferred (sherpa-onnx ships no upstream ROCm artifact).
+  # -cuda tags are NOT aliases of the CPU image: they come from the
+  # dedicated CUDA build (build-image-cuda below).
   EXTRA_ALIAS_SUFFIXES: '-rocm'
 
 jobs:
   validate-manifest:
     name: Validate appinfo/info.xml
     runs-on: ubuntu-latest
+    outputs:
+      # <version> from appinfo/info.xml — the single source of truth for
+      # release image tags (:X.Y.Z, :X.Y.Z-cuda).
+      app_version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - name: Install xmllint
@@ -67,6 +82,37 @@ jobs:
             echo "they are lifecycle callbacks, not browser routes" >&2
             exit 1
           fi
+      - name: Version pin consistency check
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="$(xmllint --xpath 'string(/info/version)' appinfo/info.xml)"
+          IMAGE_TAG="$(xmllint --xpath 'string(/info/external-app/docker-install/image-tag)' appinfo/info.xml)"
+          echo "info.xml version=${VERSION} image-tag=${IMAGE_TAG}"
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "appinfo/info.xml <version> must be X.Y.Z, got: '${VERSION}'" >&2
+            exit 1
+          fi
+          # Reproducible installs (D-360): the manifest must pin the image to
+          # the release version, never a floating tag like latest — a
+          # reinstall must pull the exact build the app version was cut from.
+          if [[ "${IMAGE_TAG}" != "${VERSION}" ]]; then
+            echo "appinfo/info.xml <image-tag> (${IMAGE_TAG}) must equal <version> (${VERSION})" >&2
+            echo "run scripts/bump-exapp-version.sh <version> to bump both together" >&2
+            exit 1
+          fi
+          # A release tag must match the manifest it ships: tagging v0.2.0
+          # with info.xml still at 0.1.0 would publish image tags that
+          # contradict the app version AppAPI registers.
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF##refs/tags/}"
+            if [[ "${TAG}" != "v${VERSION}" ]]; then
+              echo "git tag ${TAG} does not match appinfo/info.xml <version> ${VERSION} (expected v${VERSION})" >&2
+              echo "run scripts/bump-exapp-version.sh before tagging a release" >&2
+              exit 1
+            fi
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
   build-image:
     name: Build ExApp image
@@ -100,7 +146,11 @@ jobs:
           case "${GITHUB_EVENT_NAME}" in
             push)
               if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-                VERSION="${GITHUB_REF##refs/tags/}"
+                # Release tags come from appinfo/info.xml <version>, not the
+                # git ref: validate-manifest guarantees the git tag is
+                # v<version> and that <image-tag> matches, so the published
+                # :X.Y.Z tag is exactly what a pinned AppAPI install pulls.
+                VERSION="${{ needs.validate-manifest.outputs.app_version }}"
                 TAGS+=("${REF}:${VERSION}" "${REF}:latest")
                 for suffix in ${EXTRA_ALIAS_SUFFIXES}; do
                   TAGS+=("${REF}:${VERSION}${suffix}")
@@ -201,14 +251,137 @@ jobs:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-smoke-exapp.sh
 
+  build-cuda-base:
+    name: Build CUDA base image (model + CUDA libs)
+    # The fat, slow-changing substrate (~2.3GB fp32 model + CUDA native libs +
+    # nvidia runtime + apt) lives in a separate image tagged by a content hash
+    # of its inputs. Build+push it only when that exact hash is absent from
+    # ghcr, so an unchanged base is never rebuilt or re-downloaded; the
+    # per-commit CUDA app build reuses it via FROM (D-375). Stays on
+    # ubuntu-latest — no GPU needed, keeps george free.
+    runs-on: ubuntu-latest
+    needs: validate-manifest
+    # Same fork-PR guard as build-image-cuda: pushing the base needs ghcr creds,
+    # and the whole CUDA chain is skipped for forks.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    outputs:
+      base_ref: ${{ steps.base.outputs.base_ref }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk on ubuntu-latest
+        run: |
+          set -euo pipefail
+          sudo rm -rf \
+            /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+            /usr/local/share/powershell /usr/share/swift
+          sudo docker image prune -af 2>&1 | tail -1 || true
+          df -h / | head -2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve base ref + check existence
+        id: base
+        # The hash covers every input that defines the base's bytes: the asset
+        # URLs (read from the base Dockerfile's ARG defaults — single source of
+        # truth), a best-effort content fingerprint of each (so an in-place
+        # overwrite of a non-versioned URL still moves the hash), the resolved
+        # nvidia base digest (catches silent upstream re-pushes), and the base
+        # Dockerfile's own bytes. No timestamps/random — fully reproducible.
+        run: |
+          set -euo pipefail
+          DF=deployment/Dockerfile.exapp.cuda.base
+          APP_DF=deployment/Dockerfile.exapp.cuda
+          # Read an ARG default from a Dockerfile, failing loudly if the line is
+          # absent or empty — a renamed ARG must not silently yield a wrong hash.
+          df_get() {
+            local v
+            v="$(grep -E "^ARG $2=" "$1" | head -1 | sed "s/^ARG $2=//")" \
+              || { echo "ARG $2 not found in $1" >&2; exit 1; }
+            test -n "$v" || { echo "ARG $2 empty in $1" >&2; exit 1; }
+            printf '%s' "$v"
+          }
+          MODEL_ID="$(df_get "$DF" CASSINI_BUNDLED_MODEL_ID)"
+          MODEL_URL="$(df_get "$DF" CASSINI_BUNDLED_MODEL_URL)"
+          SHERPA_URL="$(df_get "$DF" SHERPA_CUDA_URL)"
+          VAD_URL="$(df_get "$DF" SILERO_VAD_URL)"
+
+          # The app Dockerfile independently sets CASSINI_STT_MODEL from its own
+          # CASSINI_BUNDLED_MODEL_ID. If it drifts from the base's, the runtime
+          # points at a model dir the base never baked — a model-less image that
+          # builds green and fails at first transcribe. Enforce equality.
+          APP_MODEL_ID="$(df_get "$APP_DF" CASSINI_BUNDLED_MODEL_ID)"
+          if [ "$MODEL_ID" != "$APP_MODEL_ID" ]; then
+            echo "CASSINI_BUNDLED_MODEL_ID mismatch: base=$MODEL_ID app=$APP_MODEL_ID" >&2
+            exit 1
+          fi
+
+          # Pin the nvidia base by digest (catches silent upstream re-pushes).
+          # Retry: Docker Hub anonymous manifest reads occasionally rate-limit.
+          NV_REF="nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04"
+          NV_DIGEST=""
+          for attempt in 1 2 3; do
+            if NV_DIGEST="$(docker buildx imagetools inspect "$NV_REF" --format '{{json .Manifest.Digest}}' | tr -d '"')" \
+               && [ -n "$NV_DIGEST" ]; then
+              break
+            fi
+            echo "nvidia digest resolve attempt ${attempt} failed; retrying" >&2
+            sleep 5
+          done
+          test -n "$NV_DIGEST" || { echo "could not resolve ${NV_REF} digest" >&2; exit 1; }
+
+          fp() { curl -fsSL -I "$1" 2>/dev/null | tr -d '\r' \
+                 | awk -F': ' 'tolower($1)=="etag"||tolower($1)=="last-modified"{print $2; exit}' || true; }
+
+          BASE_HASH="$(printf '%s\n' \
+            "$MODEL_ID" "$MODEL_URL" "$(fp "$MODEL_URL")" \
+            "$SHERPA_URL" "$(fp "$SHERPA_URL")" \
+            "$VAD_URL" "$(fp "$VAD_URL")" \
+            "$NV_DIGEST" \
+            "$(sha256sum "$DF" | cut -d' ' -f1)" \
+            | sha256sum | cut -c1-16)"
+          BASE_REF="${{ env.REGISTRY }}/${{ github.repository_owner }}/gocassini-cuda-base:${BASE_HASH}"
+          echo "base_ref=${BASE_REF}" >> "$GITHUB_OUTPUT"
+          echo "Base ref: ${BASE_REF}"
+
+          if docker buildx imagetools inspect "$BASE_REF" >/dev/null 2>&1; then
+            echo "Base already present in registry — no rebuild, no re-download."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Base absent — will build and push once."
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build + push base image
+        if: steps.base.outputs.build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/Dockerfile.exapp.cuda.base
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.base.outputs.base_ref }}
+
   build-image-cuda:
     name: Build CUDA ExApp image
     # CUDA Docker builds do not touch the GPU — they're just layer assembly.
     # Running on ubuntu-latest frees the single self-hosted GPU runner for
     # jobs that actually need it (transcribe-smoke-cuda, e2e-talk-record-cuda,
-    # deploy-preview's deploy-gpu).
+    # deploy-preview's deploy-gpu). Only the thin per-commit layers build here;
+    # the fat base comes prebuilt from build-cuda-base via FROM (D-375).
     runs-on: ubuntu-latest
-    needs: validate-manifest
+    needs: [validate-manifest, build-cuda-base]
     # Fork PRs cannot push to ghcr (no credentials) and must never run
     # downstream CUDA jobs on the self-hosted GPU runner. Skip the whole
     # CUDA chain for them; same-repo PRs and pushes proceed normally.
@@ -262,7 +435,9 @@ jobs:
           case "${GITHUB_EVENT_NAME}" in
             push)
               if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-                VERSION="${GITHUB_REF##refs/tags/}"
+                # Same source of truth as the CPU build: appinfo/info.xml
+                # <version>, validated against the git tag upstream.
+                VERSION="${{ needs.validate-manifest.outputs.app_version }}"
                 TAGS+=("${REF}:${VERSION}-cuda" "${REF}:latest-cuda" "${REF}:cuda")
               else
                 BRANCH="${GITHUB_REF##refs/heads/}"
@@ -287,9 +462,12 @@ jobs:
 
       # Build + push in one step. push: true is safe for same-repo PRs
       # (job-level if: guarantees we are not running on a fork PR) and lets
-      # the downstream CUDA jobs docker-pull from ghcr instead of needing
-      # local-daemon co-location. cache scope is separate from the CPU
-      # build so layers don't cross-pollute.
+      # the downstream CUDA jobs docker-pull from ghcr. FROM the prebuilt base
+      # (D-375): only the thin per-commit layers build here; the 2.3GB model +
+      # CUDA libs come from build-cuda-base, so an unchanged base is neither
+      # re-downloaded from origin nor re-extracted. Registry cache (on ghcr)
+      # replaces the flaky type=gha export (the "error writing layer blob:
+      # not_found" seen on PR #59); PRs read the cache, only pushes write it.
       - name: Build and push CUDA image
         id: build
         uses: docker/build-push-action@v6
@@ -298,9 +476,11 @@ jobs:
           file: deployment/Dockerfile.exapp.cuda
           platforms: linux/amd64
           push: true
+          build-args: |
+            BASE_IMAGE=${{ needs.build-cuda-base.outputs.base_ref }}
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha,scope=cuda
-          cache-to: type=gha,mode=max,scope=cuda
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}-buildcache:cuda
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}-buildcache:cuda,mode=max', env.REGISTRY, env.IMAGE) || '' }}
 
   transcribe-smoke-cuda:
     name: Smoke transcription on GPU (bundled fp32 model + CUDA EP)
@@ -357,6 +537,24 @@ jobs:
           MIN_LEVENSHTEIN: "0.50"
         run: ./harness/bin/ci-e2e-v3-transcript-verify.sh
 
+      - name: Reclaim docker disk (post-job)
+        if: always()
+        # The self-hosted GPU runner accumulates multi-GB CUDA image layers
+        # across PRs; one CI-heavy day filled its disk and killed GPU jobs at
+        # image load (D-377). Only one job runs on this runner at a time, and
+        # prune -a only removes images/containers nothing references, so this
+        # is safe. A host-side hourly cron is the primary guard; this trims
+        # right after each heavy job so bursts can't outrun the cron.
+        run: |
+          docker container prune -f --filter until=2h || true
+          docker image prune -af --filter until=6h || true
+          docker builder prune -af --filter until=6h || true
+          if [ "$(df --output=pcent / | tail -1 | tr -dc 0-9)" -ge 85 ]; then
+            docker image prune -af || true
+            docker builder prune -af || true
+          fi
+          df -h / | tail -1
+
   transcribe-smoke:
     name: Smoke transcription (bundled model, no download)
     runs-on: ubuntu-latest
@@ -386,6 +584,31 @@ jobs:
           MIN_LEVENSHTEIN: "0.50"
         run: ./harness/bin/ci-e2e-v3-transcript-verify.sh
 
+      - name: Materialize short-clip fixture (selective LFS pull)
+        # The short-clip regression below slices a single LFS-vendored bot
+        # track (mira.ogg, ~630 KB). A selective pull fetches just that
+        # object instead of the ~100 MB the full showcase fixture set would
+        # cost with `lfs: true` on the checkout — keeps the LFS bandwidth
+        # quota flat. ubuntu-latest ships git-lfs preinstalled.
+        run: git lfs pull --include="harness/media/processed/showcase-lantern-festival-v1/mira.ogg"
+
+      - name: Install host ffmpeg for clip slicing
+        # The regression script slices the source track on the host with
+        # `ffmpeg -c copy` (stream copy, no re-encode — cheap). Same apt
+        # install ci.yml's harness jobs use; ubuntu-latest has no ffmpeg.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Run short-clip ASR regression (decoder pad-tail guard)
+        # Guards the Parakeet TDT v3 short-clip zero-token fix
+        # (cassini-go-recorder/internal/transcribe/stt.go transcribeSegment
+        # pad-tail logic): clean 6-9s clips with no trailing silence must
+        # not transcribe to zero words. Its failure signature matches flake
+        # #50 — if this step trips while the Talk roundtrip stays green,
+        # the regression localizes to the decoder, not the media path.
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+        run: ./harness/bin/ci-transcribe-short-clip-regression.sh
+
   e2e-container:
     name: E2E container HTTP plane + middleware + lifecycle (no Nextcloud)
     runs-on: ubuntu-latest
@@ -405,6 +628,30 @@ jobs:
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-e2e-exapp.sh
+
+  e2e-entrypoint:
+    name: E2E container real entrypoint + HEALTHCHECK (AppAPI env, no overrides)
+    runs-on: ubuntu-latest
+    needs: build-image
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
+        with:
+          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Unlike the smoke/e2e jobs above, this boots the image via its real
+      # ENTRYPOINT with only AppAPI-shaped env (no --entrypoint override, no
+      # CASSINI_* injection, no HP_*) and waits for the image HEALTHCHECK to
+      # report healthy — the production boot contract a real install hits.
+      - name: Run real-entrypoint e2e
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+        run: ./harness/bin/ci-e2e-entrypoint-exapp.sh
 
   e2e-install:
     name: E2E install against real Nextcloud + AppAPI
@@ -517,7 +764,28 @@ jobs:
           # substring as proof the pipeline transcribed real speech.
           MIN_LEVENSHTEIN: "0.40"
           MIN_CAPTURED_RUN_WORDS: "5"
+          # Pin LOG_DIR to a stable path so the failure-artifact step below
+          # can find the pulled transcript + recorder stdout deterministically
+          # (the harness default is a PID-suffixed /tmp dir).
+          LOG_DIR: ${{ runner.temp }}/cassini-talk-rec-e2e
         run: ./harness/bin/ci-e2e-talk-record-roundtrip.sh
+      - name: Upload transcript + recorder logs on failure
+        if: failure()
+        # D-50: the CPU merged-fallback transcript gate flakes near the
+        # MIN_CAPTURED_RUN_WORDS floor. Capturing the published transcript
+        # JSON and the recorder stdout lets a future reviewer tell a genuine
+        # "always got 1 word" regression from a sporadic flake without
+        # re-running CI. transcript.words.v1.json is pulled in phase 8 (so it
+        # exists for the content-gate failure we care about) and cassini-exapp.log
+        # is written by the harness cleanup trap on every exit.
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-talk-record-cpu-debug
+          path: |
+            ${{ runner.temp }}/cassini-talk-rec-e2e/transcript.words.v1.json
+            ${{ runner.temp }}/cassini-talk-rec-e2e/cassini-exapp.log
+          if-no-files-found: warn
+          retention-days: 14
 
   e2e-talk-record-cuda:
     name: E2E Talk record-button roundtrip (CUDA / GPU)
@@ -588,16 +856,33 @@ jobs:
           MIN_CAPTURED_RUN_WORDS: "5"
         run: ./harness/bin/ci-e2e-talk-record-roundtrip.sh
 
+      - name: Reclaim docker disk (post-job)
+        if: always()
+        # See transcribe-smoke-cuda — same self-hosted GPU runner, same D-377
+        # disk-exhaustion guard. The roundtrip script already sweeps its own
+        # compose stacks; this trims accumulated image layers on top.
+        run: |
+          docker container prune -f --filter until=2h || true
+          docker image prune -af --filter until=6h || true
+          docker builder prune -af --filter until=6h || true
+          if [ "$(df --output=pcent / | tail -1 | tr -dc 0-9)" -ge 85 ]; then
+            docker image prune -af || true
+            docker builder prune -af || true
+          fi
+          df -h / | tail -1
+
   prune-old-versions:
     name: Prune old sha-tagged image versions
     runs-on: ubuntu-latest
     needs:
       - build-image
+      - build-cuda-base
       - build-image-cuda
       - smoke
       - transcribe-smoke
       - transcribe-smoke-cuda
       - e2e-container
+      - e2e-entrypoint
       - e2e-install
       - e2e-talk-record-cpu
       - e2e-talk-record-cuda
@@ -612,9 +897,9 @@ jobs:
       # delete-package-versions action's `ignore-versions` regex matches
       # against `name` (the digest), which is useless here. Use a bash
       # script that inspects tags explicitly: keep every version that
-      # carries a named tag (latest, latest-cuda, latest-rocm, v*); from
-      # the remainder (sha-*-only versions), keep the 10 newest and
-      # delete the rest.
+      # carries a named tag (latest*, cuda, release versions X.Y.Z[-suffix],
+      # legacy v*); from the remainder (sha-*-only versions), keep the 10
+      # newest and delete the rest.
       - name: Prune
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -632,14 +917,14 @@ jobs:
             "/orgs/${OWNER}/packages/container/${PACKAGE}/versions" \
             > "$tmp/versions.json"
 
-          # Versions worth keeping outright (any named tag). `latest-cuda` stays
-          # in the keep-list so PR #32's real CUDA image is protected once it
-          # starts being published; for now nothing pushes that tag.
+          # Versions worth keeping outright (any named tag). Release tags
+          # X.Y.Z[-cuda|-rocm] must survive forever — they are the
+          # reproducible install pins referenced by appinfo/info.xml.
           jq -r '
             .[]
             | .metadata.container.tags as $tags
             | select(
-                ($tags | any(. == "latest" or . == "latest-cuda" or . == "latest-rocm" or startswith("v")))
+                ($tags | any(. == "latest" or . == "latest-cuda" or . == "latest-rocm" or . == "cuda" or startswith("v") or test("^[0-9]+\\.[0-9]+\\.[0-9]+")))
               )
             | "KEEP \(.id) tags=\($tags | join(","))"
           ' "$tmp/versions.json" | tee "$tmp/keep.log" || true
@@ -651,7 +936,7 @@ jobs:
             | .[]
             | .metadata.container.tags as $tags
             | select(
-                ($tags | any(. == "latest" or . == "latest-cuda" or . == "latest-rocm" or startswith("v"))) | not
+                ($tags | any(. == "latest" or . == "latest-cuda" or . == "latest-rocm" or . == "cuda" or startswith("v") or test("^[0-9]+\\.[0-9]+\\.[0-9]+"))) | not
               )
             | "\(.id)\t\(.created_at)\t\($tags | join(","))"
           ' "$tmp/versions.json" > "$tmp/candidates.tsv"
@@ -665,6 +950,45 @@ jobs:
           fi
 
           tail -n +$((KEEP + 1)) "$tmp/candidates.tsv" | while IFS=$'\t' read -r id created tags; do
+            echo "DELETE id=${id} created=${created} tags=${tags}"
+            gh api -X DELETE \
+              -H "Accept: application/vnd.github+json" \
+              "/orgs/${OWNER}/packages/container/${PACKAGE}/versions/${id}"
+          done
+
+      # The CUDA base package (D-375) is content-hash-tagged only — no
+      # keep-forever named tags. Base rebuilds are rare (only on a model/sherpa/
+      # nvidia-base/Dockerfile change), so keeping the newest few covers any
+      # in-flight rollback while not letting hashes accumulate forever.
+      - name: Prune old CUDA base versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE: gocassini-cuda-base
+          KEEP: 5
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+
+          # The package may not exist yet on the very first base build cycle.
+          if ! gh api --paginate \
+              -H "Accept: application/vnd.github+json" \
+              "/orgs/${OWNER}/packages/container/${PACKAGE}/versions" \
+              > "$tmp/versions.json" 2>/dev/null; then
+            echo "Package ${PACKAGE} not found yet — nothing to prune."
+            exit 0
+          fi
+
+          jq -r 'sort_by(.created_at) | reverse | .[] | "\(.id)\t\(.created_at)\t\(.metadata.container.tags | join(","))"' \
+            "$tmp/versions.json" > "$tmp/all.tsv"
+          total=$(wc -l < "$tmp/all.tsv")
+          echo "Found ${total} base versions; keeping newest ${KEEP}"
+          if [[ "${total}" -le "${KEEP}" ]]; then
+            echo "Nothing to prune."
+            exit 0
+          fi
+          tail -n +$((KEEP + 1)) "$tmp/all.tsv" | while IFS=$'\t' read -r id created tags; do
             echo "DELETE id=${id} created=${created} tags=${tags}"
             gh api -X DELETE \
               -H "Accept: application/vnd.github+json" \
