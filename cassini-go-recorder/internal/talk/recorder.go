@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -86,6 +87,14 @@ type Recorder struct {
 
 	mu          sync.Mutex
 	subscribers map[string]*subscriberPeer
+	// inCallEver remembers every remote session we ever stood a subscriber
+	// up for (i.e. saw in-call). Guarded by mu, monotonic, never pruned on
+	// leave: cleanup() reconciles it against the sessions that actually
+	// captured audio to surface in-call participants we recorded nothing
+	// for (D-386) — a participant abandoned after requestoffer exhaustion or
+	// whose media never flowed leaves no stream and no capture error, so
+	// without this set the loss is invisible.
+	inCallEver map[string]struct{}
 	// stopping is set by cleanup() under mu; once true ensureSubscriber
 	// refuses to create peers (no resurrecting subscribers into the
 	// drained map) and addTrackReader refuses new capture goroutines.
@@ -133,6 +142,7 @@ func Run(ctx context.Context, cfg config.Config) error {
 	r := &Recorder{
 		cfg:               cfg,
 		subscribers:       make(map[string]*subscriberPeer),
+		inCallEver:        make(map[string]struct{}),
 		sessionsByRemote:  make(map[string]*sessionCapture),
 		identityByRemote:  make(map[string]participantIdentity),
 		startedAt:         time.Now().UTC(),
@@ -583,17 +593,25 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 		}
 	}
 
-	if r.cfg.WriteReport {
-		// Snapshot value copies under sessionMu: a track reader that
-		// outlived the bounded join above could still be bumping packet
-		// counters on the shared sessionCapture structs.
-		r.sessionMu.Lock()
-		sessions := make([]sessionCapture, 0, len(r.sessionOrder))
-		for _, s := range r.sessionOrder {
-			sessions = append(sessions, *s)
-		}
-		r.sessionMu.Unlock()
+	// Snapshot value copies under sessionMu: a track reader that outlived
+	// the bounded join above could still be bumping packet counters on the
+	// shared sessionCapture structs.
+	r.sessionMu.Lock()
+	sessions := make([]sessionCapture, 0, len(r.sessionOrder))
+	for _, s := range r.sessionOrder {
+		sessions = append(sessions, *s)
+	}
+	r.sessionMu.Unlock()
 
+	// Reconcile in-call participants against captured audio and log a loud,
+	// greppable marker for any we recorded nothing for (D-386). This runs
+	// before (and regardless of) the WriteReport gate because in production
+	// the external report is disabled, so the stderr marker scraped from the
+	// recorder log is the only surface that makes a silently-missed
+	// participant visible.
+	gaps := r.detectCaptureGaps(sessions)
+
+	if r.cfg.WriteReport {
 		reportPath := deriveReportPath(r.finalOutputPath, r.cfg.OutputPath)
 		if err := r.writeReport(
 			reportPath,
@@ -602,6 +620,7 @@ func (r *Recorder) cleanup(ctx context.Context) error {
 			composeErrText,
 			intermediateCleaned,
 			artifactSummary,
+			gaps,
 		); err != nil {
 			if firstErr == nil {
 				firstErr = err
@@ -1108,6 +1127,7 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, er
 		return current, nil
 	}
 	r.subscribers[remoteSessionID] = peer
+	r.inCallEver[remoteSessionID] = struct{}{}
 	r.mu.Unlock()
 	r.notifySubscriberChange()
 
@@ -2017,6 +2037,153 @@ func ensureOutputDir(path string) error {
 	return os.MkdirAll(filepath.Clean(dir), 0o755)
 }
 
+// lowAudioPacketFloor is the captured-audio packet count below which an
+// in-call participant that captured no video is flagged with a soft
+// "very low audio" advisory. ~50 packets is ~1s at the default 20ms Opus
+// ptime: high enough that anyone who said more than a word clears it, low
+// enough to catch a participant we captured only a sliver of. Advisory
+// only — it never fails the run.
+const lowAudioPacketFloor = 50
+
+// captureGap describes an in-call participant the recorder captured nothing
+// (or almost nothing) for. Reason is "no-media" (no audio and no video, or
+// no captured track at all) or "low-audio" (a sub-floor sliver of audio and
+// no video). See detectCaptureGaps and D-386.
+type captureGap struct {
+	RemoteSessionID string
+	ParticipantName string
+	ParticipantID   string
+	AudioPackets    int
+	VideoPackets    int
+	CapturedSession bool
+	Reason          string
+}
+
+// warning renders the human-readable line used both for the run report's
+// warnings array and the stderr marker. The "in-call participant ..."
+// prefixes are stable so log scraping can key on them.
+func (g captureGap) warning() string {
+	switch g.Reason {
+	case "no-media":
+		if !g.CapturedSession {
+			return fmt.Sprintf("in-call participant captured no media at all: name=%s sid=%s", g.ParticipantName, g.RemoteSessionID)
+		}
+		return fmt.Sprintf("in-call participant captured no audio or video: name=%s sid=%s", g.ParticipantName, g.RemoteSessionID)
+	case "low-audio":
+		return fmt.Sprintf("in-call participant captured very low audio: name=%s sid=%s (audio_packets=%d)", g.ParticipantName, g.RemoteSessionID, g.AudioPackets)
+	default:
+		return fmt.Sprintf("in-call participant capture gap (%s): name=%s sid=%s", g.Reason, g.ParticipantName, g.RemoteSessionID)
+	}
+}
+
+func captureGapOutputs(gaps []captureGap) []map[string]any {
+	out := make([]map[string]any, 0, len(gaps))
+	for _, g := range gaps {
+		out = append(out, map[string]any{
+			"remote_session_id": g.RemoteSessionID,
+			"participant_name":  g.ParticipantName,
+			"participant_id":    g.ParticipantID,
+			"audio_packets":     g.AudioPackets,
+			"video_packets":     g.VideoPackets,
+			"captured_session":  g.CapturedSession,
+			"reason":            g.Reason,
+		})
+	}
+	return out
+}
+
+// detectCaptureGaps reconciles every remote session we ever stood a
+// subscriber up for (inCallEver) against the per-session captured packet
+// counts, returning the in-call participants we recorded nothing — or
+// almost nothing — for, and logging a loud, greppable stderr marker per
+// gap. It runs regardless of the WriteReport gate: in production the
+// external report is disabled, so the marker is the only surface that makes
+// a silently-missed participant visible (D-386).
+//
+// sessions is the value-copy snapshot cleanup() already took under
+// sessionMu, so this never races a straggling track reader bumping counts.
+//
+// Flagged:
+//   - in-call but never captured a track (no session row): "no-media",
+//     captured=false — the severe case (requestoffer exhaustion, or an
+//     offer whose media never flowed).
+//   - captured but 0 audio AND 0 video: "no-media", captured=true.
+//   - captured a sub-floor sliver of audio with 0 video: "low-audio".
+//
+// Deliberately NOT flagged: 0 audio with >0 video — a muted / camera-only
+// participant is legitimately in the recording, just silent. Only a total
+// media gap (or a video-less sliver) is a gap, so the signal does not cry
+// wolf over people who were recorded but did not speak.
+func (r *Recorder) detectCaptureGaps(sessions []sessionCapture) []captureGap {
+	r.mu.Lock()
+	inCall := make([]string, 0, len(r.inCallEver))
+	for sid := range r.inCallEver {
+		inCall = append(inCall, sid)
+	}
+	r.mu.Unlock()
+	if len(inCall) == 0 {
+		return nil
+	}
+	sort.Strings(inCall)
+
+	byRemote := make(map[string]sessionCapture, len(sessions))
+	for _, s := range sessions {
+		byRemote[s.RemoteSessionID] = s
+	}
+
+	gaps := make([]captureGap, 0)
+	for _, sid := range inCall {
+		s, captured := byRemote[sid]
+		switch {
+		case !captured:
+			gaps = append(gaps, captureGap{
+				RemoteSessionID: sid,
+				ParticipantName: r.captureGapName(sid),
+				Reason:          "no-media",
+			})
+		case s.AudioPackets == 0 && s.VideoPackets == 0:
+			gaps = append(gaps, captureGap{
+				RemoteSessionID: sid,
+				ParticipantName: s.ParticipantName,
+				ParticipantID:   s.ParticipantID,
+				CapturedSession: true,
+				Reason:          "no-media",
+			})
+		case s.AudioPackets == 0:
+			// audio==0 with video>0: muted / camera-only, legitimately recorded.
+			continue
+		case s.AudioPackets < lowAudioPacketFloor && s.VideoPackets == 0:
+			gaps = append(gaps, captureGap{
+				RemoteSessionID: sid,
+				ParticipantName: s.ParticipantName,
+				ParticipantID:   s.ParticipantID,
+				AudioPackets:    s.AudioPackets,
+				VideoPackets:    s.VideoPackets,
+				CapturedSession: true,
+				Reason:          "low-audio",
+			})
+		}
+	}
+
+	for _, g := range gaps {
+		log.Printf("talk recorder: %s", g.warning())
+	}
+	return gaps
+}
+
+// captureGapName resolves a display name for an in-call session that never
+// reached ensureSessionCapture (so there is no sessionCapture to read the
+// name from), falling back to the synthetic name the capture path uses.
+func (r *Recorder) captureGapName(remoteSessionID string) string {
+	r.sessionMu.Lock()
+	identity := r.identityByRemote[remoteSessionID]
+	r.sessionMu.Unlock()
+	if name := strings.TrimSpace(identity.DisplayName); name != "" {
+		return name
+	}
+	return fmt.Sprintf("participant-%s", shortID(remoteSessionID))
+}
+
 func (r *Recorder) writeReport(
 	reportPath string,
 	sessions []sessionCapture,
@@ -2024,6 +2191,7 @@ func (r *Recorder) writeReport(
 	composeErr string,
 	intermediateCleaned bool,
 	artifactSummary *sessionCaptureSummary,
+	gaps []captureGap,
 ) error {
 	reportSessionArtifact := map[string]any{"enabled": false}
 	if artifactSummary != nil {
@@ -2060,6 +2228,9 @@ func (r *Recorder) writeReport(
 		for _, skipped := range r.artifactRemux.SkippedStreams {
 			warnings = append(warnings, fmt.Sprintf("stream %s skipped during final compose: %s", skipped.StreamID, skipped.Reason))
 		}
+	}
+	for _, g := range gaps {
+		warnings = append(warnings, g.warning())
 	}
 
 	type sessionOutput struct {
@@ -2118,10 +2289,12 @@ func (r *Recorder) writeReport(
 			"cleanup_performed":     intermediateCleaned,
 			"intermediate_retained": !intermediateCleaned,
 		},
-		"session_artifact": reportSessionArtifact,
-		"artifact_remux":   buildArtifactRemuxReport(r.artifactRemux),
-		"session_outputs":  sessionOutputs,
-		"warnings":         warnings,
+		"session_artifact":  reportSessionArtifact,
+		"artifact_remux":    buildArtifactRemuxReport(r.artifactRemux),
+		"session_outputs":   sessionOutputs,
+		"capture_gaps":      captureGapOutputs(gaps),
+		"capture_gap_count": len(gaps),
+		"warnings":          warnings,
 	}
 
 	body, err := json.MarshalIndent(report, "", "  ")

@@ -5,6 +5,7 @@ import "testing"
 func newAutostopTestRecorder() *Recorder {
 	return &Recorder{
 		subscribers:       map[string]*subscriberPeer{},
+		inCallEver:        map[string]struct{}{},
 		subscriberUpdates: make(chan struct{}, 16),
 		sessionsByRemote:  map[string]*sessionCapture{},
 		identityByRemote:  map[string]participantIdentity{},
