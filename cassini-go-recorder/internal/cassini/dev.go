@@ -35,6 +35,10 @@ func runDev(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runDevScript(ctx, repoRoot, filepath.Join("harness", "bin", "ci-e2e.sh"), args[1:], stdout, stderr)
 	case "fixture":
 		return runDevFixture(ctx, repoRoot, args[1:], stdout, stderr)
+	case "play":
+		return runDevPlay(ctx, repoRoot, args[1:], stdout, stderr)
+	case "play-private":
+		return runDevPlayPrivate(ctx, repoRoot, args[1:], stdout, stderr)
 	case "player":
 		return runDevPlayer(ctx, repoRoot, args[1:], stdout, stderr)
 	default:
@@ -49,16 +53,31 @@ func runDevStack(ctx context.Context, repoRoot string, args []string, stdout, st
 		fmt.Fprint(stderr, "usage: cassini dev stack <up|down|status> [args]\n")
 		return 2
 	}
+
+	harnessBin := filepath.Join("harness", "bin")
+	if devHarnessVMEnabled() && (args[0] == "up" || args[0] == "down") {
+		harnessBin = filepath.Join("harness", "vm", "bin")
+	}
+
 	switch args[0] {
 	case "up":
-		return runDevScript(ctx, repoRoot, filepath.Join("harness", "bin", "up.sh"), args[1:], stdout, stderr)
+		return runDevScript(ctx, repoRoot, filepath.Join(harnessBin, "up.sh"), args[1:], stdout, stderr)
 	case "down":
-		return runDevScript(ctx, repoRoot, filepath.Join("harness", "bin", "down.sh"), args[1:], stdout, stderr)
+		return runDevScript(ctx, repoRoot, filepath.Join(harnessBin, "down.sh"), args[1:], stdout, stderr)
 	case "status":
 		return runDevScript(ctx, repoRoot, filepath.Join("harness", "bin", "status.sh"), args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown dev stack command %q\n", args[0])
 		return 2
+	}
+}
+
+func devHarnessVMEnabled() bool {
+	switch os.Getenv("CASSINI_HARNESS_VM") {
+	case "true", "1", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -115,13 +134,23 @@ func runDevPlayer(ctx context.Context, repoRoot string, args []string, stdout, s
 	}
 }
 
+var runDevScriptExec = runDevScriptExecDefault
+
 func runDevScript(ctx context.Context, repoRoot string, relativeScript string, args []string, stdout, stderr io.Writer) int {
+	return runDevScriptWithEnv(ctx, repoRoot, relativeScript, args, nil, stdout, stderr)
+}
+
+func runDevScriptWithEnv(ctx context.Context, repoRoot string, relativeScript string, args []string, extraEnv []string, stdout, stderr io.Writer) int {
+	return runDevScriptExec(ctx, repoRoot, relativeScript, args, extraEnv, stdout, stderr)
+}
+
+func runDevScriptExecDefault(ctx context.Context, repoRoot string, relativeScript string, args []string, extraEnv []string, stdout, stderr io.Writer) int {
 	scriptPath := filepath.Join(repoRoot, relativeScript)
 	cmd := exec.CommandContext(ctx, scriptPath, args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Stdin = os.Stdin
-	cmd.Env = os.Environ()
+	cmd.Env = append(os.Environ(), extraEnv...)
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode()
@@ -141,6 +170,8 @@ Usage:
   cassini dev smoke
   cassini dev ci-e2e
   cassini dev fixture <prepare-showcase|stream-showcase>
+  cassini dev play --room <name> [--nextcloud-host <host-or-url>] [--mode single|full] [--duration <seconds>]
+  cassini dev play-private --scaffold-only [--nextcloud-host <host-or-url>]
   cassini dev player <video|showcase|three-songs>
 `+"\n")
 }

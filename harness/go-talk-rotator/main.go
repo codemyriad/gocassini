@@ -107,11 +107,13 @@ func (s *signalingSettings) primaryServer() string {
 }
 
 type ocsClient struct {
-	baseURL string
-	http    *http.Client
+	baseURL  string
+	username string
+	password string
+	http     *http.Client
 }
 
-func newOCSClient(baseURL string, insecure bool) *ocsClient {
+func newOCSClient(baseURL string, insecure bool, username string, password string) *ocsClient {
 	jar, _ := cookiejar.New(nil)
 
 	baseTransport, ok := http.DefaultTransport.(*http.Transport)
@@ -124,7 +126,9 @@ func newOCSClient(baseURL string, insecure bool) *ocsClient {
 	}
 
 	return &ocsClient{
-		baseURL: strings.TrimRight(baseURL, "/"),
+		baseURL:  strings.TrimRight(baseURL, "/"),
+		username: strings.TrimSpace(username),
+		password: password,
 		http: &http.Client{
 			Timeout:   20 * time.Second,
 			Transport: transport,
@@ -144,9 +148,9 @@ func (c *ocsClient) getRoom(ctx context.Context, roomToken string) error {
 	return err
 }
 
-func (c *ocsClient) markParticipantActive(ctx context.Context, roomToken, displayName string) (string, error) {
+func (c *ocsClient) markParticipantActive(ctx context.Context, roomToken, displayName string, force bool) (string, error) {
 	payload := url.Values{}
-	payload.Set("force", "false")
+	payload.Set("force", strconv.FormatBool(force))
 	if displayName != "" {
 		payload.Set("displayName", displayName)
 	}
@@ -219,6 +223,31 @@ func (c *ocsClient) leaveParticipantActive(ctx context.Context, roomToken string
 	return err
 }
 
+func (c *ocsClient) startRecording(ctx context.Context, roomToken string, status string) error {
+	payload := url.Values{}
+	payload.Set("status", status)
+	_, err := c.request(ctx, http.MethodPost, fmt.Sprintf("/ocs/v2.php/apps/spreed/api/v1/recording/%s", roomToken), nil, payload)
+	return err
+}
+
+func (c *ocsClient) roomRecordingState(ctx context.Context, roomToken string) (int, error) {
+	raw, err := c.request(ctx, http.MethodGet, fmt.Sprintf("/ocs/v2.php/apps/spreed/api/v4/room/%s", roomToken), nil, nil)
+	if err != nil {
+		return 0, err
+	}
+	var data struct {
+		CallRecording any `json:"callRecording"`
+	}
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return 0, fmt.Errorf("decode room recording state: %w", err)
+	}
+	state, ok := asInt(data.CallRecording)
+	if !ok {
+		return 0, fmt.Errorf("room response missing numeric callRecording: %v", data.CallRecording)
+	}
+	return state, nil
+}
+
 func (c *ocsClient) request(ctx context.Context, method, path string, query url.Values, form url.Values) (json.RawMessage, error) {
 	var body io.Reader
 	var contentType string
@@ -246,6 +275,9 @@ func (c *ocsClient) doRequest(ctx context.Context, method, path string, query ur
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("build request %s %s: %w", method, path, err)
+	}
+	if c.username != "" {
+		req.SetBasicAuth(c.username, c.password)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("OCS-APIRequest", "true")
@@ -485,19 +517,63 @@ func (c *signalingClient) emitConnectionError(err error) {
 	}
 }
 
+type mediaStartGate struct {
+	ready chan struct{}
+	once  sync.Once
+	err   error
+}
+
+func newMediaStartGate() *mediaStartGate {
+	return &mediaStartGate{ready: make(chan struct{})}
+}
+
+func (g *mediaStartGate) open(err error) {
+	g.once.Do(func() {
+		g.err = err
+		close(g.ready)
+	})
+}
+
+func (g *mediaStartGate) wait(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	case <-g.ready:
+		return g.err
+	}
+}
+
 type botConfig struct {
-	Index      int
-	BaseURL    string
-	RoomToken  string
-	GuestName  string
-	VideoPath  string
-	AudioPath  string
-	JoinDelay  time.Duration
-	AudioReady time.Duration
-	SyncShift  time.Duration
-	Duration   time.Duration
-	Insecure   bool
-	CallURLRaw string
+	Index                int
+	BaseURL              string
+	RoomToken            string
+	GuestName            string
+	VideoPath            string
+	AudioPath            string
+	JoinDelay            time.Duration
+	AudioReady           time.Duration
+	SyncShift            time.Duration
+	Duration             time.Duration
+	Insecure             bool
+	AuthUser             string
+	AuthPass             string
+	RecordingStarter     bool
+	RecordingStatus      string
+	RecordingPollTimeout time.Duration
+	MediaStartGate       *mediaStartGate
+	CallURLRaw           string
+}
+
+type recordingOnlyStarterConfig struct {
+	BaseURL              string
+	RoomToken            string
+	DisplayName          string
+	AuthUser             string
+	AuthPass             string
+	Insecure             bool
+	RecordingStatus      string
+	RecordingPollTimeout time.Duration
+	MediaStartGate       *mediaStartGate
 }
 
 type bot struct {
@@ -548,7 +624,7 @@ type bot struct {
 func newBot(cfg *botConfig) *bot {
 	return &bot{
 		cfg:         cfg,
-		http:        newOCSClient(cfg.BaseURL, cfg.Insecure),
+		http:        newOCSClient(cfg.BaseURL, cfg.Insecure, cfg.AuthUser, cfg.AuthPass),
 		callSID:     randomHex(16),
 		answerCh:    make(chan struct{}),
 		connectedCh: make(chan struct{}),
@@ -560,6 +636,70 @@ func newBot(cfg *botConfig) *bot {
 func (b *bot) logf(format string, args ...any) {
 	prefix := fmt.Sprintf("[bot %02d %s] ", b.cfg.Index, b.cfg.GuestName)
 	log.Printf(prefix+format, args...)
+}
+
+func runRecordingOnlyStarter(parent context.Context, cfg recordingOnlyStarterConfig) (runErr error) {
+	name := strings.TrimSpace(cfg.DisplayName)
+	if name == "" {
+		name = cfg.AuthUser
+	}
+	b := newBot(&botConfig{
+		Index:                0,
+		BaseURL:              cfg.BaseURL,
+		RoomToken:            cfg.RoomToken,
+		GuestName:            name,
+		Insecure:             cfg.Insecure,
+		AuthUser:             cfg.AuthUser,
+		AuthPass:             cfg.AuthPass,
+		RecordingStatus:      cfg.RecordingStatus,
+		RecordingPollTimeout: cfg.RecordingPollTimeout,
+	})
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		if err := b.cleanup(cleanupCtx); err != nil && runErr == nil {
+			runErr = err
+		}
+	}()
+
+	fail := func(err error) error {
+		if cfg.MediaStartGate != nil {
+			cfg.MediaStartGate.open(err)
+		}
+		return err
+	}
+
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	if err := b.joinConversation(ctx); err != nil {
+		return fail(fmt.Errorf("recording starter join conversation: %w", err))
+	}
+	if err := b.fetchSignalingSettings(ctx); err != nil {
+		return fail(fmt.Errorf("recording starter fetch signaling settings: %w", err))
+	}
+	if err := b.connectSignaling(ctx); err != nil {
+		return fail(fmt.Errorf("recording starter connect signaling: %w", err))
+	}
+	if err := b.hello(ctx); err != nil {
+		return fail(fmt.Errorf("recording starter hello: %w", err))
+	}
+	if err := b.joinSignalingRoom(ctx); err != nil {
+		return fail(fmt.Errorf("recording starter join signaling room: %w", err))
+	}
+	if err := b.joinCall(ctx); err != nil {
+		return fail(fmt.Errorf("recording starter join call: %w", err))
+	}
+
+	err := b.startRecordingAndWait(ctx)
+	if cfg.MediaStartGate != nil {
+		cfg.MediaStartGate.open(err)
+	}
+	if err != nil {
+		return err
+	}
+	b.logf("recording-only starter waiting while media publishers run")
+	<-ctx.Done()
+	return nil
 }
 
 func (b *bot) run(parent context.Context) (runErr error) {
@@ -617,6 +757,22 @@ func (b *bot) run(parent context.Context) (runErr error) {
 		return err
 	}
 	b.markConnected()
+	b.logf("connected")
+
+	if b.cfg.RecordingStarter {
+		err := b.startRecordingAndWait(ctx)
+		if b.cfg.MediaStartGate != nil {
+			b.cfg.MediaStartGate.open(err)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if b.cfg.MediaStartGate != nil {
+		if err := b.cfg.MediaStartGate.wait(ctx); err != nil {
+			return err
+		}
+	}
 	b.logf("connected and streaming")
 
 	mediaCtx, mediaCancel := context.WithCancel(ctx)
@@ -725,13 +881,20 @@ func (b *bot) joinConversation(ctx context.Context) error {
 	if err := b.http.getRoom(ctx, b.cfg.RoomToken); err != nil {
 		return fmt.Errorf("room check failed: %w", err)
 	}
-	sessionID, err := b.http.markParticipantActive(ctx, b.cfg.RoomToken, b.cfg.GuestName)
+	authenticated := strings.TrimSpace(b.cfg.AuthUser) != ""
+	displayName := b.cfg.GuestName
+	if authenticated {
+		displayName = ""
+	}
+	sessionID, err := b.http.markParticipantActive(ctx, b.cfg.RoomToken, displayName, authenticated)
 	if err != nil {
 		return fmt.Errorf("participants/active failed: %w", err)
 	}
 	b.nextcloudSessionID = sessionID
-	if err := b.http.setGuestName(ctx, b.cfg.RoomToken, b.cfg.GuestName); err != nil {
-		b.logf("guest display name not set (%v); continuing", err)
+	if !authenticated {
+		if err := b.http.setGuestName(ctx, b.cfg.RoomToken, b.cfg.GuestName); err != nil {
+			b.logf("guest display name not set (%v); continuing", err)
+		}
 	}
 	return nil
 }
@@ -848,6 +1011,45 @@ func (b *bot) joinSignalingRoom(ctx context.Context) error {
 	}
 	b.logf("joined signaling room")
 	return nil
+}
+
+func (b *bot) startRecordingAndWait(ctx context.Context) error {
+	if strings.TrimSpace(b.cfg.AuthUser) == "" {
+		return errors.New("recording starter requires authenticated user credentials")
+	}
+	status := strings.TrimSpace(b.cfg.RecordingStatus)
+	if status == "" {
+		status = "1"
+	}
+	b.logf("starting Nextcloud Talk recording before media")
+	if err := b.http.startRecording(ctx, b.cfg.RoomToken, status); err != nil {
+		return fmt.Errorf("start recording: %w", err)
+	}
+	timeout := b.cfg.RecordingPollTimeout
+	if timeout <= 0 {
+		timeout = 90 * time.Second
+	}
+	pollCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	lastState := -1
+	for {
+		state, err := b.http.roomRecordingState(pollCtx, b.cfg.RoomToken)
+		if err != nil {
+			return fmt.Errorf("poll recording state: %w", err)
+		}
+		lastState = state
+		if state == 1 {
+			b.logf("recording active")
+			return nil
+		}
+		timer := time.NewTimer(500 * time.Millisecond)
+		select {
+		case <-pollCtx.Done():
+			timer.Stop()
+			return fmt.Errorf("recording did not become active before timeout; last callRecording=%d", lastState)
+		case <-timer.C:
+		}
+	}
 }
 
 func (b *bot) joinCall(ctx context.Context) error {
@@ -2098,19 +2300,28 @@ func main() {
 
 func run() error {
 	var (
-		callURL           string
-		insecure          bool
-		videoFiles        stringList
-		audioFiles        stringList
-		names             stringList
-		joinDelaySecs     floatList
-		audioReadySec     floatList
-		syncShiftSec      floatList
-		botDurationSec    floatList
-		durationSec       float64
-		rotateSeconds     float64
-		stopWhenRoomEmpty bool
-		roomEmptyGraceSec float64
+		callURL                      string
+		insecure                     bool
+		videoFiles                   stringList
+		audioFiles                   stringList
+		names                        stringList
+		joinDelaySecs                floatList
+		audioReadySec                floatList
+		syncShiftSec                 floatList
+		botDurationSec               floatList
+		authUsers                    stringList
+		authPasswords                stringList
+		durationSec                  float64
+		rotateSeconds                float64
+		stopWhenRoomEmpty            bool
+		recordBeforeMedia            bool
+		recordingStarterIndex        int
+		recordingStarterAuthUser     string
+		recordingStarterAuthPassword string
+		recordingStarterName         string
+		recordingStatus              string
+		recordingTimeoutSec          float64
+		roomEmptyGraceSec            float64
 	)
 
 	flag.StringVar(&callURL, "call-url", "", "Talk call URL")
@@ -2121,9 +2332,18 @@ func run() error {
 	flag.Var(&audioReadySec, "audio-ready-after", "Audio can become audible after N seconds from stream start (repeat up to video count)")
 	flag.Var(&syncShiftSec, "sync-shift", "Per-bot media time shift in seconds (positive=forward, negative=backward, repeat up to video count)")
 	flag.Var(&botDurationSec, "bot-duration", "Per-bot duration in seconds (0 means until EOF, repeat up to video count)")
+	flag.Var(&authUsers, "auth-user", "Authenticated Nextcloud user id (repeat exactly once per participant when used)")
+	flag.Var(&authPasswords, "auth-password", "Authenticated Nextcloud password (repeat exactly once per participant when used)")
 	flag.Float64Var(&durationSec, "duration", 0, "Optional duration override in seconds for all bots")
 	flag.Float64Var(&rotateSeconds, "rotate-seconds", defaultRotateSeconds, "Audio rotation interval in seconds")
 	flag.BoolVar(&stopWhenRoomEmpty, "stop-when-room-empty", true, "Exit once all non-bot participants leave (after grace)")
+	flag.BoolVar(&recordBeforeMedia, "record-before-media", false, "Start Nextcloud Talk recording and wait until active before media samples are sent")
+	flag.IntVar(&recordingStarterIndex, "recording-starter-index", 1, "1-based participant index that starts recording when --record-before-media is set")
+	flag.StringVar(&recordingStarterAuthUser, "recording-starter-auth-user", "", "Optional authenticated recording starter user that joins without publishing media")
+	flag.StringVar(&recordingStarterAuthPassword, "recording-starter-auth-password", "", "Password for --recording-starter-auth-user")
+	flag.StringVar(&recordingStarterName, "recording-starter-name", "", "Display name for separate recording starter logs")
+	flag.StringVar(&recordingStatus, "recording-status", "1", "Nextcloud Talk recording status value")
+	flag.Float64Var(&recordingTimeoutSec, "recording-timeout", 90, "Seconds to wait for recording to become active")
 	flag.Float64Var(&roomEmptyGraceSec, "room-empty-grace-seconds", defaultRoomEmptyGrace.Seconds(), "Grace period before stopping after room empties")
 	flag.BoolVar(&insecure, "insecure", false, "Disable TLS verification")
 	flag.Parse()
@@ -2147,6 +2367,21 @@ func run() error {
 	if durationSec < 0 {
 		return errors.New("--duration must be >= 0")
 	}
+	if recordingTimeoutSec <= 0 {
+		return errors.New("--recording-timeout must be > 0")
+	}
+	externalRecordingStarter := strings.TrimSpace(recordingStarterAuthUser) != "" || recordingStarterAuthPassword != ""
+	if externalRecordingStarter && !recordBeforeMedia {
+		return errors.New("--recording-starter-auth-user requires --record-before-media")
+	}
+	if externalRecordingStarter && (strings.TrimSpace(recordingStarterAuthUser) == "" || recordingStarterAuthPassword == "") {
+		return errors.New("--recording-starter-auth-user and --recording-starter-auth-password must be provided together")
+	}
+	if recordBeforeMedia && !externalRecordingStarter {
+		if recordingStarterIndex < 1 || recordingStarterIndex > participantCount {
+			return fmt.Errorf("--recording-starter-index must be between 1 and participant count (%d)", participantCount)
+		}
+	}
 	if len(names) > participantCount {
 		return fmt.Errorf("--name count (%d) exceeds participant count (%d)", len(names), participantCount)
 	}
@@ -2161,6 +2396,17 @@ func run() error {
 	}
 	if len(botDurationSec) > participantCount {
 		return fmt.Errorf("--bot-duration count (%d) exceeds participant count (%d)", len(botDurationSec), participantCount)
+	}
+	if len(authUsers) > 0 || len(authPasswords) > 0 {
+		if len(authUsers) != participantCount {
+			return fmt.Errorf("--auth-user count (%d) must match participant count (%d)", len(authUsers), participantCount)
+		}
+		if len(authPasswords) != participantCount {
+			return fmt.Errorf("--auth-password count (%d) must match participant count (%d)", len(authPasswords), participantCount)
+		}
+	}
+	if recordBeforeMedia && !externalRecordingStarter && len(authUsers) == 0 {
+		return errors.New("--record-before-media requires authenticated --auth-user/--auth-password credentials")
 	}
 
 	for _, path := range append(append([]string{}, videoFiles...), audioFiles...) {
@@ -2212,6 +2458,10 @@ func run() error {
 	if durationSec > 0 {
 		overrideDuration = time.Duration(durationSec * float64(time.Second))
 	}
+	var mediaGate *mediaStartGate
+	if recordBeforeMedia {
+		mediaGate = newMediaStartGate()
+	}
 	resolvedDurations := make([]time.Duration, participantCount)
 	for i := 0; i < participantCount; i++ {
 		resolvedDurations[i] = overrideDuration
@@ -2229,19 +2479,31 @@ func run() error {
 
 	cfgs := make([]*botConfig, 0, participantCount)
 	for i := 0; i < participantCount; i++ {
+		authUser := ""
+		authPass := ""
+		if len(authUsers) > 0 {
+			authUser = strings.TrimSpace(authUsers[i])
+			authPass = authPasswords[i]
+		}
 		cfgs = append(cfgs, &botConfig{
-			Index:      i + 1,
-			BaseURL:    baseURL,
-			RoomToken:  roomToken,
-			GuestName:  resolvedNames[i],
-			VideoPath:  videoFiles[i],
-			AudioPath:  audioFiles[i],
-			JoinDelay:  time.Duration(resolvedJoinDelays[i] * float64(time.Second)),
-			AudioReady: time.Duration(resolvedAudioReady[i] * float64(time.Second)),
-			SyncShift:  time.Duration(resolvedSyncShift[i] * float64(time.Second)),
-			Duration:   resolvedDurations[i],
-			Insecure:   insecure,
-			CallURLRaw: callURL,
+			Index:                i + 1,
+			BaseURL:              baseURL,
+			RoomToken:            roomToken,
+			GuestName:            resolvedNames[i],
+			VideoPath:            videoFiles[i],
+			AudioPath:            audioFiles[i],
+			JoinDelay:            time.Duration(resolvedJoinDelays[i] * float64(time.Second)),
+			AudioReady:           time.Duration(resolvedAudioReady[i] * float64(time.Second)),
+			SyncShift:            time.Duration(resolvedSyncShift[i] * float64(time.Second)),
+			Duration:             resolvedDurations[i],
+			Insecure:             insecure,
+			AuthUser:             authUser,
+			AuthPass:             authPass,
+			RecordingStarter:     recordBeforeMedia && !externalRecordingStarter && i+1 == recordingStarterIndex,
+			RecordingStatus:      recordingStatus,
+			RecordingPollTimeout: time.Duration(recordingTimeoutSec * float64(time.Second)),
+			MediaStartGate:       mediaGate,
+			CallURLRaw:           callURL,
 		})
 	}
 
@@ -2251,9 +2513,14 @@ func run() error {
 		if cfg.Duration > 0 {
 			durationLabel = cfg.Duration.String()
 		}
+		authLabel := "guest"
+		if cfg.AuthUser != "" {
+			authLabel = cfg.AuthUser
+		}
 		log.Printf(
-			"[manager] plan bot=%s join=%s audio_ready=%s sync_shift=%s duration=%s video=%s audio=%s",
+			"[manager] plan bot=%s auth=%s join=%s audio_ready=%s sync_shift=%s duration=%s video=%s audio=%s",
 			cfg.GuestName,
+			authLabel,
 			cfg.JoinDelay,
 			cfg.AudioReady,
 			cfg.SyncShift,
@@ -2261,6 +2528,13 @@ func run() error {
 			cfg.VideoPath,
 			cfg.AudioPath,
 		)
+	}
+	if recordBeforeMedia {
+		if externalRecordingStarter {
+			log.Printf("[manager] recording gate enabled external_starter=%s timeout=%s", recordingStarterAuthUser, time.Duration(recordingTimeoutSec*float64(time.Second)))
+		} else {
+			log.Printf("[manager] recording gate enabled starter=%d timeout=%s", recordingStarterIndex, time.Duration(recordingTimeoutSec*float64(time.Second)))
+		}
 	}
 	log.Printf("[manager] rotating audible audio every %.2fs", rotateSeconds)
 	if stopWhenRoomEmpty {
@@ -2272,6 +2546,29 @@ func run() error {
 
 	ctx, cancel := context.WithCancel(signalCtx)
 	defer cancel()
+
+	var starterDone chan error
+	if externalRecordingStarter {
+		starterDone = make(chan error, 1)
+		go func() {
+			err := runRecordingOnlyStarter(ctx, recordingOnlyStarterConfig{
+				BaseURL:              baseURL,
+				RoomToken:            roomToken,
+				DisplayName:          valueOr(recordingStarterName, recordingStarterAuthUser),
+				AuthUser:             recordingStarterAuthUser,
+				AuthPass:             recordingStarterAuthPassword,
+				Insecure:             insecure,
+				RecordingStatus:      recordingStatus,
+				RecordingPollTimeout: time.Duration(recordingTimeoutSec * float64(time.Second)),
+				MediaStartGate:       mediaGate,
+			})
+			if err != nil && !isContextDone(err) {
+				mediaGate.open(err)
+				cancel()
+			}
+			starterDone <- err
+		}()
+	}
 
 	bots := make([]*bot, 0, len(cfgs))
 	for _, cfg := range cfgs {
@@ -2310,6 +2607,13 @@ func run() error {
 		}
 	}
 	rotateCancel()
+	cancel()
+	if starterDone != nil {
+		if err := <-starterDone; err != nil && !isContextDone(err) {
+			failures++
+			log.Printf("[manager] recording starter failed: %v", err)
+		}
+	}
 
 	if failures > 0 {
 		return fmt.Errorf("%d bot(s) failed", failures)
