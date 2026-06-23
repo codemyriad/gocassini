@@ -17,9 +17,21 @@ allow many-to-many, and links (not directory nesting) express the relationships.
 | **Goal** | A unit of functionality smaller than a project. May belong to one/more projects, or be orphaned (cross-cutting hygiene). | `G{n}-{short-name}` |
 | **Task** | A contained chunk of development toward a goal, mapped to a Linear ticket. No forward backlog — lineage is ex-post only. | `D-{ticket}-{short-name}` |
 
-Within a phase, **projects, goals and tasks live side-by-side** as sibling
-directories. A goal links up to its project(s) and down to its tasks; a task
-keeps the strict per-task document set defined in `DEVELOPMENT.md`.
+Within a phase, **projects, goals and tasks live side-by-side**. A goal links
+up to its project(s) and down to its tasks; a task is a directory keeping the
+strict per-task document set defined in `DEVELOPMENT.md`.
+
+### Document convention
+
+- Each **project** and **goal** is a single **standalone `.md` file** named after
+  the entity (e.g. `P1-cassini-internal-mvp.md`, `G1-operator-control-plane.md`).
+  Where an entity also carries reference/shaping docs, they sit in a same-named
+  sibling folder (e.g. `P1-cassini-internal-mvp/`) that the standalone file links into.
+- Every project/goal file is a living **status report** and carries, near the top,
+  a **`Last updated:`** date, then **Work done**, **Work TODO**, and **Gaps to
+  completion** sections — a project framed in terms of its goals, a goal in terms
+  of its tasks. These are refreshed by an explicit **reflection** pass (run on
+  request); `Last updated` records the date of that pass.
 
 ## PHASE-1
 
@@ -29,20 +41,20 @@ the **D-246** deployment-bundle implementation).
 
 ### Projects
 
-- [**P1 — Cassini internal MVP**](./PHASE-1/P1-cassini-internal-mvp/spec.md) — the end-to-end Nextcloud-Talk meeting-to-artifact MVP (old `mvp` initiative).
-- [**P2 — Nextcloud marketplace readiness**](./PHASE-1/P2-nextcloud-marketplace-readiness/spec.md) — distribution: ExApp packaging + runtime images.
+- [**P1 — Cassini internal MVP**](./PHASE-1/P1-cassini-internal-mvp.md) — the end-to-end Nextcloud-Talk meeting-to-artifact MVP (old `mvp` initiative).
+- [**P2 — Nextcloud marketplace readiness**](./PHASE-1/P2-nextcloud-marketplace-readiness.md) — distribution: ExApp packaging + runtime images.
 
 ### Goals
 
 | Goal | Project | Status |
 |------|---------|--------|
-| [G1 — Operator control plane](./PHASE-1/G1-operator-control-plane/goal.md) | P1 | ✅ |
-| [G2 — Live Nextcloud Talk capture](./PHASE-1/G2-live-meeting-capture/goal.md) | P1 | ✅ |
-| [G3 — Meeting summary](./PHASE-1/G3-meeting-summary/goal.md) | P1 | ✅ |
-| [G4 — Viewer / delivery surface](./PHASE-1/G4-viewer-delivery-surface/goal.md) | P1 | ◑ (D-249 pending) |
-| [G5 — Failure inspection, rerun & reliability](./PHASE-1/G5-failure-rerun-reliability/goal.md) | P1 | ✅ |
-| [G6 — Self-host deployment & docs](./PHASE-1/G6-self-host-deployment/goal.md) | P1 | ◑ (build pending) |
-| [G7 — Unified product CLI & DX foundation](./PHASE-1/G7-product-cli-foundation/goal.md) | _orphaned / cross-cutting_ | ✅ (phase 1) |
+| [G1 — Operator control plane](./PHASE-1/G1-operator-control-plane.md) | P1 | ✅ |
+| [G2 — Live Nextcloud Talk capture](./PHASE-1/G2-live-meeting-capture.md) | P1 | ✅ |
+| [G3 — Meeting summary](./PHASE-1/G3-meeting-summary.md) | P1 | ✅ |
+| [G4 — Viewer / delivery surface](./PHASE-1/G4-viewer-delivery-surface.md) | P1 | ◑ (D-249 pending) |
+| [G5 — Failure inspection, rerun & reliability](./PHASE-1/G5-failure-rerun-reliability.md) | P1 | ✅ |
+| [G6 — Self-host deployment & docs](./PHASE-1/G6-self-host-deployment.md) | P1 | ◑ (build pending) |
+| [G7 — Unified product CLI & DX foundation](./PHASE-1/G7-product-cli-foundation.md) | _orphaned / cross-cutting_ | ✅ (phase 1) |
 
 ### Tasks
 

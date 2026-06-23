@@ -6,8 +6,8 @@ crystallizes through projects and cycles. It is intentionally not tied to a fixe
 time horizon. See development/README.md for the tracking taxonomy.
 
 Projects under this initiative (current phase: PHASE-1):
-- P1 — Cassini internal MVP        → PHASE-1/P1-cassini-internal-mvp/spec.md
-- P2 — Nextcloud marketplace ready  → PHASE-1/P2-nextcloud-marketplace-readiness/spec.md
+- P1 — Cassini internal MVP        → PHASE-1/P1-cassini-internal-mvp.md
+- P2 — Nextcloud marketplace ready  → PHASE-1/P2-nextcloud-marketplace-readiness.md
 -->
 
 # Cassini Venture Brief
