@@ -7,9 +7,15 @@ This page describes Cassini’s main artifact types and the operator’s runtime
 | Artifact | Produced by | Purpose |
 |---|---|---|
 | `.run` bundle | record | durable capture output |
-| `.meeting` bundle | build | durable built meeting artifact |
+| `.meeting` bundle | build | transient build scratch (intermediate; packed into `.opus`) |
 | `.site` bundle | publish | static viewer export |
-| portable `.opus` | build/packaging flow | one-file meeting package |
+| portable `.opus` | build/packaging flow | the one canonical user-facing meeting format and only durable published contract |
+
+The `.opus` portable file is the single user-facing deliverable. The `.meeting`
+bundle and its manifests (`cassini.json` = `cassini.meeting.v1`, `manifest.json`
+= `cassini.meeting-artifact.v1`) are internal build scratch, not a published
+contract, and are scheduled for retirement once build/publish stop depending on
+them.
 
 ## Common bundle manifest idea
 
@@ -59,9 +65,12 @@ Typical contents:
 Conceptually:
 
 - input: `.run` or raw `.mkv`
-- output: reusable built meeting artifact
+- output: an intermediate bundle staged for packing into a portable `.opus`
 
-Use `.meeting` when you need a canonical publish input.
+The `.meeting` bundle is transient build scratch, not a published format. Its
+`cassini.json` and `manifest.json` are internal staging manifests, not a
+consumer contract, and are scheduled for retirement. Prefer the portable `.opus`
+as the durable, user-facing meeting artifact.
 
 ## `.site` bundle
 
@@ -101,8 +110,10 @@ It may include extra viewer-facing files that were materialized during publish.
 
 So:
 
-- raw `.meeting` bundles are the canonical built artifacts
-- published meeting directories are exported viewer artifacts derived from those bundles
+- raw `.meeting` bundles are transient build scratch (an intermediate that gets packed into a portable `.opus`), not the canonical deliverable
+- published meeting directories are exported viewer artifacts derived during publish
+
+The canonical user-facing meeting artifact is the portable `.opus` file.
 
 ## Operator runtime layout
 

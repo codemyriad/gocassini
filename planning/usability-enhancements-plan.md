@@ -70,7 +70,10 @@ Cassini should adopt one canonical user-facing file format:
 
 - `*.opus` with embedded Cassini meeting metadata
 
-That file should be a self-contained meeting package.
+That file should be a self-contained meeting package. It is the **only** durable,
+published Cassini contract; everything else (`.run`, `.meeting`, their
+`cassini.json`/`manifest.json` bundle manifests) is transient internal plumbing,
+not a deliverable.
 
 ### Recommended technical shape
 
@@ -80,7 +83,8 @@ Cassini metadata.
 The normative format is defined in:
 
 - [Portable meeting format](../docs/portable-meeting-format.md)
-- [cassini-portable-meeting-manifest-v1.schema.json](../spec/cassini-portable-meeting-manifest-v1.schema.json)
+- [cassini-portable-meeting-manifest-v2.schema.json](../spec/cassini-portable-meeting-manifest-v2.schema.json) (the format the producer now emits)
+- [cassini-portable-meeting-manifest-v1.schema.json](../spec/cassini-portable-meeting-manifest-v1.schema.json) (read-only; older files)
 
 ## Product Surface Users Should See
 
@@ -198,7 +202,7 @@ This is where the current `publish` concept belongs, but "share" is the better u
 The current pipeline can remain, but it should become hidden plumbing:
 
 - `.run` becomes a temporary working bundle
-- `.meeting` directory becomes the extracted working form of one `*.opus` file
+- `.meeting` directory becomes transient build scratch — an intermediate the build stage packs into one `*.opus` file, not a deliverable; its bundle manifests are not a published contract
 - `.site` remains a generated export target for sharing/browsing
 
 In other words:

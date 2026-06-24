@@ -16,6 +16,13 @@ Define one user-facing meeting file that is:
 This format is the contract that both Cassini producers and Cassini consumers
 should implement.
 
+The `.opus` portable meeting file is the **one canonical, user-facing format**
+and the only durable, published Cassini contract. The producer now emits
+`org.cassini.portable-meeting/2` (v2); v1 remains readable for older files but
+is no longer emitted. The intermediate `.meeting` bundle directory (with its
+`cassini.json` and `manifest.json`) is transient build scratch, not a
+deliverable — see [Why `.meeting` is not a contract](#why-meeting-is-not-a-contract).
+
 ## Decision
 
 Cassini v1 portable meeting files should be:
@@ -618,4 +625,23 @@ after lowercasing) to avoid OpusTag namespace collisions:
 payload, format, audio, meeting, integrity, transcript, provenance,
 summary, attachments
 ```
+
+---
+
+## Why `.meeting` is not a contract
+
+The build pipeline still uses a `.meeting` bundle directory as an intermediate
+working form. That directory carries two internal manifest files:
+
+- `cassini.json` — the bundle envelope (`cassini.meeting.v1`)
+- `manifest.json` — the artifact manifest (`cassini.meeting-artifact.v1`)
+
+These are **build scratch, not a published format**. The only durable Cassini
+deliverable is the `.opus` portable meeting file with its embedded
+`org.cassini.portable-meeting/2` manifest. The `.meeting` bundle and its two
+manifest schemas exist purely to stage the pack into `.opus`; they are
+deliberately not documented as a consumer contract and are scheduled to be
+retired once the build/publish flows no longer depend on them. Do not treat the
+`.meeting` bundle, `cassini.json`, or the bundle `manifest.json` as a stable
+interface.
 
