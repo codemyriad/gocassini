@@ -134,10 +134,9 @@
       return { duration: 0 };
     }
     return {
-      x: direction * window.innerWidth,
-      duration: 600,
-      easing: cubicInOut,
-      opacity: 1,
+      duration: 280,
+      easing: cubicOut,
+      opacity: 0,
     };
   }
 
