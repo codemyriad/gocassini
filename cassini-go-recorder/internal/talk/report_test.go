@@ -63,7 +63,7 @@ func TestWriteReportIncludesArtifactRemuxPlans(t *testing.T) {
 	}
 
 	reportPath := filepath.Join(tmp, "report.json")
-	if err := rec.writeReport(reportPath, nil, true, "", false, nil); err != nil {
+	if err := rec.writeReport(reportPath, nil, true, "", false, nil, nil); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
 
