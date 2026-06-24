@@ -417,6 +417,7 @@ Paths:
 func runInspect(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cassini inspect", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	dumpTranscript := fs.Bool("transcript", false, "dump the default words transcript from a portable .opus as transcript.words.v1.json to stdout (instead of the inspect summary)")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini inspect ./runs/meeting.run
@@ -426,6 +427,7 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
   cassini inspect /path/to/meeting.mkv
   cassini inspect /path/to/session.json
   cassini inspect /path/to/archive.csr
+  cassini inspect --transcript ./archive/meeting.opus
 
 `+"\n")
 	}
@@ -441,6 +443,23 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
 	}
 
 	path := fs.Arg(0)
+
+	// --transcript reads the default words transcript back out of a published
+	// portable .opus and writes it as transcript.words.v1.json to stdout. This
+	// is the inverse of the v2 transcript packer: it proves the published .opus
+	// actually embeds the expected transcript, not just that it is non-empty.
+	if *dumpTranscript {
+		extracted, err := inspectpkg.ExtractTranscriptWords(path)
+		if err != nil {
+			fmt.Fprintf(stderr, "inspect --transcript failed: %v\n", err)
+			return 1
+		}
+		if err := inspectpkg.WriteTranscriptWordsV1JSON(stdout, extracted); err != nil {
+			fmt.Fprintf(stderr, "inspect --transcript failed: %v\n", err)
+			return 1
+		}
+		return 0
+	}
 	if bundle, ok, err := LoadRunBundle(path); err != nil {
 		fmt.Fprintf(stderr, "inspect failed: %v\n", err)
 		return 1

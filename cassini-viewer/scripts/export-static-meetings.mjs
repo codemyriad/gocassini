@@ -142,6 +142,22 @@ export function rewriteIndexHtmlForCatalog(indexHtml) {
   return indexHtml;
 }
 
+// In v2 portable meetings the transcript items live in separate
+// CASSINI_TX_<id>_PAYLOAD_* chunk sets, not the main manifest, so
+// extractPortableManifest() (which decodes only the main manifest) returns no
+// inline transcript.items — buildTranscriptWordsFromPortable() then yields zero
+// segments and the catalog would ship segmentCount: 0 for every fresh v2 .opus.
+// The per-item count is mirrored as `wordCount` on each transcript entry
+// (wordCount === len(items) === segmentCount for cassini.words.v1 bodies, see
+// portable_meeting_v2.go), so fall back to the default transcript's wordCount
+// without having to decode the chunk-set body here.
+export function portableDefaultSegmentCount(portable) {
+  const entries = Array.isArray(portable?.transcripts) ? portable.transcripts : [];
+  if (entries.length === 0) return 0;
+  const def = entries.find((entry) => entry?.default) ?? entries[0];
+  return typeof def?.wordCount === "number" ? def.wordCount : 0;
+}
+
 export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, recordingsBaseUrl = null }) {
   const { title, dateLabel } = describeMeeting(meetingId);
 
@@ -159,7 +175,11 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
       title: sttVariantLabel ? `${title} (${sttVariantLabel})` : title,
       dateLabel,
       speakerCount: transcript.speakers?.length ?? 0,
-      segmentCount: transcript.segments?.length ?? 0,
+      // For a v2 .opus the inline items are absent (see portableDefaultSegmentCount);
+      // fall back to the default transcript's wordCount so the catalog does not
+      // ship segmentCount: 0 (which the viewer's hydration gate would treat as
+      // "already populated" and never correct).
+      segmentCount: transcript.segments?.length || portableDefaultSegmentCount(portable),
       digestDurationMs: transcript.media?.durationMs ?? 0,
     };
   }

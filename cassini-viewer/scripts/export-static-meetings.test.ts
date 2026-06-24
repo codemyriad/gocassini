@@ -7,6 +7,7 @@ import {
   describeVariantSuffix,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
+  portableDefaultSegmentCount,
   parseArgs,
 } from "./export-static-meetings.mjs";
 
@@ -988,5 +989,53 @@ describe("parseArgs", () => {
     expect(recordingsBaseUrl).toBe("https://view.meetings.codemyriad.io/main/");
     expect(sourceDir).toContain("/tmp/source");
     expect(outputDir).toContain("/tmp/out");
+  });
+});
+
+describe("portableDefaultSegmentCount (v2 .opus segmentCount fallback)", () => {
+  // A v2 portable main manifest carries per-transcript metadata in transcripts[]
+  // (wordCount); the actual items live in separate CASSINI_TX_* chunk sets the
+  // exporter does not decode. So buildTranscriptWordsFromPortable sees no inline
+  // items and yields 0 segments — the catalog must fall back to wordCount, or it
+  // would publish segmentCount: 0 for every fresh v2 .opus.
+  const v2Manifest = {
+    kind: "cassini-portable-meeting",
+    version: 2,
+    speakers: [{ id: "spk_0", label: "Alice" }],
+    transcripts: [
+      { id: "raw-asr", role: "speech-to-text", default: true, wordCount: 42 },
+      { id: "cleaned", role: "cleaned", default: false, wordCount: 40 },
+    ],
+  };
+
+  it("buildTranscriptWordsFromPortable yields 0 segments for a v2 main manifest (the bug condition)", () => {
+    expect(buildTranscriptWordsFromPortable(v2Manifest).segments).toHaveLength(0);
+  });
+
+  it("uses the default transcript's wordCount as the segment count", () => {
+    expect(portableDefaultSegmentCount(v2Manifest)).toBe(42);
+  });
+
+  it("the catalog fallback (segments.length || portableDefaultSegmentCount) avoids segmentCount: 0", () => {
+    const transcript = buildTranscriptWordsFromPortable(v2Manifest);
+    const segmentCount = transcript.segments?.length || portableDefaultSegmentCount(v2Manifest);
+    expect(segmentCount).toBe(42);
+  });
+
+  it("falls back to the first transcript when none is marked default", () => {
+    expect(
+      portableDefaultSegmentCount({
+        transcripts: [
+          { id: "a", wordCount: 7 },
+          { id: "b", wordCount: 9 },
+        ],
+      }),
+    ).toBe(7);
+  });
+
+  it("returns 0 when there are no transcripts or no numeric wordCount", () => {
+    expect(portableDefaultSegmentCount({})).toBe(0);
+    expect(portableDefaultSegmentCount({ transcripts: [] })).toBe(0);
+    expect(portableDefaultSegmentCount({ transcripts: [{ id: "a" }] })).toBe(0);
   });
 });
