@@ -26,6 +26,14 @@ func canonicalMeetingPath(workRoot, jobID string) string {
 	return filepath.Join(currentRoot(workRoot), jobID+".meeting")
 }
 
+// canonicalOpusPath is the durable portable artifact stored next to the
+// promoted `.meeting` bundle in current/. The `.opus` is the format that must
+// survive once `.meeting` stops being a publish input (D-428); it is produced
+// at promotion time by packing the promoted `.meeting` bundle.
+func canonicalOpusPath(workRoot, jobID string) string {
+	return filepath.Join(currentRoot(workRoot), jobID+".opus")
+}
+
 func attemptBaseName(jobID string, attemptNumber int) string {
 	return fmt.Sprintf("%s--attempt-%03d", jobID, attemptNumber)
 }
