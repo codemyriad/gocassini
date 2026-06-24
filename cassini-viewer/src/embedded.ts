@@ -100,11 +100,25 @@ export function ensureShadowAppRoot(doc: Document, cssHref: string): HTMLElement
 }
 
 // viewerStylesheetHref builds the shadow stylesheet URL from the captured proxy
-// base. Falls back to a relative "ui/viewer.css" if the base is somehow absent
-// (the SPA still mounts; only styling would degrade).
-function viewerStylesheetHref(win: Window): string {
+// base, mirroring the version query string from the viewer.js script tag so the
+// browser cache expires together with the JS bundle. Falls back to a relative
+// "ui/viewer.css" if the base is absent (the SPA still mounts; only styling
+// would degrade).
+function viewerStylesheetHref(win: Window, doc: Document): string {
   const base = win.__CASSINI_VIEWER_BASE__;
-  return base ? base + "ui/viewer.css" : "ui/viewer.css";
+  if (!base) return "ui/viewer.css";
+  // Extract the ?v=... query string from the registered viewer.js script src
+  // so the CSS cache-buster stays in sync with the JS cache-buster.
+  let versionQuery = "";
+  for (let i = 0; i < doc.scripts.length; i++) {
+    const src = doc.scripts[i]?.src ?? "";
+    if (VIEWER_JS_SRC_PATTERN.test(src)) {
+      const qIdx = src.lastIndexOf("?");
+      if (qIdx >= 0) versionQuery = src.slice(qIdx);
+      break;
+    }
+  }
+  return base + "ui/viewer.css" + versionQuery;
 }
 
 // applyNextcloudTheme bridges Nextcloud's user colour/accessibility preferences
@@ -134,7 +148,7 @@ export function applyNextcloudTheme(
 }
 
 function mountEmbeddedViewer(): void {
-  const appRoot = ensureShadowAppRoot(document, viewerStylesheetHref(window));
+  const appRoot = ensureShadowAppRoot(document, viewerStylesheetHref(window, document));
   const shadowHost = document.getElementById("cassini-shadow-host");
   let ncMode = false;
   if (shadowHost) {
@@ -148,15 +162,15 @@ function mountEmbeddedViewer(): void {
 
 function bootstrap(): void {
   captureViewerBase(document, window);
-  // Wait for DOMContentLoaded unless the page is already fully loaded.
-  // readyState === "interactive" means HTML is parsed but other deferred scripts
-  // (including Nextcloud core, which sets up OCA.Theming) may not have run yet.
-  // Waiting for DOMContentLoaded guarantees all deferred scripts have executed
-  // before mountEmbeddedViewer reads OCA.Theming.
+  // Wait for the window load event unless the page is already fully loaded.
+  // DOMContentLoaded fires after deferred scripts, but OCA.Theming is populated
+  // by a Nextcloud dynamic import that resolves asynchronously after
+  // DOMContentLoaded. The load event fires once readyState reaches "complete",
+  // at which point OCA.Theming.primaryColor is reliably available.
   if (document.readyState === "complete") {
     mountEmbeddedViewer();
   } else {
-    document.addEventListener("DOMContentLoaded", mountEmbeddedViewer, { once: true });
+    window.addEventListener("load", mountEmbeddedViewer, { once: true });
   }
 }
 

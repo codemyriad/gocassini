@@ -331,6 +331,19 @@ describe("controlPanelStylesheetHref", () => {
     );
   });
 
+  it("mirrors the ?v=... version query from the JS src so CSS cache expires with the bundle", () => {
+    const doc = {
+      scripts: [
+        {
+          src: "https://nc.example.com/index.php/apps/app_api/proxy/gocassini/ui/control-panel.js?v=abc123-0",
+        },
+      ],
+    } as unknown as Document;
+    expect(controlPanelStylesheetHref(doc)).toBe(
+      "/index.php/apps/app_api/proxy/gocassini/ui/control-panel.css?v=abc123-0",
+    );
+  });
+
   it("falls back to a relative href when no matching script is present", () => {
     const doc = { scripts: [{ src: "https://nc.example.com/x.js" }] } as unknown as Document;
     expect(controlPanelStylesheetHref(doc)).toBe("ui/control-panel.css");
