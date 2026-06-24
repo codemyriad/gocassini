@@ -25,7 +25,8 @@
 #      record job → recorder joins call → captures → stop → upload to
 #      Talk store → build → publish)
 #   7. Read the published transcript from the gocassini container
-#      (/srv/cassini-site/published/meeting-*/transcript.words.v1.json)
+#      (published artifact is /srv/cassini-site/published/meetings/<id>.opus;
+#       transcript text comes from the durable current/<id>.meeting bundle)
 #   8. Read the uploaded recording back from the room owner's Nextcloud
 #      files over WebDAV (spreed stores it under
 #      <attachment folder>/Recording/<room token>/) and assert existence,
@@ -470,25 +471,31 @@ phase 7 "Wait for record → upload → build → publish; pull transcript"
 # then build (transcribe v3 int8 on 30s of audio takes ~10-20s on CPU),
 # then publish. Generous timeout:
 PUBLISH_DEADLINE=$(( SECONDS + RECORD_DURATION_SECONDS + 180 ))
-log "waiting for /srv/cassini-site/published/meetings/<id>/transcript.words.v1.json (up to $((PUBLISH_DEADLINE - SECONDS))s)"
-PUBLISHED_DIR=""
+log "waiting for /srv/cassini-site/published/meetings/<id>.opus (up to $((PUBLISH_DEADLINE - SECONDS))s)"
+PUBLISHED_OPUS=""
 while (( SECONDS < PUBLISH_DEADLINE )); do
   CANDIDATE=$(docker exec "$CONTAINER_NAME" \
-    sh -c 'ls -d /srv/cassini-site/published/meetings/*/ 2>/dev/null | head -n1 | sed "s|/$||"' \
+    sh -c 'ls /srv/cassini-site/published/meetings/*.opus 2>/dev/null | head -n1' \
     || true)
   if [[ -n "$CANDIDATE" ]] && \
-     docker exec "$CONTAINER_NAME" test -s "$CANDIDATE/transcript.words.v1.json"; then
-    PUBLISHED_DIR="$CANDIDATE"
+     docker exec "$CONTAINER_NAME" test -s "$CANDIDATE"; then
+    PUBLISHED_OPUS="$CANDIDATE"
     break
   fi
   sleep 4
 done
-[[ -n "$PUBLISHED_DIR" ]] || fail "published bundle never appeared"
-log "OK published bundle: $PUBLISHED_DIR"
+[[ -n "$PUBLISHED_OPUS" ]] || fail "published .opus never appeared"
+log "OK published meeting: $PUBLISHED_OPUS"
 
-# Pull the transcript out so phase 8 can read it.
+# The published artifact is now a single portable .opus (D-429); the loose
+# transcript.words.v1.json no longer ships in the site. Pull the transcript for
+# the phase-9 text check from the operator's durable build bundle in
+# current/<id>.meeting/ — that's the exact transcript packed into the .opus
+# (publish names the file <jobID>.opus, matching current/<jobID>.meeting/), so
+# the Levenshtein check still validates published content.
+MEETING_ID="$(basename "$PUBLISHED_OPUS" .opus)"
 TRANSCRIPT_HOST="$LOG_DIR/transcript.words.v1.json"
-docker cp "$CONTAINER_NAME:$PUBLISHED_DIR/transcript.words.v1.json" "$TRANSCRIPT_HOST"
+docker cp "$CONTAINER_NAME:/var/lib/cassini-operator/jobs/current/${MEETING_ID}.meeting/transcript.words.v1.json" "$TRANSCRIPT_HOST"
 log "OK transcript pulled: $TRANSCRIPT_HOST ($(wc -c <"$TRANSCRIPT_HOST") bytes)"
 
 # Bot streamer should have exited by now (or we kill it).
