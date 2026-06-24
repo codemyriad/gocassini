@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // BuildConfig holds runtime options for the transcription pipeline.
@@ -232,6 +233,17 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 // transcribePass runs one full transcription pass over every speaker stream
 // using the given recognizer config. Returns merged + sorted segments.
 func transcribePass(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, device string, numThreads int, stdout io.Writer) ([]Segment, error) {
+	conc := resolveStreamConcurrency(len(streams), numThreads)
+	if conc <= 1 {
+		return transcribeStreamsSequential(ctx, mkvPath, streams, modelPaths, vadPath, device, numThreads, stdout)
+	}
+	return transcribeStreamsParallel(ctx, mkvPath, streams, modelPaths, vadPath, device, numThreads, conc, stdout)
+}
+
+// transcribeStreamsSequential transcribes each speaker stream one at a time with
+// a single shared recognizer. Used when concurrency resolves to 1 (single
+// speaker, tight thread budget, or low free RAM).
+func transcribeStreamsSequential(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, device string, numThreads int, stdout io.Writer) ([]Segment, error) {
 	fmt.Fprintf(stdout, "  loading recognizer (device=%s)...\n", device)
 	rec, err := NewRecognizer(modelPaths, vadPath, device, numThreads)
 	if err != nil {
@@ -257,6 +269,99 @@ func transcribePass(ctx context.Context, mkvPath string, streams []AudioStream, 
 		}
 		fmt.Fprintf(stdout, "    %s: %d words\n", stream.SpeakerLabel, len(words))
 		perSpeakerSegs[i] = AssembleSegments(stream.SpeakerID, words, 0, 0)
+	}
+	return MergeAndSortSegments(perSpeakerSegs), nil
+}
+
+// transcribeStreamsParallel transcribes speaker streams concurrently across
+// `conc` workers, each owning its OWN recognizer (no shared sherpa state, so no
+// thread-safety question) with an even share of the intra-op thread budget.
+// Concurrency is already bounded by core count and free RAM (see
+// resolveStreamConcurrency), so this never oversubscribes or OOMs the host.
+// Per-speaker results are written by index, so the merged output is independent
+// of completion order. The first error cancels the rest.
+func transcribeStreamsParallel(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, device string, numThreads, conc int, stdout io.Writer) ([]Segment, error) {
+	threadsPer := numThreads / conc
+	if threadsPer < 1 {
+		threadsPer = 1
+	}
+	fmt.Fprintf(stdout, "  transcribing %d streams, concurrency=%d (%d threads each, device=%s)...\n", len(streams), conc, threadsPer, device)
+
+	perSpeakerSegs := make([][]Segment, len(streams))
+	type streamJob struct {
+		idx    int
+		stream AudioStream
+	}
+	jobs := make(chan streamJob)
+
+	gctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		firstErr error
+	)
+	fail := func(err error) {
+		mu.Lock()
+		if firstErr == nil {
+			firstErr = err
+		}
+		mu.Unlock()
+		cancel()
+	}
+	logLine := func(format string, a ...any) {
+		mu.Lock()
+		fmt.Fprintf(stdout, format, a...)
+		mu.Unlock()
+	}
+
+	worker := func() {
+		defer wg.Done()
+		rec, err := NewRecognizer(modelPaths, vadPath, device, threadsPer)
+		if err != nil {
+			fail(fmt.Errorf("create recognizer: %w", err))
+			return
+		}
+		defer rec.Close()
+		for j := range jobs {
+			if gctx.Err() != nil {
+				return
+			}
+			logLine("  transcribing %s (stream index %d)...\n", j.stream.SpeakerLabel, j.stream.Index)
+			samples, err := ExtractSpeakerFloats(mkvPath, j.stream)
+			if err != nil {
+				fail(fmt.Errorf("extract audio for %s: %w", j.stream.SpeakerLabel, err))
+				return
+			}
+			words, err := rec.Transcribe(samples, modelPaths.SampleRate, true /*useVAD*/)
+			if err != nil {
+				fail(fmt.Errorf("transcribe %s: %w", j.stream.SpeakerLabel, err))
+				return
+			}
+			logLine("    %s: %d words\n", j.stream.SpeakerLabel, len(words))
+			perSpeakerSegs[j.idx] = AssembleSegments(j.stream.SpeakerID, words, 0, 0)
+		}
+	}
+
+	wg.Add(conc)
+	for i := 0; i < conc; i++ {
+		go worker()
+	}
+
+feed:
+	for i, s := range streams {
+		select {
+		case <-gctx.Done():
+			break feed
+		case jobs <- streamJob{idx: i, stream: s}:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+
+	if firstErr != nil {
+		return nil, firstErr
 	}
 	return MergeAndSortSegments(perSpeakerSegs), nil
 }
