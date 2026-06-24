@@ -148,10 +148,15 @@ function mountEmbeddedViewer(): void {
 
 function bootstrap(): void {
   captureViewerBase(document, window);
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", mountEmbeddedViewer, { once: true });
-  } else {
+  // Wait for DOMContentLoaded unless the page is already fully loaded.
+  // readyState === "interactive" means HTML is parsed but other deferred scripts
+  // (including Nextcloud core, which sets up OCA.Theming) may not have run yet.
+  // Waiting for DOMContentLoaded guarantees all deferred scripts have executed
+  // before mountEmbeddedViewer reads OCA.Theming.
+  if (document.readyState === "complete") {
     mountEmbeddedViewer();
+  } else {
+    document.addEventListener("DOMContentLoaded", mountEmbeddedViewer, { once: true });
   }
 }
 

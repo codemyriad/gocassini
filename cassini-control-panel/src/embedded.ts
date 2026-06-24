@@ -185,10 +185,13 @@ function mountEmbeddedControlPanel(): void {
 
 function bootstrap(): void {
   captureOperatorBasePath(document, window);
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", mountEmbeddedControlPanel, { once: true });
-  } else {
+  // Wait for DOMContentLoaded unless the page is already fully loaded — same
+  // rationale as the viewer's bootstrap: readyState "interactive" means other
+  // deferred scripts (Nextcloud core, OCA.Theming) may not have run yet.
+  if (document.readyState === "complete") {
     mountEmbeddedControlPanel();
+  } else {
+    document.addEventListener("DOMContentLoaded", mountEmbeddedControlPanel, { once: true });
   }
 }
 
