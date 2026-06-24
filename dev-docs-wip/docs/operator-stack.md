@@ -129,9 +129,16 @@ The operator’s `current/` directory is the canonical artifact library.
 Think of it as:
 
 - the latest successful `.run` per logical job
-- the latest successful `.meeting` per logical job
+- the latest successful `.meeting` bundle per logical job
 
-This matters because publish does **not** export from “the latest attempt folder”. It exports from the canonical current meeting library.
+This matters because publish does **not** export from “the latest attempt folder”. It exports from this current meeting library.
+
+> Pre-cleanup state: today the operator keeps the transient `.meeting` bundle in
+> `current/` as its internal build output and publishes from it. The `.meeting`
+> bundle is build scratch, not a user-facing deliverable; the one canonical,
+> user-facing meeting format is the portable `.opus`. The operator storing and
+> publishing `.meeting` directories is scheduled for retirement (see the D-425
+> retirement inventory).
 
 ## Why `current/` matters
 

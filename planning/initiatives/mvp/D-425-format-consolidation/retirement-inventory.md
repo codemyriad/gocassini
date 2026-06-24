@@ -111,6 +111,21 @@ Each bullet is tagged:
 > planning. They are listed under C because today they form the publish input
 > chain (`current/<job>.meeting` → publish).
 
+> Docs note (D-431, not edited — pre-cleanup operator-library wording): several
+> dev docs describe the operator's `current/` library with the phrase "canonical
+> `current/<job>.meeting`" / "one canonical `.meeting` per job", parallel to the
+> canonical `.run` pointer. This is the operator-`current/`-library sense (the
+> single retained per-job copy / promotion pointer), **not** a claim that
+> `.meeting` is the canonical user-facing format. D-431 left these as-is (the
+> `.run` half stays canonical regardless); when C lands and the operator stops
+> staging/publishing `.meeting`, update or drop the `.meeting` half here too:
+> `dev-docs-wip/docs/reference/artifacts-and-filesystem.md:190,196`,
+> `docs-wip/operator.md:90,369,529`,
+> `docs-wip/system-architecture.md:181,222`,
+> and the operator-stack/operator record-build-publish step lists
+> (`dev-docs-wip/docs/operator-stack.md:131-132,143,198,213,220`,
+> framed with a pre-cleanup note in D-431). — `removable-after: C` (doc strings)
+
 ---
 
 ## Viewer — `cassini-viewer`
@@ -164,9 +179,20 @@ Dev/build scripts (`scripts/`):
 
 ## Publisher — `cassini-publisher`
 
-No TypeScript/Svelte/.mjs source found; the module is shell scripts only. No
-`.meeting` / `cassini.meeting.v1` / `cassini.meeting-artifact.v1` / `artifactPath`
-/ `loadArtifactFromDirectory` references to retire. `keep: nothing-to-do`
+The module is shell scripts plus a README (no TypeScript/Svelte/.mjs source).
+The shell entry points delegate the actual export/merge to
+`cassini-viewer/scripts/` (already inventoried under Viewer), but the publisher's
+own README and script doc strings still document the `.meeting` bundle as a
+build output / publish input, so they are part of the C cleanup.
+
+### C — `.meeting` directory / publish input doc strings
+
+- `cassini-publisher/README.md:32` — quick-start example `./bin/cassini build /path/to/meeting.mkv --out /tmp/meetings/weekly-sync.meeting` (documents building a `.meeting` bundle as the publishable output; should become a portable `.opus`) — `removable-after: C` (doc string)
+- `cassini-publisher/bin/export-static-meetings.sh:9` — deprecation warning text `"... prefer ./bin/cassini publish ... for .meeting bundles"` (names the `.meeting` bundle as the publish input contract) — `removable-after: C` (doc string)
+
+No `cassini.meeting.v1` / `cassini.meeting-artifact.v1` / `artifactPath` /
+`loadArtifactFromDirectory` references exist in the publisher itself; those live
+in the viewer scripts it shells out to (inventoried under Viewer).
 
 ---
 
@@ -182,7 +208,9 @@ No TypeScript/Svelte/.mjs source found; the module is shell scripts only. No
 - **C (D-430)** — `.meeting` directory / `artifactPath` /
   `loadArtifactFromDirectory` as a publish/viewer input contract: recorder
   publish+inspect+help, operator path/promotion, viewer `catalog.ts` /
-  `App.svelte` / `loadArtifact.ts` and dev scripts.
+  `App.svelte` / `loadArtifact.ts` and dev scripts, and the publisher's
+  README/script doc strings that still name `.meeting` as the build output /
+  publish input.
 
 The `keep: transient-scratch-only` items (the internal `.cassini-work`
 `meeting.meeting` staging and the pack-into-`.opus` step) are intentionally
