@@ -1039,7 +1039,7 @@
      root. The <dialog> below is wrapped too so [data-theme] styles it (showModal
      keeps it in-tree for inheritance even when promoted to the top layer). -->
 <div bind:this={rootEl} class="cassini-root" data-theme={themeMode} class:theme-switching={themeSwitching}>
-<div class="grid grid-cols-1 md:grid-cols-[400px_1fr] min-h-full bg-base-200 overflow-x-clip">
+<div class="grid grid-cols-1 md:grid-cols-[400px_1fr] h-full bg-base-200 overflow-x-clip">
   {#if isDesktop || !selectedMeetingId}
     <section
       aria-label="Meeting list"
