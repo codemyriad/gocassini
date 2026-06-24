@@ -107,8 +107,43 @@ function viewerStylesheetHref(win: Window): string {
   return base ? base + "ui/viewer.css" : "ui/viewer.css";
 }
 
+// applyNextcloudTheme bridges Nextcloud's user colour/accessibility preferences
+// into the shadow root (D-414). It sets --nc-primary as an inline style on the
+// shadow host (aliasing NC's --color-primary to avoid a circular var() reference
+// with DaisyUI's own --color-primary) and records the active NC theme as
+// data-nc-theme so the CSS override block in app.css can activate. Returns true
+// when NC theming was applied (OCA.Theming.primaryColor present), false when
+// running outside Nextcloud (standalone viewer — forrest themes remain active).
+// Pure enough to unit-test: all globals are injected.
+export function applyNextcloudTheme(
+  host: HTMLElement,
+  bodyDataThemes: string | undefined,
+  primaryColor: string | null | undefined,
+): boolean {
+  if (!primaryColor) return false;
+  host.style.setProperty("--nc-primary", primaryColor);
+  const themes = bodyDataThemes ?? "";
+  const isDark = themes.includes("dark");
+  const isHighContrast = themes.includes("highcontrast");
+  let themeValue = "light";
+  if (isDark && isHighContrast) themeValue = "dark-highcontrast";
+  else if (isDark) themeValue = "dark";
+  else if (isHighContrast) themeValue = "highcontrast";
+  host.dataset.ncTheme = themeValue;
+  return true;
+}
+
 function mountEmbeddedViewer(): void {
-  mount(App, { target: ensureShadowAppRoot(document, viewerStylesheetHref(window)) });
+  const appRoot = ensureShadowAppRoot(document, viewerStylesheetHref(window));
+  const shadowHost = document.getElementById("cassini-shadow-host");
+  let ncMode = false;
+  if (shadowHost) {
+    const oca = (window as unknown as Record<string, unknown>).OCA as Record<string, unknown> | undefined;
+    const theming = oca?.Theming as Record<string, unknown> | undefined;
+    const primaryColor = theming?.primaryColor as string | undefined;
+    ncMode = applyNextcloudTheme(shadowHost, document.body.dataset.themes, primaryColor);
+  }
+  mount(App, { target: appRoot, props: { ncMode } });
 }
 
 function bootstrap(): void {

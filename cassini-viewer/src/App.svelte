@@ -87,6 +87,11 @@
   let catalogHydrationGeneration = 0;
   const CONTINUATION_GAP_MS = 60_000;
 
+  // ncMode is true when embedded in Nextcloud and OCA.Theming was detected by
+  // embedded.ts. Theme toggle is hidden and localStorage/prefers-color-scheme
+  // init is skipped — NC colour prefs are applied via CSS in app.css.
+  export let ncMode: boolean = false;
+
   type ThemeMode = "forrest-light" | "forrest-dark";
   const THEME_STORAGE_KEY = "cassini-theme";
   let themeMode: ThemeMode = "forrest-light";
@@ -318,15 +323,17 @@
     // hash-only nav) surface as hashchange. handlePopState early-returns when
     // the hash meeting already matches, so handling both is idempotent.
     window.addEventListener("hashchange", handlePopState);
-    const stored = readStoredTheme();
-    if (stored !== null) {
-      applyTheme(stored);
-    } else if (typeof window.matchMedia === "function") {
-      prefersDarkMedia = window.matchMedia("(prefers-color-scheme: dark)");
-      applyTheme(prefersDarkMedia.matches ? "forrest-dark" : "forrest-light");
-      prefersDarkMedia.addEventListener("change", handlePrefersColorSchemeChange);
-    } else {
-      applyTheme("forrest-light");
+    if (!ncMode) {
+      const stored = readStoredTheme();
+      if (stored !== null) {
+        applyTheme(stored);
+      } else if (typeof window.matchMedia === "function") {
+        prefersDarkMedia = window.matchMedia("(prefers-color-scheme: dark)");
+        applyTheme(prefersDarkMedia.matches ? "forrest-dark" : "forrest-light");
+        prefersDarkMedia.addEventListener("change", handlePrefersColorSchemeChange);
+      } else {
+        applyTheme("forrest-light");
+      }
     }
     if (typeof window.matchMedia === "function") {
       viewportMedia = window.matchMedia(DESKTOP_MEDIA_QUERY);
@@ -1058,6 +1065,7 @@
           <h2 class="text-base font-bold text-base-content">
             Meetings
           </h2>
+          {#if !ncMode}
           <label class="flex items-center gap-1.5 cursor-pointer">
             <Sun size={16} strokeWidth={2} class="text-base-content/80" aria-hidden="true" />
             <input
@@ -1069,6 +1077,7 @@
             />
             <Moon size={16} strokeWidth={2} class="text-base-content/80" aria-hidden="true" />
           </label>
+          {/if}
         </header>
         {#if catalogMeetings.length > 0}
           <div class="grid gap-3 p-4">

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  applyNextcloudTheme,
   captureOperatorBasePath,
   captureProxyBaseFrom,
   controlPanelStylesheetHref,
@@ -14,6 +15,64 @@ import { loadConfig } from "./operator/config";
 // adversarially-verified parts: proxy-base capture via a document.scripts scan
 // (currentScript is null under `defer`), turning it into the authoritative
 // window.__CASSINI_CONFIG__.operatorBasePath, and #app creation under #content.
+
+describe("applyNextcloudTheme", () => {
+  function makeHost(): HTMLElement {
+    return {
+      style: {
+        _vars: {} as Record<string, string>,
+        setProperty(name: string, value: string) {
+          this._vars[name] = value;
+        },
+      },
+      dataset: {} as DOMStringMap,
+    } as unknown as HTMLElement;
+  }
+
+  it("returns false and makes no changes when primaryColor is absent", () => {
+    const host = makeHost();
+    expect(applyNextcloudTheme(host, undefined, undefined)).toBe(false);
+    expect(applyNextcloudTheme(host, "dark", null)).toBe(false);
+    expect(applyNextcloudTheme(host, "dark", "")).toBe(false);
+    expect((host.dataset as Record<string, unknown>).ncTheme).toBeUndefined();
+  });
+
+  it("sets --nc-primary inline style from primaryColor", () => {
+    const host = makeHost();
+    applyNextcloudTheme(host, "", "#00679e");
+    const style = host.style as unknown as { _vars: Record<string, string> };
+    expect(style._vars["--nc-primary"]).toBe("#00679e");
+  });
+
+  it("sets data-nc-theme=light when no dark or highcontrast flags", () => {
+    const host = makeHost();
+    applyNextcloudTheme(host, "", "#00679e");
+    expect((host.dataset as Record<string, string>).ncTheme).toBe("light");
+  });
+
+  it("sets data-nc-theme=dark when themes includes 'dark'", () => {
+    const host = makeHost();
+    applyNextcloudTheme(host, "dark", "#00679e");
+    expect((host.dataset as Record<string, string>).ncTheme).toBe("dark");
+  });
+
+  it("sets data-nc-theme=highcontrast when themes includes 'highcontrast'", () => {
+    const host = makeHost();
+    applyNextcloudTheme(host, "highcontrast", "#00679e");
+    expect((host.dataset as Record<string, string>).ncTheme).toBe("highcontrast");
+  });
+
+  it("sets data-nc-theme=dark-highcontrast when themes includes both", () => {
+    const host = makeHost();
+    applyNextcloudTheme(host, "dark-highcontrast", "#00679e");
+    expect((host.dataset as Record<string, string>).ncTheme).toBe("dark-highcontrast");
+  });
+
+  it("returns true when primaryColor is present", () => {
+    const host = makeHost();
+    expect(applyNextcloudTheme(host, "", "#00679e")).toBe(true);
+  });
+});
 
 describe("captureProxyBaseFrom", () => {
   it("derives a ROOT-RELATIVE proxy base from the registered ui/control-panel.js src", () => {

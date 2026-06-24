@@ -149,8 +149,38 @@ export function controlPanelStylesheetHref(doc: Document): string {
   return base ? base + "ui/control-panel.css" : "ui/control-panel.css";
 }
 
+// applyNextcloudTheme bridges Nextcloud's user colour/accessibility preferences
+// into the shadow root (D-414). Mirrors the same function in the viewer's
+// embedded.ts — see that file for full rationale. Returns true when NC theming
+// was applied, false when running outside Nextcloud.
+export function applyNextcloudTheme(
+  host: HTMLElement,
+  bodyDataThemes: string | undefined,
+  primaryColor: string | null | undefined,
+): boolean {
+  if (!primaryColor) return false;
+  host.style.setProperty("--nc-primary", primaryColor);
+  const themes = bodyDataThemes ?? "";
+  const isDark = themes.includes("dark");
+  const isHighContrast = themes.includes("highcontrast");
+  let themeValue = "light";
+  if (isDark && isHighContrast) themeValue = "dark-highcontrast";
+  else if (isDark) themeValue = "dark";
+  else if (isHighContrast) themeValue = "highcontrast";
+  host.dataset.ncTheme = themeValue;
+  return true;
+}
+
 function mountEmbeddedControlPanel(): void {
-  mount(App, { target: ensureShadowAppRoot(document, controlPanelStylesheetHref(document)) });
+  const appRoot = ensureShadowAppRoot(document, controlPanelStylesheetHref(document));
+  const shadowHost = document.getElementById("cassini-shadow-host");
+  if (shadowHost) {
+    const oca = (window as unknown as Record<string, unknown>).OCA as Record<string, unknown> | undefined;
+    const theming = oca?.Theming as Record<string, unknown> | undefined;
+    const primaryColor = theming?.primaryColor as string | undefined;
+    applyNextcloudTheme(shadowHost, document.body.dataset.themes, primaryColor);
+  }
+  mount(App, { target: appRoot });
 }
 
 function bootstrap(): void {
