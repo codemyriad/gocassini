@@ -213,6 +213,77 @@ func TestStagePublishInputPassesThroughOpusFile(t *testing.T) {
 	}
 }
 
+// TestStagePublishInputPrefersOpusSiblingOverMeeting reproduces the operator's
+// current/ layout once D-428 ships: a `.meeting` bundle next to a durable
+// `.opus` of the same id (current/<id>.meeting + current/<id>.opus). Publish
+// must stage the `.opus` and skip the `.meeting` rather than packing both to
+// meetings/<id>.opus and erroring on a meeting-id collision.
+func TestStagePublishInputPrefersOpusSiblingOverMeeting(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	current := filepath.Join(tmp, "current")
+	meetingDir := filepath.Join(current, "job1.meeting")
+	if err := writeReadyMeetingBundleFixture(meetingDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write ready meeting bundle: %v", err)
+	}
+	// The operator packs the durable sibling beside the bundle at promotion (D-428).
+	if err := packMeetingBundle(context.Background(), meetingDir, filepath.Join(current, "job1.opus"), portablePackOptions{Title: "job1"}); err != nil {
+		t.Fatalf("pack durable opus sibling: %v", err)
+	}
+
+	stagingRoot, _, skipped, err := stagePublishInput(context.Background(), current)
+	if err != nil {
+		t.Fatalf("stagePublishInput() error = %v", err)
+	}
+	defer os.RemoveAll(stagingRoot)
+
+	entries, err := os.ReadDir(stagingRoot)
+	if err != nil {
+		t.Fatalf("read staging root: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly one staged artifact, got %d: %v", len(entries), entries)
+	}
+	if err := verifyPortableMeetingInput(filepath.Join(stagingRoot, "job1.opus")); err != nil {
+		t.Fatalf("expected staged job1.opus to be valid: %v", err)
+	}
+	foundSkip := false
+	for _, s := range skipped {
+		if strings.Contains(s.Reason, "superseded by durable .opus sibling") {
+			foundSkip = true
+		}
+	}
+	if !foundSkip {
+		t.Fatalf("expected the .meeting bundle to be skipped as superseded, got skipped=%+v", skipped)
+	}
+}
+
+// TestStagePublishInputPacksMeetingWhenOpusSiblingInvalid guards against losing
+// a meeting: if the durable `.opus` sibling is unverifiable, publish must fall
+// back to packing the `.meeting` bundle instead of silently dropping both.
+func TestStagePublishInputPacksMeetingWhenOpusSiblingInvalid(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	current := filepath.Join(tmp, "current")
+	meetingDir := filepath.Join(current, "job2.meeting")
+	if err := writeReadyMeetingBundleFixture(meetingDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write ready meeting bundle: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(current, "job2.opus"), []byte("not an opus file"), 0o644); err != nil {
+		t.Fatalf("write bogus opus sibling: %v", err)
+	}
+
+	stagingRoot, _, _, err := stagePublishInput(context.Background(), current)
+	if err != nil {
+		t.Fatalf("stagePublishInput() error = %v", err)
+	}
+	defer os.RemoveAll(stagingRoot)
+
+	if err := verifyPortableMeetingInput(filepath.Join(stagingRoot, "job2.opus")); err != nil {
+		t.Fatalf("expected job2.opus to be packed from the .meeting fallback: %v", err)
+	}
+}
+
 func TestStagePublishInputRejectsInvalidOpusFile(t *testing.T) {
 	tmp := t.TempDir()
 	bogus := filepath.Join(tmp, "bogus.opus")

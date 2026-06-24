@@ -230,20 +230,33 @@ func stagePublishInput(ctx context.Context, inputPath string) (string, string, [
 		_ = os.RemoveAll(stagingRoot)
 		return "", "", nil, fmt.Errorf("read publish input directory: %w", err)
 	}
+	// Two passes so a durable `.opus` always wins over re-packing its `.meeting`
+	// sibling. The deploy sequence (D-428 before D-429) leaves both
+	// current/<id>.opus and current/<id>.meeting in the publish source; both
+	// would stage to meetings/<id>.opus and collide on the meeting id. Pass 1
+	// stages the `.opus` files; pass 2 packs `.meeting` bundles but skips any
+	// whose id a `.opus` sibling already staged. A `.meeting` whose `.opus`
+	// sibling is missing or unverifiable is still packed, so no meeting is lost.
 	for _, entry := range entries {
-		candidate := filepath.Join(root, entry.Name())
-		if !entry.IsDir() {
-			// A `.opus` portable meeting sitting alongside `.meeting` bundles is a
-			// durable artifact: verify and pass it through. Other loose files are
-			// ignored.
-			if isPortableMeetingOutput(candidate) {
-				if err := addPortableMeeting(candidate, stagingRoot, added, &skipped); err != nil {
-					_ = os.RemoveAll(stagingRoot)
-					return "", "", nil, err
-				}
-			}
+		if entry.IsDir() {
 			continue
 		}
+		candidate := filepath.Join(root, entry.Name())
+		// A `.opus` portable meeting sitting alongside `.meeting` bundles is a
+		// durable artifact: verify and pass it through. Other loose files are
+		// ignored.
+		if isPortableMeetingOutput(candidate) {
+			if err := addPortableMeeting(candidate, stagingRoot, added, &skipped); err != nil {
+				_ = os.RemoveAll(stagingRoot)
+				return "", "", nil, err
+			}
+		}
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(root, entry.Name())
 		if bundle, ok, err := LoadMeetingBundle(candidate); err != nil {
 			// One corrupt cassini.json (meeting or otherwise; the manifest is
 			// parsed before the Kind filter) must not abort the publish of
@@ -253,6 +266,20 @@ func stagePublishInput(ctx context.Context, inputPath string) (string, string, [
 				Reason: fmt.Sprintf("unreadable bundle manifest: %v", err),
 			})
 		} else if ok {
+			id := strings.TrimSuffix(filepath.Base(candidate), ".meeting")
+			if id == "" {
+				id = filepath.Base(candidate)
+			}
+			if existing, dup := added[id]; dup {
+				// A durable `.opus` sibling (current/<id>.opus, D-428) already
+				// staged this meeting; skip re-packing the `.meeting` so the
+				// two siblings do not collide on meetings/<id>.opus.
+				skipped = append(skipped, publishSkippedBundle{
+					Path:   candidate,
+					Reason: fmt.Sprintf("superseded by durable .opus sibling %s", existing),
+				})
+				continue
+			}
 			if err := addMeeting(bundle); err != nil {
 				_ = os.RemoveAll(stagingRoot)
 				return "", "", nil, err
