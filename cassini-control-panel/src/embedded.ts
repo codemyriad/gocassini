@@ -190,7 +190,9 @@ function mountEmbeddedControlPanel(): void {
     const oca = (window as unknown as Record<string, unknown>).OCA as Record<string, unknown> | undefined;
     const theming = oca?.Theming as Record<string, unknown> | undefined;
     const primaryColor = theming?.primaryColor as string | undefined;
-    applyNextcloudTheme(shadowHost, document.body.dataset.themes, primaryColor);
+    const enabledThemes = theming?.enabledThemes as string[] | undefined;
+    const themesStr = document.body.dataset.themes ?? enabledThemes?.join(" ") ?? "";
+    applyNextcloudTheme(shadowHost, themesStr, primaryColor);
   }
   mount(App, { target: appRoot });
 }

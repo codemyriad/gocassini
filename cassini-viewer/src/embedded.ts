@@ -155,7 +155,12 @@ function mountEmbeddedViewer(): void {
     const oca = (window as unknown as Record<string, unknown>).OCA as Record<string, unknown> | undefined;
     const theming = oca?.Theming as Record<string, unknown> | undefined;
     const primaryColor = theming?.primaryColor as string | undefined;
-    ncMode = applyNextcloudTheme(shadowHost, document.body.dataset.themes, primaryColor);
+    // body.dataset.themes may not be populated at window.load time (NC's
+    // accessibility theme JS runs after load). Fall back to the reliably-set
+    // OCA.Theming.enabledThemes array, which mirrors the body attribute values.
+    const enabledThemes = theming?.enabledThemes as string[] | undefined;
+    const themesStr = document.body.dataset.themes ?? enabledThemes?.join(" ") ?? "";
+    ncMode = applyNextcloudTheme(shadowHost, themesStr, primaryColor);
   }
   mount(App, { target: appRoot, props: { ncMode } });
 }
