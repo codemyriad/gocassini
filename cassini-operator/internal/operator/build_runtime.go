@@ -132,7 +132,7 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "build", task.ArtifactRunPath, "--out", meetingPath)
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
-	cmd.Env = os.Environ()
+	cmd.Env = rt.currentSettings().ChildEnv(os.Environ())
 	// Kill the whole process group on ctx cancel so transcriber/ffmpeg
 	// grandchildren don't outlive the build.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

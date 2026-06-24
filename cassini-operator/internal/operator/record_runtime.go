@@ -206,7 +206,7 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 	cmd := exec.Command(rt.cfg.CassiniBin, args...)
 	cmd.Stdout = stdoutWriter
 	cmd.Stderr = stderrWriter
-	cmd.Env = os.Environ()
+	cmd.Env = rt.currentSettings().ChildEnv(os.Environ())
 	// Run the recorder in its own process group so a hard kill also reaps
 	// ffmpeg children spawned during compose instead of leaking them.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -267,7 +267,7 @@ func (rt *Runtime) runRecordDoctorContext(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "doctor", "--target", "record")
 	cmd.Stdout = writerOrDiscard(rt.stdout)
 	cmd.Stderr = writerOrDiscard(rt.stderr)
-	cmd.Env = os.Environ()
+	cmd.Env = rt.currentSettings().ChildEnv(os.Environ())
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return killProcessGroup(cmd.Process) }
 	if err := cmd.Run(); err != nil {
