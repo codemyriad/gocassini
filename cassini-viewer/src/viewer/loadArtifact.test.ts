@@ -8,7 +8,14 @@ import {
   loadPortableArtifactFromAudioPath,
   loadPortableMeetingSummary,
   switchPortableTranscript,
+  type LoadedArtifact,
 } from "./loadArtifact";
+import {
+  buildDisplayTranscriptFromArtifacts,
+  buildReadableTranscriptFromPortable,
+  buildTranscriptWordsFromPortable,
+} from "./portable";
+import type { TranscriptWordsV1 } from "../core/types";
 
 const transcriptFixture = {
   version: "transcript.words.v1",
@@ -785,6 +792,215 @@ describe("switchPortableTranscript", () => {
     await expect(
       switchPortableTranscript("./v2-fixture-sha.opus", "parakeet"),
     ).rejects.toThrow(/sha256 mismatch/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Parity: loose-file path vs packed `.opus` path (D-430)
+//
+// The viewer can load a meeting two ways:
+//   - loose files: loadArtifactFromDirectory reads transcript.words.v1.json
+//     (segments[]) + transcript.display.v1.json + transcript.readable.v1.json
+//     (a dev-only affordance);
+//   - packed `.opus`: loadPortableArtifactFromAudioPath reads the portable
+//     manifest, whose transcript lives as a flat items[] list, and reprojects
+//     items[] -> segments[] via buildTranscriptWordsFromPortable.
+//
+// `.opus` is the single durable published artifact, so the two paths must
+// produce identical normalized output. This block guards the segments[] ->
+// portable items[] reprojection: it builds ONE canonical source transcript,
+// feeds it to both paths, and asserts the LoadedArtifact projections that the
+// viewer renders (transcript words/segments, display timing, readable text,
+// the speaker set, and the meeting metadata sections) match between them.
+//
+// Path-dependent fields are EXPECTED to differ and are normalized out before
+// comparison: audioSrc / media.src (the loose path resolves them against the
+// transcript URL, the portable path against the resolved `.opus` URL) and
+// metadata.sourceKind / metadata.rawJson (different artifact kinds). These are
+// asserted separately so the divergence stays intentional and documented.
+// ---------------------------------------------------------------------------
+describe("loose-file vs packed `.opus` parity", () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.window = originalWindow;
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  // Canonical source. Single-word segments with the same id scheme the portable
+  // reprojection synthesizes (seg_NNNNNN / seg_NNNNNN:w_0) so the round trip is
+  // id-stable: buildTranscriptWordsFromPortable emits one segment per item and
+  // assigns these ids when items carry none (as the producer's items do).
+  const sourceTranscript: TranscriptWordsV1 = {
+    version: "transcript.words.v1",
+    media: { src: "meeting.opus", durationMs: 6000, sha256: "deadbeef" },
+    speakers: [
+      { id: "spk_1", label: "Alice" },
+      { id: "spk_2", label: "Bob" },
+    ],
+    segments: [
+      { id: "seg_000000", speaker: "spk_1", startMs: 0, endMs: 600, text: "Hello", words: [{ id: "seg_000000:w_0", text: "Hello", startMs: 0, endMs: 600 }] },
+      { id: "seg_000001", speaker: "spk_1", startMs: 600, endMs: 1200, text: "everyone", words: [{ id: "seg_000001:w_0", text: "everyone", startMs: 600, endMs: 1200 }] },
+      { id: "seg_000002", speaker: "spk_1", startMs: 1200, endMs: 1800, text: "today", words: [{ id: "seg_000002:w_0", text: "today", startMs: 1200, endMs: 1800 }] },
+      { id: "seg_000003", speaker: "spk_2", startMs: 2000, endMs: 2600, text: "Thanks", words: [{ id: "seg_000003:w_0", text: "Thanks", startMs: 2000, endMs: 2600 }] },
+      { id: "seg_000004", speaker: "spk_2", startMs: 2600, endMs: 3200, text: "Alice", words: [{ id: "seg_000004:w_0", text: "Alice", startMs: 2600, endMs: 3200 }] },
+    ],
+  };
+
+  // Derive readable + display ONCE from the source, with both builders the
+  // viewer itself uses, then feed the identical artifacts to both load paths.
+  const sharedReadable = buildReadableTranscriptFromPortable(
+    { speakers: sourceTranscript.speakers as unknown[] },
+    sourceTranscript,
+  );
+  const sharedDisplay = buildDisplayTranscriptFromArtifacts(sourceTranscript, sharedReadable);
+
+  // Mirrors the producer's flattenPortableTranscriptItems (see
+  // scripts/pack-portable-artifacts.mjs / portable_meeting.go): each timed word
+  // becomes a word-level item carrying its segment's speaker; id-less, so the
+  // viewer re-synthesizes ids on read.
+  function flattenPortableTranscriptItems(transcript: TranscriptWordsV1) {
+    const items: Array<{ speaker: string; startMs: number; endMs: number; text: string }> = [];
+    for (const segment of transcript.segments) {
+      const words = Array.isArray(segment.words) ? segment.words : [];
+      if (words.length === 0) {
+        const text = (segment.text ?? "").trim();
+        if (text) {
+          items.push({ speaker: segment.speaker ?? "", startMs: segment.startMs, endMs: segment.endMs, text });
+        }
+        continue;
+      }
+      for (const word of words) {
+        const text = (word.text ?? "").trim();
+        if (!text) {
+          continue;
+        }
+        items.push({ speaker: segment.speaker ?? "", startMs: word.startMs, endMs: word.endMs, text });
+      }
+    }
+    return items;
+  }
+
+  function setWindow(href: string) {
+    globalThis.window = {
+      location: { href, protocol: "http:" },
+    } as Window;
+  }
+
+  async function loadViaLooseFiles(): Promise<LoadedArtifact> {
+    globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "HEAD") {
+        return { ok: true } as Response;
+      }
+      if (url.endsWith("/transcript.words.v1.json")) {
+        return { ok: true, json: async () => sourceTranscript } as Response;
+      }
+      if (url.endsWith("/transcript.display.v1.json")) {
+        return { ok: true, json: async () => sharedDisplay } as Response;
+      }
+      if (url.endsWith("/transcript.readable.v1.json")) {
+        return { ok: true, json: async () => sharedReadable } as Response;
+      }
+      // No summary.md, manifest.json, captions, or chapters.
+      return { ok: false, status: 404 } as Response;
+    }) as typeof fetch;
+    return loadArtifactFromDirectory("./meetings/parity-meeting");
+  }
+
+  async function loadViaPackedOpus(): Promise<LoadedArtifact> {
+    const portableManifest = {
+      meeting: { durationMs: sourceTranscript.media.durationMs },
+      audio: { sha256: sourceTranscript.media.sha256 },
+      speakers: sourceTranscript.speakers,
+      transcript: { items: flattenPortableTranscriptItems(sourceTranscript) },
+      readableTranscript: sharedReadable,
+      displayTranscript: sharedDisplay,
+    };
+    const portableBytes = buildPortableOpusFixture(portableManifest);
+    globalThis.fetch = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.endsWith(".opus")) {
+        return {
+          ok: true,
+          status: 206,
+          headers: new Headers({ "content-range": "bytes 0-1999/2000" }),
+          arrayBuffer: async () =>
+            portableBytes.buffer.slice(
+              portableBytes.byteOffset,
+              portableBytes.byteOffset + portableBytes.byteLength,
+            ),
+        } as Response;
+      }
+      return { ok: false, status: 404 } as Response;
+    }) as typeof fetch;
+    return loadPortableArtifactFromAudioPath("./parity-meeting.opus");
+  }
+
+  // Strips path-dependent media.src so the shape comparison is about content,
+  // not the URL the loader happened to resolve.
+  function stripMediaSrc<T extends { media?: { src?: string } }>(value: T): T {
+    if (!value || !value.media) {
+      return value;
+    }
+    return { ...value, media: { ...value.media, src: undefined } };
+  }
+
+  it("reprojects items[] -> segments[] so the packed `.opus` matches the loose files", async () => {
+    setWindow("http://127.0.0.1:8765/?meeting=parity-meeting");
+    const loose = await loadViaLooseFiles();
+    setWindow("http://127.0.0.1:8765/?meeting=parity-meeting");
+    const packed = await loadViaPackedOpus();
+
+    // Sanity: the loose path read what we served, and the portable reprojection
+    // really did rebuild the segments (so this isn't a vacuous comparison).
+    expect(loose.transcript.segments).toHaveLength(sourceTranscript.segments.length);
+    expect(packed.transcript.segments).toHaveLength(sourceTranscript.segments.length);
+    expect(packed.transcript).toEqual(buildTranscriptWordsFromPortable(
+      {
+        meeting: { durationMs: sourceTranscript.media.durationMs },
+        audio: { sha256: sourceTranscript.media.sha256 },
+        speakers: sourceTranscript.speakers as unknown[],
+        transcript: { items: flattenPortableTranscriptItems(sourceTranscript) },
+      },
+      packed.audioSrc,
+    ));
+
+    // Transcript words/segments (ids, text, timing, per-word timing) — modulo
+    // the path-dependent media.src.
+    expect(stripMediaSrc(packed.transcript)).toEqual(stripMediaSrc(loose.transcript));
+
+    // Speaker set.
+    expect(packed.transcript.speakers).toEqual(loose.transcript.speakers);
+
+    // Readable text and segmentation.
+    expect(stripMediaSrc(packed.readableTranscript!)).toEqual(stripMediaSrc(loose.readableTranscript!));
+
+    // Display timing (blocks, tokens, per-token start/end + alignment).
+    expect(stripMediaSrc(packed.displayTranscript!)).toEqual(stripMediaSrc(loose.displayTranscript!));
+
+    // Derived timing precision classification.
+    expect(packed.timingPrecision).toEqual(loose.timingPrecision);
+
+    // The transcript index the viewer renders from.
+    expect(stripMediaSrc(packed.index.transcript)).toEqual(stripMediaSrc(loose.index.transcript));
+    expect(packed.index.transcript.media.durationMs).toBe(loose.index.transcript.media.durationMs);
+
+    // Meeting metadata: the human-facing sections (Meeting / Processing /
+    // Technical) must agree. sourceKind and rawJson legitimately differ between
+    // an artifact-directory and a portable-opus load, so they are excluded.
+    expect(packed.metadata?.sections).toEqual(loose.metadata?.sections);
+
+    // Path-dependent fields differ by construction; assert that explicitly so
+    // the divergence is intentional rather than an accidental regression.
+    expect(loose.metadata?.sourceKind).toBe("artifact-directory");
+    expect(packed.metadata?.sourceKind).toBe("portable-opus");
+    // Loose path resolves media.src against the served transcript's directory;
+    // packed path resolves the `.opus` against the document URL.
+    expect(loose.audioSrc).toBe("http://127.0.0.1:8765/meetings/parity-meeting/meeting.opus");
+    expect(packed.audioSrc).toBe("http://127.0.0.1:8765/parity-meeting.opus");
   });
 });
 

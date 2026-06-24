@@ -553,10 +553,15 @@
     loading = true;
     errorMessage = "";
     try {
-      const artifact = meeting.artifactPath
-        ? await loadArtifactFromDirectory(meeting.artifactPath)
-        : meeting.audioPath
-          ? await loadPortableArtifactFromAudioPath(meeting.audioPath)
+      // Primary published path: a `.opus` portable meeting loads via its
+      // audioPath (loadPortableArtifactFromAudioPath). Directory loading
+      // (loadArtifactFromDirectory / artifactPath) is a dev-only affordance and
+      // is only used when a catalog entry has no audioPath — so audioPath is
+      // checked first even if both happen to be present.
+      const artifact = meeting.audioPath
+        ? await loadPortableArtifactFromAudioPath(meeting.audioPath)
+        : meeting.artifactPath
+          ? await loadArtifactFromDirectory(meeting.artifactPath)
           : (() => {
               throw new Error(`Meeting ${meeting.id} is missing artifactPath and audioPath`);
             })();
