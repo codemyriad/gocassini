@@ -25,6 +25,7 @@ import {
   type PortableTranscriptDescriptor,
   type PortableTranscriptEntry,
 } from "./portable";
+import { resolveAppBaseUrl } from "./appBase";
 
 export interface LoadedArtifact {
   transcript: TranscriptWordsV1;
@@ -416,9 +417,7 @@ function resolveAppAssetUrl(assetPath: string): string {
   if (viewerBase) {
     return new URL(assetPath, viewerBase).toString();
   }
-  const base = import.meta.env.BASE_URL;
-  const baseUrl = base && base !== "/" ? new URL(base, window.location.href) : new URL(window.location.href);
-  return new URL(assetPath, baseUrl).toString();
+  return new URL(assetPath, resolveAppBaseUrl()).toString();
 }
 
 function resolveDocumentAssetUrl(assetPath: string): string {

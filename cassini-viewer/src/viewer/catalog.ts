@@ -1,3 +1,5 @@
+import { resolveAppBaseUrl } from "./appBase";
+
 export interface MeetingCatalogEntry {
   id: string;
   title: string;
@@ -127,9 +129,7 @@ function compareDescending(left: string, right: string): number {
 }
 
 function resolveAppAssetUrl(assetPath: string): string {
-  const base = import.meta.env.BASE_URL;
-  const baseUrl = base && base !== "/" ? new URL(base, window.location.href) : new URL(window.location.href);
-  return new URL(assetPath, baseUrl).toString();
+  return new URL(assetPath, resolveAppBaseUrl()).toString();
 }
 
 // resolveCatalogUrl returns the URL the viewer should hit for catalog.json.
