@@ -94,12 +94,14 @@ jobs:
         run: ./harness/bin/${{ matrix.script }}
 
   # ci-e2e-mute.sh exercises a 3-publisher mute scenario whose WebRTC ICE
-  # bring-up is inherently racy: occasionally only 2 of 3 subscribers reach
-  # ice_connected in time and the run asserts "<3 participants" (flake D-052).
-  # Rather than re-roll the whole CI, run the scenario as a best-of-N attempt
-  # matrix and treat the leg as green if ANY attempt captured all participants.
-  # integration-mute-result is the required status check; the per-attempt jobs
-  # are informational.
+  # bring-up is inherently racy AND sensitive to runner contention: under load
+  # only 2 of 3 subscribers reach ice_connected in time and the run asserts
+  # "<3 participants" (flake D-052). Run it as a best-of-3 attempt matrix and
+  # treat the leg as green if ANY attempt captured all participants. The
+  # attempts run SEQUENTIALLY (max-parallel: 1) so they do not self-contend on
+  # the shared runner and a transient bad window can pass between tries; an
+  # attempt early-exits once an earlier one has already gone green. The
+  # integration-mute-result job is the required status check.
   integration-mute:
     name: "Integration (ci-e2e-mute.sh) [attempt ${{ matrix.attempt }}]"
     runs-on: ubuntu-latest
@@ -108,6 +110,7 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         attempt: [1, 2, 3]
     steps:
@@ -120,12 +123,40 @@ jobs:
           cache-dependency-path: |
             cassini-go-recorder/go.sum
             harness/go-talk-rotator/go.sum
+      # Best-of-3 early-exit: if an earlier (sequential) attempt already passed,
+      # skip the expensive e2e for this attempt — the gate only needs one green.
+      - name: Look for an earlier green attempt
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: mute-green-*
+          path: prior-green
+          merge-multiple: true
+      - name: Decide whether to run this attempt
+        id: gate
+        run: |
+          mkdir -p prior-green
+          if find prior-green -type f -name '*.green' | grep -q .; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::an earlier mute attempt already passed; skipping attempt ${{ matrix.attempt }}"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Install runtime tools
+        if: steps.gate.outputs.skip != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg jq ripgrep
       - name: Run mute integration test against local Nextcloud
+        if: steps.gate.outputs.skip != 'true'
         id: mute
+        # A flaky attempt must not fail its own leg: the per-attempt jobs are
+        # informational and best-of-3 tolerates individual failures. The
+        # required status check is integration-mute-result, which is red only
+        # when ALL attempts fail (a genuine regression). Note: to re-run a
+        # mute that failed all attempts, re-run the whole run, not just failed
+        # jobs (the legs report success here). steps.mute.outcome still holds
+        # the true pass/fail and drives the green-marker / diagnostics steps.
         continue-on-error: true
         env:
           SPREED_PROFILE: full
@@ -135,12 +166,12 @@ jobs:
           NEXTCLOUD_IMAGE: ""
         run: ./harness/bin/ci-e2e-mute.sh
       - name: Record green attempt
-        if: ${{ steps.mute.outcome == 'success' }}
+        if: steps.gate.outputs.skip == 'true' || steps.mute.outcome == 'success'
         run: |
           mkdir -p mute-attempt-result
           echo "ok" > "mute-attempt-result/attempt-${{ matrix.attempt }}.green"
       - name: Upload green-attempt marker
-        if: ${{ steps.mute.outcome == 'success' }}
+        if: steps.gate.outputs.skip == 'true' || steps.mute.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: mute-green-${{ matrix.attempt }}
