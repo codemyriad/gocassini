@@ -28,8 +28,8 @@ Nextcloud Talk room
 The simplest way to understand the pipeline is:
 
 - **record** captures reusable source media
-- **build** turns that source media into a reusable meeting artifact
-- **publish** turns one or more reusable meeting artifacts into a static browser site
+- **build** turns that source media into a portable `.opus` meeting, staging a transient `.meeting` bundle internally
+- **publish** turns one or more built meetings into a static browser site
 
 ## 1. Record
 
@@ -132,10 +132,10 @@ The build stage itself does not have to produce every viewer convenience file.
 
 For example:
 
-- a raw `.meeting` bundle is the canonical built artifact
+- a raw `.meeting` bundle is transient build scratch (an intermediate that gets packed into a portable `.opus`), not the canonical deliverable
 - publish/export tooling may later materialize viewer-facing files such as `transcript.display.v1.json`
 
-That means a published meeting directory is not necessarily a byte-for-byte copy of the original `.meeting` bundle.
+That means a published meeting directory is not necessarily a byte-for-byte copy of the transient `.meeting` bundle. The canonical, user-facing meeting artifact is the portable `.opus` file.
 
 ## 3. Publish
 
@@ -147,6 +147,12 @@ Publish turns one or more ready meetings into a static viewer site.
 
 - one ready `.meeting` bundle
 - or a directory containing multiple ready `.meeting` bundles
+
+> Pre-cleanup state: publish currently consumes the transient `.meeting` bundle
+> as its input. The `.meeting` bundle is build scratch, not a durable
+> deliverable; the canonical, user-facing meeting format is the portable
+> `.opus`. Publish reading `.meeting` directories is scheduled for retirement
+> (see the D-425 retirement inventory).
 
 ### Output
 
@@ -220,19 +226,19 @@ Portable mode still uses the same logical stages internally. It just hides the i
 
 Think of `.meeting` as:
 
-- the canonical built artifact for the multi-stage pipeline
-- easy to inspect and publish
-- the operator’s publish input format
+- transient build scratch: an intermediate bundle the build stage stages before packing into a portable `.opus`
+- easy to inspect while debugging the pipeline
+- not a user-facing deliverable, and scheduled for retirement (its `cassini.json`/`manifest.json` are internal staging manifests, not a published contract)
 
 ### `.opus`
 
 Think of portable `.opus` as:
 
-- a one-file packaged meeting
-- good for sharing or archiving
+- the one canonical, user-facing meeting format and only durable published contract
+- a one-file packaged meeting, good for sharing or archiving
 - readable by the viewer in portable mode
 
-The key point is that `.opus` is a packaging output, not a separate capture architecture.
+The key point is that `.opus` is the durable deliverable, not a separate capture architecture; the `.meeting` bundle is just the intermediate it is packed from.
 
 ## Common state model across bundles
 

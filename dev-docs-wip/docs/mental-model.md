@@ -31,7 +31,7 @@ Nextcloud Talk room
 ### What those artifacts mean
 
 - **`.run`** — reusable output of the capture stage
-- **`.meeting`** — reusable output of the build stage
+- **`.meeting`** — transient build scratch: an intermediate bundle the build stage stages before packing into a portable `.opus` (not a user-facing deliverable; scheduled for retirement)
 - **`.site`** — static export for browser delivery
 
 Cassini also supports a portable one-file output:
@@ -40,7 +40,7 @@ Cassini also supports a portable one-file output:
 ... -> one .opus file
 ```
 
-That `.opus` file is still built from the same underlying capture/build flow. It is not a second recording architecture.
+That portable `.opus` file is the one canonical, user-facing meeting format and the only durable published contract. It is still built from the same underlying capture/build flow — it is not a second recording architecture.
 
 See more:
 

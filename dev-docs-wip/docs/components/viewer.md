@@ -55,7 +55,7 @@ Each meeting entry must provide at least one of:
 - `artifactPath` — a published meeting directory
 - `audioPath` — a portable `.opus` file
 
-Current operator-managed publish output normally uses `artifactPath` entries because the operator publishes from canonical `.meeting` bundles.
+Current operator-managed publish output normally uses `artifactPath` entries because the operator currently publishes from transient `.meeting` bundles (build scratch, not a user-facing deliverable; the canonical, user-facing meeting format is the portable `.opus`).
 
 ## Two meeting input modes
 

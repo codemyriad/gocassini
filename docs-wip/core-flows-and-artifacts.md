@@ -139,10 +139,17 @@ That file is typically materialized later by viewer/export tooling during publis
 
 So:
 
-- a raw `.meeting` bundle is the canonical built artifact
-- a published `meetings/<id>/` directory may contain extra viewer-facing convenience files derived from that bundle
+- a raw `.meeting` bundle is transient build scratch (an intermediate that gets packed into a portable `.opus`), not the canonical deliverable
+- the canonical, user-facing meeting artifact is the portable `.opus` file with its embedded `org.cassini.portable-meeting/2` manifest
+- a published `meetings/<id>/` directory may contain extra viewer-facing convenience files derived during publish
 
 ### `.meeting` bundle manifest semantics
+
+> The `.meeting` bundle's two manifests (`cassini.json` = `cassini.meeting.v1`
+> and `manifest.json` = `cassini.meeting-artifact.v1`) are **internal staging
+> manifests, not a published contract**. They exist only to stage the pack into
+> `.opus` and are scheduled for retirement. The only durable, published Cassini
+> format is the portable `.opus` file.
 
 `cassini.json` in a meeting bundle records:
 
@@ -158,7 +165,7 @@ So:
 
 ### Artifact `manifest.json` semantics
 
-`manifest.json` inside the meeting bundle describes the built meeting artifact itself.
+`manifest.json` inside the meeting bundle describes the built meeting artifact itself. It is internal build scratch, not a published format.
 
 It records:
 
@@ -309,12 +316,13 @@ If a portable command fails after recording or after building, rerunning the sam
 
 ### What a portable `.opus` file is
 
-A Cassini portable meeting is:
+A Cassini portable meeting is the one canonical, user-facing meeting format and
+the only durable, published Cassini contract:
 
 - an ordinary Ogg Opus audio file
 - with playable audio as the primary payload
 - with Cassini metadata embedded in OpusTags
-- with a compressed embedded JSON manifest split across `CASSINI_PAYLOAD_000...`
+- with a compressed embedded JSON manifest (`org.cassini.portable-meeting/2`) split across `CASSINI_PAYLOAD_000...`
 
 The embedded payload can include:
 

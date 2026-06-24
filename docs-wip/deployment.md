@@ -317,6 +317,6 @@ The operator API is primarily an operational backend surface.
 A few current behaviors matter in practice:
 
 - the live viewer site is a static export of the operator's canonical current meeting library
-- each successful operator publish rebuilds that full library from canonical ready `.meeting` bundles
+- each successful operator publish currently rebuilds that full library from ready `.meeting` bundles (transient build scratch; the canonical, user-facing meeting format is the portable `.opus`)
 - the viewer service is fully read-only against published output
 - the operator is the only service that should ever mutate shared published-site storage

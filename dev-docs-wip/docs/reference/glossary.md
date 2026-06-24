@@ -52,16 +52,16 @@ Create a new attempt for an existing job. In the current operator model, reruns 
 The durable output of the record stage.
 
 ### `.meeting`
-The durable output of the build stage and the canonical input to publish.
+Transient build scratch: an intermediate bundle directory the build stage stages before packing into a portable `.opus`. It is **not** a user-facing deliverable, and its internal manifests (`cassini.json`, `manifest.json`) are not a published contract. Scheduled for retirement.
 
 ### `.site`
 The durable output of the publish stage: a static site ready for the viewer.
 
 ### Portable `.opus`
-A one-file Cassini meeting package. It contains playable Opus audio plus embedded Cassini metadata.
+The one canonical, user-facing Cassini meeting format and the only durable, published contract. A single file containing playable Opus audio plus the embedded `org.cassini.portable-meeting/2` manifest.
 
 ### `cassini.json`
-The top-level bundle manifest used across Cassini artifact types.
+The top-level manifest of an internal `.run`/`.meeting`/`.site` bundle directory. An implementation detail of the build/publish plumbing, not a user-facing or published format. The `.meeting` bundle's `cassini.json` (and its sibling `manifest.json`) are transient scratch scheduled for retirement.
 
 ### `catalog.json`
 The top-level site file that tells the viewer which meetings are available.
