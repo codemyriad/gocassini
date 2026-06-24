@@ -28,6 +28,19 @@ const (
 	talkSignalingInternalSecretEnv = "CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
 )
 
+// Recovery cadence for in-call participants we have captured no media from
+// (D-386). After the fast requestoffer burst (MaxRequestOfferAttempts at the
+// 8s response timeout) the recorder keeps retrying at slowRequestOfferInterval
+// rather than parking the peer forever. If that still yields no media after
+// captureRebuildGrace, the subscriber is torn down and rebuilt with a fresh
+// peer connection (covering an offer that was answered but whose media never
+// flowed), up to maxCaptureRebuilds times before falling back to slow retries.
+const (
+	slowRequestOfferInterval = 30 * time.Second
+	captureRebuildGrace      = 45 * time.Second
+	maxCaptureRebuilds       = 3
+)
+
 // inCallFlagInCall is bit 1 of the Talk in-call flags: the participant has
 // joined the call. Remaining bits (audio=2, video=4, SIP=8) describe what
 // the participant publishes, so call membership is exactly flags&1 != 0.
@@ -129,7 +142,20 @@ type subscriberPeer struct {
 	remoteSessionID string
 	pc              *webrtc.PeerConnection
 
-	mu                   sync.Mutex
+	// createdAt and rebuildCount are set once at construction (newSubscriberPeer
+	// / rebuildSubscriber) before the peer is registered, then immutable for
+	// the peer's lifetime, so reconcileSubscribers reads them without a lock.
+	// createdAt anchors the no-capture grace; rebuildCount carries the rebuild
+	// cap across successive rebuilds of the same remote session (D-386).
+	createdAt    time.Time
+	rebuildCount int
+
+	mu sync.Mutex
+	// offerReceived is set true only after the offer/answer handshake completes
+	// (the answer was sent). It gates requestOfferLoop from re-requesting. It
+	// used to be set the moment an offer arrived, before SetRemoteDescription /
+	// CreateAnswer / answer-send could fail; a failed answer then suppressed
+	// retries forever, silently dropping the participant (D-386).
 	offerReceived        bool
 	currentSID           string
 	requestOfferAttempts int
@@ -919,22 +945,117 @@ func (r *Recorder) requestOfferLoop(ctx context.Context) error {
 			return nil
 		case <-ticker.C:
 		}
+		r.reconcileSubscribers(time.Now())
+	}
+}
 
-		r.mu.Lock()
-		peers := make([]*subscriberPeer, 0, len(r.subscribers))
-		for _, p := range r.subscribers {
-			peers = append(peers, p)
-		}
+// reconcileSubscribers drives recovery on every tick for in-call participants
+// we have captured no media from. It reconciles desired capture (every in-call
+// participant, represented by an existing subscriber per D-365) against actual
+// capture, instead of giving up locally: a peer with no captured media is kept
+// being requestoffer'd (slow retry, never parked), and once that has produced
+// nothing within captureRebuildGrace the subscriber is rebuilt with a fresh
+// peer connection (covering an offer that was answered but whose media never
+// flowed). A peer that is capturing anything is left alone (D-386).
+//
+// now is passed in so the rebuild decision is deterministically testable.
+func (r *Recorder) reconcileSubscribers(now time.Time) {
+	r.mu.Lock()
+	if r.stopping {
 		r.mu.Unlock()
+		return
+	}
+	peers := make([]*subscriberPeer, 0, len(r.subscribers))
+	for _, p := range r.subscribers {
+		peers = append(peers, p)
+	}
+	r.mu.Unlock()
+	if len(peers) == 0 {
+		return
+	}
 
-		for _, p := range peers {
-			if p.hasOffer() {
-				continue
-			}
+	captured := r.capturedPacketTotals()
+
+	for _, p := range peers {
+		if captured[p.remoteSessionID] > 0 {
+			// Capturing media (incl. a camera-only / muted-with-video
+			// participant): leave the working peer alone.
+			continue
+		}
+		if reconcileShouldRebuild(now, p.createdAt, p.rebuildCount) {
+			r.rebuildSubscriber(p, now)
+			continue
+		}
+		if !p.hasOffer() {
 			if err := p.requestOffer(); err != nil {
 				log.Printf("requestoffer failed for %s: %v", p.remoteSessionID, err)
 			}
 		}
+	}
+}
+
+// reconcileShouldRebuild reports whether a subscriber that has captured no
+// media should be torn down and rebuilt: only once it has existed longer than
+// captureRebuildGrace and only up to maxCaptureRebuilds times. Because a rebuilt
+// peer's createdAt resets, the grace also spaces successive rebuilds.
+func reconcileShouldRebuild(now, createdAt time.Time, rebuildCount int) bool {
+	if rebuildCount >= maxCaptureRebuilds {
+		return false
+	}
+	if createdAt.IsZero() {
+		return false
+	}
+	return now.Sub(createdAt) >= captureRebuildGrace
+}
+
+// capturedPacketTotals snapshots audio+video packet counts per remote session
+// under sessionMu (taken alone, never nested with mu).
+func (r *Recorder) capturedPacketTotals() map[string]int {
+	r.sessionMu.Lock()
+	defer r.sessionMu.Unlock()
+	totals := make(map[string]int, len(r.sessionsByRemote))
+	for sid, s := range r.sessionsByRemote {
+		totals[sid] = s.AudioPackets + s.VideoPackets
+	}
+	return totals
+}
+
+// rebuildSubscriber replaces a stuck subscriber (no media captured) with a
+// fresh peer connection and requests a new offer. Capture counts key on the
+// remote session id, so media recovered after the rebuild accrues to the same
+// participant. It reuses ensureSubscriber's registration discipline: build the
+// peer outside the lock, then swap only if we are not stopping and the old peer
+// is still the registered one.
+func (r *Recorder) rebuildSubscriber(old *subscriberPeer, now time.Time) {
+	sid := old.remoteSessionID
+	newPeer, err := r.newSubscriberPeer(sid)
+	if err != nil {
+		log.Printf("rebuild subscriber %s: create peer failed: %v", sid, err)
+		return
+	}
+	newPeer.createdAt = now
+	newPeer.rebuildCount = old.rebuildCount + 1
+
+	r.mu.Lock()
+	if r.stopping {
+		r.mu.Unlock()
+		_ = newPeer.close()
+		return
+	}
+	if r.subscribers[sid] != old {
+		// The participant left or the peer was already replaced since the
+		// reconcile snapshot; don't resurrect or double-register.
+		r.mu.Unlock()
+		_ = newPeer.close()
+		return
+	}
+	r.subscribers[sid] = newPeer
+	r.mu.Unlock()
+
+	_ = old.close()
+	log.Printf("talk recorder: rebuilding subscriber sid=%s (no media after %s, rebuild %d/%d)", sid, captureRebuildGrace, newPeer.rebuildCount, maxCaptureRebuilds)
+	if err := newPeer.requestOffer(); err != nil {
+		log.Printf("rebuild requestoffer failed for %s: %v", sid, err)
 	}
 }
 
@@ -1702,6 +1823,7 @@ func (r *Recorder) newSubscriberPeer(remoteSessionID string) (*subscriberPeer, e
 		owner:           r,
 		remoteSessionID: remoteSessionID,
 		pc:              pc,
+		createdAt:       time.Now(),
 	}
 
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
@@ -1777,22 +1899,19 @@ func (r *Recorder) sendPeerMessage(toSession, msgType string, payload map[string
 func (p *subscriberPeer) requestOffer() error {
 	now := time.Now()
 	p.mu.Lock()
-	if !p.awaitingOfferSince.IsZero() {
-		if now.Sub(p.awaitingOfferSince) < requestOfferResponseTimeout {
-			p.mu.Unlock()
-			return nil
-		}
-		p.awaitingOfferSince = time.Time{}
-	}
-
 	maxAttempts := p.owner.cfg.MaxRequestOfferAttempts
-	if maxAttempts > 0 && p.requestOfferAttempts >= maxAttempts {
-		if !p.offerExhaustedLogged {
-			log.Printf("subscriber %s received no offer after %d requestoffer attempts; backing off", p.remoteSessionID, p.requestOfferAttempts)
-			p.offerExhaustedLogged = true
-		}
+	window := requestOfferRetryWindow(p.requestOfferAttempts, maxAttempts)
+	if !p.awaitingOfferSince.IsZero() && now.Sub(p.awaitingOfferSince) < window {
 		p.mu.Unlock()
 		return nil
+	}
+
+	// Past the fast burst we slow down but never stop: this subscriber exists
+	// because the participant is in the call (D-365), so we keep asking for an
+	// offer rather than abandoning them after MaxRequestOfferAttempts (D-386).
+	if maxAttempts > 0 && p.requestOfferAttempts >= maxAttempts && !p.offerExhaustedLogged {
+		log.Printf("subscriber %s received no offer after %d requestoffer attempts; slowing retries to %s", p.remoteSessionID, p.requestOfferAttempts, slowRequestOfferInterval)
+		p.offerExhaustedLogged = true
 	}
 
 	p.requestOfferAttempts++
@@ -1800,6 +1919,18 @@ func (p *subscriberPeer) requestOffer() error {
 	p.mu.Unlock()
 
 	return p.owner.sendRequestOffer(p.remoteSessionID)
+}
+
+// requestOfferRetryWindow is the wait before the next requestoffer: the fast
+// response timeout during the initial burst (first maxAttempts), then the slow
+// steady interval, so an in-call participant whose handshake keeps racing is
+// retried indefinitely instead of parked (D-386). maxAttempts <= 0 disables the
+// burst cap and always uses the fast window.
+func requestOfferRetryWindow(attempts, maxAttempts int) time.Duration {
+	if maxAttempts > 0 && attempts >= maxAttempts {
+		return slowRequestOfferInterval
+	}
+	return requestOfferResponseTimeout
 }
 
 func (p *subscriberPeer) hasOffer() bool {
@@ -1875,8 +2006,10 @@ func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any)
 		}
 
 		p.mu.Lock()
-		p.offerReceived = true
-		p.awaitingOfferSince = time.Time{}
+		// Mark the handshake in-flight so the retry loop does not fire a
+		// redundant requestoffer while we build and send the answer. Do NOT
+		// set offerReceived yet: only a sent answer should stop retries.
+		p.awaitingOfferSince = time.Now()
 		p.currentSID = asString(data["sid"])
 		p.endOfCandidatesSent = false
 		sid := p.currentSID
@@ -1921,7 +2054,18 @@ func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any)
 			return fmt.Errorf("send answer for %s: %w", p.remoteSessionID, err)
 		}
 
-		return p.sendEndOfCandidates("post-answer")
+		if err := p.sendEndOfCandidates("post-answer"); err != nil {
+			return err
+		}
+
+		// Only now, with the answer actually sent, stop re-requesting offers
+		// for this peer. Setting offerReceived on offer arrival let a failed
+		// answer path permanently suppress retries (silent loss, D-386).
+		p.mu.Lock()
+		p.offerReceived = true
+		p.awaitingOfferSince = time.Time{}
+		p.mu.Unlock()
+		return nil
 
 	case "candidate":
 		candidatePayload := extractCandidatePayload(payload)
