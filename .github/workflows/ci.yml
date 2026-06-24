@@ -150,6 +150,14 @@ jobs:
       - name: Run mute integration test against local Nextcloud
         if: steps.gate.outputs.skip != 'true'
         id: mute
+        # A flaky attempt must not fail its own leg: the per-attempt jobs are
+        # informational and best-of-3 tolerates individual failures. The
+        # required status check is integration-mute-result, which is red only
+        # when ALL attempts fail (a genuine regression). Note: to re-run a
+        # mute that failed all attempts, re-run the whole run, not just failed
+        # jobs (the legs report success here). steps.mute.outcome still holds
+        # the true pass/fail and drives the green-marker / diagnostics steps.
+        continue-on-error: true
         env:
           SPREED_PROFILE: full
           NEXTCLOUD_URL: "http://127.0.0.1:28080"
