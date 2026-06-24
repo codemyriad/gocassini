@@ -1,4 +1,13 @@
-import type { Job, JobAttempt, JobDetailResponse } from "./types";
+import type {
+  Job,
+  JobAttempt,
+  JobDetailResponse,
+  Settings,
+  SettingsQuality,
+  SettingsUpdate,
+} from "./types";
+
+const SETTINGS_QUALITIES: readonly SettingsQuality[] = ["fast", "balanced", "best"];
 
 export interface OperatorStateChangeEvent {
   type: string;
@@ -78,6 +87,22 @@ export class OperatorClient {
     });
   }
 
+  async getSettings(): Promise<Settings> {
+    return normalizeSettings(await this.#request<unknown>("/settings"));
+  }
+
+  async putSettings(payload: SettingsUpdate): Promise<Settings> {
+    return normalizeSettings(
+      await this.#request<unknown>("/settings", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      }),
+    );
+  }
+
   openEventStream(handlers: OperatorStreamHandlers): EventSource {
     const eventSource = new EventSource(`${this.#baseUrl}/events`);
     const handleMessage = (event: MessageEvent<string>) => {
@@ -119,4 +144,35 @@ export class OperatorClient {
     }
     return (await response.json()) as T;
   }
+}
+
+// normalizeSettings keeps the panel resilient to the settings contract drifting:
+// missing fields fall back to safe defaults and unknown quality values degrade to
+// "balanced" so the UI always has a renderable, well-typed shape.
+function normalizeSettings(raw: unknown): Settings {
+  const value = (raw ?? {}) as Record<string, unknown>;
+  const effective =
+    value.effective != null && typeof value.effective === "object"
+      ? (value.effective as Record<string, unknown>)
+      : {};
+  return {
+    quality: normalizeQuality(value.quality),
+    device_override: asString(value.device_override),
+    model_override: asString(value.model_override),
+    source: asString(value.source) || "auto",
+    detected_gpu: value.detected_gpu === true,
+    cores: typeof value.cores === "number" && Number.isFinite(value.cores) ? value.cores : 0,
+    hardware_fingerprint: asString(value.hardware_fingerprint),
+    effective,
+  };
+}
+
+function normalizeQuality(value: unknown): SettingsQuality {
+  return SETTINGS_QUALITIES.includes(value as SettingsQuality)
+    ? (value as SettingsQuality)
+    : "balanced";
+}
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
