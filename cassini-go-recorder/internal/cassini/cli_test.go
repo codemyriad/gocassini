@@ -861,6 +861,7 @@ func TestPublishHelpExitsZero(t *testing.T) {
 }
 
 func TestPublishUsesExporterOverrideAndWritesSiteManifest(t *testing.T) {
+	requireFFMediaTools(t)
 	tmp := t.TempDir()
 	exporter := filepath.Join(tmp, "fake-exporter.sh")
 	if err := os.WriteFile(exporter, []byte(`#!/usr/bin/env bash
@@ -886,30 +887,10 @@ printf '{}' >"$OUTPUT_DIR/meetings/demo/manifest.json"
 	}
 
 	meetingDir := filepath.Join(tmp, "demo.meeting")
-	if err := os.MkdirAll(meetingDir, 0o755); err != nil {
-		t.Fatalf("mkdir meeting dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(meetingDir, "cassini.json"), []byte(`{
-  "kind": "meeting",
-  "version": "cassini.meeting.v1",
-  "source_kind": "mkv",
-  "source_path": "/tmp/source.mkv",
-  "files": {
-    "audio": "meeting.webm",
-    "transcript": "transcript.words.v1.json"
-  }
-}
-`), 0o644); err != nil {
-		t.Fatalf("write meeting manifest: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(meetingDir, "meeting.webm"), []byte("fake"), 0o644); err != nil {
-		t.Fatalf("write meeting webm: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(meetingDir, "transcript.words.v1.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatalf("write transcript: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(meetingDir, "manifest.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatalf("write artifact manifest: %v", err)
+	// A ready `.meeting` bundle gets packed into a `.opus` during publish, so it
+	// must carry real Opus audio (not a placeholder byte string).
+	if err := writeReadyMeetingBundleFixture(meetingDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write ready meeting bundle: %v", err)
 	}
 
 	t.Setenv("CASSINI_EXPORTER_RUNNER", exporter)

@@ -1,6 +1,7 @@
 package cassini
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -10,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	inspectpkg "gocassini/internal/inspect"
 )
 
 type publishOptions struct {
@@ -65,7 +68,7 @@ func runPublish(ctx context.Context, args []string, stdout, stderr io.Writer) in
 
 	fmt.Fprintln(stdout, "[2/4] Staging meeting bundles")
 	_ = UpdateSiteBundleStatus(site, bundleStatePreparing, "stage-input", "")
-	stagingRoot, sourceSummary, skippedBundles, err := stagePublishInput(opts.inputPath)
+	stagingRoot, sourceSummary, skippedBundles, err := stagePublishInput(ctx, opts.inputPath)
 	if err != nil {
 		_ = UpdateSiteBundleStatus(site, bundleStateFailed, "stage-input", err.Error())
 		fmt.Fprintf(stderr, "stage publish input: %v\n", err)
@@ -135,7 +138,7 @@ func exporterRunnerPath() (string, error) {
 	return path, nil
 }
 
-func stagePublishInput(inputPath string) (string, string, []publishSkippedBundle, error) {
+func stagePublishInput(ctx context.Context, inputPath string) (string, string, []publishSkippedBundle, error) {
 	stagingRoot, err := os.MkdirTemp("", "cassini-publish-source-")
 	if err != nil {
 		return "", "", nil, fmt.Errorf("create publish staging dir: %w", err)
@@ -143,6 +146,11 @@ func stagePublishInput(inputPath string) (string, string, []publishSkippedBundle
 
 	added := map[string]string{}
 	skipped := []publishSkippedBundle{}
+	// addMeeting packs a ready `.meeting` bundle into a single `.opus` portable
+	// meeting file in the staging root. The static-site exporter then treats the
+	// `.opus` as a portable meeting and points the catalog entry at it via
+	// `audioPath` (no artifactPath). The `.meeting` directory bundle is treated
+	// as transient build scratch and is never shipped verbatim.
 	addMeeting := func(bundle LoadedMeetingBundle) error {
 		if !bundleIsReady(bundle.Manifest.State) {
 			skipped = append(skipped, publishSkippedBundle{
@@ -167,12 +175,23 @@ func stagePublishInput(inputPath string) (string, string, []publishSkippedBundle
 		if existing, ok := added[trimmed]; ok {
 			return fmt.Errorf("meeting id %q collides between %s and %s", trimmed, existing, sourceDir)
 		}
-		target := filepath.Join(stagingRoot, trimmed)
-		if err := copyDir(sourceDir, target); err != nil {
-			return fmt.Errorf("copy meeting bundle %s: %w", sourceDir, err)
+		target := filepath.Join(stagingRoot, trimmed+".opus")
+		if err := packMeetingBundle(ctx, sourceDir, target, portablePackOptions{
+			Title: trimmed,
+		}); err != nil {
+			return fmt.Errorf("pack meeting bundle %s: %w", sourceDir, err)
 		}
 		added[trimmed] = sourceDir
 		return nil
+	}
+
+	// A `.opus` portable meeting file is a durable, ready-to-publish artifact:
+	// verify it and pass it through into the staging root unchanged.
+	if staged, summary, ok, err := stagePortableMeetingInput(inputPath, stagingRoot, added); err != nil {
+		_ = os.RemoveAll(stagingRoot)
+		return "", "", nil, err
+	} else if ok {
+		return staged, summary, skipped, nil
 	}
 
 	if bundle, ok, err := LoadMeetingBundle(inputPath); err != nil {
@@ -212,10 +231,19 @@ func stagePublishInput(inputPath string) (string, string, []publishSkippedBundle
 		return "", "", nil, fmt.Errorf("read publish input directory: %w", err)
 	}
 	for _, entry := range entries {
+		candidate := filepath.Join(root, entry.Name())
 		if !entry.IsDir() {
+			// A `.opus` portable meeting sitting alongside `.meeting` bundles is a
+			// durable artifact: verify and pass it through. Other loose files are
+			// ignored.
+			if isPortableMeetingOutput(candidate) {
+				if err := addPortableMeeting(candidate, stagingRoot, added, &skipped); err != nil {
+					_ = os.RemoveAll(stagingRoot)
+					return "", "", nil, err
+				}
+			}
 			continue
 		}
-		candidate := filepath.Join(root, entry.Name())
 		if bundle, ok, err := LoadMeetingBundle(candidate); err != nil {
 			// One corrupt cassini.json (meeting or otherwise; the manifest is
 			// parsed before the Kind filter) must not abort the publish of
@@ -246,6 +274,81 @@ func stagePublishInput(inputPath string) (string, string, []publishSkippedBundle
 	return stagingRoot, root, skipped, nil
 }
 
+// stagePortableMeetingInput handles the case where the publish input path is
+// itself a single `.opus` portable meeting file. It returns ok=true when the
+// input was a `.opus` file (whether or not staging succeeded via err), so the
+// caller can short-circuit the `.meeting` bundle scanning paths.
+func stagePortableMeetingInput(inputPath string, stagingRoot string, added map[string]string) (string, string, bool, error) {
+	if !isPortableMeetingOutput(inputPath) {
+		return "", "", false, nil
+	}
+	info, err := os.Stat(inputPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", "", true, fmt.Errorf("portable meeting input not found: %s", inputPath)
+		}
+		return "", "", true, fmt.Errorf("stat portable meeting input: %w", err)
+	}
+	if info.IsDir() {
+		// A directory whose name ends in `.opus` is not a portable meeting file.
+		return "", "", false, nil
+	}
+	skipped := []publishSkippedBundle{}
+	if err := addPortableMeeting(inputPath, stagingRoot, added, &skipped); err != nil {
+		return "", "", true, err
+	}
+	if len(added) == 0 {
+		// addPortableMeeting only skips on verification failure; surface it.
+		if len(skipped) > 0 {
+			return "", "", true, summarizeSkippedMeetings(inputPath, skipped)
+		}
+		return "", "", true, fmt.Errorf("no ready portable meeting found at %s", inputPath)
+	}
+	return stagingRoot, inputPath, true, nil
+}
+
+// addPortableMeeting verifies a `.opus` portable meeting file and passes it
+// through into the staging root unchanged. Invalid files are recorded as
+// skipped (mirroring the ready/partial skip handling for `.meeting` bundles);
+// meeting-id collisions are a hard error.
+func addPortableMeeting(opusPath string, stagingRoot string, added map[string]string, skipped *[]publishSkippedBundle) error {
+	if err := verifyPortableMeetingInput(opusPath); err != nil {
+		*skipped = append(*skipped, publishSkippedBundle{
+			Path:   opusPath,
+			Reason: fmt.Sprintf("invalid portable meeting: %v", err),
+		})
+		return nil
+	}
+	name := filepath.Base(opusPath)
+	trimmed := strings.TrimSuffix(name, filepath.Ext(name))
+	if trimmed == "" {
+		trimmed = name
+	}
+	if existing, ok := added[trimmed]; ok {
+		return fmt.Errorf("meeting id %q collides between %s and %s", trimmed, existing, opusPath)
+	}
+	target := filepath.Join(stagingRoot, trimmed+".opus")
+	if err := copyFile(opusPath, target, 0o644); err != nil {
+		return fmt.Errorf("stage portable meeting %s: %w", opusPath, err)
+	}
+	added[trimmed] = opusPath
+	return nil
+}
+
+// verifyPortableMeetingInput confirms a `.opus` file is a valid Cassini
+// portable meeting (decodable embedded manifest + intact audio integrity)
+// before it is shipped into the published site.
+func verifyPortableMeetingInput(opusPath string) error {
+	var out bytes.Buffer
+	if err := inspectpkg.InspectPath(&out, opusPath); err != nil {
+		return err
+	}
+	if !strings.Contains(out.String(), "cassini=ok") {
+		return fmt.Errorf("portable meeting failed integrity check")
+	}
+	return nil
+}
+
 func meetingBundleStatusReason(manifest MeetingBundleManifest) string {
 	status := bundleStateSummary(manifest.State, manifest.Stage)
 	if status == "" {
@@ -266,29 +369,6 @@ func summarizeSkippedMeetings(root string, skipped []publishSkippedBundle) error
 		parts = append(parts, fmt.Sprintf("%s (%s)", filepath.Base(item.Path), item.Reason))
 	}
 	return fmt.Errorf("no ready meeting bundles found in %s; skipped %s", root, strings.Join(parts, ", "))
-}
-
-func copyDir(src string, dst string) error {
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return fmt.Errorf("create target directory: %w", err)
-	}
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode())
-		}
-		return copyFile(path, target, info.Mode())
-	})
 }
 
 func copyFile(src string, dst string, mode os.FileMode) error {

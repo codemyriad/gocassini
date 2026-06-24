@@ -9,33 +9,6 @@ import (
 	"testing"
 )
 
-func writeReadyMeetingBundle(t *testing.T, meetingDir string) {
-	t.Helper()
-	if err := os.MkdirAll(meetingDir, 0o755); err != nil {
-		t.Fatalf("mkdir meeting dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(meetingDir, "cassini.json"), []byte(`{
-  "kind": "meeting",
-  "version": "cassini.meeting.v1",
-  "state": "ready",
-  "stage": "ready",
-  "source_kind": "mkv",
-  "source_path": "/tmp/source.mkv"
-}
-`), 0o644); err != nil {
-		t.Fatalf("write meeting manifest: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(meetingDir, "meeting.webm"), []byte("fake"), 0o644); err != nil {
-		t.Fatalf("write meeting webm: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(meetingDir, "transcript.words.v1.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatalf("write transcript: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(meetingDir, "manifest.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatalf("write artifact manifest: %v", err)
-	}
-}
-
 func writeCorruptBundleManifest(t *testing.T, bundleDir string) {
 	t.Helper()
 	if err := os.MkdirAll(bundleDir, 0o755); err != nil {
@@ -47,6 +20,7 @@ func writeCorruptBundleManifest(t *testing.T, bundleDir string) {
 }
 
 func TestPublishSkipsCorruptBundleManifests(t *testing.T) {
+	requireFFMediaTools(t)
 	tmp := t.TempDir()
 	exporter := filepath.Join(tmp, "fake-exporter.sh")
 	if err := os.WriteFile(exporter, []byte(`#!/usr/bin/env bash
@@ -76,7 +50,9 @@ ls "$SOURCE_DIR" >"$OUTPUT_DIR/source-listing.txt"
 	}
 
 	meetingsDir := filepath.Join(tmp, "meetings")
-	writeReadyMeetingBundle(t, filepath.Join(meetingsDir, "good.meeting"))
+	if err := writeReadyMeetingBundleFixture(filepath.Join(meetingsDir, "good.meeting"), "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write ready meeting bundle: %v", err)
+	}
 	// One corrupt meeting bundle and one corrupt run bundle (whose manifest is
 	// parsed before the Kind filter) must not abort the publish of `good`.
 	writeCorruptBundleManifest(t, filepath.Join(meetingsDir, "broken.meeting"))
@@ -95,8 +71,10 @@ ls "$SOURCE_DIR" >"$OUTPUT_DIR/source-listing.txt"
 	if err != nil {
 		t.Fatalf("read staged source listing: %v", err)
 	}
-	if !strings.Contains(string(listing), "good") {
-		t.Fatalf("expected good meeting staged, got listing=%q", string(listing))
+	// The ready `.meeting` bundle is packed into a single `good.opus` portable
+	// meeting file; the `.meeting` directory itself is never staged.
+	if !strings.Contains(string(listing), "good.opus") {
+		t.Fatalf("expected good meeting packed to good.opus, got listing=%q", string(listing))
 	}
 	if strings.Contains(string(listing), "broken") || strings.Contains(string(listing), "job") {
 		t.Fatalf("expected corrupt bundles excluded from staging, got listing=%q", string(listing))
@@ -129,13 +107,16 @@ func TestPublishFailsWhenOnlyBundleIsCorrupt(t *testing.T) {
 }
 
 func TestStagePublishInputSkipsCorruptBundles(t *testing.T) {
+	requireFFMediaTools(t)
 	tmp := t.TempDir()
 	meetingsDir := filepath.Join(tmp, "meetings")
-	writeReadyMeetingBundle(t, filepath.Join(meetingsDir, "good.meeting"))
+	if err := writeReadyMeetingBundleFixture(filepath.Join(meetingsDir, "good.meeting"), "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write ready meeting bundle: %v", err)
+	}
 	writeCorruptBundleManifest(t, filepath.Join(meetingsDir, "broken.meeting"))
 	writeCorruptBundleManifest(t, filepath.Join(meetingsDir, "job.run"))
 
-	stagingRoot, sourceSummary, skipped, err := stagePublishInput(meetingsDir)
+	stagingRoot, sourceSummary, skipped, err := stagePublishInput(context.Background(), meetingsDir)
 	if err != nil {
 		t.Fatalf("stagePublishInput() error = %v", err)
 	}
@@ -144,8 +125,10 @@ func TestStagePublishInputSkipsCorruptBundles(t *testing.T) {
 	if sourceSummary != meetingsDir {
 		t.Fatalf("expected source summary %q, got %q", meetingsDir, sourceSummary)
 	}
-	if _, err := os.Stat(filepath.Join(stagingRoot, "good", "cassini.json")); err != nil {
-		t.Fatalf("expected good bundle staged: %v", err)
+	// The ready `.meeting` bundle is packed into a single `good.opus` portable
+	// meeting file rather than copied as a directory.
+	if _, err := os.Stat(filepath.Join(stagingRoot, "good.opus")); err != nil {
+		t.Fatalf("expected good bundle packed to good.opus: %v", err)
 	}
 	entries, err := os.ReadDir(stagingRoot)
 	if err != nil {
@@ -164,6 +147,159 @@ func TestStagePublishInputSkipsCorruptBundles(t *testing.T) {
 		if !strings.Contains(item.Reason, item.Path) {
 			t.Fatalf("expected reason to carry the manifest path, got %+v", item)
 		}
+	}
+}
+
+func TestStagePublishInputPacksReadyBundleToValidOpus(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	meetingsDir := filepath.Join(tmp, "meetings")
+	if err := writeReadyMeetingBundleFixture(filepath.Join(meetingsDir, "good.meeting"), "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write ready meeting bundle: %v", err)
+	}
+
+	stagingRoot, _, skipped, err := stagePublishInput(context.Background(), meetingsDir)
+	if err != nil {
+		t.Fatalf("stagePublishInput() error = %v", err)
+	}
+	defer os.RemoveAll(stagingRoot)
+	if len(skipped) != 0 {
+		t.Fatalf("expected no skipped bundles, got %+v", skipped)
+	}
+
+	opusPath := filepath.Join(stagingRoot, "good.opus")
+	if err := verifyPortableMeetingInput(opusPath); err != nil {
+		t.Fatalf("expected staged good.opus to be a valid portable meeting: %v", err)
+	}
+	// Only the packed `.opus` is staged; the `.meeting` directory is not.
+	if _, err := os.Stat(filepath.Join(stagingRoot, "good")); !os.IsNotExist(err) {
+		t.Fatalf("expected no staged .meeting directory, stat err = %v", err)
+	}
+}
+
+func TestStagePublishInputPassesThroughOpusFile(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	meetingDir := filepath.Join(tmp, "good.meeting")
+	if err := writeReadyMeetingBundleFixture(meetingDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write ready meeting bundle: %v", err)
+	}
+	opusInput := filepath.Join(tmp, "daily-standup.opus")
+	if err := packMeetingBundle(context.Background(), meetingDir, opusInput, portablePackOptions{Title: "Daily Standup"}); err != nil {
+		t.Fatalf("pack meeting bundle: %v", err)
+	}
+
+	stagingRoot, sourceSummary, skipped, err := stagePublishInput(context.Background(), opusInput)
+	if err != nil {
+		t.Fatalf("stagePublishInput() error = %v", err)
+	}
+	defer os.RemoveAll(stagingRoot)
+	if len(skipped) != 0 {
+		t.Fatalf("expected no skipped bundles, got %+v", skipped)
+	}
+	if sourceSummary != opusInput {
+		t.Fatalf("expected source summary %q, got %q", opusInput, sourceSummary)
+	}
+	staged := filepath.Join(stagingRoot, "daily-standup.opus")
+	if err := verifyPortableMeetingInput(staged); err != nil {
+		t.Fatalf("expected staged .opus pass-through to be valid: %v", err)
+	}
+	entries, err := os.ReadDir(stagingRoot)
+	if err != nil {
+		t.Fatalf("read staging root: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly one staged artifact, got %d", len(entries))
+	}
+}
+
+func TestStagePublishInputRejectsInvalidOpusFile(t *testing.T) {
+	tmp := t.TempDir()
+	bogus := filepath.Join(tmp, "bogus.opus")
+	if err := os.WriteFile(bogus, []byte("not an opus file"), 0o644); err != nil {
+		t.Fatalf("write bogus opus: %v", err)
+	}
+
+	stagingRoot, _, _, err := stagePublishInput(context.Background(), bogus)
+	if err == nil {
+		os.RemoveAll(stagingRoot)
+		t.Fatalf("expected stagePublishInput to fail for an invalid .opus input")
+	}
+	if !strings.Contains(err.Error(), "no ready meeting bundles found") &&
+		!strings.Contains(err.Error(), "invalid portable meeting") {
+		t.Fatalf("expected invalid-portable-meeting error, got %v", err)
+	}
+}
+
+// TestPublishPacksMeetingsForAudioPathCatalog runs the full publish pipeline
+// with a fake exporter that mirrors the static-site exporter's catalog
+// contract: a staged `.opus` file becomes a catalog entry with audioPath, a
+// staged directory becomes an entry with artifactPath. The Go side packs ready
+// bundles into `.opus`, so the resulting catalog must carry audioPath.
+func TestPublishPacksMeetingsForAudioPathCatalog(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	exporter := filepath.Join(tmp, "fake-exporter.sh")
+	if err := os.WriteFile(exporter, []byte(`#!/usr/bin/env bash
+set -euo pipefail
+SOURCE_DIR=""
+OUTPUT_DIR=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --source-dir) SOURCE_DIR="$2"; shift 2 ;;
+    --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$OUTPUT_DIR/meetings"
+printf '<html></html>' >"$OUTPUT_DIR/index.html"
+entries=""
+for path in "$SOURCE_DIR"/*; do
+  name="$(basename "$path")"
+  if [[ -f "$path" && "$name" == *.opus ]]; then
+    id="${name%.opus}"
+    cp "$path" "$OUTPUT_DIR/meetings/$name"
+    entry="{\"id\":\"$id\",\"title\":\"$id\",\"dateLabel\":\"$id\",\"audioPath\":\"./meetings/$name\"}"
+  elif [[ -d "$path" ]]; then
+    entry="{\"id\":\"$name\",\"title\":\"$name\",\"dateLabel\":\"$name\",\"artifactPath\":\"./meetings/$name\"}"
+  else
+    continue
+  fi
+  if [[ -n "$entries" ]]; then entries="$entries,"; fi
+  entries="$entries$entry"
+done
+printf '{"version":"cassini.viewer.catalog.v1","meetings":[%s]}\n' "$entries" >"$OUTPUT_DIR/catalog.json"
+`), 0o755); err != nil {
+		t.Fatalf("write fake exporter: %v", err)
+	}
+
+	meetingsDir := filepath.Join(tmp, "meetings")
+	if err := writeReadyMeetingBundleFixture(filepath.Join(meetingsDir, "good.meeting"), "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write ready meeting bundle: %v", err)
+	}
+
+	t.Setenv("CASSINI_EXPORTER_RUNNER", exporter)
+	outDir := filepath.Join(tmp, "site")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(context.Background(), []string{"publish", meetingsDir, "--out", outDir}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected publish success, got code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
+	}
+
+	catalogRaw, err := os.ReadFile(filepath.Join(outDir, "catalog.json"))
+	if err != nil {
+		t.Fatalf("read catalog: %v", err)
+	}
+	catalog := string(catalogRaw)
+	if !strings.Contains(catalog, `"audioPath":"./meetings/good.opus"`) {
+		t.Fatalf("expected catalog entry with audioPath -> good.opus, got %q", catalog)
+	}
+	if strings.Contains(catalog, "artifactPath") {
+		t.Fatalf("expected no artifactPath for packed meeting, got %q", catalog)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "meetings", "good.opus")); err != nil {
+		t.Fatalf("expected packed good.opus staged into site: %v", err)
 	}
 }
 
