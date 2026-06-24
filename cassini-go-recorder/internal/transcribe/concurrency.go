@@ -2,9 +2,67 @@ package transcribe
 
 import (
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 )
+
+// detectOnlineCPUs returns the CPU count this process may actually use: the
+// cgroup CPU quota when one is set, else the host core count. runtime.NumCPU()
+// reports host cores even inside a quota-limited container, which would
+// over-subscribe transcription threads — so a containerised recorder stays
+// within its share of the host.
+func detectOnlineCPUs() int {
+	if n, ok := cgroupCPUQuota(); ok && n >= 1 && n < runtime.NumCPU() {
+		return n
+	}
+	return runtime.NumCPU()
+}
+
+func cgroupCPUQuota() (int, bool) {
+	if data, err := os.ReadFile("/sys/fs/cgroup/cpu.max"); err == nil { // cgroup v2
+		return parseCPUMax(string(data))
+	}
+	quota, ok1 := readIntFile("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") // cgroup v1
+	period, ok2 := readIntFile("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
+	if ok1 && ok2 && quota > 0 && period > 0 {
+		return ceilDiv(quota, period), true
+	}
+	return 0, false
+}
+
+// parseCPUMax parses a cgroup v2 "cpu.max" body ("<quota> <period>" or
+// "max <period>") into whole CPUs (rounded up). ok is false for unlimited.
+func parseCPUMax(content string) (int, bool) {
+	fields := strings.Fields(content)
+	if len(fields) == 2 && fields[0] != "max" {
+		quota, e1 := strconv.Atoi(fields[0])
+		period, e2 := strconv.Atoi(fields[1])
+		if e1 == nil && e2 == nil && quota > 0 && period > 0 {
+			return ceilDiv(quota, period), true
+		}
+	}
+	return 0, false
+}
+
+func readIntFile(path string) (int, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+func ceilDiv(a, b int) int {
+	if b <= 0 {
+		return 0
+	}
+	return (a + b - 1) / b
+}
 
 // availableMemMB is overridable in tests.
 var availableMemMB = procMemAvailableMB

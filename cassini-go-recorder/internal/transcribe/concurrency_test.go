@@ -1,6 +1,37 @@
 package transcribe
 
-import "testing"
+import (
+	"runtime"
+	"testing"
+)
+
+func TestParseCPUMax(t *testing.T) {
+	cases := []struct {
+		in     string
+		want   int
+		wantOK bool
+	}{
+		{"max 100000", 0, false},
+		{"200000 100000", 2, true},
+		{"150000 100000", 2, true}, // 1.5 -> 2
+		{"100000 100000", 1, true},
+		{"garbage", 0, false},
+	}
+	for _, c := range cases {
+		got, ok := parseCPUMax(c.in)
+		if got != c.want || ok != c.wantOK {
+			t.Errorf("parseCPUMax(%q) = (%d,%t), want (%d,%t)", c.in, got, ok, c.want, c.wantOK)
+		}
+	}
+}
+
+func TestDetectOnlineCPUs(t *testing.T) {
+	// Never returns < 1 and never exceeds the host core count.
+	n := detectOnlineCPUs()
+	if n < 1 || n > runtime.NumCPU() {
+		t.Errorf("detectOnlineCPUs() = %d, want 1..%d", n, runtime.NumCPU())
+	}
+}
 
 func TestResolveStreamConcurrency(t *testing.T) {
 	orig := availableMemMB

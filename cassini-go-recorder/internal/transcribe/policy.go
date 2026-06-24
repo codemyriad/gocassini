@@ -2,7 +2,6 @@ package transcribe
 
 import (
 	"os"
-	"runtime"
 	"strings"
 )
 
@@ -111,7 +110,7 @@ func ResolveModelID(explicitModel, quality, device string) ModelID {
 // transcription: all cores, capped to avoid oversubscription. (Replaces the
 // historical hard-coded 4, which left most cores idle on CPU-only boxes.)
 func DefaultNumThreads() int {
-	n := runtime.NumCPU()
+	n := detectOnlineCPUs()
 	switch {
 	case n < 1:
 		return 1
