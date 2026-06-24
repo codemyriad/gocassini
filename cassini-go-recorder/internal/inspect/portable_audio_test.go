@@ -107,6 +107,131 @@ func TestInspectPathPortableMeetingOpusDetectsStaleAudio(t *testing.T) {
 	}
 }
 
+func TestExtractTranscriptWordsFromV2Opus(t *testing.T) {
+	requireFFMediaTools(t)
+
+	tmp := t.TempDir()
+	wantWords := []string{"Hello", "team", "lantern", "festival", "tonight"}
+	path := createPortableV2OpusFixture(t, filepath.Join(tmp, "v2.opus"), wantWords)
+
+	extracted, err := ExtractTranscriptWords(path)
+	if err != nil {
+		t.Fatalf("ExtractTranscriptWords: %v", err)
+	}
+	if extracted.TranscriptID != portable.RoleRawASR {
+		t.Errorf("expected default transcript id %q, got %q", portable.RoleRawASR, extracted.TranscriptID)
+	}
+	got := make([]string, 0, len(extracted.Words))
+	for _, w := range extracted.Words {
+		got = append(got, w.Text)
+	}
+	if strings.Join(got, " ") != strings.Join(wantWords, " ") {
+		t.Fatalf("recovered words %v, want %v", got, wantWords)
+	}
+
+	var rendered bytes.Buffer
+	if err := WriteTranscriptWordsV1JSON(&rendered, extracted); err != nil {
+		t.Fatalf("WriteTranscriptWordsV1JSON: %v", err)
+	}
+	if !strings.Contains(rendered.String(), `"version": "transcript.words.v1"`) {
+		t.Fatalf("expected transcript.words.v1 doc, got %q", rendered.String())
+	}
+	for _, w := range wantWords {
+		if !strings.Contains(rendered.String(), `"text": "`+w+`"`) {
+			t.Fatalf("rendered transcript missing word %q: %s", w, rendered.String())
+		}
+	}
+}
+
+func createPortableV2OpusFixture(t *testing.T, outPath string, words []string) string {
+	t.Helper()
+
+	basePath := createTestOpus(t, filepath.Join(filepath.Dir(outPath), "base-v2.opus"))
+	meta, err := probePortableAudio(basePath)
+	if err != nil {
+		t.Fatalf("probe base opus: %v", err)
+	}
+	stream, err := firstAudioStream(meta)
+	if err != nil {
+		t.Fatalf("first audio stream: %v", err)
+	}
+	sampleRate := parseIntOrZero(stream.SampleRate)
+	channels := stream.Channels
+	pcmBytes, err := decodeAudioPCM(basePath, sampleRate, channels)
+	if err != nil {
+		t.Fatalf("decode pcm: %v", err)
+	}
+	pcmSum := sha256.Sum256(pcmBytes)
+	pcmSHA := hex.EncodeToString(pcmSum[:])
+	sampleCount := int64(len(pcmBytes) / (2 * channels))
+	durationMS := int64(sampleCount * 1000 / int64(sampleRate))
+
+	items := make([]portable.TranscriptItem, 0, len(words))
+	for i, w := range words {
+		items = append(items, portable.TranscriptItem{
+			Speaker: "spk1",
+			StartMS: int64(i * 100),
+			EndMS:   int64(i*100 + 80),
+			Text:    w,
+		})
+	}
+	manifest := portable.NormalizeManifest(portable.Manifest{
+		Meeting: portable.Meeting{
+			ID:           "meeting-v2",
+			Title:        "Lantern Festival",
+			CreatedAtUTC: "2026-03-11T08:30:00Z",
+			DurationMS:   durationMS,
+			Language:     "en",
+		},
+		Audio: portable.Audio{
+			Container:   "ogg",
+			Codec:       "opus",
+			SampleRate:  sampleRate,
+			Channels:    channels,
+			SampleCount: sampleCount,
+			DurationMS:  durationMS,
+		},
+		Integrity: portable.Integrity{
+			MatchPolicy: portable.AudioMatchPolicy,
+			PCMFormat:   portable.AudioPCMFormat,
+			PCMSHA256:   pcmSHA,
+			SampleRate:  sampleRate,
+			Channels:    channels,
+			SampleCount: sampleCount,
+			DurationMS:  durationMS,
+		},
+		Speakers: []portable.Speaker{{ID: "spk1", Label: "Silvio"}},
+	})
+
+	input := portable.TranscriptInput{
+		ID:       portable.RoleRawASR,
+		Role:     portable.RoleRawASR,
+		Default:  true,
+		Language: "en",
+		Body: portable.TranscriptBody{
+			Format:    "cassini.words.v1",
+			Language:  "en",
+			WordCount: len(items),
+			Items:     items,
+		},
+	}
+	encoded, err := portable.EncodeManifestV2(manifest, []portable.TranscriptInput{input}, 256)
+	if err != nil {
+		t.Fatalf("encode v2 manifest: %v", err)
+	}
+	tags := portable.BuildOpusTagsV2(manifest, encoded, portable.RoleRawASR)
+
+	args := []string{"-y", "-v", "error", "-i", basePath, "-map", "0:a:0", "-c", "copy"}
+	for key, value := range tags {
+		args = append(args, "-metadata", fmt.Sprintf("%s=%s", key, value))
+	}
+	args = append(args, outPath)
+	if err := runCommand("ffmpeg", args...); err != nil {
+		t.Fatalf("write v2 portable opus tags: %v", err)
+	}
+	return outPath
+}
+
 func requireFFMediaTools(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("ffmpeg"); err != nil {

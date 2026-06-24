@@ -499,3 +499,226 @@ func mergePortableTags(sets ...map[string]string) map[string]string {
 	}
 	return merged
 }
+
+// TranscriptWord is one decoded word read back out of a published portable
+// .opus. It mirrors the per-word shape of a transcript.words.v1.json segment.
+type TranscriptWord struct {
+	Text    string `json:"text"`
+	StartMS int64  `json:"startMs"`
+	EndMS   int64  `json:"endMs"`
+	Speaker string `json:"speaker,omitempty"`
+}
+
+// ExtractedTranscript is the default words transcript recovered from a
+// portable .opus, plus the descriptor metadata needed to render a
+// transcript.words.v1.json-shaped document for downstream text checks.
+type ExtractedTranscript struct {
+	TranscriptID string
+	Role         string
+	Format       string
+	Language     string
+	WordCount    int
+	Words        []TranscriptWord
+}
+
+// ExtractTranscriptWords reads the default raw-ASR ("words") transcript back
+// out of a published portable .opus. It is the inverse of
+// portable.EncodeTranscriptBody: it reuses the same ffprobe tag read and main
+// manifest decode as inspect (probePortableAudio + decodePortableMeeting),
+// finds the default transcript id from the decoded manifest (v2) or the inline
+// transcript (v1), gathers that transcript's CASSINI_TX_<ID>_PAYLOAD_* chunk
+// set, concatenates + base64url-decodes + gzip-decompresses + parses the
+// TranscriptBody JSON, and reconstructs the ordered words.
+func ExtractTranscriptWords(path string) (ExtractedTranscript, error) {
+	meta, err := probePortableAudio(path)
+	if err != nil {
+		return ExtractedTranscript{}, err
+	}
+	stream, err := firstAudioStream(meta)
+	if err != nil {
+		return ExtractedTranscript{}, err
+	}
+	tags := mergePortableTags(meta.Format.Tags, stream.Tags)
+
+	formatTag := metadataTag(tags, "CASSINI_FORMAT")
+	if formatTag == "" {
+		return ExtractedTranscript{}, fmt.Errorf("%s carries no CASSINI_FORMAT metadata (not a portable meeting)", path)
+	}
+	if !strings.EqualFold(formatTag, portable.Format) && !strings.EqualFold(formatTag, portable.FormatV2) {
+		return ExtractedTranscript{}, fmt.Errorf("unsupported CASSINI_FORMAT=%s", formatTag)
+	}
+
+	_, manifest, err := decodePortableMeeting(tags)
+	if err != nil {
+		return ExtractedTranscript{}, err
+	}
+
+	// v1 files carry the words inline in the main manifest.
+	if manifest.Version == 1 {
+		return extractedFromTranscriptBody(
+			"transcript",
+			manifest.Transcript.Format,
+			firstNonEmpty(manifest.Transcript.Language, manifest.Meeting.Language),
+			manifest.Transcript.WordCount,
+			manifest.Transcript.Items,
+		), nil
+	}
+
+	entry, ok := defaultWordsTranscriptEntry(tags, manifest)
+	if !ok {
+		return ExtractedTranscript{}, fmt.Errorf("portable meeting %s declares no default words transcript", path)
+	}
+
+	body, err := decodeTranscriptBody(tags, entry.ID)
+	if err != nil {
+		return ExtractedTranscript{}, fmt.Errorf("decode transcript %q body: %w", entry.ID, err)
+	}
+	out := extractedFromTranscriptBody(entry.ID, body.Format, body.Language, body.WordCount, body.Items)
+	out.Role = entry.Role
+	if out.Language == "" {
+		out.Language = entry.Language
+	}
+	if out.Format == "" {
+		out.Format = entry.Format
+	}
+	return out, nil
+}
+
+func extractedFromTranscriptBody(id, format, language string, wordCount int, items []portable.TranscriptItem) ExtractedTranscript {
+	words := make([]TranscriptWord, 0, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.Text) == "" {
+			continue
+		}
+		words = append(words, TranscriptWord{
+			Text:    item.Text,
+			StartMS: item.StartMS,
+			EndMS:   item.EndMS,
+			Speaker: item.Speaker,
+		})
+	}
+	if wordCount == 0 {
+		wordCount = len(words)
+	}
+	return ExtractedTranscript{
+		TranscriptID: id,
+		Format:       format,
+		Language:     language,
+		WordCount:    wordCount,
+		Words:        words,
+	}
+}
+
+// defaultWordsTranscriptEntry picks the default raw-words transcript descriptor
+// from a decoded v2 manifest. Preference: the entry named by the
+// CASSINI_TRANSCRIPT_DEFAULT tag, then any entry flagged Default, then the
+// first raw transcript entry.
+func defaultWordsTranscriptEntry(tags map[string]string, manifest portable.Manifest) (portable.TranscriptEntry, bool) {
+	if len(manifest.Transcripts) == 0 {
+		return portable.TranscriptEntry{}, false
+	}
+	if defaultID := strings.TrimSpace(metadataTag(tags, "CASSINI_TRANSCRIPT_DEFAULT")); defaultID != "" {
+		for _, entry := range manifest.Transcripts {
+			if entry.ID == defaultID {
+				return entry, true
+			}
+		}
+	}
+	for _, entry := range manifest.Transcripts {
+		if entry.Default {
+			return entry, true
+		}
+	}
+	return manifest.Transcripts[0], true
+}
+
+// decodeTranscriptBody reverses portable.EncodeTranscriptBody for one v2
+// transcript: it reads CASSINI_TX_<ID>_PAYLOAD_CHUNK_COUNT +
+// CASSINI_TX_<ID>_PAYLOAD_000..N, concatenates them, base64url-decodes,
+// gzip-decompresses, validates the optional sha256/byte-count tags, and parses
+// the TranscriptBody JSON.
+func decodeTranscriptBody(tags map[string]string, id string) (portable.TranscriptBody, error) {
+	prefix := portable.TranscriptIDToTagPrefix(id)
+	chunkCount := parseIntOrZero(metadataTag(tags, prefix+"CHUNK_COUNT"))
+	if chunkCount <= 0 {
+		return portable.TranscriptBody{}, fmt.Errorf("missing or invalid %sCHUNK_COUNT", prefix)
+	}
+	var encoded strings.Builder
+	for idx := 0; idx < chunkCount; idx++ {
+		key := fmt.Sprintf("%s%03d", prefix, idx)
+		part := metadataTag(tags, key)
+		if part == "" {
+			return portable.TranscriptBody{}, fmt.Errorf("missing transcript chunk %s", key)
+		}
+		encoded.WriteString(part)
+	}
+
+	compressed, err := base64.RawURLEncoding.DecodeString(encoded.String())
+	if err != nil {
+		return portable.TranscriptBody{}, fmt.Errorf("decode base64url transcript payload: %w", err)
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		return portable.TranscriptBody{}, fmt.Errorf("open gzip transcript payload: %w", err)
+	}
+	defer func() { _ = reader.Close() }()
+	rawJSON, err := io.ReadAll(reader)
+	if err != nil {
+		return portable.TranscriptBody{}, fmt.Errorf("decompress gzip transcript payload: %w", err)
+	}
+
+	if declared := parseIntOrZero(metadataTag(tags, prefix+"RAW_BYTES")); declared > 0 && declared != len(rawJSON) {
+		return portable.TranscriptBody{}, fmt.Errorf("transcript raw byte count mismatch: tags=%d decoded=%d", declared, len(rawJSON))
+	}
+	if declared := parseIntOrZero(metadataTag(tags, prefix+"GZIP_BYTES")); declared > 0 && declared != len(compressed) {
+		return portable.TranscriptBody{}, fmt.Errorf("transcript compressed byte count mismatch: tags=%d decoded=%d", declared, len(compressed))
+	}
+	if declared := strings.TrimSpace(strings.ToLower(metadataTag(tags, prefix+"SHA256"))); declared != "" {
+		sum := sha256.Sum256(rawJSON)
+		if hex.EncodeToString(sum[:]) != declared {
+			return portable.TranscriptBody{}, fmt.Errorf("transcript payload sha256 mismatch")
+		}
+	}
+
+	var body portable.TranscriptBody
+	if err := json.Unmarshal(rawJSON, &body); err != nil {
+		return portable.TranscriptBody{}, fmt.Errorf("parse transcript body JSON: %w", err)
+	}
+	return body, nil
+}
+
+// WriteTranscriptWordsV1JSON renders an extracted transcript as a
+// transcript.words.v1.json-shaped document (one segment carrying the ordered
+// words) so existing consumers — including the Talk roundtrip phase-9 check —
+// can read it without bespoke parsing.
+func WriteTranscriptWordsV1JSON(out io.Writer, extracted ExtractedTranscript) error {
+	type wordsV1Word struct {
+		Text    string `json:"text"`
+		StartMS int64  `json:"startMs"`
+		EndMS   int64  `json:"endMs"`
+	}
+	type wordsV1Segment struct {
+		Speaker string        `json:"speaker,omitempty"`
+		Words   []wordsV1Word `json:"words"`
+	}
+	type wordsV1Doc struct {
+		Version   string           `json:"version"`
+		Language  string           `json:"language,omitempty"`
+		WordCount int              `json:"wordCount"`
+		Segments  []wordsV1Segment `json:"segments"`
+	}
+
+	words := make([]wordsV1Word, 0, len(extracted.Words))
+	for _, w := range extracted.Words {
+		words = append(words, wordsV1Word{Text: w.Text, StartMS: w.StartMS, EndMS: w.EndMS})
+	}
+	doc := wordsV1Doc{
+		Version:   "transcript.words.v1",
+		Language:  extracted.Language,
+		WordCount: extracted.WordCount,
+		Segments:  []wordsV1Segment{{Words: words}},
+	}
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(doc)
+}

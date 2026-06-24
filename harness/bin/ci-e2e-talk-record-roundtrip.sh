@@ -24,14 +24,15 @@
 #      complete (Talk → HMAC POST /api/v1/room/{token} → operator's
 #      record job → recorder joins call → captures → stop → upload to
 #      Talk store → build → publish)
-#   7. Read the published transcript from the gocassini container
-#      (published artifact is /srv/cassini-site/published/meetings/<id>.opus;
-#       transcript text comes from the durable current/<id>.meeting bundle)
+#   7. Wait for the published artifact in the gocassini container
+#      (/srv/cassini-site/published/meetings/<id>.opus)
 #   8. Read the uploaded recording back from the room owner's Nextcloud
 #      files over WebDAV (spreed stores it under
 #      <attachment folder>/Recording/<room token>/) and assert existence,
 #      .mkv extension and a sane minimum size
-#   9. Levenshtein-check against the scenario's expected text
+#   9. Decode the transcript back OUT of the published .opus (via
+#      `cassini inspect --transcript`) and Levenshtein-check it against the
+#      scenario's expected text — proving the .opus embeds the transcript
 #
 # Status: draft. Phases 1-4 are scripted; 5-9 need iteration. Each phase
 # is gated so partial runs surface useful debug instead of cascading
@@ -464,7 +465,7 @@ log "OCS recording stop response: ${STOP_RESP:0:200}"
 # ============================================================================
 # Phase 7: wait for the recording lifecycle to complete; pull transcript
 # ============================================================================
-phase 7 "Wait for record → upload → build → publish; pull transcript"
+phase 7 "Wait for record → upload → build → publish; await published .opus"
 
 # Total budget: bot audio plays for $RECORD_DURATION_SECONDS seconds, then
 # recorder stops on empty room (default 8s grace), then upload to Talk,
@@ -486,17 +487,6 @@ while (( SECONDS < PUBLISH_DEADLINE )); do
 done
 [[ -n "$PUBLISHED_OPUS" ]] || fail "published .opus never appeared"
 log "OK published meeting: $PUBLISHED_OPUS"
-
-# The published artifact is now a single portable .opus (D-429); the loose
-# transcript.words.v1.json no longer ships in the site. Pull the transcript for
-# the phase-9 text check from the operator's durable build bundle in
-# current/<id>.meeting/ — that's the exact transcript packed into the .opus
-# (publish names the file <jobID>.opus, matching current/<jobID>.meeting/), so
-# the Levenshtein check still validates published content.
-MEETING_ID="$(basename "$PUBLISHED_OPUS" .opus)"
-TRANSCRIPT_HOST="$LOG_DIR/transcript.words.v1.json"
-docker cp "$CONTAINER_NAME:/var/lib/cassini-operator/jobs/current/${MEETING_ID}.meeting/transcript.words.v1.json" "$TRANSCRIPT_HOST"
-log "OK transcript pulled: $TRANSCRIPT_HOST ($(wc -c <"$TRANSCRIPT_HOST") bytes)"
 
 # Bot streamer should have exited by now (or we kill it).
 wait "$BOT_PID" 2>/dev/null || true
@@ -587,6 +577,24 @@ log "OK recording readable via WebDAV GET ($READ_BYTES bytes)"
 # Phase 9: Levenshtein-check transcript vs scenario expected text
 # ============================================================================
 phase 9 "Levenshtein-check transcript vs scenario expected text"
+
+# Recover the transcript by decoding it back OUT of the published .opus, not
+# from the build bundle. This proves the published artifact actually EMBEDS the
+# expected transcript (D-429): `cassini inspect --transcript` reads the default
+# words transcript from the portable .opus's CASSINI_TX_<id>_PAYLOAD_* tags and
+# emits transcript.words.v1.json — the exact inverse of the v2 transcript
+# packer. The Levenshtein check below then runs against THAT .opus-derived
+# transcript.
+TRANSCRIPT_HOST="$LOG_DIR/transcript.words.v1.json"
+if ! docker exec "$CONTAINER_NAME" \
+  cassini inspect --transcript "$PUBLISHED_OPUS" >"$TRANSCRIPT_HOST" 2>"$LOG_DIR/inspect-transcript.err"; then
+  sed 's/^/    /' "$LOG_DIR/inspect-transcript.err" 2>/dev/null | head -n 20 || true
+  fail "cassini inspect --transcript failed to decode transcript from published .opus: $PUBLISHED_OPUS"
+fi
+if [[ ! -s "$TRANSCRIPT_HOST" ]]; then
+  fail "decoded transcript from $PUBLISHED_OPUS is empty"
+fi
+log "OK transcript decoded from published .opus: $TRANSCRIPT_HOST ($(wc -c <"$TRANSCRIPT_HOST") bytes)"
 
 EXPECTED_TEXT=$(python3 - "$SCENARIO_PATH" <<'PY'
 import json, sys
