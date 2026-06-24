@@ -1049,7 +1049,7 @@
       <!-- Scroll container holds the sticky header so cards visibly scroll
            behind its blur. Scrollbar runs the full sidebar height as a
            consequence (the only way to get the scroll-behind effect). -->
-      <div class="flex-1 min-h-0 overflow-y-auto scroll-stable">
+      <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain scroll-stable">
         <header class="sticky top-0 z-20 flex items-center justify-between gap-3 px-4 py-3 border-b bg-base-100 border-base-300 md:border-none md:bg-base-100/50 backdrop-blur-lg">
           <h2 class="text-base font-bold text-base-content">
             Meetings
@@ -1131,7 +1131,7 @@
            even when the (absolutely positioned) player overlaps the scroll.
            `scrollbar-gutter: stable` reserves the scrollbar gutter persistently
            so content width never shifts as scrollbar appears/disappears. -->
-      <div class="flex-1 min-h-0 overflow-y-auto pb-40 md:pb-32 scroll-stable flex flex-col">
+      <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pb-40 md:pb-32 scroll-stable flex flex-col">
         <!-- Sticky header — translucent bg so the transcript scrolls behind it.
              Using base-100 (not base-200) so the header reads distinct from the
              page bg even when there's no transcript content behind it. -->
