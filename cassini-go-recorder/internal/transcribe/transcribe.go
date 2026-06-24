@@ -6,19 +6,21 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 // BuildConfig holds runtime options for the transcription pipeline.
 type BuildConfig struct {
-	Device                string    // "cpu" or "cuda"
-	ModelID               ModelID   // defaults to defaultModelID
-	AdditionalModels      []ModelID // run extra transcription passes; each becomes a sibling transcript file referenced from manifest.files.transcripts
-	CacheDir              string    // root cache directory, e.g. ~/.cache/cassini
-	LLM                   LLMConfig // optional; if not configured, skip readable cleanup
-	SummaryLLM            LLMConfig // optional; if not configured, skip summary generation
-	StrictReadableCleanup bool      // fail the build if readable cleanup cannot complete
-	NumThreads            int       // 0 = use default (4)
+	Device                string     // "cpu" or "cuda"
+	ModelID               ModelID    // defaults to defaultModelID
+	AdditionalModels      []ModelID  // run extra transcription passes; each becomes a sibling transcript file referenced from manifest.files.transcripts
+	CacheDir              string     // root cache directory, e.g. ~/.cache/cassini
+	LLM                   LLMConfig  // optional; if not configured, skip readable cleanup
+	SummaryLLM            LLMConfig  // optional; if not configured, skip summary generation
+	StrictReadableCleanup bool       // fail the build if readable cleanup cannot complete
+	NumThreads            int        // 0 = derive from core count
+	Quality               STTQuality // "" = balanced; picks model/device when not explicitly set
 }
 
 var (
@@ -34,12 +36,18 @@ var (
 //   - summary.md            — V0 template format (if SummaryLLM configured)
 //   - manifest.json
 func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg BuildConfig, stdout io.Writer) error {
+	// Resolve the STT execution policy for this host: an explicit device/model
+	// always wins; otherwise derive both from the quality tier and detected
+	// hardware (a GPU box runs fp32, a CPU box int8) and use all the cores.
+	cfg.Device = ResolveDevice(cfg.Device)
 	if cfg.ModelID == "" {
-		cfg.ModelID = DefaultModelID()
+		cfg.ModelID = ModelForQuality(cfg.Quality, cfg.Device)
 	}
-	if cfg.Device == "" || cfg.Device == "auto" {
-		cfg.Device = "cpu"
+	if cfg.NumThreads < 1 {
+		cfg.NumThreads = DefaultNumThreads()
 	}
+	fmt.Fprintf(stdout, "  STT policy: device=%s model=%s threads=%d quality=%s\n",
+		cfg.Device, cfg.ModelID, cfg.NumThreads, NormalizeQuality(string(cfg.Quality)))
 	if cfg.CacheDir == "" {
 		cfg.CacheDir = defaultCacheDir()
 	}
@@ -339,10 +347,10 @@ func DefaultBuildConfig() BuildConfig {
 		summaryLLM.APIKey = ""
 	}
 
+	// Leave an unset model empty: BuildMeetingArtifact derives it from the
+	// quality tier and the resolved device (GPU -> fp32, CPU -> int8). An
+	// explicit CASSINI_STT_MODEL still wins.
 	primary := ModelID(strings.TrimSpace(os.Getenv("CASSINI_STT_MODEL")))
-	if primary == "" {
-		primary = defaultModelID
-	}
 
 	var additional []ModelID
 	if raw := strings.TrimSpace(os.Getenv("CASSINI_STT_ADDITIONAL_MODELS")); raw != "" {
@@ -362,16 +370,29 @@ func DefaultBuildConfig() BuildConfig {
 		LLM:                   llm,
 		SummaryLLM:            summaryLLM,
 		StrictReadableCleanup: envBool("CASSINI_READABLE_STRICT_BATCHES"),
+		NumThreads:            envInt("CASSINI_STT_NUM_THREADS"),
+		Quality:               NormalizeQuality(os.Getenv("CASSINI_STT_QUALITY")),
 	}
 }
 
-// defaultDevice returns the device selected by CASSINI_STT_DEVICE if set
-// (cpu / cuda / auto), or "cpu" if unset.
+// envInt parses a positive integer env var, returning 0 when unset or invalid.
+func envInt(key string) int {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
+// defaultDevice returns the device requested via CASSINI_STT_DEVICE
+// (cpu / cuda / auto), or "auto" when unset so the device is auto-detected
+// (GPU when present) in BuildMeetingArtifact.
 func defaultDevice() string {
 	if v := strings.TrimSpace(os.Getenv("CASSINI_STT_DEVICE")); v != "" {
 		return v
 	}
-	return "cpu"
+	return "auto"
 }
 
 func writeReadableArtifacts(outputDir string, streams []AudioStream, segments []Segment, audioDurationMS int64, sha256hex string, cfg BuildConfig, stdout io.Writer) ([]Segment, bool, error) {

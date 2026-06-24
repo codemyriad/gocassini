@@ -266,7 +266,11 @@ func executeBuildIntoBundle(ctx context.Context, input buildInput, bundle Meetin
 	_ = UpdateMeetingBundleSource(bundle, input.SourceKind, input.SourcePath, "build")
 
 	cfg := transcribe.DefaultBuildConfig()
-	cfg.Device = opts.device
+	// An explicit --device wins; the default "auto" leaves the env/auto-detect
+	// resolution (CASSINI_STT_DEVICE or GPU detection) in place.
+	if d := strings.ToLower(strings.TrimSpace(opts.device)); d == "cpu" || d == "cuda" {
+		cfg.Device = opts.device
+	}
 	cfg.StrictReadableCleanup = opts.strictReadableCleanup
 
 	if err := buildArtifactFn(ctx, input.RecordingPath, bundle.RootDir, cfg, stdout); err != nil {
