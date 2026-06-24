@@ -1043,7 +1043,7 @@
   {#if isDesktop || !selectedMeetingId}
     <section
       aria-label="Meeting list"
-      class="meeting-list flex flex-col row-start-1 col-start-1 h-full md:sticky md:top-0 bg-base-100 backdrop-blur-xl border-r border-base-300"
+      class="meeting-list flex flex-col row-start-1 col-start-1 h-full min-w-0 md:sticky md:top-0 bg-base-100 backdrop-blur-xl border-r border-base-300"
       transition:fly={regionFlyConfig(-1)}
     >
       <!-- Scroll container holds the sticky header so cards visibly scroll
@@ -1123,7 +1123,7 @@
   {#if isDesktop || selectedMeetingId}
     <section
       aria-label="Meeting view"
-      class="meeting-viewer relative flex flex-col row-start-1 col-start-1 md:col-start-2 h-full"
+      class="meeting-viewer relative flex flex-col row-start-1 col-start-1 md:col-start-2 h-full min-w-0"
       transition:fly={regionFlyConfig(1)}
     >
       <!-- Scroll container: holds the sticky header and all main content.
