@@ -15,11 +15,15 @@
 #   - JOIN_DELAYS staggers the joins so the ICE negotiations are serialized.
 #   - REC_DURATION/BOT_DURATIONS are sized so every publisher's media window
 #     overlaps the recorder's capture window with an ICE/connect budget to spare.
+#   - Mute rotation is gated until the recorder session artifact has video
+#     stream_opened events for every expected publisher, so the mute assertion
+#     starts after recorder-side capture readiness instead of racing ICE.
 #
 # This test pins those two timing invariants so a future edit that re-introduces
 # the collision (joins too bunched) or shrinks the capture window (a publisher
-# stops before/after the recorder is listening) fails here instead of flaking in
-# CI. It is fast and offline: it parses the config, it does not run the stack.
+# stops before/after the recorder is listening), or removes the readiness gate,
+# fails here instead of flaking in CI. It is fast and offline: it parses the
+# config, it does not run the stack.
 #
 # Run directly:
 #   ./harness/bin/test-ci-e2e-mute-timing.sh
@@ -29,6 +33,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MUTE_SH="$SCRIPT_DIR/ci-e2e-mute.sh"
 PUBLISHER_SH="$SCRIPT_DIR/../../cassini-go-recorder/e2e_with_publisher.sh"
+STREAM_VIDEO_SH="$SCRIPT_DIR/stream-video.sh"
 
 # ICE/connect budget assumed for the slowest joiner under CI load: the gap between
 # a bot joining and it actually streaming captured media. Conservative on purpose
@@ -49,6 +54,7 @@ fail() {
 
 [[ -f "$MUTE_SH" ]] || fail "ci-e2e-mute.sh is missing at $MUTE_SH"
 [[ -f "$PUBLISHER_SH" ]] || fail "e2e_with_publisher.sh is missing at $PUBLISHER_SH"
+[[ -f "$STREAM_VIDEO_SH" ]] || fail "stream-video.sh is missing at $STREAM_VIDEO_SH"
 
 # Pull the committed `export VAR="${VAR:-default}"` defaults out of ci-e2e-mute.sh
 # without sourcing it (sourcing would trigger the whole Docker stack). Honour an
@@ -148,7 +154,18 @@ grep -q 'media stats: ' "$MUTE_SH" \
 grep -q 'mute capture summary' "$MUTE_SH" \
   || fail "ci-e2e-mute.sh no longer emits the capture-funnel summary line"
 
-# Invariant 4: the recorder publisher script surfaces *all* ICE transitions, not
+# Invariant 4: mute rotation must wait for recorder-side stream_opened coverage,
+# not just publisher-side "connected and streaming" logs.
+grep -q 'MUTE_ROTATION_START_FILE' "$MUTE_SH" \
+  || fail "ci-e2e-mute.sh no longer configures the mute rotation gate"
+grep -q 'CAPTURE_READY_PARTICIPANTS' "$MUTE_SH" \
+  || fail "ci-e2e-mute.sh no longer waits for recorder capture readiness"
+grep -q 'wait_for_capture_ready' "$PUBLISHER_SH" \
+  || fail "e2e_with_publisher.sh no longer waits for recorder capture readiness"
+grep -q -- '--mute-start-file' "$STREAM_VIDEO_SH" \
+  || fail "stream-video.sh no longer plumbs the mute rotation gate"
+
+# Invariant 5: the recorder publisher script surfaces *all* ICE transitions, not
 # just =connected, so failing/disconnected sessions are visible on a short count.
 grep -q 'ICE state=' "$PUBLISHER_SH" \
   || fail "e2e_with_publisher.sh no longer surfaces ICE transitions"
@@ -159,5 +176,6 @@ fi
 # Touched scripts still parse.
 bash -n "$MUTE_SH" || fail "bash -n failed for ci-e2e-mute.sh"
 bash -n "$PUBLISHER_SH" || fail "bash -n failed for e2e_with_publisher.sh"
+bash -n "$STREAM_VIDEO_SH" || fail "bash -n failed for stream-video.sh"
 
-echo "PASS: ci-e2e-mute.sh staggers ICE and keeps every publisher overlapping the capture window (flake D-052)"
+echo "PASS: ci-e2e-mute.sh staggers ICE, keeps every publisher overlapping capture, and gates mute rotation on recorder readiness (flake D-052)"
