@@ -20,6 +20,8 @@ on:
       - 'img/**'
       - 'media-kit.*'
   pull_request:
+    # `labeled` so adding the `full-ci` label re-triggers and runs the mute tier.
+    types: [opened, synchronize, reopened, labeled]
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
@@ -62,6 +64,10 @@ jobs:
       - name: Install media tools
         if: matrix.module == 'cassini-go-recorder'
         run: |
+          # packages.microsoft.com intermittently 403s on GitHub-hosted runners,
+          # which fails `apt-get update` (exit 100) even though nothing here
+          # needs it. Drop any apt source referencing it before updating.
+          sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f || true
           sudo apt-get update
           sudo apt-get install -y ffmpeg
       - name: Vet
@@ -112,6 +118,10 @@ jobs:
             harness/go-talk-rotator/go.sum
       - name: Install runtime tools
         run: |
+          # packages.microsoft.com intermittently 403s on GitHub-hosted runners,
+          # which fails `apt-get update` (exit 100) even though nothing here
+          # needs it. Drop any apt source referencing it before updating.
+          sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f || true
           sudo apt-get update
           sudo apt-get install -y ffmpeg jq ripgrep
       - name: Run recorder integration test against local Nextcloud
@@ -137,6 +147,13 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - unit
+    # ci-e2e-mute is a chronic WebRTC ICE flake (D-052). Best-of-3 absorbs most
+    # occurrences but occasionally fails 3/3 and reds a clean PR. Run it on
+    # push-to-main (gates the release path) and on a PR labeled `full-ci`; keep
+    # it off the default PR run so PR signal stays deterministic.
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'full-ci')
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -175,6 +192,10 @@ jobs:
       - name: Install runtime tools
         if: steps.gate.outputs.skip != 'true'
         run: |
+          # packages.microsoft.com intermittently 403s on GitHub-hosted runners,
+          # which fails `apt-get update` (exit 100) even though nothing here
+          # needs it. Drop any apt source referencing it before updating.
+          sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f || true
           sudo apt-get update
           sudo apt-get install -y ffmpeg jq ripgrep
       - name: Run mute integration test against local Nextcloud
@@ -232,7 +253,14 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - integration-mute
-    if: always()
+    # always() so it aggregates the best-of-3 outcome — but only when the mute
+    # tier actually ran (push-to-main or a `full-ci` PR). On a normal PR it
+    # skips, so a skipped mute tier can no longer masquerade as
+    # "failed all 3 attempts" (the false-red seen on the #95 main run).
+    if: >-
+      always() &&
+      (github.event_name != 'pull_request' ||
+       contains(github.event.pull_request.labels.*.name, 'full-ci'))
     steps:
       - name: Collect green-attempt markers
         uses: actions/download-artifact@v4
