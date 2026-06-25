@@ -233,7 +233,7 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 // transcribePass runs one full transcription pass over every speaker stream
 // using the given recognizer config. Returns merged + sorted segments.
 func transcribePass(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, device string, numThreads int, stdout io.Writer) ([]Segment, error) {
-	conc := resolveStreamConcurrency(len(streams), numThreads)
+	conc := resolveStreamConcurrency(len(streams), numThreads, device)
 	if conc <= 1 {
 		return transcribeStreamsSequential(ctx, mkvPath, streams, modelPaths, vadPath, device, numThreads, stdout)
 	}

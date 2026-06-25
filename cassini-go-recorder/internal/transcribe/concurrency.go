@@ -96,20 +96,33 @@ func estModelMemMB() int {
 }
 
 // resolveStreamConcurrency decides how many speaker streams to transcribe in
-// parallel. Each worker gets its OWN recognizer (so there is no shared-state
-// thread-safety question), which is why concurrency must stay bounded by:
+// parallel. Each worker gets its OWN recognizer, which is why concurrency must
+// stay bounded by:
+//   - the device: GPU stays serial (one recognizer already saturates the
+//     device, and concurrent CUDA recognizer creation is unsafe / VRAM-bound),
 //   - the number of streams,
 //   - the thread budget (at least one intra-op thread per worker), and
 //   - free RAM divided by the per-model footprint (never OOM the host).
 //
-// CASSINI_STT_STREAM_CONCURRENCY forces an explicit value (still capped by the
-// stream count). 1 means the original sequential path.
-func resolveStreamConcurrency(numStreams, numThreads int) int {
+// The parallelism is a CPU-efficiency optimization (D-436); on GPU it is both
+// unnecessary and unsafe, so cuda resolves to 1 unless explicitly overridden.
+// CASSINI_STT_STREAM_CONCURRENCY forces a value (still capped by the stream
+// count). 1 means the original sequential path.
+func resolveStreamConcurrency(numStreams, numThreads int, device string) int {
 	if numStreams <= 1 {
 		return 1
 	}
 	if v := envInt("CASSINI_STT_STREAM_CONCURRENCY"); v > 0 {
 		return min(v, numStreams)
+	}
+	// GPU transcription stays serial: each worker would load its own ~2.4GB
+	// fp32 recognizer into finite VRAM and call SherpaOnnxCreateOfflineRecognizer
+	// concurrently, and concurrent CUDA execution-provider init in
+	// sherpa-onnx/onnxruntime is not safe — it crashed recognizer creation on
+	// the self-hosted GPU runner and reddened the GPU Talk e2e on main. The env
+	// override above is the explicit escape hatch for tuned GPU setups.
+	if strings.EqualFold(device, "cuda") {
+		return 1
 	}
 	threads := numThreads
 	if threads < 1 {
