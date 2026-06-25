@@ -142,23 +142,71 @@ export function ensureShadowAppRoot(doc: Document, cssHref: string): HTMLElement
 }
 
 // controlPanelStylesheetHref builds the shadow stylesheet URL from the captured
-// proxy base. Falls back to a relative "ui/control-panel.css" if the base is
-// somehow absent (the panel still mounts; only styling would degrade).
+// proxy base, mirroring the ?v=... version query from the control-panel.js
+// script tag so the CSS cache-buster stays in sync with the JS bundle. Falls
+// back to a relative "ui/control-panel.css" if the base is absent (the panel
+// still mounts; only styling would degrade).
 export function controlPanelStylesheetHref(doc: Document): string {
   const base = captureProxyBaseFrom(doc.scripts);
-  return base ? base + "ui/control-panel.css" : "ui/control-panel.css";
+  if (!base) return "ui/control-panel.css";
+  let versionQuery = "";
+  for (let i = 0; i < doc.scripts.length; i++) {
+    const src = doc.scripts[i]?.src ?? "";
+    if (CONTROL_PANEL_JS_SRC_PATTERN.test(src)) {
+      const qIdx = src.lastIndexOf("?");
+      if (qIdx >= 0) versionQuery = src.slice(qIdx);
+      break;
+    }
+  }
+  return base + "ui/control-panel.css" + versionQuery;
+}
+
+// applyNextcloudTheme bridges Nextcloud's user colour/accessibility preferences
+// into the shadow root (D-414). Mirrors the same function in the viewer's
+// embedded.ts — see that file for full rationale. Returns true when NC theming
+// was applied, false when running outside Nextcloud.
+export function applyNextcloudTheme(
+  host: HTMLElement,
+  bodyDataThemes: string | undefined,
+  primaryColor: string | null | undefined,
+): boolean {
+  if (!primaryColor) return false;
+  host.style.setProperty("--nc-primary", primaryColor);
+  const themes = bodyDataThemes ?? "";
+  const isDark = themes.includes("dark");
+  const isHighContrast = themes.includes("highcontrast");
+  let themeValue = "light";
+  if (isDark && isHighContrast) themeValue = "dark-highcontrast";
+  else if (isDark) themeValue = "dark";
+  else if (isHighContrast) themeValue = "highcontrast";
+  host.dataset.ncTheme = themeValue;
+  return true;
 }
 
 function mountEmbeddedControlPanel(): void {
-  mount(App, { target: ensureShadowAppRoot(document, controlPanelStylesheetHref(document)) });
+  const appRoot = ensureShadowAppRoot(document, controlPanelStylesheetHref(document));
+  const shadowHost = document.getElementById("cassini-shadow-host");
+  if (shadowHost) {
+    const oca = (window as unknown as Record<string, unknown>).OCA as Record<string, unknown> | undefined;
+    const theming = oca?.Theming as Record<string, unknown> | undefined;
+    const primaryColor = theming?.primaryColor as string | undefined;
+    const enabledThemes = theming?.enabledThemes as string[] | undefined;
+    const themesStr = document.body.dataset.themes ?? enabledThemes?.join(" ") ?? "";
+    applyNextcloudTheme(shadowHost, themesStr, primaryColor);
+  }
+  mount(App, { target: appRoot });
 }
 
 function bootstrap(): void {
   captureOperatorBasePath(document, window);
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", mountEmbeddedControlPanel, { once: true });
-  } else {
+  // Wait for the window load event unless the page is already fully loaded —
+  // same rationale as the viewer's bootstrap: OCA.Theming is populated by a
+  // Nextcloud dynamic import that resolves after DOMContentLoaded, so load is
+  // the earliest reliable point to read OCA.Theming.primaryColor.
+  if (document.readyState === "complete") {
     mountEmbeddedControlPanel();
+  } else {
+    window.addEventListener("load", mountEmbeddedControlPanel, { once: true });
   }
 }
 

@@ -98,6 +98,13 @@ type Runtime struct {
 	// health endpoint cannot fan out doctor subprocesses (D-376).
 	recordHealth        *ttlProbe
 	recordHealthTimeout time.Duration
+	// settings is the operator-owned STT policy, injected into every
+	// record/build/doctor subprocess. settingsMu guards in-memory reads (at job
+	// spawn time) against PUT /settings writes; settingsPath is where it
+	// persists, on the same volume as the DB (D-435).
+	settingsMu   sync.RWMutex
+	settings     STTSettings
+	settingsPath string
 }
 
 type TriggerRequest struct {
@@ -452,6 +459,16 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		requeueKick:         make(chan struct{}, 1),
 		publishJobTimeout:   defaultPublishJobTimeout,
 		recordHealthTimeout: recordHealthProbeTimeout,
+		settingsPath:        settingsPath(cfg),
+	}
+	// Detect hardware on first start (or track it under an auto default) and
+	// load the persisted STT policy. A failure here must not take the operator
+	// down: fall back to an in-memory auto default so jobs still run (D-435).
+	if settings, err := LoadOrInitSettings(rt.settingsPath); err != nil {
+		logger.Printf("stt_settings load failed (%v); using in-memory auto default", err)
+		rt.settings = detectSettings()
+	} else {
+		rt.settings = settings
 	}
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
 	rt.recordJobFn = rt.executeRecordCLI
@@ -481,6 +498,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/jobs/", rt.jobDetailHandler)
 	api.HandleFunc("/events", rt.eventsHandler)
 	api.HandleFunc("/status", rt.statusHandler)
+	api.HandleFunc("/settings", rt.settingsHandler)
 
 	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
 	// off by default). Requests that already passed the AppAPI middleware are
@@ -519,6 +537,7 @@ func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler) {
 		root.Handle("/jobs/", api)
 		root.Handle("/events", api)
 		root.Handle("/status", api)
+		root.Handle("/settings", api)
 		return
 	}
 	root.Handle(basePath, http.StripPrefix(basePath, api))

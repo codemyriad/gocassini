@@ -564,6 +564,10 @@ type botConfig struct {
 	CallURLRaw           string
 }
 
+type muteRotationGate struct {
+	File string
+}
+
 type recordingOnlyStarterConfig struct {
 	BaseURL              string
 	RoomToken            string
@@ -1869,7 +1873,32 @@ func drainRTCP(sender *webrtc.RTPSender) {
 	}
 }
 
-func rotateAudio(ctx context.Context, bots []*bot, every time.Duration) {
+func waitForMuteRotationGate(ctx context.Context, gate muteRotationGate) bool {
+	if strings.TrimSpace(gate.File) == "" {
+		return true
+	}
+	log.Printf("[manager] waiting for mute rotation gate: %s", gate.File)
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(gate.File); err == nil {
+			log.Printf("[manager] mute rotation gate opened")
+			return true
+		} else if !errors.Is(err, os.ErrNotExist) {
+			log.Printf("[manager] mute rotation gate stat failed: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-ticker.C:
+		}
+	}
+}
+
+func rotateAudio(ctx context.Context, bots []*bot, every time.Duration, gate muteRotationGate) {
+	if !waitForMuteRotationGate(ctx, gate) {
+		return
+	}
 	current := -1
 	for {
 		if allBotsDone(bots) {
@@ -2322,6 +2351,7 @@ func run() error {
 		recordingStatus              string
 		recordingTimeoutSec          float64
 		roomEmptyGraceSec            float64
+		muteStartFile                string
 	)
 
 	flag.StringVar(&callURL, "call-url", "", "Talk call URL")
@@ -2345,6 +2375,7 @@ func run() error {
 	flag.StringVar(&recordingStatus, "recording-status", "1", "Nextcloud Talk recording status value")
 	flag.Float64Var(&recordingTimeoutSec, "recording-timeout", 90, "Seconds to wait for recording to become active")
 	flag.Float64Var(&roomEmptyGraceSec, "room-empty-grace-seconds", defaultRoomEmptyGrace.Seconds(), "Grace period before stopping after room empties")
+	flag.StringVar(&muteStartFile, "mute-start-file", "", "Optional file path that must exist before audio mute rotation starts")
 	flag.BoolVar(&insecure, "insecure", false, "Disable TLS verification")
 	flag.Parse()
 
@@ -2537,6 +2568,9 @@ func run() error {
 		}
 	}
 	log.Printf("[manager] rotating audible audio every %.2fs", rotateSeconds)
+	if strings.TrimSpace(muteStartFile) != "" {
+		log.Printf("[manager] mute rotation start file=%s", muteStartFile)
+	}
 	if stopWhenRoomEmpty {
 		log.Printf("[manager] auto-stop when room empty enabled (grace=%s)", time.Duration(roomEmptyGraceSec*float64(time.Second)))
 	}
@@ -2585,7 +2619,7 @@ func run() error {
 
 	rotateCtx, rotateCancel := context.WithCancel(ctx)
 	defer rotateCancel()
-	go rotateAudio(rotateCtx, bots, time.Duration(rotateSeconds*float64(time.Second)))
+	go rotateAudio(rotateCtx, bots, time.Duration(rotateSeconds*float64(time.Second)), muteRotationGate{File: strings.TrimSpace(muteStartFile)})
 
 	type botResult struct {
 		index int

@@ -18,6 +18,7 @@ SYNC_SHIFTS="${SYNC_SHIFTS:-}"
 BOT_DURATIONS="${BOT_DURATIONS:-}"
 AUTH_USERS="${AUTH_USERS:-}"
 AUTH_PASSWORDS="${AUTH_PASSWORDS:-}"
+MUTE_ROTATION_START_FILE="${MUTE_ROTATION_START_FILE:-}"
 RECORD_BEFORE_MEDIA="${RECORD_BEFORE_MEDIA:-0}"
 RECORDING_STARTER_INDEX="${RECORDING_STARTER_INDEX:-1}"
 RECORDING_STARTER_AUTH_USER="${RECORDING_STARTER_AUTH_USER:-}"
@@ -87,6 +88,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --bot-durations)
       BOT_DURATIONS="$2"
+      shift 2
+      ;;
+    --mute-start-file)
+      MUTE_ROTATION_START_FILE="$2"
       shift 2
       ;;
     --auth-users)
@@ -298,6 +303,9 @@ if [[ "$RECORD_BEFORE_MEDIA" == "1" ]]; then
     CMD_ARGS+=(--recording-starter-index "$RECORDING_STARTER_INDEX")
   fi
   CMD_ARGS+=(--recording-timeout "$RECORDING_TIMEOUT")
+fi
+if [[ -n "$MUTE_ROTATION_START_FILE" ]]; then
+  CMD_ARGS+=(--mute-start-file "$MUTE_ROTATION_START_FILE")
 fi
 
 for ((i = 1; i <= USERS; i++)); do

@@ -178,14 +178,14 @@ func commandCheck(name string) doctorCheck {
 
 func sttModelCacheChecks() []doctorCheck {
 	cacheRoot := defaultCassiniCacheRoot()
-	modelID := transcribe.DefaultModelID()
-	if v := strings.TrimSpace(os.Getenv("CASSINI_STT_MODEL")); v != "" {
-		modelID = transcribe.ModelID(v)
-	}
+	// Report the *resolved* device+model the build will actually use, so doctor
+	// reflects GPU auto-detection and the quality-tier model choice.
+	device := transcribe.ResolveDevice(os.Getenv("CASSINI_STT_DEVICE"))
+	modelID := transcribe.ResolveModelID(os.Getenv("CASSINI_STT_MODEL"), os.Getenv("CASSINI_STT_QUALITY"), device)
 
 	checks := []doctorCheck{
 		{status: doctorOK, summary: fmt.Sprintf("STT model id: %s", modelID)},
-		{status: doctorOK, summary: fmt.Sprintf("STT device: %s", defaultSTTDevice())},
+		{status: doctorOK, summary: fmt.Sprintf("STT device: %s (quality=%s)", device, transcribe.NormalizeQuality(os.Getenv("CASSINI_STT_QUALITY")))},
 		parentWritableCheck(cacheRoot, "cassini cache root"),
 	}
 

@@ -83,8 +83,12 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 	vadCfg.SileroVad.WindowSize = 512
 	vadCfg.SileroVad.MaxSpeechDuration = 25.0
 	vadCfg.SampleRate = paths.SampleRate
-	vadCfg.NumThreads = numThreads
-	vadCfg.Provider = provider
+	// Silero VAD is a tiny stateful model run per 32 ms window; it is fastest
+	// single-threaded on CPU. Running it on a GPU provider turns each window
+	// into a micro kernel-launch (measured ~3x slower on sparse/long streams),
+	// so VAD stays on CPU regardless of the recogniser device. See vadProvider.
+	vadCfg.NumThreads = 1
+	vadCfg.Provider = vadProvider()
 	vadCfg.Debug = 0
 
 	vad := sherpa.NewVoiceActivityDetector(&vadCfg, 60.0)

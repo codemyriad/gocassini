@@ -148,6 +148,76 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * Nextcloud native colour override (D-414)
+ *
+ * Active when embedded.ts detects OCA.Theming and sets data-nc-theme on the
+ * shadow host element. NC CSS custom properties (--color-main-background etc.)
+ * inherit through the shadow boundary from the host page :root — no JS reads
+ * needed for those. --nc-primary is set as an inline style on the shadow host
+ * by embedded.ts to sidestep the circular var() reference that would arise
+ * from both NC and DaisyUI using --color-primary.
+ *
+ * data-theme="forrest-light" stays on .cassini-root as a DaisyUI fallback for
+ * tokens NC doesn't provide (accent, secondary, neutral, etc.).
+ * :host([data-nc-theme]) .cassini-root has specificity (0,2,0) which beats
+ * DaisyUI's [data-theme="forrest-light"] at (0,1,0).
+ * ────────────────────────────────────────────────────────────────────────── */
+:host([data-nc-theme]) .cassini-root {
+  --color-primary:         var(--color-primary-element);
+  --color-primary-content: var(--color-primary-element-text);
+  --color-base-100:        var(--color-background-dark);
+  --color-base-200:        var(--color-main-background);
+  --color-base-300:        var(--color-border-dark);
+  --color-base-content:    var(--color-main-text);
+}
+
+:host([data-nc-theme="dark"]),
+:host([data-nc-theme="dark-highcontrast"]) {
+  color-scheme: dark;
+}
+
+/* All NC modes: word-level highlight uses solid primary bg — text needs primary-content */
+:host([data-nc-theme]) .cassini-root [class~="bg-primary"][class~="ring-primary"] {
+  color: var(--color-primary-content);
+}
+
+/* All NC modes: explicit card border using NC's border token */
+:host([data-nc-theme]) .cassini-root .meeting-list button:not([aria-current="page"]) {
+  border: 1px solid var(--color-border-dark);
+}
+
+/* All NC modes: solid primary fill on selected card (overrides bg-primary/25 tint) */
+:host([data-nc-theme]) .cassini-root .meeting-list button[aria-current="page"] {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-primary-content);
+}
+:host([data-nc-theme]) .cassini-root .meeting-list button[aria-current="page"] * {
+  color: var(--color-primary-content);
+}
+
+/* HC: flatten all backgrounds to NC's main-background — clean white/black canvas */
+:host([data-nc-theme*="highcontrast"]) .cassini-root {
+  --color-base-100: var(--color-main-background);
+  --color-base-200: var(--color-main-background);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .meeting-list {
+  border-right: 1px solid var(--color-border-dark);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .meeting-list button:not([aria-current="page"]):hover {
+  background-color: var(--color-background-dark);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root details.collapse {
+  border: 1px solid var(--color-border-dark);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root [class*="text-base-content"] {
+  color: var(--color-base-content);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .card.border-base-300 {
+  border: 1px solid var(--color-border-dark);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * Global resets
  *
  * D-383: in the AppAPI embedded build this CSS is injected INTO the SPA's open
@@ -170,7 +240,7 @@
  * color/background live on .cassini-root below, which carries data-theme. */
 :host {
   display: block;
-  min-height: 100%;
+  height: 100%;
   font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
   line-height: 1.5;
   -webkit-text-size-adjust: 100%;
@@ -182,6 +252,7 @@
  * inherited base color/background here so they resolve in BOTH the embedded
  * (shadow) build (where :host has no daisyUI color tokens) and standalone. */
 .cassini-root {
+  height: 100%;
   min-height: 100%;
   color: var(--color-base-content);
   background-color: var(--color-base-100);
@@ -190,6 +261,7 @@
 html,
 body,
 #app {
+  height: 100%;
   min-height: 100%;
 }
 

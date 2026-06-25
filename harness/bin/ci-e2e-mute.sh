@@ -73,6 +73,20 @@ export FINAL_OUTPUT="${FINAL_OUTPUT:-$OUTPUT}"
 export REC_LOG="${REC_LOG:-/tmp/gocassini-ci-recorder-mute.log}"
 export PUB_LOG="${PUB_LOG:-/tmp/gocassini-ci-publisher-mute.log}"
 
+# Deterministic mute-start barrier:
+#
+# The mute scenario asserts that all three participants were captured, but the
+# flaky path was recorder-side subscriber bring-up: a publisher could be
+# "connected and streaming" while the recorder had not yet opened a capture
+# stream for that participant. Start publishers muted, wait for recorder-side
+# video stream_opened events for every expected participant, then let the
+# rotator begin unmuting audio. If readiness never arrives, fail this one run
+# with the subscriber/stream diagnostics instead of retrying the whole job.
+export MUTE_ROTATION_START_FILE="${MUTE_ROTATION_START_FILE:-$CI_OUTPUT_BASE.mute-start}"
+export CAPTURE_READY_PARTICIPANTS="${CAPTURE_READY_PARTICIPANTS:-$PUB_USERS}"
+export CAPTURE_READY_TIMEOUT="${CAPTURE_READY_TIMEOUT:-35}"
+export CAPTURE_READY_STREAM_KIND="${CAPTURE_READY_STREAM_KIND:-video}"
+
 cleanup() {
   log "Cleaning up local test stack"
   "$SCRIPT_DIR/down.sh" --volumes || true
