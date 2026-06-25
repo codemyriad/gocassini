@@ -62,6 +62,10 @@ jobs:
       - name: Install media tools
         if: matrix.module == 'cassini-go-recorder'
         run: |
+          # packages.microsoft.com intermittently 403s on GitHub-hosted runners,
+          # which fails `apt-get update` (exit 100) even though nothing here
+          # needs it. Drop any apt source referencing it before updating.
+          sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f || true
           sudo apt-get update
           sudo apt-get install -y ffmpeg
       - name: Vet
@@ -112,6 +116,10 @@ jobs:
             harness/go-talk-rotator/go.sum
       - name: Install runtime tools
         run: |
+          # packages.microsoft.com intermittently 403s on GitHub-hosted runners,
+          # which fails `apt-get update` (exit 100) even though nothing here
+          # needs it. Drop any apt source referencing it before updating.
+          sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f || true
           sudo apt-get update
           sudo apt-get install -y ffmpeg jq ripgrep
       - name: Run recorder integration test against local Nextcloud
@@ -175,6 +183,10 @@ jobs:
       - name: Install runtime tools
         if: steps.gate.outputs.skip != 'true'
         run: |
+          # packages.microsoft.com intermittently 403s on GitHub-hosted runners,
+          # which fails `apt-get update` (exit 100) even though nothing here
+          # needs it. Drop any apt source referencing it before updating.
+          sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f || true
           sudo apt-get update
           sudo apt-get install -y ffmpeg jq ripgrep
       - name: Run mute integration test against local Nextcloud
