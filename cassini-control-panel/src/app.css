@@ -9,6 +9,29 @@
   themes: light --default, dark --prefersdark;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Nextcloud native colour override (D-414)
+ *
+ * Active when embedded.ts sets data-nc-theme on the shadow host. NC CSS vars
+ * inherit through the shadow boundary; --nc-primary is set via inline style
+ * on the host to avoid the circular var() reference (NC and DaisyUI both use
+ * --color-primary). :host([data-nc-theme]) beats DaisyUI's zero-specificity
+ * :where(:root, :host) default theme.
+ * ────────────────────────────────────────────────────────────────────────── */
+:host([data-nc-theme]) {
+  --color-primary:         var(--nc-primary);
+  --color-primary-content: var(--color-primary-text);
+  --color-base-100:        var(--color-main-background);
+  --color-base-200:        var(--color-background-dark);
+  --color-base-300:        var(--color-background-darker);
+  --color-base-content:    var(--color-main-text);
+}
+
+:host([data-nc-theme="dark"]),
+:host([data-nc-theme="dark-highcontrast"]) {
+  color-scheme: dark;
+}
+
 /* Shadow-boundary reset — active only in the embedded (shadow) build, where
  * :host is the shadow host; inert in standalone (no shadow host). Re-establishes
  * the base typography Tailwind Preflight's (now shadow-inert) html/body rules

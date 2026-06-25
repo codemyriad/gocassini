@@ -100,23 +100,82 @@ export function ensureShadowAppRoot(doc: Document, cssHref: string): HTMLElement
 }
 
 // viewerStylesheetHref builds the shadow stylesheet URL from the captured proxy
-// base. Falls back to a relative "ui/viewer.css" if the base is somehow absent
-// (the SPA still mounts; only styling would degrade).
-function viewerStylesheetHref(win: Window): string {
+// base, mirroring the version query string from the viewer.js script tag so the
+// browser cache expires together with the JS bundle. Falls back to a relative
+// "ui/viewer.css" if the base is absent (the SPA still mounts; only styling
+// would degrade).
+function viewerStylesheetHref(win: Window, doc: Document): string {
   const base = win.__CASSINI_VIEWER_BASE__;
-  return base ? base + "ui/viewer.css" : "ui/viewer.css";
+  if (!base) return "ui/viewer.css";
+  // Extract the ?v=... query string from the registered viewer.js script src
+  // so the CSS cache-buster stays in sync with the JS cache-buster.
+  let versionQuery = "";
+  for (let i = 0; i < doc.scripts.length; i++) {
+    const src = doc.scripts[i]?.src ?? "";
+    if (VIEWER_JS_SRC_PATTERN.test(src)) {
+      const qIdx = src.lastIndexOf("?");
+      if (qIdx >= 0) versionQuery = src.slice(qIdx);
+      break;
+    }
+  }
+  return base + "ui/viewer.css" + versionQuery;
+}
+
+// applyNextcloudTheme bridges Nextcloud's user colour/accessibility preferences
+// into the shadow root (D-414). It sets --nc-primary as an inline style on the
+// shadow host (aliasing NC's --color-primary to avoid a circular var() reference
+// with DaisyUI's own --color-primary) and records the active NC theme as
+// data-nc-theme so the CSS override block in app.css can activate. Returns true
+// when NC theming was applied (OCA.Theming.primaryColor present), false when
+// running outside Nextcloud (standalone viewer — forrest themes remain active).
+// Pure enough to unit-test: all globals are injected.
+export function applyNextcloudTheme(
+  host: HTMLElement,
+  bodyDataThemes: string | undefined,
+  primaryColor: string | null | undefined,
+): boolean {
+  if (!primaryColor) return false;
+  host.style.setProperty("--nc-primary", primaryColor);
+  const themes = bodyDataThemes ?? "";
+  const isDark = themes.includes("dark");
+  const isHighContrast = themes.includes("highcontrast");
+  let themeValue = "light";
+  if (isDark && isHighContrast) themeValue = "dark-highcontrast";
+  else if (isDark) themeValue = "dark";
+  else if (isHighContrast) themeValue = "highcontrast";
+  host.dataset.ncTheme = themeValue;
+  return true;
 }
 
 function mountEmbeddedViewer(): void {
-  mount(App, { target: ensureShadowAppRoot(document, viewerStylesheetHref(window)) });
+  const appRoot = ensureShadowAppRoot(document, viewerStylesheetHref(window, document));
+  const shadowHost = document.getElementById("cassini-shadow-host");
+  let ncMode = false;
+  if (shadowHost) {
+    const oca = (window as unknown as Record<string, unknown>).OCA as Record<string, unknown> | undefined;
+    const theming = oca?.Theming as Record<string, unknown> | undefined;
+    const primaryColor = theming?.primaryColor as string | undefined;
+    // body.dataset.themes may not be populated at window.load time (NC's
+    // accessibility theme JS runs after load). Fall back to the reliably-set
+    // OCA.Theming.enabledThemes array, which mirrors the body attribute values.
+    const enabledThemes = theming?.enabledThemes as string[] | undefined;
+    const themesStr = document.body.dataset.themes ?? enabledThemes?.join(" ") ?? "";
+    ncMode = applyNextcloudTheme(shadowHost, themesStr, primaryColor);
+  }
+  mount(App, { target: appRoot, props: { ncMode } });
 }
 
 function bootstrap(): void {
   captureViewerBase(document, window);
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", mountEmbeddedViewer, { once: true });
-  } else {
+  // Wait for the window load event unless the page is already fully loaded.
+  // DOMContentLoaded fires after deferred scripts, but OCA.Theming is populated
+  // by a Nextcloud dynamic import that resolves asynchronously after
+  // DOMContentLoaded. The load event fires once readyState reaches "complete",
+  // at which point OCA.Theming.primaryColor is reliably available.
+  if (document.readyState === "complete") {
     mountEmbeddedViewer();
+  } else {
+    window.addEventListener("load", mountEmbeddedViewer, { once: true });
   }
 }
 
