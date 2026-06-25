@@ -140,6 +140,7 @@ wait_for_capture_ready() {
   local kind="$4"
   local end_time=$((SECONDS + timeout_s))
   local last_count=-1
+  local count
 
   if (( expected < 1 )); then
     return 0

@@ -172,7 +172,7 @@ jobs:
           BOT_PASSWORD: "ci-bot-password"
           NEXTCLOUD_IMAGE: ""
         run: ./harness/bin/ci-e2e-mute.sh
-      # Capture recorder/publisher logs + session artifact on a failed attempt so a
+      # Capture recorder/publisher logs + session artifact on failure so a
       # genuine (non-flake) regression can be triaged from the funnel summary and
       # per-subscriber ICE transitions instead of re-rolling CI.
       - name: Upload mute integration diagnostics

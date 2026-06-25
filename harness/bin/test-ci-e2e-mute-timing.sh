@@ -162,8 +162,8 @@ grep -q 'CAPTURE_READY_PARTICIPANTS' "$MUTE_SH" \
   || fail "ci-e2e-mute.sh no longer waits for recorder capture readiness"
 grep -q 'wait_for_capture_ready' "$PUBLISHER_SH" \
   || fail "e2e_with_publisher.sh no longer waits for recorder capture readiness"
-grep -q -- '--mute-start-file' "$STREAM_VIDEO_SH" \
-  || fail "stream-video.sh no longer plumbs the mute rotation gate"
+grep -q 'CMD_ARGS+=(--mute-start-file' "$STREAM_VIDEO_SH" \
+  || fail "stream-video.sh no longer plumbs the mute rotation gate to the rotator"
 
 # Invariant 5: the recorder publisher script surfaces *all* ICE transitions, not
 # just =connected, so failing/disconnected sessions are visible on a short count.
