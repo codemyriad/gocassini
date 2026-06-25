@@ -5,7 +5,37 @@ on:
     branches:
       - main
       - master
+    # Pure docs/planning changes touch no code, tests, or image — skip the
+    # (expensive) suite. paths-ignore is a DENY-list: if any changed file falls
+    # outside this list the whole suite still runs, so a real code change is
+    # never silently skipped (avoids the allow-list false-green trap, cf. the
+    # PR #36 note in publish-exapp-image.yml). spec/ is intentionally NOT here:
+    # it holds the manifest JSON schemas that code validates against.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'docs-wip/**'
+      - 'dev-docs-wip/**'
+      - 'planning/**'
+      - 'img/**'
+      - 'media-kit.*'
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'docs-wip/**'
+      - 'dev-docs-wip/**'
+      - 'planning/**'
+      - 'img/**'
+      - 'media-kit.*'
+
+# Cancel a PR's superseded in-progress runs when a new commit is pushed, so
+# rapid pushes don't stack multiple ~45-min e2e runs (a major source of the
+# runner-minute burn that has been starving CI). Never cancel a push to main —
+# every main commit must produce a full, independent signal.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   unit:
