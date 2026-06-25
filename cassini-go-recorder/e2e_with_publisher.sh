@@ -31,13 +31,32 @@ JOIN_DELAYS="${JOIN_DELAYS:-}"
 AUDIO_READY_AFTERS="${AUDIO_READY_AFTERS:-}"
 SYNC_SHIFTS="${SYNC_SHIFTS:-}"
 BOT_DURATIONS="${BOT_DURATIONS:-}"
+MUTE_ROTATION_START_FILE="${MUTE_ROTATION_START_FILE:-}"
+CAPTURE_READY_PARTICIPANTS="${CAPTURE_READY_PARTICIPANTS:-0}"
+CAPTURE_READY_TIMEOUT="${CAPTURE_READY_TIMEOUT:-35}"
+CAPTURE_READY_STREAM_KIND="${CAPTURE_READY_STREAM_KIND:-video}"
 
 REC_LOG="${REC_LOG:-/tmp/gocassini-e2e.log}"
 PUB_LOG="${PUB_LOG:-/tmp/gocassini-publisher-e2e.log}"
 CHECK_SESSION_ARTIFACT="${CHECK_SESSION_ARTIFACT:-1}"
 CHECK_ARTIFACT_REMUX="${CHECK_ARTIFACT_REMUX:-1}"
 
+if ! [[ "$CAPTURE_READY_PARTICIPANTS" =~ ^[0-9]+$ ]]; then
+  echo "CAPTURE_READY_PARTICIPANTS must be a non-negative integer" >&2
+  exit 2
+fi
+if ! [[ "$CAPTURE_READY_TIMEOUT" =~ ^[0-9]+$ ]]; then
+  echo "CAPTURE_READY_TIMEOUT must be a non-negative integer number of seconds" >&2
+  exit 2
+fi
+if [[ -z "$MUTE_ROTATION_START_FILE" && "$CAPTURE_READY_PARTICIPANTS" -gt 0 ]]; then
+  MUTE_ROTATION_START_FILE="${FINAL_OUTPUT}.mute-start"
+fi
+
 rm -f "$OUTPUT" "$FINAL_OUTPUT" "$REC_LOG" "$PUB_LOG"
+if [[ -n "$MUTE_ROTATION_START_FILE" ]]; then
+  rm -f "$MUTE_ROTATION_START_FILE"
+fi
 
 if [[ -z "$CALL_URL" && -f "$HARNESS_DIR/runtime/last_call_url" ]]; then
   CALL_URL="$(cat "$HARNESS_DIR/runtime/last_call_url")"
@@ -79,9 +98,98 @@ echo "JOIN_DELAYS=$JOIN_DELAYS"
 echo "AUDIO_READY_AFTERS=$AUDIO_READY_AFTERS"
 echo "SYNC_SHIFTS=$SYNC_SHIFTS"
 echo "BOT_DURATIONS=$BOT_DURATIONS"
+echo "MUTE_ROTATION_START_FILE=$MUTE_ROTATION_START_FILE"
+echo "CAPTURE_READY_PARTICIPANTS=$CAPTURE_READY_PARTICIPANTS"
+echo "CAPTURE_READY_TIMEOUT=$CAPTURE_READY_TIMEOUT"
+echo "CAPTURE_READY_STREAM_KIND=$CAPTURE_READY_STREAM_KIND"
 echo "OUTPUT=$OUTPUT"
 echo "FINAL_OUTPUT=$FINAL_OUTPUT"
 echo "SEGMENTS_DIR=$SEGMENTS_DIR"
+
+capture_events_files() {
+  local session_root="$SEGMENTS_PARENT/sessions"
+  [[ -d "$session_root" ]] || return 0
+  find "$session_root" \
+    -maxdepth 2 \
+    -type f \
+    -name events.ndjson \
+    -path "$session_root/${SEGMENTS_BASE}_*/events.ndjson" \
+    -print
+}
+
+capture_ready_count() {
+  local kind="$1"
+  local -a event_files=()
+  mapfile -t event_files < <(capture_events_files)
+  if (( ${#event_files[@]} == 0 )); then
+    echo 0
+    return 0
+  fi
+  jq -r --arg kind "$kind" '
+    select(.type == "stream_opened" and ((.kind // "") == $kind))
+    | (.participant_id // .participant_name // .remote_session_id // empty)
+  ' "${event_files[@]}" 2>/dev/null \
+    | sort -u \
+    | awk 'NF{n++} END {print n+0}'
+}
+
+wait_for_capture_ready() {
+  local expected="$1"
+  local timeout_s="$2"
+  local gate_file="$3"
+  local kind="$4"
+  local end_time=$((SECONDS + timeout_s))
+  local last_count=-1
+  local count
+
+  if (( expected < 1 )); then
+    return 0
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "[FAIL] jq is required for CAPTURE_READY_PARTICIPANTS readiness gating" >&2
+    return 1
+  fi
+  if [[ -z "$gate_file" ]]; then
+    echo "[FAIL] MUTE_ROTATION_START_FILE is required for capture readiness gating" >&2
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$gate_file")"
+  echo "waiting for recorder capture readiness: expected=${expected} kind=${kind} timeout=${timeout_s}s"
+  while (( SECONDS <= end_time )); do
+    count="$(capture_ready_count "$kind" 2>/dev/null || true)"
+    if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+      count=0
+    fi
+    if [[ "$count" != "$last_count" ]]; then
+      echo "capture readiness: ${count}/${expected} distinct participants have ${kind} stream_opened"
+      last_count="$count"
+    fi
+    if (( count >= expected )); then
+      : >"$gate_file"
+      echo "capture readiness reached; opened mute rotation gate: $gate_file"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "[FAIL] recorder capture readiness timed out: got ${last_count}/${expected} distinct participants with ${kind} stream_opened" >&2
+  echo "--- session artifact events tail ---" >&2
+  while IFS= read -r events_path; do
+    echo "events: $events_path" >&2
+    tail -n 40 "$events_path" >&2 || true
+  done < <(capture_events_files)
+  return 1
+}
+
+stop_background_processes() {
+  local pid
+  for pid in "${PUB_PID:-}" "${REC_PID:-}"; do
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+}
 
 (
   cd "$ROOT_DIR"
@@ -135,8 +243,25 @@ sleep "$START_DELAY"
   if [[ -n "$BOT_DURATIONS" ]]; then
     STREAM_ARGS+=(--bot-durations "$BOT_DURATIONS")
   fi
+  if [[ -n "$MUTE_ROTATION_START_FILE" ]]; then
+    STREAM_ARGS+=(--mute-start-file "$MUTE_ROTATION_START_FILE")
+  fi
   ./bin/stream-video.sh "${STREAM_ARGS[@]}"
-) >"$PUB_LOG" 2>&1 || true
+) >"$PUB_LOG" 2>&1 &
+PUB_PID=$!
+
+if (( CAPTURE_READY_PARTICIPANTS > 0 )); then
+  if ! wait_for_capture_ready "$CAPTURE_READY_PARTICIPANTS" "$CAPTURE_READY_TIMEOUT" "$MUTE_ROTATION_START_FILE" "$CAPTURE_READY_STREAM_KIND"; then
+    echo "--- key recorder lines ---"
+    rg -n "talk bootstrap|subscribing to remote session|remote track:|ICE state=|duration reached|run error|composed final multi-track output|kept intermediate files" "$REC_LOG" -S || true
+    stop_background_processes
+    wait "$PUB_PID" 2>/dev/null || true
+    wait "$REC_PID" 2>/dev/null || true
+    exit 1
+  fi
+fi
+
+wait "$PUB_PID" || true
 
 wait "$REC_PID" || true
 
