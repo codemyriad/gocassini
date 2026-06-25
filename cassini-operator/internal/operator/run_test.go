@@ -2243,9 +2243,19 @@ func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func(
 	return rt, func() { _ = store.Close() }
 }
 
+// testWaitTimeout bounds the store-polling helpers below. CI runs the full
+// -race suite (150+ tests) under heavy CPU contention, which starves the
+// in-process pipeline worker driving these jobs; the original 5s deadline was
+// too tight and flaked intermittently under that load (e.g.
+// TestTalkDeliveryFailureKeepsPipelineAndRerunRedelivers, and the D-443
+// second-stop race). 30s is generous on a loaded shared runner yet still fails
+// fast on a genuine hang. The 20ms poll interval is unchanged, so a passing
+// test still returns immediately — only the failure ceiling moves.
+const testWaitTimeout = 30 * time.Second
+
 func waitForJobState(t *testing.T, store *Store, id, wantState string) Job {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testWaitTimeout)
 	for time.Now().Before(deadline) {
 		job, err := store.GetJob(context.Background(), id)
 		if err == nil && job.State == wantState {
@@ -2263,7 +2273,7 @@ func waitForJobState(t *testing.T, store *Store, id, wantState string) Job {
 
 func waitForRecordState(t *testing.T, store *Store, id, wantState string) Job {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testWaitTimeout)
 	for time.Now().Before(deadline) {
 		job, err := store.GetJob(context.Background(), id)
 		if err == nil && job.Stage == "record" && job.State == wantState {
@@ -2281,7 +2291,7 @@ func waitForRecordState(t *testing.T, store *Store, id, wantState string) Job {
 
 func waitForJobStageState(t *testing.T, store *Store, id, wantStage string, wantStates ...string) Job {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testWaitTimeout)
 	for time.Now().Before(deadline) {
 		job, err := store.GetJob(context.Background(), id)
 		if err == nil && job.Stage == wantStage {
@@ -2306,7 +2316,7 @@ func waitForJobStageState(t *testing.T, store *Store, id, wantStage string, want
 
 func waitForFile(t *testing.T, path string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(testWaitTimeout)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(path); err == nil {
 			return
