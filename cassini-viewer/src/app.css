@@ -213,6 +213,9 @@
 :host([data-nc-theme*="highcontrast"]) .cassini-root [class*="text-base-content"] {
   color: var(--color-base-content);
 }
+:host([data-nc-theme*="highcontrast"]) .cassini-root .card.border-base-300 {
+  border: 1px solid var(--color-border-dark);
+}
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * Global resets
