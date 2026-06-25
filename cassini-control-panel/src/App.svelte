@@ -8,6 +8,7 @@
     type OperatorStateChangeEvent,
   } from "./operator/client";
   import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
+  import SettingsPanel from "./SettingsPanel.svelte";
 
   const POLL_INTERVAL_MS = 2000;
 
@@ -383,6 +384,12 @@
           <div class="mt-3 alert alert-error text-sm">{actionError}</div>
         {/if}
       </section>
+
+      {#if operatorClient}
+        {#key operatorClient}
+          <SettingsPanel {operatorClient} />
+        {/key}
+      {/if}
 
       <div class="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
         <section class="min-w-0 overflow-hidden flex min-h-[24rem] flex-col rounded-box border border-base-300 bg-base-100 shadow-sm">

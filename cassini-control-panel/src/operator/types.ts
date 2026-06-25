@@ -68,3 +68,25 @@ export interface JobDetailResponse {
   job: Job;
   attempts: JobAttempt[];
 }
+
+export type SettingsQuality = "fast" | "balanced" | "best";
+
+// Settings mirror GET/PUT <basePath>/settings (D-435). The panel stays tolerant
+// of extra or missing fields so a server on a slightly older/newer contract
+// still renders rather than erroring.
+export interface Settings {
+  quality: SettingsQuality;
+  device_override: string;
+  model_override: string;
+  source: string;
+  detected_gpu: boolean;
+  cores: number;
+  hardware_fingerprint: string;
+  effective: Record<string, unknown>;
+}
+
+export interface SettingsUpdate {
+  quality: SettingsQuality;
+  device_override: string;
+  model_override: string;
+}
