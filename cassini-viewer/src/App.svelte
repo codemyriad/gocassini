@@ -108,7 +108,7 @@
   // in standalone — since document.getElementById can't see shadow-tree nodes.
   let rootEl: HTMLElement | undefined;
 
-  const DESKTOP_MEDIA_QUERY = "(min-width: 768px)";
+  const DESKTOP_MEDIA_QUERY = "(min-width: 981px)";
   let isDesktop = false;
   let viewportMedia: MediaQueryList | null = null;
 
@@ -134,10 +134,9 @@
       return { duration: 0 };
     }
     return {
-      x: direction * window.innerWidth,
-      duration: 600,
-      easing: cubicInOut,
-      opacity: 1,
+      duration: 280,
+      easing: cubicOut,
+      opacity: 0,
     };
   }
 
@@ -1044,18 +1043,18 @@
      root. The <dialog> below is wrapped too so [data-theme] styles it (showModal
      keeps it in-tree for inheritance even when promoted to the top layer). -->
 <div bind:this={rootEl} class="cassini-root" data-theme={themeMode} class:theme-switching={themeSwitching}>
-<div class="grid grid-cols-1 md:grid-cols-[400px_1fr] min-h-screen bg-base-200 overflow-x-clip">
+<div class="grid grid-cols-1 min-[981px]:grid-cols-[400px_1fr] h-full bg-base-200 overflow-x-clip">
   {#if isDesktop || !selectedMeetingId}
     <section
       aria-label="Meeting list"
-      class="meeting-list flex flex-col row-start-1 col-start-1 h-screen md:sticky md:top-0 bg-base-100 backdrop-blur-xl border-r border-base-300"
+      class="meeting-list flex flex-col row-start-1 col-start-1 h-full min-w-0 min-[981px]:sticky min-[981px]:top-0 bg-base-100 backdrop-blur-xl border-r border-base-300"
       transition:fly={regionFlyConfig(-1)}
     >
       <!-- Scroll container holds the sticky header so cards visibly scroll
            behind its blur. Scrollbar runs the full sidebar height as a
            consequence (the only way to get the scroll-behind effect). -->
-      <div class="flex-1 min-h-0 overflow-y-auto scroll-stable">
-        <header class="sticky top-0 z-20 flex items-center justify-between gap-3 px-4 py-3 border-b bg-base-100 border-base-300 md:border-none md:bg-base-100/50 backdrop-blur-lg">
+      <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain scroll-stable">
+        <header class="sticky top-0 z-20 flex items-center justify-between gap-3 px-4 py-3 border-b bg-base-100 border-base-300 min-[981px]:border-none min-[981px]:bg-base-100/50 backdrop-blur-lg">
           <h2 class="text-base font-bold text-base-content">
             Meetings
           </h2>
@@ -1128,7 +1127,7 @@
   {#if isDesktop || selectedMeetingId}
     <section
       aria-label="Meeting view"
-      class="meeting-viewer relative flex flex-col row-start-1 col-start-1 md:col-start-2 h-screen"
+      class="meeting-viewer relative flex flex-col row-start-1 col-start-1 min-[981px]:col-start-2 h-full min-w-0"
       transition:fly={regionFlyConfig(1)}
     >
       <!-- Scroll container: holds the sticky header and all main content.
@@ -1136,11 +1135,11 @@
            even when the (absolutely positioned) player overlaps the scroll.
            `scrollbar-gutter: stable` reserves the scrollbar gutter persistently
            so content width never shifts as scrollbar appears/disappears. -->
-      <div class="flex-1 min-h-0 overflow-y-auto pb-40 md:pb-32 scroll-stable flex flex-col">
+      <div class="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain pb-40 min-[981px]:pb-32 scroll-stable flex flex-col">
         <!-- Sticky header — translucent bg so the transcript scrolls behind it.
              Using base-100 (not base-200) so the header reads distinct from the
              page bg even when there's no transcript content behind it. -->
-        <header class="sticky top-0 z-20 flex-none flex items-center gap-3 min-h-12 px-4 py-3 bg-base-200 border-b border-base-300 md:border-none md:bg-base-200/50 backdrop-blur-lg">
+        <header class="sticky top-0 z-20 flex-none flex items-center gap-3 min-h-12 px-4 py-3 bg-base-200 border-b border-base-300 min-[981px]:border-none min-[981px]:bg-base-200/50 backdrop-blur-lg">
         {#if !isDesktop}
           <button
             on:click={handleBackToList}
@@ -1228,7 +1227,7 @@
         </div>
       {:else if transcriptIndex}
       <div in:fly={contentFlyInConfig()} out:fade={contentFadeConfig()}>
-      <header class="m-4 mb-8 md:mx-8 md:mb-0 min-w-0">
+      <header class="m-4 mb-8 min-[981px]:mx-8 min-[981px]:mb-0 min-w-0">
         <h1 class="text-3xl font-bold mb-3">
           {activeMeeting
             ? activeMeeting.title
@@ -1256,7 +1255,7 @@
         </div>
       </header>
 
-      <main class="flex flex-col gap-3.5 m-4 md:m-8">
+      <main class="flex flex-col gap-3.5 m-4 min-[981px]:m-8">
         {#if summaryHtml}
           <section class="flex flex-col gap-3.5 mb-4">
             <div class="pb-1">
@@ -1477,7 +1476,7 @@
       <!-- right-[15px] matches the scrollbar gutter on the sibling scroll
            container so the player aligns with transcript content's right edge. -->
       <footer
-        class="absolute bottom-0 left-0 right-0 md:right-[15px] z-30 p-2 md:px-4 md:pb-4 pointer-events-none [will-change:opacity]"
+        class="absolute bottom-0 left-0 right-0 min-[981px]:right-[15px] z-30 p-2 min-[981px]:px-4 min-[981px]:pb-4 pointer-events-none [will-change:opacity]"
         transition:fade={playerFadeConfig()}
       >
         <div class="card bg-base-100 shadow-2xl p-2 border border-base-300 pointer-events-auto relative">

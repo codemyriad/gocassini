@@ -79,6 +79,7 @@ export function ensureShadowAppRoot(doc: Document, cssHref: string): HTMLElement
   const host = existingHost ?? doc.createElement("div");
   if (!existingHost) {
     host.id = "cassini-shadow-host";
+    host.style.cssText = "display:block;width:100%;height:100%";
     (doc.getElementById("content") ?? doc.body).appendChild(host);
   }
   const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
