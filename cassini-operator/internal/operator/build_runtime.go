@@ -129,10 +129,19 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 		return meetingPath, err
 	}
 
+	// Resource governor: never let a build starve or OOM the host (the ExApp can
+	// run uncapped next to Nextcloud/Talk). Wait — bounded — for RAM headroom,
+	// then size STT threads and the GPU choice to what is actually available.
+	limits := resourceLimitsFromEnv()
+	if err := limits.waitForMemory(ctx, rt.logger.Printf); err != nil {
+		return meetingPath, err
+	}
+
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "build", task.ArtifactRunPath, "--out", meetingPath)
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
-	cmd.Env = os.Environ()
+	env := rt.currentSettings().ChildEnv(os.Environ())
+	cmd.Env = limits.applyToEnv(env, rt.buildIntendsCUDA(), rt.logger.Printf)
 	// Kill the whole process group on ctx cancel so transcriber/ffmpeg
 	// grandchildren don't outlive the build.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
