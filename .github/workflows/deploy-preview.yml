@@ -23,6 +23,8 @@ on:
       - opened
       - synchronize
       - reopened
+      # so adding the `preview` label re-triggers and lets detect run
+      - labeled
   push:
     branches:
       - main
@@ -38,11 +40,15 @@ on:
 
 jobs:
   detect:
-    # Hard-stop fork PRs before any logic runs. A fork PR with [preview] in a
-    # commit message could otherwise consume GPU time on the self-hosted runner.
+    # Previews are infrastructure, not a PR correctness gate. They always run on
+    # push-to-main and workflow_dispatch; on a PR they run ONLY when the author
+    # opts in with the `preview` label — so a normal PR neither spends runner
+    # minutes here nor surfaces a red/cascaded preview check. The same-repo
+    # clause also hard-stops fork PRs (a fork must never reach the GPU runner).
     if: >-
       github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'preview'))
     runs-on: ubuntu-latest
     outputs:
       branch: ${{ steps.detect.outputs.branch }}

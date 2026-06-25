@@ -7,6 +7,8 @@ on:
     tags:
       - 'v*'
   pull_request:
+    # Adding the `full-ci` label re-triggers so the heavy tier can run on a PR.
+    types: [opened, synchronize, reopened, labeled]
     # Every path this workflow executes or builds from must be listed here —
     # path filters are exact (no implicit globbing), so a missing entry lets
     # a PR that edits e.g. a harness script merge green and first fail on
@@ -261,11 +263,13 @@ jobs:
     # ubuntu-latest — no GPU needed, keeps george free.
     runs-on: ubuntu-latest
     needs: validate-manifest
-    # Same fork-PR guard as build-image-cuda: pushing the base needs ghcr creds,
-    # and the whole CUDA chain is skipped for forks.
+    # Heavy tier: builds on push/dispatch, or on a PR explicitly labeled
+    # `full-ci`. The same-repo clause keeps the CUDA chain (which feeds the
+    # self-hosted GPU jobs) off fork PRs; pushing the base also needs ghcr creds.
     if: >-
       github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'full-ci'))
     outputs:
       base_ref: ${{ steps.base.outputs.base_ref }}
     steps:
@@ -382,12 +386,13 @@ jobs:
     # the fat base comes prebuilt from build-cuda-base via FROM (D-375).
     runs-on: ubuntu-latest
     needs: [validate-manifest, build-cuda-base]
-    # Fork PRs cannot push to ghcr (no credentials) and must never run
-    # downstream CUDA jobs on the self-hosted GPU runner. Skip the whole
-    # CUDA chain for them; same-repo PRs and pushes proceed normally.
+    # Heavy tier: builds on push/dispatch, or on a PR explicitly labeled
+    # `full-ci`. Fork PRs cannot push to ghcr and must never run downstream CUDA
+    # jobs on the self-hosted GPU runner, so the same-repo clause stays.
     if: >-
       github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'full-ci'))
     outputs:
       image_ref: ${{ steps.meta.outputs.tags }}
       primary:   ${{ steps.meta.outputs.primary }}
@@ -486,6 +491,13 @@ jobs:
     name: Smoke transcription on GPU (bundled fp32 model + CUDA EP)
     runs-on: [self-hosted, Linux, X64, gpu]
     needs: build-image-cuda
+    # Heavy tier (self-hosted GPU): push/dispatch, or a same-repo PR labeled
+    # `full-ci`. Mirrors the build-image-cuda guard as defense-in-depth so a
+    # future graph change can't expose the GPU runner to fork code.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'full-ci'))
     steps:
       - name: Ensure git-lfs is available
         # Repo now ships LFS-vendored bot fixtures (.gitattributes routes them
@@ -559,6 +571,11 @@ jobs:
     name: Smoke transcription (bundled model, no download)
     runs-on: ubuntu-latest
     needs: build-image
+    # Heavy tier: push/dispatch, or a PR labeled `full-ci` (pulls the LFS model
+    # and runs transcription quality checks — too slow for every PR push).
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'full-ci')
     steps:
       - uses: actions/checkout@v4
 
@@ -658,6 +675,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-image
     timeout-minutes: 30
+    # Heavy tier: push/dispatch, or a PR labeled `full-ci` (spins up a full
+    # Nextcloud + AppAPI install — minutes-expensive).
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'full-ci')
     steps:
       - uses: actions/checkout@v4
 
@@ -685,6 +707,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-image
     timeout-minutes: 25
+    # Heavy tier: push/dispatch, or a PR labeled `full-ci` (full Talk-driven
+    # record roundtrip — slow, and flakes near the content-capture floor).
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'full-ci')
     # Bot fixture set is now vendored via git-lfs (see .gitattributes), so
     # the harness can run on a fresh CI checkout. Treat this job as a hard
     # gate now rather than an informational warning.
@@ -792,6 +819,12 @@ jobs:
     runs-on: [self-hosted, Linux, X64, gpu]
     needs: build-image-cuda
     timeout-minutes: 25
+    # Heavy tier (self-hosted GPU): push/dispatch, or a same-repo PR labeled
+    # `full-ci`. Mirrors the build-image-cuda guard as defense-in-depth.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(github.event.pull_request.labels.*.name, 'full-ci'))
     steps:
       - name: Ensure git-lfs is available
         # Self-hosted GPU runners don't ship git-lfs by default AND don't
