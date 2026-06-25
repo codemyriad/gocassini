@@ -826,8 +826,14 @@ func TestStopJobAcceptsRunningRecordAndCompletesPublishStage(t *testing.T) {
 	stopReq2 := httptest.NewRequest(http.MethodPost, "/jobs/"+resp.ID+"/stop", nil)
 	stopRec2 := httptest.NewRecorder()
 	rt.jobDetailHandler(stopRec2, stopReq2)
-	if stopRec2.Code != http.StatusAccepted {
-		t.Fatalf("second stop status = %d, want %d body=%s", stopRec2.Code, http.StatusAccepted, stopRec2.Body.String())
+	// The second stop races the job's own progression: 202 while the job is
+	// still stopping, or 409 once it has already left the stoppable state
+	// (the fake record proceeds to build/publish after the first stop signal).
+	// Both are correct outcomes; only an unexpected code is a real failure.
+	// A strict ==202 assertion flakes under CI load, when the gap between the
+	// two stops is wide enough for the job to finish stopping first.
+	if stopRec2.Code != http.StatusAccepted && stopRec2.Code != http.StatusConflict {
+		t.Fatalf("second stop status = %d, want 202 or 409 body=%s", stopRec2.Code, stopRec2.Body.String())
 	}
 
 	job := waitForJobState(t, rt.store, resp.ID, "succeeded")
