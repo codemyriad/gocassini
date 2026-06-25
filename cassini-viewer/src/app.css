@@ -163,17 +163,55 @@
  * DaisyUI's [data-theme="forrest-light"] at (0,1,0).
  * ────────────────────────────────────────────────────────────────────────── */
 :host([data-nc-theme]) .cassini-root {
-  --color-primary:         var(--nc-primary);
-  --color-primary-content: var(--color-primary-text);
-  --color-base-100:        var(--color-main-background);
-  --color-base-200:        var(--color-background-dark);
-  --color-base-300:        var(--color-background-darker);
+  --color-primary:         var(--color-primary-element);
+  --color-primary-content: var(--color-primary-element-text);
+  --color-base-100:        var(--color-background-dark);
+  --color-base-200:        var(--color-main-background);
+  --color-base-300:        var(--color-border-dark);
   --color-base-content:    var(--color-main-text);
 }
 
 :host([data-nc-theme="dark"]),
 :host([data-nc-theme="dark-highcontrast"]) {
   color-scheme: dark;
+}
+
+/* All NC modes: word-level highlight uses solid primary bg — text needs primary-content */
+:host([data-nc-theme]) .cassini-root [class~="bg-primary"][class~="ring-primary"] {
+  color: var(--color-primary-content);
+}
+
+/* All NC modes: explicit card border using NC's border token */
+:host([data-nc-theme]) .cassini-root .meeting-list button:not([aria-current="page"]) {
+  border: 1px solid var(--color-border-dark);
+}
+
+/* All NC modes: solid primary fill on selected card (overrides bg-primary/25 tint) */
+:host([data-nc-theme]) .cassini-root .meeting-list button[aria-current="page"] {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-primary-content);
+}
+:host([data-nc-theme]) .cassini-root .meeting-list button[aria-current="page"] * {
+  color: var(--color-primary-content);
+}
+
+/* HC: flatten all backgrounds to NC's main-background — clean white/black canvas */
+:host([data-nc-theme*="highcontrast"]) .cassini-root {
+  --color-base-100: var(--color-main-background);
+  --color-base-200: var(--color-main-background);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .meeting-list {
+  border-right: 1px solid var(--color-border-dark);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .meeting-list button:not([aria-current="page"]):hover {
+  background-color: var(--color-background-dark);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root details.collapse {
+  border: 1px solid var(--color-border-dark);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root [class*="text-base-content"] {
+  color: var(--color-base-content);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
