@@ -12,7 +12,10 @@ import (
 func TestSTTModelCacheChecksIncludeRemediationForUnwritableModelDir(t *testing.T) {
 	tmp := t.TempDir()
 	cacheRoot := filepath.Join(tmp, "cache")
-	modelDir := filepath.Join(cacheRoot, "models", string(transcribe.DefaultModelID()))
+	// Pin the device so the resolved model is deterministic regardless of
+	// whether the test host has a GPU (auto-detect would pick fp32 on a GPU box).
+	t.Setenv("CASSINI_STT_DEVICE", "cpu")
+	modelDir := filepath.Join(cacheRoot, "models", string(transcribe.ResolveModelID("", "", "cpu")))
 	if err := os.MkdirAll(modelDir, 0o755); err != nil {
 		t.Fatalf("mkdir model dir: %v", err)
 	}
