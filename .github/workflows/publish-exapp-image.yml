@@ -263,13 +263,14 @@ jobs:
     # ubuntu-latest — no GPU needed, keeps george free.
     runs-on: ubuntu-latest
     needs: validate-manifest
-    # Heavy tier: builds on push/dispatch, or on a PR explicitly labeled
-    # `full-ci`. The same-repo clause keeps the CUDA chain (which feeds the
-    # self-hosted GPU jobs) off fork PRs; pushing the base also needs ghcr creds.
+    # Runs on every same-repo PR (and push/dispatch) so a CUDA base-image build
+    # regression fails on the PR, not first on main. The base is content-hash
+    # cached, so it only actually builds+pushes when its inputs change. The
+    # same-repo clause keeps the CUDA chain off fork PRs (it needs ghcr creds and
+    # feeds the self-hosted GPU jobs).
     if: >-
       github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-       contains(github.event.pull_request.labels.*.name, 'full-ci'))
+      github.event.pull_request.head.repo.full_name == github.repository
     outputs:
       base_ref: ${{ steps.base.outputs.base_ref }}
     steps:
@@ -386,13 +387,14 @@ jobs:
     # the fat base comes prebuilt from build-cuda-base via FROM (D-375).
     runs-on: ubuntu-latest
     needs: [validate-manifest, build-cuda-base]
-    # Heavy tier: builds on push/dispatch, or on a PR explicitly labeled
-    # `full-ci`. Fork PRs cannot push to ghcr and must never run downstream CUDA
-    # jobs on the self-hosted GPU runner, so the same-repo clause stays.
+    # Runs on every same-repo PR (and push/dispatch) so a broken CUDA Dockerfile
+    # fails on the PR, not first on main. (It builds+pushes a thin per-commit
+    # layer over the cached base; old sha-tags are pruned on main.) Fork PRs
+    # cannot push to ghcr and must never feed the self-hosted GPU jobs, so the
+    # same-repo clause stays.
     if: >-
       github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-       contains(github.event.pull_request.labels.*.name, 'full-ci'))
+      github.event.pull_request.head.repo.full_name == github.repository
     outputs:
       image_ref: ${{ steps.meta.outputs.tags }}
       primary:   ${{ steps.meta.outputs.primary }}
@@ -571,11 +573,9 @@ jobs:
     name: Smoke transcription (bundled model, no download)
     runs-on: ubuntu-latest
     needs: build-image
-    # Heavy tier: push/dispatch, or a PR labeled `full-ci` (pulls the LFS model
-    # and runs transcription quality checks — too slow for every PR push).
-    if: >-
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'full-ci')
+    # Runs on every PR: CPU transcription correctness is core behavior, so the
+    # LFS model pull + dual-variant verify run on the PR that changes it rather
+    # than hiding behind a label.
     steps:
       - uses: actions/checkout@v4
 
@@ -675,11 +675,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: build-image
     timeout-minutes: 30
-    # Heavy tier: push/dispatch, or a PR labeled `full-ci` (spins up a full
-    # Nextcloud + AppAPI install — minutes-expensive).
-    if: >-
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'full-ci')
+    # Runs on every PR: a broken install against a real Nextcloud + AppAPI is a
+    # release-blocking regression worth catching on the PR, not first on main.
     steps:
       - uses: actions/checkout@v4
 
