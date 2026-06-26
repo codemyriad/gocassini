@@ -56,7 +56,7 @@ Expected relevant fields after D-395:
 }
 ```
 
-Field names may be adjusted during implementation; the invariant is boolean-only config presence and no leaked secrets.
+These fields are boolean-only config presence checks; they never expose secret values.
 
 ## Required production inputs
 

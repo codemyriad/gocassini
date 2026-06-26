@@ -25,7 +25,7 @@ See `spike-x3-nextcloud-talk-appapi-config-flow.md` for the detailed Nextcloud/A
 | Variable | Required? | Source | Purpose |
 |---|---:|---|---|
 | `CASSINI_TALK_RECORDING_SECRET` | Yes for Talk record button | Admin deploy option declared in `appinfo/info.xml` | HMAC shared secret for Talk's recording-backend protocol; must match `spreed.recording_servers.secret`. |
-| `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | Yes for HPB-internal/default Talk recording | Admin deploy option; to be declared in `appinfo/info.xml` | Internal client secret for standalone Nextcloud Talk signaling / HPB; must match signaling config `[clients] internalsecret`. |
+| `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | Yes for HPB-internal/default Talk recording | Admin deploy option declared in `appinfo/info.xml` | Internal client secret for standalone Nextcloud Talk signaling / HPB; must match signaling config `[clients] internalsecret`. |
 | `CASSINI_TALK_BACKEND_URL` | Optional, sometimes required | Admin deploy option declared in `appinfo/info.xml` | Override base URL the operator uses for callbacks/upload/OCS calls back to Nextcloud. Use when Talk advertises a URL unreachable from the ExApp container. |
 | `OPENROUTER_API_KEY` | Optional | Admin deploy option | Enables transcript cleanup / summaries through OpenRouter or compatible endpoint. |
 | `LLM_BASE_URL` | Optional | Admin deploy option | OpenAI-compatible base URL. |

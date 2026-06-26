@@ -28,6 +28,10 @@ install — see [Standalone operator (dev/staging only)](#standalone-operator-de
 - A registered AppAPI **deploy daemon** (next section).
 - A Docker engine for the ExApp container. For GPU transcription it needs the
   NVIDIA driver + Container Toolkit (see [GPU transcription](#gpu-transcription-cuda)).
+- For private, group, and one-to-one Talk recording: standalone Nextcloud Talk
+  signaling / HPB configured with an internal client secret (`[clients]`
+  `internalsecret`). Cassini's default Talk recorder path uses this
+  HPB-internal mode.
 
 Persistent storage is automatic: AppAPI creates a named volume for every
 docker-deployed ExApp and the operator stores all durable data under it
@@ -105,6 +109,19 @@ its examples:
 CASSINI_SECRET="$(openssl rand -hex 32)"
 ```
 
+Set the signaling internal secret to the value configured in the standalone
+Talk signaling / HPB server (`[clients] internalsecret`). If you are setting up
+signaling at the same time, generate the value once and put the same value in
+both places:
+
+```bash
+SIGNALING_INTERNAL_SECRET="<value-from-signaling-config-or-secret-manager>"
+```
+
+These are two different secrets: `CASSINI_SECRET` authenticates Talk's
+recording-backend HTTP protocol; `SIGNALING_INTERNAL_SECRET` authenticates
+Cassini as an internal signaling client for HPB-internal call capture.
+
 Register from a pinned manifest (`--info-xml` accepts a local path or a raw
 URL; pin a tag or commit SHA, not a moving branch):
 
@@ -116,6 +133,7 @@ curl -fsSL "https://raw.githubusercontent.com/codemyriad/gocassini/<tag-or-sha>/
 occ app_api:app:register gocassini <daemon-name> \
     --info-xml /tmp/gocassini-info.xml \
     --env CASSINI_TALK_RECORDING_SECRET="${CASSINI_SECRET}" \
+    --env CASSINI_TALK_SIGNALING_INTERNAL_SECRET="${SIGNALING_INTERNAL_SECRET}" \
     --wait-finish
 ```
 
@@ -140,10 +158,28 @@ Options).
 | Variable | Required | What it does |
 |---|---|---|
 | `CASSINI_TALK_RECORDING_SECRET` | For the Talk record button | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (Step 5). Unset, the operator rejects every recording request |
+| `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | For HPB-internal/default Talk recording | Internal client secret for standalone Talk signaling / HPB; must match `[clients] internalsecret`. Required for private, group, and one-to-one Talk recording |
 | `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped notifications, recording upload). Leave empty to use the backend URL Talk sends with each request |
 | `OPENROUTER_API_KEY` | No | API key for LLM transcript cleanup + meeting summaries. Unset, raw transcripts are published without summaries |
 | `LLM_BASE_URL` | No | OpenAI-compatible API base URL; defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
 | `LLM_MODEL` | No | Model for cleanup/summaries (default `openai/gpt-4o-mini`) |
+| `CASSINI_OPERATOR_API_TOKEN` | No | Bearer token for direct non-AppAPI operator API calls. AppAPI-proxied requests are authenticated by Nextcloud/AppAPI |
+
+### Updating deploy options after install
+
+AppAPI deploy env is container-creation-time configuration, not live Nextcloud
+app config. Changing Talk's `spreed.recording_servers.secret` does **not**
+update `CASSINI_TALK_RECORDING_SECRET` in an already deployed ExApp container.
+Likewise, changing the signaling server `internalsecret` does not update
+`CASSINI_TALK_SIGNALING_INTERNAL_SECRET`.
+
+For secret rotation or for an existing pre-D-395 install, recreate/redeploy the
+ExApp with all required `--env` values while preserving the AppAPI persistent
+storage volume. Local development can use AppAPI's `--test-deploy-mode` for
+repeat installs; production should follow your AppAPI backup/redeploy policy.
+`app_api:app:update` reuses stored deploy options and has no `--env` flag.
+`app_api:app:config:set` writes a separate app-config store and is not the
+container environment Cassini reads today.
 
 ### Runtime environment reference
 
@@ -210,15 +246,51 @@ All of these must pass before the Talk handoff:
    ```
 
    It reports the app version, the STT device (`cpu`/`cuda`) and whether that
-   device is actually usable, whether the Talk recording secret is configured
-   (never the value), and DB/storage health — the same answers that used to
+   device is actually usable, whether the Talk recording secret and signaling
+   internal secret are configured (never the values), the optional backend URL
+   override presence, and DB/storage health — the same answers that used to
    require shell access into the container.
+
+   Relevant Talk fields should look like:
+
+   ```json
+   {
+     "talk": {
+       "secret_configured": true,
+       "signaling_internal_secret_configured": true,
+       "backend_url_override_configured": false
+     }
+   }
+   ```
 9. CUDA installs only: the image tag ends in `-cuda` and the container can see
    the GPU — `docker exec nc_app_gocassini nvidia-smi`. The status endpoint in
    the previous step must show `"device": "cuda"` with `"device_usable": true`;
    a CUDA container without GPU access also logs
    `ERROR: stt_device cuda is not usable` at startup instead of silently
    falling back to CPU.
+
+### URL reachability preflight
+
+Talk sends Cassini a `Talk-Recording-Backend` URL and Cassini uses it for
+recording started/stopped callbacks, OCS signaling-settings requests, and the
+final upload unless `CASSINI_TALK_BACKEND_URL` overrides it.
+
+Before handoff, verify these URLs are coherent:
+
+```bash
+# Browser/Talk-facing base URL Nextcloud uses in generated absolute URLs.
+occ config:system:get overwrite.cli.url
+
+# AppAPI proxy base Talk will call.
+curl -fsS https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/api/v1/welcome
+
+# From the ExApp container, confirm Nextcloud is reachable. This should print
+# an HTTP status, not a DNS/connectivity failure.
+docker exec nc_app_gocassini sh -lc 'curl -k -s -o /dev/null -w "%{http_code}\n" "$NEXTCLOUD_URL/status.php"'
+```
+
+Set `CASSINI_TALK_BACKEND_URL=https://cloud.example.com` only when the URL Talk
+advertises cannot be reached from the ExApp container.
 
 ## Step 5 — Talk handoff (reversible)
 
@@ -238,16 +310,20 @@ occ config:app:set spreed recording_servers --value='{"servers":[{"server":"http
 occ config:app:set spreed call_recording --value=yes
 ```
 
-**Controlled test** — use a non-critical, *public* room:
+**Controlled test** — use a non-critical private/group or one-to-one
+conversation so the HPB-internal path is exercised:
 
-1. Create a public test conversation, join the call.
-2. Start recording. A `CassiniRecorder` guest joins within ~10–15 s and the
-   recording indicator turns on.
-3. Speak for a minute, stop the recording, leave the call.
-4. Watch the job progress through record → build → publish in the control
-   panel. The audio file is uploaded back to Talk (stored in the recording
-   owner's attachments folder, with a notification to share it into the
-   chat); the transcript/summary appears in the viewer.
+1. Create or pick a private test conversation with at least one speaking
+   participant.
+2. Start recording from Talk's **Record** button.
+3. Confirm a Cassini job appears in the **Cassini Admin** control panel.
+4. Speak for a minute, stop the recording, leave the call, or let the
+   empty-room timeout stop it.
+5. Watch the job progress through record → build → publish. The raw audio is
+   uploaded back to Talk according to Talk's recording-backend protocol; the
+   transcript/summary appears in the Cassini viewer.
+6. Run a second controlled recording and confirm both the first and second
+   transcripts remain visible in the viewer/catalog.
 
 **Rollback** — restore the saved value and Talk records through the previous
 backend again; the Cassini ExApp can stay installed:
@@ -260,14 +336,28 @@ occ config:app:delete spreed recording_servers
 
 Keep the previous backend running until your test recording passes.
 
-### Known limitation: public conversations only
+### Secret rotation checklist
 
-The recorder joins calls as an anonymous guest, and Talk only admits guests
-into **public** conversations — so the record button currently works in
-public rooms only; group and one-to-one conversations cannot be recorded.
-The recorder is also visible in the call as a `CassiniRecorder` guest
-participant. Supporting non-public conversations (the hidden internal-client
-join used by the reference recorder) is tracked as follow-up work.
+Rotate secrets as a coordinated operation; do not change only one side.
+
+For the Talk recording secret:
+
+1. Pause or avoid active recordings.
+2. Update `spreed.recording_servers.secret`.
+3. Recreate/redeploy the Cassini ExApp with the same value as
+   `CASSINI_TALK_RECORDING_SECRET`.
+4. Confirm `/operator/status` reports `secret_configured: true`.
+5. Run a controlled recording.
+
+For the signaling internal secret:
+
+1. Update the standalone signaling / HPB `[clients] internalsecret` and restart
+   signaling as required.
+2. Recreate/redeploy the Cassini ExApp with the same value as
+   `CASSINI_TALK_SIGNALING_INTERNAL_SECRET`.
+3. Confirm `/operator/status` reports
+   `signaling_internal_secret_configured: true`.
+4. Run a private/group/one-to-one controlled recording.
 
 ## GPU transcription (CUDA)
 
