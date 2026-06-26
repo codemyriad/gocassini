@@ -53,6 +53,12 @@ __pycache__/
 .envrc
 .env.local
 
+# Agent setup
+#
+# NOTE: I've set this up to use symlinks and is set up per-developer basis, see envrc.example for more
+CLAUDE.md
+AGENTS.md
+
 # Private local media captures
 /media/
 /cassini-viewer/exports/viewer-demo/
