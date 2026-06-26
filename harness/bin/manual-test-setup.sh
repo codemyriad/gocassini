@@ -7,17 +7,18 @@
 # Cassini exactly as apps.nextcloud.com would after submission, pointing
 # AppAPI at a locally-built gocassini image hosted in the local registry.
 #
-# After this script finishes, the admin can log into Nextcloud, open the
-# AppAPI "External Apps" page, and click the real "Deploy and enable"
-# button. AppAPI will pull the image, spawn the ExApp container on the
-# host docker socket, and wire up the proxy routes.
+# After this script finishes, Cassini is installed and enabled as a real
+# AppAPI ExApp. AppAPI pulls the locally tagged image, spawns the ExApp
+# container on the host Docker socket, wires up proxy routes, and Talk points
+# its recording backend at the AppAPI proxy path.
 #
 # This is the same flow that will run against the production App Store
-# once Cassini is submitted; only the catalog endpoint changes.
+# once Cassini is submitted; only the catalog/install trigger changes.
 #
 # Usage:
-#   ./harness/bin/manual-test-setup.sh                # use existing image
-#   ./harness/bin/manual-test-setup.sh --build        # force rebuild
+#   ./harness/bin/manual-test-setup.sh                # use existing image and install ExApp
+#   ./harness/bin/manual-test-setup.sh --build        # force rebuild and install ExApp
+#   ./harness/bin/manual-test-setup.sh --no-install   # stop after preparing the harness
 #
 
 set -euo pipefail
@@ -34,6 +35,14 @@ export PROJECT_NAME="cassini-exapp-test"
 # record a call end-to-end via the ExApp.
 export SPREED_PROFILE="${SPREED_PROFILE:-default}"
 
+# Load the shared dev-only Talk/signaling defaults so the values written into
+# Talk by bootstrap.sh match the values passed into the installed ExApp.
+# shellcheck source=./common.sh
+source "$SCRIPT_DIR/common.sh"
+# Ensure a caller override of CASSINI_TALK_SIGNALING_INTERNAL_SECRET is also
+# what the local signaling server uses for HPB internal auth.
+export SIGNALING_INTERNAL_SECRET="$CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
+
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$HARNESS_DIR/compose.yml")
 
 log() {
@@ -49,12 +58,15 @@ error() {
 }
 
 FORCE_BUILD=false
+INSTALL_EXAPP=true
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --build|--force-build) FORCE_BUILD=true; shift ;;
+    --no-install) INSTALL_EXAPP=false; shift ;;
     -h|--help)
-      echo "Usage: $0 [--build]"
-      echo "  --build    Force rebuilding the Cassini ExApp Docker image from source."
+      echo "Usage: $0 [--build] [--no-install]"
+      echo "  --build       Force rebuilding the Cassini ExApp Docker image from source."
+      echo "  --no-install  Prepare Nextcloud/AppAPI/HaRP but leave ExApp registration to you."
       exit 0
       ;;
     *) error "Unknown option: $1"; exit 1 ;;
@@ -62,8 +74,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 log "1. Wiping previous state..."
-docker rm -f cassini-exapp >/dev/null 2>&1 || true
-docker volume rm cassini-exapp-state cassini-exapp-site >/dev/null 2>&1 || true
+docker rm -f cassini-exapp nc_app_gocassini >/dev/null 2>&1 || true
+docker volume rm cassini-exapp-state cassini-exapp-site nc_app_gocassini_data >/dev/null 2>&1 || true
 "${COMPOSE[@]}" down --volumes --remove-orphans
 
 IMAGE_LOCAL="cassini-exapp:e2e-v3-cpu-gpu"
@@ -88,7 +100,25 @@ docker tag "$IMAGE_LOCAL" "$IMAGE_AS_PRODUCTION"
 success "✓ Tagged $IMAGE_LOCAL as $IMAGE_AS_PRODUCTION (info.xml <image-tag>)"
 
 log "3. Starting nextcloud, db, appapi-harp, reverse-proxy..."
-"${COMPOSE[@]}" up -d nextcloud db appapi-harp reverse-proxy
+compose_services=(nextcloud db appapi-harp reverse-proxy)
+if [[ "$SPREED_PROFILE" == "full" ]]; then
+  compose_services+=(nats janus signaling coturn)
+fi
+"${COMPOSE[@]}" up -d "${compose_services[@]}"
+
+log "3b. Waiting for initial Nextcloud installation before restart..."
+for attempt in $(seq 1 240); do
+  if "${COMPOSE[@]}" exec -T -u www-data nextcloud php occ status 2>&1 | grep -q "installed: true"; then
+    success "✓ Nextcloud installed"
+    break
+  fi
+  if [[ $attempt -eq 240 ]]; then
+    docker logs "${PROJECT_NAME}-nextcloud-1" --tail=120 >&2 || true
+    error "Nextcloud did not finish initial installation"
+    exit 1
+  fi
+  sleep 2
+done
 
 log "4. Granting Nextcloud access to host docker socket..."
 SOCKET_GID=$("${COMPOSE[@]}" exec -T nextcloud stat -c '%g' /var/run/docker.sock)
@@ -178,6 +208,94 @@ export OC_PASS="Tn8mY3qVrJ2x!E2e"
 "${COMPOSE[@]}" exec -T -e OC_PASS -u www-data nextcloud php occ user:add --password-from-env --display-name=Alice alice >/dev/null 2>&1 || true
 unset OC_PASS
 
+PROXY_URL="http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini"
+REGISTER_LOG="$HARNESS_DIR/runtime/manual-test-register.log"
+mkdir -p "$HARNESS_DIR/runtime"
+
+http_ok_with_retry() {
+  local desc="$1"
+  shift
+  local last=""
+  for attempt in $(seq 1 60); do
+    if last=$(curl -fsS "$@" 2>&1); then
+      success "✓ $desc"
+      return 0
+    fi
+    sleep 2
+  done
+  error "$desc failed: $last"
+  return 1
+}
+
+http_body_with_retry() {
+  local desc="$1"
+  shift
+  local out=""
+  for attempt in $(seq 1 60); do
+    if out=$(curl -fsS "$@" 2>&1); then
+      printf '%s' "$out"
+      return 0
+    fi
+    sleep 2
+  done
+  error "$desc failed: $out"
+  return 1
+}
+
+if [[ "$INSTALL_EXAPP" == "true" ]]; then
+  log "13. Registering and enabling Cassini as an installed ExApp..."
+  register_args=(
+    app_api:app:register gocassini harp_local
+    --info-xml /tmp/gocassini-info.xml
+    --env "CASSINI_TALK_RECORDING_SECRET=$CASSINI_TALK_RECORDING_SECRET"
+    --env "CASSINI_TALK_SIGNALING_INTERNAL_SECRET=$CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
+    --test-deploy-mode
+    --wait-finish
+  )
+  if [[ -n "${CASSINI_TALK_BACKEND_URL:-}" ]]; then
+    register_args+=(--env "CASSINI_TALK_BACKEND_URL=$CASSINI_TALK_BACKEND_URL")
+  fi
+  for optional_env in OPENROUTER_API_KEY LLM_BASE_URL LLM_MODEL CASSINI_OPERATOR_API_TOKEN; do
+    if [[ -n "${!optional_env:-}" ]]; then
+      register_args+=(--env "$optional_env=${!optional_env}")
+    fi
+  done
+
+  if ! occ "${register_args[@]}" >"$REGISTER_LOG" 2>&1; then
+    tail -200 "$REGISTER_LOG" >&2 || true
+    error "app_api:app:register failed; see $REGISTER_LOG"
+    exit 1
+  fi
+  if grep -q 'heartbeat check failed' "$REGISTER_LOG"; then
+    tail -200 "$REGISTER_LOG" >&2 || true
+    error "app_api:app:register reported heartbeat failure; see $REGISTER_LOG"
+    exit 1
+  fi
+  success "✓ ExApp registration completed"
+
+  log "14. Cycling enable state so AppAPI sends PUT /enabled..."
+  occ app_api:app:disable gocassini >/dev/null 2>&1 || true
+  occ app_api:app:enable gocassini >/dev/null
+  success "✓ ExApp enabled"
+
+  log "15. Verifying installed ExApp proxy routes and Talk config presence..."
+  occ app_api:app:list | grep -q 'gocassini' || { error "gocassini missing from app_api:app:list"; exit 1; }
+
+  welcome_json=$(http_body_with_retry "welcome route" "$PROXY_URL/api/v1/welcome")
+  echo "$welcome_json" | grep -q '"version":1' || { error "unexpected welcome response: $welcome_json"; exit 1; }
+  success "✓ welcome route returned {\"version\":1}"
+
+  status_json=$(http_body_with_retry "operator status" -u admin:admin "$PROXY_URL/operator/status")
+  echo "$status_json" | grep -q '"secret_configured":true' || { error "recording secret missing from status: $status_json"; exit 1; }
+  echo "$status_json" | grep -q '"signaling_internal_secret_configured":true' || { error "signaling internal secret missing from status: $status_json"; exit 1; }
+  success "✓ status reports Talk recording + signaling secrets configured"
+
+  http_ok_with_retry "admin control panel route" -u admin:admin -o /dev/null "$PROXY_URL/control-panel/"
+  http_ok_with_retry "viewer route" -u alice:Tn8mY3qVrJ2x!E2e -o /dev/null "$PROXY_URL/viewer/"
+else
+  log "13. Skipping ExApp registration because --no-install was passed."
+fi
+
 cat <<EOF
 
 $(printf '\033[1;32m======================================================================\033[0m')
@@ -193,23 +311,25 @@ What admins actually do (post-publish):
   Docker Socket Proxy) from the AppAPI admin settings page. That's the
   real friction point — link to the HaRP quickstart from the README.
 
-What you do during development (pre-publish):
-  Until Cassini is in the store, there's no "thing" handing Nextcloud
-  the info.xml on the admin's behalf. So you supply it manually via
-  occ. This is exactly the same code path the store-published install
-  would take, just with --info-xml pointing at a local file instead of
-  a store-fetched one. After publishing, this step disappears for your
-  users.
+What this script does during development (pre-publish):
+  Until Cassini is in the store, there is no store endpoint handing
+  Nextcloud the info.xml on the admin's behalf. This script supplies the
+  local info.xml via occ and registers Cassini with --test-deploy-mode,
+  the same deploy path the store-published install uses.
+
+  By default, registration is already done. The command shape is:
 
       docker compose -p cassini-exapp-test exec -u www-data nextcloud \\
           php occ app_api:app:register gocassini harp_local \\
               --info-xml /tmp/gocassini-info.xml \\
+              --env CASSINI_TALK_RECORDING_SECRET=... \\
+              --env CASSINI_TALK_SIGNALING_INTERNAL_SECRET=... \\
               --test-deploy-mode --wait-finish
 
-  --test-deploy-mode lets you re-register without unregistering first
-  (iteration sweet spot per the ExApp dev guide).
+  Secret values are intentionally not printed. Pass --no-install only if
+  you want to stop before this registration step and run it by hand.
 
-  After it prints "ExApp gocassini deployed successfully":
+  After setup:
   1. Open  http://127.0.0.1:28080/
   2. Log in as  admin / admin
   3. Navigate to the post-deploy URLs below to verify the proxy routes.
@@ -233,17 +353,18 @@ Testing the Talk record button:
          → AppAPI proxy
          → HaRP → cassini-operator in the ExApp container
 
-  The operator verifies Talk's HMAC, joins the call as a recording
-  bot, captures audio, and uploads via NEXTCLOUD_URL when the call
-  ends. No standalone cassini-operator process required.
+  The operator verifies Talk's HMAC, uses HPB-internal signaling auth,
+  captures audio, and uploads via NEXTCLOUD_URL when the call ends. No
+  standalone cassini-operator process required.
 
-  To actually exercise this you need signaling + TURN running too —
-  re-run setup with the 'full' profile:
+  To exercise real call recording you need signaling + TURN running too.
+  Start setup with the 'full' profile:
 
-      SPREED_PROFILE=full ./harness/bin/manual-test-setup.sh
+      SPREED_PROFILE=full ./harness/bin/manual-test-setup.sh --build
 
-  Then create a Talk room, start a call, click record. Without the
-  'full' profile signaling isn't wired and the bot can't join.
+  Then create a Talk room, start a call, click record, or run the
+  installed-ExApp private validation helper. Without the 'full' profile
+  signaling isn't wired and the recorder can't join.
 
 Tear down later:
   docker compose -p $PROJECT_NAME down --volumes
