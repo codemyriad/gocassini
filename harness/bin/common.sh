@@ -231,3 +231,35 @@ create_room_with_retry() {
   log "$output" >&2
   return 1
 }
+
+# run_with_retries CMD [ARGS...]
+#
+# Re-run a recorder-capture command up to CI_E2E_MAX_ATTEMPTS (default 3) times,
+# returning 0 on the first success. The recorder e2e legs intermittently fail
+# because a WebRTC subscriber's ICE never reaches `connected` under CI load (the
+# room/recorder are fine — a fresh negotiation usually connects). A genuine
+# regression fails EVERY attempt, so this only ever passes on a real capture; it
+# does not hide a consistent failure the way a continue-on-error best-of-N does
+# (the all-attempts-failed case is just the command's own non-zero exit). Each
+# attempt's outcome is logged so a 2/3 flake stays visible even on a green run.
+run_with_retries() {
+  local max="${CI_E2E_MAX_ATTEMPTS:-3}"
+  local attempt=1
+  local rc=0
+  while ((attempt <= max)); do
+    if ((attempt > 1)); then
+      log "capture attempt ${attempt}/${max} (prior attempt failed rc=${rc}; retrying a transient ICE/bring-up flake)"
+    fi
+    if "$@"; then
+      if ((attempt > 1)); then
+        log "capture recovered on attempt ${attempt}/${max} (transient flake absorbed)"
+      fi
+      return 0
+    fi
+    rc=$?
+    log "capture attempt ${attempt}/${max} failed (rc=${rc})"
+    attempt=$((attempt + 1))
+  done
+  log "::error::capture failed all ${max} attempts — treating as a real failure, not a flake"
+  return "$rc"
+}

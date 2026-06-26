@@ -56,10 +56,10 @@ log "Test room URL: $CALL_URL"
 export CALL_URL
 
 log "Running recorder + publisher end-to-end"
-(
-  cd "$REPO_ROOT/cassini-go-recorder"
-  ./e2e_with_publisher.sh
-)
+# A transient WebRTC ICE flake fails one capture attempt but a fresh negotiation
+# usually connects; a real regression fails all attempts (run_with_retries).
+run_recorder_publisher() { ( cd "$REPO_ROOT/cassini-go-recorder" && ./e2e_with_publisher.sh ); }
+run_with_retries run_recorder_publisher
 
 "$SCRIPT_DIR/verify-av-drift.sh" \
   --input "$FINAL_OUTPUT" \

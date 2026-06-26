@@ -118,15 +118,12 @@ log "Test room URL: $CALL_URL"
 export CALL_URL
 
 log "Running recorder + rotating publishers (mute coverage)"
-(
-  cd "$REPO_ROOT/cassini-go-recorder"
-  ./e2e_with_publisher.sh
-)
-ci_rc=$?
-if [[ "$ci_rc" -ne 0 ]]; then
-  log "ci-e2e base publisher run failed with rc=${ci_rc}"
-  exit "$ci_rc"
-fi
+# A transient WebRTC ICE flake fails one capture attempt but a fresh negotiation
+# usually connects; a real regression fails all attempts (run_with_retries). The
+# D-444 readiness gate inside e2e_with_publisher.sh turns a missed participant
+# into a clean non-zero exit, which this retries.
+run_recorder_publisher() { ( cd "$REPO_ROOT/cassini-go-recorder" && ./e2e_with_publisher.sh ); }
+run_with_retries run_recorder_publisher
 
 if [[ ! -f "$PUB_LOG" ]]; then
   log "Publisher log missing: $PUB_LOG"

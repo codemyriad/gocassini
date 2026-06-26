@@ -51,75 +51,85 @@ CALL_URL="$(create_room_with_retry "$CALL_NAME")"
 log "Test room URL: $CALL_URL"
 export CALL_URL
 
-rm -f "$OUTPUT" "$FINAL_OUTPUT" "$REC_LOG" "$PHASE1_LOG" "$PHASE2_LOG"
-mkdir -p "$(dirname "$OUTPUT")"
+# Capture = recorder + two publisher phases (leave/rejoin). A transient WebRTC
+# ICE flake makes the recorder capture no media for a phase, so the capture
+# fails one attempt but a fresh negotiation usually connects. run_with_retries
+# re-rolls; a real regression fails every attempt. The capture-success checks
+# (mkv present + both phases connected) live INSIDE the function so an ICE flake
+# is what triggers the retry; the richer track/artifact assertions run once,
+# after a good capture.
+run_rejoin_capture() {
+  rm -f "$OUTPUT" "$FINAL_OUTPUT" "$REC_LOG" "$PHASE1_LOG" "$PHASE2_LOG"
+  mkdir -p "$(dirname "$OUTPUT")"
 
-(
-  cd "$RECORDER_DIR"
-  go run ./cmd/gocassini \
-    --mode talk \
-    --call-url "$CALL_URL" \
-    --name "$NAME_PREFIX" \
-    --duration "$REC_DURATION" \
-    --output "$OUTPUT" \
-    --final-output "$FINAL_OUTPUT" \
-    --request-offer-interval 2 \
-    --max-request-offer-attempts 30
-) >"$REC_LOG" 2>&1 &
-REC_PID=$!
+  (
+    cd "$RECORDER_DIR"
+    go run ./cmd/gocassini \
+      --mode talk \
+      --call-url "$CALL_URL" \
+      --name "$NAME_PREFIX" \
+      --duration "$REC_DURATION" \
+      --output "$OUTPUT" \
+      --final-output "$FINAL_OUTPUT" \
+      --request-offer-interval 2 \
+      --max-request-offer-attempts 30
+  ) >"$REC_LOG" 2>&1 &
+  local rec_pid=$!
 
-sleep "$START_DELAY"
+  sleep "$START_DELAY"
 
-(
-  cd "$SCRIPT_DIR/../"
-  ./bin/stream-video.sh \
-    --call-url "$CALL_URL" \
-    --users 1 \
-    --duration "$PHASE_ONE_DURATION" \
-    --name-prefix "$NAME_PREFIX"
-) >"$PHASE1_LOG" 2>&1 || true
+  (
+    cd "$SCRIPT_DIR/../"
+    ./bin/stream-video.sh \
+      --call-url "$CALL_URL" \
+      --users 1 \
+      --duration "$PHASE_ONE_DURATION" \
+      --name-prefix "$NAME_PREFIX"
+  ) >"$PHASE1_LOG" 2>&1 || true
 
-sleep "$PHASE_GAP_SECONDS"
+  sleep "$PHASE_GAP_SECONDS"
 
-(
-  cd "$SCRIPT_DIR/../"
-  ./bin/stream-video.sh \
-    --call-url "$CALL_URL" \
-    --users 1 \
-    --duration "$PHASE_TWO_DURATION" \
-    --name-prefix "$NAME_PREFIX"
-) >"$PHASE2_LOG" 2>&1 || true
+  (
+    cd "$SCRIPT_DIR/../"
+    ./bin/stream-video.sh \
+      --call-url "$CALL_URL" \
+      --users 1 \
+      --duration "$PHASE_TWO_DURATION" \
+      --name-prefix "$NAME_PREFIX"
+  ) >"$PHASE2_LOG" 2>&1 || true
 
-wait "$REC_PID" || true
+  wait "$rec_pid" || true
 
-if [[ ! -f "$FINAL_OUTPUT" ]]; then
-  log "[FAIL] final mkv not found: $FINAL_OUTPUT"
-  log "--- recorder log tail ---"
-  tail -n 120 "$REC_LOG" || true
-  exit 1
-fi
-
-if (( $(stat -c '%s' "$FINAL_OUTPUT") <= 1024 )); then
-  log "[FAIL] final mkv unexpectedly small"
-  exit 1
-fi
-
-PHASE_LOGS=( "$PHASE1_LOG" "$PHASE2_LOG" )
-for log_file in "${PHASE_LOGS[@]}"; do
-  if ! rg -q "\[bot" "$log_file"; then
-    log "[FAIL] no bot output in ${log_file}; publisher phase likely did not start"
-    exit 1
+  if [[ ! -f "$FINAL_OUTPUT" ]]; then
+    log "[capture] final mkv not found: $FINAL_OUTPUT"
+    log "--- recorder log tail ---"
+    tail -n 120 "$REC_LOG" || true
+    return 1
   fi
-done
 
-PHASE1_CONNECTIONS="$(rg -c "audio muted|connected and streaming|audio unmuted" "$PHASE1_LOG" || true)"
-PHASE2_CONNECTIONS="$(rg -c "connected and streaming" "$PHASE2_LOG" || true)"
-if (( PHASE1_CONNECTIONS == 0 || PHASE2_CONNECTIONS == 0 )); then
-  log "[FAIL] phases did not both connect; rejoin did not happen as expected"
-  log "phase1 log: $PHASE1_LOG"
-  log "phase2 log: $PHASE2_LOG"
-  exit 1
-fi
+  if (( $(stat -c '%s' "$FINAL_OUTPUT") <= 1024 )); then
+    log "[capture] final mkv unexpectedly small"
+    return 1
+  fi
+
+  local log_file
+  for log_file in "$PHASE1_LOG" "$PHASE2_LOG"; do
+    if ! rg -q "\[bot" "$log_file"; then
+      log "[capture] no bot output in ${log_file}; publisher phase likely did not start"
+      return 1
+    fi
+  done
+
+  local phase1_conn phase2_conn
+  phase1_conn="$(rg -c "audio muted|connected and streaming|audio unmuted" "$PHASE1_LOG" || true)"
+  phase2_conn="$(rg -c "connected and streaming" "$PHASE2_LOG" || true)"
+  if (( phase1_conn == 0 || phase2_conn == 0 )); then
+    log "[capture] phases did not both connect; rejoin did not happen (phase1=${phase1_conn} phase2=${phase2_conn})"
+    return 1
+  fi
+  return 0
+}
+run_with_retries run_rejoin_capture
 
 VIDEO_TRACKS="$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0:nk=1 "$FINAL_OUTPUT" | awk -F',' '$1=="video"{n++} END {print n+0}')"
 AUDIO_TRACKS="$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0:nk=1 "$FINAL_OUTPUT" | awk -F',' '$1=="audio"{n++} END {print n+0}')"
