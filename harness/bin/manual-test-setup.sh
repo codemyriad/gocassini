@@ -44,6 +44,7 @@ source "$SCRIPT_DIR/common.sh"
 export SIGNALING_INTERNAL_SECRET="$CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
 
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$HARNESS_DIR/compose.yml")
+COMPOSE_FULL=(docker compose -p "$PROJECT_NAME" -f "$HARNESS_DIR/compose.yml" --profile full)
 
 log() {
   printf '\n\033[1;34m==>\033[0m \033[1m%s\033[0m\n' "$*"
@@ -76,7 +77,7 @@ done
 log "1. Wiping previous state..."
 docker rm -f cassini-exapp nc_app_gocassini >/dev/null 2>&1 || true
 docker volume rm cassini-exapp-state cassini-exapp-site nc_app_gocassini_data >/dev/null 2>&1 || true
-"${COMPOSE[@]}" down --volumes --remove-orphans
+"${COMPOSE_FULL[@]}" down --volumes --remove-orphans
 
 IMAGE_LOCAL="cassini-exapp:e2e-v3-cpu-gpu"
 # Tag the local image as if it had been pulled from ghcr.io. Combined with
@@ -98,6 +99,102 @@ else
 fi
 docker tag "$IMAGE_LOCAL" "$IMAGE_AS_PRODUCTION"
 success "✓ Tagged $IMAGE_LOCAL as $IMAGE_AS_PRODUCTION (info.xml <image-tag>)"
+
+render_full_profile_signaling_conf() {
+  local conf="$HARNESS_DIR/runtime/signaling.manual.conf"
+  local port="${NEXTCLOUD_HOST_PORT:-28080}"
+  mkdir -p "$HARNESS_DIR/runtime"
+
+  local -a candidates=("127.0.0.1" "localhost" "host.docker.internal")
+  if [[ -n "${CASSINI_HARNESS_HOST:-}" ]]; then
+    candidates+=("$CASSINI_HARNESS_HOST")
+  fi
+  if command -v hostname >/dev/null 2>&1; then
+    # Include the VM/LAN addresses so Talk requests made through
+    # --nextcloud-host <vm-ip> produce a Spreed-Signaling-Backend URL the
+    # signaling server accepts.
+    # shellcheck disable=SC2207
+    candidates+=($(hostname -I 2>/dev/null || true))
+  fi
+
+  local -a hosts=()
+  local raw host seen
+  for raw in "${candidates[@]}"; do
+    host="${raw#http://}"
+    host="${host#https://}"
+    host="${host%%/*}"
+    host="${host%%:*}"
+    [[ -n "$host" ]] || continue
+    seen=false
+    for existing in "${hosts[@]}"; do
+      if [[ "$existing" == "$host" ]]; then
+        seen=true
+        break
+      fi
+    done
+    [[ "$seen" == "true" ]] || hosts+=("$host")
+  done
+
+  local backend_names=""
+  for i in "${!hosts[@]}"; do
+    if [[ -n "$backend_names" ]]; then
+      backend_names+=", "
+    fi
+    backend_names+="backend-$((i + 1))"
+  done
+
+  {
+    cat <<EOF_CONF
+[http]
+listen = 0.0.0.0:28082
+
+[app]
+debug = false
+
+[sessions]
+hashkey = 39a5433df8f8334f6eff8a67f6afcfc594a2599f5389b4fef316ec30277fb910
+
+[clients]
+internalsecret = $SIGNALING_INTERNAL_SECRET
+
+[backend]
+backends = $backend_names
+allowall = false
+timeout = 10
+connectionsperhost = 16
+
+EOF_CONF
+    for i in "${!hosts[@]}"; do
+      cat <<EOF_CONF
+[backend-$((i + 1))]
+url = http://${hosts[$i]}:${port}
+secret = $SIGNALING_SHARED_SECRET
+
+EOF_CONF
+    done
+    cat <<EOF_CONF
+[nats]
+url = nats://127.0.0.1:14222
+
+[mcu]
+type = janus
+url = ws://127.0.0.1:28188
+adminkey = 01e2fcd0d226d7f4cf34a8a61397f110693f05042e57ab68e94f8476a4b8f22a
+
+[turn]
+apikey = 127.0.0.1
+secret = $TURN_SHARED_SECRET
+servers = turn:127.0.0.1:13479?transport=udp,turn:127.0.0.1:13479?transport=tcp
+EOF_CONF
+  } >"$conf"
+
+  export SIGNALING_CONF="$conf"
+  success "✓ Rendered signaling config with Nextcloud backends: ${hosts[*]}"
+}
+
+if [[ "$SPREED_PROFILE" == "full" ]]; then
+  render_full_profile_signaling_conf
+fi
 
 log "3. Starting nextcloud, db, appapi-harp, reverse-proxy..."
 compose_services=(nextcloud db appapi-harp reverse-proxy)
