@@ -4,19 +4,19 @@ shaping: true
 
 # D-395 — Env Var Setup Notes
 
-Status: planning draft. Finalize after implementation.
+Status: final for D-395 implementation.
 
 ## The core mismatch
 
 `deployment/` can pass any env var directly to containers. AppAPI-installed ExApps cannot: AppAPI only forwards variables declared in `appinfo/info.xml` `<environment-variables>`.
 
-Current missing required var for production Talk recording:
+D-395 fixed the missing required variable for production Talk recording by declaring it in `appinfo/info.xml`:
 
 ```text
 CASSINI_TALK_SIGNALING_INTERNAL_SECRET
 ```
 
-Without it, the default `hpb-internal` recorder path fails before it can record private/group/1:1 Talk calls.
+Without that variable, the default `hpb-internal` recorder path fails before it can record private/group/1:1 Talk calls.
 
 See `spike-x3-nextcloud-talk-appapi-config-flow.md` for the detailed Nextcloud/AppAPI/Talk source inspection.
 
@@ -77,7 +77,7 @@ Important parity vars:
 
 ## Registration shape after D-395
 
-Expected installed-harness/prod registration shape:
+Installed-harness/prod registration shape:
 
 ```bash
 occ app_api:app:register gocassini <daemon-name> \
@@ -106,7 +106,7 @@ Important consequences from source inspection:
 - `app_api:app:config:set` writes a separate ExApp app-config store; it does not become process env and Cassini does not currently read it.
 - Changing `spreed.recording_servers.secret` in Nextcloud does **not** update `CASSINI_TALK_RECORDING_SECRET` in a running ExApp container.
 
-For local harness iteration, use AppAPI `--test-deploy-mode` or equivalent re-register/redeploy behavior with all required `--env` values. For production secret rotation or first upgrade from a pre-D-395 install, plan a controlled ExApp redeploy/reinstall with data preserved.
+For local harness iteration, `harness/bin/manual-test-setup.sh` now uses AppAPI `--test-deploy-mode` with all required `--env` values. For production secret rotation or first upgrade from a pre-D-395 install, plan a controlled ExApp redeploy/reinstall with data preserved.
 
 ## Secret rotation / coordinated updates
 

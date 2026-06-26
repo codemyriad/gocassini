@@ -4,7 +4,7 @@ shaping: true
 
 # D-395 — Production Deployment Notes
 
-Status: planning draft. Finalize after implementation and validation.
+Status: final for D-395 implementation and validation.
 
 ## Deployment shape
 
@@ -44,7 +44,7 @@ curl -fsS -u admin:<app-password> \
   https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/operator/status
 ```
 
-Expected relevant fields after D-395:
+Expected relevant fields:
 
 ```json
 {
@@ -90,7 +90,7 @@ occ config:app:get spreed recording_servers > /root/recording_servers.backup
 # Re-register/redeploy with all required env values. Exact production command
 # depends on whether the install is App Store UI, local info.xml, or release
 # package driven. The invariant is: preserve data, recreate container, pass env.
-occ app_api:app:unregister --force gocassini
+occ app_api:app:unregister gocassini --force
 occ app_api:app:register gocassini <daemon-name> \
   --info-xml /path/to/gocassini-info.xml \
   --env CASSINI_TALK_RECORDING_SECRET="<same-as-spreed-recording-secret>" \
@@ -128,7 +128,7 @@ occ config:app:delete spreed recording_servers
 
 Use a non-critical conversation first.
 
-Preferred D-395 post-fix test:
+Preferred D-395 post-fix test (mirrors the validated local helper):
 
 1. Create a private/group or 1:1 test conversation where HPB-internal capture is required.
 2. Start a call with at least one speaking participant.

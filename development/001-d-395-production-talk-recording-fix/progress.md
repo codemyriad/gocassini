@@ -5,7 +5,7 @@
 - ✅ Slice 3 — Installed ExApp harness setup
 - ✅ Slice 4 — Private 1:1 installed-ExApp validation script
 - ✅ Slice 5 — Archive preservation hardening / regression coverage
-- 🔄 Slice 6 — Final deliverables and cleanup
+- ✅ Slice 6 — Final deliverables and cleanup
 
 ## Validation log
 
@@ -25,3 +25,7 @@
   - New job 1: `01KW1XSN0T64BBYC8XKBFB2WVG`
   - New job 2: `01KW1XVZWZCMW25D42HX7TX3HE`
 - Slice 5: same VM validation asserted the previous catalog ID plus both new jobs remained visible (`catalog_entries=3`) ✅
+- Slice 6: `bash -n harness/bin/manual-test-setup.sh harness/bin/validate-installed-exapp-private-talk.sh` ✅
+- Slice 6: `./harness/bin/test-exapp-image-ref.sh` ✅
+- Slice 6: `cd cassini-operator && go test ./...` ✅
+- Slice 6: final docs created/updated (`implementation.md`, `tutorial.md`, `env-vars.md`, `production-deployment.md`, `followups.md`) ✅

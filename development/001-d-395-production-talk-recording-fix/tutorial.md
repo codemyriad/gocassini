@@ -4,7 +4,7 @@ shaping: true
 
 # D-395 — Manual Validation Tutorial
 
-Status: planning draft. Commands and script names must be finalized after execution.
+Status: final. Validated in `dev-vm` on 2026-06-26.
 
 ## Goal
 
@@ -37,14 +37,14 @@ multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && git branch -
 If old stacks are running and you want a clean validation:
 
 ```bash
-multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && docker compose -p spreedtest-vm -f harness/vm/compose.yml down --volumes || true'
-multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && docker compose -p cassini-exapp-test -f harness/compose.yml down --volumes || true'
+multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && docker compose -p spreedtest-vm -f harness/vm/compose.yml --profile full down --volumes || true'
+multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && docker compose -p cassini-exapp-test -f harness/compose.yml --profile full down --volumes || true'
 multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace/deployment && docker compose down --volumes || true'
 ```
 
 ## Start installed ExApp harness
 
-Planned post-implementation command:
+Run:
 
 ```bash
 multipass exec dev-vm -- bash -lc '
@@ -95,7 +95,7 @@ open -na "Google Chrome" --args \
 
 ## Run private 1:1 validation
 
-Planned post-implementation helper:
+Run the installed-ExApp validation helper:
 
 ```bash
 multipass exec dev-vm -- bash -lc '
@@ -118,7 +118,7 @@ Expected helper behavior:
 - polls the installed ExApp admin API through AppAPI proxy until job 1 is done;
 - runs a second separate private recording job;
 - polls until job 2 is done;
-- fetches published catalog/transcripts through the ExApp proxy;
+- fetches published catalog/transcript metadata through the ExApp proxy;
 - asserts both new jobs remain visible and previous catalog IDs remain.
 
 ## Manual fallback for the private flow
@@ -159,7 +159,7 @@ http://<vm-ip>:28080/index.php/apps/app_api/proxy/gocassini/viewer/
 Expected:
 
 - both newest private recording jobs appear;
-- each transcript has non-empty segments/words;
+- each transcript has non-empty segments/words, or portable catalog metadata reports a positive segment count;
 - Erlich/admin private runs are represented in the catalog;
 - older meetings remain present if the catalog was non-empty before.
 
@@ -169,7 +169,7 @@ Status through AppAPI proxy:
 
 ```bash
 curl -fsS -u admin:admin \
-  "http://${VM_IP}:28080/index.php/apps/app_api/proxy/gocassini/operator/status" | jq .
+  "http://${VM_IP}:28080/index.php/apps/app_api/proxy/gocassini/operator/status" | python3 -m json.tool
 ```
 
 Talk config inside Nextcloud:
@@ -202,3 +202,23 @@ print([m.get("id") for m in d.get("meetings", [])])
 PY'\''
 '
 ```
+
+## Last validated run
+
+The final D-395 validation run used:
+
+```bash
+multipass exec dev-vm -- bash -lc '
+  cd /home/ubuntu/dev/workspace
+  ./harness/bin/validate-installed-exapp-private-talk.sh \
+    --nextcloud-host 192.168.252.29 \
+    --duration 60
+'
+```
+
+It preserved the pre-existing catalog entry `01KW1WGDK5F6T7CND3767ZN69Q` and added:
+
+- job 1: `01KW1XSN0T64BBYC8XKBFB2WVG`
+- job 2: `01KW1XVZWZCMW25D42HX7TX3HE`
+
+The helper reported `catalog_entries=3`.
