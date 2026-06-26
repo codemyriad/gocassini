@@ -2029,15 +2029,20 @@ func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any)
 			return fmt.Errorf("set local answer for %s: %w", p.remoteSessionID, err)
 		}
 
+		// Wait on the real ICE-gathering-complete event, never a wall-clock
+		// timer. The previous `time.After(4s)` cap fired before STUN/TURN
+		// gathering finished under CI load, so the answer shipped a truncated,
+		// host-only candidate set and the post-answer endOfCandidates then
+		// falsely signalled "done" — the remote could only pair host candidates,
+		// ICE reached `checking` and was torn down to `closed`, no track opened,
+		// and finalize hit "no remuxable streams". GatheringCompletePromise
+		// resolves when gathering actually finishes (pion bounds it with its own
+		// ICE timeouts); ctx.Done() still unblocks on shutdown so we never park.
 		select {
 		case <-gatherComplete:
 		case <-ctx.Done():
-			// Shutdown must not be parked behind ICE gathering; the
-			// answer below still goes out with whatever gathered so far
-			// (Send degrades to an error once signaling is closed).
+			// Shutdown must not be parked behind ICE gathering.
 			log.Printf("ICE gather interrupted by shutdown for subscriber %s; continuing", p.remoteSessionID)
-		case <-time.After(4 * time.Second):
-			log.Printf("ICE gather timeout for subscriber %s; continuing", p.remoteSessionID)
 		}
 
 		local := p.pc.LocalDescription()
