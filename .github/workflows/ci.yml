@@ -20,8 +20,6 @@ on:
       - 'img/**'
       - 'media-kit.*'
   pull_request:
-    # `labeled` so adding the `full-ci` label re-triggers and runs the mute tier.
-    types: [opened, synchronize, reopened, labeled]
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
@@ -90,7 +88,8 @@ jobs:
           - ci-e2e.sh
           - ci-e2e-rejoin.sh
           # ci-e2e-mute.sh is NOT in this matrix: it is a heavier 3-publisher
-          # WebRTC scenario, so it runs in its own main/full-ci tier below.
+          # WebRTC scenario with its own readiness gate, so it runs as its own
+          # job below (on every PR, like this one).
         # Empty string selects the pinned default Nextcloud image in
         # harness/compose.yml. If the pinned leg goes red we broke it; if
         # only a compatibility leg goes red, upstream moved.
@@ -140,11 +139,10 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - unit
-    # Run on push-to-main (gates the release path) and on a PR labeled `full-ci`;
-    # keep it off the default PR run so PR signal stays deterministic.
-    if: >-
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'full-ci')
+    # Runs on EVERY PR (and push-to-main). The mute scenario is exactly the kind
+    # of regression we kept missing by gating heavy e2e behind `full-ci`, so it
+    # must gate every PR, not just labeled ones. (Deflaked: see the larger ICE
+    # budget + stagger in ci-e2e-mute.sh and the D-444 readiness gate.)
     timeout-minutes: 45
     steps:
       - name: Checkout

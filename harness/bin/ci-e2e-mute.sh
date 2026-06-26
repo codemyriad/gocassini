@@ -31,39 +31,41 @@ export PUB_USERS="${PUB_USERS:-3}"
 # that never ICE-connects contributes zero captured media, collapsing the unique
 # participant / rtplog count below the >=PUB_USERS assertion (seen as "got 1/2").
 #
-# JOIN_DELAYS staggers the joins ~4s apart so the negotiations are spread out and
-# each publisher gets a clean ICE window. e2e_with_publisher.sh plumbs JOIN_DELAYS
-# -> stream-video.sh --join-delays -> rotator --join-delay (per bot).
-export JOIN_DELAYS="${JOIN_DELAYS:-0,4,8}"
+# JOIN_DELAYS staggers the joins ~6s apart so the negotiations are spread out and
+# each publisher — especially the last joiner, the one that flaked at "got 2/3"
+# under load — gets a clean, uncontended ICE window. e2e_with_publisher.sh plumbs
+# JOIN_DELAYS -> stream-video.sh --join-delays -> rotator --join-delay (per bot).
+export JOIN_DELAYS="${JOIN_DELAYS:-0,6,12}"
 
-# REC_DURATION must outlast the last joiner's (+8s) join + ICE budget plus its
-# whole publish window. With START_DELAY=6 the +8s bot starts joining at ~t=14s,
-# connects a few seconds later under load, and must keep streaming well inside the
-# capture window, so give the recorder a comfortable 50s.
-export REC_DURATION="${REC_DURATION:-50}"
+# REC_DURATION must outlast the last joiner's (+12s) join + a generous ICE budget
+# plus its whole publish window. With START_DELAY=6 the +12s bot starts joining at
+# ~t=18s and, under CI load, may take up to CAPTURE_READY_TIMEOUT (60s, i.e. until
+# ~t=66) to reach recorder-side video capture; the recorder must keep recording
+# past that and through the mute rotation, so give it 85s.
+export REC_DURATION="${REC_DURATION:-85}"
 
 # Per-bot publish windows are sized so every bot is still sending media deep into
-# the recorder's capture window. The rotator exits on media EOF even if
-# --bot-duration is longer, so this script prepares a mute-specific long fixture
-# below instead of relying on the default 15s sample. join_delay is slept *before*
-# the per-bot duration timer starts, so each bot streams for roughly
-# [START_DELAY+join+connect, +duration]. With START_DELAY=6 and joins at +0/+4/+8
-# these durations land all three publishing together from ~t=16s until ~t=44s,
-# fully inside REC_DURATION=50.
-#   bot1: join@6  stream@~8  +36 -> ~44
-#   bot2: join@10 stream@~12 +32 -> ~44
-#   bot3: join@14 stream@~16 +28 -> ~44
+# the recorder's capture window — past the worst-case readiness deadline (~t=66)
+# and through the mute rotation. The rotator exits on media EOF even if
+# --bot-duration is longer, so MUTE_MEDIA_DURATION below is sized >= the longest
+# bot duration. join_delay is slept *before* the per-bot duration timer starts, so
+# each bot streams for roughly [START_DELAY+join+connect, +duration]. With
+# START_DELAY=6 and joins at +0/+6/+12 these durations land all three publishing
+# together from ~t=20s until ~t=80s, inside REC_DURATION=85.
+#   bot1: join@6  stream@~8  +72 -> ~80
+#   bot2: join@12 stream@~14 +66 -> ~80
+#   bot3: join@18 stream@~20 +60 -> ~80
 # BOT_DURATIONS (plumbed via e2e_with_publisher.sh -> stream-video.sh
 # --bot-durations -> rotator --bot-duration) takes precedence over PUB_DURATION
 # per bot; PUB_DURATION stays as a fallback for any bot without an explicit value.
-export BOT_DURATIONS="${BOT_DURATIONS:-36,32,28}"
-export PUB_DURATION="${PUB_DURATION:-36}"
+export BOT_DURATIONS="${BOT_DURATIONS:-72,66,60}"
+export PUB_DURATION="${PUB_DURATION:-72}"
 export CALL_NAME="${CALL_NAME:-CI Gocassini mute room}"
 
 PREPARE_MUTE_MEDIA=0
 if [[ -z "${MEDIA_PREFIX:-}" && -z "${MEDIA_PREFIXES:-}" ]]; then
   export MUTE_MEDIA_PREFIX="${MUTE_MEDIA_PREFIX:-$MEDIA_DIR/sample-mute}"
-  export MUTE_MEDIA_DURATION="${MUTE_MEDIA_DURATION:-45}"
+  export MUTE_MEDIA_DURATION="${MUTE_MEDIA_DURATION:-78}"
   PREPARE_MUTE_MEDIA=1
 fi
 
@@ -84,7 +86,11 @@ export PUB_LOG="${PUB_LOG:-/tmp/gocassini-ci-publisher-mute.log}"
 # with the subscriber/stream diagnostics instead of retrying the whole job.
 export MUTE_ROTATION_START_FILE="${MUTE_ROTATION_START_FILE:-$CI_OUTPUT_BASE.mute-start}"
 export CAPTURE_READY_PARTICIPANTS="${CAPTURE_READY_PARTICIPANTS:-$PUB_USERS}"
-export CAPTURE_READY_TIMEOUT="${CAPTURE_READY_TIMEOUT:-35}"
+# 60s (was 35): under CI load the last joiner's ICE sometimes needed >35s to reach
+# recorder-side video capture, flaking at "got 2/3". This is a MAX wait — fast runs
+# open the gate and proceed immediately — so a generous ceiling cuts the flake
+# without slowing the common case. REC_DURATION above is sized to outlast it.
+export CAPTURE_READY_TIMEOUT="${CAPTURE_READY_TIMEOUT:-60}"
 export CAPTURE_READY_STREAM_KIND="${CAPTURE_READY_STREAM_KIND:-video}"
 
 cleanup() {
