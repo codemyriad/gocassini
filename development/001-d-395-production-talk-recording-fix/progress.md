@@ -4,8 +4,8 @@
 - ✅ Slice 2 — Docs/env setup alignment
 - ✅ Slice 3 — Installed ExApp harness setup
 - ✅ Slice 4 — Private 1:1 installed-ExApp validation script
-- 🔄 Slice 5 — Archive preservation hardening / regression coverage
-- ⏳ Slice 6 — Final deliverables and cleanup
+- ✅ Slice 5 — Archive preservation hardening / regression coverage
+- 🔄 Slice 6 — Final deliverables and cleanup
 
 ## Validation log
 
@@ -24,3 +24,4 @@
   - Existing catalog before final run: `01KW1WGDK5F6T7CND3767ZN69Q`
   - New job 1: `01KW1XSN0T64BBYC8XKBFB2WVG`
   - New job 2: `01KW1XVZWZCMW25D42HX7TX3HE`
+- Slice 5: same VM validation asserted the previous catalog ID plus both new jobs remained visible (`catalog_entries=3`) ✅

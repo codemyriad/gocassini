@@ -119,6 +119,27 @@ Talk so the installed ExApp receives the backend request, waits for publish,
 then runs a second recording and verifies both new transcripts remain visible
 in the viewer catalog.
 
+### Archive preservation checks
+
+The validation helper captures catalog IDs before recording, then fails if the
+second publish removes either the first new job or any pre-existing catalog ID.
+For manual inspection of the AppAPI persistent volume:
+
+```bash
+docker exec nc_app_gocassini sh -lc 'find "$APP_PERSISTENT_STORAGE/operator/jobs/current" -maxdepth 1 -name "*.meeting" | sort'
+docker exec nc_app_gocassini sh -lc 'python3 - <<PY
+import json, os
+p=os.path.join(os.environ["APP_PERSISTENT_STORAGE"], "site/published/catalog.json")
+d=json.load(open(p))
+print(len(d.get("meetings", [])))
+print([m.get("id") for m in d.get("meetings", [])])
+PY'
+```
+
+Expected result after the D-395 helper: at least the two new job IDs remain in
+`catalog.json`; if a catalog existed before the run, those earlier IDs remain
+too.
+
 ## Related direct-container Talk test
 
 [`harness/bin/ci-e2e-talk-record-roundtrip.sh`](../harness/bin/ci-e2e-talk-record-roundtrip.sh)
