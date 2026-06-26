@@ -26,6 +26,8 @@ const (
 	envSTTDevice = "CASSINI_STT_DEVICE"
 	envSTTModel  = "CASSINI_STT_MODEL"
 
+	envTalkSignalingInternalSecret = "CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
+
 	// recordHealthProbeTTL/Timeout throttle the deep /healthz?check=record
 	// doctor exec: the endpoint is unauthenticated, so probes are
 	// singleflighted, cached briefly, and exec-bounded (D-376).
@@ -55,8 +57,9 @@ type statusSTT struct {
 }
 
 type statusTalk struct {
-	SecretConfigured             bool `json:"secret_configured"`
-	BackendURLOverrideConfigured bool `json:"backend_url_override_configured"`
+	SecretConfigured                  bool `json:"secret_configured"`
+	SignalingInternalSecretConfigured bool `json:"signaling_internal_secret_configured"`
+	BackendURLOverrideConfigured      bool `json:"backend_url_override_configured"`
 }
 
 type statusCheck struct {
@@ -91,8 +94,9 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 			Detail:       detail,
 		},
 		Talk: statusTalk{
-			SecretConfigured:             strings.TrimSpace(rt.cfg.TalkSharedSecret) != "",
-			BackendURLOverrideConfigured: strings.TrimSpace(rt.cfg.TalkBackendURL) != "",
+			SecretConfigured:                  strings.TrimSpace(rt.cfg.TalkSharedSecret) != "",
+			SignalingInternalSecretConfigured: strings.TrimSpace(os.Getenv(envTalkSignalingInternalSecret)) != "",
+			BackendURLOverrideConfigured:      strings.TrimSpace(rt.cfg.TalkBackendURL) != "",
 		},
 		Storage: statusStorage{
 			WorkRoot: storagePathCheck(rt.cfg.WorkRoot),
