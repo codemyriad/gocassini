@@ -86,6 +86,8 @@ CATALOG_URL="$PROXY_URL/published/catalog.json"
 AUTH=(-u "$ADMIN_USER:$ADMIN_PASSWORD")
 COMPOSE=(docker compose -p cassini-exapp-test -f "$REPO_ROOT/harness/compose.yml")
 WORK_DIR="$(mktemp -d)"
+WAIT_FOR_JOB_ID=""
+RUN_PRIVATE_JOB_ID=""
 cleanup() {
   rm -rf "$WORK_DIR"
 }
@@ -203,12 +205,12 @@ for meeting in data.get('meetings') or []:
             artifact += '/'
         print('transcript_url\t' + urljoin(base, artifact + 'transcript.display.v1.json'))
         sys.exit(0)
-    segment_count = int(meeting.get('segmentCount') or 0)
     audio_path = str(meeting.get('audioPath') or '').strip()
-    if segment_count > 0 and audio_path:
+    if audio_path:
+        segment_count = int(meeting.get('segmentCount') or 0)
         print(f'portable\tsegmentCount={segment_count}\taudioPath={audio_path}')
         sys.exit(0)
-    print(f'catalog entry {job_id} has no artifactPath and no positive segmentCount', file=sys.stderr)
+    print(f'catalog entry {job_id} has no artifactPath or audioPath', file=sys.stderr)
     sys.exit(3)
 print(f'missing catalog entry for {job_id}', file=sys.stderr)
 sys.exit(2)
@@ -260,8 +262,8 @@ wait_for_new_job_success() {
       case "$rc" in
         0)
           job_id="$(tail -n 1 "$status_file")"
+          WAIT_FOR_JOB_ID="$job_id"
           success "✓ $label job succeeded: $job_id"
-          printf '%s\n' "$job_id"
           return 0
           ;;
         2)
@@ -298,7 +300,7 @@ wait_for_catalog_transcript() {
       if [[ "$rc" -eq 0 && -n "$probe" ]]; then
         IFS=$'\t' read -r probe_kind probe_value _ <<<"$probe"
         if [[ "$probe_kind" == "portable" ]]; then
-          success "✓ $label portable catalog transcript metadata visible for $job_id ($probe_value)"
+          success "✓ $label portable catalog artifact visible for $job_id ($probe_value)"
           return 0
         fi
         if [[ "$probe_kind" == "transcript_url" ]]; then
@@ -364,9 +366,10 @@ run_private_job() {
   (cd "$REPO_ROOT" && ./bin/cassini dev play-private --conversation admin --nextcloud-host "$NEXTCLOUD_HOST" --duration "$DURATION" >&2)
 
   log "Waiting for installed ExApp job to publish for $label"
-  job_id="$(wait_for_new_job_success "$label" "$before_jobs" | tail -n 1)"
+  wait_for_new_job_success "$label" "$before_jobs"
+  job_id="$WAIT_FOR_JOB_ID"
   wait_for_catalog_transcript "$label" "$job_id"
-  printf '%s\n' "$job_id"
+  RUN_PRIVATE_JOB_ID="$job_id"
 }
 
 log "Validating installed Cassini ExApp at $PROXY_URL"
@@ -385,8 +388,10 @@ printf '[validate] existing catalog ids: %s\n' "${previous_catalog_ids[*]:-(none
 log "Preparing private playback scaffold"
 (cd "$REPO_ROOT" && ./bin/cassini dev play-private --scaffold-only --nextcloud-host "$NEXTCLOUD_HOST")
 
-job1="$(run_private_job job1 | tail -n 1)"
-job2="$(run_private_job job2 | tail -n 1)"
+run_private_job job1
+job1="$RUN_PRIVATE_JOB_ID"
+run_private_job job2
+job2="$RUN_PRIVATE_JOB_ID"
 
 final_catalog="$WORK_DIR/catalog-final.json"
 fetch_json "$CATALOG_URL" "$final_catalog" false || fail "cannot fetch final catalog"

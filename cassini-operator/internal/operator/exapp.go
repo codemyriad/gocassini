@@ -295,8 +295,9 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 		root.Handle(controlPanelURLPrefix+"/", spaHandler(c.ControlPanelDist, controlPanelURLPrefix, logger))
 	}
 	if c.ViewerDist != "" {
-		root.Handle(viewerURLPrefix, spaHandler(c.ViewerDist, viewerURLPrefix, logger))
-		root.Handle(viewerURLPrefix+"/", spaHandler(c.ViewerDist, viewerURLPrefix, logger))
+		viewer := viewerHandler(c.ViewerDist, c.PublishedDir, viewerURLPrefix, logger)
+		root.Handle(viewerURLPrefix, viewer)
+		root.Handle(viewerURLPrefix+"/", viewer)
 	}
 	if c.PublishedDir != "" {
 		root.Handle(publishedURLPrefix+"/", publishedHandler(c.PublishedDir, publishedURLPrefix, logger))
@@ -617,6 +618,33 @@ func spaHandler(dir, urlPrefix string, logger *log.Logger) http.Handler {
 			return
 		}
 		fileServer.ServeHTTP(w, r)
+	})
+}
+
+// viewerHandler serves the standalone viewer SPA while preserving the static
+// export layout the viewer expects: catalog.json and meetings/* live next to the
+// SPA entry when Cassini is exported, but in an ExApp they are stored under the
+// operator's published site root. Serve those archive paths without SPA fallback
+// so JSON/audio fetches don't receive index.html.
+func viewerHandler(viewerDir, publishedDir, urlPrefix string, logger *log.Logger) http.Handler {
+	spa := spaHandler(viewerDir, urlPrefix, logger)
+	if publishedDir == "" {
+		return spa
+	}
+	publishedFiles := http.StripPrefix(urlPrefix, http.FileServer(http.Dir(publishedDir)))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		relPath := strings.TrimPrefix(r.URL.Path, urlPrefix)
+		relPath = strings.TrimPrefix(relPath, "/")
+		if relPath == "catalog.json" || strings.HasPrefix(relPath, "meetings/") {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				w.Header().Set("Allow", "GET, HEAD")
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			publishedFiles.ServeHTTP(w, r)
+			return
+		}
+		spa.ServeHTTP(w, r)
 	})
 }
 

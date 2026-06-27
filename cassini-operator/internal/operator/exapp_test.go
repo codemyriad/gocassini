@@ -589,6 +589,72 @@ func TestSPAHandlerNoIndexReturns503(t *testing.T) {
 	}
 }
 
+func TestViewerHandlerServesPublishedCatalogAndMeetings(t *testing.T) {
+	viewerDir := t.TempDir()
+	publishedDir := t.TempDir()
+	writeFile(t, filepath.Join(viewerDir, "index.html"), "<html>viewer</html>")
+	writeFile(t, filepath.Join(publishedDir, "catalog.json"), `{"version":"cassini.viewer.catalog.v1","meetings":[]}`)
+	writeFile(t, filepath.Join(publishedDir, "meetings", "demo.opus"), "opus-bytes")
+
+	h := viewerHandler(viewerDir, publishedDir, "/viewer", log.New(&bytes.Buffer{}, "", 0))
+
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{path: "/viewer/catalog.json", want: `"cassini.viewer.catalog.v1"`},
+		{path: "/viewer/meetings/demo.opus", want: "opus-bytes"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != http.StatusOK {
+				t.Fatalf("got %d, want 200; body=%s", w.Code, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), tc.want) {
+				t.Fatalf("body %q does not contain %q", w.Body.String(), tc.want)
+			}
+		})
+	}
+}
+
+func TestViewerHandlerDoesNotFallbackForMissingPublishedMeetingAsset(t *testing.T) {
+	viewerDir := t.TempDir()
+	publishedDir := t.TempDir()
+	writeFile(t, filepath.Join(viewerDir, "index.html"), "<html>viewer</html>")
+
+	h := viewerHandler(viewerDir, publishedDir, "/viewer", log.New(&bytes.Buffer{}, "", 0))
+	r := httptest.NewRequest(http.MethodGet, "/viewer/meetings/missing/transcript.words.v1.json", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d, want 404; body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "viewer") {
+		t.Fatalf("missing published asset should not serve SPA index: %q", w.Body.String())
+	}
+}
+
+func TestViewerHandlerKeepsSPAFallbackForViewerRoutes(t *testing.T) {
+	viewerDir := t.TempDir()
+	publishedDir := t.TempDir()
+	writeFile(t, filepath.Join(viewerDir, "index.html"), "<html>viewer</html>")
+
+	h := viewerHandler(viewerDir, publishedDir, "/viewer", log.New(&bytes.Buffer{}, "", 0))
+	r := httptest.NewRequest(http.MethodGet, "/viewer/session/abc", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "viewer") {
+		t.Fatalf("got body %q, want SPA fallback", w.Body.String())
+	}
+}
+
 // --- Integration: lifecycle + static + operator routes under AppAPI middleware ---
 
 func TestNewHTTPHandlerLifecycleBypassesBasePath(t *testing.T) {

@@ -306,6 +306,9 @@ export OC_PASS="Tn8mY3qVrJ2x!E2e"
 unset OC_PASS
 
 PROXY_URL="http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini"
+PUBLIC_NEXTCLOUD_HOST="${CASSINI_HARNESS_HOST:-127.0.0.1}"
+PUBLIC_NEXTCLOUD_URL="http://${PUBLIC_NEXTCLOUD_HOST}:${NEXTCLOUD_HOST_PORT:-28080}"
+PUBLIC_PROXY_URL="${PUBLIC_NEXTCLOUD_URL}/index.php/apps/app_api/proxy/gocassini"
 REGISTER_LOG="$HARNESS_DIR/runtime/manual-test-register.log"
 mkdir -p "$HARNESS_DIR/runtime"
 
@@ -427,19 +430,19 @@ What this script does during development (pre-publish):
   you want to stop before this registration step and run it by hand.
 
   After setup:
-  1. Open  http://127.0.0.1:28080/
+  1. Open  $PUBLIC_NEXTCLOUD_URL/
   2. Log in as  admin / admin
   3. Navigate to the post-deploy URLs below to verify the proxy routes.
 
   AppAPI daemon config is visible at:
-     http://127.0.0.1:28080/index.php/settings/admin/app_api
+     $PUBLIC_NEXTCLOUD_URL/index.php/settings/admin/app_api
 
 Standard user (for /viewer access after deploy):
   alice / Tn8mY3qVrJ2x!E2e
 
 Post-deploy URLs (ExApp UIs proxied through AppAPI):
-  Admin control panel: http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini/control-panel/
-  User viewer:         http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini/viewer/
+  Admin control panel: $PUBLIC_PROXY_URL/control-panel/
+  User viewer:         $PUBLIC_PROXY_URL/viewer/
 
 Testing the Talk record button:
   bootstrap.sh wired Talk's recording_servers at the AppAPI proxy URL
@@ -469,7 +472,7 @@ Tear down later:
 EOF
 
 if command -v xdg-open >/dev/null 2>&1; then
-  xdg-open "http://127.0.0.1:28080/" >/dev/null 2>&1 &
+  xdg-open "$PUBLIC_NEXTCLOUD_URL/" >/dev/null 2>&1 &
 elif command -v open >/dev/null 2>&1; then
-  open "http://127.0.0.1:28080/" >/dev/null 2>&1 &
+  open "$PUBLIC_NEXTCLOUD_URL/" >/dev/null 2>&1 &
 fi
