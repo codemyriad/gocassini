@@ -1,0 +1,10 @@
+# Local dev node_modules must never enter the image build context. The
+# Dockerfile build stages run their own `npm ci`; a host pnpm install
+# (symlinked node_modules) otherwise collides with it during COPY:
+#   "cannot replace to directory .../node_modules/<pkg> with file"
+**/node_modules
+
+# VCS history and generated harness media only bloat the build context; the
+# Dockerfile never COPYs them in.
+.git
+harness/media/processed

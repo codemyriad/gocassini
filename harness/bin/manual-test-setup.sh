@@ -43,6 +43,17 @@ source "$SCRIPT_DIR/common.sh"
 # what the local signaling server uses for HPB internal auth.
 export SIGNALING_INTERNAL_SECRET="$CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
 
+# On a loopback harness host (no VM), Talk advertises http://127.0.0.1:28080 as
+# its recording backend. The installed ExApp resolves that to its OWN container
+# loopback and cannot reach Nextcloud -> the recorder fails to join with
+# "connection refused". Default the backend override to the reverse-proxy the
+# ExApp container can actually reach. VM/LAN runs use a routable
+# CASSINI_HARNESS_HOST and don't need this.
+if [[ -z "${CASSINI_TALK_BACKEND_URL:-}" ]] \
+  && [[ "${CASSINI_HARNESS_HOST:-127.0.0.1}" == "127.0.0.1" || "${CASSINI_HARNESS_HOST:-}" == "localhost" ]]; then
+  export CASSINI_TALK_BACKEND_URL="http://reverse-proxy"
+fi
+
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$HARNESS_DIR/compose.yml")
 COMPOSE_FULL=(docker compose -p "$PROJECT_NAME" -f "$HARNESS_DIR/compose.yml" --profile full)
 
@@ -159,7 +170,15 @@ internalsecret = $SIGNALING_INTERNAL_SECRET
 
 [backend]
 backends = $backend_names
-allowall = false
+# Accept Talk backend requests regardless of which localhost identity Talk
+# presents (127.0.0.1 / reverse-proxy / docker gateway IP) by trusting the
+# shared secret alone. Without allowall, Talk's recording-start notification to
+# the signaling server is rejected (403 "Authentication check failed") whenever
+# the presented backend URL is not in the enumerated [backend-N] list -- e.g.
+# "reverse-proxy", the host the ExApp calls back through -- and Talk then 500s
+# the recording started-callback. Dev harness only.
+allowall = true
+secret = $SIGNALING_SHARED_SECRET
 timeout = 10
 connectionsperhost = 16
 
