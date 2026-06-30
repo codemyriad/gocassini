@@ -1,7 +1,3 @@
----
-shaping: true
----
-
 # D-395 — Manual Validation Tutorial
 
 Status: final. Validated in `dev-vm` on 2026-06-26.

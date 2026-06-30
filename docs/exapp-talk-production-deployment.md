@@ -1,7 +1,3 @@
----
-shaping: true
----
-
 # D-395 — Production Deployment Notes
 
 Status: final for D-395 implementation and validation.

@@ -1,7 +1,3 @@
----
-shaping: true
----
-
 # D-395 — Env Var Setup Notes
 
 Status: final for D-395 implementation.
@@ -18,7 +14,7 @@ CASSINI_TALK_SIGNALING_INTERNAL_SECRET
 
 Without that variable, the default `hpb-internal` recorder path fails before it can record private/group/1:1 Talk calls.
 
-See `spike-x3-nextcloud-talk-appapi-config-flow.md` for the detailed Nextcloud/AppAPI/Talk source inspection.
+AppAPI only forwards env vars declared in `info.xml`, so declaring it there is a prerequisite for the admin-supplied value to reach the ExApp container.
 
 ## Installed ExApp env vars
 
