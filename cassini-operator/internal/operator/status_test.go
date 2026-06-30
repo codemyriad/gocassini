@@ -44,7 +44,7 @@ func TestStatusHandlerReportsHealthyCPU(t *testing.T) {
 	if resp.STT.ModelID != "test-model" {
 		t.Fatalf("model_id = %q, want test-model", resp.STT.ModelID)
 	}
-	if !resp.Talk.SecretConfigured || resp.Talk.BackendURLOverrideConfigured {
+	if !resp.Talk.SecretConfigured || resp.Talk.SignalingInternalSecretConfigured || resp.Talk.BackendURLOverrideConfigured {
 		t.Fatalf("unexpected talk status: %#v", resp.Talk)
 	}
 	if !resp.DB.OK || !resp.Storage.WorkRoot.OK || !resp.Storage.SiteRoot.OK {
@@ -53,6 +53,59 @@ func TestStatusHandlerReportsHealthyCPU(t *testing.T) {
 	// The endpoint must report secret presence only, never the value.
 	if strings.Contains(rec.Body.String(), "super-secret-value") {
 		t.Fatal("status response leaked the Talk shared secret")
+	}
+}
+
+func TestStatusHandlerReportsTalkConfigPresenceOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		recording  string
+		internal   string
+		backendURL string
+		want       statusTalk
+	}{
+		{
+			name: "missing",
+		},
+		{
+			name:       "configured",
+			recording:  "recording-secret-value",
+			internal:   "internal-secret-value",
+			backendURL: "https://cloud.example.test",
+			want: statusTalk{
+				SecretConfigured:                  true,
+				SignalingInternalSecretConfigured: true,
+				BackendURLOverrideConfigured:      true,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt, cleanup := newTestRuntime(t)
+			defer cleanup()
+			rt.cfg.TalkSharedSecret = tc.recording
+			rt.cfg.TalkBackendURL = tc.backendURL
+			t.Setenv("CASSINI_TALK_SIGNALING_INTERNAL_SECRET", tc.internal)
+
+			req := httptest.NewRequest(http.MethodGet, "/status", nil)
+			rec := httptest.NewRecorder()
+			rt.statusHandler(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+			var resp statusResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode status response: %v", err)
+			}
+			if resp.Talk != tc.want {
+				t.Fatalf("talk status = %#v, want %#v", resp.Talk, tc.want)
+			}
+			for _, secret := range []string{tc.recording, tc.internal} {
+				if secret != "" && strings.Contains(rec.Body.String(), secret) {
+					t.Fatalf("status response leaked secret %q", secret)
+				}
+			}
+		})
 	}
 }
 

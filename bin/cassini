@@ -13,4 +13,29 @@ cleanup() {
 trap cleanup EXIT
 
 go -C "$MODULE_DIR" build -o "$TMP_DIR/cassini" ./cmd/cassini
+
+# The CLI links sherpa-onnx for transcription commands. On Nix, sherpa's
+# transitive libstdc++ dependency is not found via the main binary RUNPATH, so
+# expose the active C++ compiler runtime before executing the built binary.
+append_ld_library_path() {
+  local dir="$1"
+  if [[ -d "$dir" ]]; then
+    case ":${LD_LIBRARY_PATH:-}:" in
+      *":$dir:"*) ;;
+      *) export LD_LIBRARY_PATH="$dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ;;
+    esac
+  fi
+}
+
+CXX_BIN="${CXX:-}"
+if [[ -z "$CXX_BIN" ]]; then
+  CXX_BIN="$(go -C "$MODULE_DIR" env CXX 2>/dev/null || true)"
+fi
+if [[ -n "$CXX_BIN" ]] && command -v "$CXX_BIN" >/dev/null 2>&1; then
+  LIBSTDCXX="$("$CXX_BIN" -print-file-name=libstdc++.so.6 2>/dev/null || true)"
+  if [[ "$LIBSTDCXX" = /* && -e "$LIBSTDCXX" ]]; then
+    append_ld_library_path "$(dirname "$LIBSTDCXX")"
+  fi
+fi
+
 exec "$TMP_DIR/cassini" "$@"

@@ -11,6 +11,7 @@ import {
   listAvailableTranscripts,
   loadPortableTranscriptBody,
   pickReadableForTranscript,
+  sha256HexFallback,
   type PortableMeetingManifest,
   type PortablePayloadRef,
   type PortableTranscriptEntry,
@@ -654,6 +655,13 @@ describe("loadPortableTranscriptBody (v2 transport)", () => {
     const decoded = await loadPortableTranscriptBody(tags, payloadRef);
 
     expect(decoded).toEqual(body);
+  });
+
+  it("has a pure sha256 fallback for HTTP origins without WebCrypto subtle", () => {
+    const raw = new TextEncoder().encode("portable transcript body");
+    expect(sha256HexFallback(raw)).toBe(
+      createHash("sha256").update(raw).digest("hex"),
+    );
   });
 
   it("throws when sha256 in payloadRef does not match the decoded body", async () => {

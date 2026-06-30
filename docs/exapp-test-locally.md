@@ -1,11 +1,12 @@
 # Trying the ExApp image in a local Nextcloud
 
-Three tiers, in increasing setup cost. Pick the lowest one that answers your question.
+Use the lowest tier that exercises the surface you care about.
 
 ## Tier 1 — Image-only checks (no Nextcloud)
 
-Verifies the image builds and the HTTP plane works (operator API, lifecycle, both SPAs).
-This is what the CI workflow runs.
+Verifies that the ExApp image builds and that the HTTP plane works: operator
+API, lifecycle endpoints, AppAPI middleware, control panel, and viewer assets.
+This does **not** validate Nextcloud/AppAPI registration or Talk recording.
 
 ```bash
 # Build the image locally
@@ -15,185 +16,146 @@ docker build -f deployment/Dockerfile.exapp -t cassini-exapp:local .
 IMAGE_REF=cassini-exapp:local ./harness/bin/ci-smoke-exapp.sh
 
 # E2E: image with APP_SECRET set; asserts middleware refuses without auth,
-# accepts with valid AppAPI headers, lifecycle works, state survives restart
+# accepts valid AppAPI headers, lifecycle works, state survives restart
 IMAGE_REF=cassini-exapp:local ./harness/bin/ci-e2e-exapp.sh
 ```
 
-You can also pull the published image instead of building:
+You can also pull a published image instead of building:
 
 ```bash
 docker pull ghcr.io/codemyriad/gocassini:latest
 IMAGE_REF=ghcr.io/codemyriad/gocassini:latest ./harness/bin/ci-smoke-exapp.sh
 ```
 
-## Tier 2 — Real Nextcloud install via AppAPI
+## Tier 2 — AppAPI install/proxy checks without Talk recording
 
-This is what an admin would do, scripted end-to-end. The same recipe is
-automated in [`harness/bin/ci-e2e-install-exapp.sh`](../harness/bin/ci-e2e-install-exapp.sh),
-which the CI workflow runs against every PR — if you just want to run the
-verification, do that instead:
+[`harness/bin/ci-e2e-install-exapp.sh`](../harness/bin/ci-e2e-install-exapp.sh)
+installs Cassini into a real local Nextcloud through AppAPI and validates:
+
+- AppAPI registration;
+- AppAPI proxy route ACLs;
+- control panel and viewer routes;
+- AppAPI lifecycle callbacks;
+- persistent state survival.
+
+Run it when you need a quick installed-ExApp smoke test:
 
 ```bash
+docker build -f deployment/Dockerfile.exapp -t cassini-exapp:local .
 IMAGE_REF=cassini-exapp:local ./harness/bin/ci-e2e-install-exapp.sh
 ```
 
-The manual recipe below is for when you want to poke at the install state
-yourself.
+Important scope note: this script uses a local/manual install shape and does
+not configure Talk's record button. It is useful for AppAPI proxy/UI
+regressions, but it does not prove production Talk recording.
 
-### Prerequisites
+## Tier 3 — Production-shaped AppAPI/HaRP + Talk harness
 
-- Docker + docker compose
-- A free port (28080 by default for Nextcloud)
-- The Cassini image, either built locally or pulled from ghcr
+This is the D-395 surface: Nextcloud + AppAPI + HaRP/reverse proxy + full Talk
+signaling stack, with Cassini installed as an ExApp and Talk pointed at the
+AppAPI proxy base:
 
-### Steps
-
-1. **Bring up Nextcloud + database.** Use the harness's `default` profile —
-   ExApp install doesn't need Talk's signaling/TURN overhead:
-
-   ```bash
-   cd harness
-   SPREED_PROFILE=default docker compose -p cassini-exapp-test up -d nextcloud db
-   PROJECT_NAME=cassini-exapp-test SPREED_PROFILE=default ./bin/bootstrap.sh
-   ```
-
-   The bootstrap helper reads `PROJECT_NAME` (not `COMPOSE_PROJECT_NAME`); set it
-   so `bootstrap.sh` finds the same containers as your `docker compose -p` above.
-
-2. **Install + enable AppAPI** inside Nextcloud:
-
-   ```bash
-   alias occ='docker compose -p cassini-exapp-test exec -T -u www-data nextcloud php occ'
-   occ app:install app_api  # idempotent
-   occ app:enable  app_api
-   ```
-
-3. **Register a manual-install daemon.** AppAPI builds the heartbeat URL from
-   the daemon's host (not the app's host), so this has to be a hostname Nextcloud
-   can resolve and reach. The docker-compose network gives every service DNS,
-   so the container name we'll use in step 4 works directly — `null` will NOT,
-   despite appearing as a placeholder in older runbooks:
-
-   ```bash
-   occ app_api:daemon:register \
-       manual_install \
-       "Local manual install" \
-       manual-install \
-       http \
-       cassini-exapp \
-       http://nextcloud
-   ```
-
-4. **Run the Cassini container.** It needs to be on the compose network so
-   Nextcloud's DNS can find `cassini-exapp`. Override the entrypoint to skip
-   `frpc` — we're not using HaRP here, Nextcloud reaches the container directly:
-
-   ```bash
-   APP_SECRET="$(head -c 24 /dev/urandom | base64 | tr -d /+= | head -c 32)"
-   docker run -d --name cassini-exapp \
-       --network cassini-exapp-test_default \
-       -e APP_HOST=0.0.0.0 -e APP_PORT=8080 \
-       -e APP_ID=gocassini -e APP_VERSION=0.1.0 \
-       -e APP_SECRET="${APP_SECRET}" -e AA_VERSION=5.0.0 \
-       -e CASSINI_APPAPI_REQUIRED=true \
-       -e CASSINI_OPERATOR_BASE_PATH=/operator \
-       -e NEXTCLOUD_URL=http://nextcloud \
-       -v cassini-exapp-state:/var/lib/cassini-operator \
-       -v cassini-exapp-site:/srv/cassini-site \
-       --entrypoint /usr/local/bin/cassini-operator \
-       cassini-exapp:local
-   ```
-
-   `NEXTCLOUD_URL` is what the operator's `/init` handler uses to PUT
-   `progress=100` back to AppAPI's OCS endpoint. Without it, `--wait-finish`
-   in step 5 will hang forever.
-
-5. **Register Cassini with AppAPI.** Use `--json-info` with the route allowlist
-   embedded inline. Route URL patterns must NOT carry a leading slash and must
-   escape internal slashes as `\/` — AppAPI's proxy controller wraps each
-   pattern in `/.../i` delimiters before `preg_match`, so an unescaped `/`
-   produces "Unknown modifier" errors and 404s on every proxied request:
-
-   ```bash
-   JSON=$(jq -nc --arg secret "$APP_SECRET" \
-     '{
-        appid: "gocassini",
-        name:  "Cassini",
-        daemon_config_name: "manual_install",
-        version: "0.1.0",
-        secret:  $secret,
-        port: 8080,
-        protocol: "http",
-        system_app: 0,
-        routes: [
-          {url: "^control-panel\\/?$",              verb: "GET",      access_level: 2},
-          {url: "^control-panel\\/.+$",             verb: "GET,HEAD", access_level: 2},
-          {url: "^operator\\/jobs\\/?$",            verb: "GET,POST", access_level: 2},
-          {url: "^operator\\/jobs\\/[^\\/]+\\/?$",  verb: "GET",      access_level: 2},
-          {url: "^operator\\/jobs\\/[^\\/]+\\/stop\\/?$",  verb: "POST",  access_level: 2},
-          {url: "^operator\\/jobs\\/[^\\/]+\\/rerun\\/?$", verb: "POST",  access_level: 2},
-          {url: "^operator\\/events\\/?$",          verb: "GET",      access_level: 2},
-          {url: "^viewer\\/?$",                     verb: "GET",      access_level: 1},
-          {url: "^viewer\\/.+$",                    verb: "GET,HEAD", access_level: 1},
-          {url: "^published\\/.+$",                 verb: "GET,HEAD", access_level: 1}
-        ]
-      }')
-   occ app_api:app:register gocassini manual_install \
-       --json-info "$JSON" \
-       --force-scopes \
-       --wait-finish
-   ```
-
-   `--wait-finish` polls until the operator reports `progress=100` via the OCS
-   callback. The operator's `/init` does that automatically when `NEXTCLOUD_URL`
-   is set (step 4).
-
-6. **Force `PUT /enabled` by cycling.** `app_api:app:register` flips the
-   Nextcloud-side enabled flag but never PUTs `/enabled` to the container.
-   `app_api:app:enable` short-circuits when the flag is already set
-   ("already enabled"). The reliable way to make AppAPI actually call the
-   container's lifecycle handler is disable → enable:
-
-   ```bash
-   occ app_api:app:disable gocassini
-   occ app_api:app:enable  gocassini
-   docker exec cassini-exapp cat /var/lib/cassini-operator/app-state.json
-   # -> {"enabled":true,...}
-   ```
-
-7. **Verify proxied routes** (admin/admin works out of the box; create another
-   user with `occ user:add` for the USER-tier checks):
-
-   ```bash
-   PROXY=http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini
-   curl -u admin:admin     -o /dev/null -w '%{http_code}\n' "$PROXY/control-panel/"  # -> 200
-   curl -u admin:admin     -o /dev/null -w '%{http_code}\n' "$PROXY/operator/jobs"   # -> 200
-   curl -u admin:admin     -o /dev/null -w '%{http_code}\n' "$PROXY/viewer/"         # -> 200
-   curl -u alice:alicepass -o /dev/null -w '%{http_code}\n' "$PROXY/viewer/"         # -> 200
-   curl -u alice:alicepass -o /dev/null -w '%{http_code}\n' "$PROXY/control-panel/"  # -> 404
-   ```
-
-### Teardown
-
-```bash
-docker rm -f cassini-exapp
-docker volume rm cassini-exapp-state cassini-exapp-site
-docker compose -p cassini-exapp-test down --volumes
+```text
+Talk record button
+→ /index.php/apps/app_api/proxy/gocassini/api/v1/room/<token>
+→ AppAPI route check
+→ HaRP / ExApp container
+→ cassini-operator
+→ HPB-internal recorder
+→ publish into APP_PERSISTENT_STORAGE
+→ viewer through the ExApp proxy
 ```
 
-## Tier 3 — Production-shaped install via HaRP
+### Local host
 
-A real production AppAPI install spawns the container itself via the deploy
-daemon and routes traffic through HaRP. Reproducing this locally requires:
+From the repo root:
 
-- AppAPI's HaRP server running alongside Nextcloud
-- A Docker daemon registered with AppAPI's docker-install daemon type
-- The container's `frpc` dialing the HaRP server on startup
+```bash
+SPREED_PROFILE=full ./harness/bin/manual-test-setup.sh --build
+```
 
-This is not yet automated in the harness. The deferred Slice D (in
-`planning/installable-nextcloud-app.md`) tracks turning Tier 2 into a CI E2E
-plus extending it to a real HaRP-fronted install.
+The setup script starts the harness, builds/tags the ExApp image from
+`appinfo/info.xml`, installs/reinstalls Cassini via AppAPI, passes both Talk
+secrets as deploy env, and configures Talk's `recording_servers` to the
+installed ExApp proxy path.
 
-For now: Tier 2 verifies the install + enable contract using the same routes
-and access levels a production install would use; Tier 1 verifies the
-middleware itself.
+### `dev-vm`
+
+For the Multipass VM used by the D-395 validation, run from the mounted repo
+inside the VM:
+
+```bash
+multipass exec dev-vm -- bash -lc '
+  cd /home/ubuntu/dev/workspace
+  SPREED_PROFILE=full ./harness/bin/manual-test-setup.sh --build
+'
+```
+
+Open Nextcloud at `http://<vm-ip>:28080/` (`admin` / `admin`) and verify:
+
+- **Cassini** appears for logged-in users and opens the viewer;
+- **Cassini Admin** appears for admins and opens the control panel;
+- `GET /api/v1/welcome` through the AppAPI proxy returns `{"version":1}`;
+- `/operator/status` reports both `secret_configured` and
+  `signaling_internal_secret_configured` as true.
+
+### Installed-ExApp private Talk validation
+
+After the harness is up, validate the real Talk recording path with the D-395
+helper:
+
+```bash
+multipass exec dev-vm -- bash -lc '
+  cd /home/ubuntu/dev/workspace
+  ./harness/bin/validate-installed-exapp-private-talk.sh \
+    --nextcloud-host <vm-ip> \
+    --duration 60
+'
+```
+
+The helper uses `./bin/cassini dev play-private` to create/reuse the admin +
+Erlich Bachman private one-to-one conversation, triggers recording through
+Talk so the installed ExApp receives the backend request, waits for publish,
+then runs a second recording and verifies both new transcripts remain visible
+in the viewer catalog.
+
+### Archive preservation checks
+
+The validation helper captures catalog IDs before recording, then fails if the
+second publish removes either the first new job or any pre-existing catalog ID.
+For manual inspection of the AppAPI persistent volume:
+
+```bash
+docker exec nc_app_gocassini sh -lc 'find "$APP_PERSISTENT_STORAGE/operator/jobs/current" -maxdepth 1 -name "*.meeting" | sort'
+docker exec nc_app_gocassini sh -lc 'python3 - <<PY
+import json, os
+p=os.path.join(os.environ["APP_PERSISTENT_STORAGE"], "site/published/catalog.json")
+d=json.load(open(p))
+print(len(d.get("meetings", [])))
+print([m.get("id") for m in d.get("meetings", [])])
+PY'
+```
+
+Expected result after the D-395 helper: at least the two new job IDs remain in
+`catalog.json`; if a catalog existed before the run, those earlier IDs remain
+too.
+
+## Related direct-container Talk test
+
+[`harness/bin/ci-e2e-talk-record-roundtrip.sh`](../harness/bin/ci-e2e-talk-record-roundtrip.sh)
+validates Talk's recording-backend protocol against a directly run
+`cassini-operator` container. It is still valuable for fast recording/upload
+regressions, but it bypasses AppAPI/HaRP, ExApp deploy env allow-listing, and
+Nextcloud's installed app UI. Use Tier 3 for production-shaped validation.
+
+## Teardown
+
+For the AppAPI/HaRP harness:
+
+```bash
+cd harness
+SPREED_PROFILE=full docker compose -p cassini-exapp-test down --volumes
+```
+
+For the VM harness, use the same command inside `/home/ubuntu/dev/workspace` or
+use the helper documented by the script output.

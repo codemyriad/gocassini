@@ -23,7 +23,8 @@ fi
 log "Ensuring local operator-facing trusted domains"
 # The Nextcloud image's entrypoint already populates trusted_domains 1..4
 # from NEXTCLOUD_TRUSTED_DOMAINS (typically localhost, 127.0.0.1, nextcloud,
-# host.docker.internal). Writing to those low indices clobbers the
+# host.docker.internal, and the browser-facing VM host). Writing to those low
+# indices clobbers the
 # image-supplied entries — most importantly "nextcloud" itself, which the
 # ExApp container uses to reach Nextcloud over the compose network. Without
 # it, any in-network POST/PUT from the ExApp returns Nextcloud's "Access
@@ -34,6 +35,20 @@ occ config:system:set trusted_domains 10 --value="host.docker.internal"
 gateway="$(docker network inspect "${PROJECT_NAME}_default" -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
 if [[ -n "$gateway" ]]; then
   occ config:system:set trusted_domains 11 --value="$gateway"
+fi
+custom_public_host="${CASSINI_HARNESS_HOST:-}"
+custom_public_host="${custom_public_host#http://}"
+custom_public_host="${custom_public_host#https://}"
+custom_public_host="${custom_public_host%%/*}"
+custom_public_host="${custom_public_host%%:*}"
+if [[ -n "$custom_public_host" \
+  && "$custom_public_host" != "localhost" \
+  && "$custom_public_host" != "127.0.0.1" \
+  && "$custom_public_host" != "nextcloud" \
+  && "$custom_public_host" != "host.docker.internal" \
+  && "$custom_public_host" != "reverse-proxy" \
+  && "$custom_public_host" != "$gateway" ]]; then
+  occ config:system:set trusted_domains 12 --value="$custom_public_host"
 fi
 
 if [[ "$SPREED_PROFILE" != "full" ]]; then

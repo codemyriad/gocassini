@@ -9,6 +9,28 @@ PROJECT_NAME="${PROJECT_NAME:-spreedtest}"
 SPREED_PROFILE="${SPREED_PROFILE:-full}"
 HARNESS_SIGNALING_HOST="${HARNESS_SIGNALING_HOST:-}"
 
+harness_route_source_ip() {
+  ip -4 route get 1.1.1.1 2>/dev/null \
+    | awk '{for (i = 1; i <= NF; i++) if ($i == "src") {print $(i + 1); exit}}'
+}
+
+default_harness_host() {
+  if command -v systemd-detect-virt >/dev/null 2>&1 \
+    && ! systemd-detect-virt --container --quiet \
+    && systemd-detect-virt --vm --quiet; then
+    local source_ip
+    source_ip="$(harness_route_source_ip)"
+    if [[ -n "$source_ip" && "$source_ip" != 127.* ]]; then
+      printf '%s\n' "$source_ip"
+      return
+    fi
+  fi
+  printf '127.0.0.1\n'
+}
+
+CASSINI_HARNESS_HOST="${CASSINI_HARNESS_HOST:-$(default_harness_host)}"
+export CASSINI_HARNESS_HOST
+
 # Nextcloud server image for the compose stack. Empty selects the pinned
 # default in compose.yml; CI's NC-compatibility matrix leg overrides it
 # (e.g. NEXTCLOUD_IMAGE=nextcloud:33). Exported because docker compose
