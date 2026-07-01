@@ -356,6 +356,9 @@ bootstrap_nextcloud() {
 
 register_daemon() {
   log "Registering HaRP deploy daemon"
+  occ app_api:daemon:registry:remove harp_sandbox \
+    --registry-from=ghcr.io \
+    --registry-to=local >/dev/null 2>&1 || true
   occ app_api:daemon:unregister harp_sandbox >/dev/null 2>&1 || true
   occ app_api:daemon:register \
     harp_sandbox \
@@ -370,12 +373,17 @@ register_daemon() {
     --harp_shared_key "dogfood-shared-key-not-secret" \
     --set-default \
     --compute_device=cpu
-
-  # Lets AppAPI use locally built ghcr.io/... tags without pulling them from
-  # the registry. Published tags still work normally when the image is absent.
-  occ app_api:daemon:registry:add harp_sandbox \
+  occ app_api:daemon:registry:remove harp_sandbox \
     --registry-from=ghcr.io \
     --registry-to=local >/dev/null 2>&1 || true
+}
+
+pull_cassini_image() {
+  if [[ "$FORCE_BUILD" == "true" ]]; then
+    return 0
+  fi
+  log "Pulling Cassini ExApp image $CASSINI_EXAPP_IMAGE"
+  docker pull "$CASSINI_EXAPP_IMAGE"
 }
 
 register_cassini() {
@@ -413,6 +421,8 @@ render_configs
 if [[ "$FORCE_BUILD" == "true" ]]; then
   log "Building $CASSINI_EXAPP_IMAGE"
   docker build -f "$PROJECT_ROOT/deployment/Dockerfile.exapp" -t "$CASSINI_EXAPP_IMAGE" "$PROJECT_ROOT"
+else
+  pull_cassini_image
 fi
 
 if [[ "$REGISTER_ONLY" != "true" ]]; then
