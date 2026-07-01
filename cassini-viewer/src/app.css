@@ -181,8 +181,11 @@
   color: var(--color-primary-content);
 }
 
-/* All NC modes: explicit card border using NC's border token */
+/* All NC modes: explicit borders using NC's border token (border-width resets to 0 in shadow DOM) */
 :host([data-nc-theme]) .cassini-root .meeting-list button:not([aria-current="page"]) {
+  border: 1px solid var(--color-border-dark);
+}
+:host([data-nc-theme]) .cassini-root .card.border-base-300 {
   border: 1px solid var(--color-border-dark);
 }
 
@@ -214,7 +217,7 @@
   color: var(--color-base-content);
 }
 :host([data-nc-theme*="highcontrast"]) .cassini-root .card.border-base-300 {
-  border: 1px solid var(--color-border-dark);
+  border: 2px solid var(--color-main-text);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
