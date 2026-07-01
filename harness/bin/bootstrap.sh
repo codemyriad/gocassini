@@ -36,19 +36,36 @@ gateway="$(docker network inspect "${PROJECT_NAME}_default" -f '{{(index .IPAM.C
 if [[ -n "$gateway" ]]; then
   occ config:system:set trusted_domains 11 --value="$gateway"
 fi
-custom_public_host="${CASSINI_HARNESS_HOST:-}"
-custom_public_host="${custom_public_host#http://}"
-custom_public_host="${custom_public_host#https://}"
-custom_public_host="${custom_public_host%%/*}"
-custom_public_host="${custom_public_host%%:*}"
-if [[ -n "$custom_public_host" \
-  && "$custom_public_host" != "localhost" \
-  && "$custom_public_host" != "127.0.0.1" \
-  && "$custom_public_host" != "nextcloud" \
-  && "$custom_public_host" != "host.docker.internal" \
-  && "$custom_public_host" != "reverse-proxy" \
-  && "$custom_public_host" != "$gateway" ]]; then
-  occ config:system:set trusted_domains 12 --value="$custom_public_host"
+trusted_index=12
+add_trusted_domain() {
+  local host="$1"
+  host="$(harness_url_host "$host")"
+  if [[ -n "$host" \
+    && "$host" != "localhost" \
+    && "$host" != "127.0.0.1" \
+    && "$host" != "nextcloud" \
+    && "$host" != "host.docker.internal" \
+    && "$host" != "reverse-proxy" \
+    && "$host" != "$gateway" ]]; then
+    occ config:system:set trusted_domains "$trusted_index" --value="$host"
+    trusted_index=$((trusted_index + 1))
+  fi
+}
+add_trusted_domain "${CASSINI_HARNESS_HOST:-}"
+add_trusted_domain "${CASSINI_HARNESS_PUBLIC_HOST:-}"
+
+if [[ -n "${CASSINI_HARNESS_PUBLIC_URL:-}" ]]; then
+  public_scheme="$(harness_url_scheme "$CASSINI_HARNESS_PUBLIC_URL")"
+  public_hostport="$(harness_url_hostport "$CASSINI_HARNESS_PUBLIC_URL")"
+  log "Configuring public HTTPS origin: $CASSINI_HARNESS_PUBLIC_URL"
+  occ config:system:set overwriteprotocol --value="$public_scheme"
+  occ config:system:set overwritehost --value="$public_hostport"
+  occ config:system:set overwrite.cli.url --value="$CASSINI_HARNESS_PUBLIC_URL"
+  occ config:system:set trusted_proxies 10 --value="127.0.0.1"
+  occ config:system:set trusted_proxies 11 --value="::1"
+  if [[ -n "$gateway" ]]; then
+    occ config:system:set trusted_proxies 12 --value="$gateway"
+  fi
 fi
 
 if [[ "$SPREED_PROFILE" != "full" ]]; then

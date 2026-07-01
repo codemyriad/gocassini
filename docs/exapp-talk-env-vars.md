@@ -66,8 +66,12 @@ Important parity vars:
 | `CASSINI_TALK_RECORDING_SECRET` | dev fallback or generated | Secret written into Talk `recording_servers`; must be passed into installed ExApp. |
 | `SIGNALING_INTERNAL_SECRET` | dev fallback from harness common | Secret in signaling config; must be passed as `CASSINI_TALK_SIGNALING_INTERNAL_SECRET`. |
 | `CASSINI_HARNESS_VM` | `true` | Makes `cassini dev stack up/down` use `harness/vm`. |
-| `CASSINI_HARNESS_HOST` | VM IP, e.g. `192.168.252.29` | Browser-facing host/IP for VM harness URLs and ICE/TURN config. |
-| `NEXTCLOUD_URL` | Usually `http://<host>:28080` | Harness client-side Nextcloud URL. |
+| `CASSINI_HARNESS_HOST` | VM IP, e.g. `192.168.252.29` | Legacy browser-facing host/IP for VM/LAN harness URLs. |
+| `CASSINI_HARNESS_PUBLIC_URL` | `https://<16a-fqdn>` | Browser-facing HTTPS origin when the active `harness/` stack is served through a trusted proxy such as Tailscale Serve. Enables Nextcloud HTTPS overwrite config and public call URLs. |
+| `CASSINI_HARNESS_PUBLIC_HOST` | `<16a-fqdn>` | Bare public hostname for trusted domains, Docker-network split DNS, and signaling backend allow-list entries. Derived from `CASSINI_HARNESS_PUBLIC_URL` when omitted. |
+| `CASSINI_HARNESS_MEDIA_HOST` | `<16a-tailscale-ip>` | Host/IP advertised to browser WebRTC via Janus and TURN. Also defaults `TURN_SERVER` to `<media-host>:13479`. |
+| `CASSINI_HARNESS_SIGNALING_PUBLIC_URL` | `https://<16a-fqdn>:8443` | Optional override for the browser-facing standalone signaling URL; otherwise remote mode derives this from the public host. |
+| `NEXTCLOUD_URL` | Usually `http://127.0.0.1:28080` | Harness script/API URL for local Nextcloud access. Public room links use `NEXTCLOUD_PUBLIC_URL` / `CASSINI_HARNESS_PUBLIC_URL` when set. |
 
 ## Registration shape after D-395
 

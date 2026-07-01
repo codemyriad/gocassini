@@ -56,6 +56,9 @@ fi
 
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$HARNESS_DIR/compose.yml")
 COMPOSE_FULL=(docker compose -p "$PROJECT_NAME" -f "$HARNESS_DIR/compose.yml" --profile full)
+if harness_remote_config_requested; then
+  COMPOSE_FULL+=(--profile remote)
+fi
 
 log() {
   printf '\n\033[1;34m==>\033[0m \033[1m%s\033[0m\n' "$*"
@@ -212,13 +215,16 @@ EOF_CONF
 }
 
 if [[ "$SPREED_PROFILE" == "full" ]]; then
-  render_full_profile_signaling_conf
+  harness_render_full_profile_configs true
 fi
 
 log "3. Starting nextcloud, db, appapi-harp, reverse-proxy..."
 compose_services=(nextcloud db appapi-harp reverse-proxy)
 if [[ "$SPREED_PROFILE" == "full" ]]; then
   compose_services+=(nats janus signaling coturn)
+  if harness_remote_config_requested; then
+    compose_services+=(signaling-public-proxy)
+  fi
 fi
 "${COMPOSE[@]}" up -d "${compose_services[@]}"
 
@@ -325,9 +331,9 @@ export OC_PASS="Tn8mY3qVrJ2x!E2e"
 unset OC_PASS
 
 PROXY_URL="http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini"
-PUBLIC_NEXTCLOUD_HOST="${CASSINI_HARNESS_HOST:-127.0.0.1}"
-PUBLIC_NEXTCLOUD_URL="http://${PUBLIC_NEXTCLOUD_HOST}:${NEXTCLOUD_HOST_PORT:-28080}"
-PUBLIC_PROXY_URL="${PUBLIC_NEXTCLOUD_URL}/index.php/apps/app_api/proxy/gocassini"
+PUBLIC_NEXTCLOUD_HOST="${CASSINI_HARNESS_PUBLIC_HOST:-${CASSINI_HARNESS_HOST:-127.0.0.1}}"
+PUBLIC_NEXTCLOUD_URL="${CASSINI_HARNESS_PUBLIC_URL:-http://${PUBLIC_NEXTCLOUD_HOST}:${NEXTCLOUD_HOST_PORT:-28080}}"
+PUBLIC_PROXY_URL="${PUBLIC_NEXTCLOUD_URL%/}/index.php/apps/app_api/proxy/gocassini"
 REGISTER_LOG="$HARNESS_DIR/runtime/manual-test-register.log"
 mkdir -p "$HARNESS_DIR/runtime"
 

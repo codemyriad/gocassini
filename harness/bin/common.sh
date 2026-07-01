@@ -28,8 +28,77 @@ default_harness_host() {
   printf '127.0.0.1\n'
 }
 
+harness_url_hostport() {
+  local value="$1"
+  value="${value#http://}"
+  value="${value#https://}"
+  value="${value%%/*}"
+  value="${value%/}"
+  printf '%s\n' "$value"
+}
+
+harness_url_host() {
+  local hostport
+  hostport="$(harness_url_hostport "$1")"
+  if [[ "$hostport" == \[*\]* ]]; then
+    hostport="${hostport#\[}"
+    hostport="${hostport%%\]*}"
+  else
+    hostport="${hostport%%:*}"
+  fi
+  printf '%s\n' "$hostport"
+}
+
+harness_url_scheme() {
+  local value="$1"
+  if [[ "$value" == *"://"* ]]; then
+    printf '%s\n' "${value%%://*}"
+  else
+    printf 'http\n'
+  fi
+}
+
+harness_url_origin() {
+  local value="$1"
+  local scheme hostport
+  scheme="$(harness_url_scheme "$value")"
+  hostport="$(harness_url_hostport "$value")"
+  if [[ -n "$hostport" ]]; then
+    printf '%s://%s\n' "$scheme" "$hostport"
+  fi
+}
+
+harness_is_builtin_host() {
+  case "$1" in
+    ""|127.0.0.1|localhost|nextcloud|host.docker.internal|reverse-proxy)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 CASSINI_HARNESS_HOST="${CASSINI_HARNESS_HOST:-$(default_harness_host)}"
-export CASSINI_HARNESS_HOST
+CASSINI_HARNESS_PUBLIC_URL="${CASSINI_HARNESS_PUBLIC_URL:-}"
+if [[ -z "$CASSINI_HARNESS_PUBLIC_URL" && -n "${CASSINI_HARNESS_PUBLIC_HOST:-}" ]]; then
+  CASSINI_HARNESS_PUBLIC_URL="https://${CASSINI_HARNESS_PUBLIC_HOST}"
+fi
+CASSINI_HARNESS_PUBLIC_URL="${CASSINI_HARNESS_PUBLIC_URL%/}"
+CASSINI_HARNESS_PUBLIC_HOST="${CASSINI_HARNESS_PUBLIC_HOST:-}"
+if [[ -z "$CASSINI_HARNESS_PUBLIC_HOST" && -n "$CASSINI_HARNESS_PUBLIC_URL" ]]; then
+  CASSINI_HARNESS_PUBLIC_HOST="$(harness_url_host "$CASSINI_HARNESS_PUBLIC_URL")"
+fi
+CASSINI_HARNESS_PUBLIC_HOSTPORT=""
+if [[ -n "$CASSINI_HARNESS_PUBLIC_URL" ]]; then
+  CASSINI_HARNESS_PUBLIC_HOSTPORT="$(harness_url_hostport "$CASSINI_HARNESS_PUBLIC_URL")"
+fi
+CASSINI_HARNESS_MEDIA_HOST="${CASSINI_HARNESS_MEDIA_HOST:-}"
+if [[ -z "$CASSINI_HARNESS_MEDIA_HOST" ]] && ! harness_is_builtin_host "$CASSINI_HARNESS_HOST"; then
+  CASSINI_HARNESS_MEDIA_HOST="$CASSINI_HARNESS_HOST"
+fi
+CASSINI_HARNESS_SIGNALING_PUBLIC_URL="${CASSINI_HARNESS_SIGNALING_PUBLIC_URL:-}"
+export CASSINI_HARNESS_HOST CASSINI_HARNESS_PUBLIC_URL CASSINI_HARNESS_PUBLIC_HOST CASSINI_HARNESS_PUBLIC_HOSTPORT CASSINI_HARNESS_MEDIA_HOST CASSINI_HARNESS_SIGNALING_PUBLIC_URL
 
 # Nextcloud server image for the compose stack. Empty selects the pinned
 # default in compose.yml; CI's NC-compatibility matrix leg overrides it
@@ -57,6 +126,8 @@ default_signaling_url() {
 # get a matching URL in every callee that sources this file.
 NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://127.0.0.1:${NEXTCLOUD_HOST_PORT:-28080}}"
 NEXTCLOUD_STATUS_URL="${NEXTCLOUD_STATUS_URL:-$NEXTCLOUD_URL/status.php}"
+NEXTCLOUD_PUBLIC_URL="${NEXTCLOUD_PUBLIC_URL:-${CASSINI_HARNESS_PUBLIC_URL:-$NEXTCLOUD_URL}}"
+NEXTCLOUD_PUBLIC_URL="${NEXTCLOUD_PUBLIC_URL%/}"
 
 ADMIN_USER="${ADMIN_USER:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
@@ -67,10 +138,16 @@ BOT_PASSWORD="${BOT_PASSWORD:-zN4vQ9mT2Kp7R1x!}"
 # and must never be reused for real Nextcloud, Talk, signaling, TURN, or
 # Cassini deployments.
 # Keep empty by default here: bootstrap resolves an effective signaling URL
-# after Docker networking is up.
-SIGNALING_URL="${SIGNALING_URL:-}"
+# after Docker networking is up. In remote HTTPS mode, default to the
+# Tailscale-Serve/Caddy-facing signaling URL so the browser gets WSS instead
+# of mixed-content ws:// signaling.
+SIGNALING_URL="${SIGNALING_URL:-${CASSINI_HARNESS_SIGNALING_PUBLIC_URL:-}}"
+if [[ -z "$SIGNALING_URL" && -n "$CASSINI_HARNESS_PUBLIC_HOSTPORT" ]]; then
+  SIGNALING_URL="https://${CASSINI_HARNESS_PUBLIC_HOST}:8443"
+fi
 SIGNALING_SHARED_SECRET="${SIGNALING_SHARED_SECRET:-7f4dca67263621ba7f9f9917e13de95a201f6f360be0d303e3008c2e6c8ad37d}"
 SIGNALING_INTERNAL_SECRET="${SIGNALING_INTERNAL_SECRET:-6f4dca67263621ba7f9f9917e13de95a201f6f360be0d303e3008c2e6c8ad37d}"
+TURN_SERVER="${TURN_SERVER:-${CASSINI_HARNESS_MEDIA_HOST:+$CASSINI_HARNESS_MEDIA_HOST:13479}}"
 TURN_SERVER="${TURN_SERVER:-127.0.0.1:13479}"
 TURN_SHARED_SECRET="${TURN_SHARED_SECRET:-3c04d2fc2f7fe39d48eb4dc77f652c8c778a4ea178b0e486529b284afca7b648}"
 CASSINI_TALK_RECORDING_URL="${CASSINI_TALK_RECORDING_URL:-}"
@@ -84,6 +161,264 @@ export CASSINI_TALK_RECORDING_SECRET CASSINI_TALK_SIGNALING_INTERNAL_SECRET
 RUNTIME_DIR="$TEST_DIR/runtime"
 MEDIA_DIR="$TEST_DIR/media"
 mkdir -p "$RUNTIME_DIR" "$MEDIA_DIR"
+
+harness_remote_config_requested() {
+  [[ -n "$CASSINI_HARNESS_PUBLIC_URL" || -n "$CASSINI_HARNESS_MEDIA_HOST" || -n "$CASSINI_HARNESS_SIGNALING_PUBLIC_URL" ]]
+}
+
+harness_add_unique() {
+  local __array_name="$1"
+  local value="$2"
+  [[ -n "$value" ]] || return 0
+  local existing
+  local -a current_values=()
+  eval "current_values=(\"\${${__array_name}[@]}\")"
+  for existing in "${current_values[@]}"; do
+    if [[ "$existing" == "$value" ]]; then
+      return 0
+    fi
+  done
+  eval "${__array_name}+=(\"\$value\")"
+}
+
+harness_render_full_profile_configs() {
+  local allowall="${1:-false}"
+  local generated_dir="$RUNTIME_DIR/generated"
+  local generated_janus_dir="$generated_dir/janus"
+  local nextcloud_port="${NEXTCLOUD_HOST_PORT:-28080}"
+  local signaling_conf="$generated_dir/signaling.conf"
+  local janus_conf="$generated_janus_dir/janus.jcfg"
+  local turn_conf="$generated_dir/turnserver.conf"
+  local proxy_conf="$generated_dir/signaling-public-proxy.conf"
+  local proxy_cert="$generated_dir/signaling-public-proxy.crt"
+  local proxy_key="$generated_dir/signaling-public-proxy.key"
+  local proxy_cert_conf="$generated_dir/signaling-public-proxy.openssl.cnf"
+  local media_host="${CASSINI_HARNESS_MEDIA_HOST:-127.0.0.1}"
+  local public_host="${CASSINI_HARNESS_PUBLIC_HOST:-localhost}"
+
+  mkdir -p "$generated_dir" "$generated_janus_dir"
+
+  local -a backend_urls=()
+  harness_add_unique backend_urls "http://127.0.0.1:${nextcloud_port}"
+  harness_add_unique backend_urls "http://localhost:${nextcloud_port}"
+  harness_add_unique backend_urls "http://host.docker.internal:${nextcloud_port}"
+
+  if ! harness_is_builtin_host "$CASSINI_HARNESS_HOST"; then
+    harness_add_unique backend_urls "http://$(harness_url_host "$CASSINI_HARNESS_HOST"):${nextcloud_port}"
+  fi
+
+  if command -v hostname >/dev/null 2>&1; then
+    local host_ip
+    for host_ip in $(hostname -I 2>/dev/null || true); do
+      harness_add_unique backend_urls "http://${host_ip}:${nextcloud_port}"
+    done
+  fi
+
+  if [[ -n "$CASSINI_HARNESS_PUBLIC_URL" ]]; then
+    harness_add_unique backend_urls "$(harness_url_origin "$CASSINI_HARNESS_PUBLIC_URL")"
+  fi
+
+  local backend_names=""
+  local i
+  for i in "${!backend_urls[@]}"; do
+    if [[ -n "$backend_names" ]]; then
+      backend_names+=", "
+    fi
+    backend_names+="backend-$((i + 1))"
+  done
+
+  {
+    cat <<EOF_CONF
+[http]
+listen = 0.0.0.0:28082
+
+[app]
+debug = false
+
+[sessions]
+hashkey = 39a5433df8f8334f6eff8a67f6afcfc594a2599f5389b4fef316ec30277fb910
+
+[clients]
+internalsecret = $SIGNALING_INTERNAL_SECRET
+
+[backend]
+backends = $backend_names
+allowall = $allowall
+EOF_CONF
+    if [[ "$allowall" == "true" ]]; then
+      cat <<EOF_CONF
+# Dev harness only. Allows callbacks that present Docker-internal backend
+# names such as reverse-proxy while still using the shared backend secret.
+secret = $SIGNALING_SHARED_SECRET
+EOF_CONF
+    fi
+    cat <<EOF_CONF
+timeout = 10
+connectionsperhost = 16
+
+EOF_CONF
+    for i in "${!backend_urls[@]}"; do
+      cat <<EOF_CONF
+[backend-$((i + 1))]
+url = ${backend_urls[$i]}
+secret = $SIGNALING_SHARED_SECRET
+
+EOF_CONF
+    done
+    cat <<EOF_CONF
+[nats]
+url = nats://127.0.0.1:14222
+
+[mcu]
+type = janus
+url = ws://127.0.0.1:28188
+adminkey = 01e2fcd0d226d7f4cf34a8a61397f110693f05042e57ab68e94f8476a4b8f22a
+
+[turn]
+apikey = 127.0.0.1
+secret = $TURN_SHARED_SECRET
+servers = turn:$TURN_SERVER?transport=udp,turn:$TURN_SERVER?transport=tcp
+EOF_CONF
+  } >"$signaling_conf"
+
+  cat >"$janus_conf" <<EOF_CONF
+general: {
+  debug_level = 4
+  admin_secret = "01e2fcd0d226d7f4cf34a8a61397f110693f05042e57ab68e94f8476a4b8f22a"
+  plugins_folder = "/usr/local/lib/janus/plugins"
+  transports_folder = "/usr/local/lib/janus/transports"
+  events_folder = "/usr/local/lib/janus/events"
+}
+
+nat: {
+  # Rendered by harness/bin/common.sh for remote browser access.
+  nat_1_1_mapping = "$media_host"
+}
+
+media: {
+  rtp_port_range = "20000-20100"
+}
+
+admin: {
+  admin_port = 17088
+  admin_secret = "01e2fcd0d226d7f4cf34a8a61397f110693f05042e57ab68e94f8476a4b8f22a"
+}
+EOF_CONF
+
+  cat >"$turn_conf" <<EOF_CONF
+# Rendered local coturn config for the test harness.
+listening-port=13479
+tls-listening-port=0
+
+external-ip=$media_host
+relay-ip=$media_host
+
+min-port=49160
+max-port=49200
+
+use-auth-secret
+static-auth-secret=$TURN_SHARED_SECRET
+realm=localhost
+
+fingerprint
+no-cli
+no-tls
+no-dtls
+
+log-file=stdout
+verbose
+EOF_CONF
+
+  cat >"$proxy_conf" <<'EOF_CONF'
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  '' close;
+}
+
+server {
+  listen 443 ssl;
+  server_name _;
+
+  ssl_certificate /etc/nginx/certs/signaling.crt;
+  ssl_certificate_key /etc/nginx/certs/signaling.key;
+
+  location / {
+    proxy_pass http://nextcloud:80;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  }
+}
+
+server {
+  listen 8443 ssl;
+  server_name _;
+
+  ssl_certificate /etc/nginx/certs/signaling.crt;
+  ssl_certificate_key /etc/nginx/certs/signaling.key;
+
+  # Split-horizon helper for Nextcloud server-side HPB notifications.
+  # The Mac browser reaches the real signaling server through Tailscale Serve,
+  # but containers on hardened Linux hosts may be unable to hairpin to host
+  # ports. Talk treats non-2xx or unreachable backend notifications as fatal
+  # for room creation, so the Docker-network alias answers the server-side
+  # compatibility/notification endpoint while browser WSS still uses the real
+  # host signaling service.
+  location /api/v1/ {
+    add_header X-Spreed-Signaling-Features "audio-video-permissions, federation, incall-all, hello-v2, switchto" always;
+    add_header Content-Type application/json always;
+    return 200 '{"nextcloud-spreed-signaling":"Welcome","version":"2.1.1~docker"}';
+  }
+
+  location / {
+    return 404;
+  }
+}
+EOF_CONF
+
+  cat >"$proxy_cert_conf" <<EOF_CONF
+[req]
+prompt = no
+distinguished_name = req_distinguished_name
+x509_extensions = v3_req
+
+[req_distinguished_name]
+CN = $public_host
+
+[v3_req]
+subjectAltName = DNS:$public_host
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+EOF_CONF
+  if command -v openssl >/dev/null 2>&1; then
+    openssl req -x509 -nodes -newkey rsa:2048 -days 14 \
+      -keyout "$proxy_key" \
+      -out "$proxy_cert" \
+      -config "$proxy_cert_conf" >/dev/null 2>&1
+  elif command -v docker >/dev/null 2>&1; then
+    docker run --rm --user "$(id -u):$(id -g)" \
+      -v "$generated_dir:/out" \
+      alpine/openssl req -x509 -nodes -newkey rsa:2048 -days 14 \
+      -keyout "/out/$(basename "$proxy_key")" \
+      -out "/out/$(basename "$proxy_cert")" \
+      -config "/out/$(basename "$proxy_cert_conf")" >/dev/null 2>&1
+  else
+    echo "openssl or Docker is required to generate the remote signaling proxy certificate" >&2
+    return 1
+  fi
+  chmod 0600 "$proxy_key"
+
+  export SIGNALING_CONF="$signaling_conf"
+  export JANUS_CONF="$janus_conf"
+  export TURN_CONF="$turn_conf"
+  export SIGNALING_PUBLIC_PROXY_CONF="$proxy_conf"
+  export SIGNALING_PUBLIC_PROXY_CERT="$proxy_cert"
+  export SIGNALING_PUBLIC_PROXY_KEY="$proxy_key"
+  log "Rendered full-profile harness config (public: ${CASSINI_HARNESS_PUBLIC_URL:-local}, media: $media_host, signaling allowall: $allowall)"
+}
 
 log() {
   printf '[test] %s\n' "$*"
@@ -167,6 +502,9 @@ compose() {
   local profile_args=()
   if [[ "$SPREED_PROFILE" == "full" ]]; then
     profile_args+=(--profile full)
+  fi
+  if harness_remote_config_requested; then
+    profile_args+=(--profile remote)
   fi
   docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "${profile_args[@]}" "$@"
 }

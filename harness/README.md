@@ -70,6 +70,33 @@ One-command smoke test:
 ../bin/cassini dev smoke
 ```
 
+## Remote HTTPS / Tailscale browser harness
+
+For a browser on another machine, serve Nextcloud and signaling through a
+trusted HTTPS origin (for example Tailscale Serve) and make the harness render
+remote-safe signaling, Janus, and TURN config:
+
+```bash
+TS_FQDN="$(tailscale status --self --json | jq -r '.Self.DNSName | sub("\\.$"; "")')"
+TS_IP="$(tailscale ip -4)"
+
+sudo tailscale serve --bg --https=443 http://127.0.0.1:28080
+sudo tailscale serve --bg --https=8443 http://127.0.0.1:28082
+
+export SPREED_PROFILE=full
+export CASSINI_HARNESS_PUBLIC_URL="https://${TS_FQDN}"
+export CASSINI_HARNESS_PUBLIC_HOST="${TS_FQDN}"
+export CASSINI_HARNESS_MEDIA_HOST="${TS_IP}"
+./harness/bin/up.sh
+```
+
+Remote mode keeps the normal local harness behavior unchanged unless one of the
+`CASSINI_HARNESS_PUBLIC_*` / `CASSINI_HARNESS_MEDIA_HOST` variables is set. It
+also starts an internal Docker-network HTTPS helper for Nextcloud's server-side
+signaling notifications on hardened hosts where containers cannot hairpin to
+host ports; the Mac browser still connects to the real host signaling service
+through Tailscale Serve.
+
 ## D-283 internal HPB proof
 
 The harness now carries a standalone signaling `internalsecret` in:
