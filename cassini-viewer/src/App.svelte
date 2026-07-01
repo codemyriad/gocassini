@@ -1050,11 +1050,11 @@
      root. The <dialog> below is wrapped too so [data-theme] styles it (showModal
      keeps it in-tree for inheritance even when promoted to the top layer). -->
 <div bind:this={rootEl} class="cassini-root" data-theme={themeMode} class:theme-switching={themeSwitching}>
-<div class="grid grid-cols-1 min-[981px]:grid-cols-[400px_1fr] h-full bg-base-200 overflow-x-clip">
+<div class="grid grid-cols-1 min-[981px]:grid-cols-[400px_1fr] grid-rows-1 h-full bg-base-200 overflow-x-clip">
   {#if isDesktop || !selectedMeetingId}
     <section
       aria-label="Meeting list"
-      class="meeting-list flex flex-col row-start-1 col-start-1 h-full min-w-0 min-[981px]:sticky min-[981px]:top-0 bg-base-100 backdrop-blur-xl border-r border-base-300"
+      class="meeting-list flex flex-col row-start-1 col-start-1 h-full min-h-0 min-w-0 min-[981px]:sticky min-[981px]:top-0 bg-base-100 backdrop-blur-xl border-r border-base-300"
       transition:fly={regionFlyConfig(-1)}
     >
       <!-- Scroll container holds the sticky header so cards visibly scroll
@@ -1136,7 +1136,7 @@
   {#if isDesktop || selectedMeetingId}
     <section
       aria-label="Meeting view"
-      class="meeting-viewer relative flex flex-col row-start-1 col-start-1 min-[981px]:col-start-2 h-full min-w-0"
+      class="meeting-viewer relative flex flex-col row-start-1 col-start-1 min-[981px]:col-start-2 h-full min-h-0 min-w-0"
       transition:fly={regionFlyConfig(1)}
     >
       <!-- Scroll container: holds the sticky header and all main content.
