@@ -6,7 +6,7 @@ on:
       image_tag:
         description: Tag to publish and deploy
         type: string
-        default: sandbox
+        default: main
       reset:
         description: Reset sandbox volumes before deploying
         type: boolean
