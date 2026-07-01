@@ -1,0 +1,228 @@
+---
+import '../tailwind.css';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import { docsNav } from '../docs-nav';
+import { AlignLeft, ChevronLeft, ChevronRight } from '@lucide/astro';
+import { ViewTransitions } from 'astro:transitions';
+
+interface Props {
+  title: string;
+  description?: string;
+  headings: import('astro').MarkdownHeading[];
+  currentSlug: string;
+}
+
+const { title, description, headings, currentSlug } = Astro.props;
+const rawBase = import.meta.env.BASE_URL;
+const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
+
+// Flat ordered list for prev/next navigation
+const allItems = docsNav.flatMap(s => s.items);
+const currentIndex = allItems.findIndex(i => i.slug === currentSlug);
+const prevItem = currentIndex > 0 ? allItems[currentIndex - 1] : null;
+const nextItem = currentIndex < allItems.length - 1 ? allItems[currentIndex + 1] : null;
+
+// Breadcrumb: find the section + label for the current page
+const currentSection = docsNav.find(s => s.items.some(i => i.slug === currentSlug));
+const currentItem = currentSection?.items.find(i => i.slug === currentSlug);
+
+// Filter TOC to h2 and h3 only
+const toc = headings.filter(h => h.depth === 2 || h.depth === 3);
+---
+
+<!doctype html>
+<html lang="en" data-theme="forrest-dark" style="height: 100%; overflow: hidden;">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title} — Cassini Docs</title>
+    {description && <meta name="description" content={description} />}
+    <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
+    <ViewTransitions />
+    <script is:inline>
+      (function() {
+        const saved = localStorage.getItem('cassini-theme');
+        document.documentElement.setAttribute('data-theme', saved || 'forrest-dark');
+      })();
+    </script>
+  </head>
+  <body class="h-full overflow-hidden flex flex-col bg-base-200 text-base-content">
+    <!-- Top nav -->
+    <Nav />
+
+    <!-- Border line pinned just below the fixed nav -->
+    <div class="fixed top-[60px] left-0 right-0 h-px bg-base-300 z-40"></div>
+
+    <!-- Page body: sidebar + content + TOC -->
+    <div class="flex overflow-hidden" style="height: calc(100vh - 61px); margin-top: 61px;">
+
+      <!-- Sidebar overlay backdrop (mobile) -->
+      <div
+        id="sidebar-backdrop"
+        class="fixed inset-0 z-[52] bg-base-100/60 backdrop-blur-sm opacity-0 pointer-events-none transition-opacity duration-300 md:hidden"
+        aria-hidden="true"
+      ></div>
+
+      <!-- Sidebar -->
+      <aside
+        id="docs-sidebar"
+        class="fixed top-0 left-0 bottom-0 z-[53] w-64 bg-base-200 border-r border-base-300 overflow-y-auto
+               translate-x-[-100%] transition-transform duration-300 ease-in-out
+               md:translate-x-0 md:sticky md:top-[60px] md:h-[calc(100vh-60px)]"
+      >
+        <nav class="p-4 flex flex-col gap-6">
+          {docsNav.map(section => (
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-wider text-base-content/30 mb-2 px-2">
+                {section.section}
+              </p>
+              <ul class="flex flex-col gap-0.5">
+                {section.items.map(item => {
+                  const isActive = currentSlug === item.slug || (currentSlug === '' && item.slug === '');
+                  return (
+                    <li>
+                      <a
+                        href={`${base}docs/${item.slug}`}
+                        data-sidebar-link
+                        class={`block px-2 py-1.5 text-sm rounded transition-colors
+                          ${isActive
+                            ? 'text-primary bg-base-100'
+                            : 'text-base-content hover:bg-base-100/60'
+                          }`}
+                      >
+                        {item.label}
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </nav>
+      </aside>
+
+      <!-- Main content -->
+      <main class="flex-1 min-w-0 flex flex-col overflow-y-auto scroll-pt-8 scroll-smooth">
+        <!-- Toolbar row: mobile sidebar toggle + breadcrumb -->
+        <div class="sticky top-0 z-10 flex items-center gap-3 px-5 py-2.5 border-b border-base-300 bg-base-200 md:hidden">
+          <button
+            id="sidebar-toggle"
+            class="flex items-center gap-1.5 min-w-0 text-base-content/50 hover:text-base-content/70 transition-colors cursor-pointer"
+            aria-label="Toggle sidebar"
+          >
+            <span class="shrink-0"><AlignLeft size={15} /></span>
+            {currentSection && currentItem ? (
+              <span class="flex items-center gap-1.5 text-sm min-w-0">
+                <span class="truncate">{currentSection.section}</span>
+                <span class="shrink-0">/</span>
+                <span class="truncate text-base-content">{currentItem.label}</span>
+              </span>
+            ) : (
+              <span class="text-sm text-base-content">Docs</span>
+            )}
+          </button>
+        </div>
+
+        <div class="flex flex-1 gap-0">
+          <!-- Article -->
+          <article class="flex-1 min-w-0 px-6 py-8 md:px-10 md:py-10">
+            <div class="prose prose-base max-w-none
+              prose-headings:text-base-content
+              prose-p:text-base-content/90
+              prose-a:text-primary hover:prose-a:text-primary/80
+              prose-strong:text-base-content
+              prose-code:text-primary prose-code:bg-base-200 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-sm
+              prose-pre:bg-base-200 prose-pre:border prose-pre:border-base-300
+              prose-blockquote:border-primary prose-blockquote:text-base-content/70
+              prose-hr:border-base-300
+              prose-th:text-base-content prose-td:text-base-content/90
+            ">
+              <slot />
+            </div>
+            {(prevItem || nextItem) && (
+              <nav class="flex items-center justify-between gap-4 mt-16 pt-6 border-t border-base-300">
+                {prevItem ? (
+                  <a href={`${base}docs/${prevItem.slug}`} class="group flex items-center gap-2 p-3 rounded-lg hover:bg-base-300/30 transition-colors">
+                    <ChevronLeft size={24} class="shrink-0 text-base-content/30" />
+                    <span class="flex flex-col gap-0.5 text-sm">
+                      <span class="text-base-content/30 text-xs uppercase tracking-wider">Previous</span>
+                      <span class="text-base-content group-hover:text-primary transition-colors">{prevItem.label}</span>
+                    </span>
+                  </a>
+                ) : <span />}
+                {nextItem && (
+                  <a href={`${base}docs/${nextItem.slug}`} class="group flex items-center gap-2 p-3 rounded-lg hover:bg-base-300/30 transition-colors">
+                    <span class="flex flex-col gap-0.5 text-sm text-right">
+                      <span class="text-base-content/30 text-xs uppercase tracking-wider">Next</span>
+                      <span class="text-base-content group-hover:text-primary transition-colors">{nextItem.label}</span>
+                    </span>
+                    <ChevronRight size={24} class="shrink-0 text-base-content/30" />
+                  </a>
+                )}
+              </nav>
+            )}
+          </article>
+
+          <!-- Right TOC — xl+ only -->
+          {toc.length > 0 && (
+            <aside class="hidden lg:block w-56 xl:w-72 shrink-0 pb-8 pr-6 pt-0">
+              <div class="sticky top-10">
+                <p class="text-xs font-semibold uppercase tracking-wider text-base-content/30 mb-3">Contents</p>
+                <nav>
+                  <ul class="flex flex-col gap-1">
+                    {toc.map(heading => (
+                      <li class={heading.depth === 3 ? 'pl-3' : ''}>
+                        <a
+                          href={`#${heading.slug}`}
+                          class="text-sm text-base-content/60 hover:text-primary transition-colors leading-snug block py-0.5"
+                        >
+                          {heading.text}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </nav>
+              </div>
+            </aside>
+          )}
+        </div>
+      </main>
+
+    </div>
+
+    <script>
+      function initSidebar() {
+        const sidebar = document.getElementById('docs-sidebar');
+        const backdrop = document.getElementById('sidebar-backdrop');
+
+        function openSidebar() {
+          sidebar?.classList.remove('translate-x-[-100%]');
+          sidebar?.classList.add('translate-x-0');
+          backdrop?.classList.remove('opacity-0', 'pointer-events-none');
+          backdrop?.classList.add('opacity-100');
+        }
+
+        function closeSidebar() {
+          sidebar?.classList.add('translate-x-[-100%]');
+          sidebar?.classList.remove('translate-x-0');
+          backdrop?.classList.add('opacity-0', 'pointer-events-none');
+          backdrop?.classList.remove('opacity-100');
+        }
+
+        document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
+          const isOpen = !sidebar?.classList.contains('translate-x-[-100%]');
+          isOpen ? closeSidebar() : openSidebar();
+        });
+
+        backdrop?.addEventListener('click', closeSidebar);
+
+        document.querySelectorAll('[data-sidebar-link]').forEach(link => {
+          link.addEventListener('click', closeSidebar);
+        });
+      }
+
+      document.addEventListener('astro:page-load', initSidebar);
+    </script>
+  </body>
+</html>

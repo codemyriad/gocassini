@@ -1,0 +1,32 @@
+---
+import '../tailwind.css';
+import { ViewTransitions } from 'astro:transitions';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+const rawBase = import.meta.env.BASE_URL;
+const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
+---
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cassini</title>
+  <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
+  <ViewTransitions />
+</head>
+<body class="bg-base-100 text-base-content min-h-screen flex flex-col">
+
+  <Nav transition:persist="site-nav" />
+
+  <main class="flex-1 flex items-center justify-center pt-24 pb-16 px-5">
+    <div class="w-full max-w-7xl border-2 border-dashed border-base-300 rounded-2xl min-h-[400px] flex items-center justify-center">
+      <span class="text-base-content/30 text-sm font-medium select-none">Page content goes here</span>
+    </div>
+  </main>
+
+  <Footer />
+
+</body>
+</html>
