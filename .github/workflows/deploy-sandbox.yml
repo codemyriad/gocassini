@@ -1,0 +1,97 @@
+name: Deploy Sandbox
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Tag to publish and deploy
+        type: string
+        default: sandbox
+      reset:
+        description: Reset sandbox volumes before deploying
+        type: boolean
+        default: false
+      register_only:
+        description: Only re-register Cassini, without restarting the stack
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-sandbox
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository_owner }}/gocassini
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: Sandbox
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image ref
+        id: image
+        run: |
+          set -euo pipefail
+          raw_tag="${{ inputs.image_tag }}"
+          safe_tag="$(printf '%s' "$raw_tag" | tr '/' '-' | tr -c 'A-Za-z0-9._-' '-')"
+          image_ref="${{ env.REGISTRY }}/${{ env.IMAGE }}:${safe_tag}"
+          echo "ref=$image_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push ExApp image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployment/Dockerfile.exapp
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.ref }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install SSH key
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' '${{ secrets.SANDBOX_SSH_KEY }}' > ~/.ssh/sandbox_key
+          chmod 600 ~/.ssh/sandbox_key
+          ssh-keyscan -p "${{ secrets.SANDBOX_SSH_PORT || vars.SANDBOX_SSH_PORT || '22' }}" "${{ secrets.SANDBOX_SSH_HOST || vars.SANDBOX_SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy on sandbox host
+        env:
+          SANDBOX_HOST: ${{ secrets.SANDBOX_SSH_HOST || vars.SANDBOX_SSH_HOST }}
+          SANDBOX_SSH_USER: ${{ secrets.SANDBOX_SSH_USER || vars.SANDBOX_SSH_USER }}
+          SANDBOX_PORT: ${{ secrets.SANDBOX_SSH_PORT || vars.SANDBOX_SSH_PORT || '22' }}
+          SANDBOX_REPO_DIR: ${{ secrets.SANDBOX_REPO_DIR || vars.SANDBOX_REPO_DIR || '~/gocassini' }}
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          RESET: ${{ inputs.reset }}
+          REGISTER_ONLY: ${{ inputs.register_only }}
+        run: |
+          set -euo pipefail
+          deploy_args=(--image "$IMAGE_REF")
+          if [ "$RESET" = "true" ]; then
+            deploy_args+=(--reset)
+          fi
+          if [ "$REGISTER_ONLY" = "true" ]; then
+            deploy_args+=(--register-only)
+          fi
+
+          remote_cmd="cd $SANDBOX_REPO_DIR && git fetch origin $GITHUB_REF_NAME && git checkout $GITHUB_SHA && sandbox/deploy.sh ${deploy_args[*]}"
+          ssh -i ~/.ssh/sandbox_key -p "$SANDBOX_PORT" "$SANDBOX_SSH_USER@$SANDBOX_HOST" "$remote_cmd"
