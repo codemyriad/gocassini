@@ -136,6 +136,13 @@ Talk recording handoff, verification checklist, and GPU setup are covered in:
 
 - [docs/exapp-install.md](docs/exapp-install.md)
 
+## Project Governance
+
+- License: [GNU AGPLv3](LICENSE)
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
+- Security reporting: [SECURITY.md](SECURITY.md)
+- Contribution notes: [CONTRIBUTING.md](CONTRIBUTING.md)
+
 ## Deployment Bundle
 
 For the repo-root Docker Compose deployment bundle (development and staging —

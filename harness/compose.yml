@@ -1,4 +1,6 @@
 x-nextcloud-env: &nextcloud-env
+  # DEV-ONLY local harness credentials. These values are committed test
+  # defaults and must never be reused for a real Nextcloud deployment.
   POSTGRES_HOST: db
   POSTGRES_DB: nextcloud
   POSTGRES_USER: nc
