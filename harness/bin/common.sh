@@ -584,6 +584,10 @@ harness_require_docker() {
     echo "Docker Compose v2 is required for the Cassini dev stack" >&2
     return 1
   fi
+  if ! docker info >/dev/null 2>&1; then
+    echo "Docker daemon is not available for the Cassini dev stack" >&2
+    return 1
+  fi
 }
 
 harness_project_containers() {
