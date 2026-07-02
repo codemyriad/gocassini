@@ -59,15 +59,62 @@ stack internals.
 ## Quickstart
 
 ```bash
+../bin/cassini dev stack plan
 ../bin/cassini dev stack up
 CALL_URL="$(../bin/cassini dev room create --name "Local smoke room" | tail -n1)"
 ../bin/cassini dev player video --call-url "$CALL_URL" --duration 20
 ```
 
+`stack up` is non-destructive by default: if harness containers, volumes, or
+networks already exist, it fails with the next safe command to run. Use
+`../bin/cassini dev stack up --resume` for matching stopped resources,
+`../bin/cassini dev stack up --reset` to recreate the resolved stack, and
+`../bin/cassini dev stack stop --full` for complete harness cleanup.
+
 One-command smoke test:
 
 ```bash
 ../bin/cassini dev smoke
+```
+
+## Stack configuration modes
+
+The product-facing setup surface is `cassini dev stack`:
+
+```bash
+../bin/cassini dev stack plan   # print resolved config only
+../bin/cassini dev stack up     # start/bootstrap the resolved config
+../bin/cassini dev stack status
+../bin/cassini dev stack stop   # stop current resolved stack
+../bin/cassini dev stack stop --full
+```
+
+Important flags:
+
+- `--services legacy-default|core|appapi|full|full-remote`
+- `--cassini none|installed-exapp` (default: `none`)
+- `--recording-backend legacy|direct-operator|installed-exapp|none`
+- `--exapp-image-mode build|reuse-local|pull` or `--build`
+- `--patch=auto|none|force`
+
+Installed ExApp setup remains opt-in. A production-shaped local Talk run looks
+like:
+
+```bash
+../bin/cassini dev stack up \
+  --services full \
+  --cassini installed-exapp \
+  --recording-backend installed-exapp \
+  --build
+```
+
+For direct recorder/operator debugging without an installed ExApp:
+
+```bash
+../bin/cassini dev stack up \
+  --services full \
+  --cassini none \
+  --recording-backend direct-operator
 ```
 
 ## Remote HTTPS / Tailscale browser harness
@@ -83,16 +130,19 @@ TS_IP="$(tailscale ip -4)"
 sudo tailscale serve --bg --https=443 http://127.0.0.1:28080
 sudo tailscale serve --bg --https=8443 http://127.0.0.1:28082
 
-export SPREED_PROFILE=full
-export CASSINI_HARNESS_PUBLIC_URL="https://${TS_FQDN}"
-export CASSINI_HARNESS_PUBLIC_HOST="${TS_FQDN}"
-export CASSINI_HARNESS_MEDIA_HOST="${TS_IP}"
-./harness/bin/up.sh
+../bin/cassini dev stack up \
+  --public-mode remote-https \
+  --public-url "https://${TS_FQDN}" \
+  --public-host "${TS_FQDN}" \
+  --media-host "${TS_IP}" \
+  --services full-remote
 ```
 
-Remote mode keeps the normal local harness behavior unchanged unless one of the
-`CASSINI_HARNESS_PUBLIC_*` / `CASSINI_HARNESS_MEDIA_HOST` variables is set. It
-also starts an internal Docker-network HTTPS helper for Nextcloud's server-side
+Remote mode is explicit. Setting `CASSINI_HARNESS_PUBLIC_URL`,
+`CASSINI_HARNESS_PUBLIC_HOST`, `CASSINI_HARNESS_MEDIA_HOST`, or
+`CASSINI_HARNESS_SIGNALING_PUBLIC_URL` while public mode is still `local-http`
+fails validation instead of silently switching modes. Explicit remote mode also
+starts an internal Docker-network HTTPS helper for Nextcloud's server-side
 signaling notifications on hardened hosts where containers cannot hairpin to
 host ports; the Mac browser still connects to the real host signaling service
 through Tailscale Serve.
@@ -378,16 +428,17 @@ Run sync validation manually:
   --tolerance 0.35
 ```
 
-## Compose Profiles
+## Service modes
 
-Default is `SPREED_PROFILE=full`.
+The legacy default still maps to the historical full-media harness behavior.
+For new flows prefer `cassini dev stack --services ...`:
 
 ```bash
-# Full media path (default): Janus + signaling + coturn + nats
-SPREED_PROFILE=full ../cassini-lab/bin/up.sh
+# Full media path: Janus + signaling + coturn + nats
+../bin/cassini dev stack up --services full
 
 # Base services only: Nextcloud + Postgres
-SPREED_PROFILE=base ../cassini-lab/bin/up.sh
+../bin/cassini dev stack up --services core
 ```
 
 ## CI integration smoke

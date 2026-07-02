@@ -125,7 +125,7 @@ Common options:
   --recording-backend legacy|direct-operator|installed-exapp|none
   --exapp-image-mode build|reuse-local|pull
   --build
-  --patch auto|none|force
+  --patch=auto|none|force
 
 up options:
   --resume
@@ -229,7 +229,7 @@ func printDevUsage(w io.Writer) {
 	fmt.Fprint(w, `Cassini dev commands expose the local harness without making it the product boundary.
 
 Usage:
-  cassini dev stack <up|down|status>
+  cassini dev stack <plan|up|status|stop|down>
   cassini dev room create
   cassini dev smoke
   cassini dev ci-e2e

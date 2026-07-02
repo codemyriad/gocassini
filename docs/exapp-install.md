@@ -467,9 +467,9 @@ See [`deployment/README.md`](../deployment/README.md).
 ## Testing the image
 
 See [`docs/exapp-test-locally.md`](./exapp-test-locally.md) for three tiers:
-image-only checks (no Nextcloud), manual install against a local Nextcloud,
-and the production-shaped HaRP-fronted install
-([`harness/bin/manual-test-setup.sh`](../harness/bin/manual-test-setup.sh)).
+image-only checks (no Nextcloud), installed-ExApp checks against a local
+Nextcloud, and the production-shaped HaRP-fronted install via
+`cassini dev stack up --cassini installed-exapp`.
 
 ## CI
 

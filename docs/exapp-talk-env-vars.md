@@ -61,17 +61,23 @@ Important parity vars:
 
 | Variable | Typical value | Purpose |
 |---|---|---|
-| `SPREED_PROFILE` | `full` | Starts signaling/Janus/TURN/Talk services required for real recording. |
-| `CASSINI_TALK_RECORDING_URL` | `http://reverse-proxy/index.php/apps/app_api/proxy/gocassini` in installed-ExApp harness | Where Talk sends recording-backend requests. |
+| `SPREED_PROFILE` | `full` | Legacy compatibility profile. Prefer `CASSINI_HARNESS_SERVICE_MODE` / `cassini dev stack --services` for new flows. |
+| `CASSINI_HARNESS_SERVICE_MODE` | `legacy-default`, `core`, `appapi`, `full`, `full-remote` | Resolved service topology for `cassini dev stack`. |
+| `CASSINI_HARNESS_CASSINI_MODE` | `none`, `installed-exapp` | Whether stack setup installs/registers Cassini as an ExApp. Default is `none`. |
+| `CASSINI_HARNESS_RECORDING_BACKEND` | `legacy`, `direct-operator`, `installed-exapp`, `none` | Which Talk recording backend bootstrap writes. |
+| `CASSINI_HARNESS_EXAPP_IMAGE_MODE` | `build`, `reuse-local`, `pull` | Installed-ExApp image strategy. `--build` maps to `build`. |
+| `CASSINI_HARNESS_PATCH_MODE` | `auto`, `none`, `force` | Scenario-associated patch behavior, mapping to `--patch=auto|none|force`. |
+| `CASSINI_TALK_RECORDING_URL` | `http://reverse-proxy/index.php/apps/app_api/proxy/gocassini` in installed-ExApp harness | Optional override for where Talk sends recording-backend requests. |
 | `CASSINI_TALK_RECORDING_SECRET` | dev fallback or generated | Secret written into Talk `recording_servers`; must be passed into installed ExApp. |
-| `SIGNALING_INTERNAL_SECRET` | dev fallback from harness common | Secret in signaling config; must be passed as `CASSINI_TALK_SIGNALING_INTERNAL_SECRET`. |
+| `SIGNALING_INTERNAL_SECRET` | dev fallback from harness common | Secret in signaling config; must match `CASSINI_TALK_SIGNALING_INTERNAL_SECRET`. |
 | `CASSINI_HARNESS_VM` | `true` | Makes `cassini dev stack up/down` use `harness/vm`. |
 | `CASSINI_HARNESS_HOST` | VM IP, e.g. `192.168.252.29` | Legacy browser-facing host/IP for VM/LAN harness URLs. |
-| `CASSINI_HARNESS_PUBLIC_URL` | `https://<16a-fqdn>` | Browser-facing HTTPS origin when the active `harness/` stack is served through a trusted proxy such as Tailscale Serve. Enables Nextcloud HTTPS overwrite config and public call URLs. |
-| `CASSINI_HARNESS_PUBLIC_HOST` | `<16a-fqdn>` | Bare public hostname for trusted domains, Docker-network split DNS, and signaling backend allow-list entries. Derived from `CASSINI_HARNESS_PUBLIC_URL` when omitted. |
-| `CASSINI_HARNESS_MEDIA_HOST` | `<16a-tailscale-ip>` | Host/IP advertised to browser WebRTC via Janus and TURN. Also defaults `TURN_SERVER` to `<media-host>:13479`. |
+| `CASSINI_HARNESS_PUBLIC_MODE` | `local-http`, `lan-http`, `remote-https` | Explicit browser/public mode. Remote public env vars require `remote-https`. |
+| `CASSINI_HARNESS_PUBLIC_URL` | `https://<16a-fqdn>` | Browser-facing HTTPS origin when `CASSINI_HARNESS_PUBLIC_MODE=remote-https`. Enables Nextcloud HTTPS overwrite config and public call URLs. |
+| `CASSINI_HARNESS_PUBLIC_HOST` | `<16a-fqdn>` | Bare public hostname for trusted domains, Docker-network split DNS, and signaling backend allow-list entries. Derived from `CASSINI_HARNESS_PUBLIC_URL` in remote mode when omitted. |
+| `CASSINI_HARNESS_MEDIA_HOST` | `<16a-tailscale-ip>` | Host/IP advertised to browser WebRTC via Janus and TURN. Required for remote full media. |
 | `CASSINI_HARNESS_SIGNALING_PUBLIC_URL` | `https://<16a-fqdn>:8443` | Optional override for the browser-facing standalone signaling URL; otherwise remote mode derives this from the public host. |
-| `NEXTCLOUD_URL` | Usually `http://127.0.0.1:28080` | Harness script/API URL for local Nextcloud access. Public room links use `NEXTCLOUD_PUBLIC_URL` / `CASSINI_HARNESS_PUBLIC_URL` when set. |
+| `NEXTCLOUD_URL` | Usually `http://127.0.0.1:28080` | Harness script/API URL for local Nextcloud access. Public room links use `NEXTCLOUD_PUBLIC_URL` / `CASSINI_HARNESS_PUBLIC_URL` in remote mode. |
 
 ## Registration shape after D-395
 
@@ -104,7 +110,7 @@ Important consequences from source inspection:
 - `app_api:app:config:set` writes a separate ExApp app-config store; it does not become process env and Cassini does not currently read it.
 - Changing `spreed.recording_servers.secret` in Nextcloud does **not** update `CASSINI_TALK_RECORDING_SECRET` in a running ExApp container.
 
-For local harness iteration, `harness/bin/manual-test-setup.sh` now uses AppAPI `--test-deploy-mode` with all required `--env` values. For production secret rotation or first upgrade from a pre-D-395 install, plan a controlled ExApp redeploy/reinstall with data preserved.
+For local harness iteration, `cassini dev stack up --cassini installed-exapp` uses AppAPI `--test-deploy-mode` with all required `--env` values. For production secret rotation or first upgrade from a pre-D-395 install, plan a controlled ExApp redeploy/reinstall with data preserved.
 
 ## Secret rotation / coordinated updates
 
