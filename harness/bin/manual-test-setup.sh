@@ -243,21 +243,7 @@ for attempt in $(seq 1 240); do
   sleep 2
 done
 
-log "4. Granting Nextcloud access to host docker socket..."
-SOCKET_GID=$("${COMPOSE[@]}" exec -T nextcloud stat -c '%g' /var/run/docker.sock)
-"${COMPOSE[@]}" exec -T -u root nextcloud sh -c "
-  EXISTING_GROUP=\$(getent group $SOCKET_GID | cut -d: -f1)
-  if [ -z \"\$EXISTING_GROUP\" ]; then
-    groupadd -g $SOCKET_GID docker-host
-    GROUP_NAME=docker-host
-  else
-    GROUP_NAME=\$EXISTING_GROUP
-  fi
-  usermod -aG \"\$GROUP_NAME\" www-data
-"
-"${COMPOSE[@]}" restart nextcloud
-
-log "5. Bootstrapping Nextcloud (trusted domains, Talk, admin)..."
+log "4. Bootstrapping Nextcloud (trusted domains, Talk, admin)..."
 # Tell bootstrap.sh to wire Talk's recording_servers at Cassini's AppAPI
 # proxy URL instead of the default gateway:4000 (which expects a
 # standalone cassini-operator bot on the host). The proxy URL routes
@@ -272,49 +258,14 @@ occ() {
   "${COMPOSE[@]}" exec -T -u www-data nextcloud php occ "$@"
 }
 
-log "6. Installing AppAPI..."
-occ app:install app_api || true
-occ app:enable app_api
+log "5. Configuring AppAPI/HaRP deploy daemon..."
+harness_configure_appapi_phase
 
-log "7. Applying scenario-associated AppAPI CSP patch if needed..."
-harness_apply_patch_phase
-
-log "8. Registering HaRP deploy daemon..."
-occ app_api:daemon:unregister docker_local >/dev/null 2>&1 || true
-occ app_api:daemon:unregister harp_local   >/dev/null 2>&1 || true
-# HP_SHARED_KEY must match the value in compose.yml's appapi-harp service.
-# nextcloud_url is BOTH the URL AppAPI uses internally for heartbeat
-# (${nc_url}/exapps/<appId>/heartbeat — must route to HaRP) AND the value
-# injected into the ExApp container as NEXTCLOUD_URL (callbacks to /index.
-# php/apps/app_api/... must reach NC). The reverse-proxy splits both paths,
-# so pointing the daemon at it satisfies both directions.
-occ app_api:daemon:register \
-    harp_local \
-    "HaRP (local)" \
-    docker-install \
-    http \
-    "appapi-harp:8780" \
-    "http://reverse-proxy" \
-    --net="${PROJECT_NAME}_default" \
-    --harp \
-    --harp_frp_address "appapi-harp:8782" \
-    --harp_shared_key "dogfood-shared-key-not-secret" \
-    --set-default \
-    --compute_device=cpu
-
-log "9. Mapping ghcr.io to local so the daemon uses our locally-built image..."
-# AppAPI sees info.xml's <registry>ghcr.io</registry>, looks for the mapping,
-# finds --registry-to=local, and skips the docker pull — the image must
-# already exist locally (we tagged it in step 2). Lets the dev path use
-# info.xml verbatim, same content the production App Store install reads.
-occ app_api:daemon:registry:add harp_local \
-    --registry-from=ghcr.io --registry-to=local
-
-log "10. Copying info.xml into the Nextcloud container for app:register..."
+log "6. Copying info.xml into the Nextcloud container for app:register..."
 "${COMPOSE[@]}" cp "$PROJECT_ROOT/appinfo/info.xml" nextcloud:/tmp/gocassini-info.xml
 "${COMPOSE[@]}" exec -T -u root nextcloud chown www-data:www-data /tmp/gocassini-info.xml
 
-log "11. Creating standard user 'alice' for viewer testing..."
+log "7. Creating standard user 'alice' for viewer testing..."
 export OC_PASS="Tn8mY3qVrJ2x!E2e"
 "${COMPOSE[@]}" exec -T -e OC_PASS -u www-data nextcloud php occ user:add --password-from-env --display-name=Alice alice >/dev/null 2>&1 || true
 unset OC_PASS
@@ -357,7 +308,7 @@ http_body_with_retry() {
 }
 
 if [[ "$INSTALL_EXAPP" == "true" ]]; then
-  log "12. Registering and enabling Cassini as an installed ExApp..."
+  log "8. Registering and enabling Cassini as an installed ExApp..."
   register_args=(
     app_api:app:register gocassini harp_local
     --info-xml /tmp/gocassini-info.xml
@@ -387,12 +338,12 @@ if [[ "$INSTALL_EXAPP" == "true" ]]; then
   fi
   success "✓ ExApp registration completed"
 
-  log "13. Cycling enable state so AppAPI sends PUT /enabled..."
+  log "9. Cycling enable state so AppAPI sends PUT /enabled..."
   occ app_api:app:disable gocassini >/dev/null 2>&1 || true
   occ app_api:app:enable gocassini >/dev/null
   success "✓ ExApp enabled"
 
-  log "14. Verifying installed ExApp proxy routes and Talk config presence..."
+  log "10. Verifying installed ExApp proxy routes and Talk config presence..."
   occ app_api:app:list | grep -q 'gocassini' || { error "gocassini missing from app_api:app:list"; exit 1; }
 
   welcome_json=$(http_body_with_retry "welcome route" "$PROXY_URL/api/v1/welcome")
@@ -407,7 +358,7 @@ if [[ "$INSTALL_EXAPP" == "true" ]]; then
   http_ok_with_retry "admin control panel route" -u admin:admin -o /dev/null "$PROXY_URL/control-panel/"
   http_ok_with_retry "viewer route" -u alice:Tn8mY3qVrJ2x!E2e -o /dev/null "$PROXY_URL/viewer/"
 else
-  log "12. Skipping ExApp registration because --no-install was passed."
+  log "8. Skipping ExApp registration because --no-install was passed."
 fi
 
 cat <<EOF

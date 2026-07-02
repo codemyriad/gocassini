@@ -11,6 +11,7 @@ harness_start_compose_stack
 
 wait_for_nextcloud 420
 "$SCRIPT_DIR/bootstrap.sh"
+harness_configure_appapi_phase
 
 log "Stack is up."
 log "Create a room: $REPO_ROOT/bin/cassini dev room create --name 'Local room'"

@@ -226,6 +226,12 @@ harness_remote_config_requested() {
   [[ "${CASSINI_HARNESS_PUBLIC_MODE:-local-http}" == "remote-https" || "${CASSINI_HARNESS_SERVICE_MODE:-legacy-default}" == "full-remote" ]]
 }
 
+harness_media_selected() {
+  [[ "${CASSINI_HARNESS_SERVICE_MODE:-legacy-default}" == "full" \
+    || "${CASSINI_HARNESS_SERVICE_MODE:-legacy-default}" == "full-remote" \
+    || "${SPREED_PROFILE:-}" == "full" ]]
+}
+
 harness_add_unique() {
   local __array_name="$1"
   local value="$2"
@@ -812,6 +818,73 @@ harness_apply_patch_phase() {
     compose restart nextcloud
     wait_for_nextcloud 180
   fi
+}
+
+harness_grant_nextcloud_docker_socket() {
+  log "Granting Nextcloud access to host docker socket"
+  if ! compose exec -T nextcloud test -S /var/run/docker.sock; then
+    echo "Nextcloud container cannot see /var/run/docker.sock; AppAPI docker-install cannot be configured" >&2
+    return 1
+  fi
+
+  local socket_gid
+  socket_gid="$(compose exec -T nextcloud stat -c '%g' /var/run/docker.sock)"
+  compose exec -T -u root nextcloud sh -c "
+    EXISTING_GROUP=\$(getent group $socket_gid | cut -d: -f1)
+    if [ -z \"\$EXISTING_GROUP\" ]; then
+      groupadd -g $socket_gid docker-host
+      GROUP_NAME=docker-host
+    else
+      GROUP_NAME=\$EXISTING_GROUP
+    fi
+    usermod -aG \"\$GROUP_NAME\" www-data
+  "
+  compose restart nextcloud
+  wait_for_nextcloud 180
+}
+
+harness_configure_appapi_phase() {
+  if [[ "${CASSINI_HARNESS_CASSINI_MODE:-none}" != "installed-exapp" ]]; then
+    log "AppAPI phase: skipping because Cassini mode is '${CASSINI_HARNESS_CASSINI_MODE:-none}'"
+    return 0
+  fi
+
+  local required_service
+  for required_service in nextcloud appapi-harp reverse-proxy; do
+    if ! compose ps --services --filter status=running | grep -Fxq "$required_service"; then
+      echo "AppAPI phase requires running service '$required_service'" >&2
+      return 1
+    fi
+  done
+
+  harness_grant_nextcloud_docker_socket
+
+  log "AppAPI phase: installing/enabling AppAPI"
+  occ app:install app_api || true
+  occ app:enable app_api
+
+  harness_apply_patch_phase
+
+  log "AppAPI phase: registering HaRP deploy daemon"
+  occ app_api:daemon:unregister docker_local >/dev/null 2>&1 || true
+  occ app_api:daemon:unregister harp_local >/dev/null 2>&1 || true
+  occ app_api:daemon:register \
+    harp_local \
+    "HaRP (local)" \
+    docker-install \
+    http \
+    "appapi-harp:8780" \
+    "http://reverse-proxy" \
+    --net="${PROJECT_NAME}_default" \
+    --harp \
+    --harp_frp_address "appapi-harp:8782" \
+    --harp_shared_key "dogfood-shared-key-not-secret" \
+    --set-default \
+    --compute_device=cpu
+
+  log "AppAPI phase: mapping ghcr.io to local images"
+  occ app_api:daemon:registry:add harp_local \
+    --registry-from=ghcr.io --registry-to=local
 }
 
 harness_start_compose_stack() {

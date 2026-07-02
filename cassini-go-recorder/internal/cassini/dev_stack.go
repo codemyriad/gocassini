@@ -346,6 +346,9 @@ func validateDevStackPlan(plan devStackPlan) error {
 	if plan.RecordingBackend == devStackRecordingInstalledExApp && plan.CassiniMode != devStackCassiniInstalledExApp {
 		return errors.New("recording backend installed-exapp requires --cassini installed-exapp")
 	}
+	if plan.CassiniMode == devStackCassiniInstalledExApp && plan.ServiceMode == devStackServiceCore {
+		return errors.New("--cassini installed-exapp requires service mode appapi, full, full-remote, or legacy-default")
+	}
 	if plan.CassiniMode == devStackCassiniNone && plan.ExAppImageMode == devStackImageBuild {
 		return errors.New("--build / ExApp image mode build requires --cassini installed-exapp")
 	}

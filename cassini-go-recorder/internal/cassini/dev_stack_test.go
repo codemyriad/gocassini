@@ -86,6 +86,16 @@ func TestResolveDevStackPlanInstalledRecordingRequiresInstalledCassini(t *testin
 	}
 }
 
+func TestResolveDevStackPlanInstalledCassiniRejectsCoreServices(t *testing.T) {
+	_, _, err := resolveDevStackPlan("up", []string{"--cassini", "installed-exapp", "--services", "core"}, testEnv(nil))
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "requires service mode appapi") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestResolveDevStackPlanScopesLifecycleFlags(t *testing.T) {
 	_, _, err := resolveDevStackPlan("down", []string{"--reset"}, testEnv(nil))
 	if err == nil || !strings.Contains(err.Error(), "apply only to stack up") {
