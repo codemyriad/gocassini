@@ -6,18 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
 harness_check_existing_resources_for_up
-
-if [[ "$SPREED_PROFILE" == "full" ]] && harness_remote_config_requested; then
-  harness_render_full_profile_configs false
-fi
-
-if [[ "${CASSINI_HARNESS_EXISTING:-fail}" == "resume" ]]; then
-  log "Resuming Docker Compose stack (profile: $SPREED_PROFILE)"
-  compose start
-else
-  log "Starting Docker Compose stack (profile: $SPREED_PROFILE)"
-  compose up -d
-fi
+harness_render_stack_configs
+harness_start_compose_stack
 
 wait_for_nextcloud 420
 "$SCRIPT_DIR/bootstrap.sh"

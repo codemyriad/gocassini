@@ -6,7 +6,24 @@ REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 COMPOSE_FILE="$TEST_DIR/compose.yml"
 
 PROJECT_NAME="${PROJECT_NAME:-spreedtest}"
-SPREED_PROFILE="${SPREED_PROFILE:-full}"
+CASSINI_HARNESS_SERVICE_MODE="${CASSINI_HARNESS_SERVICE_MODE:-legacy-default}"
+case "$CASSINI_HARNESS_SERVICE_MODE" in
+  legacy-default|legacy|default)
+    CASSINI_HARNESS_SERVICE_MODE="legacy-default"
+    SPREED_PROFILE="${SPREED_PROFILE:-full}"
+    ;;
+  core|appapi)
+    SPREED_PROFILE="default"
+    ;;
+  full|full-remote)
+    SPREED_PROFILE="full"
+    ;;
+  *)
+    echo "Invalid CASSINI_HARNESS_SERVICE_MODE: $CASSINI_HARNESS_SERVICE_MODE" >&2
+    exit 2
+    ;;
+esac
+CASSINI_HARNESS_PUBLIC_MODE="${CASSINI_HARNESS_PUBLIC_MODE:-local-http}"
 HARNESS_SIGNALING_HOST="${HARNESS_SIGNALING_HOST:-}"
 
 harness_route_source_ip() {
@@ -80,25 +97,68 @@ harness_is_builtin_host() {
 }
 
 CASSINI_HARNESS_HOST="${CASSINI_HARNESS_HOST:-$(default_harness_host)}"
+_harness_public_url_was_set=false
+_harness_public_host_was_set=false
+_harness_media_host_was_set=false
+_harness_signaling_public_url_was_set=false
+[[ -v CASSINI_HARNESS_PUBLIC_URL ]] && _harness_public_url_was_set=true
+[[ -v CASSINI_HARNESS_PUBLIC_HOST ]] && _harness_public_host_was_set=true
+[[ -v CASSINI_HARNESS_MEDIA_HOST ]] && _harness_media_host_was_set=true
+[[ -v CASSINI_HARNESS_SIGNALING_PUBLIC_URL ]] && _harness_signaling_public_url_was_set=true
+
 CASSINI_HARNESS_PUBLIC_URL="${CASSINI_HARNESS_PUBLIC_URL:-}"
-if [[ -z "$CASSINI_HARNESS_PUBLIC_URL" && -n "${CASSINI_HARNESS_PUBLIC_HOST:-}" ]]; then
-  CASSINI_HARNESS_PUBLIC_URL="https://${CASSINI_HARNESS_PUBLIC_HOST}"
-fi
-CASSINI_HARNESS_PUBLIC_URL="${CASSINI_HARNESS_PUBLIC_URL%/}"
 CASSINI_HARNESS_PUBLIC_HOST="${CASSINI_HARNESS_PUBLIC_HOST:-}"
-if [[ -z "$CASSINI_HARNESS_PUBLIC_HOST" && -n "$CASSINI_HARNESS_PUBLIC_URL" ]]; then
-  CASSINI_HARNESS_PUBLIC_HOST="$(harness_url_host "$CASSINI_HARNESS_PUBLIC_URL")"
+CASSINI_HARNESS_MEDIA_HOST="${CASSINI_HARNESS_MEDIA_HOST:-}"
+CASSINI_HARNESS_SIGNALING_PUBLIC_URL="${CASSINI_HARNESS_SIGNALING_PUBLIC_URL:-}"
+
+if [[ "$CASSINI_HARNESS_SERVICE_MODE" == "full-remote" && "$CASSINI_HARNESS_PUBLIC_MODE" != "remote-https" ]]; then
+  echo "CASSINI_HARNESS_SERVICE_MODE=full-remote requires CASSINI_HARNESS_PUBLIC_MODE=remote-https" >&2
+  exit 2
 fi
+
+case "$CASSINI_HARNESS_PUBLIC_MODE" in
+  local-http)
+    if [[ "$_harness_public_url_was_set" == "true" \
+      || "$_harness_public_host_was_set" == "true" \
+      || "$_harness_media_host_was_set" == "true" \
+      || "$_harness_signaling_public_url_was_set" == "true" ]]; then
+      echo "Remote harness env vars require CASSINI_HARNESS_PUBLIC_MODE=remote-https" >&2
+      exit 2
+    fi
+    ;;
+  lan-http)
+    ;;
+  remote-https)
+    if [[ -z "$CASSINI_HARNESS_PUBLIC_URL" && -n "$CASSINI_HARNESS_PUBLIC_HOST" ]]; then
+      CASSINI_HARNESS_PUBLIC_URL="https://${CASSINI_HARNESS_PUBLIC_HOST}"
+    fi
+    CASSINI_HARNESS_PUBLIC_URL="${CASSINI_HARNESS_PUBLIC_URL%/}"
+    if [[ -z "$CASSINI_HARNESS_PUBLIC_HOST" && -n "$CASSINI_HARNESS_PUBLIC_URL" ]]; then
+      CASSINI_HARNESS_PUBLIC_HOST="$(harness_url_host "$CASSINI_HARNESS_PUBLIC_URL")"
+    fi
+    if [[ "$(harness_url_scheme "$CASSINI_HARNESS_PUBLIC_URL")" != "https" ]]; then
+      echo "CASSINI_HARNESS_PUBLIC_MODE=remote-https requires an https CASSINI_HARNESS_PUBLIC_URL" >&2
+      exit 2
+    fi
+    if [[ -z "$CASSINI_HARNESS_MEDIA_HOST" ]] && ! harness_is_builtin_host "$CASSINI_HARNESS_HOST"; then
+      CASSINI_HARNESS_MEDIA_HOST="$CASSINI_HARNESS_HOST"
+    fi
+    if [[ -z "$CASSINI_HARNESS_PUBLIC_URL" || -z "$CASSINI_HARNESS_PUBLIC_HOST" || -z "$CASSINI_HARNESS_MEDIA_HOST" ]]; then
+      echo "CASSINI_HARNESS_PUBLIC_MODE=remote-https requires public URL/host and media host" >&2
+      exit 2
+    fi
+    ;;
+  *)
+    echo "Invalid CASSINI_HARNESS_PUBLIC_MODE: $CASSINI_HARNESS_PUBLIC_MODE" >&2
+    exit 2
+    ;;
+esac
+
 CASSINI_HARNESS_PUBLIC_HOSTPORT=""
 if [[ -n "$CASSINI_HARNESS_PUBLIC_URL" ]]; then
   CASSINI_HARNESS_PUBLIC_HOSTPORT="$(harness_url_hostport "$CASSINI_HARNESS_PUBLIC_URL")"
 fi
-CASSINI_HARNESS_MEDIA_HOST="${CASSINI_HARNESS_MEDIA_HOST:-}"
-if [[ -z "$CASSINI_HARNESS_MEDIA_HOST" ]] && ! harness_is_builtin_host "$CASSINI_HARNESS_HOST"; then
-  CASSINI_HARNESS_MEDIA_HOST="$CASSINI_HARNESS_HOST"
-fi
-CASSINI_HARNESS_SIGNALING_PUBLIC_URL="${CASSINI_HARNESS_SIGNALING_PUBLIC_URL:-}"
-export CASSINI_HARNESS_HOST CASSINI_HARNESS_PUBLIC_URL CASSINI_HARNESS_PUBLIC_HOST CASSINI_HARNESS_PUBLIC_HOSTPORT CASSINI_HARNESS_MEDIA_HOST CASSINI_HARNESS_SIGNALING_PUBLIC_URL
+export CASSINI_HARNESS_SERVICE_MODE CASSINI_HARNESS_PUBLIC_MODE CASSINI_HARNESS_HOST CASSINI_HARNESS_PUBLIC_URL CASSINI_HARNESS_PUBLIC_HOST CASSINI_HARNESS_PUBLIC_HOSTPORT CASSINI_HARNESS_MEDIA_HOST CASSINI_HARNESS_SIGNALING_PUBLIC_URL
 
 # Nextcloud server image for the compose stack. Empty selects the pinned
 # default in compose.yml; CI's NC-compatibility matrix leg overrides it
@@ -163,7 +223,7 @@ MEDIA_DIR="$TEST_DIR/media"
 mkdir -p "$RUNTIME_DIR" "$MEDIA_DIR"
 
 harness_remote_config_requested() {
-  [[ -n "$CASSINI_HARNESS_PUBLIC_URL" || -n "$CASSINI_HARNESS_MEDIA_HOST" || -n "$CASSINI_HARNESS_SIGNALING_PUBLIC_URL" ]]
+  [[ "${CASSINI_HARNESS_PUBLIC_MODE:-local-http}" == "remote-https" || "${CASSINI_HARNESS_SERVICE_MODE:-legacy-default}" == "full-remote" ]]
 }
 
 harness_add_unique() {
@@ -567,7 +627,41 @@ harness_existing_resource_report() {
   fi
 }
 
+harness_compose_services_for_mode() {
+  case "${CASSINI_HARNESS_SERVICE_MODE:-legacy-default}" in
+    core)
+      printf '%s\n' db nextcloud
+      ;;
+    appapi)
+      printf '%s\n' db nextcloud appapi-harp reverse-proxy
+      ;;
+    full)
+      printf '%s\n' db nextcloud appapi-harp reverse-proxy nats janus signaling coturn
+      ;;
+    full-remote)
+      printf '%s\n' db nextcloud appapi-harp reverse-proxy nats janus signaling coturn signaling-public-proxy
+      ;;
+    legacy-default)
+      return 1
+      ;;
+    *)
+      echo "Invalid CASSINI_HARNESS_SERVICE_MODE: ${CASSINI_HARNESS_SERVICE_MODE:-}" >&2
+      return 2
+      ;;
+  esac
+}
+
+harness_compose_service_args() {
+  local services
+  if services="$(harness_compose_services_for_mode)"; then
+    printf '%s\n' "$services"
+  fi
+}
+
 harness_desired_compose_services() {
+  if harness_compose_services_for_mode 2>/dev/null | sort -u; then
+    return 0
+  fi
   compose config --services 2>/dev/null | sort -u
 }
 
@@ -671,6 +765,36 @@ harness_check_existing_resources_for_up() {
       return 1
       ;;
   esac
+}
+
+harness_render_stack_configs() {
+  if [[ "$SPREED_PROFILE" == "full" ]] && harness_remote_config_requested; then
+    harness_render_full_profile_configs false
+  fi
+}
+
+harness_start_compose_stack() {
+  local -a services=()
+  local service
+  while IFS= read -r service; do
+    [[ -n "$service" ]] && services+=("$service")
+  done < <(harness_compose_service_args)
+
+  if [[ "${CASSINI_HARNESS_EXISTING:-fail}" == "resume" ]]; then
+    log "Resuming Docker Compose stack (profile: $SPREED_PROFILE, services: ${services[*]:-legacy-default})"
+    if ((${#services[@]} > 0)); then
+      compose start "${services[@]}"
+    else
+      compose start
+    fi
+  else
+    log "Starting Docker Compose stack (profile: $SPREED_PROFILE, services: ${services[*]:-legacy-default})"
+    if ((${#services[@]} > 0)); then
+      compose up -d "${services[@]}"
+    else
+      compose up -d
+    fi
+  fi
 }
 
 harness_full_down() {
