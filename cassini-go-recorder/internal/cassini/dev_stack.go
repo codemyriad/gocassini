@@ -189,6 +189,12 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	if opts.build {
 		plan.ExAppImageMode = devStackImageBuild
 	}
+	if command != "up" && (opts.resume || opts.reset) {
+		return plan, rest, errors.New("--resume and --reset apply only to stack up")
+	}
+	if command != "down" && (opts.stopFull || opts.downVolumes) {
+		return plan, rest, errors.New("--full and --volumes apply only to stack stop/down")
+	}
 
 	switch {
 	case opts.resume && opts.reset:

@@ -86,6 +86,28 @@ func TestResolveDevStackPlanInstalledRecordingRequiresInstalledCassini(t *testin
 	}
 }
 
+func TestResolveDevStackPlanScopesLifecycleFlags(t *testing.T) {
+	_, _, err := resolveDevStackPlan("down", []string{"--reset"}, testEnv(nil))
+	if err == nil || !strings.Contains(err.Error(), "apply only to stack up") {
+		t.Fatalf("expected up-only lifecycle error, got %v", err)
+	}
+
+	_, _, err = resolveDevStackPlan("up", []string{"--full"}, testEnv(nil))
+	if err == nil || !strings.Contains(err.Error(), "apply only to stack stop/down") {
+		t.Fatalf("expected stop-only full error, got %v", err)
+	}
+}
+
+func TestResolveDevStackPlanStopFull(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("down", []string{"--full"}, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if !plan.StopFull {
+		t.Fatal("expected StopFull")
+	}
+}
+
 func TestRunDevStackPlanPrintsResolvedPlan(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

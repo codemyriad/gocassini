@@ -509,6 +509,193 @@ compose() {
   docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "${profile_args[@]}" "$@"
 }
 
+harness_require_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "Docker is required for the Cassini dev stack" >&2
+    return 1
+  fi
+  if ! docker compose version >/dev/null 2>&1; then
+    echo "Docker Compose v2 is required for the Cassini dev stack" >&2
+    return 1
+  fi
+}
+
+harness_project_containers() {
+  docker ps -a --filter "label=com.docker.compose.project=$PROJECT_NAME" --format '{{.Names}}' 2>/dev/null | sort -u
+}
+
+harness_project_volumes() {
+  docker volume ls --filter "label=com.docker.compose.project=$PROJECT_NAME" --format '{{.Name}}' 2>/dev/null | sort -u
+}
+
+harness_project_networks() {
+  docker network ls --filter "label=com.docker.compose.project=$PROJECT_NAME" --format '{{.Name}}' 2>/dev/null | sort -u
+}
+
+harness_project_resources() {
+  local item
+  while IFS= read -r item; do [[ -n "$item" ]] && printf 'container:%s\n' "$item"; done < <(harness_project_containers)
+  while IFS= read -r item; do [[ -n "$item" ]] && printf 'volume:%s\n' "$item"; done < <(harness_project_volumes)
+  while IFS= read -r item; do [[ -n "$item" ]] && printf 'network:%s\n' "$item"; done < <(harness_project_networks)
+}
+
+harness_installed_exapp_resources() {
+  docker ps -a --format '{{.Names}}' 2>/dev/null \
+    | grep -E '^(cassini-exapp|nc_app_gocassini)$' \
+    | sort -u \
+    | sed 's/^/container:/' || true
+  docker volume ls --format '{{.Name}}' 2>/dev/null \
+    | grep -E '^(cassini-exapp-state|cassini-exapp-site|nc_app_gocassini_data)$' \
+    | sort -u \
+    | sed 's/^/volume:/' || true
+}
+
+harness_remove_installed_exapp_resources() {
+  docker rm -f cassini-exapp nc_app_gocassini >/dev/null 2>&1 || true
+  docker volume rm cassini-exapp-state cassini-exapp-site nc_app_gocassini_data >/dev/null 2>&1 || true
+}
+
+harness_resource_list_nonempty() {
+  local output="$1"
+  [[ -n "${output//$'\n'/}" ]]
+}
+
+harness_existing_resource_report() {
+  local resources="$1"
+  if harness_resource_list_nonempty "$resources"; then
+    printf '%s\n' "$resources" | sed 's/^/  - /' >&2
+  fi
+}
+
+harness_desired_compose_services() {
+  compose config --services 2>/dev/null | sort -u
+}
+
+harness_existing_compose_services() {
+  compose ps -a --services 2>/dev/null | sort -u
+}
+
+harness_running_compose_services() {
+  compose ps --services --filter status=running 2>/dev/null | sort -u
+}
+
+harness_diff_lines() {
+  local left="$1"
+  local right="$2"
+  local mode="$3"
+  local left_file right_file
+  left_file="$(mktemp)"
+  right_file="$(mktemp)"
+  printf '%s\n' "$left" | sed '/^$/d' | sort -u >"$left_file"
+  printf '%s\n' "$right" | sed '/^$/d' | sort -u >"$right_file"
+  case "$mode" in
+    left) comm -23 "$left_file" "$right_file" ;;
+    right) comm -13 "$left_file" "$right_file" ;;
+    *) return 2 ;;
+  esac
+  rm -f "$left_file" "$right_file"
+}
+
+harness_validate_resume_resources() {
+  local desired existing running missing extra
+  desired="$(harness_desired_compose_services)"
+  existing="$(harness_existing_compose_services)"
+  running="$(harness_running_compose_services)"
+
+  if ! harness_resource_list_nonempty "$existing"; then
+    echo "No existing compose containers found for project '$PROJECT_NAME'; cannot --resume." >&2
+    echo "Use 'cassini dev stack up' for a fresh stack or 'cassini dev stack up --reset' to recreate." >&2
+    return 1
+  fi
+  if harness_resource_list_nonempty "$running"; then
+    echo "Cannot --resume because these services are already running:" >&2
+    printf '%s\n' "$running" | sed 's/^/  - /' >&2
+    echo "Use 'cassini dev stack status' or 'cassini dev stack stop' first." >&2
+    return 1
+  fi
+
+  missing="$(harness_diff_lines "$desired" "$existing" left)"
+  extra="$(harness_diff_lines "$desired" "$existing" right)"
+  if harness_resource_list_nonempty "$missing" || harness_resource_list_nonempty "$extra"; then
+    echo "Cannot --resume because existing services do not match the resolved config." >&2
+    if harness_resource_list_nonempty "$missing"; then
+      echo "Missing services:" >&2
+      printf '%s\n' "$missing" | sed 's/^/  - /' >&2
+    fi
+    if harness_resource_list_nonempty "$extra"; then
+      echo "Extra services:" >&2
+      printf '%s\n' "$extra" | sed 's/^/  - /' >&2
+    fi
+    echo "Use 'cassini dev stack up --reset' to recreate resources for the resolved config." >&2
+    return 1
+  fi
+}
+
+harness_check_existing_resources_for_up() {
+  harness_require_docker
+
+  local mode="${CASSINI_HARNESS_EXISTING:-fail}"
+  local compose_resources exapp_resources resources
+  compose_resources="$(harness_project_resources)"
+  exapp_resources=""
+  if [[ "${CASSINI_HARNESS_CASSINI_MODE:-none}" == "installed-exapp" ]]; then
+    exapp_resources="$(harness_installed_exapp_resources)"
+  fi
+  resources="$(printf '%s\n%s\n' "$compose_resources" "$exapp_resources" | sed '/^$/d')"
+
+  case "$mode" in
+    fail)
+      if harness_resource_list_nonempty "$resources"; then
+        echo "Cassini harness resources already exist for project '$PROJECT_NAME'." >&2
+        harness_existing_resource_report "$resources"
+        echo "Default stack startup is non-destructive." >&2
+        echo "Use one of:" >&2
+        echo "  cassini dev stack up --resume   # start matching stopped resources" >&2
+        echo "  cassini dev stack up --reset    # remove and recreate resolved resources" >&2
+        echo "  cassini dev stack stop --full   # remove all harness-owned resources" >&2
+        return 1
+      fi
+      ;;
+    resume)
+      harness_validate_resume_resources
+      ;;
+    reset)
+      log "Resetting Docker Compose resources for project '$PROJECT_NAME'"
+      compose down --volumes --remove-orphans
+      if [[ "${CASSINI_HARNESS_CASSINI_MODE:-none}" == "installed-exapp" ]]; then
+        harness_remove_installed_exapp_resources
+      fi
+      ;;
+    *)
+      echo "Unknown CASSINI_HARNESS_EXISTING mode: $mode" >&2
+      return 1
+      ;;
+  esac
+}
+
+harness_full_down() {
+  harness_require_docker
+  local -a projects=("$PROJECT_NAME" spreedtest cassini-exapp-test)
+  local project seen current_project
+  local -a unique_projects=()
+  for project in "${projects[@]}"; do
+    seen=false
+    for current_project in "${unique_projects[@]}"; do
+      if [[ "$current_project" == "$project" ]]; then
+        seen=true
+        break
+      fi
+    done
+    [[ "$seen" == "true" ]] || unique_projects+=("$project")
+  done
+
+  for project in "${unique_projects[@]}"; do
+    log "Stopping/removing harness Compose resources for project '$project'"
+    docker compose -p "$project" -f "$COMPOSE_FILE" --profile full --profile remote down --volumes --remove-orphans || true
+  done
+  harness_remove_installed_exapp_resources
+}
+
 occ() {
   local env_args=()
   if [[ -n "${OC_PASS:-}" ]]; then
