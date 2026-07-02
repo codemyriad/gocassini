@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 func runDev(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -50,26 +51,89 @@ func runDev(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 func runDevStack(ctx context.Context, repoRoot string, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, "usage: cassini dev stack <up|down|status> [args]\n")
+		printDevStackUsage(stderr)
 		return 2
+	}
+
+	command := args[0]
+	if command == "help" || command == "-h" || command == "--help" {
+		printDevStackUsage(stdout)
+		return 0
+	}
+
+	if command == "stop" {
+		command = "down"
+	}
+
+	plan, remainingArgs, err := resolveDevStackPlan(command, args[1:], osEnvLookup)
+	if err != nil {
+		fmt.Fprintf(stderr, "dev stack %s: %v\n", command, err)
+		return 2
+	}
+
+	if command == "plan" {
+		if len(remainingArgs) > 0 {
+			fmt.Fprintf(stderr, "dev stack plan: unexpected arguments: %s\n", strings.Join(remainingArgs, " "))
+			return 2
+		}
+		printDevStackPlan(stdout, plan)
+		return 0
 	}
 
 	harnessBin := filepath.Join("harness", "bin")
-	if devHarnessVMEnabled() && (args[0] == "up" || args[0] == "down") {
+	if devHarnessVMEnabled() && (command == "up" || command == "down") {
 		harnessBin = filepath.Join("harness", "vm", "bin")
 	}
 
-	switch args[0] {
+	switch command {
 	case "up":
-		return runDevScript(ctx, repoRoot, filepath.Join(harnessBin, "up.sh"), args[1:], stdout, stderr)
+		return runDevScriptWithEnv(ctx, repoRoot, filepath.Join(harnessBin, "up.sh"), remainingArgs, plan.env(), stdout, stderr)
 	case "down":
-		return runDevScript(ctx, repoRoot, filepath.Join(harnessBin, "down.sh"), args[1:], stdout, stderr)
+		scriptArgs := remainingArgs
+		if plan.DownVolumes {
+			scriptArgs = append([]string{"--volumes"}, scriptArgs...)
+		}
+		if plan.StopFull {
+			scriptArgs = append([]string{"--full"}, scriptArgs...)
+		}
+		return runDevScriptWithEnv(ctx, repoRoot, filepath.Join(harnessBin, "down.sh"), scriptArgs, plan.env(), stdout, stderr)
 	case "status":
-		return runDevScript(ctx, repoRoot, filepath.Join("harness", "bin", "status.sh"), args[1:], stdout, stderr)
+		return runDevScriptWithEnv(ctx, repoRoot, filepath.Join("harness", "bin", "status.sh"), remainingArgs, plan.env(), stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown dev stack command %q\n", args[0])
+		printDevStackUsage(stderr)
 		return 2
 	}
+}
+
+func printDevStackUsage(w io.Writer) {
+	fmt.Fprint(w, `Usage:
+  cassini dev stack plan [options]
+  cassini dev stack up [options]
+  cassini dev stack status [options]
+  cassini dev stack stop [options]
+  cassini dev stack down [options]
+
+Common options:
+  --public-mode local-http|lan-http|remote-https
+  --public-url URL
+  --public-host HOST
+  --media-host HOST_OR_IP
+  --signaling-public-url URL
+  --services legacy-default|core|appapi|full|full-remote
+  --cassini none|installed-exapp
+  --recording-backend legacy|direct-operator|installed-exapp|none
+  --exapp-image-mode build|reuse-local|pull
+  --build
+  --patch auto|none|force
+
+up options:
+  --resume
+  --reset
+
+stop/down options:
+  --full
+`+"\n")
 }
 
 func devHarnessVMEnabled() bool {
