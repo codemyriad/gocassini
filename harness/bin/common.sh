@@ -206,7 +206,7 @@ if [[ -z "$SIGNALING_URL" && -n "$CASSINI_HARNESS_PUBLIC_HOSTPORT" ]]; then
   SIGNALING_URL="https://${CASSINI_HARNESS_PUBLIC_HOST}:8443"
 fi
 SIGNALING_SHARED_SECRET="${SIGNALING_SHARED_SECRET:-7f4dca67263621ba7f9f9917e13de95a201f6f360be0d303e3008c2e6c8ad37d}"
-SIGNALING_INTERNAL_SECRET="${SIGNALING_INTERNAL_SECRET:-6f4dca67263621ba7f9f9917e13de95a201f6f360be0d303e3008c2e6c8ad37d}"
+SIGNALING_INTERNAL_SECRET="${SIGNALING_INTERNAL_SECRET:-${CASSINI_TALK_SIGNALING_INTERNAL_SECRET:-6f4dca67263621ba7f9f9917e13de95a201f6f360be0d303e3008c2e6c8ad37d}}"
 TURN_SERVER="${TURN_SERVER:-${CASSINI_HARNESS_MEDIA_HOST:+$CASSINI_HARNESS_MEDIA_HOST:13479}}"
 TURN_SERVER="${TURN_SERVER:-127.0.0.1:13479}"
 TURN_SHARED_SECRET="${TURN_SHARED_SECRET:-3c04d2fc2f7fe39d48eb4dc77f652c8c778a4ea178b0e486529b284afca7b648}"
@@ -882,9 +882,191 @@ harness_configure_appapi_phase() {
     --set-default \
     --compute_device=cpu
 
-  log "AppAPI phase: mapping ghcr.io to local images"
-  occ app_api:daemon:registry:add harp_local \
-    --registry-from=ghcr.io --registry-to=local
+  case "${CASSINI_HARNESS_EXAPP_IMAGE_MODE:-reuse-local}" in
+    build|reuse-local)
+      log "AppAPI phase: mapping ghcr.io to local images"
+      occ app_api:daemon:registry:add harp_local \
+        --registry-from=ghcr.io --registry-to=local
+      ;;
+    pull)
+      log "AppAPI phase: leaving ghcr.io unmapped so AppAPI can pull the manifest image"
+      ;;
+    *)
+      echo "Invalid CASSINI_HARNESS_EXAPP_IMAGE_MODE: ${CASSINI_HARNESS_EXAPP_IMAGE_MODE:-}" >&2
+      return 2
+      ;;
+  esac
+}
+
+harness_validate_recording_secrets() {
+  if [[ -z "${CASSINI_TALK_RECORDING_SECRET:-}" ]]; then
+    echo "CASSINI_TALK_RECORDING_SECRET must be set for Talk recording backend configuration" >&2
+    return 1
+  fi
+  if [[ "${CASSINI_TALK_SIGNALING_INTERNAL_SECRET:-}" != "${SIGNALING_INTERNAL_SECRET:-}" ]]; then
+    echo "CASSINI_TALK_SIGNALING_INTERNAL_SECRET must match SIGNALING_INTERNAL_SECRET" >&2
+    return 1
+  fi
+}
+
+harness_prepare_exapp_image() {
+  if [[ "${CASSINI_HARNESS_CASSINI_MODE:-none}" != "installed-exapp" ]]; then
+    log "ExApp image phase: skipping because Cassini mode is '${CASSINI_HARNESS_CASSINI_MODE:-none}'"
+    return 0
+  fi
+
+  local image_mode="${CASSINI_HARNESS_EXAPP_IMAGE_MODE:-reuse-local}"
+  local image_local="cassini-exapp:e2e-v3-cpu-gpu"
+  local image_tag image_as_production
+  # shellcheck source=./lib-exapp-image.sh
+  source "$TEST_DIR/bin/lib-exapp-image.sh"
+  image_tag="$(exapp_image_tag "$REPO_ROOT/appinfo/info.xml")"
+  image_as_production="ghcr.io/codemyriad/gocassini:${image_tag}"
+
+  case "$image_mode" in
+    build)
+      log "ExApp image phase: building $image_local"
+      docker build -f "$REPO_ROOT/deployment/Dockerfile.exapp" -t "$image_local" "$REPO_ROOT"
+      docker tag "$image_local" "$image_as_production"
+      log "ExApp image phase: tagged $image_local as $image_as_production"
+      ;;
+    reuse-local)
+      if ! docker image inspect "$image_local" >/dev/null 2>&1; then
+        echo "Missing local image $image_local; rerun with --build or set CASSINI_HARNESS_EXAPP_IMAGE_MODE=pull" >&2
+        return 1
+      fi
+      docker tag "$image_local" "$image_as_production"
+      log "ExApp image phase: reused and tagged $image_local as $image_as_production"
+      ;;
+    pull)
+      log "ExApp image phase: using pull mode for $image_as_production"
+      ;;
+    *)
+      echo "Invalid CASSINI_HARNESS_EXAPP_IMAGE_MODE: $image_mode" >&2
+      return 2
+      ;;
+  esac
+}
+
+harness_default_installed_exapp_backend_url() {
+  if [[ "${CASSINI_HARNESS_CASSINI_MODE:-none}" == "installed-exapp" \
+    && -z "${CASSINI_TALK_BACKEND_URL:-}" \
+    && ("${CASSINI_HARNESS_HOST:-127.0.0.1}" == "127.0.0.1" || "${CASSINI_HARNESS_HOST:-}" == "localhost") ]]; then
+    export CASSINI_TALK_BACKEND_URL="http://reverse-proxy"
+  fi
+}
+
+harness_copy_exapp_info_xml() {
+  log "ExApp install phase: copying info.xml into Nextcloud"
+  compose cp "$REPO_ROOT/appinfo/info.xml" nextcloud:/tmp/gocassini-info.xml
+  compose exec -T -u root nextcloud chown www-data:www-data /tmp/gocassini-info.xml
+}
+
+harness_create_standard_viewer_user() {
+  log "ExApp install phase: ensuring standard viewer user 'alice'"
+  export OC_PASS="Tn8mY3qVrJ2x!E2e"
+  compose exec -T -e OC_PASS -u www-data nextcloud php occ user:add --password-from-env --display-name=Alice alice >/dev/null 2>&1 || true
+  unset OC_PASS
+}
+
+harness_http_body_with_retry() {
+  local desc="$1"
+  shift
+  local out=""
+  local _attempt
+  for _attempt in $(seq 1 60); do
+    if out=$(curl -fsS "$@" 2>&1); then
+      printf '%s' "$out"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "$desc failed: $out" >&2
+  return 1
+}
+
+harness_http_ok_with_retry() {
+  local desc="$1"
+  shift
+  local last=""
+  local _attempt
+  for _attempt in $(seq 1 60); do
+    if last=$(curl -fsS "$@" 2>&1); then
+      log "✓ $desc"
+      return 0
+    fi
+    sleep 2
+  done
+  echo "$desc failed: $last" >&2
+  return 1
+}
+
+harness_register_exapp() {
+  harness_validate_recording_secrets
+  harness_default_installed_exapp_backend_url
+
+  local register_log="$RUNTIME_DIR/manual-test-register.log"
+  local -a register_args=(
+    app_api:app:register gocassini harp_local
+    --info-xml /tmp/gocassini-info.xml
+    --env "CASSINI_TALK_RECORDING_SECRET=$CASSINI_TALK_RECORDING_SECRET"
+    --env "CASSINI_TALK_SIGNALING_INTERNAL_SECRET=$CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
+    --test-deploy-mode
+    --wait-finish
+  )
+  if [[ -n "${CASSINI_TALK_BACKEND_URL:-}" ]]; then
+    register_args+=(--env "CASSINI_TALK_BACKEND_URL=$CASSINI_TALK_BACKEND_URL")
+  fi
+  local optional_env
+  for optional_env in OPENROUTER_API_KEY LLM_BASE_URL LLM_MODEL CASSINI_OPERATOR_API_TOKEN; do
+    if [[ -n "${!optional_env:-}" ]]; then
+      register_args+=(--env "$optional_env=${!optional_env}")
+    fi
+  done
+
+  log "ExApp install phase: registering and enabling Cassini"
+  if ! occ "${register_args[@]}" >"$register_log" 2>&1; then
+    tail -200 "$register_log" >&2 || true
+    echo "app_api:app:register failed; see $register_log" >&2
+    return 1
+  fi
+  if grep -q 'heartbeat check failed' "$register_log"; then
+    tail -200 "$register_log" >&2 || true
+    echo "app_api:app:register reported heartbeat failure; see $register_log" >&2
+    return 1
+  fi
+
+  log "ExApp install phase: cycling enable state"
+  occ app_api:app:disable gocassini >/dev/null 2>&1 || true
+  occ app_api:app:enable gocassini >/dev/null
+}
+
+harness_verify_exapp_routes() {
+  log "ExApp install phase: verifying routes"
+  occ app_api:app:list | grep -q 'gocassini' || { echo "gocassini missing from app_api:app:list" >&2; return 1; }
+
+  local proxy_url="http://127.0.0.1:${NEXTCLOUD_HOST_PORT:-28080}/index.php/apps/app_api/proxy/gocassini"
+  local welcome_json status_json
+  welcome_json="$(harness_http_body_with_retry "welcome route" "$proxy_url/api/v1/welcome")"
+  echo "$welcome_json" | grep -q '"version":1' || { echo "unexpected welcome response: $welcome_json" >&2; return 1; }
+
+  status_json="$(harness_http_body_with_retry "operator status" -u admin:admin "$proxy_url/operator/status")"
+  echo "$status_json" | grep -q '"secret_configured":true' || { echo "recording secret missing from status: $status_json" >&2; return 1; }
+  echo "$status_json" | grep -q '"signaling_internal_secret_configured":true' || { echo "signaling internal secret missing from status: $status_json" >&2; return 1; }
+
+  harness_http_ok_with_retry "admin control panel route" -u admin:admin -o /dev/null "$proxy_url/control-panel/"
+  harness_http_ok_with_retry "viewer route" -u alice:Tn8mY3qVrJ2x!E2e -o /dev/null "$proxy_url/viewer/"
+}
+
+harness_install_exapp_phase() {
+  if [[ "${CASSINI_HARNESS_CASSINI_MODE:-none}" != "installed-exapp" ]]; then
+    log "ExApp install phase: skipping because Cassini mode is '${CASSINI_HARNESS_CASSINI_MODE:-none}'"
+    return 0
+  fi
+  harness_copy_exapp_info_xml
+  harness_create_standard_viewer_user
+  harness_register_exapp
+  harness_verify_exapp_routes
 }
 
 harness_start_compose_stack() {

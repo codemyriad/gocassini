@@ -96,6 +96,26 @@ func TestResolveDevStackPlanInstalledCassiniRejectsCoreServices(t *testing.T) {
 	}
 }
 
+func TestResolveDevStackPlanRecordingBackendRequiresMediaServices(t *testing.T) {
+	_, _, err := resolveDevStackPlan("up", []string{"--recording-backend", "direct-operator", "--services", "appapi"}, testEnv(nil))
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "requires service mode full") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResolveDevStackPlanInstalledExAppRecordingShape(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("up", []string{"--cassini", "installed-exapp", "--recording-backend", "installed-exapp", "--services", "full", "--build"}, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if plan.ExAppImageMode != devStackImageBuild {
+		t.Fatalf("ExAppImageMode = %q", plan.ExAppImageMode)
+	}
+}
+
 func TestResolveDevStackPlanScopesLifecycleFlags(t *testing.T) {
 	_, _, err := resolveDevStackPlan("down", []string{"--reset"}, testEnv(nil))
 	if err == nil || !strings.Contains(err.Error(), "apply only to stack up") {

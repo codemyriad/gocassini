@@ -25,10 +25,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PROJECT_ROOT="$(cd "$HARNESS_DIR/.." && pwd)"
-
 export PROJECT_NAME="cassini-exapp-test"
 export CASSINI_HARNESS_CASSINI_MODE="${CASSINI_HARNESS_CASSINI_MODE:-installed-exapp}"
+export CASSINI_HARNESS_RECORDING_BACKEND="${CASSINI_HARNESS_RECORDING_BACKEND:-installed-exapp}"
 # SPREED_PROFILE controls which compose profiles get pulled in. Default
 # brings up the install-flow stack (NC, db, HaRP, reverse-proxy). Set
 # SPREED_PROFILE=full before invoking this script to also bring up
@@ -94,126 +93,15 @@ docker rm -f cassini-exapp nc_app_gocassini >/dev/null 2>&1 || true
 docker volume rm cassini-exapp-state cassini-exapp-site nc_app_gocassini_data >/dev/null 2>&1 || true
 "${COMPOSE_FULL[@]}" down --volumes --remove-orphans
 
-IMAGE_LOCAL="cassini-exapp:e2e-v3-cpu-gpu"
-# Tag the local image as if it had been pulled from ghcr.io. Combined with
-# the daemon's `--registry-from=ghcr.io --registry-to=local` mapping below,
-# this lets AppAPI use info.xml verbatim (same registry/image/tag the
-# production App Store install would use) without us hosting a local
-# registry or rewriting info.xml. The tag must therefore match info.xml's
-# <image-tag> exactly — it is version-pinned (no longer `latest`), so derive
-# it from the manifest instead of hardcoding it.
-source "$SCRIPT_DIR/lib-exapp-image.sh"
-IMAGE_TAG="$(exapp_image_tag "$PROJECT_ROOT/appinfo/info.xml")"
-IMAGE_AS_PRODUCTION="ghcr.io/codemyriad/gocassini:${IMAGE_TAG}"
-
-if [[ "$FORCE_BUILD" == "true" ]] || ! docker image inspect "$IMAGE_LOCAL" >/dev/null 2>&1; then
-  log "2. Building Cassini ExApp image..."
-  docker build -f "$PROJECT_ROOT/deployment/Dockerfile.exapp" -t "$IMAGE_LOCAL" "$PROJECT_ROOT"
+if [[ "$FORCE_BUILD" == "true" ]]; then
+  export CASSINI_HARNESS_EXAPP_IMAGE_MODE="build"
 else
-  log "2. Reusing existing $IMAGE_LOCAL image. (pass --build to force rebuild)"
+  export CASSINI_HARNESS_EXAPP_IMAGE_MODE="${CASSINI_HARNESS_EXAPP_IMAGE_MODE:-reuse-local}"
 fi
-docker tag "$IMAGE_LOCAL" "$IMAGE_AS_PRODUCTION"
-success "✓ Tagged $IMAGE_LOCAL as $IMAGE_AS_PRODUCTION (info.xml <image-tag>)"
 
-render_full_profile_signaling_conf() {
-  local conf="$HARNESS_DIR/runtime/signaling.manual.conf"
-  local port="${NEXTCLOUD_HOST_PORT:-28080}"
-  mkdir -p "$HARNESS_DIR/runtime"
-
-  local -a candidates=("127.0.0.1" "localhost" "host.docker.internal")
-  if [[ -n "${CASSINI_HARNESS_HOST:-}" ]]; then
-    candidates+=("$CASSINI_HARNESS_HOST")
-  fi
-  if command -v hostname >/dev/null 2>&1; then
-    # Include the VM/LAN addresses so Talk requests made through
-    # --nextcloud-host <vm-ip> produce a Spreed-Signaling-Backend URL the
-    # signaling server accepts.
-    # shellcheck disable=SC2207
-    candidates+=($(hostname -I 2>/dev/null || true))
-  fi
-
-  local -a hosts=()
-  local raw host seen
-  for raw in "${candidates[@]}"; do
-    host="${raw#http://}"
-    host="${host#https://}"
-    host="${host%%/*}"
-    host="${host%%:*}"
-    [[ -n "$host" ]] || continue
-    seen=false
-    for existing in "${hosts[@]}"; do
-      if [[ "$existing" == "$host" ]]; then
-        seen=true
-        break
-      fi
-    done
-    [[ "$seen" == "true" ]] || hosts+=("$host")
-  done
-
-  local backend_names=""
-  for i in "${!hosts[@]}"; do
-    if [[ -n "$backend_names" ]]; then
-      backend_names+=", "
-    fi
-    backend_names+="backend-$((i + 1))"
-  done
-
-  {
-    cat <<EOF_CONF
-[http]
-listen = 0.0.0.0:28082
-
-[app]
-debug = false
-
-[sessions]
-hashkey = 39a5433df8f8334f6eff8a67f6afcfc594a2599f5389b4fef316ec30277fb910
-
-[clients]
-internalsecret = $SIGNALING_INTERNAL_SECRET
-
-[backend]
-backends = $backend_names
-# Accept Talk backend requests regardless of which localhost identity Talk
-# presents (127.0.0.1 / reverse-proxy / docker gateway IP) by trusting the
-# shared secret alone. Without allowall, Talk's recording-start notification to
-# the signaling server is rejected (403 "Authentication check failed") whenever
-# the presented backend URL is not in the enumerated [backend-N] list -- e.g.
-# "reverse-proxy", the host the ExApp calls back through -- and Talk then 500s
-# the recording started-callback. Dev harness only.
-allowall = true
-secret = $SIGNALING_SHARED_SECRET
-timeout = 10
-connectionsperhost = 16
-
-EOF_CONF
-    for i in "${!hosts[@]}"; do
-      cat <<EOF_CONF
-[backend-$((i + 1))]
-url = http://${hosts[$i]}:${port}
-secret = $SIGNALING_SHARED_SECRET
-
-EOF_CONF
-    done
-    cat <<EOF_CONF
-[nats]
-url = nats://127.0.0.1:14222
-
-[mcu]
-type = janus
-url = ws://127.0.0.1:28188
-adminkey = 01e2fcd0d226d7f4cf34a8a61397f110693f05042e57ab68e94f8476a4b8f22a
-
-[turn]
-apikey = 127.0.0.1
-secret = $TURN_SHARED_SECRET
-servers = turn:127.0.0.1:13479?transport=udp,turn:127.0.0.1:13479?transport=tcp
-EOF_CONF
-  } >"$conf"
-
-  export SIGNALING_CONF="$conf"
-  success "✓ Rendered signaling config with Nextcloud backends: ${hosts[*]}"
-}
+log "2. Preparing Cassini ExApp image..."
+harness_prepare_exapp_image
+success "✓ ExApp image mode completed: $CASSINI_HARNESS_EXAPP_IMAGE_MODE"
 
 if [[ "$SPREED_PROFILE" == "full" ]]; then
   harness_render_full_profile_configs true
@@ -261,104 +149,17 @@ occ() {
 log "5. Configuring AppAPI/HaRP deploy daemon..."
 harness_configure_appapi_phase
 
-log "6. Copying info.xml into the Nextcloud container for app:register..."
-"${COMPOSE[@]}" cp "$PROJECT_ROOT/appinfo/info.xml" nextcloud:/tmp/gocassini-info.xml
-"${COMPOSE[@]}" exec -T -u root nextcloud chown www-data:www-data /tmp/gocassini-info.xml
-
-log "7. Creating standard user 'alice' for viewer testing..."
-export OC_PASS="Tn8mY3qVrJ2x!E2e"
-"${COMPOSE[@]}" exec -T -e OC_PASS -u www-data nextcloud php occ user:add --password-from-env --display-name=Alice alice >/dev/null 2>&1 || true
-unset OC_PASS
-
-PROXY_URL="http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini"
 PUBLIC_NEXTCLOUD_HOST="${CASSINI_HARNESS_PUBLIC_HOST:-${CASSINI_HARNESS_HOST:-127.0.0.1}}"
 PUBLIC_NEXTCLOUD_URL="${CASSINI_HARNESS_PUBLIC_URL:-http://${PUBLIC_NEXTCLOUD_HOST}:${NEXTCLOUD_HOST_PORT:-28080}}"
 PUBLIC_PROXY_URL="${PUBLIC_NEXTCLOUD_URL%/}/index.php/apps/app_api/proxy/gocassini"
-REGISTER_LOG="$HARNESS_DIR/runtime/manual-test-register.log"
 mkdir -p "$HARNESS_DIR/runtime"
 
-http_ok_with_retry() {
-  local desc="$1"
-  shift
-  local last=""
-  for attempt in $(seq 1 60); do
-    if last=$(curl -fsS "$@" 2>&1); then
-      success "✓ $desc"
-      return 0
-    fi
-    sleep 2
-  done
-  error "$desc failed: $last"
-  return 1
-}
-
-http_body_with_retry() {
-  local desc="$1"
-  shift
-  local out=""
-  for attempt in $(seq 1 60); do
-    if out=$(curl -fsS "$@" 2>&1); then
-      printf '%s' "$out"
-      return 0
-    fi
-    sleep 2
-  done
-  error "$desc failed: $out"
-  return 1
-}
-
 if [[ "$INSTALL_EXAPP" == "true" ]]; then
-  log "8. Registering and enabling Cassini as an installed ExApp..."
-  register_args=(
-    app_api:app:register gocassini harp_local
-    --info-xml /tmp/gocassini-info.xml
-    --env "CASSINI_TALK_RECORDING_SECRET=$CASSINI_TALK_RECORDING_SECRET"
-    --env "CASSINI_TALK_SIGNALING_INTERNAL_SECRET=$CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
-    --test-deploy-mode
-    --wait-finish
-  )
-  if [[ -n "${CASSINI_TALK_BACKEND_URL:-}" ]]; then
-    register_args+=(--env "CASSINI_TALK_BACKEND_URL=$CASSINI_TALK_BACKEND_URL")
-  fi
-  for optional_env in OPENROUTER_API_KEY LLM_BASE_URL LLM_MODEL CASSINI_OPERATOR_API_TOKEN; do
-    if [[ -n "${!optional_env:-}" ]]; then
-      register_args+=(--env "$optional_env=${!optional_env}")
-    fi
-  done
-
-  if ! occ "${register_args[@]}" >"$REGISTER_LOG" 2>&1; then
-    tail -200 "$REGISTER_LOG" >&2 || true
-    error "app_api:app:register failed; see $REGISTER_LOG"
-    exit 1
-  fi
-  if grep -q 'heartbeat check failed' "$REGISTER_LOG"; then
-    tail -200 "$REGISTER_LOG" >&2 || true
-    error "app_api:app:register reported heartbeat failure; see $REGISTER_LOG"
-    exit 1
-  fi
-  success "✓ ExApp registration completed"
-
-  log "9. Cycling enable state so AppAPI sends PUT /enabled..."
-  occ app_api:app:disable gocassini >/dev/null 2>&1 || true
-  occ app_api:app:enable gocassini >/dev/null
-  success "✓ ExApp enabled"
-
-  log "10. Verifying installed ExApp proxy routes and Talk config presence..."
-  occ app_api:app:list | grep -q 'gocassini' || { error "gocassini missing from app_api:app:list"; exit 1; }
-
-  welcome_json=$(http_body_with_retry "welcome route" "$PROXY_URL/api/v1/welcome")
-  echo "$welcome_json" | grep -q '"version":1' || { error "unexpected welcome response: $welcome_json"; exit 1; }
-  success "✓ welcome route returned {\"version\":1}"
-
-  status_json=$(http_body_with_retry "operator status" -u admin:admin "$PROXY_URL/operator/status")
-  echo "$status_json" | grep -q '"secret_configured":true' || { error "recording secret missing from status: $status_json"; exit 1; }
-  echo "$status_json" | grep -q '"signaling_internal_secret_configured":true' || { error "signaling internal secret missing from status: $status_json"; exit 1; }
-  success "✓ status reports Talk recording + signaling secrets configured"
-
-  http_ok_with_retry "admin control panel route" -u admin:admin -o /dev/null "$PROXY_URL/control-panel/"
-  http_ok_with_retry "viewer route" -u alice:Tn8mY3qVrJ2x!E2e -o /dev/null "$PROXY_URL/viewer/"
+  log "6. Installing and verifying Cassini as an installed ExApp..."
+  harness_install_exapp_phase
+  success "✓ ExApp registration and verification completed"
 else
-  log "8. Skipping ExApp registration because --no-install was passed."
+  log "6. Skipping ExApp registration because --no-install was passed."
 fi
 
 cat <<EOF

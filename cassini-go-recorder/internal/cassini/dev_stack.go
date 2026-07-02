@@ -346,6 +346,9 @@ func validateDevStackPlan(plan devStackPlan) error {
 	if plan.RecordingBackend == devStackRecordingInstalledExApp && plan.CassiniMode != devStackCassiniInstalledExApp {
 		return errors.New("recording backend installed-exapp requires --cassini installed-exapp")
 	}
+	if (plan.RecordingBackend == devStackRecordingDirectOperator || plan.RecordingBackend == devStackRecordingInstalledExApp) && (plan.ServiceMode == devStackServiceCore || plan.ServiceMode == devStackServiceAppAPI) {
+		return fmt.Errorf("recording backend %s requires service mode full, full-remote, or legacy-default", plan.RecordingBackend)
+	}
 	if plan.CassiniMode == devStackCassiniInstalledExApp && plan.ServiceMode == devStackServiceCore {
 		return errors.New("--cassini installed-exapp requires service mode appapi, full, full-remote, or legacy-default")
 	}

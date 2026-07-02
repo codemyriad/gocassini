@@ -108,23 +108,56 @@ harness_configure_talk_media() {
   fi
 }
 
-harness_configure_legacy_recording_backend() {
+harness_configure_recording_backend() {
+  local backend="${CASSINI_HARNESS_RECORDING_BACKEND:-legacy}"
+  local gateway effective_recording_url recording_json
+
+  case "$backend" in
+    none)
+      log "Skipping Talk recording backend configuration because backend mode is 'none'"
+      occ_ignore_failure config:app:delete spreed recording_servers >/dev/null 2>&1
+      occ config:app:set spreed call_recording --value="no"
+      return 0
+      ;;
+    legacy|direct-operator|installed-exapp)
+      ;;
+    *)
+      echo "Invalid CASSINI_HARNESS_RECORDING_BACKEND: $backend" >&2
+      return 2
+      ;;
+  esac
+
   if ! harness_media_selected; then
+    log "Skipping Talk recording backend configuration because media mode is not selected"
     return 0
   fi
 
-  local gateway effective_recording_url recording_json
+  harness_validate_recording_secrets
   gateway="$(harness_bootstrap_gateway)"
   effective_recording_url="${CASSINI_TALK_RECORDING_URL:-}"
-  if [[ -z "$effective_recording_url" || "$effective_recording_url" == "http://127.0.0.1:4000" || "$effective_recording_url" == "http://localhost:4000" ]]; then
-    if [[ -n "$gateway" ]]; then
-      effective_recording_url="http://$gateway:4000"
-    else
-      effective_recording_url="http://127.0.0.1:4000"
-    fi
-  fi
 
-  log "Configuring Talk recording backend: $effective_recording_url"
+  case "$backend" in
+    legacy|direct-operator)
+      if [[ -z "$effective_recording_url" || "$effective_recording_url" == "http://127.0.0.1:4000" || "$effective_recording_url" == "http://localhost:4000" ]]; then
+        if [[ -n "$gateway" ]]; then
+          effective_recording_url="http://$gateway:4000"
+        else
+          effective_recording_url="http://127.0.0.1:4000"
+        fi
+      fi
+      ;;
+    installed-exapp)
+      if [[ "${CASSINI_HARNESS_CASSINI_MODE:-none}" != "installed-exapp" ]]; then
+        echo "Recording backend installed-exapp requires CASSINI_HARNESS_CASSINI_MODE=installed-exapp" >&2
+        return 1
+      fi
+      if [[ -z "$effective_recording_url" ]]; then
+        effective_recording_url="http://reverse-proxy/index.php/apps/app_api/proxy/gocassini"
+      fi
+      ;;
+  esac
+
+  log "Configuring Talk recording backend ($backend): $effective_recording_url"
   recording_json=$(printf '{"servers":[{"server":"%s","verify":false}],"secret":"%s"}' "$effective_recording_url" "$CASSINI_TALK_RECORDING_SECRET")
   occ config:app:set spreed recording_servers --value="$recording_json"
   occ config:app:set spreed call_recording --value="yes"
@@ -132,6 +165,6 @@ harness_configure_legacy_recording_backend() {
 
 harness_bootstrap_core_nextcloud
 harness_configure_talk_media
-harness_configure_legacy_recording_backend
+harness_configure_recording_backend
 
 log "Bootstrap complete"
