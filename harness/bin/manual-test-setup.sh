@@ -28,6 +28,7 @@ HARNESS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_ROOT="$(cd "$HARNESS_DIR/.." && pwd)"
 
 export PROJECT_NAME="cassini-exapp-test"
+export CASSINI_HARNESS_CASSINI_MODE="${CASSINI_HARNESS_CASSINI_MODE:-installed-exapp}"
 # SPREED_PROFILE controls which compose profiles get pulled in. Default
 # brings up the install-flow stack (NC, db, HaRP, reverse-proxy). Set
 # SPREED_PROFILE=full before invoking this script to also bring up
@@ -275,22 +276,10 @@ log "6. Installing AppAPI..."
 occ app:install app_api || true
 occ app:enable app_api
 
-log "7. Patching AppAPI CSP for ExApp proxy responses..."
-"${COMPOSE[@]}" exec -T nextcloud php < "$SCRIPT_DIR/patch-csp.php"
-"${COMPOSE[@]}" restart nextcloud
+log "7. Applying scenario-associated AppAPI CSP patch if needed..."
+harness_apply_patch_phase
 
-# bootstrap.sh already waits for NC the first time; do it again post-restart.
-log "8. Waiting for Nextcloud after CSP-patch restart..."
-for attempt in $(seq 1 60); do
-  if "${COMPOSE[@]}" exec -T -u www-data nextcloud php occ status 2>&1 | grep -q "installed: true"; then
-    success "✓ Nextcloud back up"
-    break
-  fi
-  if [[ $attempt -eq 60 ]]; then error "Nextcloud did not come back up after restart"; exit 1; fi
-  sleep 1
-done
-
-log "9. Registering HaRP deploy daemon..."
+log "8. Registering HaRP deploy daemon..."
 occ app_api:daemon:unregister docker_local >/dev/null 2>&1 || true
 occ app_api:daemon:unregister harp_local   >/dev/null 2>&1 || true
 # HP_SHARED_KEY must match the value in compose.yml's appapi-harp service.
@@ -313,7 +302,7 @@ occ app_api:daemon:register \
     --set-default \
     --compute_device=cpu
 
-log "10. Mapping ghcr.io to local so the daemon uses our locally-built image..."
+log "9. Mapping ghcr.io to local so the daemon uses our locally-built image..."
 # AppAPI sees info.xml's <registry>ghcr.io</registry>, looks for the mapping,
 # finds --registry-to=local, and skips the docker pull — the image must
 # already exist locally (we tagged it in step 2). Lets the dev path use
@@ -321,11 +310,11 @@ log "10. Mapping ghcr.io to local so the daemon uses our locally-built image..."
 occ app_api:daemon:registry:add harp_local \
     --registry-from=ghcr.io --registry-to=local
 
-log "11. Copying info.xml into the Nextcloud container for app:register..."
+log "10. Copying info.xml into the Nextcloud container for app:register..."
 "${COMPOSE[@]}" cp "$PROJECT_ROOT/appinfo/info.xml" nextcloud:/tmp/gocassini-info.xml
 "${COMPOSE[@]}" exec -T -u root nextcloud chown www-data:www-data /tmp/gocassini-info.xml
 
-log "12. Creating standard user 'alice' for viewer testing..."
+log "11. Creating standard user 'alice' for viewer testing..."
 export OC_PASS="Tn8mY3qVrJ2x!E2e"
 "${COMPOSE[@]}" exec -T -e OC_PASS -u www-data nextcloud php occ user:add --password-from-env --display-name=Alice alice >/dev/null 2>&1 || true
 unset OC_PASS
@@ -368,7 +357,7 @@ http_body_with_retry() {
 }
 
 if [[ "$INSTALL_EXAPP" == "true" ]]; then
-  log "13. Registering and enabling Cassini as an installed ExApp..."
+  log "12. Registering and enabling Cassini as an installed ExApp..."
   register_args=(
     app_api:app:register gocassini harp_local
     --info-xml /tmp/gocassini-info.xml
@@ -398,12 +387,12 @@ if [[ "$INSTALL_EXAPP" == "true" ]]; then
   fi
   success "✓ ExApp registration completed"
 
-  log "14. Cycling enable state so AppAPI sends PUT /enabled..."
+  log "13. Cycling enable state so AppAPI sends PUT /enabled..."
   occ app_api:app:disable gocassini >/dev/null 2>&1 || true
   occ app_api:app:enable gocassini >/dev/null
   success "✓ ExApp enabled"
 
-  log "15. Verifying installed ExApp proxy routes and Talk config presence..."
+  log "14. Verifying installed ExApp proxy routes and Talk config presence..."
   occ app_api:app:list | grep -q 'gocassini' || { error "gocassini missing from app_api:app:list"; exit 1; }
 
   welcome_json=$(http_body_with_retry "welcome route" "$PROXY_URL/api/v1/welcome")
@@ -418,7 +407,7 @@ if [[ "$INSTALL_EXAPP" == "true" ]]; then
   http_ok_with_retry "admin control panel route" -u admin:admin -o /dev/null "$PROXY_URL/control-panel/"
   http_ok_with_retry "viewer route" -u alice:Tn8mY3qVrJ2x!E2e -o /dev/null "$PROXY_URL/viewer/"
 else
-  log "13. Skipping ExApp registration because --no-install was passed."
+  log "12. Skipping ExApp registration because --no-install was passed."
 fi
 
 cat <<EOF
