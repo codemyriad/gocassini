@@ -52,7 +52,7 @@ printf 'opus-bytes' > "$out"
 exit 0
 `)
 
-	opusPath, err := packCanonicalMeetingToOpus(context.Background(), bin, workRoot, jobID, nil)
+	opusPath, err := packCanonicalMeetingToOpus(context.Background(), bin, workRoot, jobID, "", nil)
 	if err != nil {
 		t.Fatalf("packCanonicalMeetingToOpus() error = %v", err)
 	}
@@ -72,10 +72,45 @@ exit 0
 	}
 }
 
+func TestPackCanonicalMeetingToOpusPassesTitle(t *testing.T) {
+	workRoot := t.TempDir()
+	jobID := "job1"
+	seedPromotedMeeting(t, workRoot, jobID)
+
+	// A resolved Talk room name must reach `cassini pack` as --title so the
+	// packed meeting carries the human-readable name (D-462).
+	bin := writeFakeCassini(t, `
+if [ "$5" != "--title" ]; then echo "missing --title, got $5" >&2; exit 9; fi
+if [ "$6" != "Daily Meeting" ]; then echo "wrong title: $6" >&2; exit 9; fi
+printf 'opus-bytes' > "$4"
+exit 0
+`)
+
+	if _, err := packCanonicalMeetingToOpus(context.Background(), bin, workRoot, jobID, "Daily Meeting", nil); err != nil {
+		t.Fatalf("packCanonicalMeetingToOpus() error = %v", err)
+	}
+}
+
+func TestPackCanonicalMeetingToOpusOmitsEmptyTitle(t *testing.T) {
+	workRoot := t.TempDir()
+	jobID := "job1"
+	seedPromotedMeeting(t, workRoot, jobID)
+
+	bin := writeFakeCassini(t, `
+if [ "$#" != "4" ]; then echo "unexpected extra args: $#" >&2; exit 9; fi
+printf 'opus-bytes' > "$4"
+exit 0
+`)
+
+	if _, err := packCanonicalMeetingToOpus(context.Background(), bin, workRoot, jobID, "   ", nil); err != nil {
+		t.Fatalf("packCanonicalMeetingToOpus() error = %v", err)
+	}
+}
+
 func TestPackCanonicalMeetingToOpusErrorsWhenMeetingMissing(t *testing.T) {
 	workRoot := t.TempDir()
 	bin := writeFakeCassini(t, "exit 0\n")
-	if _, err := packCanonicalMeetingToOpus(context.Background(), bin, workRoot, "missing", nil); err == nil {
+	if _, err := packCanonicalMeetingToOpus(context.Background(), bin, workRoot, "missing", "", nil); err == nil {
 		t.Fatal("expected error when promoted meeting is absent")
 	}
 }
@@ -89,7 +124,7 @@ func TestPackCanonicalMeetingToOpusErrorsWhenCommandFails(t *testing.T) {
 	// exit 2) — the operator must surface a non-nil error so the caller logs a
 	// skip, but the build itself stays unaffected.
 	bin := writeFakeCassini(t, "echo 'unknown command \"pack\"' >&2\nexit 2\n")
-	if _, err := packCanonicalMeetingToOpus(context.Background(), bin, workRoot, jobID, nil); err == nil {
+	if _, err := packCanonicalMeetingToOpus(context.Background(), bin, workRoot, jobID, "", nil); err == nil {
 		t.Fatal("expected error when cassini pack fails")
 	}
 	// No partial .opus should be left claiming success.
@@ -106,7 +141,7 @@ func TestPackCanonicalMeetingToOpusErrorsWhenOutputMissing(t *testing.T) {
 	// A cassini that exits 0 but writes nothing must be treated as a failure
 	// so we never report a phantom durable artifact.
 	bin := writeFakeCassini(t, "exit 0\n")
-	_, err := packCanonicalMeetingToOpus(context.Background(), bin, workRoot, jobID, nil)
+	_, err := packCanonicalMeetingToOpus(context.Background(), bin, workRoot, jobID, "", nil)
 	if err == nil || !strings.Contains(err.Error(), "pack output missing") {
 		t.Fatalf("expected pack output missing error, got %v", err)
 	}

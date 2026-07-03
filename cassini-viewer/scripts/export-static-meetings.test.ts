@@ -4,6 +4,7 @@ import {
   buildDisplayTranscriptFromArtifacts,
   describeMeeting,
   describeSpeechToTextVariant,
+  preferredPortableTitle,
   describeVariantSuffix,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
@@ -84,6 +85,34 @@ describe("describeMeeting", () => {
     expect(describeMeeting("01KKA70QN0ABCDEFGHJKMNPQRST").dateLabel).toBe(
       "01KKA70QN0ABCDEFGHJKMNPQRST",
     );
+  });
+});
+
+describe("preferredPortableTitle", () => {
+  const ulid = "01KKA70QN0ABCDEFGHJKMNPQRS";
+
+  it("uses a real embedded title (e.g. the Talk room name)", () => {
+    expect(preferredPortableTitle({ meeting: { title: "Daily Meeting" } }, ulid)).toBe(
+      "Daily Meeting",
+    );
+    expect(preferredPortableTitle({ meeting: { title: "  Silvio-Alex-Chris  " } }, ulid)).toBe(
+      "Silvio-Alex-Chris",
+    );
+  });
+
+  it("rejects packer defaults that echo the meeting id", () => {
+    expect(preferredPortableTitle({ meeting: { title: ulid } }, ulid)).toBe("");
+    expect(
+      preferredPortableTitle({ meeting: { title: ulid } }, `${ulid}--stt-whisper-large-v3`),
+    ).toBe("");
+    expect(preferredPortableTitle({ meeting: { title: "Cassini Meeting" } }, ulid)).toBe("");
+  });
+
+  it("rejects missing or empty titles", () => {
+    expect(preferredPortableTitle({ meeting: { title: "   " } }, ulid)).toBe("");
+    expect(preferredPortableTitle({ meeting: {} }, ulid)).toBe("");
+    expect(preferredPortableTitle({}, ulid)).toBe("");
+    expect(preferredPortableTitle(null, ulid)).toBe("");
   });
 
   it("keeps the plain-id fallback for non-ULID meeting ids", () => {

@@ -88,7 +88,7 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	// publish is enqueued. A pack failure (or a cassini binary that predates
 	// `cassini pack`) loses nothing: `.meeting` stays the durable publish input.
 	go func() {
-		opusPath, packErr := packCanonicalMeetingToOpus(rt.ctx, rt.cfg.CassiniBin, rt.cfg.WorkRoot, task.JobID, nil)
+		opusPath, packErr := packCanonicalMeetingToOpus(rt.ctx, rt.cfg.CassiniBin, rt.cfg.WorkRoot, task.JobID, rt.talkRoomNameForJob(task.JobID), nil)
 		if packErr != nil {
 			rt.logger.Printf("build opus pack skipped id=%s attempt=%d worker=%d meeting=%s: %v (durable .meeting retained; publish unaffected)", task.JobID, task.AttemptNumber, workerIndex, canonicalMeetingPath, packErr)
 			return

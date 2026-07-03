@@ -164,6 +164,10 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
   if (sourceType === "portable") {
     const portable = extractPortableManifest(sourcePath);
     const transcript = buildTranscriptWordsFromPortable(portable);
+    // A real embedded title (e.g. the Talk room name the operator captured
+    // at recording time) beats anything derived from the file name; packer
+    // defaults that merely echo the id fall through to describeMeeting.
+    const meetingTitle = preferredPortableTitle(portable, meetingId) || title;
     const targetFileName = `${meetingId}.opus`;
     if (!recordingsBaseUrl) {
       cpSync(sourcePath, join(outputDir, "meetings", targetFileName));
@@ -172,7 +176,7 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
     return {
       id: meetingId,
       audioPath: recordingsBaseUrl ? `${recordingsBaseUrl}meetings/${targetFileName}` : `./meetings/${targetFileName}`,
-      title: sttVariantLabel ? `${title} (${sttVariantLabel})` : title,
+      title: sttVariantLabel ? `${meetingTitle} (${sttVariantLabel})` : meetingTitle,
       dateLabel,
       speakerCount: transcript.speakers?.length ?? 0,
       // For a v2 .opus the inline items are absent (see portableDefaultSegmentCount);
@@ -1277,6 +1281,25 @@ export function copyPublicMeetingFiles(sourceMeetingDir, targetMeetingDir, manif
 
 export function isPortableMeeting(fileName) {
   return extname(fileName).toLowerCase() === ".opus";
+}
+
+// preferredPortableTitle returns the title embedded in a portable meeting's
+// manifest when it is a real human-readable name (e.g. the Talk room name the
+// operator resolved at recording time, D-462). Packer defaults — the meeting
+// id echoed back or the generic "Cassini Meeting" — yield "" so the caller
+// falls back to id-derived naming.
+export function preferredPortableTitle(portable, meetingId) {
+  const raw = typeof portable?.meeting?.title === "string" ? portable.meeting.title.trim() : "";
+  if (raw === "") {
+    return "";
+  }
+  if (raw === meetingId || raw === stripVariantSuffix(meetingId)) {
+    return "";
+  }
+  if (raw === "Cassini Meeting") {
+    return "";
+  }
+  return raw;
 }
 
 export function describeMeeting(meetingId) {

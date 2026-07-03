@@ -355,7 +355,16 @@ func (c ExAppConfig) initProgressReporter(logger *log.Logger) func() {
 // validates on OCS calls from an ExApp back into Nextcloud, plus the JSON
 // content negotiation every such call uses.
 func (c ExAppConfig) setAppAPIOCSHeaders(req *http.Request) {
-	auth := base64.StdEncoding.EncodeToString([]byte(":" + c.AppSecret))
+	c.setAppAPIOCSHeadersForUser(req, "")
+}
+
+// setAppAPIOCSHeadersForUser is setAppAPIOCSHeaders with the call attributed
+// to a Nextcloud user: AppAPI decodes AUTHORIZATION-APP-API as
+// base64("<userId>:<secret>") and runs the request in that user's session, so
+// user-scoped OCS APIs (e.g. Talk room lookups) behave as that user. An empty
+// userId keeps the app-scoped (system) session.
+func (c ExAppConfig) setAppAPIOCSHeadersForUser(req *http.Request, userID string) {
+	auth := base64.StdEncoding.EncodeToString([]byte(userID + ":" + c.AppSecret))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("OCS-APIRequest", "true")

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -28,7 +29,7 @@ import (
 // The pack itself is atomic at the recorder layer (packMeetingBundle stages a
 // temp file and renames into place), so a crash mid-pack leaves the previous
 // `.opus` (if any) untouched.
-func packCanonicalMeetingToOpus(ctx context.Context, cassiniBin, workRoot, jobID string, logSink io.Writer) (string, error) {
+func packCanonicalMeetingToOpus(ctx context.Context, cassiniBin, workRoot, jobID, title string, logSink io.Writer) (string, error) {
 	meetingPath := canonicalMeetingPath(workRoot, jobID)
 	if _, err := os.Stat(meetingPath); err != nil {
 		return "", fmt.Errorf("stat promoted meeting bundle: %w", err)
@@ -38,7 +39,14 @@ func packCanonicalMeetingToOpus(ctx context.Context, cassiniBin, workRoot, jobID
 		return "", fmt.Errorf("create current dir for opus: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, cassiniBin, "pack", meetingPath, "--out", opusPath)
+	args := []string{"pack", meetingPath, "--out", opusPath}
+	// A Talk recording's room name (resolved at start, talk_room_name.go)
+	// becomes the embedded meeting title; without one, pack falls back to the
+	// bundle name and the viewer to "Untitled meeting" (D-462).
+	if strings.TrimSpace(title) != "" {
+		args = append(args, "--title", strings.TrimSpace(title))
+	}
+	cmd := exec.CommandContext(ctx, cassiniBin, args...)
 	if logSink != nil {
 		cmd.Stdout = logSink
 		cmd.Stderr = logSink
