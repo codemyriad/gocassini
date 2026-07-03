@@ -55,5 +55,6 @@ Release prep for ${VERSION} is complete. Next steps:
   git add -A && git commit -m "release: ${VERSION}"
   gh pr create --base main --title "release: ${VERSION}"
   # after review + merge:
-  gh workflow run release.yml -f version=${VERSION}
+  git switch main && git pull --ff-only
+  ./scripts/tag-release.sh ${VERSION}
 EOF

@@ -11,13 +11,17 @@ the two has a bug — fix it rather than working around it.
 PRs to main (each with a changelog.d/ fragment)
   └─> release-prep PR: bump version + summarize fragments into CHANGELOG.md
         └─> human review + merge to main
-              └─> gh workflow run release.yml -f version=X.Y.Z
-                    ├─> annotated tag vX.Y.Z + GitHub Release (notes from CHANGELOG.md)
+              └─> ./scripts/tag-release.sh X.Y.Z   (validated annotated tag push)
                     ├─> publish-exapp-image.yml: GHCR images :X.Y.Z, :X.Y.Z-cuda, …
-                    └─> publish-appstore-package.yml: build + validate + attach
-                        gocassini-X.Y.Z.tar.gz, then App Store upload
-                        (guarded — skipped until certificate/registration exist)
+                    └─> release.yml: GitHub Release (notes from CHANGELOG.md)
+                          └─> build + validate + attach gocassini-X.Y.Z.tar.gz,
+                              then App Store upload (guarded — skipped until
+                              certificate/registration exist)
 ```
+
+The tag is pushed from a human machine (not by CI with `GITHUB_TOKEN`) on
+purpose: GitHub suppresses workflow triggers for refs pushed with the
+workflow token, so a CI-pushed tag would silently publish nothing.
 
 ## Branch and tag model
 
@@ -101,20 +105,21 @@ and version bump are the diff.
      `scripts/check-release-ready.sh`, builds and validates the App Store
      tarball locally.
    - Open the `release: <version>` PR; get it reviewed and merged.
-2. **Cut** (human-triggered, CI-executed):
+2. **Cut** (human, one command):
    ```bash
-   gh workflow run release.yml -f version=X.Y.Z
+   git switch main && git pull --ff-only
+   ./scripts/tag-release.sh X.Y.Z
    ```
-   `release.yml` re-validates `main` HEAD (versions agree, changelog section
-   exists, no leftover fragments, tag absent), creates the annotated tag
-   `vX.Y.Z`, and creates the GitHub Release with notes extracted from the
-   matching `CHANGELOG.md` section (prerelease flag when the version has a
-   suffix).
+   The script refuses to tag unless the worktree is clean, HEAD equals
+   `origin/main`, `check-release-ready.sh` passes, and the tag doesn't exist
+   yet; then it creates the annotated tag `vX.Y.Z` and pushes it.
 3. **Publish** (CI, automatic on the tag):
    - `publish-exapp-image.yml` builds and publishes the GHCR image tags.
-   - `publish-appstore-package.yml` builds the App Store tarball, validates
-     it, and attaches it to the GitHub Release. App Store upload runs only in
-     activated mode (below).
+   - `release.yml` re-validates, creates the GitHub Release with notes
+     extracted from the matching `CHANGELOG.md` section (prerelease flag when
+     the version has a suffix), builds and validates the App Store tarball,
+     and attaches it to the Release. App Store upload runs only in activated
+     mode (below).
 
 ## Manual ↔ CI split
 
@@ -125,9 +130,10 @@ and version bump are the diff.
 | Decide to release, pick the version | Human |
 | Release prep (bump, summarize, delete fragments) | Agent, locally, in a reviewed PR |
 | Release-prep PR review | Human |
-| Cut tag + GitHub Release | Human dispatches, CI validates and executes (`release.yml`) |
+| Cut the tag | Human (`scripts/tag-release.sh`, self-validating) |
+| GitHub Release creation | CI (`release.yml` on the tag push) |
 | Docker images | CI (`publish-exapp-image.yml`) |
-| Tarball build/validate/attach | CI (`publish-appstore-package.yml`) |
+| Tarball build/validate/attach | CI (`release.yml`) |
 | App Store upload | CI, doubly guarded: explicit dispatch input **and** `release` environment approval |
 | Post-registration activation (one-time) | Human, per the runbook below |
 
@@ -149,7 +155,7 @@ transform strips elements the store doesn't know, including
 replicates XSLT→XSD; raw XSD validation false-fails on Cassini and must not
 be used as a gate.
 
-`publish-appstore-package.yml` has two modes:
+`release.yml`'s packaging half has two modes:
 
 ### Current mode (registration pending)
 
@@ -200,7 +206,7 @@ One-time tail, blocked on the Nextcloud certificate request
    ```
 4. Publish the existing alpha (re-signs and overwrites the current asset):
    ```bash
-   gh workflow run publish-appstore-package.yml \
+   gh workflow run release.yml \
      -f version=0.2.0-alpha.1 \
      -f upload_appstore=true \
      -f overwrite_asset=true

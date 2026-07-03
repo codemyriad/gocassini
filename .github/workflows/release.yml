@@ -1,0 +1,314 @@
+# Release — GitHub Release + Nextcloud App Store package for a v<version> tag.
+#
+# Canonical flow (docs/release-policy.md): a human cuts the release with
+# scripts/tag-release.sh, which pushes the annotated tag. That push triggers
+# publish-exapp-image.yml (Docker images) and this workflow, which:
+#
+#   release        creates the GitHub Release (prerelease when the version
+#                  has a SemVer suffix) with notes extracted from the
+#                  matching CHANGELOG.md section
+#   package        builds + validates the App Store tarball (layout checks,
+#                  pre-info.xslt -> info.xsd) and attaches it to the Release
+#   store-upload   signs the app dir + archive and POSTs the release to
+#                  apps.nextcloud.com. Guarded: runs only on an explicit
+#                  workflow_dispatch with upload_appstore=true, inside the
+#                  `release` environment, and needs APP_PRIVATE_KEY,
+#                  APP_PUBLIC_CRT, APPSTORE_TOKEN. Until app registration
+#                  completes this job is skipped with a summary line.
+#
+# workflow_dispatch re-runs the pipeline for an EXISTING tag (idempotent:
+# existing Release/asset are kept unless overwrite_asset=true) — that is the
+# post-registration activation path.
+#
+# The tag is never created here: refs pushed with the Actions GITHUB_TOKEN
+# don't trigger workflows, so a CI-created tag would publish no images.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Existing release version (without the v prefix), e.g. 0.2.0-alpha.1'
+        required: true
+      upload_appstore:
+        description: 'Sign and upload the release to apps.nextcloud.com'
+        type: boolean
+        default: false
+      overwrite_asset:
+        description: 'Replace an existing GitHub Release asset'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'push' && github.ref || format('refs/tags/v{0}', inputs.version) }}
+  cancel-in-progress: false
+
+env:
+  APP_ID: gocassini
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - name: Resolve version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" == "push" ]]; then
+            VERSION="${GITHUB_REF##refs/tags/v}"
+          else
+            VERSION="${INPUT_VERSION#v}"
+          fi
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "version must be X.Y.Z or X.Y.Z-<prerelease>, got: '${VERSION}'" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          # On dispatch, operate on the tagged source, not main — re-runs must
+          # reproduce the released bytes. Fails loudly if the tag is missing.
+          ref: ${{ github.event_name == 'push' && github.ref || format('refs/tags/v{0}', steps.version.outputs.version) }}
+
+      - name: Install xmllint
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
+
+      # Gate NEW release cuts strictly. Dispatch re-runs of an existing tag
+      # skip this: the tag already shipped, and checks added since (e.g. the
+      # SPDX licence rule postdates v0.2.0-alpha.1) must not retro-block
+      # re-publishing it — the tarball validator still checks consistency.
+      - name: Release readiness check (tag push only)
+        if: github.event_name == 'push'
+        run: ./scripts/check-release-ready.sh "${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub Release (skip if it exists)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "${TAG}" --json name >/dev/null 2>&1; then
+            echo "GitHub Release ${TAG} already exists — keeping it." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # Notes = the CHANGELOG.md section for this version (from the
+          # heading to the next '## [' heading).
+          awk -v ver="${VERSION}" '
+            $0 ~ ("^## \\[" ver "\\]") { on=1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > /tmp/notes.md
+          if [[ ! -s /tmp/notes.md ]]; then
+            echo "CHANGELOG.md has no '## [${VERSION}]' section — refusing to create a notes-less release" >&2
+            exit 1
+          fi
+          args=(--verify-tag --title "${TAG}" --notes-file /tmp/notes.md)
+          # SemVer suffix => GitHub prerelease. (Store-side this is NOT a
+          # nightly — see docs/release-policy.md.)
+          [[ "${VERSION}" == *-* ]] && args+=(--prerelease)
+          gh release create "${TAG}" "${args[@]}"
+          echo "Created GitHub Release ${TAG}." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  package:
+    name: Build + attach App Store package
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.release.outputs.tag }}
+
+      - name: Install xmllint + xsltproc
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils xsltproc
+
+      - name: Build tarball (unsigned)
+        run: ./scripts/build-appstore-tarball.sh --version "${{ needs.release.outputs.version }}"
+
+      - name: Validate tarball
+        run: ./scripts/validate-appstore-tarball.sh "dist/appstore/${APP_ID}-${{ needs.release.outputs.version }}.tar.gz"
+
+      - name: Attach asset to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.release.outputs.version }}
+          TAG: ${{ needs.release.outputs.tag }}
+          OVERWRITE: ${{ inputs.overwrite_asset && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          ASSET="${APP_ID}-${VERSION}.tar.gz"
+          exists="$(gh release view "${TAG}" --json assets -q '.assets[].name' | grep -cFx "${ASSET}" || true)"
+          if [[ "${exists}" != "0" && "${OVERWRITE}" != "true" ]]; then
+            echo "Asset ${ASSET} already on ${TAG} — kept as-is (dispatch with overwrite_asset=true to replace)." \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh release upload "${TAG}" "dist/appstore/${ASSET}" --clobber
+          echo "Attached ${ASSET} to GitHub Release ${TAG}." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: App Store upload status
+        env:
+          UPLOAD_REQUESTED: ${{ (github.event_name == 'workflow_dispatch' && inputs.upload_appstore) && 'true' || 'false' }}
+          HAS_CRT: ${{ secrets.APP_PUBLIC_CRT != '' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          if [[ "${UPLOAD_REQUESTED}" == "true" ]]; then
+            echo "App Store upload requested — see the store-upload job." >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "${HAS_CRT}" != "true" ]]; then
+            echo "App Store upload skipped: APP_PUBLIC_CRT is not configured (app registration pending — see docs/release-policy.md runbook)." \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "App Store upload skipped: not requested (dispatch release.yml with upload_appstore=true to publish to the store)." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  store-upload:
+    name: Sign + upload to apps.nextcloud.com
+    runs-on: ubuntu-latest
+    needs: [release, package]
+    # Doubly guarded: explicit operator intent (dispatch input) AND the
+    # `release` environment (configure required reviewers in repo settings so
+    # a public store publish always takes a second human approval).
+    if: github.event_name == 'workflow_dispatch' && inputs.upload_appstore
+    environment: release
+    steps:
+      - name: Verify prerequisites
+        env:
+          HAS_KEY: ${{ secrets.APP_PRIVATE_KEY != '' && 'true' || 'false' }}
+          HAS_CRT: ${{ secrets.APP_PUBLIC_CRT != '' && 'true' || 'false' }}
+          HAS_TOKEN: ${{ secrets.APPSTORE_TOKEN != '' && 'true' || 'false' }}
+          OVERWRITE: ${{ inputs.overwrite_asset && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ "${HAS_KEY}" == "true" ]]   || missing+=(APP_PRIVATE_KEY)
+          [[ "${HAS_CRT}" == "true" ]]   || missing+=(APP_PUBLIC_CRT)
+          [[ "${HAS_TOKEN}" == "true" ]] || missing+=(APPSTORE_TOKEN)
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "App Store upload was explicitly requested but secrets are missing: ${missing[*]}" >&2
+            echo "Complete the post-registration runbook in docs/release-policy.md first." >&2
+            exit 1
+          fi
+          # The POSTed signature must match the bytes at the download URL, so
+          # the signed re-pack must replace the GitHub asset.
+          if [[ "${OVERWRITE}" != "true" ]]; then
+            echo "upload_appstore=true requires overwrite_asset=true: the signed tarball replaces the release asset so the store signature matches the download." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.release.outputs.tag }}
+
+      - name: Install xmllint + xsltproc
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils xsltproc
+
+      - name: Stage app directory
+        run: ./scripts/build-appstore-tarball.sh --version "${{ needs.release.outputs.version }}"
+
+      # occ integrity:sign-app needs a bootable Nextcloud; use a disposable
+      # container (same major the harness pins). docker cp instead of mounts
+      # so www-data owns the files it hashes.
+      - name: Sign app directory (occ integrity:sign-app)
+        env:
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+          APP_PUBLIC_CRT: ${{ secrets.APP_PUBLIC_CRT }}
+        run: |
+          set -euo pipefail
+          docker run -d --name nc-sign \
+            -e SQLITE_DATABASE=nc \
+            -e NEXTCLOUD_ADMIN_USER=admin \
+            -e NEXTCLOUD_ADMIN_PASSWORD=disposable-sign-only \
+            nextcloud:34.0.0
+          # Wait for the entrypoint's maintenance:install to finish.
+          for i in $(seq 1 60); do
+            if docker exec -u www-data nc-sign php occ status 2>/dev/null | grep -q 'installed: true'; then
+              break
+            fi
+            [[ "$i" == "60" ]] && { echo "Nextcloud container never became ready" >&2; exit 1; }
+            sleep 5
+          done
+
+          key="$(mktemp)"; crt="$(mktemp)"
+          trap 'rm -f "$key" "$crt"' EXIT
+          chmod 600 "$key" "$crt"
+          printf '%s\n' "${APP_PRIVATE_KEY}" > "$key"
+          printf '%s\n' "${APP_PUBLIC_CRT}" > "$crt"
+
+          docker cp "dist/appstore/${APP_ID}" "nc-sign:/tmp/${APP_ID}"
+          docker cp "$key" nc-sign:/tmp/app.key
+          docker cp "$crt" nc-sign:/tmp/app.crt
+          docker exec nc-sign chown -R www-data:www-data "/tmp/${APP_ID}" /tmp/app.key /tmp/app.crt
+          docker exec -u www-data nc-sign php occ integrity:sign-app \
+            --privateKey=/tmp/app.key --certificate=/tmp/app.crt --path="/tmp/${APP_ID}"
+          docker cp "nc-sign:/tmp/${APP_ID}/appinfo/signature.json" \
+            "dist/appstore/${APP_ID}/appinfo/signature.json"
+
+      - name: Re-pack + validate signed tarball
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          tar -czf "dist/appstore/${APP_ID}-${VERSION}.tar.gz" -C dist/appstore "${APP_ID}"
+          ./scripts/validate-appstore-tarball.sh \
+            "dist/appstore/${APP_ID}-${VERSION}.tar.gz" --require-signature
+
+      - name: Replace GitHub Release asset with the signed tarball
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.release.outputs.version }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "${TAG}" "dist/appstore/${APP_ID}-${VERSION}.tar.gz" --clobber
+          echo "Replaced ${APP_ID}-${VERSION}.tar.gz on ${TAG} with the signed package." \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Sign archive + POST release to apps.nextcloud.com
+        env:
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+          APPSTORE_TOKEN: ${{ secrets.APPSTORE_TOKEN }}
+          VERSION: ${{ needs.release.outputs.version }}
+          TAG: ${{ needs.release.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          key="$(mktemp)"
+          trap 'rm -f "$key"' EXIT
+          chmod 600 "$key"
+          printf '%s\n' "${APP_PRIVATE_KEY}" > "$key"
+
+          # Sign the exact bytes the store will download.
+          SIG="$(openssl dgst -sha512 -sign "$key" "dist/appstore/${APP_ID}-${VERSION}.tar.gz" | openssl base64 -A)"
+          DOWNLOAD="https://github.com/${REPO}/releases/download/${TAG}/${APP_ID}-${VERSION}.tar.gz"
+
+          # nightly is ALWAYS false here: SemVer suffixes are pre-releases on
+          # the store's beta channel, not nightlies (docs/release-policy.md).
+          jq -n --arg download "$DOWNLOAD" --arg signature "$SIG" \
+            '{download: $download, signature: $signature, nightly: false}' > /tmp/payload.json
+
+          curl -sSf -X POST "https://apps.nextcloud.com/api/v1/apps/releases" \
+            -H "Authorization: Token ${APPSTORE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --data @/tmp/payload.json
+          echo "Published ${APP_ID} ${VERSION} to apps.nextcloud.com (nightly=false)." \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Cleanup signing container
+        if: always()
+        run: docker rm -f nc-sign 2>/dev/null || true
