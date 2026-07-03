@@ -1,6 +1,4 @@
-# D-395 — Env Var Setup Notes
-
-Status: final for D-395 implementation.
+# Talk recording — environment variables
 
 ## The core mismatch
 
@@ -23,7 +21,7 @@ AppAPI only forwards env vars declared in `info.xml`, so declaring it there is a
 | `CASSINI_TALK_RECORDING_SECRET` | Yes for Talk record button | Admin deploy option declared in `appinfo/info.xml` | HMAC shared secret for Talk's recording-backend protocol; must match `spreed.recording_servers.secret`. |
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | Yes for HPB-internal/default Talk recording | Admin deploy option declared in `appinfo/info.xml` | Internal client secret for standalone Nextcloud Talk signaling / HPB; must match signaling config `[clients] internalsecret`. |
 | `CASSINI_TALK_BACKEND_URL` | Optional, sometimes required | Admin deploy option declared in `appinfo/info.xml` | Override base URL the operator uses for callbacks/upload/OCS calls back to Nextcloud. Use when Talk advertises a URL unreachable from the ExApp container. |
-| `OPENROUTER_API_KEY` | Optional | Admin deploy option | Enables transcript cleanup / summaries through OpenRouter or compatible endpoint. |
+| `OPENROUTER_API_KEY` | Optional | Admin deploy option | Enables transcript cleanup / summaries through OpenRouter or compatible endpoint. Privacy: when set, the full local transcript is sent to that third party; transcription itself is always local. |
 | `LLM_BASE_URL` | Optional | Admin deploy option | OpenAI-compatible base URL. |
 | `LLM_MODEL` | Optional | Admin deploy option | Model identifier for cleanup/summaries. |
 | `CASSINI_OPERATOR_API_TOKEN` | Optional | Admin deploy option | Bearer token for direct non-AppAPI operator API calls; proxied AppAPI requests are authenticated by AppAPI. |

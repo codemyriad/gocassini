@@ -172,7 +172,7 @@ They are intentionally separate applications.
 For more terms, including audio/container terminology, see:
 
 - [Glossary](./reference/glossary.md)
-- repo reference: `docs/audio-glossary.md`
+- [Audio & media glossary](./audio-glossary.md)
 
 ## Where to go next
 

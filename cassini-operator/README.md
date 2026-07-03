@@ -684,11 +684,6 @@ go test ./internal/cassini/...
 
 CI also runs operator unit tests through `.github/workflows/ci.yml`.
 
-For the implemented V2 reflection and validation path, see:
-- `planning/initiatives/mvp/slices/V2-live-nextcloud-talk-recording/implementation.md`
-- `planning/initiatives/mvp/slices/V2-live-nextcloud-talk-recording/testing.md`
-
-For the implemented V5 shaping and slice plan, see:
-- `planning/initiatives/mvp/slices/V5-failure-inspection-and-rerun-flow/brief.md`
-- `planning/initiatives/mvp/slices/V5-failure-inspection-and-rerun-flow/shaping.md`
-- `planning/initiatives/mvp/slices/V5-failure-inspection-and-rerun-flow/slices.md`
+For the operator runtime model — jobs, attempts, live recording, failure
+inspection, and the rerun flow — see [../docs/operator-stack.md](../docs/operator-stack.md)
+and the [operator API reference](../docs/reference/api.md).

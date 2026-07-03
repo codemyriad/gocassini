@@ -89,10 +89,6 @@ npm run build
 When click-to-seek timing changes, do not rely only on JSON inspection or the UI highlight.
 Double-check the final behavior mechanically by auditing the clicked token against the audio clip at its assigned timestamp.
 
-The documented workflow lives at:
-
-- [planning/initiatives/mvp/slices/V7-viewer-design-system/mechanical-timing-audit.md](planning/initiatives/mvp/slices/V7-viewer-design-system/mechanical-timing-audit.md)
-
 Quick entry point:
 
 ```bash

@@ -2,9 +2,9 @@
 
 This is a compact glossary for the terms used in these docs.
 
-For a deeper media-focused glossary, see the repo-level reference:
+For a deeper media-focused glossary, see:
 
-- `docs/audio-glossary.md`
+- [Audio & media glossary](../audio-glossary.md)
 
 ## Product and runtime terms
 
@@ -110,4 +110,4 @@ If you find yourself asking questions like:
 
 then go to the full media glossary:
 
-- `docs/audio-glossary.md`
+- [Audio & media glossary](../audio-glossary.md)

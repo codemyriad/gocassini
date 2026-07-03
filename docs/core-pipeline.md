@@ -270,4 +270,4 @@ This file-first pipeline makes Cassini easier to work on because it supports:
 - Want the runtime around this pipeline: [Operator stack](./operator-stack.md)
 - Want exact artifact contents and paths: [Artifacts and filesystem](./reference/artifacts-and-filesystem.md)
 - Want terminology help: [Glossary](./reference/glossary.md)
-- Want deeper audio/media background: repo `docs/audio-glossary.md`
+- Want deeper audio/media background: [Audio & media glossary](./audio-glossary.md)

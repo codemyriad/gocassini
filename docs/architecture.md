@@ -41,7 +41,7 @@ Each arrow corresponds to a durable artifact written to disk. For portable `.opu
 | Component | Language | Role | Deep-dive |
 |---|---|---|---|
 | [`cassini-go-recorder/`](../cassini-go-recorder/) | Go | Live capture (Nextcloud Talk → multitrack `.mkv`), offline remux, post-recording transcription/summary pipeline, the `cassini` CLI | [`cassini-go-recorder/docs/architecture-overview.md`](../cassini-go-recorder/docs/architecture-overview.md) |
-| [`cassini-transcriber/`](../cassini-transcriber/) | Python | Legacy post-recording transcription pipeline. Superseded by the Go pipeline in `cassini-go-recorder/internal/transcribe`; kept for reference and for cases that still depend on its Python-side semantics. | [`cassini-transcriber/docs/architecture-overview.md`](../cassini-transcriber/docs/architecture-overview.md) |
+| `cassini-transcriber/` | Python | **Removed legacy** post-recording transcription pipeline. The package itself is gone; only `cassini-transcriber/docs/` remains for historical reference. Active transcription lives in `cassini-go-recorder/internal/transcribe`. | [`cassini-transcriber/docs/architecture-overview.md`](../cassini-transcriber/docs/architecture-overview.md) |
 | [`cassini-publisher/`](../cassini-publisher/) | Shell | Static-site exporter: turns processed meeting bundles into a hosted library | [`cassini-publisher/README.md`](../cassini-publisher/README.md) |
 | [`cassini-readable/`](../cassini-readable/) | Shell | Readable-transcript build script, kept around as a debug surface | [`cassini-readable/README.md`](../cassini-readable/README.md) |
 | [`cassini-viewer/`](../cassini-viewer/) | Svelte | Browser app for one meeting artifact at a time — playback, transcript, search, summary panel | [`cassini-viewer/docs/architecture-overview.md`](../cassini-viewer/docs/architecture-overview.md) |
@@ -82,4 +82,3 @@ Material that spans components and isn't owned by any single one:
 
 - Component internals — see each component's `docs/architecture-overview.md`.
 - Live recording packet truth, drift correction, or remux planning — see [cassini-go-recorder/docs/](../cassini-go-recorder/docs/) (`formats.md`, `muxing.md`, `timelines.md`, `architecture-migration-status.md`).
-- Planning, decisions, or roadmap — those live under [planning/](../planning/).
