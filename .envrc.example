@@ -11,20 +11,6 @@ export NEXTCLOUD_STATUS_URL="${NEXTCLOUD_URL}/status.php"
 # Required for `cassini-viewer` demo-data:* scripts.
 export DEMO_DATA_URL="https://example.com/cassini-demo-site"
 
-# Personal agent setup
-#
-# I've set this up so that:
-# - each dev can have their own repo-specific setup (and all are checked in for visibility)
-# - one dev's setup doesn't step on another's toes
-#
-# Setup:
-# 1. Create `agent-config/{your-name}/*`
-# 2. Place your desired setup: AGENTS.md, CLAUDE.md, other config files / skills / etc.
-# 3. Create `agent-config/{your-name}/init.sh` - a script used to scaffold your own setup (mine symlinks the setup)
-# 4. Add `agent-config/{your-name}/init.sh` to your .envrc
-# see `agent-config/ivan/*` for example (feel free to copy ofc.)
-#
-# NOTE: currently only CLAUDE.md and AGENTS.md are git ignored, but:
-# - we should git ignore additional directories (please make sure to do that if you do add additional dirs to the root agent setup)
-# - we should figure out how to handle base setup (something we want to enforce across the repo)
-./agent-config/{your-name}/init.sh
+# Optional: source your own local, gitignored setup here (agent config, aliases,
+# etc.). Keep such files out of version control. Example:
+#   [ -f .envrc.local ] && source_env .envrc.local

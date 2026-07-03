@@ -160,7 +160,7 @@ Options).
 | `CASSINI_TALK_RECORDING_SECRET` | For the Talk record button | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (Step 5). Unset, the operator rejects every recording request |
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | For HPB-internal/default Talk recording | Internal client secret for standalone Talk signaling / HPB; must match `[clients] internalsecret`. Required for private, group, and one-to-one Talk recording |
 | `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped notifications, recording upload). Leave empty to use the backend URL Talk sends with each request |
-| `OPENROUTER_API_KEY` | No | API key for LLM transcript cleanup + meeting summaries. Unset, raw transcripts are published without summaries |
+| `OPENROUTER_API_KEY` | No | API key for LLM transcript cleanup + meeting summaries. **When set, the full local transcript is sent to that third-party endpoint** for cleanup/summarisation (transcription itself is always local). Unset, raw transcripts are published without summaries |
 | `LLM_BASE_URL` | No | OpenAI-compatible API base URL; defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
 | `LLM_MODEL` | No | Model for cleanup/summaries (default `openai/gpt-4o-mini`) |
 | `CASSINI_OPERATOR_API_TOKEN` | No | Bearer token for direct non-AppAPI operator API calls. AppAPI-proxied requests are authenticated by Nextcloud/AppAPI |
