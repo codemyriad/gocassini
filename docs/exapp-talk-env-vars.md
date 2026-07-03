@@ -1,6 +1,4 @@
-# D-395 — Env Var Setup Notes
-
-Status: final for D-395 implementation.
+# Talk recording — environment variables
 
 ## The core mismatch
 

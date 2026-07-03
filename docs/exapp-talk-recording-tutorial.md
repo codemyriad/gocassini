@@ -1,6 +1,6 @@
-# D-395 — Manual Validation Tutorial
+# Talk recording — manual validation walkthrough
 
-Status: final. Validated in `dev-vm` on 2026-06-26.
+_Last validated in `dev-vm` on 2026-06-26._
 
 ## Goal
 
