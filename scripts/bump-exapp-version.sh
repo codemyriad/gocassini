@@ -25,8 +25,12 @@ set -euo pipefail
 INFO_XML="$(git rev-parse --show-toplevel)/appinfo/info.xml"
 NEW_VERSION="${1:?usage: $0 <new-version> (e.g. 0.2.0)}"
 
-if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "error: version must be X.Y.Z, got: '$NEW_VERSION'" >&2
+# X.Y.Z with an optional semver pre-release suffix (-alpha.1, -rc.2, …) —
+# the same shape the App Store's info.xsd `semver` type accepts. The store
+# treats suffixed versions as pre-releases, so alphas can ship through the
+# normal release flow.
+if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+  echo "error: version must be X.Y.Z or X.Y.Z-<prerelease>, got: '$NEW_VERSION'" >&2
   exit 1
 fi
 
