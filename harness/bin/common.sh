@@ -63,6 +63,9 @@ ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
 BOT_USER="${BOT_USER:-botuser}"
 BOT_PASSWORD="${BOT_PASSWORD:-zN4vQ9mT2Kp7R1x!}"
 
+# DEV-ONLY harness defaults below are committed test values. They are public
+# and must never be reused for real Nextcloud, Talk, signaling, TURN, or
+# Cassini deployments.
 # Keep empty by default here: bootstrap resolves an effective signaling URL
 # after Docker networking is up.
 SIGNALING_URL="${SIGNALING_URL:-}"

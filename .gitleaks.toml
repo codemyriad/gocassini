@@ -1,0 +1,57 @@
+# Gitleaks configuration for gocassini.
+#
+# This repository ships DETERMINISTIC, DEV-ONLY credentials in its local test
+# harness — Nextcloud Talk signaling / TURN / Janus secrets, a dev Talk
+# recording HMAC, and default admin/bot logins — so the Docker-based harness and
+# CI can stand up a throwaway Nextcloud + Talk stack reproducibly. These are NOT
+# production credentials and must never be reused in a real deployment. See
+# SECURITY.md ("Secrets and Test Fixtures").
+#
+# This allowlist tells gitleaks those known values are expected, so a full-repo /
+# full-history scan reports clean. It SUPPRESSES the alerts; it does not remove
+# the values from git history — they remain public, which is acceptable precisely
+# because they are non-sensitive test fixtures. Any NEW / unknown secret is still
+# reported.
+#
+# Verify (same scan the release-readiness review used):
+#   gitleaks detect --source . --log-opts=--all --redact
+
+title = "gocassini gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Deterministic dev-only harness/test credentials (see SECURITY.md)"
+# Match against the whole finding line so both the raw secret values and the
+# `user:pass` curl examples are covered.
+regexTarget = "line"
+
+# Known committed dev-only secret VALUES: harness signaling (hashkey / internal /
+# shared), Janus admin key, TURN shared secret, the dev Talk recording HMAC, and
+# the harness passwords. Listed explicitly so they are accepted wherever they
+# appear — including in history where the files have since moved or been deleted
+# (e.g. the old deployment/.env recording secret).
+regexes = [
+  '''39a5433df8f8334f6eff8a67f6afcfc594a2599f5389b4fef316ec30277fb910''', # signaling hashkey
+  '''6f4dca67263621ba7f9f9917e13de95a201f6f360be0d303e3008c2e6c8ad37d''', # signaling internalsecret
+  '''7f4dca67263621ba7f9f9917e13de95a201f6f360be0d303e3008c2e6c8ad37d''', # signaling shared secret
+  '''01e2fcd0d226d7f4cf34a8a61397f110693f05042e57ab68e94f8476a4b8f22a''', # janus admin key
+  '''3c04d2fc2f7fe39d48eb4dc77f652c8c778a4ea178b0e486529b284afca7b648''', # TURN shared secret
+  '''9a2a9c0b7f4e43b7a2c6e19d6a4b8f8073b0174ee2f8425d99e8e33f7d60fb42''', # dev Talk recording HMAC
+  '''zN4vQ9mT2Kp7R1x!''',                                                 # harness bot password
+  '''Tn8mY3qVrJ2x!E2e''',                                                 # harness sample-user password
+  '''admin:admin''',                                                      # default harness login in curl examples
+]
+
+# Dev-only areas whose committed credentials are test fixtures by design. Real
+# deployment secrets never live here (production .env files are gitignored; only
+# *.example templates are tracked).
+paths = [
+  '''^harness/''',
+  '''^sandbox/''',
+  '''^deployment/''',
+  '''\.envrc\.example$''',
+  '''^docs/.*\.md$''',
+  '''_test\.go$''',            # Go test fixtures (e.g. "recording-secret-123")
+]
