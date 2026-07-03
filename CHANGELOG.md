@@ -12,6 +12,18 @@ Unreleased changes are collected as fragments in `changelog.d/`. During
 release preparation, maintainers fold those fragments into this file under the
 new version and remove the consumed fragments.
 
+## [0.2.0-alpha.1] - 2026-07-03
+
+First public alpha.
+
+### Added
+- Added public project metadata: AGPLv3 license, changelog, security policy,
+  and contribution notes.
+
+### Security
+- Marked deterministic harness credentials as development-only values and
+  expanded ignore rules for local dependency and signing artifacts.
+
 ## [0.1.0] - 2026-07-01
 
 - Initial Nextcloud AppAPI ExApp packaging for Cassini.

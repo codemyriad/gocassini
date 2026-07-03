@@ -9,7 +9,7 @@ transcribes and summarizes it, and publishes a readable static site that any
 logged-in user can browse. Recording control and job history live in the
 admin-only control panel; the published meeting archive is visible to every
 logged-in user.]]></description>
-  <version>0.1.0</version>
+  <version>0.2.0-alpha.1</version>
   <licence>agpl</licence>
   <author>codemyriad</author>
   <namespace>Cassini</namespace>
@@ -32,7 +32,7 @@ logged-in user.]]></description>
            exact build this manifest was released with, never a moving
            `latest`. CI rejects a manifest where the two disagree; bump both
            together with scripts/bump-exapp-version.sh. -->
-      <image-tag>0.1.0</image-tag>
+      <image-tag>0.2.0-alpha.1</image-tag>
     </docker-install>
 
     <!--
