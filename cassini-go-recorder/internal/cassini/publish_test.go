@@ -106,6 +106,34 @@ func TestPublishFailsWhenOnlyBundleIsCorrupt(t *testing.T) {
 	}
 }
 
+func TestStagePublishInputUsesBundleManifestTitle(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	meetingsDir := filepath.Join(tmp, "meetings")
+	bundleDir := filepath.Join(meetingsDir, "01KWEKPZVEJWP9BYBPBX9ZRNDQ.meeting")
+	if err := writeReadyMeetingBundleFixture(bundleDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write ready meeting bundle: %v", err)
+	}
+	// The operator stamps the Talk room name into cassini.json after
+	// promotion; a publish that re-packs the .meeting (durable .opus not
+	// written yet) must carry that title, not the ULID bundle name.
+	setBundleManifestTitle(t, bundleDir, "Daily Meeting")
+
+	stagingRoot, _, skipped, err := stagePublishInput(context.Background(), meetingsDir)
+	if err != nil {
+		t.Fatalf("stagePublishInput() error = %v", err)
+	}
+	defer os.RemoveAll(stagingRoot)
+	if len(skipped) != 0 {
+		t.Fatalf("unexpected skips: %v", skipped)
+	}
+
+	stagedOpus := filepath.Join(stagingRoot, "01KWEKPZVEJWP9BYBPBX9ZRNDQ.opus")
+	if got := readOpusTitleTag(t, stagedOpus); got != "Daily Meeting" {
+		t.Errorf("staged TITLE = %q, want manifest title %q", got, "Daily Meeting")
+	}
+}
+
 func TestStagePublishInputSkipsCorruptBundles(t *testing.T) {
 	requireFFMediaTools(t)
 	tmp := t.TempDir()

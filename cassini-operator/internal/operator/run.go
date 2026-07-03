@@ -67,6 +67,10 @@ type Runtime struct {
 	recordMu     sync.Mutex
 	recordJobs   map[string]*recordProcessState
 	recordWG     sync.WaitGroup
+	// opusPackWG tracks the fire-and-forget post-build `cassini pack`
+	// goroutines so tests (and shutdown, if it ever cares) can wait for them
+	// instead of racing their temp-dir writes.
+	opusPackWG   sync.WaitGroup
 	talkRooms    map[string]*talkRoomState
 	talkJobs     map[string]*talkRoomState
 	recordJobFn  func(context.Context, Job, TriggerRequest) (recordResult, error)

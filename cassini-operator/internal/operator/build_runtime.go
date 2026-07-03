@@ -70,6 +70,18 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		}
 		return
 	}
+	// Stamp the Talk room name into the promoted bundle BEFORE publish is
+	// enqueued: `cassini publish` re-packs the `.meeting` when the durable
+	// `.opus` does not exist yet (the async pack below almost always loses
+	// that race), and the manifest title is what keeps the very first publish
+	// of a fresh recording correctly named (D-462). Best-effort: a failed
+	// stamp only costs the name, never the publish.
+	meetingTitle := rt.talkRoomNameForJob(task.JobID)
+	if meetingTitle != "" {
+		if err := SetMeetingBundleTitle(canonicalMeetingPath, meetingTitle); err != nil {
+			rt.logger.Printf("meeting title stamp failed id=%s meeting=%s: %v (viewer falls back to Untitled meeting)", task.JobID, canonicalMeetingPath, err)
+		}
+	}
 	if err := rt.enqueuePublishJobNonBlocking(task.JobID, task.AttemptNumber, canonicalMeetingPath, attemptMeetingPath, finishedAt); err != nil {
 		rt.logger.Printf("publish queue update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, err)
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, "", "", err.Error(), finishedAt); updateErr != nil {
@@ -83,12 +95,16 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	// the build->publish critical path. Packing shells out to `cassini pack`
 	// (an ffmpeg encode); doing it synchronously before the publish hand-off
 	// added latency to every build and starved the single build worker, which
-	// flaked the queue/handoff tests under load. Nothing depends on the .opus
-	// until `.meeting` is retired (D-429), so run it asynchronously after
-	// publish is enqueued. A pack failure (or a cassini binary that predates
-	// `cassini pack`) loses nothing: `.meeting` stays the durable publish input.
+	// flaked the queue/handoff tests under load. Running it after the publish
+	// enqueue is safe: the meeting title publish needs already rides the
+	// bundle manifest (stamped above), so nothing depends on this .opus until
+	// `.meeting` is retired (D-429). A pack failure (or a cassini binary that
+	// predates `cassini pack`) loses nothing: `.meeting` stays the durable
+	// publish input.
+	rt.opusPackWG.Add(1)
 	go func() {
-		opusPath, packErr := packCanonicalMeetingToOpus(rt.ctx, rt.cfg.CassiniBin, rt.cfg.WorkRoot, task.JobID, rt.talkRoomNameForJob(task.JobID), nil)
+		defer rt.opusPackWG.Done()
+		opusPath, packErr := packCanonicalMeetingToOpus(rt.ctx, rt.cfg.CassiniBin, rt.cfg.WorkRoot, task.JobID, meetingTitle, nil)
 		if packErr != nil {
 			rt.logger.Printf("build opus pack skipped id=%s attempt=%d worker=%d meeting=%s: %v (durable .meeting retained; publish unaffected)", task.JobID, task.AttemptNumber, workerIndex, canonicalMeetingPath, packErr)
 			return

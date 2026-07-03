@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Talk recordings are keyed by the operator's ULID job id, which carries no
@@ -63,7 +64,16 @@ func (c ExAppConfig) talkRoomNameFetcher() talkRoomNameFetcher {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		if resp.StatusCode >= 300 {
-			return "", fmt.Errorf("room request returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+			snippet := strings.TrimSpace(string(body))
+			if len(snippet) > 512 {
+				cut := snippet[:512]
+				// Byte-sliced; back off to a rune boundary before logging.
+				for len(cut) > 0 && !utf8.ValidString(cut) {
+					cut = cut[:len(cut)-1]
+				}
+				snippet = cut + "…"
+			}
+			return "", fmt.Errorf("room request returned %d: %s", resp.StatusCode, snippet)
 		}
 		var payload struct {
 			OCS struct {
@@ -80,19 +90,30 @@ func (c ExAppConfig) talkRoomNameFetcher() talkRoomNameFetcher {
 		if name == "" {
 			name = strings.TrimSpace(payload.OCS.Data.Name)
 		}
+		name = sanitizeTalkRoomName(name)
 		if name == "" {
 			return "", fmt.Errorf("room response has no display name")
 		}
-		return clampTalkRoomName(name), nil
+		return name, nil
 	}
 }
 
-func clampTalkRoomName(name string) string {
-	runes := []rune(name)
-	if len(runes) <= talkRoomNameMaxLen {
-		return name
+// sanitizeTalkRoomName makes a room name safe to embed as a single-line
+// title: control characters become spaces, runs of whitespace collapse, and
+// pathological lengths are clamped.
+func sanitizeTalkRoomName(name string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, name)
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	runes := []rune(cleaned)
+	if len(runes) > talkRoomNameMaxLen {
+		return string(runes[:talkRoomNameMaxLen])
 	}
-	return string(runes[:talkRoomNameMaxLen])
+	return cleaned
 }
 
 // resolveTalkRoomName fetches and records the room name for a just-started

@@ -101,14 +101,20 @@ func TestTalkRoomNameFetcherNilWithoutAppAPIEnv(t *testing.T) {
 	}
 }
 
-func TestClampTalkRoomName(t *testing.T) {
+func TestSanitizeTalkRoomName(t *testing.T) {
 	long := strings.Repeat("é", talkRoomNameMaxLen+50)
-	clamped := clampTalkRoomName(long)
-	if got := len([]rune(clamped)); got != talkRoomNameMaxLen {
+	if got := len([]rune(sanitizeTalkRoomName(long))); got != talkRoomNameMaxLen {
 		t.Errorf("clamped rune length = %d, want %d", got, talkRoomNameMaxLen)
 	}
-	if clampTalkRoomName("Daily Meeting") != "Daily Meeting" {
-		t.Error("short name must pass through unchanged")
+	if got := sanitizeTalkRoomName("Daily Meeting"); got != "Daily Meeting" {
+		t.Errorf("short name changed: %q", got)
+	}
+	// Control characters must not survive into OpusTags / catalog entries.
+	if got := sanitizeTalkRoomName("Daily\nMeeting\t\x00notes"); got != "Daily Meeting notes" {
+		t.Errorf("control chars not collapsed: %q", got)
+	}
+	if got := sanitizeTalkRoomName("\x01\x02"); got != "" {
+		t.Errorf("control-only name = %q, want empty", got)
 	}
 }
 
@@ -212,6 +218,41 @@ func TestResolveTalkRoomNameNoopWithoutFetcher(t *testing.T) {
 	defer cleanup()
 	// fetchTalkRoomName stays nil (standalone deploy); must not panic.
 	rt.resolveTalkRoomName("job-x", "alice", "tok123")
+}
+
+func TestRunBuildJobStampsTalkRoomNameIntoPromotedBundle(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	// The post-build pack goroutine shells out to cfg.CassiniBin inside the
+	// test's temp WorkRoot; use an instant fake and wait for the goroutine so
+	// TempDir cleanup never races an in-flight ffmpeg.
+	rt.cfg.CassiniBin = writeFakeCassini(t, `printf 'opus-bytes' > "$4"; exit 0`)
+	jobID := "job-titled-build"
+	seedTalkJob(t, rt, jobID)
+	rt.fetchTalkRoomName = func(context.Context, string, string) (string, error) {
+		return "Daily Meeting", nil
+	}
+	rt.resolveTalkRoomName(jobID, "alice", "tok123")
+
+	runPath := attemptRunPath(rt.cfg.WorkRoot, jobID, 1)
+	if err := rt.store.MarkBuildQueued(context.Background(), jobID, runPath, runPath, nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+
+	// runBuildJob must stamp the room name into the promoted bundle's
+	// manifest BEFORE publish is enqueued — `cassini publish` re-packs the
+	// `.meeting` when the durable `.opus` isn't there yet, and the manifest
+	// title is what names the very first publish of a fresh recording.
+	rt.runBuildJob(buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath}, 1)
+	rt.opusPackWG.Wait()
+
+	manifest, ok, err := LoadMeetingBundleManifest(canonicalMeetingPath(rt.cfg.WorkRoot, jobID))
+	if err != nil || !ok {
+		t.Fatalf("LoadMeetingBundleManifest() = ok=%t err=%v", ok, err)
+	}
+	if manifest.Title != "Daily Meeting" {
+		t.Errorf("promoted bundle title = %q, want %q", manifest.Title, "Daily Meeting")
+	}
 }
 
 func TestTalkBindingRoundTripsRoomName(t *testing.T) {

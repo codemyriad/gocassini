@@ -176,8 +176,16 @@ func stagePublishInput(ctx context.Context, inputPath string) (string, string, [
 			return fmt.Errorf("meeting id %q collides between %s and %s", trimmed, existing, sourceDir)
 		}
 		target := filepath.Join(stagingRoot, trimmed+".opus")
+		// Prefer the bundle manifest's title (the Talk room name stamped by
+		// the operator) so a re-pack here names the meeting the same way the
+		// durable `.opus` would — publish often runs before that `.opus`
+		// exists for a just-recorded meeting.
+		packTitle := strings.TrimSpace(bundle.Manifest.Title)
+		if packTitle == "" {
+			packTitle = trimmed
+		}
 		if err := packMeetingBundle(ctx, sourceDir, target, portablePackOptions{
-			Title: trimmed,
+			Title: packTitle,
 		}); err != nil {
 			return fmt.Errorf("pack meeting bundle %s: %w", sourceDir, err)
 		}

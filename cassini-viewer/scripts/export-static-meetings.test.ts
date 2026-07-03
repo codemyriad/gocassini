@@ -86,6 +86,13 @@ describe("describeMeeting", () => {
       "01KKA70QN0ABCDEFGHJKMNPQRST",
     );
   });
+
+  it("keeps the plain-id fallback for non-ULID meeting ids", () => {
+    expect(describeMeeting("weekly-sync")).toEqual({
+      title: "Weekly Sync",
+      dateLabel: "weekly-sync",
+    });
+  });
 });
 
 describe("preferredPortableTitle", () => {
@@ -114,14 +121,11 @@ describe("preferredPortableTitle", () => {
     expect(preferredPortableTitle({}, ulid)).toBe("");
     expect(preferredPortableTitle(null, ulid)).toBe("");
   });
+});
 
-  it("keeps the plain-id fallback for non-ULID meeting ids", () => {
-    expect(describeMeeting("weekly-sync")).toEqual({
-      title: "Weekly Sync",
-      dateLabel: "weekly-sync",
-    });
-  });
-
+// Pre-existing grab-bag suite: STT variant labels and portable transcript
+// grouping, kept under the original suite name.
+describe("describeMeeting", () => {
   it("formats whisper STT variants for catalog titles", () => {
     expect(
       describeSpeechToTextVariant({
