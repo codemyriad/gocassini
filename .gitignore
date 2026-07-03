@@ -74,3 +74,6 @@ bin/cassini-bin
 
 # Vite temp artefacts
 */.vite/*
+
+# App Store packaging output (scripts/build-appstore-tarball.sh)
+/dist/
