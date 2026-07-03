@@ -47,6 +47,52 @@ describe("describeMeeting", () => {
     });
   });
 
+  it("derives the date from ULID meeting ids instead of echoing the id", () => {
+    // 01KKA70QN0 encodes 2026-03-09T21:11:00Z.
+    expect(describeMeeting("01KKA70QN0ABCDEFGHJKMNPQRS")).toEqual({
+      title: "Untitled meeting",
+      dateLabel: "2026-03-09 21:11",
+    });
+  });
+
+  it("handles ULID meeting ids with stt variant suffixes", () => {
+    expect(describeMeeting("01KKA70QN0ABCDEFGHJKMNPQRS--stt-whisper-large-v3")).toEqual({
+      title: "Untitled meeting",
+      dateLabel: "2026-03-09 21:11",
+    });
+  });
+
+  it("keeps the plain-id fallback for ULID lookalikes with implausible timestamps", () => {
+    expect(describeMeeting("00000000000000000000000000")).toEqual({
+      title: "00000000000000000000000000",
+      dateLabel: "00000000000000000000000000",
+    });
+  });
+
+  it("does not treat lowercase ids as ULIDs", () => {
+    // Operator job ids are always uppercase; lowercase stays a plain name.
+    expect(describeMeeting("01kka70qn0abcdefghjkmnpqrs")).toEqual({
+      title: "01kka70qn0abcdefghjkmnpqrs",
+      dateLabel: "01kka70qn0abcdefghjkmnpqrs",
+    });
+  });
+
+  it("does not treat 25- or 27-char Crockford strings as ULIDs", () => {
+    expect(describeMeeting("01KKA70QN0ABCDEFGHJKMNPQR").dateLabel).toBe(
+      "01KKA70QN0ABCDEFGHJKMNPQR",
+    );
+    expect(describeMeeting("01KKA70QN0ABCDEFGHJKMNPQRST").dateLabel).toBe(
+      "01KKA70QN0ABCDEFGHJKMNPQRST",
+    );
+  });
+
+  it("keeps the plain-id fallback for non-ULID meeting ids", () => {
+    expect(describeMeeting("weekly-sync")).toEqual({
+      title: "Weekly Sync",
+      dateLabel: "weekly-sync",
+    });
+  });
+
   it("formats whisper STT variants for catalog titles", () => {
     expect(
       describeSpeechToTextVariant({

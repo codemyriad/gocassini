@@ -1304,10 +1304,52 @@ export function describeMeeting(meetingId) {
     };
   }
 
+  // Talk recordings are named by the operator's ULID job id, which carries no
+  // human-readable name but does encode the recording start time. Surface that
+  // timestamp instead of showing the raw id as both title and date (D-462).
+  const ulidDateLabel = dateLabelFromUlid(normalizedMeetingId);
+  if (ulidDateLabel) {
+    return {
+      title: "Untitled meeting",
+      dateLabel: ulidDateLabel,
+    };
+  }
+
   return {
     title: toTitleCase(normalizedMeetingId),
     dateLabel: normalizedMeetingId,
   };
+}
+
+// Canonical 26-char Crockford base32 ULID. The first character of a real ULID
+// never exceeds 7 (48-bit timestamp bound). Deliberately uppercase-only —
+// operator job ids are always uppercase, and rejecting lowercase keeps
+// human-chosen meeting names from ever matching.
+const ULID_PATTERN = /^[0-7][0-9ABCDEFGHJKMNPQRSTVWXYZ]{25}$/;
+const CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+// Plausibility window for a decoded ULID timestamp; a 26-char Crockford-only
+// word that is not a ULID almost never decodes into it.
+const ULID_TIMESTAMP_MIN_MS = Date.UTC(2015, 0, 1);
+const ULID_TIMESTAMP_MAX_MS = Date.UTC(2100, 0, 1);
+
+// dateLabelFromUlid returns "YYYY-MM-DD HH:MM" (UTC) decoded from a ULID's
+// 48-bit timestamp prefix, or "" when the id is not a plausible ULID.
+function dateLabelFromUlid(meetingId) {
+  if (!ULID_PATTERN.test(meetingId)) {
+    return "";
+  }
+  let ms = 0;
+  for (const char of meetingId.slice(0, 10)) {
+    ms = ms * 32 + CROCKFORD_ALPHABET.indexOf(char);
+  }
+  if (ms < ULID_TIMESTAMP_MIN_MS || ms > ULID_TIMESTAMP_MAX_MS) {
+    return "";
+  }
+  const date = new Date(ms);
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(
+    date.getUTCHours(),
+  )}:${pad(date.getUTCMinutes())}`;
 }
 
 function stripVariantSuffix(meetingId) {
