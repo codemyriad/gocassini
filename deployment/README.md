@@ -117,6 +117,17 @@ By default the bundle uses Docker-managed named volumes:
 The shared published-site storage is mounted at `/srv/cassini-site`.
 The live deployed site is the child directory `/srv/cassini-site/published`, so the operator can atomically swap `published/` during promotion while the viewer mounts the same shared storage read-only.
 
+## Operator startup (site seeding)
+
+Before starting the operator process, the operator container's entrypoint prepares the shared storage so the viewer works on a clean deployment. It:
+
+1. ensures the operator state directories exist;
+2. ensures the published-site directory exists;
+3. migrates an older flat site layout into `published/` when necessary;
+4. seeds an initial empty live site if `published/index.html` is missing.
+
+The seeded site is minimal but complete — `index.html`, `assets/`, an empty `catalog.json`, and a site-level `cassini.json` — so the viewer starts and serves an empty catalog before any meeting has been published.
+
 ## Bind-mount override
 
 If you want host-visible storage instead of the default named volumes, set absolute paths in `.env`:
