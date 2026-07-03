@@ -10,7 +10,7 @@ logged-in user can browse. Recording control and job history live in the
 admin-only control panel; the published meeting archive is visible to every
 logged-in user.]]></description>
   <version>0.2.0-alpha.1</version>
-  <licence>agpl</licence>
+  <licence>AGPL-3.0-or-later</licence>
   <author>codemyriad</author>
   <namespace>Cassini</namespace>
   <category>integration</category>
