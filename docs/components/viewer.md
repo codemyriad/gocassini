@@ -93,6 +93,14 @@ Runtime behavior:
 
 This makes one-file meeting delivery possible without server-side unpacking.
 
+## Meeting list ordering and filtering
+
+The meeting library:
+
+- sorts entries newest-first by parsing `dateLabel` as a timestamp; entries whose label is not a date sort after every dated entry, and ties break by `id`
+- offers a filter box above the list (shown when there is more than one meeting) that matches meeting names and dates — both the stored label ("2026-03-12") and the format the cards render ("12 Mar 2026")
+- auto-opens the meeting when the catalog contains exactly one entry
+
 ## Transcript layers
 
 The viewer understands three transcript layers.

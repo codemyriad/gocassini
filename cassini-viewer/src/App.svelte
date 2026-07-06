@@ -4,7 +4,7 @@
   import { cubicInOut, cubicOut, quintOut } from "svelte/easing";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
-  import { Sun, Moon, Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape } from "@lucide/svelte";
+  import { Sun, Moon, Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape, Search } from "@lucide/svelte";
   import {
     formatClockTime,
     parseTimeHash,
@@ -31,6 +31,9 @@
   } from "./viewer/loadArtifact";
   import type { PortableTranscriptDescriptor } from "./viewer/portable";
   import {
+    filterMeetingCatalogEntries,
+    formatMeetingDate,
+    formatMeetingDateShort,
     loadMeetingCatalog,
     sortMeetingCatalogEntries,
     type MeetingCatalogEntry,
@@ -69,6 +72,7 @@
   let errorMessage = "";
   let loading = true;
   let catalogMeetings: MeetingCatalogEntry[] = [];
+  let meetingFilter = "";
 
   let currentTimeMs = 0;
   let durationMs = 0;
@@ -272,6 +276,7 @@
   }
 
   $: summaryHtml = renderSummaryHtml(summaryMarkdown);
+  $: visibleCatalogMeetings = filterMeetingCatalogEntries(catalogMeetings, meetingFilter);
   $: speakers = transcriptIndex?.transcript.speakers ?? [];
   $: displaySegments = transcriptIndex
     ? buildDisplaySegments(transcriptIndex, readableTranscript, displayTranscript)
@@ -980,57 +985,6 @@
     return false;
   }
 
-  // Catalog `dateLabel` ships as ISO-ish "YYYY-MM-DD" or "YYYY-MM-DD HH:MM".
-  // Render it in the user's locale (e.g. "Fri, Mar 13, 2026, 12:29 PM").
-  function formatMeetingDate(dateLabel: string): string {
-    const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(dateLabel);
-    if (!match) {
-      return dateLabel;
-    }
-    const [, y, m, d, h, mn] = match;
-    const hasTime = h !== undefined && mn !== undefined;
-    const date = new Date(
-      Number(y),
-      Number(m) - 1,
-      Number(d),
-      hasTime ? Number(h) : 0,
-      hasTime ? Number(mn) : 0,
-    );
-    if (Number.isNaN(date.getTime())) {
-      return dateLabel;
-    }
-    return new Intl.DateTimeFormat(undefined, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      ...(hasTime
-        ? { hour: "numeric", minute: "2-digit", timeZoneName: "short" }
-        : {}),
-    }).format(date);
-  }
-
-  // Compact variant of formatMeetingDate for places with little space
-  // (e.g. catalog cards). "13 Mar 2026" — day, short month, year.
-  // Locale-pinned to en-GB so the day-month-year order is consistent
-  // regardless of the viewer's browser locale.
-  function formatMeetingDateShort(dateLabel: string): string {
-    const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateLabel);
-    if (!match) {
-      return dateLabel;
-    }
-    const [, y, m, d] = match;
-    const date = new Date(Number(y), Number(m) - 1, Number(d));
-    if (Number.isNaN(date.getTime())) {
-      return dateLabel;
-    }
-    return new Intl.DateTimeFormat("en-GB", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-    }).format(date);
-  }
-
   function metadataRowKey(sectionTitle: string, row: ArtifactMetadataRow): string {
     return `${sectionTitle}:${row.label}`;
   }
@@ -1061,27 +1015,46 @@
            behind its blur. Scrollbar runs the full sidebar height as a
            consequence (the only way to get the scroll-behind effect). -->
       <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain scroll-stable">
-        <header class="sticky top-0 z-20 flex items-center justify-between gap-3 px-4 py-3 border-b bg-base-100 border-base-300 min-[981px]:border-none min-[981px]:bg-base-100/50 backdrop-blur-lg">
-          <h2 class="text-base font-bold text-base-content">
-            Meetings
-          </h2>
-          {#if !ncMode}
-          <label class="flex items-center gap-1.5 cursor-pointer">
-            <Sun size={16} strokeWidth={2} class="text-base-content/80" aria-hidden="true" />
-            <input
-              type="checkbox"
-              class="toggle toggle-sm rounded-lg text-base-content/80"
-              aria-label="Toggle light or dark theme"
-              checked={themeMode === "forrest-dark"}
-              on:change={toggleTheme}
-            />
-            <Moon size={16} strokeWidth={2} class="text-base-content/80" aria-hidden="true" />
-          </label>
+        <header class="sticky top-0 z-20 flex flex-col gap-2.5 px-4 py-3 border-b bg-base-100 border-base-300 min-[981px]:border-none min-[981px]:bg-base-100/50 backdrop-blur-lg">
+          <div class="flex items-center justify-between gap-3">
+            <h2 class="text-base font-bold text-base-content">
+              Meetings
+            </h2>
+            {#if !ncMode}
+            <label class="flex items-center gap-1.5 cursor-pointer">
+              <Sun size={16} strokeWidth={2} class="text-base-content/80" aria-hidden="true" />
+              <input
+                type="checkbox"
+                class="toggle toggle-sm rounded-lg text-base-content/80"
+                aria-label="Toggle light or dark theme"
+                checked={themeMode === "forrest-dark"}
+                on:change={toggleTheme}
+              />
+              <Moon size={16} strokeWidth={2} class="text-base-content/80" aria-hidden="true" />
+            </label>
+            {/if}
+          </div>
+          {#if catalogMeetings.length > 1}
+            <label class="input input-sm flex items-center gap-2 w-full">
+              <Search size={14} class="text-base-content/60" aria-hidden="true" />
+              <input
+                type="search"
+                class="grow"
+                placeholder="Filter by name or date"
+                aria-label="Filter meetings by name or date"
+                bind:value={meetingFilter}
+              />
+            </label>
           {/if}
         </header>
         {#if catalogMeetings.length > 0}
           <div class="grid gap-3 p-4">
-            {#each catalogMeetings as meeting}
+            {#if visibleCatalogMeetings.length === 0}
+              <p role="status" class="text-sm text-base-content/70 leading-normal">
+                No meetings match "{meetingFilter.trim()}".
+              </p>
+            {/if}
+            {#each visibleCatalogMeetings as meeting (meeting.id)}
               <button
                 on:click={() => loadCatalogMeeting(meeting)}
                 type="button"
