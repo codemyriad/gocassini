@@ -1,8 +1,7 @@
 ---
 import '../tailwind.css';
 import { Menu, X } from '@lucide/astro';
-import logoLight from '../assets/logo-light.svg?url';
-import logoDark from '../assets/logo-dark.svg?url';
+import logo from '../assets/logo-colour.svg?url';
 const rawBase = import.meta.env.BASE_URL;
 const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
 ---
@@ -10,10 +9,7 @@ const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
 <header id="site-header" class="fixed w-full top-0 z-50 bg-base-100/60 backdrop-blur-md nav-header">
   <nav class="flex items-center justify-between px-5 py-3">
     <a href={base}>
-      <picture>
-        <source srcset={logoDark} media="(prefers-color-scheme: dark)" />
-        <img src={logoLight} alt="Cassini" class="nav-logo h-[1.3rem] w-auto" />
-      </picture>
+      <img src={logo} alt="Cassini" class="nav-logo h-[1.6rem] w-auto" />
     </a>
 
     <!-- Desktop links -->
