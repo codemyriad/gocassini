@@ -8,13 +8,13 @@ const CATALOG_VERSION = "cassini.viewer.catalog.v1";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const viewerDir = resolve(scriptDir, "..");
-const distDir = resolve(viewerDir, "dist");
+// Overridable so tests can exercise the real CLI entry path against a throwaway
+// dist without touching the checked-out build output.
+const distDir = process.env.CASSINI_VIEWER_DIST_DIR
+  ? resolve(process.env.CASSINI_VIEWER_DIST_DIR)
+  : resolve(viewerDir, "dist");
 const defaultSourceDir = resolve(viewerDir, "public", "demo");
 const defaultOutputDir = resolve(viewerDir, "exports", "static-meetings");
-
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main();
-}
 
 export function main(argv = process.argv.slice(2)) {
   const { outputDir, sourceDir, recordingsBaseUrl } = parseArgs(argv);
@@ -1654,4 +1654,13 @@ function safeToString(value) {
     return value;
   }
   return "";
+}
+
+// CLI entry point. Kept at the very bottom so every module-level `const` (e.g.
+// ULID_PATTERN) is initialized before main() runs. Invoking main() near the top
+// of the module reaches those consts through describeMeeting() during module
+// evaluation, before their initializers execute — a temporal-dead-zone crash
+// that only surfaces on a real publish, never when tests import helpers (D-462).
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
 }
