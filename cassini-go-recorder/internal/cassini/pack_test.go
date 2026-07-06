@@ -3,11 +3,99 @@ package cassini
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// setBundleManifestTitle stamps a title into a fixture bundle's cassini.json,
+// mirroring what the operator does after promotion (SetMeetingBundleTitle).
+func setBundleManifestTitle(t *testing.T, bundleDir, title string) {
+	t.Helper()
+	manifestPath := filepath.Join(bundleDir, "cassini.json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read fixture manifest: %v", err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatalf("parse fixture manifest: %v", err)
+	}
+	manifest["title"] = title
+	updated, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("encode fixture manifest: %v", err)
+	}
+	if err := os.WriteFile(manifestPath, updated, 0o644); err != nil {
+		t.Fatalf("write fixture manifest: %v", err)
+	}
+}
+
+// readOpusTitleTag returns the TITLE tag of a packed .opus file. Ogg tags can
+// surface on the format or the stream depending on the muxer, so both are
+// queried.
+func readOpusTitleTag(t *testing.T, path string) string {
+	t.Helper()
+	output, err := exec.Command(
+		"ffprobe",
+		"-v", "error",
+		"-show_entries", "format_tags=title:stream_tags=title",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		path,
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("ffprobe title tag: %v: %s", err, strings.TrimSpace(string(output)))
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		if strings.TrimSpace(line) != "" {
+			return strings.TrimSpace(line)
+		}
+	}
+	return ""
+}
+
+func TestPackPrefersManifestTitleOverFileName(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	bundleDir := filepath.Join(tmp, "01KWEKPZVEJWP9BYBPBX9ZRNDQ.meeting")
+	if err := writeReadyMeetingBundleFixture(bundleDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	setBundleManifestTitle(t, bundleDir, "Daily Meeting")
+
+	outPath := filepath.Join(tmp, "01KWEKPZVEJWP9BYBPBX9ZRNDQ.opus")
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{"pack", bundleDir, "--out", outPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("pack failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	if got := readOpusTitleTag(t, outPath); got != "Daily Meeting" {
+		t.Errorf("packed TITLE = %q, want manifest title %q", got, "Daily Meeting")
+	}
+}
+
+func TestPackTitleFlagOverridesManifestTitle(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	bundleDir := filepath.Join(tmp, "meeting-a.meeting")
+	if err := writeReadyMeetingBundleFixture(bundleDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	setBundleManifestTitle(t, bundleDir, "Manifest Title")
+
+	outPath := filepath.Join(tmp, "meeting-a.opus")
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{"pack", bundleDir, "--out", outPath, "--title", "Flag Title"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("pack failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	if got := readOpusTitleTag(t, outPath); got != "Flag Title" {
+		t.Errorf("packed TITLE = %q, want flag title %q", got, "Flag Title")
+	}
+}
 
 func TestPackHelpExitsZero(t *testing.T) {
 	var stdout, stderr bytes.Buffer
