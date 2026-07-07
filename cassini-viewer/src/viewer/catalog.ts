@@ -1,4 +1,4 @@
-import { resolveAppBaseUrl } from "./appBase";
+import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 
 export interface MeetingCatalogEntry {
   id: string;
@@ -269,17 +269,6 @@ function resolveCatalogUrl(): string {
     return new URL("published/catalog.json", viewerBase).toString();
   }
   return resolveAppAssetUrl(DEFAULT_CATALOG_PATH);
-}
-
-// readViewerBase reads the AppAPI proxy base set by src/embedded.ts. Returns
-// an absolute URL the catalog/asset paths resolve against, or "" outside the
-// embedded build.
-function readViewerBase(): string {
-  const base = typeof window !== "undefined" ? window.__CASSINI_VIEWER_BASE__ : undefined;
-  if (typeof base !== "string" || base === "") {
-    return "";
-  }
-  return new URL(base, window.location.href).toString();
 }
 
 function resolveCatalogAssetUrl(assetPath: string, catalogUrl: string): string {
