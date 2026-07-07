@@ -146,7 +146,13 @@ func TestRunDevStackPlanPrintsResolvedPlan(t *testing.T) {
 		t.Fatalf("runDevStack code=%d stderr=%q", code, stderr.String())
 	}
 	out := stdout.String()
-	for _, want := range []string{"public_mode: local-http", "cassini_mode: none", "patch_mode: none", "validation: ok"} {
+	for _, want := range []string{
+		"public:\n  mode: local-http",
+		"cassini:\n  mode: none",
+		"patch:\n  mode: none",
+		"lifecycle:\n  existing_resources: fail",
+		"validation: ok",
+	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("plan output missing %q: %s", want, out)
 		}

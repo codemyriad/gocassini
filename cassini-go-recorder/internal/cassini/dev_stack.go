@@ -422,38 +422,41 @@ func (plan devStackPlan) env() []string {
 
 func printDevStackPlan(w io.Writer, plan devStackPlan) {
 	fmt.Fprintf(w, "command: %s\n", plan.Command)
-	fmt.Fprintf(w, "public_mode: %s\n", plan.PublicMode)
-	fmt.Fprintf(w, "public_url: %s\n", valueOrNone(plan.PublicURL))
-	fmt.Fprintf(w, "public_host: %s\n", valueOrNone(plan.PublicHost))
-	fmt.Fprintf(w, "media_host: %s\n", valueOrNone(plan.MediaHost))
-	fmt.Fprintf(w, "signaling_public_url: %s\n", valueOrNone(plan.SignalingPublicURL))
-	fmt.Fprintf(w, "service_mode: %s\n", plan.ServiceMode)
-	fmt.Fprintf(w, "spreed_profile: %s\n", plan.SpreedProfile)
-	fmt.Fprintf(w, "cassini_mode: %s\n", plan.CassiniMode)
-	fmt.Fprintf(w, "recording_backend: %s\n", plan.RecordingBackend)
-	fmt.Fprintf(w, "exapp_image_mode: %s\n", plan.ExAppImageMode)
-	fmt.Fprintf(w, "patch_mode: %s\n", plan.PatchMode)
-	fmt.Fprintf(w, "existing_resource_mode: %s\n", plan.ExistingResourceMode)
-	fmt.Fprintf(w, "remote_config_requested: %t\n", plan.RemoteConfigRequested)
-	if plan.StopFull {
-		fmt.Fprintln(w, "stop_full: true")
-	}
-	if plan.DownVolumes {
-		fmt.Fprintln(w, "down_volumes: true")
-	}
+	fmt.Fprintln(w, "public:")
+	fmt.Fprintf(w, "  mode: %s\n", plan.PublicMode)
+	fmt.Fprintf(w, "  url: %s\n", yamlValueOrNull(plan.PublicURL))
+	fmt.Fprintf(w, "  host: %s\n", yamlValueOrNull(plan.PublicHost))
+	fmt.Fprintf(w, "  media_host: %s\n", yamlValueOrNull(plan.MediaHost))
+	fmt.Fprintf(w, "  signaling_url: %s\n", yamlValueOrNull(plan.SignalingPublicURL))
+	fmt.Fprintf(w, "  remote_config_requested: %t\n", plan.RemoteConfigRequested)
+	fmt.Fprintln(w, "services:")
+	fmt.Fprintf(w, "  mode: %s\n", plan.ServiceMode)
+	fmt.Fprintf(w, "  spreed_profile: %s\n", plan.SpreedProfile)
+	fmt.Fprintln(w, "cassini:")
+	fmt.Fprintf(w, "  mode: %s\n", plan.CassiniMode)
+	fmt.Fprintf(w, "  exapp_image_mode: %s\n", plan.ExAppImageMode)
+	fmt.Fprintln(w, "recording:")
+	fmt.Fprintf(w, "  backend: %s\n", plan.RecordingBackend)
+	fmt.Fprintln(w, "patch:")
+	fmt.Fprintf(w, "  mode: %s\n", plan.PatchMode)
+	fmt.Fprintln(w, "lifecycle:")
+	fmt.Fprintf(w, "  existing_resources: %s\n", plan.ExistingResourceMode)
+	fmt.Fprintf(w, "  stop_full: %t\n", plan.StopFull)
+	fmt.Fprintf(w, "  down_volumes: %t\n", plan.DownVolumes)
 	if len(plan.ValidationWarnings) == 0 {
 		fmt.Fprintln(w, "validation: ok")
 		return
 	}
-	fmt.Fprintln(w, "validation_warnings:")
+	fmt.Fprintln(w, "validation:")
+	fmt.Fprintln(w, "  warnings:")
 	for _, warning := range plan.ValidationWarnings {
-		fmt.Fprintf(w, "  - %s\n", warning)
+		fmt.Fprintf(w, "    - %s\n", warning)
 	}
 }
 
-func valueOrNone(value string) string {
+func yamlValueOrNull(value string) string {
 	if value == "" {
-		return "<none>"
+		return "null"
 	}
 	return value
 }
