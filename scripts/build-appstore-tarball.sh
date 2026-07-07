@@ -44,14 +44,22 @@ usage() {
   cat >&2 <<'EOF'
 Usage:
   ./scripts/build-appstore-tarball.sh --version X.Y.Z[-pre]
-      [--staging DIR] [--output PATH] [--stage-only | --archive-only]
+      [--staging DIR] [--output PATH] [--stage-only | --archive-only] [--sign-app]
+
+--sign-app runs `occ integrity:sign-app` on the staged tree. It needs, in the
+environment:
+  OCC              command that runs occ against a working Nextcloud, e.g.
+                   "docker exec -u www-data nc php occ" — occ needs a bootable
+                   Nextcloud, so how you provide one is left to the caller.
+  APP_PRIVATE_KEY  PEM content of the app signing key
+  APP_PUBLIC_CRT   PEM content of the signed certificate
 EOF
 }
 
 die() { echo "error: $*" >&2; exit 1; }
 
 main() {
-  local version="" staging="" output="" mode="both"
+  local version="" staging="" output="" mode="both" sign_app=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --version)      version="${2:?--version needs a value}"; shift 2 ;;
@@ -59,12 +67,17 @@ main() {
       --output)       output="${2:?--output needs a value}"; shift 2 ;;
       --stage-only)   mode="stage"; shift ;;
       --archive-only) mode="archive"; shift ;;
+      --sign-app)     sign_app=1; shift ;;
       -h|--help)      usage; return 0 ;;
       *) echo "error: unknown argument '$1'" >&2; usage; return 1 ;;
     esac
   done
   [[ -n "$version" ]] || { echo "error: --version is required" >&2; usage; return 1; }
   rv_validate "$version" || return 1
+  # --sign-app signs the tree as it is staged; there is nothing to sign when
+  # only re-archiving an existing tree.
+  [[ "$sign_app" -eq 1 && "$mode" == "archive" ]] \
+    && die "--sign-app cannot be combined with --archive-only"
 
   local root
   root="$(git rev-parse --show-toplevel)"
@@ -87,6 +100,27 @@ main() {
       cp "$root/$f" "$tree/$f"
     done
     echo "Staged ${#APPSTORE_FILES[@]} files into ${tree#"$root"/}/"
+
+    if [[ "$sign_app" -eq 1 ]]; then
+      : "${OCC:?--sign-app requires OCC (a command that runs occ against a working Nextcloud) in the environment}"
+      : "${APP_PRIVATE_KEY:?--sign-app requires APP_PRIVATE_KEY (PEM content) in the environment}"
+      : "${APP_PUBLIC_CRT:?--sign-app requires APP_PUBLIC_CRT (PEM content) in the environment}"
+      local keydir key crt
+      keydir="$(mktemp -d)"
+      # shellcheck disable=SC2064  # expand keydir now; it is fixed for this run.
+      trap "rm -rf '$keydir'" EXIT
+      key="$keydir/gocassini.key"
+      crt="$keydir/gocassini.crt"
+      ( umask 077; printf '%s\n' "$APP_PRIVATE_KEY" >"$key"; printf '%s\n' "$APP_PUBLIC_CRT" >"$crt" )
+      echo "Signing $tree via: \$OCC integrity:sign-app"
+      # $OCC is a command with arguments (e.g. docker exec … php occ); it must
+      # word-split, so it is intentionally unquoted.
+      # shellcheck disable=SC2086
+      $OCC integrity:sign-app --privateKey="$key" --certificate="$crt" --path="$tree"
+      [[ -f "$tree/appinfo/signature.json" ]] \
+        || die "signing reported success but $tree/appinfo/signature.json is missing"
+      echo "Signed: appinfo/signature.json present"
+    fi
   fi
 
   if [[ "$mode" != "stage" ]]; then

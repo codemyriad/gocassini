@@ -405,6 +405,48 @@ else
   echo "  skip: xsltproc/xmllint not installed — store-schema tests run in CI"
 fi
 
+echo "build-appstore-tarball.sh — --sign-app with an injectable OCC"
+# Stub occ: parse --path and drop a signature.json, so signing is exercised
+# without a real Nextcloud. Proves the script wires OCC + key/cert + path and
+# verifies the result.
+STUB="$BD/occ-stub.sh"
+cat >"$STUB" <<'STUBEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "${1:-}" == "integrity:sign-app" ]] || { echo "stub: unexpected occ subcommand: ${1:-}" >&2; exit 3; }
+path=""; for a in "$@"; do case "$a" in --path=*) path="${a#--path=}";; esac; done
+[[ -n "$path" && -d "$path/appinfo" ]] || { echo "stub: bad --path '$path'" >&2; exit 3; }
+printf '{"hashes":{},"signature":"stub","certificate":"stub"}' > "$path/appinfo/signature.json"
+STUBEOF
+chmod +x "$STUB"
+
+if OCC="$STUB" APP_PRIVATE_KEY="KEY" APP_PUBLIC_CRT="CRT" \
+   "$SCRIPT_DIR/build-appstore-tarball.sh" --version "$SRCV" \
+     --staging "$BD/signed" --output "$BD/signed.tar.gz" --sign-app >/dev/null 2>&1; then
+  ok "--sign-app runs OCC and produces a signed tarball"
+else
+  bad "--sign-app should run OCC and produce a signed tarball"
+fi
+if tar -tzf "$BD/signed.tar.gz" 2>/dev/null | grep -qxF gocassini/appinfo/signature.json; then
+  ok "signed tarball contains appinfo/signature.json"
+else
+  bad "signed tarball should contain appinfo/signature.json"
+fi
+# --sign-app must fail loudly when OCC is absent — never silently ship unsigned.
+if APP_PRIVATE_KEY="KEY" APP_PUBLIC_CRT="CRT" \
+   "$SCRIPT_DIR/build-appstore-tarball.sh" --version "$SRCV" \
+     --staging "$BD/nosign" --output "$BD/nosign.tar.gz" --sign-app >/dev/null 2>&1; then
+  bad "--sign-app without OCC should fail"
+else
+  ok "--sign-app without OCC fails loudly"
+fi
+# --sign-app + --archive-only is contradictory and rejected.
+if "$SCRIPT_DIR/build-appstore-tarball.sh" --version "$SRCV" --sign-app --archive-only >/dev/null 2>&1; then
+  bad "--sign-app --archive-only should be rejected"
+else
+  ok "--sign-app --archive-only rejected"
+fi
+
 rm -rf "$BD"
 
 echo

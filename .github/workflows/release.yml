@@ -148,57 +148,57 @@ jobs:
       - name: Install packaging + store-schema validators
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xsltproc libxml2-utils
 
-      - name: Build the unsigned staging tree
-        run: |
-          set -euo pipefail
-          ./scripts/build-appstore-tarball.sh --version "${{ github.event.inputs.version }}" --stage-only
-
-      - name: Sign the app with occ integrity:sign-app
+      - name: Build, sign, and validate the tarball
         env:
           APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
           APP_PUBLIC_CRT: ${{ secrets.APP_PUBLIC_CRT }}
+          VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
-          # Materialize key + cert under a temp dir that is removed on exit
-          # (even on failure) so signing material never lands in the workspace
-          # or an artifact.
-          KEYDIR="$(mktemp -d)"
-          trap 'rm -rf "$KEYDIR"' EXIT
-          printf '%s' "$APP_PRIVATE_KEY" > "$KEYDIR/gocassini.key"
-          printf '%s' "$APP_PUBLIC_CRT" > "$KEYDIR/gocassini.crt"
+          # build-appstore-tarball.sh --sign-app runs `$OCC integrity:sign-app`
+          # against whatever Nextcloud the OCC command points at (see the
+          # script's --help). occ needs a bootable Nextcloud, so we provide one
+          # as a throwaway container and hand the script an OCC wrapper.
+          #
+          # RUNNER-SPIKE: this container + host/container permission bridge is
+          # the least-proven part of the pipeline — validate it on a real runner
+          # (publish_appstore=false) before relying on it.
 
-          # occ must run inside a working Nextcloud. Use the official image with
-          # a throwaway sqlite install, mount the staged app, and sign it.
-          # This step is the one to validate first on a real runner.
-          docker run --rm \
-            -e SQLITE_DATABASE=nc -e NEXTCLOUD_ADMIN_USER=admin \
-            -e NEXTCLOUD_ADMIN_PASSWORD=admin \
-            -v "$PWD/build/appstore/gocassini:/var/www/html/custom_apps/gocassini:ro" \
-            -v "$KEYDIR:/keys:ro" \
-            -v "$PWD/build/appstore/gocassini/appinfo:/out" \
-            nextcloud:stable bash -c '
-              set -eu
+          # Keep the key/cert the script materializes under the mounted
+          # workspace so the container can read them.
+          export TMPDIR="$GITHUB_WORKSPACE/.sign-tmp"
+          mkdir -p "$TMPDIR"
+
+          # OCC wrapper: run `occ "$@"` in a throwaway Nextcloud with the
+          # workspace mounted at the same path, so the key/cert/app paths the
+          # script passes resolve inside the container. As root it makes those
+          # paths accessible to www-data, then signs as www-data (occ refuses
+          # to run as root).
+          cat > "$GITHUB_WORKSPACE/.ci-occ.sh" <<'WRAP'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          exec docker run --rm \
+            -e SIGN_TMPDIR="${TMPDIR:-/tmp}" \
+            -e SIGN_APP_DIR="$GITHUB_WORKSPACE/build/appstore/gocassini" \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+            --entrypoint bash nextcloud:stable -c '
+              set -e
               /entrypoint.sh php -v >/dev/null 2>&1 || true
-              # Bring up a minimal instance so occ can bootstrap.
-              php occ maintenance:install --database sqlite \
-                --admin-user admin --admin-pass admin >/dev/null
-              php occ integrity:sign-app \
-                --privateKey=/keys/gocassini.key \
-                --certificate=/keys/gocassini.crt \
-                --path=/var/www/html/custom_apps/gocassini
-              cp /var/www/html/custom_apps/gocassini/appinfo/signature.json /out/signature.json
-            '
-          test -f build/appstore/gocassini/appinfo/signature.json
+              chmod -R a+rX "$SIGN_TMPDIR" 2>/dev/null || true
+              chown -R www-data:www-data "$SIGN_APP_DIR" 2>/dev/null || true
+              su -s /bin/bash www-data -c "php occ maintenance:install --database sqlite --admin-user admin --admin-pass admin >/dev/null 2>&1 || true; exec php occ \"\$@\"" _ "$@"
+            ' _ "$@"
+          WRAP
 
-      - name: Archive and validate the signed tarball
-        run: |
-          set -euo pipefail
-          ./scripts/build-appstore-tarball.sh --version "${{ github.event.inputs.version }}" --archive-only
+          OCC="bash $GITHUB_WORKSPACE/.ci-occ.sh" \
+            ./scripts/build-appstore-tarball.sh --version "$VERSION" --sign-app
+
           ./scripts/validate-appstore-tarball.sh \
-            --version "${{ github.event.inputs.version }}" \
+            --version "$VERSION" \
             --tarball build/artifacts/appstore/gocassini.tar.gz \
             --signed
           ( cd build/artifacts/appstore && sha256sum gocassini.tar.gz > gocassini.tar.gz.sha256 )
+          rm -rf "$TMPDIR" "$GITHUB_WORKSPACE/.ci-occ.sh"
 
       - name: Upload the signed tarball
         uses: actions/upload-artifact@v4
