@@ -68,7 +68,8 @@ mkdir -p "$RUNTIME_DIR"
 COMPOSE=(
   docker compose
   -p "$PROJECT_NAME"
-  -f "$HARNESS_DIR/compose.yml"
+  --project-directory "$HARNESS_DIR"
+  -f "$SCRIPT_DIR/harness-compose.pinned.yml"
   -f "$SCRIPT_DIR/compose.sandbox.yml"
 )
 if [[ "$SPREED_PROFILE" == "full" ]]; then

@@ -1,0 +1,166 @@
+# Pinned copy of harness/compose.yml as of main merge-base d770d72 (pre
+# remote-support + modular-harness rework). The sandbox deploy intentionally
+# uses this frozen definition so harness refactors cannot change sandbox
+# behavior. Do not edit alongside harness/compose.yml; update deliberately.
+
+x-nextcloud-env: &nextcloud-env
+  # DEV-ONLY local harness credentials. These values are committed test
+  # defaults and must never be reused for a real Nextcloud deployment.
+  POSTGRES_HOST: db
+  POSTGRES_DB: nextcloud
+  POSTGRES_USER: nc
+  POSTGRES_PASSWORD: nc
+  NEXTCLOUD_ADMIN_USER: admin
+  NEXTCLOUD_ADMIN_PASSWORD: admin
+  NEXTCLOUD_TRUSTED_DOMAINS: "localhost 127.0.0.1 nextcloud host.docker.internal reverse-proxy ${CASSINI_HARNESS_HOST:-127.0.0.1}"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nextcloud
+      POSTGRES_USER: nc
+      POSTGRES_PASSWORD: nc
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nc -d nextcloud"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  nextcloud:
+    # Pinned to the current Nextcloud release so an upstream image push is
+    # distinguishable from a product regression when an e2e leg goes red.
+    # NOT :stable — that alias lags on Docker Hub (it stayed on 32.x for
+    # months after NC 33 shipped). NOT :latest — it silently jumps majors
+    # (it moved 33 -> 34 in June 2026), which would make "works with NC33"
+    # coverage vanish without any diff in this repo.
+    #
+    # NEXTCLOUD_IMAGE overrides the default; CI's NC33 compatibility leg
+    # sets it to nextcloud:33 (see .github/workflows/ci.yml integration
+    # matrix).
+    #
+    # Bump procedure: pick the newest x.y.z tag that nextcloud:latest
+    # resolves to on https://hub.docker.com/_/nextcloud, update the
+    # default below, run a full-profile e2e
+    # (SPREED_PROFILE=full harness/bin/ci-e2e.sh), and keep the ci.yml
+    # compatibility leg pointed at the oldest Nextcloud major that
+    # appinfo/info.xml supports.
+    image: ${NEXTCLOUD_IMAGE:-nextcloud:34.0.0}
+    restart: unless-stopped
+    environment: *nextcloud-env
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      # Default 28080 for local/manual use. CI e2e runs that bring up a
+      # throwaway PID-scoped project (ci-e2e-talk-record-roundtrip.sh)
+      # export a run-scoped port instead so a leaked stack from an older
+      # cancelled run can never hold the port hostage (gh issue #51).
+      - "${NEXTCLOUD_HOST_PORT:-28080}:80"
+    volumes:
+      - nextcloud_data:/var/www/html
+      # Mounted so AppAPI's "docker-install" daemon can pull images and
+      # spawn ExApp containers on the host Docker engine.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  # Internal reverse proxy. Mirrors the production topology HaRP expects:
+  # /exapps/<appId>/... goes to HaRP (which forwards over FRP tunnel to
+  # the ExApp container), everything else goes to Nextcloud. AppAPI's
+  # daemon nextcloud_url points at this service (via Docker DNS), so
+  # AppAPI's internal heartbeat probe, the ExApp container's callbacks,
+  # and NC's server-side proxy fetches all path-split correctly. No
+  # host port mapping — the browser hits Nextcloud directly on 28080;
+  # only NC's PHP and the ExApp container resolve "reverse-proxy" via
+  # the compose network.
+  reverse-proxy:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      - nextcloud
+    volumes:
+      - ./nginx-frontproxy.conf:/etc/nginx/conf.d/default.conf:ro
+
+  # AppAPI HaRP deploy daemon: the Nextcloud-recommended ExApp orchestrator
+  # for NC 32+. Pulls images, spawns containers, and proxies traffic to
+  # them via FRP tunnels. HaRP injects HP_FRP_ADDRESS/PORT/SHARED_KEY at
+  # deploy; the Cassini entrypoint starts its frpc tunnel when those are
+  # present and runs tunnel-less otherwise.
+  appapi-harp:
+    image: ghcr.io/nextcloud/nextcloud-appapi-harp:release
+    container_name: appapi-harp
+    restart: unless-stopped
+    environment:
+      HP_SHARED_KEY: "dogfood-shared-key-not-secret"
+      NC_INSTANCE_URL: "http://nextcloud"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - appapi_harp_certs:/certs
+
+  nats:
+    # Pinned patch release (was nats:2.11-alpine, which resolved to this
+    # tag when pinned). Bump alongside the rest of the stack after a green
+    # full-profile e2e run.
+    image: nats:2.11.17-alpine
+    profiles: ["full"]
+    restart: unless-stopped
+    network_mode: host
+    command: ["-js", "-a", "127.0.0.1", "-p", "14222"]
+
+  janus:
+    # Pinned by digest: this repo publishes no release tags, only mutable
+    # :latest / :master / master_<sha> tags, so the digest is the only
+    # immutable reference. It is what :latest resolved to when pinned
+    # (last pushed 2023; :master is newer but untested here). Bump by
+    # resolving the new digest (docker buildx imagetools inspect
+    # canyan/janus-gateway:latest) after a green full-profile e2e run.
+    image: canyan/janus-gateway:latest@sha256:80970d0b1c407222e2f88d7a6d31a16686fb9a5145a491b4b4d843ee40ee4ce1
+    profiles: ["full"]
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - nats
+    volumes:
+      - ./config/janus/janus.jcfg:/usr/local/etc/janus/janus.jcfg:ro
+      - ./config/janus/janus.transport.websockets.jcfg:/usr/local/etc/janus/janus.transport.websockets.jcfg:ro
+      - ./config/janus/janus.transport.http.jcfg:/usr/local/etc/janus/janus.transport.http.jcfg:ro
+      - ./config/janus/janus.plugin.videoroom.jcfg:/usr/local/etc/janus/janus.plugin.videoroom.jcfg:ro
+
+  signaling:
+    # Pinned release (was :latest, which resolved to 2.1.1 when pinned).
+    # Bump to the newest release tag on
+    # https://hub.docker.com/r/strukturag/nextcloud-spreed-signaling after
+    # a green full-profile e2e run.
+    image: strukturag/nextcloud-spreed-signaling:2.1.1
+    profiles: ["full"]
+    restart: unless-stopped
+    network_mode: host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - nats
+      - janus
+      - nextcloud
+    volumes:
+      # The signaling server whitelists Nextcloud backend URLs; the stock
+      # config pins port 28080. Runs that re-scope NEXTCLOUD_HOST_PORT
+      # render a per-run copy and point SIGNALING_CONF at it.
+      - ${SIGNALING_CONF:-./config/signaling.conf}:/config/server.conf:ro
+
+  coturn:
+    # Pinned patch release (was coturn/coturn:4.6-alpine, which resolved
+    # to this tag when pinned).
+    image: coturn/coturn:4.6.3-alpine
+    profiles: ["full"]
+    restart: unless-stopped
+    network_mode: host
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    volumes:
+      - ./config/turnserver.conf:/etc/coturn/turnserver.conf:ro
+
+volumes:
+  db_data:
+  nextcloud_data:
+  appapi_harp_certs:
