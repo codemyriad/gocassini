@@ -2,12 +2,12 @@
 
 @plugin "@tailwindcss/typography";
 @plugin "daisyui" {
-  themes: forrest-light --default, forrest-dark --prefersdark;
+  themes: saturn-light --default, saturn-dark --prefersdark;
 }
 
 /* Light theme */
 @plugin "daisyui/theme" {
-  name: "forrest-light";
+  name: "saturn-light";
   default: true;
   prefersdark: false;
   color-scheme: light;
@@ -16,7 +16,7 @@
   --color-base-200: oklch(91.8% 0.016 103.394);
   --color-base-300: oklch(85.8% 0.014 103.384);
   --color-base-content: oklch(13.1% 0.029 65.152);
-  --color-primary: oklch(58% 0.12 215);
+  --color-primary: oklch(62% 0.085 215);
   --color-primary-content: oklch(100% 0 0);
   --color-secondary: oklch(63% 0.16 72);
   --color-secondary-content: oklch(15% 0.05 72);
@@ -45,7 +45,7 @@
 
 /* Dark theme */
 @plugin "daisyui/theme" {
-  name: "forrest-dark";
+  name: "saturn-dark";
   default: false;
   prefersdark: true;
   color-scheme: dark;
