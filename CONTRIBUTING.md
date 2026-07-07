@@ -1,7 +1,10 @@
 # Contributing
 
-Cassini is developed as a Nextcloud AppAPI ExApp. Contributions should keep
-runtime behavior, release packaging, and app-store metadata aligned.
+Cassini is developed as a Nextcloud AppAPI ExApp. If your change affects the
+ExApp's declared surface — routes, environment variables, or other
+`appinfo/info.xml` metadata — update the manifest to match the code in the same
+change. Release packaging, version/image-tag bumps, and App Store publishing are
+maintainer tasks handled at release time (see [Releases](#releases)).
 
 ## Development
 
