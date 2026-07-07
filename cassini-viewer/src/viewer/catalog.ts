@@ -153,8 +153,14 @@ export function filterMeetingCatalogEntries(
   );
 }
 
-// Catalog `dateLabel` ships as ISO-ish "YYYY-MM-DD" or "YYYY-MM-DD HH:MM".
-// Render it in the user's locale (e.g. "Fri, Mar 13, 2026, 12:29 PM").
+// Catalog `dateLabel` ships as ISO-ish "YYYY-MM-DD" or "YYYY-MM-DD HH:MM" and
+// carries NO timezone: producers stamp it from different clocks (filename
+// wall-clock, UTC-derived job ids). Render the label's own digits in the user's
+// locale (e.g. "Fri, Mar 13, 2026, 12:29 PM"), but do NOT attach a
+// `timeZoneName` — the label doesn't know its zone, so a "GMT+1" suffix would
+// assert an instant we can't actually justify (a UTC-stamped "21:11" would
+// display as "9:11 PM GMT+1" to a CET viewer, an hour off and falsely precise).
+// We show the wall-clock digits as-is and make no timezone claim (D-484).
 export function formatMeetingDate(dateLabel: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(dateLabel);
   if (!match) {
@@ -177,9 +183,7 @@ export function formatMeetingDate(dateLabel: string): string {
     month: "short",
     day: "numeric",
     year: "numeric",
-    ...(hasTime
-      ? { hour: "numeric", minute: "2-digit", timeZoneName: "short" }
-      : {}),
+    ...(hasTime ? { hour: "numeric", minute: "2-digit" } : {}),
   }).format(date);
 }
 
