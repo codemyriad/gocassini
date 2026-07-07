@@ -193,18 +193,23 @@ func TestResolveDevStackPlanScopesLifecycleFlags(t *testing.T) {
 	}
 
 	_, _, err = resolveDevStackPlan("up", []string{"--full"}, testEnv(nil))
-	if err == nil || !strings.Contains(err.Error(), "apply only to stack stop/down") {
-		t.Fatalf("expected stop-only full error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "apply only to stack down") {
+		t.Fatalf("expected down-only full error, got %v", err)
+	}
+
+	_, _, err = resolveDevStackPlan("down", []string{"--suspend", "--volumes"}, testEnv(nil))
+	if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("expected suspend/volumes conflict error, got %v", err)
 	}
 }
 
-func TestResolveDevStackPlanStopFull(t *testing.T) {
+func TestResolveDevStackPlanDownFull(t *testing.T) {
 	plan, _, err := resolveDevStackPlan("down", []string{"--full"}, testEnv(nil))
 	if err != nil {
 		t.Fatalf("resolveDevStackPlan: %v", err)
 	}
-	if !plan.StopFull {
-		t.Fatal("expected StopFull")
+	if !plan.DownFull {
+		t.Fatal("expected DownFull")
 	}
 }
 
@@ -229,7 +234,7 @@ func TestRunDevStackPlanPrintsResolvedPlan(t *testing.T) {
 	}
 }
 
-func TestRunDevStackStopKeepsContainersForResume(t *testing.T) {
+func TestRunDevStackDownFlagsMapToScript(t *testing.T) {
 	prevExec := runDevScriptExec
 	defer func() { runDevScriptExec = prevExec }()
 
@@ -240,33 +245,39 @@ func TestRunDevStackStopKeepsContainersForResume(t *testing.T) {
 		gotArgs = args
 		return 0
 	}
+	var stdout, stderr bytes.Buffer
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	if code := runDevStack(context.Background(), ".", []string{"stop"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("runDevStack stop code=%d stderr=%q", code, stderr.String())
+	cases := []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"down"}, nil}, // bare: remove containers, keep volumes
+		{[]string{"down", "--suspend"}, []string{"--suspend"}},
+		{[]string{"down", "--volumes"}, []string{"--volumes"}},
+		{[]string{"down", "--full"}, []string{"--full"}},
 	}
-	if gotScript != "harness/bin/down.sh" {
-		t.Fatalf("script = %q", gotScript)
-	}
-	if len(gotArgs) != 1 || gotArgs[0] != "--stop-only" {
-		t.Fatalf("plain stop args = %v, want [--stop-only]", gotArgs)
-	}
-
-	if code := runDevStack(context.Background(), ".", []string{"stop", "--full"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("runDevStack stop --full code=%d stderr=%q", code, stderr.String())
-	}
-	for _, arg := range gotArgs {
-		if arg == "--stop-only" {
-			t.Fatalf("stop --full args = %v, must not include --stop-only", gotArgs)
+	for _, tc := range cases {
+		gotArgs = nil
+		if code := runDevStack(context.Background(), ".", tc.args, &stdout, &stderr); code != 0 {
+			t.Fatalf("runDevStack %v code=%d stderr=%q", tc.args, code, stderr.String())
+		}
+		if gotScript != "harness/bin/down.sh" {
+			t.Fatalf("%v script = %q", tc.args, gotScript)
+		}
+		if strings.Join(gotArgs, " ") != strings.Join(tc.want, " ") {
+			t.Fatalf("%v -> down.sh args = %v, want %v", tc.args, gotArgs, tc.want)
 		}
 	}
+}
 
-	if code := runDevStack(context.Background(), ".", []string{"down"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("runDevStack down code=%d stderr=%q", code, stderr.String())
+func TestRunDevStackStopCommandRemoved(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runDevStack(context.Background(), ".", []string{"stop"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("expected non-zero exit for removed stop command")
 	}
-	if len(gotArgs) != 0 {
-		t.Fatalf("plain down args = %v, want none", gotArgs)
+	if !strings.Contains(stderr.String(), "stack down") {
+		t.Fatalf("stop error should point at down, got %q", stderr.String())
 	}
 }
 

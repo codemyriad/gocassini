@@ -57,8 +57,9 @@ type devStackPlan struct {
 	ExAppImageMode        string
 	PatchMode             string
 	ExistingResourceMode  string
-	StopFull              bool
+	DownSuspend           bool
 	DownVolumes           bool
+	DownFull              bool
 	BuildRequested        bool
 	RemoteConfigRequested bool
 	ValidationWarnings    []string
@@ -78,8 +79,9 @@ type devStackFlagOptions struct {
 	build              bool
 	resume             bool
 	reset              bool
-	stopFull           bool
+	suspend            bool
 	downVolumes        bool
+	downFull           bool
 	set                map[string]bool
 }
 
@@ -110,8 +112,9 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	build := fs.Bool("build", false, "build the Cassini ExApp image before registration")
 	resume := fs.Bool("resume", false, "resume matching stopped resources instead of creating a fresh stack")
 	reset := fs.Bool("reset", false, "stop/remove/recreate resources for the resolved stack")
-	stopFull := fs.Bool("full", false, "for stack stop: remove all harness-owned resources")
-	downVolumes := fs.Bool("volumes", false, "for stack down: remove volumes (compatibility alias for full teardown of current config)")
+	suspend := fs.Bool("suspend", false, "for stack down: stop containers but keep them for 'up --resume'")
+	downVolumes := fs.Bool("volumes", false, "for stack down: remove containers and volumes for the current config")
+	downFull := fs.Bool("full", false, "for stack down: remove all harness-owned resources, including volumes and ExApp")
 
 	if err := fs.Parse(args); err != nil {
 		return opts, nil, err
@@ -141,8 +144,9 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	opts.build = *build
 	opts.resume = *resume
 	opts.reset = *reset
-	opts.stopFull = *stopFull
+	opts.suspend = *suspend
 	opts.downVolumes = *downVolumes
+	opts.downFull = *downFull
 	return opts, fs.Args(), nil
 }
 
@@ -195,8 +199,9 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	plan.RecordingBackend = pick("recording-backend", opts.recordingBackend, "CASSINI_HARNESS_RECORDING_BACKEND", devStackRecordingLegacy)
 	plan.ExAppImageMode = pick("exapp-image-mode", opts.exAppImageMode, "CASSINI_HARNESS_EXAPP_IMAGE_MODE", devStackImageReuseLocal)
 	plan.PatchMode = pick("patch", opts.patchMode, "CASSINI_HARNESS_PATCH_MODE", devStackPatchAuto)
-	plan.StopFull = opts.stopFull
+	plan.DownSuspend = opts.suspend
 	plan.DownVolumes = opts.downVolumes
+	plan.DownFull = opts.downFull
 	plan.BuildRequested = opts.build
 
 	if opts.build {
@@ -205,8 +210,11 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	if command != "up" && (opts.resume || opts.reset) {
 		return plan, rest, errors.New("--resume and --reset apply only to stack up")
 	}
-	if command != "down" && (opts.stopFull || opts.downVolumes) {
-		return plan, rest, errors.New("--full and --volumes apply only to stack stop/down")
+	if command != "down" && (opts.suspend || opts.downVolumes || opts.downFull) {
+		return plan, rest, errors.New("--suspend, --volumes, and --full apply only to stack down")
+	}
+	if opts.suspend && (opts.downVolumes || opts.downFull) {
+		return plan, rest, errors.New("--suspend keeps containers and cannot be combined with --volumes or --full")
 	}
 
 	switch {
@@ -448,8 +456,9 @@ func printDevStackPlan(w io.Writer, plan devStackPlan) {
 	fmt.Fprintf(w, "  mode: %s\n", plan.PatchMode)
 	fmt.Fprintln(w, "lifecycle:")
 	fmt.Fprintf(w, "  existing_resources: %s\n", plan.ExistingResourceMode)
-	fmt.Fprintf(w, "  stop_full: %t\n", plan.StopFull)
+	fmt.Fprintf(w, "  down_suspend: %t\n", plan.DownSuspend)
 	fmt.Fprintf(w, "  down_volumes: %t\n", plan.DownVolumes)
+	fmt.Fprintf(w, "  down_full: %t\n", plan.DownFull)
 	if len(plan.ValidationWarnings) == 0 {
 		fmt.Fprintln(w, "validation: ok")
 		return

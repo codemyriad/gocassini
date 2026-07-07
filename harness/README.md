@@ -69,7 +69,7 @@ CALL_URL="$(../bin/cassini dev room create --name "Local smoke room" | tail -n1)
 networks already exist, it fails with the next safe command to run. Use
 `../bin/cassini dev stack up --resume` for matching stopped resources,
 `../bin/cassini dev stack up --reset` to recreate the resolved stack, and
-`../bin/cassini dev stack stop --full` for complete harness cleanup.
+`../bin/cassini dev stack down --full` for complete harness cleanup.
 
 One-command smoke test:
 
@@ -85,9 +85,14 @@ The product-facing setup surface is `cassini dev stack`:
 ../bin/cassini dev stack plan   # print resolved config only
 ../bin/cassini dev stack up     # start/bootstrap the resolved config
 ../bin/cassini dev stack status
-../bin/cassini dev stack stop   # stop current resolved stack
-../bin/cassini dev stack stop --full
+../bin/cassini dev stack down            # remove containers, keep volumes
+../bin/cassini dev stack down --suspend  # stop containers, keep for up --resume
+../bin/cassini dev stack down --full     # remove everything, incl. volumes + ExApp
 ```
+
+Containers are ephemeral and volumes hold persistence: bare `down` drops the
+containers but keeps your data volumes; `--volumes` also drops the data;
+`--full` removes all harness-owned resources across projects.
 
 Important flags:
 

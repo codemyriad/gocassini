@@ -162,7 +162,7 @@ Nextcloud's installed app UI. Use Tier 3 for production-shaped validation.
 For the AppAPI/HaRP harness:
 
 ```bash
-./bin/cassini dev stack stop --full
+./bin/cassini dev stack down --full
 ```
 
 For the VM harness, use the same command inside `/home/ubuntu/dev/workspace` or

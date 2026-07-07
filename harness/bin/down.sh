@@ -7,15 +7,15 @@ source "$SCRIPT_DIR/common.sh"
 
 EXTRA_ARGS=()
 FULL=false
-STOP_ONLY=false
+SUSPEND=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --full)
       FULL=true
       shift
       ;;
-    --stop-only)
-      STOP_ONLY=true
+    --suspend)
+      SUSPEND=true
       shift
       ;;
     --volumes)
@@ -24,12 +24,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h|--help)
       cat <<EOF
-Usage: cassini dev stack stop [--full]
-       cassini dev stack down [--volumes|--full]
+Usage: cassini dev stack down [--suspend|--volumes|--full]
 
-  stop (no flags) stops containers but keeps them for 'up --resume'.
+  down (no flags) removes containers but keeps volumes (persistence).
+  --suspend  Stop containers but keep them for 'up --resume'.
+  --volumes  Remove containers and volumes for the current Compose project.
   --full     Remove all harness-owned Compose/ExApp resources, including volumes.
-  --volumes  Compatibility option: remove volumes for the current Compose project.
 EOF
       exit 0
       ;;
@@ -46,11 +46,20 @@ if [[ "$FULL" == "true" ]]; then
   exit 0
 fi
 
-if [[ "$STOP_ONLY" == "true" ]]; then
-  log "Stopping Docker Compose stack (containers kept for 'up --resume')"
+if [[ "$SUSPEND" == "true" ]]; then
+  log "Suspending Docker Compose stack (containers kept for 'up --resume')"
   compose stop
   exit 0
 fi
 
-log "Stopping Docker Compose stack"
-compose down "${EXTRA_ARGS[@]}"
+# Remove ExApp containers first: they attach to the compose network, so
+# leaving them would block its removal. --volumes also drops their data volume.
+if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+  log "Removing Docker Compose stack and volumes"
+  harness_remove_installed_exapp_resources
+  compose down "${EXTRA_ARGS[@]}"
+else
+  log "Removing Docker Compose stack (volumes kept)"
+  harness_remove_installed_exapp_containers
+  compose down
+fi

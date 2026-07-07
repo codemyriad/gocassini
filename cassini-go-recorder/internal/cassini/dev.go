@@ -61,9 +61,10 @@ func runDevStack(ctx context.Context, repoRoot string, args []string, stdout, st
 		return 0
 	}
 
-	originalCommand := command
 	if command == "stop" {
-		command = "down"
+		fmt.Fprintln(stderr, "dev stack stop was removed; use 'cassini dev stack down' (see 'down --suspend' to keep containers for resume)")
+		printDevStackUsage(stderr)
+		return 2
 	}
 
 	plan, remainingArgs, err := resolveDevStackPlan(command, args[1:], osEnvLookup)
@@ -87,17 +88,18 @@ func runDevStack(ctx context.Context, repoRoot string, args []string, stdout, st
 	case "up":
 		return runDevScriptWithEnv(ctx, repoRoot, filepath.Join(harnessBin, "up.sh"), remainingArgs, plan.env(), stdout, stderr)
 	case "down":
+		// down is the canonical teardown. Bare down removes the ephemeral
+		// containers but keeps volumes (persistence); flags widen or narrow
+		// that: --suspend keeps containers, --volumes drops volumes too,
+		// --full removes all harness-owned resources.
 		scriptArgs := remainingArgs
-		if plan.DownVolumes {
-			scriptArgs = append([]string{"--volumes"}, scriptArgs...)
-		}
-		if plan.StopFull {
+		switch {
+		case plan.DownFull:
 			scriptArgs = append([]string{"--full"}, scriptArgs...)
-		}
-		if originalCommand == "stop" && !plan.StopFull && !plan.DownVolumes {
-			// Plain `stop` must preserve containers so `up --resume` can
-			// restart them; `down` removes resources for the resolved config.
-			scriptArgs = append([]string{"--stop-only"}, scriptArgs...)
+		case plan.DownVolumes:
+			scriptArgs = append([]string{"--volumes"}, scriptArgs...)
+		case plan.DownSuspend:
+			scriptArgs = append([]string{"--suspend"}, scriptArgs...)
 		}
 		return runDevScriptWithEnv(ctx, repoRoot, filepath.Join(harnessBin, "down.sh"), scriptArgs, plan.env(), stdout, stderr)
 	case "status":
@@ -114,7 +116,6 @@ func printDevStackUsage(w io.Writer) {
   cassini dev stack plan [options]
   cassini dev stack up [options]
   cassini dev stack status [options]
-  cassini dev stack stop [options]
   cassini dev stack down [options]
 
 Common options:
@@ -134,12 +135,11 @@ up options:
   --resume
   --reset
 
-stop/down options:
-  --full
-
-stop keeps containers so 'up --resume' can restart them; down removes the
-resolved config's resources (--volumes also removes volumes); --full removes
-all harness-owned resources.
+down options (canonical teardown; containers are ephemeral, volumes persist):
+  (none)      remove containers, keep volumes (persistence)
+  --suspend   stop containers but keep them for 'up --resume'
+  --volumes   remove containers and volumes for the current config
+  --full      remove all harness-owned resources, including volumes and ExApp
 
 Config hierarchy: explicit flag > CASSINI_HARNESS_* env var > default.
 Passing an explicit non-remote --public-mode ignores ambient remote env vars
@@ -232,7 +232,7 @@ func printDevUsage(w io.Writer) {
 	fmt.Fprint(w, `Cassini dev commands expose the local harness without making it the product boundary.
 
 Usage:
-  cassini dev stack <plan|up|status|stop|down>
+  cassini dev stack <plan|up|status|down>
   cassini dev room create
   cassini dev smoke
   cassini dev ci-e2e

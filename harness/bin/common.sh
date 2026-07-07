@@ -622,8 +622,15 @@ harness_installed_exapp_resources() {
     | sed 's/^/volume:/' || true
 }
 
-harness_remove_installed_exapp_resources() {
+harness_remove_installed_exapp_containers() {
+  # ExApp containers are AppAPI-spawned, not compose services, so `compose
+  # down` never touches them; they also attach to the compose network and
+  # block its removal. Ephemeral compute: removed on any teardown.
   docker rm -f cassini-exapp nc_app_gocassini >/dev/null 2>&1 || true
+}
+
+harness_remove_installed_exapp_resources() {
+  harness_remove_installed_exapp_containers
   docker volume rm cassini-exapp-state cassini-exapp-site nc_app_gocassini_data >/dev/null 2>&1 || true
 }
 
@@ -716,7 +723,7 @@ harness_validate_resume_resources() {
   if harness_resource_list_nonempty "$running"; then
     echo "Cannot --resume because these services are already running:" >&2
     printf '%s\n' "$running" | sed 's/^/  - /' >&2
-    echo "Use 'cassini dev stack status' or 'cassini dev stack stop' first." >&2
+    echo "Use 'cassini dev stack status' or 'cassini dev stack down --suspend' first." >&2
     return 1
   fi
 
@@ -758,7 +765,7 @@ harness_check_existing_resources_for_up() {
         echo "Use one of:" >&2
         echo "  cassini dev stack up --resume   # start matching stopped resources" >&2
         echo "  cassini dev stack up --reset    # remove and recreate resolved resources" >&2
-        echo "  cassini dev stack stop --full   # remove all harness-owned resources" >&2
+        echo "  cassini dev stack down --full   # remove all harness-owned resources" >&2
         return 1
       fi
       ;;
