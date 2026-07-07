@@ -42,8 +42,10 @@ const toc = headings.filter(h => h.depth === 2 || h.depth === 3);
     <ViewTransitions />
     <script is:inline>
       (function() {
+        const valid = ['saturn-light', 'saturn-dark'];
         const saved = localStorage.getItem('cassini-theme');
-        document.documentElement.setAttribute('data-theme', saved || 'saturn-dark');
+        const theme = valid.includes(saved) ? saved : 'saturn-dark';
+        document.documentElement.setAttribute('data-theme', theme);
       })();
     </script>
   </head>
