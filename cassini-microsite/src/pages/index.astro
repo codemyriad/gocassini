@@ -22,7 +22,7 @@ const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
   <Nav transition:persist="site-nav" />
 
   <!-- TODO: replace with official Nextcloud certified app badge once approved -->
-  <div id="nc-badge" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 transition-all duration-500">
+  <div id="nc-badge" class="md:hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-40 transition-all duration-500">
     <a href="https://apps.nextcloud.com/" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2.5 text-sm font-bold px-3 py-2 rounded-md text-black transition-opacity duration-150 hover:opacity-80 active:opacity-70" style="background: linear-gradient(135deg, #0082c9, #1cafff)">
       <img src={`${base}nc-logo.svg`} alt="" class="w-6 h-6 shrink-0" aria-hidden="true" />
       Nextcloud App Store
