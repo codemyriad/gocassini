@@ -159,6 +159,47 @@ func TestRunDevStackPlanPrintsResolvedPlan(t *testing.T) {
 	}
 }
 
+func TestRunDevStackStopKeepsContainersForResume(t *testing.T) {
+	prevExec := runDevScriptExec
+	defer func() { runDevScriptExec = prevExec }()
+
+	var gotScript string
+	var gotArgs []string
+	runDevScriptExec = func(_ context.Context, _ string, relativeScript string, args []string, _ []string, _ io.Writer, _ io.Writer) int {
+		gotScript = relativeScript
+		gotArgs = args
+		return 0
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := runDevStack(context.Background(), ".", []string{"stop"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("runDevStack stop code=%d stderr=%q", code, stderr.String())
+	}
+	if gotScript != "harness/bin/down.sh" {
+		t.Fatalf("script = %q", gotScript)
+	}
+	if len(gotArgs) != 1 || gotArgs[0] != "--stop-only" {
+		t.Fatalf("plain stop args = %v, want [--stop-only]", gotArgs)
+	}
+
+	if code := runDevStack(context.Background(), ".", []string{"stop", "--full"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("runDevStack stop --full code=%d stderr=%q", code, stderr.String())
+	}
+	for _, arg := range gotArgs {
+		if arg == "--stop-only" {
+			t.Fatalf("stop --full args = %v, must not include --stop-only", gotArgs)
+		}
+	}
+
+	if code := runDevStack(context.Background(), ".", []string{"down"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("runDevStack down code=%d stderr=%q", code, stderr.String())
+	}
+	if len(gotArgs) != 0 {
+		t.Fatalf("plain down args = %v, want none", gotArgs)
+	}
+}
+
 func TestRunDevStackUpPassesResolvedEnv(t *testing.T) {
 	prevExec := runDevScriptExec
 	defer func() { runDevScriptExec = prevExec }()

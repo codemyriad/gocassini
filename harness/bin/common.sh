@@ -101,10 +101,12 @@ _harness_public_url_was_set=false
 _harness_public_host_was_set=false
 _harness_media_host_was_set=false
 _harness_signaling_public_url_was_set=false
-[[ -v CASSINI_HARNESS_PUBLIC_URL ]] && _harness_public_url_was_set=true
-[[ -v CASSINI_HARNESS_PUBLIC_HOST ]] && _harness_public_host_was_set=true
-[[ -v CASSINI_HARNESS_MEDIA_HOST ]] && _harness_media_host_was_set=true
-[[ -v CASSINI_HARNESS_SIGNALING_PUBLIC_URL ]] && _harness_signaling_public_url_was_set=true
+# Empty counts as unset: parent phases export resolved (possibly empty)
+# values, so child scripts re-sourcing this file must not trip the guard.
+[[ -n "${CASSINI_HARNESS_PUBLIC_URL:-}" ]] && _harness_public_url_was_set=true
+[[ -n "${CASSINI_HARNESS_PUBLIC_HOST:-}" ]] && _harness_public_host_was_set=true
+[[ -n "${CASSINI_HARNESS_MEDIA_HOST:-}" ]] && _harness_media_host_was_set=true
+[[ -n "${CASSINI_HARNESS_SIGNALING_PUBLIC_URL:-}" ]] && _harness_signaling_public_url_was_set=true
 
 CASSINI_HARNESS_PUBLIC_URL="${CASSINI_HARNESS_PUBLIC_URL:-}"
 CASSINI_HARNESS_PUBLIC_HOST="${CASSINI_HARNESS_PUBLIC_HOST:-}"
@@ -889,7 +891,9 @@ harness_configure_appapi_phase() {
   case "${CASSINI_HARNESS_EXAPP_IMAGE_MODE:-reuse-local}" in
     build|reuse-local)
       log "AppAPI phase: mapping ghcr.io to local images"
-      occ app_api:daemon:registry:add harp_local \
+      # Idempotent: re-runs (e.g. bootstrap after `up --resume`) hit
+      # "registry map already exists", which is the desired end state.
+      occ_ignore_failure app_api:daemon:registry:add harp_local \
         --registry-from=ghcr.io --registry-to=local
       ;;
     pull)
@@ -1113,11 +1117,13 @@ harness_full_down() {
     [[ "$seen" == "true" ]] || unique_projects+=("$project")
   done
 
+  # Remove AppAPI-spawned ExApp containers first: they attach to the project
+  # network, and a compose down cannot delete a network that is still in use.
+  harness_remove_installed_exapp_resources
   for project in "${unique_projects[@]}"; do
     log "Stopping/removing harness Compose resources for project '$project'"
     docker compose -p "$project" -f "$COMPOSE_FILE" --profile full --profile remote down --volumes --remove-orphans || true
   done
-  harness_remove_installed_exapp_resources
 }
 
 occ() {

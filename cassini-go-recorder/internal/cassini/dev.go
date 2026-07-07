@@ -61,6 +61,7 @@ func runDevStack(ctx context.Context, repoRoot string, args []string, stdout, st
 		return 0
 	}
 
+	originalCommand := command
 	if command == "stop" {
 		command = "down"
 	}
@@ -92,6 +93,11 @@ func runDevStack(ctx context.Context, repoRoot string, args []string, stdout, st
 		}
 		if plan.StopFull {
 			scriptArgs = append([]string{"--full"}, scriptArgs...)
+		}
+		if originalCommand == "stop" && !plan.StopFull && !plan.DownVolumes {
+			// Plain `stop` must preserve containers so `up --resume` can
+			// restart them; `down` removes resources for the resolved config.
+			scriptArgs = append([]string{"--stop-only"}, scriptArgs...)
 		}
 		return runDevScriptWithEnv(ctx, repoRoot, filepath.Join(harnessBin, "down.sh"), scriptArgs, plan.env(), stdout, stderr)
 	case "status":
@@ -130,6 +136,10 @@ up options:
 
 stop/down options:
   --full
+
+stop keeps containers so 'up --resume' can restart them; down removes the
+resolved config's resources (--volumes also removes volumes); --full removes
+all harness-owned resources.
 `+"\n")
 }
 
