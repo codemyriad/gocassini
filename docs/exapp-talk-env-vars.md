@@ -71,7 +71,7 @@ Important parity vars:
 | `CASSINI_TALK_RECORDING_SECRET` | dev fallback or generated | Secret written into Talk `recording_servers`; must be passed into installed ExApp. |
 | `SIGNALING_INTERNAL_SECRET` | dev fallback from harness common | Secret in signaling config; must match `CASSINI_TALK_SIGNALING_INTERNAL_SECRET`. |
 | `CASSINI_HARNESS_HOST` | VM IP, e.g. `192.168.252.29` | Legacy browser-facing host/IP for VM/LAN harness URLs. |
-| `CASSINI_HARNESS_PUBLIC_MODE` | `local-http`, `lan-http`, `remote-https` | Explicit browser/public mode. Remote public env vars require `remote-https`. |
+| `CASSINI_HARNESS_PUBLIC_MODE` | `local-http`, `lan-http`, `remote-https` | Explicit browser/public mode. Remote public env vars require `remote-https`, unless a non-remote `--public-mode` is passed explicitly — the flag then overrides and the ambient remote env vars are ignored. Config hierarchy is flag > env > default. |
 | `CASSINI_HARNESS_PUBLIC_URL` | `https://<16a-fqdn>` | Browser-facing HTTPS origin when `CASSINI_HARNESS_PUBLIC_MODE=remote-https`. Enables Nextcloud HTTPS overwrite config and public call URLs. |
 | `CASSINI_HARNESS_PUBLIC_HOST` | `<16a-fqdn>` | Bare public hostname for trusted domains, Docker-network split DNS, and signaling backend allow-list entries. Derived from `CASSINI_HARNESS_PUBLIC_URL` in remote mode when omitted. |
 | `CASSINI_HARNESS_MEDIA_HOST` | `<16a-tailscale-ip>` | Host/IP advertised to browser WebRTC via Janus and TURN. Required for remote full media. |

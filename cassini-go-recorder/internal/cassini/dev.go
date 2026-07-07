@@ -140,6 +140,11 @@ stop/down options:
 stop keeps containers so 'up --resume' can restart them; down removes the
 resolved config's resources (--volumes also removes volumes); --full removes
 all harness-owned resources.
+
+Config hierarchy: explicit flag > CASSINI_HARNESS_* env var > default.
+Passing an explicit non-remote --public-mode ignores ambient remote env vars
+(CASSINI_HARNESS_PUBLIC_URL/PUBLIC_HOST/MEDIA_HOST/SIGNALING_PUBLIC_URL);
+without the explicit flag they still fail loud outside remote-https mode.
 `+"\n")
 }
 

@@ -158,10 +158,8 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 		value, _ := lookup(key)
 		return value
 	}
-	wasSet := func(key string) bool {
-		_, ok := lookup(key)
-		return ok
-	}
+	// Config hierarchy: explicit flag > env var > default. Empty env values
+	// count as unset (matching the shell-side guard in harness common.sh).
 	pick := func(flagName, flagValue, envName, fallback string) string {
 		if opts.set[flagName] {
 			return flagValue
@@ -173,10 +171,25 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	}
 
 	plan.PublicMode = pick("public-mode", opts.publicMode, "CASSINI_HARNESS_PUBLIC_MODE", devStackPublicLocalHTTP)
-	plan.PublicURL = pick("public-url", opts.publicURL, "CASSINI_HARNESS_PUBLIC_URL", "")
-	plan.PublicHost = pick("public-host", opts.publicHost, "CASSINI_HARNESS_PUBLIC_HOST", "")
-	plan.MediaHost = pick("media-host", opts.mediaHost, "CASSINI_HARNESS_MEDIA_HOST", "")
-	plan.SignalingPublicURL = pick("signaling-public-url", opts.signalingPublicURL, "CASSINI_HARNESS_SIGNALING_PUBLIC_URL", "")
+
+	// An explicitly flagged non-remote public mode overrides ambient remote
+	// env vars entirely: env-sourced remote inputs are ignored rather than
+	// failing the plan. Remote inputs passed as flags stay contradictory.
+	maskRemoteEnv := opts.set["public-mode"] && plan.PublicMode != devStackPublicRemoteHTTP
+	pickRemoteInput := func(flagName, flagValue, envName string) string {
+		if opts.set[flagName] {
+			return flagValue
+		}
+		if maskRemoteEnv {
+			return ""
+		}
+		return get(envName)
+	}
+
+	plan.PublicURL = pickRemoteInput("public-url", opts.publicURL, "CASSINI_HARNESS_PUBLIC_URL")
+	plan.PublicHost = pickRemoteInput("public-host", opts.publicHost, "CASSINI_HARNESS_PUBLIC_HOST")
+	plan.MediaHost = pickRemoteInput("media-host", opts.mediaHost, "CASSINI_HARNESS_MEDIA_HOST")
+	plan.SignalingPublicURL = pickRemoteInput("signaling-public-url", opts.signalingPublicURL, "CASSINI_HARNESS_SIGNALING_PUBLIC_URL")
 	plan.ServiceMode = pick("services", opts.serviceMode, "CASSINI_HARNESS_SERVICE_MODE", "")
 	plan.CassiniMode = pick("cassini", opts.cassiniMode, "CASSINI_HARNESS_CASSINI_MODE", devStackCassiniNone)
 	plan.RecordingBackend = pick("recording-backend", opts.recordingBackend, "CASSINI_HARNESS_RECORDING_BACKEND", devStackRecordingLegacy)
@@ -244,7 +257,7 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 			{"media-host", "CASSINI_HARNESS_MEDIA_HOST"},
 			{"signaling-public-url", "CASSINI_HARNESS_SIGNALING_PUBLIC_URL"},
 		} {
-			if opts.set[input.flag] || wasSet(input.env) {
+			if opts.set[input.flag] || (!maskRemoteEnv && get(input.env) != "") {
 				remoteInputs = append(remoteInputs, "--"+input.flag+"/"+input.env)
 			}
 		}
@@ -395,7 +408,10 @@ func isLoopbackHost(host string) bool {
 }
 
 func (plan devStackPlan) env() []string {
-	env := []string{
+	// Remote inputs are always emitted, even when empty: the resolved plan is
+	// the single source of truth for child scripts, and an empty assignment
+	// masks ambient shell values (harness common.sh treats empty as unset).
+	return []string{
 		"CASSINI_HARNESS_PUBLIC_MODE=" + plan.PublicMode,
 		"CASSINI_HARNESS_SERVICE_MODE=" + plan.ServiceMode,
 		"CASSINI_HARNESS_CASSINI_MODE=" + plan.CassiniMode,
@@ -404,20 +420,11 @@ func (plan devStackPlan) env() []string {
 		"CASSINI_HARNESS_PATCH_MODE=" + plan.PatchMode,
 		"CASSINI_HARNESS_EXISTING=" + plan.ExistingResourceMode,
 		"SPREED_PROFILE=" + plan.SpreedProfile,
+		"CASSINI_HARNESS_PUBLIC_URL=" + plan.PublicURL,
+		"CASSINI_HARNESS_PUBLIC_HOST=" + plan.PublicHost,
+		"CASSINI_HARNESS_MEDIA_HOST=" + plan.MediaHost,
+		"CASSINI_HARNESS_SIGNALING_PUBLIC_URL=" + plan.SignalingPublicURL,
 	}
-	if plan.PublicURL != "" {
-		env = append(env, "CASSINI_HARNESS_PUBLIC_URL="+plan.PublicURL)
-	}
-	if plan.PublicHost != "" {
-		env = append(env, "CASSINI_HARNESS_PUBLIC_HOST="+plan.PublicHost)
-	}
-	if plan.MediaHost != "" {
-		env = append(env, "CASSINI_HARNESS_MEDIA_HOST="+plan.MediaHost)
-	}
-	if plan.SignalingPublicURL != "" {
-		env = append(env, "CASSINI_HARNESS_SIGNALING_PUBLIC_URL="+plan.SignalingPublicURL)
-	}
-	return env
 }
 
 func printDevStackPlan(w io.Writer, plan devStackPlan) {

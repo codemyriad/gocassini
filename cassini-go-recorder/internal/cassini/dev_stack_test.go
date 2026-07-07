@@ -52,6 +52,76 @@ func TestResolveDevStackPlanRejectsRemoteInputsWithoutRemoteMode(t *testing.T) {
 	}
 }
 
+func TestResolveDevStackPlanFlagsOverrideEnv(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("plan", []string{
+		"--services", "core",
+		"--recording-backend", "none",
+		"--patch", "force",
+	}, testEnv(map[string]string{
+		"CASSINI_HARNESS_SERVICE_MODE":      "full",
+		"CASSINI_HARNESS_RECORDING_BACKEND": "direct-operator",
+		"CASSINI_HARNESS_PATCH_MODE":        "none",
+		"CASSINI_HARNESS_EXAPP_IMAGE_MODE":  "pull",
+	}))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if plan.ServiceMode != devStackServiceCore {
+		t.Fatalf("ServiceMode = %q, want flag value core", plan.ServiceMode)
+	}
+	if plan.RecordingBackend != devStackRecordingNone {
+		t.Fatalf("RecordingBackend = %q, want flag value none", plan.RecordingBackend)
+	}
+	if plan.PatchMode != devStackPatchForce {
+		t.Fatalf("PatchMode = %q, want flag value force", plan.PatchMode)
+	}
+	if plan.ExAppImageMode != devStackImagePull {
+		t.Fatalf("ExAppImageMode = %q, want env value pull", plan.ExAppImageMode)
+	}
+}
+
+func TestResolveDevStackPlanExplicitLocalModeMasksRemoteEnv(t *testing.T) {
+	remoteEnv := map[string]string{
+		"CASSINI_HARNESS_PUBLIC_URL":           "https://16a.tail.example",
+		"CASSINI_HARNESS_PUBLIC_HOST":          "16a.tail.example",
+		"CASSINI_HARNESS_MEDIA_HOST":           "100.127.22.64",
+		"CASSINI_HARNESS_SIGNALING_PUBLIC_URL": "https://16a.tail.example:8443",
+	}
+
+	plan, _, err := resolveDevStackPlan("plan", []string{"--public-mode", "local-http"}, testEnv(remoteEnv))
+	if err != nil {
+		t.Fatalf("explicit local-http must override remote env vars: %v", err)
+	}
+	if plan.PublicURL != "" || plan.PublicHost != "" || plan.MediaHost != "" || plan.SignalingPublicURL != "" {
+		t.Fatalf("remote inputs not masked: %+v", plan)
+	}
+	joined := strings.Join(plan.env(), "\n")
+	for _, want := range []string{
+		"CASSINI_HARNESS_PUBLIC_URL=\n",
+		"CASSINI_HARNESS_PUBLIC_HOST=\n",
+		"CASSINI_HARNESS_MEDIA_HOST=\n",
+	} {
+		if !strings.Contains(joined+"\n", want) {
+			t.Fatalf("plan env must mask ambient %q, got %v", strings.TrimSpace(want), plan.env())
+		}
+	}
+
+	// A remote input passed as a flag is still contradictory in local mode.
+	_, _, err = resolveDevStackPlan("plan", []string{"--public-mode", "local-http", "--public-url", "https://x.example"}, testEnv(nil))
+	if err == nil || !strings.Contains(err.Error(), "remote harness inputs require") {
+		t.Fatalf("expected flag contradiction error, got %v", err)
+	}
+
+	// Explicit remote mode still consumes env-provided remote inputs.
+	plan, _, err = resolveDevStackPlan("plan", []string{"--public-mode", "remote-https"}, testEnv(remoteEnv))
+	if err != nil {
+		t.Fatalf("explicit remote-https with env inputs: %v", err)
+	}
+	if plan.PublicURL != "https://16a.tail.example" || plan.MediaHost != "100.127.22.64" {
+		t.Fatalf("env remote inputs not consumed in remote mode: %+v", plan)
+	}
+}
+
 func TestResolveDevStackPlanRemoteHTTPS(t *testing.T) {
 	plan, _, err := resolveDevStackPlan("plan", []string{
 		"--public-mode", "remote-https",
