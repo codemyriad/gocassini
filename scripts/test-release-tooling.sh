@@ -381,6 +381,30 @@ else
   ok "validate rejects a non-gocassini archive root"
 fi
 
+# Store-schema validation (pre-info.xslt -> info.xsd). Needs xsltproc + xmllint;
+# skip cleanly where they are absent (CI installs them so this always runs there).
+if command -v xsltproc >/dev/null 2>&1 && command -v xmllint >/dev/null 2>&1; then
+  # The good tarball (built from the real manifest) must pass the store schema.
+  if "$SCRIPT_DIR/validate-appstore-tarball.sh" --version "$SRCV" --tarball "$TARBALL" >/dev/null 2>&1; then
+    ok "real info.xml passes store-schema validation (pre-info.xslt -> info.xsd)"
+  else
+    bad "real info.xml should pass store-schema validation"
+  fi
+  # An invalid <category> (a constrained enum) must be caught — and only the
+  # store check catches it, since our other checks ignore <category>.
+  mkdir -p "$BD/badcat"; cp -r "$BD/appstore/gocassini" "$BD/badcat/gocassini"
+  sed -i 's#<category>[^<]*</category>#<category>not-a-real-category</category>#' \
+    "$BD/badcat/gocassini/appinfo/info.xml"
+  tar -czf "$BD/badcat.tar.gz" -C "$BD/badcat" gocassini
+  if "$SCRIPT_DIR/validate-appstore-tarball.sh" --version "$SRCV" --tarball "$BD/badcat.tar.gz" >/dev/null 2>&1; then
+    bad "validate should reject a store-schema-invalid <category>"
+  else
+    ok "validate rejects a store-schema-invalid manifest (bad <category>)"
+  fi
+else
+  echo "  skip: xsltproc/xmllint not installed — store-schema tests run in CI"
+fi
+
 rm -rf "$BD"
 
 echo

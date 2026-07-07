@@ -145,6 +145,9 @@ jobs:
         with:
           ref: v${{ github.event.inputs.version }}
 
+      - name: Install packaging + store-schema validators
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xsltproc libxml2-utils
+
       - name: Build the unsigned staging tree
         run: |
           set -euo pipefail

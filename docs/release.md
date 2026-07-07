@@ -121,7 +121,10 @@ The workflow:
    with the requested version; extracts the release notes.
 2. **verify-images** — `:<version>` and `:<version>-cuda` exist on GHCR.
 3. **package** — builds the `gocassini/` staging tree, signs it with
-   `occ integrity:sign-app`, archives and validates `gocassini.tar.gz`.
+   `occ integrity:sign-app`, archives and validates `gocassini.tar.gz`. The
+   validation includes the store's own metadata check — `info.xml` run through
+   `pre-info.xslt` then `info.xsd` (schema vendored under `spec/appstore/`) —
+   so a manifest the App Store would reject fails here first.
 4. **github-release** — creates or updates a **draft** release `v<version>` from
    the changelog notes and attaches `gocassini.tar.gz` + `.sha256`.
 5. **publish-appstore** — only when `publish_appstore=true`: signs the tarball

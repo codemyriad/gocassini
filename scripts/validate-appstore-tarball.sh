@@ -8,7 +8,9 @@
 #   - <id> is gocassini
 #   - <version> equals the requested release version
 #   - the Docker <image-tag> equals the requested version
-#   - the archive is below 20 MiB
+#   - the archive is below 20 MiB and info.xml below 512 KiB (store limits)
+#   - info.xml validates the way apps.nextcloud.com does: pre-info.xslt then
+#     info.xsd (see the store-schema note below)
 #   - no private key / certificate / CSR material is present
 #   - gocassini/appinfo/signature.json exists when --signed is given
 #
@@ -21,10 +23,35 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib-release-version.sh
 source "$SCRIPT_DIR/lib-release-version.sh"
 
-MAX_BYTES=$((20 * 1024 * 1024))  # App Store archive ceiling: 20 MiB
+MAX_BYTES=$((20 * 1024 * 1024))    # App Store archive ceiling: 20 MiB
+MAX_INFO_BYTES=$((512 * 1024))     # App Store info.xml ceiling: 512 KiB
 # Extensions that must never ship in the package (signing material). Note
 # signature.json is JSON, not one of these, so it is allowed.
 FORBIDDEN_EXT_RE='\.(key|pem|crt|csr|p12|pfx)$'
+
+# Store metadata schema. apps.nextcloud.com runs info.xml through pre-info.xslt
+# (which drops elements outside the base schema, e.g. Cassini's
+# <external-app><routes>) and THEN validates the result against info.xsd —
+# validating info.xml against the XSD directly false-fails an ExApp manifest.
+# Vendored under spec/appstore/ so this runs offline and reproducibly; override
+# with APPSTORE_XSLT/APPSTORE_XSD, or fall back to downloading upstream.
+STORE_XSLT_URL="https://raw.githubusercontent.com/nextcloud/appstore/master/nextcloudappstore/api/v1/release/pre-info.xslt"
+STORE_XSD_URL="https://apps.nextcloud.com/schema/apps/info.xsd"
+VENDORED_SCHEMA_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/spec/appstore"
+
+# resolve_schema <xslt|xsd> <download-dest> — echo a usable path for the store
+# stylesheet/schema, trying: env override, vendored copy, then download.
+resolve_schema() {
+  local kind="$1" dest="$2" env_path vendored url
+  case "$kind" in
+    xslt) env_path="${APPSTORE_XSLT:-}"; vendored="$VENDORED_SCHEMA_DIR/pre-info.xslt"; url="$STORE_XSLT_URL" ;;
+    xsd)  env_path="${APPSTORE_XSD:-}";  vendored="$VENDORED_SCHEMA_DIR/info.xsd";      url="$STORE_XSD_URL" ;;
+    *) return 1 ;;
+  esac
+  if [[ -n "$env_path" && -f "$env_path" ]]; then printf '%s\n' "$env_path"; return 0; fi
+  if [[ -f "$vendored" ]]; then printf '%s\n' "$vendored"; return 0; fi
+  curl -fsSL "$url" -o "$dest" 2>/dev/null && printf '%s\n' "$dest"
+}
 
 usage() {
   cat >&2 <<'EOF'
@@ -103,6 +130,35 @@ main() {
     [[ "$id" == "gocassini" ]] || bad "<id> is '$id', expected 'gocassini'"
     [[ "$ver" == "$version" ]] || bad "<version> is '$ver', expected '$version'"
     [[ "$tag" == "$version" ]] || bad "<image-tag> is '$tag', expected '$version'"
+
+    # info.xml size ceiling (store limit).
+    local info_bytes
+    info_bytes="$(wc -c <"$info")"
+    if (( info_bytes > MAX_INFO_BYTES )); then
+      bad "appinfo/info.xml is ${info_bytes} bytes, over the ${MAX_INFO_BYTES}-byte (512 KiB) store limit"
+    fi
+
+    # Store-faithful metadata validation: pre-info.xslt then info.xsd (see the
+    # header note). Needs xsltproc + xmllint; if either is missing we warn and
+    # skip rather than fail, so a dev box without them can still run the other
+    # checks — CI installs both so the store check always runs there.
+    if command -v xsltproc >/dev/null 2>&1 && command -v xmllint >/dev/null 2>&1; then
+      local xslt xsd
+      if xslt="$(resolve_schema xslt "$tmp/pre-info.xslt")" && [[ -n "$xslt" ]] \
+         && xsd="$(resolve_schema xsd "$tmp/info.xsd")" && [[ -n "$xsd" ]]; then
+        if xsltproc "$xslt" "$info" >"$tmp/info.pre.xml" 2>/dev/null \
+           && xmllint --noout --schema "$xsd" "$tmp/info.pre.xml" 2>"$tmp/xsd.err"; then
+          : # store metadata is valid
+        else
+          bad "store metadata validation failed (pre-info.xslt -> info.xsd):"
+          sed 's/^/    /' "$tmp/xsd.err" >&2 2>/dev/null || true
+        fi
+      else
+        echo "warn: could not obtain the store schema (set APPSTORE_XSLT/APPSTORE_XSD or keep spec/appstore/) — skipping store-schema validation" >&2
+      fi
+    else
+      echo "warn: xsltproc/xmllint not found — skipping store-schema validation" >&2
+    fi
   else
     bad "gocassini/appinfo/info.xml is missing from the archive"
   fi
