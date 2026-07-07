@@ -33,7 +33,6 @@ multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && git branch -
 If old stacks are running and you want a clean validation:
 
 ```bash
-multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && docker compose -p spreedtest-vm -f harness/vm/compose.yml --profile full down --volumes || true'
 multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && docker compose -p cassini-exapp-test -f harness/compose.yml --profile full down --volumes || true'
 multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace/deployment && docker compose down --volumes || true'
 ```

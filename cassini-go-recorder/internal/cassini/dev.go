@@ -81,9 +81,6 @@ func runDevStack(ctx context.Context, repoRoot string, args []string, stdout, st
 	}
 
 	harnessBin := filepath.Join("harness", "bin")
-	if devHarnessVMEnabled() && (command == "up" || command == "down") {
-		harnessBin = filepath.Join("harness", "vm", "bin")
-	}
 
 	switch command {
 	case "up":
@@ -134,15 +131,6 @@ up options:
 stop/down options:
   --full
 `+"\n")
-}
-
-func devHarnessVMEnabled() bool {
-	switch os.Getenv("CASSINI_HARNESS_VM") {
-	case "true", "1", "yes", "on":
-		return true
-	default:
-		return false
-	}
 }
 
 func runDevRoom(ctx context.Context, repoRoot string, args []string, stdout, stderr io.Writer) int {

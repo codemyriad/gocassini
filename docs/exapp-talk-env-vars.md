@@ -70,7 +70,6 @@ Important parity vars:
 | `CASSINI_TALK_RECORDING_URL` | `http://reverse-proxy/index.php/apps/app_api/proxy/gocassini` in installed-ExApp harness | Optional override for where Talk sends recording-backend requests. |
 | `CASSINI_TALK_RECORDING_SECRET` | dev fallback or generated | Secret written into Talk `recording_servers`; must be passed into installed ExApp. |
 | `SIGNALING_INTERNAL_SECRET` | dev fallback from harness common | Secret in signaling config; must match `CASSINI_TALK_SIGNALING_INTERNAL_SECRET`. |
-| `CASSINI_HARNESS_VM` | `true` | Makes `cassini dev stack up/down` use `harness/vm`. |
 | `CASSINI_HARNESS_HOST` | VM IP, e.g. `192.168.252.29` | Legacy browser-facing host/IP for VM/LAN harness URLs. |
 | `CASSINI_HARNESS_PUBLIC_MODE` | `local-http`, `lan-http`, `remote-https` | Explicit browser/public mode. Remote public env vars require `remote-https`. |
 | `CASSINI_HARNESS_PUBLIC_URL` | `https://<16a-fqdn>` | Browser-facing HTTPS origin when `CASSINI_HARNESS_PUBLIC_MODE=remote-https`. Enables Nextcloud HTTPS overwrite config and public call URLs. |
