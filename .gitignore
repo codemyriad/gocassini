@@ -37,6 +37,9 @@
 gocassini-*.log
 *gocassini*.log
 
+# Release build artifacts (staging trees, tarballs, release notes)
+/build/
+
 # Go build output
 /cassini-go-recorder/gocassini
 /cassini-go-recorder/*.out

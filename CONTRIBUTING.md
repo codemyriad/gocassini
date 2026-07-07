@@ -24,3 +24,9 @@ them as public and unsuitable for any real deployment.
 - Add a `changelog.d/` fragment for user-facing changes, install/release
   behavior, app-store metadata, security posture, or operator documentation.
   Do not edit `CHANGELOG.md` directly except during release preparation.
+
+## Releases
+
+Maintainers cut releases with `scripts/prepare-release.sh` and the **Release**
+workflow. See [`docs/release.md`](docs/release.md) for the version ladder, the
+local release-prep flow, and the App Store publish path.

@@ -1,0 +1,290 @@
+# Manual App Store release — sign the package and publish it.
+#
+# This is the deliberate, human-triggered counterpart to publish-exapp-image.yml
+# (which builds/pushes the Docker image on a tag push). The scripts under
+# scripts/ do the real work and are unit-tested locally
+# (scripts/test-release-tooling.sh); this workflow orchestrates them around the
+# secrets and approvals that can only live in CI.
+#
+# Flow for an already-pushed tag v<version>:
+#   validate -> verify-images -> package(sign) -> github-release -> [publish-appstore]
+#
+# The signing and App Store secrets live in the protected `release`
+# environment, so `package` and `publish-appstore` pause for approval before
+# any secret is exposed. publish_appstore=false still produces a signed GitHub
+# release asset; it just stops short of apps.nextcloud.com.
+#
+# NOTE: the `package` job's occ signing step is the least-proven part of the
+# pipeline. Validate it on a real runner (a throwaway prerelease tag) before
+# relying on it — see docs/release.md.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version without leading v (must match an existing tag, e.g. 0.3.0-alpha.1)'
+        required: true
+        type: string
+      publish_appstore:
+        description: 'Also publish the signed tarball to apps.nextcloud.com'
+        required: true
+        type: boolean
+        default: false
+
+# Least privilege: contents:write to manage the GitHub release + asset,
+# packages:read to confirm the GHCR image tags exist.
+permissions:
+  contents: write
+  packages: read
+
+# Never run two releases of the same version concurrently.
+concurrency:
+  group: release-${{ github.event.inputs.version }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository_owner }}/gocassini
+  TAG: v${{ github.event.inputs.version }}
+
+jobs:
+  validate:
+    name: Validate tag + manifest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: v${{ github.event.inputs.version }}
+          fetch-depth: 0
+
+      - name: Install xmllint
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
+
+      - name: Manifest, tag and changelog agree with the requested version
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          xmllint --noout appinfo/info.xml
+          MANIFEST="$(xmllint --xpath 'string(/info/version)' appinfo/info.xml)"
+          IMAGE_TAG="$(xmllint --xpath 'string(/info/external-app/docker-install/image-tag)' appinfo/info.xml)"
+          if [[ "$MANIFEST" != "$VERSION" ]]; then
+            echo "::error::appinfo/info.xml <version> ($MANIFEST) != requested version ($VERSION)"
+            exit 1
+          fi
+          if [[ "$IMAGE_TAG" != "$VERSION" ]]; then
+            echo "::error::appinfo/info.xml <image-tag> ($IMAGE_TAG) != requested version ($VERSION)"
+            exit 1
+          fi
+          # The checked-out tag must actually be v<version>.
+          if ! git describe --exact-match --tags HEAD | grep -qx "v${VERSION}"; then
+            echo "::error::HEAD is not exactly tag v${VERSION}"
+            exit 1
+          fi
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          set -euo pipefail
+          mkdir -p build/release
+          ./scripts/extract-release-notes.sh --version "${{ github.event.inputs.version }}" \
+            > build/release/notes.md
+          echo "----- release notes -----"
+          cat build/release/notes.md
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: build/release/notes.md
+          retention-days: 7
+
+  verify-images:
+    name: Verify GHCR image tags exist
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Required and optional image tags are present
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          ref="${REGISTRY}/${IMAGE}"
+          # Required: the CPU image and the CUDA build the release was cut from.
+          for tag in "${VERSION}" "${VERSION}-cuda"; do
+            echo "Checking ${ref}:${tag}"
+            if ! docker manifest inspect "${ref}:${tag}" >/dev/null 2>&1; then
+              echo "::error::missing image ${ref}:${tag} — did publish-exapp-image.yml finish for ${TAG}?"
+              exit 1
+            fi
+          done
+          # Optional: the ROCm alias. Warn but do not fail.
+          if ! docker manifest inspect "${ref}:${VERSION}-rocm" >/dev/null 2>&1; then
+            echo "::warning::optional image ${ref}:${VERSION}-rocm not found"
+          fi
+
+  package:
+    name: Build + sign App Store tarball
+    runs-on: ubuntu-latest
+    needs: [validate, verify-images]
+    # Signing keys live in the protected environment: this job pauses for
+    # approval before APP_PRIVATE_KEY/APP_PUBLIC_CRT are ever materialized.
+    environment: release
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: v${{ github.event.inputs.version }}
+
+      - name: Build the unsigned staging tree
+        run: |
+          set -euo pipefail
+          ./scripts/build-appstore-tarball.sh --version "${{ github.event.inputs.version }}" --stage-only
+
+      - name: Sign the app with occ integrity:sign-app
+        env:
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+          APP_PUBLIC_CRT: ${{ secrets.APP_PUBLIC_CRT }}
+        run: |
+          set -euo pipefail
+          # Materialize key + cert under a temp dir that is removed on exit
+          # (even on failure) so signing material never lands in the workspace
+          # or an artifact.
+          KEYDIR="$(mktemp -d)"
+          trap 'rm -rf "$KEYDIR"' EXIT
+          printf '%s' "$APP_PRIVATE_KEY" > "$KEYDIR/gocassini.key"
+          printf '%s' "$APP_PUBLIC_CRT" > "$KEYDIR/gocassini.crt"
+
+          # occ must run inside a working Nextcloud. Use the official image with
+          # a throwaway sqlite install, mount the staged app, and sign it.
+          # This step is the one to validate first on a real runner.
+          docker run --rm \
+            -e SQLITE_DATABASE=nc -e NEXTCLOUD_ADMIN_USER=admin \
+            -e NEXTCLOUD_ADMIN_PASSWORD=admin \
+            -v "$PWD/build/appstore/gocassini:/var/www/html/custom_apps/gocassini:ro" \
+            -v "$KEYDIR:/keys:ro" \
+            -v "$PWD/build/appstore/gocassini/appinfo:/out" \
+            nextcloud:stable bash -c '
+              set -eu
+              /entrypoint.sh php -v >/dev/null 2>&1 || true
+              # Bring up a minimal instance so occ can bootstrap.
+              php occ maintenance:install --database sqlite \
+                --admin-user admin --admin-pass admin >/dev/null
+              php occ integrity:sign-app \
+                --privateKey=/keys/gocassini.key \
+                --certificate=/keys/gocassini.crt \
+                --path=/var/www/html/custom_apps/gocassini
+              cp /var/www/html/custom_apps/gocassini/appinfo/signature.json /out/signature.json
+            '
+          test -f build/appstore/gocassini/appinfo/signature.json
+
+      - name: Archive and validate the signed tarball
+        run: |
+          set -euo pipefail
+          ./scripts/build-appstore-tarball.sh --version "${{ github.event.inputs.version }}" --archive-only
+          ./scripts/validate-appstore-tarball.sh \
+            --version "${{ github.event.inputs.version }}" \
+            --tarball build/artifacts/appstore/gocassini.tar.gz \
+            --signed
+          ( cd build/artifacts/appstore && sha256sum gocassini.tar.gz > gocassini.tar.gz.sha256 )
+
+      - name: Upload the signed tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: appstore-tarball
+          path: |
+            build/artifacts/appstore/gocassini.tar.gz
+            build/artifacts/appstore/gocassini.tar.gz.sha256
+          retention-days: 7
+
+  github-release:
+    name: Attach asset to the GitHub release
+    runs-on: ubuntu-latest
+    needs: package
+    steps:
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: notes
+
+      - name: Download the signed tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: appstore-tarball
+          path: dist
+
+      - name: Create or update the release and upload the asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          # Any prerelease suffix (-alpha/-beta/-rc) marks a GitHub pre-release.
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --notes-file notes/notes.md "${prerelease[@]}"
+          else
+            # Create as a draft so a maintainer publishes deliberately.
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" --notes-file notes/notes.md --draft "${prerelease[@]}"
+          fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            dist/gocassini.tar.gz dist/gocassini.tar.gz.sha256
+
+  publish-appstore:
+    name: Publish to apps.nextcloud.com
+    runs-on: ubuntu-latest
+    needs: github-release
+    if: ${{ github.event.inputs.publish_appstore == 'true' }}
+    # Same protected environment: the App Store token is only exposed here,
+    # after the signed asset already exists on the GitHub release.
+    environment: release
+    steps:
+      - name: Download the signed tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: appstore-tarball
+          path: dist
+
+      - name: POST the release to the App Store API
+        env:
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+          APPSTORE_TOKEN: ${{ secrets.APPSTORE_TOKEN }}
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          # The App Store downloads the tarball from this URL and verifies it
+          # against the signature we send. Point it at the GitHub release asset.
+          download_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gocassini.tar.gz"
+
+          KEYDIR="$(mktemp -d)"
+          trap 'rm -rf "$KEYDIR"' EXIT
+          printf '%s' "$APP_PRIVATE_KEY" > "$KEYDIR/gocassini.key"
+          signature="$(openssl dgst -sha512 -sign "$KEYDIR/gocassini.key" \
+            dist/gocassini.tar.gz | openssl base64 -A)"
+
+          # nightly is hardcoded false: semver suffixes already mark
+          # alpha/beta/rc as App Store pre-releases.
+          http_code="$(curl -sS -o response.json -w '%{http_code}' \
+            -X POST https://apps.nextcloud.com/api/v1/apps/releases \
+            -H "Authorization: Token ${APPSTORE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"download\": \"${download_url}\", \"signature\": \"${signature}\", \"nightly\": false}")"
+          echo "App Store responded ${http_code}"
+          cat response.json || true
+          case "$http_code" in
+            200|201) echo "Published ${TAG} to the App Store." ;;
+            *) echo "::error::App Store upload failed (${http_code})"; exit 1 ;;
+          esac

@@ -8,9 +8,11 @@ archive version must match.
 
 ## [Unreleased]
 
-Unreleased changes are collected as fragments in `changelog.d/`. During
-release preparation, maintainers fold those fragments into this file under the
-new version and remove the consumed fragments.
+Unreleased changes are collected as fragments in `changelog.d/`. Versioned
+sections below are script-managed: `scripts/fold-changelog.sh` (run by
+`scripts/prepare-release.sh`) folds those fragments into this file under the new
+version and removes the consumed fragments. Edit released sections only to fix
+mistakes; add new entries as fragments. See [`docs/release.md`](docs/release.md).
 
 ## [0.2.0-alpha.2] - 2026-07-06
 
