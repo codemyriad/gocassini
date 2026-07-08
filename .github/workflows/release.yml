@@ -155,42 +155,12 @@ jobs:
           VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
-          # build-appstore-tarball.sh --sign-app runs `$OCC integrity:sign-app`
-          # against whatever Nextcloud the OCC command points at (see the
-          # script's --help). occ needs a bootable Nextcloud, so we provide one
-          # as a throwaway container and hand the script an OCC wrapper.
-          #
-          # RUNNER-SPIKE: this container + host/container permission bridge is
-          # the least-proven part of the pipeline — validate it on a real runner
-          # (publish_appstore=false) before relying on it.
-
-          # Keep the key/cert the script materializes under the mounted
-          # workspace so the container can read them.
-          export TMPDIR="$GITHUB_WORKSPACE/.sign-tmp"
-          mkdir -p "$TMPDIR"
-
-          # OCC wrapper: run `occ "$@"` in a throwaway Nextcloud with the
-          # workspace mounted at the same path, so the key/cert/app paths the
-          # script passes resolve inside the container. As root it makes those
-          # paths accessible to www-data, then signs as www-data (occ refuses
-          # to run as root).
-          cat > "$GITHUB_WORKSPACE/.ci-occ.sh" <<'WRAP'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          exec docker run --rm \
-            -e SIGN_TMPDIR="${TMPDIR:-/tmp}" \
-            -e SIGN_APP_DIR="$GITHUB_WORKSPACE/build/appstore/gocassini" \
-            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
-            --entrypoint bash nextcloud:stable -c '
-              set -e
-              /entrypoint.sh php -v >/dev/null 2>&1 || true
-              chmod -R a+rX "$SIGN_TMPDIR" 2>/dev/null || true
-              chown -R www-data:www-data "$SIGN_APP_DIR" 2>/dev/null || true
-              su -s /bin/bash www-data -c "php occ maintenance:install --database sqlite --admin-user admin --admin-pass admin >/dev/null 2>&1 || true; exec php occ \"\$@\"" _ "$@"
-            ' _ "$@"
-          WRAP
-
-          OCC="bash $GITHUB_WORKSPACE/.ci-occ.sh" \
+          # --sign-app runs `$OCC integrity:sign-app`. scripts/occ-nextcloud.sh
+          # provides occ by running it inside a throwaway nextcloud:stable
+          # container (docker is available on the runner). This exact path —
+          # stage -> occ sign -> archive -> validate --signed — is verified
+          # locally end-to-end; see docs/release.md.
+          OCC="./scripts/occ-nextcloud.sh" \
             ./scripts/build-appstore-tarball.sh --version "$VERSION" --sign-app
 
           ./scripts/validate-appstore-tarball.sh \
@@ -198,7 +168,6 @@ jobs:
             --tarball build/artifacts/appstore/gocassini.tar.gz \
             --signed
           ( cd build/artifacts/appstore && sha256sum gocassini.tar.gz > gocassini.tar.gz.sha256 )
-          rm -rf "$TMPDIR" "$GITHUB_WORKSPACE/.ci-occ.sh"
 
       - name: Upload the signed tarball
         uses: actions/upload-artifact@v4

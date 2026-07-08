@@ -204,13 +204,19 @@ anchor and audit trail.
 - **App Store:** a published App Store release cannot be silently overwritten —
   cut the next version on the ladder rather than trying to replace one.
 
-## Known caveat: signing on a runner
+## Signing
 
-The **package** job runs `occ integrity:sign-app` inside a throwaway
-`nextcloud:stable` container. This is the least-proven step in the pipeline.
-Validate it on a real runner against a throwaway prerelease tag (with
-`publish_appstore=false`) before relying on the flow for a real release; the
-`occ` bootstrap may need adjustment for the runner environment.
+The **package** job signs the app with `occ integrity:sign-app` via
+`scripts/occ-nextcloud.sh`, which runs `occ` inside a throwaway
+`nextcloud:stable` container (sqlite auto-install, ~10s; `docker cp` in/out so
+there are no bind-mount permission issues). The full path — stage → sign →
+archive → `validate --signed` — has been verified end-to-end locally with a
+throwaway keypair, so `occ` signing of the Cassini manifest is proven.
+
+What remains untested is the **real store upload**: the `store-upload` POST to
+apps.nextcloud.com needs the actual app-store-issued key/cert (in the `release`
+environment) and the registered `gocassini` app id. Do that first on a
+throwaway pre-release tag with `publish_appstore=true`.
 
 ## Deferred: one-click release from the GitHub UI
 
