@@ -309,6 +309,18 @@ if git -C "$PR" diff --quiet && git -C "$PR" diff --cached --quiet; then ok "wor
 # Re-running for a non-greater version is rejected (tag collision / ordering).
 if prep --version 0.2.0 >/dev/null 2>&1; then bad "prepare-release should reject a non-greater version"; else ok "prepare-release rejects non-greater version"; fi
 
+# --push pushes the release commit + tag to origin (0.3.0-alpha.1 -> beta.1).
+BARE="$(mktemp -d)/origin.git"; git init -q --bare "$BARE"
+git -C "$PR" remote add origin "$BARE"
+git -C "$PR" push -q origin HEAD
+( cd "$PR" && ./scripts/prepare-release.sh --promote beta --allow-empty-changelog --push ) >/dev/null 2>&1
+if git --git-dir="$BARE" tag --list | grep -qx v0.3.0-beta.1; then
+  ok "prepare-release --push pushes the release tag to origin"
+else
+  bad "prepare-release --push should push the release tag to origin"
+fi
+rm -rf "$BARE"
+
 rm -rf "$PR"
 
 echo "build/validate-appstore-tarball.sh — packaging"

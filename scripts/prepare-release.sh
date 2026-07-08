@@ -29,14 +29,18 @@ usage() {
   cat >&2 <<'EOF'
 Usage:
   ./scripts/prepare-release.sh (--bump L | --promote T | --version V) [--date D]
-                               [--allow-empty-changelog] [--no-tag]
+                               [--allow-empty-changelog] [--no-tag] [--push]
+
+--push pushes the release commit + tag to origin after creating them. The tag
+push triggers the image build and the release workflow, so this one command is
+the whole release trigger.
 EOF
 }
 
 die() { echo "error: $*" >&2; exit 1; }
 
 main() {
-  local mode="" arg="" date="" allow_empty=0 make_tag=1
+  local mode="" arg="" date="" allow_empty=0 make_tag=1 do_push=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --bump)                  mode="bump";    arg="${2:?--bump needs a level}"; shift 2 ;;
@@ -45,11 +49,14 @@ main() {
       --date)                  date="${2:?--date needs a value}"; shift 2 ;;
       --allow-empty-changelog) allow_empty=1; shift ;;
       --no-tag)                make_tag=0; shift ;;
+      --push)                  do_push=1; shift ;;
       -h|--help)               usage; return 0 ;;
       *) echo "error: unknown argument '$1'" >&2; usage; return 1 ;;
     esac
   done
   [[ -n "$mode" ]] || { echo "error: one of --bump/--promote/--version is required" >&2; usage; return 1; }
+  [[ "$do_push" -eq 1 && "$make_tag" -eq 0 ]] \
+    && die "--push with --no-tag would push a release commit with no tag to trigger the release; drop one"
   date="${date:-$(date +%F)}"
 
   local root info_xml current target
@@ -133,16 +140,26 @@ main() {
     echo "Created tag:    v$target"
   fi
 
-  local branch
+  local branch push_ref
   branch="$(git -C "$root" rev-parse --abbrev-ref HEAD)"
-  cat <<EOF
+  push_ref="$branch"
+  [[ "$make_tag" -eq 1 ]] && push_ref="$branch v$target"
 
-Release notes: ${notes_file#"$root"/}
+  echo
+  echo "Release notes: ${notes_file#"$root"/}"
+  if [[ "$do_push" -eq 1 ]]; then
+    echo "Pushing to origin: $push_ref"
+    # shellcheck disable=SC2086  # push_ref is intentionally branch + tag (two args).
+    git -C "$root" push origin $push_ref
+    echo "Pushed. The tag push triggers the image build and the release workflow."
+  else
+    cat <<EOF
 
 Nothing has been pushed. Review the commit, then push intentionally:
   git show
-  git push origin ${branch}$([[ "$make_tag" -eq 1 ]] && echo " v$target")
+  git push origin ${push_ref}
 EOF
+  fi
 }
 
 main "$@"

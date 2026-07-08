@@ -62,73 +62,58 @@ editing `CHANGELOG.md` directly. At release time the fragments are folded into
 for you. A malformed fragment (unknown heading, prose outside a heading) fails
 the fold before anything is committed.
 
-## Cut a release locally
+## Cut a release — one command
 
-`scripts/prepare-release.sh` is the one command that turns a version decision
-into a local release commit and tag. It **never pushes** — you inspect the diff
-and push deliberately.
+Picking `patch` / `minor` / `major` (or a promotion) is the only decision:
 
 ```bash
-# Pick exactly one of:
-./scripts/prepare-release.sh --bump minor        # e.g. 0.2.0 → 0.3.0-alpha.1
-./scripts/prepare-release.sh --promote rc.1      # e.g. 0.3.0-beta.1 → 0.3.0-rc.1
-./scripts/prepare-release.sh --promote stable    # e.g. 0.3.0-rc.2 → 0.3.0
-./scripts/prepare-release.sh --version 0.3.0-beta.1   # explicit target
+./scripts/prepare-release.sh --bump minor  --push     # patch | minor | major
+./scripts/prepare-release.sh --promote rc.1 --push    # advance the ladder
+./scripts/prepare-release.sh --promote stable --push
 ```
 
-It runs pre-flight checks (clean worktree, well-formed `info.xml`, tag not
-already present, target greater than the latest release tag, at least one
-changelog fragment unless `--allow-empty-changelog`), then:
+That one command runs pre-flight checks (clean worktree, well-formed `info.xml`,
+tag not already present, target greater than the latest release tag, at least
+one changelog fragment unless `--allow-empty-changelog`), then:
 
 - bumps `<version>` **and** `<image-tag>` in `appinfo/info.xml`,
 - folds `changelog.d/` into `CHANGELOG.md` under `## [<version>] - <date>`,
 - writes release notes to `build/release/gocassini-<version>-notes.md`,
-- commits `release: <version>` and tags `v<version>`.
+- commits `release: <version>`, tags `v<version>`, and **pushes** the branch + tag.
 
-Inspect, then push the branch and tag intentionally:
+> Prefer to review first? Drop `--push`, inspect with `git show`, then
+> `git push origin <branch> v<version>` yourself. The individual steps are also
+> standalone (`release-version.sh`, `fold-changelog.sh --check`,
+> `extract-release-notes.sh`), all covered by `scripts/test-release-tooling.sh`
+> and gated in CI by [`release-tooling.yml`](../.github/workflows/release-tooling.yml).
 
-```bash
-git show                       # review the release commit
-git push origin <branch> v<version>
-```
+Pushing the **tag** triggers two workflows automatically:
 
-Pushing the **tag** is what triggers `publish-exapp-image.yml` to build and push
-`:<version>` and `:<version>-cuda` to GHCR. Wait for that to finish before
-running the release workflow.
+- `publish-exapp-image.yml` → builds/pushes `:<version>` and `:<version>-cuda`
+  to GHCR.
+- `release.yml` → the release itself (next section).
 
-> The individual steps are also available standalone:
-> `scripts/release-version.sh` (bump/promote/set the version),
-> `scripts/fold-changelog.sh` (fold, with `--check` for a dry run), and
-> `scripts/extract-release-notes.sh` (print a version's notes). All are covered
-> by `scripts/test-release-tooling.sh` and gated in CI by
-> [`release-tooling.yml`](../.github/workflows/release-tooling.yml).
+## The release workflow (automatic on the tag)
 
-## Publish the release (GitHub Actions)
+`release.yml` runs on the tag push — no manual dispatch needed:
 
-Once `v<version>` is pushed and its images are on GHCR, run the **Release**
-workflow: **Actions → Release → Run workflow**.
+1. **validate** — tag, `info.xml`, `CHANGELOG.md`, and the release notes all
+   agree on the version.
+2. **verify-images** — waits for `:<version>` and `:<version>-cuda` to appear on
+   GHCR (they build in parallel).
+3. **publish** — the single `release`-environment job, so the whole signed
+   release + store push is gated behind **one approval**. Once approved it:
+   builds and `occ`-signs the tarball, validates it (including the store's own
+   `pre-info.xslt → info.xsd` schema check), creates/updates the GitHub Release
+   and attaches `gocassini.tar.gz` (+ `.sha256`), and POSTs it to
+   apps.nextcloud.com.
 
-Inputs:
+So a normal release is **one command + one approval**. Declining the approval
+aborts the release (the images still build independently).
 
-- **version** — the version without a leading `v` (e.g. `0.3.0-alpha.1`); must
-  match an existing tag.
-- **publish_appstore** — leave `false` to produce only the signed GitHub release
-  asset; set `true` to also publish to apps.nextcloud.com.
-
-The workflow:
-
-1. **validate** — the checked-out tag, `info.xml`, and `CHANGELOG.md` all agree
-   with the requested version; extracts the release notes.
-2. **verify-images** — `:<version>` and `:<version>-cuda` exist on GHCR.
-3. **package** — builds the `gocassini/` staging tree, signs it with
-   `occ integrity:sign-app`, archives and validates `gocassini.tar.gz`. The
-   validation includes the store's own metadata check — `info.xml` run through
-   `pre-info.xslt` then `info.xsd` (schema vendored under `spec/appstore/`) —
-   so a manifest the App Store would reject fails here first.
-4. **github-release** — creates or updates a **draft** release `v<version>` from
-   the changelog notes and attaches `gocassini.tar.gz` + `.sha256`.
-5. **publish-appstore** — only when `publish_appstore=true`: signs the tarball
-   and POSTs it to the App Store API with `nightly: false`.
+**Manual run.** You can also start it from **Actions → Release → Run workflow**
+on an existing tag, using `publish_appstore` to choose whether to hit the store
+(`false` = signed GitHub release only, kept as a draft).
 
 Steps 3 and 5 touch secrets, so they run in the protected **`release`
 environment** and pause for approval. `publish_appstore=false` still yields a

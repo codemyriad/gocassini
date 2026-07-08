@@ -1,108 +1,118 @@
-# Manual App Store release — sign the package and publish it.
+# App Store release — build, sign, and publish the package.
 #
-# This is the deliberate, human-triggered counterpart to publish-exapp-image.yml
-# (which builds/pushes the Docker image on a tag push). The scripts under
-# scripts/ do the real work and are unit-tested locally
+# Counterpart to publish-exapp-image.yml (which builds the Docker image on a tag
+# push). The scripts under scripts/ do the real work and are unit-tested
 # (scripts/test-release-tooling.sh); this workflow orchestrates them around the
-# secrets and approvals that can only live in CI.
+# secrets and the one approval that live in CI.
 #
-# Flow for an already-pushed tag v<version>:
-#   validate -> verify-images -> package(sign) -> github-release -> [publish-appstore]
+# Two ways in:
+#   - push a tag v<version> (the normal path — `prepare-release.sh --push` does
+#     this): the release runs automatically and, once approved, publishes to the
+#     App Store.
+#   - workflow_dispatch on an existing tag: choose whether to publish to the
+#     store (publish_appstore).
 #
-# The signing and App Store secrets live in the protected `release`
-# environment, so `package` and `publish-appstore` pause for approval before
-# any secret is exposed. publish_appstore=false still produces a signed GitHub
-# release asset; it just stops short of apps.nextcloud.com.
-#
-# NOTE: the `package` job's occ signing step is the least-proven part of the
-# pipeline. Validate it on a real runner (a throwaway prerelease tag) before
-# relying on it — see docs/release.md.
+# Flow: validate -> verify-images (waits for the parallel image build) ->
+# publish. `publish` is the single `release`-environment job, so the whole
+# signed release + store push is gated behind ONE approval; declining it aborts
+# the release (the images still build independently).
 
 name: Release
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version without leading v (must match an existing tag, e.g. 0.3.0-alpha.1)'
+        description: 'Existing release version without leading v (e.g. 0.3.0-alpha.1)'
         required: true
         type: string
       publish_appstore:
-        description: 'Also publish the signed tarball to apps.nextcloud.com'
+        description: 'Publish the signed tarball to apps.nextcloud.com'
         required: true
         type: boolean
         default: false
 
-# Least privilege: contents:write to manage the GitHub release + asset,
-# packages:read to confirm the GHCR image tags exist.
+# Least privilege: contents:write for the GitHub release + asset, packages:read
+# to confirm the GHCR image tags exist.
 permissions:
   contents: write
   packages: read
 
 # Never run two releases of the same version concurrently.
 concurrency:
-  group: release-${{ github.event.inputs.version }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
   cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
   IMAGE: ${{ github.repository_owner }}/gocassini
-  TAG: v${{ github.event.inputs.version }}
 
 jobs:
   validate:
     name: Validate tag + manifest
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      publish: ${{ steps.v.outputs.publish }}
     steps:
       - name: Checkout the release tag
         uses: actions/checkout@v4
         with:
-          ref: v${{ github.event.inputs.version }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.ref }}
           fetch-depth: 0
+
+      - name: Resolve version, tag, and publish flag
+        id: v
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_PUBLISH: ${{ github.event.inputs.publish_appstore }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" == "workflow_dispatch" ]]; then
+            version="$INPUT_VERSION"
+            publish="$INPUT_PUBLISH"
+          else
+            # Tag push: a tagged release is intended for the store, gated by the
+            # publish job's approval.
+            version="${GITHUB_REF#refs/tags/v}"
+            publish="true"
+          fi
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install xmllint
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
 
-      - name: Manifest, tag and changelog agree with the requested version
+      - name: Manifest, tag and changelog agree with the version
         env:
-          VERSION: ${{ github.event.inputs.version }}
+          VERSION: ${{ steps.v.outputs.version }}
         run: |
           set -euo pipefail
           xmllint --noout appinfo/info.xml
           MANIFEST="$(xmllint --xpath 'string(/info/version)' appinfo/info.xml)"
           IMAGE_TAG="$(xmllint --xpath 'string(/info/external-app/docker-install/image-tag)' appinfo/info.xml)"
           if [[ "$MANIFEST" != "$VERSION" ]]; then
-            echo "::error::appinfo/info.xml <version> ($MANIFEST) != requested version ($VERSION)"
-            exit 1
+            echo "::error::appinfo/info.xml <version> ($MANIFEST) != version ($VERSION)"; exit 1
           fi
           if [[ "$IMAGE_TAG" != "$VERSION" ]]; then
-            echo "::error::appinfo/info.xml <image-tag> ($IMAGE_TAG) != requested version ($VERSION)"
-            exit 1
+            echo "::error::appinfo/info.xml <image-tag> ($IMAGE_TAG) != version ($VERSION)"; exit 1
           fi
-          # The checked-out tag must actually be v<version>.
           if ! git describe --exact-match --tags HEAD | grep -qx "v${VERSION}"; then
-            echo "::error::HEAD is not exactly tag v${VERSION}"
-            exit 1
+            echo "::error::HEAD is not exactly tag v${VERSION}"; exit 1
           fi
-
-      - name: Extract release notes from CHANGELOG.md
-        run: |
-          set -euo pipefail
-          mkdir -p build/release
-          ./scripts/extract-release-notes.sh --version "${{ github.event.inputs.version }}" \
-            > build/release/notes.md
-          echo "----- release notes -----"
-          cat build/release/notes.md
-
-      - name: Upload release notes
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-notes
-          path: build/release/notes.md
-          retention-days: 7
+          # Release notes must exist for this version (also used by the publish job).
+          ./scripts/extract-release-notes.sh --version "$VERSION" >/dev/null
 
   verify-images:
-    name: Verify GHCR image tags exist
+    name: Wait for GHCR image tags
     runs-on: ubuntu-latest
     needs: validate
     steps:
@@ -113,142 +123,96 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Required and optional image tags are present
+      - name: Wait for the release images (built in parallel on the tag push)
         env:
-          VERSION: ${{ github.event.inputs.version }}
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
           ref="${REGISTRY}/${IMAGE}"
-          # Required: the CPU image and the CUDA build the release was cut from.
           for tag in "${VERSION}" "${VERSION}-cuda"; do
-            echo "Checking ${ref}:${tag}"
-            if ! docker manifest inspect "${ref}:${tag}" >/dev/null 2>&1; then
-              echo "::error::missing image ${ref}:${tag} — did publish-exapp-image.yml finish for ${TAG}?"
-              exit 1
-            fi
+            echo "Waiting for ${ref}:${tag} ..."
+            found=0
+            for _ in $(seq 1 120); do   # up to ~60 min while publish-exapp-image builds
+              if docker manifest inspect "${ref}:${tag}" >/dev/null 2>&1; then found=1; break; fi
+              sleep 30
+            done
+            [[ "$found" -eq 1 ]] || { echo "::error::timed out waiting for ${ref}:${tag}"; exit 1; }
+            echo "found ${ref}:${tag}"
           done
-          # Optional: the ROCm alias. Warn but do not fail.
-          if ! docker manifest inspect "${ref}:${VERSION}-rocm" >/dev/null 2>&1; then
-            echo "::warning::optional image ${ref}:${VERSION}-rocm not found"
-          fi
+          docker manifest inspect "${ref}:${VERSION}-rocm" >/dev/null 2>&1 \
+            || echo "::warning::optional ${ref}:${VERSION}-rocm not found"
 
-  package:
-    name: Build + sign App Store tarball
+  publish:
+    name: Sign, release, and publish
     runs-on: ubuntu-latest
     needs: [validate, verify-images]
-    # Signing keys live in the protected environment: this job pauses for
-    # approval before APP_PRIVATE_KEY/APP_PUBLIC_CRT are ever materialized.
+    # The single gated job: signing keys and the App Store token live in the
+    # protected `release` environment, so the whole signed release + store push
+    # pauses for ONE approval here.
     environment: release
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      TAG: ${{ needs.validate.outputs.tag }}
+      PUBLISH: ${{ needs.validate.outputs.publish }}
     steps:
       - name: Checkout the release tag
         uses: actions/checkout@v4
         with:
-          ref: v${{ github.event.inputs.version }}
+          ref: ${{ needs.validate.outputs.tag }}
 
-      - name: Install packaging + store-schema validators
+      - name: Install store-schema validators
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xsltproc libxml2-utils
 
       - name: Build, sign, and validate the tarball
         env:
           APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
           APP_PUBLIC_CRT: ${{ secrets.APP_PUBLIC_CRT }}
-          VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
-          # --sign-app runs `$OCC integrity:sign-app`. scripts/occ-nextcloud.sh
-          # provides occ by running it inside a throwaway nextcloud:stable
-          # container (docker is available on the runner). This exact path —
-          # stage -> occ sign -> archive -> validate --signed — is verified
-          # locally end-to-end; see docs/release.md.
+          # scripts/occ-nextcloud.sh provides occ via a throwaway nextcloud:stable
+          # container; the stage -> sign -> archive -> validate --signed path is
+          # verified end-to-end (see docs/release.md).
           OCC="./scripts/occ-nextcloud.sh" \
             ./scripts/build-appstore-tarball.sh --version "$VERSION" --sign-app
-
           ./scripts/validate-appstore-tarball.sh \
             --version "$VERSION" \
-            --tarball build/artifacts/appstore/gocassini.tar.gz \
-            --signed
+            --tarball build/artifacts/appstore/gocassini.tar.gz --signed
           ( cd build/artifacts/appstore && sha256sum gocassini.tar.gz > gocassini.tar.gz.sha256 )
 
-      - name: Upload the signed tarball
-        uses: actions/upload-artifact@v4
-        with:
-          name: appstore-tarball
-          path: |
-            build/artifacts/appstore/gocassini.tar.gz
-            build/artifacts/appstore/gocassini.tar.gz.sha256
-          retention-days: 7
-
-  github-release:
-    name: Attach asset to the GitHub release
-    runs-on: ubuntu-latest
-    needs: package
-    steps:
-      - name: Download release notes
-        uses: actions/download-artifact@v4
-        with:
-          name: release-notes
-          path: notes
-
-      - name: Download the signed tarball
-        uses: actions/download-artifact@v4
-        with:
-          name: appstore-tarball
-          path: dist
-
-      - name: Create or update the release and upload the asset
+      - name: Create or update the GitHub release and attach the asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
-          # Any prerelease suffix (-alpha/-beta/-rc) marks a GitHub pre-release.
-          prerelease=()
-          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
+          ./scripts/extract-release-notes.sh --version "$VERSION" > notes.md
+          # Published (not draft) when we will push to the store, so the store
+          # can fetch the asset from the public release URL; draft otherwise.
+          if [[ "$PUBLISH" == "true" ]]; then draft="false"; else draft="true"; fi
+          args=(--notes-file notes.md --draft="$draft")
+          [[ "$VERSION" == *-* ]] && args+=(--prerelease)
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
-              --notes-file notes/notes.md "${prerelease[@]}"
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" "${args[@]}"
           else
-            # Create as a draft so a maintainer publishes deliberately.
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "$TAG" --notes-file notes/notes.md --draft "${prerelease[@]}"
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" "${args[@]}"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
-            dist/gocassini.tar.gz dist/gocassini.tar.gz.sha256
+            build/artifacts/appstore/gocassini.tar.gz build/artifacts/appstore/gocassini.tar.gz.sha256
 
-  publish-appstore:
-    name: Publish to apps.nextcloud.com
-    runs-on: ubuntu-latest
-    needs: github-release
-    if: ${{ github.event.inputs.publish_appstore == 'true' }}
-    # Same protected environment: the App Store token is only exposed here,
-    # after the signed asset already exists on the GitHub release.
-    environment: release
-    steps:
-      - name: Download the signed tarball
-        uses: actions/download-artifact@v4
-        with:
-          name: appstore-tarball
-          path: dist
-
-      - name: POST the release to the App Store API
+      - name: Publish to apps.nextcloud.com
+        if: ${{ needs.validate.outputs.publish == 'true' }}
         env:
           APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
           APPSTORE_TOKEN: ${{ secrets.APPSTORE_TOKEN }}
-          VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
-          # The App Store downloads the tarball from this URL and verifies it
-          # against the signature we send. Point it at the GitHub release asset.
           download_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/gocassini.tar.gz"
-
           KEYDIR="$(mktemp -d)"
           trap 'rm -rf "$KEYDIR"' EXIT
           printf '%s' "$APP_PRIVATE_KEY" > "$KEYDIR/gocassini.key"
           signature="$(openssl dgst -sha512 -sign "$KEYDIR/gocassini.key" \
-            dist/gocassini.tar.gz | openssl base64 -A)"
-
-          # nightly is hardcoded false: semver suffixes already mark
-          # alpha/beta/rc as App Store pre-releases.
+            build/artifacts/appstore/gocassini.tar.gz | openssl base64 -A)"
+          # nightly hardcoded false: semver suffixes already mark alpha/beta/rc
+          # as App Store pre-releases.
           http_code="$(curl -sS -o response.json -w '%{http_code}' \
             -X POST https://apps.nextcloud.com/api/v1/apps/releases \
             -H "Authorization: Token ${APPSTORE_TOKEN}" \
