@@ -85,7 +85,7 @@ one changelog fragment unless `--allow-empty-changelog`), then:
 > `git push origin <branch> v<version>` yourself. The individual steps are also
 > standalone (`release-version.sh`, `fold-changelog.sh --check`,
 > `extract-release-notes.sh`), all covered by `scripts/test-release-tooling.sh`
-> and gated in CI by [`release-tooling.yml`](../.github/workflows/release-tooling.yml).
+> and gated in CI by [`lint.yml`](../.github/workflows/lint.yml).
 
 Pushing the **tag** triggers two workflows automatically:
 
