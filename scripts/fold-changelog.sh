@@ -27,6 +27,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage:
   ./scripts/fold-changelog.sh --version X.Y.Z[-pre] [--date YYYY-MM-DD] (--check|--write)
+  ./scripts/fold-changelog.sh --preview        # group pending fragments, no version needed
 EOF
 }
 
@@ -90,14 +91,19 @@ main() {
       --date)    date="${2:?--date needs a value}"; shift 2 ;;
       --check)   mode="check"; shift ;;
       --write)   mode="write"; shift ;;
+      --preview) mode="preview"; shift ;;
       -h|--help) usage; return 0 ;;
       *) echo "error: unknown argument '$1'" >&2; usage; return 1 ;;
     esac
   done
 
-  [[ -n "$version" ]] || { echo "error: --version is required" >&2; usage; return 1; }
-  [[ -n "$mode" ]] || { echo "error: one of --check or --write is required" >&2; usage; return 1; }
-  rv_validate "$version" || return 1
+  [[ -n "$mode" ]] || { echo "error: one of --check, --write, or --preview is required" >&2; usage; return 1; }
+  # --preview is version-agnostic (it just shows the pending entries); check and
+  # write build a `## [<version>] - <date>` section and need the version.
+  if [[ "$mode" != "preview" ]]; then
+    [[ -n "$version" ]] || { echo "error: --version is required" >&2; usage; return 1; }
+    rv_validate "$version" || return 1
+  fi
   date="${date:-$(date +%F)}"
   if [[ ! "$date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
     echo "error: --date must be YYYY-MM-DD, got: '$date'" >&2
@@ -119,6 +125,10 @@ main() {
     frags+=("$frag")
   done
   if [[ "${#frags[@]}" -eq 0 ]]; then
+    if [[ "$mode" == "preview" ]]; then
+      echo "(no pending changelog fragments in changelog.d/)"
+      return 0
+    fi
     echo "error: no changelog fragments in $fragdir (nothing to fold)" >&2
     return 1
   fi
@@ -133,6 +143,21 @@ main() {
   for f in "${frags[@]}"; do
     parse_fragment "$f" "$work" || return 1
   done
+
+  # --preview: print the grouped entries with no version header, so a caller
+  # (e.g. release-preview.sh) can show "what would ship" before a version is
+  # even chosen.
+  if [[ "$mode" == "preview" ]]; then
+    local pcat
+    for pcat in $ACCEPTED; do
+      [[ -s "$work/$pcat" ]] || continue
+      printf '### %s\n' "$pcat"
+      cat "$work/$pcat"
+      printf '\n'
+    done
+    printf '(%s pending fragment(s))\n' "${#frags[@]}"
+    return 0
+  fi
 
   # Build the release section from the accumulated categories, in canonical
   # order, including only categories that received entries.

@@ -62,6 +62,24 @@ editing `CHANGELOG.md` directly. At release time the fragments are folded into
 for you. A malformed fragment (unknown heading, prose outside a heading) fails
 the fold before anything is committed.
 
+## Decide what to release
+
+The bump type follows from what is shipping, but the changelog isn't folded
+until release time — so preview it first (read-only, changes nothing):
+
+```bash
+./scripts/release-preview.sh
+```
+
+It folds the pending `changelog.d/` fragments on the fly and prints them grouped,
+then shows your next moves:
+
+- On a **stable** version it lists the `patch` / `minor` / `major` candidates
+  with semver guidance — read the changes, pick the bump.
+- **Mid-prerelease** it shows how to advance the ladder (`promote beta` →
+  `rc.1` → `rc.2`/`stable`) and reminds you that you can skip stages with an
+  explicit `--version` (e.g. straight to stable, or one RC instead of two).
+
 ## Cut a release — one command
 
 Picking `patch` / `minor` / `major` (or a promotion) is the only decision:

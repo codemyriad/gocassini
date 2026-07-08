@@ -461,6 +461,50 @@ fi
 
 rm -rf "$BD"
 
+echo "fold-changelog.sh --preview / release-preview.sh — decide the next move"
+PV="$(mktemp -d)"
+git -C "$PV" init -q
+mkdir -p "$PV/scripts" "$PV/appinfo" "$PV/changelog.d"
+cp "$SCRIPT_DIR"/{lib-release-version.sh,fold-changelog.sh,release-preview.sh} "$PV/scripts/"
+printf '# Changelog\n\n## [Unreleased]\n' > "$PV/CHANGELOG.md"
+printf '# Fragments\n' > "$PV/changelog.d/README.md"
+prev() { ( cd "$PV" && "$PV/scripts/release-preview.sh" ); }
+foldprev() { ( cd "$PV" && "$PV/scripts/fold-changelog.sh" --preview ); }
+
+# --preview with no fragments says so and does not error.
+printf '<?xml version="1.0"?>\n<info><version>0.2.0</version><external-app><docker-install><image-tag>0.2.0</image-tag></docker-install></external-app></info>\n' > "$PV/appinfo/info.xml"
+git -C "$PV" add -A; git -C "$PV" commit -qm init
+if foldprev | grep -qF "no pending changelog"; then ok "fold --preview reports an empty changelog.d"; else bad "fold --preview should report empty"; fi
+
+# --preview groups pending fragments with no version needed.
+printf '### Added\n- Thing one.\n\n### Fixed\n- Thing two.\n' > "$PV/changelog.d/10.mix.md"
+out="$(foldprev)"
+if grep -qF "### Added" <<<"$out" && grep -qF -- "- Thing one." <<<"$out" && grep -qF "### Fixed" <<<"$out"; then
+  ok "fold --preview groups pending fragments (no version)"
+else
+  bad "fold --preview should group pending fragments"
+fi
+
+# release-preview on a STABLE version shows patch/minor/major candidates.
+sp="$(prev)"
+if grep -qF "0.2.1-alpha.1" <<<"$sp" && grep -qF "0.3.0-alpha.1" <<<"$sp" && grep -qF "1.0.0-alpha.1" <<<"$sp"; then
+  ok "release-preview shows patch/minor/major candidates on a stable version"
+else
+  bad "release-preview should show bump candidates on a stable version"
+fi
+if grep -qF -- "- Thing one." <<<"$sp"; then ok "release-preview shows the pending changes"; else bad "release-preview should show pending changes"; fi
+
+# release-preview on a PRERELEASE shows the promote move + explicit-jump hint.
+printf '<?xml version="1.0"?>\n<info><version>0.3.0-beta.1</version><external-app><docker-install><image-tag>0.3.0-beta.1</image-tag></docker-install></external-app></info>\n' > "$PV/appinfo/info.xml"
+git -C "$PV" commit -qam bump
+pp="$(prev)"
+if grep -qF "promote rc.1" <<<"$pp" && grep -qF "0.3.0-rc.1" <<<"$pp" && grep -qF -- "--version 0.3.0" <<<"$pp"; then
+  ok "release-preview shows promote + explicit-jump options on a prerelease"
+else
+  bad "release-preview should show promote/jump options on a prerelease"
+fi
+rm -rf "$PV"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [[ "$FAIL" -eq 0 ]]
