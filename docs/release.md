@@ -1,233 +1,116 @@
 # Releasing Cassini
 
-This is the **maintainer release guide**. It covers cutting a version, folding
-the changelog, publishing a GitHub release, and — optionally — pushing the
-signed package to the Nextcloud App Store.
+A release ships two things, kept in lockstep by `appinfo/info.xml` `<version>`:
+the Docker image (`ghcr.io/codemyriad/gocassini:<version>` + `:<version>-cuda`)
+and the App Store package (`gocassini.tar.gz`). The git tag `v<version>` and the
+manifest's `<image-tag>` must equal `<version>` — CI enforces it.
 
-Cassini is an AppAPI ExApp, so a "release" is really two artifacts kept in
-lockstep:
+## Cut a release
 
-1. the **Docker image** (`ghcr.io/codemyriad/gocassini:<version>` and
-   `:<version>-cuda`), built and pushed by
-   [`publish-exapp-image.yml`](../.github/workflows/publish-exapp-image.yml) when
-   a `v<version>` tag lands; and
-2. the **App Store package** (`gocassini.tar.gz`), signed and attached to the
-   GitHub release — and optionally published to apps.nextcloud.com — by
-   [`release.yml`](../.github/workflows/release.yml).
-
-The single source of truth for the version is `appinfo/info.xml` `<version>`.
-The Docker `<image-tag>` and the git tag (`v<version>`) must always equal it;
-CI rejects any manifest where they disagree.
-
-All `occ …` commands below are shorthand for however your deployment invokes
-occ (e.g. `sudo -u www-data php occ …`).
-
-## The version ladder
-
-Cassini follows the Nextcloud prerelease ladder. For a target stable version
-`X.Y.Z`:
-
-```text
-X.Y.Z-alpha.1  →  X.Y.Z-beta.1  →  X.Y.Z-rc.1  →  X.Y.Z-rc.2  →  X.Y.Z
-```
-
-- **Prereleases** carry an `-alpha.N` / `-beta.N` / `-rc.N` suffix. The App
-  Store treats any suffixed version as a pre-release; we never publish App Store
-  *nightlies*.
-- **Stable** has no suffix. A stable release does **not** require a prior
-  `rc.2` — `rc.1 → stable` is allowed when a cycle needs only one candidate.
-
-### Choosing patch / minor / major
-
-Bumps always restart the ladder at `-alpha.1` and re-target the base version:
-
-| Command | From `A.B.C` (or any prerelease of it) | Use when |
-|---|---|---|
-| `bump patch` | `A.B.(C+1)-alpha.1` | backward-compatible fixes only |
-| `bump minor` | `A.(B+1).0-alpha.1` | new features, no breaking changes |
-| `bump major` | `(A+1).0.0-alpha.1` | breaking changes |
-
-Cassini targets **one Nextcloud stable major per release** and does not maintain
-multiple Nextcloud versions in parallel. The supported Nextcloud range lives in
-`appinfo/info.xml` (`<nextcloud min-version=… max-version=…>`) and is updated in
-a normal PR when compatibility actually changes — it is **not** part of release
-prep.
-
-## Changelog fragments
-
-User- and operator-facing changes are captured at PR time as fragments under
-`changelog.d/` (see [`changelog.d/README.md`](../changelog.d/README.md)), not by
-editing `CHANGELOG.md` directly. At release time the fragments are folded into
-`CHANGELOG.md` by `scripts/fold-changelog.sh` — `prepare-release.sh` does this
-for you. A malformed fragment (unknown heading, prose outside a heading) fails
-the fold before anything is committed.
-
-## Cut a release — one guided command
-
-Run it with no arguments and it walks you through the whole decision:
+One guided command:
 
 ```bash
 ./scripts/prepare-release.sh --push
 ```
 
-It shows the current version and an on-the-fly fold of the pending
-`changelog.d/` fragments (so you can *see what's shipping*), then asks you to
-choose:
+It previews the pending changes, asks for your choice, confirms, then bumps the
+version, folds the changelog, commits, tags `v<version>`, and pushes:
 
-- On a **stable** version: `patch` / `minor` / `major`, with semver guidance next
-  to each candidate — read the changes, type the bump.
-- **Mid-prerelease**: `beta` / `rc.1` / `rc.2` / `stable` (or an explicit version
-  to skip stages — e.g. straight to stable, or one RC instead of two).
+```text
+$ ./scripts/prepare-release.sh --push
+Current version: 0.2.0
 
-It then confirms the target (`Cut v0.3.0-alpha.1 and push it? [y/N]`) before
-doing anything. So the whole decision is: **run it, read the changes, type your
-choice, confirm.**
+Pending changes (changelog.d/):
+  ### Added
+  - Auto-retry Talk recordings that drop mid-call.
 
-Under the hood it runs pre-flight checks (clean worktree, well-formed
-`info.xml`, tag not already present, target greater than the latest release tag,
-a changelog fragment unless `--allow-empty-changelog`), then bumps `<version>` +
-`<image-tag>`, folds `changelog.d/` into `CHANGELOG.md`, writes the release
-notes, commits `release: <version>`, tags `v<version>`, and (with `--push`)
-pushes.
+  patch  → 0.2.1-alpha.1    backward-compatible fixes only
+  minor  → 0.3.0-alpha.1    new features, no breaking changes
+  major  → 1.0.0-alpha.1    breaking changes
 
-> **Non-interactive / scripting.** Pass the choice explicitly to skip the
-> prompts: `--bump minor` / `--promote rc.1` / `--version 0.3.0-beta.1`. Drop
-> `--push` to keep it local (inspect with `git show`, then push yourself).
-> `./scripts/release-preview.sh` shows the same preview standalone without
-> starting a release. All are covered by `scripts/test-release-tooling.sh` and
-> gated in CI by [`lint.yml`](../.github/workflows/lint.yml).
+Choose a bump [patch/minor/major] (or a version, q to quit): minor
+Preparing release: 0.2.0 -> 0.3.0-alpha.1
+Cut v0.3.0-alpha.1 and push it? [y/N] y
+```
 
-Pushing the **tag** triggers two workflows automatically:
+Then approve the `release` deployment in **Actions** (one click) — that signs the
+package, creates the GitHub release, and publishes to the App Store.
 
-- `publish-exapp-image.yml` → builds/pushes `:<version>` and `:<version>-cuda`
-  to GHCR.
-- `release.yml` → the release itself (next section).
+**Non-interactive** (scripting) — pass the choice; drop `--push` to stay local:
 
-## The release workflow (automatic on the tag)
+```bash
+./scripts/prepare-release.sh --bump minor --push        # 0.2.0        → 0.3.0-alpha.1
+./scripts/prepare-release.sh --promote rc.1 --push      # 0.3.0-beta.1 → 0.3.0-rc.1
+./scripts/prepare-release.sh --version 0.3.0 --push     # straight to stable
+./scripts/release-preview.sh                            # just show what's pending
+```
 
-`release.yml` runs on the tag push — no manual dispatch needed:
+## What happens after the tag
 
-1. **validate** — tag, `info.xml`, `CHANGELOG.md`, and the release notes all
-   agree on the version.
-2. **verify-images** — waits for `:<version>` and `:<version>-cuda` to appear on
-   GHCR (they build in parallel).
-3. **publish** — the single `release`-environment job, so the whole signed
-   release + store push is gated behind **one approval**. Once approved it:
-   builds and `occ`-signs the tarball, validates it (including the store's own
-   `pre-info.xslt → info.xsd` schema check), creates/updates the GitHub Release
-   and attaches `gocassini.tar.gz` (+ `.sha256`), and POSTs it to
-   apps.nextcloud.com.
+The tag push triggers two workflows automatically:
 
-So a normal release is **one command + one approval**. Declining the approval
-aborts the release (the images still build independently).
+1. `publish-exapp-image.yml` — builds and pushes the `:<version>` images.
+2. `release.yml` — validates, waits for the images, then behind **one approval**
+   (the `release` environment) signs the tarball, creates the GitHub release, and
+   POSTs it to apps.nextcloud.com.
 
-**Manual run.** You can also start it from **Actions → Release → Run workflow**
-on an existing tag, using `publish_appstore` to choose whether to hit the store
-(`false` = signed GitHub release only, kept as a draft).
+So a release is **one command + one approval**. Declining the approval aborts it;
+the images still build. You can also re-run `release.yml` from **Actions** on an
+existing tag (`publish_appstore=false` = signed GitHub release only, no store).
 
-Steps 3 and 5 touch secrets, so they run in the protected **`release`
-environment** and pause for approval. `publish_appstore=false` still yields a
-signed GitHub asset; it just stops before the App Store. The GitHub release is
-created as a **draft** — review it and publish deliberately.
+## The version ladder
 
-## Required GitHub configuration
+```text
+X.Y.Z-alpha.1 → X.Y.Z-beta.1 → X.Y.Z-rc.1 → X.Y.Z-rc.2 → X.Y.Z
+```
 
-Configure a repository **environment** named `release` (Settings → Environments)
-with required reviewers, holding these secrets:
+Every bump restarts the ladder at `-alpha.1`; advance with
+`--promote beta|rc.1|rc.2|stable`. You can skip stages: `--version 0.3.0` goes
+straight to stable, and `rc.1 → stable` is fine (one RC instead of two).
+Suffixed versions upload as App Store pre-releases automatically.
 
-| Secret | What it is |
+Cassini targets **one Nextcloud major per release**. The supported range lives in
+`info.xml` (`<nextcloud min-version max-version>`) and changes in a normal PR, not
+at release time.
+
+## Changelog
+
+Changes are captured per-PR as fragments in
+[`changelog.d/`](../changelog.d/README.md), not by editing `CHANGELOG.md`.
+`prepare-release.sh` folds them in at release time; a malformed fragment fails
+the fold before anything is committed.
+
+## The `release` environment (one-time setup)
+
+**Settings → Environments → `release`**, with **required reviewers** (the
+approval gate) and these **environment** secrets:
+
+| Secret | What |
 |---|---|
-| `APP_PRIVATE_KEY` | The app's App Store code-signing **private key** (PEM). |
-| `APP_PUBLIC_CRT` | The matching **certificate** issued by the Nextcloud App Store. |
-| `APPSTORE_TOKEN` | An App Store API token for the `gocassini` app. |
+| `APP_PRIVATE_KEY` | App Store code-signing private key (PEM). |
+| `APP_PUBLIC_CRT` | Matching certificate from the App Store (PEM). |
+| `APPSTORE_TOKEN` | App Store API token for `gocassini`. |
 
-The keypair comes from the Nextcloud App Store code-signing process (a CSR you
-submit once per app); see the references below. Treat all three as secrets:
-never commit keys, certificates, CSRs, or tokens (see
-[`CONTRIBUTING.md`](../CONTRIBUTING.md#secrets)). The workflow materializes the
-key/cert only inside a `mktemp` directory that is removed on exit, so signing
-material never lands in the workspace or an artifact.
+`APP_PRIVATE_KEY` must match `APP_PUBLIC_CRT`, and the cert must be the one
+registered for the `gocassini` app id — otherwise the store rejects the upload.
+Never commit these (see [CONTRIBUTING](../CONTRIBUTING.md#secrets)).
 
-## App Store prerelease behavior
+> **First real publish:** signing is verified end-to-end, but the live store POST
+> isn't yet — do the first one on a throwaway pre-release tag and confirm the
+> store returns 200/201.
 
-`nightly` is hard-coded `false` in the workflow. The App Store infers
-pre-release status from the semver suffix, so `0.3.0-rc.1` uploads as a
-pre-release and `0.3.0` as stable through the exact same path — no separate
-nightly channel.
+## Rollback
 
-## Previous releases and retention
+- **Not pushed yet:** `git tag -d v<version> && git reset --hard HEAD~1`.
+- **Pushed a bad tag:** `git push origin :refs/tags/v<version>`, fix, re-tag.
+- **App Store:** a published release can't be overwritten — cut the next version.
 
-The App Store manages release history for you — there is almost nothing to do by
-hand:
-
-- **Releases accumulate.** Every published stable release is kept; a new release
-  does not overwrite older ones.
-- **Nextcloud is served the newest *compatible* release.** Each release records
-  its supported Nextcloud range (`info.xml` `<nextcloud min-version max-version>`).
-  When a server on Nextcloud N asks the store for apps, it is offered the highest
-  release whose range covers N. So servers on different Nextcloud versions can be
-  served different Cassini releases automatically, from the same history.
-
-Because Cassini targets **one Nextcloud major per release** and does not maintain
-versions in parallel, this means old releases simply keep serving older servers
-until those servers upgrade Nextcloud — no backports, no re-publishing.
-
-**The one real obligation — do not delete GHCR images that a live release
-pins.** `info.xml` pins `<image-tag>` to `<version>`, so every published App
-Store release points at a specific `ghcr.io/codemyriad/gocassini:<version>` (and
-`:<version>-cuda`) image. An older release stays installable only while that
-image tag still exists. **Never garbage-collect an image tag while a release
-referencing it is still live in the App Store** — doing so silently breaks
-installs and reinstalls for every server the store still serves that release to.
-
-Deleting a release (`DELETE /api/v1/apps/gocassini/releases/<version>`, owners
-and co-maintainers only) is for pulling a **broken** release, not routine
-housekeeping. Normally you leave history intact and cut the next version on the
-ladder. GitHub releases and tags likewise just accumulate as the distribution
-anchor and audit trail.
-
-## Rollback and fixes
-
-- **Before pushing:** `prepare-release.sh` only made a local commit and tag.
-  Undo with `git tag -d v<version>` and `git reset --hard HEAD~1`.
-- **After pushing a bad tag:** delete it locally and remotely
-  (`git push origin :refs/tags/v<version>`), fix, and re-tag. Note that GHCR may
-  already hold `:<version>` images from the first push.
-- **GitHub release:** it is created as a draft, so a bad build can be deleted
-  before anyone sees it. Re-running the workflow re-attaches assets
-  (`gh release upload --clobber`).
-- **App Store:** a published App Store release cannot be silently overwritten —
-  cut the next version on the ladder rather than trying to replace one.
-
-## Signing
-
-The **package** job signs the app with `occ integrity:sign-app` via
-`scripts/occ-nextcloud.sh`, which runs `occ` inside a throwaway
-`nextcloud:stable` container (sqlite auto-install, ~10s; `docker cp` in/out so
-there are no bind-mount permission issues). The full path — stage → sign →
-archive → `validate --signed` — has been verified end-to-end locally with a
-throwaway keypair, so `occ` signing of the Cassini manifest is proven.
-
-What remains untested is the **real store upload**: the `store-upload` POST to
-apps.nextcloud.com needs the actual app-store-issued key/cert (in the `release`
-environment) and the registered `gocassini` app id. Do that first on a
-throwaway pre-release tag with `publish_appstore=true`.
-
-## Deferred: one-click release from the GitHub UI
-
-Starting a release from the Actions UI (pick a branch, pick a bump/promote
-action, let CI create and push the commit + tag) is intentionally **not** built
-yet. It needs an identity to push back to the repo, and pushing a tag with the
-default `GITHUB_TOKEN` does not trigger `publish-exapp-image.yml`. When it is
-built, it will use a **`codemyriad`-owned GitHub App** minting a short-lived
-token per run — not a personal access token. Until then, cut releases locally as
-above.
+**Never delete a GHCR image tag while a live App Store release pins it.**
+`info.xml` pins `<image-tag>` to `<version>`, so deleting the image breaks
+installs for every server the store still serves that release to.
 
 ## References
 
-- Nextcloud release process:
-  <https://docs.nextcloud.com/server/latest/developer_manual/app_publishing_maintenance/release_process.html>
-- Nextcloud code signing:
-  <https://docs.nextcloud.com/server/latest/developer_manual/app_publishing_maintenance/code_signing.html>
-- App Store API:
-  <https://nextcloudappstore.readthedocs.io/en/latest/api/restapi.html>
+- [Nextcloud release process](https://docs.nextcloud.com/server/latest/developer_manual/app_publishing_maintenance/release_process.html)
+  · [code signing](https://docs.nextcloud.com/server/latest/developer_manual/app_publishing_maintenance/code_signing.html)
+  · [App Store API](https://nextcloudappstore.readthedocs.io/en/latest/api/restapi.html)
