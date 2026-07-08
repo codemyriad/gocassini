@@ -464,6 +464,8 @@ rm -rf "$BD"
 echo "fold-changelog.sh --preview / release-preview.sh — decide the next move"
 PV="$(mktemp -d)"
 git -C "$PV" init -q
+git -C "$PV" config user.email t@t
+git -C "$PV" config user.name t
 mkdir -p "$PV/scripts" "$PV/appinfo" "$PV/changelog.d"
 cp "$SCRIPT_DIR"/{lib-release-version.sh,fold-changelog.sh,release-preview.sh} "$PV/scripts/"
 printf '# Changelog\n\n## [Unreleased]\n' > "$PV/CHANGELOG.md"
