@@ -37,8 +37,10 @@ if [[ -z "$pretype" ]]; then
   printf '  %-6s → %-16s %s\n' patch "$(rv_bump patch "$current")" "backward-compatible fixes only"
   printf '  %-6s → %-16s %s\n' minor "$(rv_bump minor "$current")" "new features, no breaking changes"
   printf '  %-6s → %-16s %s\n' major "$(rv_bump major "$current")" "breaking changes"
-  echo
-  echo "Then:  ./scripts/prepare-release.sh --bump <patch|minor|major> --push"
+  if [[ -z "${RELEASE_PREVIEW_NO_HINT:-}" ]]; then
+    echo
+    echo "Then:  ./scripts/prepare-release.sh --bump <patch|minor|major> --push"
+  fi
 else
   base="${_maj}.${_min}.${_pat}"
   echo "This is a prerelease — advance it along the ladder:"
@@ -55,6 +57,8 @@ else
   echo "  or jump to any explicit target with --version (skip stages), e.g."
   echo "     --version ${base}        # straight to stable, no more prereleases"
   echo "     --version ${base}-rc.1   # skip ahead to a candidate"
-  echo
-  echo "Then:  ./scripts/prepare-release.sh --promote <target> --push"
+  if [[ -z "${RELEASE_PREVIEW_NO_HINT:-}" ]]; then
+    echo
+    echo "Then:  ./scripts/prepare-release.sh --promote <target> --push"
+  fi
 fi

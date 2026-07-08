@@ -507,6 +507,44 @@ else
 fi
 rm -rf "$PV"
 
+echo "prepare-release.sh — guided (interactive) mode"
+GD="$(mktemp -d)"
+git -C "$GD" init -q
+git -C "$GD" config user.email t@t
+git -C "$GD" config user.name t
+mkdir -p "$GD/scripts" "$GD/appinfo" "$GD/changelog.d"
+cp "$SCRIPT_DIR"/{lib-release-version.sh,release-version.sh,fold-changelog.sh,extract-release-notes.sh,prepare-release.sh,release-preview.sh} "$GD/scripts/"
+printf '<?xml version="1.0"?>\n<info><version>0.2.0</version><external-app><docker-install><image-tag>0.2.0</image-tag></docker-install></external-app></info>\n' > "$GD/appinfo/info.xml"
+printf '# Changelog\n\n## [Unreleased]\n' > "$GD/CHANGELOG.md"
+printf '# Fragments\n' > "$GD/changelog.d/README.md"
+printf '### Added\n- guided feature.\n' > "$GD/changelog.d/10.f.md"
+git -C "$GD" add -A; git -C "$GD" commit -qm init
+# guided <answers...> — pipe answers into interactive prepare-release.
+guided() { ( cd "$GD" && printf '%s\n' "$@" | "$GD/scripts/prepare-release.sh" >/dev/null 2>&1 ); }
+
+guided q
+if [[ "$(rv_read_version "$GD/appinfo/info.xml")" == "0.2.0" && -z "$(git -C "$GD" tag --list)" ]]; then
+  ok "guided: 'q' aborts, nothing changed"
+else
+  bad "guided 'q' should change nothing"
+fi
+
+guided minor n
+if [[ "$(rv_read_version "$GD/appinfo/info.xml")" == "0.2.0" ]]; then
+  ok "guided: declining the confirm changes nothing"
+else
+  bad "guided decline should change nothing"
+fi
+
+guided minor y
+if [[ "$(rv_read_version "$GD/appinfo/info.xml")" == "0.3.0-alpha.1" ]] \
+   && git -C "$GD" rev-parse -q --verify refs/tags/v0.3.0-alpha.1 >/dev/null; then
+  ok "guided: choosing minor + confirm cuts v0.3.0-alpha.1"
+else
+  bad "guided minor + confirm should cut the release"
+fi
+rm -rf "$GD"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [[ "$FAIL" -eq 0 ]]

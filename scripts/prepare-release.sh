@@ -28,8 +28,12 @@ source "$SCRIPT_DIR/lib-release-version.sh"
 usage() {
   cat >&2 <<'EOF'
 Usage:
+  ./scripts/prepare-release.sh [--push]                       # guided: preview + pick
   ./scripts/prepare-release.sh (--bump L | --promote T | --version V) [--date D]
                                [--allow-empty-changelog] [--no-tag] [--push]
+
+With no --bump/--promote/--version, runs guided: shows the pending changes and
+the candidate versions, then asks you to choose.
 
 --push pushes the release commit + tag to origin after creating them. The tag
 push triggers the image build and the release workflow, so this one command is
@@ -54,23 +58,58 @@ main() {
       *) echo "error: unknown argument '$1'" >&2; usage; return 1 ;;
     esac
   done
-  [[ -n "$mode" ]] || { echo "error: one of --bump/--promote/--version is required" >&2; usage; return 1; }
   [[ "$do_push" -eq 1 && "$make_tag" -eq 0 ]] \
     && die "--push with --no-tag would push a release commit with no tag to trigger the release; drop one"
   date="${date:-$(date +%F)}"
 
-  local root info_xml current target
+  local root info_xml current target interactive=0
   root="$(git rev-parse --show-toplevel)"
   info_xml="$root/appinfo/info.xml"
+  current="$(rv_read_version "$info_xml")" || return 1
+
+  # No --bump/--promote/--version given → guided mode: show the preview
+  # (pending changes + candidates) and ask. Reads from stdin, so it also works
+  # with piped input; on EOF it aborts.
+  if [[ -z "$mode" ]]; then
+    interactive=1
+    RELEASE_PREVIEW_NO_HINT=1 "$SCRIPT_DIR/release-preview.sh" || true
+    echo
+    local choice pretype
+    pretype="$(rv_parse "$current" | awk '{print $4}')"
+    if [[ -z "$pretype" ]]; then
+      read -r -p "Choose a bump [patch/minor/major] (or a version, q to quit): " choice \
+        || { echo; die "no choice given"; }
+    else
+      read -r -p "Advance [beta/rc.1/rc.2/stable] (or a version, q to quit): " choice \
+        || { echo; die "no choice given"; }
+    fi
+    case "$choice" in
+      q|Q|quit|"")            echo "Aborted — nothing changed."; return 0 ;;
+      patch|minor|major)      mode="bump"; arg="$choice" ;;
+      beta|rc.1|rc.2|stable)  mode="promote"; arg="$choice" ;;
+      *)
+        if rv_validate "$choice" >/dev/null 2>&1; then mode="version"; arg="$choice"
+        else die "invalid choice: '$choice'"; fi
+        ;;
+    esac
+  fi
 
   # --- Resolve the target version -----------------------------------------
-  current="$(rv_read_version "$info_xml")" || return 1
   case "$mode" in
     bump)    target="$(rv_bump "$arg" "$current")" || return 1 ;;
     promote) target="$(rv_promote "$arg" "$current")" || return 1 ;;
     version) rv_validate "$arg" || return 1; target="$arg" ;;
   esac
   echo "Preparing release: $current -> $target"
+
+  # In guided mode, confirm before doing anything (the commit/tag, and the push).
+  if [[ "$interactive" -eq 1 ]]; then
+    local prompt="Cut v$target"
+    [[ "$do_push" -eq 1 ]] && prompt="$prompt and push it (triggers the image build + release)"
+    local go
+    read -r -p "$prompt? [y/N] " go || true
+    [[ "$go" == y || "$go" == Y ]] || { echo "Aborted — nothing changed."; return 0; }
+  fi
 
   # --- Pre-flight checks (before mutating anything) -----------------------
   # Clean tracked worktree; untracked files are fine (they are not committed).

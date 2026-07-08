@@ -62,48 +62,40 @@ editing `CHANGELOG.md` directly. At release time the fragments are folded into
 for you. A malformed fragment (unknown heading, prose outside a heading) fails
 the fold before anything is committed.
 
-## Decide what to release
+## Cut a release — one guided command
 
-The bump type follows from what is shipping, but the changelog isn't folded
-until release time — so preview it first (read-only, changes nothing):
-
-```bash
-./scripts/release-preview.sh
-```
-
-It folds the pending `changelog.d/` fragments on the fly and prints them grouped,
-then shows your next moves:
-
-- On a **stable** version it lists the `patch` / `minor` / `major` candidates
-  with semver guidance — read the changes, pick the bump.
-- **Mid-prerelease** it shows how to advance the ladder (`promote beta` →
-  `rc.1` → `rc.2`/`stable`) and reminds you that you can skip stages with an
-  explicit `--version` (e.g. straight to stable, or one RC instead of two).
-
-## Cut a release — one command
-
-Picking `patch` / `minor` / `major` (or a promotion) is the only decision:
+Run it with no arguments and it walks you through the whole decision:
 
 ```bash
-./scripts/prepare-release.sh --bump minor  --push     # patch | minor | major
-./scripts/prepare-release.sh --promote rc.1 --push    # advance the ladder
-./scripts/prepare-release.sh --promote stable --push
+./scripts/prepare-release.sh --push
 ```
 
-That one command runs pre-flight checks (clean worktree, well-formed `info.xml`,
-tag not already present, target greater than the latest release tag, at least
-one changelog fragment unless `--allow-empty-changelog`), then:
+It shows the current version and an on-the-fly fold of the pending
+`changelog.d/` fragments (so you can *see what's shipping*), then asks you to
+choose:
 
-- bumps `<version>` **and** `<image-tag>` in `appinfo/info.xml`,
-- folds `changelog.d/` into `CHANGELOG.md` under `## [<version>] - <date>`,
-- writes release notes to `build/release/gocassini-<version>-notes.md`,
-- commits `release: <version>`, tags `v<version>`, and **pushes** the branch + tag.
+- On a **stable** version: `patch` / `minor` / `major`, with semver guidance next
+  to each candidate — read the changes, type the bump.
+- **Mid-prerelease**: `beta` / `rc.1` / `rc.2` / `stable` (or an explicit version
+  to skip stages — e.g. straight to stable, or one RC instead of two).
 
-> Prefer to review first? Drop `--push`, inspect with `git show`, then
-> `git push origin <branch> v<version>` yourself. The individual steps are also
-> standalone (`release-version.sh`, `fold-changelog.sh --check`,
-> `extract-release-notes.sh`), all covered by `scripts/test-release-tooling.sh`
-> and gated in CI by [`lint.yml`](../.github/workflows/lint.yml).
+It then confirms the target (`Cut v0.3.0-alpha.1 and push it? [y/N]`) before
+doing anything. So the whole decision is: **run it, read the changes, type your
+choice, confirm.**
+
+Under the hood it runs pre-flight checks (clean worktree, well-formed
+`info.xml`, tag not already present, target greater than the latest release tag,
+a changelog fragment unless `--allow-empty-changelog`), then bumps `<version>` +
+`<image-tag>`, folds `changelog.d/` into `CHANGELOG.md`, writes the release
+notes, commits `release: <version>`, tags `v<version>`, and (with `--push`)
+pushes.
+
+> **Non-interactive / scripting.** Pass the choice explicitly to skip the
+> prompts: `--bump minor` / `--promote rc.1` / `--version 0.3.0-beta.1`. Drop
+> `--push` to keep it local (inspect with `git show`, then push yourself).
+> `./scripts/release-preview.sh` shows the same preview standalone without
+> starting a release. All are covered by `scripts/test-release-tooling.sh` and
+> gated in CI by [`lint.yml`](../.github/workflows/lint.yml).
 
 Pushing the **tag** triggers two workflows automatically:
 
