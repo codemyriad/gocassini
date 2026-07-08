@@ -207,24 +207,22 @@ fi
 # ============================================================================
 phase 1 "Bring up Nextcloud + signaling/janus/coturn (compose full profile)"
 
-SPREED_PROFILE=full PROJECT_NAME="$PROJECT_NAME" compose up -d >/dev/null
-
-# wait_for_nextcloud is defined in common.sh, but we sourced compose helpers
-# above instead. Poll directly:
-log "waiting for Nextcloud status.php (up to 7 min)"
-DEADLINE=$(( SECONDS + 420 ))
-until curl -sf "$NC_URL_HOST/status.php" >/dev/null 2>&1; do
-  if (( SECONDS > DEADLINE )); then
-    fail "Nextcloud did not become reachable at $NC_URL_HOST"
-  fi
-  sleep 5
-done
-log "OK Nextcloud reachable at $NC_URL_HOST"
-
-SPREED_PROFILE=full PROJECT_NAME="$PROJECT_NAME" \
-  "$HARNESS_DIR/bin/bootstrap.sh" >"$LOG_DIR/bootstrap.log" 2>&1 \
-  || { tail -n 40 "$LOG_DIR/bootstrap.log"; fail "bootstrap failed"; }
-log "OK bootstrap (Talk + signaling configured)"
+# Explicit stack topology: local HTTP, full media services, no installed
+# ExApp, legacy recording backend (phase 5 re-points recording_servers at
+# this script's own operator container). The run-scoped PROJECT_NAME,
+# NEXTCLOUD_HOST_PORT, and SIGNALING_CONF exports above flow through
+# `cassini dev stack up` into compose/bootstrap; plain `up` (no --reset)
+# because the PID-scoped project is fresh by construction and the stale-run
+# sweep above already reaped debris.
+export PROJECT_NAME
+"$REPO_ROOT/bin/cassini" dev stack up \
+  --public-mode local-http \
+  --services full \
+  --cassini none \
+  --recording-backend legacy \
+  >"$LOG_DIR/stack-up.log" 2>&1 \
+  || { tail -n 40 "$LOG_DIR/stack-up.log"; fail "cassini dev stack up failed"; }
+log "OK stack up + bootstrap (Talk + signaling configured) at $NC_URL_HOST"
 
 # ============================================================================
 # Phase 2: install + enable AppAPI (needed for ExApp install)

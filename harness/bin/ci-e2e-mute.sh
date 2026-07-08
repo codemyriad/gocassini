@@ -95,9 +95,18 @@ export CAPTURE_READY_PARTICIPANTS="${CAPTURE_READY_PARTICIPANTS:-$PUB_USERS}"
 export CAPTURE_READY_TIMEOUT="${CAPTURE_READY_TIMEOUT:-60}"
 export CAPTURE_READY_STREAM_KIND="${CAPTURE_READY_STREAM_KIND:-video}"
 
+# Explicit stack topology for this e2e leg: local HTTP, full media services
+# (nats/janus/signaling/coturn), no installed ExApp, legacy recording backend.
+STACK_TOPOLOGY=(
+  --public-mode local-http
+  --services full
+  --cassini none
+  --recording-backend legacy
+)
+
 cleanup() {
   log "Cleaning up local test stack"
-  "$SCRIPT_DIR/down.sh" --volumes || true
+  "$REPO_ROOT/bin/cassini" dev stack down --volumes "${STACK_TOPOLOGY[@]}" || true
 }
 
 trap cleanup EXIT INT TERM
@@ -112,7 +121,9 @@ if [[ "$PREPARE_MUTE_MEDIA" == "1" ]]; then
 fi
 
 log "Starting local Nextcloud Talk stack for CI (mute rotation)"
-"$SCRIPT_DIR/up.sh"
+# --reset: e2e wants a deterministic fresh stack; a leaked project from an
+# earlier aborted run must not fail the bring-up guard.
+"$REPO_ROOT/bin/cassini" dev stack up "${STACK_TOPOLOGY[@]}" --reset
 
 log "Creating temporary room for CI capture"
 CALL_URL="$(create_room_with_retry "$CALL_NAME")"

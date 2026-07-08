@@ -67,13 +67,21 @@ trap cleanup EXIT
 
 # --- 1. Bring up Nextcloud + db -------------------------------------------
 
-log "starting Nextcloud + db on host port $NEXTCLOUD_HOST_PORT"
-SPREED_PROFILE=default \
-  compose up -d nextcloud db
-
-SPREED_PROFILE=default PROJECT_NAME="$PROJECT_NAME" \
-  "$HARNESS_DIR/bin/bootstrap.sh" >"$LOG_DIR/bootstrap.log" 2>&1 \
-  || { tail "$LOG_DIR/bootstrap.log"; fail "bootstrap failed"; }
+log "starting Nextcloud core stack on host port $NEXTCLOUD_HOST_PORT"
+# Explicit stack topology: local HTTP, core services (db/nextcloud/
+# appapi-harp/reverse-proxy — no media), no harness-installed ExApp (the
+# manual AppAPI install below IS this test), no recording backend. The
+# run-scoped PROJECT_NAME and NEXTCLOUD_HOST_PORT flow through
+# `cassini dev stack up`; plain `up` (no --reset) because the PID-scoped
+# project is fresh by construction.
+export PROJECT_NAME NEXTCLOUD_HOST_PORT
+"$REPO_ROOT/bin/cassini" dev stack up \
+  --public-mode local-http \
+  --services core \
+  --cassini none \
+  --recording-backend none \
+  >"$LOG_DIR/stack-up.log" 2>&1 \
+  || { tail -n 40 "$LOG_DIR/stack-up.log"; fail "cassini dev stack up failed"; }
 
 # --- 2. Install + enable app_api ------------------------------------------
 
