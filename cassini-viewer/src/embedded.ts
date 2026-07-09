@@ -127,7 +127,7 @@ function viewerStylesheetHref(win: Window, doc: Document): string {
 // with DaisyUI's own --color-primary) and records the active NC theme as
 // data-nc-theme so the CSS override block in app.css can activate. Returns true
 // when NC theming was applied (OCA.Theming.primaryColor present), false when
-// running outside Nextcloud (standalone viewer — forrest themes remain active).
+// running outside Nextcloud (standalone viewer — saturn themes remain active).
 // Pure enough to unit-test: all globals are injected.
 export function applyNextcloudTheme(
   host: HTMLElement,
