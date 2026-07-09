@@ -40,6 +40,9 @@
 !/harness/media/processed/showcase-lantern-festival-v1/manifest.json
 !/spec/*.json
 !/spec/**/*.json
+# Node package manifests + lockfiles (the blanket *.json above would hide them)
+!/cassini-microsite/package.json
+!/cassini-microsite/package-lock.json
 gocassini-*.log
 *gocassini*.log
 

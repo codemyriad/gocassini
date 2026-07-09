@@ -1,0 +1,105 @@
+name: Deploy Microsite
+
+# Per-branch preview deploys for the Astro microsite (cassini-microsite/).
+#
+# Mirrors the R2 + rclone model already used by deploy-preview.yml: build the
+# static site and publish it under a per-branch prefix in an R2 bucket. Each
+# branch gets its own URL so a PR's site can be reviewed in isolation.
+#
+# The site is served under a subpath (/<encoded-branch>/), so the build sets
+# BASE_PATH accordingly — astro.config.mjs reads it into `base`, and pages use
+# import.meta.env.BASE_URL to keep asset/links correct under that prefix.
+#
+# Reuses the same R2 secrets as deploy-preview.yml (R2_ACCESS_KEY_ID,
+# R2_SECRET_ACCESS_KEY, R2_S3_ENDPOINT). No new secrets required.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'cassini-microsite/**'
+      - '.github/workflows/deploy-microsite.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One live deploy per branch; newer pushes supersede in-flight ones.
+  group: microsite-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    # Secrets are unavailable to fork PRs, so an rclone publish there would only
+    # fail noisily. Restrict to same-repo branches (matches deploy-preview.yml).
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      # R2 bucket that backs the microsite previews. Publishing target is
+      # codemyriad:<bucket>/<encoded-branch>/.
+      R2_BUCKET: cassini-microsite
+      RCLONE_CONFIG_CODEMYRIAD_TYPE: s3
+      RCLONE_CONFIG_CODEMYRIAD_PROVIDER: Cloudflare
+      RCLONE_CONFIG_CODEMYRIAD_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      RCLONE_CONFIG_CODEMYRIAD_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      RCLONE_CONFIG_CODEMYRIAD_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
+      RCLONE_CONFIG_CODEMYRIAD_ACL: private
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve branch + subpath
+        id: vars
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BRANCH="${{ github.head_ref }}"
+          else
+            BRANCH="${{ github.ref_name }}"
+          fi
+          # Encode '/' the same way deploy-preview.yml does, so nested branch
+          # names map to a single flat prefix.
+          ENCODED_BRANCH="$(echo "$BRANCH" | sed 's|/|--|g')"
+          {
+            echo "encoded_branch=$ENCODED_BRANCH"
+            echo "base_path=/${ENCODED_BRANCH}/"
+          } >> "$GITHUB_OUTPUT"
+          echo "deploying branch '$BRANCH' -> prefix '${ENCODED_BRANCH}/'"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cassini-microsite/package-lock.json
+
+      - name: Install rclone
+        run: curl -fsSL https://rclone.org/install.sh | sudo bash
+
+      - name: Build site
+        working-directory: cassini-microsite
+        env:
+          # Served under /<encoded-branch>/ in the bucket, so Astro must emit
+          # asset URLs and links with that prefix.
+          BASE_PATH: ${{ steps.vars.outputs.base_path }}
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Publish to R2
+        run: |
+          set -euo pipefail
+          # --checksum keeps re-deploys cheap (only changed objects upload);
+          # --delete-during removes files dropped from the site since last run.
+          rclone sync cassini-microsite/dist/ \
+            "codemyriad:${R2_BUCKET}/${{ steps.vars.outputs.encoded_branch }}/" \
+            --checksum --delete-during
+
+      - name: Summary
+        run: |
+          echo "### Microsite deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published to \`codemyriad:${R2_BUCKET}/${{ steps.vars.outputs.encoded_branch }}/\`" >> "$GITHUB_STEP_SUMMARY"
