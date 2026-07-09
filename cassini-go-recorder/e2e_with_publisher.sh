@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HARNESS_DIR="$ROOT_DIR/../harness"
+# shellcheck source=../harness/bin/lib/e2e-local.sh
+source "$HARNESS_DIR/bin/lib/e2e-local.sh"
+harness_e2e_local_stack_env full legacy none
 # shellcheck source=../harness/bin/common.sh
 source "$HARNESS_DIR/bin/common.sh"
 

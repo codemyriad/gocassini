@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
 
+harness_stack_init
 harness_check_existing_resources_for_up
 harness_prepare_exapp_image
 harness_render_stack_configs

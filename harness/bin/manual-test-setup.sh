@@ -39,6 +39,7 @@ export SPREED_PROFILE="${SPREED_PROFILE:-default}"
 # Talk by bootstrap.sh match the values passed into the installed ExApp.
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
+harness_stack_init
 # Ensure a caller override of CASSINI_TALK_SIGNALING_INTERNAL_SECRET is also
 # what the local signaling server uses for HPB internal auth.
 export SIGNALING_INTERNAL_SECRET="$CASSINI_TALK_SIGNALING_INTERNAL_SECRET"

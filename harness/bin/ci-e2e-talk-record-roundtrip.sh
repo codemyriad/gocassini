@@ -45,6 +45,9 @@ HARNESS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$HARNESS_DIR/.." && pwd)"
 COMPOSE_FILE="$HARNESS_DIR/compose.yml"
 INFO_XML="$REPO_ROOT/appinfo/info.xml"
+# shellcheck source=./lib/e2e-local.sh
+source "$SCRIPT_DIR/lib/e2e-local.sh"
+harness_e2e_local_stack_env full legacy none
 
 # ---- Configuration --------------------------------------------------------
 
