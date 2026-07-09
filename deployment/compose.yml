@@ -35,23 +35,10 @@ services:
       - ${CASSINI_OPERATOR_STATE_STORAGE:-cassini_operator_state}:/var/lib/cassini-operator
       - ${CASSINI_PUBLISHED_SITE_STORAGE:-cassini_published_site}:/srv/cassini-site
 
-  cassini-control-panel:
-    build:
-      context: ..
-      dockerfile: deployment/Dockerfile.control-panel
-    restart: unless-stopped
-    depends_on:
-      - cassini-operator
-    environment:
-      CASSINI_OPERATOR_BASE_PATH: ${CASSINI_OPERATOR_BASE_PATH:-/}
-      # Reach the operator over the compose network instead of hairpinning
-      # through the host: published ports bind to loopback by default, so the
-      # host-gateway path would not work. compose.hostnet.yml overrides this.
-      CASSINI_OPERATOR_URL: http://cassini-operator:4000
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "${CASSINI_PUBLISH_ADDRESS:-127.0.0.1}:${CASSINI_CONTROL_PANEL_PORT:-4173}:4173"
+  # The standalone control-panel preview service was removed in D-420: the
+  # operator UI is now a surface inside the unified Cassini app (served by the
+  # ExApp at /viewer), not a separate SPA. Its old Dockerfile.control-panel is
+  # gone too.
 
   cassini-viewer:
     build:

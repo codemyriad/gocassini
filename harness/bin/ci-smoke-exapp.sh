@@ -3,7 +3,7 @@
 # (no AppAPI required), then verifies that:
 #   - /enabled and /init lifecycle endpoints respond
 #   - /operator/jobs serves the existing JSON API
-#   - /control-panel/ serves the bundled admin SPA
+#   - /viewer/ serves the bundled Cassini SPA (D-420: one unified entry)
 #   - /viewer/ serves the bundled viewer SPA
 #
 # This does NOT exercise the AppAPI auth path or the HaRP tunnel — see
@@ -72,9 +72,8 @@ assert_status GET  /operator/jobs              200
 assert_status PUT  '/enabled?enabled=1'        200
 assert_status PUT  '/enabled?enabled=0'        200
 assert_status POST /init                        200
-assert_status GET  /control-panel/             200
-assert_status GET  /control-panel/some/spa/path 200
 assert_status GET  /viewer/                    200
+assert_status GET  /viewer/some/spa/path       200
 # /published may be empty (no recordings in CI), but a 404 from FileServer
 # on the directory listing is fine; the route must at least be wired.
 got=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/published/catalog.json" || true)

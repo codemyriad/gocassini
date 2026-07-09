@@ -24,7 +24,8 @@ on:
       - 'cassini-go-recorder/**'
       - 'cassini-publisher/bin/**'
       - 'cassini-viewer/**'
-      - 'cassini-control-panel/**'
+      - 'cassini-app/**'
+      - 'package.json'
       # Harness scripts, compose stack, scenarios and media fixtures are
       # executed by the smoke/e2e jobs below.
       - 'harness/**'
