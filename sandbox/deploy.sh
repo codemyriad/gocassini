@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-HARNESS_DIR="$PROJECT_ROOT/harness"
+SANDBOX_HARNESS_DIR="$SCRIPT_DIR/harness_temp"
 RUNTIME_DIR="$SCRIPT_DIR/runtime"
 ENV_FILE="$SCRIPT_DIR/.env"
 
@@ -68,8 +68,8 @@ mkdir -p "$RUNTIME_DIR"
 COMPOSE=(
   docker compose
   -p "$PROJECT_NAME"
-  --project-directory "$HARNESS_DIR"
-  -f "$SCRIPT_DIR/harness-compose.pinned.yml"
+  --project-directory "$SANDBOX_HARNESS_DIR"
+  -f "$SANDBOX_HARNESS_DIR/compose.yml"
   -f "$SCRIPT_DIR/compose.sandbox.yml"
 )
 if [[ "$SPREED_PROFILE" == "full" ]]; then
@@ -333,7 +333,7 @@ bootstrap_nextcloud() {
   export TURN_SERVER="$SANDBOX_TURN_HOST:13479"
   export SIGNALING_SHARED_SECRET SIGNALING_INTERNAL_SECRET TURN_SHARED_SECRET CASSINI_TALK_RECORDING_SECRET
   export CASSINI_TALK_RECORDING_URL="http://reverse-proxy/index.php/apps/app_api/proxy/gocassini"
-  "$HARNESS_DIR/bin/bootstrap.sh"
+  "$SANDBOX_HARNESS_DIR/bin/bootstrap.sh"
 
   occ config:system:set trusted_domains 20 --value="${SANDBOX_DOMAIN%%:*}"
   occ config:system:set overwrite.cli.url --value="$SANDBOX_PUBLIC_URL"
@@ -346,7 +346,7 @@ bootstrap_nextcloud() {
 
   if [[ "$SANDBOX_PATCH_APPAPI_CSP" == "true" ]]; then
     log "Applying sandbox-only AppAPI CSP patch"
-    "${COMPOSE[@]}" exec -T nextcloud php < "$HARNESS_DIR/bin/patch-csp.php"
+    "${COMPOSE[@]}" exec -T nextcloud php < "$SANDBOX_HARNESS_DIR/bin/patch-csp.php"
   else
     log "Skipping sandbox-only AppAPI CSP patch"
   fi

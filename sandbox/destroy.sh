@@ -2,8 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-HARNESS_DIR="$PROJECT_ROOT/harness"
+SANDBOX_HARNESS_DIR="$SCRIPT_DIR/harness_temp"
 ENV_FILE="$SCRIPT_DIR/.env"
 
 if [[ -f "$ENV_FILE" ]]; then
@@ -31,8 +30,8 @@ done
 COMPOSE=(
   docker compose
   -p "$PROJECT_NAME"
-  --project-directory "$HARNESS_DIR"
-  -f "$SCRIPT_DIR/harness-compose.pinned.yml"
+  --project-directory "$SANDBOX_HARNESS_DIR"
+  -f "$SANDBOX_HARNESS_DIR/compose.yml"
   -f "$SCRIPT_DIR/compose.sandbox.yml"
 )
 if [[ "$SPREED_PROFILE" == "full" ]]; then

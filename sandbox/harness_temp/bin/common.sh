@@ -1,0 +1,258 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
+COMPOSE_FILE="$TEST_DIR/compose.yml"
+
+PROJECT_NAME="${PROJECT_NAME:-spreedtest}"
+SPREED_PROFILE="${SPREED_PROFILE:-full}"
+HARNESS_SIGNALING_HOST="${HARNESS_SIGNALING_HOST:-}"
+
+harness_route_source_ip() {
+  ip -4 route get 1.1.1.1 2>/dev/null \
+    | awk '{for (i = 1; i <= NF; i++) if ($i == "src") {print $(i + 1); exit}}'
+}
+
+default_harness_host() {
+  if command -v systemd-detect-virt >/dev/null 2>&1 \
+    && ! systemd-detect-virt --container --quiet \
+    && systemd-detect-virt --vm --quiet; then
+    local source_ip
+    source_ip="$(harness_route_source_ip)"
+    if [[ -n "$source_ip" && "$source_ip" != 127.* ]]; then
+      printf '%s\n' "$source_ip"
+      return
+    fi
+  fi
+  printf '127.0.0.1\n'
+}
+
+CASSINI_HARNESS_HOST="${CASSINI_HARNESS_HOST:-$(default_harness_host)}"
+export CASSINI_HARNESS_HOST
+
+# Nextcloud server image for the compose stack. Empty selects the pinned
+# default in compose.yml; CI's NC-compatibility matrix leg overrides it
+# (e.g. NEXTCLOUD_IMAGE=nextcloud:33). Exported because docker compose
+# resolves ${NEXTCLOUD_IMAGE:-...} from its own process environment.
+export NEXTCLOUD_IMAGE="${NEXTCLOUD_IMAGE:-}"
+
+default_signaling_url() {
+  if [[ -n "$HARNESS_SIGNALING_HOST" ]]; then
+    echo "http://$HARNESS_SIGNALING_HOST:28082"
+    return
+  fi
+  local gateway
+  gateway="$(docker network inspect "${PROJECT_NAME}_default" -f '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
+  if [[ -n "$gateway" ]]; then
+    echo "http://$gateway:28082"
+    return
+  fi
+  echo "http://127.0.0.1:28082"
+}
+
+# Follows NEXTCLOUD_HOST_PORT (compose.yml's published-port variable) so
+# scripts that re-scope the host port — ci-e2e-talk-record-roundtrip.sh
+# exports a per-run port to dodge stale-run collisions (gh issue #51) —
+# get a matching URL in every callee that sources this file.
+NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://127.0.0.1:${NEXTCLOUD_HOST_PORT:-28080}}"
+NEXTCLOUD_STATUS_URL="${NEXTCLOUD_STATUS_URL:-$NEXTCLOUD_URL/status.php}"
+
+ADMIN_USER="${ADMIN_USER:-admin}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
+BOT_USER="${BOT_USER:-botuser}"
+BOT_PASSWORD="${BOT_PASSWORD:-zN4vQ9mT2Kp7R1x!}"
+
+# DEV-ONLY harness defaults below are committed test values. They are public
+# and must never be reused for real Nextcloud, Talk, signaling, TURN, or
+# Cassini deployments.
+# Keep empty by default here: bootstrap resolves an effective signaling URL
+# after Docker networking is up.
+SIGNALING_URL="${SIGNALING_URL:-}"
+SIGNALING_SHARED_SECRET="${SIGNALING_SHARED_SECRET:-7f4dca67263621ba7f9f9917e13de95a201f6f360be0d303e3008c2e6c8ad37d}"
+SIGNALING_INTERNAL_SECRET="${SIGNALING_INTERNAL_SECRET:-6f4dca67263621ba7f9f9917e13de95a201f6f360be0d303e3008c2e6c8ad37d}"
+TURN_SERVER="${TURN_SERVER:-127.0.0.1:13479}"
+TURN_SHARED_SECRET="${TURN_SHARED_SECRET:-3c04d2fc2f7fe39d48eb4dc77f652c8c778a4ea178b0e486529b284afca7b648}"
+CASSINI_TALK_RECORDING_URL="${CASSINI_TALK_RECORDING_URL:-}"
+# DEV-ONLY fallback for the local harness loop. This value is committed and
+# public in repo history; never use it (or any committed value) for a real
+# deployment — generate one with `openssl rand -hex 32` instead.
+CASSINI_TALK_RECORDING_SECRET="${CASSINI_TALK_RECORDING_SECRET:-9a2a9c0b7f4e43b7a2c6e19d6a4b8f8073b0174ee2f8425d99e8e33f7d60fb42}"
+CASSINI_TALK_SIGNALING_INTERNAL_SECRET="${CASSINI_TALK_SIGNALING_INTERNAL_SECRET:-$SIGNALING_INTERNAL_SECRET}"
+export CASSINI_TALK_RECORDING_SECRET CASSINI_TALK_SIGNALING_INTERNAL_SECRET
+
+RUNTIME_DIR="$TEST_DIR/runtime"
+MEDIA_DIR="$TEST_DIR/media"
+mkdir -p "$RUNTIME_DIR" "$MEDIA_DIR"
+
+log() {
+  printf '[test] %s\n' "$*"
+}
+
+configure_python_runner() {
+  local requirements_file="${1:-}"
+  local uv_python="${UV_PYTHON:-3.12}"
+
+  PYTHON_RUNNER=()
+  if [[ -n "${PYTHON_BIN:-}" ]]; then
+    if ! "$PYTHON_BIN" --version >/dev/null 2>&1; then
+      echo "python interpreter is not runnable: $PYTHON_BIN" >&2
+      return 1
+    fi
+    PYTHON_RUNNER=("$PYTHON_BIN")
+    return 0
+  fi
+
+  if command -v uv >/dev/null 2>&1; then
+    PYTHON_RUNNER=(uv run --python "$uv_python")
+    if [[ -n "$requirements_file" ]]; then
+      PYTHON_RUNNER+=(--with-requirements "$requirements_file")
+    fi
+    PYTHON_RUNNER+=(python)
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_RUNNER=(python3)
+    return 0
+  fi
+
+  echo "missing python runtime: set PYTHON_BIN or install uv/python3" >&2
+  return 1
+}
+
+cassini_session_id_from_mkv() {
+  local input="$1"
+  ffprobe -v error -show_entries format_tags -of default=nw=1 "$input" 2>/dev/null \
+    | awk -F= '/^TAG:(SESSION_ID|session_id)=/ {print $2; exit}'
+}
+
+cassini_session_dir_from_mkv() {
+  local input="$1"
+  local session_id
+  session_id="$(cassini_session_id_from_mkv "$input")"
+  if [[ -z "$session_id" ]]; then
+    return 1
+  fi
+  printf '%s/sessions/%s\n' "$(dirname "$input")" "$session_id"
+}
+
+cassini_session_json_from_mkv() {
+  local session_dir
+  session_dir="$(cassini_session_dir_from_mkv "$1")" || return 1
+  printf '%s/session.json\n' "$session_dir"
+}
+
+cassini_events_log_from_mkv() {
+  local session_dir
+  session_dir="$(cassini_session_dir_from_mkv "$1")" || return 1
+  printf '%s/events.ndjson\n' "$session_dir"
+}
+
+cassini_streams_dir_from_mkv() {
+  local session_dir
+  session_dir="$(cassini_session_dir_from_mkv "$1")" || return 1
+  printf '%s/streams\n' "$session_dir"
+}
+
+cassini_unique_participant_count_from_mkv() {
+  local input="$1"
+  ffprobe -v error -show_entries stream_tags -of default=nw=1 "$input" 2>/dev/null \
+    | awk -F= '/^TAG:(PARTICIPANT_ID|participant_id)=/ {print $2}' \
+    | sort -u \
+    | awk 'NF{count++} END {print count+0}'
+}
+
+compose() {
+  local profile_args=()
+  if [[ "$SPREED_PROFILE" == "full" ]]; then
+    profile_args+=(--profile full)
+  fi
+  docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "${profile_args[@]}" "$@"
+}
+
+occ() {
+  local env_args=()
+  if [[ -n "${OC_PASS:-}" ]]; then
+    env_args+=(-e "OC_PASS=$OC_PASS")
+  fi
+  if [[ -n "${NC_PASS:-}" ]]; then
+    env_args+=(-e "NC_PASS=$NC_PASS")
+  fi
+  compose exec -T "${env_args[@]}" -u www-data nextcloud php occ "$@"
+}
+
+occ_ignore_failure() {
+  local had_errexit=0
+  if [[ $- == *e* ]]; then
+    had_errexit=1
+    set +e
+  fi
+  occ "$@"
+  if (( had_errexit )); then
+    set -e
+  fi
+  return 0
+}
+
+occ_has() {
+  local command_name="$1"
+  occ list --raw 2>/dev/null | awk '{print $1}' | grep -Fxq "$command_name"
+}
+
+wait_for_nextcloud() {
+  local timeout_s="${1:-360}"
+  local end_time=$((SECONDS + timeout_s))
+
+  log "Waiting for Nextcloud at $NEXTCLOUD_STATUS_URL (timeout ${timeout_s}s)"
+  until (( SECONDS >= end_time )); do
+    if curl -fsS "$NEXTCLOUD_STATUS_URL" | grep -q '"installed":true'; then
+      log "Nextcloud is ready"
+      return 0
+    fi
+    sleep 2
+  done
+
+  log "Nextcloud did not become ready within ${timeout_s}s"
+  return 1
+}
+
+create_room_with_retry() {
+  local room_name="${1:-Local room}"
+  local max_attempts="${2:-10}"
+  local attempt=1
+  local output
+  local delay_s=1
+  local did_rebootstrap=0
+
+  while ((attempt <= max_attempts)); do
+    if output="$("$TEST_DIR/bin/create-room.sh" --name "$room_name" 2>&1)"; then
+      printf '%s\n' "$(echo "$output" | tail -n1)"
+      return 0
+    fi
+
+    log "room creation attempt $attempt/$max_attempts failed" >&2
+    if ((did_rebootstrap == 0)) && [[ "$output" == *"statuscode': 996"* || "$output" == *'"statuscode": 996'* ]]; then
+      log "room creation hit statuscode 996; re-running bootstrap once before next retry" >&2
+      if "$TEST_DIR/bin/bootstrap.sh" >/dev/null 2>&1; then
+        log "bootstrap retry completed" >&2
+      else
+        log "bootstrap retry failed; continuing with room retries" >&2
+      fi
+      did_rebootstrap=1
+    fi
+    if ((attempt < max_attempts)); then
+      log "retrying room creation in ${delay_s}s..." >&2
+      sleep "$delay_s"
+      delay_s=$((delay_s * 2))
+      if ((delay_s > 30)); then
+        delay_s=30
+      fi
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  log "create-room failed after ${max_attempts} attempts" >&2
+  log "$output" >&2
+  return 1
+}

@@ -1,0 +1,3 @@
+general: {
+  rec_dir = "/tmp/janus-recordings"
+}

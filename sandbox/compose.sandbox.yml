@@ -19,12 +19,12 @@ services:
 
   signaling:
     volumes:
-      - ../sandbox/runtime/signaling.conf:/config/server.conf:ro
+      - ../runtime/signaling.conf:/config/server.conf:ro
 
   janus:
     volumes:
-      - ../sandbox/runtime/janus.jcfg:/usr/local/etc/janus/janus.jcfg:ro
+      - ../runtime/janus.jcfg:/usr/local/etc/janus/janus.jcfg:ro
 
   coturn:
     volumes:
-      - ../sandbox/runtime/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ../runtime/turnserver.conf:/etc/coturn/turnserver.conf:ro

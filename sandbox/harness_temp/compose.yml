@@ -1,8 +1,3 @@
-# Pinned copy of harness/compose.yml as of main merge-base d770d72 (pre
-# remote-support + modular-harness rework). The sandbox deploy intentionally
-# uses this frozen definition so harness refactors cannot change sandbox
-# behavior. Do not edit alongside harness/compose.yml; update deliberately.
-
 x-nextcloud-env: &nextcloud-env
   # DEV-ONLY local harness credentials. These values are committed test
   # defaults and must never be reused for a real Nextcloud deployment.

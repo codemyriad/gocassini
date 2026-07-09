@@ -4,7 +4,9 @@ This directory contains the repo-owned deployment wrapper for a cheap VPS
 sandbox. The goal is a mutable environment that can be updated, reset, or
 destroyed without hand-editing Nextcloud state.
 
-The sandbox reuses the existing harness topology:
+The sandbox reuses a sandbox-owned snapshot of the harness topology under
+`sandbox/harness_temp/` so harness refactors do not accidentally change sandbox
+behavior:
 
 - Nextcloud + Postgres
 - AppAPI + HaRP deploy daemon
