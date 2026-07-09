@@ -2024,27 +2024,28 @@ func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any)
 		if err != nil {
 			return fmt.Errorf("create answer for %s: %w", p.remoteSessionID, err)
 		}
-		gatherComplete := webrtc.GatheringCompletePromise(p.pc)
 		if err := p.pc.SetLocalDescription(answer); err != nil {
 			return fmt.Errorf("set local answer for %s: %w", p.remoteSessionID, err)
 		}
 
-		// Wait on the real ICE-gathering-complete event, never a wall-clock
-		// timer. The previous `time.After(4s)` cap fired before STUN/TURN
-		// gathering finished under CI load, so the answer shipped a truncated,
-		// host-only candidate set and the post-answer endOfCandidates then
-		// falsely signalled "done" — the remote could only pair host candidates,
-		// ICE reached `checking` and was torn down to `closed`, no track opened,
-		// and finalize hit "no remuxable streams". GatheringCompletePromise
-		// resolves when gathering actually finishes (pion bounds it with its own
-		// ICE timeouts); ctx.Done() still unblocks on shutdown so we never park.
-		select {
-		case <-gatherComplete:
-		case <-ctx.Done():
-			// Shutdown must not be parked behind ICE gathering.
-			log.Printf("ICE gather interrupted by shutdown for subscriber %s; continuing", p.remoteSessionID)
-		}
-
+		// Send the answer immediately (trickle ICE); never park it behind ICE
+		// gathering. The initial local description already carries the
+		// ufrag/pwd/fingerprint the remote needs to start connectivity checks;
+		// candidates follow on their own via OnICECandidate ("candidate"
+		// messages), and the truthful endOfCandidates is emitted only when
+		// gathering actually finishes (OnICECandidate(nil)).
+		//
+		// #106 (waiting on GatheringCompletePromise) fixed a premature
+		// endOfCandidates but introduced a worse head-of-line stall: that
+		// promise resolves only after EVERY configured STUN/TURN server has
+		// been gathered or timed out, so a single slow/unreachable server (the
+		// marginal TURN/ICE path in D-454) delayed the answer by the whole
+		// gather timeout (pion's stunGatherTimeout, 5s per server). The remote
+		// then reached ICE `connected` ~24s late — or never, torn down
+		// `checking -> closed` — missed the call window, and finalize hit "no
+		// remuxable streams" / an empty transcript. Sending the answer up front
+		// removes the stall while keeping endOfCandidates honest, so it can no
+		// longer poison the remote's candidate set (the #106 concern).
 		local := p.pc.LocalDescription()
 		if local == nil {
 			return fmt.Errorf("local description missing for %s", p.remoteSessionID)
@@ -2057,10 +2058,6 @@ func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any)
 			sid,
 		); err != nil {
 			return fmt.Errorf("send answer for %s: %w", p.remoteSessionID, err)
-		}
-
-		if err := p.sendEndOfCandidates("post-answer"); err != nil {
-			return err
 		}
 
 		// Only now, with the answer actually sent, stop re-requesting offers
