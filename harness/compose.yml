@@ -167,7 +167,9 @@ services:
     networks:
       default:
         aliases:
-          - signaling-public-proxy
+          # The service name is already resolvable on the default network;
+          # add only the public host alias to avoid duplicate-alias validation
+          # failures on older Compose versions when remote mode is not active.
           - ${CASSINI_HARNESS_PUBLIC_HOST:-signaling-public-proxy}
 
   coturn:
