@@ -96,9 +96,9 @@
   // init is skipped — NC colour prefs are applied via CSS in app.css.
   export let ncMode: boolean = false;
 
-  type ThemeMode = "forrest-light" | "forrest-dark";
+  type ThemeMode = "saturn-light" | "saturn-dark";
   const THEME_STORAGE_KEY = "cassini-theme";
-  let themeMode: ThemeMode = "forrest-light";
+  let themeMode: ThemeMode = "saturn-light";
   // theme + theme-switching live on the .cassini-root wrapper (data-theme /
   // class:theme-switching), NOT on document.documentElement — in the embedded
   // build the SPA renders inside a shadow root, so the document's <html> is
@@ -233,7 +233,7 @@
   function readStoredTheme(): ThemeMode | null {
     try {
       const value = localStorage.getItem(THEME_STORAGE_KEY);
-      return value === "forrest-light" || value === "forrest-dark" ? value : null;
+      return value === "saturn-light" || value === "saturn-dark" ? value : null;
     } catch {
       return null;
     }
@@ -266,12 +266,12 @@
   }
 
   function toggleTheme() {
-    setTheme(themeMode === "forrest-dark" ? "forrest-light" : "forrest-dark");
+    setTheme(themeMode === "saturn-dark" ? "saturn-light" : "saturn-dark");
   }
 
   function handlePrefersColorSchemeChange(event: MediaQueryListEvent) {
     if (readStoredTheme() === null) {
-      applyTheme(event.matches ? "forrest-dark" : "forrest-light");
+      applyTheme(event.matches ? "saturn-dark" : "saturn-light");
     }
   }
 
@@ -334,10 +334,10 @@
         applyTheme(stored);
       } else if (typeof window.matchMedia === "function") {
         prefersDarkMedia = window.matchMedia("(prefers-color-scheme: dark)");
-        applyTheme(prefersDarkMedia.matches ? "forrest-dark" : "forrest-light");
+        applyTheme(prefersDarkMedia.matches ? "saturn-dark" : "saturn-light");
         prefersDarkMedia.addEventListener("change", handlePrefersColorSchemeChange);
       } else {
-        applyTheme("forrest-light");
+        applyTheme("saturn-light");
       }
     }
     if (typeof window.matchMedia === "function") {
@@ -1027,7 +1027,7 @@
                 type="checkbox"
                 class="toggle toggle-sm rounded-lg text-base-content/80"
                 aria-label="Toggle light or dark theme"
-                checked={themeMode === "forrest-dark"}
+                checked={themeMode === "saturn-dark"}
                 on:change={toggleTheme}
               />
               <Moon size={16} strokeWidth={2} class="text-base-content/80" aria-hidden="true" />
@@ -1064,7 +1064,7 @@
                   border-base-300 bg-base-100/50
                   hover:bg-base-200
                   aria-[current=page]:border-primary
-                  aria-[current=page]:bg-primary/25
+                  aria-[current=page]:bg-primary/15
                 "
               >
                 <span class="font-bold">{meeting.title}</span>

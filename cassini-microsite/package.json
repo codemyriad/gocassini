@@ -1,0 +1,34 @@
+{
+  "name": "cassini-microsite",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "lint": "eslint . --ext .js,.ts,.astro"
+  },
+  "dependencies": {
+    "@astrojs/mdx": "^3.1.9",
+    "@astrojs/sitemap": "3.2.1",
+    "@lucide/astro": "^1.23.0",
+    "@tailwindcss/typography": "^0.5.15",
+    "@tailwindcss/vite": "^4.0.0",
+    "astro": "^4.16.18",
+    "clsx": "^2.1.1",
+    "daisyui": "^5.0.0",
+    "tailwind-merge": "^2.6.0",
+    "tailwindcss": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@typescript-eslint/eslint-plugin": "^8.20.0",
+    "@typescript-eslint/parser": "^8.20.0",
+    "astro-eslint-parser": "^1.1.0",
+    "eslint": "^8.57.1",
+    "eslint-plugin-astro": "^1.3.1",
+    "typescript": "^5.7.3"
+  }
+}
