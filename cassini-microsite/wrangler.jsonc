@@ -5,7 +5,7 @@
   //
   // IMPORTANT: `name` must match the Worker you connected to this repo in the
   // Cloudflare dashboard, otherwise wrangler deploys to a *different* Worker.
-  "name": "gocassini-microsite",
+  "name": "gocassini",
   "compatibility_date": "2025-07-01",
   "assets": {
     "directory": "./dist",
