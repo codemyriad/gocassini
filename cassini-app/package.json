@@ -1,15 +1,19 @@
 {
-  "name": "cassini-control-panel",
+  "name": "cassini-app",
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "//": "The in-Nextcloud shell (D-420). Hosts cassini-viewer's browse surface today; V3 adds the operator surface + nav. Consumes cassini-viewer as a workspace layer.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "build:embedded": "vite build --config vite.embedded.config.ts && node ./scripts/assert-embedded-single-bundle.mjs",
     "build:all": "npm run build && npm run build:embedded",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "cassini-viewer": "*"
   },
   "devDependencies": {
     "@lucide/svelte": "^1.11.0",

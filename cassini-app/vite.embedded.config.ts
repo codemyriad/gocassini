@@ -42,7 +42,7 @@ export default defineConfig({
     lib: {
       entry: "src/embedded.ts",
       formats: ["iife"],
-      name: "CassiniControlPanel",
+      name: "CassiniApp",
       fileName: () => "embedded.js",
     },
     rollupOptions: {

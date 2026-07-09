@@ -61,6 +61,25 @@ Both keep using `pushState`/`replaceState` fragment-only (unchanged mechanism).
 
 **One deliberate change (not a regression):** the audio-element `{#key}` now keys on `audioSrc` (was `selectedMeetingId`, which the extracted view no longer owns) — same remount-on-meeting-change semantics; transcript switches still don't remount (`applySwitchedTranscript` leaves `audioSrc` untouched).
 
-## V2 — Workspace + `cassini-app` shell skeleton (B1/B2)  _(not started)_
+## V2 — Workspace + `cassini-app` shell skeleton (B1/B2)  _(JS core done + verified; deploy wiring pending)_
+
+Branch `refactor/d-420-app-shell-workspace`, stacked on V1. **npm workspace for now**
+(pnpm swaps in via D-499; Chris OK'd npm scaffold as the interim foundation).
+
+**Done + verified:**
+- Root `package.json` (npm workspaces: `cassini-viewer`, `cassini-app`); `.gitignore` un-ignores it; stray `pnpm-lock.yaml` dropped.
+- `cassini-viewer` = the **viewing layer**: `exports` (`App`, `MeetingView`, `MeetingList`, `dataProvider`, `app.css`) + `@source "./"` in `app.css` so its Tailwind classes are detected when a different-cwd build (cassini-app) bundles it.
+- `cassini-control-panel` → **`cassini-app`** (`git mv`); its old operator `App.svelte` → `Operator.svelte` (dormant, for V3); depends on `cassini-viewer`.
+- `cassini-app/src/App.svelte` = **shell** rendering `cassini-viewer/App.svelte` (browse surface) via the DataProvider seam. `embedded.ts` = viewer-derived NC bootstrap (served as the single `/ui/viewer.js`); `main.ts` + embedded pull `cassini-viewer/app.css`.
+- **Gates green:** `cassini-app` `build` + `build:embedded` (single-bundle assert OK); `cassini-viewer` unchanged (165/3, `build:all` green). **Runtime:** merged `cassini-app` renders **pixel-identical** to the standalone viewer (list + deep-link load 209 segments + player, fully styled) — headless Chrome vs the 6-meeting demo.
+
+**Remaining (deploy wiring — Chris: "not close to deploying"):**
+- `exapp.go`: collapse `topMenuEntries` to one "Cassini" (`AdminRequired:0`); serve `/ui/viewer.js` from `cassini-app`'s dist; drop the control-panel entry.
+- `appinfo/info.xml`: drop `/ui/control-panel.*` asset routes (keep operator JSON API `ADMIN`).
+- `Dockerfile.exapp`/`.cuda`: `cassini-app` build stage (needs the workspace — copy both packages); `CASSINI_*_DIST`.
+- `Dockerfile.control-panel`, `compose*.yml`, CI workflows: rename/reconcile.
+
+**Debt to clean (noted):** the viewer-derived `embedded.ts` duplicates the viewer's bootstrap — extract a shared, parameterizable bootstrap into the viewing layer when V3 needs the operator-base capture too; `cassini-app` has no unit tests currently (`--passWithNoTests`) since the old control-panel `embedded.test.ts` tested now-removed operator-embedded code — tests return with V3. Also: with the npm workspace root, `cd cassini-viewer && npm test` wraps the exit code noisily (cosmetic; pnpm/D-499 resolves).
+
 ## V3 — Operator surface + hash-`surface` nav + 403 probe (B4/B5/B6/B7)  _(not started)_
 ## V4 — Formalise shareable single-meeting embed (R2/R3)  _(not started)_
