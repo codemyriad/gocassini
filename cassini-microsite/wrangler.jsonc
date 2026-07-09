@@ -1,0 +1,16 @@
+{
+  // Static-assets-only Worker (no server code): `wrangler deploy` uploads the
+  // built site in ./dist and serves it. This is what the Cloudflare "Deploy
+  // command: npx wrangler deploy" build step runs.
+  //
+  // IMPORTANT: `name` must match the Worker you connected to this repo in the
+  // Cloudflare dashboard, otherwise wrangler deploys to a *different* Worker.
+  "name": "gocassini-microsite",
+  "compatibility_date": "2025-07-01",
+  "assets": {
+    "directory": "./dist",
+    // Serve /docs/ -> docs/index.html. (No custom 404 page in the build yet,
+    // so not_found_handling stays at its default "none".)
+    "html_handling": "auto-trailing-slash"
+  }
+}
