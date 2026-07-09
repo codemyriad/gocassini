@@ -1,9 +1,9 @@
 ---
-import '../tailwind.css';
-import { Menu, X } from '@lucide/astro';
-import logo from '../assets/logo-colour.svg?url';
+import "../tailwind.css";
+import { Menu, X } from "@lucide/astro";
+import logo from "../assets/logo-colour.svg?url";
 const rawBase = import.meta.env.BASE_URL;
-const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
+const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
 ---
 
 <header id="site-header" class="fixed w-full top-0 z-50 bg-base-100/60 backdrop-blur-md nav-header">
@@ -85,23 +85,23 @@ const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
 
 <script>
   function initNav() {
-    const header = document.getElementById('site-header');
-    const checkScroll = () => header?.classList.toggle('is-scrolled', window.scrollY > 10);
+    const header = document.getElementById("site-header");
+    const checkScroll = () => header?.classList.toggle("is-scrolled", window.scrollY > 10);
     checkScroll();
-    window.addEventListener('scroll', checkScroll, { passive: true });
-    window.addEventListener('resize', checkScroll, { passive: true });
+    window.addEventListener("scroll", checkScroll, { passive: true });
+    window.addEventListener("resize", checkScroll, { passive: true });
 
-    const toggle = document.getElementById('nav-toggle');
-    const menu = document.getElementById('mobile-menu');
-    const iconOpen = document.getElementById('nav-icon-open');
-    const iconClose = document.getElementById('nav-icon-close');
-    toggle?.addEventListener('click', () => {
-      const isOpen = menu?.classList.contains('is-open');
-      menu?.classList.toggle('is-open', !isOpen);
-      iconOpen?.classList.toggle('hidden', !isOpen);
-      iconClose?.classList.toggle('hidden', isOpen);
+    const toggle = document.getElementById("nav-toggle");
+    const menu = document.getElementById("mobile-menu");
+    const iconOpen = document.getElementById("nav-icon-open");
+    const iconClose = document.getElementById("nav-icon-close");
+    toggle?.addEventListener("click", () => {
+      const isOpen = menu?.classList.contains("is-open");
+      menu?.classList.toggle("is-open", !isOpen);
+      iconOpen?.classList.toggle("hidden", !isOpen);
+      iconClose?.classList.toggle("hidden", isOpen);
     });
   }
 
-  document.addEventListener('astro:page-load', initNav);
+  document.addEventListener("astro:page-load", initNav);
 </script>
