@@ -774,10 +774,13 @@ harness_check_existing_resources_for_up() {
       ;;
     reset)
       log "Resetting Docker Compose resources for project '$PROJECT_NAME'"
-      compose down --volumes --remove-orphans
       if [[ "${CASSINI_HARNESS_CASSINI_MODE:-none}" == "installed-exapp" ]]; then
+        # AppAPI-spawned ExApp containers attach to the compose network, so
+        # remove them before compose down or Docker can leave the network
+        # behind as still in use. This mirrors stack down ordering.
         harness_remove_installed_exapp_resources
       fi
+      compose down --volumes --remove-orphans
       ;;
     *)
       echo "Unknown CASSINI_HARNESS_EXISTING mode: $mode" >&2
