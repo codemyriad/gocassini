@@ -2,6 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./lib/e2e-local.sh
+source "$SCRIPT_DIR/lib/e2e-local.sh"
+harness_e2e_local_stack_env full legacy none
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
 

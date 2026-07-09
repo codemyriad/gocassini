@@ -27,6 +27,9 @@ HARNESS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$HARNESS_DIR/.." && pwd)"
 COMPOSE_FILE="$HARNESS_DIR/compose.yml"
 INFO_XML="$REPO_ROOT/appinfo/info.xml"
+# shellcheck source=./lib/e2e-local.sh
+source "$SCRIPT_DIR/lib/e2e-local.sh"
+harness_e2e_local_stack_env core none none
 
 : "${IMAGE_REF:?IMAGE_REF must be set (e.g. cassini-exapp:local or ghcr.io/codemyriad/gocassini:latest)}"
 PROJECT_NAME="${PROJECT_NAME:-cassini-install-e2e-$$}"
@@ -68,8 +71,8 @@ trap cleanup EXIT
 # --- 1. Bring up Nextcloud + db -------------------------------------------
 
 log "starting Nextcloud core stack on host port $NEXTCLOUD_HOST_PORT"
-# Explicit stack topology: local HTTP, core services (db/nextcloud/
-# appapi-harp/reverse-proxy — no media), no harness-installed ExApp (the
+# Explicit stack topology: local HTTP, core services (db/nextcloud only —
+# no media), no harness-installed ExApp (the
 # manual AppAPI install below IS this test), no recording backend. The
 # run-scoped PROJECT_NAME and NEXTCLOUD_HOST_PORT flow through
 # `cassini dev stack up`; plain `up` (no --reset) because the PID-scoped
