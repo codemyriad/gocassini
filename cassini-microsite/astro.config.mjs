@@ -4,7 +4,7 @@ import sitemap from "@astrojs/sitemap";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  site: "https://TODO.example.com",
+  site: "https://gocassini.codemyriad.io",
   base: process.env.BASE_PATH,
   integrations: [mdx(), sitemap()],
   vite: {

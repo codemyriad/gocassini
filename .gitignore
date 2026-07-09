@@ -32,17 +32,12 @@
 *.pem
 *.p12
 *.mkv
-*.json
-!/test/scenarios/*.json
-!/harness/scenarios/*.json
+# NOTE: no blanket `*.json` here. Recorder JSON artifacts already fall under the
+# ignored runtime/cache/media dirs above; a repo-wide `*.json` only silently
+# swallowed committed config (package.json, tsconfig.json, schemas) and forced a
+# growing list of `!` exceptions. Scope any future artifact-JSON ignore to its dir.
 # Test fixtures (small, committed for deterministic CI)
 !/harness/media/parakeet-smoke.mkv
-!/harness/media/processed/showcase-lantern-festival-v1/manifest.json
-!/spec/*.json
-!/spec/**/*.json
-# Node package manifests + lockfiles (the blanket *.json above would hide them)
-!/cassini-microsite/package.json
-!/cassini-microsite/package-lock.json
 gocassini-*.log
 *gocassini*.log
 
