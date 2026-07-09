@@ -32,10 +32,6 @@
 *.pem
 *.p12
 *.mkv
-# NOTE: no blanket `*.json` here. Recorder JSON artifacts already fall under the
-# ignored runtime/cache/media dirs above; a repo-wide `*.json` only silently
-# swallowed committed config (package.json, tsconfig.json, schemas) and forced a
-# growing list of `!` exceptions. Scope any future artifact-JSON ignore to its dir.
 # Test fixtures (small, committed for deterministic CI)
 !/harness/media/parakeet-smoke.mkv
 gocassini-*.log
