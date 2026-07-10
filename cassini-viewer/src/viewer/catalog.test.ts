@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   filterMeetingCatalogEntries,
+  formatMeetingDate,
   formatMeetingDateShort,
   loadMeetingCatalog,
   parseDateLabelMs,
@@ -323,6 +324,39 @@ describe("formatMeetingDateShort", () => {
 
   it("passes through labels that are not dates", () => {
     expect(formatMeetingDateShort("01KWEKPZVEJWP9BYBPBX9ZRNDQ")).toBe(
+      "01KWEKPZVEJWP9BYBPBX9ZRNDQ",
+    );
+  });
+});
+
+describe("formatMeetingDate", () => {
+  it("renders the label's wall-clock time without asserting a timezone (D-484)", () => {
+    // The dateLabel carries no timezone, so the formatter must not tack on a
+    // "GMT+1" / "UTC" suffix — that would claim an instant it can't justify
+    // (a UTC-stamped "21:11" rendered as "9:11 PM GMT+1" is an hour off and
+    // falsely precise for a CET viewer).
+    const rendered = formatMeetingDate("2026-03-09 21:11");
+    // No trailing timezone token of any kind: "GMT+1", "UTC", or a named
+    // abbreviation like "WET"/"CET"/"PST" (the last token must be the time or an
+    // AM/PM day-period, never a 3-4 letter zone). This is the real regression
+    // guard — before the fix the rendered string ended with the viewer's zone.
+    expect(rendered).not.toMatch(/\s(?:GMT|UTC|[A-Z]{3,4})[+\-\d:]*$/);
+    // The label's own wall-clock digits survive: constructing the Date in local
+    // time and formatting in local time cancel out, so this holds regardless of
+    // the runtime timezone (12h "9:11" or 24h "21:11" depending on locale).
+    expect(rendered).toMatch(/(?:21:11|9:11)/);
+    expect(rendered).toContain("2026");
+  });
+
+  it("renders a date-only label with no time and no timezone", () => {
+    const rendered = formatMeetingDate("2026-03-09");
+    expect(rendered).not.toMatch(/GMT|UTC/i);
+    expect(rendered).not.toMatch(/\d{1,2}:\d{2}/);
+    expect(rendered).toContain("2026");
+  });
+
+  it("passes through labels that are not dates", () => {
+    expect(formatMeetingDate("01KWEKPZVEJWP9BYBPBX9ZRNDQ")).toBe(
       "01KWEKPZVEJWP9BYBPBX9ZRNDQ",
     );
   });
