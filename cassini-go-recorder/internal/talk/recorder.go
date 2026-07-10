@@ -173,10 +173,10 @@ type subscriberPeer struct {
 	// OnICECandidate callback can therefore race the offer handler that sends
 	// the SDP answer. The signaling client's write mutex makes each WebSocket
 	// write safe, but whichever goroutine acquires it first wins; it does not
-	// guarantee that the answer precedes candidates. Talk's remote peer does
-	// not retain candidates received before it installs the answer, so keep all
-	// local ICE signaling behind this per-peer gate and drain it in callback
-	// order only after the answer write succeeds (D-454).
+	// guarantee that the answer precedes candidates. Each candidate belongs to
+	// the answer's negotiation and must not overtake it, so keep all local ICE
+	// signaling behind this per-peer gate and drain it in callback order only
+	// after the answer write succeeds (D-454).
 	answerSent             bool
 	localICEFlushing       bool
 	pendingLocalICESignals []localICESignal
@@ -1167,22 +1167,28 @@ func (r *Recorder) handleParticipantsEvent(update map[string]any) error {
 			continue
 		}
 		r.rememberParticipantIdentity(sessionID, identity.DisplayName, identity.ParticipantID)
-		peer, err := r.ensureSubscriber(sessionID)
+		peer, requestIssued, err := r.ensureSubscriber(sessionID)
 		if err != nil {
 			return err
 		}
-		r.retryRequestOfferForCallTransition(peer)
+		if !requestIssued {
+			r.retryRequestOfferForCallTransition(peer)
+		}
 	}
 
 	return nil
 }
 
 // retryRequestOfferForCallTransition forces a fresh requestoffer when a
-// participants update tells us a session is now in the call. The first
-// requestoffer often races spreed's call-state propagation and gets
-// silently dropped at hub.go ("not in same call"); without this nudge
-// the recorder waits out the 8s response timeout × max-attempts before
-// retrying, which exceeds a typical short-recording window.
+// participants update tells us that a session with an existing subscriber is
+// now in the call. That subscriber's earlier requestoffer may have raced
+// spreed's call-state propagation and been rejected at hub.go ("not in same
+// call"), so the transition should bypass the normal response throttle.
+//
+// Callers must not invoke this when ensureSubscriber already issued a request
+// for the same update (a new peer's initial request or an exhausted peer's
+// recovery request). A duplicate request without the offer SID makes the MCU
+// rebuild its Janus subscriber.
 func (r *Recorder) retryRequestOfferForCallTransition(peer *subscriberPeer) {
 	if peer == nil {
 		return
@@ -1211,7 +1217,7 @@ func (r *Recorder) handleSignalingData(ctx context.Context, data map[string]any)
 		return nil
 	}
 
-	peer, err := r.ensureSubscriber(fromSession)
+	peer, _, err := r.ensureSubscriber(fromSession)
 	if err != nil {
 		return err
 	}
@@ -1225,15 +1231,19 @@ func (r *Recorder) handleSignalingData(ctx context.Context, data map[string]any)
 	return nil
 }
 
-func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, error) {
+// ensureSubscriber returns requestIssued=true when this call either registered
+// a peer and issued its initial requestoffer or reset an exhausted peer and
+// issued its recovery request. Callers handling an in-call transition use that
+// bit to avoid immediately sending the same request a second time.
+func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, bool, error) {
 	if remoteSessionID == "" || remoteSessionID == r.signalingSessionID {
-		return nil, nil
+		return nil, false, nil
 	}
 
 	r.mu.Lock()
 	if r.stopping {
 		r.mu.Unlock()
-		return nil, nil
+		return nil, false, nil
 	}
 	existing := r.subscribers[remoteSessionID]
 	r.mu.Unlock()
@@ -1243,13 +1253,14 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, er
 			if err := existing.requestOffer(); err != nil {
 				log.Printf("requestoffer retry failed for %s: %v", remoteSessionID, err)
 			}
+			return existing, true, nil
 		}
-		return existing, nil
+		return existing, false, nil
 	}
 
 	peer, err := r.newSubscriberPeer(remoteSessionID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	r.mu.Lock()
@@ -1258,12 +1269,14 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, er
 		// registering it now would resurrect a subscriber nobody closes.
 		r.mu.Unlock()
 		_ = peer.close()
-		return nil, nil
+		return nil, false, nil
 	}
 	if current := r.subscribers[remoteSessionID]; current != nil {
 		r.mu.Unlock()
 		_ = peer.close()
-		return current, nil
+		// The concurrent winner registered current and issued its initial
+		// requestoffer; do not make this caller duplicate it.
+		return current, true, nil
 	}
 	r.subscribers[remoteSessionID] = peer
 	r.inCallEver[remoteSessionID] = struct{}{}
@@ -1275,7 +1288,7 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, er
 		log.Printf("initial requestoffer failed for %s: %v", remoteSessionID, err)
 	}
 
-	return peer, nil
+	return peer, true, nil
 }
 
 func (r *Recorder) removeSubscriber(remoteSessionID string) error {
@@ -1334,11 +1347,13 @@ func (r *Recorder) syncRemoteParticipants(active map[string]participantIdentity)
 
 	for remoteSessionID, identity := range active {
 		r.rememberParticipantIdentity(remoteSessionID, identity.DisplayName, identity.ParticipantID)
-		peer, err := r.ensureSubscriber(remoteSessionID)
+		peer, requestIssued, err := r.ensureSubscriber(remoteSessionID)
 		if err != nil {
 			return err
 		}
-		r.retryRequestOfferForCallTransition(peer)
+		if !requestIssued {
+			r.retryRequestOfferForCallTransition(peer)
+		}
 	}
 
 	return nil
@@ -2118,8 +2133,8 @@ func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any)
 		// messages), and the truthful endOfCandidates is emitted only when
 		// gathering actually finishes (OnICECandidate(nil)). Those callbacks
 		// are buffered until the answer send below succeeds: Pion may invoke
-		// them concurrently with this handler, and the remote does not retain
-		// candidates that arrive before its answer-side peer exists.
+		// them concurrently with this handler, and candidate/EOC messages must
+		// not overtake the matching answer on the MCU subscriber queue.
 		//
 		// #106 (waiting on GatheringCompletePromise) fixed a premature
 		// endOfCandidates but introduced a worse head-of-line stall: that

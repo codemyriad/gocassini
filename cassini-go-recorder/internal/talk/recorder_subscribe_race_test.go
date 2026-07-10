@@ -16,6 +16,175 @@ import (
 	"time"
 )
 
+func partialInCallUpdate() map[string]any {
+	return map[string]any{
+		"changed": []any{
+			map[string]any{
+				"sessionId":   "alice-session",
+				"displayName": "Alice",
+				"userId":      "alice",
+				"inCall":      float64(3),
+			},
+		},
+	}
+}
+
+func syncAllInCallUpdate() map[string]any {
+	return map[string]any{
+		"all": true,
+		"users": []any{
+			map[string]any{
+				"sessionId":   "alice-session",
+				"displayName": "Alice",
+				"userId":      "alice",
+				"inCall":      float64(3),
+			},
+		},
+	}
+}
+
+func expectSingleRequestOffer(t *testing.T, messages <-chan map[string]any) {
+	t.Helper()
+
+	select {
+	case data := <-messages:
+		if got := asString(data["type"]); got != "requestoffer" {
+			t.Fatalf("signaling message type = %q, want requestoffer (data=%v)", got, data)
+		}
+		if got := asString(data["to"]); got != "alice-session" {
+			t.Fatalf("requestoffer recipient = %q, want alice-session (data=%v)", got, data)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for requestoffer")
+	}
+
+	// WebSocket delivery is asynchronous. Leave a short quiet window after
+	// the expected message so an accidental immediate duplicate is observed.
+	select {
+	case data := <-messages:
+		t.Fatalf("unexpected second signaling message after requestoffer: %v", data)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func peerRequestOfferAttempts(peer *subscriberPeer) int {
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	return peer.requestOfferAttempts
+}
+
+func TestParticipantUpdateSendsOneInitialRequestOffer(t *testing.T) {
+	tests := []struct {
+		name   string
+		update func() map[string]any
+	}{
+		{name: "partial update", update: partialInCallUpdate},
+		{name: "sync-all update", update: syncAllInCallUpdate},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r, messages := newPeerMessageCapture(t)
+			if err := r.handleParticipantsEvent(tc.update()); err != nil {
+				t.Fatalf("handleParticipantsEvent: %v", err)
+			}
+			t.Cleanup(func() { r.removeParticipantSessions([]any{"alice-session"}) })
+
+			expectSingleRequestOffer(t, messages)
+
+			peer := r.subscribers["alice-session"]
+			if peer == nil {
+				t.Fatal("new in-call participant has no subscriber")
+			}
+			if got := peerRequestOfferAttempts(peer); got != 1 {
+				t.Fatalf("new subscriber requestOfferAttempts = %d, want 1", got)
+			}
+		})
+	}
+}
+
+func TestParticipantUpdateRetriesPreExistingThrottledSubscriber(t *testing.T) {
+	tests := []struct {
+		name   string
+		update func() map[string]any
+	}{
+		{name: "partial update", update: partialInCallUpdate},
+		{name: "sync-all update", update: syncAllInCallUpdate},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r, messages := newPeerMessageCapture(t)
+			if err := r.handleParticipantsEvent(tc.update()); err != nil {
+				t.Fatalf("create subscriber: %v", err)
+			}
+			t.Cleanup(func() { r.removeParticipantSessions([]any{"alice-session"}) })
+			expectSingleRequestOffer(t, messages)
+
+			peer := r.subscribers["alice-session"]
+			if peer == nil {
+				t.Fatal("new in-call participant has no subscriber")
+			}
+			if got := peerRequestOfferAttempts(peer); got != 1 {
+				t.Fatalf("initial requestOfferAttempts = %d, want 1", got)
+			}
+
+			// The peer now predates this participants update and is still
+			// throttled waiting for an offer. This is the call-transition race
+			// the eager retry exists to recover.
+			if err := r.handleParticipantsEvent(tc.update()); err != nil {
+				t.Fatalf("retry existing subscriber: %v", err)
+			}
+			expectSingleRequestOffer(t, messages)
+			if got := peerRequestOfferAttempts(peer); got != 2 {
+				t.Fatalf("existing subscriber requestOfferAttempts = %d, want 2 after transition retry", got)
+			}
+		})
+	}
+}
+
+func TestParticipantUpdateSendsOneExhaustedRecoveryRequest(t *testing.T) {
+	tests := []struct {
+		name   string
+		update func() map[string]any
+	}{
+		{name: "partial update", update: partialInCallUpdate},
+		{name: "sync-all update", update: syncAllInCallUpdate},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r, messages := newPeerMessageCapture(t)
+			if err := r.handleParticipantsEvent(tc.update()); err != nil {
+				t.Fatalf("create subscriber: %v", err)
+			}
+			t.Cleanup(func() { r.removeParticipantSessions([]any{"alice-session"}) })
+			expectSingleRequestOffer(t, messages)
+
+			peer := r.subscribers["alice-session"]
+			if peer == nil {
+				t.Fatal("new in-call participant has no subscriber")
+			}
+			peer.mu.Lock()
+			peer.requestOfferAttempts = 8
+			peer.awaitingOfferSince = time.Now()
+			peer.offerExhaustedLogged = true
+			peer.mu.Unlock()
+
+			// ensureSubscriber owns recovery from exhaustion: it resets the
+			// throttle and issues one request. The transition hook must not add
+			// a second empty-SID request on top of it.
+			if err := r.handleParticipantsEvent(tc.update()); err != nil {
+				t.Fatalf("recover exhausted subscriber: %v", err)
+			}
+			expectSingleRequestOffer(t, messages)
+			if got := peerRequestOfferAttempts(peer); got != 1 {
+				t.Fatalf("recovered subscriber requestOfferAttempts = %d, want 1", got)
+			}
+		})
+	}
+}
+
 func TestClearOfferThrottleForCallTransitionResetsThrottle(t *testing.T) {
 	// Simulate the state right after a single requestoffer that got
 	// silently rejected: awaitingOfferSince is set to "now", one
