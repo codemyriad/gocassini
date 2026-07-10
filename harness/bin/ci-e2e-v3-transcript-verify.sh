@@ -11,16 +11,13 @@
 #   loudly instead of passing on "non-empty output".
 #
 # Flow:
-#   1. Run the existing transcribe smoke (model files present, no runtime
-#      download, build succeeds, files produced).
-#   2. Copy transcript.words.v1.json out of the container.
-#   3. Concatenate all words → lowercase ASCII text.
-#   4. Compare against the LibriSpeech 6930-75918-0001 reference (the fixture
-#      content per harness/media/NOTICE).
-#   5. Assert character-level Levenshtein ratio ≥ MIN_LEVENSHTEIN (default
-#      0.85). v3 on the 14.225s LibriSpeech clip should land in the 0.95+
-#      range on a healthy build; 0.85 is a generous floor that still catches
-#      "model loaded but produced gibberish" failures.
+#   1. Start the selected image with an overridden quiet entrypoint.
+#   2. Copy the LibriSpeech fixture in and run `cassini build` directly.
+#   3. Copy transcript.words.v1.json out of the container.
+#   4. Concatenate all words → lowercase ASCII text.
+#   5. Compare against the fixture reference and assert character-level
+#      Levenshtein ratio ≥ MIN_LEVENSHTEIN (default 0.50). This is a broad
+#      corruption/empty-output floor, not a transcript-quality SLA.
 #
 # Invocation:
 #   IMAGE_REF=cassini-exapp:e2e-v3-cpu-gpu ./harness/bin/ci-e2e-v3-transcript-verify.sh

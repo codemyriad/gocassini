@@ -12,17 +12,23 @@
 #   - Direct probe without the AppAPI header returns 401 (the
 #     proper middleware test, per the planning doc)
 #
-# The full "Nextcloud admin installs gocassini via AppAPI" flow is a
-# follow-up (Slice D continued). This script is what gets us to "image
-# tested in CI" today.
+# This deliberately stays a bare-container middleware/lifecycle test. The
+# manual-install Nextcloud proxy test and HaRP-installed product path live in
+# separate higher pyramid layers.
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+INFO_XML="$REPO_ROOT/appinfo/info.xml"
+# shellcheck source=lib-exapp-manifest.sh
+source "$SCRIPT_DIR/lib-exapp-manifest.sh"
 
 : "${IMAGE_REF:?IMAGE_REF must be set}"
 PORT="${PORT:-18080}"
 CONTAINER_NAME="cassini-exapp-e2e-$$"
 APP_SECRET="${APP_SECRET:-ci-secret-$(head -c 8 /dev/urandom | base64 | tr -d '/+=' | head -c 16)}"
-APP_ID="${APP_ID:-gocassini}"
-APP_VERSION="${APP_VERSION:-0.1.0}"
+APP_ID="${APP_ID:-$(exapp_app_id "$INFO_XML")}"
+APP_VERSION="${APP_VERSION:-$(exapp_app_version "$INFO_XML")}"
 AA_VERSION="${AA_VERSION:-5.0.0}"
 LOG_DIR="${LOG_DIR:-/tmp/cassini-e2e-$$}"
 mkdir -p "${LOG_DIR}"
@@ -43,7 +49,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-log "starting ${IMAGE_REF} on port ${PORT} with APP_SECRET set"
+log "starting bare-container ${IMAGE_REF} as ${APP_ID}@${APP_VERSION} on port ${PORT} with APP_SECRET set"
 # Bypass the entrypoint (which expects HaRP env vars and starts frpc).
 # We're testing the operator's HTTP plane and AppAPI middleware directly;
 # the frpc tunnel is a separate concern verified by the real-Nextcloud

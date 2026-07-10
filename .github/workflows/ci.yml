@@ -47,12 +47,13 @@ jobs:
       - name: Install contract tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libxml2-utils xsltproc shellcheck
+          sudo apt-get install -y --no-install-recommends jq libxml2-utils xsltproc shellcheck
       - name: Validate App Store manifest schema
         run: ./scripts/test-info-schema.sh
       - name: Run offline harness regressions
         run: |
           ./harness/bin/test-exapp-image-ref.sh
+          ./harness/bin/test-exapp-manifest.sh
           ./harness/bin/test-ci-e2e-mute-timing.sh
       - name: Parse every harness shell script
         run: |
@@ -61,7 +62,12 @@ jobs:
             bash -n "$script"
           done < <(find harness/bin -type f -name '*.sh' -print0)
       - name: Shellcheck D-453 contract scripts
-        run: shellcheck scripts/test-info-schema.sh harness/bin/test-exapp-image-ref.sh
+        run: >-
+          shellcheck
+          scripts/test-info-schema.sh
+          harness/bin/lib-exapp-manifest.sh
+          harness/bin/test-exapp-image-ref.sh
+          harness/bin/test-exapp-manifest.sh
 
   ui:
     name: UI tests (${{ matrix.package }})

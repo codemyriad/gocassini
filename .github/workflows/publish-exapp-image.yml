@@ -674,7 +674,7 @@ jobs:
         run: ./harness/bin/ci-e2e-entrypoint-exapp.sh
 
   e2e-install:
-    name: E2E install against real Nextcloud + AppAPI
+    name: E2E manual-install proxy + lifecycle (Nextcloud / AppAPI)
     runs-on: ubuntu-latest
     needs: build-image
     timeout-minutes: 30
@@ -693,7 +693,7 @@ jobs:
           image-ref-list: ${{ needs.build-image.outputs.image_ref }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run install e2e against a fresh Nextcloud + AppAPI
+      - name: Run manual-install e2e against a fresh Nextcloud + AppAPI
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-e2e-install-exapp.sh
@@ -706,7 +706,7 @@ jobs:
   # the scenario script. Runs on both image variants so a regression
   # in either the CPU or CUDA build path is caught before publish.
   e2e-talk-record-cpu:
-    name: E2E Talk record-button roundtrip (CPU)
+    name: E2E manual-install Talk roundtrip (CPU)
     runs-on: ubuntu-latest
     needs: build-image
     timeout-minutes: 25
@@ -781,7 +781,7 @@ jobs:
         # reflects only the e2e logic, not image transfer time. Images live
         # at the daemon level so no project name is required.
         run: docker compose -f harness/compose.yml --profile full pull
-      - name: Run Talk-driven e2e (CPU)
+      - name: Run manual-install Talk e2e (CPU)
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           # 75s gives the rotator several cycles per bot, enough that at
@@ -818,7 +818,7 @@ jobs:
           retention-days: 14
 
   e2e-talk-record-cuda:
-    name: E2E Talk record-button roundtrip (CUDA / GPU)
+    name: E2E manual-install Talk roundtrip (CUDA / GPU)
     runs-on: [self-hosted, Linux, X64, gpu]
     needs: build-image-cuda
     timeout-minutes: 25
@@ -884,7 +884,7 @@ jobs:
         # See sibling CPU job — splits image transfer time and registry
         # failures out of the harness step.
         run: docker compose -f harness/compose.yml --profile full pull
-      - name: Run Talk-driven e2e (GPU)
+      - name: Run manual-install Talk e2e (GPU)
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           RECORD_DURATION_SECONDS: "75"
