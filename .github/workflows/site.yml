@@ -1,32 +1,32 @@
-name: Microsite
+name: Site
 
-# Build + lint gate for the Astro microsite.
+# Build + lint gate for the Astro site.
 #
 # Deliberately a separate workflow rather than a job in ci.yml: ci.yml's
-# `paths-ignore: '**/*.md'` would skip PRs that only touch the microsite's
+# `paths-ignore: '**/*.md'` would skip PRs that only touch the site's
 # markdown content, but that content is schema-validated at build time
 # (src/content/config.ts), so a bad frontmatter change breaks the build.
 #
 # `npm ci` here is what guards the failure this workflow was added for: the
-# microsite once shipped with no package.json/lockfile at all, and nothing in
+# site once shipped with no package.json/lockfile at all, and nothing in
 # CI noticed — it was only caught when someone tried to deploy it.
 
 on:
   push:
     branches: [main]
     paths:
-      - 'cassini-microsite/**'
-      - '.github/workflows/microsite.yml'
+      - 'site/**'
+      - '.github/workflows/site.yml'
   pull_request:
     paths:
-      - 'cassini-microsite/**'
-      - '.github/workflows/microsite.yml'
+      - 'site/**'
+      - '.github/workflows/site.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: microsite-ci-${{ github.workflow }}-${{ github.ref }}
+  group: site-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: cassini-microsite
+        working-directory: site
     steps:
       - uses: actions/checkout@v4
 
@@ -43,9 +43,9 @@ jobs:
         with:
           # Single source of truth for the build Node version, shared with
           # the Cloudflare build.
-          node-version-file: cassini-microsite/.nvmrc
+          node-version-file: site/.nvmrc
           cache: npm
-          cache-dependency-path: cassini-microsite/package-lock.json
+          cache-dependency-path: site/package-lock.json
 
       - name: Install (fails if manifest/lockfile are missing or out of sync)
         run: npm ci
