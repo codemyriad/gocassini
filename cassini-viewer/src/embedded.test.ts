@@ -153,6 +153,10 @@ describe("ensureShadowAppRoot", () => {
     id: string;
     rel?: string;
     href?: string;
+    // ensureShadowAppRoot sets host.style.cssText on the created host element;
+    // a real Element always has a .style object, so the stub must too or the
+    // assignment throws "Cannot set properties of undefined (setting 'cssText')".
+    style: { cssText: string };
     children: StubEl[];
     shadowRoot: ShadowStub | null;
     appendChild(child: StubEl): void;
@@ -161,6 +165,7 @@ describe("ensureShadowAppRoot", () => {
   function makeEl(id: string): StubEl {
     return {
       id,
+      style: { cssText: "" },
       children: [],
       shadowRoot: null,
       appendChild(child: StubEl) {
