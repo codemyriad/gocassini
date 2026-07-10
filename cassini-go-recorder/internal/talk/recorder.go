@@ -1167,38 +1167,12 @@ func (r *Recorder) handleParticipantsEvent(update map[string]any) error {
 			continue
 		}
 		r.rememberParticipantIdentity(sessionID, identity.DisplayName, identity.ParticipantID)
-		peer, requestIssued, err := r.ensureSubscriber(sessionID)
-		if err != nil {
+		if err := r.ensureInCallSubscriber(sessionID); err != nil {
 			return err
-		}
-		if !requestIssued {
-			r.retryRequestOfferForCallTransition(peer)
 		}
 	}
 
 	return nil
-}
-
-// retryRequestOfferForCallTransition forces a fresh requestoffer when a
-// participants update tells us that a session with an existing subscriber is
-// now in the call. That subscriber's earlier requestoffer may have raced
-// spreed's call-state propagation and been rejected at hub.go ("not in same
-// call"), so the transition should bypass the normal response throttle.
-//
-// Callers must not invoke this when ensureSubscriber already issued a request
-// for the same update (a new peer's initial request or an exhausted peer's
-// recovery request). A duplicate request without the offer SID makes the MCU
-// rebuild its Janus subscriber.
-func (r *Recorder) retryRequestOfferForCallTransition(peer *subscriberPeer) {
-	if peer == nil {
-		return
-	}
-	if !peer.clearOfferThrottleForCallTransition() {
-		return
-	}
-	if err := peer.requestOffer(); err != nil {
-		log.Printf("requestoffer retry after call transition failed for %s: %v", peer.remoteSessionID, err)
-	}
 }
 
 func (r *Recorder) handleSignalingData(ctx context.Context, data map[string]any) error {
@@ -1217,7 +1191,7 @@ func (r *Recorder) handleSignalingData(ctx context.Context, data map[string]any)
 		return nil
 	}
 
-	peer, _, err := r.ensureSubscriber(fromSession)
+	peer, err := r.ensureSubscriber(fromSession)
 	if err != nil {
 		return err
 	}
@@ -1231,36 +1205,30 @@ func (r *Recorder) handleSignalingData(ctx context.Context, data map[string]any)
 	return nil
 }
 
-// ensureSubscriber returns requestIssued=true when this call either registered
-// a peer and issued its initial requestoffer or reset an exhausted peer and
-// issued its recovery request. Callers handling an in-call transition use that
-// bit to avoid immediately sending the same request a second time.
-func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, bool, error) {
+// ensureSubscriber returns an existing peer or registers a new peer and issues
+// exactly one initial requestoffer. It deliberately does not bypass an existing
+// peer's response throttle: participants updates describe current in-call
+// state, not edge-triggered transitions, and another empty-SID request can make
+// the MCU replace the Janus subscriber during an active negotiation (D-454).
+func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, error) {
 	if remoteSessionID == "" || remoteSessionID == r.signalingSessionID {
-		return nil, false, nil
+		return nil, nil
 	}
 
 	r.mu.Lock()
 	if r.stopping {
 		r.mu.Unlock()
-		return nil, false, nil
+		return nil, nil
 	}
 	existing := r.subscribers[remoteSessionID]
 	r.mu.Unlock()
 	if existing != nil {
-		if existing.resetIfExhausted() {
-			log.Printf("retrying requestoffer for %s (participant joined call)", remoteSessionID)
-			if err := existing.requestOffer(); err != nil {
-				log.Printf("requestoffer retry failed for %s: %v", remoteSessionID, err)
-			}
-			return existing, true, nil
-		}
-		return existing, false, nil
+		return existing, nil
 	}
 
 	peer, err := r.newSubscriberPeer(remoteSessionID)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 
 	r.mu.Lock()
@@ -1269,14 +1237,13 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, bo
 		// registering it now would resurrect a subscriber nobody closes.
 		r.mu.Unlock()
 		_ = peer.close()
-		return nil, false, nil
+		return nil, nil
 	}
 	if current := r.subscribers[remoteSessionID]; current != nil {
 		r.mu.Unlock()
 		_ = peer.close()
-		// The concurrent winner registered current and issued its initial
-		// requestoffer; do not make this caller duplicate it.
-		return current, true, nil
+		// The concurrent winner owns the one initial requestoffer.
+		return current, nil
 	}
 	r.subscribers[remoteSessionID] = peer
 	r.inCallEver[remoteSessionID] = struct{}{}
@@ -1288,7 +1255,25 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, bo
 		log.Printf("initial requestoffer failed for %s: %v", remoteSessionID, err)
 	}
 
-	return peer, true, nil
+	return peer, nil
+}
+
+// ensureInCallSubscriber owns recovery actions driven by participant state.
+// Keeping exhausted-peer reset here prevents a late inbound offer/candidate
+// from issuing a new empty-SID request before that valid message is processed.
+func (r *Recorder) ensureInCallSubscriber(remoteSessionID string) error {
+	peer, err := r.ensureSubscriber(remoteSessionID)
+	if err != nil || peer == nil {
+		return err
+	}
+	if !peer.resetIfExhausted() {
+		return nil
+	}
+	log.Printf("retrying requestoffer for %s (participant still in call)", remoteSessionID)
+	if err := peer.requestOffer(); err != nil {
+		log.Printf("requestoffer recovery failed for %s: %v", remoteSessionID, err)
+	}
+	return nil
 }
 
 func (r *Recorder) removeSubscriber(remoteSessionID string) error {
@@ -1347,12 +1332,8 @@ func (r *Recorder) syncRemoteParticipants(active map[string]participantIdentity)
 
 	for remoteSessionID, identity := range active {
 		r.rememberParticipantIdentity(remoteSessionID, identity.DisplayName, identity.ParticipantID)
-		peer, requestIssued, err := r.ensureSubscriber(remoteSessionID)
-		if err != nil {
+		if err := r.ensureInCallSubscriber(remoteSessionID); err != nil {
 			return err
-		}
-		if !requestIssued {
-			r.retryRequestOfferForCallTransition(peer)
 		}
 	}
 
@@ -1968,9 +1949,9 @@ func (p *subscriberPeer) hasOffer() bool {
 	return p.offerReceived
 }
 
-// resetIfExhausted resets the requestoffer attempt counter when the remote
-// participant has transitioned into the call. Returns true if a reset was
-// performed (i.e. attempts were exhausted and no offer was received yet).
+// resetIfExhausted resets the requestoffer attempt counter when participant
+// reconciliation confirms the remote is still in the call. Returns true if a
+// reset was performed (attempts were exhausted and no offer was received yet).
 func (p *subscriberPeer) resetIfExhausted() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -1979,24 +1960,6 @@ func (p *subscriberPeer) resetIfExhausted() bool {
 	}
 	p.requestOfferAttempts = 0
 	p.offerExhaustedLogged = false
-	p.awaitingOfferSince = time.Time{}
-	return true
-}
-
-// clearOfferThrottleForCallTransition drops the in-flight throttle so the
-// next requestOffer call sends immediately. Used when we learn the remote
-// participant has freshly entered the call — the first requestOffer
-// likely raced spreed's call-state propagation and was silently rejected
-// at hub.go ("not in the same call"). Returns true if a retry should be
-// attempted now. No-op when an offer was already received, when no
-// attempt has been made yet, or when attempts are exhausted (let
-// resetIfExhausted handle that case).
-func (p *subscriberPeer) clearOfferThrottleForCallTransition() bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.offerReceived || p.requestOfferAttempts == 0 || p.offerExhaustedLogged {
-		return false
-	}
 	p.awaitingOfferSince = time.Time{}
 	return true
 }
