@@ -1,0 +1,59 @@
+# Lint gate for shell scripts and GitHub Actions workflows, plus the fast
+# script test suite. Repo-wide hygiene, no secrets — runs whenever scripts or
+# workflows change.
+#
+# Scope notes:
+#   - actionlint lints every workflow in .github/workflows (with shellcheck on
+#     the embedded run: blocks).
+#   - shellcheck currently covers scripts/ only. Many older scripts elsewhere
+#     (harness/, deployment/, …) predate shellcheck and don't pass it yet;
+#     widening the glob needs a cleanup pass first so this gate stays green.
+name: Lint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/**'
+      - '.github/actions/**'
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/**'
+      - '.github/actions/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: shellcheck + actionlint + script tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck xsltproc libxml2-utils
+
+      - name: shellcheck scripts/
+        run: shellcheck scripts/*.sh
+
+      - name: actionlint (all workflows)
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash -o /tmp/dl-actionlint.bash
+          bash /tmp/dl-actionlint.bash >/dev/null
+          ./actionlint
+
+      - name: Run script test suites
+        run: ./scripts/test-release-tooling.sh

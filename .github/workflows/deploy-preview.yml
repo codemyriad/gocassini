@@ -66,12 +66,16 @@ jobs:
         env:
           # Forwarded so the shell parser doesn't have to template at multiple sites.
           DISPATCH_INPUT: ${{ github.event.inputs.run_processing }}
+          # head_ref is an attacker-controllable branch name: route it through
+          # an env var instead of templating it into the script inline
+          # (actionlint expression / script-injection guard).
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
 
           # ---- branch + changed-files + HEAD commit message detection ----
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BRANCH="${{ github.head_ref }}"
+            BRANCH="$HEAD_REF"
             BASE_REF="${{ github.event.pull_request.base.ref }}"
             git fetch origin "${BASE_REF}:refs/remotes/origin/${BASE_REF}"
             CHANGED="$(git diff "origin/${BASE_REF}...HEAD" --name-only || true)"
@@ -165,7 +169,7 @@ jobs:
             should_run=true
           fi
 
-          ENCODED_BRANCH="$(echo "$BRANCH" | sed 's|/|--|g')"
+          ENCODED_BRANCH="${BRANCH//\//--}"
 
           {
             echo "branch=$BRANCH"
@@ -330,7 +334,7 @@ jobs:
           # Each preview produces exactly the latest-N selection. Stale opus
           # from earlier runs would clutter the published viewer's catalog;
           # stale raw .mkv wastes disk. Wipe per-branch dirs before each run.
-          rm -rf "$RAW_DIR"/* "$PROC_DIR"/* || true
+          rm -rf "${RAW_DIR:?}"/* "${PROC_DIR:?}"/* || true
           mkdir -p "$RAW_DIR" "$PROC_DIR"
 
       - name: Select latest N recordings
