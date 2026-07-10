@@ -14,6 +14,27 @@ sections below are script-managed: `scripts/fold-changelog.sh` (run by
 version and removes the consumed fragments. Edit released sections only to fix
 mistakes; add new entries as fragments. See [`docs/release.md`](docs/release.md).
 
+## [0.2.0-alpha.3] - 2026-07-10
+
+### Added
+- Cassini marketing and docs microsite (`cassini-microsite/`): homepage, changelog page, and docs section with sidebar navigation.
+- The Cassini microsite is now published at https://gocassini.codemyriad.io.
+- Release tooling for the Nextcloud App Store: a version-ladder CLI
+  (`scripts/release-version.sh`), changelog folder (`scripts/fold-changelog.sh`),
+  local release-prep orchestrator (`scripts/prepare-release.sh`), App Store
+  package builder/validator, and a manual **Release** workflow that signs and
+  publishes `gocassini.tar.gz`. See `docs/release.md`.
+
+### Changed
+- Nextcloud toolbar icon updated to the Cassini brand mark with white fills and a tighter viewBox for correct rendering in NC ExApp containers.
+- Viewer restyled with the Saturn theme (ice blue and Saturn gold) and now shows a favicon. A previously saved light/dark choice resets once and follows your system setting until you set it again.
+
+### Fixed
+- Documentation pages on the microsite now show the site footer.
+- The microsite changelog timeline no longer draws a trailing line below the last entry.
+- Viewer meeting dates no longer append a timezone (e.g. "GMT+1") they cannot actually justify. Meeting date labels carry no timezone, so a UTC-derived time could be shown an hour off with a wrong-but-confident zone suffix. The viewer now renders the label's own wall-clock time and makes no timezone claim.
+- The operator control panel no longer flashes to loading spinners every couple of seconds while watching an active recording. Background refreshes (the 2s polling fallback and event-stream reconnects) now update the jobs list and run detail in place instead of re-showing the first-load placeholder each tick.
+
 ## [0.2.0-alpha.2] - 2026-07-06
 
 ### Added
