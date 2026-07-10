@@ -19,7 +19,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pion/webrtc/v4"
 
@@ -71,40 +70,37 @@ func TestAnswerNotBlockedByUnreachableICEServer(t *testing.T) {
 		t.Fatalf("newSubscriberPeer: %v", err)
 	}
 	// pc.Close() can park until pion gives up on the black-holed STUN gather
-	// (up to stunGatherTimeout). Close in the background with a bounded wait so
-	// teardown is deterministic; the gather goroutine self-terminates at the
-	// timeout and is reaped at process exit. We never depend on it here.
+	// (up to stunGatherTimeout). Close in the background; the gather goroutine
+	// self-terminates at the timeout and is reaped at process exit. We never
+	// depend on it here.
 	t.Cleanup(func() {
-		done := make(chan struct{})
-		go func() { _ = p.close(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(200 * time.Millisecond):
-		}
+		go func() { _ = p.close() }()
 	})
 
 	offerSDP := makeOfferSDP(t)
 
-	start := time.Now()
 	// The signaling client in the test recorder is not connected, so the
 	// answer "send" returns an error; we only care that the path REACHES the
-	// send quickly rather than parking behind ICE gathering.
+	// send while gathering is still in progress.
 	err = p.handleMessage(context.Background(), map[string]any{
 		"type":    "offer",
 		"sid":     "1",
 		"payload": map[string]any{"sdp": offerSDP},
 	})
-	elapsed := time.Since(start)
 	if err == nil || !strings.Contains(err.Error(), "send answer") {
 		t.Fatalf("offer path did not reach the expected answer send: %v", err)
 	}
 
-	// stunGatherTimeout is 5s; the answer must not wait on it. 2s leaves a
-	// wide margin above the sub-millisecond SDP work while still failing hard
-	// on the ~5s gather block the pre-fix code imposed.
-	if elapsed > 2*time.Second {
-		t.Fatalf("offer->answer took %v; the answer must not block on ICE gathering (D-454). "+
-			"An unreachable ICE server stalled the answer, which is what produces the ~24s ICE "+
-			"connect and empty captures in production.", elapsed)
+	// Event-ordering guard, no wall clock: the black-holed STUN server keeps
+	// ICE gathering busy for the whole stunGatherTimeout, so a nonblocking
+	// handler observably returns while gathering is still running. Any code
+	// that parks the answer behind gathering (the pre-fix D-454 stall) only
+	// returns once pion has already transitioned the gatherer to Complete —
+	// pion sets that state before resolving GatheringCompletePromise, so the
+	// check is deterministic in both directions.
+	if p.pc.ICEGatheringState() == webrtc.ICEGatheringStateComplete {
+		t.Fatal("offer handler returned only after ICE gathering completed: the answer was " +
+			"parked behind gathering (D-454). An unreachable ICE server must not delay the " +
+			"answer; that stall is what produces the ~24s ICE connect and empty captures.")
 	}
 }

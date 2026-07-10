@@ -38,27 +38,17 @@ func syncAllInCallUpdate() map[string]any {
 	}
 }
 
-func expectSingleRequestOffer(t *testing.T, messages <-chan map[string]any) {
+func expectSingleRequestOffer(t *testing.T, r *Recorder, messages <-chan map[string]any) {
 	t.Helper()
-
-	select {
-	case data := <-messages:
-		if got := asString(data["type"]); got != "requestoffer" {
-			t.Fatalf("signaling message type = %q, want requestoffer (data=%v)", got, data)
-		}
-		if got := asString(data["to"]); got != "alice-session" {
-			t.Fatalf("requestoffer recipient = %q, want alice-session (data=%v)", got, data)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for requestoffer")
+	got := signalingProbe(t, r, messages)
+	if len(got) != 1 {
+		t.Fatalf("signaling messages before probe = %v, want exactly one requestoffer", got)
 	}
-
-	// WebSocket delivery is asynchronous. Leave a short quiet window after
-	// the expected message so an accidental immediate duplicate is observed.
-	select {
-	case data := <-messages:
-		t.Fatalf("unexpected second signaling message after requestoffer: %v", data)
-	case <-time.After(200 * time.Millisecond):
+	if typ := asString(got[0]["type"]); typ != "requestoffer" {
+		t.Fatalf("signaling message type = %q, want requestoffer (data=%v)", typ, got[0])
+	}
+	if to := asString(got[0]["to"]); to != "alice-session" {
+		t.Fatalf("requestoffer recipient = %q, want alice-session (data=%v)", to, got[0])
 	}
 }
 
@@ -68,12 +58,10 @@ func peerRequestOfferAttempts(peer *subscriberPeer) int {
 	return peer.requestOfferAttempts
 }
 
-func expectNoSignalingMessage(t *testing.T, messages <-chan map[string]any) {
+func expectNoSignalingMessage(t *testing.T, r *Recorder, messages <-chan map[string]any) {
 	t.Helper()
-	select {
-	case data := <-messages:
-		t.Fatalf("unexpected signaling message: %v", data)
-	case <-time.After(200 * time.Millisecond):
+	if got := signalingProbe(t, r, messages); len(got) != 0 {
+		t.Fatalf("unexpected signaling messages: %v", got)
 	}
 }
 
@@ -94,7 +82,7 @@ func TestParticipantUpdateSendsOneInitialRequestOffer(t *testing.T) {
 			}
 			t.Cleanup(func() { r.removeParticipantSessions([]any{"alice-session"}) })
 
-			expectSingleRequestOffer(t, messages)
+			expectSingleRequestOffer(t, r, messages)
 
 			peer := r.subscribers["alice-session"]
 			if peer == nil {
@@ -123,7 +111,7 @@ func TestRepeatedParticipantUpdateKeepsExistingRequestThrottled(t *testing.T) {
 				t.Fatalf("create subscriber: %v", err)
 			}
 			t.Cleanup(func() { r.removeParticipantSessions([]any{"alice-session"}) })
-			expectSingleRequestOffer(t, messages)
+			expectSingleRequestOffer(t, r, messages)
 
 			peer := r.subscribers["alice-session"]
 			if peer == nil {
@@ -138,7 +126,7 @@ func TestRepeatedParticipantUpdateKeepsExistingRequestThrottled(t *testing.T) {
 			if err := r.handleParticipantsEvent(tc.update()); err != nil {
 				t.Fatalf("repeat participant update: %v", err)
 			}
-			expectNoSignalingMessage(t, messages)
+			expectNoSignalingMessage(t, r, messages)
 			if got := peerRequestOfferAttempts(peer); got != 1 {
 				t.Fatalf("existing subscriber requestOfferAttempts = %d, want 1", got)
 			}
@@ -162,7 +150,7 @@ func TestParticipantUpdateSendsOneExhaustedRecoveryRequest(t *testing.T) {
 				t.Fatalf("create subscriber: %v", err)
 			}
 			t.Cleanup(func() { r.removeParticipantSessions([]any{"alice-session"}) })
-			expectSingleRequestOffer(t, messages)
+			expectSingleRequestOffer(t, r, messages)
 
 			peer := r.subscribers["alice-session"]
 			if peer == nil {
@@ -179,7 +167,7 @@ func TestParticipantUpdateSendsOneExhaustedRecoveryRequest(t *testing.T) {
 			if err := r.handleParticipantsEvent(tc.update()); err != nil {
 				t.Fatalf("recover exhausted subscriber: %v", err)
 			}
-			expectSingleRequestOffer(t, messages)
+			expectSingleRequestOffer(t, r, messages)
 			if got := peerRequestOfferAttempts(peer); got != 1 {
 				t.Fatalf("recovered subscriber requestOfferAttempts = %d, want 1", got)
 			}
@@ -193,7 +181,7 @@ func TestEnsureSubscriberDoesNotRecoverExhaustedPeerFromInboundLookup(t *testing
 		t.Fatalf("create subscriber: %v", err)
 	}
 	t.Cleanup(func() { r.removeParticipantSessions([]any{"alice-session"}) })
-	expectSingleRequestOffer(t, messages)
+	expectSingleRequestOffer(t, r, messages)
 
 	peer := r.subscribers["alice-session"]
 	if peer == nil {
@@ -215,7 +203,7 @@ func TestEnsureSubscriberDoesNotRecoverExhaustedPeerFromInboundLookup(t *testing
 	if got != peer {
 		t.Fatalf("ensureSubscriber returned peer %p, want existing %p", got, peer)
 	}
-	expectNoSignalingMessage(t, messages)
+	expectNoSignalingMessage(t, r, messages)
 
 	peer.mu.Lock()
 	attempts := peer.requestOfferAttempts

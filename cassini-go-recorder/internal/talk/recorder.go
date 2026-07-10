@@ -2034,6 +2034,23 @@ func (p *subscriberPeer) sendEndOfCandidates(reason string) {
 	}
 }
 
+// beginNegotiation re-arms the per-negotiation signaling state when an offer
+// arrives: the response throttle (so the retry loop stays quiet while the
+// answer is built and sent), the negotiation SID, and the local ICE gate.
+// Signals buffered for a superseded negotiation are dropped — they were
+// stamped with the old SID and must not ride out around the new answer. It
+// deliberately does NOT set offerReceived: only a successfully sent answer
+// stops offer retries (D-386, see markAnswerSent).
+func (p *subscriberPeer) beginNegotiation(sid string) {
+	p.mu.Lock()
+	p.awaitingOfferSince = time.Now()
+	p.currentSID = sid
+	p.endOfCandidatesSent = false
+	p.answerSent = false
+	p.pendingLocalICESignals = nil
+	p.mu.Unlock()
+}
+
 // markAnswerSent opens the local ICE gate only after sendPeerMessage(answer)
 // returned successfully. It also completes the requestoffer state transition:
 // a failed answer write must leave retries enabled and candidates buffered.
@@ -2064,17 +2081,8 @@ func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any)
 			return nil
 		}
 
-		p.mu.Lock()
-		// Mark the handshake in-flight so the retry loop does not fire a
-		// redundant requestoffer while we build and send the answer. Do NOT
-		// set offerReceived yet: only a sent answer should stop retries.
-		p.awaitingOfferSince = time.Now()
-		p.currentSID = asString(data["sid"])
-		p.endOfCandidatesSent = false
-		p.answerSent = false
-		p.pendingLocalICESignals = nil
-		sid := p.currentSID
-		p.mu.Unlock()
+		sid := asString(data["sid"])
+		p.beginNegotiation(sid)
 
 		remoteDesc := webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdp}
 		if err := p.pc.SetRemoteDescription(remoteDesc); err != nil {
