@@ -7,6 +7,7 @@ source "$SCRIPT_DIR/common.sh"
 
 ROOM_NAME="Codex test room $(date -u +%Y%m%d-%H%M%S)"
 ROOM_TYPE="${ROOM_TYPE:-3}"
+ROOM_INVITE="${ROOM_INVITE:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -18,6 +19,10 @@ while [[ $# -gt 0 ]]; do
       ROOM_TYPE="$2"
       shift 2
       ;;
+    --invite)
+      ROOM_INVITE="$2"
+      shift 2
+      ;;
     *)
       echo "unknown argument: $1" >&2
       exit 2
@@ -25,17 +30,29 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "$ROOM_TYPE" == "1" && -z "$ROOM_INVITE" ]]; then
+  echo "room type 1 requires --invite or ROOM_INVITE" >&2
+  exit 2
+fi
+
 wait_for_nextcloud 180
 
 create_url="$NEXTCLOUD_URL/ocs/v2.php/apps/spreed/api/v4/room"
+create_fields=(--data-urlencode "roomType=$ROOM_TYPE")
+if [[ -n "$ROOM_INVITE" ]]; then
+  # A one-to-one conversation is created by inviting its other participant;
+  # roomName is only meaningful for named group/public conversations.
+  create_fields+=(--data-urlencode "invite=$ROOM_INVITE")
+else
+  create_fields+=(--data-urlencode "roomName=$ROOM_NAME")
+fi
 response="$(
   curl -sS \
     -u "$ADMIN_USER:$ADMIN_PASSWORD" \
     -H 'OCS-APIRequest: true' \
     -H 'Accept: application/json' \
     -X POST "$create_url" \
-    --data-urlencode "roomType=$ROOM_TYPE" \
-    --data-urlencode "roomName=$ROOM_NAME"
+    "${create_fields[@]}"
 )"
 
 room_token="$(

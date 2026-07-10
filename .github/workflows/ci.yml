@@ -86,6 +86,7 @@ jobs:
       matrix:
         script:
           - ci-e2e.sh
+          - ci-e2e-private.sh
           - ci-e2e-rejoin.sh
           # ci-e2e-mute.sh is NOT in this matrix: it is a heavier 3-publisher
           # WebRTC scenario with its own readiness gate, so it runs as its own
@@ -226,6 +227,79 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: d454-${{ matrix.iteration }}-diagnostics
+          path: |
+            /tmp/gocassini-ci-recorder.log
+            /tmp/gocassini-ci-publisher.log
+            /tmp/gocassini-ci-*.mkv
+            /tmp/gocassini-ci-*-segments-*
+            /tmp/sessions/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # D-454's acceptance criterion specifically calls for consecutive private
+  # calls. Repeat the permanent one-to-one integration guard enough times to
+  # expose the pre-fix flake, while keeping this soak scoped to the fix PR.
+  d454-private-stability:
+    name: "D-454 private stability (${{ matrix.iteration }}/20)"
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 127
+    runs-on: ubuntu-latest
+    needs:
+      - unit
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        iteration:
+          - 1
+          - 2
+          - 3
+          - 4
+          - 5
+          - 6
+          - 7
+          - 8
+          - 9
+          - 10
+          - 11
+          - 12
+          - 13
+          - 14
+          - 15
+          - 16
+          - 17
+          - 18
+          - 19
+          - 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: cassini-go-recorder/go.mod
+          cache-dependency-path: |
+            cassini-go-recorder/go.sum
+            harness/go-talk-rotator/go.sum
+      - name: Install runtime tools
+        run: |
+          sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f || true
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg jq ripgrep
+      - name: Run D-454 private recorder stability repetition
+        env:
+          SPREED_PROFILE: full
+          NEXTCLOUD_URL: "http://127.0.0.1:28080"
+          SIGNALING_URL: "http://127.0.0.1:28082"
+          BOT_PASSWORD: "ci-bot-password"
+          NEXTCLOUD_IMAGE: ""
+          CALL_NAME: "D-454 private stability ${{ matrix.iteration }}"
+        run: ./harness/bin/ci-e2e-private.sh
+      - name: Upload D-454 private diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: d454-private-${{ matrix.iteration }}-diagnostics
           path: |
             /tmp/gocassini-ci-recorder.log
             /tmp/gocassini-ci-publisher.log
