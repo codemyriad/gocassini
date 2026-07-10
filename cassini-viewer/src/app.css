@@ -18,8 +18,8 @@
    * one declaration serves both contexts. See src/embedded.ts. */
   root: ":where(:root, :host)";
   themes:
-    forrest-light --default,
-    forrest-dark --prefersdark;
+    saturn-light --default,
+    saturn-dark --prefersdark;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@
  * ────────────────────────────────────────────────────────────────────────── */
 
 @plugin "daisyui/theme" {
-  name: "forrest-light";
+  name: "saturn-light";
   default: true;
   prefersdark: false;
   color-scheme: light;
@@ -77,10 +77,10 @@
   --color-base-200: oklch(91.8% 0.016 103.394);
   --color-base-300: oklch(85.8% 0.014 103.384);
   --color-base-content: oklch(13.1% 0.029 65.152);
-  --color-primary: oklch(70.5% 0.147 152.3);
-  --color-primary-content: oklch(0% 0 0);
-  --color-secondary: oklch(73.4% 0.148 237.323);
-  --color-secondary-content: oklch(13.955% 0.027 168.327);
+  --color-primary: oklch(62% 0.085 215);
+  --color-primary-content: oklch(100% 0 0);
+  --color-secondary: oklch(63% 0.16 72);
+  --color-secondary-content: oklch(15% 0.05 72);
   --color-accent: oklch(81% 0.111 293.571);
   --color-accent-content: oklch(14.125% 0.023 185.713);
   --color-neutral: oklch(14% 0 0);
@@ -110,7 +110,7 @@
  * ────────────────────────────────────────────────────────────────────────── */
 
 @plugin "daisyui/theme" {
-  name: "forrest-dark";
+  name: "saturn-dark";
   default: false;
   prefersdark: true;
   color-scheme: dark;
@@ -119,10 +119,10 @@
   --color-base-200: oklch(14% 0 0);
   --color-base-300: oklch(36% 0 0);
   --color-base-content: oklch(91.8% 0.016 103.394);
-  --color-primary: oklch(58% 0.147 152.3);
+  --color-primary: oklch(80.5% 0.0775 215);
   --color-primary-content: oklch(0% 0 0);
-  --color-secondary: oklch(73.4% 0.148 237.323);
-  --color-secondary-content: oklch(13.955% 0.027 168.327);
+  --color-secondary: oklch(82% 0.14 78);
+  --color-secondary-content: oklch(20% 0.05 78);
   --color-accent: oklch(81% 0.111 293.571);
   --color-accent-content: oklch(14.125% 0.023 185.713);
   --color-neutral: oklch(91.8% 0.016 103.394);
@@ -157,10 +157,10 @@
  * by embedded.ts to sidestep the circular var() reference that would arise
  * from both NC and DaisyUI using --color-primary.
  *
- * data-theme="forrest-light" stays on .cassini-root as a DaisyUI fallback for
+ * data-theme="saturn-light" stays on .cassini-root as a DaisyUI fallback for
  * tokens NC doesn't provide (accent, secondary, neutral, etc.).
  * :host([data-nc-theme]) .cassini-root has specificity (0,2,0) which beats
- * DaisyUI's [data-theme="forrest-light"] at (0,1,0).
+ * DaisyUI's [data-theme="saturn-light"] at (0,1,0).
  * ────────────────────────────────────────────────────────────────────────── */
 :host([data-nc-theme]) .cassini-root {
   --color-primary:         var(--color-primary-element);
