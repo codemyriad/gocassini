@@ -14,8 +14,10 @@ export SIGNALING_URL="${SIGNALING_URL:-}"
 
 export ADMIN_USER="${ADMIN_USER:-admin}"
 export ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
-export BOT_USER="${BOT_USER:-ci-botuser}"
-export BOT_PASSWORD="${BOT_PASSWORD:-ci-bot-password}"
+# BOT_USER/BOT_PASSWORD come from common.sh — the single source of truth the
+# bootstrap creates the user from. A second default here would silently
+# diverge (that mismatch broke the first D-454 private soak); only export.
+export BOT_USER BOT_PASSWORD
 export SIGNALING_SHARED_SECRET="${SIGNALING_SHARED_SECRET:-7f4dca67263621ba7f9f9917e13de95a201f6f360be0d303e3008c2e6c8ad37d}"
 export TURN_SERVER="${TURN_SERVER:-127.0.0.1:13479}"
 export TURN_SHARED_SECRET="${TURN_SHARED_SECRET:-3c04d2fc2f7fe39d48eb4dc77f652c8c778a4ea178b0e486529b284afca7b648}"

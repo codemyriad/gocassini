@@ -36,12 +36,19 @@ if [[ "$ROOM_TYPE" == "1" && -z "$ROOM_INVITE" ]]; then
   echo "room type 1 requires --invite or ROOM_INVITE" >&2
   exit 2
 fi
+if [[ "$ROOM_TYPE" != "1" && -n "$ROOM_INVITE" ]]; then
+  # For group/public rooms Talk's 'invite' field means a group/circle ID, not
+  # a user, and setting it would silently drop the room name. Refuse instead
+  # of changing semantics behind the caller's back.
+  echo "--invite/ROOM_INVITE is only supported for roomType=1 (one-to-one)" >&2
+  exit 2
+fi
 
 wait_for_nextcloud 180
 
 create_url="$NEXTCLOUD_URL/ocs/v2.php/apps/spreed/api/v4/room"
 create_fields=(--data-urlencode "roomType=$ROOM_TYPE")
-if [[ -n "$ROOM_INVITE" ]]; then
+if [[ "$ROOM_TYPE" == "1" ]]; then
   # A one-to-one conversation is created by inviting its other participant;
   # roomName is only meaningful for named group/public conversations.
   create_fields+=(--data-urlencode "invite=$ROOM_INVITE")
