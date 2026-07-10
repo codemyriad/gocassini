@@ -1,11 +1,11 @@
 ---
-import '../tailwind.css';
-import { ViewTransitions } from 'astro:transitions';
-import Nav from '../components/Nav.astro';
-import Footer from '../components/Footer.astro';
-import { Headset, Lock, FileAudio, MonitorPlay, AppWindow, Puzzle, Box, Users, PackagePlus, Wand, Mic, ScrollText, Tag, Package } from '@lucide/astro';
+import "../tailwind.css";
+import { ViewTransitions } from "astro:transitions";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+import { Headset, Box, Users, Mic, ScrollText, Tag, Package } from "@lucide/astro";
 const rawBase = import.meta.env.BASE_URL;
-const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
+const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
 ---
 
 <!DOCTYPE html>
@@ -415,24 +415,24 @@ const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
   function initTranscriptDemo() {
     if (window.innerWidth < 768) return; // freeze-frame on mobile
 
-    const section = document.getElementById('transcript-demo');
+    const section = document.getElementById("transcript-demo");
     if (!section) return;
 
-    const segments = Array.from(section.querySelectorAll('.demo-segment'));
-    const timer = section.querySelector('.demo-timer');
-    const progressBar = section.querySelector('.demo-progress');
-    const elapsed = section.querySelector('.demo-elapsed');
+    const segments = Array.from(section.querySelectorAll(".demo-segment"));
+    const timer = section.querySelector(".demo-timer");
+    const progressBar = section.querySelector(".demo-progress");
+    const elapsed = section.querySelector(".demo-elapsed");
 
-    const times = ['0:00', '0:18', '0:45'];
+    const times = ["0:00", "0:18", "0:45"];
     const totalSec = 165;
 
     function formatTime(sec) {
       const m = Math.floor(sec / 60);
       const s = Math.floor(sec % 60);
-      return `${m}:${s.toString().padStart(2, '0')}`;
+      return `${m}:${s.toString().padStart(2, "0")}`;
     }
 
-    const wordCounts = segments.map(seg => seg.querySelectorAll('.demo-word').length);
+    const wordCounts = segments.map(seg => seg.querySelectorAll(".demo-word").length);
     const totalWords = wordCounts.reduce((a, b) => a + b, 0);
     const usable = 0.83;
     const startOffset = 0.04;
@@ -448,8 +448,8 @@ const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
 
     function clearAll() {
       segments.forEach(seg => {
-        seg.classList.remove('ring-2', 'ring-primary', 'ring-offset-2', 'ring-offset-base-200');
-        seg.querySelectorAll('.demo-word').forEach(w => w.classList.remove('demo-word-active'));
+        seg.classList.remove("ring-2", "ring-primary", "ring-offset-2", "ring-offset-base-200");
+        seg.querySelectorAll(".demo-word").forEach(w => w.classList.remove("demo-word-active"));
       });
     }
 
@@ -468,71 +468,71 @@ const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
 
       segments.forEach((seg, i) => {
         const isActive = i === activeIndex;
-        seg.classList.toggle('ring-2', isActive);
-        seg.classList.toggle('ring-primary', isActive);
-        seg.classList.toggle('ring-offset-2', isActive);
-        seg.classList.toggle('ring-offset-base-200', isActive);
+        seg.classList.toggle("ring-2", isActive);
+        seg.classList.toggle("ring-primary", isActive);
+        seg.classList.toggle("ring-offset-2", isActive);
+        seg.classList.toggle("ring-offset-base-200", isActive);
 
-        const words = seg.querySelectorAll('.demo-word');
+        const words = seg.querySelectorAll(".demo-word");
         if (isActive) {
           const subProgress = Math.max(0, Math.min(1, (progress - segStarts[i]) / segWidths[i]));
           const activeWordIdx = Math.min(words.length - 1, Math.floor(subProgress * words.length));
-          words.forEach((w, j) => w.classList.toggle('demo-word-active', j === activeWordIdx));
+          words.forEach((w, j) => w.classList.toggle("demo-word-active", j === activeWordIdx));
         } else {
-          words.forEach(w => w.classList.remove('demo-word-active'));
+          words.forEach(w => w.classList.remove("demo-word-active"));
         }
       });
 
-      if (timer && activeIndex >= 0) timer.textContent = times[activeIndex] ?? '0:00';
+      if (timer && activeIndex >= 0) timer.textContent = times[activeIndex] ?? "0:00";
       const audioSec = Math.min(67, (progress / 0.90) * 67);
       if (progressBar) progressBar.style.width = `${(audioSec / totalSec) * 100}%`;
       if (elapsed) elapsed.textContent = formatTime(audioSec);
     }
 
-    window.addEventListener('scroll', update, { passive: true });
+    window.addEventListener("scroll", update, { passive: true });
     update();
   }
 
-  document.addEventListener('astro:page-load', initTranscriptDemo);
+  document.addEventListener("astro:page-load", initTranscriptDemo);
 
   function initNcBadge() {
-    const badge = document.getElementById('nc-badge');
-    const hero = document.querySelector('section');
+    const badge = document.getElementById("nc-badge");
+    const hero = document.querySelector("section");
     if (!badge || !hero) return;
     function update() {
       const gone = hero.getBoundingClientRect().bottom < 0;
-      badge.style.opacity = gone ? '0' : '1';
-      badge.style.pointerEvents = gone ? 'none' : 'auto';
+      badge.style.opacity = gone ? "0" : "1";
+      badge.style.pointerEvents = gone ? "none" : "auto";
     }
-    window.addEventListener('scroll', update, { passive: true });
+    window.addEventListener("scroll", update, { passive: true });
     update();
   }
-  document.addEventListener('astro:page-load', initNcBadge);
+  document.addEventListener("astro:page-load", initNcBadge);
 
   function initFaqAccordion() {
-    const items = Array.from(document.querySelectorAll('#faq-list details'));
+    const items = Array.from(document.querySelectorAll("#faq-list details"));
 
     items.forEach(item => {
-      const summary = item.querySelector('summary');
+      const summary = item.querySelector("summary");
       // Wrap all non-summary children in an animated container
-      const body = document.createElement('div');
-      body.style.overflow = 'hidden';
-      body.style.height = '0';
-      body.style.transition = 'height 0.25s ease';
+      const body = document.createElement("div");
+      body.style.overflow = "hidden";
+      body.style.height = "0";
+      body.style.transition = "height 0.25s ease";
       Array.from(item.children).forEach(child => {
         if (child !== summary) body.appendChild(child);
       });
       item.appendChild(body);
 
-      summary.addEventListener('click', e => {
+      summary.addEventListener("click", e => {
         e.preventDefault();
-        const isOpen = item.hasAttribute('open');
+        const isOpen = item.hasAttribute("open");
         if (isOpen) {
           close(item, body);
         } else {
           items.forEach(other => {
-            if (other !== item && other.hasAttribute('open')) {
-              const otherBody = other.querySelector('div');
+            if (other !== item && other.hasAttribute("open")) {
+              const otherBody = other.querySelector("div");
               if (otherBody) close(other, otherBody);
             }
           });
@@ -542,20 +542,20 @@ const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
     });
 
     function open(item, body) {
-      item.setAttribute('open', '');
-      body.style.height = body.scrollHeight + 'px';
-      body.addEventListener('transitionend', () => { body.style.height = 'auto'; }, { once: true });
+      item.setAttribute("open", "");
+      body.style.height = body.scrollHeight + "px";
+      body.addEventListener("transitionend", () => { body.style.height = "auto"; }, { once: true });
     }
 
     function close(item, body) {
-      item.removeAttribute('open');
-      body.style.height = body.scrollHeight + 'px';
+      item.removeAttribute("open");
+      body.style.height = body.scrollHeight + "px";
       requestAnimationFrame(() => {
-        body.style.height = '0';
+        body.style.height = "0";
       });
     }
   }
-  document.addEventListener('astro:page-load', initFaqAccordion);
+  document.addEventListener("astro:page-load", initFaqAccordion);
 </script>
 
 <style>

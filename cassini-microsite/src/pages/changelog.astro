@@ -1,14 +1,14 @@
 ---
-import '../tailwind.css';
-import { getCollection } from 'astro:content';
-import { ViewTransitions } from 'astro:transitions';
-import Nav from '../components/Nav.astro';
-import Footer from '../components/Footer.astro';
-import ChangelogEntry from '../components/ChangelogEntry.astro';
+import "../tailwind.css";
+import { getCollection } from "astro:content";
+import { ViewTransitions } from "astro:transitions";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+import ChangelogEntry from "../components/ChangelogEntry.astro";
 const rawBase = import.meta.env.BASE_URL;
-const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
+const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
 
-const rawEntries = (await getCollection('changelog', ({ data }) => !data.draft))
+const rawEntries = (await getCollection("changelog", ({ data }) => !data.draft))
   .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
 
 const entries = await Promise.all(
@@ -70,10 +70,10 @@ const entries = await Promise.all(
 
 <script>
   function init() {
-    const title = document.querySelector<HTMLElement>('.changelog-title');
-    if (title) title.classList.add('in-view');
+    const title = document.querySelector<HTMLElement>(".changelog-title");
+    if (title) title.classList.add("in-view");
 
-    const entries = document.querySelectorAll<HTMLElement>('.changelog-entry');
+    const entries = document.querySelectorAll<HTMLElement>(".changelog-entry");
     let firstCallback = true;
     const observer = new IntersectionObserver((records) => {
       const isFirst = firstCallback;
@@ -81,12 +81,12 @@ const entries = await Promise.all(
       records.filter(r => r.isIntersecting).forEach((record) => {
         const el = record.target as HTMLElement;
         const delay = isFirst ? Number(el.dataset.index ?? 0) * 150 : 0;
-        el.style.setProperty('--entry-delay', `${delay}ms`);
-        el.classList.add('in-view');
+        el.style.setProperty("--entry-delay", `${delay}ms`);
+        el.classList.add("in-view");
         observer.unobserve(el);
       });
     }, { threshold: 0.1 });
     entries.forEach(el => observer.observe(el));
   }
-  document.addEventListener('astro:page-load', init);
+  document.addEventListener("astro:page-load", init);
 </script>

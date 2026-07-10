@@ -1,4 +1,7 @@
 module.exports = {
+  // Build output and generated types are not source; linting them floods the
+  // report with errors from minified bundles.
+  ignorePatterns: ["dist/", ".astro/"],
   env: {
     node: true,
     browser: true,
