@@ -17,9 +17,13 @@ type MeetingBundle struct {
 }
 
 type MeetingBundleManifest struct {
-	Kind             string            `json:"kind"`
-	Version          string            `json:"version"`
-	CreatedAtUTC     string            `json:"created_at_utc"`
+	Kind         string `json:"kind"`
+	Version      string `json:"version"`
+	CreatedAtUTC string `json:"created_at_utc"`
+	// Title is an optional human-readable meeting name (e.g. the Talk room
+	// name the operator resolved at recording time). Packing prefers it over
+	// names derived from file paths; empty means "no known name".
+	Title            string            `json:"title,omitempty"`
 	State            string            `json:"state,omitempty"`
 	Stage            string            `json:"stage,omitempty"`
 	Error            string            `json:"error,omitempty"`

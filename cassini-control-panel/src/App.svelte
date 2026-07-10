@@ -8,6 +8,7 @@
     type OperatorStateChangeEvent,
   } from "./operator/client";
   import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
+  import { shouldShowDetailLoading } from "./operator/viewState";
   import SettingsPanel from "./SettingsPanel.svelte";
 
   const POLL_INTERVAL_MS = 2000;
@@ -410,14 +411,18 @@
             <div class="px-4 py-4">
               <div class="alert alert-error text-sm">{jobsError}</div>
             </div>
-          {:else if loadingJobs}
+          {:else if loadingJobs && jobs.length === 0}
+            <!-- Only blank to a spinner when there is nothing rendered yet.
+                 Background refreshes (the 2s poll fallback and SSE-reconnect
+                 reconciles) also flip loadingJobs, but must update the list in
+                 place instead of flashing it to "Loading…" every tick (D-494). -->
             <div class="flex flex-1 items-center justify-center p-6 text-sm text-base-content/60">Loading jobs…</div>
           {:else if jobs.length === 0}
             <div class="flex flex-1 items-center justify-center p-6 text-sm text-base-content/60">No jobs yet.</div>
           {:else}
             <div class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-3">
               <div class="grid min-w-0 gap-2">
-                {#each jobs as job}
+                {#each jobs as job (job.id)}
                   <button
                     class="card w-full min-w-0 overflow-hidden border border-base-300 bg-base-100 text-left transition hover:border-primary {job.id === selectedJobId ? 'border-primary bg-primary/5' : ''}"
                     type="button"
@@ -493,7 +498,10 @@
             <div class="px-4 py-4">
               <div class="alert alert-error text-sm">{detailError}</div>
             </div>
-          {:else if loadingDetail}
+          {:else if shouldShowDetailLoading(loadingDetail, selectedJob, selectedJobId)}
+            <!-- Keep an already-rendered job visible during its background
+                 refresh, but show loading when the user switches jobs so stale
+                 details are not presented as the newly selected job (D-494). -->
             <div class="flex flex-1 items-center justify-center p-6 text-sm text-base-content/60">Loading selected run…</div>
           {:else if !selectedJob}
             <div class="flex flex-1 items-center justify-center p-6 text-sm text-base-content/60">Select a run from the history list.</div>
@@ -556,7 +564,7 @@
                     <span class="badge badge-outline">{selectedJob.attempts.length} attempts</span>
                   </div>
                   <div class="grid gap-3">
-                    {#each selectedJob.attempts as attempt}
+                    {#each selectedJob.attempts as attempt (attempt.attempt_number)}
                       <article class="rounded-box border border-base-300 bg-base-100 p-4">
                         <div class="flex items-start justify-between gap-3">
                           <div>

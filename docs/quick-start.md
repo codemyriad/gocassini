@@ -1,182 +1,150 @@
 # Quick start
 
-This walkthrough is the fastest way to see Cassini working end to end on your machine.
+This is the fastest way to see Cassini working end to end **the way it really
+runs**: as a Nextcloud Talk ExApp installed through AppAPI.
 
 Goal:
 
-- start a local Nextcloud Talk environment
-- start the Cassini deployment bundle
-- create and join a meeting
-- submit that meeting to the operator
+- start a local Nextcloud + AppAPI/HaRP + Talk stack
+- build and install Cassini as an ExApp (the production topology)
+- record a Talk meeting through Talk's record button
 - watch the job run through record -> build -> publish
-- open the final result in the viewer
+- open the published meeting in the viewer — with its real conversation name
 
 ## Before you begin
 
 Assumptions:
 
 - you are at the repo root
-- Docker is available
-- Go is available
+- Docker is available (the ExApp image is built and run via Docker)
 
-Why Go? In this checkout, `./bin/cassini` builds a temporary Cassini binary before running it.
+> Why the ExApp path is the default here: it exercises the real runtime —
+> AppAPI/HaRP proxy → ExApp → operator → recorder → publish → viewer. Bugs that
+> only appear on that path (AppAPI env allow-listing, publish-step regressions,
+> Talk conversation-name resolution) are invisible to the lighter
+> individual-service path and to unit tests. See the "Why this is the default"
+> note below and Linear **D-453**.
 
-> Command note: these docs use `./bin/cassini` from the repo root. If you have an equivalent installed wrapper named `cassini`, you can use that instead.
-
-## 1. Start the local Talk harness
+## 1. Bring up the full ExApp stack
 
 From the repo root:
 
 ```bash
-./bin/cassini dev stack up
+SPREED_PROFILE=full ./harness/bin/manual-test-setup.sh --build
 ```
 
-This starts the local Nextcloud Talk stack used for development.
+This one command:
 
-If you want to confirm it is up, open:
+- starts local Nextcloud + AppAPI/HaRP + the full Talk signaling stack;
+- builds and tags the Cassini ExApp image from `appinfo/info.xml`;
+- installs/reinstalls Cassini via AppAPI;
+- passes both Talk secrets as deploy env and points Talk's `recording_servers`
+  at the installed ExApp proxy path.
+
+The first run is slow — it builds the ExApp image. Later runs without `--build`
+reuse the existing image.
+
+When it finishes, open Nextcloud and sign in as `admin` / `admin`:
 
 - `http://127.0.0.1:28080/`
 
-The local harness uses the default Nextcloud admin credentials:
+Verify the install:
 
-- username: `admin`
-- password: `admin`
+- **Cassini** appears for logged-in users and opens the viewer;
+- **Cassini Admin** appears for admins and opens the control panel;
+- `/operator/status` reports both `secret_configured` and
+  `signaling_internal_secret_configured` as `true`.
 
-## 2. Create a Talk room
+## 2. Record a meeting
 
-Create a room and capture the returned URL:
+**Manual:** create or join a Talk room, speak for 20–60 seconds, and use Talk's
+**record** button. Because Talk's recording backend points at the installed
+ExApp, the operator joins as the recorder and runs the pipeline.
 
-```bash
-CALL_URL="$(./bin/cassini dev room create --name "Cassini local demo" | tail -n1)"
-echo "$CALL_URL"
-```
-
-You can use that URL in two places:
-
-- in your browser, to join the meeting
-- in the Cassini control panel, so the operator can join and record it
-
-If you prefer, you can also create or inspect rooms through the Nextcloud/Talk UI, but the command above is the shortest path.
-
-## 3. Start the Cassini deployment bundle
-
-In another terminal:
+**Automated (recommended for a first end-to-end check):**
 
 ```bash
-cd deployment
-docker compose up --build
+./harness/bin/validate-installed-exapp-private-talk.sh \
+  --nextcloud-host 127.0.0.1 \
+  --duration 60
 ```
 
-On later runs, once images already exist, `docker compose up` is usually enough.
+This creates/reuses a private one-to-one conversation, triggers recording
+through Talk so the installed ExApp receives the backend request, waits for
+publish, then records a second time and verifies both transcripts remain
+visible in the viewer catalog.
 
-This brings up three services:
+## 3. Open the result in the viewer
 
-- operator: `http://127.0.0.1:4000/`
-- control panel: `http://127.0.0.1:4173/`
-- viewer: `http://127.0.0.1:8765/`
+Open **Cassini** inside Nextcloud. The published meeting shows its **Talk
+conversation name** and **real recording date** — the operator resolves the
+conversation name through the AppAPI-authenticated Talk API (which is why this
+only works on the installed-ExApp path, not the standalone bundle).
 
-## 4. Open the browser surfaces
+## Why this is the default
 
-Open these in your browser:
+The installed-ExApp path is the only local topology that matches production:
 
-- the Talk room URL from `CALL_URL`
-- control panel: `http://127.0.0.1:4173/`
-- viewer: `http://127.0.0.1:8765/`
+- The **AppAPI/HaRP proxy + manifest allow-list** is in the request path, so it
+  catches env/allow-list bugs (e.g. D-403) that a direct operator container
+  never sees.
+- The **operator has AppAPI credentials**, so Talk conversation-name resolution
+  actually runs — the standalone bundle can only show the "Untitled meeting" +
+  date fallback.
+- It drives **record -> build -> publish -> viewer** for real, so it catches
+  publish-path regressions (e.g. the D-462 `export-static-meetings.mjs`
+  temporal-dead-zone crash) that unit tests structurally cannot.
 
-At this point the viewer may still be empty. That is expected until a publish succeeds.
+This is the same argument behind making the ExApp harness the default for CI
+test runners — see Linear **D-453**.
 
-## 5. Join the meeting and create some signal
+## Teardown
 
-In the Talk room:
+Per local-dev hygiene, tear the stack down at the end of a run:
 
-- join the room
-- speak for 20–60 seconds
-- if you want, add a second participant or browser tab for a slightly more realistic test
-
-The goal here is just to produce a small, obvious meeting for Cassini to capture.
-
-## 6. Submit the meeting to Cassini
-
-In the control panel:
-
-1. paste the same `CALL_URL`
-2. start the job
-
-The operator will join the room as its recorder participant and start executing the pipeline.
-
-## 7. Watch the job run
-
-In the control panel, you should see the job move through states like:
-
-```text
-record/queued
-record/running
-build/queued
-build/running
-publish/queued
-publish/running
-done/succeeded
+```bash
+cd harness
+SPREED_PROFILE=full docker compose -p cassini-exapp-test down --volumes
 ```
 
-How the recording ends:
+Drop `--volumes` if you want to keep the Nextcloud + operator state between
+runs. Note: AppAPI-deployed containers (`nc_app_gocassini`) and `appapi-harp`
+are not part of the compose project, so remove them explicitly if `down` leaves
+them behind.
 
-- easiest path: leave the room and wait for the room-empty grace period
-- alternate path: use the control panel stop action while the job is `record/running`
+## Lighter path: individual services
 
-A stop request ends recording. It does **not** necessarily cancel the whole job. If Cassini finalized a usable recording, the job can still continue into build and publish.
+If you only need the **viewer** or are iterating on a **single component**, you
+can run the services directly instead of the full ExApp. This is faster but
+does **not** exercise AppAPI/HaRP, Talk's record button, or conversation-name
+resolution — treat it as a component-development convenience, not an end-to-end
+check.
 
-## 8. Open the result in the viewer
+The two-stack individual flow (local Talk harness + the operator / control
+panel / viewer deployment bundle) is documented in full here:
 
-Once the job reaches `done / succeeded`, refresh the viewer:
-
-- `http://127.0.0.1:8765/`
-
-You should now be able to open the published meeting and inspect the output.
-
-## What you just exercised
-
-You just ran the full operator-managed flow:
-
-1. the **harness** provided a local Nextcloud Talk environment
-2. the **control panel** sent a job to the **operator**
-3. the **operator** ran record, build, and publish
-4. the **viewer** served the published static site
-
-If you want the architecture behind that flow, read:
-
-- [Mental model](./mental-model.md)
 - [Running the local developer stack](./local-developer-stack.md)
-- [Operator stack](./operator-stack.md)
 
-## Common first-run notes
+Condensed:
 
-### Ports
+```bash
+# 1. Local Talk harness
+./bin/cassini dev stack up
+CALL_URL="$(./bin/cassini dev room create --name "Local demo" | tail -n1)"
 
-The default deployment ports come from `deployment/.env`:
+# 2. Operator + control panel + viewer bundle
+cd deployment && docker compose up --build
+#   operator :4000  control panel :4173  viewer :8765
+```
 
-- operator: `4000`
-- control panel: `4173`
-- viewer: `8765`
+Then paste `CALL_URL` into the control panel to submit a job, watch it move
+`record -> build -> publish -> done`, and refresh the viewer. For viewer-only
+work, `cassini-viewer`'s own dev server (`npm run dev`) is lighter still.
 
-If you need different ports or host-visible storage paths, see:
+## Where to go next
 
-- [Configuration reference](./reference/configuration.md)
-
-### If the viewer is empty
-
-That usually means one of these is true:
-
-- the job has not reached `publish` yet
-- the job failed before publish
-- there are no successful `.meeting` artifacts available to publish
-
-See:
-
-- [Troubleshooting](./reference/troubleshooting.md)
-- [Operator stack](./operator-stack.md)
-
-### If you want a deeper pipeline-first view
-
-After this quick start, the next best page is:
-
-- [Core pipeline](./core-pipeline.md)
+- The mental model behind the flow: [Mental model](./mental-model.md)
+- The full local runtime layout: [Running the local developer stack](./local-developer-stack.md)
+- Tiered ExApp-in-Nextcloud testing (image-only → AppAPI → full Talk):
+  [Trying the ExApp image in a local Nextcloud](./exapp-test-locally.md)
+- The stage-by-stage pipeline: [Core pipeline](./core-pipeline.md)

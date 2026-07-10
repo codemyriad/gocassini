@@ -67,11 +67,21 @@ type Runtime struct {
 	recordMu     sync.Mutex
 	recordJobs   map[string]*recordProcessState
 	recordWG     sync.WaitGroup
+	// opusPackWG tracks the fire-and-forget post-build `cassini pack`
+	// goroutines so tests (and shutdown, if it ever cares) can wait for them
+	// instead of racing their temp-dir writes.
+	opusPackWG   sync.WaitGroup
 	talkRooms    map[string]*talkRoomState
 	talkJobs     map[string]*talkRoomState
 	recordJobFn  func(context.Context, Job, TriggerRequest) (recordResult, error)
 	buildJobFn   func(context.Context, buildTask) (string, error)
 	publishJobFn func(context.Context, publishTask) (string, error)
+	// fetchTalkRoomName resolves a Talk room's display name via the
+	// Nextcloud OCS API (talk_room_name.go). Nil outside AppAPI deployments;
+	// tests stub it. talkRoomNameRetryGap defaults to the package constant;
+	// tests shrink it.
+	fetchTalkRoomName    talkRoomNameFetcher
+	talkRoomNameRetryGap time.Duration
 	// recordStopAckGrace and recordStopFinalizeGrace default to the package
 	// constants; tests shrink them to exercise stop enforcement quickly.
 	recordStopAckGrace      time.Duration
@@ -167,6 +177,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
+	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
 		// recording; tell it the recording failed so the room state converges
@@ -453,8 +464,9 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		talkUploadClient: &http.Client{
 			Transport: &http.Transport{ResponseHeaderTimeout: talkUploadResponseHeaderTimeout},
 		},
-		talkRetryDelays: talkDeliveryRetryDelays,
-		talkUploadStall: talkUploadStallGrace,
+		talkRetryDelays:      talkDeliveryRetryDelays,
+		talkUploadStall:      talkUploadStallGrace,
+		talkRoomNameRetryGap: talkRoomNameRetryGap,
 
 		requeueKick:         make(chan struct{}, 1),
 		publishJobTimeout:   defaultPublishJobTimeout,

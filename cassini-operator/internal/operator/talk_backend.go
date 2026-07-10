@@ -137,6 +137,10 @@ type talkRoomState struct {
 	BackendURL string
 	RoomToken  string
 	Owner      string
+	// RoomName is the Talk conversation's display name, resolved
+	// asynchronously after start (see talk_room_name.go). Empty when the
+	// lookup is disabled or failed; consumers must treat it as optional.
+	RoomName   string
 	Status     int
 	StartActor *talkActorData
 	StopActor  *talkActorData
@@ -295,6 +299,9 @@ func (rt *Runtime) handleTalkStart(w http.ResponseWriter, r *http.Request, auth 
 		rt.logger.Printf("talk binding persist failed id=%s: %v", resp.ID, err)
 	}
 	startRecord()
+	// Resolve the room's display name off the start path; the build flow
+	// embeds it as the packed meeting's title (see talk_room_name.go).
+	go rt.resolveTalkRoomName(resp.ID, state.Owner, state.RoomToken)
 	writeJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -767,6 +774,7 @@ type talkJobBinding struct {
 	BackendURL string         `json:"backend_url"`
 	RoomToken  string         `json:"room_token"`
 	Owner      string         `json:"owner"`
+	RoomName   string         `json:"room_name,omitempty"`
 	Status     int            `json:"status,omitempty"`
 	StartActor *talkActorData `json:"start_actor,omitempty"`
 }
@@ -776,6 +784,7 @@ func encodeTalkBinding(state *talkRoomState) (string, error) {
 		BackendURL: state.BackendURL,
 		RoomToken:  state.RoomToken,
 		Owner:      state.Owner,
+		RoomName:   state.RoomName,
 		Status:     state.Status,
 		StartActor: state.StartActor,
 	})
@@ -797,6 +806,7 @@ func decodeTalkBinding(raw string) (talkRoomState, error) {
 		BackendURL: binding.BackendURL,
 		RoomToken:  binding.RoomToken,
 		Owner:      binding.Owner,
+		RoomName:   binding.RoomName,
 		Status:     binding.Status,
 		StartActor: binding.StartActor,
 	}, nil

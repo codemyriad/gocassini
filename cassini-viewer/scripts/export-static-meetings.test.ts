@@ -1,9 +1,16 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 import {
   buildDisplayTranscriptFromArtifacts,
   describeMeeting,
   describeSpeechToTextVariant,
+  preferredPortableTitle,
   describeVariantSuffix,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
@@ -47,6 +54,84 @@ describe("describeMeeting", () => {
     });
   });
 
+  it("derives the date from ULID meeting ids instead of echoing the id", () => {
+    // 01KKA70QN0 encodes 2026-03-09T21:11:00Z.
+    expect(describeMeeting("01KKA70QN0ABCDEFGHJKMNPQRS")).toEqual({
+      title: "Untitled meeting",
+      dateLabel: "2026-03-09 21:11",
+    });
+  });
+
+  it("handles ULID meeting ids with stt variant suffixes", () => {
+    expect(describeMeeting("01KKA70QN0ABCDEFGHJKMNPQRS--stt-whisper-large-v3")).toEqual({
+      title: "Untitled meeting",
+      dateLabel: "2026-03-09 21:11",
+    });
+  });
+
+  it("keeps the plain-id fallback for ULID lookalikes with implausible timestamps", () => {
+    expect(describeMeeting("00000000000000000000000000")).toEqual({
+      title: "00000000000000000000000000",
+      dateLabel: "00000000000000000000000000",
+    });
+  });
+
+  it("does not treat lowercase ids as ULIDs", () => {
+    // Operator job ids are always uppercase; lowercase stays a plain name.
+    expect(describeMeeting("01kka70qn0abcdefghjkmnpqrs")).toEqual({
+      title: "01kka70qn0abcdefghjkmnpqrs",
+      dateLabel: "01kka70qn0abcdefghjkmnpqrs",
+    });
+  });
+
+  it("does not treat 25- or 27-char Crockford strings as ULIDs", () => {
+    expect(describeMeeting("01KKA70QN0ABCDEFGHJKMNPQR").dateLabel).toBe(
+      "01KKA70QN0ABCDEFGHJKMNPQR",
+    );
+    expect(describeMeeting("01KKA70QN0ABCDEFGHJKMNPQRST").dateLabel).toBe(
+      "01KKA70QN0ABCDEFGHJKMNPQRST",
+    );
+  });
+
+  it("keeps the plain-id fallback for non-ULID meeting ids", () => {
+    expect(describeMeeting("weekly-sync")).toEqual({
+      title: "Weekly Sync",
+      dateLabel: "weekly-sync",
+    });
+  });
+});
+
+describe("preferredPortableTitle", () => {
+  const ulid = "01KKA70QN0ABCDEFGHJKMNPQRS";
+
+  it("uses a real embedded title (e.g. the Talk room name)", () => {
+    expect(preferredPortableTitle({ meeting: { title: "Daily Meeting" } }, ulid)).toBe(
+      "Daily Meeting",
+    );
+    expect(preferredPortableTitle({ meeting: { title: "  Silvio-Alex-Chris  " } }, ulid)).toBe(
+      "Silvio-Alex-Chris",
+    );
+  });
+
+  it("rejects packer defaults that echo the meeting id", () => {
+    expect(preferredPortableTitle({ meeting: { title: ulid } }, ulid)).toBe("");
+    expect(
+      preferredPortableTitle({ meeting: { title: ulid } }, `${ulid}--stt-whisper-large-v3`),
+    ).toBe("");
+    expect(preferredPortableTitle({ meeting: { title: "Cassini Meeting" } }, ulid)).toBe("");
+  });
+
+  it("rejects missing or empty titles", () => {
+    expect(preferredPortableTitle({ meeting: { title: "   " } }, ulid)).toBe("");
+    expect(preferredPortableTitle({ meeting: {} }, ulid)).toBe("");
+    expect(preferredPortableTitle({}, ulid)).toBe("");
+    expect(preferredPortableTitle(null, ulid)).toBe("");
+  });
+});
+
+// Pre-existing grab-bag suite: STT variant labels and portable transcript
+// grouping, kept under the original suite name.
+describe("describeMeeting", () => {
   it("formats whisper STT variants for catalog titles", () => {
     expect(
       describeSpeechToTextVariant({
@@ -989,6 +1074,56 @@ describe("parseArgs", () => {
     expect(recordingsBaseUrl).toBe("https://view.meetings.codemyriad.io/main/");
     expect(sourceDir).toContain("/tmp/source");
     expect(outputDir).toContain("/tmp/out");
+  });
+});
+
+describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
+  const scriptPath = fileURLToPath(new URL("./export-static-meetings.mjs", import.meta.url));
+
+  // Regression for D-462: main() must run after every module-level `const` is
+  // initialized. The helper-import tests above can never catch an eval-time
+  // temporal-dead-zone crash (they never run main()); only executing the file
+  // as a real entry point does. Before the fix this exited non-zero with
+  // "Cannot access 'ULID_PATTERN' before initialization", breaking every publish.
+  it("publishes a ULID-named meeting without a temporal-dead-zone crash", () => {
+    // 01KKA70QN0... encodes 2026-03-09T21:11:00Z (see the describeMeeting unit test).
+    const meetingId = "01KKA70QN0ABCDEFGHJKMNPQRS";
+    const root = mkdtempSync(join(tmpdir(), "cassini-export-cli-"));
+    try {
+      const distDir = join(root, "dist");
+      mkdirSync(join(distDir, "assets"), { recursive: true });
+      writeFileSync(join(distDir, "index.html"), "<!doctype html><title>viewer</title>");
+
+      const sourceDir = join(root, "source");
+      // An empty directory is a valid minimal meeting: readManifest() returns {}.
+      mkdirSync(join(sourceDir, meetingId), { recursive: true });
+      const outputDir = join(root, "out");
+
+      execFileSync(
+        process.execPath,
+        [
+          scriptPath,
+          "--source-dir",
+          sourceDir,
+          "--output-dir",
+          outputDir,
+          // Avoids needing real audio/transcript files to copy.
+          "--recordings-base-url",
+          "https://example.test/",
+        ],
+        { env: { ...process.env, CASSINI_VIEWER_DIST_DIR: distDir }, encoding: "utf8" },
+      );
+
+      const catalog = JSON.parse(readFileSync(join(outputDir, "catalog.json"), "utf8"));
+      expect(catalog.meetings).toHaveLength(1);
+      expect(catalog.meetings[0]).toMatchObject({
+        id: meetingId,
+        title: "Untitled meeting",
+        dateLabel: "2026-03-09 21:11",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

@@ -85,7 +85,12 @@ re-transcribing. The input must be a ready .meeting bundle directory.
 		return 1
 	}
 
+	// Precedence: explicit --title, then the bundle manifest's title (stamped
+	// by the operator from the Talk room name), then the output file name.
 	title := strings.TrimSpace(opts.title)
+	if title == "" {
+		title = strings.TrimSpace(bundle.Manifest.Title)
+	}
 	if title == "" {
 		title = titleFromOutputPath(opts.outPath)
 	}

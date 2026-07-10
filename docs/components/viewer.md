@@ -57,6 +57,16 @@ Each meeting entry must provide at least one of:
 
 Current operator-managed publish output normally uses `artifactPath` entries because the operator currently publishes from transient `.meeting` bundles (build scratch, not a user-facing deliverable; the canonical, user-facing meeting format is the portable `.opus`).
 
+## Meeting names and dates
+
+Catalog `title` and `dateLabel` are produced at export time from the best source available:
+
+- A portable meeting with a real embedded title is listed under that name. For Talk recordings the operator resolves the conversation's display name when recording starts and stamps it into the meeting bundle, so it survives every publish path. For 1:1 conversations the display name is the other participant's name, as seen by whoever started the recording.
+- Otherwise both fields derive from the meeting id. Timestamped ids like `daily-meeting--2026-03-05--12:38:29` yield a prettified name and date. Operator job ids (26-character ULIDs) yield the recording start time decoded from the id's timestamp prefix, with "Untitled meeting" as the name.
+- "Untitled meeting" is the last resort. It appears when the name lookup failed (Nextcloud unreachable around recording start) or when the deployment has no Nextcloud credentials to look names up with (standalone and dev deploys).
+
+Publishing regenerates all catalog entries, so exporter improvements apply to previously recorded meetings on the next publish.
+
 ## Two meeting input modes
 
 ### 1. Artifact-directory mode
@@ -92,6 +102,14 @@ Runtime behavior:
 4. play the same `.opus` file as audio
 
 This makes one-file meeting delivery possible without server-side unpacking.
+
+## Meeting list ordering and filtering
+
+The meeting library:
+
+- sorts entries newest-first by parsing `dateLabel` as a timestamp; entries whose label is not a date sort after every dated entry, and ties break by `id`
+- offers a filter box above the list (shown when there is more than one meeting) that matches meeting names and dates — both the stored label ("2026-03-12") and the format the cards render ("12 Mar 2026")
+- auto-opens the meeting when the catalog contains exactly one entry
 
 ## Transcript layers
 

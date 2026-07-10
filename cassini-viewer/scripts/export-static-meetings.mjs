@@ -8,13 +8,13 @@ const CATALOG_VERSION = "cassini.viewer.catalog.v1";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const viewerDir = resolve(scriptDir, "..");
-const distDir = resolve(viewerDir, "dist");
+// Overridable so tests can exercise the real CLI entry path against a throwaway
+// dist without touching the checked-out build output.
+const distDir = process.env.CASSINI_VIEWER_DIST_DIR
+  ? resolve(process.env.CASSINI_VIEWER_DIST_DIR)
+  : resolve(viewerDir, "dist");
 const defaultSourceDir = resolve(viewerDir, "public", "demo");
 const defaultOutputDir = resolve(viewerDir, "exports", "static-meetings");
-
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main();
-}
 
 export function main(argv = process.argv.slice(2)) {
   const { outputDir, sourceDir, recordingsBaseUrl } = parseArgs(argv);
@@ -164,6 +164,10 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
   if (sourceType === "portable") {
     const portable = extractPortableManifest(sourcePath);
     const transcript = buildTranscriptWordsFromPortable(portable);
+    // A real embedded title (e.g. the Talk room name the operator captured
+    // at recording time) beats anything derived from the file name; packer
+    // defaults that merely echo the id fall through to describeMeeting.
+    const meetingTitle = preferredPortableTitle(portable, meetingId) || title;
     const targetFileName = `${meetingId}.opus`;
     if (!recordingsBaseUrl) {
       cpSync(sourcePath, join(outputDir, "meetings", targetFileName));
@@ -172,7 +176,7 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
     return {
       id: meetingId,
       audioPath: recordingsBaseUrl ? `${recordingsBaseUrl}meetings/${targetFileName}` : `./meetings/${targetFileName}`,
-      title: sttVariantLabel ? `${title} (${sttVariantLabel})` : title,
+      title: sttVariantLabel ? `${meetingTitle} (${sttVariantLabel})` : meetingTitle,
       dateLabel,
       speakerCount: transcript.speakers?.length ?? 0,
       // For a v2 .opus the inline items are absent (see portableDefaultSegmentCount);
@@ -1279,6 +1283,25 @@ export function isPortableMeeting(fileName) {
   return extname(fileName).toLowerCase() === ".opus";
 }
 
+// preferredPortableTitle returns the title embedded in a portable meeting's
+// manifest when it is a real human-readable name (e.g. the Talk room name the
+// operator resolved at recording time, D-462). Packer defaults — the meeting
+// id echoed back or the generic "Cassini Meeting" — yield "" so the caller
+// falls back to id-derived naming.
+export function preferredPortableTitle(portable, meetingId) {
+  const raw = typeof portable?.meeting?.title === "string" ? portable.meeting.title.trim() : "";
+  if (raw === "") {
+    return "";
+  }
+  if (raw === meetingId || raw === stripVariantSuffix(meetingId)) {
+    return "";
+  }
+  if (raw === "Cassini Meeting") {
+    return "";
+  }
+  return raw;
+}
+
 export function describeMeeting(meetingId) {
   const normalizedMeetingId = stripVariantSuffix(meetingId);
   const colonTimeStamp = parseTimestampFromDoubledDashParts(normalizedMeetingId, "--");
@@ -1304,10 +1327,52 @@ export function describeMeeting(meetingId) {
     };
   }
 
+  // Talk recordings are named by the operator's ULID job id, which carries no
+  // human-readable name but does encode the recording start time. Surface that
+  // timestamp instead of showing the raw id as both title and date (D-462).
+  const ulidDateLabel = dateLabelFromUlid(normalizedMeetingId);
+  if (ulidDateLabel) {
+    return {
+      title: "Untitled meeting",
+      dateLabel: ulidDateLabel,
+    };
+  }
+
   return {
     title: toTitleCase(normalizedMeetingId),
     dateLabel: normalizedMeetingId,
   };
+}
+
+// Canonical 26-char Crockford base32 ULID. The first character of a real ULID
+// never exceeds 7 (48-bit timestamp bound). Deliberately uppercase-only —
+// operator job ids are always uppercase, and rejecting lowercase keeps
+// human-chosen meeting names from ever matching.
+const ULID_PATTERN = /^[0-7][0-9ABCDEFGHJKMNPQRSTVWXYZ]{25}$/;
+const CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+// Plausibility window for a decoded ULID timestamp; a 26-char Crockford-only
+// word that is not a ULID almost never decodes into it.
+const ULID_TIMESTAMP_MIN_MS = Date.UTC(2015, 0, 1);
+const ULID_TIMESTAMP_MAX_MS = Date.UTC(2100, 0, 1);
+
+// dateLabelFromUlid returns "YYYY-MM-DD HH:MM" (UTC) decoded from a ULID's
+// 48-bit timestamp prefix, or "" when the id is not a plausible ULID.
+function dateLabelFromUlid(meetingId) {
+  if (!ULID_PATTERN.test(meetingId)) {
+    return "";
+  }
+  let ms = 0;
+  for (const char of meetingId.slice(0, 10)) {
+    ms = ms * 32 + CROCKFORD_ALPHABET.indexOf(char);
+  }
+  if (ms < ULID_TIMESTAMP_MIN_MS || ms > ULID_TIMESTAMP_MAX_MS) {
+    return "";
+  }
+  const date = new Date(ms);
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(
+    date.getUTCHours(),
+  )}:${pad(date.getUTCMinutes())}`;
 }
 
 function stripVariantSuffix(meetingId) {
@@ -1589,4 +1654,13 @@ function safeToString(value) {
     return value;
   }
   return "";
+}
+
+// CLI entry point. Kept at the very bottom so every module-level `const` (e.g.
+// ULID_PATTERN) is initialized before main() runs. Invoking main() near the top
+// of the module reaches those consts through describeMeeting() during module
+// evaluation, before their initializers execute — a temporal-dead-zone crash
+// that only surfaces on a real publish, never when tests import helpers (D-462).
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
 }

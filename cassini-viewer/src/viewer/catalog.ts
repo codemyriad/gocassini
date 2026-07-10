@@ -82,14 +82,134 @@ function validateMeetingCatalogEntry(value: unknown, index: number): MeetingCata
   };
 }
 
+// Newest first. Entries whose dateLabel cannot be parsed (e.g. legacy catalogs
+// that shipped a raw id as the label) sort after every dated entry instead of
+// wherever plain string comparison happens to land them.
 export function sortMeetingCatalogEntries(meetings: MeetingCatalogEntry[]): MeetingCatalogEntry[] {
   return [...meetings].sort((left, right) => {
-    const dateComparison = compareDescending(normalizeDateLabel(right.dateLabel), normalizeDateLabel(left.dateLabel));
-    if (dateComparison !== 0) {
-      return dateComparison;
+    const leftMs = parseDateLabelMs(left.dateLabel);
+    const rightMs = parseDateLabelMs(right.dateLabel);
+    if (leftMs !== null && rightMs !== null && leftMs !== rightMs) {
+      return rightMs - leftMs;
+    }
+    if (leftMs !== null && rightMs === null) {
+      return -1;
+    }
+    if (leftMs === null && rightMs !== null) {
+      return 1;
     }
     return compareDescending(right.id, left.id);
   });
+}
+
+// parseDateLabelMs parses the catalog's "YYYY-MM-DD" / "YYYY-MM-DD HH:MM[:SS]"
+// date labels into a comparable timestamp, or null when the label does not
+// follow that shape or its fields are out of range (Date.UTC would silently
+// roll "2026-13-05" over into 2027 and sort it above real meetings). Labels
+// carry no timezone, so UTC is used consistently — only the relative order
+// matters here.
+export function parseDateLabelMs(dateLabel: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(dateLabel.trim());
+  if (!match) {
+    return null;
+  }
+  const [, year, month, day, hour, minute, second] = match;
+  const monthNum = Number(month);
+  const dayNum = Number(day);
+  const hourNum = hour !== undefined ? Number(hour) : 0;
+  const minuteNum = minute !== undefined ? Number(minute) : 0;
+  const secondNum = second !== undefined ? Number(second) : 0;
+  if (
+    monthNum < 1 ||
+    monthNum > 12 ||
+    dayNum < 1 ||
+    dayNum > 31 ||
+    hourNum > 23 ||
+    minuteNum > 59 ||
+    secondNum > 59
+  ) {
+    return null;
+  }
+  const ms = Date.UTC(Number(year), monthNum - 1, dayNum, hourNum, minuteNum, secondNum);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+// filterMeetingCatalogEntries narrows the list with a case-insensitive
+// substring match against the title, the raw date label ("2026-03-09 21:11"),
+// and the short rendered date ("9 Mar 2026") so users can type dates the way
+// the cards display them.
+export function filterMeetingCatalogEntries(
+  meetings: MeetingCatalogEntry[],
+  query: string,
+): MeetingCatalogEntry[] {
+  const needle = query.trim().toLowerCase();
+  if (needle === "") {
+    return meetings;
+  }
+  return meetings.filter((meeting) =>
+    [meeting.title, meeting.dateLabel, formatMeetingDateShort(meeting.dateLabel)].some((haystack) =>
+      haystack.toLowerCase().includes(needle),
+    ),
+  );
+}
+
+// Catalog `dateLabel` ships as ISO-ish "YYYY-MM-DD" or "YYYY-MM-DD HH:MM" and
+// carries NO timezone: producers stamp it from different clocks (filename
+// wall-clock, UTC-derived job ids). Render the label's own digits in the user's
+// locale (e.g. "Fri, Mar 13, 2026, 12:29 PM"), but do NOT attach a
+// `timeZoneName` — the label doesn't know its zone, so a "GMT+1" suffix would
+// assert an instant we can't actually justify (a UTC-stamped "21:11" would
+// display as "9:11 PM GMT+1" to a CET viewer, an hour off and falsely precise).
+// We show the wall-clock digits as-is and make no timezone claim (D-484).
+export function formatMeetingDate(dateLabel: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(dateLabel);
+  if (!match) {
+    return dateLabel;
+  }
+  const [, y, m, d, h, mn] = match;
+  const hasTime = h !== undefined && mn !== undefined;
+  const date = new Date(
+    Number(y),
+    Number(m) - 1,
+    Number(d),
+    hasTime ? Number(h) : 0,
+    hasTime ? Number(mn) : 0,
+  );
+  if (Number.isNaN(date.getTime())) {
+    return dateLabel;
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    ...(hasTime ? { hour: "numeric", minute: "2-digit" } : {}),
+  }).format(date);
+}
+
+// Hoisted: the filter re-formats every catalog entry on each keystroke, and
+// Intl.DateTimeFormat construction is the expensive part.
+const SHORT_DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+
+// Compact variant of formatMeetingDate for places with little space
+// (e.g. catalog cards). "13 Mar 2026" — day, short month, year.
+// Locale-pinned to en-GB so the day-month-year order is consistent
+// regardless of the viewer's browser locale.
+export function formatMeetingDateShort(dateLabel: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateLabel);
+  if (!match) {
+    return dateLabel;
+  }
+  const [, y, m, d] = match;
+  const date = new Date(Number(y), Number(m) - 1, Number(d));
+  if (Number.isNaN(date.getTime())) {
+    return dateLabel;
+  }
+  return SHORT_DATE_FORMAT.format(date);
 }
 
 function requireNonEmptyString(value: unknown, label: string): string {
@@ -118,10 +238,6 @@ function optionalNumber(value: unknown, label: string): number | undefined {
     return undefined;
   }
   return requireNumber(value, label);
-}
-
-function normalizeDateLabel(value: string): string {
-  return value.trim();
 }
 
 function compareDescending(left: string, right: string): number {
