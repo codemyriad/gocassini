@@ -493,6 +493,12 @@ jobs:
   transcribe-smoke-cuda:
     name: Smoke transcription on GPU (bundled fp32 model + CUDA EP)
     runs-on: [self-hosted, Linux, X64, gpu]
+    # Serialize all GPU jobs repo-wide onto the single physical GPU (shared by
+    # self-hosted runners george/george-2) so two never contend the 8 GiB card
+    # at once and OOM. Matches the george-gpu group used in deploy-preview.yml.
+    concurrency:
+      group: george-gpu
+      cancel-in-progress: false
     needs: build-image-cuda
     # Heavy tier (self-hosted GPU): push/dispatch, or a same-repo PR labeled
     # `full-ci`. Mirrors the build-image-cuda guard as defense-in-depth so a
@@ -820,6 +826,12 @@ jobs:
   e2e-talk-record-cuda:
     name: E2E Talk record-button roundtrip (CUDA / GPU)
     runs-on: [self-hosted, Linux, X64, gpu]
+    # Serialize all GPU jobs repo-wide onto the single physical GPU (shared by
+    # self-hosted runners george/george-2) so two never contend the 8 GiB card
+    # at once and OOM. Matches the george-gpu group used in deploy-preview.yml.
+    concurrency:
+      group: george-gpu
+      cancel-in-progress: false
     needs: build-image-cuda
     timeout-minutes: 25
     # Heavy tier (self-hosted GPU): push/dispatch, or a same-repo PR labeled
