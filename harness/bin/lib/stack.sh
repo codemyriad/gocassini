@@ -622,6 +622,12 @@ harness_validate_recording_secrets() {
   fi
 }
 
+harness_exapp_info_xml_path() {
+  local info_xml="${CASSINI_HARNESS_INFO_XML:-$REPO_ROOT/appinfo/info.xml}"
+  [[ -f "$info_xml" ]] || { echo "ExApp info.xml not found: $info_xml" >&2; return 1; }
+  printf '%s\n' "$info_xml"
+}
+
 harness_prepare_exapp_image() {
   if [[ "${CASSINI_HARNESS_CASSINI_MODE:-none}" != "installed-exapp" ]]; then
     log "ExApp image phase: skipping because Cassini mode is '${CASSINI_HARNESS_CASSINI_MODE:-none}'"
@@ -630,10 +636,11 @@ harness_prepare_exapp_image() {
 
   local image_mode="${CASSINI_HARNESS_EXAPP_IMAGE_MODE:-reuse-local}"
   local image_local="cassini-exapp:e2e-v3-cpu-gpu"
-  local image_tag image_as_production
+  local info_xml image_tag image_as_production
   # shellcheck source=./lib-exapp-image.sh
   source "$TEST_DIR/bin/lib-exapp-image.sh"
-  image_tag="$(exapp_image_tag "$REPO_ROOT/appinfo/info.xml")"
+  info_xml="$(harness_exapp_info_xml_path)"
+  image_tag="$(exapp_image_tag "$info_xml")"
   image_as_production="ghcr.io/codemyriad/gocassini:${image_tag}"
 
   case "$image_mode" in
@@ -676,8 +683,10 @@ harness_default_installed_exapp_backend_url() {
 }
 
 harness_copy_exapp_info_xml() {
-  log "ExApp install phase: copying info.xml into Nextcloud"
-  compose cp "$REPO_ROOT/appinfo/info.xml" nextcloud:/tmp/gocassini-info.xml
+  local info_xml
+  info_xml="$(harness_exapp_info_xml_path)"
+  log "ExApp install phase: copying info.xml into Nextcloud ($info_xml)"
+  compose cp "$info_xml" nextcloud:/tmp/gocassini-info.xml
   compose exec -T -u root nextcloud chown www-data:www-data /tmp/gocassini-info.xml
 }
 

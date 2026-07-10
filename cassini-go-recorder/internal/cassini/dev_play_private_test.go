@@ -206,7 +206,7 @@ func TestDevPlayPrivateSyntheticConversationStartsRecordingBeforePlaybackAndClea
 	}
 }
 
-func TestDevPlayPrivateAdminConversationUsesSilentAdminRecordingStarter(t *testing.T) {
+func TestDevPlayPrivateAdminConversationUsesAudibleStarterAndMediaOverride(t *testing.T) {
 	t.Setenv("CASSINI_HARNESS_HOST", "")
 	t.Setenv("ADMIN_PASSWORD", "adminpass")
 	fake := newDevPlayPrivatePlaybackFake(t)
@@ -215,6 +215,13 @@ func TestDevPlayPrivateAdminConversationUsesSilentAdminRecordingStarter(t *testi
 
 	repoRoot := t.TempDir()
 	createCompleteDevPlayPiedPiperFixture(t, repoRoot)
+	mediaOverride := filepath.Join(repoRoot, "known-audible")
+	if err := os.WriteFile(mediaOverride+".ivf", []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mediaOverride+".ogg", []byte("audio"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	state := buildDevPlayPrivateScaffoldState(
 		repoRoot,
 		server.URL,
@@ -240,7 +247,7 @@ func TestDevPlayPrivateAdminConversationUsesSilentAdminRecordingStarter(t *testi
 
 	var stdout strings.Builder
 	var stderr strings.Builder
-	code := runDevPlayPrivate(context.Background(), repoRoot, []string{"--conversation", "admin", "--duration", "12"}, &stdout, &stderr)
+	code := runDevPlayPrivate(context.Background(), repoRoot, []string{"--conversation", "admin", "--media-prefix", mediaOverride, "--duration", "12"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("runDevPlayPrivate code=%d stderr=%q stdout=%q", code, stderr.String(), stdout.String())
 	}
@@ -252,7 +259,7 @@ func TestDevPlayPrivateAdminConversationUsesSilentAdminRecordingStarter(t *testi
 		"--call-url", server.URL + "/call/admin-token",
 		"--users", "2",
 		"--duration", "12",
-		"--media-prefixes", filepath.Join(repoRoot, devPlayPiedPiperOutputRel, "erlich") + "," + filepath.Join(repoRoot, devPlayPiedPiperOutputRel, "erlich"),
+		"--media-prefixes", mediaOverride + "," + mediaOverride,
 		"--names", "admin,Erlich Bachman",
 		"--auth-users", "admin,cassini-erlich",
 		"--auth-passwords", "adminpass," + devPlayPrivateFallbackPassword,

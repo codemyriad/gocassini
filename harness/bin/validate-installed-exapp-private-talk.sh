@@ -14,6 +14,7 @@ JOB_TIMEOUT=1200
 POLL_INTERVAL=5
 RUN_COUNT=2
 CONVERSATION="admin"
+MEDIA_PREFIX=""
 PROJECT_NAME="${PROJECT_NAME:-cassini-exapp-test}"
 LOG_DIR="${LOG_DIR:-/tmp/cassini-installed-validation-$(date -u +%Y%m%dT%H%M%S)-$$}"
 ADMIN_USER="${ADMIN_USER:-admin}"
@@ -39,6 +40,7 @@ Options:
   --poll-interval <seconds>       Poll interval. Default: 5
   --run-count <count>             Recording attempts. Default: 2
   --conversation <name>           play-private conversation. Default: admin
+  --media-prefix <path>            Existing IVF/OGG prefix used for all participants
   --project-name <name>           Harness Compose project. Default: cassini-exapp-test
   --log-dir <path>                Retained evidence directory
 EOF
@@ -52,6 +54,7 @@ while [[ $# -gt 0 ]]; do
     --poll-interval) [[ $# -ge 2 ]] || fail "$1 requires a value"; POLL_INTERVAL="$2"; shift 2 ;;
     --run-count) [[ $# -ge 2 ]] || fail "$1 requires a value"; RUN_COUNT="$2"; shift 2 ;;
     --conversation) [[ $# -ge 2 ]] || fail "$1 requires a value"; CONVERSATION="$2"; shift 2 ;;
+    --media-prefix) [[ $# -ge 2 ]] || fail "$1 requires a value"; MEDIA_PREFIX="$2"; shift 2 ;;
     --project-name) [[ $# -ge 2 ]] || fail "$1 requires a value"; PROJECT_NAME="$2"; shift 2 ;;
     --log-dir) [[ $# -ge 2 ]] || fail "$1 requires a value"; LOG_DIR="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -224,15 +227,19 @@ wait_for_catalog_artifact() {
 
 run_private_job() {
   local label="$1" started_at before_jobs
+  local -a play_args
   before_jobs="$LOG_DIR/jobs-before-${label}.json"
   fetch_json "$PROXY_URL/operator/jobs" "$before_jobs" false || fail "cannot fetch jobs before $label"
   started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   log "Running private Talk playback for $label (single recording attempt)"
-  (cd "$REPO_ROOT" && ./bin/cassini dev play-private \
-    --conversation "$CONVERSATION" \
-    --nextcloud-host "$NEXTCLOUD_HOST" \
-    --duration "$DURATION") \
+  play_args=(
+    --conversation "$CONVERSATION"
+    --nextcloud-host "$NEXTCLOUD_HOST"
+    --duration "$DURATION"
+  )
+  [[ -z "$MEDIA_PREFIX" ]] || play_args+=(--media-prefix "$MEDIA_PREFIX")
+  (cd "$REPO_ROOT" && ./bin/cassini dev play-private "${play_args[@]}") \
     > >(tee "$LOG_DIR/playback-${label}.log") \
     2> >(tee "$LOG_DIR/playback-${label}.err" >&2)
 
@@ -270,8 +277,9 @@ mapfile -t previous_catalog_ids < <(catalog_ids "$before_catalog")
 printf '[validate] existing catalog ids: %s\n' "${previous_catalog_ids[*]:-(none)}" >&2
 
 log "Preparing private playback scaffold"
-(cd "$REPO_ROOT" && ./bin/cassini dev play-private \
-  --scaffold-only --nextcloud-host "$NEXTCLOUD_HOST") \
+scaffold_args=(--scaffold-only --nextcloud-host "$NEXTCLOUD_HOST")
+[[ -z "$MEDIA_PREFIX" ]] || scaffold_args+=(--media-prefix "$MEDIA_PREFIX")
+(cd "$REPO_ROOT" && ./bin/cassini dev play-private "${scaffold_args[@]}") \
   > >(tee "$LOG_DIR/scaffold.log") \
   2> >(tee "$LOG_DIR/scaffold.err" >&2)
 

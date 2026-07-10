@@ -89,8 +89,11 @@ fi
 # 5. The canonical helper owns manifest extraction and composes, rather than
 #    hardcoding, the production-facing tag. Guard the old floating :latest bug.
 # shellcheck disable=SC2016 # The pattern intentionally matches source text.
-grep -qF 'image_tag="$(exapp_image_tag "$REPO_ROOT/appinfo/info.xml")"' "$stack_sh" \
-  || fail "canonical image helper does not derive image-tag from info.xml"
+grep -qF 'info_xml="$(harness_exapp_info_xml_path)"' "$stack_sh" \
+  || fail "canonical image helper does not resolve the selected info.xml"
+# shellcheck disable=SC2016 # The pattern intentionally matches source text.
+grep -qF 'image_tag="$(exapp_image_tag "$info_xml")"' "$stack_sh" \
+  || fail "canonical image helper does not derive image-tag from selected info.xml"
 # shellcheck disable=SC2016 # The pattern intentionally matches source text.
 grep -qF 'image_as_production="ghcr.io/codemyriad/gocassini:${image_tag}"' "$stack_sh" \
   || fail "canonical image helper does not compose the manifest-derived tag"
