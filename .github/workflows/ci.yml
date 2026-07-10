@@ -54,6 +54,8 @@ jobs:
         run: |
           ./harness/bin/test-exapp-image-ref.sh
           ./harness/bin/test-exapp-manifest.sh
+          ./harness/bin/test-installed-validation.sh
+          ./harness/bin/test-installed-backend-url.sh
           ./harness/bin/test-post-boundary-stream.sh
           ./harness/bin/test-ci-e2e-mute-timing.sh
       - name: Parse every harness shell script
@@ -69,8 +71,13 @@ jobs:
           harness/bin/lib-exapp-manifest.sh
           harness/bin/test-exapp-image-ref.sh
           harness/bin/test-exapp-manifest.sh
+          harness/bin/test-installed-validation.sh
+          harness/bin/test-installed-backend-url.sh
+          harness/bin/validate-installed-artifact.sh
           harness/bin/test-post-boundary-stream.sh
           harness/bin/verify-post-boundary-stream.sh
+      - name: Compile D-453 Python helpers
+        run: python3 -m py_compile harness/bin/installed-validation.py
 
   ui:
     name: UI tests (${{ matrix.package }})

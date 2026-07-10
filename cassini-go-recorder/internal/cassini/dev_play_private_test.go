@@ -257,7 +257,7 @@ func TestDevPlayPrivateAdminConversationUsesSilentAdminRecordingStarter(t *testi
 		"--auth-users", "admin,cassini-erlich",
 		"--auth-passwords", "adminpass," + devPlayPrivateFallbackPassword,
 		"--record-before-media",
-		"--audio-ready-afters", "86400,0",
+		"--audio-ready-afters", "0,0",
 		"--recording-starter-index", "1",
 		"--recording-timeout", "90",
 		"--skip-prepare",

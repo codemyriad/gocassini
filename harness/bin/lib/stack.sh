@@ -477,8 +477,16 @@ harness_check_existing_resources_for_up() {
 }
 
 harness_render_stack_configs() {
-  if [[ "$SPREED_PROFILE" == "full" ]] && harness_remote_config_requested; then
+  [[ "$SPREED_PROFILE" == "full" ]] || return 0
+  if harness_remote_config_requested; then
     harness_render_full_profile_configs false
+  elif [[ "${CASSINI_HARNESS_CASSINI_MODE:-none}" == "installed-exapp" ]]; then
+    # The local installed ExApp calls Nextcloud through Docker DNS
+    # (reverse-proxy). Nextcloud then authenticates signaling backend updates
+    # with that internal origin, which is intentionally not a fixed backend URL
+    # in the host-network signaling config. Local harness only: accept the
+    # shared backend secret for Docker-internal callback origins.
+    harness_render_full_profile_configs true
   fi
 }
 
@@ -654,9 +662,15 @@ harness_prepare_exapp_image() {
 }
 
 harness_default_installed_exapp_backend_url() {
+  # In every local-http installed topology Talk advertises a host-side URL
+  # (normally 127.0.0.1:28080). That address is the ExApp container's own
+  # loopback, even when the harness itself runs inside a VM whose detected
+  # CASSINI_HARNESS_HOST is routable. Use Compose DNS for callbacks. Remote
+  # HTTPS installs keep Talk's externally routable URL unless explicitly
+  # overridden by the caller.
   if [[ "${CASSINI_HARNESS_CASSINI_MODE:-none}" == "installed-exapp" \
     && -z "${CASSINI_TALK_BACKEND_URL:-}" \
-    && ("${CASSINI_HARNESS_HOST:-127.0.0.1}" == "127.0.0.1" || "${CASSINI_HARNESS_HOST:-}" == "localhost") ]]; then
+    && "${CASSINI_HARNESS_PUBLIC_MODE:-local-http}" == "local-http" ]]; then
     export CASSINI_TALK_BACKEND_URL="http://reverse-proxy"
   fi
 }

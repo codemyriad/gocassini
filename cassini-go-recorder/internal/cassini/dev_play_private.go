@@ -506,7 +506,11 @@ func resolveDevPlayPrivateTarget(repoRoot string, baseURL string, state devPlayP
 		recordingStarter = admin
 		publishers = []devPlayPrivateActor{erlich}
 		streamActors = []devPlayPrivateActor{admin, erlich}
-		audioReadyAfters = []string{"86400", "0"}
+		// The authenticated recording starter must also publish audible media.
+		// Installed topologies can establish one subscriber before another; a
+		// permanently-muted starter let a healthy product path produce a
+		// video-only MKV while the sole audible peer was still negotiating ICE.
+		audioReadyAfters = []string{"0", "0"}
 	default:
 		return devPlayPrivatePlaybackTarget{}, fmt.Errorf("unsupported private conversation %q", conversationName)
 	}
