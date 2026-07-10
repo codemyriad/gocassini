@@ -8,6 +8,7 @@
     type OperatorStateChangeEvent,
   } from "./operator/client";
   import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
+  import { shouldShowDetailLoading } from "./operator/viewState";
   import SettingsPanel from "./SettingsPanel.svelte";
 
   const POLL_INTERVAL_MS = 2000;
@@ -497,10 +498,10 @@
             <div class="px-4 py-4">
               <div class="alert alert-error text-sm">{detailError}</div>
             </div>
-          {:else if loadingDetail && !selectedJob}
-            <!-- Same as the jobs list: show the spinner only before the first
-                 detail load. A poll/SSE reconcile of the already-selected job
-                 refreshes selectedJob in place rather than flashing (D-494). -->
+          {:else if shouldShowDetailLoading(loadingDetail, selectedJob, selectedJobId)}
+            <!-- Keep an already-rendered job visible during its background
+                 refresh, but show loading when the user switches jobs so stale
+                 details are not presented as the newly selected job (D-494). -->
             <div class="flex flex-1 items-center justify-center p-6 text-sm text-base-content/60">Loading selected run…</div>
           {:else if !selectedJob}
             <div class="flex flex-1 items-center justify-center p-6 text-sm text-base-content/60">Select a run from the history list.</div>
