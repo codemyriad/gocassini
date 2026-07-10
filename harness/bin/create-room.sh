@@ -8,6 +8,8 @@ source "$SCRIPT_DIR/common.sh"
 ROOM_NAME="Codex test room $(date -u +%Y%m%d-%H%M%S)"
 ROOM_TYPE="${ROOM_TYPE:-3}"
 ROOM_INVITE="${ROOM_INVITE:-}"
+ROOM_CREATOR_USER="${ROOM_CREATOR_USER:-$ADMIN_USER}"
+ROOM_CREATOR_PASSWORD="${ROOM_CREATOR_PASSWORD:-$ADMIN_PASSWORD}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -48,7 +50,7 @@ else
 fi
 response="$(
   curl -sS \
-    -u "$ADMIN_USER:$ADMIN_PASSWORD" \
+    -u "$ROOM_CREATOR_USER:$ROOM_CREATOR_PASSWORD" \
     -H 'OCS-APIRequest: true' \
     -H 'Accept: application/json' \
     -X POST "$create_url" \
