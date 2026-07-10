@@ -137,6 +137,12 @@ type participantIdentity struct {
 	ParticipantID string
 }
 
+type localICESignal struct {
+	messageType string
+	payload     map[string]any
+	sid         string
+}
+
 type subscriberPeer struct {
 	owner           *Recorder
 	remoteSessionID string
@@ -162,6 +168,18 @@ type subscriberPeer struct {
 	awaitingOfferSince   time.Time
 	offerExhaustedLogged bool
 	endOfCandidatesSent  bool
+
+	// SetLocalDescription starts Pion's ICE gathering asynchronously. Its
+	// OnICECandidate callback can therefore race the offer handler that sends
+	// the SDP answer. The signaling client's write mutex makes each WebSocket
+	// write safe, but whichever goroutine acquires it first wins; it does not
+	// guarantee that the answer precedes candidates. Talk's remote peer does
+	// not retain candidates received before it installs the answer, so keep all
+	// local ICE signaling behind this per-peer gate and drain it in callback
+	// order only after the answer write succeeds (D-454).
+	answerSent             bool
+	localICEFlushing       bool
+	pendingLocalICESignals []localICESignal
 }
 
 func Run(ctx context.Context, cfg config.Config) error {
@@ -1831,9 +1849,7 @@ func (r *Recorder) newSubscriberPeer(remoteSessionID string) (*subscriberPeer, e
 	})
 	pc.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		if candidate == nil {
-			if err := peer.sendEndOfCandidates("ice-gathering-complete"); err != nil {
-				log.Printf("send endOfCandidates failed sid=%s: %v", remoteSessionID, err)
-			}
+			peer.sendEndOfCandidates("ice-gathering-complete")
 			return
 		}
 		init := candidate.ToJSON()
@@ -1846,9 +1862,7 @@ func (r *Recorder) newSubscriberPeer(remoteSessionID string) (*subscriberPeer, e
 		if init.SDPMLineIndex != nil {
 			candidatePayload["sdpMLineIndex"] = int(*init.SDPMLineIndex)
 		}
-		if err := r.sendPeerMessage(remoteSessionID, "candidate", map[string]any{"candidate": candidatePayload}, peer.currentSIDValue()); err != nil {
-			log.Printf("send candidate failed sid=%s: %v", remoteSessionID, err)
-		}
+		peer.sendLocalICESignal("candidate", map[string]any{"candidate": candidatePayload})
 	})
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		if !r.addTrackReader() {
@@ -1972,26 +1986,93 @@ func (p *subscriberPeer) clearOfferThrottleForCallTransition() bool {
 	return true
 }
 
-func (p *subscriberPeer) currentSIDValue() string {
+func (p *subscriberPeer) sendLocalICESignal(messageType string, payload map[string]any) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.currentSID
+	startFlush := p.enqueueLocalICESignalLocked(messageType, payload)
+	p.mu.Unlock()
+
+	if startFlush {
+		p.flushLocalICESignals()
+	}
 }
 
-func (p *subscriberPeer) sendEndOfCandidates(reason string) error {
+// enqueueLocalICESignalLocked appends one signal with the negotiation SID that
+// was current at callback time. p.mu must be held by the caller.
+func (p *subscriberPeer) enqueueLocalICESignalLocked(messageType string, payload map[string]any) bool {
+	p.pendingLocalICESignals = append(p.pendingLocalICESignals, localICESignal{
+		messageType: messageType,
+		payload:     payload,
+		sid:         p.currentSID,
+	})
+	startFlush := p.answerSent && !p.localICEFlushing
+	if startFlush {
+		p.localICEFlushing = true
+	}
+	return startFlush
+}
+
+// flushLocalICESignals is the sole sender for this peer's trickled ICE
+// messages. Keeping one drainer active preserves candidate order and, in
+// particular, prevents endOfCandidates from overtaking a candidate queued by
+// an adjacent callback. It deliberately does not hold p.mu during a network
+// write, so other callbacks and shutdown can keep using the peer state while a
+// signaling write is in progress.
+func (p *subscriberPeer) flushLocalICESignals() {
+	for {
+		p.mu.Lock()
+		if !p.answerSent || len(p.pendingLocalICESignals) == 0 {
+			if len(p.pendingLocalICESignals) == 0 {
+				p.pendingLocalICESignals = nil
+			}
+			p.localICEFlushing = false
+			p.mu.Unlock()
+			return
+		}
+		signal := p.pendingLocalICESignals[0]
+		p.pendingLocalICESignals = p.pendingLocalICESignals[1:]
+		p.mu.Unlock()
+
+		if err := p.owner.sendPeerMessage(p.remoteSessionID, signal.messageType, signal.payload, signal.sid); err != nil {
+			log.Printf("send %s failed remote=%s sid=%s: %v", signal.messageType, p.remoteSessionID, signal.sid, err)
+		}
+	}
+}
+
+func (p *subscriberPeer) sendEndOfCandidates(reason string) {
 	p.mu.Lock()
 	if p.endOfCandidatesSent {
 		p.mu.Unlock()
-		return nil
+		return
 	}
 	p.endOfCandidatesSent = true
-	sid := p.currentSID
+	startFlush := p.enqueueLocalICESignalLocked("endOfCandidates", map[string]any{})
 	p.mu.Unlock()
 
 	if p.owner.cfg.DebugSignaling {
 		log.Printf("subscriber %s -> send endOfCandidates (%s)", p.remoteSessionID, reason)
 	}
-	return p.owner.sendPeerMessage(p.remoteSessionID, "endOfCandidates", map[string]any{}, sid)
+	if startFlush {
+		p.flushLocalICESignals()
+	}
+}
+
+// markAnswerSent opens the local ICE gate only after sendPeerMessage(answer)
+// returned successfully. It also completes the requestoffer state transition:
+// a failed answer write must leave retries enabled and candidates buffered.
+func (p *subscriberPeer) markAnswerSent() {
+	p.mu.Lock()
+	p.answerSent = true
+	p.offerReceived = true
+	p.awaitingOfferSince = time.Time{}
+	startFlush := len(p.pendingLocalICESignals) != 0 && !p.localICEFlushing
+	if startFlush {
+		p.localICEFlushing = true
+	}
+	p.mu.Unlock()
+
+	if startFlush {
+		p.flushLocalICESignals()
+	}
 }
 
 func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any) error {
@@ -2012,6 +2093,8 @@ func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any)
 		p.awaitingOfferSince = time.Now()
 		p.currentSID = asString(data["sid"])
 		p.endOfCandidatesSent = false
+		p.answerSent = false
+		p.pendingLocalICESignals = nil
 		sid := p.currentSID
 		p.mu.Unlock()
 
@@ -2033,7 +2116,10 @@ func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any)
 		// ufrag/pwd/fingerprint the remote needs to start connectivity checks;
 		// candidates follow on their own via OnICECandidate ("candidate"
 		// messages), and the truthful endOfCandidates is emitted only when
-		// gathering actually finishes (OnICECandidate(nil)).
+		// gathering actually finishes (OnICECandidate(nil)). Those callbacks
+		// are buffered until the answer send below succeeds: Pion may invoke
+		// them concurrently with this handler, and the remote does not retain
+		// candidates that arrive before its answer-side peer exists.
 		//
 		// #106 (waiting on GatheringCompletePromise) fixed a premature
 		// endOfCandidates but introduced a worse head-of-line stall: that
@@ -2063,10 +2149,7 @@ func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any)
 		// Only now, with the answer actually sent, stop re-requesting offers
 		// for this peer. Setting offerReceived on offer arrival let a failed
 		// answer path permanently suppress retries (silent loss, D-386).
-		p.mu.Lock()
-		p.offerReceived = true
-		p.awaitingOfferSince = time.Time{}
-		p.mu.Unlock()
+		p.markAnswerSent()
 		return nil
 
 	case "candidate":

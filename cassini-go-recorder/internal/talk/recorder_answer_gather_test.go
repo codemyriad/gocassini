@@ -17,6 +17,7 @@ package talk
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,12 +89,15 @@ func TestAnswerNotBlockedByUnreachableICEServer(t *testing.T) {
 	// The signaling client in the test recorder is not connected, so the
 	// answer "send" returns an error; we only care that the path REACHES the
 	// send quickly rather than parking behind ICE gathering.
-	_ = p.handleMessage(context.Background(), map[string]any{
+	err = p.handleMessage(context.Background(), map[string]any{
 		"type":    "offer",
 		"sid":     "1",
 		"payload": map[string]any{"sdp": offerSDP},
 	})
 	elapsed := time.Since(start)
+	if err == nil || !strings.Contains(err.Error(), "send answer") {
+		t.Fatalf("offer path did not reach the expected answer send: %v", err)
+	}
 
 	// stunGatherTimeout is 5s; the answer must not wait on it. 2s leaves a
 	// wide margin above the sub-millisecond SDP work while still failing hard
