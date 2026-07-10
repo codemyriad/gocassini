@@ -1,0 +1,92 @@
+---
+import '../tailwind.css';
+import { getCollection } from 'astro:content';
+import { ViewTransitions } from 'astro:transitions';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import ChangelogEntry from '../components/ChangelogEntry.astro';
+const rawBase = import.meta.env.BASE_URL;
+const base = rawBase.endsWith('/') ? rawBase : rawBase + '/';
+
+const rawEntries = (await getCollection('changelog', ({ data }) => !data.draft))
+  .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
+
+const entries = await Promise.all(
+  rawEntries.map(async (entry) => {
+    const { Content } = await entry.render();
+    return { ...entry, Content };
+  })
+);
+---
+
+<!doctype html>
+<html lang="en" data-theme="saturn-dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GoCassini – Changelog</title>
+  <meta name="description" content="Release notes and updates for GoCassini, the Nextcloud Talk meeting recorder." />
+  <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
+  <ViewTransitions />
+</head>
+<body class="bg-base-100 text-base-content min-h-screen flex flex-col">
+
+  <Nav transition:persist="site-nav" />
+
+  <main class="flex flex-col items-center w-full pt-28 pb-16 flex-1">
+    <div class="flex flex-col w-full max-w-7xl px-5 md:px-10 lg:px-20">
+      <h1 class="changelog-title text-xl md:text-2xl font-bold text-base-content mb-8">Changelog</h1>
+
+      {entries.length === 0 && (
+        <p class="text-base-content/40 text-sm">No changelog entries yet.</p>
+      )}
+
+      {entries.map((entry, i) => (
+        <ChangelogEntry
+          title={entry.data.title}
+          date={entry.data.date}
+          author={entry.data.author}
+          Content={entry.Content}
+          isLast={i === entries.length - 1}
+          index={i}
+        />
+      ))}
+    </div>
+  </main>
+
+  <Footer />
+
+</body>
+</html>
+
+<style>
+  @keyframes fadeSlideIn {
+    from { opacity: 0; transform: translateY(24px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .changelog-title { opacity: 0; }
+  .changelog-title.in-view { animation: fadeSlideIn 0.5s ease both; }
+</style>
+
+<script>
+  function init() {
+    const title = document.querySelector<HTMLElement>('.changelog-title');
+    if (title) title.classList.add('in-view');
+
+    const entries = document.querySelectorAll<HTMLElement>('.changelog-entry');
+    let firstCallback = true;
+    const observer = new IntersectionObserver((records) => {
+      const isFirst = firstCallback;
+      firstCallback = false;
+      records.filter(r => r.isIntersecting).forEach((record) => {
+        const el = record.target as HTMLElement;
+        const delay = isFirst ? Number(el.dataset.index ?? 0) * 150 : 0;
+        el.style.setProperty('--entry-delay', `${delay}ms`);
+        el.classList.add('in-view');
+        observer.unobserve(el);
+      });
+    }, { threshold: 0.1 });
+    entries.forEach(el => observer.observe(el));
+  }
+  document.addEventListener('astro:page-load', init);
+</script>
