@@ -30,7 +30,12 @@ Assumptions:
 From the repo root:
 
 ```bash
-SPREED_PROFILE=full ./harness/bin/manual-test-setup.sh --build
+./bin/cassini dev stack up \
+  --public-mode local-http \
+  --services full \
+  --cassini installed-exapp \
+  --recording-backend installed-exapp \
+  --build
 ```
 
 This one command:
@@ -63,16 +68,41 @@ ExApp, the operator joins as the recorder and runs the pipeline.
 
 **Automated (recommended for a first end-to-end check):**
 
+Materialize the one known audible LFS fixture, then run a single recording:
+
 ```bash
+git lfs pull \
+  --include="harness/media/processed/showcase-lantern-festival-v1/mira.ivf,harness/media/processed/showcase-lantern-festival-v1/mira.ogg"
+
 ./harness/bin/validate-installed-exapp-private-talk.sh \
   --nextcloud-host 127.0.0.1 \
-  --duration 60
+  --run-count 1 \
+  --media-prefix "$PWD/harness/media/processed/showcase-lantern-festival-v1/mira" \
+  --duration 30
 ```
 
-This creates/reuses a private one-to-one conversation, triggers recording
-through Talk so the installed ExApp receives the backend request, waits for
-publish, then records a second time and verifies both transcripts remain
-visible in the viewer catalog.
+This creates/reuses a private one-to-one conversation and triggers one Talk
+recording through the installed ExApp. A pass requires one new succeeded job,
+a matching viewer catalog entry with positive recorder segments, authenticated
+artifact download, and a transcript that decodes to at least one word. There is
+no recording retry. Omit `--run-count 1` to run the validator's two-record
+archive-preservation mode.
+
+For the exact-image, stack-owning CI equivalent, start from a clean stack and
+provide the already-built image explicitly:
+
+```bash
+IMAGE_REF=cassini-exapp:local-faithful
+docker build -f deployment/Dockerfile.exapp -t "$IMAGE_REF" .
+IMAGE_REF="$IMAGE_REF" ./harness/bin/ci-e2e-installed-exapp-talk.sh
+```
+
+That command installs the exact image through AppAPI/HaRP, performs one
+Talk-to-viewer run, writes machine-readable evidence, and always tears down its
+owned containers, network, and volumes. It is Linux-only and requires native
+Docker Engine/Compose, Docker socket access, Go, `git-lfs`, `jq`, `xmllint`,
+`curl`, and Python 3. It does not require Kokoro or `uv` because it uses the
+materialized Mira pair above.
 
 ## 3. Open the result in the viewer
 
@@ -83,7 +113,8 @@ only works on the installed-ExApp path, not the standalone bundle).
 
 ## Why this is the default
 
-The installed-ExApp path is the only local topology that matches production:
+The installed-ExApp path is the only local topology that faithfully exercises
+the production AppAPI manifest/install boundary:
 
 - The **AppAPI/HaRP proxy + manifest allow-list** is in the request path, so it
   catches env/allow-list bugs (e.g. D-403) that a direct operator container
@@ -103,14 +134,16 @@ test runners — see Linear **D-453**.
 Per local-dev hygiene, tear the stack down at the end of a run:
 
 ```bash
-cd harness
-SPREED_PROFILE=full docker compose -p cassini-exapp-test down --volumes
+./bin/cassini dev stack down --volumes \
+  --public-mode local-http \
+  --services full \
+  --cassini installed-exapp \
+  --recording-backend installed-exapp
 ```
 
-Drop `--volumes` if you want to keep the Nextcloud + operator state between
-runs. Note: AppAPI-deployed containers (`nc_app_gocassini`) and `appapi-harp`
-are not part of the compose project, so remove them explicitly if `down` leaves
-them behind.
+Drop `--volumes` if you want to keep the Nextcloud state. The canonical stack
+command also owns AppAPI-created ExApp resources such as `nc_app_gocassini`;
+do not replace it with raw Compose teardown.
 
 ## Lighter path: individual services
 

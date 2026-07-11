@@ -471,12 +471,34 @@ CALL_URL="$(./bin/cassini dev room create --name "Installed ExApp local dev" | t
 Private installed-ExApp validation helper:
 
 ```bash
-./harness/bin/validate-installed-exapp-private-talk.sh --duration 60
+git lfs pull \
+  --include="harness/media/processed/showcase-lantern-festival-v1/mira.ivf,harness/media/processed/showcase-lantern-festival-v1/mira.ogg"
+
+./harness/bin/validate-installed-exapp-private-talk.sh \
+  --run-count 1 \
+  --media-prefix "$PWD/harness/media/processed/showcase-lantern-festival-v1/mira" \
+  --duration 30
 ```
 
-The helper scaffolds private Talk users/conversations, drives playback into the
-admin call, waits for ExApp jobs to publish, and verifies the catalog keeps both
-new and previous entries.
+The helper consumes an already-running installed stack. It scaffolds private
+Talk users/conversations, drives playback into the admin call, waits for the
+new ExApp job, and requires a matching viewer artifact with positive segments
+and decoded words. Its default two-run mode additionally verifies that prior
+catalog entries remain available.
+
+CI and exact-image local validation use the stack-owning faithful vertical:
+
+```bash
+IMAGE_REF=cassini-exapp:local-faithful
+docker build -f deployment/Dockerfile.exapp -t "$IMAGE_REF" .
+IMAGE_REF="$IMAGE_REF" ./harness/bin/ci-e2e-installed-exapp-talk.sh
+```
+
+That script accepts exactly one prebuilt image, tags it for `reuse-local`, lets
+AppAPI/HaRP create `nc_app_gocassini`, verifies the installed image ID and
+manifest-gated Talk configuration, performs one recording, validates the
+viewer artifact, and treats D-493 teardown/leak checks as part of the pass. It
+never retries a failed recording.
 
 ---
 
