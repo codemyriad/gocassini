@@ -30,6 +30,17 @@ SANDBOX_SIGNALING_URL="${SANDBOX_SIGNALING_URL:-$SANDBOX_PUBLIC_URL/spreed}"
 SANDBOX_TURN_HOST="${SANDBOX_TURN_HOST:-${SANDBOX_DOMAIN%%:*}}"
 SANDBOX_TURN_EXTERNAL_IP="${SANDBOX_TURN_EXTERNAL_IP:-}"
 SANDBOX_PATCH_APPAPI_CSP="${SANDBOX_PATCH_APPAPI_CSP:-true}"
+# Nextcloud update channel. `beta` makes AppAPI's ExApp store accept pre-release
+# (alpha/beta/rc) apps like Cassini as well as stable ones, so the sandbox can
+# install whichever is newest; see lib/Fetcher/ExAppFetcher.php.
+SANDBOX_UPDATE_CHANNEL="${SANDBOX_UPDATE_CHANNEL:-beta}"
+# Where Cassini comes from on deploy:
+#   store  -> install the latest published release (alpha/beta/rc/stable) from
+#             the Nextcloud App Store
+#   image  -> register a specific container image (set by --image/--build)
+CASSINI_INSTALL_SOURCE="${CASSINI_INSTALL_SOURCE:-store}"
+CASSINI_APPSTORE_ID="${CASSINI_APPSTORE_ID:-gocassini}"
+CASSINI_APPSTORE_CATALOG_URL="${CASSINI_APPSTORE_CATALOG_URL:-https://apps.nextcloud.com/api/v1/appapi_apps.json}"
 FORCE_BUILD=false
 RESET=false
 REGISTER_ONLY=false
@@ -43,8 +54,13 @@ usage() {
   cat <<EOF
 Usage: sandbox/deploy.sh [options]
 
+By default Cassini is installed from the Nextcloud App Store (latest published
+release, be it alpha/beta/rc or stable). Passing --image or --build switches to
+registering a specific container image instead.
+
 Options:
-  --image IMAGE        ExApp image to register (default: $CASSINI_EXAPP_IMAGE)
+  --from-store        Install the latest release from the App Store (default)
+  --image IMAGE       Register this container image instead of the store release
   --build             Build IMAGE locally from deployment/Dockerfile.exapp
   --reset             Recreate Docker volumes before deploying
   --register-only     Re-register Cassini without restarting the stack
@@ -54,8 +70,9 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --image) CASSINI_EXAPP_IMAGE="$2"; shift 2 ;;
-    --build) FORCE_BUILD=true; shift ;;
+    --from-store) CASSINI_INSTALL_SOURCE=store; shift ;;
+    --image) CASSINI_EXAPP_IMAGE="$2"; CASSINI_INSTALL_SOURCE=image; shift 2 ;;
+    --build) FORCE_BUILD=true; CASSINI_INSTALL_SOURCE=image; shift ;;
     --reset) RESET=true; shift ;;
     --register-only) REGISTER_ONLY=true; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -287,6 +304,44 @@ render_info_xml() {
   perl -0pi -e "s#<registry>.*?</registry>#<registry>$registry</registry>#s; s#<image>.*?</image>#<image>$image</image>#s; s#<image-tag>.*?</image-tag>#<image-tag>$tag</image-tag>#s" "$RUNTIME_DIR/gocassini-info.xml"
 }
 
+resolve_store_info_xml() {
+  # Resolve the latest published Cassini release (alpha/beta/rc or stable) from
+  # the AppAPI ExApp store catalog and extract its info.xml. AppAPI pulls the
+  # image pinned in that info.xml during registration, so no separate image is
+  # needed.
+  log "Resolving latest $CASSINI_APPSTORE_ID release from the App Store"
+  local catalog="$RUNTIME_DIR/appapi_apps.json"
+  curl -fsSL "$CASSINI_APPSTORE_CATALOG_URL" -o "$catalog"
+
+  # Release download URLs embed the version tag (…/download/v<version>/<id>.tar.gz).
+  # Take the highest version regardless of channel. `sort -V` follows semver
+  # precedence for these URLs: a pre-release sorts before its own stable
+  # (v0.2.0-rc.1 < v0.2.0), so the newest stable wins when both exist, and a
+  # pre-release is only picked when it is genuinely the newest (e.g. 0.3.0-alpha
+  # over 0.2.0).
+  local url
+  url="$(grep -oE "https://[^\"']*/${CASSINI_APPSTORE_ID}[^\"']*\.tar\.gz" "$catalog" \
+    | grep -E "/v[0-9]+\.[0-9]+\.[0-9]+" \
+    | sort -V | tail -n1)"
+  if [[ -z "$url" ]]; then
+    echo "No $CASSINI_APPSTORE_ID release artifact found in $CASSINI_APPSTORE_CATALOG_URL" >&2
+    return 1
+  fi
+  log "Latest release artifact: $url"
+
+  local tgz="$RUNTIME_DIR/${CASSINI_APPSTORE_ID}-store.tar.gz"
+  local extract="$RUNTIME_DIR/store-extract"
+  curl -fsSL "$url" -o "$tgz"
+  rm -rf "$extract"
+  mkdir -p "$extract"
+  tar xzf "$tgz" -C "$extract"
+
+  local info
+  info="$(find "$extract" -name info.xml | head -n1)"
+  [[ -n "$info" ]] || { echo "info.xml not found in store artifact $url" >&2; return 1; }
+  cp "$info" "$RUNTIME_DIR/gocassini-info.xml"
+}
+
 wait_for_nextcloud() {
   local status_url="$SANDBOX_PUBLIC_URL/status.php"
   local fallback_url="http://127.0.0.1:$NEXTCLOUD_HOST_PORT/status.php"
@@ -343,6 +398,9 @@ bootstrap_nextcloud() {
   occ app:install app_api >/dev/null 2>&1 || true
   occ app:enable app_api
 
+  log "Setting app update channel to '$SANDBOX_UPDATE_CHANNEL' (accept pre-release ExApps)"
+  occ config:system:set updater.release.channel --value "$SANDBOX_UPDATE_CHANNEL"
+
   if [[ "$SANDBOX_PATCH_APPAPI_CSP" == "true" ]]; then
     log "Applying sandbox-only AppAPI CSP patch"
     "${COMPOSE[@]}" exec -T nextcloud php < "$HARNESS_DIR/bin/patch-csp.php"
@@ -387,8 +445,13 @@ pull_cassini_image() {
 }
 
 register_cassini() {
-  log "Registering Cassini ExApp from $CASSINI_EXAPP_IMAGE"
-  render_info_xml
+  if [[ "$CASSINI_INSTALL_SOURCE" == "store" ]]; then
+    resolve_store_info_xml
+    log "Registering Cassini ExApp from the App Store (latest release)"
+  else
+    log "Registering Cassini ExApp from image $CASSINI_EXAPP_IMAGE"
+    render_info_xml
+  fi
   "${COMPOSE[@]}" cp "$RUNTIME_DIR/gocassini-info.xml" nextcloud:/tmp/gocassini-info.xml
   "${COMPOSE[@]}" exec -T -u root nextcloud chown www-data:www-data /tmp/gocassini-info.xml
   occ app_api:app:register gocassini harp_sandbox \
@@ -418,11 +481,13 @@ create_demo_user() {
 
 render_configs
 
-if [[ "$FORCE_BUILD" == "true" ]]; then
-  log "Building $CASSINI_EXAPP_IMAGE"
-  docker build -f "$PROJECT_ROOT/deployment/Dockerfile.exapp" -t "$CASSINI_EXAPP_IMAGE" "$PROJECT_ROOT"
-else
-  pull_cassini_image
+if [[ "$CASSINI_INSTALL_SOURCE" == "image" ]]; then
+  if [[ "$FORCE_BUILD" == "true" ]]; then
+    log "Building $CASSINI_EXAPP_IMAGE"
+    docker build -f "$PROJECT_ROOT/deployment/Dockerfile.exapp" -t "$CASSINI_EXAPP_IMAGE" "$PROJECT_ROOT"
+  else
+    pull_cassini_image
+  fi
 fi
 
 if [[ "$REGISTER_ONLY" != "true" ]]; then

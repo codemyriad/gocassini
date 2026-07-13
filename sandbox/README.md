@@ -83,9 +83,19 @@ Use `SPREED_PROFILE=default` in `sandbox/.env` if you only need to demo AppAPI
 install, the control panel, and the viewer. Use `SPREED_PROFILE=full` when you
 need Talk call recording.
 
+## Cassini source
+
+By default `sandbox/deploy.sh` installs the **latest published release** of
+Cassini from the Nextcloud App Store (AppAPI ExApp catalog) — whichever is
+newest, be it a pre-release (alpha/beta/rc) or a stable version — and sets the
+Nextcloud update channel to `beta` so pre-release ExApps are also accepted and
+listed in the UI. Set `SANDBOX_UPDATE_CHANNEL` or `CASSINI_APPSTORE_CATALOG_URL`
+in `sandbox/.env` to override. Pass `--image`/`--build` (below) to register a
+specific container image instead of the store release.
+
 ## Updating
 
-Deploy a specific image:
+Deploy a specific image (switches off the store-install default):
 
 ```bash
 sandbox/deploy.sh --image ghcr.io/codemyriad/gocassini:branch-d-290-e2e-testing
