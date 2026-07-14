@@ -137,6 +137,12 @@ type participantIdentity struct {
 	ParticipantID string
 }
 
+type localICESignal struct {
+	messageType string
+	payload     map[string]any
+	sid         string
+}
+
 type subscriberPeer struct {
 	owner           *Recorder
 	remoteSessionID string
@@ -162,6 +168,18 @@ type subscriberPeer struct {
 	awaitingOfferSince   time.Time
 	offerExhaustedLogged bool
 	endOfCandidatesSent  bool
+
+	// SetLocalDescription starts Pion's ICE gathering asynchronously. Its
+	// OnICECandidate callback can therefore race the offer handler that sends
+	// the SDP answer. The signaling client's write mutex makes each WebSocket
+	// write safe, but whichever goroutine acquires it first wins; it does not
+	// guarantee that the answer precedes candidates. Each candidate belongs to
+	// the answer's negotiation and must not overtake it, so keep all local ICE
+	// signaling behind this per-peer gate and drain it in callback order only
+	// after the answer write succeeds (D-454).
+	answerSent             bool
+	localICEFlushing       bool
+	pendingLocalICESignals []localICESignal
 }
 
 func Run(ctx context.Context, cfg config.Config) error {
@@ -1149,32 +1167,12 @@ func (r *Recorder) handleParticipantsEvent(update map[string]any) error {
 			continue
 		}
 		r.rememberParticipantIdentity(sessionID, identity.DisplayName, identity.ParticipantID)
-		peer, err := r.ensureSubscriber(sessionID)
-		if err != nil {
+		if err := r.ensureInCallSubscriber(sessionID); err != nil {
 			return err
 		}
-		r.retryRequestOfferForCallTransition(peer)
 	}
 
 	return nil
-}
-
-// retryRequestOfferForCallTransition forces a fresh requestoffer when a
-// participants update tells us a session is now in the call. The first
-// requestoffer often races spreed's call-state propagation and gets
-// silently dropped at hub.go ("not in same call"); without this nudge
-// the recorder waits out the 8s response timeout × max-attempts before
-// retrying, which exceeds a typical short-recording window.
-func (r *Recorder) retryRequestOfferForCallTransition(peer *subscriberPeer) {
-	if peer == nil {
-		return
-	}
-	if !peer.clearOfferThrottleForCallTransition() {
-		return
-	}
-	if err := peer.requestOffer(); err != nil {
-		log.Printf("requestoffer retry after call transition failed for %s: %v", peer.remoteSessionID, err)
-	}
 }
 
 func (r *Recorder) handleSignalingData(ctx context.Context, data map[string]any) error {
@@ -1207,6 +1205,11 @@ func (r *Recorder) handleSignalingData(ctx context.Context, data map[string]any)
 	return nil
 }
 
+// ensureSubscriber returns an existing peer or registers a new peer and issues
+// exactly one initial requestoffer. It deliberately does not bypass an existing
+// peer's response throttle: participants updates describe current in-call
+// state, not edge-triggered transitions, and another empty-SID request can make
+// the MCU replace the Janus subscriber during an active negotiation (D-454).
 func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, error) {
 	if remoteSessionID == "" || remoteSessionID == r.signalingSessionID {
 		return nil, nil
@@ -1220,12 +1223,6 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, er
 	existing := r.subscribers[remoteSessionID]
 	r.mu.Unlock()
 	if existing != nil {
-		if existing.resetIfExhausted() {
-			log.Printf("retrying requestoffer for %s (participant joined call)", remoteSessionID)
-			if err := existing.requestOffer(); err != nil {
-				log.Printf("requestoffer retry failed for %s: %v", remoteSessionID, err)
-			}
-		}
 		return existing, nil
 	}
 
@@ -1245,6 +1242,7 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, er
 	if current := r.subscribers[remoteSessionID]; current != nil {
 		r.mu.Unlock()
 		_ = peer.close()
+		// The concurrent winner owns the one initial requestoffer.
 		return current, nil
 	}
 	r.subscribers[remoteSessionID] = peer
@@ -1258,6 +1256,24 @@ func (r *Recorder) ensureSubscriber(remoteSessionID string) (*subscriberPeer, er
 	}
 
 	return peer, nil
+}
+
+// ensureInCallSubscriber owns recovery actions driven by participant state.
+// Keeping exhausted-peer reset here prevents a late inbound offer/candidate
+// from issuing a new empty-SID request before that valid message is processed.
+func (r *Recorder) ensureInCallSubscriber(remoteSessionID string) error {
+	peer, err := r.ensureSubscriber(remoteSessionID)
+	if err != nil || peer == nil {
+		return err
+	}
+	if !peer.resetIfExhausted() {
+		return nil
+	}
+	log.Printf("retrying requestoffer for %s (participant still in call)", remoteSessionID)
+	if err := peer.requestOffer(); err != nil {
+		log.Printf("requestoffer recovery failed for %s: %v", remoteSessionID, err)
+	}
+	return nil
 }
 
 func (r *Recorder) removeSubscriber(remoteSessionID string) error {
@@ -1316,11 +1332,9 @@ func (r *Recorder) syncRemoteParticipants(active map[string]participantIdentity)
 
 	for remoteSessionID, identity := range active {
 		r.rememberParticipantIdentity(remoteSessionID, identity.DisplayName, identity.ParticipantID)
-		peer, err := r.ensureSubscriber(remoteSessionID)
-		if err != nil {
+		if err := r.ensureInCallSubscriber(remoteSessionID); err != nil {
 			return err
 		}
-		r.retryRequestOfferForCallTransition(peer)
 	}
 
 	return nil
@@ -1831,9 +1845,7 @@ func (r *Recorder) newSubscriberPeer(remoteSessionID string) (*subscriberPeer, e
 	})
 	pc.OnICECandidate(func(candidate *webrtc.ICECandidate) {
 		if candidate == nil {
-			if err := peer.sendEndOfCandidates("ice-gathering-complete"); err != nil {
-				log.Printf("send endOfCandidates failed sid=%s: %v", remoteSessionID, err)
-			}
+			peer.sendEndOfCandidates("ice-gathering-complete")
 			return
 		}
 		init := candidate.ToJSON()
@@ -1846,9 +1858,7 @@ func (r *Recorder) newSubscriberPeer(remoteSessionID string) (*subscriberPeer, e
 		if init.SDPMLineIndex != nil {
 			candidatePayload["sdpMLineIndex"] = int(*init.SDPMLineIndex)
 		}
-		if err := r.sendPeerMessage(remoteSessionID, "candidate", map[string]any{"candidate": candidatePayload}, peer.currentSIDValue()); err != nil {
-			log.Printf("send candidate failed sid=%s: %v", remoteSessionID, err)
-		}
+		peer.sendLocalICESignal("candidate", map[string]any{"candidate": candidatePayload})
 	})
 	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		if !r.addTrackReader() {
@@ -1939,9 +1949,9 @@ func (p *subscriberPeer) hasOffer() bool {
 	return p.offerReceived
 }
 
-// resetIfExhausted resets the requestoffer attempt counter when the remote
-// participant has transitioned into the call. Returns true if a reset was
-// performed (i.e. attempts were exhausted and no offer was received yet).
+// resetIfExhausted resets the requestoffer attempt counter when participant
+// reconciliation confirms the remote is still in the call. Returns true if a
+// reset was performed (attempts were exhausted and no offer was received yet).
 func (p *subscriberPeer) resetIfExhausted() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -1954,44 +1964,110 @@ func (p *subscriberPeer) resetIfExhausted() bool {
 	return true
 }
 
-// clearOfferThrottleForCallTransition drops the in-flight throttle so the
-// next requestOffer call sends immediately. Used when we learn the remote
-// participant has freshly entered the call — the first requestOffer
-// likely raced spreed's call-state propagation and was silently rejected
-// at hub.go ("not in the same call"). Returns true if a retry should be
-// attempted now. No-op when an offer was already received, when no
-// attempt has been made yet, or when attempts are exhausted (let
-// resetIfExhausted handle that case).
-func (p *subscriberPeer) clearOfferThrottleForCallTransition() bool {
+func (p *subscriberPeer) sendLocalICESignal(messageType string, payload map[string]any) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.offerReceived || p.requestOfferAttempts == 0 || p.offerExhaustedLogged {
-		return false
+	startFlush := p.enqueueLocalICESignalLocked(messageType, payload)
+	p.mu.Unlock()
+
+	if startFlush {
+		p.flushLocalICESignals()
 	}
-	p.awaitingOfferSince = time.Time{}
-	return true
 }
 
-func (p *subscriberPeer) currentSIDValue() string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.currentSID
+// enqueueLocalICESignalLocked appends one signal with the negotiation SID that
+// was current at callback time. p.mu must be held by the caller.
+func (p *subscriberPeer) enqueueLocalICESignalLocked(messageType string, payload map[string]any) bool {
+	p.pendingLocalICESignals = append(p.pendingLocalICESignals, localICESignal{
+		messageType: messageType,
+		payload:     payload,
+		sid:         p.currentSID,
+	})
+	startFlush := p.answerSent && !p.localICEFlushing
+	if startFlush {
+		p.localICEFlushing = true
+	}
+	return startFlush
 }
 
-func (p *subscriberPeer) sendEndOfCandidates(reason string) error {
+// flushLocalICESignals is the sole sender for this peer's trickled ICE
+// messages. Keeping one drainer active preserves candidate order and, in
+// particular, prevents endOfCandidates from overtaking a candidate queued by
+// an adjacent callback. It deliberately does not hold p.mu during a network
+// write, so other callbacks and shutdown can keep using the peer state while a
+// signaling write is in progress.
+func (p *subscriberPeer) flushLocalICESignals() {
+	for {
+		p.mu.Lock()
+		if !p.answerSent || len(p.pendingLocalICESignals) == 0 {
+			if len(p.pendingLocalICESignals) == 0 {
+				p.pendingLocalICESignals = nil
+			}
+			p.localICEFlushing = false
+			p.mu.Unlock()
+			return
+		}
+		signal := p.pendingLocalICESignals[0]
+		p.pendingLocalICESignals = p.pendingLocalICESignals[1:]
+		p.mu.Unlock()
+
+		if err := p.owner.sendPeerMessage(p.remoteSessionID, signal.messageType, signal.payload, signal.sid); err != nil {
+			log.Printf("send %s failed remote=%s sid=%s: %v", signal.messageType, p.remoteSessionID, signal.sid, err)
+		}
+	}
+}
+
+func (p *subscriberPeer) sendEndOfCandidates(reason string) {
 	p.mu.Lock()
 	if p.endOfCandidatesSent {
 		p.mu.Unlock()
-		return nil
+		return
 	}
 	p.endOfCandidatesSent = true
-	sid := p.currentSID
+	startFlush := p.enqueueLocalICESignalLocked("endOfCandidates", map[string]any{})
 	p.mu.Unlock()
 
 	if p.owner.cfg.DebugSignaling {
 		log.Printf("subscriber %s -> send endOfCandidates (%s)", p.remoteSessionID, reason)
 	}
-	return p.owner.sendPeerMessage(p.remoteSessionID, "endOfCandidates", map[string]any{}, sid)
+	if startFlush {
+		p.flushLocalICESignals()
+	}
+}
+
+// beginNegotiation re-arms the per-negotiation signaling state when an offer
+// arrives: the response throttle (so the retry loop stays quiet while the
+// answer is built and sent), the negotiation SID, and the local ICE gate.
+// Signals buffered for a superseded negotiation are dropped — they were
+// stamped with the old SID and must not ride out around the new answer. It
+// deliberately does NOT set offerReceived: only a successfully sent answer
+// stops offer retries (D-386, see markAnswerSent).
+func (p *subscriberPeer) beginNegotiation(sid string) {
+	p.mu.Lock()
+	p.awaitingOfferSince = time.Now()
+	p.currentSID = sid
+	p.endOfCandidatesSent = false
+	p.answerSent = false
+	p.pendingLocalICESignals = nil
+	p.mu.Unlock()
+}
+
+// markAnswerSent opens the local ICE gate only after sendPeerMessage(answer)
+// returned successfully. It also completes the requestoffer state transition:
+// a failed answer write must leave retries enabled and candidates buffered.
+func (p *subscriberPeer) markAnswerSent() {
+	p.mu.Lock()
+	p.answerSent = true
+	p.offerReceived = true
+	p.awaitingOfferSince = time.Time{}
+	startFlush := len(p.pendingLocalICESignals) != 0 && !p.localICEFlushing
+	if startFlush {
+		p.localICEFlushing = true
+	}
+	p.mu.Unlock()
+
+	if startFlush {
+		p.flushLocalICESignals()
+	}
 }
 
 func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any) error {
@@ -2005,15 +2081,8 @@ func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any)
 			return nil
 		}
 
-		p.mu.Lock()
-		// Mark the handshake in-flight so the retry loop does not fire a
-		// redundant requestoffer while we build and send the answer. Do NOT
-		// set offerReceived yet: only a sent answer should stop retries.
-		p.awaitingOfferSince = time.Now()
-		p.currentSID = asString(data["sid"])
-		p.endOfCandidatesSent = false
-		sid := p.currentSID
-		p.mu.Unlock()
+		sid := asString(data["sid"])
+		p.beginNegotiation(sid)
 
 		remoteDesc := webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: sdp}
 		if err := p.pc.SetRemoteDescription(remoteDesc); err != nil {
@@ -2024,27 +2093,31 @@ func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any)
 		if err != nil {
 			return fmt.Errorf("create answer for %s: %w", p.remoteSessionID, err)
 		}
-		gatherComplete := webrtc.GatheringCompletePromise(p.pc)
 		if err := p.pc.SetLocalDescription(answer); err != nil {
 			return fmt.Errorf("set local answer for %s: %w", p.remoteSessionID, err)
 		}
 
-		// Wait on the real ICE-gathering-complete event, never a wall-clock
-		// timer. The previous `time.After(4s)` cap fired before STUN/TURN
-		// gathering finished under CI load, so the answer shipped a truncated,
-		// host-only candidate set and the post-answer endOfCandidates then
-		// falsely signalled "done" — the remote could only pair host candidates,
-		// ICE reached `checking` and was torn down to `closed`, no track opened,
-		// and finalize hit "no remuxable streams". GatheringCompletePromise
-		// resolves when gathering actually finishes (pion bounds it with its own
-		// ICE timeouts); ctx.Done() still unblocks on shutdown so we never park.
-		select {
-		case <-gatherComplete:
-		case <-ctx.Done():
-			// Shutdown must not be parked behind ICE gathering.
-			log.Printf("ICE gather interrupted by shutdown for subscriber %s; continuing", p.remoteSessionID)
-		}
-
+		// Send the answer immediately (trickle ICE); never park it behind ICE
+		// gathering. The initial local description already carries the
+		// ufrag/pwd/fingerprint the remote needs to start connectivity checks;
+		// candidates follow on their own via OnICECandidate ("candidate"
+		// messages), and the truthful endOfCandidates is emitted only when
+		// gathering actually finishes (OnICECandidate(nil)). Those callbacks
+		// are buffered until the answer send below succeeds: Pion may invoke
+		// them concurrently with this handler, and candidate/EOC messages must
+		// not overtake the matching answer on the MCU subscriber queue.
+		//
+		// #106 (waiting on GatheringCompletePromise) fixed a premature
+		// endOfCandidates but introduced a worse head-of-line stall: that
+		// promise resolves only after EVERY configured STUN/TURN server has
+		// been gathered or timed out, so a single slow/unreachable server (the
+		// marginal TURN/ICE path in D-454) delayed the answer by the whole
+		// gather timeout (pion's stunGatherTimeout, 5s per server). The remote
+		// then reached ICE `connected` ~24s late — or never, torn down
+		// `checking -> closed` — missed the call window, and finalize hit "no
+		// remuxable streams" / an empty transcript. Sending the answer up front
+		// removes the stall while keeping endOfCandidates honest, so it can no
+		// longer poison the remote's candidate set (the #106 concern).
 		local := p.pc.LocalDescription()
 		if local == nil {
 			return fmt.Errorf("local description missing for %s", p.remoteSessionID)
@@ -2059,17 +2132,10 @@ func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any)
 			return fmt.Errorf("send answer for %s: %w", p.remoteSessionID, err)
 		}
 
-		if err := p.sendEndOfCandidates("post-answer"); err != nil {
-			return err
-		}
-
 		// Only now, with the answer actually sent, stop re-requesting offers
 		// for this peer. Setting offerReceived on offer arrival let a failed
 		// answer path permanently suppress retries (silent loss, D-386).
-		p.mu.Lock()
-		p.offerReceived = true
-		p.awaitingOfferSince = time.Time{}
-		p.mu.Unlock()
+		p.markAnswerSent()
 		return nil
 
 	case "candidate":

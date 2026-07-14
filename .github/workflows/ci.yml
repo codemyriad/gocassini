@@ -86,6 +86,7 @@ jobs:
       matrix:
         script:
           - ci-e2e.sh
+          - ci-e2e-private.sh
           - ci-e2e-rejoin.sh
           # ci-e2e-mute.sh is NOT in this matrix: it is a heavier 3-publisher
           # WebRTC scenario with its own readiness gate, so it runs as its own
