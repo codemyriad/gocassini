@@ -214,7 +214,8 @@ func TestDevPlayPrivateAdminConversationUsesAudibleStarterAndMediaOverride(t *te
 	defer server.Close()
 
 	repoRoot := t.TempDir()
-	createCompleteDevPlayPiedPiperFixture(t, repoRoot)
+	// Deliberately omit the generated Pied Piper fixture: a clean CI checkout
+	// must be able to play an explicit, materialized media override by itself.
 	mediaOverride := filepath.Join(repoRoot, "known-audible")
 	if err := os.WriteFile(mediaOverride+".ivf", []byte("video"), 0o644); err != nil {
 		t.Fatal(err)

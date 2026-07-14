@@ -333,17 +333,9 @@ func runDevPlayPrivateConversation(ctx context.Context, repoRoot string, opts de
 	if err != nil {
 		return err
 	}
-	target, err := resolveDevPlayPrivateTarget(repoRoot, baseURL, state, password, opts.conversation)
+	target, err := resolveDevPlayPrivateTarget(repoRoot, baseURL, state, password, opts.conversation, opts.mediaPrefix)
 	if err != nil {
 		return err
-	}
-	if opts.mediaPrefix != "" {
-		if !devPlayMediaPairExists(opts.mediaPrefix) {
-			return fmt.Errorf("--media-prefix requires non-empty %s.ivf and %s.ogg", opts.mediaPrefix, opts.mediaPrefix)
-		}
-		for i := range target.StreamMediaPrefixes {
-			target.StreamMediaPrefixes[i] = opts.mediaPrefix
-		}
 	}
 
 	client := newDevPlayPrivateOCSClient(baseURL, target.RecordingStarter.UserID, target.RecordingStarter.Password)
@@ -496,7 +488,7 @@ func devPlayPrivatePasswordForState(state devPlayPrivateScaffoldState) (string, 
 	}
 }
 
-func resolveDevPlayPrivateTarget(repoRoot string, baseURL string, state devPlayPrivateScaffoldState, password string, conversationName string) (devPlayPrivatePlaybackTarget, error) {
+func resolveDevPlayPrivateTarget(repoRoot string, baseURL string, state devPlayPrivateScaffoldState, password string, conversationName string, mediaOverride string) (devPlayPrivatePlaybackTarget, error) {
 	conversation, ok := state.conversation(conversationName)
 	if !ok || strings.TrimSpace(conversation.Token) == "" {
 		return devPlayPrivatePlaybackTarget{}, fmt.Errorf("scaffold state missing %s conversation; rerun `cassini dev play-private --scaffold-only`", conversationName)
@@ -538,9 +530,16 @@ func resolveDevPlayPrivateTarget(repoRoot string, baseURL string, state devPlayP
 			return devPlayPrivatePlaybackTarget{}, fmt.Errorf("scaffold state missing %s publisher %d fields; rerun scaffold", conversationName, i+1)
 		}
 	}
+	mediaOverride = strings.TrimSpace(mediaOverride)
+	if mediaOverride != "" && !devPlayMediaPairExists(mediaOverride) {
+		return devPlayPrivatePlaybackTarget{}, fmt.Errorf("--media-prefix requires non-empty %s.ivf and %s.ogg", mediaOverride, mediaOverride)
+	}
 	mediaPrefixes := make([]string, 0, len(publishers))
 	for _, publisher := range publishers {
-		prefix := filepath.Join(outputDir, publisher.SpeakerID)
+		prefix := mediaOverride
+		if prefix == "" {
+			prefix = filepath.Join(outputDir, publisher.SpeakerID)
+		}
 		if !devPlayMediaPairExists(prefix) {
 			return devPlayPrivatePlaybackTarget{}, fmt.Errorf("missing media for %s; run `cassini dev play --room <room> --mode single` or rerun scaffold", prefix)
 		}
@@ -548,7 +547,10 @@ func resolveDevPlayPrivateTarget(repoRoot string, baseURL string, state devPlayP
 	}
 	streamMediaPrefixes := append([]string{}, mediaPrefixes...)
 	if conversationName == devPlayPrivateConversationAdmin {
-		erlichPrefix := filepath.Join(outputDir, erlich.SpeakerID)
+		erlichPrefix := mediaOverride
+		if erlichPrefix == "" {
+			erlichPrefix = filepath.Join(outputDir, erlich.SpeakerID)
+		}
 		streamMediaPrefixes = []string{erlichPrefix, erlichPrefix}
 	}
 	callURL := strings.TrimSpace(conversation.CallURL)
