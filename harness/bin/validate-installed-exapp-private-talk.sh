@@ -68,7 +68,11 @@ for pair in "duration:$DURATION" "job-timeout:$JOB_TIMEOUT" "poll-interval:$POLL
 done
 (( DURATION > 0 && JOB_TIMEOUT > 0 && POLL_INTERVAL > 0 && RUN_COUNT > 0 )) \
   || fail "duration, timeout, poll interval, and run count must be positive"
-for tool in curl jq python3; do command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"; done
+# Portable artifact validation runs the host CLI, whose transcript extraction
+# probes and decodes the downloaded Opus file with ffprobe and ffmpeg.
+for tool in curl jq python3 ffprobe ffmpeg; do
+  command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
+done
 [[ -x "$VALIDATOR" ]] || fail "installed validator is not executable: $VALIDATOR"
 [[ -x "$ARTIFACT_VALIDATOR" ]] || fail "artifact validator is not executable: $ARTIFACT_VALIDATOR"
 

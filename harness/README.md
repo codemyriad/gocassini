@@ -468,7 +468,8 @@ CALL_URL="$(./bin/cassini dev room create --name "Installed ExApp local dev" | t
 ./bin/cassini dev player showcase --call-url "$CALL_URL"
 ```
 
-Private installed-ExApp validation helper:
+Private installed-ExApp validation helper (requires host `ffmpeg` and
+`ffprobe` to decode the downloaded portable artifact):
 
 ```bash
 git lfs pull \

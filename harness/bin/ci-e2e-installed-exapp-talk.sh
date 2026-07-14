@@ -122,7 +122,11 @@ finish() {
 }
 trap finish EXIT INT TERM
 
-for tool in docker curl jq python3; do command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"; done
+# Portable artifact validation runs the host CLI, whose transcript extraction
+# probes and decodes the downloaded Opus file with ffprobe and ffmpeg.
+for tool in docker curl jq python3 ffprobe ffmpeg; do
+  command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
+done
 [[ -f "$MANIFEST_PATH" ]] || fail "manifest not found: $MANIFEST_PATH"
 [[ -s "$MEDIA_PREFIX.ivf" && -s "$MEDIA_PREFIX.ogg" ]] \
   || fail "materialize known media pair: $MEDIA_PREFIX.{ivf,ogg}"
