@@ -62,7 +62,6 @@ type devStackPlan struct {
 	DownFull              bool
 	BuildRequested        bool
 	RemoteConfigRequested bool
-	ValidationWarnings    []string
 }
 
 type devStackFlagOptions struct {
@@ -459,15 +458,7 @@ func printDevStackPlan(w io.Writer, plan devStackPlan) {
 	fmt.Fprintf(w, "  down_suspend: %t\n", plan.DownSuspend)
 	fmt.Fprintf(w, "  down_volumes: %t\n", plan.DownVolumes)
 	fmt.Fprintf(w, "  down_full: %t\n", plan.DownFull)
-	if len(plan.ValidationWarnings) == 0 {
-		fmt.Fprintln(w, "validation: ok")
-		return
-	}
-	fmt.Fprintln(w, "validation:")
-	fmt.Fprintln(w, "  warnings:")
-	for _, warning := range plan.ValidationWarnings {
-		fmt.Fprintf(w, "    - %s\n", warning)
-	}
+	fmt.Fprintln(w, "validation: ok")
 }
 
 func yamlValueOrNull(value string) string {
