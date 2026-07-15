@@ -55,14 +55,25 @@ jobs:
           relevant=true
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             relevant=false
+            # Fail closed: if the diff can't be computed, classify as relevant so
+            # the required faithful gate actually runs instead of auto-passing green.
+            if ! changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"; then
+              echo "::warning::git diff failed; classifying change as relevant (fail-closed)"
+              echo "relevant=true" | tee -a "$GITHUB_OUTPUT"
+              exit 0
+            fi
             while IFS= read -r path; do
+              [[ -n "$path" ]] || continue
               case "$path" in
-                appinfo/*|deployment/*|cassini-operator/*|cassini-go-recorder/*|cassini-publisher/bin/*|cassini-viewer/*|cassini-control-panel/*|harness/*|bin/*|scripts/*|.gitattributes|.github/actions/*|.github/workflows/*)
+                # .dockerignore is a real image-build-context input (it excludes
+                # node_modules/.git/harness media from `context: .`), so a change to
+                # it must run the faithful gate rather than report a green no-op.
+                appinfo/*|deployment/*|cassini-operator/*|cassini-go-recorder/*|cassini-publisher/bin/*|cassini-viewer/*|cassini-control-panel/*|harness/*|bin/*|scripts/*|.dockerignore|.gitattributes|.github/actions/*|.github/workflows/*)
                   relevant=true
                   break
                   ;;
               esac
-            done < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+            done <<< "$changed"
           fi
           echo "relevant=$relevant" | tee -a "$GITHUB_OUTPUT"
 
@@ -255,10 +266,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [classify-changes, build-image]
     timeout-minutes: 30
-    # Required product gate after a 10/10 no-retry burn-in. Relevant PRs and
-    # every main push execute the product path. Unrelated PRs emit an explicit
-    # not-applicable success so branch protection never waits on a skipped
-    # path-filtered workflow.
+    # Required product gate: one no-retry AppAPI/HaRP-installed Talk recording.
+    # Relevant PRs and every main push execute the product path. Unrelated PRs
+    # emit an explicit not-applicable success so branch protection never waits on
+    # a skipped path-filtered workflow.
     if: always()
     steps:
       - name: Fail if change classification is unavailable
