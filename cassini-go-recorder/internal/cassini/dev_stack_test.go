@@ -256,6 +256,20 @@ func TestPrintDevStackPlanValidationWarnings(t *testing.T) {
 	}
 }
 
+func TestPrintDevStackCommandWarnings(t *testing.T) {
+	var output bytes.Buffer
+	printDevStackCommandWarnings(&output, "up", nil)
+	if output.Len() != 0 {
+		t.Fatalf("empty warning list printed %q", output.String())
+	}
+
+	printDevStackCommandWarnings(&output, "up", []string{"first warning", "second warning"})
+	want := "dev stack up: validation warnings:\n  - first warning\n  - second warning\n"
+	if output.String() != want {
+		t.Fatalf("warning output = %q, want %q", output.String(), want)
+	}
+}
+
 func TestRunDevStackDownFlagsMapToScript(t *testing.T) {
 	prevExec := runDevScriptExec
 	defer func() { runDevScriptExec = prevExec }()
