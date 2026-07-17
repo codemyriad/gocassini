@@ -78,4 +78,7 @@ jobs:
           # pass them -- so the control runs here, on every PR, instead of only
           # inside the ~45-minute integration leg.
           ./harness/bin/test-session-artifact-packet-guard.sh
+          # Companion control: proves verify-av-drift.sh cannot report success
+          # without actually comparing a pair. Stubs ffprobe, so no ffmpeg here.
+          ./harness/bin/test-av-drift-pair-requirement.sh
           ./harness/bin/test-ci-e2e-mute-timing.sh
