@@ -41,6 +41,27 @@ const (
 	maxCaptureRebuilds       = 3
 )
 
+// firstMediaGrace closes the sub-captureRebuildGrace dead zone (D-509): a peer
+// whose handshake COMPLETED but whose media never flowed was reachable by no
+// guard at all until it aged past the 45s captureRebuildGrace, because that
+// grace is anchored at peer creation and so conflates "no offer yet" (still
+// inside its requestoffer burst) with "answered, nothing arrived". A ~30s call
+// therefore finalized with "no remuxable streams" while the reconcile loop
+// watched. firstMediaGrace gives the answered state its own, tighter anchor
+// (answeredAt), so recovery engages inside a short recording instead of after
+// it. The 45s createdAt grace stays untouched as a floor.
+//
+// The early rebuild additionally requires that ICE is NOT connected. The answer
+// is deliberately sent before gathering completes (see handleMessage), and
+// pion's stunGatherTimeout is 5s PER configured server, so a slow-but-healthy
+// peer can legitimately deliver first media well past 12s; rebuilding it on a
+// bare timer would tear down a working transport and capture nothing — strictly
+// worse than doing nothing. Gating on the transport being observably down makes
+// the early branch a strict subset of what the 45s floor would rebuild anyway,
+// only sooner. An ICE-connected but silent peer is left to that floor, exactly
+// as today.
+const firstMediaGrace = 12 * time.Second
+
 // inCallFlagInCall is bit 1 of the Talk in-call flags: the participant has
 // joined the call. Remaining bits (audio=2, video=4, SIP=8) describe what
 // the participant publishes, so call membership is exactly flags&1 != 0.
@@ -168,6 +189,12 @@ type subscriberPeer struct {
 	awaitingOfferSince   time.Time
 	offerExhaustedLogged bool
 	endOfCandidatesSent  bool
+
+	// answeredAt is when the last answer was successfully sent — the anchor for
+	// firstMediaGrace. It is deliberately NOT cleared by beginNegotiation: it
+	// means "we have been answered since T and still have no media", which stays
+	// true across a renegotiation.
+	answeredAt time.Time
 
 	// SetLocalDescription starts Pion's ICE gathering asynchronously. Its
 	// OnICECandidate callback can therefore race the offer handler that sends
@@ -972,11 +999,25 @@ func (r *Recorder) requestOfferLoop(ctx context.Context) error {
 // participant, represented by an existing subscriber per D-365) against actual
 // capture, instead of giving up locally: a peer with no captured media is kept
 // being requestoffer'd (slow retry, never parked), and once that has produced
-// nothing within captureRebuildGrace the subscriber is rebuilt with a fresh
-// peer connection (covering an offer that was answered but whose media never
-// flowed). A peer that is capturing anything is left alone (D-386).
+// nothing the subscriber is rebuilt with a fresh peer connection (covering an
+// offer that was answered but whose media never flowed). A peer that is
+// capturing anything is left alone (D-386).
 //
-// now is passed in so the rebuild decision is deterministically testable.
+// The loop is snapshot -> decide -> act: reconcileState() takes each peer's
+// state under its own lock, reconcileActionFor decides purely from that
+// snapshot (so every reconcile outcome is table-testable without an MCU, real
+// ICE or wall-clock sleeps), and only then is an action performed with no lock
+// held. Because deciding and acting are separate, an action must re-validate
+// anything that can change under it.
+//
+// Beyond the D-386 baseline: an answered peer whose media never flowed is
+// rebuilt on the answeredAt anchor (firstMediaGrace) rather than waiting out
+// the createdAt-anchored captureRebuildGrace, which a short call never reaches
+// — but only while ICE is observably not connected (D-509 gap 1). A peer that
+// is ICE-connected but silent, and a peer still parked after maxCaptureRebuilds
+// (D-500 edge 2), are deliberately left to the unchanged 45s floor.
+//
+// now is passed in so every decision is deterministically testable.
 func (r *Recorder) reconcileSubscribers(now time.Time) {
 	r.mu.Lock()
 	if r.stopping {
@@ -995,21 +1036,129 @@ func (r *Recorder) reconcileSubscribers(now time.Time) {
 	captured := r.capturedPacketTotals()
 
 	for _, p := range peers {
-		if captured[p.remoteSessionID] > 0 {
-			// Capturing media (incl. a camera-only / muted-with-video
-			// participant): leave the working peer alone.
-			continue
-		}
-		if reconcileShouldRebuild(now, p.createdAt, p.rebuildCount) {
-			r.rebuildSubscriber(p, now)
-			continue
-		}
-		if !p.hasOffer() {
+		state := p.reconcileState()
+		switch reconcileActionFor(now, state, captured[p.remoteSessionID]) {
+		case actionRebuild:
+			r.rebuildSubscriber(p, now, rebuildReasonFor(now, state))
+		case actionRequestOffer:
 			if err := p.requestOffer(); err != nil {
 				log.Printf("requestoffer failed for %s: %v", p.remoteSessionID, err)
 			}
+		case actionNone:
+			// Healthy capture, or a bounded/parked peer we have deliberately
+			// stopped acting on.
 		}
 	}
+}
+
+// reconcileAction is the single decision reconcileSubscribers makes per peer
+// per tick. Making it a value rather than control flow is what lets the whole
+// guard chain be exercised as a table test (D-509).
+type reconcileAction int
+
+const (
+	actionNone reconcileAction = iota
+	actionRequestOffer
+	actionRebuild
+)
+
+func (a reconcileAction) String() string {
+	switch a {
+	case actionRequestOffer:
+		return "requestOffer"
+	case actionRebuild:
+		return "rebuild"
+	default:
+		return "none"
+	}
+}
+
+// peerReconcileState is a subscriberPeer snapshot: everything the reconcile
+// decision needs, read in one pass, so the decision itself is pure.
+type peerReconcileState struct {
+	createdAt     time.Time
+	rebuildCount  int
+	offerReceived bool
+	answeredAt    time.Time
+	iceConnected  bool
+}
+
+// reconcileState snapshots the peer for a reconcile tick.
+//
+// ICEConnectionState is sampled BEFORE p.mu is taken, and never under it:
+// pion invokes OnICECandidate (-> sendLocalICESignal -> p.mu) while holding its
+// own internal locks, so taking p.mu first and pion's second here would invert
+// that order. It is also nil-guarded because reconcile-decision tests construct
+// bare &subscriberPeer{} values with no peer connection.
+func (p *subscriberPeer) reconcileState() peerReconcileState {
+	iceConnected := false
+	if p.pc != nil {
+		switch p.pc.ICEConnectionState() {
+		case webrtc.ICEConnectionStateConnected, webrtc.ICEConnectionStateCompleted:
+			iceConnected = true
+		}
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return peerReconcileState{
+		createdAt:     p.createdAt,
+		rebuildCount:  p.rebuildCount,
+		offerReceived: p.offerReceived,
+		answeredAt:    p.answeredAt,
+		iceConnected:  iceConnected,
+	}
+}
+
+// reconcileActionFor is the whole reconcile decision, as a pure function of a
+// peer snapshot. It is the existing three-guard chain in the same order, plus
+// one new branch filling the chain's silent fall-through.
+func reconcileActionFor(now time.Time, s peerReconcileState, captured int) reconcileAction {
+	if captured > 0 {
+		// GUARD 1: capturing media, incl. a camera-only / muted-with-video
+		// participant. Leave the working peer alone.
+		return actionNone
+	}
+	if reconcileShouldRebuild(now, s.createdAt, s.rebuildCount) {
+		// GUARD 2 (unchanged): the 45s createdAt floor. Kept AHEAD of the
+		// answered branch below so the new logic can only ever act earlier than
+		// today, never later — which is what keeps every existing reconcile
+		// test green, including hand-built peers with a zero answeredAt.
+		return actionRebuild
+	}
+	if s.offerReceived {
+		// GUARD 3's silent fall-through: the handshake completed, so asking for
+		// another offer is both throttled off and pointless. This is where a
+		// peer used to sit doing nothing until the 45s floor (D-509 gap 1).
+		if reconcileShouldRebuildForFirstMedia(now, s) {
+			return actionRebuild
+		}
+		return actionNone
+	}
+	return actionRequestOffer // GUARD 3 (unchanged)
+}
+
+// reconcileShouldRebuildForFirstMedia reports whether an answered peer that has
+// captured nothing should be rebuilt on the firstMediaGrace anchor. Requires
+// ICE to be observably not connected: see firstMediaGrace on why a bare timer
+// here would be worse than no recovery at all.
+func reconcileShouldRebuildForFirstMedia(now time.Time, s peerReconcileState) bool {
+	if s.rebuildCount >= maxCaptureRebuilds {
+		return false
+	}
+	if s.answeredAt.IsZero() || s.iceConnected {
+		return false
+	}
+	return now.Sub(s.answeredAt) >= firstMediaGrace
+}
+
+// rebuildReasonFor labels a rebuild for the log, so the two anchors are
+// distinguishable in a post-mortem.
+func rebuildReasonFor(now time.Time, s peerReconcileState) string {
+	if reconcileShouldRebuild(now, s.createdAt, s.rebuildCount) {
+		return fmt.Sprintf("no media after %s", captureRebuildGrace)
+	}
+	return fmt.Sprintf("no media within %s of the answer, ICE not connected", firstMediaGrace)
 }
 
 // reconcileShouldRebuild reports whether a subscriber that has captured no
@@ -1044,7 +1193,7 @@ func (r *Recorder) capturedPacketTotals() map[string]int {
 // participant. It reuses ensureSubscriber's registration discipline: build the
 // peer outside the lock, then swap only if we are not stopping and the old peer
 // is still the registered one.
-func (r *Recorder) rebuildSubscriber(old *subscriberPeer, now time.Time) {
+func (r *Recorder) rebuildSubscriber(old *subscriberPeer, now time.Time, reason string) {
 	sid := old.remoteSessionID
 	newPeer, err := r.newSubscriberPeer(sid)
 	if err != nil {
@@ -1071,7 +1220,7 @@ func (r *Recorder) rebuildSubscriber(old *subscriberPeer, now time.Time) {
 	r.mu.Unlock()
 
 	_ = old.close()
-	log.Printf("talk recorder: rebuilding subscriber sid=%s (no media after %s, rebuild %d/%d)", sid, captureRebuildGrace, newPeer.rebuildCount, maxCaptureRebuilds)
+	log.Printf("talk recorder: rebuilding subscriber sid=%s (%s, rebuild %d/%d)", sid, reason, newPeer.rebuildCount, maxCaptureRebuilds)
 	if err := newPeer.requestOffer(); err != nil {
 		log.Printf("rebuild requestoffer failed for %s: %v", sid, err)
 	}
@@ -2058,6 +2207,7 @@ func (p *subscriberPeer) markAnswerSent() {
 	p.mu.Lock()
 	p.answerSent = true
 	p.offerReceived = true
+	p.answeredAt = time.Now()
 	p.awaitingOfferSince = time.Time{}
 	startFlush := len(p.pendingLocalICESignals) != 0 && !p.localICEFlushing
 	if startFlush {
