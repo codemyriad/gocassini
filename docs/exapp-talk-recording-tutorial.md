@@ -4,7 +4,7 @@ _Last validated in `dev-vm` on 2026-06-26._
 
 ## Goal
 
-Validate in `dev-vm` that Cassini is installed as a Nextcloud ExApp by default, its control panel and viewer are visible, and two private admin + Erlich Bachman 1:1 Talk recordings produce transcripts in the viewer without losing existing published meetings.
+Validate in `dev-vm` that Cassini can be installed as a Nextcloud ExApp, its control panel and viewer are visible, and two private admin + Erlich Bachman 1:1 Talk recordings produce transcripts in the viewer without losing existing published meetings.
 
 ## Host/VM setup
 
@@ -33,7 +33,6 @@ multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && git branch -
 If old stacks are running and you want a clean validation:
 
 ```bash
-multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && docker compose -p spreedtest-vm -f harness/vm/compose.yml --profile full down --volumes || true'
 multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && docker compose -p cassini-exapp-test -f harness/compose.yml --profile full down --volumes || true'
 multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace/deployment && docker compose down --volumes || true'
 ```
@@ -45,7 +44,11 @@ Run:
 ```bash
 multipass exec dev-vm -- bash -lc '
   cd /home/ubuntu/dev/workspace
-  SPREED_PROFILE=full ./harness/bin/manual-test-setup.sh --build
+  ./bin/cassini dev stack up \
+    --services full \
+    --cassini installed-exapp \
+    --recording-backend installed-exapp \
+    --build
 '
 ```
 

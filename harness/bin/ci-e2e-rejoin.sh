@@ -2,6 +2,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./lib/e2e-local.sh
+source "$SCRIPT_DIR/lib/e2e-local.sh"
+harness_e2e_local_stack_env full legacy none
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -38,15 +41,26 @@ REC_LOG="${REC_LOG:-/tmp/gocassini-ci-rejoin-recorder.log}"
 PHASE1_LOG="${PHASE1_LOG:-/tmp/gocassini-ci-rejoin-phase1.log}"
 PHASE2_LOG="${PHASE2_LOG:-/tmp/gocassini-ci-rejoin-phase2.log}"
 
+# Explicit stack topology for this e2e leg: local HTTP, full media services
+# (nats/janus/signaling/coturn), no installed ExApp, legacy recording backend.
+STACK_TOPOLOGY=(
+  --public-mode local-http
+  --services full
+  --cassini none
+  --recording-backend legacy
+)
+
 cleanup() {
   log "Cleaning up local test stack"
-  "$SCRIPT_DIR/down.sh" --volumes || true
+  "$REPO_ROOT/bin/cassini" dev stack down --volumes "${STACK_TOPOLOGY[@]}" || true
 }
 
 trap cleanup EXIT INT TERM
 
 log "Starting local Nextcloud Talk stack for CI (leave/rejoin)"
-"$SCRIPT_DIR/up.sh"
+# --reset: e2e wants a deterministic fresh stack; a leaked project from an
+# earlier aborted run must not fail the bring-up guard.
+"$REPO_ROOT/bin/cassini" dev stack up "${STACK_TOPOLOGY[@]}" --reset
 
 log "Creating temporary room for CI capture"
 CALL_URL="$(create_room_with_retry "$CALL_NAME")"

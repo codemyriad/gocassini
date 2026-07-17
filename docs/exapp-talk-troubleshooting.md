@@ -87,15 +87,14 @@ Expected output for the current VM:
 Start the installed ExApp harness inside the VM:
 
 ```bash
-multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && SPREED_PROFILE=full ./harness/bin/manual-test-setup.sh'
+multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && ./bin/cassini dev stack up --services full --cassini installed-exapp --recording-backend installed-exapp --build'
 ```
 
 Expected setup evidence:
 
 ```text
 System config value trusted_domains => 12 set to string 192.168.252.29
-✓ ExApp registration completed
-✓ status reports Talk recording + signaling secrets configured
+✓ ExApp registration and verification completed
 ```
 
 Open from the Mac browser:
@@ -147,7 +146,7 @@ multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && source harne
 The full installed-ExApp harness completed in `dev-vm` with Cassini registered and enabled:
 
 ```bash
-multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && SPREED_PROFILE=full ./harness/bin/manual-test-setup.sh'
+multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && ./bin/cassini dev stack up --services full --cassini installed-exapp --recording-backend installed-exapp --build'
 ```
 
 Playwright from the Mac host then reached:
@@ -221,7 +220,7 @@ The helper also treats a published portable `.opus` catalog entry as visible eve
 Validated with a rebuilt installed ExApp in `dev-vm`:
 
 ```bash
-multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && SPREED_PROFILE=full ./harness/bin/manual-test-setup.sh --build'
+multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && ./bin/cassini dev stack up --services full --cassini installed-exapp --recording-backend installed-exapp --build'
 multipass exec dev-vm -- bash -lc 'cd /home/ubuntu/dev/workspace && ./harness/bin/validate-installed-exapp-private-talk.sh --nextcloud-host 192.168.252.29 --duration 60 --job-timeout 900'
 ```
 

@@ -91,7 +91,7 @@ print(token)
 PY
 )"
 
-call_url="${NEXTCLOUD_URL%/}/call/$room_token"
+call_url="${NEXTCLOUD_PUBLIC_URL%/}/call/$room_token"
 printf '%s\n' "$room_token" > "$RUNTIME_DIR/last_room_token"
 printf '%s\n' "$call_url" > "$RUNTIME_DIR/last_call_url"
 

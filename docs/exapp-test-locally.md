@@ -71,13 +71,18 @@ Talk record button
 From the repo root:
 
 ```bash
-SPREED_PROFILE=full ./harness/bin/manual-test-setup.sh --build
+./bin/cassini dev stack up \
+  --services full \
+  --cassini installed-exapp \
+  --recording-backend installed-exapp \
+  --build
 ```
 
-The setup script starts the harness, builds/tags the ExApp image from
+The stack command starts the harness, builds/tags the ExApp image from
 `appinfo/info.xml`, installs/reinstalls Cassini via AppAPI, passes both Talk
 secrets as deploy env, and configures Talk's `recording_servers` to the
-installed ExApp proxy path.
+installed ExApp proxy path. Use `./bin/cassini dev stack plan ...` with the
+same flags to inspect the resolved config without mutating containers.
 
 ### `dev-vm`
 
@@ -87,7 +92,11 @@ inside the VM:
 ```bash
 multipass exec dev-vm -- bash -lc '
   cd /home/ubuntu/dev/workspace
-  SPREED_PROFILE=full ./harness/bin/manual-test-setup.sh --build
+  ./bin/cassini dev stack up \
+    --services full \
+    --cassini installed-exapp \
+    --recording-backend installed-exapp \
+    --build
 '
 ```
 
@@ -153,8 +162,7 @@ Nextcloud's installed app UI. Use Tier 3 for production-shaped validation.
 For the AppAPI/HaRP harness:
 
 ```bash
-cd harness
-SPREED_PROFILE=full docker compose -p cassini-exapp-test down --volumes
+./bin/cassini dev stack down --full
 ```
 
 For the VM harness, use the same command inside `/home/ubuntu/dev/workspace` or
