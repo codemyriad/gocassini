@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/netip"
 	"net/url"
 	"os"
 	"sort"
@@ -282,8 +283,75 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	return plan, rest, nil
 }
 
-func collectDevStackWarnings(_ devStackPlan, _ devStackFlagOptions, _ envLookupFunc) []string {
-	return nil
+func collectDevStackWarnings(plan devStackPlan, opts devStackFlagOptions, lookup envLookupFunc) []string {
+	var warnings []string
+
+	envValue := func(name string) (string, bool) {
+		value, ok := lookup(name)
+		return value, ok && value != ""
+	}
+	inputSet := func(flagName, envName string) bool {
+		if opts.set[flagName] {
+			return true
+		}
+		_, ok := envValue(envName)
+		return ok
+	}
+
+	if spreadEnv, ok := envValue("SPREED_PROFILE"); ok && spreadEnv != plan.SpreedProfile && oneOf(plan.ServiceMode, devStackServiceCore, devStackServiceAppAPI, devStackServiceFull, devStackServiceFullRemote) {
+		warnings = append(warnings, fmt.Sprintf("SPREED_PROFILE=%s is ignored because service mode %s forces SPREED_PROFILE=%s.", spreadEnv, plan.ServiceMode, plan.SpreedProfile))
+	}
+	if plan.CassiniMode == devStackCassiniNone && inputSet("exapp-image-mode", "CASSINI_HARNESS_EXAPP_IMAGE_MODE") {
+		warnings = append(warnings, fmt.Sprintf("ExApp image mode %s is ignored because Cassini mode is none.", plan.ExAppImageMode))
+	}
+	if plan.CassiniMode == devStackCassiniNone && oneOf(plan.PatchMode, devStackPatchNone, devStackPatchForce) && inputSet("patch", "CASSINI_HARNESS_PATCH_MODE") {
+		warnings = append(warnings, fmt.Sprintf("Patch mode %s is ignored because Cassini mode is none; no AppAPI CSP patch will run.", plan.PatchMode))
+	}
+
+	hasMediaStack := devStackHasMediaStack(plan)
+	if !hasMediaStack && (plan.MediaHost != "" || plan.SignalingPublicURL != "") {
+		warnings = append(warnings, "Media/signaling remote inputs are ignored because the resolved service topology does not start the Talk media stack.")
+	}
+	if plan.CassiniMode == devStackCassiniInstalledExApp && oneOf(plan.RecordingBackend, devStackRecordingLegacy, devStackRecordingDirectOperator) {
+		warnings = append(warnings, fmt.Sprintf("Cassini is installed as an ExApp, but Talk recording uses the %s backend; the installed ExApp will not receive recording callbacks.", plan.RecordingBackend))
+	}
+	if !hasMediaStack && plan.RecordingBackend != devStackRecordingNone && inputSet("recording-backend", "CASSINI_HARNESS_RECORDING_BACKEND") {
+		warnings = append(warnings, fmt.Sprintf("Recording backend %s will not be configured because the resolved service topology does not start the Talk media stack; use recording backend none for install-only checks.", plan.RecordingBackend))
+	}
+	if hasMediaStack && plan.PublicMode == devStackPublicRemoteHTTP && isRFC1918IPv4Host(plan.MediaHost) {
+		warnings = append(warnings, fmt.Sprintf("remote-https media host %s is private/RFC1918; browsers outside that private network will not reach WebRTC media.", plan.MediaHost))
+	}
+
+	if plan.ExistingResourceMode == devStackExistingReset && oneOf(plan.Command, "plan", "up") {
+		if plan.CassiniMode == devStackCassiniInstalledExApp {
+			warnings = append(warnings, "Existing-resource mode reset will remove and recreate the resolved stack, including Docker Compose volumes and installed ExApp state.")
+		} else {
+			warnings = append(warnings, "Existing-resource mode reset will remove and recreate the resolved stack, including Docker Compose volumes.")
+		}
+	}
+	if plan.Command == "down" && plan.DownVolumes {
+		warnings = append(warnings, "down --volumes will remove current-project containers and Docker Compose volumes, plus installed ExApp containers and state volumes if present.")
+	}
+	if plan.Command == "down" && plan.DownFull {
+		warnings = append(warnings, "down --full will remove all known harness-owned Compose and installed ExApp resources, including volumes.")
+	}
+
+	return warnings
+}
+
+func devStackHasMediaStack(plan devStackPlan) bool {
+	return oneOf(plan.ServiceMode, devStackServiceFull, devStackServiceFullRemote) || plan.SpreedProfile == "full"
+}
+
+func isRFC1918IPv4Host(host string) bool {
+	addr, err := netip.ParseAddr(strings.Trim(host, "[]"))
+	if err != nil || !addr.Is4() {
+		return false
+	}
+	octets := addr.As4()
+	return octets[0] == 10 ||
+		(octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31) ||
+		(octets[0] == 192 && octets[1] == 168)
 }
 
 func normalizeDevStackServiceMode(value string) string {

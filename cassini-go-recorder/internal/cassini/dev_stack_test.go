@@ -3,7 +3,9 @@ package cassini
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -40,6 +42,273 @@ func TestResolveDevStackPlanDefaultsPreserveCompatibility(t *testing.T) {
 	}
 	if len(plan.ValidationWarnings) != 0 {
 		t.Fatalf("ValidationWarnings = %v, want none", plan.ValidationWarnings)
+	}
+}
+
+func TestResolveDevStackPlanValidationWarnings(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		args    []string
+		env     map[string]string
+		want    []string
+	}{
+		{
+			name:    "SPREED_PROFILE full overridden by appapi",
+			command: "plan",
+			args:    []string{"--services", "appapi", "--recording-backend", "none"},
+			env:     map[string]string{"SPREED_PROFILE": "full"},
+			want:    []string{"SPREED_PROFILE=full is ignored because service mode appapi forces SPREED_PROFILE=default."},
+		},
+		{
+			name:    "SPREED_PROFILE default overridden by full",
+			command: "plan",
+			args:    []string{"--services", "full"},
+			env:     map[string]string{"SPREED_PROFILE": "default"},
+			want:    []string{"SPREED_PROFILE=default is ignored because service mode full forces SPREED_PROFILE=full."},
+		},
+		{
+			name:    "explicit pull image mode without Cassini",
+			command: "plan",
+			args:    []string{"--exapp-image-mode", "pull"},
+			want:    []string{"ExApp image mode pull is ignored because Cassini mode is none."},
+		},
+		{
+			name:    "explicit reuse-local image mode without Cassini",
+			command: "plan",
+			args:    []string{"--exapp-image-mode", "reuse-local"},
+			want:    []string{"ExApp image mode reuse-local is ignored because Cassini mode is none."},
+		},
+		{
+			name:    "env image mode without Cassini",
+			command: "plan",
+			env:     map[string]string{"CASSINI_HARNESS_EXAPP_IMAGE_MODE": "pull"},
+			want:    []string{"ExApp image mode pull is ignored because Cassini mode is none."},
+		},
+		{
+			name:    "explicit force patch mode without Cassini",
+			command: "plan",
+			args:    []string{"--patch", "force"},
+			want:    []string{"Patch mode force is ignored because Cassini mode is none; no AppAPI CSP patch will run."},
+		},
+		{
+			name:    "explicit none patch mode without Cassini",
+			command: "plan",
+			args:    []string{"--patch", "none"},
+			want:    []string{"Patch mode none is ignored because Cassini mode is none; no AppAPI CSP patch will run."},
+		},
+		{
+			name:    "env patch mode without Cassini",
+			command: "plan",
+			env:     map[string]string{"CASSINI_HARNESS_PATCH_MODE": "force"},
+			want:    []string{"Patch mode force is ignored because Cassini mode is none; no AppAPI CSP patch will run."},
+		},
+		{
+			name:    "remote media inputs without media services",
+			command: "plan",
+			args: []string{
+				"--public-mode", "remote-https",
+				"--public-host", "remote.example",
+				"--media-host", "100.85.120.118",
+				"--services", "appapi",
+				"--recording-backend", "none",
+			},
+			want: []string{"Media/signaling remote inputs are ignored because the resolved service topology does not start the Talk media stack."},
+		},
+		{
+			name:    "installed ExApp bypassed by legacy backend",
+			command: "plan",
+			args:    []string{"--services", "full", "--cassini", "installed-exapp", "--recording-backend", "legacy"},
+			want:    []string{"Cassini is installed as an ExApp, but Talk recording uses the legacy backend; the installed ExApp will not receive recording callbacks."},
+		},
+		{
+			name:    "installed ExApp bypassed by direct operator backend",
+			command: "plan",
+			args:    []string{"--services", "full", "--cassini", "installed-exapp", "--recording-backend", "direct-operator"},
+			want:    []string{"Cassini is installed as an ExApp, but Talk recording uses the direct-operator backend; the installed ExApp will not receive recording callbacks."},
+		},
+		{
+			name:    "private media IP in remote mode",
+			command: "plan",
+			args: []string{
+				"--public-mode", "remote-https",
+				"--public-host", "remote.example",
+				"--media-host", "192.168.1.10",
+				"--services", "full-remote",
+			},
+			want: []string{"remote-https media host 192.168.1.10 is private/RFC1918; browsers outside that private network will not reach WebRTC media."},
+		},
+		{
+			name:    "up reset",
+			command: "up",
+			args:    []string{"--reset"},
+			want:    []string{"Existing-resource mode reset will remove and recreate the resolved stack, including Docker Compose volumes."},
+		},
+		{
+			name:    "plan reset from env with installed ExApp",
+			command: "plan",
+			args:    []string{"--services", "full", "--cassini", "installed-exapp", "--recording-backend", "installed-exapp"},
+			env:     map[string]string{"CASSINI_HARNESS_EXISTING": "reset"},
+			want:    []string{"Existing-resource mode reset will remove and recreate the resolved stack, including Docker Compose volumes and installed ExApp state."},
+		},
+		{
+			name:    "down volumes",
+			command: "down",
+			args:    []string{"--volumes"},
+			want:    []string{"down --volumes will remove current-project containers and Docker Compose volumes, plus installed ExApp containers and state volumes if present."},
+		},
+		{
+			name:    "down full",
+			command: "down",
+			args:    []string{"--full"},
+			want:    []string{"down --full will remove all known harness-owned Compose and installed ExApp resources, including volumes."},
+		},
+		{
+			name:    "explicit recording backend without media services",
+			command: "plan",
+			args:    []string{"--services", "appapi", "--recording-backend", "legacy"},
+			want:    []string{"Recording backend legacy will not be configured because the resolved service topology does not start the Talk media stack; use recording backend none for install-only checks."},
+		},
+		{
+			name:    "env recording backend without media services",
+			command: "plan",
+			args:    []string{"--services", "appapi"},
+			env:     map[string]string{"CASSINI_HARNESS_RECORDING_BACKEND": "legacy"},
+			want:    []string{"Recording backend legacy will not be configured because the resolved service topology does not start the Talk media stack; use recording backend none for install-only checks."},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan, _, err := resolveDevStackPlan(tt.command, tt.args, testEnv(tt.env))
+			if err != nil {
+				t.Fatalf("resolveDevStackPlan: %v", err)
+			}
+			if !reflect.DeepEqual(plan.ValidationWarnings, tt.want) {
+				t.Fatalf("ValidationWarnings = %#v, want %#v", plan.ValidationWarnings, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveDevStackPlanDoesNotWarnForDeferredScenarios(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		env  map[string]string
+	}{
+		{
+			name: "default legacy backend without media services",
+			args: []string{"--services", "appapi"},
+		},
+		{
+			name: "explicit auto patch without Cassini",
+			args: []string{"--patch", "auto"},
+		},
+		{
+			name: "none patch with installed ExApp",
+			args: []string{"--services", "full", "--cassini", "installed-exapp", "--recording-backend", "installed-exapp", "--patch", "none"},
+		},
+		{
+			name: "explicit local mode masks remote env",
+			args: []string{"--public-mode", "local-http"},
+			env: map[string]string{
+				"CASSINI_HARNESS_PUBLIC_URL":           "https://remote.example",
+				"CASSINI_HARNESS_PUBLIC_HOST":          "remote.example",
+				"CASSINI_HARNESS_MEDIA_HOST":           "100.85.120.118",
+				"CASSINI_HARNESS_SIGNALING_PUBLIC_URL": "https://remote.example:8443",
+			},
+		},
+		{
+			name: "private public host with reachable media host",
+			args: []string{
+				"--public-mode", "remote-https",
+				"--public-host", "192.168.1.20",
+				"--media-host", "100.85.120.118",
+				"--services", "full-remote",
+			},
+		},
+		{
+			name: "pull image for installed ExApp",
+			args: []string{"--services", "full", "--cassini", "installed-exapp", "--recording-backend", "installed-exapp", "--exapp-image-mode", "pull"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan, _, err := resolveDevStackPlan("plan", tt.args, testEnv(tt.env))
+			if err != nil {
+				t.Fatalf("resolveDevStackPlan: %v", err)
+			}
+			if len(plan.ValidationWarnings) != 0 {
+				t.Fatalf("ValidationWarnings = %v, want none", plan.ValidationWarnings)
+			}
+		})
+	}
+}
+
+func TestResolveDevStackPlanWarningOrder(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("up", []string{
+		"--public-mode", "remote-https",
+		"--public-host", "remote.example",
+		"--media-host", "192.168.1.10",
+		"--services", "appapi",
+		"--cassini", "installed-exapp",
+		"--recording-backend", "legacy",
+		"--reset",
+	}, testEnv(map[string]string{"SPREED_PROFILE": "full"}))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+
+	want := []string{
+		"SPREED_PROFILE=full is ignored because service mode appapi forces SPREED_PROFILE=default.",
+		"Media/signaling remote inputs are ignored because the resolved service topology does not start the Talk media stack.",
+		"Cassini is installed as an ExApp, but Talk recording uses the legacy backend; the installed ExApp will not receive recording callbacks.",
+		"Recording backend legacy will not be configured because the resolved service topology does not start the Talk media stack; use recording backend none for install-only checks.",
+		"Existing-resource mode reset will remove and recreate the resolved stack, including Docker Compose volumes and installed ExApp state.",
+	}
+	if !reflect.DeepEqual(plan.ValidationWarnings, want) {
+		t.Fatalf("ValidationWarnings = %#v, want %#v", plan.ValidationWarnings, want)
+	}
+}
+
+func TestRFC1918IPv4Host(t *testing.T) {
+	tests := []struct {
+		host string
+		want bool
+	}{
+		{"10.0.0.1", true},
+		{"172.16.0.1", true},
+		{"172.31.255.254", true},
+		{"192.168.1.10", true},
+		{"172.15.255.254", false},
+		{"172.32.0.1", false},
+		{"100.85.120.118", false},
+		{"203.0.113.10", false},
+		{"remote.example", false},
+		{"[::1]", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			if got := isRFC1918IPv4Host(tt.host); got != tt.want {
+				t.Fatalf("isRFC1918IPv4Host(%q) = %t, want %t", tt.host, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveDevStackPlanHardFailureDoesNotCollectWarnings(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("plan", []string{
+		"--services", "appapi",
+		"--cassini", "installed-exapp",
+		"--recording-backend", "direct-operator",
+	}, testEnv(map[string]string{"SPREED_PROFILE": "full"}))
+	if err == nil {
+		t.Fatal("expected hard validation failure")
+	}
+	if len(plan.ValidationWarnings) != 0 {
+		t.Fatalf("hard failure collected warnings: %v", plan.ValidationWarnings)
 	}
 }
 
@@ -219,7 +488,7 @@ func TestResolveDevStackPlanDownFull(t *testing.T) {
 func TestRunDevStackPlanPrintsResolvedPlan(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := runDevStack(context.Background(), ".", []string{"plan", "--patch=none"}, &stdout, &stderr)
+	code := runDevStack(context.Background(), ".", []string{"plan", "--public-mode=local-http"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("runDevStack code=%d stderr=%q", code, stderr.String())
 	}
@@ -227,13 +496,32 @@ func TestRunDevStackPlanPrintsResolvedPlan(t *testing.T) {
 	for _, want := range []string{
 		"public:\n  mode: local-http",
 		"cassini:\n  mode: none",
-		"patch:\n  mode: none",
+		"patch:\n  mode: auto",
 		"lifecycle:\n  existing_resources: fail",
 		"validation: ok",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("plan output missing %q: %s", want, out)
 		}
+	}
+}
+
+func TestRunDevStackHardFailureDoesNotPrintPlan(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runDevStack(context.Background(), ".", []string{
+		"plan",
+		"--public-mode=local-http",
+		"--services=appapi",
+		"--recording-backend=direct-operator",
+	}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("runDevStack code=%d, want 2", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("hard failure printed plan: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "requires service mode full") {
+		t.Fatalf("stderr missing hard validation error: %q", stderr.String())
 	}
 }
 
@@ -317,6 +605,60 @@ func TestRunDevStackStopCommandRemoved(t *testing.T) {
 	}
 }
 
+func TestRunDevStackWarningsPreserveScriptExitCode(t *testing.T) {
+	prevExec := runDevScriptExec
+	defer func() { runDevScriptExec = prevExec }()
+
+	for _, scriptCode := range []int{0, 17} {
+		t.Run(fmt.Sprintf("script code %d", scriptCode), func(t *testing.T) {
+			called := false
+			runDevScriptExec = func(_ context.Context, _ string, relativeScript string, _ []string, _ []string, _ io.Writer, _ io.Writer) int {
+				called = true
+				if relativeScript != "harness/bin/up.sh" {
+					t.Fatalf("script = %q", relativeScript)
+				}
+				return scriptCode
+			}
+
+			var stdout, stderr bytes.Buffer
+			code := runDevStack(context.Background(), ".", []string{"up", "--reset", "--public-mode=local-http"}, &stdout, &stderr)
+			if code != scriptCode {
+				t.Fatalf("runDevStack code=%d, want script code %d", code, scriptCode)
+			}
+			if !called {
+				t.Fatal("up script was not called")
+			}
+			if !strings.Contains(stderr.String(), "dev stack up: validation warnings:") || !strings.Contains(stderr.String(), "Existing-resource mode reset") {
+				t.Fatalf("stderr missing reset warning: %q", stderr.String())
+			}
+		})
+	}
+}
+
+func TestRunDevStackDownPrintsDestructiveWarnings(t *testing.T) {
+	prevExec := runDevScriptExec
+	defer func() { runDevScriptExec = prevExec }()
+
+	runDevScriptExec = func(_ context.Context, _ string, relativeScript string, args []string, _ []string, _ io.Writer, _ io.Writer) int {
+		if relativeScript != "harness/bin/down.sh" {
+			t.Fatalf("script = %q", relativeScript)
+		}
+		if !reflect.DeepEqual(args, []string{"--full"}) {
+			t.Fatalf("args = %v, want [--full]", args)
+		}
+		return 0
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runDevStack(context.Background(), ".", []string{"down", "--full", "--public-mode=local-http"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runDevStack code=%d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "dev stack down: validation warnings:") || !strings.Contains(stderr.String(), "down --full will remove all known harness-owned") {
+		t.Fatalf("stderr missing full-down warning: %q", stderr.String())
+	}
+}
+
 func TestRunDevStackUpPassesResolvedEnv(t *testing.T) {
 	prevExec := runDevScriptExec
 	defer func() { runDevScriptExec = prevExec }()
@@ -331,7 +673,7 @@ func TestRunDevStackUpPassesResolvedEnv(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := runDevStack(context.Background(), ".", []string{"up", "--services", "core"}, &stdout, &stderr)
+	code := runDevStack(context.Background(), ".", []string{"up", "--public-mode=local-http", "--services", "core"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("runDevStack code=%d stderr=%q", code, stderr.String())
 	}
