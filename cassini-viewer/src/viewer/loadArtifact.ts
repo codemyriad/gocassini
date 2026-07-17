@@ -25,7 +25,7 @@ import {
   type PortableTranscriptDescriptor,
   type PortableTranscriptEntry,
 } from "./portable";
-import { resolveAppBaseUrl } from "./appBase";
+import { readViewerBase, resolveAppBaseUrl } from "./appBase";
 
 export interface LoadedArtifact {
   transcript: TranscriptWordsV1;
@@ -85,10 +85,87 @@ const DEFAULT_CHAPTERS_PATH = "./chapters.vtt";
 // stopped covering common cases and was forcing the full-file fallback. 1 MB
 // covers ~4 typical transcripts before the fallback kicks in.
 const PORTABLE_METADATA_RANGE_END = 1048575;
-const portableManifestCache = new Map<string, Promise<ExtractedPortableManifest>>();
-// Body cache keyed by audioUrl → transcriptId → parsed body. Lets the switcher
-// round-trip A → B → A without re-fetching or re-decompressing payloads.
-const portableBodyCache = new Map<string, Map<string, unknown>>();
+
+// PortableMeetingStore owns the portable manifest + body caches that used to be
+// module-level singletons (implicitly global state shared across every meeting
+// load). Relocating them onto an instance lets a DataProvider own its own cache
+// (see dataProvider.ts) so the state is no longer global. A single module-level
+// default instance (defaultPortableStore) keeps the exported free functions —
+// and therefore every existing call site and test — behaving identically.
+export class PortableMeetingStore {
+  // resolved audioUrl → in-flight/resolved extracted manifest.
+  private readonly manifestCache = new Map<string, Promise<ExtractedPortableManifest>>();
+  // resolved audioUrl → transcriptId → parsed body. Lets the switcher round-trip
+  // A → B → A without re-fetching or re-decompressing payloads.
+  private readonly bodyCache = new Map<string, Map<string, unknown>>();
+
+  async loadManifest(audioUrl: string): Promise<ExtractedPortableManifest> {
+    let manifestPromise = this.manifestCache.get(audioUrl);
+    if (!manifestPromise) {
+      manifestPromise = fetchPortableManifest(audioUrl);
+      this.manifestCache.set(audioUrl, manifestPromise);
+    }
+    try {
+      return await manifestPromise;
+    } catch (error) {
+      this.manifestCache.delete(audioUrl);
+      this.bodyCache.delete(audioUrl);
+      throw error;
+    }
+  }
+
+  peekManifest(audioUrl: string): Promise<ExtractedPortableManifest> | undefined {
+    return this.manifestCache.get(audioUrl);
+  }
+
+  primeBodies(
+    audioUrl: string,
+    manifest: PortableMeetingManifest,
+    currentTranscriptId: string,
+  ): void {
+    // The initial extract already eager-resolved the default raw + readable
+    // bodies into manifest.transcript / manifest.readableTranscript. Seed the
+    // body cache with those so a round-trip back to default skips re-decoding.
+    const bucket = this.bucketFor(audioUrl);
+    if (manifest.transcript && !bucket.has(currentTranscriptId)) {
+      bucket.set(currentTranscriptId, manifest.transcript);
+    }
+    const readableEntry = pickReadableForTranscript(manifest, currentTranscriptId);
+    if (readableEntry && manifest.readableTranscript && !bucket.has(readableEntry.id)) {
+      bucket.set(readableEntry.id, manifest.readableTranscript);
+    }
+  }
+
+  async loadBody(
+    audioUrl: string,
+    bodyId: string,
+    tags: Record<string, string>,
+    entry: PortableTranscriptEntry,
+  ): Promise<unknown> {
+    const bucket = this.bucketFor(audioUrl);
+    const cached = bucket.get(bodyId);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const body = await loadPortableTranscriptBody(tags, entry.payloadRef);
+    bucket.set(bodyId, body);
+    return body;
+  }
+
+  private bucketFor(audioUrl: string): Map<string, unknown> {
+    let bucket = this.bodyCache.get(audioUrl);
+    if (!bucket) {
+      bucket = new Map();
+      this.bodyCache.set(audioUrl, bucket);
+    }
+    return bucket;
+  }
+}
+
+// Module-level default store: keeps the exported free functions' behaviour
+// identical to the previous module-level singletons for callers (and tests)
+// that do not pass their own store.
+const defaultPortableStore = new PortableMeetingStore();
 
 export async function loadBundledArtifact(): Promise<LoadedArtifact> {
   return loadArtifactFromPaths({
@@ -114,13 +191,15 @@ export async function loadArtifactFromDirectory(basePath: string): Promise<Loade
   });
 }
 
-export async function loadPortableArtifactFromAudioPath(audioPath: string): Promise<LoadedArtifact> {
+export async function loadPortableArtifactFromAudioPath(
+  audioPath: string,
+  store: PortableMeetingStore = defaultPortableStore,
+): Promise<LoadedArtifact> {
   const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
-  const extracted = await loadPortableManifestFromAudioPath(audioPath);
-  const { manifest } = extracted;
+  const { manifest } = await store.loadManifest(resolvedAudioPath);
   const availableTranscripts = listAvailableTranscripts(manifest);
   const currentTranscriptId = getDefaultTranscriptId(manifest);
-  primeBodyCache(resolvedAudioPath, manifest, currentTranscriptId);
+  store.primeBodies(resolvedAudioPath, manifest, currentTranscriptId);
   return buildPortableLoadedArtifact({
     manifest,
     audioSrc: resolvedAudioPath,
@@ -129,8 +208,12 @@ export async function loadPortableArtifactFromAudioPath(audioPath: string): Prom
   });
 }
 
-export async function loadPortableMeetingSummary(audioPath: string): Promise<PortableMeetingSummary> {
-  const { manifest } = await loadPortableManifestFromAudioPath(audioPath);
+export async function loadPortableMeetingSummary(
+  audioPath: string,
+  store: PortableMeetingStore = defaultPortableStore,
+): Promise<PortableMeetingSummary> {
+  const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
+  const { manifest } = await store.loadManifest(resolvedAudioPath);
   const transcript = buildTranscriptWordsFromPortable(manifest);
   return {
     speakerCount: transcript.speakers.length,
@@ -148,9 +231,10 @@ export async function loadPortableMeetingSummary(audioPath: string): Promise<Por
 export async function switchPortableTranscript(
   audioPath: string,
   transcriptId: string,
+  store: PortableMeetingStore = defaultPortableStore,
 ): Promise<LoadedArtifact> {
   const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
-  const cached = portableManifestCache.get(resolvedAudioPath);
+  const cached = store.peekManifest(resolvedAudioPath);
   if (!cached) {
     throw new Error(
       "switchPortableTranscript called before the portable meeting was loaded; load the meeting first.",
@@ -176,7 +260,7 @@ export async function switchPortableTranscript(
   if (!entry) {
     throw new Error(`portable meeting has no transcript with id "${transcriptId}"`);
   }
-  const transcriptBody = (await loadCachedTranscriptBody(
+  const transcriptBody = (await store.loadBody(
     resolvedAudioPath,
     transcriptId,
     tags,
@@ -185,7 +269,7 @@ export async function switchPortableTranscript(
   const readableEntry = pickReadableForTranscript(manifest, transcriptId);
   let readableBody: PortableMeetingManifest["readableTranscript"] | undefined;
   if (readableEntry) {
-    readableBody = (await loadCachedTranscriptBody(
+    readableBody = (await store.loadBody(
       resolvedAudioPath,
       readableEntry.id,
       tags,
@@ -250,48 +334,6 @@ function buildPortableLoadedArtifact({
     availableTranscripts,
     currentTranscriptId,
   };
-}
-
-function primeBodyCache(
-  audioUrl: string,
-  manifest: PortableMeetingManifest,
-  currentTranscriptId: string,
-): void {
-  // The initial extract already eager-resolved the default raw + readable
-  // bodies into manifest.transcript / manifest.readableTranscript. Seed the
-  // body cache with those so a round-trip back to default skips re-decoding.
-  let bucket = portableBodyCache.get(audioUrl);
-  if (!bucket) {
-    bucket = new Map();
-    portableBodyCache.set(audioUrl, bucket);
-  }
-  if (manifest.transcript && !bucket.has(currentTranscriptId)) {
-    bucket.set(currentTranscriptId, manifest.transcript);
-  }
-  const readableEntry = pickReadableForTranscript(manifest, currentTranscriptId);
-  if (readableEntry && manifest.readableTranscript && !bucket.has(readableEntry.id)) {
-    bucket.set(readableEntry.id, manifest.readableTranscript);
-  }
-}
-
-async function loadCachedTranscriptBody(
-  audioUrl: string,
-  bodyId: string,
-  tags: Record<string, string>,
-  entry: PortableTranscriptEntry,
-): Promise<unknown> {
-  let bucket = portableBodyCache.get(audioUrl);
-  if (!bucket) {
-    bucket = new Map();
-    portableBodyCache.set(audioUrl, bucket);
-  }
-  const cached = bucket.get(bodyId);
-  if (cached !== undefined) {
-    return cached;
-  }
-  const body = await loadPortableTranscriptBody(tags, entry.payloadRef);
-  bucket.set(bodyId, body);
-  return body;
 }
 
 async function loadArtifactFromPaths(paths: {
@@ -426,37 +468,6 @@ function resolveDocumentAssetUrl(assetPath: string): string {
     return new URL(assetPath, viewerBase).toString();
   }
   return new URL(assetPath, window.location.href).toString();
-}
-
-// readViewerBase mirrors catalog.ts: returns the AppAPI proxy base captured by
-// src/embedded.ts (resolved to an absolute URL), or "" outside the embedded
-// build. Asset paths in the embedded viewer are published-archive paths the
-// operator serves under "<base>published/...", which catalog.ts already
-// rewrites into absolute URLs via the fetched catalog's response.url — but
-// bundled/document-relative fallbacks must still resolve against the proxy
-// base rather than the Nextcloud embedded-page pathname.
-function readViewerBase(): string {
-  const base = typeof window !== "undefined" ? window.__CASSINI_VIEWER_BASE__ : undefined;
-  if (typeof base !== "string" || base === "") {
-    return "";
-  }
-  return new URL(base, window.location.href).toString();
-}
-
-async function loadPortableManifestFromAudioPath(audioPath: string): Promise<ExtractedPortableManifest> {
-  const resolvedAudioPath = resolveDocumentAssetUrl(audioPath);
-  let manifestPromise = portableManifestCache.get(resolvedAudioPath);
-  if (!manifestPromise) {
-    manifestPromise = fetchPortableManifest(resolvedAudioPath);
-    portableManifestCache.set(resolvedAudioPath, manifestPromise);
-  }
-  try {
-    return await manifestPromise;
-  } catch (error) {
-    portableManifestCache.delete(resolvedAudioPath);
-    portableBodyCache.delete(resolvedAudioPath);
-    throw error;
-  }
 }
 
 async function fetchPortableManifest(audioUrl: string): Promise<ExtractedPortableManifest> {

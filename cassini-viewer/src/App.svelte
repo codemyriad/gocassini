@@ -17,27 +17,22 @@
     ReadableTranscriptV1,
     TranscriptIndex,
   } from "./core/types";
-  import {
-    loadArtifactFromDirectory,
-    loadBundledArtifact,
-    loadPortableArtifactFromAudioPath,
-    loadPortableMeetingSummary,
-    switchPortableTranscript,
-    type ArtifactMetadata,
-    type ArtifactMetadataRow,
-    type ArtifactTimingPrecision,
-    type LoadedArtifact,
-    type PortableMeetingSummary,
+  import type {
+    ArtifactMetadata,
+    ArtifactMetadataRow,
+    ArtifactTimingPrecision,
+    LoadedArtifact,
+    PortableMeetingSummary,
   } from "./viewer/loadArtifact";
   import type { PortableTranscriptDescriptor } from "./viewer/portable";
   import {
     filterMeetingCatalogEntries,
     formatMeetingDate,
     formatMeetingDateShort,
-    loadMeetingCatalog,
     sortMeetingCatalogEntries,
     type MeetingCatalogEntry,
   } from "./viewer/catalog";
+  import { StaticCatalogProvider, type DataProvider } from "./viewer/dataProvider";
   import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "./viewer/hashRouting";
 
   interface DisplaySegment {
@@ -95,6 +90,13 @@
   // embedded.ts. Theme toggle is hidden and localStorage/prefers-color-scheme
   // init is skipped — NC colour prefs are applied via CSS in app.css.
   export let ncMode: boolean = false;
+
+  // dataProvider is the seam between App and its data source (D-415). It
+  // defaults to a StaticCatalogProvider so existing mounts/tests that don't pass
+  // one keep working unchanged; main.ts / embedded.ts construct and pass one
+  // explicitly. All data access below goes through this instead of calling the
+  // loadArtifact/catalog module functions directly.
+  export let dataProvider: DataProvider = new StaticCatalogProvider();
 
   type ThemeMode = "saturn-light" | "saturn-dark";
   const THEME_STORAGE_KEY = "cassini-theme";
@@ -356,7 +358,7 @@
     const preferBundledArtifact = viewerConfig.__CASSINI_VIEWER_ARTIFACT_MODE__ === "bundled";
     try {
       if (!preferBundledArtifact) {
-        const catalog = await loadMeetingCatalog();
+        const catalog = await dataProvider.loadCatalog();
         // A successfully-loaded catalog — even an empty one (fresh install,
         // meetings: []) — means catalog/list mode. Only fall through to the
         // single bundled-artifact path when there is NO catalog at all (null),
@@ -388,7 +390,7 @@
           return;
         }
       }
-      const artifact = await loadBundledArtifact();
+      const artifact = await dataProvider.loadBundledArtifact();
       selectedMeetingId = "";
       activeMeeting = null;
       applyArtifact(artifact);
@@ -491,7 +493,7 @@
     transcriptSwitchPending = true;
     transcriptSwitchError = "";
     try {
-      const next = await switchPortableTranscript(activeMeeting.audioPath, targetId);
+      const next = await dataProvider.switchTranscript(activeMeeting, targetId);
       applySwitchedTranscript(next);
       writeTranscriptUrlParam(targetId);
     } catch (error) {
@@ -543,7 +545,7 @@
     }
     transcriptSwitchPending = true;
     try {
-      const next = await switchPortableTranscript(meeting.audioPath, requested);
+      const next = await dataProvider.switchTranscript(meeting, requested);
       applySwitchedTranscript(next);
     } catch {
       clearTranscriptUrlParam();
@@ -564,18 +566,9 @@
     loading = true;
     errorMessage = "";
     try {
-      // Primary published path: a `.opus` portable meeting loads via its
-      // audioPath (loadPortableArtifactFromAudioPath). Directory loading
-      // (loadArtifactFromDirectory / artifactPath) is a dev-only affordance and
-      // is only used when a catalog entry has no audioPath — so audioPath is
-      // checked first even if both happen to be present.
-      const artifact = meeting.audioPath
-        ? await loadPortableArtifactFromAudioPath(meeting.audioPath)
-        : meeting.artifactPath
-          ? await loadArtifactFromDirectory(meeting.artifactPath)
-          : (() => {
-              throw new Error(`Meeting ${meeting.id} is missing artifactPath and audioPath`);
-            })();
+      // The audioPath (packed `.opus`) vs artifactPath (loose dev directory)
+      // routing now lives in dataProvider.loadMeetingForEntry.
+      const artifact = await dataProvider.loadMeetingForEntry(meeting);
       const enrichedMeeting = mergeMeetingRuntimeSummary(meeting, artifact);
       catalogMeetings = catalogMeetings.map((entry) =>
         entry.id === enrichedMeeting.id ? enrichedMeeting : entry,
@@ -790,11 +783,13 @@
         continue;
       }
       try {
-        const summary = await loadPortableMeetingSummary(meeting.audioPath);
+        const summary = await dataProvider.loadMeetingSummary(meeting);
         if (generation !== catalogHydrationGeneration) {
           return;
         }
-        applyMeetingSummary(meeting.id, summary);
+        if (summary) {
+          applyMeetingSummary(meeting.id, summary);
+        }
       } catch {
         // Keep the entry in loading state if background hydration fails.
       }
