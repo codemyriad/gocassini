@@ -95,7 +95,16 @@ jobs:
       - name: Required-fields sanity check
         run: |
           set -euo pipefail
-          for field in '<id>gocassini</id>' '<external-app>' '<docker-install>' '<routes>'; do
+          # The two Talk secret declarations are markers, not decoration: AppAPI
+          # only injects env keys the manifest declares (D-403), so deleting
+          # either <variable> silently disables Talk recording. Grepping for them
+          # here puts that exact regression class on a per-PR REQUIRED context in
+          # seconds — the cheap tier under the on-demand D-403 sensitivity control
+          # (harness/bin/ci-e2e-installed-exapp-talk.sh).
+          for field in \
+            '<id>gocassini</id>' '<external-app>' '<docker-install>' '<routes>' \
+            '<name>CASSINI_TALK_RECORDING_SECRET</name>' \
+            '<name>CASSINI_TALK_SIGNALING_INTERNAL_SECRET</name>'; do
             if ! grep -qF "$field" appinfo/info.xml; then
               echo "appinfo/info.xml missing required marker: $field" >&2
               exit 1
@@ -350,6 +359,107 @@ jobs:
         with:
           name: faithful-installed-exapp-talk-cpu-${{ github.run_attempt }}
           path: ${{ runner.temp }}/faithful-installed-exapp-talk-cpu
+          if-no-files-found: warn
+          retention-days: 14
+
+  d403-manifest-sensitivity-control:
+    # The NEGATIVE control for the faithful gate above: it runs the exact same
+    # orchestrator against a manifest with the CASSINI_TALK_SIGNALING_INTERNAL_SECRET
+    # declaration stripped, and proves the installed ExApp reports the signaling
+    # secret unconfigured and fails before recording — the D-403 boundary
+    # (AppAPI drops env keys the manifest does not declare), machine-checked.
+    #
+    # DELIBERATELY off the per-PR required path (workflow_dispatch only): a
+    # DISTINCT job id and check name from "Faithful installed ExApp Talk artifact
+    # (CPU)" so it can never be mistaken for that required context. Trigger it by
+    # hand from the Actions tab ("Run workflow"). The cheap, always-on tiers that
+    # ride under it are the required-fields marker lint in validate-manifest above
+    # and harness/bin/test-negative-manifest.sh in ci.yml's contracts job.
+    name: D-403 manifest allow-list sensitivity control (CPU)
+    runs-on: ubuntu-latest
+    needs: [classify-changes, build-image]
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install host validation tools
+        run: |
+          sudo apt-get update
+          # ffmpeg supplies both ffmpeg and ffprobe, which the orchestrator
+          # preflights before stack up (a contract enforced by
+          # test-faithful-host-tools.sh) even on the control path.
+          sudo apt-get install -y --no-install-recommends ffmpeg jq libxml2-utils
+          git lfs version
+
+      - name: Materialize only the known audible participant fixture
+        run: >-
+          git lfs pull
+          --include="harness/media/processed/showcase-lantern-festival-v1/mira.ivf,harness/media/processed/showcase-lantern-festival-v1/mira.ogg"
+
+      - name: Verify participant fixture is materialized
+        run: |
+          set -euo pipefail
+          prefix=harness/media/processed/showcase-lantern-festival-v1/mira
+          for media in "$prefix.ivf" "$prefix.ogg"; do
+            [[ -s "$media" && $(stat -c%s "$media") -gt 10000 ]] || {
+              echo "::error::known participant media missing or still an LFS pointer: $media" >&2
+              exit 1
+            }
+          done
+
+      - name: Load exact ExApp image
+        id: load
+        uses: ./.github/actions/load-exapp-image
+        with:
+          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pre-pull stack images
+        run: docker compose -f harness/compose.yml --profile full pull
+
+      - name: Generate signaling-secret-free manifest
+        run: |
+          set -euo pipefail
+          python3 harness/bin/make-negative-manifest.py \
+            appinfo/info.xml "$RUNNER_TEMP/info-no-signaling.xml"
+
+      - name: Run the D-403 sensitivity control (expect failure before recording)
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+          D453_EXPECT_CONFIG_FAILURE: '1'
+          D453_MANIFEST_PATH: ${{ runner.temp }}/info-no-signaling.xml
+          LOG_DIR: ${{ runner.temp }}/d403-sensitivity-control
+        run: ./harness/bin/ci-e2e-installed-exapp-talk.sh
+
+      - name: Assert the control tripped at the boundary, before recording
+        run: |
+          set -euo pipefail
+          summary="$RUNNER_TEMP/d403-sensitivity-control/summary.json"
+          [[ -f "$summary" ]] || { echo "::error::no summary.json at $summary" >&2; exit 1; }
+          # The ticket's Done-when, machine-checked from the retained evidence:
+          # the installed status reported the signaling secret UNCONFIGURED, the
+          # differential control fired at stack verification, and no recording was
+          # attempted (recording_performed is a fact about the run, not a branch
+          # constant — see ci-e2e-installed-exapp-talk.sh RECORDING_ATTEMPTED).
+          jq -e '
+            .result == "sensitivity-control-passed"
+            and .control.expected == true
+            and .control.signaling_internal_secret_configured == false
+            and .control.recording_performed == false
+            and .control.branch == "stack-verification"
+          ' "$summary"
+
+      - name: Upload D-403 sensitivity control evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: d403-sensitivity-control-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/d403-sensitivity-control
           if-no-files-found: warn
           retention-days: 14
 

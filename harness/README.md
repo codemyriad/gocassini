@@ -501,6 +501,62 @@ manifest-gated Talk configuration, performs one recording, validates the
 viewer artifact, and treats D-493 teardown/leak checks as part of the pass. It
 never retries a failed recording.
 
+#### D-403 manifest allow-list sensitivity control (negative run)
+
+The same orchestrator runs its own negative control. AppAPI injects only the env
+keys the manifest *declares*, so deleting the
+`CASSINI_TALK_SIGNALING_INTERNAL_SECRET` `<variable>` from `appinfo/info.xml`
+makes the installed operator report the signaling secret unconfigured and fails
+the install at route verification — the exact D-403 regression the faithful gate
+exists to catch. `make-negative-manifest.py` generates that stripped manifest on
+demand (it never ships checked in, so it cannot drift as `<version>` bumps), and
+`D453_EXPECT_CONFIG_FAILURE=1` tells the orchestrator to assert the boundary
+instead of recording:
+
+```bash
+git lfs pull \
+  --include="harness/media/processed/showcase-lantern-festival-v1/mira.ivf,harness/media/processed/showcase-lantern-festival-v1/mira.ogg"
+
+# 1. Generate a manifest identical to appinfo/info.xml minus the signaling secret.
+python3 harness/bin/make-negative-manifest.py \
+  appinfo/info.xml /tmp/info-no-signaling.xml
+
+# 2. Run the control. It exits 0 when the boundary held (secret unconfigured,
+#    no recording), non-zero if the secret leaked in or the install died for an
+#    unrelated reason.
+IMAGE_REF=cassini-exapp:local-faithful \
+D453_EXPECT_CONFIG_FAILURE=1 \
+D453_MANIFEST_PATH=/tmp/info-no-signaling.xml \
+LOG_DIR=/tmp/d403-control \
+  ./harness/bin/ci-e2e-installed-exapp-talk.sh
+
+# 3. Read the machine-checkable verdict from the retained evidence.
+jq '.result, .control' /tmp/d403-control/summary.json
+# result           => "sensitivity-control-passed"
+# control.signaling_internal_secret_configured => false   (the Done-when)
+# control.recording_performed                  => false   (a fact about the run)
+# control.branch                               => "stack-verification"
+```
+
+On stack-up failure the ExApp container is still installed and serving through
+the AppAPI proxy, so the control probes `/operator/status` directly and asserts
+the parsed value: `signaling_internal_secret_configured == false` *and*
+`secret_configured == true`. The second half is differential — it proves the
+*only* difference is the missing declaration, not a wholesale env-injection
+failure. The offline generator contract test runs on every PR with no Docker:
+
+```bash
+./harness/bin/test-negative-manifest.sh
+```
+
+In CI this control is a `workflow_dispatch`-only job in
+`publish-exapp-image.yml`, **"D-403 manifest allow-list sensitivity control
+(CPU)"** — distinct from the required per-PR "Faithful installed ExApp Talk
+artifact (CPU)" gate. Trigger it from the Actions tab ("Run workflow"). The
+cheap always-on tiers are `test-negative-manifest.sh` (ci.yml contracts) and the
+required-fields marker lint in `validate-manifest` that fails per-PR if either
+Talk secret `<variable>` disappears from `appinfo/info.xml`.
+
 ---
 
 ## 6. Guide: remote HTTPS dev setup
