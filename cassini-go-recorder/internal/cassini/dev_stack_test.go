@@ -38,6 +38,9 @@ func TestResolveDevStackPlanDefaultsPreserveCompatibility(t *testing.T) {
 	if plan.PatchMode != devStackPatchAuto {
 		t.Fatalf("PatchMode = %q", plan.PatchMode)
 	}
+	if len(plan.ValidationWarnings) != 0 {
+		t.Fatalf("ValidationWarnings = %v, want none", plan.ValidationWarnings)
+	}
 }
 
 func TestResolveDevStackPlanRejectsRemoteInputsWithoutRemoteMode(t *testing.T) {
@@ -231,6 +234,25 @@ func TestRunDevStackPlanPrintsResolvedPlan(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("plan output missing %q: %s", want, out)
 		}
+	}
+}
+
+func TestPrintDevStackPlanValidationWarnings(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("plan", nil, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	plan.ValidationWarnings = []string{"first warning", "second warning"}
+
+	var output bytes.Buffer
+	printDevStackPlan(&output, plan)
+
+	want := "validation:\n  warnings:\n    - first warning\n    - second warning\n"
+	if !strings.Contains(output.String(), want) {
+		t.Fatalf("plan output missing warning block %q: %s", want, output.String())
+	}
+	if strings.Contains(output.String(), "validation: ok") {
+		t.Fatalf("warning plan must not print validation ok: %s", output.String())
 	}
 }
 
