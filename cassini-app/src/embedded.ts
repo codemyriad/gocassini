@@ -31,7 +31,9 @@
 
 import { mount } from "svelte";
 import App from "./App.svelte";
-import "cassini-viewer/app.css";
+// The shell's stylesheet composes the viewing layer's app.css and adds a
+// @source for the shell's own components (nav + operator surface) — D-420 V3.
+import "./app.css";
 
 // VIEWER_JS_SRC_PATTERN matches the registered ui/viewer.js src and captures
 // the AppAPI proxy base. Exported for the unit test so test and runtime agree.
@@ -68,6 +70,31 @@ export function captureViewerBase(doc: Document, win: Window): void {
   const base = captureViewerBaseFrom(doc.scripts);
   if (base) {
     win.__CASSINI_VIEWER_BASE__ = base;
+  }
+}
+
+// operatorBaseFrom derives the operator JSON API base from the captured viewer
+// (proxy) base: the operator surface (D-420 V3) talks to <proxy>/operator/*
+// through the same AppAPI proxy the viewer assets come from. Returns null when
+// the base is absent (standalone/dev — config.ts falls back to its build-time
+// default there). Pure so it is unit-testable.
+export function operatorBaseFrom(viewerBase: string | null | undefined): string | null {
+  if (!viewerBase) {
+    return null;
+  }
+  return viewerBase.replace(/\/+$/, "") + "/operator";
+}
+
+// captureOperatorBase publishes the operator base as
+// window.__CASSINI_CONFIG__.operatorBasePath, which operator/config.ts treats
+// as authoritative when present. This replaces the old control-panel pathname
+// sniffing (proxyPrefixFromPathname keyed off "/control-panel", which the
+// collapsed single entry no longer serves). No-op when no viewer base was
+// captured.
+export function captureOperatorBase(win: Window): void {
+  const base = operatorBaseFrom(win.__CASSINI_VIEWER_BASE__);
+  if (base) {
+    win.__CASSINI_CONFIG__ = { ...(win.__CASSINI_CONFIG__ ?? {}), operatorBasePath: base };
   }
 }
 
@@ -162,6 +189,7 @@ function mountEmbeddedShell(): void {
 
 function bootstrap(): void {
   captureViewerBase(document, window);
+  captureOperatorBase(window);
   // Wait for the window load event unless already complete: OCA.Theming is
   // populated by a Nextcloud dynamic import that resolves after
   // DOMContentLoaded; the load event is the earliest reliable read point.

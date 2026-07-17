@@ -81,5 +81,45 @@ Branch `refactor/d-420-app-shell-workspace`, stacked on V1. **npm workspace for 
 
 **Debt to clean (noted):** the viewer-derived `embedded.ts` duplicates the viewer's bootstrap — extract a shared, parameterizable bootstrap into the viewing layer when V3 needs the operator-base capture too; `cassini-app` has no unit tests currently (`--passWithNoTests`) since the old control-panel `embedded.test.ts` tested now-removed operator-embedded code — tests return with V3. Also: with the npm workspace root, `cd cassini-viewer && npm test` wraps the exit code noisily (cosmetic; pnpm/D-499 resolves).
 
-## V3 — Operator surface + hash-`surface` nav + 403 probe (B4/B5/B6/B7)  _(not started)_
+## V3 — Operator surface + hash-`surface` nav + 403 probe (B4/B5/B6/B7)
+
+Branch `refactor/d-420-operator-surface`, stacked on V2. Revives the operator as
+an admin-gated surface inside the one `cassini-app`, restoring what V2 took
+offline.
+
+- **B6 — admin probe** (`cassini-app/src/operator/adminProbe.ts`): `probeOperatorAvailable()`
+  does `GET <base>/status`; `200` → show operator, `403`/error → hide. `OC.isUserAdmin()`
+  is an optimistic anti-flash hint only. Client gating is UX; the 403 is the brace.
+- **B5 — surface routing** (`cassini-app/src/surfaceRouting.ts`): a `surface`
+  hash segment (`#surface=operator`) layered on the viewer's meeting/tx/t params
+  (browse = default, no marker). Same fragment-only `pushState` mechanism — no
+  pathname router. Kept shell-local (not in the viewing layer's `hashRouting.ts`)
+  because "which app-surface" is a shell concept the viewer stays unaware of.
+- **B4 — shell + nav** (`cassini-app/src/App.svelte`): renders a **Browse | Operator**
+  top nav only when the operator surface is available; browse stays mounted
+  (state preserved) and hides under operator; operator mounts only when active
+  (so its SSE + polling don't run in the background). Non-admins get byte-identical
+  browse-only output (no nav).
+- **B7 — boundary** (`appinfo/info.xml`): operator JSON API stays `ADMIN`. Added
+  the missing `operator/settings` route (the Settings panel needs it — it would
+  otherwise 403/404 through the proxy); dropped the dead `control-panel` routes.
+- **Operator-base capture** (`cassini-app/src/embedded.ts`): publishes
+  `window.__CASSINI_CONFIG__.operatorBasePath = <proxy base>/operator`, replacing
+  the old control-panel pathname sniffing (paying down the V2-flagged debt).
+- **Shell stylesheet** (`cassini-app/src/app.css`): composes the viewing layer's
+  `app.css` + a `@source` for `cassini-app/src` so the operator surface + nav
+  Tailwind/daisyUI classes are generated into the merged bundle.
+
+### Status — V3 COMPLETE (verified)
+- [x] Gates green: `cassini-app` `build:all` (single-bundle assert OK) + 23 unit
+  tests (probe, surface routing, operator-base capture); `cassini-viewer` 171/171;
+  Go `build`/`vet`/`test` green (operator API + settings). Operator-surface
+  Tailwind classes confirmed present in the bundled CSS.
+- [x] Runtime (headless Chrome vs the built shell): **admin** (OC hint + probe 200)
+  → Browse|Operator nav, browse default/active, deep-link `#surface=operator`
+  mounts the operator surface, **0 JS errors**. **Non-admin** (no OC + probe 403)
+  → no nav, browse-only, forced `#surface=operator` falls back to browse, **0
+  errors**. The full NC-embedded operator run (real jobs/SSE against the ADMIN
+  proxy) is CI install-e2e's domain (as in V2).
+
 ## V4 — Formalise shareable single-meeting embed (R2/R3)  _(not started)_

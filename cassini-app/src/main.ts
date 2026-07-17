@@ -1,8 +1,8 @@
 import { mount } from "svelte";
 import App from "./App.svelte";
-// The browse surface's styles live in the viewing layer (D-420). The shell's
-// own app.css (operator styling) returns when the operator surface lands (V3).
-import "cassini-viewer/app.css";
+// The shell's stylesheet composes the viewing layer's app.css and adds a
+// @source for the shell's own components (nav + operator surface) — D-420 V3.
+import "./app.css";
 
 mount(App, {
   target: document.getElementById("app")!,
