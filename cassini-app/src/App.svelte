@@ -26,6 +26,14 @@
   let operatorAvailable = false;
   let surface: Surface = "browse";
 
+  // The daisyUI theme tokens (colors AND --radius-box/--border etc.) are emitted
+  // on [data-theme=…], not on :host — so any surface NOT inside a data-theme'd
+  // element gets no theme in the embedded shadow build. The viewer's App carries
+  // data-theme on its own .cassini-root; the operator surface has no such
+  // ancestor, so we give it one here (reusing .cassini-root also pulls in the
+  // :host([data-nc-theme]) .cassini-root NC-colour overrides, matching browse).
+  let themeMode: "saturn-light" | "saturn-dark" = "saturn-light";
+
   function applySurfaceFromLocation(): void {
     const next = readSurface(window.location.hash);
     // A non-admin deep-linking #surface=operator falls back to browse (the
@@ -54,6 +62,13 @@
   }
 
   onMount(async () => {
+    // Match the viewer's default theme choice so the operator surface's
+    // data-theme agrees with the browse surface (NC colours still override via
+    // :host([data-nc-theme]) on real Nextcloud).
+    if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
+      themeMode = "saturn-dark";
+    }
+
     // Optimistic anti-flash hint: if Nextcloud already tells us the user is an
     // admin, show the operator tab immediately instead of waiting a round-trip.
     if (isLikelyAdminHint(window) === true) {
@@ -123,7 +138,10 @@
       <ViewerApp {ncMode} {dataProvider} />
     </div>
     {#if surface === "operator"}
-      <div class="cassini-shell-surface">
+      <!-- .cassini-root + data-theme give the operator its daisyUI theme in the
+           shadow build (tokens aren't on :host) and pull in the NC-colour
+           overrides, exactly like the viewer's browse surface. -->
+      <div class="cassini-shell-surface cassini-root" data-theme={themeMode}>
         <Operator />
       </div>
     {/if}
