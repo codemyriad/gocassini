@@ -138,6 +138,13 @@
   .cassini-shell {
     display: flex;
     flex-direction: column;
+    /* A DEFINITE height (not just min-height) so the viewer's height:100% chain
+       resolves through the shell wrapper — :host{height:100%} in the embedded
+       shadow build. With only min-height the wrapper's height is indefinite and
+       the viewer's `.cassini-root{height:100%}` (which carries the bg-base-200
+       grid) collapses to content height, leaving the meeting view with no
+       background / broken layout (D-420 V3). */
+    height: 100%;
     min-height: 100%;
   }
 

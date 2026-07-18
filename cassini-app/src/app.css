@@ -16,3 +16,17 @@
 
 /* Scan the shell's own components. Relative to THIS file → cassini-app/src. */
 @source "./";
+
+/* The shell is a full-height app: make the height chain DEFINITE from the root
+   so the flex surface — and the viewer's `.cassini-root { height: 100% }` that
+   carries the bg-base-200 grid — actually fill in the STANDALONE build. The
+   viewing layer's app.css sets html/body/#app to only `min-height:100%`, which
+   is indefinite, so a percentage height collapses through the shell's flex
+   column. Inert in the embedded (shadow) build — there the SPA mounts inside a
+   shadow root whose :host is already `height:100%`, and there is no html/body/
+   #app inside the shadow for this rule to match. (D-420 V3.) */
+html,
+body,
+#app {
+  height: 100%;
+}
