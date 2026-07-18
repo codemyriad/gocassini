@@ -65,9 +65,23 @@
     // Authoritative: probe the ADMIN-gated operator boundary (200 -> show).
     try {
       const { operatorBasePath } = loadConfig();
-      operatorAvailable = (await probeOperatorAvailable(operatorBasePath)).available;
-    } catch {
+      const probe = await probeOperatorAvailable(operatorBasePath);
+      operatorAvailable = probe.available;
+      // 403 is the expected "not an admin" answer — stay quiet. Anything else (a
+      // network failure or an unexpected status) shouldn't silently hide the
+      // operator surface with no trace, so surface it.
+      if (!probe.available && probe.status !== 403) {
+        console.warn(
+          `Cassini: operator surface hidden — probe returned ${probe.status ?? "a network error"}.`,
+        );
+      }
+    } catch (error) {
+      // Graceful degradation (browse must still work) but NOT silent: a thrown
+      // loadConfig (e.g. a base it can't parse) previously vanished the operator
+      // surface with zero trace, which is exactly what hid the embedded-page
+      // base bug (D-420 V3).
       operatorAvailable = false;
+      console.error("Cassini: operator availability check failed.", error);
     }
     // Reconcile the active surface with the probe result (e.g. an optimistic
     // hint the probe denied, or a stale #surface=operator we can't honour).
