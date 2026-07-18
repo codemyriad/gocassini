@@ -140,8 +140,10 @@
     {#if surface === "operator"}
       <!-- .cassini-root + data-theme give the operator its daisyUI theme in the
            shadow build (tokens aren't on :host) and pull in the NC-colour
-           overrides, exactly like the viewer's browse surface. -->
-      <div class="cassini-shell-surface cassini-root" data-theme={themeMode}>
+           overrides, exactly like the viewer's browse surface. cassini-shell-scroll
+           gives it its own scroll: the operator was built to scroll at the page
+           level (min-h-screen), but the fixed-height shell has no page scroll. -->
+      <div class="cassini-shell-surface cassini-shell-scroll cassini-root" data-theme={themeMode}>
         <Operator />
       </div>
     {/if}
@@ -201,6 +203,12 @@
   .cassini-shell-surface {
     flex: 1 1 auto;
     min-height: 0;
+  }
+
+  /* The operator surface scrolls within its own pane (it was authored for
+     page-level scroll via min-h-screen, which the fixed-height shell removes). */
+  .cassini-shell-scroll {
+    overflow-y: auto;
   }
 
   .cassini-shell-hidden {
