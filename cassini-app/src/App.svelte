@@ -82,10 +82,11 @@
       const { operatorBasePath } = loadConfig();
       const probe = await probeOperatorAvailable(operatorBasePath);
       operatorAvailable = probe.available;
-      // 403 is the expected "not an admin" answer — stay quiet. Anything else (a
-      // network failure or an unexpected status) shouldn't silently hide the
-      // operator surface with no trace, so surface it.
-      if (!probe.available && probe.status !== 403) {
+      // A non-admin is expected to be denied — AppAPI answers 403, or 404 when
+      // it hides the operator routes entirely — so stay quiet on those. Anything
+      // else (a network failure or an unexpected status) shouldn't silently hide
+      // the operator surface with no trace, so surface it.
+      if (!probe.available && probe.status !== 403 && probe.status !== 404) {
         console.warn(
           `Cassini: operator surface hidden — probe returned ${probe.status ?? "a network error"}.`,
         );
