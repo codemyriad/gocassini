@@ -139,13 +139,18 @@
       <ViewerApp {ncMode} {dataProvider} />
     </div>
     {#if surface === "operator"}
-      <!-- .cassini-root + data-theme give the operator its daisyUI theme in the
-           shadow build (tokens aren't on :host) and pull in the NC-colour
-           overrides, exactly like the viewer's browse surface. cassini-shell-scroll
-           gives it its own scroll: the operator was built to scroll at the page
-           level (min-h-screen), but the fixed-height shell has no page scroll. -->
-      <div class="cassini-shell-surface cassini-shell-scroll cassini-root" data-theme={themeMode}>
-        <Operator />
+      <!-- Scroll pane (bounded flex child) is kept SEPARATE from the themed
+           .cassini-root: putting .cassini-root's height:100% on the flex/scroll
+           element fought the flex sizing. Here the outer div is a clean bounded
+           scroller (flex:1 + overflow-y:auto); the operator was authored to
+           scroll at the page level (min-h-screen), which the fixed-height shell
+           removes. The inner .cassini-root + data-theme give it the daisyUI
+           theme in the shadow build (tokens aren't on :host) and the NC-colour
+           overrides, exactly like the viewer's browse surface. -->
+      <div class="cassini-shell-surface cassini-shell-scroll">
+        <div class="cassini-root" data-theme={themeMode}>
+          <Operator />
+        </div>
       </div>
     {/if}
   </div>
