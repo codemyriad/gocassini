@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* Explicit content source (relative to THIS file → cassini-viewer/src) so the
+ * viewer surface's utility classes are detected both in cassini-viewer's own
+ * build AND when cassini-app bundles this stylesheet from a different cwd
+ * (D-420: the shell consumes the viewing layer). */
+@source "./";
+
 /* ─────────────────────────────────────────────────────────────────────────────
  * Plugin registration
  *

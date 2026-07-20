@@ -13,10 +13,3 @@ services:
     ports: !reset []
     environment:
       CASSINI_TALK_BACKEND_URL: http://localhost:28080
-
-  cassini-control-panel:
-    environment:
-      # On the host network the operator leaves the compose network, so the
-      # service name no longer resolves; go through the host gateway to the
-      # operator's fixed host listener on port 4000.
-      CASSINI_OPERATOR_URL: http://host.docker.internal:4000

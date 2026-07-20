@@ -3,6 +3,14 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "//exports": "Viewing-layer public surface (D-420). cassini-app imports these as source; its own vite+svelte build compiles them into the single in-NC IIFE. App = browse surface (List+MeetingView); MeetingView = single-meeting surface for the shareable embed.",
+  "exports": {
+    "./App.svelte": "./src/App.svelte",
+    "./MeetingView.svelte": "./src/components/MeetingView.svelte",
+    "./MeetingList.svelte": "./src/components/MeetingList.svelte",
+    "./dataProvider": "./src/viewer/dataProvider.ts",
+    "./app.css": "./src/app.css"
+  },
   "scripts": {
     "audit:portable-token": "node ./scripts/audit-portable-token-audio.mjs",
     "dev": "vite",

@@ -39,29 +39,20 @@ RUN set -eux; \
 # LD_LIBRARY_PATH at runtime) ship in the base image — the app no longer copies
 # the CPU placeholder libs from the Go module.
 
-# ---- Stage: viewer-builder + control-panel-builder (identical to CPU image) ----
-FROM node:22-bookworm AS viewer-builder
-WORKDIR /src/cassini-viewer
-COPY cassini-viewer/package.json cassini-viewer/package-lock.json ./
-RUN npm ci
-COPY cassini-viewer/ ./
-# See Dockerfile.exapp for why VITE_BASE=./ and build:all (standalone dist/ +
-# embedded dist/embedded/{embedded.js,embedded.css} served at /ui/viewer.{js,css}).
+# ---- Stage: web-builder (npm workspace: cassini-app + cassini-viewer; same as CPU image) ----
+# See Dockerfile.exapp for the full rationale (D-420 unifies the two web apps;
+# cassini-app bundles cassini-viewer via the workspace). pnpm migration: D-499.
+FROM node:22-bookworm AS web-builder
+WORKDIR /src
+COPY package.json ./
+COPY cassini-viewer/package.json cassini-viewer/package-lock.json ./cassini-viewer/
+COPY cassini-app/package.json cassini-app/package-lock.json ./cassini-app/
+RUN npm install
+COPY cassini-viewer/ ./cassini-viewer/
+COPY cassini-app/ ./cassini-app/
 ENV VITE_BASE=./
-RUN npm run build:all
-
-FROM node:22-bookworm AS control-panel-builder
-WORKDIR /src/cassini-control-panel
-COPY cassini-control-panel/package.json cassini-control-panel/package-lock.json ./
-RUN npm ci
-COPY cassini-control-panel/ ./
-# See Dockerfile.exapp for why build:all (standalone dist/ + embedded
-# dist/embedded/{embedded.js,embedded.css} served at /ui/control-panel.{js,css},
-# D-382) and why VITE_BASE / CASSINI_OPERATOR_BASE_PATH apply only to the
-# standalone build.
-ENV VITE_BASE=/control-panel/
-ENV CASSINI_OPERATOR_BASE_PATH=/operator
-RUN npm run build:all
+RUN npm run build:all -w cassini-viewer
+RUN npm run build:all -w cassini-app
 
 # ---- Stage: frpc-fetcher (identical to CPU image) ----
 FROM debian:bookworm-slim AS frpc-fetcher
@@ -104,8 +95,7 @@ ENV CASSINI_BIN=/usr/local/bin/cassini \
     CASSINI_OPERATOR_WORK_ROOT=/var/lib/cassini-operator/jobs \
     CASSINI_OPERATOR_SITE_ROOT=/srv/cassini-site/published \
     CASSINI_CACHE_ROOT=/opt/cassini/cache \
-    CASSINI_CONTROL_PANEL_DIST=/opt/cassini/cassini-control-panel/dist \
-    CASSINI_VIEWER_DIST=/opt/cassini/cassini-viewer/dist \
+    CASSINI_VIEWER_DIST=/opt/cassini/cassini-app/dist \
     TMPDIR=/var/lib/cassini-operator/tmp \
     APP_HOST=0.0.0.0 \
     APP_PORT=8080 \
@@ -115,7 +105,7 @@ ENV CASSINI_BIN=/usr/local/bin/cassini \
 
 # AppAPI deploys inject only APP_*/HP_*/NEXTCLOUD_URL (see app_api
 # DockerActions::buildDeployEnvs) — never CASSINI_*. Bake the base path the
-# manifest route ACLs (^operator\/...) and the control-panel bundle assume,
+# manifest route ACLs (^operator\/...) and the operator client assume,
 # or the operator falls back to BasePath "/" and every /operator/* request
 # 404s in a real install.
 ENV CASSINI_OPERATOR_BASE_PATH=/operator
@@ -126,8 +116,8 @@ COPY --from=frpc-fetcher /out/frpc /usr/local/bin/frpc
 COPY cassini-publisher/bin/export-static-meetings.sh /opt/cassini/cassini-publisher/bin/export-static-meetings.sh
 COPY cassini-viewer/package.json /opt/cassini/cassini-viewer/package.json
 COPY cassini-viewer/scripts/export-static-meetings.mjs /opt/cassini/cassini-viewer/scripts/export-static-meetings.mjs
-COPY --from=viewer-builder /src/cassini-viewer/dist /opt/cassini/cassini-viewer/dist
-COPY --from=control-panel-builder /src/cassini-control-panel/dist /opt/cassini/cassini-control-panel/dist
+COPY --from=web-builder /src/cassini-viewer/dist /opt/cassini/cassini-viewer/dist
+COPY --from=web-builder /src/cassini-app/dist /opt/cassini/cassini-app/dist
 COPY deployment/exapp-start.sh /usr/local/bin/cassini-exapp-entrypoint.sh
 COPY deployment/exapp-healthcheck.sh /usr/local/bin/healthcheck.sh
 

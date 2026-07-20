@@ -1,0 +1,10 @@
+{
+  "name": "gocassini-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "description": "npm workspace root for the Cassini web packages (D-420). cassini-app (the in-NC shell) consumes cassini-viewer (the viewing layer). Migrating to pnpm is tracked in D-499.",
+  "workspaces": [
+    "cassini-viewer",
+    "cassini-app"
+  ]
+}

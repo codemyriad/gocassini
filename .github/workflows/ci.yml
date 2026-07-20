@@ -91,7 +91,7 @@ jobs:
       matrix:
         package:
           - cassini-viewer
-          - cassini-control-panel
+          - cassini-app
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -100,13 +100,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: ${{ matrix.package }}/package-lock.json
-      - name: Install dependencies
-        working-directory: ${{ matrix.package }}
-        run: npm ci
+          cache-dependency-path: '**/package-lock.json'
+      # cassini-app consumes cassini-viewer via the npm workspace (D-420), so it
+      # can't be installed standalone. Install at the workspace root (npm install
+      # resolves + links the members; no committed root lockfile yet — D-499),
+      # then test the one package via -w, matching deployment/Dockerfile.exapp.
+      - name: Install workspace
+        run: npm install
       - name: Run tests
-        working-directory: ${{ matrix.package }}
-        run: npm test
+        run: npm test -w ${{ matrix.package }}
 
   unit:
     name: Unit tests (${{ matrix.module }})

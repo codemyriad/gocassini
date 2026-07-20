@@ -208,8 +208,7 @@ Standard user (for /viewer access after deploy):
   alice / Tn8mY3qVrJ2x!E2e
 
 Post-deploy URLs (ExApp UIs proxied through AppAPI):
-  Admin control panel: $PUBLIC_PROXY_URL/control-panel/
-  User viewer:         $PUBLIC_PROXY_URL/viewer/
+  Cassini (all users): $PUBLIC_PROXY_URL/viewer/
 
 Testing the Talk record button:
   bootstrap.sh wired Talk's recording_servers at the AppAPI proxy URL

@@ -222,9 +222,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	} else {
 		logger.Printf("exapp_appapi -> inactive (APP_SECRET unset)")
 	}
-	if exappCfg.ControlPanelDist != "" {
-		logger.Printf("exapp_control_panel_dist -> %s", exappCfg.ControlPanelDist)
-	}
 	if exappCfg.ViewerDist != "" {
 		logger.Printf("exapp_viewer_dist -> %s", exappCfg.ViewerDist)
 	}

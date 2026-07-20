@@ -68,7 +68,7 @@ jobs:
                 # .dockerignore is a real image-build-context input (it excludes
                 # node_modules/.git/harness media from `context: .`), so a change to
                 # it must run the faithful gate rather than report a green no-op.
-                appinfo/*|deployment/*|cassini-operator/*|cassini-go-recorder/*|cassini-publisher/bin/*|cassini-viewer/*|cassini-control-panel/*|harness/*|bin/*|scripts/*|.dockerignore|.gitattributes|.github/actions/*|.github/workflows/*)
+                appinfo/*|deployment/*|cassini-operator/*|cassini-go-recorder/*|cassini-publisher/bin/*|cassini-viewer/*|cassini-app/*|package.json|harness/*|bin/*|scripts/*|.dockerignore|.gitattributes|.github/actions/*|.github/workflows/*)
                   relevant=true
                   break
                   ;;

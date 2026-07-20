@@ -16,8 +16,8 @@
 #      the complete route allowlist from the current appinfo/info.xml.
 #   6. Cycle disable→enable so AppAPI actually PUTs /enabled?enabled=1 to the
 #      container (register alone only sets the Nextcloud-side flag).
-#   7. Assert the proxied routes: admin sees control-panel + operator + viewer,
-#      regular user sees only viewer, neither sees the others past their tier.
+#   7. Assert the proxied routes: admin sees operator + viewer, regular user
+#      sees viewer but the operator JSON API stays ADMIN (403 for non-admins).
 #
 # Tear down on success and on failure. Logs land in $LOG_DIR.
 set -euo pipefail
@@ -203,8 +203,8 @@ echo "$state" | grep -q '"enabled":true' \
 
 # --- 6b. Assert the Nextcloud navigation registration landed ---------------
 #
-# The /enabled handler registers the top-menu entries (viewer for users,
-# control-panel for admins) in a goroutine after answering AppAPI, so poll
+# The /enabled handler registers the single "Cassini" top-menu entry (viewer,
+# all users) in a goroutine after answering AppAPI, so poll
 # briefly. GET /api/v1/ui/top-menu is AppAPI-authenticated with the same
 # shared secret the app was registered with; 200 = entry exists, 404 = not.
 
@@ -229,7 +229,6 @@ assert_top_menu_registered() {
 
 log "checking Nextcloud navigation (top-menu) registration"
 assert_top_menu_registered viewer
-assert_top_menu_registered control-panel
 
 # --- 7. Create a regular test user (admin already exists) -----------------
 
@@ -259,22 +258,18 @@ assert_status() {
 }
 
 log "checking proxied route access for admin"
-assert_status admin   "admin:admin"                       "control-panel/" 200
 assert_status admin   "admin:admin"                       "operator/jobs"  200
 assert_status admin   "admin:admin"                       "viewer/"        200
-assert_status admin   "admin:admin"                       "ui/control-panel.js" 200
-assert_status admin   "admin:admin"                       "ui/control-panel.css" 200
 
 log "checking proxied route access for $TEST_USER (USER tier)"
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "viewer/"        200
-assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "control-panel/" 404
+# The operator JSON API stays ADMIN — a non-admin is refused (D-420: the shell
+# entry is USER, but the operator surface's API remains the real boundary).
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "operator/jobs"  404
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/viewer.js"   200
 # ui/viewer.css must be proxy-reachable at USER tier: D-383 injects it into the
 # viewer's shadow root via a runtime <link>, so the proxy has to serve it.
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/viewer.css"  200
-assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/control-panel.js" 404
-assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/control-panel.css" 404
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "img/app.svg"    200
 
 # --- 7c. Assert the admin UI actually loads (not just 200 + empty) --------
@@ -282,25 +277,26 @@ assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "img/app.svg"    200
 # A status-code-only check passes even when the proxy returns a placeholder
 # or an error page styled to look benign. The contract a Nextcloud admin
 # actually cares about is "I logged in as admin, opened the cassini admin
-# UI, and saw the real control panel." Pin that by fetching the body and
-# asserting it contains the SPA's title marker (cassini-control-panel/
-# index.html). If the SPA ever stops shipping in the image, or the proxy
-# silently degrades to an empty 200, this catches it.
+# app, and saw the real Cassini SPA." Pin that by fetching the body and
+# asserting it contains the SPA's title marker (cassini-app/index.html). If the
+# SPA ever stops shipping in the image, or the proxy silently degrades to an
+# empty 200, this catches it. (D-420: one unified SPA at /viewer for everyone;
+# the operator surface is gated client-side inside it.)
 
-assert_admin_ui_loads() {
+assert_app_ui_loads() {
   local body
-  body=$(curl -sS -u "admin:admin" "$PROXY/control-panel/")
-  if ! grep -qF "<title>Cassini Control Panel</title>" <<<"$body"; then
-    log "admin /control-panel/ body did not contain the expected SPA title."
+  body=$(curl -sS -u "admin:admin" "$PROXY/viewer/")
+  if ! grep -qF "<title>Cassini</title>" <<<"$body"; then
+    log "admin /viewer/ body did not contain the expected SPA title."
     log "first 200 chars of response:"
     log "${body:0:200}"
     fail "admin UI returned 200 but body is not the cassini SPA"
   fi
-  log "OK   admin /control-panel/ returns the cassini SPA HTML"
+  log "OK   admin /viewer/ returns the cassini SPA HTML"
 }
 
-log "checking that admin UI actually loads (body contains SPA title)"
-assert_admin_ui_loads
+log "checking that the Cassini SPA actually loads (body contains SPA title)"
+assert_app_ui_loads
 
 # --- 7d. Embedded viewer wiring (D-381) -----------------------------------
 #
@@ -370,48 +366,10 @@ if ! grep -qE 'nonce="[^"]+"' <<<"$viewer_script_tag"; then
 fi
 log "OK   embedded viewer page 200 with a nonce'd proxy ui/viewer.js (CSS injected into the shadow root)"
 
-# --- 7e. Embedded control-panel wiring (D-382) ----------------------------
-#
-# Same shape as the viewer check above, for the admin control panel: it now
-# renders directly on AppAPI's nonce'd embedded page from a self-mounting IIFE
-# + stylesheet (the D-382 embedded build), not an iframe of proxied SPA HTML
-# (which AppAPI's default-src 'none' CSP blocked, leaving the panel blank).
-# The control-panel entry is ADMIN tier, so use the admin Basic creds (the
-# regular e2euser would 404 on the embedded route). HONEST LIMIT: this proves
-# registered+served+page-references-nonce'd-script, NOT pixel render (no
-# headless browser in repo).
-CP_EMBEDDED_URL="$NC_BASE/index.php/apps/app_api/embedded/${APP_ID}/control-panel"
-log "checking embedded control-panel page $CP_EMBEDDED_URL"
-cp_embedded_status=$(curl -sS -u "admin:admin" \
-  -o "$LOG_DIR/embedded-control-panel.html" -w '%{http_code}' "$CP_EMBEDDED_URL")
-if [[ "$cp_embedded_status" != "200" ]]; then
-  log "first 300 chars of embedded response:"
-  log "$(head -c 300 "$LOG_DIR/embedded-control-panel.html" 2>/dev/null)"
-  fail "embedded control-panel page expected 200 got $cp_embedded_status"
-fi
-
-# Assert the nonce is ON THE SAME <script> tag that loads control-panel.js —
-# under CSP strict-dynamic only a nonce'd script runs; a raw host-allowlisted
-# src is ignored, so a nonce elsewhere on the page is not sufficient. Attribute
-# order is not guaranteed, so isolate the control-panel.js <script> tag and
-# require nonce= within it.
-#
-# D-383: as with the viewer, the stylesheet is injected into the panel's shadow
-# root at runtime, not a page-level ui/style <link>, so we do NOT assert a
-# page-level ui/control-panel.css <link>. The ui/control-panel.css route check in
-# section 6 (admin 200 / user 404) covers that the stylesheet is served + gated.
-cp_embedded_body=$(cat "$LOG_DIR/embedded-control-panel.html")
-cp_script_tag=$(grep -oE "<script[^>]*proxy/${APP_ID}/ui/control-panel\.js[^>]*>" <<<"$cp_embedded_body" | head -1)
-if [[ -z "$cp_script_tag" ]]; then
-  log "embedded page did not reference the registered ui/control-panel.js; first 400 chars:"
-  log "$(head -c 400 "$LOG_DIR/embedded-control-panel.html")"
-  fail "embedded control-panel page does not reference the proxied ui/control-panel.js bundle"
-fi
-if ! grep -qE 'nonce="[^"]+"' <<<"$cp_script_tag"; then
-  log "control-panel.js script tag was: $cp_script_tag"
-  fail "the ui/control-panel.js <script> tag is not nonce'd (CSP strict-dynamic would block the panel)"
-fi
-log "OK   embedded control-panel page 200 with a nonce'd proxy ui/control-panel.js (CSS injected into the shadow root)"
+# (D-420: the former 7e "embedded control-panel wiring" check is gone — there is
+# no separate control-panel entry/embedded page now. The operator surface lives
+# inside the single Cassini app at /viewer, gated client-side; its JSON API
+# stays ADMIN, covered by the operator/jobs 200-admin / 404-user checks above.)
 
 log "checking proxied catalog $PROXY/published/catalog.json"
 catalog_status=$(curl -sS -u "$TEST_USER:$TEST_USER_PASSWORD" \

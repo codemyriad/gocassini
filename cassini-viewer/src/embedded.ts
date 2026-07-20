@@ -26,6 +26,7 @@
 
 import { mount } from "svelte";
 import App from "./App.svelte";
+import { StaticCatalogProvider } from "./viewer/dataProvider";
 import "./app.css";
 
 // VIEWER_JS_SRC_PATTERN matches the registered ui/viewer.js src and captures
@@ -162,7 +163,7 @@ function mountEmbeddedViewer(): void {
     const themesStr = document.body.dataset.themes ?? enabledThemes?.join(" ") ?? "";
     ncMode = applyNextcloudTheme(shadowHost, themesStr, primaryColor);
   }
-  mount(App, { target: appRoot, props: { ncMode } });
+  mount(App, { target: appRoot, props: { ncMode, dataProvider: new StaticCatalogProvider() } });
 }
 
 function bootstrap(): void {

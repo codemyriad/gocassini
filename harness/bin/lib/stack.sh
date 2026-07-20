@@ -782,7 +782,8 @@ harness_verify_exapp_routes() {
   echo "$status_json" | grep -q '"secret_configured":true' || { echo "recording secret missing from status: $status_json" >&2; return 1; }
   echo "$status_json" | grep -q '"signaling_internal_secret_configured":true' || { echo "signaling internal secret missing from status: $status_json" >&2; return 1; }
 
-  harness_http_ok_with_retry "admin control panel route" -u admin:admin -o /dev/null "$proxy_url/control-panel/"
+  # D-420: one unified "Cassini" entry — the separate admin control-panel route
+  # is gone; the operator surface lives inside the single app (admin-gated in V3).
   harness_http_ok_with_retry "viewer route" -u alice:Tn8mY3qVrJ2x!E2e -o /dev/null "$proxy_url/viewer/"
 }
 
