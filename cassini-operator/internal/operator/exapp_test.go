@@ -25,7 +25,7 @@ func clearExAppEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
 		envAppHost, envAppPort, envAppID, envAppVersion, envAppSecret,
-		envAppAPIRequired, envControlPanelDist, envViewerDist,
+		envAppAPIRequired, envViewerDist,
 	} {
 		t.Setenv(k, "")
 	}
@@ -256,12 +256,12 @@ func TestUIRegistrarRegistersTopMenuEntriesAndScripts(t *testing.T) {
 	}
 	registrar()
 
-	// 2 top-menu + 2 script: both the viewer (D-381) and the control-panel
-	// (D-382) mount their SPA directly on the embedded page from a self-mounting
-	// IIFE, so each registers a ui/script. No ui/style is registered — D-383
-	// injects the stylesheet into the SPA's shadow root instead of a global link.
-	if len(calls) != 4 {
-		t.Fatalf("got %d OCS calls, want 4 (2 top-menu + 2 script): %+v", len(calls), calls)
+	// 1 top-menu + 1 script: the single Cassini entry (D-420) mounts its SPA
+	// directly on the embedded page from a self-mounting IIFE, so it registers a
+	// ui/script. No ui/style is registered — D-383 injects the stylesheet into
+	// the SPA's shadow root instead of a global link.
+	if len(calls) != 2 {
+		t.Fatalf("got %d OCS calls, want 2 (1 top-menu + 1 script): %+v", len(calls), calls)
 	}
 	wantAuth := base64.StdEncoding.EncodeToString([]byte(":shh"))
 	for i, c := range calls {
@@ -281,10 +281,8 @@ func TestUIRegistrarRegistersTopMenuEntriesAndScripts(t *testing.T) {
 
 	// uiRegistrar emits per-entry calls in order — for each entry the top-menu,
 	// then script — so the call sequence is:
-	//   [0] viewer        top-menu
-	//   [1] viewer        script
-	//   [2] control-panel top-menu
-	//   [3] control-panel script
+	//   [0] viewer top-menu
+	//   [1] viewer script
 	assertTopMenu := func(idx int, name string, adminRequired float64) {
 		c := calls[idx]
 		if c.Path != "/ocs/v2.php/apps/app_api/api/v1/ui/top-menu" {
@@ -322,9 +320,6 @@ func TestUIRegistrarRegistersTopMenuEntriesAndScripts(t *testing.T) {
 
 	assertTopMenu(0, "viewer", 0)
 	assertScript(1, "viewer")
-
-	assertTopMenu(2, "control-panel", 1)
-	assertScript(3, "control-panel")
 }
 
 func TestUIRegistrarNilWhenUnconfigured(t *testing.T) {
@@ -364,27 +359,22 @@ func TestUIRegistrarLogsErrorOnOCSFailure(t *testing.T) {
 // rewrites them to proxy fetches of /ui/<entry>.{js,css}. This guards the
 // registrar JSON and the asset routes against drifting apart.
 //
-// D-381 + D-382: BOTH the viewer and control-panel entries now serve their
-// embedded build (a self-mounting IIFE + stylesheet from <Dist>/embedded/),
-// NOT an iframe bootstrap.
+// D-381 + D-420: the single Cassini entry serves cassini-app's embedded build
+// (a self-mounting IIFE + stylesheet from <Dist>/embedded/), NOT an iframe
+// bootstrap.
 func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
 	viewerDist := t.TempDir()
-	controlPanelDist := t.TempDir()
-	// Stand in for the baked-in embedded builds. The marker strings are what a
+	// Stand in for the baked-in embedded build. The marker strings are what a
 	// real embedded.ts compiles down to references of (it mounts into an #app
 	// under #content) — assert the served body is the embedded bundle, not an
 	// iframe bootstrap.
 	writeFile(t, filepath.Join(viewerDist, "embedded", "embedded.js"),
-		`(function(){/* embedded viewer */ var app=document.getElementById("app"); /* mount #app */})();`)
+		`(function(){/* embedded cassini */ var app=document.getElementById("app"); /* mount #app */})();`)
 	writeFile(t, filepath.Join(viewerDist, "embedded", "embedded.css"),
-		`#app{display:block}`)
-	writeFile(t, filepath.Join(controlPanelDist, "embedded", "embedded.js"),
-		`(function(){/* embedded control-panel */ var app=document.getElementById("app"); /* mount #app */})();`)
-	writeFile(t, filepath.Join(controlPanelDist, "embedded", "embedded.css"),
 		`#app{display:block}`)
 
 	root := http.NewServeMux()
-	ExAppConfig{ViewerDist: viewerDist, ControlPanelDist: controlPanelDist}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
+	ExAppConfig{ViewerDist: viewerDist}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
 
 	// assertEmbeddedAsset checks an embedded JS/CSS route serves the on-disk
 	// bundle (right content type, references #app, never an iframe bootstrap).
@@ -408,13 +398,9 @@ func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
 		}
 	}
 
-	// --- viewer: embedded IIFE + CSS, served from disk, NOT an iframe ---
+	// --- the Cassini embedded IIFE + CSS, served from disk, NOT an iframe ---
 	assertEmbeddedAsset("/ui/viewer.js", "javascript", true)
 	assertEmbeddedAsset("/ui/viewer.css", "css", false)
-
-	// --- control-panel: embedded IIFE + CSS, served from disk, NOT an iframe ---
-	assertEmbeddedAsset("/ui/control-panel.js", "javascript", true)
-	assertEmbeddedAsset("/ui/control-panel.css", "css", false)
 
 	// --- every entry's icon must resolve ---
 	for _, entry := range topMenuEntries {
@@ -430,16 +416,15 @@ func TestUIAssetRoutesMatchRegisteredScripts(t *testing.T) {
 	}
 }
 
-// When CASSINI_VIEWER_DIST / CASSINI_CONTROL_PANEL_DIST is unset (or the
-// embedded build is missing), the ui asset routes degrade to 503 rather than
-// 404/200-empty, mirroring the SPA handler's "assets not bundled" behavior.
+// When CASSINI_VIEWER_DIST is unset (or the embedded build is missing), the ui
+// asset routes degrade to 503 rather than 404/200-empty, mirroring the SPA
+// handler's "assets not bundled" behavior.
 func TestUIEmbeddedAssetUnavailableWithoutDist(t *testing.T) {
 	root := http.NewServeMux()
 	ExAppConfig{}.installRoutes(root, t.TempDir(), log.New(&bytes.Buffer{}, "", 0))
 
 	for _, path := range []string{
 		"/ui/viewer.js", "/ui/viewer.css",
-		"/ui/control-panel.js", "/ui/control-panel.css",
 	} {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		w := httptest.NewRecorder()

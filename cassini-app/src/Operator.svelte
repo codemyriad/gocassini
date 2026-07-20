@@ -12,12 +12,24 @@
   import SettingsPanel from "./SettingsPanel.svelte";
 
   const POLL_INTERVAL_MS = 2000;
+  // If the SSE stream doesn't reach "open" within this window, assume the
+  // environment can't stream it — notably Nextcloud's AppAPI proxy, which
+  // buffers Server-Sent Events so the response headers never reach the browser
+  // and EventSource sits in CONNECTING silently — and fall back to polling
+  // instead of showing "connecting" forever.
+  const STREAM_OPEN_TIMEOUT_MS = 5000;
 
   let operatorBasePath = "";
   let operatorClient: OperatorClient | null = null;
   let eventSource: EventSource | null = null;
   let hasSeenStreamOpen = false;
-  let streamStatus: "idle" | "connecting" | "connected" | "reconnecting" | "disconnected" = "idle";
+  let streamStatus:
+    | "idle"
+    | "connecting"
+    | "connected"
+    | "reconnecting"
+    | "disconnected"
+    | "unavailable" = "idle";
 
   let configError = "";
   let jobsError = "";
@@ -33,6 +45,7 @@
   let selectedJob: JobDetailResponse | null = null;
   let meetingUrl = "";
   let pollTimer = 0;
+  let streamOpenTimer = 0;
 
   onMount(async () => {
     try {
@@ -160,7 +173,7 @@
 
   function openEventStream() {
     if (!operatorClient || typeof EventSource === "undefined") {
-      streamStatus = "disconnected";
+      streamStatus = "unavailable";
       updatePolling();
       return;
     }
@@ -168,6 +181,7 @@
     streamStatus = hasSeenStreamOpen ? "reconnecting" : "connecting";
     eventSource = operatorClient.openEventStream({
       onOpen: () => {
+        clearStreamOpenTimer();
         hasSeenStreamOpen = true;
         streamStatus = "connected";
         void refreshJobs();
@@ -180,12 +194,31 @@
         applyStateChangeEvent(event);
       },
     });
+    // Guard against a stream that connects but never opens (AppAPI buffers SSE,
+    // so no headers arrive and EventSource fires neither onopen nor onerror):
+    // after a timeout, give up on live push and rely on polling.
+    clearStreamOpenTimer();
+    streamOpenTimer = window.setTimeout(() => {
+      if (streamStatus !== "connected") {
+        closeEventStream();
+        streamStatus = "unavailable";
+        updatePolling();
+      }
+    }, STREAM_OPEN_TIMEOUT_MS);
     updatePolling();
   }
 
   function closeEventStream() {
+    clearStreamOpenTimer();
     eventSource?.close();
     eventSource = null;
+  }
+
+  function clearStreamOpenTimer() {
+    if (streamOpenTimer !== 0) {
+      window.clearTimeout(streamOpenTimer);
+      streamOpenTimer = 0;
+    }
   }
 
   function applyStateChangeEvent(event: OperatorStateChangeEvent) {
@@ -237,7 +270,15 @@
 
   function updatePolling() {
     clearPolling();
-    if (!selectedJob || !isJobActive(selectedJob.job) || streamStatus === "connected") {
+    if (streamStatus === "connected") {
+      return;
+    }
+    // Live push isn't carrying updates — poll while anything is still in flight
+    // (the selected job, or any active job in the list). refreshJobs re-arms
+    // this, so it keeps polling until the work settles.
+    const hasActiveWork =
+      (selectedJob != null && isJobActive(selectedJob.job)) || jobs.some(isJobActive);
+    if (!hasActiveWork) {
       return;
     }
     pollTimer = window.setTimeout(async () => {
@@ -306,6 +347,26 @@
     }
   }
 
+  function streamStatusLabel(status: typeof streamStatus): string {
+    switch (status) {
+      case "connected":
+        return "live";
+      case "connecting":
+        return "connecting…";
+      case "reconnecting":
+        return "reconnecting…";
+      case "unavailable":
+        // The normal mode in Nextcloud (AppAPI can't stream SSE), so state the
+        // refresh cadence plainly rather than framing routine operation as a
+        // failure.
+        return `auto-refreshing every ${POLL_INTERVAL_MS / 1000}s`;
+      case "disconnected":
+        return "disconnected";
+      default:
+        return "idle";
+    }
+  }
+
   $: canStartJob = !submittingStart && meetingUrl.trim() !== "";
   $: canStopSelectedJob =
     !submittingStop &&
@@ -342,7 +403,7 @@
         </div>
         <div class="flex items-center gap-2 text-sm">
           <PlugZap size={16} aria-hidden="true" />
-          <span class={`badge ${streamStatusTone(streamStatus)}`}>{streamStatus}</span>
+          <span class={`badge ${streamStatusTone(streamStatus)}`}>{streamStatusLabel(streamStatus)}</span>
         </div>
       </div>
       <div class="text-xs text-base-content/60">

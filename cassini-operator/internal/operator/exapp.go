@@ -32,10 +32,10 @@ import (
 //   - Lifecycle handlers PUT /enabled and POST /init are mounted at the root
 //     (NOT under CASSINI_OPERATOR_BASE_PATH) because AppAPI calls them
 //     directly on the container.
-//   - Static asset prefixes serve the control-panel admin UI, the viewer
-//     SPA, and the published meeting archive from on-disk paths set via
-//     CASSINI_CONTROL_PANEL_DIST / CASSINI_VIEWER_DIST / the operator's
-//     SiteRoot.
+//   - Static asset prefixes serve the Cassini SPA (cassini-app's embedded +
+//     standalone build) and the published meeting archive from on-disk paths
+//     set via CASSINI_VIEWER_DIST (which points at cassini-app's dist — D-420)
+//     / the operator's SiteRoot.
 //   - When AppAPI's persistent volume is mounted (APP_PERSISTENT_STORAGE),
 //     data paths left unset or still at their baked image defaults are
 //     redirected under it (see exAppDataPathDefault).
@@ -45,11 +45,9 @@ import (
 //   ROOT mux (wrapped by AppAPI middleware when APP_SECRET set)
 //   ├── /enabled                       lifecycle (AppAPI direct call)
 //   ├── /init                          lifecycle (AppAPI direct call)
-//   ├── /control-panel, /control-panel/*   admin SPA static (ADMIN per manifest)
-//   ├── /viewer, /viewer/*                 viewer SPA static  (USER per manifest)
+//   ├── /viewer, /viewer/*                 Cassini SPA static (USER per manifest)
 //   ├── /published/*                       site archive       (USER per manifest)
-//   ├── /ui/viewer.js, /ui/viewer.css       embedded viewer build (USER per manifest)
-//   ├── /ui/control-panel.js, /ui/control-panel.css  embedded control-panel build (ADMIN per manifest)
+//   ├── /ui/viewer.js, /ui/viewer.css       embedded Cassini build (USER per manifest)
 //   ├── /img/app.svg                        navigation icon    (USER per manifest)
 //   └── <BasePath>/jobs, /jobs/, /events   operator JSON API  (ADMIN per manifest)
 //
@@ -64,12 +62,10 @@ const (
 	envAppSecret            = "APP_SECRET"
 	envAppPersistentStorage = "APP_PERSISTENT_STORAGE"
 	envAppAPIRequired       = "CASSINI_APPAPI_REQUIRED"
-	envControlPanelDist     = "CASSINI_CONTROL_PANEL_DIST"
 	envViewerDist           = "CASSINI_VIEWER_DIST"
 	envNextcloudURL         = "NEXTCLOUD_URL"
 	defaultExAppBindHost    = "0.0.0.0"
 	defaultExAppBindPort    = "8080"
-	controlPanelURLPrefix   = "/control-panel"
 	viewerURLPrefix         = "/viewer"
 	publishedURLPrefix      = "/published"
 )
@@ -86,10 +82,9 @@ const (
 	ocsUIScriptPath  = "/ocs/v2.php/apps/app_api/api/v1/ui/script"
 	uiAssetURLPrefix = "/ui"
 	navIconURLPath   = "/img/app.svg"
-	// Filenames of the embedded builds (vite.embedded.config.ts in both
-	// cassini-viewer and cassini-control-panel) under <DIST>/embedded/, served
-	// at /ui/viewer.{js,css} (from CASSINI_VIEWER_DIST) and
-	// /ui/control-panel.{js,css} (from CASSINI_CONTROL_PANEL_DIST).
+	// Filenames of cassini-app's embedded build (its vite.embedded.config.ts)
+	// under <DIST>/embedded/, served at /ui/viewer.{js,css} from
+	// CASSINI_VIEWER_DIST (which points at cassini-app's dist — D-420).
 	embeddedSubdir  = "embedded"
 	embeddedJSFile  = "embedded.js"
 	embeddedCSSFile = "embedded.css"
@@ -132,24 +127,19 @@ type uiScriptRegistration struct {
 }
 
 // topMenuEntries declares the navigation entries uiRegistrar registers.
-// Each entry Name doubles as the URL prefix the entry's asset lives under;
-// both entries now mount their SPA directly on the AppAPI embedded page from a
-// self-mounting IIFE + stylesheet (their embedded builds), NOT an iframe:
-//   - viewer: /ui/viewer.{js,css} is the embedded viewer build (D-381).
-//   - control-panel: /ui/control-panel.{js,css} is the embedded control-panel
-//     build (D-382). It does NOT iframe <proxy base>/control-panel/.
+// Each entry Name doubles as the URL prefix the entry's asset lives under.
+// D-420 collapsed the former two entries (viewer + the "Cassini Admin"
+// control-panel) into ONE "Cassini" entry: cassini-app mounts a single SPA
+// directly on the AppAPI embedded page from a self-mounting IIFE + stylesheet
+// (/ui/viewer.{js,css}), NOT an iframe. Admin-only surfaces (the operator) are
+// gated INSIDE the app; the operator JSON API stays ADMIN in info.xml (the real
+// boundary), so one USER-level entry is safe.
 var topMenuEntries = []uiTopMenuRegistration{
 	{
 		Name:          strings.TrimPrefix(viewerURLPrefix, "/"),
 		DisplayName:   "Cassini",
 		Icon:          strings.TrimPrefix(navIconURLPath, "/"),
 		AdminRequired: 0,
-	},
-	{
-		Name:          strings.TrimPrefix(controlPanelURLPrefix, "/"),
-		DisplayName:   "Cassini Admin",
-		Icon:          strings.TrimPrefix(navIconURLPath, "/"),
-		AdminRequired: 1,
 	},
 }
 
@@ -172,7 +162,6 @@ type ExAppConfig struct {
 	AppVersion       string
 	AppSecret        string
 	NextcloudURL     string // optional; if set, /init reports progress=100 back via OCS
-	ControlPanelDist string
 	ViewerDist       string
 	PublishedDir     string // operator SiteRoot, served read-only at /published
 }
@@ -187,7 +176,6 @@ func LoadExAppConfig() (ExAppConfig, error) {
 		AppVersion:       strings.TrimSpace(os.Getenv(envAppVersion)),
 		AppSecret:        os.Getenv(envAppSecret),
 		NextcloudURL:     strings.TrimSpace(os.Getenv(envNextcloudURL)),
-		ControlPanelDist: strings.TrimSpace(os.Getenv(envControlPanelDist)),
 		ViewerDist:       strings.TrimSpace(os.Getenv(envViewerDist)),
 	}
 	cfg.Active = strings.TrimSpace(cfg.AppSecret) != ""
@@ -290,10 +278,6 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 	root.Handle(uiAssetURLPrefix+"/", c.uiAssetHandler(logger))
 	root.Handle(navIconURLPath, embeddedAssetHandler(navIconSVG, "image/svg+xml"))
 
-	if c.ControlPanelDist != "" {
-		root.Handle(controlPanelURLPrefix, spaHandler(c.ControlPanelDist, controlPanelURLPrefix, logger))
-		root.Handle(controlPanelURLPrefix+"/", spaHandler(c.ControlPanelDist, controlPanelURLPrefix, logger))
-	}
 	if c.ViewerDist != "" {
 		viewer := viewerHandler(c.ViewerDist, c.PublishedDir, viewerURLPrefix, logger)
 		root.Handle(viewerURLPrefix, viewer)
@@ -399,8 +383,8 @@ func (c ExAppConfig) uiRegistrar(logger *log.Logger) func() {
 		// ".js" (script) / ".css" (style). Both resolve to "ui/<name>", served
 		// by uiAssetHandler at /ui/<name>.js and /ui/<name>.css.
 		assetPath := strings.TrimPrefix(uiAssetURLPrefix, "/") + "/" + entry.Name
-		// Both entries mount their SPA directly on the embedded page from a
-		// self-mounting IIFE (viewer D-381, control-panel D-382), so each
+		// The entry mounts its SPA directly on the embedded page from a
+		// self-mounting IIFE (D-381/D-420), so it
 		// registers a ui/script. The stylesheet is NOT registered as a global
 		// ui/style: embedded.ts injects it into the SPA's shadow root (D-383) so
 		// it does not bleed onto Nextcloud chrome. It is still served at
@@ -456,16 +440,14 @@ func (c ExAppConfig) uiRegistrar(logger *log.Logger) func() {
 			logger.Printf("ERROR: exapp ui: %d/%d registrations failed — navigation entries may be missing; disable and re-enable the app to retry", failures, len(calls))
 			return
 		}
-		logger.Printf("exapp ui: registered Nextcloud navigation entries: %q (users), %q (admins)", topMenuEntries[0].Name, topMenuEntries[1].Name)
+		logger.Printf("exapp ui: registered Nextcloud navigation entry: %q (all users)", topMenuEntries[0].Name)
 	}
 }
 
 // uiAssetHandler serves the ExApp UI assets AppAPI loads on the embedded page:
 //
-//   - /ui/viewer.js  + /ui/viewer.css        : the embedded viewer build
-//     (D-381), read from <ViewerDist>/embedded/.
-//   - /ui/control-panel.js + /ui/control-panel.css : the embedded control-panel
-//     build (D-382), read from <ControlPanelDist>/embedded/.
+//   - /ui/viewer.js + /ui/viewer.css : cassini-app's embedded build (D-381/
+//     D-420), read from <ViewerDist>/embedded/ (ViewerDist points at cassini-app).
 //
 // Each is a self-mounting IIFE + its stylesheet that runs DIRECTLY on the
 // nonce'd embedded page (no iframe). Anything else under /ui/ is a 404. The
@@ -473,12 +455,9 @@ func (c ExAppConfig) uiRegistrar(logger *log.Logger) func() {
 // matching info.xml routes.
 func (c ExAppConfig) uiAssetHandler(logger *log.Logger) http.Handler {
 	viewerEntryName := strings.TrimPrefix(viewerURLPrefix, "/")
-	controlPanelEntryName := strings.TrimPrefix(controlPanelURLPrefix, "/")
 
 	viewerJSPath := uiAssetURLPrefix + "/" + viewerEntryName + ".js"
 	viewerCSSPath := uiAssetURLPrefix + "/" + viewerEntryName + ".css"
-	controlPanelJSPath := uiAssetURLPrefix + "/" + controlPanelEntryName + ".js"
-	controlPanelCSSPath := uiAssetURLPrefix + "/" + controlPanelEntryName + ".css"
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -486,10 +465,6 @@ func (c ExAppConfig) uiAssetHandler(logger *log.Logger) http.Handler {
 			c.serveEmbeddedAsset(w, r, c.ViewerDist, envViewerDist, embeddedJSFile, "text/javascript; charset=utf-8", logger)
 		case viewerCSSPath:
 			c.serveEmbeddedAsset(w, r, c.ViewerDist, envViewerDist, embeddedCSSFile, "text/css; charset=utf-8", logger)
-		case controlPanelJSPath:
-			c.serveEmbeddedAsset(w, r, c.ControlPanelDist, envControlPanelDist, embeddedJSFile, "text/javascript; charset=utf-8", logger)
-		case controlPanelCSSPath:
-			c.serveEmbeddedAsset(w, r, c.ControlPanelDist, envControlPanelDist, embeddedCSSFile, "text/css; charset=utf-8", logger)
 		default:
 			http.NotFound(w, r)
 		}
@@ -497,11 +472,10 @@ func (c ExAppConfig) uiAssetHandler(logger *log.Logger) http.Handler {
 }
 
 // serveEmbeddedAsset streams one file of an embedded build from
-// <dist>/embedded/<file>. The embedded builds are baked into the image
-// alongside their standalone dists (see deployment/Dockerfile.exapp). 503 when
-// the dist env (distEnv, e.g. CASSINI_VIEWER_DIST / CASSINI_CONTROL_PANEL_DIST)
-// is unset or the file is missing, mirroring how the SPA handler degrades when
-// assets aren't bundled.
+// <dist>/embedded/<file>. The embedded build is baked into the image alongside
+// the standalone dist (see deployment/Dockerfile.exapp). 503 when the dist env
+// (distEnv, e.g. CASSINI_VIEWER_DIST) is unset or the file is missing,
+// mirroring how the SPA handler degrades when assets aren't bundled.
 func (c ExAppConfig) serveEmbeddedAsset(
 	w http.ResponseWriter,
 	r *http.Request,

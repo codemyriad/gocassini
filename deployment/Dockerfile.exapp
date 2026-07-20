@@ -7,8 +7,8 @@
 #   /usr/local/bin/cassini-exapp-entrypoint.sh     writes frpc.toml, launches frpc, exec operator
 #   /usr/local/bin/healthcheck.sh                  liveness probe
 #   /opt/cassini/lib                               sherpa-onnx native libs
-#   /opt/cassini/cassini-control-panel/dist        Svelte admin UI build
-#   /opt/cassini/cassini-viewer/dist               Viewer SPA build
+#   /opt/cassini/cassini-app/dist                  Cassini SPA build (served /viewer + /ui/viewer.*)
+#   /opt/cassini/cassini-viewer/dist               viewing-layer build (publisher export tooling)
 #   /opt/cassini/cassini-publisher/bin/...         Node publish runner (unchanged from operator image)
 
 ARG FRP_VERSION=0.61.1
@@ -77,40 +77,31 @@ RUN set -eux; \
  cp "$sherpa_root/lib/$sherpa_triplet/libsherpa-onnx-c-api.so" /out/lib/; \
  cp "$sherpa_root/lib/$sherpa_triplet/libonnxruntime.so" /out/lib/
 
-FROM node:22-bookworm AS viewer-builder
-WORKDIR /src/cassini-viewer
-COPY cassini-viewer/package.json cassini-viewer/package-lock.json ./
-RUN npm ci
-COPY cassini-viewer/ ./
+# Web workspace builder (D-420): cassini-app (the in-NC shell) consumes
+# cassini-viewer (the viewing layer) via the npm workspace, so both install
+# together and cassini-app's build bundles the viewer's source into one IIFE.
+# (pnpm migration tracked in D-499.)
+FROM node:22-bookworm AS web-builder
+WORKDIR /src
+# Manifests first for install-layer caching. No root lockfile yet (D-499), so
+# `npm install` resolves the workspace and links cassini-viewer into cassini-app.
+COPY package.json ./
+COPY cassini-viewer/package.json cassini-viewer/package-lock.json ./cassini-viewer/
+COPY cassini-app/package.json cassini-app/package-lock.json ./cassini-app/
+RUN npm install
+COPY cassini-viewer/ ./cassini-viewer/
+COPY cassini-app/ ./cassini-app/
 # VITE_BASE=./ keeps standalone asset URLs relative (served at /viewer/ by the
-# operator's SPA handler). The embedded build's runtime proxy base comes from
-# window.__CASSINI_VIEWER_BASE__ (captured by src/embedded.ts), so no VITE_BASE
-# / VITE_PUBLISHED_BASE bake-in is needed there. build:all emits BOTH the
-# standalone dist/ and the embedded dist/embedded/{embedded.js,embedded.css}
-# (in that order so the standalone build doesn't wipe dist/embedded); the
-# embedded assets are what the operator serves at /ui/viewer.{js,css}.
+# operator's SPA handler). Embedded builds resolve their proxy base at runtime
+# from window.__CASSINI_VIEWER_BASE__ (src/embedded.ts), so no bake-in there.
 ENV VITE_BASE=./
-RUN npm run build:all
-
-FROM node:22-bookworm AS control-panel-builder
-WORKDIR /src/cassini-control-panel
-COPY cassini-control-panel/package.json cassini-control-panel/package-lock.json ./
-RUN npm ci
-COPY cassini-control-panel/ ./
-# control-panel is served at /control-panel/ inside the ExApp container.
-# CASSINI_OPERATOR_BASE_PATH bakes the operator API path into the STANDALONE
-# SPA bundle; the runtime stage sets the same value as a real ENV (AppAPI
-# injects no CASSINI_* vars). VITE_BASE makes the standalone asset URLs resolve
-# under /control-panel/. build:all emits BOTH the standalone dist/ and the
-# embedded dist/embedded/{embedded.js,embedded.css} (in that order so the
-# standalone build doesn't wipe dist/embedded); the embedded assets are what the
-# operator serves at /ui/control-panel.{js,css} (D-382). The embedded build uses
-# base ./ and sets the operator base path at runtime from the captured proxy
-# base (src/embedded.ts), so VITE_BASE / CASSINI_OPERATOR_BASE_PATH don't apply
-# there.
-ENV VITE_BASE=/control-panel/
-ENV CASSINI_OPERATOR_BASE_PATH=/operator
-RUN npm run build:all
+# cassini-viewer's own dist feeds the publisher's static-export tooling.
+RUN npm run build:all -w cassini-viewer
+# cassini-app: build:all emits the standalone dist/ (served at /viewer) AND the
+# embedded dist/embedded/{embedded.js,embedded.css} — the single
+# /ui/viewer.{js,css} the operator serves. It bundles cassini-viewer via the
+# workspace.
+RUN npm run build:all -w cassini-app
 
 FROM debian:bookworm-slim AS frpc-fetcher
 ARG FRP_VERSION
@@ -154,8 +145,7 @@ ENV CASSINI_BIN=/usr/local/bin/cassini \
     CASSINI_OPERATOR_WORK_ROOT=/var/lib/cassini-operator/jobs \
     CASSINI_OPERATOR_SITE_ROOT=/srv/cassini-site/published \
     CASSINI_CACHE_ROOT=/opt/cassini/cache \
-    CASSINI_CONTROL_PANEL_DIST=/opt/cassini/cassini-control-panel/dist \
-    CASSINI_VIEWER_DIST=/opt/cassini/cassini-viewer/dist \
+    CASSINI_VIEWER_DIST=/opt/cassini/cassini-app/dist \
     TMPDIR=/var/lib/cassini-operator/tmp \
     APP_HOST=0.0.0.0 \
     APP_PORT=8080 \
@@ -165,9 +155,9 @@ ENV CASSINI_BIN=/usr/local/bin/cassini \
 
 # AppAPI deploys inject only APP_*/HP_*/NEXTCLOUD_URL (see app_api
 # DockerActions::buildDeployEnvs) — never CASSINI_*. Bake the base path the
-# manifest route ACLs (^operator\/...) and the control-panel bundle assume,
-# or the operator falls back to BasePath "/" and every /operator/* request
-# 404s in a real install.
+# manifest route ACLs (^operator\/...) and the operator client assume, or the
+# operator falls back to BasePath "/" and every /operator/* request 404s in a
+# real install.
 ENV CASSINI_OPERATOR_BASE_PATH=/operator
 
 COPY --from=go-builder /out/cassini /usr/local/bin/cassini
@@ -183,8 +173,8 @@ COPY --from=model-fetcher /out /opt/cassini/cache
 COPY cassini-publisher/bin/export-static-meetings.sh /opt/cassini/cassini-publisher/bin/export-static-meetings.sh
 COPY cassini-viewer/package.json /opt/cassini/cassini-viewer/package.json
 COPY cassini-viewer/scripts/export-static-meetings.mjs /opt/cassini/cassini-viewer/scripts/export-static-meetings.mjs
-COPY --from=viewer-builder /src/cassini-viewer/dist /opt/cassini/cassini-viewer/dist
-COPY --from=control-panel-builder /src/cassini-control-panel/dist /opt/cassini/cassini-control-panel/dist
+COPY --from=web-builder /src/cassini-viewer/dist /opt/cassini/cassini-viewer/dist
+COPY --from=web-builder /src/cassini-app/dist /opt/cassini/cassini-app/dist
 COPY deployment/exapp-start.sh /usr/local/bin/cassini-exapp-entrypoint.sh
 COPY deployment/exapp-healthcheck.sh /usr/local/bin/healthcheck.sh
 
