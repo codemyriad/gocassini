@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { readSurface, surfaceHash } from "./surfaceRouting";
+import { applySurface, readSurface, surfaceHash } from "./surfaceRouting";
 
 describe("readSurface", () => {
   it("reads the operator surface from the hash", () => {
@@ -31,5 +31,34 @@ describe("surfaceHash", () => {
   it("round-trips through readSurface", () => {
     expect(readSurface(surfaceHash("operator"))).toBe("operator");
     expect(readSurface(surfaceHash("browse"))).toBe("browse");
+  });
+});
+
+describe("applySurface", () => {
+  it("adds the operator surface while preserving meeting/tx/t in order", () => {
+    expect(applySurface("#meeting=abc&tx=v3&t=1200ms", "operator")).toBe(
+      "#surface=operator&meeting=abc&tx=v3&t=1200ms",
+    );
+  });
+
+  it("removes the surface param when switching back to browse, keeping the rest", () => {
+    expect(applySurface("#surface=operator&meeting=abc&tx=v3&t=1200ms", "browse")).toBe(
+      "#meeting=abc&tx=v3&t=1200ms",
+    );
+  });
+
+  it("keeps t= last so parseTimeHash still matches", () => {
+    expect(applySurface("#meeting=abc&t=5s", "operator").endsWith("t=5s")).toBe(true);
+  });
+
+  it("does not duplicate an existing surface param", () => {
+    expect(applySurface("#surface=operator&meeting=abc", "operator")).toBe(
+      "#surface=operator&meeting=abc",
+    );
+  });
+
+  it("returns an empty hash for browse with no other params", () => {
+    expect(applySurface("#surface=operator", "browse")).toBe("");
+    expect(applySurface("", "browse")).toBe("");
   });
 });

@@ -28,3 +28,16 @@ export function readSurface(hash: string): Surface {
 export function surfaceHash(surface: Surface): string {
   return surface === "operator" ? `#${SURFACE_PARAM}=operator` : "";
 }
+
+// applySurface sets/clears the surface param on an EXISTING hash while
+// preserving the viewer's own params (meeting/tx/t) in their original order —
+// so switching surfaces no longer drops a meeting deep-link, and t= stays last
+// for core/transcript.ts's parseTimeHash. Surface is written first.
+export function applySurface(hash: string, surface: Surface): string {
+  const rest = hash
+    .replace(/^#/, "")
+    .split("&")
+    .filter((part) => part !== "" && !part.startsWith(`${SURFACE_PARAM}=`));
+  const parts = surface === "operator" ? [`${SURFACE_PARAM}=operator`, ...rest] : rest;
+  return parts.length > 0 ? `#${parts.join("&")}` : "";
+}

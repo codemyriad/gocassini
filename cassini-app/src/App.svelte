@@ -5,7 +5,7 @@
   import Operator from "./Operator.svelte";
   import { loadConfig } from "./operator/config";
   import { isLikelyAdminHint, probeOperatorAvailable } from "./operator/adminProbe";
-  import { readSurface, surfaceHash, type Surface } from "./surfaceRouting";
+  import { applySurface, readSurface, type Surface } from "./surfaceRouting";
 
   // The Cassini in-Nextcloud shell (D-420). It hosts role-gated surfaces fed
   // through the DataProvider seam: everyone gets "browse" (cassini-viewer's App
@@ -34,6 +34,23 @@
   // :host([data-nc-theme]) .cassini-root NC-colour overrides, matching browse).
   let themeMode: "saturn-light" | "saturn-dark" = "saturn-light";
 
+  // Same key cassini-viewer's App persists its theme under.
+  const THEME_STORAGE_KEY = "cassini-theme";
+  function resolveThemeMode(): "saturn-light" | "saturn-dark" {
+    // Agree with the viewer's own theme resolution so the operator surface
+    // matches browse: honour the stored preference first, else the OS
+    // preference. NC still overrides colours via :host([data-nc-theme]).
+    try {
+      const stored = localStorage.getItem(THEME_STORAGE_KEY);
+      if (stored === "saturn-light" || stored === "saturn-dark") {
+        return stored;
+      }
+    } catch {
+      // localStorage unavailable — fall through to the media query
+    }
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "saturn-dark" : "saturn-light";
+  }
+
   function applySurfaceFromLocation(): void {
     const next = readSurface(window.location.hash);
     // A non-admin deep-linking #surface=operator falls back to browse (the
@@ -54,7 +71,9 @@
     surface = next;
     // Fragment-only pushState — same mechanism the viewer uses; gives history /
     // back-forward + deep links without a pathname router (see surfaceRouting).
-    window.history.pushState({}, "", locationWithHash(surfaceHash(next)));
+    // applySurface preserves the viewer's meeting/tx/t so switching surfaces
+    // doesn't drop a meeting deep-link.
+    window.history.pushState({}, "", locationWithHash(applySurface(window.location.hash, next)));
   }
 
   function handlePopState(): void {
@@ -62,12 +81,7 @@
   }
 
   onMount(async () => {
-    // Match the viewer's default theme choice so the operator surface's
-    // data-theme agrees with the browse surface (NC colours still override via
-    // :host([data-nc-theme]) on real Nextcloud).
-    if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
-      themeMode = "saturn-dark";
-    }
+    themeMode = resolveThemeMode();
 
     // Optimistic anti-flash hint: if Nextcloud already tells us the user is an
     // admin, show the operator tab immediately instead of waiting a round-trip.
