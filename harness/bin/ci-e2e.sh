@@ -105,9 +105,14 @@ log "Running recorder + publisher end-to-end"
   ./e2e_with_publisher.sh
 )
 
+# Tolerance budget: video decodes only from the first fixture keyframe after
+# the subscriber binds (<= 0.5s with prepare-media.sh's -g 15) while audio
+# decodes immediately, so up to ~0.5s of the elapsed difference is structural
+# start skew, not drift; the rest covers bind/pacing jitter with margin. Real
+# failures in this class (frozen or starved video) show up as tens of seconds.
 "$SCRIPT_DIR/verify-av-drift.sh" \
   --input "$FINAL_OUTPUT" \
-  --tolerance 0.80 \
+  --tolerance 1.5 \
   --min-elapsed 15
 
 log "CI integration run complete"

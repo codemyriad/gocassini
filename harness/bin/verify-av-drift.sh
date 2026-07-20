@@ -184,7 +184,7 @@ for row in "${PAIRS[@]}"; do
   DRIFT="$(awk -v a="$VIDEO_ELAPSED" -v b="$AUDIO_ELAPSED" 'BEGIN {d=a-b; if (d<0) d=-d; printf "%.6f", d}')"
   WITHIN="$(awk -v d="$DRIFT" -v t="$TOLERANCE" 'BEGIN { if (d<=t) print "yes"; else print "no" }')"
 
-  log "  ltid=${LTID} audio_elapsed=${AUDIO_ELAPSED}s video_elapsed=${VIDEO_ELAPSED}s abs_drift=${DRIFT}s"
+  log "  ltid=${LTID} audio_elapsed=${AUDIO_ELAPSED}s video_elapsed=${VIDEO_ELAPSED}s abs_drift=${DRIFT}s audio=[${AUDIO_FIRST},${AUDIO_LAST}] video=[${VIDEO_FIRST},${VIDEO_LAST}]"
   if [[ "$WITHIN" != "yes" ]]; then
     echo "av drift beyond tolerance for ltid=${LTID}: drift=${DRIFT}s > ${TOLERANCE}s" >&2
     FAILURES=$((FAILURES + 1))
