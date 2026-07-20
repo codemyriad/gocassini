@@ -472,6 +472,15 @@
     if (event.code !== "Space" || event.repeat) {
       return;
     }
+    // This is a WINDOW-level handler, so it stays live while the component is
+    // merely hidden (display:none) rather than unmounted — e.g. under the app
+    // shell's operator surface, where MeetingView keeps its state but is not
+    // shown. A hidden section has no offsetParent; bail so Space stays free for
+    // whatever surface is actually visible (button activation, scrolling) and we
+    // never toggle the hidden player's audio.
+    if (!viewRootEl || viewRootEl.offsetParent === null) {
+      return;
+    }
     const target = event.target;
     if (
       target instanceof HTMLElement &&
