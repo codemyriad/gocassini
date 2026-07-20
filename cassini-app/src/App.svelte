@@ -161,7 +161,7 @@
            removes. The inner .cassini-root + data-theme give it the daisyUI
            theme in the shadow build (tokens aren't on :host) and the NC-colour
            overrides, exactly like the viewer's browse surface. -->
-      <div class="cassini-shell-surface cassini-shell-scroll">
+      <div class="cassini-shell-surface cassini-shell-scroll scroll-stable" data-theme={themeMode}>
         <div class="cassini-root" data-theme={themeMode}>
           <Operator />
         </div>
@@ -252,8 +252,17 @@
 
   /* The operator surface scrolls within its own pane (it was authored for
      page-level scroll via min-h-screen, which the fixed-height shell removes). */
+  /* The scroll container paints the surface background itself. The scrollbar
+     gutter belongs to THIS element, not to the .cassini-root inside it, so with
+     no background here the gutter is transparent and Nextcloud's page wallpaper
+     showed through beside the scrollbar. --color-main-background is what NC maps
+     base-200 to, which is the operator's own page background (bg-base-200), so
+     the gutter blends into the surface. [data-theme] is on the element for the
+     same reason as the nav: it sits outside .cassini-root, so the daisyUI token
+     would otherwise be undefined here and fall through to the light default. */
   .cassini-shell-scroll {
     overflow-y: auto;
+    background: var(--color-main-background, var(--color-base-200, #f3f4f6));
   }
 
   .cassini-shell-hidden {
