@@ -98,6 +98,42 @@ export function captureOperatorBase(win: Window): void {
   }
 }
 
+// neutralizeNestedContentChrome undoes the DOUBLED Nextcloud app-chrome caused by
+// the AppAPI embedded page emitting a SECOND <div id="content"> inside the outer
+// <div id="content" class="app-app_api">. NC's server.css styles `#content` with
+// position:fixed, margin-top:var(--header-height), margin:var(--body-container-margin),
+// height:var(--body-height) and border-radius:var(--body-container-radius) — and an
+// ID selector matches BOTH divs, so the inner one re-applies the entire chrome on
+// top of the outer's. Symptoms (D-517):
+//   - a second header-height gap above the app;
+//   - a second container margin on the left/right edges;
+//   - the app's bottom (the viewer's player) cut off, because the inner box is a
+//     full --body-height tall yet starts one header-height lower, overflowing the
+//     outer's `overflow:clip`.
+// The OUTER #content is the panel Nextcloud intends to draw; the nested one should
+// simply fill it. Inline styles because this element lives in the light DOM, outside
+// the shadow root our bundled stylesheet is injected into. absolute+inset:0 is a
+// deterministic fill: the outer is position:fixed (per
+// `#content:not(.with-sidebar--full){position:fixed}`) so it is a containing block.
+// No-ops unless the mount target really is a nested #content, leaving a future
+// AppAPI that stops duplicating the id untouched. Returns whether it applied, and
+// takes its inputs as arguments so it is unit-testable without a real page.
+export function neutralizeNestedContentChrome(
+  contentEls: readonly HTMLElement[],
+  mountTarget: HTMLElement,
+): boolean {
+  if (contentEls.length < 2 || mountTarget === contentEls[0]) {
+    return false;
+  }
+  mountTarget.style.position = "absolute";
+  mountTarget.style.inset = "0";
+  mountTarget.style.margin = "0";
+  mountTarget.style.width = "auto";
+  mountTarget.style.height = "auto";
+  mountTarget.style.borderRadius = "0";
+  return true;
+}
+
 // ensureShadowAppRoot creates the shadow host inside the embedded template's
 // <div id="content"> (falling back to <body>), attaches an OPEN shadow root,
 // injects the bundled stylesheet at cssHref INTO the shadow, and returns the
@@ -124,6 +160,7 @@ export function ensureShadowAppRoot(doc: Document, cssHref: string): HTMLElement
       contentEls.filter((el) => el.querySelector("#content") === null).pop() ??
       contentEls[contentEls.length - 1] ??
       doc.body;
+    neutralizeNestedContentChrome(contentEls, mountTarget);
     mountTarget.appendChild(host);
   }
   const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
