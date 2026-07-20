@@ -93,18 +93,6 @@ logged-in user.]]></description>
             closes the delimiter and PHP raises "Unknown modifier" errors.
       -->
 
-      <!-- ADMIN: control-panel UI -->
-      <route>
-        <url>^control-panel\/?$</url>
-        <verb>GET</verb>
-        <access_level>ADMIN</access_level>
-      </route>
-      <route>
-        <url>^control-panel\/.+$</url>
-        <verb>GET,HEAD</verb>
-        <access_level>ADMIN</access_level>
-      </route>
-
       <!-- ADMIN: operator JSON API -->
       <route>
         <url>^operator\/jobs\/?$</url>
@@ -129,6 +117,14 @@ logged-in user.]]></description>
       <route>
         <url>^operator\/events\/?$</url>
         <verb>GET</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <!-- ADMIN: STT quality settings (read + update) driven by the operator
+           surface's Settings panel (D-420 V3). Kept ADMIN like the rest of the
+           operator API — a non-admin's PUT/GET 403s at the proxy boundary. -->
+      <route>
+        <url>^operator\/settings\/?$</url>
+        <verb>GET,PUT</verb>
         <access_level>ADMIN</access_level>
       </route>
       <!-- ADMIN: doctor/status endpoint (version, STT device usability,

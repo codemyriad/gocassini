@@ -18,8 +18,18 @@ export function loadConfig(): PanelConfig {
 function normalizeOperatorBasePath(value: string): string {
   const trimmed = value.trim();
   const normalized = (trimmed === "" ? "/" : trimmed).replace(/\/+$/, "") || "/";
-  if (!normalized.startsWith("/")) {
-    throw new Error("CASSINI_OPERATOR_BASE_PATH must be a root-relative path such as /operator.");
+  // Accept either a root-relative path (`/operator` — the dev/standalone and
+  // CASSINI_OPERATOR_BASE_PATH shape) OR an absolute http(s) URL. The AppAPI
+  // embedded build (D-420 V3) captures the proxy base from the ui/viewer.js
+  // script src, which the DOM resolves to an ABSOLUTE, same-origin URL
+  // (http://host/index.php/apps/app_api/proxy/gocassini/operator) — the viewer
+  // base is used absolutely for the same reason. Rejecting it here made
+  // loadConfig throw on the embedded page, so the operator surface (and its
+  // admin probe) silently disappeared for admins.
+  if (!normalized.startsWith("/") && !/^https?:\/\//i.test(normalized)) {
+    throw new Error(
+      "operatorBasePath must be a root-relative path (e.g. /operator) or an absolute http(s) URL.",
+    );
   }
   return normalized;
 }

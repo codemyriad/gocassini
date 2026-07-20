@@ -31,7 +31,9 @@
 
 import { mount } from "svelte";
 import App from "./App.svelte";
-import "cassini-viewer/app.css";
+// The shell's stylesheet composes the viewing layer's app.css and adds a
+// @source for the shell's own components (nav + operator surface) — D-420 V3.
+import "./app.css";
 
 // VIEWER_JS_SRC_PATTERN matches the registered ui/viewer.js src and captures
 // the AppAPI proxy base. Exported for the unit test so test and runtime agree.
@@ -71,6 +73,31 @@ export function captureViewerBase(doc: Document, win: Window): void {
   }
 }
 
+// operatorBaseFrom derives the operator JSON API base from the captured viewer
+// (proxy) base: the operator surface (D-420 V3) talks to <proxy>/operator/*
+// through the same AppAPI proxy the viewer assets come from. Returns null when
+// the base is absent (standalone/dev — config.ts falls back to its build-time
+// default there). Pure so it is unit-testable.
+export function operatorBaseFrom(viewerBase: string | null | undefined): string | null {
+  if (!viewerBase) {
+    return null;
+  }
+  return viewerBase.replace(/\/+$/, "") + "/operator";
+}
+
+// captureOperatorBase publishes the operator base as
+// window.__CASSINI_CONFIG__.operatorBasePath, which operator/config.ts treats
+// as authoritative when present. This replaces the old control-panel pathname
+// sniffing (proxyPrefixFromPathname keyed off "/control-panel", which the
+// collapsed single entry no longer serves). No-op when no viewer base was
+// captured.
+export function captureOperatorBase(win: Window): void {
+  const base = operatorBaseFrom(win.__CASSINI_VIEWER_BASE__);
+  if (base) {
+    win.__CASSINI_CONFIG__ = { ...(win.__CASSINI_CONFIG__ ?? {}), operatorBasePath: base };
+  }
+}
+
 // ensureShadowAppRoot creates the shadow host inside the embedded template's
 // <div id="content"> (falling back to <body>), attaches an OPEN shadow root,
 // injects the bundled stylesheet at cssHref INTO the shadow, and returns the
@@ -81,7 +108,17 @@ export function ensureShadowAppRoot(doc: Document, cssHref: string): HTMLElement
   if (!existingHost) {
     host.id = "cassini-shadow-host";
     host.style.cssText = "display:block;width:100%;height:100%";
-    (doc.getElementById("content") ?? doc.body).appendChild(host);
+    // The AppAPI embedded page nests a SECOND <div id="content"> inside the
+    // outer #content.app-app_api, and Nextcloud styles every #content as
+    // position:fixed — so that inner empty div becomes a full-viewport overlay
+    // painting ON TOP. Appending the host to the first #content (getElementById)
+    // made it a SIBLING the overlay covered, swallowing all clicks + wheel.
+    // Mount INSIDE the innermost #content (the intended app container) so the
+    // SPA is the fixed overlay's content and stays interactive. Falls back to
+    // the single #content (querySelectorAll → one element) or <body>.
+    const contentEls = doc.querySelectorAll("#content");
+    const mountTarget = (contentEls[contentEls.length - 1] as HTMLElement | undefined) ?? doc.body;
+    mountTarget.appendChild(host);
   }
   const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
   let appRoot = shadow.getElementById?.("app") ?? null;
@@ -162,6 +199,7 @@ function mountEmbeddedShell(): void {
 
 function bootstrap(): void {
   captureViewerBase(document, window);
+  captureOperatorBase(window);
   // Wait for the window load event unless already complete: OCA.Theming is
   // populated by a Nextcloud dynamic import that resolves after
   // DOMContentLoaded; the load event is the earliest reliable read point.

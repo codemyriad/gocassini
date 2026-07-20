@@ -1,61 +1,32 @@
-@import "tailwindcss";
-
-@plugin "daisyui" {
-  /* root: emit theme tokens on BOTH :root (standalone) and :host (the AppAPI
-   * embedded build, where embedded.ts renders the SPA inside an open shadow
-   * root). Custom properties on :host inherit across the shadow boundary; :root
-   * inside a shadow-scoped stylesheet matches nothing. See src/embedded.ts. */
-  root: ":where(:root, :host)";
-  themes: light --default, dark --prefersdark;
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * Nextcloud native colour override (D-414)
+/* The Cassini shell's stylesheet (D-420 V3).
  *
- * Active when embedded.ts sets data-nc-theme on the shadow host. NC CSS vars
- * inherit through the shadow boundary; --nc-primary is set via inline style
- * on the host to avoid the circular var() reference (NC and DaisyUI both use
- * --color-primary). :host([data-nc-theme]) beats DaisyUI's zero-specificity
- * :where(:root, :host) default theme.
- * ────────────────────────────────────────────────────────────────────────── */
-:host([data-nc-theme]) {
-  --color-primary:         var(--nc-primary);
-  --color-primary-content: var(--color-primary-text);
-  --color-base-100:        var(--color-main-background);
-  --color-base-200:        var(--color-background-dark);
-  --color-base-300:        var(--color-background-darker);
-  --color-base-content:    var(--color-main-text);
-}
+ * Composes the viewing layer's stylesheet (cassini-viewer/app.css — which owns
+ * the single @import "tailwindcss" root, the daisyUI saturn themes, the
+ * Nextcloud colour override, and the shadow-boundary reset) and adds a @source
+ * for the shell's OWN components so their Tailwind/daisyUI utilities are
+ * generated too. The viewer's app.css only @source's cassini-viewer/src; the
+ * operator surface (Operator.svelte, SettingsPanel.svelte) and the shell nav
+ * live here in cassini-app/src, so without this @source their classes would be
+ * purged out of the merged bundle.
+ *
+ * One Tailwind build, rooted here: the imported viewer stylesheet carries the
+ * @import "tailwindcss" + @plugin "daisyui" registration, so this file must NOT
+ * re-register them (that would duplicate the theme tokens). */
+@import "cassini-viewer/app.css";
 
-:host([data-nc-theme="dark"]),
-:host([data-nc-theme="dark-highcontrast"]) {
-  color-scheme: dark;
-}
+/* Scan the shell's own components. Relative to THIS file → cassini-app/src. */
+@source "./";
 
-/* Shadow-boundary reset — active only in the embedded (shadow) build, where
- * :host is the shadow host; inert in standalone (no shadow host). Re-establishes
- * the base typography Tailwind Preflight's (now shadow-inert) html/body rules
- * would set, and resets inherited props at the boundary so NC chrome does not
- * bleed into the panel. */
-:host {
-  display: block;
-  min-height: 100%;
-  font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
-  line-height: 1.5;
-  color: var(--color-base-content);
-  background-color: var(--color-base-100);
-  -webkit-text-size-adjust: 100%;
-  text-size-adjust: 100%;
-}
-
-/* Inert in the embedded (shadow) build — no html/body inside a shadow tree —
- * so this no longer bleeds onto Nextcloud; applies normally in standalone. */
+/* The shell is a full-height app: make the height chain DEFINITE from the root
+   so the flex surface — and the viewer's `.cassini-root { height: 100% }` that
+   carries the bg-base-200 grid — actually fill in the STANDALONE build. The
+   viewing layer's app.css sets html/body/#app to only `min-height:100%`, which
+   is indefinite, so a percentage height collapses through the shell's flex
+   column. Inert in the embedded (shadow) build — there the SPA mounts inside a
+   shadow root whose :host is already `height:100%`, and there is no html/body/
+   #app inside the shadow for this rule to match. (D-420 V3.) */
 html,
 body,
 #app {
-  min-height: 100%;
-}
-
-body {
-  min-height: 100vh;
+  height: 100%;
 }
