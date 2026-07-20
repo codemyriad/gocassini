@@ -31,11 +31,18 @@ export PUB_DURATION="${PUB_DURATION:-18}"
 export PUB_USERS="${PUB_USERS:-1}"
 export CALL_NAME="${CALL_NAME:-CI Gocassini room}"
 
-if (( REC_DURATION < 40 )); then
-  REC_DURATION=40
+# The drift check below requires an A/V pair with >= 15s of measured overlap
+# (--min-elapsed 15). PUB_DURATION counts from stream-video.sh launch and the
+# bots spend ~17s joining before media flows, plus ~4s is lost to the video
+# start offset and stream tails: PUB_DURATION=32 left only ~10.9s of measurable
+# pair, which the pre-D-510 checker silently skipped and the strict one rejects.
+# 45s of publishing yields a ~24s pair; REC_DURATION must outlast publisher
+# start (START_DELAY=6) + PUB_DURATION with slack for the recorder tail.
+if (( REC_DURATION < 60 )); then
+  REC_DURATION=60
 fi
-if (( PUB_DURATION < 32 )); then
-  PUB_DURATION=32
+if (( PUB_DURATION < 45 )); then
+  PUB_DURATION=45
 fi
 export REC_DURATION PUB_DURATION
 
