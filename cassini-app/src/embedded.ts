@@ -108,7 +108,17 @@ export function ensureShadowAppRoot(doc: Document, cssHref: string): HTMLElement
   if (!existingHost) {
     host.id = "cassini-shadow-host";
     host.style.cssText = "display:block;width:100%;height:100%";
-    (doc.getElementById("content") ?? doc.body).appendChild(host);
+    // The AppAPI embedded page nests a SECOND <div id="content"> inside the
+    // outer #content.app-app_api, and Nextcloud styles every #content as
+    // position:fixed — so that inner empty div becomes a full-viewport overlay
+    // painting ON TOP. Appending the host to the first #content (getElementById)
+    // made it a SIBLING the overlay covered, swallowing all clicks + wheel.
+    // Mount INSIDE the innermost #content (the intended app container) so the
+    // SPA is the fixed overlay's content and stays interactive. Falls back to
+    // the single #content (querySelectorAll → one element) or <body>.
+    const contentEls = doc.querySelectorAll("#content");
+    const mountTarget = (contentEls[contentEls.length - 1] as HTMLElement | undefined) ?? doc.body;
+    mountTarget.appendChild(host);
   }
   const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
   let appRoot = shadow.getElementById?.("app") ?? null;
