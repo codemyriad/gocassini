@@ -93,18 +93,6 @@ logged-in user.]]></description>
             closes the delimiter and PHP raises "Unknown modifier" errors.
       -->
 
-      <!-- ADMIN: control-panel UI -->
-      <route>
-        <url>^control-panel\/?$</url>
-        <verb>GET</verb>
-        <access_level>ADMIN</access_level>
-      </route>
-      <route>
-        <url>^control-panel\/.+$</url>
-        <verb>GET,HEAD</verb>
-        <access_level>ADMIN</access_level>
-      </route>
-
       <!-- ADMIN: operator JSON API -->
       <route>
         <url>^operator\/jobs\/?$</url>
@@ -129,6 +117,14 @@ logged-in user.]]></description>
       <route>
         <url>^operator\/events\/?$</url>
         <verb>GET</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <!-- ADMIN: STT quality settings (read + update) driven by the operator
+           surface's Settings panel (D-420 V3). Kept ADMIN like the rest of the
+           operator API — a non-admin's PUT/GET 403s at the proxy boundary. -->
+      <route>
+        <url>^operator\/settings\/?$</url>
+        <verb>GET,PUT</verb>
         <access_level>ADMIN</access_level>
       </route>
       <!-- ADMIN: doctor/status endpoint (version, STT device usability,
@@ -179,15 +175,15 @@ logged-in user.]]></description>
       </route>
 
       <!--
-        ExApp UI assets behind the Nextcloud navigation entries the operator
-        registers when the app is enabled (uiRegistrar in exapp.go). AppAPI's
-        embedded top-menu page loads ui/<entry>.{js,css} through this proxy, and
-        the navigation bar fetches the icon the same way, so each path needs a
-        route. Both entries render their SPA directly on the embedded page from
-        an embedded build (viewer D-381, control-panel D-382): the viewer
-        JS/CSS are USER, the control-panel JS/CSS are ADMIN (same tier as the
-        admin SPA); the icon is USER because every logged-in user sees the
-        viewer entry.
+        ExApp UI assets behind the single "Cassini" Nextcloud navigation entry
+        the operator registers when the app is enabled (uiRegistrar in
+        exapp.go). AppAPI's embedded top-menu page loads ui/viewer.{js,css}
+        through this proxy, and the navigation bar fetches the icon the same
+        way, so each path needs a route. The entry renders its SPA directly on
+        the embedded page from cassini-app's embedded build (D-381/D-420); the
+        JS/CSS + icon are USER because every logged-in user sees the entry.
+        Admin-only surfaces are gated inside the app — the operator JSON API
+        routes above stay ADMIN (the real boundary).
       -->
       <route>
         <url>^img\/app\.svg$</url>
@@ -206,19 +202,6 @@ logged-in user.]]></description>
         <url>^ui\/viewer\.css$</url>
         <verb>GET,HEAD</verb>
         <access_level>USER</access_level>
-      </route>
-      <route>
-        <url>^ui\/control-panel\.js$</url>
-        <verb>GET,HEAD</verb>
-        <access_level>ADMIN</access_level>
-      </route>
-      <!-- The control panel renders directly on AppAPI's embedded page (D-382),
-           so its stylesheet is registered as a ui/style and fetched through the
-           proxy too. ADMIN, like the control-panel JS. -->
-      <route>
-        <url>^ui\/control-panel\.css$</url>
-        <verb>GET,HEAD</verb>
-        <access_level>ADMIN</access_level>
       </route>
     </routes>
   </external-app>
