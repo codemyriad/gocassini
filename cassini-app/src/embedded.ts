@@ -114,10 +114,16 @@ export function ensureShadowAppRoot(doc: Document, cssHref: string): HTMLElement
     // painting ON TOP. Appending the host to the first #content (getElementById)
     // made it a SIBLING the overlay covered, swallowing all clicks + wheel.
     // Mount INSIDE the innermost #content (the intended app container) so the
-    // SPA is the fixed overlay's content and stays interactive. Falls back to
-    // the single #content (querySelectorAll → one element) or <body>.
-    const contentEls = doc.querySelectorAll("#content");
-    const mountTarget = (contentEls[contentEls.length - 1] as HTMLElement | undefined) ?? doc.body;
+    // SPA is the fixed overlay's content and stays interactive. Target the LEAF
+    // #content — one with no nested #content — rather than blindly the last in
+    // document order, so this stays correct if the page nests #content
+    // differently. Falls back to the last match, then the single #content, then
+    // <body>.
+    const contentEls = Array.from(doc.querySelectorAll<HTMLElement>("#content"));
+    const mountTarget =
+      contentEls.filter((el) => el.querySelector("#content") === null).pop() ??
+      contentEls[contentEls.length - 1] ??
+      doc.body;
     mountTarget.appendChild(host);
   }
   const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
