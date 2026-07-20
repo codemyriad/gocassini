@@ -356,7 +356,10 @@
       case "reconnecting":
         return "reconnecting…";
       case "unavailable":
-        return "polling — live updates unavailable";
+        // The normal mode in Nextcloud (AppAPI can't stream SSE), so state the
+        // refresh cadence plainly rather than framing routine operation as a
+        // failure.
+        return `auto-refreshing every ${POLL_INTERVAL_MS / 1000}s`;
       case "disconnected":
         return "disconnected";
       default:
