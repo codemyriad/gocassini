@@ -32,11 +32,10 @@ export PUB_USERS="${PUB_USERS:-1}"
 export CALL_NAME="${CALL_NAME:-CI Gocassini room}"
 
 # The drift check below requires an A/V pair with >= 15s of measured overlap
-# (--min-elapsed 15). PUB_DURATION counts from stream-video.sh launch and the
-# bots spend ~17s joining before media flows, plus ~4s is lost to the video
-# start offset and stream tails: PUB_DURATION=32 left only ~10.9s of measurable
-# pair, which the pre-D-510 checker silently skipped and the strict one rejects.
-# 45s of publishing yields a ~24s pair; REC_DURATION must outlast publisher
+# (--min-elapsed 15). Publishing is bounded by BOTH knobs: the bot stops at
+# min(PUB_DURATION since stream-video.sh launch, end of its media fixture),
+# and the bots spend ~17s joining before media flows, plus ~4s is lost to the
+# video start offset and stream tails. REC_DURATION must outlast publisher
 # start (START_DELAY=6) + PUB_DURATION with slack for the recorder tail.
 if (( REC_DURATION < 60 )); then
   REC_DURATION=60
@@ -45,6 +44,19 @@ if (( PUB_DURATION < 45 )); then
   PUB_DURATION=45
 fi
 export REC_DURATION PUB_DURATION
+
+# Without an explicit fixture, stream-video.sh falls back to prepare-media.sh's
+# default 15s sample, and the bot stops publishing when the fixture runs out --
+# capping the measurable pair at ~10.9s no matter how large PUB_DURATION is
+# (this is exactly what kept the pre-D-510 drift check silently skipping).
+# Prepare a fixture sized to the full publish window, same pattern as
+# ci-e2e-mute.sh.
+PREPARE_E2E_MEDIA=0
+if [[ -z "${MEDIA_PREFIX:-}" && -z "${MEDIA_PREFIXES:-}" ]]; then
+  export E2E_MEDIA_PREFIX="${E2E_MEDIA_PREFIX:-$MEDIA_DIR/sample-e2e-drift}"
+  export E2E_MEDIA_DURATION="${E2E_MEDIA_DURATION:-$PUB_DURATION}"
+  PREPARE_E2E_MEDIA=1
+fi
 
 CI_OUTPUT_BASE="/tmp/gocassini-ci-$(date -u +%Y%m%dT%H%M%S)-$$"
 export OUTPUT="${OUTPUT:-$CI_OUTPUT_BASE.mkv}"
@@ -67,6 +79,15 @@ cleanup() {
 }
 
 trap cleanup EXIT INT TERM
+
+if [[ "$PREPARE_E2E_MEDIA" == "1" ]]; then
+  log "Preparing e2e media fixture (${E2E_MEDIA_DURATION}s): $E2E_MEDIA_PREFIX"
+  "$SCRIPT_DIR/prepare-media.sh" \
+    --prefix "$E2E_MEDIA_PREFIX" \
+    --duration "$E2E_MEDIA_DURATION" \
+    --force
+  export MEDIA_PREFIX="$E2E_MEDIA_PREFIX"
+fi
 
 log "Starting local Nextcloud Talk stack for CI"
 # --reset: e2e wants a deterministic fresh stack; a leaked project from an
