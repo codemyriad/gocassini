@@ -7,6 +7,9 @@ HARNESS_DIR="$PROJECT_ROOT/harness"
 RUNTIME_DIR="$SCRIPT_DIR/runtime"
 ENV_FILE="$SCRIPT_DIR/.env"
 
+# shellcheck source=sandbox/lib-store-release.sh
+source "$SCRIPT_DIR/lib-store-release.sh"
+
 if [[ -f "$ENV_FILE" ]]; then
   set -a
   # shellcheck disable=SC1090
@@ -313,17 +316,10 @@ resolve_store_info_xml() {
   local catalog="$RUNTIME_DIR/appapi_apps.json"
   curl -fsSL "$CASSINI_APPSTORE_CATALOG_URL" -o "$catalog"
 
-  # Release download URLs embed the version tag (…/download/v<version>/<id>.tar.gz).
-  # Take the highest version regardless of channel. `sort -V` follows semver
-  # precedence for these URLs: a pre-release sorts before its own stable
-  # (v0.2.0-rc.1 < v0.2.0), so the newest stable wins when both exist, and a
-  # pre-release is only picked when it is genuinely the newest (e.g. 0.3.0-alpha
-  # over 0.2.0).
+  # Pick the newest release across all channels (see store_latest_release_url in
+  # lib-store-release.sh; ordering is pinned by test-store-release.sh).
   local url
-  url="$(grep -oE "https://[^\"']*/${CASSINI_APPSTORE_ID}[^\"']*\.tar\.gz" "$catalog" \
-    | grep -E "/v[0-9]+\.[0-9]+\.[0-9]+" \
-    | sort -V | tail -n1)"
-  if [[ -z "$url" ]]; then
+  if ! url="$(store_latest_release_url "$CASSINI_APPSTORE_ID" "$catalog")"; then
     echo "No $CASSINI_APPSTORE_ID release artifact found in $CASSINI_APPSTORE_CATALOG_URL" >&2
     return 1
   fi
