@@ -986,7 +986,7 @@ func (b *bot) hello(ctx context.Context) error {
 			return errors.New("hello response missing signaling sessionid")
 		}
 		b.setSignalingSessionID(sessionID)
-		b.logf("hello ok (version %s)", version)
+		b.logf("hello ok (version %s, session=%s)", version, sessionID)
 		return nil
 	}
 

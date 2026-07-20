@@ -36,6 +36,7 @@ type devPlayPrivateOptions struct {
 	nextcloudHost   string
 	scaffoldOnly    bool
 	conversation    string
+	mediaPrefix     string
 	durationSeconds int
 }
 
@@ -122,6 +123,7 @@ func runDevPlayPrivate(ctx context.Context, repoRoot string, args []string, stdo
 	fs.StringVar(&opts.nextcloudHost, "nextcloud-host", "", "Nextcloud harness host or base URL (defaults to CASSINI_HARNESS_HOST, then 127.0.0.1)")
 	fs.BoolVar(&opts.scaffoldOnly, "scaffold-only", false, "prepare private playback users/conversations and exit")
 	fs.StringVar(&opts.conversation, "conversation", "", "private conversation target: synthetic or admin")
+	fs.StringVar(&opts.mediaPrefix, "media-prefix", "", "override the IVF/OGG media prefix for every streamed participant")
 	fs.IntVar(&opts.durationSeconds, "duration", 0, "playback duration in seconds (for --conversation playback)")
 	fs.Usage = func() { printDevPlayPrivateUsage(fs.Output()) }
 	if err := fs.Parse(args); err != nil {
@@ -159,6 +161,7 @@ func runDevPlayPrivate(ctx context.Context, repoRoot string, args []string, stdo
 func validateDevPlayPrivateOptions(opts *devPlayPrivateOptions) error {
 	opts.nextcloudHost = strings.TrimSpace(opts.nextcloudHost)
 	opts.conversation = strings.TrimSpace(strings.ToLower(opts.conversation))
+	opts.mediaPrefix = strings.TrimSpace(opts.mediaPrefix)
 	if opts.durationSeconds < 0 {
 		return errors.New("--duration must be >= 0")
 	}
@@ -182,7 +185,7 @@ func validateDevPlayPrivateOptions(opts *devPlayPrivateOptions) error {
 func printDevPlayPrivateUsage(w io.Writer) {
 	fmt.Fprint(w, `Usage:
   cassini dev play-private --scaffold-only [--nextcloud-host <host-or-url>]
-  cassini dev play-private --conversation synthetic|admin [--nextcloud-host <host-or-url>] [--duration <seconds>]
+  cassini dev play-private --conversation synthetic|admin [--nextcloud-host <host-or-url>] [--media-prefix <path>] [--duration <seconds>]
 
 Examples:
   cassini dev play-private --scaffold-only
@@ -190,9 +193,10 @@ Examples:
 
 `)
 	fmt.Fprintf(w, `Options:
-  --scaffold-only     Create/reuse private playback users and 1:1 Talk conversations, then exit.
-  --conversation      Private playback target. synthetic is implemented now; admin lands in the next slice.
+  --scaffold-only     Create/reuse private playback users and 1:1 Talk conversations, then exit; --media-prefix skips generated fixture preparation.
+  --conversation      Private playback target: synthetic or admin.
   --nextcloud-host    Bare host/IP or full base URL. Defaults to CASSINI_HARNESS_HOST, then 127.0.0.1.
+  --media-prefix      Use one existing <prefix>.ivf + <prefix>.ogg pair for every participant.
   --duration          Seconds to play for --conversation playback.
 
 Scaffold credentials:
@@ -206,8 +210,12 @@ func scaffoldDevPlayPrivate(ctx context.Context, repoRoot string, opts devPlayPr
 	if err != nil {
 		return err
 	}
-	if code := ensureDevPlayPiedPiperFixture(ctx, repoRoot, stdout, io.Discard); code != 0 {
-		return fmt.Errorf("prepare Pied Piper fixture exited with code %d", code)
+	if opts.mediaPrefix == "" {
+		if code := ensureDevPlayPiedPiperFixture(ctx, repoRoot, stdout, io.Discard); code != 0 {
+			return fmt.Errorf("prepare Pied Piper fixture exited with code %d", code)
+		}
+	} else if !devPlayMediaPairExists(opts.mediaPrefix) {
+		return fmt.Errorf("--media-prefix requires non-empty %s.ivf and %s.ogg", opts.mediaPrefix, opts.mediaPrefix)
 	}
 
 	password, passwordSource := devPlayPrivateScaffoldPassword()
@@ -325,7 +333,7 @@ func runDevPlayPrivateConversation(ctx context.Context, repoRoot string, opts de
 	if err != nil {
 		return err
 	}
-	target, err := resolveDevPlayPrivateTarget(repoRoot, baseURL, state, password, opts.conversation)
+	target, err := resolveDevPlayPrivateTarget(repoRoot, baseURL, state, password, opts.conversation, opts.mediaPrefix)
 	if err != nil {
 		return err
 	}
@@ -480,7 +488,7 @@ func devPlayPrivatePasswordForState(state devPlayPrivateScaffoldState) (string, 
 	}
 }
 
-func resolveDevPlayPrivateTarget(repoRoot string, baseURL string, state devPlayPrivateScaffoldState, password string, conversationName string) (devPlayPrivatePlaybackTarget, error) {
+func resolveDevPlayPrivateTarget(repoRoot string, baseURL string, state devPlayPrivateScaffoldState, password string, conversationName string, mediaOverride string) (devPlayPrivatePlaybackTarget, error) {
 	conversation, ok := state.conversation(conversationName)
 	if !ok || strings.TrimSpace(conversation.Token) == "" {
 		return devPlayPrivatePlaybackTarget{}, fmt.Errorf("scaffold state missing %s conversation; rerun `cassini dev play-private --scaffold-only`", conversationName)
@@ -506,7 +514,11 @@ func resolveDevPlayPrivateTarget(repoRoot string, baseURL string, state devPlayP
 		recordingStarter = admin
 		publishers = []devPlayPrivateActor{erlich}
 		streamActors = []devPlayPrivateActor{admin, erlich}
-		audioReadyAfters = []string{"86400", "0"}
+		// The authenticated recording starter must also publish audible media.
+		// Installed topologies can establish one subscriber before another; a
+		// permanently-muted starter let a healthy product path produce a
+		// video-only MKV while the sole audible peer was still negotiating ICE.
+		audioReadyAfters = []string{"0", "0"}
 	default:
 		return devPlayPrivatePlaybackTarget{}, fmt.Errorf("unsupported private conversation %q", conversationName)
 	}
@@ -518,9 +530,16 @@ func resolveDevPlayPrivateTarget(repoRoot string, baseURL string, state devPlayP
 			return devPlayPrivatePlaybackTarget{}, fmt.Errorf("scaffold state missing %s publisher %d fields; rerun scaffold", conversationName, i+1)
 		}
 	}
+	mediaOverride = strings.TrimSpace(mediaOverride)
+	if mediaOverride != "" && !devPlayMediaPairExists(mediaOverride) {
+		return devPlayPrivatePlaybackTarget{}, fmt.Errorf("--media-prefix requires non-empty %s.ivf and %s.ogg", mediaOverride, mediaOverride)
+	}
 	mediaPrefixes := make([]string, 0, len(publishers))
 	for _, publisher := range publishers {
-		prefix := filepath.Join(outputDir, publisher.SpeakerID)
+		prefix := mediaOverride
+		if prefix == "" {
+			prefix = filepath.Join(outputDir, publisher.SpeakerID)
+		}
 		if !devPlayMediaPairExists(prefix) {
 			return devPlayPrivatePlaybackTarget{}, fmt.Errorf("missing media for %s; run `cassini dev play --room <room> --mode single` or rerun scaffold", prefix)
 		}
@@ -528,7 +547,10 @@ func resolveDevPlayPrivateTarget(repoRoot string, baseURL string, state devPlayP
 	}
 	streamMediaPrefixes := append([]string{}, mediaPrefixes...)
 	if conversationName == devPlayPrivateConversationAdmin {
-		erlichPrefix := filepath.Join(outputDir, erlich.SpeakerID)
+		erlichPrefix := mediaOverride
+		if erlichPrefix == "" {
+			erlichPrefix = filepath.Join(outputDir, erlich.SpeakerID)
+		}
 		streamMediaPrefixes = []string{erlichPrefix, erlichPrefix}
 	}
 	callURL := strings.TrimSpace(conversation.CallURL)

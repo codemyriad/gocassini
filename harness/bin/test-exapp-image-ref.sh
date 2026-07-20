@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 #
-# Regression test: manual-test-setup.sh must derive its "as if pulled from
-# ghcr.io" image tag from appinfo/info.xml's <image-tag> instead of
-# hardcoding one. The dogfood deploy maps ghcr.io -> local and lets AppAPI
-# resolve <registry>/<image>:<image-tag> verbatim from info.xml, so a
-# hardcoded tag (the old `:latest`) breaks the moment the manifest pins a
-# version — AppAPI looks for :X.Y.Z locally and finds nothing.
+# Regression test: the compatibility manual-test-setup.sh must delegate image
+# preparation to D-493's canonical harness_prepare_exapp_image helper. That
+# helper derives the "as if pulled from ghcr.io" image tag from info.xml and
+# applies the build/reuse-local/pull policy. A direct helper call or hardcoded
+# tag in the wrapper would let its setup drift from `cassini dev stack`.
 #
 # Fast and offline: no docker, no compose. Run directly:
 #   ./harness/bin/test-exapp-image-ref.sh
@@ -21,6 +20,7 @@ fail() {
 }
 
 [[ -f "$SCRIPT_DIR/lib-exapp-image.sh" ]] || fail "lib-exapp-image.sh is missing"
+# shellcheck disable=SC1091 # SCRIPT_DIR is resolved dynamically above.
 source "$SCRIPT_DIR/lib-exapp-image.sh"
 
 TMP_DIR="$(mktemp -d)"
@@ -68,18 +68,42 @@ independent="$(grep -o '<image-tag>[^<]*</image-tag>' "$PROJECT_ROOT/appinfo/inf
 [[ "$real_tag" == "$independent" ]] \
   || fail "lib extracted '$real_tag' but manifest pins '$independent'"
 
-# 4. manual-test-setup.sh consumes the helper and no longer hardcodes a
-#    gocassini image tag (the original bug: IMAGE_AS_PRODUCTION pinned
-#    :latest while info.xml pinned a version).
+# 4. manual-test-setup.sh delegates to the canonical D-493 image phase. The
+#    wrapper selects build or reuse-local; it must not independently parse the
+#    manifest or reproduce tagging policy.
 setup_sh="$SCRIPT_DIR/manual-test-setup.sh"
-grep -q 'exapp_image_tag' "$setup_sh" \
-  || fail "manual-test-setup.sh does not derive its image tag via exapp_image_tag"
-if grep -nE 'gocassini:[a-zA-Z0-9._-]' "$setup_sh"; then
+stack_sh="$SCRIPT_DIR/lib/stack.sh"
+grep -q '^harness_prepare_exapp_image$' "$setup_sh" \
+  || fail "manual-test-setup.sh does not delegate to harness_prepare_exapp_image"
+grep -q 'CASSINI_HARNESS_EXAPP_IMAGE_MODE="build"' "$setup_sh" \
+  || fail "manual-test-setup.sh does not select canonical build mode"
+grep -q 'CASSINI_HARNESS_EXAPP_IMAGE_MODE:-reuse-local' "$setup_sh" \
+  || fail "manual-test-setup.sh does not default to canonical reuse-local mode"
+if grep -q 'exapp_image_tag' "$setup_sh"; then
+  fail "manual-test-setup.sh directly parses the manifest instead of delegating"
+fi
+if grep -nE 'gocassini:(latest|[0-9]+\.[0-9]+\.[0-9]+)' "$setup_sh"; then
   fail "manual-test-setup.sh hardcodes a gocassini image tag (see line above)"
 fi
 
-# 5. Touched scripts still parse.
+# 5. The canonical helper owns manifest extraction and composes, rather than
+#    hardcoding, the production-facing tag. Guard the old floating :latest bug.
+# shellcheck disable=SC2016 # The pattern intentionally matches source text.
+grep -qF 'info_xml="$(harness_exapp_info_xml_path)"' "$stack_sh" \
+  || fail "canonical image helper does not resolve the selected info.xml"
+# shellcheck disable=SC2016 # The pattern intentionally matches source text.
+grep -qF 'image_tag="$(exapp_image_tag "$info_xml")"' "$stack_sh" \
+  || fail "canonical image helper does not derive image-tag from selected info.xml"
+# shellcheck disable=SC2016 # The pattern intentionally matches source text.
+grep -qF 'image_as_production="ghcr.io/codemyriad/gocassini:${image_tag}"' "$stack_sh" \
+  || fail "canonical image helper does not compose the manifest-derived tag"
+if grep -nE 'image_as_production=.*gocassini:(latest|[0-9]+\.[0-9]+\.[0-9]+)' "$stack_sh"; then
+  fail "canonical image helper hardcodes a floating or release tag (see line above)"
+fi
+
+# 6. Touched scripts still parse.
 bash -n "$setup_sh" || fail "bash -n failed for manual-test-setup.sh"
 bash -n "$SCRIPT_DIR/lib-exapp-image.sh" || fail "bash -n failed for lib-exapp-image.sh"
+bash -n "$stack_sh" || fail "bash -n failed for lib/stack.sh"
 
-echo "PASS: manual-test-setup.sh image tag is derived from appinfo/info.xml (<image-tag>=$real_tag)"
+echo "PASS: ExApp image setup delegates to the manifest-derived canonical helper (<image-tag>=$real_tag)"

@@ -7,31 +7,11 @@ on:
     tags:
       - 'v*'
   pull_request:
-    # Adding the `full-ci` label re-triggers so the heavy tier can run on a PR.
+    # Adding the `full-ci` label re-triggers optional CUDA/quality tiers.
+    # The classifier below keeps docs-only PRs cheap while still emitting the
+    # required faithful-check context instead of leaving path-filtered checks
+    # permanently pending in branch protection.
     types: [opened, synchronize, reopened, labeled]
-    # Every path this workflow executes or builds from must be listed here —
-    # path filters are exact (no implicit globbing), so a missing entry lets
-    # a PR that edits e.g. a harness script merge green and first fail on
-    # main (happened with PR #36).
-    paths:
-      - 'appinfo/info.xml'
-      - 'deployment/Dockerfile.exapp'
-      - 'deployment/Dockerfile.exapp.cuda'
-      - 'deployment/Dockerfile.exapp.cuda.base'
-      - 'deployment/exapp-start.sh'
-      - 'deployment/exapp-healthcheck.sh'
-      - 'cassini-operator/**'
-      - 'cassini-go-recorder/**'
-      - 'cassini-publisher/bin/**'
-      - 'cassini-viewer/**'
-      - 'cassini-app/**'
-      - 'package.json'
-      # Harness scripts, compose stack, scenarios and media fixtures are
-      # executed by the smoke/e2e jobs below.
-      - 'harness/**'
-      # Composite action every job uses to hand the built image around.
-      - '.github/actions/**'
-      - '.github/workflows/publish-exapp-image.yml'
   workflow_dispatch:
 
 permissions:
@@ -56,9 +36,52 @@ env:
   EXTRA_ALIAS_SUFFIXES: '-rocm'
 
 jobs:
+  classify-changes:
+    name: Classify image and harness relevance
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.changes.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classify changed paths
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          relevant=true
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            relevant=false
+            # Fail closed: if the diff can't be computed, classify as relevant so
+            # the required faithful gate actually runs instead of auto-passing green.
+            if ! changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"; then
+              echo "::warning::git diff failed; classifying change as relevant (fail-closed)"
+              echo "relevant=true" | tee -a "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            while IFS= read -r path; do
+              [[ -n "$path" ]] || continue
+              case "$path" in
+                # .dockerignore is a real image-build-context input (it excludes
+                # node_modules/.git/harness media from `context: .`), so a change to
+                # it must run the faithful gate rather than report a green no-op.
+                appinfo/*|deployment/*|cassini-operator/*|cassini-go-recorder/*|cassini-publisher/bin/*|cassini-viewer/*|cassini-app/*|package.json|harness/*|bin/*|scripts/*|.dockerignore|.gitattributes|.github/actions/*|.github/workflows/*)
+                  relevant=true
+                  break
+                  ;;
+              esac
+            done <<< "$changed"
+          fi
+          echo "relevant=$relevant" | tee -a "$GITHUB_OUTPUT"
+
   validate-manifest:
     name: Validate appinfo/info.xml
     runs-on: ubuntu-latest
+    needs: classify-changes
+    if: needs.classify-changes.outputs.relevant == 'true'
     outputs:
       # <version> from appinfo/info.xml — the single source of truth for
       # release image tags (:X.Y.Z, :X.Y.Z-cuda).
@@ -123,7 +146,7 @@ jobs:
   build-image:
     name: Build ExApp image
     runs-on: ubuntu-latest
-    needs: validate-manifest
+    needs: [classify-changes, validate-manifest]
     outputs:
       image_ref: ${{ steps.meta.outputs.tags }}
       digest: ${{ steps.build.outputs.digest }}
@@ -237,6 +260,98 @@ jobs:
           path: /tmp/exapp-image.tar
           retention-days: 1
           if-no-files-found: ignore
+
+  faithful-installed-exapp-talk-cpu:
+    name: Faithful installed ExApp Talk artifact (CPU)
+    runs-on: ubuntu-latest
+    needs: [classify-changes, build-image]
+    timeout-minutes: 30
+    # Required product gate: one no-retry AppAPI/HaRP-installed Talk recording.
+    # Relevant PRs and every main push execute the product path. Unrelated PRs
+    # emit an explicit not-applicable success so branch protection never waits on
+    # a skipped path-filtered workflow.
+    if: always()
+    steps:
+      - name: Fail if change classification is unavailable
+        if: needs.classify-changes.result != 'success'
+        run: |
+          echo "::error::change classifier result was ${{ needs.classify-changes.result }}" >&2
+          exit 1
+
+      - name: Fail if the exact image build is unavailable
+        if: >-
+          needs.classify-changes.outputs.relevant == 'true' &&
+          needs.build-image.result != 'success'
+        run: |
+          echo "::error::exact image build result was ${{ needs.build-image.result }}" >&2
+          exit 1
+
+      - name: Mark unrelated change as not applicable
+        if: needs.classify-changes.outputs.relevant != 'true'
+        run: echo 'Faithful installed-ExApp gate is not applicable; no image, product, CLI, workflow, or harness input changed.'
+
+      - uses: actions/checkout@v4
+        if: needs.classify-changes.outputs.relevant == 'true'
+
+      - uses: actions/setup-go@v5
+        if: needs.classify-changes.outputs.relevant == 'true'
+        with:
+          go-version: '1.22'
+
+      - name: Install host validation tools
+        if: needs.classify-changes.outputs.relevant == 'true'
+        run: |
+          sudo apt-get update
+          # ffmpeg supplies both ffmpeg and ffprobe. The host-side portable
+          # artifact validator needs them for `cassini inspect --transcript`.
+          sudo apt-get install -y --no-install-recommends ffmpeg jq libxml2-utils
+          git lfs version
+
+      - name: Materialize only the known audible participant fixture
+        if: needs.classify-changes.outputs.relevant == 'true'
+        run: >-
+          git lfs pull
+          --include="harness/media/processed/showcase-lantern-festival-v1/mira.ivf,harness/media/processed/showcase-lantern-festival-v1/mira.ogg"
+
+      - name: Verify participant fixture is materialized
+        if: needs.classify-changes.outputs.relevant == 'true'
+        run: |
+          set -euo pipefail
+          prefix=harness/media/processed/showcase-lantern-festival-v1/mira
+          for media in "$prefix.ivf" "$prefix.ogg"; do
+            [[ -s "$media" && $(stat -c%s "$media") -gt 10000 ]] || {
+              echo "::error::known participant media missing or still an LFS pointer: $media" >&2
+              exit 1
+            }
+          done
+
+      - name: Load exact ExApp image
+        if: needs.classify-changes.outputs.relevant == 'true'
+        id: load
+        uses: ./.github/actions/load-exapp-image
+        with:
+          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pre-pull stack images
+        if: needs.classify-changes.outputs.relevant == 'true'
+        run: docker compose -f harness/compose.yml --profile full pull
+
+      - name: Run one faithful AppAPI/HaRP-installed Talk recording
+        if: needs.classify-changes.outputs.relevant == 'true'
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+          LOG_DIR: ${{ runner.temp }}/faithful-installed-exapp-talk-cpu
+        run: ./harness/bin/ci-e2e-installed-exapp-talk.sh
+
+      - name: Upload faithful check evidence
+        if: always() && needs.classify-changes.outputs.relevant == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: faithful-installed-exapp-talk-cpu-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/faithful-installed-exapp-talk-cpu
+          if-no-files-found: warn
+          retention-days: 14
 
   smoke:
     name: Smoke test image (HTTP plane, dev-mode)
@@ -675,7 +790,7 @@ jobs:
         run: ./harness/bin/ci-e2e-entrypoint-exapp.sh
 
   e2e-install:
-    name: E2E install against real Nextcloud + AppAPI
+    name: E2E manual-install proxy + lifecycle (Nextcloud / AppAPI)
     runs-on: ubuntu-latest
     needs: build-image
     timeout-minutes: 30
@@ -694,7 +809,7 @@ jobs:
           image-ref-list: ${{ needs.build-image.outputs.image_ref }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run install e2e against a fresh Nextcloud + AppAPI
+      - name: Run manual-install e2e against a fresh Nextcloud + AppAPI
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-e2e-install-exapp.sh
@@ -707,7 +822,7 @@ jobs:
   # the scenario script. Runs on both image variants so a regression
   # in either the CPU or CUDA build path is caught before publish.
   e2e-talk-record-cpu:
-    name: E2E Talk record-button roundtrip (CPU)
+    name: E2E manual-install Talk roundtrip (CPU)
     runs-on: ubuntu-latest
     needs: build-image
     timeout-minutes: 25
@@ -782,7 +897,7 @@ jobs:
         # reflects only the e2e logic, not image transfer time. Images live
         # at the daemon level so no project name is required.
         run: docker compose -f harness/compose.yml --profile full pull
-      - name: Run Talk-driven e2e (CPU)
+      - name: Run manual-install Talk e2e (CPU)
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           # 75s gives the rotator several cycles per bot, enough that at
@@ -819,7 +934,7 @@ jobs:
           retention-days: 14
 
   e2e-talk-record-cuda:
-    name: E2E Talk record-button roundtrip (CUDA / GPU)
+    name: E2E manual-install Talk roundtrip (CUDA / GPU)
     runs-on: [self-hosted, Linux, X64, gpu]
     needs: build-image-cuda
     timeout-minutes: 25
@@ -885,7 +1000,7 @@ jobs:
         # See sibling CPU job — splits image transfer time and registry
         # failures out of the harness step.
         run: docker compose -f harness/compose.yml --profile full pull
-      - name: Run Talk-driven e2e (GPU)
+      - name: Run manual-install Talk e2e (GPU)
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           RECORD_DURATION_SECONDS: "75"

@@ -38,6 +38,78 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  contracts:
+    name: Fast manifest + harness contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install contract tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends jq libxml2-utils xsltproc shellcheck
+      - name: Validate App Store manifest schema
+        run: ./scripts/test-info-schema.sh
+      - name: Run offline harness regressions
+        run: |
+          ./harness/bin/test-exapp-image-ref.sh
+          ./harness/bin/test-exapp-manifest.sh
+          ./harness/bin/test-installed-validation.sh
+          ./harness/bin/test-faithful-host-tools.sh
+          ./harness/bin/test-installed-backend-url.sh
+          ./harness/bin/test-post-boundary-stream.sh
+          ./harness/bin/test-ci-e2e-mute-timing.sh
+      - name: Parse every harness shell script
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' script; do
+            bash -n "$script"
+          done < <(find harness/bin -type f -name '*.sh' -print0)
+      - name: Shellcheck D-453 contract scripts
+        run: >-
+          shellcheck
+          scripts/test-info-schema.sh
+          harness/bin/lib-exapp-manifest.sh
+          harness/bin/test-exapp-image-ref.sh
+          harness/bin/test-exapp-manifest.sh
+          harness/bin/test-installed-validation.sh
+          harness/bin/test-faithful-host-tools.sh
+          harness/bin/test-installed-backend-url.sh
+          harness/bin/validate-installed-artifact.sh
+          harness/bin/validate-installed-exapp-private-talk.sh
+          harness/bin/ci-e2e-installed-exapp-talk.sh
+          harness/bin/test-post-boundary-stream.sh
+          harness/bin/verify-post-boundary-stream.sh
+      - name: Compile D-453 Python helpers
+        run: python3 -m py_compile harness/bin/installed-validation.py
+
+  ui:
+    name: UI tests (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - cassini-viewer
+          - cassini-app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: '**/package-lock.json'
+      # cassini-app consumes cassini-viewer via the npm workspace (D-420), so it
+      # can't be installed standalone. Install at the workspace root (npm install
+      # resolves + links the members; no committed root lockfile yet — D-499),
+      # then test the one package via -w, matching deployment/Dockerfile.exapp.
+      - name: Install workspace
+        run: npm install
+      - name: Run tests
+        run: npm test -w ${{ matrix.package }}
+
   unit:
     name: Unit tests (${{ matrix.module }})
     runs-on: ubuntu-latest

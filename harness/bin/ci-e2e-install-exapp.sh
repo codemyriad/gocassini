@@ -12,8 +12,8 @@
 #      the daemon's host).
 #   4. Run the Cassini ExApp image on the same compose network, with the env
 #      AppAPI would inject (APP_SECRET, NEXTCLOUD_URL, etc.).
-#   5. Register the ExApp via `app_api:app:register --json-info`, embedding
-#      the route allowlist from appinfo/info.xml directly in the JSON.
+#   5. Register the ExApp via `app_api:app:register --json-info`, generating
+#      the complete route allowlist from the current appinfo/info.xml.
 #   6. Cycle disable→enable so AppAPI actually PUTs /enabled?enabled=1 to the
 #      container (register alone only sets the Nextcloud-side flag).
 #   7. Assert the proxied routes: admin sees operator + viewer, regular user
@@ -29,13 +29,15 @@ COMPOSE_FILE="$HARNESS_DIR/compose.yml"
 INFO_XML="$REPO_ROOT/appinfo/info.xml"
 # shellcheck source=./lib/e2e-local.sh
 source "$SCRIPT_DIR/lib/e2e-local.sh"
+# shellcheck source=./lib-exapp-manifest.sh
+source "$SCRIPT_DIR/lib-exapp-manifest.sh"
 harness_e2e_local_stack_env core none none
 
 : "${IMAGE_REF:?IMAGE_REF must be set (e.g. cassini-exapp:local or ghcr.io/codemyriad/gocassini:latest)}"
 PROJECT_NAME="${PROJECT_NAME:-cassini-install-e2e-$$}"
 DAEMON_NAME="${DAEMON_NAME:-manual_install}"
-APP_ID="${APP_ID:-gocassini}"
-APP_VERSION="${APP_VERSION:-0.1.0}"
+APP_ID="${APP_ID:-$(exapp_app_id "$INFO_XML")}"
+APP_VERSION="${APP_VERSION:-$(exapp_app_version "$INFO_XML")}"
 CONTAINER_NAME="${CONTAINER_NAME:-cassini-exapp-install-e2e}"
 LOG_DIR="${LOG_DIR:-/tmp/cassini-install-e2e-$$}"
 NEXTCLOUD_HOST_PORT="${NEXTCLOUD_HOST_PORT:-28080}"
@@ -144,46 +146,33 @@ for attempt in $(seq 1 30); do
   sleep 1
 done
 
-# --- 5. Register the ExApp with full JSON (routes embedded) --------------
+# --- 5. Register the ExApp with manifest-derived JSON --------------------
 #
 # AppAPI ignores --info-xml when --json-info is set, AND --json-info requires
-# the routes array — register-via-XML mode is only triggered when --json-info
-# is omitted. We mirror the info.xml routes here so the install path is
-# deterministic regardless of where AppAPI reads from. Patterns follow the
-# same escaping convention the proxy controller requires: no leading slash,
-# internal slashes escaped as \/.
+# the routes array. Generate that array from the current manifest so this
+# manual-install test cannot hide route additions, removals, or access changes
+# behind a stale handwritten copy.
 
-log "registering ExApp $APP_ID via app_api:app:register"
+ROUTES_JSON="$(exapp_routes_json "$INFO_XML")"
+log "registering manual-install ExApp $APP_ID@$APP_VERSION with $(jq 'length' <<<"$ROUTES_JSON") manifest routes"
 occ app_api:app:unregister "$APP_ID" --force >/dev/null 2>&1 || true
 
-# jq-built JSON keeps escaping honest (we'd otherwise have to triple-escape
-# backslashes through the shell, the docker exec, and occ).
 JSON=$(jq -nc \
   --arg secret  "$APP_SECRET" \
   --arg appid   "$APP_ID" \
+  --arg daemon  "$DAEMON_NAME" \
   --arg version "$APP_VERSION" \
+  --argjson routes "$ROUTES_JSON" \
   '{
      appid:               $appid,
      name:                "Cassini",
-     daemon_config_name:  "'"$DAEMON_NAME"'",
+     daemon_config_name:  $daemon,
      version:             $version,
      secret:              $secret,
      port:                8080,
      protocol:            "http",
      system_app:          0,
-     routes: [
-       {url: "^operator\\/jobs\\/?$",               verb: "GET,POST", access_level: 2},
-       {url: "^operator\\/jobs\\/[^\\/]+\\/?$",     verb: "GET",      access_level: 2},
-       {url: "^operator\\/jobs\\/[^\\/]+\\/stop\\/?$",  verb: "POST", access_level: 2},
-       {url: "^operator\\/jobs\\/[^\\/]+\\/rerun\\/?$", verb: "POST", access_level: 2},
-       {url: "^operator\\/events\\/?$",             verb: "GET",      access_level: 2},
-       {url: "^viewer\\/?$",                        verb: "GET",      access_level: 1},
-       {url: "^viewer\\/.+$",                       verb: "GET,HEAD", access_level: 1},
-       {url: "^published\\/.+$",                    verb: "GET,HEAD", access_level: 1},
-       {url: "^img\\/app\\.svg$",                   verb: "GET,HEAD", access_level: 1},
-       {url: "^ui\\/viewer\\.js$",                  verb: "GET,HEAD", access_level: 1},
-       {url: "^ui\\/viewer\\.css$",                 verb: "GET,HEAD", access_level: 1}
-     ]
+     routes:              $routes
    }')
 
 occ app_api:app:register "$APP_ID" "$DAEMON_NAME" \

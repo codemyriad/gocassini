@@ -21,12 +21,18 @@
 #   - docker health reaches "healthy"
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+INFO_XML="$REPO_ROOT/appinfo/info.xml"
+# shellcheck source=lib-exapp-manifest.sh
+source "$SCRIPT_DIR/lib-exapp-manifest.sh"
+
 : "${IMAGE_REF:?IMAGE_REF must be set}"
 PORT="${PORT:-18090}"
 CONTAINER_NAME="cassini-exapp-entrypoint-e2e-$$"
 APP_SECRET="${APP_SECRET:-ci-secret-$(head -c 8 /dev/urandom | base64 | tr -d '/+=' | head -c 16)}"
-APP_ID="${APP_ID:-gocassini}"
-APP_VERSION="${APP_VERSION:-0.1.0}"
+APP_ID="${APP_ID:-$(exapp_app_id "$INFO_XML")}"
+APP_VERSION="${APP_VERSION:-$(exapp_app_version "$INFO_XML")}"
 AA_VERSION="${AA_VERSION:-5.0.0}"
 LOG_DIR="${LOG_DIR:-/tmp/cassini-entrypoint-e2e-$$}"
 mkdir -p "${LOG_DIR}"
@@ -47,7 +53,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-log "starting ${IMAGE_REF} on port ${PORT} via its real entrypoint (no HP_*, no CASSINI_* injection)"
+log "starting bare-entrypoint ${IMAGE_REF} as ${APP_ID}@${APP_VERSION} on port ${PORT} (no HP_*, no CASSINI_* injection)"
 # NEXTCLOUD_URL is part of the AppAPI env shape but nothing dials it in this
 # test (the /init progress callback is the only consumer and /init is not
 # called here), so a clearly-bogus value keeps the test hermetic.

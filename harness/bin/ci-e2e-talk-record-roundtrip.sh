@@ -34,9 +34,9 @@
 #      `cassini inspect --transcript`) and Levenshtein-check it against the
 #      scenario's expected text — proving the .opus embeds the transcript
 #
-# Status: draft. Phases 1-4 are scripted; 5-9 need iteration. Each phase
-# is gated so partial runs surface useful debug instead of cascading
-# failures.
+# This is the manual-install known-content quality roundtrip. All nine phases
+# are implemented and gated; AppAPI is real, but the test starts the ExApp and
+# injects its environment itself, so this does not exercise manifest gating.
 
 set -euo pipefail
 
@@ -47,6 +47,8 @@ COMPOSE_FILE="$HARNESS_DIR/compose.yml"
 INFO_XML="$REPO_ROOT/appinfo/info.xml"
 # shellcheck source=./lib/e2e-local.sh
 source "$SCRIPT_DIR/lib/e2e-local.sh"
+# shellcheck source=./lib-exapp-manifest.sh
+source "$SCRIPT_DIR/lib-exapp-manifest.sh"
 harness_e2e_local_stack_env full legacy none
 
 # ---- Configuration --------------------------------------------------------
@@ -54,8 +56,8 @@ harness_e2e_local_stack_env full legacy none
 : "${IMAGE_REF:?IMAGE_REF must be set, e.g. ghcr.io/codemyriad/gocassini:latest}"
 
 PROJECT_NAME="${PROJECT_NAME:-cassini-talk-rec-e2e-$$}"
-APP_ID="${APP_ID:-gocassini}"
-APP_VERSION="${APP_VERSION:-0.1.0}"
+APP_ID="${APP_ID:-$(exapp_app_id "$INFO_XML")}"
+APP_VERSION="${APP_VERSION:-$(exapp_app_version "$INFO_XML")}"
 APP_SECRET="${APP_SECRET:-$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 32)}"
 TALK_RECORDING_SECRET="${TALK_RECORDING_SECRET:-$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 32)}"
 SIGNALING_INTERNAL_SECRET="${SIGNALING_INTERNAL_SECRET:-6f4dca67263621ba7f9f9917e13de95a201f6f360be0d303e3008c2e6c8ad37d}"
@@ -97,6 +99,7 @@ export SIGNALING_CONF
 log()  { printf '[talk-rec-e2e] %s\n' "$*"; }
 fail() { log "FAIL: $*"; exit 1; }
 phase() { log "----- phase $1: $2 -----"; }
+log "manual-install Talk roundtrip identity: $APP_ID@$APP_VERSION image=$IMAGE_REF"
 
 compose() {
   local profile_args=()

@@ -6,8 +6,10 @@
 #   - /viewer/ serves the bundled Cassini SPA (D-420: one unified entry)
 #   - /viewer/ serves the bundled viewer SPA
 #
-# This does NOT exercise the AppAPI auth path or the HaRP tunnel — see
-# ci-e2e-exapp.sh for the full Nextcloud-against-ExApp install test.
+# This does NOT exercise AppAPI auth or installation. See ci-e2e-exapp.sh for
+# the bare AppAPI middleware contract, ci-e2e-install-exapp.sh for the real
+# Nextcloud/manual-install proxy tier, and ci-e2e-installed-exapp-talk.sh for
+# the faithful AppAPI/HaRP product path.
 set -euo pipefail
 
 : "${IMAGE_REF:?IMAGE_REF must be set (e.g. ghcr.io/codemyriad/gocassini:sha-abc)}"

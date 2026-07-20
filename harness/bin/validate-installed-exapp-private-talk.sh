@@ -1,409 +1,318 @@
 #!/usr/bin/env bash
+# Validate recordings against an already AppAPI/HaRP-installed Cassini ExApp.
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+VALIDATOR="$SCRIPT_DIR/installed-validation.py"
+ARTIFACT_VALIDATOR="$SCRIPT_DIR/validate-installed-artifact.sh"
 
 NEXTCLOUD_HOST="${CASSINI_HARNESS_HOST:-127.0.0.1}"
 DURATION=60
 JOB_TIMEOUT=1200
 POLL_INTERVAL=5
+RUN_COUNT=2
+CONVERSATION="admin"
+MEDIA_PREFIX=""
+PROJECT_NAME="${PROJECT_NAME:-cassini-exapp-test}"
+LOG_DIR="${LOG_DIR:-/tmp/cassini-installed-validation-$(date -u +%Y%m%dT%H%M%S)-$$}"
 ADMIN_USER="${ADMIN_USER:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
 
-log() {
-  printf '\n\033[1;34m==>\033[0m \033[1m%s\033[0m\n' "$*" >&2
-}
-
-success() {
-  printf '\033[1;32m%s\033[0m\n' "$*" >&2
-}
-
-fail() {
-  printf '\033[1;31m[ERROR] %s\033[0m\n' "$*" >&2
-  exit 1
-}
+log() { printf '\n\033[1;34m==>\033[0m \033[1m%s\033[0m\n' "$*" >&2; }
+success() { printf '\033[1;32m%s\033[0m\n' "$*" >&2; }
+fail() { printf '\033[1;31m[ERROR] %s\033[0m\n' "$*" >&2; exit 1; }
 
 usage() {
   cat <<EOF
-Usage: $0 [--nextcloud-host <host-or-url>] [--duration <seconds>] [--job-timeout <seconds>]
+Usage: $0 [options]
 
-Validates the installed AppAPI/HaRP Cassini ExApp Talk path by running two
-private admin + Erlich Bachman one-to-one recording jobs and asserting both
-remain in the published viewer catalog.
+Runs one or more private Talk recordings against an already installed ExApp,
+then strictly validates the new job, viewer catalog entry, downloaded product
+artifact, and transcript content. Two runs remain the manual default so archive
+preservation is checked; faithful CI uses --run-count 1.
 
 Options:
-  --nextcloud-host  Bare host/IP or full Nextcloud base URL. Default: CASSINI_HARNESS_HOST, then 127.0.0.1
-  --duration        Playback duration for each private call in seconds. Default: 60
-  --job-timeout     Seconds to wait for each job to publish. Default: 1200
+  --nextcloud-host <host-or-url>  Default: CASSINI_HARNESS_HOST, then 127.0.0.1
+  --duration <seconds>            Playback duration per run. Default: 60
+  --job-timeout <seconds>         Job/catalog timeout. Default: 1200
+  --poll-interval <seconds>       Poll interval. Default: 5
+  --run-count <count>             Recording attempts. Default: 2
+  --conversation <name>           play-private conversation. Default: admin
+  --media-prefix <path>            Existing IVF/OGG prefix used for all participants
+  --project-name <name>           Harness Compose project. Default: cassini-exapp-test
+  --log-dir <path>                Retained evidence directory
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --nextcloud-host)
-      [[ $# -ge 2 ]] || fail "--nextcloud-host requires a value"
-      NEXTCLOUD_HOST="$2"
-      shift 2
-      ;;
-    --duration)
-      [[ $# -ge 2 ]] || fail "--duration requires a value"
-      DURATION="$2"
-      shift 2
-      ;;
-    --job-timeout)
-      [[ $# -ge 2 ]] || fail "--job-timeout requires a value"
-      JOB_TIMEOUT="$2"
-      shift 2
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      fail "unknown option: $1"
-      ;;
+    --nextcloud-host) [[ $# -ge 2 ]] || fail "$1 requires a value"; NEXTCLOUD_HOST="$2"; shift 2 ;;
+    --duration) [[ $# -ge 2 ]] || fail "$1 requires a value"; DURATION="$2"; shift 2 ;;
+    --job-timeout) [[ $# -ge 2 ]] || fail "$1 requires a value"; JOB_TIMEOUT="$2"; shift 2 ;;
+    --poll-interval) [[ $# -ge 2 ]] || fail "$1 requires a value"; POLL_INTERVAL="$2"; shift 2 ;;
+    --run-count) [[ $# -ge 2 ]] || fail "$1 requires a value"; RUN_COUNT="$2"; shift 2 ;;
+    --conversation) [[ $# -ge 2 ]] || fail "$1 requires a value"; CONVERSATION="$2"; shift 2 ;;
+    --media-prefix) [[ $# -ge 2 ]] || fail "$1 requires a value"; MEDIA_PREFIX="$2"; shift 2 ;;
+    --project-name) [[ $# -ge 2 ]] || fail "$1 requires a value"; PROJECT_NAME="$2"; shift 2 ;;
+    --log-dir) [[ $# -ge 2 ]] || fail "$1 requires a value"; LOG_DIR="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) fail "unknown option: $1" ;;
   esac
 done
 
-[[ "$DURATION" =~ ^[0-9]+$ ]] || fail "--duration must be an integer"
-[[ "$JOB_TIMEOUT" =~ ^[0-9]+$ ]] || fail "--job-timeout must be an integer"
-command -v curl >/dev/null 2>&1 || fail "curl is required"
-command -v python3 >/dev/null 2>&1 || fail "python3 is required"
+for pair in "duration:$DURATION" "job-timeout:$JOB_TIMEOUT" "poll-interval:$POLL_INTERVAL" "run-count:$RUN_COUNT"; do
+  name="${pair%%:*}" value="${pair#*:}"
+  [[ "$value" =~ ^[0-9]+$ ]] || fail "--$name must be an integer"
+done
+(( DURATION > 0 && JOB_TIMEOUT > 0 && POLL_INTERVAL > 0 && RUN_COUNT > 0 )) \
+  || fail "duration, timeout, poll interval, and run count must be positive"
+# Portable artifact validation runs the host CLI, whose transcript extraction
+# probes and decodes the downloaded Opus file with ffprobe and ffmpeg.
+for tool in curl jq python3 ffprobe ffmpeg; do
+  command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
+done
+[[ -x "$VALIDATOR" ]] || fail "installed validator is not executable: $VALIDATOR"
+[[ -x "$ARTIFACT_VALIDATOR" ]] || fail "artifact validator is not executable: $ARTIFACT_VALIDATOR"
 
 normalize_base_url() {
   local input="$1"
-  if [[ "$input" =~ ^https?:// ]]; then
-    printf '%s\n' "${input%/}"
-  else
-    printf 'http://%s:28080\n' "${input%/}"
-  fi
+  if [[ "$input" =~ ^https?:// ]]; then printf '%s\n' "${input%/}"; else printf 'http://%s:28080\n' "${input%/}"; fi
 }
 
 BASE_URL="$(normalize_base_url "$NEXTCLOUD_HOST")"
 PROXY_URL="$BASE_URL/index.php/apps/app_api/proxy/gocassini"
 CATALOG_URL="$PROXY_URL/published/catalog.json"
 AUTH=(-u "$ADMIN_USER:$ADMIN_PASSWORD")
-COMPOSE=(docker compose -p cassini-exapp-test -f "$REPO_ROOT/harness/compose.yml")
-WORK_DIR="$(mktemp -d)"
-WAIT_FOR_JOB_ID=""
-RUN_PRIVATE_JOB_ID=""
-cleanup() {
-  rm -rf "$WORK_DIR"
+AUTH_VALUE="$ADMIN_USER:$ADMIN_PASSWORD"
+COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$REPO_ROOT/harness/compose.yml")
+mkdir -p "$LOG_DIR"
+SUMMARY_NDJSON="$LOG_DIR/runs.ndjson"
+: >"$SUMMARY_NDJSON"
+RUN_JOB_ID=""
+RUN_ARTIFACT_SUMMARY=""
+VALIDATION_RESULT="failed"
+SUMMARY_WRITTEN=0
+
+write_summary() {
+  local rc="$1" image_id="unknown"
+  (( SUMMARY_WRITTEN == 0 )) || return 0
+  if command -v docker >/dev/null 2>&1; then
+    image_id="$(docker inspect nc_app_gocassini --format '{{.Image}}' 2>/dev/null || echo unknown)"
+  fi
+  jq -s \
+    --arg nextcloud "$BASE_URL" \
+    --arg catalog "$CATALOG_URL" \
+    --arg image_id "$image_id" \
+    --arg cleanup "not-owned" \
+    --arg result "$VALIDATION_RESULT" \
+    --arg last_job_id "$RUN_JOB_ID" \
+    --argjson exit_code "$rc" \
+    '{result:$result,exit_code:$exit_code,nextcloud:$nextcloud,catalog:$catalog,image_id:$image_id,cleanup:$cleanup,last_job_id:$last_job_id,runs:.}' \
+    "$SUMMARY_NDJSON" >"$LOG_DIR/summary.json" || true
+  SUMMARY_WRITTEN=1
 }
-trap cleanup EXIT
+
+on_exit() {
+  local rc=$?
+  write_summary "$rc"
+  if (( rc != 0 )); then
+    printf '[validate] failure evidence retained at %s (summary: %s)\n' "$LOG_DIR" "$LOG_DIR/summary.json" >&2
+  fi
+}
+trap on_exit EXIT
 
 curl_body_or_status() {
-  local url="$1"
-  local out body code
+  local url="$1" out body code
   out="$(curl -sS "${AUTH[@]}" -w '\n%{http_code}' "$url")" || return 1
-  body="${out%$'\n'*}"
-  code="${out##*$'\n'}"
+  body="${out%$'\n'*}" code="${out##*$'\n'}"
   printf '%s\n%s\n' "$code" "$body"
 }
 
 fetch_json() {
-  local url="$1"
-  local dest="$2"
-  local allow_missing="${3:-false}"
-  local response code body
+  local url="$1" dest="$2" allow_missing="${3:-false}" response code body
   response="$(curl_body_or_status "$url")" || return 1
   code="$(printf '%s\n' "$response" | sed -n '1p')"
   body="$(printf '%s\n' "$response" | sed '1d')"
   case "$code" in
-    200)
-      printf '%s\n' "$body" >"$dest"
-      ;;
-    404)
-      if [[ "$allow_missing" == "true" ]]; then
-        printf '{"meetings":[]}\n' >"$dest"
-      else
-        return 2
-      fi
-      ;;
-    *)
-      printf '%s\n' "$body" >&2
-      return 3
-      ;;
+    200) printf '%s\n' "$body" >"$dest" ;;
+    404) [[ "$allow_missing" == true ]] || return 2; printf '{"meetings":[]}\n' >"$dest" ;;
+    *) printf '%s\n' "$body" >&2; return 3 ;;
   esac
+  python3 -m json.tool "$dest" >/dev/null 2>&1 || return 4
 }
 
 catalog_ids() {
-  local catalog_path="$1"
-  python3 - "$catalog_path" <<'PY'
+  python3 - "$1" <<'PY'
 import json, sys
-with open(sys.argv[1], encoding='utf-8') as f:
-    data = json.load(f)
-for meeting in data.get('meetings') or []:
-    mid = str(meeting.get('id') or '').strip()
-    if mid:
-        print(mid)
+with open(sys.argv[1], encoding="utf-8") as source:
+    catalog = json.load(source)
+for meeting in catalog.get("meetings") or []:
+    value = str(meeting.get("id") or "").strip()
+    if value:
+        print(value)
 PY
-}
-
-jobs_ids() {
-  local jobs_path="$1"
-  python3 - "$jobs_path" <<'PY'
-import json, sys
-with open(sys.argv[1], encoding='utf-8') as f:
-    data = json.load(f)
-for job in data if isinstance(data, list) else []:
-    jid = str(job.get('id') or '').strip()
-    if jid:
-        print(jid)
-PY
-}
-
-new_job_status() {
-  local before_jobs="$1"
-  local current_jobs="$2"
-  python3 - "$before_jobs" "$current_jobs" <<'PY'
-import json, sys
-before_path, current_path = sys.argv[1:3]
-with open(before_path, encoding='utf-8') as f:
-    before = json.load(f)
-with open(current_path, encoding='utf-8') as f:
-    current = json.load(f)
-before_ids = {str(job.get('id') or '') for job in before if isinstance(job, dict)}
-new_jobs = [job for job in current if isinstance(job, dict) and str(job.get('id') or '') not in before_ids]
-if not new_jobs:
-    print('pending no-new-job')
-    sys.exit(2)
-new_jobs.sort(key=lambda job: str(job.get('created_at') or job.get('updated_at') or ''))
-job = new_jobs[-1]
-job_id = str(job.get('id') or '')
-state = str(job.get('state') or '')
-stage = str(job.get('stage') or '')
-err = job.get('error') or ''
-print(f'{job_id} {stage}/{state} {err}'.strip())
-if state == 'succeeded':
-    print(job_id)
-    sys.exit(0)
-if state in {'failed', 'interrupted'}:
-    sys.exit(3)
-sys.exit(2)
-PY
-}
-
-catalog_entry_probe() {
-  local catalog_path="$1"
-  local job_id="$2"
-  local proxy_url="$3"
-  python3 - "$catalog_path" "$job_id" "$proxy_url" <<'PY'
-import json, sys
-from urllib.parse import urljoin
-catalog_path, job_id, proxy_url = sys.argv[1:4]
-with open(catalog_path, encoding='utf-8') as f:
-    data = json.load(f)
-base = proxy_url.rstrip('/') + '/published/'
-for meeting in data.get('meetings') or []:
-    if str(meeting.get('id') or '').strip() != job_id:
-        continue
-    artifact = str(meeting.get('artifactPath') or '').strip()
-    if artifact:
-        if not artifact.endswith('/'):
-            artifact += '/'
-        print('transcript_url\t' + urljoin(base, artifact + 'transcript.display.v1.json'))
-        sys.exit(0)
-    audio_path = str(meeting.get('audioPath') or '').strip()
-    if audio_path:
-        segment_count = int(meeting.get('segmentCount') or 0)
-        print(f'portable\tsegmentCount={segment_count}\taudioPath={audio_path}')
-        sys.exit(0)
-    print(f'catalog entry {job_id} has no artifactPath or audioPath', file=sys.stderr)
-    sys.exit(3)
-print(f'missing catalog entry for {job_id}', file=sys.stderr)
-sys.exit(2)
-PY
-}
-
-validate_transcript_json() {
-  local transcript_path="$1"
-  python3 - "$transcript_path" <<'PY'
-import json, sys
-with open(sys.argv[1], encoding='utf-8') as f:
-    data = json.load(f)
-blocks = data.get('blocks')
-if not isinstance(blocks, list) or not blocks:
-    print('display transcript has no blocks', file=sys.stderr)
-    sys.exit(1)
-texts = []
-word_count = 0
-for block in blocks:
-    if not isinstance(block, dict):
-        continue
-    text = str(block.get('text') or '').strip()
-    if text:
-        texts.append(text)
-    for key in ('words', 'sourceWords'):
-        words = block.get(key)
-        if isinstance(words, list):
-            word_count += len(words)
-if not texts and word_count == 0:
-    print('display transcript has no text or words', file=sys.stderr)
-    sys.exit(1)
-print(f'blocks={len(blocks)} text_blocks={len(texts)} words={word_count}')
-PY
-}
-
-wait_for_new_job_success() {
-  local label="$1"
-  local before_jobs="$2"
-  local deadline=$((SECONDS + JOB_TIMEOUT))
-  local jobs_path="$WORK_DIR/jobs-${label}.json"
-  local status_file="$WORK_DIR/status-${label}.txt"
-  while (( SECONDS < deadline )); do
-    if fetch_json "$PROXY_URL/operator/jobs" "$jobs_path" false; then
-      set +e
-      new_job_status "$before_jobs" "$jobs_path" >"$status_file"
-      rc=$?
-      set -e
-      status_line="$(sed -n '1p' "$status_file")"
-      case "$rc" in
-        0)
-          job_id="$(tail -n 1 "$status_file")"
-          WAIT_FOR_JOB_ID="$job_id"
-          success "✓ $label job succeeded: $job_id"
-          return 0
-          ;;
-        2)
-          printf '[validate] waiting for %s: %s\n' "$label" "$status_line" >&2
-          ;;
-        3)
-          cat "$status_file" >&2 || true
-          fail "$label job failed"
-          ;;
-        *)
-          cat "$status_file" >&2 || true
-          fail "$label job status parse failed"
-          ;;
-      esac
-    fi
-    sleep "$POLL_INTERVAL"
-  done
-  fail "timed out waiting for $label job to succeed"
-}
-
-wait_for_catalog_transcript() {
-  local label="$1"
-  local job_id="$2"
-  local deadline=$((SECONDS + JOB_TIMEOUT))
-  local catalog_path="$WORK_DIR/catalog-${label}.json"
-  local transcript_path="$WORK_DIR/transcript-${label}.json"
-  local probe="" probe_kind="" probe_value=""
-  while (( SECONDS < deadline )); do
-    if fetch_json "$CATALOG_URL" "$catalog_path" true; then
-      set +e
-      probe="$(catalog_entry_probe "$catalog_path" "$job_id" "$PROXY_URL" 2>/dev/null)"
-      rc=$?
-      set -e
-      if [[ "$rc" -eq 0 && -n "$probe" ]]; then
-        IFS=$'\t' read -r probe_kind probe_value _ <<<"$probe"
-        if [[ "$probe_kind" == "portable" ]]; then
-          success "✓ $label portable catalog artifact visible for $job_id ($probe_value)"
-          return 0
-        fi
-        if [[ "$probe_kind" == "transcript_url" ]]; then
-          if fetch_json "$probe_value" "$transcript_path" false; then
-            transcript_summary="$(validate_transcript_json "$transcript_path")" || fail "$label transcript is empty"
-            success "✓ $label catalog/transcript visible for $job_id ($transcript_summary)"
-            return 0
-          fi
-        fi
-      fi
-    fi
-    printf '[validate] waiting for %s catalog/transcript: %s\n' "$label" "$job_id" >&2
-    sleep "$POLL_INTERVAL"
-  done
-  fail "timed out waiting for $label catalog/transcript for $job_id"
 }
 
 base_url_host() {
   python3 - "$BASE_URL" <<'PY'
 import sys
 from urllib.parse import urlparse
-parsed = urlparse(sys.argv[1])
-print(parsed.hostname or '')
+print(urlparse(sys.argv[1]).hostname or "")
 PY
 }
 
 ensure_nextcloud_host_trusted() {
   local host="$1"
-  if [[ -z "$host" || "$host" == "localhost" || "$host" == 127.* ]]; then
-    return 0
-  fi
-  if ! docker compose -p cassini-exapp-test -f "$REPO_ROOT/harness/compose.yml" ps nextcloud >/dev/null 2>&1; then
-    return 0
-  fi
+  [[ -n "$host" && "$host" != localhost && "$host" != 127.* ]] || return 0
+  "${COMPOSE[@]}" ps nextcloud >/dev/null 2>&1 || return 0
   log "Ensuring Nextcloud trusts validation host $host"
-  "${COMPOSE[@]}" exec -T -u www-data nextcloud php occ config:system:set trusted_domains 20 --value="$host" >/dev/null
+  "${COMPOSE[@]}" exec -T -u www-data nextcloud \
+    php occ config:system:set trusted_domains 20 --value="$host" >/dev/null
 }
 
-assert_catalog_contains_all() {
-  local catalog_path="$1"
-  shift
-  python3 - "$catalog_path" "$@" <<'PY'
-import json, sys
-catalog_path, expected = sys.argv[1], sys.argv[2:]
-with open(catalog_path, encoding='utf-8') as f:
-    data = json.load(f)
-ids = {str(meeting.get('id') or '').strip() for meeting in data.get('meetings') or []}
-missing = [item for item in expected if item and item not in ids]
-if missing:
-    print('missing catalog ids: ' + ', '.join(missing), file=sys.stderr)
-    sys.exit(1)
-print(f'catalog_entries={len(ids)}')
-PY
+wait_for_new_job_success() {
+  local label="$1" before_jobs="$2"
+  local deadline=$((SECONDS + JOB_TIMEOUT)) jobs="$LOG_DIR/jobs-${label}.json" result rc
+  while (( SECONDS < deadline )); do
+    if fetch_json "$PROXY_URL/operator/jobs" "$jobs" false; then
+      set +e
+      result="$($VALIDATOR select-job --before "$before_jobs" --current "$jobs" 2>"$LOG_DIR/jobs-${label}.err")"
+      rc=$?
+      set -e
+      case "$rc" in
+        0)
+          RUN_JOB_ID="$(jq -r '.job_id' <<<"$result")"
+          success "✓ $label job succeeded: $RUN_JOB_ID"
+          return 0
+          ;;
+        10) printf '[validate] waiting for %s job: %s\n' "$label" "$result" >&2 ;;
+        3) cat "$LOG_DIR/jobs-${label}.err" >&2 || true; fail "$label job failed: $result" ;;
+        *) cat "$LOG_DIR/jobs-${label}.err" >&2 || true; fail "$label job selection was invalid" ;;
+      esac
+    fi
+    sleep "$POLL_INTERVAL"
+  done
+  fail "timed out waiting for exactly one new $label job"
+}
+
+wait_for_catalog_artifact() {
+  local label="$1" job_id="$2"
+  local deadline=$((SECONDS + JOB_TIMEOUT)) catalog="$LOG_DIR/catalog-${label}.json" entry rc
+  while (( SECONDS < deadline )); do
+    if fetch_json "$CATALOG_URL" "$catalog" true; then
+      set +e
+      entry="$($VALIDATOR catalog-entry --catalog "$catalog" --job-id "$job_id" --proxy-url "$PROXY_URL" 2>"$LOG_DIR/catalog-${label}.err")"
+      rc=$?
+      set -e
+      case "$rc" in
+        0)
+          RUN_ARTIFACT_SUMMARY="$(
+            "$ARTIFACT_VALIDATOR" \
+              --catalog "$catalog" \
+              --job-id "$job_id" \
+              --proxy-url "$PROXY_URL" \
+              --auth "$AUTH_VALUE" \
+              --output-dir "$LOG_DIR" \
+              --label "$label"
+          )" || fail "$label artifact failed download/decoding validation"
+          success "✓ $label viewer artifact validated: $RUN_ARTIFACT_SUMMARY"
+          return 0
+          ;;
+        10) printf '[validate] waiting for %s catalog entry: %s\n' "$label" "$entry" >&2 ;;
+        *) cat "$LOG_DIR/catalog-${label}.err" >&2 || true; fail "$label catalog entry is invalid" ;;
+      esac
+    fi
+    sleep "$POLL_INTERVAL"
+  done
+  fail "timed out waiting for $label catalog artifact for $job_id"
 }
 
 run_private_job() {
-  local label="$1"
-  local before_jobs="$WORK_DIR/jobs-before-${label}.json"
-  log "Capturing job baseline for $label"
-  fetch_json "$PROXY_URL/operator/jobs" "$before_jobs" false || fail "cannot fetch operator jobs before $label"
+  local label="$1" started_at before_jobs
+  local -a play_args
+  before_jobs="$LOG_DIR/jobs-before-${label}.json"
+  fetch_json "$PROXY_URL/operator/jobs" "$before_jobs" false || fail "cannot fetch jobs before $label"
+  started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-  log "Running private admin + Erlich playback for $label"
-  (cd "$REPO_ROOT" && ./bin/cassini dev play-private --conversation admin --nextcloud-host "$NEXTCLOUD_HOST" --duration "$DURATION" >&2)
+  log "Running private Talk playback for $label (single recording attempt)"
+  play_args=(
+    --conversation "$CONVERSATION"
+    --nextcloud-host "$NEXTCLOUD_HOST"
+    --duration "$DURATION"
+  )
+  [[ -z "$MEDIA_PREFIX" ]] || play_args+=(--media-prefix "$MEDIA_PREFIX")
+  (cd "$REPO_ROOT" && ./bin/cassini dev play-private "${play_args[@]}") \
+    > >(tee "$LOG_DIR/playback-${label}.log") \
+    2> >(tee "$LOG_DIR/playback-${label}.err" >&2)
 
-  log "Waiting for installed ExApp job to publish for $label"
   wait_for_new_job_success "$label" "$before_jobs"
-  job_id="$WAIT_FOR_JOB_ID"
-  wait_for_catalog_transcript "$label" "$job_id"
-  RUN_PRIVATE_JOB_ID="$job_id"
+  wait_for_catalog_artifact "$label" "$RUN_JOB_ID"
+  jq -nc \
+    --arg label "$label" \
+    --arg started_at "$started_at" \
+    --argjson artifact "$RUN_ARTIFACT_SUMMARY" \
+    '{label:$label,started_at:$started_at,job_id:$artifact.job_id,artifact:$artifact}' \
+    >>"$SUMMARY_NDJSON"
 }
 
 log "Validating installed Cassini ExApp at $PROXY_URL"
+log "Evidence directory: $LOG_DIR"
 ensure_nextcloud_host_trusted "$(base_url_host)"
 curl -fsS "$PROXY_URL/api/v1/welcome" | grep -q '"version":1' || fail "welcome route did not return version=1"
-status_json="$(curl -fsS "${AUTH[@]}" "$PROXY_URL/operator/status")"
-echo "$status_json" | grep -q '"secret_configured":true' || fail "operator status does not report Talk recording secret configured"
-echo "$status_json" | grep -q '"signaling_internal_secret_configured":true' || fail "operator status does not report signaling internal secret configured"
-success "✓ installed ExApp status has required Talk config"
+curl -fsS "${AUTH[@]}" "$PROXY_URL/operator/status" >"$LOG_DIR/operator-status.json"
+python3 - "$LOG_DIR/operator-status.json" <<'PY' || fail "operator status lacks required Talk config"
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    status = json.load(source)
+talk = status.get("talk") if isinstance(status, dict) else None
+if not isinstance(talk, dict):
+    raise SystemExit("status has no talk object")
+for key in ("secret_configured", "signaling_internal_secret_configured"):
+    if talk.get(key) is not True:
+        raise SystemExit(f"talk.{key} is not true")
+PY
+success "✓ installed ExApp status has both manifest-gated Talk secrets"
 
-before_catalog="$WORK_DIR/catalog-before.json"
+before_catalog="$LOG_DIR/catalog-before.json"
 fetch_json "$CATALOG_URL" "$before_catalog" true || fail "cannot fetch initial catalog"
 mapfile -t previous_catalog_ids < <(catalog_ids "$before_catalog")
 printf '[validate] existing catalog ids: %s\n' "${previous_catalog_ids[*]:-(none)}" >&2
 
 log "Preparing private playback scaffold"
-(cd "$REPO_ROOT" && ./bin/cassini dev play-private --scaffold-only --nextcloud-host "$NEXTCLOUD_HOST")
+scaffold_args=(--scaffold-only --nextcloud-host "$NEXTCLOUD_HOST")
+[[ -z "$MEDIA_PREFIX" ]] || scaffold_args+=(--media-prefix "$MEDIA_PREFIX")
+(cd "$REPO_ROOT" && ./bin/cassini dev play-private "${scaffold_args[@]}") \
+  > >(tee "$LOG_DIR/scaffold.log") \
+  2> >(tee "$LOG_DIR/scaffold.err" >&2)
 
-run_private_job job1
-job1="$RUN_PRIVATE_JOB_ID"
-run_private_job job2
-job2="$RUN_PRIVATE_JOB_ID"
+new_job_ids=()
+for run in $(seq 1 "$RUN_COUNT"); do
+  run_private_job "job${run}"
+  new_job_ids+=("$RUN_JOB_ID")
+done
 
-final_catalog="$WORK_DIR/catalog-final.json"
+final_catalog="$LOG_DIR/catalog-final.json"
 fetch_json "$CATALOG_URL" "$final_catalog" false || fail "cannot fetch final catalog"
-expected_ids=("$job1" "$job2" "${previous_catalog_ids[@]}")
-summary="$(assert_catalog_contains_all "$final_catalog" "${expected_ids[@]}")" || fail "archive preservation check failed"
-success "✓ archive preservation check passed ($summary)"
+contains_args=(--catalog "$final_catalog")
+for id in "${new_job_ids[@]}" "${previous_catalog_ids[@]}"; do
+  [[ -n "$id" ]] && contains_args+=(--id "$id")
+done
+archive_summary="$($VALIDATOR catalog-contains "${contains_args[@]}")" \
+  || fail "archive preservation check failed"
+success "✓ archive preservation check passed ($archive_summary)"
+
+VALIDATION_RESULT="passed"
+write_summary 0
 
 cat <<EOF
 
 Installed ExApp private Talk validation passed.
   Nextcloud: $BASE_URL
-  Job 1:     $job1
-  Job 2:     $job2
+  Runs:      $RUN_COUNT
+  Jobs:      ${new_job_ids[*]}
   Catalog:   $CATALOG_URL
+  Evidence:  $LOG_DIR
+  Summary:   $LOG_DIR/summary.json
 EOF

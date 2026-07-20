@@ -32,6 +32,7 @@ export PHASE_TWO_DURATION="${PHASE_TWO_DURATION:-12}"
 export PHASE_GAP_SECONDS="${PHASE_GAP_SECONDS:-2}"
 export START_DELAY="${START_DELAY:-6}"
 export NAME_PREFIX="${NAME_PREFIX:-CassiniGoRejoin}"
+export PHASE_TWO_PARTICIPANT="${PHASE_TWO_PARTICIPANT:-${NAME_PREFIX}1}"
 
 RECORDER_DIR="$REPO_ROOT/cassini-go-recorder"
 CI_OUTPUT_BASE="/tmp/gocassini-ci-rejoin-$(date -u +%Y%m%dT%H%M%S)-$$"
@@ -97,6 +98,11 @@ sleep "$START_DELAY"
 
 sleep "$PHASE_GAP_SECONDS"
 
+# session-artifact stream_opened events use UnixNano in mono_ns. Capture the
+# phase boundary immediately before launching the second publisher so earlier
+# phase-one media cannot satisfy the rejoin assertion.
+PHASE_TWO_BOUNDARY_NS="$(date +%s%N)"
+log "Phase-two recorder evidence boundary: ${PHASE_TWO_BOUNDARY_NS} participant=${PHASE_TWO_PARTICIPANT}"
 (
   cd "$SCRIPT_DIR/../"
   ./bin/stream-video.sh \
@@ -127,6 +133,15 @@ for log_file in "${PHASE_LOGS[@]}"; do
     exit 1
   fi
 done
+
+PHASE_TWO_REMOTE_SESSION_ID="$(
+  sed -nE 's/.*hello ok \(version [^,]+, session=([^)]*)\).*/\1/p' "$PHASE2_LOG" | head -n1
+)"
+if [[ -z "$PHASE_TWO_REMOTE_SESSION_ID" ]]; then
+  log "[FAIL] phase-two publisher did not report its signaling session identity"
+  exit 1
+fi
+log "Phase-two publisher signaling session: $PHASE_TWO_REMOTE_SESSION_ID"
 
 PHASE1_CONNECTIONS="$(rg -c "audio muted|connected and streaming|audio unmuted" "$PHASE1_LOG" || true)"
 PHASE2_CONNECTIONS="$(rg -c "connected and streaming" "$PHASE2_LOG" || true)"
@@ -160,11 +175,29 @@ fi
   --tolerance 0.80 \
   --min-elapsed 15
 
+EVENTS_PATH="$(cassini_events_log_from_mkv "$FINAL_OUTPUT" || true)"
 STREAMS_DIR="$(cassini_streams_dir_from_mkv "$FINAL_OUTPUT" || true)"
+if [[ -z "$EVENTS_PATH" || ! -f "$EVENTS_PATH" ]]; then
+  log "[FAIL] could not derive session artifact events log from MKV metadata"
+  exit 1
+fi
 if [[ -z "$STREAMS_DIR" || ! -d "$STREAMS_DIR" ]]; then
   log "[FAIL] could not derive session artifact streams directory from MKV metadata"
   exit 1
 fi
+if ! POST_BOUNDARY_EVIDENCE="$(
+  "$SCRIPT_DIR/verify-post-boundary-stream.sh" \
+    --events "$EVENTS_PATH" \
+    --boundary-ns "$PHASE_TWO_BOUNDARY_NS" \
+    --participant "$PHASE_TWO_PARTICIPANT" \
+    --remote-session-id "$PHASE_TWO_REMOTE_SESSION_ID"
+)"; then
+  log "[FAIL] recorder opened no phase-two media stream for $PHASE_TWO_PARTICIPANT"
+  log "events log: $EVENTS_PATH"
+  tail -n 80 "$EVENTS_PATH" || true
+  exit 1
+fi
+log "Phase-two recorder evidence: $POST_BOUNDARY_EVIDENCE"
 ARTIFACT_STREAM_COUNT="$(find "$STREAMS_DIR" -type f -name '*.rtplog' | wc -l | tr -d ' ')"
 if (( ARTIFACT_STREAM_COUNT < 1 )); then
   log "[FAIL] expected at least one active artifact stream, got ${ARTIFACT_STREAM_COUNT}"
