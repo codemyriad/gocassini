@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
-  import { List, PlugZap, RefreshCw, Server, Square, TriangleAlert } from "@lucide/svelte";
+  import { onDestroy, onMount, tick } from "svelte";
+  import { Activity, List, RefreshCw, Square, TriangleAlert } from "@lucide/svelte";
   import { loadConfig } from "./operator/config";
   import {
     OperatorClient,
@@ -44,6 +44,9 @@
   let selectedJobId = "";
   let selectedJob: JobDetailResponse | null = null;
   let meetingUrl = "";
+
+  let showComposer = false;
+  let meetingUrlInput: HTMLInputElement | null = null;
   let pollTimer = 0;
   let streamOpenTimer = 0;
 
@@ -114,6 +117,12 @@
     }
   }
 
+  async function openComposer() {
+    showComposer = true;
+    await tick();
+    meetingUrlInput?.focus();
+  }
+
   async function handleStartJob() {
     const trimmedUrl = meetingUrl.trim();
     if (!operatorClient || trimmedUrl === "") {
@@ -125,6 +134,7 @@
     try {
       const { id } = await operatorClient.startJob(trimmedUrl);
       meetingUrl = "";
+      showComposer = false;
       await refreshJobs();
       await selectJob(id, { allowJobsRefresh: false });
     } catch (error) {
@@ -335,15 +345,35 @@
     }
   }
 
-  function streamStatusTone(status: typeof streamStatus): "badge-success" | "badge-warning" | "badge-neutral" {
+  function streamStatusTone(status: typeof streamStatus): string {
     switch (status) {
       case "connected":
         return "badge-success";
       case "reconnecting":
       case "connecting":
         return "badge-warning";
+      case "disconnected":
+        return "badge-error";
+      case "unavailable":
+        return "badge-success";
       default:
-        return "badge-neutral";
+        return "badge-outline border-base-300 text-base-content";
+    }
+  }
+
+  function connectionLabel(status: typeof streamStatus): string {
+    switch (status) {
+      case "connected":
+      case "unavailable":
+        return "Live";
+      case "connecting":
+        return "Connecting";
+      case "reconnecting":
+        return "Reconnecting";
+      case "disconnected":
+        return "Offline";
+      default:
+        return "Unknown";
     }
   }
 
@@ -386,30 +416,41 @@
   />
 </svelte:head>
 
-<div class="min-h-screen bg-base-200 text-base-content">
-  <div class="mx-auto flex min-h-screen max-w-7xl flex-col gap-6 px-4 py-6 lg:px-6">
-    <header class="flex flex-col gap-3 rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div class="flex items-center gap-3">
-          <div class="rounded-box border border-base-300 bg-base-200 p-2">
-            <Server size={18} aria-hidden="true" />
-          </div>
-          <div>
-            <h1 class="text-xl font-semibold">Cassini Control Panel</h1>
-            <p class="text-sm text-base-content/70">
-              Live history, trigger, and stop controls over the existing operator API.
-            </p>
-          </div>
-        </div>
-        <div class="flex items-center gap-2 text-sm">
-          <PlugZap size={16} aria-hidden="true" />
-          <span class={`badge ${streamStatusTone(streamStatus)}`}>{streamStatusLabel(streamStatus)}</span>
-        </div>
+<div class="flex min-h-full flex-col bg-base-200 text-base-content">
+  <div class="mx-auto flex min-h-full w-full flex-col gap-4 px-4 pt-4 pb-6">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div class="flex flex-wrap items-center gap-2.5 text-sm">
+        <span
+          class={`badge badge-sm h-auto font-medium rounded-lg gap-1.5 py-1 ${streamStatusTone(streamStatus)}`}
+          title={streamStatusLabel(streamStatus)}
+        >
+          {#if streamStatus === "connecting" || streamStatus === "reconnecting"}
+            <span class="loading loading-spinner h-3 w-3" aria-hidden="true"></span>
+          {:else}
+            <Activity size={12} aria-hidden="true" />
+          {/if}
+          {connectionLabel(streamStatus)}
+        </span>
+        {#if streamStatus === "unavailable"}
+          <span class="flex items-center gap-1 text-xs text-base-content/60">
+            <span class="cassini-tick" style="--cassini-tick: {POLL_INTERVAL_MS}ms">
+              <RefreshCw size={12} aria-hidden="true" />
+            </span>
+            Checking every {POLL_INTERVAL_MS / 1000}s
+          </span>
+        {:else if streamStatus === "disconnected"}
+          <span class="flex items-center gap-1 text-xs text-base-content/60">
+            <span class="cassini-tick" style="--cassini-tick: {POLL_INTERVAL_MS}ms">
+              <RefreshCw size={12} aria-hidden="true" />
+            </span>
+            Retrying every {POLL_INTERVAL_MS / 1000}s
+          </span>
+        {/if}
       </div>
-      <div class="text-xs text-base-content/60">
-        Operator proxy path: <code>{operatorBasePath || "(not configured)"}</code>
-      </div>
-    </header>
+      <button class="btn btn-sm btn-primary md:text-sm" type="button" on:click={openComposer}>
+        Record a meeting
+      </button>
+    </div>
 
     {#if configError}
       <section class="alert alert-error">
@@ -417,35 +458,33 @@
         <span>{configError}</span>
       </section>
     {:else}
-      <section class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
-        <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-          <label class="form-control w-full gap-2">
-            <span class="label-text font-medium">Meeting URL</span>
-            <input
-              bind:value={meetingUrl}
-              type="url"
-              class="input input-bordered w-full"
-              placeholder="https://nextcloud.example.test/call/..."
-            />
-          </label>
-          <div class="flex flex-col gap-2">
+      {#if showComposer}
+        <section class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
+          <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+            <label class="flex w-full flex-col gap-3">
+              <span class="text-sm font-medium">Meeting link</span>
+              <input
+                bind:value={meetingUrl}
+                bind:this={meetingUrlInput}
+                type="url"
+                class="input input-bordered w-full"
+                placeholder="https://nextcloud.example.test/call/..."
+              />
+            </label>
             <button class="btn btn-primary" disabled={!canStartJob} type="button" on:click={handleStartJob}>
               {#if submittingStart}
                 <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
                 Starting…
               {:else}
-                Start job
+                Start recording
               {/if}
             </button>
-            <p class="text-xs text-base-content/60 lg:text-right">
-              Uses <code>POST /jobs?provider=nextcloud-talk</code> and reconciles snapshots on stream reconnect.
-            </p>
           </div>
-        </div>
-        {#if actionError}
-          <div class="mt-3 alert alert-error text-sm">{actionError}</div>
-        {/if}
-      </section>
+          {#if actionError}
+            <div class="mt-3 alert alert-error text-sm">{actionError}</div>
+          {/if}
+        </section>
+      {/if}
 
       {#if operatorClient}
         {#key operatorClient}
@@ -453,14 +492,14 @@
         {/key}
       {/if}
 
-      <div class="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)]">
+      <div class="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
         <section class="min-w-0 overflow-hidden flex min-h-[24rem] flex-col rounded-box border border-base-300 bg-base-100 shadow-sm">
           <header class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">
             <div class="flex items-center gap-2">
               <List size={16} aria-hidden="true" />
               <div>
-                <h2 class="font-semibold">Jobs history</h2>
-                <p class="text-xs text-base-content/60">Newest-first logical runs from <code>GET /jobs</code> + <code>GET /events</code>.</p>
+                <h2 class="font-semibold">Recordings</h2>
+                <p class="text-xs text-base-content/60">Newest first.</p>
               </div>
             </div>
             <button class="btn btn-ghost btn-sm" on:click={refreshJobs} type="button" aria-label="Refresh jobs">
@@ -485,7 +524,10 @@
               <div class="grid min-w-0 gap-2">
                 {#each jobs as job (job.id)}
                   <button
-                    class="card w-full min-w-0 overflow-hidden border border-base-300 bg-base-100 text-left transition hover:border-primary {job.id === selectedJobId ? 'border-primary bg-primary/5' : ''}"
+                    class="card w-full min-w-0 overflow-hidden border text-left transition {job.id ===
+                    selectedJobId
+                      ? 'border-primary bg-primary/15 ring-1 ring-inset ring-primary'
+                      : 'border-base-300 bg-base-100 hover:border-primary/50 hover:bg-base-200/50'}"
                     type="button"
                     on:click={() => selectJob(job.id)}
                   >
@@ -520,8 +562,8 @@
         <section class="flex min-h-[24rem] flex-col rounded-box border border-base-300 bg-base-100 shadow-sm">
           <header class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">
             <div>
-              <h2 class="font-semibold">Selected run detail</h2>
-              <p class="text-xs text-base-content/60">Summary row + attempt history from snapshots and live tagged events.</p>
+              <h2 class="font-semibold">Run detail</h2>
+              <p class="text-xs text-base-content/60">Progress and history for the selected recording.</p>
             </div>
             <div class="flex flex-wrap items-center gap-2">
               <button
@@ -667,3 +709,27 @@
     {/if}
   </div>
 </div>
+
+<style>
+  .cassini-tick {
+    display: inline-flex;
+    animation: cassini-tick var(--cassini-tick, 2000ms) infinite;
+  }
+
+  @keyframes cassini-tick {
+    0%,
+    75% {
+      transform: rotate(0deg);
+      animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    100% {
+      transform: rotate(180deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .cassini-tick {
+      animation: none;
+    }
+  }
+</style>
