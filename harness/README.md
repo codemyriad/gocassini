@@ -262,6 +262,40 @@ proxy path so Cassini's local control-panel/viewer pages can render.
 The committed secrets and passwords are for the dev harness only. Never reuse
 them for real Nextcloud, Talk, signaling, TURN, or Cassini deployments.
 
+### 2.11 Plan validation warnings
+
+`dev stack` distinguishes invalid configuration from valid-but-surprising
+configuration:
+
+```text
+resolve flags + environment
+          |
+          v
+   hard validation
+      |        |
+ invalid      valid
+      |        |
+ exit 2        v
+ no plan   collect warnings
+               |
+               +-- plan: validation: ok / warnings list
+               `-- up/down: stderr preflight, then run normally
+```
+
+Hard validation still rejects contradictory or unsupported modes before a plan
+is printed. Warnings do not change the exit code. They call out:
+
+- explicit values that the resolved topology overrides or ignores, such as
+  `SPREED_PROFILE`, ExApp image mode, patch mode, and recording backend;
+- an installed ExApp bypassed by a legacy/direct recording backend;
+- remote media values that cannot serve the selected topology, including
+  RFC1918 media IPs that browsers outside the private network cannot reach;
+- destructive lifecycle intent from `up --reset`, `down --volumes`, and
+  `down --full`.
+
+The default plan has no warnings. Warnings about optional modes fire only when
+the corresponding flag or environment variable expresses user intent.
+
 ---
 
 ## 3. Stack lifecycle quickstart
