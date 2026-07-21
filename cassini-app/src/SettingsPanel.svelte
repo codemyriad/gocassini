@@ -34,7 +34,6 @@
   let quality: SettingsQuality = "balanced";
   let deviceOverride = "";
   let modelOverride = "";
-  let showAdvanced = false;
 
   let savedQuality: SettingsQuality = "balanced";
   let savedDeviceOverride = "";
@@ -94,9 +93,6 @@
     savedQuality = next.quality;
     savedDeviceOverride = next.device_override;
     savedModelOverride = next.model_override;
-    if (next.device_override !== "" || next.model_override !== "") {
-      showAdvanced = true;
-    }
   }
 
   function asMessage(error: unknown): string {
@@ -124,7 +120,7 @@
 </script>
 
 <section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
-  <header class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">
+  <header class="flex items-center justify-between gap-3 px-4 py-3">
     <div class="flex items-center gap-2">
       <div>
         <h2 class="font-semibold">Transcription quality</h2>
@@ -171,13 +167,15 @@
     <div class="flex items-center justify-center p-6 text-sm text-base-content/60">No settings available.</div>
   {:else}
     <div class="grid gap-4 p-4">
-      <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.75fr)] lg:items-start">
-        <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200/50 p-3">
+      <div
+        class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1.15fr)]"
+      >
+        <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3">
           <div class="flex items-center gap-2">
             <Cpu size={16} aria-hidden="true" />
             <h3 class="text-sm font-semibold">Detected hardware</h3>
           </div>
-          <dl class="grid gap-1.5 grid-cols-1">
+          <dl class="grid gap-3 grid-cols-1">
             <div class="flex items-center justify-between gap-2 py-1">
               <dt class="text-sm text-base-content/60">GPU</dt>
               <dd class="text-sm">
@@ -207,12 +205,12 @@
           </dl>
         </section>
 
-        <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200/50 p-3">
+        <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3">
           <div class="flex items-center gap-2">
             <CircleGauge size={16} aria-hidden="true" />
             <h3 id="stt-quality-heading" class="text-sm font-semibold">Quality</h3>
           </div>
-          <div class="grid gap-1.5" role="radiogroup" aria-labelledby="stt-quality-heading">
+          <div class="grid gap-3" role="radiogroup" aria-labelledby="stt-quality-heading">
             {#each QUALITY_OPTIONS as option}
               <label
                 class="flex cursor-pointer items-center gap-2.5 rounded-box border px-2 py-1 transition {quality ===
@@ -235,37 +233,34 @@
             {/each}
           </div>
         </section>
-      </div>
 
-      <div class="collapse collapse-arrow rounded-box border border-base-300 bg-base-200/50">
-        <input type="checkbox" bind:checked={showAdvanced} aria-label="Show advanced transcription settings" />
-        <div class="collapse-title min-h-0 cursor-pointer p-3 transition hover:bg-base-300/40">
+        <section
+          class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3"
+        >
           <div class="flex items-center gap-2">
             <SettingsIcon size={16} aria-hidden="true" />
             <h3 class="text-sm font-semibold">Device model and overrides</h3>
           </div>
-        </div>
-        <div class="collapse-content px-3">
-          <div class="grid gap-3 pb-1 sm:grid-cols-2">
-            <label class="flex w-full flex-col gap-2">
+          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+            <label class="flex w-full flex-col gap-1">
               <span class="text-xs font-medium text-base-content/70">Device override</span>
-              <select bind:value={deviceOverride} class="select select-bordered select-sm w-full">
+              <select bind:value={deviceOverride} class="select select-sm w-full border-base-300 shadow-none">
                 <option value="">Auto</option>
                 <option value="cpu">CPU</option>
                 <option value="cuda">CUDA</option>
               </select>
             </label>
-            <label class="flex w-full flex-col gap-2">
+            <label class="flex w-full flex-col gap-1">
               <span class="text-xs font-medium text-base-content/70">Model override</span>
               <input
                 bind:value={modelOverride}
                 type="text"
-                class="input input-bordered input-sm w-full"
+                class="input input-sm w-full border-base-300 shadow-none"
                 placeholder="(use default for selected quality)"
               />
             </label>
           </div>
-        </div>
+        </section>
       </div>
 
       <button

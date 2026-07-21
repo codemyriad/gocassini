@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
-  import { Activity, List, RefreshCw, Square, TriangleAlert } from "@lucide/svelte";
+  import { Activity, ArrowLeft, CassetteTape, ChevronRight, Inbox, RefreshCw, Square, TriangleAlert } from "@lucide/svelte";
   import { loadConfig } from "./operator/config";
   import {
     OperatorClient,
@@ -9,6 +9,7 @@
   } from "./operator/client";
   import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
   import { shouldShowDetailLoading } from "./operator/viewState";
+  import { applyJob, readJob } from "./surfaceRouting";
   import SettingsPanel from "./SettingsPanel.svelte";
 
   const POLL_INTERVAL_MS = 2000;
@@ -50,7 +51,18 @@
   let pollTimer = 0;
   let streamOpenTimer = 0;
 
+  const DESKTOP_MEDIA_QUERY = "(min-width: 981px)";
+  let isDesktop = false;
+  let viewportMedia: MediaQueryList | null = null;
+
   onMount(async () => {
+    if (typeof window.matchMedia === "function") {
+      viewportMedia = window.matchMedia(DESKTOP_MEDIA_QUERY);
+      isDesktop = viewportMedia.matches;
+      viewportMedia.addEventListener("change", handleViewportChange);
+    }
+    window.addEventListener("popstate", handleJobPopState);
+    seedListHistoryEntry();
     try {
       const config = loadConfig();
       operatorBasePath = config.operatorBasePath;
@@ -66,7 +78,18 @@
   onDestroy(() => {
     clearPolling();
     closeEventStream();
+    window.removeEventListener("popstate", handleJobPopState);
+    viewportMedia?.removeEventListener("change", handleViewportChange);
   });
+
+  function seedListHistoryEntry() {
+    const deepLinkedJob = readJob(window.location.hash);
+    if (deepLinkedJob === "") {
+      return;
+    }
+    window.history.replaceState({}, "", operatorHref(""));
+    window.history.pushState({}, "", operatorHref(deepLinkedJob));
+  }
 
   async function refreshJobs() {
     if (!operatorClient) {
@@ -81,7 +104,8 @@
         selectedJob = null;
         return;
       }
-      const preferredJobId = selectedJobId || jobs[0]?.id || "";
+      const deepLinkedJob = readJob(window.location.hash);
+      const preferredJobId = deepLinkedJob || selectedJobId;
       if (preferredJobId) {
         await selectJob(preferredJobId, { allowJobsRefresh: false });
       }
@@ -123,6 +147,49 @@
     meetingUrlInput?.focus();
   }
 
+  function operatorHref(jobId: string): string {
+    const url = new URL(window.location.href);
+    url.hash = applyJob(window.location.hash, jobId).replace(/^#/, "");
+    return url.toString();
+  }
+
+  function pushJobUrl(jobId: string) {
+    window.history.pushState({}, "", operatorHref(jobId));
+  }
+
+  async function openJob(jobId: string) {
+    if (jobId === selectedJobId) {
+      return;
+    }
+    pushJobUrl(jobId);
+    await selectJob(jobId);
+  }
+
+  function handleBackToList() {
+    pushJobUrl("");
+    selectedJobId = "";
+    selectedJob = null;
+    detailError = "";
+  }
+
+  function handleJobPopState() {
+    const urlJobId = readJob(window.location.hash);
+    if (urlJobId === selectedJobId) {
+      return;
+    }
+    if (urlJobId === "") {
+      selectedJobId = "";
+      selectedJob = null;
+      detailError = "";
+      return;
+    }
+    void selectJob(urlJobId, { allowJobsRefresh: false });
+  }
+
+  function handleViewportChange(event: MediaQueryListEvent) {
+    isDesktop = event.matches;
+  }
+
   async function handleStartJob() {
     const trimmedUrl = meetingUrl.trim();
     if (!operatorClient || trimmedUrl === "") {
@@ -136,6 +203,7 @@
       meetingUrl = "";
       showComposer = false;
       await refreshJobs();
+      pushJobUrl(id);
       await selectJob(id, { allowJobsRefresh: false });
     } catch (error) {
       actionError = asMessage(error);
@@ -328,6 +396,111 @@
     }).format(date);
   }
 
+  const STAGES = [
+    { key: "record", label: "Record" },
+    { key: "build", label: "Build" },
+    { key: "publish", label: "Publish" },
+  ] as const;
+
+  type StageStatus = "pending" | "queued" | "active" | "done" | "failed";
+
+  function stageTimes(job: Job | JobAttempt, key: string) {
+    const row = job as unknown as Record<string, string | null | undefined>;
+    return {
+      queued: row[`${key}_queued_at`] ?? null,
+      started: row[`${key}_started_at`] ?? null,
+      finished: row[`${key}_finished_at`] ?? null,
+    };
+  }
+
+  function stageProgress(job: Job | JobAttempt): Array<{ label: string; status: StageStatus }> {
+    const halted = job.state === "failed" || job.state === "stopped" || job.state === "interrupted";
+    let lastTouched = -1;
+    const times = STAGES.map((stage, index) => {
+      const t = stageTimes(job, stage.key);
+      if (t.queued || t.started || t.finished) {
+        lastTouched = index;
+      }
+      return t;
+    });
+    return STAGES.map((stage, index) => {
+      const t = times[index];
+      let status: StageStatus = "pending";
+      if (t.finished) {
+        status = "done";
+      } else if (t.started) {
+        status = "active";
+      } else if (t.queued) {
+        status = "queued";
+      }
+      if (halted && index === lastTouched) {
+        status = "failed";
+      }
+      return { label: stage.label, status };
+    });
+  }
+
+  function stageBarClass(status: StageStatus): string {
+    switch (status) {
+      case "done":
+        return "bg-success";
+      case "active":
+        return "bg-primary";
+      case "failed":
+        return "bg-error";
+      case "queued":
+        return "bg-primary/55";
+      default:
+        return "bg-base-content/12";
+    }
+  }
+
+  function meetingLabel(requestJSON: string): string {
+    const url = requestUrlLabel(requestJSON);
+    if (url === "\u2014") {
+      return "Recording";
+    }
+    try {
+      const token = new URL(url).pathname.split("/").filter(Boolean).pop();
+      return token ? `Call ${token}` : url;
+    } catch {
+      return url;
+    }
+  }
+
+  function jobStatusLabel(job: Pick<Job, "stage" | "state">): string {
+    if (job.state === "failed") return "Failed";
+    if (job.state === "stopped") return "Stopped";
+    if (job.state === "interrupted") return "Interrupted";
+    if (job.state === "succeeded" && job.stage === "done") return "Published";
+    if (job.state === "queued") return "Queued";
+    if (job.state === "running") {
+      const stage = STAGES.find((entry) => entry.key === job.stage);
+      return stage ? `${stage.label}ing` : "Running";
+    }
+    return formatStageState(job);
+  }
+
+  function jobStatusToneClass(job: Pick<Job, "stage" | "state">): string {
+    if (job.state === "failed" || job.state === "interrupted") return "text-error";
+    if (job.state === "stopped") return "text-warning";
+    if (job.state === "succeeded") return "text-success";
+    return "text-base-content/70";
+  }
+
+  function relativeTime(value: string | null | undefined): string {
+    if (!value) return "—";
+    const then = Date.parse(value);
+    if (Number.isNaN(then)) return "—";
+    const seconds = Math.round((Date.now() - then) / 1000);
+    if (seconds < 60) return "just now";
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.round(hours / 24)}d ago`;
+  }
+
   function formatStageState(job: Pick<Job, "stage" | "state">): string {
     return `${job.stage} / ${job.state}`;
   }
@@ -398,14 +571,15 @@
   }
 
   $: canStartJob = !submittingStart && meetingUrl.trim() !== "";
-  $: canStopSelectedJob =
-    !submittingStop &&
-    selectedJob?.job.stage === "record" &&
-    selectedJob?.job.state === "running";
-  $: canRerunSelectedJob =
-    !submittingRerun &&
-    selectedJob?.job.stage === "done" &&
-    !!selectedJob?.job.artifact_run_path;
+  $: stopApplies = selectedJob?.job.stage === "record" && selectedJob?.job.state === "running";
+  $: jobFinished = selectedJob?.job.stage === "done";
+  $: rerunApplies = jobFinished && !!selectedJob?.job.artifact_run_path;
+  $: rerunBlockedReason =
+    jobFinished && !selectedJob?.job.artifact_run_path
+      ? "This run produced no recording to rerun from."
+      : "";
+  $: canStopSelectedJob = !submittingStop && stopApplies;
+  $: canRerunSelectedJob = !submittingRerun && rerunApplies;
 </script>
 
 <svelte:head>
@@ -417,7 +591,7 @@
 </svelte:head>
 
 <div class="flex min-h-full flex-col bg-base-200 text-base-content">
-  <div class="mx-auto flex min-h-full w-full flex-col gap-4 px-4 pt-4 pb-6">
+  <div class="mx-auto flex min-h-full w-full flex-col gap-4 px-4 pt-4 pb-10">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div class="flex flex-wrap items-center gap-2.5 text-sm">
         <span
@@ -459,10 +633,10 @@
       </section>
     {:else}
       {#if showComposer}
-        <section class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
+        <section class="mb-6 rounded-box border border-base-300 bg-base-100 px-4 pt-3 pb-4 shadow-sm">
           <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-            <label class="flex w-full flex-col gap-3">
-              <span class="text-sm font-medium">Meeting link</span>
+            <label class="flex w-full flex-col gap-2">
+              <span class="font-semibold">Meeting link</span>
               <input
                 bind:value={meetingUrl}
                 bind:this={meetingUrlInput}
@@ -492,16 +666,11 @@
         {/key}
       {/if}
 
-      <div class="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
-        <section class="min-w-0 overflow-hidden flex min-h-[24rem] flex-col rounded-box border border-base-300 bg-base-100 shadow-sm">
-          <header class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">
-            <div class="flex items-center gap-2">
-              <List size={16} aria-hidden="true" />
-              <div>
-                <h2 class="font-semibold">Recordings</h2>
-                <p class="text-xs text-base-content/60">Newest first.</p>
-              </div>
-            </div>
+      <div class="mt-6 grid rounded-box border border-base-300 bg-base-100 shadow-sm min-[981px]:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
+        {#if isDesktop || !selectedJobId}
+        <section class="flex min-w-0 flex-col overflow-hidden">
+          <header class="flex min-h-14 items-center justify-between gap-3 px-4 py-3 min-[981px]:h-14">
+            <h2 class="font-semibold">Recordings</h2>
             <button class="btn btn-ghost btn-sm" on:click={refreshJobs} type="button" aria-label="Refresh jobs">
               <RefreshCw size={16} aria-hidden="true" />
             </button>
@@ -518,37 +687,48 @@
                  place instead of flashing it to "Loading…" every tick (D-494). -->
             <div class="flex flex-1 items-center justify-center p-6 text-sm text-base-content/60">Loading jobs…</div>
           {:else if jobs.length === 0}
-            <div class="flex flex-1 items-center justify-center p-6 text-sm text-base-content/60">No jobs yet.</div>
+            <div class="flex min-h-0 flex-1 p-3">
+              <div
+                class="flex flex-1 flex-col items-center justify-center gap-2 rounded-box border border-dashed border-base-content/20 p-6 text-center"
+              >
+                <Inbox size={20} class="text-base-content/40" aria-hidden="true" />
+                <p class="text-sm font-medium">No recordings yet</p>
+                <p class="text-xs text-base-content/60">Start one with "Record a meeting".</p>
+              </div>
+            </div>
           {:else}
-            <div class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-3">
-              <div class="grid min-w-0 gap-2">
+            <div class="min-h-0 min-w-0 flex-1 min-[981px]:relative">
+              <div
+                class="overflow-x-hidden p-3 min-[981px]:absolute min-[981px]:inset-0 min-[981px]:overflow-y-auto"
+              >
+                <div class="recordings-list grid min-w-0 gap-2">
                 {#each jobs as job (job.id)}
                   <button
-                    class="card w-full min-w-0 overflow-hidden border text-left transition {job.id ===
-                    selectedJobId
-                      ? 'border-primary bg-primary/15 ring-1 ring-inset ring-primary'
-                      : 'border-base-300 bg-base-100 hover:border-primary/50 hover:bg-base-200/50'}"
+                    class="card w-full min-w-0 overflow-hidden border text-left {job.id === selectedJobId
+                      ? 'cursor-default border-base-300 bg-base-200'
+                      : 'cursor-pointer border-base-300 bg-base-100 hover:bg-base-200/60'}"
                     type="button"
-                    on:click={() => selectJob(job.id)}
+                    aria-current={job.id === selectedJobId ? "page" : undefined}
+                    on:click={() => openJob(job.id)}
                   >
-                    <div class="card-body min-w-0 gap-2 p-4">
-                      <div class="flex min-w-0 items-start justify-between gap-3">
-                        <div class="min-w-0 flex-1">
-                          <p class="truncate font-mono text-xs">{job.id}</p>
-                          <p class="truncate text-sm font-medium">{formatStageState(job)}</p>
-                        </div>
-                        <div class="shrink-0 flex items-center gap-2">
-                          {#if isJobActive(job)}
-                            <span class="badge badge-warning badge-outline">Active</span>
-                          {/if}
-                          <span class="badge badge-outline">Attempt {job.current_attempt_number}</span>
-                        </div>
+                    <div class="card-body min-w-0 gap-1 p-3">
+                      <div class="flex min-w-0 items-start justify-between gap-2">
+                        <p class="min-w-0 flex-1 truncate text-sm font-medium" title={requestUrlLabel(job.request_json)}>
+                          {meetingLabel(job.request_json)}
+                        </p>
+                        {#if job.current_attempt_number > 1}
+                          <span class="badge badge-outline badge-sm shrink-0 border-base-content/20 text-base-content"
+                            >Attempt {job.current_attempt_number}</span
+                          >
+                        {/if}
                       </div>
-                      <div class="min-w-0 text-xs text-base-content/70">
-                        <p class="truncate">{requestUrlLabel(job.request_json)}</p>
-                        <p>Updated {formatTimestamp(job.updated_at)}</p>
+                      <div class="min-w-0 text-xs">
+                        <p class="truncate">
+                          <span class={jobStatusToneClass(job)}>{jobStatusLabel(job)}</span>
+                          <span class="text-base-content/50"> · {relativeTime(job.updated_at)}</span>
+                        </p>
                         {#if job.error}
-                          <p class="truncate text-error">{job.error}</p>
+                          <p class="truncate text-base-content/55">{job.error}</p>
                         {/if}
                       </div>
                     </div>
@@ -556,44 +736,67 @@
                 {/each}
               </div>
             </div>
+            </div>
           {/if}
         </section>
+        {/if}
 
-        <section class="flex min-h-[24rem] flex-col rounded-box border border-base-300 bg-base-100 shadow-sm">
-          <header class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">
-            <div>
-              <h2 class="font-semibold">Run detail</h2>
-              <p class="text-xs text-base-content/60">Progress and history for the selected recording.</p>
+        {#if isDesktop || selectedJobId}
+        <section
+          class="flex min-w-0 flex-col min-[981px]:min-h-[calc(100vh-13rem)] min-[981px]:border-l min-[981px]:border-base-300"
+        >
+          <header class="flex min-h-14 items-center justify-between gap-3 px-4 py-3 min-[981px]:h-14">
+            <div class="flex min-w-0 flex-1 items-center gap-2">
+              {#if !isDesktop}
+                <button
+                  class="btn btn-ghost btn-sm btn-square shrink-0"
+                  type="button"
+                  on:click={handleBackToList}
+                  aria-label="Back to recordings"
+                >
+                  <ArrowLeft size={16} aria-hidden="true" />
+                </button>
+              {/if}
+              <div class="min-w-0 min-[981px]:flex min-[981px]:items-center min-[981px]:gap-2">
+                <h2 class="truncate font-semibold min-[981px]:shrink-0">Run detail</h2>
+                <p class="truncate text-xs text-base-content/60 min-[981px]:min-w-0">
+                  Status and history for the selected recording
+                </p>
+              </div>
             </div>
-            <div class="flex flex-wrap items-center gap-2">
-              <button
-                class="btn btn-outline btn-sm"
-                disabled={!canRerunSelectedJob}
-                type="button"
-                on:click={handleRerunJob}
-              >
-                {#if submittingRerun}
-                  <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
-                  Rerunning…
-                {:else}
-                  <RefreshCw size={14} aria-hidden="true" />
-                  Rerun
-                {/if}
-              </button>
-              <button
-                class="btn btn-outline btn-sm"
-                disabled={!canStopSelectedJob}
-                type="button"
-                on:click={handleStopJob}
-              >
-                {#if submittingStop}
-                  <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
-                  Stopping…
-                {:else}
-                  <Square size={14} aria-hidden="true" />
-                  Stop
-                {/if}
-              </button>
+            <div class="flex shrink-0 items-center gap-2">
+              {#if stopApplies || submittingStop}
+                <button
+                  class="btn btn-outline btn-sm text-sm"
+                  disabled={!canStopSelectedJob}
+                  type="button"
+                  on:click={handleStopJob}
+                >
+                  {#if submittingStop}
+                    <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
+                    Stopping…
+                  {:else}
+                    <Square size={14} aria-hidden="true" />
+                    Stop
+                  {/if}
+                </button>
+              {:else if jobFinished || submittingRerun}
+                <button
+                  class="btn btn-outline btn-sm text-sm"
+                  disabled={!canRerunSelectedJob}
+                  title={rerunBlockedReason}
+                  type="button"
+                  on:click={handleRerunJob}
+                >
+                  {#if submittingRerun}
+                    <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
+                    Rerunning…
+                  {:else}
+                    <RefreshCw size={14} aria-hidden="true" />
+                    Rerun
+                  {/if}
+                </button>
+              {/if}
             </div>
           </header>
 
@@ -601,103 +804,252 @@
             <div class="px-4 py-4">
               <div class="alert alert-error text-sm">{detailError}</div>
             </div>
-          {:else if shouldShowDetailLoading(loadingDetail, selectedJob, selectedJobId)}
-            <!-- Keep an already-rendered job visible during its background
-                 refresh, but show loading when the user switches jobs so stale
-                 details are not presented as the newly selected job (D-494). -->
-            <div class="flex flex-1 items-center justify-center p-6 text-sm text-base-content/60">Loading selected run…</div>
           {:else if !selectedJob}
-            <div class="flex flex-1 items-center justify-center p-6 text-sm text-base-content/60">Select a run from the history list.</div>
+            <div class="flex min-h-0 flex-1 px-4 pt-3 pb-4">
+              <div
+                class="flex flex-1 flex-col items-center justify-center gap-2 rounded-box border border-dashed border-base-content/20 p-6 text-center"
+              >
+                <CassetteTape size={20} class="text-base-content/40" aria-hidden="true" />
+                <p class="text-sm font-medium">No recording selected</p>
+                <p class="text-xs text-base-content/60">Choose one from the list.</p>
+              </div>
+            </div>
           {:else}
-            <div class="min-h-0 flex-1 overflow-y-auto p-4">
+            <!-- Dimmed rather than blanked while a different run loads: replacing
+                 the content collapsed the pane and jumped the page. The dim still
+                 marks it as not-yet-the-new-run (D-494). -->
+            <div
+              class="px-4 pt-3 pb-4 transition-opacity"
+              class:opacity-50={shouldShowDetailLoading(loadingDetail, selectedJob, selectedJobId)}
+            >
               <div class="grid gap-4">
-                <section class="grid gap-3 rounded-box border border-base-300 bg-base-200/50 p-4">
-                  <div>
-                    <p class="font-mono text-xs">{selectedJob.job.id}</p>
-                    <h3 class="text-lg font-semibold">{formatStageState(selectedJob.job)}</h3>
+                <section class="grid gap-3 rounded-box border border-base-300 bg-base-200 p-4">
+                  <div class="min-w-0">
+                    <h3 class="truncate text-lg font-semibold" title={requestUrlLabel(selectedJob.job.request_json)}>
+                      {meetingLabel(selectedJob.job.request_json)}
+                    </h3>
+                    <p class="text-sm {jobStatusToneClass(selectedJob.job)}">
+                      {jobStatusLabel(selectedJob.job)}
+                      <span class="text-base-content/50">· updated {relativeTime(selectedJob.job.updated_at)}</span>
+                    </p>
                   </div>
-                  <dl class="grid gap-3 md:grid-cols-2">
+
+                  <div>
+                    <div class="flex gap-1">
+                      {#each stageProgress(selectedJob.job) as stage}
+                        <span
+                          class="h-1.5 flex-1 rounded-full {stageBarClass(stage.status)}"
+                          aria-hidden="true"
+                        ></span>
+                      {/each}
+                    </div>
+                    <div class="mt-1 flex gap-1 text-xs text-base-content/60">
+                      {#each stageProgress(selectedJob.job) as stage}
+                        <span
+                          class="flex-1"
+                          class:font-medium={stage.status === "active" || stage.status === "failed"}
+                        >
+                          {stage.label}
+                        </span>
+                      {/each}
+                    </div>
+                  </div>
+                  {#if selectedJob.job.error || selectedJob.job.stop_reason || selectedJob.job.record_stop_detail}
+                    <div class="grid gap-1 rounded-box border border-error/40 bg-error/10 p-3">
+                      {#if selectedJob.job.error}
+                        <p class="text-sm font-medium text-error">{selectedJob.job.error}</p>
+                      {/if}
+                      {#if selectedJob.job.record_stop_detail}
+                        <p class="text-xs break-words text-base-content/70">{selectedJob.job.record_stop_detail}</p>
+                      {/if}
+                      <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                        {#if selectedJob.job.record_exit_code !== null}
+                          <div class="flex gap-1">
+                            <dt class="text-base-content/50">Exit code</dt>
+                            <dd class="font-mono">{selectedJob.job.record_exit_code}</dd>
+                          </div>
+                        {/if}
+                        {#if selectedJob.job.stop_reason}
+                          <div class="flex gap-1">
+                            <dt class="text-base-content/50">Reason</dt>
+                            <dd class="font-mono">{selectedJob.job.stop_reason}</dd>
+                          </div>
+                        {/if}
+                        {#if selectedJob.job.stop_requested_at}
+                          <div class="flex gap-1">
+                            <dt class="text-base-content/50">Stop requested</dt>
+                            <dd>{formatTimestamp(selectedJob.job.stop_requested_at)}</dd>
+                          </div>
+                        {/if}
+                      </dl>
+                    </div>
+                  {/if}
+                  <dl class="mt-2 grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
                     <div>
-                      <dt class="text-xs uppercase tracking-wide text-base-content/60">Provider</dt>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Provider</dt>
                       <dd class="text-sm">{selectedJob.job.provider}</dd>
                     </div>
-                    <div>
-                      <dt class="text-xs uppercase tracking-wide text-base-content/60">Meeting URL</dt>
+                    <div class="min-w-0">
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Meeting URL</dt>
                       <dd class="text-sm break-all">{requestUrlLabel(selectedJob.job.request_json)}</dd>
                     </div>
+                    <div class="min-w-0">
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Run id</dt>
+                      <dd class="font-mono text-xs break-all">{selectedJob.job.id}</dd>
+                    </div>
                     <div>
-                      <dt class="text-xs uppercase tracking-wide text-base-content/60">Current attempt</dt>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Current attempt</dt>
                       <dd class="text-sm">{selectedJob.job.current_attempt_number}</dd>
                     </div>
                     <div>
-                      <dt class="text-xs uppercase tracking-wide text-base-content/60">Reruns</dt>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Reruns</dt>
                       <dd class="text-sm">{selectedJob.job.rerun_count}</dd>
                     </div>
                     <div>
-                      <dt class="text-xs uppercase tracking-wide text-base-content/60">Created</dt>
-                      <dd class="text-sm">{formatTimestamp(selectedJob.job.created_at)}</dd>
-                    </div>
-                    <div>
-                      <dt class="text-xs uppercase tracking-wide text-base-content/60">Updated</dt>
-                      <dd class="text-sm">{formatTimestamp(selectedJob.job.updated_at)}</dd>
-                    </div>
-                    <div>
-                      <dt class="text-xs uppercase tracking-wide text-base-content/60">Completed</dt>
-                      <dd class="text-sm">{formatTimestamp(selectedJob.job.completed_at)}</dd>
-                    </div>
-                    <div>
-                      <dt class="text-xs uppercase tracking-wide text-base-content/60">Interrupted</dt>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Interrupted</dt>
                       <dd class="text-sm">{formatTimestamp(selectedJob.job.interrupted_at)}</dd>
                     </div>
                   </dl>
-                  {#if selectedJob.job.stop_reason || selectedJob.job.stop_requested_at}
-                    <div class="rounded-box border border-base-300 bg-base-100 p-3 text-sm">
-                      <p><span class="font-medium">Stop reason:</span> {selectedJob.job.stop_reason ?? "—"}</p>
-                      <p><span class="font-medium">Stop requested:</span> {formatTimestamp(selectedJob.job.stop_requested_at)}</p>
+
+                  <div class="my-2 h-px w-full bg-base-content/12" aria-hidden="true"></div>
+                  <dl class="mt-1 grid gap-x-6 gap-y-3 grid-cols-2 lg:grid-cols-3">
+                    <div>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Created</dt>
+                      <dd class="text-sm">{formatTimestamp(selectedJob.job.created_at)}</dd>
                     </div>
-                  {/if}
-                  {#if selectedJob.job.error}
-                    <div class="alert alert-error text-sm">{selectedJob.job.error}</div>
-                  {/if}
+                    <div>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Updated</dt>
+                      <dd class="text-sm">{formatTimestamp(selectedJob.job.updated_at)}</dd>
+                    </div>
+                    <div>
+                      <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Completed</dt>
+                      <dd class="text-sm">{formatTimestamp(selectedJob.job.completed_at)}</dd>
+                    </div>
+                  </dl>
                 </section>
 
-                <section class="grid gap-3">
-                  <div class="flex items-center justify-between gap-3">
+                <section class="mt-4 grid gap-3">
+                  <div class="flex items-center gap-2">
                     <h3 class="font-semibold">Attempt history</h3>
-                    <span class="badge badge-outline">{selectedJob.attempts.length} attempts</span>
+                    <span class="badge badge-outline badge-sm border-base-content/20 text-base-content">
+                      {selectedJob.attempts.length}
+                    </span>
                   </div>
                   <div class="grid gap-3">
                     {#each selectedJob.attempts as attempt (attempt.attempt_number)}
-                      <article class="rounded-box border border-base-300 bg-base-100 p-4">
-                        <div class="flex items-start justify-between gap-3">
+                      <details class="group overflow-hidden rounded-box border border-base-300">
+                        <summary
+                          class="flex cursor-pointer list-none items-center gap-2 bg-base-200/50 px-3 py-2 transition group-open:bg-base-200 hover:bg-base-200"
+                        >
+                          <ChevronRight
+                            size={14}
+                            class="shrink-0 text-base-content/50 transition-transform group-open:rotate-90"
+                            aria-hidden="true"
+                          />
+                          <span class="min-w-0 flex-1 truncate text-xs text-base-content/60">
+                            <span class="text-sm font-medium text-base-content">Attempt {attempt.attempt_number}</span
+                            ><span class="ml-2 capitalize">{attempt.trigger_kind}</span><span
+                              class="mx-1.5 text-base-content/40">·</span
+                            ><span class={jobStatusToneClass(attempt)}>{jobStatusLabel(attempt)}</span>
+                          </span>
+                        </summary>
+
+                        <div class="grid gap-3 bg-base-200 px-3 pt-3 pb-3">
+                          {#if attempt.error || attempt.stop_reason || attempt.record_stop_detail}
+                            <div class="grid gap-1 rounded-box border border-error/40 bg-error/10 p-3">
+                              {#if attempt.error}
+                                <p class="text-sm font-medium text-error">{attempt.error}</p>
+                              {/if}
+                              {#if attempt.record_stop_detail}
+                                <p class="text-xs break-words text-base-content/70">{attempt.record_stop_detail}</p>
+                              {/if}
+                              <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                                {#if attempt.record_exit_code !== null}
+                                  <div class="flex gap-1">
+                                    <dt class="text-base-content/50">Exit code</dt>
+                                    <dd class="font-mono">{attempt.record_exit_code}</dd>
+                                  </div>
+                                {/if}
+                                {#if attempt.stop_reason}
+                                  <div class="flex gap-1">
+                                    <dt class="text-base-content/50">Reason</dt>
+                                    <dd class="font-mono">{attempt.stop_reason}</dd>
+                                  </div>
+                                {/if}
+                              </dl>
+                            </div>
+                          {/if}
+
                           <div>
-                            <p class="font-medium">Attempt {attempt.attempt_number}</p>
-                            <p class="text-sm text-base-content/70">{attempt.trigger_kind} · {attemptStageLabel(attempt)}</p>
+                            <div class="flex gap-1">
+                              {#each stageProgress(attempt) as stage}
+                                <span class="h-1.5 flex-1 rounded-full {stageBarClass(stage.status)}" aria-hidden="true"
+                                ></span>
+                              {/each}
+                            </div>
+                            <div class="mt-1 flex gap-1 text-xs text-base-content/60">
+                              {#each stageProgress(attempt) as stage}
+                                <span class="flex-1" class:font-medium={stage.status === "active" || stage.status === "failed"}>
+                                  {stage.label}
+                                </span>
+                              {/each}
+                            </div>
                           </div>
-                          <span class="badge badge-outline">{attempt.state}</span>
+
+                          <dl class="grid gap-x-6 gap-y-3 grid-cols-2">
+                            <div>
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Queued</dt>
+                              <dd class="text-sm">{formatTimestamp(attempt.record_queued_at)}</dd>
+                            </div>
+                            <div>
+                              <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Completed</dt>
+                              <dd class="text-sm">{formatTimestamp(attempt.completed_at)}</dd>
+                            </div>
+                          </dl>
+
+                          {#if attempt.artifact_run_path || attempt.artifact_meeting_path || attempt.artifact_site_path || attempt.record_log_path || attempt.build_log_path || attempt.publish_log_path}
+                            <div class="my-1 h-px w-full bg-base-content/12" aria-hidden="true"></div>
+                            <dl class="grid gap-3">
+                              {#if attempt.artifact_run_path}
+                                <div class="min-w-0">
+                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Run artifact</dt>
+                                  <dd class="font-mono text-xs break-all">{attempt.artifact_run_path}</dd>
+                                </div>
+                              {/if}
+                              {#if attempt.artifact_meeting_path}
+                                <div class="min-w-0">
+                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Meeting artifact</dt>
+                                  <dd class="font-mono text-xs break-all">{attempt.artifact_meeting_path}</dd>
+                                </div>
+                              {/if}
+                              {#if attempt.artifact_site_path}
+                                <div class="min-w-0">
+                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Site artifact</dt>
+                                  <dd class="font-mono text-xs break-all">{attempt.artifact_site_path}</dd>
+                                </div>
+                              {/if}
+                              {#if attempt.record_log_path}
+                                <div class="min-w-0">
+                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Record log</dt>
+                                  <dd class="font-mono text-xs break-all">{attempt.record_log_path}</dd>
+                                </div>
+                              {/if}
+                              {#if attempt.build_log_path}
+                                <div class="min-w-0">
+                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Build log</dt>
+                                  <dd class="font-mono text-xs break-all">{attempt.build_log_path}</dd>
+                                </div>
+                              {/if}
+                              {#if attempt.publish_log_path}
+                                <div class="min-w-0">
+                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Publish log</dt>
+                                  <dd class="font-mono text-xs break-all">{attempt.publish_log_path}</dd>
+                                </div>
+                              {/if}
+                            </dl>
+                          {/if}
                         </div>
-                        <dl class="mt-3 grid gap-3 md:grid-cols-2">
-                          <div>
-                            <dt class="text-xs uppercase tracking-wide text-base-content/60">Queued</dt>
-                            <dd class="text-sm">{formatTimestamp(attempt.record_queued_at)}</dd>
-                          </div>
-                          <div>
-                            <dt class="text-xs uppercase tracking-wide text-base-content/60">Completed</dt>
-                            <dd class="text-sm">{formatTimestamp(attempt.completed_at)}</dd>
-                          </div>
-                          <div>
-                            <dt class="text-xs uppercase tracking-wide text-base-content/60">Run artifact</dt>
-                            <dd class="text-sm break-all">{attempt.artifact_run_path ?? "—"}</dd>
-                          </div>
-                          <div>
-                            <dt class="text-xs uppercase tracking-wide text-base-content/60">Meeting artifact</dt>
-                            <dd class="text-sm break-all">{attempt.artifact_meeting_path ?? "—"}</dd>
-                          </div>
-                        </dl>
-                        {#if attempt.error}
-                          <div class="mt-3 alert alert-error text-sm">{attempt.error}</div>
-                        {/if}
-                      </article>
+                      </details>
                     {/each}
                   </div>
                 </section>
@@ -705,6 +1057,7 @@
             </div>
           {/if}
         </section>
+        {/if}
       </div>
     {/if}
   </div>

@@ -17,6 +17,7 @@
 export type Surface = "browse" | "operator";
 
 const SURFACE_PARAM = "surface";
+const JOB_PARAM = "job";
 
 export function readSurface(hash: string): Surface {
   const params = new URLSearchParams(hash.replace(/^#/, ""));
@@ -39,5 +40,23 @@ export function applySurface(hash: string, surface: Surface): string {
     .split("&")
     .filter((part) => part !== "" && !part.startsWith(`${SURFACE_PARAM}=`));
   const parts = surface === "operator" ? [`${SURFACE_PARAM}=operator`, ...rest] : rest;
+  return parts.length > 0 ? `#${parts.join("&")}` : "";
+}
+
+// readJob returns the operator surface's selected run id, or "" when none is
+// selected. The operator owns `job` the way the viewing layer owns meeting/tx/t.
+export function readJob(hash: string): string {
+  const params = new URLSearchParams(hash.replace(/^#/, ""));
+  return params.get(JOB_PARAM) ?? "";
+}
+
+// applyJob sets/clears the job param on an EXISTING hash, preserving every other
+// param (notably surface, which applySurface keeps first) in its original order.
+export function applyJob(hash: string, jobId: string): string {
+  const rest = hash
+    .replace(/^#/, "")
+    .split("&")
+    .filter((part) => part !== "" && !part.startsWith(`${JOB_PARAM}=`));
+  const parts = jobId === "" ? rest : [...rest, `${JOB_PARAM}=${encodeURIComponent(jobId)}`];
   return parts.length > 0 ? `#${parts.join("&")}` : "";
 }

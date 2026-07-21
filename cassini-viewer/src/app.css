@@ -154,6 +154,33 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * Shadow-DOM @property fallbacks (D-517)
+ *
+ * Tailwind v4 resolves border-style and box-shadow through registered custom
+ * properties (`border-style: var(--tw-border-style)`, `box-shadow: var(--tw-
+ * inset-shadow), …`). @property only registers from a DOCUMENT stylesheet, and
+ * the embedded build links this sheet INSIDE the shadow root — so the registra-
+ * tions are dropped, every var() is unresolvable, and border-style falls back to
+ * `none` while box-shadow is thrown out as invalid. Result: every `border`,
+ * `shadow-*` and `ring-*` utility renders as nothing in Nextcloud.
+ *
+ * Declaring the initial values here restores them. They are set per-element
+ * rather than once on :host because an unregistered custom property INHERITS
+ * (a registered one is inherits:false) — so a ring-* child inside a shadow-*
+ * card would otherwise inherit and repaint its parent's shadow. :where() keeps
+ * the whole block at zero specificity so every Tailwind utility still wins.
+ * ────────────────────────────────────────────────────────────────────────── */
+:where(:host, :host *) {
+  --tw-border-style: solid;
+  --tw-shadow: 0 0 #0000;
+  --tw-inset-shadow: 0 0 #0000;
+  --tw-inset-ring-shadow: 0 0 #0000;
+  --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-ring-shadow: 0 0 #0000;
+  --tw-ring-offset-width: 0px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * Nextcloud native colour override (D-414)
  *
  * Active when embedded.ts detects OCA.Theming and sets data-nc-theme on the
@@ -224,6 +251,31 @@
 }
 :host([data-nc-theme*="highcontrast"]) .cassini-root .card.border-base-300 {
   border: 2px solid var(--color-main-text);
+}
+/* The operator's run cards are .card + .border-base-300 too, so they inherit the
+ * rule above — but they sit inside panels rather than alone in a list, so 2px of
+ * --color-main-text reads louder than everything around them. Match the panels
+ * instead: 1px of the same --color-border-dark that base-300 resolves to. */
+:host([data-nc-theme*="highcontrast"]) .cassini-root .recordings-list .card.border-base-300 {
+  border: 1px solid var(--color-border-dark);
+}
+/* HC flattens base-100 and base-200 to one colour, so the selected card's
+ * bg-base-200 tint carries no signal there. Invert it instead — the same
+ * foreground/background swap .cassini-shell-tab[aria-current] uses, which tracks
+ * whichever theme is live with no hardcoded light/dark branch.
+ *
+ * The descendant rule is required, not defensive: the status word and the
+ * attempt badge set their own colour and border, and on an inverted fill both
+ * land on top of their own colour and vanish. This costs the red/green status
+ * tone while a card is selected — legibility on the flipped fill wins. */
+:host([data-nc-theme*="highcontrast"]) .cassini-root .recordings-list .card.border-base-300[aria-current="page"] {
+  background-color: var(--color-main-text);
+  border-color: var(--color-main-text);
+  color: var(--color-main-background);
+}
+:host([data-nc-theme*="highcontrast"]) .cassini-root .recordings-list .card.border-base-300[aria-current="page"] * {
+  color: var(--color-main-background);
+  border-color: var(--color-main-background);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
