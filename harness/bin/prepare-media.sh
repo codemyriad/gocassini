@@ -59,11 +59,18 @@ ffmpeg -y -v error \
   "$SAMPLE_MP4"
 
 log "Rendering IVF video: $SAMPLE_IVF"
+# -g 15: a keyframe at least every 0.5s (30fps). The rotator drops video
+# frames in real time until the subscriber binds, and the recorder can only
+# decode from the next keyframe after binding -- with libvpx's default
+# 128-frame interval that skews video start up to ~4.3s behind audio, which
+# verify-av-drift.sh (elapsed-difference metric) reads as drift. Dense
+# keyframes keep the structural skew well inside the 0.8s drift tolerance.
 ffmpeg -y -v error \
   -i "$SAMPLE_MP4" \
   -an \
   -c:v libvpx \
   -b:v 1800k \
+  -g 15 \
   -deadline realtime \
   -cpu-used 5 \
   -f ivf \

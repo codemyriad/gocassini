@@ -9,6 +9,13 @@
 #     (harness/, deployment/, …) predate shellcheck and don't pass it yet;
 #     widening the glob further needs a cleanup pass first so this gate stays
 #     green.
+#   - the script test suites are listed ONE BY ONE, not globbed. This job is the
+#     fast, offline, every-PR gate: a test belongs here only if it needs no
+#     Docker, no stack and no network. Globbing harness/bin/test-*.sh would
+#     enrol future tests automatically, including stack-dependent ones that
+#     would hang or fail here, and it would drag in harness/bin/test-exapp-image-ref.sh,
+#     which is red on main today (D-510 followups). Adding a line is the price
+#     of keeping this gate honest and green.
 name: Lint
 
 on:
@@ -16,12 +23,14 @@ on:
     branches: [main]
     paths:
       - 'scripts/**'
+      - 'harness/**'
       - 'sandbox/**'
       - '.github/workflows/**'
       - '.github/actions/**'
   pull_request:
     paths:
       - 'scripts/**'
+      - 'harness/**'
       - 'sandbox/**'
       - '.github/workflows/**'
       - '.github/actions/**'
@@ -46,7 +55,11 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends shellcheck xsltproc libxml2-utils
+          # ripgrep: the packet-guard control drives the real
+          # verify-session-artifact.sh, which hard-requires rg (and jq/python3,
+          # already on the image). Pinned here so the control fails on the
+          # artifact's content, never on a missing tool.
+          sudo apt-get install -y --no-install-recommends shellcheck xsltproc libxml2-utils ripgrep
 
       - name: shellcheck scripts/ + sandbox/
         run: shellcheck scripts/*.sh sandbox/*.sh
@@ -60,5 +73,16 @@ jobs:
 
       - name: Run script test suites
         run: |
+          set -euo pipefail
           ./scripts/test-release-tooling.sh
           ./sandbox/test-store-release.sh
+          # Negative control: proves verify-session-artifact.sh goes RED on a
+          # 0-packet capture (D-510). This guard is what the per-PR private
+          # e2e leg relies on to catch D-454 empty captures, and it used to
+          # pass them -- so the control runs here, on every PR, instead of only
+          # inside the ~45-minute integration leg.
+          ./harness/bin/test-session-artifact-packet-guard.sh
+          # Companion control: proves verify-av-drift.sh cannot report success
+          # without actually comparing a pair. Stubs ffprobe, so no ffmpeg here.
+          ./harness/bin/test-av-drift-pair-requirement.sh
+          ./harness/bin/test-ci-e2e-mute-timing.sh

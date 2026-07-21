@@ -168,12 +168,21 @@ if [[ ! -f "$PHASE1_LOG" || ! -f "$PHASE2_LOG" ]]; then
   exit 1
 fi
 
+# No MIN_RTP_PACKETS opt-down here, deliberately. The [WARN] above blesses a
+# missing video TRACK in the final MKV; it does not bless a captured stream
+# that received no media. MEDIA_TRACKS >= 1 above already demands media, and a
+# stream with rtp=0 is the D-454 empty-capture fingerprint wherever it appears.
 "$SCRIPT_DIR/verify-session-artifact.sh" --final-output "$FINAL_OUTPUT"
 
+# --require-pairs 0: this leg legitimately runs video-less (see the [WARN]
+# above), so there may be no audio/video pair to measure drift between. That is
+# the one skip this leg is allowed -- and it is now declared here instead of
+# happening silently inside the verifier for every caller.
 "$SCRIPT_DIR/verify-av-drift.sh" \
   --input "$FINAL_OUTPUT" \
   --tolerance 0.80 \
-  --min-elapsed 15
+  --min-elapsed 15 \
+  --require-pairs 0
 
 EVENTS_PATH="$(cassini_events_log_from_mkv "$FINAL_OUTPUT" || true)"
 STREAMS_DIR="$(cassini_streams_dir_from_mkv "$FINAL_OUTPUT" || true)"
