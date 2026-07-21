@@ -133,7 +133,15 @@ func TestReconcileRebuildsStuckPeerWithNoMedia(t *testing.T) {
 	}
 }
 
-func TestReconcileLeavesCapturingPeerAlone(t *testing.T) {
+// TestReconcileLeavesHealthyCapturingPeerAlone pins the invariant that protects
+// a working recording: a peer capturing media is not torn down, however old it
+// is. Note "healthy" — the peer has no answer outstanding. D-509 narrowed this
+// invariant, deliberately and visibly: a peer that is capturing AND wedged by a
+// failed renegotiation answer is now retried rather than skipped forever (see
+// TestFailedRenegotiationAnswerIsRetriedNotSkipped in
+// recorder_answer_retry_test.go). The narrowing keys on the pending answer, not
+// on the packet count, so this assertion is unchanged.
+func TestReconcileLeavesHealthyCapturingPeerAlone(t *testing.T) {
 	r := newInCallSubscribeTestRecorder()
 	old := &subscriberPeer{owner: r, remoteSessionID: "speaker", createdAt: time.Now().Add(-(captureRebuildGrace + 5*time.Second))}
 	r.subscribers["speaker"] = old

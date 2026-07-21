@@ -41,6 +41,47 @@ const (
 	maxCaptureRebuilds       = 3
 )
 
+// firstMediaGrace closes the sub-captureRebuildGrace dead zone (D-509): a peer
+// whose handshake COMPLETED but whose media never flowed was reachable by no
+// guard at all until it aged past the 45s captureRebuildGrace, because that
+// grace is anchored at peer creation and so conflates "no offer yet" (still
+// inside its requestoffer burst) with "answered, nothing arrived". A ~30s call
+// therefore finalized with "no remuxable streams" while the reconcile loop
+// watched. firstMediaGrace gives the answered state its own, tighter anchor
+// (answeredAt), so recovery engages inside a short recording instead of after
+// it. The 45s createdAt grace stays untouched as a floor.
+//
+// The early rebuild additionally requires that ICE is NOT connected. The answer
+// is deliberately sent before gathering completes (see handleMessage), and
+// pion's stunGatherTimeout is 5s PER configured server, so a slow-but-healthy
+// peer can legitimately deliver first media well past 12s; rebuilding it on a
+// bare timer would tear down a working transport and capture nothing — strictly
+// worse than doing nothing. Gating on the transport being observably down makes
+// the early branch a strict subset of what the 45s floor would rebuild anyway,
+// only sooner. An ICE-connected but silent peer is left to that floor, exactly
+// as today.
+const firstMediaGrace = 12 * time.Second
+
+// Bounds on retransmitting an answer whose write failed (D-509). Two orthogonal
+// budgets, because the failure they cover is a signaling resume and a resume
+// that SUCCEEDS is slow: defaultResumeAttempts=4 at a 1s backoff with 5s dial
+// and 5s hello timeouts means a resume can take ~15-25s and still restore the
+// same session (internal/signaling/client.go). A count-only budget at the 2s
+// reconcile tick would expire while the wedge was curing itself.
+//
+//   - answerRetransmitBudget bounds wall-clock, sized to the standalone
+//     signaling server's ~30s session-hold window (the same thing the resume
+//     schedule is sized to) plus slack. Past it the session is gone and there
+//     is nothing left to retransmit to.
+//   - maxAnswerRetransmits bounds writes actually attempted against a live
+//     socket. A tick that fails with signaling.ErrNotConnected is the resume
+//     window doing its job, not evidence the peer is broken, so it does not
+//     burn this budget.
+const (
+	answerRetransmitBudget = 35 * time.Second
+	maxAnswerRetransmits   = 5
+)
+
 // inCallFlagInCall is bit 1 of the Talk in-call flags: the participant has
 // joined the call. Remaining bits (audio=2, video=4, SIP=8) describe what
 // the participant publishes, so call membership is exactly flags&1 != 0.
@@ -168,6 +209,26 @@ type subscriberPeer struct {
 	awaitingOfferSince   time.Time
 	offerExhaustedLogged bool
 	endOfCandidatesSent  bool
+
+	// answeredAt is when the last answer was successfully sent — the anchor for
+	// firstMediaGrace. It is deliberately NOT cleared by beginNegotiation: it
+	// means "we have been answered since T and still have no media", which stays
+	// true across a renegotiation.
+	answeredAt time.Time
+
+	// pendingAnswer holds an answer whose SDP was built (SetLocalDescription
+	// succeeded) but whose signaling WRITE failed — overwhelmingly the
+	// signaling client's resume window, during which Send returns
+	// ErrNotConnected while the session is redialed and resumed (D-509 gap 2).
+	// The MCU is still waiting for this exact answer, so the recovery is to
+	// finish the send, not to renegotiate: pendingAnswerSID stamps the
+	// negotiation it belongs to and a retransmit is only ever attempted while
+	// that SID is still current. Cleared by markAnswerSentLocked (the send
+	// landed) and by beginNegotiation (a new offer superseded it).
+	pendingAnswer      map[string]any
+	pendingAnswerSID   string
+	pendingAnswerSince time.Time
+	answerRetransmits  int
 
 	// SetLocalDescription starts Pion's ICE gathering asynchronously. Its
 	// OnICECandidate callback can therefore race the offer handler that sends
@@ -972,11 +1033,39 @@ func (r *Recorder) requestOfferLoop(ctx context.Context) error {
 // participant, represented by an existing subscriber per D-365) against actual
 // capture, instead of giving up locally: a peer with no captured media is kept
 // being requestoffer'd (slow retry, never parked), and once that has produced
-// nothing within captureRebuildGrace the subscriber is rebuilt with a fresh
-// peer connection (covering an offer that was answered but whose media never
-// flowed). A peer that is capturing anything is left alone (D-386).
+// nothing the subscriber is rebuilt with a fresh peer connection (covering an
+// offer that was answered but whose media never flowed). A HEALTHY peer that is
+// capturing anything is left strictly alone (D-386).
 //
-// now is passed in so the rebuild decision is deterministically testable.
+// The loop is snapshot -> decide -> act: reconcileState() takes each peer's
+// state under its own lock, reconcileActionFor decides purely from that
+// snapshot (so every reconcile outcome is table-testable without an MCU, real
+// ICE or wall-clock sleeps), and only then is an action performed with no lock
+// held. Because deciding and acting are separate, an action must re-validate
+// anything that can change under it — see retryPendingAnswer, whose whole
+// correctness rests on that.
+//
+// Two recoveries beyond the D-386 baseline (D-509), for peers in opposite
+// trouble:
+//
+//   - Answered but no media: the handshake completed and the transport is dead.
+//     Rebuild on the answeredAt anchor (firstMediaGrace) rather than waiting out
+//     the createdAt-anchored captureRebuildGrace, which a short call never
+//     reaches. Only when ICE is observably not connected.
+//   - Live media but an unfinished handshake: a renegotiation (camera on) whose
+//     answer write failed leaves audio flowing and video permanently gated. The
+//     answer SDP was already built; only the write failed, so the fix is to
+//     finish the send. This runs BEFORE the captured>0 skip, which otherwise
+//     makes such a peer structurally unreachable for the rest of the call.
+//
+// Bounded residue, deliberately not recovered here: a wedge with no
+// retransmittable answer (SetRemoteDescription/CreateAnswer/SetLocalDescription
+// failed) is a deterministic offer failure that a retry cannot fix, and
+// rebuilding it would trade working audio for a speculative recovery; a peer
+// still parked after maxCaptureRebuilds (D-500 edge 2); and a peer that is
+// ICE-connected but silent, which stays with the unchanged 45s floor.
+//
+// now is passed in so every decision is deterministically testable.
 func (r *Recorder) reconcileSubscribers(now time.Time) {
 	r.mu.Lock()
 	if r.stopping {
@@ -995,21 +1084,167 @@ func (r *Recorder) reconcileSubscribers(now time.Time) {
 	captured := r.capturedPacketTotals()
 
 	for _, p := range peers {
-		if captured[p.remoteSessionID] > 0 {
-			// Capturing media (incl. a camera-only / muted-with-video
-			// participant): leave the working peer alone.
-			continue
-		}
-		if reconcileShouldRebuild(now, p.createdAt, p.rebuildCount) {
-			r.rebuildSubscriber(p, now)
-			continue
-		}
-		if !p.hasOffer() {
+		state := p.reconcileState()
+		switch reconcileActionFor(now, state, captured[p.remoteSessionID]) {
+		case actionRetryAnswer:
+			p.retryPendingAnswer()
+		case actionRebuild:
+			r.rebuildSubscriber(p, now, rebuildReasonFor(now, state))
+		case actionRequestOffer:
 			if err := p.requestOffer(); err != nil {
 				log.Printf("requestoffer failed for %s: %v", p.remoteSessionID, err)
 			}
+		case actionNone:
+			// Healthy capture, or a bounded/parked peer we have deliberately
+			// stopped acting on.
 		}
 	}
+}
+
+// reconcileAction is the single decision reconcileSubscribers makes per peer
+// per tick. Making it a value rather than control flow is what lets the whole
+// guard chain be exercised as a table test (D-509).
+type reconcileAction int
+
+const (
+	actionNone reconcileAction = iota
+	actionRequestOffer
+	actionRetryAnswer
+	actionRebuild
+)
+
+func (a reconcileAction) String() string {
+	switch a {
+	case actionRequestOffer:
+		return "requestOffer"
+	case actionRetryAnswer:
+		return "retryAnswer"
+	case actionRebuild:
+		return "rebuild"
+	default:
+		return "none"
+	}
+}
+
+// peerReconcileState is a subscriberPeer snapshot: everything the reconcile
+// decision needs, read in one pass, so the decision itself is pure.
+type peerReconcileState struct {
+	createdAt          time.Time
+	rebuildCount       int
+	offerReceived      bool
+	answeredAt         time.Time
+	hasPendingAnswer   bool
+	pendingAnswerSince time.Time
+	answerRetransmits  int
+	iceConnected       bool
+}
+
+// reconcileState snapshots the peer for a reconcile tick.
+//
+// ICEConnectionState is sampled BEFORE p.mu is taken, and never under it:
+// pion invokes OnICECandidate (-> sendLocalICESignal -> p.mu) while holding its
+// own internal locks, so taking p.mu first and pion's second here would invert
+// that order. It is also nil-guarded because reconcile-decision tests construct
+// bare &subscriberPeer{} values with no peer connection.
+func (p *subscriberPeer) reconcileState() peerReconcileState {
+	iceConnected := false
+	if p.pc != nil {
+		switch p.pc.ICEConnectionState() {
+		case webrtc.ICEConnectionStateConnected, webrtc.ICEConnectionStateCompleted:
+			iceConnected = true
+		}
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return peerReconcileState{
+		createdAt:          p.createdAt,
+		rebuildCount:       p.rebuildCount,
+		offerReceived:      p.offerReceived,
+		answeredAt:         p.answeredAt,
+		hasPendingAnswer:   p.pendingAnswer != nil,
+		pendingAnswerSince: p.pendingAnswerSince,
+		answerRetransmits:  p.answerRetransmits,
+		iceConnected:       iceConnected,
+	}
+}
+
+// reconcileActionFor is the whole reconcile decision, as a pure function of a
+// peer snapshot. It is the existing three-guard chain in the same order, plus
+// one prelude and one new branch filling the chain's silent fall-through.
+func reconcileActionFor(now time.Time, s peerReconcileState, captured int) reconcileAction {
+	if reconcileShouldRetryAnswer(now, s) {
+		return actionRetryAnswer
+	}
+	if captured > 0 {
+		// GUARD 1 (unchanged for healthy peers): capturing media, incl. a
+		// camera-only / muted-with-video participant. Leave the working peer
+		// alone. Reaching here means it has no answer outstanding.
+		return actionNone
+	}
+	if reconcileShouldRebuild(now, s.createdAt, s.rebuildCount) {
+		// GUARD 2 (unchanged): the 45s createdAt floor. Kept AHEAD of the
+		// answered branch below so the new logic can only ever act earlier than
+		// today, never later.
+		return actionRebuild
+	}
+	if s.offerReceived {
+		// GUARD 3's silent fall-through: the handshake completed, so asking for
+		// another offer is both throttled off and pointless. This is where a
+		// peer used to sit doing nothing until the 45s floor (D-509 gap 1).
+		if reconcileShouldRebuildForFirstMedia(now, s) {
+			return actionRebuild
+		}
+		return actionNone
+	}
+	return actionRequestOffer // GUARD 3 (unchanged)
+}
+
+// reconcileShouldRetryAnswer reports whether a peer's failed answer write
+// should be retransmitted. It runs before the captured>0 skip: a peer wedged by
+// a failed renegotiation answer keeps capturing negotiation 1's audio forever,
+// so the skip would make it unreachable by every lever the loop has, and its
+// added video would be lost for the rest of the call (D-509 gap 2).
+//
+// Scoped to offerReceived, i.e. to RENEGOTIATION wedges only. On a first offer
+// the latch is still open, so GUARD 3 already re-requests an offer within
+// requestOfferResponseTimeout (D-386) — a recovery at least as good as retrying
+// an answer to a negotiation the MCU may have abandoned. Only a renegotiation
+// wedge is structurally unreachable, and that is exactly the gap this closes.
+func reconcileShouldRetryAnswer(now time.Time, s peerReconcileState) bool {
+	if !s.offerReceived || !s.hasPendingAnswer {
+		return false
+	}
+	if s.answerRetransmits >= maxAnswerRetransmits {
+		return false
+	}
+	if s.pendingAnswerSince.IsZero() {
+		return false
+	}
+	return now.Sub(s.pendingAnswerSince) < answerRetransmitBudget
+}
+
+// reconcileShouldRebuildForFirstMedia reports whether an answered peer that has
+// captured nothing should be rebuilt on the firstMediaGrace anchor. Requires
+// ICE to be observably not connected: see firstMediaGrace on why a bare timer
+// here would be worse than no recovery at all.
+func reconcileShouldRebuildForFirstMedia(now time.Time, s peerReconcileState) bool {
+	if s.rebuildCount >= maxCaptureRebuilds {
+		return false
+	}
+	if s.answeredAt.IsZero() || s.iceConnected {
+		return false
+	}
+	return now.Sub(s.answeredAt) >= firstMediaGrace
+}
+
+// rebuildReasonFor labels a rebuild for the log, so the two anchors are
+// distinguishable in a post-mortem.
+func rebuildReasonFor(now time.Time, s peerReconcileState) string {
+	if reconcileShouldRebuild(now, s.createdAt, s.rebuildCount) {
+		return fmt.Sprintf("no media after %s", captureRebuildGrace)
+	}
+	return fmt.Sprintf("no media within %s of the answer, ICE not connected", firstMediaGrace)
 }
 
 // reconcileShouldRebuild reports whether a subscriber that has captured no
@@ -1044,7 +1279,7 @@ func (r *Recorder) capturedPacketTotals() map[string]int {
 // participant. It reuses ensureSubscriber's registration discipline: build the
 // peer outside the lock, then swap only if we are not stopping and the old peer
 // is still the registered one.
-func (r *Recorder) rebuildSubscriber(old *subscriberPeer, now time.Time) {
+func (r *Recorder) rebuildSubscriber(old *subscriberPeer, now time.Time, reason string) {
 	sid := old.remoteSessionID
 	newPeer, err := r.newSubscriberPeer(sid)
 	if err != nil {
@@ -1071,7 +1306,7 @@ func (r *Recorder) rebuildSubscriber(old *subscriberPeer, now time.Time) {
 	r.mu.Unlock()
 
 	_ = old.close()
-	log.Printf("talk recorder: rebuilding subscriber sid=%s (no media after %s, rebuild %d/%d)", sid, captureRebuildGrace, newPeer.rebuildCount, maxCaptureRebuilds)
+	log.Printf("talk recorder: rebuilding subscriber sid=%s (%s, rebuild %d/%d)", sid, reason, newPeer.rebuildCount, maxCaptureRebuilds)
 	if err := newPeer.requestOffer(); err != nil {
 		log.Printf("rebuild requestoffer failed for %s: %v", sid, err)
 	}
@@ -2036,11 +2271,23 @@ func (p *subscriberPeer) sendEndOfCandidates(reason string) {
 
 // beginNegotiation re-arms the per-negotiation signaling state when an offer
 // arrives: the response throttle (so the retry loop stays quiet while the
-// answer is built and sent), the negotiation SID, and the local ICE gate.
-// Signals buffered for a superseded negotiation are dropped — they were
-// stamped with the old SID and must not ride out around the new answer. It
-// deliberately does NOT set offerReceived: only a successfully sent answer
-// stops offer retries (D-386, see markAnswerSent).
+// answer is built and sent), the negotiation SID, and the local ICE gate. It is
+// the single point at which state belonging to a superseded negotiation is
+// invalidated. Buffered ICE signals are dropped — they were stamped with the
+// old SID and must not ride out around the new answer — and so is any pending
+// answer: the MCU has moved on and stopped waiting for it, so retransmitting it
+// could only put a stale answer on the wire (D-509).
+//
+// It deliberately does NOT set offerReceived: only a successfully sent answer
+// stops offer retries (D-386, see markAnswerSent). Note this is a one-way
+// latch, so on a RENEGOTIATION offerReceived is already true on entry and the
+// retries it gates were stopped by the previous negotiation, not by this one —
+// the pendingAnswer retransmit is what covers a failed answer from here on
+// (D-509 gap 2).
+//
+// It also does NOT clear answeredAt, which means "last successful answer at":
+// a peer mid-renegotiation has still been answered since then, and still has
+// whatever media that answer produced (or has not).
 func (p *subscriberPeer) beginNegotiation(sid string) {
 	p.mu.Lock()
 	p.awaitingOfferSince = time.Now()
@@ -2048,7 +2295,106 @@ func (p *subscriberPeer) beginNegotiation(sid string) {
 	p.endOfCandidatesSent = false
 	p.answerSent = false
 	p.pendingLocalICESignals = nil
+	p.pendingAnswer = nil
+	p.pendingAnswerSID = ""
+	p.pendingAnswerSince = time.Time{}
+	p.answerRetransmits = 0
 	p.mu.Unlock()
+}
+
+// recordPendingAnswer stores an answer whose signaling write failed, so the
+// reconcile loop can finish the send. Storing is conditional on sid still being
+// the current negotiation: an offer handler can be superseded by a newer offer
+// while its write is in flight, and installing a wedge for a negotiation the
+// MCU has already abandoned would leave a retransmit chasing a dead SID.
+func (p *subscriberPeer) recordPendingAnswer(payload map[string]any, sid string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if sid == "" || sid != p.currentSID {
+		return
+	}
+	p.pendingAnswer = payload
+	p.pendingAnswerSID = sid
+	p.pendingAnswerSince = time.Now()
+	p.answerRetransmits = 0
+}
+
+// retryPendingAnswer re-sends an answer whose write failed, completing the
+// negotiation the MCU is still waiting on. It is the recovery for D-509 gap 2:
+// the answer SDP was already built (SetLocalDescription succeeded) and only the
+// write failed, so the peer needs the send finished, not a rebuild (which would
+// drop its live audio) and not a fresh offer (an empty-SID requestoffer against
+// a peer with a live Janus subscriber is the D-454 ALREADY_JOINED mechanism
+// that PR #127 removed).
+//
+// It is compare-and-act under p.mu, and that is not incidental. reconcile is
+// snapshot -> decide -> act, so a new offer can land between the two: it would
+// clear this pendingAnswer and rotate currentSID, and a naive retransmit would
+// then put the OLD sid's answer on the wire and call markAnswerSent — opening
+// the gate and flushing the NEW negotiation's buffered candidates around an
+// answer that was never sent for it. That is exactly the D-454 harm, re-entered
+// through a new door. So the SID is re-read under the lock before sending, and
+// re-checked after the write with the gate-open in the same critical section;
+// if it moved either time, this retransmit belongs to a dead negotiation and
+// touches nothing.
+func (p *subscriberPeer) retryPendingAnswer() {
+	payload, sid, ok := p.takePendingAnswerForRetry()
+	if !ok {
+		return
+	}
+	p.completeAnswerRetransmit(sid, p.owner.sendPeerMessage(p.remoteSessionID, "answer", payload, sid))
+}
+
+// takePendingAnswerForRetry returns the pending answer to retransmit, but only
+// while it still belongs to the CURRENT negotiation: reconcile decided to retry
+// from a snapshot, and a new offer may have superseded this answer since.
+func (p *subscriberPeer) takePendingAnswerForRetry() (map[string]any, string, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.pendingAnswer == nil || p.pendingAnswerSID == "" || p.pendingAnswerSID != p.currentSID {
+		return nil, "", false
+	}
+	return p.pendingAnswer, p.pendingAnswerSID, true
+}
+
+// completeAnswerRetransmit applies the outcome of a retransmit write. It is
+// split from the write itself because the write happens with p.mu released (a
+// network write must not hold the peer lock), which is exactly the window in
+// which a new offer can supersede this negotiation: beginNegotiation would drop
+// the pending answer, rotate currentSID and shut the gate again. If this then
+// called markAnswerSent unconditionally it would re-open the gate and flush the
+// NEW negotiation's buffered candidates around an answer that was never sent
+// for it — the D-454 failure (#127) from a new site. So the SID is re-checked
+// under the lock, and the check and markAnswerSentLocked share one critical
+// section: the gate can only ever open for the negotiation we just answered.
+func (p *subscriberPeer) completeAnswerRetransmit(sid string, err error) {
+	p.mu.Lock()
+	if p.pendingAnswer == nil || p.pendingAnswerSID != sid || p.currentSID != sid {
+		// Superseded while the write was in flight. Whatever we just wrote is
+		// stale; the new negotiation owns the gate and must not be opened by us.
+		p.mu.Unlock()
+		return
+	}
+	if err != nil {
+		// A resume window is the expected cause of the wedge, not evidence the
+		// peer is broken, so it must not burn the write budget: a resume that
+		// SUCCEEDS can take ~15-25s (see answerRetransmitBudget). The wall-clock
+		// budget still bounds this.
+		if !errors.Is(err, signaling.ErrNotConnected) {
+			p.answerRetransmits++
+		}
+		retransmits := p.answerRetransmits
+		p.mu.Unlock()
+		log.Printf("retry answer failed remote=%s sid=%s (attempt %d/%d): %v", p.remoteSessionID, sid, retransmits, maxAnswerRetransmits, err)
+		return
+	}
+	startFlush := p.markAnswerSentLocked()
+	p.mu.Unlock()
+
+	log.Printf("talk recorder: retransmitted wedged answer remote=%s sid=%s; ICE gate reopened", p.remoteSessionID, sid)
+	if startFlush {
+		p.flushLocalICESignals()
+	}
 }
 
 // markAnswerSent opens the local ICE gate only after sendPeerMessage(answer)
@@ -2056,18 +2402,38 @@ func (p *subscriberPeer) beginNegotiation(sid string) {
 // a failed answer write must leave retries enabled and candidates buffered.
 func (p *subscriberPeer) markAnswerSent() {
 	p.mu.Lock()
-	p.answerSent = true
-	p.offerReceived = true
-	p.awaitingOfferSince = time.Time{}
-	startFlush := len(p.pendingLocalICESignals) != 0 && !p.localICEFlushing
-	if startFlush {
-		p.localICEFlushing = true
-	}
+	startFlush := p.markAnswerSentLocked()
 	p.mu.Unlock()
 
 	if startFlush {
 		p.flushLocalICESignals()
 	}
+}
+
+// markAnswerSentLocked is markAnswerSent's body; p.mu must be held. It exists
+// so retryPendingAnswer can compare the negotiation SID and open the gate in
+// ONE critical section: opening the gate for a negotiation whose answer we did
+// not just send is precisely the D-454 failure (buffered candidates flushing
+// around an answer the remote never received), and a retransmit races every
+// inbound offer by construction.
+//
+// It clears the pending answer because the answer has now landed, and stamps
+// answeredAt as the anchor for firstMediaGrace. Returns whether the caller must
+// drive flushLocalICESignals (which must not run under p.mu).
+func (p *subscriberPeer) markAnswerSentLocked() bool {
+	p.answerSent = true
+	p.offerReceived = true
+	p.answeredAt = time.Now()
+	p.awaitingOfferSince = time.Time{}
+	p.pendingAnswer = nil
+	p.pendingAnswerSID = ""
+	p.pendingAnswerSince = time.Time{}
+	p.answerRetransmits = 0
+	startFlush := len(p.pendingLocalICESignals) != 0 && !p.localICEFlushing
+	if startFlush {
+		p.localICEFlushing = true
+	}
+	return startFlush
 }
 
 func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any) error {
@@ -2123,12 +2489,16 @@ func (p *subscriberPeer) handleMessage(ctx context.Context, data map[string]any)
 			return fmt.Errorf("local description missing for %s", p.remoteSessionID)
 		}
 
-		if err := p.owner.sendPeerMessage(
-			p.remoteSessionID,
-			"answer",
-			map[string]any{"type": local.Type.String(), "sdp": local.SDP},
-			sid,
-		); err != nil {
+		answerPayload := map[string]any{"type": local.Type.String(), "sdp": local.SDP}
+		if err := p.owner.sendPeerMessage(p.remoteSessionID, "answer", answerPayload, sid); err != nil {
+			// The SDP is built and the MCU is waiting for exactly this answer;
+			// only the write failed (typically the signaling client's resume
+			// window, during which Send returns ErrNotConnected while the same
+			// session is redialed and resumed). Record it so reconcile can
+			// finish the send. Without this, a renegotiation wedge is
+			// unreachable forever once the peer is capturing anything, because
+			// the captured>0 skip runs before every other guard (D-509 gap 2).
+			p.recordPendingAnswer(answerPayload, sid)
 			return fmt.Errorf("send answer for %s: %w", p.remoteSessionID, err)
 		}
 
