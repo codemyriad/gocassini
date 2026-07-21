@@ -66,6 +66,7 @@ jobs:
           ./harness/bin/test-installed-backend-url.sh
           ./harness/bin/test-post-boundary-stream.sh
           ./harness/bin/test-ci-e2e-mute-timing.sh
+          ./harness/bin/test-negative-manifest.sh
       - name: Parse every harness shell script
         run: |
           set -euo pipefail
@@ -87,8 +88,11 @@ jobs:
           harness/bin/ci-e2e-installed-exapp-talk.sh
           harness/bin/test-post-boundary-stream.sh
           harness/bin/verify-post-boundary-stream.sh
+          harness/bin/test-negative-manifest.sh
       - name: Compile D-453 Python helpers
-        run: python3 -m py_compile harness/bin/installed-validation.py
+        run: |
+          python3 -m py_compile harness/bin/installed-validation.py
+          python3 -m py_compile harness/bin/make-negative-manifest.py
 
   ui:
     name: UI tests (${{ matrix.package }})

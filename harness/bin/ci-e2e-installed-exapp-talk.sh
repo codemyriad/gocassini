@@ -19,9 +19,22 @@ MEDIA_PREFIX="${MEDIA_PREFIX:-$REPO_ROOT/harness/media/processed/showcase-lanter
 EXPECT_CONFIG_FAILURE="${D453_EXPECT_CONFIG_FAILURE:-0}"
 FAIL_AT="${D453_FAIL_AT:-}"
 CANONICAL_LOCAL_IMAGE="cassini-exapp:e2e-v3-cpu-gpu"
+# The AppAPI proxy base for the installed ExApp. Hoisted here (it is a constant,
+# with no post-stack dependency) so the D-403 sensitivity control can probe
+# /operator/status at the stack-up failure boundary, where the container is
+# still live but the positive assertions below have not been reached.
+PROXY_URL="http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini"
 PRODUCTION_IMAGE="$(exapp_image_ref "$MANIFEST_PATH")"
 APP_VERSION="$(exapp_app_version "$MANIFEST_PATH")"
 RESULT="failed"
+# Set to 1 only once the run commits to driving a real recording (just before the
+# validator invocation), so write_summary can report recording_performed as a
+# FACT about the run rather than a branch-hardcoded constant. The D-403 control
+# path exits before this is ever set, so its summary honestly reports false.
+RECORDING_ATTEMPTED=0
+# Names the negative-control branch that fired, surfaced in summary.json. Empty
+# on positive runs.
+CONTROL_BRANCH=""
 CLEANUP_RESULT="not-run"
 SOURCE_IMAGE_ID=""
 INSTALLED_IMAGE_ID=""
@@ -89,6 +102,12 @@ write_summary() {
   local rc="$1" validator_summary="$LOG_DIR/validator/summary.json"
   [[ -f "$validator_summary" ]] || printf '{}\n' >"$LOG_DIR/validator-summary.empty.json"
   [[ -f "$validator_summary" ]] || validator_summary="$LOG_DIR/validator-summary.empty.json"
+  # The D-403 control probe writes the installed status body it asserted on to
+  # control-status.json; fall back to a JSON null so the control object is always
+  # well-formed (positive runs never write it).
+  local control_status_file="$LOG_DIR/control-status.json"
+  [[ -f "$control_status_file" ]] || printf 'null\n' >"$LOG_DIR/control-status.empty.json"
+  [[ -f "$control_status_file" ]] || control_status_file="$LOG_DIR/control-status.empty.json"
   jq -n \
     --arg result "$RESULT" \
     --argjson exit_code "$rc" \
@@ -99,8 +118,12 @@ write_summary() {
     --arg app_version "$APP_VERSION" \
     --arg manifest "$MANIFEST_PATH" \
     --arg cleanup "$CLEANUP_RESULT" \
+    --arg expect_config_failure "$EXPECT_CONFIG_FAILURE" \
+    --argjson recording_attempted "$RECORDING_ATTEMPTED" \
+    --arg control_branch "$CONTROL_BRANCH" \
     --slurpfile validation "$validator_summary" \
-    '{result:$result,exit_code:$exit_code,image_ref:$image_ref,source_image_id:$source_image_id,installed_image_id:$installed_image_id,production_image:$production_image,app_version:$app_version,manifest:$manifest,cleanup:$cleanup,validation:($validation[0] // {})}' \
+    --slurpfile control_status "$control_status_file" \
+    '{result:$result,exit_code:$exit_code,image_ref:$image_ref,source_image_id:$source_image_id,installed_image_id:$installed_image_id,production_image:$production_image,app_version:$app_version,manifest:$manifest,cleanup:$cleanup,control:{expected:($expect_config_failure == "1"),signaling_internal_secret_configured:($control_status[0].talk.signaling_internal_secret_configured),recording_performed:($recording_attempted == 1),branch:(if $control_branch == "" then null else $control_branch end)},validation:($validation[0] // {})}' \
     >"$LOG_DIR/summary.json" || true
 }
 
@@ -149,10 +172,29 @@ if ! CASSINI_HARNESS_INFO_XML="$MANIFEST_PATH" PROJECT_NAME="$PROJECT_NAME" \
     --reset \
     > >(tee "$LOG_DIR/stack-up.log") \
     2> >(tee "$LOG_DIR/stack-up.err" >&2); then
-  if [[ "$EXPECT_CONFIG_FAILURE" == 1 ]] \
-    && grep -q 'signaling internal secret missing from status' "$LOG_DIR/stack-up.err"; then
+  if [[ "$EXPECT_CONFIG_FAILURE" == 1 ]]; then
+    # D-403 sensitivity control. Stack up failed at route verification
+    # (harness_verify_exapp_routes, lib/stack.sh) because the stripped manifest
+    # never declared CASSINI_TALK_SIGNALING_INTERNAL_SECRET, so AppAPI dropped
+    # the admin-supplied --env value and the operator reports the signaling
+    # secret unconfigured. up.sh performs no teardown on failure, so the ExApp
+    # container is still installed and reachable through the AppAPI proxy right
+    # here — probe /operator/status directly and assert the PARSED value, not a
+    # log string that lives in a shared library one reword from vacuous.
+    #
+    # The assertion is differential: the declared sibling (secret_configured)
+    # must STILL be true, so the only difference the control observes is the
+    # missing declaration — the exact D-403 boundary, not a wholesale env
+    # injection failure or an empty .talk object.
+    control_status="$(curl -fsS -u admin:admin "$PROXY_URL/operator/status")" \
+      || fail "D-403 control: operator status unreachable after stack-up failure"
+    printf '%s\n' "$control_status" >"$LOG_DIR/control-status.json"
+    jq -e '.talk.signaling_internal_secret_configured == false and .talk.secret_configured == true' \
+      <<<"$control_status" >/dev/null \
+      || fail "D-403 control: stripped manifest did not suppress the signaling secret (status: $control_status)"
     RESULT="sensitivity-control-passed"
-    log "D-403 sensitivity control passed during stack verification"
+    CONTROL_BRANCH="stack-verification"
+    log "D-403 sensitivity control passed: signaling secret reported unconfigured, recording never attempted"
     exit 0
   fi
   fail "cassini dev stack up failed"
@@ -172,7 +214,8 @@ production_id="$(docker image inspect "$PRODUCTION_IMAGE" --format '{{.Id}}')"
 [[ "$INSTALLED_IMAGE_ID" == "$SOURCE_IMAGE_ID" ]] \
   || fail "installed ExApp image $INSTALLED_IMAGE_ID differs from tested image $SOURCE_IMAGE_ID"
 
-PROXY_URL="http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini"
+# PROXY_URL is defined once near the top so the D-403 control can reuse it at
+# the stack-up failure boundary above.
 curl -fsS "$PROXY_URL/api/v1/welcome" | grep -q '"version":1' \
   || fail "welcome route did not return version=1"
 status_json="$(curl -fsS -u admin:admin "$PROXY_URL/operator/status")"
@@ -180,17 +223,18 @@ printf '%s\n' "$status_json" >"$LOG_DIR/operator-status-asserted.json"
 jq -e --arg version "$APP_VERSION" '.version == $version and .image_tag == $version' \
   <<<"$status_json" >/dev/null || fail "operator identity does not match manifest version $APP_VERSION"
 
-if [[ "$EXPECT_CONFIG_FAILURE" == 1 ]]; then
-  jq -e '.talk.signaling_internal_secret_configured == false' <<<"$status_json" >/dev/null \
-    || fail "missing-manifest-variable control did not suppress signaling secret"
-  RESULT="sensitivity-control-passed"
-  log "D-403 sensitivity control passed: undeclared signaling secret was not injected"
-  exit 0
-fi
+# The D-403 negative control never reaches this point: a stripped manifest fails
+# stack up at route verification, and the control asserts + exits at that failure
+# boundary above. Reaching here therefore means EXPECT_CONFIG_FAILURE=0, so the
+# positive Talk-configuration gate below is the only assertion this status feeds.
 jq -e '.talk.secret_configured == true and .talk.signaling_internal_secret_configured == true and .talk.backend_url_override_configured == true' \
   <<<"$status_json" >/dev/null || fail "manifest-gated Talk configuration is incomplete"
 
 RESULT="running"
+# The run now commits to driving a real recording; record that as a fact so
+# summary.json's control.recording_performed is true here and false on the D-403
+# control path (which exited before this line).
+RECORDING_ATTEMPTED=1
 VALIDATOR_LOG_DIR="$LOG_DIR/validator"
 LOG_DIR="$VALIDATOR_LOG_DIR" \
   "$SCRIPT_DIR/validate-installed-exapp-private-talk.sh" \
