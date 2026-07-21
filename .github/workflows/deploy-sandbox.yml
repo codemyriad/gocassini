@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: Tag to publish and deploy
+        description: Container tag to build and deploy. Leave empty to install the latest release from the App Store (default).
         type: string
-        default: main
+        default: ''
       reset:
         description: Reset sandbox volumes before deploying
         type: boolean
@@ -47,6 +47,7 @@ jobs:
 
       - name: Compute image ref
         id: image
+        if: ${{ inputs.image_tag != '' }}
         run: |
           set -euo pipefail
           raw_tag="${{ inputs.image_tag }}"
@@ -55,6 +56,7 @@ jobs:
           echo "ref=$image_ref" >> "$GITHUB_OUTPUT"
 
       - name: Build and push ExApp image
+        if: ${{ inputs.image_tag != '' }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -85,7 +87,11 @@ jobs:
           REGISTER_ONLY: ${{ inputs.register_only }}
         run: |
           set -euo pipefail
-          deploy_args=(--image "$IMAGE_REF")
+          deploy_args=()
+          # Empty IMAGE_REF => install the latest release from the App Store (deploy.sh default).
+          if [ -n "$IMAGE_REF" ]; then
+            deploy_args+=(--image "$IMAGE_REF")
+          fi
           if [ "$RESET" = "true" ]; then
             deploy_args+=(--reset)
           fi

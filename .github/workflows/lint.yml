@@ -5,9 +5,10 @@
 # Scope notes:
 #   - actionlint lints every workflow in .github/workflows (with shellcheck on
 #     the embedded run: blocks).
-#   - shellcheck currently covers scripts/ only. Many older scripts elsewhere
+#   - shellcheck covers scripts/ and sandbox/. Many older scripts elsewhere
 #     (harness/, deployment/, …) predate shellcheck and don't pass it yet;
-#     widening the glob needs a cleanup pass first so this gate stays green.
+#     widening the glob further needs a cleanup pass first so this gate stays
+#     green.
 name: Lint
 
 on:
@@ -15,11 +16,13 @@ on:
     branches: [main]
     paths:
       - 'scripts/**'
+      - 'sandbox/**'
       - '.github/workflows/**'
       - '.github/actions/**'
   pull_request:
     paths:
       - 'scripts/**'
+      - 'sandbox/**'
       - '.github/workflows/**'
       - '.github/actions/**'
 
@@ -45,8 +48,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck xsltproc libxml2-utils
 
-      - name: shellcheck scripts/
-        run: shellcheck scripts/*.sh
+      - name: shellcheck scripts/ + sandbox/
+        run: shellcheck scripts/*.sh sandbox/*.sh
 
       - name: actionlint (all workflows)
         run: |
@@ -56,4 +59,6 @@ jobs:
           ./actionlint
 
       - name: Run script test suites
-        run: ./scripts/test-release-tooling.sh
+        run: |
+          ./scripts/test-release-tooling.sh
+          ./sandbox/test-store-release.sh

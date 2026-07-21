@@ -11,11 +11,16 @@ The sandbox reuses the existing harness topology:
 - Cassini as an AppAPI ExApp
 - optional full Talk stack: signaling, Janus, NATS, TURN
 
-Unlike the CI harness, the sandbox intentionally tracks the newest upstream
-Nextcloud container by default: `NEXTCLOUD_IMAGE=nextcloud:latest`, with Compose
+The sandbox tracks Nextcloud's **stable** channel by default:
+`NEXTCLOUD_IMAGE=nextcloud:stable` (currently NC 33.x), with Compose
 `pull_policy: always` so normal deploys refresh the image before starting
-Nextcloud. Pin `NEXTCLOUD_IMAGE` in `sandbox/.env` only when debugging a
-version-specific issue.
+Nextcloud. This mirrors a real/production deployment. Do **not** use
+`nextcloud:latest` — it rides the newest major before Nextcloud promotes it to
+stable, and the bundled AppAPI on the pre-stable NC 34 ships a broken ExApp
+management UI (AppAPI is bundled with the server, so its version is whatever the
+Nextcloud image bundles). Override `NEXTCLOUD_IMAGE` in `sandbox/.env` only to
+debug a specific version (e.g. `nextcloud:production` for the most conservative
+channel, or `nextcloud:34` to reproduce a version-specific issue).
 
 ## First setup on a VPS
 
@@ -83,9 +88,19 @@ Use `SPREED_PROFILE=default` in `sandbox/.env` if you only need to demo AppAPI
 install, the control panel, and the viewer. Use `SPREED_PROFILE=full` when you
 need Talk call recording.
 
+## Cassini source
+
+By default `sandbox/deploy.sh` installs the **latest published release** of
+Cassini from the Nextcloud App Store (AppAPI ExApp catalog) — whichever is
+newest, be it a pre-release (alpha/beta/rc) or a stable version — and sets the
+Nextcloud update channel to `beta` so pre-release ExApps are also accepted and
+listed in the UI. Set `SANDBOX_UPDATE_CHANNEL` or `CASSINI_APPSTORE_CATALOG_URL`
+in `sandbox/.env` to override. Pass `--image`/`--build` (below) to register a
+specific container image instead of the store release.
+
 ## Updating
 
-Deploy a specific image:
+Deploy a specific image (switches off the store-install default):
 
 ```bash
 sandbox/deploy.sh --image ghcr.io/codemyriad/gocassini:branch-d-290-e2e-testing
