@@ -54,7 +54,6 @@ jobs:
           set -euo pipefail
           relevant=true
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            relevant=false
             # Fail closed: if the diff can't be computed, classify as relevant so
             # the required faithful gate actually runs instead of auto-passing green.
             if ! changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"; then
@@ -62,18 +61,16 @@ jobs:
               echo "relevant=true" | tee -a "$GITHUB_OUTPUT"
               exit 0
             fi
-            while IFS= read -r path; do
-              [[ -n "$path" ]] || continue
-              case "$path" in
-                # .dockerignore is a real image-build-context input (it excludes
-                # node_modules/.git/harness media from `context: .`), so a change to
-                # it must run the faithful gate rather than report a green no-op.
-                appinfo/*|deployment/*|cassini-operator/*|cassini-go-recorder/*|cassini-publisher/bin/*|cassini-viewer/*|cassini-app/*|package.json|harness/*|bin/*|scripts/*|.dockerignore|.gitattributes|.github/actions/*|.github/workflows/*)
-                  relevant=true
-                  break
-                  ;;
-              esac
-            done <<< "$changed"
+            # Deny-list classifier (D-505): relevant unless EVERY changed path is
+            # provably docs/notes/assets. The predicate, its ci.yml-mirrored
+            # deny-list, and the load-bearing empty-path guard live in the script
+            # so they stay unit-tested offline (scripts/test-classify-image-relevance.sh)
+            # rather than resting on review-by-eye. There is no product allow-list
+            # here anymore: an un-enumerated build input classifies relevant by
+            # default, wasting runner minutes at worst instead of greening a
+            # required check on an unbuilt product. Two-dot diff is deliberate --
+            # it over-reports, biasing toward relevant=true (the fail-safe side).
+            relevant="$(printf '%s\n' "$changed" | "$GITHUB_WORKSPACE/scripts/classify-image-relevance.sh")"
           fi
           echo "relevant=$relevant" | tee -a "$GITHUB_OUTPUT"
 
