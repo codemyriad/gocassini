@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -835,6 +837,15 @@ func TestStopJobAcceptsRunningRecordAndCompletesPublishStage(t *testing.T) {
 	if stopRec2.Code != http.StatusAccepted && stopRec2.Code != http.StatusConflict {
 		t.Fatalf("second stop status = %d, want 202 or 409 body=%s", stopRec2.Code, stopRec2.Body.String())
 	}
+	// A 409 is only legitimate here when the job has genuinely left the record
+	// stage — i.e. the store predicate refused it. It must never be the
+	// registration guard: that would mean the store still reports record/running
+	// while the map entry is gone, which is the D-501 invariant violation this
+	// blanket tolerance used to be able to absorb. The store only moves forward,
+	// so this is race-free and needs no re-read.
+	if stopRec2.Code == http.StatusConflict && strings.Contains(stopRec2.Body.String(), "no record registration") {
+		t.Fatalf("second stop 409'd on a missing registration, want the store predicate: %s", stopRec2.Body.String())
+	}
 
 	job := waitForJobState(t, rt.store, resp.ID, "succeeded")
 	if job.Stage != "done" {
@@ -861,6 +872,154 @@ func TestStopJobAcceptsRunningRecordAndCompletesPublishStage(t *testing.T) {
 	logText := readFileString(t, logPath)
 	if !strings.Contains(logText, "--call https://example.test/stop-me") {
 		t.Fatalf("expected record invocation, got %s", logText)
+	}
+}
+
+// TestStopJobAcceptedBeforeRecordProcessSpawned pins the D-501 window
+// deterministically. The recordJobFn seam is the repro: a fake that blocks
+// without ever spawning a recorder holds the job *permanently* in the state the
+// flake hit only by chance — the store says record/running, the process map is
+// empty. Before the bracket in runRecordJob, the stop handler's map gate
+// answered 409 "job is not stoppable" against a job the API had just reported
+// as running. No sleep, no stress loop, no timing assumption.
+func TestStopJobAcceptedBeforeRecordProcessSpawned(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	release := make(chan struct{})
+	rt.recordJobFn = func(ctx context.Context, job Job, req TriggerRequest) (recordResult, error) {
+		<-release
+		runPath := attemptRunPath(rt.cfg.WorkRoot, job.ID, job.CurrentAttemptNumber)
+		bundle, err := PrepareRunBundle(runPath, false)
+		if err != nil {
+			return recordResult{}, err
+		}
+		if err := os.WriteFile(bundle.RecordingPath, []byte("fake-mkv"), 0o644); err != nil {
+			return recordResult{}, err
+		}
+		if err := FinalizeRunBundle(bundle, RunManifest{SourceMode: "talk", RecorderName: req.GuestName}); err != nil {
+			return recordResult{}, err
+		}
+		return recordResult{ArtifactRunPath: bundle.RootDir, StopReason: "operator_requested", ExitCode: intPtr(0)}, nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs?provider=nextcloud-talk", strings.NewReader(`{"platform":"nextcloud-talk","url":"https://example.test/pre-spawn"}`))
+	rec := httptest.NewRecorder()
+	rt.jobsHandler(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	var resp createJobResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	waitForRecordState(t, rt.store, resp.ID, "running")
+
+	stopReq := httptest.NewRequest(http.MethodPost, "/jobs/"+resp.ID+"/stop", nil)
+	stopRec := httptest.NewRecorder()
+	rt.jobDetailHandler(stopRec, stopReq)
+	if stopRec.Code != http.StatusAccepted {
+		t.Fatalf("stop before spawn status = %d, want %d body=%s", stopRec.Code, http.StatusAccepted, stopRec.Body.String())
+	}
+
+	// The 202 is only honest if the stop was actually recorded: an accepted
+	// stop that writes nothing is a silent no-op, which is worse than the 409.
+	job, err := rt.store.GetJob(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatalf("GetJob() error = %v", err)
+	}
+	if job.StopRequestedAt == nil {
+		t.Fatalf("accepted stop did not record stop_requested_at, got job=%#v", job)
+	}
+
+	close(release)
+	_ = waitForJobState(t, rt.store, resp.ID, "succeeded")
+}
+
+// TestStopRequestedBeforeSpawnIsDeliveredOnAttach covers the other half of the
+// promise the 202 above makes. The handler accepts the stop without sending a
+// signal (there is no process yet), so delivery falls to attachRecordProcess.
+// If it drops the stop, the operator has accepted a stop it never performed —
+// trading a loud false 409 for a silent no-op (D-501 R4).
+func TestStopRequestedBeforeSpawnIsDeliveredOnAttach(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	const jobID = "job-pre-spawn-delivery"
+	rt.registerRecordJob(jobID)
+	defer rt.unregisterRecordJob(jobID)
+
+	state, alreadyStopping := rt.beginRecordStop(jobID)
+	if state == nil {
+		t.Fatalf("beginRecordStop found no registration before spawn")
+	}
+	if alreadyStopping {
+		t.Fatalf("first stop reported alreadyStopping on a fresh registration")
+	}
+	if process, claimed := state.claimStopSignal(); claimed || process != nil {
+		t.Fatalf("pre-spawn claim = (%v, %v), want (nil, false)", process, claimed)
+	}
+
+	// sleep outlives any plausible SIGTERM delivery: attach signals before it
+	// returns, so a live sleep here means the stop was dropped, not delayed.
+	cmd := exec.Command("sleep", "30")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start sleep: %v", err)
+	}
+	rt.attachRecordProcess(jobID, cmd.Process, make(chan struct{}), newRecordOutputActivity())
+
+	// Exactly one signal: attach must have consumed the latch, so nothing may
+	// claim again. Asserted before markRecordProcessExited — a closed done makes
+	// claimStopSignal decline for an unrelated reason, which would mask a
+	// delivery that bypassed the latch entirely and let a concurrent stop
+	// SIGTERM the recorder a second time.
+	if process, claimed := state.claimStopSignal(); claimed || process != nil {
+		t.Fatalf("claim after delivery = (%v, %v), want (nil, false) — attach delivered the stop without consuming the signalled latch", process, claimed)
+	}
+
+	waitErr := cmd.Wait()
+	rt.markRecordProcessExited(jobID)
+	var exitErr *exec.ExitError
+	if !errors.As(waitErr, &exitErr) {
+		t.Fatalf("sleep exit = %v, want an ExitError from SIGTERM", waitErr)
+	}
+	status, ok := exitErr.Sys().(syscall.WaitStatus)
+	if !ok || !status.Signaled() || status.Signal() != syscall.SIGTERM {
+		t.Fatalf("sleep exit = %v, want termination by SIGTERM", waitErr)
+	}
+}
+
+// TestRecordJobRegistrationOutlivesRecordProcess covers the mirror window at
+// the far end of the stage: the recorder has exited, but the store stays in
+// record/running until runRecordJob has promoted the bundle, retried Talk
+// delivery and queued the build. The registration must outlive the subprocess
+// and disappear only when the bracket closes. It also exercises the done
+// double-close — markRecordProcessExited and unregisterRecordJob both close it.
+func TestRecordJobRegistrationOutlivesRecordProcess(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	const jobID = "job-window-2"
+	state := rt.registerRecordJob(jobID)
+	if state == nil {
+		t.Fatalf("registerRecordJob returned nil")
+	}
+
+	rt.markRecordProcessExited(jobID)
+	select {
+	case <-state.done:
+	default:
+		t.Fatalf("markRecordProcessExited did not close done")
+	}
+	found, _ := rt.beginRecordStop(jobID)
+	if found == nil {
+		t.Fatalf("registration vanished when the record process exited, reopening the D-501 window")
+	}
+
+	rt.unregisterRecordJob(jobID)
+	if gone, _ := rt.beginRecordStop(jobID); gone != nil {
+		t.Fatalf("registration survived unregisterRecordJob")
 	}
 }
 
