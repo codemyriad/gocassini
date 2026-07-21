@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { CheckCircle2, Cpu, RefreshCw, SlidersHorizontal } from "@lucide/svelte";
+  import { Cpu, CircleGauge, RefreshCw, Settings as SettingsIcon } from "@lucide/svelte";
   import { OperatorClient, OperatorHttpError } from "./operator/client";
   import type { Settings, SettingsQuality } from "./operator/types";
 
@@ -36,11 +36,14 @@
   let modelOverride = "";
   let showAdvanced = false;
 
+  let savedQuality: SettingsQuality = "balanced";
+  let savedDeviceOverride = "";
+  let savedModelOverride = "";
+
   let loading = true;
   let saving = false;
   let loadError = "";
   let saveError = "";
-  let saveSuccess = false;
 
   onMount(() => {
     void loadSettings();
@@ -53,7 +56,6 @@
     loading = true;
     loadError = "";
     saveError = "";
-    saveSuccess = false;
     try {
       const next = await operatorClient.getSettings();
       applySettings(next);
@@ -70,7 +72,6 @@
     }
     saving = true;
     saveError = "";
-    saveSuccess = false;
     try {
       const next = await operatorClient.putSettings({
         quality,
@@ -78,7 +79,6 @@
         model_override: modelOverride,
       });
       applySettings(next);
-      saveSuccess = true;
     } catch (error) {
       saveError = asMessage(error);
     } finally {
@@ -91,6 +91,9 @@
     quality = next.quality;
     deviceOverride = next.device_override;
     modelOverride = next.model_override;
+    savedQuality = next.quality;
+    savedDeviceOverride = next.device_override;
+    savedModelOverride = next.model_override;
     if (next.device_override !== "" || next.model_override !== "") {
       showAdvanced = true;
     }
@@ -113,31 +116,49 @@
     return source || "—";
   }
 
-  // Clear the save confirmation as soon as the admin edits a field so a stale
-  // "saved" badge never lingers over unsaved changes.
-  $: quality, deviceOverride, modelOverride, (saveSuccess = false);
+  $: isDirty =
+    settings !== null &&
+    (quality !== savedQuality ||
+      deviceOverride !== savedDeviceOverride ||
+      modelOverride !== savedModelOverride);
 </script>
 
 <section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
   <header class="flex items-center justify-between gap-3 border-b border-base-300 px-4 py-3">
     <div class="flex items-center gap-2">
-      <SlidersHorizontal size={16} aria-hidden="true" />
       <div>
         <h2 class="font-semibold">Transcription quality</h2>
         <p class="text-xs text-base-content/60">
-          STT settings from <code>GET /settings</code>, saved via <code>PUT /settings</code>.
+          How accurate transcripts should be, traded against speed.
         </p>
       </div>
     </div>
-    <button
-      class="btn btn-ghost btn-sm"
-      type="button"
-      on:click={loadSettings}
-      disabled={loading || !operatorClient}
-      aria-label="Reload settings"
-    >
-      <RefreshCw size={16} aria-hidden="true" />
-    </button>
+    <div class="flex items-center gap-2">
+      {#if settings}
+        <button
+          class="btn btn-primary btn-sm hidden text-sm sm:inline-flex"
+          type="button"
+          disabled={saving || !isDirty}
+          on:click={handleSave}
+        >
+          {#if saving}
+            <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+            Saving…
+          {:else}
+            Save
+          {/if}
+        </button>
+      {/if}
+      <button
+        class="btn btn-ghost btn-sm btn-square"
+        type="button"
+        on:click={loadSettings}
+        disabled={loading || !operatorClient}
+        aria-label="Reload settings"
+      >
+        <RefreshCw size={16} aria-hidden="true" />
+      </button>
+    </div>
   </header>
 
   {#if loadError}
@@ -150,77 +171,96 @@
     <div class="flex items-center justify-center p-6 text-sm text-base-content/60">No settings available.</div>
   {:else}
     <div class="grid gap-4 p-4">
-      <section class="grid gap-2 rounded-box border border-base-300 bg-base-200/50 p-4">
-        <div class="flex items-center gap-2">
-          <Cpu size={16} aria-hidden="true" />
-          <h3 class="font-semibold">Detected hardware</h3>
-        </div>
-        <dl class="grid gap-3 sm:grid-cols-3">
-          <div>
-            <dt class="text-xs uppercase tracking-wide text-base-content/60">GPU</dt>
-            <dd class="text-sm">
-              {#if settings.detected_gpu}
-                <span class="badge badge-success badge-outline">Yes</span>
-              {:else}
-                <span class="badge badge-neutral badge-outline">No</span>
-              {/if}
-            </dd>
+      <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.75fr)] lg:items-start">
+        <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200/50 p-3">
+          <div class="flex items-center gap-2">
+            <Cpu size={16} aria-hidden="true" />
+            <h3 class="text-sm font-semibold">Detected hardware</h3>
           </div>
-          <div>
-            <dt class="text-xs uppercase tracking-wide text-base-content/60">CPU cores</dt>
-            <dd class="text-sm">{settings.cores}</dd>
-          </div>
-          <div>
-            <dt class="text-xs uppercase tracking-wide text-base-content/60">Source</dt>
-            <dd class="text-sm">
-              <span class="badge badge-outline">{sourceLabel(settings.source)}</span>
-            </dd>
-          </div>
-        </dl>
-      </section>
+          <dl class="grid gap-1.5 grid-cols-1">
+            <div class="flex items-center justify-between gap-2 py-1">
+              <dt class="text-sm text-base-content/60">GPU</dt>
+              <dd class="text-sm">
+                {#if settings.detected_gpu}
+                  <span class="badge badge-success badge-outline badge-sm">Yes</span>
+                {:else}
+                  <span class="badge badge-outline badge-md border-base-content/20 text-base-content">No</span>
+                {/if}
+              </dd>
+            </div>
+            <div class="flex items-center justify-between gap-2 py-1">
+              <dt class="text-sm text-base-content/60">CPU cores</dt>
+              <dd class="text-sm">
+                <span class="badge badge-outline badge-md border-base-content/20 text-base-content"
+                  >{settings.cores}</span
+                >
+              </dd>
+            </div>
+            <div class="flex items-center justify-between gap- py-1">
+              <dt class="text-sm text-base-content/60">Source</dt>
+              <dd class="text-sm">
+                <span class="badge badge-outline badge-md border-base-content/20 text-base-content"
+                  >{sourceLabel(settings.source)}</span
+                >
+              </dd>
+            </div>
+          </dl>
+        </section>
 
-      <fieldset class="grid gap-2">
-        <legend class="label-text font-medium">Quality</legend>
-        <div class="grid gap-2">
-          {#each QUALITY_OPTIONS as option}
-            <label
-              class="flex cursor-pointer items-start gap-3 rounded-box border border-base-300 p-3 transition hover:border-primary {quality === option.value ? 'border-primary bg-primary/5' : ''}"
-            >
-              <input
-                type="radio"
-                name="stt-quality"
-                class="radio radio-primary mt-0.5"
-                value={option.value}
-                bind:group={quality}
-              />
-              <span class="min-w-0">
-                <span class="block text-sm font-medium">{option.label}</span>
-                <span class="block text-xs text-base-content/60">{option.description}</span>
-              </span>
-            </label>
-          {/each}
-        </div>
-      </fieldset>
+        <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200/50 p-3">
+          <div class="flex items-center gap-2">
+            <CircleGauge size={16} aria-hidden="true" />
+            <h3 id="stt-quality-heading" class="text-sm font-semibold">Quality</h3>
+          </div>
+          <div class="grid gap-1.5" role="radiogroup" aria-labelledby="stt-quality-heading">
+            {#each QUALITY_OPTIONS as option}
+              <label
+                class="flex cursor-pointer items-center gap-2.5 rounded-box border px-2 py-1 transition {quality ===
+                option.value
+                  ? 'border-primary bg-primary/25 ring-1 ring-inset ring-primary'
+                  : 'border-base-300 bg-base-100 hover:border-primary/50'}"
+              >
+                <input
+                  type="radio"
+                  name="stt-quality"
+                  class="radio radio-primary radio-xs shrink-0"
+                  value={option.value}
+                  bind:group={quality}
+                />
+                <span class="min-w-0 flex-1 truncate">
+                  <span class="text-sm font-medium">{option.label}</span>
+                  <span class="ml-2 text-xs text-base-content/60">{option.description}</span>
+                </span>
+              </label>
+            {/each}
+          </div>
+        </section>
+      </div>
 
-      <div class="collapse collapse-arrow rounded-box border border-base-300 bg-base-100">
-        <input type="checkbox" bind:checked={showAdvanced} />
-        <div class="collapse-title text-sm font-medium">Advanced</div>
-        <div class="collapse-content">
-          <div class="grid gap-3">
-            <label class="form-control w-full gap-2">
-              <span class="label-text font-medium">Device override</span>
-              <select bind:value={deviceOverride} class="select select-bordered w-full">
+      <div class="collapse collapse-arrow rounded-box border border-base-300 bg-base-200/50">
+        <input type="checkbox" bind:checked={showAdvanced} aria-label="Show advanced transcription settings" />
+        <div class="collapse-title min-h-0 cursor-pointer p-3 transition hover:bg-base-300/40">
+          <div class="flex items-center gap-2">
+            <SettingsIcon size={16} aria-hidden="true" />
+            <h3 class="text-sm font-semibold">Device model and overrides</h3>
+          </div>
+        </div>
+        <div class="collapse-content px-3">
+          <div class="grid gap-3 pb-1 sm:grid-cols-2">
+            <label class="flex w-full flex-col gap-2">
+              <span class="text-xs font-medium text-base-content/70">Device override</span>
+              <select bind:value={deviceOverride} class="select select-bordered select-sm w-full">
                 <option value="">Auto</option>
                 <option value="cpu">CPU</option>
                 <option value="cuda">CUDA</option>
               </select>
             </label>
-            <label class="form-control w-full gap-2">
-              <span class="label-text font-medium">Model override</span>
+            <label class="flex w-full flex-col gap-2">
+              <span class="text-xs font-medium text-base-content/70">Model override</span>
               <input
                 bind:value={modelOverride}
                 type="text"
-                class="input input-bordered w-full"
+                class="input input-bordered input-sm w-full"
                 placeholder="(use default for selected quality)"
               />
             </label>
@@ -228,22 +268,19 @@
         </div>
       </div>
 
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <button class="btn btn-primary" type="button" disabled={saving} on:click={handleSave}>
-          {#if saving}
-            <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
-            Saving…
-          {:else}
-            Save
-          {/if}
-        </button>
-        {#if saveSuccess}
-          <span class="flex items-center gap-2 text-sm text-success">
-            <CheckCircle2 size={16} aria-hidden="true" />
-            Settings saved.
-          </span>
+      <button
+        class="btn btn-primary w-full text-sm sm:hidden"
+        type="button"
+        disabled={saving || !isDirty}
+        on:click={handleSave}
+      >
+        {#if saving}
+          <span class="loading loading-spinner loading-sm" aria-hidden="true"></span>
+          Saving…
+        {:else}
+          Save
         {/if}
-      </div>
+      </button>
 
       {#if saveError}
         <div class="alert alert-error text-sm">{saveError}</div>
