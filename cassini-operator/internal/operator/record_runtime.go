@@ -44,16 +44,73 @@ const (
 	recordShutdownWait = recordStopFinalizeGrace + time.Minute
 )
 
+// recordProcessState tracks one job's record stage. The entry is created by
+// registerRecordJob before the store publishes record/running and removed by
+// unregisterRecordJob after the store has left it, so the registration's
+// lifetime is a superset of the store's claim: a stop the API accepts because
+// the store says "running" always finds an entry to act on (D-501).
+//
+// The process itself only exists for part of that lifetime, so process is nil
+// until attachRecordProcess fills it in.
 type recordProcessState struct {
-	process *os.Process
-	done    chan struct{}
-	// stopInProgress is set by stop requests under recordMu but read by the
-	// record goroutine without it, so it must be atomic (D-364).
-	stopInProgress atomic.Bool
+	// mu guards process, stopping, output and signalled.
+	//
+	// WRITE-ONCE INVARIANT: attachRecordProcess is the only writer of process,
+	// stopping and output, and it writes each exactly once. The readers that
+	// touch them without holding mu (executeRecordCLI's talk-started callback
+	// path, stopRecordProcessOnShutdown, enforceRecordStop/hardKillRecordProcess)
+	// are sound only because every one of them is reachable exclusively after
+	// that write, ordered by the `go` statements that follow attachRecordProcess
+	// or by a claimStopSignal that returned a non-nil process. If a second write
+	// to these fields is ever added, those readers must move under mu (D-501).
+	//
+	// mu exists for the one reader that genuinely races the write: a stop
+	// request landing before the recorder has spawned.
+	mu        sync.Mutex
+	process   *os.Process
+	signalled bool
 	// stopping is closed when the recorder prints recordStoppingMarker,
 	// i.e. it acknowledged SIGTERM and started finalizing.
 	stopping chan struct{}
 	output   *recordOutputActivity
+
+	done chan struct{}
+	// closeDone guards done against a double close: markRecordProcessExited
+	// closes it when the subprocess exits, and unregisterRecordJob closes it
+	// when the stage ends without ever spawning one.
+	closeDone sync.Once
+	// stopInProgress is set by stop requests under recordMu but read by the
+	// record goroutine without it, so it must be atomic (D-364). It stays
+	// outside mu; the pre-spawn handoff is safe because attachRecordProcess
+	// reads it inside the same mu critical section that writes process, and
+	// claims through the signalled latch (D-501).
+	stopInProgress atomic.Bool
+}
+
+// claimStopSignal returns the process to SIGTERM, exactly once across every
+// caller. It yields (nil, false) when the recorder has not spawned yet (the
+// stop is then delivered by attachRecordProcess), when someone else already
+// claimed the signal, or when the subprocess has already exited.
+func (s *recordProcessState) claimStopSignal() (*os.Process, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.claimStopSignalLocked()
+}
+
+// claimStopSignalLocked is claimStopSignal's core; the caller must hold s.mu.
+// attachRecordProcess claims through this so it can decide to deliver a pending
+// stop without leaving the critical section that publishes process.
+func (s *recordProcessState) claimStopSignalLocked() (*os.Process, bool) {
+	if s.signalled || s.process == nil {
+		return nil, false
+	}
+	select {
+	case <-s.done:
+		return nil, false
+	default:
+	}
+	s.signalled = true
+	return s.process, true
 }
 
 type recordResult struct {
@@ -214,8 +271,8 @@ func (rt *Runtime) executeRecordCLI(_ context.Context, job Job, req TriggerReque
 		return recordResult{}, fmt.Errorf("cassini record start: %w", err)
 	}
 
-	state := rt.registerRecordProcess(job.ID, cmd.Process, stoppingCh, activity)
-	defer rt.completeRecordProcess(job.ID)
+	state := rt.attachRecordProcess(job.ID, cmd.Process, stoppingCh, activity)
+	defer rt.markRecordProcessExited(job.ID)
 	go rt.stopRecordProcessOnShutdown(job.ID, state)
 
 	waitCh := make(chan error, 1)
@@ -296,16 +353,14 @@ func isValidTalkAuthMode(value string) bool {
 	}
 }
 
-func (rt *Runtime) registerRecordProcess(jobID string, process *os.Process, stopping chan struct{}, output *recordOutputActivity) *recordProcessState {
-	if output == nil {
-		output = newRecordOutputActivity()
-	}
-	state := &recordProcessState{
-		process:  process,
-		done:     make(chan struct{}),
-		stopping: stopping,
-		output:   output,
-	}
+// registerRecordJob opens the record stage's stop bracket. It is called by
+// runRecordJob before MarkRecordRunning so that no stop can ever observe
+// record/running without finding an entry, and is paired with
+// unregisterRecordJob, which runs after the store has left record/running.
+// The entry starts without a process: executeRecordCLI attaches one once the
+// recorder spawns, and a stop arriving before that is still accepted (D-501).
+func (rt *Runtime) registerRecordJob(jobID string) *recordProcessState {
+	state := &recordProcessState{done: make(chan struct{})}
 	rt.recordMu.Lock()
 	if rt.recordJobs == nil {
 		rt.recordJobs = map[string]*recordProcessState{}
@@ -315,13 +370,80 @@ func (rt *Runtime) registerRecordProcess(jobID string, process *os.Process, stop
 	return state
 }
 
-func (rt *Runtime) completeRecordProcess(jobID string) {
+// unregisterRecordJob closes the bracket: it removes the entry after every
+// store transition the record stage makes. It also closes done, because a
+// record stage that never spawned a subprocess (a fake recordJobFn, or an
+// early error) has nothing else to close it and enforceRecordStop waits on it.
+func (rt *Runtime) unregisterRecordJob(jobID string) {
 	rt.recordMu.Lock()
 	state := rt.recordJobs[jobID]
 	delete(rt.recordJobs, jobID)
 	rt.recordMu.Unlock()
 	if state != nil {
-		close(state.done)
+		state.closeDone.Do(func() { close(state.done) })
+	}
+}
+
+// attachRecordProcess fills in the spawned recorder on the entry the bracket
+// already created. If a stop was requested while the recorder was still
+// spawning, the API has already answered 202 with no signal sent — this is
+// where that promise is kept.
+//
+// The stopInProgress read must stay inside the same critical section that
+// writes process: releasing mu first would let a concurrent handleStopJob claim
+// the signal and leave both paths believing they owe a SIGTERM (D-501).
+func (rt *Runtime) attachRecordProcess(jobID string, process *os.Process, stopping chan struct{}, output *recordOutputActivity) *recordProcessState {
+	if output == nil {
+		output = newRecordOutputActivity()
+	}
+	rt.recordMu.Lock()
+	state := rt.recordJobs[jobID]
+	if state == nil {
+		// The bracket is opened by runRecordJob before the stage starts, so a
+		// missing entry means the record stage ran outside its driver. Insert
+		// one rather than nil-panicking the recorder, and insert it into the
+		// map (not a detached value) so markRecordProcessExited and
+		// unregisterRecordJob still find it.
+		rt.logger.Printf("record attach without registration id=%s", jobID)
+		state = &recordProcessState{done: make(chan struct{})}
+		if rt.recordJobs == nil {
+			rt.recordJobs = map[string]*recordProcessState{}
+		}
+		rt.recordJobs[jobID] = state
+	}
+	rt.recordMu.Unlock()
+
+	state.mu.Lock()
+	state.process = process
+	state.stopping = stopping
+	state.output = output
+	var pending *os.Process
+	if state.stopInProgress.Load() {
+		pending, _ = state.claimStopSignalLocked()
+	}
+	state.mu.Unlock()
+
+	if pending != nil {
+		if err := pending.Signal(syscall.SIGTERM); err != nil && !isExitedProcessError(err) {
+			rt.logger.Printf("record stop delivery on spawn failed id=%s: %v", jobID, err)
+		} else {
+			rt.logger.Printf("record stop delivered on spawn id=%s", jobID)
+		}
+		go rt.enforceRecordStop(jobID, state)
+	}
+	return state
+}
+
+// markRecordProcessExited reports that the subprocess is gone. The map entry
+// deliberately survives: the store still says record/running until runRecordJob
+// finishes promotion, Talk delivery and the build handoff, and a stop arriving
+// in that window must be answered honestly rather than 409'd (D-501).
+func (rt *Runtime) markRecordProcessExited(jobID string) {
+	rt.recordMu.Lock()
+	state := rt.recordJobs[jobID]
+	rt.recordMu.Unlock()
+	if state != nil {
+		state.closeDone.Do(func() { close(state.done) })
 	}
 }
 
@@ -352,7 +474,12 @@ func (rt *Runtime) handleStopJob(w http.ResponseWriter, r *http.Request, id stri
 
 	state, alreadyStopping := rt.beginRecordStop(id)
 	if state == nil {
-		writeJSONError(w, http.StatusConflict, "job is not stoppable")
+		// Unreachable while the bracket holds: runRecordJob registers the entry
+		// before MarkRecordRunning and removes it after the store leaves
+		// record/running, so the store gate above cannot pass without an entry.
+		// Kept as a guard that names itself if the invariant ever breaks (D-501).
+		rt.logger.Printf("stop invariant violation: store reports record/running with no registration id=%s", id)
+		writeJSONError(w, http.StatusConflict, "job is not stoppable: no record registration")
 		return
 	}
 	if alreadyStopping {
@@ -361,16 +488,25 @@ func (rt *Runtime) handleStopJob(w http.ResponseWriter, r *http.Request, id stri
 	}
 	requestedAt := nowUTCString()
 	signalSentAt := nowUTCString()
-	if err := state.process.Signal(syscall.SIGTERM); err != nil && !isExitedProcessError(err) {
-		writeJSONError(w, http.StatusConflict, fmt.Sprintf("stop job: %v", err))
-		return
+	// The signal is claimed, not sent unconditionally: the recorder may not
+	// have spawned yet (attachRecordProcess delivers the SIGTERM the moment it
+	// does), or may have already exited while the stage finishes promotion and
+	// Talk delivery. Both are honest 202s — the stop is recorded either way.
+	process, claimed := state.claimStopSignal()
+	if claimed {
+		if err := process.Signal(syscall.SIGTERM); err != nil && !isExitedProcessError(err) {
+			writeJSONError(w, http.StatusConflict, fmt.Sprintf("stop job: %v", err))
+			return
+		}
 	}
 	if err := rt.store.MarkRecordStopRequested(r.Context(), id, requestedAt, signalSentAt); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("update stop request: %v", err))
 		return
 	}
 	rt.logger.Printf("stop requested id=%s user=%s", id, appapiUserForLog(r))
-	go rt.enforceRecordStop(id, state)
+	if claimed {
+		go rt.enforceRecordStop(id, state)
+	}
 	writeJSON(w, http.StatusAccepted, recordStopResponse{ID: id})
 }
 

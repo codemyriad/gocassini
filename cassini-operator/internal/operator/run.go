@@ -668,6 +668,17 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 	defer releaseSlot()
 	defer rt.clearTalkRoomJobByID(job.ID)
 
+	// Open the stop bracket before the store publishes record/running and close
+	// it only after the stage has left that state. Stoppability is answered from
+	// two places — the store's stage/state and this in-memory registration — and
+	// a stop is only honest if both agree. Registering after the recorder spawned
+	// (and dropping the entry when it exited) left the registration strictly
+	// inside the store's claim at both ends, so a stop landing in either gap was
+	// refused with "job is not stoppable" against a job the API had just reported
+	// as running (D-501).
+	rt.registerRecordJob(job.ID)
+	defer rt.unregisterRecordJob(job.ID)
+
 	startedAt := nowUTCString()
 	if err := rt.store.MarkRecordRunning(context.Background(), job.ID, startedAt); err != nil {
 		rt.logger.Printf("record start update failed id=%s: %v", job.ID, err)
