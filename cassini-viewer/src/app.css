@@ -394,3 +394,13 @@ body {
   outline: 2px solid var(--color-base-content);
   outline-offset: 2px;
 }
+
+/* …except the control inside a daisyUI .input/.select wrapper, which shows focus
+ * on the wrapper via :focus-within — the inner ring lands inside that one, and
+ * squared off, since the inner control carries no radius. daisyUI already resets
+ * it, but that reset sits in @layer utilities while the rule above is unlayered,
+ * and unlayered wins over any layer regardless of specificity. Matching (0,1,1)
+ * against its (0,1,0), also unlayered, is what actually reaches it. */
+:where(.input, .select) :is(input, select, textarea):focus-visible {
+  outline: none;
+}
