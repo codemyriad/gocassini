@@ -8,9 +8,11 @@ on:
     # Pure docs/planning changes touch no code, tests, or image — skip the
     # (expensive) suite. paths-ignore is a DENY-list: if any changed file falls
     # outside this list the whole suite still runs, so a real code change is
-    # never silently skipped (avoids the allow-list false-green trap, cf. the
-    # PR #36 note in publish-exapp-image.yml). spec/ is intentionally NOT here:
-    # it holds the manifest JSON schemas that code validates against.
+    # never silently skipped (avoids the allow-list false-green trap the PR #36
+    # incident demonstrated; scripts/classify-image-relevance.sh now applies the
+    # same deny-list to the required faithful gate in publish-exapp-image.yml).
+    # spec/ is intentionally NOT here: it holds the manifest JSON schemas that
+    # code validates against.
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
@@ -50,6 +52,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends jq libxml2-utils xsltproc shellcheck
       - name: Validate App Store manifest schema
         run: ./scripts/test-info-schema.sh
+      - name: Test faithful-gate change classifier (deny-list)
+        # Offline unit test for scripts/classify-image-relevance.sh: the ALL-docs
+        # deny-list predicate, the load-bearing empty-path guard, and a drift
+        # assertion that this deny-list still matches ci.yml's paths-ignore (D-505).
+        run: ./scripts/test-classify-image-relevance.sh
       - name: Run offline harness regressions
         run: |
           ./harness/bin/test-exapp-image-ref.sh
@@ -59,6 +66,7 @@ jobs:
           ./harness/bin/test-installed-backend-url.sh
           ./harness/bin/test-post-boundary-stream.sh
           ./harness/bin/test-ci-e2e-mute-timing.sh
+          ./harness/bin/test-negative-manifest.sh
       - name: Parse every harness shell script
         run: |
           set -euo pipefail
@@ -80,8 +88,11 @@ jobs:
           harness/bin/ci-e2e-installed-exapp-talk.sh
           harness/bin/test-post-boundary-stream.sh
           harness/bin/verify-post-boundary-stream.sh
+          harness/bin/test-negative-manifest.sh
       - name: Compile D-453 Python helpers
-        run: python3 -m py_compile harness/bin/installed-validation.py
+        run: |
+          python3 -m py_compile harness/bin/installed-validation.py
+          python3 -m py_compile harness/bin/make-negative-manifest.py
 
   ui:
     name: UI tests (${{ matrix.package }})

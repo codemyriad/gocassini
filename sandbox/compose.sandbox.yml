@@ -1,9 +1,10 @@
 services:
   nextcloud:
-    # The sandbox is intentionally mutable/demo-oriented: always track the
-    # newest upstream Nextcloud image here. The base harness stays pinned for
-    # reproducible CI and compatibility testing.
-    image: ${NEXTCLOUD_IMAGE:-nextcloud:latest}
+    # The sandbox mirrors a real deployment: track Nextcloud's *stable* channel
+    # (currently NC 33.x), not `latest`. `latest` rides the newest major before
+    # it's promoted to stable, which has shipped a broken bundled AppAPI ExApp
+    # UI. The base harness stays pinned for reproducible CI/compat testing.
+    image: ${NEXTCLOUD_IMAGE:-nextcloud:stable}
     pull_policy: always
     extra_hosts:
       - "${SANDBOX_HOSTNAME:-demo.nextcloud.codemyriad.io}:host-gateway"

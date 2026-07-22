@@ -86,8 +86,10 @@ func runDevStack(ctx context.Context, repoRoot string, args []string, stdout, st
 
 	switch command {
 	case "up":
+		printDevStackCommandWarnings(stderr, command, plan.ValidationWarnings)
 		return runDevScriptWithEnv(ctx, repoRoot, filepath.Join(harnessBin, "up.sh"), remainingArgs, plan.env(), stdout, stderr)
 	case "down":
+		printDevStackCommandWarnings(stderr, command, plan.ValidationWarnings)
 		// down is the canonical teardown. Bare down removes the ephemeral
 		// containers but keeps volumes (persistence); flags widen or narrow
 		// that: --suspend keeps containers, --volumes drops volumes too,
@@ -108,6 +110,16 @@ func runDevStack(ctx context.Context, repoRoot string, args []string, stdout, st
 		fmt.Fprintf(stderr, "unknown dev stack command %q\n", args[0])
 		printDevStackUsage(stderr)
 		return 2
+	}
+}
+
+func printDevStackCommandWarnings(w io.Writer, command string, warnings []string) {
+	if len(warnings) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "dev stack %s: validation warnings:\n", command)
+	for _, warning := range warnings {
+		fmt.Fprintf(w, "  - %s\n", warning)
 	}
 }
 

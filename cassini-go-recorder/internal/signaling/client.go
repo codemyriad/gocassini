@@ -36,6 +36,13 @@ const (
 // "no_such_session": the session is gone and retrying cannot help.
 var errSessionExpired = errors.New("signaling session expired (no_such_session)")
 
+// ErrNotConnected marks a send attempted while no connection is installed —
+// most often the resume window, where clearConn has dropped the old conn and
+// the redial is still in flight. It is exported so callers can tell "the socket
+// is momentarily away, and the very same session is likely to come back" from a
+// real send failure, and hold their retry budget accordingly (D-509).
+var ErrNotConnected = errors.New("signaling websocket not connected")
+
 type response struct {
 	msg map[string]any
 	err error
@@ -161,14 +168,14 @@ func (c *Client) Close() error {
 
 func (c *Client) Send(payload map[string]any) error {
 	if !c.isDialed() {
-		return errors.New("signaling websocket not connected")
+		return ErrNotConnected
 	}
 	return c.writeJSON(payload)
 }
 
 func (c *Client) Request(ctx context.Context, payload map[string]any, timeout time.Duration) (map[string]any, error) {
 	if !c.isDialed() {
-		return nil, errors.New("signaling websocket not connected")
+		return nil, ErrNotConnected
 	}
 
 	id := fmt.Sprintf("%d", atomic.AddInt64(&c.nextID, 1))
