@@ -134,7 +134,7 @@
         aria-current={surface === "browse" ? "page" : undefined}
         on:click={() => selectSurface("browse")}
       >
-        Browser
+        Browse
       </button>
       <button
         type="button"

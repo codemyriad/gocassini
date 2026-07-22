@@ -194,7 +194,7 @@
                 >
               </dd>
             </div>
-            <div class="flex items-center justify-between gap- py-1">
+            <div class="flex items-center justify-between gap-2 py-1">
               <dt class="text-sm text-base-content/60">Source</dt>
               <dd class="text-sm">
                 <span class="badge badge-outline badge-md border-base-content/20 text-base-content"
