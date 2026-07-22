@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applySurface, readSurface, surfaceHash } from "./surfaceRouting";
+import { applyJob, applySurface, readJob, readSurface, surfaceHash } from "./surfaceRouting";
 
 describe("readSurface", () => {
   it("reads the operator surface from the hash", () => {
@@ -60,5 +60,35 @@ describe("applySurface", () => {
   it("returns an empty hash for browse with no other params", () => {
     expect(applySurface("#surface=operator", "browse")).toBe("");
     expect(applySurface("", "browse")).toBe("");
+  });
+});
+
+describe("readJob", () => {
+  it("reads the selected run id from the hash", () => {
+    expect(readJob("#surface=operator&job=01KXZV5QZP")).toBe("01KXZV5QZP");
+  });
+
+  it("returns an empty string when absent", () => {
+    expect(readJob("")).toBe("");
+    expect(readJob("#surface=operator")).toBe("");
+  });
+});
+
+describe("applyJob", () => {
+  it("adds the job param while preserving the surface", () => {
+    expect(applyJob("#surface=operator", "abc")).toBe("#surface=operator&job=abc");
+  });
+
+  it("replaces an existing job rather than appending a second", () => {
+    expect(applyJob("#surface=operator&job=old", "new")).toBe("#surface=operator&job=new");
+  });
+
+  it("clears the job param when given an empty id", () => {
+    expect(applyJob("#surface=operator&job=abc", "")).toBe("#surface=operator");
+    expect(applyJob("#job=abc", "")).toBe("");
+  });
+
+  it("round-trips through readJob", () => {
+    expect(readJob(applyJob("#surface=operator", "01KXZV5QZP"))).toBe("01KXZV5QZP");
   });
 });

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
   import { fade, fly } from "svelte/transition";
-  import { cubicOut, quintOut } from "svelte/easing";
+  import { cubicOut } from "svelte/easing";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
   import { Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape } from "@lucide/svelte";
@@ -115,7 +115,7 @@
   let attemptedKey: string | null = null;
 
   function contentFadeConfig() {
-    return prefersReducedMotion ? { duration: 0 } : { duration: 180 };
+    return prefersReducedMotion ? { duration: 0 } : { duration: 360 };
   }
 
   function playerFadeConfig() {
@@ -123,15 +123,6 @@
     // snapping into view near the end — pure linear opacity reads as a
     // "click" when the card bg is close to the page bg.
     return prefersReducedMotion ? { duration: 0 } : { duration: 320, easing: cubicOut };
-  }
-
-  function contentFlyInConfig() {
-    // Load-in only: slide content up from below while fading in (svelte/fly
-    // animates opacity by default). quintOut gives a snappy start with a
-    // pronounced deceleration so the content settles into place rather than
-    // drifting. Load-out keeps a plain fade so the previous content doesn't
-    // visibly travel downward when switching.
-    return prefersReducedMotion ? { duration: 0 } : { y: 120, duration: 560, easing: quintOut };
   }
 
   function renderSummaryHtml(markdown: string | null): string {
@@ -818,7 +809,7 @@
       </div>
     </div>
   {:else if transcriptIndex}
-  <div in:fly={contentFlyInConfig()} out:fade={contentFadeConfig()}>
+  <div out:fade={contentFadeConfig()}>
   <header class="m-4 mb-8 min-[981px]:mx-8 min-[981px]:mb-0 min-w-0">
     <h1 class="text-3xl font-bold mb-3">
       {meeting
@@ -1048,7 +1039,7 @@
   {#if loading && meeting}
     <div
       class="absolute inset-0 z-10 grid place-items-center bg-base-200 pointer-events-none"
-      transition:fade={contentFadeConfig()}
+      out:fade={contentFadeConfig()}
     >
       <div class="flex flex-col items-center gap-3 text-base-content">
         <span class="cassini-spinner text-primary" aria-hidden="true"></span>

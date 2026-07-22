@@ -127,14 +127,14 @@
 
 {#if operatorAvailable}
   <div class="cassini-shell">
-    <nav class="cassini-shell-nav" aria-label="Cassini surfaces">
+    <nav class="cassini-shell-nav" data-theme={themeMode} aria-label="Cassini surfaces">
       <button
         type="button"
         class="cassini-shell-tab"
         aria-current={surface === "browse" ? "page" : undefined}
         on:click={() => selectSurface("browse")}
       >
-        Browse
+        Browser
       </button>
       <button
         type="button"
@@ -161,7 +161,7 @@
            removes. The inner .cassini-root + data-theme give it the daisyUI
            theme in the shadow build (tokens aren't on :host) and the NC-colour
            overrides, exactly like the viewer's browse surface. -->
-      <div class="cassini-shell-surface cassini-shell-scroll">
+      <div class="cassini-shell-surface cassini-shell-scroll scroll-stable" data-theme={themeMode}>
         <div class="cassini-root" data-theme={themeMode}>
           <Operator />
         </div>
@@ -188,12 +188,27 @@
     min-height: 100%;
   }
 
+  /* Deliberately compact: this bar is persistent chrome above a viewer that
+     wants every pixel of height (the player sits at the bottom edge), and it
+     switches between only two surfaces — so it is sized as a control, not as
+     primary navigation. */
+  /* Colours resolve through a three-step chain, outermost wins:
+       1. Nextcloud's own vars (--color-main-background etc.) — these inherit
+          through the shadow boundary from the host page :root (see the D-414
+          block in the viewing layer's app.css), so they track NC's light/dark
+          theme with no JS.
+       2. the daisyUI token — reachable because this nav now carries its own
+          [data-theme], the same trick the operator surface uses. Without it the
+          nav sits outside every [data-theme] element, every token is undefined,
+          and all three fall through to the hardcoded light values below — which
+          is why the whole toolbar stayed light in dark mode.
+       3. a hardcoded light default, for a build with neither. */
   .cassini-shell-nav {
     display: flex;
-    gap: 0.25rem;
-    padding: 0.5rem 0.75rem;
-    border-bottom: 1px solid var(--color-base-300, #e5e7eb);
-    background: var(--color-base-100, #ffffff);
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--color-border-dark, var(--color-base-300, #e5e7eb));
+    background: var(--color-main-background, var(--color-base-100, #ffffff));
   }
 
   .cassini-shell-tab {
@@ -201,22 +216,32 @@
     border: 0;
     background: transparent;
     cursor: pointer;
-    padding: 0.375rem 0.875rem;
-    border-radius: 0.5rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.375rem;
     font: inherit;
+    font-size: 0.8125rem;
+    line-height: 1.35;
     font-weight: 600;
-    color: var(--color-base-content, #1f2937);
+    color: var(--color-main-text, var(--color-base-content, #1f2937));
     opacity: 0.7;
   }
 
   .cassini-shell-tab:hover {
-    background: var(--color-base-200, #f3f4f6);
+    background: var(--color-background-hover, var(--color-base-200, #f3f4f6));
     opacity: 1;
   }
 
+  /* Neutral high-contrast highlight rather than the theme accent: in Nextcloud
+     --color-primary is the SAME colour as the app header, so an accent-filled tab
+     stacked two heavy accent blocks and read louder than the content it switches.
+
+     Swapping the foreground and background tokens inverts the fill for free —
+     near-black on white in light mode, near-white on black in dark — and it
+     tracks whichever theme system is live (NC's or daisyUI's) instead of needing
+     a hardcoded dark-mode branch. */
   .cassini-shell-tab[aria-current="page"] {
-    background: var(--color-primary, #2563eb);
-    color: var(--color-primary-content, #ffffff);
+    background: var(--color-main-text, var(--color-base-content, #000000));
+    color: var(--color-main-background, var(--color-base-100, #ffffff));
     opacity: 1;
   }
 
@@ -227,8 +252,17 @@
 
   /* The operator surface scrolls within its own pane (it was authored for
      page-level scroll via min-h-screen, which the fixed-height shell removes). */
+  /* The scroll container paints the surface background itself. The scrollbar
+     gutter belongs to THIS element, not to the .cassini-root inside it, so with
+     no background here the gutter is transparent and Nextcloud's page wallpaper
+     showed through beside the scrollbar. --color-main-background is what NC maps
+     base-200 to, which is the operator's own page background (bg-base-200), so
+     the gutter blends into the surface. [data-theme] is on the element for the
+     same reason as the nav: it sits outside .cassini-root, so the daisyUI token
+     would otherwise be undefined here and fall through to the light default. */
   .cassini-shell-scroll {
     overflow-y: auto;
+    background: var(--color-main-background, var(--color-base-200, #f3f4f6));
   }
 
   .cassini-shell-hidden {

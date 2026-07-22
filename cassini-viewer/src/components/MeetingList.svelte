@@ -61,7 +61,7 @@
         {/if}
       </div>
       {#if meetings.length > 1}
-        <label class="input input-sm flex items-center gap-2 w-full">
+        <label class="input input-sm flex items-center gap-2 w-full text-sm">
           <Search size={14} class="text-base-content/60" aria-hidden="true" />
           <input
             type="search"
