@@ -10,6 +10,7 @@ harness_check_existing_resources_for_up
 harness_prepare_exapp_image
 harness_render_stack_configs
 harness_start_compose_stack
+harness_verify_lan_signaling_reachability
 
 wait_for_nextcloud 420
 "$SCRIPT_DIR/bootstrap.sh"

@@ -261,7 +261,12 @@ compose() {
   if harness_remote_config_requested; then
     profile_args+=(--profile remote)
   fi
-  docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "${profile_args[@]}" "$@"
+  if ((${#profile_args[@]} > 0)); then
+    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "${profile_args[@]}" "$@"
+  else
+    # Avoid expanding an empty array under macOS Bash 3.2 + `set -u`.
+    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
+  fi
 }
 
 harness_require_docker() {
@@ -277,6 +282,44 @@ harness_require_docker() {
     echo "Docker daemon is not available for the Cassini dev stack" >&2
     return 1
   fi
+}
+
+harness_verify_lan_signaling_reachability() {
+  [[ "${CASSINI_HARNESS_PUBLIC_MODE:-local-http}" == "lan-http" ]] || return 0
+  harness_media_selected || return 0
+
+  local signaling_url="${SIGNALING_URL:-}"
+  if [[ -z "$signaling_url" \
+    || "$signaling_url" == "http://127.0.0.1:18082" \
+    || "$signaling_url" == "http://127.0.0.1:28082" \
+    || "$signaling_url" == "http://signaling.localhost:28082" ]]; then
+    signaling_url="$(default_signaling_url)"
+  fi
+  signaling_url="${signaling_url%/}"
+
+  local response=""
+  local attempt
+  for attempt in $(seq 1 30); do
+    if response="$(curl -fsS --max-time 3 "$signaling_url/api/v1/welcome" 2>/dev/null)" \
+      && [[ "$response" == *'nextcloud-spreed-signaling'* ]]; then
+      log "Host can reach Talk signaling at $signaling_url"
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "Talk signaling is not reachable from the host at $signaling_url." >&2
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    cat >&2 <<'EOF'
+On macOS, enable Docker Desktop > Settings > Resources > Network >
+"Enable host networking", apply/restart, and configure both the browser and
+Nextcloud container to use the Mac LAN IP for signaling. See the macOS local
+installed-ExApp guide in harness/README.md.
+EOF
+  else
+    echo "Inspect the signaling container and host-network port 28082." >&2
+  fi
+  return 1
 }
 
 harness_project_containers() {
@@ -855,7 +898,12 @@ occ() {
   if [[ -n "${NC_PASS:-}" ]]; then
     env_args+=(-e "NC_PASS=$NC_PASS")
   fi
-  compose exec -T "${env_args[@]}" -u www-data nextcloud php occ "$@"
+  if ((${#env_args[@]} > 0)); then
+    compose exec -T "${env_args[@]}" -u www-data nextcloud php occ "$@"
+  else
+    # Avoid expanding an empty array under macOS Bash 3.2 + `set -u`.
+    compose exec -T -u www-data nextcloud php occ "$@"
+  fi
 }
 
 occ_ignore_failure() {

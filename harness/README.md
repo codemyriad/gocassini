@@ -77,16 +77,16 @@ Common combinations:
 | AppAPI/HaRP route or install testing, no media | `local-http` | `appapi` | `installed-exapp` or manual | `none` | `./bin/cassini dev stack up --services appapi --cassini installed-exapp --recording-backend none --build` |
 | Local WebRTC recorder/player E2E | `local-http` | `full` | `none` | `legacy` | `./bin/cassini dev stack up --services full` |
 | Direct standalone operator debugging | `local-http` | `full` | `none` | `direct-operator` | `./bin/cassini dev stack up --services full --recording-backend direct-operator` |
-| Local installed-ExApp recording dev | `local-http` | `full` | `installed-exapp` | `installed-exapp` | `./bin/cassini dev stack up --services full --cassini installed-exapp --recording-backend installed-exapp --build` |
+| Linux local installed-ExApp recording dev | `local-http` | `full` | `installed-exapp` | `installed-exapp` | `./bin/cassini dev stack up --services full --cassini installed-exapp --recording-backend installed-exapp --build` |
+| Docker Desktop for Mac installed-ExApp dev | `lan-http` | `full` | `installed-exapp` | `installed-exapp` | See [Docker Desktop for Mac](#52-docker-desktop-for-mac) for the required LAN signaling flags. |
 | Remote browser / macOS browser through HTTPS proxy | `remote-https` | `full-remote` | optional | matching backend | `./bin/cassini dev stack up --public-mode remote-https --services full-remote ...` |
 
-> **macOS note:** the supported full-media and installed-ExApp local dev stack
-> is a Linux Docker-host workflow. It relies on Linux host networking for Janus,
-> signaling, Coturn, and NATS, and on the host Docker socket for AppAPI/HaRP
-> ExApp deployment. Do not expect the full local dev mode to work correctly on
-> Docker Desktop for Mac. On macOS, run the stack on a Linux VM/remote machine
-> and use the [remote HTTPS guide](#6-guide-remote-https-dev-setup) from your Mac
-> browser.
+> **macOS note:** the full local stack works with Docker Desktop 4.34 or newer
+> when **Enable host networking** is on and Talk signaling uses the Mac's LAN IP.
+> The default Linux bridge-gateway signaling address is not browser-reachable on
+> macOS. Follow the [Docker Desktop for Mac guide](#52-docker-desktop-for-mac),
+> or use the [remote HTTPS guide](#6-guide-remote-https-dev-setup) when Docker
+> Desktop host networking is unavailable.
 
 ---
 
@@ -221,10 +221,11 @@ proxy path so Cassini's local control-panel/viewer pages can render.
 | CLI flag | Environment variable | Default | Notes |
 |---|---|---:|---|
 | `--public-mode local-http|lan-http|remote-https` | `CASSINI_HARNESS_PUBLIC_MODE` | `local-http` | Browser/public access mode. |
-| `--public-url URL` | `CASSINI_HARNESS_PUBLIC_URL` | unset | Browser-facing Nextcloud base URL. Required in `remote-https` unless `--public-host` can derive it. |
+| `--public-url URL` | `CASSINI_HARNESS_PUBLIC_URL` | unset | Browser-facing Nextcloud base URL. Required in `lan-http`; required in `remote-https` unless `--public-host` can derive it. |
 | `--public-host HOST` | `CASSINI_HARNESS_PUBLIC_HOST` | derived/unset | Bare host, no scheme/path. Derived from `--public-url` when possible. |
-| `--media-host HOST_OR_IP` | `CASSINI_HARNESS_MEDIA_HOST` | unset/derived | Required non-loopback host/IP in `remote-https`; advertised to WebRTC media services. |
-| `--signaling-public-url URL` | `CASSINI_HARNESS_SIGNALING_PUBLIC_URL` | `https://<public-host>:8443` in remote mode | Browser-facing standalone signaling URL. Must be HTTPS in `remote-https`. |
+| `--media-host HOST_OR_IP` | `CASSINI_HARNESS_MEDIA_HOST` | unset/derived | Advertised to WebRTC media services. Required and non-loopback for `lan-http` media and `remote-https`. |
+| `--signaling-public-url URL` | `CASSINI_HARNESS_SIGNALING_PUBLIC_URL` | `https://<public-host>:8443` in remote mode | Browser-facing standalone signaling URL. Required, HTTP, and non-loopback for `lan-http` media; HTTPS in `remote-https`. |
+| `--talk-backend-url URL` | `CASSINI_TALK_BACKEND_URL` | derived/unset | Nextcloud URL used by Cassini for Talk callbacks. Required for `lan-http` installed-ExApp recording. |
 | `--services VALUE` | `CASSINI_HARNESS_SERVICE_MODE` | `legacy-default` | Preferred service topology flag. |
 | `--service-mode VALUE` | `CASSINI_HARNESS_SERVICE_MODE` | `legacy-default` | Alias for `--services`; cannot disagree with `--services`. |
 | `--cassini none|installed-exapp` | `CASSINI_HARNESS_CASSINI_MODE` | `none` | Whether stack bring-up installs Cassini as an AppAPI ExApp. |
@@ -257,7 +258,6 @@ proxy path so Cassini's local control-panel/viewer pages can render.
 | `CASSINI_TALK_RECORDING_URL` | derived | Overrides the URL written into Talk `recording_servers`. |
 | `CASSINI_TALK_RECORDING_SECRET` | committed dev value | Talk recording backend HMAC secret. Dev only. |
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | `SIGNALING_INTERNAL_SECRET` | Secret passed to Cassini for HPB-internal signaling auth. |
-| `CASSINI_TALK_BACKEND_URL` | derived for local installed ExApp | Nextcloud URL the ExApp uses when recording. Defaults to `http://reverse-proxy` for loopback installed-ExApp stacks. |
 
 The committed secrets and passwords are for the dev harness only. Never reuse
 them for real Nextcloud, Talk, signaling, TURN, or Cassini deployments.
@@ -301,6 +301,30 @@ the corresponding flag or environment variable expresses user intent.
 ## 3. Stack lifecycle quickstart
 
 ### 3.1 Inspect, start, create a room, play media
+
+The installed-ExApp path uses Python to read `appinfo/info.xml` before Docker
+starts. Use Python 3.12 for the harness rather than an unversioned, moving
+`python3`. With direnv, pin the interpreter in the checkout's gitignored
+`.envrc`:
+
+```bash
+# Install once on macOS when needed: brew install python@3.12
+layout_python python3.12
+```
+
+After adding or changing the pin, run `direnv allow` (or `direnv reload` for an
+already allowed file), then verify that the interpreter and its native Expat
+module work:
+
+```bash
+python3 --version
+python3 -c 'import pyexpat, xml.etree.ElementTree as ET; print(pyexpat.EXPAT_VERSION)'
+```
+
+The version should be Python 3.12 and the import must exit successfully. A
+virtualenv does not repair native standard-library modules from its underlying
+interpreter, so recreate `.direnv/python-3.12` after replacing that interpreter
+if the import fails.
 
 ```bash
 ./bin/cassini dev stack plan --services full
@@ -426,15 +450,16 @@ AppAPI, Talk recording-backend, or WebRTC media coverage.
 
 ---
 
-## 5. Guide: local installed-ExApp dev mode, Linux only
+## 5. Guide: local installed-ExApp dev mode
 
 This is the production-shaped local development path: Nextcloud installs Cassini
 as a real AppAPI ExApp through HaRP, Talk points its recording backend at the
 AppAPI proxy, and the ExApp records through HPB-internal signaling auth.
 
-> **Supported host:** Linux with Docker Engine + Compose v2. The full local dev
-> mode is not supported on macOS Docker Desktop. Use a Linux VM/remote host and
-> the remote HTTPS guide when your browser is on a Mac.
+Supported hosts are Linux with Docker Engine + Compose v2, and macOS with Docker
+Desktop 4.34 or newer plus host networking enabled. The macOS command differs
+because one signaling address must be reachable from both the Nextcloud
+container and the browser.
 
 ### 5.1 Start the full installed-ExApp stack
 
@@ -469,7 +494,220 @@ If you already have a suitable local ExApp image, omit `--build` and use the
 default `reuse-local` mode. If you want AppAPI to pull the manifest image, use
 `--exapp-image-mode pull`.
 
-### 5.2 AppAPI-only local dev
+### 5.2 Docker Desktop for Mac runbook
+
+The macOS path follows the harness configuration contract:
+
+- The harness does **not** discover or guess the Mac LAN address.
+- Supply browser, media, signaling, and ExApp callback addresses explicitly.
+- Run `stack plan` first; incomplete or loopback-only LAN media configuration is
+  rejected before Docker resources are changed.
+- `stack up` verifies the configured signaling URL from the host after the media
+  services start and fails instead of leaving Talk stuck on “Connecting”.
+
+The browser keeps the potentially trustworthy loopback origin, while signaling
+and media use the explicitly configured Mac LAN address:
+
+```text
+Browser ── http://127.0.0.1:28080 ──> Nextcloud container
+   │
+   └────── http://<MAC_LAN_IP>:28082 ──> Docker Desktop host network
+                                                │
+Nextcloud container ─────────────────────────────┤
+                                                v
+                                      signaling -> Janus/TURN
+
+Cassini ExApp ── http://reverse-proxy ──> Nextcloud/Talk callbacks
+```
+
+#### Step 1: prepare Docker Desktop and the checkout
+
+1. Install Docker Desktop 4.34 or newer.
+2. Open Docker Desktop → **Settings** → **Resources** → **Network**.
+3. Enable **Enable host networking**, then apply and restart Docker Desktop.
+4. Install Go (`brew install go`); `bin/cassini` builds the CLI on every run.
+5. Keep the checkout outside `~/Documents`, or grant Docker access to that
+   directory. macOS TCC can otherwise reject Compose bind mounts with
+   `operation not permitted`.
+6. Allow incoming connections for Docker Desktop if the macOS firewall prompts.
+
+Confirm the command-line prerequisites:
+
+```bash
+docker version
+docker compose version
+go version
+```
+
+#### Step 2: choose the configuration
+
+Determine and inspect the LAN address yourself. This shell snippet is a
+convenience for the operator; the harness receives only the resulting explicit
+value:
+
+```bash
+LAN_IF="$(route -n get default | awk '/interface:/ { print $2; exit }')"
+LAN_IP="$(ipconfig getifaddr "$LAN_IF")"
+test -n "$LAN_IP" || { echo "Could not determine the Mac LAN IP" >&2; exit 1; }
+printf 'Using interface %s with LAN IP %s\n' "$LAN_IF" "$LAN_IP"
+```
+
+For the full installed-ExApp stack, these inputs are required:
+
+| Purpose | CLI flag | Environment variable | macOS value |
+|---|---|---|---|
+| Public mode | `--public-mode` | `CASSINI_HARNESS_PUBLIC_MODE` | `lan-http` |
+| Browser-facing Nextcloud | `--public-url` | `CASSINI_HARNESS_PUBLIC_URL` | `http://127.0.0.1:28080` |
+| WebRTC media address | `--media-host` | `CASSINI_HARNESS_MEDIA_HOST` | the non-loopback `$LAN_IP` |
+| Browser-facing signaling | `--signaling-public-url` | `CASSINI_HARNESS_SIGNALING_PUBLIC_URL` | `http://${LAN_IP}:28082` |
+| ExApp → Talk callback | `--talk-backend-url` | `CASSINI_TALK_BACKEND_URL` | `http://reverse-proxy` |
+| Services | `--services` | `CASSINI_HARNESS_SERVICE_MODE` | `full` |
+| Cassini installation | `--cassini` | `CASSINI_HARNESS_CASSINI_MODE` | `installed-exapp` |
+| Talk recording backend | `--recording-backend` | `CASSINI_HARNESS_RECORDING_BACKEND` | `installed-exapp` |
+| Image handling | `--build` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE` | `build` |
+
+`CASSINI_HARNESS_HOST` is not required for this topology. Leaving it unset keeps
+room/player helpers pointed at loopback Nextcloud.
+
+#### Step 3: validate the plan
+
+```bash
+./bin/cassini dev stack plan \
+  --public-mode lan-http \
+  --public-url http://127.0.0.1:28080 \
+  --media-host "$LAN_IP" \
+  --signaling-public-url "http://${LAN_IP}:28082" \
+  --talk-backend-url http://reverse-proxy \
+  --services full \
+  --cassini installed-exapp \
+  --recording-backend installed-exapp \
+  --build
+```
+
+The plan must end in `validation: ok` and show the selected media host,
+signaling URL, and Talk backend URL. Missing values and loopback media or
+signaling addresses are hard validation errors.
+
+#### Step 4: start the stack
+
+The same configuration can be passed directly to `stack up`:
+
+```bash
+./bin/cassini dev stack up \
+  --public-mode lan-http \
+  --public-url http://127.0.0.1:28080 \
+  --media-host "$LAN_IP" \
+  --signaling-public-url "http://${LAN_IP}:28082" \
+  --talk-backend-url http://reverse-proxy \
+  --services full \
+  --cassini installed-exapp \
+  --recording-backend installed-exapp \
+  --build
+```
+
+Startup is non-destructive by default. If matching resources already exist, the
+command fails and tells you to choose `--resume` for a previously suspended
+stack or `--reset` to remove and recreate the resolved stack and its volumes.
+Do not add `--reset` unless that data loss is intended.
+
+Equivalent environment-only configuration is:
+
+```bash
+export CASSINI_HARNESS_PUBLIC_MODE=lan-http
+export CASSINI_HARNESS_PUBLIC_URL=http://127.0.0.1:28080
+export CASSINI_HARNESS_MEDIA_HOST="$LAN_IP"
+export CASSINI_HARNESS_SIGNALING_PUBLIC_URL="http://${LAN_IP}:28082"
+export CASSINI_TALK_BACKEND_URL=http://reverse-proxy
+export CASSINI_HARNESS_SERVICE_MODE=full
+export CASSINI_HARNESS_CASSINI_MODE=installed-exapp
+export CASSINI_HARNESS_RECORDING_BACKEND=installed-exapp
+export CASSINI_HARNESS_EXAPP_IMAGE_MODE=build
+
+./bin/cassini dev stack plan
+./bin/cassini dev stack up
+```
+
+Explicit CLI flags override these environment variables. Empty environment
+values count as unset.
+
+#### Step 5: verify the running stack
+
+`stack up` performs the host signaling reachability check automatically. For an
+additional operator check:
+
+```bash
+curl -fsS "http://${LAN_IP}:28082/api/v1/welcome"
+./bin/cassini dev stack status
+open http://127.0.0.1:28080/
+```
+
+Log in as `admin` / `admin`, open Talk, and start a call. A healthy single-user
+call shows **Call in progress** and **Waiting for others to join**. Nextcloud
+remains on loopback HTTP so Chrome can request microphone/camera access without
+`--unsafely-treat-insecure-host-as-secure`.
+
+Two independent configuration mistakes otherwise produce the same Talk symptom:
+
+| Signaling address | Nextcloud container | macOS browser |
+|---|:---:|:---:|
+| `127.0.0.1:28082` | no | yes |
+| Docker bridge gateway (for example `172.18.0.1:28082`) | yes | no |
+| Mac LAN IP (for example `192.168.1.67:28082`) | yes | yes |
+
+#### Step 6: stop or remove the stack
+
+```bash
+# Stop containers while retaining state for a later `stack up ... --resume`.
+./bin/cassini dev stack down --suspend
+
+# Or remove all harness-owned containers and volumes, including the ExApp.
+./bin/cassini dev stack down --full
+```
+
+#### Troubleshooting
+
+| Symptom | Action |
+|---|---|
+| Plan rejects LAN configuration | Supply every required value from the configuration table; do not substitute loopback for media or signaling. |
+| Host signaling preflight fails | Confirm Docker Desktop host networking is enabled, the LAN IP has not changed, the firewall permits Docker, and `curl http://$LAN_IP:28082/api/v1/welcome` works. |
+| Bind mount reports `operation not permitted` | Move the checkout outside `~/Documents` or grant Docker Desktop access to the directory. |
+| ExApp build times out fetching base-image metadata | Pre-pull the four build images below, then rerun the same command. |
+| Python reports `No module named expat`, a missing `_XML_*` symbol, or fails while parsing `appinfo/info.xml` | The selected interpreter's native `pyexpat` extension is incompatible with its runtime Expat library. Pin the harness to Python 3.12, reload direnv, and run the import check below before retrying. |
+| Existing resources error | Use `stack status`; choose `--resume`, intentional `--reset`, or `stack down --full` rather than letting the harness guess. |
+
+The Expat failure happens in `harness/bin/lib-exapp-manifest.sh` while
+`stack up` reads the ExApp image tag from `appinfo/info.xml`; it occurs before
+Compose starts. The final `No module named expat` message does not necessarily
+mean the module is absent: `pyexpat` can be present but unable to load because
+its compiled symbols do not match the runtime library. Do not work around that
+ABI mismatch with `DYLD_LIBRARY_PATH` or an ad-hoc Expat installation. Select a
+working Python 3.12 interpreter and rebuild the direnv environment instead:
+
+```bash
+# In .envrc:
+layout_python python3.12
+
+# In the shell:
+direnv allow
+rm -rf .direnv/python-3.12  # only needed if the existing environment is stale
+
+direnv reload
+python3 -c 'import pyexpat, xml.etree.ElementTree as ET; print(pyexpat.EXPAT_VERSION)'
+./bin/cassini dev stack plan
+```
+
+Then retry `stack up`. If the first attempt reached Docker despite a different
+failure, inspect `stack status` and follow the lifecycle guidance rather than
+adding `--reset` automatically.
+
+```bash
+docker pull debian:bookworm-slim
+docker pull golang:1.24-bookworm
+docker pull node:22-bookworm
+docker pull node:22-bookworm-slim
+```
+
+### 5.3 AppAPI-only local dev
 
 For admin/viewer proxy route work that does not need Janus/signaling/TURN:
 
@@ -481,7 +719,7 @@ For admin/viewer proxy route work that does not need Janus/signaling/TURN:
   --build
 ```
 
-### 5.3 Open and validate
+### 5.4 Open and validate
 
 Default users:
 
