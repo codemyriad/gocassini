@@ -32,7 +32,6 @@ CASSINI_EXAPP_IMAGE="${CASSINI_EXAPP_IMAGE:-ghcr.io/codemyriad/gocassini:latest}
 SANDBOX_SIGNALING_URL="${SANDBOX_SIGNALING_URL:-$SANDBOX_PUBLIC_URL/spreed}"
 SANDBOX_TURN_HOST="${SANDBOX_TURN_HOST:-${SANDBOX_DOMAIN%%:*}}"
 SANDBOX_TURN_EXTERNAL_IP="${SANDBOX_TURN_EXTERNAL_IP:-}"
-SANDBOX_PATCH_APPAPI_CSP="${SANDBOX_PATCH_APPAPI_CSP:-true}"
 # Nextcloud update channel. `beta` makes AppAPI's ExApp store accept pre-release
 # (alpha/beta/rc) apps like Cassini as well as stable ones, so the sandbox can
 # install whichever is newest; see lib/Fetcher/ExAppFetcher.php.
@@ -51,7 +50,6 @@ REGISTER_ONLY=false
 export PROJECT_NAME SPREED_PROFILE
 export SANDBOX_SCHEME SANDBOX_DOMAIN SANDBOX_HOSTNAME SANDBOX_PUBLIC_URL
 export NEXTCLOUD_HOST_PORT NEXTCLOUD_ADMIN_USER NEXTCLOUD_ADMIN_PASSWORD
-export SANDBOX_PATCH_APPAPI_CSP
 
 usage() {
   cat <<EOF
@@ -397,12 +395,9 @@ bootstrap_nextcloud() {
   log "Setting app update channel to '$SANDBOX_UPDATE_CHANNEL' (accept pre-release ExApps)"
   occ config:system:set updater.release.channel --value "$SANDBOX_UPDATE_CHANNEL"
 
-  if [[ "$SANDBOX_PATCH_APPAPI_CSP" == "true" ]]; then
-    log "Applying sandbox-only AppAPI CSP patch"
-    "${COMPOSE[@]}" exec -T nextcloud php < "$HARNESS_DIR/bin/patch-csp.php"
-  else
-    log "Skipping sandbox-only AppAPI CSP patch"
-  fi
+  # Cassini renders its control-panel/viewer through AppAPI's native UI
+  # mechanism (the nonce'd embedded page loading the registered ui/viewer.js),
+  # so the sandbox leaves AppAPI untouched and the integrity check stays green.
 
   "${COMPOSE[@]}" restart nextcloud
   wait_for_nextcloud
