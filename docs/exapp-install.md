@@ -233,10 +233,10 @@ All of these must pass before the Talk handoff:
 
 6. The **Cassini** navigation entry renders for any logged-in user (the viewer
    / meeting archive). Admin users additionally get the operator surface
-   (recording control + job history) inside the same entry.
-7. Direct viewer URL (the same content, outside the navigation entry):
-   `https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/viewer/`
-8. The doctor/status endpoint reports `"ok": true` (ADMIN route — use an
+   (recording control + job history) inside the same entry. This is the
+   supported entry point — it runs on AppAPI's nonce'd embedded page under
+   Nextcloud's normal CSP, no AppAPI patch required.
+7. The doctor/status endpoint reports `"ok": true` (ADMIN route — use an
    admin login with an app password):
 
    ```bash

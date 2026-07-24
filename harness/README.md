@@ -59,7 +59,6 @@ The stack is configured by combining independent dimensions:
 - **Cassini mode**: whether Cassini is installed as an AppAPI ExApp
 - **recording backend**: how Talk's recording backend is wired
 - **ExApp image mode**: how an installed ExApp image is provided
-- **patch mode**: whether the development AppAPI CSP patch is applied
 - **lifecycle mode**: how existing containers/volumes are handled
 
 Use `stack plan` before expensive bring-up:
@@ -188,18 +187,7 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 | `--exapp-image-mode reuse-local` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE=reuse-local` | Default. Reuses an existing local `cassini-exapp:e2e-v3-cpu-gpu` image and tags it as the production reference. Fails if the local image is missing. |
 | `--exapp-image-mode pull` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE=pull` | Leaves the `ghcr.io` image unmapped so AppAPI can pull the image declared by `appinfo/info.xml`. |
 
-### 2.7 Patch modes
-
-| `--patch` value | Environment | What it does |
-|---|---|---|
-| `auto` | `CASSINI_HARNESS_PATCH_MODE=auto` | Default. Applies the scenario-aware AppAPI CSP patch when `--cassini installed-exapp` is selected and the target shape is known. |
-| `none` | `CASSINI_HARNESS_PATCH_MODE=none` | Skips the AppAPI CSP patch. Useful when validating upstream AppAPI behavior. |
-| `force` | `CASSINI_HARNESS_PATCH_MODE=force` | Forces the patch for developer exploration if shape checks fail. Use carefully. |
-
-The patch relaxes CSP only for HTML responses through the development AppAPI
-proxy path so Cassini's local control-panel/viewer pages can render.
-
-### 2.8 Lifecycle modes
+### 2.7 Lifecycle modes
 
 `stack up` is non-destructive by default.
 
@@ -216,7 +204,7 @@ proxy path so Cassini's local control-panel/viewer pages can render.
 `dev stack stop` has been removed; use `dev stack down` or `dev stack down
 --suspend`.
 
-### 2.9 Flag / environment reference
+### 2.8 Flag / environment reference
 
 | CLI flag | Environment variable | Default | Notes |
 |---|---|---:|---|
@@ -232,14 +220,13 @@ proxy path so Cassini's local control-panel/viewer pages can render.
 | `--recording-backend legacy|direct-operator|installed-exapp|none` | `CASSINI_HARNESS_RECORDING_BACKEND` | `legacy` | How Talk's recording backend is configured during bootstrap. |
 | `--exapp-image-mode build|reuse-local|pull` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE` | `reuse-local` | Only meaningful with `--cassini installed-exapp`. |
 | `--build` | n/a; sets image mode | n/a | Shorthand for image mode `build`; requires `--cassini installed-exapp`. |
-| `--patch auto|none|force` | `CASSINI_HARNESS_PATCH_MODE` | `auto` | Only meaningful when a Cassini mode has an associated patch. |
 | `stack up --resume` | `CASSINI_HARNESS_EXISTING=resume` | `fail` | Up-only lifecycle behavior. |
 | `stack up --reset` | `CASSINI_HARNESS_EXISTING=reset` | `fail` | Up-only lifecycle behavior. |
 | `stack down --suspend` | n/a | false | Down-only; stop containers but keep them. |
 | `stack down --volumes` | n/a | false | Down-only; remove project volumes too. |
 | `stack down --full` | n/a | false | Down-only; remove all known harness resources. |
 
-### 2.10 Supporting environment variables without stack flags
+### 2.9 Supporting environment variables without stack flags
 
 | Variable | Default | Purpose |
 |---|---:|---|
@@ -262,7 +249,7 @@ proxy path so Cassini's local control-panel/viewer pages can render.
 The committed secrets and passwords are for the dev harness only. Never reuse
 them for real Nextcloud, Talk, signaling, TURN, or Cassini deployments.
 
-### 2.11 Plan validation warnings
+### 2.10 Plan validation warnings
 
 `dev stack` distinguishes invalid configuration from valid-but-surprising
 configuration:
@@ -486,9 +473,8 @@ What happens:
 3. Nextcloud is bootstrapped with Talk, trusted domains, signaling, TURN, and
    Talk recording settings.
 4. AppAPI is installed/enabled.
-5. The dev CSP patch is applied in `auto` mode if needed.
-6. The HaRP deploy daemon is registered.
-7. Cassini is registered as `gocassini` and route checks are performed.
+5. The HaRP deploy daemon is registered.
+6. Cassini is registered as `gocassini` and route checks are performed.
 
 If you already have a suitable local ExApp image, omit `--build` and use the
 default `reuse-local` mode. If you want AppAPI to pull the manifest image, use
@@ -730,7 +716,7 @@ Default URLs:
 
 - Nextcloud: `http://127.0.0.1:28080/`
 - Cassini AppAPI proxy: `http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini`
-- User viewer: `http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini/viewer/` (open the "Cassini" navigation entry in Nextcloud; admins get the operator surface inside it)
+- Cassini UI: open the "Cassini" entry in the Nextcloud top bar (admins get the operator surface inside it)
 
 Create a room and play media:
 
