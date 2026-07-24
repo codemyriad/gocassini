@@ -167,7 +167,7 @@ Validation rules worth remembering:
 | `--cassini` value | Environment | What it does |
 |---|---|---|
 | `none` | `CASSINI_HARNESS_CASSINI_MODE=none` | Default. The harness configures Nextcloud/Talk but does not install Cassini as an ExApp. Use this for recorder/player E2E and standalone-operator debugging. |
-| `installed-exapp` | `CASSINI_HARNESS_CASSINI_MODE=installed-exapp` | Installs/enables AppAPI, configures a HaRP deploy daemon, prepares the Cassini ExApp image, registers `gocassini`, verifies `/api/v1/welcome`, `/operator/status`, `/control-panel/`, and `/viewer/`. |
+| `installed-exapp` | `CASSINI_HARNESS_CASSINI_MODE=installed-exapp` | Installs/enables AppAPI, configures a HaRP deploy daemon, prepares the Cassini ExApp image, registers `gocassini`, verifies `/api/v1/welcome`, `/operator/status`, and `/viewer/`. |
 
 Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 
@@ -730,8 +730,7 @@ Default URLs:
 
 - Nextcloud: `http://127.0.0.1:28080/`
 - Cassini AppAPI proxy: `http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini`
-- Admin control panel: `http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini/control-panel/`
-- User viewer: `http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini/viewer/`
+- User viewer: `http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini/viewer/` (open the "Cassini" navigation entry in Nextcloud; admins get the operator surface inside it)
 
 Create a room and play media:
 

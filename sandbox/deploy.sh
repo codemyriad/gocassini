@@ -517,9 +517,9 @@ Admin:
 Demo user:
   $SANDBOX_USER / $SANDBOX_USER_PASSWORD
 
-Cassini:
+Cassini (open the "Cassini" entry in the Nextcloud top bar; admins also get the
+operator surface inside it). Direct viewer URL:
   $SANDBOX_PUBLIC_URL/index.php/apps/app_api/proxy/gocassini/viewer/
-  $SANDBOX_PUBLIC_URL/index.php/apps/app_api/proxy/gocassini/control-panel/
 
 Teardown:
   sandbox/destroy.sh
