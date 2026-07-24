@@ -51,6 +51,7 @@ type devStackPlan struct {
 	PublicHost            string
 	MediaHost             string
 	SignalingPublicURL    string
+	TalkBackendURL        string
 	ServiceMode           string
 	SpreedProfile         string
 	CassiniMode           string
@@ -72,6 +73,7 @@ type devStackFlagOptions struct {
 	publicHost         string
 	mediaHost          string
 	signalingPublicURL string
+	talkBackendURL     string
 	serviceMode        string
 	cassiniMode        string
 	recordingBackend   string
@@ -104,6 +106,7 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	publicHost := stringFlag("public-host", "browser-facing public host without scheme")
 	mediaHost := stringFlag("media-host", "host/IP advertised for WebRTC media")
 	signalingPublicURL := stringFlag("signaling-public-url", "browser-facing standalone signaling URL")
+	talkBackendURL := stringFlag("talk-backend-url", "Nextcloud URL used by the Cassini ExApp for Talk callbacks")
 	services := stringFlag("services", "service topology: legacy-default, core, appapi, full, full-remote")
 	serviceMode := stringFlag("service-mode", "alias for --services")
 	cassiniMode := stringFlag("cassini", "Cassini install mode: none, installed-exapp")
@@ -137,6 +140,7 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	opts.publicHost = *publicHost
 	opts.mediaHost = *mediaHost
 	opts.signalingPublicURL = *signalingPublicURL
+	opts.talkBackendURL = *talkBackendURL
 	opts.serviceMode = *services
 	opts.cassiniMode = *cassiniMode
 	opts.recordingBackend = *recordingBackend
@@ -195,6 +199,7 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	plan.PublicHost = pickRemoteInput("public-host", opts.publicHost, "CASSINI_HARNESS_PUBLIC_HOST")
 	plan.MediaHost = pickRemoteInput("media-host", opts.mediaHost, "CASSINI_HARNESS_MEDIA_HOST")
 	plan.SignalingPublicURL = pickRemoteInput("signaling-public-url", opts.signalingPublicURL, "CASSINI_HARNESS_SIGNALING_PUBLIC_URL")
+	plan.TalkBackendURL = pick("talk-backend-url", opts.talkBackendURL, "CASSINI_TALK_BACKEND_URL", "")
 	plan.ServiceMode = pick("services", opts.serviceMode, "CASSINI_HARNESS_SERVICE_MODE", "")
 	plan.CassiniMode = pick("cassini", opts.cassiniMode, "CASSINI_HARNESS_CASSINI_MODE", devStackCassiniNone)
 	plan.RecordingBackend = pick("recording-backend", opts.recordingBackend, "CASSINI_HARNESS_RECORDING_BACKEND", devStackRecordingLegacy)
@@ -429,10 +434,39 @@ func validateDevStackPlan(plan devStackPlan) error {
 			}
 		}
 	}
-	if plan.PublicMode == devStackPublicLANHTTP && plan.PublicURL != "" {
+	if plan.PublicMode == devStackPublicLANHTTP {
+		if plan.PublicURL == "" {
+			return errors.New("lan-http mode requires --public-url / CASSINI_HARNESS_PUBLIC_URL")
+		}
 		if scheme, ok := devStackURLScheme(plan.PublicURL); !ok || scheme != "http" {
 			return fmt.Errorf("lan-http public URL must be http, got %q", plan.PublicURL)
 		}
+		if devStackHasMediaStack(plan) {
+			if plan.MediaHost == "" {
+				return errors.New("lan-http media mode requires --media-host / CASSINI_HARNESS_MEDIA_HOST")
+			}
+			if isLoopbackHost(plan.MediaHost) {
+				return fmt.Errorf("lan-http media host must be non-loopback, got %q", plan.MediaHost)
+			}
+			if plan.SignalingPublicURL == "" {
+				return errors.New("lan-http media mode requires --signaling-public-url / CASSINI_HARNESS_SIGNALING_PUBLIC_URL")
+			}
+			if scheme, ok := devStackURLScheme(plan.SignalingPublicURL); !ok || scheme != "http" {
+				return fmt.Errorf("lan-http signaling public URL must be http, got %q", plan.SignalingPublicURL)
+			}
+			signalingHost, _ := devStackURLHost(plan.SignalingPublicURL)
+			if isLoopbackHost(signalingHost) {
+				return fmt.Errorf("lan-http signaling public URL must use a non-loopback host, got %q", plan.SignalingPublicURL)
+			}
+		}
+	}
+	if plan.TalkBackendURL != "" {
+		if scheme, ok := devStackURLScheme(plan.TalkBackendURL); !ok || !oneOf(scheme, "http", "https") {
+			return fmt.Errorf("Talk backend URL must be http or https, got %q", plan.TalkBackendURL)
+		}
+	}
+	if plan.PublicMode == devStackPublicLANHTTP && plan.RecordingBackend == devStackRecordingInstalledExApp && plan.TalkBackendURL == "" {
+		return errors.New("lan-http installed-ExApp recording requires --talk-backend-url / CASSINI_TALK_BACKEND_URL")
 	}
 	if plan.ServiceMode == devStackServiceFullRemote && plan.PublicMode != devStackPublicRemoteHTTP {
 		return fmt.Errorf("service mode %q requires --public-mode %s", devStackServiceFullRemote, devStackPublicRemoteHTTP)
@@ -505,6 +539,7 @@ func (plan devStackPlan) env() []string {
 		"CASSINI_HARNESS_PUBLIC_HOST=" + plan.PublicHost,
 		"CASSINI_HARNESS_MEDIA_HOST=" + plan.MediaHost,
 		"CASSINI_HARNESS_SIGNALING_PUBLIC_URL=" + plan.SignalingPublicURL,
+		"CASSINI_TALK_BACKEND_URL=" + plan.TalkBackendURL,
 	}
 }
 
@@ -525,6 +560,7 @@ func printDevStackPlan(w io.Writer, plan devStackPlan) {
 	fmt.Fprintf(w, "  exapp_image_mode: %s\n", plan.ExAppImageMode)
 	fmt.Fprintln(w, "recording:")
 	fmt.Fprintf(w, "  backend: %s\n", plan.RecordingBackend)
+	fmt.Fprintf(w, "  talk_backend_url: %s\n", yamlValueOrNull(plan.TalkBackendURL))
 	fmt.Fprintln(w, "patch:")
 	fmt.Fprintf(w, "  mode: %s\n", plan.PatchMode)
 	fmt.Fprintln(w, "lifecycle:")

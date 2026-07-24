@@ -418,6 +418,91 @@ func TestResolveDevStackPlanRemoteHTTPS(t *testing.T) {
 	}
 }
 
+func TestResolveDevStackPlanLANHTTPRequiresExplicitConfiguration(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{
+			name:    "public URL",
+			args:    []string{"--public-mode", "lan-http", "--services", "full"},
+			wantErr: "requires --public-url",
+		},
+		{
+			name:    "media host",
+			args:    []string{"--public-mode", "lan-http", "--public-url", "http://127.0.0.1:28080", "--services", "full"},
+			wantErr: "requires --media-host",
+		},
+		{
+			name: "signaling URL",
+			args: []string{
+				"--public-mode", "lan-http",
+				"--public-url", "http://127.0.0.1:28080",
+				"--media-host", "192.168.1.67",
+				"--services", "full",
+			},
+			wantErr: "requires --signaling-public-url",
+		},
+		{
+			name: "non-loopback signaling URL",
+			args: []string{
+				"--public-mode", "lan-http",
+				"--public-url", "http://127.0.0.1:28080",
+				"--media-host", "192.168.1.67",
+				"--signaling-public-url", "http://127.0.0.1:28082",
+				"--services", "full",
+			},
+			wantErr: "must use a non-loopback host",
+		},
+		{
+			name: "installed ExApp callback URL",
+			args: []string{
+				"--public-mode", "lan-http",
+				"--public-url", "http://127.0.0.1:28080",
+				"--media-host", "192.168.1.67",
+				"--signaling-public-url", "http://192.168.1.67:28082",
+				"--services", "full",
+				"--cassini", "installed-exapp",
+				"--recording-backend", "installed-exapp",
+			},
+			wantErr: "requires --talk-backend-url",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := resolveDevStackPlan("plan", tt.args, testEnv(nil))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestResolveDevStackPlanLANHTTPInstalledExApp(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("plan", []string{
+		"--public-mode", "lan-http",
+		"--public-url", "http://127.0.0.1:28080",
+		"--media-host", "192.168.1.67",
+		"--signaling-public-url", "http://192.168.1.67:28082",
+		"--talk-backend-url", "http://reverse-proxy",
+		"--services", "full",
+		"--cassini", "installed-exapp",
+		"--recording-backend", "installed-exapp",
+		"--build",
+	}, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if plan.TalkBackendURL != "http://reverse-proxy" {
+		t.Fatalf("TalkBackendURL = %q", plan.TalkBackendURL)
+	}
+	if !strings.Contains(strings.Join(plan.env(), "\n"), "CASSINI_TALK_BACKEND_URL=http://reverse-proxy") {
+		t.Fatalf("plan env does not include Talk backend URL: %v", plan.env())
+	}
+}
+
 func TestResolveDevStackPlanInstalledRecordingRequiresInstalledCassini(t *testing.T) {
 	_, _, err := resolveDevStackPlan("up", []string{"--recording-backend", "installed-exapp"}, testEnv(nil))
 	if err == nil {

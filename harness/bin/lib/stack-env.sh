@@ -127,6 +127,29 @@ harness_stack_env_validate() {
         return 2
       fi
       ;;
+    lan-http)
+      if [[ -z "${CASSINI_HARNESS_PUBLIC_URL:-}" || "$(harness_url_scheme "${CASSINI_HARNESS_PUBLIC_URL:-}")" != "http" ]]; then
+        echo "CASSINI_HARNESS_PUBLIC_MODE=lan-http requires an http CASSINI_HARNESS_PUBLIC_URL" >&2
+        return 2
+      fi
+      if harness_media_selected; then
+        if [[ -z "${CASSINI_HARNESS_MEDIA_HOST:-}" ]] || harness_is_builtin_host "${CASSINI_HARNESS_MEDIA_HOST:-}"; then
+          echo "CASSINI_HARNESS_PUBLIC_MODE=lan-http media mode requires a non-loopback CASSINI_HARNESS_MEDIA_HOST" >&2
+          return 2
+        fi
+        if [[ -z "${CASSINI_HARNESS_SIGNALING_PUBLIC_URL:-}" \
+          || "$(harness_url_scheme "${CASSINI_HARNESS_SIGNALING_PUBLIC_URL:-}")" != "http" ]] \
+          || harness_is_builtin_host "$(harness_url_host "${CASSINI_HARNESS_SIGNALING_PUBLIC_URL:-}")"; then
+          echo "CASSINI_HARNESS_PUBLIC_MODE=lan-http media mode requires an http CASSINI_HARNESS_SIGNALING_PUBLIC_URL with a non-loopback host" >&2
+          return 2
+        fi
+      fi
+      if [[ "${CASSINI_HARNESS_RECORDING_BACKEND:-legacy}" == "installed-exapp" \
+        && -z "${CASSINI_TALK_BACKEND_URL:-}" ]]; then
+        echo "CASSINI_HARNESS_PUBLIC_MODE=lan-http installed-ExApp recording requires CASSINI_TALK_BACKEND_URL" >&2
+        return 2
+      fi
+      ;;
     remote-https)
       if [[ "$(harness_url_scheme "${CASSINI_HARNESS_PUBLIC_URL:-}")" != "https" ]]; then
         echo "CASSINI_HARNESS_PUBLIC_MODE=remote-https requires an https CASSINI_HARNESS_PUBLIC_URL" >&2

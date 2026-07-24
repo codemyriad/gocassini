@@ -59,6 +59,7 @@ jobs:
         run: ./scripts/test-classify-image-relevance.sh
       - name: Run offline harness regressions
         run: |
+          ./harness/bin/test-base-helpers.sh
           ./harness/bin/test-exapp-image-ref.sh
           ./harness/bin/test-exapp-manifest.sh
           ./harness/bin/test-installed-validation.sh

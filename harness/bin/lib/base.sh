@@ -90,13 +90,20 @@ harness_add_unique() {
   local value="$2"
   [[ -n "$value" ]] || return 0
   local existing
+  local current_count=0
   local -a current_values=()
-  eval "current_values=(\"\${${__array_name}[@]}\")"
-  for existing in "${current_values[@]}"; do
-    if [[ "$existing" == "$value" ]]; then
-      return 0
-    fi
-  done
+  # Bash 3.2 (the macOS system Bash) treats an expansion of a declared but
+  # empty array as an unbound variable under `set -u`. Read its length first
+  # and only expand it when it actually contains values.
+  eval "current_count=\${#${__array_name}[@]}"
+  if (( current_count > 0 )); then
+    eval "current_values=(\"\${${__array_name}[@]}\")"
+    for existing in "${current_values[@]}"; do
+      if [[ "$existing" == "$value" ]]; then
+        return 0
+      fi
+    done
+  fi
   eval "${__array_name}+=(\"\$value\")"
 }
 
