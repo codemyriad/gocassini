@@ -120,17 +120,12 @@ sandbox/deploy.sh --register-only --image ghcr.io/codemyriad/gocassini:latest
 
 ## Demo UI mode
 
-The current demo uses the existing Cassini viewer and control panel through
-AppAPI proxy URLs so the sandbox shows the expected end-user shape today. To
-support that embedded/proxied UI, `SANDBOX_PATCH_APPAPI_CSP=true` applies a
-sandbox-only patch to AppAPI's `ExAppProxyController.php`.
-
-That patch intentionally modifies a signed AppAPI file, so Nextcloud will report
-an `app_api` integrity warning. This is acceptable only for mutable demo and
-development sandboxes. Set `SANDBOX_PATCH_APPAPI_CSP=false` for a
-production-like sandbox, with the tradeoff that the proxied embedded UI may hit
-browser CSP restrictions until Cassini is moved to AppAPI's native UI
-script/style mechanism.
+Cassini renders its control-panel/viewer through AppAPI's **native UI
+mechanism**: the operator registers a single "Cassini" navigation entry and a
+nonce'd `ui/viewer.js`, and AppAPI serves them on its own embedded page under
+Nextcloud's normal CSP. This is the same shape a stock App Store install gets —
+the sandbox needs no AppAPI modifications and the `app_api` integrity check stays
+green.
 
 ## Persistence
 

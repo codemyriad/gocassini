@@ -1,7 +1,7 @@
 # Installing Cassini as a Nextcloud ExApp
 
 This is the **production install guide**. Cassini ships as a Nextcloud AppAPI
-external app: one container exposes the admin control-panel, the recording
+external app: one container exposes the admin operator surface, the recording
 viewer, the published meeting archive, and the Talk recording backend over a
 single HTTP port; Nextcloud's AppAPI proxy fronts it with per-route access
 enforcement.
@@ -231,13 +231,12 @@ All of these must pass before the Talk handoff:
    # → {"version":1}
    ```
 
-6. The admin control panel renders for an admin user (the **Cassini Admin**
-   menu entry, or directly):
-   `https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/control-panel/`
-7. The viewer renders for a normal logged-in user (the **Cassini** menu
-   entry, or directly):
-   `https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/viewer/`
-8. The doctor/status endpoint reports `"ok": true` (ADMIN route — use an
+6. The **Cassini** navigation entry renders for any logged-in user (the viewer
+   / meeting archive). Admin users additionally get the operator surface
+   (recording control + job history) inside the same entry. This is the
+   supported entry point — it runs on AppAPI's nonce'd embedded page under
+   Nextcloud's normal CSP, no AppAPI patch required.
+7. The doctor/status endpoint reports `"ok": true` (ADMIN route — use an
    admin login with an app password):
 
    ```bash
@@ -427,13 +426,12 @@ The manifest declares per-route access levels enforced by Nextcloud's proxy:
 
 | Route | Access | What it is |
 |---|---|---|
-| `/control-panel/*` | ADMIN | Svelte admin UI for starting and monitoring jobs |
 | `/operator/jobs`, `/operator/jobs/...`, `/operator/events` | ADMIN | Operator JSON + SSE API |
+| `/operator/settings` | ADMIN | STT-quality settings (read + update) |
 | `/operator/status` | ADMIN | Doctor/status endpoint (version, device usability, Talk config, DB/storage health) |
 | `/viewer/*` | USER | Viewer SPA |
 | `/published/*` | USER | Published meeting bundles (catalog + recordings) |
-| `/ui/viewer.js` | USER | Bootstrap script behind the **Cassini** navigation entry |
-| `/ui/control-panel.js` | ADMIN | Bootstrap script behind the **Cassini Admin** navigation entry |
+| `/ui/viewer.js`, `/ui/viewer.css` | USER | Bootstrap script + stylesheet behind the **Cassini** navigation entry |
 | `/img/app.svg` | USER | Navigation icon |
 | `/api/v1/welcome`, `/api/v1/room/*` | PUBLIC | Talk recording-backend protocol (HMAC-authenticated by Talk itself) |
 

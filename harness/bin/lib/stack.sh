@@ -533,47 +533,6 @@ harness_render_stack_configs() {
   fi
 }
 
-harness_csp_patch_required() {
-  [[ "${CASSINI_HARNESS_CASSINI_MODE:-none}" == "installed-exapp" ]]
-}
-
-harness_apply_patch_phase() {
-  local patch_mode="${CASSINI_HARNESS_PATCH_MODE:-auto}"
-  local patch_id="appapi-exapp-proxy-csp-html-v1"
-
-  if ! harness_csp_patch_required; then
-    log "Patch phase: no associated patch for Cassini mode '${CASSINI_HARNESS_CASSINI_MODE:-none}'"
-    return 0
-  fi
-
-  case "$patch_mode" in
-    auto|force)
-      ;;
-    none)
-      log "Patch phase: skipping associated patch $patch_id because --patch=none was selected"
-      return 0
-      ;;
-    *)
-      echo "Invalid CASSINI_HARNESS_PATCH_MODE: $patch_mode" >&2
-      return 2
-      ;;
-  esac
-
-  log "Patch phase: applying $patch_id (mode: $patch_mode)"
-  local output
-  if ! output="$(compose exec -T -e "CASSINI_HARNESS_PATCH_MODE=$patch_mode" nextcloud php < "$TEST_DIR/bin/patch-csp.php" 2>&1)"; then
-    printf '%s\n' "$output" >&2
-    return 1
-  fi
-  printf '%s\n' "$output"
-
-  if [[ "$output" == *"patch:apply $patch_id"* || "$output" == *"patch:force $patch_id"* || "$output" == *"patch:applied $patch_id"* ]]; then
-    log "Patch phase: restarting Nextcloud after $patch_id"
-    compose restart nextcloud
-    wait_for_nextcloud 180
-  fi
-}
-
 harness_grant_nextcloud_docker_socket() {
   log "Granting Nextcloud access to host docker socket"
   if ! compose exec -T nextcloud test -S /var/run/docker.sock; then
@@ -616,8 +575,6 @@ harness_configure_appapi_phase() {
   log "AppAPI phase: installing/enabling AppAPI"
   occ app:install app_api || true
   occ app:enable app_api
-
-  harness_apply_patch_phase
 
   log "AppAPI phase: registering HaRP deploy daemon"
   occ app_api:daemon:unregister docker_local >/dev/null 2>&1 || true
