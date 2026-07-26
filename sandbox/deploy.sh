@@ -445,6 +445,15 @@ register_cassini() {
   fi
   "${COMPOSE[@]}" cp "$RUNTIME_DIR/gocassini-info.xml" nextcloud:/tmp/gocassini-info.xml
   "${COMPOSE[@]}" exec -T -u root nextcloud chown www-data:www-data /tmp/gocassini-info.xml
+  # A leftover registration (an earlier App Store install, or a previous deploy)
+  # leaves AppAPI holding a secret the freshly-redeployed ExApp container no
+  # longer shares, so registering over it fails at the /init step with a 401
+  # "invalid AppAPI authentication". Unregister first for a clean re-register —
+  # WITHOUT --rm-data, so the persistent volume (jobs DB, published site) survives.
+  if occ app_api:app:list 2>/dev/null | grep -qi 'gocassini'; then
+    log "Cassini already registered; unregistering first for a clean re-register (data volume preserved)"
+    occ app_api:app:unregister gocassini || true
+  fi
   occ app_api:app:register gocassini harp_sandbox \
     --info-xml /tmp/gocassini-info.xml \
     --env "CASSINI_TALK_RECORDING_SECRET=$CASSINI_TALK_RECORDING_SECRET" \
