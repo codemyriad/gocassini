@@ -274,6 +274,13 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 					w.Header().Set(h, v)
 				}
 			}
+			if relPath == "catalog.json" {
+				// The catalog changes after every publish. Nextcloud's AppAPI proxy
+				// otherwise gives this response a one-hour browser freshness window,
+				// hiding newly published meetings even after reopening the viewer.
+				w.Header().Set("Cache-Control", "no-store")
+				w.Header().Set("Content-Type", "application/json")
+			}
 			w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
 			w.WriteHeader(resp.StatusCode)
 			if r.Method != http.MethodHead {

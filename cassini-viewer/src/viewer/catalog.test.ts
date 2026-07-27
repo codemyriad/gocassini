@@ -108,7 +108,7 @@ describe("validateMeetingCatalog", () => {
     } as Window;
     const wantCatalogUrl =
       "http://nextcloud.example.com/index.php/apps/app_api/proxy/gocassini/published/catalog.json";
-    globalThis.fetch = vi.fn(async (input: string | URL) => {
+    const fetchMock = vi.fn(async (input: string | URL) => {
       const url = String(input);
       calls.push(url);
       if (url === wantCatalogUrl) {
@@ -129,11 +129,13 @@ describe("validateMeetingCatalog", () => {
         } as Response;
       }
       return { ok: false } as Response;
-    }) as typeof fetch;
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
 
     const catalog = await loadMeetingCatalog();
 
     expect(catalog?.meetings).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledWith(wantCatalogUrl, { cache: "no-store" });
     // audioPath follows the fetched catalog's response.url automatically.
     expect(catalog?.meetings[0]?.audioPath).toBe(
       "http://nextcloud.example.com/index.php/apps/app_api/proxy/gocassini/published/meeting-x.opus",
