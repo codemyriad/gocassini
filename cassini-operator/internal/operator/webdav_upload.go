@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"cassini-operator/internal/operator/appapi"
 )
 
 // Nextcloud-native delivery of the published meeting archive (D-529). On the
@@ -244,7 +246,34 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 	// bounded by the request context; a hung upstream is bounded on headers.
 	client := &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}}
 	return func(w http.ResponseWriter, r *http.Request, relPath string) bool {
-		davURL := c.davFileURL(ncRecordingsOwner, ncRecordingsRoot+"/"+strings.TrimPrefix(relPath, "/"))
+		actAs := ncRecordingsOwner
+		if c.AccessControl {
+			// Per-user access control (D-534): serve each caller only what they
+			// may read. The caller identity comes from the AppAPI-verified
+			// request; these routes are USER-gated, so it is always present.
+			caller := appapi.UserID(r.Context())
+			if caller == "" {
+				if logger != nil {
+					logger.Printf("nc files read: missing caller identity path=%s — failing closed", relPath)
+				}
+				if relPath == "catalog.json" {
+					writeCatalogJSON(w, []byte(emptyCatalogJSON))
+				} else {
+					http.NotFound(w, r)
+				}
+				return true
+			}
+			if relPath == "catalog.json" {
+				// The list is built per caller (authoritative catalog filtered
+				// by the caller's own PROPFIND scan), not streamed as-is.
+				c.serveFilteredCatalog(r.Context(), w, client, caller, logger)
+				return true
+			}
+			// meetings/<id>.opus: fetch AS the caller so Nextcloud enforces the
+			// per-file ACL — a non-readable meeting 404s and never leaks.
+			actAs = caller
+		}
+		davURL := c.davFileURL(actAs, ncRecordingsRoot+"/"+strings.TrimPrefix(relPath, "/"))
 		req, err := http.NewRequestWithContext(r.Context(), r.Method, davURL, nil)
 		if err != nil {
 			if logger != nil {
@@ -253,7 +282,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 			http.Error(w, "Nextcloud Files request failed", http.StatusInternalServerError)
 			return true
 		}
-		c.setAppAPIDAVHeadersForUser(req, ncRecordingsOwner)
+		c.setAppAPIDAVHeadersForUser(req, actAs)
 		if rng := r.Header.Get("Range"); rng != "" {
 			req.Header.Set("Range", rng)
 		}
