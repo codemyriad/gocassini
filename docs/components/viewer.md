@@ -42,13 +42,14 @@ See:
 
 ## Site-level input contract
 
-At the site root the viewer expects:
+At the site root the viewer reads:
 
-- `index.html`
-- `catalog.json`
-- `assets/...`
+- `catalog.json` — the top-level meeting library contract
+- `meetings/...` — per-meeting artifacts referenced by the catalog
 
-`catalog.json` is the top-level meeting library contract.
+The viewer shell (`index.html` + `assets/...`) is served from the Docker image at
+runtime; it is embedded next to `catalog.json` only for a self-contained static
+export published with `--rebuild-viewer` (D-531).
 
 Each meeting entry must provide at least one of:
 

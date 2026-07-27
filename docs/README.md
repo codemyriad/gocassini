@@ -43,7 +43,9 @@ in these docs should be read in light of them.
   are silently skipped and the raw local transcript is still published.
 - **Self-contained outputs.** A portable single-file `.opus` carries audio +
   transcript + readable transcript (integrity-hashed), and a separate
-  **static-site export** (index.html + viewer SPA + `catalog.json` + `meetings/`)
+  **static-site export** (`catalog.json` + `meetings/`; the viewer SPA shell —
+  `index.html` + `assets/` — is served from the image by default and embedded
+  into the export only on `--rebuild-viewer`)
   is fully viewable with no server or central app. The viewer can also **embed**
   inside the Nextcloud page. Nuance: the summary currently ships as a
   static-site sidecar and is **not yet embedded** in the portable `.opus`

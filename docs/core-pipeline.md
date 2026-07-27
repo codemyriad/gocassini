@@ -158,13 +158,13 @@ Publish turns one or more ready meetings into a static viewer site.
 
 A **`.site` bundle**.
 
-Typical contents:
+Typical contents (lightweight by default — D-531):
 
-- `index.html`
-- `assets/...`
 - `catalog.json`
 - `meetings/<meeting-id>/...`
 - site-level `cassini.json`
+- `index.html` + `assets/...` — **only** with `--rebuild-viewer`; otherwise the
+  viewer shell is served from the image at runtime
 
 ### What publish actually does
 

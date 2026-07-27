@@ -117,6 +117,36 @@ describe("mergePublishedSites", () => {
     expect(mergedManifest.source_path).toContain(secondaryDir);
   });
 
+  // D-531: lightweight published sites have no viewer shell. Merging two of them
+  // must produce a shell-less merged site (catalog + meetings only).
+  it("merges lightweight sites without a viewer shell", () => {
+    const primaryDir = makeTempDir("merge-light-primary-");
+    const secondaryDir = makeTempDir("merge-light-secondary-");
+    const outputDir = makeTempDir("merge-light-out-");
+
+    for (const [dir, id] of [
+      [primaryDir, "alpha"],
+      [secondaryDir, "beta"],
+    ] as const) {
+      writeJson(join(dir, "catalog.json"), {
+        version: "cassini.viewer.catalog.v1",
+        meetings: [{ id, title: id, dateLabel: "2026-03-04", audioPath: `./meetings/${id}.opus` }],
+      });
+      mkdirSync(join(dir, "meetings"), { recursive: true });
+      writeFileSync(join(dir, "meetings", `${id}.opus`), `opus-${id}`, "utf8");
+    }
+
+    const merged = mergePublishedSites({ primaryDir, secondaryDir, outputDir });
+
+    expect(merged.meetings.map((m) => m.id).sort()).toEqual(["alpha", "beta"]);
+    expect(existsSync(join(outputDir, "catalog.json"))).toBe(true);
+    expect(existsSync(join(outputDir, "meetings", "alpha.opus"))).toBe(true);
+    expect(existsSync(join(outputDir, "meetings", "beta.opus"))).toBe(true);
+    // No viewer shell was present in the inputs, so none appears in the output.
+    expect(existsSync(join(outputDir, "index.html"))).toBe(false);
+    expect(existsSync(join(outputDir, "assets"))).toBe(false);
+  });
+
   it("rejects asset paths that escape the site root", () => {
     const siteDir = makeTempDir("cassini-merge-site-");
     expect(normalizeSiteAssetPath("./meetings/demo")).toBe("meetings/demo");
