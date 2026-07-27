@@ -156,14 +156,14 @@ const (
 
 // ExAppConfig holds the AppAPI-derived runtime values resolved from env vars.
 type ExAppConfig struct {
-	Active           bool
-	BindAddr         string
-	AppID            string
-	AppVersion       string
-	AppSecret        string
-	NextcloudURL     string // optional; if set, /init reports progress=100 back via OCS
-	ViewerDist       string
-	PublishedDir     string // operator SiteRoot, served read-only at /published
+	Active       bool
+	BindAddr     string
+	AppID        string
+	AppVersion   string
+	AppSecret    string
+	NextcloudURL string // optional; if set, /init reports progress=100 back via OCS
+	ViewerDist   string
+	PublishedDir string // operator SiteRoot, served read-only at /published
 }
 
 // LoadExAppConfig reads ExApp env vars and decides whether the AppAPI build
@@ -172,11 +172,11 @@ type ExAppConfig struct {
 // shared secret AppAPI was supposed to inject.
 func LoadExAppConfig() (ExAppConfig, error) {
 	cfg := ExAppConfig{
-		AppID:            strings.TrimSpace(os.Getenv(envAppID)),
-		AppVersion:       strings.TrimSpace(os.Getenv(envAppVersion)),
-		AppSecret:        os.Getenv(envAppSecret),
-		NextcloudURL:     strings.TrimSpace(os.Getenv(envNextcloudURL)),
-		ViewerDist:       strings.TrimSpace(os.Getenv(envViewerDist)),
+		AppID:        strings.TrimSpace(os.Getenv(envAppID)),
+		AppVersion:   strings.TrimSpace(os.Getenv(envAppVersion)),
+		AppSecret:    os.Getenv(envAppSecret),
+		NextcloudURL: strings.TrimSpace(os.Getenv(envNextcloudURL)),
+		ViewerDist:   strings.TrimSpace(os.Getenv(envViewerDist)),
 	}
 	cfg.Active = strings.TrimSpace(cfg.AppSecret) != ""
 	required, err := parseBoolEnv(envAppAPIRequired)
@@ -278,13 +278,17 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 	root.Handle(uiAssetURLPrefix+"/", c.uiAssetHandler(logger))
 	root.Handle(navIconURLPath, embeddedAssetHandler(navIconSVG, "image/svg+xml"))
 
+	// When running as an AppAPI ExApp, serve the archive paths (catalog.json +
+	// per-meeting .opus) from Nextcloud Files; nil (dev/standalone) keeps the
+	// local-disk behavior (D-529).
+	ncProxy := c.ncFilesProxy()
 	if c.ViewerDist != "" {
-		viewer := viewerHandler(c.ViewerDist, c.PublishedDir, viewerURLPrefix, logger)
+		viewer := viewerHandler(c.ViewerDist, c.PublishedDir, viewerURLPrefix, logger, ncProxy)
 		root.Handle(viewerURLPrefix, viewer)
 		root.Handle(viewerURLPrefix+"/", viewer)
 	}
 	if c.PublishedDir != "" {
-		root.Handle(publishedURLPrefix+"/", publishedHandler(c.PublishedDir, publishedURLPrefix, logger))
+		root.Handle(publishedURLPrefix+"/", publishedHandler(c.PublishedDir, publishedURLPrefix, logger, ncProxy))
 	}
 }
 
@@ -609,7 +613,7 @@ func spaHandler(dir, urlPrefix string, logger *log.Logger) http.Handler {
 // SPA entry when Cassini is exported, but in an ExApp they are stored under the
 // operator's published site root. Serve those archive paths without SPA fallback
 // so JSON/audio fetches don't receive index.html.
-func viewerHandler(viewerDir, publishedDir, urlPrefix string, logger *log.Logger) http.Handler {
+func viewerHandler(viewerDir, publishedDir, urlPrefix string, logger *log.Logger, ncProxy ncFilesProxyFunc) http.Handler {
 	spa := spaHandler(viewerDir, urlPrefix, logger)
 	if publishedDir == "" {
 		return spa
@@ -622,6 +626,11 @@ func viewerHandler(viewerDir, publishedDir, urlPrefix string, logger *log.Logger
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				w.Header().Set("Allow", "GET, HEAD")
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			// Prefer Nextcloud Files (D-529); fall back to the local site when
+			// NC is unconfigured/unreachable or the file isn't there yet.
+			if ncProxy != nil && ncProxy(w, r, relPath) {
 				return
 			}
 			publishedFiles.ServeHTTP(w, r)
@@ -653,13 +662,23 @@ func serveSPAIndex(w http.ResponseWriter, r *http.Request, indexPath string, log
 
 // publishedHandler serves files from `dir` under urlPrefix. No SPA fallback —
 // missing files 404. Used for the published meeting archive.
-func publishedHandler(dir, urlPrefix string, logger *log.Logger) http.Handler {
+func publishedHandler(dir, urlPrefix string, logger *log.Logger, ncProxy ncFilesProxyFunc) http.Handler {
 	fileServer := http.StripPrefix(urlPrefix, http.FileServer(http.Dir(dir)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
+		}
+		// Prefer Nextcloud Files for the archive paths (catalog.json + the
+		// per-meeting .opus); the SPA shell/assets and any NC miss fall back to
+		// the local site (D-529).
+		relPath := strings.TrimPrefix(r.URL.Path, urlPrefix)
+		relPath = strings.TrimPrefix(relPath, "/")
+		if ncProxy != nil && (relPath == "catalog.json" || strings.HasPrefix(relPath, "meetings/")) {
+			if ncProxy(w, r, relPath) {
+				return
+			}
 		}
 		fileServer.ServeHTTP(w, r)
 	})
