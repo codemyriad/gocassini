@@ -126,6 +126,51 @@ func TestNCFilesProxyFailsClosedWithoutCaller(t *testing.T) {
 	}
 }
 
+// Security-critical: a per-caller scan error must yield an EMPTY catalog, never
+// the authoritative (unfiltered) one — otherwise every meeting leaks to every
+// caller.
+func TestNCFilesProxyFailsClosedOnScanError(t *testing.T) {
+	catalog := `{"version":"cassini.viewer.catalog.v1","meetings":[` +
+		`{"id":"a","title":"One","dateLabel":"d","audioPath":"./meetings/JOB1.opus"},` +
+		`{"id":"b","title":"Two","dateLabel":"d","audioPath":"./meetings/JOB2.opus"}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/catalog.json") {
+			_, _ = w.Write([]byte(catalog))
+			return
+		}
+		// The caller's PROPFIND scan fails.
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	proxy := aclProxyConfig(srv.URL).ncFilesProxy(nil)
+	rec := httptest.NewRecorder()
+	proxy(rec, callerReq(http.MethodGet, "/published/catalog.json", "alice"), "catalog.json")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (fail-closed empty catalog)", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "JOB1") || strings.Contains(body, "JOB2") {
+		t.Errorf("scan failure must NOT leak the authoritative catalog: %s", body)
+	}
+	if !strings.Contains(body, `"meetings":[]`) {
+		t.Errorf("want empty meetings list, got %s", body)
+	}
+}
+
+func TestNCFilesProxyBadGatewayOnCatalogFetchError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError) // authoritative catalog fetch fails
+	}))
+	defer srv.Close()
+	proxy := aclProxyConfig(srv.URL).ncFilesProxy(nil)
+	rec := httptest.NewRecorder()
+	proxy(rec, callerReq(http.MethodGet, "/published/catalog.json", "alice"), "catalog.json")
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("catalog fetch error code = %d, want 502", rec.Code)
+	}
+}
+
 func TestFilterCatalogPreservesFieldsAndFilters(t *testing.T) {
 	raw := []byte(`{"version":"cassini.viewer.catalog.v1","extra":"keep",` +
 		`"meetings":[` +

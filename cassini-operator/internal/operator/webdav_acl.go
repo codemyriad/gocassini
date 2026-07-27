@@ -365,13 +365,19 @@ func (c ExAppConfig) davGetBytes(ctx context.Context, client *http.Client, userI
 // A 404 (the collection is not visible to the user) yields an empty list, not
 // an error.
 func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, userID, relDir string) ([]string, error) {
-	req, err := http.NewRequestWithContext(ctx, "PROPFIND", c.davFileURL(userID, relDir), nil)
+	// Request only <d:resourcetype/>: the href (all we need) is always returned,
+	// and a minimal prop set keeps each child's response element to a few
+	// hundred bytes instead of the multi-KiB allprops default.
+	reqBody := []byte(`<?xml version="1.0" encoding="UTF-8"?>` +
+		`<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>`)
+	req, err := http.NewRequestWithContext(ctx, "PROPFIND", c.davFileURL(userID, relDir), bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, err
 	}
 	c.setAppAPIDAVHeadersForUser(req, userID)
 	req.Header.Set("Depth", "1")
 	req.Header.Set("Content-Type", ncFilesACLMediaType)
+	req.ContentLength = int64(len(reqBody))
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -383,9 +389,16 @@ func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("PROPFIND %s -> %d", relDir, resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	// Read with an explicit cap and detect truncation: a silently truncated
+	// multistatus would fail to parse and blank the listing for every caller
+	// (fail-closed but self-inflicted), so surface it loudly instead.
+	const maxMultistatus = 64 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxMultistatus+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(body) > maxMultistatus {
+		return nil, fmt.Errorf("PROPFIND %s: multistatus exceeds %d bytes (too many meetings?)", relDir, maxMultistatus)
 	}
 	var ms struct {
 		Responses []struct {
