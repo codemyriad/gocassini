@@ -207,6 +207,12 @@ func TestNCFilesProxyRelaysAndForwardsRange(t *testing.T) {
 	if got := rec.Header().Get(ncFilesSourceHeader); got != ncFilesSourceValue {
 		t.Errorf("source header = %q, want %q", got, ncFilesSourceValue)
 	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("catalog Cache-Control = %q, want no-store", got)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("catalog Content-Type = %q, want application/json", got)
+	}
 
 	// Range GET is forwarded and 206 relayed.
 	rec = httptest.NewRecorder()
