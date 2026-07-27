@@ -20,7 +20,10 @@ const DEFAULT_CATALOG_PATH = "./catalog.json";
 
 export async function loadMeetingCatalog(path = DEFAULT_CATALOG_PATH): Promise<MeetingCatalog | null> {
   const targetUrl = path === DEFAULT_CATALOG_PATH ? resolveCatalogUrl() : path;
-  const response = await fetch(targetUrl);
+  // catalog.json is mutable: every publish replaces it with the current
+  // meeting index. Bypass the browser's HTTP cache so reopening/focusing the
+  // embedded viewer cannot remain pinned to AppAPI's prior one-hour response.
+  const response = await fetch(targetUrl, { cache: "no-store" });
   if (!response.ok) {
     return null;
   }

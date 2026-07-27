@@ -36,6 +36,10 @@
   let listError = "";
   let notFoundMessage = "";
   let catalogHydrationGeneration = 0;
+  const CATALOG_REFRESH_INTERVAL_MS = 15_000;
+  let catalogMode = false;
+  let catalogRefreshRunning = false;
+  let catalogRefreshTimer: number | undefined;
 
   type ThemeMode = "saturn-light" | "saturn-dark";
   const THEME_STORAGE_KEY = "cassini-theme";
@@ -233,6 +237,42 @@
     );
   }
 
+  async function refreshCatalog() {
+    // Embedded mode keeps probing even when no catalog existed at mount time:
+    // a fresh install can stay open while its first recording is published.
+    if ((!catalogMode && !ncMode) || catalogRefreshRunning) {
+      return;
+    }
+    catalogRefreshRunning = true;
+    try {
+      const catalog = await dataProvider.loadCatalog();
+      if (!catalog) {
+        return;
+      }
+      catalogMode = true;
+      bundledMode = false;
+      catalogMeetings = catalog.meetings;
+      listError = "";
+      void hydrateCatalogMeetingMetadata(catalog.meetings);
+      if (selectedMeetingId) {
+        notFoundMessage = catalog.meetings.some((entry) => entry.id === selectedMeetingId)
+          ? ""
+          : `Meeting not found in catalog: ${selectedMeetingId}`;
+      }
+    } catch (error) {
+      // Preserve the last known-good list while surfacing the refresh failure.
+      listError = error instanceof Error ? error.message : String(error);
+    } finally {
+      catalogRefreshRunning = false;
+    }
+  }
+
+  function refreshCatalogWhenVisible() {
+    if (document.visibilityState === "visible") {
+      void refreshCatalog();
+    }
+  }
+
   $: selectedMeeting = selectedMeetingId
     ? catalogMeetings.find((entry) => entry.id === selectedMeetingId) ?? null
     : null;
@@ -261,6 +301,17 @@
         applyTheme("saturn-light");
       }
     }
+    if (ncMode) {
+      // The embedded app can remain mounted while a Talk recording publishes
+      // in another tab. Refresh on return and periodically so the new catalog
+      // entry appears without a hard browser reload.
+      window.addEventListener("focus", refreshCatalogWhenVisible);
+      document.addEventListener("visibilitychange", refreshCatalogWhenVisible);
+      catalogRefreshTimer = window.setInterval(
+        refreshCatalogWhenVisible,
+        CATALOG_REFRESH_INTERVAL_MS,
+      );
+    }
     if (typeof window.matchMedia === "function") {
       viewportMedia = window.matchMedia(DESKTOP_MEDIA_QUERY);
       isDesktop = viewportMedia.matches;
@@ -284,6 +335,7 @@
         // "no catalog" would resolve bundled fallback files against the proxy
         // root and surface a load error instead of an empty meeting list.
         if (catalog) {
+          catalogMode = true;
           catalogMeetings = catalog.meetings;
           void hydrateCatalogMeetingMetadata(catalog.meetings);
           const requested = initialMeetingId
@@ -316,6 +368,12 @@
   onDestroy(() => {
     window.removeEventListener("popstate", handlePopState);
     window.removeEventListener("hashchange", handlePopState);
+    window.removeEventListener("focus", refreshCatalogWhenVisible);
+    document.removeEventListener("visibilitychange", refreshCatalogWhenVisible);
+    if (catalogRefreshTimer !== undefined) {
+      window.clearInterval(catalogRefreshTimer);
+    }
+    catalogHydrationGeneration += 1;
     prefersDarkMedia?.removeEventListener("change", handlePrefersColorSchemeChange);
     viewportMedia?.removeEventListener("change", handleViewportChange);
     reducedMotionMedia?.removeEventListener("change", handleReducedMotionChange);

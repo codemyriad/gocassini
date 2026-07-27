@@ -170,6 +170,7 @@ PY
   [[ "$code" == 206 ]] || return 1
   [[ "$(wc -c <"$LOG_DIR/files-${label}.opus-prefix" | tr -d ' ')" == 4 ]] || return 1
   assert_files_source "$CATALOG_URL" "${label}-catalog" || return 1
+  grep -Eiq '^Cache-Control:.*no-store' "$LOG_DIR/${label}-catalog-source.headers" || return 1
   assert_files_source "$PROXY_URL/published/${audio_path#./}" "${label}-opus" 'bytes=0-3' || return 1
 }
 
