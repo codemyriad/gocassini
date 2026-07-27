@@ -35,10 +35,17 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /var/lib/cassini-operator
+# This standalone image serves the published site directly via the sibling
+# nginx cassini-viewer container (deployment/compose.yml), which expects the
+# viewer shell in the published volume. So keep publish self-contained here:
+# CASSINI_PUBLISH_REBUILD_VIEWER=1 makes the operator's internal `cassini
+# publish` embed the shell (D-531). The ExApp image (Dockerfile.exapp) leaves
+# this unset and serves the shell from CASSINI_VIEWER_DIST instead.
 ENV CASSINI_BIN=/usr/local/bin/cassini \
     CASSINI_LIB_DIR=/opt/cassini/lib \
     LD_LIBRARY_PATH=/opt/cassini/lib \
     CASSINI_EXPORTER_RUNNER=/opt/cassini/cassini-publisher/bin/export-static-meetings.sh \
+    CASSINI_PUBLISH_REBUILD_VIEWER=1 \
     CASSINI_OPERATOR_DB_PATH=/var/lib/cassini-operator/jobs.sqlite3 \
     CASSINI_OPERATOR_WORK_ROOT=/var/lib/cassini-operator/jobs \
     CASSINI_OPERATOR_SITE_ROOT=/srv/cassini-site/published \
