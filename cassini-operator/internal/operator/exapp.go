@@ -59,6 +59,7 @@ const (
 	envAppPort              = "APP_PORT"
 	envAppID                = "APP_ID"
 	envAppVersion           = "APP_VERSION"
+	envAAVersion            = "AA_VERSION"
 	envAppSecret            = "APP_SECRET"
 	envAppPersistentStorage = "APP_PERSISTENT_STORAGE"
 	envAppAPIRequired       = "CASSINI_APPAPI_REQUIRED"
@@ -160,10 +161,12 @@ type ExAppConfig struct {
 	BindAddr     string
 	AppID        string
 	AppVersion   string
+	AAVersion    string
 	AppSecret    string
 	NextcloudURL string // optional; if set, /init reports progress=100 back via OCS
 	ViewerDist   string
 	PublishedDir string // operator SiteRoot, served read-only at /published
+	onEnabled    func(bool)
 }
 
 // LoadExAppConfig reads ExApp env vars and decides whether the AppAPI build
@@ -174,6 +177,7 @@ func LoadExAppConfig() (ExAppConfig, error) {
 	cfg := ExAppConfig{
 		AppID:        strings.TrimSpace(os.Getenv(envAppID)),
 		AppVersion:   strings.TrimSpace(os.Getenv(envAppVersion)),
+		AAVersion:    strings.TrimSpace(os.Getenv(envAAVersion)),
 		AppSecret:    os.Getenv(envAppSecret),
 		NextcloudURL: strings.TrimSpace(os.Getenv(envNextcloudURL)),
 		ViewerDist:   strings.TrimSpace(os.Getenv(envViewerDist)),
@@ -267,6 +271,7 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 		Logger:               logger,
 		InitProgressReporter: c.initProgressReporter(logger),
 		UIRegistrar:          c.uiRegistrar(logger),
+		EnabledCallback:      c.onEnabled,
 	}
 	lifecycle.Register(root)
 
@@ -281,7 +286,7 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 	// When running as an AppAPI ExApp, serve the archive paths (catalog.json +
 	// per-meeting .opus) from Nextcloud Files; nil (dev/standalone) keeps the
 	// local-disk behavior (D-529).
-	ncProxy := c.ncFilesProxy()
+	ncProxy := c.ncFilesProxy(logger)
 	if c.ViewerDist != "" {
 		viewer := viewerHandler(c.ViewerDist, c.PublishedDir, viewerURLPrefix, logger, ncProxy)
 		root.Handle(viewerURLPrefix, viewer)
@@ -628,8 +633,9 @@ func viewerHandler(viewerDir, publishedDir, urlPrefix string, logger *log.Logger
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
-			// Prefer Nextcloud Files (D-529); fall back to the local site when
-			// NC is unconfigured/unreachable or the file isn't there yet.
+			// Nextcloud Files is authoritative in AppAPI deployments (D-529).
+			// Outside AppAPI ncProxy is nil and the local site remains the
+			// standalone/dev data source.
 			if ncProxy != nil && ncProxy(w, r, relPath) {
 				return
 			}
@@ -670,9 +676,9 @@ func publishedHandler(dir, urlPrefix string, logger *log.Logger, ncProxy ncFiles
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		// Prefer Nextcloud Files for the archive paths (catalog.json + the
-		// per-meeting .opus); the SPA shell/assets and any NC miss fall back to
-		// the local site (D-529).
+		// Nextcloud Files is authoritative for archive paths in AppAPI
+		// deployments. The local site serves the SPA shell/assets and remains
+		// the archive source only outside AppAPI (D-529).
 		relPath := strings.TrimPrefix(r.URL.Path, urlPrefix)
 		relPath = strings.TrimPrefix(relPath, "/")
 		if ncProxy != nil && (relPath == "catalog.json" || strings.HasPrefix(relPath, "meetings/")) {

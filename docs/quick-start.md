@@ -47,7 +47,9 @@ This one command:
   at the installed ExApp proxy path.
 
 The first run is slow — it builds the ExApp image. Later runs without `--build`
-reuse the existing image.
+reuse the existing image. Keep `--build` when validating changes in the current
+checkout; otherwise the harness deliberately runs the previously built image,
+which may be an older release even though Git is on your feature branch.
 
 When it finishes, open Nextcloud and sign in as `admin` / `admin`:
 
@@ -83,9 +85,11 @@ git lfs pull \
 
 This creates/reuses a private one-to-one conversation and triggers one Talk
 recording through the installed ExApp. A pass requires one new succeeded job,
-a matching viewer catalog entry with positive recorder segments, authenticated
-artifact download, and a transcript that decodes to at least one word. There is
-no recording retry. Omit `--run-count 1` to run the validator's two-record
+the `.opus` and catalog to exist directly in Nextcloud Files, viewer responses
+identified as Files-backed, positive recorder segments, authenticated artifact
+download, and a transcript that decodes to at least one word. This strict check
+also catches accidentally testing a stale pre-feature image. There is no
+recording retry. Omit `--run-count 1` to run the validator's two-record
 archive-preservation mode.
 
 For the exact-image, stack-owning CI equivalent, start from a clean stack and

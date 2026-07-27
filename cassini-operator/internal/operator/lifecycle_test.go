@@ -226,6 +226,31 @@ func TestEnabledFalseDoesNotTriggerUIRegistrar(t *testing.T) {
 	}
 }
 
+func TestEnabledCallbackReceivesPersistedState(t *testing.T) {
+	h, _ := newTestHandlers(t)
+	called := make(chan bool, 2)
+	h.EnabledCallback = func(enabled bool) { called <- enabled }
+
+	for _, want := range []bool{true, false} {
+		query := "enabled=0"
+		if want {
+			query = "enabled=1"
+		}
+		w := putEnabled(t, h, query, "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("got %d, want 200; body=%s", w.Code, w.Body.String())
+		}
+		select {
+		case got := <-called:
+			if got != want {
+				t.Fatalf("EnabledCallback(%v), want %v", got, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("EnabledCallback not called for enabled=%v", want)
+		}
+	}
+}
+
 func TestEnabledRejectsGET(t *testing.T) {
 	h, _ := newTestHandlers(t)
 	mux := http.NewServeMux()
