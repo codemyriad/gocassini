@@ -128,9 +128,13 @@ func resolveServeRoot(path string) (string, string, error) {
 	if !info.IsDir() {
 		return "", "", fmt.Errorf("serve path is not a directory: %s", root)
 	}
-	indexPath := filepath.Join(root, "index.html")
-	if _, err := os.Stat(indexPath); err != nil {
-		return "", "", fmt.Errorf("serve path does not contain index.html: %s", root)
+	// A servable directory has the viewer shell (index.html) or, for a
+	// lightweight publish (D-531), a catalog.json — the viewer shell is served
+	// from the image and only catalog.json + meetings/ live in the site.
+	_, indexErr := os.Stat(filepath.Join(root, "index.html"))
+	_, catalogErr := os.Stat(filepath.Join(root, "catalog.json"))
+	if indexErr != nil && catalogErr != nil {
+		return "", "", fmt.Errorf("serve path does not contain index.html or catalog.json: %s", root)
 	}
 	return root, root, nil
 }
