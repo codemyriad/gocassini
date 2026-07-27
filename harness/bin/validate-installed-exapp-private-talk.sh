@@ -29,9 +29,10 @@ usage() {
 Usage: $0 [options]
 
 Runs one or more private Talk recordings against an already installed ExApp,
-then strictly validates the new job, viewer catalog entry, downloaded product
-artifact, and transcript content. Two runs remain the manual default so archive
-preservation is checked; faithful CI uses --run-count 1.
+then strictly validates the new job, direct Nextcloud Files delivery, the
+Files-backed viewer catalog/artifact responses, and transcript content. Two
+runs remain the manual default so archive preservation is checked; faithful CI
+uses --run-count 1.
 
 Options:
   --nextcloud-host <host-or-url>  Default: CASSINI_HARNESS_HOST, then 127.0.0.1
@@ -84,6 +85,7 @@ normalize_base_url() {
 BASE_URL="$(normalize_base_url "$NEXTCLOUD_HOST")"
 PROXY_URL="$BASE_URL/index.php/apps/app_api/proxy/gocassini"
 CATALOG_URL="$PROXY_URL/published/catalog.json"
+FILES_ROOT_URL="$BASE_URL/remote.php/dav/files/$ADMIN_USER/Cassini/Recordings"
 AUTH=(-u "$ADMIN_USER:$ADMIN_PASSWORD")
 AUTH_VALUE="$ADMIN_USER:$ADMIN_PASSWORD"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$REPO_ROOT/harness/compose.yml")
@@ -141,6 +143,34 @@ fetch_json() {
     *) printf '%s\n' "$body" >&2; return 3 ;;
   esac
   python3 -m json.tool "$dest" >/dev/null 2>&1 || return 4
+}
+
+assert_files_source() {
+  local url="$1" label="$2" range="${3:-}" headers="$LOG_DIR/${label}-source.headers" code
+  local -a request=(curl -sS "${AUTH[@]}" -D "$headers" -o /dev/null -w '%{http_code}')
+  [[ -z "$range" ]] || request+=(-H "Range: $range")
+  code="$("${request[@]}" "$url")" || return 1
+  [[ "$code" == 200 || "$code" == 206 ]] || return 1
+  grep -Eiq "^X-Cassini-Meeting-Source:[[:space:]]*nextcloud-files[[:space:]]*\r?$" "$headers"
+}
+
+validate_files_archive_entry() {
+  local label="$1" job_id="$2"
+  local catalog="$LOG_DIR/files-catalog-${label}.json" audio_path audio_url code
+  fetch_json "$FILES_ROOT_URL/catalog.json" "$catalog" false || return 1
+  "$VALIDATOR" catalog-contains --catalog "$catalog" --id "$job_id" >/dev/null || return 1
+  audio_path="$(jq -er --arg id "$job_id" '.meetings[] | select(.id == $id) | .audioPath' "$catalog")" || return 1
+  audio_url="$(python3 - "$FILES_ROOT_URL/" "$audio_path" <<'PY'
+import sys
+from urllib.parse import urljoin
+print(urljoin(sys.argv[1], sys.argv[2]))
+PY
+)"
+  code="$(curl -sS "${AUTH[@]}" -H 'Range: bytes=0-3' -o "$LOG_DIR/files-${label}.opus-prefix" -w '%{http_code}' "$audio_url")" || return 1
+  [[ "$code" == 206 ]] || return 1
+  [[ "$(wc -c <"$LOG_DIR/files-${label}.opus-prefix" | tr -d ' ')" == 4 ]] || return 1
+  assert_files_source "$CATALOG_URL" "${label}-catalog" || return 1
+  assert_files_source "$PROXY_URL/published/${audio_path#./}" "${label}-opus" 'bytes=0-3' || return 1
 }
 
 catalog_ids() {
@@ -217,7 +247,9 @@ wait_for_catalog_artifact() {
               --output-dir "$LOG_DIR" \
               --label "$label"
           )" || fail "$label artifact failed download/decoding validation"
-          success "✓ $label viewer artifact validated: $RUN_ARTIFACT_SUMMARY"
+          validate_files_archive_entry "$label" "$job_id" \
+            || fail "$label was not delivered to Nextcloud Files or the viewer did not identify Files as its source"
+          success "✓ $label viewer artifact validated from Nextcloud Files: $RUN_ARTIFACT_SUMMARY"
           return 0
           ;;
         10) printf '[validate] waiting for %s catalog entry: %s\n' "$label" "$entry" >&2 ;;
@@ -301,7 +333,16 @@ for id in "${new_job_ids[@]}" "${previous_catalog_ids[@]}"; do
 done
 archive_summary="$($VALIDATOR catalog-contains "${contains_args[@]}")" \
   || fail "archive preservation check failed"
-success "✓ archive preservation check passed ($archive_summary)"
+files_final_catalog="$LOG_DIR/files-catalog-final.json"
+fetch_json "$FILES_ROOT_URL/catalog.json" "$files_final_catalog" false \
+  || fail "cannot fetch final catalog directly from Nextcloud Files"
+files_contains_args=(--catalog "$files_final_catalog")
+for id in "${new_job_ids[@]}" "${previous_catalog_ids[@]}"; do
+  [[ -n "$id" ]] && files_contains_args+=(--id "$id")
+done
+"$VALIDATOR" catalog-contains "${files_contains_args[@]}" >/dev/null \
+  || fail "Nextcloud Files archive does not preserve every catalog entry"
+success "✓ viewer and Nextcloud Files archive preservation checks passed ($archive_summary)"
 
 VALIDATION_RESULT="passed"
 write_summary 0

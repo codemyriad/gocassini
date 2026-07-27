@@ -91,13 +91,13 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	}
 	rt.logger.Printf("publish succeeded id=%s attempt=%d attempt_site=%s site=%s", task.JobID, task.AttemptNumber, attemptArtifactSitePath, rt.cfg.SiteRoot)
 
-	// Best-effort: mirror the published archive (catalog.json + this job's
-	// .opus) into Nextcloud Files (D-529). Never fails the publish — the
-	// on-disk site stays authoritative and the read path falls back to it for
-	// anything not (yet) in NC Files. Nil outside AppAPI deployments.
+	// Best-effort: mirror the complete published archive into Nextcloud Files
+	// (D-529). Uploading every .opus retries prior failed deliveries and makes
+	// catalog.json safe to serve as the authoritative Files index. Delivery
+	// failure is visible but never changes the already-succeeded publish state.
 	if rt.uploadToNCFiles != nil {
 		uploadCtx, cancel := context.WithTimeout(rt.ctx, ncFilesUploadTimeout)
-		if err := rt.uploadToNCFiles(uploadCtx, rt.cfg.SiteRoot, task.JobID); err != nil {
+		if err := rt.syncNCFiles(uploadCtx); err != nil {
 			rt.logger.Printf("nc files delivery failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
 		} else {
 			rt.logger.Printf("nc files delivery ok id=%s attempt=%d root=%s", task.JobID, task.AttemptNumber, ncRecordingsRoot)
