@@ -435,3 +435,62 @@ func TestUpdateRunBundleStatusKeepsManifestOnWriteFailure(t *testing.T) {
 		t.Fatalf("expected manifest unchanged after failed write, before=%q after=%q", string(before), string(after))
 	}
 }
+
+// TestPublishForwardsRebuildViewer asserts the D-531 flag plumbing: by default
+// `cassini publish` invokes the exporter runner WITHOUT --rebuild-viewer (so the
+// output is lightweight), while the --rebuild-viewer flag and the
+// CASSINI_PUBLISH_REBUILD_VIEWER env both forward it.
+func TestPublishForwardsRebuildViewer(t *testing.T) {
+	requireFFMediaTools(t)
+	cases := []struct {
+		name        string
+		extraArgs   []string
+		env         string
+		wantForward bool
+	}{
+		{name: "default omits the flag", wantForward: false},
+		{name: "--rebuild-viewer forwards it", extraArgs: []string{"--rebuild-viewer"}, wantForward: true},
+		{name: "env opts in", env: "1", wantForward: true},
+		{name: "env=0 stays lightweight", env: "0", wantForward: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			argvFile := filepath.Join(tmp, "argv.txt")
+			exporter := filepath.Join(tmp, "fake-exporter.sh")
+			// Record every arg (one per line) then honor --output-dir so publish's
+			// finalize step has a directory to work with.
+			script := "#!/usr/bin/env bash\nset -euo pipefail\nprintf '%s\\n' \"$@\" > " + argvFile + "\n" +
+				"OUTPUT_DIR=\"\"\nwhile [[ $# -gt 0 ]]; do case \"$1\" in --output-dir) OUTPUT_DIR=\"$2\"; shift 2;; *) shift;; esac; done\nmkdir -p \"$OUTPUT_DIR\"\n"
+			if err := os.WriteFile(exporter, []byte(script), 0o755); err != nil {
+				t.Fatalf("write fake exporter: %v", err)
+			}
+
+			meetingsDir := filepath.Join(tmp, "meetings")
+			if err := writeReadyMeetingBundleFixture(filepath.Join(meetingsDir, "good.meeting"), "/tmp/source.mkv"); err != nil {
+				t.Fatalf("write ready meeting bundle: %v", err)
+			}
+
+			t.Setenv("CASSINI_EXPORTER_RUNNER", exporter)
+			if tc.env != "" {
+				t.Setenv("CASSINI_PUBLISH_REBUILD_VIEWER", tc.env)
+			}
+
+			outDir := filepath.Join(tmp, "site")
+			runArgs := append([]string{"publish", meetingsDir, "--out", outDir}, tc.extraArgs...)
+			var stdout, stderr bytes.Buffer
+			if code := Run(context.Background(), runArgs, &stdout, &stderr); code != 0 {
+				t.Fatalf("expected publish success, got code=%d stderr=%q", code, stderr.String())
+			}
+
+			raw, err := os.ReadFile(argvFile)
+			if err != nil {
+				t.Fatalf("read recorded argv: %v", err)
+			}
+			gotForward := strings.Contains(string(raw), "--rebuild-viewer")
+			if gotForward != tc.wantForward {
+				t.Fatalf("rebuild-viewer forwarded=%v, want %v; runner argv=%q", gotForward, tc.wantForward, string(raw))
+			}
+		})
+	}
+}
