@@ -82,6 +82,10 @@ type Runtime struct {
 	// tests shrink it.
 	fetchTalkRoomName    talkRoomNameFetcher
 	talkRoomNameRetryGap time.Duration
+	// uploadToNCFiles mirrors the published archive (catalog.json + the job's
+	// .opus) into Nextcloud Files after a successful publish (webdav_upload.go,
+	// D-529). Best-effort; nil outside AppAPI deployments.
+	uploadToNCFiles ncFilesUploader
 	// recordStopAckGrace and recordStopFinalizeGrace default to the package
 	// constants; tests shrink them to exercise stop enforcement quickly.
 	recordStopAckGrace      time.Duration
@@ -178,6 +182,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
+	runtime.uploadToNCFiles = exappCfg.ncFilesUploader()
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
 		// recording; tell it the recording failed so the room state converges
