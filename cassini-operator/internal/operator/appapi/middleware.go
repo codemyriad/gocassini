@@ -55,6 +55,18 @@ func UserID(ctx context.Context) string {
 	return v
 }
 
+// WithUserID returns a context carrying userID as the AppAPI-authenticated
+// user and marked authenticated — the same values Middleware attaches on a real
+// request. Exposed so per-user handlers (and their tests) can establish the
+// acted-as identity without reaching the unexported context keys.
+func WithUserID(ctx context.Context, userID string) context.Context {
+	ctx = context.WithValue(ctx, authenticatedContextKey{}, true)
+	if userID != "" {
+		ctx = context.WithValue(ctx, userIDContextKey{}, userID)
+	}
+	return ctx
+}
+
 // Authenticated reports whether Middleware verified the request's AppAPI
 // headers. It is false for requests served without an active middleware
 // (e.g. a standalone deploy without APP_SECRET), which lets callers layer

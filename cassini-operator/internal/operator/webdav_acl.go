@@ -7,9 +7,14 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -37,6 +42,12 @@ const (
 	sidecarSuffix       = ".manifest.json"
 	ncFilesACLTimeout   = 60 * time.Second
 	ncFilesACLMediaType = "application/xml; charset=utf-8"
+
+	catalogSchemaVersion = "cassini.viewer.catalog.v1"
+	// emptyCatalogJSON is the fail-closed body: a valid, empty catalog. Served
+	// when access control is on but the caller's meetings cannot be resolved,
+	// so the viewer degrades to "no meetings" rather than leaking or erroring.
+	emptyCatalogJSON = `{"version":"` + catalogSchemaVersion + `","meetings":[]}`
 )
 
 // ncFilesAccessApplier writes the metadata sidecar and the advanced-ACL grants
@@ -224,4 +235,176 @@ func (rt *Runtime) applyNCFilesAccess(ctx context.Context, jobID string) {
 		return
 	}
 	rt.logger.Printf("nc files access ok id=%s grants=%d root=%s", jobID, len(mappings), ncRecordingsRoot)
+}
+
+// serveFilteredCatalog writes the caller a catalog containing only the meetings
+// they may read (D-534 read side). It fetches the authoritative catalog as the
+// owner (metadata source), enumerates the meetings the caller can see with a
+// per-caller PROPFIND scan of meetings/ (advanced-ACL deny-read hides the rest),
+// and serves the catalog filtered to that set. Fails CLOSED: any scan error
+// yields an empty catalog, never the unfiltered one.
+func (c ExAppConfig) serveFilteredCatalog(ctx context.Context, w http.ResponseWriter, client *http.Client, caller string, logger *log.Logger) {
+	raw, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json")
+	if err != nil {
+		if logger != nil {
+			logger.Printf("nc files read: authoritative catalog fetch failed: %v", err)
+		}
+		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
+		return
+	}
+	if status == http.StatusNotFound {
+		writeCatalogJSON(w, []byte(emptyCatalogJSON))
+		return
+	}
+	if status < 200 || status >= 300 {
+		if logger != nil {
+			logger.Printf("nc files read: authoritative catalog -> %d", status)
+		}
+		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
+		return
+	}
+
+	names, perr := c.davPropfindNames(ctx, client, caller, ncRecordingsRoot+"/meetings")
+	if perr != nil {
+		if logger != nil {
+			logger.Printf("nc files read: per-caller scan failed caller=%s: %v — serving empty (fail closed)", caller, perr)
+		}
+		writeCatalogJSON(w, emptyLike(raw))
+		return
+	}
+	visible := make(map[string]bool, len(names))
+	for _, n := range names {
+		visible[n] = true
+	}
+	body, ferr := filterCatalog(raw, func(base string) bool { return visible[base] })
+	if ferr != nil {
+		if logger != nil {
+			logger.Printf("nc files read: filter catalog failed caller=%s: %v — serving empty", caller, ferr)
+		}
+		writeCatalogJSON(w, emptyLike(raw))
+		return
+	}
+	writeCatalogJSON(w, body)
+}
+
+func writeCatalogJSON(w http.ResponseWriter, body []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+// emptyLike returns the catalog with an empty meetings list, preserving the
+// version/top-level shape of raw; falls back to the constant empty catalog.
+func emptyLike(raw []byte) []byte {
+	if body, err := filterCatalog(raw, func(string) bool { return false }); err == nil {
+		return body
+	}
+	return []byte(emptyCatalogJSON)
+}
+
+// filterCatalog keeps only the meetings whose .opus basename passes keep,
+// preserving every other field of the catalog and of each kept entry (it
+// filters raw messages, so unknown fields survive).
+func filterCatalog(raw []byte, keep func(opusBase string) bool) ([]byte, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return nil, err
+	}
+	var meetings []json.RawMessage
+	if m, ok := top["meetings"]; ok {
+		if err := json.Unmarshal(m, &meetings); err != nil {
+			return nil, err
+		}
+	}
+	kept := make([]json.RawMessage, 0, len(meetings))
+	for _, mr := range meetings {
+		var e struct {
+			AudioPath    string `json:"audioPath"`
+			ArtifactPath string `json:"artifactPath"`
+		}
+		_ = json.Unmarshal(mr, &e)
+		ref := e.AudioPath
+		if ref == "" {
+			ref = e.ArtifactPath
+		}
+		if keep(path.Base(ref)) {
+			kept = append(kept, mr)
+		}
+	}
+	mj, err := json.Marshal(kept)
+	if err != nil {
+		return nil, err
+	}
+	top["meetings"] = mj
+	return json.Marshal(top)
+}
+
+func (c ExAppConfig) davGetBytes(ctx context.Context, client *http.Client, userID, relPath string) ([]byte, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.davFileURL(userID, relPath), nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	c.setAppAPIDAVHeadersForUser(req, userID)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer drainClose(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return body, resp.StatusCode, nil
+}
+
+// davPropfindNames lists the immediate children of relDir as userID (Depth: 1)
+// and returns the .opus basenames the user can see. Advanced-ACL deny-read
+// hides paths the user lacks read on, so the result is naturally access-scoped.
+// A 404 (the collection is not visible to the user) yields an empty list, not
+// an error.
+func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, userID, relDir string) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, "PROPFIND", c.davFileURL(userID, relDir), nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setAppAPIDAVHeadersForUser(req, userID)
+	req.Header.Set("Depth", "1")
+	req.Header.Set("Content-Type", ncFilesACLMediaType)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer drainClose(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("PROPFIND %s -> %d", relDir, resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err != nil {
+		return nil, err
+	}
+	var ms struct {
+		Responses []struct {
+			Href string `xml:"href"`
+		} `xml:"response"`
+	}
+	if err := xml.Unmarshal(body, &ms); err != nil {
+		return nil, fmt.Errorf("parse multistatus: %w", err)
+	}
+	out := make([]string, 0, len(ms.Responses))
+	for _, r := range ms.Responses {
+		href := strings.TrimRight(r.Href, "/")
+		base := path.Base(href)
+		if decoded, derr := url.PathUnescape(base); derr == nil {
+			base = decoded
+		}
+		if strings.HasSuffix(base, ".opus") {
+			out = append(out, base)
+		}
+	}
+	return out, nil
 }
