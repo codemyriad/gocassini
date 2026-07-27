@@ -146,7 +146,10 @@ fetch_json() {
 }
 
 assert_files_source() {
-  local url="$1" label="$2" range="${3:-}" headers="$LOG_DIR/${label}-source.headers" code
+  local url="$1" label="$2" range="${3:-}" code
+  # Separate 'local': $label expands before the assignments above take effect
+  # (SC2318), which pointed headers at the caller's label and failed CI.
+  local headers="$LOG_DIR/${label}-source.headers"
   local -a request=(curl -sS "${AUTH[@]}" -D "$headers" -o /dev/null -w '%{http_code}')
   [[ -z "$range" ]] || request+=(-H "Range: $range")
   code="$("${request[@]}" "$url")" || return 1
