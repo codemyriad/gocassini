@@ -19,6 +19,7 @@ func testExAppConfig(ncURL string) ExAppConfig {
 		AppSecret:    "sekret",
 		AppID:        "gocassini",
 		AppVersion:   "1.2.3",
+		AAVersion:    "34.0.0",
 	}
 }
 
@@ -28,6 +29,8 @@ type davRequest struct {
 	rng    string
 	auth   string
 	ctype  string
+	aa     string
+	ocs    string
 	body   []byte
 }
 
@@ -41,6 +44,8 @@ func TestNCFilesUploaderMirrorsArchive(t *testing.T) {
 			method: r.Method, path: r.URL.Path,
 			auth:  r.Header.Get("AUTHORIZATION-APP-API"),
 			ctype: r.Header.Get("Content-Type"),
+			aa:    r.Header.Get("AA-VERSION"),
+			ocs:   r.Header.Get("OCS-APIRequest"),
 			body:  body,
 		})
 		mu.Unlock()
@@ -59,10 +64,17 @@ func TestNCFilesUploaderMirrorsArchive(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(siteRoot, "meetings"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	jobID := "01JOBULID"
-	opusBytes := []byte("OPUSDATA")
+	opusFiles := map[string][]byte{
+		"01FIRST.opus":  []byte("FIRST"),
+		"01SECOND.opus": []byte("SECOND"),
+	}
 	catalogBytes := []byte(`{"version":"cassini.viewer.catalog.v1","meetings":[]}`)
-	if err := os.WriteFile(filepath.Join(siteRoot, "meetings", jobID+".opus"), opusBytes, 0o644); err != nil {
+	for name, contents := range opusFiles {
+		if err := os.WriteFile(filepath.Join(siteRoot, "meetings", name), contents, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(siteRoot, "meetings", "ignore.txt"), []byte("ignore"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(siteRoot, "catalog.json"), catalogBytes, 0o644); err != nil {
@@ -73,7 +85,7 @@ func TestNCFilesUploaderMirrorsArchive(t *testing.T) {
 	if up == nil {
 		t.Fatal("uploader nil with full ExApp config")
 	}
-	if err := up(context.Background(), siteRoot, jobID); err != nil {
+	if err := up(context.Background(), siteRoot); err != nil {
 		t.Fatalf("upload: %v", err)
 	}
 
@@ -82,15 +94,23 @@ func TestNCFilesUploaderMirrorsArchive(t *testing.T) {
 
 	mkcols := map[string]bool{}
 	puts := map[string][]byte{}
+	putOrder := []string{}
 	for _, req := range got {
 		if req.auth != wantAuth {
 			t.Errorf("auth header = %q, want %q (path %s)", req.auth, wantAuth, req.path)
+		}
+		if req.aa != "34.0.0" {
+			t.Errorf("AA-VERSION = %q, want 34.0.0 (path %s)", req.aa, req.path)
+		}
+		if req.ocs != "" {
+			t.Errorf("OCS-APIRequest = %q, want empty for DAV (path %s)", req.ocs, req.path)
 		}
 		switch req.method {
 		case "MKCOL":
 			mkcols[req.path] = true
 		case http.MethodPut:
 			puts[req.path] = req.body
+			putOrder = append(putOrder, req.path)
 			if strings.HasSuffix(req.path, ".opus") && req.ctype != "audio/ogg" {
 				t.Errorf("opus PUT Content-Type = %q, want audio/ogg", req.ctype)
 			}
@@ -106,15 +126,23 @@ func TestNCFilesUploaderMirrorsArchive(t *testing.T) {
 			t.Errorf("missing MKCOL for %s (got %v)", dir, mkcols)
 		}
 	}
-	if b, ok := puts[base+"/meetings/"+jobID+".opus"]; !ok || string(b) != string(opusBytes) {
-		t.Errorf("opus PUT missing/wrong: ok=%v body=%q", ok, b)
+	for name, want := range opusFiles {
+		if b, ok := puts[base+"/meetings/"+name]; !ok || string(b) != string(want) {
+			t.Errorf("opus PUT %s missing/wrong: ok=%v body=%q", name, ok, b)
+		}
+	}
+	if _, ok := puts[base+"/meetings/ignore.txt"]; ok {
+		t.Error("non-opus file should not be uploaded")
 	}
 	if b, ok := puts[base+"/catalog.json"]; !ok || string(b) != string(catalogBytes) {
 		t.Errorf("catalog PUT missing/wrong: ok=%v body=%q", ok, b)
 	}
+	if len(putOrder) != 3 || putOrder[len(putOrder)-1] != base+"/catalog.json" {
+		t.Errorf("catalog must be PUT after every opus, order=%v", putOrder)
+	}
 }
 
-func TestNCFilesUploaderSkipsMissingOpus(t *testing.T) {
+func TestNCFilesUploaderPublishesEmptyCatalog(t *testing.T) {
 	var mu sync.Mutex
 	puts := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -127,19 +155,19 @@ func TestNCFilesUploaderSkipsMissingOpus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	siteRoot := t.TempDir() // no meetings/<jobID>.opus present
+	siteRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(siteRoot, "meetings"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(siteRoot, "catalog.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	up := testExAppConfig(srv.URL).ncFilesUploader()
-	if err := up(context.Background(), siteRoot, "01MISSING"); err != nil {
-		t.Fatalf("upload should not fail on missing opus: %v", err)
+	if err := up(context.Background(), siteRoot); err != nil {
+		t.Fatalf("upload empty catalog: %v", err)
 	}
-	if puts[filepath.Join("/remote.php/dav/files/"+ncRecordingsOwner+"/"+ncRecordingsRoot+"/meetings", "01MISSING.opus")] {
-		t.Error("should not PUT a non-existent opus")
-	}
-	if !puts["/remote.php/dav/files/"+ncRecordingsOwner+"/"+ncRecordingsRoot+"/catalog.json"] {
-		t.Error("catalog.json should still be uploaded")
+	if len(puts) != 1 || !puts["/remote.php/dav/files/"+ncRecordingsOwner+"/"+ncRecordingsRoot+"/catalog.json"] {
+		t.Errorf("only catalog.json should be uploaded, got %v", puts)
 	}
 }
 
@@ -162,7 +190,7 @@ func TestNCFilesProxyRelaysAndForwardsRange(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	proxy := testExAppConfig(srv.URL).ncFilesProxy()
+	proxy := testExAppConfig(srv.URL).ncFilesProxy(nil)
 	if proxy == nil {
 		t.Fatal("proxy nil with full ExApp config")
 	}
@@ -175,6 +203,9 @@ func TestNCFilesProxyRelaysAndForwardsRange(t *testing.T) {
 	}
 	if rec.Code != http.StatusOK || rec.Body.String() != "CATALOG" {
 		t.Errorf("full GET: code=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get(ncFilesSourceHeader); got != ncFilesSourceValue {
+		t.Errorf("source header = %q, want %q", got, ncFilesSourceValue)
 	}
 
 	// Range GET is forwarded and 206 relayed.
@@ -195,20 +226,68 @@ func TestNCFilesProxyRelaysAndForwardsRange(t *testing.T) {
 	}
 }
 
-func TestNCFilesProxyFallsBackOnMiss(t *testing.T) {
+func TestNCFilesProxyMakesFilesMissAuthoritative(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 
-	proxy := testExAppConfig(srv.URL).ncFilesProxy()
+	proxy := testExAppConfig(srv.URL).ncFilesProxy(nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/published/meetings/nope.opus", nil)
-	if proxy(rec, req, "meetings/nope.opus") {
-		t.Fatal("proxy should return false (fall back) on 404")
+	if !proxy(rec, req, "meetings/nope.opus") {
+		t.Fatal("configured Files proxy must handle a miss without local fallback")
 	}
-	if rec.Body.Len() != 0 {
-		t.Errorf("proxy must not write a body when falling back, got %q", rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("proxy miss code = %d, want 404", rec.Code)
+	}
+}
+
+func TestNCFilesUploaderDoesNotPublishCatalogAfterOpusFailure(t *testing.T) {
+	var catalogPut bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/broken.opus") {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/catalog.json") {
+			catalogPut = true
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	siteRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(siteRoot, "meetings"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(siteRoot, "meetings", "broken.opus"), []byte("bad"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(siteRoot, "catalog.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := testExAppConfig(srv.URL).ncFilesUploader()(context.Background(), siteRoot); err == nil {
+		t.Fatal("expected opus upload failure")
+	}
+	if catalogPut {
+		t.Fatal("catalog must not be published after an opus upload fails")
+	}
+}
+
+func TestNCFilesProxyReturnsBadGatewayWhenFilesUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	url := srv.URL
+	srv.Close()
+
+	proxy := testExAppConfig(url).ncFilesProxy(nil)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/published/catalog.json", nil)
+	if !proxy(rec, req, "catalog.json") {
+		t.Fatal("configured Files proxy must handle an upstream failure")
+	}
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("unavailable proxy code = %d, want 502", rec.Code)
 	}
 }
 
@@ -218,12 +297,12 @@ func TestNCFilesHooksNilWithoutExAppEnv(t *testing.T) {
 	if cfg.ncFilesUploader() != nil {
 		t.Error("uploader should be nil without ExApp env")
 	}
-	if cfg.ncFilesProxy() != nil {
+	if cfg.ncFilesProxy(nil) != nil {
 		t.Error("proxy should be nil without ExApp env")
 	}
 	// Secret present but NextcloudURL absent is still inactive.
 	cfg = ExAppConfig{AppSecret: "s", AppID: "gocassini"}
-	if cfg.ncFilesUploader() != nil || cfg.ncFilesProxy() != nil {
+	if cfg.ncFilesUploader() != nil || cfg.ncFilesProxy(nil) != nil {
 		t.Error("hooks should be nil without NextcloudURL")
 	}
 }

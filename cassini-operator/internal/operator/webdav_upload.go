@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,9 +15,9 @@ import (
 	"time"
 )
 
-// Nextcloud-native delivery of the published meeting archive (D-529). After a
-// successful publish the operator mirrors the browsable archive into Nextcloud
-// Files over WebDAV — the clean portable `.opus` per meeting plus the
+// Nextcloud-native delivery of the published meeting archive (D-529). On the
+// AppAPI enabled edge and after every successful publish, the operator mirrors
+// the browsable archive into Nextcloud Files over WebDAV — the clean portable `.opus` per meeting plus the
 // `catalog.json` index — so the artefacts live in NC Files (quota-counted,
 // backed up, natively shareable) instead of only the ExApp's private volume,
 // and the viewer can be fed from there. Talk's recording `/store` endpoint is
@@ -27,7 +28,7 @@ import (
 // FIRST PASS (D-529) scope, deliberately minimal:
 //   - owner = the Nextcloud admin (hard-coded). A dedicated `cassini` service
 //     account is tracked separately (D-532); swapping ncRecordingsOwner is the
-//     only change that needs.
+//     only code change needed.
 //   - layout mirrors the published site 1:1 under a hard-coded canonical root:
 //     <root>/catalog.json and <root>/meetings/<id>.opus. Room-namespaced
 //     (<root>/<room>/<id>.opus) layout and a configurable root come later.
@@ -45,19 +46,23 @@ const (
 
 	ncFilesUploadTimeout   = 120 * time.Second
 	ncFilesProxyHeadersTTL = 30 * time.Second
+	ncFilesSourceHeader    = "X-Cassini-Meeting-Source"
+	ncFilesSourceValue     = "nextcloud-files"
 )
 
-// ncFilesUploader mirrors the published archive for one job into the owner's
-// Nextcloud Files: the job's meetings/<jobID>.opus (when present) and the whole
-// catalog.json. Best-effort — a failure must never fail the publish. Nil
-// outside an AppAPI deployment (no NextcloudURL/APP_SECRET/APP_ID).
-type ncFilesUploader func(ctx context.Context, siteRoot, jobID string) error
+// ncFilesUploader mirrors the complete published archive into the owner's
+// Nextcloud Files. Every .opus is uploaded before catalog.json, so the Files
+// catalog never points at an archive object that this sync has not delivered.
+// Best-effort at the runtime boundary — a failure must never fail the publish.
+// Nil outside an AppAPI deployment (no NextcloudURL/APP_SECRET/APP_ID).
+type ncFilesUploader func(ctx context.Context, siteRoot string) error
 
 // ncFilesProxyFunc serves a published archive path (catalog.json or
 // meetings/<id>.opus) from the owner's Nextcloud Files, forwarding the inbound
-// Range header and relaying status/headers/body. Returns true when it served
-// the response; false means "fall back to local disk" (not configured, upstream
-// error, or the file is not in NC Files yet). Nil outside an AppAPI deployment.
+// Range header and relaying status/headers/body. In an AppAPI deployment Files
+// is authoritative: the function always handles the request, including misses
+// and upstream failures. Nil outside an AppAPI deployment, where handlers keep
+// serving the local site.
 type ncFilesProxyFunc func(w http.ResponseWriter, r *http.Request, relPath string) bool
 
 // davFileURL builds the user-WebDAV URL for a path relative to the user's home,
@@ -79,16 +84,17 @@ func (c ExAppConfig) davFileURL(userID, relPath string) string {
 }
 
 // setAppAPIDAVHeadersForUser sets the AppAPI act-as-user auth headers for a
-// WebDAV call. Same credential scheme as setAppAPIOCSHeadersForUser
-// (base64("<userId>:<secret>") + EX-APP-ID/EX-APP-VERSION, so Nextcloud runs the
-// request in that user's session) but WITHOUT the OCS JSON content negotiation,
-// which is wrong for remote.php/dav — the caller sets Content-Type per file.
+// WebDAV call. It uses the same credential scheme as AppAPI's own outbound
+// requests (base64("<userId>:<secret>")), but without OCS JSON content
+// negotiation; DAV callers set Content-Type for the resource body.
 func (c ExAppConfig) setAppAPIDAVHeadersForUser(req *http.Request, userID string) {
 	auth := base64.StdEncoding.EncodeToString([]byte(userID + ":" + c.AppSecret))
 	req.Header.Set("AUTHORIZATION-APP-API", auth)
 	req.Header.Set("EX-APP-ID", c.AppID)
 	req.Header.Set("EX-APP-VERSION", c.AppVersion)
-	req.Header.Set("OCS-APIRequest", "true")
+	if c.AAVersion != "" {
+		req.Header.Set("AA-VERSION", c.AAVersion)
+	}
 }
 
 func (c ExAppConfig) appAPIActive() bool {
@@ -102,7 +108,17 @@ func (c ExAppConfig) ncFilesUploader() ncFilesUploader {
 		return nil
 	}
 	client := &http.Client{Timeout: ncFilesUploadTimeout}
-	return func(ctx context.Context, siteRoot, jobID string) error {
+	return func(ctx context.Context, siteRoot string) error {
+		catalogLocal := filepath.Join(siteRoot, "catalog.json")
+		if _, err := os.Stat(catalogLocal); err != nil {
+			return fmt.Errorf("stat catalog: %w", err)
+		}
+		meetingsLocal := filepath.Join(siteRoot, "meetings")
+		entries, err := os.ReadDir(meetingsLocal)
+		if err != nil {
+			return fmt.Errorf("read meetings: %w", err)
+		}
+
 		// Ensure the canonical collections exist (idempotent). Created parent
 		// first so each MKCOL's parent is present.
 		for _, dir := range []string{
@@ -118,25 +134,57 @@ func (c ExAppConfig) ncFilesUploader() ncFilesUploader {
 			}
 		}
 
-		// The job's clean .opus (flat mirror of the site's meetings/ layout).
-		// Absence is not fatal: the meeting id in the catalog can differ from
-		// the job id for non-Talk/dev jobs, and the read proxy falls back to
-		// local disk for anything not in NC Files.
-		opusLocal := filepath.Join(siteRoot, "meetings", jobID+".opus")
-		if _, statErr := os.Stat(opusLocal); statErr == nil {
-			if err := c.davPutFile(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/meetings/"+jobID+".opus", opusLocal, "audio/ogg"); err != nil {
-				return fmt.Errorf("put opus: %w", err)
+		// Mirror the complete archive, not only the job that triggered this
+		// publish. This repairs prior failed deliveries and makes upgrades from
+		// a local-only archive converge on the next sync. os.ReadDir is sorted
+		// by filename, keeping request order deterministic.
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".opus" {
+				continue
+			}
+			opusLocal := filepath.Join(meetingsLocal, entry.Name())
+			opusRemote := ncRecordingsRoot + "/meetings/" + entry.Name()
+			if err := c.davPutFile(ctx, client, ncRecordingsOwner, opusRemote, opusLocal, "audio/ogg"); err != nil {
+				return fmt.Errorf("put opus %s: %w", entry.Name(), err)
 			}
 		}
 
-		// The whole catalog.json (published is an O(N) whole-library re-export,
-		// D-459; last-writer-wins on the single index file).
-		catalogLocal := filepath.Join(siteRoot, "catalog.json")
+		// Publish the whole catalog last. If any .opus PUT fails, readers retain
+		// the previous Files catalog instead of receiving references to missing
+		// meeting objects.
 		if err := c.davPutFile(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json", catalogLocal, "application/json"); err != nil {
 			return fmt.Errorf("put catalog: %w", err)
 		}
 		return nil
 	}
+}
+
+func (rt *Runtime) syncNCFiles(ctx context.Context) error {
+	rt.ncFilesSyncMu.Lock()
+	defer rt.ncFilesSyncMu.Unlock()
+	return rt.uploadToNCFiles(ctx, rt.cfg.SiteRoot)
+}
+
+// syncNCFilesOnStartup converges an archive that was published before the
+// current process started. This matters on upgrades from a local-only version:
+// the existing viewer catalog becomes available from Files without requiring a
+// brand-new recording. The AppAPI enabled callback runs this asynchronously
+// after registration is enabled, when outbound act-as-user DAV auth is valid.
+func (rt *Runtime) syncNCFilesOnStartup() {
+	catalogPath := filepath.Join(rt.cfg.SiteRoot, "catalog.json")
+	if _, err := os.Stat(catalogPath); err != nil {
+		if !os.IsNotExist(err) {
+			rt.logger.Printf("nc files startup sync skipped: stat catalog: %v", err)
+		}
+		return
+	}
+	ctx, cancel := context.WithTimeout(rt.ctx, ncFilesUploadTimeout)
+	defer cancel()
+	if err := rt.syncNCFiles(ctx); err != nil {
+		rt.logger.Printf("nc files startup sync failed: %v", err)
+		return
+	}
+	rt.logger.Printf("nc files startup sync ok root=%s", ncRecordingsRoot)
 }
 
 func (c ExAppConfig) davMkcol(ctx context.Context, client *http.Client, userID, relDir string) error {
@@ -188,7 +236,7 @@ func (c ExAppConfig) davPutFile(ctx context.Context, client *http.Client, userID
 
 // ncFilesProxy returns the read-proxy closure, or nil when the ExApp env is
 // absent (dev/standalone serve straight from local disk as before).
-func (c ExAppConfig) ncFilesProxy() ncFilesProxyFunc {
+func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 	if !c.appAPIActive() {
 		return nil
 	}
@@ -197,9 +245,13 @@ func (c ExAppConfig) ncFilesProxy() ncFilesProxyFunc {
 	client := &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}}
 	return func(w http.ResponseWriter, r *http.Request, relPath string) bool {
 		davURL := c.davFileURL(ncRecordingsOwner, ncRecordingsRoot+"/"+strings.TrimPrefix(relPath, "/"))
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, davURL, nil)
+		req, err := http.NewRequestWithContext(r.Context(), r.Method, davURL, nil)
 		if err != nil {
-			return false
+			if logger != nil {
+				logger.Printf("nc files read: build request path=%s: %v", relPath, err)
+			}
+			http.Error(w, "Nextcloud Files request failed", http.StatusInternalServerError)
+			return true
 		}
 		c.setAppAPIDAVHeadersForUser(req, ncRecordingsOwner)
 		if rng := r.Header.Get("Range"); rng != "" {
@@ -207,23 +259,38 @@ func (c ExAppConfig) ncFilesProxy() ncFilesProxyFunc {
 		}
 		resp, err := client.Do(req)
 		if err != nil {
-			return false // upstream unreachable -> fall back to local disk
+			if logger != nil {
+				logger.Printf("nc files read: GET path=%s: %v", relPath, err)
+			}
+			http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
+			return true
 		}
 		defer drainClose(resp.Body)
-		// 404 (not in NC Files yet) or any error status -> fall back, so we
-		// never regress the viewer against the local archive. Only genuine
-		// hits (200 full / 206 partial) are relayed.
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-			return false
-		}
-		for _, h := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"} {
-			if v := resp.Header.Get(h); v != "" {
-				w.Header().Set(h, v)
+
+		switch resp.StatusCode {
+		case http.StatusOK, http.StatusPartialContent:
+			for _, h := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"} {
+				if v := resp.Header.Get(h); v != "" {
+					w.Header().Set(h, v)
+				}
 			}
-		}
-		w.WriteHeader(resp.StatusCode)
-		if r.Method != http.MethodHead {
-			_, _ = io.Copy(w, resp.Body)
+			w.Header().Set(ncFilesSourceHeader, ncFilesSourceValue)
+			w.WriteHeader(resp.StatusCode)
+			if r.Method != http.MethodHead {
+				_, _ = io.Copy(w, resp.Body)
+			}
+		case http.StatusNotFound:
+			http.NotFound(w, r)
+		case http.StatusRequestedRangeNotSatisfiable:
+			if v := resp.Header.Get("Content-Range"); v != "" {
+				w.Header().Set("Content-Range", v)
+			}
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+		default:
+			if logger != nil {
+				logger.Printf("nc files read: GET path=%s -> %d", relPath, resp.StatusCode)
+			}
+			http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
 		}
 		return true
 	}

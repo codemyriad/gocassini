@@ -82,10 +82,12 @@ type Runtime struct {
 	// tests shrink it.
 	fetchTalkRoomName    talkRoomNameFetcher
 	talkRoomNameRetryGap time.Duration
-	// uploadToNCFiles mirrors the published archive (catalog.json + the job's
-	// .opus) into Nextcloud Files after a successful publish (webdav_upload.go,
-	// D-529). Best-effort; nil outside AppAPI deployments.
+	// uploadToNCFiles mirrors the complete published archive into Nextcloud
+	// Files after a successful publish and on startup (webdav_upload.go, D-529).
+	// Best-effort; nil outside AppAPI deployments. ncFilesSyncMu prevents the
+	// startup convergence pass from overlapping a post-publish delivery.
 	uploadToNCFiles ncFilesUploader
+	ncFilesSyncMu   sync.Mutex
 	// recordStopAckGrace and recordStopFinalizeGrace default to the package
 	// constants; tests shrink them to exercise stop enforcement quickly.
 	recordStopAckGrace      time.Duration
@@ -183,6 +185,16 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
 	runtime.uploadToNCFiles = exappCfg.ncFilesUploader()
+	if runtime.uploadToNCFiles != nil {
+		// During AppAPI registration, outbound callbacks are rejected until the
+		// /enabled?enabled=1 lifecycle edge. Start convergence from that edge,
+		// not immediately at process start (which deterministically gets 401).
+		exappCfg.onEnabled = func(enabled bool) {
+			if enabled {
+				runtime.syncNCFilesOnStartup()
+			}
+		}
+	}
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
 		// recording; tell it the recording failed so the room state converges

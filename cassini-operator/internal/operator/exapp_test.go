@@ -24,8 +24,8 @@ func setExAppEnv(t *testing.T, kv map[string]string) {
 func clearExAppEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
-		envAppHost, envAppPort, envAppID, envAppVersion, envAppSecret,
-		envAppAPIRequired, envViewerDist,
+		envAppHost, envAppPort, envAppID, envAppVersion, envAAVersion, envAppSecret,
+		envAppAPIRequired, envViewerDist, envNextcloudURL, envAppPersistentStorage,
 	} {
 		t.Setenv(k, "")
 	}
@@ -51,6 +51,7 @@ func TestLoadExAppConfigActiveWithSecret(t *testing.T) {
 		envAppSecret:  "shh",
 		envAppID:      "gocassini",
 		envAppVersion: "0.1.0",
+		envAAVersion:  "34.0.0",
 	})
 	cfg, err := LoadExAppConfig()
 	if err != nil {
@@ -58,6 +59,9 @@ func TestLoadExAppConfigActiveWithSecret(t *testing.T) {
 	}
 	if !cfg.Active {
 		t.Fatal("expected active")
+	}
+	if cfg.AAVersion != "34.0.0" {
+		t.Fatalf("AAVersion = %q, want 34.0.0", cfg.AAVersion)
 	}
 }
 
