@@ -104,6 +104,16 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		}
 		cancel()
 	}
+
+	// Best-effort: freeze this meeting's audience to its Talk participants
+	// (D-534). Applied only for the just-published job (its participants at
+	// publish time), never re-derived for the rest of the mirrored archive.
+	// No-op unless CASSINI_NC_ACCESS_CONTROL is enabled.
+	if rt.applyNCFilesAccessFn != nil {
+		accessCtx, cancel := context.WithTimeout(rt.ctx, ncFilesACLTimeout)
+		rt.applyNCFilesAccess(accessCtx, task.JobID)
+		cancel()
+	}
 }
 
 func (rt *Runtime) enqueuePublishJob(jobID string, attemptNumber int, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt string) error {

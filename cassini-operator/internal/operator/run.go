@@ -88,6 +88,13 @@ type Runtime struct {
 	// startup convergence pass from overlapping a post-publish delivery.
 	uploadToNCFiles ncFilesUploader
 	ncFilesSyncMu   sync.Mutex
+	// fetchTalkParticipants resolves a Talk room's grantable ACL principals and
+	// applyNCFilesAccessFn writes the per-meeting sidecar + advanced-ACL grants
+	// (talk_participants.go / webdav_acl.go, D-534). Both nil unless AppAPI is
+	// active and CASSINI_NC_ACCESS_CONTROL is enabled; access control is off by
+	// default, keeping the D-529 public archive.
+	fetchTalkParticipants talkParticipantsFetcher
+	applyNCFilesAccessFn  ncFilesAccessApplier
 	// recordStopAckGrace and recordStopFinalizeGrace default to the package
 	// constants; tests shrink them to exercise stop enforcement quickly.
 	recordStopAckGrace      time.Duration
@@ -185,6 +192,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
 	runtime.uploadToNCFiles = exappCfg.ncFilesUploader()
+	runtime.fetchTalkParticipants = exappCfg.talkParticipantsFetcher()
+	runtime.applyNCFilesAccessFn = exappCfg.ncFilesAccessApplier()
 	if runtime.uploadToNCFiles != nil {
 		// During AppAPI registration, outbound callbacks are rejected until the
 		// /enabled?enabled=1 lifecycle edge. Start convergence from that edge,
