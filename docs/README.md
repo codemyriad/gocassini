@@ -98,6 +98,7 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
   ExApp reads vs. what AppAPI injects, and the `deployment/` parity vars.
 - **[Production deployment notes](./exapp-talk-production-deployment.md)** — deployment shape and operational notes.
 - **[Recording tutorial](./exapp-talk-recording-tutorial.md)** — a manual end-to-end validation walkthrough.
+- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — opt-in per-participant access control (`CASSINI_NC_ACCESS_CONTROL`): the one-time Group folders + ACL setup and how to manage who can see each recording.
 - **[Troubleshooting](./exapp-talk-troubleshooting.md)** — install/access issues seen in practice.
 - **[Trying the image locally](./exapp-test-locally.md)** — three tiers, from image-only checks to a production-shaped local install.
 - **[Releasing Cassini](./release.md)** — maintainer guide: the version ladder, the local `prepare-release.sh` flow, and the GitHub + App Store publish workflow.
