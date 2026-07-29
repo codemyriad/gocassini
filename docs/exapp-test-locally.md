@@ -80,8 +80,10 @@ From the repo root:
 
 The stack command starts the harness, builds/tags the ExApp image from
 `appinfo/info.xml`, installs/reinstalls Cassini via AppAPI, passes both Talk
-secrets as deploy env, and configures Talk's `recording_servers` to the
-installed ExApp proxy path. Use `./bin/cassini dev stack plan ...` with the
+secrets plus the harness-default `CASSINI_NC_ACCESS_CONTROL=true` deploy value,
+and configures Talk's `recording_servers` to the installed ExApp proxy path.
+Use `--nc-access-control=false` for a public-archive comparison. Use
+`./bin/cassini dev stack plan ...` with the
 same flags to inspect the resolved config without mutating containers.
 
 ### `dev-vm`

@@ -88,8 +88,21 @@ Then enable the feature on the ExApp and restart it:
 CASSINI_NC_ACCESS_CONTROL=true
 ```
 
-(Set it in the ExApp's environment — e.g. the deploy/compose env or the AppAPI
-deploy config. Any value Go's `strconv.ParseBool` accepts works: `true`, `1`.)
+Set it in the ExApp's environment — e.g. the deploy/compose env or the AppAPI
+deploy config. Any value Go's `strconv.ParseBool` accepts works (`true`, `1`).
+The local installed-ExApp harness declares and passes this value automatically,
+defaulting it to `true`:
+
+```bash
+./bin/cassini dev stack up \
+  --cassini installed-exapp \
+  --nc-access-control=true \
+  ...
+```
+
+Use `--nc-access-control=false` or `CASSINI_NC_ACCESS_CONTROL=false` to test the
+legacy public-archive behavior. Production remains off when the deploy value is
+not supplied.
 
 ```text
   who can be a viewer?                who can see meeting X?
@@ -143,10 +156,12 @@ than ever leaking, so a mis-tuned recipe degrades to "no meetings", never to
 
 ## Turning it off
 
-Unset `CASSINI_NC_ACCESS_CONTROL` (or set it to `false`) and restart. The
-operator reverts to the D-529 public behavior immediately (it serves as the
-owner again). Existing ACLs on the files remain but are not consulted by the
-public read path. The group folder and its contents are unaffected.
+Unset `CASSINI_NC_ACCESS_CONTROL` (or set it to `false`) and restart. In the
+local harness, whose default is `true`, explicitly pass
+`--nc-access-control=false`. The operator reverts to the D-529 public behavior
+immediately (it serves as the owner again). Existing ACLs on the files remain
+but are not consulted by the public read path. The group folder and its
+contents are unaffected.
 
 ## Troubleshooting
 

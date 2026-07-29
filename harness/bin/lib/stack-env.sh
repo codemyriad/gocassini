@@ -94,7 +94,12 @@ harness_stack_env_resolve() {
   CASSINI_TALK_RECORDING_URL="${CASSINI_TALK_RECORDING_URL:-}"
   CASSINI_TALK_RECORDING_SECRET="${CASSINI_TALK_RECORDING_SECRET:-9a2a9c0b7f4e43b7a2c6e19d6a4b8f8073b0174ee2f8425d99e8e33f7d60fb42}"
   CASSINI_TALK_SIGNALING_INTERNAL_SECRET="${CASSINI_TALK_SIGNALING_INTERNAL_SECRET:-$SIGNALING_INTERNAL_SECRET}"
+  # The local harness is an access-control testbed, so installed ExApps opt in
+  # by default. Production remains opt-in because the operator itself still
+  # defaults this variable to false when no deploy value is supplied.
+  CASSINI_NC_ACCESS_CONTROL="${CASSINI_NC_ACCESS_CONTROL:-true}"
   export CASSINI_TALK_RECORDING_SECRET CASSINI_TALK_SIGNALING_INTERNAL_SECRET
+  export CASSINI_NC_ACCESS_CONTROL
 
   RUNTIME_DIR="$TEST_DIR/runtime"
   MEDIA_DIR="$TEST_DIR/media"
