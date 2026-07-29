@@ -53,34 +53,54 @@ The operator writes and reads over WebDAV as an existing Nextcloud user (the
 dedicated `cassini` service account is tracked in **D-532** and is a drop-in
 replacement (change `ncRecordingsOwner`).
 
-Run these once, substituting your viewer group and owner. Command flags vary
-slightly across Group folders versions — confirm with
-`occ groupfolders:permissions --help` and the **Files → (folder) → Advanced
-permissions** UI, which can do every step below if you prefer clicking.
+Run these once. The current implementation uses the exact owner `admin` and
+viewer group `recording-viewers`. The commands below match Group folders 22 on
+Nextcloud 34; use each command's `--help` when configuring another version.
 
 ```bash
-# 1. Create the group folder whose mount point is "Cassini".
-occ groupfolders:create Cassini                       # prints a numeric <folder_id>
+# 1. Create the Team folder with its default-deny floor from the start.
+#    Nextcloud 34 cannot toggle this creation option on an existing folder.
+occ groupfolders:create --acl-no-default-permission Cassini  # prints <folder_id>
 
-# 2. Assign a BROAD viewer group — every potential recording viewer must be a
-#    member, because the group folder only mounts for members of an assigned
-#    group. (Create the group first if needed: occ group:add recording-viewers)
-occ groupfolders:group <folder_id> recording-viewers
+# 2. Mount it read-only for every potential viewer. Give the owner/admin group
+#    a separate write-capable mount mapping; ACL-management permission alone
+#    does NOT grant WebDAV create/write access.
+occ groupfolders:group <folder_id> recording-viewers read
+occ groupfolders:group <folder_id> admin read write delete share
 
-# 3. Turn on advanced ACL and the default-deny floor, so members see NOTHING in
-#    the folder until a per-meeting rule grants them read.
+# 3. Enable advanced ACL and delegate admin as its manager.
 occ groupfolders:permissions <folder_id> --enable
-#    Default-deny ("Deny by default"): set it in the Advanced permissions UI, or
-#    the version-specific occ flag (e.g. --acl-no-default-permission).
-
-# 4. Delegate the owner as the folder's ACL manager, so the operator can set
-#    per-meeting rules over WebDAV without admin impersonation.
 occ groupfolders:permissions <folder_id> --manage-add --user admin
 
-# 5. The owner must ALSO be a member of the viewer group, so the folder mounts
-#    in its own tree for the operator's PROPPATCH/PUT path.
+# 4. Grant the broad group read on the root containers so callers can traverse
+#    Cassini/Recordings/meetings. Cassini writes an explicit recording-viewers
+#    deny on every leaf and participant allows on top, so this does not grant
+#    non-participants access to recording files.
+occ groupfolders:permissions <folder_id> / --group recording-viewers +read
+
+# 5. Grant the owner full root ACL in addition to the mount mapping. It needs
+#    create/update to synchronize Files and manage ACLs on existing recordings.
+occ groupfolders:permissions <folder_id> / --user admin \
+  +read +write +create +delete +share
+
+# The owner may also be a viewer/participant in harness meetings.
 occ group:adduser recording-viewers admin
 ```
+
+Verify the resulting configuration:
+
+```bash
+occ groupfolders:list --output=json_pretty
+occ groupfolders:permissions <folder_id> --output=json_pretty
+occ groupfolders:permissions <folder_id> / --test --user admin
+```
+
+The folder JSON must show `acl_default_no_permission: true`, the `admin` group
+with permissions `31`, and `recording-viewers` with permissions `1`. The admin
+ACL test must report `+read, +write, +create, +delete, +share`. If an existing
+empty `Cassini` folder was created without the default-deny option, delete and
+recreate it with the commands above. Do not delete a non-empty folder without
+backing it up first.
 
 Then enable the feature on the ExApp and restart it:
 
@@ -143,10 +163,9 @@ recipe once on your instance:
   [ ] As carol: the Cassini viewer does NOT list it, and a direct
       /published/meetings/<id>.opus returns 404.
   [ ] If alice sees an EMPTY list, the per-caller scan can't traverse the folder:
-      grant recording-viewers read on the "Cassini" and "Cassini/Recordings"
-      container folders (NOT the .opus files) in Advanced permissions, keeping
-      default-deny on the leaves, and re-check. Adjust until the list matches
-      exactly what each caller is granted.
+      confirm the root recording-viewers `+read` traversal rule and the
+      recording's explicit recording-viewers deny + participant allows. Do not
+      grant the broad group read directly on an `.opus` file.
 ```
 
 The playback check is the security floor and must always hold. The list check is
@@ -168,9 +187,10 @@ contents are unaffected.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Everyone still sees every meeting | Flag not actually set, or operator not restarted | Confirm `CASSINI_NC_ACCESS_CONTROL=true` in the running container's env |
-| A granted user sees an empty list | Per-caller scan can't traverse the container folders | Grant the viewer group read on `Cassini` + `Cassini/Recordings` (containers only), keep default-deny on leaves |
+| A granted user sees an empty list | Per-caller scan can't traverse the container folders, or the leaf ACL was not applied | Confirm the root traversal rule and the leaf's broad-group deny + participant allows; re-publish to retry |
 | A meeting is visible to no one | Non-Talk job, or all participants were guests/federated | Share the `.opus` (+ sidecar) manually |
 | Viewer errors instead of empty list | Nextcloud Files unreachable (502) | Check the ExApp → Nextcloud WebDAV connectivity and the owner account |
+| Files delivery reports `MKCOL Cassini/Recordings -> 403` | Owner has ACL-management permission but no write-capable Team-folder mapping/root ACL | Add the `admin` group mapping and explicit admin root ACL from the one-time setup, then re-publish |
 | Publish succeeds but no ACL applied | Best-effort ACL step failed (logged, non-fatal) | Check operator logs for `nc files access …`; re-publish to retry |
 
 ## Related
