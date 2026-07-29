@@ -171,6 +171,73 @@ func TestNCFilesUploaderPublishesEmptyCatalog(t *testing.T) {
 	}
 }
 
+func TestNCFilesUploaderProtectsCatalogWhenAccessControlEnabled(t *testing.T) {
+	var got []davRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		got = append(got, davRequest{method: r.Method, path: r.URL.Path, body: body})
+		if r.Method == "PROPPATCH" {
+			w.WriteHeader(http.StatusMultiStatus)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	siteRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(siteRoot, "meetings"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(siteRoot, "meetings", "new.opus"), []byte("OPUS"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(siteRoot, "catalog.json"), []byte(`{"meetings":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testExAppConfig(srv.URL)
+	cfg.AccessControl = true
+	if err := cfg.ncFilesUploader()(context.Background(), siteRoot); err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+
+	var catalogPut, catalogACL, opusPut, opusACL int
+	var protectedOpusBeforeCatalog bool
+	for _, req := range got {
+		switch {
+		case strings.HasSuffix(req.path, "/new.opus") && req.method == http.MethodPut:
+			opusPut++
+		case strings.HasSuffix(req.path, "/new.opus") && req.method == "PROPPATCH":
+			opusACL++
+			body := string(req.body)
+			if !strings.Contains(body, "recording-viewers") || !strings.Contains(body, "<nc:acl-permissions>0</nc:acl-permissions>") {
+				t.Errorf("new opus baseline ACL does not deny the traversal group: %s", body)
+			}
+		case strings.HasSuffix(req.path, "/catalog.json") && req.method == http.MethodPut:
+			catalogPut++
+			protectedOpusBeforeCatalog = opusACL == 1
+		case strings.HasSuffix(req.path, "/catalog.json") && req.method == "PROPPATCH":
+			catalogACL++
+			body := string(req.body)
+			for _, want := range []string{
+				"recording-viewers",
+				"<nc:acl-permissions>0</nc:acl-permissions>",
+				"<nc:acl-mapping-id>admin</nc:acl-mapping-id>",
+				"<nc:acl-permissions>31</nc:acl-permissions>",
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("catalog ACL body missing %q: %s", want, body)
+				}
+			}
+		}
+	}
+	if catalogPut != 1 || catalogACL != 1 || opusPut != 1 || opusACL != 1 {
+		t.Fatalf("protected requests: opus PUT=%d ACL=%d catalog PUT=%d ACL=%d, want one each; got %+v", opusPut, opusACL, catalogPut, catalogACL, got)
+	}
+	if !protectedOpusBeforeCatalog {
+		t.Fatal("new opus must receive its deny baseline before catalog.json is uploaded")
+	}
+}
+
 func TestNCFilesProxyRelaysAndForwardsRange(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/catalog.json") {

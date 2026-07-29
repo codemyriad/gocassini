@@ -21,6 +21,8 @@ func TestACLListXML(t *testing.T) {
 	}))
 	for _, want := range []string{
 		`xmlns:nc="http://nextcloud.org/ns"`,
+		`<nc:acl-mapping-type>group</nc:acl-mapping-type><nc:acl-mapping-id>recording-viewers</nc:acl-mapping-id><nc:acl-mask>31</nc:acl-mask><nc:acl-permissions>0</nc:acl-permissions>`,
+		`<nc:acl-mapping-type>user</nc:acl-mapping-type><nc:acl-mapping-id>admin</nc:acl-mapping-id><nc:acl-mask>31</nc:acl-mask><nc:acl-permissions>31</nc:acl-permissions>`,
 		`<nc:acl-mapping-type>user</nc:acl-mapping-type><nc:acl-mapping-id>alice</nc:acl-mapping-id>`,
 		`<nc:acl-mask>31</nc:acl-mask><nc:acl-permissions>1</nc:acl-permissions>`,
 		`<nc:acl-mapping-type>group</nc:acl-mapping-type>`,
@@ -29,6 +31,22 @@ func TestACLListXML(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("aclListXML missing %q\n got: %s", want, got)
 		}
+	}
+}
+
+func TestRecordingACLRulesCoalesceBuiltInMappings(t *testing.T) {
+	rules := recordingACLRules([]aclMapping{
+		{Type: "user", ID: ncRecordingsOwner},
+		{Type: "group", ID: ncRecordingsViewerGroup},
+	})
+	if len(rules) != 2 {
+		t.Fatalf("rules = %+v, want the two built-in mappings without duplicates", rules)
+	}
+	if rules[0].Permissions != aclPermRead {
+		t.Errorf("viewer group permissions = %d, want read when the group itself is a participant", rules[0].Permissions)
+	}
+	if rules[1].Permissions != aclMaskAll {
+		t.Errorf("owner permissions = %d, want full permissions", rules[1].Permissions)
 	}
 }
 
@@ -125,7 +143,7 @@ func TestNCFilesAccessApplierWritesSidecarAndACL(t *testing.T) {
 	if opusACL == nil {
 		t.Fatalf("no PROPPATCH on the .opus (base %s); got %+v", base, got)
 	}
-	for _, want := range []string{"alice", "bob", "<nc:acl-mask>31</nc:acl-mask>"} {
+	for _, want := range []string{"alice", "bob", "recording-viewers", "<nc:acl-permissions>0</nc:acl-permissions>", "<nc:acl-mask>31</nc:acl-mask>"} {
 		if !strings.Contains(string(opusACL.body), want) {
 			t.Errorf("opus ACL body missing %q", want)
 		}
