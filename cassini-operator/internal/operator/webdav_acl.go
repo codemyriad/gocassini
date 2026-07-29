@@ -102,6 +102,12 @@ func (c ExAppConfig) ncFilesAccessApplier() ncFilesAccessApplier {
 				errs = append(errs, fmt.Errorf("put sidecar: %w", err))
 			} else if err := c.davProppatchACL(ctx, client, ncRecordingsOwner, sidecarRel, mappings); err != nil {
 				errs = append(errs, fmt.Errorf("acl sidecar: %w", err))
+				// A newly created sidecar inherits the broad traversal grant.
+				// If the participant ACL failed, make a second best-effort pass
+				// that at least fails closed to the owner.
+				if protectErr := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, sidecarRel, recordingACLRules(nil)); protectErr != nil {
+					errs = append(errs, fmt.Errorf("protect sidecar after acl failure: %w", protectErr))
+				}
 			}
 		}
 		return errors.Join(errs...)
@@ -155,10 +161,15 @@ func (c ExAppConfig) davPutBytes(ctx context.Context, client *http.Client, userI
 	return fmt.Errorf("PUT %s -> %d", relPath, resp.StatusCode)
 }
 
-// davProppatchACL sets the groupfolders advanced-ACL rule set on relPath: one
-// read-only grant per mapping. Acts as userID (the delegated ACL manager).
+// davProppatchACL sets the protected recording ACL on relPath: the broad
+// traversal group is denied, the owner stays writable, and each participant
+// gets a read-only grant. Acts as userID (the delegated ACL manager).
 func (c ExAppConfig) davProppatchACL(ctx context.Context, client *http.Client, userID, relPath string, mappings []aclMapping) error {
-	body := aclListXML(mappings)
+	return c.davProppatchACLRules(ctx, client, userID, relPath, recordingACLRules(mappings))
+}
+
+func (c ExAppConfig) davProppatchACLRules(ctx context.Context, client *http.Client, userID, relPath string, rules []aclRule) error {
+	body := aclRulesXML(rules)
 	req, err := http.NewRequestWithContext(ctx, "PROPPATCH", c.davFileURL(userID, relPath), bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -179,21 +190,78 @@ func (c ExAppConfig) davProppatchACL(ctx context.Context, client *http.Client, u
 	return fmt.Errorf("PROPPATCH %s -> %d", relPath, resp.StatusCode)
 }
 
-// aclListXML builds the `nc:acl-list` PROPPATCH body the groupfolders web UI
-// emits (src/services/acl.ts): one <nc:acl> per mapping, read-only.
+type aclRule struct {
+	Type        string
+	ID          string
+	Mask        int
+	Permissions int
+}
+
+// recordingACLRules denies the broad traversal group at the file itself, then
+// grants read to the Talk participants. Group folders merges rules at one path
+// with allow overriding deny, so a participant who is also a member of the
+// traversal group can read while every non-participant remains denied.
+func recordingACLRules(mappings []aclMapping) []aclRule {
+	rules := []aclRule{
+		{
+			Type: "group", ID: ncRecordingsViewerGroup,
+			Mask: aclMaskAll, Permissions: 0,
+		},
+		{
+			// The owner needs all permissions so later archive synchronization
+			// can overwrite an existing file as well as manage its ACL.
+			Type: "user", ID: ncRecordingsOwner,
+			Mask: aclMaskAll, Permissions: aclMaskAll,
+		},
+	}
+	indices := map[string]int{
+		"group\x00" + ncRecordingsViewerGroup: 0,
+		"user\x00" + ncRecordingsOwner:        1,
+	}
+	for _, mapping := range mappings {
+		key := mapping.Type + "\x00" + mapping.ID
+		if i, ok := indices[key]; ok {
+			rules[i].Permissions |= aclPermRead
+			continue
+		}
+		indices[key] = len(rules)
+		rules = append(rules, aclRule{
+			Type: mapping.Type, ID: mapping.ID,
+			Mask: aclMaskAll, Permissions: aclPermRead,
+		})
+	}
+	return rules
+}
+
+// catalogProtectionACLRules keeps the full Files catalog private to the owner.
+// Viewer requests never need direct access to it: the operator reads it as the
+// owner and returns a per-caller filtered catalog.
+func catalogProtectionACLRules() []aclRule {
+	return []aclRule{
+		{Type: "group", ID: ncRecordingsViewerGroup, Mask: aclMaskAll, Permissions: 0},
+		{Type: "user", ID: ncRecordingsOwner, Mask: aclMaskAll, Permissions: aclMaskAll},
+	}
+}
+
+// aclListXML builds the recording `nc:acl-list` PROPPATCH body emitted by the
+// groupfolders UI (src/services/acl.ts).
 func aclListXML(mappings []aclMapping) []byte {
+	return aclRulesXML(recordingACLRules(mappings))
+}
+
+func aclRulesXML(rules []aclRule) []byte {
 	var b bytes.Buffer
 	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
 	b.WriteString(`<d:propertyupdate xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns"><d:set><d:prop><nc:acl-list>`)
-	for _, m := range mappings {
+	for _, rule := range rules {
 		b.WriteString(`<nc:acl><nc:acl-mapping-type>`)
-		xmlEscape(&b, m.Type)
+		xmlEscape(&b, rule.Type)
 		b.WriteString(`</nc:acl-mapping-type><nc:acl-mapping-id>`)
-		xmlEscape(&b, m.ID)
+		xmlEscape(&b, rule.ID)
 		b.WriteString(`</nc:acl-mapping-id><nc:acl-mask>`)
-		fmt.Fprintf(&b, "%d", aclMaskAll)
+		fmt.Fprintf(&b, "%d", rule.Mask)
 		b.WriteString(`</nc:acl-mask><nc:acl-permissions>`)
-		fmt.Fprintf(&b, "%d", aclPermRead)
+		fmt.Fprintf(&b, "%d", rule.Permissions)
 		b.WriteString(`</nc:acl-permissions></nc:acl>`)
 	}
 	b.WriteString(`</nc:acl-list></d:prop></d:set></d:propertyupdate>`)

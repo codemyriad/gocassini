@@ -45,6 +45,11 @@ const (
 	// ncRecordingsRoot is the canonical recordings root inside the owner's
 	// Files (relative to the user's WebDAV home). Hard-coded for now (D-529).
 	ncRecordingsRoot = "Cassini/Recordings"
+	// ncRecordingsViewerGroup is the broad Team-folder mount group. Members
+	// receive read access to the container directories so they can traverse to
+	// recordings; per-file ACLs explicitly deny this group and then grant each
+	// meeting's participants, preventing the container grant from leaking files.
+	ncRecordingsViewerGroup = "recording-viewers"
 
 	ncFilesUploadTimeout   = 120 * time.Second
 	ncFilesProxyHeadersTTL = 30 * time.Second
@@ -146,16 +151,34 @@ func (c ExAppConfig) ncFilesUploader() ncFilesUploader {
 			}
 			opusLocal := filepath.Join(meetingsLocal, entry.Name())
 			opusRemote := ncRecordingsRoot + "/meetings/" + entry.Name()
-			if err := c.davPutFile(ctx, client, ncRecordingsOwner, opusRemote, opusLocal, "audio/ogg"); err != nil {
+			status, err := c.davPutFileStatus(ctx, client, ncRecordingsOwner, opusRemote, opusLocal, "audio/ogg")
+			if err != nil {
 				return fmt.Errorf("put opus %s: %w", entry.Name(), err)
+			}
+			if c.AccessControl && status == http.StatusCreated {
+				// A new file inherits the broad container traversal grant. Deny
+				// that group before catalog.json can advertise the file; the
+				// post-publish participant ACL replaces this owner-only baseline.
+				if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, opusRemote, recordingACLRules(nil)); err != nil {
+					return fmt.Errorf("protect new opus %s: %w", entry.Name(), err)
+				}
 			}
 		}
 
 		// Publish the whole catalog last. If any .opus PUT fails, readers retain
 		// the previous Files catalog instead of receiving references to missing
 		// meeting objects.
-		if err := c.davPutFile(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json", catalogLocal, "application/json"); err != nil {
+		catalogRemote := ncRecordingsRoot + "/catalog.json"
+		if err := c.davPutFile(ctx, client, ncRecordingsOwner, catalogRemote, catalogLocal, "application/json"); err != nil {
 			return fmt.Errorf("put catalog: %w", err)
+		}
+		if c.AccessControl {
+			// The broad viewer group may traverse the container directories, but
+			// must not be able to read the unfiltered authoritative catalog from
+			// Files. The operator reads it as the owner and filters it per caller.
+			if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, catalogRemote, catalogProtectionACLRules()); err != nil {
+				return fmt.Errorf("protect catalog: %w", err)
+			}
 		}
 		return nil
 	}
@@ -209,31 +232,36 @@ func (c ExAppConfig) davMkcol(ctx context.Context, client *http.Client, userID, 
 }
 
 func (c ExAppConfig) davPutFile(ctx context.Context, client *http.Client, userID, relPath, localPath, contentType string) error {
+	_, err := c.davPutFileStatus(ctx, client, userID, relPath, localPath, contentType)
+	return err
+}
+
+func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, userID, relPath, localPath, contentType string) (int, error) {
 	f, err := os.Open(localPath)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.davFileURL(userID, relPath), f)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	c.setAppAPIDAVHeadersForUser(req, userID)
 	req.Header.Set("Content-Type", contentType)
 	req.ContentLength = info.Size()
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer drainClose(resp.Body)
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
+		return resp.StatusCode, nil
 	}
-	return fmt.Errorf("PUT %s -> %d", relPath, resp.StatusCode)
+	return resp.StatusCode, fmt.Errorf("PUT %s -> %d", relPath, resp.StatusCode)
 }
 
 // ncFilesProxy returns the read-proxy closure, or nil when the ExApp env is
