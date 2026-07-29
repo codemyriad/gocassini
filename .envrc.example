@@ -8,6 +8,10 @@ export CALL_URL="https://cloud.example.com/call/<ROOM_TOKEN>"
 export NEXTCLOUD_URL="http://127.0.0.1:28080"
 export NEXTCLOUD_STATUS_URL="${NEXTCLOUD_URL}/status.php"
 
+# Optional: the installed-ExApp harness defaults this to true. Set false only
+# when comparing the legacy org-wide archive behavior.
+export CASSINI_NC_ACCESS_CONTROL=true
+
 # Required for `cassini-viewer` demo-data:* scripts.
 export DEMO_DATA_URL="https://example.com/cassini-demo-site"
 

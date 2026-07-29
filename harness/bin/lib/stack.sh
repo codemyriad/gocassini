@@ -739,6 +739,7 @@ harness_register_exapp() {
     --info-xml /tmp/gocassini-info.xml
     --env "CASSINI_TALK_RECORDING_SECRET=$CASSINI_TALK_RECORDING_SECRET"
     --env "CASSINI_TALK_SIGNALING_INTERNAL_SECRET=$CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
+    --env "CASSINI_NC_ACCESS_CONTROL=$CASSINI_NC_ACCESS_CONTROL"
     --test-deploy-mode
     --wait-finish
   )

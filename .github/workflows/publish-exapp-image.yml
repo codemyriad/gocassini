@@ -101,7 +101,8 @@ jobs:
           for field in \
             '<id>gocassini</id>' '<external-app>' '<docker-install>' '<routes>' \
             '<name>CASSINI_TALK_RECORDING_SECRET</name>' \
-            '<name>CASSINI_TALK_SIGNALING_INTERNAL_SECRET</name>'; do
+            '<name>CASSINI_TALK_SIGNALING_INTERNAL_SECRET</name>' \
+            '<name>CASSINI_NC_ACCESS_CONTROL</name>'; do
             if ! grep -qF "$field" appinfo/info.xml; then
               echo "appinfo/info.xml missing required marker: $field" >&2
               exit 1

@@ -191,6 +191,7 @@ What this script does during development (pre-publish):
               --info-xml /tmp/gocassini-info.xml \\
               --env CASSINI_TALK_RECORDING_SECRET=... \\
               --env CASSINI_TALK_SIGNALING_INTERNAL_SECRET=... \\
+              --env CASSINI_NC_ACCESS_CONTROL=true \\
               --test-deploy-mode --wait-finish
 
   Secret values are intentionally not printed. Pass --no-install only if

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -55,6 +56,7 @@ type devStackPlan struct {
 	ServiceMode           string
 	SpreedProfile         string
 	CassiniMode           string
+	NCAccessControl       bool
 	RecordingBackend      string
 	ExAppImageMode        string
 	PatchMode             string
@@ -76,6 +78,7 @@ type devStackFlagOptions struct {
 	talkBackendURL     string
 	serviceMode        string
 	cassiniMode        string
+	ncAccessControl    bool
 	recordingBackend   string
 	exAppImageMode     string
 	patchMode          string
@@ -110,6 +113,7 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	services := stringFlag("services", "service topology: legacy-default, core, appapi, full, full-remote")
 	serviceMode := stringFlag("service-mode", "alias for --services")
 	cassiniMode := stringFlag("cassini", "Cassini install mode: none, installed-exapp")
+	ncAccessControl := fs.Bool("nc-access-control", true, "enable per-participant Nextcloud Files access control")
 	recordingBackend := stringFlag("recording-backend", "Talk recording backend: legacy, direct-operator, installed-exapp, none")
 	exAppImageMode := stringFlag("exapp-image-mode", "ExApp image mode: build, reuse-local, pull")
 	patchMode := stringFlag("patch", "patch mode: auto, none, force")
@@ -143,6 +147,7 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	opts.talkBackendURL = *talkBackendURL
 	opts.serviceMode = *services
 	opts.cassiniMode = *cassiniMode
+	opts.ncAccessControl = *ncAccessControl
 	opts.recordingBackend = *recordingBackend
 	opts.exAppImageMode = *exAppImageMode
 	opts.patchMode = *patchMode
@@ -202,6 +207,16 @@ func resolveDevStackPlan(command string, args []string, lookup envLookupFunc) (d
 	plan.TalkBackendURL = pick("talk-backend-url", opts.talkBackendURL, "CASSINI_TALK_BACKEND_URL", "")
 	plan.ServiceMode = pick("services", opts.serviceMode, "CASSINI_HARNESS_SERVICE_MODE", "")
 	plan.CassiniMode = pick("cassini", opts.cassiniMode, "CASSINI_HARNESS_CASSINI_MODE", devStackCassiniNone)
+	plan.NCAccessControl = true
+	if opts.set["nc-access-control"] {
+		plan.NCAccessControl = opts.ncAccessControl
+	} else if raw := get("CASSINI_NC_ACCESS_CONTROL"); raw != "" {
+		value, parseErr := strconv.ParseBool(raw)
+		if parseErr != nil {
+			return plan, rest, fmt.Errorf("invalid CASSINI_NC_ACCESS_CONTROL %q: expected true or false", raw)
+		}
+		plan.NCAccessControl = value
+	}
 	plan.RecordingBackend = pick("recording-backend", opts.recordingBackend, "CASSINI_HARNESS_RECORDING_BACKEND", devStackRecordingLegacy)
 	plan.ExAppImageMode = pick("exapp-image-mode", opts.exAppImageMode, "CASSINI_HARNESS_EXAPP_IMAGE_MODE", devStackImageReuseLocal)
 	plan.PatchMode = pick("patch", opts.patchMode, "CASSINI_HARNESS_PATCH_MODE", devStackPatchAuto)
@@ -530,6 +545,7 @@ func (plan devStackPlan) env() []string {
 		"CASSINI_HARNESS_PUBLIC_MODE=" + plan.PublicMode,
 		"CASSINI_HARNESS_SERVICE_MODE=" + plan.ServiceMode,
 		"CASSINI_HARNESS_CASSINI_MODE=" + plan.CassiniMode,
+		"CASSINI_NC_ACCESS_CONTROL=" + strconv.FormatBool(plan.NCAccessControl),
 		"CASSINI_HARNESS_RECORDING_BACKEND=" + plan.RecordingBackend,
 		"CASSINI_HARNESS_EXAPP_IMAGE_MODE=" + plan.ExAppImageMode,
 		"CASSINI_HARNESS_PATCH_MODE=" + plan.PatchMode,
@@ -557,6 +573,7 @@ func printDevStackPlan(w io.Writer, plan devStackPlan) {
 	fmt.Fprintf(w, "  spreed_profile: %s\n", plan.SpreedProfile)
 	fmt.Fprintln(w, "cassini:")
 	fmt.Fprintf(w, "  mode: %s\n", plan.CassiniMode)
+	fmt.Fprintf(w, "  nc_access_control: %t\n", plan.NCAccessControl)
 	fmt.Fprintf(w, "  exapp_image_mode: %s\n", plan.ExAppImageMode)
 	fmt.Fprintln(w, "recording:")
 	fmt.Fprintf(w, "  backend: %s\n", plan.RecordingBackend)
