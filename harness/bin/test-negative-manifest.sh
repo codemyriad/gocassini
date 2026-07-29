@@ -60,7 +60,8 @@ neg_vars="$(count_env_vars "$negative")"
 # particular, because the control differentiates on it (secret_configured stays
 # true while signaling_internal_secret_configured flips to false).
 for sibling in CASSINI_TALK_RECORDING_SECRET CASSINI_TALK_BACKEND_URL \
-  OPENROUTER_API_KEY LLM_BASE_URL LLM_MODEL CASSINI_OPERATOR_API_TOKEN; do
+  CASSINI_NC_ACCESS_CONTROL OPENROUTER_API_KEY LLM_BASE_URL LLM_MODEL \
+  CASSINI_OPERATOR_API_TOKEN; do
   grep -qF "<name>$sibling</name>" "$negative" \
     || fail "negative manifest dropped sibling declaration $sibling"
 done

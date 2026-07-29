@@ -192,8 +192,9 @@ Flagged so readers do not mistake intent for current behavior:
   effort.
 - **The portable `.opus` viewer** renders transcript + metadata; it does not yet
   render an embedded summary from `.opus` (published artifact directories do).
-- **Per-recording access control is future work.** v1 ships an org-wide archive:
-  any logged-in Nextcloud user can browse every published meeting.
+- **Per-recording access control is opt-in in production.** The local harness
+  enables it by default, but enforced grants still require the documented
+  Group folders/advanced-ACL setup and instance-specific traversal validation.
 
 ## Fast paths
 

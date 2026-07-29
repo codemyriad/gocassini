@@ -138,6 +138,7 @@ Common options:
   --signaling-public-url URL
   --services legacy-default|core|appapi|full|full-remote
   --cassini none|installed-exapp
+  --nc-access-control=true|false
   --recording-backend legacy|direct-operator|installed-exapp|none
   --exapp-image-mode build|reuse-local|pull
   --build
@@ -153,7 +154,7 @@ down options (canonical teardown; containers are ephemeral, volumes persist):
   --volumes   remove containers and volumes for the current config
   --full      remove all harness-owned resources, including volumes and ExApp
 
-Config hierarchy: explicit flag > CASSINI_HARNESS_* env var > default.
+Config hierarchy: explicit flag > matching environment variable > default.
 Passing an explicit non-remote --public-mode ignores ambient remote env vars
 (CASSINI_HARNESS_PUBLIC_URL/PUBLIC_HOST/MEDIA_HOST/SIGNALING_PUBLIC_URL);
 without the explicit flag they still fail loud outside remote-https mode.

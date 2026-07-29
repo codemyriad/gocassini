@@ -5,10 +5,10 @@
   <name>Cassini</name>
   <summary>Record, transcribe, and publish Nextcloud Talk meetings.</summary>
   <description><![CDATA[Cassini joins a Nextcloud Talk room as a bot, records the call,
-transcribes and summarizes it, and publishes a readable static site that any
-logged-in user can browse. Recording control and job history live in the
-admin-only control panel; the published meeting archive is visible to every
-logged-in user.]]></description>
+transcribes and summarizes it, and publishes a readable archive in Nextcloud
+Files. Recording control and job history live in the admin-only control panel;
+the viewer can optionally restrict each recording to its Talk participants
+through Nextcloud's advanced file ACLs.]]></description>
   <version>0.2.0-alpha.4</version>
   <licence>agpl</licence>
   <author>codemyriad</author>
@@ -58,6 +58,11 @@ logged-in user.]]></description>
         <name>CASSINI_TALK_BACKEND_URL</name>
         <display-name>Talk backend URL override (optional)</display-name>
         <description>Base URL the operator uses to call back into Nextcloud Talk (recording started/stopped notifications and recording upload). Leave empty to use the backend URL Talk sends with each recording request, which is correct for almost every deployment.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_NC_ACCESS_CONTROL</name>
+        <display-name>Nextcloud recording access control</display-name>
+        <description>Enables per-participant access control for recordings in Nextcloud Files. Requires the one-time Group folders and advanced-ACL setup documented in docs/exapp-nextcloud-recordings-permissions.md. Off by default outside the local harness.</description>
       </variable>
       <variable>
         <name>OPENROUTER_API_KEY</name>

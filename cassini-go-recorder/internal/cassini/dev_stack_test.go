@@ -17,6 +17,28 @@ func testEnv(values map[string]string) envLookupFunc {
 	}
 }
 
+func clearDevStackAmbient(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"CASSINI_HARNESS_PUBLIC_MODE",
+		"CASSINI_HARNESS_PUBLIC_URL",
+		"CASSINI_HARNESS_PUBLIC_HOST",
+		"CASSINI_HARNESS_MEDIA_HOST",
+		"CASSINI_HARNESS_SIGNALING_PUBLIC_URL",
+		"CASSINI_TALK_BACKEND_URL",
+		"CASSINI_HARNESS_SERVICE_MODE",
+		"CASSINI_HARNESS_CASSINI_MODE",
+		"CASSINI_NC_ACCESS_CONTROL",
+		"CASSINI_HARNESS_RECORDING_BACKEND",
+		"CASSINI_HARNESS_EXAPP_IMAGE_MODE",
+		"CASSINI_HARNESS_PATCH_MODE",
+		"CASSINI_HARNESS_EXISTING",
+		"SPREED_PROFILE",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
 func TestResolveDevStackPlanDefaultsPreserveCompatibility(t *testing.T) {
 	plan, rest, err := resolveDevStackPlan("plan", nil, testEnv(nil))
 	if err != nil {
@@ -36,6 +58,9 @@ func TestResolveDevStackPlanDefaultsPreserveCompatibility(t *testing.T) {
 	}
 	if plan.CassiniMode != devStackCassiniNone {
 		t.Fatalf("CassiniMode = %q", plan.CassiniMode)
+	}
+	if !plan.NCAccessControl {
+		t.Fatal("NCAccessControl = false, want harness default true")
 	}
 	if plan.PatchMode != devStackPatchAuto {
 		t.Fatalf("PatchMode = %q", plan.PatchMode)
@@ -232,6 +257,10 @@ func TestResolveDevStackPlanDoesNotWarnForDeferredScenarios(t *testing.T) {
 			name: "pull image for installed ExApp",
 			args: []string{"--services", "full", "--cassini", "installed-exapp", "--recording-backend", "installed-exapp", "--exapp-image-mode", "pull"},
 		},
+		{
+			name: "disabled access control for installed ExApp",
+			args: []string{"--services", "full", "--cassini", "installed-exapp", "--recording-backend", "installed-exapp", "--nc-access-control=false"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -329,11 +358,13 @@ func TestResolveDevStackPlanFlagsOverrideEnv(t *testing.T) {
 		"--services", "core",
 		"--recording-backend", "none",
 		"--patch", "force",
+		"--nc-access-control=true",
 	}, testEnv(map[string]string{
 		"CASSINI_HARNESS_SERVICE_MODE":      "full",
 		"CASSINI_HARNESS_RECORDING_BACKEND": "direct-operator",
 		"CASSINI_HARNESS_PATCH_MODE":        "none",
 		"CASSINI_HARNESS_EXAPP_IMAGE_MODE":  "pull",
+		"CASSINI_NC_ACCESS_CONTROL":         "false",
 	}))
 	if err != nil {
 		t.Fatalf("resolveDevStackPlan: %v", err)
@@ -349,6 +380,33 @@ func TestResolveDevStackPlanFlagsOverrideEnv(t *testing.T) {
 	}
 	if plan.ExAppImageMode != devStackImagePull {
 		t.Fatalf("ExAppImageMode = %q, want env value pull", plan.ExAppImageMode)
+	}
+	if !plan.NCAccessControl {
+		t.Fatal("NCAccessControl = false, want explicit flag to override env")
+	}
+}
+
+func TestResolveDevStackPlanAccessControlEnv(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("plan", []string{
+		"--services", "full",
+		"--cassini", "installed-exapp",
+		"--recording-backend", "installed-exapp",
+	}, testEnv(map[string]string{"CASSINI_NC_ACCESS_CONTROL": "false"}))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if plan.NCAccessControl {
+		t.Fatal("NCAccessControl = true, want env value false")
+	}
+	if !strings.Contains(strings.Join(plan.env(), "\n"), "CASSINI_NC_ACCESS_CONTROL=false") {
+		t.Fatalf("plan env does not include disabled access control: %v", plan.env())
+	}
+
+	_, _, err = resolveDevStackPlan("plan", nil, testEnv(map[string]string{
+		"CASSINI_NC_ACCESS_CONTROL": "sometimes",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "invalid CASSINI_NC_ACCESS_CONTROL") {
+		t.Fatalf("expected invalid access-control env error, got %v", err)
 	}
 }
 
@@ -571,6 +629,7 @@ func TestResolveDevStackPlanDownFull(t *testing.T) {
 }
 
 func TestRunDevStackPlanPrintsResolvedPlan(t *testing.T) {
+	clearDevStackAmbient(t)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := runDevStack(context.Background(), ".", []string{"plan", "--public-mode=local-http"}, &stdout, &stderr)
@@ -580,7 +639,7 @@ func TestRunDevStackPlanPrintsResolvedPlan(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		"public:\n  mode: local-http",
-		"cassini:\n  mode: none",
+		"cassini:\n  mode: none\n  nc_access_control: true",
 		"patch:\n  mode: auto",
 		"lifecycle:\n  existing_resources: fail",
 		"validation: ok",
@@ -592,6 +651,7 @@ func TestRunDevStackPlanPrintsResolvedPlan(t *testing.T) {
 }
 
 func TestRunDevStackHardFailureDoesNotPrintPlan(t *testing.T) {
+	clearDevStackAmbient(t)
 	var stdout, stderr bytes.Buffer
 	code := runDevStack(context.Background(), ".", []string{
 		"plan",
@@ -644,6 +704,7 @@ func TestPrintDevStackCommandWarnings(t *testing.T) {
 }
 
 func TestRunDevStackDownFlagsMapToScript(t *testing.T) {
+	clearDevStackAmbient(t)
 	prevExec := runDevScriptExec
 	defer func() { runDevScriptExec = prevExec }()
 
@@ -680,6 +741,7 @@ func TestRunDevStackDownFlagsMapToScript(t *testing.T) {
 }
 
 func TestRunDevStackStopCommandRemoved(t *testing.T) {
+	clearDevStackAmbient(t)
 	var stdout, stderr bytes.Buffer
 	code := runDevStack(context.Background(), ".", []string{"stop"}, &stdout, &stderr)
 	if code == 0 {
@@ -691,6 +753,7 @@ func TestRunDevStackStopCommandRemoved(t *testing.T) {
 }
 
 func TestRunDevStackWarningsPreserveScriptExitCode(t *testing.T) {
+	clearDevStackAmbient(t)
 	prevExec := runDevScriptExec
 	defer func() { runDevScriptExec = prevExec }()
 
@@ -721,6 +784,7 @@ func TestRunDevStackWarningsPreserveScriptExitCode(t *testing.T) {
 }
 
 func TestRunDevStackDownPrintsDestructiveWarnings(t *testing.T) {
+	clearDevStackAmbient(t)
 	prevExec := runDevScriptExec
 	defer func() { runDevScriptExec = prevExec }()
 
@@ -745,6 +809,7 @@ func TestRunDevStackDownPrintsDestructiveWarnings(t *testing.T) {
 }
 
 func TestRunDevStackUpPassesResolvedEnv(t *testing.T) {
+	clearDevStackAmbient(t)
 	prevExec := runDevScriptExec
 	defer func() { runDevScriptExec = prevExec }()
 
@@ -766,7 +831,9 @@ func TestRunDevStackUpPassesResolvedEnv(t *testing.T) {
 		t.Fatalf("script = %q", gotScript)
 	}
 	joined := strings.Join(gotEnv, "\n")
-	if !strings.Contains(joined, "CASSINI_HARNESS_SERVICE_MODE=core") || !strings.Contains(joined, "SPREED_PROFILE=default") {
+	if !strings.Contains(joined, "CASSINI_HARNESS_SERVICE_MODE=core") ||
+		!strings.Contains(joined, "SPREED_PROFILE=default") ||
+		!strings.Contains(joined, "CASSINI_NC_ACCESS_CONTROL=true") {
 		t.Fatalf("missing resolved env in %v", gotEnv)
 	}
 }
