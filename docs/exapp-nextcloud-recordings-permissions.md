@@ -180,6 +180,19 @@ the visibility tuning; the operator **fails closed** (shows an empty list) rathe
 than ever leaking, so a mis-tuned recipe degrades to "no meetings", never to
 "everyone's meetings".
 
+## Migrating from the public archive
+
+If a deployment already ran with access control **off** (the D-529 public
+archive), recordings live in the owner's own `Cassini/Recordings` **home**
+folder. Turning access control on creates a *group folder* mounted at `Cassini`,
+and Nextcloud will not mount a group folder over an existing same-named home
+folder — it remaps the mount (e.g. `Cassini (2)`), so the operator would write to
+a different path and the previously delivered recordings would be left behind in
+the old home folder. Before enabling access control on such an instance, move or
+remove the owner's existing `Cassini` home folder (back it up first) so the group
+folder can mount at the canonical `Cassini` path, then re-enable; the startup
+sync re-delivers the archive into the group folder.
+
 ## Turning it off
 
 Unset `CASSINI_NC_ACCESS_CONTROL` (or set it to `false`) and restart. In the

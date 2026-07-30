@@ -191,7 +191,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
-	runtime.uploadToNCFiles = exappCfg.ncFilesUploader()
+	runtime.uploadToNCFiles = exappCfg.ncFilesUploader(logger)
 	runtime.fetchTalkParticipants = exappCfg.talkParticipantsFetcher()
 	runtime.applyNCFilesAccessFn = exappCfg.ncFilesAccessApplier(logger)
 	if runtime.uploadToNCFiles != nil {
@@ -199,11 +199,14 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		// /enabled?enabled=1 lifecycle edge. Start convergence from that edge,
 		// not immediately at process start (which deterministically gets 401).
 		exappCfg.onEnabled = func(enabled bool) {
+			// Gate the background viewer-group reconcile on the enabled state so it
+			// goes quiet after the app is disabled (act-as-user calls would 401).
+			SetProvisioningActive(enabled)
 			if enabled {
-				// Provision the group folder + ACL topology (and reconcile the
-				// viewer group) before the archive sync, so the canonical
-				// directory and its permissions exist for the first delivery.
-				// No-op unless access control is enabled.
+				// Provision the group folder + ACL topology (and start the viewer
+				// reconcile) before the archive sync, so the canonical directory
+				// and its permissions exist for the first delivery. No-op unless
+				// access control is enabled.
 				exappCfg.provisionNCFilesAccess(runtime.ctx, logger)
 				runtime.syncNCFilesOnStartup()
 			}

@@ -50,6 +50,46 @@ func TestRecordingACLRulesCoalesceBuiltInMappings(t *testing.T) {
 	}
 }
 
+func TestEnsureProtectedRulesPreservesParticipantsAddsDeny(t *testing.T) {
+	// A recording that somehow lacks its viewer-group deny but keeps a
+	// participant allow: self-heal must add the deny and the owner, and keep the
+	// participant.
+	got := ensureProtectedRules([]aclRule{
+		{Type: "user", ID: "alice", Mask: aclMaskAll, Permissions: aclPermRead},
+	})
+	if hasViewerGroupDeny(got) == false {
+		t.Fatalf("viewer group not denied after ensureProtectedRules: %+v", got)
+	}
+	var haveAlice, haveOwner bool
+	for _, r := range got {
+		if r.Type == "user" && r.ID == "alice" && r.Permissions == aclPermRead {
+			haveAlice = true
+		}
+		if r.Type == "user" && r.ID == ncRecordingsOwner && r.Permissions == aclMaskAll {
+			haveOwner = true
+		}
+	}
+	if !haveAlice {
+		t.Error("participant allow (alice) was dropped")
+	}
+	if !haveOwner {
+		t.Error("owner full-access rule was not ensured")
+	}
+
+	// An already-protected recording is detected as such (no-op needed).
+	protected := recordingACLRules([]aclMapping{{Type: "user", ID: "bob"}})
+	if !hasViewerGroupDeny(protected) {
+		t.Error("recordingACLRules output should already be viewer-group-denied")
+	}
+	// A stale ALLOW on the viewer group is replaced by a deny.
+	fixed := ensureProtectedRules([]aclRule{
+		{Type: "group", ID: ncRecordingsViewerGroup, Mask: aclMaskAll, Permissions: aclMaskAll},
+	})
+	if !hasViewerGroupDeny(fixed) {
+		t.Errorf("stale viewer-group allow not turned into a deny: %+v", fixed)
+	}
+}
+
 func TestBuildSidecarExtractsEntry(t *testing.T) {
 	siteRoot := t.TempDir()
 	sc := 3

@@ -414,6 +414,135 @@ func filterCatalog(raw []byte, keep func(opusBase string) bool) ([]byte, error) 
 	return json.Marshal(top)
 }
 
+// selfHealLeafProtection makes sure every recording under meetings/ carries the
+// viewer-group deny. It is the safety net for the container ACL: the root grants
+// the viewer group read (so anyone can traverse), which every leaf INHERITS
+// unless it has its own deny — so a recording whose per-file deny never landed
+// (a transient PROPPATCH failure at create, or a file that predates ACL
+// management) would be readable by every logged-in user. One PROPFIND lists the
+// current ACLs; only the offenders get a corrective PROPPATCH, and the merge
+// preserves any existing participant allows. Best-effort: logged, never fatal.
+func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Client, logger *log.Logger) {
+	acls, err := c.davPropfindACLLists(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/meetings")
+	if err != nil {
+		if logger != nil {
+			logger.Printf("nc files access: self-heal scan failed: %v", err)
+		}
+		return
+	}
+	for base, rules := range acls {
+		if !strings.HasSuffix(base, ".opus") || hasViewerGroupDeny(rules) {
+			continue
+		}
+		relPath := ncRecordingsRoot + "/meetings/" + base
+		if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, relPath, ensureProtectedRules(rules)); err != nil {
+			if logger != nil {
+				logger.Printf("nc files access: self-heal %s failed: %v", base, err)
+			}
+			continue
+		}
+		if logger != nil {
+			logger.Printf("nc files access: self-healed unprotected recording %s (applied viewer-group deny)", base)
+		}
+	}
+}
+
+// hasViewerGroupDeny reports whether the rules already deny the broad viewer
+// group (an explicit read=0 rule), i.e. the recording is protected.
+func hasViewerGroupDeny(rules []aclRule) bool {
+	for _, r := range rules {
+		if r.Type == "group" && r.ID == ncRecordingsViewerGroup && r.Permissions&aclPermRead == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureProtectedRules returns rules with the viewer-group deny and the owner
+// full-access rule guaranteed present, preserving every other rule (participant
+// allows). Used to add the missing deny without clobbering existing grants.
+func ensureProtectedRules(existing []aclRule) []aclRule {
+	haveOwner := false
+	out := make([]aclRule, 0, len(existing)+2)
+	for _, r := range existing {
+		switch {
+		case r.Type == "group" && r.ID == ncRecordingsViewerGroup:
+			// drop any existing viewer-group rule; re-added as a deny below
+			continue
+		case r.Type == "user" && r.ID == ncRecordingsOwner:
+			r.Mask, r.Permissions = aclMaskAll, aclMaskAll
+			haveOwner = true
+		}
+		out = append(out, r)
+	}
+	deny := aclRule{Type: "group", ID: ncRecordingsViewerGroup, Mask: aclMaskAll, Permissions: 0}
+	if !haveOwner {
+		out = append(out, aclRule{Type: "user", ID: ncRecordingsOwner, Mask: aclMaskAll, Permissions: aclMaskAll})
+	}
+	return append([]aclRule{deny}, out...)
+}
+
+// davPropfindACLLists lists relDir (Depth 1) requesting each child's nc:acl-list
+// and returns the parsed rules keyed by child basename.
+func (c ExAppConfig) davPropfindACLLists(ctx context.Context, client *http.Client, userID, relDir string) (map[string][]aclRule, error) {
+	reqBody := []byte(`<?xml version="1.0" encoding="UTF-8"?>` +
+		`<d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns"><d:prop><nc:acl-list/></d:prop></d:propfind>`)
+	req, err := http.NewRequestWithContext(ctx, "PROPFIND", c.davFileURL(userID, relDir), bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	c.setAppAPIDAVHeadersForUser(req, userID)
+	req.Header.Set("Depth", "1")
+	req.Header.Set("Content-Type", ncFilesACLMediaType)
+	req.ContentLength = int64(len(reqBody))
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer drainClose(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("PROPFIND %s -> %d", relDir, resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	if err != nil {
+		return nil, err
+	}
+	var ms struct {
+		Responses []struct {
+			Href     string `xml:"href"`
+			Propstat []struct {
+				ACLs []struct {
+					Type        string `xml:"acl-mapping-type"`
+					ID          string `xml:"acl-mapping-id"`
+					Mask        int    `xml:"acl-mask"`
+					Permissions int    `xml:"acl-permissions"`
+				} `xml:"prop>acl-list>acl"`
+			} `xml:"propstat"`
+		} `xml:"response"`
+	}
+	if err := xml.Unmarshal(body, &ms); err != nil {
+		return nil, fmt.Errorf("parse acl multistatus: %w", err)
+	}
+	out := make(map[string][]aclRule, len(ms.Responses))
+	for _, r := range ms.Responses {
+		base := path.Base(strings.TrimRight(r.Href, "/"))
+		if decoded, derr := url.PathUnescape(base); derr == nil {
+			base = decoded
+		}
+		var rules []aclRule
+		for _, ps := range r.Propstat {
+			for _, a := range ps.ACLs {
+				rules = append(rules, aclRule{Type: a.Type, ID: a.ID, Mask: a.Mask, Permissions: a.Permissions})
+			}
+		}
+		out[base] = rules
+	}
+	return out, nil
+}
+
 func (c ExAppConfig) davGetBytes(ctx context.Context, client *http.Client, userID, relPath string) ([]byte, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.davFileURL(userID, relPath), nil)
 	if err != nil {
