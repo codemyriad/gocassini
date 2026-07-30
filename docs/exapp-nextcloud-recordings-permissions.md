@@ -1,20 +1,20 @@
 # Managing recording permissions in Nextcloud Files
 
-How to turn on and operate **per-participant access control** for Cassini
-recordings (D-534). With it enabled, a recording is visible in the Cassini
-viewer **only to the people who were in the Talk room when it was published** —
-access is governed entirely by Nextcloud's own file permissions, and admins
-change it with Nextcloud's normal sharing/ACL tools. With it **off** (the
-default), recordings behave as before D-534: any authenticated user can browse
-and play every meeting.
+How **per-participant access control** for Cassini recordings works and how to
+operate it. With it enabled, a recording is visible in the Cassini viewer **only
+to the people who were in the Talk room when it was published** — access is
+governed entirely by Nextcloud's own file permissions, and admins change it with
+Nextcloud's normal sharing/ACL tools. With it **off** (the production default),
+recordings behave as before: any authenticated user can browse and play every
+meeting.
 
-> **Status.** The write side (freezing a meeting's audience) and the read side
-> (serving each caller only what they may see) are implemented and shipped
-> behind a flag. The exact group-folder ACL rule recipe that makes a per-user
-> scan return only the caller's meetings is validated per instance — see
-> [Validate on your instance](#validate-on-your-instance). The **playback**
-> path is always ACL-enforced by Nextcloud, so a caller can never *play* a
-> recording they were not granted, regardless of list tuning.
+> **Setup is automatic.** Enabling the ExApp with access control on makes the
+> operator create the canonical recordings directory and all of its
+> permissions itself, over Nextcloud's HTTP APIs — there is **no `occ`
+> group-folder setup to run by hand** any more (that was the pre-automation
+> procedure). The one environmental prerequisite is the **Group folders / Team
+> folders app**, which the operator cannot install for itself. See
+> [Prerequisites](#prerequisites) and [Automatic setup](#automatic-setup).
 
 ## How it works
 
@@ -38,80 +38,99 @@ The recordings live in a **group folder** (a system-owned "Team folder") with
 **advanced ACL** and a **default-deny** floor. That is the only topology where
 the same tree is visible, at the same path, in every member's Files — which is
 what lets the operator read it *as each caller*. A non-admin caller cannot read
-another user's home, so a plain per-user home (pre-D-534) cannot support this.
+another user's home, so a plain per-user home cannot support this.
+
+### The permission model
+
+```text
+  who can see the DIRECTORY?          who can see meeting X?
+  ──────────────────────────          ──────────────────────
+  every logged-in account       AND   granted +read on X.opus at publish
+        │                                     │
+        │ (recording-viewers group,           └── advanced ACL rule (frozen at publish);
+        │  kept == all users by the               each leaf denies the broad viewer group
+        │  operator — see below)                   and allows only the participants
+        │
+        └── group folder mount + a root ACL granting the viewer group read,
+            so anyone can browse/traverse the recordings tree …
+                … but each recording file overrides that with a deny + per-participant
+                  allow, so a non-participant sees the directory but not the file
+                  (a direct fetch 404s; existence never leaks).
+```
+
+- **Everyone with a logged-in account can read the directory.** The operator
+  keeps a `recording-viewers` group equal to *all users* and grants that group
+  read on the recordings root, so any account can open and traverse the
+  archive.
+- **Each recording file is private to its participants.** At publish the
+  operator writes a per-file advanced-ACL rule that denies the broad viewer
+  group and allows only the meeting's Talk participants.
 
 ## Prerequisites
 
-- Nextcloud **32+** with the **Group folders** ("Team folders") app enabled.
-- The Cassini ExApp deployed and enabled (AppAPI).
-- `occ` access on the Nextcloud server (or the Group folders admin UI).
+- Nextcloud **32+**.
+- The **Group folders** ("Team folders") app enabled. This is the single
+  one-click prerequisite an admin installs (Apps → search "Team folders" →
+  Enable); the ExApp reaches Nextcloud only over HTTP and cannot install a PHP
+  app for itself. The local harness installs and enables it automatically in
+  `harness/bin/bootstrap.sh`.
+- The Cassini ExApp deployed and enabled (AppAPI), with access control turned
+  on (see [Turning it on](#turning-it-on)).
 
-## One-time setup
+## Automatic setup
 
-The operator writes and reads over WebDAV as an existing Nextcloud user (the
-**owner / ACL manager**). The first pass uses the built-in `admin` account; a
-dedicated `cassini` service account is tracked in **D-532** and is a drop-in
-replacement (change `ncRecordingsOwner`).
+On the AppAPI **enabled** edge (install, re-enable, or restart) — the first
+moment its act-as-user calls back into Nextcloud are accepted — the operator
+provisions everything idempotently (`cassini-operator/internal/operator/nc_provision.go`):
 
-Run these once. The current implementation uses the exact owner `admin` and
-viewer group `recording-viewers`. The commands below match Group folders 22 on
-Nextcloud 34; use each command's `--help` when configuring another version.
-
-```bash
-# 1. Create the Team folder with its default-deny floor from the start.
-#    Nextcloud 34 cannot toggle this creation option on an existing folder.
-occ groupfolders:create --acl-no-default-permission Cassini  # prints <folder_id>
-
-# 2. Mount it read-only for every potential viewer. Give the owner/admin group
-#    a separate write-capable mount mapping; ACL-management permission alone
-#    does NOT grant WebDAV create/write access.
-occ groupfolders:group <folder_id> recording-viewers read
-occ groupfolders:group <folder_id> admin read write delete share
-
-# 3. Enable advanced ACL and delegate admin as its manager.
-occ groupfolders:permissions <folder_id> --enable
-occ groupfolders:permissions <folder_id> --manage-add --user admin
-
-# 4. Grant the broad group read on the root containers so callers can traverse
-#    Cassini/Recordings/meetings. Cassini writes an explicit recording-viewers
-#    deny on every leaf and participant allows on top, so this does not grant
-#    non-participants access to recording files.
-occ groupfolders:permissions <folder_id> / --group recording-viewers +read
-
-# 5. Grant the owner full root ACL in addition to the mount mapping. It needs
-#    create/update to synchronize Files and manage ACLs on existing recordings.
-occ groupfolders:permissions <folder_id> / --user admin \
-  +read +write +create +delete +share
-
-# The owner may also be a viewer/participant in harness meetings.
-occ group:adduser recording-viewers admin
+```text
+  ├── ensure the recording-viewers group exists          (OCS provisioning API)
+  ├── ensure the "Cassini" group folder, default-deny     (Group Folders API, addFolder
+  │     acl_default_no_permission=1 — only settable at creation)
+  ├── assign recording-viewers READ + the owner group ALL (Group Folders API)
+  ├── enable advanced ACL + delegate the owner as manager (Group Folders API)
+  ├── root container ACL: owner ALL + viewer-group READ   (WebDAV PROPPATCH)
+  │     → the owner can write under default-deny; everyone can traverse
+  ├── MKCOL Cassini/Recordings/meetings                   (WebDAV) so the dir exists on install
+  └── reconcile every user into recording-viewers         (OCS provisioning API)
+        + a periodic reconcile (every 15 min) so accounts created later converge
 ```
 
-Verify the resulting configuration:
+Every step is idempotent and best-effort: a failure is logged (`nc provision: …`
+in the operator log) and never blocks startup or delivery, and each step is safe
+to re-run on the next enable. The owner / ACL-manager is the built-in `admin`
+account for now; a dedicated `cassini` service account is tracked in **D-532**
+and is a drop-in replacement (change `ncRecordingsOwner`).
+
+Verify the result (optional) with `occ`:
 
 ```bash
-occ groupfolders:list --output=json_pretty
-occ groupfolders:permissions <folder_id> --output=json_pretty
-occ groupfolders:permissions <folder_id> / --test --user admin
+occ groupfolders:list --output=json_pretty   # acl: true, acl_default_no_permission: true,
+                                              # groups {admin:31, recording-viewers:1}, manage [admin]
+occ group:list | grep -A99 recording-viewers # == all users
 ```
 
-The folder JSON must show `acl_default_no_permission: true`, the `admin` group
-with permissions `31`, and `recording-viewers` with permissions `1`. The admin
-ACL test must report `+read, +write, +create, +delete, +share`. If an existing
-empty `Cassini` folder was created without the default-deny option, delete and
-recreate it with the commands above. Do not delete a non-empty folder without
-backing it up first.
+### New accounts
 
-Then enable the feature on the ExApp and restart it:
+Nextcloud has no built-in "all users" group and an ExApp cannot hook user
+creation, so the operator keeps `recording-viewers == all users` by reconciling:
+once on every enabled edge (covers everyone present at install) and then on a
+15-minute timer. A brand-new account therefore gains read/traversal of the
+recordings directory within one interval; the per-file participant ACLs are
+unaffected either way.
+
+## Turning it on
+
+Set the ExApp environment variable:
 
 ```bash
 CASSINI_NC_ACCESS_CONTROL=true
 ```
 
-Set it in the ExApp's environment — e.g. the deploy/compose env or the AppAPI
-deploy config. Any value Go's `strconv.ParseBool` accepts works (`true`, `1`).
-The local installed-ExApp harness declares and passes this value automatically,
-defaulting it to `true`:
+Set it in the ExApp's environment — the deploy/compose env or the AppAPI deploy
+config — and restart the app so the enabled edge re-provisions. Any value Go's
+`strconv.ParseBool` accepts works (`true`, `1`). The local installed-ExApp
+harness declares and passes this value automatically, defaulting it to `true`:
 
 ```bash
 ./bin/cassini dev stack up \
@@ -120,18 +139,7 @@ defaulting it to `true`:
   ...
 ```
 
-Use `--nc-access-control=false` or `CASSINI_NC_ACCESS_CONTROL=false` to test the
-legacy public-archive behavior. Production remains off when the deploy value is
-not supplied.
-
-```text
-  who can be a viewer?                who can see meeting X?
-  ────────────────────                ──────────────────────
-  member of recording-viewers   AND   granted +read on X.opus at publish
-        │                                     │
-        └── folder mounts in their Files      └── advanced ACL rule (frozen at publish)
-            (default-deny: empty until granted)
-```
+Production remains **off** when the deploy value is not supplied.
 
 ## Day-to-day: editing a meeting's permissions
 
@@ -153,19 +161,18 @@ Access is **frozen at publish** to the room's participants, then fully editable:
 
 ## Validate on your instance
 
-Because Group folders ACL inheritance is version-sensitive, confirm the rule
-recipe once on your instance:
+Because Group folders ACL inheritance is version-sensitive, you can confirm the
+recipe on your instance:
 
 ```text
-  [ ] Create a test meeting; publish it with two Talk participants (alice, bob)
-      and a non-participant (carol) all in recording-viewers.
+  [ ] Record + publish a meeting with two Talk participants (alice, bob) and
+      have a non-participant (carol) logged in.
   [ ] As alice: the Cassini viewer lists the meeting and plays it.
   [ ] As carol: the Cassini viewer does NOT list it, and a direct
       /published/meetings/<id>.opus returns 404.
   [ ] If alice sees an EMPTY list, the per-caller scan can't traverse the folder:
-      confirm the root recording-viewers `+read` traversal rule and the
-      recording's explicit recording-viewers deny + participant allows. Do not
-      grant the broad group read directly on an `.opus` file.
+      confirm (occ groupfolders:list) that the folder has advanced ACL + the
+      recording-viewers read mount, and that carol is in recording-viewers.
 ```
 
 The playback check is the security floor and must always hold. The list check is
@@ -177,20 +184,21 @@ than ever leaking, so a mis-tuned recipe degrades to "no meetings", never to
 
 Unset `CASSINI_NC_ACCESS_CONTROL` (or set it to `false`) and restart. In the
 local harness, whose default is `true`, explicitly pass
-`--nc-access-control=false`. The operator reverts to the D-529 public behavior
-immediately (it serves as the owner again). Existing ACLs on the files remain
-but are not consulted by the public read path. The group folder and its
-contents are unaffected.
+`--nc-access-control=false`. The operator reverts to the public behavior
+immediately (it serves as the owner again) and stops provisioning/reconciling.
+Existing ACLs on the files remain but are not consulted by the public read path.
+The group folder and its contents are unaffected.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Everyone still sees every meeting | Flag not actually set, or operator not restarted | Confirm `CASSINI_NC_ACCESS_CONTROL=true` in the running container's env |
-| A granted user sees an empty list | Per-caller scan can't traverse the container folders, or the leaf ACL was not applied | Confirm the root traversal rule and the leaf's broad-group deny + participant allows; re-publish to retry |
+| `nc provision: ensure group folder … failed` in the log | Group folders app not installed/enabled | Enable the Team folders app, then re-enable Cassini |
+| A granted user sees an empty list | Per-caller scan can't traverse the container folders, or the leaf ACL was not applied | Confirm (occ) the folder's advanced ACL + recording-viewers read mount and that the user is in recording-viewers; re-publish to retry |
 | A meeting is visible to no one | Non-Talk job, or all participants were guests/federated | Share the `.opus` (+ sidecar) manually |
 | Viewer errors instead of empty list | Nextcloud Files unreachable (502) | Check the ExApp → Nextcloud WebDAV connectivity and the owner account |
-| Files delivery reports `MKCOL Cassini/Recordings -> 403` | Owner has ACL-management permission but no write-capable Team-folder mapping/root ACL | Add the `admin` group mapping and explicit admin root ACL from the one-time setup, then re-publish |
+| Files delivery reports `MKCOL Cassini/Recordings -> 403` | Root container ACL (owner grant) not applied — provisioning was interrupted | Re-enable Cassini so the enabled edge re-provisions the root ACL, then re-publish |
 | Publish succeeds but no ACL applied | Best-effort ACL step failed (logged, non-fatal) | Check operator logs for `nc files access …`; re-publish to retry |
 
 ## Related
