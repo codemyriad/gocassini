@@ -707,6 +707,16 @@ jobs:
           file: deployment/Dockerfile.exapp.cuda
           platforms: linux/amd64
           push: true
+          # Push a plain single manifest, exactly like the CPU/ROCm tags
+          # (which are `docker push`ed after a local load). With buildx
+          # defaults, `push: true` emits an OCI *index* wrapping the amd64
+          # manifest plus an unknown/unknown provenance attestation. Both
+          # children are UNTAGGED, so the Prune job below — which keeps
+          # versions by tag — deleted them and left every -cuda tag pointing
+          # at a missing manifest ("not found" on docker pull). Single-arch
+          # image, no attestation consumers: no reason to publish an index.
+          provenance: false
+          sbom: false
           build-args: |
             BASE_IMAGE=${{ needs.build-cuda-base.outputs.base_ref }}
           tags: ${{ steps.meta.outputs.tags }}
@@ -1176,6 +1186,26 @@ jobs:
             "/orgs/${OWNER}/packages/container/${PACKAGE}/versions" \
             > "$tmp/versions.json"
 
+          # Protect manifests referenced BY a kept tag. A multi-arch index is
+          # itself tagged, but the per-platform manifests it points at are
+          # untagged — so a tag-only keep rule happily deletes the actual
+          # image out from under a tag it just decided to keep forever. That
+          # is what emptied every -cuda tag. The CUDA build no longer pushes
+          # an index, but any future multi-arch push must not re-break this.
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${OWNER}" --password-stdin >/dev/null 2>&1 || true
+          : > "$tmp/protected.txt"
+          jq -r '
+            .[] | .metadata.container.tags[]?
+            | select(. == "latest" or . == "latest-cuda" or . == "latest-rocm"
+                     or . == "cuda" or startswith("v")
+                     or test("^[0-9]+\\.[0-9]+\\.[0-9]+"))
+          ' "$tmp/versions.json" | sort -u | while read -r tag; do
+            docker buildx imagetools inspect --raw "ghcr.io/${OWNER}/${PACKAGE}:${tag}" 2>/dev/null \
+              | jq -r '.manifests[]?.digest' >> "$tmp/protected.txt" || true
+          done
+          sort -u -o "$tmp/protected.txt" "$tmp/protected.txt"
+          echo "Protected $(wc -l < "$tmp/protected.txt") child manifest(s) referenced by kept tags."
+
           # Versions worth keeping outright (any named tag). Release tags
           # X.Y.Z[-cuda|-rocm] must survive forever — they are the
           # reproducible install pins referenced by appinfo/info.xml.
@@ -1197,7 +1227,7 @@ jobs:
             | select(
                 ($tags | any(. == "latest" or . == "latest-cuda" or . == "latest-rocm" or . == "cuda" or startswith("v") or test("^[0-9]+\\.[0-9]+\\.[0-9]+"))) | not
               )
-            | "\(.id)\t\(.created_at)\t\($tags | join(","))"
+            | "\(.id)\t\(.name)\t\(.created_at)\t\($tags | join(","))"
           ' "$tmp/versions.json" > "$tmp/candidates.tsv"
 
           total=$(wc -l < "$tmp/candidates.tsv")
@@ -1208,8 +1238,12 @@ jobs:
             exit 0
           fi
 
-          tail -n +$((KEEP + 1)) "$tmp/candidates.tsv" | while IFS=$'\t' read -r id created tags; do
-            echo "DELETE id=${id} created=${created} tags=${tags}"
+          tail -n +$((KEEP + 1)) "$tmp/candidates.tsv" | while IFS=$'\t' read -r id digest created tags; do
+            if grep -qxF "${digest}" "$tmp/protected.txt"; then
+              echo "SKIP   id=${id} digest=${digest} — referenced by a kept tag"
+              continue
+            fi
+            echo "DELETE id=${id} digest=${digest} created=${created} tags=${tags}"
             gh api -X DELETE \
               -H "Accept: application/vnd.github+json" \
               "/orgs/${OWNER}/packages/container/${PACKAGE}/versions/${id}"
@@ -1253,3 +1287,36 @@ jobs:
               -H "Accept: application/vnd.github+json" \
               "/orgs/${OWNER}/packages/container/${PACKAGE}/versions/${id}"
           done
+
+      # A tag that resolves is not the same as a tag you can pull: an index
+      # can outlive the manifests it points at. Every -cuda tag was in this
+      # state (listed by the API, 404 on the child manifest) through several
+      # releases without anything failing. Assert pullability explicitly so
+      # the next occurrence breaks the publish run instead of the install.
+      - name: Verify keep-forever tags are pullable
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE: gocassini
+        run: |
+          set -euo pipefail
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${OWNER}" --password-stdin >/dev/null
+          failed=0
+          for tag in latest latest-cuda latest-rocm cuda; do
+            ref="ghcr.io/${OWNER}/${PACKAGE}:${tag}"
+            if ! raw=$(docker buildx imagetools inspect --raw "${ref}" 2>/dev/null); then
+              echo "FAIL ${tag}: tag does not resolve"; failed=1; continue
+            fi
+            # For an index, every referenced child must itself resolve.
+            tag_ok=1
+            for child in $(printf '%s' "${raw}" | jq -r '.manifests[]?.digest'); do
+              if ! docker buildx imagetools inspect --raw \
+                   "ghcr.io/${OWNER}/${PACKAGE}@${child}" >/dev/null 2>&1; then
+                echo "FAIL ${tag}: child ${child} is missing from the registry"
+                tag_ok=0
+                failed=1
+              fi
+            done
+            if [ "${tag_ok}" -eq 1 ]; then echo "OK   ${tag}"; fi
+          done
+          exit "${failed}"
