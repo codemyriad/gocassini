@@ -159,7 +159,7 @@ Options).
 |---|---|---|
 | `CASSINI_TALK_RECORDING_SECRET` | For the Talk record button | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (Step 5). Unset, the operator rejects every recording request |
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | For HPB-internal/default Talk recording | Internal client secret for standalone Talk signaling / HPB; must match `[clients] internalsecret`. Required for private, group, and one-to-one Talk recording |
-| `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped notifications, recording upload). Leave empty to use the backend URL Talk sends with each request |
+| `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped/failed notifications) and OCS calls. Leave empty to use the backend URL Talk sends with each request |
 | `CASSINI_NC_ACCESS_CONTROL` | No | Enables per-participant Nextcloud Files access control. The operator provisions the Group folder + ACLs automatically on enable; the only prerequisite is the Group folders ("Team folders") app being enabled. Production defaults off when omitted, while the local harness defaults it to `true` |
 | `OPENROUTER_API_KEY` | No | API key for LLM transcript cleanup + meeting summaries. **When set, the full local transcript is sent to that third-party endpoint** for cleanup/summarisation (transcription itself is always local). Unset, raw transcripts are published without summaries |
 | `LLM_BASE_URL` | No | OpenAI-compatible API base URL; defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
@@ -272,8 +272,9 @@ All of these must pass before the Talk handoff:
 ### URL reachability preflight
 
 Talk sends Cassini a `Talk-Recording-Backend` URL and Cassini uses it for
-recording started/stopped callbacks, OCS signaling-settings requests, and the
-final upload unless `CASSINI_TALK_BACKEND_URL` overrides it.
+recording started/stopped callbacks and OCS signaling-settings requests, unless
+`CASSINI_TALK_BACKEND_URL` overrides it. Cassini never uploads a recording to
+Talk — the meeting is published as `.opus` into Nextcloud Files.
 
 Before handoff, verify these URLs are coherent:
 
@@ -319,9 +320,10 @@ conversation so the HPB-internal path is exercised:
 3. Confirm a Cassini job appears in the **Cassini Admin** control panel.
 4. Speak for a minute, stop the recording, leave the call, or let the
    empty-room timeout stop it.
-5. Watch the job progress through record → build → publish. The raw audio is
-   uploaded back to Talk according to Talk's recording-backend protocol; the
-   transcript/summary appears in the Cassini viewer.
+5. Watch the job progress through record → build → publish. Talk receives
+   started/stopped status per its recording-backend protocol and nothing else;
+   the meeting itself is published as a portable `.opus` into Nextcloud Files,
+   where the transcript/summary appear in the Cassini viewer.
 6. Run a second controlled recording and confirm both the first and second
    transcripts remain visible in the viewer/catalog.
 

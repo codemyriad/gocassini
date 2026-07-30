@@ -155,8 +155,8 @@ too.
 
 [`harness/bin/ci-e2e-talk-record-roundtrip.sh`](../harness/bin/ci-e2e-talk-record-roundtrip.sh)
 validates Talk's recording-backend protocol against a directly run
-`cassini-operator` container. It is still valuable for fast recording/upload
-regressions, but it bypasses AppAPI/HaRP, ExApp deploy env allow-listing, and
+`cassini-operator` container. It is still valuable for fast
+recording-lifecycle regressions, but it bypasses AppAPI/HaRP, ExApp deploy env allow-listing, and
 Nextcloud's installed app UI. Use Tier 3 for production-shaped validation.
 
 ## Teardown
