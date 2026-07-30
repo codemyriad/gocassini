@@ -1,5 +1,10 @@
 name: Deploy Sandbox
 
+# Installs/updates Cassini on the AIO sandbox host by running
+# sandbox/wire-cassini.sh over SSH. It does NOT provision Nextcloud AIO itself —
+# that is one-time host setup (see sandbox/README.md). Optionally builds and
+# pushes an image first when a tag is given (installs from the App Store otherwise).
+
 on:
   workflow_dispatch:
     inputs:
@@ -7,12 +12,8 @@ on:
         description: Container tag to build and deploy. Leave empty to install the latest release from the App Store (default).
         type: string
         default: ''
-      reset:
-        description: Reset sandbox volumes before deploying
-        type: boolean
-        default: false
       register_only:
-        description: Only re-register Cassini, without restarting the stack
+        description: Only re-register Cassini; skip HaRP/daemon setup
         type: boolean
         default: false
 
@@ -36,9 +37,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
+        if: ${{ inputs.image_tag != '' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to ghcr.io
+        if: ${{ inputs.image_tag != '' }}
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -76,28 +79,32 @@ jobs:
           chmod 600 ~/.ssh/sandbox_key
           ssh-keyscan -p "${{ secrets.SANDBOX_SSH_PORT || vars.SANDBOX_SSH_PORT || '22' }}" "${{ secrets.SANDBOX_SSH_HOST || vars.SANDBOX_SSH_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Deploy on sandbox host
+      - name: Wire Cassini on the AIO host
         env:
           SANDBOX_HOST: ${{ secrets.SANDBOX_SSH_HOST || vars.SANDBOX_SSH_HOST }}
           SANDBOX_SSH_USER: ${{ secrets.SANDBOX_SSH_USER || vars.SANDBOX_SSH_USER }}
           SANDBOX_PORT: ${{ secrets.SANDBOX_SSH_PORT || vars.SANDBOX_SSH_PORT || '22' }}
           SANDBOX_REPO_DIR: ${{ secrets.SANDBOX_REPO_DIR || vars.SANDBOX_REPO_DIR || '~/gocassini' }}
+          SANDBOX_NC_ADMIN_PASSWORD: ${{ secrets.SANDBOX_NC_ADMIN_PASSWORD }}
           IMAGE_REF: ${{ steps.image.outputs.ref }}
-          RESET: ${{ inputs.reset }}
           REGISTER_ONLY: ${{ inputs.register_only }}
         run: |
           set -euo pipefail
-          deploy_args=()
-          # Empty IMAGE_REF => install the latest release from the App Store (deploy.sh default).
+          args=()
+          # Empty IMAGE_REF => install the latest App Store release (script default).
           if [ -n "$IMAGE_REF" ]; then
-            deploy_args+=(--image "$IMAGE_REF")
-          fi
-          if [ "$RESET" = "true" ]; then
-            deploy_args+=(--reset)
+            args+=(--image "$IMAGE_REF")
           fi
           if [ "$REGISTER_ONLY" = "true" ]; then
-            deploy_args+=(--register-only)
+            args+=(--register-only)
           fi
 
-          remote_cmd="cd $SANDBOX_REPO_DIR && git fetch origin $GITHUB_REF_NAME && git checkout $GITHUB_SHA && sandbox/deploy.sh ${deploy_args[*]}"
-          ssh -i ~/.ssh/sandbox_key -p "$SANDBOX_PORT" "$SANDBOX_SSH_USER@$SANDBOX_HOST" "$remote_cmd"
+          # The admin password is read from stdin into the remote env so it never
+          # appears in the remote process argument list.
+          remote_cmd="cd $SANDBOX_REPO_DIR \
+            && git fetch origin $GITHUB_REF_NAME \
+            && git checkout $GITHUB_SHA \
+            && export SANDBOX_NC_ADMIN_PASSWORD=\"\$(cat)\" \
+            && sandbox/wire-cassini.sh ${args[*]}"
+          printf '%s' "$SANDBOX_NC_ADMIN_PASSWORD" \
+            | ssh -i ~/.ssh/sandbox_key -p "$SANDBOX_PORT" "$SANDBOX_SSH_USER@$SANDBOX_HOST" "$remote_cmd"
