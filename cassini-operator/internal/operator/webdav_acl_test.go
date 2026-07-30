@@ -115,7 +115,7 @@ func TestNCFilesAccessApplierWritesSidecarAndACL(t *testing.T) {
 
 	cfg := testExAppConfig(srv.URL)
 	cfg.AccessControl = true
-	apply := cfg.ncFilesAccessApplier()
+	apply := cfg.ncFilesAccessApplier(nil)
 	if apply == nil {
 		t.Fatal("applier nil with AccessControl=true")
 	}
@@ -161,16 +161,16 @@ func TestNCFilesAccessApplierWritesSidecarAndACL(t *testing.T) {
 
 func TestNCFilesAccessApplierNilUnlessEnabled(t *testing.T) {
 	cfg := testExAppConfig("https://nc.example.com")
-	if cfg.ncFilesAccessApplier() != nil {
+	if cfg.ncFilesAccessApplier(nil) != nil {
 		t.Error("applier should be nil when AccessControl is off")
 	}
 	cfg.AccessControl = true
-	if cfg.ncFilesAccessApplier() == nil {
+	if cfg.ncFilesAccessApplier(nil) == nil {
 		t.Error("applier should be non-nil when AccessControl is on")
 	}
 	// No NextcloudURL -> inactive regardless of the flag.
 	off := ExAppConfig{AccessControl: true}
-	if off.ncFilesAccessApplier() != nil {
+	if off.ncFilesAccessApplier(nil) != nil {
 		t.Error("applier should be nil without ExApp env")
 	}
 }

@@ -77,12 +77,17 @@ type siteCatalogEntry struct {
 // ncFilesAccessApplier returns the closure, or nil when AppAPI is inactive or
 // access control is disabled (the default) — in which case delivery stays the
 // D-529 public archive with no ACL.
-func (c ExAppConfig) ncFilesAccessApplier() ncFilesAccessApplier {
+func (c ExAppConfig) ncFilesAccessApplier(logger *log.Logger) ncFilesAccessApplier {
 	if !c.appAPIActive() || !c.AccessControl {
 		return nil
 	}
 	client := &http.Client{Timeout: ncFilesACLTimeout}
 	return func(ctx context.Context, jobID, siteRoot string, mappings []aclMapping) error {
+		// The per-file ACL grants each participant read; also make sure each
+		// participant is in the viewer group so the folder mounts for them and
+		// they can actually reach the recording (best-effort, non-fatal).
+		c.ensureParticipantsInViewerGroup(ctx, client, mappings, logger)
+
 		opusRel := ncRecordingsRoot + "/meetings/" + jobID + ".opus"
 		sidecarRel := ncRecordingsRoot + "/meetings/" + jobID + sidecarSuffix
 

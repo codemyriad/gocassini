@@ -68,9 +68,10 @@ const (
 	// envNCAccessControl opts the AppAPI deployment into per-participant
 	// Nextcloud-native access control for recordings (D-534): the operator
 	// writes advanced-ACL grants per meeting and serves the viewer per-caller.
-	// OFF by default because it requires a one-time groupfolder + ACL setup in
-	// Nextcloud (see docs/exapp-nextcloud-recordings-permissions.md); with it
-	// off the operator keeps the D-529 public behavior.
+	// On the enabled edge it also provisions the group folder + groups + ACL
+	// topology itself (nc_provision.go), so the only prerequisite is the Group
+	// folders app being enabled (see docs/exapp-nextcloud-recordings-permissions.md).
+	// OFF by default; with it off the operator keeps the D-529 public behavior.
 	envNCAccessControl   = "CASSINI_NC_ACCESS_CONTROL"
 	defaultExAppBindHost = "0.0.0.0"
 	defaultExAppBindPort = "8080"
