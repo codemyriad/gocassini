@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lib-store-release.sh — pure helper for picking a Cassini release from the
 # Nextcloud AppAPI ExApp store catalog. No network, no Docker; sourced by
-# sandbox/deploy.sh and exercised by sandbox/test-store-release.sh.
+# sandbox/wire-cassini.sh and exercised by sandbox/test-store-release.sh.
 
 # store_latest_release_url <app-id> [catalog-file]
 #
