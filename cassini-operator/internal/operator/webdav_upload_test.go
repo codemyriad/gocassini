@@ -81,7 +81,7 @@ func TestNCFilesUploaderMirrorsArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	up := testExAppConfig(srv.URL).ncFilesUploader()
+	up := testExAppConfig(srv.URL).ncFilesUploader(nil)
 	if up == nil {
 		t.Fatal("uploader nil with full ExApp config")
 	}
@@ -162,7 +162,7 @@ func TestNCFilesUploaderPublishesEmptyCatalog(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(siteRoot, "catalog.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	up := testExAppConfig(srv.URL).ncFilesUploader()
+	up := testExAppConfig(srv.URL).ncFilesUploader(nil)
 	if err := up(context.Background(), siteRoot); err != nil {
 		t.Fatalf("upload empty catalog: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestNCFilesUploaderProtectsCatalogWhenAccessControlEnabled(t *testing.T) {
 	}
 	cfg := testExAppConfig(srv.URL)
 	cfg.AccessControl = true
-	if err := cfg.ncFilesUploader()(context.Background(), siteRoot); err != nil {
+	if err := cfg.ncFilesUploader(nil)(context.Background(), siteRoot); err != nil {
 		t.Fatalf("upload: %v", err)
 	}
 
@@ -340,7 +340,7 @@ func TestNCFilesUploaderDoesNotPublishCatalogAfterOpusFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(siteRoot, "catalog.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := testExAppConfig(srv.URL).ncFilesUploader()(context.Background(), siteRoot); err == nil {
+	if err := testExAppConfig(srv.URL).ncFilesUploader(nil)(context.Background(), siteRoot); err == nil {
 		t.Fatal("expected opus upload failure")
 	}
 	if catalogPut {
@@ -367,7 +367,7 @@ func TestNCFilesProxyReturnsBadGatewayWhenFilesUnavailable(t *testing.T) {
 func TestNCFilesHooksNilWithoutExAppEnv(t *testing.T) {
 	// Missing NextcloudURL (and secret/id) -> dev/standalone: no NC delivery.
 	cfg := ExAppConfig{}
-	if cfg.ncFilesUploader() != nil {
+	if cfg.ncFilesUploader(nil) != nil {
 		t.Error("uploader should be nil without ExApp env")
 	}
 	if cfg.ncFilesProxy(nil) != nil {
@@ -375,7 +375,7 @@ func TestNCFilesHooksNilWithoutExAppEnv(t *testing.T) {
 	}
 	// Secret present but NextcloudURL absent is still inactive.
 	cfg = ExAppConfig{AppSecret: "s", AppID: "gocassini"}
-	if cfg.ncFilesUploader() != nil || cfg.ncFilesProxy(nil) != nil {
+	if cfg.ncFilesUploader(nil) != nil || cfg.ncFilesProxy(nil) != nil {
 		t.Error("hooks should be nil without NextcloudURL")
 	}
 }

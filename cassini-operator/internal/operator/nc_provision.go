@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -72,6 +73,21 @@ const (
 // should run per process.
 var reconcileTickerOnce sync.Once
 
+// provisionMu serializes provisioning: EnabledCallback is dispatched in a
+// goroutine and can fire more than once (admin double-action, AppAPI retry), and
+// the find-then-create folder step is not atomic — without this two concurrent
+// runs could create duplicate "Cassini" folders.
+var provisionMu sync.Mutex
+
+// provisioningActive mirrors the ExApp enabled state so the background reconcile
+// sweep goes quiet after the app is disabled (AppAPI rejects the ExApp's
+// act-as-user calls once disabled, which would otherwise 401 every interval).
+var provisioningActive atomic.Bool
+
+// SetProvisioningActive records the enabled/disabled edge for the background
+// reconcile sweep. Called from the AppAPI enabled callback.
+func SetProvisioningActive(active bool) { provisioningActive.Store(active) }
+
 // firstPathSegment returns the first path component of a slash path, e.g.
 // "Cassini/Recordings" -> "Cassini". It names the group folder mount point,
 // which is the root the recordings tree lives under.
@@ -96,6 +112,8 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	if !c.appAPIActive() || !c.AccessControl {
 		return
 	}
+	provisionMu.Lock()
+	defer provisionMu.Unlock()
 	client := &http.Client{Timeout: ncProvisionTimeout}
 
 	// 1. The viewer group: the mount group whose members can traverse the
@@ -149,13 +167,10 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 		}
 	}
 
-	// 8. Put every current user in the viewer group, and keep new ones converging.
-	added, total, err := c.reconcileViewerGroupMembers(ctx, client)
-	if err != nil {
-		logger.Printf("nc provision: reconcile viewer group members: %v", err)
-	} else {
-		logger.Printf("nc provision: viewer group %q reconciled (added=%d of %d users)", ncRecordingsViewerGroup, added, total)
-	}
+	// 8. Put every current user in the viewer group, and keep new ones
+	//    converging. This runs OFF the enabled-edge critical path (in the
+	//    reconcile goroutine, which sweeps immediately then every interval) so a
+	//    large user base cannot delay the archive delivery that follows.
 	c.startViewerReconcileLoop(ctx, logger)
 
 	logger.Printf("nc provision: recordings access control provisioned folder_id=%d mount=%s root=%s owner=%s viewer_group=%s", folderID, ncRecordingsMount, ncRecordingsRoot, ncRecordingsOwner, ncRecordingsViewerGroup)
@@ -273,24 +288,48 @@ func (c ExAppConfig) findFolder(ctx context.Context, client *http.Client, mount 
 	if err := json.Unmarshal(body, &env); err != nil {
 		return gfFolder{}, false, fmt.Errorf("decode folders list: %w", err)
 	}
+	// The list is an object keyed by folder id, or an empty array. Collect all
+	// folders and pick the lowest-id match deterministically: if a duplicate
+	// mount point ever exists, every run must resolve to the same folder rather
+	// than flapping on Go's randomized map iteration.
 	var asMap map[string]gfFolder
 	if err := json.Unmarshal(env.OCS.Data, &asMap); err == nil {
+		folders := make([]gfFolder, 0, len(asMap))
 		for _, f := range asMap {
-			if f.MountPoint == mount {
-				return f, true, nil
-			}
+			folders = append(folders, f)
+		}
+		if f, ok := lowestIDMatch(folders, mount); ok {
+			return f, true, nil
 		}
 		return gfFolder{}, false, nil
 	}
 	var asArr []gfFolder
 	if err := json.Unmarshal(env.OCS.Data, &asArr); err == nil {
-		for _, f := range asArr {
-			if f.MountPoint == mount {
-				return f, true, nil
-			}
+		if f, ok := lowestIDMatch(asArr, mount); ok {
+			return f, true, nil
 		}
 	}
 	return gfFolder{}, false, nil
+}
+
+// lowestIDMatch returns the folder with the given mount point that has the
+// smallest id, so lookups are stable across calls.
+func lowestIDMatch(folders []gfFolder, mount string) (gfFolder, bool) {
+	var best gfFolder
+	bestID, found := 0, false
+	for _, f := range folders {
+		if f.MountPoint != mount {
+			continue
+		}
+		id, ok := f.idInt()
+		if !ok {
+			continue
+		}
+		if !found || id < bestID {
+			best, bestID, found = f, id, true
+		}
+	}
+	return best, found
 }
 
 // ensureFolderGroup assigns a group to the folder (idempotent: an
@@ -351,7 +390,7 @@ func (c ExAppConfig) ensureGroup(ctx context.Context, client *http.Client, group
 // reconcileViewerGroupMembers adds every user missing from the viewer group.
 // Returns (added, totalUsers). Diffs against current membership so it only
 // issues an add per genuinely-missing user and stays quiet on steady state.
-func (c ExAppConfig) reconcileViewerGroupMembers(ctx context.Context, client *http.Client) (int, int, error) {
+func (c ExAppConfig) reconcileViewerGroupMembers(ctx context.Context, client *http.Client, logger *log.Logger) (int, int, error) {
 	members, err := c.groupMembers(ctx, client, ncRecordingsViewerGroup)
 	if err != nil {
 		return 0, 0, fmt.Errorf("list viewer group members: %w", err)
@@ -383,8 +422,14 @@ func (c ExAppConfig) reconcileViewerGroupMembers(ctx context.Context, client *ht
 			added++
 		}
 		if len(users) < viewerUserPageSize {
-			break
+			return added, total, nil
 		}
+	}
+	// The loop exited on the cap rather than a short final page: users beyond
+	// viewerReconcileMaxUsers were not reconciled and will not see the archive.
+	// Log it rather than truncate silently.
+	if logger != nil {
+		logger.Printf("nc provision: WARNING viewer reconcile hit the %d-user cap; accounts beyond it are not in %q and cannot see recordings", viewerReconcileMaxUsers, ncRecordingsViewerGroup)
 	}
 	return added, total, nil
 }
@@ -476,27 +521,36 @@ func ocsStatusCode(body []byte) int {
 }
 
 // startViewerReconcileLoop starts (once per process) a background sweep that
-// keeps the viewer group == all users, so accounts created after install gain
-// access to the recordings directory within one interval.
+// keeps the viewer group == all users: an immediate pass covers everyone present
+// at install, and a periodic pass converges accounts created later, so a new
+// account gains access to the recordings directory within one interval. Each
+// sweep is bounded and skipped while the app is disabled.
 func (c ExAppConfig) startViewerReconcileLoop(ctx context.Context, logger *log.Logger) {
 	reconcileTickerOnce.Do(func() {
+		sweep := func() {
+			if !provisioningActive.Load() {
+				return
+			}
+			sweepCtx, cancel := context.WithTimeout(ctx, ncProvisionTimeout)
+			defer cancel()
+			client := &http.Client{Timeout: ncProvisionTimeout}
+			added, total, err := c.reconcileViewerGroupMembers(sweepCtx, client, logger)
+			if err != nil {
+				logger.Printf("nc provision: viewer reconcile: %v", err)
+			} else if added > 0 {
+				logger.Printf("nc provision: viewer reconcile added=%d of %d users", added, total)
+			}
+		}
 		go func() {
 			ticker := time.NewTicker(viewerReconcileInterval)
 			defer ticker.Stop()
+			sweep()
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				case <-ticker.C:
-					sweepCtx, cancel := context.WithTimeout(ctx, ncProvisionTimeout)
-					client := &http.Client{Timeout: ncProvisionTimeout}
-					added, total, err := c.reconcileViewerGroupMembers(sweepCtx, client)
-					cancel()
-					if err != nil {
-						logger.Printf("nc provision: periodic viewer reconcile: %v", err)
-					} else if added > 0 {
-						logger.Printf("nc provision: periodic viewer reconcile added=%d of %d users", added, total)
-					}
+					sweep()
 				}
 			}
 		}()
