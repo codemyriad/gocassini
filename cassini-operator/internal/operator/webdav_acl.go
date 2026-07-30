@@ -5,26 +5,23 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 )
 
 // Per-participant access control for Nextcloud Files recordings (D-534). After
 // a meeting's .opus is delivered (D-529, webdav_upload.go), this layer freezes
-// its audience: it co-uploads a tiny metadata sidecar and PROPPATCHes an
-// advanced-ACL grant (groupfolders `nc:acl-list`) so only the meeting's Talk
-// participants — resolved at publish time — may read the .opus (and its
-// sidecar). The grant is static, so later room churn does not change it: access
-// is frozen at publish and editable afterwards through Nextcloud's own UI/occ.
+// its audience by PROPPATCHing an advanced-ACL grant (groupfolders
+// `nc:acl-list`) so only the meeting's Talk participants — resolved at publish
+// time — may read the .opus. The grant is static, so later room churn does not
+// change it: access is frozen at publish and editable afterwards through
+// Nextcloud's own UI/occ.
 //
 // This requires the recordings root to be a groupfolder with advanced ACL and a
 // default-deny floor, with the operator's owner delegated as its ACL manager —
@@ -39,7 +36,6 @@ const (
 	aclMaskAll  = 31
 	aclPermRead = 1
 
-	sidecarSuffix       = ".manifest.json"
 	ncFilesACLTimeout   = 60 * time.Second
 	ncFilesACLMediaType = "application/xml; charset=utf-8"
 
@@ -50,29 +46,10 @@ const (
 	emptyCatalogJSON = `{"version":"` + catalogSchemaVersion + `","meetings":[]}`
 )
 
-// ncFilesAccessApplier writes the metadata sidecar and the advanced-ACL grants
-// for one just-published meeting, acting as the recordings owner (the delegated
-// ACL manager). Nil unless AppAPI is active and access control is enabled.
-type ncFilesAccessApplier func(ctx context.Context, jobID, siteRoot string, mappings []aclMapping) error
-
-// siteCatalog / siteCatalogEntry are the subset of the published catalog.json
-// the sidecar is built from. The list-entry contract is {id,title,dateLabel} +
-// audioPath; counts are optional.
-type siteCatalog struct {
-	Version  string             `json:"version"`
-	Meetings []siteCatalogEntry `json:"meetings"`
-}
-
-type siteCatalogEntry struct {
-	ID               string `json:"id"`
-	Title            string `json:"title"`
-	DateLabel        string `json:"dateLabel"`
-	AudioPath        string `json:"audioPath,omitempty"`
-	ArtifactPath     string `json:"artifactPath,omitempty"`
-	SpeakerCount     *int   `json:"speakerCount,omitempty"`
-	SegmentCount     *int   `json:"segmentCount,omitempty"`
-	DigestDurationMs *int   `json:"digestDurationMs,omitempty"`
-}
+// ncFilesAccessApplier writes the advanced-ACL grants for one just-published
+// meeting, acting as the recordings owner (the delegated ACL manager). Nil
+// unless AppAPI is active and access control is enabled.
+type ncFilesAccessApplier func(ctx context.Context, jobID string, mappings []aclMapping) error
 
 // ncFilesAccessApplier returns the closure, or nil when AppAPI is inactive or
 // access control is disabled (the default) — in which case delivery stays the
@@ -82,88 +59,18 @@ func (c ExAppConfig) ncFilesAccessApplier(logger *log.Logger) ncFilesAccessAppli
 		return nil
 	}
 	client := &http.Client{Timeout: ncFilesACLTimeout}
-	return func(ctx context.Context, jobID, siteRoot string, mappings []aclMapping) error {
+	return func(ctx context.Context, jobID string, mappings []aclMapping) error {
 		// The per-file ACL grants each participant read; also make sure each
 		// participant is in the viewer group so the folder mounts for them and
 		// they can actually reach the recording (best-effort, non-fatal).
 		c.ensureParticipantsInViewerGroup(ctx, client, mappings, logger)
 
 		opusRel := ncRecordingsRoot + "/meetings/" + jobID + ".opus"
-		sidecarRel := ncRecordingsRoot + "/meetings/" + jobID + sidecarSuffix
-
-		var errs []error
-		// The .opus grant gates playback — apply it first so access is enforced
-		// even if the sidecar steps fail.
 		if err := c.davProppatchACL(ctx, client, ncRecordingsOwner, opusRel, mappings); err != nil {
-			errs = append(errs, fmt.Errorf("acl opus: %w", err))
+			return fmt.Errorf("acl opus: %w", err)
 		}
-		// The sidecar is a non-authoritative metadata accelerator; a failure
-		// only forces a heavier read later, never a loss of access.
-		sidecar, err := buildSidecar(siteRoot, jobID)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("build sidecar: %w", err))
-		} else {
-			if err := c.davPutBytes(ctx, client, ncRecordingsOwner, sidecarRel, sidecar, "application/json"); err != nil {
-				errs = append(errs, fmt.Errorf("put sidecar: %w", err))
-			} else if err := c.davProppatchACL(ctx, client, ncRecordingsOwner, sidecarRel, mappings); err != nil {
-				errs = append(errs, fmt.Errorf("acl sidecar: %w", err))
-				// A newly created sidecar inherits the broad traversal grant.
-				// If the participant ACL failed, make a second best-effort pass
-				// that at least fails closed to the owner.
-				if protectErr := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, sidecarRel, recordingACLRules(nil)); protectErr != nil {
-					errs = append(errs, fmt.Errorf("protect sidecar after acl failure: %w", protectErr))
-				}
-			}
-		}
-		return errors.Join(errs...)
-	}
-}
-
-// buildSidecar reads the published catalog.json and returns the list entry for
-// the given job as a standalone `<jobID>.manifest.json` body, with audioPath
-// rewritten to the sibling .opus basename (the sidecar sits beside the .opus).
-func buildSidecar(siteRoot, jobID string) ([]byte, error) {
-	raw, err := os.ReadFile(filepath.Join(siteRoot, "catalog.json"))
-	if err != nil {
-		return nil, err
-	}
-	var cat siteCatalog
-	if err := json.Unmarshal(raw, &cat); err != nil {
-		return nil, fmt.Errorf("parse catalog: %w", err)
-	}
-	want := jobID + ".opus"
-	for _, e := range cat.Meetings {
-		if filepath.Base(e.AudioPath) != want {
-			continue
-		}
-		e.AudioPath = want
-		e.ArtifactPath = ""
-		body, err := json.Marshal(e)
-		if err != nil {
-			return nil, err
-		}
-		return body, nil
-	}
-	return nil, fmt.Errorf("no catalog entry for %s", want)
-}
-
-func (c ExAppConfig) davPutBytes(ctx context.Context, client *http.Client, userID, relPath string, body []byte, contentType string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.davFileURL(userID, relPath), bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	c.setAppAPIDAVHeadersForUser(req, userID)
-	req.Header.Set("Content-Type", contentType)
-	req.ContentLength = int64(len(body))
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer drainClose(resp.Body)
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
-	return fmt.Errorf("PUT %s -> %d", relPath, resp.StatusCode)
 }
 
 // davProppatchACL sets the protected recording ACL on relPath: the broad
@@ -303,7 +210,7 @@ func (rt *Runtime) applyNCFilesAccess(ctx context.Context, jobID string) {
 		rt.logger.Printf("nc files access: no grantable participants id=%s (guests/federated only) — meeting stays manager-only", jobID)
 		return
 	}
-	if err := rt.applyNCFilesAccessFn(ctx, jobID, rt.cfg.SiteRoot, mappings); err != nil {
+	if err := rt.applyNCFilesAccessFn(ctx, jobID, mappings); err != nil {
 		rt.logger.Printf("nc files access apply failed id=%s: %v", jobID, err)
 		return
 	}
