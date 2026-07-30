@@ -656,7 +656,7 @@ func decodeTalkBinding(raw string) (talkRoomState, error) {
 // Nextcloud exactly once, as the published .opus under the canonical recordings
 // root — never through Talk's recording store (D-551).
 //
-// Marking talk_delivered_at here is what keeps the startup sweep honest: a room
+// Marking talk_stopped_at here is what keeps the startup sweep honest: a room
 // spreed was already told "stopped" about must never later be told "failed".
 func (rt *Runtime) reportTalkRecordingStopped(jobID string, state talkRoomState) {
 	if err := rt.withTalkRetry(jobID, "stopped callback", func() error {
@@ -669,7 +669,7 @@ func (rt *Runtime) reportTalkRecordingStopped(jobID string, state talkRoomState)
 		rt.logger.Printf("talk stopped callback failed id=%s: %v (room status left to the moderator's stop)", jobID, err)
 		return
 	}
-	if err := rt.store.MarkTalkDelivered(context.Background(), jobID, nowUTCString()); err != nil {
+	if err := rt.store.MarkTalkStopped(context.Background(), jobID, nowUTCString()); err != nil {
 		rt.logger.Printf("talk stopped marker update failed id=%s: %v", jobID, err)
 	}
 }

@@ -934,8 +934,10 @@ type Job struct {
 	// TalkBinding is the persisted Talk room binding (backend URL, token,
 	// owner, actor) for jobs started through the Talk recording backend. It
 	// is internal plumbing for crash-safe delivery, not API surface.
-	TalkBinding     *string `json:"-"`
-	TalkDeliveredAt *string `json:"talk_delivered_at"`
+	TalkBinding *string `json:"-"`
+	// TalkStoppedAt records that spreed acknowledged the stopped callback for
+	// this recording (D-551 repointed it from the retired Talk upload).
+	TalkStoppedAt *string `json:"talk_stopped_at"`
 }
 
 func (s *Store) InsertQueuedJob(ctx context.Context, job Job) error {
@@ -1211,7 +1213,7 @@ SELECT id, provider, request_json, stage, state,
        build_queued_at, build_started_at, build_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
-       talk_binding, talk_delivered_at
+       talk_binding, talk_stopped_at
 FROM jobs
 ORDER BY created_at DESC, id DESC`)
 	if err != nil {
@@ -1247,7 +1249,7 @@ SELECT id, provider, request_json, stage, state,
        build_queued_at, build_started_at, build_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
-       talk_binding, talk_delivered_at
+       talk_binding, talk_stopped_at
 FROM jobs
 WHERE id = ?`, id)
 	job, err := scanJob(row)
@@ -1284,7 +1286,7 @@ func scanJob(scanner rowScanner) (Job, error) {
 	var interruptedAt sql.NullString
 	var completedAt sql.NullString
 	var talkBinding sql.NullString
-	var talkDeliveredAt sql.NullString
+	var talkStoppedAt sql.NullString
 
 	err := scanner.Scan(
 		&job.ID,
@@ -1317,7 +1319,7 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&interruptedAt,
 		&completedAt,
 		&talkBinding,
-		&talkDeliveredAt,
+		&talkStoppedAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1347,7 +1349,7 @@ func scanJob(scanner rowScanner) (Job, error) {
 	job.InterruptedAt = nullableStringPtr(interruptedAt)
 	job.CompletedAt = nullableStringPtr(completedAt)
 	job.TalkBinding = nullableStringPtr(talkBinding)
-	job.TalkDeliveredAt = nullableStringPtr(talkDeliveredAt)
+	job.TalkStoppedAt = nullableStringPtr(talkStoppedAt)
 	return job, nil
 }
 

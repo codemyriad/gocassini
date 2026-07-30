@@ -195,8 +195,8 @@ func TestTalkRoomStartAcceptsAuthenticatedRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetJob() error = %v", err)
 	}
-	if job.TalkDeliveredAt == nil {
-		t.Fatalf("expected talk_delivered_at set after an acknowledged stopped callback, got nil")
+	if job.TalkStoppedAt == nil {
+		t.Fatalf("expected talk_stopped_at set after an acknowledged stopped callback, got nil")
 	}
 }
 
@@ -550,8 +550,8 @@ func TestTalkStoppedCallbackTimeoutDoesNotWedgeJob(t *testing.T) {
 	// post-record path. The stopped marker stays unset, so the startup sweep
 	// is still free to tell spreed the recording failed.
 	job := waitForJobState(t, rt.store, jobs[0].ID, "succeeded")
-	if job.TalkDeliveredAt != nil {
-		t.Fatalf("expected the stopped marker to stay unset after callback timeouts, got %#v", job.TalkDeliveredAt)
+	if job.TalkStoppedAt != nil {
+		t.Fatalf("expected the stopped marker to stay unset after callback timeouts, got %#v", job.TalkStoppedAt)
 	}
 	fakeTalk.assertNoOtherTalkRoutes(t)
 }
@@ -584,6 +584,46 @@ func TestNotifyInterruptedTalkRecordingsSendsFailedCallback(t *testing.T) {
 
 	rt.NotifyInterruptedTalkRecordings(interruptedAt)
 	fakeTalk.assertEventTypes(t, []string{"failed"})
+}
+
+func TestNotifyInterruptedTalkRecordingsSkipsJobAlreadyReportedStopped(t *testing.T) {
+	// The window is narrow but real: the stopped callback is acknowledged and
+	// talk_stopped_at written while the row still sits at stage='record',
+	// state='running' (the record outcome update moves neither). A crash there
+	// leaves exactly such a job for the next sweep — which must NOT tell spreed
+	// the recording failed, because spreed was already told it stopped.
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.TalkSharedSecret = "secret-123"
+	rt.talkRetryDelays = []time.Duration{time.Millisecond}
+	fakeTalk := newFakeTalkServer(t)
+	defer fakeTalk.Close()
+
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "talk-stopped-then-crashed", Stage: "record", State: "running", CreatedAt: "2026-06-12T10:00:00Z"})
+	binding := `{"backend_url":"` + fakeTalk.server.URL + `","room_token":"room123","owner":"chima"}`
+	if err := rt.store.SetJobTalkBinding(context.Background(), "talk-stopped-then-crashed", binding); err != nil {
+		t.Fatalf("SetJobTalkBinding() error = %v", err)
+	}
+	if err := rt.store.MarkTalkStopped(context.Background(), "talk-stopped-then-crashed", nowUTCString()); err != nil {
+		t.Fatalf("MarkTalkStopped() error = %v", err)
+	}
+
+	interruptedAt := nowUTCString()
+	if _, err := rt.store.MarkIncompleteJobsInterrupted(context.Background(), interruptedAt); err != nil {
+		t.Fatalf("MarkIncompleteJobsInterrupted() error = %v", err)
+	}
+
+	jobs, err := rt.store.ListInterruptedTalkRecordJobs(context.Background(), interruptedAt)
+	if err != nil {
+		t.Fatalf("ListInterruptedTalkRecordJobs() error = %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("expected the sweep to skip an already-stopped job, got %#v", jobs)
+	}
+
+	rt.NotifyInterruptedTalkRecordings(interruptedAt)
+	fakeTalk.assertEventTypes(t, nil)
+	fakeTalk.assertNoOtherTalkRoutes(t)
 }
 
 func TestNotifyInterruptedTalkRecordingsNotifiesEachInterruptionOnce(t *testing.T) {
