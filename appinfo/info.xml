@@ -62,7 +62,7 @@ through Nextcloud's advanced file ACLs.]]></description>
       <variable>
         <name>CASSINI_NC_ACCESS_CONTROL</name>
         <display-name>Nextcloud recording access control</display-name>
-        <description>Enables per-participant access control for recordings in Nextcloud Files. Requires the one-time Group folders and advanced-ACL setup documented in docs/exapp-nextcloud-recordings-permissions.md. Off by default outside the local harness.</description>
+        <description>Enables per-participant access control for recordings in Nextcloud Files. The operator provisions the Group folder, groups, and advanced ACLs automatically on enable; the only prerequisite is the Group folders ("Team folders") app being enabled. See docs/exapp-nextcloud-recordings-permissions.md. Off by default outside the local harness.</description>
       </variable>
       <variable>
         <name>OPENROUTER_API_KEY</name>

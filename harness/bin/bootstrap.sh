@@ -18,6 +18,16 @@ harness_bootstrap_core_nextcloud() {
   occ_ignore_failure app:install spreed >/dev/null 2>&1
   occ_ignore_failure app:enable spreed >/dev/null 2>&1
 
+  # Group Folders (Team folders) is the one environmental prerequisite the
+  # Cassini ExApp cannot install for itself: per-participant recording access
+  # control needs a group folder with advanced ACL, and an ExApp can only reach
+  # Nextcloud over HTTP (no occ). Installing it here mirrors the single
+  # one-click app-store install a production admin does; the ExApp then creates
+  # the "Cassini" folder + ACLs itself on enable (operator nc_provision.go).
+  log "Ensuring Group Folders app is installed/enabled"
+  occ_ignore_failure app:install groupfolders >/dev/null 2>&1
+  occ_ignore_failure app:enable groupfolders >/dev/null 2>&1
+
   if occ user:info "$BOT_USER" >/dev/null 2>&1; then
     log "Bot user already exists: $BOT_USER"
   else
