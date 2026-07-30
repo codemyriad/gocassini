@@ -199,7 +199,27 @@ func TestProvisionFreshCreatesFolderGroupsACLAndReconciles(t *testing.T) {
 	if mock.count("MKCOL", "/Cassini/Recordings") < 2 {
 		t.Errorf("expected MKCOL of Recordings and meetings, got %d", mock.count("MKCOL", "/Cassini/Recordings"))
 	}
-	// Reconcile: alice + bob added (admin already a member, so skipped).
+	// The viewer-group reconcile runs off this synchronous path (in the
+	// background sweep, gated by provisioningActive) — covered by
+	// TestReconcileViewerGroupMembers, not asserted here.
+}
+
+func TestReconcileViewerGroupMembers(t *testing.T) {
+	mock := &provisionMock{
+		members: `["admin"]`,               // admin already in the viewer group
+		users:   `["admin","alice","bob"]`, // alice + bob need adding
+	}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+	cfg := testExAppConfig(srv.URL)
+
+	added, total, err := cfg.reconcileViewerGroupMembers(context.Background(), &http.Client{}, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if added != 2 || total != 3 {
+		t.Errorf("added=%d total=%d, want 2 of 3", added, total)
+	}
 	if _, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users/alice/groups"); !ok {
 		t.Error("alice not added to viewer group")
 	}
@@ -238,9 +258,9 @@ func TestProvisionExistingFolderSkipsManagerAndCreate(t *testing.T) {
 	if _, ok := mock.find(http.MethodPost, "/folders/3/acl"); !ok {
 		t.Error("advanced ACL should still be reasserted on the existing folder")
 	}
-	// No user needs adding — everyone is already a member.
+	// The reconcile is off this synchronous path, so no user-add calls happen here.
 	if _, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users/alice/groups"); ok {
-		t.Error("no user should be added when all are already members")
+		t.Error("user-group reconcile must not run on the synchronous provision path")
 	}
 }
 

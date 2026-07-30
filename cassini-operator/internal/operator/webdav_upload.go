@@ -110,7 +110,7 @@ func (c ExAppConfig) appAPIActive() bool {
 
 // ncFilesUploader returns the delivery closure, or nil when the ExApp env is
 // absent (dev/standalone deploys simply skip NC-Files delivery).
-func (c ExAppConfig) ncFilesUploader() ncFilesUploader {
+func (c ExAppConfig) ncFilesUploader(logger *log.Logger) ncFilesUploader {
 	if !c.appAPIActive() {
 		return nil
 	}
@@ -163,6 +163,15 @@ func (c ExAppConfig) ncFilesUploader() ncFilesUploader {
 					return fmt.Errorf("protect new opus %s: %w", entry.Name(), err)
 				}
 			}
+		}
+
+		// Before advertising anything, make sure every recording carries its
+		// viewer-group deny — the container grant is inherited by any leaf that
+		// lacks one, so an unprotected .opus (e.g. a create-time deny that failed
+		// on a prior sync) would be readable by every logged-in user. Only the
+		// offenders are corrected, preserving existing participant allows.
+		if c.AccessControl {
+			c.selfHealLeafProtection(ctx, client, logger)
 		}
 
 		// Publish the whole catalog last. If any .opus PUT fails, readers retain
