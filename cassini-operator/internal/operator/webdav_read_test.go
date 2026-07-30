@@ -28,17 +28,21 @@ func callerReq(method, target, caller string) *http.Request {
 // per-caller catalog must contain only JOB1 (and preserve unknown fields).
 func TestNCFilesProxyServesPerCallerCatalog(t *testing.T) {
 	catalog := `{"version":"cassini.viewer.catalog.v1","generatedAt":"2026-04-29T00:00:00Z","meetings":[` +
-		`{"id":"a","title":"One","dateLabel":"d","audioPath":"./meetings/JOB1.opus"},` +
+		`{"id":"a","title":"One","dateLabel":"d","audioPath":"./meetings/JOB1.opus",` +
+		`"speakerCount":3,"segmentCount":12,"digestDurationMs":45000},` +
 		`{"id":"b","title":"Two","dateLabel":"d","audioPath":"./meetings/JOB2.opus"}]}`
+	var catalogGets, propfinds int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/catalog.json"):
+			catalogGets++
 			// Authoritative fetch is as the owner.
 			if !strings.Contains(r.URL.Path, "/files/"+ncRecordingsOwner+"/") {
 				t.Errorf("catalog fetched as %s, want owner", r.URL.Path)
 			}
 			_, _ = w.Write([]byte(catalog))
 		case r.Method == "PROPFIND":
+			propfinds++
 			// Scan is as the caller alice.
 			if !strings.Contains(r.URL.Path, "/files/alice/") {
 				t.Errorf("scan path %s, want caller alice", r.URL.Path)
@@ -47,9 +51,10 @@ func TestNCFilesProxyServesPerCallerCatalog(t *testing.T) {
 			_, _ = w.Write([]byte(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">` +
 				`<d:response><d:href>/remote.php/dav/files/alice/Cassini/Recordings/meetings/</d:href></d:response>` +
 				`<d:response><d:href>/remote.php/dav/files/alice/Cassini/Recordings/meetings/JOB1.opus</d:href></d:response>` +
-				`<d:response><d:href>/remote.php/dav/files/alice/Cassini/Recordings/meetings/JOB1.manifest.json</d:href></d:response>` +
+				`<d:response><d:href>/remote.php/dav/files/alice/Cassini/Recordings/meetings/README.txt</d:href></d:response>` +
 				`</d:multistatus>`))
 		default:
+			t.Errorf("unexpected upstream request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
@@ -69,6 +74,14 @@ func TestNCFilesProxyServesPerCallerCatalog(t *testing.T) {
 	}
 	if !strings.Contains(body, `"generatedAt":"2026-04-29T00:00:00Z"`) {
 		t.Errorf("unknown top-level fields must be preserved: %s", body)
+	}
+	for _, want := range []string{`"speakerCount":3`, `"segmentCount":12`, `"digestDurationMs":45000`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("catalog list metadata must be preserved (%s): %s", want, body)
+		}
+	}
+	if catalogGets != 1 || propfinds != 1 {
+		t.Errorf("upstream calls: catalog GET=%d PROPFIND=%d, want one each", catalogGets, propfinds)
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" {
 		t.Errorf("catalog Cache-Control = %q, want no-store", rec.Header().Get("Cache-Control"))

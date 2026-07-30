@@ -3,12 +3,9 @@ package operator
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -90,45 +87,7 @@ func TestEnsureProtectedRulesPreservesParticipantsAddsDeny(t *testing.T) {
 	}
 }
 
-func TestBuildSidecarExtractsEntry(t *testing.T) {
-	siteRoot := t.TempDir()
-	sc := 3
-	cat := siteCatalog{Version: "cassini.viewer.catalog.v1", Meetings: []siteCatalogEntry{
-		{ID: "mtg_a", Title: "Standup", DateLabel: "Apr 29", AudioPath: "./meetings/JOB1.opus", ArtifactPath: "./meetings/JOB1.opus", SpeakerCount: &sc},
-		{ID: "mtg_b", Title: "Other", DateLabel: "Apr 30", AudioPath: "./meetings/JOB2.opus"},
-	}}
-	raw, _ := json.Marshal(cat)
-	if err := os.WriteFile(filepath.Join(siteRoot, "catalog.json"), raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	body, err := buildSidecar(siteRoot, "JOB1")
-	if err != nil {
-		t.Fatalf("buildSidecar: %v", err)
-	}
-	var entry siteCatalogEntry
-	if err := json.Unmarshal(body, &entry); err != nil {
-		t.Fatalf("sidecar json: %v", err)
-	}
-	if entry.Title != "Standup" || entry.DateLabel != "Apr 29" {
-		t.Errorf("wrong entry: %+v", entry)
-	}
-	if entry.AudioPath != "JOB1.opus" {
-		t.Errorf("audioPath = %q, want sibling basename JOB1.opus", entry.AudioPath)
-	}
-	if entry.ArtifactPath != "" {
-		t.Errorf("artifactPath should be cleared, got %q", entry.ArtifactPath)
-	}
-	if entry.SpeakerCount == nil || *entry.SpeakerCount != 3 {
-		t.Errorf("speakerCount not preserved: %v", entry.SpeakerCount)
-	}
-
-	if _, err := buildSidecar(siteRoot, "NOPE"); err == nil {
-		t.Error("expected error for a job with no catalog entry")
-	}
-}
-
-func TestNCFilesAccessApplierWritesSidecarAndACL(t *testing.T) {
+func TestNCFilesAccessApplierWritesOpusACLOnly(t *testing.T) {
 	var mu sync.Mutex
 	var got []davRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -144,15 +103,6 @@ func TestNCFilesAccessApplierWritesSidecarAndACL(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	siteRoot := t.TempDir()
-	cat := siteCatalog{Version: "cassini.viewer.catalog.v1", Meetings: []siteCatalogEntry{
-		{ID: "mtg_a", Title: "Standup", DateLabel: "Apr 29", AudioPath: "./meetings/JOB1.opus"},
-	}}
-	raw, _ := json.Marshal(cat)
-	if err := os.WriteFile(filepath.Join(siteRoot, "catalog.json"), raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
 	cfg := testExAppConfig(srv.URL)
 	cfg.AccessControl = true
 	apply := cfg.ncFilesAccessApplier(nil)
@@ -160,24 +110,22 @@ func TestNCFilesAccessApplierWritesSidecarAndACL(t *testing.T) {
 		t.Fatal("applier nil with AccessControl=true")
 	}
 	mappings := []aclMapping{{Type: "user", ID: "alice"}, {Type: "user", ID: "bob"}}
-	if err := apply(context.Background(), "JOB1", siteRoot, mappings); err != nil {
+	if err := apply(context.Background(), "JOB1", mappings); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
 	base := "/remote.php/dav/files/" + ncRecordingsOwner + "/" + ncRecordingsRoot + "/meetings/"
 	wantAuth := base64.StdEncoding.EncodeToString([]byte(ncRecordingsOwner + ":sekret"))
-	var opusACL, sidecarACL, sidecarPut *davRequest
+	var opusACL *davRequest
 	for i := range got {
 		if got[i].auth != wantAuth {
 			t.Errorf("auth = %q, want owner %q (path %s)", got[i].auth, wantAuth, got[i].path)
 		}
-		switch {
-		case got[i].method == "PROPPATCH" && strings.HasSuffix(got[i].path, "JOB1.opus"):
+		if strings.HasSuffix(got[i].path, ".manifest.json") {
+			t.Errorf("unexpected external manifest request: %s %s", got[i].method, got[i].path)
+		}
+		if got[i].method == "PROPPATCH" && strings.HasSuffix(got[i].path, "JOB1.opus") {
 			opusACL = &got[i]
-		case got[i].method == "PROPPATCH" && strings.HasSuffix(got[i].path, "JOB1"+sidecarSuffix):
-			sidecarACL = &got[i]
-		case got[i].method == http.MethodPut && strings.HasSuffix(got[i].path, "JOB1"+sidecarSuffix):
-			sidecarPut = &got[i]
 		}
 	}
 	if opusACL == nil {
@@ -187,15 +135,6 @@ func TestNCFilesAccessApplierWritesSidecarAndACL(t *testing.T) {
 		if !strings.Contains(string(opusACL.body), want) {
 			t.Errorf("opus ACL body missing %q", want)
 		}
-	}
-	if sidecarPut == nil {
-		t.Fatal("no sidecar PUT")
-	}
-	if !strings.Contains(string(sidecarPut.body), `"title":"Standup"`) {
-		t.Errorf("sidecar body = %s", sidecarPut.body)
-	}
-	if sidecarACL == nil {
-		t.Error("no PROPPATCH on the sidecar")
 	}
 }
 

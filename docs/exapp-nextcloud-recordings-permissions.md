@@ -25,7 +25,7 @@ meeting.
         │                                                  │  GET /published/catalog.json
         │  enumerate Talk participants (as owner)          │  GET /published/meetings/<id>.opus
         ▼                                                  ▼
-  PROPPATCH nc:acl-list on <id>.opus (+ sidecar):    operator proxy acts AS THE CALLER:
+  PROPPATCH nc:acl-list on <id>.opus:                operator proxy acts AS THE CALLER:
     +read for each participant (users/groups/           • catalog.json → the authoritative list,
     circles). Guests/email/federated are skipped.         filtered to the meetings the caller's
         │                                                   own PROPFIND scan can see
@@ -147,11 +147,9 @@ Access is **frozen at publish** to the room's participants, then fully editable:
 
 - **In the Files UI:** open the group folder → the meeting's `.opus` → the
   sharing panel's **Advanced permissions** tab → add or remove users/groups and
-  toggle their read access. Do the same on the `<id>.manifest.json` sidecar so
-  the list entry stays consistent.
-- **Revoke / grant to more people:** add or remove read rules on `<id>.opus`
-  (and its sidecar). Removing all rules makes the meeting visible only to the
-  ACL manager.
+  toggle their read access.
+- **Revoke / grant to more people:** add or remove read rules on `<id>.opus`.
+  Removing all rules makes the meeting visible only to the ACL manager.
 - **Guests / email / federated participants** are skipped automatically at
   publish (they have no local account to grant). To share with them, use a
   normal Nextcloud share/public link on the `.opus` (out of scope for the
@@ -209,7 +207,7 @@ The group folder and its contents are unaffected.
 | Everyone still sees every meeting | Flag not actually set, or operator not restarted | Confirm `CASSINI_NC_ACCESS_CONTROL=true` in the running container's env |
 | `nc provision: ensure group folder … failed` in the log | Group folders app not installed/enabled | Enable the Team folders app, then re-enable Cassini |
 | A granted user sees an empty list | Per-caller scan can't traverse the container folders, or the leaf ACL was not applied | Confirm (occ) the folder's advanced ACL + recording-viewers read mount and that the user is in recording-viewers; re-publish to retry |
-| A meeting is visible to no one | Non-Talk job, or all participants were guests/federated | Share the `.opus` (+ sidecar) manually |
+| A meeting is visible to no one | Non-Talk job, or all participants were guests/federated | Share the `.opus` manually |
 | Viewer errors instead of empty list | Nextcloud Files unreachable (502) | Check the ExApp → Nextcloud WebDAV connectivity and the owner account |
 | Files delivery reports `MKCOL Cassini/Recordings -> 403` | Root container ACL (owner grant) not applied — provisioning was interrupted | Re-enable Cassini so the enabled edge re-provisions the root ACL, then re-publish |
 | Publish succeeds but no ACL applied | Best-effort ACL step failed (logged, non-fatal) | Check operator logs for `nc files access …`; re-publish to retry |

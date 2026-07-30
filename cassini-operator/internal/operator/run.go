@@ -89,7 +89,7 @@ type Runtime struct {
 	uploadToNCFiles ncFilesUploader
 	ncFilesSyncMu   sync.Mutex
 	// fetchTalkParticipants resolves a Talk room's grantable ACL principals and
-	// applyNCFilesAccessFn writes the per-meeting sidecar + advanced-ACL grants
+	// applyNCFilesAccessFn writes the per-meeting advanced-ACL grants
 	// (talk_participants.go / webdav_acl.go, D-534). Both nil unless AppAPI is
 	// active and CASSINI_NC_ACCESS_CONTROL is enabled; access control is off by
 	// default, keeping the D-529 public archive.
