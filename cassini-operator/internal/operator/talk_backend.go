@@ -11,13 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"time"
 )
 
@@ -46,22 +42,14 @@ const (
 	talkRecordingChecksumOCSHeader = "TALK_RECORDING_CHECKSUM"
 )
 
-// Talk delivery runs while the only record slot is still held, so every
-// request to Nextcloud must be bounded: one hung connection through
+// Every request to Nextcloud must be bounded: one hung connection through
 // http.DefaultClient used to wedge all recording capacity until restart
-// (D-352).
+// (D-352). The record slot itself is released before these callbacks run
+// (run.go), but a hung callback still delays the build enqueue behind it.
 const (
 	// talkJSONRequestTimeout bounds the small JSON callbacks
 	// (started/stopped/failed) end to end.
 	talkJSONRequestTimeout = 30 * time.Second
-	// talkUploadResponseHeaderTimeout bounds how long Nextcloud may take to
-	// answer after the recording body has been fully uploaded (it moves the
-	// file into the owner's storage before responding).
-	talkUploadResponseHeaderTimeout = 5 * time.Minute
-	// talkUploadStallGrace is how long the upload body may make no progress
-	// before the stall watchdog cancels the request; an overall timeout
-	// would cap legitimate long uploads of big recordings.
-	talkUploadStallGrace = 2 * time.Minute
 )
 
 // talkDeliveryRetryDelays is the bounded backoff schedule for delivery
@@ -556,161 +544,7 @@ func (rt *Runtime) postTalkJSON(backendURL, path string, payload any) error {
 	req.Header.Set("OCS-ApiRequest", "true")
 	req.Header.Set(talkRecordingRandomHeader, random)
 	req.Header.Set(talkRecordingChecksumHeader, talkChecksum(rt.cfg.TalkSharedSecret, random, body))
-	return rt.doTalkRequest(rt.talkJSONClient, req)
-}
-
-// uploadTalkRecording streams the recording to spreed's store endpoint. The
-// multipart body is piped instead of buffered — buffering the whole MKV in
-// memory was an OOM on the success path of long recordings (D-352) — with
-// the exact Content-Length precomputed so the request stays
-// protocol-compatible (the checksum covers only the room token, matching the
-// reference nextcloud-talk-recording uploader). A stall watchdog cancels the
-// request when no body bytes move for talkUploadStall; once the body is
-// fully written, the client's ResponseHeaderTimeout bounds the wait.
-func (rt *Runtime) uploadTalkRecording(state talkRoomState, filePath, uploadName string) error {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("open recording for upload: %w", err)
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("stat recording for upload: %w", err)
-	}
-	if uploadName == "" {
-		uploadName = filepath.Base(filePath)
-	}
-
-	pipeReader, pipeWriter := io.Pipe()
-	writer := multipart.NewWriter(pipeWriter)
-	contentLength, err := talkUploadContentLength(writer.Boundary(), state.Owner, uploadName, info.Size())
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	activity := newUploadActivity()
-	watchdogDone := make(chan struct{})
-	defer close(watchdogDone)
-	go watchUploadActivity(activity, rt.talkUploadStall, cancel, watchdogDone)
-
-	go func() {
-		pipeWriter.CloseWithError(streamTalkUpload(writer, state.Owner, uploadName, file))
-	}()
-
-	random := talkRandom()
-	endpoint := strings.TrimRight(state.BackendURL, "/") + "/ocs/v2.php/apps/spreed/api/v1/recording/" + state.RoomToken + "/store"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &uploadActivityReader{reader: pipeReader, activity: activity})
-	if err != nil {
-		return fmt.Errorf("build recording upload request: %w", err)
-	}
-	req.ContentLength = contentLength
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("OCS-ApiRequest", "true")
-	req.Header.Set(talkRecordingRandomHeader, random)
-	req.Header.Set(talkRecordingChecksumHeader, talkChecksum(rt.cfg.TalkSharedSecret, random, []byte(state.RoomToken)))
-	return rt.doTalkRequest(rt.talkUploadClient, req)
-}
-
-// streamTalkUpload writes the multipart upload body; it runs in a goroutine
-// feeding the request pipe and must produce exactly the bytes
-// talkUploadContentLength accounted for.
-func streamTalkUpload(writer *multipart.Writer, owner, uploadName string, file io.Reader) error {
-	if err := writer.WriteField("owner", owner); err != nil {
-		return fmt.Errorf("write upload owner field: %w", err)
-	}
-	part, err := writer.CreateFormFile("file", uploadName)
-	if err != nil {
-		return fmt.Errorf("create upload form file: %w", err)
-	}
-	if _, err := io.Copy(part, file); err != nil {
-		return fmt.Errorf("copy upload file: %w", err)
-	}
-	if err := writer.Close(); err != nil {
-		return fmt.Errorf("close multipart writer: %w", err)
-	}
-	return nil
-}
-
-// talkUploadContentLength precomputes the multipart body size: the framing
-// around an empty file part (using the same boundary and field names as the
-// streamed body) plus the file size.
-func talkUploadContentLength(boundary, owner, uploadName string, fileSize int64) (int64, error) {
-	var framing bytes.Buffer
-	writer := multipart.NewWriter(&framing)
-	if err := writer.SetBoundary(boundary); err != nil {
-		return 0, fmt.Errorf("set upload boundary: %w", err)
-	}
-	if err := streamTalkUpload(writer, owner, uploadName, strings.NewReader("")); err != nil {
-		return 0, err
-	}
-	return int64(framing.Len()) + fileSize, nil
-}
-
-// uploadActivity tracks progress of the streamed upload body so the watchdog
-// can tell a slow-but-moving upload from a stalled connection.
-type uploadActivity struct {
-	lastReadNS atomic.Int64
-	bodyDone   atomic.Bool
-}
-
-func newUploadActivity() *uploadActivity {
-	activity := &uploadActivity{}
-	activity.touch()
-	return activity
-}
-
-func (a *uploadActivity) touch() {
-	a.lastReadNS.Store(time.Now().UnixNano())
-}
-
-func (a *uploadActivity) idleFor() time.Duration {
-	return time.Duration(time.Now().UnixNano() - a.lastReadNS.Load())
-}
-
-// uploadActivityReader is the request body: the transport reads from it as
-// fast as the connection drains, so successful reads are a progress signal.
-type uploadActivityReader struct {
-	reader   io.Reader
-	activity *uploadActivity
-}
-
-func (r *uploadActivityReader) Read(p []byte) (int, error) {
-	n, err := r.reader.Read(p)
-	if n > 0 {
-		r.activity.touch()
-	}
-	if errors.Is(err, io.EOF) {
-		r.activity.bodyDone.Store(true)
-	}
-	return n, err
-}
-
-// watchUploadActivity cancels a stalled upload: no body progress for the
-// stall grace while the body is still being streamed. After the body is
-// fully written it exits and leaves the response wait to the client's
-// ResponseHeaderTimeout.
-func watchUploadActivity(activity *uploadActivity, stall time.Duration, cancel context.CancelFunc, done <-chan struct{}) {
-	if stall <= 0 {
-		return
-	}
-	ticker := time.NewTicker(stall / 4)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-done:
-			return
-		case <-ticker.C:
-			if activity.bodyDone.Load() {
-				return
-			}
-			if activity.idleFor() >= stall {
-				cancel()
-				return
-			}
-		}
-	}
+	return rt.doTalkRequest(req)
 }
 
 // talkHTTPError is a non-2xx response from Nextcloud; only 5xx responses are
@@ -752,8 +586,8 @@ func (rt *Runtime) withTalkRetry(jobID, op string, fn func() error) error {
 	}
 }
 
-func (rt *Runtime) doTalkRequest(client *http.Client, req *http.Request) error {
-	resp, err := client.Do(req)
+func (rt *Runtime) doTalkRequest(req *http.Request) error {
+	resp, err := rt.talkJSONClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("talk request failed: %w", err)
 	}
@@ -767,9 +601,10 @@ func (rt *Runtime) doTalkRequest(client *http.Client, req *http.Request) error {
 
 // talkJobBinding is the durable subset of talkRoomState persisted on the
 // jobs row, so an operator restart mid-recording can still clean up the
-// spreed room state and a rerun can re-deliver the recording (D-352). The
-// in-memory binding alone meant a restart left the room stuck "recording"
-// and orphaned the upload forever.
+// spreed room state (D-352). The in-memory binding alone meant a restart left
+// the room stuck "recording" forever. It is also what publish reads to resolve
+// the room's participants and display name long after the recorder is gone
+// (talk_participants.go, talk_room_name.go).
 type talkJobBinding struct {
 	BackendURL string         `json:"backend_url"`
 	RoomToken  string         `json:"room_token"`
@@ -812,80 +647,31 @@ func decodeTalkBinding(raw string) (talkRoomState, error) {
 	}, nil
 }
 
-// deliverTalkRecording sends spreed the stopped callback and uploads the
-// recording, both with bounded retries. Failures are logged but never fail
-// the record stage: the recording is already safe in the canonical run
-// bundle, the pipeline continues to build/publish, and a rerun re-attempts
-// delivery while talk_delivered_at is unset (D-352).
-func (rt *Runtime) deliverTalkRecording(jobID string, state talkRoomState, runPath, finishedAt string) {
+// reportTalkRecordingStopped tells spreed the recording finished, with bounded
+// retries. Failure is logged but never fails the record stage: the recording is
+// already safe in the canonical run bundle and the pipeline continues to
+// build/publish (D-352).
+//
+// Cassini deliberately sends spreed *status only*. The meeting itself reaches
+// Nextcloud exactly once, as the published .opus under the canonical recordings
+// root — never through Talk's recording store (D-551).
+//
+// Marking talk_delivered_at here is what keeps the startup sweep honest: a room
+// spreed was already told "stopped" about must never later be told "failed".
+func (rt *Runtime) reportTalkRecordingStopped(jobID string, state talkRoomState) {
 	if err := rt.withTalkRetry(jobID, "stopped callback", func() error {
 		return rt.notifyTalkStopped(state)
 	}); err != nil {
-		rt.logger.Printf("talk stopped callback failed id=%s: %v (rerun re-attempts delivery)", jobID, err)
-		return
-	}
-	rt.uploadAndMarkTalkDelivered(jobID, state, runPath, finishedAt)
-}
-
-func (rt *Runtime) uploadAndMarkTalkDelivered(jobID string, state talkRoomState, runPath, finishedAt string) {
-	recordingPath := filepath.Join(runPath, "recording.mkv")
-	uploadName := talkRecordingUploadName(finishedAt)
-	if err := rt.withTalkRetry(jobID, "recording upload", func() error {
-		return rt.uploadTalkRecording(state, recordingPath, uploadName)
-	}); err != nil {
-		rt.logger.Printf("talk upload failed id=%s recording=%s: %v (rerun re-attempts delivery)", jobID, recordingPath, err)
+		// No replay path exists for this: the startup sweep only covers jobs
+		// left at stage='record', state='interrupted', and a job that finishes
+		// cleanly is never in that set. The room's status is then recovered by
+		// a moderator clicking stop (D-551 followups: a durable outbox).
+		rt.logger.Printf("talk stopped callback failed id=%s: %v (room status left to the moderator's stop)", jobID, err)
 		return
 	}
 	if err := rt.store.MarkTalkDelivered(context.Background(), jobID, nowUTCString()); err != nil {
-		rt.logger.Printf("talk delivered update failed id=%s: %v", jobID, err)
+		rt.logger.Printf("talk stopped marker update failed id=%s: %v", jobID, err)
 	}
-}
-
-// redeliverTalkRecording re-runs Talk delivery during a rerun of a job whose
-// recording never reached Nextcloud (delivery failure or operator restart).
-// The stopped callback is best-effort here — spreed's room state has usually
-// been cleaned up already by the startup failed callback or a moderator stop
-// — the upload is what matters.
-func (rt *Runtime) redeliverTalkRecording(job Job) {
-	if job.TalkBinding == nil || job.TalkDeliveredAt != nil {
-		return
-	}
-	state, err := decodeTalkBinding(*job.TalkBinding)
-	if err != nil {
-		rt.logger.Printf("talk redelivery skipped id=%s: %v", job.ID, err)
-		return
-	}
-	if job.ArtifactRunPath == nil || strings.TrimSpace(*job.ArtifactRunPath) == "" {
-		return
-	}
-	runPath := *job.ArtifactRunPath
-	if _, err := os.Stat(filepath.Join(runPath, "recording.mkv")); err != nil {
-		rt.logger.Printf("talk redelivery skipped id=%s: %v", job.ID, err)
-		return
-	}
-	// The stopped callback is room-scoped: if a NEWER recording is live in the
-	// same room, sending it would mark the live recording stopped in spreed
-	// while its recorder keeps running. Re-check before every attempt — the
-	// retry backoff is long enough for a moderator to start a fresh recording
-	// mid-loop. The upload below still proceeds: the store endpoint only files
-	// the recording into the owner's storage and never touches room state.
-	if err := rt.withTalkRetry(job.ID, "stopped callback", func() error {
-		if liveJobID, live := rt.talkRoomLiveWithOtherJob(state.RoomToken, job.ID); live {
-			return fmt.Errorf("%w: job %s is recording in room %s", errTalkRoomLive, liveJobID, state.RoomToken)
-		}
-		return rt.notifyTalkStopped(state)
-	}); err != nil {
-		if errors.Is(err, errTalkRoomLive) {
-			rt.logger.Printf("talk stopped callback skipped during redelivery id=%s room=%s: %v", job.ID, state.RoomToken, err)
-		} else {
-			rt.logger.Printf("talk stopped callback failed during redelivery id=%s: %v", job.ID, err)
-		}
-	}
-	finishedAt := ""
-	if job.RecordFinishedAt != nil {
-		finishedAt = *job.RecordFinishedAt
-	}
-	rt.uploadAndMarkTalkDelivered(job.ID, state, runPath, finishedAt)
 }
 
 // NotifyInterruptedTalkRecordings tells spreed that recordings interrupted

@@ -99,13 +99,11 @@ type Runtime struct {
 	// constants; tests shrink them to exercise stop enforcement quickly.
 	recordStopAckGrace      time.Duration
 	recordStopFinalizeGrace time.Duration
-	// Talk delivery tuning: dedicated bounded clients (a hung Nextcloud
-	// connection must not wedge the record slot, D-352), a bounded retry
-	// schedule, and the upload stall watchdog grace. Tests shrink them.
-	talkJSONClient   *http.Client
-	talkUploadClient *http.Client
-	talkRetryDelays  []time.Duration
-	talkUploadStall  time.Duration
+	// Talk status-callback tuning: a dedicated bounded client (a hung
+	// Nextcloud connection must not stall the post-record path, D-352) and a
+	// bounded retry schedule. Tests shrink them.
+	talkJSONClient  *http.Client
+	talkRetryDelays []time.Duration
 	// requeueKick nudges the requeue dispatcher to re-scan the DB for
 	// queued build/publish rows the channels could not accept (D-367).
 	requeueKick chan struct{}
@@ -491,12 +489,8 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		recordStopAckGrace:      recordStopAckGrace,
 		recordStopFinalizeGrace: recordStopFinalizeGrace,
 
-		talkJSONClient: &http.Client{Timeout: talkJSONRequestTimeout},
-		talkUploadClient: &http.Client{
-			Transport: &http.Transport{ResponseHeaderTimeout: talkUploadResponseHeaderTimeout},
-		},
+		talkJSONClient:       &http.Client{Timeout: talkJSONRequestTimeout},
 		talkRetryDelays:      talkDeliveryRetryDelays,
-		talkUploadStall:      talkUploadStallGrace,
 		talkRoomNameRetryGap: talkRoomNameRetryGap,
 
 		requeueKick:         make(chan struct{}, 1),
@@ -750,13 +744,13 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		}
 		return
 	}
-	// Talk delivery (stopped callback + recording upload) is retried with
-	// backoff but never fails the record stage: the recording is already
-	// safe in the canonical run bundle, so a Nextcloud hiccup must not
-	// strand it. Incomplete delivery leaves talk_delivered_at unset and
-	// rerun re-attempts it (D-352).
+	// Tell spreed the recording stopped. Status only — the meeting itself
+	// goes to Nextcloud as the published .opus, never through Talk's
+	// recording store (D-551). Retried with backoff but never fails the
+	// record stage: the recording is already safe in the canonical run
+	// bundle, so a Nextcloud hiccup must not strand it (D-352).
 	if talkState, ok := rt.lookupTalkJobState(job.ID); ok {
-		rt.deliverTalkRecording(job.ID, talkState, canonicalRunPath, finishedAt)
+		rt.reportTalkRecordingStopped(job.ID, talkState)
 	}
 	if err := rt.enqueueBuildJob(job.ID, job.CurrentAttemptNumber, canonicalRunPath, result.ArtifactRunPath, finishedAt); err != nil {
 		rt.logger.Printf("build queue update failed id=%s: %v", job.ID, err)
@@ -1442,12 +1436,4 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 func nowUTCString() string {
 	return time.Now().UTC().Format(time.RFC3339Nano)
-}
-
-func talkRecordingUploadName(timestamp string) string {
-	t, err := time.Parse(time.RFC3339Nano, timestamp)
-	if err != nil {
-		t = time.Now().UTC()
-	}
-	return "recording-" + t.UTC().Format("20060102T150405.000000000Z") + ".mkv"
 }

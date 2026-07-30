@@ -938,10 +938,9 @@ func (rt *Runtime) handleRerunJob(w http.ResponseWriter, r *http.Request, id str
 		rt.kickRequeueScan()
 	}
 	rt.logger.Printf("rerun accepted id=%s attempt=%d run=%s user=%s", rerunJob.ID, rerunJob.CurrentAttemptNumber, task.ArtifactRunPath, appapiUserForLog(r))
-	// Rerun is also the re-delivery path for Talk recordings that never
-	// reached Nextcloud (delivery failure or operator restart, D-352).
-	if rerunJob.TalkBinding != nil && rerunJob.TalkDeliveredAt == nil {
-		go rt.redeliverTalkRecording(rerunJob)
-	}
+	// A rerun re-runs build/publish only. It sends Talk nothing: Cassini never
+	// uploads a recording to Talk's store, and replaying a room-scoped stopped
+	// callback from a rerun is the hazard errTalkRoomLive existed to contain
+	// (D-551).
 	writeJSON(w, http.StatusAccepted, rerunJobResponse{ID: rerunJob.ID, AttemptNumber: rerunJob.CurrentAttemptNumber})
 }
