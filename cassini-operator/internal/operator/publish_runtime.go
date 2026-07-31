@@ -62,7 +62,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		return
 	}
 	attemptSiteDir := attemptSitePath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
-	rt.logger.Printf("publish started id=%s attempt=%d input=%s attempt_site=%s site=%s", task.JobID, task.AttemptNumber, currentRoot(rt.cfg.WorkRoot), attemptSiteDir, rt.cfg.SiteRoot)
+	rt.logger.Printf("publish started id=%s attempt=%d input=%s attempt_site=%s sink=%s", task.JobID, task.AttemptNumber, currentRoot(rt.cfg.WorkRoot), attemptSiteDir, rt.sink().Name())
 
 	attemptArtifactSitePath, err := rt.publishJobFn(rt.ctx, task)
 	finishedAt := nowUTCString()
@@ -74,22 +74,27 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		}
 		return
 	}
-	if err := promoteSiteBundle(attemptArtifactSitePath, rt.cfg.SiteRoot, SiteBundleLineage{
-		JobID:          task.JobID,
-		AttemptNumber:  task.AttemptNumber,
-		PublishedAtUTC: finishedAt,
-	}); err != nil {
-		rt.logger.Printf("publish promote failed id=%s attempt=%d attempt_site=%s site=%s: %v", task.JobID, task.AttemptNumber, attemptArtifactSitePath, rt.cfg.SiteRoot, err)
+	// The destination is the sink's business, not the publish worker's. A sink
+	// that cannot deliver returns an error and the publish fails — there is no
+	// best-effort delivery (D-533).
+	location, err := rt.sink().Deliver(rt.ctx, publishDelivery{
+		AttemptSitePath: attemptArtifactSitePath,
+		JobID:           task.JobID,
+		AttemptNumber:   task.AttemptNumber,
+		PublishedAtUTC:  finishedAt,
+	})
+	if err != nil {
+		rt.logger.Printf("publish deliver failed id=%s attempt=%d sink=%s attempt_site=%s: %v", task.JobID, task.AttemptNumber, rt.sink().Name(), attemptArtifactSitePath, err)
 		if updateErr := rt.store.MarkPublishFailed(context.Background(), task.JobID, "", attemptArtifactSitePath, err.Error(), finishedAt); updateErr != nil {
-			rt.logger.Printf("publish promote failure update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
+			rt.logger.Printf("publish deliver failure update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, updateErr)
 		}
 		return
 	}
-	if err := rt.store.MarkPublishSucceeded(context.Background(), task.JobID, rt.cfg.SiteRoot, attemptArtifactSitePath, finishedAt); err != nil {
+	if err := rt.store.MarkPublishSucceeded(context.Background(), task.JobID, location, attemptArtifactSitePath, finishedAt); err != nil {
 		rt.logger.Printf("publish success update failed id=%s attempt=%d: %v", task.JobID, task.AttemptNumber, err)
 		return
 	}
-	rt.logger.Printf("publish succeeded id=%s attempt=%d attempt_site=%s site=%s", task.JobID, task.AttemptNumber, attemptArtifactSitePath, rt.cfg.SiteRoot)
+	rt.logger.Printf("publish succeeded id=%s attempt=%d sink=%s attempt_site=%s location=%s", task.JobID, task.AttemptNumber, rt.sink().Name(), attemptArtifactSitePath, location)
 }
 
 func (rt *Runtime) enqueuePublishJob(jobID string, attemptNumber int, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt string) error {
