@@ -245,6 +245,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	exappCfg.PublishedDir = cfg.SiteRoot
+	exappCfg.PublishSink = sink.Name()
 	warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.SiteRoot)
 
 	server := &http.Server{

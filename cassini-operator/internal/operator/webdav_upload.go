@@ -360,7 +360,15 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 			if r.Method != http.MethodHead {
 				_, _ = io.Copy(w, resp.Body)
 			}
-		case http.StatusNotFound:
+		case http.StatusNotFound, http.StatusUnauthorized, http.StatusForbidden:
+			// Denied and absent must look the same to the caller. The whole
+			// point of the access model is that a recording you may not read
+			// never reveals that it exists — a 403 here would leak exactly
+			// that, and a 502 would suggest an outage that is not happening
+			// (D-521). Logged so the operator can still tell them apart.
+			if resp.StatusCode != http.StatusNotFound && logger != nil {
+				logger.Printf("nc files read: denied path=%s -> %d (served as 404)", relPath, resp.StatusCode)
+			}
 			http.NotFound(w, r)
 		case http.StatusRequestedRangeNotSatisfiable:
 			if v := resp.Header.Get("Content-Range"); v != "" {
