@@ -82,6 +82,12 @@ type provisionMock struct {
 	folders string // ocs.data body for GET /folders
 	members string // ocs.data.users for the viewer group
 	users   string // ocs.data.users for GET /cloud/users
+	// adminList is ocs.data.users for GET /cloud/groups/admin — who the
+	// operator discovers as an administrator to act as. Falls back to members.
+	adminList string
+	// userExists makes POST /cloud/users answer "user already exists" (102),
+	// as it does on every enable after the first.
+	userExists bool
 }
 
 func (m *provisionMock) record(r *http.Request) {
@@ -125,8 +131,12 @@ func (m *provisionMock) handler(t *testing.T) http.Handler {
 			// The create body (default-deny + mountpoint) is asserted from the
 			// recorded request in the test, not here (record() consumed the body).
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":{"id":9,"mount_point":"Cassini","manage":[]}}}`)
+		case r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/groups/admin" && m.adminList != "":
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"users":`+m.adminList+`}}}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(p, "/ocs/v2.php/cloud/groups/"):
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"users":`+m.members+`}}}`)
+		case r.Method == http.MethodPost && p == "/ocs/v2.php/cloud/users" && m.userExists:
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":102,"message":"User already exists"},"data":[]}}`)
 		case r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/users":
 			// Serve the seeded page once; empty on any subsequent offset.
 			if r.URL.Query().Get("offset") == "0" {
@@ -160,7 +170,9 @@ func TestProvisionFreshCreatesFolderGroupsACLAndReconciles(t *testing.T) {
 	cfg.provisionNCFilesAccess(ctx, log.New(io.Discard, "", 0))
 
 	// All calls act as the recordings owner (admin).
-	ownerAuth := base64.StdEncoding.EncodeToString([]byte(ncRecordingsOwner + ":" + cfg.AppSecret))
+	// Provisioning acts as the administrator; only the recordings writes act as
+	// the service account (D-532).
+	ownerAuth := base64.StdEncoding.EncodeToString([]byte(defaultNextcloudAdminUser + ":" + cfg.AppSecret))
 
 	if r, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); !ok {
 		t.Error("folder was not created")
@@ -180,18 +192,18 @@ func TestProvisionFreshCreatesFolderGroupsACLAndReconciles(t *testing.T) {
 	if r, ok := mock.find(http.MethodPost, "/folders/9/groups/recording-viewers"); !ok || !strings.Contains(r.body, "permissions=1") {
 		t.Errorf("viewer group permissions not set to read: %+v ok=%v", r, ok)
 	}
-	if r, ok := mock.find(http.MethodPost, "/folders/9/groups/admin"); !ok || !strings.Contains(r.body, "permissions=31") {
+	if r, ok := mock.find(http.MethodPost, "/folders/9/groups/"+ncRecordingsOwnerGroup); !ok || !strings.Contains(r.body, "permissions=31") {
 		t.Errorf("owner group permissions not set to full: %+v ok=%v", r, ok)
 	}
 	// Advanced ACL enabled + owner delegated as manager (fresh folder has none).
 	if r, ok := mock.find(http.MethodPost, "/folders/9/acl"); !ok || !strings.Contains(r.body, "acl=1") {
 		t.Errorf("advanced ACL not enabled: %+v ok=%v", r, ok)
 	}
-	if r, ok := mock.find(http.MethodPost, "/folders/9/manageACL"); !ok || !strings.Contains(r.body, "mappingId=admin") {
+	if r, ok := mock.find(http.MethodPost, "/folders/9/manageACL"); !ok || !strings.Contains(r.body, "mappingId="+ncRecordingsOwner) {
 		t.Errorf("owner not delegated as ACL manager: %+v ok=%v", r, ok)
 	}
 	// Root container ACL via PROPPATCH on the mount root, then the collections.
-	if r, ok := mock.find("PROPPATCH", "/remote.php/dav/files/admin/Cassini"); !ok {
+	if r, ok := mock.find("PROPPATCH", "/remote.php/dav/files/"+ncRecordingsOwner+"/Cassini"); !ok {
 		t.Error("root container ACL PROPPATCH missing")
 	} else if !strings.Contains(r.body, "recording-viewers") || !strings.Contains(r.body, "<nc:acl-permissions>1</nc:acl-permissions>") {
 		t.Errorf("root container ACL body missing viewer read grant: %s", r.body)
@@ -235,7 +247,7 @@ func TestProvisionExistingFolderSkipsManagerAndCreate(t *testing.T) {
 	// Reset the process-wide ticker guard so this test's provision is unaffected
 	// by ordering; the guard only prevents a duplicate background goroutine.
 	mock := &provisionMock{
-		folders: `{"3":{"id":3,"mount_point":"Cassini","manage":[{"type":"user","id":"admin"}]}}`,
+		folders: `{"3":{"id":3,"mount_point":"Cassini","manage":[{"type":"user","id":"` + ncRecordingsOwner + `"}]}}`,
 		members: `["admin","alice","bob"]`, // everyone already a member
 		users:   `["admin","alice","bob"]`,
 	}
@@ -306,5 +318,108 @@ func (c ExAppConfig) mu(t *testing.T, mock *provisionMock) {
 	defer mock.mu.Unlock()
 	if len(mock.reqs) != 0 {
 		t.Errorf("access control disabled but %d requests were issued", len(mock.reqs))
+	}
+}
+
+// The recordings tree is owned by a dedicated service account rather than the
+// instance administrator (D-532). Two identities are in play and confusing them
+// is the failure mode worth pinning: provisioning needs admin rights, ownership
+// must not have them.
+
+func TestProvisionCreatesTheRecordingsServiceAccount(t *testing.T) {
+	mock := &provisionMock{
+		folders: `[]`,
+		members: `["admin"]`,
+		users:   `["admin"]`,
+	}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+	resolvedProvisioningUser.Store(nil)
+
+	cfg := testExAppConfig(srv.URL)
+	cfg.AccessControl = true
+	cfg.provisionNCFilesAccess(context.Background(), log.New(ioDiscard{}, "", 0))
+
+	create, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users")
+	if !ok {
+		t.Fatalf("the service account was never created")
+	}
+	if !strings.Contains(create.body, "userid="+ncRecordingsOwner) {
+		t.Fatalf("create body = %q, want userid=%s", create.body, ncRecordingsOwner)
+	}
+	// It must land in the owner group, or it has no write-capable mount of the
+	// group folder and every delivery fails.
+	if !strings.Contains(create.body, "groups="+ncRecordingsOwnerGroup) {
+		t.Fatalf("create body = %q, want groups=%s", create.body, ncRecordingsOwnerGroup)
+	}
+	// The account is created BY the administrator. Acting as the account we are
+	// about to create would be circular.
+	wantAdmin := base64.StdEncoding.EncodeToString([]byte(defaultNextcloudAdminUser + ":" + cfg.AppSecret))
+	if create.auth != wantAdmin {
+		t.Fatalf("create auth = %q, want the administrator", create.auth)
+	}
+	// The generated password must never reach the log or any record of the
+	// request beyond Nextcloud itself; we only assert it is present and random-
+	// looking, never what it is.
+	if !strings.Contains(create.body, "password=") {
+		t.Fatalf("create body has no password: %q", create.body)
+	}
+}
+
+func TestProvisionResolvesTheAdministratorRatherThanAssumingAdmin(t *testing.T) {
+	// "admin" is conventional, not guaranteed. An instance whose administrator
+	// is called something else would otherwise have every privileged call
+	// rejected.
+	mock := &provisionMock{
+		folders:   `[]`,
+		members:   `["ops-root"]`,
+		users:     `["ops-root"]`,
+		adminList: `["ops-root"]`,
+	}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+	resolvedProvisioningUser.Store(nil)
+	t.Cleanup(func() { resolvedProvisioningUser.Store(nil) })
+
+	cfg := testExAppConfig(srv.URL)
+	cfg.AccessControl = true
+	cfg.provisionNCFilesAccess(context.Background(), log.New(ioDiscard{}, "", 0))
+
+	wantAuth := base64.StdEncoding.EncodeToString([]byte("ops-root:" + cfg.AppSecret))
+	create, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users")
+	if !ok {
+		t.Fatalf("the service account was never created")
+	}
+	if create.auth != wantAuth {
+		t.Fatalf("create auth = %q, want the discovered administrator ops-root", create.auth)
+	}
+}
+
+func TestProvisionAcceptsAnExistingServiceAccount(t *testing.T) {
+	// Re-enabling must not disturb an account that is already there — never
+	// re-created, never re-passworded, never disabled.
+	mock := &provisionMock{
+		folders:    `[]`,
+		members:    `["admin"]`,
+		users:      `["admin","` + ncRecordingsOwner + `"]`,
+		userExists: true,
+	}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+	resolvedProvisioningUser.Store(nil)
+
+	cfg := testExAppConfig(srv.URL)
+	cfg.AccessControl = true
+	cfg.provisionNCFilesAccess(context.Background(), log.New(ioDiscard{}, "", 0))
+
+	// Provisioning must still have got as far as the folder work; an
+	// "already exists" response is success, not a failure that aborts the run.
+	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); !ok {
+		t.Fatalf("provisioning stopped at the existing account instead of continuing")
+	}
+	// Membership is re-asserted, because the group may have been created after
+	// the account.
+	if _, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users/"+ncRecordingsOwner+"/groups"); !ok {
+		t.Fatalf("existing account was not re-added to the owner group")
 	}
 }
