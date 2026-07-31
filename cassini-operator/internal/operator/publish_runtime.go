@@ -62,7 +62,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		return
 	}
 	attemptSiteDir := attemptSitePath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
-	rt.logger.Printf("publish started id=%s attempt=%d input=%s attempt_site=%s sink=%s", task.JobID, task.AttemptNumber, currentRoot(rt.cfg.WorkRoot), attemptSiteDir, rt.sink().Name())
+	rt.logger.Printf("publish started id=%s attempt=%d attempt_site=%s sink=%s", task.JobID, task.AttemptNumber, attemptSiteDir, rt.sink().Name())
 
 	attemptArtifactSitePath, err := rt.publishJobFn(rt.ctx, task)
 	finishedAt := nowUTCString()
@@ -115,6 +115,13 @@ func (rt *Runtime) enqueuePublishJob(jobID string, attemptNumber int, jobArtifac
 
 func (rt *Runtime) executePublishCLI(ctx context.Context, task publishTask) (string, error) {
 	attemptSiteDir := attemptSitePath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
+	// One meeting per publish, not the whole library (D-459). Resolved before
+	// anything is created so a job with nothing to publish fails immediately
+	// instead of spawning a subprocess that exports an empty site.
+	publishInput, err := resolvePublishInputPath(rt.cfg.WorkRoot, task.JobID)
+	if err != nil {
+		return attemptSiteDir, err
+	}
 	if err := os.MkdirAll(filepath.Dir(attemptSiteDir), 0o755); err != nil {
 		return attemptSiteDir, fmt.Errorf("create site parent dir: %w", err)
 	}
@@ -130,7 +137,7 @@ func (rt *Runtime) executePublishCLI(ctx context.Context, task publishTask) (str
 		return attemptSiteDir, err
 	}
 
-	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "publish", currentRoot(rt.cfg.WorkRoot), "--out", attemptSiteDir)
+	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "publish", publishInput, "--out", attemptSiteDir)
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
 	cmd.Env = os.Environ()

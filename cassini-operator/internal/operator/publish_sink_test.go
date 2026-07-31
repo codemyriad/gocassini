@@ -439,3 +439,40 @@ func assertNoStagedAssets(t *testing.T, siteRoot string) {
 		return nil
 	})
 }
+
+func TestResolvePublishInputPathPrefersTheMeetingBundle(t *testing.T) {
+	workRoot := t.TempDir()
+	if err := os.MkdirAll(currentRoot(workRoot), 0o755); err != nil {
+		t.Fatalf("mkdir current: %v", err)
+	}
+	meeting := canonicalMeetingPath(workRoot, "job1")
+	opus := canonicalOpusPath(workRoot, "job1")
+
+	// Neither artefact: a job with nothing to publish must say so rather than
+	// export an empty site.
+	if _, err := resolvePublishInputPath(workRoot, "job1"); err == nil {
+		t.Fatalf("expected an error when neither artefact exists")
+	} else if !strings.Contains(err.Error(), "job1") {
+		t.Fatalf("error = %v, want it to name the job", err)
+	}
+
+	// Only the .opus (its .meeting was pruned): fall back to it.
+	if err := os.WriteFile(opus, []byte("opus"), 0o644); err != nil {
+		t.Fatalf("write opus: %v", err)
+	}
+	got, err := resolvePublishInputPath(workRoot, "job1")
+	if err != nil || got != opus {
+		t.Fatalf("resolvePublishInputPath() = %q err = %v, want %q", got, err, opus)
+	}
+
+	// Both present: prefer the .meeting. On a rerun the .opus still holds the
+	// previous attempt's audio, because it is packed asynchronously after the
+	// publish is enqueued.
+	if err := os.MkdirAll(meeting, 0o755); err != nil {
+		t.Fatalf("mkdir meeting: %v", err)
+	}
+	got, err = resolvePublishInputPath(workRoot, "job1")
+	if err != nil || got != meeting {
+		t.Fatalf("resolvePublishInputPath() = %q err = %v, want %q", got, err, meeting)
+	}
+}
