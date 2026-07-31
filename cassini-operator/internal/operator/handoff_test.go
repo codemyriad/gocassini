@@ -272,6 +272,12 @@ func TestPublishTimeoutKillsHungPublish(t *testing.T) {
 	}
 	rt.publishJobFn = rt.executePublishCLIWithTimeout
 
+	// Publishing resolves one meeting before it spawns anything (D-459), so the
+	// job needs a publishable bundle for the hang to be reachable at all.
+	if err := os.MkdirAll(canonicalMeetingPath(rt.cfg.WorkRoot, "pub-timeout"), 0o755); err != nil {
+		t.Fatalf("seed meeting bundle: %v", err)
+	}
+
 	insertJob(t, store.db, "pub-timeout", "2026-06-12T10:00:00Z")
 	if err := store.MarkPublishQueued(context.Background(), "pub-timeout", "/tmp/meeting", "/tmp/meeting", nowUTCString()); err != nil {
 		t.Fatalf("MarkPublishQueued() error = %v", err)
