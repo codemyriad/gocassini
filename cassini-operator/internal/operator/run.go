@@ -90,6 +90,10 @@ type Runtime struct {
 	// tests shrink it.
 	fetchTalkRoomName    talkRoomNameFetcher
 	talkRoomNameRetryGap time.Duration
+	// talkAudienceRetryGap paces the recording-audience retry ladder
+	// (talk_participants.go, D-553). Zero means the package default; tests
+	// shrink it.
+	talkAudienceRetryGap time.Duration
 	// uploadToNCFiles mirrors the complete published archive into Nextcloud
 	// Files after a successful publish and on startup (webdav_upload.go, D-529).
 	// Best-effort; nil outside AppAPI deployments. ncFilesSyncMu prevents the
@@ -529,6 +533,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		talkRetryDelays:      talkDeliveryRetryDelays,
 		talkUploadStall:      talkUploadStallGrace,
 		talkRoomNameRetryGap: talkRoomNameRetryGap,
+		talkAudienceRetryGap: talkAudienceRetryGap,
 
 		requeueKick:         make(chan struct{}, 1),
 		publishJobTimeout:   defaultPublishJobTimeout,
