@@ -214,18 +214,23 @@ func (rt *Runtime) applyNCFilesAccessStrict(ctx context.Context, jobID string) e
 	if rt.fetchTalkParticipants == nil {
 		return nil
 	}
-	mappings, err := rt.fetchTalkParticipants(ctx, owner, token)
+	mappings, source, err := rt.resolveRecordingAudience(ctx, jobID, owner, token)
 	if err != nil {
 		return fmt.Errorf("participants lookup: %w", err)
 	}
 	if len(mappings) == 0 {
+		// A real answer, not a failure: the room's attendees are all guests,
+		// email or federated, so there is no local principal to grant. The
+		// recording stays readable by the owner alone — fail-closed, and the
+		// only outcome here that is invisible to the operator, since the
+		// publish still succeeds. See followups.
 		rt.logger.Printf("nc files access: no grantable participants id=%s (guests/federated only) — meeting stays manager-only", jobID)
 		return nil
 	}
 	if err := rt.applyNCFilesAccessFn(ctx, jobID, mappings); err != nil {
 		return err
 	}
-	rt.logger.Printf("nc files access ok id=%s grants=%d root=%s", jobID, len(mappings), ncRecordingsRoot)
+	rt.logger.Printf("nc files access ok id=%s grants=%d source=%s root=%s", jobID, len(mappings), source, ncRecordingsRoot)
 	return nil
 }
 
