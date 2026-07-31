@@ -73,6 +73,34 @@ func TestResolveServeRootForGenericStaticDir(t *testing.T) {
 	}
 }
 
+// D-531: a lightweight site (catalog.json + meetings, no viewer shell and no
+// site manifest) is a valid serve root — the shell is served from the image.
+func TestResolveServeRootForLightweightCatalogDir(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "catalog.json"), []byte(`{"version":"cassini.viewer.catalog.v1","meetings":[]}`), 0o644); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+
+	root, _, err := resolveServeRoot(tmp)
+	if err != nil {
+		t.Fatalf("resolveServeRoot: %v", err)
+	}
+	if root != tmp {
+		t.Fatalf("unexpected root: got=%q want=%q", root, tmp)
+	}
+}
+
+func TestResolveServeRootRejectsDirWithoutIndexOrCatalog(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "readme.txt"), []byte("nope"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	if _, _, err := resolveServeRoot(tmp); err == nil {
+		t.Fatalf("expected error for a dir with neither index.html nor catalog.json")
+	}
+}
+
 func TestRunServeServesFiles(t *testing.T) {
 	tmp := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmp, "index.html"), []byte("<html>ok</html>"), 0o644); err != nil {

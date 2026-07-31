@@ -17,10 +17,15 @@ const defaultSourceDir = resolve(viewerDir, "public", "demo");
 const defaultOutputDir = resolve(viewerDir, "exports", "static-meetings");
 
 export function main(argv = process.argv.slice(2)) {
-  const { outputDir, sourceDir, recordingsBaseUrl } = parseArgs(argv);
+  const { outputDir, sourceDir, recordingsBaseUrl, rebuildViewer } = parseArgs(argv);
   const distIndexPath = join(distDir, "index.html");
 
-  if (!existsSync(distIndexPath)) {
+  // Lightweight by default (D-531): publish scans meetings and writes
+  // catalog.json + meetings/* only. The viewer shell (index.html + assets/) is
+  // served from the Docker image at runtime, so it is embedded into the site
+  // only on explicit --rebuild-viewer (backwards-compat / standalone static
+  // site). Only that opt-in path requires the built viewer dist.
+  if (rebuildViewer && !existsSync(distIndexPath)) {
     throw new Error(`Missing ${distIndexPath}. Run "npm run build" first.`);
   }
   if (!existsSync(sourceDir)) {
@@ -73,9 +78,11 @@ export function main(argv = process.argv.slice(2)) {
   mkdirSync(outputDir, { recursive: true });
   mkdirSync(join(outputDir, "meetings"), { recursive: true });
 
-  const builtIndexHtml = readFileSync(distIndexPath, "utf8");
-  writeFileSync(join(outputDir, "index.html"), rewriteIndexHtmlForCatalog(builtIndexHtml), "utf8");
-  cpSync(join(distDir, "assets"), join(outputDir, "assets"), { recursive: true });
+  if (rebuildViewer) {
+    const builtIndexHtml = readFileSync(distIndexPath, "utf8");
+    writeFileSync(join(outputDir, "index.html"), rewriteIndexHtmlForCatalog(builtIndexHtml), "utf8");
+    cpSync(join(distDir, "assets"), join(outputDir, "assets"), { recursive: true });
+  }
 
   const meetings = selected.map(({ meetingId, sourcePath, sourceType }) =>
     exportMeeting({
@@ -93,7 +100,9 @@ export function main(argv = process.argv.slice(2)) {
     "utf8",
   );
 
-  console.log(`viewer index -> ${join(outputDir, "index.html")}`);
+  if (rebuildViewer) {
+    console.log(`viewer index -> ${join(outputDir, "index.html")}`);
+  }
   console.log(`viewer catalog -> ${join(outputDir, "catalog.json")}`);
   for (const meeting of meetings) {
     const meetingRef = meeting.audioPath ? `${meeting.id}.opus` : meeting.id;
@@ -105,6 +114,7 @@ export function parseArgs(argv) {
   let outputDir = defaultOutputDir;
   let sourceDir = defaultSourceDir;
   let recordingsBaseUrl = null;
+  let rebuildViewer = false;
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === "--output-dir") {
       const next = argv[index + 1];
@@ -131,9 +141,16 @@ export function parseArgs(argv) {
       }
       recordingsBaseUrl = next.endsWith("/") ? next : `${next}/`;
       index += 1;
+      continue;
+    }
+    // Value-less: embed the built viewer shell (index.html + assets/) into the
+    // output. Off by default — publish is lightweight (catalog + meetings only)
+    // and the viewer is served from the Docker image (D-531).
+    if (argv[index] === "--rebuild-viewer") {
+      rebuildViewer = true;
     }
   }
-  return { outputDir, sourceDir, recordingsBaseUrl };
+  return { outputDir, sourceDir, recordingsBaseUrl, rebuildViewer };
 }
 
 export function rewriteIndexHtmlForCatalog(indexHtml) {

@@ -137,13 +137,14 @@ From either source, export a ready-to-serve catalog with:
   --output-dir /tmp/static-meetings
 ```
 
-This writes one static app plus a runtime meeting catalog:
+By default the export is **lightweight** (D-531): it writes the runtime meeting
+catalog and per-meeting artifacts only — the viewer shell (`index.html` +
+`assets/`) is served separately (from the Docker image in a deployment), so no
+viewer `dist` is needed:
 
 ```text
 exports/static-meetings/
-  index.html
   catalog.json
-  assets/...
   meetings/
     daily-meeting--2026-03-04--12-36-53/
       meeting.opus
@@ -151,6 +152,18 @@ exports/static-meetings/
       transcript.readable.v1.json
       captions.vtt (optional)
       ...
+```
+
+Add `--rebuild-viewer` to also embed the viewer shell for a self-contained,
+standalone-servable static site (this path requires the built viewer `dist`, and
+builds it on demand):
+
+```text
+exports/static-meetings/
+  index.html      # from the viewer build
+  assets/...      # from the viewer build
+  catalog.json
+  meetings/...
 ```
 
 Portable `.opus` inputs are decoded in the exporter and turned into the same

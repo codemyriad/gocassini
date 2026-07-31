@@ -17,7 +17,7 @@
     "build": "vite build",
     "build:embedded": "vite build --config vite.embedded.config.ts && node ./scripts/assert-embedded-single-bundle.mjs",
     "build:all": "npm run build && npm run build:embedded",
-    "export:meetings": "npm run build && node ./scripts/export-static-meetings.mjs",
+    "export:meetings": "npm run build && node ./scripts/export-static-meetings.mjs --rebuild-viewer",
     "export:portable-runtime": "npm run build && node ./scripts/export-runtime-portable-site.mjs",
     "materialize:display": "node ./scripts/materialize-display-transcripts.mjs",
     "merge:sites": "node ./scripts/merge-published-sites.mjs",

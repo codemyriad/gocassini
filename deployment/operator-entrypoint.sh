@@ -15,7 +15,10 @@ mkdir -p \
   /var/lib/cassini-operator/tmp \
   "$SITE_ROOT"
 
-if [[ ! -f "$SITE_ROOT/index.html" && -f "$SITE_PARENT/index.html" ]]; then
+# Seeded-site sentinel is catalog.json, not index.html (D-531): a lightweight
+# publish writes catalog.json + meetings/ but no viewer shell, so gating on
+# index.html would treat a real published site as unseeded and wipe it below.
+if [[ ! -f "$SITE_ROOT/catalog.json" && -f "$SITE_PARENT/catalog.json" ]]; then
   shopt -s dotglob nullglob
   for path in "$SITE_PARENT"/*; do
     name="$(basename "$path")"
@@ -29,7 +32,7 @@ if [[ ! -f "$SITE_ROOT/index.html" && -f "$SITE_PARENT/index.html" ]]; then
   shopt -u dotglob nullglob
 fi
 
-if [[ ! -f "$SITE_ROOT/index.html" ]]; then
+if [[ ! -f "$SITE_ROOT/catalog.json" ]]; then
   rm -rf "$SITE_ROOT"/*
   cp /opt/cassini/cassini-viewer/dist/index.html "$SITE_ROOT/index.html"
   cp -R /opt/cassini/cassini-viewer/dist/assets "$SITE_ROOT/assets"

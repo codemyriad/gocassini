@@ -124,9 +124,11 @@ Before starting the operator process, the operator container's entrypoint prepar
 1. ensures the operator state directories exist;
 2. ensures the published-site directory exists;
 3. migrates an older flat site layout into `published/` when necessary;
-4. seeds an initial empty live site if `published/index.html` is missing.
+4. seeds an initial empty live site if `published/catalog.json` is missing.
 
 The seeded site is minimal but complete — `index.html`, `assets/`, an empty `catalog.json`, and a site-level `cassini.json` — so the viewer starts and serves an empty catalog before any meeting has been published.
+
+The seeded-site check uses `catalog.json` (not `index.html`) as its sentinel: `cassini publish` is lightweight by default and writes `catalog.json` + `meetings/` without a viewer shell, so gating on `index.html` would treat a real published site as unseeded and wipe it. In this standalone compose deployment the sibling `cassini-viewer` (nginx) serves the shell from the shared volume, so the operator image sets `CASSINI_PUBLISH_REBUILD_VIEWER=1` to keep publish self-contained (shell embedded). The Nextcloud ExApp image leaves this unset and serves the shell from the image instead (`CASSINI_VIEWER_DIST`).
 
 ## Bind-mount override
 
