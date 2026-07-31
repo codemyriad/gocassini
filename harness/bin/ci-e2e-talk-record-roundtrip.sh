@@ -280,6 +280,11 @@ if [[ "$IMAGE_REF" == *cuda* || "${TALK_E2E_USE_GPU:-0}" == "1" ]]; then
   log "GPU mode: passing --gpus all and CASSINI_STT_DEVICE=cuda"
 fi
 
+# CASSINI_PUBLISH_SINK=local below: this harness registers only an AppAPI
+# *daemon*, never the app, so the self-generated APP_SECRET is unknown to
+# Nextcloud and every act-as-user WebDAV call 401s. It is a Talk-protocol
+# test rather than a deployment, so it says so explicitly instead of letting
+# the installed-app default aim it at Nextcloud Files (D-549).
 docker run -d \
   --name "$CONTAINER_NAME" \
   --network host \
@@ -299,6 +304,7 @@ docker run -d \
   -e "CASSINI_OPERATOR_BIND_ADDR=0.0.0.0:${OPERATOR_HOST_PORT}" \
   -e "CASSINI_OPERATOR_BASE_PATH=/operator" \
   -e "CASSINI_APPAPI_REQUIRED=true" \
+  -e "CASSINI_PUBLISH_SINK=local" \
   "${STT_DEVICE_ENV[@]}" \
   --entrypoint /usr/local/bin/cassini-operator \
   "$IMAGE_REF" \

@@ -202,6 +202,24 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	runtime.uploadToNCFiles = exappCfg.ncFilesUploader(logger)
 	runtime.fetchTalkParticipants = exappCfg.talkParticipantsFetcher()
 	runtime.applyNCFilesAccessFn = exappCfg.ncFilesAccessApplier(logger)
+
+	// Resolve the publish destination. An explicit name always wins; an unset
+	// one is resolved from the deployment shape, and in an ExApp that must be
+	// Nextcloud Files — defaulting an ExApp to `local` would silently keep
+	// recordings on the app's own volume, which is the exact failure D-549
+	// exists to prevent. Non-ExApp deployments keep the local site.
+	sinkName := cfg.PublishSink
+	if sinkName == "" {
+		sinkName = defaultPublishSinkFor(exappCfg)
+	}
+	sink, err := newPublishSinkFor(sinkName, cfg, exappCfg, runtime, logger)
+	if err != nil {
+		fmt.Fprintf(stderr, "publish sink: %v\n", err)
+		return 1
+	}
+	runtime.publishSink = sink
+	logger.Printf("publish_sink -> %s", sink.Name())
+
 	if runtime.uploadToNCFiles != nil {
 		// During AppAPI registration, outbound callbacks are rejected until the
 		// /enabled?enabled=1 lifecycle edge. Start convergence from that edge,
@@ -248,7 +266,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("db -> %s", cfg.DBPath)
 	logger.Printf("work_root -> %s", cfg.WorkRoot)
 	logger.Printf("site_root -> %s", cfg.SiteRoot)
-	logger.Printf("publish_sink -> %s", publishSinkNameOrDefault(cfg.PublishSink))
 	if persistRoot := persistentStorageRoot(); persistRoot != "" {
 		logger.Printf("app_persistent_storage -> %s", persistRoot)
 	}

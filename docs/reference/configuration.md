@@ -47,7 +47,7 @@ The operator supports these main flags:
 | `--db` | SQLite DB path |
 | `--work-root` | per-job artifact root |
 | `--site-root` | live published site root |
-| `--sink` | where published meetings are delivered (`local`; default `local`) |
+| `--sink` | where published meetings are delivered (`local` or `nextcloud-files`; an installed ExApp defaults to `nextcloud-files`, otherwise `local`) |
 | `--cassini-bin` | Cassini CLI binary path |
 | `--max-record-workers` | recording slot count |
 | `--max-build-workers` | build worker count |
@@ -62,7 +62,7 @@ Important env vars:
 | `CASSINI_OPERATOR_WORK_ROOT` | work-root path |
 | `WORK_ROOT` | fallback work-root env |
 | `CASSINI_OPERATOR_SITE_ROOT` | site-root path |
-| `CASSINI_PUBLISH_SINK` | publish sink name; `--sink` wins over it |
+| `CASSINI_PUBLISH_SINK` | publish sink name; `--sink` wins over it. Declared in `appinfo/info.xml` so AppAPI injects it |
 | `SITE_ROOT` | fallback site-root env |
 | `CASSINI_BIN` | Cassini CLI binary path |
 | `CASSINI_MAX_RECORD_WORKERS` | record worker count |
