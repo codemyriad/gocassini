@@ -221,7 +221,7 @@ func TestNCFilesUploaderProtectsCatalogWhenAccessControlEnabled(t *testing.T) {
 			for _, want := range []string{
 				"recording-viewers",
 				"<nc:acl-permissions>0</nc:acl-permissions>",
-				"<nc:acl-mapping-id>admin</nc:acl-mapping-id>",
+				"<nc:acl-mapping-id>" + ncRecordingsOwner + "</nc:acl-mapping-id>",
 				"<nc:acl-permissions>31</nc:acl-permissions>",
 			} {
 				if !strings.Contains(body, want) {

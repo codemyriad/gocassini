@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,11 +54,31 @@ const (
 	// member so it can create/update recordings; under the default-deny ACL floor
 	// a write mount alone is insufficient (see the root container ACL below), but
 	// it is still required — ACL-management permission does not grant WebDAV
-	// create/write. Hard-coded to "admin" for the first pass, alongside the
-	// "admin" owner user (D-532 introduces a dedicated cassini account/group).
-	ncRecordingsOwnerGroup = "admin"
+	// create/write.
+	ncRecordingsOwnerGroup = ncRecordingsOwner
+
+	// Two identities, deliberately distinct (D-532):
+	//
+	//	ownership     ncRecordingsOwner ("cassini")   owns the tree, writes the
+	//	                                              recordings, manages their ACLs
+	//	provisioning  the instance administrator      creates groups/folders/users
+	//
+	// They cannot be the same principal. Every provisioning route below —
+	// groupfolders management, OCS user and group provisioning — requires admin
+	// rights, which a service account must not have: it would make the identity
+	// that holds every recording also able to reconfigure the instance.
+	//
+	// The recordings account is created by the provisioner, so it exists before
+	// anything acts as it.
 
 	ncProvisionTimeout = 90 * time.Second
+
+	// defaultNextcloudAdminUser is the conventional administrator id, used only
+	// as a fallback when one cannot be discovered.
+	defaultNextcloudAdminUser = "admin"
+	// envNCAdminUser pins the provisioning identity on instances where
+	// discovery is wrong or undesirable.
+	envNCAdminUser = "CASSINI_NC_ADMIN_USER"
 
 	// viewerReconcile* bound the "keep every user in the viewer group" sweep. The
 	// enabled-edge reconcile covers everyone present at install; the periodic one
@@ -71,6 +93,11 @@ const (
 // reconcileTickerOnce guards the single background reconcile goroutine: the
 // enabled edge can fire more than once (re-enable, restart), but only one ticker
 // should run per process.
+// resolvedProvisioningUser caches the discovered administrator for the process
+// lifetime; an instance's administrator does not change under a running
+// container.
+var resolvedProvisioningUser atomic.Pointer[any]
+
 var reconcileTickerOnce sync.Once
 
 // provisionMu serializes provisioning: EnabledCallback is dispatched in a
@@ -103,6 +130,121 @@ func firstPathSegment(p string) string {
 // segment of the canonical recordings root.
 var ncRecordingsMount = firstPathSegment(ncRecordingsRoot)
 
+// provisioningUser is the identity that performs privileged Nextcloud setup.
+//
+// AppAPI lets an ExApp act as any user, so this is a choice rather than a
+// credential: the operator acts as an administrator for the handful of calls
+// that genuinely need admin rights, and as the recordings owner for everything
+// else. Resolved once per process and cached — an instance's administrator does
+// not change while the container runs.
+//
+// "admin" is the fallback, not the assumption: it is only conventionally the
+// administrator's user id, and an instance whose admin is called something else
+// would otherwise have every provisioning call rejected.
+func (c ExAppConfig) provisioningUser() string {
+	if cached := resolvedProvisioningUser.Load(); cached != nil {
+		if name, _ := (*cached).(string); name != "" {
+			return name
+		}
+	}
+	return c.provisioningUserFallback()
+}
+
+func (c ExAppConfig) provisioningUserFallback() string {
+	if configured := strings.TrimSpace(os.Getenv(envNCAdminUser)); configured != "" {
+		return configured
+	}
+	return defaultNextcloudAdminUser
+}
+
+// resolveProvisioningUser discovers an administrator and caches it. Called at
+// the start of provisioning, before any privileged request.
+func (c ExAppConfig) resolveProvisioningUser(ctx context.Context, client *http.Client, logger *log.Logger) {
+	if strings.TrimSpace(os.Getenv(envNCAdminUser)) != "" {
+		return // explicitly configured; do not second-guess it
+	}
+	admins, err := c.groupMembers(ctx, client, "admin")
+	if err != nil || len(admins) == 0 {
+		// Fall back to the conventional name. If that is wrong the provisioning
+		// calls fail loudly rather than silently doing nothing.
+		if logger != nil && err != nil {
+			logger.Printf("nc provision: admin lookup failed (%v); acting as %q", err, c.provisioningUserFallback())
+		}
+		return
+	}
+	chosen := admins[0]
+	for _, candidate := range admins {
+		if candidate == defaultNextcloudAdminUser {
+			chosen = candidate // prefer the conventional one when present
+			break
+		}
+	}
+	var boxed any = chosen
+	resolvedProvisioningUser.Store(&boxed)
+	if logger != nil {
+		logger.Printf("nc provision: acting as administrator %q", chosen)
+	}
+}
+
+// ensureRecordingsOwnerAccount creates the recordings service account if it is
+// absent, and puts it in the owner group so it gets a write-capable mount of
+// the group folder.
+//
+// Idempotent: an existing account is left exactly as it is — never re-created,
+// never re-passworded, never disabled. OCS reports "user already exists" as
+// statuscode 102, which is success here.
+//
+// The generated password is never used again and is deliberately not logged or
+// persisted: the operator authenticates as this account through AppAPI, not
+// with a password. OCS simply requires one at creation.
+func (c ExAppConfig) ensureRecordingsOwnerAccount(ctx context.Context, client *http.Client, logger *log.Logger) error {
+	if err := c.ensureGroup(ctx, client, ncRecordingsOwnerGroup); err != nil {
+		return fmt.Errorf("ensure owner group %q: %w", ncRecordingsOwnerGroup, err)
+	}
+
+	password, err := randomPassword()
+	if err != nil {
+		return fmt.Errorf("generate service account password: %w", err)
+	}
+	status, body, err := c.apiPostForm(ctx, client, c.ocsURL("/cloud/users"), url.Values{
+		"userid":      {ncRecordingsOwner},
+		"password":    {password},
+		"displayname": {"Cassini recordings"},
+		"groups":      {ncRecordingsOwnerGroup},
+	})
+	if err != nil {
+		return fmt.Errorf("create service account: %w", err)
+	}
+	switch {
+	case status/100 == 2 && ocsStatusCode(body) != 102:
+		if logger != nil {
+			logger.Printf("nc provision: created recordings service account %q", ncRecordingsOwner)
+		}
+	case ocsStatusCode(body) == 102 || strings.Contains(strings.ToLower(string(body)), "already exists"):
+		// Already there from a previous enable. Membership is still ensured
+		// below, because the group could have been created after the account.
+	default:
+		return fmt.Errorf("create service account -> %d: %s", status, snippet(body))
+	}
+
+	if err := c.addUserToGroup(ctx, client, ncRecordingsOwner, ncRecordingsOwnerGroup); err != nil {
+		return fmt.Errorf("add %q to %q: %w", ncRecordingsOwner, ncRecordingsOwnerGroup, err)
+	}
+	return nil
+}
+
+// randomPassword generates a password that satisfies Nextcloud's policy and is
+// then discarded.
+func randomPassword() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	// Mixed case, digits and a symbol, so a strict password policy cannot
+	// reject the account we are about to depend on.
+	return "Cw1!" + base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
 // provisionNCFilesAccess creates (idempotently) the group folder + groups + ACL
 // topology the access-control model needs, then reconciles the viewer group.
 // No-op unless AppAPI is active and access control is enabled. Best-effort:
@@ -115,6 +257,16 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	provisionMu.Lock()
 	defer provisionMu.Unlock()
 	client := &http.Client{Timeout: ncProvisionTimeout}
+
+	// 0. Establish both identities before anything uses either: discover an
+	//    administrator to act as, then make sure the recordings account exists.
+	//    Ordering is load-bearing — every step below writes as the owner, so
+	//    creating it later would point those calls at a non-existent user.
+	c.resolveProvisioningUser(ctx, client, logger)
+	if err := c.ensureRecordingsOwnerAccount(ctx, client, logger); err != nil {
+		logger.Printf("nc provision: ensure recordings account %q failed: %v — access control setup incomplete", ncRecordingsOwner, err)
+		return
+	}
 
 	// 1. The viewer group: the mount group whose members can traverse the
 	//    directory. Everyone is reconciled into it (step 8).
@@ -587,7 +739,7 @@ func (c ExAppConfig) apiPostForm(ctx context.Context, client *http.Client, rawUR
 // request marker. OCS-APIRequest is what lets the Group Folders frontpage routes
 // skip CSRF and answer JSON; the provisioning API requires it too.
 func (c ExAppConfig) setAppAPIProvisionHeaders(req *http.Request) {
-	auth := base64.StdEncoding.EncodeToString([]byte(ncRecordingsOwner + ":" + c.AppSecret))
+	auth := base64.StdEncoding.EncodeToString([]byte(c.provisioningUser() + ":" + c.AppSecret))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("OCS-APIRequest", "true")
 	req.Header.Set("AUTHORIZATION-APP-API", auth)

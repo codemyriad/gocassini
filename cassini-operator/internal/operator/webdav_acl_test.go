@@ -21,7 +21,7 @@ func TestACLListXML(t *testing.T) {
 	for _, want := range []string{
 		`xmlns:nc="http://nextcloud.org/ns"`,
 		`<nc:acl-mapping-type>group</nc:acl-mapping-type><nc:acl-mapping-id>recording-viewers</nc:acl-mapping-id><nc:acl-mask>31</nc:acl-mask><nc:acl-permissions>0</nc:acl-permissions>`,
-		`<nc:acl-mapping-type>user</nc:acl-mapping-type><nc:acl-mapping-id>admin</nc:acl-mapping-id><nc:acl-mask>31</nc:acl-mask><nc:acl-permissions>31</nc:acl-permissions>`,
+		`<nc:acl-mapping-type>user</nc:acl-mapping-type><nc:acl-mapping-id>` + ncRecordingsOwner + `</nc:acl-mapping-id><nc:acl-mask>31</nc:acl-mask><nc:acl-permissions>31</nc:acl-permissions>`,
 		`<nc:acl-mapping-type>user</nc:acl-mapping-type><nc:acl-mapping-id>alice</nc:acl-mapping-id>`,
 		`<nc:acl-mask>31</nc:acl-mask><nc:acl-permissions>1</nc:acl-permissions>`,
 		`<nc:acl-mapping-type>group</nc:acl-mapping-type>`,
@@ -124,11 +124,19 @@ func TestNCFilesAccessApplierWritesOpusACLOnly(t *testing.T) {
 	}
 
 	base := "/remote.php/dav/files/" + ncRecordingsOwner + "/" + ncRecordingsRoot + "/meetings/"
+	// Two identities, and which one is used where is the point (D-532): the
+	// recording's own files are written as the service account that owns them,
+	// while group membership is instance administration and needs the admin.
 	wantAuth := base64.StdEncoding.EncodeToString([]byte(ncRecordingsOwner + ":sekret"))
+	wantAdminAuth := base64.StdEncoding.EncodeToString([]byte(defaultNextcloudAdminUser + ":sekret"))
 	var opusACL *davRequest
 	for i := range got {
-		if got[i].auth != wantAuth {
-			t.Errorf("auth = %q, want owner %q (path %s)", got[i].auth, wantAuth, got[i].path)
+		expected, role := wantAuth, "owner"
+		if strings.Contains(got[i].path, "/ocs/v2.php/cloud/") {
+			expected, role = wantAdminAuth, "administrator"
+		}
+		if got[i].auth != expected {
+			t.Errorf("auth = %q, want %s %q (path %s)", got[i].auth, role, expected, got[i].path)
 		}
 		if strings.HasSuffix(got[i].path, ".manifest.json") {
 			t.Errorf("unexpected external manifest request: %s %s", got[i].method, got[i].path)

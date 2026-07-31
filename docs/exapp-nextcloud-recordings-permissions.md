@@ -28,6 +28,20 @@ meeting.
 > recoverable by a rerun, over-sharing is not. This does not create a public
 > link: the viewer is still sign-in only.
 
+> **Who owns the recordings.** The canonical tree is owned by a dedicated
+> `cassini` service account, created automatically when the app is enabled. It
+> is the only identity that writes recordings and manages their permissions.
+> Instance setup — creating the group folder, the groups and that account —
+> is done as an administrator instead, discovered automatically (override with
+> `CASSINI_NC_ADMIN_USER` if detection is wrong). The two are deliberately
+> separate: the account holding every recording should not also be able to
+> reconfigure the instance.
+>
+> The recordings live in a group folder, which is shared storage rather than
+> anyone's home directory, so this owner names the identity Cassini acts as —
+> not where the files sit. Upgrading from an earlier version therefore needs no
+> data migration; existing recordings stay exactly where they are.
+
 > **How the audience is resolved.** The attendee list is read from Talk once, at
 > publish time, and frozen onto the recording. Because that lookup now gates the
 > publish, it retries three times as the recording's starter and then falls back
