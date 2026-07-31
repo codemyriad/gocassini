@@ -128,7 +128,12 @@ type talkRoomState struct {
 	// RoomName is the Talk conversation's display name, resolved
 	// asynchronously after start (see talk_room_name.go). Empty when the
 	// lookup is disabled or failed; consumers must treat it as optional.
-	RoomName   string
+	RoomName string
+	// RoomPublic reports that the conversation is public (anyone with the link
+	// can join), resolved alongside RoomName and frozen at record time. False
+	// when the lookup failed — an unknown room is treated as non-public, so a
+	// failed lookup can only ever over-restrict (D-552).
+	RoomPublic bool
 	Status     int
 	StartActor *talkActorData
 	StopActor  *talkActorData
@@ -610,6 +615,7 @@ type talkJobBinding struct {
 	RoomToken  string         `json:"room_token"`
 	Owner      string         `json:"owner"`
 	RoomName   string         `json:"room_name,omitempty"`
+	RoomPublic bool           `json:"room_public,omitempty"`
 	Status     int            `json:"status,omitempty"`
 	StartActor *talkActorData `json:"start_actor,omitempty"`
 }
@@ -620,6 +626,7 @@ func encodeTalkBinding(state *talkRoomState) (string, error) {
 		RoomToken:  state.RoomToken,
 		Owner:      state.Owner,
 		RoomName:   state.RoomName,
+		RoomPublic: state.RoomPublic,
 		Status:     state.Status,
 		StartActor: state.StartActor,
 	})
@@ -642,6 +649,7 @@ func decodeTalkBinding(raw string) (talkRoomState, error) {
 		RoomToken:  binding.RoomToken,
 		Owner:      binding.Owner,
 		RoomName:   binding.RoomName,
+		RoomPublic: binding.RoomPublic,
 		Status:     binding.Status,
 		StartActor: binding.StartActor,
 	}, nil

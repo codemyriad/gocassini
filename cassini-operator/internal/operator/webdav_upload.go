@@ -167,7 +167,7 @@ func (c ExAppConfig) ncFilesUploader(logger *log.Logger) ncFilesUploader {
 				// A new file inherits the broad container traversal grant. Deny
 				// that group before catalog.json can advertise the file; the
 				// post-publish participant ACL replaces this owner-only baseline.
-				if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, opusRemote, recordingACLRules(nil)); err != nil {
+				if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, opusRemote, recordingACLRules(nil, false)); err != nil {
 					return fmt.Errorf("protect new opus %s: %w", entry.Name(), err)
 				}
 			}
