@@ -1040,7 +1040,7 @@ jobs:
         # MIN_CAPTURED_RUN_WORDS floor. Capturing the published transcript
         # JSON and the recorder stdout lets a future reviewer tell a genuine
         # "always got 1 word" regression from a sporadic flake without
-        # re-running CI. transcript.words.v1.json is pulled in phase 8 (so it
+        # re-running CI. transcript.words.v1.json is pulled in phase 9 (so it
         # exists for the content-gate failure we care about) and cassini-exapp.log
         # is written by the harness cleanup trap on every exit.
         uses: actions/upload-artifact@v4

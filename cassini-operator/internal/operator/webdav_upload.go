@@ -22,10 +22,18 @@ import (
 // the browsable archive into Nextcloud Files over WebDAV — the clean portable `.opus` per meeting plus the
 // `catalog.json` index — so the artefacts live in NC Files (quota-counted,
 // backed up, natively shareable) instead of only the ExApp's private volume,
-// and the viewer can be fed from there. Talk's recording `/store` endpoint is
-// intentionally NOT used: its format allow-list rejects `.opus` (it accepts
-// only ogg/ogv/mp4/webm/mkv), whereas a plain WebDAV PUT accepts any bytes and
-// Nextcloud maps `.opus` to audio/ogg for playback.
+// and the viewer can be fed from there.
+//
+// POLICY: Cassini never uses Talk's recording `/store` endpoint, for any file
+// (D-551). A meeting reaches Nextcloud exactly once, as the published `.opus`
+// under the canonical recordings root — because that tree is the only one
+// covered by the per-file ACL model the read proxy enforces (D-521). Anything
+// filed into a user's Talk attachment folder would be an unmanaged parallel
+// copy of the same meeting, outside the catalog and outside access control.
+// Talk receives status callbacks only. (A secondary consequence: `/store`'s
+// format allow-list rejects `.opus` anyway — it accepts only
+// ogg/ogv/mp4/webm/mkv — whereas a plain WebDAV PUT accepts any bytes and
+// Nextcloud maps `.opus` to audio/ogg for playback.)
 //
 // FIRST PASS (D-529) scope, deliberately minimal:
 //   - owner = the Nextcloud admin (hard-coded). A dedicated `cassini` service
