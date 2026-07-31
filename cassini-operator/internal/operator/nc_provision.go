@@ -245,13 +245,21 @@ func randomPassword() (string, error) {
 	return "Cw1!" + base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// provisionNCFilesAccess creates (idempotently) the group folder + groups + ACL
-// topology the access-control model needs, then reconciles the viewer group.
-// No-op unless AppAPI is active and access control is enabled. Best-effort:
-// every failure is logged and never propagated. Runs on the enabled edge (in the
-// EnabledCallback goroutine), before the archive startup sync.
+// provisionNCFilesAccess establishes the two identities Cassini acts as, and
+// then — only when access control is enabled — creates (idempotently) the group
+// folder + groups + ACL topology the access-control model needs and reconciles
+// the viewer group. No-op unless AppAPI is active. Best-effort: every failure is
+// logged and never propagated. Runs on the enabled edge (in the EnabledCallback
+// goroutine), before the archive startup sync.
+//
+// The identity tier runs in BOTH modes, and that split is load-bearing. The
+// owner writes every archive object and is the read-proxy identity whether or
+// not access control is on, but the topology below is meaningless without it.
+// Gating the account creation on the flag would leave a flag-off install
+// delivering as a user that was never created — every act-as-user call 401s and,
+// under the strict nextcloud-files sink, every publish fails.
 func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Logger) {
-	if !c.appAPIActive() || !c.AccessControl {
+	if !c.appAPIActive() {
 		return
 	}
 	provisionMu.Lock()
@@ -264,7 +272,10 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	//    creating it later would point those calls at a non-existent user.
 	c.resolveProvisioningUser(ctx, client, logger)
 	if err := c.ensureRecordingsOwnerAccount(ctx, client, logger); err != nil {
-		logger.Printf("nc provision: ensure recordings account %q failed: %v — access control setup incomplete", ncRecordingsOwner, err)
+		logger.Printf("nc provision: ensure recordings account %q failed: %v — recordings setup incomplete", ncRecordingsOwner, err)
+		return
+	}
+	if !c.AccessControl {
 		return
 	}
 

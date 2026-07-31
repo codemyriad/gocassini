@@ -300,13 +300,17 @@ func TestEnsureParticipantsInViewerGroupAddsOnlyUsers(t *testing.T) {
 	}
 }
 
-func TestProvisionNoopWhenDisabled(t *testing.T) {
+func TestProvisionNoopWithoutAppAPI(t *testing.T) {
+	// Outside an AppAPI deployment there is no act-as-user credential to
+	// provision with, so the whole provisioner — identities included — stays
+	// silent rather than issuing calls that can only 401.
 	mock := &provisionMock{folders: `[]`, members: `[]`, users: `[]`}
 	srv := httptest.NewServer(mock.handler(t))
 	defer srv.Close()
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = false // disabled → provisioner must not touch Nextcloud
+	cfg.AccessControl = true
+	cfg.AppSecret = "" // not an ExApp
 	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
 
 	cfg.mu(t, mock)
@@ -421,5 +425,41 @@ func TestProvisionAcceptsAnExistingServiceAccount(t *testing.T) {
 	// the account.
 	if _, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users/"+ncRecordingsOwner+"/groups"); !ok {
 		t.Fatalf("existing account was not re-added to the owner group")
+	}
+}
+
+func TestProvisionCreatesTheServiceAccountWithAccessControlOff(t *testing.T) {
+	// The owner writes every archive object and is the read-proxy identity in
+	// BOTH modes — only the ACL topology is conditional. If account creation
+	// were gated on the flag, a flag-off install would deliver as a user that
+	// does not exist: every act-as-user call 401s, and under the strict
+	// nextcloud-files sink that fails every publish.
+	mock := &provisionMock{
+		folders: `[]`,
+		members: `["admin"]`,
+		users:   `["admin"]`,
+	}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+	resolvedProvisioningUser.Store(nil)
+	t.Cleanup(func() { resolvedProvisioningUser.Store(nil) })
+
+	cfg := testExAppConfig(srv.URL)
+	cfg.AccessControl = false
+	cfg.provisionNCFilesAccess(context.Background(), log.New(ioDiscard{}, "", 0))
+
+	if _, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users"); !ok {
+		t.Fatalf("the service account was not created with access control off")
+	}
+	if _, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users/"+ncRecordingsOwner+"/groups"); !ok {
+		t.Fatalf("the service account was not added to the owner group")
+	}
+	// ...and nothing beyond the identities. The group folder, its ACL floor and
+	// the viewer-group reconcile all belong to the access-control tier.
+	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); ok {
+		t.Fatalf("access-control topology was provisioned with the flag off")
+	}
+	if n := mock.count(http.MethodGet, "/cloud/users"); n != 0 {
+		t.Fatalf("viewer-group reconcile ran with the flag off (%d user listings)", n)
 	}
 }
