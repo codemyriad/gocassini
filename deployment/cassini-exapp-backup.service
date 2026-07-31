@@ -1,0 +1,14 @@
+[Unit]
+Description=Back up the production Cassini ExApp archive to Cloudflare R2 (D-568)
+Documentation=https://linear.app/code-myriad/issue/D-568
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HOME=/root
+EnvironmentFile=-/etc/default/cassini-exapp-backup
+ExecStart=/usr/local/sbin/cassini-exapp-backup
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=6h

@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily off-host backup of the Cassini ExApp archive (D-568)
+Documentation=https://linear.app/code-myriad/issue/D-568
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=cassini-exapp-backup.service
+
+[Install]
+WantedBy=timers.target
