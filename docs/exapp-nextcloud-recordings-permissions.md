@@ -2,7 +2,9 @@
 
 How **per-participant access control** for Cassini recordings works and how to
 operate it. With it enabled, a recording is visible in the Cassini viewer **only
-to the people who were in the Talk room when it was published** — access is
+to the people who had access to the Talk room when it was published** — that is
+everyone on the room's attendee list, including users who were invited but never
+joined the call, and not only those present during it — access is
 governed entirely by Nextcloud's own file permissions, and admins change it with
 Nextcloud's normal sharing/ACL tools. With it **off** (the production default),
 recordings behave as before: any authenticated user can browse and play every
@@ -15,6 +17,16 @@ meeting.
 > procedure). The one environmental prerequisite is the **Group folders / Team
 > folders app**, which the operator cannot install for itself. See
 > [Prerequisites](#prerequisites) and [Automatic setup](#automatic-setup).
+
+> **How the audience is resolved.** The attendee list is read from Talk once, at
+> publish time, and frozen onto the recording. Because that lookup now gates the
+> publish, it retries three times as the recording's starter and then falls back
+> to asking as the recordings owner — which is the only thing that helps when the
+> starter has left the room, been removed or been disabled between recording and
+> publishing. If every attempt fails the publish fails, with the reason on the
+> job; a rerun re-attempts it. A room whose attendees are all guests, email or
+> federated users has no local account to grant, so the recording stays readable
+> by the owner alone — that is a successful publish, logged, not a failure.
 
 ## How it works
 

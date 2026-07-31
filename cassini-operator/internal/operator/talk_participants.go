@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -144,4 +145,88 @@ func (rt *Runtime) talkBindingForJob(jobID string) (owner, roomToken string, ok 
 		return "", "", false
 	}
 	return owner, roomToken, true
+}
+
+// Resolving a recording's audience is now load-bearing: the nextcloud-files
+// sink fails the publish when it cannot be determined (D-549). A single
+// un-retried OCS call is too thin a thread to hang a recording on, so the
+// lookup escalates through two tiers before giving up (D-553).
+//
+//	tier 1   as the recording's starter  ×talkAudienceAttempts, with a gap
+//	   │        the room's own moderator; the identity Talk expects
+//	   ▼        (transient 5xx / timeout / network blip retried here)
+//	tier 2   as the recordings owner     ×1
+//	            covers the case tier 1 structurally cannot: the starter left
+//	            the room, was removed, or was disabled between record and
+//	            publish — minutes to hours later, or on a rerun.
+//	   │
+//	   ▼
+//	unresolved → the caller decides; the sink fails the publish.
+const (
+	// talkAudienceAttempts bounds tier 1, mirroring talkRoomNameAttempts.
+	talkAudienceAttempts = 3
+	// talkAudienceRetryGap is the default for Runtime.talkAudienceRetryGap.
+	// Shorter than the room-name gap: a publish is waiting on this, where a
+	// room name is cosmetic and resolved off the critical path.
+	talkAudienceRetryGap = 3 * time.Second
+)
+
+// audienceSourceOwner and audienceSourceStarter name which identity produced
+// the audience, so the log line says how it was obtained rather than only that
+// it was.
+const (
+	audienceSourceStarter = "starter"
+	audienceSourceOwner   = "recordings-owner"
+)
+
+// resolveRecordingAudience returns the grantable principals for a room, the
+// identity that produced them, and an error only when every tier failed.
+//
+// An empty result with a nil error is a real answer, not a failure: a room
+// whose attendees are all guests/email/federated has no local principal to
+// grant. The caller distinguishes that from "we could not find out".
+func (rt *Runtime) resolveRecordingAudience(ctx context.Context, jobID, starter, roomToken string) ([]aclMapping, string, error) {
+	if rt.fetchTalkParticipants == nil {
+		return nil, "", nil
+	}
+
+	var errs []error
+	for attempt := 0; attempt < talkAudienceAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, "", errors.Join(append(errs, ctx.Err())...)
+			case <-rt.ctx.Done():
+				return nil, "", errors.Join(append(errs, rt.ctx.Err())...)
+			case <-time.After(rt.audienceRetryGap()):
+			}
+		}
+		mappings, err := rt.fetchTalkParticipants(ctx, starter, roomToken)
+		if err == nil {
+			return mappings, audienceSourceStarter, nil
+		}
+		errs = append(errs, fmt.Errorf("as %s (attempt %d): %w", starter, attempt+1, err))
+	}
+
+	// Tier 2. Not a retry of the same question — a different identity asking
+	// it, which is the only thing that helps when the starter is no longer a
+	// member. Skipped when they are the same principal.
+	if strings.TrimSpace(starter) != ncRecordingsOwner {
+		rt.logger.Printf("nc files access: participants lookup as %s exhausted id=%s — retrying as %s", starter, jobID, ncRecordingsOwner)
+		mappings, err := rt.fetchTalkParticipants(ctx, ncRecordingsOwner, roomToken)
+		if err == nil {
+			return mappings, audienceSourceOwner, nil
+		}
+		errs = append(errs, fmt.Errorf("as %s: %w", ncRecordingsOwner, err))
+	}
+	return nil, "", errors.Join(errs...)
+}
+
+// audienceRetryGap lets tests shrink the wait without exporting the field's
+// zero value as "no gap" to production.
+func (rt *Runtime) audienceRetryGap() time.Duration {
+	if rt.talkAudienceRetryGap > 0 {
+		return rt.talkAudienceRetryGap
+	}
+	return talkAudienceRetryGap
 }
