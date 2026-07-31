@@ -459,6 +459,7 @@ register_cassini() {
     --env "CASSINI_TALK_RECORDING_SECRET=$CASSINI_TALK_RECORDING_SECRET" \
     --env "CASSINI_TALK_BACKEND_URL=$SANDBOX_PUBLIC_URL" \
     --env "CASSINI_TALK_SIGNALING_INTERNAL_SECRET=$SIGNALING_INTERNAL_SECRET" \
+    --env "CASSINI_PUBLISH_SINK=${CASSINI_PUBLISH_SINK:-nextcloud-files}" \
     --test-deploy-mode \
     --wait-finish
 }

@@ -54,9 +54,13 @@ log "starting bare-container ${IMAGE_REF} as ${APP_ID}@${APP_VERSION} on port ${
 # We're testing the operator's HTTP plane and AppAPI middleware directly;
 # the frpc tunnel is a separate concern verified by the real-Nextcloud
 # follow-up.
+# CASSINI_PUBLISH_SINK=local below: this check sets no NEXTCLOUD_URL, so the
+# nextcloud-files preflight would refuse to start. It exercises the ExApp
+# entrypoint contract, not delivery (D-549).
 docker run -d \
   --name "${CONTAINER_NAME}" \
   -e CASSINI_APPAPI_REQUIRED=true \
+  -e CASSINI_PUBLISH_SINK=local \
   -e CASSINI_OPERATOR_BASE_PATH=/operator \
   -e APP_HOST=0.0.0.0 \
   -e APP_PORT=8080 \

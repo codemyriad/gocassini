@@ -189,32 +189,44 @@ func xmlEscape(b *bytes.Buffer, s string) {
 // changes the already-succeeded publish. No-op unless access control is enabled
 // (applyNCFilesAccessFn nil) and the job is a Talk job with grantable
 // participants.
-func (rt *Runtime) applyNCFilesAccess(ctx context.Context, jobID string) {
+// applyNCFilesAccessStrict freezes the meeting's audience and reports failure,
+// so the nextcloud-files sink can fail the publish (D-549). A recording whose
+// audience could not be written is not a successfully published recording.
+//
+// Two exits stay non-fatal, because neither means "the write failed":
+//
+//   - a non-Talk job has no room to derive an audience from;
+//   - a room whose attendees are all guests/federated has no local principal to
+//     grant, so the meeting stays owner-only. Fail-closed, logged, not an error.
+//
+// A lookup that errors, or an ACL write that errors, IS fatal. That does couple
+// every publish to a live Talk OCS call; the retry/fallback that softens it is
+// D-553.
+func (rt *Runtime) applyNCFilesAccessStrict(ctx context.Context, jobID string) error {
 	if rt.applyNCFilesAccessFn == nil {
-		return
+		return nil
 	}
 	owner, token, ok := rt.talkBindingForJob(jobID)
 	if !ok {
 		rt.logger.Printf("nc files access: skip id=%s (non-Talk job / no room binding)", jobID)
-		return
+		return nil
 	}
 	if rt.fetchTalkParticipants == nil {
-		return
+		return nil
 	}
 	mappings, err := rt.fetchTalkParticipants(ctx, owner, token)
 	if err != nil {
-		rt.logger.Printf("nc files access: participants lookup failed id=%s: %v", jobID, err)
-		return
+		return fmt.Errorf("participants lookup: %w", err)
 	}
 	if len(mappings) == 0 {
 		rt.logger.Printf("nc files access: no grantable participants id=%s (guests/federated only) — meeting stays manager-only", jobID)
-		return
+		return nil
 	}
 	if err := rt.applyNCFilesAccessFn(ctx, jobID, mappings); err != nil {
-		rt.logger.Printf("nc files access apply failed id=%s: %v", jobID, err)
-		return
+		return err
 	}
 	rt.logger.Printf("nc files access ok id=%s grants=%d root=%s", jobID, len(mappings), ncRecordingsRoot)
+	return nil
 }
 
 // serveFilteredCatalog writes the caller a catalog containing only the meetings
