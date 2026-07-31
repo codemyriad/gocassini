@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -102,8 +104,29 @@ func newPublishSink(name string, cfg Config, logger *log.Logger) (publishSink, e
 	}
 }
 
-// localPublishSink promotes the attempt site into the operator's site root —
-// the behaviour publishing has always had on this machine.
+// localPublishSink upserts the attempt site's meetings into the operator's live
+// site root.
+//
+// It used to replace the site root wholesale. That is why publishing cost
+// O(archive): the exporter re-exported every meeting and the promote rewrote
+// every file, so in production 67 meetings took ~7.5 minutes per recording and
+// grew from there (D-459). Upserting writes only what actually changed.
+//
+// Ordering is the crash-safety argument, and it runs in this direction on
+// purpose:
+//
+//  1. assets   copy → <dir>/.<name>.tmp-<jobID> → rename   (the .opus lands)
+//  2. shell    index.html / assets, if the attempt site has them
+//  3. manifest cassini.json lineage
+//  4. catalog  catalog.json, written atomically, LAST
+//
+// A crash before 4 leaves an unreferenced file — invisible and harmless. A
+// crash after 4 has everything the catalog names already on disk. The reverse
+// order would publish a catalog pointing at audio that is not there yet.
+//
+// Every temp is removed if the delivery fails part-way, because these temps
+// live in the *live* site directory now, not a staging tree: a stranded
+// `.x.tmp-y` would be served by the file server and swept by nothing.
 type localPublishSink struct {
 	siteRoot string
 	logger   *log.Logger
@@ -112,14 +135,159 @@ type localPublishSink struct {
 func (s *localPublishSink) Name() string { return publishSinkLocal }
 
 func (s *localPublishSink) Deliver(_ context.Context, d publishDelivery) (string, error) {
-	if err := promoteSiteBundle(d.AttemptSitePath, s.siteRoot, SiteBundleLineage{
+	incoming, ok, err := loadSiteCatalog(d.AttemptSitePath)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("attempt site %s has no catalog.json", d.AttemptSitePath)
+	}
+	existing, _, err := loadSiteCatalog(s.siteRoot)
+	if err != nil {
+		return "", err
+	}
+	merged, err := upsertSiteCatalog(existing, incoming)
+	if err != nil {
+		return "", err
+	}
+
+	if err := os.MkdirAll(s.siteRoot, 0o755); err != nil {
+		return "", fmt.Errorf("create site root: %w", err)
+	}
+
+	var pending []string
+	defer func() {
+		for _, tmp := range pending {
+			_ = os.RemoveAll(tmp)
+		}
+	}()
+
+	for _, entry := range incoming.Meetings {
+		assets, err := catalogEntryAssets(entry)
+		if err != nil {
+			return "", err
+		}
+		for _, asset := range assets {
+			tmp, err := s.stageAsset(d, asset)
+			if err != nil {
+				return "", err
+			}
+			if tmp == "" {
+				continue
+			}
+			pending = append(pending, tmp)
+		}
+	}
+	// Commit the staged assets. Rename is atomic within the directory, and the
+	// site root and the work root can be different mounts, so the temp has to
+	// live beside its destination rather than anywhere in the attempt site.
+	for _, tmp := range pending {
+		if err := os.Rename(tmp, commitPathForStagedAsset(tmp)); err != nil {
+			return "", fmt.Errorf("commit published asset: %w", err)
+		}
+	}
+	pending = nil
+
+	if err := s.refreshSiteShell(d.AttemptSitePath); err != nil {
+		return "", err
+	}
+	if err := UpdateLiveSiteManifest(s.siteRoot, SiteBundleLineage{
 		JobID:          d.JobID,
 		AttemptNumber:  d.AttemptNumber,
 		PublishedAtUTC: d.PublishedAtUTC,
-	}); err != nil {
+	}, len(merged.Meetings)); err != nil {
+		return "", err
+	}
+	if err := writeSiteCatalog(s.siteRoot, merged); err != nil {
 		return "", err
 	}
 	return s.siteRoot, nil
+}
+
+// stagedAssetSuffix marks a half-written asset in the live site. It is chosen
+// so the name cannot collide with a published artefact and is obvious in a
+// directory listing if one ever survives a crash.
+const stagedAssetSuffix = ".cassini-staged"
+
+func commitPathForStagedAsset(tmp string) string {
+	return strings.TrimSuffix(tmp, stagedAssetSuffix)
+}
+
+// stageAsset copies one catalog-referenced asset next to its destination under
+// a temp name, returning that name. It returns "" when the attempt site does
+// not carry the asset at all, which is only legitimate for an entry the
+// exporter pointed at a remote base URL.
+func (s *localPublishSink) stageAsset(d publishDelivery, asset string) (string, error) {
+	source := filepath.Join(d.AttemptSitePath, asset)
+	info, err := os.Stat(source)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("attempt site %s is missing catalog asset %s", d.AttemptSitePath, asset)
+		}
+		return "", fmt.Errorf("stat catalog asset %s: %w", asset, err)
+	}
+
+	destination := filepath.Join(s.siteRoot, asset)
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		return "", fmt.Errorf("create asset directory: %w", err)
+	}
+	tmp := destination + stagedAssetSuffix
+	if err := os.RemoveAll(tmp); err != nil {
+		return "", fmt.Errorf("clear stale staged asset: %w", err)
+	}
+	if info.IsDir() {
+		if err := copyDirectory(source, tmp); err != nil {
+			return "", err
+		}
+	} else if err := copyFile(source, tmp, info.Mode()); err != nil {
+		return "", err
+	}
+	// A rename onto an existing directory fails, so clear the destination for
+	// directory assets. Files are replaced by the rename itself.
+	if info.IsDir() {
+		if err := os.RemoveAll(destination); err != nil {
+			return "", fmt.Errorf("clear published asset directory: %w", err)
+		}
+	}
+	return tmp, nil
+}
+
+// refreshSiteShell copies the attempt site's top-level files over the live
+// site's. The standalone image publishes with --rebuild-viewer so its
+// self-contained shell (index.html, assets/) rides along with every publish;
+// the wholesale promote used to refresh it implicitly. catalog.json and
+// cassini.json are excluded because this sink owns both, and meetings/ because
+// the asset pass above owns it.
+func (s *localPublishSink) refreshSiteShell(attemptSitePath string) error {
+	entries, err := os.ReadDir(attemptSitePath)
+	if err != nil {
+		return fmt.Errorf("read attempt site: %w", err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == "catalog.json" || name == "cassini.json" || name == "meetings" {
+			continue
+		}
+		source := filepath.Join(attemptSitePath, name)
+		destination := filepath.Join(s.siteRoot, name)
+		if entry.IsDir() {
+			if err := os.RemoveAll(destination); err != nil {
+				return fmt.Errorf("clear site shell directory %s: %w", name, err)
+			}
+			if err := copyDirectory(source, destination); err != nil {
+				return err
+			}
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("stat site shell entry %s: %w", name, err)
+		}
+		if err := copyFile(source, destination, info.Mode()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // sink returns the runtime's publish sink, defaulting when it is unset.

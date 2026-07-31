@@ -213,3 +213,229 @@ func TestPublishRecordsTheLocationTheSinkReturns(t *testing.T) {
 		t.Fatalf("sink got no publish timestamp")
 	}
 }
+
+// writeAttemptSite builds the one-meeting site `cassini publish` produces: a
+// catalog naming the meeting, and the .opus it points at.
+func writeAttemptSite(t *testing.T, dir string, meetingIDs ...string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "meetings"), 0o755); err != nil {
+		t.Fatalf("mkdir attempt site: %v", err)
+	}
+	entries := make([]string, 0, len(meetingIDs))
+	for _, id := range meetingIDs {
+		if err := os.WriteFile(filepath.Join(dir, "meetings", id+".opus"), []byte("opus-"+id), 0o644); err != nil {
+			t.Fatalf("write attempt opus: %v", err)
+		}
+		entries = append(entries, `{"id":"`+id+`","title":"`+id+`","audioPath":"./meetings/`+id+`.opus"}`)
+	}
+	body := `{"version":"cassini.viewer.catalog.v1","meetings":[` + strings.Join(entries, ",") + `]}`
+	if err := os.WriteFile(filepath.Join(dir, "catalog.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write attempt catalog: %v", err)
+	}
+	return dir
+}
+
+func deliverToLocalSink(t *testing.T, siteRoot, attemptSite, jobID string) (string, error) {
+	t.Helper()
+	sink := &localPublishSink{siteRoot: siteRoot, logger: log.New(ioDiscard{}, "", 0)}
+	return sink.Deliver(context.Background(), publishDelivery{
+		AttemptSitePath: attemptSite,
+		JobID:           jobID,
+		AttemptNumber:   1,
+		PublishedAtUTC:  "2026-06-12T00:00:00Z",
+	})
+}
+
+func readCatalogIDs(t *testing.T, siteRoot string) []string {
+	t.Helper()
+	catalog, ok, err := loadSiteCatalog(siteRoot)
+	if err != nil || !ok {
+		t.Fatalf("loadSiteCatalog(%s) ok = %v err = %v", siteRoot, ok, err)
+	}
+	ids := make([]string, 0, len(catalog.Meetings))
+	for _, entry := range catalog.Meetings {
+		id, err := catalogEntryID(entry)
+		if err != nil {
+			t.Fatalf("catalogEntryID() error = %v", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func TestLocalSinkPublishesIntoAnEmptySite(t *testing.T) {
+	siteRoot := filepath.Join(t.TempDir(), "site")
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+
+	location, err := deliverToLocalSink(t, siteRoot, attempt, "meeting-a")
+	if err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	if location != siteRoot {
+		t.Fatalf("location = %q, want %q", location, siteRoot)
+	}
+	if got := readCatalogIDs(t, siteRoot); len(got) != 1 || got[0] != "meeting-a" {
+		t.Fatalf("catalog ids = %v, want [meeting-a]", got)
+	}
+	if _, err := os.Stat(filepath.Join(siteRoot, "meetings", "meeting-a.opus")); err != nil {
+		t.Fatalf("published opus missing: %v", err)
+	}
+}
+
+func TestLocalSinkKeepsMeetingsItDidNotPublish(t *testing.T) {
+	// The whole point of the upsert: publishing B must not disturb A. Under the
+	// old wholesale replace, A survived only because the exporter re-exported
+	// it every time — which is what made publishing cost O(archive).
+	siteRoot := filepath.Join(t.TempDir(), "site")
+	if _, err := deliverToLocalSink(t, siteRoot, writeAttemptSite(t, filepath.Join(t.TempDir(), "a"), "meeting-a"), "meeting-a"); err != nil {
+		t.Fatalf("first Deliver() error = %v", err)
+	}
+
+	publishedA := filepath.Join(siteRoot, "meetings", "meeting-a.opus")
+	before, err := os.Stat(publishedA)
+	if err != nil {
+		t.Fatalf("stat first opus: %v", err)
+	}
+
+	if _, err := deliverToLocalSink(t, siteRoot, writeAttemptSite(t, filepath.Join(t.TempDir(), "b"), "meeting-b"), "meeting-b"); err != nil {
+		t.Fatalf("second Deliver() error = %v", err)
+	}
+
+	got := readCatalogIDs(t, siteRoot)
+	if len(got) != 2 || got[0] != "meeting-a" || got[1] != "meeting-b" {
+		t.Fatalf("catalog ids = %v, want [meeting-a meeting-b] in that order", got)
+	}
+	after, err := os.Stat(publishedA)
+	if err != nil {
+		t.Fatalf("stat first opus after second publish: %v", err)
+	}
+	// Untouched, not merely present — this is the O(1) claim.
+	if !before.ModTime().Equal(after.ModTime()) {
+		t.Fatalf("publishing meeting-b rewrote meeting-a.opus (mtime %s -> %s)", before.ModTime(), after.ModTime())
+	}
+}
+
+func TestLocalSinkUpdatesARepublishedMeetingInPlace(t *testing.T) {
+	siteRoot := filepath.Join(t.TempDir(), "site")
+	for _, id := range []string{"meeting-a", "meeting-b"} {
+		if _, err := deliverToLocalSink(t, siteRoot, writeAttemptSite(t, filepath.Join(t.TempDir(), id), id), id); err != nil {
+			t.Fatalf("Deliver(%s) error = %v", id, err)
+		}
+	}
+
+	// Re-publish A with new audio, as a rerun would.
+	rerun := filepath.Join(t.TempDir(), "rerun")
+	writeAttemptSite(t, rerun, "meeting-a")
+	if err := os.WriteFile(filepath.Join(rerun, "meetings", "meeting-a.opus"), []byte("opus-rerun"), 0o644); err != nil {
+		t.Fatalf("write rerun opus: %v", err)
+	}
+	if _, err := deliverToLocalSink(t, siteRoot, rerun, "meeting-a"); err != nil {
+		t.Fatalf("rerun Deliver() error = %v", err)
+	}
+
+	got := readCatalogIDs(t, siteRoot)
+	if len(got) != 2 || got[0] != "meeting-a" || got[1] != "meeting-b" {
+		t.Fatalf("catalog ids = %v, want [meeting-a meeting-b] — updated in place, not duplicated", got)
+	}
+	body, err := os.ReadFile(filepath.Join(siteRoot, "meetings", "meeting-a.opus"))
+	if err != nil {
+		t.Fatalf("read republished opus: %v", err)
+	}
+	if string(body) != "opus-rerun" {
+		t.Fatalf("republished opus = %q, want the rerun's audio", body)
+	}
+}
+
+func TestLocalSinkRefreshesTheSiteShell(t *testing.T) {
+	// The standalone image publishes with --rebuild-viewer, so its shell rides
+	// along with each publish; the wholesale promote used to refresh it.
+	siteRoot := filepath.Join(t.TempDir(), "site")
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+	if err := os.WriteFile(filepath.Join(attempt, "index.html"), []byte("<html>new</html>"), 0o644); err != nil {
+		t.Fatalf("write attempt shell: %v", err)
+	}
+
+	if _, err := deliverToLocalSink(t, siteRoot, attempt, "meeting-a"); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(siteRoot, "index.html"))
+	if err != nil {
+		t.Fatalf("read published shell: %v", err)
+	}
+	if string(body) != "<html>new</html>" {
+		t.Fatalf("shell = %q, want the attempt site's", body)
+	}
+}
+
+func TestLocalSinkRefusesAMalformedLiveCatalog(t *testing.T) {
+	// Overwriting an unreadable catalog would silently drop the archive it
+	// indexes, so refuse and leave it for a human.
+	siteRoot := filepath.Join(t.TempDir(), "site")
+	if err := os.MkdirAll(siteRoot, 0o755); err != nil {
+		t.Fatalf("mkdir site: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(siteRoot, "catalog.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write malformed catalog: %v", err)
+	}
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+
+	if _, err := deliverToLocalSink(t, siteRoot, attempt, "meeting-a"); err == nil {
+		t.Fatalf("expected Deliver to refuse a malformed live catalog")
+	}
+	body, err := os.ReadFile(filepath.Join(siteRoot, "catalog.json"))
+	if err != nil || string(body) != "{not json" {
+		t.Fatalf("malformed catalog was modified: %q err = %v", body, err)
+	}
+}
+
+func TestLocalSinkFailsBeforeWritingTheCatalogWhenAnAssetIsMissing(t *testing.T) {
+	// The invariant the ordering exists to protect: never publish a catalog
+	// naming audio that is not on disk.
+	siteRoot := filepath.Join(t.TempDir(), "site")
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+	if err := os.Remove(filepath.Join(attempt, "meetings", "meeting-a.opus")); err != nil {
+		t.Fatalf("remove attempt opus: %v", err)
+	}
+
+	if _, err := deliverToLocalSink(t, siteRoot, attempt, "meeting-a"); err == nil {
+		t.Fatalf("expected Deliver to fail when the attempt site lacks the asset")
+	}
+	if _, err := os.Stat(filepath.Join(siteRoot, "catalog.json")); !os.IsNotExist(err) {
+		t.Fatalf("catalog must not exist after a failed delivery, stat err = %v", err)
+	}
+}
+
+func TestLocalSinkLeavesNoStagedAssetsBehind(t *testing.T) {
+	siteRoot := filepath.Join(t.TempDir(), "site")
+
+	// Success path.
+	if _, err := deliverToLocalSink(t, siteRoot, writeAttemptSite(t, filepath.Join(t.TempDir(), "ok"), "meeting-a"), "meeting-a"); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	assertNoStagedAssets(t, siteRoot)
+
+	// Failure path: two meetings where the second asset is missing, so the
+	// first has already been staged when the delivery gives up. A stranded temp
+	// in the live site would be served by the file server and swept by nothing.
+	bad := writeAttemptSite(t, filepath.Join(t.TempDir(), "bad"), "meeting-b", "meeting-c")
+	if err := os.Remove(filepath.Join(bad, "meetings", "meeting-c.opus")); err != nil {
+		t.Fatalf("remove attempt opus: %v", err)
+	}
+	if _, err := deliverToLocalSink(t, siteRoot, bad, "meeting-b"); err == nil {
+		t.Fatalf("expected Deliver to fail")
+	}
+	assertNoStagedAssets(t, siteRoot)
+}
+
+func assertNoStagedAssets(t *testing.T, siteRoot string) {
+	t.Helper()
+	_ = filepath.WalkDir(siteRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if strings.HasSuffix(entry.Name(), stagedAssetSuffix) || strings.HasSuffix(entry.Name(), ".tmp") {
+			t.Errorf("staged leftover in the live site: %s", path)
+		}
+		return nil
+	})
+}

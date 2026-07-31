@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+// siteManifestVersion mirrors the `cassini publish` CLI's site manifest
+// version (cassini-go-recorder/internal/cassini/site_bundle.go), used only when
+// seeding a manifest for a live site that never had one.
+const siteManifestVersion = "cassini.site.v1"
+
 type SiteBundleManifest struct {
 	Kind                     string `json:"kind"`
 	Version                  string `json:"version"`
@@ -48,14 +53,34 @@ func LoadSiteBundleManifest(path string) (SiteBundleManifest, bool, error) {
 	return manifest, true, nil
 }
 
-func WriteSiteBundleLineage(path string, lineage SiteBundleLineage) error {
+// UpdateLiveSiteManifest records the publish lineage and meeting count on the
+// live site's cassini.json, seeding the manifest when the site does not have
+// one yet.
+//
+// Its predecessor (WriteSiteBundleLineage) required the manifest to already
+// exist, which was true when publishing replaced the whole site with an
+// attempt bundle that carried one. Upserting into a live site has no such
+// guarantee: an ExApp site root is created by the first delivery, and a site
+// seeded by an entrypoint has no manifest at all. A missing manifest is
+// therefore seeded rather than treated as an error; a present one keeps every
+// field this function does not own.
+func UpdateLiveSiteManifest(path string, lineage SiteBundleLineage, meetingCount int) error {
 	manifest, ok, err := LoadSiteBundleManifest(path)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("site bundle manifest missing at %s", filepath.Join(path, "cassini.json"))
+		manifest = SiteBundleManifest{
+			Kind:         "site",
+			Version:      siteManifestVersion,
+			CreatedAtUTC: strings.TrimSpace(lineage.PublishedAtUTC),
+			CatalogPath:  "catalog.json",
+		}
 	}
+	manifest.State = bundleStateReady
+	manifest.Stage = "ready"
+	manifest.Error = ""
+	manifest.MeetingCount = meetingCount
 	manifest.PublishedByJobID = strings.TrimSpace(lineage.JobID)
 	manifest.PublishedByAttemptNumber = lineage.AttemptNumber
 	manifest.PublishedAtUTC = strings.TrimSpace(lineage.PublishedAtUTC)
