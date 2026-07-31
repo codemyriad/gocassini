@@ -49,7 +49,7 @@ const (
 // ncFilesAccessApplier writes the advanced-ACL grants for one just-published
 // meeting, acting as the recordings owner (the delegated ACL manager). Nil
 // unless AppAPI is active and access control is enabled.
-type ncFilesAccessApplier func(ctx context.Context, jobID string, mappings []aclMapping) error
+type ncFilesAccessApplier func(ctx context.Context, jobID string, mappings []aclMapping, public bool) error
 
 // ncFilesAccessApplier returns the closure, or nil when AppAPI is inactive or
 // access control is disabled (the default) — in which case delivery stays the
@@ -59,14 +59,14 @@ func (c ExAppConfig) ncFilesAccessApplier(logger *log.Logger) ncFilesAccessAppli
 		return nil
 	}
 	client := &http.Client{Timeout: ncFilesACLTimeout}
-	return func(ctx context.Context, jobID string, mappings []aclMapping) error {
+	return func(ctx context.Context, jobID string, mappings []aclMapping, public bool) error {
 		// The per-file ACL grants each participant read; also make sure each
 		// participant is in the viewer group so the folder mounts for them and
 		// they can actually reach the recording (best-effort, non-fatal).
 		c.ensureParticipantsInViewerGroup(ctx, client, mappings, logger)
 
 		opusRel := ncRecordingsRoot + "/meetings/" + jobID + ".opus"
-		if err := c.davProppatchACL(ctx, client, ncRecordingsOwner, opusRel, mappings); err != nil {
+		if err := c.davProppatchACL(ctx, client, ncRecordingsOwner, opusRel, mappings, public); err != nil {
 			return fmt.Errorf("acl opus: %w", err)
 		}
 		return nil
@@ -76,8 +76,8 @@ func (c ExAppConfig) ncFilesAccessApplier(logger *log.Logger) ncFilesAccessAppli
 // davProppatchACL sets the protected recording ACL on relPath: the broad
 // traversal group is denied, the owner stays writable, and each participant
 // gets a read-only grant. Acts as userID (the delegated ACL manager).
-func (c ExAppConfig) davProppatchACL(ctx context.Context, client *http.Client, userID, relPath string, mappings []aclMapping) error {
-	return c.davProppatchACLRules(ctx, client, userID, relPath, recordingACLRules(mappings))
+func (c ExAppConfig) davProppatchACL(ctx context.Context, client *http.Client, userID, relPath string, mappings []aclMapping, public bool) error {
+	return c.davProppatchACLRules(ctx, client, userID, relPath, recordingACLRules(mappings, public))
 }
 
 func (c ExAppConfig) davProppatchACLRules(ctx context.Context, client *http.Client, userID, relPath string, rules []aclRule) error {
@@ -113,11 +113,28 @@ type aclRule struct {
 // grants read to the Talk participants. Group folders merges rules at one path
 // with allow overriding deny, so a participant who is also a member of the
 // traversal group can read while every non-participant remains denied.
-func recordingACLRules(mappings []aclMapping) []aclRule {
+// recordingACLRules builds a recording's per-file ACL.
+//
+// The default is participant-private: the broad viewer group — which every
+// local account belongs to, so it can traverse the recordings folder — is
+// explicitly DENIED read on the leaf, and only the meeting's own participants
+// are granted it.
+//
+// A public conversation inverts that one rule. Anyone with the link could join
+// the meeting, so a recording of it is not participant-private and the viewer
+// group is granted read instead of denied (D-552). "Anyone" means any account
+// on this Nextcloud: the operator's read surface is USER-gated and no public
+// link share is created, so this widens the audience without opening an
+// anonymous door.
+func recordingACLRules(mappings []aclMapping, public bool) []aclRule {
+	viewerGroupPermissions := 0
+	if public {
+		viewerGroupPermissions = aclPermRead
+	}
 	rules := []aclRule{
 		{
 			Type: "group", ID: ncRecordingsViewerGroup,
-			Mask: aclMaskAll, Permissions: 0,
+			Mask: aclMaskAll, Permissions: viewerGroupPermissions,
 		},
 		{
 			// The owner needs all permissions so later archive synchronization
@@ -157,8 +174,8 @@ func catalogProtectionACLRules() []aclRule {
 
 // aclListXML builds the recording `nc:acl-list` PROPPATCH body emitted by the
 // groupfolders UI (src/services/acl.ts).
-func aclListXML(mappings []aclMapping) []byte {
-	return aclRulesXML(recordingACLRules(mappings))
+func aclListXML(mappings []aclMapping, public bool) []byte {
+	return aclRulesXML(recordingACLRules(mappings, public))
 }
 
 func aclRulesXML(rules []aclRule) []byte {
@@ -206,7 +223,7 @@ func (rt *Runtime) applyNCFilesAccessStrict(ctx context.Context, jobID string) e
 	if rt.applyNCFilesAccessFn == nil {
 		return nil
 	}
-	owner, token, ok := rt.talkBindingForJob(jobID)
+	binding, ok := rt.talkBindingForJob(jobID)
 	if !ok {
 		rt.logger.Printf("nc files access: skip id=%s (non-Talk job / no room binding)", jobID)
 		return nil
@@ -214,11 +231,17 @@ func (rt *Runtime) applyNCFilesAccessStrict(ctx context.Context, jobID string) e
 	if rt.fetchTalkParticipants == nil {
 		return nil
 	}
-	mappings, source, err := rt.resolveRecordingAudience(ctx, jobID, owner, token)
+	mappings, source, err := rt.resolveRecordingAudience(ctx, jobID, binding.Owner, binding.RoomToken)
 	if err != nil {
 		return fmt.Errorf("participants lookup: %w", err)
 	}
-	if len(mappings) == 0 {
+	// A public room still has an audience even with nothing to grant per
+	// participant — the viewer-group grant IS the audience — so the empty-set
+	// exit must not swallow it. That ordering matters more than it looks: a
+	// public room is the one most likely to be full of link guests, who yield
+	// no grantable principal at all, so the old early return made the most
+	// public kind of meeting produce the most private recording (D-552).
+	if len(mappings) == 0 && !binding.Public {
 		// A real answer, not a failure: the room's attendees are all guests,
 		// email or federated, so there is no local principal to grant. The
 		// recording stays readable by the owner alone — fail-closed, and the
@@ -227,10 +250,10 @@ func (rt *Runtime) applyNCFilesAccessStrict(ctx context.Context, jobID string) e
 		rt.logger.Printf("nc files access: no grantable participants id=%s (guests/federated only) — meeting stays manager-only", jobID)
 		return nil
 	}
-	if err := rt.applyNCFilesAccessFn(ctx, jobID, mappings); err != nil {
+	if err := rt.applyNCFilesAccessFn(ctx, jobID, mappings, binding.Public); err != nil {
 		return err
 	}
-	rt.logger.Printf("nc files access ok id=%s grants=%d source=%s root=%s", jobID, len(mappings), source, ncRecordingsRoot)
+	rt.logger.Printf("nc files access ok id=%s grants=%d source=%s public=%t root=%s", jobID, len(mappings), source, binding.Public, ncRecordingsRoot)
 	return nil
 }
 

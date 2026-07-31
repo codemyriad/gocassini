@@ -18,6 +18,16 @@ meeting.
 > folders app**, which the operator cannot install for itself. See
 > [Prerequisites](#prerequisites) and [Automatic setup](#automatic-setup).
 
+> **Public conversations.** A conversation anyone with the link can join is not
+> participant-private, so its recording is readable by **any account on this
+> Nextcloud** rather than only its attendees. Publicness is read from Talk at
+> record time and frozen with the recording, so flipping a conversation public
+> afterwards does not widen a recording made while it was private, and the
+> reverse does not narrow one people were already told they could see. If the
+> room lookup fails the recording is treated as non-public — over-restriction is
+> recoverable by a rerun, over-sharing is not. This does not create a public
+> link: the viewer is still sign-in only.
+
 > **How the audience is resolved.** The attendee list is read from Talk once, at
 > publish time, and frozen onto the recording. Because that lookup now gates the
 > publish, it retries three times as the recording's starter and then falls back

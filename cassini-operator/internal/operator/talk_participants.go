@@ -123,28 +123,38 @@ func participantMappings(rows []participantRow) []aclMapping {
 // live in-memory room state and falling back to the persisted Talk binding
 // (reruns / post-restart publishes). ok is false for non-Talk jobs, which have
 // no participants to freeze.
-func (rt *Runtime) talkBindingForJob(jobID string) (owner, roomToken string, ok bool) {
+func (rt *Runtime) talkBindingForJob(jobID string) (binding talkRecordingBinding, ok bool) {
 	if state, live := rt.lookupTalkJobState(jobID); live {
-		owner = strings.TrimSpace(state.Owner)
-		roomToken = strings.TrimSpace(state.RoomToken)
-		if owner != "" && roomToken != "" {
-			return owner, roomToken, true
+		if b, valid := talkRecordingBindingFrom(state); valid {
+			return b, true
 		}
 	}
 	job, err := rt.store.GetJob(context.Background(), jobID)
 	if err != nil || job.TalkBinding == nil {
-		return "", "", false
+		return talkRecordingBinding{}, false
 	}
 	state, err := decodeTalkBinding(*job.TalkBinding)
 	if err != nil {
-		return "", "", false
+		return talkRecordingBinding{}, false
 	}
-	owner = strings.TrimSpace(state.Owner)
-	roomToken = strings.TrimSpace(state.RoomToken)
+	return talkRecordingBindingFrom(state)
+}
+
+// talkRecordingBinding is what publish needs from a Talk recording: who to ask
+// about the room, which room, and whether it was public when it was recorded.
+type talkRecordingBinding struct {
+	Owner     string
+	RoomToken string
+	Public    bool
+}
+
+func talkRecordingBindingFrom(state talkRoomState) (talkRecordingBinding, bool) {
+	owner := strings.TrimSpace(state.Owner)
+	roomToken := strings.TrimSpace(state.RoomToken)
 	if owner == "" || roomToken == "" {
-		return "", "", false
+		return talkRecordingBinding{}, false
 	}
-	return owner, roomToken, true
+	return talkRecordingBinding{Owner: owner, RoomToken: roomToken, Public: state.RoomPublic}, true
 }
 
 // Resolving a recording's audience is now load-bearing: the nextcloud-files

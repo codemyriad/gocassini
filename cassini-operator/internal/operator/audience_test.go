@@ -206,7 +206,7 @@ func TestApplyAccessStrictSkipsANonTalkJob(t *testing.T) {
 	// nothing to look up, so nothing failed.
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	rt.applyNCFilesAccessFn = func(context.Context, string, []aclMapping) error {
+	rt.applyNCFilesAccessFn = func(context.Context, string, []aclMapping, bool) error {
 		t.Fatalf("applier must not run for a non-Talk job")
 		return nil
 	}
@@ -223,7 +223,7 @@ func TestApplyAccessStrictFailsWhenTheAudienceCannotBeResolved(t *testing.T) {
 	defer cleanup()
 	seedTalkJob(t, rt, "job-unresolved")
 	rt.talkAudienceRetryGap = time.Millisecond
-	rt.applyNCFilesAccessFn = func(context.Context, string, []aclMapping) error { return nil }
+	rt.applyNCFilesAccessFn = func(context.Context, string, []aclMapping, bool) error { return nil }
 	rt.fetchTalkParticipants = func(context.Context, string, string) ([]aclMapping, error) {
 		return nil, errors.New("participants request returned 503")
 	}
@@ -244,7 +244,7 @@ func TestApplyAccessStrictAcceptsARoomWithNoGrantablePrincipals(t *testing.T) {
 	defer cleanup()
 	seedTalkJob(t, rt, "job-guests")
 	applied := false
-	rt.applyNCFilesAccessFn = func(context.Context, string, []aclMapping) error {
+	rt.applyNCFilesAccessFn = func(context.Context, string, []aclMapping, bool) error {
 		applied = true
 		return nil
 	}
@@ -267,7 +267,7 @@ func TestApplyAccessStrictFailsWhenTheACLWriteFails(t *testing.T) {
 	rt.fetchTalkParticipants = func(context.Context, string, string) ([]aclMapping, error) {
 		return []aclMapping{{Type: "user", ID: "alice"}}, nil
 	}
-	rt.applyNCFilesAccessFn = func(context.Context, string, []aclMapping) error {
+	rt.applyNCFilesAccessFn = func(context.Context, string, []aclMapping, bool) error {
 		return errors.New("acl opus: PROPPATCH -> 500")
 	}
 
@@ -290,7 +290,7 @@ func TestApplyAccessStrictGrantsTheResolvedAudience(t *testing.T) {
 		// distinctive half of "everyone with access to the room".
 		return []aclMapping{{Type: "user", ID: "alice"}, {Type: "group", ID: "team"}}, nil
 	}
-	rt.applyNCFilesAccessFn = func(_ context.Context, jobID string, m []aclMapping) error {
+	rt.applyNCFilesAccessFn = func(_ context.Context, jobID string, m []aclMapping, _ bool) error {
 		if jobID != "job-ok" {
 			t.Errorf("applier got jobID %q, want job-ok", jobID)
 		}

@@ -15,7 +15,7 @@ func TestACLListXML(t *testing.T) {
 	got := string(aclListXML([]aclMapping{
 		{Type: "user", ID: "alice"},
 		{Type: "group", ID: "team & co"},
-	}))
+	}, false))
 	for _, want := range []string{
 		`xmlns:nc="http://nextcloud.org/ns"`,
 		`<nc:acl-mapping-type>group</nc:acl-mapping-type><nc:acl-mapping-id>recording-viewers</nc:acl-mapping-id><nc:acl-mask>31</nc:acl-mask><nc:acl-permissions>0</nc:acl-permissions>`,
@@ -35,7 +35,7 @@ func TestRecordingACLRulesCoalesceBuiltInMappings(t *testing.T) {
 	rules := recordingACLRules([]aclMapping{
 		{Type: "user", ID: ncRecordingsOwner},
 		{Type: "group", ID: ncRecordingsViewerGroup},
-	})
+	}, false)
 	if len(rules) != 2 {
 		t.Fatalf("rules = %+v, want the two built-in mappings without duplicates", rules)
 	}
@@ -74,7 +74,7 @@ func TestEnsureProtectedRulesPreservesParticipantsAddsDeny(t *testing.T) {
 	}
 
 	// An already-protected recording is detected as such (no-op needed).
-	protected := recordingACLRules([]aclMapping{{Type: "user", ID: "bob"}})
+	protected := recordingACLRules([]aclMapping{{Type: "user", ID: "bob"}}, false)
 	if !hasViewerGroupDeny(protected) {
 		t.Error("recordingACLRules output should already be viewer-group-denied")
 	}
@@ -110,7 +110,7 @@ func TestNCFilesAccessApplierWritesOpusACLOnly(t *testing.T) {
 		t.Fatal("applier nil with AccessControl=true")
 	}
 	mappings := []aclMapping{{Type: "user", ID: "alice"}, {Type: "user", ID: "bob"}}
-	if err := apply(context.Background(), "JOB1", mappings); err != nil {
+	if err := apply(context.Background(), "JOB1", mappings, false); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
