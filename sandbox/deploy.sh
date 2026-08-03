@@ -392,6 +392,15 @@ bootstrap_nextcloud() {
   occ app:install app_api >/dev/null 2>&1 || true
   occ app:enable app_api
 
+  # Group folders is the one prerequisite the Cassini ExApp cannot install for
+  # itself (it reaches Nextcloud over HTTP, never occ), and since D-554 it is
+  # not optional: recordings are access-controlled or they are not served.
+  # bootstrap.sh already tries this, but it tolerates failure — for a dogfood
+  # instance that people actually keep recordings in, a silent miss here means
+  # nobody can see anything, so enable is hard here on purpose.
+  occ app:install groupfolders >/dev/null 2>&1 || true
+  occ app:enable groupfolders
+
   log "Setting app update channel to '$SANDBOX_UPDATE_CHANNEL' (accept pre-release ExApps)"
   occ config:system:set updater.release.channel --value "$SANDBOX_UPDATE_CHANNEL"
 
