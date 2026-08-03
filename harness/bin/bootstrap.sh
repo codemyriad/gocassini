@@ -20,8 +20,9 @@ harness_bootstrap_core_nextcloud() {
 
   # Group Folders (Team folders) is the one environmental prerequisite the
   # Cassini ExApp cannot install for itself: per-participant recording access
-  # control needs a group folder with advanced ACL, and an ExApp can only reach
-  # Nextcloud over HTTP (no occ). Installing it here mirrors the single
+  # needs a group folder with advanced ACL, and an ExApp can only reach
+  # Nextcloud over HTTP (no occ). Since D-554 there is no mode that does
+  # without it — recordings are access-controlled or they are not served. Installing it here mirrors the single
   # one-click app-store install a production admin does; the ExApp then creates
   # the "Cassini" folder + ACLs itself on enable (operator nc_provision.go).
   log "Ensuring Group Folders app is installed/enabled"

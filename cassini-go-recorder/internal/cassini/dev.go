@@ -138,7 +138,6 @@ Common options:
   --signaling-public-url URL
   --services legacy-default|core|appapi|full|full-remote
   --cassini none|installed-exapp
-  --nc-access-control=true|false
   --recording-backend legacy|direct-operator|installed-exapp|none
   --exapp-image-mode build|reuse-local|pull
   --build
