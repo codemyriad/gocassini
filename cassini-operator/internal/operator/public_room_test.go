@@ -24,15 +24,15 @@ func aclFor(rules []aclRule, kind, id string) (aclRule, bool) {
 	return aclRule{}, false
 }
 
-func TestRecordingACLDeniesTheViewerGroupForAPrivateRoom(t *testing.T) {
+func TestRecordingACLDeniesEveryoneForAPrivateRoom(t *testing.T) {
 	rules := recordingACLRules([]aclMapping{{Type: "user", ID: "alice"}}, false)
 
-	viewer, ok := aclFor(rules, "group", ncRecordingsViewerGroup)
+	everyone, ok := aclFor(rules, "group", ncRecordingsEveryoneGroup)
 	if !ok {
-		t.Fatalf("no viewer-group rule in %+v", rules)
+		t.Fatalf("no everyone-group rule in %+v", rules)
 	}
-	if viewer.Permissions != 0 {
-		t.Fatalf("viewer group permissions = %d, want 0 (denied) for a private room", viewer.Permissions)
+	if everyone.Permissions != 0 {
+		t.Fatalf("everyone permissions = %d, want 0 (denied) for a private room", everyone.Permissions)
 	}
 	alice, ok := aclFor(rules, "user", "alice")
 	if !ok || alice.Permissions != aclPermRead {
@@ -40,18 +40,17 @@ func TestRecordingACLDeniesTheViewerGroupForAPrivateRoom(t *testing.T) {
 	}
 }
 
-func TestRecordingACLGrantsTheViewerGroupForAPublicRoom(t *testing.T) {
-	// The viewer group contains every local account (it is what lets anyone
-	// traverse the recordings folder), so granting it read is what "readable by
-	// anyone" means here — without opening an anonymous route.
+func TestRecordingACLGrantsEveryoneForAPublicRoom(t *testing.T) {
+	// The virtual everyone group contains every account from creation, so granting
+	// it read is what "readable by anyone" means without an anonymous route.
 	rules := recordingACLRules([]aclMapping{{Type: "user", ID: "alice"}}, true)
 
-	viewer, ok := aclFor(rules, "group", ncRecordingsViewerGroup)
+	everyone, ok := aclFor(rules, "group", ncRecordingsEveryoneGroup)
 	if !ok {
-		t.Fatalf("no viewer-group rule in %+v", rules)
+		t.Fatalf("no everyone-group rule in %+v", rules)
 	}
-	if viewer.Permissions != aclPermRead {
-		t.Fatalf("viewer group permissions = %d, want read for a public room", viewer.Permissions)
+	if everyone.Permissions != aclPermRead {
+		t.Fatalf("everyone permissions = %d, want read for a public room", everyone.Permissions)
 	}
 	// The owner keeps full control either way.
 	owner, ok := aclFor(rules, "user", ncRecordingsOwner)
