@@ -349,8 +349,18 @@ func TestProvisionCreatesTheRecordingsServiceAccount(t *testing.T) {
 	}
 	// It must land in the owner group, or it has no write-capable mount of the
 	// group folder and every delivery fails.
-	if !strings.Contains(create.body, "groups="+ncRecordingsOwnerGroup) {
-		t.Fatalf("create body = %q, want groups=%s", create.body, ncRecordingsOwnerGroup)
+	//
+	// The spelling is load-bearing and this assertion used to have it wrong.
+	// OCS decodes this field as a PHP array: "groups[]" (url-encoded
+	// "groups%5B%5D") works, a scalar "groups" makes Nextcloud answer a bare
+	// 400 with an empty body. Against a mock that accepts anything the
+	// difference is invisible, which is exactly how it reached a live instance
+	// — where the account was never created and every act-as-cassini call 401d.
+	if !strings.Contains(create.body, "groups%5B%5D="+ncRecordingsOwnerGroup) {
+		t.Fatalf("create body = %q, want the array form groups%%5B%%5D=%s", create.body, ncRecordingsOwnerGroup)
+	}
+	if strings.Contains(create.body, "groups="+ncRecordingsOwnerGroup) {
+		t.Fatalf("create body uses the scalar form, which Nextcloud rejects with 400: %q", create.body)
 	}
 	// The account is created BY the administrator. Acting as the account we are
 	// about to create would be circular.

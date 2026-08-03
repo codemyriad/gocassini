@@ -210,7 +210,12 @@ func (c ExAppConfig) ensureRecordingsOwnerAccount(ctx context.Context, client *h
 		"userid":      {ncRecordingsOwner},
 		"password":    {password},
 		"displayname": {"Cassini recordings"},
-		"groups":      {ncRecordingsOwnerGroup},
+		// "groups[]", not "groups". OCS decodes this field as a PHP array, and
+		// a scalar makes Nextcloud answer a bare 400 with an empty body — so
+		// the account is never created, every act-as-cassini call 401s, and
+		// nothing downstream can be provisioned. Verified against a live
+		// Nextcloud 32: "groups=" -> 400, "groups[]=" -> 200.
+		"groups[]": {ncRecordingsOwnerGroup},
 	})
 	if err != nil {
 		return fmt.Errorf("create service account: %w", err)
