@@ -174,6 +174,11 @@ type ExAppConfig struct {
 	NextcloudURL string // optional; if set, /init reports progress=100 back via OCS
 	ViewerDist   string
 	PublishedDir string // operator SiteRoot, served read-only at /published
+	// PublishSink is the resolved publish destination (publish_sink.go). It
+	// decides whether a local published archive exists to serve at all: under
+	// the nextcloud-files sink nothing is ever written to PublishedDir, so
+	// mounting a file server over it would only ever serve staleness.
+	PublishSink string
 	// AccessControl enables per-participant Nextcloud-native access control
 	// (D-534). When true, publish grants advanced-ACL read to the meeting's
 	// Talk participants and the read proxy serves each caller only the meetings
@@ -302,17 +307,24 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 	root.Handle(uiAssetURLPrefix+"/", c.uiAssetHandler(logger))
 	root.Handle(navIconURLPath, embeddedAssetHandler(navIconSVG, "image/svg+xml"))
 
-	// When running as an AppAPI ExApp, serve the archive paths (catalog.json +
-	// per-meeting .opus) from Nextcloud Files; nil (dev/standalone) keeps the
-	// local-disk behavior (D-529).
+	// Where meetings are read from mirrors where they were written (D-550).
+	// Under the nextcloud-files sink the local site root is never populated, so
+	// it is not served at all: archive paths go to Nextcloud and everything
+	// else 404s, rather than falling through to a directory that can only hold
+	// pre-sink leftovers. Under the local sink the on-disk site is the source,
+	// as it has always been.
 	ncProxy := c.ncFilesProxy(logger)
+	localArchive := c.PublishedDir
+	if c.PublishSink == publishSinkNextcloudFiles {
+		localArchive = ""
+	}
 	if c.ViewerDist != "" {
-		viewer := viewerHandler(c.ViewerDist, c.PublishedDir, viewerURLPrefix, logger, ncProxy)
+		viewer := viewerHandler(c.ViewerDist, localArchive, viewerURLPrefix, logger, ncProxy)
 		root.Handle(viewerURLPrefix, viewer)
 		root.Handle(viewerURLPrefix+"/", viewer)
 	}
-	if c.PublishedDir != "" {
-		root.Handle(publishedURLPrefix+"/", publishedHandler(c.PublishedDir, publishedURLPrefix, logger, ncProxy))
+	if localArchive != "" || ncProxy != nil {
+		root.Handle(publishedURLPrefix+"/", publishedHandler(localArchive, publishedURLPrefix, logger, ncProxy))
 	}
 }
 
@@ -639,10 +651,16 @@ func spaHandler(dir, urlPrefix string, logger *log.Logger) http.Handler {
 // so JSON/audio fetches don't receive index.html.
 func viewerHandler(viewerDir, publishedDir, urlPrefix string, logger *log.Logger, ncProxy ncFilesProxyFunc) http.Handler {
 	spa := spaHandler(viewerDir, urlPrefix, logger)
-	if publishedDir == "" {
+	if publishedDir == "" && ncProxy == nil {
 		return spa
 	}
-	publishedFiles := http.StripPrefix(urlPrefix, http.FileServer(http.Dir(publishedDir)))
+	// nil when there is no local archive — archive paths are then served by the
+	// proxy or 404, never by the SPA fallback (a JSON fetch answered with
+	// index.html is worse than a miss).
+	var publishedFiles http.Handler
+	if publishedDir != "" {
+		publishedFiles = http.StripPrefix(urlPrefix, http.FileServer(http.Dir(publishedDir)))
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		relPath := strings.TrimPrefix(r.URL.Path, urlPrefix)
 		relPath = strings.TrimPrefix(relPath, "/")
@@ -656,6 +674,10 @@ func viewerHandler(viewerDir, publishedDir, urlPrefix string, logger *log.Logger
 			// Outside AppAPI ncProxy is nil and the local site remains the
 			// standalone/dev data source.
 			if ncProxy != nil && ncProxy(w, r, relPath) {
+				return
+			}
+			if publishedFiles == nil {
+				http.NotFound(w, r)
 				return
 			}
 			publishedFiles.ServeHTTP(w, r)
@@ -688,7 +710,13 @@ func serveSPAIndex(w http.ResponseWriter, r *http.Request, indexPath string, log
 // publishedHandler serves files from `dir` under urlPrefix. No SPA fallback —
 // missing files 404. Used for the published meeting archive.
 func publishedHandler(dir, urlPrefix string, logger *log.Logger, ncProxy ncFilesProxyFunc) http.Handler {
-	fileServer := http.StripPrefix(urlPrefix, http.FileServer(http.Dir(dir)))
+	// nil when no sink writes a local archive. Everything outside the archive
+	// paths — including the site manifest cassini.json, which carries meeting
+	// counts and job ids — then 404s instead of being served off disk.
+	var fileServer http.Handler
+	if dir != "" {
+		fileServer = http.StripPrefix(urlPrefix, http.FileServer(http.Dir(dir)))
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
@@ -704,6 +732,10 @@ func publishedHandler(dir, urlPrefix string, logger *log.Logger, ncProxy ncFiles
 			if ncProxy(w, r, relPath) {
 				return
 			}
+		}
+		if fileServer == nil {
+			http.NotFound(w, r)
+			return
 		}
 		fileServer.ServeHTTP(w, r)
 	})
