@@ -7,6 +7,8 @@
     type MeetingCatalogEntry,
   } from "./viewer/catalog";
   import { StaticCatalogProvider, type DataProvider } from "./viewer/dataProvider";
+  import { isEmbeddedViewer } from "./viewer/appBase";
+  import { resolveCatalogSelection } from "./viewer/catalogSelection";
   import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "./viewer/hashRouting";
   import MeetingList from "./components/MeetingList.svelte";
   import MeetingView from "./components/MeetingView.svelte";
@@ -36,6 +38,21 @@
   let listError = "";
   let notFoundMessage = "";
   let catalogHydrationGeneration = 0;
+  // pendingMeetingId holds a deep-linked meeting id that arrived before any
+  // catalog did. It is NOT selectedMeetingId: selecting an id whose entry does
+  // not exist yet mounts MeetingView on mobile with nothing to show, which is
+  // how the stale "Meeting not found" card got on screen in the first place
+  // (D-543). It is consumed once, by whichever load first observes a catalog.
+  let pendingMeetingId: string | null = null;
+  // destroyed guards every post-await mutation. Both awaits below can resolve
+  // after unmount — the shell recreates the viewer whenever its admin probe
+  // settles — and the mount path in particular writes browser history, which a
+  // destroyed component has no business doing (D-543).
+  let destroyed = false;
+  // embedded is read once: whether this app runs inside the ExApp shell. See
+  // isEmbeddedViewer — this is deliberately not ncMode, which only reports
+  // whether Nextcloud Theming was detected.
+  const embedded = isEmbeddedViewer();
   const CATALOG_REFRESH_INTERVAL_MS = 15_000;
   let catalogMode = false;
   let catalogRefreshRunning = false;
@@ -240,13 +257,13 @@
   async function refreshCatalog() {
     // Embedded mode keeps probing even when no catalog existed at mount time:
     // a fresh install can stay open while its first recording is published.
-    if ((!catalogMode && !ncMode) || catalogRefreshRunning) {
+    if ((!catalogMode && !embedded) || catalogRefreshRunning) {
       return;
     }
     catalogRefreshRunning = true;
     try {
       const catalog = await dataProvider.loadCatalog();
-      if (!catalog) {
+      if (destroyed || !catalog) {
         return;
       }
       catalogMode = true;
@@ -254,16 +271,42 @@
       catalogMeetings = catalog.meetings;
       listError = "";
       void hydrateCatalogMeetingMetadata(catalog.meetings);
-      if (selectedMeetingId) {
+      // A deep link that could not be satisfied at mount is satisfied here, the
+      // first time a catalog actually arrives.
+      if (!selectedMeetingId && pendingMeetingId !== null) {
+        applyCatalogSelection(catalog.meetings, pendingMeetingId);
+      } else if (selectedMeetingId) {
         notFoundMessage = catalog.meetings.some((entry) => entry.id === selectedMeetingId)
           ? ""
           : `Meeting not found in catalog: ${selectedMeetingId}`;
       }
+      pendingMeetingId = null;
     } catch (error) {
+      if (destroyed) {
+        return;
+      }
       // Preserve the last known-good list while surfacing the refresh failure.
       listError = error instanceof Error ? error.message : String(error);
     } finally {
       catalogRefreshRunning = false;
+    }
+  }
+
+  // applyCatalogSelection commits what resolveCatalogSelection decided. Mount
+  // and refresh share it so they cannot drift — before this, only mount knew
+  // how to auto-open a single-meeting catalog.
+  function applyCatalogSelection(
+    meetings: MeetingCatalogEntry[],
+    requestedMeetingId: string | null,
+  ) {
+    const selection = resolveCatalogSelection(meetings, requestedMeetingId);
+    if (!selection.selectedMeetingId) {
+      return;
+    }
+    selectedMeetingId = selection.selectedMeetingId;
+    notFoundMessage = selection.notFoundMessage;
+    if (selection.seedHistory) {
+      seedListHistoryEntry(selection.selectedMeetingId);
     }
   }
 
@@ -301,10 +344,12 @@
         applyTheme("saturn-light");
       }
     }
-    if (ncMode) {
+    if (embedded) {
       // The embedded app can remain mounted while a Talk recording publishes
       // in another tab. Refresh on return and periodically so the new catalog
-      // entry appears without a hard browser reload.
+      // entry appears without a hard browser reload. Gated on `embedded`, not
+      // ncMode: an ExApp with Theming off still needs this, and it is the only
+      // thing that recovers a catalog that was absent at mount (D-543).
       window.addEventListener("focus", refreshCatalogWhenVisible);
       document.addEventListener("visibilitychange", refreshCatalogWhenVisible);
       catalogRefreshTimer = window.setInterval(
@@ -328,6 +373,9 @@
     try {
       if (!preferBundledArtifact) {
         const catalog = await dataProvider.loadCatalog();
+        if (destroyed) {
+          return;
+        }
         // A successfully-loaded catalog — even an empty one (fresh install,
         // meetings: []) — means catalog/list mode. Only fall through to the
         // single bundled-artifact path when there is NO catalog at all (null),
@@ -338,34 +386,37 @@
           catalogMode = true;
           catalogMeetings = catalog.meetings;
           void hydrateCatalogMeetingMetadata(catalog.meetings);
-          const requested = initialMeetingId
-            ? catalog.meetings.find((meeting) => meeting.id === initialMeetingId) ?? null
-            : null;
-          const selected =
-            requested ??
-            (initialMeetingId === null && catalog.meetings.length === 1
-              ? catalog.meetings[0]
-              : null);
-          if (selected) {
-            selectedMeetingId = selected.id;
-            seedListHistoryEntry(selected.id);
-          } else if (initialMeetingId) {
-            selectedMeetingId = initialMeetingId;
-            notFoundMessage = `Meeting not found in catalog: ${initialMeetingId}`;
-            seedListHistoryEntry(initialMeetingId);
-          }
+          applyCatalogSelection(catalog.meetings, initialMeetingId);
+          return;
+        }
+        // No catalog, and we are embedded: there is no bundled artifact in an
+        // ExApp build to fall back to, so stay in list mode and let the refresh
+        // above recover. A null catalog here is a normal transient — a fresh
+        // install, or any Nextcloud hiccup on the mount fetch — not a signal to
+        // switch modes. Remember the deep link so the recovery can honour it
+        // (D-543).
+        if (embedded) {
+          pendingMeetingId = initialMeetingId;
           return;
         }
       }
       bundledMode = true;
     } catch (error) {
+      if (destroyed) {
+        return;
+      }
       listError = error instanceof Error ? error.message : String(error);
     } finally {
-      mountComplete = true;
+      if (!destroyed) {
+        mountComplete = true;
+      }
     }
   });
 
   onDestroy(() => {
+    // Set before anything else: in-flight awaits check this to decide whether
+    // they may still touch component state or browser history.
+    destroyed = true;
     window.removeEventListener("popstate", handlePopState);
     window.removeEventListener("hashchange", handlePopState);
     window.removeEventListener("focus", refreshCatalogWhenVisible);
@@ -408,7 +459,10 @@
     />
   {/if}
 
-  {#if isDesktop || selectedMeetingId}
+  <!-- bundledMode is in the condition because a standalone single-meeting
+       export has neither a desktop viewport nor a selected id, and without it
+       a phone-sized window renders an empty list and no meeting at all. -->
+  {#if isDesktop || selectedMeetingId || bundledMode}
     <MeetingView
       {dataProvider}
       meeting={selectedMeeting}

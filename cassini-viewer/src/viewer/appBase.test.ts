@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { readViewerBase } from "./appBase";
+import { isEmbeddedViewer, readViewerBase } from "./appBase";
 
 // readViewerBase is the single shared resolver for the AppAPI proxy base that
 // used to be copy-pasted into both catalog.ts and loadArtifact.ts (D-415).
@@ -42,5 +42,47 @@ describe("readViewerBase", () => {
   it("returns an already-absolute base unchanged", () => {
     setWindow("https://cloud.example.com/proxy/gocassini/");
     expect(readViewerBase()).toBe("https://cloud.example.com/proxy/gocassini/");
+  });
+});
+
+// isEmbeddedViewer answers "am I inside the ExApp shell", which is a different
+// question from ncMode (Boolean(OCA.Theming.primaryColor)). Keying the
+// catalog/bundled decision on ncMode left an ExApp with Theming disabled
+// falling back to a bundled artifact that does not exist there, with no
+// recovery — the defect behind D-543.
+describe("isEmbeddedViewer", () => {
+  const originalWindow = globalThis.window;
+
+  afterEach(() => {
+    globalThis.window = originalWindow;
+  });
+
+  function setWindow(base: unknown) {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/some/page/" },
+      __CASSINI_VIEWER_BASE__: base,
+    } as unknown as Window & typeof globalThis;
+  }
+
+  it("is false outside the embedded build", () => {
+    setWindow(undefined);
+    expect(isEmbeddedViewer()).toBe(false);
+  });
+
+  it("is false when the base is an empty string", () => {
+    setWindow("");
+    expect(isEmbeddedViewer()).toBe(false);
+  });
+
+  it("is true when the embedded build injected a proxy base", () => {
+    setWindow("/index.php/apps/app_api/proxy/gocassini/");
+    expect(isEmbeddedViewer()).toBe(true);
+  });
+
+  it("does not depend on Nextcloud Theming being present", () => {
+    // The whole point: no OCA global is consulted, so an ExApp whose Theming
+    // app is off is still recognised as embedded.
+    setWindow("https://cloud.example.com/proxy/gocassini/");
+    expect(isEmbeddedViewer()).toBe(true);
   });
 });
