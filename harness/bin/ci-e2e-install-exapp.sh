@@ -317,9 +317,12 @@ assert_app_ui_loads
 SITE_ROOT=$(docker exec "$CONTAINER_NAME" printenv CASSINI_OPERATOR_SITE_ROOT 2>/dev/null || true)
 SITE_ROOT="${SITE_ROOT:-/srv/cassini-site/published}"
 
-log "seeding catalog at ${SITE_ROOT}/catalog.json inside the container"
+# Seeded with a meeting on purpose. The local site root is no longer the
+# archive — recordings live in Nextcloud Files — so this entry must NOT reach
+# the caller. If it does, the operator is serving its own volume again.
+log "seeding a decoy catalog at ${SITE_ROOT}/catalog.json inside the container"
 docker exec "$CONTAINER_NAME" sh -c \
-  'mkdir -p "$1" && printf "%s" "{\"version\":\"cassini.viewer.catalog.v1\",\"meetings\":[]}" > "$1/catalog.json"' \
+  'mkdir -p "$1" && printf "%s" "{\"version\":\"cassini.viewer.catalog.v1\",\"meetings\":[{\"id\":\"decoy\",\"title\":\"Decoy\",\"dateLabel\":\"2026-01-01\",\"audioPath\":\"./meetings/decoy.opus\"}]}" > "$1/catalog.json"' \
   _ "$SITE_ROOT" \
   || fail "could not seed catalog into the container at $SITE_ROOT"
 
@@ -371,7 +374,11 @@ log "OK   embedded viewer page 200 with a nonce'd proxy ui/viewer.js (CSS inject
 # inside the single Cassini app at /viewer, gated client-side; its JSON API
 # stays ADMIN, covered by the operator/jobs 200-admin / 404-user checks above.)
 
-log "checking proxied catalog $PROXY/published/catalog.json"
+# $TEST_USER is a plain logged-in account that has been granted nothing: no
+# recording lists it as a participant, so it is the non-participant case. Before
+# D-554 this asserted the opposite — that any logged-in user gets the shared
+# catalog — which is precisely the org-wide archive D-521 exists to retire.
+log "checking proxied catalog $PROXY/published/catalog.json as a non-participant"
 catalog_status=$(curl -sS -u "$TEST_USER:$TEST_USER_PASSWORD" \
   -o "$LOG_DIR/published-catalog.json" -w '%{http_code}' "$PROXY/published/catalog.json")
 if [[ "$catalog_status" != "200" ]]; then
@@ -383,6 +390,28 @@ if [[ "$catalog_version" != "cassini.viewer.catalog.v1" ]]; then
   log "$(head -c 300 "$LOG_DIR/published-catalog.json" 2>/dev/null)"
   fail "proxied catalog is not a valid cassini.viewer.catalog.v1 (version=$catalog_version)"
 fi
-log "OK   proxied /published/catalog.json 200 and is a valid cassini.viewer.catalog.v1"
+# A valid, EMPTY catalog. Two claims in one assertion: the caller is granted
+# nothing so they see nothing, and the decoy seeded into the container's own
+# volume is not what gets served.
+catalog_count=$(jq -r '.meetings | length' "$LOG_DIR/published-catalog.json" 2>/dev/null || echo "")
+if [[ "$catalog_count" != "0" ]]; then
+  log "catalog body:"
+  log "$(head -c 300 "$LOG_DIR/published-catalog.json" 2>/dev/null)"
+  fail "a non-participant received $catalog_count catalog entries, expected 0"
+fi
+if jq -e '.meetings[]? | select(.id == "decoy")' "$LOG_DIR/published-catalog.json" >/dev/null 2>&1; then
+  fail "the container-local catalog was served; Nextcloud Files is supposed to be authoritative"
+fi
+log "OK   a non-participant gets a valid but empty catalog, and the local decoy is not served"
+
+# ...and playback is denied the same way: a miss and a denial are the same 404,
+# so a recording a caller may not read never even reveals that it exists.
+log "checking proxied playback $PROXY/published/meetings/decoy.opus as a non-participant"
+playback_status=$(curl -sS -u "$TEST_USER:$TEST_USER_PASSWORD" \
+  -o /dev/null -w '%{http_code}' "$PROXY/published/meetings/decoy.opus")
+if [[ "$playback_status" != "404" ]]; then
+  fail "playback for a non-participant expected 404 got $playback_status"
+fi
+log "OK   proxied playback 404s for a non-participant"
 
 log "install-e2e passed"
