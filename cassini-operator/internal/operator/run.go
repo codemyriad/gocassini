@@ -103,8 +103,8 @@ type Runtime struct {
 	// fetchTalkParticipants resolves a Talk room's grantable ACL principals and
 	// applyNCFilesAccessFn writes the per-meeting advanced-ACL grants
 	// (talk_participants.go / webdav_acl.go, D-534). Both nil unless AppAPI is
-	// active and CASSINI_NC_ACCESS_CONTROL is enabled; access control is off by
-	// default, keeping the D-529 public archive.
+	// active — inside an ExApp per-participant access is the only model there
+	// is (D-554), so there is nothing left to opt into.
 	fetchTalkParticipants talkParticipantsFetcher
 	applyNCFilesAccessFn  ncFilesAccessApplier
 	// recordStopAckGrace and recordStopFinalizeGrace default to the package

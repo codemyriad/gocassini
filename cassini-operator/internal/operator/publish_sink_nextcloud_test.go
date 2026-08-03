@@ -108,12 +108,10 @@ func (f *fakeNCFiles) has(name string) bool {
 	return ok
 }
 
-func newNCSink(t *testing.T, ncURL string, accessControl bool) *nextcloudFilesPublishSink {
+func newNCSink(t *testing.T, ncURL string) *nextcloudFilesPublishSink {
 	t.Helper()
-	cfg := testExAppConfig(ncURL)
-	cfg.AccessControl = accessControl
 	return &nextcloudFilesPublishSink{
-		cfg:    cfg,
+		cfg:    testExAppConfig(ncURL),
 		logger: log.New(ioDiscard{}, "", 0),
 		client: &http.Client{},
 	}
@@ -131,7 +129,7 @@ func deliverToNC(t *testing.T, sink *nextcloudFilesPublishSink, attemptSite, job
 
 func TestNCSinkDeliversTheMeetingAndIndexesItLast(t *testing.T) {
 	nc := newFakeNCFiles()
-	sink := newNCSink(t, nc.server(t).URL, false)
+	sink := newNCSink(t, nc.server(t).URL)
 	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
 
 	location, err := deliverToNC(t, sink, attempt, "meeting-a")
@@ -161,7 +159,7 @@ func TestNCSinkUpsertsTheRemoteCatalogRatherThanReplacingIt(t *testing.T) {
 	// verbatim would truncate the whole remote archive to that meeting — this
 	// is the reason the sink reads, merges and writes back.
 	nc := newFakeNCFiles()
-	sink := newNCSink(t, nc.server(t).URL, false)
+	sink := newNCSink(t, nc.server(t).URL)
 
 	for _, id := range []string{"meeting-a", "meeting-b"} {
 		attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), id), id)
@@ -190,7 +188,7 @@ func TestNCSinkUpsertsTheRemoteCatalogRatherThanReplacingIt(t *testing.T) {
 func TestNCSinkFailsTheDeliveryWhenTheUploadFails(t *testing.T) {
 	nc := newFakeNCFiles()
 	nc.failPUT["Cassini/Recordings/meetings/meeting-a.opus"] = -1
-	sink := newNCSink(t, nc.server(t).URL, false)
+	sink := newNCSink(t, nc.server(t).URL)
 	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
 
 	if _, err := deliverToNC(t, sink, attempt, "meeting-a"); err == nil {
@@ -206,7 +204,7 @@ func TestNCSinkRefusesWhenTheAttemptSiteLacksTheRecording(t *testing.T) {
 	// Without this precondition the upload loop would find nothing to do,
 	// complete cleanly, and report a successful delivery of nothing.
 	nc := newFakeNCFiles()
-	sink := newNCSink(t, nc.server(t).URL, false)
+	sink := newNCSink(t, nc.server(t).URL)
 	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
 	if err := os.Remove(filepath.Join(attempt, "meetings", "meeting-a.opus")); err != nil {
 		t.Fatalf("remove attempt opus: %v", err)
@@ -223,7 +221,7 @@ func TestNCSinkRefusesWhenTheAttemptSiteLacksTheRecording(t *testing.T) {
 func TestNCSinkRefusesAMalformedRemoteCatalog(t *testing.T) {
 	nc := newFakeNCFiles()
 	nc.files["Cassini/Recordings/catalog.json"] = []byte("{not json")
-	sink := newNCSink(t, nc.server(t).URL, false)
+	sink := newNCSink(t, nc.server(t).URL)
 	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
 
 	if _, err := deliverToNC(t, sink, attempt, "meeting-a"); err == nil {
@@ -240,7 +238,7 @@ func TestNCSinkFailsWhenTheAudienceCannotBeWritten(t *testing.T) {
 	// D-549: a recording whose audience could not be written is not a
 	// successfully published recording.
 	nc := newFakeNCFiles()
-	sink := newNCSink(t, nc.server(t).URL, true)
+	sink := newNCSink(t, nc.server(t).URL)
 	sink.applyAccess = func(context.Context, string) error {
 		return errTestAccessApply
 	}

@@ -105,7 +105,7 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 		if err != nil {
 			return "", fmt.Errorf("put %s: %w", item.remote, err)
 		}
-		if s.cfg.AccessControl && status == http.StatusCreated {
+		if status == http.StatusCreated {
 			// A newly created leaf inherits the container's broad traversal
 			// grant. Deny it before the catalog can advertise the file; the
 			// per-meeting ACL below replaces this owner-only baseline.
@@ -163,13 +163,11 @@ func (s *nextcloudFilesPublishSink) upsertRemoteCatalog(ctx context.Context, inc
 	if err := s.cfg.davPutBytes(ctx, s.client, ncRecordingsOwner, catalogRemote, body, "application/json"); err != nil {
 		return fmt.Errorf("put catalog: %w", err)
 	}
-	if s.cfg.AccessControl {
-		// The broad viewer group may traverse the container directories but must
-		// not read the unfiltered authoritative catalog; the operator reads it
-		// as the owner and filters it per caller.
-		if err := s.cfg.davProppatchACLRules(ctx, s.client, ncRecordingsOwner, catalogRemote, catalogProtectionACLRules()); err != nil {
-			return fmt.Errorf("protect catalog: %w", err)
-		}
+	// The broad viewer group may traverse the container directories but must
+	// not read the unfiltered authoritative catalog; the operator reads it
+	// as the owner and filters it per caller.
+	if err := s.cfg.davProppatchACLRules(ctx, s.client, ncRecordingsOwner, catalogRemote, catalogProtectionACLRules()); err != nil {
+		return fmt.Errorf("protect catalog: %w", err)
 	}
 	return nil
 }

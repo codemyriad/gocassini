@@ -34,7 +34,7 @@ import (
 // act-as-user auth is accepted — so installing/enabling the ExApp makes the
 // canonical directory, groups, and permissions appear with no manual step.
 //
-//	on enabled edge (AccessControl on)
+//	on enabled edge
 //	  ├── ensure viewer group exists                     (OCS provisioning)
 //	  ├── ensure "Cassini" group folder (default-deny)   (groupfolders addFolder)
 //	  ├── assign viewer group READ + owner group ALL     (groupfolders groups)
@@ -245,19 +245,19 @@ func randomPassword() (string, error) {
 	return "Cw1!" + base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// provisionNCFilesAccess establishes the two identities Cassini acts as, and
-// then — only when access control is enabled — creates (idempotently) the group
-// folder + groups + ACL topology the access-control model needs and reconciles
-// the viewer group. No-op unless AppAPI is active. Best-effort: every failure is
-// logged and never propagated. Runs on the enabled edge (in the EnabledCallback
+// provisionNCFilesAccess establishes the two identities Cassini acts as, then
+// creates (idempotently) the group folder + groups + ACL topology the
+// access-control model needs and reconciles the viewer group. No-op unless
+// AppAPI is active. Runs on the enabled edge (in the EnabledCallback
 // goroutine), before the archive startup sync.
 //
-// The identity tier runs in BOTH modes, and that split is load-bearing. The
-// owner writes every archive object and is the read-proxy identity whether or
-// not access control is on, but the topology below is meaningless without it.
-// Gating the account creation on the flag would leave a flag-off install
-// delivering as a user that was never created — every act-as-user call 401s and,
-// under the strict nextcloud-files sink, every publish fails.
+// Every step used to be best-effort in the strict sense that nothing recorded
+// whether it worked: failures were logged and forgotten. They are still
+// non-fatal to startup — an operator that cannot provision should still come up
+// so an admin can look at it — but each outcome is now recorded and reported
+// through /status, because an ExApp whose group folder does not exist serves
+// nobody their recordings and must say so rather than degrade silently (D-554,
+// D-545 AC-7).
 func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Logger) {
 	if !c.appAPIActive() {
 		return
@@ -275,10 +275,6 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 		logger.Printf("nc provision: ensure recordings account %q failed: %v — recordings setup incomplete", ncRecordingsOwner, err)
 		return
 	}
-	if !c.AccessControl {
-		return
-	}
-
 	// 1. The viewer group: the mount group whose members can traverse the
 	//    directory. Everyone is reconciled into it (step 8).
 	if err := c.ensureGroup(ctx, client, ncRecordingsViewerGroup); err != nil {

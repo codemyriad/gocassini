@@ -104,10 +104,9 @@ func TestNCFilesAccessApplierWritesOpusACLOnly(t *testing.T) {
 	defer srv.Close()
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = true
 	apply := cfg.ncFilesAccessApplier(nil)
 	if apply == nil {
-		t.Fatal("applier nil with AccessControl=true")
+		t.Fatal("applier nil for an AppAPI-active config")
 	}
 	mappings := []aclMapping{{Type: "user", ID: "alice"}, {Type: "user", ID: "bob"}}
 	if err := apply(context.Background(), "JOB1", mappings, false); err != nil {
@@ -146,18 +145,19 @@ func TestNCFilesAccessApplierWritesOpusACLOnly(t *testing.T) {
 	}
 }
 
-func TestNCFilesAccessApplierNilUnlessEnabled(t *testing.T) {
-	cfg := testExAppConfig("https://nc.example.com")
-	if cfg.ncFilesAccessApplier(nil) != nil {
-		t.Error("applier should be nil when AccessControl is off")
+func TestNCFilesAccessApplierNilUnlessAppAPIActive(t *testing.T) {
+	// AppAPI active is now the only predicate: inside an ExApp there is nothing
+	// to opt into, and outside one there is no Nextcloud to write ACLs to.
+	if cfg := testExAppConfig("https://nc.example.com"); cfg.ncFilesAccessApplier(nil) == nil {
+		t.Error("applier should be non-nil for an AppAPI-active config")
 	}
-	cfg.AccessControl = true
-	if cfg.ncFilesAccessApplier(nil) == nil {
-		t.Error("applier should be non-nil when AccessControl is on")
-	}
-	// No NextcloudURL -> inactive regardless of the flag.
-	off := ExAppConfig{AccessControl: true}
-	if off.ncFilesAccessApplier(nil) != nil {
-		t.Error("applier should be nil without ExApp env")
+	for name, cfg := range map[string]ExAppConfig{
+		"no NextcloudURL": {AppSecret: "s", AppID: "gocassini"},
+		"no AppSecret":    {NextcloudURL: "https://nc.example.com", AppID: "gocassini"},
+		"no AppID":        {NextcloudURL: "https://nc.example.com", AppSecret: "s"},
+	} {
+		if cfg.ncFilesAccessApplier(nil) != nil {
+			t.Errorf("applier should be nil with %s", name)
+		}
 	}
 }

@@ -163,7 +163,6 @@ func TestProvisionFreshCreatesFolderGroupsACLAndReconciles(t *testing.T) {
 	defer srv.Close()
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = true
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -255,7 +254,6 @@ func TestProvisionExistingFolderSkipsManagerAndCreate(t *testing.T) {
 	defer srv.Close()
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = true
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cfg.provisionNCFilesAccess(ctx, log.New(io.Discard, "", 0))
@@ -309,7 +307,6 @@ func TestProvisionNoopWithoutAppAPI(t *testing.T) {
 	defer srv.Close()
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = true
 	cfg.AppSecret = "" // not an ExApp
 	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
 
@@ -341,7 +338,6 @@ func TestProvisionCreatesTheRecordingsServiceAccount(t *testing.T) {
 	resolvedProvisioningUser.Store(nil)
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = true
 	cfg.provisionNCFilesAccess(context.Background(), log.New(ioDiscard{}, "", 0))
 
 	create, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users")
@@ -386,7 +382,6 @@ func TestProvisionResolvesTheAdministratorRatherThanAssumingAdmin(t *testing.T) 
 	t.Cleanup(func() { resolvedProvisioningUser.Store(nil) })
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = true
 	cfg.provisionNCFilesAccess(context.Background(), log.New(ioDiscard{}, "", 0))
 
 	wantAuth := base64.StdEncoding.EncodeToString([]byte("ops-root:" + cfg.AppSecret))
@@ -413,7 +408,6 @@ func TestProvisionAcceptsAnExistingServiceAccount(t *testing.T) {
 	resolvedProvisioningUser.Store(nil)
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = true
 	cfg.provisionNCFilesAccess(context.Background(), log.New(ioDiscard{}, "", 0))
 
 	// Provisioning must still have got as far as the folder work; an
@@ -428,12 +422,11 @@ func TestProvisionAcceptsAnExistingServiceAccount(t *testing.T) {
 	}
 }
 
-func TestProvisionCreatesTheServiceAccountWithAccessControlOff(t *testing.T) {
-	// The owner writes every archive object and is the read-proxy identity in
-	// BOTH modes — only the ACL topology is conditional. If account creation
-	// were gated on the flag, a flag-off install would deliver as a user that
-	// does not exist: every act-as-user call 401s, and under the strict
-	// nextcloud-files sink that fails every publish.
+// A stock ExApp install — no extra env of any kind — must yield the whole
+// access-control substrate. That is the acceptance criterion D-554 exists for:
+// there used to be an opt-in flag defaulting to off, so the default install
+// shipped the org-wide archive the goal was retiring.
+func TestProvisionBuildsTheWholeSubstrateForAStockInstall(t *testing.T) {
 	mock := &provisionMock{
 		folders: `[]`,
 		members: `["admin"]`,
@@ -444,22 +437,23 @@ func TestProvisionCreatesTheServiceAccountWithAccessControlOff(t *testing.T) {
 	resolvedProvisioningUser.Store(nil)
 	t.Cleanup(func() { resolvedProvisioningUser.Store(nil) })
 
+	// testExAppConfig is exactly what AppAPI injects and nothing more.
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = false
 	cfg.provisionNCFilesAccess(context.Background(), log.New(ioDiscard{}, "", 0))
 
+	// The identity tier: the account every archive object is written as.
 	if _, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users"); !ok {
-		t.Fatalf("the service account was not created with access control off")
+		t.Fatalf("the service account was not created")
 	}
 	if _, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users/"+ncRecordingsOwner+"/groups"); !ok {
 		t.Fatalf("the service account was not added to the owner group")
 	}
-	// ...and nothing beyond the identities. The group folder, its ACL floor and
-	// the viewer-group reconcile all belong to the access-control tier.
-	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); ok {
-		t.Fatalf("access-control topology was provisioned with the flag off")
+	// The topology tier, which used to be behind the flag.
+	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); !ok {
+		t.Fatalf("the group folder was not provisioned for a stock install")
 	}
-	if n := mock.count(http.MethodGet, "/cloud/users"); n != 0 {
-		t.Fatalf("viewer-group reconcile ran with the flag off (%d user listings)", n)
+	// ...and its ACL floor, which is what actually restricts each recording.
+	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders/9/acl"); !ok {
+		t.Fatalf("the group folder ACL floor was not enabled for a stock install")
 	}
 }

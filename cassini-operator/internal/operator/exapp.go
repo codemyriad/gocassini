@@ -65,18 +65,10 @@ const (
 	envAppAPIRequired       = "CASSINI_APPAPI_REQUIRED"
 	envViewerDist           = "CASSINI_VIEWER_DIST"
 	envNextcloudURL         = "NEXTCLOUD_URL"
-	// envNCAccessControl opts the AppAPI deployment into per-participant
-	// Nextcloud-native access control for recordings (D-534): the operator
-	// writes advanced-ACL grants per meeting and serves the viewer per-caller.
-	// On the enabled edge it also provisions the group folder + groups + ACL
-	// topology itself (nc_provision.go), so the only prerequisite is the Group
-	// folders app being enabled (see docs/exapp-nextcloud-recordings-permissions.md).
-	// OFF by default; with it off the operator keeps the D-529 public behavior.
-	envNCAccessControl   = "CASSINI_NC_ACCESS_CONTROL"
-	defaultExAppBindHost = "0.0.0.0"
-	defaultExAppBindPort = "8080"
-	viewerURLPrefix      = "/viewer"
-	publishedURLPrefix   = "/published"
+	defaultExAppBindHost    = "0.0.0.0"
+	defaultExAppBindPort    = "8080"
+	viewerURLPrefix         = "/viewer"
+	publishedURLPrefix      = "/published"
 )
 
 // ExApp UI (Nextcloud navigation) wiring. AppAPI renders a top-menu entry for
@@ -179,13 +171,7 @@ type ExAppConfig struct {
 	// the nextcloud-files sink nothing is ever written to PublishedDir, so
 	// mounting a file server over it would only ever serve staleness.
 	PublishSink string
-	// AccessControl enables per-participant Nextcloud-native access control
-	// (D-534). When true, publish grants advanced-ACL read to the meeting's
-	// Talk participants and the read proxy serves each caller only the meetings
-	// they may read. Requires the one-time groupfolder/ACL setup. Off => D-529
-	// public behavior. Sourced from CASSINI_NC_ACCESS_CONTROL.
-	AccessControl bool
-	onEnabled     func(bool)
+	onEnabled   func(bool)
 }
 
 // LoadExAppConfig reads ExApp env vars and decides whether the AppAPI build
@@ -202,11 +188,6 @@ func LoadExAppConfig() (ExAppConfig, error) {
 		ViewerDist:   strings.TrimSpace(os.Getenv(envViewerDist)),
 	}
 	cfg.Active = strings.TrimSpace(cfg.AppSecret) != ""
-	accessControl, err := parseBoolEnv(envNCAccessControl)
-	if err != nil {
-		return cfg, err
-	}
-	cfg.AccessControl = accessControl
 	required, err := parseBoolEnv(envAppAPIRequired)
 	if err != nil {
 		return cfg, err
