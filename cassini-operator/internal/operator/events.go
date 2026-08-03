@@ -169,12 +169,13 @@ func (s *Store) GetJobAttempt(ctx context.Context, jobID string, attemptNumber i
 	row := s.db.QueryRowContext(ctx, `
 SELECT job_id, attempt_number, trigger_kind, request_json,
        stage, state,
-       artifact_run_path, artifact_meeting_path, artifact_site_path,
+       artifact_run_path, artifact_meeting_path, artifact_opus_path, artifact_opus_sha256, artifact_site_path,
        error, stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
-       record_log_path, build_log_path, publish_log_path,
+       record_log_path, build_log_path, seal_log_path, publish_log_path,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
        build_queued_at, build_started_at, build_finished_at,
+       seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at
 FROM job_attempts

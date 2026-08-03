@@ -1002,6 +1002,12 @@ type Job struct {
 	RerunCount           int     `json:"rerun_count"`
 	ArtifactRunPath      *string `json:"artifact_run_path"`
 	ArtifactMeetingPath  *string `json:"artifact_meeting_path"`
+	// ArtifactOpusPath is the canonical portable meeting, current/<id>.opus,
+	// promoted from the attempt the seal stage sealed. ArtifactOpusSHA256 is
+	// that file's digest, which the publish worker re-checks before delivering
+	// and the sink re-checks before committing the asset (D-583).
+	ArtifactOpusPath     *string `json:"artifact_opus_path"`
+	ArtifactOpusSHA256   *string `json:"artifact_opus_sha256"`
 	ArtifactSitePath     *string `json:"artifact_site_path"`
 	Error                *string `json:"error"`
 	StopReason           *string `json:"stop_reason"`
@@ -1017,6 +1023,9 @@ type Job struct {
 	BuildQueuedAt        *string `json:"build_queued_at"`
 	BuildStartedAt       *string `json:"build_started_at"`
 	BuildFinishedAt      *string `json:"build_finished_at"`
+	SealQueuedAt         *string `json:"seal_queued_at"`
+	SealStartedAt        *string `json:"seal_started_at"`
+	SealFinishedAt       *string `json:"seal_finished_at"`
 	PublishQueuedAt      *string `json:"publish_queued_at"`
 	PublishStartedAt     *string `json:"publish_started_at"`
 	PublishFinishedAt    *string `json:"publish_finished_at"`
@@ -1297,11 +1306,12 @@ func (s *Store) ListJobs(ctx context.Context) ([]Job, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, provider, request_json, stage, state,
        current_attempt_number, rerun_count,
-       artifact_run_path, artifact_meeting_path, artifact_site_path, error,
+       artifact_run_path, artifact_meeting_path, artifact_opus_path, artifact_opus_sha256, artifact_site_path, error,
        stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
        build_queued_at, build_started_at, build_finished_at,
+       seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at
@@ -1333,11 +1343,12 @@ func (s *Store) GetJob(ctx context.Context, id string) (Job, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT id, provider, request_json, stage, state,
        current_attempt_number, rerun_count,
-       artifact_run_path, artifact_meeting_path, artifact_site_path, error,
+       artifact_run_path, artifact_meeting_path, artifact_opus_path, artifact_opus_sha256, artifact_site_path, error,
        stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
        build_queued_at, build_started_at, build_finished_at,
+       seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at
@@ -1358,6 +1369,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 	var job Job
 	var artifactRunPath sql.NullString
 	var artifactMeetingPath sql.NullString
+	var artifactOpusPath sql.NullString
+	var artifactOpusSHA256 sql.NullString
 	var artifactSitePath sql.NullString
 	var jobError sql.NullString
 	var stopReason sql.NullString
@@ -1371,6 +1384,9 @@ func scanJob(scanner rowScanner) (Job, error) {
 	var buildQueuedAt sql.NullString
 	var buildStartedAt sql.NullString
 	var buildFinishedAt sql.NullString
+	var sealQueuedAt sql.NullString
+	var sealStartedAt sql.NullString
+	var sealFinishedAt sql.NullString
 	var publishQueuedAt sql.NullString
 	var publishStartedAt sql.NullString
 	var publishFinishedAt sql.NullString
@@ -1389,6 +1405,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&job.RerunCount,
 		&artifactRunPath,
 		&artifactMeetingPath,
+		&artifactOpusPath,
+		&artifactOpusSHA256,
 		&artifactSitePath,
 		&jobError,
 		&stopReason,
@@ -1404,6 +1422,9 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&buildQueuedAt,
 		&buildStartedAt,
 		&buildFinishedAt,
+		&sealQueuedAt,
+		&sealStartedAt,
+		&sealFinishedAt,
 		&publishQueuedAt,
 		&publishStartedAt,
 		&publishFinishedAt,
@@ -1421,6 +1442,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 
 	job.ArtifactRunPath = nullableStringPtr(artifactRunPath)
 	job.ArtifactMeetingPath = nullableStringPtr(artifactMeetingPath)
+	job.ArtifactOpusPath = nullableStringPtr(artifactOpusPath)
+	job.ArtifactOpusSHA256 = nullableStringPtr(artifactOpusSHA256)
 	job.ArtifactSitePath = nullableStringPtr(artifactSitePath)
 	job.Error = nullableStringPtr(jobError)
 	job.StopReason = nullableStringPtr(stopReason)
@@ -1434,6 +1457,9 @@ func scanJob(scanner rowScanner) (Job, error) {
 	job.BuildQueuedAt = nullableStringPtr(buildQueuedAt)
 	job.BuildStartedAt = nullableStringPtr(buildStartedAt)
 	job.BuildFinishedAt = nullableStringPtr(buildFinishedAt)
+	job.SealQueuedAt = nullableStringPtr(sealQueuedAt)
+	job.SealStartedAt = nullableStringPtr(sealStartedAt)
+	job.SealFinishedAt = nullableStringPtr(sealFinishedAt)
 	job.PublishQueuedAt = nullableStringPtr(publishQueuedAt)
 	job.PublishStartedAt = nullableStringPtr(publishStartedAt)
 	job.PublishFinishedAt = nullableStringPtr(publishFinishedAt)
