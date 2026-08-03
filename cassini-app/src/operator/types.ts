@@ -8,6 +8,8 @@ export interface Job {
   rerun_count: number;
   artifact_run_path: string | null;
   artifact_meeting_path: string | null;
+  artifact_opus_path: string | null;
+  artifact_opus_sha256: string | null;
   artifact_site_path: string | null;
   error: string | null;
   stop_reason: string | null;
@@ -23,6 +25,9 @@ export interface Job {
   build_queued_at: string | null;
   build_started_at: string | null;
   build_finished_at: string | null;
+  seal_queued_at: string | null;
+  seal_started_at: string | null;
+  seal_finished_at: string | null;
   publish_queued_at: string | null;
   publish_started_at: string | null;
   publish_finished_at: string | null;
@@ -39,6 +44,8 @@ export interface JobAttempt {
   state: string;
   artifact_run_path: string | null;
   artifact_meeting_path: string | null;
+  artifact_opus_path: string | null;
+  artifact_opus_sha256: string | null;
   artifact_site_path: string | null;
   error: string | null;
   stop_reason: string | null;
@@ -48,6 +55,7 @@ export interface JobAttempt {
   record_stop_detail: string | null;
   record_log_path: string | null;
   build_log_path: string | null;
+  seal_log_path: string | null;
   publish_log_path: string | null;
   created_at: string;
   updated_at: string;
@@ -57,6 +65,9 @@ export interface JobAttempt {
   build_queued_at: string | null;
   build_started_at: string | null;
   build_finished_at: string | null;
+  seal_queued_at: string | null;
+  seal_started_at: string | null;
+  seal_finished_at: string | null;
   publish_queued_at: string | null;
   publish_started_at: string | null;
   publish_finished_at: string | null;

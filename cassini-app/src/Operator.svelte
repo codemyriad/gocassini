@@ -396,9 +396,12 @@
     }).format(date);
   }
 
+  // stageTimes below reads `${key}_queued_at` / `_started_at` / `_finished_at`,
+  // so a stage appears here only if the operator names its columns to match.
   const STAGES = [
     { key: "record", label: "Record" },
     { key: "build", label: "Build" },
+    { key: "seal", label: "Seal" },
     { key: "publish", label: "Publish" },
   ] as const;
 
@@ -1007,7 +1010,7 @@
                             </div>
                           </dl>
 
-                          {#if attempt.artifact_run_path || attempt.artifact_meeting_path || attempt.artifact_site_path || attempt.record_log_path || attempt.build_log_path || attempt.publish_log_path}
+                          {#if attempt.artifact_run_path || attempt.artifact_meeting_path || attempt.artifact_opus_path || attempt.artifact_site_path || attempt.record_log_path || attempt.build_log_path || attempt.seal_log_path || attempt.publish_log_path}
                             <div class="my-1 h-px w-full bg-base-content/12" aria-hidden="true"></div>
                             <dl class="grid gap-3">
                               {#if attempt.artifact_run_path}
@@ -1020,6 +1023,15 @@
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Meeting artifact</dt>
                                   <dd class="font-mono text-xs break-all">{attempt.artifact_meeting_path}</dd>
+                                </div>
+                              {/if}
+                              {#if attempt.artifact_opus_path}
+                                <div class="min-w-0">
+                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Sealed meeting</dt>
+                                  <dd class="font-mono text-xs break-all">{attempt.artifact_opus_path}</dd>
+                                  {#if attempt.artifact_opus_sha256}
+                                    <dd class="font-mono text-xs break-all text-base-content/45">sha256 {attempt.artifact_opus_sha256}</dd>
+                                  {/if}
                                 </div>
                               {/if}
                               {#if attempt.artifact_site_path}
@@ -1038,6 +1050,12 @@
                                 <div class="min-w-0">
                                   <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Build log</dt>
                                   <dd class="font-mono text-xs break-all">{attempt.build_log_path}</dd>
+                                </div>
+                              {/if}
+                              {#if attempt.seal_log_path}
+                                <div class="min-w-0">
+                                  <dt class="mb-1 text-xs uppercase tracking-wide text-base-content/45">Seal log</dt>
+                                  <dd class="font-mono text-xs break-all">{attempt.seal_log_path}</dd>
                                 </div>
                               {/if}
                               {#if attempt.publish_log_path}
