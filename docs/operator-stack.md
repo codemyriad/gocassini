@@ -16,6 +16,7 @@ It adds:
 - preserved attempts
 - recording-slot admission control
 - queued build workers
+- one immutable, digest-verified meeting artifact per attempt
 - serialized publish
 - safe promotion into a shared live site
 - browser visibility through the control panel
@@ -31,9 +32,10 @@ It owns:
 - job admission
 - SQLite persistence
 - work-root artifacts
-- record/build/publish execution
+- record/build/seal/publish execution
 - current artifact promotion
 - live-site promotion
+- artifact retention
 
 ### Control panel
 
@@ -130,15 +132,25 @@ Think of it as:
 
 - the latest successful `.run` per logical job
 - the latest successful `.meeting` bundle per logical job
+- the latest sealed portable `.opus` per logical job
 
-This matters because publish does **not** export from “the latest attempt folder”. It exports from this current meeting library.
+```text
+  <work-root>/current/
+    <job-id>.run       the reusable source media a rerun rebuilds from
+    <job-id>.meeting   the build output, and what the seal packs
+    <job-id>.opus      the canonical portable meeting
+```
 
-> Pre-cleanup state: today the operator keeps the transient `.meeting` bundle in
-> `current/` as its internal build output and publishes from it. The `.meeting`
-> bundle is build scratch, not a user-facing deliverable; the one canonical,
-> user-facing meeting format is the portable `.opus`. The operator storing and
-> publishing `.meeting` directories is scheduled for retirement (see the D-425
-> retirement inventory).
+`current/<job-id>.opus` is a **promotion** of the artifact an attempt sealed —
+a hard link where the filesystem allows one — not an independent pack of the same
+meeting. It is what a job's downloadable meeting file is, and it is byte-identical
+to the file the live site serves.
+
+> `.meeting` is no longer a publish input. The operator keeps it in `current/`
+> because a rerun and a re-seal read it, and because it is the easiest thing to
+> inspect while debugging — but the artifact that gets published is the sealed
+> `.opus`. Retiring the `.meeting` bundle entirely is tracked in the D-425
+> retirement inventory.
 
 ## Why `current/` matters
 
@@ -146,8 +158,11 @@ The easiest way to understand publish in operator mode is:
 
 1. each attempt may create attempt-local outputs under `runs/`
 2. successful artifacts are promoted into `current/`
-3. publish reads only the job's own bundle from `current/` (one meeting, not the library)
-4. the live site is rebuilt from the ready `.meeting` bundles in that library
+3. the seal packs the attempt's own `.meeting` into an immutable
+   `runs/<job>--attempt-NNN.seal/<job-id>.opus`, records its digest, and promotes
+   it to `current/<job-id>.opus`
+4. publish delivers that exact sealed file, re-checking its digest first
+5. the sink merges it into the live site, catalog last
 
 So the live site is based on the latest successful artifacts per job, not on a single attempt directory.
 
@@ -180,6 +195,18 @@ Build uses:
 
 Build can run in parallel when configured to do so.
 
+### Seal worker
+
+Sealing uses:
+
+- an in-memory queue
+- exactly one worker
+- a per-run timeout, so a hung `cassini pack` cannot hold the worker forever
+
+Sealing is off the build worker's critical path — the build hands the job over and
+returns — but it is **not** off the pipeline's. A job cannot become
+`publish/queued` without it.
+
 ### Publish worker
 
 Publish uses:
@@ -189,7 +216,16 @@ Publish uses:
 
 Publish is serialized because every successful publish can replace the shared live site.
 
-## Record, build, publish inside the operator
+## Record, build, seal, publish inside the operator
+
+```text
+  record ──▶ build ──▶ seal ──▶ publish ──▶ done
+                        │
+                        ├─ cassini pack   runs/<job>--attempt-NNN.meeting
+                        │                   -> runs/<job>--attempt-NNN.seal/<job>.opus
+                        ├─ sha256(file)   -> job_attempts.artifact_opus_sha256
+                        └─ promote        -> current/<job>.opus   (atomic rename)
+```
 
 ### Initial attempt
 
@@ -202,10 +238,49 @@ For a new job, the operator:
 5. promotes a usable `.run` into `current/`
 6. queues build
 7. runs `cassini build`
-8. promotes a successful `.meeting` into `current/`
-9. queues publish
-10. runs `cassini publish` from the canonical `current/` library
-11. hands the attempt-local `.site` to the publish sink, which upserts that meeting into the live site root (leaving every other meeting untouched)
+8. stamps the Talk room name into the attempt `.meeting`, then promotes it into `current/`
+9. queues seal
+10. runs `cassini pack` on the attempt `.meeting`, producing the attempt's immutable `.opus`
+11. records that file's SHA-256 and promotes it to `current/<job>.opus`
+12. queues publish
+13. runs `cassini publish` on that exact sealed `.opus`, after re-checking its digest
+14. hands the attempt-local `.site` to the publish sink, which verifies the staged asset against the sealed digest and upserts that meeting into the live site root (leaving every other meeting untouched)
+
+### The seal stage
+
+Packing the portable `.opus` used to be a background task started *after* the job
+had been handed to the publish worker. It could fail, be killed by a restart, or
+be overtaken by a rerun writing the same path — and none of that failed the job,
+so a recording could reach `done/succeeded` with its canonical meeting file
+missing or belonging to a different attempt. Publish had to prefer the `.meeting`
+bundle as a result.
+
+Sealing is now a stage of the job:
+
+- **its success gates publishing.** The only transition into `publish/queued`
+  writes the sealed artifact's path and digest in the same database transaction,
+  so a queued publish always has a verified artifact behind it.
+- **its artifact is attempt-scoped and immutable.** A rerun seals its own file
+  under `runs/<job>--attempt-NNN.seal/`; it never rewrites what a queued publish
+  is about to deliver. The file is named for the job rather than the attempt
+  because the static-site exporter derives a meeting's catalog id from the input
+  file's stem — an attempt-named file would publish a rerun as a second, separate
+  meeting.
+- **its failure is a job failure.** `cassini pack` verifies its own output before
+  renaming it into place, so a zero exit means packed *and* integrity-checked; the
+  operator adds the two things pack cannot report — the file exists, and it is not
+  empty — and then records its digest. Anything else ends the job at
+  `done/failed` with the reason recorded. A rerun is the retry, and it rebuilds
+  from `current/<job>.run`, so nothing is lost.
+- **it survives a restart.** A `seal/queued` row is excluded from the startup
+  interrupted-sweep and re-delivered by the requeue dispatcher, exactly like
+  `build/queued` and `publish/queued`. A `seal/running` row lost its subprocess
+  and becomes `seal/interrupted`, which is a rerun candidate.
+
+The digest travels the whole way: it is recorded at seal time, re-checked before
+the publish subprocess spawns, and re-checked on the staged copy before the sink
+commits it. That is what makes "the meeting you download is the meeting this
+attempt sealed" a verified claim rather than a naming convention.
 
 ### Rerun attempt
 
@@ -216,8 +291,8 @@ That means a rerun:
 - does not re-record the meeting
 - requires a canonical ready `.run`
 - creates a new attempt starting at `build/queued`
-- produces fresh attempt-local `.meeting` and `.site` outputs
-- can replace the canonical current `.meeting` on success
+- produces fresh attempt-local `.meeting`, `.seal` and `.site` outputs
+- can replace the canonical current `.meeting` and `.opus` on success
 
 This is useful when:
 
@@ -249,14 +324,31 @@ The operator never publishes directly into the live site root.
 Instead it:
 
 1. publishes into a retained attempt-local `.site`
-2. stages that site next to the live root
-3. swaps the staged site into place on success
+2. hands that site to the publish sink
+3. the sink merges the one meeting it contains into the live site root
+
+The merge order is the failure boundary, and it runs in this direction on purpose:
+
+```text
+  1. asset     stage beside its destination, verify its digest, rename into place
+  2. shell     index.html / assets, staged and swapped (only when the attempt
+               site carries a shell — the ExApp image serves it from the image)
+  3. manifest  cassini.json lineage
+  4. catalog   catalog.json, written atomically, LAST
+```
+
+A crash before step 4 leaves an unreferenced file: invisible, harmless. A crash
+after it has everything the catalog names already on disk. The reverse order
+would publish a catalog pointing at audio that is not there yet.
 
 This gives Cassini an important failure boundary:
 
 - failed publish attempts do not corrupt the currently served site
-- the previous live site can remain available
-- each successful attempt keeps its own `.site` output for inspection
+- a failed shell refresh leaves the previous, working viewer in place
+- an asset whose digest does not match what the job sealed is refused before the
+  catalog can name it
+- each successful attempt keeps its own `.site` output for inspection, subject to
+  the retention policy below
 
 ## What the control panel sees
 
@@ -285,6 +377,38 @@ See more:
 
 - [Viewer](./components/viewer.md)
 
+## Artifact retention
+
+Per-attempt working files under `runs/` used to accumulate forever. An explicit
+policy now bounds them, selected with `--artifact-retention` /
+`CASSINI_ARTIFACT_RETENTION`:
+
+| Policy | Prunes |
+|--------|--------|
+| `all` | nothing — the behaviour before this policy existed, and the escape hatch |
+| `superseded` | the heavy payloads of attempts a rerun has replaced |
+| `sealed` **(default)** | `superseded`, plus a succeeded attempt's `.run`, `.meeting` and `.site` |
+
+```text
+  <work-root>/
+    current/                      NEVER pruned — canonical .run/.meeting/.opus,
+                                  which is what reruns and debugging read
+    runs/
+      <job>--attempt-NNN.run      ┐
+      <job>--attempt-NNN.meeting  ├─ prunable: duplicated in current/, or transient
+      <job>--attempt-NNN.site     ┘
+      <job>--attempt-NNN.seal     kept — the artifact that was published
+      <job>--attempt-NNN.logs     NEVER pruned — the forensic record
+  <site-root>/                    NEVER pruned — deleting published recordings is
+                                  a separate, user-facing decision
+```
+
+Every removal is guarded on the artifact that replaces it existing, so nothing
+here removes the last copy of anything: a record that failed before promotion
+keeps its attempt `.run`, and a failed job keeps everything. Removals are logged
+with the reason. The sweep runs after a successful publish and once at startup.
+An unrecognised policy name is rejected at startup with exit code 2.
+
 ## Current operational limitations
 
 Important current limitations include:
@@ -293,7 +417,8 @@ Important current limitations include:
 - no automatic resume after restart
 - no automatic retry
 - no full re-record rerun mode
-- no built-in artifact pruning policy yet
+- retention is attempt-scoped only: the number of jobs, `current/`, and the live
+  site are still unbounded, with no byte or age cap over the work root
 
 If the operator stops mid-flight:
 

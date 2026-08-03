@@ -8,7 +8,7 @@ Goal:
 - start a local Nextcloud + AppAPI/HaRP + Talk stack
 - build and install Cassini as an ExApp (the production topology)
 - record a Talk meeting through Talk's record button
-- watch the job run through record -> build -> publish
+- watch the job run through record -> build -> seal -> publish
 - open the published meeting in the viewer — with its real conversation name
 
 ## Before you begin
@@ -180,7 +180,7 @@ cd deployment && docker compose up --build
 ```
 
 Then paste `CALL_URL` into the control panel to submit a job, watch it move
-`record -> build -> publish -> done`, and refresh the viewer. For viewer-only
+`record -> build -> seal -> publish -> done`, and refresh the viewer. For viewer-only
 work, `cassini-viewer`'s own dev server (`npm run dev`) is lighter still.
 
 ## Where to go next

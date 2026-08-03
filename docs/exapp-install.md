@@ -545,7 +545,7 @@ conversation so the HPB-internal path is exercised:
 3. Confirm a Cassini job appears in the **Cassini Admin** control panel.
 4. Speak for a minute, stop the recording, leave the call, or let the
    empty-room timeout stop it.
-5. Watch the job progress through record → build → publish. Talk receives
+5. Watch the job progress through record → build → seal → publish. Talk receives
    started/stopped status per its recording-backend protocol and nothing else;
    the meeting itself is published as a portable `.opus` into Nextcloud Files,
    where the transcript/summary appear in the Cassini viewer.

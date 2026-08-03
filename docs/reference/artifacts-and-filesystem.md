@@ -9,7 +9,7 @@ This page describes Cassini’s main artifact types and the operator’s runtime
 | `.run` bundle | record | durable capture output |
 | `.meeting` bundle | build | transient build scratch (intermediate; packed into `.opus`) |
 | `.site` bundle | publish | static viewer export |
-| portable `.opus` | build/packaging flow | the one canonical user-facing meeting format and only durable published contract |
+| portable `.opus` | build/packaging flow; the operator's **seal** stage | the one canonical user-facing meeting format and only durable published contract |
 
 The `.opus` portable file is the single user-facing deliverable. The `.meeting`
 bundle and its manifests (`cassini.json` = `cassini.meeting.v1`, `manifest.json`
@@ -128,11 +128,17 @@ Assume these roots:
 <work-root>/current/
   <job-id>.run/
   <job-id>.meeting/
+  <job-id>.opus
 ```
 
 This is the operator’s canonical current library.
 
 Think of it as “the latest successful reusable artifacts per logical job”.
+
+`<job-id>.opus` is a **promotion** of the artifact an attempt sealed — a hard link
+where the filesystem allows one — not an independent pack of the same meeting. It
+is committed with a single atomic rename, so a reader sees either the whole
+previous portable meeting or the whole new one, never neither.
 
 ### Attempt-local retained artifacts
 
@@ -142,14 +148,30 @@ Think of it as “the latest successful reusable artifacts per logical job”.
   <job-id>--attempt-001.logs/
     record.log
     build.log
+    seal.log
     publish.log
   <job-id>--attempt-002.meeting/
+  <job-id>--attempt-002.seal/
+    <job-id>.opus
   <job-id>--attempt-002.site/
 ```
 
 This is the preserved attempt history.
 
 Think of it as “what happened in each execution pass”.
+
+The `.seal` directory holds that attempt's portable meeting, and its shape is the
+product of two constraints that pull in different directions:
+
+- it has to be **attempt-scoped**, so a rerun cannot overwrite the artifact a
+  queued publish is about to deliver — that race is exactly what D-583 removed;
+- its **file name has to stay the job id**, because the static-site exporter
+  derives a meeting's catalog id from the input file's stem. A file named
+  `<job-id>--attempt-002.opus` would publish a rerun as a second, separate
+  meeting rather than updating the first.
+
+A directory per attempt satisfies both. The file inside it is immutable: it is
+written once, digested, and never rewritten.
 
 ### Live published site
 
@@ -196,12 +218,42 @@ At the logical job summary level:
 
 - `artifact_run_path` points at canonical `current/<job-id>.run`
 - `artifact_meeting_path` points at canonical `current/<job-id>.meeting`
+- `artifact_opus_path` points at canonical `current/<job-id>.opus`
+- `artifact_opus_sha256` is the SHA-256 of the artifact the current attempt sealed
 - `artifact_site_path` points at the live shared site root
 
 At the attempt level:
 
 - `.run`, `.meeting`, and `.site` paths point at attempt-local retained outputs when those outputs were created for that attempt
-- rerun attempts typically reuse the canonical `.run` and create fresh attempt-local `.meeting` and `.site` outputs
+- `artifact_opus_path` points at that attempt's own immutable
+  `runs/<job-id>--attempt-NNN.seal/<job-id>.opus`, and `artifact_opus_sha256` is
+  its digest
+- rerun attempts typically reuse the canonical `.run` and create fresh attempt-local `.meeting`, `.seal` and `.site` outputs
+
+The split is the same one every stage uses, and it is what lets a publish deliver
+a specific attempt's artifact rather than whatever is currently canonical:
+
+```text
+  job row      current/<job-id>.opus                        what is canonical now
+  attempt row  runs/<job-id>--attempt-NNN.seal/<job-id>.opus what this attempt sealed
+```
+
+## Retention
+
+Attempt-local payloads under `runs/` are pruned by an explicit policy,
+`--artifact-retention` / `CASSINI_ARTIFACT_RETENTION`:
+
+| Policy | Prunes |
+|--------|--------|
+| `all` | nothing |
+| `superseded` | the `.run`, `.meeting`, `.site` and `.seal` of attempts a rerun has replaced |
+| `sealed` **(default)** | `superseded`, plus a succeeded attempt's `.run`, `.meeting` and `.site` |
+
+Never pruned, under any policy: everything in `current/`, every attempt `.logs`
+directory, the retained `.seal` of a succeeded attempt, and the live site. Every
+removal is additionally guarded on the artifact that replaces it existing, so a
+record that failed before promotion keeps its attempt `.run` and a failed job
+keeps everything — nothing here removes the last copy of anything.
 
 ## Live site lineage
 

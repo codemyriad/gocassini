@@ -116,13 +116,54 @@ Usually one of these is true:
 
 - no publish has succeeded yet
 - the latest job failed before publish finished
+- the job failed at `seal`, so there was never a portable meeting to publish
 - publish found no ready `.meeting` artifacts to export
+- publish refused to run because the sealed `.opus` was missing or no longer
+  matched the digest recorded for it
 
 ### What to do
 
 - confirm the job reached `done / succeeded`
 - inspect job and attempt state in the control panel
 - refresh the viewer after publish success
+
+### Sealing failures
+
+A job cannot publish until it has sealed a portable `.opus`, so a failed seal is
+a failed job (`done / failed`) with the pack error in `error`. The attempt's seal
+log is the detail:
+
+```text
+<work-root>/runs/<job-id>--attempt-NNN.logs/seal.log
+```
+
+A rerun is the retry. It rebuilds from `current/<job-id>.run`, so a failed seal
+loses nothing but time.
+
+If the seal succeeded but the publish refused to run, the operator log carries
+one of these, and each one names the job and the artifact:
+
+```text
+job <id> has no sealed portable meeting to publish
+job <id> is missing its sealed portable meeting <path>
+job <id> has a sealed portable meeting with no recorded digest
+sealed portable meeting <path> changed since it was sealed: sha256 <got>, want <want>
+```
+
+The last one means the file on disk is no longer the artifact the job sealed —
+truncated, replaced, or corrupted. It is a refusal, not a fallback: publishing
+something the pipeline did not verify is exactly what sealing exists to prevent.
+A rerun re-seals and re-publishes.
+
+If the delivery got as far as the sink and was refused, the message names the
+site-relative asset instead:
+
+```text
+published asset meetings/<id>.opus does not match the sealed artifact: sha256 <got>, want <want>
+```
+
+Nothing was published in that case — the asset is checked before the catalog can
+name it, and the previous live site is untouched.
 
 Remember:
 

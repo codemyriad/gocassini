@@ -129,7 +129,7 @@ Preferred D-395 post-fix test (mirrors the validated local helper):
 3. Click Talk's Record button.
 4. Confirm the operator creates a job in Cassini Admin.
 5. Stop recording or leave call and let empty-room stop happen.
-6. Confirm job reaches record → build → publish succeeded.
+6. Confirm job reaches record → build → seal → publish succeeded.
 7. Open viewer and verify transcript appears.
 8. Run a second controlled recording.
 9. Confirm both new recordings and pre-existing viewer catalog entries remain.

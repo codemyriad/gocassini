@@ -14,6 +14,7 @@ Cassini is built around durable stage boundaries.
 Nextcloud Talk room
   -> .run bundle
   -> .meeting bundle
+  -> .opus portable meeting
   -> .site bundle
 ```
 
@@ -30,6 +31,10 @@ The simplest way to understand the pipeline is:
 - **record** captures reusable source media
 - **build** turns that source media into a portable `.opus` meeting, staging a transient `.meeting` bundle internally
 - **publish** turns one or more built meetings into a static browser site
+
+In the operator those boundaries are four persisted stages, because the pack
+that produces the `.opus` is a precondition for publishing rather than a side
+effect of building — see [Operator stack](./operator-stack.md).
 
 ## 1. Record
 
@@ -145,14 +150,21 @@ Publish turns one or more ready meetings into a static viewer site.
 
 ### Accepted inputs
 
+- one portable `.opus` file
 - one ready `.meeting` bundle
-- or a directory containing multiple ready `.meeting` bundles
+- or a directory containing either or both
 
-> Pre-cleanup state: publish currently consumes the transient `.meeting` bundle
-> as its input. The `.meeting` bundle is build scratch, not a durable
-> deliverable; the canonical, user-facing meeting format is the portable
-> `.opus`. Publish reading `.meeting` directories is scheduled for retirement
-> (see the D-425 retirement inventory).
+A `.opus` input is **verified and copied through byte for byte** — its embedded
+manifest is decoded and its audio integrity re-checked, and then the file itself
+is what lands in the site. A `.meeting` input is packed into a temporary `.opus`
+first, so publishing a bundle costs a pack that publishing a portable meeting
+does not.
+
+> The operator no longer uses the `.meeting` input. Every meeting it publishes is
+> sealed into a portable `.opus` first (see [Operator stack](./operator-stack.md)),
+> so the operator's publish is always the copy-through path. The `.meeting` input
+> remains for standalone CLI use and is scheduled for retirement (see the D-425
+> retirement inventory).
 
 ### Output
 
@@ -182,12 +194,32 @@ Publish currently:
 
 ### Important publish rule
 
-Publish only uses successful ready `.meeting` artifacts as input.
+Publish only uses artifacts it can verify: a ready `.meeting` bundle, or a
+`.opus` whose embedded integrity check passes.
 
 That rule matters both:
 
 - in standalone CLI mode
-- and in operator mode, where publish reads the operator’s canonical `current/` meeting library
+- and in operator mode, where publish is handed exactly one sealed `.opus` — the
+  artifact that attempt sealed, identified by its digest
+
+### Cost, stated honestly
+
+For a job with one new meeting, and `A` meetings already in the archive:
+
+| Work | Cost |
+|------|------|
+| packing the meeting | once, at seal time |
+| writing its audio into the site | one file copy |
+| every other meeting's audio | **untouched** |
+| `catalog.json` | read, re-marshalled and rewritten in full — `O(A)` |
+
+So the **archived-media** work per publish is O(1) in the size of the archive,
+which is the D-459 win. The total is not O(1): the flat catalog is `O(A)` per
+publish, and `O(J²)` metadata work across `J` arriving jobs. At production scale
+(tens of meetings, a few KB of JSON) that is negligible next to one audio pack,
+which is why the flat catalog has not been replaced — but "incremental media
+publish" is the accurate description, not "O(1) publish".
 
 ## Explicit bundle flow vs portable single-file flow
 
@@ -237,6 +269,8 @@ Think of portable `.opus` as:
 - the one canonical, user-facing meeting format and only durable published contract
 - a one-file packaged meeting, good for sharing or archiving
 - readable by the viewer in portable mode
+- in the operator, **sealed**: produced by a stage the job must pass, verified,
+  digested, and immutable once written
 
 The key point is that `.opus` is the durable deliverable, not a separate capture architecture; the `.meeting` bundle is just the intermediate it is packed from.
 

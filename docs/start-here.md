@@ -92,3 +92,4 @@ Use this when you want to debug stage boundaries directly.
 - Want the high-level architecture first: [Mental model](./mental-model.md)
 - Want to understand the local runtime layout: [Running the local developer stack](./local-developer-stack.md)
 - Want the record/build/publish details: [Core pipeline](./core-pipeline.md)
+- Want the operator’s extra seal stage: [Operator stack](./operator-stack.md)
