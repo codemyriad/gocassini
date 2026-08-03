@@ -7,6 +7,13 @@ import (
 	"strings"
 )
 
+// MarkPublishQueued moves a job to publish/queued.
+//
+// Production never calls it: publish/queued is reachable only through
+// MarkSealSucceeded, which writes it in the same transaction that records the
+// sealed artifact, so a queued publish always has an artifact behind it
+// (D-583). It survives for tests that need to stand a publish/queued row up
+// without running a seal.
 func (s *Store) MarkPublishQueued(ctx context.Context, id, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

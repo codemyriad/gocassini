@@ -223,9 +223,9 @@ func TestResolveTalkRoomNameNoopWithoutFetcher(t *testing.T) {
 func TestRunBuildJobStampsTalkRoomNameIntoPromotedBundle(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	// The post-build pack goroutine shells out to cfg.CassiniBin inside the
-	// test's temp WorkRoot; use an instant fake and wait for the goroutine so
-	// TempDir cleanup never races an in-flight ffmpeg.
+	// The seal that follows the build shells out to cfg.CassiniBin inside the
+	// test's temp WorkRoot; use an instant fake so TempDir cleanup never races
+	// an in-flight ffmpeg.
 	rt.cfg.CassiniBin = writeFakeCassini(t, `printf 'opus-bytes' > "$4"; exit 0`)
 	jobID := "job-titled-build"
 	seedTalkJob(t, rt, jobID)
@@ -239,12 +239,10 @@ func TestRunBuildJobStampsTalkRoomNameIntoPromotedBundle(t *testing.T) {
 		t.Fatalf("MarkBuildQueued() error = %v", err)
 	}
 
-	// runBuildJob must stamp the room name into the promoted bundle's
-	// manifest BEFORE publish is enqueued — `cassini publish` re-packs the
-	// `.meeting` when the durable `.opus` isn't there yet, and the manifest
-	// title is what names the very first publish of a fresh recording.
+	// runBuildJob must stamp the room name into the attempt bundle BEFORE it is
+	// promoted, so both copies carry it and the seal that follows packs the
+	// name into the `.opus` the viewer actually reads (D-462).
 	rt.runBuildJob(buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath}, 1)
-	rt.opusPackWG.Wait()
 
 	manifest, ok, err := LoadMeetingBundleManifest(canonicalMeetingPath(rt.cfg.WorkRoot, jobID))
 	if err != nil || !ok {
@@ -252,6 +250,14 @@ func TestRunBuildJobStampsTalkRoomNameIntoPromotedBundle(t *testing.T) {
 	}
 	if manifest.Title != "Daily Meeting" {
 		t.Errorf("promoted bundle title = %q, want %q", manifest.Title, "Daily Meeting")
+	}
+	// The attempt bundle keeps the stamp too — it is what the seal packs.
+	attemptManifest, ok, err := LoadMeetingBundleManifest(attemptMeetingPath(rt.cfg.WorkRoot, jobID, 1))
+	if err != nil || !ok {
+		t.Fatalf("LoadMeetingBundleManifest(attempt) = ok=%t err=%v", ok, err)
+	}
+	if attemptManifest.Title != "Daily Meeting" {
+		t.Errorf("attempt bundle title = %q, want %q", attemptManifest.Title, "Daily Meeting")
 	}
 }
 

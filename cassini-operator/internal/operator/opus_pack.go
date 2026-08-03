@@ -11,32 +11,35 @@ import (
 	"syscall"
 )
 
-// packCanonicalMeetingToOpus packs a promoted `.meeting` bundle in current/
-// into a durable `<jobID>.opus` file stored alongside it (D-428).
+// packAttemptMeetingToOpus packs one attempt's `.meeting` bundle into that
+// attempt's portable `.opus` — the seal (D-583).
 //
-// Why this exists: today an imported/cloud meeting only survives as a
-// `.meeting` directory in current/, which publish re-exports on every run.
-// Once `.meeting` stops being a publish input (D-429), the durable unit must
-// be the `.opus` file. This step writes that `.opus` at promotion time, BEFORE
-// `.meeting` is retired, so no imported meeting is ever lost.
+// This used to be packCanonicalMeetingToOpus: it packed current/<job>.meeting
+// into current/<job>.opus, from a detached goroutine, additively, and a failure
+// was logged and forgotten because `.meeting` was still the publish input. Two
+// things changed and both matter:
 //
-// IMPORTANT (deploy-ordering / reversibility): this runs ADDITIVELY. It does
-// not remove or replace the `.meeting` bundle, and a failure here must NOT fail
-// the build — `.meeting` remains the publish input until D-429. The boolean
-// return reports whether the `.opus` was written so callers can log/diagnose;
-// the error is informational and intentionally non-fatal at the call site.
+//   - The input is the *attempt's* bundle and the output is the *attempt's*
+//     path, so two reruns of one job cannot write the same file. The canonical
+//     current/<job>.opus is a promotion of this artifact, not an independent
+//     pack of it (promoteOpusFile).
+//   - Failure is fatal. Nothing downstream falls back to `.meeting` any more, so
+//     a pack that did not produce a verified file must fail the job rather than
+//     let it publish something else.
 //
-// The pack itself is atomic at the recorder layer (packMeetingBundle stages a
-// temp file and renames into place), so a crash mid-pack leaves the previous
-// `.opus` (if any) untouched.
-func packCanonicalMeetingToOpus(ctx context.Context, cassiniBin, workRoot, jobID, title string, logSink io.Writer) (string, error) {
-	meetingPath := canonicalMeetingPath(workRoot, jobID)
+// `cassini pack` verifies its own output before renaming it into place: it
+// re-decodes the packed file and compares the PCM SHA-256 against the manifest
+// it embedded. A zero exit therefore means "packed and integrity-checked", and
+// the operator's own post-conditions are the two things pack cannot tell it —
+// that the file is there, and that it is not empty.
+func packAttemptMeetingToOpus(ctx context.Context, cassiniBin, workRoot, jobID string, attemptNumber int, title string, logSink io.Writer) (string, error) {
+	meetingPath := attemptMeetingPath(workRoot, jobID, attemptNumber)
 	if _, err := os.Stat(meetingPath); err != nil {
-		return "", fmt.Errorf("stat promoted meeting bundle: %w", err)
+		return "", fmt.Errorf("stat attempt meeting bundle: %w", err)
 	}
-	opusPath := canonicalOpusPath(workRoot, jobID)
+	opusPath := attemptOpusPath(workRoot, jobID, attemptNumber)
 	if err := os.MkdirAll(filepath.Dir(opusPath), 0o755); err != nil {
-		return "", fmt.Errorf("create current dir for opus: %w", err)
+		return "", fmt.Errorf("create runs dir for opus: %w", err)
 	}
 
 	args := []string{"pack", meetingPath, "--out", opusPath}
@@ -59,8 +62,14 @@ func packCanonicalMeetingToOpus(ctx context.Context, cassiniBin, workRoot, jobID
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("cassini pack: %w", err)
 	}
-	if _, err := os.Stat(opusPath); err != nil {
+	info, err := os.Stat(opusPath)
+	if err != nil {
 		return "", fmt.Errorf("pack output missing: %w", err)
+	}
+	if info.Size() == 0 {
+		// A zero-byte `.opus` would sail through every later existence check and
+		// fail only in the viewer. Catch it where it is still a seal failure.
+		return "", fmt.Errorf("pack output is empty: %s", opusPath)
 	}
 	return opusPath, nil
 }

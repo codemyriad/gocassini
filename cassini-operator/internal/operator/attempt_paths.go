@@ -84,6 +84,18 @@ func attemptSitePath(workRoot, jobID string, attemptNumber int) string {
 	return filepath.Join(runsRoot(workRoot), attemptBaseName(jobID, attemptNumber)+".site")
 }
 
+// attemptOpusPath is the portable meeting the seal stage produces for one
+// attempt, and the exact file the publish that follows delivers (D-583).
+//
+// It is attempt-scoped on purpose. The durable `.opus` used to be written only
+// to current/<jobID>.opus, by a detached pack per attempt; two reruns therefore
+// raced for one path and the winner was whichever pack finished last, not
+// whichever attempt was current. A rerun now seals runs/<job>--attempt-002.opus
+// while attempt 1's artifact stays exactly as it was sealed.
+func attemptOpusPath(workRoot, jobID string, attemptNumber int) string {
+	return filepath.Join(runsRoot(workRoot), attemptBaseName(jobID, attemptNumber)+".opus")
+}
+
 func siteStagingRoot(siteRoot string) string {
 	return filepath.Clean(siteRoot) + ".staging"
 }

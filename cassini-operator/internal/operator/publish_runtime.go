@@ -14,6 +14,13 @@ import (
 type publishTask struct {
 	JobID         string
 	AttemptNumber int
+	// OpusPath and OpusSHA256 are the artifact the seal stage sealed for this
+	// attempt (D-583). They travel with the task rather than being resolved
+	// when a worker dequeues it, so a rerun that seals a newer artifact cannot
+	// change what an already-queued publish delivers. Both are persisted, so
+	// the requeue dispatcher rebuilds a complete task after a restart.
+	OpusPath   string
+	OpusSHA256 string
 }
 
 func (rt *Runtime) startPublishWorker() {
@@ -105,22 +112,6 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	// want to look at it.
 	if err := os.RemoveAll(attemptArtifactSitePath); err != nil {
 		rt.logger.Printf("publish staging cleanup failed id=%s attempt=%d path=%s: %v", task.JobID, task.AttemptNumber, attemptArtifactSitePath, err)
-	}
-}
-
-func (rt *Runtime) enqueuePublishJob(jobID string, attemptNumber int, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt string) error {
-	if err := rt.store.MarkPublishQueued(context.Background(), jobID, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt); err != nil {
-		return err
-	}
-	task := publishTask{JobID: jobID, AttemptNumber: attemptNumber}
-	select {
-	case rt.publishQueue <- task:
-		return nil
-	case <-rt.ctx.Done():
-		if err := rt.store.MarkPublishFailed(context.Background(), jobID, "", "", "publish queue stopped", nowUTCString()); err != nil {
-			return err
-		}
-		return fmt.Errorf("publish queue stopped")
 	}
 }
 

@@ -75,19 +75,20 @@ type Runtime struct {
 	stderr       io.Writer
 	recordSlots  chan struct{}
 	buildQueue   chan buildTask
+	sealQueue    chan sealTask
 	publishQueue chan publishTask
 	events       *eventHub
 	recordMu     sync.Mutex
 	recordJobs   map[string]*recordProcessState
 	recordWG     sync.WaitGroup
-	// opusPackWG tracks the fire-and-forget post-build `cassini pack`
-	// goroutines so tests (and shutdown, if it ever cares) can wait for them
-	// instead of racing their temp-dir writes.
-	opusPackWG   sync.WaitGroup
 	talkRooms    map[string]*talkRoomState
 	talkJobs     map[string]*talkRoomState
 	recordJobFn  func(context.Context, Job, TriggerRequest) (recordResult, error)
 	buildJobFn   func(context.Context, buildTask) (string, error)
+	// sealJobFn packs one attempt's `.meeting` into its immutable `.opus`
+	// (D-583). It is a seam for the same reason buildJobFn and publishJobFn
+	// are: tests drive the pipeline without an ffmpeg subprocess.
+	sealJobFn    func(context.Context, sealTask) (string, error)
 	publishJobFn func(context.Context, publishTask) (string, error)
 	// publishSink is where a published meeting is delivered (publish_sink.go,
 	// D-533). Exactly one, selected by name; runPublishJob knows nothing about
@@ -126,8 +127,12 @@ type Runtime struct {
 	talkJSONClient  *http.Client
 	talkRetryDelays []time.Duration
 	// requeueKick nudges the requeue dispatcher to re-scan the DB for
-	// queued build/publish rows the channels could not accept (D-367).
+	// queued build/seal/publish rows the channels could not accept (D-367).
 	requeueKick chan struct{}
+	// sealJobTimeout bounds one `cassini pack` run; without it a hung pack
+	// wedges the seal worker forever, and nothing behind it can publish
+	// (D-583). Tests shrink it.
+	sealJobTimeout time.Duration
 	// publishJobTimeout bounds one `cassini publish` run; without it a hung
 	// publish wedges the single publish worker forever (D-367). Tests shrink it.
 	publishJobTimeout time.Duration
@@ -557,6 +562,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		stderr:       stderr,
 		recordSlots:  make(chan struct{}, cfg.MaxRecordWorkers),
 		buildQueue:   make(chan buildTask, queueCapacity),
+		sealQueue:    make(chan sealTask, queueCapacity),
 		publishQueue: make(chan publishTask, 16),
 		events:       newEventHub(),
 		recordJobs:   map[string]*recordProcessState{},
@@ -572,6 +578,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		talkAudienceRetryGap: talkAudienceRetryGap,
 
 		requeueKick:         make(chan struct{}, 1),
+		sealJobTimeout:      defaultSealJobTimeout,
 		publishJobTimeout:   defaultPublishJobTimeout,
 		recordHealthTimeout: recordHealthProbeTimeout,
 		settingsPath:        settingsPath(cfg),
@@ -588,6 +595,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
 	rt.recordJobFn = rt.executeRecordCLI
 	rt.buildJobFn = rt.executeBuildCLI
+	rt.sealJobFn = rt.executeSealCLIWithTimeout
 	rt.publishJobFn = rt.executePublishCLIWithTimeout
 	// loadConfig already rejected an unknown name; a Config built directly (as
 	// tests do) carries an empty name, which resolves to the default. So this
@@ -611,6 +619,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		return rt.runRecordDoctorContext(probeCtx)
 	})
 	rt.startBuildWorkers()
+	rt.startSealWorker()
 	rt.startPublishWorker()
 	go rt.requeueDispatcher()
 	return rt
