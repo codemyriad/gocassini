@@ -81,6 +81,13 @@ func TestEnsureProtectedRulesPreservesParticipantsAddsDeny(t *testing.T) {
 		t.Error("recordingACLRules output should already be viewer-group-denied")
 	}
 	// A stale ALLOW on the viewer group is replaced by a deny.
+	//
+	// This is a property of the repair function in isolation, NOT of the sweep
+	// that calls it: selfHealLeafProtection no longer hands it a leaf that
+	// states any viewer-group rule, because an allow there is a deliberate
+	// public grant rather than damage (D-552, see
+	// TestSelfHealLeavesAPublicRecordingAlone). Kept because the function must
+	// still normalise whatever it is given.
 	fixed := ensureProtectedRules([]aclRule{
 		{Type: "group", ID: ncRecordingsViewerGroup, Mask: aclMaskAll, Permissions: aclMaskAll},
 	})
