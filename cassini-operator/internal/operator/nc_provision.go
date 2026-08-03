@@ -264,6 +264,9 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	}
 	provisionMu.Lock()
 	defer provisionMu.Unlock()
+	// Recorded before the first step so a run that dies part-way still reports
+	// as an ExApp with a broken substrate, not as a standalone with none.
+	ncAccessSubstrate.markApplicable()
 	client := &http.Client{Timeout: ncProvisionTimeout}
 
 	// 0. Establish both identities before anything uses either: discover an
@@ -273,6 +276,7 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	c.resolveProvisioningUser(ctx, client, logger)
 	if err := c.ensureRecordingsOwnerAccount(ctx, client, logger); err != nil {
 		logger.Printf("nc provision: ensure recordings account %q failed: %v — recordings setup incomplete", ncRecordingsOwner, err)
+		ncAccessSubstrate.fail("recordings owner account "+ncRecordingsOwner, err)
 		return
 	}
 	// 1. The viewer group: the mount group whose members can traverse the
@@ -285,11 +289,16 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	folder, err := c.ensureRecordingsFolder(ctx, client)
 	if err != nil {
 		logger.Printf("nc provision: ensure group folder %q failed: %v — access control setup incomplete", ncRecordingsMount, err)
+		// By far the most likely cause, and the one an admin can act on: the
+		// Group folders ("Team folders") app is the single prerequisite an
+		// ExApp cannot install for itself.
+		ncAccessSubstrate.fail("group folder "+ncRecordingsMount+" (is the Group folders app enabled?)", err)
 		return
 	}
 	folderID, ok := folder.idInt()
 	if !ok {
 		logger.Printf("nc provision: group folder %q has no usable id — aborting", ncRecordingsMount)
+		ncAccessSubstrate.fail("group folder "+ncRecordingsMount+" has no usable id", nil)
 		return
 	}
 
@@ -332,6 +341,7 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	//    large user base cannot delay the archive delivery that follows.
 	c.startViewerReconcileLoop(ctx, logger)
 
+	ncAccessSubstrate.succeed()
 	logger.Printf("nc provision: recordings access control provisioned folder_id=%d mount=%s root=%s owner=%s viewer_group=%s", folderID, ncRecordingsMount, ncRecordingsRoot, ncRecordingsOwner, ncRecordingsViewerGroup)
 }
 
