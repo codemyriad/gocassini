@@ -29,12 +29,12 @@ func TestTalkRoomNameFetcherFetchesDisplayNameAsOwner(t *testing.T) {
 		t.Fatal("talkRoomNameFetcher() = nil, want active fetcher")
 	}
 
-	name, err := fetch(context.Background(), "alice", "tok123")
+	info, err := fetch(context.Background(), "alice", "tok123")
 	if err != nil {
 		t.Fatalf("fetch() error = %v", err)
 	}
-	if name != "Daily Meeting" {
-		t.Errorf("name = %q, want %q", name, "Daily Meeting")
+	if info.Name != "Daily Meeting" {
+		t.Errorf("name = %q, want %q", info.Name, "Daily Meeting")
 	}
 	if gotPath != "/ocs/v2.php/apps/spreed/api/v4/room/tok123" {
 		t.Errorf("path = %q", gotPath)
@@ -60,12 +60,12 @@ func TestTalkRoomNameFetcherFallsBackToRoomName(t *testing.T) {
 	defer server.Close()
 
 	fetch := ExAppConfig{NextcloudURL: server.URL, AppSecret: "s", AppID: "a"}.talkRoomNameFetcher()
-	name, err := fetch(context.Background(), "alice", "tok")
+	info, err := fetch(context.Background(), "alice", "tok")
 	if err != nil {
 		t.Fatalf("fetch() error = %v", err)
 	}
-	if name != "ops-standup" {
-		t.Errorf("name = %q, want %q", name, "ops-standup")
+	if info.Name != "ops-standup" {
+		t.Errorf("name = %q, want %q", info.Name, "ops-standup")
 	}
 }
 
@@ -162,16 +162,16 @@ func TestResolveTalkRoomNameStoresAndPersists(t *testing.T) {
 
 	calls := 0
 	rt.talkRoomNameRetryGap = time.Millisecond
-	rt.fetchTalkRoomName = func(_ context.Context, owner, roomToken string) (string, error) {
+	rt.fetchTalkRoomName = func(_ context.Context, owner, roomToken string) (talkRoomInfo, error) {
 		calls++
 		if owner != "alice" || roomToken != "tok123" {
 			t.Errorf("fetch called with owner=%q token=%q", owner, roomToken)
 		}
 		if calls == 1 {
 			// First attempt fails; the resolver must retry.
-			return "", errors.New("nextcloud briefly unreachable")
+			return talkRoomInfo{}, errors.New("nextcloud briefly unreachable")
 		}
-		return "Daily Meeting", nil
+		return talkRoomInfo{Name: "Daily Meeting"}, nil
 	}
 
 	rt.resolveTalkRoomName("job-room-name", "alice", "tok123")
@@ -198,9 +198,9 @@ func TestResolveTalkRoomNameGivesUpAfterRetries(t *testing.T) {
 
 	calls := 0
 	rt.talkRoomNameRetryGap = time.Millisecond
-	rt.fetchTalkRoomName = func(context.Context, string, string) (string, error) {
+	rt.fetchTalkRoomName = func(context.Context, string, string) (talkRoomInfo, error) {
 		calls++
-		return "", errors.New("boom")
+		return talkRoomInfo{}, errors.New("boom")
 	}
 
 	rt.resolveTalkRoomName("job-no-name", "alice", "tok123")
@@ -229,8 +229,8 @@ func TestRunBuildJobStampsTalkRoomNameIntoPromotedBundle(t *testing.T) {
 	rt.cfg.CassiniBin = writeFakeCassini(t, `printf 'opus-bytes' > "$4"; exit 0`)
 	jobID := "job-titled-build"
 	seedTalkJob(t, rt, jobID)
-	rt.fetchTalkRoomName = func(context.Context, string, string) (string, error) {
-		return "Daily Meeting", nil
+	rt.fetchTalkRoomName = func(context.Context, string, string) (talkRoomInfo, error) {
+		return talkRoomInfo{Name: "Daily Meeting"}, nil
 	}
 	rt.resolveTalkRoomName(jobID, "alice", "tok123")
 

@@ -109,7 +109,7 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 			// A newly created leaf inherits the container's broad traversal
 			// grant. Deny it before the catalog can advertise the file; the
 			// per-meeting ACL below replaces this owner-only baseline.
-			if err := s.cfg.davProppatchACLRules(ctx, s.client, ncRecordingsOwner, item.remote, recordingACLRules(nil)); err != nil {
+			if err := s.cfg.davProppatchACLRules(ctx, s.client, ncRecordingsOwner, item.remote, recordingACLRules(nil, false)); err != nil {
 				return "", fmt.Errorf("protect new %s: %w", item.remote, err)
 			}
 		}
