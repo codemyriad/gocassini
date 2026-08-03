@@ -255,6 +255,12 @@ removal is additionally guarded on the artifact that replaces it existing, so a
 record that failed before promotion keeps its attempt `.run` and a failed job
 keeps everything — nothing here removes the last copy of anything.
 
+Attempt rows keep the paths of artifacts that were pruned. The row is the record
+of what that attempt produced; the retention policy governs whether the bytes are
+still there. So an `artifact_site_path` on a succeeded attempt under the `sealed`
+policy names a directory that no longer exists, by design — the operator log line
+`artifact retention removed id=… policy=… <path> (…)` is what says why.
+
 ## Live site lineage
 
 When the operator promotes a successful site into the live root, the live site manifest can record lineage such as:

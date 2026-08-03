@@ -409,6 +409,11 @@ keeps its attempt `.run`, and a failed job keeps everything. Removals are logged
 with the reason. The sweep runs after a successful publish and once at startup.
 An unrecognised policy name is rejected at startup with exit code 2.
 
+Attempt rows keep the paths of pruned artifacts — the row records what the
+attempt produced, the policy governs whether the bytes are still there — so under
+`sealed` a succeeded attempt's `artifact_site_path` names a directory that has
+been reclaimed. The `artifact retention removed` log line is what says why.
+
 ## Current operational limitations
 
 Important current limitations include:
