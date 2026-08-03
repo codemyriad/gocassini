@@ -29,6 +29,7 @@ func (rt *Runtime) startPublishWorker() {
 	// destination (including the live published site) missing with only the
 	// ".backup" copy surviving in the staging root.
 	rt.reconcilePromotionLeftovers()
+	rt.sweepArtifactRetention()
 	go rt.publishWorker()
 }
 
@@ -103,7 +104,6 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		return
 	}
 	rt.logger.Printf("publish succeeded id=%s attempt=%d sink=%s attempt_site=%s location=%s", task.JobID, task.AttemptNumber, rt.sink().Name(), attemptArtifactSitePath, location)
-
 	// The attempt site is staging, not an archive. Once the sink has accepted
 	// the meeting it is a duplicate of what now lives at the destination, and
 	// keeping it means the ExApp retains a full copy of every recording it has
@@ -111,9 +111,22 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	// (D-550). Removed only after a successful delivery: a failed publish keeps
 	// it, because extractSiteFailureDetail reads its manifest and a rerun may
 	// want to look at it.
+	//
+	// This is deliberately NOT gated on the retention policy below, and it is
+	// the one exception to `all` meaning "prune nothing": D-550 is an access
+	// boundary, not housekeeping, so `--artifact-retention=all` must not be a
+	// way to leave every published recording readable on the app's volume.
 	if err := os.RemoveAll(attemptArtifactSitePath); err != nil {
 		rt.logger.Printf("publish staging cleanup failed id=%s attempt=%d path=%s: %v", task.JobID, task.AttemptNumber, attemptArtifactSitePath, err)
 	}
+
+	// The job is terminal now, so its attempt payloads are prunable under the
+	// configured policy (D-583). Housekeeping, after the success is recorded:
+	// nothing here can turn a published meeting into a failed job. The site this
+	// policy would prune for the current attempt is already gone above; the
+	// removal is idempotent, and the policy still governs the attempt `.run`,
+	// `.meeting` and every superseded attempt.
+	rt.pruneArtifactsForJob(task.JobID)
 }
 
 func (rt *Runtime) executePublishCLI(ctx context.Context, task publishTask) (string, error) {

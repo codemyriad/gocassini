@@ -227,6 +227,10 @@ func TestRunBuildJobStampsTalkRoomNameIntoPromotedBundle(t *testing.T) {
 	// test's temp WorkRoot; use an instant fake so TempDir cleanup never races
 	// an in-flight ffmpeg.
 	rt.cfg.CassiniBin = writeFakeCassini(t, `printf 'opus-bytes' > "$4"; exit 0`)
+	// The default retention policy prunes a succeeded attempt's `.meeting`
+	// (it is byte-duplicated in current/), and this test wants to look at both
+	// copies of the stamp.
+	rt.cfg.ArtifactRetention = artifactRetentionAll
 	jobID := "job-titled-build"
 	seedTalkJob(t, rt, jobID)
 	rt.fetchTalkRoomName = func(context.Context, string, string) (talkRoomInfo, error) {

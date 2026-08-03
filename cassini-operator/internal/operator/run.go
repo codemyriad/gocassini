@@ -64,6 +64,10 @@ type Config struct {
 	// Empty means unset, which resolves to the default; a non-empty unknown
 	// name is rejected at startup.
 	PublishSink string
+	// ArtifactRetention names which attempt-scoped payloads under runs/ are
+	// pruned (retention.go, D-583). Empty means unset, which resolves to the
+	// default; a non-empty unknown name is rejected at startup.
+	ArtifactRetention string
 }
 
 type Runtime struct {
@@ -303,6 +307,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("work_root -> %s", cfg.WorkRoot)
 	logger.Printf("site_root -> %s", cfg.SiteRoot)
 	logger.Printf("publish_sink -> %s", publishSinkNameOrDefault(cfg.PublishSink))
+	logger.Printf("artifact_retention -> %s", artifactRetentionOrDefault(cfg.ArtifactRetention))
 	if persistRoot := persistentStorageRoot(); persistRoot != "" {
 		logger.Printf("app_persistent_storage -> %s", persistRoot)
 	}
@@ -415,6 +420,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
 	fs.StringVar(&cfg.PublishSink, "sink", envOrDefaultAny([]string{"CASSINI_PUBLISH_SINK"}, ""), "where published meetings are delivered (known sinks: "+strings.Join(publishSinkNames(), ", ")+"; default "+defaultPublishSink+")")
+	fs.StringVar(&cfg.ArtifactRetention, "artifact-retention", envOrDefaultAny([]string{"CASSINI_ARTIFACT_RETENTION"}, ""), "which attempt artifacts under runs/ are pruned (policies: "+strings.Join(artifactRetentionNames(), ", ")+"; default "+defaultArtifactRetention+")")
 	fs.IntVar(&cfg.MaxRecordWorkers, "max-record-workers", defaultMaxRecordWorkers, "maximum concurrent record workers")
 	fs.IntVar(&cfg.MaxBuildWorkers, "max-build-workers", defaultMaxBuildWorkers, "maximum concurrent build workers")
 	fs.Usage = func() {
@@ -464,6 +470,10 @@ Flags:
 	}
 	cfg.PublishSink = strings.TrimSpace(cfg.PublishSink)
 	if err := validatePublishSinkName(cfg.PublishSink); err != nil {
+		return Config{}, 2, err
+	}
+	cfg.ArtifactRetention = strings.TrimSpace(cfg.ArtifactRetention)
+	if err := validateArtifactRetentionName(cfg.ArtifactRetention); err != nil {
 		return Config{}, 2, err
 	}
 	if strings.TrimSpace(cfg.CassiniBin) == "" {
