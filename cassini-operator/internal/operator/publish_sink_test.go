@@ -642,3 +642,81 @@ func TestLocalSinkKeepsTheLiveShellWhenTheRefreshFails(t *testing.T) {
 	}
 	assertNoStagedAssets(t, siteRoot)
 }
+
+// The runtime-level half of the digest chain: runPublishJob must hand the sink
+// the digest its seal recorded. Without this the wiring in runPublishJob could
+// be dropped and every sink-level digest test would still pass, because they
+// all construct publishDelivery by hand.
+func TestPublishHandsTheSinkTheSealedDigest(t *testing.T) {
+	rt, cleanup := newBarePublishRuntime(t, log.New(ioDiscard{}, "", 0))
+	defer cleanup()
+
+	sealed := attemptOpusPath(rt.cfg.WorkRoot, "pub-digest", 1)
+	if err := os.MkdirAll(filepath.Dir(sealed), 0o755); err != nil {
+		t.Fatalf("mkdir seal dir: %v", err)
+	}
+	if err := os.WriteFile(sealed, []byte("sealed-opus"), 0o644); err != nil {
+		t.Fatalf("write sealed opus: %v", err)
+	}
+	digest, err := fileSHA256(sealed)
+	if err != nil {
+		t.Fatalf("fileSHA256() error = %v", err)
+	}
+
+	attemptSite := filepath.Join(t.TempDir(), "attempt.site")
+	rt.publishJobFn = func(context.Context, publishTask) (string, error) { return attemptSite, nil }
+	sink := &okPublishSink{location: "somewhere://else"}
+	rt.publishSink = sink
+
+	insertJob(t, rt.store.db, "pub-digest", "2026-06-12T10:00:00Z")
+	if err := rt.store.MarkPublishQueued(context.Background(), "pub-digest", "/tmp/meeting", "/tmp/meeting", nowUTCString()); err != nil {
+		t.Fatalf("MarkPublishQueued() error = %v", err)
+	}
+
+	rt.runPublishJob(publishTask{JobID: "pub-digest", AttemptNumber: 1, OpusPath: sealed, OpusSHA256: digest})
+
+	job := mustGetJob(t, rt.store, "pub-digest")
+	if job.Stage != "done" || job.State != "succeeded" {
+		t.Fatalf("job = %s/%s, want done/succeeded", job.Stage, job.State)
+	}
+	if got := sink.delivered.AssetDigests["meetings/pub-digest.opus"]; got != digest {
+		t.Fatalf("sink got AssetDigests = %#v, want meetings/pub-digest.opus -> %s", sink.delivered.AssetDigests, digest)
+	}
+}
+
+// And the input half: a publish whose sealed artifact no longer matches its
+// recorded digest must fail before it spawns anything or reaches a sink.
+func TestPublishRefusesASealedArtifactThatChanged(t *testing.T) {
+	rt, cleanup := newBarePublishRuntime(t, log.New(ioDiscard{}, "", 0))
+	defer cleanup()
+	rt.cfg.CassiniBin = writeFakeCassini(t, "echo 'publish must not run' >&2\nexit 9\n")
+	rt.publishJobFn = rt.executePublishCLI
+
+	sealed := attemptOpusPath(rt.cfg.WorkRoot, "pub-tampered", 1)
+	if err := os.MkdirAll(filepath.Dir(sealed), 0o755); err != nil {
+		t.Fatalf("mkdir seal dir: %v", err)
+	}
+	if err := os.WriteFile(sealed, []byte("tampered-after-sealing"), 0o644); err != nil {
+		t.Fatalf("write sealed opus: %v", err)
+	}
+	sink := &okPublishSink{location: "somewhere://else"}
+	rt.publishSink = sink
+
+	insertJob(t, rt.store.db, "pub-tampered", "2026-06-12T10:00:00Z")
+	if err := rt.store.MarkPublishQueued(context.Background(), "pub-tampered", "/tmp/meeting", "/tmp/meeting", nowUTCString()); err != nil {
+		t.Fatalf("MarkPublishQueued() error = %v", err)
+	}
+
+	rt.runPublishJob(publishTask{JobID: "pub-tampered", AttemptNumber: 1, OpusPath: sealed, OpusSHA256: "0000000000"})
+
+	job := mustGetJob(t, rt.store, "pub-tampered")
+	if job.Stage != "done" || job.State != "failed" {
+		t.Fatalf("job = %s/%s, want done/failed", job.Stage, job.State)
+	}
+	if job.Error == nil || !strings.Contains(*job.Error, "changed since it was sealed") {
+		t.Fatalf("unexpected error detail: %#v", job.Error)
+	}
+	if sink.delivered.JobID != "" {
+		t.Fatalf("sink must not be reached for an unverifiable artifact, got %#v", sink.delivered)
+	}
+}

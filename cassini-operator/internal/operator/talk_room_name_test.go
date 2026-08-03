@@ -223,10 +223,6 @@ func TestResolveTalkRoomNameNoopWithoutFetcher(t *testing.T) {
 func TestRunBuildJobStampsTalkRoomNameIntoPromotedBundle(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	// The seal that follows the build shells out to cfg.CassiniBin inside the
-	// test's temp WorkRoot; use an instant fake so TempDir cleanup never races
-	// an in-flight ffmpeg.
-	rt.cfg.CassiniBin = writeFakeCassini(t, `printf 'opus-bytes' > "$4"; exit 0`)
 	// The default retention policy prunes a succeeded attempt's `.meeting`
 	// (it is byte-duplicated in current/), and this test wants to look at both
 	// copies of the stamp.

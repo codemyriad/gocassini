@@ -32,12 +32,16 @@ import (
 // it embedded. A zero exit therefore means "packed and integrity-checked", and
 // the operator's own post-conditions are the two things pack cannot tell it —
 // that the file is there, and that it is not empty.
-func packAttemptMeetingToOpus(ctx context.Context, cassiniBin, workRoot, jobID string, attemptNumber int, title string, logSink io.Writer) (string, error) {
-	meetingPath := attemptMeetingPath(workRoot, jobID, attemptNumber)
+// The meeting bundle is passed in rather than re-derived: it is what the build
+// recorded and what the seal task carries, so a seal packs the bundle the DB
+// says it is packing rather than one that merely shares its naming convention.
+func packAttemptMeetingToOpus(ctx context.Context, cassiniBin, meetingPath, opusPath, title string, logSink io.Writer) (string, error) {
+	if strings.TrimSpace(meetingPath) == "" {
+		return "", fmt.Errorf("no meeting bundle to seal")
+	}
 	if _, err := os.Stat(meetingPath); err != nil {
 		return "", fmt.Errorf("stat attempt meeting bundle: %w", err)
 	}
-	opusPath := attemptOpusPath(workRoot, jobID, attemptNumber)
 	if err := os.MkdirAll(filepath.Dir(opusPath), 0o755); err != nil {
 		return "", fmt.Errorf("create runs dir for opus: %w", err)
 	}

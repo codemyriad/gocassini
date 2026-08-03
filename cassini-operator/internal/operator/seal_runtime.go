@@ -161,7 +161,14 @@ func (rt *Runtime) executeSealCLI(ctx context.Context, task sealTask) (string, e
 		return "", err
 	}
 	sink := io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
-	return packAttemptMeetingToOpus(ctx, rt.cfg.CassiniBin, rt.cfg.WorkRoot, task.JobID, task.AttemptNumber, rt.talkRoomNameForJob(task.JobID), sink)
+	return packAttemptMeetingToOpus(
+		ctx,
+		rt.cfg.CassiniBin,
+		task.ArtifactMeetingPath,
+		attemptOpusPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber),
+		rt.talkRoomNameForJob(task.JobID),
+		sink,
+	)
 }
 
 // executeSealCLIWithTimeout bounds one seal run so a hung `cassini pack` cannot
