@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 STACK_ENV="$SCRIPT_DIR/lib/stack-env.sh"
 STACK="$SCRIPT_DIR/lib/stack.sh"
+BOOTSTRAP="$SCRIPT_DIR/bootstrap.sh"
 MANIFEST="$ROOT/appinfo/info.xml"
 
 fail() {
@@ -54,7 +55,17 @@ resolved_false="$(
 grep -qF -- '--env "CASSINI_NC_ACCESS_CONTROL=$CASSINI_NC_ACCESS_CONTROL"' "$STACK" \
   || fail "harness registration does not pass CASSINI_NC_ACCESS_CONTROL to AppAPI"
 
+# The installed-app harness must provide both native prerequisites before the
+# ExApp enabled edge tries to create the recordings substrate.
+for app in groupfolders group_everyone; do
+  grep -qF "app:install $app" "$BOOTSTRAP" \
+    || fail "bootstrap does not install required Nextcloud app $app"
+  grep -qF "app:enable $app" "$BOOTSTRAP" \
+    || fail "bootstrap does not enable required Nextcloud app $app"
+done
+
 bash -n "$STACK_ENV" || fail "bash -n failed for stack-env.sh"
 bash -n "$STACK" || fail "bash -n failed for stack.sh"
+bash -n "$BOOTSTRAP" || fail "bash -n failed for bootstrap.sh"
 
-echo "PASS: harness defaults Nextcloud access control on and passes it through AppAPI"
+echo "PASS: access control is passed to AppAPI with Team folders + Everyone Group prerequisites"

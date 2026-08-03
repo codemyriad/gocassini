@@ -200,8 +200,9 @@ it. Override it for a public-archive comparison with either form:
 CASSINI_NC_ACCESS_CONTROL=false ./bin/cassini dev stack up ...
 ```
 
-The flag only changes the ExApp behavior. Enforced per-participant access still
-requires the one-time Group folders, advanced-ACL, and default-deny setup in
+The harness installs/enables Team folders and Everyone Group, then the ExApp
+provisions the advanced-ACL/default-deny topology automatically. Production
+installers must enable both native apps first; see
 [`docs/exapp-nextcloud-recordings-permissions.md`](../docs/exapp-nextcloud-recordings-permissions.md).
 Production deployments remain opt-in when this variable is not supplied.
 
@@ -235,7 +236,7 @@ Production deployments remain opt-in when this variable is not supplied.
 | `--services VALUE` | `CASSINI_HARNESS_SERVICE_MODE` | `legacy-default` | Preferred service topology flag. |
 | `--service-mode VALUE` | `CASSINI_HARNESS_SERVICE_MODE` | `legacy-default` | Alias for `--services`; cannot disagree with `--services`. |
 | `--cassini none|installed-exapp` | `CASSINI_HARNESS_CASSINI_MODE` | `none` | Whether stack bring-up installs Cassini as an AppAPI ExApp. |
-| `--nc-access-control=true|false` | `CASSINI_NC_ACCESS_CONTROL` | `true` | Pass per-participant Nextcloud Files access control into an installed ExApp. Requires the one-time Group folders/ACL setup to enforce grants. |
+| `--nc-access-control=true|false` | `CASSINI_NC_ACCESS_CONTROL` | `true` | Pass per-participant Nextcloud Files access control into an installed ExApp. Harness bootstrap installs Team folders + Everyone Group; the ExApp provisions ACLs. |
 | `--recording-backend legacy|direct-operator|installed-exapp|none` | `CASSINI_HARNESS_RECORDING_BACKEND` | `legacy` | How Talk's recording backend is configured during bootstrap. |
 | `--exapp-image-mode build|reuse-local|pull` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE` | `reuse-local` | Only meaningful with `--cassini installed-exapp`. |
 | `--build` | n/a; sets image mode | n/a | Shorthand for image mode `build`; requires `--cassini installed-exapp`. |
@@ -489,17 +490,17 @@ What happens:
    `appinfo/info.xml`.
 2. Compose starts Nextcloud, Postgres, reverse proxy, AppAPI HaRP, NATS, Janus,
    standalone signaling, and Coturn.
-3. Nextcloud is bootstrapped with Talk, trusted domains, signaling, TURN, and
-   Talk recording settings.
+3. Nextcloud is bootstrapped with Talk, Team folders, Everyone Group, trusted
+   domains, signaling, TURN, and Talk recording settings.
 4. AppAPI is installed/enabled.
 5. The HaRP deploy daemon is registered.
 6. Cassini is registered as `gocassini`, including the resolved
    `CASSINI_NC_ACCESS_CONTROL` deploy value, and route checks are performed.
 
-The harness defaults access control to `true`. Use
+The harness defaults access control to `true` and supplies both native app
+prerequisites; Cassini provisions the Team folder and ACLs on enable. Use
 `--nc-access-control=false` only when intentionally comparing the legacy public
-archive behavior. The Group folders/ACL setup remains a separate one-time
-Nextcloud step.
+archive behavior.
 
 If you already have a suitable local ExApp image, omit `--build` and use the
 default `reuse-local` mode. If you want AppAPI to pull the manifest image, use

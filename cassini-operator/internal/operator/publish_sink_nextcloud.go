@@ -164,7 +164,7 @@ func (s *nextcloudFilesPublishSink) upsertRemoteCatalog(ctx context.Context, inc
 		return fmt.Errorf("put catalog: %w", err)
 	}
 	if s.cfg.AccessControl {
-		// The broad viewer group may traverse the container directories but must
+		// The virtual all-users group may traverse the container directories but must
 		// not read the unfiltered authoritative catalog; the operator reads it
 		// as the owner and filters it per caller.
 		if err := s.cfg.davProppatchACLRules(ctx, s.client, ncRecordingsOwner, catalogRemote, catalogProtectionACLRules()); err != nil {

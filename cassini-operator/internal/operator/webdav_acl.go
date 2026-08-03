@@ -54,17 +54,12 @@ type ncFilesAccessApplier func(ctx context.Context, jobID string, mappings []acl
 // ncFilesAccessApplier returns the closure, or nil when AppAPI is inactive or
 // access control is disabled (the default) — in which case delivery stays the
 // D-529 public archive with no ACL.
-func (c ExAppConfig) ncFilesAccessApplier(logger *log.Logger) ncFilesAccessApplier {
+func (c ExAppConfig) ncFilesAccessApplier(_ *log.Logger) ncFilesAccessApplier {
 	if !c.appAPIActive() || !c.AccessControl {
 		return nil
 	}
 	client := &http.Client{Timeout: ncFilesACLTimeout}
 	return func(ctx context.Context, jobID string, mappings []aclMapping, public bool) error {
-		// The per-file ACL grants each participant read; also make sure each
-		// participant is in the viewer group so the folder mounts for them and
-		// they can actually reach the recording (best-effort, non-fatal).
-		c.ensureParticipantsInViewerGroup(ctx, client, mappings, logger)
-
 		opusRel := ncRecordingsRoot + "/meetings/" + jobID + ".opus"
 		if err := c.davProppatchACL(ctx, client, ncRecordingsOwner, opusRel, mappings, public); err != nil {
 			return fmt.Errorf("acl opus: %w", err)
@@ -109,32 +104,24 @@ type aclRule struct {
 	Permissions int
 }
 
-// recordingACLRules denies the broad traversal group at the file itself, then
+// recordingACLRules denies the virtual all-users group at the file itself, then
 // grants read to the Talk participants. Group folders merges rules at one path
-// with allow overriding deny, so a participant who is also a member of the
-// traversal group can read while every non-participant remains denied.
-// recordingACLRules builds a recording's per-file ACL.
+// with allow overriding deny, so a participant who is also in `everyone` can
+// read while every non-participant remains denied.
 //
-// The default is participant-private: the broad viewer group — which every
-// local account belongs to, so it can traverse the recordings folder — is
-// explicitly DENIED read on the leaf, and only the meeting's own participants
-// are granted it.
-//
-// A public conversation inverts that one rule. Anyone with the link could join
-// the meeting, so a recording of it is not participant-private and the viewer
-// group is granted read instead of denied (D-552). "Anyone" means any account
-// on this Nextcloud: the operator's read surface is USER-gated and no public
-// link share is created, so this widens the audience without opening an
-// anonymous door.
+// The default is participant-private: `everyone` supplies every account's
+// read-only mount and container traversal, but is explicitly DENIED at the leaf.
+// A public conversation inverts that one rule and grants `everyone` read. The
+// route remains USER-gated and creates no anonymous public link (D-552).
 func recordingACLRules(mappings []aclMapping, public bool) []aclRule {
-	viewerGroupPermissions := 0
+	everyonePermissions := 0
 	if public {
-		viewerGroupPermissions = aclPermRead
+		everyonePermissions = aclPermRead
 	}
 	rules := []aclRule{
 		{
-			Type: "group", ID: ncRecordingsViewerGroup,
-			Mask: aclMaskAll, Permissions: viewerGroupPermissions,
+			Type: "group", ID: ncRecordingsEveryoneGroup,
+			Mask: aclMaskAll, Permissions: everyonePermissions,
 		},
 		{
 			// The owner needs all permissions so later archive synchronization
@@ -144,8 +131,8 @@ func recordingACLRules(mappings []aclMapping, public bool) []aclRule {
 		},
 	}
 	indices := map[string]int{
-		"group\x00" + ncRecordingsViewerGroup: 0,
-		"user\x00" + ncRecordingsOwner:        1,
+		"group\x00" + ncRecordingsEveryoneGroup: 0,
+		"user\x00" + ncRecordingsOwner:          1,
 	}
 	for _, mapping := range mappings {
 		key := mapping.Type + "\x00" + mapping.ID
@@ -167,7 +154,7 @@ func recordingACLRules(mappings []aclMapping, public bool) []aclRule {
 // owner and returns a per-caller filtered catalog.
 func catalogProtectionACLRules() []aclRule {
 	return []aclRule{
-		{Type: "group", ID: ncRecordingsViewerGroup, Mask: aclMaskAll, Permissions: 0},
+		{Type: "group", ID: ncRecordingsEveryoneGroup, Mask: aclMaskAll, Permissions: 0},
 		{Type: "user", ID: ncRecordingsOwner, Mask: aclMaskAll, Permissions: aclMaskAll},
 	}
 }
@@ -236,7 +223,7 @@ func (rt *Runtime) applyNCFilesAccessStrict(ctx context.Context, jobID string) e
 		return fmt.Errorf("participants lookup: %w", err)
 	}
 	// A public room still has an audience even with nothing to grant per
-	// participant — the viewer-group grant IS the audience — so the empty-set
+	// participant — the `everyone` grant IS the audience — so the empty-set
 	// exit must not swallow it. That ordering matters more than it looks: a
 	// public room is the one most likely to be full of link guests, who yield
 	// no grantable principal at all, so the old early return made the most
@@ -293,35 +280,15 @@ func (c ExAppConfig) serveFilteredCatalog(ctx context.Context, w http.ResponseWr
 		return
 	}
 	if !mounted {
-		// The caller has no mount of the recordings group folder, so the scan
-		// could not even see the collection — they are not in the viewer group
-		// yet. That is the normal state of an account created since the last
-		// reconcile sweep, and until now it produced a silently empty archive
-		// for up to a full sweep interval: a brand-new user could not see the
-		// public meetings that are supposed to be readable by everyone.
-		//
-		// The sweep is what keeps the group == all users; this is the same
-		// operation for the one account that is demonstrably asking. It is
-		// idempotent, costs one OCS call, and can only happen once per account
-		// — after it, the folder mounts and this branch is never reached again.
-		if err := c.addUserToGroup(ctx, client, caller, ncRecordingsViewerGroup); err != nil {
-			if logger != nil {
-				logger.Printf("nc files read: caller=%s has no recordings mount and could not be added to %q: %v — serving empty", caller, ncRecordingsViewerGroup, err)
-			}
-			writeCatalogJSON(w, emptyLike(raw))
-			return
-		}
+		// Every account should have this mount from its virtual `everyone`
+		// membership before its filesystem is first set up. A missing mount means
+		// the Everyone Group app or Team-folder mapping is unavailable; do not
+		// create mutable memberships or proxy around the broken substrate.
 		if logger != nil {
-			logger.Printf("nc files read: added caller=%s to %q on first access (no mount) — rescanning", caller, ncRecordingsViewerGroup)
+			logger.Printf("nc files read: caller=%s has no recordings mount through required group %q — serving empty (fail closed)", caller, ncRecordingsEveryoneGroup)
 		}
-		names, mounted, perr = c.davPropfindNames(ctx, client, caller, ncRecordingsRoot+"/meetings")
-		if perr != nil || !mounted {
-			if logger != nil {
-				logger.Printf("nc files read: rescan after group add failed caller=%s mounted=%t: %v — serving empty (fail closed)", caller, mounted, perr)
-			}
-			writeCatalogJSON(w, emptyLike(raw))
-			return
-		}
+		writeCatalogJSON(w, emptyLike(raw))
+		return
 	}
 	visible := make(map[string]bool, len(names))
 	for _, n := range names {
@@ -392,82 +359,80 @@ func filterCatalog(raw []byte, keep func(opusBase string) bool) ([]byte, error) 
 	return json.Marshal(top)
 }
 
-// selfHealLeafProtection makes sure every recording under meetings/ carries its
-// own viewer-group rule. It is the safety net for the container ACL: the root
-// grants the viewer group read (so anyone can traverse), which every leaf
-// INHERITS unless it states its own rule — so a recording whose per-file ACL
-// never landed (a transient PROPPATCH failure at create, or a file that predates
-// ACL management) would be readable by every logged-in user. One PROPFIND lists
-// the current ACLs; only the offenders get a corrective PROPPATCH, and the merge
-// preserves any existing participant allows. Best-effort: logged, never fatal.
-//
-// "Offender" means a leaf with NO viewer-group rule at all, not one whose rule
-// happens to be an allow. A public recording's whole ACL is a deliberate
-// viewer-group ALLOW (D-552), written by the publish path; treating the absence
-// of a *deny* as damage made this sweep silently re-privatise every public
-// recording on the next enabled edge. The leaf's own rule — allow or deny — is
-// the authoritative record of what publish decided, so an explicit rule of
-// either polarity is left alone.
-func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Client, logger *log.Logger) {
+// selfHealLeafProtection makes sure every recording under meetings/ carries an
+// explicit rule for the virtual `everyone` group. It is the safety net for the
+// inherited container read grant: a leaf with no broad-group rule is repaired as
+// private, while a legacy recording-viewers rule is translated with its polarity
+// intact (deny remains private; read remains public). Existing participant rules
+// are preserved. An error is returned so callers never expose a partially
+// protected tree through the broad root grant.
+func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Client, logger *log.Logger) error {
 	acls, err := c.davPropfindACLLists(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/meetings")
 	if err != nil {
 		if logger != nil {
 			logger.Printf("nc files access: self-heal scan failed: %v", err)
 		}
-		return
+		return err
 	}
 	for base, rules := range acls {
-		if !strings.HasSuffix(base, ".opus") || hasExplicitViewerGroupRule(rules) {
+		if !strings.HasSuffix(base, ".opus") || hasExplicitEveryoneGroupRule(rules) {
 			continue
 		}
+		next, migrated := migrateLegacyAudienceRule(rules)
+		if !migrated {
+			next = ensureProtectedRules(rules)
+		}
 		relPath := ncRecordingsRoot + "/meetings/" + base
-		if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, relPath, ensureProtectedRules(rules)); err != nil {
+		if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, relPath, next); err != nil {
 			if logger != nil {
 				logger.Printf("nc files access: self-heal %s failed: %v", base, err)
 			}
-			continue
+			return fmt.Errorf("protect %s: %w", base, err)
 		}
 		if logger != nil {
-			logger.Printf("nc files access: self-healed unprotected recording %s (applied viewer-group deny)", base)
+			if migrated {
+				logger.Printf("nc files access: migrated recording %s ACL from %q to %q", base, ncLegacyRecordingsViewerGroup, ncRecordingsEveryoneGroup)
+			} else {
+				logger.Printf("nc files access: self-healed unprotected recording %s (applied everyone deny)", base)
+			}
 		}
 	}
+	return nil
 }
 
-// hasViewerGroupDeny reports whether the rules deny the broad viewer group (an
-// explicit read=0 rule), i.e. the recording is participant-private.
-func hasViewerGroupDeny(rules []aclRule) bool {
+// hasEveryoneGroupDeny reports whether the recording is participant-private.
+func hasEveryoneGroupDeny(rules []aclRule) bool {
 	for _, r := range rules {
-		if r.Type == "group" && r.ID == ncRecordingsViewerGroup && r.Permissions&aclPermRead == 0 {
+		if r.Type == "group" && r.ID == ncRecordingsEveryoneGroup && r.Permissions&aclPermRead == 0 {
 			return true
 		}
 	}
 	return false
 }
 
-// hasExplicitViewerGroupRule reports whether the leaf states its own rule for
-// the broad viewer group, of either polarity: a deny (participant-private) or a
-// read allow (public, D-552). Both are written deliberately by the publish path,
-// and both mean the leaf is NOT relying on the inherited container grant — which
-// is the only thing selfHealLeafProtection exists to correct.
-func hasExplicitViewerGroupRule(rules []aclRule) bool {
+// hasExplicitEveryoneGroupRule reports whether the leaf states its own broad
+// audience rule, either a private deny or the deliberate public read allow.
+func hasExplicitEveryoneGroupRule(rules []aclRule) bool {
 	for _, r := range rules {
-		if r.Type == "group" && r.ID == ncRecordingsViewerGroup {
+		if r.Type == "group" && r.ID == ncRecordingsEveryoneGroup {
 			return true
 		}
 	}
 	return false
 }
 
-// ensureProtectedRules returns rules with the viewer-group deny and the owner
-// full-access rule guaranteed present, preserving every other rule (participant
-// allows). Used to add the missing deny without clobbering existing grants.
-func ensureProtectedRules(existing []aclRule) []aclRule {
-	haveOwner := false
-	out := make([]aclRule, 0, len(existing)+2)
+// migrateLegacyAudienceRule translates the old static broad-group principal to
+// `everyone`, preserving public/read versus private/deny and all participant
+// grants. The owner rule is normalized while the file is being rewritten.
+func migrateLegacyAudienceRule(existing []aclRule) ([]aclRule, bool) {
+	haveLegacy, haveOwner := false, false
+	permissions := 0
+	out := make([]aclRule, 0, len(existing)+1)
 	for _, r := range existing {
 		switch {
-		case r.Type == "group" && r.ID == ncRecordingsViewerGroup:
-			// drop any existing viewer-group rule; re-added as a deny below
+		case r.Type == "group" && r.ID == ncLegacyRecordingsViewerGroup:
+			haveLegacy = true
+			permissions |= r.Permissions & aclPermRead
 			continue
 		case r.Type == "user" && r.ID == ncRecordingsOwner:
 			r.Mask, r.Permissions = aclMaskAll, aclMaskAll
@@ -475,7 +440,33 @@ func ensureProtectedRules(existing []aclRule) []aclRule {
 		}
 		out = append(out, r)
 	}
-	deny := aclRule{Type: "group", ID: ncRecordingsViewerGroup, Mask: aclMaskAll, Permissions: 0}
+	if !haveLegacy {
+		return existing, false
+	}
+	if !haveOwner {
+		out = append(out, aclRule{Type: "user", ID: ncRecordingsOwner, Mask: aclMaskAll, Permissions: aclMaskAll})
+	}
+	audience := aclRule{Type: "group", ID: ncRecordingsEveryoneGroup, Mask: aclMaskAll, Permissions: permissions}
+	return append([]aclRule{audience}, out...), true
+}
+
+// ensureProtectedRules returns rules with an `everyone` deny and owner ALL,
+// preserving participant grants. Legacy/current broad-group rules are replaced
+// rather than duplicated.
+func ensureProtectedRules(existing []aclRule) []aclRule {
+	haveOwner := false
+	out := make([]aclRule, 0, len(existing)+2)
+	for _, r := range existing {
+		switch {
+		case r.Type == "group" && (r.ID == ncRecordingsEveryoneGroup || r.ID == ncLegacyRecordingsViewerGroup):
+			continue
+		case r.Type == "user" && r.ID == ncRecordingsOwner:
+			r.Mask, r.Permissions = aclMaskAll, aclMaskAll
+			haveOwner = true
+		}
+		out = append(out, r)
+	}
+	deny := aclRule{Type: "group", ID: ncRecordingsEveryoneGroup, Mask: aclMaskAll, Permissions: 0}
 	if !haveOwner {
 		out = append(out, aclRule{Type: "user", ID: ncRecordingsOwner, Mask: aclMaskAll, Permissions: aclMaskAll})
 	}
