@@ -41,6 +41,7 @@ From the repo root:
 This one command:
 
 - starts local Nextcloud + AppAPI/HaRP + the full Talk signaling stack;
+- installs the native Team folders and Everyone Group prerequisites;
 - builds and tags the Cassini ExApp image from `appinfo/info.xml`;
 - installs/reinstalls Cassini via AppAPI;
 - passes both Talk secrets and `CASSINI_NC_ACCESS_CONTROL=true` as deploy env,
@@ -50,9 +51,10 @@ The first run is slow — it builds the ExApp image. Later runs without `--build
 reuse the existing image. Keep `--build` when validating changes in the current
 checkout; otherwise the harness deliberately runs the previously built image,
 which may be an older release even though Git is on your feature branch.
-Access control is on by default in the harness; its file grants become enforced
-once you complete the [Group folders/ACL setup](./exapp-nextcloud-recordings-permissions.md).
-Use `--nc-access-control=false` only to compare the legacy public behavior.
+Access control is on by default in the harness, which installs its native apps
+and lets Cassini provision the Team folder/ACL topology automatically. See
+[Recording permissions](./exapp-nextcloud-recordings-permissions.md). Use
+`--nc-access-control=false` only to compare the legacy public behavior.
 
 When it finishes, open Nextcloud and sign in as `admin` / `admin`:
 

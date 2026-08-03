@@ -34,16 +34,17 @@ import (
 // act-as-user auth is accepted — so installing/enabling the ExApp makes the
 // canonical directory, groups, and permissions appear with no manual step.
 //
-//	on enabled edge (AccessControl on)
-//	  ├── ensure viewer group exists                     (OCS provisioning)
-//	  ├── ensure "Cassini" group folder (default-deny)   (groupfolders addFolder)
-//	  ├── assign viewer group READ + owner group ALL     (groupfolders groups)
-//	  ├── enable advanced ACL + delegate owner manager   (groupfolders acl/manageACL)
-//	  ├── root container ACL: owner ALL + viewer READ    (WebDAV PROPPATCH)
-//	  │     → owner can write under default-deny; everyone can traverse
-//	  ├── MKCOL Cassini/Recordings/meetings              (WebDAV) so the dir exists
-//	  └── reconcile every user into the viewer group     (OCS provisioning)
-//	        + a periodic reconcile so new accounts converge
+//	on enabled edge
+//	  ├── resolve administrator + ensure `cassini` owner  (OCS provisioning API)
+//	  └── when AccessControl is on:
+//	      ├── require the virtual "everyone" group       (Everyone Group app)
+//	      ├── ensure "Cassini" Team folder (default-deny) (groupfolders addFolder)
+//	      ├── assign everyone READ + owner group ALL      (groupfolders groups)
+//	      ├── enable ACL + delegate `cassini` manager     (groupfolders acl/manageACL)
+//	      ├── migrate legacy recording-viewers leaf ACLs  (WebDAV PROPFIND/PROPPATCH)
+//	      ├── root ACL: cassini ALL + everyone READ       (WebDAV PROPPATCH)
+//	      ├── remove legacy viewer/admin mappings/manager (groupfolders APIs)
+//	      └── MKCOL Cassini/Recordings/meetings           (WebDAV)
 //
 // Everything is idempotent and best-effort: a failure is logged and never
 // blocks startup or delivery, and each step is safe to re-run on every enable.
@@ -54,51 +55,30 @@ const (
 	// member so it can create/update recordings; under the default-deny ACL floor
 	// a write mount alone is insufficient (see the root container ACL below), but
 	// it is still required — ACL-management permission does not grant WebDAV
-	// create/write.
+	// create/write. It is deliberately narrow: only the dedicated recordings
+	// service account belongs to this group. The virtual `everyone` group remains
+	// read-only and supplies the broad mount/traversal capability.
 	ncRecordingsOwnerGroup = ncRecordingsOwner
 
-	// Two identities, deliberately distinct (D-532):
+	// Two identities are deliberately distinct (D-532):
 	//
-	//	ownership     ncRecordingsOwner ("cassini")   owns the tree, writes the
-	//	                                              recordings, manages their ACLs
-	//	provisioning  the instance administrator      creates groups/folders/users
+	//	ownership     `cassini` service account   owns the tree, writes recordings,
+	//	                                        and manages per-path ACLs
+	//	provisioning  instance administrator     creates users, groups, and folders
 	//
-	// They cannot be the same principal. Every provisioning route below —
-	// groupfolders management, OCS user and group provisioning — requires admin
-	// rights, which a service account must not have: it would make the identity
-	// that holds every recording also able to reconfigure the instance.
-	//
-	// The recordings account is created by the provisioner, so it exists before
-	// anything acts as it.
+	// The identity holding every recording must not also have instance-admin
+	// rights. The owner account is therefore created before any step acts as it.
+	defaultNextcloudAdminUser = "admin"
+	envNCAdminUser            = "CASSINI_NC_ADMIN_USER"
+
+	// Before D-532 the built-in admin group supplied the write-capable mount.
+	// Remove that mapping only after the service account proves it can manage the
+	// migrated root, so the dedicated owner group is the sole write principal.
+	ncLegacyRecordingsOwner      = "admin"
+	ncLegacyRecordingsOwnerGroup = "admin"
 
 	ncProvisionTimeout = 90 * time.Second
-
-	// defaultNextcloudAdminUser is the conventional administrator id, used only
-	// as a fallback when one cannot be discovered.
-	defaultNextcloudAdminUser = "admin"
-	// envNCAdminUser pins the provisioning identity on instances where
-	// discovery is wrong or undesirable.
-	envNCAdminUser = "CASSINI_NC_ADMIN_USER"
-
-	// viewerReconcile* bound the "keep every user in the viewer group" sweep. The
-	// enabled-edge reconcile covers everyone present at install; the periodic one
-	// converges accounts created later (Nextcloud has no built-in "all users"
-	// group and an ExApp cannot hook user creation), so a brand-new user gains
-	// read/traversal of the recordings directory within one interval.
-	viewerUserPageSize      = 200
-	viewerReconcileMaxUsers = 50000
-	viewerReconcileInterval = 15 * time.Minute
 )
-
-// reconcileTickerOnce guards the single background reconcile goroutine: the
-// enabled edge can fire more than once (re-enable, restart), but only one ticker
-// should run per process.
-// resolvedProvisioningUser caches the discovered administrator for the process
-// lifetime; an instance's administrator does not change under a running
-// container.
-var resolvedProvisioningUser atomic.Pointer[any]
-
-var reconcileTickerOnce sync.Once
 
 // provisionMu serializes provisioning: EnabledCallback is dispatched in a
 // goroutine and can fire more than once (admin double-action, AppAPI retry), and
@@ -106,14 +86,9 @@ var reconcileTickerOnce sync.Once
 // runs could create duplicate "Cassini" folders.
 var provisionMu sync.Mutex
 
-// provisioningActive mirrors the ExApp enabled state so the background reconcile
-// sweep goes quiet after the app is disabled (AppAPI rejects the ExApp's
-// act-as-user calls once disabled, which would otherwise 401 every interval).
-var provisioningActive atomic.Bool
-
-// SetProvisioningActive records the enabled/disabled edge for the background
-// reconcile sweep. Called from the AppAPI enabled callback.
-func SetProvisioningActive(active bool) { provisioningActive.Store(active) }
+// resolvedProvisioningUser caches the administrator selected for privileged
+// setup. An instance's administrator does not change during one container run.
+var resolvedProvisioningUser atomic.Pointer[any]
 
 // firstPathSegment returns the first path component of a slash path, e.g.
 // "Cassini/Recordings" -> "Cassini". It names the group folder mount point,
@@ -130,17 +105,9 @@ func firstPathSegment(p string) string {
 // segment of the canonical recordings root.
 var ncRecordingsMount = firstPathSegment(ncRecordingsRoot)
 
-// provisioningUser is the identity that performs privileged Nextcloud setup.
-//
-// AppAPI lets an ExApp act as any user, so this is a choice rather than a
-// credential: the operator acts as an administrator for the handful of calls
-// that genuinely need admin rights, and as the recordings owner for everything
-// else. Resolved once per process and cached — an instance's administrator does
-// not change while the container runs.
-//
-// "admin" is the fallback, not the assumption: it is only conventionally the
-// administrator's user id, and an instance whose admin is called something else
-// would otherwise have every provisioning call rejected.
+// provisioningUser is the administrator used only for privileged setup. The
+// explicit environment override wins; otherwise a discovered administrator is
+// cached, with the conventional `admin` id as the fallback.
 func (c ExAppConfig) provisioningUser() string {
 	if cached := resolvedProvisioningUser.Load(); cached != nil {
 		if name, _ := (*cached).(string); name != "" {
@@ -157,25 +124,21 @@ func (c ExAppConfig) provisioningUserFallback() string {
 	return defaultNextcloudAdminUser
 }
 
-// resolveProvisioningUser discovers an administrator and caches it. Called at
-// the start of provisioning, before any privileged request.
 func (c ExAppConfig) resolveProvisioningUser(ctx context.Context, client *http.Client, logger *log.Logger) {
 	if strings.TrimSpace(os.Getenv(envNCAdminUser)) != "" {
-		return // explicitly configured; do not second-guess it
+		return
 	}
 	admins, err := c.groupMembers(ctx, client, "admin")
 	if err != nil || len(admins) == 0 {
-		// Fall back to the conventional name. If that is wrong the provisioning
-		// calls fail loudly rather than silently doing nothing.
-		if logger != nil && err != nil {
-			logger.Printf("nc provision: admin lookup failed (%v); acting as %q", err, c.provisioningUserFallback())
+		if logger != nil {
+			logger.Printf("nc provision: admin lookup yielded no usable account (%v); acting as %q; set %s if this is wrong", err, c.provisioningUserFallback(), envNCAdminUser)
 		}
 		return
 	}
 	chosen := admins[0]
 	for _, candidate := range admins {
 		if candidate == defaultNextcloudAdminUser {
-			chosen = candidate // prefer the conventional one when present
+			chosen = candidate
 			break
 		}
 	}
@@ -186,22 +149,14 @@ func (c ExAppConfig) resolveProvisioningUser(ctx context.Context, client *http.C
 	}
 }
 
-// ensureRecordingsOwnerAccount creates the recordings service account if it is
-// absent, and puts it in the owner group so it gets a write-capable mount of
-// the group folder.
-//
-// Idempotent: an existing account is left exactly as it is — never re-created,
-// never re-passworded, never disabled. OCS reports "user already exists" as
-// statuscode 102, which is success here.
-//
-// The generated password is never used again and is deliberately not logged or
-// persisted: the operator authenticates as this account through AppAPI, not
-// with a password. OCS simply requires one at creation.
+// ensureRecordingsOwnerAccount creates the dedicated recordings owner and
+// ensures it belongs to the narrow write-capable owner group. Existing accounts
+// are never re-passworded or disabled. The generated password only satisfies
+// the OCS create contract; AppAPI act-as-user authentication never uses it.
 func (c ExAppConfig) ensureRecordingsOwnerAccount(ctx context.Context, client *http.Client, logger *log.Logger) error {
 	if err := c.ensureGroup(ctx, client, ncRecordingsOwnerGroup); err != nil {
 		return fmt.Errorf("ensure owner group %q: %w", ncRecordingsOwnerGroup, err)
 	}
-
 	password, err := randomPassword()
 	if err != nil {
 		return fmt.Errorf("generate service account password: %w", err)
@@ -210,7 +165,9 @@ func (c ExAppConfig) ensureRecordingsOwnerAccount(ctx context.Context, client *h
 		"userid":      {ncRecordingsOwner},
 		"password":    {password},
 		"displayname": {"Cassini recordings"},
-		"groups":      {ncRecordingsOwnerGroup},
+		// OCS decodes this as a PHP array. The scalar `groups` form returns a
+		// bare 400 on live Nextcloud and leaves every act-as-cassini call broken.
+		"groups[]": {ncRecordingsOwnerGroup},
 	})
 	if err != nil {
 		return fmt.Errorf("create service account: %w", err)
@@ -221,43 +178,30 @@ func (c ExAppConfig) ensureRecordingsOwnerAccount(ctx context.Context, client *h
 			logger.Printf("nc provision: created recordings service account %q", ncRecordingsOwner)
 		}
 	case ocsStatusCode(body) == 102 || strings.Contains(strings.ToLower(string(body)), "already exists"):
-		// Already there from a previous enable. Membership is still ensured
-		// below, because the group could have been created after the account.
+		// Membership is still re-asserted below because the group may have been
+		// created after an existing account.
 	default:
 		return fmt.Errorf("create service account -> %d: %s", status, snippet(body))
 	}
-
 	if err := c.addUserToGroup(ctx, client, ncRecordingsOwner, ncRecordingsOwnerGroup); err != nil {
 		return fmt.Errorf("add %q to %q: %w", ncRecordingsOwner, ncRecordingsOwnerGroup, err)
 	}
 	return nil
 }
 
-// randomPassword generates a password that satisfies Nextcloud's policy and is
-// then discarded.
 func randomPassword() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	// Mixed case, digits and a symbol, so a strict password policy cannot
-	// reject the account we are about to depend on.
 	return "Cw1!" + base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// provisionNCFilesAccess establishes the two identities Cassini acts as, and
-// then — only when access control is enabled — creates (idempotently) the group
-// folder + groups + ACL topology the access-control model needs and reconciles
-// the viewer group. No-op unless AppAPI is active. Best-effort: every failure is
-// logged and never propagated. Runs on the enabled edge (in the EnabledCallback
-// goroutine), before the archive startup sync.
-//
-// The identity tier runs in BOTH modes, and that split is load-bearing. The
-// owner writes every archive object and is the read-proxy identity whether or
-// not access control is on, but the topology below is meaningless without it.
-// Gating the account creation on the flag would leave a flag-off install
-// delivering as a user that was never created — every act-as-user call 401s and,
-// under the strict nextcloud-files sink, every publish fails.
+// provisionNCFilesAccess first establishes the ownership/provisioning identities,
+// then creates the idempotent group-folder + ACL topology when access control is
+// enabled. The identity tier runs in both modes because uploads always act as
+// the recordings owner. No-op only outside AppAPI. Best-effort: every failure is
+// logged and never propagated. Runs on the enabled edge before startup sync.
 func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Logger) {
 	if !c.appAPIActive() {
 		return
@@ -266,10 +210,8 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	defer provisionMu.Unlock()
 	client := &http.Client{Timeout: ncProvisionTimeout}
 
-	// 0. Establish both identities before anything uses either: discover an
-	//    administrator to act as, then make sure the recordings account exists.
-	//    Ordering is load-bearing — every step below writes as the owner, so
-	//    creating it later would point those calls at a non-existent user.
+	// 0. The administrator creates the service account before any DAV call acts
+	//    as it. The narrow owner group supplies its write-capable Team-folder mount.
 	c.resolveProvisioningUser(ctx, client, logger)
 	if err := c.ensureRecordingsOwnerAccount(ctx, client, logger); err != nil {
 		logger.Printf("nc provision: ensure recordings account %q failed: %v — recordings setup incomplete", ncRecordingsOwner, err)
@@ -279,10 +221,18 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 		return
 	}
 
-	// 1. The viewer group: the mount group whose members can traverse the
-	//    directory. Everyone is reconciled into it (step 8).
-	if err := c.ensureGroup(ctx, client, ncRecordingsViewerGroup); err != nil {
-		logger.Printf("nc provision: ensure viewer group %q: %v", ncRecordingsViewerGroup, err)
+	// 1. Require the virtual all-users group supplied by the Everyone Group app
+	//    (or an equivalent group backend). Never create a static group with this
+	//    name: an empty ordinary group would silently reintroduce the new-account
+	//    mount race this topology exists to remove.
+	hasEveryone, err := c.groupExists(ctx, client, ncRecordingsEveryoneGroup)
+	if err != nil {
+		logger.Printf("nc provision: check required universal group %q: %v — access control setup incomplete", ncRecordingsEveryoneGroup, err)
+		return
+	}
+	if !hasEveryone {
+		logger.Printf("nc provision: required universal group %q is unavailable; install/enable the Everyone Group app (group_everyone) — access control setup incomplete", ncRecordingsEveryoneGroup)
+		return
 	}
 
 	// 2. The group folder with its default-deny floor (only settable at creation).
@@ -297,8 +247,10 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 		return
 	}
 
-	// 3. Mount mappings: viewers get READ, the owner group gets ALL (write mount).
-	c.ensureFolderGroup(ctx, client, folderID, ncRecordingsViewerGroup, aclPermRead, logger)
+	// 3. Mount mappings: the virtual all-users group gets a READ capability
+	//    ceiling; the narrow owner group gets ALL so the service account can
+	//    write. ACL-manager status alone cannot elevate a READ mount to write.
+	c.ensureFolderGroup(ctx, client, folderID, ncRecordingsEveryoneGroup, aclPermRead, logger)
 	c.ensureFolderGroup(ctx, client, folderID, ncRecordingsOwnerGroup, aclMaskAll, logger)
 
 	// 4. Advanced ACL on (idempotent).
@@ -314,15 +266,50 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 		}
 	}
 
-	// 6. Root container ACL. Under default-deny nobody — not even the owner — may
-	//    act inside the folder without an explicit grant, so grant the owner ALL
-	//    (to create/manage recordings) and the viewer group READ (to traverse).
-	//    Inherited down the tree; each leaf recording overrides it at publish.
-	if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, ncRecordingsMount, containerACLRules()); err != nil {
-		logger.Printf("nc provision: root container ACL %q: %v", ncRecordingsMount, err)
+	// 6. Narrow the root to the owner while migrating existing leaves. Otherwise
+	//    a new user (who was never in the legacy static group) could inherit the
+	//    new broad allow through an old private leaf that only denies
+	//    recording-viewers. Any migration failure leaves the tree owner-only — an
+	//    availability failure rather than an access leak — for the next retry.
+	if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, ncRecordingsMount, ownerOnlyContainerACLRules()); err != nil {
+		logger.Printf("nc provision: establish owner-only migration floor on %q: %v", ncRecordingsMount, err)
+		return
+	}
+	if err := c.selfHealLeafProtection(ctx, client, logger); err != nil {
+		logger.Printf("nc provision: migrate/protect recording ACLs: %v — leaving root owner-only", err)
+		return
+	}
+	if err := c.protectExistingCatalog(ctx, client); err != nil {
+		logger.Printf("nc provision: migrate existing catalog ACL: %v — leaving root owner-only", err)
+		return
 	}
 
-	// 7. Materialize the canonical collections so the directory exists right after
+	// 7. The migration is complete, so grant everyone READ at the root. Each leaf
+	//    now safely overrides that inherited grant as private or public.
+	if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, ncRecordingsMount, containerACLRules()); err != nil {
+		logger.Printf("nc provision: root container ACL %q: %v", ncRecordingsMount, err)
+		return
+	}
+
+	// Old mount mappings are no longer authoritative. Remove them only after the
+	// virtual audience and dedicated owner are proven through the migrated root.
+	// Leave the ordinary groups themselves untouched in case an administrator
+	// reused them elsewhere.
+	for _, legacyGroup := range []string{ncLegacyRecordingsViewerGroup, ncLegacyRecordingsOwnerGroup} {
+		if legacyGroup == ncRecordingsOwnerGroup || !folder.hasGroup(legacyGroup) {
+			continue
+		}
+		if err := c.removeFolderGroup(ctx, client, folderID, legacyGroup); err != nil {
+			logger.Printf("nc provision: remove legacy group %q from folder=%d: %v", legacyGroup, folderID, err)
+		}
+	}
+	if ncLegacyRecordingsOwner != ncRecordingsOwner && folder.hasManager("user", ncLegacyRecordingsOwner) {
+		if err := c.folderManageACL(ctx, client, folderID, "user", ncLegacyRecordingsOwner, false); err != nil {
+			logger.Printf("nc provision: remove legacy ACL manager folder=%d user=%s: %v", folderID, ncLegacyRecordingsOwner, err)
+		}
+	}
+
+	// 8. Materialize the canonical collections so the directory exists right after
 	//    install, before any recording. MKCOL of the mount root is a harmless 405.
 	for _, dir := range []string{ncRecordingsRoot, ncRecordingsRoot + "/meetings"} {
 		if err := c.davMkcol(ctx, client, ncRecordingsOwner, dir); err != nil {
@@ -330,40 +317,36 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 		}
 	}
 
-	// 8. Put every current user in the viewer group, and keep new ones
-	//    converging. This runs OFF the enabled-edge critical path (in the
-	//    reconcile goroutine, which sweeps immediately then every interval) so a
-	//    large user base cannot delay the archive delivery that follows.
-	c.startViewerReconcileLoop(ctx, logger)
-
-	logger.Printf("nc provision: recordings access control provisioned folder_id=%d mount=%s root=%s owner=%s viewer_group=%s", folderID, ncRecordingsMount, ncRecordingsRoot, ncRecordingsOwner, ncRecordingsViewerGroup)
+	logger.Printf("nc provision: recordings access control provisioned folder_id=%d mount=%s root=%s owner=%s audience_group=%s", folderID, ncRecordingsMount, ncRecordingsRoot, ncRecordingsOwner, ncRecordingsEveryoneGroup)
 }
 
-// containerACLRules grants the owner full control and the viewer group read on a
-// recordings container directory. Applied to the group folder root and inherited
-// down: it lets the owner write under the default-deny floor and lets every
-// viewer traverse to the meetings, while each leaf recording overrides the
-// viewer grant with a deny + per-participant allows at publish (webdav_acl.go).
+// containerACLRules grants the owner full control and the virtual all-users
+// group read on a recordings container. The owner writes under default-deny;
+// every account can traverse; each leaf overrides the broad grant with either a
+// private deny + participant allows or a public allow (webdav_acl.go).
 func containerACLRules() []aclRule {
-	return []aclRule{
-		{Type: "user", ID: ncRecordingsOwner, Mask: aclMaskAll, Permissions: aclMaskAll},
-		{Type: "group", ID: ncRecordingsViewerGroup, Mask: aclMaskAll, Permissions: aclPermRead},
-	}
+	return append(ownerOnlyContainerACLRules(), aclRule{Type: "group", ID: ncRecordingsEveryoneGroup, Mask: aclMaskAll, Permissions: aclPermRead})
+}
+
+func ownerOnlyContainerACLRules() []aclRule {
+	return []aclRule{{Type: "user", ID: ncRecordingsOwner, Mask: aclMaskAll, Permissions: aclMaskAll}}
 }
 
 // --- Group Folders app HTTP surface (/index.php/apps/groupfolders/...) --------
 //
 // These are the app's own (non-OCS) routes, but sending OCS-APIRequest: true
 // bypasses CSRF and returns an OCS-wrapped JSON envelope. They are guarded by
-// RequireGroupFolderAdmin, which a full admin (the owner acts as "admin")
-// satisfies. PasswordConfirmationRequired is skipped for the synthetic AppAPI
-// session (no confirmable password token), the same way it is for basic auth.
+// RequireGroupFolderAdmin, so these calls act as the separately resolved
+// administrator, never as the recordings owner. PasswordConfirmationRequired
+// is skipped for the synthetic AppAPI session (no confirmable password token),
+// the same way it is for basic auth.
 
 // gfFolder is the subset of a Group Folders folder record this code reads.
 type gfFolder struct {
-	ID         json.Number `json:"id"`
-	MountPoint string      `json:"mount_point"`
-	Manage     []gfManage  `json:"manage"`
+	ID         json.Number     `json:"id"`
+	MountPoint string          `json:"mount_point"`
+	Groups     json.RawMessage `json:"groups"`
+	Manage     []gfManage      `json:"manage"`
 }
 
 type gfManage struct {
@@ -389,6 +372,17 @@ func (f gfFolder) hasManager(mtype, mid string) bool {
 		}
 	}
 	return false
+}
+
+func (f gfFolder) hasGroup(group string) bool {
+	var groups map[string]json.RawMessage
+	if err := json.Unmarshal(f.Groups, &groups); err != nil {
+		// Team folders serializes no mappings as [] and populated mappings as an
+		// object keyed by group id. An empty array therefore means no match.
+		return false
+	}
+	_, ok := groups[group]
+	return ok
 }
 
 func (c ExAppConfig) gfURL(suffix string) string {
@@ -512,6 +506,17 @@ func (c ExAppConfig) ensureFolderGroup(ctx context.Context, client *http.Client,
 	}
 }
 
+func (c ExAppConfig) removeFolderGroup(ctx context.Context, client *http.Client, folderID int, group string) error {
+	status, body, err := c.apiDelete(ctx, client, c.gfURL(fmt.Sprintf("/folders/%d/groups/%s", folderID, url.PathEscape(group))))
+	if err != nil {
+		return err
+	}
+	if status/100 != 2 {
+		return fmt.Errorf("remove group %q from folder=%d -> %d: %s", group, folderID, status, snippet(body))
+	}
+	return nil
+}
+
 func (c ExAppConfig) folderSetACL(ctx context.Context, client *http.Client, folderID int, enabled bool) error {
 	return c.folderPostExpectOK(ctx, client, fmt.Sprintf("/folders/%d/acl", folderID), url.Values{"acl": {boolForm(enabled)}})
 }
@@ -537,8 +542,8 @@ func (c ExAppConfig) folderPostExpectOK(ctx context.Context, client *http.Client
 
 // --- Core OCS provisioning surface (/ocs/v2.php/cloud/...) ---------------------
 
-// ensureGroup creates a group, treating "already exists" (statuscode 102) as
-// success.
+// ensureGroup creates an ordinary group, treating "already exists" as success.
+// It is used only for the narrow owner group; `everyone` must remain virtual.
 func (c ExAppConfig) ensureGroup(ctx context.Context, client *http.Client, group string) error {
 	status, body, err := c.apiPostForm(ctx, client, c.ocsURL("/cloud/groups"), url.Values{"groupid": {group}})
 	if err != nil {
@@ -548,65 +553,6 @@ func (c ExAppConfig) ensureGroup(ctx context.Context, client *http.Client, group
 		return nil
 	}
 	return fmt.Errorf("create group -> %d: %s", status, snippet(body))
-}
-
-// reconcileViewerGroupMembers adds every user missing from the viewer group.
-// Returns (added, totalUsers). Diffs against current membership so it only
-// issues an add per genuinely-missing user and stays quiet on steady state.
-func (c ExAppConfig) reconcileViewerGroupMembers(ctx context.Context, client *http.Client, logger *log.Logger) (int, int, error) {
-	members, err := c.groupMembers(ctx, client, ncRecordingsViewerGroup)
-	if err != nil {
-		return 0, 0, fmt.Errorf("list viewer group members: %w", err)
-	}
-	memberSet := make(map[string]bool, len(members))
-	for _, m := range members {
-		memberSet[m] = true
-	}
-	added, total := 0, 0
-	for offset := 0; offset < viewerReconcileMaxUsers; offset += viewerUserPageSize {
-		users, err := c.listUsers(ctx, client, viewerUserPageSize, offset)
-		if err != nil {
-			return added, total, err
-		}
-		for _, uid := range users {
-			uid = strings.TrimSpace(uid)
-			if uid == "" {
-				continue
-			}
-			total++
-			if memberSet[uid] {
-				continue
-			}
-			if err := c.addUserToGroup(ctx, client, uid, ncRecordingsViewerGroup); err != nil {
-				// Best-effort: a single user failing must not abort the sweep.
-				continue
-			}
-			memberSet[uid] = true
-			added++
-		}
-		if len(users) < viewerUserPageSize {
-			return added, total, nil
-		}
-	}
-	// The loop exited on the cap rather than a short final page: users beyond
-	// viewerReconcileMaxUsers were not reconciled and will not see the archive.
-	// Log it rather than truncate silently.
-	if logger != nil {
-		logger.Printf("nc provision: WARNING viewer reconcile hit the %d-user cap; accounts beyond it are not in %q and cannot see recordings", viewerReconcileMaxUsers, ncRecordingsViewerGroup)
-	}
-	return added, total, nil
-}
-
-func (c ExAppConfig) listUsers(ctx context.Context, client *http.Client, limit, offset int) ([]string, error) {
-	u := c.ocsURL("/cloud/users") + fmt.Sprintf("?limit=%d&offset=%d", limit, offset)
-	status, body, err := c.apiGet(ctx, client, u)
-	if err != nil {
-		return nil, err
-	}
-	if status/100 != 2 {
-		return nil, fmt.Errorf("list users -> %d: %s", status, snippet(body))
-	}
-	return parseOCSUserList(body)
 }
 
 func (c ExAppConfig) groupMembers(ctx context.Context, client *http.Client, group string) ([]string, error) {
@@ -623,25 +569,6 @@ func (c ExAppConfig) groupMembers(ctx context.Context, client *http.Client, grou
 	return parseOCSUserList(body)
 }
 
-// ensureParticipantsInViewerGroup best-effort adds each user participant to the
-// viewer group so the recordings group folder mounts for them promptly. A
-// participant is granted per-file read at publish, but can only reach the file
-// once the folder is mounted — i.e. once they are a viewer-group member. The
-// periodic reconcile would add them within the interval; doing it here lets a
-// participant see their recording on the next viewer load instead of waiting.
-// Group/circle participants are covered by the all-users reconcile, so only
-// user mappings are handled.
-func (c ExAppConfig) ensureParticipantsInViewerGroup(ctx context.Context, client *http.Client, mappings []aclMapping, logger *log.Logger) {
-	for _, m := range mappings {
-		if m.Type != "user" || strings.TrimSpace(m.ID) == "" {
-			continue
-		}
-		if err := c.addUserToGroup(ctx, client, m.ID, ncRecordingsViewerGroup); err != nil && logger != nil {
-			logger.Printf("nc provision: add participant %q to viewer group: %v", m.ID, err)
-		}
-	}
-}
-
 func (c ExAppConfig) addUserToGroup(ctx context.Context, client *http.Client, userID, group string) error {
 	status, body, err := c.apiPostForm(ctx, client, c.ocsURL("/cloud/users/"+url.PathEscape(userID)+"/groups"), url.Values{"groupid": {group}})
 	if err != nil {
@@ -653,7 +580,6 @@ func (c ExAppConfig) addUserToGroup(ctx context.Context, client *http.Client, us
 	return nil
 }
 
-// parseOCSUserList reads ocs.data.users from a provisioning response.
 func parseOCSUserList(body []byte) ([]string, error) {
 	var env struct {
 		OCS struct {
@@ -666,6 +592,30 @@ func parseOCSUserList(body []byte) ([]string, error) {
 		return nil, fmt.Errorf("decode user list: %w", err)
 	}
 	return env.OCS.Data.Users, nil
+}
+
+// groupExists checks for an exact group id without enumerating its members. The
+// virtual `everyone` backend can represent very large instances, so provisioning
+// must not turn its availability check into an O(N) user listing.
+func (c ExAppConfig) groupExists(ctx context.Context, client *http.Client, group string) (bool, error) {
+	u := c.ocsURL("/cloud/groups") + "?search=" + url.QueryEscape(group) + "&limit=100"
+	status, body, err := c.apiGet(ctx, client, u)
+	if err != nil {
+		return false, err
+	}
+	if status/100 != 2 {
+		return false, fmt.Errorf("list groups -> %d: %s", status, snippet(body))
+	}
+	groups, err := parseOCSGroupList(body)
+	if err != nil {
+		return false, err
+	}
+	for _, candidate := range groups {
+		if candidate == group {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ocsStatusCode extracts ocs.meta.statuscode, or -1 if absent/unparseable.
@@ -683,46 +633,44 @@ func ocsStatusCode(body []byte) int {
 	return env.OCS.Meta.StatusCode
 }
 
-// startViewerReconcileLoop starts (once per process) a background sweep that
-// keeps the viewer group == all users: an immediate pass covers everyone present
-// at install, and a periodic pass converges accounts created later, so a new
-// account gains access to the recordings directory within one interval. Each
-// sweep is bounded and skipped while the app is disabled.
-func (c ExAppConfig) startViewerReconcileLoop(ctx context.Context, logger *log.Logger) {
-	reconcileTickerOnce.Do(func() {
-		sweep := func() {
-			if !provisioningActive.Load() {
-				return
-			}
-			sweepCtx, cancel := context.WithTimeout(ctx, ncProvisionTimeout)
-			defer cancel()
-			client := &http.Client{Timeout: ncProvisionTimeout}
-			added, total, err := c.reconcileViewerGroupMembers(sweepCtx, client, logger)
-			if err != nil {
-				logger.Printf("nc provision: viewer reconcile: %v", err)
-			} else if added > 0 {
-				logger.Printf("nc provision: viewer reconcile added=%d of %d users", added, total)
-			}
-		}
-		go func() {
-			ticker := time.NewTicker(viewerReconcileInterval)
-			defer ticker.Stop()
-			sweep()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-ticker.C:
-					sweep()
-				}
-			}
-		}()
-	})
+// parseOCSGroupList reads ocs.data.groups from a provisioning response.
+func parseOCSGroupList(body []byte) ([]string, error) {
+	var env struct {
+		OCS struct {
+			Data struct {
+				Groups []string `json:"groups"`
+			} `json:"data"`
+		} `json:"ocs"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, fmt.Errorf("decode group list: %w", err)
+	}
+	return env.OCS.Data.Groups, nil
+}
+
+// protectExistingCatalog changes the legacy broad-group deny before the root
+// switches to `everyone`. A missing catalog is the normal fresh-install state;
+// startup sync will create and protect it later.
+func (c ExAppConfig) protectExistingCatalog(ctx context.Context, client *http.Client) error {
+	_, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json")
+	if err != nil {
+		return err
+	}
+	if status == http.StatusNotFound {
+		return nil
+	}
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("inspect catalog -> %d", status)
+	}
+	if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json", catalogProtectionACLRules()); err != nil {
+		return err
+	}
+	return nil
 }
 
 // --- HTTP helpers -------------------------------------------------------------
 
-// apiGet issues an authenticated JSON GET as the recordings owner. `format=json`
+// apiGet issues an authenticated JSON GET as the provisioning administrator. `format=json`
 // forces the OCS envelope to JSON regardless of Accept handling.
 func (c ExAppConfig) apiGet(ctx context.Context, client *http.Client, rawURL string) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, withFormatJSON(rawURL), nil)
@@ -733,7 +681,7 @@ func (c ExAppConfig) apiGet(ctx context.Context, client *http.Client, rawURL str
 	return doReadBody(client, req)
 }
 
-// apiPostForm issues an authenticated form-encoded POST as the recordings owner.
+// apiPostForm issues an authenticated form-encoded POST as the provisioning administrator.
 func (c ExAppConfig) apiPostForm(ctx context.Context, client *http.Client, rawURL string, form url.Values) (int, []byte, error) {
 	body := form.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, withFormatJSON(rawURL), strings.NewReader(body))
@@ -746,7 +694,16 @@ func (c ExAppConfig) apiPostForm(ctx context.Context, client *http.Client, rawUR
 	return doReadBody(client, req)
 }
 
-// setAppAPIProvisionHeaders sets the AppAPI act-as-owner auth plus the OCS
+func (c ExAppConfig) apiDelete(ctx context.Context, client *http.Client, rawURL string) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, withFormatJSON(rawURL), nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	c.setAppAPIProvisionHeaders(req)
+	return doReadBody(client, req)
+}
+
+// setAppAPIProvisionHeaders sets AppAPI auth for the provisioning administrator plus the OCS
 // request marker. OCS-APIRequest is what lets the Group Folders frontpage routes
 // skip CSRF and answer JSON; the provisioning API requires it too.
 func (c ExAppConfig) setAppAPIProvisionHeaders(req *http.Request) {
