@@ -433,7 +433,7 @@ func assertNoStagedAssets(t *testing.T, siteRoot string) {
 		if err != nil {
 			return nil
 		}
-		if strings.HasSuffix(entry.Name(), stagedAssetSuffix) || strings.HasSuffix(entry.Name(), ".tmp") {
+		if strings.HasSuffix(entry.Name(), stagedAssetSuffix) || strings.HasSuffix(entry.Name(), previousShellSuffix) || strings.HasSuffix(entry.Name(), ".tmp") {
 			t.Errorf("staged leftover in the live site: %s", path)
 		}
 		return nil
@@ -569,4 +569,76 @@ func TestSealedAssetDigestsNamesTheSitePathTheExporterWrites(t *testing.T) {
 	if digests := sealedAssetDigests(publishTask{JobID: "job1"}); len(digests) != 0 {
 		t.Fatalf("sealedAssetDigests() = %#v, want empty for an unsealed task", digests)
 	}
+}
+
+// writeShellAttemptSite is an attempt site that carries the viewer shell, which
+// is what the standalone image publishes (--rebuild-viewer). The ExApp image
+// serves the shell from the image and produces sites without one.
+func writeShellAttemptSite(t *testing.T, dir string, indexBody, assetBody string) string {
+	t.Helper()
+	writeAttemptSite(t, dir, "meeting-a")
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte(indexBody), 0o644); err != nil {
+		t.Fatalf("write attempt index.html: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "assets"), 0o755); err != nil {
+		t.Fatalf("mkdir attempt assets: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "assets", "app.js"), []byte(assetBody), 0o644); err != nil {
+		t.Fatalf("write attempt asset: %v", err)
+	}
+	return dir
+}
+
+func TestLocalSinkRefreshesTheSiteShellIncludingAssetDirectories(t *testing.T) {
+	siteRoot := filepath.Join(t.TempDir(), "site")
+	attempt := writeShellAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "<html>new</html>", "console.log('new')")
+
+	if _, err := deliverToLocalSink(t, siteRoot, attempt, "meeting-a"); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	if body := readFileString(t, filepath.Join(siteRoot, "index.html")); body != "<html>new</html>" {
+		t.Fatalf("index.html = %q, want the attempt site's", body)
+	}
+	if body := readFileString(t, filepath.Join(siteRoot, "assets", "app.js")); body != "console.log('new')" {
+		t.Fatalf("assets/app.js = %q, want the attempt site's", body)
+	}
+	assertNoStagedAssets(t, siteRoot)
+}
+
+// A shell refresh that cannot complete must leave the site serving what it was
+// serving. The refresh used to RemoveAll the live assets/ and then copy into it,
+// so a failure between the two left the live catalog pointing into a site with
+// no viewer shell — something the wholesale promote it replaced could not do.
+func TestLocalSinkKeepsTheLiveShellWhenTheRefreshFails(t *testing.T) {
+	siteRoot := filepath.Join(t.TempDir(), "site")
+	first := writeShellAttemptSite(t, filepath.Join(t.TempDir(), "first"), "<html>live</html>", "console.log('live')")
+	if _, err := deliverToLocalSink(t, siteRoot, first, "meeting-a"); err != nil {
+		t.Fatalf("seed the live site: %v", err)
+	}
+	catalogBefore := readFileString(t, filepath.Join(siteRoot, "catalog.json"))
+
+	// Force the copy of the incoming shell to fail: an unreadable source
+	// directory stands in for a full disk or an I/O error mid-copy.
+	second := writeShellAttemptSite(t, filepath.Join(t.TempDir(), "second"), "<html>next</html>", "console.log('next')")
+	if err := os.Chmod(filepath.Join(second, "assets"), 0o000); err != nil {
+		t.Fatalf("chmod attempt assets: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(second, "assets"), 0o755) })
+
+	if _, err := deliverToLocalSink(t, siteRoot, second, "meeting-a"); err == nil {
+		t.Fatal("expected the delivery to fail when the shell cannot be copied")
+	}
+
+	// The previously usable shell survives, intact and complete.
+	if body := readFileString(t, filepath.Join(siteRoot, "assets", "app.js")); body != "console.log('live')" {
+		t.Fatalf("assets/app.js = %q, want the previous shell", body)
+	}
+	if body := readFileString(t, filepath.Join(siteRoot, "index.html")); body != "<html>live</html>" {
+		t.Fatalf("index.html = %q, want the previous shell", body)
+	}
+	// And so does the catalog it belongs to: a failed refresh publishes nothing.
+	if body := readFileString(t, filepath.Join(siteRoot, "catalog.json")); body != catalogBefore {
+		t.Fatalf("catalog.json changed on a failed delivery")
+	}
+	assertNoStagedAssets(t, siteRoot)
 }

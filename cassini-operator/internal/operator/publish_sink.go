@@ -285,12 +285,72 @@ func (s *localPublishSink) stageAsset(d publishDelivery, asset string) (staged s
 	return tmp, nil
 }
 
+// previousShellSuffix names the live shell directory set aside during a swap.
+// It is removed on success and renamed back on failure, so it is only ever
+// visible for the length of two renames.
+const previousShellSuffix = ".cassini-previous"
+
+// replaceSiteShellDirectory swaps one shell directory (assets/) for the attempt
+// site's copy without ever leaving the live site without one.
+//
+//	copy   attempt/assets  ->  site/assets.cassini-staged
+//	rename site/assets     ->  site/assets.cassini-previous
+//	rename site/assets.cassini-staged -> site/assets
+//	remove site/assets.cassini-previous
+//
+// It used to be RemoveAll followed by copyDirectory. A failure between those two
+// — a full disk, an I/O error, a kill — left the live catalog pointing into a
+// site whose viewer shell was gone or half-written, which the wholesale promote
+// this replaced could not do. Now the only window is between two renames, and
+// any failure restores what was there.
+func replaceSiteShellDirectory(source, destination string) error {
+	staged := destination + stagedAssetSuffix
+	previous := destination + previousShellSuffix
+	if err := os.RemoveAll(staged); err != nil {
+		return fmt.Errorf("clear staged site shell directory %s: %w", filepath.Base(destination), err)
+	}
+	if err := copyDirectory(source, staged); err != nil {
+		_ = os.RemoveAll(staged)
+		return err
+	}
+	if err := os.RemoveAll(previous); err != nil {
+		_ = os.RemoveAll(staged)
+		return fmt.Errorf("clear previous site shell directory %s: %w", filepath.Base(destination), err)
+	}
+
+	_, statErr := os.Stat(destination)
+	hasDestination := statErr == nil
+	if statErr != nil && !os.IsNotExist(statErr) {
+		_ = os.RemoveAll(staged)
+		return fmt.Errorf("stat site shell directory %s: %w", filepath.Base(destination), statErr)
+	}
+	if hasDestination {
+		if err := os.Rename(destination, previous); err != nil {
+			_ = os.RemoveAll(staged)
+			return fmt.Errorf("move previous site shell directory %s aside: %w", filepath.Base(destination), err)
+		}
+	}
+	if err := os.Rename(staged, destination); err != nil {
+		if hasDestination {
+			if rollbackErr := os.Rename(previous, destination); rollbackErr != nil {
+				return fmt.Errorf("install site shell directory %s: %w; restore previous: %v", filepath.Base(destination), err, rollbackErr)
+			}
+		}
+		_ = os.RemoveAll(staged)
+		return fmt.Errorf("install site shell directory %s: %w", filepath.Base(destination), err)
+	}
+	_ = os.RemoveAll(previous)
+	return nil
+}
+
 // refreshSiteShell copies the attempt site's top-level files over the live
 // site's. The standalone image publishes with --rebuild-viewer so its
 // self-contained shell (index.html, assets/) rides along with every publish;
-// the wholesale promote used to refresh it implicitly. catalog.json and
-// cassini.json are excluded because this sink owns both, and meetings/ because
-// the asset pass above owns it.
+// the wholesale promote used to refresh it implicitly. The ExApp image does not
+// embed the shell — it serves the viewer from the image — so there its attempt
+// sites carry nothing here and this is a no-op. catalog.json and cassini.json
+// are excluded because this sink owns both, and meetings/ because the asset
+// pass above owns it.
 func (s *localPublishSink) refreshSiteShell(attemptSitePath string) error {
 	entries, err := os.ReadDir(attemptSitePath)
 	if err != nil {
@@ -304,10 +364,7 @@ func (s *localPublishSink) refreshSiteShell(attemptSitePath string) error {
 		source := filepath.Join(attemptSitePath, name)
 		destination := filepath.Join(s.siteRoot, name)
 		if entry.IsDir() {
-			if err := os.RemoveAll(destination); err != nil {
-				return fmt.Errorf("clear site shell directory %s: %w", name, err)
-			}
-			if err := copyDirectory(source, destination); err != nil {
+			if err := replaceSiteShellDirectory(source, destination); err != nil {
 				return err
 			}
 			continue
@@ -316,9 +373,29 @@ func (s *localPublishSink) refreshSiteShell(attemptSitePath string) error {
 		if err != nil {
 			return fmt.Errorf("stat site shell entry %s: %w", name, err)
 		}
-		if err := copyFile(source, destination, info.Mode()); err != nil {
+		if err := replaceSiteShellFile(source, destination, info.Mode()); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// replaceSiteShellFile installs one shell file (index.html) through a staged
+// copy and a rename, for the same reason its directory sibling does: copying
+// straight onto the live path truncates it first, so a failure mid-copy leaves
+// the site serving a half-written index.html rather than the previous one.
+func replaceSiteShellFile(source, destination string, mode os.FileMode) error {
+	staged := destination + stagedAssetSuffix
+	if err := os.RemoveAll(staged); err != nil {
+		return fmt.Errorf("clear staged site shell file %s: %w", filepath.Base(destination), err)
+	}
+	if err := copyFile(source, staged, mode); err != nil {
+		_ = os.Remove(staged)
+		return err
+	}
+	if err := os.Rename(staged, destination); err != nil {
+		_ = os.Remove(staged)
+		return fmt.Errorf("install site shell file %s: %w", filepath.Base(destination), err)
 	}
 	return nil
 }
