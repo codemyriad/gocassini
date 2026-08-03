@@ -284,13 +284,44 @@ func (c ExAppConfig) serveFilteredCatalog(ctx context.Context, w http.ResponseWr
 		return
 	}
 
-	names, perr := c.davPropfindNames(ctx, client, caller, ncRecordingsRoot+"/meetings")
+	names, mounted, perr := c.davPropfindNames(ctx, client, caller, ncRecordingsRoot+"/meetings")
 	if perr != nil {
 		if logger != nil {
 			logger.Printf("nc files read: per-caller scan failed caller=%s: %v — serving empty (fail closed)", caller, perr)
 		}
 		writeCatalogJSON(w, emptyLike(raw))
 		return
+	}
+	if !mounted {
+		// The caller has no mount of the recordings group folder, so the scan
+		// could not even see the collection — they are not in the viewer group
+		// yet. That is the normal state of an account created since the last
+		// reconcile sweep, and until now it produced a silently empty archive
+		// for up to a full sweep interval: a brand-new user could not see the
+		// public meetings that are supposed to be readable by everyone.
+		//
+		// The sweep is what keeps the group == all users; this is the same
+		// operation for the one account that is demonstrably asking. It is
+		// idempotent, costs one OCS call, and can only happen once per account
+		// — after it, the folder mounts and this branch is never reached again.
+		if err := c.addUserToGroup(ctx, client, caller, ncRecordingsViewerGroup); err != nil {
+			if logger != nil {
+				logger.Printf("nc files read: caller=%s has no recordings mount and could not be added to %q: %v — serving empty", caller, ncRecordingsViewerGroup, err)
+			}
+			writeCatalogJSON(w, emptyLike(raw))
+			return
+		}
+		if logger != nil {
+			logger.Printf("nc files read: added caller=%s to %q on first access (no mount) — rescanning", caller, ncRecordingsViewerGroup)
+		}
+		names, mounted, perr = c.davPropfindNames(ctx, client, caller, ncRecordingsRoot+"/meetings")
+		if perr != nil || !mounted {
+			if logger != nil {
+				logger.Printf("nc files read: rescan after group add failed caller=%s mounted=%t: %v — serving empty (fail closed)", caller, mounted, perr)
+			}
+			writeCatalogJSON(w, emptyLike(raw))
+			return
+		}
 	}
 	visible := make(map[string]bool, len(names))
 	for _, n := range names {
@@ -361,14 +392,22 @@ func filterCatalog(raw []byte, keep func(opusBase string) bool) ([]byte, error) 
 	return json.Marshal(top)
 }
 
-// selfHealLeafProtection makes sure every recording under meetings/ carries the
-// viewer-group deny. It is the safety net for the container ACL: the root grants
-// the viewer group read (so anyone can traverse), which every leaf INHERITS
-// unless it has its own deny — so a recording whose per-file deny never landed
-// (a transient PROPPATCH failure at create, or a file that predates ACL
-// management) would be readable by every logged-in user. One PROPFIND lists the
-// current ACLs; only the offenders get a corrective PROPPATCH, and the merge
+// selfHealLeafProtection makes sure every recording under meetings/ carries its
+// own viewer-group rule. It is the safety net for the container ACL: the root
+// grants the viewer group read (so anyone can traverse), which every leaf
+// INHERITS unless it states its own rule — so a recording whose per-file ACL
+// never landed (a transient PROPPATCH failure at create, or a file that predates
+// ACL management) would be readable by every logged-in user. One PROPFIND lists
+// the current ACLs; only the offenders get a corrective PROPPATCH, and the merge
 // preserves any existing participant allows. Best-effort: logged, never fatal.
+//
+// "Offender" means a leaf with NO viewer-group rule at all, not one whose rule
+// happens to be an allow. A public recording's whole ACL is a deliberate
+// viewer-group ALLOW (D-552), written by the publish path; treating the absence
+// of a *deny* as damage made this sweep silently re-privatise every public
+// recording on the next enabled edge. The leaf's own rule — allow or deny — is
+// the authoritative record of what publish decided, so an explicit rule of
+// either polarity is left alone.
 func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Client, logger *log.Logger) {
 	acls, err := c.davPropfindACLLists(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/meetings")
 	if err != nil {
@@ -378,7 +417,7 @@ func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Cl
 		return
 	}
 	for base, rules := range acls {
-		if !strings.HasSuffix(base, ".opus") || hasViewerGroupDeny(rules) {
+		if !strings.HasSuffix(base, ".opus") || hasExplicitViewerGroupRule(rules) {
 			continue
 		}
 		relPath := ncRecordingsRoot + "/meetings/" + base
@@ -394,11 +433,25 @@ func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Cl
 	}
 }
 
-// hasViewerGroupDeny reports whether the rules already deny the broad viewer
-// group (an explicit read=0 rule), i.e. the recording is protected.
+// hasViewerGroupDeny reports whether the rules deny the broad viewer group (an
+// explicit read=0 rule), i.e. the recording is participant-private.
 func hasViewerGroupDeny(rules []aclRule) bool {
 	for _, r := range rules {
 		if r.Type == "group" && r.ID == ncRecordingsViewerGroup && r.Permissions&aclPermRead == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// hasExplicitViewerGroupRule reports whether the leaf states its own rule for
+// the broad viewer group, of either polarity: a deny (participant-private) or a
+// read allow (public, D-552). Both are written deliberately by the publish path,
+// and both mean the leaf is NOT relying on the inherited container grant — which
+// is the only thing selfHealLeafProtection exists to correct.
+func hasExplicitViewerGroupRule(rules []aclRule) bool {
+	for _, r := range rules {
+		if r.Type == "group" && r.ID == ncRecordingsViewerGroup {
 			return true
 		}
 	}
@@ -511,9 +564,13 @@ func (c ExAppConfig) davGetBytes(ctx context.Context, client *http.Client, userI
 // davPropfindNames lists the immediate children of relDir as userID (Depth: 1)
 // and returns the .opus basenames the user can see. Advanced-ACL deny-read
 // hides paths the user lacks read on, so the result is naturally access-scoped.
-// A 404 (the collection is not visible to the user) yields an empty list, not
-// an error.
-func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, userID, relDir string) ([]string, error) {
+//
+// visible reports whether the collection itself was reachable. A 404 means the
+// caller has no mount of the recordings group folder at all — a different
+// condition from "mounted, but every recording is denied", and one the caller
+// can act on (see serveFilteredCatalog). Both yield an empty list; only the
+// second is a legitimate empty answer.
+func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, userID, relDir string) (names []string, visible bool, err error) {
 	// Request only <d:resourcetype/>: the href (all we need) is always returned,
 	// and a minimal prop set keeps each child's response element to a few
 	// hundred bytes instead of the multi-KiB allprops default.
@@ -521,7 +578,7 @@ func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, 
 		`<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>`)
 	req, err := http.NewRequestWithContext(ctx, "PROPFIND", c.davFileURL(userID, relDir), bytes.NewReader(reqBody))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	c.setAppAPIDAVHeadersForUser(req, userID)
 	req.Header.Set("Depth", "1")
@@ -529,14 +586,14 @@ func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, 
 	req.ContentLength = int64(len(reqBody))
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer drainClose(resp.Body)
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil
+		return nil, false, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("PROPFIND %s -> %d", relDir, resp.StatusCode)
+		return nil, false, fmt.Errorf("PROPFIND %s -> %d", relDir, resp.StatusCode)
 	}
 	// Read with an explicit cap and detect truncation: a silently truncated
 	// multistatus would fail to parse and blank the listing for every caller
@@ -544,10 +601,10 @@ func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, 
 	const maxMultistatus = 64 << 20
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxMultistatus+1))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if len(body) > maxMultistatus {
-		return nil, fmt.Errorf("PROPFIND %s: multistatus exceeds %d bytes (too many meetings?)", relDir, maxMultistatus)
+		return nil, false, fmt.Errorf("PROPFIND %s: multistatus exceeds %d bytes (too many meetings?)", relDir, maxMultistatus)
 	}
 	var ms struct {
 		Responses []struct {
@@ -555,7 +612,7 @@ func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, 
 		} `xml:"response"`
 	}
 	if err := xml.Unmarshal(body, &ms); err != nil {
-		return nil, fmt.Errorf("parse multistatus: %w", err)
+		return nil, false, fmt.Errorf("parse multistatus: %w", err)
 	}
 	out := make([]string, 0, len(ms.Responses))
 	for _, r := range ms.Responses {
@@ -568,5 +625,5 @@ func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, 
 			out = append(out, base)
 		}
 	}
-	return out, nil
+	return out, true, nil
 }
