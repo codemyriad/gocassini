@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -96,12 +97,21 @@ WHERE job_id = ? AND attempt_number = ?`, "publish", "running", startedAt, start
 // ListQueuedPublishTasks returns the durable publish backlog (publish/queued
 // rows) for the requeue dispatcher: tasks the channel dropped (full queue) or
 // never saw (operator restart) (D-367).
+//
+// The attempt row is joined in because the sealed artifact is attempt-scoped
+// (D-583): a task rebuilt after a restart has to carry the same immutable path
+// and digest the seal recorded, not re-derive them from whatever currently sits
+// in current/.
 func (s *Store) ListQueuedPublishTasks(ctx context.Context) ([]publishTask, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, current_attempt_number
+SELECT jobs.id, jobs.current_attempt_number,
+       job_attempts.artifact_opus_path, job_attempts.artifact_opus_sha256
 FROM jobs
-WHERE stage = 'publish' AND state = 'queued'
-ORDER BY publish_queued_at ASC, id ASC`)
+JOIN job_attempts
+  ON job_attempts.job_id = jobs.id
+ AND job_attempts.attempt_number = jobs.current_attempt_number
+WHERE jobs.stage = 'publish' AND jobs.state = 'queued'
+ORDER BY jobs.publish_queued_at ASC, jobs.id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query queued publish jobs: %w", err)
 	}
@@ -110,9 +120,13 @@ ORDER BY publish_queued_at ASC, id ASC`)
 	var tasks []publishTask
 	for rows.Next() {
 		var task publishTask
-		if err := rows.Scan(&task.JobID, &task.AttemptNumber); err != nil {
+		var opusPath sql.NullString
+		var opusSHA256 sql.NullString
+		if err := rows.Scan(&task.JobID, &task.AttemptNumber, &opusPath, &opusSHA256); err != nil {
 			return nil, fmt.Errorf("scan queued publish job: %w", err)
 		}
+		task.OpusPath = opusPath.String
+		task.OpusSHA256 = opusSHA256.String
 		tasks = append(tasks, task)
 	}
 	if err := rows.Err(); err != nil {

@@ -243,6 +243,10 @@ func TestRunBuildJobStampsTalkRoomNameIntoPromotedBundle(t *testing.T) {
 	// promoted, so both copies carry it and the seal that follows packs the
 	// name into the `.opus` the viewer actually reads (D-462).
 	rt.runBuildJob(buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath}, 1)
+	// The build hands off to the seal worker, which writes inside the test's
+	// temp WorkRoot; wait for the job to finish so TempDir cleanup cannot race
+	// an in-flight seal.
+	waitForJobState(t, rt.store, jobID, "succeeded")
 
 	manifest, ok, err := LoadMeetingBundleManifest(canonicalMeetingPath(rt.cfg.WorkRoot, jobID))
 	if err != nil || !ok {

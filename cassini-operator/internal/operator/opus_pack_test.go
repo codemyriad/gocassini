@@ -80,10 +80,15 @@ exit 0
 	if _, err := os.Stat(meetingPath); err != nil {
 		t.Fatalf("attempt .meeting must survive packing: %v", err)
 	}
-	// The seal lands in runs/, beside the attempt it belongs to — not in
-	// current/, where two attempts of one job would collide (D-583).
-	if filepath.Dir(opusPath) != runsRoot(workRoot) {
-		t.Fatalf("sealed opus must live in runs/, got %q", opusPath)
+	// The seal lands in the attempt's own directory under runs/, beside the
+	// attempt it belongs to — not in current/, where two attempts of one job
+	// would collide (D-583). Its file name stays the job id, because the
+	// exporter derives the catalog id from the stem.
+	if filepath.Dir(opusPath) != attemptSealDir(workRoot, jobID, 1) {
+		t.Fatalf("sealed opus must live in the attempt seal dir, got %q", opusPath)
+	}
+	if filepath.Base(opusPath) != jobID+".opus" {
+		t.Fatalf("sealed opus must be named for the job, got %q", filepath.Base(opusPath))
 	}
 }
 

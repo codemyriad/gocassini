@@ -272,10 +272,19 @@ func TestPublishTimeoutKillsHungPublish(t *testing.T) {
 	}
 	rt.publishJobFn = rt.executePublishCLIWithTimeout
 
-	// Publishing resolves one meeting before it spawns anything (D-459), so the
-	// job needs a publishable bundle for the hang to be reachable at all.
-	if err := os.MkdirAll(canonicalMeetingPath(rt.cfg.WorkRoot, "pub-timeout"), 0o755); err != nil {
-		t.Fatalf("seed meeting bundle: %v", err)
+	// Publishing verifies the artifact its seal recorded before it spawns
+	// anything (D-583), so the job needs a sealed `.opus` for the hang to be
+	// reachable at all.
+	sealed := attemptOpusPath(rt.cfg.WorkRoot, "pub-timeout", 1)
+	if err := os.MkdirAll(filepath.Dir(sealed), 0o755); err != nil {
+		t.Fatalf("seed seal dir: %v", err)
+	}
+	if err := os.WriteFile(sealed, []byte("sealed-opus"), 0o644); err != nil {
+		t.Fatalf("seed sealed opus: %v", err)
+	}
+	sealedDigest, err := fileSHA256(sealed)
+	if err != nil {
+		t.Fatalf("fileSHA256() error = %v", err)
 	}
 
 	insertJob(t, store.db, "pub-timeout", "2026-06-12T10:00:00Z")
@@ -284,7 +293,7 @@ func TestPublishTimeoutKillsHungPublish(t *testing.T) {
 	}
 
 	start := time.Now()
-	rt.runPublishJob(publishTask{JobID: "pub-timeout", AttemptNumber: 1})
+	rt.runPublishJob(publishTask{JobID: "pub-timeout", AttemptNumber: 1, OpusPath: sealed, OpusSHA256: sealedDigest})
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
 		t.Fatalf("hung publish was not bounded: took %s", elapsed)
 	}

@@ -89,6 +89,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		JobID:           task.JobID,
 		AttemptNumber:   task.AttemptNumber,
 		PublishedAtUTC:  finishedAt,
+		AssetDigests:    sealedAssetDigests(task),
 	})
 	if err != nil {
 		rt.logger.Printf("publish deliver failed id=%s attempt=%d sink=%s attempt_site=%s: %v", task.JobID, task.AttemptNumber, rt.sink().Name(), attemptArtifactSitePath, err)
@@ -117,13 +118,18 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 
 func (rt *Runtime) executePublishCLI(ctx context.Context, task publishTask) (string, error) {
 	attemptSiteDir := attemptSitePath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
-	// One meeting per publish, not the whole library (D-459). Resolved before
-	// anything is created so a job with nothing to publish fails immediately
-	// instead of spawning a subprocess that exports an empty site.
-	publishInput, err := resolvePublishInputPath(rt.cfg.WorkRoot, task.JobID)
-	if err != nil {
+	// One meeting per publish, not the whole library (D-459), and specifically
+	// the artifact this attempt sealed (D-583). Verified before anything is
+	// created, so a job whose seal is missing or altered fails immediately
+	// instead of spawning a subprocess that publishes something else.
+	//
+	// `cassini publish` copies a `.opus` input through byte for byte after
+	// re-checking its embedded integrity, so this is also where the second pack
+	// went: the hot path now packs once, at seal time.
+	if err := verifySealedPublishInput(task.JobID, task.OpusPath, task.OpusSHA256); err != nil {
 		return attemptSiteDir, err
 	}
+	publishInput := task.OpusPath
 	if err := os.MkdirAll(filepath.Dir(attemptSiteDir), 0o755); err != nil {
 		return attemptSiteDir, fmt.Errorf("create site parent dir: %w", err)
 	}
@@ -154,6 +160,23 @@ func (rt *Runtime) executePublishCLI(ctx context.Context, task publishTask) (str
 		return attemptSiteDir, fmt.Errorf("publish output missing cassini.json: %w", err)
 	}
 	return attemptSiteDir, nil
+}
+
+// sealedAssetDigests names the site-relative asset the sink must end up holding
+// and the digest it must have — the last link in the chain that starts at the
+// seal (D-583).
+//
+// The exporter writes a portable meeting to `meetings/<id>.opus`, where the id
+// is the input file's stem, and the sealed artifact is named for the job, so
+// the destination is derivable rather than parsed back out of the catalog. Any
+// sink can honour this without knowing what sealing is.
+func sealedAssetDigests(task publishTask) map[string]string {
+	digest := strings.TrimSpace(task.OpusSHA256)
+	if digest == "" || strings.TrimSpace(task.OpusPath) == "" {
+		return nil
+	}
+	asset := filepath.ToSlash(filepath.Join("meetings", filepath.Base(task.OpusPath)))
+	return map[string]string{asset: digest}
 }
 
 func (rt *Runtime) extractSiteFailureDetail(sitePath string, fallback error) string {

@@ -440,39 +440,133 @@ func assertNoStagedAssets(t *testing.T, siteRoot string) {
 	})
 }
 
-func TestResolvePublishInputPathPrefersTheMeetingBundle(t *testing.T) {
+// Publishing delivers the artifact this attempt sealed, and proves it. The
+// `.meeting` preference this replaces existed only because the `.opus` was
+// packed asynchronously after the publish was enqueued (D-583).
+func TestVerifySealedPublishInputRequiresTheSealedArtifact(t *testing.T) {
 	workRoot := t.TempDir()
-	if err := os.MkdirAll(currentRoot(workRoot), 0o755); err != nil {
-		t.Fatalf("mkdir current: %v", err)
-	}
-	meeting := canonicalMeetingPath(workRoot, "job1")
-	opus := canonicalOpusPath(workRoot, "job1")
+	opus := attemptOpusPath(workRoot, "job1", 1)
 
-	// Neither artefact: a job with nothing to publish must say so rather than
-	// export an empty site.
-	if _, err := resolvePublishInputPath(workRoot, "job1"); err == nil {
-		t.Fatalf("expected an error when neither artefact exists")
+	// No seal at all: a job with nothing verified to publish must say so rather
+	// than export something else.
+	if err := verifySealedPublishInput("job1", "", ""); err == nil {
+		t.Fatal("expected an error when no sealed artifact is recorded")
 	} else if !strings.Contains(err.Error(), "job1") {
 		t.Fatalf("error = %v, want it to name the job", err)
 	}
 
-	// Only the .opus (its .meeting was pruned): fall back to it.
-	if err := os.WriteFile(opus, []byte("opus"), 0o644); err != nil {
-		t.Fatalf("write opus: %v", err)
-	}
-	got, err := resolvePublishInputPath(workRoot, "job1")
-	if err != nil || got != opus {
-		t.Fatalf("resolvePublishInputPath() = %q err = %v, want %q", got, err, opus)
+	// Recorded but missing from disk (pruned, or a work root wiped under a
+	// queued publish).
+	if err := verifySealedPublishInput("job1", opus, "abc123"); err == nil {
+		t.Fatal("expected an error when the sealed artifact is missing")
+	} else if !strings.Contains(err.Error(), opus) {
+		t.Fatalf("error = %v, want it to name the artifact", err)
 	}
 
-	// Both present: prefer the .meeting. On a rerun the .opus still holds the
-	// previous attempt's audio, because it is packed asynchronously after the
-	// publish is enqueued.
-	if err := os.MkdirAll(meeting, 0o755); err != nil {
-		t.Fatalf("mkdir meeting: %v", err)
+	if err := os.MkdirAll(filepath.Dir(opus), 0o755); err != nil {
+		t.Fatalf("mkdir seal dir: %v", err)
 	}
-	got, err = resolvePublishInputPath(workRoot, "job1")
-	if err != nil || got != meeting {
-		t.Fatalf("resolvePublishInputPath() = %q err = %v, want %q", got, err, meeting)
+	if err := os.WriteFile(opus, []byte("sealed-bytes"), 0o644); err != nil {
+		t.Fatalf("write sealed opus: %v", err)
+	}
+	digest, err := fileSHA256(opus)
+	if err != nil {
+		t.Fatalf("fileSHA256() error = %v", err)
+	}
+
+	// Present with no recorded digest: unverifiable is not the same as fine.
+	if err := verifySealedPublishInput("job1", opus, "  "); err == nil {
+		t.Fatal("expected an error when no digest was recorded")
+	}
+
+	// Present but altered since it was sealed.
+	if err := verifySealedPublishInput("job1", opus, "0000000000"); err == nil {
+		t.Fatal("expected an error when the artifact no longer matches its digest")
+	} else if !strings.Contains(err.Error(), "changed since it was sealed") {
+		t.Fatalf("error = %v, want the mutation to be named", err)
+	}
+
+	if err := verifySealedPublishInput("job1", opus, digest); err != nil {
+		t.Fatalf("verifySealedPublishInput() error = %v, want the sealed artifact accepted", err)
+	}
+}
+
+// The sink is handed the digest of the artifact the job sealed, so a corrupted
+// or substituted asset is refused where it can still be refused — before the
+// catalog names it.
+func TestLocalSinkRefusesAnAssetThatIsNotTheSealedArtifact(t *testing.T) {
+	siteRoot := filepath.Join(t.TempDir(), "site")
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+
+	sink := &localPublishSink{siteRoot: siteRoot, logger: log.New(ioDiscard{}, "", 0)}
+	_, err := sink.Deliver(context.Background(), publishDelivery{
+		AttemptSitePath: attempt,
+		JobID:           "meeting-a",
+		AttemptNumber:   1,
+		PublishedAtUTC:  "2026-06-12T00:00:00Z",
+		AssetDigests:    map[string]string{"meetings/meeting-a.opus": "not-the-sealed-digest"},
+	})
+	if err == nil {
+		t.Fatal("expected the delivery to be refused")
+	}
+	if !strings.Contains(err.Error(), "does not match the sealed artifact") {
+		t.Fatalf("error = %v, want the digest mismatch named", err)
+	}
+	// Refused before the catalog was written, and with no staged temp left in
+	// the live site.
+	if _, err := os.Stat(filepath.Join(siteRoot, "catalog.json")); !os.IsNotExist(err) {
+		t.Fatalf("no catalog may be written for a refused delivery, err=%v", err)
+	}
+	assertNoStagedAssets(t, siteRoot)
+}
+
+// The matching digest is the normal path, and it must not get in the way.
+func TestLocalSinkCommitsAnAssetThatMatchesTheSealedArtifact(t *testing.T) {
+	siteRoot := filepath.Join(t.TempDir(), "site")
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+	digest, err := fileSHA256(filepath.Join(attempt, "meetings", "meeting-a.opus"))
+	if err != nil {
+		t.Fatalf("fileSHA256() error = %v", err)
+	}
+
+	sink := &localPublishSink{siteRoot: siteRoot, logger: log.New(ioDiscard{}, "", 0)}
+	if _, err := sink.Deliver(context.Background(), publishDelivery{
+		AttemptSitePath: attempt,
+		JobID:           "meeting-a",
+		AttemptNumber:   1,
+		PublishedAtUTC:  "2026-06-12T00:00:00Z",
+		AssetDigests:    map[string]string{"meetings/meeting-a.opus": digest},
+	}); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	published, err := fileSHA256(filepath.Join(siteRoot, "meetings", "meeting-a.opus"))
+	if err != nil {
+		t.Fatalf("digest the published asset: %v", err)
+	}
+	if published != digest {
+		t.Fatalf("published digest %s != sealed digest %s", published, digest)
+	}
+	assertNoStagedAssets(t, siteRoot)
+}
+
+// sealedAssetDigests is what binds a publish task to the site path the exporter
+// will write. The catalog id, and therefore the asset name, is the sealed
+// file's stem — which is the job id.
+func TestSealedAssetDigestsNamesTheSitePathTheExporterWrites(t *testing.T) {
+	workRoot := "/work"
+	task := publishTask{
+		JobID:         "job1",
+		AttemptNumber: 2,
+		OpusPath:      attemptOpusPath(workRoot, "job1", 2),
+		OpusSHA256:    "abc123",
+	}
+	digests := sealedAssetDigests(task)
+	if got, ok := digests["meetings/job1.opus"]; !ok || got != "abc123" {
+		t.Fatalf("sealedAssetDigests() = %#v, want meetings/job1.opus -> abc123", digests)
+	}
+	// A task with nothing sealed asks the sink to check nothing, rather than to
+	// check the empty string.
+	if digests := sealedAssetDigests(publishTask{JobID: "job1"}); len(digests) != 0 {
+		t.Fatalf("sealedAssetDigests() = %#v, want empty for an unsealed task", digests)
 	}
 }

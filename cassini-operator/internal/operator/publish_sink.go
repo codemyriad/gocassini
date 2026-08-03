@@ -48,6 +48,13 @@ type publishDelivery struct {
 	AttemptNumber   int
 	// PublishedAtUTC is the publish completion timestamp, recorded as lineage.
 	PublishedAtUTC string
+	// AssetDigests maps a site-relative asset path to the sha256 the delivered
+	// copy must have. It closes the chain that starts at the seal (D-583): the
+	// asset the sink commits is verified to be the artifact the job sealed, not
+	// merely a file that arrived under the right name. A sink honours it without
+	// knowing anything about sealing, so every destination — including ones that
+	// land later — inherits the guarantee. Empty means "nothing to check".
+	AssetDigests map[string]string
 }
 
 // publishSink delivers a published meeting to one destination.
@@ -217,7 +224,12 @@ func commitPathForStagedAsset(tmp string) string {
 // a temp name, returning that name. It returns "" when the attempt site does
 // not carry the asset at all, which is only legitimate for an entry the
 // exporter pointed at a remote base URL.
-func (s *localPublishSink) stageAsset(d publishDelivery, asset string) (string, error) {
+//
+// Anything it created is removed when it returns an error: the temp lives in the
+// *live* site directory, where a stranded half-written copy would be listed by
+// the file server and swept by nothing. The caller's own cleanup only covers
+// temps it was told about, which by definition excludes the one that failed.
+func (s *localPublishSink) stageAsset(d publishDelivery, asset string) (staged string, err error) {
 	source := filepath.Join(d.AttemptSitePath, asset)
 	info, err := os.Stat(source)
 	if err != nil {
@@ -235,12 +247,33 @@ func (s *localPublishSink) stageAsset(d publishDelivery, asset string) (string, 
 	if err := os.RemoveAll(tmp); err != nil {
 		return "", fmt.Errorf("clear stale staged asset: %w", err)
 	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(tmp)
+		}
+	}()
 	if info.IsDir() {
 		if err := copyDirectory(source, tmp); err != nil {
 			return "", err
 		}
 	} else if err := copyFile(source, tmp, info.Mode()); err != nil {
 		return "", err
+	}
+	// The last link in the seal chain: what is about to be committed must be the
+	// artifact the job sealed (D-583). Checked on the staged copy, before the
+	// commit, so a mismatch leaves the previously published asset in place.
+	//
+	// Only file assets are digested. A directory asset is a legacy `artifactPath`
+	// export, which the operator's publish path no longer produces and for which
+	// there is no single artifact to have sealed.
+	if want, ok := d.AssetDigests[filepath.ToSlash(asset)]; ok && !info.IsDir() {
+		got, err := fileSHA256(tmp)
+		if err != nil {
+			return "", err
+		}
+		if got != want {
+			return "", fmt.Errorf("published asset %s does not match the sealed artifact: sha256 %s, want %s", asset, got, want)
+		}
 	}
 	// A rename onto an existing directory fails, so clear the destination for
 	// directory assets. Files are replaced by the rename itself.
