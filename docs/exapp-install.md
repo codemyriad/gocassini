@@ -160,7 +160,6 @@ Options).
 | `CASSINI_TALK_RECORDING_SECRET` | For the Talk record button | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (Step 5). Unset, the operator rejects every recording request |
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | For HPB-internal/default Talk recording | Internal client secret for standalone Talk signaling / HPB; must match `[clients] internalsecret`. Required for private, group, and one-to-one Talk recording |
 | `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped/failed notifications) and OCS calls. Leave empty to use the backend URL Talk sends with each request |
-| `CASSINI_NC_ACCESS_CONTROL` | No | Enables per-participant Nextcloud Files access control. The operator provisions the Group folder + ACLs automatically on enable; the only prerequisite is the Group folders ("Team folders") app being enabled. Production defaults off when omitted, while the local harness defaults it to `true` |
 | `OPENROUTER_API_KEY` | No | API key for LLM transcript cleanup + meeting summaries. **When set, the full local transcript is sent to that third-party endpoint** for cleanup/summarisation (transcription itself is always local). Unset, raw transcripts are published without summaries |
 | `LLM_BASE_URL` | No | OpenAI-compatible API base URL; defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
 | `LLM_MODEL` | No | Model for cleanup/summaries (default `openai/gpt-4o-mini`) |
@@ -438,10 +437,11 @@ The manifest declares per-route access levels enforced by Nextcloud's proxy:
 | `/img/app.svg` | USER | Navigation icon |
 | `/api/v1/welcome`, `/api/v1/room/*` | PUBLIC | Talk recording-backend protocol (HMAC-authenticated by Talk itself) |
 
-USER means the proxy route requires a logged-in Nextcloud user. With
-`CASSINI_NC_ACCESS_CONTROL` off, every such user receives the org-wide archive.
-With it on, the operator additionally serves the catalog and recordings as the
-individual caller so Nextcloud Files enforces each meeting's advanced ACL; see
+USER means the proxy route requires a logged-in Nextcloud user. Being logged in
+is necessary but not sufficient: the operator serves the catalog and each
+recording **as the individual caller**, so Nextcloud Files enforces that
+meeting's advanced ACL — a non-participant sees no catalog entry and a direct
+fetch 404s. See
 [Managing recording permissions](./exapp-nextcloud-recordings-permissions.md).
 
 `PUT /enabled` and `POST /init` are AppAPI **lifecycle callbacks**, not

@@ -1,16 +1,18 @@
 # Managing recording permissions in Nextcloud Files
 
 How **per-participant access control** for Cassini recordings works and how to
-operate it. With it enabled, a recording is visible in the Cassini viewer **only
-to the people who had access to the Talk room when it was published** — that is
-everyone on the room's attendee list, including users who were invited but never
-joined the call, and not only those present during it — access is
-governed entirely by Nextcloud's own file permissions, and admins change it with
-Nextcloud's normal sharing/ACL tools. With it **off** (the production default),
-recordings behave as before: any authenticated user can browse and play every
-meeting.
+operate it. A recording is visible in the Cassini viewer **only to the people
+who had access to the Talk room when it was published** — that is everyone on
+the room's attendee list, including users who were invited but never joined the
+call, and not only those present during it — access is governed entirely by
+Nextcloud's own file permissions, and admins change it with Nextcloud's normal
+sharing/ACL tools.
 
-> **Setup is automatic.** Enabling the ExApp with access control on makes the
+This is the only mode. There is no setting that turns it off and no public
+archive to fall back to: an installed Cassini ExApp serves each caller only the
+recordings Nextcloud says they may read (D-554).
+
+> **Setup is automatic.** Enabling the ExApp makes the
 > operator create the canonical recordings directory and all of its
 > permissions itself, over Nextcloud's HTTP APIs — there is **no `occ`
 > group-folder setup to run by hand** any more (that was the pre-automation
@@ -110,8 +112,7 @@ another user's home, so a plain per-user home cannot support this.
   Enable); the ExApp reaches Nextcloud only over HTTP and cannot install a PHP
   app for itself. The local harness installs and enables it automatically in
   `harness/bin/bootstrap.sh`.
-- The Cassini ExApp deployed and enabled (AppAPI), with access control turned
-  on (see [Turning it on](#turning-it-on)).
+- The Cassini ExApp deployed and enabled (AppAPI).
 
 ## Automatic setup
 
@@ -132,17 +133,32 @@ provisions everything idempotently (`cassini-operator/internal/operator/nc_provi
         + a periodic reconcile (every 15 min) so accounts created later converge
 ```
 
-Every step is idempotent and best-effort: a failure is logged (`nc provision: …`
-in the operator log) and never blocks startup or delivery, and each step is safe
-to re-run on the next enable. The owner / ACL-manager is the built-in `admin`
-account for now; a dedicated `cassini` service account is tracked in **D-532**
-and is a drop-in replacement (change `ncRecordingsOwner`).
+Every step is idempotent and safe to re-run on the next enable. A failure does
+not stop the operator starting — an instance that cannot provision should still
+come up so an admin can look at it — but it is **not** silent: the outcome is
+recorded and reported by `GET /operator/status` under `recordings_access`, and
+an ExApp whose substrate is missing answers **503** there rather than looking
+healthy while showing nobody their recordings.
+
+```json
+"recordings_access": {
+  "applicable": true,
+  "publish_sink": "nextcloud-files",
+  "ok": false,
+  "detail": "group folder Cassini (is the Group folders app enabled?): …",
+  "checked_at": "2026-08-03T21:14:02Z"
+}
+```
+
+A publish is a different matter: writing a recording's participant ACL is part
+of delivering it, so a failure there fails the publish rather than shipping a
+recording nobody has been granted (D-549).
 
 Verify the result (optional) with `occ`:
 
 ```bash
 occ groupfolders:list --output=json_pretty   # acl: true, acl_default_no_permission: true,
-                                              # groups {admin:31, recording-viewers:1}, manage [admin]
+                                              # groups {cassini:31, recording-viewers:1}, manage [cassini]
 occ group:list | grep -A99 recording-viewers # == all users
 ```
 
@@ -155,27 +171,23 @@ once on every enabled edge (covers everyone present at install) and then on a
 recordings directory within one interval; the per-file participant ACLs are
 unaffected either way.
 
-## Turning it on
+## Is it on?
 
-Set the ExApp environment variable:
+Nothing turns it on. Whenever the operator runs as an installed ExApp, its
+recordings are access-controlled and the directory is provisioned on the enabled
+edge; the only thing an admin does is enable the Group folders app (see
+[Prerequisites](#prerequisites)).
 
-```bash
-CASSINI_NC_ACCESS_CONTROL=true
-```
-
-Set it in the ExApp's environment — the deploy/compose env or the AppAPI deploy
-config — and restart the app so the enabled edge re-provisions. Any value Go's
-`strconv.ParseBool` accepts works (`true`, `1`). The local installed-ExApp
-harness declares and passes this value automatically, defaulting it to `true`:
+To confirm an instance is actually set up, ask the operator:
 
 ```bash
-./bin/cassini dev stack up \
-  --cassini installed-exapp \
-  --nc-access-control=true \
-  ...
+curl -sS -u admin:<pass> \
+  "https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/operator/status" \
+  | jq .recordings_access
 ```
 
-Production remains **off** when the deploy value is not supplied.
+`ok: true` means the group folder, its ACL floor, the viewer group and the
+canonical collections are all in place.
 
 ## Day-to-day: editing a meeting's permissions
 
@@ -206,7 +218,7 @@ recipe on your instance:
       /published/meetings/<id>.opus returns 404.
   [ ] If alice sees an EMPTY list, the per-caller scan can't traverse the folder:
       confirm (occ groupfolders:list) that the folder has advanced ACL + the
-      recording-viewers read mount, and that carol is in recording-viewers.
+      recording-viewers read mount, and that alice is in recording-viewers.
 ```
 
 The playback check is the security floor and must always hold. The list check is
@@ -214,33 +226,31 @@ the visibility tuning; the operator **fails closed** (shows an empty list) rathe
 than ever leaking, so a mis-tuned recipe degrades to "no meetings", never to
 "everyone's meetings".
 
-## Migrating from the public archive
+## Upgrading from a pre-access-control install
 
-If a deployment already ran with access control **off** (the D-529 public
-archive), recordings live in the owner's own `Cassini/Recordings` **home**
-folder. Turning access control on creates a *group folder* mounted at `Cassini`,
-and Nextcloud will not mount a group folder over an existing same-named home
-folder — it remaps the mount (e.g. `Cassini (2)`), so the operator would write to
-a different path and the previously delivered recordings would be left behind in
-the old home folder. Before enabling access control on such an instance, move or
-remove the owner's existing `Cassini` home folder (back it up first) so the group
-folder can mount at the canonical `Cassini` path, then re-enable; the startup
-sync re-delivers the archive into the group folder.
+If a deployment ran before access control was unconditional — when the operator
+served the D-529 public archive — its recordings live in the owner's own
+`Cassini/Recordings` **home** folder. Provisioning creates a *group folder*
+mounted at `Cassini`, and Nextcloud will not mount a group folder over an
+existing same-named home folder: it remaps the mount (e.g. `Cassini (2)`), so the
+operator writes to a different path and the previously delivered recordings are
+left behind in the old one.
 
-## Turning it off
+Before upgrading such an instance, move or remove the owner's existing `Cassini`
+home folder (back it up first) so the group folder can mount at the canonical
+`Cassini` path, then enable Cassini; the startup sync re-delivers the archive
+into the group folder. Which account holds that stale home folder depends on the
+version you are coming from — `admin` before D-532, `cassini` after it.
 
-Unset `CASSINI_NC_ACCESS_CONTROL` (or set it to `false`) and restart. In the
-local harness, whose default is `true`, explicitly pass
-`--nc-access-control=false`. The operator reverts to the public behavior
-immediately (it serves as the owner again) and stops provisioning/reconciling.
-Existing ACLs on the files remain but are not consulted by the public read path.
-The group folder and its contents are unaffected.
+There is no way back. `CASSINI_NC_ACCESS_CONTROL` was removed in D-554 and the
+public read path with it, so an instance that upgrades is access-controlled.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Everyone still sees every meeting | Flag not actually set, or operator not restarted | Confirm `CASSINI_NC_ACCESS_CONTROL=true` in the running container's env |
+| Everyone still sees every meeting | Running a build from before D-554, when access control was an opt-in flag | Upgrade; there is no configuration that produces this any more |
+| Nobody sees any meeting | Provisioning did not complete — most likely the group folder is missing | `GET /operator/status` → `recordings_access`; it names the step that failed. Enable the Team folders app, then re-enable Cassini |
 | `nc provision: ensure group folder … failed` in the log | Group folders app not installed/enabled | Enable the Team folders app, then re-enable Cassini |
 | A granted user sees an empty list | Per-caller scan can't traverse the container folders, or the leaf ACL was not applied | Confirm (occ) the folder's advanced ACL + recording-viewers read mount and that the user is in recording-viewers; re-publish to retry |
 | A meeting is visible to no one | Non-Talk job, or all participants were guests/federated | Share the `.opus` manually |
@@ -250,7 +260,9 @@ The group folder and its contents are unaffected.
 
 ## Related
 
-- `docs/proposals/nextcloud-files-access-and-index.md` — the design and the
-  spike this implements.
-- **D-532** — dedicated `cassini` service account (replaces the `admin` interim).
+- **D-530** — the design spike this implements (the proposal is not tracked in
+  this repo).
+- **D-532** — dedicated `cassini` service account; landed, and replaced the
+  `admin` interim.
+- **D-554** — made this the only mode and added the `/status` substrate report.
 - **D-529** — the underlying Nextcloud Files delivery this builds on.
