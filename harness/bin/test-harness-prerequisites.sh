@@ -34,7 +34,9 @@ done
 #    enable is HARD — no `|| true`. bootstrap.sh only tries; a throwaway test
 #    stack can survive a miss, a dogfood box cannot.
 for app in groupfolders group_everyone; do
-  grep -qE "^[[:space:]]*occ app:enable $app[[:space:]]*\$" "$SANDBOX_DEPLOY" \
+  # ${app} braced: bare "$app[" reads as an array subscript to shellcheck (SC1087),
+  # and the bracket here opens a POSIX character class, not an index.
+  grep -qE "^[[:space:]]*occ app:enable ${app}[[:space:]]*\$" "$SANDBOX_DEPLOY" \
     || fail "sandbox/deploy.sh does not hard-enable required Nextcloud app $app"
 done
 
