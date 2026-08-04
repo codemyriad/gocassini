@@ -36,9 +36,8 @@ import (
 // Nextcloud maps `.opus` to audio/ogg for playback.)
 //
 // FIRST PASS (D-529) scope, deliberately minimal:
-//   - owner = the Nextcloud admin (hard-coded). A dedicated `cassini` service
-//     account is tracked separately (D-532); swapping ncRecordingsOwner is the
-//     only code change needed.
+//   - owner = the dedicated `cassini` service account, provisioned on the
+//     AppAPI enabled edge (D-532).
 //   - layout mirrors the published site 1:1 under a hard-coded canonical root:
 //     <root>/catalog.json and <root>/meetings/<id>.opus. Room-namespaced
 //     (<root>/<room>/<id>.opus) layout and a configurable root come later.
@@ -46,10 +45,22 @@ import (
 //     single owner and serves to any authenticated caller (D-530 adds the
 //     per-user/per-group access model on top of this topology).
 const (
-	// ncRecordingsOwner is the Nextcloud user whose Files hold the canonical
-	// recordings tree, impersonated for both the WebDAV PUT (delivery) and the
-	// read proxy (serving). Hard-coded to admin for the first pass — see D-532.
-	ncRecordingsOwner = "admin"
+	// ncRecordingsOwner is the Nextcloud account that owns the canonical
+	// recordings tree — it performs the WebDAV writes, manages each recording's
+	// ACL, and is the identity the read proxy reads the authoritative catalog
+	// as (D-532).
+	//
+	// A dedicated service account rather than the instance administrator, for
+	// three reasons: recordings get a stable non-human owner that does not
+	// change when staff do; the account that holds every recording is not also
+	// able to reconfigure the instance (provisioning acts as the admin instead,
+	// see nc_provision.go); and nothing assumes an administrator is literally
+	// called "admin", which is true only by convention.
+	//
+	// The tree lives in a group folder, so this names the identity the operator
+	// acts as, not a home directory — the recordings are in shared group-folder
+	// storage either way. That is why changing it needs no data migration.
+	ncRecordingsOwner = "cassini"
 	// ncRecordingsRoot is the canonical recordings root inside the owner's
 	// Files (relative to the user's WebDAV home). Hard-coded for now (D-529).
 	ncRecordingsRoot = "Cassini/Recordings"

@@ -65,6 +65,11 @@ through Nextcloud's advanced file ACLs.]]></description>
         <description>Enables per-participant access control for recordings in Nextcloud Files. The operator provisions the Team folder and advanced ACLs automatically on enable. The Group folders ("Team folders") and Everyone Group (group_everyone) apps must already be enabled. See docs/exapp-nextcloud-recordings-permissions.md. Off by default outside the local harness.</description>
       </variable>
       <variable>
+        <name>CASSINI_NC_ADMIN_USER</name>
+        <display-name>Administrator account for setup (optional)</display-name>
+        <description>The Nextcloud account Cassini acts as when it creates its recordings folder, groups and service account. Leave empty to detect an administrator automatically; set it only if detection picks the wrong account. This is used for one-time setup, never for storing or reading recordings — those use the dedicated "cassini" service account.</description>
+      </variable>
+      <variable>
         <name>CASSINI_PUBLISH_SINK</name>
         <display-name>Where published recordings are stored</display-name>
         <description>Selects the publish destination: "nextcloud-files" stores recordings in Nextcloud Files under Cassini/Recordings (the default for an installed app, and the only mode covered by recording access control), or "local" keeps them on the app's own volume. Leave empty unless you specifically need the local mode; an installed app defaults to nextcloud-files so recordings are never silently kept off Nextcloud.</description>

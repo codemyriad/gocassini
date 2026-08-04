@@ -87,6 +87,16 @@ type provisionMock struct {
 	reqs    []recordedReq
 	folders string // ocs.data body for GET /folders
 	groups  string // ocs.data.groups for GET /cloud/groups
+	// adminList is ocs.data.users for GET /cloud/groups/admin.
+	adminList string
+	// userExists makes service-account creation return OCS 102.
+	userExists bool
+}
+
+func resetProvisioningUser(t *testing.T) {
+	t.Helper()
+	resolvedProvisioningUser.Store(nil)
+	t.Cleanup(func() { resolvedProvisioningUser.Store(nil) })
 }
 
 func (m *provisionMock) record(r *http.Request) {
@@ -137,6 +147,14 @@ func (m *provisionMock) handler(t *testing.T) http.Handler {
 		switch {
 		case r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/groups":
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"groups":`+m.groups+`}}}`)
+		case r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/groups/admin":
+			admins := m.adminList
+			if admins == "" {
+				admins = `["admin"]`
+			}
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"users":`+admins+`}}}`)
+		case r.Method == http.MethodPost && p == "/ocs/v2.php/cloud/users" && m.userExists:
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":102,"message":"User already exists"},"data":[]}}`)
 		case r.Method == http.MethodGet && p == "/index.php/apps/groupfolders/folders":
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":`+m.folders+`}}`)
 		case r.Method == http.MethodPost && p == "/index.php/apps/groupfolders/folders":
@@ -154,7 +172,8 @@ func (m *provisionMock) handler(t *testing.T) http.Handler {
 	})
 }
 
-func TestProvisionFreshUsesEveryoneWithoutMembershipWrites(t *testing.T) {
+func TestProvisionFreshUsesEveryoneAndDedicatedOwner(t *testing.T) {
+	resetProvisioningUser(t)
 	mock := &provisionMock{folders: `[]`, groups: `["admin","everyone"]`}
 	srv := httptest.NewServer(mock.handler(t))
 	defer srv.Close()
@@ -163,12 +182,12 @@ func TestProvisionFreshUsesEveryoneWithoutMembershipWrites(t *testing.T) {
 	cfg.AccessControl = true
 	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
 
-	ownerAuth := base64.StdEncoding.EncodeToString([]byte(ncRecordingsOwner + ":" + cfg.AppSecret))
+	adminAuth := base64.StdEncoding.EncodeToString([]byte(defaultNextcloudAdminUser + ":" + cfg.AppSecret))
 	if r, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); !ok {
 		t.Error("folder was not created")
 	} else {
-		if r.auth != ownerAuth {
-			t.Errorf("create folder auth = %q, want act-as-owner", r.auth)
+		if r.auth != adminAuth {
+			t.Errorf("create folder auth = %q, want act-as-administrator", r.auth)
 		}
 		if !strings.Contains(r.body, "acl_default_no_permission=1") || !strings.Contains(r.body, "mountpoint=Cassini") {
 			t.Errorf("create folder body = %q, want Cassini default-deny", r.body)
@@ -178,16 +197,16 @@ func TestProvisionFreshUsesEveryoneWithoutMembershipWrites(t *testing.T) {
 	if r, ok := mock.find(http.MethodPost, "/folders/9/groups/everyone"); !ok || !strings.Contains(r.body, "permissions=1") {
 		t.Errorf("everyone permissions not set to read: %+v ok=%v", r, ok)
 	}
-	if r, ok := mock.find(http.MethodPost, "/folders/9/groups/admin"); !ok || !strings.Contains(r.body, "permissions=31") {
+	if r, ok := mock.find(http.MethodPost, "/folders/9/groups/"+ncRecordingsOwnerGroup); !ok || !strings.Contains(r.body, "permissions=31") {
 		t.Errorf("owner group permissions not set to full: %+v ok=%v", r, ok)
 	}
 	if r, ok := mock.find(http.MethodPost, "/folders/9/acl"); !ok || !strings.Contains(r.body, "acl=1") {
 		t.Errorf("advanced ACL not enabled: %+v ok=%v", r, ok)
 	}
-	if r, ok := mock.find(http.MethodPost, "/folders/9/manageACL"); !ok || !strings.Contains(r.body, "mappingId=admin") {
+	if r, ok := mock.find(http.MethodPost, "/folders/9/manageACL"); !ok || !strings.Contains(r.body, "mappingId="+ncRecordingsOwner) {
 		t.Errorf("owner not delegated as ACL manager: %+v ok=%v", r, ok)
 	}
-	if r, ok := mock.findLast("PROPPATCH", "/remote.php/dav/files/admin/Cassini"); !ok {
+	if r, ok := mock.findLast("PROPPATCH", "/remote.php/dav/files/"+ncRecordingsOwner+"/Cassini"); !ok {
 		t.Error("root container ACL PROPPATCH missing")
 	} else if !strings.Contains(r.body, ncRecordingsEveryoneGroup) || !strings.Contains(r.body, "<nc:acl-permissions>1</nc:acl-permissions>") {
 		t.Errorf("root container ACL body missing everyone read grant: %s", r.body)
@@ -195,12 +214,19 @@ func TestProvisionFreshUsesEveryoneWithoutMembershipWrites(t *testing.T) {
 	if mock.count("MKCOL", "/Cassini/Recordings") < 2 {
 		t.Errorf("expected MKCOL of Recordings and meetings, got %d", mock.count("MKCOL", "/Cassini/Recordings"))
 	}
-	if mock.count(http.MethodPost, "/cloud/groups") != 0 || mock.count(http.MethodPost, "/cloud/users/") != 0 {
-		t.Fatal("provisioning must neither create the virtual group nor write user memberships")
+	if create, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users"); !ok || create.auth != adminAuth {
+		t.Fatalf("service account was not created by the administrator: %+v ok=%v", create, ok)
+	}
+	if group, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/groups"); !ok || !strings.Contains(group.body, "groupid="+ncRecordingsOwnerGroup) || strings.Contains(group.body, "groupid=everyone") {
+		t.Fatalf("only the narrow owner group should be created: %+v ok=%v", group, ok)
+	}
+	if mock.count(http.MethodPost, "/cloud/users/"+ncRecordingsOwner+"/groups") != 1 {
+		t.Fatal("service-account owner-group membership was not asserted exactly once")
 	}
 }
 
 func TestProvisionRequiresUniversalGroup(t *testing.T) {
+	resetProvisioningUser(t)
 	mock := &provisionMock{folders: `[]`, groups: `["admin"]`}
 	srv := httptest.NewServer(mock.handler(t))
 	defer srv.Close()
@@ -219,8 +245,9 @@ func TestProvisionRequiresUniversalGroup(t *testing.T) {
 }
 
 func TestProvisionExistingFolderMigratesLegacyMountMapping(t *testing.T) {
+	resetProvisioningUser(t)
 	mock := &provisionMock{
-		folders: `{"3":{"id":3,"mount_point":"Cassini","groups":{"recording-viewers":{"permissions":1}},"manage":[{"type":"user","id":"admin"}]}}`,
+		folders: `{"3":{"id":3,"mount_point":"Cassini","groups":{"admin":{"permissions":31},"recording-viewers":{"permissions":1}},"manage":[{"type":"user","id":"` + ncRecordingsOwner + `"},{"type":"user","id":"admin"}]}}`,
 		groups:  `["admin","everyone","recording-viewers"]`,
 	}
 	srv := httptest.NewServer(mock.handler(t))
@@ -233,11 +260,14 @@ func TestProvisionExistingFolderMigratesLegacyMountMapping(t *testing.T) {
 	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); ok {
 		t.Error("folder should not be re-created")
 	}
-	if _, ok := mock.find(http.MethodPost, "/folders/3/manageACL"); ok {
-		t.Error("existing ACL manager must not be re-added")
+	if r, ok := mock.find(http.MethodPost, "/folders/3/manageACL"); !ok || !strings.Contains(r.body, "mappingId=admin") || !strings.Contains(r.body, "manageAcl=0") {
+		t.Errorf("legacy administrator ACL manager was not removed: %+v ok=%v", r, ok)
 	}
 	if _, ok := mock.find(http.MethodDelete, "/folders/3/groups/recording-viewers"); !ok {
 		t.Error("legacy recording-viewers mount mapping was not removed")
+	}
+	if _, ok := mock.find(http.MethodDelete, "/folders/3/groups/admin"); !ok {
+		t.Error("legacy administrator write mapping was not removed")
 	}
 	if r, ok := mock.find(http.MethodPost, "/folders/3/groups/everyone"); !ok || !strings.Contains(r.body, "permissions=1") {
 		t.Errorf("everyone mount mapping was not installed first: %+v ok=%v", r, ok)
@@ -259,7 +289,8 @@ func TestGroupExistsUsesExactID(t *testing.T) {
 	}
 }
 
-func TestProvisionNoopWhenDisabled(t *testing.T) {
+func TestProvisionCreatesOwnerWithAccessControlOff(t *testing.T) {
+	resetProvisioningUser(t)
 	mock := &provisionMock{folders: `[]`, groups: `[]`}
 	srv := httptest.NewServer(mock.handler(t))
 	defer srv.Close()
@@ -268,9 +299,95 @@ func TestProvisionNoopWhenDisabled(t *testing.T) {
 	cfg.AccessControl = false
 	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
 
+	if _, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users"); !ok {
+		t.Fatal("service account was not created with access control off")
+	}
+	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); ok {
+		t.Fatal("access-control topology was provisioned with access control off")
+	}
+}
+
+func TestProvisionNoopWithoutAppAPI(t *testing.T) {
+	resetProvisioningUser(t)
+	mock := &provisionMock{folders: `[]`, groups: `[]`}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	cfg := testExAppConfig(srv.URL)
+	cfg.AccessControl = true
+	cfg.AppSecret = ""
+	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
+
 	mock.mu.Lock()
 	defer mock.mu.Unlock()
 	if len(mock.reqs) != 0 {
-		t.Errorf("access control disabled but %d requests were issued", len(mock.reqs))
+		t.Errorf("non-AppAPI provisioning issued %d requests", len(mock.reqs))
+	}
+}
+
+func TestProvisionCreatesServiceAccountWithArrayGroupField(t *testing.T) {
+	resetProvisioningUser(t)
+	mock := &provisionMock{folders: `[]`, groups: `["admin","everyone"]`}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	cfg := testExAppConfig(srv.URL)
+	cfg.AccessControl = false
+	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
+
+	create, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users")
+	if !ok {
+		t.Fatal("service account was never created")
+	}
+	if !strings.Contains(create.body, "userid="+ncRecordingsOwner) {
+		t.Fatalf("create body = %q, want userid=%s", create.body, ncRecordingsOwner)
+	}
+	if !strings.Contains(create.body, "groups%5B%5D="+ncRecordingsOwnerGroup) {
+		t.Fatalf("create body = %q, want groups%%5B%%5D=%s", create.body, ncRecordingsOwnerGroup)
+	}
+	if strings.Contains(create.body, "groups="+ncRecordingsOwnerGroup) {
+		t.Fatalf("create body uses scalar groups field rejected by Nextcloud: %q", create.body)
+	}
+	wantAdmin := base64.StdEncoding.EncodeToString([]byte(defaultNextcloudAdminUser + ":" + cfg.AppSecret))
+	if create.auth != wantAdmin {
+		t.Fatalf("create auth = %q, want administrator %q", create.auth, wantAdmin)
+	}
+}
+
+func TestProvisionUsesDiscoveredAdministrator(t *testing.T) {
+	resetProvisioningUser(t)
+	mock := &provisionMock{folders: `[]`, groups: `["everyone"]`, adminList: `["ops-root"]`}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	cfg := testExAppConfig(srv.URL)
+	cfg.AccessControl = false
+	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
+
+	create, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users")
+	if !ok {
+		t.Fatal("service account was never created")
+	}
+	want := base64.StdEncoding.EncodeToString([]byte("ops-root:" + cfg.AppSecret))
+	if create.auth != want {
+		t.Fatalf("create auth = %q, want discovered administrator %q", create.auth, want)
+	}
+}
+
+func TestProvisionAcceptsExistingServiceAccount(t *testing.T) {
+	resetProvisioningUser(t)
+	mock := &provisionMock{folders: `[]`, groups: `["admin","everyone"]`, userExists: true}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	cfg := testExAppConfig(srv.URL)
+	cfg.AccessControl = true
+	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
+
+	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); !ok {
+		t.Fatal("provisioning stopped at an existing account")
+	}
+	if _, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users/"+ncRecordingsOwner+"/groups"); !ok {
+		t.Fatal("existing account owner-group membership was not reasserted")
 	}
 }

@@ -16,6 +16,18 @@ recording to every authenticated account through the recordings owner.
 > administrator must first enable **Group folders / Team folders** and
 > **Everyone Group** (`group_everyone`). The local harness installs both.
 
+> **Who owns the recordings.** The canonical tree is owned by a dedicated
+> `cassini` service account, created automatically when the app is enabled. It
+> is the only identity that writes recordings and manages their permissions.
+> Privileged setup—creating the account, its narrow owner group, and the Team
+> folder—is performed as a separately resolved administrator. Set
+> `CASSINI_NC_ADMIN_USER` only when automatic administrator discovery chooses
+> the wrong account.
+>
+> The recordings live in shared Team-folder storage rather than a user's home.
+> Changing the acting owner from the earlier administrator identity therefore
+> requires no data migration: existing Team-folder recordings remain in place.
+
 > **Public conversations.** Publicness is read from Talk at record time and
 > frozen with the recording. Making a conversation public later does not widen
 > an earlier private recording, and making it private does not narrow an earlier
@@ -33,7 +45,7 @@ recording to every authenticated account through the recordings owner.
 ```text
   PUBLISH (write)                                    VIEW (read)
   ───────────────                                    ───────────
-  owner delivers <id>.opus to NC Files               browser opens Cassini
+  `cassini` owner delivers <id>.opus to NC Files     browser opens Cassini
         │                                                  │
         │  enumerate Talk audience                          │  authenticated caller
         ▼                                                  ▼
@@ -61,7 +73,7 @@ and the owner group remain separate:
   TEAM-FOLDER MOUNTS                    ADVANCED ACLS
   ──────────────────                    ─────────────
   everyone             READ             Cassini root:
-  owner group          ALL                everyone        READ
+  cassini owner group  ALL                everyone        READ
        │                                    owner          ALL
        │
        └── owner group must stay narrow   private leaf:
@@ -100,7 +112,7 @@ group with `ALL` and gives `everyone` only `READ`.
 - Cassini deployed through AppAPI, with access control enabled.
 
 Both native apps must be enabled before Cassini's enabled lifecycle callback.
-Cassini checks that `everyone` exists and refuses to create the recordings
+Cassini checks that `everyone` exists and refuses to create the recording ACL
 substrate when it does not. It never creates an ordinary empty group named
 `everyone`, because that would silently restore the new-account race.
 
@@ -115,10 +127,15 @@ accordingly.
 
 ## Automatic setup
 
-On the AppAPI **enabled** edge, Cassini provisions this topology idempotently:
+On the AppAPI **enabled** edge, Cassini provisions this topology idempotently.
+The owner account tier runs even when access control is off because all Files
+uploads and owner-side reads act as that account; the remaining topology is
+conditional on access control:
 
 ```text
-  ├── verify virtual group `everyone` exists              (OCS API)
+  ├── resolve the provisioning administrator              (OCS API)
+  ├── ensure owner group + `cassini` service account       (OCS API)
+  ├── verify virtual group `everyone` exists               (OCS API)
   ├── ensure Team folder `Cassini`, default-deny           (Team folders API)
   ├── assign everyone READ + owner group ALL              (Team folders API)
   ├── enable advanced ACL + delegate owner ACL manager    (Team folders API)
@@ -126,10 +143,11 @@ On the AppAPI **enabled** edge, Cassini provisions this topology idempotently:
   ├── migrate/protect every existing recording leaf       (DAV PROPFIND/PROPPATCH)
   │     recording-viewers READ → everyone READ
   │     recording-viewers DENY → everyone DENY
+  │     legacy admin owner     → cassini owner
   │     no broad rule          → everyone DENY
   ├── protect an existing catalog for owner-only access   (DAV PROPPATCH)
   ├── grant everyone READ at the root                     (DAV PROPPATCH)
-  ├── remove the legacy recording-viewers mount mapping   (Team folders API)
+  ├── remove legacy viewer/admin mappings + admin manager (Team folders API)
   └── materialize Cassini/Recordings/meetings             (DAV MKCOL)
 ```
 
@@ -137,12 +155,16 @@ The root remains owner-only if leaf or catalog migration fails, preventing a
 partially migrated private file from inheriting broad read. Re-enabling Cassini
 retries the idempotent sequence. The legacy ordinary `recording-viewers` group
 itself is left untouched in case an administrator reused it elsewhere; Cassini
-no longer reads or writes its memberships.
+no longer reads or writes its memberships. The old `admin: ALL` mount mapping is
+also removed after `cassini: ALL` has been installed and the migrated root has
+been written successfully. The old `admin` ACL-manager delegation is removed at
+the same point, leaving the dedicated service account as the ACL authority and
+its owner group as the narrow write principal.
 
-The owner and owner group are the built-in `admin` identity in this branch. A
-dedicated `cassini` service account and narrow owner group are tracked by
-**D-532**; ACL-manager status alone is not a substitute for that group's
-write-capable Team-folder mount.
+The dedicated `cassini` service account is the recording owner and ACL manager.
+It is the only member Cassini adds to the narrow `cassini` owner group, whose
+`ALL` Team-folder mapping is required for writes. The virtual `everyone` group
+remains `READ`; ACL-manager status cannot elevate that mount capability.
 
 Verify the result:
 
@@ -150,7 +172,10 @@ Verify the result:
 occ app:list | grep -E 'groupfolders|group_everyone'
 occ groupfolders:list --output=json_pretty
 # acl: true, acl_default_no_permission: true
-# groups: admin=31, everyone=1; manage: user admin
+# groups: cassini=31, everyone=1; manage: user cassini
+
+occ user:info cassini
+# groups includes: cassini (narrow write-capable owner group)
 
 occ user:info <any-user>
 # groups includes: everyone (virtual; no membership reconciliation required)
@@ -218,8 +243,9 @@ list rather than returning the unfiltered owner catalog.
 
 ## Migrating from the public home-folder archive
 
-If a deployment ran with access control off, recordings may live in the owner's
-ordinary `Cassini/Recordings` home directory. Nextcloud will not mount a Team
+If a deployment ran with access control off, recordings may live in the acting
+owner's ordinary `Cassini/Recordings` home directory (`cassini` on this branch,
+or the administrator on older releases). Nextcloud will not mount a Team
 folder over an existing same-named home folder; it may rename the mount to
 `Cassini (2)`. Back up and move/remove the owner's old `Cassini` home directory
 before enabling access control, then re-enable Cassini so startup sync delivers
@@ -237,6 +263,7 @@ consulted by that read path.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Log says required universal group `everyone` is unavailable | Everyone Group app missing/disabled | Install/enable `group_everyone`, then re-enable Cassini |
+| Service-account setup fails | Administrator discovery is wrong or account/group provisioning was rejected | Inspect `nc provision:` logs; set `CASSINI_NC_ADMIN_USER` to the correct administrator and re-enable Cassini |
 | `ensure group folder` fails | Team folders app missing/disabled | Install/enable `groupfolders`, then re-enable Cassini |
 | Fresh user has no Cassini mount | `group_everyone` disabled or Team-folder mapping missing | Confirm `occ user:info <user>` includes `everyone` and `groupfolders:list` assigns `everyone:1` |
 | Root becomes owner-only after upgrade | Legacy leaf/catalog ACL migration failed | Inspect `nc provision:` logs, correct the DAV/ACL error, then re-enable Cassini |

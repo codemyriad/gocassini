@@ -228,9 +228,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		// not immediately at process start (which deterministically gets 401).
 		exappCfg.onEnabled = func(enabled bool) {
 			if enabled {
-				// Provision the group folder + ACL topology before the archive sync,
-				// so the canonical directory and its permissions exist for the first
-				// delivery. No-op unless access control is enabled.
+				// Ensure the dedicated recordings owner first, then provision the Team-
+				// folder + ACL topology when access control is enabled. This runs before
+				// archive sync so the first delivery acts as an existing, mounted owner.
 				exappCfg.provisionNCFilesAccess(runtime.ctx, logger)
 				runtime.syncNCFilesOnStartup()
 			}

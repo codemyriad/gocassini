@@ -364,8 +364,10 @@ func filterCatalog(raw []byte, keep func(opusBase string) bool) ([]byte, error) 
 // inherited container read grant: a leaf with no broad-group rule is repaired as
 // private, while a legacy recording-viewers rule is translated with its polarity
 // intact (deny remains private; read remains public). Existing participant rules
-// are preserved. An error is returned so callers never expose a partially
-// protected tree through the broad root grant.
+// are preserved. ACLs created by the previous admin owner are also normalized
+// to the dedicated `cassini` owner without changing public/private polarity. An
+// error is returned so callers never expose a partially migrated tree through
+// the broad root grant.
 func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Client, logger *log.Logger) error {
 	acls, err := c.davPropfindACLLists(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/meetings")
 	if err != nil {
@@ -375,12 +377,21 @@ func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Cl
 		return err
 	}
 	for base, rules := range acls {
-		if !strings.HasSuffix(base, ".opus") || hasExplicitEveryoneGroupRule(rules) {
+		if !strings.HasSuffix(base, ".opus") {
 			continue
 		}
 		next, migrated := migrateLegacyAudienceRule(rules)
+		ownerNormalized := false
 		if !migrated {
-			next = ensureProtectedRules(rules)
+			switch {
+			case hasExplicitEveryoneGroupRule(rules) && needsOwnerNormalization(rules):
+				next = normalizeOwnerRules(rules)
+				ownerNormalized = true
+			case hasExplicitEveryoneGroupRule(rules):
+				continue
+			default:
+				next = ensureProtectedRules(rules)
+			}
 		}
 		relPath := ncRecordingsRoot + "/meetings/" + base
 		if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, relPath, next); err != nil {
@@ -390,9 +401,12 @@ func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Cl
 			return fmt.Errorf("protect %s: %w", base, err)
 		}
 		if logger != nil {
-			if migrated {
-				logger.Printf("nc files access: migrated recording %s ACL from %q to %q", base, ncLegacyRecordingsViewerGroup, ncRecordingsEveryoneGroup)
-			} else {
+			switch {
+			case migrated:
+				logger.Printf("nc files access: migrated recording %s ACL from %q to %q and owner to %q", base, ncLegacyRecordingsViewerGroup, ncRecordingsEveryoneGroup, ncRecordingsOwner)
+			case ownerNormalized:
+				logger.Printf("nc files access: migrated recording %s owner ACL to %q", base, ncRecordingsOwner)
+			default:
 				logger.Printf("nc files access: self-healed unprotected recording %s (applied everyone deny)", base)
 			}
 		}
@@ -425,40 +439,53 @@ func hasExplicitEveryoneGroupRule(rules []aclRule) bool {
 // `everyone`, preserving public/read versus private/deny and all participant
 // grants. The owner rule is normalized while the file is being rewritten.
 func migrateLegacyAudienceRule(existing []aclRule) ([]aclRule, bool) {
-	haveLegacy, haveOwner := false, false
+	haveLegacy := false
 	permissions := 0
 	out := make([]aclRule, 0, len(existing)+1)
 	for _, r := range existing {
-		switch {
-		case r.Type == "group" && r.ID == ncLegacyRecordingsViewerGroup:
+		if r.Type == "group" && r.ID == ncLegacyRecordingsViewerGroup {
 			haveLegacy = true
 			permissions |= r.Permissions & aclPermRead
 			continue
-		case r.Type == "user" && r.ID == ncRecordingsOwner:
-			r.Mask, r.Permissions = aclMaskAll, aclMaskAll
-			haveOwner = true
 		}
 		out = append(out, r)
 	}
 	if !haveLegacy {
 		return existing, false
 	}
-	if !haveOwner {
-		out = append(out, aclRule{Type: "user", ID: ncRecordingsOwner, Mask: aclMaskAll, Permissions: aclMaskAll})
-	}
 	audience := aclRule{Type: "group", ID: ncRecordingsEveryoneGroup, Mask: aclMaskAll, Permissions: permissions}
-	return append([]aclRule{audience}, out...), true
+	return normalizeOwnerRules(append([]aclRule{audience}, out...)), true
 }
 
-// ensureProtectedRules returns rules with an `everyone` deny and owner ALL,
-// preserving participant grants. Legacy/current broad-group rules are replaced
-// rather than duplicated.
-func ensureProtectedRules(existing []aclRule) []aclRule {
+// needsOwnerNormalization finds ACLs created before the dedicated service
+// account: they either lack the cassini owner or retain the old admin owner.
+func needsOwnerNormalization(rules []aclRule) bool {
 	haveOwner := false
-	out := make([]aclRule, 0, len(existing)+2)
+	for _, r := range rules {
+		if r.Type == "user" && r.ID == ncRecordingsOwner && r.Permissions == aclMaskAll {
+			haveOwner = true
+		}
+		if isLegacyOwnerRule(r) {
+			return true
+		}
+	}
+	return !haveOwner
+}
+
+func isLegacyOwnerRule(r aclRule) bool {
+	return r.Type == "user" && r.ID == ncLegacyRecordingsOwner &&
+		ncLegacyRecordingsOwner != ncRecordingsOwner && r.Permissions == aclMaskAll
+}
+
+// normalizeOwnerRules removes the generated legacy admin-owner rule, preserves
+// participant grants (including a manually narrowed admin read), and ensures the
+// dedicated service account is the sole generated ALL-permission owner.
+func normalizeOwnerRules(existing []aclRule) []aclRule {
+	haveOwner := false
+	out := make([]aclRule, 0, len(existing)+1)
 	for _, r := range existing {
 		switch {
-		case r.Type == "group" && (r.ID == ncRecordingsEveryoneGroup || r.ID == ncLegacyRecordingsViewerGroup):
+		case isLegacyOwnerRule(r):
 			continue
 		case r.Type == "user" && r.ID == ncRecordingsOwner:
 			r.Mask, r.Permissions = aclMaskAll, aclMaskAll
@@ -466,11 +493,25 @@ func ensureProtectedRules(existing []aclRule) []aclRule {
 		}
 		out = append(out, r)
 	}
-	deny := aclRule{Type: "group", ID: ncRecordingsEveryoneGroup, Mask: aclMaskAll, Permissions: 0}
 	if !haveOwner {
 		out = append(out, aclRule{Type: "user", ID: ncRecordingsOwner, Mask: aclMaskAll, Permissions: aclMaskAll})
 	}
-	return append([]aclRule{deny}, out...)
+	return out
+}
+
+// ensureProtectedRules returns rules with an `everyone` deny and owner ALL,
+// preserving participant grants. Legacy/current broad-group rules are replaced
+// rather than duplicated.
+func ensureProtectedRules(existing []aclRule) []aclRule {
+	out := make([]aclRule, 0, len(existing)+2)
+	for _, r := range existing {
+		if r.Type == "group" && (r.ID == ncRecordingsEveryoneGroup || r.ID == ncLegacyRecordingsViewerGroup) {
+			continue
+		}
+		out = append(out, r)
+	}
+	deny := aclRule{Type: "group", ID: ncRecordingsEveryoneGroup, Mask: aclMaskAll, Permissions: 0}
+	return normalizeOwnerRules(append([]aclRule{deny}, out...))
 }
 
 // davPropfindACLLists lists relDir (Depth 1) requesting each child's nc:acl-list

@@ -21,7 +21,7 @@ func TestACLListXML(t *testing.T) {
 	for _, want := range []string{
 		`xmlns:nc="http://nextcloud.org/ns"`,
 		`<nc:acl-mapping-type>group</nc:acl-mapping-type><nc:acl-mapping-id>everyone</nc:acl-mapping-id><nc:acl-mask>31</nc:acl-mask><nc:acl-permissions>0</nc:acl-permissions>`,
-		`<nc:acl-mapping-type>user</nc:acl-mapping-type><nc:acl-mapping-id>admin</nc:acl-mapping-id><nc:acl-mask>31</nc:acl-mask><nc:acl-permissions>31</nc:acl-permissions>`,
+		`<nc:acl-mapping-type>user</nc:acl-mapping-type><nc:acl-mapping-id>` + ncRecordingsOwner + `</nc:acl-mapping-id><nc:acl-mask>31</nc:acl-mask><nc:acl-permissions>31</nc:acl-permissions>`,
 		`<nc:acl-mapping-type>user</nc:acl-mapping-type><nc:acl-mapping-id>alice</nc:acl-mapping-id>`,
 		`<nc:acl-mask>31</nc:acl-mask><nc:acl-permissions>1</nc:acl-permissions>`,
 		`<nc:acl-mapping-type>group</nc:acl-mapping-type>`,
@@ -80,14 +80,9 @@ func TestEnsureProtectedRulesPreservesParticipantsAddsDeny(t *testing.T) {
 	if !hasEveryoneGroupDeny(protected) {
 		t.Error("recordingACLRules output should already deny everyone")
 	}
-	// A stale ALLOW on the viewer group is replaced by a deny.
-	//
-	// This is a property of the repair function in isolation, NOT of the sweep
-	// that calls it: selfHealLeafProtection no longer hands it a leaf that
-	// states any viewer-group rule, because an allow there is a deliberate
-	// public grant rather than damage (D-552, see
-	// TestSelfHealLeavesAPublicRecordingAlone). Kept because the function must
-	// still normalise whatever it is given.
+	// A stale ALLOW passed directly to the private-repair helper is replaced by
+	// a deny. The self-heal sweep preserves an explicit `everyone` allow because
+	// it represents a deliberate public recording.
 	fixed := ensureProtectedRules([]aclRule{
 		{Type: "group", ID: ncRecordingsEveryoneGroup, Mask: aclMaskAll, Permissions: aclMaskAll},
 	})
@@ -168,10 +163,10 @@ func TestNCFilesAccessApplierNilUnlessEnabled(t *testing.T) {
 func aclMultistatus(leaves map[string][]aclRule) string {
 	var b strings.Builder
 	b.WriteString(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns">`)
-	b.WriteString(`<d:response><d:href>/remote.php/dav/files/admin/Cassini/Recordings/meetings/</d:href>` +
+	b.WriteString(`<d:response><d:href>/remote.php/dav/files/` + ncRecordingsOwner + `/Cassini/Recordings/meetings/</d:href>` +
 		`<d:propstat><d:prop><nc:acl-list/></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`)
 	for name, rules := range leaves {
-		b.WriteString(`<d:response><d:href>/remote.php/dav/files/admin/Cassini/Recordings/meetings/` + name + `</d:href>`)
+		b.WriteString(`<d:response><d:href>/remote.php/dav/files/` + ncRecordingsOwner + `/Cassini/Recordings/meetings/` + name + `</d:href>`)
 		b.WriteString(`<d:propstat><d:prop><nc:acl-list>`)
 		for _, r := range rules {
 			b.WriteString(`<nc:acl><nc:acl-mapping-type>` + r.Type + `</nc:acl-mapping-type>` +
@@ -195,10 +190,20 @@ func TestSelfHealPreservesCurrentRulesAndMigratesLegacyRules(t *testing.T) {
 	proppatched := map[string]string{}
 	legacyPublic := []aclRule{
 		{Type: "group", ID: ncLegacyRecordingsViewerGroup, Mask: aclMaskAll, Permissions: aclPermRead},
-		{Type: "user", ID: ncRecordingsOwner, Mask: aclMaskAll, Permissions: aclMaskAll},
+		{Type: "user", ID: ncLegacyRecordingsOwner, Mask: aclMaskAll, Permissions: aclMaskAll},
 	}
 	legacyPrivate := []aclRule{
 		{Type: "group", ID: ncLegacyRecordingsViewerGroup, Mask: aclMaskAll, Permissions: 0},
+		{Type: "user", ID: "alice", Mask: aclMaskAll, Permissions: aclPermRead},
+	}
+	currentPublicOldOwner := []aclRule{
+		{Type: "group", ID: ncRecordingsEveryoneGroup, Mask: aclMaskAll, Permissions: aclPermRead},
+		{Type: "user", ID: ncLegacyRecordingsOwner, Mask: aclMaskAll, Permissions: aclMaskAll},
+		{Type: "user", ID: "alice", Mask: aclMaskAll, Permissions: aclPermRead},
+	}
+	currentPrivateOldOwner := []aclRule{
+		{Type: "group", ID: ncRecordingsEveryoneGroup, Mask: aclMaskAll, Permissions: 0},
+		{Type: "user", ID: ncLegacyRecordingsOwner, Mask: aclMaskAll, Permissions: aclMaskAll},
 		{Type: "user", ID: "alice", Mask: aclMaskAll, Permissions: aclPermRead},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -207,11 +212,13 @@ func TestSelfHealPreservesCurrentRulesAndMigratesLegacyRules(t *testing.T) {
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusMultiStatus)
 			_, _ = io.WriteString(w, aclMultistatus(map[string][]aclRule{
-				"public.opus":         recordingACLRules([]aclMapping{{Type: "user", ID: "alice"}}, true),
-				"private.opus":        recordingACLRules([]aclMapping{{Type: "user", ID: "alice"}}, false),
-				"legacy-public.opus":  legacyPublic,
-				"legacy-private.opus": legacyPrivate,
-				"orphan.opus":         {{Type: "user", ID: "alice", Mask: aclMaskAll, Permissions: aclPermRead}},
+				"public.opus":                     recordingACLRules([]aclMapping{{Type: "user", ID: "alice"}}, true),
+				"private.opus":                    recordingACLRules([]aclMapping{{Type: "user", ID: "alice"}}, false),
+				"legacy-public.opus":              legacyPublic,
+				"legacy-private.opus":             legacyPrivate,
+				"everyone-old-owner-public.opus":  currentPublicOldOwner,
+				"everyone-old-owner-private.opus": currentPrivateOldOwner,
+				"orphan.opus":                     {{Type: "user", ID: "alice", Mask: aclMaskAll, Permissions: aclPermRead}},
 			}))
 		case "PROPPATCH":
 			body, _ := io.ReadAll(r.Body)
@@ -244,13 +251,32 @@ func TestSelfHealPreservesCurrentRulesAndMigratesLegacyRules(t *testing.T) {
 		}
 		if body == "" || !strings.Contains(body, "<nc:acl-mapping-id>everyone</nc:acl-mapping-id>") ||
 			!strings.Contains(body, "<nc:acl-permissions>"+permission+"</nc:acl-permissions>") ||
-			strings.Contains(body, ncLegacyRecordingsViewerGroup) {
+			!strings.Contains(body, "<nc:acl-mapping-id>"+ncRecordingsOwner+"</nc:acl-mapping-id>") ||
+			strings.Contains(body, ncLegacyRecordingsViewerGroup) ||
+			strings.Contains(body, "<nc:acl-mapping-id>"+ncLegacyRecordingsOwner+"</nc:acl-mapping-id>") {
 			t.Fatalf("%s was not migrated with permissions=%s: %s", name, permission, body)
 		}
 	}
 	assertMigrated("legacy-public.opus", "1")
 	assertMigrated("legacy-private.opus", "0")
+	assertMigrated("everyone-old-owner-public.opus", "1")
+	assertMigrated("everyone-old-owner-private.opus", "0")
 	assertMigrated("orphan.opus", "0")
+}
+
+func TestNormalizeOwnerRulesPreservesAdminParticipantRead(t *testing.T) {
+	rules := normalizeOwnerRules([]aclRule{
+		{Type: "group", ID: ncRecordingsEveryoneGroup, Mask: aclMaskAll, Permissions: 0},
+		{Type: "user", ID: ncLegacyRecordingsOwner, Mask: aclMaskAll, Permissions: aclPermRead},
+	})
+	var adminRead, ownerAll bool
+	for _, rule := range rules {
+		adminRead = adminRead || (rule.Type == "user" && rule.ID == ncLegacyRecordingsOwner && rule.Permissions == aclPermRead)
+		ownerAll = ownerAll || (rule.Type == "user" && rule.ID == ncRecordingsOwner && rule.Permissions == aclMaskAll)
+	}
+	if !adminRead || !ownerAll {
+		t.Fatalf("owner normalization dropped participant read or omitted service owner: %+v", rules)
+	}
 }
 
 func TestHasExplicitEveryoneGroupRule(t *testing.T) {
