@@ -250,7 +250,9 @@ it rather than matching prose.
 does not serve recordings from Nextcloud Files — a standalone operator, or an
 ExApp pinned to `CASSINI_PUBLISH_SINK=local` — so there is no substrate to
 expect. `state: unknown` means the container was restarted without the app being
-re-enabled, so setup has not run in this process; disable and re-enable Cassini.
+re-enabled, so setup has not run in this process. Disable and re-enable Cassini —
+publishing is refused until then, because nothing has verified where recordings
+would land.
 
 The full state table and worked examples are in
 [the install guide](./exapp-install.md#verifying-the-recordings-substrate).

@@ -354,7 +354,7 @@ substrate is visible rather than a silently empty archive.
 | `provisioned` | Setup completed. | Nothing. |
 | `unavailable` | A **named** thing is missing. `step` says which: `app_missing:<id>` or `administrator`. | Install the app, or set `CASSINI_NC_ADMIN_USER`; then re-enable Cassini. |
 | `degraded` | A setup **call failed**. `step` names it (`acl_enable`, `mount_mapping:everyone`, `root_acl`, …). | Read the matching `nc provision:` line in the container log, fix the fault, re-enable Cassini. |
-| `unknown` | Setup has not run in this process — the container was restarted without the app being re-enabled. | Disable and re-enable Cassini. |
+| `unknown` | Setup has not run in this process — the container was restarted without the app being re-enabled. | Disable and re-enable Cassini. **Publishing is refused until then**: nothing has verified where recordings would land. |
 | `not_applicable` | This deployment does not serve recordings from Nextcloud Files (standalone operator, or `CASSINI_PUBLISH_SINK=local`). | Nothing. |
 
 ```json
