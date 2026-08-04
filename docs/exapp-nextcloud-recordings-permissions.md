@@ -23,9 +23,15 @@ recordings Nextcloud says they may read (D-554).
 > `cassini` service account, created automatically when the app is enabled. It
 > is the only identity that writes recordings and manages their permissions.
 > Privileged setup—creating the account, its narrow owner group, and the Team
-> folder—is performed as a separately resolved administrator. Set
-> `CASSINI_NC_ADMIN_USER` only when automatic administrator discovery chooses
-> the wrong account.
+> folder—is performed as a separately resolved administrator.
+>
+> That administrator is *probed*, not looked up: an external app cannot be told
+> who it is, and every API that would reveal one is admin-gated. Cassini tries
+> `CASSINI_NC_ADMIN_USER`, then `admin`, then the instance's own account list
+> (up to a bounded number), and uses the first that turns out to be an
+> administrator. If none is, provisioning stops and says so rather than acting
+> as an account that may not exist. Set `CASSINI_NC_ADMIN_USER` then — see
+> [the install guide](./exapp-install.md#administrator-discovery).
 >
 > The recordings live in shared Team-folder storage rather than a user's home.
 > Changing the acting owner from the earlier administrator identity therefore
@@ -211,30 +217,51 @@ curl -sS -u admin:<pass> \
 {
   "applicable": true,
   "publish_sink": "nextcloud-files",
+  "state": "provisioned",
   "ok": true,
-  "detail": "",
+  "admin_user": "admin",
+  "prerequisites": [
+    { "name": "groupfolders", "state": "enabled" },
+    { "name": "group_everyone", "state": "enabled" }
+  ],
   "checked_at": "2026-08-03T21:14:02Z"
 }
 ```
 
-`ok: true` means the Team folder, its ACL floor, the universal `everyone` mount
-and the canonical collections are all in place. `ok: false` names the step that
-stopped provisioning, and `/status` answers **503** so a broken substrate is
-visible rather than a silently empty archive. The two causes an admin can act on
-directly are the missing native apps:
+`state: provisioned` means the Team folder, its ACL floor, the universal
+`everyone` mount and the canonical collections are all in place. Anything else
+(other than `not_applicable`) makes `/status` answer **503**, so a broken
+substrate is visible rather than a silently empty archive.
+
+`state` distinguishes the two things an administrator does differently:
+**`unavailable`** means a named thing is absent — install it, or set it —
+while **`degraded`** means a call failed and there is nothing specific to
+install. `step` is machine-readable, so a monitor or an install check can key on
+it rather than matching prose.
 
 ```json
-"detail": "universal group everyone is unavailable (is the Everyone Group app, group_everyone, enabled?)"
-"detail": "group folder Cassini (is the Group folders app enabled?): ..."
+"step": "app_missing:group_everyone"   → install/enable the Everyone Group app
+"step": "app_missing:groupfolders"     → install/enable the Team folders app
+"step": "administrator"                → set CASSINI_NC_ADMIN_USER
+"step": "acl_enable"                   → a call failed; read the nc provision: log
 ```
 
-`applicable: false` means this operator is not an installed ExApp at all, so
-there is no substrate to expect.
+`applicable: false` (reported as `state: not_applicable`) means this deployment
+does not serve recordings from Nextcloud Files — a standalone operator, or an
+ExApp pinned to `CASSINI_PUBLISH_SINK=local` — so there is no substrate to
+expect. `state: unknown` means the container was restarted without the app being
+re-enabled, so setup has not run in this process; disable and re-enable Cassini.
 
-Provisioning does not block startup, but since D-549 it does gate **delivery**:
-a `nextcloud-files` publish writes the per-meeting ACL as part of publishing, so
-a recording whose audience cannot be written is not published. If publishes start
-failing on an instance where they did not before, read `recordings_access` first.
+The full state table and worked examples are in
+[the install guide](./exapp-install.md#verifying-the-recordings-substrate).
+
+Provisioning does not block startup, but it does gate **delivery**. A
+`nextcloud-files` publish writes the per-meeting ACL as part of publishing
+(D-549), so a recording whose audience cannot be written is not published — and
+since D-585 a publish is refused outright while the substrate is not
+`provisioned`, rather than writing recordings into the `cassini` account's
+private home where nobody can reach them. If publishes start failing on an
+instance where they did not before, read `recordings_access` first.
 
 ## Day-to-day permission changes
 
@@ -296,7 +323,11 @@ public read path with it, so an instance that upgrades is access-controlled.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/operator/status` answers 503 | Provisioning did not complete | Read `recordings_access.detail` — it names the step that stopped, in the same words as the `nc provision:` log line |
+| `/operator/status` answers 503 | Provisioning did not complete | Read `recordings_access.state` and `.step`. `unavailable` names a thing to install or set; `degraded` means a call failed — the matching `nc provision:` log line has the detail |
+| `state=unavailable`, `step=app_missing:<id>` | That native app is not enabled | `occ app:install <id> && occ app:enable <id>`, then re-enable Cassini |
+| `state=unavailable`, `step=administrator` | No probed account is an administrator Cassini may act as | Set `CASSINI_NC_ADMIN_USER` to one, then re-enable Cassini |
+| `state=unknown` | The container restarted without the app being re-enabled, so setup has not run in this process (D-541) | Disable and re-enable Cassini |
+| Publishes fail with "the recordings substrate is not provisioned" | Deliberate: writing into the owner's private home would leave recordings nobody can open | Fix the state above, or set `CASSINI_PUBLISH_SINK=local` to keep recordings on the app's own volume |
 | Log says required universal group `everyone` is unavailable | Everyone Group app missing/disabled | Install/enable `group_everyone`, then re-enable Cassini |
 | Service-account setup fails | Administrator discovery is wrong or account/group provisioning was rejected | Inspect `nc provision:` logs; set `CASSINI_NC_ADMIN_USER` to the correct administrator and re-enable Cassini |
 | `ensure group folder` fails | Team folders app missing/disabled | Install/enable `groupfolders`, then re-enable Cassini |
