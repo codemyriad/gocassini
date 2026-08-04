@@ -67,7 +67,7 @@ was published, enforced by Nextcloud's own advanced file ACLs.]]></description>
       <variable>
         <name>CASSINI_PUBLISH_SINK</name>
         <display-name>Where published recordings are stored</display-name>
-        <description>Selects the publish destination: "nextcloud-files" stores recordings in Nextcloud Files under Cassini/Recordings (the default for an installed app, and the only mode with per-participant access control), or "local" keeps them on the app's own volume. Leave empty unless you specifically need the local mode; an installed app defaults to nextcloud-files so recordings are never silently kept off Nextcloud.</description>
+        <description>Selects the publish destination: "nextcloud-files" stores recordings in Nextcloud Files under Cassini/Recordings (the default for an installed app, and the only mode with per-participant access control), or "local" keeps them on the app's own volume. Leave empty unless you specifically need the local mode; an installed app defaults to nextcloud-files so recordings are never silently kept off Nextcloud. The nextcloud-files mode needs the Group folders ("Team folders") and Everyone Group (group_everyone) apps enabled first — Cassini provisions the folder and ACL topology itself but cannot install a PHP app. See docs/exapp-nextcloud-recordings-permissions.md.</description>
       </variable>
       <variable>
         <name>OPENROUTER_API_KEY</name>

@@ -88,8 +88,8 @@ CATALOG_URL="$PROXY_URL/published/catalog.json"
 FILES_ROOT_URL="$BASE_URL/remote.php/dav/files/$ADMIN_USER/Cassini/Recordings"
 AUTH=(-u "$ADMIN_USER:$ADMIN_PASSWORD")
 # The standard viewer user the harness creates (harness_create_standard_viewer_user).
-# In recording-viewers, so the group folder mounts for her, but never in the
-# room -- exactly the caller access control exists to stop.
+# In the virtual everyone group, so the group folder mounts for her, but never
+# in the room -- exactly the caller access control exists to stop.
 OUTSIDER_USER="${OUTSIDER_USER:-alice}"
 OUTSIDER_PASSWORD="${OUTSIDER_PASSWORD:-Tn8mY3qVrJ2x!E2e}"
 AUTH_VALUE="$ADMIN_USER:$ADMIN_PASSWORD"

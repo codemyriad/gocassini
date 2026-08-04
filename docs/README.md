@@ -100,7 +100,7 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
   ExApp reads vs. what AppAPI injects, and the `deployment/` parity vars.
 - **[Production deployment notes](./exapp-talk-production-deployment.md)** — deployment shape and operational notes.
 - **[Recording tutorial](./exapp-talk-recording-tutorial.md)** — a manual end-to-end validation walkthrough.
-- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — how per-participant access control works: what the ExApp provisions automatically on enable, the Group folders app prerequisite, and how to manage who can see each recording.
+- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — how per-participant access control works: what the ExApp provisions automatically on enable, the Team folders + Everyone Group prerequisites, and how to manage who can see each recording.
 - **[Troubleshooting](./exapp-talk-troubleshooting.md)** — install/access issues seen in practice.
 - **[Trying the image locally](./exapp-test-locally.md)** — three tiers, from image-only checks to a production-shaped local install.
 - **[Releasing Cassini](./release.md)** — maintainer guide: the version ladder, the local `prepare-release.sh` flow, and the GitHub + App Store publish workflow.
@@ -193,8 +193,9 @@ Flagged so readers do not mistake intent for current behavior:
 - **The portable `.opus` viewer** renders transcript + metadata; it does not yet
   render an embedded summary from `.opus` (published artifact directories do).
 - **Group folders ACL inheritance is version-sensitive.** Per-recording access
-  control is unconditional and provisioned automatically, but it is worth
-  validating traversal on your own instance — the runbook has a checklist.
+  control is unconditional and provisioned automatically, but it still requires
+  the Team folders and Everyone Group apps, and it is worth validating traversal
+  on your own instance — the runbook has a checklist.
 
 ## Fast paths
 

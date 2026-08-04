@@ -41,6 +41,7 @@ From the repo root:
 This one command:
 
 - starts local Nextcloud + AppAPI/HaRP + the full Talk signaling stack;
+- installs the native Team folders and Everyone Group prerequisites;
 - builds and tags the Cassini ExApp image from `appinfo/info.xml`;
 - installs/reinstalls Cassini via AppAPI;
 - passes both Talk secrets as deploy env, and points Talk's `recording_servers`
@@ -50,8 +51,9 @@ The first run is slow — it builds the ExApp image. Later runs without `--build
 reuse the existing image. Keep `--build` when validating changes in the current
 checkout; otherwise the harness deliberately runs the previously built image,
 which may be an older release even though Git is on your feature branch.
-Recordings are access-controlled: the harness enables the Group folders app and
-the ExApp provisions the recordings folder and its permissions on enable — see
+Recordings are access-controlled — there is no other mode. The harness enables
+the Team folders and Everyone Group apps and the ExApp provisions the recordings
+folder and its permissions on enable — see
 [Recording permissions](./exapp-nextcloud-recordings-permissions.md).
 
 When it finishes, open Nextcloud and sign in as `admin` / `admin`:

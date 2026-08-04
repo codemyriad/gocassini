@@ -26,6 +26,15 @@ install — see [Standalone operator (dev/staging only)](#standalone-operator-de
   is tested against Nextcloud 33+) with the **AppAPI** app installed and
   enabled.
 - A registered AppAPI **deploy daemon** (next section).
+- **Required.** The native **Group folders / Team folders** (`groupfolders`)
+  and **Everyone Group** (`group_everyone`) apps, installed and enabled *before*
+  Cassini is enabled. Recordings are always access-controlled, and Cassini
+  provisions the Team folder, the `cassini` service account and every ACL itself
+  — but an ExApp reaches Nextcloud only over HTTP and cannot install a PHP app.
+  Without them recordings are served to nobody and `/operator/status` reports the
+  reason. The Everyone Group is instance-wide and may appear in other Nextcloud
+  sharing pickers; see
+  [Recording permissions](./exapp-nextcloud-recordings-permissions.md).
 - A Docker engine for the ExApp container. For GPU transcription it needs the
   NVIDIA driver + Container Toolkit (see [GPU transcription](#gpu-transcription-cuda)).
 - For private, group, and one-to-one Talk recording: standalone Nextcloud Talk
@@ -160,6 +169,7 @@ Options).
 | `CASSINI_TALK_RECORDING_SECRET` | For the Talk record button | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (Step 5). Unset, the operator rejects every recording request |
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | For HPB-internal/default Talk recording | Internal client secret for standalone Talk signaling / HPB; must match `[clients] internalsecret`. Required for private, group, and one-to-one Talk recording |
 | `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped/failed notifications) and OCS calls. Leave empty to use the backend URL Talk sends with each request |
+| `CASSINI_NC_ADMIN_USER` | No | Administrator account used only to create the `cassini` service account, its narrow owner group, and the Team-folder topology. Leave empty for automatic discovery; set it when discovery chooses the wrong account. Recordings are still owned, written, and managed by `cassini` |
 | `OPENROUTER_API_KEY` | No | API key for LLM transcript cleanup + meeting summaries. **When set, the full local transcript is sent to that third-party endpoint** for cleanup/summarisation (transcription itself is always local). Unset, raw transcripts are published without summaries |
 | `LLM_BASE_URL` | No | OpenAI-compatible API base URL; defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
 | `LLM_MODEL` | No | Model for cleanup/summaries (default `openai/gpt-4o-mini`) |

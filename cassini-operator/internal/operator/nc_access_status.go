@@ -23,6 +23,10 @@ import (
 // It reports the last recorded outcome rather than probing Nextcloud, because
 // /status promises that every check is cheap ("no transcription, no doctor
 // subprocess") and this condition only changes when provisioning runs.
+//
+// A recorded success means no step aborted. ensureFolderGroup, folderManageACL
+// and the MKCOL loop are still logged-only, so `ok: true` is a floor rather
+// than a proof that the topology is correct — D-585 closes that gap.
 type ncAccessSubstrateStatus struct {
 	mu sync.Mutex
 	// applicable is false for a standalone operator: there is no Nextcloud it

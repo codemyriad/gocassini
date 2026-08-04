@@ -55,17 +55,12 @@ type ncFilesAccessApplier func(ctx context.Context, jobID string, mappings []acl
 // i.e. a standalone operator, which has no Nextcloud to write ACLs to. Inside
 // an ExApp there is no opt-out: per-participant access is the only model
 // (D-554).
-func (c ExAppConfig) ncFilesAccessApplier(logger *log.Logger) ncFilesAccessApplier {
+func (c ExAppConfig) ncFilesAccessApplier(_ *log.Logger) ncFilesAccessApplier {
 	if !c.appAPIActive() {
 		return nil
 	}
 	client := &http.Client{Timeout: ncFilesACLTimeout}
 	return func(ctx context.Context, jobID string, mappings []aclMapping, public bool) error {
-		// The per-file ACL grants each participant read; also make sure each
-		// participant is in the viewer group so the folder mounts for them and
-		// they can actually reach the recording (best-effort, non-fatal).
-		c.ensureParticipantsInViewerGroup(ctx, client, mappings, logger)
-
 		opusRel := ncRecordingsRoot + "/meetings/" + jobID + ".opus"
 		if err := c.davProppatchACL(ctx, client, ncRecordingsOwner, opusRel, mappings, public); err != nil {
 			return fmt.Errorf("acl opus: %w", err)
@@ -110,32 +105,24 @@ type aclRule struct {
 	Permissions int
 }
 
-// recordingACLRules denies the broad traversal group at the file itself, then
+// recordingACLRules denies the virtual all-users group at the file itself, then
 // grants read to the Talk participants. Group folders merges rules at one path
-// with allow overriding deny, so a participant who is also a member of the
-// traversal group can read while every non-participant remains denied.
-// recordingACLRules builds a recording's per-file ACL.
+// with allow overriding deny, so a participant who is also in `everyone` can
+// read while every non-participant remains denied.
 //
-// The default is participant-private: the broad viewer group — which every
-// local account belongs to, so it can traverse the recordings folder — is
-// explicitly DENIED read on the leaf, and only the meeting's own participants
-// are granted it.
-//
-// A public conversation inverts that one rule. Anyone with the link could join
-// the meeting, so a recording of it is not participant-private and the viewer
-// group is granted read instead of denied (D-552). "Anyone" means any account
-// on this Nextcloud: the operator's read surface is USER-gated and no public
-// link share is created, so this widens the audience without opening an
-// anonymous door.
+// The default is participant-private: `everyone` supplies every account's
+// read-only mount and container traversal, but is explicitly DENIED at the leaf.
+// A public conversation inverts that one rule and grants `everyone` read. The
+// route remains USER-gated and creates no anonymous public link (D-552).
 func recordingACLRules(mappings []aclMapping, public bool) []aclRule {
-	viewerGroupPermissions := 0
+	everyonePermissions := 0
 	if public {
-		viewerGroupPermissions = aclPermRead
+		everyonePermissions = aclPermRead
 	}
 	rules := []aclRule{
 		{
-			Type: "group", ID: ncRecordingsViewerGroup,
-			Mask: aclMaskAll, Permissions: viewerGroupPermissions,
+			Type: "group", ID: ncRecordingsEveryoneGroup,
+			Mask: aclMaskAll, Permissions: everyonePermissions,
 		},
 		{
 			// The owner needs all permissions so later archive synchronization
@@ -145,8 +132,8 @@ func recordingACLRules(mappings []aclMapping, public bool) []aclRule {
 		},
 	}
 	indices := map[string]int{
-		"group\x00" + ncRecordingsViewerGroup: 0,
-		"user\x00" + ncRecordingsOwner:        1,
+		"group\x00" + ncRecordingsEveryoneGroup: 0,
+		"user\x00" + ncRecordingsOwner:          1,
 	}
 	for _, mapping := range mappings {
 		key := mapping.Type + "\x00" + mapping.ID
@@ -168,7 +155,7 @@ func recordingACLRules(mappings []aclMapping, public bool) []aclRule {
 // owner and returns a per-caller filtered catalog.
 func catalogProtectionACLRules() []aclRule {
 	return []aclRule{
-		{Type: "group", ID: ncRecordingsViewerGroup, Mask: aclMaskAll, Permissions: 0},
+		{Type: "group", ID: ncRecordingsEveryoneGroup, Mask: aclMaskAll, Permissions: 0},
 		{Type: "user", ID: ncRecordingsOwner, Mask: aclMaskAll, Permissions: aclMaskAll},
 	}
 }
@@ -237,7 +224,7 @@ func (rt *Runtime) applyNCFilesAccessStrict(ctx context.Context, jobID string) e
 		return fmt.Errorf("participants lookup: %w", err)
 	}
 	// A public room still has an audience even with nothing to grant per
-	// participant — the viewer-group grant IS the audience — so the empty-set
+	// participant — the `everyone` grant IS the audience — so the empty-set
 	// exit must not swallow it. That ordering matters more than it looks: a
 	// public room is the one most likely to be full of link guests, who yield
 	// no grantable principal at all, so the old early return made the most
@@ -285,10 +272,21 @@ func (c ExAppConfig) serveFilteredCatalog(ctx context.Context, w http.ResponseWr
 		return
 	}
 
-	names, perr := c.davPropfindNames(ctx, client, caller, ncRecordingsRoot+"/meetings")
+	names, mounted, perr := c.davPropfindNames(ctx, client, caller, ncRecordingsRoot+"/meetings")
 	if perr != nil {
 		if logger != nil {
 			logger.Printf("nc files read: per-caller scan failed caller=%s: %v — serving empty (fail closed)", caller, perr)
+		}
+		writeCatalogJSON(w, emptyLike(raw))
+		return
+	}
+	if !mounted {
+		// Every account should have this mount from its virtual `everyone`
+		// membership before its filesystem is first set up. A missing mount means
+		// the Everyone Group app or Team-folder mapping is unavailable; do not
+		// create mutable memberships or proxy around the broken substrate.
+		if logger != nil {
+			logger.Printf("nc files read: caller=%s has no recordings mount through required group %q — serving empty (fail closed)", caller, ncRecordingsEveryoneGroup)
 		}
 		writeCatalogJSON(w, emptyLike(raw))
 		return
@@ -362,60 +360,133 @@ func filterCatalog(raw []byte, keep func(opusBase string) bool) ([]byte, error) 
 	return json.Marshal(top)
 }
 
-// selfHealLeafProtection makes sure every recording under meetings/ carries the
-// viewer-group deny. It is the safety net for the container ACL: the root grants
-// the viewer group read (so anyone can traverse), which every leaf INHERITS
-// unless it has its own deny — so a recording whose per-file deny never landed
-// (a transient PROPPATCH failure at create, or a file that predates ACL
-// management) would be readable by every logged-in user. One PROPFIND lists the
-// current ACLs; only the offenders get a corrective PROPPATCH, and the merge
-// preserves any existing participant allows. Best-effort: logged, never fatal.
-func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Client, logger *log.Logger) {
+// selfHealLeafProtection makes sure every recording under meetings/ carries an
+// explicit rule for the virtual `everyone` group. It is the safety net for the
+// inherited container read grant: a leaf with no broad-group rule is repaired as
+// private, while a legacy recording-viewers rule is translated with its polarity
+// intact (deny remains private; read remains public). Existing participant rules
+// are preserved. ACLs created by the previous admin owner are also normalized
+// to the dedicated `cassini` owner without changing public/private polarity. An
+// error is returned so callers never expose a partially migrated tree through
+// the broad root grant.
+func (c ExAppConfig) selfHealLeafProtection(ctx context.Context, client *http.Client, logger *log.Logger) error {
 	acls, err := c.davPropfindACLLists(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/meetings")
 	if err != nil {
 		if logger != nil {
 			logger.Printf("nc files access: self-heal scan failed: %v", err)
 		}
-		return
+		return err
 	}
 	for base, rules := range acls {
-		if !strings.HasSuffix(base, ".opus") || hasViewerGroupDeny(rules) {
+		if !strings.HasSuffix(base, ".opus") {
 			continue
 		}
+		next, migrated := migrateLegacyAudienceRule(rules)
+		ownerNormalized := false
+		if !migrated {
+			switch {
+			case hasExplicitEveryoneGroupRule(rules) && needsOwnerNormalization(rules):
+				next = normalizeOwnerRules(rules)
+				ownerNormalized = true
+			case hasExplicitEveryoneGroupRule(rules):
+				continue
+			default:
+				next = ensureProtectedRules(rules)
+			}
+		}
 		relPath := ncRecordingsRoot + "/meetings/" + base
-		if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, relPath, ensureProtectedRules(rules)); err != nil {
+		if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, relPath, next); err != nil {
 			if logger != nil {
 				logger.Printf("nc files access: self-heal %s failed: %v", base, err)
 			}
-			continue
+			return fmt.Errorf("protect %s: %w", base, err)
 		}
 		if logger != nil {
-			logger.Printf("nc files access: self-healed unprotected recording %s (applied viewer-group deny)", base)
+			switch {
+			case migrated:
+				logger.Printf("nc files access: migrated recording %s ACL from %q to %q and owner to %q", base, ncLegacyRecordingsViewerGroup, ncRecordingsEveryoneGroup, ncRecordingsOwner)
+			case ownerNormalized:
+				logger.Printf("nc files access: migrated recording %s owner ACL to %q", base, ncRecordingsOwner)
+			default:
+				logger.Printf("nc files access: self-healed unprotected recording %s (applied everyone deny)", base)
+			}
 		}
 	}
+	return nil
 }
 
-// hasViewerGroupDeny reports whether the rules already deny the broad viewer
-// group (an explicit read=0 rule), i.e. the recording is protected.
-func hasViewerGroupDeny(rules []aclRule) bool {
+// hasEveryoneGroupDeny reports whether the recording is participant-private.
+func hasEveryoneGroupDeny(rules []aclRule) bool {
 	for _, r := range rules {
-		if r.Type == "group" && r.ID == ncRecordingsViewerGroup && r.Permissions&aclPermRead == 0 {
+		if r.Type == "group" && r.ID == ncRecordingsEveryoneGroup && r.Permissions&aclPermRead == 0 {
 			return true
 		}
 	}
 	return false
 }
 
-// ensureProtectedRules returns rules with the viewer-group deny and the owner
-// full-access rule guaranteed present, preserving every other rule (participant
-// allows). Used to add the missing deny without clobbering existing grants.
-func ensureProtectedRules(existing []aclRule) []aclRule {
+// hasExplicitEveryoneGroupRule reports whether the leaf states its own broad
+// audience rule, either a private deny or the deliberate public read allow.
+func hasExplicitEveryoneGroupRule(rules []aclRule) bool {
+	for _, r := range rules {
+		if r.Type == "group" && r.ID == ncRecordingsEveryoneGroup {
+			return true
+		}
+	}
+	return false
+}
+
+// migrateLegacyAudienceRule translates the old static broad-group principal to
+// `everyone`, preserving public/read versus private/deny and all participant
+// grants. The owner rule is normalized while the file is being rewritten.
+func migrateLegacyAudienceRule(existing []aclRule) ([]aclRule, bool) {
+	haveLegacy := false
+	permissions := 0
+	out := make([]aclRule, 0, len(existing)+1)
+	for _, r := range existing {
+		if r.Type == "group" && r.ID == ncLegacyRecordingsViewerGroup {
+			haveLegacy = true
+			permissions |= r.Permissions & aclPermRead
+			continue
+		}
+		out = append(out, r)
+	}
+	if !haveLegacy {
+		return existing, false
+	}
+	audience := aclRule{Type: "group", ID: ncRecordingsEveryoneGroup, Mask: aclMaskAll, Permissions: permissions}
+	return normalizeOwnerRules(append([]aclRule{audience}, out...)), true
+}
+
+// needsOwnerNormalization finds ACLs created before the dedicated service
+// account: they either lack the cassini owner or retain the old admin owner.
+func needsOwnerNormalization(rules []aclRule) bool {
 	haveOwner := false
-	out := make([]aclRule, 0, len(existing)+2)
+	for _, r := range rules {
+		if r.Type == "user" && r.ID == ncRecordingsOwner && r.Permissions == aclMaskAll {
+			haveOwner = true
+		}
+		if isLegacyOwnerRule(r) {
+			return true
+		}
+	}
+	return !haveOwner
+}
+
+func isLegacyOwnerRule(r aclRule) bool {
+	return r.Type == "user" && r.ID == ncLegacyRecordingsOwner &&
+		ncLegacyRecordingsOwner != ncRecordingsOwner && r.Permissions == aclMaskAll
+}
+
+// normalizeOwnerRules removes the generated legacy admin-owner rule, preserves
+// participant grants (including a manually narrowed admin read), and ensures the
+// dedicated service account is the sole generated ALL-permission owner.
+func normalizeOwnerRules(existing []aclRule) []aclRule {
+	haveOwner := false
+	out := make([]aclRule, 0, len(existing)+1)
 	for _, r := range existing {
 		switch {
-		case r.Type == "group" && r.ID == ncRecordingsViewerGroup:
-			// drop any existing viewer-group rule; re-added as a deny below
+		case isLegacyOwnerRule(r):
 			continue
 		case r.Type == "user" && r.ID == ncRecordingsOwner:
 			r.Mask, r.Permissions = aclMaskAll, aclMaskAll
@@ -423,11 +494,25 @@ func ensureProtectedRules(existing []aclRule) []aclRule {
 		}
 		out = append(out, r)
 	}
-	deny := aclRule{Type: "group", ID: ncRecordingsViewerGroup, Mask: aclMaskAll, Permissions: 0}
 	if !haveOwner {
 		out = append(out, aclRule{Type: "user", ID: ncRecordingsOwner, Mask: aclMaskAll, Permissions: aclMaskAll})
 	}
-	return append([]aclRule{deny}, out...)
+	return out
+}
+
+// ensureProtectedRules returns rules with an `everyone` deny and owner ALL,
+// preserving participant grants. Legacy/current broad-group rules are replaced
+// rather than duplicated.
+func ensureProtectedRules(existing []aclRule) []aclRule {
+	out := make([]aclRule, 0, len(existing)+2)
+	for _, r := range existing {
+		if r.Type == "group" && (r.ID == ncRecordingsEveryoneGroup || r.ID == ncLegacyRecordingsViewerGroup) {
+			continue
+		}
+		out = append(out, r)
+	}
+	deny := aclRule{Type: "group", ID: ncRecordingsEveryoneGroup, Mask: aclMaskAll, Permissions: 0}
+	return normalizeOwnerRules(append([]aclRule{deny}, out...))
 }
 
 // davPropfindACLLists lists relDir (Depth 1) requesting each child's nc:acl-list
@@ -512,9 +597,13 @@ func (c ExAppConfig) davGetBytes(ctx context.Context, client *http.Client, userI
 // davPropfindNames lists the immediate children of relDir as userID (Depth: 1)
 // and returns the .opus basenames the user can see. Advanced-ACL deny-read
 // hides paths the user lacks read on, so the result is naturally access-scoped.
-// A 404 (the collection is not visible to the user) yields an empty list, not
-// an error.
-func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, userID, relDir string) ([]string, error) {
+//
+// visible reports whether the collection itself was reachable. A 404 means the
+// caller has no mount of the recordings group folder at all — a different
+// condition from "mounted, but every recording is denied", and one the caller
+// can act on (see serveFilteredCatalog). Both yield an empty list; only the
+// second is a legitimate empty answer.
+func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, userID, relDir string) (names []string, visible bool, err error) {
 	// Request only <d:resourcetype/>: the href (all we need) is always returned,
 	// and a minimal prop set keeps each child's response element to a few
 	// hundred bytes instead of the multi-KiB allprops default.
@@ -522,7 +611,7 @@ func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, 
 		`<d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>`)
 	req, err := http.NewRequestWithContext(ctx, "PROPFIND", c.davFileURL(userID, relDir), bytes.NewReader(reqBody))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	c.setAppAPIDAVHeadersForUser(req, userID)
 	req.Header.Set("Depth", "1")
@@ -530,14 +619,14 @@ func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, 
 	req.ContentLength = int64(len(reqBody))
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer drainClose(resp.Body)
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, nil
+		return nil, false, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("PROPFIND %s -> %d", relDir, resp.StatusCode)
+		return nil, false, fmt.Errorf("PROPFIND %s -> %d", relDir, resp.StatusCode)
 	}
 	// Read with an explicit cap and detect truncation: a silently truncated
 	// multistatus would fail to parse and blank the listing for every caller
@@ -545,10 +634,10 @@ func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, 
 	const maxMultistatus = 64 << 20
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxMultistatus+1))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if len(body) > maxMultistatus {
-		return nil, fmt.Errorf("PROPFIND %s: multistatus exceeds %d bytes (too many meetings?)", relDir, maxMultistatus)
+		return nil, false, fmt.Errorf("PROPFIND %s: multistatus exceeds %d bytes (too many meetings?)", relDir, maxMultistatus)
 	}
 	var ms struct {
 		Responses []struct {
@@ -556,7 +645,7 @@ func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, 
 		} `xml:"response"`
 	}
 	if err := xml.Unmarshal(body, &ms); err != nil {
-		return nil, fmt.Errorf("parse multistatus: %w", err)
+		return nil, false, fmt.Errorf("parse multistatus: %w", err)
 	}
 	out := make([]string, 0, len(ms.Responses))
 	for _, r := range ms.Responses {
@@ -569,5 +658,5 @@ func (c ExAppConfig) davPropfindNames(ctx context.Context, client *http.Client, 
 			out = append(out, base)
 		}
 	}
-	return out, nil
+	return out, true, nil
 }

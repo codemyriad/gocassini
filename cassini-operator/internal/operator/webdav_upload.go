@@ -64,11 +64,14 @@ const (
 	// ncRecordingsRoot is the canonical recordings root inside the owner's
 	// Files (relative to the user's WebDAV home). Hard-coded for now (D-529).
 	ncRecordingsRoot = "Cassini/Recordings"
-	// ncRecordingsViewerGroup is the broad Team-folder mount group. Members
-	// receive read access to the container directories so they can traverse to
-	// recordings; per-file ACLs explicitly deny this group and then grant each
-	// meeting's participants, preventing the container grant from leaking files.
-	ncRecordingsViewerGroup = "recording-viewers"
+	// ncRecordingsEveryoneGroup is the virtual all-users group supplied by the
+	// Nextcloud Everyone Group app. It gives every account a read-only Team-folder
+	// mount from account creation; per-file ACLs deny it for private meetings and
+	// allow only participants, preventing the container grant from leaking files.
+	ncRecordingsEveryoneGroup = "everyone"
+	// ncLegacyRecordingsViewerGroup identifies the static group used before the
+	// virtual group migration. It is read only to translate existing ACLs safely.
+	ncLegacyRecordingsViewerGroup = "recording-viewers"
 
 	ncFilesUploadTimeout   = 120 * time.Second
 	ncFilesProxyHeadersTTL = 30 * time.Second
@@ -185,11 +188,13 @@ func (c ExAppConfig) ncFilesUploader(logger *log.Logger) ncFilesUploader {
 		}
 
 		// Before advertising anything, make sure every recording carries its
-		// viewer-group deny — the container grant is inherited by any leaf that
+		// explicit all-users rule — the container grant is inherited by any leaf that
 		// lacks one, so an unprotected .opus (e.g. a create-time deny that failed
 		// on a prior sync) would be readable by every logged-in user. Only the
 		// offenders are corrected, preserving existing participant allows.
-		c.selfHealLeafProtection(ctx, client, logger)
+		if err := c.selfHealLeafProtection(ctx, client, logger); err != nil {
+			return fmt.Errorf("protect recording ACLs: %w", err)
+		}
 
 		// Publish the whole catalog last. If any .opus PUT fails, readers retain
 		// the previous Files catalog instead of receiving references to missing
@@ -198,7 +203,7 @@ func (c ExAppConfig) ncFilesUploader(logger *log.Logger) ncFilesUploader {
 		if err := c.davPutFile(ctx, client, ncRecordingsOwner, catalogRemote, catalogLocal, "application/json"); err != nil {
 			return fmt.Errorf("put catalog: %w", err)
 		}
-		// The broad viewer group may traverse the container directories, but
+		// The virtual all-users group may traverse the container directories, but
 		// must not be able to read the unfiltered authoritative catalog from
 		// Files. The operator reads it as the owner and filters it per caller.
 		if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, catalogRemote, catalogProtectionACLRules()); err != nil {

@@ -54,6 +54,12 @@ func TestNCFilesUploaderMirrorsArchive(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 		case http.MethodPut:
 			w.WriteHeader(http.StatusCreated)
+		case "PROPFIND":
+			// The self-heal sweep reads every leaf's current ACL before
+			// advertising the catalog, and since D-554 a failure there fails
+			// the upload. An empty multistatus is "nothing to repair".
+			w.WriteHeader(http.StatusMultiStatus)
+			io.WriteString(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"/>`)
 		default:
 			w.WriteHeader(http.StatusOK)
 		}
@@ -151,6 +157,13 @@ func TestNCFilesUploaderPublishesEmptyCatalog(t *testing.T) {
 			puts[r.URL.Path] = true
 			mu.Unlock()
 		}
+		if r.Method == "PROPFIND" {
+			// See TestNCFilesUploaderMirrorsArchive: the self-heal sweep runs
+			// unconditionally now and needs a parseable multistatus.
+			w.WriteHeader(http.StatusMultiStatus)
+			io.WriteString(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"/>`)
+			return
+		}
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer srv.Close()
@@ -176,8 +189,13 @@ func TestNCFilesUploaderProtectsCatalog(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		got = append(got, davRequest{method: r.Method, path: r.URL.Path, body: body})
-		if r.Method == "PROPPATCH" {
+		switch r.Method {
+		case "PROPPATCH":
 			w.WriteHeader(http.StatusMultiStatus)
+			return
+		case "PROPFIND":
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = io.WriteString(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"/>`)
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
@@ -208,7 +226,7 @@ func TestNCFilesUploaderProtectsCatalog(t *testing.T) {
 		case strings.HasSuffix(req.path, "/new.opus") && req.method == "PROPPATCH":
 			opusACL++
 			body := string(req.body)
-			if !strings.Contains(body, "recording-viewers") || !strings.Contains(body, "<nc:acl-permissions>0</nc:acl-permissions>") {
+			if !strings.Contains(body, "everyone") || !strings.Contains(body, "<nc:acl-permissions>0</nc:acl-permissions>") {
 				t.Errorf("new opus baseline ACL does not deny the traversal group: %s", body)
 			}
 		case strings.HasSuffix(req.path, "/catalog.json") && req.method == http.MethodPut:
@@ -218,7 +236,7 @@ func TestNCFilesUploaderProtectsCatalog(t *testing.T) {
 			catalogACL++
 			body := string(req.body)
 			for _, want := range []string{
-				"recording-viewers",
+				"everyone",
 				"<nc:acl-permissions>0</nc:acl-permissions>",
 				"<nc:acl-mapping-id>" + ncRecordingsOwner + "</nc:acl-mapping-id>",
 				"<nc:acl-permissions>31</nc:acl-permissions>",
