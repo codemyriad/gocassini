@@ -111,9 +111,12 @@ The script is **idempotent** — re-run it to update Cassini or reconcile config
 2. runs + registers the HaRP daemon (`harp_aio`);
 3. resolves the latest published release from the App Store catalog (or a given
    `--image`), pre-pulls it, and registers the `gocassini` ExApp;
-4. feeds Cassini AIO's Talk **`INTERNAL_SECRET`** (as
-   `CASSINI_TALK_SIGNALING_INTERNAL_SECRET`, for HPB-internal recording) and a
-   generated recording secret, then hands `spreed`'s recording backend to Cassini;
+4. installs Cassini the zero-config way (D-447): **no recording secret is set**,
+   so Cassini self-generates and persists one; the script then reads it back from
+   the ExApp and points `spreed`'s recording backend at Cassini. Only AIO's Talk
+   **`INTERNAL_SECRET`** (as `CASSINI_TALK_SIGNALING_INTERNAL_SECRET`, for
+   HPB-internal recording — it cannot be generated) is injected, read from the
+   AIO Talk container;
 5. resets the admin password to `SANDBOX_NC_ADMIN_PASSWORD` if set.
 
 Options:
@@ -123,7 +126,7 @@ sandbox/wire-cassini.sh --image ghcr.io/codemyriad/gocassini:sha-<shortsha>  # t
 sandbox/wire-cassini.sh --register-only                                      # re-register only
 ```
 
-Secrets (HaRP shared key, recording secret) persist in a fixed **`/opt/cassini-aio`**
+The HaRP shared key persists in a fixed **`/opt/cassini-aio`**
 (override with `CASSINI_AIO_STATE`), **not** in the repo. It must be a single
 shared path — not a per-user home — so every operator and CI use the *same* HaRP
 key; otherwise a second user's run regenerates the key and breaks the daemon.
