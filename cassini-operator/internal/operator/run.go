@@ -45,8 +45,17 @@ type Config struct {
 	CassiniBin       string
 	TalkSharedSecret string
 	TalkBackendURL   string
-	MaxRecordWorkers int
-	MaxBuildWorkers  int
+	// TalkSecretSource records where TalkSharedSecret came from ("env" when
+	// supplied via flag/env, "generated" when the operator self-generated and
+	// persisted it, "unset" when none is available). Resolved at startup by
+	// resolveTalkProvisioning (D-447); reported by /status. Not a flag.
+	TalkSecretSource string
+	// TalkRecordingBackendURL is the recording_servers server value to register
+	// in spreed — the AppAPI proxy base for this ExApp, derived from
+	// NEXTCLOUD_URL + APP_ID. Empty on standalone/dev deploys. Not a flag.
+	TalkRecordingBackendURL string
+	MaxRecordWorkers        int
+	MaxBuildWorkers         int
 	// APIToken (CASSINI_OPERATOR_API_TOKEN) optionally guards the operator
 	// JSON API with bearer auth for standalone deploys; empty disables it
 	// and AppAPI-authenticated requests bypass it (D-376).
@@ -160,6 +169,15 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	cfg.BindAddr = exappCfg.applyToBindAddr(cfg.BindAddr)
 
+	// Zero-config Talk recording (D-447): generate + persist a recording secret
+	// when none was supplied, and derive the backend URL to register in spreed.
+	// An explicit CASSINI_TALK_RECORDING_SECRET still wins. The persisted secret
+	// lives next to the DB, i.e. on the AppAPI volume, so it survives restart.
+	prov := resolveTalkProvisioning(filepath.Dir(cfg.DBPath), cfg.TalkSharedSecret, exappCfg.NextcloudURL, exappCfg.AppID, logger)
+	cfg.TalkSharedSecret = prov.Secret
+	cfg.TalkSecretSource = prov.SecretSource
+	cfg.TalkRecordingBackendURL = prov.BackendURL
+
 	store, err := OpenStore(cfg.DBPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "open store: %v\n", err)
@@ -210,7 +228,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		logger.Printf("app_persistent_storage -> %s", persistRoot)
 	}
 	logger.Printf("cassini_bin -> %s", cfg.CassiniBin)
-	logger.Printf("talk_shared_secret_set -> %t", strings.TrimSpace(cfg.TalkSharedSecret) != "")
+	logger.Printf("talk_shared_secret_set -> %t (source=%s)", strings.TrimSpace(cfg.TalkSharedSecret) != "", cfg.TalkSecretSource)
+	if cfg.TalkRecordingBackendURL != "" {
+		logger.Printf("talk_recording_backend_url -> %s", cfg.TalkRecordingBackendURL)
+	}
 	logger.Printf("max_record_workers -> %d", cfg.MaxRecordWorkers)
 	logger.Printf("max_build_workers -> %d", cfg.MaxBuildWorkers)
 	logger.Printf("operator_api_token_auth -> %t", cfg.APIToken != "")
@@ -508,6 +529,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/events", rt.eventsHandler)
 	api.HandleFunc("/status", rt.statusHandler)
 	api.HandleFunc("/settings", rt.settingsHandler)
+	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
 
 	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
 	// off by default). Requests that already passed the AppAPI middleware are
@@ -547,6 +569,7 @@ func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler) {
 		root.Handle("/events", api)
 		root.Handle("/status", api)
 		root.Handle("/settings", api)
+		root.Handle("/talk/provisioning", api)
 		return
 	}
 	root.Handle(basePath, http.StripPrefix(basePath, api))

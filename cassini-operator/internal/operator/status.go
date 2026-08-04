@@ -60,6 +60,14 @@ type statusTalk struct {
 	SecretConfigured                  bool `json:"secret_configured"`
 	SignalingInternalSecretConfigured bool `json:"signaling_internal_secret_configured"`
 	BackendURLOverrideConfigured      bool `json:"backend_url_override_configured"`
+	// SecretSource is where the recording secret came from ("env" | "generated"
+	// | "unset"), so an admin can tell a self-generated secret (D-447) from one
+	// they injected. Never the secret value itself.
+	SecretSource string `json:"secret_source,omitempty"`
+	// RecordingBackendURL is the recording_servers server value to register in
+	// spreed (the AppAPI proxy base for this ExApp), derived from NEXTCLOUD_URL.
+	// Not a secret; empty on standalone/dev deploys where it cannot be derived.
+	RecordingBackendURL string `json:"recording_backend_url,omitempty"`
 }
 
 type statusCheck struct {
@@ -97,6 +105,8 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 			SecretConfigured:                  strings.TrimSpace(rt.cfg.TalkSharedSecret) != "",
 			SignalingInternalSecretConfigured: strings.TrimSpace(os.Getenv(envTalkSignalingInternalSecret)) != "",
 			BackendURLOverrideConfigured:      strings.TrimSpace(rt.cfg.TalkBackendURL) != "",
+			SecretSource:                      rt.cfg.TalkSecretSource,
+			RecordingBackendURL:               rt.cfg.TalkRecordingBackendURL,
 		},
 		Storage: statusStorage{
 			WorkRoot: storagePathCheck(rt.cfg.WorkRoot),
