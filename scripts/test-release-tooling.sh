@@ -434,11 +434,17 @@ chmod +x "$STUB"
 
 if OCC="$STUB" APP_PRIVATE_KEY="KEY" APP_PUBLIC_CRT="CRT" \
    "$SCRIPT_DIR/build-appstore-tarball.sh" --version "$SRCV" \
-     --staging "$BD/signed" --output "$BD/signed.tar.gz" --sign-app >/dev/null 2>&1; then
+     --staging "$BD/signed" --output "$BD/signed.tar.gz" --sign-app >"$BD/signout.txt" 2>&1; then
   ok "--sign-app runs OCC and produces a signed tarball"
 else
   bad "--sign-app should run OCC and produce a signed tarball"
 fi
+echo "::group::DEBUG sign-app"
+echo "--- tar version ---"; tar --version | head -1
+echo "--- build stdout/stderr ---"; cat "$BD/signout.txt" || true
+echo "--- ls staged tree appinfo ---"; ls -la "$BD/signed/gocassini/appinfo/" 2>&1 || true
+echo "--- tarball full listing ---"; tar -tzf "$BD/signed.tar.gz" 2>&1 || true
+echo "::endgroup::"
 if tar -tzf "$BD/signed.tar.gz" 2>/dev/null | grep -qxF gocassini/appinfo/signature.json; then
   ok "signed tarball contains appinfo/signature.json"
 else
