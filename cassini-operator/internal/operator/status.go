@@ -178,7 +178,12 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 			WorkRoot: storagePathCheck(rt.cfg.WorkRoot),
 			SiteRoot: storagePathCheck(rt.cfg.SiteRoot),
 		},
-		RecordingsAccess: ncAccessSubstrate.snapshot(publishSinkNameOrDefault(rt.cfg.PublishSink)),
+		// The RESOLVED sink, not the configured one. cfg.PublishSink is the raw
+		// selection and is empty on an ExApp that did not set it — reporting it
+		// through publishSinkNameOrDefault would say `local` for a deployment
+		// actually delivering to Nextcloud Files, which is exactly backwards for
+		// the field an admin uses to decide whether a substrate is expected.
+		RecordingsAccess: ncAccessSubstrate.snapshot(rt.resolvedPublishSinkName()),
 	}
 	if !resp.Talk.SignalingInternalSecretConfigured {
 		resp.Talk.SignalingInternalSecretHint = signalingInternalSecretHint
@@ -362,4 +367,14 @@ func (p *ttlProbe) check() error {
 	close(done)
 	p.mu.Unlock()
 	return err
+}
+
+// resolvedPublishSinkName is the sink actually in use. The Runtime holds the
+// constructed sink; cfg.PublishSink is only the raw selection, which an ExApp
+// commonly leaves empty while resolving to nextcloud-files.
+func (rt *Runtime) resolvedPublishSinkName() string {
+	if rt.publishSink != nil {
+		return rt.publishSink.Name()
+	}
+	return publishSinkNameOrDefault(rt.cfg.PublishSink)
 }

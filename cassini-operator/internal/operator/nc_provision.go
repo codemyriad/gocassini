@@ -196,9 +196,6 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	}
 	provisionMu.Lock()
 	defer provisionMu.Unlock()
-	// Recorded before the first step so a run that dies part-way still reports
-	// as an ExApp with a broken substrate, not as a standalone with none.
-	ncAccessSubstrate.markApplicable()
 	client := &http.Client{Timeout: ncProvisionTimeout}
 
 	// P1. Resolve the administrator BEFORE anything acts as one. Proceeding as

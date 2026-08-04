@@ -444,6 +444,7 @@ func TestStatusReportsAStandaloneOperatorAsHealthyWithNoSubstrate(t *testing.T) 
 func TestStatusReportsAProvisionedSubstrate(t *testing.T) {
 	ncAccessSubstrate.reset()
 	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.markApplicable()
 	ncAccessSubstrate.succeed()
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -480,6 +481,7 @@ func TestStatusIsUnhealthyWhenTheSubstrateIsMissing(t *testing.T) {
 	// call it healthy.
 	ncAccessSubstrate.reset()
 	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.markApplicable()
 	ncAccessSubstrate.unavailable("app_missing:"+ncAppGroupFolders, errStatusSubstrateProbe)
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -516,6 +518,7 @@ func TestStatusIsUnhealthyWhenTheSubstrateIsMissing(t *testing.T) {
 func TestStatusReportsDegradedAsUnhealthyAndDistinctFromUnavailable(t *testing.T) {
 	ncAccessSubstrate.reset()
 	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.markApplicable()
 	ncAccessSubstrate.degraded("app_check_failed", errStatusSubstrateProbe)
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -543,6 +546,7 @@ func TestStatusReportsDegradedAsUnhealthyAndDistinctFromUnavailable(t *testing.T
 func TestStatusReportsTheResolvedAdministratorAndPrerequisites(t *testing.T) {
 	ncAccessSubstrate.reset()
 	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.markApplicable()
 	ncAccessSubstrate.setAdminUser("ops-root")
 	ncAccessSubstrate.setPrerequisites([]ncPrerequisiteStatus{
 		{Name: ncAppGroupFolders, State: ncPrerequisiteEnabled},
@@ -598,5 +602,35 @@ func TestStatusReportsProvisioningThatHasNotRunYet(t *testing.T) {
 	}
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503 for an unverified substrate", rec.Code)
+	}
+}
+
+// An ExApp deliberately pinned to CASSINI_PUBLISH_SINK=local serves nothing from
+// Nextcloud Files, so a Team folder it never writes to is not its health.
+// Provisioning still runs there (idempotent, cheap) and still records — but
+// applicability is decided by the deployment, not by whether provisioning
+// happened. Without this, `local` — the escape hatch the publish gate points
+// at — would be a permanently unhealthy configuration.
+func TestStatusDoesNotJudgeALocalSinkOnANextcloudSubstrate(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	// Provisioning ran and failed, but this deployment was never marked
+	// applicable because its resolved sink is not nextcloud-files.
+	ncAccessSubstrate.unavailable("app_missing:"+ncAppGroupFolders, errStatusSubstrateProbe)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for a deployment that expects no substrate", rec.Code)
+	}
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.RecordingsAccess.State != string(ncSubstrateNotApplicable) || !resp.RecordingsAccess.OK {
+		t.Fatalf("recordings access = %#v, want not_applicable and OK", resp.RecordingsAccess)
 	}
 }

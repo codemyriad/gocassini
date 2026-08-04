@@ -158,6 +158,10 @@ func resetProvisioningUser(t *testing.T) {
 func resetSubstrateRecord(t *testing.T) {
 	t.Helper()
 	ncAccessSubstrate.reset()
+	// Applicability is decided once at startup by run.go, not by the provisioner,
+	// so a test that wants to read the recorded outcome has to declare it — the
+	// deployment being modelled here is an ExApp delivering to Nextcloud Files.
+	ncAccessSubstrate.markApplicable()
 	t.Cleanup(ncAccessSubstrate.reset)
 }
 

@@ -238,6 +238,156 @@ OC_PASS="$TEST_USER_PASSWORD" \
   php occ user:add --password-from-env --display-name="$TEST_USER" "$TEST_USER" \
   >/dev/null 2>&1 || true   # idempotent
 
+# --- 7a. The recordings substrate: what a stock install actually yields ----
+#
+# This job is the closest thing in the repo to a real production install: a
+# manual AppAPI install against a plain Nextcloud, with NO Team folders and NO
+# Everyone Group — which is exactly what Nextcloud AIO ships. So it can prove
+# BOTH halves of D-585 with one boot.
+#
+# Everything here runs against a stock install: no extra --env, nothing but the
+# variables AppAPI injects.
+
+SUBSTRATE_PROXY="http://127.0.0.1:${NEXTCLOUD_HOST_PORT}/index.php/apps/app_api/proxy/${APP_ID}"
+
+cycle_exapp() {
+  occ app_api:app:disable "$APP_ID" >/dev/null 2>&1 || true
+  occ app_api:app:enable  "$APP_ID" >/dev/null 2>&1 || true
+  sleep 6
+}
+
+substrate_json() {
+  curl -sS -u "admin:admin" "$SUBSTRATE_PROXY/operator/status" 2>/dev/null \
+    | jq -c '.recordings_access' 2>/dev/null || echo '{}'
+}
+
+substrate_field() {
+  substrate_json | jq -r ".$1 // \"\"" 2>/dev/null || echo ""
+}
+
+# (a) POSITIVE: with the two prerequisites — the ONLY manual step a production
+#     admin performs — the whole substrate must appear with no further
+#     configuration. Acceptance criterion 2.
+#
+#     They are enabled explicitly rather than assumed: whether a given Nextcloud
+#     image ships either of them is not this test's contract, and asserting on
+#     the base image's app list would make the result depend on an upstream
+#     packaging decision.
+log "ensuring the two native prerequisites are enabled"
+for app in groupfolders group_everyone; do
+  occ app:install "$app" >/dev/null 2>&1 || true
+  occ app:enable  "$app" >/dev/null 2>&1 \
+    || fail "could not enable required Nextcloud app $app"
+done
+cycle_exapp
+
+substrate_status=$(curl -sS -u "admin:admin" -o /dev/null -w '%{http_code}' "$SUBSTRATE_PROXY/operator/status")
+state=$(substrate_field state)
+if [[ "$substrate_status" != "200" || "$state" != "provisioned" ]]; then
+  log "recordings_access: $(substrate_json)"
+  fail "expected a provisioned substrate (200), got $substrate_status/$state"
+fi
+# The sink must be the RESOLVED one. An ExApp that sets no CASSINI_PUBLISH_SINK
+# resolves to nextcloud-files, and reporting the raw (empty) config as `local`
+# would say no substrate is expected for a deployment that plainly expects one.
+sink=$(substrate_field publish_sink)
+[[ "$sink" == "nextcloud-files" ]] \
+  || fail "expected the resolved sink nextcloud-files, got '$sink'"
+admin_user=$(substrate_field admin_user)
+[[ -n "$admin_user" ]] || fail "the resolved administrator is not reported"
+enabled_prereqs=$(substrate_json | jq '[.prerequisites[] | select(.state == "enabled")] | length' 2>/dev/null || echo 0)
+[[ "$enabled_prereqs" == "2" ]] \
+  || fail "expected both prerequisites reported enabled, got $enabled_prereqs"
+log "OK   /status: provisioned, sink=$sink, admin_user=$admin_user, 2 prerequisites enabled"
+
+# The service account, created because the app was installed — no occ recipe.
+occ user:info cassini >/dev/null 2>&1 \
+  || fail "the cassini service account was not created by the install"
+log "OK   the cassini service account exists"
+
+# The Team-folder topology, read over the same HTTP surface the operator speaks.
+gf_json="$LOG_DIR/groupfolders.json"
+curl -sS -u "admin:admin" -H 'OCS-APIRequest: true' \
+  "http://127.0.0.1:${NEXTCLOUD_HOST_PORT}/index.php/apps/groupfolders/folders?format=json" \
+  -o "$gf_json" || fail "could not list Team folders"
+if ! jq -e '[.ocs.data[]? | select(.mount_point == "Cassini")] | length == 1' "$gf_json" >/dev/null 2>&1; then
+  log "groupfolders: $(head -c 400 "$gf_json")"
+  fail "expected exactly one Cassini Team folder"
+fi
+# everyone READ is the audience; the narrow owner group ALL is the only write
+# path. Asserted by value so a permissions regression cannot pass.
+jq -e '.ocs.data[] | select(.mount_point == "Cassini") | select(.acl == true)' "$gf_json" >/dev/null 2>&1 \
+  || fail "the Cassini Team folder does not have advanced ACL enabled"
+jq -e '.ocs.data[] | select(.mount_point == "Cassini") | select(.groups.everyone == 1)' "$gf_json" >/dev/null 2>&1 \
+  || fail "the Cassini Team folder does not grant the everyone group read (1)"
+jq -e '.ocs.data[] | select(.mount_point == "Cassini") | select(.groups.cassini == 31)' "$gf_json" >/dev/null 2>&1 \
+  || fail "the Cassini Team folder does not grant the cassini owner group all (31)"
+jq -e '.ocs.data[] | select(.mount_point == "Cassini") | .manage[] | select(.type == "user" and .id == "cassini")' "$gf_json" >/dev/null 2>&1 \
+  || fail "cassini is not the ACL manager of the Cassini Team folder"
+log "OK   Cassini Team folder: acl=true, everyone:1, cassini:31, manager=cassini"
+
+# The default-deny floor is only settable at creation and is not exposed by the
+# HTTP index, so this one needs occ.
+occ groupfolders:list --output=json_pretty > "$LOG_DIR/groupfolders-occ.json" 2>/dev/null \
+  || fail "occ groupfolders:list failed"
+if ! jq -e '[.[] | select(.mount_point == "Cassini") | select(.acl_default_no_permission == true)] | length == 1' \
+     "$LOG_DIR/groupfolders-occ.json" >/dev/null 2>&1; then
+  log "groupfolders (occ): $(head -c 400 "$LOG_DIR/groupfolders-occ.json")"
+  fail "the Cassini Team folder does not have acl_default_no_permission"
+fi
+log "OK   the Cassini Team folder has its default-deny floor"
+
+# THE DISCRIMINATOR. From `cassini` a private home directory and a mounted Team
+# folder are indistinguishable — both answer 207 to its own PROPFIND. From a
+# THIRD, unrelated account they are 404 vs 207. This is the only assertion here
+# that can tell "the recordings tree exists" from "the recordings tree exists
+# where nobody else can reach it", which is the failure D-585 exists to remove.
+propfind_status=$(curl -sS -X PROPFIND -u "$TEST_USER:$TEST_USER_PASSWORD" -H 'Depth: 1' \
+  -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${NEXTCLOUD_HOST_PORT}/remote.php/dav/files/$TEST_USER/Cassini/Recordings/meetings")
+if [[ "$propfind_status" != "207" ]]; then
+  fail "PROPFIND of Cassini/Recordings/meetings as $TEST_USER expected 207 (a mounted Team folder), got $propfind_status — the tree is in the owner's private home"
+fi
+log "OK   $TEST_USER sees Cassini/Recordings/meetings: it is a Team folder, not a private home"
+
+# (b) NEGATIVE: take a prerequisite away and the install must SAY SO rather than
+#     coming up healthy and serving nobody. Acceptance criterion 1 — and the
+#     thing the harness's pre-enabling normally hides.
+log "asserting a missing prerequisite is reported rather than silently skipped"
+occ app:disable group_everyone >/dev/null 2>&1 || fail "could not disable group_everyone"
+cycle_exapp
+
+substrate_status=$(curl -sS -u "admin:admin" -o /dev/null -w '%{http_code}' "$SUBSTRATE_PROXY/operator/status")
+state=$(substrate_field state)
+step=$(substrate_field step)
+if [[ "$substrate_status" != "503" ]]; then
+  log "recordings_access: $(substrate_json)"
+  fail "/operator/status expected 503 with group_everyone disabled, got $substrate_status"
+fi
+if [[ "$state" != "unavailable" || "$step" != "app_missing:group_everyone" ]]; then
+  log "recordings_access: $(substrate_json)"
+  fail "expected unavailable/app_missing:group_everyone, got $state/$step"
+fi
+# The report must name WHICH app, not merely that something is missing.
+if ! substrate_json | jq -e '.prerequisites[] | select(.name == "group_everyone" and .state == "missing")' >/dev/null 2>&1; then
+  log "recordings_access: $(substrate_json)"
+  fail "the missing prerequisite is not named in the report"
+fi
+log "OK   a missing prerequisite reports unavailable/app_missing:group_everyone (503)"
+
+# ...and it must be RECOVERABLE, not sticky: an admin who fixes the cause and
+# re-enables gets a working install back without reinstalling anything.
+log "asserting the failure clears once the prerequisite is restored"
+occ app:enable group_everyone >/dev/null 2>&1 || fail "could not re-enable group_everyone"
+cycle_exapp
+substrate_status=$(curl -sS -u "admin:admin" -o /dev/null -w '%{http_code}' "$SUBSTRATE_PROXY/operator/status")
+state=$(substrate_field state)
+if [[ "$substrate_status" != "200" || "$state" != "provisioned" ]]; then
+  log "recordings_access: $(substrate_json)"
+  fail "the substrate did not recover after the prerequisite was restored: $substrate_status/$state"
+fi
+log "OK   restoring the prerequisite restores the substrate"
+
 # --- 7b. Assert proxied routes --------------------------------------------
 
 PROXY="http://127.0.0.1:${NEXTCLOUD_HOST_PORT}/index.php/apps/app_api/proxy/${APP_ID}"

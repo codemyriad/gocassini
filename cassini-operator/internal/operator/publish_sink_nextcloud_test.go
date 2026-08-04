@@ -114,6 +114,7 @@ func newNCSink(t *testing.T, ncURL string) *nextcloudFilesPublishSink {
 	// (D-585). Every test below is about a deployment whose substrate IS there,
 	// so seed it; the refusal itself has its own test.
 	ncAccessSubstrate.reset()
+	ncAccessSubstrate.markApplicable()
 	ncAccessSubstrate.succeed()
 	t.Cleanup(ncAccessSubstrate.reset)
 	return &nextcloudFilesPublishSink{
@@ -309,6 +310,7 @@ func TestNCSinkRefusesToDeliverWhenTheSubstrateIsUnavailable(t *testing.T) {
 	sink := newNCSink(t, srv.URL)
 	// newNCSink seeded a healthy substrate; take it away.
 	ncAccessSubstrate.reset()
+	ncAccessSubstrate.markApplicable()
 	ncAccessSubstrate.unavailable("app_missing:"+ncAppGroupFolders, nil)
 	t.Cleanup(ncAccessSubstrate.reset)
 

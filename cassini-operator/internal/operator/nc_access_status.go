@@ -100,10 +100,20 @@ type ncAccessSubstrateStatus struct {
 var ncAccessSubstrate ncAccessSubstrateStatus
 
 // markApplicable records that this deployment is expected to have a substrate.
-// Called at startup for an AppAPI deployment whose sink is Nextcloud Files, and
-// again before the first provisioning step — so a container that restarts
-// without ever seeing an enabled edge reports `unknown` rather than passing
-// itself off as a standalone operator with nothing to provision.
+//
+// Called ONCE, at operator startup, for an AppAPI deployment whose resolved sink
+// is Nextcloud Files — and nowhere else. Applicability is a property of the
+// deployment, not of whether provisioning happened to run, so the recorders
+// below deliberately do not set it:
+//
+//   - marking it at startup rather than inside the provisioner is what makes a
+//     restarted container report `unknown` instead of passing itself off as a
+//     standalone operator with nothing to provision (D-541 made visible);
+//   - keeping it OUT of the recorders is what stops an ExApp pinned to
+//     CASSINI_PUBLISH_SINK=local from reporting an unhealthy substrate it serves
+//     nothing from. Provisioning still runs there — it is idempotent and cheap —
+//     but its outcome is not this deployment's health, and `local` is the escape
+//     hatch the publish gate itself points at.
 func (s *ncAccessSubstrateStatus) markApplicable() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -128,7 +138,6 @@ func (s *ncAccessSubstrateStatus) degraded(step string, cause error) {
 func (s *ncAccessSubstrateStatus) record(state ncSubstrateState, step string, cause error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.applicable = true
 	s.state = state
 	s.step = step
 	if cause != nil {
@@ -143,7 +152,6 @@ func (s *ncAccessSubstrateStatus) record(state ncSubstrateState, step string, ca
 func (s *ncAccessSubstrateStatus) succeed() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.applicable = true
 	s.state = ncSubstrateProvisioned
 	s.step = ""
 	s.detail = ""
