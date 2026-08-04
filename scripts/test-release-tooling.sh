@@ -338,10 +338,17 @@ fi
 files="$(tar -tzf "$TARBALL" | grep -v '/$' | LC_ALL=C sort | tr '\n' ',')"
 expected="gocassini/CHANGELOG.md,gocassini/LICENSE,gocassini/appinfo/app.php,gocassini/appinfo/info.xml,gocassini/img/app.svg,"
 eq "package contains only expected files" "$expected" "$files"
-if tar -tzf "$TARBALL" | grep -q 'gocassini/README.md'; then bad "README.md must not be packaged"; else ok "README.md excluded from package"; fi
+# The listing is captured ONCE and grepped from a variable rather than piped.
+# `tar -tzf … | grep -q …` is a trap under `set -o pipefail`: grep -q exits at
+# the first match, tar is killed by SIGPIPE (141), and pipefail makes that the
+# pipeline's status. For a "must NOT be present" check like these two, the
+# resulting non-zero lands in the `else` branch — so a genuinely bad archive
+# would be reported as ok, and the assertion would silently stop testing.
+tarball_files="$(tar -tzf "$TARBALL")"
+if grep -q 'gocassini/README.md' <<<"$tarball_files"; then bad "README.md must not be packaged"; else ok "README.md excluded from package"; fi
 
 # Every entry sits under the gocassini/ root.
-if tar -tzf "$TARBALL" | grep -qvE '^gocassini(/|$)'; then bad "archive has entries outside gocassini/"; else ok "archive root is gocassini/"; fi
+if grep -qvE '^gocassini(/|$)' <<<"$tarball_files"; then bad "archive has entries outside gocassini/"; else ok "archive root is gocassini/"; fi
 
 # Validator passes on the freshly built (unsigned) tarball.
 if "$SCRIPT_DIR/validate-appstore-tarball.sh" --version "$SRCV" --tarball "$TARBALL" >/dev/null 2>&1; then
@@ -439,7 +446,13 @@ if OCC="$STUB" APP_PRIVATE_KEY="KEY" APP_PUBLIC_CRT="CRT" \
 else
   bad "--sign-app should run OCC and produce a signed tarball"
 fi
-if tar -tzf "$BD/signed.tar.gz" 2>/dev/null | grep -qxF gocassini/appinfo/signature.json; then
+# Same pipefail/SIGPIPE trap as above, and this is the one it actually bit:
+# signature.json is entry 7 of 9 in the listing, so grep -qxF matched and exited
+# while tar still had two entries to write. tar died with 141, pipefail made the
+# pipeline non-zero, and the test failed with the file correctly in the archive —
+# intermittently, on ~1 run in 40, across unrelated branches.
+signed_files="$(tar -tzf "$BD/signed.tar.gz" 2>/dev/null || true)"
+if grep -qxF gocassini/appinfo/signature.json <<<"$signed_files"; then
   ok "signed tarball contains appinfo/signature.json"
 else
   bad "signed tarball should contain appinfo/signature.json"
