@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -126,31 +127,6 @@ func (c ExAppConfig) provisioningUserFallback() string {
 	return defaultNextcloudAdminUser
 }
 
-func (c ExAppConfig) resolveProvisioningUser(ctx context.Context, client *http.Client, logger *log.Logger) {
-	if strings.TrimSpace(os.Getenv(envNCAdminUser)) != "" {
-		return
-	}
-	admins, err := c.groupMembers(ctx, client, "admin")
-	if err != nil || len(admins) == 0 {
-		if logger != nil {
-			logger.Printf("nc provision: admin lookup yielded no usable account (%v); acting as %q; set %s if this is wrong", err, c.provisioningUserFallback(), envNCAdminUser)
-		}
-		return
-	}
-	chosen := admins[0]
-	for _, candidate := range admins {
-		if candidate == defaultNextcloudAdminUser {
-			chosen = candidate
-			break
-		}
-	}
-	var boxed any = chosen
-	resolvedProvisioningUser.Store(&boxed)
-	if logger != nil {
-		logger.Printf("nc provision: acting as administrator %q", chosen)
-	}
-}
-
 // ensureRecordingsOwnerAccount creates the dedicated recordings owner and
 // ensures it belongs to the narrow write-capable owner group. Existing accounts
 // are never re-passworded or disabled. The generated password only satisfies
@@ -225,12 +201,43 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	ncAccessSubstrate.markApplicable()
 	client := &http.Client{Timeout: ncProvisionTimeout}
 
+	// P1. Resolve the administrator BEFORE anything acts as one. Proceeding as
+	//     an account that may not exist is what made every downstream failure
+	//     look like a Nextcloud fault rather than a naming one (D-585).
+	admin, err := c.resolveAdminIdentity(ctx, client, logger)
+	if err != nil {
+		logger.Printf("nc provision: %v — set %s to an account in the \"admin\" group; recordings setup skipped", err, envNCAdminUser)
+		if errors.Is(err, errAdminRouteMissing) {
+			ncAccessSubstrate.degraded("administrator_probe", err)
+		} else {
+			ncAccessSubstrate.unavailable("administrator", fmt.Errorf("%w; set %s to an account in the \"admin\" group", err, envNCAdminUser))
+		}
+		return
+	}
+	ncAccessSubstrate.setAdminUser(admin)
+
+	// P2. Both native prerequisites, checked explicitly so a missing one is
+	//     NAMED rather than surfacing later as an opaque folder-create failure.
+	//     Nextcloud AIO does not ship Team folders enabled, so this is the
+	//     common case (D-585 outcome 1).
+	prereqs, perr := c.preflightNativeApps(ctx, client)
+	ncAccessSubstrate.setPrerequisites(prereqs)
+	if perr != nil {
+		if missing := firstMissingApp(prereqs); missing != "" {
+			logger.Printf("nc provision: required Nextcloud app %q is not enabled — run `occ app:install %s && occ app:enable %s`; recordings setup skipped", missing, missing, missing)
+			ncAccessSubstrate.unavailable("app_missing:"+missing, fmt.Errorf("the %q app is not enabled; an ExApp cannot install it", missing))
+			return
+		}
+		logger.Printf("nc provision: %v — recordings setup skipped", perr)
+		ncAccessSubstrate.degraded("app_check_failed", perr)
+		return
+	}
+
 	// 0. The administrator creates the service account before any DAV call acts
 	//    as it. The narrow owner group supplies its write-capable Team-folder mount.
-	c.resolveProvisioningUser(ctx, client, logger)
 	if err := c.ensureRecordingsOwnerAccount(ctx, client, logger); err != nil {
 		logger.Printf("nc provision: ensure recordings account %q failed: %v — recordings setup incomplete", ncRecordingsOwner, err)
-		ncAccessSubstrate.fail("recordings owner account "+ncRecordingsOwner, err)
+		ncAccessSubstrate.unavailable("owner_account", fmt.Errorf("the recordings owner account %q could not be created: %w", ncRecordingsOwner, err))
 		return
 	}
 
@@ -241,12 +248,12 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	hasEveryone, err := c.groupExists(ctx, client, ncRecordingsEveryoneGroup)
 	if err != nil {
 		logger.Printf("nc provision: check required universal group %q: %v — access control setup incomplete", ncRecordingsEveryoneGroup, err)
-		ncAccessSubstrate.fail("universal group "+ncRecordingsEveryoneGroup+" lookup", err)
+		ncAccessSubstrate.degraded("universal_group_probe", fmt.Errorf("could not check whether the universal group %q exists: %w", ncRecordingsEveryoneGroup, err))
 		return
 	}
 	if !hasEveryone {
 		logger.Printf("nc provision: required universal group %q is unavailable; install/enable the Everyone Group app (group_everyone) — access control setup incomplete", ncRecordingsEveryoneGroup)
-		ncAccessSubstrate.fail("universal group "+ncRecordingsEveryoneGroup+" is unavailable (is the Everyone Group app, group_everyone, enabled?)", nil)
+		ncAccessSubstrate.unavailable("universal_group", fmt.Errorf("the universal group %q does not exist; the Everyone Group app (%s) is enabled but produced no group", ncRecordingsEveryoneGroup, ncAppEveryoneGroup))
 		return
 	}
 
@@ -257,21 +264,35 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 		// The likeliest cause an admin can act on: the Group folders ("Team
 		// folders") app is one of the two native prerequisites an ExApp cannot
 		// install for itself.
-		ncAccessSubstrate.fail("group folder "+ncRecordingsMount+" (is the Group folders app enabled?)", err)
+		ncAccessSubstrate.unavailable("group_folder", fmt.Errorf("the %q Team folder could not be created: %w", ncRecordingsMount, err))
 		return
 	}
 	folderID, ok := folder.idInt()
 	if !ok {
 		logger.Printf("nc provision: group folder %q has no usable id — aborting", ncRecordingsMount)
-		ncAccessSubstrate.fail("group folder "+ncRecordingsMount+" has no usable id", nil)
+		ncAccessSubstrate.degraded("folder_id", fmt.Errorf("the %q Team folder has no usable id", ncRecordingsMount))
 		return
 	}
 
 	// 3. Mount mappings: the virtual all-users group gets a READ capability
 	//    ceiling; the narrow owner group gets ALL so the service account can
 	//    write. ACL-manager status alone cannot elevate a READ mount to write.
-	c.ensureFolderGroup(ctx, client, folderID, ncRecordingsEveryoneGroup, aclPermRead, logger)
-	c.ensureFolderGroup(ctx, client, folderID, ncRecordingsOwnerGroup, aclMaskAll, logger)
+	//    Both abort: without the everyone mapping nobody has the folder, and
+	//    without the owner mapping the service account cannot write into it.
+	//    Continuing to the root grant would report success over a folder that
+	//    serves nobody.
+	for _, mapping := range []struct {
+		group string
+		perms int
+	}{
+		{ncRecordingsEveryoneGroup, aclPermRead},
+		{ncRecordingsOwnerGroup, aclMaskAll},
+	} {
+		if err := c.ensureFolderGroup(ctx, client, folderID, mapping.group, mapping.perms, logger); err != nil {
+			ncAccessSubstrate.degraded("mount_mapping:"+mapping.group, fmt.Errorf("the %q mount mapping on the %q Team folder could not be installed: %w", mapping.group, ncRecordingsMount, err))
+			return
+		}
+	}
 
 	// 4. Advanced ACL on (idempotent). This aborts rather than logging on,
 	//    because step 7 below unconditionally grants `everyone` READ at the
@@ -281,7 +302,7 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	//    behind a flag that defaulted off; it now runs on every install.
 	if err := c.folderSetACL(ctx, client, folderID, true); err != nil {
 		logger.Printf("nc provision: enable advanced ACL folder=%d: %v — refusing to widen the root without it", folderID, err)
-		ncAccessSubstrate.fail("enable advanced ACL on group folder "+ncRecordingsMount, err)
+		ncAccessSubstrate.degraded("acl_enable", fmt.Errorf("advanced ACL could not be enabled on the %q Team folder, so the default-deny floor is missing: %w", ncRecordingsMount, err))
 		return
 	}
 
@@ -289,7 +310,11 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	//    Re-adding an existing manager is a 500, so only add when absent.
 	if !folder.hasManager("user", ncRecordingsOwner) {
 		if err := c.folderManageACL(ctx, client, folderID, "user", ncRecordingsOwner, true); err != nil {
+			// Not fatal: the migration below acts as the owner and will fail
+			// loudly if the delegation really did not take. Recorded so a
+			// half-provisioned folder is never reported as provisioned.
 			logger.Printf("nc provision: delegate ACL manager folder=%d user=%s: %v", folderID, ncRecordingsOwner, err)
+			ncAccessSubstrate.degraded("acl_manager", fmt.Errorf("%q could not be delegated as ACL manager of the %q Team folder: %w", ncRecordingsOwner, ncRecordingsMount, err))
 		}
 	}
 
@@ -300,17 +325,17 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	//    availability failure rather than an access leak — for the next retry.
 	if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, ncRecordingsMount, ownerOnlyContainerACLRules()); err != nil {
 		logger.Printf("nc provision: establish owner-only migration floor on %q: %v", ncRecordingsMount, err)
-		ncAccessSubstrate.fail("owner-only migration floor on "+ncRecordingsMount, err)
+		ncAccessSubstrate.degraded("migration_floor", fmt.Errorf("the owner-only migration floor could not be applied to %q: %w", ncRecordingsMount, err))
 		return
 	}
 	if err := c.selfHealLeafProtection(ctx, client, logger); err != nil {
 		logger.Printf("nc provision: migrate/protect recording ACLs: %v — leaving root owner-only", err)
-		ncAccessSubstrate.fail("migrate legacy recording ACLs (tree left owner-only)", err)
+		ncAccessSubstrate.degraded("migration", fmt.Errorf("legacy recording ACLs could not be migrated, so the tree is left owner-only: %w", err))
 		return
 	}
 	if err := c.protectExistingCatalog(ctx, client); err != nil {
 		logger.Printf("nc provision: migrate existing catalog ACL: %v — leaving root owner-only", err)
-		ncAccessSubstrate.fail("migrate catalog ACL (tree left owner-only)", err)
+		ncAccessSubstrate.degraded("catalog_migration", fmt.Errorf("the existing catalog ACL could not be migrated, so the tree is left owner-only: %w", err))
 		return
 	}
 
@@ -318,7 +343,7 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	//    now safely overrides that inherited grant as private or public.
 	if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, ncRecordingsMount, containerACLRules()); err != nil {
 		logger.Printf("nc provision: root container ACL %q: %v", ncRecordingsMount, err)
-		ncAccessSubstrate.fail("root container ACL on "+ncRecordingsMount, err)
+		ncAccessSubstrate.degraded("root_acl", fmt.Errorf("the root container ACL could not be applied to %q, so nobody can traverse to the recordings: %w", ncRecordingsMount, err))
 		return
 	}
 
@@ -342,10 +367,16 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 
 	// 8. Materialize the canonical collections so the directory exists right after
 	//    install, before any recording. MKCOL of the mount root is a harmless 405.
+	mkcolFailed := false
 	for _, dir := range []string{ncRecordingsRoot, ncRecordingsRoot + "/meetings"} {
 		if err := c.davMkcol(ctx, client, ncRecordingsOwner, dir); err != nil {
 			logger.Printf("nc provision: mkcol %s: %v", dir, err)
+			ncAccessSubstrate.degraded("mkcol:"+dir, fmt.Errorf("the canonical collection %q could not be created: %w", dir, err))
+			mkcolFailed = true
 		}
+	}
+	if mkcolFailed {
+		return
 	}
 
 	ncAccessSubstrate.succeed()
@@ -524,18 +555,28 @@ func lowestIDMatch(folders []gfFolder, mount string) (gfFolder, bool) {
 // ensureFolderGroup assigns a group to the folder (idempotent: an
 // already-assigned group is a non-fatal error we ignore) and then sets its
 // permissions, which is the authoritative, idempotent source of the mount level.
-func (c ExAppConfig) ensureFolderGroup(ctx context.Context, client *http.Client, folderID int, group string, perms int, logger *log.Logger) {
+// ensureFolderGroup returns an error rather than only logging, because the mount
+// mapping is the whole audience mechanism: without the `everyone` READ mapping
+// nobody has the folder at all, and without the owner group's ALL mapping the
+// service account cannot write into it. Reporting `provisioned` after either
+// failed would be exactly the silent-green shape D-585 removes.
+func (c ExAppConfig) ensureFolderGroup(ctx context.Context, client *http.Client, folderID int, group string, perms int, logger *log.Logger) error {
 	// addGroup: 2xx on first add, non-2xx ("Group already assigned") afterwards.
 	if status, body, err := c.apiPostForm(ctx, client, c.gfURL(fmt.Sprintf("/folders/%d/groups", folderID)), url.Values{"group": {group}}); err != nil {
 		logger.Printf("nc provision: add group %q to folder=%d: %v", group, folderID, err)
+		return fmt.Errorf("add group %q to folder=%d: %w", group, folderID, err)
 	} else if status/100 != 2 && !strings.Contains(strings.ToLower(string(body)), "already") {
 		logger.Printf("nc provision: add group %q to folder=%d -> %d: %s", group, folderID, status, snippet(body))
+		return fmt.Errorf("add group %q to folder=%d -> %d: %s", group, folderID, status, snippet(body))
 	}
 	if status, body, err := c.apiPostForm(ctx, client, c.gfURL(fmt.Sprintf("/folders/%d/groups/%s", folderID, url.PathEscape(group))), url.Values{"permissions": {fmt.Sprintf("%d", perms)}}); err != nil {
 		logger.Printf("nc provision: set permissions group=%q folder=%d: %v", group, folderID, err)
+		return fmt.Errorf("set permissions group=%q folder=%d: %w", group, folderID, err)
 	} else if status/100 != 2 {
 		logger.Printf("nc provision: set permissions group=%q folder=%d -> %d: %s", group, folderID, status, snippet(body))
+		return fmt.Errorf("set permissions group=%q folder=%d -> %d: %s", group, folderID, status, snippet(body))
 	}
+	return nil
 }
 
 func (c ExAppConfig) removeFolderGroup(ctx context.Context, client *http.Client, folderID int, group string) error {
@@ -713,6 +754,20 @@ func (c ExAppConfig) apiGet(ctx context.Context, client *http.Client, rawURL str
 	return doReadBody(client, req)
 }
 
+// apiGetAs is apiGet acting as an explicit identity rather than the resolved
+// administrator. Only admin discovery needs it: every other provisioning call
+// happens after resolution, when provisioningUser() is the right answer. An
+// empty actAs keeps the app-scoped (system) session, which is what makes the
+// account roster readable before any identity is known (nc_admin_identity.go).
+func (c ExAppConfig) apiGetAs(ctx context.Context, client *http.Client, actAs, rawURL string) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, withFormatJSON(rawURL), nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	c.setAppAPIProvisionHeadersAs(req, actAs)
+	return doReadBody(client, req)
+}
+
 // apiPostForm issues an authenticated form-encoded POST as the provisioning administrator.
 func (c ExAppConfig) apiPostForm(ctx context.Context, client *http.Client, rawURL string, form url.Values) (int, []byte, error) {
 	body := form.Encode()
@@ -739,7 +794,11 @@ func (c ExAppConfig) apiDelete(ctx context.Context, client *http.Client, rawURL 
 // request marker. OCS-APIRequest is what lets the Group Folders frontpage routes
 // skip CSRF and answer JSON; the provisioning API requires it too.
 func (c ExAppConfig) setAppAPIProvisionHeaders(req *http.Request) {
-	auth := base64.StdEncoding.EncodeToString([]byte(c.provisioningUser() + ":" + c.AppSecret))
+	c.setAppAPIProvisionHeadersAs(req, c.provisioningUser())
+}
+
+func (c ExAppConfig) setAppAPIProvisionHeadersAs(req *http.Request, userID string) {
+	auth := base64.StdEncoding.EncodeToString([]byte(userID + ":" + c.AppSecret))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("OCS-APIRequest", "true")
 	req.Header.Set("AUTHORIZATION-APP-API", auth)

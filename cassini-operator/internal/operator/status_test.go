@@ -436,6 +436,9 @@ func TestStatusReportsAStandaloneOperatorAsHealthyWithNoSubstrate(t *testing.T) 
 	if !resp.RecordingsAccess.OK || resp.RecordingsAccess.Detail == "" {
 		t.Fatalf("an inapplicable substrate must read as OK and say why: %#v", resp.RecordingsAccess)
 	}
+	if resp.RecordingsAccess.State != string(ncSubstrateNotApplicable) {
+		t.Fatalf("state = %q, want %q", resp.RecordingsAccess.State, ncSubstrateNotApplicable)
+	}
 }
 
 func TestStatusReportsAProvisionedSubstrate(t *testing.T) {
@@ -466,6 +469,9 @@ func TestStatusReportsAProvisionedSubstrate(t *testing.T) {
 	if resp.RecordingsAccess.PublishSink == "" {
 		t.Fatal("the resolved publish sink must be reported")
 	}
+	if resp.RecordingsAccess.State != string(ncSubstrateProvisioned) {
+		t.Fatalf("state = %q, want %q", resp.RecordingsAccess.State, ncSubstrateProvisioned)
+	}
 }
 
 func TestStatusIsUnhealthyWhenTheSubstrateIsMissing(t *testing.T) {
@@ -474,7 +480,7 @@ func TestStatusIsUnhealthyWhenTheSubstrateIsMissing(t *testing.T) {
 	// call it healthy.
 	ncAccessSubstrate.reset()
 	t.Cleanup(ncAccessSubstrate.reset)
-	ncAccessSubstrate.fail("group folder Cassini (is the Group folders app enabled?)", errStatusSubstrateProbe)
+	ncAccessSubstrate.unavailable("app_missing:"+ncAppGroupFolders, errStatusSubstrateProbe)
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
@@ -492,8 +498,75 @@ func TestStatusIsUnhealthyWhenTheSubstrateIsMissing(t *testing.T) {
 		t.Fatalf("expected an unhealthy substrate: %#v", resp.RecordingsAccess)
 	}
 	// The detail has to be actionable: it names the step and the likely cause.
-	if !strings.Contains(resp.RecordingsAccess.Detail, "Group folders") {
+	if !strings.Contains(resp.RecordingsAccess.Detail, ncAppGroupFolders) {
 		t.Fatalf("detail is not actionable: %q", resp.RecordingsAccess.Detail)
+	}
+	// And the step has to be machine-readable, so a monitor or an install check
+	// can key on WHICH failure this is rather than string-matching prose.
+	if resp.RecordingsAccess.State != string(ncSubstrateUnavailable) {
+		t.Fatalf("state = %q, want %q", resp.RecordingsAccess.State, ncSubstrateUnavailable)
+	}
+	if resp.RecordingsAccess.Step != "app_missing:"+ncAppGroupFolders {
+		t.Fatalf("step = %q, want app_missing:%s", resp.RecordingsAccess.Step, ncAppGroupFolders)
+	}
+}
+
+// A failed CALL is not the same diagnosis as an ABSENT app: nothing is installed
+// to fix it. Both are unhealthy, and the step is what tells them apart.
+func TestStatusReportsDegradedAsUnhealthyAndDistinctFromUnavailable(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.degraded("app_check_failed", errStatusSubstrateProbe)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 when provisioning degraded; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.RecordingsAccess.State != string(ncSubstrateDegraded) {
+		t.Fatalf("state = %q, want %q", resp.RecordingsAccess.State, ncSubstrateDegraded)
+	}
+	if resp.RecordingsAccess.Step != "app_check_failed" {
+		t.Fatalf("step = %q, want app_check_failed", resp.RecordingsAccess.Step)
+	}
+}
+
+// The administrator and the prerequisite list are context an admin needs to act,
+// so they survive into the report rather than living only in the log.
+func TestStatusReportsTheResolvedAdministratorAndPrerequisites(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.setAdminUser("ops-root")
+	ncAccessSubstrate.setPrerequisites([]ncPrerequisiteStatus{
+		{Name: ncAppGroupFolders, State: ncPrerequisiteEnabled},
+		{Name: ncAppEveryoneGroup, State: ncPrerequisiteMissing, Detail: "run `occ app:install group_everyone`"},
+	})
+	ncAccessSubstrate.unavailable("app_missing:"+ncAppEveryoneGroup, nil)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.RecordingsAccess.AdminUser != "ops-root" {
+		t.Fatalf("admin_user = %q, want ops-root", resp.RecordingsAccess.AdminUser)
+	}
+	if len(resp.RecordingsAccess.Prerequisites) != 2 {
+		t.Fatalf("prerequisites = %#v, want both native apps", resp.RecordingsAccess.Prerequisites)
+	}
+	if resp.RecordingsAccess.Prerequisites[1].State != ncPrerequisiteMissing {
+		t.Fatalf("the missing app must be named as missing: %#v", resp.RecordingsAccess.Prerequisites)
 	}
 }
 
@@ -516,5 +589,14 @@ func TestStatusReportsProvisioningThatHasNotRunYet(t *testing.T) {
 	}
 	if !strings.Contains(resp.RecordingsAccess.Detail, "has not run yet") {
 		t.Fatalf("an ExApp that was never enabled must say so: %q", resp.RecordingsAccess.Detail)
+	}
+	// Reachable after a bare container restart, because provisioning runs on the
+	// enabled edge and a restart is not one (D-541). Reported as `unknown`
+	// rather than passed off as a standalone with nothing to provision.
+	if resp.RecordingsAccess.State != string(ncSubstrateUnknown) {
+		t.Fatalf("state = %q, want %q", resp.RecordingsAccess.State, ncSubstrateUnknown)
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 for an unverified substrate", rec.Code)
 	}
 }

@@ -110,6 +110,12 @@ func (f *fakeNCFiles) has(name string) bool {
 
 func newNCSink(t *testing.T, ncURL string) *nextcloudFilesPublishSink {
 	t.Helper()
+	// Deliver refuses to write unless provisioning recorded a usable substrate
+	// (D-585). Every test below is about a deployment whose substrate IS there,
+	// so seed it; the refusal itself has its own test.
+	ncAccessSubstrate.reset()
+	ncAccessSubstrate.succeed()
+	t.Cleanup(ncAccessSubstrate.reset)
 	return &nextcloudFilesPublishSink{
 		cfg:    testExAppConfig(ncURL),
 		logger: log.New(ioDiscard{}, "", 0),
@@ -283,3 +289,59 @@ type testAccessErr string
 func (e testAccessErr) Error() string { return string(e) }
 
 const errTestAccessApply = testAccessErr("acl opus: PROPPATCH -> 500")
+
+// The silent third outcome D-585 forbids: with no Team folder mounted at
+// `Cassini`, MKCOL creates an ordinary directory in the service account's own
+// home and returns 201, the PUTs succeed, the publish reports success, and every
+// caller 404s forever. WebDAV never says no, so the recorded substrate state has
+// to.
+func TestNCSinkRefusesToDeliverWhenTheSubstrateIsUnavailable(t *testing.T) {
+	var mu sync.Mutex
+	var methods []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		methods = append(methods, r.Method)
+		mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	sink := newNCSink(t, srv.URL)
+	// newNCSink seeded a healthy substrate; take it away.
+	ncAccessSubstrate.reset()
+	ncAccessSubstrate.unavailable("app_missing:"+ncAppGroupFolders, nil)
+	t.Cleanup(ncAccessSubstrate.reset)
+
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+	_, err := deliverToNC(t, sink, attempt, "meeting-a")
+	if err == nil {
+		t.Fatal("Deliver succeeded into an unprovisioned substrate")
+	}
+	// The message has to carry both escapes: where to look, and how to opt out.
+	for _, want := range []string{"app_missing:" + ncAppGroupFolders, "recordings_access", envPublishSinkName + "=local"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+	// Nothing may have been written — not even a directory. A partial write is
+	// how the private-home tree gets created in the first place.
+	mu.Lock()
+	defer mu.Unlock()
+	if len(methods) != 0 {
+		t.Fatalf("an unprovisioned substrate was written to: %v", methods)
+	}
+}
+
+// A standalone operator, or an ExApp pinned to the local sink, never records an
+// applicable substrate — the gate must not fire for them.
+func TestNCSinkDeliversWhenNoSubstrateIsExpected(t *testing.T) {
+	nc := newFakeNCFiles()
+	sink := newNCSink(t, nc.server(t).URL)
+	ncAccessSubstrate.reset() // applicable == false
+	t.Cleanup(ncAccessSubstrate.reset)
+
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+	if _, err := deliverToNC(t, sink, attempt, "meeting-a"); err != nil {
+		t.Fatalf("Deliver refused a deployment that expects no substrate: %v", err)
+	}
+}

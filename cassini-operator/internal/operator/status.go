@@ -79,9 +79,30 @@ type statusRecordingsAccess struct {
 	// its archive off Nextcloud, which makes a provisioned substrate inert
 	// rather than wrong.
 	PublishSink string `json:"publish_sink,omitempty"`
-	OK          bool   `json:"ok"`
-	Detail      string `json:"detail,omitempty"`
-	CheckedAt   string `json:"checked_at,omitempty"`
+	// State is provisioned / degraded / unavailable / not_applicable / unknown
+	// (D-585). OK is kept alongside it, derived, so anything that already reads
+	// the boolean keeps working.
+	State string `json:"state"`
+	OK    bool   `json:"ok"`
+	// Step names the provisioning step that stopped, in a stable machine-readable
+	// form a monitor or a test can key on: "app_missing:group_everyone",
+	// "administrator", "mount_mapping:everyone".
+	Step   string `json:"step,omitempty"`
+	Detail string `json:"detail,omitempty"`
+	// AdminUser is the account provisioning resolved and acted as. Its absence
+	// is itself the diagnosis when Step is "administrator".
+	AdminUser string `json:"admin_user,omitempty"`
+	// Prerequisites reports the native Nextcloud apps an ExApp cannot install
+	// for itself, so a missing one is named rather than inferred.
+	Prerequisites []statusPrerequisite `json:"prerequisites,omitempty"`
+	CheckedAt     string               `json:"checked_at,omitempty"`
+}
+
+// statusPrerequisite is one native app the recordings substrate depends on.
+type statusPrerequisite struct {
+	Name   string `json:"name"`
+	State  string `json:"state"`
+	Detail string `json:"detail,omitempty"`
 }
 
 type statusSTT struct {
