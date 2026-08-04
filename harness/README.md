@@ -57,7 +57,6 @@ The stack is configured by combining independent dimensions:
 - **public/browser mode**: how browsers and bots reach Nextcloud/signaling
 - **service topology**: which Docker Compose services start
 - **Cassini mode**: whether Cassini is installed as an AppAPI ExApp
-- **recording access control**: whether an installed ExApp enforces per-caller Files access
 - **recording backend**: how Talk's recording backend is wired
 - **ExApp image mode**: how an installed ExApp image is provided
 - **lifecycle mode**: how existing containers/volumes are handled
@@ -188,25 +187,7 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 | `--exapp-image-mode reuse-local` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE=reuse-local` | Default. Reuses an existing local `cassini-exapp:e2e-v3-cpu-gpu` image and tags it as the production reference. Fails if the local image is missing. |
 | `--exapp-image-mode pull` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE=pull` | Leaves the `ghcr.io` image unmapped so AppAPI can pull the image declared by `appinfo/info.xml`. |
 
-### 2.7 Nextcloud recording access control
-
-Installed ExApps in the local harness default to
-`CASSINI_NC_ACCESS_CONTROL=true`. The harness passes the resolved value through
-AppAPI registration, and `appinfo/info.xml` declares it so AppAPI does not drop
-it. Override it for a public-archive comparison with either form:
-
-```bash
-./bin/cassini dev stack up ... --nc-access-control=false
-CASSINI_NC_ACCESS_CONTROL=false ./bin/cassini dev stack up ...
-```
-
-The harness installs/enables Team folders and Everyone Group, then the ExApp
-provisions the advanced-ACL/default-deny topology automatically. Production
-installers must enable both native apps first; see
-[`docs/exapp-nextcloud-recordings-permissions.md`](../docs/exapp-nextcloud-recordings-permissions.md).
-Production deployments remain opt-in when this variable is not supplied.
-
-### 2.8 Lifecycle modes
+### 2.7 Lifecycle modes
 
 `stack up` is non-destructive by default.
 
@@ -223,7 +204,7 @@ Production deployments remain opt-in when this variable is not supplied.
 `dev stack stop` has been removed; use `dev stack down` or `dev stack down
 --suspend`.
 
-### 2.9 Flag / environment reference
+### 2.8 Flag / environment reference
 
 | CLI flag | Environment variable | Default | Notes |
 |---|---|---:|---|
@@ -236,7 +217,6 @@ Production deployments remain opt-in when this variable is not supplied.
 | `--services VALUE` | `CASSINI_HARNESS_SERVICE_MODE` | `legacy-default` | Preferred service topology flag. |
 | `--service-mode VALUE` | `CASSINI_HARNESS_SERVICE_MODE` | `legacy-default` | Alias for `--services`; cannot disagree with `--services`. |
 | `--cassini none|installed-exapp` | `CASSINI_HARNESS_CASSINI_MODE` | `none` | Whether stack bring-up installs Cassini as an AppAPI ExApp. |
-| `--nc-access-control=true|false` | `CASSINI_NC_ACCESS_CONTROL` | `true` | Pass per-participant Nextcloud Files access control into an installed ExApp. Harness bootstrap installs Team folders + Everyone Group; the ExApp provisions ACLs. |
 | `--recording-backend legacy|direct-operator|installed-exapp|none` | `CASSINI_HARNESS_RECORDING_BACKEND` | `legacy` | How Talk's recording backend is configured during bootstrap. |
 | `--exapp-image-mode build|reuse-local|pull` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE` | `reuse-local` | Only meaningful with `--cassini installed-exapp`. |
 | `--build` | n/a; sets image mode | n/a | Shorthand for image mode `build`; requires `--cassini installed-exapp`. |
@@ -246,7 +226,7 @@ Production deployments remain opt-in when this variable is not supplied.
 | `stack down --volumes` | n/a | false | Down-only; remove project volumes too. |
 | `stack down --full` | n/a | false | Down-only; remove all known harness resources. |
 
-### 2.10 Supporting environment variables without stack flags
+### 2.9 Supporting environment variables without stack flags
 
 | Variable | Default | Purpose |
 |---|---:|---|
@@ -269,7 +249,7 @@ Production deployments remain opt-in when this variable is not supplied.
 The committed secrets and passwords are for the dev harness only. Never reuse
 them for real Nextcloud, Talk, signaling, TURN, or Cassini deployments.
 
-### 2.11 Plan validation warnings
+### 2.10 Plan validation warnings
 
 `dev stack` distinguishes invalid configuration from valid-but-surprising
 configuration:
@@ -494,13 +474,13 @@ What happens:
    domains, signaling, TURN, and Talk recording settings.
 4. AppAPI is installed/enabled.
 5. The HaRP deploy daemon is registered.
-6. Cassini is registered as `gocassini`, including the resolved
-   `CASSINI_NC_ACCESS_CONTROL` deploy value, and route checks are performed.
+6. Cassini is registered as `gocassini` and route checks are performed.
 
-The harness defaults access control to `true` and supplies both native app
-prerequisites; Cassini provisions the Team folder and ACLs on enable. Use
-`--nc-access-control=false` only when intentionally comparing the legacy public
-archive behavior.
+Recordings are access-controlled — there is no other mode. `bootstrap.sh`
+installs the two prerequisites an ExApp cannot install for itself — Team folders
+and Everyone Group — and the ExApp provisions its folder, groups and ACLs on
+enable. Production installers must enable both native apps first. See
+[`docs/exapp-nextcloud-recordings-permissions.md`](../docs/exapp-nextcloud-recordings-permissions.md).
 
 If you already have a suitable local ExApp image, omit `--build` and use the
 default `reuse-local` mode. If you want AppAPI to pull the manifest image, use
@@ -575,7 +555,6 @@ For the full installed-ExApp stack, these inputs are required:
 | ExApp → Talk callback | `--talk-backend-url` | `CASSINI_TALK_BACKEND_URL` | `http://reverse-proxy` |
 | Services | `--services` | `CASSINI_HARNESS_SERVICE_MODE` | `full` |
 | Cassini installation | `--cassini` | `CASSINI_HARNESS_CASSINI_MODE` | `installed-exapp` |
-| Recording access control | `--nc-access-control` | `CASSINI_NC_ACCESS_CONTROL` | `true` (harness default) |
 | Talk recording backend | `--recording-backend` | `CASSINI_HARNESS_RECORDING_BACKEND` | `installed-exapp` |
 | Image handling | `--build` | `CASSINI_HARNESS_EXAPP_IMAGE_MODE` | `build` |
 
@@ -633,7 +612,6 @@ export CASSINI_HARNESS_SIGNALING_PUBLIC_URL="http://${LAN_IP}:28082"
 export CASSINI_TALK_BACKEND_URL=http://reverse-proxy
 export CASSINI_HARNESS_SERVICE_MODE=full
 export CASSINI_HARNESS_CASSINI_MODE=installed-exapp
-export CASSINI_NC_ACCESS_CONTROL=true
 export CASSINI_HARNESS_RECORDING_BACKEND=installed-exapp
 export CASSINI_HARNESS_EXAPP_IMAGE_MODE=build
 

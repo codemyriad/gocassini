@@ -18,13 +18,13 @@ import (
 )
 
 // Automatic provisioning of the Nextcloud-native recordings access model
-// (companion to D-534). When per-participant access control is enabled, the
-// recordings must live in a group folder ("Team folder") with advanced ACL and
-// a default-deny floor, owned/managed by the recordings owner, and readable by
-// every logged-in user so anyone can traverse to the meetings they were granted
-// (per-file ACLs — applied at publish, webdav_acl.go — restrict each recording
-// to its participants). Before this file that whole topology was a manual,
-// documented `occ groupfolders:*` + group setup an admin had to run once.
+// (companion to D-534). Recordings live in a group folder ("Team folder") with
+// advanced ACL and a default-deny floor, owned/managed by the recordings owner,
+// and readable by every logged-in user so anyone can traverse to the meetings
+// they were granted (per-file ACLs — applied at publish, webdav_acl.go —
+// restrict each recording to its participants). Before this file that whole
+// topology was a manual, documented `occ groupfolders:*` + group setup an admin
+// had to run once.
 //
 // An ExApp cannot run `occ`; it can only reach Nextcloud over HTTP. But every
 // step of the manual recipe has an HTTP equivalent that an admin-acting caller
@@ -36,18 +36,20 @@ import (
 //
 //	on enabled edge
 //	  ├── resolve administrator + ensure `cassini` owner  (OCS provisioning API)
-//	  └── when AccessControl is on:
-//	      ├── require the virtual "everyone" group       (Everyone Group app)
-//	      ├── ensure "Cassini" Team folder (default-deny) (groupfolders addFolder)
-//	      ├── assign everyone READ + owner group ALL      (groupfolders groups)
-//	      ├── enable ACL + delegate `cassini` manager     (groupfolders acl/manageACL)
-//	      ├── migrate legacy recording-viewers leaf ACLs  (WebDAV PROPFIND/PROPPATCH)
-//	      ├── root ACL: cassini ALL + everyone READ       (WebDAV PROPPATCH)
-//	      ├── remove legacy viewer/admin mappings/manager (groupfolders APIs)
-//	      └── MKCOL Cassini/Recordings/meetings           (WebDAV)
+//	  ├── require the virtual "everyone" group            (Everyone Group app)
+//	  ├── ensure "Cassini" Team folder (default-deny)     (groupfolders addFolder)
+//	  ├── assign everyone READ + owner group ALL          (groupfolders groups)
+//	  ├── enable ACL + delegate `cassini` manager         (groupfolders acl/manageACL)
+//	  ├── migrate legacy recording-viewers leaf ACLs      (WebDAV PROPFIND/PROPPATCH)
+//	  ├── root ACL: cassini ALL + everyone READ           (WebDAV PROPPATCH)
+//	  ├── remove legacy viewer/admin mappings/manager     (groupfolders APIs)
+//	  └── MKCOL Cassini/Recordings/meetings               (WebDAV)
 //
-// Everything is idempotent and best-effort: a failure is logged and never
-// blocks startup or delivery, and each step is safe to re-run on every enable.
+// Every step is idempotent and safe to re-run on every enable. A failure still
+// does not block startup, but since D-554 it is no longer merely logged: each
+// outcome is recorded (nc_access_status.go) and reported by GET /status, because
+// an ExApp whose group folder does not exist answers every request while serving
+// nobody their recordings.
 
 const (
 	// ncRecordingsOwnerGroup is the group whose members get a write-capable mount
@@ -165,8 +167,11 @@ func (c ExAppConfig) ensureRecordingsOwnerAccount(ctx context.Context, client *h
 		"userid":      {ncRecordingsOwner},
 		"password":    {password},
 		"displayname": {"Cassini recordings"},
-		// OCS decodes this as a PHP array. The scalar `groups` form returns a
-		// bare 400 on live Nextcloud and leaves every act-as-cassini call broken.
+		// "groups[]", not "groups". OCS decodes this field as a PHP array, and
+		// a scalar makes Nextcloud answer a bare 400 with an empty body — so
+		// the account is never created, every act-as-cassini call 401s, and
+		// nothing downstream can be provisioned. Verified against a live
+		// Nextcloud 32: "groups=" -> 400, "groups[]=" -> 200.
 		"groups[]": {ncRecordingsOwnerGroup},
 	})
 	if err != nil {
@@ -197,17 +202,27 @@ func randomPassword() (string, error) {
 	return "Cw1!" + base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// provisionNCFilesAccess first establishes the ownership/provisioning identities,
-// then creates the idempotent group-folder + ACL topology when access control is
-// enabled. The identity tier runs in both modes because uploads always act as
-// the recordings owner. No-op only outside AppAPI. Best-effort: every failure is
-// logged and never propagated. Runs on the enabled edge before startup sync.
+// provisionNCFilesAccess first establishes the ownership/provisioning
+// identities, then creates (idempotently) the group folder + ACL topology the
+// access-control model needs. No-op only outside AppAPI. Runs on the enabled
+// edge (in the EnabledCallback goroutine), before the archive startup sync.
+//
+// Every step used to be best-effort in the strict sense that nothing recorded
+// whether it worked: failures were logged and forgotten. They are still
+// non-fatal to startup — an operator that cannot provision should still come up
+// so an admin can look at it — but each outcome is now recorded and reported
+// through /status, because an ExApp whose group folder does not exist serves
+// nobody their recordings and must say so rather than degrade silently (D-554,
+// D-545 AC-7).
 func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Logger) {
 	if !c.appAPIActive() {
 		return
 	}
 	provisionMu.Lock()
 	defer provisionMu.Unlock()
+	// Recorded before the first step so a run that dies part-way still reports
+	// as an ExApp with a broken substrate, not as a standalone with none.
+	ncAccessSubstrate.markApplicable()
 	client := &http.Client{Timeout: ncProvisionTimeout}
 
 	// 0. The administrator creates the service account before any DAV call acts
@@ -215,9 +230,7 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	c.resolveProvisioningUser(ctx, client, logger)
 	if err := c.ensureRecordingsOwnerAccount(ctx, client, logger); err != nil {
 		logger.Printf("nc provision: ensure recordings account %q failed: %v — recordings setup incomplete", ncRecordingsOwner, err)
-		return
-	}
-	if !c.AccessControl {
+		ncAccessSubstrate.fail("recordings owner account "+ncRecordingsOwner, err)
 		return
 	}
 
@@ -228,10 +241,12 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	hasEveryone, err := c.groupExists(ctx, client, ncRecordingsEveryoneGroup)
 	if err != nil {
 		logger.Printf("nc provision: check required universal group %q: %v — access control setup incomplete", ncRecordingsEveryoneGroup, err)
+		ncAccessSubstrate.fail("universal group "+ncRecordingsEveryoneGroup+" lookup", err)
 		return
 	}
 	if !hasEveryone {
 		logger.Printf("nc provision: required universal group %q is unavailable; install/enable the Everyone Group app (group_everyone) — access control setup incomplete", ncRecordingsEveryoneGroup)
+		ncAccessSubstrate.fail("universal group "+ncRecordingsEveryoneGroup+" is unavailable (is the Everyone Group app, group_everyone, enabled?)", nil)
 		return
 	}
 
@@ -239,11 +254,16 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	folder, err := c.ensureRecordingsFolder(ctx, client)
 	if err != nil {
 		logger.Printf("nc provision: ensure group folder %q failed: %v — access control setup incomplete", ncRecordingsMount, err)
+		// The likeliest cause an admin can act on: the Group folders ("Team
+		// folders") app is one of the two native prerequisites an ExApp cannot
+		// install for itself.
+		ncAccessSubstrate.fail("group folder "+ncRecordingsMount+" (is the Group folders app enabled?)", err)
 		return
 	}
 	folderID, ok := folder.idInt()
 	if !ok {
 		logger.Printf("nc provision: group folder %q has no usable id — aborting", ncRecordingsMount)
+		ncAccessSubstrate.fail("group folder "+ncRecordingsMount+" has no usable id", nil)
 		return
 	}
 
@@ -253,9 +273,16 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	c.ensureFolderGroup(ctx, client, folderID, ncRecordingsEveryoneGroup, aclPermRead, logger)
 	c.ensureFolderGroup(ctx, client, folderID, ncRecordingsOwnerGroup, aclMaskAll, logger)
 
-	// 4. Advanced ACL on (idempotent).
+	// 4. Advanced ACL on (idempotent). This aborts rather than logging on,
+	//    because step 7 below unconditionally grants `everyone` READ at the
+	//    mount root: without advanced ACL there is no default-deny floor and no
+	//    per-leaf override, so continuing would make every registered account
+	//    able to read every recording. Before D-554 this path was reachable only
+	//    behind a flag that defaulted off; it now runs on every install.
 	if err := c.folderSetACL(ctx, client, folderID, true); err != nil {
-		logger.Printf("nc provision: enable advanced ACL folder=%d: %v", folderID, err)
+		logger.Printf("nc provision: enable advanced ACL folder=%d: %v — refusing to widen the root without it", folderID, err)
+		ncAccessSubstrate.fail("enable advanced ACL on group folder "+ncRecordingsMount, err)
+		return
 	}
 
 	// 5. Delegate the owner as ACL manager so it can PROPPATCH per-path rules.
@@ -273,14 +300,17 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	//    availability failure rather than an access leak — for the next retry.
 	if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, ncRecordingsMount, ownerOnlyContainerACLRules()); err != nil {
 		logger.Printf("nc provision: establish owner-only migration floor on %q: %v", ncRecordingsMount, err)
+		ncAccessSubstrate.fail("owner-only migration floor on "+ncRecordingsMount, err)
 		return
 	}
 	if err := c.selfHealLeafProtection(ctx, client, logger); err != nil {
 		logger.Printf("nc provision: migrate/protect recording ACLs: %v — leaving root owner-only", err)
+		ncAccessSubstrate.fail("migrate legacy recording ACLs (tree left owner-only)", err)
 		return
 	}
 	if err := c.protectExistingCatalog(ctx, client); err != nil {
 		logger.Printf("nc provision: migrate existing catalog ACL: %v — leaving root owner-only", err)
+		ncAccessSubstrate.fail("migrate catalog ACL (tree left owner-only)", err)
 		return
 	}
 
@@ -288,6 +318,7 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	//    now safely overrides that inherited grant as private or public.
 	if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, ncRecordingsMount, containerACLRules()); err != nil {
 		logger.Printf("nc provision: root container ACL %q: %v", ncRecordingsMount, err)
+		ncAccessSubstrate.fail("root container ACL on "+ncRecordingsMount, err)
 		return
 	}
 
@@ -317,6 +348,7 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 		}
 	}
 
+	ncAccessSubstrate.succeed()
 	logger.Printf("nc provision: recordings access control provisioned folder_id=%d mount=%s root=%s owner=%s audience_group=%s", folderID, ncRecordingsMount, ncRecordingsRoot, ncRecordingsOwner, ncRecordingsEveryoneGroup)
 }
 

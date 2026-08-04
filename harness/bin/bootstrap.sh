@@ -22,7 +22,10 @@ harness_bootstrap_core_nextcloud() {
   # ExApp cannot install for itself: Team folders supplies the shared tree and
   # advanced ACLs; Everyone Group supplies the virtual `everyone` group so every
   # account has the read-only mount from creation without membership sweeps.
-  # The ExApp creates the "Cassini" folder + ACLs itself on enable.
+  # Since D-554 neither is optional — recordings are access-controlled or they
+  # are not served. Installing them here mirrors the one-click app-store install
+  # a production admin does; the ExApp then creates the "Cassini" folder + ACLs
+  # itself on enable (operator nc_provision.go).
   log "Ensuring Group Folders app is installed/enabled"
   occ_ignore_failure app:install groupfolders >/dev/null 2>&1
   occ_ignore_failure app:enable groupfolders >/dev/null 2>&1

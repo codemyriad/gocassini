@@ -3,6 +3,7 @@ package operator
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,10 @@ import (
 	"testing"
 	"time"
 )
+
+// errStatusSubstrateProbe stands in for whatever Nextcloud said; the tests care
+// about how the failure is reported, not what caused it.
+var errStatusSubstrateProbe = errors.New("groupfolders app not enabled")
 
 func TestStatusHandlerReportsHealthyCPU(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
@@ -398,4 +403,113 @@ func TestJobMutationLogsIncludeAppAPIUser(t *testing.T) {
 	}
 	assertLogLineWithUser("accepted id=" + resp.ID)
 	assertLogLineWithUser("rerun accepted id=" + resp.ID)
+}
+
+// The substrate block exists because provisioning used to fail into a log line
+// and nothing else: the operator stayed "healthy" while serving nobody their
+// recordings (D-554 outcome 3, D-545 AC-7).
+
+func TestStatusReportsAStandaloneOperatorAsHealthyWithNoSubstrate(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if rec.Code != http.StatusOK || !resp.OK {
+		t.Fatalf("a standalone operator must not be unhealthy for want of a Nextcloud: %d %#v", rec.Code, resp)
+	}
+	if resp.RecordingsAccess.Applicable {
+		t.Fatalf("recordings access must not be applicable without AppAPI: %#v", resp.RecordingsAccess)
+	}
+	if !resp.RecordingsAccess.OK || resp.RecordingsAccess.Detail == "" {
+		t.Fatalf("an inapplicable substrate must read as OK and say why: %#v", resp.RecordingsAccess)
+	}
+}
+
+func TestStatusReportsAProvisionedSubstrate(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.succeed()
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if rec.Code != http.StatusOK || !resp.OK {
+		t.Fatalf("a provisioned substrate must be healthy: %d %#v", rec.Code, resp)
+	}
+	if !resp.RecordingsAccess.Applicable || !resp.RecordingsAccess.OK {
+		t.Fatalf("unexpected recordings access: %#v", resp.RecordingsAccess)
+	}
+	if resp.RecordingsAccess.CheckedAt == "" {
+		t.Fatal("a recorded outcome must carry when it was recorded")
+	}
+	// The sink is reported so an ExApp pinned to the local sink — where a
+	// provisioned substrate is inert rather than wrong — is distinguishable.
+	if resp.RecordingsAccess.PublishSink == "" {
+		t.Fatal("the resolved publish sink must be reported")
+	}
+}
+
+func TestStatusIsUnhealthyWhenTheSubstrateIsMissing(t *testing.T) {
+	// The whole point: a Group-folders-less instance answers every request and
+	// shows nobody their recordings. That is not healthy, and /status must not
+	// call it healthy.
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.fail("group folder Cassini (is the Group folders app enabled?)", errStatusSubstrateProbe)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 when the substrate is missing; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.OK || resp.RecordingsAccess.OK {
+		t.Fatalf("expected an unhealthy substrate: %#v", resp.RecordingsAccess)
+	}
+	// The detail has to be actionable: it names the step and the likely cause.
+	if !strings.Contains(resp.RecordingsAccess.Detail, "Group folders") {
+		t.Fatalf("detail is not actionable: %q", resp.RecordingsAccess.Detail)
+	}
+}
+
+func TestStatusReportsProvisioningThatHasNotRunYet(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.markApplicable()
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.RecordingsAccess.CheckedAt != "" {
+		t.Fatalf("nothing has been checked yet: %#v", resp.RecordingsAccess)
+	}
+	if !strings.Contains(resp.RecordingsAccess.Detail, "has not run yet") {
+		t.Fatalf("an ExApp that was never enabled must say so: %q", resp.RecordingsAccess.Detail)
+	}
 }

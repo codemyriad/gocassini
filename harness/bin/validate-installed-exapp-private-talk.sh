@@ -175,8 +175,8 @@ validate_files_archive_entry() {
   # filtered view, so nobody else -- the administrator included -- can read the
   # unfiltered archive index out of Files. This used to fetch it directly as
   # $ADMIN_USER, which worked only while `admin` was itself the recordings
-  # owner; D-532 moved ownership to the `cassini` service account, so in
-  # access-controlled mode that read is now a 404 by design.
+  # owner; D-532 moved ownership to the `cassini` service account and D-554 made
+  # the ACL unconditional, so that read is now a 404 by design.
   #
   # Assert what the caller is actually promised instead: the per-caller catalog
   # they were served names the meeting, and the recording itself is really in
@@ -388,8 +388,8 @@ archive_summary="$($VALIDATOR catalog-contains "${contains_args[@]}")" \
 # Archive preservation in Files itself. This used to read
 # Cassini/Recordings/catalog.json over WebDAV as $ADMIN_USER, which only worked
 # while `admin` was the recordings owner: the authoritative index is owner-only
-# on purpose (D-532 moved ownership to `cassini`), so in access-controlled mode
-# that read is a 404 now and asserting on it would be
+# on purpose (D-532 moved ownership to `cassini`, D-554 made the ACL
+# unconditional), so that read is a 404 now and asserting on it would be
 # asserting the archive index leaks.
 #
 # Assert on the recordings instead, which is the actual claim: every meeting

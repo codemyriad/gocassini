@@ -26,7 +26,7 @@ import (
 // This requires the recordings root to be a groupfolder with advanced ACL and a
 // default-deny floor, with the operator's owner delegated as its ACL manager —
 // a one-time setup documented in docs/exapp-nextcloud-recordings-permissions.md.
-// The whole layer is nil unless CASSINI_NC_ACCESS_CONTROL is enabled.
+// The whole layer is nil unless AppAPI is active.
 
 const (
 	// Nextcloud permission bits (OCP\Constants): READ=1, UPDATE=2, CREATE=4,
@@ -48,14 +48,15 @@ const (
 
 // ncFilesAccessApplier writes the advanced-ACL grants for one just-published
 // meeting, acting as the recordings owner (the delegated ACL manager). Nil
-// unless AppAPI is active and access control is enabled.
+// unless AppAPI is active.
 type ncFilesAccessApplier func(ctx context.Context, jobID string, mappings []aclMapping, public bool) error
 
-// ncFilesAccessApplier returns the closure, or nil when AppAPI is inactive or
-// access control is disabled (the default) — in which case delivery stays the
-// D-529 public archive with no ACL.
+// ncFilesAccessApplier returns the closure, or nil when AppAPI is inactive —
+// i.e. a standalone operator, which has no Nextcloud to write ACLs to. Inside
+// an ExApp there is no opt-out: per-participant access is the only model
+// (D-554).
 func (c ExAppConfig) ncFilesAccessApplier(_ *log.Logger) ncFilesAccessApplier {
-	if !c.appAPIActive() || !c.AccessControl {
+	if !c.appAPIActive() {
 		return nil
 	}
 	client := &http.Client{Timeout: ncFilesACLTimeout}

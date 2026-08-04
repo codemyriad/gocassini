@@ -142,7 +142,9 @@ func TestNCProxyServesADeniedReadAsNotFound(t *testing.T) {
 			t.Fatalf("expected a proxy for an AppAPI-active config")
 		}
 
-		r := httptest.NewRequest(http.MethodGet, "/published/meetings/secret.opus", nil)
+		// Every read is served as the caller now (D-554), so the request needs
+		// an identity to get past the fail-closed guard and reach upstream.
+		r := callerReq(http.MethodGet, "/published/meetings/secret.opus", "alice")
 		w := httptest.NewRecorder()
 		if !proxy(w, r, "meetings/secret.opus") {
 			t.Fatalf("proxy did not handle the request")
@@ -168,7 +170,7 @@ func TestNCProxyStillReportsAnUpstreamOutage(t *testing.T) {
 
 	cfg := testExAppConfig(srv.URL)
 	proxy := cfg.ncFilesProxy(log.New(&bytes.Buffer{}, "", 0))
-	r := httptest.NewRequest(http.MethodGet, "/published/meetings/x.opus", nil)
+	r := callerReq(http.MethodGet, "/published/meetings/x.opus", "alice")
 	w := httptest.NewRecorder()
 	proxy(w, r, "meetings/x.opus")
 	if w.Code != http.StatusBadGateway {

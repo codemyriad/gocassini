@@ -100,7 +100,7 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
   ExApp reads vs. what AppAPI injects, and the `deployment/` parity vars.
 - **[Production deployment notes](./exapp-talk-production-deployment.md)** — deployment shape and operational notes.
 - **[Recording tutorial](./exapp-talk-recording-tutorial.md)** — a manual end-to-end validation walkthrough.
-- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — opt-in per-participant access control (`CASSINI_NC_ACCESS_CONTROL`): Team folders + virtual Everyone Group prerequisites, automatic ACL provisioning, and permission management.
+- **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — how per-participant access control works: what the ExApp provisions automatically on enable, the Team folders + Everyone Group prerequisites, and how to manage who can see each recording.
 - **[Troubleshooting](./exapp-talk-troubleshooting.md)** — install/access issues seen in practice.
 - **[Trying the image locally](./exapp-test-locally.md)** — three tiers, from image-only checks to a production-shaped local install.
 - **[Releasing Cassini](./release.md)** — maintainer guide: the version ladder, the local `prepare-release.sh` flow, and the GitHub + App Store publish workflow.
@@ -192,9 +192,10 @@ Flagged so readers do not mistake intent for current behavior:
   effort.
 - **The portable `.opus` viewer** renders transcript + metadata; it does not yet
   render an embedded summary from `.opus` (published artifact directories do).
-- **Per-recording access control is opt-in in production.** The local harness
-  enables it by default, but enforced grants still require the documented Team
-  folders + Everyone Group apps and instance-specific ACL validation.
+- **Group folders ACL inheritance is version-sensitive.** Per-recording access
+  control is unconditional and provisioned automatically, but it still requires
+  the Team folders and Everyone Group apps, and it is worth validating traversal
+  on your own instance — the runbook has a checklist.
 
 ## Fast paths
 

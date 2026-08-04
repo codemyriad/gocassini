@@ -41,8 +41,8 @@ import (
 //   - layout mirrors the published site 1:1 under a hard-coded canonical root:
 //     <root>/catalog.json and <root>/meetings/<id>.opus. Room-namespaced
 //     (<root>/<room>/<id>.opus) layout and a configurable root come later.
-//   - PUBLIC: access control is out of scope; the operator reads/writes as the
-//     single owner and serves to any authenticated caller (D-530 adds the
+//   - Access control is now unconditional (D-554): the operator writes as the
+//     single owner and serves each caller as themselves (D-530 added the
 //     per-user/per-group access model on top of this topology).
 const (
 	// ncRecordingsOwner is the Nextcloud account that owns the canonical
@@ -177,7 +177,7 @@ func (c ExAppConfig) ncFilesUploader(logger *log.Logger) ncFilesUploader {
 			if err != nil {
 				return fmt.Errorf("put opus %s: %w", entry.Name(), err)
 			}
-			if c.AccessControl && status == http.StatusCreated {
+			if status == http.StatusCreated {
 				// A new file inherits the broad container traversal grant. Deny
 				// that group before catalog.json can advertise the file; the
 				// post-publish participant ACL replaces this owner-only baseline.
@@ -192,10 +192,8 @@ func (c ExAppConfig) ncFilesUploader(logger *log.Logger) ncFilesUploader {
 		// lacks one, so an unprotected .opus (e.g. a create-time deny that failed
 		// on a prior sync) would be readable by every logged-in user. Only the
 		// offenders are corrected, preserving existing participant allows.
-		if c.AccessControl {
-			if err := c.selfHealLeafProtection(ctx, client, logger); err != nil {
-				return fmt.Errorf("protect recording ACLs: %w", err)
-			}
+		if err := c.selfHealLeafProtection(ctx, client, logger); err != nil {
+			return fmt.Errorf("protect recording ACLs: %w", err)
 		}
 
 		// Publish the whole catalog last. If any .opus PUT fails, readers retain
@@ -205,13 +203,11 @@ func (c ExAppConfig) ncFilesUploader(logger *log.Logger) ncFilesUploader {
 		if err := c.davPutFile(ctx, client, ncRecordingsOwner, catalogRemote, catalogLocal, "application/json"); err != nil {
 			return fmt.Errorf("put catalog: %w", err)
 		}
-		if c.AccessControl {
-			// The virtual all-users group may traverse the container directories, but
-			// must not be able to read the unfiltered authoritative catalog from
-			// Files. The operator reads it as the owner and filters it per caller.
-			if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, catalogRemote, catalogProtectionACLRules()); err != nil {
-				return fmt.Errorf("protect catalog: %w", err)
-			}
+		// The virtual all-users group may traverse the container directories, but
+		// must not be able to read the unfiltered authoritative catalog from
+		// Files. The operator reads it as the owner and filters it per caller.
+		if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, catalogRemote, catalogProtectionACLRules()); err != nil {
+			return fmt.Errorf("protect catalog: %w", err)
 		}
 		return nil
 	}
@@ -307,34 +303,32 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 	// bounded by the request context; a hung upstream is bounded on headers.
 	client := &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}}
 	return func(w http.ResponseWriter, r *http.Request, relPath string) bool {
-		actAs := ncRecordingsOwner
-		if c.AccessControl {
-			// Per-user access control (D-534): serve each caller only what they
-			// may read. The caller identity comes from the AppAPI-verified
-			// request; these routes are USER-gated, so it is always present.
-			caller := appapi.UserID(r.Context())
-			if caller == "" {
-				if logger != nil {
-					logger.Printf("nc files read: missing caller identity path=%s — failing closed", relPath)
-				}
-				if relPath == "catalog.json" {
-					writeCatalogJSON(w, []byte(emptyCatalogJSON))
-				} else {
-					http.NotFound(w, r)
-				}
-				return true
+		// Per-user access control (D-534, unconditional since D-554): serve each
+		// caller only what they may read. The caller identity comes from the
+		// AppAPI-verified request; these routes are USER-gated, so it is always
+		// present. There is no owner-identity path left — serving the archive as
+		// the owner is precisely the org-wide behaviour D-521 retired.
+		caller := appapi.UserID(r.Context())
+		if caller == "" {
+			if logger != nil {
+				logger.Printf("nc files read: missing caller identity path=%s — failing closed", relPath)
 			}
 			if relPath == "catalog.json" {
-				// The list is built per caller (authoritative catalog filtered
-				// by the caller's own PROPFIND scan), not streamed as-is.
-				c.serveFilteredCatalog(r.Context(), w, client, caller, logger)
-				return true
+				writeCatalogJSON(w, []byte(emptyCatalogJSON))
+			} else {
+				http.NotFound(w, r)
 			}
-			// meetings/<id>.opus: fetch AS the caller so Nextcloud enforces the
-			// per-file ACL — a non-readable meeting 404s and never leaks.
-			actAs = caller
+			return true
 		}
-		davURL := c.davFileURL(actAs, ncRecordingsRoot+"/"+strings.TrimPrefix(relPath, "/"))
+		if relPath == "catalog.json" {
+			// The list is built per caller (authoritative catalog filtered
+			// by the caller's own PROPFIND scan), not streamed as-is.
+			c.serveFilteredCatalog(r.Context(), w, client, caller, logger)
+			return true
+		}
+		// meetings/<id>.opus: fetch AS the caller so Nextcloud enforces the
+		// per-file ACL — a non-readable meeting 404s and never leaks.
+		davURL := c.davFileURL(caller, ncRecordingsRoot+"/"+strings.TrimPrefix(relPath, "/"))
 		req, err := http.NewRequestWithContext(r.Context(), r.Method, davURL, nil)
 		if err != nil {
 			if logger != nil {
@@ -343,7 +337,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 			http.Error(w, "Nextcloud Files request failed", http.StatusInternalServerError)
 			return true
 		}
-		c.setAppAPIDAVHeadersForUser(req, actAs)
+		c.setAppAPIDAVHeadersForUser(req, caller)
 		if rng := r.Header.Get("Range"); rng != "" {
 			req.Header.Set("Range", rng)
 		}

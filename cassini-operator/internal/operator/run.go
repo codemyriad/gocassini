@@ -103,8 +103,8 @@ type Runtime struct {
 	// fetchTalkParticipants resolves a Talk room's grantable ACL principals and
 	// applyNCFilesAccessFn writes the per-meeting advanced-ACL grants
 	// (talk_participants.go / webdav_acl.go, D-534). Both nil unless AppAPI is
-	// active and CASSINI_NC_ACCESS_CONTROL is enabled; access control is off by
-	// default, keeping the D-529 public archive.
+	// active — inside an ExApp per-participant access is the only model there
+	// is (D-554), so there is nothing left to opt into.
 	fetchTalkParticipants talkParticipantsFetcher
 	applyNCFilesAccessFn  ncFilesAccessApplier
 	// recordStopAckGrace and recordStopFinalizeGrace default to the package
@@ -228,9 +228,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		// not immediately at process start (which deterministically gets 401).
 		exappCfg.onEnabled = func(enabled bool) {
 			if enabled {
-				// Ensure the dedicated recordings owner first, then provision the Team-
-				// folder + ACL topology when access control is enabled. This runs before
-				// archive sync so the first delivery acts as an existing, mounted owner.
+				// Ensure the dedicated recordings owner, then provision the Team-
+				// folder + ACL topology. This runs before archive sync so the
+				// first delivery acts as an existing, mounted owner.
 				exappCfg.provisionNCFilesAccess(runtime.ctx, logger)
 				runtime.syncNCFilesOnStartup()
 			}

@@ -12,7 +12,6 @@ import (
 
 func aclProxyConfig(url string) ExAppConfig {
 	cfg := testExAppConfig(url)
-	cfg.AccessControl = true
 	return cfg
 }
 

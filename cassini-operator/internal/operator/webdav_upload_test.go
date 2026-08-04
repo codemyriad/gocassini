@@ -54,6 +54,12 @@ func TestNCFilesUploaderMirrorsArchive(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 		case http.MethodPut:
 			w.WriteHeader(http.StatusCreated)
+		case "PROPFIND":
+			// The self-heal sweep reads every leaf's current ACL before
+			// advertising the catalog, and since D-554 a failure there fails
+			// the upload. An empty multistatus is "nothing to repair".
+			w.WriteHeader(http.StatusMultiStatus)
+			io.WriteString(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"/>`)
 		default:
 			w.WriteHeader(http.StatusOK)
 		}
@@ -151,6 +157,13 @@ func TestNCFilesUploaderPublishesEmptyCatalog(t *testing.T) {
 			puts[r.URL.Path] = true
 			mu.Unlock()
 		}
+		if r.Method == "PROPFIND" {
+			// See TestNCFilesUploaderMirrorsArchive: the self-heal sweep runs
+			// unconditionally now and needs a parseable multistatus.
+			w.WriteHeader(http.StatusMultiStatus)
+			io.WriteString(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"/>`)
+			return
+		}
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer srv.Close()
@@ -171,7 +184,7 @@ func TestNCFilesUploaderPublishesEmptyCatalog(t *testing.T) {
 	}
 }
 
-func TestNCFilesUploaderProtectsCatalogWhenAccessControlEnabled(t *testing.T) {
+func TestNCFilesUploaderProtectsCatalog(t *testing.T) {
 	var got []davRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -200,7 +213,6 @@ func TestNCFilesUploaderProtectsCatalogWhenAccessControlEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = true
 	if err := cfg.ncFilesUploader(nil)(context.Background(), siteRoot); err != nil {
 		t.Fatalf("upload: %v", err)
 	}
@@ -243,9 +255,12 @@ func TestNCFilesUploaderProtectsCatalogWhenAccessControlEnabled(t *testing.T) {
 	}
 }
 
+// The relay path is meetings/<id>.opus: catalog.json is built per caller rather
+// than streamed (webdav_read_test.go covers that), so this is where byte
+// relaying and Range forwarding actually happen.
 func TestNCFilesProxyRelaysAndForwardsRange(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/catalog.json") {
+		if !strings.HasSuffix(r.URL.Path, "/meetings/demo.opus") {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -253,12 +268,12 @@ func TestNCFilesProxyRelaysAndForwardsRange(t *testing.T) {
 			w.Header().Set("Content-Range", "bytes 0-3/7")
 			w.Header().Set("Accept-Ranges", "bytes")
 			w.WriteHeader(http.StatusPartialContent)
-			_, _ = w.Write([]byte("CATA"))
+			_, _ = w.Write([]byte("OPUS"))
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "audio/ogg")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("CATALOG"))
+		_, _ = w.Write([]byte("OPUSBYTES"))
 	}))
 	defer srv.Close()
 
@@ -269,28 +284,22 @@ func TestNCFilesProxyRelaysAndForwardsRange(t *testing.T) {
 
 	// Full GET.
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/published/catalog.json", nil)
-	if !proxy(rec, req, "catalog.json") {
-		t.Fatal("proxy should have served catalog.json")
+	req := callerReq(http.MethodGet, "/published/meetings/demo.opus", "alice")
+	if !proxy(rec, req, "meetings/demo.opus") {
+		t.Fatal("proxy should have served the recording")
 	}
-	if rec.Code != http.StatusOK || rec.Body.String() != "CATALOG" {
+	if rec.Code != http.StatusOK || rec.Body.String() != "OPUSBYTES" {
 		t.Errorf("full GET: code=%d body=%q", rec.Code, rec.Body.String())
 	}
 	if got := rec.Header().Get(ncFilesSourceHeader); got != ncFilesSourceValue {
 		t.Errorf("source header = %q, want %q", got, ncFilesSourceValue)
 	}
-	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
-		t.Errorf("catalog Cache-Control = %q, want no-store", got)
-	}
-	if got := rec.Header().Get("Content-Type"); got != "application/json" {
-		t.Errorf("catalog Content-Type = %q, want application/json", got)
-	}
 
 	// Range GET is forwarded and 206 relayed.
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/published/catalog.json", nil)
+	req = callerReq(http.MethodGet, "/published/meetings/demo.opus", "alice")
 	req.Header.Set("Range", "bytes=0-3")
-	if !proxy(rec, req, "catalog.json") {
+	if !proxy(rec, req, "meetings/demo.opus") {
 		t.Fatal("proxy should have served the ranged request")
 	}
 	if rec.Code != http.StatusPartialContent {
@@ -299,7 +308,7 @@ func TestNCFilesProxyRelaysAndForwardsRange(t *testing.T) {
 	if rec.Header().Get("Content-Range") != "bytes 0-3/7" {
 		t.Errorf("Content-Range not relayed: %q", rec.Header().Get("Content-Range"))
 	}
-	if rec.Body.String() != "CATA" {
+	if rec.Body.String() != "OPUS" {
 		t.Errorf("range body = %q", rec.Body.String())
 	}
 }
@@ -312,7 +321,7 @@ func TestNCFilesProxyMakesFilesMissAuthoritative(t *testing.T) {
 
 	proxy := testExAppConfig(srv.URL).ncFilesProxy(nil)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/published/meetings/nope.opus", nil)
+	req := callerReq(http.MethodGet, "/published/meetings/nope.opus", "alice")
 	if !proxy(rec, req, "meetings/nope.opus") {
 		t.Fatal("configured Files proxy must handle a miss without local fallback")
 	}
@@ -360,8 +369,10 @@ func TestNCFilesProxyReturnsBadGatewayWhenFilesUnavailable(t *testing.T) {
 
 	proxy := testExAppConfig(url).ncFilesProxy(nil)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/published/catalog.json", nil)
-	if !proxy(rec, req, "catalog.json") {
+	// A recording rather than the catalog: an unreachable Files must surface as
+	// an outage, where the catalog deliberately fails closed to an empty list.
+	req := callerReq(http.MethodGet, "/published/meetings/x.opus", "alice")
+	if !proxy(rec, req, "meetings/x.opus") {
 		t.Fatal("configured Files proxy must handle an upstream failure")
 	}
 	if rec.Code != http.StatusBadGateway {

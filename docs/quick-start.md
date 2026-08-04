@@ -44,17 +44,17 @@ This one command:
 - installs the native Team folders and Everyone Group prerequisites;
 - builds and tags the Cassini ExApp image from `appinfo/info.xml`;
 - installs/reinstalls Cassini via AppAPI;
-- passes both Talk secrets and `CASSINI_NC_ACCESS_CONTROL=true` as deploy env,
-  and points Talk's `recording_servers` at the installed ExApp proxy path.
+- passes both Talk secrets as deploy env, and points Talk's `recording_servers`
+  at the installed ExApp proxy path.
 
 The first run is slow — it builds the ExApp image. Later runs without `--build`
 reuse the existing image. Keep `--build` when validating changes in the current
 checkout; otherwise the harness deliberately runs the previously built image,
 which may be an older release even though Git is on your feature branch.
-Access control is on by default in the harness, which installs its native apps
-and lets Cassini provision the Team folder/ACL topology automatically. See
-[Recording permissions](./exapp-nextcloud-recordings-permissions.md). Use
-`--nc-access-control=false` only to compare the legacy public behavior.
+Recordings are access-controlled — there is no other mode. The harness enables
+the Team folders and Everyone Group apps and the ExApp provisions the recordings
+folder and its permissions on enable — see
+[Recording permissions](./exapp-nextcloud-recordings-permissions.md).
 
 When it finishes, open Nextcloud and sign in as `admin` / `admin`:
 

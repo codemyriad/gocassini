@@ -21,7 +21,6 @@ AppAPI only forwards env vars declared in `info.xml`, so declaring it there is a
 | `CASSINI_TALK_RECORDING_SECRET` | Yes for Talk record button | Admin deploy option declared in `appinfo/info.xml` | HMAC shared secret for Talk's recording-backend protocol; must match `spreed.recording_servers.secret`. |
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | Yes for HPB-internal/default Talk recording | Admin deploy option declared in `appinfo/info.xml` | Internal client secret for standalone Nextcloud Talk signaling / HPB; must match signaling config `[clients] internalsecret`. |
 | `CASSINI_TALK_BACKEND_URL` | Optional, sometimes required | Admin deploy option declared in `appinfo/info.xml` | Override base URL the operator uses for status callbacks and OCS calls back to Nextcloud. Use when Talk advertises a URL unreachable from the ExApp container. |
-| `CASSINI_NC_ACCESS_CONTROL` | Optional in production; defaults to `true` in the local harness | Admin deploy option declared in `appinfo/info.xml` | Enables per-participant Nextcloud Files access control. Requires the native Team folders (`groupfolders`) and Everyone Group (`group_everyone`) apps; Cassini provisions the folder/ACL topology. |
 | `OPENROUTER_API_KEY` | Optional | Admin deploy option | Enables transcript cleanup / summaries through OpenRouter or compatible endpoint. Privacy: when set, the full local transcript is sent to that third party; transcription itself is always local. |
 | `LLM_BASE_URL` | Optional | Admin deploy option | OpenAI-compatible base URL. |
 | `LLM_MODEL` | Optional | Admin deploy option | Model identifier for cleanup/summaries. |
@@ -65,7 +64,6 @@ Important parity vars:
 | `SPREED_PROFILE` | `full` | Legacy compatibility profile. Prefer `CASSINI_HARNESS_SERVICE_MODE` / `cassini dev stack --services` for new flows. |
 | `CASSINI_HARNESS_SERVICE_MODE` | `legacy-default`, `core`, `appapi`, `full`, `full-remote` | Resolved service topology for `cassini dev stack`. |
 | `CASSINI_HARNESS_CASSINI_MODE` | `none`, `installed-exapp` | Whether stack setup installs/registers Cassini as an ExApp. Default is `none`. |
-| `CASSINI_NC_ACCESS_CONTROL` | `true` (harness default), `false` | Value passed to the installed ExApp; CLI equivalent is `--nc-access-control=true|false`. |
 | `CASSINI_HARNESS_RECORDING_BACKEND` | `legacy`, `direct-operator`, `installed-exapp`, `none` | Which Talk recording backend bootstrap writes. |
 | `CASSINI_HARNESS_EXAPP_IMAGE_MODE` | `build`, `reuse-local`, `pull` | Installed-ExApp image strategy. `--build` maps to `build`. |
 | `CASSINI_HARNESS_PATCH_MODE` | `auto`, `none`, `force` | Scenario-associated patch behavior, mapping to `--patch=auto|none|force`. |
@@ -89,7 +87,6 @@ occ app_api:app:register gocassini <daemon-name> \
   --info-xml /tmp/gocassini-info.xml \
   --env CASSINI_TALK_RECORDING_SECRET="${CASSINI_SECRET}" \
   --env CASSINI_TALK_SIGNALING_INTERNAL_SECRET="${SIGNALING_INTERNAL_SECRET}" \
-  --env CASSINI_NC_ACCESS_CONTROL=true \
   --wait-finish
 ```
 

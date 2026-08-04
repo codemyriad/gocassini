@@ -61,6 +61,19 @@ func TestParseOCSGroupList(t *testing.T) {
 	}
 }
 
+func TestParseOCSUserListAndStatusCode(t *testing.T) {
+	users, err := parseOCSUserList([]byte(`{"ocs":{"meta":{"statuscode":200},"data":{"users":["a","b"]}}}`))
+	if err != nil || len(users) != 2 || users[0] != "a" || users[1] != "b" {
+		t.Fatalf("parseOCSUserList = %v, %v", users, err)
+	}
+	if code := ocsStatusCode([]byte(`{"ocs":{"meta":{"statuscode":102,"message":"group exists"}}}`)); code != 102 {
+		t.Errorf("ocsStatusCode = %d, want 102", code)
+	}
+	if code := ocsStatusCode([]byte(`not json`)); code != -1 {
+		t.Errorf("ocsStatusCode(garbage) = %d, want -1", code)
+	}
+}
+
 func TestWithFormatJSONAndBoolForm(t *testing.T) {
 	if got := withFormatJSON("http://x/y"); got != "http://x/y?format=json" {
 		t.Errorf("withFormatJSON no-query = %q", got)
@@ -91,12 +104,26 @@ type provisionMock struct {
 	adminList string
 	// userExists makes service-account creation return OCS 102.
 	userExists bool
+	// failPath makes any request whose path ends with this suffix answer 500,
+	// for the provisioning steps that must now abort rather than log on.
+	failPath string
 }
 
 func resetProvisioningUser(t *testing.T) {
 	t.Helper()
 	resolvedProvisioningUser.Store(nil)
 	t.Cleanup(func() { resolvedProvisioningUser.Store(nil) })
+}
+
+// resetSubstrateRecord is mandatory in every test that calls
+// provisionNCFilesAccess. ncAccessSubstrate is a package-level singleton and
+// the whole package's tests run in one binary, so a test that deliberately
+// ends in a failed state would otherwise make statusHandler answer 503 for
+// every later test in status_test.go.
+func resetSubstrateRecord(t *testing.T) {
+	t.Helper()
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
 }
 
 func (m *provisionMock) record(r *http.Request) {
@@ -145,6 +172,8 @@ func (m *provisionMock) handler(t *testing.T) http.Handler {
 		m.record(r)
 		p := r.URL.Path
 		switch {
+		case m.failPath != "" && strings.HasSuffix(p, m.failPath):
+			w.WriteHeader(http.StatusInternalServerError)
 		case r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/groups":
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"groups":`+m.groups+`}}}`)
 		case r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/groups/admin":
@@ -174,12 +203,12 @@ func (m *provisionMock) handler(t *testing.T) http.Handler {
 
 func TestProvisionFreshUsesEveryoneAndDedicatedOwner(t *testing.T) {
 	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
 	mock := &provisionMock{folders: `[]`, groups: `["admin","everyone"]`}
 	srv := httptest.NewServer(mock.handler(t))
 	defer srv.Close()
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = true
 	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
 
 	adminAuth := base64.StdEncoding.EncodeToString([]byte(defaultNextcloudAdminUser + ":" + cfg.AppSecret))
@@ -227,12 +256,12 @@ func TestProvisionFreshUsesEveryoneAndDedicatedOwner(t *testing.T) {
 
 func TestProvisionRequiresUniversalGroup(t *testing.T) {
 	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
 	mock := &provisionMock{folders: `[]`, groups: `["admin"]`}
 	srv := httptest.NewServer(mock.handler(t))
 	defer srv.Close()
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = true
 	var logs strings.Builder
 	cfg.provisionNCFilesAccess(context.Background(), log.New(&logs, "", 0))
 
@@ -242,10 +271,15 @@ func TestProvisionRequiresUniversalGroup(t *testing.T) {
 	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); ok {
 		t.Fatal("provisioning created a folder without the required universal group")
 	}
+	// The log is for whoever is tailing it; /status is for whoever is not.
+	if detail := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles).Detail; !strings.Contains(detail, "group_everyone") {
+		t.Fatalf("substrate detail = %q, want it to name the prerequisite", detail)
+	}
 }
 
 func TestProvisionExistingFolderMigratesLegacyMountMapping(t *testing.T) {
 	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
 	mock := &provisionMock{
 		folders: `{"3":{"id":3,"mount_point":"Cassini","groups":{"admin":{"permissions":31},"recording-viewers":{"permissions":1}},"manage":[{"type":"user","id":"` + ncRecordingsOwner + `"},{"type":"user","id":"admin"}]}}`,
 		groups:  `["admin","everyone","recording-viewers"]`,
@@ -254,7 +288,6 @@ func TestProvisionExistingFolderMigratesLegacyMountMapping(t *testing.T) {
 	defer srv.Close()
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = true
 	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
 
 	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); ok {
@@ -289,32 +322,130 @@ func TestGroupExistsUsesExactID(t *testing.T) {
 	}
 }
 
-func TestProvisionCreatesOwnerWithAccessControlOff(t *testing.T) {
+// The identity tier runs before — and independently of — the topology tier, so
+// a substrate that cannot be built must still leave behind the account every
+// archive object is written as. Otherwise a later, fixed install would find
+// itself acting as a user that does not exist.
+func TestProvisionCreatesTheOwnerEvenWhenTheSubstrateCannotBeBuilt(t *testing.T) {
 	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
 	mock := &provisionMock{folders: `[]`, groups: `[]`}
 	srv := httptest.NewServer(mock.handler(t))
 	defer srv.Close()
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = false
 	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
 
 	if _, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users"); !ok {
-		t.Fatal("service account was not created with access control off")
+		t.Fatal("service account was not created")
 	}
 	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); ok {
-		t.Fatal("access-control topology was provisioned with access control off")
+		t.Fatal("a group folder was provisioned without the required universal group")
+	}
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if !snap.Applicable || snap.OK {
+		t.Fatalf("substrate = %+v, want applicable and not ok", snap)
+	}
+	if !strings.Contains(snap.Detail, "group_everyone") {
+		t.Fatalf("substrate detail = %q, want it to name the missing app", snap.Detail)
+	}
+}
+
+// The Group folders app is the other native prerequisite an ExApp cannot
+// install for itself, and its absence surfaces as a failed folder creation.
+// /status must name it rather than reporting an opaque failure.
+func TestProvisionRecordsSubstrateFailureWhenTheGroupFolderCannotBeCreated(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	mock := &provisionMock{folders: `[]`, groups: `["admin","everyone"]`, failPath: "/apps/groupfolders/folders"}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	testExAppConfig(srv.URL).provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
+
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if !snap.Applicable || snap.OK {
+		t.Fatalf("substrate = %+v, want applicable and not ok", snap)
+	}
+	if !strings.Contains(snap.Detail, "Group folders") {
+		t.Fatalf("substrate detail = %q, want it to name the Group folders app", snap.Detail)
+	}
+}
+
+// The root grant gives the virtual `everyone` group read on the whole mount.
+// It is only safe under the default-deny floor that advanced ACL provides, and
+// before D-554 this path was reachable only behind a flag that defaulted off.
+// Failing to enable the ACL must therefore abort, not log and widen.
+func TestProvisionAbortsBeforeTheBroadRootGrantWhenAdvancedACLCannotBeEnabled(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	mock := &provisionMock{folders: `[]`, groups: `["admin","everyone"]`, failPath: "/folders/9/acl"}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	testExAppConfig(srv.URL).provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
+
+	if r, ok := mock.findLast("PROPPATCH", "/remote.php/dav/files/"+ncRecordingsOwner+"/Cassini"); ok {
+		if strings.Contains(r.body, ncRecordingsEveryoneGroup) {
+			t.Fatalf("root was widened to %s without an ACL floor: %s", ncRecordingsEveryoneGroup, r.body)
+		}
+	}
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.OK || !strings.Contains(snap.Detail, "advanced ACL") {
+		t.Fatalf("substrate = %+v, want a recorded advanced-ACL failure", snap)
+	}
+}
+
+// A stock install is the env AppAPI injects and nothing more — no opt-in, no
+// extra variable. It must yield the whole substrate, which is the acceptance
+// criterion D-554 exists for.
+func TestProvisionBuildsTheWholeSubstrateForAStockInstall(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	mock := &provisionMock{folders: `[]`, groups: `["admin","everyone"]`}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	testExAppConfig(srv.URL).provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
+
+	// The identity tier: the account every archive object is written as.
+	if _, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users"); !ok {
+		t.Fatal("the service account was not created")
+	}
+	if _, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users/"+ncRecordingsOwner+"/groups"); !ok {
+		t.Fatal("the service account was not added to the owner group")
+	}
+	// The topology tier, which used to be behind the flag.
+	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); !ok {
+		t.Fatal("the group folder was not provisioned for a stock install")
+	}
+	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders/9/acl"); !ok {
+		t.Fatal("the group folder ACL floor was not enabled for a stock install")
+	}
+	// The audience: a universal read mount, and the matching root grant that
+	// every leaf then overrides as private or public.
+	if r, ok := mock.find(http.MethodPost, "/folders/9/groups/"+ncRecordingsEveryoneGroup); !ok || !strings.Contains(r.body, "permissions=1") {
+		t.Fatalf("universal read mount not installed: %+v ok=%v", r, ok)
+	}
+	if r, ok := mock.findLast("PROPPATCH", "/remote.php/dav/files/"+ncRecordingsOwner+"/Cassini"); !ok {
+		t.Fatal("root container ACL PROPPATCH missing")
+	} else if !strings.Contains(r.body, ncRecordingsEveryoneGroup) || !strings.Contains(r.body, "<nc:acl-permissions>1</nc:acl-permissions>") {
+		t.Fatalf("root container ACL body missing the everyone read grant: %s", r.body)
+	}
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if !snap.Applicable || !snap.OK {
+		t.Fatalf("substrate = %+v, want applicable and ok", snap)
 	}
 }
 
 func TestProvisionNoopWithoutAppAPI(t *testing.T) {
 	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
 	mock := &provisionMock{folders: `[]`, groups: `[]`}
 	srv := httptest.NewServer(mock.handler(t))
 	defer srv.Close()
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = true
 	cfg.AppSecret = ""
 	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
 
@@ -325,14 +456,14 @@ func TestProvisionNoopWithoutAppAPI(t *testing.T) {
 	}
 }
 
-func TestProvisionCreatesServiceAccountWithArrayGroupField(t *testing.T) {
+func TestProvisionCreatesTheRecordingsServiceAccount(t *testing.T) {
 	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
 	mock := &provisionMock{folders: `[]`, groups: `["admin","everyone"]`}
 	srv := httptest.NewServer(mock.handler(t))
 	defer srv.Close()
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = false
 	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
 
 	create, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users")
@@ -342,26 +473,46 @@ func TestProvisionCreatesServiceAccountWithArrayGroupField(t *testing.T) {
 	if !strings.Contains(create.body, "userid="+ncRecordingsOwner) {
 		t.Fatalf("create body = %q, want userid=%s", create.body, ncRecordingsOwner)
 	}
+	// It must land in the owner group, or it has no write-capable mount of the
+	// group folder and every delivery fails.
+	//
+	// The spelling is load-bearing and this assertion used to have it wrong.
+	// OCS decodes this field as a PHP array: "groups[]" (url-encoded
+	// "groups%5B%5D") works, a scalar "groups" makes Nextcloud answer a bare
+	// 400 with an empty body. Against a mock that accepts anything the
+	// difference is invisible, which is exactly how it reached a live instance
+	// — where the account was never created and every act-as-cassini call 401d.
 	if !strings.Contains(create.body, "groups%5B%5D="+ncRecordingsOwnerGroup) {
-		t.Fatalf("create body = %q, want groups%%5B%%5D=%s", create.body, ncRecordingsOwnerGroup)
+		t.Fatalf("create body = %q, want the array form groups%%5B%%5D=%s", create.body, ncRecordingsOwnerGroup)
 	}
 	if strings.Contains(create.body, "groups="+ncRecordingsOwnerGroup) {
-		t.Fatalf("create body uses scalar groups field rejected by Nextcloud: %q", create.body)
+		t.Fatalf("create body uses the scalar form, which Nextcloud rejects with 400: %q", create.body)
 	}
+	// The account is created BY the administrator. Acting as the account we are
+	// about to create would be circular.
 	wantAdmin := base64.StdEncoding.EncodeToString([]byte(defaultNextcloudAdminUser + ":" + cfg.AppSecret))
 	if create.auth != wantAdmin {
 		t.Fatalf("create auth = %q, want administrator %q", create.auth, wantAdmin)
 	}
+	// The generated password must never reach the log or any record of the
+	// request beyond Nextcloud itself; we only assert it is present, never
+	// what it is.
+	if !strings.Contains(create.body, "password=") {
+		t.Fatalf("create body has no password: %q", create.body)
+	}
 }
 
-func TestProvisionUsesDiscoveredAdministrator(t *testing.T) {
+// "admin" is conventional, not guaranteed. An instance whose administrator is
+// named something else must still provision, acting as whoever is actually in
+// the admin group.
+func TestProvisionResolvesTheAdministratorRatherThanAssumingAdmin(t *testing.T) {
 	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
 	mock := &provisionMock{folders: `[]`, groups: `["everyone"]`, adminList: `["ops-root"]`}
 	srv := httptest.NewServer(mock.handler(t))
 	defer srv.Close()
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = false
 	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
 
 	create, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users")
@@ -376,12 +527,12 @@ func TestProvisionUsesDiscoveredAdministrator(t *testing.T) {
 
 func TestProvisionAcceptsExistingServiceAccount(t *testing.T) {
 	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
 	mock := &provisionMock{folders: `[]`, groups: `["admin","everyone"]`, userExists: true}
 	srv := httptest.NewServer(mock.handler(t))
 	defer srv.Close()
 
 	cfg := testExAppConfig(srv.URL)
-	cfg.AccessControl = true
 	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
 
 	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); !ok {
