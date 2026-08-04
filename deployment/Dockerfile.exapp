@@ -8,8 +8,13 @@
 #   /usr/local/bin/healthcheck.sh                  liveness probe
 #   /opt/cassini/lib                               sherpa-onnx native libs
 #   /opt/cassini/cassini-app/dist                  Cassini SPA build (served /viewer + /ui/viewer.*)
-#   /opt/cassini/cassini-viewer/dist               viewing-layer build (publisher export tooling)
+#   /opt/cassini/cassini-viewer/dist               viewing-layer build (only for `cassini publish --rebuild-viewer`)
 #   /opt/cassini/cassini-publisher/bin/...         Node publish runner (unchanged from operator image)
+#
+# Publish is lightweight by default (D-531): `cassini publish` writes
+# catalog.json + meetings/ into the site root and does NOT embed the viewer
+# shell. The shell is served from CASSINI_VIEWER_DIST (cassini-app/dist) by the
+# operator's viewerHandler, so no CASSINI_PUBLISH_REBUILD_VIEWER is set here.
 
 ARG FRP_VERSION=0.61.1
 

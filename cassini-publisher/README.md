@@ -19,10 +19,14 @@ It does not:
 ## Tools
 
 - `bin/export-static-meetings.sh`: package one or more existing artifact
-  directories into a static meeting library using the viewer build.
+  directories into a meeting library. **Lightweight by default** (D-531): writes
+  `catalog.json` + `meetings/` only; the viewer shell is served separately (from
+  the Docker image in a deployment). Pass `--rebuild-viewer` to also embed the
+  viewer shell (`index.html` + `assets/`) for a self-contained static site — that
+  path uses the viewer build.
 - `bin/merge-published-sites.sh`: merge two existing published site roots into
-  one combined site, preserving the viewer shell and merging `catalog.json` plus
-  referenced meeting artifacts.
+  one combined site, preserving whatever site shell is present and merging
+  `catalog.json` plus referenced meeting artifacts.
 
 ## Typical flows
 

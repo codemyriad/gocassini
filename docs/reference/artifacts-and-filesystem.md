@@ -74,13 +74,13 @@ as the durable, user-facing meeting artifact.
 
 ## `.site` bundle
 
-Typical contents:
+Typical contents (lightweight by default — D-531):
 
-- `index.html`
-- `assets/...`
 - `catalog.json`
 - `meetings/<meeting-id>/...`
 - site-level `cassini.json`
+- `index.html` + `assets/...` — **only** when published with `--rebuild-viewer`;
+  by default the viewer shell is served from the Docker image, not the site
 
 Conceptually:
 

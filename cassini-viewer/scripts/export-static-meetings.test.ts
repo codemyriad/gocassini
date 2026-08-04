@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1075,6 +1075,29 @@ describe("parseArgs", () => {
     expect(sourceDir).toContain("/tmp/source");
     expect(outputDir).toContain("/tmp/out");
   });
+
+  // D-531: publish is lightweight by default; the viewer shell (index.html +
+  // assets/) is embedded only on --rebuild-viewer.
+  it("rebuildViewer defaults to false", () => {
+    expect(parseArgs([]).rebuildViewer).toBe(false);
+  });
+
+  it("parses --rebuild-viewer as a value-less boolean", () => {
+    expect(parseArgs(["--rebuild-viewer"]).rebuildViewer).toBe(true);
+  });
+
+  it("parses --rebuild-viewer alongside --source-dir/--output-dir without consuming a value", () => {
+    const { rebuildViewer, sourceDir, outputDir } = parseArgs([
+      "--rebuild-viewer",
+      "--source-dir",
+      "/tmp/source",
+      "--output-dir",
+      "/tmp/out",
+    ]);
+    expect(rebuildViewer).toBe(true);
+    expect(sourceDir).toContain("/tmp/source");
+    expect(outputDir).toContain("/tmp/out");
+  });
 });
 
 describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
@@ -1121,6 +1144,88 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
         title: "Untitled meeting",
         dateLabel: "2026-03-09 21:11",
       });
+      // D-531: default publish is lightweight — no viewer shell embedded, even
+      // when a dist is present (it is served from the Docker image at runtime).
+      expect(existsSync(join(outputDir, "index.html"))).toBe(false);
+      expect(existsSync(join(outputDir, "assets"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // D-531: the lightweight default must not require the viewer dist at all —
+  // publish should succeed with no built shell available.
+  it("default lightweight run succeeds without any viewer dist", () => {
+    const meetingId = "01KKA70QN0ABCDEFGHJKMNPQRS";
+    const root = mkdtempSync(join(tmpdir(), "cassini-export-nodist-"));
+    try {
+      // Point the dist dir at an empty location (no index.html) to prove the
+      // default path never reads it.
+      const distDir = join(root, "dist");
+      mkdirSync(distDir, { recursive: true });
+
+      const sourceDir = join(root, "source");
+      mkdirSync(join(sourceDir, meetingId), { recursive: true });
+      const outputDir = join(root, "out");
+
+      execFileSync(
+        process.execPath,
+        [
+          scriptPath,
+          "--source-dir",
+          sourceDir,
+          "--output-dir",
+          outputDir,
+          "--recordings-base-url",
+          "https://example.test/",
+        ],
+        { env: { ...process.env, CASSINI_VIEWER_DIST_DIR: distDir }, encoding: "utf8" },
+      );
+
+      const catalog = JSON.parse(readFileSync(join(outputDir, "catalog.json"), "utf8"));
+      expect(catalog.meetings).toHaveLength(1);
+      expect(existsSync(join(outputDir, "index.html"))).toBe(false);
+      expect(existsSync(join(outputDir, "assets"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // D-531: --rebuild-viewer restores the old behavior — embed the built shell.
+  it("--rebuild-viewer embeds the viewer shell from the dist", () => {
+    const meetingId = "01KKA70QN0ABCDEFGHJKMNPQRS";
+    const root = mkdtempSync(join(tmpdir(), "cassini-export-rebuild-"));
+    try {
+      const distDir = join(root, "dist");
+      mkdirSync(join(distDir, "assets"), { recursive: true });
+      writeFileSync(join(distDir, "index.html"), "<!doctype html><title>viewer</title>");
+      writeFileSync(join(distDir, "assets", "app.js"), "console.log('viewer')");
+
+      const sourceDir = join(root, "source");
+      mkdirSync(join(sourceDir, meetingId), { recursive: true });
+      const outputDir = join(root, "out");
+
+      execFileSync(
+        process.execPath,
+        [
+          scriptPath,
+          "--source-dir",
+          sourceDir,
+          "--output-dir",
+          outputDir,
+          "--recordings-base-url",
+          "https://example.test/",
+          "--rebuild-viewer",
+        ],
+        { env: { ...process.env, CASSINI_VIEWER_DIST_DIR: distDir }, encoding: "utf8" },
+      );
+
+      // Shell present and derived from the dist.
+      expect(readFileSync(join(outputDir, "index.html"), "utf8")).toContain("<title>viewer</title>");
+      expect(existsSync(join(outputDir, "assets", "app.js"))).toBe(true);
+      // Catalog + meetings still produced.
+      const catalog = JSON.parse(readFileSync(join(outputDir, "catalog.json"), "utf8"));
+      expect(catalog.meetings).toHaveLength(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

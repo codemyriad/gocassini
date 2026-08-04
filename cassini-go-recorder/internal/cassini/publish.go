@@ -16,8 +16,9 @@ import (
 )
 
 type publishOptions struct {
-	inputPath string
-	outDir    string
+	inputPath     string
+	outDir        string
+	rebuildViewer bool
 }
 
 type publishSkippedBundle struct {
@@ -31,10 +32,12 @@ func runPublish(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	fs := flag.NewFlagSet("cassini publish", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.outDir, "out", "", "output site directory")
+	fs.BoolVar(&opts.rebuildViewer, "rebuild-viewer", false, "embed the viewer shell (index.html + assets) into the site; default is lightweight (catalog.json + meetings/ only, viewer served from the image)")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini publish ./meetings --out ./site
   cassini publish ./meetings/demo.meeting --out ./site
+  cassini publish ./meetings --out ./site --rebuild-viewer   # also embed the viewer shell
 
 `+"\n")
 		fs.PrintDefaults()
@@ -57,6 +60,13 @@ func runPublish(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	if opts.outDir == "" {
 		fmt.Fprintln(stderr, "publish configuration error: --out is required")
 		return 2
+	}
+	// A deployment can opt an internal publish into embedding the viewer shell
+	// via env without passing the flag (the operator forwards os.Environ() to
+	// this subprocess). The standalone operator image sets this so its
+	// self-contained nginx viewer keeps working (D-531).
+	if !opts.rebuildViewer && envRebuildViewer() {
+		opts.rebuildViewer = true
 	}
 
 	fmt.Fprintln(stdout, "[1/4] Preparing site bundle")
@@ -92,7 +102,11 @@ func runPublish(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	_ = UpdateSiteBundleSource(site, sourceSummary, "publish")
 
 	fmt.Fprintln(stdout, "[3/4] Publishing static site")
-	cmd := exec.CommandContext(ctx, runnerPath, "--source-dir", stagingRoot, "--output-dir", site.RootDir)
+	runnerArgs := []string{"--source-dir", stagingRoot, "--output-dir", site.RootDir}
+	if opts.rebuildViewer {
+		runnerArgs = append(runnerArgs, "--rebuild-viewer")
+	}
+	cmd := exec.CommandContext(ctx, runnerPath, runnerArgs...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Env = os.Environ()
@@ -113,6 +127,18 @@ func runPublish(ctx context.Context, args []string, stdout, stderr io.Writer) in
 
 	fmt.Fprintf(stdout, "site -> %s\n", site.RootDir)
 	return 0
+}
+
+// envRebuildViewer reports whether CASSINI_PUBLISH_REBUILD_VIEWER requests the
+// legacy shell-embedding publish. It lets a container opt in without a CLI flag
+// (D-531).
+func envRebuildViewer() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("CASSINI_PUBLISH_REBUILD_VIEWER"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func exporterRunnerPath() (string, error) {
