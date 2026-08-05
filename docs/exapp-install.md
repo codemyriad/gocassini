@@ -62,6 +62,48 @@ Then register it in Nextcloud → Administration settings → AppAPI →
 daemon's three-dot menu before going further. `occ app_api:daemon:list` should
 show it afterwards.
 
+### Step 1b — Route `/exapps/*` to HaRP at your reverse proxy
+
+**Required for every HaRP daemon**, local or remote. AppAPI does not talk to a
+HaRP-hosted ExApp over an internal address — it builds a **public** URL and
+dials it:
+
+```
+GET https://cloud.example.com/exapps/<appid>/heartbeat
+```
+
+Your TLS terminator must send `/exapps/*` to HaRP's `8780`, *not* to Nextcloud.
+Without this route the request reaches Nextcloud, which 502s, and
+install/enable never completes.
+
+Caddy:
+
+```caddyfile
+handle /exapps/* {
+    reverse_proxy 127.0.0.1:8780        # HaRP
+}
+
+handle {
+    reverse_proxy 127.0.0.1:11000 {     # Nextcloud
+        header_up Host {host}
+    }
+}
+```
+
+`handle`, **not** `handle_path`: `handle_path` strips the matched prefix, and
+HaRP routes on `/exapps/<appid>/…`. nginx equivalent: `location /exapps/ { … }`
+with a `proxy_pass` that has **no** trailing path element, so the prefix
+survives.
+
+The failure is indirect and easy to misdiagnose: the app reports `[enabled]` in
+`occ app_api:app:list` but its **navigation icon never appears**, because
+Cassini registers its nav entries only after receiving
+`PUT /enabled?enabled=1` — a callback that never arrives.
+
+**Do not test this with an unauthenticated `curl https://…/exapps/…`.** It
+returns 502 whether the route is right or wrong. Verify with `occ` plus
+`nextcloud.log`, and by looking for `PUT /enabled` in the ExApp container log.
+
 ## Step 2 — Pick an image tag
 
 CI publishes to `ghcr.io/codemyriad/gocassini`:
@@ -180,6 +222,12 @@ repeat installs; production should follow your AppAPI backup/redeploy policy.
 `app_api:app:update` reuses stored deploy options and has no `--env` flag.
 `app_api:app:config:set` writes a separate app-config store and is not the
 container environment Cassini reads today.
+
+Because deploy env is creation-time only, **a release that adds a new
+*required* environment variable cannot be delivered by the admin UI's Update
+button** — it is a breaking change needing a redeploy. See
+[`exapp-update-constraints.md`](./exapp-update-constraints.md) for the full set
+of rules on what Install/Update can and cannot deliver.
 
 ### Runtime environment reference
 
@@ -382,8 +430,19 @@ over its FRP tunnel (see "Remote Docker Engines" in the
 2. Copy the client certificates from the HaRP container's `/certs/frp` and
    run `frpc` on the GPU node to tunnel its Docker socket back to HaRP
    (one remote port per engine, 24001–24099).
-3. Register a second deploy daemon for that engine with Compute device =
+3. Make sure `/exapps/*` reaches HaRP at your reverse proxy
+   ([Step 1b](#step-1b--route-exapps-to-harp-at-your-reverse-proxy)). This is
+   the step that actually blocks the install, and its symptom — an app that
+   reports `[enabled]` with no navigation icon — points nowhere near the
+   reverse proxy.
+4. Register a second deploy daemon for that engine with Compute device =
    CUDA, and register (or re-register) `gocassini` against it.
+
+You do not re-register the app to switch between CPU and GPU images: the
+compute device is a property of the **daemon**, and AppAPI derives the image
+variant from it. See
+[`exapp-update-constraints.md`](./exapp-update-constraints.md) for what that
+implies for the Install/Update buttons.
 
 **Docker-in-LXC note:** if the GPU "node" is an LXC container running Docker
 (e.g. on Proxmox), the NVIDIA stack must work *inside* the LXC: the
