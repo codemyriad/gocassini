@@ -439,7 +439,13 @@ if OCC="$STUB" APP_PRIVATE_KEY="KEY" APP_PUBLIC_CRT="CRT" \
 else
   bad "--sign-app should run OCC and produce a signed tarball"
 fi
-if tar -tzf "$BD/signed.tar.gz" 2>/dev/null | grep -qxF gocassini/appinfo/signature.json; then
+# Read the listing fully before grepping: piping tar into `grep -q` lets grep
+# close the pipe on the first match (signature.json is not the last entry), and
+# under `set -o pipefail` the still-writing tar then dies with SIGPIPE and the
+# whole pipeline reports failure — a timing-dependent false negative that
+# flaked this check in CI. Capturing first makes the check deterministic.
+signed_listing="$(tar -tzf "$BD/signed.tar.gz" 2>/dev/null)"
+if grep -qxF gocassini/appinfo/signature.json <<<"$signed_listing"; then
   ok "signed tarball contains appinfo/signature.json"
 else
   bad "signed tarball should contain appinfo/signature.json"
