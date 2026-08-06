@@ -66,6 +66,11 @@ func TestStatusHandlerReportsTalkConfigPresenceOnly(t *testing.T) {
 	}{
 		{
 			name: "missing",
+			// When the internal secret is absent, status surfaces an actionable
+			// hint so an admin learns of it before a recording fails (D-447).
+			want: statusTalk{
+				SignalingInternalSecretHint: signalingInternalSecretHint,
+			},
 		},
 		{
 			name:       "configured",
