@@ -34,6 +34,40 @@ func canonicalOpusPath(workRoot, jobID string) string {
 	return filepath.Join(currentRoot(workRoot), jobID+".opus")
 }
 
+// resolvePublishInputPath names the single meeting a publish should export.
+//
+// Publishing used to hand `cassini publish` the whole `current/` library, so
+// every recording re-exported every meeting — O(archive) per publish, ~7.5
+// minutes at 67 meetings in production (D-459). The CLI already accepts one
+// bundle, so the fix is to name one.
+//
+// The `.meeting` is preferred over the `.opus`, deliberately:
+//
+//   - The `.opus` is packed by a detached goroutine started *after* the publish
+//     is enqueued, so on a rerun `current/<jobID>.opus` still holds the previous
+//     attempt's audio when the publish worker picks the job up. Preferring it
+//     would publish stale audio.
+//   - A `.opus` that fails verification makes `cassini publish` fail outright,
+//     whereas the `.meeting` branch repacks and keeps the meeting. The library
+//     input has always chosen the recovering path; so does this.
+//
+// The `.opus` remains the fallback for a job whose `.meeting` has been pruned.
+func resolvePublishInputPath(workRoot, jobID string) (string, error) {
+	meetingPath := canonicalMeetingPath(workRoot, jobID)
+	if _, err := os.Stat(meetingPath); err == nil {
+		return meetingPath, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat %s: %w", meetingPath, err)
+	}
+	opusPath := canonicalOpusPath(workRoot, jobID)
+	if _, err := os.Stat(opusPath); err == nil {
+		return opusPath, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat %s: %w", opusPath, err)
+	}
+	return "", fmt.Errorf("job %s has no publishable meeting: neither %s nor %s exists", jobID, meetingPath, opusPath)
+}
+
 func attemptBaseName(jobID string, attemptNumber int) string {
 	return fmt.Sprintf("%s--attempt-%03d", jobID, attemptNumber)
 }
