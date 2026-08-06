@@ -52,7 +52,7 @@ logged-in user.]]></description>
       <variable>
         <name>CASSINI_TALK_SIGNALING_INTERNAL_SECRET</name>
         <display-name>Talk signaling internal secret</display-name>
-        <description>Shared internal secret for standalone Nextcloud Talk signaling / HPB. Must match the signaling server [clients] internalsecret value. Required for the default HPB-internal recorder path used by private, group, and one-to-one Talk recording.</description>
+        <description>Shared internal secret for standalone Nextcloud Talk signaling / HPB. Must match the signaling server's [clients] internalsecret. Required for HPB-internal recording (the invisible recorder used for private, group, and one-to-one calls) — it cannot be auto-generated. How to find it: on Nextcloud All-in-One run `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`; on a standalone HPB it is the [clients] internalsecret in the signaling server config. See docs/exapp-install.md.</description>
       </variable>
       <variable>
         <name>CASSINI_TALK_BACKEND_URL</name>

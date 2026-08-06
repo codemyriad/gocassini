@@ -156,18 +156,32 @@ manager); an explicit value always wins over the generated one:
 CASSINI_SECRET="$(openssl rand -hex 32)"
 ```
 
-Set the signaling internal secret to the value configured in the standalone
-Talk signaling / HPB server (`[clients] internalsecret`). If you are setting up
-signaling at the same time, generate the value once and put the same value in
-both places:
+#### Finding the signaling internal secret
+
+`CASSINI_TALK_SIGNALING_INTERNAL_SECRET` must equal your Talk signaling / HPB
+server's `[clients] internalsecret`. It is the **one** value Cassini cannot
+self-provision (unlike the recording secret): the invisible HPB-internal recorder
+authenticates to the signaling server with this shared secret, and there is no
+API that exposes it, so you supply it once. Where to find it:
+
+- **Nextcloud All-in-One:** `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`
+- **Standalone HPB:** the `[clients] internalsecret` in the signaling server's
+  config (e.g. `server.conf`). If you are setting up signaling at the same time,
+  generate the value once and put the same value in both places.
 
 ```bash
-SIGNALING_INTERNAL_SECRET="<value-from-signaling-config-or-secret-manager>"
+SIGNALING_INTERNAL_SECRET="<value from the command / config above>"
 ```
 
 These are two different secrets: `CASSINI_SECRET` authenticates Talk's
 recording-backend HTTP protocol; `SIGNALING_INTERNAL_SECRET` authenticates
 Cassini as an internal signaling client for HPB-internal call capture.
+
+> **Knowing whether it's set:** if it is missing, the operator logs
+> `WARNING: talk_signaling_internal_secret_set -> false: …` at startup, and
+> `GET /operator/status` returns `"signaling_internal_secret_configured": false`
+> with a `signaling_internal_secret_hint` telling you how to fix it. Recording
+> stays disabled until the secret is set.
 
 Register from a pinned manifest (`--info-xml` accepts a local path or a raw
 URL; pin a tag or commit SHA, not a moving branch):
