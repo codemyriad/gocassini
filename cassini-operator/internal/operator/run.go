@@ -344,7 +344,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", envOrDefaultAny([]string{"CASSINI_BIN"}, defaultCassiniBinPath(repoRoot)), "Cassini CLI binary path")
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
-	fs.StringVar(&cfg.PublishSink, "sink", envOrDefaultAny([]string{"CASSINI_PUBLISH_SINK"}, ""), "where published meetings are delivered (known sinks: "+strings.Join(publishSinkNames(), ", ")+"; default "+defaultPublishSink+")")
+	fs.StringVar(&cfg.PublishSink, "publish-sink", envOrDefaultAny([]string{"CASSINI_PUBLISH_SINK"}, ""), "where published meetings are delivered (known sinks: "+strings.Join(publishSinkNames(), ", ")+"; default "+defaultPublishSink+")")
 	fs.IntVar(&cfg.MaxRecordWorkers, "max-record-workers", defaultMaxRecordWorkers, "maximum concurrent record workers")
 	fs.IntVar(&cfg.MaxBuildWorkers, "max-build-workers", defaultMaxBuildWorkers, "maximum concurrent build workers")
 	fs.Usage = func() {

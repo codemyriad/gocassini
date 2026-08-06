@@ -39,15 +39,15 @@ func TestLoadConfigPublishSinkSelection(t *testing.T) {
 		wantExit int
 	}{
 		{name: "env local", env: publishSinkLocal, want: publishSinkLocal},
-		{name: "flag local", args: []string{"--sink", publishSinkLocal}, want: publishSinkLocal},
+		{name: "flag local", args: []string{"--publish-sink", publishSinkLocal}, want: publishSinkLocal},
 		{
 			// CLI beats env, so an operator can override a baked-in image value.
 			name: "flag overrides env",
 			env:  "bogus",
-			args: []string{"--sink", publishSinkLocal},
+			args: []string{"--publish-sink", publishSinkLocal},
 			want: publishSinkLocal,
 		},
-		{name: "unknown flag", args: []string{"--sink", "bogus"}, wantErr: "unknown publish sink", wantExit: 2},
+		{name: "unknown flag", args: []string{"--publish-sink", "bogus"}, wantErr: "unknown publish sink", wantExit: 2},
 		{name: "unknown env", env: "bogus", wantErr: "unknown publish sink", wantExit: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
