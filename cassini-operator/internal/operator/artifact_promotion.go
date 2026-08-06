@@ -14,7 +14,7 @@ const promotionBackupSuffix = ".backup"
 
 func promoteRunBundle(workRoot, sourceRunPath, jobID string) (string, error) {
 	destination := canonicalRunPath(workRoot, jobID)
-	if err := promoteDirectory(sourceRunPath, destination, currentStagingRoot(workRoot), nil); err != nil {
+	if err := promoteDirectory(sourceRunPath, destination, currentStagingRoot(workRoot)); err != nil {
 		return "", err
 	}
 	return destination, nil
@@ -22,13 +22,13 @@ func promoteRunBundle(workRoot, sourceRunPath, jobID string) (string, error) {
 
 func promoteMeetingBundle(workRoot, sourceMeetingPath, jobID string) (string, error) {
 	destination := canonicalMeetingPath(workRoot, jobID)
-	if err := promoteDirectory(sourceMeetingPath, destination, currentStagingRoot(workRoot), nil); err != nil {
+	if err := promoteDirectory(sourceMeetingPath, destination, currentStagingRoot(workRoot)); err != nil {
 		return "", err
 	}
 	return destination, nil
 }
 
-func promoteDirectory(sourcePath, destinationPath, stagingRoot string, prepareStaged func(string) error) error {
+func promoteDirectory(sourcePath, destinationPath, stagingRoot string) error {
 	sourcePath = filepath.Clean(sourcePath)
 	destinationPath = filepath.Clean(destinationPath)
 	stagingRoot = filepath.Clean(stagingRoot)
@@ -49,12 +49,6 @@ func promoteDirectory(sourcePath, destinationPath, stagingRoot string, prepareSt
 	if err := copyDirectory(sourcePath, stagingPath); err != nil {
 		_ = os.RemoveAll(stagingPath)
 		return fmt.Errorf("copy artifact into staging: %w", err)
-	}
-	if prepareStaged != nil {
-		if err := prepareStaged(stagingPath); err != nil {
-			_ = os.RemoveAll(stagingPath)
-			return fmt.Errorf("prepare staged artifact: %w", err)
-		}
 	}
 	if err := os.MkdirAll(filepath.Dir(destinationPath), 0o755); err != nil {
 		_ = os.RemoveAll(stagingPath)

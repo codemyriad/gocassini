@@ -19,9 +19,13 @@ type publishTask struct {
 func (rt *Runtime) startPublishWorker() {
 	// Reconcile leftover promotion staging before any worker can promote
 	// again: a crash between replaceStagedDirectory's two renames leaves the
-	// destination (including the live published site) missing with only the
-	// ".backup" copy surviving in the staging root.
+	// destination missing with only the ".backup" copy surviving in the
+	// staging root.
 	rt.reconcilePromotionLeftovers()
+	// Exactly one publish worker. The local sink read-modify-writes the live
+	// catalog and names its temps after their destinations, so serialised
+	// delivery is a correctness requirement, not a throughput choice
+	// (publish_sink.go).
 	go rt.publishWorker()
 }
 
@@ -30,6 +34,12 @@ func (rt *Runtime) reconcilePromotionLeftovers() {
 	if strings.TrimSpace(rt.cfg.WorkRoot) != "" {
 		stagingRoots = append(stagingRoots, currentStagingRoot(rt.cfg.WorkRoot))
 	}
+	// Nothing writes the site staging root any more — the publish sink upserts
+	// into the live site instead of promoting a whole bundle into it (D-533).
+	// This stays as an upgrade guard: an operator that crashed mid-promote on a
+	// previous version comes back up with its live site as a ".backup" here and
+	// nothing else to restore it. Removable once every deployment has started
+	// at least once on a version that includes the sink.
 	if strings.TrimSpace(rt.cfg.SiteRoot) != "" {
 		stagingRoots = append(stagingRoots, siteStagingRoot(rt.cfg.SiteRoot))
 	}
