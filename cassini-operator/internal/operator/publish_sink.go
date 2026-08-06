@@ -112,21 +112,26 @@ func newPublishSink(name string, cfg Config, logger *log.Logger) (publishSink, e
 // every file, so in production 67 meetings took ~7.5 minutes per recording and
 // grew from there (D-459). Upserting writes only what actually changed.
 //
-// Ordering is the crash-safety argument, and it runs in this direction on
-// purpose:
+// Assets are staged before any of them is committed: every one is copied next
+// to its destination under a `.cassini-staged` name, and only then renamed into
+// place. Nothing already published is touched until the first rename, so a
+// failure while staging is a no-op plus a sweep.
 //
-//  1. assets   copy → <dir>/.<name>.tmp-<jobID> → rename   (the .opus lands)
-//  2. shell    index.html / assets, if the attempt site has them
-//  3. manifest cassini.json lineage
-//  4. catalog  catalog.json, written atomically, LAST
+// The commit order is assets → shell → manifest → catalog. A crash before the
+// catalog write leaves an unreferenced file — invisible and harmless — while a
+// crash after it has everything the catalog names already on disk. The reverse
+// order would publish a catalog pointing at audio that has not landed.
 //
-// A crash before 4 leaves an unreferenced file — invisible and harmless. A
-// crash after 4 has everything the catalog names already on disk. The reverse
-// order would publish a catalog pointing at audio that is not there yet.
+// Staged copies live in the *live* site directory, not a staging tree, because
+// the work root and the site root are separate mounts in the standalone image
+// and a cross-tree rename is EXDEV. A stranded temp there would be served by
+// the file server and swept by nothing, so a failed delivery removes every copy
+// it staged and reports any it could not.
 //
-// Every temp is removed if the delivery fails part-way, because these temps
-// live in the *live* site directory now, not a staging tree: a stranded
-// `.x.tmp-y` would be served by the file server and swept by nothing.
+// A delivery is not safe to run concurrently with another: it read-modify-writes
+// catalog.json and names its temps after their destination. That is guaranteed
+// by there being exactly one publish worker (startPublishWorker), which is a
+// correctness requirement of this sink and not just a throughput choice.
 type localPublishSink struct {
 	siteRoot string
 	logger   *log.Logger
@@ -134,6 +139,11 @@ type localPublishSink struct {
 
 func (s *localPublishSink) Name() string { return publishSinkLocal }
 
+// Deliver ignores the context deliberately. Cancellation arrives on operator
+// shutdown, and by then the choice is between a delivery that finishes in the
+// time a few renames take and one abandoned half-way; the staged copies would
+// be swept but the meeting would report as failed for no gain. The staging
+// phase, which is where the time actually goes, is bounded by one meeting.
 func (s *localPublishSink) Deliver(_ context.Context, d publishDelivery) (string, error) {
 	incoming, ok, err := loadSiteCatalog(d.AttemptSitePath)
 	if err != nil {
@@ -150,45 +160,35 @@ func (s *localPublishSink) Deliver(_ context.Context, d publishDelivery) (string
 	if err != nil {
 		return "", err
 	}
+	owned, err := ownedAssetRoots(existing, incoming)
+	if err != nil {
+		return "", err
+	}
 
 	if err := os.MkdirAll(s.siteRoot, 0o755); err != nil {
 		return "", fmt.Errorf("create site root: %w", err)
 	}
 
-	var pending []string
+	var staged []stagedAsset
 	defer func() {
-		for _, tmp := range pending {
-			_ = os.RemoveAll(tmp)
-		}
+		s.discardStaged(staged)
 	}()
 
-	for _, entry := range incoming.Meetings {
-		assets, err := catalogEntryAssets(entry)
-		if err != nil {
+	staged, err = s.stageCatalogAssets(d, incoming)
+	if err != nil {
+		return "", err
+	}
+
+	// Every asset is on disk beside where it belongs; committing is the first
+	// destructive act.
+	for _, item := range staged {
+		if err := s.commitStagedAsset(item); err != nil {
 			return "", err
 		}
-		for _, asset := range assets {
-			tmp, err := s.stageAsset(d, asset)
-			if err != nil {
-				return "", err
-			}
-			if tmp == "" {
-				continue
-			}
-			pending = append(pending, tmp)
-		}
 	}
-	// Commit the staged assets. Rename is atomic within the directory, and the
-	// site root and the work root can be different mounts, so the temp has to
-	// live beside its destination rather than anywhere in the attempt site.
-	for _, tmp := range pending {
-		if err := os.Rename(tmp, commitPathForStagedAsset(tmp)); err != nil {
-			return "", fmt.Errorf("commit published asset: %w", err)
-		}
-	}
-	pending = nil
+	staged = nil
 
-	if err := s.refreshSiteShell(d.AttemptSitePath); err != nil {
+	if err := s.refreshSiteShell(d.AttemptSitePath, owned); err != nil {
 		return "", err
 	}
 	if err := UpdateLiveSiteManifest(s.siteRoot, SiteBundleLineage{
@@ -201,71 +201,186 @@ func (s *localPublishSink) Deliver(_ context.Context, d publishDelivery) (string
 	if err := writeSiteCatalog(s.siteRoot, merged); err != nil {
 		return "", err
 	}
+	s.sweepOrphanedAssets(existing, incoming)
 	return s.siteRoot, nil
 }
 
-// stagedAssetSuffix marks a half-written asset in the live site. It is chosen
-// so the name cannot collide with a published artefact and is obvious in a
-// directory listing if one ever survives a crash.
-const stagedAssetSuffix = ".cassini-staged"
+const (
+	// stagedAssetSuffix marks a copy waiting to be committed. It is chosen so
+	// the name cannot collide with a published artefact and is obvious in a
+	// directory listing if one ever survives a crash.
+	stagedAssetSuffix = ".cassini-staged"
+	// previousAssetSuffix marks the live copy of a directory asset held aside
+	// for the one rename between "the new copy is not in place" and "the old
+	// one is no longer needed". Same name #169 gives the same idea for the site
+	// shell, so the two collapse into one suffix when they meet.
+	previousAssetSuffix = ".cassini-previous"
+)
 
-func commitPathForStagedAsset(tmp string) string {
-	return strings.TrimSuffix(tmp, stagedAssetSuffix)
+// stagedAsset is one copy waiting beside its destination in the live site.
+type stagedAsset struct {
+	tmp         string
+	destination string
+	isDir       bool
 }
 
-// stageAsset copies one catalog-referenced asset next to its destination under
-// a temp name, returning that name. It returns "" when the attempt site does
-// not carry the asset at all, which is only legitimate for an entry the
-// exporter pointed at a remote base URL.
-func (s *localPublishSink) stageAsset(d publishDelivery, asset string) (string, error) {
+// stageCatalogAssets stages every file the incoming catalog's entries name.
+// The partial list is returned alongside an error so the caller can sweep what
+// was staged before the failure.
+func (s *localPublishSink) stageCatalogAssets(d publishDelivery, incoming siteCatalog) ([]stagedAsset, error) {
+	var staged []stagedAsset
+	for _, entry := range incoming.Meetings {
+		assets, err := catalogEntryAssets(entry)
+		if err != nil {
+			return staged, err
+		}
+		for _, asset := range assets {
+			item, err := s.stageAsset(d, asset)
+			if err != nil {
+				return staged, err
+			}
+			staged = append(staged, item)
+		}
+	}
+	return staged, nil
+}
+
+// ownedAssetRoots is the set of top-level names the asset pass owns, which the
+// shell refresh must leave alone.
+//
+// It is derived from the catalogs rather than hardcoding the exporter's
+// directory name. The shell refresh replaces a whole directory, so if the
+// exporter ever renamed `meetings/`, a hardcoded skip would quietly hand the
+// live archive's audio to a refresh carrying only the meeting being published.
+// Both catalogs contribute: a deployment whose incoming entries point at a
+// remote base URL (exporter --recordings-base-url, which siteRelativeAsset
+// drops) still has local assets named by the live catalog. `meetings` is kept
+// as a floor for the case where neither catalog names a local asset and the
+// directory nonetheless exists.
+func ownedAssetRoots(catalogs ...siteCatalog) (map[string]struct{}, error) {
+	owned := map[string]struct{}{"meetings": {}}
+	for _, catalog := range catalogs {
+		for _, entry := range catalog.Meetings {
+			assets, err := catalogEntryAssets(entry)
+			if err != nil {
+				return nil, err
+			}
+			for _, asset := range assets {
+				root := asset
+				if index := strings.Index(asset, string(filepath.Separator)); index > 0 {
+					root = asset[:index]
+				}
+				owned[root] = struct{}{}
+			}
+		}
+	}
+	return owned, nil
+}
+
+// stageAsset copies one catalog-referenced asset next to its destination in the
+// live site, under a temp name. It is pure preparation: nothing already
+// published is touched until commitStagedAsset renames the copy into place.
+//
+// An asset the attempt site does not carry is an error rather than a skip.
+// Entries the exporter pointed at a remote base URL never reach here, because
+// siteRelativeAsset drops those paths before the sink sees them, so a missing
+// source means the publish produced a catalog it cannot back.
+func (s *localPublishSink) stageAsset(d publishDelivery, asset string) (stagedAsset, error) {
 	source := filepath.Join(d.AttemptSitePath, asset)
 	info, err := os.Stat(source)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("attempt site %s is missing catalog asset %s", d.AttemptSitePath, asset)
+			return stagedAsset{}, fmt.Errorf("attempt site %s is missing catalog asset %s", d.AttemptSitePath, asset)
 		}
-		return "", fmt.Errorf("stat catalog asset %s: %w", asset, err)
+		return stagedAsset{}, fmt.Errorf("stat catalog asset %s: %w", asset, err)
 	}
 
 	destination := filepath.Join(s.siteRoot, asset)
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
-		return "", fmt.Errorf("create asset directory: %w", err)
+		return stagedAsset{}, fmt.Errorf("create asset directory: %w", err)
 	}
 	tmp := destination + stagedAssetSuffix
 	if err := os.RemoveAll(tmp); err != nil {
-		return "", fmt.Errorf("clear stale staged asset: %w", err)
+		return stagedAsset{}, fmt.Errorf("clear stale staged asset: %w", err)
 	}
 	if info.IsDir() {
 		if err := copyDirectory(source, tmp); err != nil {
-			return "", err
+			return stagedAsset{}, err
 		}
 	} else if err := copyFile(source, tmp, info.Mode()); err != nil {
-		return "", err
+		return stagedAsset{}, err
 	}
-	// A rename onto an existing directory fails, so clear the destination for
-	// directory assets. Files are replaced by the rename itself.
-	if info.IsDir() {
-		if err := os.RemoveAll(destination); err != nil {
-			return "", fmt.Errorf("clear published asset directory: %w", err)
+	return stagedAsset{tmp: tmp, destination: destination, isDir: info.IsDir()}, nil
+}
+
+// commitStagedAsset renames one staged copy into place.
+//
+// A file is replaced by the rename itself, so its destination is never absent.
+// A directory cannot be: rename onto an existing directory fails, so the live
+// one moves aside first. It is *moved*, not removed — until the staged copy is
+// in place the aside is the only complete copy, and a failed rename puts it
+// back. A crash in that one-rename window leaves `<name>.cassini-previous` next
+// to a missing `<name>`, which the next delivery of that meeting repairs (it
+// stages a fresh copy and clears the stale aside). Only directory assets reach
+// this path, and the current exporter emits none: portable meetings carry an
+// audioPath file.
+func (s *localPublishSink) commitStagedAsset(item stagedAsset) error {
+	if !item.isDir {
+		if err := os.Rename(item.tmp, item.destination); err != nil {
+			return fmt.Errorf("commit published asset %s: %w", item.destination, err)
+		}
+		return nil
+	}
+
+	aside := item.destination + previousAssetSuffix
+	if err := os.RemoveAll(aside); err != nil {
+		return fmt.Errorf("clear stale replaced asset %s: %w", aside, err)
+	}
+	hasDestination := true
+	if _, err := os.Stat(item.destination); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("stat published asset %s: %w", item.destination, err)
+		}
+		hasDestination = false
+	}
+	if hasDestination {
+		if err := os.Rename(item.destination, aside); err != nil {
+			return fmt.Errorf("move previous published asset %s aside: %w", item.destination, err)
 		}
 	}
-	return tmp, nil
+	if err := os.Rename(item.tmp, item.destination); err != nil {
+		if hasDestination {
+			if rollbackErr := os.Rename(aside, item.destination); rollbackErr != nil {
+				return fmt.Errorf("commit published asset %s: %w; restore previous: %v", item.destination, err, rollbackErr)
+			}
+		}
+		return fmt.Errorf("commit published asset %s: %w", item.destination, err)
+	}
+	if hasDestination {
+		if err := os.RemoveAll(aside); err != nil {
+			s.logf("discard replaced asset %s failed: %v", aside, err)
+		}
+	}
+	return nil
 }
 
 // refreshSiteShell copies the attempt site's top-level files over the live
 // site's. The standalone image publishes with --rebuild-viewer so its
 // self-contained shell (index.html, assets/) rides along with every publish;
 // the wholesale promote used to refresh it implicitly. catalog.json and
-// cassini.json are excluded because this sink owns both, and meetings/ because
-// the asset pass above owns it.
-func (s *localPublishSink) refreshSiteShell(attemptSitePath string) error {
+// cassini.json are excluded because this sink owns both, and the asset roots
+// because the pass above owns those.
+func (s *localPublishSink) refreshSiteShell(attemptSitePath string, owned map[string]struct{}) error {
 	entries, err := os.ReadDir(attemptSitePath)
 	if err != nil {
 		return fmt.Errorf("read attempt site: %w", err)
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if name == "catalog.json" || name == "cassini.json" || name == "meetings" {
+		if name == "catalog.json" || name == "cassini.json" {
+			continue
+		}
+		if _, isAssetRoot := owned[name]; isAssetRoot {
 			continue
 		}
 		source := filepath.Join(attemptSitePath, name)
@@ -288,6 +403,99 @@ func (s *localPublishSink) refreshSiteShell(attemptSitePath string) error {
 		}
 	}
 	return nil
+}
+
+// discardStaged removes the copies a failed delivery left beside their
+// destinations. A failure to remove one is logged rather than swallowed: these
+// live in the served site root, where nothing else sweeps them.
+func (s *localPublishSink) discardStaged(staged []stagedAsset) {
+	for _, item := range staged {
+		if err := os.RemoveAll(item.tmp); err != nil {
+			s.logf("discard staged asset %s failed: %v", item.tmp, err)
+		}
+		if !item.isDir {
+			continue
+		}
+		// An aside is garbage only once its destination is back in place. If a
+		// rollback failed, the aside is the last complete copy of a published
+		// asset and has to survive for a human to restore.
+		aside := item.destination + previousAssetSuffix
+		if _, err := os.Stat(item.destination); err != nil {
+			if _, asideErr := os.Stat(aside); asideErr == nil {
+				s.logf("kept %s: %s is missing and the aside is the only copy left", aside, item.destination)
+			}
+			continue
+		}
+		if err := os.RemoveAll(aside); err != nil {
+			s.logf("discard replaced asset %s failed: %v", aside, err)
+		}
+	}
+}
+
+// sweepOrphanedAssets removes files the previous version of a republished entry
+// named and the new one does not — an entry that moved from an artifactPath
+// directory to a portable .opus, say. The wholesale replace used to drop those
+// implicitly; an upsert has to be told.
+//
+// It runs after the catalog write on purpose: by then the files are
+// unreferenced, so losing the sweep to a crash leaves invisible garbage rather
+// than a broken link. A failure is logged, never returned — the meeting is
+// published either way, and failing a delivered publish over leftover bytes
+// would be worse than the leftovers.
+func (s *localPublishSink) sweepOrphanedAssets(existing, incoming siteCatalog) {
+	previous := make(map[string][]string, len(existing.Meetings))
+	for _, entry := range existing.Meetings {
+		id, err := catalogEntryID(entry)
+		if err != nil {
+			s.logf("sweep orphaned assets: read existing catalog entry failed: %v", err)
+			continue
+		}
+		assets, err := catalogEntryAssets(entry)
+		if err != nil {
+			s.logf("sweep orphaned assets: read assets of %s failed: %v", id, err)
+			continue
+		}
+		previous[id] = assets
+	}
+
+	for _, entry := range incoming.Meetings {
+		id, err := catalogEntryID(entry)
+		if err != nil {
+			continue
+		}
+		superseded, ok := previous[id]
+		if !ok {
+			continue
+		}
+		current, err := catalogEntryAssets(entry)
+		if err != nil {
+			continue
+		}
+		kept := make(map[string]struct{}, len(current))
+		for _, asset := range current {
+			kept[asset] = struct{}{}
+		}
+		for _, asset := range superseded {
+			if _, stillNamed := kept[asset]; stillNamed {
+				continue
+			}
+			orphan := filepath.Join(s.siteRoot, asset)
+			if err := os.RemoveAll(orphan); err != nil {
+				s.logf("sweep orphaned asset %s of meeting %s failed: %v", orphan, id, err)
+				continue
+			}
+			s.logf("swept orphaned asset %s of republished meeting %s", orphan, id)
+		}
+	}
+}
+
+// logf reports on the sink's logger, which is nil only for a Runtime built as a
+// struct literal (see sink()).
+func (s *localPublishSink) logf(format string, args ...any) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.Printf("publish sink "+publishSinkLocal+": "+format, args...)
 }
 
 // sink returns the runtime's publish sink, defaulting when it is unset.

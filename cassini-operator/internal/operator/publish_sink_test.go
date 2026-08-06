@@ -433,11 +433,147 @@ func assertNoStagedAssets(t *testing.T, siteRoot string) {
 		if err != nil {
 			return nil
 		}
-		if strings.HasSuffix(entry.Name(), stagedAssetSuffix) || strings.HasSuffix(entry.Name(), ".tmp") {
-			t.Errorf("staged leftover in the live site: %s", path)
+		for _, suffix := range []string{stagedAssetSuffix, previousAssetSuffix, ".tmp"} {
+			if strings.HasSuffix(entry.Name(), suffix) {
+				t.Errorf("staged leftover in the live site: %s", path)
+			}
 		}
 		return nil
 	})
+}
+
+// writeCatalog writes a site catalog from raw entry JSON, for the shapes
+// writeAttemptSite's portable-meeting default cannot express.
+func writeCatalog(t *testing.T, dir string, entries ...string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir site: %v", err)
+	}
+	body := `{"version":"cassini.viewer.catalog.v1","meetings":[` + strings.Join(entries, ",") + `]}`
+	if err := os.WriteFile(filepath.Join(dir, "catalog.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+}
+
+func writeSiteFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func assertFileBody(t *testing.T, path, want string) {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if string(body) != want {
+		t.Fatalf("%s = %q, want %q", path, body, want)
+	}
+}
+
+func TestLocalSinkKeepsADirectoryAssetWhenDeliveryFailsLater(t *testing.T) {
+	// Directory assets cannot be replaced by a bare rename, so the live copy has
+	// to move aside — and it must move at *commit* time, not while staging. When
+	// staging removed it, a later failure swept the temp and left the meeting
+	// with no asset at all, under a catalog that still named it.
+	siteRoot := filepath.Join(t.TempDir(), "site")
+	writeCatalog(t, siteRoot, `{"id":"meeting-a","title":"a","artifactPath":"./meetings/meeting-a"}`)
+	writeSiteFile(t, filepath.Join(siteRoot, "meetings", "meeting-a", "data.json"), "live-a")
+
+	// The attempt carries a new meeting-a and a meeting-z whose asset is absent,
+	// so the delivery fails after meeting-a has been staged.
+	attempt := filepath.Join(t.TempDir(), "attempt")
+	writeCatalog(t, attempt,
+		`{"id":"meeting-a","title":"a","artifactPath":"./meetings/meeting-a"}`,
+		`{"id":"meeting-z","title":"z","audioPath":"./meetings/meeting-z.opus"}`,
+	)
+	writeSiteFile(t, filepath.Join(attempt, "meetings", "meeting-a", "data.json"), "attempt-a")
+
+	if _, err := deliverToLocalSink(t, siteRoot, attempt, "meeting-a"); err == nil {
+		t.Fatalf("expected Deliver to fail on the missing asset")
+	}
+	// The live directory asset survives untouched, not merely present.
+	assertFileBody(t, filepath.Join(siteRoot, "meetings", "meeting-a", "data.json"), "live-a")
+	assertNoStagedAssets(t, siteRoot)
+}
+
+func TestLocalSinkLeavesAPopulatedSiteUntouchedWhenDeliveryFails(t *testing.T) {
+	// A failed delivery must be a no-op for what is already published — the
+	// catalog, the other meetings' audio, and the shell.
+	siteRoot := filepath.Join(t.TempDir(), "site")
+	if _, err := deliverToLocalSink(t, siteRoot, writeAttemptSite(t, filepath.Join(t.TempDir(), "a"), "meeting-a"), "meeting-a"); err != nil {
+		t.Fatalf("seed Deliver() error = %v", err)
+	}
+	writeSiteFile(t, filepath.Join(siteRoot, "index.html"), "<html>live</html>")
+	catalogBefore, err := os.ReadFile(filepath.Join(siteRoot, "catalog.json"))
+	if err != nil {
+		t.Fatalf("read seeded catalog: %v", err)
+	}
+
+	bad := writeAttemptSite(t, filepath.Join(t.TempDir(), "bad"), "meeting-b")
+	writeSiteFile(t, filepath.Join(bad, "index.html"), "<html>attempt</html>")
+	if err := os.Remove(filepath.Join(bad, "meetings", "meeting-b.opus")); err != nil {
+		t.Fatalf("remove attempt opus: %v", err)
+	}
+
+	if _, err := deliverToLocalSink(t, siteRoot, bad, "meeting-b"); err == nil {
+		t.Fatalf("expected Deliver to fail")
+	}
+	assertFileBody(t, filepath.Join(siteRoot, "catalog.json"), string(catalogBefore))
+	assertFileBody(t, filepath.Join(siteRoot, "meetings", "meeting-a.opus"), "opus-meeting-a")
+	assertFileBody(t, filepath.Join(siteRoot, "index.html"), "<html>live</html>")
+	assertNoStagedAssets(t, siteRoot)
+}
+
+func TestLocalSinkNeverTreatsAnAssetDirectoryAsSiteShell(t *testing.T) {
+	// The shell refresh replaces whole directories, so it must skip every
+	// directory the catalogs name — derived, not hardcoded to `meetings`. A
+	// hardcoded skip would hand the live archive to a refresh that carries only
+	// the meeting being published.
+	siteRoot := filepath.Join(t.TempDir(), "site")
+	writeCatalog(t, siteRoot, `{"id":"meeting-a","title":"a","audioPath":"./recordings/meeting-a.opus"}`)
+	writeSiteFile(t, filepath.Join(siteRoot, "recordings", "meeting-a.opus"), "opus-a")
+
+	attempt := filepath.Join(t.TempDir(), "attempt")
+	writeCatalog(t, attempt, `{"id":"meeting-b","title":"b","audioPath":"./recordings/meeting-b.opus"}`)
+	writeSiteFile(t, filepath.Join(attempt, "recordings", "meeting-b.opus"), "opus-b")
+	writeSiteFile(t, filepath.Join(attempt, "index.html"), "<html>shell</html>")
+
+	if _, err := deliverToLocalSink(t, siteRoot, attempt, "meeting-b"); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	assertFileBody(t, filepath.Join(siteRoot, "recordings", "meeting-a.opus"), "opus-a")
+	assertFileBody(t, filepath.Join(siteRoot, "recordings", "meeting-b.opus"), "opus-b")
+	assertFileBody(t, filepath.Join(siteRoot, "index.html"), "<html>shell</html>")
+	if got := readCatalogIDs(t, siteRoot); len(got) != 2 {
+		t.Fatalf("catalog ids = %v, want both meetings", got)
+	}
+}
+
+func TestLocalSinkSweepsAssetsARepublishNoLongerNames(t *testing.T) {
+	// An entry that moves from an artifactPath directory to a portable .opus
+	// leaves its old directory unreferenced. The wholesale replace dropped it
+	// implicitly; the upsert has to be told.
+	siteRoot := filepath.Join(t.TempDir(), "site")
+	writeCatalog(t, siteRoot, `{"id":"meeting-a","title":"a","artifactPath":"./meetings/meeting-a"}`)
+	writeSiteFile(t, filepath.Join(siteRoot, "meetings", "meeting-a", "data.json"), "live-a")
+
+	if _, err := deliverToLocalSink(t, siteRoot, writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a"), "meeting-a"); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+
+	assertFileBody(t, filepath.Join(siteRoot, "meetings", "meeting-a.opus"), "opus-meeting-a")
+	if _, err := os.Stat(filepath.Join(siteRoot, "meetings", "meeting-a")); !os.IsNotExist(err) {
+		t.Fatalf("superseded artifact directory survived the republish, stat err = %v", err)
+	}
+	if got := readCatalogIDs(t, siteRoot); len(got) != 1 || got[0] != "meeting-a" {
+		t.Fatalf("catalog ids = %v, want [meeting-a]", got)
+	}
 }
 
 func TestResolvePublishInputPathPrefersTheMeetingBundle(t *testing.T) {
