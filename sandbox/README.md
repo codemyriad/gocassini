@@ -1,187 +1,171 @@
-# Cassini Sandbox Deployment
+# Cassini Sandbox (Nextcloud AIO)
 
-This directory contains the repo-owned deployment wrapper for a cheap VPS
-sandbox. The goal is a mutable environment that can be updated, reset, or
-destroyed without hand-editing Nextcloud state.
+The demo sandbox at **https://demo.nextcloud.codemyriad.io** runs on **Nextcloud
+All-in-One (AIO)** — the substrate a real admin runs, and the one
+[cloud.codemyriad.io](https://cloud.codemyriad.io) uses. This is deliberate: the
+sandbox should mirror a real deployment installing Cassini, not the CI/dev
+harness. AIO owns Nextcloud, Postgres, the **Talk HPB** (signaling + Janus +
+TURN, as the `talk` optional container), backups, and the reverse-proxy apache.
 
-The sandbox reuses the existing harness topology:
+> The CI/dev **harness** (`harness/`) is a separate thing — a throwaway
+> docker-compose stack for tests, with committed dev creds and test-isms. The
+> sandbox no longer reuses any of it (this is what [D-515] fixed). Don't wire the
+> two back together.
 
-- Nextcloud + Postgres
-- AppAPI + HaRP deploy daemon
-- Cassini as an AppAPI ExApp
-- optional full Talk stack: signaling, Janus, NATS, TURN
+The repo's contribution to the sandbox is one script, **`wire-cassini.sh`**,
+which installs/updates Cassini on top of an already-provisioned AIO. Everything
+else here is one-time host setup, documented below.
 
-The sandbox tracks Nextcloud's **stable** channel by default:
-`NEXTCLOUD_IMAGE=nextcloud:stable` (currently NC 33.x), with Compose
-`pull_policy: always` so normal deploys refresh the image before starting
-Nextcloud. This mirrors a real/production deployment. Do **not** use
-`nextcloud:latest` — it rides the newest major before Nextcloud promotes it to
-stable, and the bundled AppAPI on the pre-stable NC 34 ships a broken ExApp
-management UI (AppAPI is bundled with the server, so its version is whatever the
-Nextcloud image bundles). Override `NEXTCLOUD_IMAGE` in `sandbox/.env` only to
-debug a specific version (e.g. `nextcloud:production` for the most conservative
-channel, or `nextcloud:34` to reproduce a version-specific issue).
+## Architecture
 
-## First setup on a VPS
-
-1. Install Docker, Docker Compose, Git, curl, openssl, and perl.
-2. Point a DNS name at the VPS.
-3. Make sure the VPS does not map the public sandbox hostname to loopback in
-   `/etc/hosts`. AppAPI-created ExApp containers can inherit that mapping; if
-   `cassini-sandbox.example.com` resolves to `127.0.1.1` inside the ExApp,
-   Cassini cannot connect to Talk signaling. Prefer either public DNS
-   resolution or a host-gateway/public-IP mapping.
-4. Put TLS in front of Nextcloud. The host reverse proxy must route normal
-   Nextcloud traffic to `NEXTCLOUD_HOST_PORT` and route Talk HPB traffic under
-   `/spreed` to signaling on `28082`. Talk appends its own websocket and
-   backend API paths to `SANDBOX_SIGNALING_URL`, so the proxy must strip the
-   outer `/spreed` prefix before forwarding nested paths such as
-   `/spreed/spreed` and `/spreed/api`.
-
-   A minimal Caddy shape is:
-
-   ```caddyfile
-   cassini-sandbox.example.com {
-       encode gzip zstd
-
-       handle /spreed/* {
-           uri strip_prefix /spreed
-           reverse_proxy 127.0.0.1:28082
-       }
-
-       handle /spreed* {
-           reverse_proxy 127.0.0.1:28082
-       }
-
-       handle {
-           reverse_proxy 127.0.0.1:28080
-       }
-   }
-   ```
-
-   Open both TCP 443 and UDP 443 if you want Caddy's default HTTP/3 support.
-   After changing HTTP protocol settings, restart Caddy rather than only
-   reloading it so the HTTP/3 listener and `Alt-Svc` advertisement agree.
-
-   For `SPREED_PROFILE=full`, also open the Talk media ports:
-
-   - TCP/UDP `13479` for TURN.
-   - UDP `49160-49200` for TURN relay allocations.
-   - UDP `20000-20100` for Janus RTP. The sandbox renders Janus with
-     `nat_1_1_mapping` set from `SANDBOX_JANUS_EXTERNAL_IP`, or from
-     `SANDBOX_TURN_EXTERNAL_IP` when that is unset.
-
-5. Copy the sample env and edit it:
-
-   ```bash
-   cp sandbox/env.example sandbox/.env
-   $EDITOR sandbox/.env
-   ```
-
-6. Deploy:
-
-   ```bash
-   sandbox/deploy.sh
-   ```
-
-Use `SPREED_PROFILE=default` in `sandbox/.env` if you only need to demo AppAPI
-install, the control panel, and the viewer. Use `SPREED_PROFILE=full` when you
-need Talk call recording.
-
-## Cassini source
-
-By default `sandbox/deploy.sh` installs the **latest published release** of
-Cassini from the Nextcloud App Store (AppAPI ExApp catalog) — whichever is
-newest, be it a pre-release (alpha/beta/rc) or a stable version — and sets the
-Nextcloud update channel to `beta` so pre-release ExApps are also accepted and
-listed in the UI. Set `SANDBOX_UPDATE_CHANNEL` or `CASSINI_APPSTORE_CATALOG_URL`
-in `sandbox/.env` to override. Pass `--image`/`--build` (below) to register a
-specific container image instead of the store release.
-
-## Updating
-
-Deploy a specific image (switches off the store-install default):
-
-```bash
-sandbox/deploy.sh --image ghcr.io/codemyriad/gocassini:branch-d-290-e2e-testing
+```
+browser ──443──▶ Caddy (host) ──/exapps/*──▶ HaRP :8780 ──frp──▶ Cassini ExApp
+                      │                                   (nc_app_gocassini)
+                      └──everything else──▶ AIO apache :11000 ──▶ Nextcloud + Talk HPB
+Talk call media ──3478/tcp+udp──▶ AIO Talk (signaling + Janus + TURN)
 ```
 
-Rebuild locally on the VPS from the current checkout:
+### Why a manual HaRP daemon
+
+Cassini deploys as a Nextcloud **AppAPI ExApp**, which needs a **deploy daemon**.
+The recommended daemon is **HaRP**. AIO does not *yet* expose a HaRP container in
+its UI (the AppAPI/HaRP integration is gated behind a newer AIO/Talk bundle), so
+`wire-cassini.sh` runs HaRP itself next to AIO and points the host reverse proxy's
+`/exapps/*` at it. **When AIO ships the HaRP container**, this collapses to
+"tick the HaRP box in AIO" and Cassini installs one-click from the store — the
+true [D-449] goal. Until then this script is the reproducible path.
+
+## One-time host setup
+
+### 1. Firewall
+
+Open, at the network firewall (e.g. Hetzner Cloud Console → Firewalls):
+
+| Port | Proto | Purpose |
+|---|---|---|
+| 22 | TCP | SSH |
+| 80, 443 | TCP | Nextcloud / ACME |
+| **3478** | **TCP + UDP** | **Talk call media (STUN/TURN/relay).** AIO routes *all* Talk media through this one port. Without it, calls connect at signaling but exchange **no audio/video**, and recordings capture no media. |
+
+(The old compose sandbox used 13479 / 20000 / 49160 — those are obsolete; remove them.)
+
+### 2. Nextcloud AIO (reverse-proxy mode, behind Caddy)
 
 ```bash
-sandbox/deploy.sh --build --image ghcr.io/codemyriad/gocassini:sandbox-local
+docker run -d \
+  --init --sig-proxy=false \
+  --name nextcloud-aio-mastercontainer \
+  --restart always \
+  --publish 8080:8080 \
+  --env APACHE_PORT=11000 \
+  --env APACHE_IP_BINDING=127.0.0.1 \
+  --env SKIP_DOMAIN_VALIDATION=false \
+  --env AIO_DISABLE_BACKUP_SECTION=true \
+  --volume nextcloud_aio_mastercontainer:/mnt/docker-aio-config \
+  --volume /var/run/docker.sock:/var/run/docker.sock:ro \
+  ghcr.io/nextcloud-releases/all-in-one:latest
 ```
 
-Only re-register the ExApp, without restarting Nextcloud:
+Then open the AIO interface over an SSH tunnel (don't expose :8080 publicly):
 
 ```bash
-sandbox/deploy.sh --register-only --image ghcr.io/codemyriad/gocassini:latest
+ssh -L 8080:localhost:8080 <sandbox-host>
+# browse https://localhost:8080, note the passphrase
 ```
 
-## Demo UI mode
+In the wizard: set the domain `demo.nextcloud.codemyriad.io`, then on the
+optional-containers page **enable Talk** (and Talk recording if listed), and
+**Download and start containers**. Record the generated admin password (or let
+`wire-cassini.sh` reset it — see below).
 
-Cassini renders its control-panel/viewer through AppAPI's **native UI
-mechanism**: the operator registers a single "Cassini" navigation entry and a
-nonce'd `ui/viewer.js`, and AppAPI serves them on its own embedded page under
-Nextcloud's normal CSP. This is the same shape a stock App Store install gets —
-the sandbox needs no AppAPI modifications and the `app_api` integrity check stays
-green.
+### 3. Caddy
 
-## Persistence
+Route `/exapps/*` to HaRP and everything else to AIO's apache:
 
-Nextcloud, Postgres, AppAPI/HaRP certificates, and the Cassini ExApp each use
-Docker-managed named volumes. In ExApp mode, AppAPI mounts Cassini's persistent
-volume at `/nc_app_gocassini_data` and sets `APP_PERSISTENT_STORAGE`.
+```caddyfile
+demo.nextcloud.codemyriad.io:443 {
+    encode gzip zstd
 
-Cassini stores its operator database, job artifacts, temporary files, and
-published viewer output under that AppAPI persistent storage path. This data
-survives container recreation and ExApp re-registration. It is removed only when
-the corresponding Docker volume is removed, for example with
-`sandbox/destroy.sh --volumes` or `sandbox/deploy.sh --reset`.
+    handle /exapps/* {
+        reverse_proxy 127.0.0.1:8780
+    }
 
-The sandbox registers Cassini with `CASSINI_TALK_BACKEND_URL` set to the public
-`SANDBOX_PUBLIC_URL`. Nextcloud sets `Secure` session cookies when
-`SANDBOX_SCHEME=https`; using an internal plain-HTTP callback URL for the
-recorder would prevent the recorder's cookie jar from retaining the Talk guest
-session between `participants/active` and `call/{token}`.
+    handle {
+        reverse_proxy 127.0.0.1:11000
+    }
+}
+```
 
-Each deploy also configures Nextcloud's reverse proxy trust from the active
-Compose network. It sets `trusted_proxies` to the Docker bridge gateway used by
-the host TLS proxy, plus the internal `reverse-proxy` container address used by
-AppAPI callbacks, and sets `forwarded_for_headers` to `HTTP_X_FORWARDED_FOR`.
-This keeps the admin security checks green after reset/redeploy without
-hand-editing `config.php`.
+`sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile && sudo systemctl reload caddy`
 
-Reset all Compose volumes and start from a clean Nextcloud:
+## Install / update Cassini
 
 ```bash
-sandbox/deploy.sh --reset
+cp sandbox/env.example sandbox/.env   # first time; edit for this host
+sandbox/wire-cassini.sh               # install latest App Store release (default)
 ```
 
-## Teardown
+The script is **idempotent** — re-run it to update Cassini or reconcile config. It:
 
-Stop containers but keep data:
+1. enables AppAPI;
+2. runs + registers the HaRP daemon (`harp_aio`);
+3. resolves the latest published release from the App Store catalog (or a given
+   `--image`), pre-pulls it, and registers the `gocassini` ExApp;
+4. installs Cassini the zero-config way (D-447): **no recording secret is set**,
+   so Cassini self-generates and persists one; the script then reads it back from
+   the ExApp and points `spreed`'s recording backend at Cassini. Only AIO's Talk
+   **`INTERNAL_SECRET`** (as `CASSINI_TALK_SIGNALING_INTERNAL_SECRET`, for
+   HPB-internal recording — it cannot be generated) is injected, read from the
+   AIO Talk container;
+5. resets the admin password to `SANDBOX_NC_ADMIN_PASSWORD` if set.
+
+Options:
 
 ```bash
-sandbox/destroy.sh
+sandbox/wire-cassini.sh --image ghcr.io/codemyriad/gocassini:sha-<shortsha>  # test a specific build
+sandbox/wire-cassini.sh --register-only                                      # re-register only
 ```
 
-Remove containers and volumes:
+The HaRP shared key persists in a fixed **`/opt/cassini-aio`**
+(override with `CASSINI_AIO_STATE`), **not** in the repo. It must be a single
+shared path — not a per-user home — so every operator and CI use the *same* HaRP
+key; otherwise a second user's run regenerates the key and breaks the daemon.
+Create it once, writable by everyone who deploys (all of whom are in the `docker`
+group already):
 
 ```bash
-sandbox/destroy.sh --volumes
+sudo install -d -g docker -m 2770 /opt/cassini-aio   # setgid: files inherit the docker group
 ```
+
+## Verify
+
+```bash
+# PUBLIC Talk welcome (proves the /exapps route + HaRP tunnel):
+curl -fsS https://demo.nextcloud.codemyriad.io/index.php/apps/app_api/proxy/gocassini/api/v1/welcome
+# → {"version":1}
+
+# ADMIN status (Talk secrets, STT device, DB/storage):
+curl -fsS -u admin:<password> \
+  https://demo.nextcloud.codemyriad.io/index.php/apps/app_api/proxy/gocassini/operator/status
+# → "signaling_internal_secret_configured": true
+```
+
+Then a real recording: a 2-party Talk call (**mics on, actually speak**), start
+recording from the call's ⋯ menu, stop after ~1 min — a Cassini job runs
+`record → build → publish` and the transcript appears in the **Cassini** viewer.
+
+Full production install guide (any Nextcloud, not just this sandbox):
+[`docs/exapp-install.md`](../docs/exapp-install.md).
 
 ## GitHub Actions
 
-The `Deploy Sandbox` workflow builds and pushes an ExApp image, then SSHes into
-the VPS and runs this same `sandbox/deploy.sh` script. CI should orchestrate the
-deployment; the deployment behavior should stay in this directory.
+The **Deploy Sandbox** workflow SSHes into the AIO host and runs
+`wire-cassini.sh` (optionally building/pushing an image first for `--image`).
+It does **not** provision AIO — that is the one-time setup above. Repository
+config lives in the **Sandbox** environment:
 
-Expected repository secrets:
+- secrets: `SANDBOX_SSH_KEY`, `SANDBOX_NC_ADMIN_PASSWORD`
+- variables: `SANDBOX_SSH_HOST`, `SANDBOX_SSH_USER`, `SANDBOX_SSH_PORT`, `SANDBOX_REPO_DIR`
 
-- `SANDBOX_SSH_HOST`
-- `SANDBOX_SSH_USER`
-- `SANDBOX_SSH_KEY`
-- optional `SANDBOX_SSH_PORT`
-- optional `SANDBOX_REPO_DIR`
+[D-449]: https://linear.app/code-myriad/issue/D-449
+[D-515]: https://linear.app/code-myriad/issue/D-515
