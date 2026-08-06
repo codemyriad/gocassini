@@ -144,10 +144,15 @@ desired `sha-…` or release tag, and register from that local copy.
 
 ## Step 3 — Register the app
 
-Generate a fresh Talk recording secret — never reuse a value from this repo or
-its examples:
+The Talk recording secret is **optional** since D-447: if you omit
+`CASSINI_TALK_RECORDING_SECRET`, the operator generates one on first start and
+persists it on the AppAPI volume, and Step 5 reads it back from the operator's
+provisioning endpoint — so no human ever has to invent or copy it. Supply one
+explicitly only when you want to manage it out of band (e.g. a shared secret
+manager); an explicit value always wins over the generated one:
 
 ```bash
+# Optional — omit to let Cassini self-generate. Never reuse a repo/example value.
 CASSINI_SECRET="$(openssl rand -hex 32)"
 ```
 
@@ -174,9 +179,11 @@ curl -fsSL "https://raw.githubusercontent.com/codemyriad/gocassini/<tag-or-sha>/
 
 occ app_api:app:register gocassini <daemon-name> \
     --info-xml /tmp/gocassini-info.xml \
-    --env CASSINI_TALK_RECORDING_SECRET="${CASSINI_SECRET}" \
     --env CASSINI_TALK_SIGNALING_INTERNAL_SECRET="${SIGNALING_INTERNAL_SECRET}" \
     --wait-finish
+    # Optionally add: --env CASSINI_TALK_RECORDING_SECRET="${CASSINI_SECRET}"
+    #   Omit it to let the operator self-generate + persist the recording
+    #   secret (D-447); Step 5 reads it back from the provisioning endpoint.
 ```
 
 If `occ` runs inside a container, copy the manifest in first
@@ -199,7 +206,7 @@ Options).
 
 | Variable | Required | What it does |
 |---|---|---|
-| `CASSINI_TALK_RECORDING_SECRET` | For the Talk record button | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (Step 5). Unset, the operator rejects every recording request |
+| `CASSINI_TALK_RECORDING_SECRET` | No (auto-generated) | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (Step 5). **Since D-447, if omitted the operator generates and persists one** — read it back from the provisioning endpoint (Step 5). An explicit value wins and is treated as externally managed |
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | For HPB-internal/default Talk recording | Internal client secret for standalone Talk signaling / HPB; must match `[clients] internalsecret`. Required for private, group, and one-to-one Talk recording |
 | `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped notifications, recording upload). Leave empty to use the backend URL Talk sends with each request |
 | `OPENROUTER_API_KEY` | No | API key for LLM transcript cleanup + meeting summaries. **When set, the full local transcript is sent to that third-party endpoint** for cleanup/summarisation (transcription itself is always local). Unset, raw transcripts are published without summaries |
@@ -305,10 +312,17 @@ All of these must pass before the Talk handoff:
      "talk": {
        "secret_configured": true,
        "signaling_internal_secret_configured": true,
-       "backend_url_override_configured": false
+       "backend_url_override_configured": false,
+       "secret_source": "generated",
+       "recording_backend_url": "https://cloud.example.com/index.php/apps/app_api/proxy/gocassini"
      }
    }
    ```
+
+   `secret_source` is `generated` when the operator self-generated the recording
+   secret (D-447) or `env` when you supplied one; `recording_backend_url` is the
+   value to register in Step 5 (never the secret itself — that comes from the
+   provisioning endpoint below).
 9. CUDA installs only: the image tag ends in `-cuda` and the container can see
    the GPU — `docker exec nc_app_gocassini nvidia-smi`. The status endpoint in
    the previous step must show `"device": "cuda"` with `"device_usable": true`;
@@ -346,16 +360,30 @@ and `api/v1/room/*` routes are declared PUBLIC in the manifest, so Talk's
 recording protocol (authenticated by its own HMAC, not a Nextcloud session)
 passes through the proxy.
 
+Talk has no API for an app to register itself as the recording backend, so this
+one admin step stays manual — but since D-447 it is **secret-free**: the
+operator's ADMIN-only provisioning endpoint returns the ready-to-apply
+`recording_servers` value (including the self-generated secret), so you never
+copy a secret by hand.
+
 **Back up the current backend first**, then switch:
 
 ```bash
 # 0. Back up (empty output = no recording backend configured)
 occ config:app:get spreed recording_servers | tee /root/recording_servers.backup
 
-# 1. Switch — same secret you registered the app with in Step 3
-occ config:app:set spreed recording_servers --value='{"servers":[{"server":"https://cloud.example.com/index.php/apps/app_api/proxy/gocassini","verify":true}],"secret":"<secret>"}'
+# 1. Pull the ready-to-apply recording_servers value from Cassini (ADMIN route,
+#    use an admin login with an app password) and register it in one step.
+RS="$(curl -fsS -u admin:<app-password> \
+  https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/operator/talk/provisioning \
+  | jq -c '.recording_servers')"
+occ config:app:set spreed recording_servers --value="$RS"
 occ config:app:set spreed call_recording --value=yes
 ```
+
+If you supplied `CASSINI_TALK_RECORDING_SECRET` yourself in Step 3, you can
+instead set `recording_servers` directly with that same secret and the
+`recording_backend_url` from the status endpoint.
 
 **Controlled test** — use a non-critical private/group or one-to-one
 conversation so the HPB-internal path is exercised:
