@@ -28,6 +28,20 @@ const (
 
 	envTalkSignalingInternalSecret = "CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
 
+	// signalingInternalSecretHint is the single actionable message shown to
+	// admins when the Talk signaling internal secret is missing. It is the one
+	// required input for invisible HPB-internal recording — it cannot be
+	// auto-provisioned (unlike the recording secret), because an invisible
+	// internal signaling client authenticates with the server's shared
+	// internalsecret. Surfaced both at startup (run.go) and in /status so the
+	// admin learns of it before a recording fails.
+	signalingInternalSecretHint = "Talk recording needs CASSINI_TALK_SIGNALING_INTERNAL_SECRET " +
+		"(the Talk signaling server's [clients] internalsecret). On Nextcloud AIO, read it with " +
+		"`docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`; on a standalone HPB it is the " +
+		"[clients] internalsecret in the signaling server config. Set it in the External Apps deploy " +
+		"options, or with `occ app_api:app:register <app> <daemon> --env " +
+		"CASSINI_TALK_SIGNALING_INTERNAL_SECRET=<value>`. See docs/exapp-install.md."
+
 	// recordHealthProbeTTL/Timeout throttle the deep /healthz?check=record
 	// doctor exec: the endpoint is unauthenticated, so probes are
 	// singleflighted, cached briefly, and exec-bounded (D-376).
@@ -68,6 +82,16 @@ type statusTalk struct {
 	// spreed (the AppAPI proxy base for this ExApp), derived from NEXTCLOUD_URL.
 	// Not a secret; empty on standalone/dev deploys where it cannot be derived.
 	RecordingBackendURL string `json:"recording_backend_url,omitempty"`
+	// SignalingInternalSecretHint is set only when the internal secret is
+	// missing: an actionable message telling the admin how to find and set it.
+	// Empty when configured, so a healthy status stays quiet.
+	SignalingInternalSecretHint string `json:"signaling_internal_secret_hint,omitempty"`
+}
+
+// signalingInternalSecretConfigured reports whether the Talk signaling internal
+// secret (required for invisible HPB-internal recording) is set.
+func signalingInternalSecretConfigured() bool {
+	return strings.TrimSpace(os.Getenv(envTalkSignalingInternalSecret)) != ""
 }
 
 type statusCheck struct {
@@ -103,7 +127,7 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 		},
 		Talk: statusTalk{
 			SecretConfigured:                  strings.TrimSpace(rt.cfg.TalkSharedSecret) != "",
-			SignalingInternalSecretConfigured: strings.TrimSpace(os.Getenv(envTalkSignalingInternalSecret)) != "",
+			SignalingInternalSecretConfigured: signalingInternalSecretConfigured(),
 			BackendURLOverrideConfigured:      strings.TrimSpace(rt.cfg.TalkBackendURL) != "",
 			SecretSource:                      rt.cfg.TalkSecretSource,
 			RecordingBackendURL:               rt.cfg.TalkRecordingBackendURL,
@@ -112,6 +136,9 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 			WorkRoot: storagePathCheck(rt.cfg.WorkRoot),
 			SiteRoot: storagePathCheck(rt.cfg.SiteRoot),
 		},
+	}
+	if !resp.Talk.SignalingInternalSecretConfigured {
+		resp.Talk.SignalingInternalSecretHint = signalingInternalSecretHint
 	}
 	resp.ImageTag = resp.Version
 	resp.DB = statusCheck{OK: true, Path: rt.cfg.DBPath}
