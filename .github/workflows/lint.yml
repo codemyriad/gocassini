@@ -5,10 +5,10 @@
 # Scope notes:
 #   - actionlint lints every workflow in .github/workflows (with shellcheck on
 #     the embedded run: blocks).
-#   - shellcheck covers scripts/ and sandbox/. Many older scripts elsewhere
-#     (harness/, deployment/, …) predate shellcheck and don't pass it yet;
-#     widening the glob further needs a cleanup pass first so this gate stays
-#     green.
+#   - shellcheck covers scripts/, sandbox/ and ops/deploy/. Many older scripts
+#     elsewhere (harness/, deployment/, …) predate shellcheck and don't pass it
+#     yet; widening the glob further needs a cleanup pass first so this gate
+#     stays green.
 #   - the script test suites are listed ONE BY ONE, not globbed. This job is the
 #     fast, offline, every-PR gate: a test belongs here only if it needs no
 #     Docker, no stack and no network. Globbing harness/bin/test-*.sh would
@@ -25,6 +25,7 @@ on:
       - 'scripts/**'
       - 'harness/**'
       - 'sandbox/**'
+      - 'ops/**'
       - '.github/workflows/**'
       - '.github/actions/**'
   pull_request:
@@ -32,6 +33,7 @@ on:
       - 'scripts/**'
       - 'harness/**'
       - 'sandbox/**'
+      - 'ops/**'
       - '.github/workflows/**'
       - '.github/actions/**'
 
@@ -61,8 +63,8 @@ jobs:
           # artifact's content, never on a missing tool.
           sudo apt-get install -y --no-install-recommends shellcheck xsltproc libxml2-utils ripgrep
 
-      - name: shellcheck scripts/ + sandbox/
-        run: shellcheck scripts/*.sh sandbox/*.sh
+      - name: shellcheck scripts/ + sandbox/ + ops/deploy/
+        run: shellcheck scripts/*.sh sandbox/*.sh ops/deploy/*.sh ops/deploy/lib/*.sh
 
       - name: actionlint (all workflows)
         run: |
@@ -76,6 +78,10 @@ jobs:
           set -euo pipefail
           ./scripts/test-release-tooling.sh
           ./sandbox/test-store-release.sh
+          # The deploy library's decision rules: moving tags refused, the
+          # compute device deriving the image variant instead of forking the
+          # deploy, and no reachable --rm-data. Pure functions, no network.
+          ./ops/deploy/test-exapp-register.sh
           # Negative control: proves verify-session-artifact.sh goes RED on a
           # 0-packet capture (D-510). This guard is what the per-PR private
           # e2e leg relies on to catch D-454 empty captures, and it used to

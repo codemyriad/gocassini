@@ -99,6 +99,10 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
 - **[Env-var reference](./exapp-talk-env-vars.md)** — every variable the installed
   ExApp reads vs. what AppAPI injects, and the `deployment/` parity vars.
 - **[Production deployment notes](./exapp-talk-production-deployment.md)** — deployment shape and operational notes.
+- **[One-click install & update constraints](./exapp-update-constraints.md)** —
+  what AppAPI's Install/Update buttons can and cannot deliver. Notably: deploy
+  env is creation-time only, so a release adding a *required* env var is a
+  breaking change.
 - **[Recording tutorial](./exapp-talk-recording-tutorial.md)** — a manual end-to-end validation walkthrough.
 - **[Troubleshooting](./exapp-talk-troubleshooting.md)** — install/access issues seen in practice.
 - **[Trying the image locally](./exapp-test-locally.md)** — three tiers, from image-only checks to a production-shaped local install.
@@ -110,7 +114,9 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
   most installs; live capture is CPU-bound regardless of transcription device.
 - **GPU/CUDA**: tag `X.Y.Z-cuda`. CUDA-enabled sherpa-onnx + fp32 Parakeet, with
   `CASSINI_STT_DEVICE=cuda` baked in. Set the deploy daemon's **Compute device**
-  to CUDA and AppAPI pulls the `-cuda` image automatically. The GPU accelerates
+  to CUDA and AppAPI pulls the `-cuda` image automatically — the device is a
+  property of the *daemon*, so a CPU and a GPU install differ by that one
+  setting and nothing else. The GPU accelerates
   the **transcription (build) stage** only. Requires the NVIDIA driver +
   Container Toolkit on the engine running the ExApp. See
   [GPU transcription (CUDA)](./exapp-install.md#gpu-transcription-cuda) and, for

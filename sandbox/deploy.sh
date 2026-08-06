@@ -9,6 +9,11 @@ ENV_FILE="$SCRIPT_DIR/.env"
 
 # shellcheck source=sandbox/lib-store-release.sh
 source "$SCRIPT_DIR/lib-store-release.sh"
+# The AppAPI register dance is shared with the harness install phase and the
+# production deploy (ops/deploy/deploy-exapp.sh) — one implementation, three
+# callers. See that file's header for the rules it encodes.
+# shellcheck source=ops/deploy/lib/exapp-register.sh
+source "$PROJECT_ROOT/ops/deploy/lib/exapp-register.sh"
 
 if [[ -f "$ENV_FILE" ]]; then
   set -a
@@ -96,6 +101,7 @@ fi
 log() {
   printf '\n\033[1;34m==>\033[0m \033[1m%s\033[0m\n' "$*"
 }
+exapp_log() { log "$@"; }
 
 occ() {
   "${COMPOSE[@]}" exec -T -u www-data nextcloud php occ "$@"
@@ -404,24 +410,24 @@ bootstrap_nextcloud() {
 }
 
 register_daemon() {
-  log "Registering HaRP deploy daemon"
   occ app_api:daemon:registry:remove harp_sandbox \
     --registry-from=ghcr.io \
     --registry-to=local >/dev/null 2>&1 || true
-  occ app_api:daemon:unregister harp_sandbox >/dev/null 2>&1 || true
-  occ app_api:daemon:register \
-    harp_sandbox \
-    "HaRP (Cassini sandbox)" \
-    docker-install \
-    http \
-    "appapi-harp:8780" \
-    "http://reverse-proxy" \
-    --net="${PROJECT_NAME}_default" \
+  # SANDBOX_COMPUTE_DEVICE is the only knob that separates a CPU sandbox from a
+  # GPU one: AppAPI derives the -cuda image variant from the daemon. Same
+  # parameter, same code path, as ops/deploy/inventory/*.env in production.
+  exapp_register_daemon \
+    --name harp_sandbox \
+    --display "HaRP (Cassini sandbox)" \
+    --host "appapi-harp:8780" \
+    --nc-url "http://reverse-proxy" \
+    --net "${PROJECT_NAME}_default" \
     --harp \
-    --harp_frp_address "appapi-harp:8782" \
-    --harp_shared_key "dogfood-shared-key-not-secret" \
+    --frp-address "appapi-harp:8782" \
+    --shared-key "dogfood-shared-key-not-secret" \
+    --compute-device "${SANDBOX_COMPUTE_DEVICE:-cpu}" \
     --set-default \
-    --compute_device=cpu
+    --replace
   occ app_api:daemon:registry:remove harp_sandbox \
     --registry-from=ghcr.io \
     --registry-to=local >/dev/null 2>&1 || true
@@ -445,22 +451,21 @@ register_cassini() {
   fi
   "${COMPOSE[@]}" cp "$RUNTIME_DIR/gocassini-info.xml" nextcloud:/tmp/gocassini-info.xml
   "${COMPOSE[@]}" exec -T -u root nextcloud chown www-data:www-data /tmp/gocassini-info.xml
-  # A leftover registration (an earlier App Store install, or a previous deploy)
-  # leaves AppAPI holding a secret the freshly-redeployed ExApp container no
-  # longer shares, so registering over it fails at the /init step with a 401
-  # "invalid AppAPI authentication". Unregister first for a clean re-register —
-  # WITHOUT --rm-data, so the persistent volume (jobs DB, published site) survives.
-  if occ app_api:app:list 2>/dev/null | grep -qi 'gocassini'; then
-    log "Cassini already registered; unregistering first for a clean re-register (data volume preserved)"
-    occ app_api:app:unregister gocassini || true
-  fi
-  occ app_api:app:register gocassini harp_sandbox \
+  # --replace: a leftover registration (an earlier App Store install, or a
+  # previous deploy) leaves AppAPI holding a secret the freshly-redeployed
+  # ExApp container no longer shares, so registering over it fails at /init
+  # with a 401 "invalid AppAPI authentication". The shared library unregisters
+  # first and never passes --rm-data, so the persistent volume (jobs DB,
+  # published site) survives.
+  exapp_register_app \
+    --app-id gocassini \
+    --daemon harp_sandbox \
     --info-xml /tmp/gocassini-info.xml \
     --env "CASSINI_TALK_RECORDING_SECRET=$CASSINI_TALK_RECORDING_SECRET" \
     --env "CASSINI_TALK_BACKEND_URL=$SANDBOX_PUBLIC_URL" \
     --env "CASSINI_TALK_SIGNALING_INTERNAL_SECRET=$SIGNALING_INTERNAL_SECRET" \
     --test-deploy-mode \
-    --wait-finish
+    --replace
 }
 
 create_demo_user() {
