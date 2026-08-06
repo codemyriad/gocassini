@@ -229,6 +229,15 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	logger.Printf("cassini_bin -> %s", cfg.CassiniBin)
 	logger.Printf("talk_shared_secret_set -> %t (source=%s)", strings.TrimSpace(cfg.TalkSharedSecret) != "", cfg.TalkSecretSource)
+	// The signaling internal secret is the one input we cannot self-provision
+	// (invisible HPB-internal recording authenticates with it). Surface its
+	// absence loudly at startup — not silently at record time — so an admin
+	// learns of it before the first recording fails (see docs/exapp-install.md).
+	if signalingInternalSecretConfigured() {
+		logger.Printf("talk_signaling_internal_secret_set -> true")
+	} else {
+		logger.Printf("WARNING: talk_signaling_internal_secret_set -> false: %s", signalingInternalSecretHint)
+	}
 	if cfg.TalkRecordingBackendURL != "" {
 		logger.Printf("talk_recording_backend_url -> %s", cfg.TalkRecordingBackendURL)
 	}
