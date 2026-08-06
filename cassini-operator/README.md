@@ -250,7 +250,7 @@ Publish still uses the Cassini CLI directly, but now targets an attempt-scoped r
 cassini publish <work-root>/current/<job-id>.meeting --out <work-root>/runs/<job-id>--attempt-XXX.site
 ```
 
-On success, the operator promotes a copy of that retained attempt site into the live shared site root:
+On success, the operator hands that retained attempt site to the publish sink, which upserts the meeting into the live shared site root:
 
 ```text
 <site-root>/
@@ -643,9 +643,9 @@ An attempt row stores:
 ### Publish stage
 
 - queue-backed
-- always processed by one publish worker
+- always processed by one publish worker — serialised delivery is a correctness requirement of the local sink, which read-modify-writes the live catalog
 - runs `cassini publish <work-root>/current/<job-id>.meeting --out <work-root>/runs/<job-id>--attempt-XXX.site` (one meeting, not the library)
-- on success, promotes a copy of that retained attempt site into `<site-root>`
+- on success, the publish sink upserts that meeting into `<site-root>`, leaving every other meeting's files untouched
 
 ## Failure reporting
 
