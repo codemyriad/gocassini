@@ -28,12 +28,6 @@ func promoteMeetingBundle(workRoot, sourceMeetingPath, jobID string) (string, er
 	return destination, nil
 }
 
-func promoteSiteBundle(sourceSitePath, destinationSitePath string, lineage SiteBundleLineage) error {
-	return promoteDirectory(sourceSitePath, destinationSitePath, siteStagingRoot(destinationSitePath), func(stagingPath string) error {
-		return WriteSiteBundleLineage(stagingPath, lineage)
-	})
-}
-
 func promoteDirectory(sourcePath, destinationPath, stagingRoot string, prepareStaged func(string) error) error {
 	sourcePath = filepath.Clean(sourcePath)
 	destinationPath = filepath.Clean(destinationPath)

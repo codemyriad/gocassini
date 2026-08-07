@@ -52,7 +52,7 @@ logged-in user.]]></description>
       <variable>
         <name>CASSINI_TALK_SIGNALING_INTERNAL_SECRET</name>
         <display-name>Talk signaling internal secret</display-name>
-        <description>Shared internal secret for standalone Nextcloud Talk signaling / HPB. Must match the signaling server [clients] internalsecret value. Required for the default HPB-internal recorder path used by private, group, and one-to-one Talk recording.</description>
+        <description>Shared internal secret for standalone Nextcloud Talk signaling / HPB. Must match the signaling server's [clients] internalsecret. Required for HPB-internal recording (the invisible recorder used for private, group, and one-to-one calls) — it cannot be auto-generated. How to find it: on Nextcloud All-in-One run `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`; on a standalone HPB it is the [clients] internalsecret in the signaling server config. See docs/exapp-install.md.</description>
       </variable>
       <variable>
         <name>CASSINI_TALK_BACKEND_URL</name>
@@ -131,6 +131,16 @@ logged-in user.]]></description>
            Talk config presence, DB/storage health — never secret values) -->
       <route>
         <url>^operator\/status\/?$</url>
+        <verb>GET</verb>
+        <access_level>ADMIN</access_level>
+      </route>
+      <!-- ADMIN: Talk recording provisioning bundle (D-447). Returns the
+           self-generated recording secret + the recording_servers value to
+           register in spreed so the host can wire Talk in one secret-free
+           step. Exposes the secret ON PURPOSE — ADMIN-only at the proxy, it
+           is how the generated secret reaches spreed's config. -->
+      <route>
+        <url>^operator\/talk\/provisioning\/?$</url>
         <verb>GET</verb>
         <access_level>ADMIN</access_level>
       </route>

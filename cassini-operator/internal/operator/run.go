@@ -45,12 +45,25 @@ type Config struct {
 	CassiniBin       string
 	TalkSharedSecret string
 	TalkBackendURL   string
-	MaxRecordWorkers int
-	MaxBuildWorkers  int
+	// TalkSecretSource records where TalkSharedSecret came from ("env" when
+	// supplied via flag/env, "generated" when the operator self-generated and
+	// persisted it, "unset" when none is available). Resolved at startup by
+	// resolveTalkProvisioning (D-447); reported by /status. Not a flag.
+	TalkSecretSource string
+	// TalkRecordingBackendURL is the recording_servers server value to register
+	// in spreed — the AppAPI proxy base for this ExApp, derived from
+	// NEXTCLOUD_URL + APP_ID. Empty on standalone/dev deploys. Not a flag.
+	TalkRecordingBackendURL string
+	MaxRecordWorkers        int
+	MaxBuildWorkers         int
 	// APIToken (CASSINI_OPERATOR_API_TOKEN) optionally guards the operator
 	// JSON API with bearer auth for standalone deploys; empty disables it
 	// and AppAPI-authenticated requests bypass it (D-376).
 	APIToken string
+	// PublishSink names where published meetings go (publish_sink.go, D-533).
+	// Empty means unset, which resolves to the default; a non-empty unknown
+	// name is rejected at startup.
+	PublishSink string
 }
 
 type Runtime struct {
@@ -76,6 +89,10 @@ type Runtime struct {
 	recordJobFn  func(context.Context, Job, TriggerRequest) (recordResult, error)
 	buildJobFn   func(context.Context, buildTask) (string, error)
 	publishJobFn func(context.Context, publishTask) (string, error)
+	// publishSink is where a published meeting is delivered (publish_sink.go,
+	// D-533). Exactly one, selected by name; runPublishJob knows nothing about
+	// the destination. Never nil — an unset name resolves to the default.
+	publishSink publishSink
 	// fetchTalkRoomName resolves a Talk room's display name via the
 	// Nextcloud OCS API (talk_room_name.go). Nil outside AppAPI deployments;
 	// tests stub it. talkRoomNameRetryGap defaults to the package constant;
@@ -160,6 +177,15 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	cfg.BindAddr = exappCfg.applyToBindAddr(cfg.BindAddr)
 
+	// Zero-config Talk recording (D-447): generate + persist a recording secret
+	// when none was supplied, and derive the backend URL to register in spreed.
+	// An explicit CASSINI_TALK_RECORDING_SECRET still wins. The persisted secret
+	// lives next to the DB, i.e. on the AppAPI volume, so it survives restart.
+	prov := resolveTalkProvisioning(filepath.Dir(cfg.DBPath), cfg.TalkSharedSecret, exappCfg.NextcloudURL, exappCfg.AppID, logger)
+	cfg.TalkSharedSecret = prov.Secret
+	cfg.TalkSecretSource = prov.SecretSource
+	cfg.TalkRecordingBackendURL = prov.BackendURL
+
 	store, err := OpenStore(cfg.DBPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "open store: %v\n", err)
@@ -206,11 +232,24 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("db -> %s", cfg.DBPath)
 	logger.Printf("work_root -> %s", cfg.WorkRoot)
 	logger.Printf("site_root -> %s", cfg.SiteRoot)
+	logger.Printf("publish_sink -> %s", publishSinkNameOrDefault(cfg.PublishSink))
 	if persistRoot := persistentStorageRoot(); persistRoot != "" {
 		logger.Printf("app_persistent_storage -> %s", persistRoot)
 	}
 	logger.Printf("cassini_bin -> %s", cfg.CassiniBin)
-	logger.Printf("talk_shared_secret_set -> %t", strings.TrimSpace(cfg.TalkSharedSecret) != "")
+	logger.Printf("talk_shared_secret_set -> %t (source=%s)", strings.TrimSpace(cfg.TalkSharedSecret) != "", cfg.TalkSecretSource)
+	// The signaling internal secret is the one input we cannot self-provision
+	// (invisible HPB-internal recording authenticates with it). Surface its
+	// absence loudly at startup — not silently at record time — so an admin
+	// learns of it before the first recording fails (see docs/exapp-install.md).
+	if signalingInternalSecretConfigured() {
+		logger.Printf("talk_signaling_internal_secret_set -> true")
+	} else {
+		logger.Printf("WARNING: talk_signaling_internal_secret_set -> false: %s", signalingInternalSecretHint)
+	}
+	if cfg.TalkRecordingBackendURL != "" {
+		logger.Printf("talk_recording_backend_url -> %s", cfg.TalkRecordingBackendURL)
+	}
 	logger.Printf("max_record_workers -> %d", cfg.MaxRecordWorkers)
 	logger.Printf("max_build_workers -> %d", cfg.MaxBuildWorkers)
 	logger.Printf("operator_api_token_auth -> %t", cfg.APIToken != "")
@@ -305,6 +344,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", envOrDefaultAny([]string{"CASSINI_BIN"}, defaultCassiniBinPath(repoRoot)), "Cassini CLI binary path")
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
+	fs.StringVar(&cfg.PublishSink, "sink", envOrDefaultAny([]string{"CASSINI_PUBLISH_SINK"}, ""), "where published meetings are delivered (known sinks: "+strings.Join(publishSinkNames(), ", ")+"; default "+defaultPublishSink+")")
 	fs.IntVar(&cfg.MaxRecordWorkers, "max-record-workers", defaultMaxRecordWorkers, "maximum concurrent record workers")
 	fs.IntVar(&cfg.MaxBuildWorkers, "max-build-workers", defaultMaxBuildWorkers, "maximum concurrent build workers")
 	fs.Usage = func() {
@@ -351,6 +391,10 @@ Flags:
 	}
 	if cfg.MaxBuildWorkers < 1 {
 		return Config{}, 2, errors.New("--max-build-workers must be >= 1")
+	}
+	cfg.PublishSink = strings.TrimSpace(cfg.PublishSink)
+	if err := validatePublishSinkName(cfg.PublishSink); err != nil {
+		return Config{}, 2, err
 	}
 	if strings.TrimSpace(cfg.CassiniBin) == "" {
 		return Config{}, 2, errors.New("--cassini-bin must not be empty")
@@ -483,6 +527,15 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	rt.recordJobFn = rt.executeRecordCLI
 	rt.buildJobFn = rt.executeBuildCLI
 	rt.publishJobFn = rt.executePublishCLIWithTimeout
+	// loadConfig already rejected an unknown name; a Config built directly (as
+	// tests do) carries an empty name, which resolves to the default. So this
+	// cannot fail in practice — but fall back rather than panic if it ever does.
+	sink, err := newPublishSink(cfg.PublishSink, cfg, logger)
+	if err != nil {
+		logger.Printf("publish sink %q unavailable (%v); using %s", cfg.PublishSink, err, defaultPublishSink)
+		sink, _ = newPublishSink(defaultPublishSink, cfg, logger)
+	}
+	rt.publishSink = sink
 	rt.computeProbe = sync.OnceValues(func() (bool, string) {
 		return probeComputeDevice(configuredSTTDevice())
 	})
@@ -508,6 +561,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/events", rt.eventsHandler)
 	api.HandleFunc("/status", rt.statusHandler)
 	api.HandleFunc("/settings", rt.settingsHandler)
+	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
 
 	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
 	// off by default). Requests that already passed the AppAPI middleware are
@@ -547,6 +601,7 @@ func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler) {
 		root.Handle("/events", api)
 		root.Handle("/status", api)
 		root.Handle("/settings", api)
+		root.Handle("/talk/provisioning", api)
 		return
 	}
 	root.Handle(basePath, http.StripPrefix(basePath, api))

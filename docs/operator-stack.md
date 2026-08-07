@@ -146,7 +146,7 @@ The easiest way to understand publish in operator mode is:
 
 1. each attempt may create attempt-local outputs under `runs/`
 2. successful artifacts are promoted into `current/`
-3. publish reads the whole canonical `current/` library
+3. publish reads only the job's own bundle from `current/` (one meeting, not the library)
 4. the live site is rebuilt from the ready `.meeting` bundles in that library
 
 So the live site is based on the latest successful artifacts per job, not on a single attempt directory.
@@ -205,7 +205,7 @@ For a new job, the operator:
 8. promotes a successful `.meeting` into `current/`
 9. queues publish
 10. runs `cassini publish` from the canonical `current/` library
-11. promotes the retained attempt-local `.site` into the live site root
+11. hands the attempt-local `.site` to the publish sink, which upserts that meeting into the live site root (leaving every other meeting untouched)
 
 ### Rerun attempt
 
