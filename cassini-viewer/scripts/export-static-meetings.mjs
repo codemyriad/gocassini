@@ -176,10 +176,9 @@ export function portableDefaultSegmentCount(portable) {
 }
 
 export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, recordingsBaseUrl = null }) {
-  const { title, dateLabel } = describeMeeting(meetingId);
-
   if (sourceType === "portable") {
     const portable = extractPortableManifest(sourcePath);
+    const { title, dateLabel } = describeMeeting(meetingId, portable?.meeting?.createdAtUtc);
     const transcript = buildTranscriptWordsFromPortable(portable);
     // A real embedded title (e.g. the Talk room name the operator captured
     // at recording time) beats anything derived from the file name; packer
@@ -204,6 +203,10 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
       digestDurationMs: transcript.media?.durationMs ?? 0,
     };
   }
+
+  // Directory packs carry no createdAtUtc in the metadata the exporter reads
+  // (manifest.json), so their dateLabel still comes from the id alone.
+  const { title, dateLabel } = describeMeeting(meetingId);
 
   if (recordingsBaseUrl) {
     const manifest = readManifest(sourcePath, meetingId);
@@ -1319,7 +1322,20 @@ export function preferredPortableTitle(portable, meetingId) {
   return raw;
 }
 
-export function describeMeeting(meetingId) {
+export function describeMeeting(meetingId, createdAtUtc = "") {
+  // Pack metadata beats filename heuristics: backfilled ids like
+  // "daily-meeting-2026-04-08" carry no time part, so without metadata the
+  // dateLabel echoes the raw slug and sorts to the bottom of the catalog
+  // (D-588). The title still comes from the id.
+  const described = describeMeetingFromId(meetingId);
+  const metadataDateLabel = dateLabelFromTimestamp(createdAtUtc);
+  if (metadataDateLabel !== "") {
+    return { title: described.title, dateLabel: metadataDateLabel };
+  }
+  return described;
+}
+
+function describeMeetingFromId(meetingId) {
   const normalizedMeetingId = stripVariantSuffix(meetingId);
   const colonTimeStamp = parseTimestampFromDoubledDashParts(normalizedMeetingId, "--");
   if (colonTimeStamp) {
@@ -1385,7 +1401,24 @@ function dateLabelFromUlid(meetingId) {
   if (ms < ULID_TIMESTAMP_MIN_MS || ms > ULID_TIMESTAMP_MAX_MS) {
     return "";
   }
-  const date = new Date(ms);
+  return formatUtcDateLabel(new Date(ms));
+}
+
+// dateLabelFromTimestamp renders "YYYY-MM-DD HH:MM" (UTC, same shape as the
+// ULID-derived labels) from a pack's RFC3339 createdAtUtc, or "" when the
+// value is absent or unparseable.
+function dateLabelFromTimestamp(timestamp) {
+  if (typeof timestamp !== "string" || timestamp.trim() === "") {
+    return "";
+  }
+  const ms = Date.parse(timestamp.trim());
+  if (!Number.isFinite(ms)) {
+    return "";
+  }
+  return formatUtcDateLabel(new Date(ms));
+}
+
+function formatUtcDateLabel(date) {
   const pad = (value) => String(value).padStart(2, "0");
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(
     date.getUTCHours(),

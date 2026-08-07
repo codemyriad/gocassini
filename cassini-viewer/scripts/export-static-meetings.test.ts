@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
@@ -98,6 +99,34 @@ describe("describeMeeting", () => {
       title: "Weekly Sync",
       dateLabel: "weekly-sync",
     });
+  });
+
+  it("derives the date from pack createdAtUtc when the id has no time part (D-588)", () => {
+    expect(describeMeeting("daily-meeting-2026-04-08", "2026-04-08T07:31:02Z")).toEqual({
+      title: "Daily Meeting 2026 04 08",
+      dateLabel: "2026-04-08 07:31",
+    });
+  });
+
+  it("prefers pack createdAtUtc over filename timestamps", () => {
+    // Metadata is authoritative (UTC); filename stamps are a fallback only.
+    expect(describeMeeting("daily-meeting--2026-03-05--12:38:29", "2026-03-05T10:38:29Z")).toEqual({
+      title: "Daily Meeting",
+      dateLabel: "2026-03-05 10:38",
+    });
+  });
+
+  it("falls back to the id when createdAtUtc is missing or unparseable", () => {
+    expect(describeMeeting("daily-meeting-2026-04-08")).toEqual({
+      title: "Daily Meeting 2026 04 08",
+      dateLabel: "daily-meeting-2026-04-08",
+    });
+    expect(describeMeeting("daily-meeting-2026-04-08", "not-a-timestamp").dateLabel).toBe(
+      "daily-meeting-2026-04-08",
+    );
+    expect(describeMeeting("daily-meeting-2026-04-08", "   ").dateLabel).toBe(
+      "daily-meeting-2026-04-08",
+    );
   });
 });
 
@@ -1226,6 +1255,86 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
       // Catalog + meetings still produced.
       const catalog = JSON.parse(readFileSync(join(outputDir, "catalog.json"), "utf8"));
       expect(catalog.meetings).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // D-588: slug-named portable packs (e.g. backfilled dailies) carry no time
+  // part in the id; the dateLabel must come from the pack's createdAtUtc, with
+  // the raw-slug fallback intact when the metadata lacks it too.
+  it("derives dateLabel from pack createdAtUtc for slug-named portable packs", () => {
+    const root = mkdtempSync(join(tmpdir(), "cassini-export-createdat-"));
+    try {
+      const distDir = join(root, "dist");
+      mkdirSync(distDir, { recursive: true });
+
+      // extractPortableManifest() shells out to ffprobe, which the UI test
+      // environment does not provide. Stub it with a script that emits the
+      // pre-baked report stored next to the probed .opus file.
+      const stubBinDir = join(root, "bin");
+      mkdirSync(stubBinDir, { recursive: true });
+      const stubPath = join(stubBinDir, "ffprobe");
+      writeFileSync(stubPath, '#!/bin/sh\nfor arg in "$@"; do last="$arg"; done\nexec cat "${last}.ffprobe.json"\n');
+      chmodSync(stubPath, 0o755);
+
+      const sourceDir = join(root, "source");
+      mkdirSync(sourceDir, { recursive: true });
+      const writePortablePack = (meetingId: string, meeting: Record<string, unknown>) => {
+        const payload = gzipSync(Buffer.from(JSON.stringify({ meeting }), "utf8")).toString("base64url");
+        writeFileSync(join(sourceDir, `${meetingId}.opus`), "");
+        writeFileSync(
+          join(sourceDir, `${meetingId}.opus.ffprobe.json`),
+          JSON.stringify({
+            format: { tags: { CASSINI_PAYLOAD_CHUNK_COUNT: "1", CASSINI_PAYLOAD_000: payload } },
+            streams: [],
+          }),
+        );
+      };
+
+      writePortablePack("daily-meeting-2026-04-08", {
+        id: "daily-meeting-2026-04-08",
+        title: "Cassini Meeting",
+        createdAtUtc: "2026-04-08T07:31:02Z",
+      });
+      writePortablePack("daily-meeting-2026-04-09", {
+        id: "daily-meeting-2026-04-09",
+        title: "Cassini Meeting",
+      });
+
+      const outputDir = join(root, "out");
+      execFileSync(
+        process.execPath,
+        [
+          scriptPath,
+          "--source-dir",
+          sourceDir,
+          "--output-dir",
+          outputDir,
+          "--recordings-base-url",
+          "https://example.test/",
+        ],
+        {
+          env: {
+            ...process.env,
+            CASSINI_VIEWER_DIST_DIR: distDir,
+            PATH: `${stubBinDir}:${process.env.PATH}`,
+          },
+          encoding: "utf8",
+        },
+      );
+
+      const catalog = JSON.parse(readFileSync(join(outputDir, "catalog.json"), "utf8"));
+      const byId = new Map(catalog.meetings.map((meeting: { id: string }) => [meeting.id, meeting]));
+      // Metadata present: a real "YYYY-MM-DD HH:MM" (UTC) label the viewer can
+      // parse and sort by.
+      expect(byId.get("daily-meeting-2026-04-08")).toMatchObject({
+        dateLabel: "2026-04-08 07:31",
+      });
+      // Metadata absent: the raw-slug fallback still applies.
+      expect(byId.get("daily-meeting-2026-04-09")).toMatchObject({
+        dateLabel: "daily-meeting-2026-04-09",
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
