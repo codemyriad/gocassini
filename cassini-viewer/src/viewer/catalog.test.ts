@@ -56,7 +56,9 @@ describe("validateMeetingCatalog", () => {
       ],
     });
 
-    expect(catalog.meetings[0]?.audioPath).toBe("./daily-meeting-2026-03-18--12:30.opus");
+    expect(catalog.meetings[0]?.audioPath).toBe(
+      "./daily-meeting-2026-03-18--12:30.opus",
+    );
     expect(catalog.meetings[0]?.speakerCount).toBeUndefined();
   });
 
@@ -101,14 +103,13 @@ describe("validateMeetingCatalog", () => {
     const calls: string[] = [];
     globalThis.window = {
       location: {
-        href:
-          "http://nextcloud.example.com/index.php/apps/app_api/embedded/gocassini/viewer",
+        href: "http://nextcloud.example.com/index.php/apps/app_api/embedded/gocassini/viewer",
       },
       __CASSINI_VIEWER_BASE__: viewerBase,
     } as Window;
     const wantCatalogUrl =
       "http://nextcloud.example.com/index.php/apps/app_api/proxy/gocassini/published/catalog.json";
-    globalThis.fetch = vi.fn(async (input: string | URL) => {
+    const fetchMock = vi.fn(async (input: string | URL) => {
       const url = String(input);
       calls.push(url);
       if (url === wantCatalogUrl) {
@@ -129,11 +130,15 @@ describe("validateMeetingCatalog", () => {
         } as Response;
       }
       return { ok: false } as Response;
-    }) as typeof fetch;
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
 
     const catalog = await loadMeetingCatalog();
 
     expect(catalog?.meetings).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledWith(wantCatalogUrl, {
+      cache: "no-store",
+    });
     // audioPath follows the fetched catalog's response.url automatically.
     expect(catalog?.meetings[0]?.audioPath).toBe(
       "http://nextcloud.example.com/index.php/apps/app_api/proxy/gocassini/published/meeting-x.opus",
@@ -174,9 +179,41 @@ describe("validateMeetingCatalog", () => {
     const catalog = await loadMeetingCatalog();
 
     expect(catalog?.meetings).toHaveLength(1);
-    expect(catalog?.meetings[0]?.audioPath).toBe("http://127.0.0.1:8765/meeting-a.opus");
+    expect(catalog?.meetings[0]?.audioPath).toBe(
+      "http://127.0.0.1:8765/meeting-a.opus",
+    );
     expect(calls).toContain("http://127.0.0.1:8765/catalog.json");
     expect(calls).not.toContain("http://127.0.0.1:8765/preview/catalog.json");
+  });
+
+  it("returns null only when the site genuinely has no catalog", async () => {
+    // null tells the caller to load a single bundled artifact instead, which is
+    // right for a standalone one-meeting export. A 404 is the only status that
+    // means that.
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/viewer" },
+    } as Window;
+    globalThis.fetch = vi.fn(
+      async () => ({ ok: false, status: 404 }) as Response,
+    ) as typeof fetch;
+
+    await expect(loadMeetingCatalog()).resolves.toBeNull();
+  });
+
+  it("throws when a catalog that should exist cannot be reached", async () => {
+    // Returning null here would send an ExApp viewer looking for a bundled
+    // artifact its build does not contain, turning a Nextcloud outage into a
+    // confusing empty state rather than a reported error (D-550).
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/viewer" },
+    } as Window;
+    for (const status of [500, 502, 503]) {
+      globalThis.fetch = vi.fn(
+        async () => ({ ok: false, status }) as Response,
+      ) as typeof fetch;
+
+      await expect(loadMeetingCatalog()).rejects.toThrow(String(status));
+    }
   });
 });
 
@@ -242,19 +279,36 @@ describe("sortMeetingCatalogEntries", () => {
 
   it("breaks date ties by id, newest-looking id first", () => {
     const sorted = sortMeetingCatalogEntries([
-      { id: "meeting-a", audioPath: "./a.opus", title: "A", dateLabel: "2026-03-12 12:29" },
-      { id: "meeting-b", audioPath: "./b.opus", title: "B", dateLabel: "2026-03-12 12:29" },
+      {
+        id: "meeting-a",
+        audioPath: "./a.opus",
+        title: "A",
+        dateLabel: "2026-03-12 12:29",
+      },
+      {
+        id: "meeting-b",
+        audioPath: "./b.opus",
+        title: "B",
+        dateLabel: "2026-03-12 12:29",
+      },
     ]);
 
-    expect(sorted.map((meeting) => meeting.id)).toEqual(["meeting-b", "meeting-a"]);
+    expect(sorted.map((meeting) => meeting.id)).toEqual([
+      "meeting-b",
+      "meeting-a",
+    ]);
   });
 });
 
 describe("parseDateLabelMs", () => {
   it("parses date-only and date-time labels", () => {
     expect(parseDateLabelMs("2026-03-12")).toBe(Date.UTC(2026, 2, 12));
-    expect(parseDateLabelMs("2026-03-12 12:29")).toBe(Date.UTC(2026, 2, 12, 12, 29));
-    expect(parseDateLabelMs("2026-03-12 12:29:31")).toBe(Date.UTC(2026, 2, 12, 12, 29, 31));
+    expect(parseDateLabelMs("2026-03-12 12:29")).toBe(
+      Date.UTC(2026, 2, 12, 12, 29),
+    );
+    expect(parseDateLabelMs("2026-03-12 12:29:31")).toBe(
+      Date.UTC(2026, 2, 12, 12, 29, 31),
+    );
   });
 
   it("returns null for labels that are not dates", () => {
@@ -271,9 +325,24 @@ describe("parseDateLabelMs", () => {
 
 describe("filterMeetingCatalogEntries", () => {
   const meetings = [
-    { id: "m1", audioPath: "./m1.opus", title: "Daily Meeting", dateLabel: "2026-03-12 12:29" },
-    { id: "m2", audioPath: "./m2.opus", title: "Planning Session", dateLabel: "2026-04-02 09:00" },
-    { id: "m3", audioPath: "./m3.opus", title: "Untitled meeting", dateLabel: "2026-04-15 15:30" },
+    {
+      id: "m1",
+      audioPath: "./m1.opus",
+      title: "Daily Meeting",
+      dateLabel: "2026-03-12 12:29",
+    },
+    {
+      id: "m2",
+      audioPath: "./m2.opus",
+      title: "Planning Session",
+      dateLabel: "2026-04-02 09:00",
+    },
+    {
+      id: "m3",
+      audioPath: "./m3.opus",
+      title: "Untitled meeting",
+      dateLabel: "2026-04-15 15:30",
+    },
   ];
 
   it("returns all meetings for an empty or whitespace query", () => {
@@ -282,17 +351,25 @@ describe("filterMeetingCatalogEntries", () => {
   });
 
   it("matches titles case-insensitively", () => {
-    expect(filterMeetingCatalogEntries(meetings, "planning").map((m) => m.id)).toEqual(["m2"]);
-    expect(filterMeetingCatalogEntries(meetings, "MEETING").map((m) => m.id)).toEqual(["m1", "m3"]);
+    expect(
+      filterMeetingCatalogEntries(meetings, "planning").map((m) => m.id),
+    ).toEqual(["m2"]);
+    expect(
+      filterMeetingCatalogEntries(meetings, "MEETING").map((m) => m.id),
+    ).toEqual(["m1", "m3"]);
   });
 
   it("matches raw date labels", () => {
-    expect(filterMeetingCatalogEntries(meetings, "2026-04").map((m) => m.id)).toEqual(["m2", "m3"]);
+    expect(
+      filterMeetingCatalogEntries(meetings, "2026-04").map((m) => m.id),
+    ).toEqual(["m2", "m3"]);
   });
 
   it("matches dates the way the cards render them", () => {
     // Cards show "12 Mar 2026" (en-GB short format).
-    expect(filterMeetingCatalogEntries(meetings, "mar 2026").map((m) => m.id)).toEqual(["m1"]);
+    expect(
+      filterMeetingCatalogEntries(meetings, "mar 2026").map((m) => m.id),
+    ).toEqual(["m1"]);
   });
 
   it("returns an empty list when nothing matches", () => {
@@ -310,10 +387,12 @@ describe("filterMeetingCatalogEntries", () => {
       },
       ...meetings,
     ];
-    expect(filterMeetingCatalogEntries(legacy, "01kwek").map((m) => m.id)).toEqual([
-      "01KWEKPZVEJWP9BYBPBX9ZRNDQ",
-    ]);
-    expect(filterMeetingCatalogEntries(legacy, "planning").map((m) => m.id)).toEqual(["m2"]);
+    expect(
+      filterMeetingCatalogEntries(legacy, "01kwek").map((m) => m.id),
+    ).toEqual(["01KWEKPZVEJWP9BYBPBX9ZRNDQ"]);
+    expect(
+      filterMeetingCatalogEntries(legacy, "planning").map((m) => m.id),
+    ).toEqual(["m2"]);
   });
 });
 

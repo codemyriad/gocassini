@@ -5,10 +5,10 @@
   <name>Cassini</name>
   <summary>Record, transcribe, and publish Nextcloud Talk meetings.</summary>
   <description><![CDATA[Cassini joins a Nextcloud Talk room as a bot, records the call,
-transcribes and summarizes it, and publishes a readable static site that any
-logged-in user can browse. Recording control and job history live in the
-admin-only control panel; the published meeting archive is visible to every
-logged-in user.]]></description>
+transcribes and summarizes it, and publishes a readable archive in Nextcloud
+Files. Recording control and job history live in the admin-only control panel;
+each recording is readable only by the people who were in the Talk room when it
+was published, enforced by Nextcloud's own advanced file ACLs.]]></description>
   <version>0.2.0-alpha.4</version>
   <licence>agpl</licence>
   <author>codemyriad</author>
@@ -58,6 +58,16 @@ logged-in user.]]></description>
         <name>CASSINI_TALK_BACKEND_URL</name>
         <display-name>Talk backend URL override (optional)</display-name>
         <description>Base URL the operator uses to call back into Nextcloud Talk (recording started/stopped notifications and recording upload). Leave empty to use the backend URL Talk sends with each recording request, which is correct for almost every deployment.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_NC_ADMIN_USER</name>
+        <display-name>Administrator account for setup (optional)</display-name>
+        <description>The Nextcloud account Cassini acts as when it creates its recordings folder, groups and service account. Leave empty to detect an administrator automatically; set it only if detection picks the wrong account. This is used for one-time setup, never for storing or reading recordings — those use the dedicated "cassini" service account.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_PUBLISH_SINK</name>
+        <display-name>Where published recordings are stored</display-name>
+        <description>Selects the publish destination: "nextcloud-files" stores recordings in Nextcloud Files under Cassini/Recordings (the default for an installed app, and the only mode with per-participant access control), or "local" keeps them on the app's own volume. Leave empty unless you specifically need the local mode; an installed app defaults to nextcloud-files so recordings are never silently kept off Nextcloud. The nextcloud-files mode needs the Group folders ("Team folders") and Everyone Group (group_everyone) apps enabled first — Cassini provisions the folder and ACL topology itself but cannot install a PHP app. See docs/exapp-nextcloud-recordings-permissions.md.</description>
       </variable>
       <variable>
         <name>OPENROUTER_API_KEY</name>
@@ -145,7 +155,9 @@ logged-in user.]]></description>
         <access_level>ADMIN</access_level>
       </route>
 
-      <!-- USER: viewer SPA + published recordings (org-wide archive per D10) -->
+      <!-- USER: viewer SPA + published recordings. USER means a logged-in
+           Nextcloud account is required; it is not sufficient. Each recording is
+           served as the individual caller, so Nextcloud enforces its ACL. -->
       <route>
         <url>^viewer\/?$</url>
         <verb>GET</verb>

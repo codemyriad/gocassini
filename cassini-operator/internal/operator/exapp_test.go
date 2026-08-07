@@ -24,8 +24,8 @@ func setExAppEnv(t *testing.T, kv map[string]string) {
 func clearExAppEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
-		envAppHost, envAppPort, envAppID, envAppVersion, envAppSecret,
-		envAppAPIRequired, envViewerDist,
+		envAppHost, envAppPort, envAppID, envAppVersion, envAAVersion, envAppSecret,
+		envAppAPIRequired, envViewerDist, envNextcloudURL, envAppPersistentStorage,
 	} {
 		t.Setenv(k, "")
 	}
@@ -51,6 +51,7 @@ func TestLoadExAppConfigActiveWithSecret(t *testing.T) {
 		envAppSecret:  "shh",
 		envAppID:      "gocassini",
 		envAppVersion: "0.1.0",
+		envAAVersion:  "34.0.0",
 	})
 	cfg, err := LoadExAppConfig()
 	if err != nil {
@@ -58,6 +59,9 @@ func TestLoadExAppConfigActiveWithSecret(t *testing.T) {
 	}
 	if !cfg.Active {
 		t.Fatal("expected active")
+	}
+	if cfg.AAVersion != "34.0.0" {
+		t.Fatalf("AAVersion = %q, want 34.0.0", cfg.AAVersion)
 	}
 }
 
@@ -581,7 +585,7 @@ func TestViewerHandlerServesPublishedCatalogAndMeetings(t *testing.T) {
 	writeFile(t, filepath.Join(publishedDir, "catalog.json"), `{"version":"cassini.viewer.catalog.v1","meetings":[]}`)
 	writeFile(t, filepath.Join(publishedDir, "meetings", "demo.opus"), "opus-bytes")
 
-	h := viewerHandler(viewerDir, publishedDir, "/viewer", log.New(&bytes.Buffer{}, "", 0))
+	h := viewerHandler(viewerDir, publishedDir, "/viewer", log.New(&bytes.Buffer{}, "", 0), nil)
 
 	for _, tc := range []struct {
 		path string
@@ -609,7 +613,7 @@ func TestViewerHandlerDoesNotFallbackForMissingPublishedMeetingAsset(t *testing.
 	publishedDir := t.TempDir()
 	writeFile(t, filepath.Join(viewerDir, "index.html"), "<html>viewer</html>")
 
-	h := viewerHandler(viewerDir, publishedDir, "/viewer", log.New(&bytes.Buffer{}, "", 0))
+	h := viewerHandler(viewerDir, publishedDir, "/viewer", log.New(&bytes.Buffer{}, "", 0), nil)
 	r := httptest.NewRequest(http.MethodGet, "/viewer/meetings/missing/transcript.words.v1.json", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -627,7 +631,7 @@ func TestViewerHandlerKeepsSPAFallbackForViewerRoutes(t *testing.T) {
 	publishedDir := t.TempDir()
 	writeFile(t, filepath.Join(viewerDir, "index.html"), "<html>viewer</html>")
 
-	h := viewerHandler(viewerDir, publishedDir, "/viewer", log.New(&bytes.Buffer{}, "", 0))
+	h := viewerHandler(viewerDir, publishedDir, "/viewer", log.New(&bytes.Buffer{}, "", 0), nil)
 	r := httptest.NewRequest(http.MethodGet, "/viewer/session/abc", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)

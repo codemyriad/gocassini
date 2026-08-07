@@ -248,6 +248,21 @@ register_cassini() {
   # from the AIO Talk container. No human sets any secret.
   local int_secret; int_secret="$(aio_talk_internal_secret)"
 
+  # Two prerequisites the Cassini ExApp cannot install for itself (it reaches
+  # Nextcloud over HTTP, never occ), and since D-554 neither is optional:
+  # recordings are access-controlled or they are not served. For a dogfood
+  # instance that people actually keep recordings in, a silent miss means
+  # nobody can see anything, so enable is hard here on purpose.
+  #
+  # The two fail differently, which is why both are hard. Without groupfolders
+  # you get a visible folder-creation failure. Without group_everyone the
+  # provisioner returns before the folder is ever created — a silent no-op
+  # provision, strictly harder to diagnose.
+  occ app:install groupfolders >/dev/null 2>&1 || true
+  occ app:enable groupfolders
+  occ app:install group_everyone >/dev/null 2>&1 || true
+  occ app:enable group_everyone
+
   occ config:system:set updater.release.channel --value "$SANDBOX_UPDATE_CHANNEL" >/dev/null
 
   docker cp "$WORK_DIR/gocassini-info.xml" "$AIO_NEXTCLOUD:/tmp/gocassini-info.xml"
@@ -262,6 +277,7 @@ register_cassini() {
     --info-xml /tmp/gocassini-info.xml \
     --env "CASSINI_TALK_SIGNALING_INTERNAL_SECRET=$int_secret" \
     --env "CASSINI_TALK_BACKEND_URL=$PUBLIC_URL" \
+    --env "CASSINI_PUBLISH_SINK=${CASSINI_PUBLISH_SINK:-nextcloud-files}" \
     --wait-finish || true
   # --wait-finish can outlive its window on first deploy; ensure enabled.
   occ app_api:app:enable "$CASSINI_APPSTORE_ID" || true

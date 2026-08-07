@@ -22,14 +22,13 @@
 #   5. Create a Talk call; spawn audio bot(s) playing a known scenario
 #   6. Trigger Talk's start-recording via OCS; wait for the lifecycle to
 #      complete (Talk → HMAC POST /api/v1/room/{token} → operator's
-#      record job → recorder joins call → captures → stop → upload to
-#      Talk store → build → publish)
+#      record job → recorder joins call → captures → stop → build →
+#      publish; Talk receives status callbacks only, never an upload)
 #   7. Wait for the published artifact in the gocassini container
 #      (/srv/cassini-site/published/meetings/<id>.opus)
-#   8. Read the uploaded recording back from the room owner's Nextcloud
-#      files over WebDAV (spreed stores it under
-#      <attachment folder>/Recording/<room token>/) and assert existence,
-#      .mkv extension and a sane minimum size
+#   8. Assert Cassini uploaded NOTHING to Talk's recording store: the room
+#      owner's <attachment folder>/Recording/<room token>/ is absent or
+#      holds no files (D-551 — the .opus archive is the only path)
 #   9. Decode the transcript back OUT of the published .opus (via
 #      `cassini inspect --transcript`) and Levenshtein-check it against the
 #      scenario's expected text — proving the .opus embeds the transcript
@@ -280,6 +279,11 @@ if [[ "$IMAGE_REF" == *cuda* || "${TALK_E2E_USE_GPU:-0}" == "1" ]]; then
   log "GPU mode: passing --gpus all and CASSINI_STT_DEVICE=cuda"
 fi
 
+# CASSINI_PUBLISH_SINK=local below: this harness registers only an AppAPI
+# *daemon*, never the app, so the self-generated APP_SECRET is unknown to
+# Nextcloud and every act-as-user WebDAV call 401s. It is a Talk-protocol
+# test rather than a deployment, so it says so explicitly instead of letting
+# the installed-app default aim it at Nextcloud Files (D-549).
 docker run -d \
   --name "$CONTAINER_NAME" \
   --network host \
@@ -299,6 +303,7 @@ docker run -d \
   -e "CASSINI_OPERATOR_BIND_ADDR=0.0.0.0:${OPERATOR_HOST_PORT}" \
   -e "CASSINI_OPERATOR_BASE_PATH=/operator" \
   -e "CASSINI_APPAPI_REQUIRED=true" \
+  -e "CASSINI_PUBLISH_SINK=local" \
   "${STT_DEVICE_ENV[@]}" \
   --entrypoint /usr/local/bin/cassini-operator \
   "$IMAGE_REF" \
@@ -469,12 +474,12 @@ log "OCS recording stop response: ${STOP_RESP:0:200}"
 # ============================================================================
 # Phase 7: wait for the recording lifecycle to complete; pull transcript
 # ============================================================================
-phase 7 "Wait for record → upload → build → publish; await published .opus"
+phase 7 "Wait for record → build → publish; await published .opus"
 
 # Total budget: bot audio plays for $RECORD_DURATION_SECONDS seconds, then
-# recorder stops on empty room (default 8s grace), then upload to Talk,
-# then build (transcribe v3 int8 on 30s of audio takes ~10-20s on CPU),
-# then publish. Generous timeout:
+# recorder stops on empty room (default 8s grace), then build (transcribe
+# v3 int8 on 30s of audio takes ~10-20s on CPU), then publish. Generous
+# timeout:
 PUBLISH_DEADLINE=$(( SECONDS + RECORD_DURATION_SECONDS + 180 ))
 log "waiting for /srv/cassini-site/published/meetings/<id>.opus (up to $((PUBLISH_DEADLINE - SECONDS))s)"
 PUBLISHED_OPUS=""
@@ -496,86 +501,78 @@ log "OK published meeting: $PUBLISHED_OPUS"
 wait "$BOT_PID" 2>/dev/null || true
 
 # ============================================================================
-# Phase 8: read the uploaded MKV back from the owner's Nextcloud files
+# Phase 8: assert Cassini uploaded NOTHING to Talk's recording store
 # ============================================================================
-phase 8 "Assert the uploaded MKV landed in the owner's Nextcloud files (WebDAV)"
+phase 8 "Assert Cassini uploaded nothing to Talk's recording store"
 
-# The operator uploads the recording to Talk's OCS store endpoint with
-# owner=<the user that hit the OCS recording-start endpoint in phase 6>,
-# i.e. admin. spreed files recordings into the owner's Talk attachment
-# folder: <attachment folder>/Recording/<room token>/<upload name>,
+# Cassini never uses Talk's OCS recording-store endpoint, for any file
+# (D-551). A meeting reaches Nextcloud exactly once, as the published .opus
+# under the canonical recordings root — the only tree covered by the per-file
+# ACL model the read proxy enforces (D-521). A raw .mkv filed into the room
+# owner's Talk attachment folder would be an unmanaged parallel copy of the
+# same meeting, outside that model entirely.
+#
+# spreed would file such an upload at <attachment folder>/Recording/<token>/,
 # defaulting to /Talk/Recording/<token>/ (spreed lib/Config.php
-# getRecordingFolder() + lib/Service/RecordingService.php). Phase 7
-# already waited for publish, which the operator sequences strictly after
-# the Talk-store upload, so no polling here: the file either landed or
-# the user-visible contract regressed (misfiled, wrong owner, zero
-# bytes) even though the record stage reported success.
+# getRecordingFolder() + lib/Service/RecordingService.php). Phase 7 already
+# waited for publish, which is sequenced after the point where the upload
+# used to happen, so there is nothing to poll for: either the folder is
+# absent, or it exists and holds no files.
 RECORDING_OWNER="${RECORDING_OWNER:-admin}"
 RECORDING_OWNER_PASSWORD="${RECORDING_OWNER_PASSWORD:-admin}"
-MIN_RECORDING_BYTES="${MIN_RECORDING_BYTES:-10000}"
-DAV_RECORDING_DIR="$NC_URL_HOST/remote.php/dav/files/$RECORDING_OWNER/Talk/Recording/$ROOM_TOKEN"
+DAV_RECORDING_DIR="${DAV_RECORDING_DIR:-$NC_URL_HOST/remote.php/dav/files/$RECORDING_OWNER/Talk/Recording/$ROOM_TOKEN}"
 
 DAV_PROPFIND="$LOG_DIR/dav-recording-propfind.xml"
 DAV_STATUS=$(curl -s -o "$DAV_PROPFIND" -w '%{http_code}' \
   -u "$RECORDING_OWNER:$RECORDING_OWNER_PASSWORD" \
   -X PROPFIND -H "Depth: 1" -H "Content-Type: application/xml" \
-  --data '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:getcontentlength/></d:prop></d:propfind>' \
+  --data '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:getcontentlength/><d:resourcetype/></d:prop></d:propfind>' \
   "$DAV_RECORDING_DIR/" || true)
-if [[ "$DAV_STATUS" != "207" ]]; then
-  sed 's/^/    /' "$DAV_PROPFIND" 2>/dev/null | head -n 20 || true
-  fail "PROPFIND $DAV_RECORDING_DIR/ returned HTTP $DAV_STATUS — recording never landed in ${RECORDING_OWNER}'s files"
-fi
 
-MKV_ENTRY=$(python3 - "$DAV_PROPFIND" "$MIN_RECORDING_BYTES" <<'PY'
+case "$DAV_STATUS" in
+  404|405)
+    log "OK no Talk recording folder for the room ($DAV_STATUS) — nothing was uploaded to Talk"
+    ;;
+  207)
+    # The folder exists (a previous run, an unrelated Talk recording, or a
+    # pre-created tree). It must contain no files — only the collection itself.
+    python3 - "$DAV_PROPFIND" <<'PY' || fail "Cassini uploaded a file to Talk's recording store (PROPFIND response: $DAV_PROPFIND)"
 import sys
 import xml.etree.ElementTree as ET
 
-propfind_path, min_bytes = sys.argv[1], int(sys.argv[2])
 ns = {"d": "DAV:"}
-mkvs = []
-for resp in ET.parse(propfind_path).getroot().findall("d:response", ns):
+files = []
+for resp in ET.parse(sys.argv[1]).getroot().findall("d:response", ns):
     href = (resp.findtext("d:href", "", ns) or "").strip()
-    if not href.lower().endswith(".mkv"):
+    # A collection carries <d:collection/> inside <d:resourcetype>; anything
+    # without it is a file.
+    is_collection = any(
+        el.find("{DAV:}collection") is not None for el in resp.iter("{DAV:}resourcetype")
+    )
+    if is_collection:
         continue
     sizes = [
         int(el.text)
         for el in resp.iter("{DAV:}getcontentlength")
         if (el.text or "").strip().isdigit()
     ]
-    mkvs.append((href, sizes[0] if sizes else -1))
+    files.append((href, sizes[0] if sizes else -1))
 
-if len(mkvs) != 1:
+if files:
     print(
-        f"[talk-rec-e2e] FAIL expected exactly one .mkv in the recording "
-        f"folder, found {len(mkvs)}: {mkvs}",
+        "[talk-rec-e2e] FAIL Talk's recording folder is not empty — Cassini "
+        f"must never upload through the recording store (D-551): {files}",
         file=sys.stderr,
     )
     sys.exit(1)
-href, size = mkvs[0]
-if size < min_bytes:
-    print(
-        f"[talk-rec-e2e] FAIL recording {href} is {size} bytes "
-        f"(< {min_bytes} floor)",
-        file=sys.stderr,
-    )
-    sys.exit(1)
-print(f"{href}\t{size}")
 PY
-) || fail "uploaded recording missing or too small in ${RECORDING_OWNER}'s files (PROPFIND response: $DAV_PROPFIND)"
-MKV_HREF=${MKV_ENTRY%%$'\t'*}
-MKV_SIZE=${MKV_ENTRY##*$'\t'}
-log "OK recording in owner's files: $MKV_HREF ($MKV_SIZE bytes)"
-
-# Existence via PROPFIND is necessary but not sufficient — stream the
-# bytes back as the owner to prove the file is actually readable.
-READBACK="$LOG_DIR/recording-readback.mkv"
-READ_BYTES=$(curl -sf -u "$RECORDING_OWNER:$RECORDING_OWNER_PASSWORD" \
-  -o "$READBACK" -w '%{size_download}' "$NC_URL_HOST$MKV_HREF") \
-  || fail "WebDAV GET $MKV_HREF as $RECORDING_OWNER failed"
-if [[ "$READ_BYTES" != "$MKV_SIZE" ]]; then
-  fail "WebDAV GET $MKV_HREF returned $READ_BYTES bytes but PROPFIND advertised $MKV_SIZE"
-fi
-log "OK recording readable via WebDAV GET ($READ_BYTES bytes)"
+    log "OK Talk recording folder exists but holds no files — nothing was uploaded to Talk"
+    ;;
+  *)
+    sed 's/^/    /' "$DAV_PROPFIND" 2>/dev/null | head -n 20 || true
+    fail "PROPFIND $DAV_RECORDING_DIR/ returned unexpected HTTP $DAV_STATUS"
+    ;;
+esac
 
 # ============================================================================
 # Phase 9: Levenshtein-check transcript vs scenario expected text

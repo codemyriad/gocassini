@@ -83,6 +83,11 @@
   // switcher instead of taking over the whole "meeting failed to load" state.
   let transcriptSwitchError = "";
   let errorMessage = "";
+  // lastBundled tracks the previous value of the `bundled` prop so the reactive
+  // block below fires on transitions only. Initialised from the prop because
+  // onMount already loads when it starts true; without that, mounting bundled
+  // would load twice.
+  let lastBundled = bundled;
   let loading = false;
 
   let currentTimeMs = 0;
@@ -666,6 +671,28 @@
     window.removeEventListener("keydown", handleWindowKeydown);
     stopPlaybackClock();
   });
+
+  // Reactive `bundled`: the shell can flip this at any time — an embedded
+  // viewer that fell back to the bundled artifact and then recovered its
+  // catalog is exactly that transition. Without a handler here, a failed
+  // bundled load left errorMessage set and NEITHER branch below could clear it
+  // (the first needs a meeting, the second needs a non-null attemptedKey, and a
+  // bundled load sets neither) — so the "Meeting not found" card survived the
+  // recovery and stayed on screen until the user clicked something (D-543).
+  //
+  // This lives in the component rather than only in the shell because
+  // MeetingView is a published entry point ("./MeetingView.svelte") — any host
+  // that toggles `bundled` reproduces the same stuck card.
+  $: if (bundled !== lastBundled) {
+    const wasBundled = lastBundled;
+    lastBundled = bundled;
+    if (bundled) {
+      void loadBundled();
+    } else if (wasBundled) {
+      resetLoadedArtifact();
+      errorMessage = "";
+    }
+  }
 
   // Reactive load: when the shell selects a different meeting, load it. Guarded
   // by attemptedKey so catalog enrichment (which changes the meeting object

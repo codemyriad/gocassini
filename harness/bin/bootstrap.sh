@@ -18,6 +18,22 @@ harness_bootstrap_core_nextcloud() {
   occ_ignore_failure app:install spreed >/dev/null 2>&1
   occ_ignore_failure app:enable spreed >/dev/null 2>&1
 
+  # Per-participant recording access needs two native Nextcloud apps that an
+  # ExApp cannot install for itself: Team folders supplies the shared tree and
+  # advanced ACLs; Everyone Group supplies the virtual `everyone` group so every
+  # account has the read-only mount from creation without membership sweeps.
+  # Since D-554 neither is optional — recordings are access-controlled or they
+  # are not served. Installing them here mirrors the one-click app-store install
+  # a production admin does; the ExApp then creates the "Cassini" folder + ACLs
+  # itself on enable (operator nc_provision.go).
+  log "Ensuring Group Folders app is installed/enabled"
+  occ_ignore_failure app:install groupfolders >/dev/null 2>&1
+  occ_ignore_failure app:enable groupfolders >/dev/null 2>&1
+
+  log "Ensuring Everyone Group app is installed/enabled"
+  occ_ignore_failure app:install group_everyone >/dev/null 2>&1
+  occ_ignore_failure app:enable group_everyone >/dev/null 2>&1
+
   if occ user:info "$BOT_USER" >/dev/null 2>&1; then
     log "Bot user already exists: $BOT_USER"
   else

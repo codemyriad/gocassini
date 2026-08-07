@@ -95,6 +95,17 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		return
 	}
 	rt.logger.Printf("publish succeeded id=%s attempt=%d sink=%s attempt_site=%s location=%s", task.JobID, task.AttemptNumber, rt.sink().Name(), attemptArtifactSitePath, location)
+
+	// The attempt site is staging, not an archive. Once the sink has accepted
+	// the meeting it is a duplicate of what now lives at the destination, and
+	// keeping it means the ExApp retains a full copy of every recording it has
+	// ever published — outside the access model, on the app's own volume
+	// (D-550). Removed only after a successful delivery: a failed publish keeps
+	// it, because extractSiteFailureDetail reads its manifest and a rerun may
+	// want to look at it.
+	if err := os.RemoveAll(attemptArtifactSitePath); err != nil {
+		rt.logger.Printf("publish staging cleanup failed id=%s attempt=%d path=%s: %v", task.JobID, task.AttemptNumber, attemptArtifactSitePath, err)
+	}
 }
 
 func (rt *Runtime) enqueuePublishJob(jobID string, attemptNumber int, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt string) error {

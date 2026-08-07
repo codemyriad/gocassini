@@ -22,9 +22,19 @@ import (
 // (D-462). Every step is best-effort: a missing name only means the viewer
 // falls back to "Untitled meeting".
 
-// talkRoomNameFetcher resolves a Talk room's display name as seen by a
-// Nextcloud user. Nil when the operator has no AppAPI credentials.
-type talkRoomNameFetcher func(ctx context.Context, owner, roomToken string) (string, error)
+// talkRoomInfo is what the operator needs from a Talk conversation: its
+// display name (for the meeting title) and whether it is public, which decides
+// the recording's audience (D-552).
+type talkRoomInfo struct {
+	Name string
+	// Public is spreed's conversation type 3. A public room is one anyone with
+	// the link can join, so its recording is not participant-private.
+	Public bool
+}
+
+// talkRoomNameFetcher resolves a Talk room as seen by a Nextcloud user. Nil
+// when the operator has no AppAPI credentials.
+type talkRoomNameFetcher func(ctx context.Context, owner, roomToken string) (talkRoomInfo, error)
 
 const (
 	talkRoomNameTimeout  = 15 * time.Second
@@ -34,6 +44,10 @@ const (
 	// talkRoomNameMaxLen keeps a pathological room name from bloating
 	// OpusTags and catalog entries.
 	talkRoomNameMaxLen = 200
+	// talkRoomTypePublic is spreed's ROOM_TYPE_PUBLIC. The others (1 one-to-one,
+	// 2 group, 4 changelog, 5 former one-to-one, 6 note-to-self) are all
+	// invitation-scoped, so only this one widens a recording's audience.
+	talkRoomTypePublic = 3
 )
 
 // talkRoomNameFetcher returns a fetcher backed by the Talk OCS API, or nil
@@ -45,21 +59,21 @@ func (c ExAppConfig) talkRoomNameFetcher() talkRoomNameFetcher {
 	}
 	base := strings.TrimRight(c.NextcloudURL, "/")
 	client := &http.Client{Timeout: talkRoomNameTimeout}
-	return func(ctx context.Context, owner, roomToken string) (string, error) {
+	return func(ctx context.Context, owner, roomToken string) (talkRoomInfo, error) {
 		owner = strings.TrimSpace(owner)
 		roomToken = strings.TrimSpace(roomToken)
 		if owner == "" || roomToken == "" {
-			return "", fmt.Errorf("owner and room token are required")
+			return talkRoomInfo{}, fmt.Errorf("owner and room token are required")
 		}
 		roomURL := base + "/ocs/v2.php/apps/spreed/api/v4/room/" + url.PathEscape(roomToken)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, roomURL, nil)
 		if err != nil {
-			return "", fmt.Errorf("build room request: %w", err)
+			return talkRoomInfo{}, fmt.Errorf("build room request: %w", err)
 		}
 		c.setAppAPIOCSHeadersForUser(req, owner)
 		resp, err := client.Do(req)
 		if err != nil {
-			return "", fmt.Errorf("room request failed: %w", err)
+			return talkRoomInfo{}, fmt.Errorf("room request failed: %w", err)
 		}
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -73,18 +87,22 @@ func (c ExAppConfig) talkRoomNameFetcher() talkRoomNameFetcher {
 				}
 				snippet = cut + "…"
 			}
-			return "", fmt.Errorf("room request returned %d: %s", resp.StatusCode, snippet)
+			return talkRoomInfo{}, fmt.Errorf("room request returned %d: %s", resp.StatusCode, snippet)
 		}
 		var payload struct {
 			OCS struct {
 				Data struct {
 					DisplayName string `json:"displayName"`
 					Name        string `json:"name"`
+					// spreed's conversation type. Present on every room object;
+					// absent only if Talk changes its API, in which case the
+					// zero value reads as "not public" — fail closed.
+					Type int `json:"type"`
 				} `json:"data"`
 			} `json:"ocs"`
 		}
 		if err := json.Unmarshal(body, &payload); err != nil {
-			return "", fmt.Errorf("decode room response: %w", err)
+			return talkRoomInfo{}, fmt.Errorf("decode room response: %w", err)
 		}
 		name := strings.TrimSpace(payload.OCS.Data.DisplayName)
 		if name == "" {
@@ -92,9 +110,9 @@ func (c ExAppConfig) talkRoomNameFetcher() talkRoomNameFetcher {
 		}
 		name = sanitizeTalkRoomName(name)
 		if name == "" {
-			return "", fmt.Errorf("room response has no display name")
+			return talkRoomInfo{}, fmt.Errorf("room response has no display name")
 		}
-		return name, nil
+		return talkRoomInfo{Name: name, Public: payload.OCS.Data.Type == talkRoomTypePublic}, nil
 	}
 }
 
@@ -134,25 +152,36 @@ func (rt *Runtime) resolveTalkRoomName(jobID, owner, roomToken string) {
 			}
 		}
 		ctx, cancel := context.WithTimeout(rt.ctx, talkRoomNameTimeout)
-		name, err := rt.fetchTalkRoomName(ctx, owner, roomToken)
+		info, err := rt.fetchTalkRoomName(ctx, owner, roomToken)
 		cancel()
 		if err == nil {
-			rt.storeTalkRoomName(jobID, name)
+			rt.storeTalkRoomInfo(jobID, info)
 			return
 		}
 		lastErr = err
 	}
-	rt.logger.Printf("talk room name lookup failed id=%s room=%s: %v (meeting title falls back)", jobID, roomToken, lastErr)
+	// The audience consequence is the one worth stating: without the room
+	// object we do not know the conversation is public, so the recording keeps
+	// the participant-only ACL. Fail closed — an over-restricted recording is
+	// recoverable by a rerun; an over-shared one is not (D-552).
+	rt.logger.Printf("talk room lookup failed id=%s room=%s: %v (meeting title falls back; recording treated as non-public)", jobID, roomToken, lastErr)
 }
 
-// storeTalkRoomName records a resolved room name on the in-memory room state
-// and re-persists the job's Talk binding so the name survives an operator
-// restart until the build flow packs it into the meeting title.
-func (rt *Runtime) storeTalkRoomName(jobID, name string) {
+// storeTalkRoomInfo records the resolved room name and publicness on the
+// in-memory room state and re-persists the job's Talk binding, so both survive
+// an operator restart: the name until the build flow packs it into the meeting
+// title, and the public flag until publish decides the recording's audience.
+//
+// Publicness is captured at record time on purpose. Deciding it at publish
+// would let a room flipped public after the fact widen a recording made while
+// it was private — and the reverse would silently narrow one people were told
+// they could see.
+func (rt *Runtime) storeTalkRoomInfo(jobID string, info talkRoomInfo) {
 	rt.recordMu.Lock()
 	state, ok := rt.talkJobs[jobID]
 	if ok {
-		state.RoomName = name
+		state.RoomName = info.Name
+		state.RoomPublic = info.Public
 	}
 	var snapshot talkRoomState
 	if ok {

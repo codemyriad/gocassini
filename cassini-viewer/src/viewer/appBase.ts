@@ -16,6 +16,20 @@ export function readViewerBase(): string {
   return new URL(base, window.location.href).toString();
 }
 
+// isEmbeddedViewer reports whether this app is running inside the Nextcloud
+// ExApp shell, which is a different question from ncMode.
+//
+// ncMode is Boolean(OCA.Theming.primaryColor) — a *theming* signal, and it is
+// false inside a genuine ExApp whose Theming app is disabled or has not
+// resolved yet. __CASSINI_VIEWER_BASE__ is injected by the embedded build
+// itself, so it answers "am I embedded", which is what the catalog/bundled
+// decision actually turns on (D-543): an embedded viewer has no bundled
+// artifact to fall back to, so a catalog that is momentarily absent — a fresh
+// install, or any Nextcloud hiccup — must leave it in list mode, waiting.
+export function isEmbeddedViewer(): boolean {
+  return readViewerBase() !== "";
+}
+
 export function resolveAppBaseUrl(): URL {
   const base = import.meta.env.BASE_URL;
   if (base && base !== "./" && base !== "/") {

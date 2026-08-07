@@ -61,7 +61,7 @@ type publishSink interface {
 
 // publishSinkNames lists the selectable sinks, for flag help and error text.
 func publishSinkNames() []string {
-	names := []string{publishSinkLocal}
+	names := []string{publishSinkLocal, publishSinkNextcloudFiles}
 	sort.Strings(names)
 	return names
 }

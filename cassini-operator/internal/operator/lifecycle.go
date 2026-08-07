@@ -124,6 +124,10 @@ type LifecycleHandlers struct {
 	// exapp.go), which can deadlock a single-worker PHP setup if done before
 	// the /enabled response is written. Nil disables it (dev / tests).
 	UIRegistrar func()
+	// EnabledCallback runs asynchronously after an enabled/disabled state was
+	// persisted and answered. ExApp integrations use the enabled=true edge for
+	// callbacks that AppAPI would reject while registration is still disabled.
+	EnabledCallback func(bool)
 }
 
 func (h *LifecycleHandlers) logger() *log.Logger {
@@ -193,6 +197,9 @@ func (h *LifecycleHandlers) handleEnabled(w http.ResponseWriter, r *http.Request
 	// itself, so there is nothing to undo.
 	if enabled && h.UIRegistrar != nil {
 		go h.UIRegistrar()
+	}
+	if h.EnabledCallback != nil {
+		go h.EnabledCallback(enabled)
 	}
 }
 

@@ -17,14 +17,14 @@ that path can and cannot deliver is written down in
 | Path | What it is |
 |---|---|
 | `deploy-exapp.sh` | The deploy. Dry-run by default; `--apply` to act. |
-| `lib/exapp-register.sh` | The AppAPI register logic — **one implementation, three callers.** Also sourced by `sandbox/deploy.sh` and `harness/bin/lib/stack.sh`. |
+| `lib/exapp-register.sh` | The AppAPI register logic — **one implementation, two callers.** Also sourced by `harness/bin/lib/stack.sh`. (The AIO sandbox's `wire-cassini.sh` registers inline and does not source it.) |
 | `test-exapp-register.sh` | Offline unit tests for the library's decision rules. Runs in the per-PR lint gate. |
 | `inventory/` | Non-secret topology parameters, one file per deployment. |
 
 `lib/exapp-register.sh` is the reason this lives in the product repo rather than
-in our systems repo: the sandbox and the e2e harness source it directly, and the
-rules it encodes (never `--rm-data`, unregister before re-register, force
-`PUT /enabled`) have to hold identically in all three places or they will drift.
+in our systems repo: the e2e harness sources it directly, and the rules it
+encodes (never `--rm-data`, unregister before re-register, force
+`PUT /enabled`) have to hold identically in both places or they will drift.
 
 ## Our real inventory is not in this repo
 

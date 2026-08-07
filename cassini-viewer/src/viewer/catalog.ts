@@ -18,11 +18,28 @@ export interface MeetingCatalog {
 
 const DEFAULT_CATALOG_PATH = "./catalog.json";
 
-export async function loadMeetingCatalog(path = DEFAULT_CATALOG_PATH): Promise<MeetingCatalog | null> {
+export async function loadMeetingCatalog(
+  path = DEFAULT_CATALOG_PATH,
+): Promise<MeetingCatalog | null> {
   const targetUrl = path === DEFAULT_CATALOG_PATH ? resolveCatalogUrl() : path;
-  const response = await fetch(targetUrl);
+  // catalog.json is mutable: every publish replaces it with the current
+  // meeting index. Bypass the browser's HTTP cache so reopening/focusing the
+  // embedded viewer cannot remain pinned to AppAPI's prior one-hour response.
+  const response = await fetch(targetUrl, { cache: "no-store" });
   if (!response.ok) {
-    return null;
+    // null means "this site has no catalog" — a standalone single-meeting
+    // export — and the caller answers it by loading the bundled artifact. Only
+    // a 404 means that. Anything else is a failure to reach a catalog that
+    // does exist (Nextcloud unreachable, the proxy erroring), and returning
+    // null there sends the viewer looking for a bundled artifact that is not
+    // in an ExApp build, turning an outage into a confusing empty state
+    // instead of an error (D-550).
+    if (response.status === 404) {
+      return null;
+    }
+    throw new Error(
+      `Could not load the meeting list (HTTP ${response.status}).`,
+    );
   }
   const catalog = validateMeetingCatalog((await response.json()) as unknown);
   return {
@@ -33,7 +50,9 @@ export async function loadMeetingCatalog(path = DEFAULT_CATALOG_PATH): Promise<M
         artifactPath: meeting.artifactPath
           ? resolveCatalogAssetUrl(meeting.artifactPath, response.url)
           : undefined,
-        audioPath: meeting.audioPath ? resolveCatalogAssetUrl(meeting.audioPath, response.url) : undefined,
+        audioPath: meeting.audioPath
+          ? resolveCatalogAssetUrl(meeting.audioPath, response.url)
+          : undefined,
       })),
     ),
   };
@@ -52,22 +71,41 @@ export function validateMeetingCatalog(value: unknown): MeetingCatalog {
 
   return {
     version: "cassini.viewer.catalog.v1",
-    meetings: value.meetings.map((entry, index) => validateMeetingCatalogEntry(entry, index)),
+    meetings: value.meetings.map((entry, index) =>
+      validateMeetingCatalogEntry(entry, index),
+    ),
   };
 }
 
-function validateMeetingCatalogEntry(value: unknown, index: number): MeetingCatalogEntry {
+function validateMeetingCatalogEntry(
+  value: unknown,
+  index: number,
+): MeetingCatalogEntry {
   if (!isRecord(value)) {
     throw new Error(`catalog entry ${index} must be an object`);
   }
 
   const id = requireNonEmptyString(value.id, `catalog entry ${index} id`);
-  const title = requireNonEmptyString(value.title, `catalog entry ${index} title`);
-  const dateLabel = requireNonEmptyString(value.dateLabel, `catalog entry ${index} dateLabel`);
-  const artifactPath = optionalNonEmptyString(value.artifactPath, `catalog entry ${index} artifactPath`);
-  const audioPath = optionalNonEmptyString(value.audioPath, `catalog entry ${index} audioPath`);
+  const title = requireNonEmptyString(
+    value.title,
+    `catalog entry ${index} title`,
+  );
+  const dateLabel = requireNonEmptyString(
+    value.dateLabel,
+    `catalog entry ${index} dateLabel`,
+  );
+  const artifactPath = optionalNonEmptyString(
+    value.artifactPath,
+    `catalog entry ${index} artifactPath`,
+  );
+  const audioPath = optionalNonEmptyString(
+    value.audioPath,
+    `catalog entry ${index} audioPath`,
+  );
   if (!artifactPath && !audioPath) {
-    throw new Error(`catalog entry ${index} must define artifactPath or audioPath`);
+    throw new Error(
+      `catalog entry ${index} must define artifactPath or audioPath`,
+    );
   }
 
   return {
@@ -76,16 +114,27 @@ function validateMeetingCatalogEntry(value: unknown, index: number): MeetingCata
     audioPath,
     title,
     dateLabel,
-    speakerCount: optionalNumber(value.speakerCount, `catalog entry ${index} speakerCount`),
-    segmentCount: optionalNumber(value.segmentCount, `catalog entry ${index} segmentCount`),
-    digestDurationMs: optionalNumber(value.digestDurationMs, `catalog entry ${index} digestDurationMs`),
+    speakerCount: optionalNumber(
+      value.speakerCount,
+      `catalog entry ${index} speakerCount`,
+    ),
+    segmentCount: optionalNumber(
+      value.segmentCount,
+      `catalog entry ${index} segmentCount`,
+    ),
+    digestDurationMs: optionalNumber(
+      value.digestDurationMs,
+      `catalog entry ${index} digestDurationMs`,
+    ),
   };
 }
 
 // Newest first. Entries whose dateLabel cannot be parsed (e.g. legacy catalogs
 // that shipped a raw id as the label) sort after every dated entry instead of
 // wherever plain string comparison happens to land them.
-export function sortMeetingCatalogEntries(meetings: MeetingCatalogEntry[]): MeetingCatalogEntry[] {
+export function sortMeetingCatalogEntries(
+  meetings: MeetingCatalogEntry[],
+): MeetingCatalogEntry[] {
   return [...meetings].sort((left, right) => {
     const leftMs = parseDateLabelMs(left.dateLabel);
     const rightMs = parseDateLabelMs(right.dateLabel);
@@ -109,7 +158,10 @@ export function sortMeetingCatalogEntries(meetings: MeetingCatalogEntry[]): Meet
 // carry no timezone, so UTC is used consistently — only the relative order
 // matters here.
 export function parseDateLabelMs(dateLabel: string): number | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(dateLabel.trim());
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(
+      dateLabel.trim(),
+    );
   if (!match) {
     return null;
   }
@@ -130,7 +182,14 @@ export function parseDateLabelMs(dateLabel: string): number | null {
   ) {
     return null;
   }
-  const ms = Date.UTC(Number(year), monthNum - 1, dayNum, hourNum, minuteNum, secondNum);
+  const ms = Date.UTC(
+    Number(year),
+    monthNum - 1,
+    dayNum,
+    hourNum,
+    minuteNum,
+    secondNum,
+  );
   return Number.isFinite(ms) ? ms : null;
 }
 
@@ -147,9 +206,11 @@ export function filterMeetingCatalogEntries(
     return meetings;
   }
   return meetings.filter((meeting) =>
-    [meeting.title, meeting.dateLabel, formatMeetingDateShort(meeting.dateLabel)].some((haystack) =>
-      haystack.toLowerCase().includes(needle),
-    ),
+    [
+      meeting.title,
+      meeting.dateLabel,
+      formatMeetingDateShort(meeting.dateLabel),
+    ].some((haystack) => haystack.toLowerCase().includes(needle)),
   );
 }
 
@@ -162,7 +223,9 @@ export function filterMeetingCatalogEntries(
 // display as "9:11 PM GMT+1" to a CET viewer, an hour off and falsely precise).
 // We show the wall-clock digits as-is and make no timezone claim (D-484).
 export function formatMeetingDate(dateLabel: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(dateLabel);
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(
+    dateLabel,
+  );
   if (!match) {
     return dateLabel;
   }
@@ -226,7 +289,10 @@ function requireNumber(value: unknown, label: string): number {
   return value;
 }
 
-function optionalNonEmptyString(value: unknown, label: string): string | undefined {
+function optionalNonEmptyString(
+  value: unknown,
+  label: string,
+): string | undefined {
   if (value === undefined) {
     return undefined;
   }

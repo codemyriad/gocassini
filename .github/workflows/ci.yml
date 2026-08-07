@@ -68,6 +68,7 @@ jobs:
           ./harness/bin/test-post-boundary-stream.sh
           ./harness/bin/test-ci-e2e-mute-timing.sh
           ./harness/bin/test-negative-manifest.sh
+          ./harness/bin/test-harness-prerequisites.sh
       - name: Parse every harness shell script
         run: |
           set -euo pipefail
@@ -90,6 +91,7 @@ jobs:
           harness/bin/test-post-boundary-stream.sh
           harness/bin/verify-post-boundary-stream.sh
           harness/bin/test-negative-manifest.sh
+          harness/bin/test-harness-prerequisites.sh
       - name: Compile D-453 Python helpers
         run: |
           python3 -m py_compile harness/bin/installed-validation.py

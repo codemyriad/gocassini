@@ -61,6 +61,27 @@ type statusResponse struct {
 	Talk        statusTalk    `json:"talk"`
 	DB          statusCheck   `json:"db"`
 	Storage     statusStorage `json:"storage"`
+	// RecordingsAccess reports whether the Nextcloud substrate that makes
+	// recordings per-participant readable is actually there (D-554). It is the
+	// last recorded outcome of provisioning, not a live probe.
+	RecordingsAccess statusRecordingsAccess `json:"recordings_access"`
+}
+
+// statusRecordingsAccess answers "can this deployment actually restrict a
+// recording to its participants". A missing group folder does not stop the
+// operator answering requests — it stops anyone seeing their recordings — so
+// it has to be asked for rather than noticed.
+type statusRecordingsAccess struct {
+	// Applicable is false for a standalone operator, which serves no recordings
+	// from Nextcloud Files and cannot be broken for want of a substrate.
+	Applicable bool `json:"applicable"`
+	// PublishSink is reported because an ExApp pinned to the local sink keeps
+	// its archive off Nextcloud, which makes a provisioned substrate inert
+	// rather than wrong.
+	PublishSink string `json:"publish_sink,omitempty"`
+	OK          bool   `json:"ok"`
+	Detail      string `json:"detail,omitempty"`
+	CheckedAt   string `json:"checked_at,omitempty"`
 }
 
 type statusSTT struct {
@@ -136,6 +157,7 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 			WorkRoot: storagePathCheck(rt.cfg.WorkRoot),
 			SiteRoot: storagePathCheck(rt.cfg.SiteRoot),
 		},
+		RecordingsAccess: ncAccessSubstrate.snapshot(publishSinkNameOrDefault(rt.cfg.PublishSink)),
 	}
 	if !resp.Talk.SignalingInternalSecretConfigured {
 		resp.Talk.SignalingInternalSecretHint = signalingInternalSecretHint
@@ -146,7 +168,11 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 		resp.DB.OK = false
 		resp.DB.Detail = err.Error()
 	}
-	resp.OK = resp.STT.DeviceUsable && resp.DB.OK && resp.Storage.WorkRoot.OK && resp.Storage.SiteRoot.OK
+	// The substrate counts toward health only where it applies. An ExApp whose
+	// group folder does not exist is genuinely broken and should say 503; a
+	// standalone dev operator must not go 503 for a Nextcloud it never had.
+	resp.OK = resp.STT.DeviceUsable && resp.DB.OK && resp.Storage.WorkRoot.OK &&
+		resp.Storage.SiteRoot.OK && resp.RecordingsAccess.OK
 
 	status := http.StatusOK
 	if !resp.OK {

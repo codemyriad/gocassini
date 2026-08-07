@@ -19,35 +19,37 @@ WHERE id = ?`, bindingJSON, nowUTCString(), id); err != nil {
 	return nil
 }
 
-// MarkTalkDelivered records that the recording reached Nextcloud (stopped
-// callback acknowledged and upload stored). Reruns skip re-delivery once it
-// is set.
-func (s *Store) MarkTalkDelivered(ctx context.Context, id, deliveredAt string) error {
+// MarkTalkStopped records that spreed acknowledged the stopped callback for
+// this recording. It is the operator's memory of "spreed already knows this
+// one finished" — see ListInterruptedTalkRecordJobs, which must never send a
+// failed callback for a room that was already told stopped (D-551 repointed
+// this marker from the retired Talk upload).
+func (s *Store) MarkTalkStopped(ctx context.Context, id, stoppedAt string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin talk delivered update: %w", err)
+		return fmt.Errorf("begin talk stopped update: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.ExecContext(ctx, `
 UPDATE jobs
-SET talk_delivered_at = ?, updated_at = ?
-WHERE id = ?`, deliveredAt, deliveredAt, id); err != nil {
-		return fmt.Errorf("update talk delivered: %w", err)
+SET talk_stopped_at = ?, updated_at = ?
+WHERE id = ?`, stoppedAt, stoppedAt, id); err != nil {
+		return fmt.Errorf("update talk stopped: %w", err)
 	}
 	attemptNumber, err := currentAttemptNumberTx(ctx, tx, id)
 	if err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit talk delivered update: %w", err)
+		return fmt.Errorf("commit talk stopped update: %w", err)
 	}
 	s.emitStateChange(ctx, "job.updated", id, attemptNumber)
 	return nil
 }
 
 // interruptedTalkJob is a Talk-bound job whose recording was cut short by an
-// operator restart and whose delivery never completed.
+// operator restart and which spreed was never told about.
 type interruptedTalkJob struct {
 	ID      string
 	Binding string
@@ -57,6 +59,13 @@ type interruptedTalkJob struct {
 // marked interrupted by the startup sweep at interruptedAt. Filtering on the
 // sweep timestamp keeps older interrupted history from re-notifying rooms
 // that may have started a fresh recording since.
+//
+// The talk_stopped_at predicate enforces the rule that makes the sweep safe:
+// never tell spreed a recording "failed" when it was already told "stopped".
+// The window is real — the stopped callback is acknowledged and the marker
+// written while the row still sits at stage='record', state='running' (the
+// record outcome update moves neither), so a crash in between leaves exactly
+// such a job for the next sweep to find.
 func (s *Store) ListInterruptedTalkRecordJobs(ctx context.Context, interruptedAt string) ([]interruptedTalkJob, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, talk_binding
@@ -65,7 +74,7 @@ WHERE stage = 'record'
   AND state = 'interrupted'
   AND interrupted_at = ?
   AND talk_binding IS NOT NULL
-  AND talk_delivered_at IS NULL
+  AND talk_stopped_at IS NULL
 ORDER BY created_at ASC, id ASC`, interruptedAt)
 	if err != nil {
 		return nil, fmt.Errorf("query interrupted talk jobs: %w", err)
