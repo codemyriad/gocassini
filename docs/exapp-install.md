@@ -71,6 +71,48 @@ Then register it in Nextcloud → Administration settings → AppAPI →
 daemon's three-dot menu before going further. `occ app_api:daemon:list` should
 show it afterwards.
 
+### Step 1b — Route `/exapps/*` to HaRP at your reverse proxy
+
+**Required for every HaRP daemon**, local or remote. AppAPI does not talk to a
+HaRP-hosted ExApp over an internal address — it builds a **public** URL and
+dials it:
+
+```
+GET https://cloud.example.com/exapps/<appid>/heartbeat
+```
+
+Your TLS terminator must send `/exapps/*` to HaRP's `8780`, *not* to Nextcloud.
+Without this route the request reaches Nextcloud, which 502s, and
+install/enable never completes.
+
+Caddy:
+
+```caddyfile
+handle /exapps/* {
+    reverse_proxy 127.0.0.1:8780        # HaRP
+}
+
+handle {
+    reverse_proxy 127.0.0.1:11000 {     # Nextcloud
+        header_up Host {host}
+    }
+}
+```
+
+`handle`, **not** `handle_path`: `handle_path` strips the matched prefix, and
+HaRP routes on `/exapps/<appid>/…`. nginx equivalent: `location /exapps/ { … }`
+with a `proxy_pass` that has **no** trailing path element, so the prefix
+survives.
+
+The failure is indirect and easy to misdiagnose: the app reports `[enabled]` in
+`occ app_api:app:list` but its **navigation icon never appears**, because
+Cassini registers its nav entries only after receiving
+`PUT /enabled?enabled=1` — a callback that never arrives.
+
+**Do not test this with an unauthenticated `curl https://…/exapps/…`.** It
+returns 502 whether the route is right or wrong. Verify with `occ` plus
+`nextcloud.log`, and by looking for `PUT /enabled` in the ExApp container log.
+
 ## Step 2 — Pick an image tag
 
 CI publishes to `ghcr.io/codemyriad/gocassini`:
@@ -111,25 +153,44 @@ desired `sha-…` or release tag, and register from that local copy.
 
 ## Step 3 — Register the app
 
-Generate a fresh Talk recording secret — never reuse a value from this repo or
-its examples:
+The Talk recording secret is **optional** since D-447: if you omit
+`CASSINI_TALK_RECORDING_SECRET`, the operator generates one on first start and
+persists it on the AppAPI volume, and Step 5 reads it back from the operator's
+provisioning endpoint — so no human ever has to invent or copy it. Supply one
+explicitly only when you want to manage it out of band (e.g. a shared secret
+manager); an explicit value always wins over the generated one:
 
 ```bash
+# Optional — omit to let Cassini self-generate. Never reuse a repo/example value.
 CASSINI_SECRET="$(openssl rand -hex 32)"
 ```
 
-Set the signaling internal secret to the value configured in the standalone
-Talk signaling / HPB server (`[clients] internalsecret`). If you are setting up
-signaling at the same time, generate the value once and put the same value in
-both places:
+#### Finding the signaling internal secret
+
+`CASSINI_TALK_SIGNALING_INTERNAL_SECRET` must equal your Talk signaling / HPB
+server's `[clients] internalsecret`. It is the **one** value Cassini cannot
+self-provision (unlike the recording secret): the invisible HPB-internal recorder
+authenticates to the signaling server with this shared secret, and there is no
+API that exposes it, so you supply it once. Where to find it:
+
+- **Nextcloud All-in-One:** `docker exec nextcloud-aio-talk printenv INTERNAL_SECRET`
+- **Standalone HPB:** the `[clients] internalsecret` in the signaling server's
+  config (e.g. `server.conf`). If you are setting up signaling at the same time,
+  generate the value once and put the same value in both places.
 
 ```bash
-SIGNALING_INTERNAL_SECRET="<value-from-signaling-config-or-secret-manager>"
+SIGNALING_INTERNAL_SECRET="<value from the command / config above>"
 ```
 
 These are two different secrets: `CASSINI_SECRET` authenticates Talk's
 recording-backend HTTP protocol; `SIGNALING_INTERNAL_SECRET` authenticates
 Cassini as an internal signaling client for HPB-internal call capture.
+
+> **Knowing whether it's set:** if it is missing, the operator logs
+> `WARNING: talk_signaling_internal_secret_set -> false: …` at startup, and
+> `GET /operator/status` returns `"signaling_internal_secret_configured": false`
+> with a `signaling_internal_secret_hint` telling you how to fix it. Recording
+> stays disabled until the secret is set.
 
 Register from a pinned manifest (`--info-xml` accepts a local path or a raw
 URL; pin a tag or commit SHA, not a moving branch):
@@ -141,9 +202,11 @@ curl -fsSL "https://raw.githubusercontent.com/codemyriad/gocassini/<tag-or-sha>/
 
 occ app_api:app:register gocassini <daemon-name> \
     --info-xml /tmp/gocassini-info.xml \
-    --env CASSINI_TALK_RECORDING_SECRET="${CASSINI_SECRET}" \
     --env CASSINI_TALK_SIGNALING_INTERNAL_SECRET="${SIGNALING_INTERNAL_SECRET}" \
     --wait-finish
+    # Optionally add: --env CASSINI_TALK_RECORDING_SECRET="${CASSINI_SECRET}"
+    #   Omit it to let the operator self-generate + persist the recording
+    #   secret (D-447); Step 5 reads it back from the provisioning endpoint.
 ```
 
 If `occ` runs inside a container, copy the manifest in first
@@ -166,7 +229,7 @@ Options).
 
 | Variable | Required | What it does |
 |---|---|---|
-| `CASSINI_TALK_RECORDING_SECRET` | For the Talk record button | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (Step 5). Unset, the operator rejects every recording request |
+| `CASSINI_TALK_RECORDING_SECRET` | No (auto-generated) | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (Step 5). **Since D-447, if omitted the operator generates and persists one** — read it back from the provisioning endpoint (Step 5). An explicit value wins and is treated as externally managed |
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | For HPB-internal/default Talk recording | Internal client secret for standalone Talk signaling / HPB; must match `[clients] internalsecret`. Required for private, group, and one-to-one Talk recording |
 | `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped/failed notifications) and OCS calls. Leave empty to use the backend URL Talk sends with each request |
 | `CASSINI_NC_ADMIN_USER` | No | Administrator account used only to create the `cassini` service account, its narrow owner group, and the Team-folder topology. Leave empty for automatic discovery; set it when discovery chooses the wrong account. Recordings are still owned, written, and managed by `cassini` |
@@ -190,6 +253,12 @@ repeat installs; production should follow your AppAPI backup/redeploy policy.
 `app_api:app:update` reuses stored deploy options and has no `--env` flag.
 `app_api:app:config:set` writes a separate app-config store and is not the
 container environment Cassini reads today.
+
+Because deploy env is creation-time only, **a release that adds a new
+*required* environment variable cannot be delivered by the admin UI's Update
+button** — it is a breaking change needing a redeploy. See
+[`exapp-update-constraints.md`](./exapp-update-constraints.md) for the full set
+of rules on what Install/Update can and cannot deliver.
 
 ### Runtime environment reference
 
@@ -267,10 +336,17 @@ All of these must pass before the Talk handoff:
      "talk": {
        "secret_configured": true,
        "signaling_internal_secret_configured": true,
-       "backend_url_override_configured": false
+       "backend_url_override_configured": false,
+       "secret_source": "generated",
+       "recording_backend_url": "https://cloud.example.com/index.php/apps/app_api/proxy/gocassini"
      }
    }
    ```
+
+   `secret_source` is `generated` when the operator self-generated the recording
+   secret (D-447) or `env` when you supplied one; `recording_backend_url` is the
+   value to register in Step 5 (never the secret itself — that comes from the
+   provisioning endpoint below).
 9. CUDA installs only: the image tag ends in `-cuda` and the container can see
    the GPU — `docker exec nc_app_gocassini nvidia-smi`. The status endpoint in
    the previous step must show `"device": "cuda"` with `"device_usable": true`;
@@ -309,16 +385,30 @@ and `api/v1/room/*` routes are declared PUBLIC in the manifest, so Talk's
 recording protocol (authenticated by its own HMAC, not a Nextcloud session)
 passes through the proxy.
 
+Talk has no API for an app to register itself as the recording backend, so this
+one admin step stays manual — but since D-447 it is **secret-free**: the
+operator's ADMIN-only provisioning endpoint returns the ready-to-apply
+`recording_servers` value (including the self-generated secret), so you never
+copy a secret by hand.
+
 **Back up the current backend first**, then switch:
 
 ```bash
 # 0. Back up (empty output = no recording backend configured)
 occ config:app:get spreed recording_servers | tee /root/recording_servers.backup
 
-# 1. Switch — same secret you registered the app with in Step 3
-occ config:app:set spreed recording_servers --value='{"servers":[{"server":"https://cloud.example.com/index.php/apps/app_api/proxy/gocassini","verify":true}],"secret":"<secret>"}'
+# 1. Pull the ready-to-apply recording_servers value from Cassini (ADMIN route,
+#    use an admin login with an app password) and register it in one step.
+RS="$(curl -fsS -u admin:<app-password> \
+  https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/operator/talk/provisioning \
+  | jq -c '.recording_servers')"
+occ config:app:set spreed recording_servers --value="$RS"
 occ config:app:set spreed call_recording --value=yes
 ```
+
+If you supplied `CASSINI_TALK_RECORDING_SECRET` yourself in Step 3, you can
+instead set `recording_servers` directly with that same secret and the
+`recording_backend_url` from the status endpoint.
 
 **Controlled test** — use a non-critical private/group or one-to-one
 conversation so the HPB-internal path is exercised:
@@ -394,8 +484,19 @@ over its FRP tunnel (see "Remote Docker Engines" in the
 2. Copy the client certificates from the HaRP container's `/certs/frp` and
    run `frpc` on the GPU node to tunnel its Docker socket back to HaRP
    (one remote port per engine, 24001–24099).
-3. Register a second deploy daemon for that engine with Compute device =
+3. Make sure `/exapps/*` reaches HaRP at your reverse proxy
+   ([Step 1b](#step-1b--route-exapps-to-harp-at-your-reverse-proxy)). This is
+   the step that actually blocks the install, and its symptom — an app that
+   reports `[enabled]` with no navigation icon — points nowhere near the
+   reverse proxy.
+4. Register a second deploy daemon for that engine with Compute device =
    CUDA, and register (or re-register) `gocassini` against it.
+
+You do not re-register the app to switch between CPU and GPU images: the
+compute device is a property of the **daemon**, and AppAPI derives the image
+variant from it. See
+[`exapp-update-constraints.md`](./exapp-update-constraints.md) for what that
+implies for the Install/Update buttons.
 
 **Docker-in-LXC note:** if the GPU "node" is an LXC container running Docker
 (e.g. on Proxmox), the NVIDIA stack must work *inside* the LXC: the

@@ -1195,15 +1195,20 @@ jobs:
           # an index, but any future multi-arch push must not re-break this.
           echo "${GH_TOKEN}" | docker login ghcr.io -u "${OWNER}" --password-stdin >/dev/null 2>&1 || true
           : > "$tmp/protected.txt"
+          # This is the keep-forever tag set. Persist it under RUNNER_TEMP so the
+          # verify step below asserts pullability over exactly the tags this step
+          # decided to keep, instead of a second hardcoded list that can drift
+          # from this predicate (D-567).
           jq -r '
             .[] | .metadata.container.tags[]?
             | select(. == "latest" or . == "latest-cuda" or . == "latest-rocm"
                      or . == "cuda" or startswith("v")
                      or test("^[0-9]+\\.[0-9]+\\.[0-9]+"))
-          ' "$tmp/versions.json" | sort -u | while read -r tag; do
+          ' "$tmp/versions.json" | sort -u > "${RUNNER_TEMP}/keep-tags.txt"
+          while read -r tag; do
             docker buildx imagetools inspect --raw "ghcr.io/${OWNER}/${PACKAGE}:${tag}" 2>/dev/null \
               | jq -r '.manifests[]?.digest' >> "$tmp/protected.txt" || true
-          done
+          done < "${RUNNER_TEMP}/keep-tags.txt"
           sort -u -o "$tmp/protected.txt" "$tmp/protected.txt"
           echo "Protected $(wc -l < "$tmp/protected.txt") child manifest(s) referenced by kept tags."
 
@@ -1294,6 +1299,14 @@ jobs:
       # state (listed by the API, 404 on the child manifest) through several
       # releases without anything failing. Assert pullability explicitly so
       # the next occurrence breaks the publish run instead of the install.
+      #
+      # Checks every keep-forever tag, not just the floating ones (D-567). On a
+      # release run X.Y.Z-cuda shares a digest with latest-cuda, so checking
+      # latest alone covers the release tag exactly once — and never again. The
+      # original breakage was a later prune stripping an OLDER release tag with
+      # nothing watching, which is precisely what the floating-tag-only loop
+      # cannot see. Release tags are the install pins in appinfo/info.xml, so
+      # they are the ones that most need asserting.
       - name: Verify keep-forever tags are pullable
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1302,8 +1315,20 @@ jobs:
         run: |
           set -euo pipefail
           echo "${GH_TOKEN}" | docker login ghcr.io -u "${OWNER}" --password-stdin >/dev/null
+
+          # Written by the Prune step from the same predicate it keeps by. A
+          # missing or empty list means the keep rule matched nothing, which
+          # would silently verify zero tags — the exact failure mode this gate
+          # exists to prevent. Fail instead.
+          keep_tags="${RUNNER_TEMP}/keep-tags.txt"
+          if [ ! -s "${keep_tags}" ]; then
+            echo "FAIL: no keep-forever tags resolved from the prune step; refusing to verify nothing"
+            exit 1
+          fi
+          echo "Verifying $(wc -l < "${keep_tags}") keep-forever tag(s)."
+
           failed=0
-          for tag in latest latest-cuda latest-rocm cuda; do
+          while read -r tag; do
             ref="ghcr.io/${OWNER}/${PACKAGE}:${tag}"
             if ! raw=$(docker buildx imagetools inspect --raw "${ref}" 2>/dev/null); then
               echo "FAIL ${tag}: tag does not resolve"; failed=1; continue
@@ -1319,5 +1344,11 @@ jobs:
               fi
             done
             if [ "${tag_ok}" -eq 1 ]; then echo "OK   ${tag}"; fi
-          done
+          done < "${keep_tags}"
+          if [ "${failed}" -ne 0 ]; then
+            echo "::error::A keep-forever tag is not pullable. Either the manifest was"
+            echo "::error::pruned out from under it, or the tag was never fully published."
+            echo "::error::A dangling tag cannot be repaired by retagging — it needs a rebuild"
+            echo "::error::at that source ref, or deletion if the version is not worth restoring."
+          fi
           exit "${failed}"

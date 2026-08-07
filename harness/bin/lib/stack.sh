@@ -13,6 +13,12 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/base.sh"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/stack-env.sh"
 # shellcheck source=./artifacts.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/artifacts.sh"
+# The AppAPI register dance is shared with sandbox/deploy.sh and the production
+# deploy (ops/deploy/deploy-exapp.sh) — one implementation, three callers. See
+# that file's header for the operational rules it encodes.
+# shellcheck source=../../../ops/deploy/lib/exapp-register.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../ops/deploy/lib" && pwd)/exapp-register.sh"
+exapp_log() { log "$@"; }
 
 harness_render_full_profile_configs() {
   local allowall="${1:-false}"
@@ -578,20 +584,21 @@ harness_configure_appapi_phase() {
 
   log "AppAPI phase: registering HaRP deploy daemon"
   occ app_api:daemon:unregister docker_local >/dev/null 2>&1 || true
-  occ app_api:daemon:unregister harp_local >/dev/null 2>&1 || true
-  occ app_api:daemon:register \
-    harp_local \
-    "HaRP (local)" \
-    docker-install \
-    http \
-    "appapi-harp:8780" \
-    "http://reverse-proxy" \
-    --net="${PROJECT_NAME}_default" \
+  # CASSINI_HARNESS_COMPUTE_DEVICE is the only knob separating a CPU harness
+  # from a GPU one: AppAPI derives the -cuda image variant from the daemon.
+  # Same parameter, same code path, as production.
+  exapp_register_daemon \
+    --name harp_local \
+    --display "HaRP (local)" \
+    --host "appapi-harp:8780" \
+    --nc-url "http://reverse-proxy" \
+    --net "${PROJECT_NAME}_default" \
     --harp \
-    --harp_frp_address "appapi-harp:8782" \
-    --harp_shared_key "dogfood-shared-key-not-secret" \
+    --frp-address "appapi-harp:8782" \
+    --shared-key "dogfood-shared-key-not-secret" \
+    --compute-device "${CASSINI_HARNESS_COMPUTE_DEVICE:-cpu}" \
     --set-default \
-    --compute_device=cpu
+    --replace
 
   case "${CASSINI_HARNESS_EXAPP_IMAGE_MODE:-reuse-local}" in
     build|reuse-local)
@@ -735,13 +742,15 @@ harness_register_exapp() {
 
   local register_log="$RUNTIME_DIR/manual-test-register.log"
   local -a register_args=(
-    app_api:app:register gocassini harp_local
+    --app-id gocassini
+    --daemon harp_local
     --info-xml /tmp/gocassini-info.xml
     --env "CASSINI_TALK_RECORDING_SECRET=$CASSINI_TALK_RECORDING_SECRET"
     --env "CASSINI_TALK_SIGNALING_INTERNAL_SECRET=$CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
     --env "CASSINI_PUBLISH_SINK=${CASSINI_PUBLISH_SINK:-nextcloud-files}"
     --test-deploy-mode
-    --wait-finish
+    --log "$register_log"
+    --enable-cycle
   )
   if [[ -n "${CASSINI_TALK_BACKEND_URL:-}" ]]; then
     register_args+=(--env "CASSINI_TALK_BACKEND_URL=$CASSINI_TALK_BACKEND_URL")
@@ -754,20 +763,7 @@ harness_register_exapp() {
   done
 
   log "ExApp install phase: registering and enabling Cassini"
-  if ! occ "${register_args[@]}" >"$register_log" 2>&1; then
-    tail -200 "$register_log" >&2 || true
-    echo "app_api:app:register failed; see $register_log" >&2
-    return 1
-  fi
-  if grep -q 'heartbeat check failed' "$register_log"; then
-    tail -200 "$register_log" >&2 || true
-    echo "app_api:app:register reported heartbeat failure; see $register_log" >&2
-    return 1
-  fi
-
-  log "ExApp install phase: cycling enable state"
-  occ app_api:app:disable gocassini >/dev/null 2>&1 || true
-  occ app_api:app:enable gocassini >/dev/null
+  exapp_register_app "${register_args[@]}"
 }
 
 harness_verify_exapp_routes() {
