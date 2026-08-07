@@ -30,6 +30,7 @@ func (rt *Runtime) startPublishWorker() {
 	// ".backup" copy surviving in the staging root.
 	rt.reconcilePromotionLeftovers()
 	rt.sweepArtifactRetention()
+	rt.workerWG.Add(1)
 	go rt.publishWorker()
 }
 
@@ -53,6 +54,7 @@ func (rt *Runtime) reconcilePromotionLeftovers() {
 }
 
 func (rt *Runtime) publishWorker() {
+	defer rt.workerWG.Done()
 	for {
 		select {
 		case <-rt.ctx.Done():

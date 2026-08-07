@@ -2366,7 +2366,10 @@ esac
 		}
 		return sitePath, nil
 	}
-	return rt, func() { _ = store.Close() }, logPath, startedPath
+	// Stop the pipeline workers before t.TempDir cleanup removes WorkRoot;
+	// a still-running publish or requeue pass writing under it flakes the
+	// RemoveAll with "directory not empty" (D-584).
+	return rt, func() { rt.Shutdown(); _ = store.Close() }, logPath, startedPath
 }
 
 func newTestRuntime(t *testing.T) (*Runtime, func()) {
@@ -2423,7 +2426,10 @@ func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func(
 		}
 		return sitePath, nil
 	}
-	return rt, func() { _ = store.Close() }
+	// Stop the pipeline workers before t.TempDir cleanup removes WorkRoot;
+	// a still-running publish or requeue pass writing under it flakes the
+	// RemoveAll with "directory not empty" (D-584).
+	return rt, func() { rt.Shutdown(); _ = store.Close() }
 }
 
 // writeSealedOpusFixture stands in for `cassini pack`: it writes the attempt's
