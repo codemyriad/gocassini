@@ -443,6 +443,8 @@ func TestBuildHelpExitsZero(t *testing.T) {
 }
 
 func TestBuildUsesRunnerOverrideAndWritesMeetingManifest(t *testing.T) {
+	requireFFMediaTools(t)
+
 	tmp := t.TempDir()
 
 	input := filepath.Join(tmp, "source.mkv")
@@ -475,6 +477,8 @@ func TestBuildUsesRunnerOverrideAndWritesMeetingManifest(t *testing.T) {
 }
 
 func TestBuildRejectsArtifactOutputsMissingRequiredFiles(t *testing.T) {
+	requireFFMediaTools(t)
+
 	tmp := t.TempDir()
 
 	input := filepath.Join(tmp, "source.mkv")
@@ -513,6 +517,8 @@ func TestBuildRejectsArtifactOutputsMissingRequiredFiles(t *testing.T) {
 }
 
 func TestBuildPassesStrictReadableCleanupFlag(t *testing.T) {
+	requireFFMediaTools(t)
+
 	tmp := t.TempDir()
 
 	input := filepath.Join(tmp, "source.mkv")
@@ -541,6 +547,8 @@ func TestBuildPassesStrictReadableCleanupFlag(t *testing.T) {
 }
 
 func TestBuildUsesStrictReadableCleanupEnvDefault(t *testing.T) {
+	requireFFMediaTools(t)
+
 	t.Setenv("CASSINI_READABLE_STRICT_BATCHES", "true")
 
 	tmp := t.TempDir()
