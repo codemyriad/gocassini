@@ -370,6 +370,51 @@ recordings into the `cassini` account's private home where nobody can reach
 them. The `occ`-side verification of the resulting topology is in
 [Recording permissions](./exapp-nextcloud-recordings-permissions.md).
 
+### What people see when setup is not finished
+
+You do not have to read `/operator/status` to find out — opening **Cassini**
+from the Nextcloud app menu says it, and says something different depending on
+who is looking. The split is decided by the same boundary that decides whether
+you get the **Operator** tab at all: the operator API is ADMIN, so being able to
+read it is what makes you an administrator here.
+
+| Who | What Cassini shows |
+|---|---|
+| An administrator | The step that stopped, in words and in commands. `app_missing:<id>`: the app by name and id, the `occ app:install` line for it, and the `occ app_api:app:disable`/`:enable` pair that re-runs setup. `administrator`: `CASSINI_NC_ADMIN_USER`. `degraded`: the `nc provision:` log lines, rather than an app to install — nothing is missing that you could install. `unknown`: that the container has not re-run setup since it restarted. In every case, the operator's own `detail` sentence — the same one in the container log. |
+| Everyone else | That Cassini is not set up, that it is not their account, and a link to this Cassini page to hand to an administrator — who, opening it, gets the row above. Nothing names an app, a step or a command. |
+
+The verdict behind this comes from `GET /operator/setup`, which is USER-level
+and carries `ok` and `state` only:
+
+```bash
+curl -sS -u alice:<pass> \
+  "https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/operator/setup"
+# {"ok":false,"state":"unavailable"}
+```
+
+It answers **200 in every state**, including the broken ones: the caller is a
+browser deciding what to render, and it has to be able to tell "Cassini is not
+set up" from "the ExApp is down", which is what a 503 in front of it looks like.
+`/operator/status` is the endpoint that answers 503 — use that one for
+monitoring.
+
+Whether it replaces the meeting list or sits above it depends on whether the
+archive can still be **read**, which is a different question from whether setup
+completed — the read path fetches every recording as the individual caller and
+never consults the setup record.
+
+| `state` | Where the message goes | Why |
+|---|---|---|
+| `unavailable`, `degraded` | Replaces the meeting list | Nothing is mounted, or the mount root has been narrowed to owner-only, so the list underneath would be an error or an empty lie |
+| `unknown` | A strip above the meeting list, which stays | The container merely restarted. Every published recording still opens; only publishing is refused. Blanking the archive on every reboot would be worse than the problem |
+
+An administrator keeps the **Operator** tab throughout.
+
+> This route reaches AppAPI at **registration** time. An app installed before
+> this version has to be re-registered (an app update does this) before
+> `/operator/setup` exists; until then the panel does not appear and the viewer
+> behaves as it did before.
+
 ## Step 4 — Verify the install (before touching Talk)
 
 All of these must pass before the Talk handoff:
@@ -623,6 +668,7 @@ The manifest declares per-route access levels enforced by Nextcloud's proxy:
 | `/operator/jobs`, `/operator/jobs/...`, `/operator/events` | ADMIN | Operator JSON + SSE API |
 | `/operator/settings` | ADMIN | STT-quality settings (read + update) |
 | `/operator/status` | ADMIN | Doctor/status endpoint (version, device usability, Talk config, DB/storage health) |
+| `/operator/setup` | USER | Whether recordings can be served at all — `{"ok":…,"state":…}` and nothing else |
 | `/viewer/*` | USER | Viewer SPA |
 | `/published/*` | USER | Published meeting bundles (catalog + recordings) |
 | `/ui/viewer.js`, `/ui/viewer.css` | USER | Bootstrap script + stylesheet behind the **Cassini** navigation entry |
@@ -635,6 +681,14 @@ recording **as the individual caller**, so Nextcloud Files enforces that
 meeting's advanced ACL — a non-participant sees no catalog entry and a direct
 fetch 404s. See
 [Managing recording permissions](./exapp-nextcloud-recordings-permissions.md).
+
+`/operator/setup` is the one deliberate exception to "the operator API is
+ADMIN", and it is USER for a reason: without it, the only thing a non-admin
+could learn about an unfinished install was the viewer failing to load. It
+carries the `recordings_access` **verdict** — `ok` and `state` — and nothing
+else. No step, no administrator, no paths, no versions; the diagnosis stays on
+`/operator/status`. See [What people see when setup is not
+finished](#what-people-see-when-setup-is-not-finished).
 
 `PUT /enabled` and `POST /init` are AppAPI **lifecycle callbacks**, not
 proxied browser routes; they do not appear in `<routes>`.

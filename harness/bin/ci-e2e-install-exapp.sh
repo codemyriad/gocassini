@@ -332,6 +332,22 @@ enabled_prereqs=$(substrate_json | jq '[.prerequisites[] | select(.state == "ena
   || fail "expected both prerequisites reported enabled, got $enabled_prereqs"
 log "OK   /status: provisioned, sink=$sink, admin_user=$admin_user, 2 prerequisites enabled"
 
+# The USER-readable half of the same verdict. This is the only route that lets
+# someone who is NOT an administrator find out that an install was never
+# finished — before it, the viewer's `HTTP 502` was the whole message — so both
+# halves of its contract are asserted here, through the proxy, as a non-admin:
+# it answers, and it answers with nothing else. The unit tests pin the shape;
+# only this pins that Nextcloud lets a USER-tier account reach it at all.
+setup_json="$LOG_DIR/operator-setup.json"
+curl -sS -u "$TEST_USER:$TEST_USER_PASSWORD" "$SUBSTRATE_PROXY/operator/setup" -o "$setup_json" \
+  || fail "could not read operator/setup as $TEST_USER"
+jq -e '.ok == true and .state == "provisioned"' "$setup_json" >/dev/null 2>&1 \
+  || fail "operator/setup as $TEST_USER should mirror the provisioned verdict, got: $(cat "$setup_json")"
+setup_keys=$(jq -r 'keys | join(",")' "$setup_json" 2>/dev/null || echo "")
+[[ "$setup_keys" == "ok,state" ]] \
+  || fail "operator/setup must expose ok+state only — a non-admin has no business with the step, the administrator or the paths; got keys: $setup_keys"
+log "OK   operator/setup: readable by $TEST_USER, verdict only (keys: $setup_keys)"
+
 # The service account, created because the app was installed — no occ recipe.
 occ user:info cassini >/dev/null 2>&1 \
   || fail "the cassini service account was not created by the install"
@@ -413,6 +429,10 @@ assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "viewer/"        200
 # The operator JSON API stays ADMIN — a non-admin is refused (D-420: the shell
 # entry is USER, but the operator surface's API remains the real boundary).
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "operator/jobs"  404
+# ...but "is Cassini set up" is USER, and has to be, or the only answer a
+# non-admin could get about an unfinished install is the viewer's own HTTP 502.
+# That it carries the verdict and none of the diagnosis is asserted in 7a.
+assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "operator/setup"  200
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/viewer.js"   200
 # ui/viewer.css must be proxy-reachable at USER tier: D-383 injects it into the
 # viewer's shadow root via a runtime <link>, so the proxy has to serve it.

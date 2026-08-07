@@ -257,6 +257,16 @@ would land.
 The full state table and worked examples are in
 [the install guide](./exapp-install.md#verifying-the-recordings-substrate).
 
+You do not have to curl for it. Whenever the state is not `provisioned` or
+`not_applicable`, opening **Cassini** shows an administrator what stopped — the
+missing app and its `occ` lines where there is one, the log to read where there
+is not — along with the operator's own `detail` sentence, and shows everyone
+else that Cassini is not set up plus a link to hand to an administrator. For
+`unavailable` and `degraded` that message takes the place of the meeting list;
+for `unknown` the list stays, because a restarted container can still serve
+every recording it already has. See [What people see when setup is not
+finished](./exapp-install.md#what-people-see-when-setup-is-not-finished).
+
 Provisioning does not block startup, but it does gate **delivery**. A
 `nextcloud-files` publish writes the per-meeting ACL as part of publishing
 (D-549), so a recording whose audience cannot be written is not published — and
@@ -339,6 +349,8 @@ public read path with it, so an instance that upgrades is access-controlled.
 | Granted user sees an empty list | Caller cannot traverse or leaf ACL was not applied | Confirm advanced ACL, `everyone:1` mount, root read, and the participant allow |
 | Meeting visible to nobody | Non-Talk job or private room with only non-local participants | Share the `.opus` manually |
 | Viewer returns 502 | Nextcloud Files is unreachable | Check ExApp-to-Nextcloud DAV connectivity and owner identity |
+| Cassini shows "Cassini is not set up yet" instead of the meeting list | `state` is `unavailable` or `degraded`; the app now says so in the UI rather than failing the archive fetch | Open Cassini **as an administrator** — the same page names what stopped and the commands. See [What people see when setup is not finished](./exapp-install.md#what-people-see-when-setup-is-not-finished) |
+| Cassini shows "Cassini has not finished setting itself up" above a working meeting list | `state` is `unknown` — the container restarted without the app being re-enabled. Reads are fine; publishing is refused | Disable and re-enable Cassini |
 
 ## Related
 

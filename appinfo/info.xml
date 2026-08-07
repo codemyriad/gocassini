@@ -173,6 +173,16 @@ was published, enforced by Nextcloud's own advanced file ACLs.]]></description>
         <verb>GET,HEAD</verb>
         <access_level>USER</access_level>
       </route>
+      <!-- USER: "is Cassini set up" — the one bit of /status a non-admin needs.
+           Without it the only answer an unprivileged user could get about an
+           unfinished install was the viewer's own `HTTP 502`. It carries the
+           substrate state and nothing else: no step, no administrator, no
+           paths, no versions. The diagnosis stays ADMIN, on /operator/status. -->
+      <route>
+        <url>^operator\/setup\/?$</url>
+        <verb>GET</verb>
+        <access_level>USER</access_level>
+      </route>
 
       <!--
         PUBLIC: Talk recording-backend protocol. Lets the "Start recording"

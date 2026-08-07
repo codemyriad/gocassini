@@ -622,6 +622,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/jobs/", rt.jobDetailHandler)
 	api.HandleFunc("/events", rt.eventsHandler)
 	api.HandleFunc("/status", rt.statusHandler)
+	api.HandleFunc("/setup", rt.setupHandler)
 	api.HandleFunc("/settings", rt.settingsHandler)
 	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
 
@@ -662,6 +663,7 @@ func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler) {
 		root.Handle("/jobs/", api)
 		root.Handle("/events", api)
 		root.Handle("/status", api)
+		root.Handle("/setup", api)
 		root.Handle("/settings", api)
 		root.Handle("/talk/provisioning", api)
 		return
