@@ -51,6 +51,14 @@ mkdir -p "$LOG_DIR"
 log() { printf '[installed-e2e] %s\n' "$*" | tee -a "$LOG_DIR/orchestrator.log"; }
 fail() { log "FAIL: $*"; exit 1; }
 
+# The D-453 hooks make a green run mean something weaker than "recorded a real
+# Talk call", so a stray value inherited from a job env must fail this required
+# gate loudly. Deliberate negative runs (the D-403 sensitivity control, manual
+# testing) opt in with D453_ALLOW_TEST_HOOKS=1.
+if [[ ( "$EXPECT_CONFIG_FAILURE" != 0 || -n "$FAIL_AT" ) && "${D453_ALLOW_TEST_HOOKS:-0}" != 1 ]]; then
+  fail "D453_EXPECT_CONFIG_FAILURE/D453_FAIL_AT are set but D453_ALLOW_TEST_HOOKS=1 is not; refusing to weaken the gate"
+fi
+
 compose() { docker compose -p "$PROJECT_NAME" -f "$REPO_ROOT/harness/compose.yml" "$@"; }
 occ() { compose exec -T -u www-data nextcloud php occ "$@"; }
 

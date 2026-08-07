@@ -113,6 +113,7 @@ log "  recorder duration: ${RECORDER_DURATION}s"
     --duration "$RECORDER_DURATION" \
     --output "$ARCHIVE_OUTPUT" \
     --final-output "$OUTPUT" \
+    --write-report \
     --request-offer-interval "$REQUEST_OFFER_INTERVAL" \
     --max-request-offer-attempts "$MAX_REQUEST_OFFER_ATTEMPTS"
 ) >"$REC_LOG" 2>&1 &
@@ -148,7 +149,11 @@ if [[ ! -f "$OUTPUT" ]]; then
   echo "recording output not found: $OUTPUT" >&2
   exit 1
 fi
-if [[ "$SKIP_SYNC_CHECK" != "1" && -f "$REPORT_JSON" ]]; then
+if [[ "$SKIP_SYNC_CHECK" != "1" ]]; then
+  if [[ ! -f "$REPORT_JSON" ]]; then
+    echo "sync check requested but recorder report not found: $REPORT_JSON (pass --skip-sync-check to skip)" >&2
+    exit 1
+  fi
   "$SCRIPT_DIR/verify-sync-from-report.sh" \
     --recording "$OUTPUT" \
     --report "$REPORT_JSON"

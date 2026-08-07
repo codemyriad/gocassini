@@ -129,8 +129,8 @@ PY
 mapfile -t EXPECTED <"$EXPECTED_FILE"
 
 if [[ "${#EXPECTED[@]}" -lt 2 ]]; then
-  log "sync check skipped: need at least 2 composed sessions (found ${#EXPECTED[@]})"
-  exit 0
+  echo "sync check needs at least 2 composed sessions, found ${#EXPECTED[@]} in $REPORT" >&2
+  exit 1
 fi
 
 FAILURES=0
