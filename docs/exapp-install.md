@@ -684,6 +684,12 @@ Run it on the host where the app container runs, **after** enabling the updated
 app — enabling is what provisions the `Cassini` Team folder the migration writes
 into. Pass `--container NAME` if your app id is not `gocassini`.
 
+Do not record meetings while it runs. It checks that Nextcloud Files is empty
+once, at the start, and writes the recording index at the end; a meeting
+published in between would be dropped from that index. On a quiet instance this
+is a non-issue, and a recording published during the run can be republished
+afterwards.
+
 Two things worth knowing before you run it:
 
 - **Running it when unsure is safe.** It stops without changing anything both

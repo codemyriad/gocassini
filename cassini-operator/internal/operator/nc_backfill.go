@@ -98,7 +98,7 @@ func runBackfillNCFiles(ctx context.Context, args []string, stdout, stderr io.Wr
 	siteRoot := fs.String("site-root", defaultSiteRoot(persistentStorageRoot(), defaultOperatorDataRoot(repoRoot)),
 		"published site to read the legacy archive from")
 	public := fs.Bool("public", false,
-		"grant every signed-in account read on the backfilled recordings, instead of leaving them owner-only")
+		"grant every signed-in account read on the backfilled recordings, instead of leaving them\nowner-only. Decide before the run: the migration cannot be re-run to widen them afterwards")
 	dryRun := fs.Bool("dry-run", false,
 		"check the guard and report what would be uploaded, without writing anything")
 	fs.Usage = func() {
@@ -225,8 +225,12 @@ func (b *backfillNCFiles) run(ctx context.Context, siteRoot string, dryRun bool)
 	}
 	b.printf("done: %d recording(s) in %s", len(local.uploads), ncRecordingsRoot)
 	if !b.public {
-		b.printf("backfilled recordings are owner-only. Grant access from the Nextcloud Files UI, " +
-			"or re-run with --public to let every signed-in account read them.")
+		// Deliberately does NOT offer a re-run with --public: the destination is
+		// now populated, so the guard would refuse. Widening after the fact is
+		// Nextcloud's job, and this is a one-shot migration by design.
+		b.printf("These recordings are readable only by %q. Grant access from the Files app "+
+			"(Advanced permissions on Cassini/Recordings/meetings/). This migration cannot be "+
+			"re-run to widen them.", ncRecordingsOwner)
 	}
 	return nil
 }
