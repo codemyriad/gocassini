@@ -103,12 +103,6 @@ type Runtime struct {
 	// (talk_participants.go, D-553). Zero means the package default; tests
 	// shrink it.
 	talkAudienceRetryGap time.Duration
-	// uploadToNCFiles mirrors the complete published archive into Nextcloud
-	// Files after a successful publish and on startup (webdav_upload.go, D-529).
-	// Best-effort; nil outside AppAPI deployments. ncFilesSyncMu prevents the
-	// startup convergence pass from overlapping a post-publish delivery.
-	uploadToNCFiles ncFilesUploader
-	ncFilesSyncMu   sync.Mutex
 	// fetchTalkParticipants resolves a Talk room's grantable ACL principals and
 	// applyNCFilesAccessFn writes the per-meeting advanced-ACL grants
 	// (talk_participants.go / webdav_acl.go, D-534). Both nil unless AppAPI is
@@ -219,7 +213,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
-	runtime.uploadToNCFiles = exappCfg.ncFilesUploader(logger)
 	runtime.fetchTalkParticipants = exappCfg.talkParticipantsFetcher()
 	runtime.applyNCFilesAccessFn = exappCfg.ncFilesAccessApplier(logger)
 
@@ -241,10 +234,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("publish_sink -> %s", sink.Name())
 
 	// Only a deployment that actually serves recordings from Nextcloud Files is
-	// expected to have a substrate. uploadToNCFiles is non-nil whenever AppAPI is
-	// active regardless of the sink, so without this an ExApp deliberately pinned
-	// to `local` would report an unhealthy substrate it serves nothing from — and
-	// `local` is the documented escape hatch the sink gate itself points at.
+	// expected to have a substrate. AppAPI can also run with an ExApp deliberately
+	// pinned to `local`; that escape hatch must not report an unhealthy substrate
+	// for a destination it serves nothing from.
 	//
 	// Marked HERE rather than only inside the provisioner so a container that
 	// restarts without seeing another enabled edge reports `unknown` instead of
@@ -254,20 +246,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		ncAccessSubstrate.markApplicable()
 	}
 
-	if runtime.uploadToNCFiles != nil {
-		// During AppAPI registration, outbound callbacks are rejected until the
-		// /enabled?enabled=1 lifecycle edge. Start convergence from that edge,
-		// not immediately at process start (which deterministically gets 401).
-		exappCfg.onEnabled = func(enabled bool) {
-			if enabled {
-				// Ensure the dedicated recordings owner, then provision the Team-
-				// folder + ACL topology. This runs before archive sync so the
-				// first delivery acts as an existing, mounted owner.
-				exappCfg.provisionNCFilesAccess(runtime.ctx, logger)
-				runtime.syncNCFilesOnStartup()
-			}
-		}
-	}
+	// Provisioning remains tied to the AppAPI enabled edge, but not to the eager
+	// whole-archive uploader removed by D-613.
+	exappCfg.onEnabled = exappCfg.enabledCallback(runtime.ctx, logger)
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
 		// recording; tell it the recording failed so the room state converges
