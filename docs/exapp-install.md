@@ -643,11 +643,16 @@ under it:
 $APP_PERSISTENT_STORAGE/operator/jobs.sqlite3    # SQLite job DB
 $APP_PERSISTENT_STORAGE/operator/app-state.json  # AppAPI lifecycle state
 $APP_PERSISTENT_STORAGE/operator/jobs            # per-attempt artifacts (raw recordings)
-$APP_PERSISTENT_STORAGE/site/published           # published meeting site (read by the viewer)
+$APP_PERSISTENT_STORAGE/site/published           # legacy published site (see below)
 ```
 
-No manual volume mounts are required — job history, recordings, and the
-published site survive app updates and container recreates.
+No manual volume mounts are required — job history and recordings survive app
+updates and container recreates.
+
+An installed app publishes into Nextcloud Files, so `site/published` is not
+written and not served: it holds only what an older, pre-Nextcloud-Files version
+left behind. See [Updating from a pre-Nextcloud-Files
+version](#updating-from-a-pre-nextcloud-files-version).
 
 Setting `CASSINI_OPERATOR_DB_PATH`, `CASSINI_OPERATOR_WORK_ROOT`, or
 `CASSINI_OPERATOR_SITE_ROOT` to a non-default path overrides the
@@ -658,6 +663,47 @@ filesystem (overlay or tmpfs).
 Outside AppAPI (plain `docker run` without `APP_PERSISTENT_STORAGE`) the
 image defaults apply: `/var/lib/cassini-operator` for the DB + work root and
 `/srv/cassini-site/published` for the site — mount volumes there yourself.
+
+## Updating from a pre-Nextcloud-Files version
+
+Recordings published by a current install go straight into Nextcloud Files, and
+the delivery is part of the publish — if it fails, the publish fails. Nothing
+below applies to them.
+
+Recordings published by an **older** version live only on the app's own volume,
+under `$APP_PERSISTENT_STORAGE/site/published`. Nothing republishes them, so
+after updating they are not in Nextcloud Files and the viewer does not list
+them. Migrating them is one manual step:
+
+```bash
+./scripts/backfill-nc-files.sh --dry-run   # report what would move, change nothing
+./scripts/backfill-nc-files.sh             # migrate
+```
+
+Run it on the host where the app container runs, **after** enabling the updated
+app — enabling is what provisions the `Cassini` Team folder the migration writes
+into. Pass `--container NAME` if your app id is not `gocassini`.
+
+Two things worth knowing before you run it:
+
+- **It refuses if Nextcloud Files already holds recordings** and exits 3 without
+  changing anything. That is the expected answer on an install that is already
+  past this point, so running it when unsure is safe. It is a one-shot
+  migration, not a repair tool: it will not reconcile a partially populated
+  archive.
+- **Migrated recordings are private by default** — readable only by the
+  `cassini` service account, because the audience a recording had at publish
+  time cannot be recovered after the fact. Grant access from the Files UI, or
+  pass `--public` to make them readable by every signed-in account, which
+  matches how a pre-access-control archive behaved.
+
+Skipping the migration entirely is a legitimate choice: the old recordings stay
+on the volume, and everything published from now on works normally.
+
+If a run fails part-way, do not simply re-run it — it uploads recordings before
+writing the index, so the guard will now refuse. Fix the reported error, remove
+the partially uploaded files from `Cassini/Recordings/` in the Files UI, then
+run it again.
 
 ## Access policy
 

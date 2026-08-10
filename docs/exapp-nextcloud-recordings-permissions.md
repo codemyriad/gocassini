@@ -324,9 +324,26 @@ behind in the old one.
 
 Before upgrading such an instance, move or remove the owner's existing `Cassini`
 home folder (back it up first) so the Team folder can mount at the canonical
-`Cassini` path, then re-enable Cassini; the startup sync re-delivers the archive
-into the Team folder. Which account holds that stale home folder depends on the
-version you are coming from — `admin` before D-532, `cassini` after it.
+`Cassini` path, then re-enable Cassini. Which account holds that stale home
+folder depends on the version you are coming from — `admin` before D-532,
+`cassini` after it.
+
+Re-enabling provisions the Team folder but does **not** re-deliver the archive
+into it. Cassini used to converge the archive by itself on every enabled edge,
+by re-uploading all of it; that was unbounded work under a fixed deadline and it
+failed by silently freezing the recording list, so it was removed (D-613). Run
+the migration explicitly instead, once, after the Team folder exists:
+
+```bash
+./scripts/backfill-nc-files.sh --dry-run   # check first
+./scripts/backfill-nc-files.sh
+```
+
+It refuses if `Cassini/Recordings/` already holds recordings, so it is safe to
+run when you are unsure whether it is needed. Migrated recordings are readable
+only by the `cassini` service account — grant access from the Files UI, or pass
+`--public` to restore the org-wide readability a pre-access-control archive had.
+See [`docs/exapp-install.md`](exapp-install.md) for the full procedure.
 
 There is no way back. `CASSINI_NC_ACCESS_CONTROL` was removed in D-554 and the
 public read path with it, so an instance that upgrades is access-controlled.
