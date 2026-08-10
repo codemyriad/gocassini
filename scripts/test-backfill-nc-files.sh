@@ -108,17 +108,36 @@ status=$?
 set -e
 [[ "$status" -eq 3 ]] || fail "guard refusal exit = $status, want 3"
 grep -q "Nothing was changed" "$WORK/stderr" || fail "refusal not explained: $(cat "$WORK/stderr")"
-grep -q "already stores its recordings" "$WORK/stderr" || fail "refusal does not say the install is already migrated"
-echo "  ok: a refusal is relayed as 'already migrated', not as a breakage"
+grep -q "nothing for this migration to do" "$WORK/stderr" || fail "refusal does not say there is nothing to do"
+grep -qi "remove the recordings" "$WORK/stderr" \
+  && fail "a refusal told the admin to delete recordings: $(cat "$WORK/stderr")"
+echo "  ok: a refusal is relayed as 'nothing to do', not as a breakage"
 
-# --- a real failure warns that re-running is not the fix ---
+# --- exit 4 is "stopped before writing": retry is safe, nothing to clean up ---
+#
+# This is the case that must never be confused with a partial run. It is what a
+# perfectly healthy, already-migrated installation produces when an admin runs
+# the migration "to check" — telling them to go and delete files from
+# Cassini/Recordings/ would point them at their live archive.
+make_stub 4
+set +e
+run_target
+status=$?
+set -e
+[[ "$status" -eq 4 ]] || fail "not-started exit = $status, want 4"
+grep -q "nothing to clean up" "$WORK/stderr" || fail "not-started guidance missing: $(cat "$WORK/stderr")"
+grep -qi "remove the recordings" "$WORK/stderr" \
+  && fail "a run that wrote nothing told the admin to delete recordings: $(cat "$WORK/stderr")"
+echo "  ok: a run that wrote nothing never suggests deleting recordings"
+
+# --- a genuinely partial run warns that re-running is not the fix ---
 make_stub 1
 set +e
 run_target
 status=$?
 set -e
 [[ "$status" -eq 1 ]] || fail "failure exit = $status, want 1"
-grep -q "Re-running is NOT the fix" "$WORK/stderr" || fail "partial-run guidance missing: $(cat "$WORK/stderr")"
+grep -q "Do not simply re-run it" "$WORK/stderr" || fail "partial-run guidance missing: $(cat "$WORK/stderr")"
 echo "  ok: a partial run tells the admin what to do next"
 
 # --- unknown options are rejected rather than silently forwarded ---

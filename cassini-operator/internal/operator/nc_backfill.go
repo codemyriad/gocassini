@@ -46,9 +46,30 @@ const backfillNCFilesCommand = "backfill-nc-files"
 // is no next attempt that silently papers over a timeout.
 const ncBackfillTimeout = 6 * time.Hour
 
-// errBackfillRefused marks the guard's verdict, so the caller can report a
-// refusal ("this install is past the migration point") differently from a
-// failure ("the migration broke half-way").
+// Exit codes. The caller acts on these, so they distinguish the three things an
+// admin would do differently — not merely success from failure.
+//
+// The distinction that matters is whether anything was WRITTEN. "Retry is safe"
+// and "retry will make it worse" are opposite instructions, and every failure
+// before the upload loop belongs to the first group: telling someone to go and
+// delete half-uploaded recordings when nothing was uploaded points them at a
+// live archive.
+const (
+	// backfillExitNothingToDo: the destination is already populated, or there is
+	// no legacy archive to migrate. Nothing was written; nothing is wrong.
+	backfillExitNothingToDo = 3
+	// backfillExitNotStarted: the run failed before writing anything. Fix the
+	// cause and re-run — no cleanup.
+	backfillExitNotStarted = 4
+	// backfillExitPartial (the generic failure code): writing had begun, so the
+	// destination may hold objects the catalog does not name.
+	backfillExitPartial = 1
+)
+
+// errBackfillRefused marks an answer of "there is nothing to migrate here" —
+// either the destination is already populated or the source is empty. Both are
+// legitimate outcomes of asking the question, not failures, and both leave
+// everything untouched.
 var errBackfillRefused = errors.New("refused")
 
 // backfillNCFiles is the delivery, minus the transport. Split out so the tests
@@ -60,6 +81,9 @@ type backfillNCFiles struct {
 	// recording. See the flag's help text for why this is a real decision.
 	public bool
 	out    io.Writer
+	// wrote records that at least one mutating request was sent, so a failure
+	// can say whether the destination might now be half-written.
+	wrote bool
 }
 
 // runBackfillNCFiles is the `cassini-operator backfill-nc-files` entry point.
@@ -129,10 +153,14 @@ Flags:
 	}
 	if err := b.run(ctx, *siteRoot, *dryRun); err != nil {
 		fmt.Fprintf(stderr, "backfill: %v\n", err)
-		if errors.Is(err, errBackfillRefused) {
-			return 3
+		switch {
+		case errors.Is(err, errBackfillRefused):
+			return backfillExitNothingToDo
+		case !b.wrote:
+			return backfillExitNotStarted
+		default:
+			return backfillExitPartial
 		}
-		return 1
 	}
 	return 0
 }
@@ -158,6 +186,9 @@ func (b *backfillNCFiles) run(ctx context.Context, siteRoot string, dryRun bool)
 		return nil
 	}
 
+	// Past this point the destination may have been modified, so a failure can
+	// no longer promise that re-running is safe.
+	b.wrote = true
 	for _, dir := range []string{
 		path.Dir(ncRecordingsRoot),     // Cassini
 		ncRecordingsRoot,               // Cassini/Recordings
@@ -312,12 +343,19 @@ func loadBackfillSource(siteRoot string) (backfillSource, error) {
 	if err != nil {
 		return backfillSource{}, err
 	}
+	// An absent or empty local archive is the ordinary state of any installation
+	// created after recordings moved to Nextcloud Files — the site root is never
+	// written under that sink. So it is a "nothing to migrate" answer, in the
+	// same class as a destination that is already populated, and NOT a failure:
+	// reporting it as one would tell an admin their migration broke when in fact
+	// there was never anything to migrate.
 	if !ok {
-		return backfillSource{}, fmt.Errorf("%s has no catalog.json, so there is no legacy archive here to back up. "+
-			"If this installation never published before recordings moved to Nextcloud Files, there is nothing to do", siteRoot)
+		return backfillSource{}, fmt.Errorf("%w: %s has no catalog.json, so there is no legacy archive here to migrate. "+
+			"An installation that only ever published into Nextcloud Files has nothing to do here", errBackfillRefused, siteRoot)
 	}
 	if len(catalog.Meetings) == 0 {
-		return backfillSource{}, fmt.Errorf("%s/catalog.json lists no meetings, so there is nothing to back up", siteRoot)
+		return backfillSource{}, fmt.Errorf("%w: %s/catalog.json lists no meetings, so there is nothing to migrate",
+			errBackfillRefused, siteRoot)
 	}
 
 	var uploads []backfillUpload

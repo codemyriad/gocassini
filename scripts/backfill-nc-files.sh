@@ -98,9 +98,15 @@ fi
 
 echo "backfill-nc-files: using container $CONTAINER"
 
-# The command reports its own progress and refuses on its own terms; this script
-# only translates the outcome into something an admin can act on. Exit 3 is the
-# guard's refusal, which is a legitimate answer rather than a breakage.
+# The command reports its own progress and decides its own outcome; this script
+# only translates it into what to do next. The codes distinguish whether
+# anything was WRITTEN, because "retry is safe" and "retry makes it worse" are
+# opposite instructions and must never be given for the same situation.
+#
+#   0  migrated
+#   3  nothing to migrate      — nothing written
+#   4  failed before writing   — nothing written, retry is safe
+#   1  failed after writing    — may be half-written, do not just retry
 set +e
 "$DOCKER" exec "$CONTAINER" cassini-operator backfill-nc-files "${ARGS[@]}"
 status=$?
@@ -111,22 +117,32 @@ case "$status" in
   3)
     cat >&2 <<'EOF'
 
-Nothing was changed. This installation already stores its recordings in
-Nextcloud Files, so there is no legacy archive to migrate. If you expected
-recordings to be missing, they are missing for another reason — check the app's
-status page rather than re-running this.
+Nothing was changed, and nothing needed to be. Either this installation already
+keeps its recordings in Nextcloud Files, or it has no older archive to migrate.
+Both mean there is nothing for this migration to do.
+
+If you expected recordings to be missing, they are missing for some other
+reason — check the app's status page rather than re-running this.
+EOF
+    ;;
+  4)
+    cat >&2 <<'EOF'
+
+The migration stopped before writing anything, so nothing in Nextcloud Files was
+touched and there is nothing to clean up. Fix the error reported above and run
+it again.
 EOF
     ;;
   *)
     cat >&2 <<'EOF'
 
-The migration did not finish. It uploads recordings before writing the index,
-so a partial run leaves files that nothing links to rather than an index
-pointing at recordings that are not there.
+The migration stopped part-way, after it had started writing. It uploads
+recordings before writing the index, so what is in Nextcloud Files now may be
+recordings that nothing links to yet.
 
-Re-running is NOT the fix: the guard will now refuse, because Nextcloud Files
-holds recordings. Resolve the reported error first, then remove the partially
-uploaded files from Cassini/Recordings/ in the Files UI before trying again.
+Do not simply re-run it: the guard will refuse, because Nextcloud Files now
+holds recordings. Fix the error reported above, then remove the recordings this
+run uploaded from Cassini/Recordings/ in the Files app before trying again.
 EOF
     ;;
 esac

@@ -372,11 +372,18 @@ func TestBackfillDoesNotIndexAfterAFailedUpload(t *testing.T) {
 	}
 }
 
-func TestBackfillSourceRejectsAnArchiveItCannotDeliver(t *testing.T) {
+// An absent or empty local archive means "nothing to migrate", not "the
+// migration failed". It is the ordinary state of every installation created
+// after recordings moved to Nextcloud Files, so an admin who runs this to check
+// must not be told their migration broke.
+func TestBackfillTreatsAnAbsentLocalArchiveAsNothingToDo(t *testing.T) {
 	t.Run("no catalog", func(t *testing.T) {
-		if _, err := loadBackfillSource(t.TempDir()); err == nil ||
-			!strings.Contains(err.Error(), "no catalog.json") {
-			t.Fatalf("error = %v, want a clear 'nothing to back up'", err)
+		_, err := loadBackfillSource(t.TempDir())
+		if !errors.Is(err, errBackfillRefused) {
+			t.Fatalf("error = %v, want a 'nothing to migrate' refusal", err)
+		}
+		if !strings.Contains(err.Error(), "no catalog.json") {
+			t.Errorf("refusal does not say why: %v", err)
 		}
 	})
 
@@ -385,11 +392,13 @@ func TestBackfillSourceRejectsAnArchiveItCannotDeliver(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(root, "catalog.json"), []byte(`{"meetings":[]}`), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := loadBackfillSource(root); err == nil || !strings.Contains(err.Error(), "lists no meetings") {
-			t.Fatalf("error = %v, want 'nothing to back up'", err)
+		if err := func() error { _, err := loadBackfillSource(root); return err }(); !errors.Is(err, errBackfillRefused) {
+			t.Fatalf("error = %v, want a 'nothing to migrate' refusal", err)
 		}
 	})
+}
 
+func TestBackfillSourceRejectsAnArchiveItCannotDeliver(t *testing.T) {
 	t.Run("asset missing from disk", func(t *testing.T) {
 		root := writeLegacySite(t, "meeting-a")
 		if err := os.Remove(filepath.Join(root, "meetings", "meeting-a.opus")); err != nil {
@@ -495,5 +504,76 @@ func TestBackfillCommandRefusesOutsideAnExApp(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "inside the Cassini app container") {
 		t.Errorf("error does not say where to run it: %s", stderr.String())
+	}
+}
+
+// The exit code says whether anything was WRITTEN, because the runner turns it
+// into opposite instructions: "re-run, nothing to clean up" versus "do not
+// re-run, remove what this uploaded". Giving the second answer for a run that
+// wrote nothing points an admin at their live archive.
+func TestBackfillExitCodesDistinguishWrittenFromNotWritten(t *testing.T) {
+	legacy := writeLegacySite(t, "meeting-a")
+	empty := t.TempDir()
+
+	tests := map[string]struct {
+		siteRoot string
+		nc       func(*backfillDest)
+		// unreachable points the command at a dead server.
+		unreachable bool
+		want        int
+	}{
+		"migrated": {
+			siteRoot: legacy, nc: func(*backfillDest) {}, want: 0,
+		},
+		"no legacy archive on disk": {
+			// The ordinary state of a current install. Nothing was written, and
+			// nothing is wrong — this is the case that used to report a partial
+			// migration and send admins to delete live recordings.
+			siteRoot: empty, nc: func(*backfillDest) {}, want: backfillExitNothingToDo,
+		},
+		"destination already populated": {
+			siteRoot: legacy,
+			nc: func(d *backfillDest) {
+				d.files["Cassini/Recordings/catalog.json"] =
+					[]byte(`{"version":"` + catalogSchemaVersion + `","meetings":[{"id":"live"}]}`)
+			},
+			want: backfillExitNothingToDo,
+		},
+		"guard could not reach Nextcloud": {
+			// A failure, but strictly before any write: retry is safe.
+			siteRoot: legacy, nc: func(*backfillDest) {}, unreachable: true,
+			want: backfillExitNotStarted,
+		},
+		"upload failed part-way": {
+			siteRoot: legacy,
+			nc: func(d *backfillDest) {
+				d.failPUT = "Cassini/Recordings/meetings/meeting-a.opus"
+			},
+			want: backfillExitPartial,
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			dest := newBackfillDest()
+			tc.nc(dest)
+			srv := dest.server(t)
+			url := srv.URL
+			if tc.unreachable {
+				srv.Close()
+			}
+
+			t.Setenv("NEXTCLOUD_URL", url)
+			t.Setenv("APP_ID", "gocassini")
+			t.Setenv("APP_SECRET", "sekret")
+			t.Setenv("APP_VERSION", "1.2.3")
+
+			var stdout, stderr bytes.Buffer
+			got := runBackfillNCFiles(context.Background(),
+				[]string{"--site-root", tc.siteRoot}, &stdout, &stderr)
+			if got != tc.want {
+				t.Fatalf("exit = %d, want %d\nstdout: %s\nstderr: %s", got, tc.want, &stdout, &stderr)
+			}
+		})
 	}
 }

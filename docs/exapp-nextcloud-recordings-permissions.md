@@ -339,8 +339,9 @@ the migration explicitly instead, once, after the Team folder exists:
 ./scripts/backfill-nc-files.sh
 ```
 
-It refuses if `Cassini/Recordings/` already holds recordings, so it is safe to
-run when you are unsure whether it is needed. Migrated recordings are readable
+It changes nothing when `Cassini/Recordings/` already holds recordings, or when
+there is no older archive on the volume, so it is safe to run when you are
+unsure whether it is needed. Migrated recordings are readable
 only by the `cassini` service account — grant access from the Files UI, or pass
 `--public` to restore the org-wide readability a pre-access-control archive had.
 See [`docs/exapp-install.md`](exapp-install.md) for the full procedure.

@@ -686,11 +686,11 @@ into. Pass `--container NAME` if your app id is not `gocassini`.
 
 Two things worth knowing before you run it:
 
-- **It refuses if Nextcloud Files already holds recordings** and exits 3 without
-  changing anything. That is the expected answer on an install that is already
-  past this point, so running it when unsure is safe. It is a one-shot
-  migration, not a repair tool: it will not reconcile a partially populated
-  archive.
+- **Running it when unsure is safe.** It stops without changing anything both
+  when Nextcloud Files already holds recordings and when there is no older
+  archive to migrate — the ordinary state of an install created after the
+  switch. Either way it exits 3 and says so. It is a one-shot migration, not a
+  repair tool: it will not reconcile a partially populated archive.
 - **Migrated recordings are private by default** — readable only by the
   `cassini` service account, because the audience a recording had at publish
   time cannot be recovered after the fact. Grant access from the Files UI, or
@@ -700,10 +700,15 @@ Two things worth knowing before you run it:
 Skipping the migration entirely is a legitimate choice: the old recordings stay
 on the volume, and everything published from now on works normally.
 
-If a run fails part-way, do not simply re-run it — it uploads recordings before
-writing the index, so the guard will now refuse. Fix the reported error, remove
-the partially uploaded files from `Cassini/Recordings/` in the Files UI, then
-run it again.
+The exit code tells you whether anything was written, which is what decides
+whether re-running is safe:
+
+| Exit | Meaning | What to do |
+|---|---|---|
+| 0 | Migrated | Check `Cassini/Recordings/` in Files, then grant access |
+| 3 | Nothing to migrate — already in Files, or no older archive | Nothing. This is the normal answer on a current install |
+| 4 | Stopped before writing anything | Fix the reported error and run it again. Nothing to clean up |
+| 1 | Stopped part-way, after writing began | Do **not** just re-run: the guard will now refuse. Fix the error, remove the recordings that run uploaded from `Cassini/Recordings/` in the Files app, then run it again |
 
 ## Access policy
 
