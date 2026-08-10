@@ -168,6 +168,17 @@ type jobDetailResponse struct {
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	// A leading non-flag word selects a maintenance command instead of the
+	// server. Everything else is the server with flags, as it has always been —
+	// the binary's job is to be the operator, and a subcommand is the exception.
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		if args[0] == backfillNCFilesCommand {
+			return runBackfillNCFiles(ctx, args[1:], stdout, stderr)
+		}
+		fmt.Fprintf(stderr, "unknown command %q (known commands: %s)\n", args[0], backfillNCFilesCommand)
+		return 2
+	}
+
 	logger := log.New(stderr, "cassini-operator: ", log.LstdFlags)
 
 	cfg, exitCode, err := loadConfig(args, stderr)
@@ -383,10 +394,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 		envOrDefaultAny([]string{"CASSINI_OPERATOR_WORK_ROOT", "WORK_ROOT"}, ""),
 		imageDefaultWorkRoot, "operator/jobs",
 		filepath.Join(defaultDataRoot, "jobs")), "per-job artifact root")
-	fs.StringVar(&cfg.SiteRoot, "site-root", exAppDataPathDefault(persistRoot,
-		envOrDefaultAny([]string{"CASSINI_OPERATOR_SITE_ROOT", "SITE_ROOT"}, ""),
-		imageDefaultSiteRoot, "site/published",
-		filepath.Join(defaultDataRoot, "site")), "published site output root")
+	fs.StringVar(&cfg.SiteRoot, "site-root", defaultSiteRoot(persistRoot, defaultDataRoot), "published site output root")
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", envOrDefaultAny([]string{"CASSINI_BIN"}, defaultCassiniBinPath(repoRoot)), "Cassini CLI binary path")
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
@@ -400,6 +408,11 @@ Usage:
   cassini-operator
   cassini-operator --bind 0.0.0.0:4000
   cassini-operator --base-path /operator --db ./cassini-operator/runtime/jobs.sqlite3
+
+Commands:
+  `+backfillNCFilesCommand+`   one-shot migration of a legacy in-container archive
+                       into Nextcloud Files (run by hand after an update;
+                       see --help on the command itself)
 
 Flags:
 `)
@@ -450,6 +463,17 @@ Flags:
 	}
 
 	return cfg, 0, nil
+}
+
+// defaultSiteRoot resolves where the published site lives when no --site-root
+// is given. Shared with the backfill command (nc_backfill.go) rather than
+// re-derived there: a backfill that reads a different directory than the one
+// the operator writes would silently sync nothing and report success.
+func defaultSiteRoot(persistRoot, dataRoot string) string {
+	return exAppDataPathDefault(persistRoot,
+		envOrDefaultAny([]string{"CASSINI_OPERATOR_SITE_ROOT", "SITE_ROOT"}, ""),
+		imageDefaultSiteRoot, "site/published",
+		filepath.Join(dataRoot, "site"))
 }
 
 func parsePositiveIntEnvAny(names []string, fallback int) (int, error) {
