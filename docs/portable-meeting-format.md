@@ -66,8 +66,12 @@ This document defines:
 A file is a Cassini portable meeting file when all of the following are true:
 
 1. the container is Ogg Opus
-2. OpusTags contains `CASSINI_FORMAT=org.cassini.portable-meeting/1`
+2. OpusTags contains `CASSINI_FORMAT=org.cassini.portable-meeting/2` (current) or
+   `org.cassini.portable-meeting/1` (older files, still readable)
 3. OpusTags contains a valid Cassini payload descriptor
+
+Consumers MUST accept both versions. A consumer that accepts only `/1` rejects
+every file Cassini writes today.
 
 If `CASSINI_FORMAT` is absent, consumers MUST treat the file as plain audio.
 
@@ -114,7 +118,11 @@ Cassini portable meeting file. Decode CASSINI_PAYLOAD_*: base64url -> gzip -> UT
 
 ### Cassini descriptor tags
 
-The following tags are REQUIRED:
+The following tags are REQUIRED. The `CASSINI_FORMAT` and `CASSINI_PAYLOAD_SCHEMA`
+values below are the v1 forms; a producer emitting v2 writes
+`org.cassini.portable-meeting/2` and the `…-v2.schema.json` URL instead, and adds
+the per-transcript descriptors described under
+[v2 (Multi-Transcription)](#v2-multi-transcription).
 
 - `CASSINI_FORMAT=org.cassini.portable-meeting/1`
 - `CASSINI_PROFILE=ogg-opus`

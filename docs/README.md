@@ -161,6 +161,7 @@ Kept because it helps a contributor, installer, or user. Read on demand.
 - [Operator API](./reference/api.md) — HTTP + SSE surface.
 - [Configuration](./reference/configuration.md) — all runtime knobs.
 - [Artifacts and filesystem](./reference/artifacts-and-filesystem.md) — `.run` / `.meeting` / `.site` / `.opus` and operator layout.
+- [Agent access to meeting recordings](./agent-meeting-access.md) — reading meetings from outside Nextcloud with `cassini meetings`, as a Nextcloud user.
 - [Glossary](./reference/glossary.md) — Cassini + media terms.
 - [Troubleshooting](./reference/troubleshooting.md) — common local-dev and runtime issues.
 
