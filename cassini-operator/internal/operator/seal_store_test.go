@@ -219,8 +219,8 @@ func TestSealMigrationReroutesInFlightPublishRows(t *testing.T) {
 
 	// Roll back past the seal migration and forward again: the up-migration's
 	// re-route is what an upgrading deployment runs.
-	if err := store.migrateDownTo(4); err != nil {
-		t.Fatalf("migrateDownTo(4) error = %v", err)
+	if err := store.migrateDownTo(5); err != nil {
+		t.Fatalf("migrateDownTo(5) error = %v", err)
 	}
 	if err := store.ensureSchema(); err != nil {
 		t.Fatalf("ensureSchema() error = %v", err)
