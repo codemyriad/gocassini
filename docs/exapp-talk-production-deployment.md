@@ -160,7 +160,6 @@ Job logs to inspect for:
 ```text
 talk auth mode hpb-internal requires CASSINI_TALK_SIGNALING_INTERNAL_SECRET to be set
 participants/active
-recording/store
 talk stopped
 compose final output failed
 requestoffer
@@ -189,4 +188,4 @@ Interpretation:
 
 ## Scope note
 
-D-395 keeps the Cassini ExApp persistent volume as the authoritative store for rich artifacts and the viewer. Raw Talk upload to Nextcloud Files remains protocol/delivery behavior. Nextcloud-Files-native rich artifact delivery and owner-scoped archive redesign are separate product decisions.
+D-395 kept the Cassini ExApp persistent volume as the authoritative store for rich artifacts and the viewer. That has since moved: D-529/D-534 make Nextcloud Files the archive, and D-551 removed the raw Talk upload entirely — Cassini sends Talk status callbacks only, and a meeting reaches Nextcloud once, as the published `.opus` under the canonical recordings root.

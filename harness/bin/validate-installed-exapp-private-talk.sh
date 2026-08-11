@@ -29,9 +29,10 @@ usage() {
 Usage: $0 [options]
 
 Runs one or more private Talk recordings against an already installed ExApp,
-then strictly validates the new job, viewer catalog entry, downloaded product
-artifact, and transcript content. Two runs remain the manual default so archive
-preservation is checked; faithful CI uses --run-count 1.
+then strictly validates the new job, direct Nextcloud Files delivery, the
+Files-backed viewer catalog/artifact responses, and transcript content. Two
+runs remain the manual default so archive preservation is checked; faithful CI
+uses --run-count 1.
 
 Options:
   --nextcloud-host <host-or-url>  Default: CASSINI_HARNESS_HOST, then 127.0.0.1
@@ -84,7 +85,13 @@ normalize_base_url() {
 BASE_URL="$(normalize_base_url "$NEXTCLOUD_HOST")"
 PROXY_URL="$BASE_URL/index.php/apps/app_api/proxy/gocassini"
 CATALOG_URL="$PROXY_URL/published/catalog.json"
+FILES_ROOT_URL="$BASE_URL/remote.php/dav/files/$ADMIN_USER/Cassini/Recordings"
 AUTH=(-u "$ADMIN_USER:$ADMIN_PASSWORD")
+# The standard viewer user the harness creates (harness_create_standard_viewer_user).
+# In the virtual everyone group, so the group folder mounts for her, but never
+# in the room -- exactly the caller access control exists to stop.
+OUTSIDER_USER="${OUTSIDER_USER:-alice}"
+OUTSIDER_PASSWORD="${OUTSIDER_PASSWORD:-Tn8mY3qVrJ2x!E2e}"
 AUTH_VALUE="$ADMIN_USER:$ADMIN_PASSWORD"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$REPO_ROOT/harness/compose.yml")
 mkdir -p "$LOG_DIR"
@@ -141,6 +148,79 @@ fetch_json() {
     *) printf '%s\n' "$body" >&2; return 3 ;;
   esac
   python3 -m json.tool "$dest" >/dev/null 2>&1 || return 4
+}
+
+# join_url resolves a catalog audioPath ("./meetings/<id>.opus") against a base.
+join_url() {
+  python3 -c 'import sys; from urllib.parse import urljoin; print(urljoin(sys.argv[1], sys.argv[2]))' "$1" "$2"
+}
+
+assert_files_source() {
+  local url="$1" label="$2" range="${3:-}" code
+  # Separate 'local': $label expands before the assignments above take effect
+  # (SC2318), which pointed headers at the caller's label and failed CI.
+  local headers="$LOG_DIR/${label}-source.headers"
+  local -a request=(curl -sS "${AUTH[@]}" -D "$headers" -o /dev/null -w '%{http_code}')
+  [[ -z "$range" ]] || request+=(-H "Range: $range")
+  code="$("${request[@]}" "$url")" || return 1
+  [[ "$code" == 200 || "$code" == 206 ]] || return 1
+  grep -Eiq "^X-Cassini-Meeting-Source:[[:space:]]*nextcloud-files[[:space:]]*\r?$" "$headers"
+}
+
+validate_files_archive_entry() {
+  local label="$1" job_id="$2"
+  local catalog="$LOG_DIR/catalog-${label}.json" audio_path audio_url code
+  # The authoritative Cassini/Recordings/catalog.json is deliberately owner-only:
+  # the operator reads it as the recordings owner and serves each caller a
+  # filtered view, so nobody else -- the administrator included -- can read the
+  # unfiltered archive index out of Files. This used to fetch it directly as
+  # $ADMIN_USER, which worked only while `admin` was itself the recordings
+  # owner; D-532 moved ownership to the `cassini` service account and D-554 made
+  # the ACL unconditional, so that read is now a 404 by design.
+  #
+  # Assert what the caller is actually promised instead: the per-caller catalog
+  # they were served names the meeting, and the recording itself is really in
+  # Files, readable by this caller because they were in the room.
+  audio_path="$(jq -er --arg id "$job_id" '.meetings[] | select(.id == $id) | .audioPath' "$catalog")" || return 1
+  audio_url="$(join_url "$FILES_ROOT_URL/" "$audio_path")" || return 1
+  code="$(curl -sS "${AUTH[@]}" -H 'Range: bytes=0-3' -o "$LOG_DIR/files-${label}.opus-prefix" -w '%{http_code}' "$audio_url")" || return 1
+  [[ "$code" == 206 ]] || return 1
+  [[ "$(wc -c <"$LOG_DIR/files-${label}.opus-prefix" | tr -d ' ')" == 4 ]] || return 1
+  # ...and that the authoritative index stays unreadable to a caller who is not
+  # the owner. If this ever starts returning a body, the archive index is
+  # leaking to everyone the group folder mounts for.
+  code="$(curl -sS "${AUTH[@]}" -o /dev/null -w '%{http_code}' "$FILES_ROOT_URL/catalog.json")" || return 1
+  [[ "$code" == 404 || "$code" == 403 ]] || return 1
+  assert_files_source "$CATALOG_URL" "${label}-catalog" || return 1
+  grep -Eiq '^Cache-Control:.*no-store' "$LOG_DIR/${label}-catalog-source.headers" || return 1
+  assert_files_source "$PROXY_URL/published/${audio_path#./}" "${label}-opus" 'bytes=0-3' || return 1
+}
+
+# A user who was not in the room must see nothing and be able to fetch nothing.
+# This is the half the install e2e cannot reach -- it never records -- and it is
+# the whole point of D-521: being logged in is necessary, not sufficient.
+validate_non_participant_denied() {
+  local label="$1" job_id="$2"
+  local catalog="$LOG_DIR/catalog-${label}-outsider.json" code
+  local -a outsider_auth=(-u "$OUTSIDER_USER:$OUTSIDER_PASSWORD")
+
+  code="$(curl -sS "${outsider_auth[@]}" -o "$catalog" -w '%{http_code}' "$CATALOG_URL")" || return 1
+  # 200 with an empty list, never an error: the read path fails closed, and the
+  # viewer must show "nothing here for you" rather than an outage.
+  [[ "$code" == 200 ]] || return 1
+  jq -e '.meetings | length == 0' "$catalog" >/dev/null 2>&1 || return 1
+
+  # Playback is denied as a miss, so a recording a caller may not read never
+  # even reveals that it exists.
+  code="$(curl -sS "${outsider_auth[@]}" -o /dev/null -w '%{http_code}' \
+    "$PROXY_URL/published/meetings/${job_id}.opus")" || return 1
+  [[ "$code" == 404 ]] || return 1
+
+  # And the same through Nextcloud's own WebDAV, which is what actually enforces
+  # it -- the operator is not the thing saying no.
+  code="$(curl -sS "${outsider_auth[@]}" -o /dev/null -w '%{http_code}' \
+    "$BASE_URL/remote.php/dav/files/$OUTSIDER_USER/Cassini/Recordings/meetings/${job_id}.opus")" || return 1
+  [[ "$code" == 404 || "$code" == 403 ]] || return 1
 }
 
 catalog_ids() {
@@ -217,7 +297,11 @@ wait_for_catalog_artifact() {
               --output-dir "$LOG_DIR" \
               --label "$label"
           )" || fail "$label artifact failed download/decoding validation"
-          success "✓ $label viewer artifact validated: $RUN_ARTIFACT_SUMMARY"
+          validate_files_archive_entry "$label" "$job_id" \
+            || fail "$label was not delivered to Nextcloud Files or the viewer did not identify Files as its source"
+          validate_non_participant_denied "$label" "$job_id" \
+            || fail "$label was visible or fetchable by $OUTSIDER_USER, who was not in the room"
+          success "✓ $label viewer artifact validated from Nextcloud Files: $RUN_ARTIFACT_SUMMARY"
           return 0
           ;;
         10) printf '[validate] waiting for %s catalog entry: %s\n' "$label" "$entry" >&2 ;;
@@ -301,7 +385,26 @@ for id in "${new_job_ids[@]}" "${previous_catalog_ids[@]}"; do
 done
 archive_summary="$($VALIDATOR catalog-contains "${contains_args[@]}")" \
   || fail "archive preservation check failed"
-success "✓ archive preservation check passed ($archive_summary)"
+# Archive preservation in Files itself. This used to read
+# Cassini/Recordings/catalog.json over WebDAV as $ADMIN_USER, which only worked
+# while `admin` was the recordings owner: the authoritative index is owner-only
+# on purpose (D-532 moved ownership to `cassini`, D-554 made the ACL
+# unconditional), so that read is a 404 now and asserting on it would be
+# asserting the archive index leaks.
+#
+# Assert on the recordings instead, which is the actual claim: every meeting
+# this run produced is still in Files and still readable by a participant. The
+# viewer-facing half of preservation is already covered by the per-caller
+# catalog check above.
+for id in "${new_job_ids[@]}"; do
+  [[ -n "$id" ]] || continue
+  code="$(curl -sS "${AUTH[@]}" -H 'Range: bytes=0-3' -o /dev/null -w '%{http_code}' \
+    "$FILES_ROOT_URL/meetings/${id}.opus")" \
+    || fail "Nextcloud Files archive request failed for $id"
+  [[ "$code" == 206 || "$code" == 200 ]] \
+    || fail "Nextcloud Files archive does not hold a readable recording for $id (HTTP $code)"
+done
+success "✓ viewer and Nextcloud Files archive preservation checks passed ($archive_summary)"
 
 VALIDATION_RESULT="passed"
 write_summary 0

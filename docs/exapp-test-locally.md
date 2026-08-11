@@ -80,8 +80,8 @@ From the repo root:
 
 The stack command starts the harness, builds/tags the ExApp image from
 `appinfo/info.xml`, installs/reinstalls Cassini via AppAPI, passes both Talk
-secrets as deploy env, and configures Talk's `recording_servers` to the
-installed ExApp proxy path. Use `./bin/cassini dev stack plan ...` with the
+secrets, and configures Talk's `recording_servers` to the installed ExApp proxy
+path. Use `./bin/cassini dev stack plan ...` with the
 same flags to inspect the resolved config without mutating containers.
 
 ### `dev-vm`
@@ -153,8 +153,8 @@ too.
 
 [`harness/bin/ci-e2e-talk-record-roundtrip.sh`](../harness/bin/ci-e2e-talk-record-roundtrip.sh)
 validates Talk's recording-backend protocol against a directly run
-`cassini-operator` container. It is still valuable for fast recording/upload
-regressions, but it bypasses AppAPI/HaRP, ExApp deploy env allow-listing, and
+`cassini-operator` container. It is still valuable for fast
+recording-lifecycle regressions, but it bypasses AppAPI/HaRP, ExApp deploy env allow-listing, and
 Nextcloud's installed app UI. Use Tier 3 for production-shaped validation.
 
 ## Teardown

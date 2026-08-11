@@ -169,6 +169,14 @@ and the live site itself is:
 /srv/cassini-site/published
 ```
 
+> **The site root is only used by the `local` publish sink.** Under
+> `--sink nextcloud-files` (the default for an installed ExApp) recordings are
+> written to `Cassini/Recordings/` in Nextcloud Files and nothing is written
+> here, so the operator does not serve this directory at all — archive requests
+> go to Nextcloud or 404. The per-attempt `runs/<job>--attempt-NNN.site`
+> directory is staging either way, and is removed once the sink accepts the
+> meeting. See `docs/reference/configuration.md` for `--sink`.
+
 ## Why both `current/` and `runs/` exist
 
 The split exists so Cassini can do both of these well:

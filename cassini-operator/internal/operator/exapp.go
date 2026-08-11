@@ -59,6 +59,7 @@ const (
 	envAppPort              = "APP_PORT"
 	envAppID                = "APP_ID"
 	envAppVersion           = "APP_VERSION"
+	envAAVersion            = "AA_VERSION"
 	envAppSecret            = "APP_SECRET"
 	envAppPersistentStorage = "APP_PERSISTENT_STORAGE"
 	envAppAPIRequired       = "CASSINI_APPAPI_REQUIRED"
@@ -156,14 +157,21 @@ const (
 
 // ExAppConfig holds the AppAPI-derived runtime values resolved from env vars.
 type ExAppConfig struct {
-	Active           bool
-	BindAddr         string
-	AppID            string
-	AppVersion       string
-	AppSecret        string
-	NextcloudURL     string // optional; if set, /init reports progress=100 back via OCS
-	ViewerDist       string
-	PublishedDir     string // operator SiteRoot, served read-only at /published
+	Active       bool
+	BindAddr     string
+	AppID        string
+	AppVersion   string
+	AAVersion    string
+	AppSecret    string
+	NextcloudURL string // optional; if set, /init reports progress=100 back via OCS
+	ViewerDist   string
+	PublishedDir string // operator SiteRoot, served read-only at /published
+	// PublishSink is the resolved publish destination (publish_sink.go). It
+	// decides whether a local published archive exists to serve at all: under
+	// the nextcloud-files sink nothing is ever written to PublishedDir, so
+	// mounting a file server over it would only ever serve staleness.
+	PublishSink string
+	onEnabled   func(bool)
 }
 
 // LoadExAppConfig reads ExApp env vars and decides whether the AppAPI build
@@ -172,11 +180,12 @@ type ExAppConfig struct {
 // shared secret AppAPI was supposed to inject.
 func LoadExAppConfig() (ExAppConfig, error) {
 	cfg := ExAppConfig{
-		AppID:            strings.TrimSpace(os.Getenv(envAppID)),
-		AppVersion:       strings.TrimSpace(os.Getenv(envAppVersion)),
-		AppSecret:        os.Getenv(envAppSecret),
-		NextcloudURL:     strings.TrimSpace(os.Getenv(envNextcloudURL)),
-		ViewerDist:       strings.TrimSpace(os.Getenv(envViewerDist)),
+		AppID:        strings.TrimSpace(os.Getenv(envAppID)),
+		AppVersion:   strings.TrimSpace(os.Getenv(envAppVersion)),
+		AAVersion:    strings.TrimSpace(os.Getenv(envAAVersion)),
+		AppSecret:    os.Getenv(envAppSecret),
+		NextcloudURL: strings.TrimSpace(os.Getenv(envNextcloudURL)),
+		ViewerDist:   strings.TrimSpace(os.Getenv(envViewerDist)),
 	}
 	cfg.Active = strings.TrimSpace(cfg.AppSecret) != ""
 	required, err := parseBoolEnv(envAppAPIRequired)
@@ -267,6 +276,7 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 		Logger:               logger,
 		InitProgressReporter: c.initProgressReporter(logger),
 		UIRegistrar:          c.uiRegistrar(logger),
+		EnabledCallback:      c.onEnabled,
 	}
 	lifecycle.Register(root)
 
@@ -278,13 +288,24 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 	root.Handle(uiAssetURLPrefix+"/", c.uiAssetHandler(logger))
 	root.Handle(navIconURLPath, embeddedAssetHandler(navIconSVG, "image/svg+xml"))
 
+	// Where meetings are read from mirrors where they were written (D-550).
+	// Under the nextcloud-files sink the local site root is never populated, so
+	// it is not served at all: archive paths go to Nextcloud and everything
+	// else 404s, rather than falling through to a directory that can only hold
+	// pre-sink leftovers. Under the local sink the on-disk site is the source,
+	// as it has always been.
+	ncProxy := c.ncFilesProxy(logger)
+	localArchive := c.PublishedDir
+	if c.PublishSink == publishSinkNextcloudFiles {
+		localArchive = ""
+	}
 	if c.ViewerDist != "" {
-		viewer := viewerHandler(c.ViewerDist, c.PublishedDir, viewerURLPrefix, logger)
+		viewer := viewerHandler(c.ViewerDist, localArchive, viewerURLPrefix, logger, ncProxy)
 		root.Handle(viewerURLPrefix, viewer)
 		root.Handle(viewerURLPrefix+"/", viewer)
 	}
-	if c.PublishedDir != "" {
-		root.Handle(publishedURLPrefix+"/", publishedHandler(c.PublishedDir, publishedURLPrefix, logger))
+	if localArchive != "" || ncProxy != nil {
+		root.Handle(publishedURLPrefix+"/", publishedHandler(localArchive, publishedURLPrefix, logger, ncProxy))
 	}
 }
 
@@ -609,12 +630,18 @@ func spaHandler(dir, urlPrefix string, logger *log.Logger) http.Handler {
 // SPA entry when Cassini is exported, but in an ExApp they are stored under the
 // operator's published site root. Serve those archive paths without SPA fallback
 // so JSON/audio fetches don't receive index.html.
-func viewerHandler(viewerDir, publishedDir, urlPrefix string, logger *log.Logger) http.Handler {
+func viewerHandler(viewerDir, publishedDir, urlPrefix string, logger *log.Logger, ncProxy ncFilesProxyFunc) http.Handler {
 	spa := spaHandler(viewerDir, urlPrefix, logger)
-	if publishedDir == "" {
+	if publishedDir == "" && ncProxy == nil {
 		return spa
 	}
-	publishedFiles := http.StripPrefix(urlPrefix, http.FileServer(http.Dir(publishedDir)))
+	// nil when there is no local archive — archive paths are then served by the
+	// proxy or 404, never by the SPA fallback (a JSON fetch answered with
+	// index.html is worse than a miss).
+	var publishedFiles http.Handler
+	if publishedDir != "" {
+		publishedFiles = http.StripPrefix(urlPrefix, http.FileServer(http.Dir(publishedDir)))
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		relPath := strings.TrimPrefix(r.URL.Path, urlPrefix)
 		relPath = strings.TrimPrefix(relPath, "/")
@@ -622,6 +649,16 @@ func viewerHandler(viewerDir, publishedDir, urlPrefix string, logger *log.Logger
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				w.Header().Set("Allow", "GET, HEAD")
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			// Nextcloud Files is authoritative in AppAPI deployments (D-529).
+			// Outside AppAPI ncProxy is nil and the local site remains the
+			// standalone/dev data source.
+			if ncProxy != nil && ncProxy(w, r, relPath) {
+				return
+			}
+			if publishedFiles == nil {
+				http.NotFound(w, r)
 				return
 			}
 			publishedFiles.ServeHTTP(w, r)
@@ -653,12 +690,32 @@ func serveSPAIndex(w http.ResponseWriter, r *http.Request, indexPath string, log
 
 // publishedHandler serves files from `dir` under urlPrefix. No SPA fallback —
 // missing files 404. Used for the published meeting archive.
-func publishedHandler(dir, urlPrefix string, logger *log.Logger) http.Handler {
-	fileServer := http.StripPrefix(urlPrefix, http.FileServer(http.Dir(dir)))
+func publishedHandler(dir, urlPrefix string, logger *log.Logger, ncProxy ncFilesProxyFunc) http.Handler {
+	// nil when no sink writes a local archive. Everything outside the archive
+	// paths — including the site manifest cassini.json, which carries meeting
+	// counts and job ids — then 404s instead of being served off disk.
+	var fileServer http.Handler
+	if dir != "" {
+		fileServer = http.StripPrefix(urlPrefix, http.FileServer(http.Dir(dir)))
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// Nextcloud Files is authoritative for archive paths in AppAPI
+		// deployments. The local site serves the SPA shell/assets and remains
+		// the archive source only outside AppAPI (D-529).
+		relPath := strings.TrimPrefix(r.URL.Path, urlPrefix)
+		relPath = strings.TrimPrefix(relPath, "/")
+		if ncProxy != nil && (relPath == "catalog.json" || strings.HasPrefix(relPath, "meetings/")) {
+			if ncProxy(w, r, relPath) {
+				return
+			}
+		}
+		if fileServer == nil {
+			http.NotFound(w, r)
 			return
 		}
 		fileServer.ServeHTTP(w, r)

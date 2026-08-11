@@ -3,10 +3,10 @@
 # deploy-exapp.sh — register (or re-register) the Cassini ExApp on a Nextcloud
 # instance described by a committed inventory file.
 #
-# This is the production counterpart of sandbox/deploy.sh. Both call the same
-# register logic (ops/deploy/lib/exapp-register.sh); the differences are the
-# daemon parameters and that this script never brings a stack up — it registers
-# into a Nextcloud that already exists.
+# This is the production register path. It shares the register logic
+# (ops/deploy/lib/exapp-register.sh) with the e2e harness; the differences are
+# the daemon parameters and that this script never brings a stack up — it
+# registers into a Nextcloud that already exists.
 #
 #   Dry run (default — reads live state, changes nothing):
 #     ops/deploy/deploy-exapp.sh --inventory ops/deploy/inventory/example-cpu-local.env \

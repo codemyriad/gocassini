@@ -1,0 +1,7 @@
+{
+  "quality": "balanced",
+  "source": "auto",
+  "hardware_fingerprint": "gpu=false;cores=8",
+  "detected_gpu": false,
+  "cores": 8
+}

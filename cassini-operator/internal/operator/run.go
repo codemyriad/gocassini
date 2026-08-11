@@ -99,17 +99,32 @@ type Runtime struct {
 	// tests shrink it.
 	fetchTalkRoomName    talkRoomNameFetcher
 	talkRoomNameRetryGap time.Duration
+	// talkAudienceRetryGap paces the recording-audience retry ladder
+	// (talk_participants.go, D-553). Zero means the package default; tests
+	// shrink it.
+	talkAudienceRetryGap time.Duration
+	// uploadToNCFiles mirrors the complete published archive into Nextcloud
+	// Files after a successful publish and on startup (webdav_upload.go, D-529).
+	// Best-effort; nil outside AppAPI deployments. ncFilesSyncMu prevents the
+	// startup convergence pass from overlapping a post-publish delivery.
+	uploadToNCFiles ncFilesUploader
+	ncFilesSyncMu   sync.Mutex
+	// fetchTalkParticipants resolves a Talk room's grantable ACL principals and
+	// applyNCFilesAccessFn writes the per-meeting advanced-ACL grants
+	// (talk_participants.go / webdav_acl.go, D-534). Both nil unless AppAPI is
+	// active — inside an ExApp per-participant access is the only model there
+	// is (D-554), so there is nothing left to opt into.
+	fetchTalkParticipants talkParticipantsFetcher
+	applyNCFilesAccessFn  ncFilesAccessApplier
 	// recordStopAckGrace and recordStopFinalizeGrace default to the package
 	// constants; tests shrink them to exercise stop enforcement quickly.
 	recordStopAckGrace      time.Duration
 	recordStopFinalizeGrace time.Duration
-	// Talk delivery tuning: dedicated bounded clients (a hung Nextcloud
-	// connection must not wedge the record slot, D-352), a bounded retry
-	// schedule, and the upload stall watchdog grace. Tests shrink them.
-	talkJSONClient   *http.Client
-	talkUploadClient *http.Client
-	talkRetryDelays  []time.Duration
-	talkUploadStall  time.Duration
+	// Talk status-callback tuning: a dedicated bounded client (a hung
+	// Nextcloud connection must not stall the post-record path, D-352) and a
+	// bounded retry schedule. Tests shrink them.
+	talkJSONClient  *http.Client
+	talkRetryDelays []time.Duration
 	// requeueKick nudges the requeue dispatcher to re-scan the DB for
 	// queued build/publish rows the channels could not accept (D-367).
 	requeueKick chan struct{}
@@ -204,6 +219,41 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
+	runtime.uploadToNCFiles = exappCfg.ncFilesUploader(logger)
+	runtime.fetchTalkParticipants = exappCfg.talkParticipantsFetcher()
+	runtime.applyNCFilesAccessFn = exappCfg.ncFilesAccessApplier(logger)
+
+	// Resolve the publish destination. An explicit name always wins; an unset
+	// one is resolved from the deployment shape, and in an ExApp that must be
+	// Nextcloud Files — defaulting an ExApp to `local` would silently keep
+	// recordings on the app's own volume, which is the exact failure D-549
+	// exists to prevent. Non-ExApp deployments keep the local site.
+	sinkName := cfg.PublishSink
+	if sinkName == "" {
+		sinkName = defaultPublishSinkFor(exappCfg)
+	}
+	sink, err := newPublishSinkFor(sinkName, cfg, exappCfg, runtime, logger)
+	if err != nil {
+		fmt.Fprintf(stderr, "publish sink: %v\n", err)
+		return 1
+	}
+	runtime.publishSink = sink
+	logger.Printf("publish_sink -> %s", sink.Name())
+
+	if runtime.uploadToNCFiles != nil {
+		// During AppAPI registration, outbound callbacks are rejected until the
+		// /enabled?enabled=1 lifecycle edge. Start convergence from that edge,
+		// not immediately at process start (which deterministically gets 401).
+		exappCfg.onEnabled = func(enabled bool) {
+			if enabled {
+				// Ensure the dedicated recordings owner, then provision the Team-
+				// folder + ACL topology. This runs before archive sync so the
+				// first delivery acts as an existing, mounted owner.
+				exappCfg.provisionNCFilesAccess(runtime.ctx, logger)
+				runtime.syncNCFilesOnStartup()
+			}
+		}
+	}
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
 		// recording; tell it the recording failed so the room state converges
@@ -213,6 +263,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	exappCfg.PublishedDir = cfg.SiteRoot
+	exappCfg.PublishSink = sink.Name()
 	warnIfEphemeral(logger, filepath.Dir(cfg.DBPath), cfg.SiteRoot)
 
 	server := &http.Server{
@@ -501,13 +552,10 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		recordStopAckGrace:      recordStopAckGrace,
 		recordStopFinalizeGrace: recordStopFinalizeGrace,
 
-		talkJSONClient: &http.Client{Timeout: talkJSONRequestTimeout},
-		talkUploadClient: &http.Client{
-			Transport: &http.Transport{ResponseHeaderTimeout: talkUploadResponseHeaderTimeout},
-		},
+		talkJSONClient:       &http.Client{Timeout: talkJSONRequestTimeout},
 		talkRetryDelays:      talkDeliveryRetryDelays,
-		talkUploadStall:      talkUploadStallGrace,
 		talkRoomNameRetryGap: talkRoomNameRetryGap,
+		talkAudienceRetryGap: talkAudienceRetryGap,
 
 		requeueKick:         make(chan struct{}, 1),
 		publishJobTimeout:   defaultPublishJobTimeout,
@@ -771,13 +819,13 @@ func (rt *Runtime) runRecordJob(job Job, req TriggerRequest) {
 		}
 		return
 	}
-	// Talk delivery (stopped callback + recording upload) is retried with
-	// backoff but never fails the record stage: the recording is already
-	// safe in the canonical run bundle, so a Nextcloud hiccup must not
-	// strand it. Incomplete delivery leaves talk_delivered_at unset and
-	// rerun re-attempts it (D-352).
+	// Tell spreed the recording stopped. Status only — the meeting itself
+	// goes to Nextcloud as the published .opus, never through Talk's
+	// recording store (D-551). Retried with backoff but never fails the
+	// record stage: the recording is already safe in the canonical run
+	// bundle, so a Nextcloud hiccup must not strand it (D-352).
 	if talkState, ok := rt.lookupTalkJobState(job.ID); ok {
-		rt.deliverTalkRecording(job.ID, talkState, canonicalRunPath, finishedAt)
+		rt.reportTalkRecordingStopped(job.ID, talkState)
 	}
 	if err := rt.enqueueBuildJob(job.ID, job.CurrentAttemptNumber, canonicalRunPath, result.ArtifactRunPath, finishedAt); err != nil {
 		rt.logger.Printf("build queue update failed id=%s: %v", job.ID, err)
@@ -961,8 +1009,10 @@ type Job struct {
 	// TalkBinding is the persisted Talk room binding (backend URL, token,
 	// owner, actor) for jobs started through the Talk recording backend. It
 	// is internal plumbing for crash-safe delivery, not API surface.
-	TalkBinding     *string `json:"-"`
-	TalkDeliveredAt *string `json:"talk_delivered_at"`
+	TalkBinding *string `json:"-"`
+	// TalkStoppedAt records that spreed acknowledged the stopped callback for
+	// this recording (D-551 repointed it from the retired Talk upload).
+	TalkStoppedAt *string `json:"talk_stopped_at"`
 }
 
 func (s *Store) InsertQueuedJob(ctx context.Context, job Job) error {
@@ -1238,7 +1288,7 @@ SELECT id, provider, request_json, stage, state,
        build_queued_at, build_started_at, build_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
-       talk_binding, talk_delivered_at
+       talk_binding, talk_stopped_at
 FROM jobs
 ORDER BY created_at DESC, id DESC`)
 	if err != nil {
@@ -1274,7 +1324,7 @@ SELECT id, provider, request_json, stage, state,
        build_queued_at, build_started_at, build_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
-       talk_binding, talk_delivered_at
+       talk_binding, talk_stopped_at
 FROM jobs
 WHERE id = ?`, id)
 	job, err := scanJob(row)
@@ -1311,7 +1361,7 @@ func scanJob(scanner rowScanner) (Job, error) {
 	var interruptedAt sql.NullString
 	var completedAt sql.NullString
 	var talkBinding sql.NullString
-	var talkDeliveredAt sql.NullString
+	var talkStoppedAt sql.NullString
 
 	err := scanner.Scan(
 		&job.ID,
@@ -1344,7 +1394,7 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&interruptedAt,
 		&completedAt,
 		&talkBinding,
-		&talkDeliveredAt,
+		&talkStoppedAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1374,7 +1424,7 @@ func scanJob(scanner rowScanner) (Job, error) {
 	job.InterruptedAt = nullableStringPtr(interruptedAt)
 	job.CompletedAt = nullableStringPtr(completedAt)
 	job.TalkBinding = nullableStringPtr(talkBinding)
-	job.TalkDeliveredAt = nullableStringPtr(talkDeliveredAt)
+	job.TalkStoppedAt = nullableStringPtr(talkStoppedAt)
 	return job, nil
 }
 
@@ -1463,12 +1513,4 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 
 func nowUTCString() string {
 	return time.Now().UTC().Format(time.RFC3339Nano)
-}
-
-func talkRecordingUploadName(timestamp string) string {
-	t, err := time.Parse(time.RFC3339Nano, timestamp)
-	if err != nil {
-		t = time.Now().UTC()
-	}
-	return "recording-" + t.UTC().Format("20060102T150405.000000000Z") + ".mkv"
 }

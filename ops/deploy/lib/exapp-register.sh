@@ -2,16 +2,18 @@
 #
 # Canonical AppAPI daemon/app registration logic.
 #
-# One implementation, three callers (D-458 / D-565):
+# One implementation, two callers (D-458 / D-565):
 #
-#   * sandbox/deploy.sh          — HaRP daemon, brings the compose stack up
 #   * harness/bin/lib/stack.sh   — HaRP daemon, install phase of the e2e stack
 #   * ops/deploy/deploy-exapp.sh — production, registers into an existing
 #                                  Nextcloud, never brings a stack up
 #
+# (The AIO sandbox — sandbox/wire-cassini.sh — registers inline against AIO's
+# own HaRP wiring and does not source this file.)
+#
 # The only real differences between them are the daemon parameters and whether
 # a stack is started; the register dance itself is identical, and every
-# operational lesson below was learned the hard way on one of the three.
+# operational lesson below was learned the hard way on one of the callers.
 #
 # ---------------------------------------------------------------------------
 # Contract

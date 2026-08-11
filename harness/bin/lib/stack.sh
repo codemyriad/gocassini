@@ -13,9 +13,9 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/base.sh"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/stack-env.sh"
 # shellcheck source=./artifacts.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/artifacts.sh"
-# The AppAPI register dance is shared with sandbox/deploy.sh and the production
-# deploy (ops/deploy/deploy-exapp.sh) — one implementation, three callers. See
-# that file's header for the operational rules it encodes.
+# The AppAPI register dance is shared with the production deploy
+# (ops/deploy/deploy-exapp.sh) — one implementation, two callers. See that
+# file's header for the operational rules it encodes.
 # shellcheck source=../../../ops/deploy/lib/exapp-register.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../ops/deploy/lib" && pwd)/exapp-register.sh"
 exapp_log() { log "$@"; }
@@ -747,6 +747,7 @@ harness_register_exapp() {
     --info-xml /tmp/gocassini-info.xml
     --env "CASSINI_TALK_RECORDING_SECRET=$CASSINI_TALK_RECORDING_SECRET"
     --env "CASSINI_TALK_SIGNALING_INTERNAL_SECRET=$CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
+    --env "CASSINI_PUBLISH_SINK=${CASSINI_PUBLISH_SINK:-nextcloud-files}"
     --test-deploy-mode
     --log "$register_log"
     --enable-cycle

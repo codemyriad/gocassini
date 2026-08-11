@@ -96,7 +96,7 @@ Common combinations:
 For `cassini dev stack`, the hierarchy is:
 
 ```text
-explicit CLI flag > CASSINI_HARNESS_* environment variable > default
+explicit CLI flag > matching environment variable > default
 ```
 
 Important details:
@@ -470,11 +470,17 @@ What happens:
    `appinfo/info.xml`.
 2. Compose starts Nextcloud, Postgres, reverse proxy, AppAPI HaRP, NATS, Janus,
    standalone signaling, and Coturn.
-3. Nextcloud is bootstrapped with Talk, trusted domains, signaling, TURN, and
-   Talk recording settings.
+3. Nextcloud is bootstrapped with Talk, Team folders, Everyone Group, trusted
+   domains, signaling, TURN, and Talk recording settings.
 4. AppAPI is installed/enabled.
 5. The HaRP deploy daemon is registered.
 6. Cassini is registered as `gocassini` and route checks are performed.
+
+Recordings are access-controlled — there is no other mode. `bootstrap.sh`
+installs the two prerequisites an ExApp cannot install for itself — Team folders
+and Everyone Group — and the ExApp provisions its folder, groups and ACLs on
+enable. Production installers must enable both native apps first. See
+[`docs/exapp-nextcloud-recordings-permissions.md`](../docs/exapp-nextcloud-recordings-permissions.md).
 
 If you already have a suitable local ExApp image, omit `--build` and use the
 default `reuse-local` mode. If you want AppAPI to pull the manifest image, use

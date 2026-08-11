@@ -17,6 +17,27 @@ func testEnv(values map[string]string) envLookupFunc {
 	}
 }
 
+func clearDevStackAmbient(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"CASSINI_HARNESS_PUBLIC_MODE",
+		"CASSINI_HARNESS_PUBLIC_URL",
+		"CASSINI_HARNESS_PUBLIC_HOST",
+		"CASSINI_HARNESS_MEDIA_HOST",
+		"CASSINI_HARNESS_SIGNALING_PUBLIC_URL",
+		"CASSINI_TALK_BACKEND_URL",
+		"CASSINI_HARNESS_SERVICE_MODE",
+		"CASSINI_HARNESS_CASSINI_MODE",
+		"CASSINI_HARNESS_RECORDING_BACKEND",
+		"CASSINI_HARNESS_EXAPP_IMAGE_MODE",
+		"CASSINI_HARNESS_PATCH_MODE",
+		"CASSINI_HARNESS_EXISTING",
+		"SPREED_PROFILE",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
 func TestResolveDevStackPlanDefaultsPreserveCompatibility(t *testing.T) {
 	plan, rest, err := resolveDevStackPlan("plan", nil, testEnv(nil))
 	if err != nil {
@@ -571,6 +592,7 @@ func TestResolveDevStackPlanDownFull(t *testing.T) {
 }
 
 func TestRunDevStackPlanPrintsResolvedPlan(t *testing.T) {
+	clearDevStackAmbient(t)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	code := runDevStack(context.Background(), ".", []string{"plan", "--public-mode=local-http"}, &stdout, &stderr)
@@ -592,6 +614,7 @@ func TestRunDevStackPlanPrintsResolvedPlan(t *testing.T) {
 }
 
 func TestRunDevStackHardFailureDoesNotPrintPlan(t *testing.T) {
+	clearDevStackAmbient(t)
 	var stdout, stderr bytes.Buffer
 	code := runDevStack(context.Background(), ".", []string{
 		"plan",
@@ -644,6 +667,7 @@ func TestPrintDevStackCommandWarnings(t *testing.T) {
 }
 
 func TestRunDevStackDownFlagsMapToScript(t *testing.T) {
+	clearDevStackAmbient(t)
 	prevExec := runDevScriptExec
 	defer func() { runDevScriptExec = prevExec }()
 
@@ -680,6 +704,7 @@ func TestRunDevStackDownFlagsMapToScript(t *testing.T) {
 }
 
 func TestRunDevStackStopCommandRemoved(t *testing.T) {
+	clearDevStackAmbient(t)
 	var stdout, stderr bytes.Buffer
 	code := runDevStack(context.Background(), ".", []string{"stop"}, &stdout, &stderr)
 	if code == 0 {
@@ -691,6 +716,7 @@ func TestRunDevStackStopCommandRemoved(t *testing.T) {
 }
 
 func TestRunDevStackWarningsPreserveScriptExitCode(t *testing.T) {
+	clearDevStackAmbient(t)
 	prevExec := runDevScriptExec
 	defer func() { runDevScriptExec = prevExec }()
 
@@ -721,6 +747,7 @@ func TestRunDevStackWarningsPreserveScriptExitCode(t *testing.T) {
 }
 
 func TestRunDevStackDownPrintsDestructiveWarnings(t *testing.T) {
+	clearDevStackAmbient(t)
 	prevExec := runDevScriptExec
 	defer func() { runDevScriptExec = prevExec }()
 
@@ -745,6 +772,7 @@ func TestRunDevStackDownPrintsDestructiveWarnings(t *testing.T) {
 }
 
 func TestRunDevStackUpPassesResolvedEnv(t *testing.T) {
+	clearDevStackAmbient(t)
 	prevExec := runDevScriptExec
 	defer func() { runDevScriptExec = prevExec }()
 
@@ -766,7 +794,8 @@ func TestRunDevStackUpPassesResolvedEnv(t *testing.T) {
 		t.Fatalf("script = %q", gotScript)
 	}
 	joined := strings.Join(gotEnv, "\n")
-	if !strings.Contains(joined, "CASSINI_HARNESS_SERVICE_MODE=core") || !strings.Contains(joined, "SPREED_PROFILE=default") {
+	if !strings.Contains(joined, "CASSINI_HARNESS_SERVICE_MODE=core") ||
+		!strings.Contains(joined, "SPREED_PROFILE=default") {
 		t.Fatalf("missing resolved env in %v", gotEnv)
 	}
 }
