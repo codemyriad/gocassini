@@ -64,6 +64,10 @@ type Config struct {
 	// Empty means unset, which resolves to the default; a non-empty unknown
 	// name is rejected at startup.
 	PublishSink string
+	// ArtifactRetention names which attempt-scoped payloads under runs/ are
+	// pruned (retention.go, D-583). Empty means unset, which resolves to the
+	// default; a non-empty unknown name is rejected at startup.
+	ArtifactRetention string
 }
 
 type Runtime struct {
@@ -75,19 +79,20 @@ type Runtime struct {
 	stderr       io.Writer
 	recordSlots  chan struct{}
 	buildQueue   chan buildTask
+	sealQueue    chan sealTask
 	publishQueue chan publishTask
 	events       *eventHub
 	recordMu     sync.Mutex
 	recordJobs   map[string]*recordProcessState
 	recordWG     sync.WaitGroup
-	// opusPackWG tracks the fire-and-forget post-build `cassini pack`
-	// goroutines so tests (and shutdown, if it ever cares) can wait for them
-	// instead of racing their temp-dir writes.
-	opusPackWG   sync.WaitGroup
 	talkRooms    map[string]*talkRoomState
 	talkJobs     map[string]*talkRoomState
 	recordJobFn  func(context.Context, Job, TriggerRequest) (recordResult, error)
 	buildJobFn   func(context.Context, buildTask) (string, error)
+	// sealJobFn packs one attempt's `.meeting` into its immutable `.opus`
+	// (D-583). It is a seam for the same reason buildJobFn and publishJobFn
+	// are: tests drive the pipeline without an ffmpeg subprocess.
+	sealJobFn    func(context.Context, sealTask) (string, error)
 	publishJobFn func(context.Context, publishTask) (string, error)
 	// publishSink is where a published meeting is delivered (publish_sink.go,
 	// D-533). Exactly one, selected by name; runPublishJob knows nothing about
@@ -126,8 +131,12 @@ type Runtime struct {
 	talkJSONClient  *http.Client
 	talkRetryDelays []time.Duration
 	// requeueKick nudges the requeue dispatcher to re-scan the DB for
-	// queued build/publish rows the channels could not accept (D-367).
+	// queued build/seal/publish rows the channels could not accept (D-367).
 	requeueKick chan struct{}
+	// sealJobTimeout bounds one `cassini pack` run; without it a hung pack
+	// wedges the seal worker forever, and nothing behind it can publish
+	// (D-583). Tests shrink it.
+	sealJobTimeout time.Duration
 	// publishJobTimeout bounds one `cassini publish` run; without it a hung
 	// publish wedges the single publish worker forever (D-367). Tests shrink it.
 	publishJobTimeout time.Duration
@@ -298,6 +307,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("work_root -> %s", cfg.WorkRoot)
 	logger.Printf("site_root -> %s", cfg.SiteRoot)
 	logger.Printf("publish_sink -> %s", publishSinkNameOrDefault(cfg.PublishSink))
+	logger.Printf("artifact_retention -> %s", artifactRetentionOrDefault(cfg.ArtifactRetention))
 	if persistRoot := persistentStorageRoot(); persistRoot != "" {
 		logger.Printf("app_persistent_storage -> %s", persistRoot)
 	}
@@ -410,6 +420,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
 	fs.StringVar(&cfg.PublishSink, "sink", envOrDefaultAny([]string{"CASSINI_PUBLISH_SINK"}, ""), "where published meetings are delivered (known sinks: "+strings.Join(publishSinkNames(), ", ")+"; default "+defaultPublishSink+")")
+	fs.StringVar(&cfg.ArtifactRetention, "artifact-retention", envOrDefaultAny([]string{"CASSINI_ARTIFACT_RETENTION"}, ""), "which attempt artifacts under runs/ are pruned (policies: "+strings.Join(artifactRetentionNames(), ", ")+"; default "+defaultArtifactRetention+")")
 	fs.IntVar(&cfg.MaxRecordWorkers, "max-record-workers", defaultMaxRecordWorkers, "maximum concurrent record workers")
 	fs.IntVar(&cfg.MaxBuildWorkers, "max-build-workers", defaultMaxBuildWorkers, "maximum concurrent build workers")
 	fs.Usage = func() {
@@ -459,6 +470,10 @@ Flags:
 	}
 	cfg.PublishSink = strings.TrimSpace(cfg.PublishSink)
 	if err := validatePublishSinkName(cfg.PublishSink); err != nil {
+		return Config{}, 2, err
+	}
+	cfg.ArtifactRetention = strings.TrimSpace(cfg.ArtifactRetention)
+	if err := validateArtifactRetentionName(cfg.ArtifactRetention); err != nil {
 		return Config{}, 2, err
 	}
 	if strings.TrimSpace(cfg.CassiniBin) == "" {
@@ -557,6 +572,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		stderr:       stderr,
 		recordSlots:  make(chan struct{}, cfg.MaxRecordWorkers),
 		buildQueue:   make(chan buildTask, queueCapacity),
+		sealQueue:    make(chan sealTask, queueCapacity),
 		publishQueue: make(chan publishTask, 16),
 		events:       newEventHub(),
 		recordJobs:   map[string]*recordProcessState{},
@@ -572,6 +588,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		talkAudienceRetryGap: talkAudienceRetryGap,
 
 		requeueKick:         make(chan struct{}, 1),
+		sealJobTimeout:      defaultSealJobTimeout,
 		publishJobTimeout:   defaultPublishJobTimeout,
 		recordHealthTimeout: recordHealthProbeTimeout,
 		settingsPath:        settingsPath(cfg),
@@ -588,6 +605,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
 	rt.recordJobFn = rt.executeRecordCLI
 	rt.buildJobFn = rt.executeBuildCLI
+	rt.sealJobFn = rt.executeSealCLIWithTimeout
 	rt.publishJobFn = rt.executePublishCLIWithTimeout
 	// loadConfig already rejected an unknown name; a Config built directly (as
 	// tests do) carries an empty name, which resolves to the default. So this
@@ -611,6 +629,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		return rt.runRecordDoctorContext(probeCtx)
 	})
 	rt.startBuildWorkers()
+	rt.startSealWorker()
 	rt.startPublishWorker()
 	go rt.requeueDispatcher()
 	return rt
@@ -1002,6 +1021,12 @@ type Job struct {
 	RerunCount           int     `json:"rerun_count"`
 	ArtifactRunPath      *string `json:"artifact_run_path"`
 	ArtifactMeetingPath  *string `json:"artifact_meeting_path"`
+	// ArtifactOpusPath is the canonical portable meeting, current/<id>.opus,
+	// promoted from the attempt the seal stage sealed. ArtifactOpusSHA256 is
+	// that file's digest, which the publish worker re-checks before delivering
+	// and the sink re-checks before committing the asset (D-583).
+	ArtifactOpusPath     *string `json:"artifact_opus_path"`
+	ArtifactOpusSHA256   *string `json:"artifact_opus_sha256"`
 	ArtifactSitePath     *string `json:"artifact_site_path"`
 	Error                *string `json:"error"`
 	StopReason           *string `json:"stop_reason"`
@@ -1017,6 +1042,9 @@ type Job struct {
 	BuildQueuedAt        *string `json:"build_queued_at"`
 	BuildStartedAt       *string `json:"build_started_at"`
 	BuildFinishedAt      *string `json:"build_finished_at"`
+	SealQueuedAt         *string `json:"seal_queued_at"`
+	SealStartedAt        *string `json:"seal_started_at"`
+	SealFinishedAt       *string `json:"seal_finished_at"`
 	PublishQueuedAt      *string `json:"publish_queued_at"`
 	PublishStartedAt     *string `json:"publish_started_at"`
 	PublishFinishedAt    *string `json:"publish_finished_at"`
@@ -1297,11 +1325,12 @@ func (s *Store) ListJobs(ctx context.Context) ([]Job, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT id, provider, request_json, stage, state,
        current_attempt_number, rerun_count,
-       artifact_run_path, artifact_meeting_path, artifact_site_path, error,
+       artifact_run_path, artifact_meeting_path, artifact_opus_path, artifact_opus_sha256, artifact_site_path, error,
        stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
        build_queued_at, build_started_at, build_finished_at,
+       seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at
@@ -1333,11 +1362,12 @@ func (s *Store) GetJob(ctx context.Context, id string) (Job, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT id, provider, request_json, stage, state,
        current_attempt_number, rerun_count,
-       artifact_run_path, artifact_meeting_path, artifact_site_path, error,
+       artifact_run_path, artifact_meeting_path, artifact_opus_path, artifact_opus_sha256, artifact_site_path, error,
        stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
        build_queued_at, build_started_at, build_finished_at,
+       seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
        talk_binding, talk_stopped_at
@@ -1358,6 +1388,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 	var job Job
 	var artifactRunPath sql.NullString
 	var artifactMeetingPath sql.NullString
+	var artifactOpusPath sql.NullString
+	var artifactOpusSHA256 sql.NullString
 	var artifactSitePath sql.NullString
 	var jobError sql.NullString
 	var stopReason sql.NullString
@@ -1371,6 +1403,9 @@ func scanJob(scanner rowScanner) (Job, error) {
 	var buildQueuedAt sql.NullString
 	var buildStartedAt sql.NullString
 	var buildFinishedAt sql.NullString
+	var sealQueuedAt sql.NullString
+	var sealStartedAt sql.NullString
+	var sealFinishedAt sql.NullString
 	var publishQueuedAt sql.NullString
 	var publishStartedAt sql.NullString
 	var publishFinishedAt sql.NullString
@@ -1389,6 +1424,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&job.RerunCount,
 		&artifactRunPath,
 		&artifactMeetingPath,
+		&artifactOpusPath,
+		&artifactOpusSHA256,
 		&artifactSitePath,
 		&jobError,
 		&stopReason,
@@ -1404,6 +1441,9 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&buildQueuedAt,
 		&buildStartedAt,
 		&buildFinishedAt,
+		&sealQueuedAt,
+		&sealStartedAt,
+		&sealFinishedAt,
 		&publishQueuedAt,
 		&publishStartedAt,
 		&publishFinishedAt,
@@ -1421,6 +1461,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 
 	job.ArtifactRunPath = nullableStringPtr(artifactRunPath)
 	job.ArtifactMeetingPath = nullableStringPtr(artifactMeetingPath)
+	job.ArtifactOpusPath = nullableStringPtr(artifactOpusPath)
+	job.ArtifactOpusSHA256 = nullableStringPtr(artifactOpusSHA256)
 	job.ArtifactSitePath = nullableStringPtr(artifactSitePath)
 	job.Error = nullableStringPtr(jobError)
 	job.StopReason = nullableStringPtr(stopReason)
@@ -1434,6 +1476,9 @@ func scanJob(scanner rowScanner) (Job, error) {
 	job.BuildQueuedAt = nullableStringPtr(buildQueuedAt)
 	job.BuildStartedAt = nullableStringPtr(buildStartedAt)
 	job.BuildFinishedAt = nullableStringPtr(buildFinishedAt)
+	job.SealQueuedAt = nullableStringPtr(sealQueuedAt)
+	job.SealStartedAt = nullableStringPtr(sealStartedAt)
+	job.SealFinishedAt = nullableStringPtr(sealFinishedAt)
 	job.PublishQueuedAt = nullableStringPtr(publishQueuedAt)
 	job.PublishStartedAt = nullableStringPtr(publishStartedAt)
 	job.PublishFinishedAt = nullableStringPtr(publishFinishedAt)

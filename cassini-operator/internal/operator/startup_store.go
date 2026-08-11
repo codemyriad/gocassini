@@ -15,12 +15,17 @@ import (
 // QueueRerunAttempt clears interrupted_at when a job is rerun, so nothing
 // depends on refreshing the stamp.
 //
-// Queued build/publish rows are also excluded: their inputs (the canonical
-// run/meeting bundles) are durable on disk and the requeue dispatcher
-// re-delivers them after a restart, so marking them interrupted would strand
-// resumable work (D-367). Only record-stage jobs (whose recorder process died
-// with the operator) and running build/publish jobs (whose subprocess died)
-// are truly interrupted.
+// Queued build/seal/publish rows are also excluded: their inputs (the canonical
+// run/meeting bundles and the sealed `.opus`) are durable on disk and the
+// requeue dispatcher re-delivers them after a restart, so marking them
+// interrupted would strand resumable work (D-367). Only record-stage jobs (whose
+// recorder process died with the operator) and running build/seal/publish jobs
+// (whose subprocess died) are truly interrupted.
+//
+// `seal` joins that list rather than sitting outside it because sealing is what
+// makes a job publishable (D-583): a seal/queued row stranded as interrupted
+// would be a recording that silently never publishes, which is exactly the
+// failure mode the seal stage exists to remove.
 func (s *Store) MarkIncompleteJobsInterrupted(ctx context.Context, interruptedAt string) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -32,7 +37,7 @@ func (s *Store) MarkIncompleteJobsInterrupted(ctx context.Context, interruptedAt
 UPDATE jobs
 SET state = ?, updated_at = ?, interrupted_at = ?
 WHERE state NOT IN (?, ?, ?)
-  AND NOT (state = 'queued' AND stage IN ('build', 'publish'))`, "interrupted", interruptedAt, interruptedAt, "succeeded", "failed", "interrupted")
+  AND NOT (state = 'queued' AND stage IN ('build', 'seal', 'publish'))`, "interrupted", interruptedAt, interruptedAt, "succeeded", "failed", "interrupted")
 	if err != nil {
 		return 0, fmt.Errorf("mark incomplete jobs interrupted: %w", err)
 	}
@@ -40,7 +45,7 @@ WHERE state NOT IN (?, ?, ?)
 UPDATE job_attempts
 SET state = ?, updated_at = ?, interrupted_at = ?
 WHERE state NOT IN (?, ?, ?)
-  AND NOT (state = 'queued' AND stage IN ('build', 'publish'))`, "interrupted", interruptedAt, interruptedAt, "succeeded", "failed", "interrupted"); err != nil {
+  AND NOT (state = 'queued' AND stage IN ('build', 'seal', 'publish'))`, "interrupted", interruptedAt, interruptedAt, "succeeded", "failed", "interrupted"); err != nil {
 		return 0, fmt.Errorf("mark incomplete attempts interrupted: %w", err)
 	}
 	count, err := result.RowsAffected()

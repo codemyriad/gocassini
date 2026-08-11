@@ -38,20 +38,23 @@ func (rt *Runtime) kickRequeueScan() {
 	}
 }
 
-// requeueDispatcher is the single goroutine feeding DB-queued build/publish
-// rows back into the worker channels. The first pass runs immediately so
-// rows queued before a restart resume without operator intervention.
+// requeueDispatcher is the single goroutine feeding DB-queued
+// build/seal/publish rows back into the worker channels. The first pass runs
+// immediately so rows queued before a restart resume without operator
+// intervention.
 func (rt *Runtime) requeueDispatcher() {
 	// dispatched remembers tasks already handed to a channel so a row that
 	// stays queued while waiting in the channel is not re-sent every pass;
 	// entries are pruned once the row leaves state=queued.
 	dispatchedBuild := map[string]struct{}{}
+	dispatchedSeal := map[string]struct{}{}
 	dispatchedPublish := map[string]struct{}{}
 	for {
 		buildBacklog := rt.dispatchQueuedBuildTasks(dispatchedBuild)
+		sealBacklog := rt.dispatchQueuedSealTasks(dispatchedSeal)
 		publishBacklog := rt.dispatchQueuedPublishTasks(dispatchedPublish)
 		delay := requeueScanIdleInterval
-		if buildBacklog || publishBacklog {
+		if buildBacklog || sealBacklog || publishBacklog {
 			delay = requeueScanRetryDelay
 		}
 		timer := time.NewTimer(delay)
@@ -137,24 +140,6 @@ func pruneDispatched(dispatched, queued map[string]struct{}) {
 			delete(dispatched, key)
 		}
 	}
-}
-
-// enqueuePublishJobNonBlocking durably marks the job publish/queued and hands
-// it to the publish worker without ever blocking the (single) build worker on
-// a full publish queue; the requeue dispatcher re-delivers any task the
-// channel could not accept (D-367).
-func (rt *Runtime) enqueuePublishJobNonBlocking(jobID string, attemptNumber int, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt string) error {
-	if err := rt.store.MarkPublishQueued(context.Background(), jobID, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt); err != nil {
-		return err
-	}
-	task := publishTask{JobID: jobID, AttemptNumber: attemptNumber}
-	select {
-	case rt.publishQueue <- task:
-	default:
-		rt.logger.Printf("publish queue full id=%s attempt=%d: durably queued for the requeue dispatcher", jobID, attemptNumber)
-		rt.kickRequeueScan()
-	}
-	return nil
 }
 
 // executePublishCLIWithTimeout bounds one publish run with publishJobTimeout
