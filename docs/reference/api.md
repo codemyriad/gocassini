@@ -70,6 +70,34 @@ Useful for:
 - preserved failures and reruns
 - attempt-local artifact and log paths
 
+### Seal-stage fields
+
+The `seal` stage adds these fields to the response.
+
+On `job`:
+
+- `seal_queued_at`, `seal_started_at`, `seal_finished_at`
+- `artifact_opus_path` — the canonical promotion, `current/<id>.opus`
+- `artifact_opus_sha256` — the SHA-256 of the sealed file
+
+On each entry of `attempts`:
+
+- the same five fields, where `artifact_opus_path` is that attempt’s own immutable
+  sealed file, `runs/<id>--attempt-NNN.seal/<id>.opus`
+- `seal_log_path` — `runs/<id>--attempt-NNN.logs/seal.log`
+
+All of them are `null` until the stage that writes them runs.
+
+The split is the same one every other stage uses:
+
+```text
+job row      current/<id>.opus                 what is canonical now
+attempt row  runs/<id>--attempt-NNN.seal/...   what this attempt sealed
+```
+
+`artifact_opus_sha256` is written by the seal and re-checked by the publish that
+follows it, so the two rows together say which exact bytes were delivered.
+
 ## Stop a job
 
 ```http
@@ -137,6 +165,7 @@ Stage values:
 
 - `record`
 - `build`
+- `seal` — packing the portable `.opus` this attempt will publish
 - `publish`
 - `done`
 
@@ -155,6 +184,8 @@ record/queued
 -> record/running
 -> build/queued
 -> build/running
+-> seal/queued
+-> seal/running
 -> publish/queued
 -> publish/running
 -> done/succeeded
@@ -165,9 +196,29 @@ Typical rerun lifecycle:
 ```text
 build/queued
 -> build/running
+-> seal/queued
+-> seal/running
 -> publish/queued
 -> publish/running
 -> done/succeeded
+```
+
+`publish/queued` is reachable only through a completed seal. A job that reaches
+`done/failed` from `seal` did not produce a verifiable portable meeting, and its
+`error` carries the pack failure; the retry is a rerun, exactly as it is for a
+failed build or publish.
+
+A restart mid-pipeline resolves like this:
+
+```text
+  at crash            after restart          resumes?
+  ────────────────    ───────────────────    ──────────────────────────────
+  record/*            record/interrupted     no  — rerun
+  build/queued        build/queued           yes — requeue dispatcher
+  seal/queued         seal/queued            yes — requeue dispatcher
+  publish/queued      publish/queued         yes — requeue dispatcher
+  build|seal|publish  <stage>/interrupted    no  — the subprocess died; rerun
+    /running
 ```
 
 ## What the API does not try to be

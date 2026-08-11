@@ -240,10 +240,24 @@ func packMeetingBundle(ctx context.Context, meetingDir string, outPath string, o
 	if err := verifyPortableMeetingFile(finalStagePath, manifest); err != nil {
 		return err
 	}
-	if err := os.Remove(resolvedOut); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("replace portable meeting output: %w", err)
-	}
-	if err := os.Rename(finalStagePath, resolvedOut); err != nil {
+	return commitPortableMeetingOutput(finalStagePath, resolvedOut)
+}
+
+// commitPortableMeetingOutput publishes the verified stage file as the portable
+// meeting output.
+//
+// One rename, and nothing before it. rename(2) replaces an existing regular
+// file atomically: a reader either sees the whole previous `.opus` or the whole
+// new one, never neither. The output used to be removed first, which bought
+// nothing and cost the only copy — a crash or an I/O error in that gap left the
+// meeting with no portable artifact at all, and the operator now treats that
+// artifact as a publish precondition (D-583).
+//
+// The rename is always same-filesystem: createPortableStagePath puts the stage
+// file in the output's own directory. The one destination shape rename cannot
+// replace is a directory, which preparePortableMeetingOutput already rejects.
+func commitPortableMeetingOutput(stagePath, outPath string) error {
+	if err := os.Rename(stagePath, outPath); err != nil {
 		return fmt.Errorf("move portable meeting output into place: %w", err)
 	}
 	return nil

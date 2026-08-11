@@ -20,6 +20,13 @@ type JobAttempt struct {
 	State               string  `json:"state"`
 	ArtifactRunPath     *string `json:"artifact_run_path"`
 	ArtifactMeetingPath *string `json:"artifact_meeting_path"`
+	// ArtifactOpusPath is this attempt's sealed portable meeting,
+	// runs/<job>--attempt-NNN.opus. It is immutable: no other attempt of the
+	// same job can write it, which is what lets the publish worker deliver the
+	// exact artifact this attempt sealed (D-583). ArtifactOpusSHA256 is that
+	// file's digest.
+	ArtifactOpusPath    *string `json:"artifact_opus_path"`
+	ArtifactOpusSHA256  *string `json:"artifact_opus_sha256"`
 	ArtifactSitePath    *string `json:"artifact_site_path"`
 	Error               *string `json:"error"`
 	StopReason          *string `json:"stop_reason"`
@@ -29,6 +36,7 @@ type JobAttempt struct {
 	RecordStopDetail    *string `json:"record_stop_detail"`
 	RecordLogPath       *string `json:"record_log_path"`
 	BuildLogPath        *string `json:"build_log_path"`
+	SealLogPath         *string `json:"seal_log_path"`
 	PublishLogPath      *string `json:"publish_log_path"`
 	CreatedAt           string  `json:"created_at"`
 	UpdatedAt           string  `json:"updated_at"`
@@ -38,6 +46,9 @@ type JobAttempt struct {
 	BuildQueuedAt       *string `json:"build_queued_at"`
 	BuildStartedAt      *string `json:"build_started_at"`
 	BuildFinishedAt     *string `json:"build_finished_at"`
+	SealQueuedAt        *string `json:"seal_queued_at"`
+	SealStartedAt       *string `json:"seal_started_at"`
+	SealFinishedAt      *string `json:"seal_finished_at"`
 	PublishQueuedAt     *string `json:"publish_queued_at"`
 	PublishStartedAt    *string `json:"publish_started_at"`
 	PublishFinishedAt   *string `json:"publish_finished_at"`
@@ -86,6 +97,8 @@ func (s *Store) SetAttemptStageLogPath(ctx context.Context, jobID string, attemp
 		column = "record_log_path"
 	case "build":
 		column = "build_log_path"
+	case "seal":
+		column = "seal_log_path"
 	case "publish":
 		column = "publish_log_path"
 	default:
@@ -164,6 +177,7 @@ SET stage = ?, state = ?,
     error = NULL,
     updated_at = ?,
     build_queued_at = ?, build_started_at = NULL, build_finished_at = NULL,
+    seal_queued_at = NULL, seal_started_at = NULL, seal_finished_at = NULL,
     publish_queued_at = NULL, publish_started_at = NULL, publish_finished_at = NULL,
     interrupted_at = NULL, completed_at = NULL
 WHERE id = ?`,
@@ -188,12 +202,13 @@ func (s *Store) ListJobAttempts(ctx context.Context, jobID string) ([]JobAttempt
 	rows, err := s.db.QueryContext(ctx, `
 SELECT job_id, attempt_number, trigger_kind, request_json,
        stage, state,
-       artifact_run_path, artifact_meeting_path, artifact_site_path,
+       artifact_run_path, artifact_meeting_path, artifact_opus_path, artifact_opus_sha256, artifact_site_path,
        error, stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
-       record_log_path, build_log_path, publish_log_path,
+       record_log_path, build_log_path, seal_log_path, publish_log_path,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
        build_queued_at, build_started_at, build_finished_at,
+       seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at
 FROM job_attempts
@@ -225,6 +240,8 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 	var attempt JobAttempt
 	var artifactRunPath sql.NullString
 	var artifactMeetingPath sql.NullString
+	var artifactOpusPath sql.NullString
+	var artifactOpusSHA256 sql.NullString
 	var artifactSitePath sql.NullString
 	var attemptError sql.NullString
 	var stopReason sql.NullString
@@ -234,6 +251,7 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 	var recordStopDetail sql.NullString
 	var recordLogPath sql.NullString
 	var buildLogPath sql.NullString
+	var sealLogPath sql.NullString
 	var publishLogPath sql.NullString
 	var recordQueuedAt sql.NullString
 	var recordStartedAt sql.NullString
@@ -241,6 +259,9 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 	var buildQueuedAt sql.NullString
 	var buildStartedAt sql.NullString
 	var buildFinishedAt sql.NullString
+	var sealQueuedAt sql.NullString
+	var sealStartedAt sql.NullString
+	var sealFinishedAt sql.NullString
 	var publishQueuedAt sql.NullString
 	var publishStartedAt sql.NullString
 	var publishFinishedAt sql.NullString
@@ -256,6 +277,8 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 		&attempt.State,
 		&artifactRunPath,
 		&artifactMeetingPath,
+		&artifactOpusPath,
+		&artifactOpusSHA256,
 		&artifactSitePath,
 		&attemptError,
 		&stopReason,
@@ -265,6 +288,7 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 		&recordStopDetail,
 		&recordLogPath,
 		&buildLogPath,
+		&sealLogPath,
 		&publishLogPath,
 		&attempt.CreatedAt,
 		&attempt.UpdatedAt,
@@ -274,6 +298,9 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 		&buildQueuedAt,
 		&buildStartedAt,
 		&buildFinishedAt,
+		&sealQueuedAt,
+		&sealStartedAt,
+		&sealFinishedAt,
 		&publishQueuedAt,
 		&publishStartedAt,
 		&publishFinishedAt,
@@ -286,6 +313,8 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 
 	attempt.ArtifactRunPath = nullableStringPtr(artifactRunPath)
 	attempt.ArtifactMeetingPath = nullableStringPtr(artifactMeetingPath)
+	attempt.ArtifactOpusPath = nullableStringPtr(artifactOpusPath)
+	attempt.ArtifactOpusSHA256 = nullableStringPtr(artifactOpusSHA256)
 	attempt.ArtifactSitePath = nullableStringPtr(artifactSitePath)
 	attempt.Error = nullableStringPtr(attemptError)
 	attempt.StopReason = nullableStringPtr(stopReason)
@@ -295,6 +324,7 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 	attempt.RecordStopDetail = nullableStringPtr(recordStopDetail)
 	attempt.RecordLogPath = nullableStringPtr(recordLogPath)
 	attempt.BuildLogPath = nullableStringPtr(buildLogPath)
+	attempt.SealLogPath = nullableStringPtr(sealLogPath)
 	attempt.PublishLogPath = nullableStringPtr(publishLogPath)
 	attempt.RecordQueuedAt = nullableStringPtr(recordQueuedAt)
 	attempt.RecordStartedAt = nullableStringPtr(recordStartedAt)
@@ -302,6 +332,9 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 	attempt.BuildQueuedAt = nullableStringPtr(buildQueuedAt)
 	attempt.BuildStartedAt = nullableStringPtr(buildStartedAt)
 	attempt.BuildFinishedAt = nullableStringPtr(buildFinishedAt)
+	attempt.SealQueuedAt = nullableStringPtr(sealQueuedAt)
+	attempt.SealStartedAt = nullableStringPtr(sealStartedAt)
+	attempt.SealFinishedAt = nullableStringPtr(sealFinishedAt)
 	attempt.PublishQueuedAt = nullableStringPtr(publishQueuedAt)
 	attempt.PublishStartedAt = nullableStringPtr(publishStartedAt)
 	attempt.PublishFinishedAt = nullableStringPtr(publishFinishedAt)

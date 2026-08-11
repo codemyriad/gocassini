@@ -48,6 +48,7 @@ The operator supports these main flags:
 | `--work-root` | per-job artifact root |
 | `--site-root` | live published site root |
 | `--sink` | where published meetings are delivered (`local` or `nextcloud-files`; an installed ExApp defaults to `nextcloud-files`, otherwise `local`) |
+| `--artifact-retention` | which attempt payloads under `runs/` are pruned (`all`, `superseded`, `sealed`; default `sealed`) |
 | `--cassini-bin` | Cassini CLI binary path |
 | `--max-record-workers` | recording slot count |
 | `--max-build-workers` | build worker count |
@@ -63,12 +64,30 @@ Important env vars:
 | `WORK_ROOT` | fallback work-root env |
 | `CASSINI_OPERATOR_SITE_ROOT` | site-root path |
 | `CASSINI_PUBLISH_SINK` | publish sink name; `--sink` wins over it. Declared in `appinfo/info.xml` so AppAPI injects it |
+| `CASSINI_ARTIFACT_RETENTION` | artifact retention policy; `--artifact-retention` wins over it |
 | `SITE_ROOT` | fallback site-root env |
 | `CASSINI_BIN` | Cassini CLI binary path |
 | `CASSINI_MAX_RECORD_WORKERS` | record worker count |
 | `MAX_RECORD_WORKERS` | fallback record worker count |
 | `CASSINI_MAX_BUILD_WORKERS` | build worker count |
 | `MAX_BUILD_WORKERS` | fallback build worker count |
+
+### Artifact retention policies
+
+| Policy | Prunes |
+|---|---|
+| `all` | nothing — the behaviour before this policy existed, and the escape hatch |
+| `superseded` | the `.run`, `.meeting`, `.site` and `.seal` of attempts a rerun has replaced |
+| `sealed` **(default)** | `superseded`, plus a succeeded attempt's `.run`, `.meeting` and `.site`, keeping its sealed `.opus` |
+
+Nothing in `current/`, no attempt `.logs` directory and no published recording is
+ever pruned, and every removal is guarded on the artifact that replaces it
+existing. A successfully delivered attempt's `.site` is the one exception to
+`all`: it is removed once the sink accepts it regardless of policy, because
+keeping it leaves a full copy of the recording on the app's own volume, outside
+the access model (D-550). An unrecognised policy name is rejected at startup with
+exit code 2 and the valid names listed — the same rule `--sink` follows. See
+[Artifacts and filesystem](./artifacts-and-filesystem.md#retention).
 
 Local non-containerized defaults resolve under:
 

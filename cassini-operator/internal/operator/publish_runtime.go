@@ -14,6 +14,13 @@ import (
 type publishTask struct {
 	JobID         string
 	AttemptNumber int
+	// OpusPath and OpusSHA256 are the artifact the seal stage sealed for this
+	// attempt (D-583). They travel with the task rather than being resolved
+	// when a worker dequeues it, so a rerun that seals a newer artifact cannot
+	// change what an already-queued publish delivers. Both are persisted, so
+	// the requeue dispatcher rebuilds a complete task after a restart.
+	OpusPath   string
+	OpusSHA256 string
 }
 
 func (rt *Runtime) startPublishWorker() {
@@ -22,6 +29,7 @@ func (rt *Runtime) startPublishWorker() {
 	// destination (including the live published site) missing with only the
 	// ".backup" copy surviving in the staging root.
 	rt.reconcilePromotionLeftovers()
+	rt.sweepArtifactRetention()
 	go rt.publishWorker()
 }
 
@@ -82,6 +90,7 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		JobID:           task.JobID,
 		AttemptNumber:   task.AttemptNumber,
 		PublishedAtUTC:  finishedAt,
+		AssetDigests:    sealedAssetDigests(task),
 	})
 	if err != nil {
 		rt.logger.Printf("publish deliver failed id=%s attempt=%d sink=%s attempt_site=%s: %v", task.JobID, task.AttemptNumber, rt.sink().Name(), attemptArtifactSitePath, err)
@@ -95,7 +104,6 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 		return
 	}
 	rt.logger.Printf("publish succeeded id=%s attempt=%d sink=%s attempt_site=%s location=%s", task.JobID, task.AttemptNumber, rt.sink().Name(), attemptArtifactSitePath, location)
-
 	// The attempt site is staging, not an archive. Once the sink has accepted
 	// the meeting it is a duplicate of what now lives at the destination, and
 	// keeping it means the ExApp retains a full copy of every recording it has
@@ -103,36 +111,38 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	// (D-550). Removed only after a successful delivery: a failed publish keeps
 	// it, because extractSiteFailureDetail reads its manifest and a rerun may
 	// want to look at it.
+	//
+	// This is deliberately NOT gated on the retention policy below, and it is
+	// the one exception to `all` meaning "prune nothing": D-550 is an access
+	// boundary, not housekeeping, so `--artifact-retention=all` must not be a
+	// way to leave every published recording readable on the app's volume.
 	if err := os.RemoveAll(attemptArtifactSitePath); err != nil {
 		rt.logger.Printf("publish staging cleanup failed id=%s attempt=%d path=%s: %v", task.JobID, task.AttemptNumber, attemptArtifactSitePath, err)
 	}
-}
 
-func (rt *Runtime) enqueuePublishJob(jobID string, attemptNumber int, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt string) error {
-	if err := rt.store.MarkPublishQueued(context.Background(), jobID, jobArtifactMeetingPath, attemptArtifactMeetingPath, queuedAt); err != nil {
-		return err
-	}
-	task := publishTask{JobID: jobID, AttemptNumber: attemptNumber}
-	select {
-	case rt.publishQueue <- task:
-		return nil
-	case <-rt.ctx.Done():
-		if err := rt.store.MarkPublishFailed(context.Background(), jobID, "", "", "publish queue stopped", nowUTCString()); err != nil {
-			return err
-		}
-		return fmt.Errorf("publish queue stopped")
-	}
+	// The job is terminal now, so its attempt payloads are prunable under the
+	// configured policy (D-583). Housekeeping, after the success is recorded:
+	// nothing here can turn a published meeting into a failed job. The site this
+	// policy would prune for the current attempt is already gone above; the
+	// removal is idempotent, and the policy still governs the attempt `.run`,
+	// `.meeting` and every superseded attempt.
+	rt.pruneArtifactsForJob(task.JobID)
 }
 
 func (rt *Runtime) executePublishCLI(ctx context.Context, task publishTask) (string, error) {
 	attemptSiteDir := attemptSitePath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
-	// One meeting per publish, not the whole library (D-459). Resolved before
-	// anything is created so a job with nothing to publish fails immediately
-	// instead of spawning a subprocess that exports an empty site.
-	publishInput, err := resolvePublishInputPath(rt.cfg.WorkRoot, task.JobID)
-	if err != nil {
+	// One meeting per publish, not the whole library (D-459), and specifically
+	// the artifact this attempt sealed (D-583). Verified before anything is
+	// created, so a job whose seal is missing or altered fails immediately
+	// instead of spawning a subprocess that publishes something else.
+	//
+	// `cassini publish` copies a `.opus` input through byte for byte after
+	// re-checking its embedded integrity, so this is also where the second pack
+	// went: the hot path now packs once, at seal time.
+	if err := verifySealedPublishInput(task.JobID, task.OpusPath, task.OpusSHA256); err != nil {
 		return attemptSiteDir, err
 	}
+	publishInput := task.OpusPath
 	if err := os.MkdirAll(filepath.Dir(attemptSiteDir), 0o755); err != nil {
 		return attemptSiteDir, fmt.Errorf("create site parent dir: %w", err)
 	}
@@ -163,6 +173,23 @@ func (rt *Runtime) executePublishCLI(ctx context.Context, task publishTask) (str
 		return attemptSiteDir, fmt.Errorf("publish output missing cassini.json: %w", err)
 	}
 	return attemptSiteDir, nil
+}
+
+// sealedAssetDigests names the site-relative asset the sink must end up holding
+// and the digest it must have — the last link in the chain that starts at the
+// seal (D-583).
+//
+// The exporter writes a portable meeting to `meetings/<id>.opus`, where the id
+// is the input file's stem, and the sealed artifact is named for the job, so
+// the destination is derivable rather than parsed back out of the catalog. Any
+// sink can honour this without knowing what sealing is.
+func sealedAssetDigests(task publishTask) map[string]string {
+	digest := strings.TrimSpace(task.OpusSHA256)
+	if digest == "" || strings.TrimSpace(task.OpusPath) == "" {
+		return nil
+	}
+	asset := filepath.ToSlash(filepath.Join("meetings", filepath.Base(task.OpusPath)))
+	return map[string]string{asset: digest}
 }
 
 func (rt *Runtime) extractSiteFailureDetail(sitePath string, fallback error) string {
