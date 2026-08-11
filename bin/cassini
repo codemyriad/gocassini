@@ -6,13 +6,18 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MODULE_DIR="$REPO_ROOT/cassini-go-recorder"
 export CASSINI_REPO_ROOT="$REPO_ROOT"
 
-TMP_DIR="$(mktemp -d)"
-cleanup() {
-  rm -rf "$TMP_DIR"
-}
-trap cleanup EXIT
+# Build to a stable cache path: the exec below replaces the shell, so an EXIT
+# trap can never clean up a mktemp dir. Building to a temp name in the same
+# directory and renaming keeps concurrent invocations from tearing the binary
+# (rename is atomic; no flock needed, macOS lacks it).
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/cassini/bin"
+mkdir -p "$CACHE_DIR"
+CASSINI_BIN="$CACHE_DIR/cassini"
+TMP_BIN="$CACHE_DIR/.cassini.$$"
+trap 'rm -f "$TMP_BIN"' EXIT # only fires if the build fails before the exec
 
-go -C "$MODULE_DIR" build -o "$TMP_DIR/cassini" ./cmd/cassini
+go -C "$MODULE_DIR" build -o "$TMP_BIN" ./cmd/cassini
+mv -f "$TMP_BIN" "$CASSINI_BIN"
 
 # The CLI links sherpa-onnx for transcription commands. On Nix, sherpa's
 # transitive libstdc++ dependency is not found via the main binary RUNPATH, so
@@ -38,4 +43,4 @@ if [[ -n "$CXX_BIN" ]] && command -v "$CXX_BIN" >/dev/null 2>&1; then
   fi
 fi
 
-exec "$TMP_DIR/cassini" "$@"
+exec "$CASSINI_BIN" "$@"
