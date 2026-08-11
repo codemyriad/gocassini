@@ -84,6 +84,8 @@ func runMeetings(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		return runMeetingsList(ctx, args[1:], stdout, stderr)
 	case "fetch":
 		return runMeetingsFetch(ctx, args[1:], stdout, stderr)
+	case "context":
+		return runMeetingsContext(ctx, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown meetings command %q\n\n", args[0])
 		printMeetingsUsage(stderr)
@@ -101,10 +103,13 @@ Usage:
   cassini meetings list
   cassini meetings list --json
   cassini meetings fetch <meeting-id> --out "./Meeting.opus"
+  cassini meetings context <meeting-id>
+  cassini meetings context <meeting-id> --json --out ./context.json
 
 Commands:
   list     List the meetings your account may read
   fetch    Download one meeting's portable .opus
+  context  Print one meeting as agent-readable context (transcript + summary)
 
 Connection:
   --nextcloud-url URL   Nextcloud base URL           (env CASSINI_NC_URL)

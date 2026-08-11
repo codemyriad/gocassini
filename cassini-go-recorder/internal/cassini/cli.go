@@ -392,6 +392,7 @@ Usage:
   cassini dev ...
   cassini inspect <path>
   cassini meetings list
+  cassini meetings context <meeting-id>
   cassini operator start [args...]
   cassini pack ./meetings/demo.meeting --out "./Meeting.opus"
   cassini publish ./meetings --out ./site
