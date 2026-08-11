@@ -143,8 +143,36 @@ func TestExtractTranscriptWordsFromV2Opus(t *testing.T) {
 	}
 }
 
+// portableV2FixtureOptions varies a v2 portable fixture beyond the plain
+// single-speaker word list: an explicit per-word speaker assignment (so speaker
+// changes can be exercised) and an attached summary.md.
+type portableV2FixtureOptions struct {
+	words []string
+	// speakerOf assigns a speaker id per word index. Nil means every word is
+	// spoken by spk1.
+	speakerOf func(index int) string
+	// speakers declares the speaker roster. Nil means the spk1/Silvio default.
+	speakers    []portable.Speaker
+	withSummary bool
+	summaryBody string
+}
+
 func createPortableV2OpusFixture(t *testing.T, outPath string, words []string) string {
 	t.Helper()
+	return createPortableV2OpusFixtureWith(t, outPath, portableV2FixtureOptions{words: words})
+}
+
+func createPortableV2OpusFixtureWith(t *testing.T, outPath string, opts portableV2FixtureOptions) string {
+	t.Helper()
+	words := opts.words
+	speakerOf := opts.speakerOf
+	if speakerOf == nil {
+		speakerOf = func(int) string { return "spk1" }
+	}
+	speakers := opts.speakers
+	if speakers == nil {
+		speakers = []portable.Speaker{{ID: "spk1", Label: "Silvio"}}
+	}
 
 	basePath := createTestOpus(t, filepath.Join(filepath.Dir(outPath), "base-v2.opus"))
 	meta, err := probePortableAudio(basePath)
@@ -169,7 +197,7 @@ func createPortableV2OpusFixture(t *testing.T, outPath string, words []string) s
 	items := make([]portable.TranscriptItem, 0, len(words))
 	for i, w := range words {
 		items = append(items, portable.TranscriptItem{
-			Speaker: "spk1",
+			Speaker: speakerOf(i),
 			StartMS: int64(i * 100),
 			EndMS:   int64(i*100 + 80),
 			Text:    w,
@@ -200,8 +228,24 @@ func createPortableV2OpusFixture(t *testing.T, outPath string, words []string) s
 			SampleCount: sampleCount,
 			DurationMS:  durationMS,
 		},
-		Speakers: []portable.Speaker{{ID: "spk1", Label: "Silvio"}},
+		Speakers: speakers,
 	})
+	if opts.withSummary {
+		body := opts.summaryBody
+		if body == "" {
+			body = "# Meeting Summary\n"
+		}
+		manifest.Summary = map[string]any{
+			"model":           "summary-model",
+			"format":          "markdown",
+			"templateVersion": "v0",
+		}
+		manifest.Attachments = append(manifest.Attachments, map[string]any{
+			"name":          "summary.md",
+			"mime":          "text/markdown",
+			"contentBase64": base64.StdEncoding.EncodeToString([]byte(body)),
+		})
+	}
 
 	input := portable.TranscriptInput{
 		ID:       portable.RoleRawASR,
