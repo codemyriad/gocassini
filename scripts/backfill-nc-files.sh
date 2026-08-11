@@ -106,7 +106,12 @@ echo "backfill-nc-files: using container $CONTAINER"
 #   0  migrated
 #   3  nothing to migrate      — nothing written
 #   4  failed before writing   — nothing written, retry is safe
+#   2  wrong usage/environment — nothing written, the command never started
 #   1  failed after writing    — may be half-written, do not just retry
+#
+# Only 1 may suggest cleanup. Every other code means nothing was written, so the
+# catch-all below must stay narrow: sending someone to delete recordings after a
+# run that wrote nothing points them at their live archive.
 set +e
 "$DOCKER" exec "$CONTAINER" cassini-operator backfill-nc-files "${ARGS[@]}"
 status=$?
@@ -133,7 +138,18 @@ touched and there is nothing to clean up. Fix the error reported above and run
 it again.
 EOF
     ;;
-  *)
+  2)
+    cat >&2 <<'EOF'
+
+The migration never started: the command rejected how it was invoked, or the app
+container is not set up the way it expects. Nothing in Nextcloud Files was
+touched and there is nothing to clean up.
+
+Check that you are pointing at the Cassini app container and that the app is
+enabled in Nextcloud, then run it again.
+EOF
+    ;;
+  1)
     cat >&2 <<'EOF'
 
 The migration stopped part-way, after it had started writing. It uploads
@@ -143,6 +159,20 @@ recordings that nothing links to yet.
 Do not simply re-run it: the guard will refuse, because Nextcloud Files now
 holds recordings. Fix the error reported above, then remove the recordings this
 run uploaded from Cassini/Recordings/ in the Files app before trying again.
+EOF
+    ;;
+  *)
+    # Not one of the command's own codes — the container died, or the container
+    # CLI itself failed. Whether anything was written is genuinely unknown, so
+    # say that rather than guess in either direction.
+    cat >&2 <<EOF
+
+The migration ended unexpectedly (exit $status). That is not one of the codes it
+reports for itself, so the container or the container CLI failed rather than the
+migration.
+
+Check Cassini/Recordings/ in the Files app before re-running: whether anything
+was written is unknown.
 EOF
     ;;
 esac
