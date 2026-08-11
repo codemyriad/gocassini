@@ -82,8 +82,11 @@ Important env vars:
 
 Nothing in `current/`, no attempt `.logs` directory and no published recording is
 ever pruned, and every removal is guarded on the artifact that replaces it
-existing. An unrecognised policy name is rejected at startup with exit code 2 and
-the valid names listed — the same rule `--sink` follows. See
+existing. A successfully delivered attempt's `.site` is the one exception to
+`all`: it is removed once the sink accepts it regardless of policy, because
+keeping it leaves a full copy of the recording on the app's own volume, outside
+the access model (D-550). An unrecognised policy name is rejected at startup with
+exit code 2 and the valid names listed — the same rule `--sink` follows. See
 [Artifacts and filesystem](./artifacts-and-filesystem.md#retention).
 
 Local non-containerized defaults resolve under:

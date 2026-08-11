@@ -249,6 +249,12 @@ Attempt-local payloads under `runs/` are pruned by an explicit policy,
 | `superseded` | the `.run`, `.meeting`, `.site` and `.seal` of attempts a rerun has replaced |
 | `sealed` **(default)** | `superseded`, plus a succeeded attempt's `.run`, `.meeting` and `.site` |
 
+One removal happens outside this policy and `all` does not disable it: a
+successfully delivered attempt's `.site` is removed as soon as the sink accepts
+it (D-550). That is an access boundary rather than housekeeping — the attempt
+site is a full copy of the recording on the app's own volume, outside the
+Nextcloud access model — so retention is not a way to keep one.
+
 Never pruned, under any policy: everything in `current/`, every attempt `.logs`
 directory, the retained `.seal` of a succeeded attempt, and the live site. Every
 removal is additionally guarded on the artifact that replaces it existing, so a
