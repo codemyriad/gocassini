@@ -34,6 +34,19 @@ harness_bootstrap_core_nextcloud() {
   occ_ignore_failure app:install group_everyone >/dev/null 2>&1
   occ_ignore_failure app:enable group_everyone >/dev/null 2>&1
 
+  # The installs above tolerate failure on purpose: both are app-store apps and
+  # a hard install would abort the harness on any box without app-store
+  # reachability. But a failed install must not then be INVISIBLE — without
+  # these apps the ExApp provisions nothing, and a missing group_everyone in
+  # particular makes the provisioner return before the Team folder is ever
+  # created, which looks identical to a successful run.
+  for required_app in groupfolders group_everyone; do
+    if ! occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${required_app}:"; then
+      log "FATAL: ${required_app} is required for recordings and is not enabled"
+      return 1
+    fi
+  done
+
   if occ user:info "$BOT_USER" >/dev/null 2>&1; then
     log "Bot user already exists: $BOT_USER"
   else

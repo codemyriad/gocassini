@@ -79,9 +79,30 @@ type statusRecordingsAccess struct {
 	// its archive off Nextcloud, which makes a provisioned substrate inert
 	// rather than wrong.
 	PublishSink string `json:"publish_sink,omitempty"`
-	OK          bool   `json:"ok"`
-	Detail      string `json:"detail,omitempty"`
-	CheckedAt   string `json:"checked_at,omitempty"`
+	// State is provisioned / degraded / unavailable / not_applicable / unknown
+	// (D-585). OK is kept alongside it, derived, so anything that already reads
+	// the boolean keeps working.
+	State string `json:"state"`
+	OK    bool   `json:"ok"`
+	// Step names the provisioning step that stopped, in a stable machine-readable
+	// form a monitor or a test can key on: "app_missing:group_everyone",
+	// "administrator", "mount_mapping:everyone".
+	Step   string `json:"step,omitempty"`
+	Detail string `json:"detail,omitempty"`
+	// AdminUser is the account provisioning resolved and acted as. Its absence
+	// is itself the diagnosis when Step is "administrator".
+	AdminUser string `json:"admin_user,omitempty"`
+	// Prerequisites reports the native Nextcloud apps an ExApp cannot install
+	// for itself, so a missing one is named rather than inferred.
+	Prerequisites []statusPrerequisite `json:"prerequisites,omitempty"`
+	CheckedAt     string               `json:"checked_at,omitempty"`
+}
+
+// statusPrerequisite is one native app the recordings substrate depends on.
+type statusPrerequisite struct {
+	Name   string `json:"name"`
+	State  string `json:"state"`
+	Detail string `json:"detail,omitempty"`
 }
 
 type statusSTT struct {
@@ -157,7 +178,12 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 			WorkRoot: storagePathCheck(rt.cfg.WorkRoot),
 			SiteRoot: storagePathCheck(rt.cfg.SiteRoot),
 		},
-		RecordingsAccess: ncAccessSubstrate.snapshot(publishSinkNameOrDefault(rt.cfg.PublishSink)),
+		// The RESOLVED sink, not the configured one. cfg.PublishSink is the raw
+		// selection and is empty on an ExApp that did not set it — reporting it
+		// through publishSinkNameOrDefault would say `local` for a deployment
+		// actually delivering to Nextcloud Files, which is exactly backwards for
+		// the field an admin uses to decide whether a substrate is expected.
+		RecordingsAccess: ncAccessSubstrate.snapshot(rt.resolvedPublishSinkName()),
 	}
 	if !resp.Talk.SignalingInternalSecretConfigured {
 		resp.Talk.SignalingInternalSecretHint = signalingInternalSecretHint
@@ -179,6 +205,51 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusServiceUnavailable
 	}
 	writeJSON(w, status, resp)
+}
+
+// setupResponse is the USER-readable half of /status: whether this deployment
+// can serve recordings at all, and nothing else.
+//
+// /status is ADMIN through the proxy, which is right — it carries the version,
+// the resolved administrator, the storage paths and every step name. But that
+// left the person who is NOT an administrator with no way to find out that the
+// app they are looking at was never finished, and the viewer answered the only
+// question they could ask — "show me the meetings" — with `HTTP 502`. Naming a
+// misconfiguration is not a privilege: a user who can see that Cassini is not
+// set up can go and tell someone who can fix it, which is the entire remedy
+// available to them.
+//
+// So this reports the same verdict in the same words, with none of the detail:
+// the state, and whether it is working. No step, no administrator, no paths, no
+// versions — nothing an unprivileged caller could not have guessed from the app
+// failing in front of them.
+type setupResponse struct {
+	// OK is false whenever recordings cannot be served, for any reason.
+	OK bool `json:"ok"`
+	// State is the recordings_access state verbatim (provisioned / degraded /
+	// unavailable / not_applicable / unknown) so the UI branches on the same
+	// vocabulary the admin-facing report and the docs already use.
+	State string `json:"state"`
+}
+
+// setupHandler answers GET <base>/setup for any logged-in Nextcloud user.
+//
+// Deliberately 200 even when OK is false. /status answers 503 because a monitor
+// asking "is this healthy" wants the code; here the caller is a browser asking
+// "should I show the archive or an explanation", and it has to read the body to
+// tell "Cassini is not set up" from "the ExApp is down" — which is exactly what
+// a 503 from the proxy in front of it looks like.
+func (rt *Runtime) setupHandler(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/setup" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	access := ncAccessSubstrate.snapshot(rt.resolvedPublishSinkName())
+	writeJSON(w, http.StatusOK, setupResponse{OK: access.OK, State: access.State})
 }
 
 // Ping verifies the job store answers queries.
@@ -341,4 +412,14 @@ func (p *ttlProbe) check() error {
 	close(done)
 	p.mu.Unlock()
 	return err
+}
+
+// resolvedPublishSinkName is the sink actually in use. The Runtime holds the
+// constructed sink; cfg.PublishSink is only the raw selection, which an ExApp
+// commonly leaves empty while resolving to nextcloud-files.
+func (rt *Runtime) resolvedPublishSinkName() string {
+	if rt.publishSink != nil {
+		return rt.publishSink.Name()
+	}
+	return publishSinkNameOrDefault(rt.cfg.PublishSink)
 }

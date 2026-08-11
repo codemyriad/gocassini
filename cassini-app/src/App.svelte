@@ -3,8 +3,16 @@
   import ViewerApp from "cassini-viewer/App.svelte";
   import { StaticCatalogProvider } from "cassini-viewer/dataProvider";
   import Operator from "./Operator.svelte";
+  import SetupNotice from "./SetupNotice.svelte";
   import { loadConfig } from "./operator/config";
   import { isLikelyAdminHint, probeOperatorAvailable } from "./operator/adminProbe";
+  import {
+    buildSetupNotice,
+    fetchSetupHealth,
+    readRecordingsAccess,
+    shareableAppUrl,
+    type SetupNotice as SetupNoticeContent,
+  } from "./operator/setupHealth";
   import { applySurface, readSurface, type Surface } from "./surfaceRouting";
 
   // The Cassini in-Nextcloud shell (D-420). It hosts role-gated surfaces fed
@@ -14,7 +22,13 @@
   //
   // The operator JSON API stays ADMIN in info.xml (the REAL boundary). The
   // shell only decides whether to *show* the operator by probing that boundary
-  // (403 -> hide); a non-admin who forced the surface still 403s at the proxy.
+  // (denied -> hide); a non-admin who forced the surface still 403s at the proxy.
+  //
+  // That one probe now decides two things, deliberately: whether there is an
+  // operator surface, and — when the deployment is not set up — which of the two
+  // explanations you get (setupHealth.ts). Being able to read the ADMIN-gated
+  // /status IS being an administrator, so there is no second notion of admin
+  // here to drift from the first.
   export let ncMode: boolean = false;
 
   const dataProvider = new StaticCatalogProvider();
@@ -25,6 +39,23 @@
   // no shell chrome, byte-identical output.
   let operatorAvailable = false;
   let surface: Surface = "browse";
+
+  // setupNotice is non-null when this deployment's recordings substrate is not
+  // proven (D-585). Where it renders depends on whether the archive can still be
+  // READ, which is not the same question as whether setup completed:
+  //
+  //   blocking   the per-caller scan finds no mount and the catalog fails closed
+  //              to empty, so the list underneath would be an error or a lie.
+  //              The notice takes the browse slot.
+  //   advisory   a restarted container that never re-ran setup. Publishing is
+  //              refused, but every published recording still opens, so the list
+  //              stays and the notice is a strip above it. Replacing it here
+  //              would blank a working archive on every reboot.
+  //
+  // Either way an administrator keeps the operator surface — that is the one
+  // place they can still act. Null (the normal case, and every case where the
+  // check itself could not be made) leaves the shell exactly as it was.
+  let setupNotice: SetupNoticeContent | null = null;
 
   // The daisyUI theme tokens (colors AND --radius-box/--border etc.) are emitted
   // on [data-theme=…], not on :host — so any surface NOT inside a data-theme'd
@@ -91,11 +122,28 @@
     applySurfaceFromLocation();
     window.addEventListener("popstate", handlePopState);
 
-    // Authoritative: probe the ADMIN-gated operator boundary (200 -> show).
+    // Authoritative: probe the ADMIN-gated operator boundary (an operator that
+    // answered -> show). Alongside it, ask the USER-level setup endpoint whether
+    // this deployment can serve recordings at all — the two are independent, so
+    // they go out together.
     try {
       const { operatorBasePath } = loadConfig();
-      const probe = await probeOperatorAvailable(operatorBasePath);
+      const [probe, health] = await Promise.all([
+        probeOperatorAvailable(operatorBasePath),
+        fetchSetupHealth(operatorBasePath),
+      ]);
       operatorAvailable = probe.available;
+      // Which setup message you get is decided by the SAME probe that decides
+      // whether the operator surface exists — being able to read the ADMIN-gated
+      // /status IS being an administrator, so there is no second notion of admin
+      // here to drift from the first. The diagnosis comes from that same
+      // response; a non-admin never had it and never will.
+      setupNotice = buildSetupNotice({
+        health,
+        access: readRecordingsAccess(probe.body),
+        isAdmin: probe.available,
+        appUrl: shareableAppUrl(window.location.href),
+      });
       // A non-admin is expected to be denied — AppAPI answers 403, or 404 when
       // it hides the operator routes entirely — so stay quiet on those. Anything
       // else (a network failure or an unexpected status) shouldn't silently hide
@@ -111,6 +159,7 @@
       // surface with zero trace, which is exactly what hid the embedded-page
       // base bug (D-420 V3).
       operatorAvailable = false;
+      setupNotice = null;
       console.error("Cassini: operator availability check failed.", error);
     }
     // Reconcile the active surface with the probe result (e.g. an optimistic
@@ -146,12 +195,39 @@
       </button>
     </nav>
 
-    <!-- Browse stays mounted (preserves list/meeting/playback state) and is
-         hidden while the operator surface is active; the operator mounts only
-         when active so its SSE stream + polling don't run in the background. -->
-    <div class="cassini-shell-surface" class:cassini-shell-hidden={surface === "operator"}>
-      <ViewerApp {ncMode} {dataProvider} />
-    </div>
+    {#if setupNotice && !setupNotice.blocking}
+      <!-- Advisory: setup is unproven but the archive still reads, so this is a
+           strip above the list, not a replacement for it. Kept beside the nav
+           rather than inside the browse slot so it stays put while an
+           administrator works on the operator surface — publishing is refused
+           there too. -->
+      <div class="cassini-shell-banner" data-theme={themeMode}>
+        <div class="cassini-root" data-theme={themeMode}>
+          <SetupNotice notice={setupNotice} />
+        </div>
+      </div>
+    {/if}
+    {#if setupNotice?.blocking}
+      <!-- The browse slot, explaining itself. An administrator keeps the tab
+           bar above and the operator surface below: nothing about a missing
+           substrate stops them starting a recording or reading job history. -->
+      <div
+        class="cassini-shell-surface cassini-shell-scroll scroll-stable"
+        class:cassini-shell-hidden={surface === "operator"}
+        data-theme={themeMode}
+      >
+        <div class="cassini-root" data-theme={themeMode}>
+          <SetupNotice notice={setupNotice} />
+        </div>
+      </div>
+    {:else}
+      <!-- Browse stays mounted (preserves list/meeting/playback state) and is
+           hidden while the operator surface is active; the operator mounts only
+           when active so its SSE stream + polling don't run in the background. -->
+      <div class="cassini-shell-surface" class:cassini-shell-hidden={surface === "operator"}>
+        <ViewerApp {ncMode} {dataProvider} />
+      </div>
+    {/if}
     {#if surface === "operator"}
       <!-- Scroll pane (bounded flex child) is kept SEPARATE from the themed
            .cassini-root: putting .cassini-root's height:100% on the flex/scroll
@@ -167,6 +243,30 @@
         </div>
       </div>
     {/if}
+  </div>
+{:else if setupNotice?.blocking}
+  <!-- No operator surface to preserve, so the notice IS the app. It carries its
+       own height and scroll: without the operator tab there is no .cassini-shell
+       around it, and it is otherwise a direct child of the shadow :host (or #app
+       in the standalone build), both of which are height:100%. -->
+  <div class="cassini-setup-surface" data-theme={themeMode}>
+    <div class="cassini-root" data-theme={themeMode}>
+      <SetupNotice notice={setupNotice} />
+    </div>
+  </div>
+{:else if setupNotice}
+  <!-- Advisory, with no operator tab. .cassini-shell is reused verbatim: it is
+       already the "fixed chrome above a full-height viewer" geometry the nav
+       relies on, which is the same problem. -->
+  <div class="cassini-shell">
+    <div class="cassini-shell-banner" data-theme={themeMode}>
+      <div class="cassini-root" data-theme={themeMode}>
+        <SetupNotice notice={setupNotice} />
+      </div>
+    </div>
+    <div class="cassini-shell-surface">
+      <ViewerApp {ncMode} {dataProvider} />
+    </div>
   </div>
 {:else}
   <ViewerApp {ncMode} {dataProvider} />
@@ -267,5 +367,23 @@
 
   .cassini-shell-hidden {
     display: none;
+  }
+
+  /* The advisory strip: fixed chrome, like the nav, so the viewer below keeps a
+     bounded flex height. flex:none is what stops it stretching or being squeezed
+     when the meeting list grows. */
+  .cassini-shell-banner {
+    flex: none;
+    background: var(--color-main-background, var(--color-base-100, #ffffff));
+  }
+
+  /* The notice standing in for the whole app (no operator tab). Same bounded
+     scroller + background as .cassini-shell-scroll, but height:100% instead of
+     flex:1 because there is no .cassini-shell flex column above it here. */
+  .cassini-setup-surface {
+    height: 100%;
+    min-height: 100%;
+    overflow-y: auto;
+    background: var(--color-main-background, var(--color-base-200, #f3f4f6));
   }
 </style>

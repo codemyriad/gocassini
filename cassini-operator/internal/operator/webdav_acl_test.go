@@ -360,3 +360,54 @@ func TestFilteredCatalogDoesNotTouchGroupsForAMountedCaller(t *testing.T) {
 		t.Fatalf("a denied meeting leaked to a mounted caller: %s", w.Body.String())
 	}
 }
+
+// A PROPPATCH answers 207 when the request was UNDERSTOOD; whether the property
+// was accepted lives in the per-property status inside it. Not reading that is
+// one of the ways a recording gets written with no ACL at all while every
+// response looks fine — outside a Team folder with advanced ACL, `nc:acl-list`
+// is simply not a settable property (D-585).
+func TestProppatchACLRejectsAFailedPropstat(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMultiStatus)
+		io.WriteString(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response>`+
+			`<d:href>/x</d:href><d:propstat><d:prop><nc:acl-list xmlns:nc="http://nextcloud.org/ns"/></d:prop>`+
+			`<d:status>HTTP/1.1 403 Forbidden</d:status></d:propstat></d:response></d:multistatus>`)
+	}))
+	defer srv.Close()
+
+	err := testExAppConfig(srv.URL).davProppatchACLRules(context.Background(), srv.Client(), ncRecordingsOwner, "Cassini/Recordings/meetings/JOB1.opus", containerACLRules())
+	if err == nil {
+		t.Fatal("a rejected nc:acl-list was reported as success")
+	}
+	if !strings.Contains(err.Error(), "nc:acl-list rejected") || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("error is not actionable: %v", err)
+	}
+}
+
+func TestProppatchACLAcceptsAnOKPropstat(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMultiStatus)
+		io.WriteString(w, `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response>`+
+			`<d:href>/x</d:href><d:propstat><d:prop><nc:acl-list xmlns:nc="http://nextcloud.org/ns"/></d:prop>`+
+			`<d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`)
+	}))
+	defer srv.Close()
+
+	if err := testExAppConfig(srv.URL).davProppatchACLRules(context.Background(), srv.Client(), ncRecordingsOwner, "Cassini", containerACLRules()); err != nil {
+		t.Fatalf("an accepted PROPPATCH was reported as a failure: %v", err)
+	}
+}
+
+// A bare 2xx with no body is a legitimate success shape. Turning "I could not
+// read the response" into "the ACL was rejected" would fail publishes on a
+// technicality.
+func TestProppatchACLAcceptsABodylessSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if err := testExAppConfig(srv.URL).davProppatchACLRules(context.Background(), srv.Client(), ncRecordingsOwner, "Cassini", containerACLRules()); err != nil {
+		t.Fatalf("a bodyless 200 was reported as a failure: %v", err)
+	}
+}

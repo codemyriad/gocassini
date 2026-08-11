@@ -436,11 +436,15 @@ func TestStatusReportsAStandaloneOperatorAsHealthyWithNoSubstrate(t *testing.T) 
 	if !resp.RecordingsAccess.OK || resp.RecordingsAccess.Detail == "" {
 		t.Fatalf("an inapplicable substrate must read as OK and say why: %#v", resp.RecordingsAccess)
 	}
+	if resp.RecordingsAccess.State != string(ncSubstrateNotApplicable) {
+		t.Fatalf("state = %q, want %q", resp.RecordingsAccess.State, ncSubstrateNotApplicable)
+	}
 }
 
 func TestStatusReportsAProvisionedSubstrate(t *testing.T) {
 	ncAccessSubstrate.reset()
 	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.markApplicable()
 	ncAccessSubstrate.succeed()
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -466,6 +470,9 @@ func TestStatusReportsAProvisionedSubstrate(t *testing.T) {
 	if resp.RecordingsAccess.PublishSink == "" {
 		t.Fatal("the resolved publish sink must be reported")
 	}
+	if resp.RecordingsAccess.State != string(ncSubstrateProvisioned) {
+		t.Fatalf("state = %q, want %q", resp.RecordingsAccess.State, ncSubstrateProvisioned)
+	}
 }
 
 func TestStatusIsUnhealthyWhenTheSubstrateIsMissing(t *testing.T) {
@@ -474,7 +481,8 @@ func TestStatusIsUnhealthyWhenTheSubstrateIsMissing(t *testing.T) {
 	// call it healthy.
 	ncAccessSubstrate.reset()
 	t.Cleanup(ncAccessSubstrate.reset)
-	ncAccessSubstrate.fail("group folder Cassini (is the Group folders app enabled?)", errStatusSubstrateProbe)
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.unavailable("app_missing:"+ncAppGroupFolders, errStatusSubstrateProbe)
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
@@ -492,8 +500,77 @@ func TestStatusIsUnhealthyWhenTheSubstrateIsMissing(t *testing.T) {
 		t.Fatalf("expected an unhealthy substrate: %#v", resp.RecordingsAccess)
 	}
 	// The detail has to be actionable: it names the step and the likely cause.
-	if !strings.Contains(resp.RecordingsAccess.Detail, "Group folders") {
+	if !strings.Contains(resp.RecordingsAccess.Detail, ncAppGroupFolders) {
 		t.Fatalf("detail is not actionable: %q", resp.RecordingsAccess.Detail)
+	}
+	// And the step has to be machine-readable, so a monitor or an install check
+	// can key on WHICH failure this is rather than string-matching prose.
+	if resp.RecordingsAccess.State != string(ncSubstrateUnavailable) {
+		t.Fatalf("state = %q, want %q", resp.RecordingsAccess.State, ncSubstrateUnavailable)
+	}
+	if resp.RecordingsAccess.Step != "app_missing:"+ncAppGroupFolders {
+		t.Fatalf("step = %q, want app_missing:%s", resp.RecordingsAccess.Step, ncAppGroupFolders)
+	}
+}
+
+// A failed CALL is not the same diagnosis as an ABSENT app: nothing is installed
+// to fix it. Both are unhealthy, and the step is what tells them apart.
+func TestStatusReportsDegradedAsUnhealthyAndDistinctFromUnavailable(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.degraded("app_check_failed", errStatusSubstrateProbe)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 when provisioning degraded; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.RecordingsAccess.State != string(ncSubstrateDegraded) {
+		t.Fatalf("state = %q, want %q", resp.RecordingsAccess.State, ncSubstrateDegraded)
+	}
+	if resp.RecordingsAccess.Step != "app_check_failed" {
+		t.Fatalf("step = %q, want app_check_failed", resp.RecordingsAccess.Step)
+	}
+}
+
+// The administrator and the prerequisite list are context an admin needs to act,
+// so they survive into the report rather than living only in the log.
+func TestStatusReportsTheResolvedAdministratorAndPrerequisites(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.setAdminUser("ops-root")
+	ncAccessSubstrate.setPrerequisites([]ncPrerequisiteStatus{
+		{Name: ncAppGroupFolders, State: ncPrerequisiteEnabled},
+		{Name: ncAppEveryoneGroup, State: ncPrerequisiteMissing, Detail: "run `occ app:install group_everyone`"},
+	})
+	ncAccessSubstrate.unavailable("app_missing:"+ncAppEveryoneGroup, nil)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.RecordingsAccess.AdminUser != "ops-root" {
+		t.Fatalf("admin_user = %q, want ops-root", resp.RecordingsAccess.AdminUser)
+	}
+	if len(resp.RecordingsAccess.Prerequisites) != 2 {
+		t.Fatalf("prerequisites = %#v, want both native apps", resp.RecordingsAccess.Prerequisites)
+	}
+	if resp.RecordingsAccess.Prerequisites[1].State != ncPrerequisiteMissing {
+		t.Fatalf("the missing app must be named as missing: %#v", resp.RecordingsAccess.Prerequisites)
 	}
 }
 
@@ -516,5 +593,200 @@ func TestStatusReportsProvisioningThatHasNotRunYet(t *testing.T) {
 	}
 	if !strings.Contains(resp.RecordingsAccess.Detail, "has not run yet") {
 		t.Fatalf("an ExApp that was never enabled must say so: %q", resp.RecordingsAccess.Detail)
+	}
+	// Reachable after a bare container restart, because provisioning runs on the
+	// enabled edge and a restart is not one (D-541). Reported as `unknown`
+	// rather than passed off as a standalone with nothing to provision.
+	if resp.RecordingsAccess.State != string(ncSubstrateUnknown) {
+		t.Fatalf("state = %q, want %q", resp.RecordingsAccess.State, ncSubstrateUnknown)
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 for an unverified substrate", rec.Code)
+	}
+}
+
+// An ExApp deliberately pinned to CASSINI_PUBLISH_SINK=local serves nothing from
+// Nextcloud Files, so a Team folder it never writes to is not its health.
+// Provisioning still runs there (idempotent, cheap) and still records — but
+// applicability is decided by the deployment, not by whether provisioning
+// happened. Without this, `local` — the escape hatch the publish gate points
+// at — would be a permanently unhealthy configuration.
+func TestStatusDoesNotJudgeALocalSinkOnANextcloudSubstrate(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	// Provisioning ran and failed, but this deployment was never marked
+	// applicable because its resolved sink is not nextcloud-files.
+	ncAccessSubstrate.unavailable("app_missing:"+ncAppGroupFolders, errStatusSubstrateProbe)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for a deployment that expects no substrate", rec.Code)
+	}
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.RecordingsAccess.State != string(ncSubstrateNotApplicable) || !resp.RecordingsAccess.OK {
+		t.Fatalf("recordings access = %#v, want not_applicable and OK", resp.RecordingsAccess)
+	}
+}
+
+// The USER-readable half. A non-admin cannot reach /status — that is correct,
+// it carries the administrator, the paths and the version — but it left the
+// person actually looking at the app with `HTTP 502` as the only account of an
+// install that was never finished.
+
+func TestSetupReportsTheSameVerdictAsStatusWithoutTheDiagnosis(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		arrange func()
+		wantOK  bool
+		want    ncSubstrateState
+	}{
+		{
+			name:    "provisioned",
+			arrange: func() { ncAccessSubstrate.markApplicable(); ncAccessSubstrate.succeed() },
+			wantOK:  true,
+			want:    ncSubstrateProvisioned,
+		},
+		{
+			name: "unavailable",
+			arrange: func() {
+				ncAccessSubstrate.markApplicable()
+				ncAccessSubstrate.unavailable("app_missing:"+ncAppGroupFolders, errStatusSubstrateProbe)
+			},
+			want: ncSubstrateUnavailable,
+		},
+		{
+			name: "degraded",
+			arrange: func() {
+				ncAccessSubstrate.markApplicable()
+				ncAccessSubstrate.degraded("acl_enable", errStatusSubstrateProbe)
+			},
+			want: ncSubstrateDegraded,
+		},
+		{
+			// A container restarted without the app being re-enabled. Publishing
+			// is already refused here, so the viewer must not claim otherwise.
+			name:    "unknown",
+			arrange: ncAccessSubstrate.markApplicable,
+			want:    ncSubstrateUnknown,
+		},
+		{
+			// A standalone operator, or an ExApp pinned to the local sink. Nothing
+			// to set up, so nothing to warn anyone about.
+			name:    "not applicable",
+			arrange: func() {},
+			wantOK:  true,
+			want:    ncSubstrateNotApplicable,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ncAccessSubstrate.reset()
+			t.Cleanup(ncAccessSubstrate.reset)
+			tc.arrange()
+			rt, cleanup := newTestRuntime(t)
+			defer cleanup()
+
+			rec := httptest.NewRecorder()
+			rt.setupHandler(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+
+			// Always 200, even when not OK: the caller is a browser deciding what
+			// to render, and it has to be able to tell "Cassini is not set up"
+			// from "the ExApp is down" — which is what a 503 in front of it means.
+			if rec.Code != http.StatusOK {
+				t.Fatalf("setup = %d, want 200 in every state; body=%s", rec.Code, rec.Body.String())
+			}
+			var resp setupResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode setup response: %v", err)
+			}
+			if resp.OK != tc.wantOK || resp.State != string(tc.want) {
+				t.Fatalf("setup = %#v, want ok=%v state=%s", resp, tc.wantOK, tc.want)
+			}
+		})
+	}
+}
+
+// The endpoint is USER-level at the proxy, so what it does NOT say is as much a
+// part of its contract as what it does. The step names an app or a config key;
+// the detail quotes Nextcloud; admin_user names an account. None of that is a
+// non-admin's business, and none of it helps them — their only remedy is to
+// tell an administrator.
+func TestSetupWithholdsEverythingAdminOnly(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.setAdminUser("ops-root")
+	ncAccessSubstrate.setPrerequisites([]ncPrerequisiteStatus{
+		{Name: ncAppGroupFolders, State: ncPrerequisiteMissing, Detail: "run `occ app:install groupfolders`"},
+	})
+	ncAccessSubstrate.unavailable("app_missing:"+ncAppGroupFolders, errStatusSubstrateProbe)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	rt.setupHandler(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+
+	body := rec.Body.String()
+	for _, leak := range []string{"ops-root", "app_missing", ncAppGroupFolders, "occ", rt.cfg.SiteRoot} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("setup leaked admin-only detail %q: %s", leak, body)
+		}
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
+		t.Fatalf("decode setup response: %v", err)
+	}
+	if len(fields) != 2 {
+		t.Fatalf("setup must answer with ok+state only, got %#v", fields)
+	}
+}
+
+func TestSetupIsMountedWhereverTheOperatorAPIIs(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	// Deliberately the BROKEN state: mounted-and-answering must not be confused
+	// with healthy. /status answers 503 here, and an implementation that copied
+	// that would make this test pass for the wrong reason.
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.unavailable("app_missing:"+ncAppGroupFolders, errStatusSubstrateProbe)
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	for _, tc := range []struct {
+		basePath string
+		url      string
+		want     int
+	}{
+		// The ExApp shape: the manifest route is operator/setup.
+		{basePath: "/operator", url: "/operator/setup", want: http.StatusOK},
+		{basePath: "/operator", url: "/setup", want: http.StatusNotFound},
+		// The standalone shape. Forgetting this branch is how a route lands that
+		// works through Nextcloud and 404s in dev.
+		{basePath: "/", url: "/setup", want: http.StatusOK},
+	} {
+		rt.cfg.BasePath = tc.basePath
+		handler := newHTTPHandler(log.New(ioDiscard{}, "", 0), rt, ExAppConfig{})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.url, nil))
+		if rec.Code != tc.want {
+			t.Fatalf("GET %s with base %q = %d, want %d", tc.url, tc.basePath, rec.Code, tc.want)
+		}
+	}
+}
+
+func TestSetupRejectsNonGET(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	rt.setupHandler(rec, httptest.NewRequest(http.MethodPost, "/setup", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /setup = %d, want 405", rec.Code)
 	}
 }

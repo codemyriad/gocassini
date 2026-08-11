@@ -35,6 +35,9 @@ install — see [Standalone operator (dev/staging only)](#standalone-operator-de
   reason. The Everyone Group is instance-wide and may appear in other Nextcloud
   sharing pickers; see
   [Recording permissions](./exapp-nextcloud-recordings-permissions.md).
+- An administrator account Cassini can act as, for one-time setup only. See
+  [Administrator discovery](#administrator-discovery) — in almost all cases this
+  needs no configuration.
 - A Docker engine for the ExApp container. For GPU transcription it needs the
   NVIDIA driver + Container Toolkit (see [GPU transcription](#gpu-transcription-cuda)).
 - For private, group, and one-to-one Talk recording: standalone Nextcloud Talk
@@ -232,7 +235,8 @@ Options).
 | `CASSINI_TALK_RECORDING_SECRET` | No (auto-generated) | Shared secret for Talk's recording backend protocol; must match the `secret` in `spreed`'s `recording_servers` (Step 5). **Since D-447, if omitted the operator generates and persists one** — read it back from the provisioning endpoint (Step 5). An explicit value wins and is treated as externally managed |
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | For HPB-internal/default Talk recording | Internal client secret for standalone Talk signaling / HPB; must match `[clients] internalsecret`. Required for private, group, and one-to-one Talk recording |
 | `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped/failed notifications) and OCS calls. Leave empty to use the backend URL Talk sends with each request |
-| `CASSINI_NC_ADMIN_USER` | No | Administrator account used only to create the `cassini` service account, its narrow owner group, and the Team-folder topology. Leave empty for automatic discovery; set it when discovery chooses the wrong account. Recordings are still owned, written, and managed by `cassini` |
+| `CASSINI_NC_ADMIN_USER` | On instances where no discovered account is an administrator | Administrator account used only to create the `cassini` service account, its narrow owner group, and the Team-folder topology. Leave empty for automatic discovery (see [Administrator discovery](#administrator-discovery)); set it when discovery cannot find one or picks the wrong account. Recordings are still owned, written, and managed by `cassini` |
+| `CASSINI_PUBLISH_SINK` | No | Where published recordings are stored. `nextcloud-files` (the default for an installed app) puts them in the `Cassini` Team folder with per-participant ACLs; `local` keeps them on the app's own volume with no access control and no Nextcloud prerequisites. Set `local` only deliberately |
 | `OPENROUTER_API_KEY` | No | API key for LLM transcript cleanup + meeting summaries. **When set, the full local transcript is sent to that third-party endpoint** for cleanup/summarisation (transcription itself is always local). Unset, raw transcripts are published without summaries |
 | `LLM_BASE_URL` | No | OpenAI-compatible API base URL; defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
 | `LLM_MODEL` | No | Model for cleanup/summaries (default `openai/gpt-4o-mini`) |
@@ -288,6 +292,128 @@ Proxy daemons, HaRP direct-connect, manual installs):
 
 `CASSINI_APPAPI_REQUIRED=true` is baked into the ExApp image (not injected by
 AppAPI); it makes the operator refuse to start without `APP_SECRET`.
+
+### Administrator discovery
+
+Cassini performs one-time setup — creating the `cassini` service account, its
+narrow owner group, and the `Cassini` Team folder — as a Nextcloud
+administrator. It never stores or reads recordings as one; that is the service
+account's job, deliberately kept without instance-admin rights.
+
+An external app cannot be *told* who the administrator is, and every Nextcloud
+API that would reveal one is itself admin-gated, so discovery is a **probe**
+rather than a lookup:
+
+1. `CASSINI_NC_ADMIN_USER`, if you set it.
+2. `admin`, the conventional id.
+3. Every account on the instance, enumerated through AppAPI (which answers
+   without needing an identity), up to a bounded number.
+
+Each candidate is asked whether it is an administrator; the first that says yes
+is used and named in `/status` as `admin_user`. If none is — an instance with a
+large user base whose administrator sorts past the probe limit, or one where the
+app may not act as any administrator — provisioning **stops and says so** rather
+than continuing as an account that may not exist. Set `CASSINI_NC_ADMIN_USER` to
+the account and re-enable Cassini.
+
+### Verifying the recordings substrate
+
+Recordings are only visible to the right people if the Team folder, its ACL
+floor and the universal `everyone` mount actually exist. Provisioning happens
+automatically when the app is enabled, and reports what it found:
+
+```bash
+curl -sS -u admin:<pass> \
+  "https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/operator/status" \
+  | jq .recordings_access
+```
+
+A healthy install:
+
+```json
+{
+  "applicable": true,
+  "publish_sink": "nextcloud-files",
+  "state": "provisioned",
+  "ok": true,
+  "admin_user": "admin",
+  "prerequisites": [
+    { "name": "groupfolders", "state": "enabled" },
+    { "name": "group_everyone", "state": "enabled" }
+  ],
+  "checked_at": "2026-08-04T09:14:02Z"
+}
+```
+
+`state` is the thing to read. Anything other than `provisioned` or
+`not_applicable` also makes `/operator/status` answer **503**, so a broken
+substrate is visible rather than a silently empty archive.
+
+| `state` | Means | What to do |
+|---|---|---|
+| `provisioned` | Setup completed. | Nothing. |
+| `unavailable` | A **named** thing is missing. `step` says which: `app_missing:<id>` or `administrator`. | Install the app, or set `CASSINI_NC_ADMIN_USER`; then re-enable Cassini. |
+| `degraded` | A setup **call failed**. `step` names it (`acl_enable`, `mount_mapping:everyone`, `root_acl`, …). | Read the matching `nc provision:` line in the container log, fix the fault, re-enable Cassini. |
+| `unknown` | Setup has not run in this process — the container was restarted without the app being re-enabled. | Disable and re-enable Cassini. **Publishing is refused until then**: nothing has verified where recordings would land. |
+| `not_applicable` | This deployment does not serve recordings from Nextcloud Files (standalone operator, or `CASSINI_PUBLISH_SINK=local`). | Nothing. |
+
+```json
+{ "state": "unavailable", "step": "app_missing:group_everyone",
+  "detail": "app_missing:group_everyone: the \"group_everyone\" app is not enabled; an ExApp cannot install it" }
+
+{ "state": "unavailable", "step": "administrator",
+  "detail": "administrator: no Nextcloud administrator could be resolved (probed 3: [admin alice bob]); set CASSINI_NC_ADMIN_USER to an account in the \"admin\" group" }
+```
+
+Until the substrate is `provisioned`, publishing **fails** rather than writing
+recordings into the `cassini` account's private home where nobody can reach
+them. The `occ`-side verification of the resulting topology is in
+[Recording permissions](./exapp-nextcloud-recordings-permissions.md).
+
+### What people see when setup is not finished
+
+You do not have to read `/operator/status` to find out — opening **Cassini**
+from the Nextcloud app menu says it, and says something different depending on
+who is looking. The split is decided by the same boundary that decides whether
+you get the **Operator** tab at all: the operator API is ADMIN, so being able to
+read it is what makes you an administrator here.
+
+| Who | What Cassini shows |
+|---|---|
+| An administrator | The step that stopped, in words and in commands. `app_missing:<id>`: the app by name and id, the `occ app:install` line for it, and the `occ app_api:app:disable`/`:enable` pair that re-runs setup. `administrator`: `CASSINI_NC_ADMIN_USER`. `degraded`: the `nc provision:` log lines, rather than an app to install — nothing is missing that you could install. `unknown`: that the container has not re-run setup since it restarted. In every case, the operator's own `detail` sentence — the same one in the container log. |
+| Everyone else | That Cassini is not set up, that it is not their account, and a link to this Cassini page to hand to an administrator — who, opening it, gets the row above. Nothing names an app, a step or a command. |
+
+The verdict behind this comes from `GET /operator/setup`, which is USER-level
+and carries `ok` and `state` only:
+
+```bash
+curl -sS -u alice:<pass> \
+  "https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/operator/setup"
+# {"ok":false,"state":"unavailable"}
+```
+
+It answers **200 in every state**, including the broken ones: the caller is a
+browser deciding what to render, and it has to be able to tell "Cassini is not
+set up" from "the ExApp is down", which is what a 503 in front of it looks like.
+`/operator/status` is the endpoint that answers 503 — use that one for
+monitoring.
+
+Whether it replaces the meeting list or sits above it depends on whether the
+archive can still be **read**, which is a different question from whether setup
+completed — the read path fetches every recording as the individual caller and
+never consults the setup record.
+
+| `state` | Where the message goes | Why |
+|---|---|---|
+| `unavailable`, `degraded` | Replaces the meeting list | Nothing is mounted, or the mount root has been narrowed to owner-only, so the list underneath would be an error or an empty lie |
+| `unknown` | A strip above the meeting list, which stays | The container merely restarted. Every published recording still opens; only publishing is refused. Blanking the archive on every reboot would be worse than the problem |
+
+An administrator keeps the **Operator** tab throughout.
+
+> This route reaches AppAPI at **registration** time. An app installed before
+> this version has to be re-registered (an app update does this) before
+> `/operator/setup` exists; until then the panel does not appear and the viewer
+> behaves as it did before.
 
 ## Step 4 — Verify the install (before touching Talk)
 
@@ -542,6 +668,7 @@ The manifest declares per-route access levels enforced by Nextcloud's proxy:
 | `/operator/jobs`, `/operator/jobs/...`, `/operator/events` | ADMIN | Operator JSON + SSE API |
 | `/operator/settings` | ADMIN | STT-quality settings (read + update) |
 | `/operator/status` | ADMIN | Doctor/status endpoint (version, device usability, Talk config, DB/storage health) |
+| `/operator/setup` | USER | Whether recordings can be served at all — `{"ok":…,"state":…}` and nothing else |
 | `/viewer/*` | USER | Viewer SPA |
 | `/published/*` | USER | Published meeting bundles (catalog + recordings) |
 | `/ui/viewer.js`, `/ui/viewer.css` | USER | Bootstrap script + stylesheet behind the **Cassini** navigation entry |
@@ -554,6 +681,14 @@ recording **as the individual caller**, so Nextcloud Files enforces that
 meeting's advanced ACL — a non-participant sees no catalog entry and a direct
 fetch 404s. See
 [Managing recording permissions](./exapp-nextcloud-recordings-permissions.md).
+
+`/operator/setup` is the one deliberate exception to "the operator API is
+ADMIN", and it is USER for a reason: without it, the only thing a non-admin
+could learn about an unfinished install was the viewer failing to load. It
+carries the `recordings_access` **verdict** — `ok` and `state` — and nothing
+else. No step, no administrator, no paths, no versions; the diagnosis stays on
+`/operator/status`. See [What people see when setup is not
+finished](#what-people-see-when-setup-is-not-finished).
 
 `PUT /enabled` and `POST /init` are AppAPI **lifecycle callbacks**, not
 proxied browser routes; they do not appear in `<routes>`.

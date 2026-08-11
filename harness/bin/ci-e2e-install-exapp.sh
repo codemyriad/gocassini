@@ -238,6 +238,169 @@ OC_PASS="$TEST_USER_PASSWORD" \
   php occ user:add --password-from-env --display-name="$TEST_USER" "$TEST_USER" \
   >/dev/null 2>&1 || true   # idempotent
 
+# --- 7a. The recordings substrate: what a stock install actually yields ----
+#
+# This job is the closest thing in the repo to a real production install: a
+# manual AppAPI install against a plain Nextcloud, with NO Team folders and NO
+# Everyone Group — which is exactly what Nextcloud AIO ships. So it can prove
+# BOTH halves of D-585 with one boot.
+#
+# Everything here runs against a stock install: no extra --env, nothing but the
+# variables AppAPI injects.
+
+SUBSTRATE_PROXY="http://127.0.0.1:${NEXTCLOUD_HOST_PORT}/index.php/apps/app_api/proxy/${APP_ID}"
+
+cycle_exapp() {
+  occ app_api:app:disable "$APP_ID" >/dev/null 2>&1 || true
+  occ app_api:app:enable  "$APP_ID" >/dev/null 2>&1 || true
+}
+
+# await_substrate <expected-state> — provisioning is dispatched in a goroutine
+# AFTER the lifecycle handler has already answered, so the enabled edge returning
+# is not the same as provisioning having finished. Poll rather than sleep on a
+# guess; a fixed sleep is a race in both directions (flaky when slow, wasted
+# minutes when fast).
+await_substrate() {
+  local want="$1" seen=""
+  for _ in $(seq 1 40); do
+    seen=$(substrate_field state)
+    [[ "$seen" == "$want" ]] && return 0
+    sleep 1
+  done
+  log "recordings_access: $(substrate_json)"
+  log "provisioning log:"
+  docker logs "$CONTAINER_NAME" 2>&1 | grep 'nc provision' | tail -5 | sed 's/^/    /'
+  fail "substrate state settled at '${seen:-<unreadable>}', expected '$want'"
+}
+
+# require_app_enabled <id> — occ app:enable exits 0 even where the app did not
+# actually become enabled, and a silent miss here is indistinguishable from the
+# failure this section is testing for.
+require_app_enabled() {
+  local app="$1"
+  for _ in $(seq 1 20); do
+    if occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${app}:"; then
+      return 0
+    fi
+    sleep 1
+  done
+  fail "Nextcloud app $app did not become enabled"
+}
+
+substrate_json() {
+  curl -sS -u "admin:admin" "$SUBSTRATE_PROXY/operator/status" 2>/dev/null \
+    | jq -c '.recordings_access' 2>/dev/null || echo '{}'
+}
+
+substrate_field() {
+  substrate_json | jq -r ".$1 // \"\"" 2>/dev/null || echo ""
+}
+
+# (a) POSITIVE: with the two prerequisites — the ONLY manual step a production
+#     admin performs — the whole substrate must appear with no further
+#     configuration. Acceptance criterion 2.
+#
+#     They are enabled explicitly rather than assumed: whether a given Nextcloud
+#     image ships either of them is not this test's contract, and asserting on
+#     the base image's app list would make the result depend on an upstream
+#     packaging decision.
+log "ensuring the two native prerequisites are enabled"
+for app in groupfolders group_everyone; do
+  occ app:install "$app" >/dev/null 2>&1 || true
+  occ app:enable  "$app" >/dev/null 2>&1 \
+    || fail "could not enable required Nextcloud app $app"
+  require_app_enabled "$app"
+done
+cycle_exapp
+await_substrate provisioned
+
+substrate_status=$(curl -sS -u "admin:admin" -o /dev/null -w '%{http_code}' "$SUBSTRATE_PROXY/operator/status")
+if [[ "$substrate_status" != "200" ]]; then
+  log "recordings_access: $(substrate_json)"
+  fail "a provisioned substrate must answer 200, got $substrate_status"
+fi
+# The sink must be the RESOLVED one. An ExApp that sets no CASSINI_PUBLISH_SINK
+# resolves to nextcloud-files, and reporting the raw (empty) config as `local`
+# would say no substrate is expected for a deployment that plainly expects one.
+sink=$(substrate_field publish_sink)
+[[ "$sink" == "nextcloud-files" ]] \
+  || fail "expected the resolved sink nextcloud-files, got '$sink'"
+admin_user=$(substrate_field admin_user)
+[[ -n "$admin_user" ]] || fail "the resolved administrator is not reported"
+enabled_prereqs=$(substrate_json | jq '[.prerequisites[] | select(.state == "enabled")] | length' 2>/dev/null || echo 0)
+[[ "$enabled_prereqs" == "2" ]] \
+  || fail "expected both prerequisites reported enabled, got $enabled_prereqs"
+log "OK   /status: provisioned, sink=$sink, admin_user=$admin_user, 2 prerequisites enabled"
+
+# The USER-readable half of the same verdict. This is the only route that lets
+# someone who is NOT an administrator find out that an install was never
+# finished — before it, the viewer's `HTTP 502` was the whole message — so both
+# halves of its contract are asserted here, through the proxy, as a non-admin:
+# it answers, and it answers with nothing else. The unit tests pin the shape;
+# only this pins that Nextcloud lets a USER-tier account reach it at all.
+setup_json="$LOG_DIR/operator-setup.json"
+curl -sS -u "$TEST_USER:$TEST_USER_PASSWORD" "$SUBSTRATE_PROXY/operator/setup" -o "$setup_json" \
+  || fail "could not read operator/setup as $TEST_USER"
+jq -e '.ok == true and .state == "provisioned"' "$setup_json" >/dev/null 2>&1 \
+  || fail "operator/setup as $TEST_USER should mirror the provisioned verdict, got: $(cat "$setup_json")"
+setup_keys=$(jq -r 'keys | join(",")' "$setup_json" 2>/dev/null || echo "")
+[[ "$setup_keys" == "ok,state" ]] \
+  || fail "operator/setup must expose ok+state only — a non-admin has no business with the step, the administrator or the paths; got keys: $setup_keys"
+log "OK   operator/setup: readable by $TEST_USER, verdict only (keys: $setup_keys)"
+
+# The service account, created because the app was installed — no occ recipe.
+occ user:info cassini >/dev/null 2>&1 \
+  || fail "the cassini service account was not created by the install"
+log "OK   the cassini service account exists"
+
+# The Team-folder topology, read over the same HTTP surface the operator speaks.
+gf_json="$LOG_DIR/groupfolders.json"
+curl -sS -u "admin:admin" -H 'OCS-APIRequest: true' \
+  "http://127.0.0.1:${NEXTCLOUD_HOST_PORT}/index.php/apps/groupfolders/folders?format=json" \
+  -o "$gf_json" || fail "could not list Team folders"
+if ! jq -e '[.ocs.data[]? | select(.mount_point == "Cassini")] | length == 1' "$gf_json" >/dev/null 2>&1; then
+  log "groupfolders: $(head -c 400 "$gf_json")"
+  fail "expected exactly one Cassini Team folder"
+fi
+# everyone READ is the audience; the narrow owner group ALL is the only write
+# path. Asserted by value so a permissions regression cannot pass.
+jq -e '.ocs.data[] | select(.mount_point == "Cassini") | select(.acl == true)' "$gf_json" >/dev/null 2>&1 \
+  || fail "the Cassini Team folder does not have advanced ACL enabled"
+jq -e '.ocs.data[] | select(.mount_point == "Cassini") | select(.groups.everyone == 1)' "$gf_json" >/dev/null 2>&1 \
+  || fail "the Cassini Team folder does not grant the everyone group read (1)"
+jq -e '.ocs.data[] | select(.mount_point == "Cassini") | select(.groups.cassini == 31)' "$gf_json" >/dev/null 2>&1 \
+  || fail "the Cassini Team folder does not grant the cassini owner group all (31)"
+jq -e '.ocs.data[] | select(.mount_point == "Cassini") | .manage[] | select(.type == "user" and .id == "cassini")' "$gf_json" >/dev/null 2>&1 \
+  || fail "cassini is not the ACL manager of the Cassini Team folder"
+log "OK   Cassini Team folder: acl=true, everyone:1, cassini:31, manager=cassini"
+
+# The default-deny floor is only settable at creation and is not exposed by the
+# HTTP index, so this one needs occ. Note the key is `mountPoint` here and
+# `mount_point` over HTTP — the two surfaces genuinely disagree, and using the
+# HTTP spelling against occ silently selects nothing.
+occ groupfolders:list --output=json_pretty > "$LOG_DIR/groupfolders-occ.json" 2>/dev/null \
+  || fail "occ groupfolders:list failed"
+if ! jq -e '[.[] | select(.mountPoint == "Cassini") | select(.acl_default_no_permission == true)] | length == 1' \
+     "$LOG_DIR/groupfolders-occ.json" >/dev/null 2>&1; then
+  log "groupfolders (occ): $(head -c 400 "$LOG_DIR/groupfolders-occ.json")"
+  fail "the Cassini Team folder does not have acl_default_no_permission"
+fi
+log "OK   the Cassini Team folder has its default-deny floor"
+
+# THE DISCRIMINATOR. From `cassini` a private home directory and a mounted Team
+# folder are indistinguishable — both answer 207 to its own PROPFIND. From a
+# THIRD, unrelated account they are 404 vs 207. This is the only assertion here
+# that can tell "the recordings tree exists" from "the recordings tree exists
+# where nobody else can reach it", which is the failure D-585 exists to remove.
+propfind_status=$(curl -sS -X PROPFIND -u "$TEST_USER:$TEST_USER_PASSWORD" -H 'Depth: 1' \
+  -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${NEXTCLOUD_HOST_PORT}/remote.php/dav/files/$TEST_USER/Cassini/Recordings/meetings")
+if [[ "$propfind_status" != "207" ]]; then
+  fail "PROPFIND of Cassini/Recordings/meetings as $TEST_USER expected 207 (a mounted Team folder), got $propfind_status — the tree is in the owner's private home"
+fi
+log "OK   $TEST_USER sees Cassini/Recordings/meetings: it is a Team folder, not a private home"
+
+
 # --- 7b. Assert proxied routes --------------------------------------------
 
 PROXY="http://127.0.0.1:${NEXTCLOUD_HOST_PORT}/index.php/apps/app_api/proxy/${APP_ID}"
@@ -266,6 +429,10 @@ assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "viewer/"        200
 # The operator JSON API stays ADMIN — a non-admin is refused (D-420: the shell
 # entry is USER, but the operator surface's API remains the real boundary).
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "operator/jobs"  404
+# ...but "is Cassini set up" is USER, and has to be, or the only answer a
+# non-admin could get about an unfinished install is the viewer's own HTTP 502.
+# That it carries the verdict and none of the diagnosis is asserted in 7a.
+assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "operator/setup"  200
 assert_status "$TEST_USER" "$TEST_USER:$TEST_USER_PASSWORD" "ui/viewer.js"   200
 # ui/viewer.css must be proxy-reachable at USER tier: D-383 injects it into the
 # viewer's shadow root via a runtime <link>, so the proxy has to serve it.
@@ -413,5 +580,27 @@ if [[ "$playback_status" != "404" ]]; then
   fail "playback for a non-participant expected 404 got $playback_status"
 fi
 log "OK   proxied playback 404s for a non-participant"
+
+# NOT ASSERTED HERE: the negative half (disable a prerequisite → the install
+# reports unavailable/app_missing:<id> instead of coming up healthy).
+#
+# It is real and it is verified — by unit tests over the provisioner
+# (TestProvisionNamesTheMissingNativeApp asserts the state, the step, the per-app
+# list, the log naming `occ app:install`, and that nothing downstream is
+# attempted), and by hand against a live Nextcloud 34 (transcript in
+# _ivans-notes/development/549-install-substrate-preflight/implementation.md).
+#
+# It is not asserted in THIS job because toggling a Nextcloud app mid-run is
+# nondeterministic here: `occ` and php-fpm do not share an APCu segment, so
+# `occ app:disable`/`app:enable` updates the database and the CLI cache while the
+# web workers keep serving a stale enabled-apps list. Observed in both
+# directions across runs, with `occ app:list` disagreeing with
+# `GET /ocs/v2.php/cloud/apps?filter=enabled` for longer than 40s of polling.
+# Asserting on it measures Nextcloud's cache invalidation, not this code, and
+# makes the repo's most expensive job flaky for a reason unrelated to the change
+# under test.
+#
+# To reinstate: restart the `nextcloud` compose service between the toggle and
+# the poll so the web workers rebuild their app list.
 
 log "install-e2e passed"

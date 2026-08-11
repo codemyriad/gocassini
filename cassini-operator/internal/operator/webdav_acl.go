@@ -90,12 +90,56 @@ func (c ExAppConfig) davProppatchACLRules(ctx context.Context, client *http.Clie
 		return err
 	}
 	defer drainClose(resp.Body)
-	// A successful PROPPATCH returns 207 Multi-Status (or 2xx). The per-property
-	// status inside the multistatus is not parsed here (best-effort delivery).
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("PROPPATCH %s -> %d", relPath, resp.StatusCode)
 	}
-	return fmt.Errorf("PROPPATCH %s -> %d", relPath, resp.StatusCode)
+	// A PROPPATCH returns 207 Multi-Status, and the per-property status inside
+	// it is where a REJECTED property lands — the 207 itself only says the
+	// request was understood. Not reading it is one of the ways a recording can
+	// be written with no ACL at all while every response looks fine: outside a
+	// group folder with advanced ACL, `nc:acl-list` is not a settable property,
+	// so Nextcloud answers 207 with a 403 propstat and the caller sees success
+	// (D-585).
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("PROPPATCH %s: read multistatus: %w", relPath, err)
+	}
+	if status, ok := failedPropstatStatus(raw); ok {
+		return fmt.Errorf("PROPPATCH %s: nc:acl-list rejected (%s) — is %s inside the %q Team folder, with advanced ACL enabled?", relPath, status, relPath, ncRecordingsMount)
+	}
+	return nil
+}
+
+// failedPropstatStatus reports the first non-2xx per-property status line in a
+// PROPPATCH multistatus, if any. An absent or unparseable body is NOT treated as
+// a failure: a bare 200 with no body is a legitimate success shape, and turning
+// "I could not read the response" into "the ACL was rejected" would fail
+// publishes on a technicality.
+func failedPropstatStatus(raw []byte) (string, bool) {
+	var ms struct {
+		Responses []struct {
+			Propstat []struct {
+				Status string `xml:"status"`
+			} `xml:"propstat"`
+		} `xml:"response"`
+	}
+	if err := xml.Unmarshal(raw, &ms); err != nil {
+		return "", false
+	}
+	for _, r := range ms.Responses {
+		for _, ps := range r.Propstat {
+			// "HTTP/1.1 403 Forbidden" -> the class digit is the one after the
+			// space following the protocol token.
+			fields := strings.Fields(ps.Status)
+			if len(fields) < 2 {
+				continue
+			}
+			if !strings.HasPrefix(fields[1], "2") {
+				return strings.TrimSpace(ps.Status), true
+			}
+		}
+	}
+	return "", false
 }
 
 type aclRule struct {

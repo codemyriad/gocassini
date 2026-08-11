@@ -40,6 +40,10 @@ import (
 // never blank or narrow it.
 const publishSinkNextcloudFiles = "nextcloud-files"
 
+// envPublishSinkName is the deploy option that selects the sink. Named here
+// because the strict substrate gate below points an operator at it.
+const envPublishSinkName = "CASSINI_PUBLISH_SINK"
+
 type nextcloudFilesPublishSink struct {
 	cfg    ExAppConfig
 	logger *log.Logger
@@ -53,6 +57,26 @@ type nextcloudFilesPublishSink struct {
 func (s *nextcloudFilesPublishSink) Name() string { return publishSinkNextcloudFiles }
 
 func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelivery) (string, error) {
+	// Refuse to write into a directory that is not the Team folder (D-585
+	// outcome 5, decided strict).
+	//
+	// WebDAV cannot tell us this. With no group folder mounted at `Cassini`,
+	// MKCOL of Cassini/Recordings creates an ordinary directory in the service
+	// account's own HOME and returns the same 201 as a mounted group folder
+	// would; the .opus PUTs succeed; the publish reports success; and every
+	// caller's PROPFIND of their own tree 404s forever. Every individual call
+	// succeeds and the composition is wrong, so the only sound guard is what
+	// provisioning recorded.
+	//
+	// Strict rather than a degraded mode, consistent with D-549/D-550: a
+	// recording that did not reach Nextcloud is not published. An operator who
+	// genuinely wants recordings on the app's own volume already has
+	// CASSINI_PUBLISH_SINK=local, which is a different sink object entirely and
+	// never reaches this code.
+	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.Applicable && !ncAccessSubstrate.usable() {
+		return "", fmt.Errorf("the recordings substrate is not provisioned (%s: %s); refusing to write recordings into the %q account's private home — see GET /status recordings_access, or set %s=local to keep recordings on this app's own volume",
+			snap.Step, snap.Detail, ncRecordingsOwner, envPublishSinkName)
+	}
 	incoming, ok, err := loadSiteCatalog(d.AttemptSitePath)
 	if err != nil {
 		return "", err

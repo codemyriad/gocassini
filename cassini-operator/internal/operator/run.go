@@ -240,6 +240,20 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	runtime.publishSink = sink
 	logger.Printf("publish_sink -> %s", sink.Name())
 
+	// Only a deployment that actually serves recordings from Nextcloud Files is
+	// expected to have a substrate. uploadToNCFiles is non-nil whenever AppAPI is
+	// active regardless of the sink, so without this an ExApp deliberately pinned
+	// to `local` would report an unhealthy substrate it serves nothing from — and
+	// `local` is the documented escape hatch the sink gate itself points at.
+	//
+	// Marked HERE rather than only inside the provisioner so a container that
+	// restarts without seeing another enabled edge reports `unknown` instead of
+	// passing itself off as a standalone operator with nothing to provision. That
+	// makes D-541's restart-convergence gap visible; it does not close it.
+	if exappCfg.appAPIActive() && sink.Name() == publishSinkNextcloudFiles {
+		ncAccessSubstrate.markApplicable()
+	}
+
 	if runtime.uploadToNCFiles != nil {
 		// During AppAPI registration, outbound callbacks are rejected until the
 		// /enabled?enabled=1 lifecycle edge. Start convergence from that edge,
@@ -608,6 +622,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/jobs/", rt.jobDetailHandler)
 	api.HandleFunc("/events", rt.eventsHandler)
 	api.HandleFunc("/status", rt.statusHandler)
+	api.HandleFunc("/setup", rt.setupHandler)
 	api.HandleFunc("/settings", rt.settingsHandler)
 	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
 
@@ -648,6 +663,7 @@ func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler) {
 		root.Handle("/jobs/", api)
 		root.Handle("/events", api)
 		root.Handle("/status", api)
+		root.Handle("/setup", api)
 		root.Handle("/settings", api)
 		root.Handle("/talk/provisioning", api)
 		return

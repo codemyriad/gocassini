@@ -107,12 +107,47 @@ type provisionMock struct {
 	// failPath makes any request whose path ends with this suffix answer 500,
 	// for the provisioning steps that must now abort rather than log on.
 	failPath string
+	// apps is ocs.data.apps for GET /cloud/apps?filter=enabled. Nil means both
+	// native prerequisites are enabled, which is what almost every test wants.
+	apps []string
+	// adminActors maps an act-as identity to the status GET /cloud/groups/admin
+	// answers it. Nil means "admin is an administrator", the conventional shape.
+	// Unlisted actors get 401 — a live Nextcloud's answer for an account that
+	// does not exist, and 403 for one that exists but is not an admin
+	// (spike-x1).
+	adminActors map[string]int
+	// roster is ocs.data for GET /apps/app_api/api/v1/users, which answers
+	// app-scoped and is what lets discovery enumerate rather than guess.
+	roster []string
+}
+
+// actorOf decodes the act-as identity out of the AppAPI auth header, so the mock
+// can answer per-identity the way a real Nextcloud does.
+func actorOf(r *http.Request) string {
+	raw, err := base64.StdEncoding.DecodeString(r.Header.Get("AUTHORIZATION-APP-API"))
+	if err != nil {
+		return ""
+	}
+	actor, _, _ := strings.Cut(string(raw), ":")
+	return actor
+}
+
+func jsonArray(items []string) string {
+	quoted := make([]string, 0, len(items))
+	for _, item := range items {
+		quoted = append(quoted, `"`+item+`"`)
+	}
+	return "[" + strings.Join(quoted, ",") + "]"
 }
 
 func resetProvisioningUser(t *testing.T) {
 	t.Helper()
-	resolvedProvisioningUser.Store(nil)
-	t.Cleanup(func() { resolvedProvisioningUser.Store(nil) })
+	clear := func() {
+		resolvedProvisioningUser.Store(nil)
+		resolvedAdminRoster.Store(nil)
+	}
+	clear()
+	t.Cleanup(clear)
 }
 
 // resetSubstrateRecord is mandatory in every test that calls
@@ -123,6 +158,10 @@ func resetProvisioningUser(t *testing.T) {
 func resetSubstrateRecord(t *testing.T) {
 	t.Helper()
 	ncAccessSubstrate.reset()
+	// Applicability is decided once at startup by run.go, not by the provisioner,
+	// so a test that wants to read the recorded outcome has to declare it — the
+	// deployment being modelled here is an ExApp delivering to Nextcloud Files.
+	ncAccessSubstrate.markApplicable()
 	t.Cleanup(ncAccessSubstrate.reset)
 }
 
@@ -174,9 +213,43 @@ func (m *provisionMock) handler(t *testing.T) http.Handler {
 		switch {
 		case m.failPath != "" && strings.HasSuffix(p, m.failPath):
 			w.WriteHeader(http.StatusInternalServerError)
+		case r.Method == http.MethodGet && p == "/ocs/v2.php/apps/app_api/api/v1/users":
+			// Answers app-scoped (empty actor) on a live instance, which is what
+			// makes it usable before any identity is known.
+			roster := m.roster
+			if roster == nil {
+				roster = []string{"admin"}
+			}
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":`+jsonArray(roster)+`}}`)
+		case r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/apps":
+			apps := m.apps
+			if apps == nil {
+				apps = ncRequiredNativeApps
+			}
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"apps":`+jsonArray(apps)+`}}}`)
 		case r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/groups":
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"groups":`+m.groups+`}}}`)
 		case r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/groups/admin":
+			// Per-actor, because that is the discriminator admin discovery now
+			// depends on: 2xx = this actor IS an admin, 403 = exists but is not,
+			// 401 = no such act-as (verified live, spike-x1). A mock that
+			// answered 200 to everyone is exactly why the circularity survived.
+			actor := actorOf(r)
+			want := http.StatusOK
+			if m.adminActors != nil {
+				code, listed := m.adminActors[actor]
+				if !listed {
+					code = http.StatusUnauthorized
+				}
+				want = code
+			} else if actor != defaultNextcloudAdminUser {
+				want = http.StatusUnauthorized
+			}
+			if want/100 != 2 {
+				w.WriteHeader(want)
+				io.WriteString(w, `{"ocs":{"meta":{"status":"failure","statuscode":997},"data":[]}}`)
+				return
+			}
 			admins := m.adminList
 			if admins == "" {
 				admins = `["admin"]`
@@ -351,9 +424,9 @@ func TestProvisionCreatesTheOwnerEvenWhenTheSubstrateCannotBeBuilt(t *testing.T)
 	}
 }
 
-// The Group folders app is the other native prerequisite an ExApp cannot
-// install for itself, and its absence surfaces as a failed folder creation.
-// /status must name it rather than reporting an opaque failure.
+// With the preflight in place, a folder-create failure is no longer evidence
+// that the Group folders app is missing — the preflight already established it
+// is enabled. It is a distinct diagnosis, and the step says so.
 func TestProvisionRecordsSubstrateFailureWhenTheGroupFolderCannotBeCreated(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
@@ -367,8 +440,84 @@ func TestProvisionRecordsSubstrateFailureWhenTheGroupFolderCannotBeCreated(t *te
 	if !snap.Applicable || snap.OK {
 		t.Fatalf("substrate = %+v, want applicable and not ok", snap)
 	}
-	if !strings.Contains(snap.Detail, "Group folders") {
-		t.Fatalf("substrate detail = %q, want it to name the Group folders app", snap.Detail)
+	if snap.Step != "group_folder" {
+		t.Fatalf("step = %q, want group_folder", snap.Step)
+	}
+	if !strings.Contains(snap.Detail, ncRecordingsMount) {
+		t.Fatalf("substrate detail = %q, want it to name the Team folder", snap.Detail)
+	}
+}
+
+// D-585 outcome 1: a NOT-INSTALLED app is actionable and must be named. Nextcloud
+// AIO does not ship Team folders enabled, so this is the common case.
+func TestProvisionNamesTheMissingNativeApp(t *testing.T) {
+	for _, missing := range ncRequiredNativeApps {
+		t.Run(missing, func(t *testing.T) {
+			resetProvisioningUser(t)
+			resetSubstrateRecord(t)
+			var enabled []string
+			for _, app := range ncRequiredNativeApps {
+				if app != missing {
+					enabled = append(enabled, app)
+				}
+			}
+			mock := &provisionMock{folders: `[]`, groups: `["admin","everyone"]`, apps: enabled}
+			srv := httptest.NewServer(mock.handler(t))
+			defer srv.Close()
+
+			var logs strings.Builder
+			testExAppConfig(srv.URL).provisionNCFilesAccess(context.Background(), log.New(&logs, "", 0))
+
+			snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+			if snap.State != string(ncSubstrateUnavailable) || snap.Step != "app_missing:"+missing {
+				t.Fatalf("substrate = %+v, want unavailable/app_missing:%s", snap, missing)
+			}
+			if !strings.Contains(logs.String(), "occ app:install "+missing) {
+				t.Fatalf("the log must name the fix: %s", logs.String())
+			}
+			// Nothing may be attempted against a substrate that cannot exist.
+			if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); ok {
+				t.Fatal("a folder was created despite a missing prerequisite")
+			}
+			if _, ok := mock.find(http.MethodPost, "/ocs/v2.php/cloud/users"); ok {
+				t.Fatal("the service account was created despite a missing prerequisite")
+			}
+			// And the per-app list must name which one, not merely that one is missing.
+			var reported string
+			for _, p := range snap.Prerequisites {
+				if p.State == ncPrerequisiteMissing {
+					reported = p.Name
+				}
+			}
+			if reported != missing {
+				t.Fatalf("prerequisites = %+v, want %s reported missing", snap.Prerequisites, missing)
+			}
+		})
+	}
+}
+
+// ...and a FAILED CHECK is a different diagnosis, because nothing is installed
+// to fix it. Conflating the two turns an `occ app:install` into an investigation.
+func TestProvisionDistinguishesAFailedAppCheckFromAMissingApp(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	mock := &provisionMock{folders: `[]`, groups: `["admin","everyone"]`, failPath: "/cloud/apps"}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	testExAppConfig(srv.URL).provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
+
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.State != string(ncSubstrateDegraded) || snap.Step != "app_check_failed" {
+		t.Fatalf("substrate = %+v, want degraded/app_check_failed", snap)
+	}
+	if strings.HasPrefix(snap.Step, "app_missing:") {
+		t.Fatal("a failed check must not be reported as a missing app")
+	}
+	for _, p := range snap.Prerequisites {
+		if p.State != ncPrerequisiteUnknown {
+			t.Fatalf("an unanswerable check leaves every app unknown, got %+v", p)
+		}
 	}
 }
 
@@ -508,7 +657,13 @@ func TestProvisionCreatesTheRecordingsServiceAccount(t *testing.T) {
 func TestProvisionResolvesTheAdministratorRatherThanAssumingAdmin(t *testing.T) {
 	resetProvisioningUser(t)
 	resetSubstrateRecord(t)
-	mock := &provisionMock{folders: `[]`, groups: `["everyone"]`, adminList: `["ops-root"]`}
+	mock := &provisionMock{
+		folders:     `[]`,
+		groups:      `["everyone"]`,
+		adminList:   `["ops-root"]`,
+		roster:      []string{"alice", "ops-root", "bob"},
+		adminActors: map[string]int{"ops-root": http.StatusOK, "admin": http.StatusUnauthorized},
+	}
 	srv := httptest.NewServer(mock.handler(t))
 	defer srv.Close()
 

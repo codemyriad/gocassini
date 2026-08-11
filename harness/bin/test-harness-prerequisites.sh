@@ -45,4 +45,49 @@ done
 grep -qF 'CASSINI_NC_ACCESS_CONTROL' "$MANIFEST" \
   && fail "appinfo/info.xml still declares the retired CASSINI_NC_ACCESS_CONTROL variable"
 
-echo "PASS: Team folders + Everyone Group are provisioned by the harness and hard-enabled on the sandbox"
+INSTALL_DOC="$ROOT/docs/exapp-install.md"
+
+# 4. Both apps are named inside the Prerequisites SECTION, not merely somewhere
+#    in the file. An installer reads that section and stops; a mention buried in
+#    a variable description is how this went undocumented in the first place
+#    (D-585 outcome 4).
+prereq_block="$(awk '/^## Prerequisites$/{f=1;next} /^## /{f=0} f' "$INSTALL_DOC")"
+[[ -n "$prereq_block" ]] || fail "docs/exapp-install.md has no Prerequisites section"
+for app in groupfolders group_everyone; do
+  grep -qF "$app" <<<"$prereq_block" \
+    || fail "docs/exapp-install.md Prerequisites does not name required app $app"
+done
+
+# 5. MANIFEST <-> DOCS PARITY. The deploy-options table was missing two of the
+#    declared variables, and it was missing them because nothing checked.
+mapfile -t manifest_vars < <(python3 - "$MANIFEST" <<'PY'
+import sys, xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+for v in root.findall('./external-app/environment-variables/variable'):
+    print(v.find('name').text)
+PY
+)
+[[ ${#manifest_vars[@]} -gt 0 ]] || fail "appinfo/info.xml declares no environment variables"
+mapfile -t doc_vars < <(python3 - "$INSTALL_DOC" <<'PY'
+import re, sys
+doc = open(sys.argv[1]).read()
+# The deploy-options table: rows whose first cell is a backticked variable name.
+block = doc.split('### App configuration (`--env`)', 1)[-1].split('### Updating deploy options', 1)[0]
+for line in block.splitlines():
+    m = re.match(r'\|\s*`([A-Z][A-Z0-9_]*)`\s*\|', line)
+    if m:
+        print(m.group(1))
+PY
+)
+missing_from_docs="$(comm -23 <(printf '%s\n' "${manifest_vars[@]}" | sort) <(printf '%s\n' "${doc_vars[@]}" | sort))"
+missing_from_manifest="$(comm -13 <(printf '%s\n' "${manifest_vars[@]}" | sort) <(printf '%s\n' "${doc_vars[@]}" | sort))"
+[[ -z "$missing_from_docs" ]] \
+  || fail "declared in appinfo/info.xml but absent from the deploy-options table: $(tr '\n' ' ' <<<"$missing_from_docs")"
+[[ -z "$missing_from_manifest" ]] \
+  || fail "documented in the deploy-options table but not declared in appinfo/info.xml: $(tr '\n' ' ' <<<"$missing_from_manifest")"
+
+# 6. The substrate report is documented where an installer will look for it.
+grep -qF 'recordings_access' "$INSTALL_DOC" \
+  || fail "docs/exapp-install.md does not document the /status recordings_access block"
+
+echo "PASS: prerequisites are provisioned and hard-enabled, and all ${#manifest_vars[@]} declared deploy variables are documented"
