@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -697,5 +698,106 @@ func TestMeetingsListSkipsEntriesWithNoID(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "had no id and were skipped") {
 		t.Errorf("stderr=%q, want it to report the skipped entries", stderr)
+	}
+}
+
+// A catalog body of unbounded length must not be read into memory until the
+// machine dies. This is capped rather than left to the request timeout, which a
+// fast link outruns by gigabytes.
+func TestMeetingsListRefusesAnOversizedCatalog(t *testing.T) {
+	// One byte past the cap is enough to prove the limit; serving gigabytes here
+	// would just OOM the test runner, which is exactly the bug being fixed.
+	oversized := maxCatalogBytes + 1
+	fake := newMeetingsFakeNextcloud(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Cassini-Meeting-Source", "nextcloud-files")
+		w.WriteHeader(http.StatusOK)
+		chunk := bytes.Repeat([]byte("A"), 1<<16)
+		for sent := 0; sent < oversized; sent += len(chunk) {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+	})
+
+	code, _, stderr := runMeetingsCLI(t, fake.server.URL, "list")
+
+	if code != 1 {
+		t.Fatalf("exit=%d, want 1 (stderr=%q)", code, stderr)
+	}
+	if !strings.Contains(stderr, "larger than") {
+		t.Errorf("stderr=%q, want it to name the size refusal", stderr)
+	}
+}
+
+// A flag that lands in the surplus arguments gets echoed back so the caller can
+// see what was misread. The app password must not be echoed with it.
+//
+// This needs a flag positioned AFTER a positional argument: Go's flag package
+// stops parsing there, so everything following becomes surplus. A leading id is
+// reordered to the end (meetingsParseArgs) and parses cleanly, so that shape is
+// safe already — these are the shapes that are not.
+func TestMeetingsSurplusArgumentsNeverEchoTheAppPassword(t *testing.T) {
+	const secret = "super-secret-app-password"
+	for _, form := range [][]string{
+		{"meetings", "fetch", "--out", "/tmp/x.opus", "ID", "--app-password", secret},
+		{"meetings", "fetch", "--out", "/tmp/x.opus", "ID", "--app-password=" + secret},
+		{"meetings", "context", "--json", "ID", "--app-password", secret},
+		{"meetings", "list", "surplus", "--app-password", secret},
+	} {
+		t.Run(strings.Join(form[1:3], " "), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := Run(context.Background(), form, &stdout, &stderr)
+			if code != 2 {
+				t.Fatalf("exit=%d, want 2", code)
+			}
+			if strings.Contains(stdout.String()+stderr.String(), secret) {
+				t.Errorf("the app password was echoed:\nstdout=%q\nstderr=%q", stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "redacted") {
+				t.Errorf("expected the value to be marked redacted, got %q", stderr.String())
+			}
+		})
+	}
+}
+
+// Titles come from the server. A newline in one would let a catalog forge extra
+// "meeting=" lines that a caller parsing this output reads as real recordings.
+func TestMeetingsListFlattensControlCharactersInServerText(t *testing.T) {
+	fake := newMeetingsFakeNextcloud(t, serveCatalog(`{"version":"cassini.viewer.catalog.v1","meetings":[
+	  {"id":"REAL","dateLabel":"2026-08-11","audioPath":"./meetings/REAL.opus",
+	   "title":"Standup\nmeeting=FORGED date=2026-01-01 title=Injected speakers=1 segments=1 duration_ms=1 fetchable=yes"}]}`))
+
+	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "list")
+
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	if strings.Contains(stdout, "\nmeeting=FORGED") {
+		t.Errorf("a forged record was injected into the output:\n%s", stdout)
+	}
+	// One summary line plus exactly one meeting line.
+	if got := strings.Count(strings.TrimSpace(stdout), "\n"); got != 1 {
+		t.Errorf("expected 2 lines of output, got %d newlines:\n%s", got, stdout)
+	}
+}
+
+// A downloaded recording is a private meeting's audio and transcript. It must not
+// be created world-readable, which would undo the access control it was fetched
+// under.
+func TestMeetingsFetchWritesAnOwnerOnlyFile(t *testing.T) {
+	tmp := t.TempDir()
+	outPath := filepath.Join(tmp, "m.opus")
+	fake := newMeetingsFakeNextcloud(t, serveCatalogAndOpus(oneMeetingCatalog, []byte("opus-bytes")))
+
+	if code, _, stderr := runMeetingsCLI(t, fake.server.URL, "fetch", "MEETING1", "--out", outPath); code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+
+	info, err := os.Stat(outPath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode&0o077 != 0 {
+		t.Errorf("mode = %#o, want no group or other access", mode)
 	}
 }

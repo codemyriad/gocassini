@@ -36,7 +36,7 @@ summary in a single file. Use `+"`cassini meetings list`"+` to find the id.
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintf(stderr, "fetch takes exactly one meeting id, got %d arguments: %v\n", fs.NArg(), fs.Args())
+		fmt.Fprintf(stderr, "fetch takes exactly one meeting id, got %d arguments: %v\n", fs.NArg(), redactMeetingsArgs(fs.Args()))
 		// Go's flag package stops parsing at the first non-flag argument, so a
 		// flag after the id lands here as a surplus positional rather than as
 		// an unknown-flag error. Say which ordering works.
@@ -141,14 +141,49 @@ func (c *meetingsClient) downloadMeeting(ctx context.Context, audioURL *url.URL,
 	if err := tmp.Close(); err != nil {
 		return 0, fmt.Errorf("finish writing %s: %w", tmpName, err)
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return 0, fmt.Errorf("set permissions on %s: %w", tmpName, err)
-	}
+	// Deliberately NOT widened to 0644. os.CreateTemp makes the file readable by
+	// its owner only, and that is the right default here: this file is a private
+	// meeting's audio and transcript, and the whole point of the surface is that
+	// Nextcloud decides who may read it. Publishing it to every account on a
+	// shared host would undo that, and forcing a mode would override a caller who
+	// set a restrictive umask on purpose. A caller who wants it wider can chmod.
 	if err := os.Rename(tmpName, outPath); err != nil {
 		return 0, fmt.Errorf("move the downloaded meeting into place at %s: %w", outPath, err)
 	}
 	committed = true
 	return written, nil
+}
+
+// redactMeetingsArgs returns args with any app-password value replaced.
+//
+// Surplus arguments get echoed back so the caller can see what was
+// misinterpreted — but a flag placed after the meeting id is exactly what lands
+// there, and `--app-password <secret>` is the likeliest such flag. Echoing it
+// verbatim would print the credential to the terminal and into any captured
+// output, which is the one thing this surface must never do.
+func redactMeetingsArgs(args []string) []string {
+	const flagName = "app-password"
+	redacted := make([]string, 0, len(args))
+	hideNext := false
+	for _, arg := range args {
+		if hideNext {
+			redacted = append(redacted, "<redacted>")
+			hideNext = false
+			continue
+		}
+		trimmed := strings.TrimLeft(arg, "-")
+		switch {
+		case trimmed == flagName:
+			// The value is the next argument.
+			redacted = append(redacted, arg)
+			hideNext = true
+		case strings.HasPrefix(trimmed, flagName+"="):
+			redacted = append(redacted, arg[:len(arg)-len(trimmed)]+flagName+"=<redacted>")
+		default:
+			redacted = append(redacted, arg)
+		}
+	}
+	return redacted
 }
 
 // checkMeetingOutPath rejects a destination that cannot receive a file, naming

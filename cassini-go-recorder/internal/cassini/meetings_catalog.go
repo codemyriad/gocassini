@@ -16,6 +16,16 @@ import (
 // fields that may have moved.
 const meetingsCatalogVersion = "cassini.viewer.catalog.v1"
 
+// maxCatalogBytes caps how much of a catalog response is read into memory.
+//
+// A catalog entry is a few hundred bytes, so this is generous by orders of
+// magnitude — a hundred thousand meetings would still fit. The cap exists
+// because the body is network data of unbounded length: reading it whole with no
+// limit lets a malfunctioning or hostile server drive this process until the
+// machine is out of memory. The request timeout is not a substitute, since a
+// fast link delivers gigabytes well inside it.
+const maxCatalogBytes = 32 << 20
+
 // meetingsCatalog is the per-caller meeting index.
 //
 // Entries are kept as raw JSON as well as decoded: the exporter owns this shape
@@ -93,9 +103,16 @@ func (c *meetingsClient) fetchCatalog(ctx context.Context) (meetingsListing, err
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	// Read one byte past the cap so hitting it is detectable rather than silently
+	// truncating the JSON into a parse error that blames the server's syntax.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCatalogBytes+1))
 	if err != nil {
 		return meetingsListing{}, fmt.Errorf("read catalog from %s: %w", target.Redacted(), err)
+	}
+	if len(body) > maxCatalogBytes {
+		return meetingsListing{}, fmt.Errorf(
+			"catalog from %s is larger than %d MiB, which no real meeting list is: refusing to keep reading it into memory",
+			target.Redacted(), maxCatalogBytes>>20)
 	}
 
 	var catalog meetingsCatalog

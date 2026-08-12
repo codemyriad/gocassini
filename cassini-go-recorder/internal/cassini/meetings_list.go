@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 )
 
 func runMeetingsList(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -34,7 +35,7 @@ recordings folder looks like.
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintf(stderr, "list does not accept positional arguments: %v\n", fs.Args())
+		fmt.Fprintf(stderr, "list does not accept positional arguments: %v\n", redactMeetingsArgs(fs.Args()))
 		fs.Usage()
 		return 2
 	}
@@ -87,13 +88,31 @@ recordings folder looks like.
 	return 0
 }
 
-// blankMeetingsDash renders an empty field as "-", matching how inspect prints
-// key=value records.
+// blankMeetingsDash renders a field for the one-record-per-line output: empty
+// becomes "-", matching how inspect prints key=value records, and control
+// characters are flattened to spaces.
+//
+// The flattening is not cosmetic. Titles come from the server, and a title
+// containing a newline would let a catalog forge additional "meeting=" lines
+// that a caller parsing this output would read as real recordings; an escape
+// sequence could rewrite the terminal. Neither can survive into a line-oriented
+// format.
 func blankMeetingsDash(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return "-"
 	}
-	return value
+	return oneLineField(value)
+}
+
+// oneLineField replaces every control character in value with a space, so the
+// result cannot break out of the line it is printed on.
+func oneLineField(value string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' || unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, value)
 }
 
 // meetingsCount renders an absent count as "-" rather than a misleading 0.

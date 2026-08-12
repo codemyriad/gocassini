@@ -108,7 +108,7 @@ Requires ffprobe on PATH to read the meeting file's metadata.
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintf(stderr, "context takes exactly one meeting id, got %d arguments: %v\n", fs.NArg(), fs.Args())
+		fmt.Fprintf(stderr, "context takes exactly one meeting id, got %d arguments: %v\n", fs.NArg(), redactMeetingsArgs(fs.Args()))
 		if meetingsArgsLookLikeFlagsAfterPositional(fs.Args()) {
 			fmt.Fprintf(stderr, "hint=flags must come before the meeting id, or the id must come last\n")
 		}
