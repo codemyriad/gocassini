@@ -54,7 +54,29 @@ const (
 
 // meetingsHTTPClient handles the small JSON request (the catalog). Package-level
 // so tests can point it at an httptest server's transport.
-var meetingsHTTPClient = &http.Client{Timeout: 20 * time.Second}
+var meetingsHTTPClient = &http.Client{
+	Timeout:       20 * time.Second,
+	CheckRedirect: refuseMeetingsRedirect,
+}
+
+// refuseMeetingsRedirect stops every redirect rather than following it.
+//
+// Go's default policy keeps the Authorization header when a redirect stays on
+// the same domain *or moves to a subdomain of it*, so a Nextcloud that has been
+// compromised — or anything able to inject a redirect — could send the app
+// password to `evil.nextcloud.example.com` just by answering 302. The published
+// routes have no legitimate reason to redirect: every request targets a concrete
+// file under the app's proxied root. Refusing is therefore free, and it keeps the
+// credential provably scoped to the host the caller named.
+func refuseMeetingsRedirect(req *http.Request, via []*http.Request) error {
+	from := "the request"
+	if len(via) > 0 {
+		from = via[len(via)-1].URL.Redacted()
+	}
+	return fmt.Errorf(
+		"refusing to follow a redirect from %s to %s: the Nextcloud credentials would travel to the redirect target, so point --nextcloud-url at the final URL instead",
+		from, req.URL.Redacted())
+}
 
 // meetingsConfig is the resolved connection configuration shared by every
 // meetings subcommand.
@@ -237,13 +259,20 @@ type meetingsClient struct {
 func newMeetingsClient(cfg meetingsConfig) *meetingsClient {
 	jsonClient := meetingsHTTPClient
 	if cfg.insecure {
-		jsonClient = &http.Client{Timeout: jsonClient.Timeout, Transport: meetingsTransport(true)}
+		// A fresh client, never a mutation of the package-level one: --insecure
+		// on one invocation must not weaken TLS for anything else in-process.
+		jsonClient = &http.Client{
+			Timeout:       jsonClient.Timeout,
+			Transport:     meetingsTransport(true),
+			CheckRedirect: refuseMeetingsRedirect,
+		}
 	}
 	return &meetingsClient{
 		cfg:  cfg,
 		json: jsonClient,
 		stream: &http.Client{
-			Transport: meetingsTransport(cfg.insecure),
+			Transport:     meetingsTransport(cfg.insecure),
+			CheckRedirect: refuseMeetingsRedirect,
 		},
 	}
 }

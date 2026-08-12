@@ -104,6 +104,13 @@ func (c *meetingsClient) resolveMeeting(ctx context.Context, meetingID string) (
 // extract would report as a corrupt meeting. The temp file is removed on every
 // failure path.
 func (c *meetingsClient) downloadMeeting(ctx context.Context, audioURL *url.URL, outPath string) (int64, error) {
+	// Check the destination before spending a download on it. Without this, a
+	// --out naming an existing directory (or ending in a slash) only fails at the
+	// final rename, reporting "file exists" about a path the caller never named.
+	if err := checkMeetingOutPath(outPath); err != nil {
+		return 0, err
+	}
+
 	resp, err := c.get(ctx, audioURL, c.stream)
 	if err != nil {
 		return 0, err
@@ -142,6 +149,20 @@ func (c *meetingsClient) downloadMeeting(ctx context.Context, audioURL *url.URL,
 	}
 	committed = true
 	return written, nil
+}
+
+// checkMeetingOutPath rejects a destination that cannot receive a file, naming
+// what is wrong with it rather than letting the failure surface later as a rename
+// error about a temp path.
+func checkMeetingOutPath(outPath string) error {
+	if strings.HasSuffix(outPath, string(os.PathSeparator)) {
+		return fmt.Errorf("--out %s names a directory; give the path of the .opus file to write", outPath)
+	}
+	info, err := os.Stat(outPath)
+	if err == nil && info.IsDir() {
+		return fmt.Errorf("--out %s is an existing directory; give the path of the .opus file to write", outPath)
+	}
+	return nil
 }
 
 // meetingsParseArgs moves a leading meeting id to the end so both

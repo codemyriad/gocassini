@@ -57,11 +57,15 @@ recordings folder looks like.
 		return 0
 	}
 
-	fmt.Fprintf(stdout, "meetings=%d caller=%s source=%s\n", len(listing.Entries), cfg.user, listing.Source)
+	entries := listing.Entries()
+	fmt.Fprintf(stdout, "meetings=%d caller=%s source=%s\n", len(entries), cfg.user, listing.Source)
 	if listing.Source == "unknown" {
 		fmt.Fprintf(stderr, "warning=response carried no %s header, so these bytes did not come from Nextcloud Files; per-caller access control may not be in effect\n", meetingsSourceHeader)
 	}
-	if len(listing.Entries) == 0 {
+	if listing.Skipped > 0 {
+		fmt.Fprintf(stderr, "warning=%d catalog entr(y/ies) had no id and were skipped, so this list may be incomplete\n", listing.Skipped)
+	}
+	if len(entries) == 0 {
 		// The app answers 200 with an empty list both when the caller really
 		// has no readable recordings and when the recordings substrate is
 		// mis-provisioned or unreachable. It cannot tell the caller which,
@@ -69,7 +73,7 @@ recordings folder looks like.
 		fmt.Fprintln(stdout, "note=no recordings are visible to this account; this is also what a mis-provisioned recordings folder looks like")
 		return 0
 	}
-	for _, entry := range listing.Entries {
+	for _, entry := range entries {
 		fmt.Fprintf(stdout, "meeting=%s date=%s title=%s speakers=%s segments=%s duration_ms=%s fetchable=%s\n",
 			blankMeetingsDash(entry.ID),
 			blankMeetingsDash(entry.DateLabel),

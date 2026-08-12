@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -489,8 +490,10 @@ func TestResolveMeetingAudioURL(t *testing.T) {
 	}{
 		{"dot-relative", meetingsCatalogEntry{ID: "X", AudioPath: "./meetings/X.opus"}, base + "meetings/X.opus"},
 		{"bare relative", meetingsCatalogEntry{ID: "X", AudioPath: "meetings/X.opus"}, base + "meetings/X.opus"},
-		{"absolute", meetingsCatalogEntry{ID: "X", AudioPath: "https://cdn.example.com/m/X.opus"}, "https://cdn.example.com/m/X.opus"},
 		{"id needing escaping", meetingsCatalogEntry{ID: "X", AudioPath: "./meetings/a b.opus"}, base + "meetings/a%20b.opus"},
+		// An absolute URL on the configured origin is fine; one on another host
+		// is refused — see TestResolveMeetingAudioURLRefusesEscapingThePublishedTree.
+		{"absolute on the same origin", meetingsCatalogEntry{ID: "X", AudioPath: base + "meetings/X.opus"}, base + "meetings/X.opus"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -521,23 +524,178 @@ func TestResolveMeetingAudioURL(t *testing.T) {
 	})
 }
 
-func TestSortMeetingsNewestFirstPutsUnparseableLabelsLast(t *testing.T) {
-	entries := []meetingsCatalogEntry{
-		{ID: "no-label"},
-		{ID: "older", DateLabel: "2026-08-01"},
-		{ID: "newest", DateLabel: "2026-08-11 10:32:07"},
-		{ID: "middle", DateLabel: "2026-08-05 09:00"},
-		{ID: "garbage", DateLabel: "last tuesday"},
-	}
-
-	sortMeetingsNewestFirst(entries)
-
-	got := make([]string, 0, len(entries))
+// catalogItems builds items the way fetchCatalog does, so the sort is tested
+// through the same date parsing the real path uses.
+func catalogItems(entries ...meetingsCatalogEntry) []meetingsCatalogItem {
+	items := make([]meetingsCatalogItem, 0, len(entries))
 	for _, entry := range entries {
-		got = append(got, entry.ID)
+		at, dated := parseMeetingDateLabel(entry.DateLabel)
+		items = append(items, meetingsCatalogItem{entry: entry, at: at, dated: dated})
 	}
+	return items
+}
+
+func sortedIDs(items []meetingsCatalogItem) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.entry.ID)
+	}
+	return ids
+}
+
+func TestSortMeetingsNewestFirstPutsUnparseableLabelsLast(t *testing.T) {
+	items := catalogItems(
+		meetingsCatalogEntry{ID: "no-label"},
+		meetingsCatalogEntry{ID: "older", DateLabel: "2026-08-01"},
+		meetingsCatalogEntry{ID: "newest", DateLabel: "2026-08-11 10:32:07"},
+		meetingsCatalogEntry{ID: "middle", DateLabel: "2026-08-05 09:00"},
+		meetingsCatalogEntry{ID: "garbage", DateLabel: "last tuesday"},
+	)
+
+	sortMeetingsNewestFirst(items)
+
 	want := []string{"newest", "middle", "older", "no-label", "garbage"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
+	if got := sortedIDs(items); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("order = %v, want %v", got, want)
+	}
+}
+
+// Ids are server data and nothing guarantees they are unique. An earlier version
+// keyed the parsed dates by id, so duplicate ids shared one date and sorted
+// wrongly — and the raw payload of one of them was dropped from --json.
+func TestSortMeetingsNewestFirstHandlesDuplicateIDs(t *testing.T) {
+	items := catalogItems(
+		meetingsCatalogEntry{ID: "A", DateLabel: "2026-08-01", Title: "oldest A"},
+		meetingsCatalogEntry{ID: "A", DateLabel: "not-a-date", Title: "undated A"},
+		meetingsCatalogEntry{ID: "A", DateLabel: "2026-08-12", Title: "newest A"},
+		meetingsCatalogEntry{ID: "B", DateLabel: "2026-08-05", Title: "B"},
+	)
+
+	sortMeetingsNewestFirst(items)
+
+	titles := make([]string, 0, len(items))
+	for _, item := range items {
+		titles = append(titles, item.entry.Title)
+	}
+	want := []string{"newest A", "B", "oldest A", "undated A"}
+	if strings.Join(titles, ",") != strings.Join(want, ",") {
+		t.Errorf("order = %v, want %v", titles, want)
+	}
+}
+
+// A catalog entry naming another host must never be fetched: the request carries
+// the caller's Nextcloud app password, so following it would hand that credential
+// to whatever host the catalog asked for.
+func TestMeetingsFetchRefusesAForeignHostInTheCatalog(t *testing.T) {
+	var harvested struct {
+		gotAuth  bool
+		password string
+	}
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, password, ok := r.BasicAuth()
+		harvested.gotAuth, harvested.password = ok, password
+		_, _ = w.Write([]byte("harvested"))
+	}))
+	defer attacker.Close()
+
+	hostileCatalog := fmt.Sprintf(`{"version":"cassini.viewer.catalog.v1","meetings":[
+	  {"id":"MEETING1","title":"Daily Standup","dateLabel":"2026-08-11 10:32","audioPath":"%s/harvest.opus"}]}`, attacker.URL)
+	fake := newMeetingsFakeNextcloud(t, serveCatalog(hostileCatalog))
+
+	tmp := t.TempDir()
+	code, _, stderr := runMeetingsCLI(t, fake.server.URL, "fetch", "MEETING1", "--out", filepath.Join(tmp, "m.opus"))
+
+	if harvested.gotAuth {
+		t.Fatalf("LEAK: the app password %q was sent to a host named by the catalog", harvested.password)
+	}
+	if code != 1 {
+		t.Errorf("exit=%d, want 1 (stderr=%q)", code, stderr)
+	}
+	if !strings.Contains(stderr, "points outside the Nextcloud you configured") {
+		t.Errorf("stderr=%q, want it to explain the refusal", stderr)
+	}
+	assertNoStrayFiles(t, tmp)
+}
+
+// Go's default redirect policy keeps Authorization when a redirect moves to a
+// SUBDOMAIN of the origin, so a compromised Nextcloud could harvest the app
+// password with a 302. Every redirect is refused instead.
+func TestMeetingsRefusesRedirectsRatherThanForwardingCredentials(t *testing.T) {
+	var harvested struct {
+		gotAuth  bool
+		password string
+	}
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, password, ok := r.BasicAuth()
+		harvested.gotAuth, harvested.password = ok, password
+		w.Header().Set("X-Cassini-Meeting-Source", "nextcloud-files")
+		fmt.Fprint(w, `{"version":"cassini.viewer.catalog.v1","meetings":[]}`)
+	}))
+	defer attacker.Close()
+
+	fake := newMeetingsFakeNextcloud(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL+"/harvest.json", http.StatusFound)
+	})
+
+	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "list")
+
+	if harvested.gotAuth {
+		t.Fatalf("LEAK: the app password %q was sent to a redirect target", harvested.password)
+	}
+	if code != 1 {
+		t.Errorf("exit=%d, want 1 (stdout=%q stderr=%q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "refusing to follow a redirect") {
+		t.Errorf("stderr=%q, want it to name the refused redirect", stderr)
+	}
+}
+
+// An entry whose audioPath climbs out of the published tree would aim
+// credentialed requests at unrelated routes on the same Nextcloud.
+func TestResolveMeetingAudioURLRefusesEscapingThePublishedTree(t *testing.T) {
+	catalogURL, err := url.Parse("https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/published/catalog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, audioPath := range []string{
+		"../../../../../../remote.php/dav/files/admin/secret.opus",
+		"/ocs/v2.php/cloud/users",
+		"https://evil.example.com/harvest.opus",
+		"//evil.example.com/harvest.opus",
+	} {
+		t.Run(audioPath, func(t *testing.T) {
+			resolved, err := resolveMeetingAudioURL(catalogURL, meetingsCatalogEntry{ID: "M1", AudioPath: audioPath})
+			if err == nil {
+				t.Fatalf("expected a refusal, got %s", resolved)
+			}
+			if !strings.Contains(err.Error(), "refusing to fetch meeting") {
+				t.Errorf("error = %v, want an explicit refusal", err)
+			}
+		})
+	}
+}
+
+// A JSON null or an entry with no id cannot be fetched or referred to, so it must
+// not be listed as a phantom meeting — but it must be reported as skipped, since
+// the list is then incomplete.
+func TestMeetingsListSkipsEntriesWithNoID(t *testing.T) {
+	fake := newMeetingsFakeNextcloud(t, serveCatalog(`{"version":"cassini.viewer.catalog.v1","meetings":[
+	  {"id":"REAL","title":"Daily Standup","dateLabel":"2026-08-11","audioPath":"./meetings/REAL.opus"},
+	  null,
+	  {"title":"No id here","dateLabel":"2026-08-10"}]}`))
+
+	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "list")
+
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "meetings=1") {
+		t.Errorf("expected only the usable entry to be counted:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "meeting=- ") {
+		t.Errorf("a phantom meeting was listed:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "had no id and were skipped") {
+		t.Errorf("stderr=%q, want it to report the skipped entries", stderr)
 	}
 }
