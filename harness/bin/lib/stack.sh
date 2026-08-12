@@ -347,15 +347,25 @@ harness_project_resources() {
   while IFS= read -r item; do [[ -n "$item" ]] && printf 'network:%s\n' "$item"; done < <(harness_project_networks)
 }
 
+harness_installed_exapp_volumes() {
+  docker volume ls --format '{{.Name}}' 2>/dev/null \
+    | grep -E '^(cassini-exapp-state|cassini-exapp-site|nc_app_gocassini_data)$' \
+    | sort -u || true
+}
+
 harness_installed_exapp_resources() {
   docker ps -a --format '{{.Names}}' 2>/dev/null \
     | grep -E '^(cassini-exapp|nc_app_gocassini)$' \
     | sort -u \
     | sed 's/^/container:/' || true
-  docker volume ls --format '{{.Name}}' 2>/dev/null \
-    | grep -E '^(cassini-exapp-state|cassini-exapp-site|nc_app_gocassini_data)$' \
-    | sort -u \
-    | sed 's/^/volume:/' || true
+  harness_installed_exapp_volumes | sed 's/^/volume:/'
+}
+
+harness_resume_volumes() {
+  harness_project_volumes
+  if [[ "${CASSINI_HARNESS_CASSINI_MODE:-none}" == "installed-exapp" ]]; then
+    harness_installed_exapp_volumes
+  fi
 }
 
 harness_remove_installed_exapp_containers() {
@@ -446,14 +456,21 @@ harness_diff_lines() {
 }
 
 harness_validate_resume_resources() {
-  local desired existing running missing extra
+  local desired existing running retained_volumes missing extra
   desired="$(harness_desired_compose_services)"
   existing="$(harness_existing_compose_services)"
   running="$(harness_running_compose_services)"
 
   if ! harness_resource_list_nonempty "$existing"; then
-    echo "No existing compose containers found for project '$PROJECT_NAME'; cannot --resume." >&2
-    echo "Use 'cassini dev stack up' for a fresh stack or 'cassini dev stack up --reset' to recreate." >&2
+    retained_volumes="$(harness_resume_volumes)"
+    if harness_resource_list_nonempty "$retained_volumes"; then
+      # A normal `stack down` removes containers and the Compose network but
+      # deliberately retains data volumes. The resolved Compose config can
+      # safely recreate those ephemeral resources around the retained data.
+      return 0
+    fi
+    echo "No stopped compose containers or retained data volumes found for project '$PROJECT_NAME'; cannot --resume." >&2
+    echo "Use 'cassini dev stack up' to create a fresh stack." >&2
     return 1
   fi
   if harness_resource_list_nonempty "$running"; then
@@ -499,7 +516,7 @@ harness_check_existing_resources_for_up() {
         harness_existing_resource_report "$resources"
         echo "Default stack startup is non-destructive." >&2
         echo "Use one of:" >&2
-        echo "  cassini dev stack up --resume   # start matching stopped resources" >&2
+        echo "  cassini dev stack up --resume   # reuse stopped containers or retained volumes" >&2
         echo "  cassini dev stack up --reset    # remove and recreate resolved resources" >&2
         echo "  cassini dev stack down --full   # remove all harness-owned resources" >&2
         return 1
@@ -797,17 +814,27 @@ harness_install_exapp_phase() {
 
 harness_start_compose_stack() {
   local -a services=()
-  local service
+  local service existing
   while IFS= read -r service; do
     [[ -n "$service" ]] && services+=("$service")
   done < <(harness_compose_service_args)
 
   if [[ "${CASSINI_HARNESS_EXISTING:-fail}" == "resume" ]]; then
-    log "Resuming Docker Compose stack (profile: $SPREED_PROFILE, services: ${services[*]:-legacy-default})"
-    if ((${#services[@]} > 0)); then
-      compose start "${services[@]}"
+    existing="$(harness_existing_compose_services)"
+    if harness_resource_list_nonempty "$existing"; then
+      log "Resuming stopped Docker Compose stack (profile: $SPREED_PROFILE, services: ${services[*]:-legacy-default})"
+      if ((${#services[@]} > 0)); then
+        compose start "${services[@]}"
+      else
+        compose start
+      fi
     else
-      compose start
+      log "Recreating Docker Compose containers with retained volumes (profile: $SPREED_PROFILE, services: ${services[*]:-legacy-default})"
+      if ((${#services[@]} > 0)); then
+        compose up -d "${services[@]}"
+      else
+        compose up -d
+      fi
     fi
   else
     log "Starting Docker Compose stack (profile: $SPREED_PROFILE, services: ${services[*]:-legacy-default})"
