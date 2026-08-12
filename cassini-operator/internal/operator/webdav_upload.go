@@ -9,20 +9,32 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"cassini-operator/internal/operator/appapi"
 )
 
-// Nextcloud-native delivery of the published meeting archive (D-529). On the
-// AppAPI enabled edge and after every successful publish, the operator mirrors
-// the browsable archive into Nextcloud Files over WebDAV — the clean portable `.opus` per meeting plus the
-// `catalog.json` index — so the artefacts live in NC Files (quota-counted,
-// backed up, natively shareable) instead of only the ExApp's private volume,
-// and the viewer can be fed from there.
+// Nextcloud-native delivery of the published meeting archive (D-529). A
+// published meeting reaches Nextcloud Files over WebDAV — the clean portable
+// `.opus` plus its entry in the `catalog.json` index — so the artefacts live in
+// NC Files (quota-counted, backed up, natively shareable) instead of the
+// ExApp's private volume, and the viewer is fed from there.
+//
+// Delivery is per-meeting and happens inside the publish job, in
+// publish_sink_nextcloud.go. This file holds the DAV primitives that sink is
+// built from, plus the read proxy that serves the archive back.
+//
+// There is deliberately NO automatic whole-archive mirror (D-613). One used to
+// run on the AppAPI enabled edge: it re-PUT every `.opus` under the local site
+// root unconditionally, under a single cumulative 120s budget, so past a
+// certain archive size it died before the catalog PUT and pinned the remote
+// catalog forever (D-540); it also fired only on that edge, never on a plain
+// restart, despite its name (D-541). Since delivery became a mandatory publish
+// stage (D-549) and the local site root stopped being written at all (D-550),
+// its only remaining job was converging an archive published by an older
+// local-only version. That is a one-time migration, so it is now an explicit
+// one — `cassini-operator backfill-nc-files`, run by hand (nc_backfill.go).
 //
 // POLICY: Cassini never uses Talk's recording `/store` endpoint, for any file
 // (D-551). A meeting reaches Nextcloud exactly once, as the published `.opus`
@@ -79,13 +91,6 @@ const (
 	ncFilesSourceValue     = "nextcloud-files"
 )
 
-// ncFilesUploader mirrors the complete published archive into the owner's
-// Nextcloud Files. Every .opus is uploaded before catalog.json, so the Files
-// catalog never points at an archive object that this sync has not delivered.
-// Best-effort at the runtime boundary — a failure must never fail the publish.
-// Nil outside an AppAPI deployment (no NextcloudURL/APP_SECRET/APP_ID).
-type ncFilesUploader func(ctx context.Context, siteRoot string) error
-
 // ncFilesProxyFunc serves a published archive path (catalog.json or
 // meetings/<id>.opus) from the owner's Nextcloud Files, forwarding the inbound
 // Range header and relaying status/headers/body. In an AppAPI deployment Files
@@ -130,117 +135,6 @@ func (c ExAppConfig) appAPIActive() bool {
 	return c.NextcloudURL != "" && c.AppSecret != "" && c.AppID != ""
 }
 
-// ncFilesUploader returns the delivery closure, or nil when the ExApp env is
-// absent (dev/standalone deploys simply skip NC-Files delivery).
-func (c ExAppConfig) ncFilesUploader(logger *log.Logger) ncFilesUploader {
-	if !c.appAPIActive() {
-		return nil
-	}
-	client := &http.Client{Timeout: ncFilesUploadTimeout}
-	return func(ctx context.Context, siteRoot string) error {
-		catalogLocal := filepath.Join(siteRoot, "catalog.json")
-		if _, err := os.Stat(catalogLocal); err != nil {
-			return fmt.Errorf("stat catalog: %w", err)
-		}
-		meetingsLocal := filepath.Join(siteRoot, "meetings")
-		entries, err := os.ReadDir(meetingsLocal)
-		if err != nil {
-			return fmt.Errorf("read meetings: %w", err)
-		}
-
-		// Ensure the canonical collections exist (idempotent). Created parent
-		// first so each MKCOL's parent is present.
-		for _, dir := range []string{
-			path.Dir(ncRecordingsRoot),     // Cassini
-			ncRecordingsRoot,               // Cassini/Recordings
-			ncRecordingsRoot + "/meetings", // Cassini/Recordings/meetings
-		} {
-			if dir == "." || dir == "" {
-				continue
-			}
-			if err := c.davMkcol(ctx, client, ncRecordingsOwner, dir); err != nil {
-				return fmt.Errorf("mkcol %s: %w", dir, err)
-			}
-		}
-
-		// Mirror the complete archive, not only the job that triggered this
-		// publish. This repairs prior failed deliveries and makes upgrades from
-		// a local-only archive converge on the next sync. os.ReadDir is sorted
-		// by filename, keeping request order deterministic.
-		for _, entry := range entries {
-			if entry.IsDir() || filepath.Ext(entry.Name()) != ".opus" {
-				continue
-			}
-			opusLocal := filepath.Join(meetingsLocal, entry.Name())
-			opusRemote := ncRecordingsRoot + "/meetings/" + entry.Name()
-			status, err := c.davPutFileStatus(ctx, client, ncRecordingsOwner, opusRemote, opusLocal, "audio/ogg")
-			if err != nil {
-				return fmt.Errorf("put opus %s: %w", entry.Name(), err)
-			}
-			if status == http.StatusCreated {
-				// A new file inherits the broad container traversal grant. Deny
-				// that group before catalog.json can advertise the file; the
-				// post-publish participant ACL replaces this owner-only baseline.
-				if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, opusRemote, recordingACLRules(nil, false)); err != nil {
-					return fmt.Errorf("protect new opus %s: %w", entry.Name(), err)
-				}
-			}
-		}
-
-		// Before advertising anything, make sure every recording carries its
-		// explicit all-users rule — the container grant is inherited by any leaf that
-		// lacks one, so an unprotected .opus (e.g. a create-time deny that failed
-		// on a prior sync) would be readable by every logged-in user. Only the
-		// offenders are corrected, preserving existing participant allows.
-		if err := c.selfHealLeafProtection(ctx, client, logger); err != nil {
-			return fmt.Errorf("protect recording ACLs: %w", err)
-		}
-
-		// Publish the whole catalog last. If any .opus PUT fails, readers retain
-		// the previous Files catalog instead of receiving references to missing
-		// meeting objects.
-		catalogRemote := ncRecordingsRoot + "/catalog.json"
-		if err := c.davPutFile(ctx, client, ncRecordingsOwner, catalogRemote, catalogLocal, "application/json"); err != nil {
-			return fmt.Errorf("put catalog: %w", err)
-		}
-		// The virtual all-users group may traverse the container directories, but
-		// must not be able to read the unfiltered authoritative catalog from
-		// Files. The operator reads it as the owner and filters it per caller.
-		if err := c.davProppatchACLRules(ctx, client, ncRecordingsOwner, catalogRemote, catalogProtectionACLRules()); err != nil {
-			return fmt.Errorf("protect catalog: %w", err)
-		}
-		return nil
-	}
-}
-
-func (rt *Runtime) syncNCFiles(ctx context.Context) error {
-	rt.ncFilesSyncMu.Lock()
-	defer rt.ncFilesSyncMu.Unlock()
-	return rt.uploadToNCFiles(ctx, rt.cfg.SiteRoot)
-}
-
-// syncNCFilesOnStartup converges an archive that was published before the
-// current process started. This matters on upgrades from a local-only version:
-// the existing viewer catalog becomes available from Files without requiring a
-// brand-new recording. The AppAPI enabled callback runs this asynchronously
-// after registration is enabled, when outbound act-as-user DAV auth is valid.
-func (rt *Runtime) syncNCFilesOnStartup() {
-	catalogPath := filepath.Join(rt.cfg.SiteRoot, "catalog.json")
-	if _, err := os.Stat(catalogPath); err != nil {
-		if !os.IsNotExist(err) {
-			rt.logger.Printf("nc files startup sync skipped: stat catalog: %v", err)
-		}
-		return
-	}
-	ctx, cancel := context.WithTimeout(rt.ctx, ncFilesUploadTimeout)
-	defer cancel()
-	if err := rt.syncNCFiles(ctx); err != nil {
-		rt.logger.Printf("nc files startup sync failed: %v", err)
-		return
-	}
-	rt.logger.Printf("nc files startup sync ok root=%s", ncRecordingsRoot)
-}
-
 func (c ExAppConfig) davMkcol(ctx context.Context, client *http.Client, userID, relDir string) error {
 	req, err := http.NewRequestWithContext(ctx, "MKCOL", c.davFileURL(userID, relDir), nil)
 	if err != nil {
@@ -258,11 +152,6 @@ func (c ExAppConfig) davMkcol(ctx context.Context, client *http.Client, userID, 
 		return nil
 	}
 	return fmt.Errorf("MKCOL %s -> %d", relDir, resp.StatusCode)
-}
-
-func (c ExAppConfig) davPutFile(ctx context.Context, client *http.Client, userID, relPath, localPath, contentType string) error {
-	_, err := c.davPutFileStatus(ctx, client, userID, relPath, localPath, contentType)
-	return err
 }
 
 func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, userID, relPath, localPath, contentType string) (int, error) {

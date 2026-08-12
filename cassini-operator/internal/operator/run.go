@@ -108,12 +108,6 @@ type Runtime struct {
 	// (talk_participants.go, D-553). Zero means the package default; tests
 	// shrink it.
 	talkAudienceRetryGap time.Duration
-	// uploadToNCFiles mirrors the complete published archive into Nextcloud
-	// Files after a successful publish and on startup (webdav_upload.go, D-529).
-	// Best-effort; nil outside AppAPI deployments. ncFilesSyncMu prevents the
-	// startup convergence pass from overlapping a post-publish delivery.
-	uploadToNCFiles ncFilesUploader
-	ncFilesSyncMu   sync.Mutex
 	// fetchTalkParticipants resolves a Talk room's grantable ACL principals and
 	// applyNCFilesAccessFn writes the per-meeting advanced-ACL grants
 	// (talk_participants.go / webdav_acl.go, D-534). Both nil unless AppAPI is
@@ -183,6 +177,17 @@ type jobDetailResponse struct {
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	// A leading non-flag word selects a maintenance command instead of the
+	// server. Everything else is the server with flags, as it has always been —
+	// the binary's job is to be the operator, and a subcommand is the exception.
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		if args[0] == backfillNCFilesCommand {
+			return runBackfillNCFiles(ctx, args[1:], stdout, stderr)
+		}
+		fmt.Fprintf(stderr, "unknown command %q (known commands: %s)\n", args[0], backfillNCFilesCommand)
+		return 2
+	}
+
 	logger := log.New(stderr, "cassini-operator: ", log.LstdFlags)
 
 	cfg, exitCode, err := loadConfig(args, stderr)
@@ -228,7 +233,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	runtime := NewRuntime(ctx, store, cfg, logger, stdout, stderr)
 	runtime.fetchTalkRoomName = exappCfg.talkRoomNameFetcher()
-	runtime.uploadToNCFiles = exappCfg.ncFilesUploader(logger)
 	runtime.fetchTalkParticipants = exappCfg.talkParticipantsFetcher()
 	runtime.applyNCFilesAccessFn = exappCfg.ncFilesAccessApplier(logger)
 
@@ -250,10 +254,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("publish_sink -> %s", sink.Name())
 
 	// Only a deployment that actually serves recordings from Nextcloud Files is
-	// expected to have a substrate. uploadToNCFiles is non-nil whenever AppAPI is
-	// active regardless of the sink, so without this an ExApp deliberately pinned
-	// to `local` would report an unhealthy substrate it serves nothing from — and
-	// `local` is the documented escape hatch the sink gate itself points at.
+	// expected to have a substrate. AppAPI can also run with an ExApp deliberately
+	// pinned to `local`; that escape hatch must not report an unhealthy substrate
+	// for a destination it serves nothing from.
 	//
 	// Marked HERE rather than only inside the provisioner so a container that
 	// restarts without seeing another enabled edge reports `unknown` instead of
@@ -263,20 +266,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		ncAccessSubstrate.markApplicable()
 	}
 
-	if runtime.uploadToNCFiles != nil {
-		// During AppAPI registration, outbound callbacks are rejected until the
-		// /enabled?enabled=1 lifecycle edge. Start convergence from that edge,
-		// not immediately at process start (which deterministically gets 401).
-		exappCfg.onEnabled = func(enabled bool) {
-			if enabled {
-				// Ensure the dedicated recordings owner, then provision the Team-
-				// folder + ACL topology. This runs before archive sync so the
-				// first delivery acts as an existing, mounted owner.
-				exappCfg.provisionNCFilesAccess(runtime.ctx, logger)
-				runtime.syncNCFilesOnStartup()
-			}
-		}
-	}
+	// Provisioning remains tied to the AppAPI enabled edge, but not to the eager
+	// whole-archive uploader removed by D-613.
+	exappCfg.onEnabled = exappCfg.enabledCallback(runtime.ctx, logger)
 	if interrupted > 0 {
 		// A restart mid-recording leaves spreed convinced the room is still
 		// recording; tell it the recording failed so the room state converges
@@ -412,10 +404,7 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 		envOrDefaultAny([]string{"CASSINI_OPERATOR_WORK_ROOT", "WORK_ROOT"}, ""),
 		imageDefaultWorkRoot, "operator/jobs",
 		filepath.Join(defaultDataRoot, "jobs")), "per-job artifact root")
-	fs.StringVar(&cfg.SiteRoot, "site-root", exAppDataPathDefault(persistRoot,
-		envOrDefaultAny([]string{"CASSINI_OPERATOR_SITE_ROOT", "SITE_ROOT"}, ""),
-		imageDefaultSiteRoot, "site/published",
-		filepath.Join(defaultDataRoot, "site")), "published site output root")
+	fs.StringVar(&cfg.SiteRoot, "site-root", defaultSiteRoot(persistRoot, defaultDataRoot), "published site output root")
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", envOrDefaultAny([]string{"CASSINI_BIN"}, defaultCassiniBinPath(repoRoot)), "Cassini CLI binary path")
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
@@ -430,6 +419,11 @@ Usage:
   cassini-operator
   cassini-operator --bind 0.0.0.0:4000
   cassini-operator --base-path /operator --db ./cassini-operator/runtime/jobs.sqlite3
+
+Commands:
+  `+backfillNCFilesCommand+`   one-shot migration of a legacy in-container archive
+                       into Nextcloud Files (run by hand after an update;
+                       see --help on the command itself)
 
 Flags:
 `)
@@ -484,6 +478,17 @@ Flags:
 	}
 
 	return cfg, 0, nil
+}
+
+// defaultSiteRoot resolves where the published site lives when no --site-root
+// is given. Shared with the backfill command (nc_backfill.go) rather than
+// re-derived there: a backfill that reads a different directory than the one
+// the operator writes would silently sync nothing and report success.
+func defaultSiteRoot(persistRoot, dataRoot string) string {
+	return exAppDataPathDefault(persistRoot,
+		envOrDefaultAny([]string{"CASSINI_OPERATOR_SITE_ROOT", "SITE_ROOT"}, ""),
+		imageDefaultSiteRoot, "site/published",
+		filepath.Join(dataRoot, "site"))
 }
 
 func parsePositiveIntEnvAny(names []string, fallback int) (int, error) {

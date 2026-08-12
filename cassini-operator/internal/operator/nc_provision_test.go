@@ -697,3 +697,65 @@ func TestProvisionAcceptsExistingServiceAccount(t *testing.T) {
 		t.Fatal("existing account owner-group membership was not reasserted")
 	}
 }
+
+// The enabled edge must provision on nothing more than "this is an ExApp".
+//
+// This is a regression guard, not a unit test of a predicate. The hook used to
+// be installed only when the whole-archive uploader had been constructed, so
+// deleting that uploader (D-613) would have silently detached provisioning:
+// no group folder, no ACL topology, /status stuck at 503, and nothing in the
+// logs pointing at the change that caused it. Asserting the callback exists
+// AND actually reaches Nextcloud keeps the two independent.
+func TestEnabledCallbackProvisionsWheneverAppAPIIsActive(t *testing.T) {
+	// Provisioning writes the process-wide substrate record, which /status
+	// reads; leaving this run's failure behind would fail unrelated tests.
+	t.Cleanup(ncAccessSubstrate.reset)
+
+	var mu sync.Mutex
+	var called bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		called = true
+		mu.Unlock()
+		// Fail every provisioning call: this test is about whether provisioning
+		// was ATTEMPTED from the edge, and provisioning is deliberately
+		// non-fatal, so the unhappy path keeps it fast and hermetic.
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	cfg := testExAppConfig(srv.URL)
+	hook := cfg.enabledCallback(context.Background(), log.New(io.Discard, "", 0))
+	if hook == nil {
+		t.Fatal("no enabled callback for an AppAPI-active config: provisioning would never run")
+	}
+
+	// Disabled edges must not provision.
+	hook(false)
+	mu.Lock()
+	if called {
+		t.Error("provisioning ran on an enabled=false edge")
+	}
+	mu.Unlock()
+
+	hook(true)
+	mu.Lock()
+	defer mu.Unlock()
+	if !called {
+		t.Fatal("enabled edge did not reach Nextcloud: provisioning is detached")
+	}
+}
+
+func TestEnabledCallbackIsNilOutsideAppAPI(t *testing.T) {
+	// A standalone operator has no Nextcloud to provision, and AppAPI's
+	// lifecycle routes are not mounted at all.
+	for name, cfg := range map[string]ExAppConfig{
+		"empty":            {},
+		"secret-only":      {AppSecret: "s", AppID: "gocassini"},
+		"url-without-auth": {NextcloudURL: "https://nc.example.com"},
+	} {
+		if got := cfg.enabledCallback(context.Background(), log.New(io.Discard, "", 0)); got != nil {
+			t.Errorf("%s: enabledCallback is non-nil outside an AppAPI deployment", name)
+		}
+	}
+}

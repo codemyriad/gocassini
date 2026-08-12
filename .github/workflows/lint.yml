@@ -83,6 +83,11 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/test-release-tooling.sh
+          # The NC-Files backfill runner: stubs `docker`, so no daemon and no
+          # Nextcloud. It pins that the guard's refusal (exit 3) is relayed as
+          # "already migrated" rather than as a breakage, and that unknown
+          # options never reach the container.
+          ./scripts/test-backfill-nc-files.sh
           ./sandbox/test-store-release.sh
           # The deploy library's decision rules: moving tags refused, the
           # compute device deriving the image variant instead of forking the

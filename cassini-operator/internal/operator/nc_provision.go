@@ -178,10 +178,40 @@ func randomPassword() (string, error) {
 	return "Cw1!" + base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
+// enabledCallback is the AppAPI lifecycle hook, or nil outside an AppAPI
+// deployment. Provisioning is all it does.
+//
+// It exists as a named function rather than a closure at the call site because
+// of how it was nearly lost. The assignment used to sit inside
+// `if runtime.uploadToNCFiles != nil`, which tied the hook the entire access
+// substrate hangs off to whether the whole-archive mirror happened to be
+// constructed. When that mirror was deleted (D-613) the guard would have gone
+// false everywhere, onEnabled would never be assigned, the group folder would
+// never be created, and /status would report 503 for the life of the install —
+// a total outage caused by removing something unrelated. Naming the hook and
+// guarding it on the one condition that actually governs it makes that class of
+// accident visible, and testable.
+func (c ExAppConfig) enabledCallback(ctx context.Context, logger *log.Logger) func(bool) {
+	if !c.appAPIActive() {
+		return nil
+	}
+	return func(enabled bool) {
+		if !enabled {
+			return
+		}
+		// Ensure the dedicated recordings owner, then provision the Team-folder
+		// + ACL topology, so the first delivery acts as an existing, mounted
+		// owner. Deferred to this edge because during AppAPI registration
+		// outbound act-as-user calls are rejected: running at process start
+		// deterministically gets 401.
+		c.provisionNCFilesAccess(ctx, logger)
+	}
+}
+
 // provisionNCFilesAccess first establishes the ownership/provisioning
 // identities, then creates (idempotently) the group folder + ACL topology the
 // access-control model needs. No-op only outside AppAPI. Runs on the enabled
-// edge (in the EnabledCallback goroutine), before the archive startup sync.
+// edge, in the EnabledCallback goroutine.
 //
 // Every step used to be best-effort in the strict sense that nothing recorded
 // whether it worked: failures were logged and forgotten. They are still
