@@ -118,7 +118,9 @@ Expected:
 `source=nextcloud-files` confirms the bytes came from Nextcloud Files, with
 per-caller permissions applied. `source=unknown` means they did not — you are
 most likely talking to a development operator serving a local archive, which has
-no per-caller access control at all.
+no per-caller access control at all. `source=unrecognised` means the response
+claimed some other origin, which is equally not a guarantee. Anything but
+`nextcloud-files` also prints a warning on stderr, from all three commands.
 
 `fetchable=no` marks a meeting recorded before the single-file format: it has no
 portable `.opus`, so `fetch` and `context` cannot serve it.
@@ -129,6 +131,11 @@ server sent them, so the server's payload stays the single contract:
 ```bash
 ./bin/cassini meetings list --json | jq -r '.meetings[0].id'
 ```
+
+The document also carries `skipped`: the number of catalog entries that had no id
+and were dropped. A non-zero value means the list is incomplete — the catalog is
+malformed rather than short — so check it before treating the list as the whole
+truth.
 
 ## 3. Read one meeting as context
 
@@ -167,8 +174,13 @@ readable by `cassini inspect`:
 ./bin/cassini inspect "./Daily Standup.opus"
 ```
 
-An interrupted download never lands at the destination; the transfer is staged
-alongside it and moved into place only once complete.
+An interrupted download never lands at the destination: the transfer is staged
+alongside it and moved into place only once complete, and an empty (0-byte) reply
+is refused rather than saved as a `.opus` that fails when something reads it.
+
+The file is created **readable by you only**. It holds a private meeting's audio
+and transcript, and Nextcloud decided who may see it — so it is not published to
+every account on a shared host. `chmod` it yourself if you need it wider.
 
 ## Exit codes
 
@@ -198,6 +210,16 @@ account can read.
 **`Nextcloud Files is unavailable`** — an outage on the Nextcloud side, not a
 permissions problem. Retrying later is reasonable; re-checking the app password
 is not.
+
+**`refusing to follow a redirect`** — the CLI will not follow redirects, because
+the Nextcloud credentials would travel to wherever the redirect points. Set
+`--nextcloud-url` to the URL your instance actually serves on (most often this
+means `https://` rather than `http://`).
+
+**`the catalog points outside the Nextcloud you configured`** — a catalog entry
+named a different host. That is refused for the same reason: the request carries
+your app password. If it is not an attack it is a misconfigured export, and it is
+worth reporting.
 
 **`read the downloaded meeting: … not a portable meeting`** — the fetched file is
 not a Cassini portable `.opus`. Keep it with `--keep-opus FILE` and run

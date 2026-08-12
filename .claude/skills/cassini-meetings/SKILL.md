@@ -55,6 +55,10 @@ To pick programmatically, use `--json` (newest is first):
 ./bin/cassini meetings list --json | jq -r '.meetings[0].id'
 ```
 
+Check `.skipped` in that document before treating the list as complete: a
+non-zero value means some catalog entries were unusable and dropped, so meetings
+may be missing that the account can in fact read.
+
 When several meetings could match what the user meant, **show the candidates and
 ask** rather than guessing. Titles repeat week to week, so a title alone is
 usually ambiguous; the date disambiguates.
@@ -137,7 +141,9 @@ shaped plan and tracked issues:
 | `no recording you can read at that id` | Absent, **or** present and not readable by this account. Answered identically on purpose, so that a recording you cannot see never reveals it exists. | Run `meetings list`. Never tell the user the meeting "doesn't exist" or that they are "not allowed" — you cannot know which. |
 | `Nextcloud rejected the credentials` | The app password is wrong or revoked. | Ask the user to generate a new one. Never print the value. |
 | `Nextcloud Files is unavailable` | An outage on the Nextcloud side, not permissions. | Retrying later is reasonable. Re-checking the password is not. |
-| `source=unknown` on a `list` | The response did not come from Nextcloud Files, so per-caller access control was not applied — probably a development operator. | Say so before treating the results as access-controlled. |
+| `source=unknown` or `source=unrecognised` | The response did not come from Nextcloud Files, so per-caller access control was not applied — probably a development operator. Warned on stderr by all three commands. | Say so before treating the results as access-controlled. |
+| `refusing to follow a redirect` / `points outside the Nextcloud you configured` | The CLI refused to send the credentials somewhere other than the instance you named. | Do not work around it. Report it: it is either a misconfiguration or an attempt to harvest the app password. |
+| `is empty (0 bytes)` | The published recording has no content. | Report it as a broken recording; retrying will not help. |
 | `ffprobe … not found` | `meetings context` needs `ffprobe` on `PATH`. | Ask the user to install ffmpeg. `list` and `fetch` still work. |
 
 Exit `0` means success — including a `list` that found nothing. Exit `2` is a
