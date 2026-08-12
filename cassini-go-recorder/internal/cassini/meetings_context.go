@@ -125,8 +125,15 @@ Requires ffprobe on PATH to read the meeting file's metadata.
 		return 2
 	}
 
+	// Trim once and use the trimmed values everywhere: gating the file open on a
+	// trimmed path but the "wrote it" line on the raw one made `--out " "` print
+	// the payload to stdout AND claim a file had been written.
+	outFile := strings.TrimSpace(*outPath)
+	keepOpusPath := strings.TrimSpace(*keepOpus)
+
 	client := newMeetingsClient(cfg)
-	audioURL, err := client.resolveMeeting(ctx, meetingID)
+	audioURL, listing, err := client.resolveMeeting(ctx, meetingID)
+	warnAboutMeetingsSource(stderr, listing)
 	if err != nil {
 		return reportMeetingsError(stderr, "context", cfg, err)
 	}
@@ -134,7 +141,7 @@ Requires ffprobe on PATH to read the meeting file's metadata.
 	// The portable reader needs a filesystem path: it shells out to ffprobe to
 	// read the OpusTags. Stage the download in a temp file — and remove it on
 	// every path, since cassini has leaked temp files before.
-	opusPath, cleanup, err := client.stageMeetingOpus(ctx, audioURL, *keepOpus)
+	opusPath, cleanup, err := client.stageMeetingOpus(ctx, audioURL, keepOpusPath)
 	if err != nil {
 		return reportMeetingsError(stderr, "context", cfg, err)
 	}
@@ -148,7 +155,7 @@ Requires ffprobe on PATH to read the meeting file's metadata.
 
 	bundle := buildMeetingContext(meetingID, meeting)
 
-	out, closeOut, err := openMeetingsOutput(*outPath, stdout)
+	out, closeOut, err := openMeetingsOutput(outFile, stdout)
 	if err != nil {
 		fmt.Fprintf(stderr, "context failed: %v\n", err)
 		return 1
@@ -165,8 +172,8 @@ Requires ffprobe on PATH to read the meeting file's metadata.
 	if !bundle.Summary.Present {
 		fmt.Fprintf(stderr, "note=this meeting has no generated summary; the transcript is included on its own\n")
 	}
-	if *outPath != "" {
-		fmt.Fprintf(stdout, "meeting_context -> %s\n", *outPath)
+	if outFile != "" {
+		fmt.Fprintf(stdout, "meeting_context -> %s\n", outFile)
 	}
 	return 0
 }
@@ -318,52 +325,108 @@ func writeMeetingContextMarkdown(out io.Writer, bundle meetingContext) error {
 const maxMarkdownHeadingLevel = 6
 
 // demoteMarkdownHeadings pushes every ATX heading in body down so the shallowest
-// one sits just below under. Relative depth is preserved, and `#` inside fenced
+// one sits just below under. Relative depth is preserved, and text inside fenced
 // code blocks is left untouched.
 func demoteMarkdownHeadings(body string, under int) string {
 	lines := strings.Split(body, "\n")
 
-	shallowest := 0
-	inFence := false
+	shallowest, deepest := 0, 0
+	fence := markdownFence{}
 	for _, line := range lines {
-		if isMarkdownFence(line) {
-			inFence = !inFence
+		if fence.toggles(line) {
 			continue
 		}
-		if inFence {
+		if fence.open() {
 			continue
 		}
-		if level := markdownHeadingLevel(line); level > 0 && (shallowest == 0 || level < shallowest) {
-			shallowest = level
+		if level := markdownHeadingLevel(line); level > 0 {
+			if shallowest == 0 || level < shallowest {
+				shallowest = level
+			}
+			if level > deepest {
+				deepest = level
+			}
 		}
 	}
 	if shallowest == 0 {
 		return body
 	}
+	// One shift for every heading, clamped so the deepest still fits. Clamping
+	// per line instead would leave a child shallower than its parent, inverting
+	// the nesting this exists to preserve.
 	shift := under + 1 - shallowest
+	if headroom := maxMarkdownHeadingLevel - deepest; shift > headroom {
+		shift = headroom
+	}
 	if shift <= 0 {
 		return body
 	}
 
-	inFence = false
+	fence = markdownFence{}
 	for i, line := range lines {
-		if isMarkdownFence(line) {
-			inFence = !inFence
+		if fence.toggles(line) {
 			continue
 		}
-		if inFence {
+		if fence.open() {
 			continue
 		}
-		level := markdownHeadingLevel(line)
-		if level == 0 {
-			continue
-		}
-		if level+shift > maxMarkdownHeadingLevel {
+		if markdownHeadingLevel(line) == 0 {
 			continue
 		}
 		lines[i] = strings.Repeat("#", shift) + line
 	}
 	return strings.Join(lines, "\n")
+}
+
+// markdownFence tracks whether the current line sits inside a fenced code block.
+//
+// It records the opening fence's marker and length, because per CommonMark only a
+// run of the same character at least as long closes it. Treating any ``` or ~~~
+// as a toggle got this wrong twice: a nested shorter fence inside a longer one
+// closed the block early, and a ~~~ was accepted as the closer of a ``` block —
+// either way the code inside was then rewritten as if it were prose.
+type markdownFence struct {
+	marker rune
+	length int
+}
+
+func (f *markdownFence) open() bool { return f.length > 0 }
+
+// toggles reports whether line is a fence delimiter, updating the state if so.
+func (f *markdownFence) toggles(line string) bool {
+	marker, length := markdownFenceRun(line)
+	if length == 0 {
+		return false
+	}
+	if !f.open() {
+		f.marker, f.length = marker, length
+		return true
+	}
+	if marker == f.marker && length >= f.length {
+		f.marker, f.length = 0, 0
+		return true
+	}
+	// A different or shorter run inside an open block is content, not a closer.
+	return false
+}
+
+// markdownFenceRun returns the fence character and run length of a fence line,
+// or a zero length when the line is not one.
+func markdownFenceRun(line string) (rune, int) {
+	trimmed := strings.TrimLeft(line, " ")
+	for _, marker := range []rune{'`', '~'} {
+		length := 0
+		for _, r := range trimmed {
+			if r != marker {
+				break
+			}
+			length++
+		}
+		if length >= 3 {
+			return marker, length
+		}
+	}
+	return 0, 0
 }
 
 // markdownHeadingLevel returns the ATX heading level of line, or 0 when it is
@@ -382,13 +445,11 @@ func markdownHeadingLevel(line string) int {
 	return level
 }
 
-func isMarkdownFence(line string) bool {
-	trimmed := strings.TrimSpace(line)
-	return strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~")
-}
-
 // formatMeetingDuration renders milliseconds as h:mm:ss or m:ss, whichever fits.
 func formatMeetingDuration(durationMS int64) string {
+	if durationMS < 0 {
+		durationMS = 0
+	}
 	totalSeconds := durationMS / 1000
 	hours := totalSeconds / 3600
 	minutes := (totalSeconds % 3600) / 60

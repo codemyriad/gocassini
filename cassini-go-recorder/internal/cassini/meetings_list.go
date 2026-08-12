@@ -50,6 +50,11 @@ recordings folder looks like.
 		return reportMeetingsError(stderr, "list", cfg, err)
 	}
 
+	// Diagnostics go out before the format branches, so the --json path — the one
+	// an agent actually reads — is not the only one that never hears the list may
+	// be incomplete.
+	warnAboutMeetingsSource(stderr, listing)
+
 	if *asJSON {
 		if err := writeMeetingsCatalogJSON(stdout, listing); err != nil {
 			fmt.Fprintf(stderr, "list failed: write JSON: %v\n", err)
@@ -60,13 +65,14 @@ recordings folder looks like.
 
 	entries := listing.Entries()
 	fmt.Fprintf(stdout, "meetings=%d caller=%s source=%s\n", len(entries), cfg.user, listing.Source)
-	if listing.Source == "unknown" {
-		fmt.Fprintf(stderr, "warning=response carried no %s header, so these bytes did not come from Nextcloud Files; per-caller access control may not be in effect\n", meetingsSourceHeader)
-	}
-	if listing.Skipped > 0 {
-		fmt.Fprintf(stderr, "warning=%d catalog entr(y/ies) had no id and were skipped, so this list may be incomplete\n", listing.Skipped)
-	}
 	if len(entries) == 0 {
+		if listing.Skipped > 0 {
+			// Not a permissions or provisioning story: the server did return
+			// meetings and every one was unusable. Claiming none are visible to
+			// this account would be false.
+			fmt.Fprintf(stdout, "note=the catalog held %d entr(y/ies) but none carried an id, so none can be read; the catalog is malformed rather than empty\n", listing.Skipped)
+			return 0
+		}
 		// The app answers 200 with an empty list both when the caller really
 		// has no readable recordings and when the recordings substrate is
 		// mis-provisioned or unreachable. It cannot tell the caller which,

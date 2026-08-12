@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -139,6 +140,10 @@ func (c *meetingsClient) fetchCatalog(ctx context.Context) (meetingsListing, err
 			listing.Skipped++
 			continue
 		}
+		// Trim the id on the decoded entry so an id padded with whitespace is
+		// findable rather than listed-but-unfetchable. raw keeps the server's
+		// bytes untouched, so --json still re-emits exactly what was sent.
+		entry.ID = strings.TrimSpace(entry.ID)
 		at, dated := parseMeetingDateLabel(entry.DateLabel)
 		listing.Items = append(listing.Items, meetingsCatalogItem{entry: entry, raw: raw, at: at, dated: dated})
 	}
@@ -209,16 +214,21 @@ func requireWithinPublishedTree(catalogURL *url.URL, resolved *url.URL, meetingI
 			"refusing to fetch meeting %q from %s: the catalog points outside the Nextcloud you configured (%s://%s), and the request would carry your app password",
 			meetingID, resolved.Redacted(), catalogURL.Scheme, catalogURL.Host)
 	}
-	// The catalog's own directory is the boundary; url.Parse has already
-	// normalised away any "." and ".." segments by this point.
-	base := catalogURL.EscapedPath()
-	if idx := strings.LastIndex(base, "/"); idx >= 0 {
-		base = base[:idx+1]
+	// Compare the DECODED and cleaned paths, not the escaped ones. An audioPath of
+	// "%2e%2e%2f" keeps those escapes in the escaped path, so an escaped-path
+	// prefix test still sees ".../published/" and passes — while the decoded path
+	// has already climbed out of the tree, and the server decodes before it
+	// routes. path.Clean is the load-bearing part: it resolves the ".." segments
+	// that url.Parse leaves in place for an escaped reference.
+	baseDir := path.Dir(path.Clean(catalogURL.Path))
+	if !strings.HasSuffix(baseDir, "/") {
+		baseDir += "/"
 	}
-	if !strings.HasPrefix(resolved.EscapedPath(), base) {
+	cleaned := path.Clean(resolved.Path)
+	if !strings.HasPrefix(cleaned, baseDir) {
 		return fmt.Errorf(
-			"refusing to fetch meeting %q from %s: audioPath %q escapes the published tree at %s",
-			meetingID, resolved.EscapedPath(), audioPath, base)
+			"refusing to fetch meeting %q: audioPath %q resolves to %s, which escapes the published tree at %s",
+			meetingID, audioPath, cleaned, baseDir)
 	}
 	return nil
 }
@@ -266,12 +276,17 @@ func writeMeetingsCatalogJSON(out io.Writer, listing meetingsListing) error {
 		meetings = append(meetings, item.raw)
 	}
 	document := struct {
-		Version  string            `json:"version"`
-		Source   string            `json:"source"`
+		Version string `json:"version"`
+		Source  string `json:"source"`
+		// Skipped tells a programmatic consumer the list is incomplete. Without
+		// it, --json — the path an agent actually reads — is the only one that
+		// cannot tell a short list from a complete one.
+		Skipped  int               `json:"skipped"`
 		Meetings []json.RawMessage `json:"meetings"`
 	}{
 		Version:  listing.Version,
 		Source:   listing.Source,
+		Skipped:  listing.Skipped,
 		Meetings: meetings,
 	}
 	encoder := json.NewEncoder(out)

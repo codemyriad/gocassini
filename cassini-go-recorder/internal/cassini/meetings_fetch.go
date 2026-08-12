@@ -61,7 +61,8 @@ summary in a single file. Use `+"`cassini meetings list`"+` to find the id.
 	}
 
 	client := newMeetingsClient(cfg)
-	audioURL, err := client.resolveMeeting(ctx, meetingID)
+	audioURL, listing, err := client.resolveMeeting(ctx, meetingID)
+	warnAboutMeetingsSource(stderr, listing)
 	if err != nil {
 		return reportMeetingsError(stderr, "fetch", cfg, err)
 	}
@@ -81,20 +82,21 @@ summary in a single file. Use `+"`cassini meetings list`"+` to find the id.
 // Going through the catalog rather than guessing the asset path is what makes an
 // id the caller may not read indistinguishable from one that does not exist:
 // the catalog is already filtered to the caller, so the id is simply not there.
-func (c *meetingsClient) resolveMeeting(ctx context.Context, meetingID string) (*url.URL, error) {
+func (c *meetingsClient) resolveMeeting(ctx context.Context, meetingID string) (*url.URL, meetingsListing, error) {
 	listing, err := c.fetchCatalog(ctx)
 	if err != nil {
-		return nil, err
+		return nil, meetingsListing{}, err
 	}
 	entry, err := listing.find(meetingID)
 	if err != nil {
-		return nil, err
+		return nil, listing, err
 	}
 	catalogURL, err := c.catalogURL()
 	if err != nil {
-		return nil, err
+		return nil, listing, err
 	}
-	return resolveMeetingAudioURL(catalogURL, entry)
+	audioURL, err := resolveMeetingAudioURL(catalogURL, entry)
+	return audioURL, listing, err
 }
 
 // downloadMeeting streams the .opus to outPath and returns the byte count.
@@ -140,6 +142,13 @@ func (c *meetingsClient) downloadMeeting(ctx context.Context, audioURL *url.URL,
 	}
 	if err := tmp.Close(); err != nil {
 		return 0, fmt.Errorf("finish writing %s: %w", tmpName, err)
+	}
+	// A 200 with an empty body is not a meeting. Committing it would report
+	// success for a 0-byte .opus that only fails later, when something tries to
+	// read it — which is the same class of half-written file the temp-and-rename
+	// dance exists to prevent.
+	if written == 0 {
+		return 0, fmt.Errorf("the published recording at %s is empty (0 bytes), so there is nothing to save", audioURL.Redacted())
 	}
 	// Deliberately NOT widened to 0644. os.CreateTemp makes the file readable by
 	// its owner only, and that is the right default here: this file is a private

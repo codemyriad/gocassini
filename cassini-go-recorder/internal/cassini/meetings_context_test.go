@@ -428,3 +428,94 @@ func TestMeetingsContextUsageErrors(t *testing.T) {
 		})
 	}
 }
+
+// --out " " must not quietly fall back to stdout while also claiming a file was
+// written — that emitted two documents on stdout and lost the flag silently.
+func TestMeetingsContextRejectsAWhitespaceOutPath(t *testing.T) {
+	fake := newMeetingsFakeNextcloud(t, serveCatalogAndOpus(oneMeetingCatalog, []byte("opus")))
+
+	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "context", "MEETING1", "--json", "--out", "   ")
+
+	if strings.Contains(stdout, "meeting_context ->") {
+		t.Errorf("must not claim a file was written:\n%s", stdout)
+	}
+	// The download is not a real .opus, so this fails at extraction — the point is
+	// that it does not report having written a file it did not write.
+	if code == 0 && strings.Count(stdout, meetingContextVersion) > 1 {
+		t.Errorf("emitted more than one document on stdout:\n%s", stdout)
+	}
+	_ = stderr
+}
+
+// Content inside a fenced code block must never be rewritten, whichever fence
+// marker and length the summary uses.
+func TestDemoteMarkdownHeadingsLeavesFencedContentAlone(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "a shorter inner fence does not close a longer one",
+			in:   "# Title\n\n````\n```\n# not a heading\n```\n````\n\n## After",
+			want: "### Title\n\n````\n```\n# not a heading\n```\n````\n\n#### After",
+		},
+		{
+			name: "a tilde run does not close a backtick block",
+			in:   "# Title\n```\n# inside\n~~~\n## still inside\n```\n## after",
+			want: "### Title\n```\n# inside\n~~~\n## still inside\n```\n#### after",
+		},
+		{
+			name: "indented fence still counts",
+			in:   "## Real\n\n  ```sh\n  # a comment\n  ```",
+			want: "### Real\n\n  ```sh\n  # a comment\n  ```",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := demoteMarkdownHeadings(tc.in, 2); got != tc.want {
+				t.Errorf("got:\n%q\nwant:\n%q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Clamping at h6 must apply one shift to every heading. Clamping per line left a
+// child shallower than its parent, inverting the nesting.
+func TestDemoteMarkdownHeadingsNeverInvertsNesting(t *testing.T) {
+	got := demoteMarkdownHeadings("# Title\n#### Deep\n##### Deeper", 2)
+
+	levels := make([]int, 0, 3)
+	for _, line := range strings.Split(got, "\n") {
+		levels = append(levels, markdownHeadingLevel(line))
+	}
+	for i := 1; i < len(levels); i++ {
+		if levels[i] < levels[i-1] && i == 2 {
+			t.Errorf("nesting inverted: %v\n%s", levels, got)
+		}
+	}
+	if levels[1] > levels[2] {
+		t.Errorf("child %d is shallower than parent %d: %v\n%s", levels[2], levels[1], levels, got)
+	}
+}
+
+// A speaker id padded with whitespace must still find its declared label.
+func TestBuildMeetingContextMatchesSpeakerLabelsDespiteWhitespace(t *testing.T) {
+	meeting := extractedMeetingFixture(wordsAt(" spk1 ", 0, 200, "hello", "there"), "")
+	meeting.Manifest.Speakers = []portable.Speaker{{ID: " spk1 ", Label: "Erlich"}}
+
+	bundle := buildMeetingContext("M1", meeting)
+
+	if len(bundle.Segments) != 1 {
+		t.Fatalf("got %d segments, want 1", len(bundle.Segments))
+	}
+	if bundle.Segments[0].SpeakerLabel != "Erlich" {
+		t.Errorf("SpeakerLabel = %q, want Erlich", bundle.Segments[0].SpeakerLabel)
+	}
+}
+
+func TestFormatMeetingDurationClampsNegatives(t *testing.T) {
+	if got := formatMeetingDuration(-3661000); got != "0:00" {
+		t.Errorf("formatMeetingDuration(-3661000) = %q, want 0:00", got)
+	}
+}

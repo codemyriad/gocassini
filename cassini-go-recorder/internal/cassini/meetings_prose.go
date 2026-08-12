@@ -99,8 +99,12 @@ func splitWordRunsBySpeaker(words []inspectpkg.TranscriptWord) []speakerWordRun 
 // speakerLabel resolves a speaker id to its display label, falling back to the
 // raw id so an unlabelled speaker is still attributed rather than dropped.
 func speakerLabel(id string, labels map[string]string) string {
-	if label := strings.TrimSpace(labels[id]); label != "" {
+	// Trim before looking up: the roster is keyed by trimmed id (ExtractMeeting
+	// normalises it), so a transcript item carrying a padded id would otherwise
+	// miss its own declared label and be attributed by raw id instead.
+	trimmed := strings.TrimSpace(id)
+	if label := strings.TrimSpace(labels[trimmed]); label != "" {
 		return label
 	}
-	return strings.TrimSpace(id)
+	return trimmed
 }

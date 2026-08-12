@@ -801,3 +801,192 @@ func TestMeetingsFetchWritesAnOwnerOnlyFile(t *testing.T) {
 		t.Errorf("mode = %#o, want no group or other access", mode)
 	}
 }
+
+// Percent-encoded traversal must be refused like literal traversal. The escapes
+// survive EscapedPath(), so an escaped-path prefix check passes while the decoded
+// path has already left the tree — and the server decodes before it routes.
+func TestResolveMeetingAudioURLRefusesPercentEncodedTraversal(t *testing.T) {
+	catalogURL, err := url.Parse("https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/published/catalog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, audioPath := range []string{
+		"%2e%2e%2f%2e%2e%2fadmin/jobs",
+		"%2e%2e/%2e%2e/admin/jobs",
+		".%2e/.%2e/admin/jobs",
+		"meetings/%2e%2e%2f%2e%2e%2f%2e%2e%2fremote.php/dav",
+	} {
+		t.Run(audioPath, func(t *testing.T) {
+			resolved, err := resolveMeetingAudioURL(catalogURL, meetingsCatalogEntry{ID: "M1", AudioPath: audioPath})
+			if err == nil {
+				t.Fatalf("expected a refusal, got %s", resolved)
+			}
+			if !strings.Contains(err.Error(), "escapes the published tree") {
+				t.Errorf("error = %v, want it to name the escape", err)
+			}
+		})
+	}
+}
+
+// A base URL can carry userinfo. A validation failure must not echo the password
+// into the terminal or into an agent's captured transcript.
+func TestNormalizeNextcloudURLNeverEchoesEmbeddedCredentials(t *testing.T) {
+	const secret = "SuperSecret123"
+	for _, raw := range []string{
+		"ftp://alice:" + secret + "@nc.example.com",
+		"https://alice:" + secret + "@nc.example.com:notaport",
+		"gopher://alice:" + secret + "@host/path@notuserinfo",
+	} {
+		_, err := normalizeNextcloudURL(raw)
+		if err == nil {
+			t.Fatalf("expected %q to be rejected", raw)
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("error leaked the embedded password: %v", err)
+		}
+	}
+
+	// Userinfo on an otherwise valid URL is dropped: SetBasicAuth overrides it, so
+	// carrying it would only smuggle a dead credential into every request URL.
+	got, err := normalizeNextcloudURL("https://alice:" + secret + "@nc.example.com")
+	if err != nil {
+		t.Fatalf("normalizeNextcloudURL: %v", err)
+	}
+	if strings.Contains(got, secret) || strings.Contains(got, "alice") {
+		t.Errorf("normalized URL still carries userinfo: %q", got)
+	}
+	if got != "https://nc.example.com" {
+		t.Errorf("normalized = %q, want %q", got, "https://nc.example.com")
+	}
+}
+
+// --json is the path an agent reads, so it must not be the only one that never
+// hears the list is incomplete or unverified.
+func TestMeetingsListJSONStillReportsWarningsAndSkippedCount(t *testing.T) {
+	fake := newMeetingsFakeNextcloud(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"version":"cassini.viewer.catalog.v1","meetings":[
+		  {"id":"OK1","dateLabel":"2026-08-11","audioPath":"./meetings/OK1.opus"},
+		  {"title":"no id"}, null]}`)
+	})
+
+	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "list", "--json")
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+
+	var got struct {
+		Source   string           `json:"source"`
+		Skipped  int              `json:"skipped"`
+		Meetings []map[string]any `json:"meetings"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout must be exactly one JSON document: %v\n%s", err, stdout)
+	}
+	if got.Skipped != 2 {
+		t.Errorf("skipped = %d, want 2", got.Skipped)
+	}
+	if got.Source != "unknown" {
+		t.Errorf("source = %q, want unknown", got.Source)
+	}
+	if !strings.Contains(stderr, "were skipped") {
+		t.Errorf("stderr should warn about the skipped entries: %q", stderr)
+	}
+	if !strings.Contains(stderr, "per-caller access control may not be in effect") {
+		t.Errorf("stderr should warn about the missing source header: %q", stderr)
+	}
+}
+
+// When every entry is unusable the server did return meetings, so claiming none
+// are visible to this account would be false.
+func TestMeetingsListDistinguishesAMalformedCatalogFromAnEmptyOne(t *testing.T) {
+	fake := newMeetingsFakeNextcloud(t, serveCatalog(`{"version":"cassini.viewer.catalog.v1","meetings":[{"title":"a"},{"title":"b"},null]}`))
+
+	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "list")
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "malformed rather than empty") {
+		t.Errorf("expected the malformed-catalog note:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "no recordings are visible to this account") {
+		t.Errorf("must not claim the account can read none:\n%s", stdout)
+	}
+}
+
+// The source value is server-controlled and lands in a key=value line, so it must
+// not be able to append further pairs a parser would read as facts.
+func TestMeetingsSourceRejectsAnInjectedHeaderValue(t *testing.T) {
+	fake := newMeetingsFakeNextcloud(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Cassini-Meeting-Source", "nextcloud-files caller=root trust=full")
+		fmt.Fprint(w, `{"version":"cassini.viewer.catalog.v1","meetings":[]}`)
+	})
+
+	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "list")
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	if strings.Contains(stdout, "caller=root") {
+		t.Errorf("an injected key=value pair reached the summary line:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "source=unrecognised") {
+		t.Errorf("expected source=unrecognised:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "unrecognised") {
+		t.Errorf("expected a warning about the value: %q", stderr)
+	}
+}
+
+// fetch and context must warn about a missing source header too — an agent
+// driving only context would otherwise never learn access control was not applied.
+func TestMeetingsFetchAndContextWarnWhenNotServedFromNextcloudFiles(t *testing.T) {
+	body := []byte("opus-bytes")
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case meetingsTestCatalogPath:
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, oneMeetingCatalog)
+		case "/index.php/apps/app_api/proxy/gocassini/published/meetings/MEETING1.opus":
+			_, _ = w.Write(body)
+		default:
+			http.NotFound(w, r)
+		}
+	}
+
+	tmp := t.TempDir()
+	fake := newMeetingsFakeNextcloud(t, handler)
+	if code, _, stderr := runMeetingsCLI(t, fake.server.URL, "fetch", "MEETING1", "--out", filepath.Join(tmp, "m.opus")); code != 0 {
+		t.Fatalf("fetch exit=%d stderr=%q", code, stderr)
+	} else if !strings.Contains(stderr, "per-caller access control may not be in effect") {
+		t.Errorf("fetch should warn: %q", stderr)
+	}
+
+	// context fails later (the body is not a real .opus), but the warning is owed
+	// regardless and must appear.
+	_, _, stderr := runMeetingsCLI(t, fake.server.URL, "context", "MEETING1")
+	if !strings.Contains(stderr, "per-caller access control may not be in effect") {
+		t.Errorf("context should warn: %q", stderr)
+	}
+}
+
+// A 200 with an empty body is not a meeting; committing it reports success for a
+// file that only fails later.
+func TestMeetingsFetchRefusesAnEmptyRecording(t *testing.T) {
+	tmp := t.TempDir()
+	outPath := filepath.Join(tmp, "m.opus")
+	fake := newMeetingsFakeNextcloud(t, serveCatalogAndOpus(oneMeetingCatalog, []byte{}))
+
+	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "fetch", "MEETING1", "--out", outPath)
+
+	if code != 1 {
+		t.Fatalf("exit=%d, want 1 (stdout=%q stderr=%q)", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "is empty (0 bytes)") {
+		t.Errorf("stderr=%q, want it to name the empty recording", stderr)
+	}
+	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
+		t.Errorf("no file should be written, stat err=%v", err)
+	}
+	assertNoStrayFiles(t, tmp)
+}

@@ -50,6 +50,10 @@ const (
 	// somewhere else — a dev operator serving a local archive with no access
 	// control — which is worth telling the caller about.
 	meetingsSourceHeader = "X-Cassini-Meeting-Source"
+
+	// ncFilesSourceValue is the only value the app sets, meaning the bytes were
+	// served out of Nextcloud Files with per-caller permissions applied.
+	ncFilesSourceValue = "nextcloud-files"
 )
 
 // meetingsHTTPClient handles the small JSON request (the catalog). Package-level
@@ -218,18 +222,27 @@ func normalizeNextcloudURL(raw string) (string, error) {
 	if !strings.Contains(value, "://") {
 		value = "https://" + value
 	}
+	// Every message below reports the redacted form. A base URL can carry
+	// userinfo ("https://user:secret@host"), and a validation failure is exactly
+	// where that would otherwise be echoed verbatim into a terminal and into an
+	// agent's captured transcript.
+	shown := redactURLish(raw)
 	parsed, err := url.Parse(value)
 	if err != nil {
-		return "", fmt.Errorf("invalid --nextcloud-url %q: %w", raw, err)
+		return "", fmt.Errorf("invalid --nextcloud-url %q: %s", shown, redactURLish(err.Error()))
 	}
 	switch parsed.Scheme {
 	case "http", "https":
 	default:
-		return "", fmt.Errorf("invalid --nextcloud-url %q: scheme must be http or https, got %q", raw, parsed.Scheme)
+		return "", fmt.Errorf("invalid --nextcloud-url %q: scheme must be http or https, got %q", shown, parsed.Scheme)
 	}
 	if parsed.Host == "" {
-		return "", fmt.Errorf("invalid --nextcloud-url %q: no host", raw)
+		return "", fmt.Errorf("invalid --nextcloud-url %q: no host", shown)
 	}
+	// Userinfo in the base URL never authenticates — SetBasicAuth overrides it —
+	// so carrying it forward would only smuggle a dead credential into every
+	// request URL.
+	parsed.User = nil
 	// A base URL carries neither a query nor a fragment, and route paths are
 	// appended to it, so normalise both away and drop any trailing slash.
 	parsed.Path = strings.TrimRight(parsed.Path, "/")
@@ -237,6 +250,35 @@ func normalizeNextcloudURL(raw string) (string, error) {
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed.String(), nil
+}
+
+// redactURLish replaces the password in any "scheme://user:secret@host" that
+// appears in text, so a value that failed to parse can still be quoted back to
+// the caller without disclosing a credential embedded in it.
+//
+// url.URL.Redacted() cannot be used here: it needs a URL that parsed, and the
+// cases that most need redacting are the ones that did not.
+func redactURLish(text string) string {
+	scheme := strings.Index(text, "://")
+	if scheme < 0 {
+		return text
+	}
+	rest := text[scheme+3:]
+	// The authority ends at the first path, query or fragment delimiter; an "@"
+	// after that belongs to the path and is not userinfo.
+	authority := rest
+	if end := strings.IndexAny(rest, "/?#"); end >= 0 {
+		authority = rest[:end]
+	}
+	at := strings.Index(authority, "@")
+	if at < 0 {
+		return text
+	}
+	userinfo := authority[:at]
+	if colon := strings.Index(userinfo, ":"); colon >= 0 {
+		userinfo = userinfo[:colon] + ":xxxxx"
+	}
+	return text[:scheme+3] + userinfo + rest[at:]
 }
 
 // meetingsClient talks to the app's published routes through Nextcloud's AppAPI
@@ -398,10 +440,38 @@ func reportMeetingsError(stderr io.Writer, verb string, cfg meetingsConfig, err 
 // reply did not come from Nextcloud Files — a dev operator serving a local
 // archive has no per-caller access control at all.
 func meetingsSource(header http.Header) string {
-	if value := strings.TrimSpace(header.Get(meetingsSourceHeader)); value != "" {
-		return value
+	value := strings.TrimSpace(header.Get(meetingsSourceHeader))
+	if value == "" {
+		return "unknown"
 	}
-	return "unknown"
+	// The value lands in a key=value summary line, and it is server-controlled: a
+	// value containing a space would append further pairs that a caller parsing
+	// that line reads as facts ("source=nextcloud-files caller=root"). Only the
+	// known token is passed through; anything else is reported as unrecognised
+	// rather than echoed.
+	if value != ncFilesSourceValue {
+		return "unrecognised"
+	}
+	return value
+}
+
+// warnAboutMeetingsSource writes the diagnostics every verb owes the caller
+// about the listing it just fetched: whether per-caller access control was
+// actually in effect, and whether the catalog was partly unusable.
+//
+// Every verb calls it, not just list — an agent driving only `context` would
+// otherwise never learn that the bytes did not come from Nextcloud Files.
+func warnAboutMeetingsSource(stderr io.Writer, listing meetingsListing) {
+	switch listing.Source {
+	case "", ncFilesSourceValue:
+	case "unknown":
+		fmt.Fprintf(stderr, "warning=response carried no %s header, so these bytes did not come from Nextcloud Files; per-caller access control may not be in effect\n", meetingsSourceHeader)
+	default:
+		fmt.Fprintf(stderr, "warning=response carried an unrecognised %s value, so it is not clear these bytes came from Nextcloud Files\n", meetingsSourceHeader)
+	}
+	if listing.Skipped > 0 {
+		fmt.Fprintf(stderr, "warning=%d catalog entr(y/ies) had no id and were skipped, so this list may be incomplete\n", listing.Skipped)
+	}
 }
 
 // openMeetingsOutput returns the writer for a subcommand's primary output:
