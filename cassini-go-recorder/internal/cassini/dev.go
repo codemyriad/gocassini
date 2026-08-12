@@ -144,8 +144,8 @@ Common options:
   --patch=auto|none|force
 
 up options:
-  --resume
-  --reset
+  --resume   reuse matching stopped containers or retained harness volumes
+  --reset    remove and recreate containers and volumes
 
 down options (canonical teardown; containers are ephemeral, volumes persist):
   (none)      remove containers, keep volumes (persistence)

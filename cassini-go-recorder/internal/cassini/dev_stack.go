@@ -114,7 +114,7 @@ func parseDevStackFlags(command string, args []string) (devStackFlagOptions, []s
 	exAppImageMode := stringFlag("exapp-image-mode", "ExApp image mode: build, reuse-local, pull")
 	patchMode := stringFlag("patch", "patch mode: auto, none, force")
 	build := fs.Bool("build", false, "build the Cassini ExApp image before registration")
-	resume := fs.Bool("resume", false, "resume matching stopped resources instead of creating a fresh stack")
+	resume := fs.Bool("resume", false, "reuse matching stopped containers or retained harness volumes")
 	reset := fs.Bool("reset", false, "stop/remove/recreate resources for the resolved stack")
 	suspend := fs.Bool("suspend", false, "for stack down: stop containers but keep them for 'up --resume'")
 	downVolumes := fs.Bool("volumes", false, "for stack down: remove containers and volumes for the current config")

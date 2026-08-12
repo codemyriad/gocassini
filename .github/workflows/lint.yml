@@ -63,8 +63,14 @@ jobs:
           # artifact's content, never on a missing tool.
           sudo apt-get install -y --no-install-recommends shellcheck xsltproc libxml2-utils ripgrep
 
-      - name: shellcheck scripts/ + sandbox/ + ops/deploy/
-        run: shellcheck scripts/*.sh sandbox/*.sh ops/deploy/*.sh ops/deploy/lib/*.sh
+      - name: shellcheck scripts/ + sandbox/ + ops/deploy/ + stack resume contract
+        run: >-
+          shellcheck
+          scripts/*.sh
+          sandbox/*.sh
+          ops/deploy/*.sh
+          ops/deploy/lib/*.sh
+          harness/bin/test-stack-resume.sh
 
       - name: actionlint (all workflows)
         run: |
@@ -92,3 +98,4 @@ jobs:
           # without actually comparing a pair. Stubs ffprobe, so no ffmpeg here.
           ./harness/bin/test-av-drift-pair-requirement.sh
           ./harness/bin/test-ci-e2e-mute-timing.sh
+          ./harness/bin/test-stack-resume.sh

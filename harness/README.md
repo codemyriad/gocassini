@@ -194,7 +194,7 @@ Installed ExApp setup is opt-in. It also enables the patch/image phases below.
 | Command/flag | Environment | What it does |
 |---|---|---|
 | `stack up` | `CASSINI_HARNESS_EXISTING=fail` (default) | Fails if harness containers, volumes, or networks already exist, and prints the safe next command. |
-| `stack up --resume` | `CASSINI_HARNESS_EXISTING=resume` | Starts matching stopped resources. Fails if the stopped services do not match the resolved config. |
+| `stack up --resume` | `CASSINI_HARNESS_EXISTING=resume` | Starts a matching stopped container set, or recreates the resolved containers around data volumes retained by bare `stack down`. Existing stopped containers must match the resolved services. |
 | `stack up --reset` | `CASSINI_HARNESS_EXISTING=reset` | Removes and recreates resources for the resolved stack. For installed ExApp mode, AppAPI-spawned ExApp resources are removed first so the network can be deleted. |
 | `stack down` | command flag only | Removes compose containers and ExApp containers, keeps data volumes. |
 | `stack down --suspend` | command flag only | Stops compose containers but keeps them for `up --resume`. Cannot combine with `--volumes` or `--full`. |
@@ -342,7 +342,7 @@ One-command smoke test:
 with suggested next commands. Use:
 
 ```bash
-./bin/cassini dev stack up --resume   # matching stopped resources
+./bin/cassini dev stack up --resume   # stopped containers or retained volumes
 ./bin/cassini dev stack up --reset    # recreate resolved stack
 ./bin/cassini dev stack down --full   # complete harness cleanup
 ```
@@ -599,8 +599,9 @@ The same configuration can be passed directly to `stack up`:
 
 Startup is non-destructive by default. If matching resources already exist, the
 command fails and tells you to choose `--resume` for a previously suspended
-stack or `--reset` to remove and recreate the resolved stack and its volumes.
-Do not add `--reset` unless that data loss is intended.
+stack or for data volumes retained by bare `stack down`. In the retained-volume
+case, Compose creates fresh containers from the resolved config and mounts the
+existing volumes. Use `--reset` only when removing that data is intended.
 
 Equivalent environment-only configuration is:
 
@@ -649,10 +650,15 @@ Two independent configuration mistakes otherwise produce the same Talk symptom:
 #### Step 6: stop or remove the stack
 
 ```bash
-# Stop containers while retaining state for a later `stack up ... --resume`.
-./bin/cassini dev stack down --suspend
+# Remove containers while retaining volumes for fresh containers on resume.
+./bin/cassini dev stack down
+./bin/cassini dev stack up --resume
 
-# Or remove all harness-owned containers and volumes, including the ExApp.
+# Or stop and retain the existing Compose containers for resume.
+./bin/cassini dev stack down --suspend
+./bin/cassini dev stack up --resume
+
+# Remove all harness-owned containers and volumes, including the ExApp.
 ./bin/cassini dev stack down --full
 ```
 
@@ -1383,13 +1389,15 @@ Common runtime outputs:
 
 ## 11. Teardown reference
 
-Bare `down` removes containers but keeps volumes:
+Bare `down` removes containers but keeps volumes. `--resume` recreates the
+resolved containers and mounts those retained volumes:
 
 ```bash
 ./bin/cassini dev stack down
+./bin/cassini dev stack up --resume
 ```
 
-Stop containers and keep them resumable:
+Stop containers and keep those exact containers resumable:
 
 ```bash
 ./bin/cassini dev stack down --suspend

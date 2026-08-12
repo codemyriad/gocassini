@@ -65,6 +65,7 @@ jobs:
           ./harness/bin/test-installed-validation.sh
           ./harness/bin/test-faithful-host-tools.sh
           ./harness/bin/test-installed-backend-url.sh
+          ./harness/bin/test-stack-resume.sh
           ./harness/bin/test-post-boundary-stream.sh
           ./harness/bin/test-ci-e2e-mute-timing.sh
           ./harness/bin/test-negative-manifest.sh
@@ -85,6 +86,7 @@ jobs:
           harness/bin/test-installed-validation.sh
           harness/bin/test-faithful-host-tools.sh
           harness/bin/test-installed-backend-url.sh
+          harness/bin/test-stack-resume.sh
           harness/bin/validate-installed-artifact.sh
           harness/bin/validate-installed-exapp-private-talk.sh
           harness/bin/ci-e2e-installed-exapp-talk.sh
