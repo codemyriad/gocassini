@@ -28,6 +28,55 @@ func promoteMeetingBundle(workRoot, sourceMeetingPath, jobID string) (string, er
 	return destination, nil
 }
 
+// promoteOpusFile publishes an attempt's sealed `.opus` as the job's canonical
+// portable meeting, current/<jobID>.opus (D-428, D-583).
+//
+// Unlike the bundle promotions above there is no backup dance, because there is
+// nothing to protect against: rename(2) replaces an existing regular file
+// atomically, so a reader sees either the whole previous `.opus` or the whole
+// new one. The staged copy exists only to keep that rename inside current/ —
+// work root and site root can be separate mounts in the standalone image, and a
+// cross-tree rename is EXDEV.
+//
+// The staging copy is a hard link when the filesystem allows it. runs/ and
+// current/ are always the same filesystem (both live under the work root), so
+// the link normally succeeds and the canonical `.opus` costs no extra bytes and
+// is byte-identical to the sealed artifact by construction. A link failure
+// (an exotic mount, a filesystem without hard links) falls back to a copy.
+func promoteOpusFile(workRoot, sourceOpusPath, jobID string) (string, error) {
+	sourceOpusPath = filepath.Clean(sourceOpusPath)
+	info, err := os.Stat(sourceOpusPath)
+	if err != nil {
+		return "", fmt.Errorf("stat sealed portable meeting: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("sealed portable meeting is not a file: %s", sourceOpusPath)
+	}
+
+	destination := canonicalOpusPath(workRoot, jobID)
+	stagingRoot := currentStagingRoot(workRoot)
+	if err := os.MkdirAll(stagingRoot, 0o755); err != nil {
+		return "", fmt.Errorf("create staging root: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		return "", fmt.Errorf("create destination parent: %w", err)
+	}
+
+	stagingPath := filepath.Join(stagingRoot, filepath.Base(destination))
+	_ = os.Remove(stagingPath)
+	if err := os.Link(sourceOpusPath, stagingPath); err != nil {
+		if copyErr := copyFile(sourceOpusPath, stagingPath, info.Mode()); copyErr != nil {
+			_ = os.Remove(stagingPath)
+			return "", copyErr
+		}
+	}
+	if err := os.Rename(stagingPath, destination); err != nil {
+		_ = os.Remove(stagingPath)
+		return "", fmt.Errorf("promote sealed portable meeting: %w", err)
+	}
+	return destination, nil
+}
+
 func promoteDirectory(sourcePath, destinationPath, stagingRoot string, prepareStaged func(string) error) error {
 	sourcePath = filepath.Clean(sourcePath)
 	destinationPath = filepath.Clean(destinationPath)

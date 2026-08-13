@@ -15,7 +15,7 @@ A Nextcloud Talk meeting URL that Cassini can join and record.
 The local development and test lab for Nextcloud Talk. It lets you bring up a local Talk stack, create rooms, and run smoke or fixture flows.
 
 ### Operator
-Cassini’s long-running control-plane service. It persists jobs and attempts and runs record/build/publish through CLI subprocesses.
+Cassini’s long-running control-plane service. It persists jobs and attempts and runs record/build/seal/publish through CLI subprocesses.
 
 ### Control panel
 The browser UI used to start, stop, rerun, and inspect operator-managed jobs.

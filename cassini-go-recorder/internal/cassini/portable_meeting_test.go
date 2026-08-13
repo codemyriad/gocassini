@@ -315,3 +315,56 @@ func writePortableJSONFixture(t *testing.T, path string, payload any) {
 		t.Fatalf("write fixture %s: %v", path, err)
 	}
 }
+
+// A pack that cannot produce its output must never destroy the `.opus` that is
+// already there. The commit step used to remove the destination before renaming
+// the stage file over it, so a failure in that gap left the meeting with no
+// portable artifact at all — and the operator now refuses to publish a meeting
+// whose `.opus` is missing (D-583).
+func TestCommitPortableMeetingOutputKeepsThePreviousFileWhenTheStageIsMissing(t *testing.T) {
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "meeting.opus")
+	if err := os.WriteFile(outPath, []byte("previous-opus"), 0o644); err != nil {
+		t.Fatalf("write previous output: %v", err)
+	}
+
+	err := commitPortableMeetingOutput(filepath.Join(dir, "never-written.opus"), outPath)
+	if err == nil {
+		t.Fatal("expected an error when the stage file does not exist")
+	}
+
+	body, readErr := os.ReadFile(outPath)
+	if readErr != nil {
+		t.Fatalf("previous output must survive a failed commit: %v", readErr)
+	}
+	if string(body) != "previous-opus" {
+		t.Fatalf("previous output = %q, want %q", string(body), "previous-opus")
+	}
+}
+
+func TestCommitPortableMeetingOutputReplacesTheExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "meeting.opus")
+	stagePath := filepath.Join(dir, ".cassini-stage.opus")
+	if err := os.WriteFile(outPath, []byte("previous-opus"), 0o644); err != nil {
+		t.Fatalf("write previous output: %v", err)
+	}
+	if err := os.WriteFile(stagePath, []byte("next-opus"), 0o644); err != nil {
+		t.Fatalf("write stage file: %v", err)
+	}
+
+	if err := commitPortableMeetingOutput(stagePath, outPath); err != nil {
+		t.Fatalf("commitPortableMeetingOutput() error = %v", err)
+	}
+
+	body, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read output: %v", err)
+	}
+	if string(body) != "next-opus" {
+		t.Fatalf("output = %q, want %q", string(body), "next-opus")
+	}
+	if _, err := os.Stat(stagePath); !os.IsNotExist(err) {
+		t.Fatalf("stage file must not survive the commit, err=%v", err)
+	}
+}

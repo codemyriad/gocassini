@@ -273,6 +273,25 @@ case "$cmd" in
     [[ -n "$out" ]]
     write_meeting "$out"
     ;;
+  pack)
+    # The operator seals a portable .opus before it queues a publish (D-583),
+    # so a fake cassini without this verb strands every job at seal/running.
+    out=""
+    while [[ "$#" -gt 0 ]]; do
+      case "$1" in
+        --out)
+          out="$2"
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    [[ -n "$out" ]]
+    mkdir -p "$(dirname "$out")"
+    printf 'fake-portable-meeting' > "$out"
+    ;;
   publish)
     out=""
     while [[ "$#" -gt 0 ]]; do

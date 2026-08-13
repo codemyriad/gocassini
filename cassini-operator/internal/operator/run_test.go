@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -36,8 +37,8 @@ func TestOpenStoreEnsuresSchemaAndEmptyList(t *testing.T) {
 	if len(jobs) != 0 {
 		t.Fatalf("expected empty jobs list, got %d", len(jobs))
 	}
-	if versions := migrationVersions(t, store.db); len(versions) != 5 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 || versions[4] != 5 {
-		t.Fatalf("expected migration versions [1 2 3 4 5], got %v", versions)
+	if versions := migrationVersions(t, store.db); len(versions) != 6 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 || versions[4] != 5 || versions[5] != 6 {
+		t.Fatalf("expected migration versions [1 2 3 4 5 6], got %v", versions)
 	}
 	if !sqliteTableExists(t, store.db, "job_attempts") {
 		t.Fatalf("expected job_attempts table to exist")
@@ -56,8 +57,8 @@ func TestOpenStoreBaselinesLegacySchemaDatabase(t *testing.T) {
 	}
 	defer store.Close()
 
-	if versions := migrationVersions(t, store.db); len(versions) != 5 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 || versions[4] != 5 {
-		t.Fatalf("expected migration versions [1 2 3 4 5], got %v", versions)
+	if versions := migrationVersions(t, store.db); len(versions) != 6 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 || versions[4] != 5 || versions[5] != 6 {
+		t.Fatalf("expected migration versions [1 2 3 4 5 6], got %v", versions)
 	}
 	job := mustGetJob(t, store, "legacy-job")
 	if job.Provider != "nextcloud-talk" || job.Stage != "record" || job.State != "queued" {
@@ -2306,6 +2307,28 @@ case "$cmd" in
     write_run "$out"
     exit 0
     ;;
+  pack)
+    # The seal stage (D-583) packs every built meeting before publish is
+    # queued, so a fake cassini without this case stops the whole pipeline
+    # there. Deterministic bytes keep the sealed digest reproducible.
+    out=""
+    prev=""
+    for arg in "$@"; do
+      if [ "$prev" = "--out" ]; then out="$arg"; fi
+      prev="$arg"
+    done
+    [ -n "$out" ]
+    if [ "${FAKE_CASSINI_PACK_FAIL:-0}" = "1" ]; then
+      echo "fake pack failure" >&2
+      exit 1
+    fi
+    if [ "${FAKE_CASSINI_PACK_HANG:-0}" = "1" ]; then
+      sleep 60
+    fi
+    mkdir -p "$(dirname "$out")"
+    printf 'sealed-opus' > "$out"
+    exit 0
+    ;;
   *)
     echo "unexpected command: $cmd" >&2
     exit 1
@@ -2392,6 +2415,7 @@ func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func(
 		}
 		return meetingPath, nil
 	}
+	rt.sealJobFn = writeSealedOpusFixture(rt)
 	rt.publishJobFn = func(ctx context.Context, task publishTask) (string, error) {
 		sitePath := attemptSitePath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
 		if err := writeReadySiteBundleFixture(sitePath, currentRoot(rt.cfg.WorkRoot)); err != nil {
@@ -2400,6 +2424,24 @@ func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func(
 		return sitePath, nil
 	}
 	return rt, func() { _ = store.Close() }
+}
+
+// writeSealedOpusFixture stands in for `cassini pack`: it writes the attempt's
+// sealed `.opus` without an ffmpeg subprocess, the same way buildJobFn and
+// publishJobFn stand in for `cassini build` and `cassini publish`. The bytes
+// vary per attempt so a test can tell two seals apart.
+func writeSealedOpusFixture(rt *Runtime) func(context.Context, sealTask) (string, error) {
+	return func(ctx context.Context, task sealTask) (string, error) {
+		opusPath := attemptOpusPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber)
+		if err := os.MkdirAll(filepath.Dir(opusPath), 0o755); err != nil {
+			return "", err
+		}
+		body := fmt.Sprintf("sealed-opus %s attempt %d", task.JobID, task.AttemptNumber)
+		if err := os.WriteFile(opusPath, []byte(body), 0o644); err != nil {
+			return "", err
+		}
+		return opusPath, nil
+	}
 }
 
 // testWaitTimeout bounds the store-polling helpers below. CI runs the full

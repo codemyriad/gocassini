@@ -16,16 +16,60 @@ import (
 
 // fakeNCFiles is a WebDAV stand-in that remembers what was written, so tests
 // can assert on the archive rather than on request counts.
+//
+// `order` is the PUT sequence — what the archive gained, and in which order.
+// `ops` is every mutating request including PROPPATCH, which is what the
+// access-control assertions need: a recording's deny has to be recorded before
+// the catalog that advertises it, and "an ACL was sent" is not the same claim
+// as "the ACL denied the right principal".
 type fakeNCFiles struct {
-	mu        sync.Mutex
-	files     map[string][]byte
-	order     []string
-	failPUT   map[string]int
-	proppatch int
+	mu      sync.Mutex
+	files   map[string][]byte
+	order   []string
+	ops     []ncFilesOp
+	failPUT map[string]int
+}
+
+// ncFilesOp is one mutating request the fake saw.
+type ncFilesOp struct {
+	method string
+	path   string
+	body   string
 }
 
 func newFakeNCFiles() *fakeNCFiles {
 	return &fakeNCFiles{files: map[string][]byte{}, failPUT: map[string]int{}}
+}
+
+// aclBodyFor returns the single ACL body PROPPATCHed onto path, failing unless
+// exactly one was sent — a second write would mean a later pass silently
+// replaced the protection the first one established.
+func (f *fakeNCFiles) aclBodyFor(t *testing.T, path string) string {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var bodies []string
+	for _, op := range f.ops {
+		if op.method == "PROPPATCH" && op.path == path {
+			bodies = append(bodies, op.body)
+		}
+	}
+	if len(bodies) != 1 {
+		t.Fatalf("PROPPATCH count for %s = %d, want exactly 1", path, len(bodies))
+	}
+	return bodies[0]
+}
+
+// indexOfOp reports where a request sits in the mutation sequence, or -1.
+func (f *fakeNCFiles) indexOfOp(method, path string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, op := range f.ops {
+		if op.method == method && op.path == path {
+			return i
+		}
+	}
+	return -1
 }
 
 func (f *fakeNCFiles) server(t *testing.T) *httptest.Server {
@@ -43,7 +87,8 @@ func (f *fakeNCFiles) server(t *testing.T) *httptest.Server {
 		case "MKCOL":
 			w.WriteHeader(http.StatusCreated)
 		case "PROPPATCH":
-			f.proppatch++
+			body, _ := io.ReadAll(r.Body)
+			f.ops = append(f.ops, ncFilesOp{method: "PROPPATCH", path: rel, body: string(body)})
 			w.WriteHeader(http.StatusMultiStatus)
 		case http.MethodPut:
 			if n := f.failPUT[rel]; n != 0 {
@@ -58,6 +103,7 @@ func (f *fakeNCFiles) server(t *testing.T) *httptest.Server {
 			_, existed := f.files[rel]
 			f.files[rel] = body
 			f.order = append(f.order, rel)
+			f.ops = append(f.ops, ncFilesOp{method: http.MethodPut, path: rel, body: string(body)})
 			if existed {
 				w.WriteHeader(http.StatusNoContent)
 			} else {
@@ -158,6 +204,72 @@ func TestNCSinkDeliversTheMeetingAndIndexesItLast(t *testing.T) {
 	defer nc.mu.Unlock()
 	if last := nc.order[len(nc.order)-1]; last != "Cassini/Recordings/catalog.json" {
 		t.Fatalf("last write = %q, want the catalog", last)
+	}
+}
+
+// The delivery's access-control contract, asserted on the wire bodies rather
+// than on the fact that some PROPPATCH happened.
+//
+// Both leaves the sink creates inherit the container's read grant to the
+// virtual all-users group, so both must override it, and the recording's
+// override has to land BEFORE the catalog names the file — otherwise there is a
+// window in which the archive advertises audio every logged-in account can
+// read. This coverage used to live on the whole-archive mirror, which is the
+// only place the catalog protection body was ever checked; the mirror is gone
+// (D-613) and the assertions belong here, on the path that actually runs.
+func TestNCSinkProtectsWhatItWritesBeforeAdvertisingIt(t *testing.T) {
+	nc := newFakeNCFiles()
+	sink := newNCSink(t, nc.server(t).URL)
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+
+	if _, err := deliverToNC(t, sink, attempt, "meeting-a"); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+
+	const (
+		opusPath    = "Cassini/Recordings/meetings/meeting-a.opus"
+		catalogPath = "Cassini/Recordings/catalog.json"
+		denyAll     = "<nc:acl-permissions>0</nc:acl-permissions>"
+		grantAll    = "<nc:acl-permissions>31</nc:acl-permissions>"
+	)
+
+	// A newly created recording is owner-only: the all-users group is denied
+	// every bit, so it cannot inherit the container's traversal grant.
+	opusACL := nc.aclBodyFor(t, opusPath)
+	for _, want := range []string{
+		"<nc:acl-mapping-id>" + ncRecordingsEveryoneGroup + "</nc:acl-mapping-id>",
+		denyAll,
+		"<nc:acl-mapping-id>" + ncRecordingsOwner + "</nc:acl-mapping-id>",
+		grantAll,
+	} {
+		if !strings.Contains(opusACL, want) {
+			t.Errorf("new recording ACL missing %q: %s", want, opusACL)
+		}
+	}
+
+	// The authoritative catalog stays private to the owner unconditionally: the
+	// operator reads it as the owner and serves each caller a filtered view, so
+	// no account has any reason to read the unfiltered index directly.
+	catalogACL := nc.aclBodyFor(t, catalogPath)
+	for _, want := range []string{
+		"<nc:acl-mapping-id>" + ncRecordingsEveryoneGroup + "</nc:acl-mapping-id>",
+		denyAll,
+		"<nc:acl-mapping-id>" + ncRecordingsOwner + "</nc:acl-mapping-id>",
+		grantAll,
+	} {
+		if !strings.Contains(catalogACL, want) {
+			t.Errorf("catalog ACL missing %q: %s", want, catalogACL)
+		}
+	}
+
+	// Ordering: deny the recording, then advertise it.
+	opusDeny := nc.indexOfOp("PROPPATCH", opusPath)
+	catalogWrite := nc.indexOfOp(http.MethodPut, catalogPath)
+	if opusDeny < 0 || catalogWrite < 0 {
+		t.Fatalf("missing operations: opus deny=%d catalog PUT=%d", opusDeny, catalogWrite)
+	}
+	if opusDeny > catalogWrite {
+		t.Fatalf("recording was advertised at op %d before it was protected at op %d", catalogWrite, opusDeny)
 	}
 }
 
