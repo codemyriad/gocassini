@@ -148,6 +148,32 @@ func TestFromFlagsRejectsNegativeRoomEmptyGrace(t *testing.T) {
 	}
 }
 
+func TestFromFlagsRejectsZeroRequestOfferInterval(t *testing.T) {
+	// D-511: interval 0 used to mean "disable retries" but now silences
+	// every capture-recovery path, so it must be rejected outright.
+	_, err := FromFlags([]string{
+		"--mode", "talk",
+		"--call-url", "https://cloud.example.com/call/roomtoken",
+		"--output", "/tmp/out.csr",
+		"--request-offer-interval", "0",
+	})
+	if err == nil {
+		t.Fatalf("expected error for zero request-offer-interval")
+	}
+}
+
+func TestFromFlagsRejectsNegativeRequestOfferInterval(t *testing.T) {
+	_, err := FromFlags([]string{
+		"--mode", "talk",
+		"--call-url", "https://cloud.example.com/call/roomtoken",
+		"--output", "/tmp/out.csr",
+		"--request-offer-interval", "-1",
+	})
+	if err == nil {
+		t.Fatalf("expected error for negative request-offer-interval")
+	}
+}
+
 func TestFromFlagsReportIsDisabledByDefault(t *testing.T) {
 	cfg, err := FromFlags([]string{
 		"--mode", "talk",

@@ -507,6 +507,24 @@ func TestBackfillCommandRefusesOutsideAnExApp(t *testing.T) {
 	}
 }
 
+// A malformed ExApp environment is rejected before the guard runs, so nothing
+// has been written and the runner must say so. This path used to return the
+// generic failure code, which the runner reads as "may be half-written" and
+// answers with "remove the recordings this run uploaded" — pointing an admin at
+// a live archive this run never touched.
+func TestBackfillConfigFailureReportsNothingWasWritten(t *testing.T) {
+	t.Setenv("CASSINI_APPAPI_REQUIRED", "true")
+	t.Setenv("NEXTCLOUD_URL", "http://nextcloud.invalid")
+	t.Setenv("APP_ID", "gocassini")
+	t.Setenv("APP_SECRET", "")
+
+	var stdout, stderr bytes.Buffer
+	code := runBackfillNCFiles(context.Background(), []string{"--dry-run"}, &stdout, &stderr)
+	if code != backfillExitNotStarted {
+		t.Fatalf("exit = %d, want %d (nothing was written)\nstderr: %s", code, backfillExitNotStarted, &stderr)
+	}
+}
+
 // The exit code says whether anything was WRITTEN, because the runner turns it
 // into opposite instructions: "re-run, nothing to clean up" versus "do not
 // re-run, remove what this uploaded". Giving the second answer for a run that

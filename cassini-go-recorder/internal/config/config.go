@@ -80,7 +80,7 @@ func FromFlags(args []string) (Config, error) {
 	fs.IntVar(&cfg.JoinFlags, "join-flags", 1, "call join flags (must include bit 1)")
 	fs.BoolVar(&cfg.Insecure, "insecure", false, "disable TLS certificate verification (testing only)")
 	fs.BoolVar(&cfg.DebugSignaling, "debug-signaling", false, "log signaling events and peer messages")
-	fs.Float64Var(&requestOfferIntervalSeconds, "request-offer-interval", 2.0, "seconds between requestoffer retries (0 disables)")
+	fs.Float64Var(&requestOfferIntervalSeconds, "request-offer-interval", 2.0, "seconds between requestoffer retries and capture-recovery reconcile ticks (must be > 0)")
 	fs.IntVar(&cfg.MaxRequestOfferAttempts, "max-request-offer-attempts", 8, "max requestoffer attempts per session (0 disables limit)")
 	fs.StringVar(&cfg.TurnMode, "turn-mode", "all", "TURN usage mode: off, udp-only, all")
 	fs.BoolVar(&cfg.WriteReport, "write-report", false, "write legacy external JSON sidecar report next to the final MKV")
@@ -130,8 +130,8 @@ func FromFlags(args []string) (Config, error) {
 	if (cfg.JoinFlags & 1) == 0 {
 		return Config{}, errors.New("join-flags must include bit 1 (in-call)")
 	}
-	if cfg.RequestOfferInterval < 0 {
-		return Config{}, errors.New("request-offer-interval must be >= 0")
+	if cfg.RequestOfferInterval <= 0 {
+		return Config{}, errors.New("request-offer-interval must be > 0: an interval of 0 would disable every capture-recovery path (requestoffer retries, rebuilds, answer retransmits)")
 	}
 	if cfg.RoomEmptyGrace < 0 {
 		return Config{}, errors.New("room-empty-grace must be >= 0")
