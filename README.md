@@ -207,7 +207,11 @@ setting.
 ./bin/cassini publish
 ./bin/cassini serve
 ./bin/cassini inspect
+./bin/cassini meetings
 ```
+
+`cassini meetings` reads published recordings back out of Nextcloud as a given
+Nextcloud user — see [Agent access to meeting recordings](docs/agent-meeting-access.md).
 
 ## Legacy Surface
 

@@ -529,59 +529,17 @@ type ExtractedTranscript struct {
 // transcript (v1), gathers that transcript's CASSINI_TX_<ID>_PAYLOAD_* chunk
 // set, concatenates + base64url-decodes + gzip-decompresses + parses the
 // TranscriptBody JSON, and reconstructs the ordered words.
+//
+// It is a projection of ExtractMeeting, which does that whole decode and also
+// keeps the manifest and the summary attachment. The decode lives in exactly
+// one place so a reader that needs more than the words does not grow a second
+// copy of the tag layout.
 func ExtractTranscriptWords(path string) (ExtractedTranscript, error) {
-	meta, err := probePortableAudio(path)
+	meeting, err := ExtractMeeting(path)
 	if err != nil {
 		return ExtractedTranscript{}, err
 	}
-	stream, err := firstAudioStream(meta)
-	if err != nil {
-		return ExtractedTranscript{}, err
-	}
-	tags := mergePortableTags(meta.Format.Tags, stream.Tags)
-
-	formatTag := metadataTag(tags, "CASSINI_FORMAT")
-	if formatTag == "" {
-		return ExtractedTranscript{}, fmt.Errorf("%s carries no CASSINI_FORMAT metadata (not a portable meeting)", path)
-	}
-	if !strings.EqualFold(formatTag, portable.Format) && !strings.EqualFold(formatTag, portable.FormatV2) {
-		return ExtractedTranscript{}, fmt.Errorf("unsupported CASSINI_FORMAT=%s", formatTag)
-	}
-
-	_, manifest, err := decodePortableMeeting(tags)
-	if err != nil {
-		return ExtractedTranscript{}, err
-	}
-
-	// v1 files carry the words inline in the main manifest.
-	if manifest.Version == 1 {
-		return extractedFromTranscriptBody(
-			"transcript",
-			manifest.Transcript.Format,
-			firstNonEmpty(manifest.Transcript.Language, manifest.Meeting.Language),
-			manifest.Transcript.WordCount,
-			manifest.Transcript.Items,
-		), nil
-	}
-
-	entry, ok := defaultWordsTranscriptEntry(tags, manifest)
-	if !ok {
-		return ExtractedTranscript{}, fmt.Errorf("portable meeting %s declares no default words transcript", path)
-	}
-
-	body, err := decodeTranscriptBody(tags, entry.ID)
-	if err != nil {
-		return ExtractedTranscript{}, fmt.Errorf("decode transcript %q body: %w", entry.ID, err)
-	}
-	out := extractedFromTranscriptBody(entry.ID, body.Format, body.Language, body.WordCount, body.Items)
-	out.Role = entry.Role
-	if out.Language == "" {
-		out.Language = entry.Language
-	}
-	if out.Format == "" {
-		out.Format = entry.Format
-	}
-	return out, nil
+	return meeting.Transcript, nil
 }
 
 func extractedFromTranscriptBody(id, format, language string, wordCount int, items []portable.TranscriptItem) ExtractedTranscript {

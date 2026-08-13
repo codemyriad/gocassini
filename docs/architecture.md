@@ -13,6 +13,7 @@ Cassini records a Nextcloud Talk meeting and turns it into a portable, self-desc
 ./bin/cassini publish   # render artifacts into a static site
 ./bin/cassini serve     # serve a published site or inspect an artifact
 ./bin/cassini inspect   # look inside any primary Cassini artifact
+./bin/cassini meetings  # read published recordings back out of Nextcloud as a user
 ```
 
 The CLI is implemented in `cassini-go-recorder/cmd/cassini` and dispatches into the in-tree subsystems described below. From the user's perspective the inputs are a Talk URL or an existing recording; the outputs are a portable `.opus` file and/or a published static site.
