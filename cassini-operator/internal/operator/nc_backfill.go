@@ -131,8 +131,11 @@ Flags:
 
 	exapp, err := LoadExAppConfig()
 	if err != nil {
+		// Not backfillExitPartial: this fails before the guard has even run, so
+		// nothing was written and the runner must not tell an admin to go and
+		// delete recordings — which, on a healthy install, are their live ones.
 		fmt.Fprintf(stderr, "exapp config: %v\n", err)
-		return 1
+		return backfillExitNotStarted
 	}
 	if !exapp.appAPIActive() {
 		// Almost always "you ran this on the host instead of inside the app
