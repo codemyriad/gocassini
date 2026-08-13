@@ -430,6 +430,7 @@ jobs:
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           D453_EXPECT_CONFIG_FAILURE: '1'
+          D453_ALLOW_TEST_HOOKS: '1'
           D453_MANIFEST_PATH: ${{ runner.temp }}/info-no-signaling.xml
           LOG_DIR: ${{ runner.temp }}/d403-sensitivity-control
         run: ./harness/bin/ci-e2e-installed-exapp-talk.sh

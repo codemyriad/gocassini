@@ -780,7 +780,10 @@ the install at route verification — the exact D-403 regression the faithful ga
 exists to catch. `make-negative-manifest.py` generates that stripped manifest on
 demand (it never ships checked in, so it cannot drift as `<version>` bumps), and
 `D453_EXPECT_CONFIG_FAILURE=1` tells the orchestrator to assert the boundary
-instead of recording:
+instead of recording. Because that hook (like `D453_FAIL_AT`) weakens what a
+green run proves, the orchestrator refuses it unless `D453_ALLOW_TEST_HOOKS=1`
+is also set — a stray value in a CI job env fails loudly instead of silently
+turning the required gate into a non-recording pass:
 
 ```bash
 git lfs pull \
@@ -795,6 +798,7 @@ python3 harness/bin/make-negative-manifest.py \
 #    unrelated reason.
 IMAGE_REF=cassini-exapp:local-faithful \
 D453_EXPECT_CONFIG_FAILURE=1 \
+D453_ALLOW_TEST_HOOKS=1 \
 D453_MANIFEST_PATH=/tmp/info-no-signaling.xml \
 LOG_DIR=/tmp/d403-control \
   ./harness/bin/ci-e2e-installed-exapp-talk.sh
@@ -1280,15 +1284,18 @@ CALL_URL="$(./bin/cassini dev room create --name "3-song-recorded" | tail -n1)"
 This generates:
 
 - raw recorder output MKV (`/tmp/three-songs.mkv`)
+- legacy JSON sidecar report (`/tmp/three-songs.mkv.json`), which the sync and
+  session-artifact checks consume
 - session artifact directory under `/tmp/sessions/<meeting_id>/`
 - sync validation output (`verify-sync-from-report.sh`, auto-run unless
-  `--skip-sync-check`)
+  `--skip-sync-check`; a missing report or fewer than 2 composed sessions fails
+  the run instead of silently skipping)
 - recorder/player logs (`/tmp/three-songs.mkv.recorder.log`,
   `/tmp/three-songs.mkv.publisher.log`)
 
 The MKV is the primary meeting artifact and carries Cassini metadata inside the
-container itself. Add `--write-report` to the recorder invocation if you also
-want the legacy external JSON sidecar for debug/export workflows. If you
+container itself. When driving the recorder directly, add `--write-report` if
+you want the legacy external JSON sidecar for debug/export workflows. If you
 explicitly need a separate compatibility archive path, pass
 `--archive-output /tmp/three-songs.csr`.
 
