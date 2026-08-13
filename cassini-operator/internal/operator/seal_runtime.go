@@ -25,10 +25,12 @@ type sealTask struct {
 }
 
 func (rt *Runtime) startSealWorker() {
+	rt.workerWG.Add(1)
 	go rt.sealWorker()
 }
 
 func (rt *Runtime) sealWorker() {
+	defer rt.workerWG.Done()
 	for {
 		select {
 		case <-rt.ctx.Done():

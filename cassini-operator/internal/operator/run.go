@@ -648,14 +648,19 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	return rt
 }
 
-// Shutdown stops the pipeline worker goroutines and blocks until they — and
-// any in-flight async opus pack — have exited, so nothing keeps writing under
-// WorkRoot afterwards. It does not wait for in-flight record jobs; that is
-// WaitForRecordJobs. Tests must call it before their temp WorkRoot is removed.
+// Shutdown stops the pipeline worker goroutines and blocks until they have
+// exited, so nothing keeps writing under WorkRoot afterwards. It does not wait
+// for in-flight record jobs; that is WaitForRecordJobs. Tests must call it
+// before their temp WorkRoot is removed.
+//
+// Every goroutine NewRuntime spawns must be registered on workerWG, or this
+// promise is only partly kept. It covers the build workers, the seal worker,
+// the publish worker and the requeue dispatcher — the four that write under
+// WorkRoot. D-583 removed the detached `cassini pack` goroutine this used to
+// wait on separately; sealing is now one of those registered workers.
 func (rt *Runtime) Shutdown() {
 	rt.cancel()
 	rt.workerWG.Wait()
-	rt.opusPackWG.Wait()
 }
 
 func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.Handler {
