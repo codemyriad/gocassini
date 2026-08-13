@@ -118,15 +118,21 @@ func TestLocalICESignalsWaitForAnswer(t *testing.T) {
 // so OnICECandidate can run concurrently with the offer handler. The remote
 // peer cannot apply candidates until it has installed our SDP answer; therefore
 // the answer must always be the first message for its negotiation SID.
+//
+// This is a smoke test: the synchronous answer write usually wins the race
+// against real ICE gathering anyway, and there is no seam to delay it. The
+// deterministic ordering coverage lives in TestLocalICESignalsWaitForAnswer
+// and TestOfferResetsLocalICEGate.
 func TestAnswerPrecedesTrickledICEMessages(t *testing.T) {
 	r, messages := newPeerMessageCapture(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	t.Cleanup(cancel)
 
 	// Repeat the native callback path to exercise creation/teardown and ensure
-	// every negotiation gets an independent answer-first ordering gate.
+	// every negotiation gets an independent answer-first ordering gate. Each
+	// iteration gets its own deadline: ~32 PeerConnection lifecycles under one
+	// shared budget timed out spuriously on loaded runners.
 	const iterations = 16
 	for i := 0; i < iterations; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		peer, err := r.newSubscriberPeer("ivan")
 		if err != nil {
 			t.Fatalf("iteration %d: new subscriber peer: %v", i, err)
@@ -158,6 +164,7 @@ func TestAnswerPrecedesTrickledICEMessages(t *testing.T) {
 			}
 		}
 		_ = peer.close()
+		cancel()
 
 		if gotTypes[0] != "answer" {
 			t.Fatalf("iteration %d: first signaling message = %q, want answer; sequence=%v", i, gotTypes[0], gotTypes)
