@@ -214,7 +214,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: cassini-viewer/package-lock.json
+          # Root lockfile: cassini-viewer is an npm workspace member, so the
+          # authoritative lockfile is the workspace root's, not its own [D-578].
+          cache-dependency-path: package-lock.json
 
       - name: Install rclone + ffmpeg
         run: |
@@ -240,11 +242,16 @@ jobs:
           rclone copy "codemyriad:cassini-processed/main/meetings/" "$SOURCE_CACHE/"
 
       - name: Export branch preview bundle
-        working-directory: cassini-viewer
         run: |
           set -euo pipefail
+          # Run from the workspace root, NOT cassini-viewer. The root
+          # package.json declares cassini-viewer a workspace member, so npm
+          # resolves the project root upward and reads the ROOT lockfile —
+          # `npm ci` inside the member fails EUSAGE ("can only install with an
+          # existing package-lock.json") even though that directory has one of
+          # its own, which npm ignores in a workspace [D-578].
           npm ci
-          npm run export:meetings -- \
+          npm run export:meetings -w cassini-viewer -- \
             --source-dir "$SOURCE_CACHE" \
             --output-dir "$EXPORT_DIR" \
             --recordings-base-url "$SOURCE_RECORDINGS_BASE_URL"
@@ -297,7 +304,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: cassini-viewer/package-lock.json
+          # Root lockfile: cassini-viewer is an npm workspace member, so the
+          # authoritative lockfile is the workspace root's, not its own [D-578].
+          cache-dependency-path: package-lock.json
 
       - name: Prepare branch-scoped paths
         run: |
@@ -402,11 +411,11 @@ jobs:
             --exclude '.cassini-work/**'
 
       - name: Export branch preview bundle
-        working-directory: cassini-viewer
         run: |
           set -euo pipefail
+          # Workspace root, not cassini-viewer — see the deploy-ui job [D-578].
           npm ci
-          npm run export:meetings -- \
+          npm run export:meetings -w cassini-viewer -- \
             --source-dir "$PROC_DIR" \
             --output-dir "$EXPORT_DIR" \
             --recordings-base-url "https://view.meetings.codemyriad.io/${ENCODED_BRANCH}/"
