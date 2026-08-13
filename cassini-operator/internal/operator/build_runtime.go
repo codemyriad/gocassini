@@ -20,12 +20,14 @@ type buildTask struct {
 }
 
 func (rt *Runtime) startBuildWorkers() {
+	rt.workerWG.Add(rt.cfg.MaxBuildWorkers)
 	for i := 0; i < rt.cfg.MaxBuildWorkers; i++ {
 		go rt.buildWorker(i + 1)
 	}
 }
 
 func (rt *Runtime) buildWorker(index int) {
+	defer rt.workerWG.Done()
 	for {
 		select {
 		case <-rt.ctx.Done():

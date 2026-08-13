@@ -71,7 +71,12 @@ type Config struct {
 }
 
 type Runtime struct {
-	ctx          context.Context
+	ctx context.Context
+	// cancel stops rt.ctx; workerWG tracks the pipeline worker goroutines
+	// NewRuntime spawns (build, publish, requeue dispatch) so Shutdown can
+	// await their exit instead of leaving them writing under WorkRoot.
+	cancel       context.CancelFunc
+	workerWG     sync.WaitGroup
 	store        *Store
 	cfg          Config
 	logger       *log.Logger
@@ -568,8 +573,10 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	if queueCapacity < 16 {
 		queueCapacity = 16
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	rt := &Runtime{
 		ctx:          ctx,
+		cancel:       cancel,
 		store:        store,
 		cfg:          cfg,
 		logger:       logger,
@@ -636,8 +643,24 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	rt.startBuildWorkers()
 	rt.startSealWorker()
 	rt.startPublishWorker()
+	rt.workerWG.Add(1)
 	go rt.requeueDispatcher()
 	return rt
+}
+
+// Shutdown stops the pipeline worker goroutines and blocks until they have
+// exited, so nothing keeps writing under WorkRoot afterwards. It does not wait
+// for in-flight record jobs; that is WaitForRecordJobs. Tests must call it
+// before their temp WorkRoot is removed.
+//
+// Every goroutine NewRuntime spawns must be registered on workerWG, or this
+// promise is only partly kept. It covers the build workers, the seal worker,
+// the publish worker and the requeue dispatcher — the four that write under
+// WorkRoot. D-583 removed the detached `cassini pack` goroutine this used to
+// wait on separately; sealing is now one of those registered workers.
+func (rt *Runtime) Shutdown() {
+	rt.cancel()
+	rt.workerWG.Wait()
 }
 
 func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.Handler {

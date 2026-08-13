@@ -43,6 +43,7 @@ func (rt *Runtime) kickRequeueScan() {
 // immediately so rows queued before a restart resume without operator
 // intervention.
 func (rt *Runtime) requeueDispatcher() {
+	defer rt.workerWG.Done()
 	// dispatched remembers tasks already handed to a channel so a row that
 	// stays queued while waiting in the channel is not re-sent every pass;
 	// entries are pruned once the row leaves state=queued.

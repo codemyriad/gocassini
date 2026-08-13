@@ -107,14 +107,13 @@ func TestNewRuntimeReconcilesPromotionLeftoversAtStartup(t *testing.T) {
 		t.Fatalf("OpenStore() error = %v", err)
 	}
 	defer store.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	NewRuntime(ctx, store, Config{
+	rt := NewRuntime(context.Background(), store, Config{
 		WorkRoot:         workRoot,
 		SiteRoot:         siteRoot,
 		MaxRecordWorkers: 1,
 		MaxBuildWorkers:  1,
 	}, log.New(io.Discard, "", 0), io.Discard, io.Discard)
+	defer rt.Shutdown()
 
 	raw, err := os.ReadFile(filepath.Join(canonicalMeetingPath(workRoot, "job1"), "cassini.json"))
 	if err != nil {
