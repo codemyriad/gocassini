@@ -159,25 +159,8 @@ jobs:
           sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f || true
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-      # Nothing enforced gofmt before, so it drifted: thirteen files across two
-      # modules were unformatted on main, while PR descriptions kept reporting
-      # "gofmt -l clean". It lives in this job rather than in lint.yml for two
-      # reasons: this job is a REQUIRED check, so the gate binds without touching
-      # branch protection, and it is already a per-module matrix, which is the
-      # granularity gofmt works at.
-      - name: gofmt
-        working-directory: ${{ matrix.module }}
-        run: |
-          set -euo pipefail
-          # -s (simplify) as well as formatting: the repo is already clean at
-          # that level, so gating it costs nothing today and stops the stricter
-          # form drifting out of reach later.
-          unformatted="$(gofmt -s -l .)"
-          if [ -n "$unformatted" ]; then
-            echo "::error::gofmt reports unformatted files; run 'gofmt -s -w .' in ${{ matrix.module }}"
-            echo "$unformatted"
-            exit 1
-          fi
+      # gofmt lives in lint.yml, with shellcheck and actionlint — see the note
+      # there. It was here only while Lint was advisory.
       - name: Vet
         working-directory: ${{ matrix.module }}
         run: go vet ./...
