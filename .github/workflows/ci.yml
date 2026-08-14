@@ -118,11 +118,14 @@ jobs:
           cache: npm
           cache-dependency-path: '**/package-lock.json'
       # cassini-app consumes cassini-viewer via the npm workspace (D-420), so it
-      # can't be installed standalone. Install at the workspace root (npm install
-      # resolves + links the members; no committed root lockfile yet — D-499),
-      # then test the one package via -w, matching deployment/Dockerfile.exapp.
+      # can't be installed standalone. Install at the workspace root, then test
+      # the one package via -w, matching deployment/Dockerfile.exapp.
+      #
+      # `npm ci`, not `npm install`: D-578 committed the root lockfile, so the
+      # install is reproducible and CI can no longer silently resolve a different
+      # dependency tree than the lockfile pins.
       - name: Install workspace
-        run: npm install
+        run: npm ci
       - name: Run tests
         run: npm test -w ${{ matrix.package }}
 
@@ -158,17 +161,20 @@ jobs:
           sudo apt-get install -y ffmpeg
       # Nothing enforced gofmt before, so it drifted: thirteen files across two
       # modules were unformatted on main, while PR descriptions kept reporting
-      # "gofmt -l clean". Checked here rather than in lint.yml because that
-      # workflow is path-filtered to shell and workflow files and would never
-      # run on a Go-only change. This job is already required, so the gate
-      # applies without touching branch protection.
+      # "gofmt -l clean". It lives in this job rather than in lint.yml for two
+      # reasons: this job is a REQUIRED check, so the gate binds without touching
+      # branch protection, and it is already a per-module matrix, which is the
+      # granularity gofmt works at.
       - name: gofmt
         working-directory: ${{ matrix.module }}
         run: |
           set -euo pipefail
-          unformatted="$(gofmt -l .)"
+          # -s (simplify) as well as formatting: the repo is already clean at
+          # that level, so gating it costs nothing today and stops the stricter
+          # form drifting out of reach later.
+          unformatted="$(gofmt -s -l .)"
           if [ -n "$unformatted" ]; then
-            echo "::error::gofmt reports unformatted files; run 'gofmt -w .' in ${{ matrix.module }}"
+            echo "::error::gofmt reports unformatted files; run 'gofmt -s -w .' in ${{ matrix.module }}"
             echo "$unformatted"
             exit 1
           fi
