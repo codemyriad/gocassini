@@ -162,10 +162,24 @@ func (c ExAppConfig) ensureRecordingsOwnerAccount(ctx context.Context, client *h
 		// Membership is still re-asserted below because the group may have been
 		// created after an existing account.
 	default:
-		return fmt.Errorf("create service account -> %d: %s", status, snippet(body))
+		if exists, ferr := c.userExists(ctx, client, ncRecordingsOwner); ferr == nil && exists {
+			break
+		}
+		return fmt.Errorf("create service account -> %d: %s — "+fmt.Sprintf(manualSetupHint, ncRecordingsOwnerGroup, ncRecordingsOwner), status, snippet(body))
 	}
+	return c.ensureOwnerGroupMembership(ctx, client)
+}
+
+// ensureOwnerGroupMembership asserts the service account is in its owner group,
+// skipping the write when it already is — the add call is password-confirmation
+// protected too, so re-asserting an existing membership would fail a deployment
+// that is already correct.
+func (c ExAppConfig) ensureOwnerGroupMembership(ctx context.Context, client *http.Client) error {
 	if err := c.addUserToGroup(ctx, client, ncRecordingsOwner, ncRecordingsOwnerGroup); err != nil {
-		return fmt.Errorf("add %q to %q: %w", ncRecordingsOwner, ncRecordingsOwnerGroup, err)
+		if member, ferr := c.userInGroup(ctx, client, ncRecordingsOwner, ncRecordingsOwnerGroup); ferr == nil && member {
+			return nil
+		}
+		return fmt.Errorf("add %q to %q: %w — "+fmt.Sprintf(manualSetupHint, ncRecordingsOwnerGroup, ncRecordingsOwner), ncRecordingsOwner, ncRecordingsOwnerGroup, err)
 	}
 	return nil
 }
@@ -652,8 +666,91 @@ func (c ExAppConfig) ensureGroup(ctx context.Context, client *http.Client, group
 	if status/100 == 2 || ocsStatusCode(body) == 102 || strings.Contains(strings.ToLower(string(body)), "group exists") {
 		return nil
 	}
-	return fmt.Errorf("create group -> %d: %s", status, snippet(body))
+	// The create was refused. Ask once more whether the group is there anyway:
+	// a 403 for password confirmation arrives before Nextcloud evaluates
+	// existence, so a refusal says nothing about whether the group exists.
+	if exists, ferr := c.groupExists(ctx, client, group); ferr == nil && exists {
+		return nil
+	}
+	return fmt.Errorf("create group -> %d: %s — "+fmt.Sprintf(manualSetupHint, group, ncRecordingsOwner), status, snippet(body))
 }
+
+// Reading before writing is what makes a manually prepared Nextcloud usable.
+//
+// Creating a group, creating an account and adding it to a group are all
+// #[PasswordConfirmationRequired] in the provisioning API. That annotation is
+// satisfied by a browser session in which the admin has just re-entered their
+// password; an ExApp acting as the admin over AppAPI has no such session and
+// never can — the middleware reads `last-password-confirm` out of the PHP
+// session, which for a stateless act-as-user request is always empty. So on any
+// deployment that enforces it, those three calls answer 403 forever.
+//
+// That is survivable, because an administrator can create all three by hand
+// (Users → Groups in the admin UI, or `occ group:add` / `occ user:add`), where
+// password confirmation works exactly as designed. What made it UNsurvivable was
+// asking Nextcloud to create things without first asking whether they exist:
+// the 403 arrives before Nextcloud ever evaluates existence, so a correctly
+// prepared instance looked identical to an empty one and provisioning failed
+// permanently on a machine that was already set up.
+//
+// The reads used here are not password-confirmation protected — GET
+// /cloud/groups is even #[NoAdminRequired] — so they work wherever the writes do
+// not. groupExists already existed for the preflight; it simply was never
+// consulted when a create was refused.
+//
+// They run ONLY on the failure path, never before a write. Probing first cost
+// two extra round-trips on every enable, and provisioning runs on the AppAPI
+// enabled edge against a context the next disable cancels — the harness cycles
+// enable within ~7s. That widened an existing race until a disable landed mid
+// create-account, leaving a half-built substrate the next run could not repair
+// ("PROPPATCH Cassini -> 404" at the migration floor). Optimistic write, verify
+// only when refused: the happy path is byte-for-byte the cost it was.
+
+// userExists reports whether an account is present, and demands positive
+// evidence to say so: an OCS success envelope carrying that exact account id.
+//
+// Anything less — a non-2xx, an OCS 998, an unrecognised body — answers false,
+// because the only thing this decides is whether to SKIP creating the account.
+// "I could not confirm it exists" must fall through to the create attempt,
+// which is precisely today's behaviour; only a confirmed account changes it.
+func (c ExAppConfig) userExists(ctx context.Context, client *http.Client, userID string) (bool, error) {
+	status, body, err := c.apiGet(ctx, client, c.ocsURL("/cloud/users/"+url.PathEscape(userID)))
+	if err != nil {
+		return false, err
+	}
+	if status/100 != 2 || ocsStatusCode(body) != 100 {
+		return false, nil
+	}
+	var env struct {
+		OCS struct {
+			Data struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		} `json:"ocs"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return false, nil
+	}
+	return env.OCS.Data.ID == userID, nil
+}
+
+// userInGroup reports whether an account is already a member of a group.
+func (c ExAppConfig) userInGroup(ctx context.Context, client *http.Client, userID, group string) (bool, error) {
+	members, err := c.groupMembers(ctx, client, group)
+	if err != nil {
+		return false, err
+	}
+	for _, member := range members {
+		if member == userID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// manualSetupHint is appended to every refusal these three steps can produce, so
+// the log says what an administrator should do rather than only what failed.
+const manualSetupHint = "if this Nextcloud requires password confirmation for user administration, an ExApp cannot satisfy it — create the group and account by hand (Users → Groups in the admin UI, or `occ group:add %[1]s` / `occ user:add --group=%[1]s %[2]s`) and Cassini will adopt them on the next enable"
 
 func (c ExAppConfig) groupMembers(ctx context.Context, client *http.Client, group string) ([]string, error) {
 	status, body, err := c.apiGet(ctx, client, c.ocsURL("/cloud/groups/"+url.PathEscape(group)))
