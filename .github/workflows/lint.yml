@@ -9,8 +9,15 @@
 # checks the release tooling. A filter that has to enumerate the transitive
 # inputs of a test suite will drift out of date; running always cannot.
 #
-# It also makes the job appear on every PR, which is what a check needs before
-# it can be made required — this one is not required today, so it is advisory.
+# It also makes the job appear on every PR, which is what a check needs to be
+# required — and it now is: "shellcheck + actionlint + script tests" is in
+# main's required status checks.
+#
+# That string is a CONTRACT with branch protection, not a description. Renaming
+# the job below silently breaks the gate: protection waits for a context that
+# never reports, and every PR blocks forever. It is why the name no longer lists
+# everything the job runs (gofmt is here too). Change it only together with the
+# repository's required-checks setting.
 #
 # Scope notes:
 #   - actionlint lints every workflow in .github/workflows — all 8, confirmed
@@ -97,6 +104,41 @@ jobs:
           mapfile -t scripts < <(git ls-files '*.sh' | sort)
           printf 'checking %d shell scripts\n' "${#scripts[@]}"
           shellcheck -x --source-path=SCRIPTDIR --severity=style "${scripts[@]}"
+
+      # Formatting, alongside the other lint gates rather than bolted onto the
+      # unit-test job. It sat in ci.yml while this workflow was advisory: a
+      # formatting gate that cannot block a merge is the failure it exists to
+      # prevent. Lint is a required status check now, so it belongs here.
+      #
+      # One setup-go for all three modules is only correct because they declare
+      # the same Go version — gofmt's output has changed between releases (the
+      # 1.19 doc-comment reformatting is exactly the drift this gate first swept
+      # out), so a split floor would mean formatting depended on which module you
+      # were in. Keep them unified, or this step has to become a matrix.
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: cassini-operator/go.mod
+      - name: gofmt (every Go module)
+        run: |
+          set -euo pipefail
+          rc=0
+          for module in cassini-go-recorder cassini-operator harness/go-talk-rotator; do
+            # Capture the status too, not just the listing: gofmt reports a file
+            # it cannot parse on stderr and lists nothing, so testing the output
+            # alone would pass a syntactically broken tree.
+            if ! unformatted="$(gofmt -s -l "$module")"; then
+              echo "::error::gofmt failed to process $module (see the error above)"
+              rc=1
+              continue
+            fi
+            if [ -n "$unformatted" ]; then
+              echo "::error::gofmt reports unformatted files in $module; run 'gofmt -s -w .' there"
+              echo "$unformatted"
+              rc=1
+            fi
+          done
+          exit "$rc"
 
       - name: actionlint (all workflows)
         run: |
