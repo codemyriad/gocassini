@@ -104,6 +104,15 @@ type provisionMock struct {
 	adminList string
 	// userExists makes service-account creation return OCS 102.
 	userExists bool
+	// ownerPrepared models an administrator having created the service account
+	// and its group membership by hand — the documented recovery on a Nextcloud
+	// that refuses those writes to an ExApp.
+	ownerPrepared bool
+	// confirmationRequired makes every user-administration write answer 403
+	// "Password confirmation is required", the way a Nextcloud that enforces
+	// #[PasswordConfirmationRequired] answers an ExApp — which can never satisfy
+	// it, having no browser session to confirm a password in.
+	confirmationRequired bool
 	// failPath makes any request whose path ends with this suffix answer 500,
 	// for the provisioning steps that must now abort rather than log on.
 	failPath string
@@ -255,6 +264,15 @@ func (m *provisionMock) handler(t *testing.T) http.Handler {
 				admins = `["admin"]`
 			}
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"users":`+admins+`}}}`)
+		case m.ownerPrepared && r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/users/"+ncRecordingsOwner:
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":{"id":"`+ncRecordingsOwner+`"}}}`)
+		case m.ownerPrepared && r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/groups/"+ncRecordingsOwnerGroup:
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":{"users":["`+ncRecordingsOwner+`"]}}}`)
+		case m.confirmationRequired && r.Method == http.MethodPost &&
+			(p == "/ocs/v2.php/cloud/groups" || p == "/ocs/v2.php/cloud/users" ||
+				strings.HasSuffix(p, "/groups") && strings.HasPrefix(p, "/ocs/v2.php/cloud/users/")):
+			w.WriteHeader(http.StatusForbidden)
+			io.WriteString(w, `{"ocs":{"meta":{"status":"failure","statuscode":403,"message":"Password confirmation is required"},"data":[]}}`)
 		case r.Method == http.MethodPost && p == "/ocs/v2.php/cloud/users" && m.userExists:
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":102,"message":"User already exists"},"data":[]}}`)
 		case r.Method == http.MethodGet && p == "/index.php/apps/groupfolders/folders":
@@ -757,5 +775,74 @@ func TestEnabledCallbackIsNilOutsideAppAPI(t *testing.T) {
 		if got := cfg.enabledCallback(context.Background(), log.New(io.Discard, "", 0)); got != nil {
 			t.Errorf("%s: enabledCallback is non-nil outside an AppAPI deployment", name)
 		}
+	}
+}
+
+// A Nextcloud that enforces #[PasswordConfirmationRequired] refuses every write
+// an ExApp makes to user administration — creating a group, creating an account,
+// adding it to a group — because the middleware reads `last-password-confirm`
+// out of a PHP session an act-as-user request does not have. There is no
+// configuration that relaxes it: the exclusion list is a hardcoded private array
+// and the timestamp is session state.
+//
+// The supported answer is for an administrator to create those three by hand,
+// where password confirmation works as designed. That answer only works if
+// provisioning LOOKS before it writes: found on a real Nextcloud 34 (AIO), where
+// the account and group existed and provisioning still failed forever, because
+// the 403 arrives before Nextcloud ever evaluates existence — so a prepared
+// instance was indistinguishable from an empty one.
+func TestProvisionAdoptsAManuallyPreparedOwnerWhenWritesAreRefused(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	mock := &provisionMock{
+		folders: `[]`,
+		// The administrator has already created both, by hand.
+		groups:               `["admin","everyone","` + ncRecordingsOwnerGroup + `"]`,
+		ownerPrepared:        true,
+		confirmationRequired: true,
+	}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	cfg := testExAppConfig(srv.URL)
+	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
+
+	// The substrate must come up: every write that follows the owner account —
+	// the Team folder, its ACL topology — is NOT password-confirmation
+	// protected, so nothing after this step is actually blocked.
+	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); !ok {
+		t.Fatal("provisioning stopped at the owner account and never built the Team folder, " +
+			"even though the group and account were already present")
+	}
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if !snap.OK {
+		t.Fatalf("substrate reported not-ok on a correctly prepared instance: %+v", snap)
+	}
+}
+
+// The converse: when the writes are refused AND nothing has been prepared, the
+// run must still fail — and say what to do about it, rather than reporting a
+// bare 403 the reader has to interpret.
+func TestProvisionRefusedWritesWithNothingPreparedStillFailLoudly(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	mock := &provisionMock{
+		folders:              `[]`,
+		groups:               `["admin","everyone"]`, // no cassini group
+		confirmationRequired: true,
+	}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	var logs strings.Builder
+	cfg := testExAppConfig(srv.URL)
+	cfg.provisionNCFilesAccess(context.Background(), log.New(&logs, "", 0))
+
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.OK {
+		t.Fatal("substrate reported ok with no owner group and no way to create one")
+	}
+	if !strings.Contains(logs.String(), "occ group:add") {
+		t.Errorf("the refusal must tell an administrator how to recover; got: %s", logs.String())
 	}
 }
