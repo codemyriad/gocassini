@@ -101,10 +101,11 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
 - **[Production deployment notes](./exapp-talk-production-deployment.md)** — deployment shape and operational notes.
 - **[One-click install & update constraints](./exapp-update-constraints.md)** —
   what AppAPI's Install/Update buttons can and cannot deliver. Notably: deploy
-  env is creation-time only, so a release adding a *required* env var is a
+  env is creation-time only, so a release adding a _required_ env var is a
   breaking change.
 - **[Recording tutorial](./exapp-talk-recording-tutorial.md)** — a manual end-to-end validation walkthrough.
 - **[Recording permissions](./exapp-nextcloud-recordings-permissions.md)** — how per-participant access control works: what the ExApp provisions automatically on enable, the Team folders + Everyone Group prerequisites, and how to manage who can see each recording.
+- **[Data processing & privacy](./privacy.md)** — what Cassini stores, where it lives, deletion/uninstall implications, and the one optional step that sends data off your infrastructure.
 - **[Troubleshooting](./exapp-talk-troubleshooting.md)** — install/access issues seen in practice.
 - **[Trying the image locally](./exapp-test-locally.md)** — three tiers, from image-only checks to a production-shaped local install.
 - **[Releasing Cassini](./release.md)** — maintainer guide: the version ladder, the local `prepare-release.sh` flow, and the GitHub + App Store publish workflow.
@@ -116,7 +117,7 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
 - **GPU/CUDA**: tag `X.Y.Z-cuda`. CUDA-enabled sherpa-onnx + fp32 Parakeet, with
   `CASSINI_STT_DEVICE=cuda` baked in. Set the deploy daemon's **Compute device**
   to CUDA and AppAPI pulls the `-cuda` image automatically — the device is a
-  property of the *daemon*, so a CPU and a GPU install differ by that one
+  property of the _daemon_, so a CPU and a GPU install differ by that one
   setting and nothing else. The GPU accelerates
   the **transcription (build) stage** only. Requires the NVIDIA driver +
   Container Toolkit on the engine running the ExApp. See
@@ -193,7 +194,7 @@ Kept because it helps a contributor, installer, or user. Read on demand.
 Flagged so readers do not mistake intent for current behavior:
 
 - **Summarisation is WIP.** It works, but `summary.md` is **not yet embedded**
-  in the portable `.opus` and is **not** in `manifest.json`. It *is* included in
+  in the portable `.opus` and is **not** in `manifest.json`. It _is_ included in
   the static-site bundle as an optional sidecar. A local/privacy-focused
   summariser (avoiding the third-party OpenRouter step) is a separate future
   effort.
@@ -210,5 +211,5 @@ Flagged so readers do not mistake intent for current behavior:
 - Work on the media pipeline: [Mental model](./mental-model.md) → [Core pipeline](./core-pipeline.md) → [Artifacts and filesystem](./reference/artifacts-and-filesystem.md)
 - Work on the browser apps: [Quick start](./quick-start.md) → [Control panel](./components/control-panel.md) → [Viewer](./components/viewer.md)
 - Install on Nextcloud: [ExApp install](./exapp-install.md) → [Env-var reference](./exapp-talk-env-vars.md)
-</content>
-</invoke>
+  </content>
+  </invoke>
