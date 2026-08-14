@@ -135,12 +135,6 @@ func (c ExAppConfig) ensureRecordingsOwnerAccount(ctx context.Context, client *h
 	if err := c.ensureGroup(ctx, client, ncRecordingsOwnerGroup); err != nil {
 		return fmt.Errorf("ensure owner group %q: %w", ncRecordingsOwnerGroup, err)
 	}
-	if exists, err := c.userExists(ctx, client, ncRecordingsOwner); err == nil && exists {
-		// Already there — created by an earlier run, or by an administrator on a
-		// deployment where this ExApp is not allowed to create accounts. Skip
-		// straight to asserting membership.
-		return c.ensureOwnerGroupMembership(ctx, client)
-	}
 	password, err := randomPassword()
 	if err != nil {
 		return fmt.Errorf("generate service account password: %w", err)
@@ -181,9 +175,6 @@ func (c ExAppConfig) ensureRecordingsOwnerAccount(ctx context.Context, client *h
 // protected too, so re-asserting an existing membership would fail a deployment
 // that is already correct.
 func (c ExAppConfig) ensureOwnerGroupMembership(ctx context.Context, client *http.Client) error {
-	if member, err := c.userInGroup(ctx, client, ncRecordingsOwner, ncRecordingsOwnerGroup); err == nil && member {
-		return nil
-	}
 	if err := c.addUserToGroup(ctx, client, ncRecordingsOwner, ncRecordingsOwnerGroup); err != nil {
 		if member, ferr := c.userInGroup(ctx, client, ncRecordingsOwner, ncRecordingsOwnerGroup); ferr == nil && member {
 			return nil
@@ -668,9 +659,6 @@ func (c ExAppConfig) folderPostExpectOK(ctx context.Context, client *http.Client
 // ensureGroup creates an ordinary group, treating "already exists" as success.
 // It is used only for the narrow owner group; `everyone` must remain virtual.
 func (c ExAppConfig) ensureGroup(ctx context.Context, client *http.Client, group string) error {
-	if exists, err := c.groupExists(ctx, client, group); err == nil && exists {
-		return nil
-	}
 	status, body, err := c.apiPostForm(ctx, client, c.ocsURL("/cloud/groups"), url.Values{"groupid": {group}})
 	if err != nil {
 		return err
@@ -708,7 +696,15 @@ func (c ExAppConfig) ensureGroup(ctx context.Context, client *http.Client, group
 // The reads used here are not password-confirmation protected — GET
 // /cloud/groups is even #[NoAdminRequired] — so they work wherever the writes do
 // not. groupExists already existed for the preflight; it simply was never
-// consulted before creating.
+// consulted when a create was refused.
+//
+// They run ONLY on the failure path, never before a write. Probing first cost
+// two extra round-trips on every enable, and provisioning runs on the AppAPI
+// enabled edge against a context the next disable cancels — the harness cycles
+// enable within ~7s. That widened an existing race until a disable landed mid
+// create-account, leaving a half-built substrate the next run could not repair
+// ("PROPPATCH Cassini -> 404" at the migration floor). Optimistic write, verify
+// only when refused: the happy path is byte-for-byte the cost it was.
 
 // userExists reports whether an account is present, and demands positive
 // evidence to say so: an OCS success envelope carrying that exact account id.
