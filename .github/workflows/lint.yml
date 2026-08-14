@@ -13,8 +13,10 @@
 # it can be made required — this one is not required today, so it is advisory.
 #
 # Scope notes:
-#   - actionlint lints every workflow in .github/workflows (with shellcheck on
-#     the embedded run: blocks).
+#   - actionlint lints every workflow in .github/workflows — all 8, confirmed
+#     with -verbose — and runs shellcheck on embedded `run:` blocks. It silently
+#     DISABLES a rule whose tool is missing and still exits 0, so the install
+#     step below is what makes that rule real. See the note there about pyflakes.
 #   - shellcheck covers EVERY tracked *.sh, at full severity with no excluded
 #     codes. It used to be an allow-list of scripts/, sandbox/ and ops/deploy/
 #     because older scripts elsewhere did not pass; the cleanup that allow-list
@@ -59,6 +61,19 @@ jobs:
           # verify-session-artifact.sh, which hard-requires rg (and jq/python3,
           # already on the image). Pinned here so the control fails on the
           # artifact's content, never on a missing tool.
+          # ShellCheck is load-bearing beyond the step below: actionlint runs it
+          # on every embedded `run:` block, and SILENTLY DISABLES that rule if
+          # the binary is absent — exiting 0 for a check it never performed.
+          # (Careful: a comment line starting with the tool's own lowercase
+          # name is parsed as a directive, not prose, and errors out. actionlint
+          # caught exactly that mistake in this very comment — the rule proving
+          # itself.)
+          #
+          # actionlint does the same with pyflakes for `shell: python` blocks.
+          # pyflakes is not packaged for the runner's Ubuntu, and no workflow
+          # here uses a python block, so it is deliberately not installed — but
+          # that means adding one would go unlinted with nothing said. Install
+          # pyflakes (pip) in the same breath as the first `shell: python`.
           sudo apt-get install -y --no-install-recommends shellcheck xsltproc libxml2-utils ripgrep
 
       # Every tracked shell script, not an allow-list. The allow-list existed
