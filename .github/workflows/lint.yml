@@ -5,8 +5,8 @@
 # Scope notes:
 #   - actionlint lints every workflow in .github/workflows (with shellcheck on
 #     the embedded run: blocks).
-#   - shellcheck covers EVERY tracked *.sh, at `warning` severity and excluding
-#     SC2034. It used to be an allow-list of scripts/, sandbox/ and ops/deploy/
+#   - shellcheck covers EVERY tracked *.sh, at full severity with no excluded
+#     codes. It used to be an allow-list of scripts/, sandbox/ and ops/deploy/
 #     because older scripts elsewhere did not pass; the cleanup that allow-list
 #     was waiting on has since happened, so the glob is the whole repo and new
 #     scripts are covered the moment they are added rather than when somebody
@@ -73,17 +73,21 @@ jobs:
       # libraries a shell-lint regression would hurt most (D-508 asked for
       # lib/base.sh, lib/artifacts.sh and lib/e2e-local.sh specifically).
       #
-      # Severity is capped at `warning`: `info` and `style` are ~50 further
-      # findings that are matters of taste, and a gate nobody can keep green
-      # gets disabled. SC2034 (unused variable) is excluded repo-wide because it
-      # cannot see across `source` or through namerefs, so it is noise in a
-      # codebase built on sourced libraries and env-fixture scripts.
+      # Full severity, no excluded codes. The repo is clean at `style`, which is
+      # everything shellcheck reports — so there is nothing to grandfather and no
+      # threshold to argue about later.
+      #
+      # -x --source-path=SCRIPTDIR is what makes that affordable: without it
+      # shellcheck cannot follow `source "$SCRIPT_DIR/common.sh"` and emits 48
+      # SC1091s, plus SC2034s for variables it cannot see used across the source.
+      # Following sources resolves both, and the handful that remained were
+      # either annotated where they occur or were real bugs and got fixed.
       - name: shellcheck (every tracked shell script)
         run: |
           set -euo pipefail
           mapfile -t scripts < <(git ls-files '*.sh' | sort)
           printf 'checking %d shell scripts\n' "${#scripts[@]}"
-          shellcheck --severity=warning --exclude=SC2034 "${scripts[@]}"
+          shellcheck -x --source-path=SCRIPTDIR --severity=style "${scripts[@]}"
 
       - name: actionlint (all workflows)
         run: |
