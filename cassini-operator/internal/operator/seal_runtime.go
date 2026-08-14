@@ -44,11 +44,11 @@ func (rt *Runtime) sealWorker() {
 // runSealJob turns a built meeting into the immutable artifact publish will
 // deliver. The order is the crash-safety argument and runs this way on purpose:
 //
-//	1. claim               seal/queued -> seal/running (conditional)
-//	2. pack                attempt .meeting -> attempt .opus  (verified by cassini pack)
-//	3. digest              sha256 of the sealed file
-//	4. promote             attempt .opus -> current/<job>.opus (atomic rename)
-//	5. MarkSealSucceeded   records both paths + the digest AND queues publish
+//  1. claim               seal/queued -> seal/running (conditional)
+//  2. pack                attempt .meeting -> attempt .opus  (verified by cassini pack)
+//  3. digest              sha256 of the sealed file
+//  4. promote             attempt .opus -> current/<job>.opus (atomic rename)
+//  5. MarkSealSucceeded   records both paths + the digest AND queues publish
 //
 // A crash between 4 and 5 leaves a correct canonical `.opus` and a seal/queued
 // row the requeue dispatcher re-runs — packing the same bundle again produces

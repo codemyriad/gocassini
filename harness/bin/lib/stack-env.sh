@@ -1,3 +1,4 @@
+# shellcheck shell=bash  # sourced by the harness scripts; it has no shebang of its own
 # Harness stack environment resolution and validation.
 #
 # Sourcing this file is safe: it defines functions only (plus base helpers).

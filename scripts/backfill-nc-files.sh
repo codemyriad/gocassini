@@ -113,7 +113,10 @@ echo "backfill-nc-files: using container $CONTAINER"
 # catch-all below must stay narrow: sending someone to delete recordings after a
 # run that wrote nothing points them at their live archive.
 set +e
-"$DOCKER" exec "$CONTAINER" cassini-operator backfill-nc-files "${ARGS[@]}"
+# "${ARGS[@]+...}" rather than a bare "${ARGS[@]}": under `set -u`, bash 3.2 —
+# still the system bash on macOS — treats an empty array as unset and aborts,
+# which is exactly the no-flags invocation this script documents first.
+"$DOCKER" exec "$CONTAINER" cassini-operator backfill-nc-files ${ARGS[@]+"${ARGS[@]}"}
 status=$?
 set -e
 

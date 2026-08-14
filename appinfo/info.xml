@@ -70,6 +70,11 @@ was published, enforced by Nextcloud's own advanced file ACLs.]]></description>
         <description>Selects the publish destination: "nextcloud-files" stores recordings in Nextcloud Files under Cassini/Recordings (the default for an installed app, and the only mode with per-participant access control), or "local" keeps them on the app's own volume. Leave empty unless you specifically need the local mode; an installed app defaults to nextcloud-files so recordings are never silently kept off Nextcloud. The nextcloud-files mode needs the Group folders ("Team folders") and Everyone Group (group_everyone) apps enabled first — Cassini provisions the folder and ACL topology itself but cannot install a PHP app. See docs/exapp-nextcloud-recordings-permissions.md.</description>
       </variable>
       <variable>
+        <name>CASSINI_ARTIFACT_RETENTION</name>
+        <display-name>Working-file retention (optional)</display-name>
+        <description>How much of each recording's per-run working files Cassini keeps on its own volume. "sealed" (the default) reclaims a completed run's working copies, all of which are duplicated in the canonical library or were temporary staging, and keeps the sealed meeting file and every log. "superseded" only reclaims runs a rerun has replaced. "all" keeps everything, which is the escape hatch when something needs to be recovered from a completed run. Nothing removes the last copy of anything, and published recordings are never touched. Leave empty unless you are diagnosing a problem.</description>
+      </variable>
+      <variable>
         <name>OPENROUTER_API_KEY</name>
         <display-name>LLM API key (optional)</display-name>
         <description>API key for transcript cleanup and meeting summaries, sent to OpenRouter or any OpenAI-compatible endpoint (see LLM_BASE_URL). Leave empty to publish raw transcripts without summaries.</description>

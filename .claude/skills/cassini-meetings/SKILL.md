@@ -55,6 +55,13 @@ To pick programmatically, use `--json` (newest is first):
 ./bin/cassini meetings list --json | jq -r '.meetings[0].id'
 ```
 
+Do not parse the text form. `title=` is free text taken from the recording, and
+it is not quoted or escaped — a meeting titled `Budget meeting=X id=admin` prints
+those words inside the `title=` field, where anything splitting the line on
+`key=value` pairs will read them as fields. Newlines are stripped, so a title
+cannot forge a whole extra `meeting=` line, but within a line the text form is
+for reading, not for parsing. `--json` is unambiguous.
+
 Check `.skipped` in that document before treating the list as complete: a
 non-zero value means some catalog entries were unusable and dropped, so meetings
 may be missing that the account can in fact read.

@@ -1,3 +1,4 @@
+# shellcheck shell=bash  # sourced by the harness scripts; it has no shebang of its own
 # Shared safe harness basics. Sourcing this file only defines paths,
 # helpers, and non-topology defaults; it must not validate or exit because e2e
 # scripts source it before choosing/sanitizing their stack topology.
@@ -9,7 +10,9 @@ CASSINI_HARNESS_LIB_BASE_SOURCED=1
 
 HARNESS_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_DIR="$(cd "$HARNESS_BIN_DIR/.." && pwd)"
+# shellcheck disable=SC2034 # library surface: set for scripts that source this file
 REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
+# shellcheck disable=SC2034 # library surface: set for scripts that source this file
 COMPOSE_FILE="$TEST_DIR/compose.yml"
 
 PROJECT_NAME="${PROJECT_NAME:-spreedtest}"
