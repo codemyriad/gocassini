@@ -59,6 +59,7 @@ summary in a single file. Use `+"`cassini meetings list`"+` to find the id.
 		fmt.Fprintf(stderr, "fetch configuration error: %v\n", err)
 		return 2
 	}
+	warnAboutInsecureTLS(stderr, cfg)
 
 	client := newMeetingsClient(cfg)
 	audioURL, listing, err := client.resolveMeeting(ctx, meetingID)

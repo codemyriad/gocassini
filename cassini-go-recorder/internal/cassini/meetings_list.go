@@ -43,6 +43,7 @@ recordings folder looks like.
 		fmt.Fprintf(stderr, "list configuration error: %v\n", err)
 		return 2
 	}
+	warnAboutInsecureTLS(stderr, cfg)
 
 	client := newMeetingsClient(cfg)
 	listing, err := client.fetchCatalog(ctx)

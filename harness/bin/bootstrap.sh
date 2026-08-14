@@ -34,13 +34,20 @@ harness_bootstrap_core_nextcloud() {
   occ_ignore_failure app:install group_everyone >/dev/null 2>&1
   occ_ignore_failure app:enable group_everyone >/dev/null 2>&1
 
-  # The installs above tolerate failure on purpose: both are app-store apps and
-  # a hard install would abort the harness on any box without app-store
+  # The installs above tolerate failure on purpose: all three are app-store apps
+  # and a hard install would abort the harness on any box without app-store
   # reachability. But a failed install must not then be INVISIBLE — without
   # these apps the ExApp provisions nothing, and a missing group_everyone in
   # particular makes the provisioner return before the Team folder is ever
   # created, which looks identical to a successful run.
-  for required_app in groupfolders group_everyone; do
+  #
+  # spreed is checked here for the same reason, learned the hard way: on a slow
+  # link the ~6 MB app-store index times out, `app:install spreed` fails with
+  # both streams discarded, and the harness reports a healthy bootstrap. The
+  # first visible symptom is /operator/status answering 503 much later, with
+  # nothing anywhere naming the cause. There is no Talk to record without it, so
+  # a bootstrap that reaches this point without spreed has already failed.
+  for required_app in spreed groupfolders group_everyone; do
     if ! occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${required_app}:"; then
       log "FATAL: ${required_app} is required for recordings and is not enabled"
       return 1

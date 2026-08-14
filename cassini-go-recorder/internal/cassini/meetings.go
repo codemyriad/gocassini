@@ -461,6 +461,26 @@ func meetingsSource(header http.Header) string {
 //
 // Every verb calls it, not just list — an agent driving only `context` would
 // otherwise never learn that the bytes did not come from Nextcloud Files.
+// warnAboutInsecureTLS says out loud what --insecure costs, every time it is
+// used with a credential.
+//
+// The rest of this surface goes to some length to keep the app password on the
+// host the caller named: resolved asset URLs are pinned to that origin, and
+// redirects are refused outright, because Go forwards Authorization to a
+// subdomain. --insecure opens the same door from the other side — it accepts any
+// certificate, so anything in the path can present one and read the credential.
+//
+// A warning rather than a refusal: verifying against a local harness with a
+// self-signed certificate is a real use, and the flag says "testing only". What
+// it did not do is say anything at the moment it matters, which left the one
+// deliberate hole in this design as the only silent one.
+func warnAboutInsecureTLS(stderr io.Writer, cfg meetingsConfig) {
+	if !cfg.insecure || strings.TrimSpace(cfg.appPassword) == "" {
+		return
+	}
+	fmt.Fprintf(stderr, "warning=--insecure disables TLS certificate verification while your app password is sent to %s; anything able to intercept this connection can read it. Use it only against a local test server\n", cfg.nextcloudURL)
+}
+
 func warnAboutMeetingsSource(stderr io.Writer, listing meetingsListing) {
 	switch listing.Source {
 	case "", ncFilesSourceValue:
