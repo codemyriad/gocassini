@@ -718,7 +718,15 @@ func (c ExAppConfig) userExists(ctx context.Context, client *http.Client, userID
 	if err != nil {
 		return false, err
 	}
-	if status/100 != 2 || ocsStatusCode(body) != 100 {
+	// HTTP 2xx plus the id below is the evidence; the OCS meta code is NOT part
+	// of the test. /ocs/v1.php answers 100 for OK and /ocs/v2.php answers 200 —
+	// requiring 100 made this always-false against a real v2 endpoint, which is
+	// how a service account that plainly existed was reported missing on the
+	// sandbox. An explicit not-found still short-circuits.
+	if status/100 != 2 {
+		return false, nil
+	}
+	if code := ocsStatusCode(body); code == 998 || code == 404 {
 		return false, nil
 	}
 	var env struct {

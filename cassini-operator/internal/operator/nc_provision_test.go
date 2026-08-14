@@ -265,9 +265,12 @@ func (m *provisionMock) handler(t *testing.T) http.Handler {
 			}
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"users":`+admins+`}}}`)
 		case m.ownerPrepared && r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/users/"+ncRecordingsOwner:
-			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":{"id":"`+ncRecordingsOwner+`"}}}`)
+			// statuscode 200, as /ocs/v2.php really answers — not 100, which is
+			// the v1 code. Getting this wrong in the mock is what let a check
+			// that could never succeed against a live Nextcloud pass its test.
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"id":"`+ncRecordingsOwner+`"}}}`)
 		case m.ownerPrepared && r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/groups/"+ncRecordingsOwnerGroup:
-			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":{"users":["`+ncRecordingsOwner+`"]}}}`)
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"users":["`+ncRecordingsOwner+`"]}}}`)
 		case m.confirmationRequired && r.Method == http.MethodPost &&
 			(p == "/ocs/v2.php/cloud/groups" || p == "/ocs/v2.php/cloud/users" ||
 				strings.HasSuffix(p, "/groups") && strings.HasPrefix(p, "/ocs/v2.php/cloud/users/")):
