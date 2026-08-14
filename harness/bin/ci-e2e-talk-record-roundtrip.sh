@@ -387,6 +387,8 @@ log "call URL:   $CALL_URL"
 # 127.0.0.1, same as ci-e2e-rejoin.sh's stream-video.sh.
 BOT_LOG="$LOG_DIR/bots.log"
 (
+  # shellcheck disable=SC2097,SC2098 # the prefix exports the outer CALL_URL to the
+  # subprocess; --call-url below expands that same outer value, not the prefix.
   CALL_URL="$CALL_URL" \
   SCENARIO="$SCENARIO_PATH" \
   OUTPUT_DIR="$SCENARIO_MEDIA_DIR" \

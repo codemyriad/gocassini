@@ -1,3 +1,4 @@
+# shellcheck shell=bash  # sourced by the harness scripts; it has no shebang of its own
 # Safe Cassini recorder/session artifact helpers.
 
 if [[ "${CASSINI_HARNESS_LIB_ARTIFACTS_SOURCED:-0}" == "1" ]]; then

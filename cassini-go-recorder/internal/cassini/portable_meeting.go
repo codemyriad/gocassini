@@ -58,11 +58,11 @@ type portableMeetingArtifact struct {
 	} `json:"source"`
 	Provenance *portable.Provenance `json:"provenance"`
 	Files      struct {
-		Audio              string                            `json:"audio"`
-		Transcript         string                            `json:"transcript"`
-		ReadableTranscript string                            `json:"readableTranscript"`
-		DisplayTranscript  string                            `json:"displayTranscript"`
-		Summary            string                            `json:"summary"`
+		Audio              string                               `json:"audio"`
+		Transcript         string                               `json:"transcript"`
+		ReadableTranscript string                               `json:"readableTranscript"`
+		DisplayTranscript  string                               `json:"displayTranscript"`
+		Summary            string                               `json:"summary"`
 		Transcripts        []portableMeetingTranscriptInputFile `json:"transcripts,omitempty"`
 	} `json:"files"`
 	SpeakerCount int `json:"speakerCount"`
@@ -75,11 +75,11 @@ type portableMeetingArtifact struct {
 // one entry per element; the singular `files.transcript` is ignored. When the
 // list is empty, a v2 file with one synthesized raw-asr entry is emitted.
 type portableMeetingTranscriptInputFile struct {
-	ID         string                  `json:"id"`
-	Path       string                  `json:"path"`
-	Role       string                  `json:"role"`
-	Default    bool                    `json:"default,omitempty"`
-	Language   string                  `json:"language,omitempty"`
+	ID         string                   `json:"id"`
+	Path       string                   `json:"path"`
+	Role       string                   `json:"role"`
+	Default    bool                     `json:"default,omitempty"`
+	Language   string                   `json:"language,omitempty"`
 	Provenance *portable.ProcessingStep `json:"provenance,omitempty"`
 }
 

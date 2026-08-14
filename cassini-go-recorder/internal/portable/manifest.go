@@ -30,21 +30,21 @@ const (
 	TranscriptBodyMIMEWords    = "application/vnd.cassini.transcript-words+json"
 	TranscriptBodyMIMEReadable = "application/vnd.cassini.transcript-readable+json"
 
-	RoleRawASR           = "raw-asr"
-	RoleReadableCleanup  = "readable-cleanup"
-	RoleDisplay          = "display"
-	RoleHumanCorrected   = "human-corrected"
-	RoleTranslation      = "translation"
+	RoleRawASR          = "raw-asr"
+	RoleReadableCleanup = "readable-cleanup"
+	RoleDisplay         = "display"
+	RoleHumanCorrected  = "human-corrected"
+	RoleTranslation     = "translation"
 )
 
 type Manifest struct {
-	Kind       string     `json:"kind"`
-	Version    int        `json:"version"`
-	Profile    string     `json:"profile"`
-	Meeting    Meeting    `json:"meeting"`
-	Audio      Audio      `json:"audio"`
-	Integrity  Integrity  `json:"integrity"`
-	Speakers   []Speaker  `json:"speakers"`
+	Kind      string    `json:"kind"`
+	Version   int       `json:"version"`
+	Profile   string    `json:"profile"`
+	Meeting   Meeting   `json:"meeting"`
+	Audio     Audio     `json:"audio"`
+	Integrity Integrity `json:"integrity"`
+	Speakers  []Speaker `json:"speakers"`
 	// v1 wire: required field; v2 wire never includes it (omitempty on a
 	// non-pointer struct is a no-op, so v1 writes always render this — fine).
 	Transcript Transcript `json:"transcript"`
@@ -53,10 +53,10 @@ type Manifest struct {
 	// so these fields never appear in v2-produced JSON either.
 	Transcripts         []TranscriptEntry `json:"transcripts,omitempty"`
 	ReadableTranscripts []TranscriptEntry `json:"readableTranscripts,omitempty"`
-	Provenance *Provenance `json:"provenance,omitempty"`
-	ReadableTranscript map[string]any `json:"readableTranscript,omitempty"`
-	DisplayTranscript  map[string]any `json:"displayTranscript,omitempty"`
-	Chapters           []Chapter      `json:"chapters,omitempty"`
+	Provenance          *Provenance       `json:"provenance,omitempty"`
+	ReadableTranscript  map[string]any    `json:"readableTranscript,omitempty"`
+	DisplayTranscript   map[string]any    `json:"displayTranscript,omitempty"`
+	Chapters            []Chapter         `json:"chapters,omitempty"`
 	// Summary holds metadata about the meeting summary artifact (model,
 	// templateVersion, format). Schema is intentionally open: map[string]any
 	// lets future producers add keys without breaking decoders. The actual

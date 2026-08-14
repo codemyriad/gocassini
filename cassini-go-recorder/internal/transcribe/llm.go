@@ -12,9 +12,9 @@ import (
 
 // LLMConfig holds settings for the readable transcript cleanup API.
 type LLMConfig struct {
-	APIKey    string
-	BaseURL   string // e.g. "https://openrouter.ai/api/v1"
-	Model     string // e.g. "openai/gpt-4o-mini"
+	APIKey     string
+	BaseURL    string // e.g. "https://openrouter.ai/api/v1"
+	Model      string // e.g. "openai/gpt-4o-mini"
 	TimeoutSec int
 }
 

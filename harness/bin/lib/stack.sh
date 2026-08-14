@@ -1,3 +1,4 @@
+# shellcheck shell=bash  # sourced by the harness scripts; it has no shebang of its own
 # Docker Compose/AppAPI stack helpers. Sourcing this file does not validate
 # ambient harness topology; callers that start or bootstrap a stack must call
 # harness_stack_init first.

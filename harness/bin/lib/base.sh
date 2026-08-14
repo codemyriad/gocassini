@@ -1,3 +1,4 @@
+# shellcheck shell=bash  # sourced by the harness scripts; it has no shebang of its own
 # Shared safe harness basics. Sourcing this file only defines paths,
 # helpers, and non-topology defaults; it must not validate or exit because e2e
 # scripts source it before choosing/sanitizing their stack topology.

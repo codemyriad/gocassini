@@ -33,7 +33,7 @@ if [[ ! -f "$SITE_ROOT/catalog.json" && -f "$SITE_PARENT/catalog.json" ]]; then
 fi
 
 if [[ ! -f "$SITE_ROOT/catalog.json" ]]; then
-  rm -rf "$SITE_ROOT"/*
+  rm -rf "${SITE_ROOT:?}"/*
   cp /opt/cassini/cassini-viewer/dist/index.html "$SITE_ROOT/index.html"
   cp -R /opt/cassini/cassini-viewer/dist/assets "$SITE_ROOT/assets"
   cat > "$SITE_ROOT/catalog.json" <<'EOF'

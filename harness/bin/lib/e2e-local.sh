@@ -1,3 +1,4 @@
+# shellcheck shell=bash  # sourced by the harness scripts; it has no shebang of its own
 # Local e2e topology sanitizer. This file is intentionally safe to source
 # before common.sh/stack-env.sh; it masks ambient remote harness variables so
 # local e2e scripts remain deterministic from developer shells and persistent

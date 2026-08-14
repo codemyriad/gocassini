@@ -5,10 +5,12 @@
 # Scope notes:
 #   - actionlint lints every workflow in .github/workflows (with shellcheck on
 #     the embedded run: blocks).
-#   - shellcheck covers scripts/, sandbox/ and ops/deploy/. Many older scripts
-#     elsewhere (harness/, deployment/, …) predate shellcheck and don't pass it
-#     yet; widening the glob further needs a cleanup pass first so this gate
-#     stays green.
+#   - shellcheck covers EVERY tracked *.sh, at `warning` severity and excluding
+#     SC2034. It used to be an allow-list of scripts/, sandbox/ and ops/deploy/
+#     because older scripts elsewhere did not pass; the cleanup that allow-list
+#     was waiting on has since happened, so the glob is the whole repo and new
+#     scripts are covered the moment they are added rather than when somebody
+#     remembers to extend a list.
 #   - the script test suites are listed ONE BY ONE, not globbed. This job is the
 #     fast, offline, every-PR gate: a test belongs here only if it needs no
 #     Docker, no stack and no network. Globbing harness/bin/test-*.sh would
@@ -26,6 +28,7 @@ on:
       - 'harness/**'
       - 'sandbox/**'
       - 'ops/**'
+      - '**/*.sh'
       - '.github/workflows/**'
       - '.github/actions/**'
   pull_request:
@@ -34,6 +37,7 @@ on:
       - 'harness/**'
       - 'sandbox/**'
       - 'ops/**'
+      - '**/*.sh'
       - '.github/workflows/**'
       - '.github/actions/**'
 
@@ -63,14 +67,23 @@ jobs:
           # artifact's content, never on a missing tool.
           sudo apt-get install -y --no-install-recommends shellcheck xsltproc libxml2-utils ripgrep
 
-      - name: shellcheck scripts/ + sandbox/ + ops/deploy/ + stack resume contract
-        run: >-
-          shellcheck
-          scripts/*.sh
-          sandbox/*.sh
-          ops/deploy/*.sh
-          ops/deploy/lib/*.sh
-          harness/bin/test-stack-resume.sh
+      # Every tracked shell script, not an allow-list. The allow-list existed
+      # because older scripts under harness/ and deployment/ did not pass — that
+      # is no longer true, and an allow-list quietly excludes exactly the runtime
+      # libraries a shell-lint regression would hurt most (D-508 asked for
+      # lib/base.sh, lib/artifacts.sh and lib/e2e-local.sh specifically).
+      #
+      # Severity is capped at `warning`: `info` and `style` are ~50 further
+      # findings that are matters of taste, and a gate nobody can keep green
+      # gets disabled. SC2034 (unused variable) is excluded repo-wide because it
+      # cannot see across `source` or through namerefs, so it is noise in a
+      # codebase built on sourced libraries and env-fixture scripts.
+      - name: shellcheck (every tracked shell script)
+        run: |
+          set -euo pipefail
+          mapfile -t scripts < <(git ls-files '*.sh' | sort)
+          printf 'checking %d shell scripts\n' "${#scripts[@]}"
+          shellcheck --severity=warning --exclude=SC2034 "${scripts[@]}"
 
       - name: actionlint (all workflows)
         run: |

@@ -68,18 +68,18 @@ func TestValidateTranscriptID(t *testing.T) {
 		{"a", false},
 		{"a1", false},
 		{"a_b_c", false},
-		{"PARAKEET", true},      // uppercase rejected
-		{"-leading", true},      // must start with [a-z0-9]
-		{"with space", true},    // no spaces
-		{"with.dot", true},      // no dots
+		{"PARAKEET", true},              // uppercase rejected
+		{"-leading", true},              // must start with [a-z0-9]
+		{"with space", true},            // no spaces
+		{"with.dot", true},              // no dots
 		{strings.Repeat("a", 33), true}, // too long
-		{"", true},              // empty
-		{"payload", true},       // reserved
-		{"format", true},        // reserved
-		{"audio", true},         // reserved
-		{"meeting", true},       // reserved
-		{"transcript", true},    // reserved
-		{"provenance", true},    // reserved
+		{"", true},                      // empty
+		{"payload", true},               // reserved
+		{"format", true},                // reserved
+		{"audio", true},                 // reserved
+		{"meeting", true},               // reserved
+		{"transcript", true},            // reserved
+		{"provenance", true},            // reserved
 	}
 	for _, tc := range cases {
 		err := ValidateTranscriptID(tc.id)

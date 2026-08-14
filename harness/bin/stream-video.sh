@@ -222,6 +222,7 @@ fi
 
 if [[ -n "$MEDIA_PREFIXES" ]]; then
   split_csv_into "$MEDIA_PREFIXES" csv_media
+  # shellcheck disable=SC2154 # split_csv_into assigns csv_media through a nameref
   MEDIA_PREFIX_LIST+=("${csv_media[@]}")
 fi
 if [[ "${#MEDIA_PREFIX_LIST[@]}" -eq 0 && -n "$MEDIA_PREFIX" ]]; then
