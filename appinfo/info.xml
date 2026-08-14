@@ -9,7 +9,7 @@ transcribes and summarizes it, and publishes a readable archive in Nextcloud
 Files. Recording control and job history live in the admin-only control panel;
 each recording is readable only by the people who were in the Talk room when it
 was published, enforced by Nextcloud's own advanced file ACLs.]]></description>
-  <version>0.2.0-alpha.4</version>
+  <version>0.2.0-beta.1</version>
   <licence>agpl</licence>
   <author>codemyriad</author>
   <namespace>Cassini</namespace>
@@ -32,7 +32,7 @@ was published, enforced by Nextcloud's own advanced file ACLs.]]></description>
            exact build this manifest was released with, never a moving
            `latest`. CI rejects a manifest where the two disagree; bump both
            together with scripts/bump-exapp-version.sh. -->
-      <image-tag>0.2.0-alpha.4</image-tag>
+      <image-tag>0.2.0-beta.1</image-tag>
     </docker-install>
 
     <!--
