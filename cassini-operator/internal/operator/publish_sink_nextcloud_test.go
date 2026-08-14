@@ -459,3 +459,68 @@ func TestNCSinkDeliversWhenNoSubstrateIsExpected(t *testing.T) {
 		t.Fatalf("Deliver refused a deployment that expects no substrate: %v", err)
 	}
 }
+
+// The last link in the seal chain, on the sink that production actually uses
+// (D-583 acceptance criterion 3). The local sink has checked this since #169;
+// this one did not, because #153 landed it before the seal stage existed and
+// the criterion stopped being satisfiable by one PR.
+//
+// A mismatch must fail before anything is uploaded: the sink's whole contract is
+// that a meeting either reaches Nextcloud whole or does not reach it at all, and
+// a half-delivered archive with a recording nothing indexes is the state it was
+// built to prevent.
+func TestNCSinkRefusesAnAssetThatIsNotTheSealedArtifact(t *testing.T) {
+	nc := newFakeNCFiles()
+	sink := newNCSink(t, nc.server(t).URL)
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+
+	_, err := sink.Deliver(context.Background(), publishDelivery{
+		AttemptSitePath: attempt,
+		JobID:           "meeting-a",
+		AttemptNumber:   1,
+		PublishedAtUTC:  "2026-06-12T00:00:00Z",
+		AssetDigests:    map[string]string{"meetings/meeting-a.opus": "not-the-sealed-digest"},
+	})
+	if err == nil {
+		t.Fatal("Deliver() succeeded with an asset that does not match the sealed artifact")
+	}
+	if !strings.Contains(err.Error(), "sealed") {
+		t.Errorf("error does not say what is wrong: %v", err)
+	}
+
+	// Nothing may have been written — not the recording, and above all not the
+	// catalog, which is what makes a recording visible.
+	for _, path := range []string{
+		"Cassini/Recordings/meetings/meeting-a.opus",
+		"Cassini/Recordings/catalog.json",
+	} {
+		if nc.has(path) {
+			t.Errorf("a refused delivery left %s in Nextcloud", path)
+		}
+	}
+}
+
+// The digest that matches is delivered, so the check cannot be satisfied by
+// refusing everything.
+func TestNCSinkDeliversAnAssetMatchingTheSealedArtifact(t *testing.T) {
+	nc := newFakeNCFiles()
+	sink := newNCSink(t, nc.server(t).URL)
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+
+	digest, err := fileSHA256(filepath.Join(attempt, "meetings", "meeting-a.opus"))
+	if err != nil {
+		t.Fatalf("fileSHA256() error = %v", err)
+	}
+	if _, err := sink.Deliver(context.Background(), publishDelivery{
+		AttemptSitePath: attempt,
+		JobID:           "meeting-a",
+		AttemptNumber:   1,
+		PublishedAtUTC:  "2026-06-12T00:00:00Z",
+		AssetDigests:    map[string]string{"meetings/meeting-a.opus": digest},
+	}); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+	if !nc.has("Cassini/Recordings/meetings/meeting-a.opus") {
+		t.Error("a matching asset was not delivered")
+	}
+}

@@ -88,10 +88,10 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 		return "", fmt.Errorf("attempt site %s published no meetings", d.AttemptSitePath)
 	}
 
-	// Every asset the incoming catalog names must exist locally before anything
-	// is uploaded. Without this the loop below could complete having delivered
-	// nothing and still report success — reintroducing the silent hole this
-	// sink exists to close.
+	// Every asset the incoming catalog names must exist locally, and match the
+	// digest its job sealed, before anything is uploaded. Without this the loop
+	// below could complete having delivered nothing and still report success —
+	// reintroducing the silent hole this sink exists to close.
 	type upload struct{ local, remote string }
 	var uploads []upload
 	for _, entry := range incoming.Meetings {
@@ -101,8 +101,30 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 		}
 		for _, asset := range assets {
 			local := filepath.Join(d.AttemptSitePath, asset)
-			if _, err := os.Stat(local); err != nil {
+			info, err := os.Stat(local)
+			if err != nil {
 				return "", fmt.Errorf("attempt site is missing catalog asset %s: %w", asset, err)
+			}
+			// The last link in the seal chain (D-583). The local sink checks this
+			// in stageAsset; this sink did not, so on an installed ExApp — the
+			// only deployment that uses it — the chain was two links long instead
+			// of three. Checked here rather than per-PUT so a mismatch costs no
+			// upload at all, matching the existing "verify everything first"
+			// preflight above.
+			//
+			// Only file assets are digested: a directory asset is a legacy
+			// artifactPath export with no single artifact to have sealed. Like
+			// stageAsset this proves the bytes leaving here are the sealed ones;
+			// it does not attest what the server stored, which WebDAV gives us no
+			// portable way to read back.
+			if want, ok := d.AssetDigests[filepath.ToSlash(asset)]; ok && !info.IsDir() {
+				got, err := fileSHA256(local)
+				if err != nil {
+					return "", err
+				}
+				if got != want {
+					return "", fmt.Errorf("refusing to publish %s: it does not match the artifact this job sealed (sha256 %s, want %s)", asset, got, want)
+				}
 			}
 			uploads = append(uploads, upload{local: local, remote: ncRecordingsRoot + "/" + filepath.ToSlash(asset)})
 		}
