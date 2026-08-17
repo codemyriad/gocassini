@@ -22,6 +22,11 @@ import (
 type portablePackOptions struct {
 	Title        string
 	CreatedAtUTC string
+	// RoomID and RoomName name the conversation this meeting was recorded in
+	// (D-622). Unlike Title they have no fallback chain: a room is either known
+	// or it is not, and guessing one from a file name would invent an identity.
+	RoomID   string
+	RoomName string
 }
 
 type portableMeetingSource struct {
@@ -508,6 +513,8 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 			RecordedAtLocal: recordedAtLocal,
 			ProcessedAtUTC:  processedAtUTC,
 			DurationMS:      audio.DurationMS,
+			RoomID:          strings.TrimSpace(opts.RoomID),
+			RoomName:        strings.TrimSpace(opts.RoomName),
 		},
 		Audio: portable.Audio{
 			Container:   "ogg",

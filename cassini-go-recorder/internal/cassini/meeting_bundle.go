@@ -23,7 +23,14 @@ type MeetingBundleManifest struct {
 	// Title is an optional human-readable meeting name (e.g. the Talk room
 	// name the operator resolved at recording time). Packing prefers it over
 	// names derived from file paths; empty means "no known name".
-	Title            string            `json:"title,omitempty"`
+	Title string `json:"title,omitempty"`
+	// RoomID and RoomName name the conversation the recording came from — for
+	// Talk, the room token and its display name. The operator stamps them
+	// alongside Title after the build, and `cassini pack` carries them into the
+	// portable .opus (D-622). Empty means "no known room", which is the normal
+	// state for a bundle built from a file rather than a call.
+	RoomID           string            `json:"room_id,omitempty"`
+	RoomName         string            `json:"room_name,omitempty"`
 	State            string            `json:"state,omitempty"`
 	Stage            string            `json:"stage,omitempty"`
 	Error            string            `json:"error,omitempty"`

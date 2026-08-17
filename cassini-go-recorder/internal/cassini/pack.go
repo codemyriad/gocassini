@@ -22,6 +22,8 @@ type packOptions struct {
 	inputPath string
 	outPath   string
 	title     string
+	roomID    string
+	roomName  string
 }
 
 func runPack(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -31,12 +33,21 @@ func runPack(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.outPath, "out", "", "output portable .opus file")
 	fs.StringVar(&opts.title, "title", "", "override the meeting title embedded in the .opus file")
+	fs.StringVar(&opts.roomID, "room-id", "", "id of the conversation this meeting was recorded in (for Talk, the room token)")
+	fs.StringVar(&opts.roomName, "room-name", "", "display name of the conversation this meeting was recorded in")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini pack ./meetings/demo.meeting --out "./My Meetings/Demo.opus"
+  cassini pack ./meetings/demo.meeting --out ./Demo.opus \
+    --room-id a7bc3k9x --room-name "Weekly Sync"
 
 Pack an already-built .meeting bundle into a portable .opus file without
 re-transcribing. The input must be a ready .meeting bundle directory.
+
+--room-id and --room-name record which conversation the recording came from,
+so a published meeting can be grouped and filtered by room. Both default to
+whatever the bundle manifest carries, and both are optional — a meeting with no
+known room is packed without them rather than with a guess.
 
 `+"\n")
 		fs.PrintDefaults()
@@ -95,10 +106,24 @@ re-transcribing. The input must be a ready .meeting bundle directory.
 		title = titleFromOutputPath(opts.outPath)
 	}
 
+	// The room follows the same flag-then-bundle precedence as the title, but
+	// stops there: a title has a sensible last resort (the output file name),
+	// while a room does not. An unknown room stays unknown.
+	roomID := strings.TrimSpace(opts.roomID)
+	if roomID == "" {
+		roomID = strings.TrimSpace(bundle.Manifest.RoomID)
+	}
+	roomName := strings.TrimSpace(opts.roomName)
+	if roomName == "" {
+		roomName = strings.TrimSpace(bundle.Manifest.RoomName)
+	}
+
 	fmt.Fprintln(stdout, "[1/1] Writing portable meeting file")
 	if err := packMeetingBundle(ctx, bundle.RootDir, opts.outPath, portablePackOptions{
 		Title:        title,
 		CreatedAtUTC: strings.TrimSpace(bundle.Manifest.CreatedAtUTC),
+		RoomID:       roomID,
+		RoomName:     roomName,
 	}); err != nil {
 		fmt.Fprintf(stderr, "write portable meeting file: %v\n", err)
 		return 1
