@@ -119,7 +119,9 @@ func TestMeetingsListSendsBasicAuthToTheProxiedCatalogRoute(t *testing.T) {
 	if !strings.Contains(stdout, "meetings=2 caller=alice source=nextcloud-files") {
 		t.Errorf("missing summary line in:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "meeting=NEWER date=2026-08-11 10:32 title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes") {
+	// room=- because this catalog predates room metadata, which is what most of
+	// a real archive looks like.
+	if !strings.Contains(stdout, "meeting=NEWER date=2026-08-11 10:32 room=- title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes") {
 		t.Errorf("missing meeting line in:\n%s", stdout)
 	}
 }

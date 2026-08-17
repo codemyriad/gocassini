@@ -298,12 +298,30 @@ func parseMeetingDateLabel(label string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// meetingsFilterEcho is the filter as it appears in --json, so a consumer
+// reading a short list can tell what narrowed it without re-parsing argv.
+type meetingsFilterEcho struct {
+	From string `json:"from,omitempty"`
+	To   string `json:"to,omitempty"`
+	Room string `json:"room,omitempty"`
+}
+
 // writeMeetingsCatalogJSON re-emits the catalog in display order, preserving
 // each entry's bytes verbatim and adding where they came from.
-func writeMeetingsCatalogJSON(out io.Writer, listing meetingsListing) error {
-	meetings := make([]json.RawMessage, 0, len(listing.Items))
-	for _, item := range listing.Items {
+func writeMeetingsCatalogJSON(out io.Writer, listing meetingsListing, filter meetingsFilter, result meetingsFilterResult) error {
+	meetings := make([]json.RawMessage, 0, len(result.items))
+	for _, item := range result.items {
 		meetings = append(meetings, item.raw)
+	}
+	var echo *meetingsFilterEcho
+	if filter.active() {
+		echo = &meetingsFilterEcho{Room: filter.room}
+		if filter.hasFrom {
+			echo.From = filter.from.Format(meetingsFilterStampLayout)
+		}
+		if filter.hasTo {
+			echo.To = filter.to.Format(meetingsFilterStampLayout)
+		}
 	}
 	document := struct {
 		Version string `json:"version"`
@@ -311,13 +329,27 @@ func writeMeetingsCatalogJSON(out io.Writer, listing meetingsListing) error {
 		// Skipped tells a programmatic consumer the list is incomplete. Without
 		// it, --json — the path an agent actually reads — is the only one that
 		// cannot tell a short list from a complete one.
-		Skipped  int               `json:"skipped"`
-		Meetings []json.RawMessage `json:"meetings"`
+		//
+		// It keeps its original meaning — entries with no id, i.e. a malformed
+		// catalog — and deliberately does NOT absorb filtered-out entries. An
+		// agent reads a non-zero skipped as "something is wrong with the
+		// server's data", which a filter doing its job is not.
+		Skipped int                 `json:"skipped"`
+		Filter  *meetingsFilterEcho `json:"filter,omitempty"`
+		// Excluded counts entries the filter removed; ExcludedUndated is the
+		// subset dropped because a date filter was set and their dateLabel
+		// could not be parsed — nothing the caller typed is wrong in that case.
+		Excluded        int               `json:"excluded"`
+		ExcludedUndated int               `json:"excludedUndated"`
+		Meetings        []json.RawMessage `json:"meetings"`
 	}{
-		Version:  listing.Version,
-		Source:   listing.Source,
-		Skipped:  listing.Skipped,
-		Meetings: meetings,
+		Version:         listing.Version,
+		Source:          listing.Source,
+		Skipped:         listing.Skipped,
+		Filter:          echo,
+		Excluded:        result.excluded,
+		ExcludedUndated: result.undated,
+		Meetings:        meetings,
 	}
 	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
