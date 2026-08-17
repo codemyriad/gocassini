@@ -12,6 +12,7 @@ import {
   describeMeeting,
   describeSpeechToTextVariant,
   preferredPortableTitle,
+  portableRoomFields,
   describeVariantSuffix,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
@@ -127,6 +128,32 @@ describe("describeMeeting", () => {
     expect(describeMeeting("daily-meeting-2026-04-08", "   ").dateLabel).toBe(
       "daily-meeting-2026-04-08",
     );
+  });
+});
+
+describe("portableRoomFields", () => {
+  it("carries both halves of the room when the file has them", () => {
+    expect(
+      portableRoomFields({ meeting: { roomId: " a7bc3k9x ", roomName: "  Weekly Sync  " } }),
+    ).toEqual({ roomId: "a7bc3k9x", roomName: "Weekly Sync" });
+  });
+
+  it("omits the keys entirely rather than writing empty strings", () => {
+    // An entry with roomId: "" would read as "this meeting has a room whose id
+    // is the empty string", and every consumer would have to check presence AND
+    // emptiness. A meeting with no room is a normal state, not a broken one.
+    expect(portableRoomFields({ meeting: { roomId: "   ", roomName: "" } })).toEqual({});
+    expect(portableRoomFields({ meeting: {} })).toEqual({});
+    expect(portableRoomFields({})).toEqual({});
+    expect(portableRoomFields(null)).toEqual({});
+  });
+
+  it("carries a room name with no id", () => {
+    // What a backfilled legacy recording looks like: the published .opus never
+    // carried a Talk token, so only the name is recoverable from it.
+    expect(portableRoomFields({ meeting: { roomName: "Old Standup" } })).toEqual({
+      roomName: "Old Standup",
+    });
   });
 });
 
@@ -1335,6 +1362,79 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
       expect(byId.get("daily-meeting-2026-04-09")).toMatchObject({
         dateLabel: "daily-meeting-2026-04-09",
       });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // D-622: the room a recording came from must reach the catalog as its own
+  // fields. The catalog title is not a usable substitute — it has the STT
+  // variant appended, and nothing in it distinguishes "this room is called X"
+  // from "we never learned the room name and fell back to the id".
+  it("carries the room from the .opus into the catalog entry", () => {
+    const root = mkdtempSync(join(tmpdir(), "cassini-export-room-"));
+    try {
+      const distDir = join(root, "dist");
+      mkdirSync(distDir, { recursive: true });
+
+      const stubBinDir = join(root, "bin");
+      mkdirSync(stubBinDir, { recursive: true });
+      const stubPath = join(stubBinDir, "ffprobe");
+      writeFileSync(stubPath, '#!/bin/sh\nfor arg in "$@"; do last="$arg"; done\nexec cat "${last}.ffprobe.json"\n');
+      chmodSync(stubPath, 0o755);
+
+      const sourceDir = join(root, "source");
+      mkdirSync(sourceDir, { recursive: true });
+      const writePortablePack = (meetingId: string, meeting: Record<string, unknown>) => {
+        const payload = gzipSync(Buffer.from(JSON.stringify({ meeting }), "utf8")).toString("base64url");
+        writeFileSync(join(sourceDir, `${meetingId}.opus`), "");
+        writeFileSync(
+          join(sourceDir, `${meetingId}.opus.ffprobe.json`),
+          JSON.stringify({
+            format: { tags: { CASSINI_PAYLOAD_CHUNK_COUNT: "1", CASSINI_PAYLOAD_000: payload } },
+            streams: [],
+          }),
+        );
+      };
+
+      writePortablePack("01JZ8K3M4N5P6Q7R8S9T0VWXYZ", {
+        id: "01JZ8K3M4N5P6Q7R8S9T0VWXYZ",
+        title: "Weekly Sync",
+        createdAtUtc: "2026-08-11T10:32:00Z",
+        roomId: "a7bc3k9x",
+        roomName: "Weekly Sync",
+      });
+      writePortablePack("01JZ8K3M4N5P6Q7R8S9T0VWXZZ", {
+        id: "01JZ8K3M4N5P6Q7R8S9T0VWXZZ",
+        title: "Cassini Meeting",
+        createdAtUtc: "2026-08-12T10:32:00Z",
+      });
+
+      const outputDir = join(root, "out");
+      execFileSync(
+        process.execPath,
+        [scriptPath, "--source-dir", sourceDir, "--output-dir", outputDir, "--recordings-base-url", "https://example.test/"],
+        {
+          env: { ...process.env, CASSINI_VIEWER_DIST_DIR: distDir, PATH: `${stubBinDir}:${process.env.PATH}` },
+          encoding: "utf8",
+        },
+      );
+
+      const catalog = JSON.parse(readFileSync(join(outputDir, "catalog.json"), "utf8"));
+      const byId = new Map(catalog.meetings.map((meeting: { id: string }) => [meeting.id, meeting]));
+      expect(byId.get("01JZ8K3M4N5P6Q7R8S9T0VWXYZ")).toMatchObject({
+        roomId: "a7bc3k9x",
+        roomName: "Weekly Sync",
+      });
+      // A meeting with no room ships no room keys at all, rather than two empty
+      // strings a consumer would have to distinguish from a real value.
+      const withoutRoom = byId.get("01JZ8K3M4N5P6Q7R8S9T0VWXZZ") as Record<string, unknown>;
+      expect(withoutRoom).toBeDefined();
+      expect("roomId" in withoutRoom).toBe(false);
+      expect("roomName" in withoutRoom).toBe(false);
+      // The version must be untouched: five unlinked readers check it for exact
+      // equality, so the new fields have to be purely additive.
+      expect(catalog.version).toBe("cassini.viewer.catalog.v1");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

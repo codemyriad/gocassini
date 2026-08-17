@@ -9,6 +9,17 @@ export interface MeetingCatalogEntry {
   speakerCount?: number;
   segmentCount?: number;
   digestDurationMs?: number;
+  // Which conversation the meeting was recorded in: for a Talk recording,
+  // roomId is the room token and roomName its display name (D-622). Both are
+  // optional — a meeting recorded before the field existed, or one whose room
+  // lookup failed, simply has no room, and no consumer may require one.
+  //
+  // roomName often equals title, and is still a separate field: a title is
+  // free text that may have been overridden or derived from a file name, while
+  // roomName is a claim about which room this is. Only the second is safe to
+  // group by.
+  roomId?: string;
+  roomName?: string;
 }
 
 export interface MeetingCatalog {
@@ -125,6 +136,17 @@ function validateMeetingCatalogEntry(
     digestDurationMs: optionalNumber(
       value.digestDurationMs,
       `catalog entry ${index} digestDurationMs`,
+    ),
+    // This function rebuilds every entry from an explicit literal, so a field
+    // missing HERE is dropped at load with no error anywhere — even though it
+    // is present in the catalog the browser just fetched.
+    roomId: optionalNonEmptyString(
+      value.roomId,
+      `catalog entry ${index} roomId`,
+    ),
+    roomName: optionalNonEmptyString(
+      value.roomName,
+      `catalog entry ${index} roomName`,
     ),
   };
 }

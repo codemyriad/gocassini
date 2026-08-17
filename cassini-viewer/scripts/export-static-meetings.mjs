@@ -201,11 +201,17 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
       // "already populated" and never correct).
       segmentCount: transcript.segments?.length || portableDefaultSegmentCount(portable),
       digestDurationMs: transcript.media?.durationMs ?? 0,
+      // The room the recording came from, when the file carries one (D-622).
+      // Spread last and conditionally, so a meeting with no room ships no room
+      // keys at all rather than two empty strings.
+      ...portableRoomFields(portable),
     };
   }
 
   // Directory packs carry no createdAtUtc in the metadata the exporter reads
-  // (manifest.json), so their dateLabel still comes from the id alone.
+  // (manifest.json), and no room either — manifest.json has never had one, and
+  // this branch serves the pre-portable format that will not gain fields. Such
+  // meetings are exported without a room, which is what they have.
   const { title, dateLabel } = describeMeeting(meetingId);
 
   if (recordingsBaseUrl) {
@@ -1308,6 +1314,27 @@ export function isPortableMeeting(fileName) {
 // operator resolved at recording time, D-462). Packer defaults — the meeting
 // id echoed back or the generic "Cassini Meeting" — yield "" so the caller
 // falls back to id-derived naming.
+// portableRoomFields returns the {roomId, roomName} a catalog entry should
+// carry, or {} when the meeting has no room.
+//
+// Absent rather than empty: an entry with `roomId: ""` would read as "this
+// meeting has a room whose id is the empty string", and every consumer — the
+// viewer's grouping, the CLI's --room filter — would have to check presence
+// AND emptiness. Meetings recorded before D-622, and Talk recordings whose room
+// lookup failed, genuinely have no room, and saying so is the correct answer.
+export function portableRoomFields(portable) {
+  const fields = {};
+  const roomId = typeof portable?.meeting?.roomId === "string" ? portable.meeting.roomId.trim() : "";
+  const roomName = typeof portable?.meeting?.roomName === "string" ? portable.meeting.roomName.trim() : "";
+  if (roomId !== "") {
+    fields.roomId = roomId;
+  }
+  if (roomName !== "") {
+    fields.roomName = roomName;
+  }
+  return fields;
+}
+
 export function preferredPortableTitle(portable, meetingId) {
   const raw = typeof portable?.meeting?.title === "string" ? portable.meeting.title.trim() : "";
   if (raw === "") {

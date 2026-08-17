@@ -990,3 +990,70 @@ func TestMeetingsFetchRefusesAnEmptyRecording(t *testing.T) {
 	}
 	assertNoStrayFiles(t, tmp)
 }
+
+// roomCatalog exercises every room state a real archive holds at once: a
+// meeting with both halves, one backfilled to a name with no id (the token was
+// never written into the published .opus and cannot be recovered from it), and
+// one from before the field existed.
+const roomCatalog = `{
+  "version": "cassini.viewer.catalog.v1",
+  "meetings": [
+    {"id": "SYNC1", "title": "Weekly Sync (Parakeet Tdt-0.6b-v2)", "dateLabel": "2026-08-11 10:32",
+     "audioPath": "./meetings/SYNC1.opus", "roomId": "a7bc3k9x", "roomName": "Weekly Sync"},
+    {"id": "SYNC2", "title": "Weekly Sync (Parakeet Tdt-0.6b-v2)", "dateLabel": "2026-08-04 10:30",
+     "audioPath": "./meetings/SYNC2.opus", "roomId": "a7bc3k9x", "roomName": "Weekly Sync"},
+    {"id": "LEGACY", "title": "Old Standup", "dateLabel": "2026-07-02 09:00",
+     "audioPath": "./meetings/LEGACY.opus", "roomName": "Old Standup"},
+    {"id": "NOROOM", "title": "Untitled meeting", "dateLabel": "2026-06-01 08:00",
+     "audioPath": "./meetings/NOROOM.opus"}
+  ]
+}`
+
+func TestMeetingsCatalogEntryCarriesTheRoom(t *testing.T) {
+	fake := newMeetingsFakeNextcloud(t, serveCatalog(roomCatalog))
+	client := newMeetingsClient(meetingsConfig{
+		nextcloudURL: fake.server.URL, user: "alice", appPassword: "app-pw-1234", appID: meetingsDefaultAppID,
+	})
+	listing, err := client.fetchCatalog(context.Background())
+	if err != nil {
+		t.Fatalf("fetchCatalog: %v", err)
+	}
+
+	byID := map[string]meetingsCatalogEntry{}
+	for _, entry := range listing.Entries() {
+		byID[entry.ID] = entry
+	}
+	if got := byID["SYNC1"]; got.RoomID != "a7bc3k9x" || got.RoomName != "Weekly Sync" {
+		t.Errorf("SYNC1 room = %q/%q, want %q/%q", got.RoomID, got.RoomName, "a7bc3k9x", "Weekly Sync")
+	}
+	if got := byID["LEGACY"]; got.RoomID != "" || got.RoomName != "Old Standup" {
+		t.Errorf("LEGACY room = %q/%q, want an empty id and %q", got.RoomID, got.RoomName, "Old Standup")
+	}
+	if got := byID["NOROOM"]; got.RoomID != "" || got.RoomName != "" {
+		t.Errorf("NOROOM room = %q/%q, want both empty", got.RoomID, got.RoomName)
+	}
+}
+
+func TestMeetingsCatalogEntryRoomSelector(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry meetingsCatalogEntry
+		want  string
+	}{
+		{"id wins", meetingsCatalogEntry{RoomID: "a7bc3k9x", RoomName: "Weekly Sync"}, "a7bc3k9x"},
+		// A room known only by name gets a prefixed selector rather than a
+		// synthesised id: a fabricated token in the catalog would look real and
+		// would group meetings that were never in the same room.
+		{"name only", meetingsCatalogEntry{RoomName: "Old Standup"}, "name:Old Standup"},
+		{"neither", meetingsCatalogEntry{}, ""},
+		{"blank id falls through to the name", meetingsCatalogEntry{RoomID: "   ", RoomName: "Old Standup"}, "name:Old Standup"},
+		{"blank both", meetingsCatalogEntry{RoomID: " ", RoomName: "  "}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.entry.roomSelector(); got != tc.want {
+				t.Errorf("roomSelector() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

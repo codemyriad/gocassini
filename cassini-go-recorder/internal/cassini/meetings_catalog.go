@@ -51,7 +51,37 @@ type meetingsCatalogEntry struct {
 	SpeakerCount     int    `json:"speakerCount,omitempty"`
 	SegmentCount     int    `json:"segmentCount,omitempty"`
 	DigestDurationMS int64  `json:"digestDurationMs,omitempty"`
+	// RoomID and RoomName name the conversation the meeting was recorded in
+	// (D-622). Both are optional and frequently absent: a meeting published
+	// before the field existed carries neither, and one whose room name was
+	// backfilled from the published file carries only the name, because the
+	// Talk token was never written into the artifact and cannot be recovered
+	// from it.
+	RoomID   string `json:"roomId,omitempty"`
+	RoomName string `json:"roomName,omitempty"`
 }
+
+// roomSelector is the value `meetings rooms` prints and `meetings list --room`
+// accepts for this entry's room, or "" when the entry has no room at all.
+//
+// A meeting whose room is known only by name gets a "name:" selector rather
+// than a synthesised id. The alternative — fabricating an id from the name —
+// would put a value in the catalog that looks like a Talk token and is not,
+// silently grouping meetings that were never in the same room. Keeping the
+// invention in the CLI, prefixed and visible, keeps the stored data honest.
+func (e meetingsCatalogEntry) roomSelector() string {
+	if id := strings.TrimSpace(e.RoomID); id != "" {
+		return id
+	}
+	if name := strings.TrimSpace(e.RoomName); name != "" {
+		return meetingsRoomNameSelectorPrefix + name
+	}
+	return ""
+}
+
+// meetingsRoomNameSelectorPrefix marks a selector that matches a room's display
+// name instead of its id.
+const meetingsRoomNameSelectorPrefix = "name:"
 
 // meetingsCatalogItem pairs one decoded entry with the raw JSON it came from and
 // its parsed date.
