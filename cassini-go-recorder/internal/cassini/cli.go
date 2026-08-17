@@ -392,6 +392,7 @@ Usage:
   cassini dev ...
   cassini inspect <path>
   cassini meetings list
+  cassini meetings rooms
   cassini meetings fetch <meeting-id> --out "./Meeting.opus"
   cassini meetings context <meeting-id>
   cassini operator start [args...]
