@@ -1,6 +1,6 @@
 ---
 name: cassini-meetings
-description: Read Cassini meeting recordings — list meetings, pull one meeting's transcript and summary as context, or download its portable .opus — using the `cassini meetings` CLI against a Nextcloud instance. Use when the user asks what was said or decided in a meeting, asks you to turn a recorded conversation into a plan, issues, notes or a summary, or refers to "the recording", "the call", "last week's meeting", or a meeting by name or date.
+description: Read Cassini meeting recordings — list the rooms, list meetings (filtered by room and date), pull one meeting's transcript and summary as context, or download its portable .opus — using the `cassini meetings` CLI against a Nextcloud instance. Use when the user asks what was said or decided in a meeting, asks you to turn a recorded conversation into a plan, issues, notes or a summary, asks which rooms or conversations have recordings, asks for the meetings from a particular room or between two dates, or refers to "the recording", "the call", "last week's meeting", "the standup", or a meeting by name, room or date.
 ---
 
 # Read Cassini meeting recordings
@@ -38,37 +38,91 @@ Use `./bin/cassini` from a Cassini checkout, or `cassini` if it is on `PATH`.
 
 ## Find the meeting
 
+**Narrow before you list.** The archive grows without bound and a user asking
+about "the standup" means one room, not the whole history. Two filters do almost
+all the work, and they combine:
+
+```bash
+./bin/cassini meetings rooms                                  # what rooms are there?
+./bin/cassini meetings list --room <room> --from 2026-08-01   # that room, since a date
+```
+
+### Which rooms are there
+
+```bash
+./bin/cassini meetings rooms
+```
+
+```text
+rooms=2 caller=alice source=nextcloud-files
+room=a7bc3k9x name=Weekly Sync meetings=12 latest=2026-08-11 10:32 earliest=2026-05-05 10:30
+room=name:Old Standup name=Old Standup meetings=3 latest=2026-07-02 09:00 earliest=2026-06-18 09:00
+```
+
+The `room=` value is the **only** thing `--room` accepts — copy it, do not
+retype it from the name. It is the room's id where Cassini recorded one, and
+`name:<display name>` for meetings recorded before it did. There is no
+substring search; the listing is how you find the value.
+
+A room you have no readable recording from does not appear here at all, so this
+never reveals a conversation the account cannot already see. And a trailing note
+may say some meetings carry no room whatsoever — those are real meetings that
+`list` shows and **no `--room` value reaches**. If the user's question could be
+about one of them, list without `--room`.
+
+### Which meetings
+
 ```bash
 ./bin/cassini meetings list
+./bin/cassini meetings list --room a7bc3k9x
+./bin/cassini meetings list --from 2026-08-01 --to 2026-08-31
 ```
 
 Newest first, one line per meeting:
 
 ```text
 meetings=2 caller=alice source=nextcloud-files
-meeting=01JZ8K3M4N5P6Q7R8S9T0VWXYZ date=2026-08-11 10:32 title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes
+meeting=01JZ8K3M4N5P6Q7R8S9T0VWXYZ date=2026-08-11 10:32 room=a7bc3k9x title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes
 ```
+
+All three filters are optional and they AND together. Dates are written as
+`2026-08-11`, `2026-08-11 14:30` or `2026-08-11 14:30:05`, carry **no
+timezone**, and a bare date covers the whole day at both ends — so
+`--from 2026-08-01 --to 2026-08-31` is all of August. A range whose ends are
+backwards is rejected outright (exit 2) rather than silently matching nothing.
+
+When a filter is in effect the output says so, with a count of what it removed:
+
+```text
+filter=from:2026-08-01 00:00:00 room:a7bc3k9x excluded=37
+```
+
+Read that line before reporting. `excluded=37` means you are looking at a
+slice, and a user who asked an open question deserves to be told which slice.
 
 To pick programmatically, use `--json` (newest is first):
 
 ```bash
 ./bin/cassini meetings list --json | jq -r '.meetings[0].id'
+./bin/cassini meetings list --room a7bc3k9x --json | jq -r '.meetings[].id'
 ```
 
-Do not parse the text form. `title=` is free text taken from the recording, and
-it is not quoted or escaped — a meeting titled `Budget meeting=X id=admin` prints
-those words inside the `title=` field, where anything splitting the line on
-`key=value` pairs will read them as fields. Newlines are stripped, so a title
-cannot forge a whole extra `meeting=` line, but within a line the text form is
-for reading, not for parsing. `--json` is unambiguous.
+Do not parse the text form. `title=` and `room=` are free text taken from the
+recording and from the Talk conversation's name, and neither is quoted or
+escaped — a meeting titled `Budget meeting=X id=admin` prints those words inside
+the `title=` field, where anything splitting the line on `key=value` pairs will
+read them as fields. Newlines are stripped, so neither can forge a whole extra
+`meeting=` line, but within a line the text form is for reading, not for
+parsing. `--json` is unambiguous.
 
 Check `.skipped` in that document before treating the list as complete: a
 non-zero value means some catalog entries were unusable and dropped, so meetings
-may be missing that the account can in fact read.
+may be missing that the account can in fact read. `.excluded` is different — it
+counts what **your filter** removed, and is not a problem.
 
 When several meetings could match what the user meant, **show the candidates and
-ask** rather than guessing. Titles repeat week to week, so a title alone is
-usually ambiguous; the date disambiguates.
+ask** rather than guessing. The room disambiguates first and the date second:
+titles repeat week to week, and two rooms can even share a name.
 
 `fetchable=no` means the meeting predates the single-file format and cannot be
 read — say so instead of retrying.
@@ -128,8 +182,9 @@ against the recording.
 The workflow this exists for — turning a recorded feature discussion into a
 shaped plan and tracked issues:
 
-1. `meetings list` → identify the conversation. Confirm the choice with the user
-   if more than one plausibly matches.
+1. `meetings rooms`, then `meetings list --room <room> --from <date>` → identify
+   the conversation. Narrow before you list; confirm the choice with the user if
+   more than one plausibly matches.
 2. `meetings context <id> --out /tmp/meeting.md` → read it.
 3. Extract, keeping them separate: **decisions taken**, **open questions**, and
    **work implied**. A decision someone stated and a suggestion someone floated
@@ -144,7 +199,12 @@ shaped plan and tracked issues:
 
 | What you see | What it means | What to do |
 |---|---|---|
-| `meetings=0` + mis-provisioned note | Either the account may read nothing, or the recordings folder is not set up. The server cannot tell these apart, so neither can you. | Report both possibilities. Suggest checking the same account in the Cassini viewer in a browser. Do not retry. |
+| `meetings=0` + mis-provisioned note | Either the account may read nothing, or the recordings folder is not set up. The server cannot tell these apart, so neither can you. **Only ever printed when no filter is in effect** — check that before reporting it. | Report both possibilities. Suggest checking the same account in the Cassini viewer in a browser. Do not retry. |
+| `meetings=0` + `your filter excluded all N` | Your filter matched nothing. The account **can** read N meetings. | Widen or drop the filter, or run `meetings rooms` for a value that exists. Never report this as a permissions or provisioning problem — it is neither. |
+| `note=N meeting(s) have a date this build cannot read` | Those entries have an unparseable `dateLabel`, so any `--from`/`--to` leaves them out in both directions. | If the answer might be among them, list again without the date filters. |
+| A room in `rooms` you cannot select | You mistyped the selector. `--room` matches exactly, and takes the `room=` value verbatim, including any `name:` prefix. | Copy the value from `meetings rooms`; there is no substring matching. |
+| `--room` returns nothing but the meeting is in `list` | The meeting records no room at all (`room=-`), which no `--room` value reaches. | List without `--room`. Say the meeting predates room metadata rather than that it is missing. |
+| `list configuration error: --from …` (exit 2) | The date is not one of the accepted forms, or the range runs backwards. | Rewrite it as `2026-08-11` (optionally with ` 14:30`), and do not add a timezone. |
 | `no recording you can read at that id` | Absent, **or** present and not readable by this account. Answered identically on purpose, so that a recording you cannot see never reveals it exists. | Run `meetings list`. Never tell the user the meeting "doesn't exist" or that they are "not allowed" — you cannot know which. |
 | `Nextcloud rejected the credentials` | The app password is wrong or revoked. | Ask the user to generate a new one. Never print the value. |
 | `Nextcloud Files is unavailable` | An outage on the Nextcloud side, not permissions. | Retrying later is reasonable. Re-checking the password is not. |
@@ -161,7 +221,9 @@ retrying, since most of these are not worth retrying at all.
 
 This surface is **read-only**. There is no command here to start, stop, delete or
 re-run a recording, and there is no way to read a meeting the account may not
-read. If the user needs any of that, tell them it is an administrator action in
+read. `meetings rooms` enumerates rooms, but only the ones this account already
+has readable recordings from — it is a view of the same permitted set, not a
+directory of the instance's conversations. If the user needs any of that, tell them it is an administrator action in
 Nextcloud or in the Cassini operator, and stop.
 
 Meeting transcripts are recordings of real people talking, often candidly. Treat

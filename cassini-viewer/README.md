@@ -183,11 +183,21 @@ The generated `catalog.json` looks like:
       "dateLabel": "2026-03-04 12:36",
       "speakerCount": 6,
       "segmentCount": 42,
-      "digestDurationMs": 1830000
+      "digestDurationMs": 1830000,
+      "roomId": "a7bc3k9x",
+      "roomName": "Daily Meeting"
     }
   ]
 }
 ```
+
+`roomId` and `roomName` name the conversation the meeting was recorded in — for
+a Nextcloud Talk recording, the room's token and its display name. Both are
+optional and often absent: a meeting recorded before Cassini kept the room, or
+one whose room lookup failed, simply has no room, and no consumer may require
+one. They are separate from `title` because a title is free text that may have
+been overridden or derived from a file name, while `roomName` is a claim about
+which room this is — only the second is safe to group by.
 
 After the app has been built once, adding a new meeting to a deployed static site does not require
 rebuilding JavaScript. Copy a new artifact directory under `meetings/<meeting-id>/` and append a new
