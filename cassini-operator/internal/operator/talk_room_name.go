@@ -202,20 +202,49 @@ func (rt *Runtime) storeTalkRoomInfo(jobID string, info talkRoomInfo) {
 	}
 }
 
-// talkRoomNameForJob returns the room name recorded for a job, preferring the
-// live in-memory state and falling back to the persisted Talk binding (rerun
-// or post-restart builds). Empty for non-Talk jobs or when resolution failed.
-func (rt *Runtime) talkRoomNameForJob(jobID string) string {
-	if state, ok := rt.lookupTalkJobState(jobID); ok && strings.TrimSpace(state.RoomName) != "" {
-		return strings.TrimSpace(state.RoomName)
+// talkRoomForJob returns the room a job was recorded in: its token and its
+// display name. It prefers the live in-memory state and falls back to the
+// persisted Talk binding (rerun or post-restart builds). Both are empty for a
+// non-Talk job.
+//
+// The two are resolved together but are independently optional, and the token
+// is the one that survives more failures. It is known synchronously when the
+// recording starts, straight off the spreed request, while the name is fetched
+// asynchronously and best-effort (resolveTalkRoomName). Reading the token from
+// the binding rather than from the name fetcher is what keeps a failed name
+// lookup from also costing the id — the case that decides whether a meeting can
+// be grouped with the rest of its room at all (D-622).
+func (rt *Runtime) talkRoomForJob(jobID string) (roomID, roomName string) {
+	if state, ok := rt.lookupTalkJobState(jobID); ok {
+		roomID = strings.TrimSpace(state.RoomToken)
+		roomName = strings.TrimSpace(state.RoomName)
+	}
+	// The in-memory state is dropped when the job unbinds, and a name resolved
+	// after a restart lives only in the binding. Consult the binding whenever
+	// either half is still missing, not only when both are.
+	if roomID != "" && roomName != "" {
+		return roomID, roomName
 	}
 	job, err := rt.store.GetJob(context.Background(), jobID)
 	if err != nil || job.TalkBinding == nil {
-		return ""
+		return roomID, roomName
 	}
 	state, err := decodeTalkBinding(*job.TalkBinding)
 	if err != nil {
-		return ""
+		return roomID, roomName
 	}
-	return strings.TrimSpace(state.RoomName)
+	if roomID == "" {
+		roomID = strings.TrimSpace(state.RoomToken)
+	}
+	if roomName == "" {
+		roomName = strings.TrimSpace(state.RoomName)
+	}
+	return roomID, roomName
+}
+
+// talkRoomNameForJob returns just the room's display name, which is what the
+// meeting title is stamped from.
+func (rt *Runtime) talkRoomNameForJob(jobID string) string {
+	_, roomName := rt.talkRoomForJob(jobID)
+	return roomName
 }

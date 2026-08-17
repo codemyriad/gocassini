@@ -65,7 +65,7 @@ printf 'opus-bytes' > "$out"
 exit 0
 `)
 
-	opusPath, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1), "", nil)
+	opusPath, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1), "", "", "", nil)
 	if err != nil {
 		t.Fatalf("packAttemptMeetingToOpus() error = %v", err)
 	}
@@ -101,11 +101,11 @@ func TestPackAttemptMeetingToOpusKeepsAttemptsApart(t *testing.T) {
 	seedAttemptMeeting(t, workRoot, jobID, 2)
 	bin := writeFakeCassini(t, `printf '%s' "$2" > "$4"; exit 0`)
 
-	first, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1), "", nil)
+	first, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1), "", "", "", nil)
 	if err != nil {
 		t.Fatalf("seal attempt 1: %v", err)
 	}
-	second, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 2), attemptOpusPath(workRoot, jobID, 2), "", nil)
+	second, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 2), attemptOpusPath(workRoot, jobID, 2), "", "", "", nil)
 	if err != nil {
 		t.Fatalf("seal attempt 2: %v", err)
 	}
@@ -135,7 +135,7 @@ printf 'opus-bytes' > "$4"
 exit 0
 `)
 
-	if _, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1), "Daily Meeting", nil); err != nil {
+	if _, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1), "Daily Meeting", "", "", nil); err != nil {
 		t.Fatalf("packAttemptMeetingToOpus() error = %v", err)
 	}
 }
@@ -151,7 +151,57 @@ printf 'opus-bytes' > "$4"
 exit 0
 `)
 
-	if _, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1), "   ", nil); err != nil {
+	if _, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1), "   ", "", "", nil); err != nil {
+		t.Fatalf("packAttemptMeetingToOpus() error = %v", err)
+	}
+}
+
+func TestPackAttemptMeetingToOpusPassesTheRoom(t *testing.T) {
+	workRoot := t.TempDir()
+	jobID := "job1"
+	seedAttemptMeeting(t, workRoot, jobID, 1)
+
+	// The room travels as its own flags alongside --title, so a consumer can
+	// group meetings by conversation instead of parsing a display string
+	// (D-622).
+	bin := writeFakeCassini(t, `
+out="$4"
+if [ "$5" != "--title" ] || [ "$6" != "Daily Meeting" ]; then echo "wrong title args: $5 $6" >&2; exit 9; fi
+if [ "$7" != "--room-id" ] || [ "$8" != "tok123" ]; then echo "wrong room id args: $7 $8" >&2; exit 9; fi
+if [ "$9" != "--room-name" ]; then echo "missing --room-name, got $9" >&2; exit 9; fi
+shift 9
+if [ "$1" != "Daily Meeting" ]; then echo "wrong room name: $1" >&2; exit 9; fi
+printf 'opus-bytes' > "$out"
+exit 0
+`)
+
+	_, err := packAttemptMeetingToOpus(context.Background(), bin,
+		attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1),
+		"Daily Meeting", "tok123", "Daily Meeting", nil)
+	if err != nil {
+		t.Fatalf("packAttemptMeetingToOpus() error = %v", err)
+	}
+}
+
+// A failed room-name lookup still knows the token, and that half must reach the
+// pack on its own — otherwise a transient Nextcloud outage during recording
+// costs the meeting its room permanently.
+func TestPackAttemptMeetingToOpusPassesRoomIDWithoutAName(t *testing.T) {
+	workRoot := t.TempDir()
+	jobID := "job1"
+	seedAttemptMeeting(t, workRoot, jobID, 1)
+
+	bin := writeFakeCassini(t, `
+if [ "$#" != "6" ]; then echo "unexpected arg count $#: $*" >&2; exit 9; fi
+if [ "$5" != "--room-id" ] || [ "$6" != "tok123" ]; then echo "wrong room id args: $5 $6" >&2; exit 9; fi
+printf 'opus-bytes' > "$4"
+exit 0
+`)
+
+	_, err := packAttemptMeetingToOpus(context.Background(), bin,
+		attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1),
+		"", "tok123", "", nil)
+	if err != nil {
 		t.Fatalf("packAttemptMeetingToOpus() error = %v", err)
 	}
 }
@@ -159,7 +209,7 @@ exit 0
 func TestPackAttemptMeetingToOpusErrorsWhenMeetingMissing(t *testing.T) {
 	workRoot := t.TempDir()
 	bin := writeFakeCassini(t, "exit 0\n")
-	if _, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, "missing", 1), attemptOpusPath(workRoot, "missing", 1), "", nil); err == nil {
+	if _, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, "missing", 1), attemptOpusPath(workRoot, "missing", 1), "", "", "", nil); err == nil {
 		t.Fatal("expected error when the attempt meeting bundle is absent")
 	}
 }
@@ -173,7 +223,7 @@ func TestPackAttemptMeetingToOpusErrorsWhenCommandFails(t *testing.T) {
 	// exit 2). This used to be survivable — `.meeting` was still the publish
 	// input — and is now a seal failure, because nothing falls back to it.
 	bin := writeFakeCassini(t, "echo 'unknown command \"pack\"' >&2\nexit 2\n")
-	if _, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1), "", nil); err == nil {
+	if _, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1), "", "", "", nil); err == nil {
 		t.Fatal("expected error when cassini pack fails")
 	}
 	// No partial .opus should be left claiming success.
@@ -190,7 +240,7 @@ func TestPackAttemptMeetingToOpusErrorsWhenOutputMissing(t *testing.T) {
 	// A cassini that exits 0 but writes nothing must be treated as a failure
 	// so we never report a phantom sealed artifact.
 	bin := writeFakeCassini(t, "exit 0\n")
-	_, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1), "", nil)
+	_, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1), "", "", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "pack output missing") {
 		t.Fatalf("expected pack output missing error, got %v", err)
 	}
@@ -204,7 +254,7 @@ func TestPackAttemptMeetingToOpusErrorsWhenOutputIsEmpty(t *testing.T) {
 	seedAttemptMeeting(t, workRoot, jobID, 1)
 
 	bin := writeFakeCassini(t, ": > \"$4\"\nexit 0\n")
-	_, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1), "", nil)
+	_, err := packAttemptMeetingToOpus(context.Background(), bin, attemptMeetingPath(workRoot, jobID, 1), attemptOpusPath(workRoot, jobID, 1), "", "", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "pack output is empty") {
 		t.Fatalf("expected empty pack output error, got %v", err)
 	}
@@ -217,7 +267,7 @@ func TestPackAttemptMeetingToOpusErrorsWhenOutputIsEmpty(t *testing.T) {
 func TestPackAttemptMeetingToOpusErrorsWithoutAMeetingPath(t *testing.T) {
 	workRoot := t.TempDir()
 	bin := writeFakeCassini(t, "exit 0\n")
-	_, err := packAttemptMeetingToOpus(context.Background(), bin, "   ", attemptOpusPath(workRoot, "job1", 1), "", nil)
+	_, err := packAttemptMeetingToOpus(context.Background(), bin, "   ", attemptOpusPath(workRoot, "job1", 1), "", "", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "no meeting bundle to seal") {
 		t.Fatalf("expected a missing-meeting-path error, got %v", err)
 	}
@@ -238,7 +288,7 @@ func TestPackAttemptMeetingToOpusPacksTheBundleItIsGiven(t *testing.T) {
 	}
 	bin := writeFakeCassini(t, `printf '%s' "$2" > "$4"; exit 0`)
 
-	opusPath, err := packAttemptMeetingToOpus(context.Background(), bin, elsewhere, attemptOpusPath(workRoot, "job1", 1), "", nil)
+	opusPath, err := packAttemptMeetingToOpus(context.Background(), bin, elsewhere, attemptOpusPath(workRoot, "job1", 1), "", "", "", nil)
 	if err != nil {
 		t.Fatalf("packAttemptMeetingToOpus() error = %v", err)
 	}
