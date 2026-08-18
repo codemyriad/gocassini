@@ -104,6 +104,10 @@ type provisionMock struct {
 	adminList string
 	// userExists makes service-account creation return OCS 102.
 	userExists bool
+	// refuseFolderWrites makes the Group Folders writes answer the way a
+	// password-confirmation-enforcing Nextcloud does: HTTP 200, with the failure
+	// only in ocs.meta.
+	refuseFolderWrites bool
 	// ownerPrepared models an administrator having created the service account
 	// and its group membership by hand — the documented recovery on a Nextcloud
 	// that refuses those writes to an ExApp.
@@ -280,6 +284,8 @@ func (m *provisionMock) handler(t *testing.T) http.Handler {
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":102,"message":"User already exists"},"data":[]}}`)
 		case r.Method == http.MethodGet && p == "/index.php/apps/groupfolders/folders":
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":`+m.folders+`}}`)
+		case m.refuseFolderWrites && r.Method == http.MethodPost && strings.HasPrefix(p, "/index.php/apps/groupfolders/"):
+			io.WriteString(w, `{"ocs":{"meta":{"status":"failure","statuscode":403,"message":"Password confirmation is required"},"data":[]}}`)
 		case r.Method == http.MethodPost && p == "/index.php/apps/groupfolders/folders":
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":{"id":9,"mount_point":"Cassini","groups":{},"manage":[]}}}`)
 		case r.Method == "PROPFIND" && strings.HasSuffix(p, "/meetings"):
@@ -847,5 +853,79 @@ func TestProvisionRefusedWritesWithNothingPreparedStillFailLoudly(t *testing.T) 
 	}
 	if !strings.Contains(logs.String(), "occ group:add") {
 		t.Errorf("the refusal must tell an administrator how to recover; got: %s", logs.String())
+	}
+}
+
+// The Group Folders API answers a refused write with HTTP 200 and the failure
+// only in ocs.meta. Checking the HTTP status alone therefore reads a refusal as
+// a success — and provisioning did, then tried to decode the empty `data: []`
+// as a folder and reported `json: cannot unmarshal array into ... gfFolder`,
+// naming neither the status nor the reason.
+//
+// Found on the sandbox (Nextcloud 34, AIO), where every groupfolders write is
+// #[PasswordConfirmationRequired] and an ExApp cannot satisfy it. Reproduced by
+// hand against the live server:
+//
+//	HTTP=200
+//	{"ocs":{"meta":{"status":"failure","statuscode":403,
+//	                "message":"Password confirmation is required"},"data":[]}}
+func TestOCSRefusalSeesAFailureWearingAnHTTP200(t *testing.T) {
+	refused := []byte(`{"ocs":{"meta":{"status":"failure","statuscode":403,"message":"Password confirmation is required"},"data":[]}}`)
+	got := ocsRefusal(http.StatusOK, refused)
+	if got == "" {
+		t.Fatal("an OCS failure carried by an HTTP 200 was read as success")
+	}
+	if !strings.Contains(got, "403") || !strings.Contains(got, "Password confirmation") {
+		t.Errorf("the refusal must name the status and the reason, got %q", got)
+	}
+
+	// Both OCS success codes: 100 is v1, 200 is v2.
+	for _, ok := range [][]byte{
+		[]byte(`{"ocs":{"meta":{"status":"ok","statuscode":100},"data":{}}}`),
+		[]byte(`{"ocs":{"meta":{"status":"ok","statuscode":200},"data":{}}}`),
+	} {
+		if refusal := ocsRefusal(http.StatusOK, ok); refusal != "" {
+			t.Errorf("a success envelope was read as a refusal: %q (%s)", refusal, ok)
+		}
+	}
+
+	// A non-2xx is a refusal whatever the body says.
+	if ocsRefusal(http.StatusForbidden, []byte(`{}`)) == "" {
+		t.Error("a non-2xx must always be a refusal")
+	}
+}
+
+// The substrate build must not report success when the Team folder was never
+// created, and must say what an administrator can do about it.
+func TestProvisionSurfacesARefusedFolderCreate(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	mock := &provisionMock{
+		folders:              `[]`,
+		groups:               `["admin","everyone","` + ncRecordingsOwnerGroup + `"]`,
+		ownerPrepared:        true,
+		confirmationRequired: true,
+		refuseFolderWrites:   true,
+	}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	var logs strings.Builder
+	cfg := testExAppConfig(srv.URL)
+	cfg.provisionNCFilesAccess(context.Background(), log.New(&logs, "", 0))
+
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.OK {
+		t.Fatal("substrate reported ok though the Team folder was never created")
+	}
+	out := logs.String()
+	if strings.Contains(out, "cannot unmarshal") {
+		t.Errorf("the failure is reported as a JSON decode error rather than the refusal: %s", out)
+	}
+	if !strings.Contains(out, "Password confirmation") {
+		t.Errorf("the refusal's reason is not reported: %s", out)
+	}
+	if !strings.Contains(out, "groupfolders:create") {
+		t.Errorf("the refusal must name the recovery; got: %s", out)
 	}
 }
