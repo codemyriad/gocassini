@@ -261,10 +261,3 @@ func (rt *Runtime) talkRoomForJob(jobID string) (roomID, roomName string) {
 	}
 	return roomID, roomName
 }
-
-// talkRoomNameForJob returns just the room's display name, which is what the
-// meeting title is stamped from.
-func (rt *Runtime) talkRoomNameForJob(jobID string) string {
-	_, roomName := rt.talkRoomForJob(jobID)
-	return roomName
-}

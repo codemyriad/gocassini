@@ -70,6 +70,19 @@ may say some meetings carry no room whatsoever — those are real meetings that
 `list` shows and **no `--room` value reaches**. If the user's question could be
 about one of them, list without `--room`.
 
+To pick a room programmatically, use `--json` — and do, because the text form
+above is even less parseable than `list`'s: `latest=2026-08-11 10:32` contains a
+space, so a naive split on `key=value` mis-reads a perfectly ordinary row.
+
+```bash
+./bin/cassini meetings rooms --json | jq -r '.rooms[] | "\(.room)\t\(.meetings)\t\(.roomName)"'
+```
+
+Each room carries `room` (the selector), `roomId` and `roomName` (either may be
+absent), `meetings`, `latest` and `earliest`. The document also carries
+`unattributed` — the meetings in no room at all — and the same `skipped` you
+must check on `list`.
+
 ### Which meetings
 
 ```bash

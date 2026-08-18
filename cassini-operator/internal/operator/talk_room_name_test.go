@@ -176,18 +176,18 @@ func TestResolveTalkRoomNameStoresAndPersists(t *testing.T) {
 
 	rt.resolveTalkRoomName("job-room-name", "alice", "tok123")
 
-	if got := rt.talkRoomNameForJob("job-room-name"); got != "Daily Meeting" {
-		t.Errorf("talkRoomNameForJob() = %q, want %q (in-memory)", got, "Daily Meeting")
+	if _, got := rt.talkRoomForJob("job-room-name"); got != "Daily Meeting" {
+		t.Errorf("talkRoomForJob() name = %q, want %q (in-memory)", got, "Daily Meeting")
 	}
 
 	// The name must survive the in-memory state being dropped (operator
-	// restart before build): talkRoomNameForJob falls back to the persisted
-	// Talk binding.
+	// restart before build): talkRoomForJob falls back to the persisted Talk
+	// binding.
 	rt.recordMu.Lock()
 	delete(rt.talkJobs, "job-room-name")
 	rt.recordMu.Unlock()
-	if got := rt.talkRoomNameForJob("job-room-name"); got != "Daily Meeting" {
-		t.Errorf("talkRoomNameForJob() = %q, want %q (persisted binding)", got, "Daily Meeting")
+	if _, got := rt.talkRoomForJob("job-room-name"); got != "Daily Meeting" {
+		t.Errorf("talkRoomForJob() name = %q, want %q (persisted binding)", got, "Daily Meeting")
 	}
 }
 
@@ -208,8 +208,8 @@ func TestResolveTalkRoomNameGivesUpAfterRetries(t *testing.T) {
 	if calls != talkRoomNameAttempts {
 		t.Errorf("fetch calls = %d, want %d", calls, talkRoomNameAttempts)
 	}
-	if got := rt.talkRoomNameForJob("job-no-name"); got != "" {
-		t.Errorf("talkRoomNameForJob() = %q, want empty after failed resolution", got)
+	if _, got := rt.talkRoomForJob("job-no-name"); got != "" {
+		t.Errorf("talkRoomForJob() name = %q, want empty after failed resolution", got)
 	}
 
 	// A failed name lookup must not also cost the room id. The token comes off
