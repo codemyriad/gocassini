@@ -144,13 +144,16 @@ fi
 # typo would send an admin to inspect a live archive nothing touched.
 make_docker_stub 0
 run_wrapper --bogus-flag && true
-if [[ $? -eq 2 ]]; then ok "an unknown option exits 2"; else fail "an unknown option should exit 2, got $?"; fi
+status=$?
+if [[ $status -eq 2 ]]; then ok "an unknown option exits 2"; else fail "an unknown option should exit 2, got $status"; fi
 make_docker_stub 0
 run_wrapper --container missing-container && true
-if [[ $? -eq 2 ]]; then ok "a missing container exits 2"; else fail "a missing container should exit 2, got $?"; fi
+status=$?
+if [[ $status -eq 2 ]]; then ok "a missing container exits 2"; else fail "a missing container should exit 2, got $status"; fi
 make_docker_stub 0 false
 run_wrapper && true
-if [[ $? -eq 2 ]]; then ok "a stopped container exits 2"; else fail "a stopped container should exit 2, got $?"; fi
+status=$?
+if [[ $status -eq 2 ]]; then ok "a stopped container exits 2"; else fail "a stopped container should exit 2, got $status"; fi
 
 # --- exit codes become instructions, and only exit 1 mentions cleanup ---
 # "nothing was written, retry is safe" and "something was written, check it"
@@ -392,7 +395,8 @@ write_fake_archive <<'EOF'
    "roomId":"existing-token","roomName":"Existing"}]}
 EOF
 run_payload && true
-if [[ $? -eq 3 ]]; then ok "an archive with nothing to do exits 3"; else fail "an archive where every entry has a room should exit 3"; fi
+status=$?
+if [[ $status -eq 3 ]]; then ok "an archive with nothing to do exits 3"; else fail "an archive where every entry has a room should exit 3, got $status"; fi
 
 # --- a missing AppAPI environment is exit 2, not 1 ---
 # Running the payload outside the app container (or against the wrong one) must
@@ -401,7 +405,8 @@ if [[ $? -eq 3 ]]; then ok "an archive with nothing to do exits 3"; else fail "a
 rm -f "$WORK/put-body.json"
 env PATH="$STUBS:$PATH" APP_SECRET="" NEXTCLOUD_URL="" APP_ID="" APP_VERSION="" \
   bash "$PAYLOAD" >"$WORK/stdout" 2>"$WORK/stderr" && true
-if [[ $? -eq 2 ]]; then ok "a missing AppAPI environment exits 2"; else fail "a missing environment should exit 2, got $?"; fi
+status=$?
+if [[ $status -eq 2 ]]; then ok "a missing AppAPI environment exits 2"; else fail "a missing environment should exit 2, got $status"; fi
 check "the environment error names the variable" "$WORK/stderr" "NEXTCLOUD_URL is not set"
 
 # --- a transport or auth failure is not a verdict on the recording ---
@@ -421,7 +426,8 @@ fi
 EOF
 chmod +x "$STUBS/curl"
 run_payload && true
-if [[ $? -eq 4 ]]; then ok "an outage on a meeting GET exits 4 (nothing written, retry safe)"; else fail "an outage should exit 4, got $?"; fi
+status=$?
+if [[ $status -eq 4 ]]; then ok "an outage on a meeting GET exits 4 (nothing written, retry safe)"; else fail "an outage should exit 4, got $status"; fi
 check "the outage says it is not a verdict on the recording" "$WORK/stderr" "not a verdict on that recording"
 cp "$STUBS/curl.real" "$STUBS/curl"
 
@@ -431,16 +437,19 @@ write_fake_archive <<'EOF'
   {"id":"GONE","title":"t","dateLabel":"2026-08-11 10:32","audioPath":"./meetings/GONE.opus"}]}
 EOF
 run_payload && true
-if [[ $? -eq 0 ]]; then ok "unresolvable candidates exit 0, not 3"; else fail "unresolvable candidates should not claim 'nothing needed doing', got $?"; fi
+status=$?
+if [[ $status -eq 0 ]]; then ok "unresolvable candidates exit 0, not 3"; else fail "unresolvable candidates should not claim 'nothing needed doing', got $status"; fi
 check "it says the files carry no room" "$WORK/stdout" "their published files carry none"
 
 # --- --limit 0 is refused rather than silently meaning "no limit" ---
 run_payload --limit 0 && true
-if [[ $? -eq 2 ]]; then ok "--limit 0 is refused"; else fail "--limit 0 should exit 2, got $?"; fi
+status=$?
+if [[ $status -eq 2 ]]; then ok "--limit 0 is refused"; else fail "--limit 0 should exit 2, got $status"; fi
 
 # --- a bad --limit is a usage error, before any request ---
 run_payload --limit not-a-number && true
-if [[ $? -eq 2 ]]; then ok "a malformed --limit is a usage error"; else fail "a non-numeric --limit should exit 2"; fi
+status=$?
+if [[ $status -eq 2 ]]; then ok "a malformed --limit is a usage error"; else fail "a non-numeric --limit should exit 2, got $status"; fi
 
 if [[ "$failures" -ne 0 ]]; then
   echo "FAILED: $failures check(s)" >&2
