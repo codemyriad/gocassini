@@ -163,6 +163,11 @@ jobs:
           # ever invented for a recording that has none, and that a rejected
           # ACL is a failure rather than a silent success.
           ./scripts/test-backfill-catalog-rooms.sh
+          # The room merge. It asserts an identity the data does not support and
+          # is only reversible by running it the other way, so the guards are
+          # what this pins: dry-run default, a refused self-merge, every moved
+          # meeting named, and the owner-only ACL restored after every write.
+          ./scripts/test-reattribute-catalog-room.sh
           ./sandbox/test-store-release.sh
           # The deploy library's decision rules: moving tags refused, the
           # compute device deriving the image variant instead of forking the

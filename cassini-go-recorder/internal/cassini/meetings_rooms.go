@@ -19,9 +19,9 @@ import (
 // may read, so a room the caller has no readable recording from cannot appear
 // here — and a room's existence is never disclosed by this command alone.
 type meetingsRoom struct {
-	// Selector is the value to paste into `meetings list --room`. It is the
-	// room's id when it has one, and "name:<display name>" when the room is
-	// known only by name.
+	// Selector is the value to paste into `meetings list --room` — the room's
+	// derived id. Kept as its own field rather than collapsed into RoomID so the
+	// contract "this is what --room takes" stays explicit at the point of use.
 	Selector string `json:"room"`
 	RoomID   string `json:"roomId,omitempty"`
 	RoomName string `json:"roomName,omitempty"`
@@ -49,9 +49,14 @@ The rooms are derived from the recordings you may read, so a room you have no
 readable recording from does not appear — this command discloses nothing that
 `+"`cassini meetings list`"+` does not.
 
-The room= value is what `+"`cassini meetings list --room`"+` accepts. It is the
-room's id where one is known, and "name:<display name>" for a recording made
-before Cassini recorded room ids, whose room can only be identified by name.
+The room= value is what `+"`cassini meetings list --room`"+` accepts. It is a
+derived id, not the conversation's Talk token — the token is never published,
+because for a public conversation it is also the link that joins it.
+
+Two rows can share a display name. That usually means one room identified from
+its token and one identified from its name by the catalog backfill: the same
+real conversation, which nothing in the data can prove. Merging them is a
+deliberate act — see scripts/reattribute-catalog-room.sh.
 
 `+"\n")
 		fs.PrintDefaults()
@@ -127,14 +132,16 @@ before Cassini recorded room ids, whose room can only be identified by name.
 }
 
 // groupMeetingsByRoom folds a listing into one row per distinct room, plus a
-// count of the meetings that name no room whatsoever.
+// count of the meetings that record no room whatsoever.
 //
-// Rows are keyed by selector, so two recordings from one room group together
-// whether the room is identified by id or by name — but a room whose id is
-// known and a room known only by name are NOT merged, even when the names
-// match. Merging them would be a guess about identity that nothing in the data
-// supports: two conversations can share a display name, and a room can be
-// renamed between recordings.
+// Rows are keyed by the room id, and only by the id. Two rows can therefore
+// carry the same display name and stay separate — most often one room whose id
+// was derived from its Talk token and one whose id the catalog backfill derived
+// from its name, which are the same real conversation and cannot be shown to
+// be. Merging them on the name would be a guess nothing in the data supports:
+// two conversations can share a display name, and a room can be renamed between
+// recordings. That merge is a human judgement, made once and deliberately with
+// scripts/reattribute-catalog-room.sh.
 func groupMeetingsByRoom(listing meetingsListing) (rooms []meetingsRoom, unattributed int) {
 	index := map[string]int{}
 	// Newest-first order comes from the listing itself, and the first and last

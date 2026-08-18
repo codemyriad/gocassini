@@ -184,15 +184,17 @@ The generated `catalog.json` looks like:
       "speakerCount": 6,
       "segmentCount": 42,
       "digestDurationMs": 1830000,
-      "roomId": "a7bc3k9x",
+      "roomId": "rm_9f2a1c3d4e5b6a70",
       "roomName": "Daily Meeting"
     }
   ]
 }
 ```
 
-`roomId` and `roomName` name the conversation the meeting was recorded in — for
-a Nextcloud Talk recording, the room's token and its display name. Both are
+`roomId` and `roomName` name the conversation the meeting was recorded in.
+`roomId` is a deterministic one-way derivation of the room's identity — for a
+Talk recording, of its conversation token — never the token itself, because for
+a public conversation that token is also the link that joins it. Both are
 optional and often absent: a meeting recorded before Cassini kept the room, or
 one whose room lookup failed, simply has no room, and no consumer may require
 one. They are separate from `title` because a title is free text that may have

@@ -35,7 +35,7 @@ import (
 // The meeting bundle is passed in rather than re-derived: it is what the build
 // recorded and what the seal task carries, so a seal packs the bundle the DB
 // says it is packing rather than one that merely shares its naming convention.
-func packAttemptMeetingToOpus(ctx context.Context, cassiniBin, meetingPath, opusPath, title, roomID, roomName string, logSink io.Writer) (string, error) {
+func packAttemptMeetingToOpus(ctx context.Context, cassiniBin, meetingPath, opusPath, title, roomToken, roomName string, logSink io.Writer) (string, error) {
 	if strings.TrimSpace(meetingPath) == "" {
 		return "", fmt.Errorf("no meeting bundle to seal")
 	}
@@ -58,8 +58,12 @@ func packAttemptMeetingToOpus(ctx context.Context, cassiniBin, meetingPath, opus
 	// display string that may not be a room name at all (D-622). Each half is
 	// passed only when known — `cassini pack` records an unknown room as absent
 	// rather than guessing one.
-	if strings.TrimSpace(roomID) != "" {
-		args = append(args, "--room-id", strings.TrimSpace(roomID))
+	//
+	// The TOKEN is what is handed over, and it stops at `cassini pack`: the
+	// artifact carries only a one-way derivation of it, because for a public
+	// conversation the token is also the link that joins it.
+	if strings.TrimSpace(roomToken) != "" {
+		args = append(args, "--room-token", strings.TrimSpace(roomToken))
 	}
 	if strings.TrimSpace(roomName) != "" {
 		args = append(args, "--room-name", strings.TrimSpace(roomName))

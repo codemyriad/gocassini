@@ -10,7 +10,7 @@ import (
 func TestMeetingsListFiltersByRoom(t *testing.T) {
 	fake := newMeetingsFakeNextcloud(t, serveCatalog(roomCatalog))
 
-	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "list", "--room", "a7bc3k9x")
+	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "list", "--room", roomCatalogTokenRoomID)
 
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%q", code, stderr)
@@ -18,7 +18,7 @@ func TestMeetingsListFiltersByRoom(t *testing.T) {
 	if !strings.Contains(stdout, "meetings=2 ") {
 		t.Errorf("expected 2 meetings, got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "filter=room:a7bc3k9x excluded=2") {
+	if !strings.Contains(stdout, "filter=room:"+roomCatalogTokenRoomID+" excluded=2") {
 		t.Errorf("expected the filter to be echoed with its exclusion count, got:\n%s", stdout)
 	}
 	for _, id := range []string{"SYNC1", "SYNC2"} {
@@ -33,12 +33,13 @@ func TestMeetingsListFiltersByRoom(t *testing.T) {
 	}
 }
 
-func TestMeetingsListFiltersByNameOnlyRoom(t *testing.T) {
+func TestMeetingsListFiltersByABackfilledRoom(t *testing.T) {
 	fake := newMeetingsFakeNextcloud(t, serveCatalog(roomCatalog))
 
-	// The selector `meetings rooms` printed for a room recorded before Cassini
-	// kept room ids. Filtering by it is the only way to reach those meetings.
-	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "list", "--room", "name:Old Standup")
+	// A room recorded before Cassini kept the room at all. The catalog backfill
+	// derived its id from the room NAME rather than a token, but the id is an id
+	// like any other — there is one kind of room selector, not two.
+	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "list", "--room", roomCatalogNameRoomID)
 
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%q", code, stderr)
@@ -46,17 +47,19 @@ func TestMeetingsListFiltersByNameOnlyRoom(t *testing.T) {
 	if !strings.Contains(stdout, "meetings=1 ") || !strings.Contains(stdout, "meeting=LEGACY ") {
 		t.Errorf("expected only LEGACY, got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "room=name:Old Standup") {
-		t.Errorf("expected the room column to show the selector, got:\n%s", stdout)
+	if !strings.Contains(stdout, "room="+roomCatalogNameRoomID) {
+		t.Errorf("expected the room column to show the id, got:\n%s", stdout)
 	}
 }
 
 func TestMeetingsListRoomFilterNeverMatchesARoomlessMeeting(t *testing.T) {
 	fake := newMeetingsFakeNextcloud(t, serveCatalog(roomCatalog))
 
-	// NOROOM has neither id nor name. No --room value selects it — including
-	// the empty-looking ones someone might reach for.
-	for _, selector := range []string{"name:", "NOROOM", "name:Untitled meeting"} {
+	// NOROOM records no room. No --room value selects it — including the
+	// empty-looking ones, and including its display title, which is not a room.
+	// An empty --room is "no filter", not "the roomless room", so it is not in
+	// this list; the values here are ones someone might plausibly reach for.
+	for _, selector := range []string{"NOROOM", "Untitled meeting", "rm_"} {
 		code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "list", "--room", selector)
 		if code != 0 {
 			t.Fatalf("--room %q exit=%d stderr=%q", selector, code, stderr)
@@ -90,7 +93,7 @@ func TestMeetingsListCombinesFiltersWithAnd(t *testing.T) {
 	fake := newMeetingsFakeNextcloud(t, serveCatalog(roomCatalog))
 
 	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL,
-		"list", "--room", "a7bc3k9x", "--from", "2026-08-05")
+		"list", "--room", roomCatalogTokenRoomID, "--from", "2026-08-05")
 
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%q", code, stderr)
@@ -182,7 +185,7 @@ func TestMeetingsListJSONEchoesTheFilterAndCounts(t *testing.T) {
 	fake := newMeetingsFakeNextcloud(t, serveCatalog(roomCatalog))
 
 	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL,
-		"list", "--json", "--room", "a7bc3k9x", "--from", "2026-08-01")
+		"list", "--json", "--room", roomCatalogTokenRoomID, "--from", "2026-08-01")
 
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%q", code, stderr)
@@ -204,7 +207,7 @@ func TestMeetingsListJSONEchoesTheFilterAndCounts(t *testing.T) {
 	if document.Filter == nil {
 		t.Fatalf("expected the filter echoed in JSON: %q", stdout)
 	}
-	if document.Filter.Room != "a7bc3k9x" || document.Filter.From != "2026-08-01 00:00:00" || document.Filter.To != "" {
+	if document.Filter.Room != roomCatalogTokenRoomID || document.Filter.From != "2026-08-01 00:00:00" || document.Filter.To != "" {
 		t.Errorf("filter echo = %+v", *document.Filter)
 	}
 	if document.Excluded != 2 || len(document.Meetings) != 2 {
@@ -274,38 +277,27 @@ func TestParseMeetingsFilterBoundAcceptsWhatTheCatalogPrints(t *testing.T) {
 	}
 }
 
-func TestMeetingsRoomSelectorRoundTripsThroughThePrintedForm(t *testing.T) {
-	// `meetings rooms` prints the selector flattened, and the printed value is
-	// what a caller pastes back. Comparing against the raw name would make a
-	// room whose name contains a tab advertise a selector that matches nothing
-	// — hiding the whole room behind its own listing.
-	entry := meetingsCatalogEntry{ID: "A", RoomName: "Weekly\tSync"}
-	printed := oneLineField(entry.roomSelector())
-	if printed != "name:Weekly Sync" {
-		t.Fatalf("printed selector = %q, want %q", printed, "name:Weekly Sync")
+func TestMeetingsRoomSelectorIsTheIDAndNothingElse(t *testing.T) {
+	// One kind of room identifier. A display name is not one — two conversations
+	// can share a name — so an entry with a name and no id belongs to no room a
+	// filter can reach.
+	withID := meetingsCatalogEntry{ID: "A", RoomID: "rm_abc123", RoomName: "Weekly Sync"}
+	if got := withID.roomSelector(); got != "rm_abc123" {
+		t.Errorf("selector = %q, want the id", got)
 	}
-	if !meetingMatchesRoom(entry, printed) {
-		t.Errorf("--room %q does not match the entry that printed it", printed)
+	if !meetingMatchesRoom(withID, "rm_abc123") {
+		t.Error("an entry must match its own id")
 	}
-}
+	if meetingMatchesRoom(withID, "Weekly Sync") {
+		t.Error("--room must not match on the display name")
+	}
 
-func TestMeetingsRoomIDIsMatchedBeforeTheNamePrefixIsInterpreted(t *testing.T) {
-	// A room id is opaque server data and nothing stops one from starting with
-	// the name-selector prefix. If one does, the entry whose selector was
-	// printed must still be the entry that selector selects.
-	entry := meetingsCatalogEntry{ID: "A", RoomID: "name:Weekly"}
-	if got := entry.roomSelector(); got != "name:Weekly" {
-		t.Fatalf("selector = %q", got)
+	nameOnly := meetingsCatalogEntry{ID: "B", RoomName: "Weekly Sync"}
+	if got := nameOnly.roomSelector(); got != "" {
+		t.Errorf("selector = %q for an entry with no id, want empty", got)
 	}
-	if !meetingMatchesRoom(entry, "name:Weekly") {
-		t.Error("an id that looks like a name selector must still match by id")
-	}
-	// And a genuinely name-only entry is still matched by the same string —
-	// they are not distinguishable at the selector level, which is why the
-	// grouping keeps them apart by the presence of an id rather than by string.
-	nameOnly := meetingsCatalogEntry{ID: "B", RoomName: "Weekly"}
-	if !meetingMatchesRoom(nameOnly, "name:Weekly") {
-		t.Error("a name-only entry must match its own name selector")
+	if meetingMatchesRoom(nameOnly, "Weekly Sync") || meetingMatchesRoom(nameOnly, "") {
+		t.Error("an entry with no room id must be matched by no selector at all")
 	}
 }
 

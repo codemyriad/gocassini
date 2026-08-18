@@ -55,14 +55,22 @@ all the work, and they combine:
 
 ```text
 rooms=2 caller=alice source=nextcloud-files
-room=a7bc3k9x name=Weekly Sync meetings=12 latest=2026-08-11 10:32 earliest=2026-05-05 10:30
-room=name:Old Standup name=Old Standup meetings=3 latest=2026-07-02 09:00 earliest=2026-06-18 09:00
+room=rm_9f2a1c3d4e5b6a70 name=Weekly Sync meetings=12 latest=2026-08-11 10:32 earliest=2026-05-05 10:30
+room=rm_11bb22cc33dd44ee name=Old Standup meetings=3 latest=2026-07-02 09:00 earliest=2026-06-18 09:00
 ```
 
 The `room=` value is the **only** thing `--room` accepts — copy it, do not
-retype it from the name. It is the room's id where Cassini recorded one, and
-`name:<display name>` for meetings recorded before it did. There is no
-substring search; the listing is how you find the value.
+retype it. It is an opaque derived id, not the conversation's name and not its
+Talk token, so there is nothing in it to guess at and no substring search: the
+listing is how you find the value.
+
+**Two rows can share a display name.** That normally means one room identified
+from its Talk token and the same room identified from its name for recordings
+made before Cassini kept the room — the same real conversation, split in two,
+which nothing in the data can prove. If the user's question spans both, list
+each and say so rather than picking one. An administrator can merge them
+permanently (`scripts/reattribute-catalog-room.sh`); you cannot, and should not
+imply otherwise.
 
 A room you have no readable recording from does not appear here at all, so this
 never reveals a conversation the account cannot already see. And a trailing note
@@ -87,7 +95,7 @@ must check on `list`.
 
 ```bash
 ./bin/cassini meetings list
-./bin/cassini meetings list --room a7bc3k9x
+./bin/cassini meetings list --room rm_9f2a1c3d4e5b6a70
 ./bin/cassini meetings list --from 2026-08-01 --to 2026-08-31
 ```
 
@@ -95,7 +103,7 @@ Newest first, one line per meeting:
 
 ```text
 meetings=2 caller=alice source=nextcloud-files
-meeting=01JZ8K3M4N5P6Q7R8S9T0VWXYZ date=2026-08-11 10:32 room=a7bc3k9x title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes
+meeting=01JZ8K3M4N5P6Q7R8S9T0VWXYZ date=2026-08-11 10:32 room=rm_9f2a1c3d4e5b6a70 title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes
 ```
 
 All three filters are optional and they AND together. Dates are written as
@@ -107,7 +115,7 @@ backwards is rejected outright (exit 2) rather than silently matching nothing.
 When a filter is in effect the output says so, with a count of what it removed:
 
 ```text
-filter=from:2026-08-01 00:00:00 room:a7bc3k9x excluded=37
+filter=from:2026-08-01 00:00:00 room:rm_9f2a1c3d4e5b6a70 excluded=37
 ```
 
 Read that line before reporting. `excluded=37` means you are looking at a
@@ -117,7 +125,7 @@ To pick programmatically, use `--json` (newest is first):
 
 ```bash
 ./bin/cassini meetings list --json | jq -r '.meetings[0].id'
-./bin/cassini meetings list --room a7bc3k9x --json | jq -r '.meetings[].id'
+./bin/cassini meetings list --room rm_9f2a1c3d4e5b6a70 --json | jq -r '.meetings[].id'
 ```
 
 Do not parse the text form. `title=` and `room=` are free text taken from the
@@ -215,7 +223,8 @@ shaped plan and tracked issues:
 | `meetings=0` + mis-provisioned note | The account may read nothing at all, or the recordings folder is not set up. The server cannot tell these apart, so neither can you. It means the **whole** catalog was empty, not that your filter matched nothing — a filter that removed something says so on its own line instead. | Report both possibilities. Suggest checking the same account in the Cassini viewer in a browser. Do not retry. |
 | `meetings=0` + `your filter excluded all N` | Your filter matched nothing. The account **can** read N meetings. | Widen or drop the filter, or run `meetings rooms` for a value that exists. Never report this as a permissions or provisioning problem — it is neither. |
 | `note=N meeting(s) have a date this build cannot read` | Those entries have an unparseable `dateLabel`, so any `--from`/`--to` leaves them out in both directions. | If the answer might be among them, list again without the date filters. |
-| A room in `rooms` you cannot select | You mistyped the selector. `--room` matches exactly, and takes the `room=` value verbatim, including any `name:` prefix. | Copy the value from `meetings rooms`; there is no substring matching. |
+| A room in `rooms` you cannot select | You mistyped the id. `--room` matches exactly and takes the `room=` value verbatim. | Copy the value from `meetings rooms`; there is no substring matching. |
+| Two rooms with the same `name=` | One conversation identified two ways — from its Talk token, and from its name for older recordings. Cassini cannot prove they are the same. | Query both and say the archive is split. Merging them is an administrator action (`scripts/reattribute-catalog-room.sh`). |
 | `--room` returns nothing but the meeting is in `list` | The meeting records no room at all (`room=-`), which no `--room` value reaches. | List without `--room`. Say the meeting predates room metadata rather than that it is missing. |
 | `list configuration error: --from …` (exit 2) | The date is not one of the accepted forms, or the range runs backwards. | Rewrite it as `2026-08-11` (optionally with ` 14:30`), and do not add a timezone. |
 | `no recording you can read at that id` | Absent, **or** present and not readable by this account. Answered identically on purpose, so that a recording you cannot see never reveals it exists. | Run `meetings list`. Never tell the user the meeting "doesn't exist" or that they are "not allowed" — you cannot know which. |

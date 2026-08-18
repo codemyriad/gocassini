@@ -42,9 +42,9 @@ func TestSetMeetingBundleRoomStampsAndPreservesUnknownFields(t *testing.T) {
 
 	updated := readBundleManifestFixture(t, bundleDir)
 	for key, want := range map[string]string{
-		"title":     "Daily Meeting",
-		"room_id":   "a7bc3k9x",
-		"room_name": "Daily Meeting",
+		"title":      "Daily Meeting",
+		"room_token": "a7bc3k9x",
+		"room_name":  "Daily Meeting",
 		// The stamp must not drop fields the operator's manifest struct does
 		// not know about — the recorder owns the schema.
 		"future_field": "keep-me",
@@ -62,8 +62,8 @@ func TestSetMeetingBundleRoomStampsAndPreservesUnknownFields(t *testing.T) {
 	if manifest.Title != "Daily Meeting" {
 		t.Errorf("manifest.Title = %q, want %q", manifest.Title, "Daily Meeting")
 	}
-	if manifest.RoomID != "a7bc3k9x" || manifest.RoomName != "Daily Meeting" {
-		t.Errorf("manifest room = %q/%q, want %q/%q", manifest.RoomID, manifest.RoomName, "a7bc3k9x", "Daily Meeting")
+	if manifest.RoomToken != "a7bc3k9x" || manifest.RoomName != "Daily Meeting" {
+		t.Errorf("manifest room = %q/%q, want %q/%q", manifest.RoomToken, manifest.RoomName, "a7bc3k9x", "Daily Meeting")
 	}
 }
 
@@ -79,8 +79,8 @@ func TestSetMeetingBundleRoomLeavesBlankFieldsAlone(t *testing.T) {
 	}
 
 	updated := readBundleManifestFixture(t, bundleDir)
-	if updated["room_id"] != "a7bc3k9x" {
-		t.Errorf("room_id = %v, want %q", updated["room_id"], "a7bc3k9x")
+	if updated["room_token"] != "a7bc3k9x" {
+		t.Errorf("room_token = %v, want %q", updated["room_token"], "a7bc3k9x")
 	}
 	for _, key := range []string{"title", "room_name"} {
 		if _, ok := updated[key]; ok {

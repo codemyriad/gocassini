@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gocassini/internal/portable"
 )
 
 // setBundleManifestTitle stamps a title into a fixture bundle's cassini.json,
@@ -159,16 +161,21 @@ func TestPackRoomFlagsReachOpusTags(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Run(context.Background(), []string{
 		"pack", bundleDir, "--out", outPath,
-		"--room-id", "a7bc3k9x", "--room-name", "Weekly Sync",
+		"--room-token", "a7bc3k9x", "--room-name", "Weekly Sync",
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("pack failed code=%d stderr=%q", code, stderr.String())
 	}
 
-	// The tags exist so that a shell script can read the room with one ffprobe
-	// call instead of decoding the gzipped payload (D-622 backfill).
-	if got := readOpusTag(t, outPath, "CASSINI_ROOM_ID"); got != "a7bc3k9x" {
-		t.Errorf("CASSINI_ROOM_ID = %q, want %q", got, "a7bc3k9x")
+	// The published id is a DERIVATION of the token, never the token: for a
+	// public conversation the token is also the link that joins it.
+	want := portable.RoomIDFromToken("", "a7bc3k9x")
+	got := readOpusTag(t, outPath, "CASSINI_ROOM_ID")
+	if got != want {
+		t.Errorf("CASSINI_ROOM_ID = %q, want the derived %q", got, want)
+	}
+	if strings.Contains(got, "a7bc3k9x") {
+		t.Errorf("CASSINI_ROOM_ID = %q leaks the room token", got)
 	}
 	if got := readOpusTag(t, outPath, "CASSINI_ROOM_NAME"); got != "Weekly Sync" {
 		t.Errorf("CASSINI_ROOM_NAME = %q, want %q", got, "Weekly Sync")
@@ -208,8 +215,8 @@ func TestPackReadsRoomFromBundleManifest(t *testing.T) {
 	}
 	// What the operator stamps after a build (SetMeetingBundleRoom).
 	setBundleManifestFields(t, bundleDir, map[string]any{
-		"room_id":   "stamped-token",
-		"room_name": "Stamped Room",
+		"room_token": "stamped-token",
+		"room_name":  "Stamped Room",
 	})
 
 	outPath := filepath.Join(tmp, "meeting-stamped.opus")
@@ -218,8 +225,8 @@ func TestPackReadsRoomFromBundleManifest(t *testing.T) {
 		t.Fatalf("pack failed code=%d stderr=%q", code, stderr.String())
 	}
 
-	if got := readOpusTag(t, outPath, "CASSINI_ROOM_ID"); got != "stamped-token" {
-		t.Errorf("CASSINI_ROOM_ID = %q, want the bundle manifest's %q", got, "stamped-token")
+	if got, want := readOpusTag(t, outPath, "CASSINI_ROOM_ID"), portable.RoomIDFromToken("", "stamped-token"); got != want {
+		t.Errorf("CASSINI_ROOM_ID = %q, want the id derived from the bundle manifest's token, %q", got, want)
 	}
 	if got := readOpusTag(t, outPath, "CASSINI_ROOM_NAME"); got != "Stamped Room" {
 		t.Errorf("CASSINI_ROOM_NAME = %q, want the bundle manifest's %q", got, "Stamped Room")
@@ -234,22 +241,22 @@ func TestPackRoomFlagsOverrideBundleManifest(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 	setBundleManifestFields(t, bundleDir, map[string]any{
-		"room_id":   "manifest-token",
-		"room_name": "Manifest Room",
+		"room_token": "manifest-token",
+		"room_name":  "Manifest Room",
 	})
 
 	outPath := filepath.Join(tmp, "meeting-override.opus")
 	var stdout, stderr bytes.Buffer
 	code := Run(context.Background(), []string{
 		"pack", bundleDir, "--out", outPath,
-		"--room-id", "flag-token", "--room-name", "Flag Room",
+		"--room-token", "flag-token", "--room-name", "Flag Room",
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("pack failed code=%d stderr=%q", code, stderr.String())
 	}
 
-	if got := readOpusTag(t, outPath, "CASSINI_ROOM_ID"); got != "flag-token" {
-		t.Errorf("CASSINI_ROOM_ID = %q, want the flag's %q", got, "flag-token")
+	if got, want := readOpusTag(t, outPath, "CASSINI_ROOM_ID"), portable.RoomIDFromToken("", "flag-token"); got != want {
+		t.Errorf("CASSINI_ROOM_ID = %q, want the id derived from the flag's token, %q", got, want)
 	}
 	if got := readOpusTag(t, outPath, "CASSINI_ROOM_NAME"); got != "Flag Room" {
 		t.Errorf("CASSINI_ROOM_NAME = %q, want the flag's %q", got, "Flag Room")

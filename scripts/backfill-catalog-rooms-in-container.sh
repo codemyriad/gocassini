@@ -13,6 +13,7 @@
 #   GET  Cassini/Recordings/catalog.json          (WebDAV, as the recordings owner)
 #   GET  Cassini/Recordings/meetings/<id>.opus    for each entry needing a room
 #   ffprobe the file  →  CASSINI_ROOM_ID / CASSINI_ROOM_NAME, else TITLE
+#   derive a room id from the name when the file carries no id of its own
 #   merge into the catalog, preserving every other field and the version
 #   PUT       the catalog back              (only with --apply)
 #   PROPPATCH the owner-only ACL back       (only with --apply)
@@ -245,7 +246,7 @@ has been written, so fix it and run this again."
       }
       return "";
     };
-    const roomId = tag("CASSINI_ROOM_ID");
+    let roomId = tag("CASSINI_ROOM_ID");
     let roomName = tag("CASSINI_ROOM_NAME");
     let source = roomId || roomName ? "room-tag" : "";
     if (!roomName) {
@@ -264,6 +265,22 @@ has been written, so fix it and run this again."
       }
     }
     if (!roomId && !roomName) process.exit(1);
+    if (!roomId) {
+      // No id in the file, so derive one from the name with the SAME one-way
+      // function the recorder applies to a Talk token — different domain, so a
+      // name can never collide with a token belonging to some other room.
+      // Pinned against the Go
+      // implementation by TestRoomIDMatchesTheNodeImplementation.
+      const crypto = require("crypto");
+      const mac = crypto.createHmac("sha256", Buffer.from(process.env.CASSINI_ROOM_ID_PEPPER || "", "utf8"));
+      mac.update("cassini.room.name.v1\u0000", "utf8");
+      mac.update(roomName.trim(), "utf8");
+      roomId = "rm_" + mac.digest("hex").slice(0, 16);
+      // Say so. A derived-from-name id is a weaker identity than a
+      // derived-from-token one, and the operator reading a dry run is the only
+      // person in a position to notice when it is wrong.
+      source = (source || "title") + "+id-from-name";
+    }
     // Tabs and newlines would break the TSV this is read back as, and a room
     // name is user-controlled text.
     const flat = (value) => value.replace(/[\t\r\n]+/g, " ").trim();

@@ -216,9 +216,9 @@ func TestResolveTalkRoomNameGivesUpAfterRetries(t *testing.T) {
 	// the spreed start request and is known synchronously; only the name is
 	// fetched. Losing both would leave the meeting ungroupable rather than
 	// merely unlabelled (D-622).
-	roomID, roomName := rt.talkRoomForJob("job-no-name")
-	if roomID != "tok123" {
-		t.Errorf("talkRoomForJob() id = %q, want %q even though the name lookup failed", roomID, "tok123")
+	roomToken, roomName := rt.talkRoomForJob("job-no-name")
+	if roomToken != "tok123" {
+		t.Errorf("talkRoomForJob() token = %q, want %q even though the name lookup failed", roomToken, "tok123")
 	}
 	if roomName != "" {
 		t.Errorf("talkRoomForJob() name = %q, want empty after failed resolution", roomName)
@@ -236,9 +236,9 @@ func TestTalkRoomForJobReturnsBothHalvesFromTheBinding(t *testing.T) {
 	}
 	rt.resolveTalkRoomName("job-room", "alice", "tok123")
 
-	roomID, roomName := rt.talkRoomForJob("job-room")
-	if roomID != "tok123" || roomName != "Daily Meeting" {
-		t.Errorf("talkRoomForJob() = %q/%q, want %q/%q (in-memory)", roomID, roomName, "tok123", "Daily Meeting")
+	roomToken, roomName := rt.talkRoomForJob("job-room")
+	if roomToken != "tok123" || roomName != "Daily Meeting" {
+		t.Errorf("talkRoomForJob() = %q/%q, want %q/%q (in-memory)", roomToken, roomName, "tok123", "Daily Meeting")
 	}
 
 	// Both halves must survive the in-memory state being dropped — an operator
@@ -246,9 +246,9 @@ func TestTalkRoomForJobReturnsBothHalvesFromTheBinding(t *testing.T) {
 	rt.recordMu.Lock()
 	delete(rt.talkJobs, "job-room")
 	rt.recordMu.Unlock()
-	roomID, roomName = rt.talkRoomForJob("job-room")
-	if roomID != "tok123" || roomName != "Daily Meeting" {
-		t.Errorf("talkRoomForJob() = %q/%q, want %q/%q (persisted binding)", roomID, roomName, "tok123", "Daily Meeting")
+	roomToken, roomName = rt.talkRoomForJob("job-room")
+	if roomToken != "tok123" || roomName != "Daily Meeting" {
+		t.Errorf("talkRoomForJob() = %q/%q, want %q/%q (persisted binding)", roomToken, roomName, "tok123", "Daily Meeting")
 	}
 }
 
@@ -256,9 +256,9 @@ func TestTalkRoomForJobIsEmptyForANonTalkJob(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
-	roomID, roomName := rt.talkRoomForJob("job-that-was-never-talk")
-	if roomID != "" || roomName != "" {
-		t.Errorf("talkRoomForJob() = %q/%q, want empty for a job with no Talk binding", roomID, roomName)
+	roomToken, roomName := rt.talkRoomForJob("job-that-was-never-talk")
+	if roomToken != "" || roomName != "" {
+		t.Errorf("talkRoomForJob() = %q/%q, want empty for a job with no Talk binding", roomToken, roomName)
 	}
 }
 
@@ -330,38 +330,5 @@ func TestTalkBindingRoundTripsRoomName(t *testing.T) {
 	}
 	if state.RoomName != "Daily Meeting" {
 		t.Errorf("RoomName = %q, want %q", state.RoomName, "Daily Meeting")
-	}
-}
-
-// A public conversation's token is a join link, and the publish ACL grants
-// `everyone` read on its recording — so the token must not travel into the
-// artifact, where it would reach every signed-in account. The name still does,
-// so the meeting is still groupable.
-func TestTalkRoomForJobWithholdsAPublicRoomsToken(t *testing.T) {
-	rt, cleanup := newTestRuntime(t)
-	defer cleanup()
-	seedTalkJob(t, rt, "job-public")
-
-	rt.talkRoomNameRetryGap = time.Millisecond
-	rt.fetchTalkRoomName = func(context.Context, string, string) (talkRoomInfo, error) {
-		return talkRoomInfo{Name: "Open Office Hours", Public: true}, nil
-	}
-	rt.resolveTalkRoomName("job-public", "alice", "tok123")
-
-	roomID, roomName := rt.talkRoomForJob("job-public")
-	if roomID != "" {
-		t.Errorf("talkRoomForJob() id = %q for a public room, want it withheld", roomID)
-	}
-	if roomName != "Open Office Hours" {
-		t.Errorf("talkRoomForJob() name = %q, want %q — the name is not a capability", roomName, "Open Office Hours")
-	}
-
-	// And after a restart, where publicness can only come from the binding.
-	rt.recordMu.Lock()
-	delete(rt.talkJobs, "job-public")
-	rt.recordMu.Unlock()
-	roomID, roomName = rt.talkRoomForJob("job-public")
-	if roomID != "" || roomName != "Open Office Hours" {
-		t.Errorf("talkRoomForJob() = %q/%q from the persisted binding, want \"\"/%q", roomID, roomName, "Open Office Hours")
 	}
 }

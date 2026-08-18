@@ -217,8 +217,8 @@ func stagePublishInput(ctx context.Context, inputPath string) (string, string, [
 			// second path to a published meeting, and a meeting that reached the
 			// catalog this way would otherwise be the only kind that silently
 			// lost its room (D-622).
-			RoomID:   strings.TrimSpace(bundle.Manifest.RoomID),
-			RoomName: strings.TrimSpace(bundle.Manifest.RoomName),
+			RoomToken: strings.TrimSpace(bundle.Manifest.RoomToken),
+			RoomName:  strings.TrimSpace(bundle.Manifest.RoomName),
 		}); err != nil {
 			return fmt.Errorf("pack meeting bundle %s: %w", sourceDir, err)
 		}

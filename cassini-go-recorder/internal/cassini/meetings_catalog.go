@@ -52,36 +52,26 @@ type meetingsCatalogEntry struct {
 	SegmentCount     int    `json:"segmentCount,omitempty"`
 	DigestDurationMS int64  `json:"digestDurationMs,omitempty"`
 	// RoomID and RoomName name the conversation the meeting was recorded in
-	// (D-622). Both are optional and frequently absent: a meeting published
-	// before the field existed carries neither, and one whose room name was
-	// backfilled from the published file carries only the name, because the
-	// Talk token was never written into the artifact and cannot be recovered
-	// from it.
+	// (D-622). RoomID is a one-way derivation of the room's identity — never
+	// the Talk token itself — so it is safe to publish and print.
+	//
+	// Both are optional. A meeting published before the field existed carries
+	// neither until the catalog backfill gives it what its file still holds,
+	// and a meeting that came from no conversation at all never gets either.
 	RoomID   string `json:"roomId,omitempty"`
 	RoomName string `json:"roomName,omitempty"`
 }
 
 // roomSelector is the value `meetings rooms` prints and `meetings list --room`
-// accepts for this entry's room, or "" when the entry has no room at all.
+// accepts for this entry's room, or "" when the entry has no room.
 //
-// A meeting whose room is known only by name gets a "name:" selector rather
-// than a synthesised id. The alternative — fabricating an id from the name —
-// would put a value in the catalog that looks like a Talk token and is not,
-// silently grouping meetings that were never in the same room. Keeping the
-// invention in the CLI, prefixed and visible, keeps the stored data honest.
+// It is simply the id. Every room that can be identified at all has one — a
+// live recording derives it from the Talk token, a backfilled one from the
+// room name — so there is exactly one kind of room identifier and nothing to
+// disambiguate.
 func (e meetingsCatalogEntry) roomSelector() string {
-	if id := strings.TrimSpace(e.RoomID); id != "" {
-		return id
-	}
-	if name := strings.TrimSpace(e.RoomName); name != "" {
-		return meetingsRoomNameSelectorPrefix + name
-	}
-	return ""
+	return strings.TrimSpace(e.RoomID)
 }
-
-// meetingsRoomNameSelectorPrefix marks a selector that matches a room's display
-// name instead of its id.
-const meetingsRoomNameSelectorPrefix = "name:"
 
 // meetingsCatalogItem pairs one decoded entry with the raw JSON it came from and
 // its parsed date.

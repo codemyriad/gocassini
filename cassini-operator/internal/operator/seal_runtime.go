@@ -163,16 +163,16 @@ func (rt *Runtime) executeSealCLI(ctx context.Context, task sealTask) (string, e
 		return "", err
 	}
 	sink := io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
-	// The room's display name is also the meeting title (D-462); its id is what
-	// lets the published meeting be grouped with the rest of its room (D-622).
-	roomID, roomName := rt.talkRoomForJob(task.JobID)
+	// The room's display name is also the meeting title (D-462); its token is
+	// what `cassini pack` derives the published room id from (D-622).
+	roomToken, roomName := rt.talkRoomForJob(task.JobID)
 	return packAttemptMeetingToOpus(
 		ctx,
 		rt.cfg.CassiniBin,
 		task.ArtifactMeetingPath,
 		attemptOpusPath(rt.cfg.WorkRoot, task.JobID, task.AttemptNumber),
 		roomName,
-		roomID,
+		roomToken,
 		roomName,
 		sink,
 	)

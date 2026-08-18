@@ -22,8 +22,8 @@ func TestMeetingsRoomsGroupsAndOrdersByMostRecent(t *testing.T) {
 	// Most recently active first, matching the order `list` is in — someone
 	// scanning both should not have to re-sort in their head.
 	want := []string{
-		"room=a7bc3k9x name=Weekly Sync meetings=2 latest=2026-08-11 10:32 earliest=2026-08-04 10:30",
-		"room=name:Old Standup name=Old Standup meetings=1 latest=2026-07-02 09:00 earliest=2026-07-02 09:00",
+		"room=" + roomCatalogTokenRoomID + " name=Weekly Sync meetings=2 latest=2026-08-11 10:32 earliest=2026-08-04 10:30",
+		"room=" + roomCatalogNameRoomID + " name=Old Standup meetings=1 latest=2026-07-02 09:00 earliest=2026-07-02 09:00",
 	}
 	for i, expected := range want {
 		if i+1 >= len(lines) || lines[i+1] != expected {
@@ -73,13 +73,15 @@ func TestMeetingsRoomsJSONCarriesTheDiagnostics(t *testing.T) {
 		t.Fatalf("rooms = %d, want 2 (%q)", len(document.Rooms), stdout)
 	}
 	first := document.Rooms[0]
-	if first.Selector != "a7bc3k9x" || first.RoomID != "a7bc3k9x" || first.Meetings != 2 {
+	if first.Selector != roomCatalogTokenRoomID || first.RoomID != roomCatalogTokenRoomID || first.Meetings != 2 {
 		t.Errorf("first room = %+v", first)
 	}
-	// A room known only by name reports no id at all rather than a fabricated
-	// one: a made-up token in the output would look like a real Talk token.
+	// A backfilled room reports an id like any other. Its id happens to be
+	// derived from the room's name rather than its token, which nothing in the
+	// output distinguishes — and nothing should, because a consumer cannot act
+	// on the difference.
 	second := document.Rooms[1]
-	if second.Selector != "name:Old Standup" || second.RoomID != "" || second.RoomName != "Old Standup" {
+	if second.Selector != roomCatalogNameRoomID || second.RoomID != roomCatalogNameRoomID || second.RoomName != "Old Standup" {
 		t.Errorf("second room = %+v", second)
 	}
 }
@@ -110,7 +112,7 @@ func TestMeetingsRoomsFlattensControlCharactersInRoomNames(t *testing.T) {
 	// parsing this output would read as real rooms.
 	catalog := `{"version":"cassini.viewer.catalog.v1","meetings":[
 	  {"id":"A","title":"t","dateLabel":"2026-08-11 10:32","audioPath":"./meetings/A.opus",
-	   "roomId":"tok","roomName":"Sync\nroom=forged name=evil"}]}`
+	   "roomId":"rm_tok","roomName":"Sync\nroom=forged name=evil"}]}`
 	fake := newMeetingsFakeNextcloud(t, serveCatalog(catalog))
 
 	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "rooms")
@@ -170,14 +172,16 @@ func TestMeetingsRoomsUsageAndDispatch(t *testing.T) {
 	})
 }
 
-func TestGroupMeetingsByRoomKeepsIDAndNameOnlyRoomsApart(t *testing.T) {
-	// Same display name, but one recording has a token and one does not. They
-	// must NOT merge: two conversations can share a name, and a room can be
-	// renamed between recordings, so merging would assert an identity nothing
-	// in the data supports.
+func TestGroupMeetingsByRoomKeepsSameNamedRoomsApart(t *testing.T) {
+	// Two different ids, one display name — in practice a room identified from
+	// its Talk token and the same room identified from its name by the catalog
+	// backfill. They must NOT merge: two conversations can genuinely share a
+	// name, and a room can be renamed between recordings, so merging on the name
+	// would assert an identity nothing in the data supports. Merging them is a
+	// human judgement, made with scripts/reattribute-catalog-room.sh.
 	listing := meetingsListing{Items: []meetingsCatalogItem{
-		{entry: meetingsCatalogEntry{ID: "A", RoomID: "tok", RoomName: "Weekly Sync"}},
-		{entry: meetingsCatalogEntry{ID: "B", RoomName: "Weekly Sync"}},
+		{entry: meetingsCatalogEntry{ID: "A", RoomID: "rm_fromtoken", RoomName: "Weekly Sync"}},
+		{entry: meetingsCatalogEntry{ID: "B", RoomID: "rm_fromname", RoomName: "Weekly Sync"}},
 	}}
 
 	rooms, unattributed := groupMeetingsByRoom(listing)
@@ -200,8 +204,8 @@ func TestGroupMeetingsByRoomLabelsARoomFromALaterRecording(t *testing.T) {
 	// while still carrying the id (a failed name lookup at record time). The
 	// row should still be labelled if any recording in the room carries a name.
 	listing := meetingsListing{Items: []meetingsCatalogItem{
-		{entry: meetingsCatalogEntry{ID: "NEW", RoomID: "tok"}},
-		{entry: meetingsCatalogEntry{ID: "OLD", RoomID: "tok", RoomName: "Weekly Sync"}},
+		{entry: meetingsCatalogEntry{ID: "NEW", RoomID: "rm_tok"}},
+		{entry: meetingsCatalogEntry{ID: "OLD", RoomID: "rm_tok", RoomName: "Weekly Sync"}},
 	}}
 
 	rooms, _ := groupMeetingsByRoom(listing)

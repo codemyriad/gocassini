@@ -113,7 +113,7 @@ Expected:
 - A first line summarising the result:
   `meetings=2 caller=alice source=nextcloud-files`
 - One line per meeting, newest first, matching the order the viewer shows:
-  `meeting=01JZ8K… date=2026-08-11 10:32 room=a7bc3k9x title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes`
+  `meeting=01JZ8K… date=2026-08-11 10:32 room=rm_9f2a1c3d4e5b6a70 title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes`
 - Exit code `0`.
 
 `source=nextcloud-files` confirms the bytes came from Nextcloud Files, with
@@ -144,9 +144,9 @@ Three optional filters, which combine — a meeting must satisfy all of the ones
 you pass:
 
 ```bash
-./bin/cassini meetings list --room a7bc3k9x
+./bin/cassini meetings list --room rm_9f2a1c3d4e5b6a70
 ./bin/cassini meetings list --from 2026-08-01 --to 2026-08-31
-./bin/cassini meetings list --room a7bc3k9x --from 2026-08-01 --json
+./bin/cassini meetings list --room rm_9f2a1c3d4e5b6a70 --from 2026-08-01 --json
 ```
 
 `--from` and `--to` take the dates the catalog itself prints — `2026-08-11`,
@@ -165,7 +165,7 @@ When any filter is in effect the output gains a line naming it and counting what
 it removed, so a short list is never mysterious:
 
 ```text
-filter=from:2026-08-01 00:00:00 room:a7bc3k9x excluded=37
+filter=from:2026-08-01 00:00:00 room:rm_9f2a1c3d4e5b6a70 excluded=37
 ```
 
 In `--json` the same information is a `filter` object plus `excluded` and
@@ -190,31 +190,38 @@ range you typed.
 
 ```text
 rooms=2 caller=alice source=nextcloud-files
-room=a7bc3k9x name=Weekly Sync meetings=12 latest=2026-08-11 10:32 earliest=2026-05-05 10:30
-room=name:Old Standup name=Old Standup meetings=3 latest=2026-07-02 09:00 earliest=2026-06-18 09:00
+room=rm_9f2a1c3d4e5b6a70 name=Weekly Sync meetings=12 latest=2026-08-11 10:32 earliest=2026-05-05 10:30
+room=rm_11bb22cc33dd44ee name=Old Standup meetings=3 latest=2026-07-02 09:00 earliest=2026-06-18 09:00
 ```
 
 The rooms are derived from the catalog you may already read, not fetched from
 Talk, so a room you have no readable recording from does not appear. This
 discloses nothing that `list` does not.
 
-The `room=` column is the value `--room` accepts:
+The `room=` column is the value `--room` accepts. It is a **derived id**, and
+deliberately not the Talk conversation token: for a public conversation that
+token is also the link that joins it, so publishing it alongside a recording
+every signed-in account may read would turn "may read a past recording" into
+"may join the live conversation". The id is a one-way function of the room's
+identity — deterministic, so a room always derives the same id, and not
+reversible into the token.
 
-- a **room id** — the Talk conversation token — where Cassini recorded one;
-- `name:<display name>` for a meeting recorded before it did. Those recordings'
-  published files never carried a token and it cannot be recovered from them, so
-  the name is the only identity they have. Nothing is invented to fill the gap:
-  a fabricated token would look real and would group meetings that were never in
-  the same room.
+Set `CASSINI_ROOM_ID_PEPPER` on the app to a stable deployment-wide secret. A
+Talk token is short, so an unpeppered derivation can be reversed by enumerating
+the token space offline; with a pepper it cannot. Choose it once — changing it
+changes every id, and already-published meetings keep the ids they were written
+with.
 
-A room identified by id and a room known only by name are listed separately even
-when the names match, because two conversations can share a display name and a
-room can be renamed between recordings.
+**Two rows can share a display name.** A recording made before Cassini kept the
+room carries no token in its published file, so `scripts/backfill-catalog-rooms.sh`
+derives that meeting's id from the room *name* instead. The two derivations do
+not agree, and cannot: only a person knows the two are the same conversation.
+`scripts/reattribute-catalog-room.sh` is how that person says so, once, and
+merges them.
 
-A trailing note may report meetings that carry **no room at all**. They are real,
-`list` shows them, and no `--room` value reaches them. `scripts/backfill-catalog-rooms.sh`
-recovers a room name for those whose published file still holds one; run it once
-after updating.
+A trailing note may report meetings that carry **no room at all** — a non-Talk
+job, or an old recording whose file holds no usable room name either. They are
+real, `list` shows them, and no `--room` value reaches them.
 
 ## 3. Read one meeting as context
 
@@ -284,8 +291,7 @@ is a provisioning question, not a CLI one.
 **`your filter excluded all N readable meeting(s)`** — not a permissions or
 provisioning problem: the account can read N meetings and your filter matched
 none of them. Widen it, or run `cassini meetings rooms` for a `room=` value that
-exists. `--room` matches exactly and takes the printed value verbatim, `name:`
-prefix included.
+exists. `--room` matches exactly and takes the printed value verbatim.
 
 **A meeting shows `room=-` and no `--room` value finds it** — it records no room
 at all, which is what every recording published before Cassini kept the room

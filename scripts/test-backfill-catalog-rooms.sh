@@ -260,7 +260,22 @@ run_payload() {
   rm -f "$WORK/put-body.json" "$WORK/proppatch-body.xml"
   env PATH="$STUBS:$PATH" \
     NEXTCLOUD_URL="https://cloud.test" APP_SECRET="s3cret" APP_ID="gocassini" APP_VERSION="0.2.0" \
+    CASSINI_ROOM_ID_PEPPER="test-pepper" \
     bash "$PAYLOAD" "$@" >"$WORK/stdout" 2>"$WORK/stderr"
+}
+
+# room_id_for_name derives the id the payload must produce for a name-only
+# recording, the same way the Go recorder and the payload both do. Written out
+# here rather than shared, so a change to either side fails this test instead of
+# silently agreeing with itself.
+room_id_for_name() {
+  node -e '
+    const crypto = require("crypto");
+    const mac = crypto.createHmac("sha256", Buffer.from(process.argv[2] || "", "utf8"));
+    mac.update("cassini.room.name.v1\u0000", "utf8");
+    mac.update(process.argv[1].trim(), "utf8");
+    process.stdout.write("rm_" + mac.digest("hex").slice(0, 16));
+  ' "$1" "test-pepper"
 }
 
 write_fake_archive <<'EOF'
@@ -309,8 +324,17 @@ check "room tags are read from the file" "$WORK/stdout" \
 # A recording published before room ids existed keeps its name and gets NO id.
 # A fabricated token would look real and would group meetings that were never
 # in the same room.
-check "a legacy recording gets a name and no invented id" "$WORK/stdout" \
-  "LEGACY: room id=- name=Old Standup (from title)"
+LEGACY_ROOM_ID="$(room_id_for_name "Old Standup")"
+check "a legacy recording gets an id derived from its name" "$WORK/stdout" \
+  "LEGACY: room id=$LEGACY_ROOM_ID name=Old Standup (from title+id-from-name)"
+
+# The whole point of the derivation: the published id must not be, or contain,
+# anything that could be pasted into a Talk join link.
+if [[ "$LEGACY_ROOM_ID" == rm_* && ${#LEGACY_ROOM_ID} -eq 19 ]]; then
+  ok "the derived id is an opaque rm_ value, not a room name or token"
+else
+  fail "derived id has the wrong shape: $LEGACY_ROOM_ID"
+fi
 
 check "packer default titles are not mistaken for room names" "$WORK/stdout" \
   "DEFAULTTITLE: the published file carries no room name"
@@ -332,12 +356,12 @@ if node -e '
   if (catalog.meetings.length !== 5) problems.push("every entry must survive, not just the updated ones");
   if (byId.TAGGED.roomId !== "a7bc3k9x" || byId.TAGGED.roomName !== "Weekly Sync") problems.push("TAGGED room not written");
   if (byId.TAGGED.speakerCount !== 3) problems.push("unrelated fields must be preserved verbatim");
-  if ("roomId" in byId.LEGACY) problems.push("LEGACY must not get an invented roomId");
+  if (byId.LEGACY.roomId !== process.argv[2]) problems.push("LEGACY roomId is not the name-derived id");
   if (byId.LEGACY.roomName !== "Old Standup") problems.push("LEGACY roomName not written");
   if ("roomId" in byId.DEFAULTTITLE || "roomName" in byId.DEFAULTTITLE) problems.push("DEFAULTTITLE must stay roomless");
   if (byId.ALREADY.roomId !== "existing-token") problems.push("an existing room must not be overwritten");
   if (problems.length) { console.error(problems.join("; ")); process.exit(1); }
-' "$WORK/put-body.json"; then
+' "$WORK/put-body.json" "$LEGACY_ROOM_ID"; then
   ok "the written catalog keeps every other field, and the version"
 else
   fail "the written catalog is wrong (see above)"

@@ -167,7 +167,7 @@ func TestPackAttemptMeetingToOpusPassesTheRoom(t *testing.T) {
 	bin := writeFakeCassini(t, `
 out="$4"
 if [ "$5" != "--title" ] || [ "$6" != "Daily Meeting" ]; then echo "wrong title args: $5 $6" >&2; exit 9; fi
-if [ "$7" != "--room-id" ] || [ "$8" != "tok123" ]; then echo "wrong room id args: $7 $8" >&2; exit 9; fi
+if [ "$7" != "--room-token" ] || [ "$8" != "tok123" ]; then echo "wrong room token args: $7 $8" >&2; exit 9; fi
 if [ "$9" != "--room-name" ]; then echo "missing --room-name, got $9" >&2; exit 9; fi
 shift 9
 if [ "$1" != "Daily Meeting" ]; then echo "wrong room name: $1" >&2; exit 9; fi
@@ -186,14 +186,14 @@ exit 0
 // A failed room-name lookup still knows the token, and that half must reach the
 // pack on its own — otherwise a transient Nextcloud outage during recording
 // costs the meeting its room permanently.
-func TestPackAttemptMeetingToOpusPassesRoomIDWithoutAName(t *testing.T) {
+func TestPackAttemptMeetingToOpusPassesRoomTokenWithoutAName(t *testing.T) {
 	workRoot := t.TempDir()
 	jobID := "job1"
 	seedAttemptMeeting(t, workRoot, jobID, 1)
 
 	bin := writeFakeCassini(t, `
 if [ "$#" != "6" ]; then echo "unexpected arg count $#: $*" >&2; exit 9; fi
-if [ "$5" != "--room-id" ] || [ "$6" != "tok123" ]; then echo "wrong room id args: $5 $6" >&2; exit 9; fi
+if [ "$5" != "--room-token" ] || [ "$6" != "tok123" ]; then echo "wrong room token args: $5 $6" >&2; exit 9; fi
 printf 'opus-bytes' > "$4"
 exit 0
 `)

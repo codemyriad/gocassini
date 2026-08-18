@@ -16,11 +16,15 @@ type MeetingBundleManifest struct {
 	// meeting name. The operator stamps it (SetMeetingBundleRoom) from the
 	// Talk room name after promotion.
 	Title string `json:"title,omitempty"`
-	// RoomID and RoomName mirror the recorder's manifest fields: which
+	// RoomToken and RoomName mirror the recorder's manifest fields: which
 	// conversation the recording came from, stamped by SetMeetingBundleRoom
 	// from the job's Talk binding after promotion. Empty means "no known room",
 	// which is normal for a non-Talk job.
-	RoomID           string            `json:"room_id,omitempty"`
+	//
+	// The bundle holds the raw token — it is the operator's own working
+	// directory, the same exposure as the jobs table it was read from. Packing
+	// derives the published id from it; the token itself is never published.
+	RoomToken        string            `json:"room_token,omitempty"`
 	RoomName         string            `json:"room_name,omitempty"`
 	State            string            `json:"state,omitempty"`
 	Stage            string            `json:"stage,omitempty"`
@@ -42,11 +46,11 @@ type MeetingBundleManifest struct {
 // Every field is optional and a blank one is left alone rather than written as
 // an empty string. A rerun whose room lookup failed must not erase a room an
 // earlier attempt did resolve.
-func SetMeetingBundleRoom(bundleDir, title, roomID, roomName string) error {
+func SetMeetingBundleRoom(bundleDir, title, roomToken, roomName string) error {
 	return setMeetingBundleFields(bundleDir, map[string]string{
-		"title":     title,
-		"room_id":   roomID,
-		"room_name": roomName,
+		"title":      title,
+		"room_token": roomToken,
+		"room_name":  roomName,
 	})
 }
 

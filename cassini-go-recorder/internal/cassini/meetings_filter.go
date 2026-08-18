@@ -20,8 +20,7 @@ type meetingsFilter struct {
 	hasFrom bool
 	to      time.Time
 	hasTo   bool
-	// room is a selector as printed by `meetings rooms`: a room id, or
-	// "name:<display name>" for a room known only by name.
+	// room is a room id, as printed by `meetings rooms`.
 	room string
 }
 
@@ -166,35 +165,14 @@ func applyMeetingsFilter(items []meetingsCatalogItem, filter meetingsFilter) mee
 // meetingMatchesRoom reports whether an entry belongs to the room a selector
 // names.
 //
-// Matching is exact in both forms. A room id is an opaque Talk token, so
-// substring-matching one is meaningless; a name selector is exact because the
-// selector was produced from a room listing and pasted back, not typed from
-// memory. Neither form ever matches a meeting that carries no room — those are
-// selected by no --room value, which is why `rooms` counts them separately.
+// Exact equality on the room id, and nothing else. The id is opaque — a
+// derivation, not a name — so substring or prefix matching it would be
+// meaningless, and the value is always copied from a `meetings rooms` listing
+// rather than typed from memory.
+//
+// A meeting that carries no room is matched by no selector at all, which is why
+// `rooms` counts those separately instead of inventing a bucket for them.
 func meetingMatchesRoom(entry meetingsCatalogEntry, selector string) bool {
-	// An exact id match is tried BEFORE the "name:" prefix is interpreted. A
-	// room id is opaque server data and nothing stops one from starting with
-	// that prefix; if one does, the entry whose selector was printed must still
-	// be the entry that selector selects.
-	if id := strings.TrimSpace(entry.RoomID); id != "" && id == selector {
-		return true
-	}
-	name, ok := strings.CutPrefix(selector, meetingsRoomNameSelectorPrefix)
-	if !ok {
-		return false
-	}
-	wanted := strings.TrimSpace(name)
-	// A "name:" selector matches on the name and only the name. An entry that
-	// has an id is a different room from a same-named entry that has none — the
-	// room listing shows them as separate rows, and the filter must agree with
-	// the listing that produced the selector.
-	if wanted == "" || strings.TrimSpace(entry.RoomID) != "" {
-		return false
-	}
-	// Compared in their flattened forms, because `meetings rooms` prints the
-	// selector through oneLineField and the printed value is what a caller
-	// pastes back. Comparing against the raw name would make a room whose name
-	// contains a tab print a selector that matches nothing — hiding the whole
-	// room behind the very listing that advertised it.
-	return oneLineField(strings.TrimSpace(entry.RoomName)) == oneLineField(wanted)
+	id := strings.TrimSpace(entry.RoomID)
+	return id != "" && id == selector
 }
