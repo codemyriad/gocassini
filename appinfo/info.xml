@@ -18,7 +18,7 @@ steps. Optional LLM transcript cleanup and summaries are the only step that send
 data to a third party, and they run only when an OpenRouter (or compatible) API
 key is configured. Without a key, nothing leaves your infrastructure. See the
 full data-processing note: https://github.com/codemyriad/gocassini/blob/main/docs/privacy.md]]></description>
-  <version>0.2.0-alpha.4</version>
+  <version>0.2.0-beta.1</version>
   <licence>agpl</licence>
   <author>codemyriad</author>
   <namespace>Cassini</namespace>
@@ -41,7 +41,7 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
            exact build this manifest was released with, never a moving
            `latest`. CI rejects a manifest where the two disagree; bump both
            together with scripts/bump-exapp-version.sh. -->
-      <image-tag>0.2.0-alpha.4</image-tag>
+      <image-tag>0.2.0-beta.1</image-tag>
     </docker-install>
 
     <!--
@@ -77,6 +77,11 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
         <name>CASSINI_PUBLISH_SINK</name>
         <display-name>Where published recordings are stored</display-name>
         <description>Selects the publish destination: "nextcloud-files" stores recordings in Nextcloud Files under Cassini/Recordings (the default for an installed app, and the only mode with per-participant access control), or "local" keeps them on the app's own volume. Leave empty unless you specifically need the local mode; an installed app defaults to nextcloud-files so recordings are never silently kept off Nextcloud. The nextcloud-files mode needs the Group folders ("Team folders") and Everyone Group (group_everyone) apps enabled first — Cassini provisions the folder and ACL topology itself but cannot install a PHP app. See docs/exapp-nextcloud-recordings-permissions.md.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_ARTIFACT_RETENTION</name>
+        <display-name>Working-file retention (optional)</display-name>
+        <description>How much of each recording's per-run working files Cassini keeps on its own volume. "sealed" (the default) reclaims a completed run's working copies, all of which are duplicated in the canonical library or were temporary staging, and keeps the sealed meeting file and every log. "superseded" only reclaims runs a rerun has replaced. "all" keeps everything, which is the escape hatch when something needs to be recovered from a completed run. Nothing removes the last copy of anything, and published recordings are never touched. Leave empty unless you are diagnosing a problem.</description>
       </variable>
       <variable>
         <name>OPENROUTER_API_KEY</name>

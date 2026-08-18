@@ -222,6 +222,7 @@ fi
 
 if [[ -n "$MEDIA_PREFIXES" ]]; then
   split_csv_into "$MEDIA_PREFIXES" csv_media
+  # shellcheck disable=SC2154 # split_csv_into assigns csv_media through a nameref
   MEDIA_PREFIX_LIST+=("${csv_media[@]}")
 fi
 if [[ "${#MEDIA_PREFIX_LIST[@]}" -eq 0 && -n "$MEDIA_PREFIX" ]]; then
@@ -253,10 +254,10 @@ normalize_prefix() {
 resolve_media_prefix() {
   local user_index="$1"
   if [[ "${#MEDIA_PREFIX_LIST[@]}" -eq 1 ]]; then
-    echo "$(normalize_prefix "${MEDIA_PREFIX_LIST[0]}")"
+    normalize_prefix "${MEDIA_PREFIX_LIST[0]}"
     return 0
   fi
-  echo "$(normalize_prefix "${MEDIA_PREFIX_LIST[$((user_index - 1))]}")"
+  normalize_prefix "${MEDIA_PREFIX_LIST[$((user_index - 1))]}"
 }
 
 GO_ROTATOR_DIR="${GO_ROTATOR_DIR:-$TEST_DIR/go-talk-rotator}"

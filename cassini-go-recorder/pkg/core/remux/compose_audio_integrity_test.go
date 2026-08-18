@@ -177,8 +177,8 @@ func TestComposeSparseAudioKeepsToneAtCorrectTimelinePositions(t *testing.T) {
 		t.Fatalf("decoded duration %.2fs not in 6.5-8.0s; the gap collapsed or stretched", durSec)
 	}
 
-	burstADB := rmsDB(samples, 0.1, 0.9)   // skip 100ms of opus pre-skip ramp at each edge
-	gapDB := rmsDB(samples, 2.5, 4.5)      // mid-gap, well away from boundary artifacts
+	burstADB := rmsDB(samples, 0.1, 0.9) // skip 100ms of opus pre-skip ramp at each edge
+	gapDB := rmsDB(samples, 2.5, 4.5)    // mid-gap, well away from boundary artifacts
 	burstBDB := rmsDB(samples, 5.2, 6.8)
 
 	if burstADB <= loudThresholdDB {
@@ -334,4 +334,3 @@ func min(a, b int) int {
 	}
 	return b
 }
-

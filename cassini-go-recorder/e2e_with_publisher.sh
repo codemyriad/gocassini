@@ -288,6 +288,7 @@ if [[ ! -d "$SEGMENTS_DIR" ]]; then
 fi
 
 echo "segments dir: $SEGMENTS_DIR"
+# shellcheck disable=SC2012 # human-readable diagnostic dump, never parsed
 ls -lah "$SEGMENTS_DIR" | sed -n '1,80p'
 
 echo "--- final mkv streams ---"

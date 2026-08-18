@@ -43,6 +43,13 @@ func promoteMeetingBundle(workRoot, sourceMeetingPath, jobID string) (string, er
 // the link normally succeeds and the canonical `.opus` costs no extra bytes and
 // is byte-identical to the sealed artifact by construction. A link failure
 // (an exotic mount, a filesystem without hard links) falls back to a copy.
+//
+// That link is why the canonical path must only ever be REPLACED, never written
+// through: it and the sealed artifact are usually the same inode, so opening
+// current/<jobID>.opus for writing would mutate the artifact whose digest the
+// publish worker and the sinks verify, and the seal would stop meaning what it
+// says. Replacing by rename, as below, is safe — it swaps the name, leaving the
+// sealed inode untouched.
 func promoteOpusFile(workRoot, sourceOpusPath, jobID string) (string, error) {
 	sourceOpusPath = filepath.Clean(sourceOpusPath)
 	info, err := os.Stat(sourceOpusPath)

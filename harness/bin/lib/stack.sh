@@ -1,3 +1,4 @@
+# shellcheck shell=bash  # sourced by the harness scripts; it has no shebang of its own
 # Docker Compose/AppAPI stack helpers. Sourcing this file does not validate
 # ambient harness topology; callers that start or bootstrap a stack must call
 # harness_stack_init first.
@@ -661,7 +662,7 @@ harness_prepare_exapp_image() {
   local image_mode="${CASSINI_HARNESS_EXAPP_IMAGE_MODE:-reuse-local}"
   local image_local="cassini-exapp:e2e-v3-cpu-gpu"
   local info_xml image_tag image_as_production
-  # shellcheck source=./lib-exapp-image.sh
+  # shellcheck source=../lib-exapp-image.sh disable=SC1091 # path built from TEST_DIR at runtime
   source "$TEST_DIR/bin/lib-exapp-image.sh"
   info_xml="$(harness_exapp_info_xml_path)"
   image_tag="$(exapp_image_tag "$info_xml")"

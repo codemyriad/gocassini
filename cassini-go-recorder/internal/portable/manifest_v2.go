@@ -18,26 +18,26 @@ import (
 // the per-transcript bodies it wants to embed.
 
 type manifestV2Wire struct {
-	Kind                string                   `json:"kind"`
-	Version             int                      `json:"version"`
-	Profile             string                   `json:"profile"`
-	Meeting             Meeting                  `json:"meeting"`
-	Audio               Audio                    `json:"audio"`
-	Integrity           Integrity                `json:"integrity"`
-	Speakers            []Speaker                `json:"speakers"`
-	Transcripts         []TranscriptEntry        `json:"transcripts"`
-	ReadableTranscripts []TranscriptEntry        `json:"readableTranscripts,omitempty"`
-	Provenance          *provenanceV2Wire        `json:"provenance,omitempty"`
-	Chapters            []Chapter                `json:"chapters,omitempty"`
-	Summary             map[string]any           `json:"summary,omitempty"`
-	Attachments         []map[string]any         `json:"attachments,omitempty"`
+	Kind                string            `json:"kind"`
+	Version             int               `json:"version"`
+	Profile             string            `json:"profile"`
+	Meeting             Meeting           `json:"meeting"`
+	Audio               Audio             `json:"audio"`
+	Integrity           Integrity         `json:"integrity"`
+	Speakers            []Speaker         `json:"speakers"`
+	Transcripts         []TranscriptEntry `json:"transcripts"`
+	ReadableTranscripts []TranscriptEntry `json:"readableTranscripts,omitempty"`
+	Provenance          *provenanceV2Wire `json:"provenance,omitempty"`
+	Chapters            []Chapter         `json:"chapters,omitempty"`
+	Summary             map[string]any    `json:"summary,omitempty"`
+	Attachments         []map[string]any  `json:"attachments,omitempty"`
 }
 
 type provenanceV2Wire struct {
-	SpeechToText    map[string]*ProcessingStep `json:"speechToText,omitempty"`
-	ReadableCleanup map[string]*ProcessingStep `json:"readableCleanup,omitempty"`
+	SpeechToText      map[string]*ProcessingStep `json:"speechToText,omitempty"`
+	ReadableCleanup   map[string]*ProcessingStep `json:"readableCleanup,omitempty"`
 	DisplayTranscript map[string]*ProcessingStep `json:"displayTranscript,omitempty"`
-	MeetingSummary  *ProcessingStep            `json:"meetingSummary,omitempty"`
+	MeetingSummary    *ProcessingStep            `json:"meetingSummary,omitempty"`
 }
 
 // TranscriptEntry describes one transcript body embedded in a v2 portable
@@ -107,7 +107,7 @@ type TranscriptInput struct {
 }
 
 var (
-	transcriptIDRE   = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+	transcriptIDRE        = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 	reservedTranscriptIDs = map[string]struct{}{
 		"payload":     {},
 		"format":      {},
