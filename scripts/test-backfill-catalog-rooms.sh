@@ -139,6 +139,19 @@ else
   ok "a stopped container is refused"
 fi
 
+# --- every preflight refusal is exit 2, never 1 ---
+# 1 is reserved for "failed after writing". A wrapper that returned it for a
+# typo would send an admin to inspect a live archive nothing touched.
+make_docker_stub 0
+run_wrapper --bogus-flag && true
+if [[ $? -eq 2 ]]; then ok "an unknown option exits 2"; else fail "an unknown option should exit 2, got $?"; fi
+make_docker_stub 0
+run_wrapper --container missing-container && true
+if [[ $? -eq 2 ]]; then ok "a missing container exits 2"; else fail "a missing container should exit 2, got $?"; fi
+make_docker_stub 0 false
+run_wrapper && true
+if [[ $? -eq 2 ]]; then ok "a stopped container exits 2"; else fail "a stopped container should exit 2, got $?"; fi
+
 # --- exit codes become instructions, and only exit 1 mentions cleanup ---
 # "nothing was written, retry is safe" and "something was written, check it"
 # are opposite instructions; giving the wrong one sends an admin to inspect a
@@ -197,6 +210,9 @@ while [[ \$# -gt 0 ]]; do
     -o) out="\$2"; shift 2 ;;
     -X) method="\$2"; shift 2 ;;
     -H) shift 2 ;;
+    # The real script passes the auth headers in a 0600 config file rather than
+    # on argv, so the stub has to skip it the same way curl would.
+    --config) shift 2 ;;
     --data-binary) data="\${2#@}"; shift 2 ;;
     -sS|-w) shift ;;
     '%{http_code}') shift ;;
@@ -296,7 +312,7 @@ check "a legacy recording gets a name and no invented id" "$WORK/stdout" \
 check "packer default titles are not mistaken for room names" "$WORK/stdout" \
   "DEFAULTTITLE: the published file carries no room name"
 
-check "a missing published file is reported and skipped" "$WORK/stdout" "GONE: no readable file"
+check "a missing published file is reported and skipped" "$WORK/stdout" "GONE: no file at"
 
 refute "entries that already carry a room are left alone" "$WORK/stdout" "ALREADY:"
 
@@ -377,6 +393,50 @@ write_fake_archive <<'EOF'
 EOF
 run_payload && true
 if [[ $? -eq 3 ]]; then ok "an archive with nothing to do exits 3"; else fail "an archive where every entry has a room should exit 3"; fi
+
+# --- a missing AppAPI environment is exit 2, not 1 ---
+# Running the payload outside the app container (or against the wrong one) must
+# not report "the catalog may be publicly readable" for a run that made no
+# request at all.
+rm -f "$WORK/put-body.json"
+env PATH="$STUBS:$PATH" APP_SECRET="" NEXTCLOUD_URL="" APP_ID="" APP_VERSION="" \
+  bash "$PAYLOAD" >"$WORK/stdout" 2>"$WORK/stderr" && true
+if [[ $? -eq 2 ]]; then ok "a missing AppAPI environment exits 2"; else fail "a missing environment should exit 2, got $?"; fi
+check "the environment error names the variable" "$WORK/stderr" "NEXTCLOUD_URL is not set"
+
+# --- a transport or auth failure is not a verdict on the recording ---
+# A backfill runs for a long time; a Nextcloud restart part-way through must not
+# silently mark every remaining meeting permanently unfixable and exit 0.
+write_fake_archive <<'EOF'
+{"version":"cassini.viewer.catalog.v1","meetings":[
+  {"id":"OUTAGE","title":"t","dateLabel":"2026-08-11 10:32","audioPath":"./meetings/OUTAGE.opus"}]}
+EOF
+cat >"$STUBS/curl" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do [[ "\$prev" == "-o" ]] && out="\$a"; prev="\$a"; done
+if printf '%s\n' "\$@" | grep -q catalog.json; then
+  cat "$WORK/archive/catalog.json" >"\$out"; echo 200; exit 0
+fi
+: >"\$out"; echo 503
+EOF
+chmod +x "$STUBS/curl"
+run_payload && true
+if [[ $? -eq 4 ]]; then ok "an outage on a meeting GET exits 4 (nothing written, retry safe)"; else fail "an outage should exit 4, got $?"; fi
+check "the outage says it is not a verdict on the recording" "$WORK/stderr" "not a verdict on that recording"
+cp "$STUBS/curl.real" "$STUBS/curl"
+
+# --- "every candidate failed" must not be reported as "nothing needed doing" ---
+write_fake_archive <<'EOF'
+{"version":"cassini.viewer.catalog.v1","meetings":[
+  {"id":"GONE","title":"t","dateLabel":"2026-08-11 10:32","audioPath":"./meetings/GONE.opus"}]}
+EOF
+run_payload && true
+if [[ $? -eq 0 ]]; then ok "unresolvable candidates exit 0, not 3"; else fail "unresolvable candidates should not claim 'nothing needed doing', got $?"; fi
+check "it says the files carry no room" "$WORK/stdout" "their published files carry none"
+
+# --- --limit 0 is refused rather than silently meaning "no limit" ---
+run_payload --limit 0 && true
+if [[ $? -eq 2 ]]; then ok "--limit 0 is refused"; else fail "--limit 0 should exit 2, got $?"; fi
 
 # --- a bad --limit is a usage error, before any request ---
 run_payload --limit not-a-number && true

@@ -332,3 +332,36 @@ func TestTalkBindingRoundTripsRoomName(t *testing.T) {
 		t.Errorf("RoomName = %q, want %q", state.RoomName, "Daily Meeting")
 	}
 }
+
+// A public conversation's token is a join link, and the publish ACL grants
+// `everyone` read on its recording — so the token must not travel into the
+// artifact, where it would reach every signed-in account. The name still does,
+// so the meeting is still groupable.
+func TestTalkRoomForJobWithholdsAPublicRoomsToken(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	seedTalkJob(t, rt, "job-public")
+
+	rt.talkRoomNameRetryGap = time.Millisecond
+	rt.fetchTalkRoomName = func(context.Context, string, string) (talkRoomInfo, error) {
+		return talkRoomInfo{Name: "Open Office Hours", Public: true}, nil
+	}
+	rt.resolveTalkRoomName("job-public", "alice", "tok123")
+
+	roomID, roomName := rt.talkRoomForJob("job-public")
+	if roomID != "" {
+		t.Errorf("talkRoomForJob() id = %q for a public room, want it withheld", roomID)
+	}
+	if roomName != "Open Office Hours" {
+		t.Errorf("talkRoomForJob() name = %q, want %q — the name is not a capability", roomName, "Open Office Hours")
+	}
+
+	// And after a restart, where publicness can only come from the binding.
+	rt.recordMu.Lock()
+	delete(rt.talkJobs, "job-public")
+	rt.recordMu.Unlock()
+	roomID, roomName = rt.talkRoomForJob("job-public")
+	if roomID != "" || roomName != "Open Office Hours" {
+		t.Errorf("talkRoomForJob() = %q/%q from the persisted binding, want \"\"/%q", roomID, roomName, "Open Office Hours")
+	}
+}

@@ -159,11 +159,35 @@ func blankMeetingsDash(value string) string {
 	return oneLineField(value)
 }
 
-// oneLineField replaces every control character in value with a space, so the
-// result cannot break out of the line it is printed on.
+// oneLineField replaces every character that could break out of the line with a
+// space, so a server-supplied string cannot forge a record of its own.
+//
+// unicode.IsControl is not sufficient, and the gap matters more now that room
+// names — Talk conversation names, renameable by any participant — are printed
+// here. Two classes above U+00FF get through it:
+//
+//   - U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR (categories Zl/Zp).
+//     Go does not treat them as line terminators, but Python's splitlines, a
+//     JavaScript multiline regexp and Java's String.lines() all do — so a name
+//     carrying one forges a whole extra record for exactly the consumers most
+//     likely to be parsing this output.
+//   - The bidi overrides and isolates (U+202A–U+202E, U+2066–U+2069) and the
+//     directional marks (U+200E, U+200F). These do not forge a line; they
+//     reverse how the REST of the line renders, so a room name can make the
+//     fields after it read as something else entirely in any terminal that
+//     honours bidi.
+//
+// The rest of category Cf is deliberately left alone: ZWJ and ZWNJ (U+200C,
+// U+200D) are load-bearing in Arabic, Indic scripts and emoji sequences, and
+// flattening them would corrupt legitimate names to no benefit.
 func oneLineField(value string) string {
 	return strings.Map(func(r rune) rune {
-		if r == '\t' || r == '\n' || r == '\r' || unicode.IsControl(r) {
+		switch {
+		case r == '\t' || r == '\n' || r == '\r' || unicode.IsControl(r):
+			return ' '
+		case unicode.In(r, unicode.Zl, unicode.Zp):
+			return ' '
+		case r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069, r == 0x200E, r == 0x200F:
 			return ' '
 		}
 		return r

@@ -215,29 +215,49 @@ func (rt *Runtime) storeTalkRoomInfo(jobID string, info talkRoomInfo) {
 // lookup from also costing the id — the case that decides whether a meeting can
 // be grouped with the rest of its room at all (D-622).
 func (rt *Runtime) talkRoomForJob(jobID string) (roomID, roomName string) {
+	var public bool
+	var seen bool
 	if state, ok := rt.lookupTalkJobState(jobID); ok {
+		seen = true
 		roomID = strings.TrimSpace(state.RoomToken)
 		roomName = strings.TrimSpace(state.RoomName)
+		public = state.RoomPublic
 	}
 	// The in-memory state is dropped when the job unbinds, and a name resolved
 	// after a restart lives only in the binding. Consult the binding whenever
 	// either half is still missing, not only when both are.
-	if roomID != "" && roomName != "" {
-		return roomID, roomName
+	if !seen || roomID == "" || roomName == "" {
+		if job, err := rt.store.GetJob(context.Background(), jobID); err == nil && job.TalkBinding != nil {
+			if state, err := decodeTalkBinding(*job.TalkBinding); err == nil {
+				if roomID == "" {
+					roomID = strings.TrimSpace(state.RoomToken)
+				}
+				if roomName == "" {
+					roomName = strings.TrimSpace(state.RoomName)
+				}
+				if !seen {
+					public = state.RoomPublic
+				}
+			}
+		}
 	}
-	job, err := rt.store.GetJob(context.Background(), jobID)
-	if err != nil || job.TalkBinding == nil {
-		return roomID, roomName
-	}
-	state, err := decodeTalkBinding(*job.TalkBinding)
-	if err != nil {
-		return roomID, roomName
-	}
-	if roomID == "" {
-		roomID = strings.TrimSpace(state.RoomToken)
-	}
-	if roomName == "" {
-		roomName = strings.TrimSpace(state.RoomName)
+	// A PUBLIC conversation's token is withheld from the artifact.
+	//
+	// For a public room the publish ACL grants the virtual `everyone` group
+	// READ on the recording (recordingACLRules, webdav_acl.go), so its catalog
+	// entry is visible to every signed-in account — not only to people who were
+	// told the room exists. And a Talk token is not merely an identifier for a
+	// public conversation: https://<nextcloud>/call/<token> is its join link.
+	// Publishing the token there would turn "may read a past recording" into
+	// "may join the live conversation", which is a different permission and not
+	// one publishing a recording was ever meant to grant.
+	//
+	// The name is still emitted, so these meetings group and filter by their
+	// `name:` selector. Frozen-at-record-time publicness is what is consulted
+	// (D-552), so a room flipped public afterwards cannot retroactively expose
+	// a token already written, and one flipped private cannot un-withhold it.
+	if public {
+		return "", roomName
 	}
 	return roomID, roomName
 }

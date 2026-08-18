@@ -140,15 +140,28 @@ function validateMeetingCatalogEntry(
     // This function rebuilds every entry from an explicit literal, so a field
     // missing HERE is dropped at load with no error anywhere — even though it
     // is present in the catalog the browser just fetched.
-    roomId: optionalNonEmptyString(
-      value.roomId,
-      `catalog entry ${index} roomId`,
-    ),
-    roomName: optionalNonEmptyString(
-      value.roomName,
-      `catalog entry ${index} roomName`,
-    ),
+    //
+    // Read leniently, unlike artifactPath/audioPath above. Those are
+    // load-bearing — an entry with a blank one cannot be opened, so refusing
+    // the catalog is the honest answer. A blank room is merely a room we do not
+    // know, which is the normal state for most of an archive; and
+    // validateMeetingCatalog has no per-entry recovery, so throwing here would
+    // let one stray `""` from a hand-edited or third-party catalog take down
+    // the whole meeting list.
+    roomId: optionalRoomString(value.roomId),
+    roomName: optionalRoomString(value.roomName),
   };
+}
+
+// optionalRoomString reads an optional room field. A missing value, a blank
+// one, or one that is not a string all mean the same thing — no room was
+// recorded — and none of them is an error.
+function optionalRoomString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
 }
 
 // Newest first. Entries whose dateLabel cannot be parsed (e.g. legacy catalogs

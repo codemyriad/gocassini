@@ -199,7 +199,7 @@ shaped plan and tracked issues:
 
 | What you see | What it means | What to do |
 |---|---|---|
-| `meetings=0` + mis-provisioned note | Either the account may read nothing, or the recordings folder is not set up. The server cannot tell these apart, so neither can you. **Only ever printed when no filter is in effect** — check that before reporting it. | Report both possibilities. Suggest checking the same account in the Cassini viewer in a browser. Do not retry. |
+| `meetings=0` + mis-provisioned note | The account may read nothing at all, or the recordings folder is not set up. The server cannot tell these apart, so neither can you. It means the **whole** catalog was empty, not that your filter matched nothing — a filter that removed something says so on its own line instead. | Report both possibilities. Suggest checking the same account in the Cassini viewer in a browser. Do not retry. |
 | `meetings=0` + `your filter excluded all N` | Your filter matched nothing. The account **can** read N meetings. | Widen or drop the filter, or run `meetings rooms` for a value that exists. Never report this as a permissions or provisioning problem — it is neither. |
 | `note=N meeting(s) have a date this build cannot read` | Those entries have an unparseable `dateLabel`, so any `--from`/`--to` leaves them out in both directions. | If the answer might be among them, list again without the date filters. |
 | A room in `rooms` you cannot select | You mistyped the selector. `--room` matches exactly, and takes the `room=` value verbatim, including any `name:` prefix. | Copy the value from `meetings rooms`; there is no substring matching. |

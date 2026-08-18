@@ -273,3 +273,83 @@ func TestParseMeetingsFilterBoundAcceptsWhatTheCatalogPrints(t *testing.T) {
 		}
 	}
 }
+
+func TestMeetingsRoomSelectorRoundTripsThroughThePrintedForm(t *testing.T) {
+	// `meetings rooms` prints the selector flattened, and the printed value is
+	// what a caller pastes back. Comparing against the raw name would make a
+	// room whose name contains a tab advertise a selector that matches nothing
+	// — hiding the whole room behind its own listing.
+	entry := meetingsCatalogEntry{ID: "A", RoomName: "Weekly\tSync"}
+	printed := oneLineField(entry.roomSelector())
+	if printed != "name:Weekly Sync" {
+		t.Fatalf("printed selector = %q, want %q", printed, "name:Weekly Sync")
+	}
+	if !meetingMatchesRoom(entry, printed) {
+		t.Errorf("--room %q does not match the entry that printed it", printed)
+	}
+}
+
+func TestMeetingsRoomIDIsMatchedBeforeTheNamePrefixIsInterpreted(t *testing.T) {
+	// A room id is opaque server data and nothing stops one from starting with
+	// the name-selector prefix. If one does, the entry whose selector was
+	// printed must still be the entry that selector selects.
+	entry := meetingsCatalogEntry{ID: "A", RoomID: "name:Weekly"}
+	if got := entry.roomSelector(); got != "name:Weekly" {
+		t.Fatalf("selector = %q", got)
+	}
+	if !meetingMatchesRoom(entry, "name:Weekly") {
+		t.Error("an id that looks like a name selector must still match by id")
+	}
+	// And a genuinely name-only entry is still matched by the same string —
+	// they are not distinguishable at the selector level, which is why the
+	// grouping keeps them apart by the presence of an id rather than by string.
+	nameOnly := meetingsCatalogEntry{ID: "B", RoomName: "Weekly"}
+	if !meetingMatchesRoom(nameOnly, "name:Weekly") {
+		t.Error("a name-only entry must match its own name selector")
+	}
+}
+
+func TestMeetingsListUndatedNoteCountsOnlyTheFilteredRoom(t *testing.T) {
+	// An undated meeting in a DIFFERENT room is not something the date range
+	// cost this caller, and reporting it would send them to re-list without
+	// --from/--to, which surfaces nothing extra.
+	catalog := `{"version":"cassini.viewer.catalog.v1","meetings":[
+	  {"id":"INROOM","title":"t","dateLabel":"2026-08-11 10:32","audioPath":"./meetings/INROOM.opus","roomId":"tok"},
+	  {"id":"OTHER1","title":"t","dateLabel":"some-slug","audioPath":"./meetings/OTHER1.opus","roomId":"other"},
+	  {"id":"OTHER2","title":"t","dateLabel":"other-slug","audioPath":"./meetings/OTHER2.opus","roomId":"other"}]}`
+	fake := newMeetingsFakeNextcloud(t, serveCatalog(catalog))
+
+	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "list", "--room", "tok", "--from", "2026-01-01")
+
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	if strings.Contains(stdout, "have a date this build cannot read") {
+		t.Errorf("undated meetings from another room were reported as lost to the date filter:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "meeting=INROOM ") {
+		t.Errorf("expected INROOM, got:\n%s", stdout)
+	}
+}
+
+func TestOneLineFieldNeutralisesLineAndBidiSeparators(t *testing.T) {
+	// unicode.IsControl is false for every rune above U+00FF, so these two
+	// classes used to pass through: U+2028/U+2029 are line terminators to
+	// Python, JavaScript and Java (forging a whole record for exactly the
+	// consumers most likely to be parsing this), and the bidi overrides reverse
+	// how the rest of the line renders in any terminal that honours them.
+	for _, bad := range []string{" ", " ", "‮", "‪", "⁦", "⁩", "‎", "‏"} {
+		got := oneLineField("Sync" + bad + "room=forged")
+		if strings.ContainsAny(got, bad) {
+			t.Errorf("oneLineField kept %U, which can break out of the line: %q", []rune(bad)[0], got)
+		}
+	}
+	// Zero-width joiners are load-bearing in Arabic, Indic scripts and emoji
+	// sequences, and must survive — flattening them corrupts real names for no
+	// security benefit.
+	for _, good := range []string{"‌", "‍"} {
+		if got := oneLineField("a" + good + "b"); !strings.Contains(got, good) {
+			t.Errorf("oneLineField dropped %U, which is legitimate text: %q", []rune(good)[0], got)
+		}
+	}
+}

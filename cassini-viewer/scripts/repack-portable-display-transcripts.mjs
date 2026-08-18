@@ -220,6 +220,21 @@ export function buildOpusTags(manifest, payload) {
     CASSINI_WORD_COUNT: String(normalized.transcript?.wordCount ?? 0),
   };
 
+  // The room, mirroring Go's applyRoomTags (internal/portable/manifest.go).
+  // rewritePortableTags runs ffmpeg with -map_metadata -1, so a tag this
+  // function does not re-emit is DELETED from every repacked file — the room
+  // would survive in the gzipped payload and vanish from the plain tags, which
+  // are the ones a shell reader (the catalog backfill) can actually get at.
+  // Absent rather than empty when unknown, as on the Go side.
+  const roomId = typeof normalized.meeting?.roomId === "string" ? normalized.meeting.roomId.trim() : "";
+  const roomName = typeof normalized.meeting?.roomName === "string" ? normalized.meeting.roomName.trim() : "";
+  if (roomId) {
+    tags.CASSINI_ROOM_ID = roomId;
+  }
+  if (roomName) {
+    tags.CASSINI_ROOM_NAME = roomName;
+  }
+
   const language = firstNonEmpty(normalized.transcript?.language, normalized.meeting?.language);
   if (language) {
     tags.LANGUAGE = language;

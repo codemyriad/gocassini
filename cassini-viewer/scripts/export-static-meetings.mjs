@@ -1309,11 +1309,6 @@ export function isPortableMeeting(fileName) {
   return extname(fileName).toLowerCase() === ".opus";
 }
 
-// preferredPortableTitle returns the title embedded in a portable meeting's
-// manifest when it is a real human-readable name (e.g. the Talk room name the
-// operator resolved at recording time, D-462). Packer defaults — the meeting
-// id echoed back or the generic "Cassini Meeting" — yield "" so the caller
-// falls back to id-derived naming.
 // portableRoomFields returns the {roomId, roomName} a catalog entry should
 // carry, or {} when the meeting has no room.
 //
@@ -1335,6 +1330,11 @@ export function portableRoomFields(portable) {
   return fields;
 }
 
+// preferredPortableTitle returns the title embedded in a portable meeting's
+// manifest when it is a real human-readable name (e.g. the Talk room name the
+// operator resolved at recording time, D-462). Packer defaults — the meeting
+// id echoed back or the generic "Cassini Meeting" — yield "" so the caller
+// falls back to id-derived naming.
 export function preferredPortableTitle(portable, meetingId) {
   const raw = typeof portable?.meeting?.title === "string" ? portable.meeting.title.trim() : "";
   if (raw === "") {

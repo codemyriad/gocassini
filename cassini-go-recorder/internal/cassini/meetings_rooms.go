@@ -92,6 +92,15 @@ before Cassini recorded room ids, whose room can only be identified by name.
 
 	fmt.Fprintf(stdout, "rooms=%d caller=%s source=%s\n", len(rooms), cfg.user, listing.Source)
 	if len(rooms) == 0 && unattributed == 0 {
+		if listing.Skipped > 0 {
+			// The same distinction `list` draws, and for the same reason: the
+			// server did return meetings and every one was unusable, so this is
+			// a malformed catalog rather than an empty or mis-provisioned one.
+			// Without this branch `rooms` would blame provisioning for a
+			// situation `list` correctly diagnoses one command away.
+			fmt.Fprintf(stdout, "note=the catalog held %d entr(y/ies) but none carried an id, so none can be read; the catalog is malformed rather than empty\n", listing.Skipped)
+			return 0
+		}
 		// Same ambiguity `list` reports, for the same reason: the app answers
 		// 200 with an empty list both when the caller has no readable
 		// recordings and when the recordings substrate is mis-provisioned.

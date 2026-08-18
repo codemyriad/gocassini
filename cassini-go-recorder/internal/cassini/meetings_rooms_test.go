@@ -222,3 +222,23 @@ func runMeetingsCLIRaw(t *testing.T, args ...string) (int, string, string) {
 	code := Run(context.Background(), args, &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
 }
+
+func TestMeetingsRoomsDistinguishesAMalformedCatalogFromAnEmptyOne(t *testing.T) {
+	// `list` refuses to blame provisioning when the server DID return meetings
+	// and every one was unusable. `rooms` must draw the same line, or the two
+	// commands disagree about the same catalog one keystroke apart.
+	fake := newMeetingsFakeNextcloud(t, serveCatalog(
+		`{"version":"cassini.viewer.catalog.v1","meetings":[{"title":"t"},{"title":"u"}]}`))
+
+	code, stdout, stderr := runMeetingsCLI(t, fake.server.URL, "rooms")
+
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, "the catalog is malformed rather than empty") {
+		t.Errorf("expected the malformed-catalog note, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "mis-provisioned") {
+		t.Errorf("a malformed catalog must not be reported as a provisioning problem:\n%s", stdout)
+	}
+}

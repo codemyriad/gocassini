@@ -137,6 +137,14 @@ func applyMeetingsFilter(items []meetingsCatalogItem, filter meetingsFilter) mee
 	result := meetingsFilterResult{items: make([]meetingsCatalogItem, 0, len(items))}
 	dated := filter.hasFrom || filter.hasTo
 	for _, item := range items {
+		// The room predicate runs FIRST so the undated count means what its note
+		// claims: the meetings THIS caller lost to the date range. Counting an
+		// undated meeting from some other room would tell them to re-list
+		// without --from/--to, which surfaces nothing extra.
+		if filter.room != "" && !meetingMatchesRoom(item.entry, filter.room) {
+			result.excluded++
+			continue
+		}
 		if dated && !item.dated {
 			result.excluded++
 			result.undated++
@@ -147,10 +155,6 @@ func applyMeetingsFilter(items []meetingsCatalogItem, filter meetingsFilter) mee
 			continue
 		}
 		if filter.hasTo && item.at.After(filter.to) {
-			result.excluded++
-			continue
-		}
-		if filter.room != "" && !meetingMatchesRoom(item.entry, filter.room) {
 			result.excluded++
 			continue
 		}
@@ -168,13 +172,29 @@ func applyMeetingsFilter(items []meetingsCatalogItem, filter meetingsFilter) mee
 // memory. Neither form ever matches a meeting that carries no room — those are
 // selected by no --room value, which is why `rooms` counts them separately.
 func meetingMatchesRoom(entry meetingsCatalogEntry, selector string) bool {
-	if name, ok := strings.CutPrefix(selector, meetingsRoomNameSelectorPrefix); ok {
-		wanted := strings.TrimSpace(name)
-		// A "name:" selector matches on the name and only the name. An entry
-		// that has an id is a different room from a same-named entry that has
-		// none — the room listing shows them as separate rows, and the filter
-		// must agree with the listing that produced the selector.
-		return wanted != "" && strings.TrimSpace(entry.RoomID) == "" && strings.TrimSpace(entry.RoomName) == wanted
+	// An exact id match is tried BEFORE the "name:" prefix is interpreted. A
+	// room id is opaque server data and nothing stops one from starting with
+	// that prefix; if one does, the entry whose selector was printed must still
+	// be the entry that selector selects.
+	if id := strings.TrimSpace(entry.RoomID); id != "" && id == selector {
+		return true
 	}
-	return strings.TrimSpace(entry.RoomID) == selector
+	name, ok := strings.CutPrefix(selector, meetingsRoomNameSelectorPrefix)
+	if !ok {
+		return false
+	}
+	wanted := strings.TrimSpace(name)
+	// A "name:" selector matches on the name and only the name. An entry that
+	// has an id is a different room from a same-named entry that has none — the
+	// room listing shows them as separate rows, and the filter must agree with
+	// the listing that produced the selector.
+	if wanted == "" || strings.TrimSpace(entry.RoomID) != "" {
+		return false
+	}
+	// Compared in their flattened forms, because `meetings rooms` prints the
+	// selector through oneLineField and the printed value is what a caller
+	// pastes back. Comparing against the raw name would make a room whose name
+	// contains a tab print a selector that matches nothing — hiding the whole
+	// room behind the very listing that advertised it.
+	return oneLineField(strings.TrimSpace(entry.RoomName)) == oneLineField(wanted)
 }

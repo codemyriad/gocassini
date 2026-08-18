@@ -53,7 +53,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PAYLOAD="$SCRIPT_DIR/backfill-catalog-rooms-in-container.sh"
 ARGS=()
 
-die() { echo "error: $*" >&2; exit 1; }
+# Exit 2, not 1. Every guard below runs before the container is touched, and 1
+# is the code this script's own contract reserves for "failed AFTER writing —
+# the catalog may be exposed". A typo in a flag must not send someone to inspect
+# a live archive.
+die() { echo "error: $*" >&2; exit 2; }
 
 usage() {
   cat >&2 <<'EOF'

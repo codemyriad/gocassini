@@ -34,7 +34,10 @@
 set -euo pipefail
 
 APPLY=0
-LIMIT=0
+# Empty means "no limit". It is deliberately NOT 0: 0 is a value an operator can
+# type, and reading it as "unlimited" would make the most cautious-looking flag
+# the one that writes the most.
+LIMIT=
 
 # The archive layout is fixed (D-529): the recordings owner, the root, and the
 # per-meeting file name, which is always the catalog entry's id.
@@ -56,16 +59,24 @@ while [[ $# -gt 0 ]]; do
     *) fail_usage "unknown option: $1" ;;
   esac
 done
-[[ "$LIMIT" =~ ^[0-9]+$ ]] || fail_usage "--limit must be a non-negative integer, got: $LIMIT"
+if [[ -n "$LIMIT" ]]; then
+  [[ "$LIMIT" =~ ^[0-9]+$ ]] || fail_usage "--limit must be a positive integer, got: $LIMIT"
+  [[ "$LIMIT" != "0" ]] || fail_usage "--limit 0 would examine nothing; omit --limit to examine everything"
+fi
 
 for tool in curl ffprobe node base64; do
   command -v "$tool" >/dev/null 2>&1 || fail_usage "$tool is not available in this container"
 done
 
-: "${NEXTCLOUD_URL:?NEXTCLOUD_URL is not set — this must run inside the Cassini app container, where AppAPI injects it}"
-: "${APP_SECRET:?APP_SECRET is not set — this must run inside the Cassini app container, where AppAPI injects it}"
-: "${APP_ID:?APP_ID is not set — this must run inside the Cassini app container, where AppAPI injects it}"
-: "${APP_VERSION:?APP_VERSION is not set — this must run inside the Cassini app container, where AppAPI injects it}"
+# Checked by hand rather than with "${VAR:?msg}": that form aborts with status 1
+# under `set -e`, and 1 is the code this contract reserves for "failed AFTER
+# writing". A run that never made a request would otherwise tell the operator
+# their catalog may be publicly readable.
+for var in NEXTCLOUD_URL APP_SECRET APP_ID APP_VERSION; do
+  if [[ -z "${!var:-}" ]]; then
+    fail_usage "$var is not set — this must run inside the Cassini app container, where AppAPI injects it"
+  fi
+done
 
 BASE="${NEXTCLOUD_URL%/}"
 AUTH="$(printf '%s' "$OWNER:$APP_SECRET" | base64 | tr -d '\n')"
@@ -75,18 +86,25 @@ WORK="$(mktemp -d)"
 # them behind would fill the container's disk with a second copy of the archive.
 trap 'rm -rf "$WORK"' EXIT
 
-# AA_VERSION is optional — AppAPI sets it only on some versions — so it is
-# carried as an array element rather than an unquoted ${VAR:+...} expansion,
-# which would word-split "AA-VERSION: 2.0" into two arguments and send a
-# malformed header.
-DAV_HEADERS=(
-  -H "AUTHORIZATION-APP-API: $AUTH"
-  -H "EX-APP-ID: $APP_ID"
-  -H "EX-APP-VERSION: $APP_VERSION"
-)
-if [[ -n "${AA_VERSION:-}" ]]; then
-  DAV_HEADERS+=(-H "AA-VERSION: $AA_VERSION")
-fi
+# The auth header goes in a 0600 config file, never on curl's argv. APP_SECRET
+# is the ExApp shared secret that authorises acting as any Nextcloud user, and
+# an argv is readable from /proc, from `docker top`, and from any crash or audit
+# capture — for every request, and this makes one per meeting examined.
+#
+# AA_VERSION is optional (AppAPI sets it only on some versions) and is written
+# conditionally rather than expanded inline, which would word-split
+# "AA-VERSION: 2.0" into two arguments and send a malformed header.
+CURL_CONFIG="$WORK/curl.conf"
+(umask 077; : > "$CURL_CONFIG")
+{
+  printf 'header = "AUTHORIZATION-APP-API: %s"\n' "$AUTH"
+  printf 'header = "EX-APP-ID: %s"\n' "$APP_ID"
+  # shellcheck disable=SC2153 # APP_VERSION is an AppAPI-injected variable, not a typo for AA_VERSION; both are used here
+  printf 'header = "EX-APP-VERSION: %s"\n' "$APP_VERSION"
+  if [[ -n "${AA_VERSION:-}" ]]; then
+    printf 'header = "AA-VERSION: %s"\n' "$AA_VERSION"
+  fi
+} >> "$CURL_CONFIG"
 
 # dav runs one WebDAV request as the recordings owner. It prints the HTTP status
 # on stdout and leaves the body in $3; the caller decides what a status means,
@@ -102,8 +120,8 @@ dav() {
   local method="$1" rel="$2" out="$3"
   shift 3
   curl -sS -o "$out" -w '%{http_code}' \
+    --config "$CURL_CONFIG" \
     -X "$method" \
-    "${DAV_HEADERS[@]}" \
     "$@" \
     "$BASE/remote.php/dav/files/$OWNER/$rel"
 }
@@ -164,7 +182,7 @@ node -e '
   }
   process.stdout.write(lines.length ? lines.join("\n") + "\n" : "");
   process.stderr.write(`${meetings.length} entr(y/ies) in the catalog, ${lines.length} to examine\n`);
-' "$CATALOG" "$LIMIT" > "$NEEDED" || fail_before "could not read the catalog"
+' "$CATALOG" "${LIMIT:-0}" > "$NEEDED" || fail_before "could not read the catalog"
 
 if [[ ! -s "$NEEDED" ]]; then
   log "every published recording already carries its room"
@@ -179,11 +197,27 @@ while IFS=$'\t' read -r id opus; do
   [[ -n "$id" ]] || continue
   target="$WORK/meeting.opus"
   status="$(dav GET "$ROOT/meetings/$opus" "$target")" || status="000"
-  if [[ "$status" != "200" ]]; then
-    log "  $id: no readable file at $ROOT/meetings/$opus (HTTP $status) — left without a room"
-    missing=$((missing + 1))
-    continue
-  fi
+  case "$status" in
+    200) ;;
+    404)
+      # Genuinely absent: the catalog names a file the archive does not have.
+      # Nothing will ever recover a room for it.
+      log "  $id: no file at $ROOT/meetings/$opus (HTTP 404) — left without a room"
+      missing=$((missing + 1))
+      continue
+      ;;
+    *)
+      # An outage, an auth failure, or a proxy error — NOT a permanent verdict
+      # on this recording. A backfill over a few hundred meetings downloads each
+      # one in full and runs for a long time, so a Nextcloud restart part-way
+      # through would otherwise silently classify every remaining entry as
+      # unfixable and still report "done". Stop instead: nothing has been
+      # written, so re-running costs only time.
+      fail_before "reading $ROOT/meetings/$opus returned HTTP $status.
+This is an outage or an auth failure, not a verdict on that recording — nothing
+has been written, so fix it and run this again."
+      ;;
+  esac
   # Ogg puts comments on the stream and other muxers on the format; ask for both
   # and let the merge step take whichever carries the tag.
   tags="$WORK/tags.json"
@@ -219,7 +253,12 @@ while IFS=$'\t' read -r id opus; do
       // defaults are not names: a title that echoes the meeting id, or the
       // generic fallback, tells us nothing about a room.
       const title = tag("TITLE");
-      if (title && title !== meetingId && title !== "Cassini Meeting") {
+      // Mirrors preferredPortableTitle (export-static-meetings.mjs), including
+      // its variant arm: an STT-variant export has a catalog id like
+      // "<ulid>--stt-parakeet" while the embedded title is the bare "<ulid>",
+      // so the plain inequality alone would stamp a ULID in as a room name.
+      const isIdEcho = title === meetingId || meetingId.startsWith(title + "--");
+      if (title && !isIdEcho && title !== "Cassini Meeting") {
         roomName = title;
         source = source || "title";
       }
@@ -247,6 +286,14 @@ resolved_count="$(wc -l < "$RESOLVED" | tr -d ' ')"
 log "$resolved_count entr(y/ies) can be given a room; $missing cannot"
 
 if [[ "$resolved_count" == "0" ]]; then
+  if [[ "$missing" != "0" ]]; then
+    # NOT exit 3. The wrapper renders 3 as "nothing needed to be changed", and
+    # that is false here: entries do need a room and their published files do
+    # not carry one. Exit 0 with the count, so the operator hears the true
+    # answer — that this is as far as the files themselves can get.
+    log "nothing to write: $missing entr(y/ies) need a room and their published files carry none"
+    exit 0
+  fi
   log "nothing to write"
   exit 3
 fi
@@ -294,11 +341,19 @@ if [[ "$APPLY" != "1" ]]; then
 fi
 
 log "writing $ROOT/catalog.json"
+# A transport failure here is NOT "nothing was written": curl can fail after
+# Nextcloud has already committed the write (a proxy timing out while the
+# response is read), and the recreated catalog.json would then be live with the
+# container's inherited grant to everyone and no PROPPATCH to remove it. Exit 1
+# — "may be written, check it" — is the only honest answer.
 status="$(dav PUT "$ROOT/catalog.json" "$WORK/put.out" -H "Content-Type: application/json" --data-binary "@$UPDATED")" \
-  || fail_before "the catalog upload could not be sent"
+  || fail_after "the catalog upload could not be sent, and it may still have been applied"
+# 2xx only, matching the operator's own uploader (webdav_upload.go). A 3xx here
+# means curl — invoked without -L — did NOT store the body at the target, so
+# treating a redirect as success would report a write that never happened.
 case "$status" in
-  20*|30*) ;;
-  *) fail_before "writing the catalog returned HTTP $status" ;;
+  20*) ;;
+  *) fail_before "writing the catalog returned HTTP $status (only a 2xx means it was stored)" ;;
 esac
 
 # From here on the catalog IS written, so every failure is exit 1: the file may
