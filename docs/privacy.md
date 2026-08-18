@@ -69,9 +69,28 @@ anonymously). Access control is provisioned automatically; it depends on the Tea
 folders and Everyone Group apps being present (see
 [Recording permissions](./exapp-nextcloud-recordings-permissions.md)).
 
+**Recordings migrated from an older version are owner-only.** Installations that
+published before recordings moved into Nextcloud Files migrate them with
+`scripts/backfill-nc-files.sh`, run once by hand. The audience a recording had
+when it was published cannot be recovered afterwards, so migrated recordings are
+readable only by the `cassini` service account, and access is granted from the
+Files app. That script's `--public` flag instead makes **every** migrated
+recording readable by every signed-in account — the pre-access-control behaviour.
+It is a deliberate, irreversible widening: decide before running it.
+
 Because published recordings live in Nextcloud Files, they follow **Nextcloud's**
-retention, backup, and deletion — not Cassini's. Deleting a recording from
-Nextcloud Files deletes that copy.
+retention and backup — not Cassini's.
+
+> **Known limitation: published recordings currently cannot be deleted.** When
+> Cassini creates the `Cassini` Team folder it sets Group Folders'
+> `acl_default_no_permission` flag, and on Group Folders v21+ that pins the base
+> permission at read for **every** account — so `DELETE` and cross-directory
+> `MOVE` are refused for everyone, including the `cassini` service account and
+> instance administrators. Recording *content* is unaffected and access control
+> works as described above; only removal is blocked. A folder created by an
+> administrator by hand does not carry the flag and is not affected. Tracked in
+> D-612, with the fix being to stop setting the flag; until then, treat published
+> recordings as append-only.
 
 ## What leaves your infrastructure, and when
 
@@ -122,7 +141,7 @@ and the [env-var reference](./exapp-talk-env-vars.md) for the full set of knobs.
   access model.
 - **Published recordings persist in Nextcloud Files** independently of Cassini.
   Removing or disabling the Cassini app does not delete them; they are managed as
-  ordinary Nextcloud files.
+  ordinary Nextcloud files — subject to the deletion limitation noted above.
 - **Uninstalling the app keeps its data by default.**
   `occ app_api:app:unregister gocassini` removes the Cassini container but
   **keeps** its persistent volume. The operator database and any un-pruned
