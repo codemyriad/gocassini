@@ -4,11 +4,20 @@
   <id>gocassini</id>
   <name>Cassini</name>
   <summary>Record, transcribe, and publish Nextcloud Talk meetings.</summary>
-  <description><![CDATA[Cassini joins a Nextcloud Talk room as a bot, records the call,
-transcribes and summarizes it, and publishes a readable archive in Nextcloud
-Files. Recording control and job history live in the admin-only control panel;
-each recording is readable only by the people who were in the Talk room when it
-was published, enforced by Nextcloud's own advanced file ACLs.]]></description>
+  <description><![CDATA[Cassini records a Nextcloud Talk call without joining as a participant, then
+transcribes and publishes a readable archive in Nextcloud Files. Optionally, it
+can also summarize each meeting when you configure an OpenRouter (or compatible)
+API key. Recording control and job history live in the admin-only control panel;
+each private recording is readable only by the people who had access to the Talk
+room (its attendee list) when it was published, enforced by Nextcloud's own
+advanced file ACLs.
+
+Data processing: recording and speech-to-text transcription run entirely within
+your own infrastructure. No audio or transcript leaves your servers for those
+steps. Optional LLM transcript cleanup and summaries are the only step that sends
+data to a third party, and they run only when an OpenRouter (or compatible) API
+key is configured. Without a key, nothing leaves your infrastructure. See the
+full data-processing note: https://github.com/codemyriad/gocassini/blob/main/docs/privacy.md]]></description>
   <version>0.2.0-beta.1</version>
   <licence>agpl</licence>
   <author>codemyriad</author>
