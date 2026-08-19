@@ -106,4 +106,3 @@ func TestWriterRoundTripAndIndex(t *testing.T) {
 		t.Fatalf("close reader: %v", err)
 	}
 }
-

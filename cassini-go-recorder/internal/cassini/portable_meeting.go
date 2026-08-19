@@ -22,6 +22,15 @@ import (
 type portablePackOptions struct {
 	Title        string
 	CreatedAtUTC string
+	// RoomToken and RoomName name the conversation this meeting was recorded in
+	// (D-622). Unlike Title they have no fallback chain: a room is either known
+	// or it is not, and guessing one from a file name would invent an identity.
+	//
+	// The TOKEN is the input, not the published value. It is a capability for a
+	// public conversation, so what lands in the manifest is a one-way derivation
+	// of it (portable.RoomIDForMeeting) and the token itself stops here.
+	RoomToken string
+	RoomName  string
 }
 
 type portableMeetingSource struct {
@@ -58,11 +67,11 @@ type portableMeetingArtifact struct {
 	} `json:"source"`
 	Provenance *portable.Provenance `json:"provenance"`
 	Files      struct {
-		Audio              string                            `json:"audio"`
-		Transcript         string                            `json:"transcript"`
-		ReadableTranscript string                            `json:"readableTranscript"`
-		DisplayTranscript  string                            `json:"displayTranscript"`
-		Summary            string                            `json:"summary"`
+		Audio              string                               `json:"audio"`
+		Transcript         string                               `json:"transcript"`
+		ReadableTranscript string                               `json:"readableTranscript"`
+		DisplayTranscript  string                               `json:"displayTranscript"`
+		Summary            string                               `json:"summary"`
 		Transcripts        []portableMeetingTranscriptInputFile `json:"transcripts,omitempty"`
 	} `json:"files"`
 	SpeakerCount int `json:"speakerCount"`
@@ -75,11 +84,11 @@ type portableMeetingArtifact struct {
 // one entry per element; the singular `files.transcript` is ignored. When the
 // list is empty, a v2 file with one synthesized raw-asr entry is emitted.
 type portableMeetingTranscriptInputFile struct {
-	ID         string                  `json:"id"`
-	Path       string                  `json:"path"`
-	Role       string                  `json:"role"`
-	Default    bool                    `json:"default,omitempty"`
-	Language   string                  `json:"language,omitempty"`
+	ID         string                   `json:"id"`
+	Path       string                   `json:"path"`
+	Role       string                   `json:"role"`
+	Default    bool                     `json:"default,omitempty"`
+	Language   string                   `json:"language,omitempty"`
 	Provenance *portable.ProcessingStep `json:"provenance,omitempty"`
 }
 
@@ -508,6 +517,10 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 			RecordedAtLocal: recordedAtLocal,
 			ProcessedAtUTC:  processedAtUTC,
 			DurationMS:      audio.DurationMS,
+			// Derived here and nowhere else on this path: the raw token must
+			// not reach the manifest, the OpusTags or anything that reads them.
+			RoomID:   portable.RoomIDForMeeting(portable.RoomIDPepperFromEnv(), opts.RoomToken, opts.RoomName),
+			RoomName: strings.TrimSpace(opts.RoomName),
 		},
 		Audio: portable.Audio{
 			Container:   "ogg",

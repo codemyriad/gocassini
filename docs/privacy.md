@@ -69,6 +69,15 @@ anonymously). Access control is provisioned automatically; it depends on the Tea
 folders and Everyone Group apps being present (see
 [Recording permissions](./exapp-nextcloud-recordings-permissions.md)).
 
+**Recordings migrated from an older version are owner-only.** Installations that
+published before recordings moved into Nextcloud Files migrate them with
+`scripts/backfill-nc-files.sh`, run once by hand. The audience a recording had
+when it was published cannot be recovered afterwards, so migrated recordings are
+readable only by the `cassini` service account, and access is granted from the
+Files app. That script's `--public` flag instead makes **every** migrated
+recording readable by every signed-in account — the pre-access-control behaviour.
+It is a deliberate, irreversible widening: decide before running it.
+
 Because published recordings live in Nextcloud Files, they follow **Nextcloud's**
 retention, backup, and deletion — not Cassini's. Deleting a recording from
 Nextcloud Files deletes that copy.

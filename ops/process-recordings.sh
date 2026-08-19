@@ -50,18 +50,21 @@ for mkv in "${mkv_files[@]}"; do
   fi
 
   echo "--- processing: $base"
-  (
+  # if/else, not `cmd && { ok } || { fail }`: in the && || form the failure
+  # branch also runs when the success branch itself fails, which quietly
+  # double-counts a run as both processed and failed.
+  if (
     cd "$PROCESSED_DIR"
     "$CASSINI_BIN" build "$mkv" \
       --out "$out" \
       --device "$DEVICE"
-  ) && {
+  ); then
     echo "ok   $base -> $out"
     (( ok++ )) || true
-  } || {
+  else
     echo "FAIL $base"
     (( fail++ )) || true
-  }
+  fi
   echo ""
 done
 

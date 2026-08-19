@@ -64,15 +64,18 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		}
 		return
 	}
-	// Stamp the Talk room name into the ATTEMPT bundle, before it is promoted.
-	// The seal that follows packs this bundle and the promoted copy inherits the
-	// stamp, so one write names both — and the name reaches the `.opus` the
-	// viewer reads rather than only the bundle nobody publishes any more (D-462).
-	// Best-effort: a failed stamp costs the name, never the meeting.
-	meetingTitle := rt.talkRoomNameForJob(task.JobID)
-	if meetingTitle != "" {
-		if err := SetMeetingBundleTitle(attemptMeetingPath, meetingTitle); err != nil {
-			rt.logger.Printf("meeting title stamp failed id=%s meeting=%s: %v (viewer falls back to Untitled meeting)", task.JobID, attemptMeetingPath, err)
+	// Stamp the Talk room into the ATTEMPT bundle, before it is promoted. The
+	// seal that follows packs this bundle and the promoted copy inherits the
+	// stamp, so one write names both — and it reaches the `.opus` the viewer
+	// reads rather than only the bundle nobody publishes any more (D-462).
+	//
+	// The room's name is also the meeting title, and its token is what the
+	// published room id is derived from (D-622).
+	// Best-effort: a failed stamp costs the room, never the meeting.
+	roomToken, meetingTitle := rt.talkRoomForJob(task.JobID)
+	if meetingTitle != "" || roomToken != "" {
+		if err := SetMeetingBundleRoom(attemptMeetingPath, meetingTitle, roomToken, meetingTitle); err != nil {
+			rt.logger.Printf("meeting room stamp failed id=%s meeting=%s: %v (viewer falls back to Untitled meeting; the meeting will carry no room)", task.JobID, attemptMeetingPath, err)
 		}
 	}
 	canonicalMeetingPath, promoteErr := promoteMeetingBundle(rt.cfg.WorkRoot, attemptMeetingPath, task.JobID)

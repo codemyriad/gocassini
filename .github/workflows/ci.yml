@@ -118,11 +118,14 @@ jobs:
           cache: npm
           cache-dependency-path: '**/package-lock.json'
       # cassini-app consumes cassini-viewer via the npm workspace (D-420), so it
-      # can't be installed standalone. Install at the workspace root (npm install
-      # resolves + links the members; no committed root lockfile yet — D-499),
-      # then test the one package via -w, matching deployment/Dockerfile.exapp.
+      # can't be installed standalone. Install at the workspace root, then test
+      # the one package via -w, matching deployment/Dockerfile.exapp.
+      #
+      # `npm ci`, not `npm install`: D-578 committed the root lockfile, so the
+      # install is reproducible and CI can no longer silently resolve a different
+      # dependency tree than the lockfile pins.
       - name: Install workspace
-        run: npm install
+        run: npm ci
       - name: Run tests
         run: npm test -w ${{ matrix.package }}
 
@@ -156,6 +159,8 @@ jobs:
           sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | sudo xargs -r rm -f || true
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+      # gofmt lives in lint.yml, with shellcheck and actionlint — see the note
+      # there. It was here only while Lint was advisory.
       - name: Vet
         working-directory: ${{ matrix.module }}
         run: go vet ./...

@@ -104,6 +104,19 @@ type provisionMock struct {
 	adminList string
 	// userExists makes service-account creation return OCS 102.
 	userExists bool
+	// refuseFolderWrites makes the Group Folders writes answer the way a
+	// password-confirmation-enforcing Nextcloud does: HTTP 200, with the failure
+	// only in ocs.meta.
+	refuseFolderWrites bool
+	// ownerPrepared models an administrator having created the service account
+	// and its group membership by hand — the documented recovery on a Nextcloud
+	// that refuses those writes to an ExApp.
+	ownerPrepared bool
+	// confirmationRequired makes every user-administration write answer 403
+	// "Password confirmation is required", the way a Nextcloud that enforces
+	// #[PasswordConfirmationRequired] answers an ExApp — which can never satisfy
+	// it, having no browser session to confirm a password in.
+	confirmationRequired bool
 	// failPath makes any request whose path ends with this suffix answer 500,
 	// for the provisioning steps that must now abort rather than log on.
 	failPath string
@@ -255,10 +268,24 @@ func (m *provisionMock) handler(t *testing.T) http.Handler {
 				admins = `["admin"]`
 			}
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"users":`+admins+`}}}`)
+		case m.ownerPrepared && r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/users/"+ncRecordingsOwner:
+			// statuscode 200, as /ocs/v2.php really answers — not 100, which is
+			// the v1 code. Getting this wrong in the mock is what let a check
+			// that could never succeed against a live Nextcloud pass its test.
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"id":"`+ncRecordingsOwner+`"}}}`)
+		case m.ownerPrepared && r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/groups/"+ncRecordingsOwnerGroup:
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"users":["`+ncRecordingsOwner+`"]}}}`)
+		case m.confirmationRequired && r.Method == http.MethodPost &&
+			(p == "/ocs/v2.php/cloud/groups" || p == "/ocs/v2.php/cloud/users" ||
+				strings.HasSuffix(p, "/groups") && strings.HasPrefix(p, "/ocs/v2.php/cloud/users/")):
+			w.WriteHeader(http.StatusForbidden)
+			io.WriteString(w, `{"ocs":{"meta":{"status":"failure","statuscode":403,"message":"Password confirmation is required"},"data":[]}}`)
 		case r.Method == http.MethodPost && p == "/ocs/v2.php/cloud/users" && m.userExists:
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":102,"message":"User already exists"},"data":[]}}`)
 		case r.Method == http.MethodGet && p == "/index.php/apps/groupfolders/folders":
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":`+m.folders+`}}`)
+		case m.refuseFolderWrites && r.Method == http.MethodPost && strings.HasPrefix(p, "/index.php/apps/groupfolders/"):
+			io.WriteString(w, `{"ocs":{"meta":{"status":"failure","statuscode":403,"message":"Password confirmation is required"},"data":[]}}`)
 		case r.Method == http.MethodPost && p == "/index.php/apps/groupfolders/folders":
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":{"id":9,"mount_point":"Cassini","groups":{},"manage":[]}}}`)
 		case r.Method == "PROPFIND" && strings.HasSuffix(p, "/meetings"):
@@ -757,5 +784,148 @@ func TestEnabledCallbackIsNilOutsideAppAPI(t *testing.T) {
 		if got := cfg.enabledCallback(context.Background(), log.New(io.Discard, "", 0)); got != nil {
 			t.Errorf("%s: enabledCallback is non-nil outside an AppAPI deployment", name)
 		}
+	}
+}
+
+// A Nextcloud that enforces #[PasswordConfirmationRequired] refuses every write
+// an ExApp makes to user administration — creating a group, creating an account,
+// adding it to a group — because the middleware reads `last-password-confirm`
+// out of a PHP session an act-as-user request does not have. There is no
+// configuration that relaxes it: the exclusion list is a hardcoded private array
+// and the timestamp is session state.
+//
+// The supported answer is for an administrator to create those three by hand,
+// where password confirmation works as designed. That answer only works if
+// provisioning LOOKS before it writes: found on a real Nextcloud 34 (AIO), where
+// the account and group existed and provisioning still failed forever, because
+// the 403 arrives before Nextcloud ever evaluates existence — so a prepared
+// instance was indistinguishable from an empty one.
+func TestProvisionAdoptsAManuallyPreparedOwnerWhenWritesAreRefused(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	mock := &provisionMock{
+		folders: `[]`,
+		// The administrator has already created both, by hand.
+		groups:               `["admin","everyone","` + ncRecordingsOwnerGroup + `"]`,
+		ownerPrepared:        true,
+		confirmationRequired: true,
+	}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	cfg := testExAppConfig(srv.URL)
+	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
+
+	// The substrate must come up: every write that follows the owner account —
+	// the Team folder, its ACL topology — is NOT password-confirmation
+	// protected, so nothing after this step is actually blocked.
+	if _, ok := mock.find(http.MethodPost, "/index.php/apps/groupfolders/folders"); !ok {
+		t.Fatal("provisioning stopped at the owner account and never built the Team folder, " +
+			"even though the group and account were already present")
+	}
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if !snap.OK {
+		t.Fatalf("substrate reported not-ok on a correctly prepared instance: %+v", snap)
+	}
+}
+
+// The converse: when the writes are refused AND nothing has been prepared, the
+// run must still fail — and say what to do about it, rather than reporting a
+// bare 403 the reader has to interpret.
+func TestProvisionRefusedWritesWithNothingPreparedStillFailLoudly(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	mock := &provisionMock{
+		folders:              `[]`,
+		groups:               `["admin","everyone"]`, // no cassini group
+		confirmationRequired: true,
+	}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	var logs strings.Builder
+	cfg := testExAppConfig(srv.URL)
+	cfg.provisionNCFilesAccess(context.Background(), log.New(&logs, "", 0))
+
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.OK {
+		t.Fatal("substrate reported ok with no owner group and no way to create one")
+	}
+	if !strings.Contains(logs.String(), "occ group:add") {
+		t.Errorf("the refusal must tell an administrator how to recover; got: %s", logs.String())
+	}
+}
+
+// The Group Folders API answers a refused write with HTTP 200 and the failure
+// only in ocs.meta. Checking the HTTP status alone therefore reads a refusal as
+// a success — and provisioning did, then tried to decode the empty `data: []`
+// as a folder and reported `json: cannot unmarshal array into ... gfFolder`,
+// naming neither the status nor the reason.
+//
+// Found on the sandbox (Nextcloud 34, AIO), where every groupfolders write is
+// #[PasswordConfirmationRequired] and an ExApp cannot satisfy it. Reproduced by
+// hand against the live server:
+//
+//	HTTP=200
+//	{"ocs":{"meta":{"status":"failure","statuscode":403,
+//	                "message":"Password confirmation is required"},"data":[]}}
+func TestOCSRefusalSeesAFailureWearingAnHTTP200(t *testing.T) {
+	refused := []byte(`{"ocs":{"meta":{"status":"failure","statuscode":403,"message":"Password confirmation is required"},"data":[]}}`)
+	got := ocsRefusal(http.StatusOK, refused)
+	if got == "" {
+		t.Fatal("an OCS failure carried by an HTTP 200 was read as success")
+	}
+	if !strings.Contains(got, "403") || !strings.Contains(got, "Password confirmation") {
+		t.Errorf("the refusal must name the status and the reason, got %q", got)
+	}
+
+	// Both OCS success codes: 100 is v1, 200 is v2.
+	for _, ok := range [][]byte{
+		[]byte(`{"ocs":{"meta":{"status":"ok","statuscode":100},"data":{}}}`),
+		[]byte(`{"ocs":{"meta":{"status":"ok","statuscode":200},"data":{}}}`),
+	} {
+		if refusal := ocsRefusal(http.StatusOK, ok); refusal != "" {
+			t.Errorf("a success envelope was read as a refusal: %q (%s)", refusal, ok)
+		}
+	}
+
+	// A non-2xx is a refusal whatever the body says.
+	if ocsRefusal(http.StatusForbidden, []byte(`{}`)) == "" {
+		t.Error("a non-2xx must always be a refusal")
+	}
+}
+
+// The substrate build must not report success when the Team folder was never
+// created, and must say what an administrator can do about it.
+func TestProvisionSurfacesARefusedFolderCreate(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	mock := &provisionMock{
+		folders:              `[]`,
+		groups:               `["admin","everyone","` + ncRecordingsOwnerGroup + `"]`,
+		ownerPrepared:        true,
+		confirmationRequired: true,
+		refuseFolderWrites:   true,
+	}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	var logs strings.Builder
+	cfg := testExAppConfig(srv.URL)
+	cfg.provisionNCFilesAccess(context.Background(), log.New(&logs, "", 0))
+
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.OK {
+		t.Fatal("substrate reported ok though the Team folder was never created")
+	}
+	out := logs.String()
+	if strings.Contains(out, "cannot unmarshal") {
+		t.Errorf("the failure is reported as a JSON decode error rather than the refusal: %s", out)
+	}
+	if !strings.Contains(out, "Password confirmation") {
+		t.Errorf("the refusal's reason is not reported: %s", out)
+	}
+	if !strings.Contains(out, "groupfolders:create") {
+		t.Errorf("the refusal must name the recovery; got: %s", out)
 	}
 }

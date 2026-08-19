@@ -30,21 +30,21 @@ const (
 	TranscriptBodyMIMEWords    = "application/vnd.cassini.transcript-words+json"
 	TranscriptBodyMIMEReadable = "application/vnd.cassini.transcript-readable+json"
 
-	RoleRawASR           = "raw-asr"
-	RoleReadableCleanup  = "readable-cleanup"
-	RoleDisplay          = "display"
-	RoleHumanCorrected   = "human-corrected"
-	RoleTranslation      = "translation"
+	RoleRawASR          = "raw-asr"
+	RoleReadableCleanup = "readable-cleanup"
+	RoleDisplay         = "display"
+	RoleHumanCorrected  = "human-corrected"
+	RoleTranslation     = "translation"
 )
 
 type Manifest struct {
-	Kind       string     `json:"kind"`
-	Version    int        `json:"version"`
-	Profile    string     `json:"profile"`
-	Meeting    Meeting    `json:"meeting"`
-	Audio      Audio      `json:"audio"`
-	Integrity  Integrity  `json:"integrity"`
-	Speakers   []Speaker  `json:"speakers"`
+	Kind      string    `json:"kind"`
+	Version   int       `json:"version"`
+	Profile   string    `json:"profile"`
+	Meeting   Meeting   `json:"meeting"`
+	Audio     Audio     `json:"audio"`
+	Integrity Integrity `json:"integrity"`
+	Speakers  []Speaker `json:"speakers"`
 	// v1 wire: required field; v2 wire never includes it (omitempty on a
 	// non-pointer struct is a no-op, so v1 writes always render this — fine).
 	Transcript Transcript `json:"transcript"`
@@ -53,10 +53,10 @@ type Manifest struct {
 	// so these fields never appear in v2-produced JSON either.
 	Transcripts         []TranscriptEntry `json:"transcripts,omitempty"`
 	ReadableTranscripts []TranscriptEntry `json:"readableTranscripts,omitempty"`
-	Provenance *Provenance `json:"provenance,omitempty"`
-	ReadableTranscript map[string]any `json:"readableTranscript,omitempty"`
-	DisplayTranscript  map[string]any `json:"displayTranscript,omitempty"`
-	Chapters           []Chapter      `json:"chapters,omitempty"`
+	Provenance          *Provenance       `json:"provenance,omitempty"`
+	ReadableTranscript  map[string]any    `json:"readableTranscript,omitempty"`
+	DisplayTranscript   map[string]any    `json:"displayTranscript,omitempty"`
+	Chapters            []Chapter         `json:"chapters,omitempty"`
 	// Summary holds metadata about the meeting summary artifact (model,
 	// templateVersion, format). Schema is intentionally open: map[string]any
 	// lets future producers add keys without breaking decoders. The actual
@@ -95,6 +95,18 @@ type Meeting struct {
 	ProcessedAtUTC  string `json:"processedAtUtc,omitempty"`
 	DurationMS      int64  `json:"durationMs"`
 	Language        string `json:"language,omitempty"`
+	// RoomID and RoomName identify the conversation the meeting was recorded
+	// in — for a Talk recording, the room's token and its display name
+	// (D-622). Both are optional: a meeting packed from a file, a dev run, or
+	// a Talk job whose room lookup failed has no room, and an absent room is
+	// not an error anywhere downstream.
+	//
+	// The name is also embedded as the meeting Title, since that is what a
+	// player shows. They are kept apart because a title is free text that may
+	// have been overridden or derived from a file name, while RoomName is a
+	// claim about which room this is — and only the second is safe to group by.
+	RoomID   string `json:"roomId,omitempty"`
+	RoomName string `json:"roomName,omitempty"`
 	// Summary is reserved for surfacing summary content as a *meeting attribute*
 	// (e.g. a TL;DR readable without unpacking the gzipped payload). Currently
 	// left empty — picking a meaning (TL;DR? full markdown? first heading?)
@@ -270,6 +282,7 @@ func BuildOpusTags(manifest Manifest, payload EncodedPayload) map[string]string 
 	if manifest.Meeting.ProcessedAtUTC != "" {
 		tags["CASSINI_PROCESSED_AT"] = manifest.Meeting.ProcessedAtUTC
 	}
+	applyRoomTags(tags, manifest.Meeting)
 
 	language := firstNonEmpty(manifest.Transcript.Language, manifest.Meeting.Language)
 	if language != "" {
@@ -285,6 +298,29 @@ func BuildOpusTags(manifest Manifest, payload EncodedPayload) map[string]string 
 		tags[fmt.Sprintf("CASSINI_PAYLOAD_%03d", idx)] = chunk
 	}
 	return tags
+}
+
+// applyRoomTags mirrors the meeting's room onto plain OpusTags, and only when
+// there is one to mirror.
+//
+// The room is already in the gzipped CASSINI_PAYLOAD_* manifest, so these tags
+// are strictly redundant for a Go or Node reader. They exist for the readers
+// that are neither: reading the room out of the payload means concatenating N
+// chunks, base64url-decoding, gunzipping and parsing JSON, which is a program
+// — while these tags fall out of one `ffprobe -show_entries format_tags` call.
+// The catalog backfill (D-622) is a shell script for exactly that reason, and
+// so is anything an operator writes at a terminal.
+//
+// Absent rather than empty when unknown: an empty CASSINI_ROOM_ID would read as
+// "this meeting has a room whose id is the empty string", and a consumer
+// checking presence would have to know to also check emptiness.
+func applyRoomTags(tags map[string]string, meeting Meeting) {
+	if meeting.RoomID != "" {
+		tags["CASSINI_ROOM_ID"] = meeting.RoomID
+	}
+	if meeting.RoomName != "" {
+		tags["CASSINI_ROOM_NAME"] = meeting.RoomName
+	}
 }
 
 func applyProcessingStepTags(tags map[string]string, prefix string, step *ProcessingStep) {

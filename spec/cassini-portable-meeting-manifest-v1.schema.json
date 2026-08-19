@@ -53,6 +53,14 @@
         "language": {
           "type": "string"
         },
+        "roomId": {
+          "type": "string",
+          "description": "Id of the conversation this meeting was recorded in. For a Nextcloud Talk recording this is the room token. Absent when the room is unknown."
+        },
+        "roomName": {
+          "type": "string",
+          "description": "Display name of the conversation this meeting was recorded in. Absent when the room is unknown."
+        },
         "summary": {
           "type": "string"
         }

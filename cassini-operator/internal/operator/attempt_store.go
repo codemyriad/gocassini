@@ -25,35 +25,35 @@ type JobAttempt struct {
 	// same job can write it, which is what lets the publish worker deliver the
 	// exact artifact this attempt sealed (D-583). ArtifactOpusSHA256 is that
 	// file's digest.
-	ArtifactOpusPath    *string `json:"artifact_opus_path"`
-	ArtifactOpusSHA256  *string `json:"artifact_opus_sha256"`
-	ArtifactSitePath    *string `json:"artifact_site_path"`
-	Error               *string `json:"error"`
-	StopReason          *string `json:"stop_reason"`
-	StopRequestedAt     *string `json:"stop_requested_at"`
-	StopSignalSentAt    *string `json:"stop_signal_sent_at"`
-	RecordExitCode      *int    `json:"record_exit_code"`
-	RecordStopDetail    *string `json:"record_stop_detail"`
-	RecordLogPath       *string `json:"record_log_path"`
-	BuildLogPath        *string `json:"build_log_path"`
-	SealLogPath         *string `json:"seal_log_path"`
-	PublishLogPath      *string `json:"publish_log_path"`
-	CreatedAt           string  `json:"created_at"`
-	UpdatedAt           string  `json:"updated_at"`
-	RecordQueuedAt      *string `json:"record_queued_at"`
-	RecordStartedAt     *string `json:"record_started_at"`
-	RecordFinishedAt    *string `json:"record_finished_at"`
-	BuildQueuedAt       *string `json:"build_queued_at"`
-	BuildStartedAt      *string `json:"build_started_at"`
-	BuildFinishedAt     *string `json:"build_finished_at"`
-	SealQueuedAt        *string `json:"seal_queued_at"`
-	SealStartedAt       *string `json:"seal_started_at"`
-	SealFinishedAt      *string `json:"seal_finished_at"`
-	PublishQueuedAt     *string `json:"publish_queued_at"`
-	PublishStartedAt    *string `json:"publish_started_at"`
-	PublishFinishedAt   *string `json:"publish_finished_at"`
-	InterruptedAt       *string `json:"interrupted_at"`
-	CompletedAt         *string `json:"completed_at"`
+	ArtifactOpusPath   *string `json:"artifact_opus_path"`
+	ArtifactOpusSHA256 *string `json:"artifact_opus_sha256"`
+	ArtifactSitePath   *string `json:"artifact_site_path"`
+	Error              *string `json:"error"`
+	StopReason         *string `json:"stop_reason"`
+	StopRequestedAt    *string `json:"stop_requested_at"`
+	StopSignalSentAt   *string `json:"stop_signal_sent_at"`
+	RecordExitCode     *int    `json:"record_exit_code"`
+	RecordStopDetail   *string `json:"record_stop_detail"`
+	RecordLogPath      *string `json:"record_log_path"`
+	BuildLogPath       *string `json:"build_log_path"`
+	SealLogPath        *string `json:"seal_log_path"`
+	PublishLogPath     *string `json:"publish_log_path"`
+	CreatedAt          string  `json:"created_at"`
+	UpdatedAt          string  `json:"updated_at"`
+	RecordQueuedAt     *string `json:"record_queued_at"`
+	RecordStartedAt    *string `json:"record_started_at"`
+	RecordFinishedAt   *string `json:"record_finished_at"`
+	BuildQueuedAt      *string `json:"build_queued_at"`
+	BuildStartedAt     *string `json:"build_started_at"`
+	BuildFinishedAt    *string `json:"build_finished_at"`
+	SealQueuedAt       *string `json:"seal_queued_at"`
+	SealStartedAt      *string `json:"seal_started_at"`
+	SealFinishedAt     *string `json:"seal_finished_at"`
+	PublishQueuedAt    *string `json:"publish_queued_at"`
+	PublishStartedAt   *string `json:"publish_started_at"`
+	PublishFinishedAt  *string `json:"publish_finished_at"`
+	InterruptedAt      *string `json:"interrupted_at"`
+	CompletedAt        *string `json:"completed_at"`
 }
 
 func insertInitialAttemptTx(tx *sql.Tx, job Job) error {

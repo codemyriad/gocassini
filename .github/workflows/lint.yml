@@ -1,14 +1,35 @@
 # Lint gate for shell scripts and GitHub Actions workflows, plus the fast
-# script test suite. Repo-wide hygiene, no secrets — runs whenever scripts or
-# workflows change.
+# script test suite. Repo-wide hygiene, no secrets — runs on EVERY pull request.
+#
+# Deliberately not path-filtered. The filter used to list scripts/, harness/,
+# sandbox/, ops/ and the workflows, which missed the inputs these tests actually
+# read: test-release-tooling.sh reads appinfo/info.xml, changelog.d/ and
+# CHANGELOG.md, and test-exapp-register.sh reads appinfo/info.xml. A release PR
+# bumping only <version> and <image-tag> therefore skipped the one suite that
+# checks the release tooling. A filter that has to enumerate the transitive
+# inputs of a test suite will drift out of date; running always cannot.
+#
+# It also makes the job appear on every PR, which is what a check needs to be
+# required — and it now is: "shellcheck + actionlint + script tests" is in
+# main's required status checks.
+#
+# That string is a CONTRACT with branch protection, not a description. Renaming
+# the job below silently breaks the gate: protection waits for a context that
+# never reports, and every PR blocks forever. It is why the name no longer lists
+# everything the job runs (gofmt is here too). Change it only together with the
+# repository's required-checks setting.
 #
 # Scope notes:
-#   - actionlint lints every workflow in .github/workflows (with shellcheck on
-#     the embedded run: blocks).
-#   - shellcheck covers scripts/, sandbox/ and ops/deploy/. Many older scripts
-#     elsewhere (harness/, deployment/, …) predate shellcheck and don't pass it
-#     yet; widening the glob further needs a cleanup pass first so this gate
-#     stays green.
+#   - actionlint lints every workflow in .github/workflows — all 8, confirmed
+#     with -verbose — and runs shellcheck on embedded `run:` blocks. It silently
+#     DISABLES a rule whose tool is missing and still exits 0, so the install
+#     step below is what makes that rule real. See the note there about pyflakes.
+#   - shellcheck covers EVERY tracked *.sh, at full severity with no excluded
+#     codes. It used to be an allow-list of scripts/, sandbox/ and ops/deploy/
+#     because older scripts elsewhere did not pass; the cleanup that allow-list
+#     was waiting on has since happened, so the glob is the whole repo and new
+#     scripts are covered the moment they are added rather than when somebody
+#     remembers to extend a list.
 #   - the script test suites are listed ONE BY ONE, not globbed. This job is the
 #     fast, offline, every-PR gate: a test belongs here only if it needs no
 #     Docker, no stack and no network. Globbing harness/bin/test-*.sh would
@@ -21,21 +42,7 @@ name: Lint
 on:
   push:
     branches: [main]
-    paths:
-      - 'scripts/**'
-      - 'harness/**'
-      - 'sandbox/**'
-      - 'ops/**'
-      - '.github/workflows/**'
-      - '.github/actions/**'
   pull_request:
-    paths:
-      - 'scripts/**'
-      - 'harness/**'
-      - 'sandbox/**'
-      - 'ops/**'
-      - '.github/workflows/**'
-      - '.github/actions/**'
 
 permissions:
   contents: read
@@ -61,16 +68,77 @@ jobs:
           # verify-session-artifact.sh, which hard-requires rg (and jq/python3,
           # already on the image). Pinned here so the control fails on the
           # artifact's content, never on a missing tool.
+          # ShellCheck is load-bearing beyond the step below: actionlint runs it
+          # on every embedded `run:` block, and SILENTLY DISABLES that rule if
+          # the binary is absent — exiting 0 for a check it never performed.
+          # (Careful: a comment line starting with the tool's own lowercase
+          # name is parsed as a directive, not prose, and errors out. actionlint
+          # caught exactly that mistake in this very comment — the rule proving
+          # itself.)
+          #
+          # actionlint does the same with pyflakes for `shell: python` blocks.
+          # pyflakes is not packaged for the runner's Ubuntu, and no workflow
+          # here uses a python block, so it is deliberately not installed — but
+          # that means adding one would go unlinted with nothing said. Install
+          # pyflakes (pip) in the same breath as the first `shell: python`.
           sudo apt-get install -y --no-install-recommends shellcheck xsltproc libxml2-utils ripgrep
 
-      - name: shellcheck scripts/ + sandbox/ + ops/deploy/ + stack resume contract
-        run: >-
-          shellcheck
-          scripts/*.sh
-          sandbox/*.sh
-          ops/deploy/*.sh
-          ops/deploy/lib/*.sh
-          harness/bin/test-stack-resume.sh
+      # Every tracked shell script, not an allow-list. The allow-list existed
+      # because older scripts under harness/ and deployment/ did not pass — that
+      # is no longer true, and an allow-list quietly excludes exactly the runtime
+      # libraries a shell-lint regression would hurt most (D-508 asked for
+      # lib/base.sh, lib/artifacts.sh and lib/e2e-local.sh specifically).
+      #
+      # Full severity, no excluded codes. The repo is clean at `style`, which is
+      # everything shellcheck reports — so there is nothing to grandfather and no
+      # threshold to argue about later.
+      #
+      # -x --source-path=SCRIPTDIR is what makes that affordable: without it
+      # shellcheck cannot follow `source "$SCRIPT_DIR/common.sh"` and emits 48
+      # SC1091s, plus SC2034s for variables it cannot see used across the source.
+      # Following sources resolves both, and the handful that remained were
+      # either annotated where they occur or were real bugs and got fixed.
+      - name: shellcheck (every tracked shell script)
+        run: |
+          set -euo pipefail
+          mapfile -t scripts < <(git ls-files '*.sh' | sort)
+          printf 'checking %d shell scripts\n' "${#scripts[@]}"
+          shellcheck -x --source-path=SCRIPTDIR --severity=style "${scripts[@]}"
+
+      # Formatting, alongside the other lint gates rather than bolted onto the
+      # unit-test job. It sat in ci.yml while this workflow was advisory: a
+      # formatting gate that cannot block a merge is the failure it exists to
+      # prevent. Lint is a required status check now, so it belongs here.
+      #
+      # One setup-go for all three modules is only correct because they declare
+      # the same Go version — gofmt's output has changed between releases (the
+      # 1.19 doc-comment reformatting is exactly the drift this gate first swept
+      # out), so a split floor would mean formatting depended on which module you
+      # were in. Keep them unified, or this step has to become a matrix.
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: cassini-operator/go.mod
+      - name: gofmt (every Go module)
+        run: |
+          set -euo pipefail
+          rc=0
+          for module in cassini-go-recorder cassini-operator harness/go-talk-rotator; do
+            # Capture the status too, not just the listing: gofmt reports a file
+            # it cannot parse on stderr and lists nothing, so testing the output
+            # alone would pass a syntactically broken tree.
+            if ! unformatted="$(gofmt -s -l "$module")"; then
+              echo "::error::gofmt failed to process $module (see the error above)"
+              rc=1
+              continue
+            fi
+            if [ -n "$unformatted" ]; then
+              echo "::error::gofmt reports unformatted files in $module; run 'gofmt -s -w .' there"
+              echo "$unformatted"
+              rc=1
+            fi
+          done
+          exit "$rc"
 
       - name: actionlint (all workflows)
         run: |
@@ -88,6 +156,18 @@ jobs:
           # "already migrated" rather than as a breakage, and that unknown
           # options never reach the container.
           ./scripts/test-backfill-nc-files.sh
+          # The room backfill, both halves: the wrapper's container checks and
+          # exit-code relay (stubbed `docker`), and the in-container payload's
+          # catalog merge (stubbed `curl` and `ffprobe`, so no Nextcloud and no
+          # media). It pins that a dry run is the default, that no room id is
+          # ever invented for a recording that has none, and that a rejected
+          # ACL is a failure rather than a silent success.
+          ./scripts/test-backfill-catalog-rooms.sh
+          # The room merge. It asserts an identity the data does not support and
+          # is only reversible by running it the other way, so the guards are
+          # what this pins: dry-run default, a refused self-merge, every moved
+          # meeting named, and the owner-only ACL restored after every write.
+          ./scripts/test-reattribute-catalog-room.sh
           ./sandbox/test-store-release.sh
           # The deploy library's decision rules: moving tags refused, the
           # compute device deriving the image variant instead of forking the

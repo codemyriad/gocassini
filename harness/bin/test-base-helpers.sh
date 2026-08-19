@@ -43,6 +43,7 @@ CASSINI_HARNESS_PUBLIC_MODE=lan-http
 CASSINI_HARNESS_PUBLIC_URL=http://127.0.0.1:28080
 CASSINI_HARNESS_MEDIA_HOST=192.0.2.10
 CASSINI_HARNESS_SIGNALING_PUBLIC_URL=http://192.0.2.10:28082
+# shellcheck disable=SC2034 # fixture: read by harness_stack_env_validate
 CASSINI_HARNESS_RECORDING_BACKEND=installed-exapp
 CASSINI_TALK_BACKEND_URL=http://reverse-proxy
 harness_stack_env_validate || fail "valid LAN media configuration was rejected"

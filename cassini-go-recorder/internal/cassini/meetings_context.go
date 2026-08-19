@@ -124,6 +124,7 @@ Requires ffprobe on PATH to read the meeting file's metadata.
 		fmt.Fprintf(stderr, "context configuration error: %v\n", err)
 		return 2
 	}
+	warnAboutInsecureTLS(stderr, cfg)
 
 	// Trim once and use the trimmed values everywhere: gating the file open on a
 	// trimmed path but the "wrote it" line on the raw one made `--out " "` print

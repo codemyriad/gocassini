@@ -10,7 +10,8 @@ Give an agent the three things it needs to reason about your meetings:
 
 | Command | What it answers |
 |---------|-----------------|
-| `cassini meetings list` | Which meetings may this account read? |
+| `cassini meetings rooms` | Which conversations does this account have recordings from? |
+| `cassini meetings list` | Which meetings may this account read — optionally only a room's, or a date range's? |
 | `cassini meetings fetch <id>` | Give me that meeting's single portable file. |
 | `cassini meetings context <id>` | Give me that meeting as text I can read. |
 
@@ -112,7 +113,7 @@ Expected:
 - A first line summarising the result:
   `meetings=2 caller=alice source=nextcloud-files`
 - One line per meeting, newest first, matching the order the viewer shows:
-  `meeting=01JZ8K… date=2026-08-11 10:32 title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes`
+  `meeting=01JZ8K… date=2026-08-11 10:32 room=rm_9f2a1c3d4e5b6a70 title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes`
 - Exit code `0`.
 
 `source=nextcloud-files` confirms the bytes came from Nextcloud Files, with
@@ -136,6 +137,91 @@ The document also carries `skipped`: the number of catalog entries that had no i
 and were dropped. A non-zero value means the list is incomplete — the catalog is
 malformed rather than short — so check it before treating the list as the whole
 truth.
+
+### Narrowing the list
+
+Three optional filters, which combine — a meeting must satisfy all of the ones
+you pass:
+
+```bash
+./bin/cassini meetings list --room rm_9f2a1c3d4e5b6a70
+./bin/cassini meetings list --from 2026-08-01 --to 2026-08-31
+./bin/cassini meetings list --room rm_9f2a1c3d4e5b6a70 --from 2026-08-01 --json
+```
+
+`--from` and `--to` take the dates the catalog itself prints — `2026-08-11`,
+`2026-08-11 14:30`, or `2026-08-11 14:30:05`. They carry **no timezone**,
+because a meeting's `dateLabel` does not: it is a wall clock, and asserting a
+zone here would claim an instant the data cannot justify. A bare date covers the
+whole day at both ends, so `--from 2026-08-01 --to 2026-08-31` means all of
+August. A range whose ends are backwards is rejected (exit `2`) rather than
+returning an empty list that would be indistinguishable from having no
+recordings at all.
+
+`--room` takes the `room=` value printed by `cassini meetings rooms` — see
+below. Matching is exact; there is no substring search.
+
+When any filter is in effect the output gains a line naming it and counting what
+it removed, so a short list is never mysterious:
+
+```text
+filter=from:2026-08-01 00:00:00 room:rm_9f2a1c3d4e5b6a70 excluded=37
+```
+
+In `--json` the same information is a `filter` object plus `excluded` and
+`excludedUndated` counts. `excluded` is deliberately **not** folded into
+`skipped`: `skipped` means the catalog is malformed, which a filter doing its
+job is not.
+
+A filter that matches nothing says so explicitly, and does not repeat the
+mis-provisioned note — that would send you to debug a provisioning failure that
+does not exist.
+
+Meetings whose `dateLabel` cannot be parsed are left out of any dated range, in
+both directions, and counted in a note. Their timestamp is unknown, so including
+them would make the same meeting appear or vanish depending on which end of the
+range you typed.
+
+## 2b. List the rooms
+
+```bash
+./bin/cassini meetings rooms
+```
+
+```text
+rooms=2 caller=alice source=nextcloud-files
+room=rm_9f2a1c3d4e5b6a70 name=Weekly Sync meetings=12 latest=2026-08-11 10:32 earliest=2026-05-05 10:30
+room=rm_11bb22cc33dd44ee name=Old Standup meetings=3 latest=2026-07-02 09:00 earliest=2026-06-18 09:00
+```
+
+The rooms are derived from the catalog you may already read, not fetched from
+Talk, so a room you have no readable recording from does not appear. This
+discloses nothing that `list` does not.
+
+The `room=` column is the value `--room` accepts. It is a **derived id**, and
+deliberately not the Talk conversation token: for a public conversation that
+token is also the link that joins it, so publishing it alongside a recording
+every signed-in account may read would turn "may read a past recording" into
+"may join the live conversation". The id is a one-way function of the room's
+identity — deterministic, so a room always derives the same id, and not
+reversible into the token.
+
+Set `CASSINI_ROOM_ID_PEPPER` on the app to a stable deployment-wide secret. A
+Talk token is short, so an unpeppered derivation can be reversed by enumerating
+the token space offline; with a pepper it cannot. Choose it once — changing it
+changes every id, and already-published meetings keep the ids they were written
+with.
+
+**Two rows can share a display name.** A recording made before Cassini kept the
+room carries no token in its published file, so `scripts/backfill-catalog-rooms.sh`
+derives that meeting's id from the room *name* instead. The two derivations do
+not agree, and cannot: only a person knows the two are the same conversation.
+`scripts/reattribute-catalog-room.sh` is how that person says so, once, and
+merges them.
+
+A trailing note may report meetings that carry **no room at all** — a non-Talk
+job, or an old recording whose file holds no usable room name either. They are
+real, `list` shows them, and no `--room` value reaches them.
 
 ## 3. Read one meeting as context
 
@@ -188,7 +274,7 @@ every account on a shared host. `chmod` it yourself if you need it wider.
 |------|---------|
 | `0` | Success — including a `list` that found no readable meetings |
 | `1` | Runtime failure: credentials rejected, nothing readable at that id, Nextcloud Files unavailable, unreadable meeting file |
-| `2` | Usage or configuration error: a missing flag, a bad argument |
+| `2` | Usage or configuration error: a missing flag, a bad argument, an unparseable `--from`/`--to`, or a date range whose ends are backwards |
 
 ## Troubleshooting
 
@@ -201,6 +287,17 @@ names where the credential was read from (`env CASSINI_NC_APP_PASSWORD` or
 no readable recordings, or the recordings folder is not set up. Check the same
 account in the Cassini viewer in a browser: if it sees nothing there either, this
 is a provisioning question, not a CLI one.
+
+**`your filter excluded all N readable meeting(s)`** — not a permissions or
+provisioning problem: the account can read N meetings and your filter matched
+none of them. Widen it, or run `cassini meetings rooms` for a `room=` value that
+exists. `--room` matches exactly and takes the printed value verbatim.
+
+**A meeting shows `room=-` and no `--room` value finds it** — it records no room
+at all, which is what every recording published before Cassini kept the room
+looks like. List it without `--room`, and run
+`scripts/backfill-catalog-rooms.sh` on the installation to recover what its
+published file still holds.
 
 **`no recording you can read at that id`** — the id is absent from *this
 account's* catalog. It may not exist, or it may exist and belong to someone else;

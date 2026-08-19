@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	doubledDashStampPattern = regexp.MustCompile(`^(.*)--(\d{4})-(\d{2})-(\d{2})--(\d{2}):(\d{2})(?::(\d{2}))?$`)
+	doubledDashStampPattern  = regexp.MustCompile(`^(.*)--(\d{4})-(\d{2})-(\d{2})--(\d{2}):(\d{2})(?::(\d{2}))?$`)
 	embeddedDateStampPattern = regexp.MustCompile(`^(.*)-(\d{4})-(\d{2})-(\d{2})--(\d{2}):(\d{2})(?::(\d{2}))?$`)
 	compactStampPattern      = regexp.MustCompile(`^(.*)--(\d{8})T(\d{2})(\d{2})(\d{2})$`)
 )

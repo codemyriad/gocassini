@@ -55,16 +55,16 @@ func TestLoadPortableMeetingSourceIncludesReadableAndDisplayTranscripts(t *testi
 		},
 		"blocks": []map[string]any{
 			{
-				"id":                "block-1",
-				"speaker":           "speaker-1",
-				"speakerLabel":      "Speaker 1",
-				"startMs":           0,
-				"endMs":             1000,
-				"text":              "Hello world.",
-				"sourceSegmentIds":  []string{"seg_1"},
-				"wordCount":         2,
-				"timedWordCount":    2,
-				"timingCoverage":    1,
+				"id":               "block-1",
+				"speaker":          "speaker-1",
+				"speakerLabel":     "Speaker 1",
+				"startMs":          0,
+				"endMs":            1000,
+				"text":             "Hello world.",
+				"sourceSegmentIds": []string{"seg_1"},
+				"wordCount":        2,
+				"timedWordCount":   2,
+				"timingCoverage":   1,
 				"tokens": []map[string]any{
 					{
 						"text":          "Hello",
@@ -289,8 +289,8 @@ func writePortableMinimalFixture(t *testing.T, root string) {
 		t.Fatalf("write audio: %v", err)
 	}
 	writePortableJSONFixture(t, filepath.Join(root, "transcript.words.v1.json"), map[string]any{
-		"version": "transcript.words.v1",
-		"media":   map[string]any{"src": "meeting.webm", "durationMs": 1234, "sha256": "abc"},
+		"version":  "transcript.words.v1",
+		"media":    map[string]any{"src": "meeting.webm", "durationMs": 1234, "sha256": "abc"},
 		"speakers": []map[string]any{{"id": "speaker-1", "label": "Speaker 1"}},
 		"segments": []map[string]any{{
 			"speaker": "speaker-1",

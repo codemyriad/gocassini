@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Pin numeric formatting to the C locale. awk formats and parses the elapsed
+# times below, and under a comma-decimal locale (LC_NUMERIC=it_IT.UTF-8, and
+# most of Europe) "3,000000" does not compare as a number — so the elapsed
+# times all read as zero, no pair clears min_elapsed, and the check reports
+# success having compared nothing. That is precisely the failure this script
+# was written to make impossible, reintroduced by the developer's locale: it
+# is green in CI, which runs under C, and silently useless on a laptop.
+export LC_NUMERIC=C
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
 
 INPUT=""
-REPORT=""
 TOLERANCE="${TOLERANCE:-0.80}"
 MIN_ELAPSED="${MIN_ELAPSED:-15}"
 # Minimum A/V pairs that must actually be COMPARED for this run to pass.
@@ -24,10 +32,6 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --input|--recording|--final-output)
       INPUT="$2"
-      shift 2
-      ;;
-    --report)
-      REPORT="$2"
       shift 2
       ;;
     --tolerance)
@@ -154,6 +158,8 @@ FAILURES=0
 PAIRS_COMPARED=0
 log "av drift check: tolerance=${TOLERANCE}s min_elapsed=${MIN_ELAPSED}s pairs=${#PAIRS[@]} require_pairs=${REQUIRE_PAIRS}"
 for row in "${PAIRS[@]}"; do
+  # shellcheck disable=SC2034 # AUDIO_ID/VIDEO_ID name the columns this row
+  # destructures; only the indices are read below.
   IFS=$'\t' read -r LTID AUDIO_ID AUDIO_IDX VIDEO_ID VIDEO_IDX <<<"$row"
 
   AUDIO_FIRST_LAST="$(first_last_audio "$AUDIO_IDX" || true)"
