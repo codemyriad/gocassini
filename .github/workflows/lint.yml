@@ -156,6 +156,18 @@ jobs:
           # "already migrated" rather than as a breakage, and that unknown
           # options never reach the container.
           ./scripts/test-backfill-nc-files.sh
+          # The room backfill, both halves: the wrapper's container checks and
+          # exit-code relay (stubbed `docker`), and the in-container payload's
+          # catalog merge (stubbed `curl` and `ffprobe`, so no Nextcloud and no
+          # media). It pins that a dry run is the default, that no room id is
+          # ever invented for a recording that has none, and that a rejected
+          # ACL is a failure rather than a silent success.
+          ./scripts/test-backfill-catalog-rooms.sh
+          # The room merge. It asserts an identity the data does not support and
+          # is only reversible by running it the other way, so the guards are
+          # what this pins: dry-run default, a refused self-merge, every moved
+          # meeting named, and the owner-only ACL restored after every write.
+          ./scripts/test-reattribute-catalog-room.sh
           ./sandbox/test-store-release.sh
           # The deploy library's decision rules: moving tags refused, the
           # compute device deriving the image variant instead of forking the

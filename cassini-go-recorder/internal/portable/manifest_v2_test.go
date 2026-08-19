@@ -387,3 +387,49 @@ func TestBuildOpusTagsV2EmitsPerTranscriptDescriptorsAndChunks(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildOpusTagsV2AndWireCarryTheRoom(t *testing.T) {
+	manifest := baseManifestV2()
+	manifest.Meeting.RoomID = "a7bc3k9x"
+	manifest.Meeting.RoomName = "Weekly Sync"
+	transcripts := []TranscriptInput{
+		{ID: "canary", Role: RoleRawASR, Default: true, Body: sampleBody("spk_0", "alpha")},
+	}
+	encoded, err := EncodeManifestV2(manifest, transcripts, 0)
+	if err != nil {
+		t.Fatalf("EncodeManifestV2: %v", err)
+	}
+
+	tags := BuildOpusTagsV2(manifest, encoded, "canary")
+	if got := tags["CASSINI_ROOM_ID"]; got != "a7bc3k9x" {
+		t.Errorf("CASSINI_ROOM_ID = %q, want %q", got, "a7bc3k9x")
+	}
+	if got := tags["CASSINI_ROOM_NAME"]; got != "Weekly Sync" {
+		t.Errorf("CASSINI_ROOM_NAME = %q, want %q", got, "Weekly Sync")
+	}
+
+	// v2 is the format the operator actually emits, so the room has to survive
+	// into the wire manifest too — the plain tags are a convenience, not the
+	// contract the viewer and the exporter read.
+	var wire struct {
+		Meeting struct {
+			RoomID   string `json:"roomId"`
+			RoomName string `json:"roomName"`
+		} `json:"meeting"`
+	}
+	if err := json.Unmarshal(encoded.Main.JSON, &wire); err != nil {
+		t.Fatalf("decode v2 wire manifest: %v", err)
+	}
+	if wire.Meeting.RoomID != "a7bc3k9x" || wire.Meeting.RoomName != "Weekly Sync" {
+		t.Errorf("wire meeting room = %q/%q, want %q/%q",
+			wire.Meeting.RoomID, wire.Meeting.RoomName, "a7bc3k9x", "Weekly Sync")
+	}
+
+	// No room: no tags, and no empty keys in the wire manifest either.
+	plainTags := BuildOpusTagsV2(baseManifestV2(), encoded, "canary")
+	for _, key := range []string{"CASSINI_ROOM_ID", "CASSINI_ROOM_NAME"} {
+		if _, ok := plainTags[key]; ok {
+			t.Errorf("%s is present on a meeting with no room, want absent", key)
+		}
+	}
+}

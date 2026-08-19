@@ -22,6 +22,15 @@ import (
 type portablePackOptions struct {
 	Title        string
 	CreatedAtUTC string
+	// RoomToken and RoomName name the conversation this meeting was recorded in
+	// (D-622). Unlike Title they have no fallback chain: a room is either known
+	// or it is not, and guessing one from a file name would invent an identity.
+	//
+	// The TOKEN is the input, not the published value. It is a capability for a
+	// public conversation, so what lands in the manifest is a one-way derivation
+	// of it (portable.RoomIDForMeeting) and the token itself stops here.
+	RoomToken string
+	RoomName  string
 }
 
 type portableMeetingSource struct {
@@ -508,6 +517,10 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 			RecordedAtLocal: recordedAtLocal,
 			ProcessedAtUTC:  processedAtUTC,
 			DurationMS:      audio.DurationMS,
+			// Derived here and nowhere else on this path: the raw token must
+			// not reach the manifest, the OpusTags or anything that reads them.
+			RoomID:   portable.RoomIDForMeeting(portable.RoomIDPepperFromEnv(), opts.RoomToken, opts.RoomName),
+			RoomName: strings.TrimSpace(opts.RoomName),
 		},
 		Audio: portable.Audio{
 			Container:   "ogg",

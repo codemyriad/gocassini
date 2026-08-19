@@ -9,6 +9,17 @@ export interface MeetingCatalogEntry {
   speakerCount?: number;
   segmentCount?: number;
   digestDurationMs?: number;
+  // Which conversation the meeting was recorded in: for a Talk recording,
+  // roomId is the room token and roomName its display name (D-622). Both are
+  // optional — a meeting recorded before the field existed, or one whose room
+  // lookup failed, simply has no room, and no consumer may require one.
+  //
+  // roomName often equals title, and is still a separate field: a title is
+  // free text that may have been overridden or derived from a file name, while
+  // roomName is a claim about which room this is. Only the second is safe to
+  // group by.
+  roomId?: string;
+  roomName?: string;
 }
 
 export interface MeetingCatalog {
@@ -126,7 +137,31 @@ function validateMeetingCatalogEntry(
       value.digestDurationMs,
       `catalog entry ${index} digestDurationMs`,
     ),
+    // This function rebuilds every entry from an explicit literal, so a field
+    // missing HERE is dropped at load with no error anywhere — even though it
+    // is present in the catalog the browser just fetched.
+    //
+    // Read leniently, unlike artifactPath/audioPath above. Those are
+    // load-bearing — an entry with a blank one cannot be opened, so refusing
+    // the catalog is the honest answer. A blank room is merely a room we do not
+    // know, which is the normal state for most of an archive; and
+    // validateMeetingCatalog has no per-entry recovery, so throwing here would
+    // let one stray `""` from a hand-edited or third-party catalog take down
+    // the whole meeting list.
+    roomId: optionalRoomString(value.roomId),
+    roomName: optionalRoomString(value.roomName),
   };
+}
+
+// optionalRoomString reads an optional room field. A missing value, a blank
+// one, or one that is not a string all mean the same thing — no room was
+// recorded — and none of them is an error.
+function optionalRoomString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
 }
 
 // Newest first. Entries whose dateLabel cannot be parsed (e.g. legacy catalogs

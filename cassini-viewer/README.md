@@ -183,11 +183,23 @@ The generated `catalog.json` looks like:
       "dateLabel": "2026-03-04 12:36",
       "speakerCount": 6,
       "segmentCount": 42,
-      "digestDurationMs": 1830000
+      "digestDurationMs": 1830000,
+      "roomId": "rm_9f2a1c3d4e5b6a70",
+      "roomName": "Daily Meeting"
     }
   ]
 }
 ```
+
+`roomId` and `roomName` name the conversation the meeting was recorded in.
+`roomId` is a deterministic one-way derivation of the room's identity — for a
+Talk recording, of its conversation token — never the token itself, because for
+a public conversation that token is also the link that joins it. Both are
+optional and often absent: a meeting recorded before Cassini kept the room, or
+one whose room lookup failed, simply has no room, and no consumer may require
+one. They are separate from `title` because a title is free text that may have
+been overridden or derived from a file name, while `roomName` is a claim about
+which room this is — only the second is safe to group by.
 
 After the app has been built once, adding a new meeting to a deployed static site does not require
 rebuilding JavaScript. Copy a new artifact directory under `meetings/<meeting-id>/` and append a new

@@ -22,6 +22,8 @@ type packOptions struct {
 	inputPath string
 	outPath   string
 	title     string
+	roomToken string
+	roomName  string
 }
 
 func runPack(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -31,12 +33,29 @@ func runPack(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.outPath, "out", "", "output portable .opus file")
 	fs.StringVar(&opts.title, "title", "", "override the meeting title embedded in the .opus file")
+	fs.StringVar(&opts.roomToken, "room-token", "", "token of the conversation this meeting was recorded in (never stored; only a one-way derivation of it is)")
+	fs.StringVar(&opts.roomName, "room-name", "", "display name of the conversation this meeting was recorded in")
 	fs.Usage = func() {
 		fmt.Fprint(fs.Output(), `Usage:
   cassini pack ./meetings/demo.meeting --out "./My Meetings/Demo.opus"
+  cassini pack ./meetings/demo.meeting --out ./Demo.opus \
+    --room-token a7bc3k9x --room-name "Weekly Sync"
 
 Pack an already-built .meeting bundle into a portable .opus file without
 re-transcribing. The input must be a ready .meeting bundle directory.
+
+--room-token and --room-name record which conversation the recording came from,
+so a published meeting can be grouped and filtered by room. Both default to
+whatever the bundle manifest carries, and both are optional — a meeting with no
+known room is packed without them rather than with a guess.
+
+The token is NOT stored. For a public conversation it is a join link, so what
+lands in the file is a deterministic one-way derivation of it that cannot be
+turned back into a token. Set CASSINI_ROOM_ID_PEPPER to a stable deployment-wide
+secret to make that derivation resistant to being enumerated offline; without it
+the id still hides the token from anyone reading a catalog, but not from someone
+determined to recover it. Changing the pepper changes every id, so choose it
+once.
 
 `+"\n")
 		fs.PrintDefaults()
@@ -95,10 +114,24 @@ re-transcribing. The input must be a ready .meeting bundle directory.
 		title = titleFromOutputPath(opts.outPath)
 	}
 
+	// The room follows the same flag-then-bundle precedence as the title, but
+	// stops there: a title has a sensible last resort (the output file name),
+	// while a room does not. An unknown room stays unknown.
+	roomToken := strings.TrimSpace(opts.roomToken)
+	if roomToken == "" {
+		roomToken = strings.TrimSpace(bundle.Manifest.RoomToken)
+	}
+	roomName := strings.TrimSpace(opts.roomName)
+	if roomName == "" {
+		roomName = strings.TrimSpace(bundle.Manifest.RoomName)
+	}
+
 	fmt.Fprintln(stdout, "[1/1] Writing portable meeting file")
 	if err := packMeetingBundle(ctx, bundle.RootDir, opts.outPath, portablePackOptions{
 		Title:        title,
 		CreatedAtUTC: strings.TrimSpace(bundle.Manifest.CreatedAtUTC),
+		RoomToken:    roomToken,
+		RoomName:     roomName,
 	}); err != nil {
 		fmt.Fprintf(stderr, "write portable meeting file: %v\n", err)
 		return 1
