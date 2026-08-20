@@ -405,18 +405,28 @@ jq -e '.ocs.data[] | select(.mount_point == "Cassini") | .manage[] | select(.typ
   || fail "cassini is not the ACL manager of the Cassini Team folder"
 log "OK   Cassini Team folder: acl=true, everyone:1, cassini:31, manager=cassini"
 
-# The default-deny floor is only settable at creation and is not exposed by the
-# HTTP index, so this one needs occ. Note the key is `mountPoint` here and
-# `mount_point` over HTTP — the two surfaces genuinely disagree, and using the
-# HTTP spelling against occ silently selects nothing.
+# The flag must be ABSENT (D-612). It used to be asserted present, as the
+# default-deny floor; on Group Folders v21+ it instead pins the base permission
+# at READ, which makes every recording in the folder permanently undeletable and
+# un-moveable by every account, administrators included. The floor it was meant
+# to provide comes from the explicit root ACL asserted above, and the DELETE
+# probe earlier in this script is the behavioural half of the same claim.
+#
+# Still via occ: the flag is not exposed by the HTTP index. Note the key is
+# `mountPoint` here and `mount_point` over HTTP — the two surfaces genuinely
+# disagree, and using the HTTP spelling against occ silently selects nothing,
+# which would make this assertion vacuously true.
 occ groupfolders:list --output=json_pretty > "$LOG_DIR/groupfolders-occ.json" 2>/dev/null \
   || fail "occ groupfolders:list failed"
-if ! jq -e '[.[] | select(.mountPoint == "Cassini") | select(.acl_default_no_permission == true)] | length == 1' \
+jq -e '[.[] | select(.mountPoint == "Cassini")] | length == 1' \
+   "$LOG_DIR/groupfolders-occ.json" >/dev/null 2>&1 \
+  || fail "expected exactly one Cassini Team folder in occ groupfolders:list"
+if ! jq -e '[.[] | select(.mountPoint == "Cassini") | select(.acl_default_no_permission == false)] | length == 1' \
      "$LOG_DIR/groupfolders-occ.json" >/dev/null 2>&1; then
   log "groupfolders (occ): $(head -c 400 "$LOG_DIR/groupfolders-occ.json")"
-  fail "the Cassini Team folder does not have acl_default_no_permission"
+  fail "the Cassini Team folder carries acl_default_no_permission — recordings in it can never be deleted or moved (D-612)"
 fi
-log "OK   the Cassini Team folder has its default-deny floor"
+log "OK   the Cassini Team folder has no default-deny flag (D-612)"
 
 # THE DISCRIMINATOR. From `cassini` a private home directory and a mounted Team
 # folder are indistinguishable — both answer 207 to its own PROPFIND. From a
