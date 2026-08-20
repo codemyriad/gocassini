@@ -149,6 +149,19 @@ func readOpusTag(t *testing.T, path, tag string) string {
 	return ""
 }
 
+// decodePortableManifestFromOpus reads the gzipped payload rather than the
+// plain tags. The tags are a convenience mirror; the payload is the record, and
+// it is what the exporter reads to build a catalog entry — so a field that is
+// only in the tags is a field that does not reach the catalog.
+func decodePortableManifestFromOpus(t *testing.T, path string) portable.Manifest {
+	t.Helper()
+	manifest, _, err := readPortableMeetingManifest(path)
+	if err != nil {
+		t.Fatalf("read portable manifest from %s: %v", path, err)
+	}
+	return manifest
+}
+
 func TestPackRoomFlagsReachOpusTags(t *testing.T) {
 	requireFFMediaTools(t)
 	tmp := t.TempDir()
@@ -177,8 +190,170 @@ func TestPackRoomFlagsReachOpusTags(t *testing.T) {
 	if strings.Contains(got, "a7bc3k9x") {
 		t.Errorf("CASSINI_ROOM_ID = %q leaks the room token", got)
 	}
-	if got := readOpusTag(t, outPath, "CASSINI_ROOM_NAME"); got != "Weekly Sync" {
-		t.Errorf("CASSINI_ROOM_NAME = %q, want %q", got, "Weekly Sync")
+	// The room NAME is an input, not a stored field (D-640). It still becomes
+	// the title — the record-time label a player shows — but the room's current
+	// name belongs in the catalog, where a rename does not mean rewriting a
+	// sealed file.
+	if got := readOpusTag(t, outPath, "CASSINI_ROOM_NAME"); got != "" {
+		t.Errorf("CASSINI_ROOM_NAME = %q, want absent: the room name is no longer stored in the artifact", got)
+	}
+	if got := readOpusTag(t, outPath, "TITLE"); got != "Weekly Sync" {
+		t.Errorf("TITLE = %q, want the room name %q", got, "Weekly Sync")
+	}
+}
+
+// TestPackNeverWritesTheRoomTokenAnywhere is the invariant the whole room-id
+// design rests on, asserted rather than assumed: a recording may be shared with
+// someone who must not be able to join the conversation it came from, and for a
+// public conversation the token IS the join link.
+//
+// It reads every tag rather than the ones we expect to be interesting, because
+// the failure this guards against is a token appearing in a tag nobody thought
+// about — including the gzipped payload, which is checked by decoding it.
+func TestPackNeverWritesTheRoomTokenAnywhere(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	bundleDir := filepath.Join(tmp, "meeting-secret.meeting")
+	if err := writeReadyMeetingBundleFixture(bundleDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	// Distinctive enough that a substring match cannot be a coincidence, and
+	// shaped like a real spreed token.
+	const token = "zzq4tokenzz"
+	outPath := filepath.Join(tmp, "meeting-secret.opus")
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{
+		"pack", bundleDir, "--out", outPath,
+		"--room-token", token, "--room-name", "Secret Room",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("pack failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	// The whole container, not just the tags: if the token reaches the file by
+	// any route at all — a tag, the payload, a stray comment — it is in these
+	// bytes.
+	raw, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read packed file: %v", err)
+	}
+	if bytes.Contains(raw, []byte(token)) {
+		t.Fatalf("the packed .opus contains the raw room token %q", token)
+	}
+	// And decoded, because the payload is gzipped: a token inside it would not
+	// show up in the raw scan above.
+	manifest := decodePortableManifestFromOpus(t, outPath)
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("re-encode manifest: %v", err)
+	}
+	if bytes.Contains(encoded, []byte(token)) {
+		t.Fatalf("the decoded manifest contains the raw room token %q: %s", token, encoded)
+	}
+	if manifest.Meeting.RoomID != portable.RoomIDFromToken("", token) {
+		t.Errorf("meeting.roomId = %q, want the derivation of the token", manifest.Meeting.RoomID)
+	}
+}
+
+func TestPackProvenanceFlagsReachTheArtifact(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	bundleDir := filepath.Join(tmp, "meeting-prov.meeting")
+	if err := writeReadyMeetingBundleFixture(bundleDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	outPath := filepath.Join(tmp, "meeting-prov.opus")
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{
+		"pack", bundleDir, "--out", outPath,
+		"--job-id", "01K3Q7W8ZC9F0MJXQ2NB8V4RTD", "--attempt-number", "3",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("pack failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	if got := readOpusTag(t, outPath, "CASSINI_JOB_ID"); got != "01K3Q7W8ZC9F0MJXQ2NB8V4RTD" {
+		t.Errorf("CASSINI_JOB_ID = %q, want the flag's value", got)
+	}
+	if got := readOpusTag(t, outPath, "CASSINI_ATTEMPT_NUMBER"); got != "3" {
+		t.Errorf("CASSINI_ATTEMPT_NUMBER = %q, want %q", got, "3")
+	}
+	manifest := decodePortableManifestFromOpus(t, outPath)
+	if manifest.Meeting.JobID != "01K3Q7W8ZC9F0MJXQ2NB8V4RTD" {
+		t.Errorf("meeting.jobId = %q, want the flag's value", manifest.Meeting.JobID)
+	}
+	if manifest.Meeting.AttemptNumber != 3 {
+		t.Errorf("meeting.attemptNumber = %d, want 3", manifest.Meeting.AttemptNumber)
+	}
+}
+
+func TestPackReadsProvenanceFromBundleManifest(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	bundleDir := filepath.Join(tmp, "meeting-prov-stamped.meeting")
+	if err := writeReadyMeetingBundleFixture(bundleDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	setBundleManifestFields(t, bundleDir, map[string]any{
+		"job_id":         "01STAMPEDJOBID0000000000AB",
+		"attempt_number": 2,
+	})
+
+	outPath := filepath.Join(tmp, "meeting-prov-stamped.opus")
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{"pack", bundleDir, "--out", outPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("pack failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	if got := readOpusTag(t, outPath, "CASSINI_JOB_ID"); got != "01STAMPEDJOBID0000000000AB" {
+		t.Errorf("CASSINI_JOB_ID = %q, want the bundle manifest's value", got)
+	}
+	if got := readOpusTag(t, outPath, "CASSINI_ATTEMPT_NUMBER"); got != "2" {
+		t.Errorf("CASSINI_ATTEMPT_NUMBER = %q, want %q", got, "2")
+	}
+}
+
+func TestPackWithoutProvenanceEmitsNoProvenanceTags(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	bundleDir := filepath.Join(tmp, "meeting-noprov.meeting")
+	if err := writeReadyMeetingBundleFixture(bundleDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	outPath := filepath.Join(tmp, "meeting-noprov.opus")
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{"pack", bundleDir, "--out", outPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("pack failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	for _, tag := range []string{"CASSINI_JOB_ID", "CASSINI_ATTEMPT_NUMBER"} {
+		if got := readOpusTag(t, outPath, tag); got != "" {
+			t.Errorf("%s = %q on a meeting packed outside the operator, want absent", tag, got)
+		}
+	}
+}
+
+func TestPackRejectsANegativeAttemptNumber(t *testing.T) {
+	tmp := t.TempDir()
+	bundleDir := filepath.Join(tmp, "meeting-badattempt.meeting")
+	if err := writeReadyMeetingBundleFixture(bundleDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run(context.Background(), []string{
+		"pack", bundleDir, "--out", filepath.Join(tmp, "out.opus"), "--attempt-number", "-1",
+	}, &stdout, &stderr)
+	// Exit 2, not a silent clamp to "unknown": a negative attempt can only come
+	// from a caller that computed it wrongly, and hiding that hides the bug.
+	if code != 2 {
+		t.Fatalf("pack exit = %d, want 2 for a negative --attempt-number (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "attempt-number") {
+		t.Errorf("stderr = %q, want it to name the offending flag", stderr.String())
 	}
 }
 
@@ -228,8 +403,8 @@ func TestPackReadsRoomFromBundleManifest(t *testing.T) {
 	if got, want := readOpusTag(t, outPath, "CASSINI_ROOM_ID"), portable.RoomIDFromToken("", "stamped-token"); got != want {
 		t.Errorf("CASSINI_ROOM_ID = %q, want the id derived from the bundle manifest's token, %q", got, want)
 	}
-	if got := readOpusTag(t, outPath, "CASSINI_ROOM_NAME"); got != "Stamped Room" {
-		t.Errorf("CASSINI_ROOM_NAME = %q, want the bundle manifest's %q", got, "Stamped Room")
+	if got := readOpusTag(t, outPath, "TITLE"); got != "Stamped Room" {
+		t.Errorf("TITLE = %q, want the bundle manifest's room name %q", got, "Stamped Room")
 	}
 }
 
@@ -258,8 +433,8 @@ func TestPackRoomFlagsOverrideBundleManifest(t *testing.T) {
 	if got, want := readOpusTag(t, outPath, "CASSINI_ROOM_ID"), portable.RoomIDFromToken("", "flag-token"); got != want {
 		t.Errorf("CASSINI_ROOM_ID = %q, want the id derived from the flag's token, %q", got, want)
 	}
-	if got := readOpusTag(t, outPath, "CASSINI_ROOM_NAME"); got != "Flag Room" {
-		t.Errorf("CASSINI_ROOM_NAME = %q, want the flag's %q", got, "Flag Room")
+	if got := readOpusTag(t, outPath, "TITLE"); got != "Flag Room" {
+		t.Errorf("TITLE = %q, want the flag's room name %q", got, "Flag Room")
 	}
 }
 

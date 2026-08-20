@@ -235,6 +235,20 @@ export function buildOpusTags(manifest, payload) {
     tags.CASSINI_ROOM_NAME = roomName;
   }
 
+  // The operator lineage, mirroring Go's applyProvenanceTags. Same deletion
+  // hazard as the room above: a tag not re-emitted here is gone from every
+  // repacked file. attemptNumber is 1-based, so a non-positive value is
+  // "unknown" and is omitted rather than written as an attempt that cannot
+  // exist.
+  const jobId = typeof normalized.meeting?.jobId === "string" ? normalized.meeting.jobId.trim() : "";
+  const attemptNumber = Number(normalized.meeting?.attemptNumber);
+  if (jobId) {
+    tags.CASSINI_JOB_ID = jobId;
+  }
+  if (Number.isInteger(attemptNumber) && attemptNumber > 0) {
+    tags.CASSINI_ATTEMPT_NUMBER = String(attemptNumber);
+  }
+
   const language = firstNonEmpty(normalized.transcript?.language, normalized.meeting?.language);
   if (language) {
     tags.LANGUAGE = language;
