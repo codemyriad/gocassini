@@ -196,15 +196,27 @@ dav() {
 # Probing the version string would mean parsing it; running the program and
 # retrying on the one error that flag fixes is shorter and cannot misread a
 # version scheme.
+#
+# stderr is captured rather than passed through, because the FIRST attempt's
+# stderr is a false alarm whenever the retry is the one that works. It is
+# forwarded on both outcomes: on failure it is the diagnosis, and on success it
+# carries the count of job rows found — which is the one line that tells an
+# operator whether their job history was actually there.
 run_node() {
   local program="$1"
   shift
   if node -e "$program" "$@" 2>"$WORK/node.err"; then
+    cat "$WORK/node.err" >&2
     return 0
   fi
   if grep -q "node:sqlite" "$WORK/node.err" 2>/dev/null; then
-    node --experimental-sqlite -e "$program" "$@" 2>>"$WORK/node.err"
-    return
+    # Start the log over: the first attempt's module error is noise once the
+    # retry explains itself.
+    : > "$WORK/node.err"
+    if node --experimental-sqlite -e "$program" "$@" 2>"$WORK/node.err"; then
+      cat "$WORK/node.err" >&2
+      return 0
+    fi
   fi
   cat "$WORK/node.err" >&2
   return 1
