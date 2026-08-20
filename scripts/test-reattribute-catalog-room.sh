@@ -32,6 +32,16 @@ check() {
   fi
 }
 
+# refute <description> <file> <pattern>
+refute() {
+  local what="$1" file="$2" pattern="$3"
+  if tr '\n' ' ' <"$file" | grep -q -- "$pattern"; then
+    fail "$what — did not expect /$pattern/ in: $(tr '\n' ' ' <"$file")"
+  else
+    ok "$what"
+  fi
+}
+
 echo "test-reattribute-catalog-room.sh"
 
 FROM_ID="rm_11bb22cc33dd44ee"
@@ -118,6 +128,39 @@ run_wrapper --from "$FROM_ID" --to "$TO_ID" && true
 status=$?
 if [[ $status -eq 1 ]]; then ok "exit 1 is relayed"; else fail "exit 1 should be relayed, got $status"; fi
 check "exit 1 warns that the catalog may be exposed" "$WORK/stderr" "readable by every signed-in account"
+check "exit 1 also covers the created-recording case" "$WORK/stderr" "CREATED rather than overwritten"
+
+# Exit 5 needs an arm of its own. Without one it falls to the catch-all, which
+# says "whether anything was written is unknown" — the single most wrong thing
+# that could be said about a refusal, which by construction wrote nothing.
+make_docker_stub 5
+run_wrapper --from "$FROM_ID" --to "$TO_ID" && true
+status=$?
+if [[ $status -eq 5 ]]; then ok "exit 5 is relayed"; else fail "exit 5 should be relayed, got $status"; fi
+check "exit 5 says nothing was written" "$WORK/stderr" "Nothing was written"
+check "exit 5 names the backfill as the right tool" "$WORK/stderr" "backfill-catalog-rooms.sh --apply"
+check "exit 5 names the override" "$WORK/stderr" -- "--force"
+refute "exit 5 does not claim the outcome is unknown" "$WORK/stderr" "is unknown"
+
+# --- the new flags reach the container, and are not inferred ---
+make_docker_stub 0
+run_wrapper --from "$FROM_ID" --to "$TO_ID" --force --no-retag --no-jobs-db \
+  || fail "the new flags should exit 0"
+for expected in --force --no-retag --no-jobs-db; do
+  if ! grep -qx -- "$expected" "$WORK/exec-argv"; then
+    fail "expected $expected to reach the container, got: $(tr '\n' ' ' <"$WORK/exec-argv")"
+  fi
+done
+ok "--force, --no-retag and --no-jobs-db are passed through"
+
+make_docker_stub 0
+run_wrapper --from "$FROM_ID" --to "$TO_ID" || fail "a bare invocation should exit 0"
+for forbidden in --force --no-retag --no-jobs-db; do
+  if grep -qx -- "$forbidden" "$WORK/exec-argv"; then
+    fail "a bare invocation must not pass $forbidden"
+  fi
+done
+ok "the guard and the re-tag are never inferred"
 
 # ---------------------------------------------------------------------------
 # the payload
@@ -128,6 +171,9 @@ mkdir -p "$STUBS"
 
 write_fake_catalog() { cat >"$WORK/catalog.json"; }
 
+# The stub branches on the URL, not just the method: since D-640 this command
+# reads and writes recordings as well as the catalog, and a method-only stub
+# would answer a recording GET with the catalog.
 cat >"$STUBS/curl" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -145,24 +191,108 @@ while [[ \$# -gt 0 ]]; do
   esac
 done
 : >"\${out:-/dev/null}"
-case "\$method" in
-  GET) cat "$WORK/catalog.json" >"\$out"; echo 200 ;;
-  PUT) cp "\$data" "$WORK/put-body.json"; echo 204 ;;
-  PROPPATCH)
+case "\$method:\$url" in
+  GET:*catalog.json) cat "$WORK/catalog.json" >"\$out"; echo 200 ;;
+  GET:*meetings/*)
+    id="\${url##*/meetings/}"; id="\${id%.opus}"
+    printf '%s' "\$id" >"\$out"; echo 200 ;;
+  PUT:*meetings/*)
+    id="\${url##*/meetings/}"; id="\${id%.opus}"
+    printf '%s\n' "\$id" >>"$WORK/opus-puts.txt"
+    echo "\${OPUS_PUT_STATUS:-204}" ;;
+  PROPPATCH:*meetings/*)
+    # Never legitimate: writing an ACL onto a recording would replace the
+    # meeting's real audience with a guess. Recorded so a test can assert it.
+    printf '%s\n' "\$url" >>"$WORK/opus-proppatch.txt"
+    echo 207 ;;
+  PUT:*catalog.json) cp "\$data" "$WORK/put-body.json"; echo 204 ;;
+  PROPPATCH:*catalog.json)
     cp "\$data" "$WORK/proppatch-body.xml"
     printf '<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>' >"\$out"
     echo 207 ;;
   *) echo 500 ;;
 esac
 EOF
-chmod +x "$STUBS/curl"
+
+# The cassini stub stands in for `cassini retag`: it records the room id written
+# into each file and copies the input through so the PUT has a body.
+cat >"$STUBS/cassini" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$*" >>"$WORK/retag-argv"
+[[ "\$1" == "retag" ]] || { echo "unexpected cassini subcommand: \$1" >&2; exit 2; }
+in="\$2"; out=""
+shift 2
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --out) out="\$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+cp "\$in" "\$out"
+EOF
+chmod +x "$STUBS/curl" "$STUBS/cassini"
+cp "$STUBS/curl" "$STUBS/curl.real"
+
+# node:sqlite is unflagged from Node 22.13 and flagged before it.
+node_sqlite() {
+  if node -e 'require("node:sqlite")' >/dev/null 2>&1; then
+    node "$@"
+  else
+    node --experimental-sqlite "$@"
+  fi
+}
+
+if ! node -e 'require("node:sqlite")' >/dev/null 2>&1 \
+   && ! node --experimental-sqlite -e 'require("node:sqlite")' >/dev/null 2>&1; then
+  echo "  SKIP: this node has no node:sqlite; the lineage-guard half cannot be exercised" >&2
+  echo "PASS (partial)"
+  exit 0
+fi
+
+JOBS_DB="$WORK/jobs.sqlite3"
+
+# write_jobs_db builds a REAL operator job database from a TSV of
+# <job id>\t<room token>. The talk_binding column holds the exact JSON the
+# operator writes (talkJobBinding in talk_backend.go), because a stub of it would
+# agree with whatever the guard happened to expect.
+write_jobs_db() {
+  rm -f "$JOBS_DB"
+  node_sqlite -e '
+    const fs = require("fs");
+    const { DatabaseSync } = require("node:sqlite");
+    const [, dbPath, rowsPath] = process.argv;
+    const db = new DatabaseSync(dbPath);
+    db.exec("CREATE TABLE jobs (id TEXT PRIMARY KEY NOT NULL, talk_binding TEXT)");
+    const insert = db.prepare("INSERT INTO jobs (id, talk_binding) VALUES (?, ?)");
+    for (const line of fs.readFileSync(rowsPath, "utf8").split("\n")) {
+      if (line.trim() === "") continue;
+      const [id, token] = line.split("\t");
+      insert.run(id, JSON.stringify({
+        backend_url: "https://cloud.test/",
+        room_token: token,
+        owner: "alice",
+        room_public: false,
+      }));
+    }
+    db.close();
+  ' "$JOBS_DB" "$1"
+}
 
 run_payload() {
-  rm -f "$WORK/put-body.json" "$WORK/proppatch-body.xml"
+  rm -f "$WORK/put-body.json" "$WORK/proppatch-body.xml" \
+        "$WORK/opus-puts.txt" "$WORK/opus-proppatch.txt" "$WORK/retag-argv"
   env PATH="$STUBS:$PATH" \
     NEXTCLOUD_URL="https://cloud.test" APP_SECRET="s3cret" APP_ID="gocassini" APP_VERSION="0.2.0" \
-    bash "$PAYLOAD" "$@" >"$WORK/stdout" 2>"$WORK/stderr"
+    CASSINI_ROOM_ID_PEPPER="test-pepper" \
+    OPUS_PUT_STATUS="${OPUS_PUT_STATUS:-204}" \
+    bash "$PAYLOAD" --jobs-db "$JOBS_DB" "$@" >"$WORK/stdout" 2>"$WORK/stderr"
 }
+
+# By default nothing in the fixture has a recorded lineage: these are exactly the
+# meetings this command exists for. Individual tests add rows.
+: >"$WORK/jobs.tsv"
+write_jobs_db "$WORK/jobs.tsv"
 
 write_fake_catalog <<EOF
 {
@@ -269,6 +399,166 @@ if [[ -f "$WORK/put-body.json" ]]; then
 else
   ok "an unmatched --from writes nothing"
 fi
+
+# ---------------------------------------------------------------------------
+# The lineage guard (D-640)
+# ---------------------------------------------------------------------------
+
+# room_id_for_token derives what the guard must derive, written out here rather
+# than shared so a change to either side fails this test instead of agreeing
+# with itself.
+room_id_for_token() {
+  node -e '
+    const crypto = require("crypto");
+    const mac = crypto.createHmac("sha256", Buffer.from("test-pepper", "utf8"));
+    mac.update("cassini.room.token.v1\u0000", "utf8");
+    mac.update(process.argv[1].trim(), "utf8");
+    process.stdout.write("rm_" + mac.digest("hex").slice(0, 16));
+  ' "$1"
+}
+
+# OLD1 was recorded by this installation, in a conversation whose token derives
+# to something that is NOT the merge target. OLD2 was not — it has no job row at
+# all, which is the population this command exists for.
+printf 'OLD1\ttok-old1\n' >"$WORK/jobs.tsv"
+write_jobs_db "$WORK/jobs.tsv"
+OLD1_RECORDED_ID="$(room_id_for_token "tok-old1")"
+
+# --- the guard refuses, and refuses in a DRY RUN ---
+# The dry run is the review surface this command's whole design rests on. A
+# guard that only fired on --apply would teach an operator that the dry run is a
+# preview of something else.
+run_payload --from "$FROM_ID" --to "$TO_ID" && true
+status=$?
+if [[ $status -eq 5 ]]; then
+  ok "a recorded room binding refuses the merge, in a dry run"
+else
+  fail "a contradicting lineage should exit 5, got $status: $(cat "$WORK/stderr")"
+fi
+check "the refusal names the meeting and what its lineage derives to" "$WORK/stdout" \
+  "OLD1: its recorded room derives to $OLD1_RECORDED_ID"
+check "the refusal points at the backfill as the right tool" "$WORK/stderr" \
+  "backfill-catalog-rooms.sh --apply"
+if [[ -f "$WORK/put-body.json" || -f "$WORK/opus-puts.txt" ]]; then
+  fail "a refusal must write nothing at all"
+else
+  ok "a refusal writes nothing"
+fi
+
+# The token is a join capability for a public conversation. The guard compares
+# derived ids and must never print, log or write the token itself.
+refute "the refusal never prints the raw token" "$WORK/stdout" "tok-old1"
+refute "and not on stderr either" "$WORK/stderr" "tok-old1"
+
+# --- it refuses with --apply too, before anything is written ---
+run_payload --from "$FROM_ID" --to "$TO_ID" --apply && true
+status=$?
+if [[ $status -eq 5 ]]; then ok "the guard also refuses --apply"; else fail "--apply with a contradicting lineage should exit 5, got $status"; fi
+if [[ -f "$WORK/put-body.json" ]]; then fail "a refused --apply must not write the catalog"; else ok "a refused --apply writes nothing"; fi
+
+# --- --force overrides, and says so loudly ---
+run_payload --from "$FROM_ID" --to "$TO_ID" --apply --force && true
+status=$?
+if [[ $status -eq 0 ]]; then ok "--force overrides the guard"; else fail "--force should exit 0, got $status: $(cat "$WORK/stderr")"; fi
+check "--force records the override in the transcript" "$WORK/stdout" "overridden by --force"
+[[ -f "$WORK/put-body.json" ]] || fail "--force should write the catalog"
+
+# --- a meeting with no job row is never refused ---
+: >"$WORK/jobs.tsv"
+write_jobs_db "$WORK/jobs.tsv"
+run_payload --from "$FROM_ID" --to "$TO_ID" && true
+status=$?
+if [[ $status -eq 0 ]]; then
+  ok "meetings with no recorded lineage merge freely — the population this exists for"
+else
+  fail "a merge with no contradicting lineage should exit 0, got $status: $(cat "$WORK/stderr")"
+fi
+
+# --- an unreadable jobs database fails closed ---
+# A guard that degrades silently is not a guard.
+printf 'not a sqlite database at all' >"$WORK/broken.sqlite3"
+env PATH="$STUBS:$PATH" \
+  NEXTCLOUD_URL="https://cloud.test" APP_SECRET="s3cret" APP_ID="gocassini" APP_VERSION="0.2.0" \
+  CASSINI_ROOM_ID_PEPPER="test-pepper" \
+  bash "$PAYLOAD" --jobs-db "$WORK/broken.sqlite3" --from "$FROM_ID" --to "$TO_ID" --apply \
+  >"$WORK/stdout" 2>"$WORK/stderr" && true
+status=$?
+if [[ $status -eq 4 ]]; then ok "an unreadable jobs database exits 4 rather than merging unchecked"; else fail "an unreadable jobs database should exit 4, got $status"; fi
+if [[ -f "$WORK/put-body.json" ]]; then fail "a failed guard must write nothing"; else ok "a failed guard writes nothing"; fi
+
+# --- --no-jobs-db skips the check explicitly ---
+printf 'OLD1\ttok-old1\n' >"$WORK/jobs.tsv"
+write_jobs_db "$WORK/jobs.tsv"
+env PATH="$STUBS:$PATH" \
+  NEXTCLOUD_URL="https://cloud.test" APP_SECRET="s3cret" APP_ID="gocassini" APP_VERSION="0.2.0" \
+  CASSINI_ROOM_ID_PEPPER="test-pepper" \
+  bash "$PAYLOAD" --no-jobs-db --from "$FROM_ID" --to "$TO_ID" >"$WORK/stdout" 2>"$WORK/stderr" && true
+status=$?
+if [[ $status -eq 0 ]]; then ok "--no-jobs-db skips the lineage check"; else fail "--no-jobs-db should exit 0, got $status: $(cat "$WORK/stderr")"; fi
+
+# ---------------------------------------------------------------------------
+# Re-tagging the moved recordings (D-640)
+# ---------------------------------------------------------------------------
+
+: >"$WORK/jobs.tsv"
+write_jobs_db "$WORK/jobs.tsv"
+
+run_payload --from "$FROM_ID" --to "$TO_ID" --apply || fail "--apply should exit 0: $(cat "$WORK/stderr")"
+# Without this the exporter re-derives each entry's room from an untouched file
+# on the next republish, and the merge is undone.
+for id in OLD1 OLD2; do
+  if grep -qx "$id" "$WORK/opus-puts.txt" 2>/dev/null; then
+    ok "$id's recording was re-tagged and uploaded"
+  else
+    fail "$id should have been re-tagged: $(cat "$WORK/opus-puts.txt" 2>/dev/null)"
+  fi
+done
+if grep -qx "NEW1" "$WORK/opus-puts.txt" 2>/dev/null; then
+  fail "a meeting that did not move must not be re-tagged"
+else
+  ok "meetings that did not move are left alone"
+fi
+check "the re-tag writes the TARGET room id into the file" "$WORK/retag-argv" -- "--room-id $TO_ID"
+
+# Never PROPPATCH a recording: an overwrite keeps the fileid its permissions
+# hang off, so leaving the ACL alone is what keeps it correct.
+if [[ -f "$WORK/opus-proppatch.txt" ]]; then
+  fail "a recording's permissions must never be rewritten: $(cat "$WORK/opus-proppatch.txt")"
+else
+  ok "no recording's permissions were touched"
+fi
+
+# --- a 201 on a recording is a hard failure ---
+# A newly created leaf under meetings/ has no rules of its own and inherits the
+# container's grant to the virtual everyone group.
+OPUS_PUT_STATUS=201 run_payload --from "$FROM_ID" --to "$TO_ID" --apply && true
+status=$?
+unset OPUS_PUT_STATUS
+if [[ $status -eq 1 ]]; then ok "a created (201) recording exits 1"; else fail "a 201 on a recording upload should exit 1, got $status"; fi
+check "the 201 failure explains the permissions consequence" "$WORK/stderr" \
+  "inherits the folder grant to every signed-in account"
+if [[ -f "$WORK/put-body.json" ]]; then
+  fail "a failed re-tag must stop before the catalog is written"
+else
+  ok "a failed re-tag stops before the catalog is written"
+fi
+
+# --- --no-retag writes only the catalog, and says the merge is temporary ---
+run_payload --from "$FROM_ID" --to "$TO_ID" --apply --no-retag \
+  || fail "--no-retag should exit 0: $(cat "$WORK/stderr")"
+[[ -f "$WORK/put-body.json" ]] || fail "--no-retag should still write the catalog"
+if [[ -f "$WORK/opus-puts.txt" ]]; then
+  fail "--no-retag must not upload any recording"
+else
+  ok "--no-retag leaves recordings untouched"
+fi
+check "--no-retag warns that the merge does not survive a republish" "$WORK/stdout" \
+  "will revert them"
+
+# --- --jobs-db and --no-jobs-db contradict each other ---
+run_payload --from "$FROM_ID" --to "$TO_ID" --no-jobs-db && true
+status=$?
+if [[ $status -eq 2 ]]; then ok "--jobs-db with --no-jobs-db is a usage error"; else fail "contradictory jobs flags should exit 2, got $status"; fi
 
 # --- a missing AppAPI environment is exit 2, not 1 ---
 env PATH="$STUBS:$PATH" APP_SECRET="" NEXTCLOUD_URL="" APP_ID="" APP_VERSION="" \
