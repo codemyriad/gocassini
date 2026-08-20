@@ -46,6 +46,13 @@
           "type": "string",
           "format": "date-time"
         },
+        "recordedAtLocal": {
+          "type": "string"
+        },
+        "processedAtUtc": {
+          "type": "string",
+          "format": "date-time"
+        },
         "durationMs": {
           "type": "integer",
           "minimum": 0
