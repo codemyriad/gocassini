@@ -218,7 +218,21 @@ func EncodeManifest(manifest Manifest, chunkSize int) (EncodedPayload, error) {
 	if err != nil {
 		return EncodedPayload{}, fmt.Errorf("marshal portable meeting manifest: %w", err)
 	}
+	return EncodePayloadBytes(rawJSON, chunkSize)
+}
 
+// EncodePayloadBytes runs already-serialised manifest JSON through the payload
+// pipeline: gzip, base64url, chunk, and the digest and byte counts the tags
+// declare.
+//
+// Split out of EncodeManifest for the editors rather than the producers.
+// `cassini retag` rewrites one field of an existing file's manifest and must
+// re-emit everything else exactly as it found it — including whatever wire
+// version that file uses and any key this build has never heard of — so it
+// edits the JSON document and hands the bytes here. Marshalling a
+// portable.Manifest instead would silently drop every field the struct does not
+// model, which on a v2 file is its entire transcript descriptor set.
+func EncodePayloadBytes(rawJSON []byte, chunkSize int) (EncodedPayload, error) {
 	var compressed bytes.Buffer
 	gzw := gzip.NewWriter(&compressed)
 	if _, err := gzw.Write(rawJSON); err != nil {

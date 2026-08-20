@@ -107,6 +107,38 @@ func RoomIDPepperFromEnv() string {
 	return os.Getenv(RoomIDPepperEnv)
 }
 
+// IsRoomID reports whether a value has the shape this package produces.
+//
+// It exists for the tools that ACCEPT a room id rather than derive one —
+// `cassini retag`, and the maintenance scripts behind it. Those write into
+// already-published recordings, so the one input that must never get through is
+// a raw Talk conversation token pasted where a derived id belongs: a spreed
+// token is a short alphanumeric string that looks perfectly plausible next to
+// an id, and writing one into an artifact would publish the join link for a
+// public conversation. The rm_ prefix and the fixed hex length make that
+// mistake mechanically detectable, which is most of why the prefix exists.
+//
+// Shape only. It cannot tell a well-formed id for the wrong room from the right
+// one — nothing can, since the derivation is one-way.
+func IsRoomID(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) != len(roomIDPrefix)+roomIDHexLen {
+		return false
+	}
+	if !strings.HasPrefix(trimmed, roomIDPrefix) {
+		return false
+	}
+	// Lowercase hex only, matching hex.EncodeToString. Accepting uppercase
+	// would let two spellings of one id exist, and ids are compared as strings
+	// everywhere downstream.
+	for _, r := range trimmed[len(roomIDPrefix):] {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // RoomIDForMeeting picks the best available derivation for one meeting: the
 // token when it is known, the display name when it is not.
 //
