@@ -236,6 +236,144 @@ func TestRetagJSONSummaryReportsOnlyRealChanges(t *testing.T) {
 	}
 }
 
+// The payload DESCRIPTOR tags share the CASSINI_PAYLOAD_ prefix with the chunk
+// set and have nothing to do with it. A blanket prefix drop deleted all three
+// from every re-tagged file — invisibly, because nothing in this repo needs
+// them to decode a payload, and the scripts upload the result over a recording
+// that under D-612 cannot be deleted.
+func TestRetagKeepsThePayloadDescriptorTags(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	inPath := packFixtureOpus(t, tmp, "before")
+	outPath := filepath.Join(tmp, "after.opus")
+
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{
+		"retag", inPath, "--out", outPath, "--room-id", "rm_9f2a1c3d4e5b6a70",
+	}, &stdout, &stderr); code != 0 {
+		t.Fatalf("retag failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	// Required by docs/portable-meeting-format.md, and asserted against the
+	// input rather than a literal so this keeps working if the values change.
+	beforeTags, err := portableMeetingTags(inPath)
+	if err != nil {
+		t.Fatalf("read input tags: %v", err)
+	}
+	afterTags, err := portableMeetingTags(outPath)
+	if err != nil {
+		t.Fatalf("read output tags: %v", err)
+	}
+	for _, tag := range []string{"CASSINI_PAYLOAD_MIME", "CASSINI_PAYLOAD_ENCODING", "CASSINI_PAYLOAD_SCHEMA"} {
+		want := portableTagValue(beforeTags, tag)
+		if want == "" {
+			t.Fatalf("the fixture does not carry %s, so this test proves nothing", tag)
+		}
+		if got := portableTagValue(afterTags, tag); got != want {
+			t.Errorf("%s = %q after retag, want the original %q", tag, got, want)
+		}
+	}
+	// And the counters ARE rewritten, since the payload changed.
+	if portableTagValue(afterTags, "CASSINI_PAYLOAD_SHA256") == portableTagValue(beforeTags, "CASSINI_PAYLOAD_SHA256") {
+		t.Error("CASSINI_PAYLOAD_SHA256 did not change, so the payload was not rewritten")
+	}
+}
+
+// Go's flag package accepts `--clear-room-id=false` for a bool. Deciding "was
+// this asked for" from fs.Visit alone made the explicit "do NOT clear" spelling
+// clear the field — the exact opposite of what it says.
+func TestRetagHonoursAnExplicitlyFalseClearFlag(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	inPath := packFixtureOpus(t, tmp, "before", "--room-token", "a7bc3k9x",
+		"--job-id", "01ABCDEFGHJKMNPQRSTVWXYZ01", "--attempt-number", "2")
+	before := decodePortableManifestFromOpus(t, inPath)
+	if before.Meeting.RoomID == "" || before.Meeting.JobID == "" {
+		t.Fatal("the fixture must carry a room and a job for this to prove anything")
+	}
+	outPath := filepath.Join(tmp, "after.opus")
+
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{
+		"retag", inPath, "--out", outPath,
+		"--clear-room-id=false", "--clear-job-id=false", "--clear-attempt-number=false",
+	}, &stdout, &stderr); code != 0 {
+		t.Fatalf("retag failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	after := decodePortableManifestFromOpus(t, outPath)
+	if after.Meeting.RoomID != before.Meeting.RoomID {
+		t.Errorf("--clear-room-id=false cleared the room: %q -> %q", before.Meeting.RoomID, after.Meeting.RoomID)
+	}
+	if after.Meeting.JobID != before.Meeting.JobID {
+		t.Errorf("--clear-job-id=false cleared the job: %q -> %q", before.Meeting.JobID, after.Meeting.JobID)
+	}
+	if after.Meeting.AttemptNumber != before.Meeting.AttemptNumber {
+		t.Errorf("--clear-attempt-number=false cleared the attempt: %d -> %d", before.Meeting.AttemptNumber, after.Meeting.AttemptNumber)
+	}
+	// ...and =true still clears, so the fix did not simply disable the flags.
+	clearedPath := filepath.Join(tmp, "cleared.opus")
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run(context.Background(), []string{
+		"retag", inPath, "--out", clearedPath, "--clear-room-id=true",
+	}, &stdout, &stderr); code != 0 {
+		t.Fatalf("retag --clear-room-id=true failed code=%d stderr=%q", code, stderr.String())
+	}
+	if got := decodePortableManifestFromOpus(t, clearedPath).Meeting.RoomID; got != "" {
+		t.Errorf("--clear-room-id=true left roomId = %q", got)
+	}
+}
+
+// ffprobe reports Vorbis comment keys in whatever case the muxer wrote them,
+// and builds disagree. An exact-case delete on a file tagged `cassini_room_id`
+// would leave the old value in place AND add the new one under a second key, so
+// the file would name two different rooms.
+func TestRetagMirrorTagsAreCaseInsensitive(t *testing.T) {
+	tags := map[string]string{
+		"cassini_room_id":             "rm_1111111111111111",
+		"Cassini_Payload_Chunk_Count": "1",
+		"CASSINI_PAYLOAD_MIME":        "application/vnd.cassini.portable-meeting+json",
+		"cassini_payload_000":         "stale-chunk",
+	}
+	manifest := portable.Manifest{Meeting: portable.Meeting{RoomID: "rm_2222222222222222"}}
+
+	updated, err := retagOpusTags(tags, []byte(`{"meeting":{"id":"m"}}`), manifest)
+	if err != nil {
+		t.Fatalf("retagOpusTags: %v", err)
+	}
+
+	var roomKeys []string
+	for key := range updated {
+		if strings.EqualFold(key, "CASSINI_ROOM_ID") {
+			roomKeys = append(roomKeys, key)
+		}
+	}
+	if len(roomKeys) != 1 {
+		t.Fatalf("got %d room-id keys %v, want exactly one", len(roomKeys), roomKeys)
+	}
+	if updated[roomKeys[0]] != "rm_2222222222222222" {
+		t.Errorf("room id = %q, want the new value", updated[roomKeys[0]])
+	}
+	// The lower-cased stale chunk must be gone, and the descriptor kept.
+	if _, ok := updated["cassini_payload_000"]; ok && updated["cassini_payload_000"] == "stale-chunk" {
+		t.Error("a lower-cased stale payload chunk survived")
+	}
+	if updated["CASSINI_PAYLOAD_MIME"] == "" {
+		t.Error("CASSINI_PAYLOAD_MIME was dropped")
+	}
+	// One chunk-count key, whatever its spelling.
+	var countKeys []string
+	for key := range updated {
+		if strings.EqualFold(key, "CASSINI_PAYLOAD_CHUNK_COUNT") {
+			countKeys = append(countKeys, key)
+		}
+	}
+	if len(countKeys) != 1 {
+		t.Errorf("got %d chunk-count keys %v, want exactly one", len(countKeys), countKeys)
+	}
+}
+
 func TestRetagRefusesWritingOverItsInput(t *testing.T) {
 	requireFFMediaTools(t)
 	tmp := t.TempDir()

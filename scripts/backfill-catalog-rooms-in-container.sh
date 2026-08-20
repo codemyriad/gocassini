@@ -126,7 +126,10 @@ fi
 for tool in curl ffprobe node base64; do
   command -v "$tool" >/dev/null 2>&1 || fail_usage "$tool is not available in this container"
 done
-if [[ "$RETAG" == "1" ]]; then
+# Only a run that will actually re-tag needs it: a dry run never reaches the
+# call, and refusing to even REPORT on a container without the binary would deny
+# an operator the one thing that is always safe to do.
+if [[ "$RETAG" == "1" && "$APPLY" == "1" ]]; then
   command -v cassini >/dev/null 2>&1 \
     || fail_usage "cassini is not available in this container, so published files cannot be re-tagged. Pass --no-retag to write only the catalog — but a catalog-only room is reverted by the next republish."
 fi
@@ -404,14 +407,14 @@ node -e '
       // and needs no file at all, but a room with no label reads as anonymous
       // in every listing, and the TITLE tag on the file is the last place to look.
       const needsProbe = roomName === "" ? 1 : 0;
-      lines.push([id, encodeURIComponent(id + ".opus"), job.roomId, flat(roomName), "job-binding", needsProbe].join(US));
+      lines.push([flat(id), encodeURIComponent(id + ".opus"), job.roomId, flat(roomName), "job-binding", needsProbe].join(US));
       reconciled += 1;
     } else {
       // The operator owns this one: no job row means this installation has no
       // record of producing it, so anything already there was put there by a
       // person and must not be overwritten.
       if (entryRoomId !== "" || entryRoomName !== "") continue;
-      lines.push([id, encodeURIComponent(id + ".opus"), "", "", "file", 1].join(US));
+      lines.push([flat(id), encodeURIComponent(id + ".opus"), "", "", "file", 1].join(US));
       filled += 1;
     }
     if (limit > 0 && lines.length >= limit) break;
@@ -451,7 +454,14 @@ while IFS=$'\x1f' read -r id opus want_room_id want_room_name source needs_probe
       200) have_file=1 ;;
       404)
         # Genuinely absent: the catalog names a file the archive does not have.
-        if [[ "$needs_probe" == "1" ]]; then
+        #
+        # Gated on whether a room is already KNOWN, not on whether the file was
+        # going to be probed. needs_probe means only "the room NAME is still
+        # unknown" — for an entry recovered from the jobs table the id came from
+        # the token and needs no file at all, so treating a missing file as
+        # fatal there would throw away an id the operator's own records
+        # determined, and report the meeting as unplaceable when it is not.
+        if [[ -z "$room_id" ]]; then
           log "  $id: no file at $ROOT/meetings/$opus (HTTP 404) — left without a room"
           missing=$((missing + 1))
           continue
@@ -580,12 +590,46 @@ catalog has not been written, so fix it and run this again."
     if [[ "$source" == job-binding* ]]; then
       retag_args+=(--job-id "${id%%--stt-*}")
     fi
-    if ! cassini "${retag_args[@]}" >/dev/null 2>"$WORK/retag.err"; then
+    retag_args+=(--json)
+    if ! cassini "${retag_args[@]}" >"$WORK/retag.json" 2>"$WORK/retag.err"; then
       fail_before "re-tagging $id failed:
 $(cat "$WORK/retag.err")
 The catalog has not been written and no artifact was uploaded, so re-running is
 safe. Pass --no-retag to update only the catalog."
     fi
+    # Re-tagging is local and cheap; UPLOADING a whole sealed recording is not.
+    # An entry can be selected purely because its room NAME changed, and the
+    # artifact carries the id and not the name — so for those there is nothing
+    # new to send, and sending it anyway would re-upload the archive on every
+    # run. retag's own change report is the authority on whether the file moved,
+    # which avoids probing it a second time to ask.
+    # Three outcomes, and they must not be collapsed: 0 "it moved, upload it",
+    # 10 "nothing moved, skip the upload", anything else "the summary could not
+    # be read". A two-way test would read an unparseable summary as "nothing
+    # moved" and silently skip the durability step this whole branch exists for.
+    set +e
+    node -e '
+      const fs = require("fs");
+      const summary = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      if (!Array.isArray(summary.changes)) throw new Error("summary has no changes array");
+      process.exit(summary.changes.length > 0 ? 0 : 10);
+    ' "$WORK/retag.json" 2>"$WORK/retag-summary.err"
+    summary_status=$?
+    set -e
+    case "$summary_status" in
+      0) ;;
+      10)
+        log "  $id: room id=$room_id name=${room_name:--} (from ${source}; the published file already names this room)"
+        printf '%s\t%s\t%s\t%s\n' "$id" "$room_id" "$room_name" "$source" >> "$RESOLVED"
+        continue
+        ;;
+      *)
+        fail_before "could not read what re-tagging $id changed:
+$(cat "$WORK/retag-summary.err")
+Nothing has been uploaded and the catalog has not been written, so re-running is
+safe."
+        ;;
+    esac
     # Refuse to CREATE. A PUT onto a path that is not there mints a fresh fileid
     # with no ACL rows, and a leaf under meetings/ with no rule of its own
     # inherits the container's grant to the virtual everyone group — a

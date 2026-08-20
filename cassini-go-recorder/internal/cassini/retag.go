@@ -211,13 +211,18 @@ func retagEditsFromFlags(values retagFlagValues, fs *flag.FlagSet, stderr io.Wri
 		setFlag   string
 		clearFlag string
 		field     string
+		clearSet  bool
 	}{
-		{"room-id", "clear-room-id", "roomId"},
-		{"room-name", "clear-room-name", "roomName"},
-		{"job-id", "clear-job-id", "jobId"},
-		{"attempt-number", "clear-attempt-number", "attemptNumber"},
+		{"room-id", "clear-room-id", "roomId", values.clearRoomID},
+		{"room-name", "clear-room-name", "roomName", values.clearRoomName},
+		{"job-id", "clear-job-id", "jobId", values.clearJobID},
+		{"attempt-number", "clear-attempt-number", "attemptNumber", values.clearAttempt},
 	} {
-		set, clear := provided[pair.setFlag], provided[pair.clearFlag]
+		// Presence AND value. Go's flag package accepts `--clear-room-id=false`
+		// for a bool, so deciding from fs.Visit alone made the explicit
+		// "do NOT clear this" spelling clear the field — the exact opposite of
+		// what it says, on a tool that edits published recordings.
+		set, clear := provided[pair.setFlag], provided[pair.clearFlag] && pair.clearSet
 		if set && clear {
 			fmt.Fprintf(stderr, "retag configuration error: --%s and --%s contradict each other\n", pair.setFlag, pair.clearFlag)
 			return nil, 2
@@ -361,6 +366,31 @@ func retagPortableMeeting(ctx context.Context, inputPath, outPath string, edits 
 	if err := verifyPortableMeetingFile(stagePath, manifest); err != nil {
 		return RetagSummary{}, err
 	}
+	// Read the manifest back OUT of the staged file before committing it.
+	//
+	// verifyPortableMeetingFile checks the audio, which -c:a copy makes almost
+	// impossible to break; what can actually go wrong here is the metadata,
+	// which is the only thing this command changes. A chunk set that did not
+	// survive the muxer, a payload digest that does not match what was written,
+	// a room id that landed in the tags and not the manifest — all of them
+	// produce a file that plays perfectly and is unreadable as a meeting.
+	//
+	// The callers upload the result over a recording that, under D-612, cannot
+	// be deleted. This is the last point at which that is preventable.
+	written, writtenTags, err := readPortableMeetingManifest(stagePath)
+	if err != nil {
+		return RetagSummary{}, fmt.Errorf("verify retagged file: %w", err)
+	}
+	if written.Meeting.RoomID != manifest.Meeting.RoomID ||
+		written.Meeting.RoomName != manifest.Meeting.RoomName ||
+		written.Meeting.JobID != manifest.Meeting.JobID ||
+		written.Meeting.AttemptNumber != manifest.Meeting.AttemptNumber {
+		return RetagSummary{}, fmt.Errorf("verify retagged file: the written manifest does not carry the requested fields")
+	}
+	// And that the mirrors agree with it, since a shell reader believes them.
+	if got := portableTagValue(writtenTags, "CASSINI_ROOM_ID"); got != written.Meeting.RoomID {
+		return RetagSummary{}, fmt.Errorf("verify retagged file: CASSINI_ROOM_ID is %q, manifest says %q", got, written.Meeting.RoomID)
+	}
 	if err := commitPortableMeetingOutput(stagePath, resolvedOut); err != nil {
 		return RetagSummary{}, err
 	}
@@ -384,21 +414,30 @@ func retagOpusTags(existing map[string]string, payloadJSON []byte, manifest port
 
 	tags := make(map[string]string, len(existing)+len(encoded.Chunks))
 	for key, value := range existing {
-		// Drop the OLD payload chunk set wholesale. Copying it forward and
-		// overwriting the chunks that happen to exist in the new one would
-		// leave a stale tail behind when the payload shrinks — and a stale
+		// Drop the OLD payload CHUNKS wholesale. Copying them forward and
+		// overwriting the ones that happen to exist in the new set would leave a
+		// stale tail behind when the payload shrinks — and a stale
 		// CASSINI_PAYLOAD_009 is invisible until a reader trusts a chunk count
 		// that no longer matches.
-		if strings.HasPrefix(strings.ToUpper(key), "CASSINI_PAYLOAD_") {
+		//
+		// Matched on the numbered form specifically, NOT on the
+		// `CASSINI_PAYLOAD_` prefix: that prefix also covers
+		// CASSINI_PAYLOAD_MIME, _ENCODING and _SCHEMA, which the format spec
+		// lists as REQUIRED and which have nothing to do with the chunk set. A
+		// blanket prefix drop deleted all three from every re-tagged file —
+		// invisibly, because nothing this repo ships needs them to decode.
+		if isPayloadChunkTag(key) {
 			continue
 		}
 		tags[key] = value
 	}
 
-	tags["CASSINI_PAYLOAD_CHUNK_COUNT"] = fmt.Sprintf("%d", len(encoded.Chunks))
-	tags["CASSINI_PAYLOAD_SHA256"] = encoded.SHA256
-	tags["CASSINI_PAYLOAD_RAW_BYTES"] = fmt.Sprintf("%d", encoded.RawBytes)
-	tags["CASSINI_PAYLOAD_GZIP_BYTES"] = fmt.Sprintf("%d", encoded.CompressedBytes)
+	// Rewritten rather than deleted-and-re-added, so a file whose producer
+	// spelled them in another case ends up with one of each rather than two.
+	setTagPreservingCase(tags, "CASSINI_PAYLOAD_CHUNK_COUNT", fmt.Sprintf("%d", len(encoded.Chunks)))
+	setTagPreservingCase(tags, "CASSINI_PAYLOAD_SHA256", encoded.SHA256)
+	setTagPreservingCase(tags, "CASSINI_PAYLOAD_RAW_BYTES", fmt.Sprintf("%d", encoded.RawBytes))
+	setTagPreservingCase(tags, "CASSINI_PAYLOAD_GZIP_BYTES", fmt.Sprintf("%d", encoded.CompressedBytes))
 	for idx, chunk := range encoded.Chunks {
 		tags[fmt.Sprintf("CASSINI_PAYLOAD_%03d", idx)] = chunk
 	}
@@ -406,23 +445,72 @@ func retagOpusTags(existing map[string]string, payloadJSON []byte, manifest port
 	// The mirrors. Deleted when the field is gone rather than left stale — a
 	// CASSINI_ROOM_ID that disagrees with the manifest is worse than no tag,
 	// because the shell readers these exist for would believe it.
+	//
+	// Case-insensitively, because ffprobe reports Vorbis comment keys in
+	// whatever case the muxer wrote them and builds disagree. An exact-case
+	// delete on a file tagged `cassini_room_id` would leave the old value in
+	// place AND add the new one under a second key, so the file would name two
+	// different rooms and which one a reader saw would depend on its iteration
+	// order.
+	attempt := ""
+	if manifest.Meeting.AttemptNumber > 0 {
+		attempt = fmt.Sprintf("%d", manifest.Meeting.AttemptNumber)
+	}
 	for tag, value := range map[string]string{
-		"CASSINI_ROOM_ID":   manifest.Meeting.RoomID,
-		"CASSINI_ROOM_NAME": manifest.Meeting.RoomName,
-		"CASSINI_JOB_ID":    manifest.Meeting.JobID,
+		"CASSINI_ROOM_ID":        manifest.Meeting.RoomID,
+		"CASSINI_ROOM_NAME":      manifest.Meeting.RoomName,
+		"CASSINI_JOB_ID":         manifest.Meeting.JobID,
+		"CASSINI_ATTEMPT_NUMBER": attempt,
 	} {
 		if value == "" {
-			delete(tags, tag)
+			deleteTagAnyCase(tags, tag)
 			continue
 		}
-		tags[tag] = value
-	}
-	if manifest.Meeting.AttemptNumber > 0 {
-		tags["CASSINI_ATTEMPT_NUMBER"] = fmt.Sprintf("%d", manifest.Meeting.AttemptNumber)
-	} else {
-		delete(tags, "CASSINI_ATTEMPT_NUMBER")
+		setTagPreservingCase(tags, tag, value)
 	}
 	return tags, nil
+}
+
+// isPayloadChunkTag reports whether a tag is one of the numbered payload chunks
+// — CASSINI_PAYLOAD_000 and friends — and not one of the descriptor tags that
+// merely share the prefix.
+func isPayloadChunkTag(key string) bool {
+	const prefix = "CASSINI_PAYLOAD_"
+	upper := strings.ToUpper(key)
+	if !strings.HasPrefix(upper, prefix) {
+		return false
+	}
+	suffix := upper[len(prefix):]
+	if suffix == "" {
+		return false
+	}
+	for _, r := range suffix {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// setTagPreservingCase writes a tag under the spelling the file already used,
+// falling back to the canonical one. See the note on the mirrors above for why
+// the case matters.
+func setTagPreservingCase(tags map[string]string, canonical, value string) {
+	for key := range tags {
+		if strings.EqualFold(key, canonical) {
+			tags[key] = value
+			return
+		}
+	}
+	tags[canonical] = value
+}
+
+func deleteTagAnyCase(tags map[string]string, canonical string) {
+	for key := range tags {
+		if strings.EqualFold(key, canonical) {
+			delete(tags, key)
+		}
+	}
 }
 
 // retagValuesEqual compares an existing decoded value against a requested one.

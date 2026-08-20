@@ -209,8 +209,14 @@ on every republish — so changing it means re-tagging the file (`cassini retag`
 which both maintenance scripts use). `roomName` lives only in this catalog: a
 display name is editable and a sealed recording is not, so freezing a copy into
 every artifact would mean honouring a rename by rewriting every file that room
-ever produced. The operator stamps the room's *current* name onto the entry on
-every publish, and carries it across a republish when it has none to stamp.
+ever produced. The operator stamps it onto the entry on every publish, from the
+job's Talk binding, and carries the previous value across a republish when it
+has none to stamp.
+
+That name is the one the *job* recorded — the binding is written once, at record
+start — so a republish restamps the same value rather than picking up a rename.
+What moving it out of the artifact buys is not freshness but the ability to
+correct it in one place; nothing refreshes it from Talk today.
 
 `jobId` and `attemptNumber` say which operator job and attempt produced the
 artifact. Both are optional — a meeting published by any other producer has

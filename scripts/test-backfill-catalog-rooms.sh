@@ -364,6 +364,13 @@ while [[ \$# -gt 0 ]]; do
 done
 if [[ -n "\${RETAG_FAILS:-}" ]]; then echo "retag: simulated failure" >&2; exit 1; fi
 cp "\$in" "\$out"
+# The --json summary the payload reads to decide whether an upload is needed.
+# RETAG_CHANGES=none makes it report that the file already named this room.
+if [[ "\${RETAG_CHANGES:-some}" == "none" ]]; then
+  printf '{"input":"%s","output":"%s","meetingId":"m","changes":[]}\n' "\$in" "\$out"
+else
+  printf '{"input":"%s","output":"%s","meetingId":"m","changes":[{"field":"roomId","from":null,"to":"rm_x"}]}\n' "\$in" "\$out"
+fi
 EOF
 chmod +x "$STUBS/curl" "$STUBS/ffprobe" "$STUBS/cassini"
 cp "$STUBS/curl" "$STUBS/curl.real"
@@ -376,6 +383,7 @@ run_payload() {
     CASSINI_ROOM_ID_PEPPER="test-pepper" \
     OPUS_PUT_STATUS="${OPUS_PUT_STATUS:-204}" \
     RETAG_FAILS="${RETAG_FAILS:-}" \
+    RETAG_CHANGES="${RETAG_CHANGES:-some}" \
     bash "$PAYLOAD" --jobs-db "$JOBS_DB" "$@" >"$WORK/stdout" 2>"$WORK/stderr"
 }
 
@@ -662,6 +670,66 @@ elif ! grep -q "rejected the catalog permissions" "$WORK/stderr"; then
   fail "a rejected ACL should say so: $(cat "$WORK/stderr")"
 else
   ok "a rejected ACL is a failure after writing, not a silent success"
+fi
+
+# --- an entry whose file already names the room is not re-uploaded ---
+# Re-tagging is local and cheap; uploading a whole sealed recording is not. An
+# entry can be selected purely because its room NAME changed, and the artifact
+# carries the id and not the name — so there is nothing new to send.
+RETAG_CHANGES=none run_payload --apply && true
+status=$?
+unset RETAG_CHANGES
+if [[ $status -eq 0 ]]; then ok "a no-op re-tag still succeeds"; else fail "expected exit 0, got $status: $(cat "$WORK/stderr")"; fi
+if [[ -f "$WORK/opus-puts.tsv" ]]; then
+  fail "a recording whose file already names the room must not be re-uploaded: $(cat "$WORK/opus-puts.tsv")"
+else
+  ok "a recording whose file already names the room is not re-uploaded"
+fi
+check "it says why nothing was uploaded" "$WORK/stdout" "already names this room"
+# ...and the catalog is still written, because the entry itself did change.
+[[ -f "$WORK/put-body.json" ]] || fail "the catalog must still be written when only the entry changed"
+
+# --- an unreadable change summary is a failure, not "nothing moved" ---
+# A two-way test would read a malformed summary as "no changes" and silently
+# skip the durability step this whole branch exists for.
+cat >"$STUBS/cassini.broken" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+in="\$2"; out=""
+shift 2
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --out) out="\$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+cp "\$in" "\$out"
+printf 'not json at all'
+EOF
+chmod +x "$STUBS/cassini.broken"
+cp "$STUBS/cassini" "$STUBS/cassini.real"
+cp "$STUBS/cassini.broken" "$STUBS/cassini"
+run_payload --apply && true
+status=$?
+cp "$STUBS/cassini.real" "$STUBS/cassini"
+if [[ $status -eq 4 ]]; then
+  ok "an unreadable re-tag summary exits 4 rather than skipping the upload"
+else
+  fail "an unreadable summary should exit 4, got $status"
+fi
+if [[ -f "$WORK/put-body.json" ]]; then fail "it must not write the catalog"; else ok "and writes nothing"; fi
+
+# --- a dry run works on a container with no cassini binary ---
+# Reporting is always safe, so refusing to report because the re-tag binary is
+# absent would deny an operator the one thing they can always do.
+mv "$STUBS/cassini" "$STUBS/cassini.hidden"
+run_payload && true
+status=$?
+mv "$STUBS/cassini.hidden" "$STUBS/cassini"
+if [[ $status -eq 0 ]]; then
+  ok "a dry run does not require the cassini binary"
+else
+  fail "a dry run should not need cassini, got $status: $(cat "$WORK/stderr")"
 fi
 
 # --- a re-run after a successful pass changes nothing ---

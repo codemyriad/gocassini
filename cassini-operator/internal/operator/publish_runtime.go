@@ -87,10 +87,17 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	// The destination is the sink's business, not the publish worker's. A sink
 	// that cannot deliver returns an error and the publish fails — there is no
 	// best-effort delivery (D-533).
-	// The room's current display name, resolved at publish time rather than
+	//
+	// The room's display name, taken from the job's Talk binding rather than
 	// read out of the artifact (D-640). The name is the one part of a meeting's
 	// room that is allowed to change, so the catalog — rewritten on every
-	// publish anyway — is where it lives, and this is the moment it is known.
+	// publish anyway — is where it lives.
+	//
+	// It is the name AS THIS JOB RECORDED IT, not a live lookup: the binding is
+	// written once, at record start, so a republish restamps the same value. The
+	// gain is that the name now sits somewhere it can be corrected in one place
+	// instead of being frozen into an artifact that cannot be rewritten cheaply.
+	// Refreshing it from Talk is a separate thing nothing does yet.
 	_, roomName := rt.talkRoomForJob(task.JobID)
 	location, err := rt.sink().Deliver(rt.ctx, publishDelivery{
 		AttemptSitePath: attemptArtifactSitePath,

@@ -456,6 +456,98 @@ status=$?
 if [[ $status -eq 5 ]]; then ok "the guard also refuses --apply"; else fail "--apply with a contradicting lineage should exit 5, got $status"; fi
 if [[ -f "$WORK/put-body.json" ]]; then fail "a refused --apply must not write the catalog"; else ok "a refused --apply writes nothing"; fi
 
+# --- a merge the recorded lineage AGREES with is allowed ---
+# This is the ordinary shape of the D-622 -> D-640 upgrade: an entry left
+# carrying a stale name-derived id, being moved onto the token-derived one the
+# jobs table says is correct. Refusing it would block the correct merge, and
+# would do it with a message reading "derives to X, not X".
+AGREE_TOKEN="tok-agrees"
+AGREE_ID="$(room_id_for_token "$AGREE_TOKEN")"
+write_fake_catalog <<EOF
+{
+  "version": "cassini.viewer.catalog.v1",
+  "meetings": [
+    {"id": "OLD1", "title": "Weekly Sync", "dateLabel": "2026-05-02 10:30",
+     "audioPath": "./meetings/OLD1.opus",
+     "roomId": "$FROM_ID", "roomName": "weekly sync"}
+  ]
+}
+EOF
+printf 'OLD1\t%s\n' "$AGREE_TOKEN" >"$WORK/jobs.tsv"
+write_jobs_db "$WORK/jobs.tsv"
+run_payload --from "$FROM_ID" --to "$AGREE_ID" --apply && true
+status=$?
+if [[ $status -eq 0 ]]; then
+  ok "a merge onto the id the recorded lineage derives to is allowed"
+else
+  fail "an agreeing merge should exit 0, got $status: $(cat "$WORK/stderr")"
+fi
+refute "and is not reported as a self-contradiction" "$WORK/stdout" "not $AGREE_ID"
+
+# --- an STT variant does not hide its sibling from the guard ---
+# Both <ulid> and <ulid>--stt-<model> strip to the same job id; a map of one
+# would name and count only the last of them.
+write_fake_catalog <<EOF
+{
+  "version": "cassini.viewer.catalog.v1",
+  "meetings": [
+    {"id": "OLD1", "title": "a", "dateLabel": "2026-05-02 10:30",
+     "audioPath": "./meetings/OLD1.opus", "roomId": "$FROM_ID"},
+    {"id": "OLD1--stt-parakeet", "title": "a", "dateLabel": "2026-05-02 10:30",
+     "audioPath": "./meetings/OLD1--stt-parakeet.opus", "roomId": "$FROM_ID"}
+  ]
+}
+EOF
+printf 'OLD1\ttok-old1\n' >"$WORK/jobs.tsv"
+write_jobs_db "$WORK/jobs.tsv"
+run_payload --from "$FROM_ID" --to "$TO_ID" && true
+status=$?
+if [[ $status -eq 5 ]]; then ok "the variant pair is refused"; else fail "expected exit 5, got $status"; fi
+check "the base id is named" "$WORK/stdout" "OLD1: its recorded room derives to"
+check "and so is its STT variant" "$WORK/stdout" "OLD1--stt-parakeet: its recorded room derives to"
+
+# --- an id that is not a derived room id is refused before anything is read ---
+# --to is written verbatim into every moved entry's roomId, so with --no-retag a
+# pasted Talk conversation token would be PUBLISHED in catalog.json — the one
+# thing the whole derivation exists to prevent.
+for bad in a7bc3k9x rm_NOTHEX0000000000 rm_9f2a weekly-sync; do
+  run_payload --from "$FROM_ID" --to "$bad" --apply --no-retag && true
+  status=$?
+  if [[ $status -ne 2 ]]; then
+    fail "--to $bad should exit 2, got $status"
+  elif [[ -f "$WORK/put-body.json" ]]; then
+    fail "--to $bad must not write the catalog"
+  else
+    ok "--to $bad is refused as not a room id"
+  fi
+done
+run_payload --from a7bc3k9x --to "$TO_ID" && true
+status=$?
+if [[ $status -eq 2 ]]; then ok "--from is shape-checked too"; else fail "a malformed --from should exit 2, got $status"; fi
+
+# Restore the fixture the later cases expect.
+write_fake_catalog <<EOF
+{
+  "version": "cassini.viewer.catalog.v1",
+  "meetings": [
+    {"id": "NEW1", "title": "Weekly Sync", "dateLabel": "2026-08-11 10:32",
+     "audioPath": "./meetings/NEW1.opus", "speakerCount": 3,
+     "roomId": "$TO_ID", "roomName": "Weekly Sync"},
+    {"id": "OLD1", "title": "Weekly Sync", "dateLabel": "2026-05-02 10:30",
+     "audioPath": "./meetings/OLD1.opus",
+     "roomId": "$FROM_ID", "roomName": "weekly sync"},
+    {"id": "OLD2", "title": "Weekly Sync", "dateLabel": "2026-04-25 10:30",
+     "audioPath": "./meetings/OLD2.opus",
+     "roomId": "$FROM_ID", "roomName": "weekly sync"},
+    {"id": "OTHER", "title": "Retro", "dateLabel": "2026-04-01 10:30",
+     "audioPath": "./meetings/OTHER.opus",
+     "roomId": "rm_ffffffffffffffff", "roomName": "Retro"}
+  ]
+}
+EOF
+printf 'OLD1\ttok-old1\n' >"$WORK/jobs.tsv"
+write_jobs_db "$WORK/jobs.tsv"
+
 # --- --force overrides, and says so loudly ---
 run_payload --from "$FROM_ID" --to "$TO_ID" --apply --force && true
 status=$?

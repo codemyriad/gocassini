@@ -111,6 +111,21 @@ done
 [[ -n "$FROM" ]] || fail_usage "--from is required"
 [[ -n "$TO" ]] || fail_usage "--to is required"
 [[ "$FROM" != "$TO" ]] || fail_usage "--from and --to are the same id ($FROM); nothing to reattribute"
+# Both must LOOK like derived room ids. The one input that must never get
+# through is a raw Talk conversation token pasted where an id belongs: it is a
+# short alphanumeric string that looks perfectly plausible, and --to is written
+# verbatim into every moved entry's roomId — so with --no-retag it would be
+# published in catalog.json, which is the one thing the derivation exists to
+# prevent. `cassini retag` refuses it on the other path; this closes the path
+# that skips retag.
+for id_flag in from to; do
+  id_value="$FROM"
+  [[ "$id_flag" == "to" ]] && id_value="$TO"
+  [[ "$id_value" =~ ^rm_[0-9a-f]{16}$ ]] || fail_usage "--$id_flag is not a derived room id (want rm_ followed by 16 hex characters), got: $id_value
+Copy the room= value from 'cassini meetings rooms' exactly. If what you have
+looks like a Talk conversation token, it is not a room id and must not be
+published."
+done
 if [[ -n "$JOBS_DB" && "$USE_JOBS_DB" == "0" ]]; then
   fail_usage "--jobs-db and --no-jobs-db contradict each other"
 fi
@@ -269,6 +284,16 @@ done < "$REPORT"
 
 moved="$(grep -c -- "-> $TO$\|-> $TO " "$REPORT" | tr -d ' ')"
 log "$moved meeting(s) would move from $FROM to $TO"
+if grep -q "stays in $TO (name" "$REPORT" 2>/dev/null; then
+  # The merged room takes one display name, including on meetings already in the
+  # target — but a NAME is not this tool's to keep. Since D-640 the operator
+  # stamps it from the job's Talk binding on every publish, and the backfill
+  # restores it from the same source. So the merged label holds until one of
+  # those runs for a meeting that has a job row.
+  log "note: the merged room's display name is not durable for any meeting the"
+  log "  operator has a job row for — publishing or backfilling one restores the"
+  log "  name recorded against its job. The room ID is what this merge makes stick."
+fi
 
 # ---------------------------------------------------------------------------
 # The lineage guard. Runs in a dry run too — see the header.
@@ -293,13 +318,21 @@ if [[ "$USE_JOBS_DB" == "1" ]]; then
     # node:sqlite is unflagged from Node 22.13 and flagged before it; which one
     # the image has depends on when it was built. Run, and retry once with the
     # flag on the single error it fixes.
+    # stderr is captured because the FIRST attempt's module error is a false
+    # alarm whenever the retry is the one that works — and forwarded on every
+    # failure path, including the retry's. Without that, the whole population
+    # the retry exists for (a flagged Node, 22.5 to 22.12) reports every guard
+    # failure with no diagnostic at all, under a message asserting a cause that
+    # may not be the real one.
     run_guard() {
       if node -e "$1" "$JOBS_DB" "$MOVED_IDS" "$TO" 2>"$WORK/guard.err"; then
         return 0
       fi
       if grep -q "node:sqlite" "$WORK/guard.err" 2>/dev/null; then
-        node --experimental-sqlite -e "$1" "$JOBS_DB" "$MOVED_IDS" "$TO" 2>>"$WORK/guard.err"
-        return
+        : > "$WORK/guard.err"
+        if node --experimental-sqlite -e "$1" "$JOBS_DB" "$MOVED_IDS" "$TO" 2>"$WORK/guard.err"; then
+          return 0
+        fi
       fi
       cat "$WORK/guard.err" >&2
       return 1
@@ -317,8 +350,16 @@ if [[ "$USE_JOBS_DB" == "1" ]]; then
       // from is the bare ULID. Mirrors stripVariantSuffix in
       // export-static-meetings.mjs.
       const stripVariant = (id) => id.replace(/--stt-[A-Za-z0-9._-]+$/, "");
+      // One job can have produced several catalog entries — an STT-variant
+      // export publishes <ulid>--stt-<model> beside <ulid>, and both strip to
+      // the same job id. Keyed to a LIST, because a map of one would name and
+      // count only the last of them and under-report the contradiction.
       const byJob = new Map();
-      for (const id of wanted) byJob.set(stripVariant(id), id);
+      for (const id of wanted) {
+        const job = stripVariant(id);
+        if (!byJob.has(job)) byJob.set(job, []);
+        byJob.get(job).push(id);
+      }
 
       const db = new DatabaseSync(dbPath, { readOnly: true });
       let rows;
@@ -330,8 +371,8 @@ if [[ "$USE_JOBS_DB" == "1" ]]; then
       const pepper = Buffer.from(process.env.CASSINI_ROOM_ID_PEPPER || "", "utf8");
       const lines = [];
       for (const row of rows) {
-        const meetingId = byJob.get(String(row.id));
-        if (!meetingId) continue;
+        const meetingIds = byJob.get(String(row.id));
+        if (!meetingIds) continue;
         let binding;
         try { binding = JSON.parse(row.talk_binding); } catch { continue; }
         const token = typeof binding?.room_token === "string" ? binding.room_token.trim() : "";
@@ -340,9 +381,18 @@ if [[ "$USE_JOBS_DB" == "1" ]]; then
         mac.update("cassini.room.token.v1\u0000", "utf8");
         mac.update(token, "utf8");
         const derived = "rm_" + mac.digest("hex").slice(0, 16);
+        // Only a CONTRADICTION is a reason to refuse. When the recorded room
+        // derives to exactly the merge target, the operator is asking for the
+        // thing the data already says — which is the ordinary shape of this
+        // upgrade: an entry left carrying a stale name-derived id, being moved
+        // onto the token-derived one. Refusing that would block the correct
+        // merge, and would do it with a message reading "derives to X, not X".
+        if (derived === to) continue;
         // Derived ids only. The token is a join capability and must not reach a
         // log, a file or an argv.
-        lines.push(`  ${meetingId}: its recorded room derives to ${derived}, not ${to}`);
+        for (const meetingId of meetingIds) {
+          lines.push(`  ${meetingId}: its recorded room derives to ${derived}, not ${to}`);
+        }
       }
       process.stdout.write(lines.length ? lines.join("\n") + "\n" : "");
     ' > "$CONTRADICTS" || fail_before "could not read the operator job database at $JOBS_DB.

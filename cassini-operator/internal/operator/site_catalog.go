@@ -109,9 +109,15 @@ func siteRelativeAsset(raw string) (string, bool) {
 // is the whole of D-640's second decision: a room's display name is editable
 // and a published recording is not, so freezing a copy of the name into every
 // artifact meant a rename could only be honoured by rewriting every file that
-// room ever produced. The operator resolves the CURRENT name from the job's
-// Talk binding on every publish, and the catalog — which is rewritten anyway —
-// is where it lands.
+// room ever produced. The operator reads it from the job's Talk binding on
+// every publish, and the catalog — which is rewritten anyway — is where it
+// lands.
+//
+// The binding is written once, at record start, so this is the name as that job
+// recorded it and a republish restamps the same value. What moving it buys is
+// not freshness but MUTABILITY: it now lives somewhere a correction costs one
+// edit rather than a rewrite of every artifact. Refreshing it from Talk is a
+// separate thing nothing does yet.
 //
 // Empty means "the operator has nothing to say", which is the normal state for
 // a non-Talk job and for one whose room lookup failed. It must not erase a name
@@ -198,9 +204,15 @@ func upsertSiteCatalog(existing siteCatalog, incoming siteCatalog, overlay catal
 //
 // Precedence, highest first:
 //
-//  1. the incoming entry's own value — the exporter read it out of the file it
-//     just published, so it is the freshest claim the artifact can make;
-//  2. the operator's overlay — for a field the artifact cannot carry at all;
+//  1. the operator's overlay — it is resolved from the job's Talk binding at
+//     publish time, and it exists precisely for a field the artifact is not
+//     allowed to be authoritative about. It outranks the incoming entry because
+//     the only way an incoming entry carries a roomName at all is a file packed
+//     before D-640 stopped writing one, and a frozen record-time label must not
+//     beat what the operator knows now;
+//  2. the incoming entry's own value — for everything else, the exporter read
+//     it out of the file just published, so it is the freshest claim the
+//     artifact can make;
 //  3. the entry being replaced — for a value that only ever existed in the
 //     catalog, or that the artifact has not been re-tagged with yet.
 //

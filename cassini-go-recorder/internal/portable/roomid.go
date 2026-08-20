@@ -41,9 +41,13 @@ const (
 	// but not deliberate offline enumeration by someone who wants the token
 	// back. Deployments that care should set it.
 	//
-	// It is a ONE-WAY DOOR: changing it changes every id, while catalog entries
-	// keep the ids they were written with, so rooms split. That is what
-	// scripts/reattribute-catalog-room.sh is for.
+	// Changing it changes every id, while catalog entries keep the ids they
+	// were written with, so rooms split. The remedy depends on whether the
+	// installation still has the job that produced a recording:
+	// scripts/backfill-catalog-rooms.sh re-derives from the recorded Talk token
+	// and repairs every meeting with a surviving job row, which is most of an
+	// archive; scripts/reattribute-catalog-room.sh merges the rest by hand, and
+	// deliberately REFUSES the ones the backfill can fix.
 	RoomIDPepperEnv = "CASSINI_ROOM_ID_PEPPER"
 
 	// roomIDPrefix marks a value as a derived room id. It makes an id

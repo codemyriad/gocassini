@@ -1342,9 +1342,7 @@ export function portableRoomFields(portable) {
   // Which job and attempt produced the artifact (D-640). jobId normally equals
   // the entry's own id — the operator publishes meetings/<jobID>.opus — and is
   // carried anyway, because that equality is a convention of one publish path
-  // and not something a consumer should have to assume. It is also what tells
-  // the reattribution tool that a meeting has a lineage worth refusing to
-  // overwrite.
+  // and not something a consumer should have to assume.
   if (jobId !== "") {
     fields.jobId = jobId;
   }

@@ -65,9 +65,14 @@ type meetingsCatalogEntry struct {
 	// than an operator job has neither.
 	//
 	// JobID normally equals ID, because the operator publishes its artifact
-	// under the job id. It is carried as its own field anyway: that equality is
-	// a convention of one publish path, and this is the field that tells the
-	// reattribution tool a meeting has a lineage it must not overwrite.
+	// under the job id. It is carried as its own field anyway, because that
+	// equality is a convention of one publish path and a consumer should not
+	// have to assume it.
+	//
+	// The maintenance scripts do NOT read it: they derive the job id from the
+	// catalog id themselves, because they must also work on an archive
+	// published before this field existed. It is here for consumers, and as the
+	// thing that makes the convention checkable.
 	JobID         string `json:"jobId,omitempty"`
 	AttemptNumber int    `json:"attemptNumber,omitempty"`
 }
