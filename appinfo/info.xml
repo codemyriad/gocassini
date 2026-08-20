@@ -22,10 +22,22 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
   <licence>agpl</licence>
   <author>codemyriad</author>
   <namespace>Cassini</namespace>
+  <documentation>
+    <user>https://github.com/codemyriad/gocassini/blob/main/docs/start-here.md</user>
+    <admin>https://github.com/codemyriad/gocassini/blob/main/docs/exapp-install.md</admin>
+  </documentation>
   <category>integration</category>
+  <category>ai</category>
   <website>https://github.com/codemyriad/gocassini</website>
   <bugs>https://github.com/codemyriad/gocassini/issues</bugs>
   <repository>https://github.com/codemyriad/gocassini</repository>
+
+  <!-- Store screenshots (D-406). HTTPS-hosted, ≤2 MiB each, up to 10; the store
+       fetches these URLs at listing time (they are not bundled in the tarball).
+       Committed under img/screenshots/, served via raw.githubusercontent.com
+       from main — so they resolve once this lands on main. -->
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/gocassini-browse.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/gocassini-operator.png</screenshot>
 
   <dependencies>
     <!-- HaRP (the recommended AppAPI deploy daemon) requires NC 32+; older
