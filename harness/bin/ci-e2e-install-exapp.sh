@@ -348,6 +348,37 @@ setup_keys=$(jq -r 'keys | join(",")' "$setup_json" 2>/dev/null || echo "")
   || fail "operator/setup must expose ok+state only — a non-admin has no business with the step, the administrator or the paths; got keys: $setup_keys"
 log "OK   operator/setup: readable by $TEST_USER, verdict only (keys: $setup_keys)"
 
+# A fresh install must produce a Team folder whose recordings can be DELETED and
+# MOVED. This is D-612's acceptance, asserted live so the flag cannot silently
+# come back: Cassini used to create the folder with Group Folders'
+# acl_default_no_permission, which on v21+ pins the base permission at READ and
+# makes canDeleteTree false for EVERY path and EVERY account — the service
+# account and instance administrators included. Nothing in the product deletes a
+# recording today, so no other check here would notice.
+#
+# Probed as the service account, because that is the identity that would have to
+# do it, and through a throwaway file so the assertion never depends on a
+# recording existing. Run from inside the ExApp container using the same
+# act-as-user credential the operator itself uses — the account's password is
+# generated and never stored, so Basic auth is not available to us.
+d612_probe=$(docker exec "$CONTAINER_NAME" sh -c '
+  AUTH=$(printf "cassini:%s" "$APP_SECRET" | base64 -w0)
+  DAV="$NEXTCLOUD_URL/remote.php/dav/files/cassini/Cassini/Recordings/d612-probe.txt"
+  H="-H \"AUTHORIZATION-APP-API: $AUTH\" -H \"EX-APP-ID: $APP_ID\" -H \"EX-APP-VERSION: $APP_VERSION\""
+  put=$(curl -sS -o /dev/null -w "%{http_code}" -X PUT --data-binary d612 \
+    -H "AUTHORIZATION-APP-API: $AUTH" -H "EX-APP-ID: $APP_ID" -H "EX-APP-VERSION: $APP_VERSION" "$DAV")
+  del=$(curl -sS -o /dev/null -w "%{http_code}" -X DELETE \
+    -H "AUTHORIZATION-APP-API: $AUTH" -H "EX-APP-ID: $APP_ID" -H "EX-APP-VERSION: $APP_VERSION" "$DAV")
+  printf "%s %s" "$put" "$del"
+' 2>/dev/null || echo "000 000")
+d612_put=${d612_probe%% *}
+d612_del=${d612_probe##* }
+[[ "$d612_put" == "201" || "$d612_put" == "204" ]] \
+  || fail "the service account could not write into the Team folder (PUT -> $d612_put); the substrate is not usable"
+[[ "$d612_del" == "204" ]] \
+  || fail "the service account cannot DELETE inside the Team folder (DELETE -> $d612_del). That is D-612: the folder carries acl_default_no_permission, so no recording in it can ever be deleted or moved, by anyone including administrators."
+log "OK   d612: the service account can write and delete in the Team folder (PUT -> $d612_put, DELETE -> $d612_del)"
+
 # The service account, created because the app was installed — no occ recipe.
 occ user:info cassini >/dev/null 2>&1 \
   || fail "the cassini service account was not created by the install"
