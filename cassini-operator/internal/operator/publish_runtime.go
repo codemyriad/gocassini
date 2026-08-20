@@ -87,12 +87,18 @@ func (rt *Runtime) runPublishJob(task publishTask) {
 	// The destination is the sink's business, not the publish worker's. A sink
 	// that cannot deliver returns an error and the publish fails — there is no
 	// best-effort delivery (D-533).
+	// The room's current display name, resolved at publish time rather than
+	// read out of the artifact (D-640). The name is the one part of a meeting's
+	// room that is allowed to change, so the catalog — rewritten on every
+	// publish anyway — is where it lives, and this is the moment it is known.
+	_, roomName := rt.talkRoomForJob(task.JobID)
 	location, err := rt.sink().Deliver(rt.ctx, publishDelivery{
 		AttemptSitePath: attemptArtifactSitePath,
 		JobID:           task.JobID,
 		AttemptNumber:   task.AttemptNumber,
 		PublishedAtUTC:  finishedAt,
 		AssetDigests:    sealedAssetDigests(task),
+		RoomName:        roomName,
 	})
 	if err != nil {
 		rt.logger.Printf("publish deliver failed id=%s attempt=%d sink=%s attempt_site=%s: %v", task.JobID, task.AttemptNumber, rt.sink().Name(), attemptArtifactSitePath, err)

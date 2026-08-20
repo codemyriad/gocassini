@@ -149,11 +149,42 @@ describe("portableRoomFields", () => {
   });
 
   it("carries a room name with no id", () => {
-    // What a backfilled legacy recording looks like: the published .opus never
-    // carried a Talk token, so only the name is recoverable from it.
+    // What a legacy recording with no job row looks like: its published .opus
+    // never carried a Talk token, so only the name is recoverable from it.
     expect(portableRoomFields({ meeting: { roomName: "Old Standup" } })).toEqual({
       roomName: "Old Standup",
     });
+  });
+
+  it("carries the job and attempt that produced the artifact", () => {
+    expect(
+      portableRoomFields({
+        meeting: { roomId: "rm_9f2a1c3d4e5b6a70", jobId: " 01K3Q7W8ZC9F0MJXQ2NB8V4RTD ", attemptNumber: 2 },
+      }),
+    ).toEqual({
+      roomId: "rm_9f2a1c3d4e5b6a70",
+      jobId: "01K3Q7W8ZC9F0MJXQ2NB8V4RTD",
+      attemptNumber: 2,
+    });
+  });
+
+  it("treats a non-positive or non-integer attempt as not recorded", () => {
+    // Attempts are 1-based, so a zero is "nobody told us" and not an attempt
+    // that could have produced anything.
+    for (const attemptNumber of [0, -1, 1.5, "2", null]) {
+      expect(portableRoomFields({ meeting: { jobId: "01ABC", attemptNumber } })).toEqual({
+        jobId: "01ABC",
+      });
+    }
+  });
+
+  it("reads a room name a pre-D-640 file still carries", () => {
+    // Producers stopped writing roomName — a display name is editable and a
+    // sealed recording is not — but files packed before that change still have
+    // one, and for them it is still the best answer available.
+    expect(
+      portableRoomFields({ meeting: { roomId: "rm_9f2a1c3d4e5b6a70", roomName: "Weekly Sync" } }),
+    ).toEqual({ roomId: "rm_9f2a1c3d4e5b6a70", roomName: "Weekly Sync" });
   });
 });
 

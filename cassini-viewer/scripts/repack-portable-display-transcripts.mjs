@@ -241,11 +241,11 @@ export function buildOpusTags(manifest, payload) {
   // "unknown" and is omitted rather than written as an attempt that cannot
   // exist.
   const jobId = typeof normalized.meeting?.jobId === "string" ? normalized.meeting.jobId.trim() : "";
-  const attemptNumber = Number(normalized.meeting?.attemptNumber);
+  const attemptNumber = normalized.meeting?.attemptNumber;
   if (jobId) {
     tags.CASSINI_JOB_ID = jobId;
   }
-  if (Number.isInteger(attemptNumber) && attemptNumber > 0) {
+  if (typeof attemptNumber === "number" && Number.isInteger(attemptNumber) && attemptNumber > 0) {
     tags.CASSINI_ATTEMPT_NUMBER = String(attemptNumber);
   }
 

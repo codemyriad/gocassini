@@ -70,13 +70,14 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	// reads rather than only the bundle nobody publishes any more (D-462).
 	//
 	// The room's name is also the meeting title, and its token is what the
-	// published room id is derived from (D-622).
+	// published room id is derived from (D-622). The job and attempt go on the
+	// same stamp (D-640), and unconditionally: a bundle always has a job, even
+	// when it has no room, and it is the only lineage a `.opus` published
+	// through `cassini publish <bundle>` would otherwise carry.
 	// Best-effort: a failed stamp costs the room, never the meeting.
 	roomToken, meetingTitle := rt.talkRoomForJob(task.JobID)
-	if meetingTitle != "" || roomToken != "" {
-		if err := SetMeetingBundleRoom(attemptMeetingPath, meetingTitle, roomToken, meetingTitle); err != nil {
-			rt.logger.Printf("meeting room stamp failed id=%s meeting=%s: %v (viewer falls back to Untitled meeting; the meeting will carry no room)", task.JobID, attemptMeetingPath, err)
-		}
+	if err := SetMeetingBundleRoom(attemptMeetingPath, meetingTitle, roomToken, meetingTitle, task.JobID, task.AttemptNumber); err != nil {
+		rt.logger.Printf("meeting room stamp failed id=%s meeting=%s: %v (viewer falls back to Untitled meeting; the meeting will carry no room)", task.JobID, attemptMeetingPath, err)
 	}
 	canonicalMeetingPath, promoteErr := promoteMeetingBundle(rt.cfg.WorkRoot, attemptMeetingPath, task.JobID)
 	if promoteErr != nil {
