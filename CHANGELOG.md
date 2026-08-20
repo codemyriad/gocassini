@@ -14,6 +14,31 @@ sections below are script-managed: `scripts/fold-changelog.sh` (run by
 version and removes the consumed fragments. Edit released sections only to fix
 mistakes; add new entries as fragments. See [`docs/release.md`](docs/release.md).
 
+## [0.2.0-beta.2] - 2026-08-20
+
+### Added
+- **Data-processing & privacy note.** A new `docs/privacy.md` documents what
+  Cassini stores, where it lives, the single optional step (LLM cleanup and
+  summaries) that sends data off your infrastructure, and what deletion and
+  uninstall remove.
+- The App Store listing now shows what Cassini is: screenshots of the meeting viewer and the admin control panel, an `ai` category alongside `integration`, and user/admin documentation links. A screenshot-less entry reads as abandoned; the listing now presents the product.
+- **Meetings now know which conversation they came from, and you can list and filter by it.** Until now a recording's room name was flattened into its title and the room's identity was discarded, so there was no way to ask for "the meetings from this room". Every recording made from here on carries a room id and display name in its portable `.opus` and in the published catalog, and the CLI gains two ways to use that: `cassini meetings rooms` lists the conversations your account has readable recordings from, and `cassini meetings list` accepts `--room`, `--from` and `--to` (all optional, and they combine — `--from 2026-08-01 --to 2026-08-31` means all of August). The agent skill for reading meetings now narrows by room and date before listing, instead of fetching the whole archive and guessing.
+- **A new setting, `CASSINI_ROOM_ID_PEPPER`.** The room id published on a meeting is a one-way derivation of the Talk conversation's identity, never the conversation's own token — for a public conversation that token is also the link that joins it, and every signed-in account can read those recordings. Setting this to a stable secret is what makes the derivation resistant to being reversed: a Talk token is short enough that an unpeppered one can be recovered by working through the possibilities offline. Choose it once — changing it changes every room id, and meetings already published keep the ids they were written with, so a room splits in two until you merge it again.
+
+### Changed
+- The Nextcloud App Store description now discloses that recording and
+  transcription stay on your infrastructure and that only the optional
+  external-LLM step sends data to a third party.
+- **Recordings published before this update can be given their room back, from the files themselves.** Run `./scripts/backfill-catalog-rooms.sh` once, by hand, on the host where the app container runs; it reports what it would change and writes nothing until you add `--apply`. It recovers each meeting's room name from its published recording and derives a room id from that name, because those files never carried the conversation's token and it cannot be recovered from them.
+- **Because of that, one conversation can appear as two rooms** — one identified from its token, for recordings made since the update, and one identified from its name, for everything older. Cassini cannot prove they are the same conversation: two conversations can share a display name, and a room can be renamed between recordings. When you know they are the same, `./scripts/reattribute-catalog-room.sh --from <id> --to <id>` merges them, and like the backfill it shows you every meeting it would move before it writes anything.
+
+### Fixed
+- **Published recordings can be deleted again.** Cassini created its `Cassini` Team folder with a Group Folders flag that, on recent versions, made every file in it permanently undeletable and un-moveable — by everyone, including the Cassini account and Nextcloud administrators. New installations no longer set it, and nothing else changes: who can read a recording is decided by the same per-recording permissions as before. An existing folder cannot be repaired automatically, because Group Folders offers no way to clear the flag after creation; the app's status page now reports the condition and what it costs instead of leaving it invisible.
+- **Setting up recordings no longer fails on an installation that is already correct.** On a Nextcloud that requires password confirmation for administration, an administrator has to create the recordings folder by hand — after which Cassini re-applied the same group and permission settings anyway, was refused, and reported the setup as broken even though nothing was wrong. It now checks what is already in place and only writes what is missing.
+- The app's status page no longer reports a completed setup as healthy when a step failed along the way.
+- **Setting up the recordings folder now reports why it failed.** The Group Folders API answers a refused request with `HTTP 200` and the failure recorded only inside the response body, so Cassini read a refusal as a success and then failed while decoding it — reporting a JSON error that named neither the problem nor the cause. On Nextcloud installations that require password confirmation for administration, every one of these requests is refused, and the app's status page said only that setup was incomplete. Cassini now reports the actual reason and, when it cannot proceed, names the `occ` commands that create the Team folder by hand — which it then adopts on the next enable.
+- **Setting up recordings no longer fails on Nextcloud installations that require password confirmation for user administration.** Cassini creates a `cassini` service account and its group when the app is enabled; on Nextcloud 34 (and any instance enforcing password confirmation) those calls are refused, because an app has no browser session in which to confirm a password. An administrator can create the account and group by hand — but Cassini did not check whether they already existed before trying to create them, so a correctly prepared installation looked identical to an empty one and setup failed permanently. Cassini now looks first, adopts what is already there, and when it genuinely cannot proceed it names the `occ` commands that fix it.
+
 ## [0.2.0-beta.1] - 2026-08-14
 
 ### Added
