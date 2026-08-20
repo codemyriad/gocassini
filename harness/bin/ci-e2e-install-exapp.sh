@@ -349,7 +349,7 @@ setup_keys=$(jq -r 'keys | join(",")' "$setup_json" 2>/dev/null || echo "")
 log "OK   operator/setup: readable by $TEST_USER, verdict only (keys: $setup_keys)"
 
 # A fresh install must produce a Team folder whose recordings can be DELETED and
-# MOVED. This is D-612's acceptance, asserted live so the flag cannot silently
+# MOVED across directories. This is D-612's acceptance, asserted live so the flag cannot silently
 # come back: Cassini used to create the folder with Group Folders'
 # acl_default_no_permission, which on v21+ pins the base permission at READ and
 # makes canDeleteTree false for EVERY path and EVERY account — the service
@@ -363,21 +363,31 @@ log "OK   operator/setup: readable by $TEST_USER, verdict only (keys: $setup_key
 # generated and never stored, so Basic auth is not available to us.
 d612_probe=$(docker exec "$CONTAINER_NAME" sh -c '
   AUTH=$(printf "cassini:%s" "$APP_SECRET" | base64 -w0)
-  DAV="$NEXTCLOUD_URL/remote.php/dav/files/cassini/Cassini/Recordings/d612-probe.txt"
-  H="-H \"AUTHORIZATION-APP-API: $AUTH\" -H \"EX-APP-ID: $APP_ID\" -H \"EX-APP-VERSION: $APP_VERSION\""
+  ROOT="$NEXTCLOUD_URL/remote.php/dav/files/cassini/Cassini/Recordings"
+  SRC="$ROOT/d612-probe.txt"
+  DST="$ROOT/meetings/d612-probe-moved.txt"
   put=$(curl -sS -o /dev/null -w "%{http_code}" -X PUT --data-binary d612 \
-    -H "AUTHORIZATION-APP-API: $AUTH" -H "EX-APP-ID: $APP_ID" -H "EX-APP-VERSION: $APP_VERSION" "$DAV")
+    -H "AUTHORIZATION-APP-API: $AUTH" -H "EX-APP-ID: $APP_ID" -H "EX-APP-VERSION: $APP_VERSION" "$SRC")
+  # Cross-directory MOVE, not a same-directory rename: only the former exercises
+  # canDeleteTree on the source, which is what the flag zeroes.
+  mv=$(curl -sS -o /dev/null -w "%{http_code}" -X MOVE -H "Destination: $DST" -H "Overwrite: T" \
+    -H "AUTHORIZATION-APP-API: $AUTH" -H "EX-APP-ID: $APP_ID" -H "EX-APP-VERSION: $APP_VERSION" "$SRC")
   del=$(curl -sS -o /dev/null -w "%{http_code}" -X DELETE \
-    -H "AUTHORIZATION-APP-API: $AUTH" -H "EX-APP-ID: $APP_ID" -H "EX-APP-VERSION: $APP_VERSION" "$DAV")
-  printf "%s %s" "$put" "$del"
-' 2>/dev/null || echo "000 000")
-d612_put=${d612_probe%% *}
-d612_del=${d612_probe##* }
+    -H "AUTHORIZATION-APP-API: $AUTH" -H "EX-APP-ID: $APP_ID" -H "EX-APP-VERSION: $APP_VERSION" "$DST")
+  # Best effort: if the MOVE did not happen the source is still there.
+  curl -sS -o /dev/null -X DELETE \
+    -H "AUTHORIZATION-APP-API: $AUTH" -H "EX-APP-ID: $APP_ID" -H "EX-APP-VERSION: $APP_VERSION" "$SRC" || true
+  printf "%s %s %s" "$put" "$mv" "$del"
+' 2>/dev/null || echo "000 000 000")
+read -r d612_put d612_mv d612_del <<<"$d612_probe"
 [[ "$d612_put" == "201" || "$d612_put" == "204" ]] \
   || fail "the service account could not write into the Team folder (PUT -> $d612_put); the substrate is not usable"
+# 201 created at the destination, 204 overwrote an existing one.
+[[ "$d612_mv" == "201" || "$d612_mv" == "204" ]] \
+  || fail "the service account cannot MOVE across directories in the Team folder (MOVE -> $d612_mv). That is D-612: the folder carries acl_default_no_permission, which zeroes canDeleteTree for every account. This is the operation D-594 needs."
 [[ "$d612_del" == "204" ]] \
-  || fail "the service account cannot DELETE inside the Team folder (DELETE -> $d612_del). That is D-612: the folder carries acl_default_no_permission, so no recording in it can ever be deleted or moved, by anyone including administrators."
-log "OK   d612: the service account can write and delete in the Team folder (PUT -> $d612_put, DELETE -> $d612_del)"
+  || fail "the service account cannot DELETE inside the Team folder (DELETE -> $d612_del). That is D-612: no recording in the folder can ever be deleted, by anyone including administrators."
+log "OK   d612: the service account can write, cross-directory move and delete in the Team folder (PUT -> $d612_put, MOVE -> $d612_mv, DELETE -> $d612_del)"
 
 # The service account, created because the app was installed — no occ recipe.
 occ user:info cassini >/dev/null 2>&1 \
