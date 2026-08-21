@@ -62,7 +62,11 @@ There is one HTTP client, `chatCompletion(cfg, system, user)` in `llm.go`, used 
 | `ReadableCleanup` (step 8) | `BuildConfig.LLM` | `openai/gpt-4o-mini` | `LLM_MODEL` |
 | `BuildMeetingSummary` (step 9) | `BuildConfig.SummaryLLM` | inherits from `LLM_MODEL`; falls back to `openai/gpt-4o-mini` | `SUMMARY_MODEL` |
 
-Both share the same auth (`OPENROUTER_API_KEY`) and base URL (`OPENROUTER_BASE_URL`, falling back to `LLM_BASE_URL`). If no key is set, `IsConfigured()` returns false and both steps are skipped silently.
+Both share the same auth (`OPENROUTER_API_KEY`) and base URL (`OPENROUTER_BASE_URL`, falling back to `LLM_BASE_URL`).
+
+**The base URL is the switch, not the key.** `IsConfigured()` requires a base URL and an unset kill-switch; the API key is optional, because a self-hosted OpenAI-compatible server (llama.cpp, vLLM, Ollama) usually has none. When the key is empty the `Authorization` header is omitted entirely rather than sent as an empty bearer token, which some self-hosted servers reject. With no base URL, both steps are skipped silently.
+
+Each step also has its own kill-switch — `CASSINI_SUMMARY_DISABLED` and `CASSINI_READABLE_DISABLED` — applied to a copy of the shared config, so disabling one never disables the other.
 
 This split exists because the two tasks have different cost/quality profiles — readable cleanup runs many small batches (cheap is fine), while summary generation is one large prompt where a stronger frontier model is justified. Operators set `SUMMARY_MODEL=anthropic/claude-...` (or similar) without disturbing cleanup.
 
@@ -95,6 +99,10 @@ type BuildConfig struct {
 | `OPENROUTER_BASE_URL` (or `LLM_BASE_URL`) | `LLM.BaseURL` and `SummaryLLM.BaseURL` |
 | `LLM_MODEL` | `LLM.Model` (and `SummaryLLM.Model` until overridden) |
 | `SUMMARY_MODEL` | `SummaryLLM.Model` (overrides the default) |
+| `CASSINI_LLM_TIMEOUT_SEC` | `TimeoutSec` on both (default 900; raise for CPU-bound local models) |
+| `CASSINI_LLM_MAX_TOKENS` | `MaxTokens` on both (default 4096) |
+| `CASSINI_SUMMARY_DISABLED` | `SummaryLLM.Disabled` |
+| `CASSINI_READABLE_DISABLED` | `LLM.Disabled` |
 | `CASSINI_READABLE_STRICT_BATCHES` | `StrictReadableCleanup` |
 | `CASSINI_CACHE_ROOT` | `CacheDir` (default cache location) |
 
@@ -105,7 +113,7 @@ V4 introduces step 9 — meeting summary generation — and nothing else in the 
 - **No new artifact contract.** `summary.md` is plain markdown. The contract is the V0 template in `internal/transcribe/templates/summary.v0.md`, embedded into the system prompt at compile time via `go:embed` so edits to the template propagate without code changes.
 - **No new dependencies.** Reuses `chatCompletion` from `llm.go`.
 - **No manifest schema change.** `manifest.json` does not currently list `summary.md` or summary provenance — see Followups for V6.
-- **No new CLI flags.** Operators set `OPENROUTER_API_KEY` (and optionally `SUMMARY_MODEL`) and the summary path turns on automatically. Unset the key and step 9 is skipped silently along with step 8.
+- **No new CLI flags.** Operators set an endpoint (`LLM_BASE_URL`, or `OPENROUTER_API_KEY` which implies the OpenRouter one) and optionally `SUMMARY_MODEL`, and the summary path turns on automatically. With no endpoint, step 9 is skipped silently along with step 8; `CASSINI_SUMMARY_DISABLED=1` skips step 9 alone.
 - **Test mocking** uses the same `func` package-var pattern step 8 introduced (`readableCleanupFn` / `buildMeetingSummaryFn`), so no live LLM is called in CI.
 
 The acceptance criteria from D-242 map to:

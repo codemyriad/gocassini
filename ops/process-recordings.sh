@@ -3,7 +3,9 @@
 # .opus files in /mnt/data/cassini/processed/ using the native cassini binary
 # with sherpa-onnx for STT.
 #
-# Set OPENROUTER_API_KEY for LLM-based readable transcript cleanup.
+# Set LLM_BASE_URL (any OpenAI-compatible endpoint, hosted or self-hosted) for
+# LLM-based readable transcript cleanup, plus OPENROUTER_API_KEY if it needs a
+# key. Setting only OPENROUTER_API_KEY defaults the endpoint to OpenRouter.
 # Set DEVICE=cuda to use GPU acceleration (default: cpu).
 #
 # Can be run on any host that has ffmpeg, or from inside container 100:
@@ -19,8 +21,8 @@ CASSINI_LIB_DIR="${CASSINI_LIB_DIR:-$(dirname "$CASSINI_BIN")}"
 export CASSINI_CACHE_ROOT="${CASSINI_CACHE_ROOT:-/mnt/data/cassini/.cache}"
 export LD_LIBRARY_PATH="${CASSINI_LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
-  echo "warn: OPENROUTER_API_KEY not set — readable transcript (LLM cleanup) will be skipped" >&2
+if [[ -z "${LLM_BASE_URL:-}" && -z "${OPENROUTER_BASE_URL:-}" && -z "${OPENROUTER_API_KEY:-}" ]]; then
+  echo "warn: no LLM endpoint configured — readable transcript (LLM cleanup) and summaries will be skipped" >&2
 fi
 
 mkdir -p "$PROCESSED_DIR"

@@ -21,9 +21,14 @@ AppAPI only forwards env vars declared in `info.xml`, so declaring it there is a
 | `CASSINI_TALK_RECORDING_SECRET` | Yes for Talk record button | Admin deploy option declared in `appinfo/info.xml` | HMAC shared secret for Talk's recording-backend protocol; must match `spreed.recording_servers.secret`. |
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | Yes for HPB-internal/default Talk recording | Admin deploy option declared in `appinfo/info.xml` | Internal client secret for standalone Nextcloud Talk signaling / HPB; must match signaling config `[clients] internalsecret`. |
 | `CASSINI_TALK_BACKEND_URL` | Optional, sometimes required | Admin deploy option declared in `appinfo/info.xml` | Override base URL the operator uses for status callbacks and OCS calls back to Nextcloud. Use when Talk advertises a URL unreachable from the ExApp container. |
-| `OPENROUTER_API_KEY` | Optional | Admin deploy option | Enables transcript cleanup / summaries through OpenRouter or compatible endpoint. Privacy: when set, the full local transcript is sent to that third party; transcription itself is always local. |
-| `LLM_BASE_URL` | Optional | Admin deploy option | OpenAI-compatible base URL. |
+| `OPENROUTER_API_KEY` | Optional | Admin deploy option | API key for the endpoint above, when it needs one. A self-hosted model server usually does not. |
+| `LLM_BASE_URL` | Optional | Admin deploy option | OpenAI-compatible base URL — a hosted provider or your own model server. This is what enables transcript cleanup / summaries. Privacy: the full local transcript is sent to whatever endpoint this names; transcription itself is always local. |
 | `LLM_MODEL` | Optional | Admin deploy option | Model identifier for cleanup/summaries. |
+| `SUMMARY_MODEL` | Optional | Admin deploy option | Model identifier for summaries, when it should differ from `LLM_MODEL`. |
+| `CASSINI_SUMMARY_DISABLED` | Optional | Admin deploy option | `1` skips summary generation. |
+| `CASSINI_READABLE_DISABLED` | Optional | Admin deploy option | `1` skips readable transcript cleanup. The verbatim transcript is unaffected. |
+| `CASSINI_LLM_TIMEOUT_SEC` | Optional | Admin deploy option | Per-request timeout in seconds (default 900). |
+| `CASSINI_LLM_MAX_TOKENS` | Optional | Admin deploy option | Per-response token limit (default 4096). |
 | `CASSINI_OPERATOR_API_TOKEN` | Optional | Admin deploy option | Bearer token for direct non-AppAPI operator API calls; proxied AppAPI requests are authenticated by AppAPI. |
 
 ## AppAPI-injected runtime vars

@@ -155,7 +155,10 @@ The bundle also passes these optional operator capability envs through when you 
 - `LLM_BASE_URL`
 - `LLM_MODEL`
 - `SUMMARY_MODEL`
+- `CASSINI_LLM_TIMEOUT_SEC`
+- `CASSINI_LLM_MAX_TOKENS`
 - `CASSINI_SUMMARY_DISABLED`
+- `CASSINI_READABLE_DISABLED`
 - `CASSINI_READABLE_STRICT_BATCHES`
 
 They are intentionally not part of the narrow core deployment contract.

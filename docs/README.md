@@ -126,9 +126,11 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
 ### Summarisation & the privacy caveat
 
 Summaries and readable-transcript cleanup are **off by default**. To enable them,
-set `OPENROUTER_API_KEY` (optionally `LLM_BASE_URL`, default
-`https://openrouter.ai/api/v1`, and `LLM_MODEL`/`SUMMARY_MODEL`, default
-`openai/gpt-4o-mini`).
+set `LLM_BASE_URL` to any OpenAI-compatible endpoint — a hosted provider or your
+own model server — plus `LLM_MODEL`/`SUMMARY_MODEL` (default
+`openai/gpt-4o-mini`). Add `OPENROUTER_API_KEY` when the endpoint needs a key;
+setting it alone defaults `LLM_BASE_URL` to `https://openrouter.ai/api/v1`.
+A self-hosted endpoint with no authentication works without a key.
 
 > **Privacy warning.** When these are enabled, the **full local transcript text
 > is sent to the configured third party** (OpenRouter or a compatible endpoint)

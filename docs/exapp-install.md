@@ -238,9 +238,14 @@ Options).
 | `CASSINI_NC_ADMIN_USER` | On instances where no discovered account is an administrator | Administrator account used only to create the `cassini` service account, its narrow owner group, and the Team-folder topology. Leave empty for automatic discovery (see [Administrator discovery](#administrator-discovery)); set it when discovery cannot find one or picks the wrong account. Recordings are still owned, written, and managed by `cassini` |
 | `CASSINI_PUBLISH_SINK` | No | Where published recordings are stored. `nextcloud-files` (the default for an installed app) puts them in the `Cassini` Team folder with per-participant ACLs; `local` keeps them on the app's own volume with no access control and no Nextcloud prerequisites. Set `local` only deliberately |
 | `CASSINI_ARTIFACT_RETENTION` | No | How much of each recording's per-run working files the app keeps on its own volume. `sealed` (the default) reclaims a completed run's working copies — all duplicated in the canonical library or transient staging — and keeps the sealed meeting file and every log; `superseded` reclaims only runs a rerun replaced; `all` keeps everything, as the escape hatch when something must be recovered from a completed run. Nothing removes the last copy of anything, and published recordings are never touched |
-| `OPENROUTER_API_KEY` | No | API key for LLM transcript cleanup + meeting summaries. **When set, the full local transcript is sent to that third-party endpoint** for cleanup/summarisation (transcription itself is always local). Unset, raw transcripts are published without summaries |
-| `LLM_BASE_URL` | No | OpenAI-compatible API base URL; defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
+| `OPENROUTER_API_KEY` | No | API key for the LLM endpoint, when it needs one. A self-hosted model server usually does not — the key is not what enables the feature, `LLM_BASE_URL` is |
+| `LLM_BASE_URL` | No | OpenAI-compatible API base URL for transcript cleanup + meeting summaries — a hosted provider or your own model server. **The full local transcript is sent to whatever endpoint this names** (transcription itself is always local). Unset, raw transcripts are published without summaries. Defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
 | `LLM_MODEL` | No | Model for cleanup/summaries (default `openai/gpt-4o-mini`) |
+| `SUMMARY_MODEL` | No | Model for summaries, when it should differ from `LLM_MODEL` |
+| `CASSINI_SUMMARY_DISABLED` | No | `1` skips summary generation, leaving the rest of the LLM config in place |
+| `CASSINI_READABLE_DISABLED` | No | `1` skips readable transcript cleanup. The verbatim transcript is always produced and published |
+| `CASSINI_LLM_TIMEOUT_SEC` | No | Per-request timeout in seconds (default 900). Raise it for a CPU-bound self-hosted model |
+| `CASSINI_LLM_MAX_TOKENS` | No | Per-response token limit (default 4096). Raise it if long summaries are cut off |
 | `CASSINI_OPERATOR_API_TOKEN` | No | Bearer token for direct non-AppAPI operator API calls. AppAPI-proxied requests are authenticated by Nextcloud/AppAPI |
 
 ### Updating deploy options after install

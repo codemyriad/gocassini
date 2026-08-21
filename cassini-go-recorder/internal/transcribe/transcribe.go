@@ -441,16 +441,21 @@ func DefaultBuildConfig() BuildConfig {
 	if model := os.Getenv("LLM_MODEL"); model != "" {
 		llm.Model = model
 	}
+	if sec := envInt("CASSINI_LLM_TIMEOUT_SEC"); sec > 0 {
+		llm.TimeoutSec = sec
+	}
+	if n := envInt("CASSINI_LLM_MAX_TOKENS"); n > 0 {
+		llm.MaxTokens = n
+	}
 
+	// Copied before either kill-switch is applied, so the two capabilities are
+	// disabled independently of one another.
 	summaryLLM := llm
 	if model := os.Getenv("SUMMARY_MODEL"); model != "" {
 		summaryLLM.Model = model
 	}
-	if envBool("CASSINI_SUMMARY_DISABLED") {
-		// Disable summary independently of readable cleanup. IsConfigured()
-		// requires both APIKey and BaseURL, so blanking the key is sufficient.
-		summaryLLM.APIKey = ""
-	}
+	summaryLLM.Disabled = envBool("CASSINI_SUMMARY_DISABLED")
+	llm.Disabled = envBool("CASSINI_READABLE_DISABLED")
 
 	// Leave an unset model empty: BuildMeetingArtifact derives it from the
 	// quality tier and the resolved device (GPU -> fp32, CPU -> int8). An
