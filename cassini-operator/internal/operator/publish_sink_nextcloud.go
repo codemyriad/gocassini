@@ -225,7 +225,7 @@ type upload struct {
 // The last row is deliberate: a re-delivery replaces content, never access. An
 // audience someone widened by hand in the Files UI survives it.
 func (s *nextcloudFilesPublishSink) deliverAsset(ctx context.Context, item upload) (audienceNeeded bool, err error) {
-	if item.isDir {
+	if false {
 		// A legacy artifactPath export is a directory, which has no single leaf
 		// to reserve, no length to verify, and — the reason for the early exit
 		// rather than a few skipped steps — nothing that should ever be fed to

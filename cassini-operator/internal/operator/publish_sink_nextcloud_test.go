@@ -630,6 +630,28 @@ func TestNCSinkDeliversAnAssetMatchingTheSealedArtifact(t *testing.T) {
 // it, and a re-delivery must replace content without touching access.
 // ---------------------------------------------------------------------------
 
+// assertLeafProtected fails unless the archive ENDED UP with a broad-group rule
+// on path.
+//
+// This is the assertion that actually encodes D-594, and every test that
+// delivers a recording makes it. Asserting only on the request sequence is not
+// enough: a delivery can deny a leaf, delete it, and then re-create it with a
+// bare content PUT, which reads as a perfectly ordered transcript and leaves the
+// recording readable by every account.
+func assertLeafProtected(t *testing.T, nc *fakeNCFiles, path string) {
+	t.Helper()
+	nc.mu.Lock()
+	rules := nc.acls[path]
+	nc.mu.Unlock()
+	if !nc.has(path) {
+		t.Fatalf("%s is not in the archive at all", path)
+	}
+	if !hasExplicitEveryoneGroupRule(rules) {
+		t.Fatalf("%s ended up with no %q rule — it is readable by every account: %+v",
+			path, ncRecordingsEveryoneGroup, rules)
+	}
+}
+
 // opsFor returns the fake's mutation sequence for one path, methods only.
 func (f *fakeNCFiles) opsFor(path string) []string {
 	f.mu.Lock()
@@ -685,6 +707,7 @@ func TestNCSinkRulesTheRecordingBeforeItHasAnyAudioInIt(t *testing.T) {
 	if reservation != "" {
 		t.Fatalf("the leaf was reserved with %d bytes of content, want 0", len(reservation))
 	}
+	assertLeafProtected(t, nc, opus)
 }
 
 func TestNCSinkRepublishReplacesContentButNotAccess(t *testing.T) {
@@ -741,6 +764,7 @@ func TestNCSinkRepublishReplacesContentButNotAccess(t *testing.T) {
 	if !nc.has(opus) {
 		t.Fatalf("the recording disappeared across a re-delivery")
 	}
+	assertLeafProtected(t, nc, opus)
 }
 
 func TestNCSinkFinishesAnAudienceThatNeverLanded(t *testing.T) {
@@ -814,6 +838,10 @@ func TestNCSinkRepairsARecordingDeliveredWithoutAnyRule(t *testing.T) {
 	if string(nc.files[opus]) == "leaked audio" {
 		t.Fatalf("the unprotected recording was left in place")
 	}
+	// And the replacement is protected. Without this the whole test passes for a
+	// delivery that denies, deletes, and then re-creates the leaf with a bare
+	// content PUT — which is D-594 again, with a tidier transcript.
+	assertLeafProtected(t, nc, opus)
 }
 
 func TestNCSinkRefusesToPublishATruncatedUpload(t *testing.T) {
