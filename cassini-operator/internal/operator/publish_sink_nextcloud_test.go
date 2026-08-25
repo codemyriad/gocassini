@@ -835,6 +835,15 @@ func TestNCSinkRepairsARecordingDeliveredWithoutAnyRule(t *testing.T) {
 	if deny > del {
 		t.Fatalf("op sequence for %s = %v — the leaf was deleted before it was denied", opus, got)
 	}
+	// And it has to be a DENY. Asserting only that "a PROPPATCH came first"
+	// passes just as happily for one that grants — which would put a
+	// world-readable copy of the recording into the Team-folder trash, the exact
+	// outcome the ordering exists to prevent.
+	first := nc.aclBodiesFor(opus)[0]
+	if !hasEveryoneGroupDeny(parseACLRulesFromPropertyUpdate(first)) {
+		t.Fatalf("the rule set written before the DELETE does not deny %q, so the trash copy stays readable: %s",
+			ncRecordingsEveryoneGroup, first)
+	}
 	if string(nc.files[opus]) == "leaked audio" {
 		t.Fatalf("the unprotected recording was left in place")
 	}
