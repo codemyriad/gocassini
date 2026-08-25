@@ -213,6 +213,17 @@ setting.
 `cassini meetings` reads published recordings back out of Nextcloud as a given
 Nextcloud user — see [Agent access to meeting recordings](docs/agent-meeting-access.md).
 
+## Agent Skills
+
+The agent-side workflows live in [`skills/`](skills/README.md) — reading a
+meeting, and turning one into a summary, a per-person to-do list, a shaping draft
+or a retrospective. Install them into any agent that reads the
+[Agent Skills format](https://agentskills.io):
+
+```bash
+npx skills add codemyriad/gocassini
+```
+
 ## Legacy Surface
 
 Older wrappers under directories such as:

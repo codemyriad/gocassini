@@ -328,6 +328,10 @@ not. Install ffmpeg, or use `fetch` and inspect elsewhere.
 
 ## Related
 
+- [Agent skills](../skills/README.md) — `cassini-meetings` packages everything on
+  this page as a skill an agent installs with `npx skills add
+  codemyriad/gocassini`, alongside four workflow skills that turn a meeting into
+  a summary, per-person to-dos, a shaping draft or a retrospective.
 - [Portable meeting format](./portable-meeting-format.md) — the contract for the
   `.opus` file this fetches.
 - [Nextcloud recordings permissions](./exapp-nextcloud-recordings-permissions.md)
