@@ -3,6 +3,8 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -25,9 +27,14 @@ import (
 type fakeNCFiles struct {
 	mu      sync.Mutex
 	files   map[string][]byte
+	acls    map[string][]aclRule
 	order   []string
 	ops     []ncFilesOp
 	failPUT map[string]int
+	// truncatePUT makes a PUT store fewer bytes than were sent while still
+	// answering 2xx — an interrupted upload as Nextcloud commits it: the fileid
+	// and the ACL survive, only the content is short.
+	truncatePUT map[string]int
 }
 
 // ncFilesOp is one mutating request the fake saw.
@@ -38,14 +45,69 @@ type ncFilesOp struct {
 }
 
 func newFakeNCFiles() *fakeNCFiles {
-	return &fakeNCFiles{files: map[string][]byte{}, failPUT: map[string]int{}}
+	return &fakeNCFiles{
+		files:       map[string][]byte{},
+		acls:        map[string][]aclRule{},
+		failPUT:     map[string]int{},
+		truncatePUT: map[string]int{},
+	}
 }
 
-// aclBodyFor returns the single ACL body PROPPATCHed onto path, failing unless
-// exactly one was sent — a second write would mean a later pass silently
-// replaced the protection the first one established.
-func (f *fakeNCFiles) aclBodyFor(t *testing.T, path string) string {
-	t.Helper()
+// leafMultistatus renders the Depth-0 response davPropfindLeafState parses,
+// including the separate 404 propstat Nextcloud emits for a property the
+// resource does not carry.
+func leafMultistatus(href string, size int, rules []aclRule) string {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns"><d:response><d:href>`)
+	b.WriteString(href)
+	b.WriteString(`</d:href><d:propstat><d:prop><d:getcontentlength>`)
+	fmt.Fprintf(&b, "%d", size)
+	b.WriteString(`</d:getcontentlength>`)
+	if len(rules) > 0 {
+		b.WriteString(`<nc:acl-list>`)
+		for _, r := range rules {
+			fmt.Fprintf(&b, `<nc:acl><nc:acl-mapping-type>%s</nc:acl-mapping-type><nc:acl-mapping-id>%s</nc:acl-mapping-id><nc:acl-mask>%d</nc:acl-mask><nc:acl-permissions>%d</nc:acl-permissions></nc:acl>`,
+				r.Type, r.ID, r.Mask, r.Permissions)
+		}
+		b.WriteString(`</nc:acl-list>`)
+	}
+	b.WriteString(`</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>`)
+	if len(rules) == 0 {
+		b.WriteString(`<d:propstat><d:prop><nc:acl-list/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat>`)
+	}
+	b.WriteString(`</d:response></d:multistatus>`)
+	return b.String()
+}
+
+// parseACLRulesFromPropertyUpdate reads back what aclRulesXML wrote, so the fake
+// stores the rules a later PROPFIND has to report.
+func parseACLRulesFromPropertyUpdate(body string) []aclRule {
+	var pu struct {
+		ACLs []struct {
+			Type        string `xml:"acl-mapping-type"`
+			ID          string `xml:"acl-mapping-id"`
+			Mask        int    `xml:"acl-mask"`
+			Permissions int    `xml:"acl-permissions"`
+		} `xml:"set>prop>acl-list>acl"`
+	}
+	if err := xml.Unmarshal([]byte(body), &pu); err != nil {
+		return nil
+	}
+	out := make([]aclRule, 0, len(pu.ACLs))
+	for _, a := range pu.ACLs {
+		out = append(out, aclRule{Type: a.Type, ID: a.ID, Mask: a.Mask, Permissions: a.Permissions})
+	}
+	return out
+}
+
+// aclBodiesFor returns every ACL body PROPPATCHed onto path, in order.
+//
+// A delivered recording legitimately receives two: the owner-only deny that
+// covers it before it holds any audio, then the audience. What must never
+// happen is a *third* on a re-delivery, which is what would silently reset an
+// audience someone had widened by hand — asserted directly by the republish
+// tests rather than inferred from a count here.
+func (f *fakeNCFiles) aclBodiesFor(path string) []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var bodies []string
@@ -54,10 +116,18 @@ func (f *fakeNCFiles) aclBodyFor(t *testing.T, path string) string {
 			bodies = append(bodies, op.body)
 		}
 	}
-	if len(bodies) != 1 {
-		t.Fatalf("PROPPATCH count for %s = %d, want exactly 1", path, len(bodies))
+	return bodies
+}
+
+// aclBodyFor returns the last ACL body PROPPATCHed onto path — the rule set the
+// archive actually ended up with — failing if none was sent at all.
+func (f *fakeNCFiles) aclBodyFor(t *testing.T, path string) string {
+	t.Helper()
+	bodies := f.aclBodiesFor(path)
+	if len(bodies) == 0 {
+		t.Fatalf("no PROPPATCH for %s", path)
 	}
-	return bodies[0]
+	return bodies[len(bodies)-1]
 }
 
 // indexOfOp reports where a request sits in the mutation sequence, or -1.
@@ -89,7 +159,34 @@ func (f *fakeNCFiles) server(t *testing.T) *httptest.Server {
 		case "PROPPATCH":
 			body, _ := io.ReadAll(r.Body)
 			f.ops = append(f.ops, ncFilesOp{method: "PROPPATCH", path: rel, body: string(body)})
+			f.acls[rel] = parseACLRulesFromPropertyUpdate(string(body))
 			w.WriteHeader(http.StatusMultiStatus)
+		case "PROPFIND":
+			// Real Nextcloud answers a leaf PROPFIND with a multistatus carrying
+			// the length and the stored nc:acl-list. Serving a bare 200 here —
+			// which is what the old `default` arm did — would make every health
+			// gate read "absent" and every assertion below pass vacuously.
+			// Recorded before the existence check: a health gate that probed an
+			// absent leaf still asked, and the request sequence assertions are
+			// about what the sink did, not about what it found.
+			f.ops = append(f.ops, ncFilesOp{method: "PROPFIND", path: rel})
+			body, ok := f.files[rel]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = io.WriteString(w, leafMultistatus(r.URL.Path, len(body), f.acls[rel]))
+		case http.MethodDelete:
+			f.ops = append(f.ops, ncFilesOp{method: http.MethodDelete, path: rel})
+			if _, ok := f.files[rel]; !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			delete(f.files, rel)
+			delete(f.acls, rel)
+			w.WriteHeader(http.StatusNoContent)
 		case http.MethodPut:
 			if n := f.failPUT[rel]; n != 0 {
 				if n > 0 {
@@ -101,6 +198,9 @@ func (f *fakeNCFiles) server(t *testing.T) *httptest.Server {
 			}
 			body, _ := io.ReadAll(r.Body)
 			_, existed := f.files[rel]
+			if n, ok := f.truncatePUT[rel]; ok && n < len(body) {
+				body = body[:n]
+			}
 			f.files[rel] = body
 			f.order = append(f.order, rel)
 			f.ops = append(f.ops, ncFilesOp{method: http.MethodPut, path: rel, body: string(body)})
@@ -522,5 +622,215 @@ func TestNCSinkDeliversAnAssetMatchingTheSealedArtifact(t *testing.T) {
 	}
 	if !nc.has("Cassini/Recordings/meetings/meeting-a.opus") {
 		t.Error("a matching asset was not delivered")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// D-594: the object must never be reachable with content in it and no rules on
+// it, and a re-delivery must replace content without touching access.
+// ---------------------------------------------------------------------------
+
+// opsFor returns the fake's mutation sequence for one path, methods only.
+func (f *fakeNCFiles) opsFor(path string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, op := range f.ops {
+		if op.path == path {
+			out = append(out, op.method)
+		}
+	}
+	return out
+}
+
+func TestNCSinkRulesTheRecordingBeforeItHasAnyAudioInIt(t *testing.T) {
+	nc := newFakeNCFiles()
+	sink := newNCSink(t, nc.server(t).URL)
+	sink.applyAccess = func(ctx context.Context, jobID string) error {
+		return sink.cfg.davProppatchACLRules(ctx, sink.client, ncRecordingsOwner,
+			ncRecordingsRoot+"/meetings/"+jobID+".opus",
+			recordingACLRules([]aclMapping{{Type: "user", ID: "alice"}}, false))
+	}
+	attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a")
+
+	if _, err := deliverToNC(t, sink, attempt, "meeting-a"); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+
+	opus := "Cassini/Recordings/meetings/meeting-a.opus"
+	// The empty reservation, then the deny, then the audio. A PUT of content
+	// before the PROPPATCH is the bug this ticket is about.
+	got := nc.opsFor(opus)
+	want := []string{"PROPFIND", http.MethodPut, "PROPPATCH", http.MethodPut, "PROPFIND", "PROPPATCH"}
+	if len(got) != len(want) {
+		t.Fatalf("op sequence for %s = %v, want %v", opus, got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("op sequence for %s = %v, want %v", opus, got, want)
+		}
+	}
+
+	// And the reservation really was empty: had it carried the audio, the deny
+	// that follows it would be closing the door after the fact.
+	nc.mu.Lock()
+	var reservation string
+	for _, op := range nc.ops {
+		if op.method == http.MethodPut && op.path == opus {
+			reservation = op.body
+			break
+		}
+	}
+	nc.mu.Unlock()
+	if reservation != "" {
+		t.Fatalf("the leaf was reserved with %d bytes of content, want 0", len(reservation))
+	}
+}
+
+func TestNCSinkRepublishReplacesContentButNotAccess(t *testing.T) {
+	nc := newFakeNCFiles()
+	sink := newNCSink(t, nc.server(t).URL)
+	applied := 0
+	sink.applyAccess = func(ctx context.Context, jobID string) error {
+		applied++
+		return sink.cfg.davProppatchACLRules(ctx, sink.client, ncRecordingsOwner,
+			ncRecordingsRoot+"/meetings/"+jobID+".opus",
+			recordingACLRules([]aclMapping{{Type: "user", ID: "alice"}}, false))
+	}
+	opus := "Cassini/Recordings/meetings/meeting-a.opus"
+
+	if _, err := deliverToNC(t, sink, writeAttemptSite(t, filepath.Join(t.TempDir(), "one"), "meeting-a"), "meeting-a"); err != nil {
+		t.Fatalf("first Deliver() error = %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("audience applied %d times on the first delivery, want 1", applied)
+	}
+
+	// An administrator widens the recording by hand in the Files UI.
+	widened := append(recordingACLRules([]aclMapping{{Type: "user", ID: "alice"}}, false),
+		aclRule{Type: "user", ID: "carol", Mask: aclMaskAll, Permissions: aclPermRead})
+	if err := sink.cfg.davProppatchACLRules(context.Background(), sink.client, ncRecordingsOwner,
+		ncRecordingsRoot+"/meetings/meeting-a.opus", widened); err != nil {
+		t.Fatalf("hand-widening the ACL failed: %v", err)
+	}
+	before := len(nc.aclBodiesFor(opus))
+
+	if _, err := deliverToNC(t, sink, writeAttemptSite(t, filepath.Join(t.TempDir(), "two"), "meeting-a"), "meeting-a"); err != nil {
+		t.Fatalf("republish Deliver() error = %v", err)
+	}
+
+	if applied != 1 {
+		t.Fatalf("audience applied %d times, want 1 — a re-delivery must not rewrite access", applied)
+	}
+	if after := len(nc.aclBodiesFor(opus)); after != before {
+		t.Fatalf("republish sent %d further ACL writes, want 0", after-before)
+	}
+	// Carol's grant is still there, and the audio was still replaced.
+	nc.mu.Lock()
+	rules := nc.acls[opus]
+	nc.mu.Unlock()
+	found := false
+	for _, r := range rules {
+		if r.Type == "user" && r.ID == "carol" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the hand-added grant was reset by a re-delivery: %+v", rules)
+	}
+	if !nc.has(opus) {
+		t.Fatalf("the recording disappeared across a re-delivery")
+	}
+}
+
+func TestNCSinkFinishesAnAudienceThatNeverLanded(t *testing.T) {
+	// The publish died between the content PUT and the audience PROPPATCH, so
+	// the leaf carries only the owner-only baseline. It is protected, but the
+	// meeting is invisible to its own participants — a re-delivery has to
+	// finish the job rather than read "already ruled" and skip it.
+	nc := newFakeNCFiles()
+	sink := newNCSink(t, nc.server(t).URL)
+	fail := true
+	applied := 0
+	sink.applyAccess = func(ctx context.Context, jobID string) error {
+		if fail {
+			return fmt.Errorf("talk is down")
+		}
+		applied++
+		return sink.cfg.davProppatchACLRules(ctx, sink.client, ncRecordingsOwner,
+			ncRecordingsRoot+"/meetings/"+jobID+".opus",
+			recordingACLRules([]aclMapping{{Type: "user", ID: "alice"}}, false))
+	}
+
+	if _, err := deliverToNC(t, sink, writeAttemptSite(t, filepath.Join(t.TempDir(), "one"), "meeting-a"), "meeting-a"); err == nil {
+		t.Fatalf("expected the first delivery to fail when the audience cannot be written")
+	}
+	if nc.has("Cassini/Recordings/catalog.json") {
+		t.Fatalf("a meeting whose audience did not land must not be advertised")
+	}
+
+	fail = false
+	if _, err := deliverToNC(t, sink, writeAttemptSite(t, filepath.Join(t.TempDir(), "two"), "meeting-a"), "meeting-a"); err != nil {
+		t.Fatalf("second Deliver() error = %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("audience applied %d times, want 1 — the unfinished publish was not resumed", applied)
+	}
+}
+
+func TestNCSinkRepairsARecordingDeliveredWithoutAnyRule(t *testing.T) {
+	// The pre-fix archive state, and what any half-written delivery leaves: a
+	// recording sitting in meetings/ with no ACL rows at all, readable by every
+	// account through the container's grant.
+	nc := newFakeNCFiles()
+	opus := "Cassini/Recordings/meetings/meeting-a.opus"
+	nc.files[opus] = []byte("leaked audio")
+	sink := newNCSink(t, nc.server(t).URL)
+	sink.applyAccess = func(ctx context.Context, jobID string) error { return nil }
+
+	if _, err := deliverToNC(t, sink, writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a"), "meeting-a"); err != nil {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+
+	got := nc.opsFor(opus)
+	// The deny MUST precede the DELETE. Deleting an unruled recording moves the
+	// bytes into a Team-folder trash that every account can list and download,
+	// so a bare DELETE relocates the exposure instead of ending it.
+	deny, del := -1, -1
+	for i, m := range got {
+		if m == "PROPPATCH" && deny < 0 {
+			deny = i
+		}
+		if m == http.MethodDelete {
+			del = i
+		}
+	}
+	if deny < 0 || del < 0 {
+		t.Fatalf("op sequence for %s = %v, want a PROPPATCH and a DELETE", opus, got)
+	}
+	if deny > del {
+		t.Fatalf("op sequence for %s = %v — the leaf was deleted before it was denied", opus, got)
+	}
+	if string(nc.files[opus]) == "leaked audio" {
+		t.Fatalf("the unprotected recording was left in place")
+	}
+}
+
+func TestNCSinkRefusesToPublishATruncatedUpload(t *testing.T) {
+	nc := newFakeNCFiles()
+	opus := "Cassini/Recordings/meetings/meeting-a.opus"
+	nc.truncatePUT[opus] = 3
+	sink := newNCSink(t, nc.server(t).URL)
+	sink.applyAccess = func(ctx context.Context, jobID string) error { return nil }
+
+	_, err := deliverToNC(t, sink, writeAttemptSite(t, filepath.Join(t.TempDir(), "attempt"), "meeting-a"), "meeting-a")
+	if err == nil {
+		t.Fatalf("expected a truncated upload to fail the publish")
+	}
+	if !strings.Contains(err.Error(), "truncated") {
+		t.Fatalf("error = %v, want it to name the truncation", err)
+	}
+	if nc.has("Cassini/Recordings/catalog.json") {
+		t.Fatalf("a truncated recording must not be advertised")
 	}
 }
