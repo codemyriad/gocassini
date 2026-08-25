@@ -225,6 +225,15 @@ type upload struct {
 // The last row is deliberate: a re-delivery replaces content, never access. An
 // audience someone widened by hand in the Files UI survives it.
 func (s *nextcloudFilesPublishSink) deliverAsset(ctx context.Context, item upload) (audienceNeeded bool, err error) {
+	if item.isDir {
+		// A legacy artifactPath export is a directory, which has no single leaf
+		// to reserve, no length to verify, and — the reason for the early exit
+		// rather than a few skipped steps — nothing that should ever be fed to
+		// the repair branch, where a missing rule set would DELETE the tree.
+		// This asset shape is carried exactly as it was before D-594.
+		return false, s.putAssetBytes(ctx, item)
+	}
+
 	state, err := s.cfg.davPropfindLeafState(ctx, s.client, ncRecordingsOwner, item.remote)
 	if err != nil {
 		return false, fmt.Errorf("inspect %s: %w", item.remote, err)
@@ -263,11 +272,6 @@ func (s *nextcloudFilesPublishSink) deliverAsset(ctx context.Context, item uploa
 
 // createProtectedLeaf establishes the leaf with an owner-only ACL and no content.
 func (s *nextcloudFilesPublishSink) createProtectedLeaf(ctx context.Context, item upload) error {
-	if item.isDir {
-		// A directory asset is uploaded file by file by putAssetBytes; there is
-		// no single leaf to reserve.
-		return nil
-	}
 	if _, err := s.cfg.davPutEmpty(ctx, s.client, ncRecordingsOwner, item.remote, ncRecordingsContentType); err != nil {
 		return fmt.Errorf("reserve %s: %w", item.remote, err)
 	}
