@@ -253,4 +253,4 @@ them as confidential: do not copy them into anything the user did not ask you to
 write, and do not send them anywhere outside the work at hand.
 
 Full reference, including the app-password walkthrough and every exit code:
-[`docs/agent-meeting-access.md`](../../../docs/agent-meeting-access.md).
+[`docs/agent-meeting-access.md`](../../docs/agent-meeting-access.md).
