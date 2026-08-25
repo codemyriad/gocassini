@@ -253,4 +253,19 @@ them as confidential: do not copy them into anything the user did not ask you to
 write, and do not send them anywhere outside the work at hand.
 
 Full reference, including the app-password walkthrough and every exit code:
-[`docs/agent-meeting-access.md`](../../../docs/agent-meeting-access.md).
+[`docs/agent-meeting-access.md`](../../docs/agent-meeting-access.md).
+
+## What to do with the meeting once you have it
+
+This skill's job ends at the bundle. Four sibling skills turn it into something:
+
+| Skill | Produces |
+|---|---|
+| `cassini-meeting-summary` | the meeting as a fixed-shape summary — overview, decisions, action items, open questions |
+| `cassini-meeting-todos` | a to-do list per participant, each item traceable to who committed to it |
+| `cassini-meeting-shaping` | a shaping draft — requirements, the shapes the room floated, open questions left open |
+| `cassini-meeting-retro` | a retrospective over one meeting or a run of them |
+
+They install from the same package ([`skills/README.md`](../README.md)); use one
+when the user's ask names its output, and keep this skill for finding and
+reading.

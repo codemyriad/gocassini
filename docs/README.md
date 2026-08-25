@@ -163,6 +163,7 @@ Kept because it helps a contributor, installer, or user. Read on demand.
 - [Configuration](./reference/configuration.md) — all runtime knobs.
 - [Artifacts and filesystem](./reference/artifacts-and-filesystem.md) — `.run` / `.meeting` / `.site` / `.opus` and operator layout.
 - [Agent access to meeting recordings](./agent-meeting-access.md) — reading meetings from outside Nextcloud with `cassini meetings`, as a Nextcloud user.
+- [Agent skills](../skills/README.md) — the installable skills an agent uses to read a meeting and turn it into a summary, to-dos, a shaping draft or a retrospective.
 - [Glossary](./reference/glossary.md) — Cassini + media terms.
 - [Troubleshooting](./reference/troubleshooting.md) — common local-dev and runtime issues.
 
@@ -211,5 +212,3 @@ Flagged so readers do not mistake intent for current behavior:
 - Work on the media pipeline: [Mental model](./mental-model.md) → [Core pipeline](./core-pipeline.md) → [Artifacts and filesystem](./reference/artifacts-and-filesystem.md)
 - Work on the browser apps: [Quick start](./quick-start.md) → [Control panel](./components/control-panel.md) → [Viewer](./components/viewer.md)
 - Install on Nextcloud: [ExApp install](./exapp-install.md) → [Env-var reference](./exapp-talk-env-vars.md)
-  </content>
-  </invoke>
