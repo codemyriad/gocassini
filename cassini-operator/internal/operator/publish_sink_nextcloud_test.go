@@ -862,3 +862,63 @@ func TestNCSinkRefusesToPublishATruncatedUpload(t *testing.T) {
 		t.Fatalf("a truncated recording must not be advertised")
 	}
 }
+
+func TestNCSinkDoesNotUndoAHandNarrowedAudience(t *testing.T) {
+	// A leaf sitting at exactly the owner-only baseline is ambiguous: it is what
+	// a publish that died before the audience landed leaves, and equally what an
+	// administrator leaves by narrowing a recording the documented way. Getting
+	// that wrong re-derives the audience and silently reverts their decision —
+	// and for a PUBLIC room it re-grants `everyone` read on a recording somebody
+	// had just made private. The catalog breaks the tie.
+	for _, tc := range []struct {
+		name   string
+		public bool
+	}{
+		{"private meeting narrowed to owner-only", false},
+		{"public meeting made private by hand", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			nc := newFakeNCFiles()
+			sink := newNCSink(t, nc.server(t).URL)
+			applied := 0
+			sink.applyAccess = func(ctx context.Context, jobID string) error {
+				applied++
+				return sink.cfg.davProppatchACLRules(ctx, sink.client, ncRecordingsOwner,
+					ncRecordingsRoot+"/meetings/"+jobID+".opus",
+					recordingACLRules([]aclMapping{{Type: "user", ID: "bob"}}, tc.public))
+			}
+			opus := "Cassini/Recordings/meetings/meeting-a.opus"
+
+			if _, err := deliverToNC(t, sink, writeAttemptSite(t, filepath.Join(t.TempDir(), "one"), "meeting-a"), "meeting-a"); err != nil {
+				t.Fatalf("first Deliver() error = %v", err)
+			}
+
+			// The admin narrows it to exactly the shape recordingACLRules(nil,
+			// false) produces — no participants, everyone denied.
+			if err := sink.cfg.davProppatchACLRules(context.Background(), sink.client, ncRecordingsOwner,
+				ncRecordingsRoot+"/meetings/meeting-a.opus", recordingACLRules(nil, false)); err != nil {
+				t.Fatalf("hand-narrowing failed: %v", err)
+			}
+
+			if _, err := deliverToNC(t, sink, writeAttemptSite(t, filepath.Join(t.TempDir(), "two"), "meeting-a"), "meeting-a"); err != nil {
+				t.Fatalf("republish Deliver() error = %v", err)
+			}
+
+			if applied != 1 {
+				t.Fatalf("audience applied %d times, want 1 — the re-publish reverted a deliberate narrowing", applied)
+			}
+			nc.mu.Lock()
+			after := nc.acls[opus]
+			nc.mu.Unlock()
+			for _, r := range after {
+				if r.Type == "group" && r.ID == ncRecordingsEveryoneGroup && r.Permissions&aclPermRead != 0 {
+					t.Fatalf("the recording is world-readable again after a re-publish: %+v", after)
+				}
+				if r.Type == "user" && r.ID == "bob" {
+					t.Fatalf("the removed participant grant came back: %+v", after)
+				}
+			}
+			assertLeafProtected(t, nc, opus)
+		})
+	}
+}

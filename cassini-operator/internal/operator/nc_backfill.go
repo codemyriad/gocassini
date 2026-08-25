@@ -209,16 +209,25 @@ func (b *backfillNCFiles) run(ctx context.Context, siteRoot string, dryRun bool)
 	// for the same reason: a run that dies half-way leaves files nothing points
 	// at, never an index pointing at files that are not there.
 	for i, u := range local.uploads {
+		// Rules before bytes, exactly as the publish sink does it (D-594). A
+		// leaf inherits the container's read grant to the virtual all-users
+		// group, so uploading first would make every recording in the archive
+		// readable by every account for the length of its own upload — minutes
+		// per file here, and this command exists to move many at once. Reserving
+		// the leaf empty and denying it first costs one request per file and
+		// leaves nothing exposed but a zero-byte name.
+		//
+		// The deny survives the upload that follows because an overwriting PUT
+		// preserves the fileid, which is what groupfolders keys ACL rows by.
+		if _, err := b.cfg.davPutEmpty(ctx, b.client, ncRecordingsOwner, u.remote, "audio/ogg"); err != nil {
+			return fmt.Errorf("reserve %s (%d of %d): %w", u.remote, i+1, len(local.uploads), err)
+		}
+		if err := b.cfg.davProppatchACLRules(ctx, b.client, ncRecordingsOwner, u.remote, recordingACLRules(nil, b.public)); err != nil {
+			return fmt.Errorf("protect %s: %w", u.remote, err)
+		}
 		status, err := b.cfg.davPutFileStatus(ctx, b.client, ncRecordingsOwner, u.remote, u.local, "audio/ogg")
 		if err != nil {
 			return fmt.Errorf("upload %s (%d of %d): %w", u.remote, i+1, len(local.uploads), err)
-		}
-		// Every leaf inherits the container's read grant to the virtual
-		// all-users group, so every leaf must override it — before the catalog
-		// can advertise it. A 204 means the object was already there, which the
-		// guard should have prevented; ACL it anyway rather than assume.
-		if err := b.cfg.davProppatchACLRules(ctx, b.client, ncRecordingsOwner, u.remote, recordingACLRules(nil, b.public)); err != nil {
-			return fmt.Errorf("protect %s: %w", u.remote, err)
 		}
 		b.printf("uploaded %s (%d/%d, %s)", u.remote, i+1, len(local.uploads), backfillStatusWord(status))
 	}

@@ -481,6 +481,30 @@ func hasExplicitEveryoneGroupRule(rules []aclRule) bool {
 	return false
 }
 
+// everyoneRuleGovernsRead reports whether the leaf's broad-group rule actually
+// decides the read bit — i.e. whether the recording's visibility is stated by
+// the leaf rather than inherited from the container.
+//
+// The mask is the part that is easy to miss. Group Folders applies a rule as
+// `perms & ^mask | (rulePerms & mask)`, so a bit the mask does not cover is
+// left inherited: an `everyone` row whose mask omits READ neither grants nor
+// denies anything, and the leaf still picks up the container's `everyone: READ`.
+// The Advanced-permissions dialog produces exactly that when someone flips a
+// recording's `everyone` toggle back to "inherit" — which the operator docs
+// invite them to do.
+//
+// So this, not hasExplicitEveryoneGroupRule, is what the delivery gate has to
+// ask. "There is a rule" and "there is a rule that does anything" are different
+// claims, and only the second one means the recording is not world-readable.
+func everyoneRuleGovernsRead(rules []aclRule) bool {
+	for _, r := range rules {
+		if r.Type == "group" && r.ID == ncRecordingsEveryoneGroup && r.Mask&aclPermRead != 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // audienceApplied reports whether a leaf's rules go beyond the owner-only
 // baseline that recordingACLRules(nil, false) writes at create time — that is,
 // whether the meeting's audience was ever actually frozen onto it.
