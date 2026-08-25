@@ -72,6 +72,29 @@ The recordings live in a system-owned **Team folder** with advanced ACLs and a
 default-deny floor. This gives every user the same `Cassini/Recordings` path
 while allowing Nextcloud to hide individual leaves from non-participants.
 
+### Why a recording is created empty
+
+A leaf that states no rules of its own inherits the container's `everyone: READ`,
+so a recording uploaded and *then* protected is readable by every account for as
+long as the gap between the two requests lasts. Nextcloud offers no atomic
+create-with-ACL for a file, so Cassini closes the gap from the other end: it
+creates the leaf empty, denies it, and only then uploads the audio. An
+overwriting PUT keeps the file's id and Group Folders keys its rules by that id,
+so the deny written against the empty file still covers the audio that replaces
+it. The only thing ever briefly visible without rules is a zero-byte file.
+
+```text
+  PUT <id>.opus (empty)  →  PROPPATCH owner-only deny  →  PUT <id>.opus (audio)
+                                                       →  PROPPATCH audience
+                                                       →  catalog.json
+```
+
+The catalog is written last, so a meeting whose ACL did not land is never
+advertised. If a delivery is interrupted, the next publish repairs the leaf: a
+recording found carrying no `everyone` rule is denied, removed, and re-created.
+The deny before the removal is deliberate — a deleted leaf keeps its rules in the
+Team folder trash, and one with no rules stays readable there.
+
 ### Permission layers
 
 Team-folder mount permissions are a capability ceiling; advanced ACLs cannot
@@ -283,6 +306,11 @@ Access is frozen at publish and remains editable in Nextcloud:
   permissions** to add/remove user, group, or team read rules.
 - Keep the explicit `everyone` rule: deny means private; read means public.
 - Removing participant rules leaves a private recording owner-only.
+- **Edits survive a re-publish.** Re-delivering a meeting replaces its audio and
+  leaves its rules exactly as they are, so a recording you widened or narrowed by
+  hand stays that way. The one exception is a recording that never got an
+  audience at all — where the first publish failed partway — which the next
+  publish finishes.
 - Guest/email/federated participants without a local account need a separate
   normal share or public link, outside Cassini's managed model.
 - Non-Talk/dev recordings have no participant audience and remain owner-only.
