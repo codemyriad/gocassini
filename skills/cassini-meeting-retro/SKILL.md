@@ -41,7 +41,10 @@ For the derived kind, list the meetings you read at the top: a reader must be
 able to tell what the period covered and what it missed.
 
 Use `--json` when you will cite timestamps, which for a derived retro you always
-will. `segments[]` carries `startMs`/`endMs`; `speakers[]` is the roster.
+will. `segments[]` carries `startMs`/`endMs`; `speakers[]` is the roster. The
+markdown form carries **no timestamps at all** — a speaker label and the words,
+nothing else — so without `--json` write `— said by <label> (`<meeting-id>`)` and
+no `at MM:SS`. A timestamp you estimated is a fabricated citation.
 
 ## Write the retrospective
 

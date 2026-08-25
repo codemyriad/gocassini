@@ -27,8 +27,10 @@ skill, which owns finding the meeting; do not re-derive that here.
 
 **Use `--json` for this workflow.** It carries `speakers[]` — the roster that
 decides which sections exist — and `segments[]` with `startMs`/`endMs`, which is
-where every citation comes from. The markdown form has neither in a machine-
-readable shape.
+where every citation comes from. The markdown form prints a speaker label and the
+words and **nothing else**: it has no timestamps anywhere, so an `at MM:SS`
+written from it is a number you made up. Working from markdown alone, drop
+` at MM:SS` from every item and keep the rest.
 
 **The roster is closed.** A section may be headed only by a label in
 `speakers[]`, or by `Unassigned`. A name that appears in the transcript but not

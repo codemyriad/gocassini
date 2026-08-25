@@ -27,6 +27,12 @@ skill, which owns finding the meeting; do not re-derive that here.
 ./bin/cassini meetings context <meeting-id> --json          # per-segment timings
 ```
 
+**Pull `--json` too.** The evidence rule below is the spine of the document and
+it cites timestamps — and the markdown form has none, only a speaker label and
+the words. Without `--json`, cite the speaker alone; an `at 12:04` estimated from
+where a paragraph sits on the page is a fabricated citation in a document whose
+whole point is that its claims are checkable.
+
 **A design discussion usually spans several calls.** Ask which meetings belong to
 this shaping effort and take them in the order they happened — ideas build across
 calls, and the last word on a question is the one that counts. `cassini meetings

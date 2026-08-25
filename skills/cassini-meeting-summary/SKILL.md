@@ -29,8 +29,13 @@ skill, which owns finding the meeting; do not re-derive that here.
 A bundle carries: `# <title>`, then the meeting id, recording time, duration and
 speakers; a `## Summary` section that is either a previously generated summary or
 the line `_No summary was generated for this meeting._`; and a `## Transcript`
-section of `**Speaker:** text` paragraphs. `--json` adds `segments[]` with
-`startMs`/`endMs`, which is where timestamps for attribution come from.
+section of `**Speaker:** text` paragraphs.
+
+**The markdown form carries no timestamps at all** — it prints a speaker label
+and the words, and nothing else. Timings live only in `--json`, under
+`segments[]` as `startMs`/`endMs`. Pull `--json` as well when you intend to cite
+one; working from the markdown alone, attribute to the speaker and write no
+timestamp rather than estimating one from the position of a paragraph.
 
 **Several bundles summarise as several meetings, not as one.** When the user
 hands you more than one, produce one summary per meeting under its own heading
@@ -105,8 +110,8 @@ its top heading becomes a sibling of `## Transcript` instead of a child. Stay at
 `h1`–`h4`.
 
 State the meeting id under the Overview when you produce this outside the
-pipeline, and cite the speaker plus approximate timestamp for anything a reader
-might contest.
+pipeline, and cite the speaker — plus the approximate timestamp when you have
+`--json` — for anything a reader might contest.
 
 ## How to read the material
 
