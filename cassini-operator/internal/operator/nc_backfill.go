@@ -278,11 +278,20 @@ func (b *backfillNCFiles) writeCatalog(ctx context.Context, catalog siteCatalog)
 	if _, err := b.cfg.davPutEmpty(ctx, b.client, ncRecordingsOwner, remote, "application/json"); err != nil {
 		return fmt.Errorf("reserve catalog: %w", err)
 	}
+	// Naming the leftover matters here, because reserving first changes what a
+	// failure leaves behind: a zero-byte catalog.json, which every later publish
+	// refuses to parse rather than overwrite. That is the correct direction to
+	// fail — the alternative is a readable index — but it stops publishing until
+	// someone clears it, so the operator has to be told the file is there.
 	if err := b.cfg.davProppatchACLRules(ctx, b.client, ncRecordingsOwner, remote, catalogProtectionACLRules()); err != nil {
-		return fmt.Errorf("protect catalog before filling it: %w", err)
+		return fmt.Errorf("protect %s before filling it: %w — it is now an empty file, and publishing stays blocked until it is removed or replaced by hand", remote, err)
 	}
+	// Hedged, unlike the message above, because this one cannot know: the PUT
+	// fails both when Nextcloud refused the body and when it stored the body and
+	// the answer never arrived. Telling an operator to delete a file that is
+	// actually the complete index would be worse than saying nothing.
 	if err := b.cfg.davPutBytes(ctx, b.client, ncRecordingsOwner, remote, body, "application/json"); err != nil {
-		return fmt.Errorf("put catalog: %w", err)
+		return fmt.Errorf("put catalog: %w — %s may have been left empty; look at it before removing it, and note that publishing is blocked only while it is unparseable", err, remote)
 	}
 	// The unfiltered index stays private to the owner: the operator reads it as
 	// the owner and serves each caller a filtered view.

@@ -401,15 +401,28 @@ func TestNCSinkProtectsWhatItWritesBeforeAdvertisingIt(t *testing.T) {
 	// The authoritative catalog stays private to the owner unconditionally: the
 	// operator reads it as the owner and serves each caller a filtered view, so
 	// no account has any reason to read the unfiltered index directly.
-	catalogACL := nc.aclBodyFor(t, catalogPath)
-	for _, want := range []string{
-		"<nc:acl-mapping-id>" + ncRecordingsEveryoneGroup + "</nc:acl-mapping-id>",
-		denyAll,
-		"<nc:acl-mapping-id>" + ncRecordingsOwner + "</nc:acl-mapping-id>",
-		grantAll,
-	} {
-		if !strings.Contains(catalogACL, want) {
-			t.Errorf("catalog ACL missing %q: %s", want, catalogACL)
+	//
+	// EVERY rule write is checked, not the one the archive ended up with.
+	// aclBodyFor reads the last PROPPATCH, so an assertion phrased through it
+	// says nothing about the create-time deny — the write that has to be right,
+	// because it is the only one that precedes the content. Clearing it would be
+	// fail-OPEN: an empty rule list leaves the leaf inheriting the container's
+	// read grant for the whole upload, which is the exposure this ordering
+	// exists to close.
+	catalogACLs := nc.aclBodiesFor(catalogPath)
+	if len(catalogACLs) != 2 {
+		t.Fatalf("catalog rule writes = %d, want the create-time deny and the one after the content", len(catalogACLs))
+	}
+	for i, acl := range catalogACLs {
+		for _, want := range []string{
+			"<nc:acl-mapping-id>" + ncRecordingsEveryoneGroup + "</nc:acl-mapping-id>",
+			denyAll,
+			"<nc:acl-mapping-id>" + ncRecordingsOwner + "</nc:acl-mapping-id>",
+			grantAll,
+		} {
+			if !strings.Contains(acl, want) {
+				t.Errorf("catalog ACL %d/%d missing %q: %s", i+1, len(catalogACLs), want, acl)
+			}
 		}
 	}
 
@@ -427,16 +440,44 @@ func TestNCSinkProtectsWhatItWritesBeforeAdvertisingIt(t *testing.T) {
 
 	// The catalog is born under the same rule as a recording, and this is what
 	// pins it. Every assertion above survives deleting the reservation: the ACL
-	// check reads the LAST PROPPATCH, which the unconditional one after the
-	// content write satisfies, and the ordering check compares two positions
-	// that both move together. Only the shape of the sequence — an empty PUT
-	// before the deny, the body after it — can tell the difference.
+	// checks are about rule CONTENT and are satisfied by whichever writes remain,
+	// and the ordering check compares two positions that move together. Only the
+	// shape of the sequence — an empty PUT before the deny, the body after it —
+	// can tell the difference.
+	//
+	// The whole sequence rather than its first two entries, because the trailing
+	// PROPPATCH is load-bearing on its own: the reserve-and-deny is gated on the
+	// catalog being absent, so on every delivery into an archive that already has
+	// one, that trailing write is the ONLY rule write on the path — and the one
+	// that repairs a catalog left unruled by an earlier failure, which nothing
+	// else does, since selfHealLeafProtection never visits a non-`.opus` leaf.
 	//
 	// It has to hold on the ordinary path, not a corner: provisioning never
 	// creates catalog.json (it calls a missing one "the normal fresh-install
 	// state"), so the first publish into any new instance takes this branch.
-	if got, want := nc.sequenceFor(catalogPath), []string{"PUT/0", "PROPPATCH"}; len(got) < 2 || got[0] != want[0] || got[1] != want[1] {
-		t.Errorf("the authoritative index was created before it was denied: %v", got)
+	assertLeafSequence(t, catalogPath, nc.sequenceFor(catalogPath), "PUT/0", "PROPPATCH", "PUT/+", "PROPPATCH")
+}
+
+// assertLeafSequence compares a leaf's request sequence against a shape, where
+// "PUT/+" matches a PUT carrying any non-zero number of bytes and every other
+// entry must match exactly.
+//
+// The byte counts are the point. A reservation and a content write are the same
+// method on the same path, so a shape written in methods alone cannot say which
+// came first — which is exactly the assertion D-594 needs and exactly the one
+// that silently stopped holding when the reservation was added.
+func assertLeafSequence(t *testing.T, path string, got []string, want ...string) {
+	t.Helper()
+	ok := len(got) == len(want)
+	for i := 0; ok && i < len(want); i++ {
+		if want[i] == "PUT/+" {
+			ok = strings.HasPrefix(got[i], "PUT/") && got[i] != "PUT/0"
+			continue
+		}
+		ok = got[i] == want[i]
+	}
+	if !ok {
+		t.Errorf("%s request sequence = %v, want %v", path, got, want)
 	}
 }
 
