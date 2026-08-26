@@ -247,7 +247,8 @@ func (b *backfillNCFiles) run(ctx context.Context, siteRoot string, dryRun bool)
 	return nil
 }
 
-// writeCatalog publishes the index last, then locks it to the owner.
+// writeCatalog publishes the index last, reserved and denied before it holds
+// anything, then locked to the owner again once it does.
 //
 // The local catalog is written as-is rather than merged, which is safe only
 // because the guard proved the destination had no catalog worth merging. The
@@ -262,6 +263,24 @@ func (b *backfillNCFiles) writeCatalog(ctx context.Context, catalog siteCatalog)
 	}
 	body = append(body, '\n')
 	remote := ncRecordingsRoot + "/catalog.json"
+	// Rules before bytes, for the same reason as the recordings above (D-594),
+	// and on a leaf the guard has just proven is absent: PUTting the body
+	// outright creates the authoritative unfiltered index of every migrated
+	// meeting — ids, titles, room names, dates — with no rules of its own,
+	// inheriting the container's `everyone: READ` until the PROPPATCH lands.
+	//
+	// Unconditional rather than gated on "was it missing", because
+	// guardDestinationIsEmpty admits only an absent or meeting-less catalog:
+	// there is never a body here worth preserving. That also makes the aborted
+	// state safe — if the deny below fails, the run stops having created a
+	// zero-byte file rather than a readable index of the whole archive, which
+	// matters because selfHealLeafProtection only ever visits `.opus` leaves.
+	if _, err := b.cfg.davPutEmpty(ctx, b.client, ncRecordingsOwner, remote, "application/json"); err != nil {
+		return fmt.Errorf("reserve catalog: %w", err)
+	}
+	if err := b.cfg.davProppatchACLRules(ctx, b.client, ncRecordingsOwner, remote, catalogProtectionACLRules()); err != nil {
+		return fmt.Errorf("protect catalog before filling it: %w", err)
+	}
 	if err := b.cfg.davPutBytes(ctx, b.client, ncRecordingsOwner, remote, body, "application/json"); err != nil {
 		return fmt.Errorf("put catalog: %w", err)
 	}

@@ -101,6 +101,25 @@ func (d *backfillDest) op(method, path string) (ncFilesOp, bool) {
 	return ncFilesOp{}, false
 }
 
+// sequenceFor renders one path's requests as "METHOD" or "PUT/<bytes>". The
+// byte count is the load-bearing part: a reservation and the content write are
+// both a PUT to the same path, so nothing phrased over methods alone can tell
+// whether the leaf was ruled before it was filled.
+func (d *backfillDest) sequenceFor(path string) []string {
+	var seq []string
+	for _, op := range d.ops {
+		if op.path != path {
+			continue
+		}
+		if op.method == http.MethodPut {
+			seq = append(seq, fmt.Sprintf("PUT/%d", len(op.body)))
+			continue
+		}
+		seq = append(seq, op.method)
+	}
+	return seq
+}
+
 // writeLegacySite lays down the shape a pre-Nextcloud-Files install left on its
 // volume: catalog.json plus meetings/<id>.opus.
 func writeLegacySite(t *testing.T, ids ...string) string {
@@ -219,6 +238,18 @@ func TestBackfillProtectsEverythingItWrites(t *testing.T) {
 	}
 	if opusDeny < 0 || catalogPut < 0 || opusDeny > catalogPut {
 		t.Fatalf("recording must be protected before it is advertised: deny=%d catalog PUT=%d", opusDeny, catalogPut)
+	}
+
+	// Both leaves are born empty and denied before they hold anything — the
+	// catalog as much as the recording. It is the more exposed of the two here:
+	// the local catalog is written as-is rather than merged, so the body is the
+	// entire migrated archive's metadata, and selfHealLeafProtection never
+	// visits a non-`.opus` leaf to repair it afterwards.
+	for _, path := range []string{opusPath, catalogPath} {
+		seq := dest.sequenceFor(path)
+		if len(seq) < 2 || seq[0] != "PUT/0" || seq[1] != "PROPPATCH" {
+			t.Errorf("%s held content before it had any rules: %v", path, seq)
+		}
 	}
 }
 

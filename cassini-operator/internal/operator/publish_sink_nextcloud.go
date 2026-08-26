@@ -171,8 +171,16 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 
 	// The audience is written once, onto the meeting's .opus, and only when that
 	// leaf has not already got one. Which upload that is has to be decided here,
-	// against the same path ncFilesAccessApplier will target, so a layout that
-	// drifts is caught by the tests rather than by a silently unprotected file.
+	// against the same path ncFilesAccessApplier will target.
+	//
+	// The coupling is structural — attemptOpusPath hardcodes <jobID>.opus and the
+	// exporter derives both the catalog id and audioPath from that stem — so it
+	// takes a code change to break, and it fails CLOSED when broken:
+	// createProtectedLeaf still writes the owner-only deny unconditionally, so a
+	// drifted asset publishes over-restricted rather than unruled. It is the
+	// installed-ExApp e2e that would catch it, not the tests in this package:
+	// writeAttemptSite fabricates the site with the same convention the sink
+	// assumes, so a unit test cannot disagree with it.
 	opusRemote := ncRecordingsRoot + "/meetings/" + d.JobID + ".opus"
 	audienceNeeded := false
 
@@ -404,6 +412,20 @@ func (s *nextcloudFilesPublishSink) readRemoteCatalog(ctx context.Context) (cata
 		return siteCatalog{}, false, fmt.Errorf("read remote catalog: %w", err)
 	case status == http.StatusNotFound:
 		return siteCatalog{}, true, nil
+	case status < 200 || status >= 300:
+		// Branch on the status, never on the error — davGetBytes returns a nil
+		// error for a 403 or a 503, so "err == nil" does not mean "this is the
+		// catalog". The rule guardDestinationIsEmpty already follows; this was
+		// the one of the package's three catalog GETs that did not.
+		//
+		// What it costs to get wrong is the whole index, not one meeting's
+		// audience. Meetings is []json.RawMessage, so ANY JSON object without a
+		// `meetings` key parses cleanly as an empty archive — and upsert writes
+		// the merged document whole, so one bad read replaces every meeting in
+		// the archive with the one being delivered. Nothing repairs it: later
+		// publishes append to the truncated file and backfill refuses a
+		// populated destination.
+		return siteCatalog{}, false, fmt.Errorf("read remote catalog: HTTP %d", status)
 	}
 	if err := json.Unmarshal(raw, &catalog); err != nil {
 		// Overwriting an unreadable catalog would silently drop the archive it

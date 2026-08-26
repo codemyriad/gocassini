@@ -35,6 +35,9 @@ type fakeNCFiles struct {
 	// answering 2xx — an interrupted upload as Nextcloud commits it: the fileid
 	// and the ACL survive, only the content is short.
 	truncatePUT map[string]int
+	// failGET answers a path with the given status and a JSON body, which is
+	// what a gateway in front of Nextcloud does and what Sabre never does.
+	failGET map[string]int
 }
 
 // ncFilesOp is one mutating request the fake saw.
@@ -50,6 +53,7 @@ func newFakeNCFiles() *fakeNCFiles {
 		acls:        map[string][]aclRule{},
 		failPUT:     map[string]int{},
 		truncatePUT: map[string]int{},
+		failGET:     map[string]int{},
 	}
 }
 
@@ -142,6 +146,45 @@ func (f *fakeNCFiles) indexOfOp(method, path string) int {
 	return -1
 }
 
+// lastIndexOfOp is indexOfOp for the case where the LAST occurrence is the one
+// that means something — a leaf is PUT twice, and it is the second one that
+// advertises it.
+func (f *fakeNCFiles) lastIndexOfOp(method, path string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := len(f.ops) - 1; i >= 0; i-- {
+		if f.ops[i].method == method && f.ops[i].path == path {
+			return i
+		}
+	}
+	return -1
+}
+
+// sequenceFor renders every request the fake saw against one path as
+// "METHOD" or "PUT/<bytes>", so a test can assert the whole shape of a leaf's
+// delivery rather than the relative position of two of its requests.
+//
+// The distinction is what tells a reservation from a content write, and it is
+// the only thing that does: both are a PUT to the same path, and an assertion
+// phrased over methods and ordering alone stays green when the reservation is
+// deleted.
+func (f *fakeNCFiles) sequenceFor(path string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var seq []string
+	for _, op := range f.ops {
+		if op.path != path {
+			continue
+		}
+		if op.method == http.MethodPut {
+			seq = append(seq, fmt.Sprintf("PUT/%d", len(op.body)))
+			continue
+		}
+		seq = append(seq, op.method)
+	}
+	return seq
+}
+
 func (f *fakeNCFiles) server(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -210,6 +253,14 @@ func (f *fakeNCFiles) server(t *testing.T) *httptest.Server {
 				w.WriteHeader(http.StatusCreated)
 			}
 		case http.MethodGet:
+			// A gateway answering non-2xx with a JSON body — the one shape that
+			// gets past davGetBytes, which reports a nil error for any status.
+			if status, ok := f.failGET[rel]; ok {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, `{"message":"upstream unavailable"}`)
+				return
+			}
 			body, ok := f.files[rel]
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
@@ -362,14 +413,30 @@ func TestNCSinkProtectsWhatItWritesBeforeAdvertisingIt(t *testing.T) {
 		}
 	}
 
-	// Ordering: deny the recording, then advertise it.
+	// Ordering: deny the recording, then advertise it. The advertisement is the
+	// write that puts meetings in the index, which is the LAST PUT on the
+	// catalog — the first one is the empty reservation asserted below.
 	opusDeny := nc.indexOfOp("PROPPATCH", opusPath)
-	catalogWrite := nc.indexOfOp(http.MethodPut, catalogPath)
+	catalogWrite := nc.lastIndexOfOp(http.MethodPut, catalogPath)
 	if opusDeny < 0 || catalogWrite < 0 {
 		t.Fatalf("missing operations: opus deny=%d catalog PUT=%d", opusDeny, catalogWrite)
 	}
 	if opusDeny > catalogWrite {
 		t.Fatalf("recording was advertised at op %d before it was protected at op %d", catalogWrite, opusDeny)
+	}
+
+	// The catalog is born under the same rule as a recording, and this is what
+	// pins it. Every assertion above survives deleting the reservation: the ACL
+	// check reads the LAST PROPPATCH, which the unconditional one after the
+	// content write satisfies, and the ordering check compares two positions
+	// that both move together. Only the shape of the sequence — an empty PUT
+	// before the deny, the body after it — can tell the difference.
+	//
+	// It has to hold on the ordinary path, not a corner: provisioning never
+	// creates catalog.json (it calls a missing one "the normal fresh-install
+	// state"), so the first publish into any new instance takes this branch.
+	if got, want := nc.sequenceFor(catalogPath), []string{"PUT/0", "PROPPATCH"}; len(got) < 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("the authoritative index was created before it was denied: %v", got)
 	}
 }
 
@@ -401,6 +468,41 @@ func TestNCSinkUpsertsTheRemoteCatalogRatherThanReplacingIt(t *testing.T) {
 	}
 	if got := nc.catalogIDs(t); len(got) != 2 {
 		t.Fatalf("remote catalog ids = %v, want no duplicate", got)
+	}
+}
+
+// A catalog GET that is not a 404 and not a success is not an empty archive.
+//
+// davGetBytes reports a nil error for any status, so a status the reader does
+// not branch on reaches json.Unmarshal — and siteCatalog.Meetings is a slice,
+// so any JSON object without a `meetings` key parses cleanly as "no meetings
+// here". Since the merge seeds from what was read and the result is PUT whole,
+// believing that answer replaces every meeting in the archive with the one
+// being delivered, and nothing repairs it afterwards: later publishes append to
+// the truncated file and backfill refuses a populated destination.
+func TestNCSinkRefusesToTreatAFailedCatalogReadAsAnEmptyArchive(t *testing.T) {
+	nc := newFakeNCFiles()
+	sink := newNCSink(t, nc.server(t).URL)
+
+	for _, id := range []string{"meeting-a", "meeting-b"} {
+		attempt := writeAttemptSite(t, filepath.Join(t.TempDir(), id), id)
+		if _, err := deliverToNC(t, sink, attempt, id); err != nil {
+			t.Fatalf("Deliver(%s) error = %v", id, err)
+		}
+	}
+
+	nc.failGET["Cassini/Recordings/catalog.json"] = http.StatusServiceUnavailable
+	_, err := deliverToNC(t, sink, writeAttemptSite(t, filepath.Join(t.TempDir(), "c"), "meeting-c"), "meeting-c")
+	if err == nil {
+		t.Fatal("a 503 carrying a JSON body was accepted as the archive's index")
+	}
+	if !strings.Contains(err.Error(), "503") {
+		t.Errorf("the failure should name the status it got, not a parse error: %v", err)
+	}
+
+	// The point of failing: the index still names everything it did before.
+	if got := nc.catalogIDs(t); len(got) != 2 || got[0] != "meeting-a" || got[1] != "meeting-b" {
+		t.Fatalf("remote catalog ids = %v, want the archive intact", got)
 	}
 }
 
