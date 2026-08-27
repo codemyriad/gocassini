@@ -216,7 +216,7 @@ Nextcloud user — see [Agent access to meeting recordings](docs/agent-meeting-a
 ## Agent Skills
 
 The agent-side workflows live in [`skills/`](skills/README.md) — reading a
-meeting, and turning one into a summary, a per-person to-do list, a shaping draft
+meeting, and turning one into a summary, grounded commitments, a shaping draft
 or a retrospective. Install them into any agent that reads the
 [Agent Skills format](https://agentskills.io):
 
