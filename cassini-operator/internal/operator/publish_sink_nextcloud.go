@@ -162,7 +162,7 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 		}
 	}
 
-	if err := s.upsertRemoteCatalog(ctx, incoming); err != nil {
+	if err := s.upsertRemoteCatalog(ctx, incoming, catalogEntryOverlay{RoomName: d.RoomName}); err != nil {
 		return "", err
 	}
 
@@ -177,7 +177,7 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 // upsertRemoteCatalog merges the delivered meetings into the catalog already in
 // Nextcloud Files and writes it back. Read-merge-write, never overwrite: the
 // attempt site knows about one meeting and the archive knows about all of them.
-func (s *nextcloudFilesPublishSink) upsertRemoteCatalog(ctx context.Context, incoming siteCatalog) error {
+func (s *nextcloudFilesPublishSink) upsertRemoteCatalog(ctx context.Context, incoming siteCatalog, overlay catalogEntryOverlay) error {
 	catalogRemote := ncRecordingsRoot + "/catalog.json"
 
 	var existing siteCatalog
@@ -195,7 +195,7 @@ func (s *nextcloudFilesPublishSink) upsertRemoteCatalog(ctx context.Context, inc
 		}
 	}
 
-	merged, err := upsertSiteCatalog(existing, incoming)
+	merged, err := upsertSiteCatalog(existing, incoming, overlay)
 	if err != nil {
 		return err
 	}

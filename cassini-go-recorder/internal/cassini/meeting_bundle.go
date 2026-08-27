@@ -34,8 +34,14 @@ type MeetingBundleManifest struct {
 	// directory — the same exposure as the jobs table it came from. The token
 	// goes no further: packing derives, and the artifact carries only the
 	// derivation.
-	RoomToken        string            `json:"room_token,omitempty"`
-	RoomName         string            `json:"room_name,omitempty"`
+	RoomToken string `json:"room_token,omitempty"`
+	RoomName  string `json:"room_name,omitempty"`
+	// JobID and AttemptNumber name the operator job and attempt that built the
+	// bundle (D-640), stamped by the same call that stamps the room. They exist
+	// here so `cassini publish <bundle>` — the path that packs a bundle without
+	// going through the seal — carries the same provenance the seal does.
+	JobID            string            `json:"job_id,omitempty"`
+	AttemptNumber    int               `json:"attempt_number,omitempty"`
 	State            string            `json:"state,omitempty"`
 	Stage            string            `json:"stage,omitempty"`
 	Error            string            `json:"error,omitempty"`

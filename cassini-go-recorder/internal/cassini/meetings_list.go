@@ -39,9 +39,10 @@ meeting dates do not. A bare date covers the whole day at both ends, so
 --from 2026-08-01 --to 2026-08-31 means all of August. A meeting whose date
 cannot be read is left out of any dated range and reported separately.
 
---room takes the room= value from `+"`cassini meetings rooms`"+`, which is the
-room's id where one is known and "name:<display name>" where it is not. A
-meeting that records no room at all is matched by no --room value.
+--room takes the room= value from `+"`cassini meetings rooms`"+` — an opaque
+derived id, shaped rm_<16 hex>. Copy it; it is not the conversation's name and
+not its Talk token, and neither of those will match. A meeting that records no
+room at all is matched by no --room value.
 
 `+"\n")
 		fs.PrintDefaults()

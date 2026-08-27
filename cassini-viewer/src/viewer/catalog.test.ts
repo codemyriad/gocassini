@@ -114,6 +114,49 @@ describe("validateMeetingCatalog", () => {
     expect(catalog.meetings[1]?.roomName).toBe("Old Standup");
   });
 
+  it("carries the job and attempt that produced a meeting", () => {
+    // This function rebuilds every entry from an explicit literal, so a field
+    // missing there is dropped at load with no error — present in the catalog
+    // the browser just fetched and invisible in the browser.
+    const catalog = validateMeetingCatalog({
+      version: "cassini.viewer.catalog.v1",
+      meetings: [
+        {
+          id: "01K3Q7W8ZC9F0MJXQ2NB8V4RTD",
+          audioPath: "./meetings/01K3Q7W8ZC9F0MJXQ2NB8V4RTD.opus",
+          title: "Weekly Sync",
+          dateLabel: "2026-08-11 10:32",
+          jobId: "01K3Q7W8ZC9F0MJXQ2NB8V4RTD",
+          attemptNumber: 2,
+        },
+      ],
+    });
+
+    expect(catalog.meetings[0]?.jobId).toBe("01K3Q7W8ZC9F0MJXQ2NB8V4RTD");
+    expect(catalog.meetings[0]?.attemptNumber).toBe(2);
+  });
+
+  it("reads a bad attempt number as not recorded rather than failing the load", () => {
+    // Lineage, not something the viewer opens a meeting with. validateMeetingCatalog
+    // has no per-entry recovery, so throwing here would let one stray value in a
+    // hand-edited catalog take down the whole meeting list.
+    for (const attemptNumber of [0, -1, 1.5, "2", null]) {
+      const catalog = validateMeetingCatalog({
+        version: "cassini.viewer.catalog.v1",
+        meetings: [
+          {
+            id: "job-1",
+            audioPath: "./meetings/job-1.opus",
+            title: "Weekly Sync",
+            dateLabel: "2026-08-11 10:32",
+            attemptNumber,
+          },
+        ],
+      });
+      expect(catalog.meetings[0]?.attemptNumber).toBeUndefined();
+    }
+  });
+
   it("rejects invalid catalog versions", () => {
     expect(() =>
       validateMeetingCatalog({

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -35,7 +36,7 @@ import (
 // The meeting bundle is passed in rather than re-derived: it is what the build
 // recorded and what the seal task carries, so a seal packs the bundle the DB
 // says it is packing rather than one that merely shares its naming convention.
-func packAttemptMeetingToOpus(ctx context.Context, cassiniBin, meetingPath, opusPath, title, roomToken, roomName string, logSink io.Writer) (string, error) {
+func packAttemptMeetingToOpus(ctx context.Context, cassiniBin, meetingPath, opusPath, title, roomToken, roomName, jobID string, attemptNumber int, logSink io.Writer) (string, error) {
 	if strings.TrimSpace(meetingPath) == "" {
 		return "", fmt.Errorf("no meeting bundle to seal")
 	}
@@ -67,6 +68,17 @@ func packAttemptMeetingToOpus(ctx context.Context, cassiniBin, meetingPath, opus
 	}
 	if strings.TrimSpace(roomName) != "" {
 		args = append(args, "--room-name", strings.TrimSpace(roomName))
+	}
+	// Which job and attempt produced this file (D-640). The job id is already
+	// the artifact's published name — the sink writes meetings/<jobID>.opus —
+	// so recording it inside the file discloses nothing new; the attempt is not
+	// recoverable from anything else, and is what tells a rerun's output apart
+	// from the output it replaced.
+	if strings.TrimSpace(jobID) != "" {
+		args = append(args, "--job-id", strings.TrimSpace(jobID))
+	}
+	if attemptNumber > 0 {
+		args = append(args, "--attempt-number", strconv.Itoa(attemptNumber))
 	}
 	cmd := exec.CommandContext(ctx, cassiniBin, args...)
 	if logSink != nil {

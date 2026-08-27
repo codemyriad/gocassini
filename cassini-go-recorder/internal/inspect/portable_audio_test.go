@@ -60,6 +60,34 @@ func TestInspectPathPortableMeetingOpus(t *testing.T) {
 	if strings.Contains(out.String(), "attachment ") {
 		t.Errorf("did not expect attachment line when summary absent, got %q", out.String())
 	}
+	// A file packed by hand genuinely has no origin, and a row of dashes would
+	// read like a lookup that failed rather than like nothing to report.
+	if strings.Contains(out.String(), "origin ") {
+		t.Errorf("did not expect an origin line when the meeting has no room or job, got %q", out.String())
+	}
+}
+
+// `cassini inspect` is what the docs point people at to check by hand that a
+// recording carries its room. Until D-640 it decoded the room and dropped it, so
+// the only way to verify the producer chain was a raw ffprobe against tag names
+// the docs did not list — a poor answer then, and a worse one now that a
+// maintenance tool can rewrite these fields and an operator has to confirm the
+// rewrite landed.
+func TestInspectPathPortableMeetingOpusSurfacesTheOrigin(t *testing.T) {
+	requireFFMediaTools(t)
+
+	tmp := t.TempDir()
+	path := createPortableOpusFixture(t, filepath.Join(tmp, "with-origin.opus"), portableFixtureOptions{
+		withOrigin: true,
+	})
+
+	var out bytes.Buffer
+	if err := InspectPath(&out, path); err != nil {
+		t.Fatalf("inspect portable opus: %v", err)
+	}
+	if !strings.Contains(out.String(), "origin room_id=rm_9f2a1c3d4e5b6a70 room_name=- job_id=01K3Q7W8ZC9F0MJXQ2NB8V4RTD attempt=2\n") {
+		t.Errorf("expected an origin line naming the room and the job, got %q", out.String())
+	}
 }
 
 func TestInspectPathPortableMeetingOpusSurfacesSummary(t *testing.T) {
@@ -305,6 +333,7 @@ func createTestOpus(t *testing.T, outPath string) string {
 type portableFixtureOptions struct {
 	stale       bool
 	withSummary bool
+	withOrigin  bool
 }
 
 func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtureOptions) string {
@@ -392,6 +421,11 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 			},
 		},
 	})
+	if opts.withOrigin {
+		manifest.Meeting.RoomID = "rm_9f2a1c3d4e5b6a70"
+		manifest.Meeting.JobID = "01K3Q7W8ZC9F0MJXQ2NB8V4RTD"
+		manifest.Meeting.AttemptNumber = 2
+	}
 	if opts.withSummary {
 		manifest.Provenance.MeetingSummary = &portable.ProcessingStep{
 			Backend: "openai-compatible",

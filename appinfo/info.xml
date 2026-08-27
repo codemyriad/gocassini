@@ -113,7 +113,7 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       <variable>
         <name>CASSINI_ROOM_ID_PEPPER</name>
         <display-name>Room id pepper (optional)</display-name>
-        <description>Deployment-wide secret mixed into the one-way derivation of each meeting's room id, so the Talk conversation token it is derived from cannot be recovered by enumeration. Recommended. Choose it ONCE: changing it changes every room id, and meetings already published keep the ids they were written with, so rooms split until they are merged again with scripts/reattribute-catalog-room.sh.</description>
+        <description>Deployment-wide secret mixed into the one-way derivation of each meeting's room id, so the Talk conversation token it is derived from cannot be recovered by enumeration. Recommended. Choose it ONCE: changing it changes every room id, and meetings already published keep the ids they were written with, so rooms split. Re-running scripts/backfill-catalog-rooms.sh --apply repairs every meeting this installation has a job row for; only recordings imported from elsewhere need the manual merge in scripts/reattribute-catalog-room.sh.</description>
       </variable>
       <variable>
         <name>CASSINI_OPERATOR_API_TOKEN</name>

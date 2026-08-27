@@ -158,6 +158,25 @@ The following tags are RECOMMENDED summary tags:
 - `CASSINI_READABLE_MODEL=<cleanup model>`
 - `CASSINI_READABLE_SOURCE=<generated|embedded|disabled>`
 
+The following tags are OPTIONAL, and mirror the origin fields in the `meeting`
+object. Each is emitted only when the value is known — absent, never empty,
+because an empty `CASSINI_ROOM_ID` would read as "this meeting has a room whose
+id is the empty string" and every consumer would have to check both presence and
+emptiness.
+
+- `CASSINI_ROOM_ID=rm_<16 lowercase hex>`
+- `CASSINI_ROOM_NAME=<display name>` — legacy, no longer written; see below
+- `CASSINI_JOB_ID=<producer job id>`
+- `CASSINI_ATTEMPT_NUMBER=<decimal integer, 1-based>`
+
+They are a convenience mirror for readers that are neither Go nor Node: the
+values are already in the embedded manifest, but reading them out of it means
+concatenating N chunks, base64url-decoding, gunzipping and parsing JSON — which
+is a program, while these fall out of one `ffprobe -show_entries format_tags`
+call. **The manifest is the record and these are the copy.** A tool that edits
+one MUST edit the other; a consumer that finds them disagreeing SHOULD believe
+the manifest.
+
 ### Payload chunk tags
 
 The encoded payload MUST be split into tags named:
@@ -236,6 +255,28 @@ fields such as:
 - created time
 - duration
 - language
+
+It MAY also carry where the meeting came from. All four are optional, and a
+meeting with none of them is an ordinary state, not a broken one:
+
+- `roomId` — the conversation the meeting was recorded in, as a **deterministic
+  one-way derivation** of that room's identity, shaped `rm_<16 lowercase hex>`.
+  Never the identity itself: for a Nextcloud Talk recording it derives from the
+  conversation token, and for a public conversation that token is also the link
+  that joins it — so publishing it alongside a recording would turn "may read a
+  past recording" into "may join the live conversation". Producers MUST NOT
+  write a raw room token into this file, in this field or any other.
+- `roomName` — **LEGACY, read-only.** The room's display name frozen at record
+  time. Producers stopped writing it: a display name is editable and a published
+  recording is not, so honouring a rename would mean rewriting every artifact
+  that room ever produced. The name at record time is still available as the
+  `title`; the room's *current* name belongs wherever the producer keeps mutable
+  metadata. Consumers MUST still read it, because files written before the
+  change carry it.
+- `jobId` — the producer job that made this artifact. Optional; a file packed by
+  hand has none.
+- `attemptNumber` — which attempt of that job, 1-based. Absent means unknown, so
+  a consumer MUST treat a non-positive value as absent rather than as an attempt.
 
 ### `audio`
 

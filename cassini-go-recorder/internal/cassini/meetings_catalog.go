@@ -60,6 +60,21 @@ type meetingsCatalogEntry struct {
 	// and a meeting that came from no conversation at all never gets either.
 	RoomID   string `json:"roomId,omitempty"`
 	RoomName string `json:"roomName,omitempty"`
+	// JobID and AttemptNumber name the operator job and attempt that produced
+	// the recording (D-640). Optional — a meeting published by anything other
+	// than an operator job has neither.
+	//
+	// JobID normally equals ID, because the operator publishes its artifact
+	// under the job id. It is carried as its own field anyway, because that
+	// equality is a convention of one publish path and a consumer should not
+	// have to assume it.
+	//
+	// The maintenance scripts do NOT read it: they derive the job id from the
+	// catalog id themselves, because they must also work on an archive
+	// published before this field existed. It is here for consumers, and as the
+	// thing that makes the convention checkable.
+	JobID         string `json:"jobId,omitempty"`
+	AttemptNumber int    `json:"attemptNumber,omitempty"`
 }
 
 // roomSelector is the value `meetings rooms` prints and `meetings list --room`
