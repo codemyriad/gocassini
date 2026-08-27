@@ -2,11 +2,11 @@
 # reattribute-catalog-room.sh — declare that two room ids are the same room.
 #
 # A meeting's room id is derived one-way from the room's identity. A recording
-# made since Cassini started keeping the room derives its id from the Talk
-# conversation token; one published before that has no token in its file, so the
-# catalog backfill derives its id from the room NAME instead. The two
-# derivations do not and cannot agree, so one real conversation shows up as two
-# rooms:
+# this installation produced derives its id from the Talk conversation token —
+# from the file when it was recorded, from the operator's job database when it is
+# backfilled. A recording this installation has NO job row for has neither, so
+# its id is derived from the room NAME instead. The two derivations do not and
+# cannot agree, so one real conversation can show up as two rooms:
 #
 #   cassini meetings rooms
 #     room=rm_9f2a1c3d4e5b6a70  name=Weekly Sync  meetings=12   <- from the token
@@ -26,19 +26,38 @@
 # than as one id with two names. Pass --name to set that name explicitly when
 # the target has none, or when neither name is the one you want to keep.
 #
-# It is also the remedy when CASSINI_ROOM_ID_PEPPER changes: every id changes
-# with it, and this is what maps the old ones onto the new.
+# IT ONLY TOUCHES MEETINGS THE OPERATOR HAS NO LINEAGE FOR (D-640). If a meeting
+# this would move has a job row carrying the room token it was actually recorded
+# in, the merge is REFUSED — for those the recorded truth is recoverable and
+# asserting a different id would leave a recording whose lineage and published
+# room permanently disagree. The right tool for that population is the backfill,
+# which derives the real id from the token:
+#
+#   ./scripts/backfill-catalog-rooms.sh --apply
+#
+# That also means a CASSINI_ROOM_ID_PEPPER rotation is no longer a manual merge
+# for most of an archive: re-running the backfill re-derives every meeting whose
+# job row survives. This command is for the rest — and --force is there for the
+# case where the recorded binding is genuinely the wrong one.
+#
+# It also re-tags each moved recording, because the exporter re-derives a catalog
+# entry's room from the file on every republish, so a catalog-only merge is undone
+# by the next re-seal.
 #
 # Options:
 #   --from ID          the room id to replace (required)
 #   --to ID            the room id to replace it with (required)
 #   --name NAME        display name for the merged room (default: the target's)
 #   --apply            write the updated catalog (without it, nothing is written)
+#   --force            move meetings even when the operator recorded a different room
+#   --no-retag         update only the catalog; do not re-tag any published file
+#   --jobs-db PATH     the operator job database (default: resolved as the app does)
+#   --no-jobs-db       do not check the recorded lineage at all
 #   --container NAME   app container (default: nc_app_gocassini, or $CASSINI_CONTAINER)
 #   -h, --help         this text
 #
 # This is a DIFFERENT KIND OF ACT from the backfill, which is why it is a
-# different command. The backfill recovers what a file already says and cannot
+# different command. The backfill recovers what the operator recorded and cannot
 # be wrong about identity. This asserts an identity the data does not support.
 # It is also not reversible except by running it again the other way — and once
 # two rooms are merged, which meetings came from which is no longer recorded
@@ -62,15 +81,26 @@ usage() {
   cat >&2 <<'EOF'
 Usage:
   ./scripts/reattribute-catalog-room.sh --from ID --to ID [--name NAME]
-                                        [--apply] [--container NAME]
+                                        [--apply] [--force] [--no-retag]
+                                        [--jobs-db PATH | --no-jobs-db]
+                                        [--container NAME]
 
-Declares that two room ids are the same room, and rewrites the catalog so they
-are. Reports what it would change and writes nothing unless --apply is passed.
+Declares that two room ids are the same room, and rewrites the catalog and the
+recordings so they are. Reports what it would change and writes nothing unless
+--apply is passed.
+
+Meetings the operator has a recorded room binding for are REFUSED: for those the
+real room id is recoverable, and ./scripts/backfill-catalog-rooms.sh is the tool
+that recovers it.
 
   --from ID          the room id to replace
   --to ID            the room id to replace it with
   --name NAME        display name for the merged room (default: the target's)
-  --apply            write the updated catalog back to Nextcloud Files
+  --apply            write the catalog and the re-tagged recordings
+  --force            move meetings even when the operator recorded a different room
+  --no-retag         update only the catalog, leaving published files untouched
+  --jobs-db PATH     the operator job database, if not where the app puts it
+  --no-jobs-db       do not check the recorded lineage at all
   --container NAME   app container (default: nc_app_gocassini)
 
 Find the ids with `cassini meetings rooms`.
@@ -96,6 +126,13 @@ while [[ $# -gt 0 ]]; do
       ARGS+=(--name "$2"); shift 2 ;;
     --name=*) ARGS+=(--name "${1#--name=}"); shift ;;
     --apply) ARGS+=(--apply); shift ;;
+    --force) ARGS+=(--force); shift ;;
+    --no-retag) ARGS+=(--no-retag); shift ;;
+    --no-jobs-db) ARGS+=(--no-jobs-db); shift ;;
+    --jobs-db)
+      [[ $# -ge 2 ]] || die "--jobs-db needs a value"
+      ARGS+=(--jobs-db "$2"); shift 2 ;;
+    --jobs-db=*) ARGS+=(--jobs-db "${1#--jobs-db=}"); shift ;;
     --container)
       [[ $# -ge 2 ]] || die "--container needs a value"
       CONTAINER="$2"; shift 2 ;;
@@ -135,6 +172,7 @@ echo "reattribute-catalog-room: using container $CONTAINER"
 #   0  done
 #   3  nothing to do          — no entry carries the --from id
 #   4  failed before writing  — nothing written, retry is safe
+#   5  refused                — a recorded room binding contradicts the merge
 #   2  wrong usage/environment — nothing written, it never started
 #   1  failed after writing   — the catalog may be exposed
 set +e
@@ -157,9 +195,31 @@ EOF
   4)
     cat >&2 <<'EOF'
 
-It stopped before writing anything, so the catalog in Nextcloud Files is exactly
-as it was and there is nothing to clean up. Fix the error reported above and run
-it again.
+It stopped before writing the catalog, so the catalog in Nextcloud Files is
+exactly as it was. Some recordings may already have been re-tagged; that is safe
+to leave and safe to repeat, because re-tagging changes nothing but the room a
+file names and never touches its permissions. Fix the error reported above and
+run it again.
+EOF
+    ;;
+  5)
+    cat >&2 <<EOF
+
+Nothing was written, and this is a refusal rather than a failure.
+
+Some of the meetings this would move have a room recorded in the operator's job
+database — the conversation they were actually recorded in. Moving them to $TO
+would leave that recorded lineage and their published room permanently
+disagreeing, and nothing afterwards could tell which one is right.
+
+For those meetings the real room id is recoverable, so asserting one is the
+wrong tool. Run the backfill instead, which derives it from what was recorded:
+
+  ./scripts/backfill-catalog-rooms.sh --apply
+
+If you are certain the recorded binding is the wrong one — a job that recorded
+the wrong conversation, say — re-run this with --force. The meetings it names
+above are the ones that would move.
 EOF
     ;;
   2)
@@ -172,14 +232,20 @@ EOF
   1)
     cat >&2 <<'EOF'
 
-It stopped part-way, after it had started writing. The catalog in Nextcloud
-Files may hold the reattributed entries without the owner-only permissions being
-re-applied, which would leave the full archive index readable by every
-signed-in account.
+It stopped part-way, after it had started writing, and something may now be
+readable that should not be. There are two shapes of this and the error above
+says which:
 
-Check Cassini/Recordings/catalog.json in the Files app and confirm it is shared
-with nobody before re-running. Re-running this itself is safe: reattributing a
-room that has already been reattributed simply finds nothing to do.
+  * the catalog was written without its owner-only permissions being re-applied,
+    which would leave the full archive index readable by every signed-in account
+    — check Cassini/Recordings/catalog.json in the Files app; or
+  * a re-tagged recording was CREATED rather than overwritten, meaning it has no
+    permissions of its own and inherits the folder's grant to every signed-in
+    account — the error names the file.
+
+Confirm the named file is shared with nobody before re-running. Re-running this
+itself is safe: reattributing a room that has already been reattributed simply
+finds nothing to do.
 EOF
     ;;
   *)

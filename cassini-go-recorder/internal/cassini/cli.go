@@ -133,6 +133,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runPublish(ctx, args[1:], stdout, stderr)
 	case "record":
 		return runRecord(ctx, args[1:], stdout, stderr)
+	case "retag":
+		return runRetag(ctx, args[1:], stdout, stderr)
 	case "serve":
 		return runServe(ctx, args[1:], stdout, stderr)
 	default:
@@ -400,6 +402,7 @@ Usage:
   cassini publish ./meetings --out ./site
   cassini record --call <CALL_URL> --out "./Meeting.opus"
   cassini record --simulate --out ./runs/demo.run
+  cassini retag ./Meeting.opus --out ./Retagged.opus --room-id rm_9f2a1c3d4e5b6a70
   cassini serve ./site
 
 Commands:
@@ -412,6 +415,7 @@ Commands:
   pack     Pack a built .meeting bundle into a portable .opus file
   publish  Publish one or more meeting bundles as a static site
   record   Record a meeting into one portable artifact
+  retag    Rewrite a packed .opus file's room and job fields without re-encoding it
   serve    Serve a static Cassini site locally
 
 Paths:

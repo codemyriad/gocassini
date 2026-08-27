@@ -210,14 +210,25 @@ Set `CASSINI_ROOM_ID_PEPPER` on the app to a stable deployment-wide secret. A
 Talk token is short, so an unpeppered derivation can be reversed by enumerating
 the token space offline; with a pepper it cannot. Choose it once — changing it
 changes every id, and already-published meetings keep the ids they were written
-with.
+with. Re-running `scripts/backfill-catalog-rooms.sh --apply` re-derives every
+meeting whose operator job row survives, so a rotation is a re-run rather than a
+manual merge for most of an archive.
 
-**Two rows can share a display name.** A recording made before Cassini kept the
-room carries no token in its published file, so `scripts/backfill-catalog-rooms.sh`
-derives that meeting's id from the room *name* instead. The two derivations do
-not agree, and cannot: only a person knows the two are the same conversation.
+**Two rows can share a display name.** A recording this installation has *no job
+row* for — one imported from elsewhere, or older than the operator's job store —
+has no token anywhere, so `scripts/backfill-catalog-rooms.sh` derives its id
+from the room *name* instead. That derivation cannot agree with a token-derived
+one, and only a person knows the two are the same conversation;
 `scripts/reattribute-catalog-room.sh` is how that person says so, once, and
 merges them.
+
+It is a much smaller set than it used to be. The catalog entry's id is the
+operator's job id, and the operator's job database still holds the Talk room
+token for every job it ran — so for anything this installation produced, the
+backfill recovers the *real* id rather than a name-derived stand-in. That is
+also why the reattribution tool now **refuses** a meeting with a recorded room
+binding: for those the truth is recoverable, and asserting an id instead would
+leave a recording whose lineage and published room permanently disagree.
 
 A trailing note may report meetings that carry **no room at all** — a non-Talk
 job, or an old recording whose file holds no usable room name either. They are
@@ -295,9 +306,10 @@ exists. `--room` matches exactly and takes the printed value verbatim.
 
 **A meeting shows `room=-` and no `--room` value finds it** — it records no room
 at all, which is what every recording published before Cassini kept the room
-looks like. List it without `--room`, and run
-`scripts/backfill-catalog-rooms.sh` on the installation to recover what its
-published file still holds.
+looks like. List it without `--room`, and ask an administrator to run
+`scripts/backfill-catalog-rooms.sh` on the installation: it recovers the real
+room from the operator's own job history where that survives, and from the
+published file's name where it does not.
 
 **`no recording you can read at that id`** — the id is absent from *this
 account's* catalog. It may not exist, or it may exist and belong to someone else;

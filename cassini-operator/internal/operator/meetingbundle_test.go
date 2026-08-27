@@ -36,7 +36,7 @@ func readBundleManifestFixture(t *testing.T, bundleDir string) map[string]any {
 func TestSetMeetingBundleRoomStampsAndPreservesUnknownFields(t *testing.T) {
 	bundleDir := writeBundleManifestFixture(t)
 
-	if err := SetMeetingBundleRoom(bundleDir, "Daily Meeting", "a7bc3k9x", "Daily Meeting"); err != nil {
+	if err := SetMeetingBundleRoom(bundleDir, "Daily Meeting", "a7bc3k9x", "Daily Meeting", "01K3Q7W8ZC9F0MJXQ2NB8V4RTD", 2); err != nil {
 		t.Fatalf("SetMeetingBundleRoom() error = %v", err)
 	}
 
@@ -45,6 +45,7 @@ func TestSetMeetingBundleRoomStampsAndPreservesUnknownFields(t *testing.T) {
 		"title":      "Daily Meeting",
 		"room_token": "a7bc3k9x",
 		"room_name":  "Daily Meeting",
+		"job_id":     "01K3Q7W8ZC9F0MJXQ2NB8V4RTD",
 		// The stamp must not drop fields the operator's manifest struct does
 		// not know about — the recorder owns the schema.
 		"future_field": "keep-me",
@@ -65,6 +66,11 @@ func TestSetMeetingBundleRoomStampsAndPreservesUnknownFields(t *testing.T) {
 	if manifest.RoomToken != "a7bc3k9x" || manifest.RoomName != "Daily Meeting" {
 		t.Errorf("manifest room = %q/%q, want %q/%q", manifest.RoomToken, manifest.RoomName, "a7bc3k9x", "Daily Meeting")
 	}
+	// The job and attempt ride on the same stamp (D-640): they are the only
+	// lineage a `.opus` published straight from this bundle would carry.
+	if manifest.JobID != "01K3Q7W8ZC9F0MJXQ2NB8V4RTD" || manifest.AttemptNumber != 2 {
+		t.Errorf("manifest provenance = %q/%d, want the job id and attempt 2", manifest.JobID, manifest.AttemptNumber)
+	}
 }
 
 func TestSetMeetingBundleRoomLeavesBlankFieldsAlone(t *testing.T) {
@@ -74,7 +80,7 @@ func TestSetMeetingBundleRoomLeavesBlankFieldsAlone(t *testing.T) {
 	// non-Talk job knows neither. Neither may write an empty string: a rerun
 	// that resolved less than an earlier attempt would otherwise erase what the
 	// earlier one found.
-	if err := SetMeetingBundleRoom(bundleDir, "", "a7bc3k9x", ""); err != nil {
+	if err := SetMeetingBundleRoom(bundleDir, "", "a7bc3k9x", "", "", 0); err != nil {
 		t.Fatalf("SetMeetingBundleRoom() error = %v", err)
 	}
 
@@ -82,7 +88,9 @@ func TestSetMeetingBundleRoomLeavesBlankFieldsAlone(t *testing.T) {
 	if updated["room_token"] != "a7bc3k9x" {
 		t.Errorf("room_token = %v, want %q", updated["room_token"], "a7bc3k9x")
 	}
-	for _, key := range []string{"title", "room_name"} {
+	// Same rule for the provenance: attempts are 1-based, so a zero is
+	// "unknown" and must not be written as an attempt that cannot exist.
+	for _, key := range []string{"title", "room_name", "job_id", "attempt_number"} {
 		if _, ok := updated[key]; ok {
 			t.Errorf("%s = %v, want left unwritten", key, updated[key])
 		}
@@ -90,7 +98,7 @@ func TestSetMeetingBundleRoomLeavesBlankFieldsAlone(t *testing.T) {
 }
 
 func TestSetMeetingBundleRoomErrorsWithoutManifest(t *testing.T) {
-	if err := SetMeetingBundleRoom(t.TempDir(), "Daily Meeting", "", ""); err == nil {
+	if err := SetMeetingBundleRoom(t.TempDir(), "Daily Meeting", "", "", "", 0); err == nil {
 		t.Error("SetMeetingBundleRoom() on empty dir error = nil, want error")
 	}
 }

@@ -29,8 +29,19 @@ type portablePackOptions struct {
 	// The TOKEN is the input, not the published value. It is a capability for a
 	// public conversation, so what lands in the manifest is a one-way derivation
 	// of it (portable.RoomIDForMeeting) and the token itself stops here.
+	//
+	// RoomName is an INPUT ONLY as of D-640: it feeds the name-domain
+	// derivation for a meeting with no token, and is embedded as the Title,
+	// but it is no longer written to the manifest's roomName. See
+	// portable.Meeting.RoomName for why.
 	RoomToken string
 	RoomName  string
+	// JobID and AttemptNumber record which operator job and attempt produced
+	// the artifact (D-640). Optional, like the room — a bundle packed outside
+	// the operator has neither, and inventing one would claim a lineage that
+	// does not exist.
+	JobID         string
+	AttemptNumber int
 }
 
 type portableMeetingSource struct {
@@ -519,8 +530,12 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 			DurationMS:      audio.DurationMS,
 			// Derived here and nowhere else on this path: the raw token must
 			// not reach the manifest, the OpusTags or anything that reads them.
-			RoomID:   portable.RoomIDForMeeting(portable.RoomIDPepperFromEnv(), opts.RoomToken, opts.RoomName),
-			RoomName: strings.TrimSpace(opts.RoomName),
+			RoomID: portable.RoomIDForMeeting(portable.RoomIDPepperFromEnv(), opts.RoomToken, opts.RoomName),
+			// RoomName is deliberately NOT set (D-640). The room's name at
+			// record time is the Title above; its current name belongs in the
+			// catalog, where changing it does not mean rewriting a sealed file.
+			JobID:         strings.TrimSpace(opts.JobID),
+			AttemptNumber: opts.AttemptNumber,
 		},
 		Audio: portable.Audio{
 			Container:   "ogg",

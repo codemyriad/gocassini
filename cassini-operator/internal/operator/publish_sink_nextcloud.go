@@ -224,7 +224,7 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 		}
 	}
 
-	if err := s.upsertRemoteCatalog(ctx, existingCatalog, catalogMissing, incoming); err != nil {
+	if err := s.upsertRemoteCatalog(ctx, existingCatalog, catalogMissing, incoming, catalogEntryOverlay{RoomName: d.RoomName}); err != nil {
 		return "", err
 	}
 	return ncRecordingsRoot, nil
@@ -399,9 +399,6 @@ func (s *nextcloudFilesPublishSink) putAssetBytes(ctx context.Context, item uplo
 	return nil
 }
 
-// upsertRemoteCatalog merges the delivered meetings into the catalog already in
-// Nextcloud Files and writes it back. Read-merge-write, never overwrite: the
-// attempt site knows about one meeting and the archive knows about all of them.
 // readRemoteCatalog fetches the archive's authoritative index. missing reports
 // that there is none yet — the only case in which the catalog leaf is about to
 // be CREATED, and therefore the only one in which it could be born without rules.
@@ -435,10 +432,13 @@ func (s *nextcloudFilesPublishSink) readRemoteCatalog(ctx context.Context) (cata
 	return catalog, false, nil
 }
 
-func (s *nextcloudFilesPublishSink) upsertRemoteCatalog(ctx context.Context, existing siteCatalog, catalogMissing bool, incoming siteCatalog) error {
+// upsertRemoteCatalog merges the delivered meetings into the catalog snapshot
+// read before delivery, preserving the archive and applying the operator's
+// catalog-only fields before it writes the protected index.
+func (s *nextcloudFilesPublishSink) upsertRemoteCatalog(ctx context.Context, existing siteCatalog, catalogMissing bool, incoming siteCatalog, overlay catalogEntryOverlay) error {
 	catalogRemote := ncRecordingsRoot + "/catalog.json"
 
-	merged, err := upsertSiteCatalog(existing, incoming)
+	merged, err := upsertSiteCatalog(existing, incoming, overlay)
 	if err != nil {
 		return err
 	}

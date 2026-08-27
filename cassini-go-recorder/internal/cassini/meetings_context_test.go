@@ -55,7 +55,7 @@ func standupWords() []inspectpkg.TranscriptWord {
 // The catalog id is what a caller can correlate; the manifest's own id is a
 // content hash and is not what the published catalog indexes by.
 func TestBuildMeetingContextUsesTheCatalogIDNotTheManifestID(t *testing.T) {
-	bundle := buildMeetingContext("CATALOG-ID-1", extractedMeetingFixture(standupWords(), ""))
+	bundle := buildMeetingContext("CATALOG-ID-1", extractedMeetingFixture(standupWords(), ""), meetingsCatalogEntry{})
 
 	if bundle.Meeting.ID != "CATALOG-ID-1" {
 		t.Errorf("Meeting.ID = %q, want the catalog id", bundle.Meeting.ID)
@@ -65,10 +65,69 @@ func TestBuildMeetingContextUsesTheCatalogIDNotTheManifestID(t *testing.T) {
 	}
 }
 
+// "Which room was this?" is a question an agent summarising a meeting routinely
+// needs answered, and until D-640 the command the docs point it at handed back a
+// document that could not answer it.
+func TestBuildMeetingContextCarriesTheRoomFromTheCatalogEntry(t *testing.T) {
+	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), ""), meetingsCatalogEntry{
+		RoomID: "rm_9f2a1c3d4e5b6a70", RoomName: "Weekly Sync",
+	})
+
+	if bundle.Meeting.RoomID != "rm_9f2a1c3d4e5b6a70" || bundle.Meeting.RoomName != "Weekly Sync" {
+		t.Errorf("room = %q/%q, want the catalog entry's", bundle.Meeting.RoomID, bundle.Meeting.RoomName)
+	}
+
+	var buf bytes.Buffer
+	if err := writeMeetingContext(&buf, bundle, false); err != nil {
+		t.Fatalf("writeMeetingContext: %v", err)
+	}
+	// The id is what `meetings list --room` accepts and the name is not, so the
+	// markdown shows both — an agent that copies the label instead of the id
+	// gets an empty list and no explanation.
+	if !strings.Contains(buf.String(), "- Room: Weekly Sync (`rm_9f2a1c3d4e5b6a70`)") {
+		t.Errorf("markdown does not carry the room:\n%s", buf.String())
+	}
+}
+
+// The catalog is authoritative because it is what a backfill and a
+// reattribution keep current; the file's id is whatever it was last tagged with.
+func TestBuildMeetingContextPrefersTheCatalogRoomOverTheFilesOwn(t *testing.T) {
+	meeting := extractedMeetingFixture(standupWords(), "")
+	meeting.Manifest.Meeting.RoomID = "rm_1111111111111111"
+	meeting.Manifest.Meeting.RoomName = "Frozen Legacy Name"
+
+	bundle := buildMeetingContext("M1", meeting, meetingsCatalogEntry{
+		RoomID: "rm_2222222222222222", RoomName: "Merged Room",
+	})
+	if bundle.Meeting.RoomID != "rm_2222222222222222" || bundle.Meeting.RoomName != "Merged Room" {
+		t.Errorf("room = %q/%q, want the catalog's", bundle.Meeting.RoomID, bundle.Meeting.RoomName)
+	}
+
+	// ...and the file is the fallback, which is what a pre-D-640 archive with
+	// no catalog room looks like.
+	fallback := buildMeetingContext("M1", meeting, meetingsCatalogEntry{})
+	if fallback.Meeting.RoomID != "rm_1111111111111111" || fallback.Meeting.RoomName != "Frozen Legacy Name" {
+		t.Errorf("fallback room = %q/%q, want the file's", fallback.Meeting.RoomID, fallback.Meeting.RoomName)
+	}
+}
+
+func TestBuildMeetingContextOmitsTheRoomLineWhenThereIsNoRoom(t *testing.T) {
+	// A non-Talk job, a --simulate run, an import: no room is an ordinary state
+	// and must not render as an empty or dashed field.
+	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), ""), meetingsCatalogEntry{})
+	var buf bytes.Buffer
+	if err := writeMeetingContext(&buf, bundle, false); err != nil {
+		t.Fatalf("writeMeetingContext: %v", err)
+	}
+	if strings.Contains(buf.String(), "- Room:") {
+		t.Errorf("markdown carries a room line for a meeting with no room:\n%s", buf.String())
+	}
+}
+
 // The provenance marker is the guard against an agent presenting derived prose
 // as an edited transcript, so it is asserted explicitly.
 func TestBuildMeetingContextMarksTheTranscriptAsDerived(t *testing.T) {
-	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), ""))
+	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), ""), meetingsCatalogEntry{})
 
 	if bundle.TranscriptSource != "derived-from-words" {
 		t.Errorf("TranscriptSource = %q, want derived-from-words", bundle.TranscriptSource)
@@ -82,7 +141,7 @@ func TestBuildMeetingContextMarksTheTranscriptAsDerived(t *testing.T) {
 }
 
 func TestBuildMeetingContextAttributesSegmentsToSpeakers(t *testing.T) {
-	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), "# Summary\n"))
+	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), "# Summary\n"), meetingsCatalogEntry{})
 
 	if len(bundle.Segments) != 2 {
 		t.Fatalf("got %d segments, want 2: %+v", len(bundle.Segments), bundle.Segments)
@@ -107,7 +166,7 @@ func TestBuildMeetingContextAttributesSegmentsToSpeakers(t *testing.T) {
 // A missing summary must be a distinguishable state, not an empty string that
 // reads like an empty summary.
 func TestBuildMeetingContextMarksAMissingSummaryAbsent(t *testing.T) {
-	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), ""))
+	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), ""), meetingsCatalogEntry{})
 
 	if bundle.Summary.Present {
 		t.Errorf("Summary.Present = true, want false: %+v", bundle.Summary)
@@ -118,7 +177,7 @@ func TestBuildMeetingContextMarksAMissingSummaryAbsent(t *testing.T) {
 }
 
 func TestWriteMeetingContextMarkdown(t *testing.T) {
-	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), "# Summary\n\n- Ship it.\n"))
+	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), "# Summary\n\n- Ship it.\n"), meetingsCatalogEntry{})
 
 	var out bytes.Buffer
 	if err := writeMeetingContext(&out, bundle, false); err != nil {
@@ -147,7 +206,7 @@ func TestWriteMeetingContextMarkdown(t *testing.T) {
 }
 
 func TestWriteMeetingContextMarkdownSaysWhenThereIsNoSummary(t *testing.T) {
-	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), ""))
+	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), ""), meetingsCatalogEntry{})
 
 	var out bytes.Buffer
 	if err := writeMeetingContext(&out, bundle, false); err != nil {
@@ -159,7 +218,7 @@ func TestWriteMeetingContextMarkdownSaysWhenThereIsNoSummary(t *testing.T) {
 }
 
 func TestWriteMeetingContextMarkdownHandlesASilentMeeting(t *testing.T) {
-	bundle := buildMeetingContext("M1", extractedMeetingFixture(nil, ""))
+	bundle := buildMeetingContext("M1", extractedMeetingFixture(nil, ""), meetingsCatalogEntry{})
 
 	var out bytes.Buffer
 	if err := writeMeetingContext(&out, bundle, false); err != nil {
@@ -171,7 +230,7 @@ func TestWriteMeetingContextMarkdownHandlesASilentMeeting(t *testing.T) {
 }
 
 func TestWriteMeetingContextJSON(t *testing.T) {
-	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), "# Summary\n"))
+	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), "# Summary\n"), meetingsCatalogEntry{})
 
 	var out bytes.Buffer
 	if err := writeMeetingContext(&out, bundle, true); err != nil {
@@ -203,7 +262,7 @@ func TestWriteMeetingContextJSON(t *testing.T) {
 // splitting the document on h2 reads them as top-level sections of the context.
 func TestWriteMeetingContextMarkdownNestsTheSummarysOwnHeadings(t *testing.T) {
 	summary := "## Decisions\n\n- Ship it.\n\n## Actions\n\n- Erlich: open the PR.\n"
-	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), summary))
+	bundle := buildMeetingContext("M1", extractedMeetingFixture(standupWords(), summary), meetingsCatalogEntry{})
 
 	var out bytes.Buffer
 	if err := writeMeetingContext(&out, bundle, false); err != nil {
@@ -504,7 +563,7 @@ func TestBuildMeetingContextMatchesSpeakerLabelsDespiteWhitespace(t *testing.T) 
 	meeting := extractedMeetingFixture(wordsAt(" spk1 ", 0, 200, "hello", "there"), "")
 	meeting.Manifest.Speakers = []portable.Speaker{{ID: " spk1 ", Label: "Erlich"}}
 
-	bundle := buildMeetingContext("M1", meeting)
+	bundle := buildMeetingContext("M1", meeting, meetingsCatalogEntry{})
 
 	if len(bundle.Segments) != 1 {
 		t.Fatalf("got %d segments, want 1", len(bundle.Segments))

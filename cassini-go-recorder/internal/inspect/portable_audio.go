@@ -178,6 +178,7 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 		audio.Container, audio.Codec, integrity.SampleRate, integrity.Channels, integrity.DurationMS, blankDash(integrity.PCMHashSHA256))
 	fmt.Fprintf(out, "payload encoding=%s schema=%s chunks=%d raw_bytes=%d compressed_bytes=%d sha256=%s language=%s\n",
 		payload.Encoding, blankDash(payload.Schema), payload.ChunkCount, payload.RawBytes, payload.CompressedBytes, blankDash(payload.SHA256), blankDash(language))
+	printPortableOrigin(out, manifest.Meeting)
 	if manifest.Version == 2 {
 		for _, entry := range manifest.Transcripts {
 			printPortableTranscriptEntry(out, "transcript", entry)
@@ -196,6 +197,33 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	for _, warning := range integrity.Warnings {
 		fmt.Fprintf(out, "warning=%s\n", warning)
 	}
+}
+
+// printPortableOrigin prints where a meeting came from: the room it was
+// recorded in, and the operator job and attempt that produced the file.
+//
+// It is the by-hand verification path for the whole producer chain, and until
+// D-640 it did not exist — `cassini inspect` decoded the room and dropped it, so
+// checking that a recording carried its room meant a raw `ffprobe` against tag
+// names the docs did not list. That is a poor answer for the command the docs
+// point at, and a worse one now that a maintenance tool can rewrite these
+// fields and an operator needs to confirm the rewrite landed.
+//
+// The whole line is omitted when a meeting has none of them, rather than
+// printing four dashes: a file packed by hand genuinely has no origin, and a
+// row of dashes reads like a lookup that failed.
+func printPortableOrigin(out io.Writer, meeting portable.Meeting) {
+	if meeting.RoomID == "" && meeting.RoomName == "" && meeting.JobID == "" && meeting.AttemptNumber == 0 {
+		return
+	}
+	attempt := "-"
+	if meeting.AttemptNumber > 0 {
+		attempt = fmt.Sprintf("%d", meeting.AttemptNumber)
+	}
+	// room_name is shown because a file may still carry a legacy one; it is no
+	// longer written, and the catalog is where a room's current name lives.
+	fmt.Fprintf(out, "origin room_id=%s room_name=%s job_id=%s attempt=%s\n",
+		blankDash(meeting.RoomID), blankDash(meeting.RoomName), blankDash(meeting.JobID), attempt)
 }
 
 func printPortableTranscriptEntry(out io.Writer, label string, entry portable.TranscriptEntry) {
