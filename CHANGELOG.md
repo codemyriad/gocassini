@@ -14,6 +14,17 @@ sections below are script-managed: `scripts/fold-changelog.sh` (run by
 version and removes the consumed fragments. Edit released sections only to fix
 mistakes; add new entries as fragments. See [`docs/release.md`](docs/release.md).
 
+## [0.2.0-beta.4] - 2026-08-28
+
+### Changed
+- **GPU transcription upgrade:** existing portable/plain-image ExApp installations continue to capture and preserve Talk audio, but operator-managed transcription now enters `build/blocked` instead of using CPU ASR. Install the matching `-cuda` image on a GPU deploy daemon, then choose **Rerun** for each preserved blocked job in Cassini Admin.
+
+### Fixed
+- Short interjections now retain their real timeline position and speaker attribution. Transcription drains final VAD audio, recovers more subsecond turns, and rejects near-silent decoder hallucinations without discarding speech whose decoded timestamp leads its waveform.
+- Transcript construction no longer applies duplicate timeline offsets or retains both sides of a mixed-track fallback, and genuine final words emitted in decoder or VAD padding are preserved at the real audio boundary.
+- Meeting duration now comes from playable audio without discarding source-container provenance or preallocating PCM from corrupt duration metadata.
+- GPU readiness failures are reported explicitly, and generated artifacts record the effective ASR device.
+
 ## [0.2.0-beta.3] - 2026-08-28
 
 ### Added
