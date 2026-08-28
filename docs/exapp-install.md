@@ -122,7 +122,7 @@ CI publishes to `ghcr.io/codemyriad/gocassini`:
 
 | Tag | What it is |
 |---|---|
-| `X.Y.Z` | CPU release build. Immutable by convention; matches `<version>`/`<image-tag>` in `appinfo/info.xml` |
+| `X.Y.Z` | Portable capture image. Immutable by convention; matches `<version>`/`<image-tag>` in `appinfo/info.xml`. It records without a GPU, while operator-managed transcription defers instead of using CPU ASR. |
 | `X.Y.Z-cuda` | CUDA release build (CUDA 12 / cuDNN 9 sherpa-onnx, fp32 Parakeet model, `CASSINI_STT_DEVICE=cuda`) |
 | `X.Y.Z-rocm` | Alias of the CPU build so ROCm-tagged daemons install; no ROCm acceleration yet |
 | `sha-<shortsha>` / `sha-<shortsha>-cuda` | Every pushed commit, for pinning a specific build |
@@ -148,7 +148,9 @@ publish when the git tag and the manifest version disagree, or when
 
 You don't select the `-cuda` tag by hand: when the deploy daemon's compute
 device is CUDA, AppAPI automatically tries `<image-tag>-cuda` first and falls
-back to the plain tag.
+back to the plain tag. Cassini detects that fallback: the plain image remains
+available for capture, `/operator/status` reports CUDA unavailable, and build
+jobs stay durably queued for GPU resources instead of decoding on CPU.
 
 The checked-in manifest already pins the current release; to install a
 different build, download `appinfo/info.xml`, set `<image-tag>` to the
@@ -601,6 +603,14 @@ the container via Docker device requests. The Docker engine running the ExApp
 needs the NVIDIA driver + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/);
 verify with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`
 on that engine before registering the app.
+
+There is no CPU transcription fallback. If CUDA is absent, unusable, or below
+the configured VRAM floor, recording can finish but the build remains queued
+with `build_retry_not_before`; `/operator/status` answers 503 with an actionable
+`stt.detail`. For temporary device/VRAM pressure, restoring GPU capacity lets
+the durable worker retry resume it. If `stt.detail` says the portable image has
+no CUDA runtime, repair the `-cuda` tag and redeploy/upgrade the ExApp; capacity
+alone cannot make that image eligible.
 
 ### Remote GPU node
 

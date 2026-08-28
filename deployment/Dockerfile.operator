@@ -50,6 +50,7 @@ ENV CASSINI_BIN=/usr/local/bin/cassini \
     CASSINI_OPERATOR_WORK_ROOT=/var/lib/cassini-operator/jobs \
     CASSINI_OPERATOR_SITE_ROOT=/srv/cassini-site/published \
     CASSINI_CACHE_ROOT=/var/lib/cassini-operator/cache \
+    CASSINI_STT_CUDA_CAPABLE=0 \
     TMPDIR=/var/lib/cassini-operator/tmp
 
 COPY --from=go-builder /out/cassini /usr/local/bin/cassini

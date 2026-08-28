@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -55,13 +56,77 @@ def command_select_job(args: argparse.Namespace) -> int:
     state = str(job.get("state") or "").strip().lower()
     stage = str(job.get("stage") or "").strip()
     error = str(job.get("error") or "").strip()
-    result = {"job_id": job_id, "state": state, "stage": stage, "error": error}
+    result = {
+        "job_id": job_id,
+        "state": state,
+        "stage": stage,
+        "error": error,
+        "record_exit_code": job.get("record_exit_code"),
+        "record_finished_at": job.get("record_finished_at"),
+        "artifact_run_path": job.get("artifact_run_path"),
+        "artifact_meeting_path": job.get("artifact_meeting_path"),
+        "build_queued_at": job.get("build_queued_at"),
+        "build_retry_not_before": job.get("build_retry_not_before"),
+        "build_started_at": job.get("build_started_at"),
+        "build_finished_at": job.get("build_finished_at"),
+        "completed_at": job.get("completed_at"),
+    }
     print(json.dumps(result, separators=(",", ":")))
-    if state == "succeeded":
-        return 0
     if state in {"failed", "interrupted"}:
         return 3
-    return 10
+    if args.expect == "succeeded":
+        return 0 if state == "succeeded" else 10
+
+    # A GPU-less host is allowed to record, but it must never decode speech on
+    # the CPU. The operator expresses that contract by preserving the ready run
+    # bundle and durably deferring build with a retry timestamp. Treat an
+    # unexpectedly successful build as a hard policy failure, not a green run.
+    if state == "succeeded" or job.get("artifact_meeting_path") is not None:
+        raise ValidationError(
+            f"job {job_id} produced a meeting although GPU inference was unavailable"
+        )
+    if stage != "build" or state not in {"queued", "running"}:
+        return 10
+    retry_not_before = str(job.get("build_retry_not_before") or "").strip()
+    if state == "running" or not retry_not_before:
+        return 10
+    run_path = str(job.get("artifact_run_path") or "").strip()
+    record_finished_at = str(job.get("record_finished_at") or "").strip()
+    build_queued_at = str(job.get("build_queued_at") or "").strip()
+    if (
+        not run_path
+        or not record_finished_at
+        or not build_queued_at
+        or job.get("record_exit_code") != 0
+        or error
+    ):
+        raise ValidationError(
+            f"job {job_id} deferred before preserving a successful recording"
+        )
+    if (
+        job.get("build_started_at") is not None
+        or job.get("build_finished_at") is not None
+        or job.get("completed_at") is not None
+    ):
+        raise ValidationError(
+            f"job {job_id} has inconsistent deferred-build timestamps"
+        )
+    try:
+        retry_at = datetime.fromisoformat(retry_not_before.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValidationError(
+            f"job {job_id} has invalid build_retry_not_before: {retry_not_before}"
+        ) from exc
+    if retry_at.tzinfo is None:
+        raise ValidationError(
+            f"job {job_id} has timezone-less build_retry_not_before"
+        )
+    # A retry whose window already elapsed is in transition back to running;
+    # keep polling until the worker records the next durable backoff rather
+    # than accepting a stale timestamp as proof of deferral.
+    if retry_at <= datetime.now(timezone.utc):
+        return 10
+    return 0
 
 
 def command_catalog_entry(args: argparse.Namespace) -> int:
@@ -198,6 +263,9 @@ def build_parser() -> argparse.ArgumentParser:
     select = sub.add_parser("select-job")
     select.add_argument("--before", required=True)
     select.add_argument("--current", required=True)
+    select.add_argument(
+        "--expect", choices=("succeeded", "build-deferred"), default="succeeded"
+    )
     select.set_defaults(run=command_select_job)
 
     catalog = sub.add_parser("catalog-entry")

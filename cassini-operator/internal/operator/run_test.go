@@ -2234,6 +2234,7 @@ func newCLITestRuntimeWithContext(t *testing.T, ctx context.Context) (*Runtime, 
 	t.Helper()
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
+	t.Setenv(envSTTCUDACapable, "1")
 
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "cassini.log")
@@ -2381,6 +2382,7 @@ func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func(
 	t.Helper()
 	repoRoot := filepath.Clean(filepath.Join("..", "..", ".."))
 	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
+	t.Setenv(envSTTCUDACapable, "1")
 
 	tmp := t.TempDir()
 	store, err := OpenStore(filepath.Join(tmp, "jobs.sqlite3"))

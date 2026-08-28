@@ -182,6 +182,60 @@ func TestStatusHandlerReportsCudaUnusable(t *testing.T) {
 	if !strings.Contains(resp.STT.Detail, "no NVIDIA device visible") {
 		t.Fatalf("expected actionable detail, got %q", resp.STT.Detail)
 	}
+	if !resp.DB.OK || !resp.Storage.WorkRoot.OK || !resp.Storage.SiteRoot.OK || !resp.RecordingsAccess.OK {
+		t.Fatalf("CUDA must be the sole failed readiness dimension: %#v", resp)
+	}
+}
+
+func TestStatusHandlerRejectsPortableImageOnGPUHost(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	t.Setenv(envSTTCUDACapable, "0")
+	rt.setSettings(STTSettings{Quality: sttQualityBest, DeviceOverride: "cuda"})
+	probeCalled := false
+	rt.computeProbe = func(device string) (bool, string) {
+		probeCalled = true
+		return true, "cuda hardware visible"
+	}
+
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.STT.DeviceUsable || !strings.Contains(resp.STT.Detail, "portable image") || !strings.Contains(resp.STT.Detail, "-cuda") {
+		t.Fatalf("unexpected portable-image status: %#v", resp.STT)
+	}
+	if probeCalled {
+		t.Fatal("GPU hardware probe ran even though the image has no CUDA runtime")
+	}
+}
+
+func TestImageCUDACapabilityFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		want        bool
+	}{
+		{name: "declared CUDA", value: "1", want: true},
+		{name: "portable", value: "0", want: false},
+		{name: "missing", value: "", want: false},
+		{name: "invalid", value: "maybe", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(envSTTCUDACapable, tc.value)
+			got, detail := imageCUDACapability()
+			if got != tc.want {
+				t.Fatalf("imageCUDACapability() = %t, want %t (%s)", got, tc.want, detail)
+			}
+			if !got && strings.TrimSpace(detail) == "" {
+				t.Fatal("unusable image capability has no actionable detail")
+			}
+		})
+	}
 }
 
 func TestStatusHandlerRejectsLegacyCPUOverride(t *testing.T) {
@@ -256,6 +310,7 @@ func TestProbeComputeDeviceCPUVariants(t *testing.T) {
 }
 
 func TestLogComputeDeviceStatusLoudWhenUnusable(t *testing.T) {
+	t.Setenv(envSTTCUDACapable, "1")
 	buf := &syncBuffer{}
 	rt := &Runtime{
 		logger:       log.New(buf, "", 0),

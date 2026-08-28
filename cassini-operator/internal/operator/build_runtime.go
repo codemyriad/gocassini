@@ -202,21 +202,30 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	}
 
 	// Resource governor: never let a build starve or OOM the host (the ExApp can
-	// run uncapped next to Nextcloud/Talk). Wait — bounded — for RAM headroom,
-	// then size STT threads and the GPU choice to what is actually available.
+	// run uncapped next to Nextcloud/Talk). Reject a missing CUDA runtime/device
+	// before waiting for RAM: a portable image can never become eligible merely
+	// because host memory frees up. Then wait — bounded — for RAM headroom.
 	limits := resourceLimitsFromEnv()
+	if !rt.buildIntendsCUDA() {
+		_, admissionErr := limits.applyToEnv(nil, false)
+		return meetingPath, admissionErr
+	}
 	if err := limits.waitForMemory(ctx, rt.logger.Printf); err != nil {
+		return meetingPath, err
+	}
+	// Probe free VRAM only after any RAM wait, immediately before launch. That
+	// reading is an admission snapshot; taking it before a long memory wait
+	// would let another workload consume the GPU in between.
+	env := rt.currentSettings().ChildEnv(os.Environ())
+	buildEnv, err := limits.applyToEnv(env, true)
+	if err != nil {
 		return meetingPath, err
 	}
 
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "build", task.ArtifactRunPath, "--out", meetingPath)
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
-	env := rt.currentSettings().ChildEnv(os.Environ())
-	cmd.Env, err = limits.applyToEnv(env, rt.buildIntendsCUDA())
-	if err != nil {
-		return meetingPath, err
-	}
+	cmd.Env = buildEnv
 	// Kill the whole process group on ctx cancel so transcriber/ffmpeg
 	// grandchildren don't outlive the build.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

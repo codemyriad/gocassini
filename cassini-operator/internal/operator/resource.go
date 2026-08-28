@@ -158,6 +158,9 @@ func (l resourceLimits) waitForMemory(ctx context.Context, logf func(format stri
 // false result as unavailable capacity, so neither an explicit CPU override nor
 // a temporarily missing GPU node can trigger CPU speech recognition.
 func (rt *Runtime) buildIntendsCUDA() bool {
+	if capable, _ := imageCUDACapability(); !capable {
+		return false
+	}
 	switch strings.ToLower(strings.TrimSpace(rt.currentSettings().DeviceOverride)) {
 	case "cpu":
 		return false

@@ -37,10 +37,27 @@ JSON
 cat >"$TMP_DIR/jobs-ambiguous.json" <<'JSON'
 [{"id":"old","state":"succeeded"},{"id":"new-a","state":"succeeded"},{"id":"new-b","state":"running"}]
 JSON
+cat >"$TMP_DIR/jobs-build-deferred.json" <<'JSON'
+[{"id":"old","state":"succeeded"},{"id":"new","state":"queued","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":"2099-08-28T10:00:15Z","build_started_at":null,"build_finished_at":null,"completed_at":null,"error":null}]
+JSON
+cat >"$TMP_DIR/jobs-build-pending.json" <<'JSON'
+[{"id":"old","state":"succeeded"},{"id":"new","state":"queued","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":null,"build_started_at":null,"build_finished_at":null,"completed_at":null,"error":null}]
+JSON
+cat >"$TMP_DIR/jobs-build-stale.json" <<'JSON'
+[{"id":"old","state":"succeeded"},{"id":"new","state":"queued","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":"2000-01-01T00:00:00Z","build_started_at":null,"build_finished_at":null,"completed_at":null,"error":null}]
+JSON
+cat >"$TMP_DIR/jobs-build-invalid-retry.json" <<'JSON'
+[{"id":"old","state":"succeeded"},{"id":"new","state":"queued","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":"eventually","build_started_at":null,"build_finished_at":null,"completed_at":null,"error":null}]
+JSON
 expect_rc 10 "no new job" "$PY" select-job --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-none.json"
 expect_pass "one succeeded new job" "$PY" select-job --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-success.json"
 expect_rc 3 "failed new job" "$PY" select-job --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-failed.json"
 expect_fail "ambiguous new jobs" "$PY" select-job --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-ambiguous.json"
+expect_pass "GPU-less build is durably deferred" "$PY" select-job --expect build-deferred --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-build-deferred.json"
+expect_rc 10 "build without a resource backoff is still pending" "$PY" select-job --expect build-deferred --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-build-pending.json"
+expect_rc 10 "elapsed resource backoff is still pending" "$PY" select-job --expect build-deferred --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-build-stale.json"
+expect_fail "malformed resource backoff is invalid" "$PY" select-job --expect build-deferred --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-build-invalid-retry.json"
+expect_fail "CPU fallback success violates GPU-only mode" "$PY" select-job --expect build-deferred --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-success.json"
 
 cat >"$TMP_DIR/catalog-missing.json" <<'JSON'
 {"meetings":[{"id":"old","audioPath":"./old.opus","segmentCount":1}]}

@@ -53,9 +53,11 @@ bug: it will drift, and the two halves will not be tested equally.
 **Two traps:**
 
 - The fallback is **silent**. If `X.Y.Z-cuda` is unpullable, AppAPI installs the
-  CPU image on a GPU daemon and reports success. Transcription then runs on CPU
-  with nothing in any log to say so. Every publish must verify the `-cuda` tag
-  is pullable *including its child manifests*; CI does this, and so does
+  portable image on a GPU daemon and reports success. Cassini now fails closed:
+  recording remains available, but `/operator/status` reports CUDA unavailable
+  and transcription stays durably queued instead of falling back to CPU. Every
+  publish must still verify the `-cuda` tag is pullable *including its child
+  manifests*; CI does this, and so does
   `ops/deploy/deploy-exapp.sh`. As of 2026-07-31 every published `-cuda`
   release tag is dangling.
 - `<image-tag>` in the manifest is always the **base** tag. Writing

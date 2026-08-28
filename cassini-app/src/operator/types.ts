@@ -23,6 +23,7 @@ export interface Job {
   record_started_at: string | null;
   record_finished_at: string | null;
   build_queued_at: string | null;
+  build_retry_not_before: string | null;
   build_started_at: string | null;
   build_finished_at: string | null;
   seal_queued_at: string | null;
@@ -63,6 +64,7 @@ export interface JobAttempt {
   record_started_at: string | null;
   record_finished_at: string | null;
   build_queued_at: string | null;
+  build_retry_not_before: string | null;
   build_started_at: string | null;
   build_finished_at: string | null;
   seal_queued_at: string | null;

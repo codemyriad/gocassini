@@ -23,8 +23,9 @@ import (
 // subprocess.
 
 const (
-	envSTTDevice = "CASSINI_STT_DEVICE"
-	envSTTModel  = "CASSINI_STT_MODEL"
+	envSTTDevice      = "CASSINI_STT_DEVICE"
+	envSTTModel       = "CASSINI_STT_MODEL"
+	envSTTCUDACapable = "CASSINI_STT_CUDA_CAPABLE"
 
 	envTalkSignalingInternalSecret = "CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
 
@@ -277,7 +278,33 @@ func (rt *Runtime) effectiveComputeStatus(settings STTSettings, device string) (
 	if !validDeviceOverride(override) {
 		return false, fmt.Sprintf("stored device_override %q is incompatible with the GPU-only operator; select auto or cuda", settings.DeviceOverride)
 	}
+	if capable, detail := imageCUDACapability(); !capable {
+		return false, detail
+	}
 	return rt.computeProbe(device)
+}
+
+// imageCUDACapability distinguishes the portable capture image from the CUDA
+// image. Hardware visibility alone is insufficient: AppAPI can silently fall
+// back from an unavailable -cuda tag to the plain image while still exposing
+// the daemon's NVIDIA devices. Without this marker that deployment could pass
+// readiness and launch a binary which has no CUDA execution provider.
+//
+// Every production image sets the marker explicitly. Missing or invalid values
+// fail closed: a source/dev build must opt in only when it was actually linked
+// with the CUDA execution provider.
+func imageCUDACapability() (bool, string) {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(envSTTCUDACapable)))
+	switch raw {
+	case "1", "true", "yes":
+		return true, ""
+	case "0", "false", "no":
+		return false, "the installed portable image does not bundle the CUDA inference runtime; install the matching -cuda image on the GPU deploy daemon because operator speech recognition is GPU-only"
+	case "":
+		return false, fmt.Sprintf("%s is not declared; refusing CUDA inference because operator speech recognition is GPU-only", envSTTCUDACapable)
+	default:
+		return false, fmt.Sprintf("invalid %s=%q; refusing CUDA inference because operator speech recognition is GPU-only", envSTTCUDACapable, os.Getenv(envSTTCUDACapable))
+	}
 }
 
 // probeComputeDevice reports whether the configured STT device is usable plus

@@ -1,15 +1,17 @@
 # Quick start
 
-This is the fastest way to see Cassini working end to end **the way it really
-runs**: as a Nextcloud Talk ExApp installed through AppAPI.
+This is the fastest way to exercise Cassini **the way it really runs**: as a
+Nextcloud Talk ExApp installed through AppAPI. The locally built plain image is
+capture-only; completing transcription and opening a new result requires a
+CUDA-capable deploy daemon and the matching `-cuda` image.
 
 Goal:
 
 - start a local Nextcloud + AppAPI/HaRP + Talk stack
 - build and install Cassini as an ExApp (the production topology)
 - record a Talk meeting through Talk's record button
-- watch the job run through record -> build -> seal -> publish
-- open the published meeting in the viewer — with its real conversation name
+- verify Talk audio is retained and the GPU-only build is durably queued
+- on a CUDA deployment, watch build -> seal -> publish and open the meeting
 
 ## Before you begin
 
@@ -65,7 +67,9 @@ Verify the install:
 - **Cassini** appears for logged-in users and opens the viewer;
 - **Cassini Admin** appears for admins and opens the control panel;
 - `/operator/status` reports both `secret_configured` and
-  `signaling_internal_secret_configured` as `true`.
+  `signaling_internal_secret_configured` as `true`. With the plain local image,
+  HTTP 503 and `stt.device_usable=false` are expected while every non-STT
+  readiness check remains healthy.
 
 ## 2. Record a meeting
 
@@ -82,6 +86,7 @@ git lfs pull \
   --include="harness/media/processed/showcase-lantern-festival-v1/mira.ivf,harness/media/processed/showcase-lantern-festival-v1/mira.ogg"
 
 ./harness/bin/validate-installed-exapp-private-talk.sh \
+  --expect-build-deferred \
   --nextcloud-host 127.0.0.1 \
   --run-count 1 \
   --media-prefix "$PWD/harness/media/processed/showcase-lantern-festival-v1/mira" \
@@ -89,13 +94,12 @@ git lfs pull \
 ```
 
 This creates/reuses a private one-to-one conversation and triggers one Talk
-recording through the installed ExApp. A pass requires one new succeeded job,
-the `.opus` and catalog to exist directly in Nextcloud Files, viewer responses
-identified as Files-backed, positive recorder segments, authenticated artifact
-download, and a transcript that decodes to at least one word. This strict check
-also catches accidentally testing a stale pre-feature image. There is no
-recording retry. Omit `--run-count 1` to run the validator's two-record
-archive-preservation mode.
+recording through the installed ExApp. In capture-only mode, a pass requires a
+ready Talk run bundle, non-empty audio with packets, a future durable build
+retry, no ASR subprocess launch, and no prematurely published meeting. There
+is no recording retry. On a CUDA-ready installed image, omit
+`--expect-build-deferred`; the validator instead requires a succeeded job,
+Files-backed `.opus`, positive segments, and decoded words.
 
 For the exact-image, stack-owning CI equivalent, start from a clean stack and
 provide the already-built image explicitly:
@@ -103,22 +107,25 @@ provide the already-built image explicitly:
 ```bash
 IMAGE_REF=cassini-exapp:local-faithful
 docker build -f deployment/Dockerfile.exapp -t "$IMAGE_REF" .
-IMAGE_REF="$IMAGE_REF" ./harness/bin/ci-e2e-installed-exapp-talk.sh
+CASSINI_EXPECT_GPU_UNAVAILABLE=1 IMAGE_REF="$IMAGE_REF" \
+  ./harness/bin/ci-e2e-installed-exapp-talk.sh
 ```
 
-That command installs the exact image through AppAPI/HaRP, performs one
-Talk-to-viewer run, writes machine-readable evidence, and always tears down its
-owned containers, network, and volumes. It is Linux-only and requires native
+That command installs the exact image through AppAPI/HaRP, performs one Talk
+capture/deferral run, writes machine-readable evidence, and always tears down
+its owned containers, network, and volumes. It is Linux-only and requires native
 Docker Engine/Compose, Docker socket access, Go, `git-lfs`, `jq`, `xmllint`,
 `curl`, and Python 3. It does not require Kokoro or `uv` because it uses the
 materialized Mira pair above.
 
-## 3. Open the result in the viewer
+## 3. Resume on CUDA and open the result
 
-Open **Cassini** inside Nextcloud. The published meeting shows its **Talk
-conversation name** and **real recording date** — the operator resolves the
-conversation name through the AppAPI-authenticated Talk API (which is why this
-only works on the installed-ExApp path, not the standalone bundle).
+The plain image deliberately leaves the captured job queued. Install/redeploy
+the matching `-cuda` image on a CUDA deploy daemon; the durable worker can then
+build, seal, and publish it. Open **Cassini** inside Nextcloud. The published
+meeting shows its **Talk conversation name** and **real recording date** — the
+operator resolves the conversation name through the AppAPI-authenticated Talk
+API.
 
 ## Why this is the default
 
@@ -131,9 +138,9 @@ the production AppAPI manifest/install boundary:
 - The **operator has AppAPI credentials**, so Talk conversation-name resolution
   actually runs — the standalone bundle can only show the "Untitled meeting" +
   date fallback.
-- It drives **record -> build -> publish -> viewer** for real, so it catches
-  publish-path regressions (e.g. the D-462 `export-static-meetings.mjs`
-  temporal-dead-zone crash) that unit tests structurally cannot.
+- It drives the real Talk capture path on every host. With a CUDA image it also
+  drives **build -> publish -> viewer**, catching publish-path regressions (for
+  example D-462) that unit tests structurally cannot.
 
 This is the same argument behind making the ExApp harness the default for CI
 test runners — see Linear **D-453**.
@@ -179,9 +186,10 @@ cd deployment && docker compose up --build
 #   operator :4000  control panel :4173  viewer :8765
 ```
 
-Then paste `CALL_URL` into the control panel to submit a job, watch it move
-`record -> build -> seal -> publish -> done`, and refresh the viewer. For viewer-only
-work, `cassini-viewer`'s own dev server (`npm run dev`) is lighter still.
+Then paste `CALL_URL` into the control panel to submit a recording. The bundled
+standalone operator image is also capture-only, so its build remains queued
+until run in a CUDA-capable operator image. For viewer-only work,
+`cassini-viewer`'s own dev server (`npm run dev`) is lighter still.
 
 ## Where to go next
 

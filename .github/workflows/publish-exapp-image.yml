@@ -349,6 +349,11 @@ jobs:
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           LOG_DIR: ${{ runner.temp }}/faithful-installed-exapp-talk-cpu
+          # The portable image runs on a GPU-less hosted runner. It must still
+          # capture and preserve Talk media, then report durable GPU resource
+          # deferral; completing a transcript here would prove an illegal CPU
+          # speech-recognition fallback.
+          CASSINI_EXPECT_GPU_UNAVAILABLE: '1'
         run: ./harness/bin/ci-e2e-installed-exapp-talk.sh
 
       - name: Upload faithful check evidence
@@ -431,6 +436,7 @@ jobs:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           D453_EXPECT_CONFIG_FAILURE: '1'
           D453_ALLOW_TEST_HOOKS: '1'
+          CASSINI_EXPECT_GPU_UNAVAILABLE: '1'
           D453_MANIFEST_PATH: ${{ runner.temp }}/info-no-signaling.xml
           LOG_DIR: ${{ runner.temp }}/d403-sensitivity-control
         run: ./harness/bin/ci-e2e-installed-exapp-talk.sh
@@ -805,65 +811,6 @@ jobs:
           fi
           df -h / | tail -1
 
-  transcribe-smoke:
-    name: Smoke transcription (bundled model, no download)
-    runs-on: ubuntu-latest
-    needs: build-image
-    # Heavy tier: push/dispatch, or a PR labeled `full-ci` (pulls the LFS model
-    # and runs transcription quality checks — too slow for every PR push).
-    if: >-
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'full-ci')
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Load ExApp image
-        id: load
-        uses: ./.github/actions/load-exapp-image
-        with:
-          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Run transcribe smoke
-        env:
-          IMAGE_REF: ${{ steps.load.outputs.ref }}
-        run: ./harness/bin/ci-transcribe-smoke-exapp.sh
-
-      - name: Run dual-variant transcript verify (CPU = v3 int8)
-        env:
-          IMAGE_REF: ${{ steps.load.outputs.ref }}
-          # v3 int8 (CPU) drops the soft opening on this clip — sherpa-onnx's
-          # streaming VAD does not pick up the early words. The threshold is
-          # a smoke floor that catches "model loaded but produced gibberish"
-          # without gating on absolute WER. Investigation tracked separately.
-          MIN_LEVENSHTEIN: "0.50"
-        run: ./harness/bin/ci-e2e-v3-transcript-verify.sh
-
-      - name: Materialize short-clip fixture (selective LFS pull)
-        # The short-clip regression below slices a single LFS-vendored bot
-        # track (mira.ogg, ~630 KB). A selective pull fetches just that
-        # object instead of the ~100 MB the full showcase fixture set would
-        # cost with `lfs: true` on the checkout — keeps the LFS bandwidth
-        # quota flat. ubuntu-latest ships git-lfs preinstalled.
-        run: git lfs pull --include="harness/media/processed/showcase-lantern-festival-v1/mira.ogg"
-
-      - name: Install host ffmpeg for clip slicing
-        # The regression script slices the source track on the host with
-        # `ffmpeg -c copy` (stream copy, no re-encode — cheap). Same apt
-        # install ci.yml's harness jobs use; ubuntu-latest has no ffmpeg.
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
-
-      - name: Run short-clip ASR regression (decoder pad-tail guard)
-        # Guards the Parakeet TDT v3 short-clip zero-token fix
-        # (cassini-go-recorder/internal/transcribe/stt.go transcribeSegment
-        # pad-tail logic): clean 6-9s clips with no trailing silence must
-        # not transcribe to zero words. Its failure signature matches flake
-        # #50 — if this step trips while the Talk roundtrip stays green,
-        # the regression localizes to the decoder, not the media path.
-        env:
-          IMAGE_REF: ${{ steps.load.outputs.ref }}
-        run: ./harness/bin/ci-transcribe-short-clip-regression.sh
-
   e2e-container:
     name: E2E container HTTP plane + middleware + lifecycle (no Nextcloud)
     runs-on: ubuntu-latest
@@ -931,127 +878,12 @@ jobs:
       - name: Run manual-install e2e against a fresh Nextcloud + AppAPI
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
+          CASSINI_EXPECT_GPU_UNAVAILABLE: '1'
         run: ./harness/bin/ci-e2e-install-exapp.sh
 
-  # Full Talk-driven roundtrip: bot streamers join a Talk call, Talk's
-  # native "record call" button fires, operator HMAC-authenticates,
-  # cassini-go-recorder joins the call as a guest, captures RTP for
-  # ~75s, then the build pipeline produces a meeting bundle. Phase 8
-  # asserts the published transcript contains a verbatim substring of
-  # the scenario script. Runs on both image variants so a regression
-  # in either the CPU or CUDA build path is caught before publish.
-  e2e-talk-record-cpu:
-    name: E2E manual-install Talk roundtrip (CPU)
-    runs-on: ubuntu-latest
-    needs: build-image
-    timeout-minutes: 25
-    # Heavy tier: push/dispatch, or a PR labeled `full-ci` (full Talk-driven
-    # record roundtrip — slow, and flakes near the content-capture floor).
-    if: >-
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'full-ci')
-    # Bot fixture set is now vendored via git-lfs (see .gitattributes), so
-    # the harness can run on a fresh CI checkout. Treat this job as a hard
-    # gate now rather than an informational warning.
-    steps:
-      - name: Ensure git-lfs is available
-        # ubuntu-latest ships git-lfs preinstalled, but self-hosted runners
-        # generally don't. Use the standalone binary into ~/.local/bin so the
-        # install path doesn't depend on sudo / apt — most self-hosted runners
-        # have no passwordless sudo.
-        run: |
-          set -euo pipefail
-          if command -v git-lfs >/dev/null 2>&1; then
-            git-lfs --version
-            exit 0
-          fi
-          GIT_LFS_VERSION="3.5.1"
-          tmpdir="$(mktemp -d)"
-          curl -fsSL \
-            "https://github.com/git-lfs/git-lfs/releases/download/v${GIT_LFS_VERSION}/git-lfs-linux-amd64-v${GIT_LFS_VERSION}.tar.gz" \
-            | tar -xz -C "$tmpdir"
-          mkdir -p "$HOME/.local/bin"
-          install "$tmpdir/git-lfs-${GIT_LFS_VERSION}/git-lfs" "$HOME/.local/bin/git-lfs"
-          rm -rf "$tmpdir"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/bin/git-lfs" install --skip-repo
-          "$HOME/.local/bin/git-lfs" --version
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-      - name: Force LFS smudge
-        # On ubuntu-latest the working tree is fresh, but on self-hosted
-        # runners the tree is reused across runs and checkout@v4 may skip
-        # smudging files it considers unchanged, leaving stale pointers.
-        # `git lfs pull` is idempotent and cheap, so we run it on both
-        # jobs to keep them symmetric.
-        run: git lfs pull
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-      - name: Confirm bot media fixture is materialized
-        run: |
-          set -euo pipefail
-          # The fixture is vendored under harness/media/processed/
-          # showcase-lantern-festival-v1/ via git-lfs (see .gitattributes).
-          # checkout@v4 with lfs: true above pulls LFS content, so the .ogg
-          # and .ivf files should be real content here, not 132-byte pointers.
-          # Hard-fail if not: a silent skip would let LFS regressions ship.
-          f=harness/media/processed/showcase-lantern-festival-v1/mira.ogg
-          if [[ ! -s "$f" ]] || [[ $(stat -c%s "$f") -le 10000 ]]; then
-            echo "::error::Talk e2e bot media missing or still an LFS pointer at $f" >&2
-            echo "::error::checkout@v4 should have materialized it (lfs: true is set). Check repo LFS quota." >&2
-            exit 1
-          fi
-      - name: Load ExApp image
-        id: load
-        uses: ./.github/actions/load-exapp-image
-        with:
-          image-ref-list: ${{ needs.build-image.outputs.image_ref }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Pre-pull compose stack images
-        # Pull the Nextcloud + Talk signaling stack images in a dedicated
-        # step so registry/network failures show up here (not buried inside
-        # the phase-1 harness step) and so the harness step's wall-clock
-        # reflects only the e2e logic, not image transfer time. Images live
-        # at the daemon level so no project name is required.
-        run: docker compose -f harness/compose.yml --profile full pull
-      - name: Run manual-install Talk e2e (CPU)
-        env:
-          IMAGE_REF: ${{ steps.load.outputs.ref }}
-          # 75s gives the rotator several cycles per bot, enough that at
-          # least one participant track captures a multi-word verbatim
-          # slice of the scenario script.
-          RECORD_DURATION_SECONDS: "75"
-          # Strict Levenshtein on the full 3.7KB scenario is dominated
-          # by missing content (most bots' tracks are sparse-RTP DTX
-          # silence today — see task #11); accept a verbatim word-run
-          # substring as proof the pipeline transcribed real speech.
-          MIN_LEVENSHTEIN: "0.40"
-          MIN_CAPTURED_RUN_WORDS: "5"
-          # Pin LOG_DIR to a stable path so the failure-artifact step below
-          # can find the pulled transcript + recorder stdout deterministically
-          # (the harness default is a PID-suffixed /tmp dir).
-          LOG_DIR: ${{ runner.temp }}/cassini-talk-rec-e2e
-        run: ./harness/bin/ci-e2e-talk-record-roundtrip.sh
-      - name: Upload transcript + recorder logs on failure
-        if: failure()
-        # D-50: the CPU merged-fallback transcript gate flakes near the
-        # MIN_CAPTURED_RUN_WORDS floor. Capturing the published transcript
-        # JSON and the recorder stdout lets a future reviewer tell a genuine
-        # "always got 1 word" regression from a sporadic flake without
-        # re-running CI. transcript.words.v1.json is pulled in phase 9 (so it
-        # exists for the content-gate failure we care about) and cassini-exapp.log
-        # is written by the harness cleanup trap on every exit.
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-talk-record-cpu-debug
-          path: |
-            ${{ runner.temp }}/cassini-talk-rec-e2e/transcript.words.v1.json
-            ${{ runner.temp }}/cassini-talk-rec-e2e/cassini-exapp.log
-          if-no-files-found: warn
-          retention-days: 14
-
+  # D-684 removed the hosted-CPU Talk/ASR roundtrip. This CUDA job owns the
+  # positive transcript assertion; the faithful CPU-host gate above owns Talk
+  # capture, durable GPU deferral, and the no-CPU-subprocess assertion.
   e2e-talk-record-cuda:
     name: E2E manual-install Talk roundtrip (CUDA / GPU)
     runs-on: [self-hosted, Linux, X64, gpu]
@@ -1150,12 +982,10 @@ jobs:
       - build-cuda-base
       - build-image-cuda
       - smoke
-      - transcribe-smoke
       - transcribe-smoke-cuda
       - e2e-container
       - e2e-entrypoint
       - e2e-install
-      - e2e-talk-record-cpu
       - e2e-talk-record-cuda
     # Only prune after a successful push that actually pushed to ghcr —
     # main (publishes :latest) and version tags.

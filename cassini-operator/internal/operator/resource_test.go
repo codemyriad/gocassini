@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -162,6 +163,58 @@ func TestApplyToEnv(t *testing.T) {
 	}
 }
 
+func TestExecuteBuildCLIDoesNotLaunchCassiniWithoutCUDARuntime(t *testing.T) {
+	// An impossible RAM floor proves CUDA capability is checked first. A
+	// portable image must defer immediately, not spend five minutes waiting for
+	// memory that cannot make its missing execution provider appear.
+	t.Setenv("CASSINI_BUILD_MIN_FREE_MEM_MB", "999999")
+	t.Setenv("CASSINI_BUILD_MEM_WAIT_SECS", "300")
+	t.Setenv(envSTTCUDACapable, "0")
+	tmp := t.TempDir()
+	marker := filepath.Join(tmp, "cassini-started")
+	t.Setenv("CASSINI_TEST_MARKER", marker)
+	cassiniBin := filepath.Join(tmp, "cassini-marker")
+	if err := os.WriteFile(cassiniBin, []byte("#!/bin/sh\n: > \"$CASSINI_TEST_MARKER\"\n"), 0o755); err != nil {
+		t.Fatalf("write marker binary: %v", err)
+	}
+
+	store, err := OpenStore(filepath.Join(tmp, "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	const jobID = "cpu-must-not-launch"
+	insertJob(t, store.db, jobID, nowUTCString())
+	runPath := seedReadyRunBundle(t, filepath.Join(tmp, "jobs"), jobID)
+	if err := store.MarkBuildQueued(context.Background(), jobID, runPath, runPath, nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+
+	rt := &Runtime{
+		store:  store,
+		cfg:    Config{CassiniBin: cassiniBin, WorkRoot: filepath.Join(tmp, "jobs")},
+		logger: log.New(io.Discard, "", 0),
+		settings: STTSettings{
+			// Emulate a portable image installed on a GPU daemon. Visible GPU
+			// hardware must not override the missing CUDA execution provider;
+			// admission must fail before cmd.Run can start the ASR process.
+			DeviceOverride: "cuda",
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err = rt.executeBuildCLI(ctx, buildTask{
+		JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath,
+	})
+	var unavailable *resourceUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.resource != "CUDA device" {
+		t.Fatalf("executeBuildCLI() error = %v, want CUDA resourceUnavailableError", err)
+	}
+	if _, statErr := os.Stat(marker); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("Cassini subprocess ran on CPU (marker stat error = %v)", statErr)
+	}
+}
+
 func TestWaitForMemory(t *testing.T) {
 	orig := probeAvailableMem
 	defer func() { probeAvailableMem = orig }()
@@ -255,6 +308,27 @@ FROM job_attempts WHERE job_id = ? AND attempt_number = 1`, jobID).
 	}
 	if stage != "build" || state != "queued" || completedAt != nil || buildStartedAt != nil {
 		t.Fatalf("deferred attempt = stage %q state %q completed=%v started=%v", stage, state, completedAt, buildStartedAt)
+	}
+	job, err := rt.store.GetJob(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("GetJob() deferred job error = %v", err)
+	}
+	if job.BuildRetryNotBefore == nil || strings.TrimSpace(*job.BuildRetryNotBefore) == "" {
+		t.Fatalf("deferred job does not expose build_retry_not_before: %#v", job)
+	}
+	attempts, err := rt.store.ListJobAttempts(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("ListJobAttempts() deferred job error = %v", err)
+	}
+	if len(attempts) != 1 || attempts[0].BuildRetryNotBefore == nil || strings.TrimSpace(*attempts[0].BuildRetryNotBefore) == "" {
+		t.Fatalf("deferred attempt does not expose build_retry_not_before: %#v", attempts)
+	}
+	attempt, err := rt.store.GetJobAttempt(context.Background(), jobID, 1)
+	if err != nil {
+		t.Fatalf("GetJobAttempt() deferred job error = %v", err)
+	}
+	if attempt.BuildRetryNotBefore == nil || strings.TrimSpace(*attempt.BuildRetryNotBefore) == "" {
+		t.Fatalf("deferred event attempt does not expose build_retry_not_before: %#v", attempt)
 	}
 
 	select {
