@@ -75,3 +75,12 @@ func TestDefaultNumThreads(t *testing.T) {
 		t.Errorf("DefaultNumThreads() = %d, want 1..16", n)
 	}
 }
+
+func TestDefaultNumThreadsForDevice(t *testing.T) {
+	if got := DefaultNumThreadsForDevice(" CUDA "); got != 1 {
+		t.Errorf("CUDA threads = %d, want 1", got)
+	}
+	if got := DefaultNumThreadsForDevice("cpu"); got != DefaultNumThreads() {
+		t.Errorf("CPU threads = %d, want %d", got, DefaultNumThreads())
+	}
+}

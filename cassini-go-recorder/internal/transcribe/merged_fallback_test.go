@@ -61,3 +61,67 @@ func TestShouldFireMergedFallbackOnHealthyPass(t *testing.T) {
 		t.Fatalf("shouldFireMergedFallback(14 words) = true; want false (healthy passes must not trigger redundant recovery)")
 	}
 }
+
+func TestChooseMergedFallbackReplacesThinPassWithoutDuplicatingSurvivors(t *testing.T) {
+	participant := []Segment{{
+		SpeakerID: "spk_alice",
+		StartMS:   1000,
+		EndMS:     1500,
+		Words: []Word{
+			{Text: "hello", StartMS: 1000, EndMS: 1200},
+			{Text: "there", StartMS: 1250, EndMS: 1500},
+		},
+	}}
+	merged := []Segment{{
+		SpeakerID: "merged",
+		StartMS:   900,
+		EndMS:     2200,
+		Words: []Word{
+			{Text: "well", StartMS: 900, EndMS: 980},
+			{Text: "hello", StartMS: 1000, EndMS: 1200},
+			{Text: "there", StartMS: 1250, EndMS: 1500},
+			{Text: "everyone", StartMS: 1700, EndMS: 2200},
+		},
+	}}
+
+	got, useMerged := chooseMergedFallback(participant, merged)
+	if !useMerged {
+		t.Fatal("richer mixed pass was not selected")
+	}
+	if CountWords(got) != CountWords(merged) {
+		t.Fatalf("selected transcript has %d words, want exactly the mixed pass's %d (no additive duplicates)", CountWords(got), CountWords(merged))
+	}
+	for _, segment := range got {
+		if segment.SpeakerID != "merged" {
+			t.Fatalf("thin participant hypothesis leaked into selected transcript: %#v", got)
+		}
+	}
+}
+
+func TestChooseMergedFallbackKeepsAttributionUnlessMixIsStrictlyRicher(t *testing.T) {
+	participant := segmentsWithWords(3)
+	participant[0].SpeakerID = "spk_alice"
+
+	for _, test := range []struct {
+		name            string
+		mergedWordCount int
+	}{
+		{name: "empty", mergedWordCount: 0},
+		{name: "poorer", mergedWordCount: 2},
+		{name: "tied", mergedWordCount: 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			merged := segmentsWithWords(test.mergedWordCount)
+			if len(merged) != 0 {
+				merged[0].SpeakerID = "merged"
+			}
+			got, useMerged := chooseMergedFallback(participant, merged)
+			if useMerged {
+				t.Fatalf("selected %d-word mixed pass over 3 attributed words", test.mergedWordCount)
+			}
+			if len(got) != 1 || got[0].SpeakerID != "spk_alice" || CountWords(got) != 3 {
+				t.Fatalf("attributed participant pass was not preserved: %#v", got)
+			}
+		})
+	}
+}

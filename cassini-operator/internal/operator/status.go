@@ -17,8 +17,8 @@ import (
 // actually installed, proxied, configured, and ready for Talk" without shell
 // access. Through the AppAPI proxy it is ADMIN-ACL'd by the
 // ^operator\/status\/?$ route in appinfo/info.xml. It reports version/image
-// tag, CPU-vs-CUDA mode and whether the device is actually usable, Talk
-// backend config presence (booleans only — never secret values), and
+// tag, the effective forced-CUDA settings and whether CUDA is actually usable,
+// Talk backend config presence (booleans only — never secret values), and
 // DB/storage health. All checks are cheap: no transcription, no doctor
 // subprocess.
 
@@ -107,6 +107,7 @@ type statusPrerequisite struct {
 
 type statusSTT struct {
 	Device       string `json:"device"`
+	Quality      string `json:"quality"`
 	ModelID      string `json:"model_id,omitempty"`
 	DeviceUsable bool   `json:"device_usable"`
 	Detail       string `json:"detail,omitempty"`
@@ -157,13 +158,16 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	usable, detail := rt.computeProbe()
+	settings := rt.currentSettings()
+	effective := settings.effective()
+	usable, detail := rt.effectiveComputeStatus(settings, effective.Device)
 	resp := statusResponse{
 		Version:     strings.TrimSpace(os.Getenv(envAppVersion)),
 		VCSRevision: buildVCSRevision(),
 		STT: statusSTT{
-			Device:       configuredSTTDevice(),
-			ModelID:      strings.TrimSpace(os.Getenv(envSTTModel)),
+			Device:       effective.Device,
+			Quality:      effective.Quality,
+			ModelID:      effective.Model,
 			DeviceUsable: usable,
 			Detail:       detail,
 		},
@@ -261,14 +265,19 @@ func (s *Store) Ping(ctx context.Context) error {
 	return nil
 }
 
-// configuredSTTDevice mirrors how the recorder's transcribe stack consumes
-// CASSINI_STT_DEVICE (transcribe.defaultDevice: unset means cpu; "auto"
-// resolves to cpu as well).
-func configuredSTTDevice() string {
-	if v := strings.TrimSpace(os.Getenv(envSTTDevice)); v != "" {
-		return v
+// effectiveComputeStatus validates the raw persisted override before probing
+// the concrete execution device. Current APIs only permit auto/CUDA, but this
+// also makes a legacy or out-of-band CPU setting visibly unhealthy instead of
+// claiming the forced-CUDA build path is ready.
+func (rt *Runtime) effectiveComputeStatus(settings STTSettings, device string) (bool, string) {
+	override := strings.ToLower(strings.TrimSpace(settings.DeviceOverride))
+	if override == "auto" {
+		override = ""
 	}
-	return "cpu"
+	if !validDeviceOverride(override) {
+		return false, fmt.Sprintf("stored device_override %q is incompatible with the GPU-only operator; select auto or cuda", settings.DeviceOverride)
+	}
+	return rt.computeProbe(device)
 }
 
 // probeComputeDevice reports whether the configured STT device is usable plus
@@ -291,7 +300,7 @@ func probeCUDADevice() (bool, string) {
 	_, driverErr := os.Stat("/proc/driver/nvidia/version")
 	deviceNodes, _ := filepath.Glob("/dev/nvidia*")
 	if driverErr != nil && len(deviceNodes) == 0 {
-		return false, "CASSINI_STT_DEVICE=cuda but no NVIDIA driver (/proc/driver/nvidia/version) or device nodes (/dev/nvidia*) are visible — run the container with GPU access (docker --gpus all, or an AppAPI deploy daemon with the nvidia runtime), or set CASSINI_STT_DEVICE=cpu"
+		return false, "CASSINI_STT_DEVICE=cuda but no NVIDIA driver (/proc/driver/nvidia/version) or device nodes (/dev/nvidia*) are visible — run the container with GPU access (docker --gpus all, or an AppAPI deploy daemon with the nvidia runtime); operator speech recognition is GPU-only"
 	}
 	smi, err := exec.LookPath("nvidia-smi")
 	if err != nil {
@@ -301,11 +310,11 @@ func probeCUDADevice() (bool, string) {
 	defer cancel()
 	out, err := exec.CommandContext(ctx, smi, "-L").Output()
 	if err != nil {
-		return false, fmt.Sprintf("CASSINI_STT_DEVICE=cuda but `nvidia-smi -L` failed: %v — the GPU is not usable from this container; fix GPU access or set CASSINI_STT_DEVICE=cpu", err)
+		return false, fmt.Sprintf("CASSINI_STT_DEVICE=cuda but `nvidia-smi -L` failed: %v — the GPU is not usable from this container; fix GPU access because operator speech recognition is GPU-only", err)
 	}
 	gpus := strings.TrimSpace(string(out))
 	if gpus == "" {
-		return false, "CASSINI_STT_DEVICE=cuda but `nvidia-smi -L` lists no GPUs — the GPU is not usable from this container; fix GPU access or set CASSINI_STT_DEVICE=cpu"
+		return false, "CASSINI_STT_DEVICE=cuda but `nvidia-smi -L` lists no GPUs — the GPU is not usable from this container; fix GPU access because operator speech recognition is GPU-only"
 	}
 	if line, _, found := strings.Cut(gpus, "\n"); found {
 		gpus = line + " (+more)"
@@ -313,14 +322,16 @@ func probeCUDADevice() (bool, string) {
 	return true, "cuda: " + gpus
 }
 
-// logComputeDeviceStatus logs the STT device once at startup, loudly when the
-// configured device is unusable: a CUDA image without GPU access must fail
+// logComputeDeviceStatus logs the effective STT device once at startup, loudly
+// when CUDA is unusable: a CUDA image without GPU access must fail
 // visibly instead of silently transcribing on CPU (D-363).
 func (rt *Runtime) logComputeDeviceStatus() {
-	device := configuredSTTDevice()
-	usable, detail := rt.computeProbe()
+	settings := rt.currentSettings()
+	effective := settings.effective()
+	device := effective.Device
+	usable, detail := rt.effectiveComputeStatus(settings, device)
 	if usable {
-		rt.logger.Printf("stt_device -> %s (%s)", device, detail)
+		rt.logger.Printf("stt_device -> %s quality=%s model=%s (%s)", device, effective.Quality, effective.Model, detail)
 		return
 	}
 	rt.logger.Printf("ERROR: stt_device %s is not usable: %s", device, detail)

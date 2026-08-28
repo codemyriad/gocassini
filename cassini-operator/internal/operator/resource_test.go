@@ -2,7 +2,12 @@ package operator
 
 import (
 	"context"
+	"errors"
+	"io"
+	"log"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -59,6 +64,22 @@ func TestDefaultCPUReserve(t *testing.T) {
 	}
 }
 
+func TestResourceLimitDefaultsCoverMeasuredWorkingSet(t *testing.T) {
+	orig := probeOnlineCPUs
+	defer func() { probeOnlineCPUs = orig }()
+	probeOnlineCPUs = func() int { return 8 }
+	t.Setenv("CASSINI_BUILD_MIN_FREE_MEM_MB", "")
+	t.Setenv("CASSINI_GPU_MIN_FREE_MB", "")
+
+	limits := resourceLimitsFromEnv()
+	if limits.minFreeMemMB != 6144 {
+		t.Fatalf("default RAM floor = %dMiB, want 6144MiB", limits.minFreeMemMB)
+	}
+	if limits.gpuMinFreeMB != 5500 {
+		t.Fatalf("default VRAM floor = %dMiB, want 5500MiB", limits.gpuMinFreeMB)
+	}
+}
+
 func TestSetEnvKey(t *testing.T) {
 	env := []string{"A=1", "CASSINI_STT_DEVICE=cuda", "B=2"}
 	out := setEnvKey(env, "CASSINI_STT_DEVICE", "cpu")
@@ -77,38 +98,67 @@ func TestApplyToEnv(t *testing.T) {
 	origCPU, origGPU := probeOnlineCPUs, probeGPUFreeMB
 	defer func() { probeOnlineCPUs, probeGPUFreeMB = origCPU, origGPU }()
 	probeOnlineCPUs = func() int { return 8 }
-	noop := func(string, ...any) {}
 	l := resourceLimits{cpuReserve: 2, gpuMinFreeMB: 4096}
 
-	// CPU-only run: threads injected, no device forced.
+	// CPU resolution is never a fallback for operator-managed recognition.
 	probeGPUFreeMB = func() (int, bool) { return 0, false }
-	out := l.applyToEnv([]string{"X=1"}, false, noop)
-	if !contains(out, "CASSINI_STT_NUM_THREADS=6") {
-		t.Errorf("thread budget not injected: %v", out)
+	out, err := l.applyToEnv([]string{"X=1"}, false)
+	var unavailable *resourceUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.resource != "CUDA device" {
+		t.Fatalf("CPU resolution error = %v, want CUDA resourceUnavailableError", err)
 	}
-	if countKey(out, "CASSINI_STT_DEVICE=") != 0 {
-		t.Errorf("device should not be forced on a cpu run: %v", out)
+	if out != nil {
+		t.Errorf("CPU resolution env = %v, want no launch environment", out)
 	}
 
-	// cuda intended, GPU full -> forced to cpu.
+	// CUDA intended, GPU full -> defer rather than silently using host CPU/RAM.
 	probeGPUFreeMB = func() (int, bool) { return 1000, true }
-	out = l.applyToEnv(nil, true, noop)
-	if !contains(out, "CASSINI_STT_DEVICE=cpu") {
-		t.Errorf("expected cuda->cpu fallback when VRAM low: %v", out)
+	out, err = l.applyToEnv(nil, true)
+	unavailable = nil
+	if !errors.As(err, &unavailable) || unavailable.resource != "GPU memory" {
+		t.Fatalf("low VRAM error = %v, want GPU resourceUnavailableError", err)
+	}
+	if out != nil {
+		t.Errorf("low VRAM env = %v, want no launch environment", out)
 	}
 
-	// cuda intended, GPU has room -> not forced.
+	// CUDA intended and GPU has room -> explicitly pinned to CUDA and one host
+	// thread, even when the input environment was auto-detecting the device.
 	probeGPUFreeMB = func() (int, bool) { return 8000, true }
-	out = l.applyToEnv(nil, true, noop)
-	if countKey(out, "CASSINI_STT_DEVICE=") != 0 {
-		t.Errorf("device should not be forced when VRAM is sufficient: %v", out)
+	out, err = l.applyToEnv([]string{
+		"CASSINI_STT_NUM_THREADS=12",
+		"CASSINI_STT_STREAM_CONCURRENCY=4",
+	}, true)
+	if err != nil {
+		t.Fatalf("CUDA applyToEnv() error = %v", err)
+	}
+	if !contains(out, "CASSINI_STT_DEVICE=cuda") ||
+		!contains(out, "CASSINI_STT_NUM_THREADS=1") ||
+		!contains(out, "CASSINI_STT_STREAM_CONCURRENCY=1") {
+		t.Errorf("CUDA policy not pinned to cuda/one thread/one recognizer: %v", out)
+	}
+	if countKey(out, "CASSINI_STT_STREAM_CONCURRENCY=") != 1 {
+		t.Errorf("stale CUDA stream concurrency override survived: %v", out)
+	}
+	probeGPUFreeMB = func() (int, bool) { return 5500, true }
+	if _, err := (resourceLimits{gpuMinFreeMB: 5500}).applyToEnv(nil, true); err != nil {
+		t.Errorf("VRAM exactly at floor must be eligible: %v", err)
+	}
+	probeGPUFreeMB = func() (int, bool) { return 5499, true }
+	if _, err := (resourceLimits{gpuMinFreeMB: 5500}).applyToEnv(nil, true); err == nil {
+		t.Error("VRAM one MiB below floor must be deferred")
 	}
 
-	// cuda intended but nvidia-smi absent -> can't verify, don't force.
+	// Unknown VRAM fails closed: launching without a usable capacity reading
+	// cannot uphold the host-safety guarantee.
 	probeGPUFreeMB = func() (int, bool) { return 0, false }
-	out = l.applyToEnv(nil, true, noop)
-	if countKey(out, "CASSINI_STT_DEVICE=") != 0 {
-		t.Errorf("device should not be forced when GPU free is unknown: %v", out)
+	out, err = l.applyToEnv(nil, true)
+	unavailable = nil
+	if !errors.As(err, &unavailable) || unavailable.resource != "GPU memory" {
+		t.Fatalf("unknown VRAM error = %v, want GPU memory resourceUnavailableError", err)
+	}
+	if out != nil {
+		t.Errorf("unknown VRAM env = %v, want no launch environment", out)
 	}
 }
 
@@ -124,12 +174,15 @@ func TestWaitForMemory(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Persistently low -> proceeds after memWaitMax (does not hang or error).
+	// Persistently low -> returns a transient resource error after memWaitMax;
+	// the caller must not launch the build.
 	probeAvailableMem = func() int { return 100 }
 	l = resourceLimits{minFreeMemMB: 1536, memWaitMax: 20 * time.Millisecond, memPoll: 5 * time.Millisecond}
 	start := time.Now()
-	if err := l.waitForMemory(context.Background(), noop); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	err := l.waitForMemory(context.Background(), noop)
+	var unavailable *resourceUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.resource != "host memory" {
+		t.Fatalf("low RAM error = %v, want host memory resourceUnavailableError", err)
 	}
 	if time.Since(start) < 15*time.Millisecond {
 		t.Errorf("expected to wait ~memWaitMax before proceeding")
@@ -142,6 +195,267 @@ func TestWaitForMemory(t *testing.T) {
 	defer cancel()
 	if err := l.waitForMemory(ctx, noop); err == nil {
 		t.Errorf("expected context error when RAM never frees")
+	}
+}
+
+func TestRunBuildJobDefersTransientResourceError(t *testing.T) {
+	tmp := t.TempDir()
+	store, err := OpenStore(filepath.Join(tmp, "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt := &Runtime{
+		ctx:        ctx,
+		store:      store,
+		cfg:        Config{WorkRoot: filepath.Join(tmp, "jobs")},
+		logger:     log.New(io.Discard, "", 0),
+		buildQueue: make(chan buildTask, 1),
+		// Leave enough wall-clock room to inspect the durable queue before the
+		// retry becomes eligible. A 20 ms window made this assertion depend on
+		// host load rather than the persisted backoff semantics.
+		buildResourceRetryDelay: 250 * time.Millisecond,
+	}
+
+	const jobID = "resource-deferred"
+	insertJob(t, rt.store.db, jobID, "2026-08-28T10:00:00Z")
+	runPath := seedReadyRunBundle(t, rt.cfg.WorkRoot, jobID)
+	if err := rt.store.MarkBuildQueued(context.Background(), jobID, runPath, runPath, nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	rt.buildJobFn = func(context.Context, buildTask) (string, error) {
+		return "", &resourceUnavailableError{resource: "GPU memory", detail: "test pressure"}
+	}
+
+	started := time.Now()
+	rt.runBuildJob(buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath}, 1)
+
+	var stage, state string
+	var completedAt, buildStartedAt *string
+	if err := rt.store.db.QueryRow(`
+SELECT stage, state, completed_at, build_started_at FROM jobs WHERE id = ?`, jobID).
+		Scan(&stage, &state, &completedAt, &buildStartedAt); err != nil {
+		t.Fatalf("query deferred job: %v", err)
+	}
+	if stage != "build" || state != "queued" || completedAt != nil || buildStartedAt != nil {
+		t.Fatalf("deferred job = stage %q state %q completed=%v started=%v", stage, state, completedAt, buildStartedAt)
+	}
+	if tasks, err := rt.store.ListQueuedBuildTasks(context.Background()); err != nil {
+		t.Fatalf("ListQueuedBuildTasks() error = %v", err)
+	} else if len(tasks) != 0 {
+		t.Fatalf("deferred task became dispatcher-eligible before backoff: %#v", tasks)
+	}
+	if err := rt.store.db.QueryRow(`
+SELECT stage, state, completed_at, build_started_at
+FROM job_attempts WHERE job_id = ? AND attempt_number = 1`, jobID).
+		Scan(&stage, &state, &completedAt, &buildStartedAt); err != nil {
+		t.Fatalf("query deferred attempt: %v", err)
+	}
+	if stage != "build" || state != "queued" || completedAt != nil || buildStartedAt != nil {
+		t.Fatalf("deferred attempt = stage %q state %q completed=%v started=%v", stage, state, completedAt, buildStartedAt)
+	}
+
+	select {
+	case retry := <-rt.buildQueue:
+		if retry.JobID != jobID || retry.AttemptNumber != 1 {
+			t.Fatalf("retry task = %#v", retry)
+		}
+		if time.Since(started) < 200*time.Millisecond {
+			t.Fatalf("resource retry was delivered without backoff")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("deferred build was not redelivered")
+	}
+}
+
+func TestRunBuildJobSerializesConcurrentWorkers(t *testing.T) {
+	tmp := t.TempDir()
+	store, err := OpenStore(filepath.Join(tmp, "jobs.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rt := &Runtime{
+		ctx:        ctx,
+		store:      store,
+		cfg:        Config{WorkRoot: filepath.Join(tmp, "jobs")},
+		logger:     log.New(io.Discard, "", 0),
+		buildQueue: make(chan buildTask, 2),
+	}
+
+	tasks := []buildTask{
+		{JobID: "serial-a", AttemptNumber: 1, ArtifactRunPath: "/run/a"},
+		{JobID: "serial-b", AttemptNumber: 1, ArtifactRunPath: "/run/b"},
+	}
+	for _, task := range tasks {
+		insertJob(t, store.db, task.JobID, nowUTCString())
+		if err := store.MarkBuildQueued(context.Background(), task.JobID, task.ArtifactRunPath, task.ArtifactRunPath, nowUTCString()); err != nil {
+			t.Fatalf("queue %s: %v", task.JobID, err)
+		}
+	}
+
+	entered := make(chan string, 2)
+	release := make(chan struct{}, 2)
+	var stateMu sync.Mutex
+	active, maxActive := 0, 0
+	rt.buildJobFn = func(_ context.Context, task buildTask) (string, error) {
+		stateMu.Lock()
+		active++
+		if active > maxActive {
+			maxActive = active
+		}
+		stateMu.Unlock()
+		entered <- task.JobID
+		<-release
+		stateMu.Lock()
+		active--
+		stateMu.Unlock()
+		return "", errors.New("intentional test stop")
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for i, task := range tasks {
+		go func(worker int, task buildTask) {
+			defer wg.Done()
+			rt.runBuildJob(task, worker)
+		}(i+1, task)
+	}
+
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("first build did not enter")
+	}
+	select {
+	case second := <-entered:
+		t.Fatalf("second build %s entered before the first released its GPU admission", second)
+	case <-time.After(40 * time.Millisecond):
+	}
+	release <- struct{}{}
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("second build did not enter after the first released")
+	}
+	release <- struct{}{}
+	wg.Wait()
+	stateMu.Lock()
+	defer stateMu.Unlock()
+	if maxActive != 1 {
+		t.Fatalf("maximum simultaneous builds = %d, want 1", maxActive)
+	}
+}
+
+func TestScheduleDeferredBuildStopsOnShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	rt := &Runtime{
+		ctx:                     ctx,
+		logger:                  log.New(io.Discard, "", 0),
+		buildQueue:              make(chan buildTask, 1),
+		buildResourceRetryDelay: 10 * time.Millisecond,
+	}
+	cancel()
+	rt.scheduleDeferredBuild(buildTask{JobID: "shutdown", AttemptNumber: 1}, time.Now().Add(10*time.Millisecond))
+
+	select {
+	case task := <-rt.buildQueue:
+		t.Fatalf("retry delivered after shutdown: %#v", task)
+	case <-time.After(30 * time.Millisecond):
+	}
+}
+
+func TestBuildRetryNotBeforeSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.sqlite3")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	seedJobRow(t, store.db, seededJobRow{ID: "restart-deferred", Stage: "record", State: "queued", CreatedAt: "2026-08-28T10:00:00Z"})
+	if err := store.MarkBuildQueued(context.Background(), "restart-deferred", "/run/restart", "/run/restart", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	task := buildTask{JobID: "restart-deferred", AttemptNumber: 1, ArtifactRunPath: "/run/restart"}
+	if claimed, err := store.ClaimBuildRunning(context.Background(), task, nowUTCString()); err != nil || !claimed {
+		t.Fatalf("ClaimBuildRunning() = (%v, %v), want (true, nil)", claimed, err)
+	}
+	if deferred, err := store.MarkBuildDeferred(
+		context.Background(), task.JobID, task.AttemptNumber,
+		nowUTCString(), "2099-01-01T00:00:00Z",
+	); err != nil || !deferred {
+		t.Fatalf("MarkBuildDeferred() = (%v, %v), want (true, nil)", deferred, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	store, err = OpenStore(path)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer store.Close()
+	if tasks, err := store.ListQueuedBuildTasks(context.Background()); err != nil {
+		t.Fatalf("ListQueuedBuildTasks() after restart error = %v", err)
+	} else if len(tasks) != 0 {
+		t.Fatalf("future retry became eligible after restart: %#v", tasks)
+	}
+	if claimed, err := store.ClaimBuildRunning(context.Background(), task, nowUTCString()); err != nil || claimed {
+		t.Fatalf("early ClaimBuildRunning() = (%v, %v), want (false, nil)", claimed, err)
+	}
+	if _, err := store.db.Exec(`
+UPDATE jobs SET build_retry_not_before = '2000-01-01T00:00:00Z' WHERE id = 'restart-deferred';
+UPDATE job_attempts SET build_retry_not_before = '2000-01-01T00:00:00Z'
+WHERE job_id = 'restart-deferred' AND attempt_number = 1;`); err != nil {
+		t.Fatalf("make retry eligible: %v", err)
+	}
+	if tasks, err := store.ListQueuedBuildTasks(context.Background()); err != nil {
+		t.Fatalf("ListQueuedBuildTasks() eligible error = %v", err)
+	} else if len(tasks) != 1 || tasks[0] != task {
+		t.Fatalf("eligible tasks = %#v, want %#v", tasks, task)
+	}
+}
+
+func TestBuildRetryEligibilityUsesChronologicalFractionalTime(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+
+	seedJobRow(t, store.db, seededJobRow{ID: "fractional-retry", Stage: "record", State: "queued", CreatedAt: "2026-08-28T10:00:00Z"})
+	if err := store.MarkBuildQueued(context.Background(), "fractional-retry", "/run/fractional", "/run/fractional", "2026-08-28T10:00:00Z"); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	if _, err := store.db.Exec(`
+UPDATE jobs SET build_retry_not_before = '2026-08-28T10:00:00.8Z' WHERE id = 'fractional-retry';
+UPDATE job_attempts SET build_retry_not_before = '2026-08-28T10:00:00.8Z'
+WHERE job_id = 'fractional-retry' AND attempt_number = 1;`); err != nil {
+		t.Fatalf("seed variable-width retry timestamp: %v", err)
+	}
+
+	// Lexically .85Z is less than .8Z even though it is 50 ms later. This
+	// explicitly covers databases written before timestamps became fixed-width.
+	task := buildTask{JobID: "fractional-retry", AttemptNumber: 1, ArtifactRunPath: "/run/fractional"}
+	claimed, err := store.ClaimBuildRunning(context.Background(), task, "2026-08-28T10:00:00.85Z")
+	if err != nil || !claimed {
+		t.Fatalf("chronologically due ClaimBuildRunning() = (%v, %v), want (true, nil)", claimed, err)
+	}
+}
+
+func TestFormatUTCStringIsFixedWidthAndLexicallySortable(t *testing.T) {
+	earlier := time.Date(2026, 8, 28, 10, 0, 0, 800_000_000, time.UTC)
+	later := time.Date(2026, 8, 28, 10, 0, 0, 850_000_000, time.UTC)
+	earlierText := formatUTCString(earlier)
+	laterText := formatUTCString(later)
+	if len(earlierText) != len(laterText) || len(earlierText) != len("2026-08-28T10:00:00.000000000Z") {
+		t.Fatalf("timestamp widths = %d/%d: %q / %q", len(earlierText), len(laterText), earlierText, laterText)
+	}
+	if earlierText >= laterText {
+		t.Fatalf("fixed-width timestamps are not chronologically sortable: %q >= %q", earlierText, laterText)
 	}
 }
 

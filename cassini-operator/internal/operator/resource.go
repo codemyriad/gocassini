@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
@@ -14,9 +15,10 @@ import (
 // the host. The deployed ExApp runs uncapped (cgroup cpu.max=max, memory.max=max)
 // on the SAME host as Nextcloud + Talk, so a transcription that grabs every core
 // or all of RAM degrades the call server. On GPU hosts the shared VRAM can OOM
-// other services. The governor: (1) caps STT threads below the available core
-// count, (2) refuses to start a build while free RAM is below a floor, and (3)
-// falls back from cuda to cpu when GPU VRAM is too low.
+// other services. Production builds are GPU-only: the governor (1) pins CUDA
+// STT to one host thread, (2) refuses to start while free RAM is below a floor,
+// and (3) defers when CUDA or a trustworthy free-VRAM reading is unavailable.
+// It never moves recognition onto CPU/RAM as a fallback.
 
 // Probes are package vars so tests can inject deterministic values.
 var (
@@ -28,7 +30,7 @@ var (
 type resourceLimits struct {
 	cpuReserve   int           // cores to leave free for the rest of the host
 	minFreeMemMB int           // do not start a build below this free RAM
-	gpuMinFreeMB int           // fall back to cpu below this free VRAM
+	gpuMinFreeMB int           // defer a CUDA build below this free VRAM
 	memWaitMax   time.Duration // bound on how long to wait for RAM to free up
 	memPoll      time.Duration
 }
@@ -36,9 +38,12 @@ type resourceLimits struct {
 func resourceLimitsFromEnv() resourceLimits {
 	cpus := probeOnlineCPUs()
 	return resourceLimits{
-		cpuReserve:   envIntDefault("CASSINI_BUILD_CPU_RESERVE", defaultCPUReserve(cpus)),
-		minFreeMemMB: envIntDefault("CASSINI_BUILD_MIN_FREE_MEM_MB", 1536),
-		gpuMinFreeMB: envIntDefault("CASSINI_GPU_MIN_FREE_MB", 4096),
+		cpuReserve: envIntDefault("CASSINI_BUILD_CPU_RESERVE", defaultCPUReserve(cpus)),
+		// Full-run measurements peaked at ~5.2GiB cgroup RAM and 4.63GiB
+		// VRAM. Keep conservative launch floors above those working sets so
+		// the build can load without consuming the host's last reserve.
+		minFreeMemMB: envIntDefault("CASSINI_BUILD_MIN_FREE_MEM_MB", 6144),
+		gpuMinFreeMB: envIntDefault("CASSINI_GPU_MIN_FREE_MB", 5500),
 		memWaitMax:   time.Duration(envIntDefault("CASSINI_BUILD_MEM_WAIT_SECS", 300)) * time.Second,
 		memPoll:      3 * time.Second,
 	}
@@ -68,24 +73,58 @@ func (l resourceLimits) threadBudget() int {
 	}
 }
 
-// applyToEnv injects CASSINI_STT_NUM_THREADS (the safe budget) and, when the run
-// would use cuda but the GPU lacks free VRAM, forces CASSINI_STT_DEVICE=cpu.
-// logf is called with human-readable notes about any downgrade.
-func (l resourceLimits) applyToEnv(env []string, intendsCUDA bool, logf func(format string, v ...any)) []string {
-	env = setEnvKey(env, envSTTNumThreads, strconv.Itoa(l.threadBudget()))
+// resourceUnavailableError marks transient capacity pressure. The build worker
+// recognizes it and restores the claimed job to the durable queue instead of
+// turning a valid recording into a terminal failure.
+type resourceUnavailableError struct {
+	resource string
+	detail   string
+}
 
-	if intendsCUDA {
-		if free, ok := probeGPUFreeMB(); ok && free < l.gpuMinFreeMB {
-			logf("resource governor: GPU free %dMiB < %dMiB needed; forcing %s=cpu to avoid OOMing the GPU", free, l.gpuMinFreeMB, envSTTDevice)
-			env = setEnvKey(env, envSTTDevice, "cpu")
+func (e *resourceUnavailableError) Error() string {
+	return fmt.Sprintf("resource governor: %s unavailable: %s", e.resource, e.detail)
+}
+
+// applyToEnv injects the GPU-only STT execution policy. A CPU resolution means
+// CUDA is absent or was explicitly disabled; either case is a transient build
+// capacity failure, never permission to run speech recognition on host CPU.
+// CUDA builds are pinned to one host thread and require a trustworthy VRAM
+// reading at or above the configured floor.
+func (l resourceLimits) applyToEnv(env []string, intendsCUDA bool) ([]string, error) {
+	if !intendsCUDA {
+		return nil, &resourceUnavailableError{
+			resource: "CUDA device",
+			detail:   "GPU-only speech recognition is required but the configured/automatic device resolved to CPU",
 		}
 	}
-	return env
+
+	env = setEnvKey(env, envSTTNumThreads, "1")
+	// The recorder intentionally exposes a stream-concurrency escape hatch for
+	// manual benchmarking. It is not safe in the operator: every worker owns a
+	// separate recognizer/model allocation, and concurrent CUDA provider setup
+	// has crashed in practice. Override even a stale inherited value.
+	env = setEnvKey(env, envSTTStreamConcurrency, "1")
+	env = setEnvKey(env, envSTTDevice, "cuda")
+	free, ok := probeGPUFreeMB()
+	if !ok {
+		return nil, &resourceUnavailableError{
+			resource: "GPU memory",
+			detail:   "free VRAM could not be measured; refusing an unbounded CUDA launch",
+		}
+	}
+	if free < l.gpuMinFreeMB {
+		return nil, &resourceUnavailableError{
+			resource: "GPU memory",
+			detail:   fmt.Sprintf("free %dMiB is below the %dMiB floor", free, l.gpuMinFreeMB),
+		}
+	}
+	return env, nil
 }
 
 // waitForMemory blocks (bounded) until free RAM clears the floor, so a build is
 // never spawned into a near-OOM host during a transient memory spike. After
-// memWaitMax it proceeds with a warning rather than wedging the queue forever.
+// memWaitMax it returns a transient capacity error so the worker can defer the
+// job without launching or terminally failing it.
 func (l resourceLimits) waitForMemory(ctx context.Context, logf func(format string, v ...any)) error {
 	if l.minFreeMemMB <= 0 {
 		return nil
@@ -98,8 +137,10 @@ func (l resourceLimits) waitForMemory(ctx context.Context, logf func(format stri
 			return nil
 		}
 		if time.Now().After(deadline) {
-			logf("resource governor: free mem still %dMiB (< %dMiB) after %s; starting build anyway", free, l.minFreeMemMB, l.memWaitMax)
-			return nil
+			return &resourceUnavailableError{
+				resource: "host memory",
+				detail:   fmt.Sprintf("free %dMiB is below the %dMiB floor after waiting %s", free, l.minFreeMemMB, l.memWaitMax),
+			}
 		}
 		if !warned {
 			logf("resource governor: free mem %dMiB < %dMiB; deferring build start", free, l.minFreeMemMB)
@@ -113,9 +154,9 @@ func (l resourceLimits) waitForMemory(ctx context.Context, logf func(format stri
 	}
 }
 
-// buildIntendsCUDA mirrors the recorder's device resolution: an explicit cuda
-// override means cuda; cpu means cpu; otherwise the recorder auto-detects a GPU
-// from a device node, so we do the same.
+// buildIntendsCUDA mirrors the recorder's device resolution. applyToEnv treats a
+// false result as unavailable capacity, so neither an explicit CPU override nor
+// a temporarily missing GPU node can trigger CPU speech recognition.
 func (rt *Runtime) buildIntendsCUDA() bool {
 	switch strings.ToLower(strings.TrimSpace(rt.currentSettings().DeviceOverride)) {
 	case "cpu":

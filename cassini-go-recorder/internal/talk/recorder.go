@@ -1896,8 +1896,7 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 	reason := "ended"
 	var nextStreamOpenAttempt time.Time
 	for {
-		recv := time.Now()
-		pkt, _, readErr := track.ReadRTP()
+		pkt, _, recv, readErr := readWithArrivalTime(track.ReadRTP)
 		if readErr != nil {
 			reason = "read-error"
 			if errors.Is(readErr, context.Canceled) || errors.Is(readErr, context.DeadlineExceeded) {
@@ -1965,6 +1964,14 @@ func (r *Recorder) onRemoteTrack(ctx context.Context, track *webrtc.TrackRemote,
 	if err := ctx.Err(); err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("capture track failed sid=%s track=%s: %v", remoteSessionID, track.ID(), err)
 	}
+}
+
+// readWithArrivalTime timestamps a value after the blocking read completes.
+// Capturing the time before ReadRTP collapses a mute/DTX gap onto the first
+// packet of the next speech burst, which then becomes an incorrect media PTS.
+func readWithArrivalTime[T, A any](read func() (T, A, error)) (T, A, time.Time, error) {
+	value, attrs, err := read()
+	return value, attrs, time.Now(), err
 }
 
 func streamSegmentRotationReason(prevSSRC, nextSSRC uint32, prevPT, nextPT uint8) string {

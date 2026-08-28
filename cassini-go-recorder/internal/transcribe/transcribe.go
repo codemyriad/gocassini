@@ -20,8 +20,9 @@ type BuildConfig struct {
 	LLM                   LLMConfig  // optional; if not configured, skip readable cleanup
 	SummaryLLM            LLMConfig  // optional; if not configured, skip summary generation
 	StrictReadableCleanup bool       // fail the build if readable cleanup cannot complete
-	NumThreads            int        // 0 = derive from core count
+	NumThreads            int        // 0 = derive from device (CUDA=1; CPU=core count, capped)
 	Quality               STTQuality // "" = balanced; picks model/device when not explicitly set
+	TranscriptionTerms    []string   // optional preferred spellings for LLM readable cleanup; does not affect raw ASR
 }
 
 var (
@@ -39,13 +40,14 @@ var (
 func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg BuildConfig, stdout io.Writer) error {
 	// Resolve the STT execution policy for this host: an explicit device/model
 	// always wins; otherwise derive both from the quality tier and detected
-	// hardware (a GPU box runs fp32, a CPU box int8) and use all the cores.
+	// hardware (a GPU box runs fp32, a CPU box int8). CUDA uses one host thread
+	// by default so GPU inference does not create unnecessary CPU/RAM pressure.
 	cfg.Device = ResolveDevice(cfg.Device)
 	if cfg.ModelID == "" {
 		cfg.ModelID = ModelForQuality(cfg.Quality, cfg.Device)
 	}
 	if cfg.NumThreads < 1 {
-		cfg.NumThreads = DefaultNumThreads()
+		cfg.NumThreads = DefaultNumThreadsForDevice(cfg.Device)
 	}
 	fmt.Fprintf(stdout, "  STT policy: device=%s model=%s threads=%d quality=%s\n",
 		cfg.Device, cfg.ModelID, cfg.NumThreads, NormalizeQuality(string(cfg.Quality)))
@@ -156,13 +158,13 @@ type AdditionalTranscript struct {
 }
 
 // ensureMergedFallback transcribes the already-mixed meeting.webm under a
-// synthetic "merged" speaker when the per-participant pass found nothing.
+// synthetic "merged" speaker when the per-participant pass is too thin.
 // Talk-recorder per-participant tracks can be sparse (DTX, comfort-noise
 // frames between speaking turns) in ways that defeat the VAD even though
 // the same audio sums to a clearly-transcribable mix; rather than ship an
-// empty transcript in that case, fall back to the mix. Returns the
+// empty or nearly empty transcript in that case, fall back to the mix. Returns the
 // (possibly extended) streams + segments. Does nothing when the
-// per-participant pass already produced content.
+// per-participant pass meets the minimum word threshold.
 // minWordsBeforeMergedFallback is the per-participant word threshold below
 // which we re-run transcription over the merged mix. The strict ==0 gate
 // was observed to skip fallback when a single stray word survived through
@@ -225,9 +227,29 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 	}
 
 	mergedSegs := AssembleSegments(mergedStream.SpeakerID, words, 0, 0)
+	chosenSegments, useMerged := chooseMergedFallback(segments, mergedSegs)
+	if !useMerged {
+		fmt.Fprintf(stdout, "    merged fallback did not improve word count; keeping attributed participant pass\n")
+		return streams, chosenSegments, nil
+	}
+
+	// The mixed pass covers the same meeting timeline as the participant pass.
+	// Treat these as alternative hypotheses, never additive sources: appending
+	// both duplicated every word that survived the thin participant pass. Only
+	// the strictly richer mixed hypothesis reaches the transcript.
 	extendedStreams := append(append([]AudioStream(nil), streams...), mergedStream)
-	mergedSegments := MergeAndSortSegments([][]Segment{segments, mergedSegs})
-	return extendedStreams, mergedSegments, nil
+	return extendedStreams, chosenSegments, nil
+}
+
+// chooseMergedFallback keeps the two transcription hypotheses mutually
+// exclusive. Attribution is more valuable when word coverage is tied, so the
+// synthetic mixed pass replaces the participant pass only when it recovered
+// strictly more words.
+func chooseMergedFallback(participantSegments, mergedSegments []Segment) ([]Segment, bool) {
+	if CountWords(mergedSegments) <= CountWords(participantSegments) {
+		return participantSegments, false
+	}
+	return MergeAndSortSegments([][]Segment{mergedSegments}), true
 }
 
 // transcribePass runs one full transcription pass over every speaker stream
@@ -477,6 +499,7 @@ func DefaultBuildConfig() BuildConfig {
 		StrictReadableCleanup: envBool("CASSINI_READABLE_STRICT_BATCHES"),
 		NumThreads:            envInt("CASSINI_STT_NUM_THREADS"),
 		Quality:               NormalizeQuality(os.Getenv("CASSINI_STT_QUALITY")),
+		TranscriptionTerms:    parseTranscriptionTerms(os.Getenv("CASSINI_TRANSCRIPTION_TERMS")),
 	}
 }
 
@@ -506,7 +529,9 @@ func writeReadableArtifacts(outputDir string, streams []AudioStream, segments []
 	}
 
 	fmt.Fprintln(stdout, "  running LLM readable cleanup...")
-	readableSegs, err := readableCleanupFn(cfg.LLM, segments)
+	llmCfg := cfg.LLM
+	llmCfg.PreferredSpellings = preferredSpellingsForCleanup(cfg.TranscriptionTerms, streams)
+	readableSegs, err := readableCleanupFn(llmCfg, segments)
 	if err != nil {
 		if cfg.StrictReadableCleanup {
 			return nil, false, fmt.Errorf("readable cleanup: %w", err)

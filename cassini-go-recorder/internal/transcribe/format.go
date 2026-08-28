@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -310,7 +312,7 @@ func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []Audi
 			RecordedAtLocal: meetingtime.InferRecordedAtLocal(srcBasename),
 		},
 		Files:            files,
-		SpeakerCount:     len(streams),
+		SpeakerCount:     logicalSpeakerCount(streams),
 		SegmentCount:     len(segments),
 		DigestDurationMS: srcDurationMS,
 		WordCount:        wordCount,
@@ -319,17 +321,39 @@ func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []Audi
 	return writeJSON(path, doc)
 }
 
+func logicalSpeakerCount(streams []AudioStream) int {
+	seen := make(map[string]struct{}, len(streams))
+	for _, stream := range streams {
+		// Negative stream indexes are synthetic transcript sources (currently
+		// the mixed-track fallback), not meeting participants.
+		if stream.Index < 0 {
+			continue
+		}
+		id := strings.TrimSpace(stream.SpeakerID)
+		if id == "" {
+			continue
+		}
+		seen[id] = struct{}{}
+	}
+	return len(seen)
+}
+
 // --- segment assembly ---
+
+const (
+	defaultSegmentGapThresholdMS int64 = 1500
+	defaultSegmentMaxWords             = 60
+)
 
 // AssembleSegments groups words from a speaker into logical segments.
 // A new segment starts when there is a gap > gapThresholdMS or the
 // segment exceeds maxWords.
 func AssembleSegments(speakerID string, words []Word, gapThresholdMS int64, maxWords int) []Segment {
 	if gapThresholdMS <= 0 {
-		gapThresholdMS = 1500
+		gapThresholdMS = defaultSegmentGapThresholdMS
 	}
 	if maxWords <= 0 {
-		maxWords = 60
+		maxWords = defaultSegmentMaxWords
 	}
 
 	var segments []Segment
@@ -371,14 +395,77 @@ func wordsToText(words []Word) string {
 	return strings.Join(parts, " ")
 }
 
-// MergeAndSortSegments merges per-speaker segment lists and sorts by start time.
+// MergeAndSortSegments merges per-speaker segment lists in word-time order.
+//
+// Sorting already-assembled segments as opaque blocks loses short interjections:
+// a speaker's long segment can span another speaker's complete comment, causing
+// that comment to be rendered only after the long segment. Rebuilding segments
+// from the canonical word timestamps makes each speaker change a turn boundary,
+// while retaining the same default gap and word-count limits as AssembleSegments.
 func MergeAndSortSegments(perSpeaker [][]Segment) []Segment {
-	var all []Segment
-	for _, segs := range perSpeaker {
-		all = append(all, segs...)
+	type attributedWord struct {
+		speakerID string
+		word      Word
 	}
-	sortSegments(all)
-	return all
+
+	var words []attributedWord
+	var wordless []Segment
+	for _, segs := range perSpeaker {
+		for _, seg := range segs {
+			if len(seg.Words) == 0 {
+				// Text-only segments predate the word-level transcript contract.
+				// Keep them as opaque records so merging never drops caller data.
+				wordless = append(wordless, seg)
+				continue
+			}
+			for _, word := range seg.Words {
+				words = append(words, attributedWord{speakerID: seg.SpeakerID, word: word})
+			}
+		}
+	}
+
+	// Stable ordering makes equal-start words deterministic: they retain the
+	// caller's per-speaker/segment/word order.
+	sort.SliceStable(words, func(i, j int) bool {
+		return words[i].word.StartMS < words[j].word.StartMS
+	})
+
+	var merged []Segment
+	var currentSpeaker string
+	var currentWords []Word
+	flush := func() {
+		if len(currentWords) == 0 {
+			return
+		}
+		merged = append(merged, Segment{
+			SpeakerID: currentSpeaker,
+			StartMS:   currentWords[0].StartMS,
+			EndMS:     currentWords[len(currentWords)-1].EndMS,
+			Text:      wordsToText(currentWords),
+			Words:     append([]Word(nil), currentWords...),
+		})
+		currentWords = currentWords[:0]
+	}
+
+	for _, attributed := range words {
+		if len(currentWords) > 0 {
+			gap := attributed.word.StartMS - currentWords[len(currentWords)-1].EndMS
+			if attributed.speakerID != currentSpeaker ||
+				gap > defaultSegmentGapThresholdMS ||
+				len(currentWords) >= defaultSegmentMaxWords {
+				flush()
+			}
+		}
+		if len(currentWords) == 0 {
+			currentSpeaker = attributed.speakerID
+		}
+		currentWords = append(currentWords, attributed.word)
+	}
+	flush()
+
+	merged = append(merged, wordless...)
+	sortSegments(merged)
+	return merged
 }
 
 func sortSegments(segs []Segment) {
@@ -405,7 +492,25 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o644)
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // CountWords counts total words across all segments.

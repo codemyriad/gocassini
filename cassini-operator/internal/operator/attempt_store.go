@@ -176,7 +176,7 @@ SET stage = ?, state = ?,
     artifact_run_path = ?,
     error = NULL,
     updated_at = ?,
-    build_queued_at = ?, build_started_at = NULL, build_finished_at = NULL,
+    build_queued_at = ?, build_retry_not_before = NULL, build_started_at = NULL, build_finished_at = NULL,
     seal_queued_at = NULL, seal_started_at = NULL, seal_finished_at = NULL,
     publish_queued_at = NULL, publish_started_at = NULL, publish_finished_at = NULL,
     interrupted_at = NULL, completed_at = NULL

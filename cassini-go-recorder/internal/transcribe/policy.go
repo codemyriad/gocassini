@@ -121,6 +121,17 @@ func DefaultNumThreads() int {
 	}
 }
 
+// DefaultNumThreadsForDevice keeps CUDA inference from creating a large CPU
+// thread pool alongside the GPU execution provider. A single host thread was
+// sufficient for the CUDA path in the transcription audit and keeps CPU/RAM
+// pressure predictable; CPU inference retains the core-count-derived default.
+func DefaultNumThreadsForDevice(device string) int {
+	if strings.EqualFold(strings.TrimSpace(device), "cuda") {
+		return 1
+	}
+	return DefaultNumThreads()
+}
+
 // vadProvider returns the execution provider for Silero VAD. It defaults to CPU
 // regardless of the recogniser device: VAD runs a tiny model per 32 ms window,
 // which is latency-bound and pathologically slow on a GPU (millions of micro

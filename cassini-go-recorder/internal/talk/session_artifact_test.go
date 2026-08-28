@@ -41,6 +41,116 @@ func TestSessionArtifactBootAndClose(t *testing.T) {
 	}
 }
 
+func TestSessionArtifactUsesSessionRelativeMonotonicTimelineAcrossStreams(t *testing.T) {
+	tmp := t.TempDir()
+	artifactPath := filepath.Join(tmp, "relative-timeline.mkv")
+	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
+	if err != nil {
+		t.Fatalf("create artifact: %v", err)
+	}
+	defer func() {
+		_ = artifact.close()
+	}()
+
+	if got := artifact.sessionMeta.StartedMonoNS; got != sessionMonoBaseNS {
+		t.Fatalf("started monotonic timestamp is not session-relative: got=%d want=%d", got, sessionMonoBaseNS)
+	}
+	wallStart, err := time.Parse(time.RFC3339Nano, artifact.sessionMeta.StartedWallUTC)
+	if err != nil {
+		t.Fatalf("parse started wall time: %v", err)
+	}
+	if wallStart.UnixNano() != artifact.monoOrigin.UnixNano() {
+		t.Fatalf("wall start was not preserved separately: got=%s origin=%s", wallStart, artifact.monoOrigin)
+	}
+
+	desc := trackDescriptor{
+		kind:      "audio",
+		codec:     "audio/opus",
+		clockRate: 48000,
+	}
+	desc.mid = "first"
+	firstID, err := artifact.openStream("sid-1", "user-1", "Alice", desc, 1001, 111, artifact.monoOrigin.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("open first stream: %v", err)
+	}
+	desc.mid = "second"
+	secondID, err := artifact.openStream("sid-2", "user-2", "Bob", desc, 1002, 111, artifact.monoOrigin.Add(5*time.Second))
+	if err != nil {
+		t.Fatalf("open second stream: %v", err)
+	}
+
+	artifact.mu.Lock()
+	streams := append([]session.PacketStream(nil), artifact.sessionMeta.PacketStreams...)
+	logicalTracks := append([]session.LogicalTrack(nil), artifact.sessionMeta.LogicalTracks...)
+	artifact.mu.Unlock()
+	if len(streams) != 2 || len(logicalTracks) != 2 {
+		t.Fatalf("unexpected timeline metadata: streams=%d logical_tracks=%d", len(streams), len(logicalTracks))
+	}
+	if got, want := streams[0].StartMonoNS, sessionMonoBaseNS+uint64(2*time.Second); got != want {
+		t.Fatalf("first stream start: got=%d want=%d", got, want)
+	}
+	if got, want := streams[1].StartMonoNS-streams[0].StartMonoNS, uint64(3*time.Second); got != want {
+		t.Fatalf("cross-stream offset changed: got=%d want=%d", got, want)
+	}
+	if logicalTracks[0].CreatedMonoNS != streams[0].StartMonoNS || logicalTracks[1].CreatedMonoNS != streams[1].StartMonoNS {
+		t.Fatalf("logical-track creation times do not share stream timeline: tracks=%v streams=%v", logicalTracks, streams)
+	}
+
+	packet := &rtp.Packet{
+		Header:  rtp.Header{SequenceNumber: 1, Timestamp: 960, SSRC: 1002, PayloadType: 111},
+		Payload: []byte{0x01, 0x02},
+	}
+	// Write the later observation first. Each stream must still retain its
+	// true position on the common session clock, rather than inheriting a
+	// process/write-order timestamp from another stream.
+	if err := artifact.writeRTP(secondID, packet, artifact.monoOrigin.Add(7*time.Second)); err != nil {
+		t.Fatalf("write second stream: %v", err)
+	}
+	packet.SSRC = 1001
+	if err := artifact.writeRTP(firstID, packet, artifact.monoOrigin.Add(6*time.Second)); err != nil {
+		t.Fatalf("write first stream: %v", err)
+	}
+	if err := artifact.closeStream(firstID, "test", artifact.monoOrigin.Add(8*time.Second)); err != nil {
+		t.Fatalf("close first stream: %v", err)
+	}
+	if err := artifact.closeStream(secondID, "test", artifact.monoOrigin.Add(8*time.Second)); err != nil {
+		t.Fatalf("close second stream: %v", err)
+	}
+
+	readRecv := func(streamID string) uint64 {
+		t.Helper()
+		reader, openErr := store.OpenReader(filepath.Join(artifact.streamsDir, streamID+".rtplog"))
+		if openErr != nil {
+			t.Fatalf("open %s: %v", streamID, openErr)
+		}
+		defer func() { _ = reader.Close() }()
+		record, readErr := reader.Next()
+		if readErr != nil {
+			t.Fatalf("read %s: %v", streamID, readErr)
+		}
+		return record.RecvMonoNS
+	}
+	firstRecv := readRecv(firstID)
+	secondRecv := readRecv(secondID)
+	if got, want := secondRecv-firstRecv, uint64(time.Second); got != want {
+		t.Fatalf("cross-stream receive offset changed by write order: got=%d want=%d", got, want)
+	}
+}
+
+func TestSessionArtifactMonotonicMappingUsesElapsedTime(t *testing.T) {
+	// time.Now and Add retain Go's hidden monotonic reading. This is the same
+	// shape as production arrival timestamps and makes Sub immune to a wall
+	// clock correction; importantly, no Unix epoch value is persisted.
+	origin := time.Now()
+	artifact := &sessionCaptureArtifact{monoOrigin: origin}
+	if got, want := artifact.monoNS(origin.Add(1250*time.Millisecond)), sessionMonoBaseNS+uint64(1250*time.Millisecond); got != want {
+		t.Fatalf("elapsed monotonic mapping: got=%d want=%d", got, want)
+	}
+	if got := artifact.monoNS(origin.Add(-time.Second)); got != sessionMonoBaseNS {
+		t.Fatalf("pre-origin timestamp should use nonzero floor: got=%d want=%d", got, sessionMonoBaseNS)
+	}
+}
+
 func TestSessionArtifactHelpers(t *testing.T) {
 	if got := sanitizeSessionPathPart("a/b\\c"); got != "a_b_c" {
 		t.Fatalf("sanitize session path part: got=%q", got)

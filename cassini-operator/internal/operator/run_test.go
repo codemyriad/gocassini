@@ -37,8 +37,8 @@ func TestOpenStoreEnsuresSchemaAndEmptyList(t *testing.T) {
 	if len(jobs) != 0 {
 		t.Fatalf("expected empty jobs list, got %d", len(jobs))
 	}
-	if versions := migrationVersions(t, store.db); len(versions) != 6 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 || versions[4] != 5 || versions[5] != 6 {
-		t.Fatalf("expected migration versions [1 2 3 4 5 6], got %v", versions)
+	if versions := migrationVersions(t, store.db); len(versions) != 7 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 || versions[4] != 5 || versions[5] != 6 || versions[6] != 7 {
+		t.Fatalf("expected migration versions [1 2 3 4 5 6 7], got %v", versions)
 	}
 	if !sqliteTableExists(t, store.db, "job_attempts") {
 		t.Fatalf("expected job_attempts table to exist")
@@ -57,8 +57,8 @@ func TestOpenStoreBaselinesLegacySchemaDatabase(t *testing.T) {
 	}
 	defer store.Close()
 
-	if versions := migrationVersions(t, store.db); len(versions) != 6 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 || versions[4] != 5 || versions[5] != 6 {
-		t.Fatalf("expected migration versions [1 2 3 4 5 6], got %v", versions)
+	if versions := migrationVersions(t, store.db); len(versions) != 7 || versions[0] != 1 || versions[1] != 2 || versions[2] != 3 || versions[3] != 4 || versions[4] != 5 || versions[5] != 6 || versions[6] != 7 {
+		t.Fatalf("expected migration versions [1 2 3 4 5 6 7], got %v", versions)
 	}
 	job := mustGetJob(t, store, "legacy-job")
 	if job.Provider != "nextcloud-talk" || job.Stage != "record" || job.State != "queued" {
@@ -2369,7 +2369,7 @@ esac
 	// Stop the pipeline workers before t.TempDir cleanup removes WorkRoot;
 	// a still-running publish or requeue pass writing under it flakes the
 	// RemoveAll with "directory not empty" (D-584).
-	return rt, func() { rt.Shutdown(); _ = store.Close() }, logPath, startedPath
+	return rt, func() { cleanupTestRuntime(t, rt, store) }, logPath, startedPath
 }
 
 func newTestRuntime(t *testing.T) (*Runtime, func()) {
@@ -2429,7 +2429,21 @@ func newTestRuntimeWithLogger(t *testing.T, logger *log.Logger) (*Runtime, func(
 	// Stop the pipeline workers before t.TempDir cleanup removes WorkRoot;
 	// a still-running publish or requeue pass writing under it flakes the
 	// RemoveAll with "directory not empty" (D-584).
-	return rt, func() { rt.Shutdown(); _ = store.Close() }
+	return rt, func() { cleanupTestRuntime(t, rt, store) }
+}
+
+func cleanupTestRuntime(t *testing.T, rt *Runtime, store *Store) {
+	t.Helper()
+	// Shutdown cancels the runtime and drains the registered pipeline workers.
+	// Record jobs have their own wait group, so wait for them as well before the
+	// TempDir cleanup removes files they may still be creating.
+	rt.Shutdown()
+	if !rt.WaitForRecordJobs(testWaitTimeout) {
+		t.Error("timed out waiting for record jobs during test cleanup")
+	}
+	if err := store.Close(); err != nil {
+		t.Errorf("close test store: %v", err)
+	}
 }
 
 // writeSealedOpusFixture stands in for `cassini pack`: it writes the attempt's

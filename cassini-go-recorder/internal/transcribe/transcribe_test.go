@@ -60,6 +60,50 @@ func TestWriteReadableArtifactsSkipsCleanupFailuresByDefault(t *testing.T) {
 	}
 }
 
+func TestWriteReadableArtifactsPassesConfiguredAndSpeakerPreferredSpellings(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := BuildConfig{
+		LLM: LLMConfig{
+			APIKey:  "test-key",
+			BaseURL: "https://example.test/api/v1",
+			Model:   "test-model",
+		},
+		TranscriptionTerms: []string{"Gocassini", " alice "},
+	}
+	streams := []AudioStream{
+		{SpeakerID: "spk_alice", SpeakerLabel: "Alice"},
+		{SpeakerID: "spk_recorder", SpeakerLabel: "Cassini Recorder"},
+	}
+	segments := []Segment{
+		{
+			SpeakerID: "spk_alice",
+			StartMS:   0,
+			EndMS:     900,
+			Text:      "hello there",
+			Words: []Word{
+				{Text: "hello", StartMS: 0, EndMS: 400},
+				{Text: "there", StartMS: 450, EndMS: 900},
+			},
+		},
+	}
+
+	var gotTerms []string
+	prev := readableCleanupFn
+	readableCleanupFn = func(cfg LLMConfig, input []Segment) ([]Segment, error) {
+		gotTerms = append([]string(nil), cfg.PreferredSpellings...)
+		return append([]Segment(nil), input...), nil
+	}
+	t.Cleanup(func() { readableCleanupFn = prev })
+
+	if _, _, err := writeReadableArtifacts(tmp, streams, segments, 900, "abc123", cfg, &bytes.Buffer{}); err != nil {
+		t.Fatalf("writeReadableArtifacts() error = %v", err)
+	}
+	want := "Gocassini|alice|Cassini Recorder"
+	if got := strings.Join(gotTerms, "|"); got != want {
+		t.Fatalf("PreferredSpellings = %q, want %q", got, want)
+	}
+}
+
 func TestWriteReadableArtifactsFailsWhenStrict(t *testing.T) {
 	tmp := t.TempDir()
 

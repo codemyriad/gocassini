@@ -90,10 +90,19 @@ type Runtime struct {
 	recordMu     sync.Mutex
 	recordJobs   map[string]*recordProcessState
 	recordWG     sync.WaitGroup
-	talkRooms    map[string]*talkRoomState
-	talkJobs     map[string]*talkRoomState
-	recordJobFn  func(context.Context, Job, TriggerRequest) (recordResult, error)
-	buildJobFn   func(context.Context, buildTask) (string, error)
+	// buildExecutionMu is the final admission gate around the whole build. The
+	// configured worker count may exceed one, but CUDA recognizers and the RAM/
+	// VRAM headroom probe are not safely reservable between concurrent workers.
+	// Serializing here makes the resource check and ensuing launch atomic with
+	// respect to every other build in this operator process.
+	buildExecutionMu sync.Mutex
+	talkRooms        map[string]*talkRoomState
+	talkJobs         map[string]*talkRoomState
+	recordJobFn      func(context.Context, Job, TriggerRequest) (recordResult, error)
+	buildJobFn       func(context.Context, buildTask) (string, error)
+	// buildResourceRetryDelay bounds transient RAM/VRAM retry frequency.
+	// Tests shorten it; production uses defaultBuildResourceRetryDelay.
+	buildResourceRetryDelay time.Duration
 	// sealJobFn packs one attempt's `.meeting` into its immutable `.opus`
 	// (D-583). It is a seam for the same reason buildJobFn and publishJobFn
 	// are: tests drive the pipeline without an ffmpeg subprocess.
@@ -139,10 +148,11 @@ type Runtime struct {
 	// publishJobTimeout bounds one `cassini publish` run; without it a hung
 	// publish wedges the single publish worker forever (D-367). Tests shrink it.
 	publishJobTimeout time.Duration
-	// computeProbe reports whether the configured STT device is usable; the
-	// default is cached after the first call — GPU visibility cannot change
-	// within a container's lifetime (D-363). Tests stub it.
-	computeProbe func() (usable bool, detail string)
+	// computeProbe reports whether the effective STT device is usable. It takes
+	// the device selected from the current in-memory settings snapshot so
+	// readiness cannot drift from the policy used by newly spawned builds.
+	// Tests stub it.
+	computeProbe func(device string) (usable bool, detail string)
 	// recordHealth throttles the deep /healthz?check=record doctor exec with
 	// singleflight + a short TTL cache + an exec timeout, so the unauthenticated
 	// health endpoint cannot fan out doctor subprocesses (D-376).
@@ -599,11 +609,12 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		talkRoomNameRetryGap: talkRoomNameRetryGap,
 		talkAudienceRetryGap: talkAudienceRetryGap,
 
-		requeueKick:         make(chan struct{}, 1),
-		sealJobTimeout:      defaultSealJobTimeout,
-		publishJobTimeout:   defaultPublishJobTimeout,
-		recordHealthTimeout: recordHealthProbeTimeout,
-		settingsPath:        settingsPath(cfg),
+		requeueKick:             make(chan struct{}, 1),
+		buildResourceRetryDelay: defaultBuildResourceRetryDelay,
+		sealJobTimeout:          defaultSealJobTimeout,
+		publishJobTimeout:       defaultPublishJobTimeout,
+		recordHealthTimeout:     recordHealthProbeTimeout,
+		settingsPath:            settingsPath(cfg),
 	}
 	// Detect hardware on first start (or track it under an auto default) and
 	// load the persisted STT policy. A failure here must not take the operator
@@ -628,9 +639,10 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		sink, _ = newPublishSink(defaultPublishSink, cfg, logger)
 	}
 	rt.publishSink = sink
-	rt.computeProbe = sync.OnceValues(func() (bool, string) {
-		return probeComputeDevice(configuredSTTDevice())
-	})
+	// Keep readiness live: /status is an admin endpoint and this cheap probe
+	// must reflect a driver reset or settings update instead of retaining a
+	// process-start answer indefinitely.
+	rt.computeProbe = probeComputeDevice
 	rt.recordHealth = newTTLProbe(recordHealthProbeTTL, func() error {
 		probeCtx := rt.ctx
 		if timeout := rt.recordHealthTimeout; timeout > 0 {
@@ -1600,6 +1612,16 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	}
 }
 
+// sortableUTCLayout keeps every persisted timestamp at the same precision.
+// RFC3339Nano trims trailing fractional zeros, so its strings are not ordered
+// chronologically within the same second (for example, .85Z sorts before .8Z).
+// Fixed-width timestamps remain valid RFC3339Nano while also sorting correctly.
+const sortableUTCLayout = "2006-01-02T15:04:05.000000000Z"
+
+func formatUTCString(value time.Time) string {
+	return value.UTC().Format(sortableUTCLayout)
+}
+
 func nowUTCString() string {
-	return time.Now().UTC().Format(time.RFC3339Nano)
+	return formatUTCString(time.Now())
 }

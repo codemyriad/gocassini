@@ -74,6 +74,34 @@ func TestRecommendedTimelineStartAdjustmentClamp(t *testing.T) {
 	}
 }
 
+func TestApplyReceiveTimelineProfileDoesNotDoubleAdjustStreamStart(t *testing.T) {
+	profile := timelineProfile{
+		Samples:             minTimelineSamplesForAdjustment + 10,
+		RawDurationNS:       10_000_000_000,
+		CorrectedDurationNS: 100_000_000,
+	}
+	seg := segmentArtifact{
+		FirstNS:          12_345_678_901,
+		FirstTimelineNS:  99,
+		TimelineAdjustNS: recommendedTimelineStartAdjustmentNS(profile),
+	}
+	if seg.TimelineAdjustNS == 0 {
+		t.Fatal("fixture must represent a legacy duration-centering adjustment")
+	}
+
+	applyReceiveTimelineProfile(&seg, profile)
+
+	if seg.FirstTimelineNS != int64(seg.FirstNS) {
+		t.Fatalf("receive-timeline start changed: got=%d want=%d", seg.FirstTimelineNS, seg.FirstNS)
+	}
+	if seg.TimelineAdjustNS != 0 {
+		t.Fatalf("arrival-rewritten media received a second start correction: %d", seg.TimelineAdjustNS)
+	}
+	if seg.TimelineProfile != profile {
+		t.Fatalf("timeline diagnostics were not retained: got=%+v want=%+v", seg.TimelineProfile, profile)
+	}
+}
+
 func writeDriftedTimelineLog(
 	path string,
 	ssrc uint32,
