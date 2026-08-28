@@ -272,7 +272,6 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	runtime.publishSink = sink
-	logger.Printf("publish_sink -> %s", sink.Name())
 
 	// Only a deployment that actually serves recordings from Nextcloud Files is
 	// expected to have a substrate. AppAPI can also run with an ExApp deliberately
@@ -319,7 +318,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("db -> %s", cfg.DBPath)
 	logger.Printf("work_root -> %s", cfg.WorkRoot)
 	logger.Printf("site_root -> %s", cfg.SiteRoot)
-	logger.Printf("publish_sink -> %s", publishSinkNameOrDefault(cfg.PublishSink))
+	// Report the destination we actually constructed. cfg.PublishSink stays raw
+	// (and is commonly empty in an ExApp), so applying the standalone default to
+	// it here would misreport the resolved nextcloud-files sink as local.
+	logger.Printf("publish_sink -> %s", sink.Name())
 	logger.Printf("artifact_retention -> %s", artifactRetentionOrDefault(cfg.ArtifactRetention))
 	if persistRoot := persistentStorageRoot(); persistRoot != "" {
 		logger.Printf("app_persistent_storage -> %s", persistRoot)

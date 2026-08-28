@@ -173,6 +173,10 @@ jobs:
           # compute device deriving the image variant instead of forking the
           # deploy, and no reachable --rm-data. Pure functions, no network.
           ./ops/deploy/test-exapp-register.sh
+          # The production driver's manifest handoff. Its ssh/scp/docker stubs
+          # pin collision-safe names and the cleanup/timeout ownership rules
+          # without reaching a host, registry or Nextcloud.
+          ./ops/deploy/test-deploy-exapp-staging.sh
           # Negative control: proves verify-session-artifact.sh goes RED on a
           # 0-packet capture (D-510). This guard is what the per-PR private
           # e2e leg relies on to catch D-454 empty captures, and it used to
