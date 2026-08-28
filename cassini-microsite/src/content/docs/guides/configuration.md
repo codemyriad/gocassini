@@ -56,7 +56,7 @@ Make sure the directory is writable before running. `cassini doctor` will report
 
 ## Model selection
 
-Cassini uses a local Whisper model for transcription. The default model is chosen to balance accuracy and speed. If you have a GPU available, Cassini will use it automatically.
+Cassini uses a local Parakeet speech-to-text model (NVIDIA, run through ONNX Runtime) for transcription. The default model is chosen to balance accuracy and speed. If you have a GPU available, Cassini will use it automatically.
 
 To check what model is in use and whether GPU acceleration is active:
 
