@@ -202,7 +202,7 @@ func TestClampWordsToTimelineEndExcludesDecoderPadding(t *testing.T) {
 func TestFilterWordsByEnergyRejectsSilenceAndClicksButKeepsQuietInterjections(t *testing.T) {
 	const sampleRate = 16000
 	samples := make([]float32, 3*sampleRate)
-	// A quiet 30ms utterance begins 50ms before the model timestamp. The 100ms
+	// A quiet 30ms utterance begins 50ms before the model timestamp. The energy
 	// margin must preserve it at the -60 dBFS peak boundary.
 	for i := 950 * sampleRate / 1000; i < 980*sampleRate/1000; i++ {
 		samples[i] = minimumWordPeakAmplitude
@@ -229,6 +229,25 @@ func TestFilterWordsByEnergyRejectsSilenceAndClicksButKeepsQuietInterjections(t 
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("filterWordsByEnergy =\n  %#v\nwant\n  %#v", got, want)
+	}
+}
+
+func TestFilterWordsByEnergyAllowsMeasuredDecoderLead(t *testing.T) {
+	const sampleRate = 16000
+	if wordEnergyPreMarginMS != 100 || wordEnergyPostMarginMS != 200 {
+		t.Fatalf("word energy margins = %dms/%dms; want 100ms/200ms", wordEnergyPreMarginMS, wordEnergyPostMarginMS)
+	}
+	samples := make([]float32, 2*sampleRate)
+	// Real Parakeet output has placed a word up to 180ms before its direct PCM.
+	// Keep that measured decoder lead while still requiring sustained energy.
+	for i := 780 * sampleRate / 1000; i < 830*sampleRate/1000; i++ {
+		samples[i] = 0.01
+	}
+	words := []Word{{Text: "delayed-energy", StartMS: 500, EndMS: 600}}
+
+	got := filterWordsByEnergy(samples, sampleRate, words)
+	if !reflect.DeepEqual(got, words) {
+		t.Fatalf("filterWordsByEnergy measured decoder lead = %#v; want %#v", got, words)
 	}
 }
 

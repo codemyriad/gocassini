@@ -31,7 +31,7 @@ const vadWindowSamples = 512
 
 // The stock 0.5 Silero threshold missed direct acknowledgements as short as
 // 420-500ms in real per-participant tracks. The lower threshold recovers those
-// turns; the conservative peak gate below prevents newly admitted digital
+// turns; the conservative energy gate below prevents newly admitted digital
 // silence and near-silence from becoming attributed ASR hallucinations.
 const (
 	vadSpeechThreshold       = 0.18
@@ -40,7 +40,8 @@ const (
 	minimumWordRMSAmplitude  = 0.0001 // -80 dBFS
 	minimumActiveAmplitude   = 0.0005 // -66 dBFS
 	minimumActiveDurationMS  = 5
-	wordPeakMarginMS         = int64(100)
+	wordEnergyPreMarginMS    = int64(100)
+	wordEnergyPostMarginMS   = int64(200)
 )
 
 // vadDrainEverySamples controls how often queued speech segments are popped
@@ -251,7 +252,8 @@ func finalizeTranscriptWords(samples []float32, sampleRate int, words []Word, au
 }
 
 // filterWordsByEnergy drops decoder output whose source interval is digital
-// silence or near-silence. A 100ms margin tolerates model timestamp jitter.
+// silence or near-silence. A 100ms pre-margin and 200ms post-margin tolerate
+// measured model timestamp jitter without widening both sides unnecessarily.
 // Requiring a -60 dBFS peak, -80 dBFS RMS, and 5ms of active samples rejects
 // isolated clicks while remaining conservative around quiet acknowledgements.
 // The input slice may be compacted in place.
@@ -273,13 +275,13 @@ func filterWordsByEnergy(samples []float32, sampleRate int, words []Word) []Word
 		if endMS > audioEndMS {
 			endMS = audioEndMS
 		}
-		if startMS > wordPeakMarginMS {
-			startMS -= wordPeakMarginMS
+		if startMS > wordEnergyPreMarginMS {
+			startMS -= wordEnergyPreMarginMS
 		} else {
 			startMS = 0
 		}
-		if endMS < audioEndMS-wordPeakMarginMS {
-			endMS += wordPeakMarginMS
+		if endMS < audioEndMS-wordEnergyPostMarginMS {
+			endMS += wordEnergyPostMarginMS
 		} else {
 			endMS = audioEndMS
 		}
