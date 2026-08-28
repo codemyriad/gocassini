@@ -250,10 +250,12 @@ type provStep struct {
 	Device  string `json:"device,omitempty"`
 }
 
-// WriteManifest writes manifest.json summarising the build. additional carries
-// extra transcript files produced by secondary STT models; each becomes a
-// files.transcripts[] entry alongside the primary transcript.words.v1.json.
-func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []AudioStream, segments []Segment, sttModelID ModelID, llmModel string, hasReadable bool, summaryModel string, hasSummary bool, additional []AdditionalTranscript) error {
+// WriteManifest writes manifest.json summarising the build. srcDurationMS is
+// source-container provenance, while digestDurationMS describes the final
+// playable meeting.webm. additional carries extra transcript files produced by
+// secondary STT models; each becomes a files.transcripts[] entry alongside the
+// primary transcript.words.v1.json.
+func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int64, streams []AudioStream, segments []Segment, sttModelID ModelID, llmModel string, hasReadable bool, summaryModel string, hasSummary bool, additional []AdditionalTranscript) error {
 	wordCount := 0
 	for _, seg := range segments {
 		wordCount += len(seg.Words)
@@ -315,7 +317,7 @@ func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []Audi
 		Files:            files,
 		SpeakerCount:     logicalSpeakerCount(streams),
 		SegmentCount:     len(segments),
-		DigestDurationMS: srcDurationMS,
+		DigestDurationMS: digestDurationMS,
 		WordCount:        wordCount,
 		Provenance:       prov,
 	}

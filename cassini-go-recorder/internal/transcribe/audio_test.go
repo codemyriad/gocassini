@@ -139,6 +139,55 @@ func TestReadPCM16LEFloatsRejectsPartialSample(t *testing.T) {
 	}
 }
 
+func TestSetPCMCapacityDurationHintsUsesPlayableMixWithoutChangingTiming(t *testing.T) {
+	streams := []AudioStream{
+		{
+			Index:              7,
+			ParticipantID:      "alice",
+			SpeakerID:          "spk_alice",
+			SpeakerLabel:       "Alice",
+			Channels:           2,
+			StartTimeMS:        12_345,
+			TimelineDurationMS: 1_977_527,
+		},
+	}
+
+	setPCMCapacityDurationHints(streams, 242_413)
+
+	got := streams[0]
+	if got.TimelineDurationMS != 242_413 {
+		t.Fatalf("PCM capacity duration = %d, want playable duration 242413", got.TimelineDurationMS)
+	}
+	if got.Index != 7 || got.ParticipantID != "alice" || got.SpeakerID != "spk_alice" ||
+		got.SpeakerLabel != "Alice" || got.Channels != 2 || got.StartTimeMS != 12_345 {
+		t.Fatalf("non-capacity stream metadata changed: %#v", got)
+	}
+	if newCapacity, oldCapacity := expectedPCMSamples(got.TimelineDurationMS, 16000), expectedPCMSamples(1_977_527, 16000); newCapacity >= oldCapacity {
+		t.Fatalf("playable-duration capacity %d did not reduce overstated source capacity %d", newCapacity, oldCapacity)
+	}
+}
+
+func TestReadPCM16LEFloatsDoesNotTruncateWhenDurationHintIsTooShort(t *testing.T) {
+	// A malformed or truncated duration is only a capacity hint. Supply more
+	// than its one-second allowance and verify the decoder grows instead of
+	// discarding playable PCM.
+	hint := expectedPCMSamples(1, 16000)
+	sampleCount := hint + 1234
+	raw := make([]byte, sampleCount*2)
+	raw[len(raw)-2], raw[len(raw)-1] = 0xff, 0x7f
+
+	got, err := readPCM16LEFloats(bytes.NewReader(raw), hint)
+	if err != nil {
+		t.Fatalf("read PCM beyond undersized duration hint: %v", err)
+	}
+	if len(got) != sampleCount {
+		t.Fatalf("sample count = %d, want %d (duration hint must not truncate)", len(got), sampleCount)
+	}
+	if math.Abs(float64(got[len(got)-1]-32767.0/32768.0)) > 1e-7 {
+		t.Fatalf("last sample = %f, want decoded tail sample", got[len(got)-1])
+	}
+}
+
 func requireFFMediaTools(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("ffmpeg"); err != nil {

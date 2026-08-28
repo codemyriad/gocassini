@@ -80,6 +80,10 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	if err != nil {
 		return fmt.Errorf("get audio duration: %w", err)
 	}
+	// Source container duration remains provenance, but malformed container
+	// metadata can vastly overstate it. The measured playable mix is a safer
+	// allocation hint for per-speaker PCM; packet PTS still controls timing.
+	setPCMCapacityDurationHints(streams, audioDurationMS)
 
 	// --- 3. Download / verify STT model and VAD ---
 	fmt.Fprintf(stdout, "  ensuring model %s is cached...\n", cfg.ModelID)
@@ -139,7 +143,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// --- 10. Write manifest ---
 	manifestPath := filepath.Join(outputDir, "manifest.json")
 	srcBasename := filepath.Base(mkvPath)
-	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, streams, segments, cfg.ModelID, cfg.LLM.Model, hasReadable, cfg.SummaryLLM.Model, hasSummary, additionalTranscripts); err != nil {
+	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, audioDurationMS, streams, segments, cfg.ModelID, cfg.LLM.Model, hasReadable, cfg.SummaryLLM.Model, hasSummary, additionalTranscripts); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 

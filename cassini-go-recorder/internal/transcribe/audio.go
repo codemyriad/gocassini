@@ -22,11 +22,23 @@ type AudioStream struct {
 	SpeakerLabel  string
 	Channels      int
 	StartTimeMS   int64
-	// TimelineDurationMS is the duration of the containing recording. It is
-	// carried from the initial probe so PCM extraction can reserve the one
-	// unavoidable []float32 result exactly once, without retaining a second
-	// full-duration []byte buffer or re-probing the file for every stream.
+	// TimelineDurationMS is only a capacity hint for decoded PCM. It is
+	// initialised from the source probe, then replaced with the measured final
+	// mix duration when available. Packet timestamps and StartTimeMS remain the
+	// authority for audio timing.
 	TimelineDurationMS int64
+}
+
+// setPCMCapacityDurationHints replaces only the decoded-PCM allocation hint
+// after the final mix establishes the playable timeline length. It must not
+// alter packet timestamp handling or participant stream offsets.
+func setPCMCapacityDurationHints(streams []AudioStream, durationMS int64) {
+	if durationMS <= 0 {
+		return
+	}
+	for i := range streams {
+		streams[i].TimelineDurationMS = durationMS
+	}
 }
 
 type ffprobeOutput struct {
