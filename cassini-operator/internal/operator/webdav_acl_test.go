@@ -411,3 +411,37 @@ func TestProppatchACLAcceptsABodylessSuccess(t *testing.T) {
 		t.Fatalf("a bodyless 200 was reported as a failure: %v", err)
 	}
 }
+
+// TestAudienceAppliedDistinguishesTheBaselineFromAFrozenAudience pins the
+// predicate the re-delivery path branches on (D-594).
+//
+// It is asserted directly, per rule set, because the sink-level tests cannot
+// reach every case: a PUBLIC meeting's audience is the `everyone` grant itself
+// and names no participant, so it looks exactly like the owner-only baseline
+// unless the grant's permissions are read. Getting that wrong rewrites a public
+// recording's ACL on every re-delivery — silently discarding whatever an
+// administrator had changed by hand.
+func TestAudienceAppliedDistinguishesTheBaselineFromAFrozenAudience(t *testing.T) {
+	alice := []aclMapping{{Type: "user", ID: "alice"}}
+	handWidened := append(recordingACLRules(nil, false),
+		aclRule{Type: "user", ID: "carol", Mask: aclMaskAll, Permissions: aclPermRead})
+
+	for _, tc := range []struct {
+		name  string
+		rules []aclRule
+		want  bool
+	}{
+		{"no rules at all", nil, false},
+		{"the create-time owner-only baseline", recordingACLRules(nil, false), false},
+		{"private meeting with a participant", recordingACLRules(alice, false), true},
+		{"public meeting with no grantable participant", recordingACLRules(nil, true), true},
+		{"public meeting with a participant", recordingACLRules(alice, true), true},
+		{"baseline plus a hand-added grant", handWidened, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := audienceApplied(tc.rules); got != tc.want {
+				t.Fatalf("audienceApplied(%+v) = %t, want %t", tc.rules, got, tc.want)
+			}
+		})
+	}
+}

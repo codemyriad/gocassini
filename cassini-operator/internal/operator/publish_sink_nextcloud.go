@@ -27,18 +27,37 @@ import (
 //	   │
 //	   ├─ 1. precondition: the .opus this job published is on disk
 //	   ├─ 2. MKCOL Cassini{,/Recordings{,/meetings}}         idempotent
-//	   ├─ 3. PUT  meetings/<jobID>.opus        ← the object, FIRST
-//	   │        + create-time deny so a new leaf cannot inherit the
-//	   │          container's broad traversal grant before it is ACL'd
-//	   ├─ 4. GET  catalog.json  → upsert this meeting → PUT      ← index, LAST
-//	   └─ 5. per-file ACL: the meeting's audience
+//	   ├─ 3. GET catalog.json   ← read only; is this meeting already indexed?
+//	   ├─ 4. per asset, deliverAsset:
+//	   │        PROPFIND        ← health gate: is it there, and is it ruled?
+//	   │        PUT (empty)     ← the leaf exists before any audio does
+//	   │        PROPPATCH deny  ← owner-only, unconditional
+//	   │        PUT (bytes)     ← fileid unchanged, so the deny still covers it
+//	   │        PROPFIND        ← post-condition: stored length AND rules
+//	   ├─ 5. per-file ACL: the meeting's audience                ← access, THEN
+//	   └─ 6. upsert this meeting into catalog.json → PUT         ← index, LAST
 //
-// Step 4 reads-merges-writes rather than uploading the local catalog, and that
+// Steps 4-6 are ordered the way they are because of D-594: the object must never
+// be reachable with content in it and no rules on it, and it must never be
+// advertised before its audience is frozen. The bytes therefore land last within
+// a leaf, and the catalog last overall.
+//
+// Step 3 is a read, and it is where it is for a different reason: the index is
+// the only durable evidence of whether a meeting's audience was ever written, and
+// step 4 needs that to tell an unfinished publish from an administrator's
+// deliberate narrowing.
+//
+// Step 6 reads-merges-writes rather than uploading the local catalog, and that
 // is load-bearing: the attempt site's catalog names exactly one meeting, so
 // PUTting it verbatim would truncate the remote archive to that meeting. It
 // also means the remote catalog is only ever added to — a failed delivery can
 // never blank or narrow it.
 const publishSinkNextcloudFiles = "nextcloud-files"
+
+// ncRecordingsContentType is what a recording is uploaded as. Nextcloud maps
+// `.opus` to audio/ogg for playback either way; sending it explicitly keeps the
+// empty reservation and the content PUT identical in everything but length.
+const ncRecordingsContentType = "audio/ogg"
 
 // envPublishSinkName is the deploy option that selects the sink. Named here
 // because the strict substrate gate below points an operator at it.
@@ -92,7 +111,6 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 	// digest its job sealed, before anything is uploaded. Without this the loop
 	// below could complete having delivered nothing and still report success —
 	// reintroducing the silent hole this sink exists to close.
-	type upload struct{ local, remote string }
 	var uploads []upload
 	for _, entry := range incoming.Meetings {
 		assets, err := catalogEntryAssets(entry)
@@ -126,7 +144,12 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 					return "", fmt.Errorf("refusing to publish %s: it does not match the artifact this job sealed (sha256 %s, want %s)", asset, got, want)
 				}
 			}
-			uploads = append(uploads, upload{local: local, remote: ncRecordingsRoot + "/" + filepath.ToSlash(asset)})
+			uploads = append(uploads, upload{
+				local:  local,
+				remote: ncRecordingsRoot + "/" + filepath.ToSlash(asset),
+				size:   info.Size(),
+				isDir:  info.IsDir(),
+			})
 		}
 	}
 	if len(uploads) == 0 {
@@ -146,54 +169,274 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 		}
 	}
 
-	for _, item := range uploads {
-		status, err := s.cfg.davPutFileStatus(ctx, s.client, ncRecordingsOwner, item.remote, item.local, "audio/ogg")
-		if err != nil {
-			return "", fmt.Errorf("put %s: %w", item.remote, err)
-		}
-		if status == http.StatusCreated {
-			// A newly created leaf inherits the container's traversal grant to
-			// the virtual `everyone` group. Deny it before the catalog can
-			// advertise the file; the per-meeting ACL below replaces this
-			// owner-only baseline.
-			if err := s.cfg.davProppatchACLRules(ctx, s.client, ncRecordingsOwner, item.remote, recordingACLRules(nil, false)); err != nil {
-				return "", fmt.Errorf("protect new %s: %w", item.remote, err)
-			}
-		}
-	}
+	// The audience is written once, onto the meeting's .opus, and only when that
+	// leaf has not already got one. Which upload that is has to be decided here,
+	// against the same path ncFilesAccessApplier will target.
+	//
+	// The coupling is structural — attemptOpusPath hardcodes <jobID>.opus and the
+	// exporter derives both the catalog id and audioPath from that stem — so it
+	// takes a code change to break, and it fails CLOSED when broken:
+	// createProtectedLeaf still writes the owner-only deny unconditionally, so a
+	// drifted asset publishes over-restricted rather than unruled. It is the
+	// installed-ExApp e2e that would catch it, not the tests in this package:
+	// writeAttemptSite fabricates the site with the same convention the sink
+	// assumes, so a unit test cannot disagree with it.
+	opusRemote := ncRecordingsRoot + "/meetings/" + d.JobID + ".opus"
+	audienceNeeded := false
 
-	if err := s.upsertRemoteCatalog(ctx, incoming, catalogEntryOverlay{RoomName: d.RoomName}); err != nil {
+	// Read the archive's index BEFORE touching anything, because it is the only
+	// evidence available for a question the leaf's rules cannot answer on their
+	// own: has this meeting's audience ever been written?
+	//
+	// A leaf sitting at exactly the owner-only baseline is ambiguous. It is what
+	// a publish that died between the content PUT and the audience PROPPATCH
+	// leaves — and it is equally what an administrator leaves by narrowing a
+	// recording to owner-only from the Files UI, which the operator docs invite
+	// them to do. Re-deriving the audience in the second case is a silent revert
+	// of a deliberate access decision, and for a recording of a PUBLIC room it
+	// re-grants `everyone` read on something someone had just made private.
+	//
+	// The catalog settles it. It is written last, so a meeting that appears in it
+	// got through the audience step; one that does not, did not.
+	existingCatalog, catalogMissing, err := s.readRemoteCatalog(ctx)
+	if err != nil {
 		return "", err
 	}
+	alreadyIndexed := catalogNamesMeeting(existingCatalog, d.JobID)
 
-	if s.applyAccess != nil {
+	for _, item := range uploads {
+		fresh, err := s.deliverAsset(ctx, item, alreadyIndexed)
+		if err != nil {
+			return "", err
+		}
+		if item.remote == opusRemote && fresh {
+			audienceNeeded = true
+		}
+	}
+
+	// Freezing the audience comes BEFORE the catalog, so a meeting whose ACL did
+	// not land is never advertised — the catalog is the thing that makes a
+	// recording discoverable, and writing it first is what let a failed ACL
+	// produce an indexed, readable recording.
+	if audienceNeeded && s.applyAccess != nil {
 		if err := s.applyAccess(ctx, d.JobID); err != nil {
 			return "", fmt.Errorf("access: %w", err)
 		}
 	}
+
+	if err := s.upsertRemoteCatalog(ctx, existingCatalog, catalogMissing, incoming, catalogEntryOverlay{RoomName: d.RoomName}); err != nil {
+		return "", err
+	}
 	return ncRecordingsRoot, nil
 }
 
-// upsertRemoteCatalog merges the delivered meetings into the catalog already in
-// Nextcloud Files and writes it back. Read-merge-write, never overwrite: the
-// attempt site knows about one meeting and the archive knows about all of them.
-func (s *nextcloudFilesPublishSink) upsertRemoteCatalog(ctx context.Context, incoming siteCatalog, overlay catalogEntryOverlay) error {
-	catalogRemote := ncRecordingsRoot + "/catalog.json"
-
-	var existing siteCatalog
-	raw, status, err := s.cfg.davGetBytes(ctx, s.client, ncRecordingsOwner, catalogRemote)
-	switch {
-	case err != nil && status != http.StatusNotFound:
-		return fmt.Errorf("read remote catalog: %w", err)
-	case status == http.StatusNotFound:
-		// First delivery into an empty archive.
-	default:
-		if err := json.Unmarshal(raw, &existing); err != nil {
-			// Overwriting an unreadable catalog would silently drop the archive
-			// it indexes. Refuse and leave it for a human.
-			return fmt.Errorf("parse remote catalog: %w", err)
+// catalogNamesMeeting reports whether the archive's index already lists jobID.
+func catalogNamesMeeting(catalog siteCatalog, jobID string) bool {
+	for _, entry := range catalog.Meetings {
+		id, err := catalogEntryID(entry)
+		if err != nil {
+			continue
+		}
+		if id == jobID {
+			return true
 		}
 	}
+	return false
+}
+
+// upload is one asset on its way to the archive, with what the post-condition
+// needs to judge whether it arrived intact.
+type upload struct {
+	local, remote string
+	size          int64
+	// isDir marks a legacy artifactPath export, which has no single file whose
+	// length can be compared.
+	isDir bool
+}
+
+// deliverAsset puts one asset into the archive so that it is never reachable
+// with content in it and no rules on it, and reports whether the leaf still
+// needs its audience written.
+//
+// The ordering is the whole fix (D-594). A leaf that states no rules of its own
+// inherits the container's `everyone: READ`, so the bytes must not exist until a
+// rule set does. Since there is no atomic create-with-ACL for a file, the leaf is
+// created EMPTY, denied, and only then filled — an overwriting PUT keeps the
+// file's fileid, and groupfolders keys its rules by fileid, so the deny written
+// against the empty file still covers the audio.
+//
+//	absent                  -> PUT empty, deny, PUT bytes        (+ audience)
+//	present, no everyone row-> deny, DELETE, then as absent       (+ audience)
+//	present, no audience yet-> PUT bytes                          (+ audience)
+//	present, audience set   -> PUT bytes, ACL untouched
+//
+// The last row is deliberate: a re-delivery replaces content, never access. An
+// audience someone widened by hand in the Files UI survives it.
+func (s *nextcloudFilesPublishSink) deliverAsset(ctx context.Context, item upload, alreadyIndexed bool) (audienceNeeded bool, err error) {
+	if item.isDir {
+		// A legacy artifactPath export is a directory, which has no single leaf
+		// to reserve, no length to verify, and — the reason for the early exit
+		// rather than a few skipped steps — nothing that should ever be fed to
+		// the repair branch, where a missing rule set would DELETE the tree.
+		// This asset shape is carried exactly as it was before D-594.
+		return false, s.putAssetBytes(ctx, item)
+	}
+
+	state, err := s.cfg.davPropfindLeafState(ctx, s.client, ncRecordingsOwner, item.remote)
+	if err != nil {
+		return false, fmt.Errorf("inspect %s: %w", item.remote, err)
+	}
+
+	switch {
+	case state.Exists && !everyoneRuleGovernsRead(state.Rules):
+		// The D-594 state itself: a delivered recording carrying no broad-group
+		// rule, readable by every account. Repair it before replacing it —
+		// deleting it first would only move the exposure into a trash every
+		// account can read.
+		if err := s.repairUnprotectedLeaf(ctx, item.remote); err != nil {
+			return false, err
+		}
+		if err := s.createProtectedLeaf(ctx, item); err != nil {
+			return false, err
+		}
+		audienceNeeded = true
+	case !state.Exists:
+		if err := s.createProtectedLeaf(ctx, item); err != nil {
+			return false, err
+		}
+		audienceNeeded = true
+	default:
+		// Already protected. Whether the audience still has to be written is the
+		// difference between "the create-time deny is all that ever landed" and
+		// "this meeting's audience is frozen" — see audienceApplied.
+		//
+		// alreadyIndexed breaks the tie the rules alone cannot: a leaf at exactly
+		// the baseline is both what an unfinished publish leaves and what an
+		// administrator leaves by narrowing a recording to owner-only. If the
+		// meeting is in the catalog, a previous publish got past the audience
+		// step, so the baseline is somebody's decision and not our unfinished
+		// work — leave it alone.
+		audienceNeeded = !audienceApplied(state.Rules) && !alreadyIndexed
+	}
+
+	if err := s.putAssetBytes(ctx, item); err != nil {
+		return false, err
+	}
+	return audienceNeeded, nil
+}
+
+// createProtectedLeaf establishes the leaf with an owner-only ACL and no content.
+func (s *nextcloudFilesPublishSink) createProtectedLeaf(ctx context.Context, item upload) error {
+	if _, err := s.cfg.davPutEmpty(ctx, s.client, ncRecordingsOwner, item.remote, ncRecordingsContentType); err != nil {
+		return fmt.Errorf("reserve %s: %w", item.remote, err)
+	}
+	// Unconditional, never gated on the PUT having returned 201. Gating it is
+	// what let a re-delivery — which answers 204 — skip the deny entirely and
+	// leave a previously unprotected recording unprotected.
+	if err := s.cfg.davProppatchACLRules(ctx, s.client, ncRecordingsOwner, item.remote, recordingACLRules(nil, false)); err != nil {
+		return fmt.Errorf("protect new %s: %w", item.remote, err)
+	}
+	return nil
+}
+
+// repairUnprotectedLeaf denies the broad group on a leaf that has no rules and
+// then removes it.
+//
+// The deny is not belt-and-braces: a group-folder DELETE moves the bytes to the
+// Team-folder trash, and the trash gate consults the leaf's own rules, so
+// deleting an unruled recording leaves it listable and downloadable by every
+// account from their own trashbin. Denying first is what makes the trash copy
+// inherit the protection.
+func (s *nextcloudFilesPublishSink) repairUnprotectedLeaf(ctx context.Context, remote string) error {
+	if err := s.cfg.davProppatchACLRules(ctx, s.client, ncRecordingsOwner, remote, recordingACLRules(nil, false)); err != nil {
+		return fmt.Errorf("protect unprotected %s before removing it: %w", remote, err)
+	}
+	if s.logger != nil {
+		s.logger.Printf("nc files: %s was delivered without an access rule — denied and replaced", remote)
+	}
+	if err := s.cfg.davDelete(ctx, s.client, ncRecordingsOwner, remote); err != nil {
+		return fmt.Errorf("remove unprotected %s: %w", remote, err)
+	}
+	return nil
+}
+
+// putAssetBytes uploads the content and verifies what Nextcloud stored.
+//
+// The read-back is the only thing standing between an interrupted upload and a
+// silently truncated recording: Nextcloud commits the short bytes to the
+// published path, keeps the fileid and keeps the ACL, so nothing downstream can
+// tell. Comparing the stored length against what we sent turns that into a failed
+// publish the operator can re-run.
+func (s *nextcloudFilesPublishSink) putAssetBytes(ctx context.Context, item upload) error {
+	if _, err := s.cfg.davPutFileStatus(ctx, s.client, ncRecordingsOwner, item.remote, item.local, ncRecordingsContentType); err != nil {
+		return fmt.Errorf("put %s: %w", item.remote, err)
+	}
+	if item.isDir {
+		return nil
+	}
+	state, err := s.cfg.davPropfindLeafState(ctx, s.client, ncRecordingsOwner, item.remote)
+	if err != nil {
+		return fmt.Errorf("verify %s: %w", item.remote, err)
+	}
+	if !state.Exists {
+		return fmt.Errorf("verify %s: it is not there after a successful upload", item.remote)
+	}
+	if state.Size != item.size {
+		return fmt.Errorf("refusing to publish %s: Nextcloud stored %d bytes of %d — the upload was interrupted and the remote copy is truncated; re-run the publish",
+			item.remote, state.Size, item.size)
+	}
+	// The same response already carries the leaf's rules, so checking them costs
+	// nothing and closes the gap between the health gate and this PUT. If the
+	// leaf lost its rules in between — an administrator deleted the recording
+	// from the Files UI, a trash restore re-created it, a rule row went away —
+	// then this PUT created a NEW leaf, with a new fileid and therefore no rules
+	// at all, now holding the audio. Fail rather than return to a caller that
+	// would go on to advertise it.
+	if !everyoneRuleGovernsRead(state.Rules) {
+		return fmt.Errorf("refusing to publish %s: it carries no effective %q rule after the upload — it would be readable by every account; re-run the publish",
+			item.remote, ncRecordingsEveryoneGroup)
+	}
+	return nil
+}
+
+// readRemoteCatalog fetches the archive's authoritative index. missing reports
+// that there is none yet — the only case in which the catalog leaf is about to
+// be CREATED, and therefore the only one in which it could be born without rules.
+func (s *nextcloudFilesPublishSink) readRemoteCatalog(ctx context.Context) (catalog siteCatalog, missing bool, err error) {
+	raw, status, err := s.cfg.davGetBytes(ctx, s.client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json")
+	switch {
+	case err != nil && status != http.StatusNotFound:
+		return siteCatalog{}, false, fmt.Errorf("read remote catalog: %w", err)
+	case status == http.StatusNotFound:
+		return siteCatalog{}, true, nil
+	case status < 200 || status >= 300:
+		// Branch on the status, never on the error — davGetBytes returns a nil
+		// error for a 403 or a 503, so "err == nil" does not mean "this is the
+		// catalog". The rule guardDestinationIsEmpty already follows; this was
+		// the one of the package's three catalog GETs that did not.
+		//
+		// What it costs to get wrong is the whole index, not one meeting's
+		// audience. Meetings is []json.RawMessage, so ANY JSON object without a
+		// `meetings` key parses cleanly as an empty archive — and upsert writes
+		// the merged document whole, so one bad read replaces every meeting in
+		// the archive with the one being delivered. Nothing repairs it: later
+		// publishes append to the truncated file and backfill refuses a
+		// populated destination.
+		return siteCatalog{}, false, fmt.Errorf("read remote catalog: HTTP %d", status)
+	}
+	if err := json.Unmarshal(raw, &catalog); err != nil {
+		// Overwriting an unreadable catalog would silently drop the archive it
+		// indexes. Refuse and leave it for a human.
+		return siteCatalog{}, false, fmt.Errorf("parse remote catalog: %w", err)
+	}
+	return catalog, false, nil
+}
+
+// upsertRemoteCatalog merges the delivered meetings into the catalog snapshot
+// read before delivery, preserving the archive and applying the operator's
+// catalog-only fields before it writes the protected index.
+func (s *nextcloudFilesPublishSink) upsertRemoteCatalog(ctx context.Context, existing siteCatalog, catalogMissing bool, incoming siteCatalog, overlay catalogEntryOverlay) error {
+	catalogRemote := ncRecordingsRoot + "/catalog.json"
 
 	merged, err := upsertSiteCatalog(existing, incoming, overlay)
 	if err != nil {
@@ -207,6 +450,21 @@ func (s *nextcloudFilesPublishSink) upsertRemoteCatalog(ctx context.Context, inc
 		return fmt.Errorf("marshal remote catalog: %w", err)
 	}
 	body = append(body, '\n')
+	// The catalog gets the same treatment as a recording, and for the same
+	// reason: on a first publish into a fresh archive this leaf does not exist
+	// yet, so PUTting it outright would create the authoritative, unfiltered
+	// index of every meeting on the instance — ids, titles, dates — with no
+	// rules of its own, inheriting the container's `everyone: READ` until the
+	// PROPPATCH below lands. Reserve it empty and deny it first; the rules then
+	// survive this and every later overwrite, because the fileid does.
+	if catalogMissing {
+		if _, err := s.cfg.davPutEmpty(ctx, s.client, ncRecordingsOwner, catalogRemote, "application/json"); err != nil {
+			return fmt.Errorf("reserve catalog: %w", err)
+		}
+		if err := s.cfg.davProppatchACLRules(ctx, s.client, ncRecordingsOwner, catalogRemote, catalogProtectionACLRules()); err != nil {
+			return fmt.Errorf("protect catalog: %w", err)
+		}
+	}
 	if err := s.cfg.davPutBytes(ctx, s.client, ncRecordingsOwner, catalogRemote, body, "application/json"); err != nil {
 		return fmt.Errorf("put catalog: %w", err)
 	}
