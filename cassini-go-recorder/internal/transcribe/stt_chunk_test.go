@@ -180,22 +180,39 @@ func TestDedupOverlappingWordsFirstWindowVerbatim(t *testing.T) {
 	}
 }
 
-func TestClampWordsToTimelineEndExcludesDecoderPadding(t *testing.T) {
+func TestClampWordsToTimelineEndPreservesBoundaryTokensWithinDecoderPadding(t *testing.T) {
 	words := []Word{
 		{Text: "within", StartMS: 13000, EndMS: 14000},
 		{Text: "straddles", StartMS: 14000, EndMS: 14950},
-		{Text: "padding", StartMS: 14455, EndMS: 14800},
-		{Text: "later-padding", StartMS: 14800, EndMS: 14950},
+		{Text: "boundary", StartMS: 14455, EndMS: 14800},
+		{Text: "inside-padding", StartMS: 14800, EndMS: 14950},
+		{Text: "padding-limit", StartMS: 14955, EndMS: 15000},
+		{Text: "beyond-padding", StartMS: 14956, EndMS: 15000},
+		{Text: "reversed-padding", StartMS: 14800, EndMS: 14799},
 	}
 
-	got := clampWordsToTimelineEnd(words, 14455)
+	got := clampWordsToTimelineEnd(words, 14455, 500)
 	want := []Word{
 		{Text: "within", StartMS: 13000, EndMS: 14000},
 		{Text: "straddles", StartMS: 14000, EndMS: 14455},
+		{Text: "boundary", StartMS: 14455, EndMS: 14455},
+		{Text: "inside-padding", StartMS: 14455, EndMS: 14455},
+		{Text: "padding-limit", StartMS: 14455, EndMS: 14455},
 	}
 
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("clampWordsToTimelineEnd =\n  %#v\nwant\n  %#v", got, want)
+	}
+}
+
+func TestClampWordsToTimelineEndWithoutPaddingKeepsOnlyExactBoundary(t *testing.T) {
+	words := []Word{
+		{Text: "boundary", StartMS: 1000, EndMS: 1100},
+		{Text: "past-boundary", StartMS: 1001, EndMS: 1100},
+	}
+	want := []Word{{Text: "boundary", StartMS: 1000, EndMS: 1000}}
+	if got := clampWordsToTimelineEnd(words, 1000, 0); !reflect.DeepEqual(got, want) {
+		t.Fatalf("clampWordsToTimelineEnd without padding = %#v; want %#v", got, want)
 	}
 }
 
@@ -274,12 +291,30 @@ func TestFinalizeTranscriptWordsClampsBeforeEnergyGate(t *testing.T) {
 	}
 	words := []Word{
 		{Text: "straddles", StartMS: 900, EndMS: 1100},
-		{Text: "padding", StartMS: 1000, EndMS: 1200},
+		{Text: "boundary", StartMS: 1000, EndMS: 1200},
+		{Text: "inside-vad-padding", StartMS: 1032, EndMS: 1100},
+		{Text: "beyond-vad-padding", StartMS: 1033, EndMS: 1100},
 	}
-	got := finalizeTranscriptWords(samples, sampleRate, words, 1000)
-	want := []Word{{Text: "straddles", StartMS: 900, EndMS: 1000}}
+	got := finalizeTranscriptWords(samples, sampleRate, words, 1000, 32)
+	want := []Word{
+		{Text: "straddles", StartMS: 900, EndMS: 1000},
+		{Text: "boundary", StartMS: 1000, EndMS: 1000},
+		{Text: "inside-vad-padding", StartMS: 1000, EndMS: 1000},
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("finalizeTranscriptWords = %#v; want %#v", got, want)
+	}
+}
+
+func TestSamplesToCeilMSMatchesActualVADTailPadding(t *testing.T) {
+	if got := samplesToCeilMS(0, 16000); got != 0 {
+		t.Fatalf("zero padding = %dms; want 0", got)
+	}
+	if got := samplesToCeilMS(511, 16000); got != 32 {
+		t.Fatalf("511-sample VAD padding = %dms; want ceil(31.9375)=32", got)
+	}
+	if got := samplesToCeilMS(8000, 16000); got != 500 {
+		t.Fatalf("decoder padding = %dms; want 500", got)
 	}
 }
 

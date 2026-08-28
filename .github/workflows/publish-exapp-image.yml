@@ -793,6 +793,21 @@ jobs:
           MIN_LEVENSHTEIN: "0.50"
         run: ./harness/bin/ci-e2e-v3-transcript-verify.sh
 
+      - name: Materialize short-clip fixture (selective LFS pull)
+        # Fetch only the ~630 KB source used by the D-50 pad-tail guard, not
+        # the complete private/showcase media set. git-lfs was installed before
+        # checkout above because this self-hosted runner has no sudo.
+        run: git lfs pull --include="harness/media/processed/showcase-lantern-festival-v1/mira.ogg"
+
+      - name: Run short-clip ASR regression on CUDA (decoder pad-tail guard)
+        # Clean 6-9s clips with abrupt endings must retain final tokens emitted
+        # in the 0.5s decoder pad. The script derives CASSINI_STT_DEVICE from the
+        # exact image, exposes the GPU, and fails on silent CPU fallback.
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+          REQUIRE_CUDA: "1"
+        run: ./harness/bin/ci-transcribe-short-clip-regression.sh
+
       - name: Reclaim docker disk (post-job)
         if: always()
         # The self-hosted GPU runner accumulates multi-GB CUDA image layers

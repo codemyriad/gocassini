@@ -163,7 +163,7 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 			return nil, err
 		}
 		decodedWords := len(words)
-		words = finalizeTranscriptWords(samples, sampleRate, words, audioEndMS)
+		words = finalizeTranscriptWords(samples, sampleRate, words, audioEndMS, 0)
 		if len(words) == 0 && len(samples) >= sampleRate*5 {
 			audioSeconds := float64(len(samples)) / float64(sampleRate)
 			log.Printf("transcribe: 0 words from %.1fs of audio (VAD bypassed); ASR decoded=%d, retained=%d after energy gate", audioSeconds, decodedWords, len(words))
@@ -176,6 +176,7 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 	var allWords []Word
 	var segCount int
 	var totalSpeechSamples int
+	var vadTailPaddingSamples int
 
 	// drainSegments transcribes every speech segment the VAD has queued so far.
 	drainSegments := func() error {
@@ -216,6 +217,7 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 			// run the detector over sherpa-onnx's buffered partial window.
 			padded := make([]float32, vadWindowSamples)
 			copy(padded, window)
+			vadTailPaddingSamples = vadWindowSamples - len(window)
 			window = padded
 		}
 		r.vad.AcceptWaveform(window)
@@ -237,7 +239,7 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 	// containing only silent hallucinations is still reported as zero retained
 	// words rather than suppressing the warning.
 	decodedWords := len(allWords)
-	allWords = finalizeTranscriptWords(samples, sampleRate, allWords, audioEndMS)
+	allWords = finalizeTranscriptWords(samples, sampleRate, allWords, audioEndMS, samplesToCeilMS(vadTailPaddingSamples, sampleRate))
 	if len(allWords) == 0 && len(samples) >= sampleRate*5 {
 		audioSeconds := float64(len(samples)) / float64(sampleRate)
 		speechSeconds := float64(totalSpeechSamples) / float64(sampleRate)
@@ -246,8 +248,8 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 	return allWords, nil
 }
 
-func finalizeTranscriptWords(samples []float32, sampleRate int, words []Word, audioEndMS int64) []Word {
-	words = clampWordsToTimelineEnd(words, audioEndMS)
+func finalizeTranscriptWords(samples []float32, sampleRate int, words []Word, audioEndMS, paddedTailMS int64) []Word {
+	words = clampWordsToTimelineEnd(words, audioEndMS, paddedTailMS)
 	return filterWordsByEnergy(samples, sampleRate, words)
 }
 
@@ -266,7 +268,7 @@ func filterWordsByEnergy(samples []float32, sampleRate int, words []Word) []Word
 	kept := words[:0]
 	for _, word := range words {
 		startMS, endMS := word.StartMS, word.EndMS
-		if endMS < 0 || endMS < startMS || startMS >= audioEndMS {
+		if endMS < 0 || endMS < startMS || startMS > audioEndMS {
 			continue
 		}
 		if startMS < 0 {
@@ -338,8 +340,10 @@ func (r *Recognizer) transcribeSegment(samples []float32, sampleRate int, segOff
 		// trimming the LibriSpeech reference, so we keep the tail
 		// short.
 		const decoderTailPadMinSeconds = 10
+		decoderTailPaddingSamples := 0
 		if len(chunk) < decoderTailPadMinSeconds*sampleRate {
-			padded := make([]float32, len(chunk)+sampleRate/2) // +0.5s
+			decoderTailPaddingSamples = sampleRate / 2
+			padded := make([]float32, len(chunk)+decoderTailPaddingSamples) // +0.5s
 			copy(padded, chunk)
 			chunk = padded
 		}
@@ -365,32 +369,58 @@ func (r *Recognizer) transcribeSegment(samples []float32, sampleRate int, segOff
 			words[i].StartMS += chunkOffsetMS
 			words[i].EndMS += chunkOffsetMS
 		}
-		// The recognizer may timestamp the last token inside the synthetic 0.5s
-		// decoder tail. Clamp a straddling token to the real chunk boundary and
-		// discard tokens emitted wholly inside padding.
+		// The recognizer may timestamp a genuine final token inside the synthetic
+		// 0.5s decoder tail. Clamp tokens stamped within the actual padding to a
+		// zero-length word at the real boundary; the later energy gate decides
+		// whether the real audio tail supports them. Discard only timestamps beyond
+		// the padding that was supplied to this decode.
 		chunkEndMS := segOffsetMS + int64(end)*1000/int64(sampleRate)
-		words = clampWordsToTimelineEnd(words, chunkEndMS)
+		words = clampWordsToTimelineEnd(words, chunkEndMS, samplesToCeilMS(decoderTailPaddingSamples, sampleRate))
 		allWords = append(allWords, words...)
 	}
 	return allWords, nil
 }
 
-// clampWordsToTimelineEnd removes tokens emitted wholly beyond a real PCM
-// boundary and clips tokens that straddle it. Decoder and VAD padding are
-// implementation details and must never extend transcript timestamps.
+// clampWordsToTimelineEnd clips tokens that straddle a real PCM boundary.
+// Tokens stamped at the boundary or within the synthetic padded tail are
+// retained as zero-length boundary words so the energy gate can inspect the
+// real audio immediately before them. Tokens starting beyond the supplied
+// padding are removed. Decoder and VAD padding never extends public timestamps.
 // The input slice may be compacted in place.
-func clampWordsToTimelineEnd(words []Word, endMS int64) []Word {
+func clampWordsToTimelineEnd(words []Word, endMS, paddedTailMS int64) []Word {
+	if paddedTailMS < 0 {
+		paddedTailMS = 0
+	}
+	paddedEndMS := endMS + paddedTailMS
+	if paddedEndMS < endMS { // Saturate on malformed/overflowing input.
+		paddedEndMS = int64(^uint64(0) >> 1)
+	}
 	kept := words[:0]
 	for _, word := range words {
-		if word.StartMS >= endMS {
+		// Do not turn a malformed padded timestamp into an apparently valid
+		// zero-length boundary word.
+		if word.EndMS < word.StartMS {
 			continue
 		}
-		if word.EndMS > endMS {
+		if word.StartMS > paddedEndMS {
+			continue
+		}
+		if word.StartMS >= endMS {
+			word.StartMS = endMS
+			word.EndMS = endMS
+		} else if word.EndMS > endMS {
 			word.EndMS = endMS
 		}
 		kept = append(kept, word)
 	}
 	return kept
+}
+
+func samplesToCeilMS(samples, sampleRate int) int64 {
+	if samples <= 0 || sampleRate <= 0 {
+		return 0
+	}
+	return (int64(samples)*1000 + int64(sampleRate) - 1) / int64(sampleRate)
 }
 
 // transcribeNonVADChunked decodes dense, silence-free audio (the merged-mix
