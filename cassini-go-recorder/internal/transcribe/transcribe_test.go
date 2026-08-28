@@ -60,6 +60,50 @@ func TestWriteReadableArtifactsSkipsCleanupFailuresByDefault(t *testing.T) {
 	}
 }
 
+func TestWriteReadableArtifactsPassesConfiguredAndSpeakerPreferredSpellings(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := BuildConfig{
+		LLM: LLMConfig{
+			APIKey:  "test-key",
+			BaseURL: "https://example.test/api/v1",
+			Model:   "test-model",
+		},
+		TranscriptionTerms: []string{"Gocassini", " alice "},
+	}
+	streams := []AudioStream{
+		{SpeakerID: "spk_alice", SpeakerLabel: "Alice"},
+		{SpeakerID: "spk_recorder", SpeakerLabel: "Cassini Recorder"},
+	}
+	segments := []Segment{
+		{
+			SpeakerID: "spk_alice",
+			StartMS:   0,
+			EndMS:     900,
+			Text:      "hello there",
+			Words: []Word{
+				{Text: "hello", StartMS: 0, EndMS: 400},
+				{Text: "there", StartMS: 450, EndMS: 900},
+			},
+		},
+	}
+
+	var gotTerms []string
+	prev := readableCleanupFn
+	readableCleanupFn = func(cfg LLMConfig, input []Segment) ([]Segment, error) {
+		gotTerms = append([]string(nil), cfg.PreferredSpellings...)
+		return append([]Segment(nil), input...), nil
+	}
+	t.Cleanup(func() { readableCleanupFn = prev })
+
+	if _, _, err := writeReadableArtifacts(tmp, streams, segments, 900, "abc123", cfg, &bytes.Buffer{}); err != nil {
+		t.Fatalf("writeReadableArtifacts() error = %v", err)
+	}
+	want := "Gocassini|alice|Cassini Recorder"
+	if got := strings.Join(gotTerms, "|"); got != want {
+		t.Fatalf("PreferredSpellings = %q, want %q", got, want)
+	}
+}
+
 func TestWriteReadableArtifactsFailsWhenStrict(t *testing.T) {
 	tmp := t.TempDir()
 
@@ -280,7 +324,14 @@ func TestWriteManifestIncludesRuntimeSummaryFields(t *testing.T) {
 		},
 	}
 
-	if err := WriteManifest(path, "source.mkv", 1200, streams, segments, ModelParakeet06B, "openai/gpt-4o-mini", true, "", false, nil); err != nil {
+	const sourceDurationMS = int64(1_977_527)
+	const playableDurationMS = int64(242_413)
+	additional := []AdditionalTranscript{{
+		ID:      "parakeet-v2",
+		Path:    "transcript.parakeet-v2.json",
+		ModelID: ModelParakeet06BV3,
+	}}
+	if err := WriteManifest(path, "source.mkv", sourceDurationMS, playableDurationMS, streams, segments, ModelParakeet06B, "cuda", "openai/gpt-4o-mini", true, "", false, additional); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 
@@ -292,6 +343,15 @@ func TestWriteManifestIncludesRuntimeSummaryFields(t *testing.T) {
 	var payload struct {
 		SegmentCount     int   `json:"segmentCount"`
 		DigestDurationMS int64 `json:"digestDurationMs"`
+		Files            struct {
+			Transcripts []artifactTranscriptRef `json:"transcripts"`
+		} `json:"files"`
+		Provenance struct {
+			SpeechToText *provStep `json:"speechToText"`
+		} `json:"provenance"`
+		Source struct {
+			DurationMS int64 `json:"durationMs"`
+		} `json:"source"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatalf("parse manifest: %v", err)
@@ -299,7 +359,21 @@ func TestWriteManifestIncludesRuntimeSummaryFields(t *testing.T) {
 	if payload.SegmentCount != 1 {
 		t.Fatalf("expected segmentCount 1, got %d", payload.SegmentCount)
 	}
-	if payload.DigestDurationMS != 1200 {
-		t.Fatalf("expected digestDurationMs 1200, got %d", payload.DigestDurationMS)
+	if payload.Source.DurationMS != sourceDurationMS {
+		t.Fatalf("expected source.durationMs %d, got %d", sourceDurationMS, payload.Source.DurationMS)
+	}
+	if payload.DigestDurationMS != playableDurationMS {
+		t.Fatalf("expected digestDurationMs %d, got %d", playableDurationMS, payload.DigestDurationMS)
+	}
+	if payload.Provenance.SpeechToText == nil || payload.Provenance.SpeechToText.Device != "cuda" {
+		t.Fatalf("expected speechToText.device cuda, got %#v", payload.Provenance.SpeechToText)
+	}
+	if len(payload.Files.Transcripts) != 2 {
+		t.Fatalf("expected primary and additional transcript provenance, got %d entries", len(payload.Files.Transcripts))
+	}
+	for _, transcript := range payload.Files.Transcripts {
+		if transcript.Provenance == nil || transcript.Provenance.Device != "cuda" {
+			t.Errorf("transcript %q device provenance = %#v, want cuda", transcript.ID, transcript.Provenance)
+		}
 	}
 }

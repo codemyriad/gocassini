@@ -45,6 +45,7 @@ NEXTCLOUD_URL_INTERNAL="${NEXTCLOUD_URL_INTERNAL:-http://nextcloud}"
 TEST_USER="${TEST_USER:-e2euser}"
 TEST_USER_PASSWORD="${TEST_USER_PASSWORD:-Tn8mY3qVrJ2x!E2e}"
 APP_SECRET="${APP_SECRET:-$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 32)}"
+EXPECT_GPU_UNAVAILABLE="${CASSINI_EXPECT_GPU_UNAVAILABLE:-0}"
 
 mkdir -p "$LOG_DIR"
 
@@ -314,10 +315,25 @@ done
 cycle_exapp
 await_substrate provisioned
 
-substrate_status=$(curl -sS -u "admin:admin" -o /dev/null -w '%{http_code}' "$SUBSTRATE_PROXY/operator/status")
-if [[ "$substrate_status" != "200" ]]; then
+substrate_status_body="$LOG_DIR/operator-status-provisioned.json"
+substrate_status=$(curl -sS -u "admin:admin" -o "$substrate_status_body" -w '%{http_code}' "$SUBSTRATE_PROXY/operator/status")
+if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
+  if [[ "$substrate_status" != "503" ]] || ! jq -e '
+    .ok == false
+    and .stt.device == "cuda"
+    and .stt.device_usable == false
+    and (.stt.detail | type == "string" and length > 0)
+    and .db.ok == true
+    and .storage.work_root.ok == true
+    and .storage.site_root.ok == true
+    and .recordings_access.ok == true
+  ' "$substrate_status_body" >/dev/null; then
+    log "recordings_access: $(substrate_json)"
+    fail "a provisioned GPU-less substrate must answer structured sole-STT 503, got HTTP $substrate_status"
+  fi
+elif [[ "$substrate_status" != "200" ]] || ! jq -e '.ok == true' "$substrate_status_body" >/dev/null; then
   log "recordings_access: $(substrate_json)"
-  fail "a provisioned substrate must answer 200, got $substrate_status"
+  fail "a ready provisioned substrate must answer 200/ok, got HTTP $substrate_status"
 fi
 # The sink must be the RESOLVED one. An ExApp that sets no CASSINI_PUBLISH_SINK
 # resolves to nextcloud-files, and reporting the raw (empty) config as `local`
@@ -330,7 +346,7 @@ admin_user=$(substrate_field admin_user)
 enabled_prereqs=$(substrate_json | jq '[.prerequisites[] | select(.state == "enabled")] | length' 2>/dev/null || echo 0)
 [[ "$enabled_prereqs" == "2" ]] \
   || fail "expected both prerequisites reported enabled, got $enabled_prereqs"
-log "OK   /status: provisioned, sink=$sink, admin_user=$admin_user, 2 prerequisites enabled"
+log "OK   /status: provisioned, expected GPU readiness, sink=$sink, admin_user=$admin_user, 2 prerequisites enabled"
 
 # The USER-readable half of the same verdict. This is the only route that lets
 # someone who is NOT an administrator find out that an install was never

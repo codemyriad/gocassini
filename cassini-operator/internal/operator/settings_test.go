@@ -1,9 +1,13 @@
 package operator
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -26,8 +30,13 @@ func TestChildEnvStripsImageModelPinAndStaleQuality(t *testing.T) {
 		"CASSINI_STT_QUALITY=fast",
 		"CASSINI_STT_NUM_THREADS=8",
 		"CASSINI_STT_DEVICE=cpu",
+		"CASSINI_STT_ADDITIONAL_MODELS=parakeet-tdt-0.6b-v3-int8",
+		"CASSINI_TRANSCRIPTION_TERMS=[\"stale\"]",
 	}
-	s := STTSettings{Quality: sttQualityBest}
+	s := STTSettings{
+		Quality:            sttQualityBest,
+		TranscriptionTerms: []string{" Gocassini ", "Nextcloud Talk", "gocassini"},
+	}
 	env := s.ChildEnv(base)
 
 	if q, ok := envValue(env, envSTTQuality); !ok || q != sttQualityBest {
@@ -41,6 +50,20 @@ func TestChildEnvStripsImageModelPinAndStaleQuality(t *testing.T) {
 	}
 	if _, ok := envValue(env, envSTTNumThreads); ok {
 		t.Fatalf("CASSINI_STT_NUM_THREADS must be stripped; env=%v", env)
+	}
+	if _, ok := envValue(env, envSTTAdditionalModels); ok {
+		t.Fatalf("CASSINI_STT_ADDITIONAL_MODELS must be stripped by GPU-only policy; env=%v", env)
+	}
+	termsJSON, ok := envValue(env, envTranscriptionTerms)
+	if !ok {
+		t.Fatalf("CASSINI_TRANSCRIPTION_TERMS must be set; env=%v", env)
+	}
+	var terms []string
+	if err := json.Unmarshal([]byte(termsJSON), &terms); err != nil {
+		t.Fatalf("decode CASSINI_TRANSCRIPTION_TERMS: %v", err)
+	}
+	if got := strings.Join(terms, "|"); got != "Gocassini|Nextcloud Talk" {
+		t.Fatalf("CASSINI_TRANSCRIPTION_TERMS = %q, want normalized preferred spellings", got)
 	}
 	// No stale duplicate quality.
 	count := 0
@@ -63,11 +86,11 @@ func TestChildEnvOverridesAreAppended(t *testing.T) {
 		"CASSINI_STT_MODEL=parakeet-tdt-0.6b-v3-int8",
 		"CASSINI_STT_DEVICE=cpu",
 	}
-	s := STTSettings{Quality: sttQualityBalanced, DeviceOverride: "cuda", ModelOverride: "x"}
+	s := STTSettings{Quality: sttQualityBalanced, DeviceOverride: "cuda", ModelOverride: auditedCUDAParakeetV3}
 	env := s.ChildEnv(base)
 
-	if m, ok := envValue(env, envSTTModel); !ok || m != "x" {
-		t.Fatalf("CASSINI_STT_MODEL = %q ok=%v, want x", m, ok)
+	if m, ok := envValue(env, envSTTModel); !ok || m != auditedCUDAParakeetV3 {
+		t.Fatalf("CASSINI_STT_MODEL = %q ok=%v, want %s", m, ok, auditedCUDAParakeetV3)
 	}
 	if d, ok := envValue(env, envSTTDevice); !ok || d != "cuda" {
 		t.Fatalf("CASSINI_STT_DEVICE = %q ok=%v, want cuda", d, ok)
@@ -82,6 +105,35 @@ func TestChildEnvOverridesAreAppended(t *testing.T) {
 		}
 		if count != 1 {
 			t.Fatalf("expected exactly one %s entry, got %d: %v", key, count, env)
+		}
+	}
+}
+
+func TestChildEnvFailsSafeForUnauditedModelOverride(t *testing.T) {
+	env := (STTSettings{
+		Quality:       sttQualityBest,
+		ModelOverride: "parakeet-tdt-0.6b-v3-int8",
+	}).ChildEnv([]string{
+		"CASSINI_STT_MODEL=unsafe-inherited",
+		"CASSINI_STT_ADDITIONAL_MODELS=also-unsafe",
+	})
+	if _, ok := envValue(env, envSTTModel); ok {
+		t.Fatalf("unaudited model override escaped into child environment: %v", env)
+	}
+	if _, ok := envValue(env, envSTTAdditionalModels); ok {
+		t.Fatalf("additional models escaped into child environment: %v", env)
+	}
+}
+
+func TestValidCUDAModelOverrideAllowlist(t *testing.T) {
+	for _, model := range []string{"", "  ", auditedCUDAParakeetV3, "  " + auditedCUDAParakeetV3 + "  "} {
+		if !validCUDAModelOverride(model) {
+			t.Errorf("audited CUDA model %q was rejected", model)
+		}
+	}
+	for _, model := range []string{"parakeet-tdt-0.6b-v3-int8", "custom", "PARAKEET-TDT-0.6B-V3"} {
+		if validCUDAModelOverride(model) {
+			t.Errorf("unaudited model %q was accepted", model)
 		}
 	}
 }
@@ -102,6 +154,37 @@ func TestNormalizeQuality(t *testing.T) {
 		if got := normalizeQuality(in); got != want {
 			t.Errorf("normalizeQuality(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestNormalizeTranscriptionTerms(t *testing.T) {
+	terms, err := normalizeTranscriptionTerms([]string{
+		"  Gocassini  ",
+		"Nextcloud\t Talk",
+		"gocassini",
+		"",
+		"  ",
+	})
+	if err != nil {
+		t.Fatalf("normalizeTranscriptionTerms() error = %v", err)
+	}
+	if got := strings.Join(terms, "|"); got != "Gocassini|Nextcloud Talk" {
+		t.Fatalf("normalized terms = %q, want Gocassini|Nextcloud Talk", got)
+	}
+}
+
+func TestNormalizeTranscriptionTermsEnforcesBounds(t *testing.T) {
+	tooLong := strings.Repeat("x", maxTranscriptionTermRunes+1)
+	if _, err := normalizeTranscriptionTerms([]string{tooLong}); err == nil {
+		t.Fatal("expected overlong term to be rejected")
+	}
+
+	tooMany := make([]string, maxTranscriptionTerms+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("term-%d", i)
+	}
+	if _, err := normalizeTranscriptionTerms(tooMany); err == nil {
+		t.Fatal("expected excess terms to be rejected")
 	}
 }
 
@@ -142,7 +225,8 @@ func TestSaveLoadRoundTripUserSettings(t *testing.T) {
 	want := STTSettings{
 		Quality:             sttQualityFast,
 		DeviceOverride:      "cuda",
-		ModelOverride:       "custom",
+		ModelOverride:       auditedCUDAParakeetV3,
+		TranscriptionTerms:  []string{"Gocassini", "Nextcloud Talk"},
 		Source:              sttSourceUser,
 		HardwareFingerprint: "gpu=true;cores=16",
 		DetectedGPU:         true,
@@ -158,8 +242,141 @@ func TestSaveLoadRoundTripUserSettings(t *testing.T) {
 	if got.Source != sttSourceUser {
 		t.Fatalf("Source = %q, want user (must not be overwritten)", got.Source)
 	}
-	if got.Quality != want.Quality || got.DeviceOverride != want.DeviceOverride || got.ModelOverride != want.ModelOverride {
+	if got.Quality != want.Quality || got.DeviceOverride != want.DeviceOverride || got.ModelOverride != want.ModelOverride || strings.Join(got.TranscriptionTerms, "|") != strings.Join(want.TranscriptionTerms, "|") {
 		t.Fatalf("user policy not preserved: got %#v want %#v", got, want)
+	}
+}
+
+func TestSaveRejectsUnsupportedOverrides(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := Save(path, STTSettings{Quality: sttQualityBest, ModelOverride: "custom"}); err == nil || !strings.Contains(err.Error(), "not an audited CUDA model") {
+		t.Fatalf("Save() error = %v, want unaudited CUDA rejection", err)
+	}
+	for _, device := range []string{"cpu", "tpu"} {
+		if err := Save(path, STTSettings{Quality: sttQualityBest, DeviceOverride: device}); err == nil || !strings.Contains(err.Error(), "GPU-only") {
+			t.Errorf("Save(device_override=%q) error = %v, want GPU-only rejection", device, err)
+		}
+	}
+}
+
+func TestLoadLegacySettingsHealsUnsupportedOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		device      string
+		model       string
+		wantDevice  string
+		wantModel   string
+		messageBits []string
+	}{
+		{
+			name:       "cpu device and unaudited model",
+			device:     "cpu",
+			model:      "parakeet-tdt-0.6b-v3-int8",
+			wantDevice: "",
+			wantModel:  "",
+			messageBits: []string{
+				`unsupported device_override="cpu"`,
+				`unaudited model_override="parakeet-tdt-0.6b-v3-int8"`,
+			},
+		},
+		{
+			name:       "unknown device",
+			device:     "tpu",
+			model:      auditedCUDAParakeetV3,
+			wantDevice: "",
+			wantModel:  auditedCUDAParakeetV3,
+			messageBits: []string{
+				`unsupported device_override="tpu"`,
+			},
+		},
+		{
+			name:       "unaudited model only",
+			device:     "cuda",
+			model:      "custom/model",
+			wantDevice: "cuda",
+			wantModel:  "",
+			messageBits: []string{
+				`unaudited model_override="custom/model"`,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.json")
+			legacy := STTSettings{
+				Quality:             sttQualityFast,
+				DeviceOverride:      tc.device,
+				ModelOverride:       tc.model,
+				TranscriptionTerms:  []string{" Gocassini ", "Nextcloud\tTalk", "gocassini"},
+				Source:              sttSourceUser,
+				HardwareFingerprint: "legacy-host",
+				DetectedGPU:         false,
+				Cores:               2,
+			}
+			raw, err := json.Marshal(legacy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, raw, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			var migrations []SettingsMigration
+			got, err := LoadOrInitSettingsWithMigrationReporter(path, func(migration SettingsMigration) {
+				migrations = append(migrations, migration)
+			})
+			if err != nil {
+				t.Fatalf("LoadOrInitSettingsWithMigrationReporter() error = %v", err)
+			}
+			if got.DeviceOverride != tc.wantDevice || got.ModelOverride != tc.wantModel {
+				t.Fatalf("healed overrides = device %q model %q, want %q/%q", got.DeviceOverride, got.ModelOverride, tc.wantDevice, tc.wantModel)
+			}
+			if got.Quality != sttQualityFast || got.Source != sttSourceUser {
+				t.Fatalf("legacy quality/source were not preserved: %#v", got)
+			}
+			if terms := strings.Join(got.TranscriptionTerms, "|"); terms != "Gocassini|Nextcloud Talk" {
+				t.Fatalf("legacy transcription terms = %q, want normalized preserved terms", terms)
+			}
+			if len(migrations) != 1 {
+				t.Fatalf("migration reports = %d, want exactly 1", len(migrations))
+			}
+			message := migrations[0].Message()
+			for _, bit := range append(tc.messageBits,
+				path,
+				`preserved quality="fast", source="user", and 2 transcription terms`,
+				"use Settings to select CUDA",
+			) {
+				if !strings.Contains(message, bit) {
+					t.Errorf("migration message %q does not contain %q", message, bit)
+				}
+			}
+
+			// Read the file directly: a successful in-memory migration is not
+			// enough because it would recur after every operator restart.
+			persistedRaw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var persisted STTSettings
+			if err := json.Unmarshal(persistedRaw, &persisted); err != nil {
+				t.Fatalf("decode healed settings: %v", err)
+			}
+			if persisted.DeviceOverride != tc.wantDevice || persisted.ModelOverride != tc.wantModel {
+				t.Fatalf("persisted overrides = device %q model %q, want %q/%q", persisted.DeviceOverride, persisted.ModelOverride, tc.wantDevice, tc.wantModel)
+			}
+			if persisted.Quality != sttQualityFast || persisted.Source != sttSourceUser || strings.Join(persisted.TranscriptionTerms, "|") != "Gocassini|Nextcloud Talk" {
+				t.Fatalf("persisted policy was not preserved: %#v", persisted)
+			}
+
+			migrations = nil
+			if _, err := LoadOrInitSettingsWithMigrationReporter(path, func(migration SettingsMigration) {
+				migrations = append(migrations, migration)
+			}); err != nil {
+				t.Fatalf("reload healed settings: %v", err)
+			}
+			if len(migrations) != 0 {
+				t.Fatalf("healed file migrated again: %#v", migrations)
+			}
+		})
 	}
 }
 
@@ -167,7 +384,7 @@ func TestPutSettingsValidPersistsUserSource(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
-	body := `{"quality":"best","device_override":"cuda"}`
+	body := `{"quality":"best","device_override":"cuda","transcription_terms":[" Gocassini ","Nextcloud Talk","gocassini"]}`
 	req := httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	rt.settingsHandler(rec, req)
@@ -188,6 +405,9 @@ func TestPutSettingsValidPersistsUserSource(t *testing.T) {
 	if resp.DeviceOverride != "cuda" {
 		t.Fatalf("DeviceOverride = %q, want cuda", resp.DeviceOverride)
 	}
+	if got := strings.Join(resp.TranscriptionTerms, "|"); got != "Gocassini|Nextcloud Talk" {
+		t.Fatalf("TranscriptionTerms = %q, want normalized preferred spellings", got)
+	}
 	if resp.Effective.Device != "cuda" {
 		t.Fatalf("Effective.Device = %q, want cuda", resp.Effective.Device)
 	}
@@ -202,8 +422,28 @@ func TestPutSettingsValidPersistsUserSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload error = %v", err)
 	}
-	if reloaded.Quality != sttQualityBest || reloaded.Source != sttSourceUser {
+	if reloaded.Quality != sttQualityBest || reloaded.Source != sttSourceUser || strings.Join(reloaded.TranscriptionTerms, "|") != "Gocassini|Nextcloud Talk" {
 		t.Fatalf("persisted settings mismatch: %#v", reloaded)
+	}
+}
+
+func TestPutSettingsRejectsOutOfBoundsTranscriptionTerms(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	body, err := json.Marshal(map[string]any{
+		"quality":             "best",
+		"transcription_terms": []string{strings.Repeat("x", maxTranscriptionTermRunes+1)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(string(body)))
+	rec := httptest.NewRecorder()
+	rt.settingsHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT overlong transcription term = %d, want 400 body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -233,6 +473,38 @@ func TestPutSettingsInvalidDeviceRejected(t *testing.T) {
 	}
 }
 
+func TestPutSettingsRejectsCPUForGPUOnlyOperator(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(`{"quality":"best","device_override":"cpu"}`))
+	rec := httptest.NewRecorder()
+	rt.settingsHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT CPU device = %d, want 400 body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "GPU-only") {
+		t.Fatalf("CPU rejection did not explain GPU-only policy: %s", rec.Body.String())
+	}
+}
+
+func TestPutSettingsRejectsUnauditedCUDAModel(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(`{"quality":"best","model_override":"parakeet-tdt-0.6b-v3-int8"}`))
+	rec := httptest.NewRecorder()
+	rt.settingsHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT unaudited model = %d, want 400 body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), auditedCUDAParakeetV3) {
+		t.Fatalf("model rejection did not name the audited CUDA model: %s", rec.Body.String())
+	}
+}
+
 func TestGetSettingsReturnsEffectiveView(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -248,10 +520,53 @@ func TestGetSettingsReturnsEffectiveView(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.Effective.Device == "" {
-		t.Fatalf("effective.device should be set, got empty: %s", rec.Body.String())
+	if resp.Effective.Device != "cuda" {
+		t.Fatalf("effective.device = %q, want forced cuda: %s", resp.Effective.Device, rec.Body.String())
+	}
+	if resp.Effective.Model != auditedCUDAParakeetV3 {
+		t.Fatalf("effective.model = %q, want %s: %s", resp.Effective.Model, auditedCUDAParakeetV3, rec.Body.String())
 	}
 	if resp.Effective.Quality != normalizeQuality(resp.Quality) {
 		t.Fatalf("effective.quality = %q, want %q", resp.Effective.Quality, normalizeQuality(resp.Quality))
+	}
+}
+
+func TestGetSettingsLogsPersistedPolicyMigration(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	legacy := STTSettings{
+		Quality:            sttQualityBest,
+		DeviceOverride:     "cpu",
+		ModelOverride:      "legacy-int8-model",
+		TranscriptionTerms: []string{"Gocassini"},
+		Source:             sttSourceUser,
+	}
+	raw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.settingsPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	rt.logger = log.New(&logs, "operator: ", 0)
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	rec := httptest.NewRecorder()
+	rt.settingsHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+	for _, bit := range []string{
+		"operator: stt_settings migrated",
+		`unsupported device_override="cpu"`,
+		`unaudited model_override="legacy-int8-model"`,
+		"use Settings to select CUDA",
+	} {
+		if !strings.Contains(logs.String(), bit) {
+			t.Errorf("migration log %q does not contain %q", logs.String(), bit)
+		}
 	}
 }

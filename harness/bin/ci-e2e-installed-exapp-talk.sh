@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Faithful D-453 product vertical: exact image -> AppAPI/HaRP install -> Talk -> viewer artifact.
+# Faithful D-453 product vertical: exact image -> AppAPI/HaRP install -> Talk -> GPU policy/artifact.
 
 set -euo pipefail
 
@@ -17,6 +17,7 @@ LOG_DIR="${LOG_DIR:-/tmp/cassini-installed-e2e-$(date -u +%Y%m%dT%H%M%S)-$$}"
 MANIFEST_PATH="${D453_MANIFEST_PATH:-$REPO_ROOT/appinfo/info.xml}"
 MEDIA_PREFIX="${MEDIA_PREFIX:-$REPO_ROOT/harness/media/processed/showcase-lantern-festival-v1/mira}"
 EXPECT_CONFIG_FAILURE="${D453_EXPECT_CONFIG_FAILURE:-0}"
+EXPECT_GPU_UNAVAILABLE="${CASSINI_EXPECT_GPU_UNAVAILABLE:-0}"
 FAIL_AT="${D453_FAIL_AT:-}"
 CANONICAL_LOCAL_IMAGE="cassini-exapp:e2e-v3-cpu-gpu"
 # The AppAPI proxy base for the installed ExApp. Hoisted here (it is a constant,
@@ -50,6 +51,33 @@ STACK_TOPOLOGY=(
 mkdir -p "$LOG_DIR"
 log() { printf '[installed-e2e] %s\n' "$*" | tee -a "$LOG_DIR/orchestrator.log"; }
 fail() { log "FAIL: $*"; exit 1; }
+
+case "$EXPECT_GPU_UNAVAILABLE" in
+  0) export CASSINI_HARNESS_EXPECT_GPU_UNAVAILABLE=0 ;;
+  1) export CASSINI_HARNESS_EXPECT_GPU_UNAVAILABLE=1 ;;
+  *) fail "CASSINI_EXPECT_GPU_UNAVAILABLE must be 0 or 1" ;;
+esac
+
+fetch_operator_status() {
+  local destination="$1" code
+  code="$(curl -sS -u admin:admin -o "$destination" -w '%{http_code}' "$PROXY_URL/operator/status")" \
+    || return 1
+  if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
+    [[ "$code" == "503" ]] || return 1
+    jq -e '
+      .ok == false
+      and .stt.device == "cuda"
+      and .stt.device_usable == false
+      and (.stt.detail | type == "string" and length > 0)
+      and .db.ok == true
+      and .storage.work_root.ok == true
+      and .storage.site_root.ok == true
+      and .recordings_access.ok == true
+    ' "$destination" >/dev/null
+    return
+  fi
+  [[ "$code" == "200" ]] && jq -e '.ok == true' "$destination" >/dev/null
+}
 
 # The D-453 hooks make a green run mean something weaker than "recorded a real
 # Talk call", so a stray value inherited from a job env must fail this required
@@ -153,11 +181,17 @@ finish() {
 }
 trap finish EXIT INT TERM
 
-# Portable artifact validation runs the host CLI, whose transcript extraction
-# probes and decodes the downloaded Opus file with ffprobe and ffmpeg.
-for tool in docker curl jq python3 ffprobe ffmpeg; do
+# CUDA-positive artifact validation runs the host CLI, whose transcript
+# extraction needs host ffprobe and ffmpeg. Portable-image mode proves capture
+# and immediate build blocking without decoding speech.
+for tool in docker curl jq python3; do
   command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
 done
+if [[ "$EXPECT_GPU_UNAVAILABLE" != "1" ]]; then
+  for tool in ffprobe ffmpeg; do
+    command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
+  done
+fi
 [[ -f "$MANIFEST_PATH" ]] || fail "manifest not found: $MANIFEST_PATH"
 [[ -s "$MEDIA_PREFIX.ivf" && -s "$MEDIA_PREFIX.ogg" ]] \
   || fail "materialize known media pair: $MEDIA_PREFIX.{ivf,ogg}"
@@ -194,9 +228,9 @@ if ! CASSINI_HARNESS_INFO_XML="$MANIFEST_PATH" PROJECT_NAME="$PROJECT_NAME" \
     # must STILL be true, so the only difference the control observes is the
     # missing declaration — the exact D-403 boundary, not a wholesale env
     # injection failure or an empty .talk object.
-    control_status="$(curl -fsS -u admin:admin "$PROXY_URL/operator/status")" \
-      || fail "D-403 control: operator status unreachable after stack-up failure"
-    printf '%s\n' "$control_status" >"$LOG_DIR/control-status.json"
+    fetch_operator_status "$LOG_DIR/control-status.json" \
+      || fail "D-403 control: operator status did not match the expected GPU readiness state after stack-up failure"
+    control_status="$(<"$LOG_DIR/control-status.json")"
     jq -e '.talk.signaling_internal_secret_configured == false and .talk.secret_configured == true' \
       <<<"$control_status" >/dev/null \
       || fail "D-403 control: stripped manifest did not suppress the signaling secret (status: $control_status)"
@@ -226,8 +260,9 @@ production_id="$(docker image inspect "$PRODUCTION_IMAGE" --format '{{.Id}}')"
 # the stack-up failure boundary above.
 curl -fsS "$PROXY_URL/api/v1/welcome" | grep -q '"version":1' \
   || fail "welcome route did not return version=1"
-status_json="$(curl -fsS -u admin:admin "$PROXY_URL/operator/status")"
-printf '%s\n' "$status_json" >"$LOG_DIR/operator-status-asserted.json"
+fetch_operator_status "$LOG_DIR/operator-status-asserted.json" \
+  || fail "operator status did not match the expected GPU readiness state"
+status_json="$(<"$LOG_DIR/operator-status-asserted.json")"
 jq -e --arg version "$APP_VERSION" '.version == $version and .image_tag == $version' \
   <<<"$status_json" >/dev/null || fail "operator identity does not match manifest version $APP_VERSION"
 
@@ -244,17 +279,41 @@ RESULT="running"
 # control path (which exited before this line).
 RECORDING_ATTEMPTED=1
 VALIDATOR_LOG_DIR="$LOG_DIR/validator"
+validator_args=(
+  --run-count 1
+  --conversation admin
+  --media-prefix "$MEDIA_PREFIX"
+  --duration "$DURATION"
+  --job-timeout "$JOB_TIMEOUT"
+  --poll-interval "$POLL_INTERVAL"
+  --project-name "$PROJECT_NAME"
+)
+if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
+  validator_args+=(--expect-build-blocked)
+fi
 LOG_DIR="$VALIDATOR_LOG_DIR" \
-  "$SCRIPT_DIR/validate-installed-exapp-private-talk.sh" \
-    --run-count 1 \
-    --conversation admin \
-    --media-prefix "$MEDIA_PREFIX" \
-    --duration "$DURATION" \
-    --job-timeout "$JOB_TIMEOUT" \
-    --poll-interval "$POLL_INTERVAL" \
-    --project-name "$PROJECT_NAME"
+  "$SCRIPT_DIR/validate-installed-exapp-private-talk.sh" "${validator_args[@]}"
 
 validator_summary="$VALIDATOR_LOG_DIR/summary.json"
-jq -e '.result == "passed" and (.runs | length) == 1 and .runs[0].artifact.segment_count > 0 and .runs[0].artifact.word_count > 0' \
-  "$validator_summary" >/dev/null || fail "validator summary lacks one positive segment/word result"
-log "faithful product vertical passed with exact image, positive segments, and decoded words"
+if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
+  jq -e '
+    .result == "passed"
+    and (.runs | length) == 1
+    and .runs[0].blocked.stage == "build"
+    and .runs[0].blocked.state == "blocked"
+    and .runs[0].blocked.record_exit_code == 0
+    and (.runs[0].blocked.recording_bytes | type == "number" and . > 0)
+    and (.runs[0].blocked.audio_packets | type == "number" and . >= 10)
+    and .runs[0].blocked.build_retry_not_before == null
+    and .runs[0].blocked.build_deferral_count == 0
+    and .runs[0].blocked.artifact_meeting_path == null
+    and (.runs[0].blocked.error | ascii_downcase | contains("resource governor: cuda runtime unavailable"))
+    and (.runs[0].blocked.error | ascii_downcase | contains("matching -cuda image"))
+  ' "$validator_summary" >/dev/null \
+    || fail "validator summary lacks one durable recording with an immediate actionable portable-image block"
+  log "faithful CPU-host vertical passed: recording preserved, portable-image build blocked, no CPU transcription"
+else
+  jq -e '.result == "passed" and (.runs | length) == 1 and .runs[0].artifact.segment_count > 0 and .runs[0].artifact.word_count > 0' \
+    "$validator_summary" >/dev/null || fail "validator summary lacks one positive segment/word result"
+  log "faithful product vertical passed with exact image, positive segments, and decoded words"
+fi

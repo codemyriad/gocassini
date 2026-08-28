@@ -90,10 +90,22 @@ type Runtime struct {
 	recordMu     sync.Mutex
 	recordJobs   map[string]*recordProcessState
 	recordWG     sync.WaitGroup
-	talkRooms    map[string]*talkRoomState
-	talkJobs     map[string]*talkRoomState
-	recordJobFn  func(context.Context, Job, TriggerRequest) (recordResult, error)
-	buildJobFn   func(context.Context, buildTask) (string, error)
+	// buildExecutionMu is the final admission gate around the whole build. The
+	// configured worker count may exceed one, but CUDA recognizers and the RAM/
+	// VRAM headroom probe are not safely reservable between concurrent workers.
+	// Serializing here makes the resource check and ensuing launch atomic with
+	// respect to every other build in this operator process.
+	buildExecutionMu sync.Mutex
+	talkRooms        map[string]*talkRoomState
+	talkJobs         map[string]*talkRoomState
+	recordJobFn      func(context.Context, Job, TriggerRequest) (recordResult, error)
+	buildJobFn       func(context.Context, buildTask) (string, error)
+	// buildResourceRetryDelay bounds transient RAM/VRAM retry frequency.
+	// Tests shorten it; production uses defaultBuildResourceRetryDelay.
+	buildResourceRetryDelay time.Duration
+	// maxBuildResourceDeferrals bounds transient retry churn. Permanent
+	// conditions block immediately; repeated pressure blocks at this ceiling.
+	maxBuildResourceDeferrals int
 	// sealJobFn packs one attempt's `.meeting` into its immutable `.opus`
 	// (D-583). It is a seam for the same reason buildJobFn and publishJobFn
 	// are: tests drive the pipeline without an ffmpeg subprocess.
@@ -139,10 +151,14 @@ type Runtime struct {
 	// publishJobTimeout bounds one `cassini publish` run; without it a hung
 	// publish wedges the single publish worker forever (D-367). Tests shrink it.
 	publishJobTimeout time.Duration
-	// computeProbe reports whether the configured STT device is usable; the
-	// default is cached after the first call — GPU visibility cannot change
-	// within a container's lifetime (D-363). Tests stub it.
-	computeProbe func() (usable bool, detail string)
+	// computeProbe reports whether the effective STT device is usable. It takes
+	// the device selected from the current in-memory settings snapshot so
+	// readiness cannot drift from the policy used by newly spawned builds.
+	// Tests stub it.
+	computeProbe func(device string) (usable bool, detail string)
+	// computeReadiness coalesces and briefly caches the nvidia-smi-backed
+	// readiness probe so status polling cannot create a subprocess storm.
+	computeReadiness *computeStatusProbe
 	// recordHealth throttles the deep /healthz?check=record doctor exec with
 	// singleflight + a short TTL cache + an exec timeout, so the unauthenticated
 	// health endpoint cannot fan out doctor subprocesses (D-376).
@@ -599,16 +615,18 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		talkRoomNameRetryGap: talkRoomNameRetryGap,
 		talkAudienceRetryGap: talkAudienceRetryGap,
 
-		requeueKick:         make(chan struct{}, 1),
-		sealJobTimeout:      defaultSealJobTimeout,
-		publishJobTimeout:   defaultPublishJobTimeout,
-		recordHealthTimeout: recordHealthProbeTimeout,
-		settingsPath:        settingsPath(cfg),
+		requeueKick:               make(chan struct{}, 1),
+		buildResourceRetryDelay:   defaultBuildResourceRetryDelay,
+		maxBuildResourceDeferrals: defaultMaxBuildResourceDeferrals,
+		sealJobTimeout:            defaultSealJobTimeout,
+		publishJobTimeout:         defaultPublishJobTimeout,
+		recordHealthTimeout:       recordHealthProbeTimeout,
+		settingsPath:              settingsPath(cfg),
 	}
 	// Detect hardware on first start (or track it under an auto default) and
 	// load the persisted STT policy. A failure here must not take the operator
 	// down: fall back to an in-memory auto default so jobs still run (D-435).
-	if settings, err := LoadOrInitSettings(rt.settingsPath); err != nil {
+	if settings, err := LoadOrInitSettingsWithMigrationReporter(rt.settingsPath, rt.reportSettingsMigration); err != nil {
 		logger.Printf("stt_settings load failed (%v); using in-memory auto default", err)
 		rt.settings = detectSettings()
 	} else {
@@ -628,8 +646,11 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		sink, _ = newPublishSink(defaultPublishSink, cfg, logger)
 	}
 	rt.publishSink = sink
-	rt.computeProbe = sync.OnceValues(func() (bool, string) {
-		return probeComputeDevice(configuredSTTDevice())
+	// Keep readiness live without spawning nvidia-smi for every status request:
+	// a short keyed TTL still reflects driver resets and device-policy changes.
+	rt.computeProbe = probeComputeDevice
+	rt.computeReadiness = newComputeStatusProbe(computeReadinessProbeTTL, func(device string) (bool, string) {
+		return rt.computeProbe(device)
 	})
 	rt.recordHealth = newTTLProbe(recordHealthProbeTTL, func() error {
 		probeCtx := rt.ctx
@@ -1053,31 +1074,33 @@ type Job struct {
 	// promoted from the attempt the seal stage sealed. ArtifactOpusSHA256 is
 	// that file's digest, which the publish worker re-checks before delivering
 	// and the sink re-checks before committing the asset (D-583).
-	ArtifactOpusPath   *string `json:"artifact_opus_path"`
-	ArtifactOpusSHA256 *string `json:"artifact_opus_sha256"`
-	ArtifactSitePath   *string `json:"artifact_site_path"`
-	Error              *string `json:"error"`
-	StopReason         *string `json:"stop_reason"`
-	StopRequestedAt    *string `json:"stop_requested_at"`
-	StopSignalSentAt   *string `json:"stop_signal_sent_at"`
-	RecordExitCode     *int    `json:"record_exit_code"`
-	RecordStopDetail   *string `json:"record_stop_detail"`
-	CreatedAt          string  `json:"created_at"`
-	UpdatedAt          string  `json:"updated_at"`
-	RecordQueuedAt     *string `json:"record_queued_at"`
-	RecordStartedAt    *string `json:"record_started_at"`
-	RecordFinishedAt   *string `json:"record_finished_at"`
-	BuildQueuedAt      *string `json:"build_queued_at"`
-	BuildStartedAt     *string `json:"build_started_at"`
-	BuildFinishedAt    *string `json:"build_finished_at"`
-	SealQueuedAt       *string `json:"seal_queued_at"`
-	SealStartedAt      *string `json:"seal_started_at"`
-	SealFinishedAt     *string `json:"seal_finished_at"`
-	PublishQueuedAt    *string `json:"publish_queued_at"`
-	PublishStartedAt   *string `json:"publish_started_at"`
-	PublishFinishedAt  *string `json:"publish_finished_at"`
-	InterruptedAt      *string `json:"interrupted_at"`
-	CompletedAt        *string `json:"completed_at"`
+	ArtifactOpusPath    *string `json:"artifact_opus_path"`
+	ArtifactOpusSHA256  *string `json:"artifact_opus_sha256"`
+	ArtifactSitePath    *string `json:"artifact_site_path"`
+	Error               *string `json:"error"`
+	StopReason          *string `json:"stop_reason"`
+	StopRequestedAt     *string `json:"stop_requested_at"`
+	StopSignalSentAt    *string `json:"stop_signal_sent_at"`
+	RecordExitCode      *int    `json:"record_exit_code"`
+	RecordStopDetail    *string `json:"record_stop_detail"`
+	CreatedAt           string  `json:"created_at"`
+	UpdatedAt           string  `json:"updated_at"`
+	RecordQueuedAt      *string `json:"record_queued_at"`
+	RecordStartedAt     *string `json:"record_started_at"`
+	RecordFinishedAt    *string `json:"record_finished_at"`
+	BuildQueuedAt       *string `json:"build_queued_at"`
+	BuildRetryNotBefore *string `json:"build_retry_not_before"`
+	BuildDeferralCount  int     `json:"build_deferral_count"`
+	BuildStartedAt      *string `json:"build_started_at"`
+	BuildFinishedAt     *string `json:"build_finished_at"`
+	SealQueuedAt        *string `json:"seal_queued_at"`
+	SealStartedAt       *string `json:"seal_started_at"`
+	SealFinishedAt      *string `json:"seal_finished_at"`
+	PublishQueuedAt     *string `json:"publish_queued_at"`
+	PublishStartedAt    *string `json:"publish_started_at"`
+	PublishFinishedAt   *string `json:"publish_finished_at"`
+	InterruptedAt       *string `json:"interrupted_at"`
+	CompletedAt         *string `json:"completed_at"`
 	// TalkBinding is the persisted Talk room binding (backend URL, token,
 	// owner, actor) for jobs started through the Talk recording backend. It
 	// is internal plumbing for crash-safe delivery, not API surface.
@@ -1357,7 +1380,7 @@ SELECT id, provider, request_json, stage, state,
        stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
-       build_queued_at, build_started_at, build_finished_at,
+       build_queued_at, build_retry_not_before, build_deferral_count, build_started_at, build_finished_at,
        seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
@@ -1394,7 +1417,7 @@ SELECT id, provider, request_json, stage, state,
        stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
-       build_queued_at, build_started_at, build_finished_at,
+       build_queued_at, build_retry_not_before, build_deferral_count, build_started_at, build_finished_at,
        seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
@@ -1429,6 +1452,7 @@ func scanJob(scanner rowScanner) (Job, error) {
 	var recordStartedAt sql.NullString
 	var recordFinishedAt sql.NullString
 	var buildQueuedAt sql.NullString
+	var buildRetryNotBefore sql.NullString
 	var buildStartedAt sql.NullString
 	var buildFinishedAt sql.NullString
 	var sealQueuedAt sql.NullString
@@ -1467,6 +1491,8 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&recordStartedAt,
 		&recordFinishedAt,
 		&buildQueuedAt,
+		&buildRetryNotBefore,
+		&job.BuildDeferralCount,
 		&buildStartedAt,
 		&buildFinishedAt,
 		&sealQueuedAt,
@@ -1502,6 +1528,7 @@ func scanJob(scanner rowScanner) (Job, error) {
 	job.RecordStartedAt = nullableStringPtr(recordStartedAt)
 	job.RecordFinishedAt = nullableStringPtr(recordFinishedAt)
 	job.BuildQueuedAt = nullableStringPtr(buildQueuedAt)
+	job.BuildRetryNotBefore = nullableStringPtr(buildRetryNotBefore)
 	job.BuildStartedAt = nullableStringPtr(buildStartedAt)
 	job.BuildFinishedAt = nullableStringPtr(buildFinishedAt)
 	job.SealQueuedAt = nullableStringPtr(sealQueuedAt)
@@ -1600,6 +1627,16 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	}
 }
 
+// sortableUTCLayout keeps every persisted timestamp at the same precision.
+// RFC3339Nano trims trailing fractional zeros, so its strings are not ordered
+// chronologically within the same second (for example, .85Z sorts before .8Z).
+// Fixed-width timestamps remain valid RFC3339Nano while also sorting correctly.
+const sortableUTCLayout = "2006-01-02T15:04:05.000000000Z"
+
+func formatUTCString(value time.Time) string {
+	return value.UTC().Format(sortableUTCLayout)
+}
+
 func nowUTCString() string {
-	return time.Now().UTC().Format(time.RFC3339Nano)
+	return formatUTCString(time.Now())
 }

@@ -61,3 +61,109 @@ func TestShouldFireMergedFallbackOnHealthyPass(t *testing.T) {
 		t.Fatalf("shouldFireMergedFallback(14 words) = true; want false (healthy passes must not trigger redundant recovery)")
 	}
 }
+
+func TestChooseMergedFallbackReplacesThinPassWithoutDuplicatingSurvivors(t *testing.T) {
+	participant := []Segment{{
+		SpeakerID: "spk_alice",
+		StartMS:   1000,
+		EndMS:     1500,
+		Words: []Word{
+			{Text: "hello", StartMS: 1000, EndMS: 1200},
+			{Text: "there", StartMS: 1250, EndMS: 1500},
+		},
+	}}
+	merged := []Segment{{
+		SpeakerID: "merged",
+		StartMS:   900,
+		EndMS:     2200,
+		Words: []Word{
+			{Text: "well", StartMS: 900, EndMS: 980},
+			{Text: "hello", StartMS: 1000, EndMS: 1200},
+			{Text: "there", StartMS: 1250, EndMS: 1500},
+			{Text: "everyone", StartMS: 1700, EndMS: 2200},
+		},
+	}}
+
+	got, useMerged := chooseMergedFallback(participant, merged)
+	if !useMerged {
+		t.Fatal("richer mixed pass was not selected")
+	}
+	if CountWords(got) != CountWords(merged) {
+		t.Fatalf("selected transcript has %d words, want exactly the mixed pass's %d (no additive duplicates)", CountWords(got), CountWords(merged))
+	}
+	for _, segment := range got {
+		if segment.SpeakerID != "merged" {
+			t.Fatalf("thin participant hypothesis leaked into selected transcript: %#v", got)
+		}
+	}
+}
+
+func TestChooseMergedFallbackKeepsAttributionUnlessMixClearsMargin(t *testing.T) {
+	participant := segmentsWithWords(3)
+	participant[0].SpeakerID = "spk_alice"
+
+	for _, test := range []struct {
+		name            string
+		mergedWordCount int
+	}{
+		{name: "empty", mergedWordCount: 0},
+		{name: "poorer", mergedWordCount: 2},
+		{name: "tied", mergedWordCount: 3},
+		{name: "one_extra_word", mergedWordCount: 4},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			merged := segmentsWithWords(test.mergedWordCount)
+			if len(merged) != 0 {
+				merged[0].SpeakerID = "merged"
+			}
+			got, useMerged := chooseMergedFallback(participant, merged)
+			if useMerged {
+				t.Fatalf("selected %d-word mixed pass over 3 attributed words", test.mergedWordCount)
+			}
+			if len(got) != 1 || got[0].SpeakerID != "spk_alice" || CountWords(got) != 3 {
+				t.Fatalf("attributed participant pass was not preserved: %#v", got)
+			}
+		})
+	}
+}
+
+func TestMinimumMergedFallbackWordsPreservesAttributionMargin(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		participantWords int
+		want             int
+	}{
+		{name: "empty participant pass accepts any recovery", participantWords: 0, want: 1},
+		{name: "absolute margin dominates tiny pass", participantWords: 1, want: 3},
+		{name: "absolute margin covers fallback threshold", participantWords: 9, want: 11},
+		{name: "relative margin scales for larger hypotheses", participantWords: 20, want: 24},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := minimumMergedFallbackWords(test.participantWords); got != test.want {
+				t.Fatalf("minimumMergedFallbackWords(%d) = %d, want %d", test.participantWords, got, test.want)
+			}
+		})
+	}
+}
+
+func TestChooseMergedFallbackAcceptsEmptyPassRecoveryAndMeaningfulGain(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		participantWords int
+		mergedWords      int
+	}{
+		{name: "first recovered word", participantWords: 0, mergedWords: 1},
+		{name: "two-word absolute gain", participantWords: 3, mergedWords: 5},
+		{name: "twenty-percent relative gain", participantWords: 20, mergedWords: 24},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, useMerged := chooseMergedFallback(segmentsWithWords(test.participantWords), segmentsWithWords(test.mergedWords))
+			if !useMerged {
+				t.Fatalf("did not select %d-word mix over %d-word participant pass", test.mergedWords, test.participantWords)
+			}
+			if CountWords(got) != test.mergedWords {
+				t.Fatalf("selected transcript has %d words, want %d", CountWords(got), test.mergedWords)
+			}
+		})
+	}
+}
