@@ -135,6 +135,7 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 	if len(samples) == 0 {
 		return nil, nil
 	}
+	audioEndMS := int64(len(samples)) * 1000 / int64(sampleRate)
 
 	if !useVAD {
 		words, err := r.transcribeNonVADChunked(samples, sampleRate)
@@ -145,7 +146,7 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 			audioSeconds := float64(len(samples)) / float64(sampleRate)
 			log.Printf("transcribe: 0 words from %.1fs of audio (VAD bypassed); ASR returned no tokens", audioSeconds)
 		}
-		return words, nil
+		return clampWordsToTimelineEnd(words, audioEndMS), nil
 	}
 
 	r.vad.Reset()
@@ -217,7 +218,10 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 		speechSeconds := float64(totalSpeechSamples) / float64(sampleRate)
 		log.Printf("transcribe: 0 words from %.1fs of audio; VAD segments=%d totalling %.1fs of speech", audioSeconds, segCount, speechSeconds)
 	}
-	return allWords, nil
+	// The final VAD window is zero-padded to its configured call size. Keep that
+	// detector-only padding, and any decoder tail padding, out of the public
+	// recording timeline.
+	return clampWordsToTimelineEnd(allWords, audioEndMS), nil
 }
 
 // transcribeSegment transcribes a single VAD speech segment, splitting into sub-chunks
@@ -268,9 +272,32 @@ func (r *Recognizer) transcribeSegment(samples []float32, sampleRate int, segOff
 			words[i].StartMS += chunkOffsetMS
 			words[i].EndMS += chunkOffsetMS
 		}
+		// The recognizer may timestamp the last token inside the synthetic 0.5s
+		// decoder tail. Clamp a straddling token to the real chunk boundary and
+		// discard tokens emitted wholly inside padding.
+		chunkEndMS := segOffsetMS + int64(end)*1000/int64(sampleRate)
+		words = clampWordsToTimelineEnd(words, chunkEndMS)
 		allWords = append(allWords, words...)
 	}
 	return allWords, nil
+}
+
+// clampWordsToTimelineEnd removes tokens emitted wholly beyond a real PCM
+// boundary and clips tokens that straddle it. Decoder and VAD padding are
+// implementation details and must never extend transcript timestamps.
+// The input slice may be compacted in place.
+func clampWordsToTimelineEnd(words []Word, endMS int64) []Word {
+	kept := words[:0]
+	for _, word := range words {
+		if word.StartMS >= endMS {
+			continue
+		}
+		if word.EndMS > endMS {
+			word.EndMS = endMS
+		}
+		kept = append(kept, word)
+	}
+	return kept
 }
 
 // transcribeNonVADChunked decodes dense, silence-free audio (the merged-mix

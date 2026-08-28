@@ -180,6 +180,25 @@ func TestDedupOverlappingWordsFirstWindowVerbatim(t *testing.T) {
 	}
 }
 
+func TestClampWordsToTimelineEndExcludesDecoderPadding(t *testing.T) {
+	words := []Word{
+		{Text: "within", StartMS: 13000, EndMS: 14000},
+		{Text: "straddles", StartMS: 14000, EndMS: 14950},
+		{Text: "padding", StartMS: 14455, EndMS: 14800},
+		{Text: "later-padding", StartMS: 14800, EndMS: 14950},
+	}
+
+	got := clampWordsToTimelineEnd(words, 14455)
+	want := []Word{
+		{Text: "within", StartMS: 13000, EndMS: 14000},
+		{Text: "straddles", StartMS: 14000, EndMS: 14455},
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("clampWordsToTimelineEnd =\n  %#v\nwant\n  %#v", got, want)
+	}
+}
+
 // TestNonVADChunkedDedupEndToEndShape simulates the full window iteration over a
 // 75s timeline with a synthetic per-window decoder, asserting that a word in
 // every overlap region survives exactly once after the real
