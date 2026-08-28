@@ -80,7 +80,7 @@ func TestStressNonVADFallback(t *testing.T) {
 		} else {
 			// Pre-fix behavior: single full-length span (only the 55s safety
 			// split applies, exactly what ensureMergedFallback used to do).
-			words, err = rec.transcribeSegment(samples, paths.SampleRate, 0)
+			words, err = rec.transcribeSegment(samples, paths.SampleRate, 0, false)
 		}
 		if err != nil {
 			t.Fatalf("decode: %v", err)
