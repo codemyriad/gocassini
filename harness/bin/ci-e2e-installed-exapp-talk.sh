@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Faithful D-453 product vertical: exact image -> AppAPI/HaRP install -> Talk -> viewer artifact.
+# Faithful D-453 product vertical: exact image -> AppAPI/HaRP install -> Talk -> GPU policy/artifact.
 
 set -euo pipefail
 
@@ -181,11 +181,17 @@ finish() {
 }
 trap finish EXIT INT TERM
 
-# Portable artifact validation runs the host CLI, whose transcript extraction
-# probes and decodes the downloaded Opus file with ffprobe and ffmpeg.
-for tool in docker curl jq python3 ffprobe ffmpeg; do
+# CUDA-positive artifact validation runs the host CLI, whose transcript
+# extraction needs host ffprobe and ffmpeg. Portable-image mode proves capture
+# and immediate build blocking without decoding speech.
+for tool in docker curl jq python3; do
   command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
 done
+if [[ "$EXPECT_GPU_UNAVAILABLE" != "1" ]]; then
+  for tool in ffprobe ffmpeg; do
+    command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
+  done
+fi
 [[ -f "$MANIFEST_PATH" ]] || fail "manifest not found: $MANIFEST_PATH"
 [[ -s "$MEDIA_PREFIX.ivf" && -s "$MEDIA_PREFIX.ogg" ]] \
   || fail "materialize known media pair: $MEDIA_PREFIX.{ivf,ogg}"
@@ -283,7 +289,7 @@ validator_args=(
   --project-name "$PROJECT_NAME"
 )
 if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
-  validator_args+=(--expect-build-deferred)
+  validator_args+=(--expect-build-blocked)
 fi
 LOG_DIR="$VALIDATOR_LOG_DIR" \
   "$SCRIPT_DIR/validate-installed-exapp-private-talk.sh" "${validator_args[@]}"
@@ -293,16 +299,19 @@ if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
   jq -e '
     .result == "passed"
     and (.runs | length) == 1
-    and .runs[0].deferral.stage == "build"
-    and .runs[0].deferral.state == "queued"
-    and .runs[0].deferral.record_exit_code == 0
-    and (.runs[0].deferral.recording_bytes | type == "number" and . > 0)
-    and (.runs[0].deferral.audio_packets | type == "number" and . >= 10)
-    and (.runs[0].deferral.build_retry_not_before | type == "string" and length > 0)
-    and .runs[0].deferral.artifact_meeting_path == null
+    and .runs[0].blocked.stage == "build"
+    and .runs[0].blocked.state == "blocked"
+    and .runs[0].blocked.record_exit_code == 0
+    and (.runs[0].blocked.recording_bytes | type == "number" and . > 0)
+    and (.runs[0].blocked.audio_packets | type == "number" and . >= 10)
+    and .runs[0].blocked.build_retry_not_before == null
+    and .runs[0].blocked.build_deferral_count == 0
+    and .runs[0].blocked.artifact_meeting_path == null
+    and (.runs[0].blocked.error | ascii_downcase | contains("resource governor: cuda runtime unavailable"))
+    and (.runs[0].blocked.error | ascii_downcase | contains("matching -cuda image"))
   ' "$validator_summary" >/dev/null \
-    || fail "validator summary lacks one durable recording with explicit GPU resource deferral"
-  log "faithful CPU-host vertical passed: recording preserved, GPU build deferred, no CPU transcription"
+    || fail "validator summary lacks one durable recording with an immediate actionable portable-image block"
+  log "faithful CPU-host vertical passed: recording preserved, portable-image build blocked, no CPU transcription"
 else
   jq -e '.result == "passed" and (.runs | length) == 1 and .runs[0].artifact.segment_count > 0 and .runs[0].artifact.word_count > 0' \
     "$validator_summary" >/dev/null || fail "validator summary lacks one positive segment/word result"

@@ -55,6 +55,50 @@ const (
 	maxTranscriptionTermRunes = 100
 )
 
+// SettingsMigration describes a persisted STT policy that was accepted by an
+// older operator but cannot be executed under the current GPU-only policy. The
+// loader clears only the unsupported overrides and rewrites settings.json; the
+// remaining user policy stays intact.
+//
+// Callers receive this value only after the healed file has been persisted, so
+// logging Message cannot claim a migration that failed to reach disk.
+type SettingsMigration struct {
+	Path                   string
+	ClearedDeviceOverride  string
+	ClearedModelOverride   string
+	Quality                string
+	Source                 string
+	TranscriptionTermCount int
+}
+
+// Message is suitable for the operator log. It explains both what changed and
+// how an administrator can restore an explicit, supported override without
+// logging the vocabulary itself.
+func (m SettingsMigration) Message() string {
+	cleared := make([]string, 0, 2)
+	if m.ClearedDeviceOverride != "" {
+		cleared = append(cleared, fmt.Sprintf("unsupported device_override=%q", m.ClearedDeviceOverride))
+	}
+	if m.ClearedModelOverride != "" {
+		cleared = append(cleared, fmt.Sprintf("unaudited model_override=%q", m.ClearedModelOverride))
+	}
+	return fmt.Sprintf(
+		"stt_settings migrated %s: cleared %s; preserved quality=%q, source=%q, and %d transcription terms; use Settings to select CUDA or the audited model %q if an explicit override is required",
+		m.Path,
+		strings.Join(cleared, " and "),
+		m.Quality,
+		m.Source,
+		m.TranscriptionTermCount,
+		auditedCUDAParakeetV3,
+	)
+}
+
+// SettingsMigrationReporter is invoked after a legacy settings file has been
+// healed and successfully replaced. Keeping reporting as an injected callback lets
+// startup use the Runtime logger without coupling this persistence helper to a
+// process-global logger.
+type SettingsMigrationReporter func(SettingsMigration)
+
 func validCUDAModelOverride(model string) bool {
 	switch strings.TrimSpace(model) {
 	case "", auditedCUDAParakeetV3:
@@ -168,6 +212,12 @@ func detectSettings() STTSettings {
 // DetectedGPU/Cores/HardwareFingerprint display fields are refreshed (persisted
 // best-effort) so the UI shows the current host.
 func LoadOrInitSettings(path string) (STTSettings, error) {
+	return LoadOrInitSettingsWithMigrationReporter(path, nil)
+}
+
+// LoadOrInitSettingsWithMigrationReporter is LoadOrInitSettings with an
+// optional structured notification for persisted-policy migrations.
+func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrationReporter) (STTSettings, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -188,9 +238,31 @@ func LoadOrInitSettings(path string) (STTSettings, error) {
 	if err != nil {
 		return STTSettings{}, fmt.Errorf("parse settings %s transcription_terms: %w", path, err)
 	}
+
+	var migration SettingsMigration
+	needsRewrite := false
+	originalDeviceOverride := s.DeviceOverride
+	deviceOverride := strings.ToLower(strings.TrimSpace(originalDeviceOverride))
+	if deviceOverride == "auto" {
+		deviceOverride = ""
+	}
+	if !validDeviceOverride(deviceOverride) {
+		migration.ClearedDeviceOverride = originalDeviceOverride
+		deviceOverride = ""
+	}
+	if deviceOverride != originalDeviceOverride {
+		needsRewrite = true
+	}
+	s.DeviceOverride = deviceOverride
+
+	originalModelOverride := s.ModelOverride
 	s.ModelOverride = strings.TrimSpace(s.ModelOverride)
 	if !validCUDAModelOverride(s.ModelOverride) {
-		return STTSettings{}, fmt.Errorf("parse settings %s model_override: %q is not an audited CUDA model", path, s.ModelOverride)
+		migration.ClearedModelOverride = originalModelOverride
+		s.ModelOverride = ""
+	}
+	if s.ModelOverride != originalModelOverride {
+		needsRewrite = true
 	}
 	s.Quality = normalizeQuality(s.Quality)
 	if s.Source != sttSourceUser {
@@ -204,24 +276,62 @@ func LoadOrInitSettings(path string) (STTSettings, error) {
 	if s.Source == sttSourceAuto {
 		if fingerprint != s.HardwareFingerprint {
 			// Hardware changed under an auto default: re-derive and rewrite.
+			terms := s.TranscriptionTerms
 			s = detectSettings()
+			// Vocabulary is independent of the hardware-derived quality tier.
+			// Preserve it when re-fingerprinting an auto policy.
+			s.TranscriptionTerms = terms
 			if err := Save(path, s); err != nil {
 				return STTSettings{}, err
+			}
+			if migration.ClearedDeviceOverride != "" || migration.ClearedModelOverride != "" {
+				reportSettingsMigration(report, path, migration, s)
+			}
+		} else if needsRewrite {
+			if err := Save(path, s); err != nil {
+				return STTSettings{}, err
+			}
+			if migration.ClearedDeviceOverride != "" || migration.ClearedModelOverride != "" {
+				reportSettingsMigration(report, path, migration, s)
 			}
 		}
 		return s, nil
 	}
 
 	// Source == user: never change policy, only refresh display fields.
-	if s.DetectedGPU != gpu || s.Cores != cores || s.HardwareFingerprint != fingerprint {
+	displayChanged := s.DetectedGPU != gpu || s.Cores != cores || s.HardwareFingerprint != fingerprint
+	if displayChanged {
 		s.DetectedGPU = gpu
 		s.Cores = cores
 		s.HardwareFingerprint = fingerprint
+	}
+	if needsRewrite {
+		// Clearing a no-longer-supported override is a required migration, not
+		// the best-effort display refresh below. Surface a write failure so the
+		// operator cannot claim a self-heal that will recur on every restart.
+		if err := Save(path, s); err != nil {
+			return STTSettings{}, err
+		}
+		if migration.ClearedDeviceOverride != "" || migration.ClearedModelOverride != "" {
+			reportSettingsMigration(report, path, migration, s)
+		}
+	} else if displayChanged {
 		// Best-effort: a stale display field is harmless, so a write failure
 		// here must not block startup.
 		_ = Save(path, s)
 	}
 	return s, nil
+}
+
+func reportSettingsMigration(report SettingsMigrationReporter, path string, migration SettingsMigration, s STTSettings) {
+	if report == nil {
+		return
+	}
+	migration.Path = path
+	migration.Quality = s.Quality
+	migration.Source = s.Source
+	migration.TranscriptionTermCount = len(s.TranscriptionTerms)
+	report(migration)
 }
 
 // Save writes settings.json atomically (temp file + rename) so a crash mid-write
@@ -234,6 +344,14 @@ func Save(path string, s STTSettings) error {
 	if !validCUDAModelOverride(s.ModelOverride) {
 		return fmt.Errorf("model_override %q is not an audited CUDA model", s.ModelOverride)
 	}
+	deviceOverride := strings.ToLower(strings.TrimSpace(s.DeviceOverride))
+	if !validDeviceOverride(deviceOverride) {
+		return fmt.Errorf("device_override %q is not supported; operator builds are GPU-only", s.DeviceOverride)
+	}
+	if deviceOverride == "auto" {
+		deviceOverride = ""
+	}
+	s.DeviceOverride = deviceOverride
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir settings dir: %w", err)
 	}
@@ -376,6 +494,12 @@ func (rt *Runtime) setSettings(s STTSettings) {
 	rt.settingsMu.Unlock()
 }
 
+func (rt *Runtime) reportSettingsMigration(migration SettingsMigration) {
+	if rt.logger != nil {
+		rt.logger.Print(migration.Message())
+	}
+}
+
 // validDeviceOverride reports whether a device override is permitted by the
 // production operator. Raw recorder tooling can still support CPU explicitly,
 // but operator-managed speech recognition is GPU-only.
@@ -406,7 +530,7 @@ func (rt *Runtime) settingsHandler(w http.ResponseWriter, r *http.Request) {
 func (rt *Runtime) handleGetSettings(w http.ResponseWriter) {
 	// Re-read from disk so an out-of-band edit (or a peer process) is reflected,
 	// and refresh the in-memory copy used at job spawn time.
-	s, err := LoadOrInitSettings(rt.settingsPath)
+	s, err := LoadOrInitSettingsWithMigrationReporter(rt.settingsPath, rt.reportSettingsMigration)
 	if err != nil {
 		// Disk unreadable: fall back to the in-memory copy rather than 500, so
 		// the admin can still see and re-set the policy.

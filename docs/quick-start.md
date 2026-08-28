@@ -10,7 +10,8 @@ Goal:
 - start a local Nextcloud + AppAPI/HaRP + Talk stack
 - build and install Cassini as an ExApp (the production topology)
 - record a Talk meeting through Talk's record button
-- verify Talk audio is retained and the GPU-only build is durably queued
+- verify Talk audio is retained and the plain image immediately blocks the
+  GPU-only build with actionable recovery instructions
 - on a CUDA deployment, watch build -> seal -> publish and open the meeting
 
 ## Before you begin
@@ -86,7 +87,7 @@ git lfs pull \
   --include="harness/media/processed/showcase-lantern-festival-v1/mira.ivf,harness/media/processed/showcase-lantern-festival-v1/mira.ogg"
 
 ./harness/bin/validate-installed-exapp-private-talk.sh \
-  --expect-build-deferred \
+  --expect-build-blocked \
   --nextcloud-host 127.0.0.1 \
   --run-count 1 \
   --media-prefix "$PWD/harness/media/processed/showcase-lantern-festival-v1/mira" \
@@ -95,11 +96,12 @@ git lfs pull \
 
 This creates/reuses a private one-to-one conversation and triggers one Talk
 recording through the installed ExApp. In capture-only mode, a pass requires a
-ready Talk run bundle, non-empty audio with packets, a future durable build
-retry, no ASR subprocess launch, and no prematurely published meeting. There
-is no recording retry. On a CUDA-ready installed image, omit
-`--expect-build-deferred`; the validator instead requires a succeeded job,
-Files-backed `.opus`, positive segments, and decoded words.
+ready Talk run bundle, non-empty audio with packets, immediate `build/blocked`,
+no retry timestamp, an actionable CUDA-runtime error, no ASR subprocess launch,
+and no prematurely published meeting. There is no recording retry. On a
+CUDA-ready installed image, omit `--expect-build-blocked`; the validator instead
+requires a succeeded job, Files-backed `.opus`, positive segments, and decoded
+words.
 
 For the exact-image, stack-owning CI equivalent, start from a clean stack and
 provide the already-built image explicitly:
@@ -112,20 +114,21 @@ CASSINI_EXPECT_GPU_UNAVAILABLE=1 IMAGE_REF="$IMAGE_REF" \
 ```
 
 That command installs the exact image through AppAPI/HaRP, performs one Talk
-capture/deferral run, writes machine-readable evidence, and always tears down
+capture/block run, writes machine-readable evidence, and always tears down
 its owned containers, network, and volumes. It is Linux-only and requires native
 Docker Engine/Compose, Docker socket access, Go, `git-lfs`, `jq`, `xmllint`,
 `curl`, and Python 3. It does not require Kokoro or `uv` because it uses the
 materialized Mira pair above.
 
-## 3. Resume on CUDA and open the result
+## 3. Retry on CUDA and open the result
 
-The plain image deliberately leaves the captured job queued. Install/redeploy
-the matching `-cuda` image on a CUDA deploy daemon; the durable worker can then
-build, seal, and publish it. Open **Cassini** inside Nextcloud. The published
-meeting shows its **Talk conversation name** and **real recording date** — the
-operator resolves the conversation name through the AppAPI-authenticated Talk
-API.
+The plain image deliberately leaves the captured job in `build/blocked` while
+preserving its run bundle and audio. Install/redeploy the matching `-cuda` image
+on a CUDA deploy daemon, open **Cassini Admin**, and choose **Rerun** for the
+blocked job. The new attempt reuses the recording, then builds, seals, and
+publishes it. Open **Cassini** inside Nextcloud. The published meeting shows its
+**Talk conversation name** and **real recording date** — the operator resolves
+the conversation name through the AppAPI-authenticated Talk API.
 
 ## Why this is the default
 
@@ -187,9 +190,10 @@ cd deployment && docker compose up --build
 ```
 
 Then paste `CALL_URL` into the control panel to submit a recording. The bundled
-standalone operator image is also capture-only, so its build remains queued
-until run in a CUDA-capable operator image. For viewer-only work,
-`cassini-viewer`'s own dev server (`npm run dev`) is lighter still.
+standalone operator image is also capture-only, so its build becomes blocked
+until the preserved recording is retried in a CUDA-capable operator image. For
+viewer-only work, `cassini-viewer`'s own dev server (`npm run dev`) is lighter
+still.
 
 ## Where to go next
 

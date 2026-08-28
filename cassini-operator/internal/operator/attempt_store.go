@@ -45,6 +45,7 @@ type JobAttempt struct {
 	RecordFinishedAt    *string `json:"record_finished_at"`
 	BuildQueuedAt       *string `json:"build_queued_at"`
 	BuildRetryNotBefore *string `json:"build_retry_not_before"`
+	BuildDeferralCount  int     `json:"build_deferral_count"`
 	BuildStartedAt      *string `json:"build_started_at"`
 	BuildFinishedAt     *string `json:"build_finished_at"`
 	SealQueuedAt        *string `json:"seal_queued_at"`
@@ -135,7 +136,7 @@ WHERE id = ?`, job.ID).Scan(&state, &requestJSON, &currentAttemptNumber, &artifa
 		}
 		return Job{}, fmt.Errorf("load job for rerun: %w", err)
 	}
-	if state != "failed" && state != "succeeded" && state != "interrupted" {
+	if state != "failed" && state != "succeeded" && state != "interrupted" && state != "blocked" {
 		return Job{}, ErrJobNotEligibleForRerun
 	}
 
@@ -177,7 +178,7 @@ SET stage = ?, state = ?,
     artifact_run_path = ?,
     error = NULL,
     updated_at = ?,
-    build_queued_at = ?, build_retry_not_before = NULL, build_started_at = NULL, build_finished_at = NULL,
+	    build_queued_at = ?, build_retry_not_before = NULL, build_deferral_count = 0, build_started_at = NULL, build_finished_at = NULL,
     seal_queued_at = NULL, seal_started_at = NULL, seal_finished_at = NULL,
     publish_queued_at = NULL, publish_started_at = NULL, publish_finished_at = NULL,
     interrupted_at = NULL, completed_at = NULL
@@ -208,7 +209,7 @@ SELECT job_id, attempt_number, trigger_kind, request_json,
        record_log_path, build_log_path, seal_log_path, publish_log_path,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
-       build_queued_at, build_retry_not_before, build_started_at, build_finished_at,
+	       build_queued_at, build_retry_not_before, build_deferral_count, build_started_at, build_finished_at,
        seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at
@@ -299,6 +300,7 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 		&recordFinishedAt,
 		&buildQueuedAt,
 		&buildRetryNotBefore,
+		&attempt.BuildDeferralCount,
 		&buildStartedAt,
 		&buildFinishedAt,
 		&sealQueuedAt,

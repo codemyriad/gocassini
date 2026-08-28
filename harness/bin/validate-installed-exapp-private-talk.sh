@@ -15,7 +15,7 @@ POLL_INTERVAL=5
 RUN_COUNT=2
 CONVERSATION="admin"
 MEDIA_PREFIX=""
-EXPECT_BUILD_DEFERRED=0
+EXPECT_BUILD_BLOCKED=0
 PROJECT_NAME="${PROJECT_NAME:-cassini-exapp-test}"
 LOG_DIR="${LOG_DIR:-/tmp/cassini-installed-validation-$(date -u +%Y%m%dT%H%M%S)-$$}"
 ADMIN_USER="${ADMIN_USER:-admin}"
@@ -43,7 +43,7 @@ Options:
   --run-count <count>             Recording attempts. Default: 2
   --conversation <name>           play-private conversation. Default: admin
   --media-prefix <path>            Existing IVF/OGG prefix used for all participants
-  --expect-build-deferred          Prove capture succeeds but GPU-less build is durably deferred
+  --expect-build-blocked          Require retained capture plus immediate build/blocked
   --project-name <name>           Harness Compose project. Default: cassini-exapp-test
   --log-dir <path>                Retained evidence directory
 EOF
@@ -58,7 +58,7 @@ while [[ $# -gt 0 ]]; do
     --run-count) [[ $# -ge 2 ]] || fail "$1 requires a value"; RUN_COUNT="$2"; shift 2 ;;
     --conversation) [[ $# -ge 2 ]] || fail "$1 requires a value"; CONVERSATION="$2"; shift 2 ;;
     --media-prefix) [[ $# -ge 2 ]] || fail "$1 requires a value"; MEDIA_PREFIX="$2"; shift 2 ;;
-    --expect-build-deferred) EXPECT_BUILD_DEFERRED=1; shift ;;
+    --expect-build-blocked) EXPECT_BUILD_BLOCKED=1; shift ;;
     --project-name) [[ $# -ge 2 ]] || fail "$1 requires a value"; PROJECT_NAME="$2"; shift 2 ;;
     --log-dir) [[ $# -ge 2 ]] || fail "$1 requires a value"; LOG_DIR="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -72,11 +72,18 @@ for pair in "duration:$DURATION" "job-timeout:$JOB_TIMEOUT" "poll-interval:$POLL
 done
 (( DURATION > 0 && JOB_TIMEOUT > 0 && POLL_INTERVAL > 0 && RUN_COUNT > 0 )) \
   || fail "duration, timeout, poll interval, and run count must be positive"
-# Portable artifact validation runs the host CLI, whose transcript extraction
-# probes and decodes the downloaded Opus file with ffprobe and ffmpeg.
-for tool in curl jq python3 ffprobe ffmpeg; do
+# Both modes inspect the installed container. Positive artifact validation also
+# runs the host CLI, whose transcript extraction needs host ffprobe and ffmpeg;
+# the blocked portable-image path probes media metadata inside the container and
+# deliberately performs no speech decode.
+for tool in docker curl jq python3; do
   command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
 done
+if (( ! EXPECT_BUILD_BLOCKED )); then
+  for tool in ffprobe ffmpeg; do
+    command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
+  done
+fi
 [[ -x "$VALIDATOR" ]] || fail "installed validator is not executable: $VALIDATOR"
 [[ -x "$ARTIFACT_VALIDATOR" ]] || fail "artifact validator is not executable: $ARTIFACT_VALIDATOR"
 
@@ -102,7 +109,7 @@ SUMMARY_NDJSON="$LOG_DIR/runs.ndjson"
 : >"$SUMMARY_NDJSON"
 RUN_JOB_ID=""
 RUN_ARTIFACT_SUMMARY=""
-RUN_DEFERRED_SUMMARY=""
+RUN_BLOCKED_SUMMARY=""
 VALIDATION_RESULT="failed"
 SUMMARY_WRITTEN=0
 
@@ -281,39 +288,39 @@ wait_for_new_job_success() {
   fail "timed out waiting for exactly one new $label job"
 }
 
-wait_for_new_job_deferred() {
+wait_for_new_job_blocked() {
   local label="$1" before_jobs="$2"
   local deadline=$((SECONDS + JOB_TIMEOUT)) jobs="$LOG_DIR/jobs-${label}.json" result rc
   while (( SECONDS < deadline )); do
     if fetch_json "$PROXY_URL/operator/jobs" "$jobs" false; then
       set +e
-      result="$($VALIDATOR select-job --expect build-deferred --before "$before_jobs" --current "$jobs" 2>"$LOG_DIR/jobs-${label}.err")"
+      result="$($VALIDATOR select-job --expect build-blocked --before "$before_jobs" --current "$jobs" 2>"$LOG_DIR/jobs-${label}.err")"
       rc=$?
       set -e
       case "$rc" in
         0)
           RUN_JOB_ID="$(jq -r '.job_id' <<<"$result")"
-          RUN_DEFERRED_SUMMARY="$result"
-          success "✓ $label recording preserved and GPU build durably deferred: $RUN_JOB_ID"
+          RUN_BLOCKED_SUMMARY="$result"
+          success "✓ $label recording preserved and portable-image build blocked: $RUN_JOB_ID"
           return 0
           ;;
-        10) printf '[validate] waiting for %s deferred build: %s\n' "$label" "$result" >&2 ;;
-        3) cat "$LOG_DIR/jobs-${label}.err" >&2 || true; fail "$label job failed instead of deferring: $result" ;;
-        *) cat "$LOG_DIR/jobs-${label}.err" >&2 || true; fail "$label deferred-build selection was invalid" ;;
+        10) printf '[validate] waiting for %s build to block: %s\n' "$label" "$result" >&2 ;;
+        3) cat "$LOG_DIR/jobs-${label}.err" >&2 || true; fail "$label job failed instead of blocking: $result" ;;
+        *) cat "$LOG_DIR/jobs-${label}.err" >&2 || true; fail "$label blocked-build selection was invalid" ;;
       esac
     fi
     sleep "$POLL_INTERVAL"
   done
-  fail "timed out waiting for exactly one new $label recording to enter GPU resource deferral"
+  fail "timed out waiting for exactly one new $label recording to reach build/blocked"
 }
 
-validate_deferred_run_bundle() {
+validate_blocked_run_bundle() {
   local label="$1" run_path manifest recording_path recording_bytes audio_packets detail build_log_path build_log_bytes container_log
-  run_path="$(jq -er '.artifact_run_path' <<<"$RUN_DEFERRED_SUMMARY")" \
-    || fail "$label deferred job has no run path"
+  run_path="$(jq -er '.artifact_run_path' <<<"$RUN_BLOCKED_SUMMARY")" \
+    || fail "$label blocked job has no run path"
   manifest="$LOG_DIR/run-${label}.cassini.json"
   docker exec nc_app_gocassini cat "$run_path/cassini.json" >"$manifest" \
-    || fail "$label deferred run manifest is not readable"
+    || fail "$label blocked run manifest is not readable"
   jq -e '
     .kind == "run"
     and .version == "cassini.run.v1"
@@ -321,45 +328,45 @@ validate_deferred_run_bundle() {
     and .stage == "ready"
     and .source_mode == "talk"
     and (.recording.path | type == "string" and length > 0)
-  ' "$manifest" >/dev/null || fail "$label deferred run manifest is not ready Talk capture"
+  ' "$manifest" >/dev/null || fail "$label blocked run manifest is not ready Talk capture"
   recording_path="$(jq -er '.recording.path' "$manifest")"
   [[ "$recording_path" != /* && "$recording_path" != *..* ]] \
-    || fail "$label deferred run manifest has unsafe recording path: $recording_path"
+    || fail "$label blocked run manifest has unsafe recording path: $recording_path"
   docker exec nc_app_gocassini test -s "$run_path/$recording_path" \
-    || fail "$label deferred recording is missing or empty"
+    || fail "$label blocked recording is missing or empty"
   recording_bytes="$(docker exec nc_app_gocassini stat -c %s "$run_path/$recording_path")"
   [[ "$recording_bytes" =~ ^[1-9][0-9]*$ ]] \
-    || fail "$label deferred recording size is invalid: $recording_bytes"
+    || fail "$label blocked recording size is invalid: $recording_bytes"
   docker exec nc_app_gocassini ffprobe -v error -select_streams a:0 \
     -count_packets -show_entries stream=codec_type,nb_read_packets -of json \
     "$run_path/$recording_path" >"$LOG_DIR/run-${label}.audio-streams.json" \
-    || fail "$label deferred recording failed audio-stream metadata probe"
+    || fail "$label blocked recording failed audio-stream metadata probe"
   audio_packets="$(jq -er '[.streams[] | select(.codec_type == "audio") | ((.nb_read_packets | tonumber?) // 0)] | max // 0' \
     "$LOG_DIR/run-${label}.audio-streams.json")" \
-    || fail "$label deferred recording has invalid audio packet metadata"
+    || fail "$label blocked recording has invalid audio packet metadata"
   if [[ ! "$audio_packets" =~ ^[0-9]+$ ]] || (( audio_packets < 10 )); then
-    fail "$label deferred recording has too few audio packets: $audio_packets"
+    fail "$label blocked recording has too few audio packets: $audio_packets"
   fi
 
   detail="$LOG_DIR/job-detail-${label}.json"
   fetch_json "$PROXY_URL/operator/jobs/$RUN_JOB_ID" "$detail" false \
-    || fail "$label deferred job detail is unavailable"
+    || fail "$label blocked job detail is unavailable"
   build_log_path="$(jq -er --argjson attempt "$(jq -r '.job.current_attempt_number' "$detail")" \
     '.attempts[] | select(.attempt_number == $attempt) | .build_log_path' "$detail")" \
-    || fail "$label deferred attempt has no build log path"
+    || fail "$label blocked attempt has no build log path"
   docker exec nc_app_gocassini test -f "$build_log_path" \
-    || fail "$label deferred build log does not exist"
+    || fail "$label blocked build log does not exist"
   build_log_bytes="$(docker exec nc_app_gocassini stat -c %s "$build_log_path")"
   [[ "$build_log_bytes" == "0" ]] \
-    || fail "$label deferred build invoked the transcription CLI (build log is ${build_log_bytes} bytes)"
+    || fail "$label blocked build invoked the transcription CLI (build log is ${build_log_bytes} bytes)"
   container_log="$LOG_DIR/container-${label}.log"
   docker logs nc_app_gocassini >"$container_log" 2>&1 \
     || fail "$label cannot read installed ExApp log"
-  grep -F "build deferred id=$RUN_JOB_ID" "$container_log" \
-    | grep -F "resource governor: CUDA device unavailable" >/dev/null \
-    || fail "$label container log does not confirm CUDA admission deferral"
-  RUN_DEFERRED_SUMMARY="$(jq -c --argjson recording_bytes "$recording_bytes" --argjson audio_packets "$audio_packets" \
-    '. + {recording_bytes:$recording_bytes,audio_packets:$audio_packets}' <<<"$RUN_DEFERRED_SUMMARY")"
+  grep -F "build blocked id=$RUN_JOB_ID" "$container_log" \
+    | grep -F "resource governor: CUDA runtime unavailable" >/dev/null \
+    || fail "$label container log does not confirm the permanent portable-image CUDA block"
+  RUN_BLOCKED_SUMMARY="$(jq -c --argjson recording_bytes "$recording_bytes" --argjson audio_packets "$audio_packets" \
+    '. + {recording_bytes:$recording_bytes,audio_packets:$audio_packets}' <<<"$RUN_BLOCKED_SUMMARY")"
   success "✓ $label raw Talk recording is durable (${recording_bytes} bytes, ${audio_packets} audio packets, ASR CLI not invoked)"
 }
 
@@ -417,14 +424,14 @@ run_private_job() {
     > >(tee "$LOG_DIR/playback-${label}.log") \
     2> >(tee "$LOG_DIR/playback-${label}.err" >&2)
 
-  if (( EXPECT_BUILD_DEFERRED )); then
-    wait_for_new_job_deferred "$label" "$before_jobs"
-    validate_deferred_run_bundle "$label"
+  if (( EXPECT_BUILD_BLOCKED )); then
+    wait_for_new_job_blocked "$label" "$before_jobs"
+    validate_blocked_run_bundle "$label"
     jq -nc \
       --arg label "$label" \
       --arg started_at "$started_at" \
-      --argjson deferral "$RUN_DEFERRED_SUMMARY" \
-      '{label:$label,started_at:$started_at,job_id:$deferral.job_id,deferral:$deferral}' \
+      --argjson blocked "$RUN_BLOCKED_SUMMARY" \
+      '{label:$label,started_at:$started_at,job_id:$blocked.job_id,blocked:$blocked}' \
       >>"$SUMMARY_NDJSON"
   else
     wait_for_new_job_success "$label" "$before_jobs"
@@ -443,23 +450,23 @@ log "Evidence directory: $LOG_DIR"
 ensure_nextcloud_host_trusted "$(base_url_host)"
 curl -fsS "$PROXY_URL/api/v1/welcome" | grep -q '"version":1' || fail "welcome route did not return version=1"
 status_code="$(curl -sS "${AUTH[@]}" -o "$LOG_DIR/operator-status.json" -w '%{http_code}' "$PROXY_URL/operator/status")"
-if (( EXPECT_BUILD_DEFERRED )); then
+if (( EXPECT_BUILD_BLOCKED )); then
   [[ "$status_code" == "503" ]] || fail "GPU-less operator status returned HTTP $status_code, expected 503"
 else
   [[ "$status_code" == "200" ]] || fail "ready operator status returned HTTP $status_code, expected 200"
 fi
-python3 - "$LOG_DIR/operator-status.json" "$EXPECT_BUILD_DEFERRED" <<'PY' || fail "operator status lacks required Talk/GPU contract"
+python3 - "$LOG_DIR/operator-status.json" "$EXPECT_BUILD_BLOCKED" <<'PY' || fail "operator status lacks required Talk/GPU contract"
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as source:
     status = json.load(source)
-expect_deferred = sys.argv[2] == "1"
+expect_blocked = sys.argv[2] == "1"
 talk = status.get("talk") if isinstance(status, dict) else None
 if not isinstance(talk, dict):
     raise SystemExit("status has no talk object")
 for key in ("secret_configured", "signaling_internal_secret_configured"):
     if talk.get(key) is not True:
         raise SystemExit(f"talk.{key} is not true")
-if expect_deferred:
+if expect_blocked:
     stt = status.get("stt") or {}
     storage = status.get("storage") or {}
     if not (
@@ -499,26 +506,26 @@ for run in $(seq 1 "$RUN_COUNT"); do
 done
 
 final_catalog="$LOG_DIR/catalog-final.json"
-if (( EXPECT_BUILD_DEFERRED )); then
+if (( EXPECT_BUILD_BLOCKED )); then
   fetch_json "$CATALOG_URL" "$final_catalog" true || fail "cannot fetch final catalog"
   jq -e '.meetings | type == "array"' "$final_catalog" >/dev/null \
     || fail "final catalog does not contain a meetings array"
   for id in "${new_job_ids[@]}"; do
     if jq -e --arg id "$id" '.meetings | any(.id == $id)' "$final_catalog" >/dev/null; then
-      fail "GPU-deferred job $id was published despite having no transcript"
+      fail "GPU-blocked job $id was published despite having no transcript"
     fi
   done
   for id in "${previous_catalog_ids[@]}"; do
     if [[ -n "$id" ]] && ! jq -e --arg id "$id" '.meetings | any(.id == $id)' "$final_catalog" >/dev/null; then
-      fail "previously published meeting $id disappeared during GPU deferral"
+      fail "previously published meeting $id disappeared while a GPU build was blocked"
     fi
   done
-  success "✓ GPU-deferred recordings were not published as completed meetings"
+  success "✓ GPU-blocked recordings were not published as completed meetings"
   VALIDATION_RESULT="passed"
   write_summary 0
   cat <<EOF
 
-Installed ExApp GPU-only capture validation passed.
+Installed ExApp portable-image capture/block validation passed.
   Nextcloud: $BASE_URL
   Runs:      $RUN_COUNT
   Jobs:      ${new_job_ids[*]}

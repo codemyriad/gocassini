@@ -72,8 +72,8 @@ func TestStatusHandlerReportsCurrentEffectiveCUDASettings(t *testing.T) {
 		t.Fatal("status response leaked the Talk shared secret")
 	}
 
-	// A later policy update and a second readiness request must use a fresh
-	// snapshot and a fresh probe, not the values cached at process start.
+	// A later policy update uses a fresh settings snapshot. The effective device
+	// is unchanged, so its expensive readiness result remains briefly cached.
 	rt.setSettings(STTSettings{Quality: sttQualityBest, DeviceOverride: "cuda"})
 	second := httptest.NewRecorder()
 	rt.statusHandler(second, httptest.NewRequest(http.MethodGet, "/status", nil))
@@ -87,8 +87,8 @@ func TestStatusHandlerReportsCurrentEffectiveCUDASettings(t *testing.T) {
 	if secondResp.STT.Quality != sttQualityBest {
 		t.Fatalf("second quality = %q, want best", secondResp.STT.Quality)
 	}
-	if len(probedDevices) != 2 || probedDevices[1] != "cuda" {
-		t.Fatalf("probed devices after refresh = %v, want [cuda cuda]", probedDevices)
+	if len(probedDevices) != 1 || probedDevices[0] != "cuda" {
+		t.Fatalf("probed devices after cached refresh = %v, want [cuda]", probedDevices)
 	}
 }
 
@@ -354,6 +354,51 @@ func TestTTLProbeSingleflightAndTTL(t *testing.T) {
 	}
 	if got := runs.Load(); got != 2 {
 		t.Fatalf("post-TTL check ran the probe %d times total, want 2", got)
+	}
+}
+
+func TestComputeStatusProbeSingleflightTTLAndDeviceKey(t *testing.T) {
+	var runs atomic.Int32
+	gate := make(chan struct{})
+	probe := newComputeStatusProbe(80*time.Millisecond, func(device string) (bool, string) {
+		runs.Add(1)
+		if device == "cuda" {
+			<-gate
+		}
+		return true, device + " ready"
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			usable, detail := probe.check("cuda")
+			if !usable || detail != "cuda ready" {
+				t.Errorf("check(cuda) = %t %q", usable, detail)
+			}
+		}()
+	}
+	time.Sleep(20 * time.Millisecond)
+	close(gate)
+	wg.Wait()
+	if got := runs.Load(); got != 1 {
+		t.Fatalf("concurrent CUDA checks ran %d probes, want 1", got)
+	}
+
+	if usable, detail := probe.check("other"); !usable || detail != "other ready" {
+		t.Fatalf("device-key invalidation = %t %q", usable, detail)
+	}
+	if got := runs.Load(); got != 2 {
+		t.Fatalf("new device did not invalidate cache: runs=%d", got)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	if usable, detail := probe.check("other"); !usable || detail != "other ready" {
+		t.Fatalf("post-TTL check = %t %q", usable, detail)
+	}
+	if got := runs.Load(); got != 3 {
+		t.Fatalf("post-TTL runs=%d, want 3", got)
 	}
 }
 

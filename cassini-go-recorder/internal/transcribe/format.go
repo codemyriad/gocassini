@@ -1,6 +1,7 @@
 package transcribe
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -487,23 +488,39 @@ func labelForSpeaker(id string, streams []AudioStream) string {
 }
 
 func writeJSON(path string, v any) error {
+	return writeJSONWithSync(path, v, (*os.File).Sync)
+}
+
+// writeJSONWithSync writes JSON through a same-directory temporary file so a
+// concurrent reader sees either the old document or the complete new one. The
+// sync hook exists to exercise the pre-rename durability failure path in tests.
+func writeJSONWithSync(path string, v any, syncFile func(*os.File) error) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
 	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	perm := os.FileMode(0o644)
+	if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() {
+		// os.WriteFile used to retain an existing file's mode. Use it as the
+		// creation ceiling so an atomic replacement never widens permissions;
+		// OpenFile may still narrow it according to the current umask.
+		perm = info.Mode().Perm()
+	} else if statErr != nil && !os.IsNotExist(statErr) {
+		return statErr
+	}
+	tmp, err := createJSONTemp(dir, filepath.Base(path), perm)
 	if err != nil {
 		return err
 	}
 	tmpPath := tmp.Name()
 	defer func() { _ = os.Remove(tmpPath) }()
-	if err := tmp.Chmod(0o644); err != nil {
+	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
 		return err
 	}
-	if _, err := tmp.Write(data); err != nil {
+	if err := syncFile(tmp); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -511,6 +528,28 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 	return os.Rename(tmpPath, path)
+}
+
+// createJSONTemp is equivalent to CreateTemp with a caller-specified creation
+// mode. OpenFile applies the process umask when the file is created, preserving
+// the old WriteFile creation semantics (and any stricter existing-mode ceiling)
+// while O_EXCL keeps the random name safe from clobbering or symlink races.
+func createJSONTemp(dir, base string, perm os.FileMode) (*os.File, error) {
+	var suffix [16]byte
+	for range 100 {
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return nil, fmt.Errorf("generate temporary JSON filename: %w", err)
+		}
+		tmpPath := filepath.Join(dir, fmt.Sprintf(".%s.tmp-%x", base, suffix))
+		tmp, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+		if err == nil {
+			return tmp, nil
+		}
+		if !os.IsExist(err) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("create temporary JSON file for %s: too many collisions", base)
 }
 
 // CountWords counts total words across all segments.

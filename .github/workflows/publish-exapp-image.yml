@@ -309,9 +309,9 @@ jobs:
         if: needs.classify-changes.outputs.relevant == 'true'
         run: |
           sudo apt-get update
-          # ffmpeg supplies both ffmpeg and ffprobe. The host-side portable
-          # artifact validator needs them for `cassini inspect --transcript`.
-          sudo apt-get install -y --no-install-recommends ffmpeg jq libxml2-utils
+          # Portable-image mode probes retained audio inside the image and does
+          # not decode speech or require host ffmpeg/ffprobe.
+          sudo apt-get install -y --no-install-recommends jq libxml2-utils
           git lfs version
 
       - name: Materialize only the known audible participant fixture
@@ -350,9 +350,9 @@ jobs:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           LOG_DIR: ${{ runner.temp }}/faithful-installed-exapp-talk-cpu
           # The portable image runs on a GPU-less hosted runner. It must still
-          # capture and preserve Talk media, then report durable GPU resource
-          # deferral; completing a transcript here would prove an illegal CPU
-          # speech-recognition fallback.
+          # capture and preserve Talk media, then immediately block build with
+          # an actionable request for the matching CUDA image; completing a
+          # transcript here would prove an illegal CPU fallback.
           CASSINI_EXPECT_GPU_UNAVAILABLE: '1'
         run: ./harness/bin/ci-e2e-installed-exapp-talk.sh
 
@@ -883,7 +883,8 @@ jobs:
 
   # D-684 removed the hosted-CPU Talk/ASR roundtrip. This CUDA job owns the
   # positive transcript assertion; the faithful CPU-host gate above owns Talk
-  # capture, durable GPU deferral, and the no-CPU-subprocess assertion.
+  # capture, immediate permanent-image blocking, and the no-CPU-subprocess
+  # assertion.
   e2e-talk-record-cuda:
     name: E2E manual-install Talk roundtrip (CUDA / GPU)
     runs-on: [self-hosted, Linux, X64, gpu]

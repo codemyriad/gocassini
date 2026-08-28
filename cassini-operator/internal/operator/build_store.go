@@ -15,7 +15,7 @@ func (s *Store) MarkBuildQueued(ctx context.Context, id, jobArtifactRunPath, att
 
 	_, err = tx.ExecContext(ctx, `
 UPDATE jobs
-SET stage = ?, state = ?, artifact_run_path = ?, updated_at = ?, record_finished_at = ?, build_queued_at = ?, build_retry_not_before = NULL, completed_at = NULL, error = NULL
+SET stage = ?, state = ?, artifact_run_path = ?, updated_at = ?, record_finished_at = ?, build_queued_at = ?, build_retry_not_before = NULL, build_deferral_count = 0, completed_at = NULL, error = NULL
 WHERE id = ?`, "build", "queued", jobArtifactRunPath, queuedAt, queuedAt, queuedAt, id)
 	if err != nil {
 		return fmt.Errorf("update build queued: %w", err)
@@ -26,7 +26,7 @@ WHERE id = ?`, "build", "queued", jobArtifactRunPath, queuedAt, queuedAt, queued
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE job_attempts
-SET stage = ?, state = ?, artifact_run_path = ?, updated_at = ?, record_finished_at = ?, build_queued_at = ?, build_retry_not_before = NULL, completed_at = NULL, error = NULL
+SET stage = ?, state = ?, artifact_run_path = ?, updated_at = ?, record_finished_at = ?, build_queued_at = ?, build_retry_not_before = NULL, build_deferral_count = 0, completed_at = NULL, error = NULL
 WHERE job_id = ? AND attempt_number = ?`, "build", "queued", attemptArtifactRunPath, queuedAt, queuedAt, queuedAt, id, attemptNumber); err != nil {
 		return fmt.Errorf("update attempt build queued: %w", err)
 	}
@@ -51,17 +51,18 @@ func (s *Store) ClaimBuildRunning(ctx context.Context, task buildTask, startedAt
 
 	result, err := tx.ExecContext(ctx, `
 UPDATE jobs
-SET state = ?, updated_at = ?, build_started_at = ?, build_retry_not_before = NULL
+SET state = ?, updated_at = ?, build_started_at = ?, build_retry_not_before = NULL, error = NULL
 WHERE id = ?
   AND current_attempt_number = ?
   AND artifact_run_path = ?
   AND stage = ? AND state = ?
-  -- Parse instead of comparing TEXT so rows written by an older build using
-  -- variable-width RFC3339Nano fractions remain chronologically correct.
-  AND (build_retry_not_before IS NULL OR julianday(build_retry_not_before) <= julianday(?))`,
+  AND build_deferral_count = ?
+  -- Migration 0007 normalizes older timestamps; all new values use the same
+  -- fixed-width UTC layout, so this range remains indexable.
+  AND (build_retry_not_before IS NULL OR build_retry_not_before <= ?)`,
 		"running", startedAt, startedAt,
 		task.JobID, task.AttemptNumber, task.ArtifactRunPath,
-		"build", "queued", startedAt)
+		"build", "queued", task.DeferralCount, startedAt)
 	if err != nil {
 		return false, fmt.Errorf("update build running: %w", err)
 	}
@@ -74,10 +75,11 @@ WHERE id = ?
 	}
 	attemptResult, err := tx.ExecContext(ctx, `
 UPDATE job_attempts
-SET stage = ?, state = ?, updated_at = ?, build_started_at = ?, build_retry_not_before = NULL
-WHERE job_id = ? AND attempt_number = ? AND stage = ? AND state = ?`,
+SET stage = ?, state = ?, updated_at = ?, build_started_at = ?, build_retry_not_before = NULL, error = NULL
+WHERE job_id = ? AND attempt_number = ? AND stage = ? AND state = ?
+  AND build_deferral_count = ?`,
 		"build", "running", startedAt, startedAt,
-		task.JobID, task.AttemptNumber, "build", "queued")
+		task.JobID, task.AttemptNumber, "build", "queued", task.DeferralCount)
 	if err != nil {
 		return false, fmt.Errorf("update attempt build running: %w", err)
 	}
@@ -98,7 +100,7 @@ WHERE job_id = ? AND attempt_number = ? AND stage = ? AND state = ?`,
 // MarkBuildDeferred atomically restores a transiently resource-constrained
 // build from running to queued. It deliberately preserves build_queued_at and
 // artifact paths so normal queue ordering and restart recovery remain intact.
-func (s *Store) MarkBuildDeferred(ctx context.Context, id string, attemptNumber int, deferredAt, retryNotBefore string) (bool, error) {
+func (s *Store) MarkBuildDeferred(ctx context.Context, task buildTask, nextDeferralCount int, detail, deferredAt, retryNotBefore string) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("begin build deferred update: %w", err)
@@ -107,9 +109,12 @@ func (s *Store) MarkBuildDeferred(ctx context.Context, id string, attemptNumber 
 
 	result, err := tx.ExecContext(ctx, `
 UPDATE jobs
-SET state = ?, updated_at = ?, build_started_at = NULL, build_retry_not_before = ?
-WHERE id = ? AND current_attempt_number = ? AND stage = ? AND state = ?`,
-		"queued", deferredAt, retryNotBefore, id, attemptNumber, "build", "running")
+SET state = ?, error = ?, updated_at = ?, build_started_at = NULL,
+    build_retry_not_before = ?, build_deferral_count = ?
+WHERE id = ? AND current_attempt_number = ? AND stage = ? AND state = ?
+  AND build_deferral_count = ?`,
+		"queued", strings.TrimSpace(detail), deferredAt, retryNotBefore, nextDeferralCount,
+		task.JobID, task.AttemptNumber, "build", "running", task.DeferralCount)
 	if err != nil {
 		return false, fmt.Errorf("update build deferred: %w", err)
 	}
@@ -122,9 +127,11 @@ WHERE id = ? AND current_attempt_number = ? AND stage = ? AND state = ?`,
 	}
 	attemptResult, err := tx.ExecContext(ctx, `
 UPDATE job_attempts
-SET state = ?, updated_at = ?, build_started_at = NULL, build_retry_not_before = ?
+SET state = ?, error = ?, updated_at = ?, build_started_at = NULL,
+    build_retry_not_before = ?, build_deferral_count = ?
 WHERE job_id = ? AND attempt_number = ? AND stage = ? AND state = ?`,
-		"queued", deferredAt, retryNotBefore, id, attemptNumber, "build", "running")
+		"queued", strings.TrimSpace(detail), deferredAt, retryNotBefore, nextDeferralCount,
+		task.JobID, task.AttemptNumber, "build", "running")
 	if err != nil {
 		return false, fmt.Errorf("update attempt build deferred: %w", err)
 	}
@@ -138,7 +145,57 @@ WHERE job_id = ? AND attempt_number = ? AND stage = ? AND state = ?`,
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("commit build deferred update: %w", err)
 	}
-	s.emitStateChange(ctx, "job.updated", id, attemptNumber)
+	s.emitStateChange(ctx, "job.updated", task.JobID, task.AttemptNumber)
+	return true, nil
+}
+
+// MarkBuildBlocked records a resource condition for which the worker will no
+// longer churn. The ready run bundle is preserved, and a manual rerun creates a
+// fresh attempt after the administrator fixes CUDA capacity/runtime.
+func (s *Store) MarkBuildBlocked(ctx context.Context, task buildTask, detail, blockedAt string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin build blocked update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	result, err := tx.ExecContext(ctx, `
+UPDATE jobs
+SET state = ?, error = ?, updated_at = ?, build_started_at = NULL, build_retry_not_before = NULL
+WHERE id = ? AND current_attempt_number = ? AND stage = ? AND state = ?
+  AND build_deferral_count = ?`,
+		"blocked", strings.TrimSpace(detail), blockedAt,
+		task.JobID, task.AttemptNumber, "build", "running", task.DeferralCount)
+	if err != nil {
+		return false, fmt.Errorf("update build blocked: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("build blocked rows affected: %w", err)
+	}
+	if changed == 0 {
+		return false, nil
+	}
+	attemptResult, err := tx.ExecContext(ctx, `
+UPDATE job_attempts
+SET state = ?, error = ?, updated_at = ?, build_started_at = NULL, build_retry_not_before = NULL
+WHERE job_id = ? AND attempt_number = ? AND stage = ? AND state = ?`,
+		"blocked", strings.TrimSpace(detail), blockedAt,
+		task.JobID, task.AttemptNumber, "build", "running")
+	if err != nil {
+		return false, fmt.Errorf("update attempt build blocked: %w", err)
+	}
+	attemptChanged, err := attemptResult.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("attempt build blocked rows affected: %w", err)
+	}
+	if attemptChanged != 1 {
+		return false, fmt.Errorf("update attempt build blocked: expected 1 row, changed %d", attemptChanged)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit build blocked update: %w", err)
+	}
+	s.emitStateChange(ctx, "job.updated", task.JobID, task.AttemptNumber)
 	return true, nil
 }
 
@@ -148,11 +205,10 @@ WHERE job_id = ? AND attempt_number = ? AND stage = ? AND state = ?`,
 // or never saw them (operator restart) (D-367).
 func (s *Store) ListQueuedBuildTasks(ctx context.Context) ([]buildTask, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, current_attempt_number, artifact_run_path
+SELECT id, current_attempt_number, artifact_run_path, build_deferral_count
 FROM jobs
 WHERE stage = 'build' AND state = 'queued' AND artifact_run_path IS NOT NULL
-  -- See ClaimBuildRunning: julianday also handles pre-fixed-width values.
-  AND (build_retry_not_before IS NULL OR julianday(build_retry_not_before) <= julianday(?))
+  AND (build_retry_not_before IS NULL OR build_retry_not_before <= ?)
 ORDER BY build_queued_at ASC, id ASC`, nowUTCString())
 	if err != nil {
 		return nil, fmt.Errorf("query queued build jobs: %w", err)
@@ -162,7 +218,7 @@ ORDER BY build_queued_at ASC, id ASC`, nowUTCString())
 	var tasks []buildTask
 	for rows.Next() {
 		var task buildTask
-		if err := rows.Scan(&task.JobID, &task.AttemptNumber, &task.ArtifactRunPath); err != nil {
+		if err := rows.Scan(&task.JobID, &task.AttemptNumber, &task.ArtifactRunPath, &task.DeferralCount); err != nil {
 			return nil, fmt.Errorf("scan queued build job: %w", err)
 		}
 		tasks = append(tasks, task)

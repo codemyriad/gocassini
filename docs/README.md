@@ -27,10 +27,14 @@ in these docs should be read in light of them.
   transcript leaves the host for the transcription step.
 - **Operator-managed transcription is GPU-only.** The default ExApp image is a
   portable capture image: it can retain a Talk recording without a GPU, but its
-  build remains queued. The **GPU/CUDA** image runs fp32
+  build immediately enters `build/blocked` with instructions to install the
+  matching `-cuda` image. The **GPU/CUDA** image runs fp32
   `parakeet-tdt-0.6b-v3` with `CASSINI_STT_DEVICE=cuda`. Low-level Cassini CLI
   tooling still carries an int8 CPU runtime for explicit local diagnostics;
-  the production operator never selects it as an ASR fallback.
+  the production operator never selects it as an ASR fallback. On an eligible
+  CUDA image, transient RAM/VRAM pressure is retried with exponential backoff;
+  repeated pressure eventually becomes `build/blocked` instead of retrying
+  forever.
 - **Speaker labels come from signaling, not diarization.** Each participant is a
   separate RTP stream from the Talk **HPB (High Performance Backend) signaling
   server**. Display names arrive on signaling join/participants events, ride
@@ -115,8 +119,10 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
 
 - **Portable/capture-only**: tag `X.Y.Z`. It can capture and durably retain a
   Talk recording on a host without a GPU, but operator-managed speech
-  recognition is GPU-only: the build stays queued with an explicit resource
-  retry instead of falling back to CPU.
+  recognition is GPU-only: the build immediately becomes `build/blocked` with
+  an actionable request for the matching `X.Y.Z-cuda` image instead of falling
+  back to CPU. After installing that image, use **Rerun** in Cassini Admin to
+  reuse the preserved recording.
 - **GPU/CUDA**: tag `X.Y.Z-cuda`. CUDA-enabled sherpa-onnx + fp32 Parakeet, with
   `CASSINI_STT_DEVICE=cuda` baked in. Set the deploy daemon's **Compute device**
   to CUDA and AppAPI pulls the `-cuda` image automatically — the device is a

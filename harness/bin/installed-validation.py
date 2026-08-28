@@ -67,6 +67,7 @@ def command_select_job(args: argparse.Namespace) -> int:
         "artifact_meeting_path": job.get("artifact_meeting_path"),
         "build_queued_at": job.get("build_queued_at"),
         "build_retry_not_before": job.get("build_retry_not_before"),
+        "build_deferral_count": job.get("build_deferral_count"),
         "build_started_at": job.get("build_started_at"),
         "build_finished_at": job.get("build_finished_at"),
         "completed_at": job.get("completed_at"),
@@ -78,18 +79,29 @@ def command_select_job(args: argparse.Namespace) -> int:
         return 0 if state == "succeeded" else 10
 
     # A GPU-less host is allowed to record, but it must never decode speech on
-    # the CPU. The operator expresses that contract by preserving the ready run
-    # bundle and durably deferring build with a retry timestamp. Treat an
-    # unexpectedly successful build as a hard policy failure, not a green run.
+    # the CPU. Treat an unexpectedly successful build as a hard policy failure,
+    # not a green run, for either resource-governor expectation.
     if state == "succeeded" or job.get("artifact_meeting_path") is not None:
         raise ValidationError(
             f"job {job_id} produced a meeting although GPU inference was unavailable"
         )
-    if stage != "build" or state not in {"queued", "running"}:
+
+    # Record/build handoff is asynchronous. Keep polling while the only new job
+    # is still in flight; once it reaches the expected build state, validate the
+    # preserved recording and every governor-specific field below.
+    if state in {"queued", "running"} and stage != "build":
         return 10
-    retry_not_before = str(job.get("build_retry_not_before") or "").strip()
-    if state == "running" or not retry_not_before:
+    if args.expect == "build-blocked" and state != "blocked":
+        if state in {"queued", "running"}:
+            return 10
+        raise ValidationError(
+            f"job {job_id} reached unexpected {stage or '(no stage)'}/{state or '(no state)'} instead of build/blocked"
+        )
+    if args.expect == "build-deferred" and (
+        stage != "build" or state not in {"queued", "running"}
+    ):
         return 10
+
     run_path = str(job.get("artifact_run_path") or "").strip()
     record_finished_at = str(job.get("record_finished_at") or "").strip()
     build_queued_at = str(job.get("build_queued_at") or "").strip()
@@ -98,10 +110,9 @@ def command_select_job(args: argparse.Namespace) -> int:
         or not record_finished_at
         or not build_queued_at
         or job.get("record_exit_code") != 0
-        or error
     ):
         raise ValidationError(
-            f"job {job_id} deferred before preserving a successful recording"
+            f"job {job_id} reached the resource governor before preserving a successful recording"
         )
     if (
         job.get("build_started_at") is not None
@@ -109,7 +120,52 @@ def command_select_job(args: argparse.Namespace) -> int:
         or job.get("completed_at") is not None
     ):
         raise ValidationError(
-            f"job {job_id} has inconsistent deferred-build timestamps"
+            f"job {job_id} has inconsistent resource-governed build timestamps"
+        )
+
+    retry_not_before = str(job.get("build_retry_not_before") or "").strip()
+    if args.expect == "build-deferred" and (state == "running" or not retry_not_before):
+        return 10
+
+    error_lower = error.lower()
+    if not error_lower.startswith("resource governor:"):
+        raise ValidationError(
+            f"job {job_id} has no actionable resource-governor error"
+        )
+
+    if args.expect == "build-blocked":
+        if stage != "build":
+            raise ValidationError(f"job {job_id} blocked outside the build stage")
+        if job.get("build_retry_not_before") is not None:
+            raise ValidationError(
+                f"job {job_id} is permanently blocked but still has build_retry_not_before"
+            )
+        deferral_count = job.get("build_deferral_count")
+        if isinstance(deferral_count, bool) or deferral_count != 0:
+            raise ValidationError(
+                f"job {job_id} did not block immediately (build_deferral_count={deferral_count!r})"
+            )
+        required_detail = (
+            "cuda runtime unavailable",
+            "portable image",
+            "matching -cuda image",
+            "gpu-only",
+        )
+        missing = [part for part in required_detail if part not in error_lower]
+        if missing:
+            raise ValidationError(
+                f"job {job_id} CUDA block is not actionable; missing: {', '.join(missing)}"
+            )
+        return 0
+
+    deferral_count = job.get("build_deferral_count")
+    if (
+        isinstance(deferral_count, bool)
+        or not isinstance(deferral_count, int)
+        or deferral_count < 1
+    ):
+        raise ValidationError(
+            f"job {job_id} has invalid build_deferral_count: {deferral_count!r}"
         )
     try:
         retry_at = datetime.fromisoformat(retry_not_before.replace("Z", "+00:00"))
@@ -264,7 +320,9 @@ def build_parser() -> argparse.ArgumentParser:
     select.add_argument("--before", required=True)
     select.add_argument("--current", required=True)
     select.add_argument(
-        "--expect", choices=("succeeded", "build-deferred"), default="succeeded"
+        "--expect",
+        choices=("succeeded", "build-deferred", "build-blocked"),
+        default="succeeded",
     )
     select.set_defaults(run=command_select_job)
 

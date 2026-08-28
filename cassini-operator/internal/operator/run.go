@@ -103,6 +103,9 @@ type Runtime struct {
 	// buildResourceRetryDelay bounds transient RAM/VRAM retry frequency.
 	// Tests shorten it; production uses defaultBuildResourceRetryDelay.
 	buildResourceRetryDelay time.Duration
+	// maxBuildResourceDeferrals bounds transient retry churn. Permanent
+	// conditions block immediately; repeated pressure blocks at this ceiling.
+	maxBuildResourceDeferrals int
 	// sealJobFn packs one attempt's `.meeting` into its immutable `.opus`
 	// (D-583). It is a seam for the same reason buildJobFn and publishJobFn
 	// are: tests drive the pipeline without an ffmpeg subprocess.
@@ -153,6 +156,9 @@ type Runtime struct {
 	// readiness cannot drift from the policy used by newly spawned builds.
 	// Tests stub it.
 	computeProbe func(device string) (usable bool, detail string)
+	// computeReadiness coalesces and briefly caches the nvidia-smi-backed
+	// readiness probe so status polling cannot create a subprocess storm.
+	computeReadiness *computeStatusProbe
 	// recordHealth throttles the deep /healthz?check=record doctor exec with
 	// singleflight + a short TTL cache + an exec timeout, so the unauthenticated
 	// health endpoint cannot fan out doctor subprocesses (D-376).
@@ -609,17 +615,18 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		talkRoomNameRetryGap: talkRoomNameRetryGap,
 		talkAudienceRetryGap: talkAudienceRetryGap,
 
-		requeueKick:             make(chan struct{}, 1),
-		buildResourceRetryDelay: defaultBuildResourceRetryDelay,
-		sealJobTimeout:          defaultSealJobTimeout,
-		publishJobTimeout:       defaultPublishJobTimeout,
-		recordHealthTimeout:     recordHealthProbeTimeout,
-		settingsPath:            settingsPath(cfg),
+		requeueKick:               make(chan struct{}, 1),
+		buildResourceRetryDelay:   defaultBuildResourceRetryDelay,
+		maxBuildResourceDeferrals: defaultMaxBuildResourceDeferrals,
+		sealJobTimeout:            defaultSealJobTimeout,
+		publishJobTimeout:         defaultPublishJobTimeout,
+		recordHealthTimeout:       recordHealthProbeTimeout,
+		settingsPath:              settingsPath(cfg),
 	}
 	// Detect hardware on first start (or track it under an auto default) and
 	// load the persisted STT policy. A failure here must not take the operator
 	// down: fall back to an in-memory auto default so jobs still run (D-435).
-	if settings, err := LoadOrInitSettings(rt.settingsPath); err != nil {
+	if settings, err := LoadOrInitSettingsWithMigrationReporter(rt.settingsPath, rt.reportSettingsMigration); err != nil {
 		logger.Printf("stt_settings load failed (%v); using in-memory auto default", err)
 		rt.settings = detectSettings()
 	} else {
@@ -639,10 +646,12 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		sink, _ = newPublishSink(defaultPublishSink, cfg, logger)
 	}
 	rt.publishSink = sink
-	// Keep readiness live: /status is an admin endpoint and this cheap probe
-	// must reflect a driver reset or settings update instead of retaining a
-	// process-start answer indefinitely.
+	// Keep readiness live without spawning nvidia-smi for every status request:
+	// a short keyed TTL still reflects driver resets and device-policy changes.
 	rt.computeProbe = probeComputeDevice
+	rt.computeReadiness = newComputeStatusProbe(computeReadinessProbeTTL, func(device string) (bool, string) {
+		return rt.computeProbe(device)
+	})
 	rt.recordHealth = newTTLProbe(recordHealthProbeTTL, func() error {
 		probeCtx := rt.ctx
 		if timeout := rt.recordHealthTimeout; timeout > 0 {
@@ -1081,6 +1090,7 @@ type Job struct {
 	RecordFinishedAt    *string `json:"record_finished_at"`
 	BuildQueuedAt       *string `json:"build_queued_at"`
 	BuildRetryNotBefore *string `json:"build_retry_not_before"`
+	BuildDeferralCount  int     `json:"build_deferral_count"`
 	BuildStartedAt      *string `json:"build_started_at"`
 	BuildFinishedAt     *string `json:"build_finished_at"`
 	SealQueuedAt        *string `json:"seal_queued_at"`
@@ -1370,7 +1380,7 @@ SELECT id, provider, request_json, stage, state,
        stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
-       build_queued_at, build_retry_not_before, build_started_at, build_finished_at,
+	       build_queued_at, build_retry_not_before, build_deferral_count, build_started_at, build_finished_at,
        seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
@@ -1407,7 +1417,7 @@ SELECT id, provider, request_json, stage, state,
        stop_reason, stop_requested_at, stop_signal_sent_at, record_exit_code, record_stop_detail,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
-       build_queued_at, build_retry_not_before, build_started_at, build_finished_at,
+	       build_queued_at, build_retry_not_before, build_deferral_count, build_started_at, build_finished_at,
        seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at,
@@ -1482,6 +1492,7 @@ func scanJob(scanner rowScanner) (Job, error) {
 		&recordFinishedAt,
 		&buildQueuedAt,
 		&buildRetryNotBefore,
+		&job.BuildDeferralCount,
 		&buildStartedAt,
 		&buildFinishedAt,
 		&sealQueuedAt,

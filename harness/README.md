@@ -756,10 +756,11 @@ Talk users/conversations, drives playback into the admin call, waits for the
 new ExApp job, and requires a matching viewer artifact with positive segments
 and decoded words. Its default two-run mode additionally verifies that prior
 catalog entries remain available. On a GPU-less host, add
-`--expect-build-deferred`: the alternate contract requires a ready Talk run
-bundle with non-empty audio, a future durable build retry, an untouched build
-log, and no published meeting. That path probes container media metadata only;
-it does not decode speech.
+`--expect-build-blocked`: the portable-image contract requires a ready Talk run
+bundle with non-empty audio, immediate `build/blocked`, no retry timestamp, an
+actionable request for the matching `-cuda` image, an untouched build log, and
+no published meeting. That path probes container media metadata only; it does
+not decode speech.
 
 CI and exact-image local validation use the stack-owning faithful vertical:
 
@@ -774,10 +775,10 @@ That script accepts exactly one prebuilt image, tags it for `reuse-local`, lets
 AppAPI/HaRP create `nc_app_gocassini`, verifies the installed image ID and
 manifest-gated Talk configuration, performs one recording, and treats D-493
 teardown/leak checks as part of the pass. The CPU-host mode shown above proves
-raw capture plus durable GPU deferral and rejects any CPU ASR launch. Omit
-`CASSINI_EXPECT_GPU_UNAVAILABLE` on a CUDA-ready host to require the completed
-viewer artifact, positive segments, and decoded words. Neither mode retries a
-failed recording.
+raw capture plus immediate permanent-image blocking and rejects any CPU ASR
+launch. Omit `CASSINI_EXPECT_GPU_UNAVAILABLE` on a CUDA-ready host to require
+the completed viewer artifact, positive segments, and decoded words. Neither
+mode retries a failed recording.
 
 #### D-403 manifest allow-list sensitivity control (negative run)
 

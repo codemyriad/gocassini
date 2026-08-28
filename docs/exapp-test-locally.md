@@ -118,7 +118,7 @@ helper:
 multipass exec dev-vm -- bash -lc '
   cd /home/ubuntu/dev/workspace
   ./harness/bin/validate-installed-exapp-private-talk.sh \
-    --expect-build-deferred \
+    --expect-build-blocked \
     --nextcloud-host <vm-ip> \
     --duration 60
 '
@@ -126,17 +126,17 @@ multipass exec dev-vm -- bash -lc '
 
 The helper uses `./bin/cassini dev play-private` to create/reuse the admin +
 Erlich Bachman private one-to-one conversation and triggers recording through
-Talk. With the locally built plain image, `--expect-build-deferred` proves both
-recordings retain non-empty audio, remain durably queued for GPU, never launch
-CPU ASR, and do not disturb the existing viewer catalog. On a CUDA daemon with
-the matching `-cuda` image, omit that flag to require both transcripts in the
-viewer catalog.
+Talk. With the locally built plain image, `--expect-build-blocked` proves both
+recordings retain non-empty audio, immediately enter `build/blocked` with no
+retry timestamp and an actionable CUDA error, never launch CPU ASR, and do not
+disturb the existing viewer catalog. On a CUDA daemon with the matching `-cuda`
+image, omit that flag to require both transcripts in the viewer catalog.
 
 ### Archive preservation checks
 
 The validation helper captures catalog IDs before recording. CUDA-positive mode
 fails if the second publish removes the first new job or any pre-existing ID;
-capture-only mode requires all prior IDs to remain and neither deferred job to
+capture-only mode requires all prior IDs to remain and neither blocked job to
 appear. For manual inspection of the AppAPI persistent volume:
 
 ```bash
@@ -151,8 +151,9 @@ PY'
 ```
 
 Expected result in CUDA-positive mode: at least the two new job IDs remain in
-`catalog.json`. In capture-only mode they are absent until a GPU build succeeds;
-any catalog IDs that existed before the run remain in both modes.
+`catalog.json`. In capture-only mode they remain absent until the matching CUDA
+image is installed and an admin retries the blocked jobs; any catalog IDs that
+existed before the run remain in both modes.
 
 ## Related direct-container Talk test
 

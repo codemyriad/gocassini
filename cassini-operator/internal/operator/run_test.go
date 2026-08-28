@@ -73,6 +73,103 @@ func TestOpenStoreBaselinesLegacySchemaDatabase(t *testing.T) {
 	}
 }
 
+func TestBuildRetryMigrationNormalizesLegacyQueueTimestamps(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobs.sqlite3")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	seedJobRow(t, store.db, seededJobRow{ID: "legacy-time", Stage: "build", State: "queued", CreatedAt: "2026-08-28T10:00:00Z"})
+	if _, err := store.db.Exec(`
+UPDATE jobs
+SET created_at = '2026-08-28T10:00:00.1Z',
+    build_queued_at = '2026-08-28T10:00:00.8Z',
+    seal_queued_at = '2026-08-28T10:00:00.12Z',
+    publish_queued_at = '2026-08-28T10:00:00Z'
+WHERE id = 'legacy-time';
+UPDATE job_attempts
+SET created_at = '2026-08-28T10:00:00.2Z',
+    build_queued_at = '2026-08-28T10:00:00.85Z',
+    seal_queued_at = '2026-08-28T10:00:00.123Z',
+    publish_queued_at = '2026-08-28T10:00:00.1234Z'
+WHERE job_id = 'legacy-time' AND attempt_number = 1;`); err != nil {
+		t.Fatalf("seed legacy timestamps: %v", err)
+	}
+
+	// Re-run migration 0007 exactly as an installation upgrading from the last
+	// release would. Its direct TEXT comparisons are only chronological if old
+	// RFC3339Nano values are first made fixed-width.
+	if err := store.migrateDownTo(6); err != nil {
+		t.Fatalf("migrateDownTo(6): %v", err)
+	}
+	if err := store.ensureSchema(); err != nil {
+		t.Fatalf("ensureSchema(): %v", err)
+	}
+
+	var jobCreated, jobBuild, jobSeal, jobPublish string
+	var attemptCreated, attemptBuild, attemptSeal, attemptPublish string
+	var jobDeferrals, attemptDeferrals int
+	if err := store.db.QueryRow(`
+SELECT created_at, build_queued_at, seal_queued_at, publish_queued_at, build_deferral_count
+FROM jobs WHERE id = 'legacy-time'`).Scan(&jobCreated, &jobBuild, &jobSeal, &jobPublish, &jobDeferrals); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`
+SELECT created_at, build_queued_at, seal_queued_at, publish_queued_at, build_deferral_count
+FROM job_attempts WHERE job_id = 'legacy-time' AND attempt_number = 1`).Scan(
+		&attemptCreated, &attemptBuild, &attemptSeal, &attemptPublish, &attemptDeferrals,
+	); err != nil {
+		t.Fatal(err)
+	}
+	gotJob := []string{jobCreated, jobBuild, jobSeal, jobPublish}
+	wantJob := []string{
+		"2026-08-28T10:00:00.100000000Z",
+		"2026-08-28T10:00:00.800000000Z",
+		"2026-08-28T10:00:00.120000000Z",
+		"2026-08-28T10:00:00.000000000Z",
+	}
+	gotAttempt := []string{attemptCreated, attemptBuild, attemptSeal, attemptPublish}
+	wantAttempt := []string{
+		"2026-08-28T10:00:00.200000000Z",
+		"2026-08-28T10:00:00.850000000Z",
+		"2026-08-28T10:00:00.123000000Z",
+		"2026-08-28T10:00:00.123400000Z",
+	}
+	if strings.Join(gotJob, "|") != strings.Join(wantJob, "|") || strings.Join(gotAttempt, "|") != strings.Join(wantAttempt, "|") {
+		t.Fatalf("normalized order timestamps = jobs %#v attempts %#v", gotJob, gotAttempt)
+	}
+	if jobDeferrals != 0 || attemptDeferrals != 0 {
+		t.Fatalf("new deferral counters = %d / %d, want zero", jobDeferrals, attemptDeferrals)
+	}
+
+	planRows, err := store.db.Query(`
+EXPLAIN QUERY PLAN
+SELECT id, current_attempt_number, artifact_run_path, build_deferral_count
+FROM jobs
+WHERE stage = 'build' AND state = 'queued' AND artifact_run_path IS NOT NULL
+  AND (build_retry_not_before IS NULL OR build_retry_not_before <= ?)
+ORDER BY build_queued_at ASC, id ASC`, nowUTCString())
+	if err != nil {
+		t.Fatalf("explain build queue query: %v", err)
+	}
+	defer planRows.Close()
+	var plan []string
+	for planRows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := planRows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+	}
+	planText := strings.Join(plan, "\n")
+	if !strings.Contains(planText, "jobs_build_queue_order") || strings.Contains(planText, "TEMP B-TREE") {
+		t.Fatalf("build queue query does not use FIFO index without sorting:\n%s", planText)
+	}
+}
+
 func TestStoreMigrateDownToRemovesJobsSchema(t *testing.T) {
 	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
 
@@ -344,6 +441,7 @@ func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
 	seedJobRow(t, rt.store.db, seededJobRow{ID: "running-build", Stage: "build", State: "running", CreatedAt: "2026-04-29T10:01:00Z"})
 	seedJobRow(t, rt.store.db, seededJobRow{ID: "queued-build", Stage: "build", State: "queued", CreatedAt: "2026-04-29T10:01:30Z"})
 	seedJobRow(t, rt.store.db, seededJobRow{ID: "queued-publish", Stage: "publish", State: "queued", CreatedAt: "2026-04-29T10:02:00Z"})
+	seedJobRow(t, rt.store.db, seededJobRow{ID: "blocked-build", Stage: "build", State: "blocked", CreatedAt: "2026-04-29T10:02:30Z"})
 	seedJobRow(t, rt.store.db, seededJobRow{ID: "done-success", Stage: "done", State: "succeeded", CreatedAt: "2026-04-29T10:03:00Z", CompletedAt: strPtr("2026-04-29T10:04:00Z")})
 	seedJobRow(t, rt.store.db, seededJobRow{ID: "done-failed", Stage: "done", State: "failed", CreatedAt: "2026-04-29T10:05:00Z", CompletedAt: strPtr("2026-04-29T10:06:00Z")})
 
@@ -386,6 +484,11 @@ func TestStartupMarksIncompleteJobsInterruptedAndPreservesStage(t *testing.T) {
 	queuedPublish := mustGetJob(t, rt.store, "queued-publish")
 	if queuedPublish.Stage != "publish" || queuedPublish.State != "queued" || queuedPublish.InterruptedAt != nil {
 		t.Fatalf("queued publish job should stay queued, got %#v", queuedPublish)
+	}
+
+	blockedBuild := mustGetJob(t, rt.store, "blocked-build")
+	if blockedBuild.Stage != "build" || blockedBuild.State != "blocked" || blockedBuild.InterruptedAt != nil {
+		t.Fatalf("blocked build job should remain recoverable after restart, got %#v", blockedBuild)
 	}
 
 	doneSuccess := mustGetJob(t, rt.store, "done-success")
@@ -1776,6 +1879,53 @@ func TestRerunRejectsUnknownAndActiveJobs(t *testing.T) {
 		t.Fatalf("stop status = %d, want %d body=%s", stopRec.Code, http.StatusAccepted, stopRec.Body.String())
 	}
 	_ = waitForJobState(t, rt.store, resp.ID, "succeeded")
+}
+
+func TestRerunBlockedBuildCreatesFreshAttempt(t *testing.T) {
+	tmp := t.TempDir()
+	store, err := OpenStore(filepath.Join(tmp, "jobs.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	rt := &Runtime{
+		store:      store,
+		logger:     log.New(ioDiscard{}, "", 0),
+		buildQueue: make(chan buildTask, 1),
+	}
+
+	const jobID = "blocked-rerun"
+	insertJob(t, store.db, jobID, nowUTCString())
+	runPath := seedReadyRunBundle(t, filepath.Join(tmp, "jobs"), jobID)
+	if err := store.MarkBuildQueued(context.Background(), jobID, runPath, runPath, nowUTCString()); err != nil {
+		t.Fatal(err)
+	}
+	task := buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath}
+	if claimed, err := store.ClaimBuildRunning(context.Background(), task, nowUTCString()); err != nil || !claimed {
+		t.Fatalf("ClaimBuildRunning() = %t, %v", claimed, err)
+	}
+	if blocked, err := store.MarkBuildBlocked(context.Background(), task, "resource governor: CUDA runtime unavailable", nowUTCString()); err != nil || !blocked {
+		t.Fatalf("MarkBuildBlocked() = %t, %v", blocked, err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/jobs/"+jobID+"/rerun", nil)
+	rec := httptest.NewRecorder()
+	rt.handleRerunJob(rec, req, jobID)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("rerun status = %d, want %d body=%s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+	job := mustGetJob(t, store, jobID)
+	if job.Stage != "build" || job.State != "queued" || job.CurrentAttemptNumber != 2 || job.RerunCount != 1 || job.BuildDeferralCount != 0 || job.Error != nil {
+		t.Fatalf("blocked rerun job = %#v", job)
+	}
+	select {
+	case queued := <-rt.buildQueue:
+		if queued.JobID != jobID || queued.AttemptNumber != 2 || queued.DeferralCount != 0 {
+			t.Fatalf("rerun task = %#v", queued)
+		}
+	default:
+		t.Fatal("rerun task was not queued")
+	}
 }
 
 func TestRerunInterruptedJobWithReadyRunSucceeds(t *testing.T) {

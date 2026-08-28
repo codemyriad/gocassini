@@ -19,8 +19,9 @@ import (
 // ^operator\/status\/?$ route in appinfo/info.xml. It reports version/image
 // tag, the effective forced-CUDA settings and whether CUDA is actually usable,
 // Talk backend config presence (booleans only — never secret values), and
-// DB/storage health. All checks are cheap: no transcription, no doctor
-// subprocess.
+// DB/storage health. No check loads a model or transcribes audio. CUDA
+// readiness may invoke `nvidia-smi`, so it is singleflighted and cached for a
+// short TTL; the record doctor subprocess remains opt-in via /healthz.
 
 const (
 	envSTTDevice      = "CASSINI_STT_DEVICE"
@@ -48,6 +49,7 @@ const (
 	// singleflighted, cached briefly, and exec-bounded (D-376).
 	recordHealthProbeTTL     = 15 * time.Second
 	recordHealthProbeTimeout = 30 * time.Second
+	computeReadinessProbeTTL = 10 * time.Second
 )
 
 type statusResponse struct {
@@ -281,6 +283,9 @@ func (rt *Runtime) effectiveComputeStatus(settings STTSettings, device string) (
 	if capable, detail := imageCUDACapability(); !capable {
 		return false, detail
 	}
+	if rt.computeReadiness != nil {
+		return rt.computeReadiness.check(device)
+	}
 	return rt.computeProbe(device)
 }
 
@@ -308,9 +313,9 @@ func imageCUDACapability() (bool, string) {
 }
 
 // probeComputeDevice reports whether the configured STT device is usable plus
-// an actionable detail message. The CUDA probe is cheap — driver/device-node
-// visibility and an optional `nvidia-smi -L` — never a model load or a
-// transcription (D-363).
+// an actionable detail message. The CUDA probe checks driver/device-node
+// visibility and may run `nvidia-smi -L`; callers cache it so polling cannot
+// fan out subprocesses. It never loads a model or transcribes audio (D-363).
 func probeComputeDevice(device string) (bool, string) {
 	switch strings.ToLower(strings.TrimSpace(device)) {
 	case "", "cpu", "auto":
@@ -413,6 +418,58 @@ type ttlProbe struct {
 	inflight chan struct{}
 	at       time.Time
 	err      error
+}
+
+// computeStatusProbe is a device-keyed value form of ttlProbe. Device changes
+// invalidate the cached result immediately; concurrent status requests for the
+// same device share one nvidia-smi-backed probe.
+type computeStatusProbe struct {
+	ttl time.Duration
+	run func(device string) (usable bool, detail string)
+
+	mu       sync.Mutex
+	inflight chan struct{}
+	device   string
+	at       time.Time
+	usable   bool
+	detail   string
+}
+
+func newComputeStatusProbe(ttl time.Duration, run func(string) (bool, string)) *computeStatusProbe {
+	return &computeStatusProbe{ttl: ttl, run: run}
+}
+
+func (p *computeStatusProbe) check(device string) (bool, string) {
+	p.mu.Lock()
+	for {
+		if p.device == device && !p.at.IsZero() && time.Since(p.at) < p.ttl {
+			usable, detail := p.usable, p.detail
+			p.mu.Unlock()
+			return usable, detail
+		}
+		if p.inflight == nil {
+			break
+		}
+		wait := p.inflight
+		p.mu.Unlock()
+		<-wait
+		p.mu.Lock()
+	}
+	done := make(chan struct{})
+	p.inflight = done
+	p.mu.Unlock()
+
+	usable, detail := p.run(device)
+
+	p.mu.Lock()
+	p.device = device
+	p.usable = usable
+	p.detail = detail
+	p.at = time.Now()
+	p.inflight = nil
+	close(done)
+	p.mu.Unlock()
+	return usable, detail
 }
 
 func newTTLProbe(ttl time.Duration, run func() error) *ttlProbe {

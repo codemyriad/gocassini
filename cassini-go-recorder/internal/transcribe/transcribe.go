@@ -173,6 +173,15 @@ type AdditionalTranscript struct {
 // passing-run baseline of ~12-14 verbatim words, well over the noise.
 const minWordsBeforeMergedFallback = 10
 
+// The merged pass has no participant attribution, so it must recover more
+// than a token or two before replacing words that still identify a speaker.
+// Require at least two additional words and at least a 20% coverage gain. The
+// zero-word failure mode remains special: any non-empty mix is an improvement.
+const (
+	mergedFallbackMinExtraWords          = 2
+	mergedFallbackMinRelativeGainPercent = 20
+)
+
 // shouldFireMergedFallback decides whether the merged-mix fallback pass
 // is worth running. Extracted so the trigger threshold has a dedicated
 // regression test without needing a sherpa-onnx model + audio fixture.
@@ -229,27 +238,40 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 	mergedSegs := AssembleSegments(mergedStream.SpeakerID, words, 0, 0)
 	chosenSegments, useMerged := chooseMergedFallback(segments, mergedSegs)
 	if !useMerged {
-		fmt.Fprintf(stdout, "    merged fallback did not improve word count; keeping attributed participant pass\n")
+		fmt.Fprintf(stdout, "    merged fallback did not clear attribution-preserving margin (need at least %d words vs %d attributed); keeping participant pass\n",
+			minimumMergedFallbackWords(CountWords(segments)), CountWords(segments))
 		return streams, chosenSegments, nil
 	}
 
 	// The mixed pass covers the same meeting timeline as the participant pass.
 	// Treat these as alternative hypotheses, never additive sources: appending
 	// both duplicated every word that survived the thin participant pass. Only
-	// the strictly richer mixed hypothesis reaches the transcript.
+	// a mixed hypothesis that clears the attribution-preserving margin reaches
+	// the transcript.
 	extendedStreams := append(append([]AudioStream(nil), streams...), mergedStream)
 	return extendedStreams, chosenSegments, nil
 }
 
 // chooseMergedFallback keeps the two transcription hypotheses mutually
-// exclusive. Attribution is more valuable when word coverage is tied, so the
-// synthetic mixed pass replaces the participant pass only when it recovered
-// strictly more words.
+// exclusive. Attribution is more valuable than a marginal coverage increase,
+// so the synthetic mixed pass replaces the participant pass only when it clears
+// the documented absolute and relative recovery margin above.
 func chooseMergedFallback(participantSegments, mergedSegments []Segment) ([]Segment, bool) {
-	if CountWords(mergedSegments) <= CountWords(participantSegments) {
+	if CountWords(mergedSegments) < minimumMergedFallbackWords(CountWords(participantSegments)) {
 		return participantSegments, false
 	}
 	return MergeAndSortSegments([][]Segment{mergedSegments}), true
+}
+
+func minimumMergedFallbackWords(participantWords int) int {
+	if participantWords == 0 {
+		return 1
+	}
+	relativeGain := (participantWords*mergedFallbackMinRelativeGainPercent + 99) / 100
+	if relativeGain < mergedFallbackMinExtraWords {
+		relativeGain = mergedFallbackMinExtraWords
+	}
+	return participantWords + relativeGain
 }
 
 // transcribePass runs one full transcription pass over every speaker stream

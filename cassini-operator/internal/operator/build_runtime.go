@@ -13,13 +13,18 @@ import (
 	"time"
 )
 
-const defaultBuildWorkerCount = 1
-const defaultBuildResourceRetryDelay = 15 * time.Second
+const (
+	defaultBuildWorkerCount          = 1
+	defaultBuildResourceRetryDelay   = 15 * time.Second
+	maxBuildResourceRetryDelay       = 15 * time.Minute
+	defaultMaxBuildResourceDeferrals = 8
+)
 
 type buildTask struct {
 	JobID           string
 	AttemptNumber   int
 	ArtifactRunPath string
+	DeferralCount   int
 }
 
 func (rt *Runtime) startBuildWorkers() {
@@ -71,13 +76,34 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	if err != nil {
 		var unavailable *resourceUnavailableError
 		if errors.As(err, &unavailable) {
-			delay := rt.buildResourceRetryDelay
-			if delay <= 0 {
-				delay = defaultBuildResourceRetryDelay
+			maxDeferrals := rt.maxBuildResourceDeferrals
+			if maxDeferrals <= 0 {
+				maxDeferrals = defaultMaxBuildResourceDeferrals
 			}
+			nextDeferral := task.DeferralCount + 1
+			if unavailable.permanent || nextDeferral > maxDeferrals {
+				blocked, blockErr := rt.store.MarkBuildBlocked(
+					context.Background(), task, strings.TrimSpace(unavailable.Error()), finishedAt,
+				)
+				if blockErr != nil {
+					rt.logger.Printf("build resource block update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, blockErr)
+					return
+				}
+				if !blocked {
+					rt.logger.Printf("build resource block skipped id=%s attempt=%d worker=%d: job is no longer build/running", task.JobID, task.AttemptNumber, workerIndex)
+					return
+				}
+				reason := "permanent resource condition"
+				if !unavailable.permanent {
+					reason = fmt.Sprintf("retry ceiling reached after %d deferrals", task.DeferralCount)
+				}
+				rt.logger.Printf("build blocked id=%s attempt=%d worker=%d (%s): %v", task.JobID, task.AttemptNumber, workerIndex, reason, unavailable)
+				return
+			}
+			delay := exponentialBuildRetryDelay(rt.buildResourceRetryDelay, nextDeferral)
 			retryNotBefore := time.Now().UTC().Add(delay)
 			deferred, deferErr := rt.store.MarkBuildDeferred(
-				context.Background(), task.JobID, task.AttemptNumber,
+				context.Background(), task, nextDeferral, strings.TrimSpace(unavailable.Error()),
 				finishedAt, formatUTCString(retryNotBefore),
 			)
 			if deferErr != nil {
@@ -88,7 +114,8 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 				rt.logger.Printf("build resource defer skipped id=%s attempt=%d worker=%d: job is no longer build/running", task.JobID, task.AttemptNumber, workerIndex)
 				return
 			}
-			rt.logger.Printf("build deferred id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, unavailable)
+			task.DeferralCount = nextDeferral
+			rt.logger.Printf("build deferred id=%s attempt=%d worker=%d count=%d retry_in=%s: %v", task.JobID, task.AttemptNumber, workerIndex, nextDeferral, delay, unavailable)
 			rt.scheduleDeferredBuild(task, retryNotBefore)
 			return
 		}
@@ -139,11 +166,31 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	rt.logger.Printf("build succeeded id=%s attempt=%d worker=%d attempt_meeting=%s canonical_meeting=%s seal_queued_at=%s", task.JobID, task.AttemptNumber, workerIndex, attemptMeetingPath, canonicalMeetingPath, finishedAt)
 }
 
-// scheduleDeferredBuild applies a fixed backoff before redelivery. The durable
-// row remains build/queued throughout. Waiting in a goroutine avoids occupying
-// the sole build worker, and the blocking channel handoff (bounded by shutdown)
-// guarantees delivery even when the requeue dispatcher's duplicate tracker
-// still remembers the original handoff.
+func exponentialBuildRetryDelay(base time.Duration, deferralCount int) time.Duration {
+	if base <= 0 {
+		base = defaultBuildResourceRetryDelay
+	}
+	if deferralCount < 1 {
+		deferralCount = 1
+	}
+	delay := base
+	for count := 1; count < deferralCount && delay < maxBuildResourceRetryDelay; count++ {
+		if delay > maxBuildResourceRetryDelay/2 {
+			return maxBuildResourceRetryDelay
+		}
+		delay *= 2
+	}
+	if delay > maxBuildResourceRetryDelay {
+		return maxBuildResourceRetryDelay
+	}
+	return delay
+}
+
+// scheduleDeferredBuild waits for the exponentially calculated retry time
+// before redelivery. The durable row remains build/queued throughout. Waiting
+// in a goroutine avoids occupying the sole build worker, and the blocking
+// channel handoff (bounded by shutdown) guarantees delivery even when the
+// requeue dispatcher's duplicate tracker still remembers the original handoff.
 func (rt *Runtime) scheduleDeferredBuild(task buildTask, retryNotBefore time.Time) {
 	go func() {
 		delay := time.Until(retryNotBefore)
@@ -206,8 +253,7 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	// before waiting for RAM: a portable image can never become eligible merely
 	// because host memory frees up. Then wait — bounded — for RAM headroom.
 	limits := resourceLimitsFromEnv()
-	if !rt.buildIntendsCUDA() {
-		_, admissionErr := limits.applyToEnv(nil, false)
+	if admissionErr := rt.buildCUDAAdmission(); admissionErr != nil {
 		return meetingPath, admissionErr
 	}
 	if err := limits.waitForMemory(ctx, rt.logger.Printf); err != nil {

@@ -38,26 +38,44 @@ cat >"$TMP_DIR/jobs-ambiguous.json" <<'JSON'
 [{"id":"old","state":"succeeded"},{"id":"new-a","state":"succeeded"},{"id":"new-b","state":"running"}]
 JSON
 cat >"$TMP_DIR/jobs-build-deferred.json" <<'JSON'
-[{"id":"old","state":"succeeded"},{"id":"new","state":"queued","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":"2099-08-28T10:00:15Z","build_started_at":null,"build_finished_at":null,"completed_at":null,"error":null}]
+[{"id":"old","state":"succeeded"},{"id":"new","state":"queued","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":"2099-08-28T10:00:15Z","build_deferral_count":1,"build_started_at":null,"build_finished_at":null,"completed_at":null,"error":"resource governor: GPU memory unavailable: free VRAM is below floor"}]
 JSON
 cat >"$TMP_DIR/jobs-build-pending.json" <<'JSON'
-[{"id":"old","state":"succeeded"},{"id":"new","state":"queued","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":null,"build_started_at":null,"build_finished_at":null,"completed_at":null,"error":null}]
+[{"id":"old","state":"succeeded"},{"id":"new","state":"queued","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":null,"build_deferral_count":0,"build_started_at":null,"build_finished_at":null,"completed_at":null,"error":null}]
 JSON
 cat >"$TMP_DIR/jobs-build-stale.json" <<'JSON'
-[{"id":"old","state":"succeeded"},{"id":"new","state":"queued","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":"2000-01-01T00:00:00Z","build_started_at":null,"build_finished_at":null,"completed_at":null,"error":null}]
+[{"id":"old","state":"succeeded"},{"id":"new","state":"queued","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":"2000-01-01T00:00:00Z","build_deferral_count":2,"build_started_at":null,"build_finished_at":null,"completed_at":null,"error":"resource governor: host memory unavailable: below floor"}]
 JSON
 cat >"$TMP_DIR/jobs-build-invalid-retry.json" <<'JSON'
-[{"id":"old","state":"succeeded"},{"id":"new","state":"queued","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":"eventually","build_started_at":null,"build_finished_at":null,"completed_at":null,"error":null}]
+[{"id":"old","state":"succeeded"},{"id":"new","state":"queued","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":"eventually","build_deferral_count":1,"build_started_at":null,"build_finished_at":null,"completed_at":null,"error":"resource governor: GPU memory unavailable: below floor"}]
+JSON
+cat >"$TMP_DIR/jobs-build-blocked.json" <<'JSON'
+[{"id":"old","state":"succeeded"},{"id":"new","state":"blocked","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":null,"build_deferral_count":0,"build_started_at":null,"build_finished_at":null,"completed_at":null,"error":"resource governor: CUDA runtime unavailable: the installed portable image does not bundle the CUDA inference runtime; install the matching -cuda image on the GPU deploy daemon because operator speech recognition is GPU-only"}]
+JSON
+cat >"$TMP_DIR/jobs-build-blocked-retry.json" <<'JSON'
+[{"id":"old","state":"succeeded"},{"id":"new","state":"blocked","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":"2099-08-28T10:00:15Z","build_deferral_count":0,"build_started_at":null,"build_finished_at":null,"completed_at":null,"error":"resource governor: CUDA runtime unavailable: the installed portable image does not bundle the CUDA inference runtime; install the matching -cuda image on the GPU deploy daemon because operator speech recognition is GPU-only"}]
+JSON
+cat >"$TMP_DIR/jobs-build-blocked-vague.json" <<'JSON'
+[{"id":"old","state":"succeeded"},{"id":"new","state":"blocked","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":null,"build_deferral_count":0,"build_started_at":null,"build_finished_at":null,"completed_at":null,"error":"resource governor: CUDA runtime unavailable"}]
+JSON
+cat >"$TMP_DIR/jobs-build-blocked-after-retry.json" <<'JSON'
+[{"id":"old","state":"succeeded"},{"id":"new","state":"blocked","stage":"build","record_exit_code":0,"record_finished_at":"2026-08-28T10:00:00Z","artifact_run_path":"/jobs/new/runs/attempt-001","artifact_meeting_path":null,"build_queued_at":"2026-08-28T10:00:00Z","build_retry_not_before":null,"build_deferral_count":1,"build_started_at":null,"build_finished_at":null,"completed_at":null,"error":"resource governor: CUDA runtime unavailable: the installed portable image does not bundle the CUDA inference runtime; install the matching -cuda image on the GPU deploy daemon because operator speech recognition is GPU-only"}]
 JSON
 expect_rc 10 "no new job" "$PY" select-job --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-none.json"
 expect_pass "one succeeded new job" "$PY" select-job --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-success.json"
 expect_rc 3 "failed new job" "$PY" select-job --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-failed.json"
 expect_fail "ambiguous new jobs" "$PY" select-job --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-ambiguous.json"
-expect_pass "GPU-less build is durably deferred" "$PY" select-job --expect build-deferred --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-build-deferred.json"
+expect_pass "transient VRAM pressure is durably deferred" "$PY" select-job --expect build-deferred --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-build-deferred.json"
 expect_rc 10 "build without a resource backoff is still pending" "$PY" select-job --expect build-deferred --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-build-pending.json"
 expect_rc 10 "elapsed resource backoff is still pending" "$PY" select-job --expect build-deferred --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-build-stale.json"
 expect_fail "malformed resource backoff is invalid" "$PY" select-job --expect build-deferred --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-build-invalid-retry.json"
 expect_fail "CPU fallback success violates GPU-only mode" "$PY" select-job --expect build-deferred --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-success.json"
+expect_pass "portable image build blocks immediately and actionably" "$PY" select-job --expect build-blocked --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-build-blocked.json"
+expect_rc 10 "portable build still in flight is pending" "$PY" select-job --expect build-blocked --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-build-pending.json"
+expect_fail "permanent block cannot retain a retry timestamp" "$PY" select-job --expect build-blocked --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-build-blocked-retry.json"
+expect_fail "permanent block must tell the admin how to recover" "$PY" select-job --expect build-blocked --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-build-blocked-vague.json"
+expect_fail "portable runtime must block without transient deferrals" "$PY" select-job --expect build-blocked --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-build-blocked-after-retry.json"
+expect_fail "CPU fallback success violates blocked GPU-only mode" "$PY" select-job --expect build-blocked --before "$TMP_DIR/jobs-before.json" --current "$TMP_DIR/jobs-success.json"
 
 cat >"$TMP_DIR/catalog-missing.json" <<'JSON'
 {"meetings":[{"id":"old","audioPath":"./old.opus","segmentCount":1}]}

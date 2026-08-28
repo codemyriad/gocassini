@@ -122,7 +122,7 @@ CI publishes to `ghcr.io/codemyriad/gocassini`:
 
 | Tag | What it is |
 |---|---|
-| `X.Y.Z` | Portable capture image. Immutable by convention; matches `<version>`/`<image-tag>` in `appinfo/info.xml`. It records without a GPU, while operator-managed transcription defers instead of using CPU ASR. |
+| `X.Y.Z` | Portable capture image. Immutable by convention; matches `<version>`/`<image-tag>` in `appinfo/info.xml`. It records without a GPU, while operator-managed transcription immediately enters `build/blocked` instead of using CPU ASR. |
 | `X.Y.Z-cuda` | CUDA release build (CUDA 12 / cuDNN 9 sherpa-onnx, fp32 Parakeet model, `CASSINI_STT_DEVICE=cuda`) |
 | `X.Y.Z-rocm` | Alias of the CPU build so ROCm-tagged daemons install; no ROCm acceleration yet |
 | `sha-<shortsha>` / `sha-<shortsha>-cuda` | Every pushed commit, for pinning a specific build |
@@ -150,7 +150,8 @@ You don't select the `-cuda` tag by hand: when the deploy daemon's compute
 device is CUDA, AppAPI automatically tries `<image-tag>-cuda` first and falls
 back to the plain tag. Cassini detects that fallback: the plain image remains
 available for capture, `/operator/status` reports CUDA unavailable, and build
-jobs stay durably queued for GPU resources instead of decoding on CPU.
+jobs immediately enter `build/blocked` with instructions to install the matching
+`-cuda` image instead of decoding on CPU.
 
 The checked-in manifest already pins the current release; to install a
 different build, download `appinfo/info.xml`, set `<image-tag>` to the
@@ -604,13 +605,18 @@ needs the NVIDIA driver + [NVIDIA Container Toolkit](https://docs.nvidia.com/dat
 verify with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`
 on that engine before registering the app.
 
-There is no CPU transcription fallback. If CUDA is absent, unusable, or below
-the configured VRAM floor, recording can finish but the build remains queued
-with `build_retry_not_before`; `/operator/status` answers 503 with an actionable
-`stt.detail`. For temporary device/VRAM pressure, restoring GPU capacity lets
-the durable worker retry resume it. If `stt.detail` says the portable image has
-no CUDA runtime, repair the `-cuda` tag and redeploy/upgrade the ExApp; capacity
-alone cannot make that image eligible.
+There is no CPU transcription fallback. A plain portable image is a permanent
+inference mismatch: recording finishes, but the build immediately enters
+`build/blocked` with no `build_retry_not_before`; `/operator/status` answers 503
+with an actionable `stt.detail`. Install/redeploy the matching `-cuda` image,
+then use **Rerun** in Cassini Admin to process the preserved recording.
+
+On a CUDA-capable image, temporary RAM or VRAM pressure is different. The
+operator keeps the build queued, records `build_retry_not_before`, and retries
+with exponential backoff (starting at 15 seconds and capped at 15 minutes).
+After eight unsuccessful deferrals it moves the job to `build/blocked` instead
+of retrying forever. Restore capacity and use **Rerun** to create a fresh
+attempt.
 
 ### Remote GPU node
 

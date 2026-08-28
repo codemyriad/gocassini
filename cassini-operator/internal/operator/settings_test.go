@@ -1,8 +1,10 @@
 package operator
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -245,20 +247,136 @@ func TestSaveLoadRoundTripUserSettings(t *testing.T) {
 	}
 }
 
-func TestLoadAndSaveRejectUnauditedModelOverride(t *testing.T) {
+func TestSaveRejectsUnsupportedOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	if err := os.WriteFile(path, []byte(`{
-  "quality": "best",
-  "model_override": "parakeet-tdt-0.6b-v3-int8",
-  "source": "user"
-}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadOrInitSettings(path); err == nil || !strings.Contains(err.Error(), "not an audited CUDA model") {
-		t.Fatalf("LoadOrInitSettings() error = %v, want unaudited CUDA rejection", err)
-	}
 	if err := Save(path, STTSettings{Quality: sttQualityBest, ModelOverride: "custom"}); err == nil || !strings.Contains(err.Error(), "not an audited CUDA model") {
 		t.Fatalf("Save() error = %v, want unaudited CUDA rejection", err)
+	}
+	for _, device := range []string{"cpu", "tpu"} {
+		if err := Save(path, STTSettings{Quality: sttQualityBest, DeviceOverride: device}); err == nil || !strings.Contains(err.Error(), "GPU-only") {
+			t.Errorf("Save(device_override=%q) error = %v, want GPU-only rejection", device, err)
+		}
+	}
+}
+
+func TestLoadLegacySettingsHealsUnsupportedOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		device      string
+		model       string
+		wantDevice  string
+		wantModel   string
+		messageBits []string
+	}{
+		{
+			name:       "cpu device and unaudited model",
+			device:     "cpu",
+			model:      "parakeet-tdt-0.6b-v3-int8",
+			wantDevice: "",
+			wantModel:  "",
+			messageBits: []string{
+				`unsupported device_override="cpu"`,
+				`unaudited model_override="parakeet-tdt-0.6b-v3-int8"`,
+			},
+		},
+		{
+			name:       "unknown device",
+			device:     "tpu",
+			model:      auditedCUDAParakeetV3,
+			wantDevice: "",
+			wantModel:  auditedCUDAParakeetV3,
+			messageBits: []string{
+				`unsupported device_override="tpu"`,
+			},
+		},
+		{
+			name:       "unaudited model only",
+			device:     "cuda",
+			model:      "custom/model",
+			wantDevice: "cuda",
+			wantModel:  "",
+			messageBits: []string{
+				`unaudited model_override="custom/model"`,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "settings.json")
+			legacy := STTSettings{
+				Quality:             sttQualityFast,
+				DeviceOverride:      tc.device,
+				ModelOverride:       tc.model,
+				TranscriptionTerms:  []string{" Gocassini ", "Nextcloud\tTalk", "gocassini"},
+				Source:              sttSourceUser,
+				HardwareFingerprint: "legacy-host",
+				DetectedGPU:         false,
+				Cores:               2,
+			}
+			raw, err := json.Marshal(legacy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, raw, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			var migrations []SettingsMigration
+			got, err := LoadOrInitSettingsWithMigrationReporter(path, func(migration SettingsMigration) {
+				migrations = append(migrations, migration)
+			})
+			if err != nil {
+				t.Fatalf("LoadOrInitSettingsWithMigrationReporter() error = %v", err)
+			}
+			if got.DeviceOverride != tc.wantDevice || got.ModelOverride != tc.wantModel {
+				t.Fatalf("healed overrides = device %q model %q, want %q/%q", got.DeviceOverride, got.ModelOverride, tc.wantDevice, tc.wantModel)
+			}
+			if got.Quality != sttQualityFast || got.Source != sttSourceUser {
+				t.Fatalf("legacy quality/source were not preserved: %#v", got)
+			}
+			if terms := strings.Join(got.TranscriptionTerms, "|"); terms != "Gocassini|Nextcloud Talk" {
+				t.Fatalf("legacy transcription terms = %q, want normalized preserved terms", terms)
+			}
+			if len(migrations) != 1 {
+				t.Fatalf("migration reports = %d, want exactly 1", len(migrations))
+			}
+			message := migrations[0].Message()
+			for _, bit := range append(tc.messageBits,
+				path,
+				`preserved quality="fast", source="user", and 2 transcription terms`,
+				"use Settings to select CUDA",
+			) {
+				if !strings.Contains(message, bit) {
+					t.Errorf("migration message %q does not contain %q", message, bit)
+				}
+			}
+
+			// Read the file directly: a successful in-memory migration is not
+			// enough because it would recur after every operator restart.
+			persistedRaw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var persisted STTSettings
+			if err := json.Unmarshal(persistedRaw, &persisted); err != nil {
+				t.Fatalf("decode healed settings: %v", err)
+			}
+			if persisted.DeviceOverride != tc.wantDevice || persisted.ModelOverride != tc.wantModel {
+				t.Fatalf("persisted overrides = device %q model %q, want %q/%q", persisted.DeviceOverride, persisted.ModelOverride, tc.wantDevice, tc.wantModel)
+			}
+			if persisted.Quality != sttQualityFast || persisted.Source != sttSourceUser || strings.Join(persisted.TranscriptionTerms, "|") != "Gocassini|Nextcloud Talk" {
+				t.Fatalf("persisted policy was not preserved: %#v", persisted)
+			}
+
+			migrations = nil
+			if _, err := LoadOrInitSettingsWithMigrationReporter(path, func(migration SettingsMigration) {
+				migrations = append(migrations, migration)
+			}); err != nil {
+				t.Fatalf("reload healed settings: %v", err)
+			}
+			if len(migrations) != 0 {
+				t.Fatalf("healed file migrated again: %#v", migrations)
+			}
+		})
 	}
 }
 
@@ -410,5 +528,45 @@ func TestGetSettingsReturnsEffectiveView(t *testing.T) {
 	}
 	if resp.Effective.Quality != normalizeQuality(resp.Quality) {
 		t.Fatalf("effective.quality = %q, want %q", resp.Effective.Quality, normalizeQuality(resp.Quality))
+	}
+}
+
+func TestGetSettingsLogsPersistedPolicyMigration(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	legacy := STTSettings{
+		Quality:            sttQualityBest,
+		DeviceOverride:     "cpu",
+		ModelOverride:      "legacy-int8-model",
+		TranscriptionTerms: []string{"Gocassini"},
+		Source:             sttSourceUser,
+	}
+	raw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt.settingsPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	rt.logger = log.New(&logs, "operator: ", 0)
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	rec := httptest.NewRecorder()
+	rt.settingsHandler(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+	for _, bit := range []string{
+		"operator: stt_settings migrated",
+		`unsupported device_override="cpu"`,
+		`unaudited model_override="legacy-int8-model"`,
+		"use Settings to select CUDA",
+	} {
+		if !strings.Contains(logs.String(), bit) {
+			t.Errorf("migration log %q does not contain %q", logs.String(), bit)
+		}
 	}
 }

@@ -17,8 +17,9 @@ import (
 // or all of RAM degrades the call server. On GPU hosts the shared VRAM can OOM
 // other services. Production builds are GPU-only: the governor (1) pins CUDA
 // STT to one host thread, (2) refuses to start while free RAM is below a floor,
-// and (3) defers when CUDA or a trustworthy free-VRAM reading is unavailable.
-// It never moves recognition onto CPU/RAM as a fallback.
+// and (3) defers transient device/VRAM pressure while permanently blocking an
+// incompatible runtime or policy. It never moves recognition onto CPU/RAM as a
+// fallback.
 
 // Probes are package vars so tests can inject deterministic values.
 var (
@@ -73,21 +74,26 @@ func (l resourceLimits) threadBudget() int {
 	}
 }
 
-// resourceUnavailableError marks transient capacity pressure. The build worker
-// recognizes it and restores the claimed job to the durable queue instead of
-// turning a valid recording into a terminal failure.
+// resourceUnavailableError marks resource admission failures. The build worker
+// either restores transient capacity pressure to the durable queue or preserves
+// a permanent/exhausted condition in a visible, manually rerunnable blocked
+// state instead of turning a valid recording into a generic failure.
 type resourceUnavailableError struct {
 	resource string
 	detail   string
+	// permanent means waiting cannot make this runtime eligible (for example,
+	// the portable image does not contain CUDA libraries). The worker moves the
+	// job to build/blocked immediately instead of scheduling retries forever.
+	permanent bool
 }
 
 func (e *resourceUnavailableError) Error() string {
 	return fmt.Sprintf("resource governor: %s unavailable: %s", e.resource, e.detail)
 }
 
-// applyToEnv injects the GPU-only STT execution policy. A CPU resolution means
-// CUDA is absent or was explicitly disabled; either case is a transient build
-// capacity failure, never permission to run speech recognition on host CPU.
+// applyToEnv injects the GPU-only STT execution policy after buildCUDAAdmission
+// has rejected permanent image/policy failures. A false CUDA intent remains an
+// admission error, never permission to run speech recognition on host CPU.
 // CUDA builds are pinned to one host thread and require a trustworthy VRAM
 // reading at or above the configured floor.
 func (l resourceLimits) applyToEnv(env []string, intendsCUDA bool) ([]string, error) {
@@ -154,20 +160,37 @@ func (l resourceLimits) waitForMemory(ctx context.Context, logf func(format stri
 	}
 }
 
-// buildIntendsCUDA mirrors the recorder's device resolution. applyToEnv treats a
-// false result as unavailable capacity, so neither an explicit CPU override nor
-// a temporarily missing GPU node can trigger CPU speech recognition.
-func (rt *Runtime) buildIntendsCUDA() bool {
-	if capable, _ := imageCUDACapability(); !capable {
-		return false
+// buildCUDAAdmission separates permanent policy/runtime failures from
+// transient device pressure before the worker waits for host RAM. The later
+// applyToEnv call still takes the fresh free-VRAM snapshot immediately before
+// launch.
+func (rt *Runtime) buildCUDAAdmission() error {
+	if capable, detail := imageCUDACapability(); !capable {
+		return &resourceUnavailableError{resource: "CUDA runtime", detail: detail, permanent: true}
 	}
-	switch strings.ToLower(strings.TrimSpace(rt.currentSettings().DeviceOverride)) {
+	switch override := strings.ToLower(strings.TrimSpace(rt.currentSettings().DeviceOverride)); override {
 	case "cpu":
-		return false
+		return &resourceUnavailableError{
+			resource:  "CUDA policy",
+			detail:    "stored device_override=cpu is incompatible with GPU-only operator builds; clear it or select cuda",
+			permanent: true,
+		}
 	case "cuda":
-		return true
+		return nil
+	case "", "auto":
+		if detectGPU() {
+			return nil
+		}
+		return &resourceUnavailableError{
+			resource: "CUDA device",
+			detail:   "no NVIDIA device is currently visible to the CUDA-capable runtime",
+		}
 	default:
-		return detectGPU()
+		return &resourceUnavailableError{
+			resource:  "CUDA policy",
+			detail:    fmt.Sprintf("stored device_override=%q is invalid for GPU-only operator builds", override),
+			permanent: true,
+		}
 	}
 }
 

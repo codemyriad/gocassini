@@ -90,7 +90,7 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 	vadCfg.SileroVad.Threshold = 0.5
 	vadCfg.SileroVad.MinSilenceDuration = 0.5
 	vadCfg.SileroVad.MinSpeechDuration = 0.25
-	vadCfg.SileroVad.WindowSize = 512
+	vadCfg.SileroVad.WindowSize = vadWindowSamples
 	vadCfg.SileroVad.MaxSpeechDuration = 25.0
 	vadCfg.SampleRate = paths.SampleRate
 	// Silero VAD is a tiny stateful model run per 32 ms window; it is fastest

@@ -252,7 +252,6 @@
               <span class="text-xs font-medium text-base-content/70">Device override</span>
               <select bind:value={deviceOverride} class="select select-sm w-full border-base-300 shadow-none">
                 <option value="">Auto</option>
-                <option value="cpu">CPU</option>
                 <option value="cuda">CUDA</option>
               </select>
             </label>

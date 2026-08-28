@@ -165,7 +165,7 @@ func TestApplyToEnv(t *testing.T) {
 
 func TestExecuteBuildCLIDoesNotLaunchCassiniWithoutCUDARuntime(t *testing.T) {
 	// An impossible RAM floor proves CUDA capability is checked first. A
-	// portable image must defer immediately, not spend five minutes waiting for
+	// portable image must block immediately, not spend five minutes waiting for
 	// memory that cannot make its missing execution provider appear.
 	t.Setenv("CASSINI_BUILD_MIN_FREE_MEM_MB", "999999")
 	t.Setenv("CASSINI_BUILD_MEM_WAIT_SECS", "300")
@@ -207,8 +207,8 @@ func TestExecuteBuildCLIDoesNotLaunchCassiniWithoutCUDARuntime(t *testing.T) {
 		JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath,
 	})
 	var unavailable *resourceUnavailableError
-	if !errors.As(err, &unavailable) || unavailable.resource != "CUDA device" {
-		t.Fatalf("executeBuildCLI() error = %v, want CUDA resourceUnavailableError", err)
+	if !errors.As(err, &unavailable) || unavailable.resource != "CUDA runtime" || !unavailable.permanent {
+		t.Fatalf("executeBuildCLI() error = %v, want permanent CUDA runtime resourceUnavailableError", err)
 	}
 	if _, statErr := os.Stat(marker); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("Cassini subprocess ran on CPU (marker stat error = %v)", statErr)
@@ -316,11 +316,14 @@ FROM job_attempts WHERE job_id = ? AND attempt_number = 1`, jobID).
 	if job.BuildRetryNotBefore == nil || strings.TrimSpace(*job.BuildRetryNotBefore) == "" {
 		t.Fatalf("deferred job does not expose build_retry_not_before: %#v", job)
 	}
+	if job.BuildDeferralCount != 1 || job.Error == nil || !strings.Contains(*job.Error, "test pressure") {
+		t.Fatalf("deferred job does not expose count/reason: %#v", job)
+	}
 	attempts, err := rt.store.ListJobAttempts(context.Background(), jobID)
 	if err != nil {
 		t.Fatalf("ListJobAttempts() deferred job error = %v", err)
 	}
-	if len(attempts) != 1 || attempts[0].BuildRetryNotBefore == nil || strings.TrimSpace(*attempts[0].BuildRetryNotBefore) == "" {
+	if len(attempts) != 1 || attempts[0].BuildRetryNotBefore == nil || strings.TrimSpace(*attempts[0].BuildRetryNotBefore) == "" || attempts[0].BuildDeferralCount != 1 {
 		t.Fatalf("deferred attempt does not expose build_retry_not_before: %#v", attempts)
 	}
 	attempt, err := rt.store.GetJobAttempt(context.Background(), jobID, 1)
@@ -333,7 +336,7 @@ FROM job_attempts WHERE job_id = ? AND attempt_number = 1`, jobID).
 
 	select {
 	case retry := <-rt.buildQueue:
-		if retry.JobID != jobID || retry.AttemptNumber != 1 {
+		if retry.JobID != jobID || retry.AttemptNumber != 1 || retry.DeferralCount != 1 {
 			t.Fatalf("retry task = %#v", retry)
 		}
 		if time.Since(started) < 200*time.Millisecond {
@@ -341,6 +344,116 @@ FROM job_attempts WHERE job_id = ? AND attempt_number = 1`, jobID).
 		}
 	case <-time.After(time.Second):
 		t.Fatal("deferred build was not redelivered")
+	}
+}
+
+func TestRunBuildJobBlocksPermanentAndRetryCeiling(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		initialCount  int
+		maxDeferrals  int
+		unavailable   *resourceUnavailableError
+		wantRerunTest bool
+	}{
+		{
+			name:          "permanent image incompatibility",
+			maxDeferrals:  8,
+			unavailable:   &resourceUnavailableError{resource: "CUDA runtime", detail: "portable image", permanent: true},
+			wantRerunTest: true,
+		},
+		{
+			name:         "transient retry ceiling",
+			initialCount: 2,
+			maxDeferrals: 2,
+			unavailable:  &resourceUnavailableError{resource: "GPU memory", detail: "still busy"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			store, err := OpenStore(filepath.Join(tmp, "jobs.sqlite3"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			rt := &Runtime{
+				ctx:                       ctx,
+				store:                     store,
+				cfg:                       Config{WorkRoot: filepath.Join(tmp, "jobs")},
+				logger:                    log.New(io.Discard, "", 0),
+				buildQueue:                make(chan buildTask, 1),
+				maxBuildResourceDeferrals: tc.maxDeferrals,
+			}
+
+			jobID := "blocked-" + strings.ReplaceAll(tc.name, " ", "-")
+			insertJob(t, store.db, jobID, nowUTCString())
+			runPath := seedReadyRunBundle(t, rt.cfg.WorkRoot, jobID)
+			if err := store.MarkBuildQueued(context.Background(), jobID, runPath, runPath, nowUTCString()); err != nil {
+				t.Fatal(err)
+			}
+			if tc.initialCount > 0 {
+				if _, err := store.db.Exec(`
+UPDATE jobs SET build_deferral_count = ? WHERE id = ?;
+UPDATE job_attempts SET build_deferral_count = ? WHERE job_id = ? AND attempt_number = 1`,
+					tc.initialCount, jobID, tc.initialCount, jobID); err != nil {
+					t.Fatalf("seed deferral count: %v", err)
+				}
+			}
+			rt.buildJobFn = func(context.Context, buildTask) (string, error) { return "", tc.unavailable }
+			task := buildTask{JobID: jobID, AttemptNumber: 1, ArtifactRunPath: runPath, DeferralCount: tc.initialCount}
+			rt.runBuildJob(task, 1)
+
+			job, err := store.GetJob(context.Background(), jobID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if job.Stage != "build" || job.State != "blocked" || job.BuildRetryNotBefore != nil || job.BuildStartedAt != nil || job.CompletedAt != nil {
+				t.Fatalf("blocked job = %#v", job)
+			}
+			if job.BuildDeferralCount != tc.initialCount || job.Error == nil || !strings.Contains(*job.Error, tc.unavailable.detail) {
+				t.Fatalf("blocked job lost count/reason: %#v", job)
+			}
+			attempt, err := store.GetJobAttempt(context.Background(), jobID, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if attempt.State != "blocked" || attempt.BuildDeferralCount != tc.initialCount || attempt.BuildRetryNotBefore != nil {
+				t.Fatalf("blocked attempt = %#v", attempt)
+			}
+			select {
+			case retry := <-rt.buildQueue:
+				t.Fatalf("blocked build scheduled retry: %#v", retry)
+			default:
+			}
+
+			if tc.wantRerunTest {
+				rerun, err := store.QueueRerunAttempt(context.Background(), job, nowUTCString())
+				if err != nil {
+					t.Fatalf("QueueRerunAttempt(blocked) error = %v", err)
+				}
+				if rerun.Stage != "build" || rerun.State != "queued" || rerun.CurrentAttemptNumber != 2 || rerun.BuildDeferralCount != 0 || rerun.Error != nil {
+					t.Fatalf("blocked rerun = %#v", rerun)
+				}
+			}
+		})
+	}
+}
+
+func TestExponentialBuildRetryDelayCapsAtFifteenMinutes(t *testing.T) {
+	for _, tc := range []struct {
+		count int
+		want  time.Duration
+	}{
+		{count: 1, want: 15 * time.Second},
+		{count: 2, want: 30 * time.Second},
+		{count: 6, want: 8 * time.Minute},
+		{count: 7, want: 15 * time.Minute},
+		{count: 100, want: 15 * time.Minute},
+	} {
+		if got := exponentialBuildRetryDelay(15*time.Second, tc.count); got != tc.want {
+			t.Errorf("count %d delay = %s, want %s", tc.count, got, tc.want)
+		}
 	}
 }
 
@@ -458,8 +571,8 @@ func TestBuildRetryNotBeforeSurvivesRestart(t *testing.T) {
 		t.Fatalf("ClaimBuildRunning() = (%v, %v), want (true, nil)", claimed, err)
 	}
 	if deferred, err := store.MarkBuildDeferred(
-		context.Background(), task.JobID, task.AttemptNumber,
-		nowUTCString(), "2099-01-01T00:00:00Z",
+		context.Background(), task, 1, "resource governor: test pressure",
+		nowUTCString(), "2099-01-01T00:00:00.000000000Z",
 	); err != nil || !deferred {
 		t.Fatalf("MarkBuildDeferred() = (%v, %v), want (true, nil)", deferred, err)
 	}
@@ -481,19 +594,26 @@ func TestBuildRetryNotBeforeSurvivesRestart(t *testing.T) {
 		t.Fatalf("early ClaimBuildRunning() = (%v, %v), want (false, nil)", claimed, err)
 	}
 	if _, err := store.db.Exec(`
-UPDATE jobs SET build_retry_not_before = '2000-01-01T00:00:00Z' WHERE id = 'restart-deferred';
-UPDATE job_attempts SET build_retry_not_before = '2000-01-01T00:00:00Z'
+UPDATE jobs SET build_retry_not_before = '2000-01-01T00:00:00.000000000Z' WHERE id = 'restart-deferred';
+UPDATE job_attempts SET build_retry_not_before = '2000-01-01T00:00:00.000000000Z'
 WHERE job_id = 'restart-deferred' AND attempt_number = 1;`); err != nil {
 		t.Fatalf("make retry eligible: %v", err)
 	}
+	eligibleTask := buildTask{JobID: task.JobID, AttemptNumber: task.AttemptNumber, ArtifactRunPath: task.ArtifactRunPath, DeferralCount: 1}
 	if tasks, err := store.ListQueuedBuildTasks(context.Background()); err != nil {
 		t.Fatalf("ListQueuedBuildTasks() eligible error = %v", err)
-	} else if len(tasks) != 1 || tasks[0] != task {
-		t.Fatalf("eligible tasks = %#v, want %#v", tasks, task)
+	} else if len(tasks) != 1 || tasks[0] != eligibleTask {
+		t.Fatalf("eligible tasks = %#v, want %#v", tasks, eligibleTask)
+	}
+	if claimed, err := store.ClaimBuildRunning(context.Background(), task, nowUTCString()); err != nil || claimed {
+		t.Fatalf("stale deferral task ClaimBuildRunning() = (%v, %v), want (false, nil)", claimed, err)
+	}
+	if claimed, err := store.ClaimBuildRunning(context.Background(), eligibleTask, nowUTCString()); err != nil || !claimed {
+		t.Fatalf("current deferral task ClaimBuildRunning() = (%v, %v), want (true, nil)", claimed, err)
 	}
 }
 
-func TestBuildRetryEligibilityUsesChronologicalFractionalTime(t *testing.T) {
+func TestBuildRetryEligibilityUsesFixedWidthTextTime(t *testing.T) {
 	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
 	if err != nil {
 		t.Fatalf("OpenStore() error = %v", err)
@@ -505,16 +625,16 @@ func TestBuildRetryEligibilityUsesChronologicalFractionalTime(t *testing.T) {
 		t.Fatalf("MarkBuildQueued() error = %v", err)
 	}
 	if _, err := store.db.Exec(`
-UPDATE jobs SET build_retry_not_before = '2026-08-28T10:00:00.8Z' WHERE id = 'fractional-retry';
-UPDATE job_attempts SET build_retry_not_before = '2026-08-28T10:00:00.8Z'
+UPDATE jobs SET build_retry_not_before = '2026-08-28T10:00:00.800000000Z' WHERE id = 'fractional-retry';
+UPDATE job_attempts SET build_retry_not_before = '2026-08-28T10:00:00.800000000Z'
 WHERE job_id = 'fractional-retry' AND attempt_number = 1;`); err != nil {
-		t.Fatalf("seed variable-width retry timestamp: %v", err)
+		t.Fatalf("seed fixed-width retry timestamp: %v", err)
 	}
 
-	// Lexically .85Z is less than .8Z even though it is 50 ms later. This
-	// explicitly covers databases written before timestamps became fixed-width.
+	// Migration 0007 and all new writes use a fixed-width UTC representation,
+	// so direct TEXT comparison is chronological and can use the queue index.
 	task := buildTask{JobID: "fractional-retry", AttemptNumber: 1, ArtifactRunPath: "/run/fractional"}
-	claimed, err := store.ClaimBuildRunning(context.Background(), task, "2026-08-28T10:00:00.85Z")
+	claimed, err := store.ClaimBuildRunning(context.Background(), task, "2026-08-28T10:00:00.850000000Z")
 	if err != nil || !claimed {
 		t.Fatalf("chronologically due ClaimBuildRunning() = (%v, %v), want (true, nil)", claimed, err)
 	}

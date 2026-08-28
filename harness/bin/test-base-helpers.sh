@@ -25,21 +25,21 @@ source "$SCRIPT_DIR/lib/stack.sh"
 # structured 503 with CUDA as the sole unhealthy dimension. Contract tests can
 # require either state explicitly; DB/storage/access failures are never hidden.
 healthy_status='{"ok":true,"stt":{"device":"cuda","device_usable":true,"detail":"cuda ready"},"db":{"ok":true},"storage":{"work_root":{"ok":true},"site_root":{"ok":true}},"recordings_access":{"ok":true}}'
-gpu_deferred_status='{"ok":false,"stt":{"device":"cuda","device_usable":false,"detail":"GPU-only: no NVIDIA device"},"db":{"ok":true},"storage":{"work_root":{"ok":true},"site_root":{"ok":true}},"recordings_access":{"ok":true}}'
+gpu_unavailable_status='{"ok":false,"stt":{"device":"cuda","device_usable":false,"detail":"GPU-only: no NVIDIA device"},"db":{"ok":true},"storage":{"work_root":{"ok":true},"site_root":{"ok":true}},"recordings_access":{"ok":true}}'
 broken_storage_status='{"ok":false,"stt":{"device":"cuda","device_usable":false,"detail":"GPU-only: no NVIDIA device"},"db":{"ok":true},"storage":{"work_root":{"ok":false},"site_root":{"ok":true}},"recordings_access":{"ok":true}}'
 unset CASSINI_HARNESS_EXPECT_GPU_UNAVAILABLE
 harness_operator_status_matches 200 "$healthy_status" \
   || fail "auto readiness rejected healthy operator status"
-harness_operator_status_matches 503 "$gpu_deferred_status" \
+harness_operator_status_matches 503 "$gpu_unavailable_status" \
   || fail "auto readiness rejected capture-only operator status"
 export CASSINI_HARNESS_EXPECT_GPU_UNAVAILABLE=0
 harness_operator_status_matches 200 "$healthy_status" \
   || fail "strict GPU-ready mode rejected healthy operator status"
-if harness_operator_status_matches 503 "$gpu_deferred_status"; then
+if harness_operator_status_matches 503 "$gpu_unavailable_status"; then
   fail "strict GPU-ready mode accepted a GPU-less 503"
 fi
 export CASSINI_HARNESS_EXPECT_GPU_UNAVAILABLE=1
-harness_operator_status_matches 503 "$gpu_deferred_status" \
+harness_operator_status_matches 503 "$gpu_unavailable_status" \
   || fail "explicit capture-only readiness rejected the sole-STT 503"
 if harness_operator_status_matches 200 "$healthy_status"; then
   fail "explicit capture-only readiness accepted an unexpectedly ready GPU"

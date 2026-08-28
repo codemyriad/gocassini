@@ -2,11 +2,55 @@ package transcribe
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestWriteJSONSyncFailureLeavesExistingDocumentIntact(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "transcript.json")
+	oldDocument := []byte("old document\n")
+	if err := os.WriteFile(path, oldDocument, 0o600); err != nil {
+		t.Fatalf("seed old document: %v", err)
+	}
+
+	syncErr := errors.New("forced sync failure")
+	syncCalled := false
+	err := writeJSONWithSync(path, map[string]string{"new": "document"}, func(file *os.File) error {
+		syncCalled = true
+		info, statErr := file.Stat()
+		if statErr != nil {
+			t.Fatalf("stat temporary file before sync: %v", statErr)
+		}
+		if info.Size() == 0 {
+			t.Fatal("sync called before JSON was written")
+		}
+		return syncErr
+	})
+	if !errors.Is(err, syncErr) {
+		t.Fatalf("writeJSONWithSync error = %v, want %v", err, syncErr)
+	}
+	if !syncCalled {
+		t.Fatal("writeJSONWithSync did not sync the temporary file")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read preserved document: %v", err)
+	}
+	if string(got) != string(oldDocument) {
+		t.Fatalf("destination changed before successful sync: got %q, want %q", got, oldDocument)
+	}
+	matches, err := filepath.Glob(filepath.Join(tmp, ".transcript.json.tmp-*"))
+	if err != nil {
+		t.Fatalf("glob temporary files: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("temporary files left behind after sync failure: %v", matches)
+	}
+}
 
 func TestValidateSegmentsRejectsReversedWordRanges(t *testing.T) {
 	err := ValidateSegments([]Segment{
