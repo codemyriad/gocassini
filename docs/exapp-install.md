@@ -614,7 +614,8 @@ then use **Rerun** in Cassini Admin to process the preserved recording.
 On a CUDA-capable image, temporary RAM or VRAM pressure is different. The
 operator keeps the build queued, records `build_retry_not_before`, and retries
 with exponential backoff (starting at 15 seconds and capped at 15 minutes).
-After eight unsuccessful deferrals it moves the job to `build/blocked` instead
+After sixteen unsuccessful deferrals (about 2¾ hours at the default schedule)
+it moves the job to `build/blocked` instead
 of retrying forever. Restore capacity and use **Rerun** to create a fresh
 attempt.
 

@@ -14,10 +14,12 @@ import (
 )
 
 const (
-	defaultBuildWorkerCount          = 1
-	defaultBuildResourceRetryDelay   = 15 * time.Second
-	maxBuildResourceRetryDelay       = 15 * time.Minute
-	defaultMaxBuildResourceDeferrals = 8
+	defaultBuildWorkerCount        = 1
+	defaultBuildResourceRetryDelay = 15 * time.Second
+	maxBuildResourceRetryDelay     = 15 * time.Minute
+	// Sixteen bounded deferrals cover about 2h46m, so a normal hour-scale
+	// neighbor workload on a shared GPU does not strand a valid recording.
+	defaultMaxBuildResourceDeferrals = 16
 )
 
 type buildTask struct {

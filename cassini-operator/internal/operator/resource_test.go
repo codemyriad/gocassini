@@ -455,6 +455,13 @@ func TestExponentialBuildRetryDelayCapsAtFifteenMinutes(t *testing.T) {
 			t.Errorf("count %d delay = %s, want %s", tc.count, got, tc.want)
 		}
 	}
+	var defaultWindow time.Duration
+	for count := 1; count <= defaultMaxBuildResourceDeferrals; count++ {
+		defaultWindow += exponentialBuildRetryDelay(defaultBuildResourceRetryDelay, count)
+	}
+	if want := 2*time.Hour + 45*time.Minute + 45*time.Second; defaultWindow != want {
+		t.Fatalf("default transient-resource window = %s, want %s", defaultWindow, want)
+	}
 }
 
 func TestRunBuildJobSerializesConcurrentWorkers(t *testing.T) {

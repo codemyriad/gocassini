@@ -174,7 +174,7 @@ SELECT job_id, attempt_number, trigger_kind, request_json,
        record_log_path, build_log_path, seal_log_path, publish_log_path,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
-	       build_queued_at, build_retry_not_before, build_deferral_count, build_started_at, build_finished_at,
+       build_queued_at, build_retry_not_before, build_deferral_count, build_started_at, build_finished_at,
        seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at
