@@ -199,6 +199,85 @@ func TestClampWordsToTimelineEndExcludesDecoderPadding(t *testing.T) {
 	}
 }
 
+func TestFilterWordsByEnergyRejectsSilenceAndClicksButKeepsQuietInterjections(t *testing.T) {
+	const sampleRate = 16000
+	samples := make([]float32, 3*sampleRate)
+	// A quiet 30ms utterance begins 50ms before the model timestamp. The 100ms
+	// margin must preserve it at the -60 dBFS peak boundary.
+	for i := 950 * sampleRate / 1000; i < 980*sampleRate/1000; i++ {
+		samples[i] = minimumWordPeakAmplitude
+	}
+	// Negative PCM contributes to peak and RMS by absolute/magnitude values.
+	for i := 1500 * sampleRate / 1000; i < 1530*sampleRate/1000; i++ {
+		samples[i] = -0.01
+	}
+	// A lone full-scale click passes the peak and RMS floors but must fail the
+	// minimum active-duration requirement.
+	samples[1950*sampleRate/1000] = 1
+	words := []Word{
+		{Text: "quiet", StartMS: 1000, EndMS: 1100},
+		{Text: "negative", StartMS: 1500, EndMS: 1600},
+		{Text: "click", StartMS: 2000, EndMS: 2100},
+		{Text: "silence", StartMS: 2400, EndMS: 2500},
+		{Text: "outside", StartMS: 4000, EndMS: 4100},
+	}
+
+	got := filterWordsByEnergy(samples, sampleRate, words)
+	want := []Word{
+		{Text: "quiet", StartMS: 1000, EndMS: 1100},
+		{Text: "negative", StartMS: 1500, EndMS: 1600},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("filterWordsByEnergy =\n  %#v\nwant\n  %#v", got, want)
+	}
+}
+
+func TestFilterWordsByEnergyRejectsMalformedTimestamps(t *testing.T) {
+	samples := make([]float32, 16000)
+	for i := range samples {
+		samples[i] = 0.1
+	}
+	words := []Word{
+		{Text: "max", StartMS: int64(1<<63 - 1), EndMS: int64(1<<63 - 1)},
+		{Text: "min", StartMS: int64(-1 << 63), EndMS: int64(-1 << 63)},
+		{Text: "reversed", StartMS: 800, EndMS: 700},
+	}
+	if got := filterWordsByEnergy(samples, 16000, words); len(got) != 0 {
+		t.Fatalf("filterWordsByEnergy malformed timestamps = %#v; want none", got)
+	}
+}
+
+func TestFinalizeTranscriptWordsClampsBeforeEnergyGate(t *testing.T) {
+	const sampleRate = 16000
+	samples := make([]float32, sampleRate)
+	for i := range samples {
+		samples[i] = 0.01
+	}
+	words := []Word{
+		{Text: "straddles", StartMS: 900, EndMS: 1100},
+		{Text: "padding", StartMS: 1000, EndMS: 1200},
+	}
+	got := finalizeTranscriptWords(samples, sampleRate, words, 1000)
+	want := []Word{{Text: "straddles", StartMS: 900, EndMS: 1000}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("finalizeTranscriptWords = %#v; want %#v", got, want)
+	}
+}
+
+func TestShortInterjectionVADConfig(t *testing.T) {
+	t.Setenv("CASSINI_VAD_DEVICE", "cpu")
+	cfg := newVADModelConfig("vad.onnx", 16000)
+	if cfg.SileroVad.Model != "vad.onnx" || cfg.SampleRate != 16000 {
+		t.Fatalf("VAD identity config = model %q sample rate %d", cfg.SileroVad.Model, cfg.SampleRate)
+	}
+	if cfg.SileroVad.Threshold != 0.18 || cfg.SileroVad.MinSpeechDuration != 0.10 {
+		t.Fatalf("VAD short-turn config = threshold %g min speech %g; want 0.18 / 0.10", cfg.SileroVad.Threshold, cfg.SileroVad.MinSpeechDuration)
+	}
+	if cfg.SileroVad.WindowSize != vadWindowSamples || cfg.NumThreads != 1 || cfg.Provider != "cpu" {
+		t.Fatalf("VAD runtime config = window %d threads %d provider %q", cfg.SileroVad.WindowSize, cfg.NumThreads, cfg.Provider)
+	}
+}
+
 // TestNonVADChunkedDedupEndToEndShape simulates the full window iteration over a
 // 75s timeline with a synthetic per-window decoder, asserting that a word in
 // every overlap region survives exactly once after the real

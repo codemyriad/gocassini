@@ -29,6 +29,20 @@ type Recognizer struct {
 // follows the upstream detector's intended call shape.
 const vadWindowSamples = 512
 
+// The stock 0.5 Silero threshold missed direct acknowledgements as short as
+// 420-500ms in real per-participant tracks. The lower threshold recovers those
+// turns; the conservative peak gate below prevents newly admitted digital
+// silence and near-silence from becoming attributed ASR hallucinations.
+const (
+	vadSpeechThreshold       = 0.18
+	vadMinSpeechDuration     = 0.10
+	minimumWordPeakAmplitude = 0.001  // -60 dBFS
+	minimumWordRMSAmplitude  = 0.0001 // -80 dBFS
+	minimumActiveAmplitude   = 0.0005 // -66 dBFS
+	minimumActiveDurationMS  = 5
+	wordPeakMarginMS         = int64(100)
+)
+
 // vadDrainEverySamples controls how often queued speech segments are popped
 // and transcribed while feeding (every ~5 seconds at 16 kHz). Draining as we
 // go keeps the VAD's internal circular buffer small instead of letting whole
@@ -53,6 +67,25 @@ const (
 	nonVADWindowSamples        = 16000 * 15 // 15s window at 16 kHz
 	nonVADWindowOverlapSamples = 16000 / 2  // 0.5s overlap at 16 kHz
 )
+
+func newVADModelConfig(modelPath string, sampleRate int) sherpa.VadModelConfig {
+	cfg := sherpa.VadModelConfig{}
+	cfg.SileroVad.Model = modelPath
+	cfg.SileroVad.Threshold = vadSpeechThreshold
+	cfg.SileroVad.MinSilenceDuration = 0.5
+	cfg.SileroVad.MinSpeechDuration = vadMinSpeechDuration
+	cfg.SileroVad.WindowSize = vadWindowSamples
+	cfg.SileroVad.MaxSpeechDuration = 25.0
+	cfg.SampleRate = sampleRate
+	// Silero VAD is a tiny stateful model run per 32 ms window; it is fastest
+	// single-threaded on CPU. Running it on a GPU provider turns each window
+	// into a micro kernel-launch (measured ~3x slower on sparse/long streams),
+	// so VAD stays on CPU regardless of the recogniser device. See vadProvider.
+	cfg.NumThreads = 1
+	cfg.Provider = vadProvider()
+	cfg.Debug = 0
+	return cfg
+}
 
 // NewRecognizer creates an offline recognizer from the given model paths and a
 // Silero VAD model. provider is "cpu" or "cuda"; vadModelPath is the path to
@@ -85,21 +118,7 @@ func NewRecognizer(paths ModelPaths, vadModelPath, provider string, numThreads i
 		return nil, fmt.Errorf("failed to create sherpa-onnx recognizer (check model paths and provider %q)", provider)
 	}
 
-	vadCfg := sherpa.VadModelConfig{}
-	vadCfg.SileroVad.Model = vadModelPath
-	vadCfg.SileroVad.Threshold = 0.5
-	vadCfg.SileroVad.MinSilenceDuration = 0.5
-	vadCfg.SileroVad.MinSpeechDuration = 0.25
-	vadCfg.SileroVad.WindowSize = vadWindowSamples
-	vadCfg.SileroVad.MaxSpeechDuration = 25.0
-	vadCfg.SampleRate = paths.SampleRate
-	// Silero VAD is a tiny stateful model run per 32 ms window; it is fastest
-	// single-threaded on CPU. Running it on a GPU provider turns each window
-	// into a micro kernel-launch (measured ~3x slower on sparse/long streams),
-	// so VAD stays on CPU regardless of the recogniser device. See vadProvider.
-	vadCfg.NumThreads = 1
-	vadCfg.Provider = vadProvider()
-	vadCfg.Debug = 0
+	vadCfg := newVADModelConfig(vadModelPath, paths.SampleRate)
 
 	vad := sherpa.NewVoiceActivityDetector(&vadCfg, 60.0)
 	if vad == nil {
@@ -142,11 +161,13 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 		if err != nil {
 			return nil, err
 		}
+		decodedWords := len(words)
+		words = finalizeTranscriptWords(samples, sampleRate, words, audioEndMS)
 		if len(words) == 0 && len(samples) >= sampleRate*5 {
 			audioSeconds := float64(len(samples)) / float64(sampleRate)
-			log.Printf("transcribe: 0 words from %.1fs of audio (VAD bypassed); ASR returned no tokens", audioSeconds)
+			log.Printf("transcribe: 0 words from %.1fs of audio (VAD bypassed); ASR decoded=%d, retained=%d after energy gate", audioSeconds, decodedWords, len(words))
 		}
-		return clampWordsToTimelineEnd(words, audioEndMS), nil
+		return words, nil
 	}
 
 	r.vad.Reset()
@@ -209,19 +230,89 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 	if err := drainSegments(); err != nil {
 		return nil, err
 	}
-	// When a non-trivial audio buffer produces zero words, we want enough
-	// information in the log to tell VAD-rejected-everything from
-	// ASR-returned-no-tokens — the e2e harness keeps observing this
-	// failure intermittently and the two cases have very different fixes.
+	// The final VAD window is zero-padded to its configured call size. Keep that
+	// detector-only padding, and any decoder tail padding, out of the public
+	// recording timeline. Apply the energy gate before diagnostics so a decode
+	// containing only silent hallucinations is still reported as zero retained
+	// words rather than suppressing the warning.
+	decodedWords := len(allWords)
+	allWords = finalizeTranscriptWords(samples, sampleRate, allWords, audioEndMS)
 	if len(allWords) == 0 && len(samples) >= sampleRate*5 {
 		audioSeconds := float64(len(samples)) / float64(sampleRate)
 		speechSeconds := float64(totalSpeechSamples) / float64(sampleRate)
-		log.Printf("transcribe: 0 words from %.1fs of audio; VAD segments=%d totalling %.1fs of speech", audioSeconds, segCount, speechSeconds)
+		log.Printf("transcribe: 0 words from %.1fs of audio; VAD segments=%d totalling %.1fs of speech; ASR decoded=%d, retained=%d after energy gate", audioSeconds, segCount, speechSeconds, decodedWords, len(allWords))
 	}
-	// The final VAD window is zero-padded to its configured call size. Keep that
-	// detector-only padding, and any decoder tail padding, out of the public
-	// recording timeline.
-	return clampWordsToTimelineEnd(allWords, audioEndMS), nil
+	return allWords, nil
+}
+
+func finalizeTranscriptWords(samples []float32, sampleRate int, words []Word, audioEndMS int64) []Word {
+	words = clampWordsToTimelineEnd(words, audioEndMS)
+	return filterWordsByEnergy(samples, sampleRate, words)
+}
+
+// filterWordsByEnergy drops decoder output whose source interval is digital
+// silence or near-silence. A 100ms margin tolerates model timestamp jitter.
+// Requiring a -60 dBFS peak, -80 dBFS RMS, and 5ms of active samples rejects
+// isolated clicks while remaining conservative around quiet acknowledgements.
+// The input slice may be compacted in place.
+func filterWordsByEnergy(samples []float32, sampleRate int, words []Word) []Word {
+	if len(words) == 0 || len(samples) == 0 || sampleRate <= 0 {
+		return words
+	}
+	audioEndMS := int64(len(samples)) * 1000 / int64(sampleRate)
+	minimumActiveSamples := (sampleRate*minimumActiveDurationMS + 999) / 1000
+	kept := words[:0]
+	for _, word := range words {
+		startMS, endMS := word.StartMS, word.EndMS
+		if endMS < 0 || endMS < startMS || startMS >= audioEndMS {
+			continue
+		}
+		if startMS < 0 {
+			startMS = 0
+		}
+		if endMS > audioEndMS {
+			endMS = audioEndMS
+		}
+		if startMS > wordPeakMarginMS {
+			startMS -= wordPeakMarginMS
+		} else {
+			startMS = 0
+		}
+		if endMS < audioEndMS-wordPeakMarginMS {
+			endMS += wordPeakMarginMS
+		} else {
+			endMS = audioEndMS
+		}
+		start := int(startMS * int64(sampleRate) / 1000)
+		end := int((endMS*int64(sampleRate) + 999) / 1000)
+		if end > len(samples) {
+			end = len(samples)
+		}
+		if end <= start {
+			continue
+		}
+		var peak float32
+		var squareSum float64
+		activeSamples := 0
+		for _, sample := range samples[start:end] {
+			squareSum += float64(sample) * float64(sample)
+			if sample < 0 {
+				sample = -sample
+			}
+			if sample >= minimumActiveAmplitude {
+				activeSamples++
+			}
+			if sample > peak {
+				peak = sample
+			}
+		}
+		meanSquare := squareSum / float64(end-start)
+		minimumMeanSquare := float64(minimumWordRMSAmplitude) * float64(minimumWordRMSAmplitude)
+		if peak >= minimumWordPeakAmplitude && meanSquare >= minimumMeanSquare && activeSamples >= minimumActiveSamples {
+			kept = append(kept, word)
+		}
+	}
+	return kept
 }
 
 // transcribeSegment transcribes a single VAD speech segment, splitting into sub-chunks
