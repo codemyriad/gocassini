@@ -484,6 +484,7 @@ func TestStatusReportsAStandaloneOperatorAsHealthyWithNoSubstrate(t *testing.T) 
 	t.Cleanup(ncAccessSubstrate.reset)
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
+	rt.computeProbe = func(device string) (bool, string) { return true, "cuda ready" }
 
 	rec := httptest.NewRecorder()
 	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
@@ -513,6 +514,7 @@ func TestStatusReportsAProvisionedSubstrate(t *testing.T) {
 	ncAccessSubstrate.succeed()
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
+	rt.computeProbe = func(device string) (bool, string) { return true, "cuda ready" }
 
 	rec := httptest.NewRecorder()
 	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
@@ -684,6 +686,7 @@ func TestStatusDoesNotJudgeALocalSinkOnANextcloudSubstrate(t *testing.T) {
 	ncAccessSubstrate.unavailable("app_missing:"+ncAppGroupFolders, errStatusSubstrateProbe)
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
+	rt.computeProbe = func(device string) (bool, string) { return true, "cuda ready" }
 
 	rec := httptest.NewRecorder()
 	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
