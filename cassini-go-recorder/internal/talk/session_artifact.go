@@ -32,11 +32,13 @@ type sessionCaptureArtifact struct {
 	sessionID   string
 	sessionMeta session.Session
 
-	// monoOrigin retains the monotonic component returned by time.Now. All
-	// persisted *MonoNS values are offsets from this one session-wide anchor,
-	// rather than Unix wall-clock nanoseconds. This keeps streams comparable
-	// and makes capture timing insensitive to NTP/manual wall-clock steps.
+	// monoOrigin retains the monotonic component returned by time.Now, while
+	// monoBaseNS retains that instant's Unix-nanosecond coordinate. Persisted
+	// *MonoNS values are base + monotonic elapsed time: streams share one stable
+	// clock, and external capture-boundary tools retain the existing Unix-ns
+	// coordinate during normal operation.
 	monoOrigin time.Time
+	monoBaseNS uint64
 
 	eventsFile   *os.File
 	eventsWriter *bufio.Writer
@@ -65,11 +67,6 @@ type sessionCaptureStream struct {
 	closed      bool
 	lastRecvNS  uint64
 }
-
-// sessionMonoBaseNS is deliberately non-zero because several readers use zero
-// as an "unset" sentinel. Absolute monotonic values have no meaning outside a
-// session; only their differences do.
-const sessionMonoBaseNS uint64 = 1
 
 type trackDescriptor struct {
 	kind      string
@@ -122,11 +119,12 @@ func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName
 	// Keep the original time.Time for its process-monotonic component. Calling
 	// UTC is only appropriate for the separately persisted wall-clock label.
 	now := time.Now()
+	monoBaseNS := uint64(now.UnixNano())
 	meta := session.Session{
 		Version:        session.SchemaVersion,
 		SessionID:      fmt.Sprintf("%s_%s", base, sessionID),
 		StartedWallUTC: now.UTC().Format(time.RFC3339Nano),
-		StartedMonoNS:  sessionMonoBaseNS,
+		StartedMonoNS:  monoBaseNS,
 		Platform: session.Platform{
 			Name:       "nextcloudtalk",
 			Deployment: "custom",
@@ -147,6 +145,7 @@ func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName
 		sessionID:    sessionID,
 		sessionMeta:  meta,
 		monoOrigin:   now,
+		monoBaseNS:   monoBaseNS,
 		eventsFile:   eventsFile,
 		eventsWriter: bufio.NewWriter(eventsFile),
 		streams:      map[string]*sessionCaptureStream{},
@@ -624,14 +623,15 @@ func (a *sessionCaptureArtifact) emitEvent(fields map[string]any, observed time.
 // monoNS maps an observation carrying Go's monotonic clock reading into the
 // session timeline. In production all callers pass time.Now-derived values,
 // so time.Sub uses monotonic elapsed time even if the system wall clock moves.
-// The floor also keeps synthetic/pre-origin observations away from the zero
-// sentinel without changing the relative timing of real capture observations.
+// Anchoring that elapsed value at the session's initial Unix-ns coordinate
+// preserves normal external boundary comparisons without following later
+// realtime clock corrections.
 func (a *sessionCaptureArtifact) monoNS(observed time.Time) uint64 {
 	elapsed := observed.Sub(a.monoOrigin)
 	if elapsed <= 0 {
-		return sessionMonoBaseNS
+		return a.monoBaseNS
 	}
-	return sessionMonoBaseNS + uint64(elapsed)
+	return a.monoBaseNS + uint64(elapsed)
 }
 
 func (a *sessionCaptureArtifact) persistSessionLocked() error {

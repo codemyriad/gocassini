@@ -41,9 +41,9 @@ func TestSessionArtifactBootAndClose(t *testing.T) {
 	}
 }
 
-func TestSessionArtifactUsesSessionRelativeMonotonicTimelineAcrossStreams(t *testing.T) {
+func TestSessionArtifactUsesAnchoredMonotonicTimelineAcrossStreams(t *testing.T) {
 	tmp := t.TempDir()
-	artifactPath := filepath.Join(tmp, "relative-timeline.mkv")
+	artifactPath := filepath.Join(tmp, "anchored-timeline.mkv")
 	artifact, err := newSessionCaptureArtifact(artifactPath, "https://example.test/call/room", "room-token", "recorder")
 	if err != nil {
 		t.Fatalf("create artifact: %v", err)
@@ -52,8 +52,9 @@ func TestSessionArtifactUsesSessionRelativeMonotonicTimelineAcrossStreams(t *tes
 		_ = artifact.close()
 	}()
 
-	if got := artifact.sessionMeta.StartedMonoNS; got != sessionMonoBaseNS {
-		t.Fatalf("started monotonic timestamp is not session-relative: got=%d want=%d", got, sessionMonoBaseNS)
+	monoBaseNS := uint64(artifact.monoOrigin.UnixNano())
+	if got := artifact.sessionMeta.StartedMonoNS; got != monoBaseNS {
+		t.Fatalf("started monotonic timestamp lost its Unix-ns anchor: got=%d want=%d", got, monoBaseNS)
 	}
 	wallStart, err := time.Parse(time.RFC3339Nano, artifact.sessionMeta.StartedWallUTC)
 	if err != nil {
@@ -61,6 +62,9 @@ func TestSessionArtifactUsesSessionRelativeMonotonicTimelineAcrossStreams(t *tes
 	}
 	if wallStart.UnixNano() != artifact.monoOrigin.UnixNano() {
 		t.Fatalf("wall start was not preserved separately: got=%s origin=%s", wallStart, artifact.monoOrigin)
+	}
+	if uint64(wallStart.UnixNano()) != artifact.sessionMeta.StartedMonoNS {
+		t.Fatalf("wall and monotonic anchors disagree: wall=%d mono=%d", wallStart.UnixNano(), artifact.sessionMeta.StartedMonoNS)
 	}
 
 	desc := trackDescriptor{
@@ -86,7 +90,7 @@ func TestSessionArtifactUsesSessionRelativeMonotonicTimelineAcrossStreams(t *tes
 	if len(streams) != 2 || len(logicalTracks) != 2 {
 		t.Fatalf("unexpected timeline metadata: streams=%d logical_tracks=%d", len(streams), len(logicalTracks))
 	}
-	if got, want := streams[0].StartMonoNS, sessionMonoBaseNS+uint64(2*time.Second); got != want {
+	if got, want := streams[0].StartMonoNS, monoBaseNS+uint64(2*time.Second); got != want {
 		t.Fatalf("first stream start: got=%d want=%d", got, want)
 	}
 	if got, want := streams[1].StartMonoNS-streams[0].StartMonoNS, uint64(3*time.Second); got != want {
@@ -94,6 +98,12 @@ func TestSessionArtifactUsesSessionRelativeMonotonicTimelineAcrossStreams(t *tes
 	}
 	if logicalTracks[0].CreatedMonoNS != streams[0].StartMonoNS || logicalTracks[1].CreatedMonoNS != streams[1].StartMonoNS {
 		t.Fatalf("logical-track creation times do not share stream timeline: tracks=%v streams=%v", logicalTracks, streams)
+	}
+	// CI/rejoin tooling records phase boundaries as Unix nanoseconds outside the
+	// recorder process. The stable session clock must remain comparable to them.
+	externalBoundaryNS := monoBaseNS + uint64(4*time.Second)
+	if streams[0].StartMonoNS >= externalBoundaryNS || streams[1].StartMonoNS <= externalBoundaryNS {
+		t.Fatalf("external boundary did not separate streams: boundary=%d streams=%v", externalBoundaryNS, streams)
 	}
 
 	packet := &rtp.Packet{
@@ -140,14 +150,15 @@ func TestSessionArtifactUsesSessionRelativeMonotonicTimelineAcrossStreams(t *tes
 func TestSessionArtifactMonotonicMappingUsesElapsedTime(t *testing.T) {
 	// time.Now and Add retain Go's hidden monotonic reading. This is the same
 	// shape as production arrival timestamps and makes Sub immune to a wall
-	// clock correction; importantly, no Unix epoch value is persisted.
+	// clock correction while the anchor remains Unix-ns compatible.
 	origin := time.Now()
-	artifact := &sessionCaptureArtifact{monoOrigin: origin}
-	if got, want := artifact.monoNS(origin.Add(1250*time.Millisecond)), sessionMonoBaseNS+uint64(1250*time.Millisecond); got != want {
+	monoBaseNS := uint64(origin.UnixNano())
+	artifact := &sessionCaptureArtifact{monoOrigin: origin, monoBaseNS: monoBaseNS}
+	if got, want := artifact.monoNS(origin.Add(1250*time.Millisecond)), monoBaseNS+uint64(1250*time.Millisecond); got != want {
 		t.Fatalf("elapsed monotonic mapping: got=%d want=%d", got, want)
 	}
-	if got := artifact.monoNS(origin.Add(-time.Second)); got != sessionMonoBaseNS {
-		t.Fatalf("pre-origin timestamp should use nonzero floor: got=%d want=%d", got, sessionMonoBaseNS)
+	if got := artifact.monoNS(origin.Add(-time.Second)); got != monoBaseNS {
+		t.Fatalf("pre-origin timestamp should use the session anchor: got=%d want=%d", got, monoBaseNS)
 	}
 }
 
