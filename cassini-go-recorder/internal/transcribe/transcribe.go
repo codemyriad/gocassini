@@ -143,7 +143,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// --- 10. Write manifest ---
 	manifestPath := filepath.Join(outputDir, "manifest.json")
 	srcBasename := filepath.Base(mkvPath)
-	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, audioDurationMS, streams, segments, cfg.ModelID, cfg.LLM.Model, hasReadable, cfg.SummaryLLM.Model, hasSummary, additionalTranscripts); err != nil {
+	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, audioDurationMS, streams, segments, cfg.ModelID, cfg.Device, cfg.LLM.Model, hasReadable, cfg.SummaryLLM.Model, hasSummary, additionalTranscripts); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 

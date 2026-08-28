@@ -254,8 +254,9 @@ type provStep struct {
 // source-container provenance, while digestDurationMS describes the final
 // playable meeting.webm. additional carries extra transcript files produced by
 // secondary STT models; each becomes a files.transcripts[] entry alongside the
-// primary transcript.words.v1.json.
-func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int64, streams []AudioStream, segments []Segment, sttModelID ModelID, llmModel string, hasReadable bool, summaryModel string, hasSummary bool, additional []AdditionalTranscript) error {
+// primary transcript.words.v1.json. sttDevice is the already-resolved device
+// used by both the primary and additional ASR passes.
+func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int64, streams []AudioStream, segments []Segment, sttModelID ModelID, sttDevice, llmModel string, hasReadable bool, summaryModel string, hasSummary bool, additional []AdditionalTranscript) error {
 	wordCount := 0
 	for _, seg := range segments {
 		wordCount += len(seg.Words)
@@ -269,12 +270,12 @@ func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int
 		primaryID := sanitizeTranscriptID(string(sttModelID))
 		files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
 			ID: primaryID, Path: "transcript.words.v1.json", Role: "raw-asr", Default: true,
-			Provenance: &provStep{Backend: "sherpa-onnx", Model: string(sttModelID)},
+			Provenance: &provStep{Backend: "sherpa-onnx", Model: string(sttModelID), Device: sttDevice},
 		})
 		for _, extra := range additional {
 			files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
 				ID: extra.ID, Path: extra.Path, Role: "raw-asr",
-				Provenance: &provStep{Backend: "sherpa-onnx", Model: string(extra.ModelID)},
+				Provenance: &provStep{Backend: "sherpa-onnx", Model: string(extra.ModelID), Device: sttDevice},
 			})
 		}
 	}
@@ -290,6 +291,7 @@ func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int
 		SpeechToText: &provStep{
 			Backend: "sherpa-onnx",
 			Model:   string(sttModelID),
+			Device:  sttDevice,
 		},
 	}
 	if hasReadable {

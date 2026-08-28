@@ -208,7 +208,7 @@ func TestWriteManifestRecordsSummaryWhenPresent(t *testing.T) {
 	streams := []AudioStream{{SpeakerID: "spk_alex", SpeakerLabel: "Alex"}}
 	segments := []Segment{{SpeakerID: "spk_alex", StartMS: 0, EndMS: 1000, Text: "hi", Words: []Word{{Text: "hi", StartMS: 0, EndMS: 1000}}}}
 
-	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, segments, ModelID("test-stt"), "test-llm", true, "summary-model", true, nil); err != nil {
+	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, segments, ModelID("test-stt"), "cuda", "test-llm", true, "summary-model", true, nil); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 
@@ -244,7 +244,7 @@ func TestWriteManifestCountsUniqueLogicalSpeakers(t *testing.T) {
 		{Index: -1, SpeakerID: "merged", SpeakerLabel: "Everyone"}, // synthetic fallback, not a participant
 	}
 
-	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, nil, ModelID("test-stt"), "", false, "", false, nil); err != nil {
+	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, nil, ModelID("test-stt"), "cuda", "", false, "", false, nil); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 
@@ -290,7 +290,7 @@ func TestWriteManifestOmitsSummaryWhenAbsent(t *testing.T) {
 	streams := []AudioStream{{SpeakerID: "spk_alex", SpeakerLabel: "Alex"}}
 	segments := []Segment{{SpeakerID: "spk_alex", StartMS: 0, EndMS: 1000, Text: "hi", Words: []Word{{Text: "hi", StartMS: 0, EndMS: 1000}}}}
 
-	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, segments, ModelID("test-stt"), "", false, "", false, nil); err != nil {
+	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, segments, ModelID("test-stt"), "cuda", "", false, "", false, nil); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 

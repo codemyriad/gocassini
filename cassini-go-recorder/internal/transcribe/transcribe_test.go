@@ -326,7 +326,12 @@ func TestWriteManifestIncludesRuntimeSummaryFields(t *testing.T) {
 
 	const sourceDurationMS = int64(1_977_527)
 	const playableDurationMS = int64(242_413)
-	if err := WriteManifest(path, "source.mkv", sourceDurationMS, playableDurationMS, streams, segments, ModelParakeet06B, "openai/gpt-4o-mini", true, "", false, nil); err != nil {
+	additional := []AdditionalTranscript{{
+		ID:      "parakeet-v2",
+		Path:    "transcript.parakeet-v2.json",
+		ModelID: ModelParakeet06BV3,
+	}}
+	if err := WriteManifest(path, "source.mkv", sourceDurationMS, playableDurationMS, streams, segments, ModelParakeet06B, "cuda", "openai/gpt-4o-mini", true, "", false, additional); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 
@@ -338,7 +343,13 @@ func TestWriteManifestIncludesRuntimeSummaryFields(t *testing.T) {
 	var payload struct {
 		SegmentCount     int   `json:"segmentCount"`
 		DigestDurationMS int64 `json:"digestDurationMs"`
-		Source           struct {
+		Files            struct {
+			Transcripts []artifactTranscriptRef `json:"transcripts"`
+		} `json:"files"`
+		Provenance struct {
+			SpeechToText *provStep `json:"speechToText"`
+		} `json:"provenance"`
+		Source struct {
 			DurationMS int64 `json:"durationMs"`
 		} `json:"source"`
 	}
@@ -353,5 +364,16 @@ func TestWriteManifestIncludesRuntimeSummaryFields(t *testing.T) {
 	}
 	if payload.DigestDurationMS != playableDurationMS {
 		t.Fatalf("expected digestDurationMs %d, got %d", playableDurationMS, payload.DigestDurationMS)
+	}
+	if payload.Provenance.SpeechToText == nil || payload.Provenance.SpeechToText.Device != "cuda" {
+		t.Fatalf("expected speechToText.device cuda, got %#v", payload.Provenance.SpeechToText)
+	}
+	if len(payload.Files.Transcripts) != 2 {
+		t.Fatalf("expected primary and additional transcript provenance, got %d entries", len(payload.Files.Transcripts))
+	}
+	for _, transcript := range payload.Files.Transcripts {
+		if transcript.Provenance == nil || transcript.Provenance.Device != "cuda" {
+			t.Errorf("transcript %q device provenance = %#v, want cuda", transcript.ID, transcript.Provenance)
+		}
 	}
 }
