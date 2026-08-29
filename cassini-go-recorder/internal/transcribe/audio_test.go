@@ -24,6 +24,9 @@ func TestExtractSpeakerFloatsAppliesPacketOffsetExactlyOnce(t *testing.T) {
 	if len(streams) != 2 {
 		t.Fatalf("expected 2 streams, got %d", len(streams))
 	}
+	if got := streams[1].FirstPacketTimeMS; got < 9700 || got > 10300 {
+		t.Fatalf("first packet timestamp = %dms, want about 10000ms", got)
+	}
 
 	samples, err := ExtractSpeakerFloats(mkvPath, streams[1])
 	if err != nil {
@@ -37,6 +40,31 @@ func TestExtractSpeakerFloatsAppliesPacketOffsetExactlyOnce(t *testing.T) {
 	firstSignalMS := firstSignalSample(samples, 0.01) * 1000 / 16000
 	if firstSignalMS < 9700 || firstSignalMS > 10300 {
 		t.Fatalf("delayed speaker signal starts at %dms, want about 10000ms", firstSignalMS)
+	}
+}
+
+func TestSparseTimelineDecodeRebasesVeryLateFirstPacket(t *testing.T) {
+	requireFFMediaTools(t)
+
+	// Both field failures that motivated this regression had late stereo Opus
+	// tracks with ordinary WebRTC timestamp jitter. This fully synthetic shape
+	// reproduces exit 139 in libswresample 3.9.100 (FFmpeg 4.4.2); a constant-PTS
+	// late sine wave does not. The MKV stays tiny because the 3,637-second offset
+	// lives in packet timestamps rather than encoded silence.
+	mkvPath := buildSparseJitterMeeting(t, t.TempDir())
+	streams, _, err := ProbeMKV(mkvPath)
+	if err != nil {
+		t.Fatalf("probe very-late stream: %v", err)
+	}
+	if got := streams[1].FirstPacketTimeMS; got < 3_637_100 || got > 3_637_800 {
+		t.Fatalf("first packet timestamp = %dms, want about 3637463ms", got)
+	}
+
+	args := []string{"-y", "-v", "error", "-i", mkvPath}
+	args = append(args, sparseTimelineDecodeArgs(streams[1], 16000)...)
+	args = append(args, "-f", "null", "-")
+	if err := runMediaCommand("ffmpeg", args...); err != nil {
+		t.Fatalf("decode very-late sparse stream: %v", err)
 	}
 }
 
@@ -148,6 +176,7 @@ func TestSetPCMCapacityDurationHintsUsesPlayableMixWithoutChangingTiming(t *test
 			SpeakerLabel:       "Alice",
 			Channels:           2,
 			StartTimeMS:        12_345,
+			FirstPacketTimeMS:  12_678,
 			TimelineDurationMS: 1_977_527,
 		},
 	}
@@ -159,7 +188,7 @@ func TestSetPCMCapacityDurationHintsUsesPlayableMixWithoutChangingTiming(t *test
 		t.Fatalf("PCM capacity duration = %d, want playable duration 242413", got.TimelineDurationMS)
 	}
 	if got.Index != 7 || got.ParticipantID != "alice" || got.SpeakerID != "spk_alice" ||
-		got.SpeakerLabel != "Alice" || got.Channels != 2 || got.StartTimeMS != 12_345 {
+		got.SpeakerLabel != "Alice" || got.Channels != 2 || got.StartTimeMS != 12_345 || got.FirstPacketTimeMS != 12_678 {
 		t.Fatalf("non-capacity stream metadata changed: %#v", got)
 	}
 	if newCapacity, oldCapacity := expectedPCMSamples(got.TimelineDurationMS, 16000), expectedPCMSamples(1_977_527, 16000); newCapacity >= oldCapacity {
@@ -219,6 +248,31 @@ func buildOffsetMeeting(t *testing.T, dir string, offsetSeconds float64) string 
 		outPath,
 	); err != nil {
 		t.Fatalf("create offset meeting: %v", err)
+	}
+	return outPath
+}
+
+func buildSparseJitterMeeting(t *testing.T, dir string) string {
+	t.Helper()
+
+	outPath := filepath.Join(dir, "sparse-jitter-meeting.mkv")
+	if err := runMediaCommand(
+		"ffmpeg",
+		"-y",
+		"-v", "error",
+		"-copyts",
+		"-f", "lavfi",
+		"-i", "sine=frequency=500:sample_rate=48000:duration=0.1",
+		"-f", "lavfi",
+		"-i", "anullsrc=r=48000:cl=stereo:d=530,asetnsamples=n=960:p=1,asetpts=PTS+3637.463/TB+(random(0)-0.5)*1920",
+		"-map", "0:a:0",
+		"-map", "1:a:0",
+		"-c:a", "libopus",
+		"-b:a", "8k",
+		"-avoid_negative_ts", "disabled",
+		outPath,
+	); err != nil {
+		t.Fatalf("create sparse jitter meeting: %v", err)
 	}
 	return outPath
 }

@@ -22,10 +22,14 @@ type AudioStream struct {
 	SpeakerLabel  string
 	Channels      int
 	StartTimeMS   int64
+	// FirstPacketTimeMS is the first packet PTS on the shared meeting
+	// timeline. Matroska stream start_time is commonly zero for rotated or
+	// late-joining participant tracks, so it cannot represent this offset.
+	FirstPacketTimeMS int64
 	// TimelineDurationMS is only a capacity hint for decoded PCM. It is
 	// initialised from the source probe, then replaced with the measured final
-	// mix duration when available. Packet timestamps and StartTimeMS remain the
-	// authority for audio timing.
+	// mix duration when available. Packet timestamps, FirstPacketTimeMS, and
+	// StartTimeMS remain the authority for audio timing.
 	TimelineDurationMS int64
 }
 
@@ -112,7 +116,43 @@ func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 	if len(streams) == 0 {
 		return nil, 0, fmt.Errorf("no audio streams found in %s", mkv)
 	}
+	for i := range streams {
+		firstPacketTimeMS, err := probeFirstPacketTimeMS(mkv, streams[i].Index)
+		if err != nil {
+			return nil, 0, err
+		}
+		streams[i].FirstPacketTimeMS = firstPacketTimeMS
+	}
 	return streams, durationMs, nil
+}
+
+// probeFirstPacketTimeMS reads only the first packet selected for one stream.
+// A separate short probe is intentional: adding -show_packets to ProbeMKV's
+// stream/format probe would scan every packet of long meetings just to learn
+// one timestamp per participant.
+func probeFirstPacketTimeMS(mkv string, streamIndex int) (int64, error) {
+	cmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-select_streams", strconv.Itoa(streamIndex),
+		"-read_intervals", "%+#1",
+		"-show_entries", "packet=pts_time",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		mkv,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("ffprobe first packet for stream %d: %w\n%s", streamIndex, err, truncate(string(out), 800))
+	}
+	value := strings.TrimSpace(string(out))
+	if value == "" || value == "N/A" {
+		// Empty participant tracks are legal. There is no offset to preserve.
+		return 0, nil
+	}
+	seconds, err := strconv.ParseFloat(strings.Fields(value)[0], 64)
+	if err != nil || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+		return 0, fmt.Errorf("parse first packet timestamp %q for stream %d", value, streamIndex)
+	}
+	return maxInt64(0, int64(math.Round(seconds*1000))), nil
 }
 
 // ExtractSpeakerFloats extracts one audio stream as []float32 (16 kHz mono,
@@ -127,20 +167,22 @@ func ExtractSpeakerFloats(mkv string, stream AudioStream) ([]float32, error) {
 		// probe because the duration is carried on each discovered stream.
 		durationMS, _ = AudioDurationMS(mkv)
 	}
-	cmd := exec.Command("ffmpeg",
+	args := []string{
 		"-v", "error",
 		"-y",
 		"-i", mkv,
-		"-map", fmt.Sprintf("0:%d", stream.Index),
+	}
+	args = append(args, sparseTimelineDecodeArgs(stream, 16000)...)
+	args = append(args,
 		"-vn",
 		"-sn",
 		"-dn",
-		"-af", sparseTimelineAudioFilter(),
 		"-ac", "1",
 		"-ar", "16000",
 		"-f", "s16le",
 		"pipe:1",
 	)
+	cmd := exec.Command("ffmpeg", args...)
 	samples, err := runPCM16LECommand(cmd, expectedPCMSamples(durationMS, 16000))
 	if err != nil {
 		return nil, fmt.Errorf("ffmpeg extract speaker %d: %w", stream.Index, err)
@@ -446,26 +488,53 @@ func decodeTrackWithSparseGaps(mkv string, stream AudioStream, sampleRate int, o
 		"-y",
 		"-v", "error",
 		"-i", mkv,
-		"-map", fmt.Sprintf("0:%d", stream.Index),
+	}
+	args = append(args, sparseTimelineDecodeArgs(stream, sampleRate)...)
+	args = append(args,
 		"-vn",
 		"-sn",
 		"-dn",
-		"-af", sparseTimelineAudioFilter(),
 		"-ac", "1",
 		"-ar", strconv.Itoa(sampleRate),
 		"-c:a", "pcm_s16le",
 		outPath,
-	}
+	)
 	return runFFmpegQuiet(args...)
 }
 
-func sparseTimelineAudioFilter() string {
+const sparseInitialOffsetRebaseMS = int64(1000)
+
+func sparseTimelineDecodeArgs(stream AudioStream, sampleRate int) []string {
 	// Sparse meeting tracks can have long timestamp gaps during mute / silence.
 	// We must materialize those holes as actual silence before piping raw PCM,
-	// otherwise separate speaking turns collapse together in both STT and
-	// mixdown. Do not add stream.start_time as a separate delay: the input packet
-	// PTS already contains it, so doing both shifts late streams twice.
-	return "aresample=async=1:first_pts=0"
+	// otherwise separate speaking turns collapse together in both STT and mix.
+	//
+	// FFmpeg 4.4's libswresample can segfault while asking aresample to inject a
+	// multi-minute initial hole. Rebase the real packets to zero first, preserve
+	// their relative/internal gaps through aresample, then prepend the initial
+	// silence as a separate streaming source. This avoids one huge hard
+	// compensation without changing the shared meeting timeline.
+	if stream.FirstPacketTimeMS >= sparseInitialOffsetRebaseMS {
+		seconds := strconv.FormatFloat(float64(stream.FirstPacketTimeMS)/1000, 'f', 3, 64)
+		filter := fmt.Sprintf(
+			"anullsrc=r=%d:cl=mono:d=%s,aformat=sample_fmts=s16[silence];"+
+				"[0:%d]asetpts=PTS-STARTPTS,aresample=%d:async=1:first_pts=0,"+
+				"aformat=sample_fmts=s16:channel_layouts=mono[audio];"+
+				"[silence][audio]concat=n=2:v=0:a=1[cassini_audio]",
+			sampleRate,
+			seconds,
+			stream.Index,
+			sampleRate,
+		)
+		return []string{"-filter_complex", filter, "-map", "[cassini_audio]"}
+	}
+
+	// Packet PTS already includes the small initial offset. Do not add
+	// stream.start_time as a separate delay or late streams shift twice.
+	return []string{
+		"-map", fmt.Sprintf("0:%d", stream.Index),
+		"-af", "aresample=async=1:first_pts=0",
+	}
 }
 
 func speakerIDFromLabel(label string) string {
