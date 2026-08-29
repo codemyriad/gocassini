@@ -793,6 +793,25 @@ describe("switchPortableTranscript", () => {
       switchPortableTranscript("./v2-fixture-sha.opus", "parakeet"),
     ).rejects.toThrow(/sha256 mismatch/);
   });
+
+  it("rejects a portable file whose main manifest digest is stale", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=v2-main-sha", protocol: "http:" },
+    } as Window;
+    const fixture = buildPortableOpusFixture(
+      {
+        version: 2,
+        meeting: { durationMs: 3000 },
+        transcripts: [],
+      },
+      { CASSINI_PAYLOAD_SHA256: "0".repeat(64) },
+    );
+    globalThis.fetch = mockFetchReturning(fixture);
+
+    await expect(loadPortableArtifactFromAudioPath("./v2-main-sha.opus")).rejects.toThrow(
+      /portable manifest sha256 mismatch/,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1053,6 +1072,9 @@ function buildPortableOpusFixture(
     .replace(/=+$/g, "");
   const tags = {
     CASSINI_PAYLOAD_CHUNK_COUNT: "1",
+    CASSINI_PAYLOAD_SHA256: createHash("sha256").update(rawJson).digest("hex"),
+    CASSINI_PAYLOAD_RAW_BYTES: String(rawJson.byteLength),
+    CASSINI_PAYLOAD_GZIP_BYTES: String(compressed.byteLength),
     CASSINI_PAYLOAD_000: encoded,
     ...extraTags,
   };

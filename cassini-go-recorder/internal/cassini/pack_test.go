@@ -85,6 +85,22 @@ func TestPackPrefersManifestTitleOverFileName(t *testing.T) {
 	if got := readOpusTitleTag(t, outPath); got != "Daily Meeting" {
 		t.Errorf("packed TITLE = %q, want manifest title %q", got, "Daily Meeting")
 	}
+	manifest := decodePortableManifestFromOpus(t, outPath)
+	if manifest.Version != 3 || manifest.Integrity.MatchPolicy != portable.AudioMatchPolicy {
+		t.Fatalf("packed integrity contract = v%d/%q, want v3/%q", manifest.Version, manifest.Integrity.MatchPolicy, portable.AudioMatchPolicy)
+	}
+	if len(manifest.Integrity.OpusSHA256) != 64 || manifest.Integrity.PCMSHA256 != "" {
+		t.Fatalf("packed integrity = %+v, want compressed Opus digest and no PCM digest", manifest.Integrity)
+	}
+	if got := readOpusTag(t, outPath, "CASSINI_FORMAT"); got != portable.FormatV3 {
+		t.Errorf("CASSINI_FORMAT = %q, want %q", got, portable.FormatV3)
+	}
+	if got := readOpusTag(t, outPath, "CASSINI_AUDIO_OPUS_SHA256"); got != manifest.Integrity.OpusSHA256 {
+		t.Errorf("CASSINI_AUDIO_OPUS_SHA256 = %q, manifest says %q", got, manifest.Integrity.OpusSHA256)
+	}
+	if got := readOpusTag(t, outPath, "CASSINI_AUDIO_PCM_SHA256"); got != "" {
+		t.Errorf("CASSINI_AUDIO_PCM_SHA256 = %q, want absent on v3", got)
+	}
 }
 
 func TestPackTitleFlagOverridesManifestTitle(t *testing.T) {

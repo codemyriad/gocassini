@@ -40,6 +40,11 @@ export interface PortableMeetingManifest {
   audio?: {
     sha256?: string;
   };
+  integrity?: {
+    matchPolicy?: string;
+    opusAudioSha256?: string;
+    pcmSha256?: string;
+  };
   speakers?: unknown[];
   transcript?: {
     items?: unknown[];
@@ -93,7 +98,7 @@ export async function extractPortableManifestFromArrayBuffer(
   if (version === 1) {
     return { manifest: indexManifest, tags };
   }
-  if (version === 2) {
+  if (version === 2 || version === 3) {
     const manifest = await resolvePortableV2DefaultBodies(indexManifest, tags);
     return { manifest, tags };
   }
@@ -121,7 +126,28 @@ async function readMainPortablePayload(
   }
 
   const compressed = decodeBase64Url(encoded);
+  const declaredGzipBytes = safeToInt(tags.CASSINI_PAYLOAD_GZIP_BYTES, 0);
+  if (declaredGzipBytes > 0 && declaredGzipBytes !== compressed.byteLength) {
+    throw new Error(
+      `portable manifest gzip byte count mismatch (expected ${declaredGzipBytes}, got ${compressed.byteLength})`,
+    );
+  }
   const rawManifest = await gunzipBytes(compressed);
+  const declaredRawBytes = safeToInt(tags.CASSINI_PAYLOAD_RAW_BYTES, 0);
+  if (declaredRawBytes > 0 && declaredRawBytes !== rawManifest.byteLength) {
+    throw new Error(
+      `portable manifest raw byte count mismatch (expected ${declaredRawBytes}, got ${rawManifest.byteLength})`,
+    );
+  }
+  const expectedSHA = String(tags.CASSINI_PAYLOAD_SHA256 ?? "").trim().toLowerCase();
+  if (expectedSHA) {
+    const actualSHA = await sha256Hex(rawManifest);
+    if (actualSHA !== expectedSHA) {
+      throw new Error(
+        `portable manifest sha256 mismatch (expected ${expectedSHA}, got ${actualSHA})`,
+      );
+    }
+  }
   return JSON.parse(new TextDecoder().decode(rawManifest)) as PortableMeetingManifest;
 }
 
@@ -131,7 +157,7 @@ async function resolvePortableV2DefaultBodies(
 ): Promise<PortableMeetingManifest> {
   const transcripts = Array.isArray(indexManifest.transcripts) ? indexManifest.transcripts : [];
   if (transcripts.length === 0) {
-    throw new Error("portable v2 manifest has no transcripts[]");
+    throw new Error(`portable v${indexManifest.version ?? 2} manifest has no transcripts[]`);
   }
   const defaultTranscript = pickDefaultTranscript(transcripts);
   const transcriptBody = await loadPortableTranscriptBody(tags, defaultTranscript.payloadRef);

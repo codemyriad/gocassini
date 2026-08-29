@@ -76,6 +76,7 @@ export function listPortableMeetingFiles(sourceDir) {
 
 export function repackPortableMeeting(path) {
   const portable = extractPortableManifest(path);
+  requireLegacyV1ForJSRewrite(portable, path);
   const normalizedPortable = normalizePortableReadableTranscript(portable);
   const transcript = buildTranscriptWordsFromPortable(normalizedPortable);
   const readable = buildReadableTranscriptFromPortable(normalizedPortable, transcript);
@@ -109,6 +110,19 @@ export function repackPortableMeeting(path) {
     rmSync(stagePath, { force: true });
   }
   return { status: "rewrite" };
+}
+
+// This script predates multi-transcript portable files and rebuilds a v1
+// manifest. Refuse v2/v3 rather than silently dropping their transcript chunk
+// sets or downgrading compressed-audio integrity to decoded PCM. New packing
+// is delegated to the Go `cassini pack` implementation.
+export function requireLegacyV1ForJSRewrite(portable, path = "portable meeting") {
+  const version = Number(portable?.version ?? 1);
+  if (version !== 1) {
+    throw new Error(
+      `${path} uses portable manifest v${version}; this legacy display repacker only rewrites v1`,
+    );
+  }
 }
 
 export function normalizePortableReadableTranscript(portable) {

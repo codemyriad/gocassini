@@ -135,7 +135,7 @@ func TestLoadPortableMeetingSourceIncludesReadableAndDisplayTranscripts(t *testi
 		Channels:    1,
 		SampleCount: 59232,
 		DurationMS:  1234,
-		PCMSHA256:   "pcm-sha",
+		OpusSHA256:  "opus-sha",
 	}, filepath.Join(root, "meeting.opus"), portablePackOptions{
 		Title:        "Meeting",
 		CreatedAtUTC: "2026-03-11T00:00:00Z",
@@ -206,7 +206,7 @@ func TestPortableManifestEmbedsSummaryWhenPresent(t *testing.T) {
 		Channels:    1,
 		SampleCount: 59232,
 		DurationMS:  1234,
-		PCMSHA256:   "pcm-sha",
+		OpusSHA256:  "opus-sha",
 	}, filepath.Join(root, "meeting.opus"), portablePackOptions{Title: "Meeting"})
 	if err != nil {
 		t.Fatalf("buildPortableMeetingManifest: %v", err)
@@ -268,7 +268,7 @@ func TestPortableManifestOmitsSummaryWhenAbsent(t *testing.T) {
 	}
 
 	manifest, err := buildPortableMeetingManifest(source, portableAudioIntegrity{
-		SampleRate: 48000, Channels: 1, SampleCount: 59232, DurationMS: 1234, PCMSHA256: "pcm-sha",
+		SampleRate: 48000, Channels: 1, SampleCount: 59232, DurationMS: 1234, OpusSHA256: "opus-sha",
 	}, filepath.Join(root, "meeting.opus"), portablePackOptions{Title: "Meeting"})
 	if err != nil {
 		t.Fatalf("buildPortableMeetingManifest: %v", err)

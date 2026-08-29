@@ -14,7 +14,7 @@ import (
 // this format cannot absorb: adding a field to portable.Meeting and forgetting
 // the schema.
 //
-// Both schemas declare the meeting object with "additionalProperties": false,
+// All schemas declare the meeting object with "additionalProperties": false,
 // so a key a producer emits and a schema does not declare makes every file that
 // producer writes invalid — against a document nothing in CI validates, so it
 // would be found by a consumer rather than by us.
@@ -60,13 +60,17 @@ func TestPackedMeetingKeysAreDeclaredBySchema(t *testing.T) {
 		t.Fatal("the packed manifest has no meeting object")
 	}
 
-	// `cassini pack` writes v2, so that is the schema this file must satisfy.
-	// v1 is checked too, because the same Meeting struct is what a v1 write
-	// would serialise.
+	// `cassini pack` writes v3, so that is the schema this file must satisfy.
+	// v1/v2 are checked too, because the same Meeting struct is what those
+	// legacy writers serialise.
 	for _, schema := range []struct {
 		path string
 		at   func(map[string]any) map[string]any
 	}{
+		{
+			path: "../../../spec/cassini-portable-meeting-manifest-v3.schema.json",
+			at:   func(doc map[string]any) map[string]any { return nested(doc, "$defs", "meeting") },
+		},
 		{
 			path: "../../../spec/cassini-portable-meeting-manifest-v2.schema.json",
 			at:   func(doc map[string]any) map[string]any { return nested(doc, "$defs", "meeting") },

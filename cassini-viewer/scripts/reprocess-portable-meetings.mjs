@@ -24,6 +24,7 @@ import {
   normalizeManifest,
   normalizePortableReadableTranscript,
   repackPortableMeeting,
+  requireLegacyV1ForJSRewrite,
   rewritePortableTags,
 } from "./repack-portable-display-transcripts.mjs";
 
@@ -140,7 +141,9 @@ export function indexArtifactDirectories(roots) {
 }
 
 export async function reprocessPortableMeeting(portablePath, artifactIndex) {
-  const portable = normalizePortableReadableTranscript(extractPortableManifest(portablePath));
+  const extracted = extractPortableManifest(portablePath);
+  requireLegacyV1ForJSRewrite(extracted, portablePath);
+  const portable = normalizePortableReadableTranscript(extracted);
   const portableAudio = portableAudioIdentityFromManifest(portable);
   const meetingKey = canonicalMeetingKey(basename(portablePath, ".opus"));
   const candidatePaths = artifactIndex.get(meetingKey) ?? [];

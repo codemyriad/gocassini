@@ -799,6 +799,19 @@ describe("listAvailableTranscripts / describeTranscript", () => {
     expect(getDefaultTranscriptId(manifest)).toBe("canary");
   });
 
+  it("uses the v2 multi-transcript shape for compressed-integrity v3 manifests", () => {
+    const manifest: PortableMeetingManifest = {
+      version: 3,
+      integrity: {
+        matchPolicy: "exact-opus-audio-v1",
+        opusAudioSha256: "a".repeat(64),
+      },
+      transcripts: [makeTranscriptEntry({ id: "parakeet", default: true })],
+    };
+    expect(listAvailableTranscripts(manifest).map((entry) => entry.id)).toEqual(["parakeet"]);
+    expect(getDefaultTranscriptId(manifest)).toBe("parakeet");
+  });
+
   it("keeps labels unique when two transcripts share engine, backend, and model fields", () => {
     // Regression: an older version of describeTranscript labeled by engine
     // first, so two sherpa-onnx transcripts both rendered as "sherpa-onnx".
