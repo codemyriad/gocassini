@@ -223,6 +223,76 @@ func TestDedupOverlappingWordsRetainsOneSidedOverlapWords(t *testing.T) {
 	}
 }
 
+func TestNonVADChunkedDisagreeingSeamUsesMidpointOwnership(t *testing.T) {
+	// The merged fallback's int8 decoder can hear the same overlap as one word
+	// in the preceding window and several different words in the next. With no
+	// text/time match, alignment alone would retain both readings. Keep the old
+	// midpoint ownership for this path so only one hypothesis owns each instant.
+	acc := []Word{
+		{Text: "before", StartMS: 14000, EndMS: 14200},
+		{Text: "recognize", StartMS: 14600, EndMS: 14900},
+		{Text: "old-late", StartMS: 14820, EndMS: 14920},
+	}
+	next := []Word{
+		{Text: "wreck", StartMS: 14610, EndMS: 14650},
+		{Text: "a", StartMS: 14660, EndMS: 14700},
+		{Text: "nice", StartMS: 14810, EndMS: 14850},
+		{Text: "after", StartMS: 15100, EndMS: 15300},
+	}
+
+	got := dedupMergedFallbackWords(acc, next, false, 14500, 500)
+	want := []Word{acc[0], acc[1], next[2], next[3]}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("disagreeing non-VAD seam = %#v; want midpoint-owned %#v", got, want)
+	}
+
+	// The VAD-window merge intentionally keeps one-sided lexical evidence; its
+	// private-corpus evaluation covers that behavior and must not inherit the
+	// merged fallback's disagreement policy.
+	gotVAD := dedupOverlappingWords(acc, next, false, 14500, 500)
+	if len(gotVAD) != len(acc)+len(next) {
+		t.Fatalf("disagreeing VAD seam = %#v; want both one-sided hypotheses", gotVAD)
+	}
+}
+
+func TestNonVADChunkedBoundaryContactDoesNotTriggerDisagreementCut(t *testing.T) {
+	// The preceding word only touches the overlap start; it does not populate
+	// the overlap. The one-sided next-window word must therefore survive rather
+	// than activating the merged fallback's disagreement policy.
+	acc := []Word{{Text: "before", StartMS: 9300, EndMS: 9500}}
+	next := []Word{
+		{Text: "new-only", StartMS: 9600, EndMS: 9700},
+		{Text: "after", StartMS: 10100, EndMS: 10300},
+	}
+	want := []Word{acc[0], next[0], next[1]}
+	got := dedupMergedFallbackWords(acc, next, false, 9500, 500)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("boundary-contact seam = %#v; want one-sided words %#v", got, want)
+	}
+}
+
+func TestNonVADChunkedConfidentMatchKeepsOneSidedOverlapWord(t *testing.T) {
+	// Midpoint ownership is only the zero-match fallback. Once one shared word
+	// anchors the hypotheses, retain additional one-sided lexical evidence from
+	// the aligned merge even when it lies before the old midpoint cut.
+	acc := []Word{{Text: "shared", StartMS: 9600, EndMS: 9700}}
+	next := []Word{
+		{Text: "shared", StartMS: 9610, EndMS: 9710},
+		{Text: "new-only", StartMS: 9700, EndMS: 9740},
+		{Text: "after", StartMS: 10100, EndMS: 10300},
+	}
+	got := dedupMergedFallbackWords(acc, next, false, 9500, 500)
+	wantText := []string{"shared", "new-only", "after"}
+	if len(got) != len(wantText) {
+		t.Fatalf("anchored non-VAD seam = %#v; want %v", got, wantText)
+	}
+	for i, text := range wantText {
+		if got[i].Text != text {
+			t.Fatalf("anchored non-VAD seam word %d = %q; want %q (all=%#v)", i, got[i].Text, text, got)
+		}
+	}
+}
+
 func TestDedupOverlappingWordsReplacesClampedBoundaryCopy(t *testing.T) {
 	acc := []Word{
 		{Text: "before", StartMS: 9300, EndMS: 9500},
@@ -627,7 +697,7 @@ func TestNonVADChunkedDedupEndToEndShape(t *testing.T) {
 	first := true
 	for _, b := range bounds {
 		windowStartMS := int64(b.start) * 1000 / int64(sr)
-		merged = dedupOverlappingWords(merged, decodeWindow(b), first, windowStartMS, overlapMS)
+		merged = dedupMergedFallbackWords(merged, decodeWindow(b), first, windowStartMS, overlapMS)
 		first = false
 	}
 

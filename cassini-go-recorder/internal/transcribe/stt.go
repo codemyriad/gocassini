@@ -501,7 +501,9 @@ func samplesToCeilMS(samples, sampleRate int) int64 {
 // segOffsetMS.
 // Adjacent windows overlap by nonVADWindowOverlapSamples so a word straddling a
 // boundary is captured by at least one window; confirmed duplicates are aligned
-// by normalized text, order, and timestamp in dedupOverlappingWords.
+// by normalized text, order, and timestamp. If two populated overlap hypotheses
+// cannot be aligned at all, the merged fallback retains its legacy deterministic
+// midpoint ownership instead of emitting both unstable readings.
 func (r *Recognizer) transcribeNonVADChunked(samples []float32, sampleRate int) ([]Word, error) {
 	windowSamples := scaleSamples(nonVADWindowSamples, sampleRate)
 	overlapSamples := scaleSamples(nonVADWindowOverlapSamples, sampleRate)
@@ -518,8 +520,10 @@ func (r *Recognizer) transcribeNonVADChunked(samples []float32, sampleRate int) 
 		}
 		// Align the region already covered by the previous window's tail (the
 		// overlap [windowStartMS, windowStartMS+overlapMS]). Confirmed duplicate
-		// words are kept once despite timestamp jitter; one-sided words survive.
-		allWords = dedupOverlappingWords(allWords, words, firstWindow, windowStartMS, overlapMS)
+		// words are kept once despite timestamp jitter. Unlike the VAD path, two
+		// populated but wholly disagreeing merged-fallback hypotheses use the old
+		// midpoint cut so each seam still has one deterministic owner.
+		allWords = dedupMergedFallbackWords(allWords, words, firstWindow, windowStartMS, overlapMS)
 		firstWindow = false
 	}
 	return allWords, nil
@@ -560,7 +564,7 @@ func nonVADWindowBounds(total, windowSamples, overlapSamples int) []windowBound 
 	return bounds
 }
 
-// dedupOverlappingWords merges adjacent window hypotheses. Decoder timestamps
+// dedupOverlappingWords merges adjacent VAD-window hypotheses. Decoder timestamps
 // can shift by hundreds of milliseconds when the same word is seen with left
 // versus right context, so a hard midpoint splice can either duplicate that
 // word or remove both copies. Instead, find an order-preserving alignment of
@@ -569,6 +573,18 @@ func nonVADWindowBounds(total, windowSamples, overlapSamples int) []windowBound 
 // matched copies, keep the one farther from its decode boundary, where the
 // recognizer had more context. firstWindow has no preceding hypothesis.
 func dedupOverlappingWords(acc, next []Word, firstWindow bool, windowStartMS, overlapMS int64) []Word {
+	return dedupOverlappingWordsWithPolicy(acc, next, firstWindow, windowStartMS, overlapMS, false)
+}
+
+// dedupMergedFallbackWords preserves the non-VAD merged fallback's legacy
+// one-owner-per-seam behavior when adjacent int8 decodes produce wholly
+// different readings in a populated overlap. Where at least one confident
+// text/time match exists, it retains the context-aware aligned merge.
+func dedupMergedFallbackWords(acc, next []Word, firstWindow bool, windowStartMS, overlapMS int64) []Word {
+	return dedupOverlappingWordsWithPolicy(acc, next, firstWindow, windowStartMS, overlapMS, true)
+}
+
+func dedupOverlappingWordsWithPolicy(acc, next []Word, firstWindow bool, windowStartMS, overlapMS int64, midpointOnDisagreement bool) []Word {
 	if firstWindow {
 		return append(acc, next...)
 	}
@@ -582,6 +598,11 @@ func dedupOverlappingWords(acc, next []Word, firstWindow bool, windowStartMS, ov
 	overlapEndMS := windowStartMS + overlapMS
 	matches := alignOverlapWords(acc, next, windowStartMS, overlapEndMS, overlapDuplicateTolerance)
 	matches = confidentOverlapMatches(matches, acc, next, overlapEndMS)
+	if midpointOnDisagreement && len(matches) == 0 &&
+		hasWordInOverlap(acc, windowStartMS, overlapEndMS) &&
+		hasWordInOverlap(next, windowStartMS, overlapEndMS) {
+		return mergeOverlapAtMidpoint(acc, next, windowStartMS, overlapMS)
+	}
 	dropAcc := make([]bool, len(acc))
 	dropNext := make([]bool, len(next))
 	for _, match := range matches {
@@ -628,6 +649,49 @@ func dedupOverlappingWords(acc, next []Word, firstWindow bool, windowStartMS, ov
 	sort.SliceStable(merged, func(i, j int) bool {
 		return merged[i].StartMS < merged[j].StartMS
 	})
+	return merged
+}
+
+func hasWordInOverlap(words []Word, overlapStartMS, overlapEndMS int64) bool {
+	for _, word := range words {
+		if word.EndMS < word.StartMS || normalizeOverlapWord(word.Text) == "" {
+			continue
+		}
+		if word.EndMS == word.StartMS {
+			if word.StartMS >= overlapStartMS && word.StartMS <= overlapEndMS {
+				return true
+			}
+			continue
+		}
+		// Duration words must positively intersect the half-open overlap. Mere
+		// contact at either boundary does not mean both decodes populated it.
+		if word.EndMS > overlapStartMS && word.StartMS < overlapEndMS {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeOverlapAtMidpoint is the deterministic ownership rule used by the
+// non-VAD merged fallback before text/time alignment was introduced. The
+// preceding decode owns starts before the overlap midpoint; the next decode
+// owns starts at or after it.
+func mergeOverlapAtMidpoint(acc, next []Word, windowStartMS, overlapMS int64) []Word {
+	cutMS := windowStartMS + overlapMS/2
+	trimmed := len(acc)
+	for trimmed > 0 && acc[trimmed-1].StartMS >= cutMS {
+		trimmed--
+	}
+	// Build a fresh result so appending the next-window half cannot overwrite
+	// the caller's acc backing array. The aligned path has the same no-alias
+	// property, and keeping both policies consistent makes test/retry reuse safe.
+	merged := make([]Word, 0, trimmed+len(next))
+	merged = append(merged, acc[:trimmed]...)
+	for _, word := range next {
+		if word.StartMS >= cutMS {
+			merged = append(merged, word)
+		}
+	}
 	return merged
 }
 
