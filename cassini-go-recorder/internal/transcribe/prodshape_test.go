@@ -2,6 +2,7 @@ package transcribe
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -61,16 +62,20 @@ func buildProdShapedMeeting(t *testing.T, dir string) string {
 	// A participant who is barely present at all (p10 density).
 	sparse := fmt.Sprintf(
 		"sine=frequency=1100:sample_rate=48000:duration=%.1f,volume=0.4", 0.3)
-	// The rejoin: a second stream for the punctual speaker, same participant id.
+	// The rejoin: a second stream for the punctual speaker, same participant id,
+	// carrying ONLY ongoing speech and overlapping the window the tests probe.
+	// That combination is what breaks per-stream calibration — a stream with no
+	// quiet part has speech as its own noise floor — so the fixture has to place
+	// it where the assertions look, not politely out of the way.
 	rejoin := fmt.Sprintf(
-		"sine=frequency=300:sample_rate=48000:duration=%.1f,volume=0.9", 1.0)
+		"sine=frequency=300:sample_rate=48000:duration=%.1f,volume=0.9", 1.2)
 
 	args := []string{
 		"-y", "-v", "error",
 		"-f", "lavfi", "-i", punctual,
 		"-itsoffset", "2.0", "-f", "lavfi", "-i", late,
 		"-itsoffset", "4.5", "-f", "lavfi", "-i", sparse,
-		"-itsoffset", "5.0", "-f", "lavfi", "-i", rejoin,
+		"-itsoffset", "2.2", "-f", "lavfi", "-i", rejoin,
 		"-map", "0:a:0", "-map", "1:a:0", "-map", "2:a:0", "-map", "3:a:0",
 		"-metadata:s:a:0", "title=Punctual",
 		"-metadata:s:a:0", "participant_id=user-punctual",
@@ -140,6 +145,62 @@ func TestProdShapedFixtureHasProductionShape(t *testing.T) {
 	}
 	if late == 0 {
 		t.Error("fixture must contain a late-joining track: 67.8% of production streams are")
+	}
+
+	// The rejoined stream must carry speech in the window the attribution tests
+	// probe, or it cannot exercise the calibration failure it exists to cover.
+	envelopes, err := BuildSpeakerEnvelopes(mkv, streams, 16000, nil)
+	if err != nil {
+		t.Fatalf("envelopes: %v", err)
+	}
+	var covering int
+	for _, env := range envelopes {
+		if _, ok := env.aboveFloor(2500, 2700); ok {
+			covering++
+		}
+	}
+	if covering < 3 {
+		t.Errorf("only %d streams carry audio in the probed window; the rejoin stream "+
+			"must overlap it or the rotation case is never exercised", covering)
+	}
+}
+
+// The rejoined stream carries only speech, so calibrated on its own its floor
+// would be speech. Pooling by logical speaker is what keeps the punctual
+// speaker's established floor, and this asserts it on a real decoded fixture
+// rather than on synthesised envelopes.
+func TestProdShapeRotationSharesOneFloorPerSpeaker(t *testing.T) {
+	requireFFMediaTools(t)
+	dir := t.TempDir()
+	mkv := buildProdShapedMeeting(t, dir)
+
+	streams, _, err := ProbeMKV(mkv)
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	envelopes, err := BuildSpeakerEnvelopes(mkv, streams, 16000, nil)
+	if err != nil {
+		t.Fatalf("envelopes: %v", err)
+	}
+	floors := map[string][]float64{}
+	for _, env := range envelopes {
+		floors[env.SpeakerID] = append(floors[env.SpeakerID], env.FloorDB)
+	}
+	var sawShared bool
+	for id, vals := range floors {
+		if len(vals) < 2 {
+			continue
+		}
+		sawShared = true
+		for _, v := range vals[1:] {
+			if math.Abs(v-vals[0]) > 1 {
+				t.Errorf("%s has streams calibrated to different floors: %.1f vs %.1f",
+					id, vals[0], v)
+			}
+		}
+	}
+	if !sawShared {
+		t.Fatal("fixture no longer contains a speaker with two streams")
 	}
 }
 

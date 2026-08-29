@@ -682,6 +682,24 @@ func redistributeWords(origWords []Word, cleanedText string) []Word {
 			t1 = segEnd
 		}
 		out[i] = Word{Text: w, StartMS: t0, EndMS: t1}
+		// Carry attribution provenance across the rewrite. Cleaned words are new
+		// text on interpolated slots, so the honest mapping is temporal: a
+		// cleaned word inherits the flag when it overlaps a source word the
+		// acoustic evidence contradicted. Losing it here would silently make the
+		// summary filter a no-op, because readable cleanup and summarisation
+		// normally share one configured LLM and the summary reads the cleaned
+		// segments.
+		for _, orig := range origWords {
+			if !orig.LowConfidenceSpeaker {
+				continue
+			}
+			if orig.StartMS < t1 && t0 < orig.EndMS {
+				out[i].LowConfidenceSpeaker = true
+				out[i].AttributionGapDB = orig.AttributionGapDB
+				out[i].HasAttributionGap = orig.HasAttributionGap
+				break
+			}
+		}
 	}
 	return out
 }

@@ -471,3 +471,126 @@ func TestFilteringDoesNotMutateTheCanonicalSegments(t *testing.T) {
 		t.Errorf("canonical transcript was mutated: %d words became %d", before, after)
 	}
 }
+
+// A noise floor belongs to somebody's microphone, not to a packet stream. Remux
+// emits a fresh stream on every rotation or rejoin, and a short one can contain
+// nothing but ongoing speech — calibrated alone its own 20th percentile IS
+// speech, so its floor lands tens of dB too high, the real speaker measures as
+// barely above it, and a quiet track carrying only their bleed wins. Measured
+// before pooling: a -40 dBFS bleed beat the real 0.8-amplitude owner by 20 dB.
+func TestRotatedStreamInheritsTheSpeakersEstablishedFloor(t *testing.T) {
+	const sr = 16000
+	frame, hop := sr*attributionFrameMS/1000, sr*attributionHopMS/1000
+
+	// The first stream establishes speaker A's microphone floor.
+	established := envelopeFromSamples("a", tone(sr, 0.002), frame, hop, attributionHopMS)
+	// The rotation produces a short stream carrying only speech.
+	rotated := envelopeFromSamples("a",
+		append(make([]float32, sr), tone(sr, 0.8)...), frame, hop, attributionHopMS)
+	// Speaker B carries only bleed during that word, above its own quiet floor.
+	bleed := envelopeFromSamples("b",
+		append(tone(sr, 0.001), tone(sr, 0.01)...), frame, hop, attributionHopMS)
+
+	envelopes := []*SpeakerEnvelope{established, rotated, bleed}
+	if rotated.FloorDB-established.FloorDB < 20 {
+		t.Fatalf("fixture is not exercising the failure: rotated floor %.1f vs established %.1f",
+			rotated.FloorDB, established.FloorDB)
+	}
+
+	calibrateByLogicalSpeaker(envelopes)
+
+	if math.Abs(rotated.FloorDB-established.FloorDB) > 1 {
+		t.Errorf("both of A's streams must share one floor: %.1f vs %.1f",
+			rotated.FloorDB, established.FloorDB)
+	}
+	gap, ok := AttributionGapDB(Word{Text: "real", StartMS: 1200, EndMS: 1400}, "a", envelopes)
+	if !ok {
+		t.Fatal("expected attribution evidence")
+	}
+	if gap > 0 {
+		t.Errorf("quiet bleed beat the real owner by %.1f dB across a rotation", gap)
+	}
+}
+
+// Readable cleanup rewrites text onto interpolated slots. If the flag does not
+// survive that rewrite, the summary filter silently becomes a no-op — and since
+// readable cleanup and summarisation normally share one configured LLM, the
+// no-op is the normal path, not an edge case.
+func TestAttributionSurvivesReadableCleanup(t *testing.T) {
+	original := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: "one two",
+		Words: []Word{
+			{Text: "one", StartMS: 0, EndMS: 500},
+			{Text: "two", StartMS: 500, EndMS: 1000,
+				LowConfidenceSpeaker: true, HasAttributionGap: true, AttributionGapDB: 31.7},
+		}}}
+	readable := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: "One, two."}}
+
+	applied := ApplyReadableText(original, readable)
+	var flagged int
+	var gap float64
+	for _, seg := range applied {
+		for _, w := range seg.Words {
+			if w.LowConfidenceSpeaker {
+				flagged++
+				gap = w.AttributionGapDB
+			}
+		}
+	}
+	if flagged == 0 {
+		t.Fatal("readable cleanup dropped the flag; summary filtering would be a no-op")
+	}
+	if gap != 31.7 {
+		t.Errorf("the measured gap should travel with the flag, got %.1f", gap)
+	}
+	if _, removed := WithoutLowConfidenceWords(applied); removed == 0 {
+		t.Error("the summary filter must still find something to remove after cleanup")
+	}
+}
+
+// A word the evidence did not contradict must not pick up a flag from a
+// neighbour just because the text was rewritten around it.
+func TestReadableCleanupDoesNotSpreadTheFlag(t *testing.T) {
+	original := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: "a b c d",
+		Words: []Word{
+			{Text: "a", StartMS: 0, EndMS: 250},
+			{Text: "b", StartMS: 250, EndMS: 500},
+			{Text: "c", StartMS: 500, EndMS: 750},
+			{Text: "d", StartMS: 750, EndMS: 1000, LowConfidenceSpeaker: true},
+		}}}
+	readable := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: "a b c d"}}
+	applied := ApplyReadableText(original, readable)
+	var flagged int
+	for _, w := range applied[0].Words {
+		if w.LowConfidenceSpeaker {
+			flagged++
+		}
+	}
+	if flagged != 1 {
+		t.Errorf("exactly the overlapping word should be flagged, got %d of %d",
+			flagged, len(applied[0].Words))
+	}
+}
+
+// Older transcripts carry segment text with no word list. There is nothing to
+// filter and nothing to judge them on, so they must not vanish because some
+// other segment was flagged.
+func TestFilteringKeepsWordlessLegacySegments(t *testing.T) {
+	segments := []Segment{
+		{SpeakerID: "spk_a", StartMS: 0, EndMS: 100, Text: "legacy text, no word list"},
+		{SpeakerID: "spk_b", StartMS: 0, EndMS: 100, Text: "ghost",
+			Words: []Word{{Text: "ghost", StartMS: 0, EndMS: 100, LowConfidenceSpeaker: true}}},
+	}
+	out, removed := WithoutLowConfidenceWords(segments)
+	if removed != 1 {
+		t.Fatalf("expected the flagged word removed, got %d", removed)
+	}
+	var keptLegacy bool
+	for _, seg := range out {
+		if seg.SpeakerID == "spk_a" && seg.Text == "legacy text, no word list" {
+			keptLegacy = true
+		}
+	}
+	if !keptLegacy {
+		t.Error("the wordless legacy segment was dropped")
+	}
+}

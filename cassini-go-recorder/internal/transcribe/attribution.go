@@ -138,12 +138,51 @@ func BuildSpeakerEnvelopes(mkvPath string, streams []AudioStream, sampleRate int
 		}
 		env := envelopeFromSamples(stream.SpeakerID, samples, frame, hop, int64(attributionHopMS))
 		envelopes = append(envelopes, env)
-		if progress != nil {
+	}
+	calibrateByLogicalSpeaker(envelopes)
+	if progress != nil {
+		for _, env := range envelopes {
 			fmt.Fprintf(progress, "    envelope %s: floor %.1f dB, speech %.1f dB\n",
-				stream.SpeakerLabel, env.FloorDB, env.SpeechDB)
+				env.SpeakerID, env.FloorDB, env.SpeechDB)
 		}
 	}
 	return envelopes, nil
+}
+
+// calibrateByLogicalSpeaker pools the levels of every stream belonging to one
+// participant before deciding that participant's floor.
+//
+// A noise floor is a property of somebody's microphone and room, not of a
+// packet stream. Remux emits a fresh stream on every rotation or rejoin, and a
+// short one can contain nothing but ongoing speech — so calibrated alone, its
+// own 20th percentile IS speech and its floor lands tens of dB too high. The
+// speaker then measures as barely above "their own floor" while a quiet track
+// carrying only their bleed measures well above its genuinely quiet one, and
+// the bleed wins: measured, a -40 dBFS bleed beat the real 0.8-amplitude owner
+// by 20 dB across a rotation.
+//
+// Pooling fixes it at the source, and taking the union of present frames means
+// the quiet stream that established the real floor keeps setting it.
+func calibrateByLogicalSpeaker(envelopes []*SpeakerEnvelope) {
+	pooled := map[string][]float64{}
+	for _, env := range envelopes {
+		if len(env.Present) != len(env.FrameDB) {
+			continue
+		}
+		for i, ok := range env.Present {
+			if ok {
+				pooled[env.SpeakerID] = append(pooled[env.SpeakerID], env.FrameDB[i])
+			}
+		}
+	}
+	for _, env := range envelopes {
+		levels := pooled[env.SpeakerID]
+		if len(levels) == 0 {
+			continue
+		}
+		env.FloorDB = percentileOf(levels, attributionFloorPercentile)
+		env.SpeechDB = percentileOf(levels, attributionSpeechPercentile)
+	}
 }
 
 // envelopeFromSamples is the pure core of BuildSpeakerEnvelopes, split out so
@@ -428,6 +467,10 @@ func AnnotateAttribution(segments []Segment, envelopes []*SpeakerEnvelope, drop 
 
 	out := make([]Segment, 0, len(segments))
 	for _, seg := range segments {
+		if len(seg.Words) == 0 {
+			out = append(out, seg)
+			continue
+		}
 		kept := make([]Word, 0, len(seg.Words))
 		for _, w := range seg.Words {
 			if w.HasAttributionGap && w.AttributionGapDB >= threshold {
@@ -495,6 +538,13 @@ func WithoutLowConfidenceWords(segments []Segment) ([]Segment, int) {
 	var removed int
 	out := make([]Segment, 0, len(segments))
 	for _, seg := range segments {
+		if len(seg.Words) == 0 {
+			// A legacy segment carries text but no word list. There is nothing
+			// to filter and nothing to judge it on, so it passes through: it
+			// must not disappear because some other segment was flagged.
+			out = append(out, seg)
+			continue
+		}
 		kept := make([]Word, 0, len(seg.Words))
 		for _, w := range seg.Words {
 			if w.LowConfidenceSpeaker {
