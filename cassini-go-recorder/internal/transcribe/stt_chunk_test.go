@@ -121,10 +121,8 @@ func TestDedupOverlappingWordsKeepsOverlapWordOnce(t *testing.T) {
 		overlapMS     = int64(500)
 	)
 
-	// Previous window's decode, already in acc. The word "shared" sits in the
-	// overlap, before the cut (start 14600 < 14750), so it stays with window 0.
-	// "late" starts at 14800 (>= cut): it must be trimmed from acc and re-owned
-	// by window 1.
+	// Previous window's decode, already in acc. "shared" has more left-window
+	// context, while "late" has more right-window context.
 	acc := []Word{
 		{Text: "hello", StartMS: 1000, EndMS: 1400},
 		{Text: "world", StartMS: 5000, EndMS: 5400},
@@ -135,8 +133,8 @@ func TestDedupOverlappingWordsKeepsOverlapWordOnce(t *testing.T) {
 	// Next window's decode. It re-emits "shared" and "late" (both windows saw
 	// them), then continues past the overlap.
 	next := []Word{
-		{Text: "shared", StartMS: 14600, EndMS: 14760}, // before cut -> dropped here
-		{Text: "late", StartMS: 14800, EndMS: 14980},   // at/after cut -> kept here
+		{Text: "shared", StartMS: 14600, EndMS: 14760}, // duplicate; older copy wins
+		{Text: "late", StartMS: 14800, EndMS: 14980},   // duplicate; newer copy wins
 		{Text: "again", StartMS: 16000, EndMS: 16400},
 		{Text: "more", StartMS: 20000, EndMS: 20400},
 	}
@@ -164,6 +162,235 @@ func TestDedupOverlappingWordsKeepsOverlapWordOnce(t *testing.T) {
 		if counts[dup] != 1 {
 			t.Fatalf("overlap word %q appears %d times; want exactly 1", dup, counts[dup])
 		}
+	}
+}
+
+func TestDedupOverlappingWordsHandlesTimestampJitterAcrossOldMidpoint(t *testing.T) {
+	const (
+		windowStartMS = int64(9500)
+		overlapMS     = int64(500)
+	)
+	for _, tc := range []struct {
+		name      string
+		accStart  int64
+		nextStart int64
+	}{
+		{name: "old-before-new-after", accStart: 9740, nextStart: 9760},
+		{name: "old-after-new-before", accStart: 9760, nextStart: 9740},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			acc := []Word{
+				{Text: "before", StartMS: 9000, EndMS: 9200},
+				{Text: "Shared,", StartMS: tc.accStart, EndMS: tc.accStart + 100},
+			}
+			next := []Word{
+				{Text: "shared", StartMS: tc.nextStart, EndMS: tc.nextStart + 100},
+				{Text: "after", StartMS: 10200, EndMS: 10400},
+			}
+			got := dedupOverlappingWords(acc, next, false, windowStartMS, overlapMS)
+			if len(got) != 3 {
+				t.Fatalf("merged words = %#v; want before, one shared copy, after", got)
+			}
+			counts := map[string]int{}
+			for _, word := range got {
+				counts[normalizeOverlapWord(word.Text)]++
+			}
+			if counts["shared"] != 1 {
+				t.Fatalf("shared copies = %d in %#v; want exactly one", counts["shared"], got)
+			}
+		})
+	}
+}
+
+func TestDedupOverlappingWordsRetainsOneSidedOverlapWords(t *testing.T) {
+	acc := []Word{
+		{Text: "before", StartMS: 9000, EndMS: 9200},
+		{Text: "old-only", StartMS: 9800, EndMS: 9900},
+	}
+	next := []Word{
+		{Text: "new-only", StartMS: 9700, EndMS: 9800},
+		{Text: "after", StartMS: 10200, EndMS: 10400},
+	}
+	got := dedupOverlappingWords(acc, next, false, 9500, 500)
+	want := []string{"before", "new-only", "old-only", "after"}
+	if len(got) != len(want) {
+		t.Fatalf("merged words = %#v; want %v", got, want)
+	}
+	for i := range want {
+		if got[i].Text != want[i] {
+			t.Fatalf("merged word %d = %q; want %q (all=%#v)", i, got[i].Text, want[i], got)
+		}
+	}
+}
+
+func TestNonVADChunkedDisagreeingSeamUsesMidpointOwnership(t *testing.T) {
+	// The merged fallback's int8 decoder can hear the same overlap as one word
+	// in the preceding window and several different words in the next. With no
+	// text/time match, alignment alone would retain both readings. Keep the old
+	// midpoint ownership for this path so only one hypothesis owns each instant.
+	acc := []Word{
+		{Text: "before", StartMS: 14000, EndMS: 14200},
+		{Text: "recognize", StartMS: 14600, EndMS: 14900},
+		{Text: "old-late", StartMS: 14820, EndMS: 14920},
+	}
+	next := []Word{
+		{Text: "wreck", StartMS: 14610, EndMS: 14650},
+		{Text: "a", StartMS: 14660, EndMS: 14700},
+		{Text: "nice", StartMS: 14810, EndMS: 14850},
+		{Text: "after", StartMS: 15100, EndMS: 15300},
+	}
+
+	got := dedupMergedFallbackWords(acc, next, false, 14500, 500)
+	want := []Word{acc[0], acc[1], next[2], next[3]}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("disagreeing non-VAD seam = %#v; want midpoint-owned %#v", got, want)
+	}
+
+	// The VAD-window merge intentionally keeps one-sided lexical evidence; its
+	// private-corpus evaluation covers that behavior and must not inherit the
+	// merged fallback's disagreement policy.
+	gotVAD := dedupOverlappingWords(acc, next, false, 14500, 500)
+	if len(gotVAD) != len(acc)+len(next) {
+		t.Fatalf("disagreeing VAD seam = %#v; want both one-sided hypotheses", gotVAD)
+	}
+}
+
+func TestNonVADChunkedBoundaryContactDoesNotTriggerDisagreementCut(t *testing.T) {
+	// The preceding word only touches the overlap start; it does not populate
+	// the overlap. The one-sided next-window word must therefore survive rather
+	// than activating the merged fallback's disagreement policy.
+	acc := []Word{{Text: "before", StartMS: 9300, EndMS: 9500}}
+	next := []Word{
+		{Text: "new-only", StartMS: 9600, EndMS: 9700},
+		{Text: "after", StartMS: 10100, EndMS: 10300},
+	}
+	want := []Word{acc[0], next[0], next[1]}
+	got := dedupMergedFallbackWords(acc, next, false, 9500, 500)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("boundary-contact seam = %#v; want one-sided words %#v", got, want)
+	}
+}
+
+func TestNonVADChunkedConfidentMatchKeepsOneSidedOverlapWord(t *testing.T) {
+	// Midpoint ownership is only the zero-match fallback. Once one shared word
+	// anchors the hypotheses, retain additional one-sided lexical evidence from
+	// the aligned merge even when it lies before the old midpoint cut.
+	acc := []Word{{Text: "shared", StartMS: 9600, EndMS: 9700}}
+	next := []Word{
+		{Text: "shared", StartMS: 9610, EndMS: 9710},
+		{Text: "new-only", StartMS: 9700, EndMS: 9740},
+		{Text: "after", StartMS: 10100, EndMS: 10300},
+	}
+	got := dedupMergedFallbackWords(acc, next, false, 9500, 500)
+	wantText := []string{"shared", "new-only", "after"}
+	if len(got) != len(wantText) {
+		t.Fatalf("anchored non-VAD seam = %#v; want %v", got, wantText)
+	}
+	for i, text := range wantText {
+		if got[i].Text != text {
+			t.Fatalf("anchored non-VAD seam word %d = %q; want %q (all=%#v)", i, got[i].Text, text, got)
+		}
+	}
+}
+
+func TestDedupOverlappingWordsReplacesClampedBoundaryCopy(t *testing.T) {
+	acc := []Word{
+		{Text: "before", StartMS: 9300, EndMS: 9500},
+		{Text: "final", StartMS: 10000, EndMS: 10000},
+	}
+	next := []Word{
+		{Text: "final", StartMS: 9800, EndMS: 9950},
+		{Text: "after", StartMS: 10100, EndMS: 10300},
+	}
+	got := dedupOverlappingWords(acc, next, false, 9500, 500)
+	want := []Word{
+		{Text: "before", StartMS: 9300, EndMS: 9500},
+		{Text: "final", StartMS: 9800, EndMS: 9950},
+		{Text: "after", StartMS: 10100, EndMS: 10300},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("merged boundary words = %#v; want %#v", got, want)
+	}
+}
+
+func TestDedupOverlappingWordsAlignsShiftedPhrase(t *testing.T) {
+	// This shape was observed in the private evaluation: the old midpoint
+	// splice produced "pass it pass it" because the second hypothesis shifted
+	// the repeated phrase about 300ms later.
+	acc := []Word{
+		{Text: "I", StartMS: 9400, EndMS: 9500},
+		{Text: "can", StartMS: 9500, EndMS: 9660},
+		{Text: "pass", StartMS: 9660, EndMS: 9820},
+		{Text: "it", StartMS: 9820, EndMS: 9980},
+	}
+	next := []Word{
+		{Text: "pass", StartMS: 9960, EndMS: 10120},
+		{Text: "it", StartMS: 10120, EndMS: 10280},
+		{Text: "to", StartMS: 10280, EndMS: 10440},
+	}
+	got := dedupOverlappingWords(acc, next, false, 9500, 500)
+	wantText := []string{"I", "can", "pass", "it", "to"}
+	if len(got) != len(wantText) {
+		t.Fatalf("shifted phrase = %#v; want %v", got, wantText)
+	}
+	for i, text := range wantText {
+		if got[i].Text != text {
+			t.Fatalf("shifted phrase word %d = %q; want %q (all=%#v)", i, got[i].Text, text, got)
+		}
+	}
+}
+
+func TestDedupOverlappingWordsKeepsRapidRepeatedSingleton(t *testing.T) {
+	acc := []Word{{Text: "yes", StartMS: 9550, EndMS: 9650}}
+	next := []Word{{Text: "yes", StartMS: 9900, EndMS: 10000}}
+	got := dedupOverlappingWords(acc, next, false, 9500, 500)
+	if !reflect.DeepEqual(got, []Word{acc[0], next[0]}) {
+		t.Fatalf("rapid repeated singleton = %#v; want both occurrences", got)
+	}
+}
+
+func TestDedupOverlappingWordsKeepsRapidZeroLengthNextSingleton(t *testing.T) {
+	acc := []Word{{Text: "yes", StartMS: 9600, EndMS: 9700}}
+	next := []Word{{Text: "yes", StartMS: 10000, EndMS: 10000}}
+	got := dedupOverlappingWords(acc, next, false, 9500, 500)
+	if !reflect.DeepEqual(got, []Word{acc[0], next[0]}) {
+		t.Fatalf("zero-length next singleton = %#v; want both occurrences", got)
+	}
+}
+
+func TestDedupOverlappingWordsPreservesSemanticPunctuation(t *testing.T) {
+	acc := []Word{{Text: "C++", StartMS: 9700, EndMS: 9800}}
+	next := []Word{
+		{Text: "C#", StartMS: 9710, EndMS: 9810},
+		{Text: "C", StartMS: 9720, EndMS: 9820},
+	}
+	got := dedupOverlappingWords(acc, next, false, 9500, 500)
+	if len(got) != 3 {
+		t.Fatalf("technical tokens = %#v; want C++, C#, and C", got)
+	}
+	for _, tc := range []struct {
+		word string
+		want string
+	}{
+		{word: "C++", want: "c++"},
+		{word: "C#", want: "c#"},
+		{word: "a-b", want: "a-b"},
+		{word: "ab", want: "ab"},
+		{word: "“DON’T!”", want: "don't"},
+	} {
+		if got := normalizeOverlapWord(tc.word); got != tc.want {
+			t.Errorf("normalizeOverlapWord(%q) = %q; want %q", tc.word, got, tc.want)
+		}
+	}
+}
+
+func TestDedupOverlappingWordsKeepsStableSourceOrderForEqualStarts(t *testing.T) {
+	acc := []Word{{Text: "old", StartMS: 9800, EndMS: 10000}}
+	next := []Word{{Text: "new", StartMS: 9800, EndMS: 9900}}
+	got := dedupOverlappingWords(acc, next, false, 9500, 500)
+	want := []Word{acc[0], next[0]}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("equal-start source order = %#v; want %#v", got, want)
 	}
 }
 
@@ -318,6 +545,104 @@ func TestSamplesToCeilMSMatchesActualVADTailPadding(t *testing.T) {
 	}
 }
 
+func TestDecoderTailPadSamplesPadsEveryVADSegment(t *testing.T) {
+	const sampleRate = 16000
+	for _, seconds := range []int{1, 9, 10, 15, 25, 55} {
+		if got := decoderTailPadSamples(seconds*sampleRate, sampleRate, true); got != sampleRate/2 {
+			t.Errorf("%ds VAD segment padding = %d samples; want %d", seconds, got, sampleRate/2)
+		}
+	}
+}
+
+func TestLongVADSegmentUsesOverlappingDecoderWindows(t *testing.T) {
+	const sampleRate = 16000
+	got := vadSegmentWindowBounds(25*sampleRate+700, sampleRate)
+	want := []windowBound{
+		{start: 0, end: 10 * sampleRate},
+		{start: 9*sampleRate + sampleRate/2, end: 19*sampleRate + sampleRate/2},
+		{start: 19 * sampleRate, end: 25*sampleRate + 700},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("25s VAD bounds = %#v; want %#v", got, want)
+	}
+	if got := vadSegmentWindowBounds(10*sampleRate, sampleRate); !reflect.DeepEqual(got, []windowBound{{start: 0, end: 10 * sampleRate}}) {
+		t.Fatalf("10s VAD bounds = %#v; want one unsplit window", got)
+	}
+	barelyLong := 10*sampleRate + 1
+	if got := vadSegmentWindowBounds(barelyLong, sampleRate); !reflect.DeepEqual(got, []windowBound{{start: 0, end: barelyLong}}) {
+		t.Fatalf("10s+1-sample VAD bounds = %#v; want one extended window", got)
+	}
+	tinyTerminal := 19*sampleRate + sampleRate/2 + 1
+	wantMergedTerminal := []windowBound{
+		{start: 0, end: 10 * sampleRate},
+		{start: 9*sampleRate + sampleRate/2, end: 15*sampleRate + 1},
+		{start: 14*sampleRate + sampleRate/2 + 1, end: tinyTerminal},
+	}
+	if got := vadSegmentWindowBounds(tinyTerminal, sampleRate); !reflect.DeepEqual(got, wantMergedTerminal) {
+		t.Fatalf("tiny-terminal VAD bounds = %#v; want %#v", got, wantMergedTerminal)
+	}
+}
+
+func TestVADSegmentWindowBoundsStayBoundedWithExactOverlap(t *testing.T) {
+	const sampleRate = 16000
+	for _, total := range []int{
+		10*sampleRate + sampleRate/2 + 1,
+		11 * sampleRate,
+		19*sampleRate + sampleRate/2 + 1,
+		20 * sampleRate,
+		25*sampleRate + 123,
+		55*sampleRate - 1,
+	} {
+		bounds := vadSegmentWindowBounds(total, sampleRate)
+		if len(bounds) < 2 {
+			t.Fatalf("total=%d produced %d bounds; want a split", total, len(bounds))
+		}
+		if bounds[0].start != 0 || bounds[len(bounds)-1].end != total {
+			t.Fatalf("total=%d is not fully covered: %#v", total, bounds)
+		}
+		for i, bound := range bounds {
+			length := bound.end - bound.start
+			if length < vadDecodeMinTerminal || length > vadDecodeWindowSamples {
+				t.Fatalf("total=%d window %d length=%d; want [%d,%d] (all=%#v)",
+					total, i, length, vadDecodeMinTerminal, vadDecodeWindowSamples, bounds)
+			}
+			if i > 0 {
+				if overlap := bounds[i-1].end - bound.start; overlap != vadDecodeWindowOverlap {
+					t.Fatalf("total=%d overlap %d->%d = %d; want %d (all=%#v)",
+						total, i-1, i, overlap, vadDecodeWindowOverlap, bounds)
+				}
+			}
+		}
+	}
+}
+
+func TestDecoderTailPadSamplesPreservesNonVADWindowPolicy(t *testing.T) {
+	const sampleRate = 16000
+	if got := decoderTailPadSamples(9*sampleRate, sampleRate, false); got != sampleRate/2 {
+		t.Fatalf("9s non-VAD chunk padding = %d samples; want %d", got, sampleRate/2)
+	}
+	if got := decoderTailPadSamples(10*sampleRate, sampleRate, false); got != 0 {
+		t.Fatalf("10s non-VAD chunk padding = %d samples; want 0", got)
+	}
+	if got := decoderTailPadSamples(15*sampleRate, sampleRate, false); got != 0 {
+		t.Fatalf("15s non-VAD window padding = %d samples; want 0", got)
+	}
+	for _, tc := range []struct {
+		name       string
+		samples    int
+		sampleRate int
+	}{
+		{name: "empty", samples: 0, sampleRate: sampleRate},
+		{name: "invalid-rate", samples: sampleRate, sampleRate: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := decoderTailPadSamples(tc.samples, tc.sampleRate, true); got != 0 {
+				t.Fatalf("padding = %d samples; want 0", got)
+			}
+		})
+	}
+}
+
 func TestShortInterjectionVADConfig(t *testing.T) {
 	t.Setenv("CASSINI_VAD_DEVICE", "cpu")
 	cfg := newVADModelConfig("vad.onnx", 16000)
@@ -372,7 +697,7 @@ func TestNonVADChunkedDedupEndToEndShape(t *testing.T) {
 	first := true
 	for _, b := range bounds {
 		windowStartMS := int64(b.start) * 1000 / int64(sr)
-		merged = dedupOverlappingWords(merged, decodeWindow(b), first, windowStartMS, overlapMS)
+		merged = dedupMergedFallbackWords(merged, decodeWindow(b), first, windowStartMS, overlapMS)
 		first = false
 	}
 
