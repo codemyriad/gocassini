@@ -150,10 +150,27 @@ jobs:
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
+  resolve-ffmpeg:
+    name: Resolve newest stable FFmpeg
+    runs-on: ubuntu-latest
+    needs: classify-changes
+    if: needs.classify-changes.outputs.relevant == 'true'
+    outputs:
+      version: ${{ steps.ffmpeg.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve release from ffmpeg.org
+        id: ffmpeg
+        run: |
+          set -euo pipefail
+          version=$(deployment/ffmpeg/resolve-latest.sh)
+          echo "Resolved FFmpeg ${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
   build-image:
     name: Build ExApp image
     runs-on: ubuntu-latest
-    needs: [classify-changes, validate-manifest]
+    needs: [classify-changes, validate-manifest, resolve-ffmpeg]
     outputs:
       image_ref: ${{ steps.meta.outputs.tags }}
       digest: ${{ steps.build.outputs.digest }}
@@ -235,6 +252,8 @@ jobs:
           push: false
           load: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -619,7 +638,7 @@ jobs:
     # deploy-preview's deploy-gpu). Only the thin per-commit layers build here;
     # the fat base comes prebuilt from build-cuda-base via FROM (D-375).
     runs-on: ubuntu-latest
-    needs: [validate-manifest, build-cuda-base]
+    needs: [validate-manifest, build-cuda-base, resolve-ffmpeg]
     # Heavy tier: builds on push/dispatch, or on a PR explicitly labeled
     # `full-ci`. Fork PRs cannot push to ghcr and must never run downstream CUDA
     # jobs on the self-hosted GPU runner, so the same-repo clause stays.
@@ -727,6 +746,7 @@ jobs:
           sbom: false
           build-args: |
             BASE_IMAGE=${{ needs.build-cuda-base.outputs.base_ref }}
+            FFMPEG_VERSION=${{ needs.resolve-ffmpeg.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE }}-buildcache:cuda
           cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}-buildcache:cuda,mode=max', env.REGISTRY, env.IMAGE) || '' }}

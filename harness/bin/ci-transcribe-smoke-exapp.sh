@@ -29,6 +29,7 @@
 set -euo pipefail
 
 : "${IMAGE_REF:?IMAGE_REF must be set (e.g. ghcr.io/codemyriad/gocassini:sha-abc)}"
+"$(dirname "${BASH_SOURCE[0]}")/ci-ffmpeg-bundle.sh"
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 FIXTURE_HOST="${REPO_ROOT}/harness/media/parakeet-smoke.mkv"

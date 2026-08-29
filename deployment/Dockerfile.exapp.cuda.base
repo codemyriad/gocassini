@@ -82,13 +82,13 @@ RUN set -eux; \
  rm -rf /tmp/sherpa.tar.bz2 /tmp/sherpa-extract; \
  ls -la /out/lib/
 
-# ---- Base substrate: nvidia/cuda runtime + node + ffmpeg + model + CUDA libs ----
+# ---- Base substrate: nvidia/cuda runtime + node + model + CUDA libs ----
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 LABEL io.gocassini.image-role=base-cuda
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      bash ca-certificates curl ffmpeg tini gnupg \
+      bash ca-certificates curl libopus0 tini gnupg \
  && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*

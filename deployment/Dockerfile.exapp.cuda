@@ -20,6 +20,22 @@
 ARG BASE_IMAGE
 ARG FRP_VERSION=0.61.1
 ARG CASSINI_BUNDLED_MODEL_ID=parakeet-tdt-0.6b-v3
+ARG FFMPEG_VERSION=latest
+ARG FFMPEG_BUILD_JOBS=2
+
+# Match the Ubuntu 22.04 CUDA runtime ABI. FFmpeg stays in this thin layer so
+# every application build can pick up the latest stable release without
+# rebuilding the multi-gigabyte model/CUDA base.
+FROM ubuntu:22.04 AS ffmpeg-builder
+ARG FFMPEG_VERSION
+ARG FFMPEG_BUILD_JOBS
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential ca-certificates curl gnupg libopus-dev nasm pkg-config xz-utils \
+ && rm -rf /var/lib/apt/lists/*
+COPY deployment/ffmpeg /tmp/cassini-ffmpeg-build
+RUN FFMPEG_BUILD_JOBS="${FFMPEG_BUILD_JOBS}" \
+    /tmp/cassini-ffmpeg-build/build.sh "${FFMPEG_VERSION}" /out/ffmpeg
 
 # ---- Stage: go-builder (recorder + operator, identical to CPU image) ----
 FROM golang:1.24-bookworm AS go-builder
@@ -78,6 +94,8 @@ RUN set -eux; \
 # ---- Runtime stage: the prebuilt CUDA base + thin per-commit layers ----
 FROM ${BASE_IMAGE}
 ARG CASSINI_BUNDLED_MODEL_ID
+ARG FFMPEG_VERSION
+LABEL io.gocassini.ffmpeg.requested-version=${FFMPEG_VERSION}
 ENV CASSINI_STT_MODEL=${CASSINI_BUNDLED_MODEL_ID}
 
 WORKDIR /var/lib/cassini-operator
@@ -103,6 +121,7 @@ ENV CASSINI_BIN=/usr/local/bin/cassini \
     CASSINI_STT_CUDA_CAPABLE=1 \
     CASSINI_STT_DEVICE=cuda \
     CASSINI_DISALLOW_MODEL_DOWNLOAD=1
+ENV PATH=/opt/cassini/ffmpeg/bin:${PATH}
 
 # AppAPI deploys inject only APP_*/HP_*/NEXTCLOUD_URL (see app_api
 # DockerActions::buildDeployEnvs) — never CASSINI_*. Bake the base path the
@@ -114,6 +133,7 @@ ENV CASSINI_OPERATOR_BASE_PATH=/operator
 COPY --from=go-builder /out/cassini /usr/local/bin/cassini
 COPY --from=go-builder /out/cassini-operator /usr/local/bin/cassini-operator
 COPY --from=frpc-fetcher /out/frpc /usr/local/bin/frpc
+COPY --from=ffmpeg-builder /out/ffmpeg /opt/cassini/ffmpeg
 COPY cassini-publisher/bin/export-static-meetings.sh /opt/cassini/cassini-publisher/bin/export-static-meetings.sh
 COPY cassini-viewer/package.json /opt/cassini/cassini-viewer/package.json
 COPY cassini-viewer/scripts/export-static-meetings.mjs /opt/cassini/cassini-viewer/scripts/export-static-meetings.mjs
@@ -124,7 +144,7 @@ COPY deployment/exapp-healthcheck.sh /usr/local/bin/healthcheck.sh
 
 # The base already ships /opt/cassini/lib; refresh the linker cache for it and
 # finalize the thin app artifacts.
-RUN printf '%s\n' /opt/cassini/lib > /etc/ld.so.conf.d/cassini.conf \
+RUN printf '%s\n' /opt/cassini/lib /opt/cassini/ffmpeg/lib > /etc/ld.so.conf.d/cassini.conf \
  && ldconfig \
  && chmod +x \
    /usr/local/bin/cassini \
