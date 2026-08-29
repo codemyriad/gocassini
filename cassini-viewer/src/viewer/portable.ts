@@ -499,11 +499,21 @@ function extractPortableReadableWords(
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
       return [];
     }
+    // Carry attribution provenance through the portable path too, or a meeting
+    // opened from a .opus silently loses the crosstalk evidence a meeting opened
+    // from JSON keeps.
+    const attributionGapDb = typeof word.attributionGapDb === "number" &&
+        Number.isFinite(word.attributionGapDb)
+      ? word.attributionGapDb
+      : undefined;
+    const lowConfidenceSpeaker = word.lowConfidenceSpeaker === true ? true : undefined;
     return [{
       id: typeof word.id === "string" && word.id.trim() !== "" ? word.id : `${segmentId}:w_${index}`,
       text,
       startMs,
       endMs,
+      ...(attributionGapDb === undefined ? {} : { attributionGapDb }),
+      ...(lowConfidenceSpeaker === undefined ? {} : { lowConfidenceSpeaker }),
     }];
   });
 }

@@ -68,6 +68,28 @@
 
   const CONTINUATION_GAP_MS = 60_000;
 
+  /**
+   * A turn whose words the producer flagged as probable crosstalk. Cassini
+   * records, per word, how far the loudest other microphone sat above its own
+   * noise floor compared with this speaker's; a large gap means somebody else
+   * was talking and this track only picked them up. Such a turn is usually not
+   * a real interjection at all, so it is marked rather than hidden — the reader
+   * can still hear the audio and decide.
+   */
+  function lowConfidenceWordCount(segment: DisplaySegment): number {
+    return segment.words.reduce(
+      (count, word) => (word.lowConfidenceSpeaker ? count + 1 : count),
+      0,
+    );
+  }
+
+  function isLikelyCrosstalkTurn(segment: DisplaySegment): boolean {
+    const flagged = lowConfidenceWordCount(segment);
+    // Every word, and there is a word: a turn built entirely from audio the
+    // evidence attributes to somebody else.
+    return flagged > 0 && flagged === segment.words.length;
+  }
+
   let transcriptIndex: TranscriptIndex | null = null;
   let displayTranscript: DisplayTranscriptV1 | null = null;
   let readableTranscript: ReadableTranscriptV1 | null = null;
@@ -932,6 +954,12 @@
               {#if !isSpeakerContinuation(visibleSegments, segmentIndex)}
                 <span class="badge badge-md badge-info text-sm px-1 font-bold">{segment.speakerLabel}</span>
               {/if}
+              {#if isLikelyCrosstalkTurn(segment)}
+                <span
+                  class="badge badge-md badge-warning badge-outline text-sm px-1"
+                  title="Another participant's microphone was much louder here. This turn is probably their voice bleeding into {segment.speakerLabel}'s track, not {segment.speakerLabel} speaking."
+                >probably crosstalk</span>
+              {/if}
               <button
                 class="badge badge-md text-sm bg-base-200 px-1 text-base-content/60 hover:bg-primary/60 hover:text-base-content cursor-pointer tabular-nums"
                 on:click={() => seekTo(segment.startMs)}
@@ -975,8 +1003,13 @@
                     class="inline p-0 border-0 rounded text-base leading-normal cursor-pointer transition duration-150 {segment.id ===
                       activeSegment?.id && word.id === activeWord?.id
                       ? 'bg-primary ring-1 ring-primary'
-                      : 'hover:bg-primary'}"
+                      : 'hover:bg-primary'} {word.lowConfidenceSpeaker
+                      ? 'text-base-content/55 border-b border-dashed border-warning/60'
+                      : ''}"
                     on:click={() => seekTo(word.startMs)}
+                    title={word.lowConfidenceSpeaker
+                      ? `Another microphone was ${word.attributionGapDb?.toFixed(0) ?? "much"} dB louder here — probably not ${segment.speakerLabel} speaking`
+                      : undefined}
                     type="button"
                   >{word.text}</button>{/each}
               </div>

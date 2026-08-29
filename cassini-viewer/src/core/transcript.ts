@@ -46,6 +46,12 @@ function asOptionalString(value: unknown, label: string): string | undefined {
   return asString(value, label);
 }
 
+function asOptionalBoolean(value: unknown, label: string): boolean | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "boolean") fail(`${label} must be a boolean`);
+  return value as boolean;
+}
+
 function asOptionalNumber(value: unknown, label: string): number | undefined {
   if (value === undefined) {
     return undefined;
@@ -71,12 +77,23 @@ function validateWord(input: unknown, segmentId: string, wordIndex: number): Tra
     fail(`segment ${segmentId} word ${wordIndex} confidence must be between 0 and 1`);
   }
 
+  const attributionGapDb = asOptionalNumber(
+    word.attributionGapDb,
+    `segment ${segmentId} word ${wordIndex} attributionGapDb`,
+  );
+  const lowConfidenceSpeaker = asOptionalBoolean(
+    word.lowConfidenceSpeaker,
+    `segment ${segmentId} word ${wordIndex} lowConfidenceSpeaker`,
+  );
+
   return {
     id: asOptionalString(word.id, `segment ${segmentId} word ${wordIndex} id`),
     text: asString(word.text, `segment ${segmentId} word ${wordIndex} text`),
     startMs,
     endMs,
     confidence,
+    attributionGapDb,
+    lowConfidenceSpeaker,
   };
 }
 

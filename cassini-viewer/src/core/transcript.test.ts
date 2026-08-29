@@ -125,3 +125,61 @@ describe("transcript core", () => {
     expect(searchSegments(index, "late", []).map((segment) => segment.id)).toEqual(["seg_2"]);
   });
 });
+
+describe("speaker attribution provenance", () => {
+  const withAttribution = (word: Record<string, unknown>) =>
+    validateTranscriptWordsV1({
+      version: "transcript.words.v1",
+      media: { src: "meeting.webm", durationMs: 5000 },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      segments: [
+        {
+          id: "seg_1",
+          speaker: "spk_1",
+          startMs: 1000,
+          endMs: 2000,
+          text: "okay",
+          words: [{ text: "okay", startMs: 1000, endMs: 2000, ...word }],
+        },
+      ],
+    });
+
+  it("keeps the attribution gap and the low-confidence flag", () => {
+    const parsed = withAttribution({ attributionGapDb: 31.7, lowConfidenceSpeaker: true });
+    const word = parsed.segments[0].words[0];
+    expect(word.attributionGapDb).toBe(31.7);
+    expect(word.lowConfidenceSpeaker).toBe(true);
+  });
+
+  // The validator rebuilds every word from a whitelist, so a field that is not
+  // explicitly carried is silently dropped. That is exactly how the evidence
+  // would go missing between the producer and the viewer.
+  it("leaves both undefined when the producer did not measure attribution", () => {
+    const word = withAttribution({}).segments[0].words[0];
+    expect(word.attributionGapDb).toBeUndefined();
+    expect(word.lowConfidenceSpeaker).toBeUndefined();
+  });
+
+  it("accepts a negative gap, which means the speaker's own microphone won", () => {
+    const word = withAttribution({ attributionGapDb: -12.4 }).segments[0].words[0];
+    expect(word.attributionGapDb).toBe(-12.4);
+  });
+
+  it("rejects a non-numeric gap rather than passing it through", () => {
+    expect(() => withAttribution({ attributionGapDb: "loud" })).toThrow(/attributionGapDb/);
+  });
+
+  it("rejects a non-boolean flag", () => {
+    expect(() => withAttribution({ lowConfidenceSpeaker: "yes" })).toThrow(
+      /lowConfidenceSpeaker/,
+    );
+  });
+
+  it("carries the flag into the built index so components can read it", () => {
+    const parsed = withAttribution({ attributionGapDb: 40, lowConfidenceSpeaker: true });
+    const index = buildTranscriptIndex(parsed);
+    const indexed = index.segments[0].words[0];
+    expect(indexed.lowConfidenceSpeaker).toBe(true);
+    expect(indexed.attributionGapDb).toBe(40);
+  });
+});
