@@ -449,8 +449,22 @@ describe("filterMeetingCatalogEntries", () => {
 });
 
 describe("formatMeetingDateShort", () => {
-  it("renders a compact en-GB date", () => {
-    expect(formatMeetingDateShort("2026-03-12 12:29")).toBe("12 Mar 2026");
+  it("renders a compact en-GB date with the meeting's start time (D-685)", () => {
+    expect(formatMeetingDateShort("2026-03-12 12:29")).toBe("12 Mar 2026, 12:29");
+  });
+
+  it("keeps the label's own digits — no timezone shift, no am/pm (D-484)", () => {
+    // 24-hour, wall clock as written: the label makes no timezone claim, and a
+    // list card has no room for a "pm" suffix.
+    expect(formatMeetingDateShort("2026-03-12T00:15")).toBe("12 Mar 2026, 00:15");
+  });
+
+  it("renders date only when the label carries no time", () => {
+    expect(formatMeetingDateShort("2026-04-08")).toBe("8 Apr 2026");
+  });
+
+  it("drops an out-of-range time rather than rendering it", () => {
+    expect(formatMeetingDateShort("2026-04-08 99:99")).toBe("8 Apr 2026");
   });
 
   it("passes through labels that are not dates", () => {

@@ -109,12 +109,55 @@ describe("describeMeeting", () => {
     });
   });
 
-  it("prefers pack createdAtUtc over filename timestamps", () => {
-    // Metadata is authoritative (UTC); filename stamps are a fallback only.
-    expect(describeMeeting("daily-meeting--2026-03-05--12:38:29", "2026-03-05T10:38:29Z")).toEqual({
+  it("prefers recordedAtLocal — when the meeting happened — over everything else (D-685)", () => {
+    // A pack rebuilt on 29 Aug still describes a meeting held on 10 Mar.
+    expect(
+      describeMeeting(
+        "daily-meeting-2026-03-10--12:30",
+        "2026-08-29T09:14:07Z",
+        "2026-03-10T12:30:00",
+      ),
+    ).toEqual({
       title: "Daily Meeting",
-      dateLabel: "2026-03-05 10:38",
+      dateLabel: "2026-03-10 12:30",
     });
+  });
+
+  it("keeps recordedAtLocal's own wall-clock digits, with no timezone shift", () => {
+    // The value carries no zone, so it must not be round-tripped through Date:
+    // a UTC render on a CET exporter would move 12:30 to 11:30.
+    expect(
+      describeMeeting("daily-meeting-2026-04-08", "", "2026-04-08T00:15:00").dateLabel,
+    ).toBe("2026-04-08 00:15");
+  });
+
+  it("prefers a filename timestamp over pack createdAtUtc (D-685)", () => {
+    // createdAtUtc is when the pack was WRITTEN. Reprocessing the archive
+    // rewrites it to the rebuild day, which is never the meeting's date; the
+    // id's own stamp is a claim about the recording and outranks it.
+    expect(
+      describeMeeting("daily-meeting--2026-03-05--12:38:29", "2026-08-29T09:14:07Z"),
+    ).toEqual({
+      title: "Daily Meeting",
+      dateLabel: "2026-03-05 12:38",
+    });
+  });
+
+  it("prefers a ULID job id's recording time over pack createdAtUtc (D-685)", () => {
+    expect(
+      describeMeeting("01KKA70QN0ABCDEFGHJKMNPQRS", "2026-08-29T09:14:07Z").dateLabel,
+    ).toBe(describeMeeting("01KKA70QN0ABCDEFGHJKMNPQRS").dateLabel);
+  });
+
+  it("ignores an unparseable or out-of-range recordedAtLocal", () => {
+    expect(
+      describeMeeting("daily-meeting-2026-04-08", "2026-04-08T07:31:02Z", "not-a-timestamp")
+        .dateLabel,
+    ).toBe("2026-04-08 07:31");
+    expect(
+      describeMeeting("daily-meeting-2026-04-08", "2026-04-08T07:31:02Z", "2026-13-40T99:99:00")
+        .dateLabel,
+    ).toBe("2026-04-08 07:31");
   });
 
   it("falls back to the id when createdAtUtc is missing or unparseable", () => {
