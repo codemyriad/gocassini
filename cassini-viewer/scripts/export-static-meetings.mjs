@@ -178,7 +178,11 @@ export function portableDefaultSegmentCount(portable) {
 export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, recordingsBaseUrl = null }) {
   if (sourceType === "portable") {
     const portable = extractPortableManifest(sourcePath);
-    const { title, dateLabel } = describeMeeting(meetingId, portable?.meeting?.createdAtUtc);
+    const { title, dateLabel } = describeMeeting(
+      meetingId,
+      portable?.meeting?.createdAtUtc,
+      portable?.meeting?.recordedAtLocal,
+    );
     const transcript = buildTranscriptWordsFromPortable(portable);
     // A real embedded title (e.g. the Talk room name the operator captured
     // at recording time) beats anything derived from the file name; packer
@@ -1371,24 +1375,50 @@ export function preferredPortableTitle(portable, meetingId) {
   return raw;
 }
 
-export function describeMeeting(meetingId, createdAtUtc = "") {
-  // Pack metadata beats filename heuristics: backfilled ids like
-  // "daily-meeting-2026-04-08" carry no time part, so without metadata the
-  // dateLabel echoes the raw slug and sorts to the bottom of the catalog
-  // (D-588). The title still comes from the id.
+// describeMeeting picks the catalog title and dateLabel for a meeting.
+//
+// The dateLabel answers "when did this meeting happen", NOT "when did we
+// process it" — the two diverge every time a pack is rebuilt, and a re-run of
+// the whole archive would otherwise stamp every meeting with the rebuild day
+// (D-685). Sources, best first:
+//
+//   1. recordedAtLocal — the recording's own wall clock, the only field that
+//      states when people were actually in the room.
+//   2. the meeting id — filename stamps and ULID job ids both encode the
+//      recording start. A slug-only id like "daily-meeting-2026-04-08" yields a
+//      date with no time, which is still the right DAY.
+//   3. createdAtUtc — when the pack was written. Wrong by construction for any
+//      rebuild, and kept only as a last resort so a meeting with no other
+//      timestamp still parses and sorts instead of showing a raw slug (D-588).
+//
+// The title always comes from the id.
+export function describeMeeting(meetingId, createdAtUtc = "", recordedAtLocal = "") {
   const described = describeMeetingFromId(meetingId);
+  const { dateFromId, ...describedFields } = described;
+
+  const recordedDateLabel = dateLabelFromLocalTimestamp(recordedAtLocal);
+  if (recordedDateLabel !== "") {
+    return { title: described.title, dateLabel: recordedDateLabel };
+  }
+  if (dateFromId) {
+    return describedFields;
+  }
   const metadataDateLabel = dateLabelFromTimestamp(createdAtUtc);
   if (metadataDateLabel !== "") {
     return { title: described.title, dateLabel: metadataDateLabel };
   }
-  return described;
+  return describedFields;
 }
 
+// describeMeetingFromId also reports `dateFromId`: false means the dateLabel is
+// just the raw id echoed back because nothing in it looked like a timestamp.
+// describeMeeting uses that to decide whether pack metadata is worth reaching
+// for; the flag is stripped before the result leaves describeMeeting.
 function describeMeetingFromId(meetingId) {
   const normalizedMeetingId = stripVariantSuffix(meetingId);
   const colonTimeStamp = parseTimestampFromDoubledDashParts(normalizedMeetingId, "--");
   if (colonTimeStamp) {
-    return colonTimeStamp;
+    return { ...colonTimeStamp, dateFromId: true };
   }
 
   const modernStamp = /^(.*)--(\d{8})T(\d{2})(\d{2})(\d{2})$/.exec(normalizedMeetingId);
@@ -1397,6 +1427,7 @@ function describeMeetingFromId(meetingId) {
     return {
       title: toTitleCase(rawTitle),
       dateLabel: `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)} ${hour}:${minute}`,
+      dateFromId: true,
     };
   }
 
@@ -1406,7 +1437,27 @@ function describeMeetingFromId(meetingId) {
     return {
       title: toTitleCase(rawTitle),
       dateLabel: `${year}-${month}-${day} ${hour}:${minute}`,
+      dateFromId: true,
     };
+  }
+
+  // Some backfilled dailies have only a calendar date in their id and a
+  // generic source basename (recording.mkv). They therefore have neither a
+  // trustworthy createdAtUtc nor a recordedAtLocal after reprocessing. The
+  // date carried by the id is still authoritative even though no start time is
+  // recoverable (D-685).
+  const dateOnlyStamp = /^(.*)-(\d{4})-(\d{2})-(\d{2})$/.exec(
+    normalizedMeetingId,
+  );
+  if (dateOnlyStamp) {
+    const [, rawTitle, year, month, day] = dateOnlyStamp;
+    if (rawTitle && isValidCalendarDate(year, month, day)) {
+      return {
+        title: toTitleCase(rawTitle),
+        dateLabel: `${year}-${month}-${day}`,
+        dateFromId: true,
+      };
+    }
   }
 
   // Talk recordings are named by the operator's ULID job id, which carries no
@@ -1417,12 +1468,14 @@ function describeMeetingFromId(meetingId) {
     return {
       title: "Untitled meeting",
       dateLabel: ulidDateLabel,
+      dateFromId: true,
     };
   }
 
   return {
     title: toTitleCase(normalizedMeetingId),
     dateLabel: normalizedMeetingId,
+    dateFromId: false,
   };
 }
 
@@ -1451,6 +1504,71 @@ function dateLabelFromUlid(meetingId) {
     return "";
   }
   return formatUtcDateLabel(new Date(ms));
+}
+
+// dateLabelFromLocalTimestamp renders "YYYY-MM-DD HH:MM" from a pack's
+// recordedAtLocal ("2026-03-10T12:30:00") — a LOCAL wall clock with no zone.
+// Its digits are reformatted as-is rather than round-tripped through Date:
+// Date.parse would read a zoneless string in the exporter's local zone, and the
+// UTC render on the far side would shift a 12:30 meeting to 11:30 whenever the
+// machine running the export is not on UTC. The viewer makes no timezone claim
+// about these labels either (D-484), so the digits are the whole truth.
+function dateLabelFromLocalTimestamp(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?$/.exec(
+    value.trim(),
+  );
+  if (!match) {
+    return "";
+  }
+  const [, year, month, day, hour, minute, second] = match;
+  // Out-of-range fields mean the value is not a timestamp we can trust; fall
+  // through to the next source rather than emit a label that sorts wrongly.
+  if (!isValidCalendarDate(year, month, day)) {
+    return "";
+  }
+  if (
+    Number(hour) > 23 ||
+    Number(minute) > 59 ||
+    (second !== undefined && Number(second) > 59)
+  ) {
+    return "";
+  }
+  return `${year}-${month}-${day} ${hour}:${minute}`;
+}
+
+function isValidCalendarDate(year, month, day) {
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (
+    !Number.isInteger(y) ||
+    !Number.isInteger(m) ||
+    !Number.isInteger(d) ||
+    m < 1 ||
+    m > 12 ||
+    d < 1
+  ) {
+    return false;
+  }
+  const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+  const daysInMonth = [
+    31,
+    leap ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  return d <= daysInMonth[m - 1];
 }
 
 // dateLabelFromTimestamp renders "YYYY-MM-DD HH:MM" (UTC, same shape as the
