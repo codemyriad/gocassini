@@ -70,6 +70,11 @@ type wordEntry struct {
 	Text    string `json:"text"`
 	StartMS int64  `json:"startMs"`
 	EndMS   int64  `json:"endMs"`
+	// AttributionGapDB and LowConfidenceSpeaker are omitted entirely when the
+	// attribution stage did not run, so existing consumers see an unchanged
+	// document and the schema stays backward compatible.
+	AttributionGapDB     *float64 `json:"attributionGapDb,omitempty"`
+	LowConfidenceSpeaker bool     `json:"lowConfidenceSpeaker,omitempty"`
 }
 
 // WriteTranscriptJSON writes transcript.words.v1.json.
@@ -129,10 +134,15 @@ func buildTranscriptSegmentEntries(segments []Segment) []transcriptSegmentEntry 
 		words := make([]wordEntry, len(seg.Words))
 		for wordIndex, w := range seg.Words {
 			words[wordIndex] = wordEntry{
-				ID:      transcriptWordID(segmentID, wordIndex),
-				Text:    w.Text,
-				StartMS: w.StartMS,
-				EndMS:   w.EndMS,
+				ID:                   transcriptWordID(segmentID, wordIndex),
+				Text:                 w.Text,
+				StartMS:              w.StartMS,
+				EndMS:                w.EndMS,
+				LowConfidenceSpeaker: w.LowConfidenceSpeaker,
+			}
+			if w.HasAttributionGap {
+				gap := w.AttributionGapDB
+				words[wordIndex].AttributionGapDB = &gap
 			}
 		}
 		entries[segIndex] = transcriptSegmentEntry{

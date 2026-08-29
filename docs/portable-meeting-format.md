@@ -324,6 +324,20 @@ V1 transcript entries are word-timed items:
 - `endMs`
 - `text`
 
+Words MAY additionally carry cross-track speaker-attribution evidence. Both
+fields are omitted entirely when the attribution stage did not run, so a
+consumer that ignores them reads an unchanged V1 document:
+
+- `attributionGapDb` — how far the loudest OTHER participant's microphone sat
+  above its own noise floor compared with the attributed speaker's, in dB, at
+  this word. Near zero means the attributed speaker was the loudest voice; a
+  large positive value means somebody else was, and the word is a crosstalk
+  candidate rather than that participant speaking.
+- `lowConfidenceSpeaker` — true when the gap cleared the threshold estimated
+  from that meeting's own level distribution. The word is still canonical
+  transcript content; consumers MAY de-emphasise it, exclude it from a summary,
+  or surface it for review.
+
 The embedded transcript is the source of truth.
 
 Derived views such as readable transcript and captions MUST be treated as
