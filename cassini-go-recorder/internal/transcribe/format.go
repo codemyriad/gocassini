@@ -363,6 +363,7 @@ func AssembleSegments(speakerID string, words []Word, gapThresholdMS int64, maxW
 
 	var segments []Segment
 	var cur []Word
+	var curStartMS, curEndMS int64
 
 	flush := func() {
 		if len(cur) == 0 {
@@ -371,19 +372,32 @@ func AssembleSegments(speakerID string, words []Word, gapThresholdMS int64, maxW
 		text := wordsToText(cur)
 		segments = append(segments, Segment{
 			SpeakerID: speakerID,
-			StartMS:   cur[0].StartMS,
-			EndMS:     cur[len(cur)-1].EndMS,
+			StartMS:   curStartMS,
+			EndMS:     curEndMS,
 			Text:      text,
 			Words:     append([]Word(nil), cur...),
 		})
 		cur = cur[:0]
+		curStartMS = 0
+		curEndMS = 0
 	}
 
 	for _, w := range words {
 		if len(cur) > 0 {
-			gap := w.StartMS - cur[len(cur)-1].EndMS
+			gap := w.StartMS - curEndMS
 			if gap > gapThresholdMS || len(cur) >= maxWords {
 				flush()
+			}
+		}
+		if len(cur) == 0 {
+			curStartMS = w.StartMS
+			curEndMS = w.EndMS
+		} else {
+			if w.StartMS < curStartMS {
+				curStartMS = w.StartMS
+			}
+			if w.EndMS > curEndMS {
+				curEndMS = w.EndMS
 			}
 		}
 		cur = append(cur, w)
@@ -438,23 +452,26 @@ func MergeAndSortSegments(perSpeaker [][]Segment) []Segment {
 	var merged []Segment
 	var currentSpeaker string
 	var currentWords []Word
+	var currentStartMS, currentEndMS int64
 	flush := func() {
 		if len(currentWords) == 0 {
 			return
 		}
 		merged = append(merged, Segment{
 			SpeakerID: currentSpeaker,
-			StartMS:   currentWords[0].StartMS,
-			EndMS:     currentWords[len(currentWords)-1].EndMS,
+			StartMS:   currentStartMS,
+			EndMS:     currentEndMS,
 			Text:      wordsToText(currentWords),
 			Words:     append([]Word(nil), currentWords...),
 		})
 		currentWords = currentWords[:0]
+		currentStartMS = 0
+		currentEndMS = 0
 	}
 
 	for _, attributed := range words {
 		if len(currentWords) > 0 {
-			gap := attributed.word.StartMS - currentWords[len(currentWords)-1].EndMS
+			gap := attributed.word.StartMS - currentEndMS
 			if attributed.speakerID != currentSpeaker ||
 				gap > defaultSegmentGapThresholdMS ||
 				len(currentWords) >= defaultSegmentMaxWords {
@@ -463,6 +480,15 @@ func MergeAndSortSegments(perSpeaker [][]Segment) []Segment {
 		}
 		if len(currentWords) == 0 {
 			currentSpeaker = attributed.speakerID
+			currentStartMS = attributed.word.StartMS
+			currentEndMS = attributed.word.EndMS
+		} else {
+			if attributed.word.StartMS < currentStartMS {
+				currentStartMS = attributed.word.StartMS
+			}
+			if attributed.word.EndMS > currentEndMS {
+				currentEndMS = attributed.word.EndMS
+			}
 		}
 		currentWords = append(currentWords, attributed.word)
 	}
