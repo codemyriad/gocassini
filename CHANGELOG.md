@@ -14,6 +14,11 @@ sections below are script-managed: `scripts/fold-changelog.sh` (run by
 version and removes the consumed fragments. Edit released sections only to fix
 mistakes; add new entries as fragments. See [`docs/release.md`](docs/release.md).
 
+## [0.2.0-beta.6] - 2026-08-29
+
+### Fixed
+- Fixed transcript reruns failing validation when overlapping decoder-window words end out of start-time order.
+
 ## [0.2.0-beta.5] - 2026-08-29
 
 ### Fixed
