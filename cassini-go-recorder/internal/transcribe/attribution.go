@@ -56,7 +56,16 @@ type SpeakerEnvelope struct {
 	SpeakerID string
 	// FrameDB is the log-RMS of each frame in dBFS.
 	FrameDB []float64
-	// FloorDB and SpeechDB are this track's own quiet and loud levels.
+	// Present marks frames that carry real captured audio. Decoding puts every
+	// track on the shared meeting timeline, which means a participant who joined
+	// late — or was muted, or whose stream was rotated — has their absent span
+	// materialised as exact digital silence. That padding is not this
+	// microphone's noise floor and must not be measured as if it were: including
+	// it drags the 20th percentile down to the log epsilon and makes the track
+	// score hundreds of dB above "its own floor", which would win every word.
+	Present []bool
+	// FloorDB and SpeechDB are this track's own quiet and loud levels, computed
+	// over present frames only.
 	FloorDB  float64
 	SpeechDB float64
 	HopMS    int64
@@ -80,7 +89,19 @@ func (e *SpeakerEnvelope) aboveFloor(startMS, endMS int64) (float64, bool) {
 	if hi <= lo {
 		return 0, false
 	}
-	window := e.FrameDB[lo:hi]
+	// Only present frames count. A track that was not in the call at this
+	// instant is not a rival for the word, and has no floor to be measured
+	// against.
+	window := make([]float64, 0, hi-lo)
+	for i := lo; i < hi; i++ {
+		if len(e.Present) == len(e.FrameDB) && !e.Present[i] {
+			continue
+		}
+		window = append(window, e.FrameDB[i])
+	}
+	if len(window) == 0 {
+		return 0, false
+	}
 	// Mean of the loudest half: robust to a word window that includes a pause,
 	// without being swayed by one outlying frame the way a max would be.
 	sorted := append([]float64(nil), window...)
@@ -134,16 +155,35 @@ func envelopeFromSamples(speakerID string, samples []float32, frame, hop int, ho
 	}
 	n := 1 + (len(samples)-frame)/hop
 	env.FrameDB = make([]float64, n)
+	env.Present = make([]bool, n)
+	present := make([]float64, 0, n)
 	for i := 0; i < n; i++ {
 		var sum float64
+		nonZero := false
 		for _, s := range samples[i*hop : i*hop+frame] {
+			if s != 0 {
+				nonZero = true
+			}
 			sum += float64(s) * float64(s)
 		}
 		rms := math.Sqrt(sum / float64(frame))
 		env.FrameDB[i] = 20 * math.Log10(rms+1e-12)
+		// A frame of exact zeros is timeline padding, not captured silence:
+		// real capture always carries at least dither. Anything genuinely
+		// recorded, however quiet, has a non-zero sample somewhere in 32 ms.
+		env.Present[i] = nonZero
+		if nonZero {
+			present = append(present, env.FrameDB[i])
+		}
 	}
-	env.FloorDB = percentileOf(env.FrameDB, attributionFloorPercentile)
-	env.SpeechDB = percentileOf(env.FrameDB, attributionSpeechPercentile)
+	if len(present) == 0 {
+		// The track carries no captured audio at all. Leave the levels at zero
+		// and the mask all-false; aboveFloor will decline for every window, so
+		// this track is never a rival and never claims a word.
+		return env
+	}
+	env.FloorDB = percentileOf(present, attributionFloorPercentile)
+	env.SpeechDB = percentileOf(present, attributionSpeechPercentile)
 	return env
 }
 
@@ -168,7 +208,7 @@ func percentileOf(values []float64, pct float64) float64 {
 // zero means the owner really was the loudest voice; a large gap means somebody
 // else was, and the word is a crosstalk candidate.
 func AttributionGapDB(word Word, speakerID string, envelopes []*SpeakerEnvelope) (float64, bool) {
-	var own float64
+	own := math.Inf(-1)
 	var haveOwn bool
 	best := math.Inf(-1)
 	for _, env := range envelopes {
@@ -177,7 +217,14 @@ func AttributionGapDB(word Word, speakerID string, envelopes []*SpeakerEnvelope)
 			continue
 		}
 		if env.SpeakerID == speakerID {
-			own, haveOwn = level, true
+			// One participant can own several streams: remux emits one per
+			// rotated or rejoined packet stream, and they share the
+			// participant-derived speaker id. Take the loudest, so the answer
+			// does not depend on which stream happens to come last.
+			if level > own {
+				own = level
+			}
+			haveOwn = true
 			continue
 		}
 		if level > best {
@@ -398,8 +445,20 @@ func AnnotateAttribution(segments []Segment, envelopes []*SpeakerEnvelope, drop 
 		}
 		seg.Words = kept
 		if drop {
-			seg.StartMS = kept[0].StartMS
-			seg.EndMS = kept[len(kept)-1].EndMS
+			// Words can overlap, so the envelope is the running min/max over the
+			// retained words — not the first word's start and the last word's
+			// end. Taking the last word's end reintroduces the invalid-envelope
+			// bug fixed in #216, and ValidateSegments rejects the result.
+			start, end := kept[0].StartMS, kept[0].EndMS
+			for _, w := range kept[1:] {
+				if w.StartMS < start {
+					start = w.StartMS
+				}
+				if w.EndMS > end {
+					end = w.EndMS
+				}
+			}
+			seg.StartMS, seg.EndMS = start, end
 			seg.Text = joinWordText(kept)
 		}
 		out = append(out, seg)
@@ -416,4 +475,52 @@ func joinWordText(words []Word) string {
 		b = append(b, w.Text...)
 	}
 	return string(b)
+}
+
+// WithoutLowConfidenceWords returns segments with words the attribution stage
+// flagged removed, leaving the canonical transcript untouched.
+//
+// This is what makes the measurement pay off on the default path. The canonical
+// transcript keeps every word — a human reading it can see, and overrule,
+// anything marked — but a generated summary has no reader to overrule it. A
+// fabricated interjection that reached the summariser becomes a decision
+// somebody supposedly made, which is a far more expensive error than a greyed
+// word in a viewer. Flags exist only where the meeting's own level distribution
+// showed an unambiguous crosstalk population, so this removes nothing when there
+// is nothing to remove.
+//
+// Segments left with no words are dropped; survivors get their bounds rebuilt
+// from the words that remain.
+func WithoutLowConfidenceWords(segments []Segment) ([]Segment, int) {
+	var removed int
+	out := make([]Segment, 0, len(segments))
+	for _, seg := range segments {
+		kept := make([]Word, 0, len(seg.Words))
+		for _, w := range seg.Words {
+			if w.LowConfidenceSpeaker {
+				removed++
+				continue
+			}
+			kept = append(kept, w)
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		if len(kept) != len(seg.Words) {
+			start, end := kept[0].StartMS, kept[0].EndMS
+			for _, w := range kept[1:] {
+				if w.StartMS < start {
+					start = w.StartMS
+				}
+				if w.EndMS > end {
+					end = w.EndMS
+				}
+			}
+			seg.StartMS, seg.EndMS = start, end
+			seg.Text = joinWordText(kept)
+		}
+		seg.Words = kept
+		out = append(out, seg)
+	}
+	return out, removed
 }

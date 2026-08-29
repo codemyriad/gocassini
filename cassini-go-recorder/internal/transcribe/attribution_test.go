@@ -273,3 +273,201 @@ func TestAnnotateAttributionIsANoopWithoutEnvelopes(t *testing.T) {
 		t.Error("nothing should be measured without envelopes")
 	}
 }
+
+// A participant who joins late has their pre-join span materialised as exact
+// digital silence when the track is put on the shared meeting timeline. That
+// padding is not their microphone's noise floor. Including it drove the 20th
+// percentile to the log epsilon and made the track score ~238 dB above "its own
+// floor" against ~52 dB for an identical continuous track — which would have won
+// that participant every contested word in the meeting.
+func TestLateJoinPaddingDoesNotPoisonTheFloor(t *testing.T) {
+	const sr = 16000
+	frame, hop := sr*attributionFrameMS/1000, sr*attributionHopMS/1000
+
+	// Identical microphone dynamics: 1 s at the mic's noise floor, 1 s of speech.
+	realAudio := append(tone(sr, 0.002), tone(sr, 0.8)...)
+	continuous := envelopeFromSamples("cont", realAudio, frame, hop, attributionHopMS)
+	// The late joiner is the same capture, preceded by 2 s of timeline padding.
+	late := envelopeFromSamples("late",
+		append(make([]float32, sr*2), realAudio...), frame, hop, attributionHopMS)
+
+	if got := continuous.FloorDB - late.FloorDB; math.Abs(got) > 3 {
+		t.Errorf("same mic should calibrate alike: continuous floor %.1f, late-join floor %.1f",
+			continuous.FloorDB, late.FloorDB)
+	}
+	lc, okc := continuous.aboveFloor(1200, 1400)
+	ll, okl := late.aboveFloor(3200, 3400) // same speech, shifted by the padding
+	if !okc || !okl {
+		t.Fatal("expected both windows to be measurable")
+	}
+	if math.Abs(ll-lc) > 3 {
+		t.Errorf("identical speech must score alike: continuous %.1f dB, late-join %.1f dB", lc, ll)
+	}
+}
+
+// Before a participant joins there is nothing of theirs to hear, so they must
+// not compete for a word — and a word attributed to them there cannot be
+// measured at all.
+func TestAbsentTrackIsNotARival(t *testing.T) {
+	const sr = 16000
+	frame, hop := sr*attributionFrameMS/1000, sr*attributionHopMS/1000
+	early := envelopeFromSamples("early", append(tone(sr, 0.002), tone(sr, 0.8)...), frame, hop, attributionHopMS)
+	late := envelopeFromSamples("late", append(make([]float32, sr*2), tone(sr, 0.8)...), frame, hop, attributionHopMS)
+
+	if _, ok := late.aboveFloor(1200, 1400); ok {
+		t.Error("a track that had not joined yet must not report a level")
+	}
+	// A word on the early speaker during the late speaker's absence is
+	// uncontested: the only measurable track is its own.
+	gap, ok := AttributionGapDB(Word{Text: "hi", StartMS: 1200, EndMS: 1400}, "early",
+		[]*SpeakerEnvelope{early, late})
+	if ok {
+		t.Errorf("with no rival present there is nothing to compare against, got gap %.1f", gap)
+	}
+}
+
+func TestTrackWithNoCapturedAudioNeverClaimsAWord(t *testing.T) {
+	const sr = 16000
+	frame, hop := sr*attributionFrameMS/1000, sr*attributionHopMS/1000
+	silent := envelopeFromSamples("never_spoke", make([]float32, sr*3), frame, hop, attributionHopMS)
+	if _, ok := silent.aboveFloor(1000, 1100); ok {
+		t.Error("an all-padding track must decline every window")
+	}
+}
+
+// One participant can own several MKV streams: remux emits one per rotated or
+// rejoined packet stream and they share the participant-derived speaker id.
+// Scoring must not depend on which of those streams is iterated last.
+func TestDuplicateSpeakerStreamsAreConsolidated(t *testing.T) {
+	loud := make([]float64, 300)
+	for i := range loud {
+		loud[i] = 40
+	}
+	quiet := make([]float64, 300)
+	present := make([]bool, 300)
+	for i := range present {
+		present[i] = true
+	}
+	active := &SpeakerEnvelope{SpeakerID: "spk_a", FrameDB: loud, Present: present, FloorDB: 0, HopMS: attributionHopMS}
+	rotated := &SpeakerEnvelope{SpeakerID: "spk_a", FrameDB: quiet, Present: present, FloorDB: 0, HopMS: attributionHopMS}
+	rival := &SpeakerEnvelope{SpeakerID: "spk_b", FrameDB: loud, Present: present, FloorDB: 0, HopMS: attributionHopMS}
+
+	word := Word{Text: "hi", StartMS: 1000, EndMS: 1100}
+	first, ok1 := AttributionGapDB(word, "spk_a", []*SpeakerEnvelope{active, rotated, rival})
+	second, ok2 := AttributionGapDB(word, "spk_a", []*SpeakerEnvelope{rotated, active, rival})
+	if !ok1 || !ok2 {
+		t.Fatal("expected both orderings to produce a gap")
+	}
+	if first != second {
+		t.Errorf("attribution must not depend on stream order: %.1f vs %.1f", first, second)
+	}
+	if first != 0 {
+		t.Errorf("the speaker's loudest stream should tie the equally loud rival, got %.1f", first)
+	}
+}
+
+// Words overlap, so a segment's envelope is the running min/max over the words
+// that survive — not the first word's start and the last word's end. Getting
+// that wrong reintroduces the invalid envelope fixed in #216.
+func TestDropModeKeepsSegmentEnvelopeAroundOverlappingWords(t *testing.T) {
+	frames := make([]float64, 400)
+	for i := range frames {
+		frames[i] = 30
+	}
+	present := make([]bool, 400)
+	for i := range present {
+		present[i] = true
+	}
+	envs := []*SpeakerEnvelope{
+		{SpeakerID: "a", FrameDB: frames, Present: present, FloorDB: 0, HopMS: attributionHopMS},
+		{SpeakerID: "b", FrameDB: make([]float64, 400), Present: present, FloorDB: 0, HopMS: attributionHopMS},
+	}
+	real := make([]Word, 60)
+	for i := range real {
+		s := int64(100 + i*10)
+		real[i] = Word{Text: "real", StartMS: s, EndMS: s + 5}
+	}
+	// A long word that outlasts every word starting after it.
+	real[0].EndMS = 5000
+	bleed := make([]Word, 30)
+	for i := range bleed {
+		s := int64(100 + i*10)
+		bleed[i] = Word{Text: "bleed", StartMS: s, EndMS: s + 5}
+	}
+	segments := []Segment{
+		{SpeakerID: "a", StartMS: 100, EndMS: 5000, Text: "real", Words: real},
+		{SpeakerID: "b", StartMS: 100, EndMS: 400, Text: "bleed", Words: bleed},
+	}
+
+	out, res := AnnotateAttribution(segments, envs, true)
+	if !res.ThresholdFound || res.Dropped == 0 {
+		t.Fatalf("fixture did not exercise drop mode: %+v", res)
+	}
+	if err := ValidateSegments(out); err != nil {
+		t.Fatalf("drop mode produced an invalid transcript: %v", err)
+	}
+	for _, seg := range out {
+		for _, w := range seg.Words {
+			if w.StartMS < seg.StartMS || w.EndMS > seg.EndMS {
+				t.Errorf("word %d-%d escapes segment %d-%d", w.StartMS, w.EndMS, seg.StartMS, seg.EndMS)
+			}
+		}
+	}
+}
+
+func TestWithoutLowConfidenceWordsIsANoopWhenNothingIsFlagged(t *testing.T) {
+	segments := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 200, Text: "a b",
+		Words: []Word{{Text: "a", StartMS: 0, EndMS: 100}, {Text: "b", StartMS: 100, EndMS: 200}}}}
+	out, removed := WithoutLowConfidenceWords(segments)
+	if removed != 0 || CountWords(out) != 2 {
+		t.Errorf("unflagged transcript must pass through untouched, removed=%d words=%d",
+			removed, CountWords(out))
+	}
+}
+
+func TestWithoutLowConfidenceWordsRebuildsBoundsAndDropsEmptySegments(t *testing.T) {
+	segments := []Segment{
+		{SpeakerID: "spk_a", StartMS: 0, EndMS: 900, Text: "keep long drop",
+			Words: []Word{
+				{Text: "keep", StartMS: 0, EndMS: 100},
+				{Text: "long", StartMS: 50, EndMS: 900}, // overlaps and outlasts
+				{Text: "drop", StartMS: 800, EndMS: 850, LowConfidenceSpeaker: true},
+			}},
+		{SpeakerID: "spk_b", StartMS: 0, EndMS: 100, Text: "ghost",
+			Words: []Word{{Text: "ghost", StartMS: 0, EndMS: 100, LowConfidenceSpeaker: true}}},
+	}
+	out, removed := WithoutLowConfidenceWords(segments)
+	if removed != 2 {
+		t.Fatalf("expected both flagged words removed, got %d", removed)
+	}
+	if len(out) != 1 {
+		t.Fatalf("the all-flagged segment should be dropped, got %d segments", len(out))
+	}
+	if out[0].StartMS != 0 || out[0].EndMS != 900 {
+		t.Errorf("bounds must span the retained overlapping word, got %d-%d",
+			out[0].StartMS, out[0].EndMS)
+	}
+	if out[0].Text != "keep long" {
+		t.Errorf("text should be rebuilt from retained words, got %q", out[0].Text)
+	}
+	if err := ValidateSegments(out); err != nil {
+		t.Errorf("filtered transcript must stay valid: %v", err)
+	}
+}
+
+// The canonical transcript must never lose a word to this: only the summary
+// input is filtered.
+func TestFilteringDoesNotMutateTheCanonicalSegments(t *testing.T) {
+	segments := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 200, Text: "a b",
+		Words: []Word{
+			{Text: "a", StartMS: 0, EndMS: 100},
+			{Text: "b", StartMS: 100, EndMS: 200, LowConfidenceSpeaker: true},
+		}}}
+	before := CountWords(segments)
+	if _, removed := WithoutLowConfidenceWords(segments); removed != 1 {
+		t.Fatalf("expected one removal, got %d", removed)
+	}
+	if after := CountWords(segments); after != before {
+		t.Errorf("canonical transcript was mutated: %d words became %d", before, after)
+	}
+}

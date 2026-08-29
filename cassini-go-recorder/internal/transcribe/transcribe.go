@@ -155,6 +155,15 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	if hasReadable {
 		summaryInput = cleanedSegs
 	}
+	// The canonical transcript keeps every word; the summary does not. A reader
+	// can see and overrule a word marked as probable crosstalk, but a generated
+	// summary has no such reader, and a fabricated interjection there becomes a
+	// decision somebody supposedly made. This is a no-op unless the meeting's own
+	// distribution showed an unambiguous crosstalk population.
+	if filtered, removed := WithoutLowConfidenceWords(summaryInput); removed > 0 {
+		fmt.Fprintf(stdout, "  excluding %d low-confidence words from the summary input\n", removed)
+		summaryInput = filtered
+	}
 	hasSummary, err := writeSummaryArtifact(outputDir, streams, summaryInput, cfg, stdout)
 	if err != nil {
 		return err
@@ -464,6 +473,12 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		segs, err := transcribePass(ctx, mkvPath, streams, modelPaths, vadPath, ResolveRecognizerBackend(cfg.Backend), cfg.Device, cfg.NumThreads, stdout)
 		if err != nil {
 			return nil, fmt.Errorf("additional transcribe %s: %w", modelID, err)
+		}
+		// Every transcript this build emits carries the same attribution
+		// contract, or switching models would silently change whether a word
+		// has provenance.
+		if !cfg.SkipAttribution {
+			segs = applyAttribution(mkvPath, streams, segs, modelPaths.SampleRate, cfg, stdout)
 		}
 		path := fmt.Sprintf("transcript-%s.words.v1.json", id)
 		if err := writeTranscriptWithHash(filepath.Join(outputDir, path), "transcript.words.v1", streams, segs, audioDurationMS, sha256hex); err != nil {
