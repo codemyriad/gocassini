@@ -14,6 +14,13 @@ sections below are script-managed: `scripts/fold-changelog.sh` (run by
 version and removes the consumed fragments. Edit released sections only to fix
 mistakes; add new entries as fragments. See [`docs/release.md`](docs/release.md).
 
+## [0.2.0-beta.5] - 2026-08-29
+
+### Fixed
+- Long speech turns admitted by the interjection-sensitive VAD are decoded in bounded overlapping windows, reducing Parakeet's silent omissions from 20–25-second utterances without reverting the short-interjection VAD thresholds. Dense merged-fallback windows also retain deterministic seam ownership when adjacent decodes disagree completely.
+- Production ExApp deploys now use collision-safe temporary manifest paths and clean them after settled runs, so a stale file from another operator cannot block an upgrade.
+- ExApp startup logs now report the effective publication sink instead of contradicting a resolved Nextcloud Files destination with a later `local` line.
+
 ## [0.2.0-beta.4] - 2026-08-28
 
 ### Changed
