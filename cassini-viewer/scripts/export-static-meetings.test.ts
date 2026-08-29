@@ -102,10 +102,10 @@ describe("describeMeeting", () => {
     });
   });
 
-  it("derives the date from pack createdAtUtc when the id has no time part (D-588)", () => {
-    expect(describeMeeting("daily-meeting-2026-04-08", "2026-04-08T07:31:02Z")).toEqual({
-      title: "Daily Meeting 2026 04 08",
-      dateLabel: "2026-04-08 07:31",
+  it("prefers a date-only id over pack processing time (D-685)", () => {
+    expect(describeMeeting("daily-meeting-2026-04-08", "2026-08-29T09:14:07Z")).toEqual({
+      title: "Daily Meeting",
+      dateLabel: "2026-04-08",
     });
   });
 
@@ -151,25 +151,33 @@ describe("describeMeeting", () => {
 
   it("ignores an unparseable or out-of-range recordedAtLocal", () => {
     expect(
-      describeMeeting("daily-meeting-2026-04-08", "2026-04-08T07:31:02Z", "not-a-timestamp")
+      describeMeeting("weekly-sync", "2026-04-08T07:31:02Z", "not-a-timestamp")
         .dateLabel,
     ).toBe("2026-04-08 07:31");
     expect(
-      describeMeeting("daily-meeting-2026-04-08", "2026-04-08T07:31:02Z", "2026-13-40T99:99:00")
+      describeMeeting("weekly-sync", "2026-04-08T07:31:02Z", "2026-13-40T99:99:00")
+        .dateLabel,
+    ).toBe("2026-04-08 07:31");
+    expect(
+      describeMeeting("weekly-sync", "2026-04-08T07:31:02Z", "2026-02-30T12:00:00")
+        .dateLabel,
+    ).toBe("2026-04-08 07:31");
+    expect(
+      describeMeeting("weekly-sync", "2026-04-08T07:31:02Z", "2026-04-08T12:00:99junk")
         .dateLabel,
     ).toBe("2026-04-08 07:31");
   });
 
   it("falls back to the id when createdAtUtc is missing or unparseable", () => {
-    expect(describeMeeting("daily-meeting-2026-04-08")).toEqual({
-      title: "Daily Meeting 2026 04 08",
-      dateLabel: "daily-meeting-2026-04-08",
+    expect(describeMeeting("weekly-sync")).toEqual({
+      title: "Weekly Sync",
+      dateLabel: "weekly-sync",
     });
-    expect(describeMeeting("daily-meeting-2026-04-08", "not-a-timestamp").dateLabel).toBe(
-      "daily-meeting-2026-04-08",
+    expect(describeMeeting("weekly-sync", "not-a-timestamp").dateLabel).toBe(
+      "weekly-sync",
     );
-    expect(describeMeeting("daily-meeting-2026-04-08", "   ").dateLabel).toBe(
-      "daily-meeting-2026-04-08",
+    expect(describeMeeting("weekly-sync", "   ").dateLabel).toBe(
+      "weekly-sync",
     );
   });
 });
@@ -1330,10 +1338,9 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
     }
   });
 
-  // D-588: slug-named portable packs (e.g. backfilled dailies) carry no time
-  // part in the id; the dateLabel must come from the pack's createdAtUtc, with
-  // the raw-slug fallback intact when the metadata lacks it too.
-  it("derives dateLabel from pack createdAtUtc for slug-named portable packs", () => {
+  // D-685: date-only slug ids are still recording-time claims. They must win
+  // over a portable's createdAtUtc even though no start time is recoverable.
+  it("derives dateLabel from date-only ids for slug-named portable packs", () => {
     const root = mkdtempSync(join(tmpdir(), "cassini-export-createdat-"));
     try {
       const distDir = join(root, "dist");
@@ -1396,14 +1403,14 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
 
       const catalog = JSON.parse(readFileSync(join(outputDir, "catalog.json"), "utf8"));
       const byId = new Map(catalog.meetings.map((meeting: { id: string }) => [meeting.id, meeting]));
-      // Metadata present: a real "YYYY-MM-DD HH:MM" (UTC) label the viewer can
-      // parse and sort by.
+      // A date-only id is a recording-time claim and therefore outranks the
+      // portable's createdAtUtc batch-processing timestamp.
       expect(byId.get("daily-meeting-2026-04-08")).toMatchObject({
-        dateLabel: "2026-04-08 07:31",
+        dateLabel: "2026-04-08",
       });
-      // Metadata absent: the raw-slug fallback still applies.
+      // The same remains true when createdAtUtc is absent.
       expect(byId.get("daily-meeting-2026-04-09")).toMatchObject({
-        dateLabel: "daily-meeting-2026-04-09",
+        dateLabel: "2026-04-09",
       });
     } finally {
       rmSync(root, { recursive: true, force: true });

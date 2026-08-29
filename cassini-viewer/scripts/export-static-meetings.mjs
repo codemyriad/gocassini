@@ -1419,6 +1419,25 @@ function describeMeetingFromId(meetingId) {
     };
   }
 
+  // Some backfilled dailies have only a calendar date in their id and a
+  // generic source basename (recording.mkv). They therefore have neither a
+  // trustworthy createdAtUtc nor a recordedAtLocal after reprocessing. The
+  // date carried by the id is still authoritative even though no start time is
+  // recoverable (D-685).
+  const dateOnlyStamp = /^(.*)-(\d{4})-(\d{2})-(\d{2})$/.exec(
+    normalizedMeetingId,
+  );
+  if (dateOnlyStamp) {
+    const [, rawTitle, year, month, day] = dateOnlyStamp;
+    if (rawTitle && isValidCalendarDate(year, month, day)) {
+      return {
+        title: toTitleCase(rawTitle),
+        dateLabel: `${year}-${month}-${day}`,
+        dateFromId: true,
+      };
+    }
+  }
+
   // Talk recordings are named by the operator's ULID job id, which carries no
   // human-readable name but does encode the recording start time. Surface that
   // timestamp instead of showing the raw id as both title and date (D-462).
@@ -1476,20 +1495,58 @@ function dateLabelFromLocalTimestamp(value) {
   if (typeof value !== "string") {
     return "";
   }
-  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::\d{2})?/.exec(value.trim());
+  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?$/.exec(
+    value.trim(),
+  );
   if (!match) {
     return "";
   }
-  const [, year, month, day, hour, minute] = match;
+  const [, year, month, day, hour, minute, second] = match;
   // Out-of-range fields mean the value is not a timestamp we can trust; fall
   // through to the next source rather than emit a label that sorts wrongly.
-  if (Number(month) < 1 || Number(month) > 12 || Number(day) < 1 || Number(day) > 31) {
+  if (!isValidCalendarDate(year, month, day)) {
     return "";
   }
-  if (Number(hour) > 23 || Number(minute) > 59) {
+  if (
+    Number(hour) > 23 ||
+    Number(minute) > 59 ||
+    (second !== undefined && Number(second) > 59)
+  ) {
     return "";
   }
   return `${year}-${month}-${day} ${hour}:${minute}`;
+}
+
+function isValidCalendarDate(year, month, day) {
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (
+    !Number.isInteger(y) ||
+    !Number.isInteger(m) ||
+    !Number.isInteger(d) ||
+    m < 1 ||
+    m > 12 ||
+    d < 1
+  ) {
+    return false;
+  }
+  const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+  const daysInMonth = [
+    31,
+    leap ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  return d <= daysInMonth[m - 1];
 }
 
 // dateLabelFromTimestamp renders "YYYY-MM-DD HH:MM" (UTC, same shape as the
