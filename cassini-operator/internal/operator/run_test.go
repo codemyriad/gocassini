@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -305,6 +306,61 @@ func TestLoadConfigRejectsMissingCassiniBin(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cassini binary") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunStartupReportsResolvedExAppPublishSink(t *testing.T) {
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+
+	repoRoot := makeFakeOperatorRepoRoot(t)
+	dataRoot := t.TempDir()
+	t.Setenv("CASSINI_REPO_ROOT", repoRoot)
+	t.Setenv(envAppID, "gocassini")
+	t.Setenv(envAppVersion, "test")
+	t.Setenv(envAppSecret, "test-app-secret")
+	t.Setenv(envNextcloudURL, "https://cloud.example.test")
+	t.Setenv(envAppHost, "")
+	t.Setenv(envAppPort, "")
+	t.Setenv(envAppPersistentStorage, "")
+	t.Setenv(envAppAPIRequired, "false")
+	t.Setenv(envViewerDist, "")
+	t.Setenv(envPublishSinkName, "")
+	t.Setenv(envSTTCUDACapable, "0")
+	t.Setenv("CASSINI_TALK_RECORDING_SECRET", "test-recording-secret")
+	t.Setenv(envTalkSignalingInternalSecret, "test-signaling-secret")
+
+	args := []string{
+		"--bind", "127.0.0.1:0",
+		"--db", filepath.Join(dataRoot, "jobs.sqlite3"),
+		"--work-root", filepath.Join(dataRoot, "jobs"),
+		"--site-root", filepath.Join(dataRoot, "site"),
+		"--cassini-bin", filepath.Join(repoRoot, "bin", "cassini"),
+	}
+	cfg, exitCode, err := loadConfig(args, ioDiscard{})
+	if err != nil || exitCode != 0 {
+		t.Fatalf("loadConfig() exitCode = %d err = %v", exitCode, err)
+	}
+	if cfg.PublishSink != "" {
+		t.Fatalf("raw PublishSink = %q, want empty (unset)", cfg.PublishSink)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	if code := Run(ctx, args, &stdout, &stderr); code != 0 {
+		t.Fatalf("Run() = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+
+	logs := stderr.String()
+	if got := strings.Count(logs, "publish_sink ->"); got != 1 {
+		t.Fatalf("publish sink startup summaries = %d, want 1\nlogs:\n%s", got, logs)
+	}
+	if !strings.Contains(logs, "publish_sink -> "+publishSinkNextcloudFiles) {
+		t.Fatalf("startup summary does not report resolved ExApp sink %q\nlogs:\n%s", publishSinkNextcloudFiles, logs)
+	}
+	if strings.Contains(logs, "publish_sink -> "+publishSinkLocal) {
+		t.Fatalf("startup summary reports standalone sink for an unset ExApp config\nlogs:\n%s", logs)
 	}
 }
 
