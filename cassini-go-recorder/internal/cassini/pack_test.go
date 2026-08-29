@@ -103,6 +103,55 @@ func TestPackPrefersManifestTitleOverFileName(t *testing.T) {
 	}
 }
 
+func TestPackStabilizesMixedWebMOpusIdentity(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	bundleDir := filepath.Join(tmp, "mixed.meeting")
+	if err := writeReadyMeetingBundleFixture(bundleDir, "/tmp/source.mkv"); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	// Mirror MixDownToWebM's multi-track path. FFmpeg 9.0.1 writes a final
+	// granule 24 samples lower on the first Ogg -> Ogg metadata remux for this
+	// exact one-second shape. Compressed packets remain identical, but v3 also
+	// binds playable end trim, so packing must normalize and rebuild its
+	// manifest rather than publishing the first, now-stale digest.
+	output, err := exec.Command(
+		"ffmpeg", "-y", "-v", "error",
+		"-f", "lavfi", "-i", "sine=frequency=410:sample_rate=48000:duration=1.00",
+		"-f", "lavfi", "-i", "sine=frequency=520:sample_rate=48000:duration=1.00",
+		"-filter_complex", "[0:a][1:a]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.95[out]",
+		"-map", "[out]",
+		"-ac", "1", "-ar", "48000",
+		"-c:a", "libopus", "-b:a", "64k", "-vbr", "on",
+		"-compression_level", "10", "-application", "voip",
+		filepath.Join(bundleDir, "meeting.webm"),
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("write mixed WebM fixture: %v: %s", err, strings.TrimSpace(string(output)))
+	}
+
+	outPath := filepath.Join(tmp, "mixed.opus")
+	var stdout, stderr bytes.Buffer
+	if code := Run(context.Background(), []string{"pack", bundleDir, "--out", outPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("pack mixed WebM failed code=%d stderr=%q", code, stderr.String())
+	}
+
+	manifest := decodePortableManifestFromOpus(t, outPath)
+	actual, err := computePortableAudioIntegrity(outPath)
+	if err != nil {
+		t.Fatalf("hash packed mixed WebM: %v", err)
+	}
+	if actual.OpusSHA256 != manifest.Integrity.OpusSHA256 ||
+		actual.SampleCount != manifest.Integrity.SampleCount ||
+		actual.DurationMS != manifest.Integrity.DurationMS {
+		t.Fatalf("packed integrity = %+v, manifest integrity = %+v", actual, manifest.Integrity)
+	}
+	if got := readOpusTag(t, outPath, "CASSINI_AUDIO_OPUS_SHA256"); got != actual.OpusSHA256 {
+		t.Fatalf("CASSINI_AUDIO_OPUS_SHA256 = %q, actual %q", got, actual.OpusSHA256)
+	}
+}
+
 func TestPackTitleFlagOverridesManifestTitle(t *testing.T) {
 	requireFFMediaTools(t)
 	tmp := t.TempDir()

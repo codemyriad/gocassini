@@ -139,6 +139,13 @@ type portableAudioIntegrity struct {
 	PCMSHA256   string
 }
 
+// maxPortableMeetingIdentityPasses bounds metadata remux convergence. FFmpeg
+// can normalize an Ogg Opus final granule on the first Ogg -> Ogg stream copy
+// (notably after an amix/alimiter WebM input). The next copy is stable in the
+// affected FFmpeg 9 path, but keep this bounded and fail closed rather than
+// silently publishing a manifest for different playable audio.
+const maxPortableMeetingIdentityPasses = 4
+
 func isPortableMeetingOutput(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".opus")
 }
@@ -221,34 +228,68 @@ func packMeetingBundle(ctx context.Context, meetingDir string, outPath string, o
 		return fmt.Errorf("stage portable meeting audio: %w", err)
 	}
 
-	audio, err := computePortableAudioIntegrity(stagedAudioPath)
-	if err != nil {
-		return err
-	}
-	manifest, err := buildPortableMeetingManifest(source, audio, resolvedOut, opts)
-	if err != nil {
-		return err
-	}
+	// Build tags from the identity of the file that feeds the metadata remux,
+	// then confirm the output has that same identity. FFmpeg normally preserves
+	// it on the first pass. For end-trim-sensitive mixed WebM, FFmpeg 9 can
+	// normalize the first Ogg final granule by a few samples on the next remux.
+	// When that happens, treat the remuxed file as the normalized input, rebuild
+	// the manifest/meeting ID, and try again. This preserves end-trim binding in
+	// exact-opus-audio-v1 instead of weakening the digest to ignore the change.
+	currentAudioPath := stagedAudioPath
+	for pass := 1; pass <= maxPortableMeetingIdentityPasses; pass++ {
+		audio, err := computePortableAudioIntegrity(currentAudioPath)
+		if err != nil {
+			return err
+		}
+		manifest, err := buildPortableMeetingManifest(source, audio, resolvedOut, opts)
+		if err != nil {
+			return err
+		}
+		opusTags, err := buildPortableMeetingV3TagsFromSource(manifest, source)
+		if err != nil {
+			return err
+		}
 
-	opusTags, err := buildPortableMeetingV3TagsFromSource(manifest, source)
-	if err != nil {
-		return err
+		candidatePath, err := createPortableStagePath(resolvedOut)
+		if err != nil {
+			return err
+		}
+		defer func(path string) {
+			_ = os.Remove(path)
+		}(candidatePath)
+		if err := writePortableMeetingFile(ctx, currentAudioPath, candidatePath, opusTags); err != nil {
+			return err
+		}
+		candidateAudio, err := computePortableAudioIntegrity(candidatePath)
+		if err != nil {
+			return err
+		}
+		if portableAudioIntegrityEqual(audio, candidateAudio) {
+			if err := verifyPortableOpusIntegrity(candidateAudio, manifest.Integrity); err != nil {
+				return err
+			}
+			return commitPortableMeetingOutput(candidatePath, resolvedOut)
+		}
+		if pass == maxPortableMeetingIdentityPasses {
+			return fmt.Errorf(
+				"portable Opus identity did not stabilize after %d metadata remuxes: before sha256=%s samples=%d duration_ms=%d; after sha256=%s samples=%d duration_ms=%d",
+				pass,
+				audio.OpusSHA256, audio.SampleCount, audio.DurationMS,
+				candidateAudio.OpusSHA256, candidateAudio.SampleCount, candidateAudio.DurationMS,
+			)
+		}
+		_ = os.Remove(currentAudioPath)
+		currentAudioPath = candidatePath
 	}
+	return fmt.Errorf("portable Opus identity stabilization exhausted unexpectedly")
+}
 
-	finalStagePath, err := createPortableStagePath(resolvedOut)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = os.Remove(finalStagePath)
-	}()
-	if err := writePortableMeetingFile(ctx, stagedAudioPath, finalStagePath, opusTags); err != nil {
-		return err
-	}
-	if err := verifyPortableMeetingFile(finalStagePath, manifest); err != nil {
-		return err
-	}
-	return commitPortableMeetingOutput(finalStagePath, resolvedOut)
+func portableAudioIntegrityEqual(left, right portableAudioIntegrity) bool {
+	return left.OpusSHA256 == right.OpusSHA256 &&
+		left.SampleRate == right.SampleRate &&
+		left.Channels == right.Channels &&
+		left.SampleCount == right.SampleCount &&
+		left.DurationMS == right.DurationMS
 }
 
 // commitPortableMeetingOutput publishes the verified stage file as the portable
@@ -664,9 +705,10 @@ func verifyPortableMeetingFile(path string, manifest portable.Manifest) error {
 	switch policy {
 	case portable.AudioMatchPolicy:
 		audio, err = computePortableAudioIntegrity(path)
-		if err == nil && audio.OpusSHA256 != manifest.Integrity.OpusSHA256 {
-			return fmt.Errorf("verify portable meeting file: compressed Opus sha256 mismatch")
+		if err != nil {
+			return fmt.Errorf("verify portable meeting file: %w", err)
 		}
+		return verifyPortableOpusIntegrity(audio, manifest.Integrity)
 	case portable.LegacyAudioMatchPolicyPCM:
 		if manifest.Integrity.PCMFormat != "" && !strings.EqualFold(manifest.Integrity.PCMFormat, portable.AudioPCMFormat) {
 			return fmt.Errorf("verify portable meeting file: unsupported pcm format %q", manifest.Integrity.PCMFormat)
@@ -691,6 +733,33 @@ func verifyPortableMeetingFile(path string, manifest portable.Manifest) error {
 		return fmt.Errorf("verify portable meeting file: sample count mismatch")
 	}
 	if audio.DurationMS != manifest.Integrity.DurationMS {
+		return fmt.Errorf("verify portable meeting file: duration mismatch")
+	}
+	return nil
+}
+
+func verifyPortableOpusIntegrity(audio portableAudioIntegrity, integrity portable.Integrity) error {
+	if audio.OpusSHA256 != integrity.OpusSHA256 {
+		return fmt.Errorf(
+			"verify portable meeting file: compressed Opus sha256 mismatch: manifest=%s actual=%s manifest_samples=%d actual_samples=%d manifest_duration_ms=%d actual_duration_ms=%d",
+			integrity.OpusSHA256,
+			audio.OpusSHA256,
+			integrity.SampleCount,
+			audio.SampleCount,
+			integrity.DurationMS,
+			audio.DurationMS,
+		)
+	}
+	if audio.SampleRate != integrity.SampleRate {
+		return fmt.Errorf("verify portable meeting file: sample rate mismatch")
+	}
+	if audio.Channels != integrity.Channels {
+		return fmt.Errorf("verify portable meeting file: channel mismatch")
+	}
+	if audio.SampleCount != integrity.SampleCount {
+		return fmt.Errorf("verify portable meeting file: sample count mismatch")
+	}
+	if audio.DurationMS != integrity.DurationMS {
 		return fmt.Errorf("verify portable meeting file: duration mismatch")
 	}
 	return nil

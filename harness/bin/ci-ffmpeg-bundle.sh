@@ -77,5 +77,38 @@ docker run --rm --entrypoint /bin/sh "$IMAGE_REF" -ceu '
     -map 0:a:0 -f s16le -acodec pcm_s16le -ar 16000 -ac 1 - | wc -c)
   test "$pcm_bytes" -gt 0 || fail "Matroska-to-PCM pipe decode produced no audio"
 
+  # Exercise the exact portable-pack lifecycle, not only an FFmpeg retag. The
+  # multi-track mix filters produce an end-trim-sensitive WebM: FFmpeg 9.0.1
+  # normalizes its final Ogg granule by 24 samples on the first metadata remux.
+  # Cassini must converge on that normalized compressed identity, rebuild the
+  # v3 manifest, and verify the tagged output.
+  bundle="$tmp/mixed.meeting"
+  mkdir -p "$bundle"
+  ffmpeg -hide_banner -loglevel error \
+    -f lavfi -i sine=frequency=410:sample_rate=48000:duration=1.00 \
+    -f lavfi -i sine=frequency=520:sample_rate=48000:duration=1.00 \
+    -filter_complex "[0:a][1:a]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.95[out]" \
+    -map "[out]" -ac 1 -ar 48000 -c:a libopus -b:a 64k -vbr on \
+    -compression_level 10 -application voip "$bundle/meeting.webm"
+  cat >"$bundle/cassini.json" <<EOF
+{"kind":"meeting","version":"cassini.meeting.v1","created_at_utc":"2026-08-29T00:00:00Z","state":"ready","stage":"ready","source_kind":"mkv","source_path":"smoke.mkv"}
+EOF
+  cat >"$bundle/manifest.json" <<EOF
+{"kind":"cassini.meeting-artifact.v1","version":"1","generatedAt":"2026-08-29T00:00:00Z","source":{"basename":"smoke.mkv","durationMs":1000},"files":{"audio":"meeting.webm","transcript":"transcript.words.v1.json"},"speakerCount":1,"wordCount":1}
+EOF
+  cat >"$bundle/transcript.words.v1.json" <<EOF
+{"version":"transcript.words.v1","media":{"src":"meeting.webm","durationMs":1000},"speakers":[{"id":"spk_1","label":"Speaker 1"}],"segments":[{"speaker":"spk_1","startMs":0,"endMs":100,"text":"hello","words":[{"text":"hello","startMs":0,"endMs":100}]}]}
+EOF
+  if ! pack_output=$(cassini pack "$bundle" --out "$tmp/mixed.opus" 2>&1); then
+    printf "%s\n" "$pack_output" >&2
+    fail "portable mixed-WebM pack failed"
+  fi
+  if ! inspect_output=$(cassini inspect "$tmp/mixed.opus" 2>&1); then
+    printf "%s\n" "$inspect_output" >&2
+    fail "portable mixed-WebM inspect failed"
+  fi
+  printf "%s\n" "$inspect_output" | grep -q "cassini=ok" \
+    || fail "portable mixed-WebM integrity was not verified"
+
   echo "[ffmpeg-bundle] OK FFmpeg $resolved"
 '
