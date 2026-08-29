@@ -322,20 +322,33 @@ const SHORT_DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
 });
 
 // Compact variant of formatMeetingDate for places with little space
-// (e.g. catalog cards). "13 Mar 2026" — day, short month, year.
-// Locale-pinned to en-GB so the day-month-year order is consistent
+// (e.g. catalog cards). "13 Mar 2026, 12:29" — day, short month, year, and the
+// meeting's start time when the label carries one (D-685). Locale-pinned to
+// en-GB so the day-month-year order and the 24-hour clock are consistent
 // regardless of the viewer's browser locale.
+//
+// The time is appended from the label's own digits rather than through Intl:
+// like formatMeetingDate, this makes no timezone claim (D-484), and hour12
+// would otherwise turn a compact "12:29" into "12:29 pm" on a card that has
+// none of that room.
 export function formatMeetingDateShort(dateLabel: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateLabel);
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(dateLabel);
   if (!match) {
     return dateLabel;
   }
-  const [, y, m, d] = match;
+  const [, y, m, d, h, mn] = match;
   const date = new Date(Number(y), Number(m) - 1, Number(d));
   if (Number.isNaN(date.getTime())) {
     return dateLabel;
   }
-  return SHORT_DATE_FORMAT.format(date);
+  const day = SHORT_DATE_FORMAT.format(date);
+  if (h === undefined || mn === undefined) {
+    return day;
+  }
+  if (Number(h) > 23 || Number(mn) > 59) {
+    return day;
+  }
+  return `${day}, ${h}:${mn}`;
 }
 
 function requireNonEmptyString(value: unknown, label: string): string {
