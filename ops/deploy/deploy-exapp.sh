@@ -455,7 +455,7 @@ trap cleanup_partial_stage EXIT
 host_manifest="$(mktemp /tmp/cassini-deploy-manifest.host.XXXXXXXX)"
 container_manifest="$(docker exec --user root "$CASSINI_NC_CONTAINER" \
   mktemp /tmp/cassini-deploy-manifest.container.XXXXXXXX)"
-printf '%s\n%s\n' "$host_manifest" "$container_manifest"
+printf 'CASSINI_DEPLOY_STAGE=%s|%s\n' "$host_manifest" "$container_manifest"
 trap - EXIT
 REMOTE_STAGE
 })" || {
@@ -463,14 +463,19 @@ REMOTE_STAGE
   exit "$rc"
 }
 mapfile -t staging_path_lines <<<"$staging_paths"
-if [[ "${#staging_path_lines[@]}" -ne 2 \
-   || ! "${staging_path_lines[0]}" =~ ^/tmp/cassini-deploy-manifest\.host\.[A-Za-z0-9]+$ \
-   || ! "${staging_path_lines[1]}" =~ ^/tmp/cassini-deploy-manifest\.container\.[A-Za-z0-9]+$ ]]; then
+staging_record_count=0
+staging_record_re='^CASSINI_DEPLOY_STAGE=(/tmp/cassini-deploy-manifest\.host\.[A-Za-z0-9]+)\|(/tmp/cassini-deploy-manifest\.container\.[A-Za-z0-9]+)$'
+for staging_path_line in "${staging_path_lines[@]}"; do
+  if [[ "$staging_path_line" =~ $staging_record_re ]]; then
+    staging_record_count=$((staging_record_count + 1))
+    STAGED_HOST_MANIFEST="${BASH_REMATCH[1]}"
+    STAGED_CONTAINER_MANIFEST="${BASH_REMATCH[2]}"
+  fi
+done
+if [[ "$staging_record_count" -ne 1 ]]; then
   echo "target returned invalid manifest staging paths" >&2
   exit 1
 fi
-STAGED_HOST_MANIFEST="${staging_path_lines[0]}"
-STAGED_CONTAINER_MANIFEST="${staging_path_lines[1]}"
 
 scp -q "$WORK/gocassini-info.xml" \
   "$CASSINI_NC_SSH:$STAGED_HOST_MANIFEST"

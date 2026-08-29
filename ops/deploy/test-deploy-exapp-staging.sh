@@ -4,9 +4,10 @@
 #
 # ssh/scp/docker/curl are stubs: no network, daemon or registry is used. The
 # full deploy driver still runs, which pins the production properties that a
-# helper-only test could miss: host/container paths are distinct per run, the
-# rendered manifest reaches the container, settled exits clean both files, and
-# a timed-out detached register retains them.
+# helper-only test could miss: host/container paths are distinct per run,
+# unrelated remote stdout cannot corrupt their handoff, the rendered manifest
+# reaches the container, settled exits clean both files, and a timed-out
+# detached register retains them.
 
 set -uo pipefail
 
@@ -109,7 +110,8 @@ if [[ "$body" == *'host_manifest="$(mktemp /tmp/cassini-deploy-manifest.host.XXX
   : > "$TEST_STATE/files/host.${host##*/}"
   : > "$TEST_STATE/files/container.${container##*/}"
   printf '%s|%s\n' "$host" "$container" >> "$TEST_STATE/allocations.log"
-  printf '%s\n%s\n' "$host" "$container"
+  [[ -z "${TEST_STAGE_CHATTER:-}" ]] || printf '%s\n' "$TEST_STAGE_CHATTER"
+  printf 'CASSINI_DEPLOY_STAGE=%s|%s\n' "$host" "$container"
   exit 0
 fi
 
@@ -185,9 +187,10 @@ CASSINI_SECRET_CMD_SIGNALING="printf '%s' test-signaling-secret"
 INVENTORY
 
 run_deploy() {
-  local name="$1" mode="$2" scp_exit="${3:-}" rc
+  local name="$1" mode="$2" scp_exit="${3:-}" stage_chatter="${4:-}" rc
   local output="$TEST_ROOT/$name.out"
   TEST_STATE="$STATE" TEST_REGISTER_MODE="$mode" TEST_SCP_EXIT="$scp_exit" \
+    TEST_STAGE_CHATTER="$stage_chatter" \
     PATH="$STUB_BIN:$PATH" \
     "$DEPLOY" --inventory "$TEST_ROOT/inventory.env" \
       --tag 0.2.0-beta.4 --src-ref v0.2.0-beta.4 --apply \
@@ -263,6 +266,21 @@ expect_file "timeout retains the container staging file" \
   "$STATE/files/container.${timeout_container##*/}"
 expect_contains "timeout explains why staging was retained" \
   'manifest staging files were intentionally retained' "$TEST_ROOT/register-timeout.out"
+
+# A target shell may print a banner or other text before running bash -s. The
+# marked allocation record remains machine-readable, and normal EXIT cleanup
+# must still remove both files.
+rc="$(run_deploy chatty-stage success "" 'remote shell banner')"
+expect_eq "unrelated remote stdout does not reject staging paths" 0 "$rc"
+chatty_allocation="$(tail -n 1 "$STATE/allocations.log")"
+chatty_host="${chatty_allocation%%|*}"
+chatty_container="${chatty_allocation#*|}"
+expect_eq "chatty allocation reaches registration" "$chatty_container" \
+  "$(tail -n 1 "$STATE/register-paths.log")"
+expect_no_file "chatty deploy removes the host staging file" \
+  "$STATE/files/host.${chatty_host##*/}"
+expect_no_file "chatty deploy removes the container staging file" \
+  "$STATE/files/container.${chatty_container##*/}"
 
 # Secret resolver commands are embedded only in the remote shell input. No
 # diagnostic, path log or captured command may reveal their resolved values.
