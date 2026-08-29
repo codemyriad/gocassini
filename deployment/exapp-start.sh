@@ -11,6 +11,13 @@ log() {
   printf '[exapp-start] %s\n' "$*" >&2
 }
 
+# Native media/CUDA failures can otherwise write multi-gigabyte core files into
+# the container's writable overlay. Production images do not ship debugger
+# symbols, and repeated decoder retries must not exhaust the host filesystem.
+if ! ulimit -c 0; then
+  log "WARNING: unable to disable core dumps"
+fi
+
 require_env() {
   local name="$1"
   if [[ -z "${!name:-}" ]]; then
