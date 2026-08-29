@@ -101,6 +101,38 @@ func (d *backfillDest) op(method, path string) (ncFilesOp, bool) {
 	return ncFilesOp{}, false
 }
 
+// aclBodiesFor returns every ACL body PROPPATCHed onto path, in order — the
+// catalog gets two, and the one that decides what the archive is left with is
+// the last, not the first.
+func (d *backfillDest) aclBodiesFor(path string) []string {
+	var bodies []string
+	for _, op := range d.ops {
+		if op.method == "PROPPATCH" && op.path == path {
+			bodies = append(bodies, op.body)
+		}
+	}
+	return bodies
+}
+
+// sequenceFor renders one path's requests as "METHOD" or "PUT/<bytes>". The
+// byte count is the load-bearing part: a reservation and the content write are
+// both a PUT to the same path, so nothing phrased over methods alone can tell
+// whether the leaf was ruled before it was filled.
+func (d *backfillDest) sequenceFor(path string) []string {
+	var seq []string
+	for _, op := range d.ops {
+		if op.path != path {
+			continue
+		}
+		if op.method == http.MethodPut {
+			seq = append(seq, fmt.Sprintf("PUT/%d", len(op.body)))
+			continue
+		}
+		seq = append(seq, op.method)
+	}
+	return seq
+}
+
 // writeLegacySite lays down the shape a pre-Nextcloud-Files install left on its
 // volume: catalog.json plus meetings/<id>.opus.
 func writeLegacySite(t *testing.T, ids ...string) string {
@@ -191,19 +223,26 @@ func TestBackfillProtectsEverythingItWrites(t *testing.T) {
 		denyAll     = "<nc:acl-permissions>0</nc:acl-permissions>"
 		grantAll    = "<nc:acl-permissions>31</nc:acl-permissions>"
 	)
+	// EVERY rule write on each leaf, not the first one. Reserving the catalog
+	// empty added a second PROPPATCH ahead of the one that was already there, so
+	// a first-match lookup silently stopped saying anything about the rule set
+	// the archive is actually left with — which is the one that decides whether
+	// the unfiltered index is readable.
 	for _, path := range []string{opusPath, catalogPath} {
-		acl, ok := dest.op("PROPPATCH", path)
-		if !ok {
+		acls := dest.aclBodiesFor(path)
+		if len(acls) == 0 {
 			t.Fatalf("%s was never given an ACL: it inherits the container's read grant", path)
 		}
-		for _, want := range []string{
-			"<nc:acl-mapping-id>" + ncRecordingsEveryoneGroup + "</nc:acl-mapping-id>",
-			denyAll,
-			"<nc:acl-mapping-id>" + ncRecordingsOwner + "</nc:acl-mapping-id>",
-			grantAll,
-		} {
-			if !strings.Contains(acl.body, want) {
-				t.Errorf("%s ACL missing %q: %s", path, want, acl.body)
+		for i, acl := range acls {
+			for _, want := range []string{
+				"<nc:acl-mapping-id>" + ncRecordingsEveryoneGroup + "</nc:acl-mapping-id>",
+				denyAll,
+				"<nc:acl-mapping-id>" + ncRecordingsOwner + "</nc:acl-mapping-id>",
+				grantAll,
+			} {
+				if !strings.Contains(acl, want) {
+					t.Errorf("%s ACL %d/%d missing %q: %s", path, i+1, len(acls), want, acl)
+				}
 			}
 		}
 	}
@@ -220,6 +259,18 @@ func TestBackfillProtectsEverythingItWrites(t *testing.T) {
 	if opusDeny < 0 || catalogPut < 0 || opusDeny > catalogPut {
 		t.Fatalf("recording must be protected before it is advertised: deny=%d catalog PUT=%d", opusDeny, catalogPut)
 	}
+
+	// Both leaves are born empty and denied before they hold anything — the
+	// catalog as much as the recording. It is the more exposed of the two here:
+	// the local catalog is written as-is rather than merged, so the body is the
+	// entire migrated archive's metadata, and selfHealLeafProtection never
+	// visits a non-`.opus` leaf to repair it afterwards.
+	//
+	// Whole sequences, so the shapes cannot drift into each other: a recording
+	// is reserved, denied and filled, while the catalog is denied once more
+	// afterwards.
+	assertLeafSequence(t, opusPath, dest.sequenceFor(opusPath), "PUT/0", "PROPPATCH", "PUT/+")
+	assertLeafSequence(t, catalogPath, dest.sequenceFor(catalogPath), "PUT/0", "PROPPATCH", "PUT/+", "PROPPATCH")
 }
 
 // --public is the deliberate escape hatch for a legacy archive that was
@@ -242,13 +293,18 @@ func TestBackfillPublicGrantsTheAllUsersGroupRead(t *testing.T) {
 	}
 
 	// The catalog is never widened: it is the unfiltered index, and the read
-	// proxy serves each caller a filtered view of it.
-	catalogACL, ok := dest.op("PROPPATCH", "Cassini/Recordings/catalog.json")
-	if !ok {
+	// proxy serves each caller a filtered view of it. Checked on every write,
+	// because the one that decides what the archive is left with is the last —
+	// a widening there is invisible to a first-match lookup, and it is the whole
+	// exposure this test exists to prevent.
+	catalogACLs := dest.aclBodiesFor("Cassini/Recordings/catalog.json")
+	if len(catalogACLs) == 0 {
 		t.Fatal("catalog was never given an ACL")
 	}
-	if !strings.Contains(catalogACL.body, "<nc:acl-permissions>0</nc:acl-permissions>") {
-		t.Errorf("--public widened the authoritative catalog: %s", catalogACL.body)
+	for i, acl := range catalogACLs {
+		if !strings.Contains(acl, "<nc:acl-permissions>0</nc:acl-permissions>") {
+			t.Errorf("--public widened the authoritative catalog on write %d/%d: %s", i+1, len(catalogACLs), acl)
+		}
 	}
 }
 

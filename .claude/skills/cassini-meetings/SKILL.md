@@ -65,12 +65,16 @@ Talk token, so there is nothing in it to guess at and no substring search: the
 listing is how you find the value.
 
 **Two rows can share a display name.** That normally means one room identified
-from its Talk token and the same room identified from its name for recordings
-made before Cassini kept the room — the same real conversation, split in two,
-which nothing in the data can prove. If the user's question spans both, list
-each and say so rather than picking one. An administrator can merge them
-permanently (`scripts/reattribute-catalog-room.sh`); you cannot, and should not
-imply otherwise.
+from its Talk conversation and the same room identified from its *name* for
+recordings this installation has no job history for — the same real
+conversation, split in two, which nothing in the data can prove. If the user's
+question spans both, list each and say so rather than picking one.
+
+Repairing it is an administrator action and you should not imply you can do it.
+There are two, and which one applies is not yours to judge: running
+`scripts/backfill-catalog-rooms.sh` recovers the real room for everything the
+installation produced, and `scripts/reattribute-catalog-room.sh` merges what is
+left over — and deliberately refuses meetings the first tool can fix.
 
 A room you have no readable recording from does not appear here at all, so this
 never reveals a conversation the account cannot already see. And a trailing note
@@ -154,9 +158,14 @@ read — say so instead of retrying.
 ./bin/cassini meetings context <meeting-id>
 ```
 
-Markdown on stdout: the meeting's identity and duration, the summary if one
-exists, and the transcript as speaker-attributed paragraphs. For long meetings,
-write it to a file and read that instead of holding it all inline:
+Markdown on stdout: the meeting's identity, the room it came from, its duration,
+the summary if one exists, and the transcript as speaker-attributed paragraphs.
+The `- Room:` line carries the display name with the id in backticks beside it —
+the id is what `list --room` takes and the name is not, so quote the name to the
+user and pass the id to the CLI. A meeting with no room has no such line.
+
+For long meetings, write it to a file and read that instead of holding it all
+inline:
 
 ```bash
 ./bin/cassini meetings context <meeting-id> --out /tmp/meeting.md
@@ -224,8 +233,8 @@ shaped plan and tracked issues:
 | `meetings=0` + `your filter excluded all N` | Your filter matched nothing. The account **can** read N meetings. | Widen or drop the filter, or run `meetings rooms` for a value that exists. Never report this as a permissions or provisioning problem — it is neither. |
 | `note=N meeting(s) have a date this build cannot read` | Those entries have an unparseable `dateLabel`, so any `--from`/`--to` leaves them out in both directions. | If the answer might be among them, list again without the date filters. |
 | A room in `rooms` you cannot select | You mistyped the id. `--room` matches exactly and takes the `room=` value verbatim. | Copy the value from `meetings rooms`; there is no substring matching. |
-| Two rooms with the same `name=` | One conversation identified two ways — from its Talk token, and from its name for older recordings. Cassini cannot prove they are the same. | Query both and say the archive is split. Merging them is an administrator action (`scripts/reattribute-catalog-room.sh`). |
-| `--room` returns nothing but the meeting is in `list` | The meeting records no room at all (`room=-`), which no `--room` value reaches. | List without `--room`. Say the meeting predates room metadata rather than that it is missing. |
+| Two rooms with the same `name=` | One conversation identified two ways — from its Talk conversation, and from its name for recordings this installation has no job history for. Cassini cannot prove they are the same. | Query both and say the archive is split. Repairing it is an administrator action: `scripts/backfill-catalog-rooms.sh` first, then `scripts/reattribute-catalog-room.sh` for whatever remains. |
+| `--room` returns nothing but the meeting is in `list` | The meeting records no room at all (`room=-`), which no `--room` value reaches. | List without `--room`. Say the meeting predates room metadata rather than that it is missing; an administrator can often recover it with `scripts/backfill-catalog-rooms.sh`. |
 | `list configuration error: --from …` (exit 2) | The date is not one of the accepted forms, or the range runs backwards. | Rewrite it as `2026-08-11` (optionally with ` 14:30`), and do not add a timezone. |
 | `no recording you can read at that id` | Absent, **or** present and not readable by this account. Answered identically on purpose, so that a recording you cannot see never reveals it exists. | Run `meetings list`. Never tell the user the meeting "doesn't exist" or that they are "not allowed" — you cannot know which. |
 | `Nextcloud rejected the credentials` | The app password is wrong or revoked. | Ask the user to generate a new one. Never print the value. |

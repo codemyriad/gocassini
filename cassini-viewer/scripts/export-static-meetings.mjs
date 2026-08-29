@@ -1313,23 +1313,45 @@ export function isPortableMeeting(fileName) {
   return extname(fileName).toLowerCase() === ".opus";
 }
 
-// portableRoomFields returns the {roomId, roomName} a catalog entry should
-// carry, or {} when the meeting has no room.
+// portableRoomFields returns the room and lineage fields a catalog entry should
+// carry, or {} when the meeting has none of them.
 //
 // Absent rather than empty: an entry with `roomId: ""` would read as "this
 // meeting has a room whose id is the empty string", and every consumer — the
 // viewer's grouping, the CLI's --room filter — would have to check presence
 // AND emptiness. Meetings recorded before D-622, and Talk recordings whose room
 // lookup failed, genuinely have no room, and saying so is the correct answer.
+//
+// roomName is still read here, and is no longer WRITTEN by any producer
+// (D-640): a display name is editable and a sealed recording is not, so the
+// current name is stamped onto the entry by the operator at publish time and
+// carried across a republish by upsertSiteCatalog. Files packed before that
+// change still carry one, and it is still the best answer available for them.
 export function portableRoomFields(portable) {
   const fields = {};
   const roomId = typeof portable?.meeting?.roomId === "string" ? portable.meeting.roomId.trim() : "";
   const roomName = typeof portable?.meeting?.roomName === "string" ? portable.meeting.roomName.trim() : "";
+  const jobId = typeof portable?.meeting?.jobId === "string" ? portable.meeting.jobId.trim() : "";
+  // Strict on the type, like every other optional field here and in
+  // catalog.ts: a wrong-typed value means "not recorded", never "coerce it".
+  // Number("2") is 2, so a lenient read would quietly promote a string in a
+  // hand-edited or third-party manifest into a lineage claim.
+  const attemptNumber = portable?.meeting?.attemptNumber;
   if (roomId !== "") {
     fields.roomId = roomId;
   }
   if (roomName !== "") {
     fields.roomName = roomName;
+  }
+  // Which job and attempt produced the artifact (D-640). jobId normally equals
+  // the entry's own id — the operator publishes meetings/<jobID>.opus — and is
+  // carried anyway, because that equality is a convention of one publish path
+  // and not something a consumer should have to assume.
+  if (jobId !== "") {
+    fields.jobId = jobId;
+  }
+  if (typeof attemptNumber === "number" && Number.isInteger(attemptNumber) && attemptNumber > 0) {
+    fields.attemptNumber = attemptNumber;
   }
   return fields;
 }

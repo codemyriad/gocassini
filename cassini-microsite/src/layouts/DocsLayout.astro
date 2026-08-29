@@ -3,6 +3,7 @@ import "../tailwind.css";
 import Nav from "../components/Nav.astro";
 import Footer from "../components/Footer.astro";
 import { docsNav } from "../docs-nav";
+import SocialMeta from "../components/SocialMeta.astro";
 import { AlignLeft, ChevronLeft, ChevronRight } from "@lucide/astro";
 import { ViewTransitions } from "astro:transitions";
 
@@ -37,7 +38,10 @@ const toc = headings.filter(h => h.depth === 2 || h.depth === 3);
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GoCassini Docs – {title}</title>
-    {description && <meta name="description" content={description} />}
+    <SocialMeta
+      title={`${title} – GoCassini Docs`}
+      description={description ?? "Documentation for GoCassini, the Nextcloud Talk meeting recorder."}
+    />
     <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
     <ViewTransitions />
     <script is:inline>

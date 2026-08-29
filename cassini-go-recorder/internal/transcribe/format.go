@@ -1,10 +1,13 @@
 package transcribe
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -247,10 +250,13 @@ type provStep struct {
 	Device  string `json:"device,omitempty"`
 }
 
-// WriteManifest writes manifest.json summarising the build. additional carries
-// extra transcript files produced by secondary STT models; each becomes a
-// files.transcripts[] entry alongside the primary transcript.words.v1.json.
-func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []AudioStream, segments []Segment, sttModelID ModelID, llmModel string, hasReadable bool, summaryModel string, hasSummary bool, additional []AdditionalTranscript) error {
+// WriteManifest writes manifest.json summarising the build. srcDurationMS is
+// source-container provenance, while digestDurationMS describes the final
+// playable meeting.webm. additional carries extra transcript files produced by
+// secondary STT models; each becomes a files.transcripts[] entry alongside the
+// primary transcript.words.v1.json. sttDevice is the already-resolved device
+// used by both the primary and additional ASR passes.
+func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int64, streams []AudioStream, segments []Segment, sttModelID ModelID, sttDevice, llmModel string, hasReadable bool, summaryModel string, hasSummary bool, additional []AdditionalTranscript) error {
 	wordCount := 0
 	for _, seg := range segments {
 		wordCount += len(seg.Words)
@@ -264,12 +270,12 @@ func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []Audi
 		primaryID := sanitizeTranscriptID(string(sttModelID))
 		files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
 			ID: primaryID, Path: "transcript.words.v1.json", Role: "raw-asr", Default: true,
-			Provenance: &provStep{Backend: "sherpa-onnx", Model: string(sttModelID)},
+			Provenance: &provStep{Backend: "sherpa-onnx", Model: string(sttModelID), Device: sttDevice},
 		})
 		for _, extra := range additional {
 			files.Transcripts = append(files.Transcripts, artifactTranscriptRef{
 				ID: extra.ID, Path: extra.Path, Role: "raw-asr",
-				Provenance: &provStep{Backend: "sherpa-onnx", Model: string(extra.ModelID)},
+				Provenance: &provStep{Backend: "sherpa-onnx", Model: string(extra.ModelID), Device: sttDevice},
 			})
 		}
 	}
@@ -285,6 +291,7 @@ func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []Audi
 		SpeechToText: &provStep{
 			Backend: "sherpa-onnx",
 			Model:   string(sttModelID),
+			Device:  sttDevice,
 		},
 	}
 	if hasReadable {
@@ -310,30 +317,53 @@ func WriteManifest(path, srcBasename string, srcDurationMS int64, streams []Audi
 			RecordedAtLocal: meetingtime.InferRecordedAtLocal(srcBasename),
 		},
 		Files:            files,
-		SpeakerCount:     len(streams),
+		SpeakerCount:     logicalSpeakerCount(streams),
 		SegmentCount:     len(segments),
-		DigestDurationMS: srcDurationMS,
+		DigestDurationMS: digestDurationMS,
 		WordCount:        wordCount,
 		Provenance:       prov,
 	}
 	return writeJSON(path, doc)
 }
 
+func logicalSpeakerCount(streams []AudioStream) int {
+	seen := make(map[string]struct{}, len(streams))
+	for _, stream := range streams {
+		// Negative stream indexes are synthetic transcript sources (currently
+		// the mixed-track fallback), not meeting participants.
+		if stream.Index < 0 {
+			continue
+		}
+		id := strings.TrimSpace(stream.SpeakerID)
+		if id == "" {
+			continue
+		}
+		seen[id] = struct{}{}
+	}
+	return len(seen)
+}
+
 // --- segment assembly ---
+
+const (
+	defaultSegmentGapThresholdMS int64 = 1500
+	defaultSegmentMaxWords             = 60
+)
 
 // AssembleSegments groups words from a speaker into logical segments.
 // A new segment starts when there is a gap > gapThresholdMS or the
 // segment exceeds maxWords.
 func AssembleSegments(speakerID string, words []Word, gapThresholdMS int64, maxWords int) []Segment {
 	if gapThresholdMS <= 0 {
-		gapThresholdMS = 1500
+		gapThresholdMS = defaultSegmentGapThresholdMS
 	}
 	if maxWords <= 0 {
-		maxWords = 60
+		maxWords = defaultSegmentMaxWords
 	}
 
 	var segments []Segment
 	var cur []Word
+	var curStartMS, curEndMS int64
 
 	flush := func() {
 		if len(cur) == 0 {
@@ -342,19 +372,32 @@ func AssembleSegments(speakerID string, words []Word, gapThresholdMS int64, maxW
 		text := wordsToText(cur)
 		segments = append(segments, Segment{
 			SpeakerID: speakerID,
-			StartMS:   cur[0].StartMS,
-			EndMS:     cur[len(cur)-1].EndMS,
+			StartMS:   curStartMS,
+			EndMS:     curEndMS,
 			Text:      text,
 			Words:     append([]Word(nil), cur...),
 		})
 		cur = cur[:0]
+		curStartMS = 0
+		curEndMS = 0
 	}
 
 	for _, w := range words {
 		if len(cur) > 0 {
-			gap := w.StartMS - cur[len(cur)-1].EndMS
+			gap := w.StartMS - curEndMS
 			if gap > gapThresholdMS || len(cur) >= maxWords {
 				flush()
+			}
+		}
+		if len(cur) == 0 {
+			curStartMS = w.StartMS
+			curEndMS = w.EndMS
+		} else {
+			if w.StartMS < curStartMS {
+				curStartMS = w.StartMS
+			}
+			if w.EndMS > curEndMS {
+				curEndMS = w.EndMS
 			}
 		}
 		cur = append(cur, w)
@@ -371,14 +414,89 @@ func wordsToText(words []Word) string {
 	return strings.Join(parts, " ")
 }
 
-// MergeAndSortSegments merges per-speaker segment lists and sorts by start time.
+// MergeAndSortSegments merges per-speaker segment lists in word-time order.
+//
+// Sorting already-assembled segments as opaque blocks loses short interjections:
+// a speaker's long segment can span another speaker's complete comment, causing
+// that comment to be rendered only after the long segment. Rebuilding segments
+// from the canonical word timestamps makes each speaker change a turn boundary,
+// while retaining the same default gap and word-count limits as AssembleSegments.
 func MergeAndSortSegments(perSpeaker [][]Segment) []Segment {
-	var all []Segment
-	for _, segs := range perSpeaker {
-		all = append(all, segs...)
+	type attributedWord struct {
+		speakerID string
+		word      Word
 	}
-	sortSegments(all)
-	return all
+
+	var words []attributedWord
+	var wordless []Segment
+	for _, segs := range perSpeaker {
+		for _, seg := range segs {
+			if len(seg.Words) == 0 {
+				// Text-only segments predate the word-level transcript contract.
+				// Keep them as opaque records so merging never drops caller data.
+				wordless = append(wordless, seg)
+				continue
+			}
+			for _, word := range seg.Words {
+				words = append(words, attributedWord{speakerID: seg.SpeakerID, word: word})
+			}
+		}
+	}
+
+	// Stable ordering makes equal-start words deterministic: they retain the
+	// caller's per-speaker/segment/word order.
+	sort.SliceStable(words, func(i, j int) bool {
+		return words[i].word.StartMS < words[j].word.StartMS
+	})
+
+	var merged []Segment
+	var currentSpeaker string
+	var currentWords []Word
+	var currentStartMS, currentEndMS int64
+	flush := func() {
+		if len(currentWords) == 0 {
+			return
+		}
+		merged = append(merged, Segment{
+			SpeakerID: currentSpeaker,
+			StartMS:   currentStartMS,
+			EndMS:     currentEndMS,
+			Text:      wordsToText(currentWords),
+			Words:     append([]Word(nil), currentWords...),
+		})
+		currentWords = currentWords[:0]
+		currentStartMS = 0
+		currentEndMS = 0
+	}
+
+	for _, attributed := range words {
+		if len(currentWords) > 0 {
+			gap := attributed.word.StartMS - currentEndMS
+			if attributed.speakerID != currentSpeaker ||
+				gap > defaultSegmentGapThresholdMS ||
+				len(currentWords) >= defaultSegmentMaxWords {
+				flush()
+			}
+		}
+		if len(currentWords) == 0 {
+			currentSpeaker = attributed.speakerID
+			currentStartMS = attributed.word.StartMS
+			currentEndMS = attributed.word.EndMS
+		} else {
+			if attributed.word.StartMS < currentStartMS {
+				currentStartMS = attributed.word.StartMS
+			}
+			if attributed.word.EndMS > currentEndMS {
+				currentEndMS = attributed.word.EndMS
+			}
+		}
+		currentWords = append(currentWords, attributed.word)
+	}
+	flush()
+
+	merged = append(merged, wordless...)
+	sortSegments(merged)
+	return merged
 }
 
 func sortSegments(segs []Segment) {
@@ -400,12 +518,68 @@ func labelForSpeaker(id string, streams []AudioStream) string {
 }
 
 func writeJSON(path string, v any) error {
+	return writeJSONWithSync(path, v, (*os.File).Sync)
+}
+
+// writeJSONWithSync writes JSON through a same-directory temporary file so a
+// concurrent reader sees either the old document or the complete new one. The
+// sync hook exists to exercise the pre-rename durability failure path in tests.
+func writeJSONWithSync(path string, v any, syncFile func(*os.File) error) error {
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o644)
+	dir := filepath.Dir(path)
+	perm := os.FileMode(0o644)
+	if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() {
+		// os.WriteFile used to retain an existing file's mode. Use it as the
+		// creation ceiling so an atomic replacement never widens permissions;
+		// OpenFile may still narrow it according to the current umask.
+		perm = info.Mode().Perm()
+	} else if statErr != nil && !os.IsNotExist(statErr) {
+		return statErr
+	}
+	tmp, err := createJSONTemp(dir, filepath.Base(path), perm)
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := syncFile(tmp); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+// createJSONTemp is equivalent to CreateTemp with a caller-specified creation
+// mode. OpenFile applies the process umask when the file is created, preserving
+// the old WriteFile creation semantics (and any stricter existing-mode ceiling)
+// while O_EXCL keeps the random name safe from clobbering or symlink races.
+func createJSONTemp(dir, base string, perm os.FileMode) (*os.File, error) {
+	var suffix [16]byte
+	for range 100 {
+		if _, err := rand.Read(suffix[:]); err != nil {
+			return nil, fmt.Errorf("generate temporary JSON filename: %w", err)
+		}
+		tmpPath := filepath.Join(dir, fmt.Sprintf(".%s.tmp-%x", base, suffix))
+		tmp, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+		if err == nil {
+			return tmp, nil
+		}
+		if !os.IsExist(err) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("create temporary JSON file for %s: too many collisions", base)
 }
 
 // CountWords counts total words across all segments.

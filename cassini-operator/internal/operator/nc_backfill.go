@@ -209,16 +209,25 @@ func (b *backfillNCFiles) run(ctx context.Context, siteRoot string, dryRun bool)
 	// for the same reason: a run that dies half-way leaves files nothing points
 	// at, never an index pointing at files that are not there.
 	for i, u := range local.uploads {
+		// Rules before bytes, exactly as the publish sink does it (D-594). A
+		// leaf inherits the container's read grant to the virtual all-users
+		// group, so uploading first would make every recording in the archive
+		// readable by every account for the length of its own upload — minutes
+		// per file here, and this command exists to move many at once. Reserving
+		// the leaf empty and denying it first costs one request per file and
+		// leaves nothing exposed but a zero-byte name.
+		//
+		// The deny survives the upload that follows because an overwriting PUT
+		// preserves the fileid, which is what groupfolders keys ACL rows by.
+		if _, err := b.cfg.davPutEmpty(ctx, b.client, ncRecordingsOwner, u.remote, "audio/ogg"); err != nil {
+			return fmt.Errorf("reserve %s (%d of %d): %w", u.remote, i+1, len(local.uploads), err)
+		}
+		if err := b.cfg.davProppatchACLRules(ctx, b.client, ncRecordingsOwner, u.remote, recordingACLRules(nil, b.public)); err != nil {
+			return fmt.Errorf("protect %s: %w", u.remote, err)
+		}
 		status, err := b.cfg.davPutFileStatus(ctx, b.client, ncRecordingsOwner, u.remote, u.local, "audio/ogg")
 		if err != nil {
 			return fmt.Errorf("upload %s (%d of %d): %w", u.remote, i+1, len(local.uploads), err)
-		}
-		// Every leaf inherits the container's read grant to the virtual
-		// all-users group, so every leaf must override it — before the catalog
-		// can advertise it. A 204 means the object was already there, which the
-		// guard should have prevented; ACL it anyway rather than assume.
-		if err := b.cfg.davProppatchACLRules(ctx, b.client, ncRecordingsOwner, u.remote, recordingACLRules(nil, b.public)); err != nil {
-			return fmt.Errorf("protect %s: %w", u.remote, err)
 		}
 		b.printf("uploaded %s (%d/%d, %s)", u.remote, i+1, len(local.uploads), backfillStatusWord(status))
 	}
@@ -238,7 +247,8 @@ func (b *backfillNCFiles) run(ctx context.Context, siteRoot string, dryRun bool)
 	return nil
 }
 
-// writeCatalog publishes the index last, then locks it to the owner.
+// writeCatalog publishes the index last, reserved and denied before it holds
+// anything, then locked to the owner again once it does.
 //
 // The local catalog is written as-is rather than merged, which is safe only
 // because the guard proved the destination had no catalog worth merging. The
@@ -253,8 +263,35 @@ func (b *backfillNCFiles) writeCatalog(ctx context.Context, catalog siteCatalog)
 	}
 	body = append(body, '\n')
 	remote := ncRecordingsRoot + "/catalog.json"
+	// Rules before bytes, for the same reason as the recordings above (D-594),
+	// and on a leaf the guard has just proven is absent: PUTting the body
+	// outright creates the authoritative unfiltered index of every migrated
+	// meeting — ids, titles, room names, dates — with no rules of its own,
+	// inheriting the container's `everyone: READ` until the PROPPATCH lands.
+	//
+	// Unconditional rather than gated on "was it missing", because
+	// guardDestinationIsEmpty admits only an absent or meeting-less catalog:
+	// there is never a body here worth preserving. That also makes the aborted
+	// state safe — if the deny below fails, the run stops having created a
+	// zero-byte file rather than a readable index of the whole archive, which
+	// matters because selfHealLeafProtection only ever visits `.opus` leaves.
+	if _, err := b.cfg.davPutEmpty(ctx, b.client, ncRecordingsOwner, remote, "application/json"); err != nil {
+		return fmt.Errorf("reserve catalog: %w", err)
+	}
+	// Naming the leftover matters here, because reserving first changes what a
+	// failure leaves behind: a zero-byte catalog.json, which every later publish
+	// refuses to parse rather than overwrite. That is the correct direction to
+	// fail — the alternative is a readable index — but it stops publishing until
+	// someone clears it, so the operator has to be told the file is there.
+	if err := b.cfg.davProppatchACLRules(ctx, b.client, ncRecordingsOwner, remote, catalogProtectionACLRules()); err != nil {
+		return fmt.Errorf("protect %s before filling it: %w — it is now an empty file, and publishing stays blocked until it is removed or replaced by hand", remote, err)
+	}
+	// Hedged, unlike the message above, because this one cannot know: the PUT
+	// fails both when Nextcloud refused the body and when it stored the body and
+	// the answer never arrived. Telling an operator to delete a file that is
+	// actually the complete index would be worse than saying nothing.
 	if err := b.cfg.davPutBytes(ctx, b.client, ncRecordingsOwner, remote, body, "application/json"); err != nil {
-		return fmt.Errorf("put catalog: %w", err)
+		return fmt.Errorf("put catalog: %w — %s may have been left empty; look at it before removing it, and note that publishing is blocked only while it is unparseable", err, remote)
 	}
 	// The unfiltered index stays private to the owner: the operator reads it as
 	// the owner and serves each caller a filtered view.

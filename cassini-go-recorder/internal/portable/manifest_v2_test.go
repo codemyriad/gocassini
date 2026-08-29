@@ -433,3 +433,47 @@ func TestBuildOpusTagsV2AndWireCarryTheRoom(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildOpusTagsV2AndWireCarryTheProvenance(t *testing.T) {
+	manifest := baseManifestV2()
+	manifest.Meeting.JobID = "01K3Q7W8ZC9F0MJXQ2NB8V4RTD"
+	manifest.Meeting.AttemptNumber = 2
+	transcripts := []TranscriptInput{
+		{ID: "canary", Role: RoleRawASR, Default: true, Body: sampleBody("spk_0", "alpha")},
+	}
+	encoded, err := EncodeManifestV2(manifest, transcripts, 0)
+	if err != nil {
+		t.Fatalf("EncodeManifestV2: %v", err)
+	}
+
+	tags := BuildOpusTagsV2(manifest, encoded, "canary")
+	if got := tags["CASSINI_JOB_ID"]; got != "01K3Q7W8ZC9F0MJXQ2NB8V4RTD" {
+		t.Errorf("CASSINI_JOB_ID = %q, want the job id", got)
+	}
+	if got := tags["CASSINI_ATTEMPT_NUMBER"]; got != "2" {
+		t.Errorf("CASSINI_ATTEMPT_NUMBER = %q, want %q", got, "2")
+	}
+
+	// v2 is the format the operator emits, so — as with the room — the plain
+	// tags are the convenience and the wire manifest is the contract.
+	var wire struct {
+		Meeting struct {
+			JobID         string `json:"jobId"`
+			AttemptNumber int    `json:"attemptNumber"`
+		} `json:"meeting"`
+	}
+	if err := json.Unmarshal(encoded.Main.JSON, &wire); err != nil {
+		t.Fatalf("decode v2 wire manifest: %v", err)
+	}
+	if wire.Meeting.JobID != "01K3Q7W8ZC9F0MJXQ2NB8V4RTD" || wire.Meeting.AttemptNumber != 2 {
+		t.Errorf("wire meeting provenance = %q/%d, want the job id and attempt 2",
+			wire.Meeting.JobID, wire.Meeting.AttemptNumber)
+	}
+
+	plainTags := BuildOpusTagsV2(baseManifestV2(), encoded, "canary")
+	for _, key := range []string{"CASSINI_JOB_ID", "CASSINI_ATTEMPT_NUMBER"} {
+		if _, ok := plainTags[key]; ok {
+			t.Errorf("%s is present on a meeting with no operator lineage, want absent", key)
+		}
+	}
+}

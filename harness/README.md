@@ -444,9 +444,10 @@ as a real AppAPI ExApp through HaRP, Talk points its recording backend at the
 AppAPI proxy, and the ExApp records through HPB-internal signaling auth.
 
 Supported hosts are Linux with Docker Engine + Compose v2, and macOS with Docker
-Desktop 4.34 or newer plus host networking enabled. The macOS command differs
-because one signaling address must be reachable from both the Nextcloud
-container and the browser.
+Desktop 4.34 or newer plus host networking enabled. Installed-ExApp status
+verification also requires `jq`; stack startup checks for it before creating
+resources. The macOS command differs because one signaling address must be
+reachable from both the Nextcloud container and the browser.
 
 ### 5.1 Start the full installed-ExApp stack
 
@@ -737,8 +738,8 @@ CALL_URL="$(./bin/cassini dev room create --name "Installed ExApp local dev" | t
 ./bin/cassini dev player showcase --call-url "$CALL_URL"
 ```
 
-Private installed-ExApp validation helper (requires host `ffmpeg` and
-`ffprobe` to decode the downloaded portable artifact):
+Private installed-ExApp validation helper for a CUDA-ready stack (requires host
+`ffmpeg` and `ffprobe` to inspect the published portable artifact):
 
 ```bash
 git lfs pull \
@@ -754,21 +755,30 @@ The helper consumes an already-running installed stack. It scaffolds private
 Talk users/conversations, drives playback into the admin call, waits for the
 new ExApp job, and requires a matching viewer artifact with positive segments
 and decoded words. Its default two-run mode additionally verifies that prior
-catalog entries remain available.
+catalog entries remain available. On a GPU-less host, add
+`--expect-build-blocked`: the portable-image contract requires a ready Talk run
+bundle with non-empty audio, immediate `build/blocked`, no retry timestamp, an
+actionable request for the matching `-cuda` image, an untouched build log, and
+no published meeting. That path probes container media metadata only; it does
+not decode speech.
 
 CI and exact-image local validation use the stack-owning faithful vertical:
 
 ```bash
 IMAGE_REF=cassini-exapp:local-faithful
 docker build -f deployment/Dockerfile.exapp -t "$IMAGE_REF" .
-IMAGE_REF="$IMAGE_REF" ./harness/bin/ci-e2e-installed-exapp-talk.sh
+CASSINI_EXPECT_GPU_UNAVAILABLE=1 IMAGE_REF="$IMAGE_REF" \
+  ./harness/bin/ci-e2e-installed-exapp-talk.sh
 ```
 
 That script accepts exactly one prebuilt image, tags it for `reuse-local`, lets
 AppAPI/HaRP create `nc_app_gocassini`, verifies the installed image ID and
-manifest-gated Talk configuration, performs one recording, validates the
-viewer artifact, and treats D-493 teardown/leak checks as part of the pass. It
-never retries a failed recording.
+manifest-gated Talk configuration, performs one recording, and treats D-493
+teardown/leak checks as part of the pass. The CPU-host mode shown above proves
+raw capture plus immediate permanent-image blocking and rejects any CPU ASR
+launch. Omit `CASSINI_EXPECT_GPU_UNAVAILABLE` on a CUDA-ready host to require
+the completed viewer artifact, positive segments, and decoded words. Neither
+mode retries a failed recording.
 
 #### D-403 manifest allow-list sensitivity control (negative run)
 
@@ -797,6 +807,7 @@ python3 harness/bin/make-negative-manifest.py \
 #    no recording), non-zero if the secret leaked in or the install died for an
 #    unrelated reason.
 IMAGE_REF=cassini-exapp:local-faithful \
+CASSINI_EXPECT_GPU_UNAVAILABLE=1 \
 D453_EXPECT_CONFIG_FAILURE=1 \
 D453_ALLOW_TEST_HOOKS=1 \
 D453_MANIFEST_PATH=/tmp/info-no-signaling.xml \

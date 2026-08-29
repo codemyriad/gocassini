@@ -53,13 +53,25 @@ bug: it will drift, and the two halves will not be tested equally.
 **Two traps:**
 
 - The fallback is **silent**. If `X.Y.Z-cuda` is unpullable, AppAPI installs the
-  CPU image on a GPU daemon and reports success. Transcription then runs on CPU
-  with nothing in any log to say so. Every publish must verify the `-cuda` tag
-  is pullable *including its child manifests*; CI does this, and so does
+  portable image on a GPU daemon and reports success. Cassini now fails closed:
+  recording remains available, but `/operator/status` reports CUDA unavailable
+  and each transcription immediately enters `build/blocked` with instructions
+  to install the matching `-cuda` image instead of falling back to CPU. Every
+  publish must still verify the `-cuda` tag is pullable *including its child
+  manifests*; CI does this, and so does
   `ops/deploy/deploy-exapp.sh`. As of 2026-07-31 every published `-cuda`
   release tag is dangling.
 - `<image-tag>` in the manifest is always the **base** tag. Writing
   `0.2.0-cuda` there yields a request for `0.2.0-cuda-cuda`.
+
+> **GPU-only upgrade warning.** Updating a pre-GPU-only installation on a CPU
+> daemon, or updating while only the plain image is pullable, stops operator
+> transcription immediately. Capture and raw-audio retention continue, but new
+> and recovered build jobs become `build/blocked`; an update does not migrate
+> the app to a CUDA daemon. Make the matching `<image-tag>-cuda` image pullable,
+> install/redeploy on a CUDA deploy daemon, then use **Rerun** in Cassini Admin
+> for every preserved blocked recording. Release notes for this transition must
+> call out that plain-image transcription no longer runs.
 
 ### 4. The persistent volume survives updates and container recreates
 

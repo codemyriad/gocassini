@@ -18,7 +18,7 @@ steps. Optional LLM transcript cleanup and summaries are the only step that send
 data to a third party, and they run only when an OpenRouter (or compatible) API
 key is configured. Without a key, nothing leaves your infrastructure. See the
 full data-processing note: https://github.com/codemyriad/gocassini/blob/main/docs/privacy.md]]></description>
-  <version>0.2.0-beta.2</version>
+  <version>0.2.0-beta.6</version>
   <licence>agpl</licence>
   <author>codemyriad</author>
   <namespace>Cassini</namespace>
@@ -53,7 +53,7 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
            exact build this manifest was released with, never a moving
            `latest`. CI rejects a manifest where the two disagree; bump both
            together with scripts/bump-exapp-version.sh. -->
-      <image-tag>0.2.0-beta.2</image-tag>
+      <image-tag>0.2.0-beta.6</image-tag>
     </docker-install>
 
     <!--
@@ -113,7 +113,7 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       <variable>
         <name>CASSINI_ROOM_ID_PEPPER</name>
         <display-name>Room id pepper (optional)</display-name>
-        <description>Deployment-wide secret mixed into the one-way derivation of each meeting's room id, so the Talk conversation token it is derived from cannot be recovered by enumeration. Recommended. Choose it ONCE: changing it changes every room id, and meetings already published keep the ids they were written with, so rooms split until they are merged again with scripts/reattribute-catalog-room.sh.</description>
+        <description>Deployment-wide secret mixed into the one-way derivation of each meeting's room id, so the Talk conversation token it is derived from cannot be recovered by enumeration. Recommended. Choose it ONCE: changing it changes every room id, and meetings already published keep the ids they were written with, so rooms split. Re-running scripts/backfill-catalog-rooms.sh --apply repairs every meeting this installation has a job row for; only recordings imported from elsewhere need the manual merge in scripts/reattribute-catalog-room.sh.</description>
       </variable>
       <variable>
         <name>CASSINI_OPERATOR_API_TOKEN</name>

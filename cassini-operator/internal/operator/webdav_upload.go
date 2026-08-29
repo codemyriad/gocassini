@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -152,6 +153,62 @@ func (c ExAppConfig) davMkcol(ctx context.Context, client *http.Client, userID, 
 		return nil
 	}
 	return fmt.Errorf("MKCOL %s -> %d", relDir, resp.StatusCode)
+}
+
+// davPutEmpty creates relPath as a zero-byte file and reports the status.
+//
+// This is the first half of "rule the object before it has any content in it"
+// (D-594). There is no atomic create-with-ACL for a file — PROPPATCH on a path
+// that does not exist is a 404, no PUT header carries rules, and groupfolders
+// exposes no per-path OCS route — so the only way to get an ACL onto a leaf
+// before its audio is to create the leaf empty, PROPPATCH it, and then fill it.
+// An overwriting PUT preserves the file's fileid, and groupfolders ACL rows are
+// keyed by fileid, so the rules written here survive every later overwrite.
+//
+// What is exposed in the window this leaves open is the file's name, a length of
+// zero, and its mtime — never audio.
+func (c ExAppConfig) davPutEmpty(ctx context.Context, client *http.Client, userID, relPath, contentType string) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.davFileURL(userID, relPath), bytes.NewReader(nil))
+	if err != nil {
+		return 0, err
+	}
+	c.setAppAPIDAVHeadersForUser(req, userID)
+	req.Header.Set("Content-Type", contentType)
+	req.ContentLength = 0
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer drainClose(resp.Body)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return resp.StatusCode, nil
+	}
+	return resp.StatusCode, fmt.Errorf("PUT (empty) %s -> %d", relPath, resp.StatusCode)
+}
+
+// davDelete removes relPath. A 404 is success: the caller wanted it gone.
+//
+// CAUTION: deleting a leaf in a group folder does not destroy it. The bytes move
+// to the Team-folder trash, where they stay reachable to exactly the accounts the
+// leaf's rules allowed — and a leaf with NO rules is readable and listable there
+// by every account, from its own trashbin. So a DELETE issued to remediate an
+// unprotected recording relocates the exposure rather than ending it. Every call
+// site must PROPPATCH a deny onto the leaf first; see repairUnprotectedLeaf.
+func (c ExAppConfig) davDelete(ctx context.Context, client *http.Client, userID, relPath string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.davFileURL(userID, relPath), nil)
+	if err != nil {
+		return err
+	}
+	c.setAppAPIDAVHeadersForUser(req, userID)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer drainClose(resp.Body)
+	if resp.StatusCode == http.StatusNotFound || (resp.StatusCode >= 200 && resp.StatusCode < 300) {
+		return nil
+	}
+	return fmt.Errorf("DELETE %s -> %d", relPath, resp.StatusCode)
 }
 
 func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, userID, relPath, localPath, contentType string) (int, error) {

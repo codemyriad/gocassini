@@ -3,6 +3,7 @@ import "../tailwind.css";
 import { ViewTransitions } from "astro:transitions";
 import Nav from "../components/Nav.astro";
 import Footer from "../components/Footer.astro";
+import SocialMeta from "../components/SocialMeta.astro";
 import { Headset, Box, Users, Mic, ScrollText, Tag, Package } from "@lucide/astro";
 const rawBase = import.meta.env.BASE_URL;
 const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
@@ -14,7 +15,10 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>GoCassini — Record &amp; Transcribe Nextcloud Talk</title>
-  <meta name="description" content="GoCassini records and transcribes Nextcloud Talk meetings on your own server." />
+  <SocialMeta
+    title="GoCassini — Record & Transcribe Nextcloud Talk"
+    description="A privacy-first meeting recorder for Nextcloud Talk. Records and transcribes calls on your own server, into one self-contained file per meeting."
+  />
   <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
   <ViewTransitions />
 </head>
@@ -24,7 +28,7 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
 
   <!-- TODO: replace with official Nextcloud certified app badge once approved -->
   <div id="nc-badge" class="md:hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-40 transition-all duration-500">
-    <a href="https://apps.nextcloud.com/" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2.5 text-sm font-bold px-3 py-2 rounded-md text-black transition-opacity duration-150 hover:opacity-80 active:opacity-70" style="background: linear-gradient(135deg, #0082c9, #1cafff)">
+    <a href="https://apps.nextcloud.com/apps/gocassini" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-2.5 text-sm font-bold px-3 py-2 rounded-md text-black transition-opacity duration-150 hover:opacity-80 active:opacity-70" style="background: linear-gradient(135deg, #0082c9, #1cafff)">
       <img src={`${base}nc-logo.svg`} alt="" class="w-6 h-6 shrink-0" aria-hidden="true" />
       Nextcloud App Store
     </a>
@@ -75,7 +79,7 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
             <p class="text-base-content/40"><span class="text-primary/60">~</span> cassini record --room daily-standup</p>
             <p class="text-base-content/40 pl-4">Nextcloud Talk · daily-standup · 5 participants</p>
             <p class="text-base-content mt-1"><span class="text-primary mr-2">●</span>Recording<span class="text-base-content/30"> 00:02:45</span></p>
-            <p class="text-base-content"><span class="text-primary/70 mr-2">✓</span>Transcribing<span class="text-base-content/30 ml-2">whisper-base · local</span></p>
+            <p class="text-base-content"><span class="text-primary/70 mr-2">✓</span>Transcribing<span class="text-base-content/30 ml-2">parakeet-tdt-0.6b-v3 · local</span></p>
             <p class="text-base-content"><span class="text-primary/70 mr-2">✓</span>Packaging</p>
             <p class="text-base-content/60 mt-1">→ daily-standup-2026-07-01.opus<span class="terminal-blink"></span></p>
           </div>
@@ -320,7 +324,7 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
         <div class="flex flex-col gap-3 max-w-2xl">
           <span class="text-xs font-bold tracking-widest uppercase text-base-content/30">Optional</span>
           <h2 class="text-4xl md:text-5xl font-bold text-base-content">Meeting summaries</h2>
-          <p class="text-base text-base-content/50 leading-relaxed">Add an OpenRouter API key and Cassini will clean up the raw transcript and generate a structured summary, automatically, after every meeting. Without a key, the raw local transcript is published as-is.</p>
+          <p class="text-base text-base-content/50 leading-relaxed">Point Cassini at an LLM — an OpenRouter API key, or any OpenAI-compatible endpoint you host yourself — and it will generate a structured summary, automatically, after every meeting. Leave it unconfigured and the local transcript is published as-is.</p>
         </div>
 
         <!-- Full-width summary mockup -->
@@ -365,7 +369,7 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
             Does audio leave my server?
             <svg class="w-4 h-4 text-base-content/40 shrink-0 transition-transform group-open:rotate-180" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
           </summary>
-          <p class="mt-3 text-sm text-base-content/50 leading-relaxed">By default, no. Cassini runs Whisper locally on your Nextcloud server and audio never leaves your infrastructure. The one exception is meeting summaries: if you enable them, the transcript (not the audio) is sent to OpenRouter to generate a summary. Summaries are opt-in and off by default.</p>
+          <p class="mt-3 text-sm text-base-content/50 leading-relaxed">By default, no. Cassini runs NVIDIA&apos;s Parakeet speech-to-text model locally on your Nextcloud server and audio never leaves your infrastructure. The one exception is meeting summaries: if you enable them, the transcript (not the audio) is sent to whichever LLM endpoint you configured — your own or a third party. Summaries are opt-in and off by default.</p>
         </details>
 
         <details class="group rounded-2xl border border-base-300/50 bg-base-200/40 px-5 py-4 hover:border-base-300 hover:bg-base-200/70 open:bg-base-200/70 open:border-base-300 transition-colors cursor-pointer">
@@ -381,7 +385,7 @@ const base = rawBase.endsWith("/") ? rawBase : rawBase + "/";
             What languages can it transcribe?
             <svg class="w-4 h-4 text-base-content/40 shrink-0 transition-transform group-open:rotate-180" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
           </summary>
-          <p class="mt-3 text-sm text-base-content/50 leading-relaxed">Whisper supports over 90 languages. Cassini will transcribe in whatever language is spoken in the meeting, with no configuration needed.</p>
+          <p class="mt-3 text-sm text-base-content/50 leading-relaxed">The bundled Parakeet model supports 25 European languages, including English, German, French, Spanish, Italian and Dutch. It detects the language automatically, so Cassini transcribes whatever is spoken in the meeting with no configuration needed.</p>
         </details>
 
         <details class="group rounded-2xl border border-base-300/50 bg-base-200/40 px-5 py-4 hover:border-base-300 hover:bg-base-200/70 open:bg-base-200/70 open:border-base-300 transition-colors cursor-pointer">

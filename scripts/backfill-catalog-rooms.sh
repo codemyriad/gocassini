@@ -1,44 +1,57 @@
 #!/usr/bin/env bash
-# backfill-catalog-rooms.sh — add room metadata to already-published recordings.
+# backfill-catalog-rooms.sh — give already-published recordings the room their
+# job actually recorded.
 #
-# Since D-622 every recording carries the conversation it came from, and the
-# catalog entry it publishes into carries roomId/roomName. Recordings published
-# before that carry neither, so they appear in no room: `cassini meetings rooms`
-# does not list them, and `cassini meetings list --room` cannot reach them.
+# Since D-622 every recording carries the conversation it came from. Recordings
+# published before that carry nothing, so they appear in no room: `cassini
+# meetings rooms` does not list them and `--room` cannot reach them.
 #
-# This adds back what the published files still hold. Run it ONCE, by hand,
-# after updating. Nothing else needs it: every recording published since the
-# update writes its room at publish time.
+# WHERE THE ROOM COMES FROM (D-640). The catalog entry's id IS the operator's
+# job id — the sink publishes meetings/<jobID>.opus — and the operator's job
+# database still holds the Talk room token for exactly those jobs. Nothing
+# deletes job rows. So the room a recording came out of is usually recoverable
+# EXACTLY, not approximately:
 #
-# WHAT IT CAN AND CANNOT RECOVER. A recording published before D-622 was written
-# with no room id. The Talk room token was never in the file and cannot be
-# derived from it, so those entries get a room NAME and no id — which is enough
-# for `cassini meetings rooms` to list them and for `--room "name:<name>"` to
-# select them, and is honest about what is actually known. No id is ever
-# invented: a made-up token would look real and would silently group meetings
-# that were never in the same room.
+#   1. jobs.talk_binding.room_token  →  the real room id, authoritative.
+#      Overwrites whatever the entry carries, which is what merges a room that
+#      an earlier pass split across a token-derived and a name-derived id.
+#   2. no job row  →  the published file: its CASSINI_ROOM_ID tag, else an id
+#      derived from its room NAME (CASSINI_ROOM_NAME, else the TITLE tag).
+#      This only FILLS A BLANK — it never overwrites a room a person chose with
+#      ./scripts/reattribute-catalog-room.sh.
 #
-# WHERE THE NAME COMES FROM, in order:
-#   1. the file's CASSINI_ROOM_NAME tag  (written since D-622)
-#   2. the file's TITLE tag              (the Talk room name, since D-462)
-# TITLE is used only when it is a real name: a title that merely echoes the
-# meeting id, or the packer's "Cassini Meeting" default, is left alone. A
-# recording packed by hand from a file rather than recorded from a call could
-# still have a TITLE that is a file name, not a room — which is why this runs as
-# a dry run by default and prints the source of every value before it writes.
+# A name-derived id is a weaker identity: two conversations sharing a display
+# name derive one id, and renaming a room derives a new one. Nothing is ever
+# invented, though — an entry that neither source can place is left with no room
+# rather than a plausible guess. TITLE is used only when it is a real name: one
+# that merely echoes the meeting id, or the packer's "Cassini Meeting" default,
+# is ignored. A recording packed by hand could still have a TITLE that is a file
+# name, which is why this is a dry run by default and prints the source of every
+# value before it writes.
+#
+# IT ALSO RE-TAGS THE PUBLISHED FILE, because the exporter re-derives a catalog
+# entry's room from the file on every republish — so a catalog-only backfill is
+# silently undone by the next re-seal. Overwriting an existing file preserves the
+# permissions already on it; the payload refuses to CREATE one, which is the case
+# that would not. Pass --no-retag to skip it and accept that the change is
+# temporary.
 #
 #   ./scripts/backfill-catalog-rooms.sh              # report only, change nothing
-#   ./scripts/backfill-catalog-rooms.sh --apply      # write the catalog back
+#   ./scripts/backfill-catalog-rooms.sh --apply      # write it back
 #
 # Options:
-#   --apply            write the updated catalog (without it, nothing is written)
+#   --apply            write the catalog and the re-tagged files (without it, nothing is written)
+#   --no-retag         update only the catalog; do not re-tag any published file
+#   --jobs-db PATH     the operator job database (default: resolved as the app does)
+#   --no-jobs-db       ignore the job database; derive every room from its file
 #   --limit N          examine at most N entries that need a room (default: all)
 #   --container NAME   app container (default: nc_app_gocassini, or $CASSINI_CONTAINER)
 #   -h, --help         this text
 #
-# The work happens inside the app container because the catalog in Nextcloud
-# Files is readable and writable only by the recordings owner, whose credential
-# AppAPI injects into that container and which is not available from here.
+# The work happens inside the app container because both things it reads live
+# there: the catalog in Nextcloud Files is readable only by the recordings owner,
+# whose credential AppAPI injects into that container, and the job database is on
+# that container's own volume.
 #
 # Run it while nothing is publishing. Publishing rewrites the same catalog with
 # a read-merge-write and no lock, so a recording finishing mid-backfill can lose
@@ -62,12 +75,20 @@ die() { echo "error: $*" >&2; exit 2; }
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  ./scripts/backfill-catalog-rooms.sh [--apply] [--limit N] [--container NAME]
+  ./scripts/backfill-catalog-rooms.sh [--apply] [--no-retag] [--limit N]
+                                      [--jobs-db PATH | --no-jobs-db]
+                                      [--container NAME]
 
-Adds room metadata to recordings published before Cassini recorded the room.
-Reports what it would change and writes nothing unless --apply is passed.
+Gives already-published recordings the room their job recorded, reading the Talk
+room token out of the operator's job database and falling back to the published
+file only where no job row survives. Reports what it would change and writes
+nothing unless --apply is passed.
 
-  --apply            write the updated catalog back to Nextcloud Files
+  --apply            write the catalog and the re-tagged files
+  --no-retag         update only the catalog, leaving published files untouched
+                     (the change is then reverted by the next republish)
+  --jobs-db PATH     the operator job database, if it is not where the app puts it
+  --no-jobs-db       ignore the job database and derive every room from its file
   --limit N          examine at most N entries that need a room
   --container NAME   app container (default: nc_app_gocassini)
 
@@ -80,6 +101,12 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply) ARGS+=(--apply); shift ;;
+    --no-retag) ARGS+=(--no-retag); shift ;;
+    --no-jobs-db) ARGS+=(--no-jobs-db); shift ;;
+    --jobs-db)
+      [[ $# -ge 2 ]] || die "--jobs-db needs a value"
+      ARGS+=(--jobs-db "$2"); shift 2 ;;
+    --jobs-db=*) ARGS+=(--jobs-db "${1#--jobs-db=}"); shift ;;
     --limit)
       [[ $# -ge 2 ]] || die "--limit needs a value"
       ARGS+=(--limit "$2"); shift 2 ;;
@@ -136,19 +163,23 @@ case "$status" in
     cat >&2 <<'EOF'
 
 Nothing was changed, and nothing needed to be. Either every published recording
-already carries its room, or this installation has no published recordings.
+already carries the room its job recorded, or this installation has no published
+recordings.
 
 If you expected meetings to be missing a room, check `cassini meetings list`
-first: an entry this cannot fix is one whose published file carries no room name
-either, and no amount of re-running will change that.
+first. An entry this cannot fix is one with no job row AND no room name in its
+published file, and no amount of re-running will change that — those are the
+ones ./scripts/reattribute-catalog-room.sh exists for.
 EOF
     ;;
   4)
     cat >&2 <<'EOF'
 
-It stopped before writing anything, so the catalog in Nextcloud Files is exactly
-as it was and there is nothing to clean up. Fix the error reported above and run
-it again.
+It stopped before writing the catalog, so the catalog in Nextcloud Files is
+exactly as it was. Some published files may already have been re-tagged; that is
+safe to leave and safe to repeat, because re-tagging changes nothing but the
+room a file names and never touches its permissions. Fix the error reported
+above and run it again.
 EOF
     ;;
   2)
@@ -165,14 +196,19 @@ EOF
   1)
     cat >&2 <<'EOF'
 
-It stopped part-way, after it had started writing. The catalog in Nextcloud
-Files may hold the updated entries without the owner-only permissions being
-re-applied, which would leave the full archive index readable by every
-signed-in account.
+It stopped part-way, after it had started writing, and something may now be
+readable that should not be. There are two shapes of this and the error above
+says which:
 
-Check Cassini/Recordings/catalog.json in the Files app and confirm it is shared
-with nobody before re-running. Re-running the backfill itself is safe: it is
-idempotent per entry.
+  * the catalog was written without its owner-only permissions being re-applied,
+    which would leave the full archive index readable by every signed-in account
+    — check Cassini/Recordings/catalog.json in the Files app; or
+  * a re-tagged recording was CREATED rather than overwritten, meaning it has no
+    permissions of its own and inherits the folder's grant to every signed-in
+    account — the error names the file; check it in the Files app.
+
+Confirm the named file is shared with nobody before re-running. Re-running the
+backfill itself is safe: it is idempotent per entry.
 EOF
     ;;
   *)

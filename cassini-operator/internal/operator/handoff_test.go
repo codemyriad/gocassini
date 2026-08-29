@@ -39,6 +39,12 @@ func setJobArtifactRunPath(t *testing.T, db *sql.DB, id, runPath string) {
 	if _, err := db.Exec(`UPDATE jobs SET artifact_run_path = ? WHERE id = ?`, runPath, id); err != nil {
 		t.Fatalf("set artifact_run_path for %s: %v", id, err)
 	}
+	if _, err := db.Exec(`
+UPDATE job_attempts SET artifact_run_path = ?
+WHERE job_id = ? AND attempt_number = (SELECT current_attempt_number FROM jobs WHERE id = ?)`,
+		runPath, id, id); err != nil {
+		t.Fatalf("set attempt artifact_run_path for %s: %v", id, err)
+	}
 }
 
 // blockingBuildFixture replaces buildJobFn with one that signals each started
@@ -315,21 +321,88 @@ func TestClaimBuildRunningClaimsOnlyQueuedRows(t *testing.T) {
 	}
 	defer store.Close()
 
-	seedJobRow(t, store.db, seededJobRow{ID: "claim-me", Stage: "build", State: "queued", CreatedAt: "2026-06-12T10:00:00Z"})
+	seedJobRow(t, store.db, seededJobRow{ID: "claim-me", Stage: "record", State: "queued", CreatedAt: "2026-06-12T10:00:00Z"})
+	if err := store.MarkBuildQueued(context.Background(), "claim-me", "/run/one", "/run/one", nowUTCString()); err != nil {
+		t.Fatalf("MarkBuildQueued() error = %v", err)
+	}
+	task := buildTask{JobID: "claim-me", AttemptNumber: 1, ArtifactRunPath: "/run/one"}
 
-	claimed, err := store.ClaimBuildRunning(context.Background(), "claim-me", nowUTCString())
+	claimed, err := store.ClaimBuildRunning(context.Background(), task, nowUTCString())
 	if err != nil {
 		t.Fatalf("first ClaimBuildRunning() error = %v", err)
 	}
 	if !claimed {
 		t.Fatal("first claim should succeed")
 	}
-	claimed, err = store.ClaimBuildRunning(context.Background(), "claim-me", nowUTCString())
+	claimed, err = store.ClaimBuildRunning(context.Background(), task, nowUTCString())
 	if err != nil {
 		t.Fatalf("second ClaimBuildRunning() error = %v", err)
 	}
 	if claimed {
 		t.Fatal("duplicate claim should be skipped, not re-run")
+	}
+}
+
+func TestClaimBuildRunningRejectsStaleAttemptAndSource(t *testing.T) {
+	t.Setenv("CASSINI_REPO_ROOT", filepath.Clean(filepath.Join("..", "..", "..")))
+	store, err := OpenStore(filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatalf("OpenStore() error = %v", err)
+	}
+	defer store.Close()
+
+	seedJobRow(t, store.db, seededJobRow{ID: "rerun-claim", Stage: "record", State: "queued", CreatedAt: "2026-06-12T10:00:00Z"})
+	if _, err := store.db.Exec(`
+UPDATE job_attempts SET stage = 'done', state = 'succeeded', artifact_run_path = '/run/one'
+WHERE job_id = 'rerun-claim' AND attempt_number = 1;
+INSERT INTO job_attempts (
+  job_id, attempt_number, trigger_kind, request_json, stage, state,
+  artifact_run_path, created_at, updated_at, build_queued_at
+) VALUES (
+  'rerun-claim', 2, 'rerun', '{}', 'build', 'queued',
+  '/run/two', '2026-06-12T10:01:00Z', '2026-06-12T10:01:00Z', '2026-06-12T10:01:00Z'
+);
+UPDATE jobs SET
+  stage = 'build', state = 'queued', current_attempt_number = 2,
+  artifact_run_path = '/run/two', build_queued_at = '2026-06-12T10:01:00Z'
+WHERE id = 'rerun-claim';`); err != nil {
+		t.Fatalf("seed rerun: %v", err)
+	}
+
+	stale := buildTask{JobID: "rerun-claim", AttemptNumber: 1, ArtifactRunPath: "/run/one"}
+	claimed, err := store.ClaimBuildRunning(context.Background(), stale, nowUTCString())
+	if err != nil {
+		t.Fatalf("stale ClaimBuildRunning() error = %v", err)
+	}
+	if claimed {
+		t.Fatal("stale attempt claimed the newer rerun")
+	}
+	wrongSource := buildTask{JobID: "rerun-claim", AttemptNumber: 2, ArtifactRunPath: "/run/wrong"}
+	claimed, err = store.ClaimBuildRunning(context.Background(), wrongSource, nowUTCString())
+	if err != nil {
+		t.Fatalf("wrong-source ClaimBuildRunning() error = %v", err)
+	}
+	if claimed {
+		t.Fatal("task with stale source metadata claimed the rerun")
+	}
+
+	current := buildTask{JobID: "rerun-claim", AttemptNumber: 2, ArtifactRunPath: "/run/two"}
+	claimed, err = store.ClaimBuildRunning(context.Background(), current, nowUTCString())
+	if err != nil || !claimed {
+		t.Fatalf("current ClaimBuildRunning() = (%v, %v), want (true, nil)", claimed, err)
+	}
+	var jobState, attempt1State, attempt2State string
+	if err := store.db.QueryRow(`SELECT state FROM jobs WHERE id = 'rerun-claim'`).Scan(&jobState); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT state FROM job_attempts WHERE job_id = 'rerun-claim' AND attempt_number = 1`).Scan(&attempt1State); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT state FROM job_attempts WHERE job_id = 'rerun-claim' AND attempt_number = 2`).Scan(&attempt2State); err != nil {
+		t.Fatal(err)
+	}
+	if jobState != "running" || attempt1State != "succeeded" || attempt2State != "running" {
+		t.Fatalf("states job=%q attempt1=%q attempt2=%q", jobState, attempt1State, attempt2State)
 	}
 }
 

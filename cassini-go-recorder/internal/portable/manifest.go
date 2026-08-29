@@ -95,18 +95,44 @@ type Meeting struct {
 	ProcessedAtUTC  string `json:"processedAtUtc,omitempty"`
 	DurationMS      int64  `json:"durationMs"`
 	Language        string `json:"language,omitempty"`
-	// RoomID and RoomName identify the conversation the meeting was recorded
-	// in — for a Talk recording, the room's token and its display name
-	// (D-622). Both are optional: a meeting packed from a file, a dev run, or
-	// a Talk job whose room lookup failed has no room, and an absent room is
-	// not an error anywhere downstream.
+	// RoomID identifies the conversation the meeting was recorded in: a
+	// deterministic one-way derivation of the room's identity (D-622), never
+	// the Talk token itself. Optional — a meeting packed from a file, a dev
+	// run, or a Talk job whose room lookup failed has no room, and an absent
+	// room is not an error anywhere downstream.
+	RoomID string `json:"roomId,omitempty"`
+	// RoomName is LEGACY and is no longer written (D-640). Producers before
+	// D-640 froze the room's display name into every artifact; a display name
+	// is editable, so honouring a rename meant rewriting every file that room
+	// ever produced — and under D-612 a published recording cannot even be
+	// deleted.
 	//
-	// The name is also embedded as the meeting Title, since that is what a
-	// player shows. They are kept apart because a title is free text that may
-	// have been overridden or derived from a file name, while RoomName is a
-	// claim about which room this is — and only the second is safe to group by.
-	RoomID   string `json:"roomId,omitempty"`
+	// The room's name at record time is still in the file, as the Title: that
+	// is what a player shows and what the operator has always stamped there.
+	// The room's CURRENT name lives in the catalog entry, which is mutable and
+	// which the operator restamps on every publish.
+	//
+	// Kept on the struct, in both schemas and in every reader, because files
+	// written before D-640 still carry it and `cassini retag` preserves what a
+	// file already has rather than stripping it.
 	RoomName string `json:"roomName,omitempty"`
+	// JobID and AttemptNumber record which operator job and which of its
+	// attempts produced this artifact (D-640). Both optional: a meeting packed
+	// by hand, or by any producer that is not the operator, has neither.
+	//
+	// JobID discloses nothing new — the operator publishes the artifact as
+	// meetings/<jobID>.opus and the catalog entry's id is the same value, so
+	// it is already the file's name. AttemptNumber is genuinely new: a rerun
+	// produces a different attempt of the same job, and nothing else in the
+	// file says which one this is.
+	//
+	// There is deliberately no "attempt id": an attempt's identity in the
+	// operator is the composite (job id, attempt number), and inventing a
+	// single string for it here would invent an identifier the operator does
+	// not have. AttemptNumber is 1-based, so the omitempty zero is
+	// unambiguously "unknown" rather than a legal value.
+	JobID         string `json:"jobId,omitempty"`
+	AttemptNumber int    `json:"attemptNumber,omitempty"`
 	// Summary is reserved for surfacing summary content as a *meeting attribute*
 	// (e.g. a TL;DR readable without unpacking the gzipped payload). Currently
 	// left empty — picking a meaning (TL;DR? full markdown? first heading?)
@@ -192,7 +218,21 @@ func EncodeManifest(manifest Manifest, chunkSize int) (EncodedPayload, error) {
 	if err != nil {
 		return EncodedPayload{}, fmt.Errorf("marshal portable meeting manifest: %w", err)
 	}
+	return EncodePayloadBytes(rawJSON, chunkSize)
+}
 
+// EncodePayloadBytes runs already-serialised manifest JSON through the payload
+// pipeline: gzip, base64url, chunk, and the digest and byte counts the tags
+// declare.
+//
+// Split out of EncodeManifest for the editors rather than the producers.
+// `cassini retag` rewrites one field of an existing file's manifest and must
+// re-emit everything else exactly as it found it — including whatever wire
+// version that file uses and any key this build has never heard of — so it
+// edits the JSON document and hands the bytes here. Marshalling a
+// portable.Manifest instead would silently drop every field the struct does not
+// model, which on a v2 file is its entire transcript descriptor set.
+func EncodePayloadBytes(rawJSON []byte, chunkSize int) (EncodedPayload, error) {
 	var compressed bytes.Buffer
 	gzw := gzip.NewWriter(&compressed)
 	if _, err := gzw.Write(rawJSON); err != nil {
@@ -283,6 +323,7 @@ func BuildOpusTags(manifest Manifest, payload EncodedPayload) map[string]string 
 		tags["CASSINI_PROCESSED_AT"] = manifest.Meeting.ProcessedAtUTC
 	}
 	applyRoomTags(tags, manifest.Meeting)
+	applyProvenanceTags(tags, manifest.Meeting)
 
 	language := firstNonEmpty(manifest.Transcript.Language, manifest.Meeting.Language)
 	if language != "" {
@@ -320,6 +361,22 @@ func applyRoomTags(tags map[string]string, meeting Meeting) {
 	}
 	if meeting.RoomName != "" {
 		tags["CASSINI_ROOM_NAME"] = meeting.RoomName
+	}
+}
+
+// applyProvenanceTags mirrors which job and attempt produced the file, for the
+// same reason applyRoomTags exists: one `ffprobe -show_entries format_tags`
+// call, no program required.
+//
+// Both are absent rather than empty when unknown. CASSINI_ATTEMPT_NUMBER is
+// omitted for any non-positive value — attempts are 1-based, so a zero is
+// "nobody told us" and writing it would assert an attempt that cannot exist.
+func applyProvenanceTags(tags map[string]string, meeting Meeting) {
+	if meeting.JobID != "" {
+		tags["CASSINI_JOB_ID"] = meeting.JobID
+	}
+	if meeting.AttemptNumber > 0 {
+		tags["CASSINI_ATTEMPT_NUMBER"] = fmt.Sprintf("%d", meeting.AttemptNumber)
 	}
 }
 

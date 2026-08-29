@@ -6,7 +6,10 @@
   import DOMPurify from "dompurify";
   import { Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape } from "@lucide/svelte";
   import { formatClockTime, parseTimeHash } from "../core/transcript";
-  import { getActiveTimedRange } from "../core/timing";
+  import {
+    getActiveTimedRange,
+    getLatestStartingActiveTimedRange,
+  } from "../core/timing";
   import type {
     DisplayTranscriptToken,
     DisplayTranscriptV1,
@@ -555,7 +558,7 @@
     segments: DisplaySegment[],
     timeMs: number,
   ): DisplaySegment | null {
-    return getActiveTimedRange(segments, timeMs);
+    return getLatestStartingActiveTimedRange(segments, timeMs);
   }
 
   function getActiveDisplayToken(

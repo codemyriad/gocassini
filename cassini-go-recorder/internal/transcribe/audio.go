@@ -1,6 +1,7 @@
 package transcribe
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -15,11 +16,29 @@ import (
 
 // AudioStream represents one audio track in the source MKV.
 type AudioStream struct {
-	Index        int
-	SpeakerID    string
-	SpeakerLabel string
-	Channels     int
-	StartTimeMS  int64
+	Index         int
+	ParticipantID string
+	SpeakerID     string
+	SpeakerLabel  string
+	Channels      int
+	StartTimeMS   int64
+	// TimelineDurationMS is only a capacity hint for decoded PCM. It is
+	// initialised from the source probe, then replaced with the measured final
+	// mix duration when available. Packet timestamps and StartTimeMS remain the
+	// authority for audio timing.
+	TimelineDurationMS int64
+}
+
+// setPCMCapacityDurationHints replaces only the decoded-PCM allocation hint
+// after the final mix establishes the playable timeline length. It must not
+// alter packet timestamp handling or participant stream offsets.
+func setPCMCapacityDurationHints(streams []AudioStream, durationMS int64) {
+	if durationMS <= 0 {
+		return
+	}
+	for i := range streams {
+		streams[i].TimelineDurationMS = durationMS
+	}
 }
 
 type ffprobeOutput struct {
@@ -29,7 +48,9 @@ type ffprobeOutput struct {
 		Channels  int    `json:"channels"`
 		StartTime string `json:"start_time"`
 		Tags      struct {
-			Title string `json:"title"`
+			Title           string `json:"title"`
+			ParticipantID   string `json:"PARTICIPANT_ID"`
+			ParticipantName string `json:"PARTICIPANT_NAME"`
 		} `json:"tags"`
 	} `json:"streams"`
 	Format struct {
@@ -41,7 +62,7 @@ type ffprobeOutput struct {
 func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 	cmd := exec.Command("ffprobe",
 		"-v", "error",
-		"-show_entries", "stream=index,codec_type,channels,start_time:stream_tags=title:format=duration",
+		"-show_entries", "stream=index,codec_type,channels,start_time:stream_tags=title,participant_id,participant_name:format=duration",
 		"-of", "json",
 		mkv,
 	)
@@ -63,17 +84,28 @@ func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 		if s.CodecType != "audio" {
 			continue
 		}
-		label := strings.TrimSpace(s.Tags.Title)
+		participantID := strings.TrimSpace(s.Tags.ParticipantID)
+		label := strings.TrimSpace(s.Tags.ParticipantName)
+		if label == "" {
+			label = strings.TrimSpace(s.Tags.Title)
+		}
 		if label == "" {
 			label = fmt.Sprintf("Speaker %d", audioIdx+1)
 		}
-		id := speakerIDFromLabel(label)
+		speakerIdentity := participantID
+		if speakerIdentity == "" {
+			// Legacy MKVs predate participant tags and use the stream title as
+			// their only stable speaker identity.
+			speakerIdentity = label
+		}
 		streams = append(streams, AudioStream{
-			Index:        s.Index,
-			SpeakerID:    id,
-			SpeakerLabel: label,
-			Channels:     s.Channels,
-			StartTimeMS:  maxInt64(0, durationStringToMS(s.StartTime)),
+			Index:              s.Index,
+			ParticipantID:      participantID,
+			SpeakerID:          speakerIDFromLabel(speakerIdentity),
+			SpeakerLabel:       label,
+			Channels:           s.Channels,
+			StartTimeMS:        maxInt64(0, durationStringToMS(s.StartTime)),
+			TimelineDurationMS: durationMs,
 		})
 		audioIdx++
 	}
@@ -84,8 +116,17 @@ func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 }
 
 // ExtractSpeakerFloats extracts one audio stream as []float32 (16 kHz mono,
-// normalised to [-1, 1]) by piping raw PCM from ffmpeg.
+// normalised to [-1, 1]) by streaming raw PCM from ffmpeg. The return type
+// necessarily owns four bytes per sample; decoding incrementally avoids the
+// former additional two-byte-per-sample, full-duration raw buffer.
 func ExtractSpeakerFloats(mkv string, stream AudioStream) ([]float32, error) {
+	durationMS := stream.TimelineDurationMS
+	if durationMS <= 0 {
+		// Preserve the memory bound for direct callers that construct AudioStream
+		// themselves instead of using ProbeMKV. Normal builds avoid this extra
+		// probe because the duration is carried on each discovered stream.
+		durationMS, _ = AudioDurationMS(mkv)
+	}
 	cmd := exec.Command("ffmpeg",
 		"-v", "error",
 		"-y",
@@ -94,22 +135,15 @@ func ExtractSpeakerFloats(mkv string, stream AudioStream) ([]float32, error) {
 		"-vn",
 		"-sn",
 		"-dn",
-		"-af", sparseTimelineAudioFilter(stream.StartTimeMS),
+		"-af", sparseTimelineAudioFilter(),
 		"-ac", "1",
 		"-ar", "16000",
 		"-f", "s16le",
 		"pipe:1",
 	)
-	raw, err := cmd.Output()
+	samples, err := runPCM16LECommand(cmd, expectedPCMSamples(durationMS, 16000))
 	if err != nil {
 		return nil, fmt.Errorf("ffmpeg extract speaker %d: %w", stream.Index, err)
-	}
-	samples := make([]float32, len(raw)/2)
-	for i := range samples {
-		lo := raw[i*2]
-		hi := raw[i*2+1]
-		s16 := int16(uint16(lo) | uint16(hi)<<8)
-		samples[i] = float32(s16) / 32768.0
 	}
 	return samples, nil
 }
@@ -118,6 +152,7 @@ func ExtractSpeakerFloats(mkv string, stream AudioStream) ([]float32, error) {
 // audio file) as []float32 (16 kHz mono, normalised to [-1, 1]). Used by
 // the merged-fallback transcription path.
 func ExtractMixedFloats(audioPath string) ([]float32, error) {
+	durationMS, _ := AudioDurationMS(audioPath)
 	cmd := exec.Command("ffmpeg",
 		"-v", "error",
 		"-y",
@@ -130,18 +165,129 @@ func ExtractMixedFloats(audioPath string) ([]float32, error) {
 		"-f", "s16le",
 		"pipe:1",
 	)
-	raw, err := cmd.Output()
+	samples, err := runPCM16LECommand(cmd, expectedPCMSamples(durationMS, 16000))
 	if err != nil {
 		return nil, fmt.Errorf("ffmpeg extract mixed audio: %w", err)
 	}
-	samples := make([]float32, len(raw)/2)
-	for i := range samples {
-		lo := raw[i*2]
-		hi := raw[i*2+1]
-		s16 := int16(uint16(lo) | uint16(hi)<<8)
-		samples[i] = float32(s16) / 32768.0
+	return samples, nil
+}
+
+const pcmReadChunkBytes = 64 * 1024
+
+// runPCM16LECommand starts an ffmpeg command whose stdout is signed 16-bit
+// little-endian PCM and converts it incrementally. Both pipes stay bounded:
+// stdout is consumed in fixed chunks and repeated decoder diagnostics cannot
+// grow stderr without limit on malformed media.
+func runPCM16LECommand(cmd *exec.Cmd, expectedSamples int) ([]float32, error) {
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("open PCM pipe: %w", err)
+	}
+	var stderr boundedBuffer
+	stderr.limit = 8192
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start ffmpeg: %w", err)
+	}
+
+	samples, readErr := readPCM16LEFloats(stdout, expectedSamples)
+	if readErr != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+	waitErr := cmd.Wait()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if waitErr != nil {
+		return nil, fmt.Errorf("ffmpeg: %w\n%s", waitErr, truncate(stderr.String(), 800))
 	}
 	return samples, nil
+}
+
+// boundedBuffer implements io.Writer while retaining at most limit bytes.
+// Write still reports the full input length so a noisy child process cannot
+// block on stderr merely because the diagnostic prefix is complete.
+type boundedBuffer struct {
+	bytes.Buffer
+	limit int
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	originalLen := len(p)
+	if remaining := b.limit - b.Len(); remaining > 0 {
+		if len(p) > remaining {
+			p = p[:remaining]
+		}
+		_, _ = b.Buffer.Write(p)
+	}
+	return originalLen, nil
+}
+
+// readPCM16LEFloats converts fixed-size chunks and tolerates arbitrarily short
+// reads. expectedSamples is a capacity hint only; callers still get every
+// decoded sample if container metadata under-reports the duration.
+func readPCM16LEFloats(r io.Reader, expectedSamples int) ([]float32, error) {
+	if expectedSamples < 0 {
+		expectedSamples = 0
+	}
+	samples := make([]float32, 0, expectedSamples)
+	raw := make([]byte, pcmReadChunkBytes)
+	for {
+		n, err := io.ReadFull(r, raw)
+		if n%2 != 0 {
+			return nil, fmt.Errorf("decoded PCM has odd byte count")
+		}
+		if n > 0 {
+			oldLen := len(samples)
+			sampleCount := n / 2
+			newLen := oldLen + sampleCount
+			if newLen <= cap(samples) {
+				samples = samples[:newLen]
+			} else {
+				// The duration hint can be absent or slightly low. Growth is only a
+				// fallback; normal probed recordings stay within the exact initial
+				// allocation plus the one-second allowance below.
+				samples = append(samples, make([]float32, sampleCount)...)
+			}
+			for i := 0; i < sampleCount; i++ {
+				lo := raw[i*2]
+				hi := raw[i*2+1]
+				s16 := int16(uint16(lo) | uint16(hi)<<8)
+				samples[oldLen+i] = float32(s16) / 32768.0
+			}
+		}
+
+		switch err {
+		case nil:
+			continue
+		case io.EOF, io.ErrUnexpectedEOF:
+			return samples, nil
+		default:
+			return nil, fmt.Errorf("read decoded PCM: %w", err)
+		}
+	}
+}
+
+func expectedPCMSamples(durationMS int64, sampleRate int) int {
+	if durationMS <= 0 || sampleRate <= 0 {
+		return 0
+	}
+	duration := uint64(durationMS)
+	rate := uint64(sampleRate)
+	if duration > (^uint64(0)-999)/rate {
+		return 0
+	}
+	samples := (duration*rate + 999) / 1000
+	// Allow a second for codec/resampler tail rounding. This is 64 KiB at
+	// 16 kHz float32 and prevents a whole-slice growth for tiny metadata skew.
+	if samples > ^uint64(0)-rate {
+		return 0
+	}
+	samples += rate
+	if samples > uint64(^uint(0)>>1) {
+		return 0
+	}
+	return int(samples)
 }
 
 // MixDownToWebM mixes all audio streams from the MKV into a single-channel
@@ -291,9 +437,10 @@ func runFFmpegQuiet(args ...string) error {
 // decodeTrackWithSparseGaps turns one source stream into a PCM WAV whose sample
 // timeline matches the meeting timeline. This is the critical anti-regression
 // step for sparse tracks: without async resampling, FFmpeg emits only packets
-// that exist and silently drops the long gaps between speaking turns. The
-// explicit delay restores the stream's container start offset so late joins and
-// rejoin tracks remain aligned with the rest of the meeting.
+// that exist and silently drops the long gaps between speaking turns. Packet
+// PTS is authoritative here: aresample materializes both the initial offset and
+// later gaps, including for rotated tracks whose stream start_time metadata is
+// zero despite a much later first packet.
 func decodeTrackWithSparseGaps(mkv string, stream AudioStream, sampleRate int, outPath string) error {
 	args := []string{
 		"-y",
@@ -303,7 +450,7 @@ func decodeTrackWithSparseGaps(mkv string, stream AudioStream, sampleRate int, o
 		"-vn",
 		"-sn",
 		"-dn",
-		"-af", sparseTimelineAudioFilter(stream.StartTimeMS),
+		"-af", sparseTimelineAudioFilter(),
 		"-ac", "1",
 		"-ar", strconv.Itoa(sampleRate),
 		"-c:a", "pcm_s16le",
@@ -312,30 +459,42 @@ func decodeTrackWithSparseGaps(mkv string, stream AudioStream, sampleRate int, o
 	return runFFmpegQuiet(args...)
 }
 
-func sparseTimelineAudioFilter(startTimeMS int64) string {
+func sparseTimelineAudioFilter() string {
 	// Sparse meeting tracks can have long timestamp gaps during mute / silence.
 	// We must materialize those holes as actual silence before piping raw PCM,
-	// otherwise separate speaking turns collapse together in both STT and mixdown.
-	filter := "aresample=async=1:first_pts=0"
-	if startTimeMS > 0 {
-		filter += fmt.Sprintf(",adelay=%d:all=1", startTimeMS)
-	}
-	return filter
+	// otherwise separate speaking turns collapse together in both STT and
+	// mixdown. Do not add stream.start_time as a separate delay: the input packet
+	// PTS already contains it, so doing both shifts late streams twice.
+	return "aresample=async=1:first_pts=0"
 }
 
 func speakerIDFromLabel(label string) string {
-	clean := strings.ToLower(label)
-	clean = strings.Map(func(r rune) rune {
+	const maxSlugBytes = 48
+	var slug strings.Builder
+	lastWasSeparator := false
+	for _, r := range strings.ToLower(label) {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			return r
+			if slug.Len() < maxSlugBytes {
+				slug.WriteRune(r)
+			}
+			lastWasSeparator = false
+			continue
 		}
-		return '_'
-	}, clean)
-	clean = strings.Trim(clean, "_")
+		if slug.Len() > 0 && slug.Len() < maxSlugBytes && !lastWasSeparator {
+			slug.WriteByte('_')
+		}
+		lastWasSeparator = true
+	}
+	clean := strings.Trim(slug.String(), "_")
 	if clean == "" {
 		clean = "unknown"
 	}
-	return "spk_" + clean
+	// Sanitisation is intentionally lossy (slashes, punctuation, case and
+	// non-ASCII runes can collapse to the same slug). Bind the readable slug to
+	// the exact identity bytes with a 96-bit SHA-256 suffix so distinct
+	// participant IDs cannot silently merge.
+	digest := sha256.Sum256([]byte(label))
+	return fmt.Sprintf("spk_%s_%x", clean, digest[:12])
 }
 
 // WorkPath returns a path inside the bundle's _work subdirectory,

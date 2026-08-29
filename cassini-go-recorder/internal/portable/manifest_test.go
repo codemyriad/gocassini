@@ -2,6 +2,7 @@ package portable
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -126,6 +127,72 @@ func TestBuildOpusTagsEmitsRoomTagsOnlyWhenKnown(t *testing.T) {
 	}
 	if got := nameOnly["CASSINI_ROOM_NAME"]; got != "Old Standup" {
 		t.Errorf("CASSINI_ROOM_NAME = %q, want %q", got, "Old Standup")
+	}
+}
+
+func TestBuildOpusTagsEmitsProvenanceTagsOnlyWhenKnown(t *testing.T) {
+	payload := EncodedPayload{Chunks: []string{"abc"}}
+
+	withJob := BuildOpusTags(roomTagFixture(Meeting{
+		Title: "Weekly Sync", JobID: "01K3Q7W8ZC9F0MJXQ2NB8V4RTD", AttemptNumber: 2,
+	}), payload)
+	if got := withJob["CASSINI_JOB_ID"]; got != "01K3Q7W8ZC9F0MJXQ2NB8V4RTD" {
+		t.Errorf("CASSINI_JOB_ID = %q, want the job id", got)
+	}
+	if got := withJob["CASSINI_ATTEMPT_NUMBER"]; got != "2" {
+		t.Errorf("CASSINI_ATTEMPT_NUMBER = %q, want %q", got, "2")
+	}
+
+	withoutJob := BuildOpusTags(roomTagFixture(Meeting{Title: "Some File"}), payload)
+	for _, tag := range []string{"CASSINI_JOB_ID", "CASSINI_ATTEMPT_NUMBER"} {
+		if _, ok := withoutJob[tag]; ok {
+			t.Errorf("%s is present on a meeting packed outside the operator, want absent", tag)
+		}
+	}
+
+	// Attempts are 1-based, so a zero is "nobody told us" rather than a legal
+	// value — writing it would assert an attempt that cannot exist. A job id
+	// with no attempt is a real state (a producer that knows one and not the
+	// other), so the two are emitted independently.
+	jobOnly := BuildOpusTags(roomTagFixture(Meeting{Title: "X", JobID: "01ABC", AttemptNumber: 0}), payload)
+	if got := jobOnly["CASSINI_JOB_ID"]; got != "01ABC" {
+		t.Errorf("CASSINI_JOB_ID = %q, want it emitted without an attempt", got)
+	}
+	if _, ok := jobOnly["CASSINI_ATTEMPT_NUMBER"]; ok {
+		t.Errorf("CASSINI_ATTEMPT_NUMBER is present for attempt 0, want absent")
+	}
+}
+
+func TestManifestProvenanceSurvivesTheEncodedPayload(t *testing.T) {
+	manifest := roomTagFixture(Meeting{
+		Title: "Weekly Sync", JobID: "01K3Q7W8ZC9F0MJXQ2NB8V4RTD", AttemptNumber: 3,
+	})
+
+	encoded, err := EncodeManifest(manifest, 0)
+	if err != nil {
+		t.Fatalf("encode manifest: %v", err)
+	}
+	var decoded Manifest
+	if err := json.Unmarshal(encoded.JSON, &decoded); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if decoded.Meeting.JobID != "01K3Q7W8ZC9F0MJXQ2NB8V4RTD" {
+		t.Errorf("meeting.jobId = %q after a round trip, want the job id", decoded.Meeting.JobID)
+	}
+	if decoded.Meeting.AttemptNumber != 3 {
+		t.Errorf("meeting.attemptNumber = %d after a round trip, want 3", decoded.Meeting.AttemptNumber)
+	}
+
+	// omitempty on both: a meeting with no operator lineage must not carry the
+	// keys at all, so a consumer checking presence gets the right answer.
+	bare, err := EncodeManifest(roomTagFixture(Meeting{Title: "Some File"}), 0)
+	if err != nil {
+		t.Fatalf("encode bare manifest: %v", err)
+	}
+	for _, key := range []string{`"jobId"`, `"attemptNumber"`} {
+		if strings.Contains(string(bare.JSON), key) {
+			t.Errorf("%s is present in a manifest with no operator lineage: %s", key, bare.JSON)
+		}
 	}
 }
 

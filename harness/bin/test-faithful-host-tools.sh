@@ -11,14 +11,21 @@ VALIDATOR="$SCRIPT_DIR/validate-installed-exapp-private-talk.sh"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# shellcheck disable=SC2016 # Assert the literal guard in the script source.
+grep -F 'if [[ "$EXPECT_GPU_UNAVAILABLE" != "1" ]]' "$ORCHESTRATOR" >/dev/null \
+  || fail "orchestrator does not exempt portable blocked mode from host media tools"
+grep -F 'if (( ! EXPECT_BUILD_BLOCKED )); then' "$VALIDATOR" >/dev/null \
+  || fail "validator does not exempt portable blocked mode from host media tools"
 for script in "$ORCHESTRATOR" "$VALIDATOR"; do
-  for tool in ffprobe ffmpeg; do
-    grep -Eq "for tool in .*\\b${tool}\\b" "$script" \
-      || fail "$(basename "$script") does not preflight $tool"
-  done
+  grep -F 'for tool in ffprobe ffmpeg' "$script" >/dev/null \
+    || fail "$(basename "$script") does not preflight media tools in CUDA-positive mode"
 done
 
-grep -Eq 'apt-get install .*\bffmpeg\b' "$WORKFLOW" \
-  || fail "faithful CI job does not install the ffmpeg package"
+faithful_job="$(sed -n '/^  faithful-installed-exapp-talk-cpu:/,/^  d403-manifest-sensitivity-control:/p' "$WORKFLOW")"
+grep -F 'apt-get install -y --no-install-recommends jq libxml2-utils' <<<"$faithful_job" >/dev/null \
+  || fail "faithful portable-image job does not install its minimal host tools"
+if grep -Eq 'apt-get install .*\bffmpeg\b' <<<"$faithful_job"; then
+  fail "faithful portable-image job unnecessarily installs host ffmpeg"
+fi
 
-echo "PASS: faithful host ffmpeg/ffprobe dependencies are explicit"
+echo "PASS: portable blocked mode avoids host decode tools; CUDA-positive mode preflights them"

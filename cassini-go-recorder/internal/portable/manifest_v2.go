@@ -421,6 +421,7 @@ func BuildOpusTagsV2(manifest Manifest, encoded EncodedManifestV2, defaultRawID 
 		tags["CASSINI_PROCESSED_AT"] = manifest.Meeting.ProcessedAtUTC
 	}
 	applyRoomTags(tags, manifest.Meeting)
+	applyProvenanceTags(tags, manifest.Meeting)
 
 	// Main payload chunks
 	for idx, chunk := range encoded.Main.Chunks {

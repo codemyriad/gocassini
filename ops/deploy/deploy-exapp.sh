@@ -46,6 +46,15 @@ FORCE_UNREGISTER=0
 PRINT_DAEMON_CMD=0
 REMOTE_TIMEOUT="${CASSINI_DEPLOY_TIMEOUT:-900}"
 
+# Filled only for an --apply run, after the target has atomically allocated
+# both names. Each invocation gets its own files in the host and Nextcloud
+# container /tmp namespaces; fixed names are unsafe when two operators deploy
+# concurrently (and sticky /tmp prevents one Unix user replacing another's
+# file). The EXIT trap below owns their cleanup.
+STAGED_HOST_MANIFEST=""
+STAGED_CONTAINER_MANIFEST=""
+KEEP_STAGED_MANIFEST=0
+
 usage() {
   cat <<'EOF'
 Usage: ops/deploy/deploy-exapp.sh --inventory FILE --tag X.Y.Z[-pre] [options]
@@ -210,10 +219,21 @@ REMOTE
 }
 
 occ() {
-  local cmd="$1"
+  local cmd="$1" rc
   if [[ " $READONLY_OCC_COMMANDS " == *" $cmd "* ]] || (( APPLY )); then
-    remote_occ "$@"
-    return
+    if remote_occ "$@"; then
+      return 0
+    else
+      rc=$?
+      # The detached register process still has --info-xml in its argv. When
+      # our poll times out it may not have opened the manifest yet, so deleting
+      # the staged files here can turn a merely slow deploy into a broken one.
+      # Other failures are settled and take the ordinary cleanup path.
+      if [[ "$cmd" == "app_api:app:register" && "$rc" -eq 124 ]]; then
+        KEEP_STAGED_MANIFEST=1
+      fi
+      return "$rc"
+    fi
   fi
   printf '[dry-run] occ' >&2
   printf ' %q' "$@" >&2
@@ -286,7 +306,41 @@ fi
 
 log "Preparing manifest from $SRC_REF"
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+
+cleanup_deploy() {
+  local original_rc=$?
+  trap - EXIT
+  set +e
+
+  rm -rf "$WORK"
+
+  if [[ -n "$STAGED_HOST_MANIFEST" && -n "$STAGED_CONTAINER_MANIFEST" ]]; then
+    if (( KEEP_STAGED_MANIFEST )); then
+      cat >&2 <<EOF
+
+WARNING: the detached app registration timed out and may still be running.
+Its manifest staging files were intentionally retained:
+  host:      $CASSINI_NC_SSH:$STAGED_HOST_MANIFEST
+  container: $CASSINI_NC_CONTAINER:$STAGED_CONTAINER_MANIFEST
+Wait for the remote OCC process to settle before removing those two files.
+EOF
+    elif ! ssh -o BatchMode=yes "$CASSINI_NC_SSH" \
+      "CASSINI_NC_CONTAINER='$CASSINI_NC_CONTAINER' CASSINI_STAGE_HOST='$STAGED_HOST_MANIFEST' CASSINI_STAGE_CONTAINER='$STAGED_CONTAINER_MANIFEST' bash -s" <<'REMOTE_CLEANUP'
+set -uo pipefail
+cleanup_rc=0
+rm -f -- "$CASSINI_STAGE_HOST" || cleanup_rc=1
+docker exec --user root "$CASSINI_NC_CONTAINER" \
+  rm -f -- "$CASSINI_STAGE_CONTAINER" || cleanup_rc=1
+exit "$cleanup_rc"
+REMOTE_CLEANUP
+    then
+      echo "warning: could not remove one or more manifest staging files" >&2
+    fi
+  fi
+
+  exit "$original_rc"
+}
+trap cleanup_deploy EXIT
 git -C "$REPO_ROOT" show "$SRC_REF:appinfo/info.xml" > "$WORK/info.src.xml"
 exapp_render_manifest "$WORK/info.src.xml" "$WORK/gocassini-info.xml" "$TAG"
 exapp_assert_manifest_declares "$WORK/gocassini-info.xml" \
@@ -380,15 +434,64 @@ EOF
 fi
 
 log "Copying manifest to $CASSINI_NC_SSH"
-scp -q "$WORK/gocassini-info.xml" "$CASSINI_NC_SSH:/tmp/gocassini-info.xml"
+staging_paths="$({
+  ssh -o BatchMode=yes "$CASSINI_NC_SSH" \
+    "CASSINI_NC_CONTAINER='$CASSINI_NC_CONTAINER' bash -s" <<'REMOTE_STAGE'
+set -euo pipefail
+host_manifest=""
+container_manifest=""
+
+cleanup_partial_stage() {
+  local original_rc=$?
+  trap - EXIT
+  set +e
+  [[ -z "$host_manifest" ]] || rm -f -- "$host_manifest"
+  [[ -z "$container_manifest" ]] || docker exec --user root "$CASSINI_NC_CONTAINER" \
+    rm -f -- "$container_manifest"
+  exit "$original_rc"
+}
+trap cleanup_partial_stage EXIT
+
+host_manifest="$(mktemp /tmp/cassini-deploy-manifest.host.XXXXXXXX)"
+container_manifest="$(docker exec --user root "$CASSINI_NC_CONTAINER" \
+  mktemp /tmp/cassini-deploy-manifest.container.XXXXXXXX)"
+printf 'CASSINI_DEPLOY_STAGE=%s|%s\n' "$host_manifest" "$container_manifest"
+trap - EXIT
+REMOTE_STAGE
+})" || {
+  rc=$?
+  exit "$rc"
+}
+mapfile -t staging_path_lines <<<"$staging_paths"
+staging_record_count=0
+staging_record_re='^CASSINI_DEPLOY_STAGE=(/tmp/cassini-deploy-manifest\.host\.[A-Za-z0-9]+)\|(/tmp/cassini-deploy-manifest\.container\.[A-Za-z0-9]+)$'
+for staging_path_line in "${staging_path_lines[@]}"; do
+  if [[ "$staging_path_line" =~ $staging_record_re ]]; then
+    staging_record_count=$((staging_record_count + 1))
+    STAGED_HOST_MANIFEST="${BASH_REMATCH[1]}"
+    STAGED_CONTAINER_MANIFEST="${BASH_REMATCH[2]}"
+  fi
+done
+if [[ "$staging_record_count" -ne 1 ]]; then
+  echo "target returned invalid manifest staging paths" >&2
+  exit 1
+fi
+
+scp -q "$WORK/gocassini-info.xml" \
+  "$CASSINI_NC_SSH:$STAGED_HOST_MANIFEST"
 ssh -o BatchMode=yes "$CASSINI_NC_SSH" \
-  "docker cp /tmp/gocassini-info.xml $CASSINI_NC_CONTAINER:/tmp/gocassini-info.xml \
-   && docker exec --user root $CASSINI_NC_CONTAINER chown www-data:www-data /tmp/gocassini-info.xml"
+  "CASSINI_NC_CONTAINER='$CASSINI_NC_CONTAINER' CASSINI_STAGE_HOST='$STAGED_HOST_MANIFEST' CASSINI_STAGE_CONTAINER='$STAGED_CONTAINER_MANIFEST' bash -s" <<'REMOTE_COPY'
+set -euo pipefail
+docker cp "$CASSINI_STAGE_HOST" \
+  "$CASSINI_NC_CONTAINER:$CASSINI_STAGE_CONTAINER"
+docker exec --user root "$CASSINI_NC_CONTAINER" \
+  chown www-data:www-data "$CASSINI_STAGE_CONTAINER"
+REMOTE_COPY
 
 declare -a register_args=(
   --app-id "$CASSINI_APP_ID"
   --daemon "$CASSINI_DAEMON"
-  --info-xml /tmp/gocassini-info.xml
+  --info-xml "$STAGED_CONTAINER_MANIFEST"
   --env "CASSINI_TALK_RECORDING_SECRET=@@SECRET:RECORDING@@"
   --env "CASSINI_TALK_SIGNALING_INTERNAL_SECRET=@@SECRET:SIGNALING@@"
   --replace
@@ -396,7 +499,15 @@ declare -a register_args=(
 )
 (( FORCE_UNREGISTER )) && register_args+=(--force-unregister)
 
-exapp_register_app "${register_args[@]}"
+register_rc=0
+exapp_register_app "${register_args[@]}" || register_rc=$?
+if (( register_rc != 0 )); then
+  # exapp_register_app intentionally normalizes transport failures to 1. Keep
+  # the distinctive timeout status for automation and for cleanup_deploy's
+  # retained-manifest branch.
+  (( KEEP_STAGED_MANIFEST )) && exit 124
+  exit "$register_rc"
+fi
 
 log "Verifying"
 occ app_api:app:list | grep -i "$CASSINI_APP_ID" || {

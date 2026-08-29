@@ -9,17 +9,32 @@ export interface MeetingCatalogEntry {
   speakerCount?: number;
   segmentCount?: number;
   digestDurationMs?: number;
-  // Which conversation the meeting was recorded in: for a Talk recording,
-  // roomId is the room token and roomName its display name (D-622). Both are
-  // optional — a meeting recorded before the field existed, or one whose room
-  // lookup failed, simply has no room, and no consumer may require one.
+  // Which conversation the meeting was recorded in (D-622). roomId is a
+  // deterministic one-way derivation of the room's identity — for a Talk
+  // recording, of its conversation token — and never the token itself, because
+  // for a public conversation that token is also the link that joins it. Both
+  // are optional: a meeting recorded before the field existed, or one whose
+  // room lookup failed, simply has no room, and no consumer may require one.
   //
   // roomName often equals title, and is still a separate field: a title is
   // free text that may have been overridden or derived from a file name, while
   // roomName is a claim about which room this is. Only the second is safe to
   // group by.
+  //
+  // The two have different homes as of D-640, which matters to anything that
+  // wants to CHANGE one. roomId lives in the .opus and the exporter re-derives
+  // it from there on every republish, so changing it means re-tagging the file.
+  // roomName lives only here — a display name is editable and a sealed
+  // recording is not — and is stamped by the operator on every publish.
   roomId?: string;
   roomName?: string;
+  // Which operator job and attempt produced the artifact (D-640). Both
+  // optional; a meeting published by any other producer has neither. jobId
+  // normally equals `id`, because the operator publishes its artifact under the
+  // job id — carried explicitly rather than assumed, since that equality is a
+  // convention of one publish path.
+  jobId?: string;
+  attemptNumber?: number;
 }
 
 export interface MeetingCatalog {
@@ -150,7 +165,20 @@ function validateMeetingCatalogEntry(
     // the whole meeting list.
     roomId: optionalRoomString(value.roomId),
     roomName: optionalRoomString(value.roomName),
+    jobId: optionalRoomString(value.jobId),
+    attemptNumber: optionalPositiveInteger(value.attemptNumber),
   };
+}
+
+// optionalPositiveInteger reads an optional 1-based ordinal. Anything that is
+// not one — missing, a string, a float, zero — means "not recorded", on the
+// same principle as optionalRoomString: this is lineage, not something the
+// viewer opens a meeting with, so a bad value must not fail the catalog load.
+function optionalPositiveInteger(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    return undefined;
+  }
+  return value;
 }
 
 // optionalRoomString reads an optional room field. A missing value, a blank

@@ -1,34 +1,42 @@
 package transcribe
 
 import (
+	"bytes"
 	"fmt"
+	"math"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"testing/iotest"
 )
 
-func TestExtractSpeakerFloatsPreservesDelayedTrackStart(t *testing.T) {
+func TestExtractSpeakerFloatsAppliesPacketOffsetExactlyOnce(t *testing.T) {
 	requireFFMediaTools(t)
 
 	tmp := t.TempDir()
-	mkvPath := buildDelayedTrack(t, tmp, "speaker-a", 10.0)
+	mkvPath := buildOffsetMeeting(t, tmp, 10.0)
 
 	streams, sourceDurationMS, err := ProbeMKV(mkvPath)
 	if err != nil {
 		t.Fatalf("probe delayed mkv: %v", err)
 	}
-	if len(streams) != 1 {
-		t.Fatalf("expected 1 stream, got %d", len(streams))
+	if len(streams) != 2 {
+		t.Fatalf("expected 2 streams, got %d", len(streams))
 	}
 
-	samples, err := ExtractSpeakerFloats(mkvPath, streams[0])
+	samples, err := ExtractSpeakerFloats(mkvPath, streams[1])
 	if err != nil {
 		t.Fatalf("extract delayed speaker floats: %v", err)
 	}
 
 	actualDurationMS := int64(len(samples)) * 1000 / 16000
-	if deltaMS(sourceDurationMS, actualDurationMS) > 1500 {
-		t.Fatalf("delayed speaker timeline collapsed: source=%dms extracted=%dms", sourceDurationMS, actualDurationMS)
+	if deltaMS(sourceDurationMS, actualDurationMS) > 250 {
+		t.Fatalf("delayed speaker timeline collapsed or doubled: source=%dms extracted=%dms", sourceDurationMS, actualDurationMS)
+	}
+	firstSignalMS := firstSignalSample(samples, 0.01) * 1000 / 16000
+	if firstSignalMS < 9700 || firstSignalMS > 10300 {
+		t.Fatalf("delayed speaker signal starts at %dms, want about 10000ms", firstSignalMS)
 	}
 }
 
@@ -36,9 +44,7 @@ func TestMixDownToWebMPreservesDelayedTrackOffsets(t *testing.T) {
 	requireFFMediaTools(t)
 
 	tmp := t.TempDir()
-	trackA := buildDelayedTrack(t, tmp, "speaker-a", 0.0)
-	trackB := buildDelayedTrack(t, tmp, "speaker-b", 10.0)
-	meetingPath := mergeAudioTracks(t, tmp, trackA, trackB)
+	meetingPath := buildOffsetMeeting(t, tmp, 10.0)
 
 	streams, sourceDurationMS, err := ProbeMKV(meetingPath)
 	if err != nil {
@@ -54,8 +60,131 @@ func TestMixDownToWebMPreservesDelayedTrackOffsets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("probe mixed webm duration: %v", err)
 	}
-	if deltaMS(sourceDurationMS, mixedDurationMS) > 1500 {
-		t.Fatalf("delayed mix timeline collapsed: source=%dms mixed=%dms", sourceDurationMS, mixedDurationMS)
+	if deltaMS(sourceDurationMS, mixedDurationMS) > 500 {
+		t.Fatalf("delayed mix timeline collapsed or doubled: source=%dms mixed=%dms", sourceDurationMS, mixedDurationMS)
+	}
+}
+
+func TestProbeMKVPrefersParticipantMetadataAndKeepsLegacyFallback(t *testing.T) {
+	requireFFMediaTools(t)
+
+	mkvPath := buildParticipantMetadataMeeting(t, t.TempDir())
+	streams, _, err := ProbeMKV(mkvPath)
+	if err != nil {
+		t.Fatalf("ProbeMKV: %v", err)
+	}
+	if len(streams) != 2 {
+		t.Fatalf("expected 2 audio streams, got %d", len(streams))
+	}
+
+	if got := streams[0]; got.ParticipantID != "user-alice" || got.SpeakerLabel != "Alice Canonical" || got.SpeakerID != "spk_user_alice_0e7b8c3e3b7f94ed81538a56" {
+		t.Fatalf("participant-tagged stream = %#v, want participant user-alice, label Alice Canonical, stable hashed speaker ID", got)
+	}
+	if got := streams[1]; got.ParticipantID != "" || got.SpeakerLabel != "Legacy Bob" || got.SpeakerID != "spk_legacy_bob_42651a3b862b81c2d596dac6" {
+		t.Fatalf("legacy stream = %#v, want empty participant, label Legacy Bob, stable hashed speaker ID", got)
+	}
+}
+
+func TestSpeakerIDFromLabelSeparatesSanitizationCollisions(t *testing.T) {
+	forwardSlash := speakerIDFromLabel("alpha/beta")
+	backslash := speakerIDFromLabel(`alpha\beta`)
+	if forwardSlash == backslash {
+		t.Fatalf("lossy slugs collided: %q", forwardSlash)
+	}
+	if !strings.HasPrefix(forwardSlash, "spk_alpha_beta_") || !strings.HasPrefix(backslash, "spk_alpha_beta_") {
+		t.Fatalf("speaker IDs lost readable slug: %q, %q", forwardSlash, backslash)
+	}
+	if got := speakerIDFromLabel("alpha/beta"); got != forwardSlash {
+		t.Fatalf("speaker ID is not deterministic: first=%q second=%q", forwardSlash, got)
+	}
+}
+
+func TestSpeakerIDFromLabelHandlesNonASCIIWithoutColliding(t *testing.T) {
+	if got, want := speakerIDFromLabel("東京"), "spk_unknown_130016b2599bf7e5978cae78"; got != want {
+		t.Fatalf("non-ASCII speaker ID = %q, want %q", got, want)
+	}
+	if got, want := speakerIDFromLabel("José 東京"), "spk_jos_d7af912635f816d90ab8779d"; got != want {
+		t.Fatalf("mixed-script speaker ID = %q, want %q", got, want)
+	}
+	if speakerIDFromLabel("東京") == speakerIDFromLabel("大阪") {
+		t.Fatal("distinct non-ASCII identities collided")
+	}
+}
+
+func TestReadPCM16LEFloatsHandlesShortReads(t *testing.T) {
+	raw := []byte{
+		0x00, 0x00, // 0
+		0xff, 0x7f, // 32767
+		0x00, 0x80, // -32768
+		0x00, 0x40, // 16384
+	}
+	got, err := readPCM16LEFloats(iotest.OneByteReader(bytes.NewReader(raw)), len(raw)/2)
+	if err != nil {
+		t.Fatalf("read chunked PCM: %v", err)
+	}
+	want := []float32{0, 32767.0 / 32768.0, -1, 0.5}
+	if len(got) != len(want) {
+		t.Fatalf("sample count = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if math.Abs(float64(got[i]-want[i])) > 1e-7 {
+			t.Errorf("sample %d = %f, want %f", i, got[i], want[i])
+		}
+	}
+}
+
+func TestReadPCM16LEFloatsRejectsPartialSample(t *testing.T) {
+	if _, err := readPCM16LEFloats(bytes.NewReader([]byte{0x01}), 0); err == nil {
+		t.Fatal("expected odd-byte PCM error")
+	}
+}
+
+func TestSetPCMCapacityDurationHintsUsesPlayableMixWithoutChangingTiming(t *testing.T) {
+	streams := []AudioStream{
+		{
+			Index:              7,
+			ParticipantID:      "alice",
+			SpeakerID:          "spk_alice",
+			SpeakerLabel:       "Alice",
+			Channels:           2,
+			StartTimeMS:        12_345,
+			TimelineDurationMS: 1_977_527,
+		},
+	}
+
+	setPCMCapacityDurationHints(streams, 242_413)
+
+	got := streams[0]
+	if got.TimelineDurationMS != 242_413 {
+		t.Fatalf("PCM capacity duration = %d, want playable duration 242413", got.TimelineDurationMS)
+	}
+	if got.Index != 7 || got.ParticipantID != "alice" || got.SpeakerID != "spk_alice" ||
+		got.SpeakerLabel != "Alice" || got.Channels != 2 || got.StartTimeMS != 12_345 {
+		t.Fatalf("non-capacity stream metadata changed: %#v", got)
+	}
+	if newCapacity, oldCapacity := expectedPCMSamples(got.TimelineDurationMS, 16000), expectedPCMSamples(1_977_527, 16000); newCapacity >= oldCapacity {
+		t.Fatalf("playable-duration capacity %d did not reduce overstated source capacity %d", newCapacity, oldCapacity)
+	}
+}
+
+func TestReadPCM16LEFloatsDoesNotTruncateWhenDurationHintIsTooShort(t *testing.T) {
+	// A malformed or truncated duration is only a capacity hint. Supply more
+	// than its one-second allowance and verify the decoder grows instead of
+	// discarding playable PCM.
+	hint := expectedPCMSamples(1, 16000)
+	sampleCount := hint + 1234
+	raw := make([]byte, sampleCount*2)
+	raw[len(raw)-2], raw[len(raw)-1] = 0xff, 0x7f
+
+	got, err := readPCM16LEFloats(bytes.NewReader(raw), hint)
+	if err != nil {
+		t.Fatalf("read PCM beyond undersized duration hint: %v", err)
+	}
+	if len(got) != sampleCount {
+		t.Fatalf("sample count = %d, want %d (duration hint must not truncate)", len(got), sampleCount)
+	}
+	if math.Abs(float64(got[len(got)-1]-32767.0/32768.0)) > 1e-7 {
+		t.Fatalf("last sample = %f, want decoded tail sample", got[len(got)-1])
 	}
 }
 
@@ -69,53 +198,64 @@ func requireFFMediaTools(t *testing.T) {
 	}
 }
 
-func buildDelayedTrack(t *testing.T, dir string, name string, offsetSeconds float64) string {
+func buildOffsetMeeting(t *testing.T, dir string, offsetSeconds float64) string {
 	t.Helper()
 
-	basePath := filepath.Join(dir, name+"-base.mkv")
-	outPath := filepath.Join(dir, name+".mkv")
+	outPath := filepath.Join(dir, "meeting.mkv")
 	if err := runMediaCommand(
 		"ffmpeg",
 		"-y",
 		"-v", "error",
 		"-f", "lavfi",
-		"-i", "sine=frequency=1000:sample_rate=48000:duration=0.1",
-		"-c:a", "libopus",
-		basePath,
-	); err != nil {
-		t.Fatalf("create base delayed track: %v", err)
-	}
-	if err := runMediaCommand(
-		"ffmpeg",
-		"-y",
-		"-v", "error",
+		"-i", "sine=frequency=500:sample_rate=48000:duration=0.1",
 		"-itsoffset", fmt.Sprintf("%.3f", offsetSeconds),
-		"-i", basePath,
+		"-f", "lavfi",
+		"-i", "sine=frequency=1000:sample_rate=48000:duration=0.1",
 		"-map", "0:a:0",
-		"-c", "copy",
+		"-map", "1:a:0",
+		"-metadata:s:a:0", "title=speaker-a",
+		"-metadata:s:a:1", "title=speaker-b",
+		"-c:a", "libopus",
 		outPath,
 	); err != nil {
-		t.Fatalf("shift delayed track: %v", err)
+		t.Fatalf("create offset meeting: %v", err)
 	}
 	return outPath
 }
 
-func mergeAudioTracks(t *testing.T, dir string, tracks ...string) string {
+func buildParticipantMetadataMeeting(t *testing.T, dir string) string {
 	t.Helper()
 
-	outPath := filepath.Join(dir, "meeting.mkv")
-	args := []string{"-y", "-v", "error"}
-	for _, track := range tracks {
-		args = append(args, "-i", track)
-	}
-	for i := range tracks {
-		args = append(args, "-map", fmt.Sprintf("%d:a:0", i))
-	}
-	args = append(args, "-c", "copy", outPath)
-	if err := runMediaCommand("ffmpeg", args...); err != nil {
-		t.Fatalf("merge delayed tracks: %v", err)
+	outPath := filepath.Join(dir, "participant-metadata.mkv")
+	if err := runMediaCommand(
+		"ffmpeg",
+		"-y",
+		"-v", "error",
+		"-f", "lavfi",
+		"-i", "sine=frequency=500:sample_rate=48000:duration=0.1",
+		"-f", "lavfi",
+		"-i", "sine=frequency=1000:sample_rate=48000:duration=0.1",
+		"-map", "0:a:0",
+		"-map", "1:a:0",
+		"-metadata:s:a:0", "title=Legacy Alice",
+		"-metadata:s:a:0", "participant_id=user-alice",
+		"-metadata:s:a:0", "participant_name=Alice Canonical",
+		"-metadata:s:a:1", "title=Legacy Bob",
+		"-c:a", "libopus",
+		outPath,
+	); err != nil {
+		t.Fatalf("create participant metadata meeting: %v", err)
 	}
 	return outPath
+}
+
+func firstSignalSample(samples []float32, threshold float32) int64 {
+	for i, sample := range samples {
+		if sample > threshold || sample < -threshold {
+			return int64(i)
+		}
+	}
+	return -1
 }
 
 func runMediaCommand(name string, args ...string) error {

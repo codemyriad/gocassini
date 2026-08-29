@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { containsPlaybackTime, getActiveTimedRange } from "./timing";
+import {
+  containsPlaybackTime,
+  getActiveTimedRange,
+  getLatestStartingActiveTimedRange,
+} from "./timing";
 
 describe("timing helpers", () => {
   it("treats shared boundaries as belonging to the later range", () => {
@@ -40,5 +44,25 @@ describe("timing helpers", () => {
     expect(containsPlaybackTime(markers[0], 4999)).toBe(false);
     expect(containsPlaybackTime(markers[0], 5000)).toBe(true);
     expect(containsPlaybackTime(markers[0], 5001)).toBe(false);
+  });
+
+  it("prefers the latest-starting range during a nested overlap", () => {
+    const blocks = [
+      { id: "long-turn", startMs: 1000, endMs: 10_000 },
+      { id: "interjection", startMs: 3000, endMs: 3500 },
+    ];
+
+    expect(getLatestStartingActiveTimedRange(blocks, 2999)?.id).toBe("long-turn");
+    expect(getLatestStartingActiveTimedRange(blocks, 3200)?.id).toBe("interjection");
+    expect(getLatestStartingActiveTimedRange(blocks, 3500)?.id).toBe("long-turn");
+  });
+
+  it("selects by start time rather than input order", () => {
+    const blocks = [
+      { id: "interjection", startMs: 3000, endMs: 3500 },
+      { id: "long-turn", startMs: 1000, endMs: 10_000 },
+    ];
+
+    expect(getLatestStartingActiveTimedRange(blocks, 3200)?.id).toBe("interjection");
   });
 });

@@ -24,8 +24,15 @@ type MeetingBundleManifest struct {
 	// The bundle holds the raw token — it is the operator's own working
 	// directory, the same exposure as the jobs table it was read from. Packing
 	// derives the published id from it; the token itself is never published.
-	RoomToken        string            `json:"room_token,omitempty"`
-	RoomName         string            `json:"room_name,omitempty"`
+	RoomToken string `json:"room_token,omitempty"`
+	RoomName  string `json:"room_name,omitempty"`
+	// JobID and AttemptNumber mirror the recorder's manifest fields: which job
+	// and attempt built this bundle (D-640), stamped by SetMeetingBundleRoom
+	// alongside the room. `cassini pack` reads them when the seal does not pass
+	// them explicitly, which is what carries the provenance through the
+	// `cassini publish <bundle>` path.
+	JobID            string            `json:"job_id,omitempty"`
+	AttemptNumber    int               `json:"attempt_number,omitempty"`
 	State            string            `json:"state,omitempty"`
 	Stage            string            `json:"stage,omitempty"`
 	Error            string            `json:"error,omitempty"`
@@ -35,23 +42,29 @@ type MeetingBundleManifest struct {
 	Files            map[string]string `json:"files,omitempty"`
 }
 
-// SetMeetingBundleRoom stamps the meeting's title and the room it came from in
-// one rewrite.
+// SetMeetingBundleRoom stamps the meeting's title, the room it came from and
+// the job that produced it, in one rewrite.
 //
-// One call rather than three, because each rewrite is a read-modify-rename of
-// the same file: doing them separately would triple the window in which a
+// One call rather than five, because each rewrite is a read-modify-rename of
+// the same file: doing them separately would multiply the window in which a
 // crash leaves the bundle stamped with a title and no room, which is exactly
 // the state that looks correct and is not.
 //
 // Every field is optional and a blank one is left alone rather than written as
 // an empty string. A rerun whose room lookup failed must not erase a room an
-// earlier attempt did resolve.
-func SetMeetingBundleRoom(bundleDir, title, roomToken, roomName string) error {
-	return setMeetingBundleFields(bundleDir, map[string]string{
+// earlier attempt did resolve. attemptNumber is 1-based, so a non-positive
+// value is "unknown" and is skipped on the same principle.
+func SetMeetingBundleRoom(bundleDir, title, roomToken, roomName, jobID string, attemptNumber int) error {
+	fields := map[string]any{
 		"title":      title,
 		"room_token": roomToken,
 		"room_name":  roomName,
-	})
+		"job_id":     jobID,
+	}
+	if attemptNumber > 0 {
+		fields["attempt_number"] = attemptNumber
+	}
+	return setMeetingBundleFields(bundleDir, fields)
 }
 
 // setMeetingBundleFields merges non-blank fields into a bundle's cassini.json.
@@ -59,7 +72,7 @@ func SetMeetingBundleRoom(bundleDir, title, roomToken, roomName string) error {
 // MeetingBundleManifest copy does not know about survive, and lands via
 // temp-file rename so a concurrent reader (a publish scan) never sees a torn
 // manifest.
-func setMeetingBundleFields(bundleDir string, fields map[string]string) error {
+func setMeetingBundleFields(bundleDir string, fields map[string]any) error {
 	manifestPath := filepath.Join(bundleDir, "cassini.json")
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -71,7 +84,11 @@ func setMeetingBundleFields(bundleDir string, fields map[string]string) error {
 	}
 	wrote := false
 	for key, value := range fields {
-		if strings.TrimSpace(value) == "" {
+		// A blank string is "nothing to say", never "set this to empty" — see
+		// the note on SetMeetingBundleRoom. Non-string values (the attempt
+		// number) are already filtered by their caller, so they are written as
+		// they arrive.
+		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
 			continue
 		}
 		manifest[key] = value

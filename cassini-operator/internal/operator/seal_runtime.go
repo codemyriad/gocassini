@@ -174,6 +174,8 @@ func (rt *Runtime) executeSealCLI(ctx context.Context, task sealTask) (string, e
 		roomName,
 		roomToken,
 		roomName,
+		task.JobID,
+		task.AttemptNumber,
 		sink,
 	)
 }
