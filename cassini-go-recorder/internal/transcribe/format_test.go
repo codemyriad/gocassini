@@ -93,6 +93,72 @@ func TestValidateSegmentsRejectsOutOfBoundsWordRanges(t *testing.T) {
 	}
 }
 
+func TestSegmentAssemblyUsesFullOverlappingWordEnvelope(t *testing.T) {
+	words := []Word{
+		{Text: "funnels.", StartMS: 890199, EndMS: 890760},
+		{Text: "following", StartMS: 890300, EndMS: 890739},
+	}
+
+	builders := map[string]func() []Segment{
+		"assemble": func() []Segment {
+			return AssembleSegments("spk_a", words, defaultSegmentGapThresholdMS, defaultSegmentMaxWords)
+		},
+		"merge": func() []Segment {
+			return MergeAndSortSegments([][]Segment{{{
+				SpeakerID: "spk_a",
+				Words:     words,
+			}}})
+		},
+	}
+
+	for name, build := range builders {
+		t.Run(name, func(t *testing.T) {
+			got := build()
+			if len(got) != 1 {
+				t.Fatalf("segments = %d, want 1: %#v", len(got), got)
+			}
+			if got[0].StartMS != 890199 || got[0].EndMS != 890760 {
+				t.Fatalf("segment bounds = %d-%d, want 890199-890760", got[0].StartMS, got[0].EndMS)
+			}
+			if err := ValidateSegments(got); err != nil {
+				t.Fatalf("ValidateSegments() error = %v", err)
+			}
+		})
+	}
+}
+
+func TestSegmentAssemblyGapUsesRunningMaximumEnd(t *testing.T) {
+	words := []Word{
+		{Text: "long", StartMS: 0, EndMS: 5000},
+		{Text: "nested", StartMS: 100, EndMS: 200},
+		{Text: "still-overlapping", StartMS: 1701, EndMS: 1800},
+	}
+
+	builders := map[string]func() []Segment{
+		"assemble": func() []Segment {
+			return AssembleSegments("spk_a", words, defaultSegmentGapThresholdMS, defaultSegmentMaxWords)
+		},
+		"merge": func() []Segment {
+			return MergeAndSortSegments([][]Segment{{{
+				SpeakerID: "spk_a",
+				Words:     words,
+			}}})
+		},
+	}
+
+	for name, build := range builders {
+		t.Run(name, func(t *testing.T) {
+			got := build()
+			if len(got) != 1 {
+				t.Fatalf("running maximum end should keep overlapping words together; got %d segments: %#v", len(got), got)
+			}
+			if got[0].StartMS != 0 || got[0].EndMS != 5000 {
+				t.Fatalf("segment bounds = %d-%d, want 0-5000", got[0].StartMS, got[0].EndMS)
+			}
+		})
+	}
+}
+
 func TestMergeAndSortSegmentsSplitsAroundInterjection(t *testing.T) {
 	perSpeaker := [][]Segment{
 		{
