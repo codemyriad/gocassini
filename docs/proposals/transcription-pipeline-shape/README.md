@@ -483,6 +483,35 @@ Archived run (fixture, all six corpora, 23 result JSONs, logs) is on the private
 `<private-archive>/cassini-pipeline-shape.tgz`, with a SHA-256 and
 a provenance README. The rented GPU was destroyed after the run.
 
+## What implementation review changed
+
+The design above survived, but three review rounds against the Go implementation found
+eight defects the prototype never exposed — worth recording, because every one of them
+lived in the gap between "measure level relative to each track's own floor" as a sentence
+and as running code.
+
+| defect | why the prototype missed it |
+|---|---|
+| Timeline padding measured as the noise floor: a late joiner scored **238 dB** above "its own floor" against 52 dB for identical continuous audio, and would have won every contested word | every prototype track started at t=0 |
+| Attribution depended on stream order when one participant owned several streams (40.0 vs 0.0 dB) | prototype tracks had unique ids |
+| Pooling a speaker's frames and taking one percentile is **duration-weighted**: a five-second speech-only rejoin swamped the one second that established the floor, and crosstalk beat the owner by 20 dB again | the first fix was tested with equal-length streams |
+| Drop mode rebuilt segment bounds from the last word, reintroducing the overlapping-word invalid envelope fixed in #216 | prototype words never overlapped |
+| The flag was dropped by LLM readable cleanup, making the summary filter a no-op in exactly the normal path | the prototype had no cleanup stage |
+| Mapping a cleaned word to *any* overlapping source word let one contradicted word flag a legitimate neighbour | tested only where cleanup preserved the word count |
+| Segments carrying text but no word list were discarded whenever another segment was flagged | prototype segments always had words |
+| The viewer badge could never fire for portable meetings, whose display transcripts carry cleaned tokens rather than words | the prototype had no viewer |
+
+Two of those — padding, and duration-weighted pooling — are the same mistake twice: a
+floor is a property of a participant's microphone, and anything that lets a *stream's*
+accidents set it is wrong. The shipped code therefore calibrates per logical speaker,
+taking the quietest floor any of their streams established, over frames that carry real
+captured audio.
+
+The habit that would have prevented most of this is cheap: **survey the shape of
+production data before writing a fixture, not after shipping one.** A few `ffprobe` passes
+over the archive produce the table in `prodshape_test.go`, and every defect above except
+the last two sits somewhere in it.
+
 ## Provenance of figures quoted from elsewhere
 
 Numbers attributed to the 2026-08-27 audit, to `challenges.go` (1106 lines + 500 of tests)
