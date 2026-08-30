@@ -235,12 +235,38 @@ func TestAttributionOnProductionShapeDoesNotFavourLateJoiners(t *testing.T) {
 		}
 	}
 
-	// During the punctual speaker's loud passage the late joiner has not even
-	// arrived, so a word wrongly attributed to them must be contradicted, and
-	// the punctual speaker's own word must not be.
+	// SpeakerID is derived and hashed from the participant id, so an assertion
+	// written against a guessed literal silently never runs. Look the real one
+	// up from the probed streams.
+	speakerID := func(label string) string {
+		t.Helper()
+		for _, s := range streams {
+			if s.SpeakerLabel == label {
+				return s.SpeakerID
+			}
+		}
+		t.Fatalf("no stream labelled %q in the fixture", label)
+		return ""
+	}
+
+	// The punctual speaker is genuinely talking here, so their own word must not
+	// be contradicted.
 	word := Word{Text: "test", StartMS: 2500, EndMS: 2700}
-	if gap, ok := AttributionGapDB(word, "spk_punctual", envelopes); ok && gap > 6 {
+	gap, ok := AttributionGapDB(word, speakerID("Punctual"), envelopes)
+	if !ok {
+		t.Fatal("expected the real speaker's word to be measurable")
+	}
+	if gap > 6 {
 		t.Errorf("the actual speaker was contradicted by %.1f dB", gap)
+	}
+
+	// A word attributed to the participant who has barely any audio, during the
+	// punctual speaker's loud passage, is the crosstalk shape and must be
+	// contradicted.
+	ghost, ok := AttributionGapDB(word, speakerID("BarelySpoke"), envelopes)
+	if ok && ghost <= gap {
+		t.Errorf("a word on the near-silent track scored %.1f dB, no worse than the "+
+			"real speaker's %.1f dB", ghost, gap)
 	}
 }
 

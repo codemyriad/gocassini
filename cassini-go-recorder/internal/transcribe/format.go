@@ -683,22 +683,25 @@ func redistributeWords(origWords []Word, cleanedText string) []Word {
 		}
 		out[i] = Word{Text: w, StartMS: t0, EndMS: t1}
 		// Carry attribution provenance across the rewrite. Cleaned words are new
-		// text on interpolated slots, so the honest mapping is temporal: a
-		// cleaned word inherits the flag when it overlaps a source word the
-		// acoustic evidence contradicted. Losing it here would silently make the
-		// summary filter a no-op, because readable cleanup and summarisation
-		// normally share one configured LLM and the summary reads the cleaned
-		// segments.
-		for _, orig := range origWords {
-			if !orig.LowConfidenceSpeaker {
-				continue
+		// text on interpolated slots, so the mapping has to be temporal — but it
+		// must be to the SINGLE best-overlapping source word, not to any word
+		// that happens to overlap. Cleanup routinely changes the word count, and
+		// "any overlap" then lets one contradicted source word flag two cleaned
+		// words, deleting legitimate neighbouring text from the summary.
+		// Losing the flag entirely would be just as wrong: readable cleanup and
+		// summarisation normally share one configured LLM, so the summary reads
+		// these cleaned segments.
+		best, bestOverlap := -1, int64(0)
+		for j, orig := range origWords {
+			overlap := minInt64(t1, orig.EndMS) - maxInt64(t0, orig.StartMS)
+			if overlap > bestOverlap {
+				best, bestOverlap = j, overlap
 			}
-			if orig.StartMS < t1 && t0 < orig.EndMS {
-				out[i].LowConfidenceSpeaker = true
-				out[i].AttributionGapDB = orig.AttributionGapDB
-				out[i].HasAttributionGap = orig.HasAttributionGap
-				break
-			}
+		}
+		if best >= 0 && origWords[best].LowConfidenceSpeaker {
+			out[i].LowConfidenceSpeaker = true
+			out[i].AttributionGapDB = origWords[best].AttributionGapDB
+			out[i].HasAttributionGap = origWords[best].HasAttributionGap
 		}
 	}
 	return out

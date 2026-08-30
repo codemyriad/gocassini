@@ -5,7 +5,7 @@
   import { marked } from "marked";
   import DOMPurify from "dompurify";
   import { Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape } from "@lucide/svelte";
-  import { formatClockTime, parseTimeHash } from "../core/transcript";
+  import { formatClockTime, isLikelyCrosstalkTurn, parseTimeHash } from "../core/transcript";
   import {
     getActiveTimedRange,
     getLatestStartingActiveTimedRange,
@@ -68,27 +68,6 @@
 
   const CONTINUATION_GAP_MS = 60_000;
 
-  /**
-   * A turn whose words the producer flagged as probable crosstalk. Cassini
-   * records, per word, how far the loudest other microphone sat above its own
-   * noise floor compared with this speaker's; a large gap means somebody else
-   * was talking and this track only picked them up. Such a turn is usually not
-   * a real interjection at all, so it is marked rather than hidden — the reader
-   * can still hear the audio and decide.
-   */
-  function lowConfidenceWordCount(segment: DisplaySegment): number {
-    return segment.words.reduce(
-      (count, word) => (word.lowConfidenceSpeaker ? count + 1 : count),
-      0,
-    );
-  }
-
-  function isLikelyCrosstalkTurn(segment: DisplaySegment): boolean {
-    const flagged = lowConfidenceWordCount(segment);
-    // Every word, and there is a word: a turn built entirely from audio the
-    // evidence attributes to somebody else.
-    return flagged > 0 && flagged === segment.words.length;
-  }
 
   let transcriptIndex: TranscriptIndex | null = null;
   let displayTranscript: DisplayTranscriptV1 | null = null;
@@ -522,6 +501,13 @@
     display: DisplayTranscriptV1 | null,
   ): DisplaySegment[] {
     if (display) {
+      // Carry the canonical words alongside the display tokens. A display
+      // transcript is LLM-cleaned prose whose tokens hold no attribution, and
+      // portable meetings always build one — so leaving this empty meant the
+      // crosstalk badge never appeared for the common case, only for raw JSON
+      // with the exact-word view switched on. The words are not rendered here;
+      // they are what the segment is judged on.
+      const canonicalById = new Map(index.segments.map((segment) => [segment.id, segment]));
       return display.blocks.map((block) => ({
         id: block.id,
         speaker: block.speaker,
@@ -530,7 +516,10 @@
         endMs: block.endMs,
         text: block.text,
         tokens: block.tokens,
-        words: [],
+        words: block.sourceSegmentIds
+          .map((segmentId) => canonicalById.get(segmentId))
+          .filter((segment): segment is NonNullable<typeof segment> => Boolean(segment))
+          .flatMap((segment) => segment.words),
         sourceSegmentIds: [...block.sourceSegmentIds],
       }));
     }
@@ -954,7 +943,7 @@
               {#if !isSpeakerContinuation(visibleSegments, segmentIndex)}
                 <span class="badge badge-md badge-info text-sm px-1 font-bold">{segment.speakerLabel}</span>
               {/if}
-              {#if isLikelyCrosstalkTurn(segment)}
+              {#if isLikelyCrosstalkTurn(segment.words)}
                 <span
                   class="badge badge-md badge-warning badge-outline text-sm px-1"
                   title="Another participant's microphone was much louder here. This turn is probably their voice bleeding into {segment.speakerLabel}'s track, not {segment.speakerLabel} speaking."

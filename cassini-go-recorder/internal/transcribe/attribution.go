@@ -149,39 +149,68 @@ func BuildSpeakerEnvelopes(mkvPath string, streams []AudioStream, sampleRate int
 	return envelopes, nil
 }
 
-// calibrateByLogicalSpeaker pools the levels of every stream belonging to one
-// participant before deciding that participant's floor.
+// calibrateByLogicalSpeaker gives every stream belonging to one participant
+// that participant's floor, taken as the quietest floor any of their streams
+// established.
 //
 // A noise floor is a property of somebody's microphone and room, not of a
 // packet stream. Remux emits a fresh stream on every rotation or rejoin, and a
-// short one can contain nothing but ongoing speech — so calibrated alone, its
-// own 20th percentile IS speech and its floor lands tens of dB too high. The
+// short one can contain nothing but ongoing speech — calibrated alone, its own
+// 20th percentile IS speech and its floor lands tens of dB too high. The
 // speaker then measures as barely above "their own floor" while a quiet track
 // carrying only their bleed measures well above its genuinely quiet one, and
-// the bleed wins: measured, a -40 dBFS bleed beat the real 0.8-amplitude owner
-// by 20 dB across a rotation.
+// the bleed wins.
 //
-// Pooling fixes it at the source, and taking the union of present frames means
-// the quiet stream that established the real floor keeps setting it.
+// Pooling every frame and taking one percentile does not survive this, because
+// it is duration-weighted: five seconds of speech-only rotation swamps one
+// second of the stream that established the real floor, and the pooled
+// percentile lands in speech again. The quietest per-stream floor is the
+// duration-independent answer — whichever stream actually saw this microphone
+// idle is the one that knows where its floor is.
+//
+// Streams too short to characterise anything are ignored, so a fragment of a
+// stream cannot drag a speaker's floor down.
 func calibrateByLogicalSpeaker(envelopes []*SpeakerEnvelope) {
-	pooled := map[string][]float64{}
+	// minCalibrationFrames is ~160 ms at the standard hop: enough for a floor
+	// estimate to mean something, short enough that a brief rejoin still counts.
+	const minCalibrationFrames = 10
+
+	type speakerLevels struct {
+		floorDB  float64
+		speechDB float64
+		found    bool
+	}
+	levels := map[string]*speakerLevels{}
 	for _, env := range envelopes {
-		if len(env.Present) != len(env.FrameDB) {
+		var present int
+		if len(env.Present) == len(env.FrameDB) {
+			for _, ok := range env.Present {
+				if ok {
+					present++
+				}
+			}
+		}
+		if present < minCalibrationFrames {
 			continue
 		}
-		for i, ok := range env.Present {
-			if ok {
-				pooled[env.SpeakerID] = append(pooled[env.SpeakerID], env.FrameDB[i])
-			}
+		agg, ok := levels[env.SpeakerID]
+		if !ok {
+			agg = &speakerLevels{floorDB: env.FloorDB, speechDB: env.SpeechDB, found: true}
+			levels[env.SpeakerID] = agg
+			continue
+		}
+		if env.FloorDB < agg.floorDB {
+			agg.floorDB = env.FloorDB
+		}
+		if env.SpeechDB > agg.speechDB {
+			agg.speechDB = env.SpeechDB
 		}
 	}
 	for _, env := range envelopes {
-		levels := pooled[env.SpeakerID]
-		if len(levels) == 0 {
-			continue
+		if agg, ok := levels[env.SpeakerID]; ok && agg.found {
+			env.FloorDB = agg.floorDB
+			env.SpeechDB = agg.speechDB
 		}
-		env.FloorDB = percentileOf(levels, attributionFloorPercentile)
-		env.SpeechDB = percentileOf(levels, attributionSpeechPercentile)
 	}
 }
 
@@ -573,4 +602,11 @@ func WithoutLowConfidenceWords(segments []Segment) ([]Segment, int) {
 		out = append(out, seg)
 	}
 	return out, removed
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
 }

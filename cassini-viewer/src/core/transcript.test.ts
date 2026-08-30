@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildTranscriptIndex,
+  isLikelyCrosstalkTurn,
+  lowConfidenceWordCount,
   getActiveSegment,
   getActiveWord,
   parseTimeHash,
@@ -181,5 +183,59 @@ describe("speaker attribution provenance", () => {
     const indexed = index.segments[0].words[0];
     expect(indexed.lowConfidenceSpeaker).toBe(true);
     expect(indexed.attributionGapDb).toBe(40);
+  });
+});
+
+describe("crosstalk turn detection", () => {
+  const w = (text: string, low?: boolean) => ({
+    text,
+    startMs: 0,
+    endMs: 100,
+    ...(low === undefined ? {} : { lowConfidenceSpeaker: low }),
+  });
+
+  it("counts only the flagged words", () => {
+    expect(lowConfidenceWordCount([w("a"), w("b", true), w("c", true)])).toBe(2);
+    expect(lowConfidenceWordCount([w("a"), w("b")])).toBe(0);
+  });
+
+  it("calls a turn crosstalk only when every word is flagged", () => {
+    expect(isLikelyCrosstalkTurn([w("okay", true)])).toBe(true);
+    expect(isLikelyCrosstalkTurn([w("okay", true), w("sure", true)])).toBe(true);
+    // A real turn that merely overlaps someone louder must not be written off.
+    expect(isLikelyCrosstalkTurn([w("okay", true), w("sure")])).toBe(false);
+    expect(isLikelyCrosstalkTurn([w("okay"), w("sure")])).toBe(false);
+  });
+
+  it("is false for a turn with no words rather than vacuously true", () => {
+    expect(isLikelyCrosstalkTurn([])).toBe(false);
+  });
+
+  // The display-transcript path is what portable meetings always take. Its
+  // blocks carry tokens, not words, so the canonical words have to be gathered
+  // from the source segments or the badge can never fire in the common case.
+  it("judges a display block from the canonical words of its source segments", () => {
+    const parsed = validateTranscriptWordsV1({
+      version: "transcript.words.v1",
+      media: { src: "m.webm", durationMs: 5000 },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      segments: [
+        {
+          id: "seg_1",
+          speaker: "spk_1",
+          startMs: 0,
+          endMs: 500,
+          text: "okay",
+          words: [{ text: "okay", startMs: 0, endMs: 500, lowConfidenceSpeaker: true }],
+        },
+      ],
+    });
+    const index = buildTranscriptIndex(parsed);
+    const canonicalById = new Map(index.segments.map((s) => [s.id, s]));
+    const blockWords = ["seg_1"]
+      .map((id) => canonicalById.get(id))
+      .filter((s): s is NonNullable<typeof s> => Boolean(s))
+      .flatMap((s) => s.words);
+    expect(isLikelyCrosstalkTurn(blockWords)).toBe(true);
   });
 });

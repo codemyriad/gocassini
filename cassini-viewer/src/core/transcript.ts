@@ -554,3 +554,27 @@ function formatVttTimestamp(ms: number): string {
     seconds,
   ).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
 }
+
+/**
+ * How many of a turn's words the producer flagged as probable crosstalk.
+ *
+ * Cassini records, per word, how far the loudest other microphone sat above its
+ * own noise floor compared with the attributed speaker's. A large gap means
+ * somebody else was talking and this participant's track merely picked them up.
+ */
+export function lowConfidenceWordCount(words: readonly TranscriptWord[]): number {
+  return words.reduce((count, word) => (word.lowConfidenceSpeaker ? count + 1 : count), 0);
+}
+
+/**
+ * A turn built entirely from words the acoustic evidence attributes to somebody
+ * else — the shape where a quiet track picks up whoever is actually speaking and
+ * the decoder renders it as a short interjection by the wrong person.
+ *
+ * Requires every word to be flagged, not merely some: a real turn that happens
+ * to overlap someone louder should not be written off wholesale.
+ */
+export function isLikelyCrosstalkTurn(words: readonly TranscriptWord[]): boolean {
+  if (words.length === 0) return false;
+  return lowConfidenceWordCount(words) === words.length;
+}

@@ -594,3 +594,116 @@ func TestFilteringKeepsWordlessLegacySegments(t *testing.T) {
 		t.Error("the wordless legacy segment was dropped")
 	}
 }
+
+// Pooling every frame and taking one percentile is duration-weighted: five
+// seconds of speech-only rotation swamps one second of the stream that
+// established the real floor, and the pooled percentile lands in speech again.
+// The equal-duration case passes either way, which is why it has to be tested
+// unequal.
+func TestCalibrationSurvivesALongSpeechOnlyRotation(t *testing.T) {
+	const sr = 16000
+	frame, hop := sr*attributionFrameMS/1000, sr*attributionHopMS/1000
+
+	// One second establishes the microphone's floor; five seconds of rotation
+	// carry nothing but speech.
+	established := envelopeFromSamples("a", tone(sr, 0.002), frame, hop, attributionHopMS)
+	rotated := envelopeFromSamples("a", tone(sr*5, 0.8), frame, hop, attributionHopMS)
+	bleed := envelopeFromSamples("b",
+		append(tone(sr, 0.001), tone(sr*5, 0.01)...), frame, hop, attributionHopMS)
+
+	envelopes := []*SpeakerEnvelope{established, rotated, bleed}
+	calibrateByLogicalSpeaker(envelopes)
+
+	if math.Abs(established.FloorDB-rotated.FloorDB) > 1 {
+		t.Errorf("both of A's streams must share one floor: %.1f vs %.1f",
+			established.FloorDB, rotated.FloorDB)
+	}
+	if established.FloorDB > -40 {
+		t.Errorf("the speaker's floor was dragged into speech: %.1f dB", established.FloorDB)
+	}
+	gap, ok := AttributionGapDB(Word{Text: "real", StartMS: 2000, EndMS: 2200}, "a", envelopes)
+	if !ok {
+		t.Fatal("expected attribution evidence")
+	}
+	if gap > 0 {
+		t.Errorf("bleed beat the real owner by %.1f dB across a long rotation", gap)
+	}
+}
+
+// A stream too short to characterise anything must not drag a speaker's floor
+// down just because it happened to catch a quiet instant.
+func TestCalibrationIgnoresStreamsTooShortToCharacterise(t *testing.T) {
+	const sr = 16000
+	frame, hop := sr*attributionFrameMS/1000, sr*attributionHopMS/1000
+	real := envelopeFromSamples("a", append(tone(sr, 0.02), tone(sr, 0.8)...), frame, hop, attributionHopMS)
+	before := real.FloorDB
+	// A few milliseconds of near-silence: fewer frames than the guard allows.
+	sliver := envelopeFromSamples("a", tone(600, 0.000001), frame, hop, attributionHopMS)
+
+	calibrateByLogicalSpeaker([]*SpeakerEnvelope{real, sliver})
+	if math.Abs(real.FloorDB-before) > 1 {
+		t.Errorf("a sliver of a stream moved the speaker's floor from %.1f to %.1f",
+			before, real.FloorDB)
+	}
+}
+
+// Readable cleanup routinely changes the word count. Mapping a cleaned word to
+// ANY overlapping source word lets one contradicted word flag a legitimate
+// neighbour, deleting text from the summary that the evidence never questioned.
+//
+// The property to hold is not a word count — cleanup that expands one word into
+// two may legitimately flag both — but containment: a flag must never reach a
+// stretch of time no source word was contradicted in.
+func TestReadableCleanupDoesNotSpreadBeyondTheContradictedSpan(t *testing.T) {
+	original := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: "a b c d",
+		Words: []Word{
+			{Text: "a", StartMS: 0, EndMS: 250},
+			{Text: "b", StartMS: 250, EndMS: 500},
+			{Text: "c", StartMS: 500, EndMS: 750},
+			{Text: "d", StartMS: 750, EndMS: 1000, LowConfidenceSpeaker: true},
+		}}}
+
+	for _, cleaned := range []string{
+		"a b c extra d", // a word inserted before the contradicted one
+		"a b c d e f g", // substantial growth
+		"a d",           // shrink
+		"a b c d",       // unchanged
+	} {
+		readable := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: cleaned}}
+		applied := ApplyReadableText(original, readable)
+		for _, w := range applied[0].Words {
+			if !w.LowConfidenceSpeaker {
+				continue
+			}
+			// The flagged source word is "d", 750-1000 ms. A cleaned word may
+			// only inherit the flag if it genuinely overlaps that span.
+			if w.EndMS <= 750 || w.StartMS >= 1000 {
+				t.Errorf("cleanup %q: flagged %q at %d-%d, outside the contradicted 750-1000 ms",
+					cleaned, w.Text, w.StartMS, w.EndMS)
+			}
+		}
+	}
+}
+
+// The case the review reported: one inserted word must not cost a legitimate
+// neighbour its place in the summary.
+func TestReadableCleanupInsertionFlagsExactlyTheContradictedWord(t *testing.T) {
+	original := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: "a b c d",
+		Words: []Word{
+			{Text: "a", StartMS: 0, EndMS: 250},
+			{Text: "b", StartMS: 250, EndMS: 500},
+			{Text: "c", StartMS: 500, EndMS: 750},
+			{Text: "d", StartMS: 750, EndMS: 1000, LowConfidenceSpeaker: true},
+		}}}
+	readable := []Segment{{SpeakerID: "spk_a", StartMS: 0, EndMS: 1000, Text: "a b c extra d"}}
+	applied := ApplyReadableText(original, readable)
+	var flagged int
+	for _, w := range applied[0].Words {
+		if w.LowConfidenceSpeaker {
+			flagged++
+		}
+	}
+	if flagged != 1 {
+		t.Errorf("one contradicted source word flagged %d cleaned words", flagged)
+	}
+}
