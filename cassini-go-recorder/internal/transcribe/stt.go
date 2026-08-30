@@ -15,6 +15,21 @@ type Word struct {
 	Text    string
 	StartMS int64
 	EndMS   int64
+
+	// AttributionGapDB is how far the loudest OTHER participant track sat above
+	// this word's own track at this instant, each measured against its own noise
+	// floor. Near zero means the attributed speaker really was the loudest voice;
+	// a large positive gap means somebody else was, and this word is a crosstalk
+	// candidate. Set by AnnotateAttribution; see attribution.go.
+	AttributionGapDB float64
+	// HasAttributionGap distinguishes "measured 0 dB" from "never measured".
+	HasAttributionGap bool
+	// LowConfidenceSpeaker marks a word whose gap cleared this meeting's own
+	// estimated crosstalk threshold. The word is kept — the transcript stays
+	// canonical — but consumers may grey it, exclude it from a summary, or ask a
+	// human. It is never set unless the meeting shows an unambiguous crosstalk
+	// population.
+	LowConfidenceSpeaker bool
 }
 
 // Recognizer wraps a sherpa-onnx offline recognizer with Silero VAD segmentation.

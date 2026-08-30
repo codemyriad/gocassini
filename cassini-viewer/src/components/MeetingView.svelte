@@ -5,7 +5,12 @@
   import { marked } from "marked";
   import DOMPurify from "dompurify";
   import { Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape } from "@lucide/svelte";
-  import { formatClockTime, parseTimeHash } from "../core/transcript";
+  import {
+    canonicalWordsForBlock,
+    formatClockTime,
+    isLikelyCrosstalkTurn,
+    parseTimeHash,
+  } from "../core/transcript";
   import {
     getActiveTimedRange,
     getLatestStartingActiveTimedRange,
@@ -67,6 +72,7 @@
   }
 
   const CONTINUATION_GAP_MS = 60_000;
+
 
   let transcriptIndex: TranscriptIndex | null = null;
   let displayTranscript: DisplayTranscriptV1 | null = null;
@@ -500,6 +506,16 @@
     display: DisplayTranscriptV1 | null,
   ): DisplaySegment[] {
     if (display) {
+      // Carry the canonical words alongside the display tokens. A display
+      // transcript is LLM-cleaned prose whose tokens hold no attribution, and
+      // portable meetings always build one — so leaving this empty meant the
+      // crosstalk badge never appeared for the common case, only for raw JSON
+      // with the exact-word view switched on. canonicalWordsForBlock resolves
+      // the tokens' sourceWordIds against the canonical index (sourceSegmentIds
+      // alone use producer segment ids that never match the per-item ids a
+      // portable manifest is re-projected into) and falls back to the
+      // sourceSegmentIds mapping for blocks with no word alignment. The words
+      // are not rendered here; they are what the segment is judged on.
       return display.blocks.map((block) => ({
         id: block.id,
         speaker: block.speaker,
@@ -508,7 +524,7 @@
         endMs: block.endMs,
         text: block.text,
         tokens: block.tokens,
-        words: [],
+        words: canonicalWordsForBlock(index, block),
         sourceSegmentIds: [...block.sourceSegmentIds],
       }));
     }
@@ -552,6 +568,17 @@
 
   function normalizeSpeakerLabel(label: string): string {
     return label.replace(/\s+(audio|video)\s*$/i, "").trim() || label;
+  }
+
+  // Tooltip fragment for a low-confidence word. Guarded against non-finite
+  // gaps (hosts can mount this published component with unvalidated data):
+  // never render "NaN dB" or "Infinity dB" — fall back to the unmeasured
+  // wording instead.
+  function describeAttributionGap(gapDb: number | undefined): string {
+    if (gapDb === undefined || !Number.isFinite(gapDb)) {
+      return "much louder";
+    }
+    return `${gapDb.toFixed(0)} dB louder`;
   }
 
   function getActiveDisplaySegment(
@@ -932,6 +959,12 @@
               {#if !isSpeakerContinuation(visibleSegments, segmentIndex)}
                 <span class="badge badge-md badge-info text-sm px-1 font-bold">{segment.speakerLabel}</span>
               {/if}
+              {#if isLikelyCrosstalkTurn(segment.words)}
+                <span
+                  class="badge badge-md badge-warning badge-outline text-sm px-1"
+                  title="Another participant's microphone was much louder here. This turn is probably their voice bleeding into {segment.speakerLabel}'s track, not {segment.speakerLabel} speaking."
+                >probably crosstalk</span>
+              {/if}
               <button
                 class="badge badge-md text-sm bg-base-200 px-1 text-base-content/60 hover:bg-primary/60 hover:text-base-content cursor-pointer tabular-nums"
                 on:click={() => seekTo(segment.startMs)}
@@ -975,8 +1008,13 @@
                     class="inline p-0 border-0 rounded text-base leading-normal cursor-pointer transition duration-150 {segment.id ===
                       activeSegment?.id && word.id === activeWord?.id
                       ? 'bg-primary ring-1 ring-primary'
-                      : 'hover:bg-primary'}"
+                      : 'hover:bg-primary'} {word.lowConfidenceSpeaker
+                      ? 'text-base-content/55 border-b border-dashed border-warning/60'
+                      : ''}"
                     on:click={() => seekTo(word.startMs)}
+                    title={word.lowConfidenceSpeaker
+                      ? `Another microphone was ${describeAttributionGap(word.attributionGapDb)} here — probably not ${segment.speakerLabel} speaking`
+                      : undefined}
                     type="button"
                   >{word.text}</button>{/each}
               </div>

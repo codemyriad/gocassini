@@ -331,7 +331,7 @@ func TestWriteManifestIncludesRuntimeSummaryFields(t *testing.T) {
 		Path:    "transcript.parakeet-v2.json",
 		ModelID: ModelParakeet06BV3,
 	}}
-	if err := WriteManifest(path, "source.mkv", sourceDurationMS, playableDurationMS, streams, segments, ModelParakeet06B, "cuda", "openai/gpt-4o-mini", true, "", false, additional); err != nil {
+	if err := WriteManifest(path, "source.mkv", sourceDurationMS, playableDurationMS, streams, segments, "fake-engine", ModelParakeet06B, "cuda", "openai/gpt-4o-mini", true, "", false, additional, nil); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 
@@ -371,9 +371,17 @@ func TestWriteManifestIncludesRuntimeSummaryFields(t *testing.T) {
 	if len(payload.Files.Transcripts) != 2 {
 		t.Fatalf("expected primary and additional transcript provenance, got %d entries", len(payload.Files.Transcripts))
 	}
+	if payload.Provenance.SpeechToText.Backend != "fake-engine" {
+		t.Errorf("speechToText.backend = %q, want the resolved engine fake-engine",
+			payload.Provenance.SpeechToText.Backend)
+	}
 	for _, transcript := range payload.Files.Transcripts {
 		if transcript.Provenance == nil || transcript.Provenance.Device != "cuda" {
 			t.Errorf("transcript %q device provenance = %#v, want cuda", transcript.ID, transcript.Provenance)
+		}
+		if transcript.Provenance != nil && transcript.Provenance.Backend != "fake-engine" {
+			t.Errorf("transcript %q backend provenance = %q, want fake-engine",
+				transcript.ID, transcript.Provenance.Backend)
 		}
 	}
 }

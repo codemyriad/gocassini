@@ -165,6 +165,9 @@ The bundle also passes these optional operator capability envs through when you 
 - `SUMMARY_MODEL`
 - `CASSINI_SUMMARY_DISABLED`
 - `CASSINI_READABLE_STRICT_BATCHES`
+- `CASSINI_STT_BACKEND`
+- `CASSINI_ATTRIBUTION_DISABLED`
+- `CASSINI_ATTRIBUTION_DROP`
 
 They are intentionally not part of the narrow core deployment contract.
 

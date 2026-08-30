@@ -17,6 +17,13 @@ import {
   type PortablePayloadRef,
   type PortableTranscriptEntry,
 } from "./portable";
+import {
+  buildTranscriptIndex,
+  canonicalWordsForBlock,
+  isLikelyCrosstalkTurn,
+  validateDisplayTranscriptV1,
+  validateTranscriptWordsV1,
+} from "../core/transcript";
 
 // Mirrors scripts/export-static-meetings.test.ts — this module keeps an
 // identical copy of describeMeeting for in-browser use.
@@ -872,5 +879,207 @@ describe("pickReadableForTranscript", () => {
 
   it("returns null when no readable transcripts are present", () => {
     expect(pickReadableForTranscript({} as PortableMeetingManifest, "anything")).toBeNull();
+  });
+});
+
+// Attribution provenance rides on the raw-asr items of a portable manifest
+// (optional attributionGapDb / lowConfidenceSpeaker keys; null = not
+// measured). The re-projection into canonical words must keep it, or every
+// meeting opened from a .opus loses the crosstalk evidence.
+describe("buildTranscriptWordsFromPortable attribution carry", () => {
+  const manifestWithItem = (item: Record<string, unknown>) => ({
+    meeting: { durationMs: 5000 },
+    speakers: [
+      { id: "spk_ana", label: "Ana" },
+      { id: "spk_ben", label: "Ben" },
+    ],
+    transcript: {
+      items: [
+        { speaker: "spk_ana", startMs: 0, endMs: 500, text: "we" },
+        item,
+      ],
+    },
+  });
+
+  it("copies attributionGapDb and lowConfidenceSpeaker from an item onto its word", () => {
+    const transcript = buildTranscriptWordsFromPortable(
+      manifestWithItem({
+        speaker: "spk_ben",
+        startMs: 900,
+        endMs: 1400,
+        text: "yeah",
+        attributionGapDb: 31.7,
+        lowConfidenceSpeaker: true,
+      }) as never,
+    );
+    expect(transcript.segments[1]?.words[0]).toMatchObject({
+      text: "yeah",
+      attributionGapDb: 31.7,
+      lowConfidenceSpeaker: true,
+    });
+    // The unflagged item's word carries neither key.
+    expect(transcript.segments[0]?.words[0]).not.toHaveProperty("attributionGapDb");
+    expect(transcript.segments[0]?.words[0]).not.toHaveProperty("lowConfidenceSpeaker");
+  });
+
+  it("round-trips a flagged item into an index the crosstalk judgement fires on", () => {
+    const transcript = validateTranscriptWordsV1(
+      buildTranscriptWordsFromPortable(
+        manifestWithItem({
+          speaker: "spk_ben",
+          startMs: 900,
+          endMs: 1400,
+          text: "yeah",
+          attributionGapDb: 31.7,
+          lowConfidenceSpeaker: true,
+        }) as never,
+      ) as unknown,
+    );
+    const index = buildTranscriptIndex(transcript);
+    expect(isLikelyCrosstalkTurn(index.segments[1]!.words)).toBe(true);
+    expect(isLikelyCrosstalkTurn(index.segments[0]!.words)).toBe(false);
+  });
+
+  it("treats null attribution values as not measured and still validates", () => {
+    const transcript = buildTranscriptWordsFromPortable(
+      manifestWithItem({
+        speaker: "spk_ben",
+        startMs: 900,
+        endMs: 1400,
+        text: "yeah",
+        attributionGapDb: null,
+        lowConfidenceSpeaker: null,
+      }) as never,
+    );
+    const word = transcript.segments[1]?.words[0];
+    expect(word).not.toHaveProperty("attributionGapDb");
+    expect(word).not.toHaveProperty("lowConfidenceSpeaker");
+    expect(() => validateTranscriptWordsV1(transcript as unknown)).not.toThrow();
+  });
+
+  it("drops non-finite or non-numeric gaps so the validator never sees them", () => {
+    for (const gap of [Number.NaN, Number.POSITIVE_INFINITY, "loud"]) {
+      const transcript = buildTranscriptWordsFromPortable(
+        manifestWithItem({
+          speaker: "spk_ben",
+          startMs: 900,
+          endMs: 1400,
+          text: "yeah",
+          attributionGapDb: gap,
+        }) as never,
+      );
+      expect(transcript.segments[1]?.words[0]).not.toHaveProperty("attributionGapDb");
+      expect(() => validateTranscriptWordsV1(transcript as unknown)).not.toThrow();
+    }
+  });
+
+  it("does not fabricate flagged words for multi-word items", () => {
+    // Multi-word spans stay word-less (no fabricated timings), flagged or not.
+    const transcript = buildTranscriptWordsFromPortable(
+      manifestWithItem({
+        speaker: "spk_ben",
+        startMs: 900,
+        endMs: 1400,
+        text: "yeah sure",
+        attributionGapDb: 31.7,
+        lowConfidenceSpeaker: true,
+      }) as never,
+    );
+    expect(transcript.segments[1]?.words).toEqual([]);
+  });
+});
+
+// The JSON-directory shape: canonical words already carry ids and flags, and
+// readable segments reference the REAL canonical segment ids. The display
+// judgement must fire here through the same canonicalWordsForBlock mapping the
+// portable path uses.
+describe("display judgement over the JSON-directory artifacts", () => {
+  it("carries per-word flags from canonical words into the display-block judgement", () => {
+    const rawTranscript = {
+      version: "transcript.words.v1",
+      media: { src: "meeting.webm", durationMs: 10_000 },
+      speakers: [
+        { id: "spk_ana", label: "Ana" },
+        { id: "spk_ben", label: "Ben" },
+      ],
+      segments: [
+        {
+          id: "seg_000000",
+          speaker: "spk_ana",
+          startMs: 0,
+          endMs: 2000,
+          text: "hello there ben",
+          words: [
+            { id: "seg_000000:w_0", text: "hello", startMs: 0, endMs: 500, attributionGapDb: -22.4 },
+            { id: "seg_000000:w_1", text: "there", startMs: 500, endMs: 1200, attributionGapDb: -19.1 },
+            { id: "seg_000000:w_2", text: "ben", startMs: 1200, endMs: 2000, attributionGapDb: -25.0 },
+          ],
+        },
+        {
+          id: "seg_000001",
+          speaker: "spk_ben",
+          startMs: 2600,
+          endMs: 3600,
+          text: "budget approved",
+          words: [
+            {
+              id: "seg_000001:w_0",
+              text: "budget",
+              startMs: 2600,
+              endMs: 3100,
+              attributionGapDb: 14.2,
+              lowConfidenceSpeaker: true,
+            },
+            {
+              id: "seg_000001:w_1",
+              text: "approved",
+              startMs: 3100,
+              endMs: 3600,
+              attributionGapDb: 15.8,
+              lowConfidenceSpeaker: true,
+            },
+          ],
+        },
+      ],
+    };
+    const rawReadable = {
+      version: "transcript.readable.v1",
+      media: { src: "meeting.webm", durationMs: 10_000 },
+      speakers: rawTranscript.speakers,
+      sourceTranscriptVersion: "transcript.words.v1",
+      segments: [
+        {
+          id: "r_seg_000000",
+          speaker: "spk_ana",
+          startMs: 0,
+          endMs: 2000,
+          text: "Hello there, Ben.",
+          sourceSegmentIds: ["seg_000000"],
+        },
+        {
+          id: "r_seg_000001",
+          speaker: "spk_ben",
+          startMs: 2600,
+          endMs: 3600,
+          text: "Budget approved.",
+          sourceSegmentIds: ["seg_000001"],
+        },
+      ],
+    };
+
+    const display = validateDisplayTranscriptV1(
+      buildDisplayTranscriptFromArtifacts(rawTranscript as never, rawReadable as never) as unknown,
+    );
+    const index = buildTranscriptIndex(validateTranscriptWordsV1(rawTranscript));
+
+    const judged = display.blocks.map((block) => ({
+      speaker: block.speaker,
+      words: canonicalWordsForBlock(index, block).length,
+      crosstalk: isLikelyCrosstalkTurn(canonicalWordsForBlock(index, block)),
+    }));
+    expect(judged).toEqual([
+      { speaker: "spk_ana", words: 3, crosstalk: false },
+      { speaker: "spk_ben", words: 2, crosstalk: true },
+    ]);
   });
 });

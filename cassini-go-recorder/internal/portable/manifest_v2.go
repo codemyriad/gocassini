@@ -38,6 +38,7 @@ type provenanceV2Wire struct {
 	ReadableCleanup   map[string]*ProcessingStep `json:"readableCleanup,omitempty"`
 	DisplayTranscript map[string]*ProcessingStep `json:"displayTranscript,omitempty"`
 	MeetingSummary    *ProcessingStep            `json:"meetingSummary,omitempty"`
+	Attribution       *AttributionProvenance     `json:"attribution,omitempty"`
 }
 
 // TranscriptEntry describes one transcript body embedded in a v2 portable
@@ -233,8 +234,13 @@ func encodeMultiTranscriptManifest(manifest Manifest, transcripts []TranscriptIn
 	readableEncoded := make([]NamedEncodedPayload, 0)
 
 	provenance := &provenanceV2Wire{}
-	if manifest.Provenance != nil && manifest.Provenance.MeetingSummary != nil {
+	if manifest.Provenance != nil {
 		provenance.MeetingSummary = manifest.Provenance.MeetingSummary
+		// Meeting-level, not keyed by transcript id: the attribution stage
+		// runs once against the default raw transcript. In drop mode this
+		// record is the only remaining trace of the deleted words, so a wire
+		// that sheds it publishes a file with no audit trail at all.
+		provenance.Attribution = manifest.Provenance.Attribution
 	}
 
 	for _, input := range transcripts {
@@ -338,7 +344,7 @@ func hasAnyProvenance(p *provenanceV2Wire) bool {
 	if p == nil {
 		return false
 	}
-	return len(p.SpeechToText) > 0 || len(p.ReadableCleanup) > 0 || len(p.DisplayTranscript) > 0 || p.MeetingSummary != nil
+	return len(p.SpeechToText) > 0 || len(p.ReadableCleanup) > 0 || len(p.DisplayTranscript) > 0 || p.MeetingSummary != nil || p.Attribution != nil
 }
 
 func validateTranscriptInputs(transcripts []TranscriptInput) error {

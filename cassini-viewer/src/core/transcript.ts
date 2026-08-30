@@ -46,6 +46,12 @@ function asOptionalString(value: unknown, label: string): string | undefined {
   return asString(value, label);
 }
 
+function asOptionalBoolean(value: unknown, label: string): boolean | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "boolean") fail(`${label} must be a boolean`);
+  return value as boolean;
+}
+
 function asOptionalNumber(value: unknown, label: string): number | undefined {
   if (value === undefined) {
     return undefined;
@@ -54,6 +60,18 @@ function asOptionalNumber(value: unknown, label: string): number | undefined {
     fail(`${label} must be a number`);
   }
   return value;
+}
+
+// For attributionGapDb: `null` must read as "not measured", matching how
+// asOptionalBoolean treats `lowConfidenceSpeaker: null`. A producer that
+// always emits the key writes null when the attribution stage did not run,
+// and a missing measurement must degrade to "no evidence" — never to a
+// transcript that refuses to load.
+function asOptionalNumberOrNull(value: unknown, label: string): number | undefined {
+  if (value === null) {
+    return undefined;
+  }
+  return asOptionalNumber(value, label);
 }
 
 function validateWord(input: unknown, segmentId: string, wordIndex: number): TranscriptWord {
@@ -71,12 +89,23 @@ function validateWord(input: unknown, segmentId: string, wordIndex: number): Tra
     fail(`segment ${segmentId} word ${wordIndex} confidence must be between 0 and 1`);
   }
 
+  const attributionGapDb = asOptionalNumberOrNull(
+    word.attributionGapDb,
+    `segment ${segmentId} word ${wordIndex} attributionGapDb`,
+  );
+  const lowConfidenceSpeaker = asOptionalBoolean(
+    word.lowConfidenceSpeaker,
+    `segment ${segmentId} word ${wordIndex} lowConfidenceSpeaker`,
+  );
+
   return {
     id: asOptionalString(word.id, `segment ${segmentId} word ${wordIndex} id`),
     text: asString(word.text, `segment ${segmentId} word ${wordIndex} text`),
     startMs,
     endMs,
     confidence,
+    attributionGapDb,
+    lowConfidenceSpeaker,
   };
 }
 
@@ -414,6 +443,83 @@ export function buildTranscriptIndex(transcript: TranscriptWordsV1): TranscriptI
   };
 }
 
+interface IndexLookups {
+  wordsById: Map<string, IndexedWord>;
+  segmentsById: Map<string, IndexedSegment>;
+}
+
+// Lazy per-index lookup maps for canonicalWordsForBlock. Keyed weakly on the
+// index so repeated per-block calls during one render stay O(block size) after
+// the first, and a replaced index (transcript switch) drops its maps.
+const indexLookupsCache = new WeakMap<TranscriptIndex, IndexLookups>();
+
+function lookupsFor(index: TranscriptIndex): IndexLookups {
+  let lookups = indexLookupsCache.get(index);
+  if (!lookups) {
+    const wordsById = new Map<string, IndexedWord>();
+    const segmentsById = new Map<string, IndexedSegment>();
+    for (const segment of index.segments) {
+      segmentsById.set(segment.id, segment);
+      for (const word of segment.words) {
+        if (!wordsById.has(word.id)) {
+          wordsById.set(word.id, word);
+        }
+      }
+    }
+    lookups = { wordsById, segmentsById };
+    indexLookupsCache.set(index, lookups);
+  }
+  return lookups;
+}
+
+/**
+ * The canonical timed words a display block should be judged on (the crosstalk
+ * badge and per-word attribution styling).
+ *
+ * Display tokens name the exact canonical words they were aligned to via
+ * `sourceWordIds`, and those ids are minted by the same code that builds the
+ * canonical index — so they resolve on both the JSON-directory path and the
+ * portable (.opus) path. The block-level `sourceSegmentIds`, by contrast, carry
+ * producer segment ids that do NOT match the per-item segment ids a portable
+ * manifest is re-projected into (`seg_000000` per word item), which is why
+ * judging via sourceSegmentIds silently found no words for portable meetings.
+ * When no token resolves to a canonical word (a block with no word alignment at
+ * all), fall back to gathering every canonical word of the block's source
+ * segments — the mapping the JSON-directory path has always used.
+ */
+export function canonicalWordsForBlock(
+  index: TranscriptIndex,
+  block: {
+    sourceSegmentIds: readonly string[];
+    tokens: ReadonlyArray<{ sourceWordIds: readonly string[] }>;
+  },
+): IndexedWord[] {
+  const { wordsById, segmentsById } = lookupsFor(index);
+
+  const seen = new Set<string>();
+  const fromTokens: IndexedWord[] = [];
+  for (const token of block.tokens) {
+    for (const wordId of token.sourceWordIds) {
+      if (seen.has(wordId)) {
+        continue;
+      }
+      seen.add(wordId);
+      const word = wordsById.get(wordId);
+      if (word) {
+        fromTokens.push(word);
+      }
+    }
+  }
+  if (fromTokens.length > 0) {
+    return fromTokens;
+  }
+
+  return block.sourceSegmentIds
+    .map((segmentId) => segmentsById.get(segmentId))
+    .filter((segment): segment is IndexedSegment => Boolean(segment))
+    .flatMap((segment) => segment.words);
+}
+
 function upperBound(values: number[], target: number): number {
   let low = 0;
   let high = values.length;
@@ -536,4 +642,28 @@ function formatVttTimestamp(ms: number): string {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(
     seconds,
   ).padStart(2, "0")}.${String(milliseconds).padStart(3, "0")}`;
+}
+
+/**
+ * How many of a turn's words the producer flagged as probable crosstalk.
+ *
+ * Cassini records, per word, how far the loudest other microphone sat above its
+ * own noise floor compared with the attributed speaker's. A large gap means
+ * somebody else was talking and this participant's track merely picked them up.
+ */
+export function lowConfidenceWordCount(words: readonly TranscriptWord[]): number {
+  return words.reduce((count, word) => (word.lowConfidenceSpeaker ? count + 1 : count), 0);
+}
+
+/**
+ * A turn built entirely from words the acoustic evidence attributes to somebody
+ * else — the shape where a quiet track picks up whoever is actually speaking and
+ * the decoder renders it as a short interjection by the wrong person.
+ *
+ * Requires every word to be flagged, not merely some: a real turn that happens
+ * to overlap someone louder should not be written off wholesale.
+ */
+export function isLikelyCrosstalkTurn(words: readonly TranscriptWord[]): boolean {
+  if (words.length === 0) return false;
+  return lowConfidenceWordCount(words) === words.length;
 }

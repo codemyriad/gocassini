@@ -477,6 +477,16 @@ export function buildTranscriptWordsFromPortable(
       : [];
     const speaker =
       typeof segment.speaker === "string" && segment.speaker.trim() !== "" ? segment.speaker : undefined;
+    // Attribution provenance rides on the raw-asr items themselves (optional
+    // keys; null and non-finite values mean "not measured"). Copy it onto
+    // every word the item yields, or the canonical index — the thing the
+    // crosstalk badge is judged on — silently loses the evidence for meetings
+    // opened from a .opus.
+    const attributionGapDb =
+      typeof segment.attributionGapDb === "number" && Number.isFinite(segment.attributionGapDb)
+        ? segment.attributionGapDb
+        : undefined;
+    const lowConfidenceSpeaker = segment.lowConfidenceSpeaker === true ? true : undefined;
 
     return {
       id: segmentId,
@@ -487,6 +497,8 @@ export function buildTranscriptWordsFromPortable(
       words: words.map((word) => ({
         ...word,
         id: `${segmentId}:${word.id}`,
+        ...(attributionGapDb === undefined ? {} : { attributionGapDb }),
+        ...(lowConfidenceSpeaker === undefined ? {} : { lowConfidenceSpeaker }),
       })),
     };
   });
@@ -525,6 +537,12 @@ function extractPortableReadableWords(
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
       return [];
     }
+    // Deliberately no attribution carry here: readable-segment words only ever
+    // feed display TIMING (token start/end via sourceWords) — no judgement or
+    // rendering path reads attribution off them, and the producer never writes
+    // readable words at all. Attribution travels on the raw-asr items instead
+    // (see buildTranscriptWordsFromPortable), which is what the canonical
+    // index — and therefore the crosstalk badge — is built from.
     return [{
       id: typeof word.id === "string" && word.id.trim() !== "" ? word.id : `${segmentId}:w_${index}`,
       text,
