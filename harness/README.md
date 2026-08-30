@@ -766,7 +766,11 @@ CI and exact-image local validation use the stack-owning faithful vertical:
 
 ```bash
 IMAGE_REF=cassini-exapp:local-faithful
-docker build -f deployment/Dockerfile.exapp -t "$IMAGE_REF" .
+FFMPEG_VERSION="$(deployment/ffmpeg/resolve-latest.sh)"
+docker build \
+  --build-arg "FFMPEG_VERSION=$FFMPEG_VERSION" \
+  -f deployment/Dockerfile.exapp \
+  -t "$IMAGE_REF" .
 CASSINI_EXPECT_GPU_UNAVAILABLE=1 IMAGE_REF="$IMAGE_REF" \
   ./harness/bin/ci-e2e-installed-exapp-talk.sh
 ```

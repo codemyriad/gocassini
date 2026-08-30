@@ -26,7 +26,7 @@ func baseManifestV2() Manifest {
 			DurationMS:  60000,
 		},
 		Integrity: Integrity{
-			MatchPolicy: AudioMatchPolicy,
+			MatchPolicy: LegacyAudioMatchPolicyPCM,
 			PCMFormat:   AudioPCMFormat,
 			PCMSHA256:   strings.Repeat("a", 64),
 			SampleRate:  48000,
@@ -36,6 +36,19 @@ func baseManifestV2() Manifest {
 		},
 		Speakers: []Speaker{{ID: "spk_0", Label: "Alice"}},
 	}
+}
+
+func baseManifestV3() Manifest {
+	manifest := baseManifestV2()
+	manifest.Integrity = Integrity{
+		MatchPolicy: AudioMatchPolicy,
+		OpusSHA256:  strings.Repeat("b", 64),
+		SampleRate:  48000,
+		Channels:    1,
+		SampleCount: 2_880_000,
+		DurationMS:  60000,
+	}
+	return manifest
 }
 
 func sampleBody(speaker string, words ...string) TranscriptBody {
@@ -232,6 +245,57 @@ func TestEncodeManifestV2EmitsExpectedShape(t *testing.T) {
 	}
 	if wire.Provenance.SpeechToText["canary"] == nil || wire.Provenance.SpeechToText["canary"].Model != "canary-1b-v2" {
 		t.Errorf("canary provenance wrong: %+v", wire.Provenance.SpeechToText["canary"])
+	}
+}
+
+func TestEncodeManifestV3UsesCompressedOpusIntegrity(t *testing.T) {
+	manifest := baseManifestV3()
+	transcripts := []TranscriptInput{{
+		ID: "parakeet", Role: RoleRawASR, Default: true,
+		Body: sampleBody("spk_0", "compressed", "identity"),
+	}}
+	encoded, err := EncodeManifestV3(manifest, transcripts, 0)
+	if err != nil {
+		t.Fatalf("EncodeManifestV3: %v", err)
+	}
+
+	var wire manifestV2Wire
+	if err := json.Unmarshal(encoded.Main.JSON, &wire); err != nil {
+		t.Fatalf("decode v3 wire: %v", err)
+	}
+	if wire.Version != 3 {
+		t.Errorf("version = %d, want 3", wire.Version)
+	}
+	if wire.Integrity.MatchPolicy != AudioMatchPolicy {
+		t.Errorf("matchPolicy = %q, want %q", wire.Integrity.MatchPolicy, AudioMatchPolicy)
+	}
+	if wire.Integrity.OpusSHA256 != strings.Repeat("b", 64) {
+		t.Errorf("opusAudioSha256 = %q", wire.Integrity.OpusSHA256)
+	}
+	if wire.Integrity.PCMSHA256 != "" || wire.Integrity.PCMFormat != "" {
+		t.Errorf("v3 leaked legacy PCM integrity: %+v", wire.Integrity)
+	}
+
+	tags := BuildOpusTagsV3(manifest, encoded, "parakeet")
+	if tags["CASSINI_FORMAT"] != FormatV3 {
+		t.Errorf("CASSINI_FORMAT = %q, want %q", tags["CASSINI_FORMAT"], FormatV3)
+	}
+	if tags["CASSINI_AUDIO_OPUS_SHA256"] != strings.Repeat("b", 64) {
+		t.Errorf("CASSINI_AUDIO_OPUS_SHA256 = %q", tags["CASSINI_AUDIO_OPUS_SHA256"])
+	}
+	if _, ok := tags["CASSINI_AUDIO_PCM_SHA256"]; ok {
+		t.Error("v3 emitted CASSINI_AUDIO_PCM_SHA256")
+	}
+}
+
+func TestEncodeManifestV3RequiresCompressedDigest(t *testing.T) {
+	manifest := baseManifestV3()
+	manifest.Integrity.OpusSHA256 = ""
+	_, err := EncodeManifestV3(manifest, []TranscriptInput{{
+		ID: "parakeet", Role: RoleRawASR, Default: true, Body: sampleBody("spk_0", "x"),
+	}}, 0)
+	if err == nil || !strings.Contains(err.Error(), "opusAudioSha256") {
+		t.Fatalf("error = %v, want missing opusAudioSha256", err)
 	}
 }
 

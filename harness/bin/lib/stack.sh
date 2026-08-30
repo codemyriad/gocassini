@@ -667,7 +667,7 @@ harness_prepare_exapp_image() {
 
   local image_mode="${CASSINI_HARNESS_EXAPP_IMAGE_MODE:-reuse-local}"
   local image_local="cassini-exapp:e2e-v3-cpu-gpu"
-  local info_xml image_tag image_as_production
+  local info_xml image_tag image_as_production ffmpeg_version
   # shellcheck source=../lib-exapp-image.sh disable=SC1091 # path built from TEST_DIR at runtime
   source "$TEST_DIR/bin/lib-exapp-image.sh"
   info_xml="$(harness_exapp_info_xml_path)"
@@ -677,7 +677,13 @@ harness_prepare_exapp_image() {
   case "$image_mode" in
     build)
       log "ExApp image phase: building $image_local"
-      docker build -f "$REPO_ROOT/deployment/Dockerfile.exapp" -t "$image_local" "$REPO_ROOT"
+      ffmpeg_version="$("$REPO_ROOT/deployment/ffmpeg/resolve-latest.sh")"
+      log "ExApp image phase: selected newest stable FFmpeg $ffmpeg_version"
+      docker build \
+        --build-arg "FFMPEG_VERSION=$ffmpeg_version" \
+        -f "$REPO_ROOT/deployment/Dockerfile.exapp" \
+        -t "$image_local" \
+        "$REPO_ROOT"
       docker tag "$image_local" "$image_as_production"
       log "ExApp image phase: tagged $image_local as $image_as_production"
       ;;

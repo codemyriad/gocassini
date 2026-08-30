@@ -32,6 +32,19 @@ func buildPortableMeetingV2TagsFromSource(manifest portable.Manifest, source por
 	return portable.BuildOpusTagsV2(manifest, encoded, defaultID), nil
 }
 
+func buildPortableMeetingV3TagsFromSource(manifest portable.Manifest, source portableMeetingSource) (map[string]string, error) {
+	transcripts, defaultID, err := assembleV2TranscriptInputs(manifest, source)
+	if err != nil {
+		return nil, err
+	}
+
+	encoded, err := portable.EncodeManifestV3(manifest, transcripts, portable.DefaultPayloadChunkSize)
+	if err != nil {
+		return nil, fmt.Errorf("encode portable v3 manifest: %w", err)
+	}
+	return portable.BuildOpusTagsV3(manifest, encoded, defaultID), nil
+}
+
 // assembleV2TranscriptInputs returns the list of transcript inputs plus the
 // id of the default raw-ASR entry. The default rule: if any input declares
 // Default=true, that's the default; otherwise the first raw-ASR input wins.
