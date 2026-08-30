@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os/exec"
 	"sort"
 )
 
@@ -65,7 +66,12 @@ type SpeakerEnvelope struct {
 	// score hundreds of dB above "its own floor", which would win every word.
 	Present []bool
 	// FloorDB and SpeechDB are this track's own quiet and loud levels, computed
-	// over present frames only.
+	// over present frames only. SpeechDB is the speaker's speech reference: the
+	// 97th percentile of present-frame level, pooled per logical speaker by
+	// calibrateByLogicalSpeaker as the loudest any of their streams established
+	// — a level this microphone is known to reach when its owner actually
+	// speaks. Flaggability depends on it: a word may only be flagged when the
+	// owner's own level sits well below this reference (see ownerQuietDuring).
 	FloorDB  float64
 	SpeechDB float64
 	HopMS    int64
@@ -120,6 +126,11 @@ func (e *SpeakerEnvelope) aboveFloor(startMS, endMS int64) (float64, bool) {
 // BuildSpeakerEnvelopes decodes each participant track once and reduces it to a
 // level envelope on the shared timeline. This is cheap next to ASR: it is the
 // same ffmpeg decode the transcription pass already performs, plus arithmetic.
+//
+// The decode is streamed: PCM is consumed from the ffmpeg pipe in small chunks
+// and folded into frames as it arrives, so peak memory is O(frames) — a track
+// never exists in memory as a whole PCM slice here. A 2-hour track is ~460 MB
+// of float32 if materialised; its envelope is ~4 MB.
 func BuildSpeakerEnvelopes(mkvPath string, streams []AudioStream, sampleRate int, progress io.Writer) ([]*SpeakerEnvelope, error) {
 	if sampleRate <= 0 {
 		sampleRate = 16000
@@ -132,11 +143,10 @@ func BuildSpeakerEnvelopes(mkvPath string, streams []AudioStream, sampleRate int
 
 	envelopes := make([]*SpeakerEnvelope, 0, len(streams))
 	for _, stream := range streams {
-		samples, err := ExtractSpeakerFloats(mkvPath, stream)
+		env, err := buildSpeakerEnvelopeStreaming(mkvPath, stream, frame, hop)
 		if err != nil {
 			return nil, fmt.Errorf("attribution: decode %s: %w", stream.SpeakerLabel, err)
 		}
-		env := envelopeFromSamples(stream.SpeakerID, samples, frame, hop, int64(attributionHopMS))
 		envelopes = append(envelopes, env)
 	}
 	calibrateByLogicalSpeaker(envelopes)
@@ -214,8 +224,38 @@ func calibrateByLogicalSpeaker(envelopes []*SpeakerEnvelope) {
 	}
 }
 
-// envelopeFromSamples is the pure core of BuildSpeakerEnvelopes, split out so
-// the framing and calibration can be tested without ffmpeg or a fixture.
+// frameStats reduces one frame of samples to its dB level and presence.
+//
+// The RMS is computed over the samples that actually carry audio (non-zero),
+// not over the whole frame. Timeline padding is exact digital silence, and a
+// frame can straddle a padding boundary: a 20 ms DTX packet inside a 32 ms
+// frame would otherwise be diluted by up to 20*log10(frame/covered) dB, which
+// on a DTX-shaped track puts every present frame during silence several dB
+// below the microphone's real floor — and min-pooling in
+// calibrateByLogicalSpeaker then spreads that too-low floor to the whole
+// speaker.
+func frameStats(samples []float32) (db float64, present bool) {
+	var sum float64
+	nonZero := 0
+	for _, s := range samples {
+		if s != 0 {
+			nonZero++
+			sum += float64(s) * float64(s)
+		}
+	}
+	var rms float64
+	if nonZero > 0 {
+		rms = math.Sqrt(sum / float64(nonZero))
+	}
+	// A frame of exact zeros is timeline padding, not captured silence:
+	// real capture always carries at least dither. Anything genuinely
+	// recorded, however quiet, has a non-zero sample somewhere in 32 ms.
+	return 20 * math.Log10(rms+1e-12), nonZero > 0
+}
+
+// envelopeFromSamples is the pure core of the envelope computation, split out
+// so the framing and calibration can be tested without ffmpeg or a fixture.
+// The streaming path must produce exactly this, frame for frame.
 func envelopeFromSamples(speakerID string, samples []float32, frame, hop int, hopMS int64) *SpeakerEnvelope {
 	env := &SpeakerEnvelope{SpeakerID: speakerID, HopMS: hopMS}
 	if len(samples) < frame || frame <= 0 || hop <= 0 {
@@ -226,22 +266,11 @@ func envelopeFromSamples(speakerID string, samples []float32, frame, hop int, ho
 	env.Present = make([]bool, n)
 	present := make([]float64, 0, n)
 	for i := 0; i < n; i++ {
-		var sum float64
-		nonZero := false
-		for _, s := range samples[i*hop : i*hop+frame] {
-			if s != 0 {
-				nonZero = true
-			}
-			sum += float64(s) * float64(s)
-		}
-		rms := math.Sqrt(sum / float64(frame))
-		env.FrameDB[i] = 20 * math.Log10(rms+1e-12)
-		// A frame of exact zeros is timeline padding, not captured silence:
-		// real capture always carries at least dither. Anything genuinely
-		// recorded, however quiet, has a non-zero sample somewhere in 32 ms.
-		env.Present[i] = nonZero
-		if nonZero {
-			present = append(present, env.FrameDB[i])
+		db, ok := frameStats(samples[i*hop : i*hop+frame])
+		env.FrameDB[i] = db
+		env.Present[i] = ok
+		if ok {
+			present = append(present, db)
 		}
 	}
 	if len(present) == 0 {
@@ -253,6 +282,139 @@ func envelopeFromSamples(speakerID string, samples []float32, frame, hop int, ho
 	env.FloorDB = percentileOf(present, attributionFloorPercentile)
 	env.SpeechDB = percentileOf(present, attributionSpeechPercentile)
 	return env
+}
+
+// attributionReadChunkBytes is how much decoded PCM the streaming envelope
+// reads from the ffmpeg pipe at a time. Small enough that the streaming path's
+// total allocation stays far below the track's sample count, large enough to
+// keep pipe overhead negligible.
+const attributionReadChunkBytes = 16 * 1024
+
+// buildSpeakerEnvelopeStreaming decodes one participant track with the same
+// ffmpeg invocation ExtractSpeakerFloats uses and folds the PCM into an
+// envelope as it arrives. Peak allocation is O(frames) plus fixed chunk
+// buffers — the track's PCM is never materialised as a whole.
+func buildSpeakerEnvelopeStreaming(mkvPath string, stream AudioStream, frame, hop int) (*SpeakerEnvelope, error) {
+	args := []string{
+		"-v", "error",
+		"-y",
+		"-i", mkvPath,
+	}
+	args = append(args, sparseTimelineDecodeArgs(stream, 16000)...)
+	args = append(args,
+		"-vn",
+		"-sn",
+		"-dn",
+		"-ac", "1",
+		"-ar", "16000",
+		"-f", "s16le",
+		"pipe:1",
+	)
+	cmd := exec.Command("ffmpeg", args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("open PCM pipe: %w", err)
+	}
+	var stderr boundedBuffer
+	stderr.limit = 8192
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start ffmpeg: %w", err)
+	}
+
+	builder := newEnvelopeBuilder(stream.SpeakerID, frame, hop, int64(attributionHopMS))
+	chunkSamples := attributionReadChunkBytes / 2
+	raw := make([]byte, attributionReadChunkBytes)
+	floats := make([]float32, chunkSamples)
+	var readErr error
+	for {
+		n, err := io.ReadFull(stdout, raw)
+		if n%2 != 0 {
+			readErr = fmt.Errorf("decoded PCM has odd byte count")
+			break
+		}
+		if n > 0 {
+			count := n / 2
+			for i := 0; i < count; i++ {
+				lo := raw[i*2]
+				hi := raw[i*2+1]
+				s16 := int16(uint16(lo) | uint16(hi)<<8)
+				floats[i] = float32(s16) / 32768.0
+			}
+			builder.push(floats[:count])
+		}
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break
+		}
+		if err != nil {
+			readErr = fmt.Errorf("read decoded PCM: %w", err)
+			break
+		}
+	}
+	if readErr != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+	waitErr := cmd.Wait()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if waitErr != nil {
+		return nil, fmt.Errorf("ffmpeg: %w\n%s", waitErr, truncate(stderr.String(), 800))
+	}
+	return builder.finish(), nil
+}
+
+// envelopeBuilder folds streamed PCM into overlapping frames incrementally,
+// producing exactly what envelopeFromSamples produces on the concatenation of
+// every pushed chunk. It retains at most frame-1 carried samples plus one
+// chunk, never the track.
+type envelopeBuilder struct {
+	frame, hop int
+	env        *SpeakerEnvelope
+	presentDB  []float64
+	work       []float32
+}
+
+func newEnvelopeBuilder(speakerID string, frame, hop int, hopMS int64) *envelopeBuilder {
+	return &envelopeBuilder{
+		frame: frame,
+		hop:   hop,
+		env:   &SpeakerEnvelope{SpeakerID: speakerID, HopMS: hopMS},
+		work:  make([]float32, 0, frame+attributionReadChunkBytes/2),
+	}
+}
+
+func (b *envelopeBuilder) push(chunk []float32) {
+	b.work = append(b.work, chunk...)
+	off := 0
+	for off+b.frame <= len(b.work) {
+		db, ok := frameStats(b.work[off : off+b.frame])
+		b.env.FrameDB = append(b.env.FrameDB, db)
+		b.env.Present = append(b.env.Present, ok)
+		if ok {
+			b.presentDB = append(b.presentDB, db)
+		}
+		off += b.hop
+	}
+	// Keep the tail that has not yet completed a frame (always < frame
+	// samples), moved to the front of the fixed-capacity buffer so no append
+	// ever reallocates.
+	rem := copy(b.work, b.work[off:])
+	b.work = b.work[:rem]
+}
+
+func (b *envelopeBuilder) finish() *SpeakerEnvelope {
+	// The final partial window (fewer than frame samples) is discarded, the
+	// same as envelopeFromSamples' 1+(len-frame)/hop framing.
+	if len(b.presentDB) == 0 {
+		// No captured audio at all: levels stay zero and the mask all-false,
+		// so aboveFloor declines every window and the track never claims a
+		// word. Matches envelopeFromSamples.
+		return b.env
+	}
+	b.env.FloorDB = percentileOf(b.presentDB, attributionFloorPercentile)
+	b.env.SpeechDB = percentileOf(b.presentDB, attributionSpeechPercentile)
+	return b.env
 }
 
 func percentileOf(values []float64, pct float64) float64 {
@@ -331,7 +493,25 @@ func EstimateCrosstalkThresholdDB(gaps []float64) (threshold float64, ok bool) {
 		// this many dB either side of the threshold.
 		valleyHalfWidthDB = 3.0
 		valleyMaxShare    = 0.10
+		// outlierTrimPercentile: gaps above this percentile are excluded from
+		// the estimate (not from flagging — the threshold still applies to
+		// every word). A handful of words measured while a rival was shouting
+		// sit far above the genuine crosstalk mode; left in, they capture the
+		// upper k-means centre, the mode is absorbed into the lower cluster,
+		// and a populated, tight, well-separated crosstalk mode either gets a
+		// wrong threshold above it or is declined for looking too spread out.
+		outlierTrimPercentile = 99.0
 	)
+	if len(gaps) > 0 {
+		cut := percentileOf(gaps, outlierTrimPercentile)
+		trimmed := make([]float64, 0, len(gaps))
+		for _, g := range gaps {
+			if g <= cut {
+				trimmed = append(trimmed, g)
+			}
+		}
+		gaps = trimmed
+	}
 	if len(gaps) < minSampleForSplit {
 		return 0, false
 	}
@@ -345,10 +525,12 @@ func EstimateCrosstalkThresholdDB(gaps []float64) (threshold float64, ok bool) {
 		return 0, false
 	}
 
-	// Seed the two centres from the extremes of the WHOLE distribution, not of
-	// the candidate subset: when every crosstalk word sits at the same level the
-	// subset has zero range, and seeding from it collapses both centres onto the
-	// same point so nothing is ever found.
+	// Seed the two centres from the extremes of the outlier-trimmed
+	// distribution, not of the candidate subset: when every crosstalk word
+	// sits at the same level the subset has zero range, and seeding from it
+	// collapses both centres onto the same point so nothing is ever found.
+	// Trimming above is what makes the max a usable seed — untrimmed, five
+	// far outliers own the upper centre from iteration one.
 	lo, hi := gaps[0], gaps[0]
 	for _, g := range gaps {
 		lo = math.Min(lo, g)
@@ -444,6 +626,56 @@ func stddev(values []float64) float64 {
 	return math.Sqrt(sum / float64(len(values)))
 }
 
+// quietOwnerShortfallDB is how far below the owner's own speech reference
+// (SpeechDB) a word's own-track level must sit for the word to be FLAGGABLE.
+//
+// The gap alone cannot separate ghosts from genuine double-talk: with
+// asymmetric microphones (a close mic at ~38 dB SNR against a laptop mic at
+// ~27 dB) the interrupted speaker's REAL words measure +10..+15 dB — the same
+// band real hallucinated runs occupy. What does separate them is the owner's
+// own activity: a ghost word rides bleed on a track whose owner was NOT
+// speaking, and bleed typically sits 15-20 dB or more below the owner's own
+// speech level, while genuine speech — measured as the mean of the loudest
+// half of a padded word window — stays within ~10 dB of the p97 reference
+// even for soft words. 15 dB sits above the one and at the bottom of the
+// other, and errs toward keeping real words unflaggable: the expensive
+// mistake is flagging (and, in drop mode, deleting) a real word, not leaving
+// a ghost merely annotated.
+const quietOwnerShortfallDB = 15.0
+
+// ownerQuietDuring reports whether the word's owner was quiet over the word
+// window: their own level, on the loudest of their measurable streams, sits at
+// least quietOwnerShortfallDB below their pooled speech reference. This is the
+// flaggability precondition — the gap stays annotated on every measured word
+// as ranking evidence, but only words carrying the true ghost signature
+// (owner not speaking) may ever be flagged or dropped.
+//
+// A speaker whose streams never establish a reference above their bleed level
+// (they never spoke anywhere in the meeting) can never satisfy the shortfall,
+// so their words are never flaggable. That error goes in the safe direction:
+// missed ghosts stay annotated; real words are never deleted.
+func ownerQuietDuring(word Word, speakerID string, envelopes []*SpeakerEnvelope) bool {
+	quiet := false
+	for _, env := range envelopes {
+		if env.SpeakerID != speakerID {
+			continue
+		}
+		above, ok := env.aboveFloor(word.StartMS, word.EndMS)
+		if !ok {
+			continue
+		}
+		// Absolute own level over the window is above+FloorDB; the shortfall
+		// against the pooled reference is independent of the floor.
+		if env.SpeechDB-(env.FloorDB+above) < quietOwnerShortfallDB {
+			// One of the owner's streams shows them at or near speech level:
+			// they were talking, whatever any rival was doing.
+			return false
+		}
+		quiet = true
+	}
+	return quiet
+}
+
 // AttributionResult reports what the stage measured, for provenance and logs.
 type AttributionResult struct {
 	// WordsMeasured is how many words got a gap.
@@ -463,6 +695,15 @@ type AttributionResult struct {
 // result on the word. When drop is true and this meeting shows an unambiguous
 // crosstalk mode, flagged words are removed instead of merely marked.
 //
+// Every measured word keeps its gap as ranking evidence, but only words whose
+// owner was quiet (ownerQuietDuring) are FLAGGABLE, and the threshold is
+// estimated on that subset's gaps alone. Genuine double-talk under asymmetric
+// microphone SNR produces real words at +10..+15 dB — inside the ghost band —
+// and mixing them into the estimate either got them flagged or smeared the
+// upper cluster until the tightness gate declined and nothing was ever
+// flagged on real speech. The owner's own activity is the discriminator the
+// gap lacks.
+//
 // Segments whose words are all removed are dropped; surviving segments have
 // their bounds and text rebuilt so the artifact stays internally consistent.
 func AnnotateAttribution(segments []Segment, envelopes []*SpeakerEnvelope, drop bool) ([]Segment, AttributionResult) {
@@ -480,8 +721,13 @@ func AnnotateAttribution(segments []Segment, envelopes []*SpeakerEnvelope, drop 
 			}
 			segments[si].Words[wi].AttributionGapDB = gap
 			segments[si].Words[wi].HasAttributionGap = true
-			gaps = append(gaps, gap)
 			res.WordsMeasured++
+			// Only flaggable words feed the estimator: gaps measured while the
+			// owner was audibly speaking are double-talk evidence, not
+			// crosstalk candidates, and they contaminate the fit.
+			if ownerQuietDuring(segments[si].Words[wi], segments[si].SpeakerID, envelopes) {
+				gaps = append(gaps, gap)
+			}
 		}
 	}
 	if res.WordsMeasured == 0 {
@@ -502,7 +748,8 @@ func AnnotateAttribution(segments []Segment, envelopes []*SpeakerEnvelope, drop 
 		}
 		kept := make([]Word, 0, len(seg.Words))
 		for _, w := range seg.Words {
-			if w.HasAttributionGap && w.AttributionGapDB >= threshold {
+			if w.HasAttributionGap && w.AttributionGapDB >= threshold &&
+				ownerQuietDuring(w, seg.SpeakerID, envelopes) {
 				res.Flagged++
 				w.LowConfidenceSpeaker = true
 				if drop {

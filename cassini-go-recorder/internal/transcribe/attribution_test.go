@@ -3,6 +3,9 @@ package transcribe
 import (
 	"math"
 	"math/rand"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -152,39 +155,44 @@ func TestEstimateCrosstalkThresholdIgnoresTinySamples(t *testing.T) {
 	}
 }
 
-// twoSpeakerScene builds a 4-second pair of tracks with a real quiet/loud
-// contrast, so each track's own floor is meaningful: both are near-silent for
-// the first two seconds, then spk_a talks while spk_b stays at its floor. Words
-// are placed inside spk_a's speaking half, so a word attributed to spk_b there
-// is exactly the crosstalk case.
+// twoSpeakerScene builds a 6-second pair of tracks with a real quiet/loud
+// contrast on BOTH: each is near-silent outside its own speech, spk_a talks in
+// seconds 2-4, and spk_b talks in seconds 4-6 — which establishes spk_b's own
+// speech reference, without which none of their words would be flaggable.
+// Three word populations cover the cases: spk_a's real words during their
+// speech (owner at reference, never flaggable), ghost words on spk_b during
+// spk_a's speech (owner quiet, rival loud — the crosstalk shape), and murmur
+// words on spk_b during the opening silence (owner quiet, rival quiet — the
+// flaggable lower cluster the estimator needs to see a bimodal distribution).
 func twoSpeakerScene(t *testing.T) ([]*SpeakerEnvelope, []Segment) {
 	t.Helper()
 	const sr = 16000
 	frame, hop := sr*attributionFrameMS/1000, sr*attributionHopMS/1000
 
-	quietHalf := tone(sr*2, 0.0008)
-	talker := append(append([]float32(nil), quietHalf...), tone(sr*2, 0.4)...)
-	silent := append(append([]float32(nil), quietHalf...), tone(sr*2, 0.0008)...)
+	quiet := func(n int) []float32 { return tone(n, 0.0008) }
+	talker := append(append(append([]float32(nil), quiet(sr*2)...), tone(sr*2, 0.4)...), quiet(sr*2)...)
+	other := append(append([]float32(nil), quiet(sr*4)...), tone(sr*2, 0.3)...)
 
 	envs := []*SpeakerEnvelope{
 		envelopeFromSamples("spk_a", talker, frame, hop, attributionHopMS),
-		envelopeFromSamples("spk_b", silent, frame, hop, attributionHopMS),
+		envelopeFromSamples("spk_b", other, frame, hop, attributionHopMS),
 	}
 
-	var aWords, bWords []Word
+	var aWords, ghost, murmur []Word
 	for i := 0; i < 60; i++ {
 		start := int64(2100 + i*30)
 		aWords = append(aWords, Word{Text: "real", StartMS: start, EndMS: start + 25})
-	}
-	for i := 0; i < 30; i++ {
-		start := int64(2100 + i*30)
-		bWords = append(bWords, Word{Text: "ghost", StartMS: start, EndMS: start + 25})
+		ghost = append(ghost, Word{Text: "ghost", StartMS: start, EndMS: start + 25})
+		early := int64(100 + i*30)
+		murmur = append(murmur, Word{Text: "murmur", StartMS: early, EndMS: early + 25})
 	}
 	segments := []Segment{
 		{SpeakerID: "spk_a", StartMS: aWords[0].StartMS, EndMS: aWords[len(aWords)-1].EndMS,
 			Text: "real", Words: aWords},
-		{SpeakerID: "spk_b", StartMS: bWords[0].StartMS, EndMS: bWords[len(bWords)-1].EndMS,
-			Text: "ghost", Words: bWords},
+		{SpeakerID: "spk_b", StartMS: ghost[0].StartMS, EndMS: ghost[len(ghost)-1].EndMS,
+			Text: "ghost", Words: ghost},
+		{SpeakerID: "spk_b", StartMS: murmur[0].StartMS, EndMS: murmur[len(murmur)-1].EndMS,
+			Text: "murmur", Words: murmur},
 	}
 	return envs, segments
 }
@@ -193,8 +201,8 @@ func TestAnnotateAttributionMarksButKeepsByDefault(t *testing.T) {
 	envs, segments := twoSpeakerScene(t)
 
 	annotated, res := AnnotateAttribution(segments, envs, false)
-	if res.WordsMeasured != 90 {
-		t.Fatalf("expected all 90 words measured, got %d", res.WordsMeasured)
+	if res.WordsMeasured != 180 {
+		t.Fatalf("expected all 180 words measured, got %d", res.WordsMeasured)
 	}
 	if !res.ThresholdFound {
 		t.Fatal("a clean two-mode distribution should yield a threshold")
@@ -202,7 +210,7 @@ func TestAnnotateAttributionMarksButKeepsByDefault(t *testing.T) {
 	if res.Dropped != 0 {
 		t.Errorf("annotate-only must not drop, dropped %d", res.Dropped)
 	}
-	if CountWords(annotated) != 90 {
+	if CountWords(annotated) != 180 {
 		t.Errorf("annotate-only must keep every word, got %d", CountWords(annotated))
 	}
 	if res.Flagged == 0 {
@@ -223,8 +231,9 @@ func TestAnnotateAttributionMarksButKeepsByDefault(t *testing.T) {
 			}
 		}
 	}
-	if flaggedOnGhost == 0 {
-		t.Error("the bleed track's words should be flagged")
+	if flaggedOnGhost != 60 {
+		t.Errorf("exactly the 60 ghost words during spk_a's speech should be flagged "+
+			"(the murmur words carry no gap to speak of), got %d", flaggedOnGhost)
 	}
 	if flaggedOnReal != 0 {
 		t.Errorf("the real speaker's words must not be flagged, got %d", flaggedOnReal)
@@ -238,8 +247,8 @@ func TestAnnotateAttributionDropsOnlyWhenAsked(t *testing.T) {
 	if res.Dropped == 0 {
 		t.Fatal("dropping was requested but nothing was dropped")
 	}
-	if CountWords(annotated) != 90-res.Dropped {
-		t.Errorf("word count %d does not match 90 - %d dropped", CountWords(annotated), res.Dropped)
+	if CountWords(annotated) != 180-res.Dropped {
+		t.Errorf("word count %d does not match 180 - %d dropped", CountWords(annotated), res.Dropped)
 	}
 	for _, seg := range annotated {
 		if len(seg.Words) == 0 {
@@ -254,11 +263,24 @@ func TestAnnotateAttributionDropsOnlyWhenAsked(t *testing.T) {
 	if err := ValidateSegments(annotated); err != nil {
 		t.Errorf("dropped output must still be a valid transcript: %v", err)
 	}
-	// The words that survive must be the real speaker's, not the bleed.
+	// Exactly the ghost words must be gone: spk_b's murmur words carry a
+	// near-zero gap and must survive drop mode untouched.
+	var ghostLeft, murmurLeft int
 	for _, seg := range annotated {
-		if seg.SpeakerID == "spk_b" && len(seg.Words) > 0 {
-			t.Errorf("bleed segment survived with %d words", len(seg.Words))
+		for _, w := range seg.Words {
+			switch w.Text {
+			case "ghost":
+				ghostLeft++
+			case "murmur":
+				murmurLeft++
+			}
 		}
+	}
+	if ghostLeft != 0 {
+		t.Errorf("%d ghost words survived drop mode", ghostLeft)
+	}
+	if murmurLeft != 60 {
+		t.Errorf("spk_b's own quiet words must survive drop mode, kept %d of 60", murmurLeft)
 	}
 }
 
@@ -370,17 +392,24 @@ func TestDuplicateSpeakerStreamsAreConsolidated(t *testing.T) {
 // that survive — not the first word's start and the last word's end. Getting
 // that wrong reintroduces the invalid envelope fixed in #216.
 func TestDropModeKeepsSegmentEnvelopeAroundOverlappingWords(t *testing.T) {
+	// Speaker a talks through the first half (30 dB above floor) and is quiet
+	// after; b's track is at its floor throughout but b's reference says they
+	// do speak at 30 somewhere, so b's words are flaggable: bleed words during
+	// a's speech carry a 30 dB gap, hush words in the quiet tail carry ~0 —
+	// the bimodal population drop mode needs.
 	frames := make([]float64, 400)
 	for i := range frames {
-		frames[i] = 30
+		if i < 200 {
+			frames[i] = 30
+		}
 	}
 	present := make([]bool, 400)
 	for i := range present {
 		present[i] = true
 	}
 	envs := []*SpeakerEnvelope{
-		{SpeakerID: "a", FrameDB: frames, Present: present, FloorDB: 0, HopMS: attributionHopMS},
-		{SpeakerID: "b", FrameDB: make([]float64, 400), Present: present, FloorDB: 0, HopMS: attributionHopMS},
+		{SpeakerID: "a", FrameDB: frames, Present: present, FloorDB: 0, SpeechDB: 30, HopMS: attributionHopMS},
+		{SpeakerID: "b", FrameDB: make([]float64, 400), Present: present, FloorDB: 0, SpeechDB: 30, HopMS: attributionHopMS},
 	}
 	real := make([]Word, 60)
 	for i := range real {
@@ -389,14 +418,20 @@ func TestDropModeKeepsSegmentEnvelopeAroundOverlappingWords(t *testing.T) {
 	}
 	// A long word that outlasts every word starting after it.
 	real[0].EndMS = 5000
-	bleed := make([]Word, 30)
+	bleed := make([]Word, 60)
 	for i := range bleed {
 		s := int64(100 + i*10)
 		bleed[i] = Word{Text: "bleed", StartMS: s, EndMS: s + 5}
 	}
+	hush := make([]Word, 60)
+	for i := range hush {
+		s := int64(3500 + i*10)
+		hush[i] = Word{Text: "hush", StartMS: s, EndMS: s + 5}
+	}
 	segments := []Segment{
 		{SpeakerID: "a", StartMS: 100, EndMS: 5000, Text: "real", Words: real},
-		{SpeakerID: "b", StartMS: 100, EndMS: 400, Text: "bleed", Words: bleed},
+		{SpeakerID: "b", StartMS: 100, EndMS: 700, Text: "bleed", Words: bleed},
+		{SpeakerID: "b", StartMS: 3500, EndMS: 4105, Text: "hush", Words: hush},
 	}
 
 	out, res := AnnotateAttribution(segments, envs, true)
@@ -705,5 +740,378 @@ func TestReadableCleanupInsertionFlagsExactlyTheContradictedWord(t *testing.T) {
 	}
 	if flagged != 1 {
 		t.Errorf("one contradicted source word flagged %d cleaned words", flagged)
+	}
+}
+
+// signNoise builds a constant-magnitude, random-sign buffer. Its RMS over ANY
+// non-empty subset of samples is exactly amp, which makes floor expectations
+// exact: a correct partial-frame RMS gives identical floors however the audio
+// is sliced, while whole-frame averaging dilutes partially covered frames.
+func signNoise(n int, amp float32, seed int64) []float32 {
+	rng := rand.New(rand.NewSource(seed))
+	out := make([]float32, n)
+	for i := range out {
+		if rng.Intn(2) == 0 {
+			out[i] = amp
+		} else {
+			out[i] = -amp
+		}
+	}
+	return out
+}
+
+// A DTX-shaped track materialises as short packets of real audio inside long
+// runs of exact-zero timeline padding, and a packet routinely starts and ends
+// mid-frame. A frame's RMS must be computed over the samples that are actually
+// present: averaged over the whole frame, a 20 ms packet inside a 32 ms frame
+// reads up to ~6 dB quiet, every present frame during silence is partial, and
+// the track's 20th-percentile floor lands well below the microphone's real
+// floor — which min-pooling then spreads to the whole speaker.
+func TestPartialFramesAreNotDilutedByPadding(t *testing.T) {
+	const sr = 16000
+	frame, hop := sr*attributionFrameMS/1000, sr*attributionHopMS/1000
+	const amp = 0.0006
+
+	// The same microphone noise, continuous vs DTX-shaped: one 20 ms packet
+	// (320 samples) every 400 ms, each starting mid-frame (offset 137 is not a
+	// multiple of the 256-sample hop, so every packet boundary cuts frames).
+	continuous := envelopeFromSamples("cont", signNoise(sr*4, amp, 1), frame, hop, attributionHopMS)
+	dtx := make([]float32, sr*12)
+	for start := 137; start+320 <= len(dtx); start += 6400 {
+		copy(dtx[start:start+320], signNoise(320, amp, int64(start)))
+	}
+	sparse := envelopeFromSamples("dtx", dtx, frame, hop, attributionHopMS)
+
+	var present int
+	for _, ok := range sparse.Present {
+		if ok {
+			present++
+		}
+	}
+	if present < 10 {
+		t.Fatalf("fixture broke: only %d present frames on the DTX track", present)
+	}
+	if got := math.Abs(continuous.FloorDB - sparse.FloorDB); got > 1 {
+		t.Errorf("identical noise must calibrate alike however it is packetised: "+
+			"continuous floor %.1f dB, DTX floor %.1f dB (Δ %.1f dB)",
+			continuous.FloorDB, sparse.FloorDB, got)
+	}
+}
+
+// A handful of words measured while a rival was shouting sit far above the
+// genuine crosstalk mode. Seeded at the global max, the upper k-means centre
+// belonged to those outliers, the mode was absorbed into the lower cluster,
+// and a populated, tight, well-separated crosstalk mode was either cut above
+// (flagging only the outliers) or declined as too spread out. The estimate
+// must land in the valley under the mode regardless.
+func TestEstimateCrosstalkThresholdSurvivesFarOutliers(t *testing.T) {
+	rng := rand.New(rand.NewSource(3))
+	gaps := make([]float64, 0, 732)
+	for i := 0; i < 586; i++ {
+		gaps = append(gaps, math.Abs(rng.NormFloat64()*2.0))
+	}
+	for i := 0; i < 140; i++ {
+		gaps = append(gaps, 22+rng.NormFloat64())
+	}
+	for i := 0; i < 6; i++ {
+		gaps = append(gaps, 55+rng.NormFloat64())
+	}
+	thr, ok := EstimateCrosstalkThresholdDB(gaps)
+	if !ok {
+		t.Fatal("a tight, populated, well-separated crosstalk mode must be found " +
+			"even with a few far outliers above it")
+	}
+	// The valley sits between the lower mode (~0) and the crosstalk mode (22);
+	// a threshold at or above the mode means the outliers captured the fit.
+	if thr <= 6 || thr >= 19 {
+		t.Errorf("threshold %.1f dB is not in the valley below the 22 dB mode", thr)
+	}
+}
+
+// The tightness gate is what keeps the estimator honest when the "upper
+// cluster" is two genuine sub-modes (say overlap plus crosstalk from different
+// rooms): the valley between them is empty and they are far from the lower
+// mode, so only stddev(upper) says "this is not one crosstalk population".
+// This distribution is accepted the moment that gate is removed.
+func TestEstimateCrosstalkThresholdRejectsABimodalUpperCluster(t *testing.T) {
+	rng := rand.New(rand.NewSource(5))
+	gaps := make([]float64, 0, 640)
+	for i := 0; i < 600; i++ {
+		gaps = append(gaps, math.Abs(rng.NormFloat64()*1.5))
+	}
+	for i := 0; i < 20; i++ {
+		gaps = append(gaps, 20+rng.NormFloat64()*0.5)
+	}
+	for i := 0; i < 20; i++ {
+		gaps = append(gaps, 35+rng.NormFloat64()*0.5)
+	}
+	if thr, ok := EstimateCrosstalkThresholdDB(gaps); ok {
+		t.Errorf("a bimodal upper cluster is not one crosstalk mode; got threshold %.1f dB", thr)
+	}
+}
+
+// The separation gate is what declines a tight mode that sits too close to the
+// lower mode for the cut to be trustworthy: here the valley near the forced
+// 8 dB minimum is essentially empty and the upper mode is tight, so only the
+// centre separation says no. This distribution is accepted the moment that
+// gate is removed.
+func TestEstimateCrosstalkThresholdRequiresSeparation(t *testing.T) {
+	rng := rand.New(rand.NewSource(9))
+	gaps := make([]float64, 0, 740)
+	for i := 0; i < 600; i++ {
+		gaps = append(gaps, math.Abs(rng.NormFloat64()*1.5))
+	}
+	for i := 0; i < 140; i++ {
+		gaps = append(gaps, 12+rng.NormFloat64()*0.5)
+	}
+	if thr, ok := EstimateCrosstalkThresholdDB(gaps); ok {
+		t.Errorf("a mode only ~10 dB above the noise cluster is too close to cut; got threshold %.1f dB", thr)
+	}
+}
+
+// The envelope stage must not materialise a track's PCM: the streaming decode
+// has to produce, frame for frame, exactly what the batch decode produces,
+// while allocating O(frames), not O(samples).
+func TestStreamingEnvelopeMatchesBatchDecode(t *testing.T) {
+	requireFFMediaTools(t)
+	mkv := filepath.Join("..", "..", "..", "harness", "media", "parakeet-smoke.mkv")
+	if _, err := os.Stat(mkv); err != nil {
+		t.Skipf("public smoke fixture not present: %v", err)
+	}
+	const sr = 16000
+	frame, hop := sr*attributionFrameMS/1000, sr*attributionHopMS/1000
+	stream := AudioStream{Index: 0, SpeakerID: "smoke", SpeakerLabel: "smoke"}
+
+	samples, err := ExtractSpeakerFloats(mkv, stream)
+	if err != nil {
+		t.Fatalf("batch decode: %v", err)
+	}
+	want := envelopeFromSamples("smoke", samples, frame, hop, attributionHopMS)
+	if len(want.FrameDB) == 0 {
+		t.Fatal("fixture decoded to no frames")
+	}
+
+	envs, err := BuildSpeakerEnvelopes(mkv, []AudioStream{stream}, sr, nil)
+	if err != nil {
+		t.Fatalf("streaming envelope: %v", err)
+	}
+	got := envs[0]
+	if len(got.FrameDB) != len(want.FrameDB) {
+		t.Fatalf("frame count differs: streaming %d, batch %d", len(got.FrameDB), len(want.FrameDB))
+	}
+	for i := range got.FrameDB {
+		if math.Abs(got.FrameDB[i]-want.FrameDB[i]) > 1e-6 {
+			t.Fatalf("frame %d differs: streaming %.9f dB, batch %.9f dB", i, got.FrameDB[i], want.FrameDB[i])
+		}
+		if got.Present[i] != want.Present[i] {
+			t.Fatalf("frame %d presence differs", i)
+		}
+	}
+	if math.Abs(got.FloorDB-want.FloorDB) > 1e-6 || math.Abs(got.SpeechDB-want.SpeechDB) > 1e-6 {
+		t.Fatalf("levels differ: streaming floor %.6f speech %.6f, batch floor %.6f speech %.6f",
+			got.FloorDB, got.SpeechDB, want.FloorDB, want.SpeechDB)
+	}
+
+	// The first call above warmed every code path; now measure. Materialising
+	// the track costs at least len(samples)*4 bytes in one slice; the
+	// streaming path's whole allocation budget must sit far below that.
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	if _, err := BuildSpeakerEnvelopes(mkv, []AudioStream{stream}, sr, nil); err != nil {
+		t.Fatalf("streaming envelope: %v", err)
+	}
+	runtime.ReadMemStats(&after)
+	delta := after.TotalAlloc - before.TotalAlloc
+	sampleBytes := uint64(len(samples)) * 4
+	if delta > sampleBytes/2 {
+		t.Errorf("streaming envelope allocated %d bytes for a track whose PCM is %d bytes; "+
+			"the track is being materialised", delta, sampleBytes)
+	}
+}
+
+// asymmetricScene builds the case the completeness critic measured end-to-end:
+// genuine double-talk under microphone-SNR asymmetry. The interrupted victim
+// speaks at their own reference (27 dB above their floor — a laptop mic's SNR)
+// while the interrupter's close mic runs at 38, so the victim's REAL words
+// measure a positive gap in the same +10..+15 dB band real ghost runs occupy.
+// A third quiet participant carries the actual ghosts: bleed words while the
+// hot rig is at a moderate level (region B), and quiet-quiet words (region C)
+// that give the estimator its lower cluster. hotB sets the hot rig's region-B
+// level so callers can spread the ghost band.
+func asymmetricScene(hotA func(i int) float64, hotB func(i int) float64) ([]*SpeakerEnvelope, []Segment) {
+	const n = 400
+	mk := func(id string, speech float64, level func(i int) float64) *SpeakerEnvelope {
+		fr := make([]float64, n)
+		pr := make([]bool, n)
+		for i := range fr {
+			fr[i] = level(i)
+			pr[i] = true
+		}
+		return &SpeakerEnvelope{SpeakerID: id, FrameDB: fr, Present: pr,
+			FloorDB: 0, SpeechDB: speech, HopMS: attributionHopMS}
+	}
+	victim := mk("victim", 27, func(i int) float64 {
+		if i < 100 {
+			return 27
+		}
+		return 0
+	})
+	hot := mk("hot", 38, func(i int) float64 {
+		if i < 100 {
+			return hotA(i)
+		}
+		if i < 200 {
+			return hotB(i)
+		}
+		return 0
+	})
+	quietguy := mk("quietguy", 30, func(i int) float64 { return 0 })
+
+	words := func(fromMS int64, text string) []Word {
+		out := make([]Word, 60)
+		for i := range out {
+			s := fromMS + int64(i)*25
+			out[i] = Word{Text: text, StartMS: s, EndMS: s + 20}
+		}
+		return out
+	}
+	vWords := words(40, "real")    // region A: frames 0-99 (0-1600 ms)
+	gWords := words(1660, "ghost") // region B: frames 100-199
+	cWords := words(3260, "hush")  // region C: everyone quiet
+	segments := []Segment{
+		{SpeakerID: "victim", StartMS: vWords[0].StartMS, EndMS: vWords[len(vWords)-1].EndMS,
+			Text: "real", Words: vWords},
+		{SpeakerID: "quietguy", StartMS: gWords[0].StartMS, EndMS: gWords[len(gWords)-1].EndMS,
+			Text: "ghost", Words: gWords},
+		{SpeakerID: "quietguy", StartMS: cWords[0].StartMS, EndMS: cWords[len(cWords)-1].EndMS,
+			Text: "hush", Words: cWords},
+	}
+	return []*SpeakerEnvelope{victim, hot, quietguy}, segments
+}
+
+// Genuine double-talk words under SNR asymmetry sit in the ghost band by gap
+// alone; the quiet-owner gate is what keeps them unflaggable — the victim was
+// speaking at their own reference level. Removing the gate makes this fail one
+// of two ways: the victim's words get flagged (flag filter), or the
+// double-talk contamination lands in the estimator's valley and the true
+// ghosts go unflagged (estimator input).
+func TestDoubleTalkWithAsymmetricMicsIsNotFlaggable(t *testing.T) {
+	flatA := func(int) float64 { return 38 }
+	flatB := func(int) float64 { return 14 }
+
+	envs, segments := asymmetricScene(flatA, flatB)
+	annotated, res := AnnotateAttribution(segments, envs, false)
+	if !res.ThresholdFound {
+		t.Fatal("the quiet-owner subset is cleanly bimodal; the estimator must find a threshold")
+	}
+	var victimFlagged, ghostFlagged int
+	victimGap := math.Inf(-1)
+	for _, seg := range annotated {
+		for _, w := range seg.Words {
+			switch w.Text {
+			case "real":
+				if !w.HasAttributionGap {
+					t.Fatal("the victim's words must stay measured: the gap is ranking evidence")
+				}
+				victimGap = w.AttributionGapDB
+				if w.LowConfidenceSpeaker {
+					victimFlagged++
+				}
+			case "ghost":
+				if w.LowConfidenceSpeaker {
+					ghostFlagged++
+				}
+			}
+		}
+	}
+	// The fixture must keep the victim in the dangerous band, above the found
+	// threshold — otherwise the gate is not what protects them.
+	if victimGap < 10 || victimGap > 15 {
+		t.Fatalf("fixture drifted: double-talk gap should sit at +10..+15 dB, got %.1f", victimGap)
+	}
+	if victimGap < res.ThresholdDB {
+		t.Fatalf("fixture drifted: victim gap %.1f dB is below the threshold %.1f dB, "+
+			"so the gate is not being exercised", victimGap, res.ThresholdDB)
+	}
+	if victimFlagged != 0 {
+		t.Errorf("genuine double-talk words were flagged (%d of 60): a speaker at their own "+
+			"reference level must never be", victimFlagged)
+	}
+	if ghostFlagged < 50 {
+		t.Errorf("the true ghosts should still be flagged, got %d of 60", ghostFlagged)
+	}
+
+	// Drop mode must keep every one of the victim's words.
+	envs2, segments2 := asymmetricScene(flatA, flatB)
+	dropped, resDrop := AnnotateAttribution(segments2, envs2, true)
+	if resDrop.Dropped == 0 {
+		t.Fatal("drop mode should have removed the ghosts")
+	}
+	var victimKept int
+	for _, seg := range dropped {
+		for _, w := range seg.Words {
+			if w.Text == "real" {
+				victimKept++
+			}
+		}
+	}
+	if victimKept != 60 {
+		t.Errorf("drop mode deleted real double-talk words: kept %d of 60", victimKept)
+	}
+}
+
+// On real speech the all-words positive-gap population is intrinsically broad:
+// double-talk words track voice dynamics and smear from ~+9 to ~+17 dB, the
+// upper cluster fails the tightness/valley gates, and the estimator declines —
+// which is why flagging only ever fired on synthetic constant-gap fixtures.
+// Restricted to quiet-owner words the double-talk contamination is gone and
+// the same meeting yields a clean bimodal split.
+func TestQuietOwnerSubsetRescuesABroadGapPopulation(t *testing.T) {
+	// The hot rig's level varies with speech dynamics during the double-talk,
+	// spreading the victim's gaps over +9..+17 dB; the ghosts sit at +30.
+	dynamicA := func(i int) float64 { return 36 + float64((i/12)%9) }
+	flatB := func(int) float64 { return 30 }
+
+	envs, segments := asymmetricScene(dynamicA, flatB)
+	annotated, res := AnnotateAttribution(segments, envs, false)
+
+	// The unrestricted population — what the estimator used to be fed — must
+	// decline: that is finding 2, nothing was ever flagged on real speech.
+	var all []float64
+	for _, seg := range annotated {
+		for _, w := range seg.Words {
+			if w.HasAttributionGap {
+				all = append(all, w.AttributionGapDB)
+			}
+		}
+	}
+	if thr, ok := EstimateCrosstalkThresholdDB(all); ok {
+		t.Errorf("the unrestricted gap population is broad and must decline, got %.1f dB — "+
+			"the quiet-owner subset would be no rescue", thr)
+	}
+	if !res.ThresholdFound {
+		t.Fatal("restricted to quiet-owner words the population separates cleanly; " +
+			"the estimator must find the mode")
+	}
+	var victimFlagged, ghostFlagged int
+	for _, seg := range annotated {
+		for _, w := range seg.Words {
+			if !w.LowConfidenceSpeaker {
+				continue
+			}
+			switch w.Text {
+			case "real":
+				victimFlagged++
+			case "ghost":
+				ghostFlagged++
+			}
+		}
+	}
+	if victimFlagged != 0 {
+		t.Errorf("broad double-talk words were flagged (%d)", victimFlagged)
+	}
+	if ghostFlagged < 50 {
+		t.Errorf("the ghost mode should be flagged once rescued, got %d of 60", ghostFlagged)
 	}
 }

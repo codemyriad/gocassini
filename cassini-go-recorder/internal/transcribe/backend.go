@@ -91,18 +91,41 @@ func ResolveRecognizerBackend(explicit string) string {
 	return SherpaOnnxBackend
 }
 
+// LookupRecognizerBackend resolves the backend id (explicit value, then
+// CASSINI_STT_BACKEND, then the bundled decoder) and confirms it is actually
+// registered. It is the cheap front-door check: BuildMeetingArtifact calls it
+// before probing, mixing, hashing or downloading anything, so a misconfigured
+// backend fails in milliseconds instead of after minutes of decode and
+// download work that would be repeated on every retry.
+func LookupRecognizerBackend(id string) (string, error) {
+	id = ResolveRecognizerBackend(id)
+	backendMu.RLock()
+	_, ok := backendRegistry[id]
+	backendMu.RUnlock()
+	if !ok {
+		return "", errUnknownBackend(id)
+	}
+	return id, nil
+}
+
+// errUnknownBackend is the loud refusal shared by every lookup path: silently
+// falling back to a different engine than the operator asked for would make
+// the resulting artifact's provenance a lie.
+func errUnknownBackend(id string) error {
+	return fmt.Errorf("unknown STT backend %q (available: %s)",
+		id, strings.Join(RecognizerBackends(), ", "))
+}
+
 // NewRecognizerForBackend builds a recognizer from the named backend. An
 // unknown id is an error naming what is available rather than a silent
-// fallback: quietly transcribing with a different engine than the operator
-// asked for would make the resulting artifact's provenance a lie.
+// fallback.
 func NewRecognizerForBackend(id string, paths ModelPaths, vadModelPath, provider string, numThreads int) (SpeechRecognizer, error) {
 	id = ResolveRecognizerBackend(id)
 	backendMu.RLock()
 	factory, ok := backendRegistry[id]
 	backendMu.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("unknown STT backend %q (available: %s)",
-			id, strings.Join(RecognizerBackends(), ", "))
+		return nil, errUnknownBackend(id)
 	}
 	rec, err := factory(paths, vadModelPath, provider, numThreads)
 	if err != nil {
