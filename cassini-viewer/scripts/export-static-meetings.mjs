@@ -445,9 +445,8 @@ export function buildReadableTranscriptFromPortable(portable, transcript) {
   };
 }
 
-function buildReadableDisplaySourceBlocks(readable, speakerLabels, transcriptSegments) {
-  const segmentById = new Map((Array.isArray(transcriptSegments) ? transcriptSegments : []).map((segment) => [segment.id, segment]));
-  const baseBlocks = readable.segments.map((segment, index) => {
+function buildReadableDisplaySourceBlocks(readable, speakerLabels) {
+  return readable.segments.map((segment, index) => {
     const blockId =
       typeof segment?.id === "string" && segment.id.trim() !== ""
         ? segment.id
@@ -462,292 +461,8 @@ function buildReadableDisplaySourceBlocks(readable, speakerLabels, transcriptSeg
       text: typeof segment?.text === "string" ? segment.text : "",
       sourceSegmentIds,
       words: extractPortableReadableWords(segment, blockId),
-      sourceWords: collectReadableSourceWords({
-        segment,
-        sourceSegmentIds,
-        segmentById,
-        transcriptSegments,
-      }),
     };
   });
-  return splitReadableBlocksOnInterruptions(baseBlocks);
-}
-
-function collectReadableSourceWords({ segment, sourceSegmentIds, segmentById, transcriptSegments }) {
-  const resolved = sourceSegmentIds
-    .map((segmentId) => segmentById.get(segmentId))
-    .filter(Boolean);
-  const candidates = resolved.length > 0
-    ? resolved
-    : (Array.isArray(transcriptSegments) ? transcriptSegments : []).filter((candidate) => {
-        const startMs = safeToInt(candidate?.startMs, 0);
-        const endMs = safeToInt(candidate?.endMs, startMs);
-        if (endMs < safeToInt(segment?.startMs, 0) || startMs > safeToInt(segment?.endMs, startMs)) {
-          return false;
-        }
-        if (typeof segment?.speaker === "string" && candidate?.speaker && candidate.speaker !== segment.speaker) {
-          return false;
-        }
-        return true;
-      });
-  return candidates.flatMap((candidate) =>
-    Array.isArray(candidate?.words)
-      ? candidate.words
-          .filter((word) => word && typeof word === "object")
-          .map((word, index) => ({
-            id: typeof word.id === "string" && word.id.trim() !== "" ? word.id : `${candidate.id}:w_${index}`,
-            text: safeToString(word.text).trim(),
-            startMs: safeToInt(word.startMs, Number.NaN),
-            endMs: safeToInt(word.endMs, safeToInt(word.startMs, Number.NaN)),
-          }))
-          .filter((word) => word.text && Number.isFinite(word.startMs) && Number.isFinite(word.endMs))
-      : [],
-  );
-}
-
-function splitReadableBlocksOnInterruptions(blocks) {
-  return blocks.flatMap((block, blockIndex) => splitReadableBlockOnInterruptions(block, blockIndex, blocks));
-}
-
-function splitReadableBlockOnInterruptions(block, blockIndex, allBlocks) {
-  if (!Array.isArray(block.words) || block.words.length === 0 || !block.speaker) {
-    return [block];
-  }
-
-  const interruptions = mergeTimeWindows(
-    allBlocks
-      .filter((other, index) => index !== blockIndex && other.speaker && other.speaker !== block.speaker)
-      .map((other) => ({
-        startMs: Math.max(block.startMs, other.startMs),
-        endMs: Math.min(block.endMs, other.endMs),
-      }))
-      .filter((window) => window.endMs - window.startMs >= 400),
-  );
-  const windows = subtractTimeWindows(
-    { startMs: block.startMs, endMs: block.endMs },
-    interruptions,
-  ).filter((window) => window.endMs - window.startMs >= 250);
-
-  if (windows.length <= 1) {
-    return [block];
-  }
-
-  const transcriptWordCounts =
-    Array.isArray(block.sourceWords) && block.sourceWords.length > 0
-      ? assignWordsToWindows(block.sourceWords, windows)
-      : null;
-  const uniformlyInterpolated = wordsLookUniformlyInterpolated(block.words, block.startMs, block.endMs);
-  const counts = transcriptWordCounts && transcriptWordCounts.some((count) => count > 0)
-    ? transcriptWordCounts
-    : uniformlyInterpolated
-      ? allocateWordCountsAcrossWindows(block.words.length, windows)
-      : assignWordsToWindows(block.words, windows);
-  const plan = windows
-    .map((window, index) => ({ window, count: counts[index] ?? 0 }))
-    .filter((entry) => entry.count > 0);
-
-  if (plan.length <= 1) {
-    return [block];
-  }
-
-  const textParts = splitTextByWordCounts(block.text, plan.map((entry) => entry.count));
-  const derivedBlocks = [];
-  let wordOffset = 0;
-  let sourceWordOffset = 0;
-  for (let index = 0; index < plan.length; index += 1) {
-    const { window, count } = plan[index];
-    const words = block.words.slice(wordOffset, wordOffset + count);
-    const sourceWords = Array.isArray(block.sourceWords)
-      ? block.sourceWords.slice(sourceWordOffset, sourceWordOffset + count)
-      : [];
-    wordOffset += count;
-    sourceWordOffset += count;
-    if (words.length === 0) {
-      continue;
-    }
-    const timedWords = uniformlyInterpolated ? retimeWordsWithinWindow(words, window) : words;
-    derivedBlocks.push({
-      ...block,
-      id: `${block.id}__split_${String(index).padStart(2, "0")}`,
-      startMs: sourceWords[0]?.startMs ?? timedWords[0]?.startMs ?? window.startMs,
-      endMs: sourceWords[sourceWords.length - 1]?.endMs ?? timedWords[timedWords.length - 1]?.endMs ?? window.endMs,
-      text: textParts[index] ?? rebuildTextFromWords(timedWords),
-      words: timedWords,
-      sourceWords,
-      sourceSegmentIds: sourceWords.length > 0
-        ? [...new Set(sourceWords.map((word) => String(word.id ?? "").split(":")[0]).filter(Boolean))]
-        : block.sourceSegmentIds,
-    });
-  }
-
-  return derivedBlocks.length > 0 ? derivedBlocks : [block];
-}
-
-function mergeTimeWindows(windows) {
-  const sorted = [...windows].sort((left, right) => left.startMs - right.startMs);
-  const merged = [];
-  for (const window of sorted) {
-    const previous = merged.at(-1);
-    if (!previous || window.startMs > previous.endMs) {
-      merged.push({ ...window });
-      continue;
-    }
-    previous.endMs = Math.max(previous.endMs, window.endMs);
-  }
-  return merged;
-}
-
-function subtractTimeWindows(range, removals) {
-  const windows = [];
-  let cursor = range.startMs;
-  for (const removal of removals) {
-    if (removal.endMs <= cursor) {
-      continue;
-    }
-    if (removal.startMs > cursor) {
-      windows.push({
-        startMs: cursor,
-        endMs: Math.min(removal.startMs, range.endMs),
-      });
-    }
-    cursor = Math.max(cursor, removal.endMs);
-    if (cursor >= range.endMs) {
-      break;
-    }
-  }
-  if (cursor < range.endMs) {
-    windows.push({ startMs: cursor, endMs: range.endMs });
-  }
-  return windows.filter((window) => window.endMs > window.startMs);
-}
-
-function wordsLookUniformlyInterpolated(words, startMs, endMs) {
-  if (!Array.isArray(words) || words.length === 0) {
-    return false;
-  }
-  const span = Math.max(0, endMs - startMs);
-  const toleranceMs = Math.max(25, Math.floor(span / Math.max(words.length, 1) / 5));
-  return words.every((word, index) => {
-    const expectedStart = words.length <= 1
-      ? startMs
-      : startMs + Math.floor((span * index) / words.length);
-    const expectedEnd = words.length <= 1
-      ? endMs
-      : startMs + Math.floor((span * (index + 1)) / words.length);
-    return (
-      Math.abs(safeToInt(word.startMs, expectedStart) - expectedStart) <= toleranceMs &&
-      Math.abs(safeToInt(word.endMs, expectedEnd) - expectedEnd) <= toleranceMs
-    );
-  });
-}
-
-function allocateWordCountsAcrossWindows(totalWords, windows) {
-  const totalDuration = windows.reduce((sum, window) => sum + Math.max(0, window.endMs - window.startMs), 0);
-  if (totalDuration <= 0) {
-    return windows.map((_, index) => (index === windows.length - 1 ? totalWords : 0));
-  }
-  const counts = windows.map((window) =>
-    Math.floor((totalWords * Math.max(0, window.endMs - window.startMs)) / totalDuration),
-  );
-  let assigned = counts.reduce((sum, count) => sum + count, 0);
-  const rankedRemainders = windows
-    .map((window, index) => ({
-      index,
-      remainder:
-        ((totalWords * Math.max(0, window.endMs - window.startMs)) / totalDuration) - (counts[index] ?? 0),
-    }))
-    .sort((left, right) => right.remainder - left.remainder);
-  for (const { index } of rankedRemainders) {
-    if (assigned >= totalWords) {
-      break;
-    }
-    counts[index] = (counts[index] ?? 0) + 1;
-    assigned += 1;
-  }
-  if (assigned < totalWords) {
-    counts[counts.length - 1] = (counts[counts.length - 1] ?? 0) + (totalWords - assigned);
-  }
-  return counts;
-}
-
-function assignWordsToWindows(words, windows) {
-  const counts = windows.map(() => 0);
-  for (const word of words) {
-    const midpoint = Math.floor((safeToInt(word.startMs, 0) + safeToInt(word.endMs, 0)) / 2);
-    let winnerIndex = windows.findIndex((window) => midpoint >= window.startMs && midpoint < window.endMs);
-    if (winnerIndex < 0) {
-      winnerIndex = windows.reduce((bestIndex, window, index) => {
-        const bestWindow = windows[bestIndex];
-        const bestDistance = distanceToWindow(midpoint, bestWindow);
-        const nextDistance = distanceToWindow(midpoint, window);
-        return nextDistance < bestDistance ? index : bestIndex;
-      }, 0);
-    }
-    counts[winnerIndex] = (counts[winnerIndex] ?? 0) + 1;
-  }
-  return counts;
-}
-
-function distanceToWindow(value, window) {
-  if (value < window.startMs) {
-    return window.startMs - value;
-  }
-  if (value > window.endMs) {
-    return value - window.endMs;
-  }
-  return 0;
-}
-
-function retimeWordsWithinWindow(words, window) {
-  if (!Array.isArray(words) || words.length === 0) {
-    return [];
-  }
-  const span = Math.max(0, window.endMs - window.startMs);
-  return words.map((word, index) => ({
-    ...word,
-    startMs: words.length <= 1 ? window.startMs : window.startMs + Math.floor((span * index) / words.length),
-    endMs: words.length <= 1 ? window.endMs : window.startMs + Math.floor((span * (index + 1)) / words.length),
-  }));
-}
-
-function splitTextByWordCounts(text, counts) {
-  const tokens = tokenizeDisplayText(text);
-  const parts = [];
-  let tokenStart = 0;
-  for (const count of counts) {
-    let tokenEnd = tokenStart;
-    let wordsSeen = 0;
-    while (tokenEnd < tokens.length && wordsSeen < count) {
-      if (tokens[tokenEnd]?.kind === "word") {
-        wordsSeen += 1;
-      }
-      tokenEnd += 1;
-    }
-    while (tokenEnd < tokens.length && tokens[tokenEnd]?.kind !== "word") {
-      tokenEnd += 1;
-    }
-    parts.push(rebuildTextFromTokens(tokens.slice(tokenStart, tokenEnd)));
-    tokenStart = tokenEnd;
-  }
-  if (parts.length > 0 && tokenStart < tokens.length) {
-    parts[parts.length - 1] = `${parts[parts.length - 1]}${rebuildTextFromTokens(tokens.slice(tokenStart))}`;
-  }
-  return parts;
-}
-
-function rebuildTextFromTokens(tokens) {
-  let text = "";
-  for (const token of tokens) {
-    if (token.spaceBefore && text !== "") {
-      text += " ";
-    }
-    text += token.text;
-  }
-  return text;
-}
-
-function rebuildTextFromWords(words) {
-  return words.map((word) => word.text).join(" ");
 }
 
 export function groupTranscriptSegmentsAsReadable(segments) {
@@ -930,7 +645,7 @@ export function buildDisplayTranscriptFromArtifacts(transcript, readable) {
   const segmentById = new Map(transcriptSegments.map((segment) => [segment.id, segment]));
   const sourceBlocks =
     readable && readable.version === "transcript.readable.v1" && Array.isArray(readable.segments)
-      ? buildReadableDisplaySourceBlocks(readable, speakerLabels, transcriptSegments)
+      ? buildReadableDisplaySourceBlocks(readable, speakerLabels)
       : transcriptSegments.map((segment) => ({
           id: `d_${segment.id}`,
           speaker: segment.speaker,
@@ -940,7 +655,6 @@ export function buildDisplayTranscriptFromArtifacts(transcript, readable) {
           text: segment.text,
           sourceSegmentIds: [segment.id],
           words: [],
-          sourceWords: Array.isArray(segment.words) ? segment.words : [],
         }));
 
   return {

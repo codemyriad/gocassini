@@ -1,0 +1,962 @@
+/**
+ * Simultaneous speech, and the legacy timing repair that keeps it honest (D-690).
+ *
+ * Three problems live here, because the later ones cannot be trusted without
+ * the earlier ones.
+ *
+ * 1. OVERLAP IS INVISIBLE. Both viewer load paths hand the transcript pane an
+ *    array in producer order and render one full-width paragraph per element,
+ *    top to bottom. Two turns that intersect in time therefore read as ordinary
+ *    consecutive paragraphs — the reader has no way to tell that two people
+ *    were talking at once, and the audio does not match the page.
+ *
+ * 2. MOST RENDERED OVERLAP IN PUBLISHED MEETINGS IS FAKE. Parakeet stamps a
+ *    trailing punctuation token at the NEXT acoustic onset, and the producer
+ *    glues that token onto the preceding word — inflating that word's end
+ *    across the whole following silence. Measured on one published meeting:
+ *    words ending in .?!,;: have median span 560 ms / p95 2959 ms / max 8560 ms
+ *    and 62 of them run past 1 s, while every other word has median 240 ms /
+ *    p95 639 ms and only 5 pass 1 s; 14 of the 15 longest words in the meeting
+ *    end in a period. The consequence is that 23.3 s of that meeting's
+ *    cross-speaker word overlap is fabricated against 2.4 s that is genuine —
+ *    about 86% of the overlapped time is a decoder artifact, and the pattern
+ *    holds across every meeting sampled from the archive.
+ *
+ *    The producer-side fix only reaches meetings recorded from now on. 197
+ *    meetings are already published and will not be reprocessed, and their
+ *    .opus files carry no baked display transcript — the viewer rebuilds it at
+ *    runtime — so repairing the timing HERE, at display time, reaches all of
+ *    them on the next deploy with no repacking. Without the repair, feature 1
+ *    would spend most of its time confidently labelling silence as crosstalk.
+ *
+ * 3. THE PRODUCER HIDES THE COMMONEST OVERLAP ENTIRELY. `MergeAndSortSegments`
+ *    interleaves every speaker's words by start time and flushes a segment on
+ *    each speaker change, so a backchannel inside a continuous turn is not
+ *    emitted as two overlapping turns at all — it is emitted as three
+ *    consecutive blocks, A / B / A, with A's turn cut in half exactly where B's
+ *    words begin. Measured on the overlap-and-pause fixture, whose ground truth
+ *    is known: Cara speaks continuously 23.0–30.1 s while Ana says "Perfect." at
+ *    26.5, and the pipeline emitted `cara 23.48–26.68`, `ana 26.56–27.24`,
+ *    `cara 26.68–29.36`. Rendered naively that reads as "Cara finished, Ana
+ *    spoke, Cara started again" when in fact Cara never stopped — and Cara's
+ *    second paragraph opens mid-clause, on "link in the channel", because the
+ *    cut fell inside her sentence. Span intersection alone understates these
+ *    badly (0.42 s, 0.12/0.56 s and 0.23 s measured against 0.63 s, 0.77 s and
+ *    0.38 s of ground truth), so the A/B/A sandwich is detected STRUCTURALLY
+ *    rather than by intersecting spans.
+ *
+ * The repair is TIMING ONLY. It never changes displayed text, word order, or
+ * the words themselves; it clips one word's end back to a defensible bound so
+ * that overlap detection, the audio-sync highlight and word seek targets all
+ * agree with what a listener actually hears.
+ *
+ * Pure module: no Svelte, no DOM, no I/O.
+ */
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Intersections shorter than this are not reported, so a boundary touch between
+ * two adjacent turns never draws an affordance.
+ *
+ * The starting point was 250 ms, mirroring the floor the readable-block splitter
+ * used for "a fragment of speech worth keeping" (portable.ts), with its other
+ * constant — 400 ms for "this counts as an interruption" — rejected because the
+ * fixture's one genuine floor-change interruption is only 379 ms of ground-truth
+ * simultaneity. Measurement then pushed it lower still: because the producer
+ * flushes a segment at every speaker change, the measurable intersection is
+ * systematically far smaller than the real simultaneity. The three genuine
+ * overlaps in the ground-truth fixture measure 0.42 s, 0.12/0.56 s and 0.23 s
+ * against 0.63/0.77/0.38 s of ground truth; at 250 ms the floor-change
+ * interruption vanishes entirely.
+ *
+ * 150 ms is where it lands: above word-boundary estimation jitter, comfortably
+ * above a producer boundary touch (which is exactly 0 ms — consecutive blocks
+ * are cut at a shared word boundary, so they cannot graze each other by
+ * accident), and below every genuine case measured. The fabricated overlaps
+ * this would otherwise admit are removed upstream by the timing repair, not by
+ * this threshold.
+ */
+export const MIN_CREDIBLE_OVERLAP_MS = 150;
+
+/**
+ * A turn-final punctuated word is never allowed to run longer than
+ * `max(MAX_TURN_FINAL_WORD_MS, TURN_FINAL_WORD_MEDIAN_FACTOR × speaker median)`.
+ *
+ * The absolute floor exists so a speaker with an unusually clipped median can
+ * still hold a genuinely drawn-out last word without it being cut. It sits at
+ * 1 s because in the measured meeting only 5 non-punctuated words in the entire
+ * meeting reached 1 s (p95 was 639 ms), so 1 s is already deep in the tail of
+ * real speech.
+ */
+export const MAX_TURN_FINAL_WORD_MS = 1000;
+
+/**
+ * The multiple of a speaker's own median word duration a turn-final word may
+ * reach before it is treated as inflated. 4× is deliberately generous: genuine
+ * sentence-final lengthening is roughly 1.5–2× in conversational speech, so 4×
+ * clips the decoder artifact and leaves real emphasis alone. Against the
+ * measured 240–280 ms medians it lands at ~1.0–1.1 s: just past the p95 of
+ * ordinary words, far below the 2959 ms p95 of punctuated ones.
+ */
+export const TURN_FINAL_WORD_MEDIAN_FACTOR = 4;
+
+/**
+ * A speaker's own median is trusted only once we hold this many timed words for
+ * them; below it we fall back to the meeting-wide median, then to
+ * FALLBACK_MEDIAN_WORD_MS. A one-word turn must not define its own bound.
+ */
+export const MIN_MEDIAN_SAMPLE_WORDS = 8;
+
+/**
+ * Stand-in median when neither the speaker nor the meeting has enough timed
+ * words. 250 ms is the measured median of ordinary (non-turn-final) words; at
+ * this value the bound collapses to MAX_TURN_FINAL_WORD_MS, the conservative
+ * outcome.
+ */
+export const FALLBACK_MEDIAN_WORD_MS = 250;
+
+/**
+ * How far apart the two halves of a split turn may sit before we stop calling
+ * the speaker continuous across the block between them.
+ *
+ * The producer cuts A's turn at the exact word boundary where B starts, so a
+ * genuinely uninterrupted A has a seam of 0 ms — measured, to the millisecond,
+ * on the fixture: `ana 1.02–5.20 / ben 4.78–5.26 / ana 5.20–8.24` and
+ * `cara 23.48–26.68 / ana 26.56–27.24 / cara 26.68–29.36`. 400 ms absorbs
+ * alignment noise and a breath while staying far below any real turn exchange:
+ * for A to resume within 400 ms of stopping, B must have been talking OVER A
+ * rather than answering A. This is the load-bearing gate — ordinary dialogue
+ * forms A/B/A constantly and must keep rendering as three separate turns.
+ */
+export const INTERJECTION_MAX_SEAM_GAP_MS = 400;
+
+/**
+ * How long the interjecting block may run and still be treated as something
+ * said inside somebody else's turn rather than a turn of its own.
+ *
+ * The fixture's backchannels are 0.48 s ("Right.") and 0.68 s ("Perfect."). At
+ * conversational rate 2 s is around six or seven words — past that, B is making
+ * a contribution, and calling it an interjection would demote a real turn.
+ * A long B that genuinely talks over A is still reported, as ordinary
+ * simultaneous speech with a measured duration.
+ */
+export const INTERJECTION_MAX_MIDDLE_MS = 2000;
+
+/**
+ * How much silence either side of the interjection tolerates before the shape
+ * stops looking like a backchannel.
+ *
+ * In the fixture both sides are NEGATIVE — B starts before A's first half ends
+ * and A's second half starts before B ends (−0.42/−0.06 s and −0.12/−0.56 s) —
+ * because B genuinely spoke over A. 500 ms of slack on each side covers
+ * alignment noise and a backchannel that lands in a breath, and rules out the
+ * exchange shape where A finishes, a beat passes, and B replies.
+ */
+export const INTERJECTION_MAX_SIDE_GAP_MS = 500;
+
+/**
+ * The punctuation Parakeet emits as its own token and the producer glues onto
+ * the preceding word.
+ *
+ * Terminal punctuation is matched BEFORE any closing quote or bracket, because
+ * the cleanup pass adds them: without that, `Yeah."` escapes the repair
+ * entirely. The class covers the Unicode sentence terminators as well as the
+ * ASCII ones, so a non-English meeting is repaired too.
+ */
+const TURN_FINAL_PUNCTUATION = /[.?!,;:\u2026\u3002\uFF0E\uFF01\uFF1F\uFF1B\uFF1A\uFF0C\u3001\u0964\u0965\u061B\u061F][)\]}"'\u2019\u201D\u00BB\u203A\u300D\u300F\u3009\u300B]*$/u;
+
+/** Anything carrying a letter or a digit is a word rather than punctuation. */
+const WORD_LIKE = /[\p{L}\p{N}]/u;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One timed thing inside a block: a display token, or a canonical word. */
+export interface OverlapTimedSpan {
+  readonly text: string;
+  readonly startMs?: number;
+  readonly endMs?: number;
+}
+
+/**
+ * The display-segment projection this module works on. Structural on purpose:
+ * MeetingView's DisplaySegment, a DisplayTranscriptV1 block and a plain test
+ * fixture all satisfy it, and every function preserves whatever extra fields
+ * the caller's own type carries.
+ */
+export interface OverlapBlock {
+  readonly id: string;
+  readonly speaker?: string;
+  readonly speakerLabel?: string;
+  readonly startMs: number;
+  readonly endMs: number;
+  readonly tokens?: readonly OverlapTimedSpan[];
+  readonly words?: readonly OverlapTimedSpan[];
+}
+
+/** One other block that was audible at the same time as this one. */
+export interface OverlapPeer {
+  readonly id: string;
+  readonly speakerLabel: string;
+  readonly overlapMs: number;
+}
+
+/** The turn this block landed inside, when the producer split that turn in two. */
+export interface InterjectionContext {
+  readonly speakerLabel: string;
+  /** The first half of the interrupted turn. */
+  readonly beforeId: string;
+  /** The half that resumes after this block. */
+  readonly afterId: string;
+}
+
+/** The block that interrupted the turn this block resumes. */
+export interface ResumptionContext {
+  readonly speakerLabel: string;
+  readonly blockId: string;
+}
+
+/** What the renderer needs to describe one block's simultaneity. */
+export interface BlockOverlap {
+  readonly id: string;
+  /** Union of every credible intersection, so two peers over the same second count once. */
+  readonly overlapMs: number;
+  /** Overlapped ms contributed by peers ALREADY speaking when this turn began. */
+  readonly overlapMsBefore: number;
+  /** Overlapped ms contributed by peers who started speaking DURING this turn. */
+  readonly overlapMsAfter: number;
+  /** Peers, largest overlap first. */
+  readonly peers: readonly OverlapPeer[];
+  /** Set when this whole turn sits inside one peer's span — the backchannel case. */
+  readonly containedIn?: string;
+  /** Set when this block sits between the two halves of one continuous turn. */
+  readonly interrupts?: InterjectionContext;
+  /** Set when this block is the second half of a turn something landed inside. */
+  readonly resumes?: ResumptionContext;
+}
+
+/** Copy for one affordance. */
+export interface OverlapDescription {
+  /** Compact badge text, e.g. `0.6 s during Ana Duarte`. Carries no icon. */
+  readonly badge: string;
+  /** Full sentence for `title` and assistive technology. */
+  readonly detail: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reading order
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Blocks in the order a reader should meet them.
+ *
+ * Never assume the producer sorted them: it appends wordless segments after the
+ * timed ones, so an untimed aside can land at the very end of the page hundreds
+ * of turns away from when it was said. The sort is stable, so blocks starting at
+ * the same millisecond keep producer order.
+ */
+export function sortBlocksInReadingOrder<B extends { readonly startMs: number }>(
+  blocks: readonly B[],
+): B[] {
+  return [...blocks].sort((left, right) => left.startMs - right.startMs);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Legacy timing repair
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Derive EFFECTIVE display spans by clipping the inflated end off each
+ * sentence-final punctuated word.
+ *
+ * Returns a new array. Nothing is mutated: blocks needing no repair are
+ * returned by identity, repaired blocks are shallow copies, and a clipped span
+ * is a copy with ONLY `endMs` lowered. `startMs` is never touched — which is
+ * what makes this low risk, because a seek target is a word START and so never
+ * moves. Text, word order and the words themselves are untouched; the canonical
+ * artifact the viewer loaded is left exactly as it was.
+ *
+ * The rule, in full:
+ *   - a candidate is a word-like span together with the punctuation spans
+ *     immediately following it (display tokenisation splits `everything.` into
+ *     a word token and a `.` token, canonical ASR words keep them joined — this
+ *     covers both);
+ *   - the candidate's text must end in terminal punctuation, closing quotes and
+ *     brackets allowed after it;
+ *   - the candidate's span must exceed `max(MAX_TURN_FINAL_WORD_MS,
+ *     TURN_FINAL_WORD_MEDIAN_FACTOR × that speaker's reference median)`;
+ *   - if so, its end is pulled back to `start + that bound`.
+ *
+ * A word that ends in punctuation but runs for an ordinary length is left
+ * exactly as it is, which is what preserves genuine simultaneity: a backchannel
+ * landing inside another turn does not stop being an overlap because it happens
+ * to end in a full stop.
+ *
+ * WHY NOT ONLY THE LAST WORD OF EACH BLOCK. The artifact is created at the end
+ * of an ASR TURN, and the readable writer glues many ASR turns into one display
+ * paragraph, so most inflated words sit in the MIDDLE of a block. Measured over
+ * nine archived meetings: 501 words ending in `.?!,;:` run past 1 s against 105
+ * of every other kind (median 560 ms vs 240 ms), yet only about ten per meeting
+ * are block-final. Restricting the repair to block-final words removed 12% of
+ * the fabricated cross-speaker word overlap in that archive where the full rule
+ * removes essentially all of it. The restriction is safe to drop because the
+ * budget, not the position, is what identifies the artifact: an interior word
+ * only reaches 4× its speaker's median when the decoder stretched it across a
+ * silence.
+ */
+export function repairTurnFinalWordInflation<B extends OverlapBlock>(blocks: readonly B[]): B[] {
+  if (blocks.length === 0) {
+    return [];
+  }
+  const tokenBudgets = budgetsBySpeaker(blocks, (block) => block.tokens);
+  const wordBudgets = budgetsBySpeaker(blocks, (block) => block.words);
+
+  return blocks.map((block) => {
+    const key = speakerKey(block);
+    const tokens = clipInflatedSpans(block.tokens, tokenBudgets.get(key));
+    const words = clipInflatedSpans(block.words, wordBudgets.get(key));
+    if (!tokens && !words) {
+      return block;
+    }
+
+    // A block's envelope is defined by its timed spans, so when the last of
+    // them shrinks the block shrinks with it — otherwise the paragraph would
+    // still claim silence it no longer contains, and overlap detection would
+    // keep reading the fabricated span off the envelope instead of the word.
+    const endMs = Math.max(
+      block.startMs,
+      Math.min(block.endMs, latestTimedEnd(tokens ?? block.tokens, words ?? block.words, block.endMs)),
+    );
+
+    // Spreading a generic is not provably assignable back to B for the
+    // compiler even though every field keeps its type; the cast is the narrow
+    // escape hatch for that.
+    return {
+      ...block,
+      endMs,
+      ...(tokens ? { tokens } : {}),
+      ...(words ? { words } : {}),
+    } as B;
+  });
+}
+
+function latestTimedEnd(
+  tokens: readonly OverlapTimedSpan[] | undefined,
+  words: readonly OverlapTimedSpan[] | undefined,
+  fallbackMs: number,
+): number {
+  const pool = tokens && tokens.length > 0 ? tokens : words;
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const span of pool ?? []) {
+    if (hasTiming(span)) {
+      latest = Math.max(latest, span.endMs as number);
+    }
+  }
+  return Number.isFinite(latest) ? latest : fallbackMs;
+}
+
+/**
+ * Clipped copy of `spans`, or null when nothing needed clipping.
+ *
+ * A "candidate" is one word plus the punctuation glued after it; both the
+ * word span and the punctuation spans that share its inflated end are pulled
+ * back, or the block would keep the long end through whichever one survived.
+ */
+function clipInflatedSpans<S extends OverlapTimedSpan>(
+  spans: readonly S[] | undefined,
+  budgetMs: number | undefined,
+): S[] | null {
+  if (!spans || spans.length === 0 || budgetMs === undefined) {
+    return null;
+  }
+  let next: S[] | null = null;
+  for (const candidate of candidateRuns(spans)) {
+    if (candidate.endMs - candidate.startMs <= budgetMs) {
+      continue;
+    }
+    const clippedEndMs = candidate.startMs + budgetMs;
+    for (const index of candidate.timedIndexes) {
+      const span = spans[index]!;
+      const startMs = span.startMs as number;
+      const endMs = Math.max(startMs, Math.min(span.endMs as number, clippedEndMs));
+      if (endMs === span.endMs) {
+        continue;
+      }
+      next ??= [...spans];
+      next[index] = { ...span, endMs } as S;
+    }
+  }
+  return next;
+}
+
+interface CandidateRun {
+  readonly timedIndexes: number[];
+  readonly startMs: number;
+  readonly endMs: number;
+}
+
+/**
+ * Every word-plus-trailing-punctuation run whose text ends in terminal
+ * punctuation and carries timing. Punctuation spans with no timing of their own
+ * still count towards the TEXT of the run, so `everything` (timed) followed by
+ * `.` (untimed) is recognised as sentence-final.
+ */
+function candidateRuns(spans: readonly OverlapTimedSpan[]): CandidateRun[] {
+  const runs: CandidateRun[] = [];
+  for (let index = 0; index < spans.length; index += 1) {
+    if (!WORD_LIKE.test(spans[index]!.text ?? "")) {
+      continue;
+    }
+    let end = index + 1;
+    while (end < spans.length && !WORD_LIKE.test(spans[end]!.text ?? "")) {
+      end += 1;
+    }
+    const text = spans
+      .slice(index, end)
+      .map((span) => span.text ?? "")
+      .join("");
+    if (!TURN_FINAL_PUNCTUATION.test(text.trimEnd())) {
+      index = end - 1;
+      continue;
+    }
+    const timedIndexes: number[] = [];
+    let startMs = Number.POSITIVE_INFINITY;
+    let endMs = Number.NEGATIVE_INFINITY;
+    for (let inner = index; inner < end; inner += 1) {
+      if (!hasTiming(spans[inner])) {
+        continue;
+      }
+      timedIndexes.push(inner);
+      startMs = Math.min(startMs, spans[inner]!.startMs as number);
+      endMs = Math.max(endMs, spans[inner]!.endMs as number);
+    }
+    if (timedIndexes.length > 0) {
+      runs.push({ timedIndexes, startMs, endMs });
+    }
+    index = end - 1;
+  }
+  return runs;
+}
+
+/**
+ * Per-speaker clip budget, computed once per pool (tokens and canonical words
+ * are measured separately because a caller may carry one, the other, or both).
+ *
+ * The reference population deliberately EXCLUDES every word the repair could
+ * fire on, so a candidate can never inflate the bound that judges it. Without
+ * that guard a speaker whose only contribution is a single inflated "Yeah."
+ * has a 2.96 s median, a 11.8 s budget, and is never clipped. Excluded are:
+ *   - every span the repair could fire on, i.e. every word followed by terminal
+ *     punctuation, wherever in the block it sits;
+ *   - pure punctuation spans, which duplicate their source word's span rather
+ *     than being words in their own right;
+ *   - non-positive durations.
+ *
+ * A speaker with fewer than MIN_MEDIAN_SAMPLE_WORDS reference words falls back
+ * to the meeting-wide median of the same population, and a meeting with too few
+ * falls back to FALLBACK_MEDIAN_WORD_MS — at which point the budget is just the
+ * MAX_TURN_FINAL_WORD_MS floor, the conservative outcome.
+ */
+function budgetsBySpeaker<B extends OverlapBlock>(
+  blocks: readonly B[],
+  pool: (block: B) => readonly OverlapTimedSpan[] | undefined,
+): Map<string, number> {
+  const durationsBySpeaker = new Map<string, number[]>();
+  const allDurations: number[] = [];
+  for (const block of blocks) {
+    const spans = pool(block);
+    if (!spans) {
+      continue;
+    }
+    const key = speakerKey(block);
+    let durations = durationsBySpeaker.get(key);
+    if (!durations) {
+      durations = [];
+      durationsBySpeaker.set(key, durations);
+    }
+    const excluded = new Set<number>();
+    for (const candidate of candidateRuns(spans)) {
+      for (const index of candidate.timedIndexes) {
+        excluded.add(index);
+      }
+    }
+    for (let index = 0; index < spans.length; index += 1) {
+      const span = spans[index]!;
+      if (excluded.has(index) || !hasTiming(span) || !WORD_LIKE.test(span.text ?? "")) {
+        continue;
+      }
+      const durationMs = (span.endMs as number) - (span.startMs as number);
+      if (durationMs <= 0) {
+        continue;
+      }
+      durations.push(durationMs);
+      allDurations.push(durationMs);
+    }
+  }
+
+  const meetingMedian =
+    allDurations.length >= MIN_MEDIAN_SAMPLE_WORDS ? median(allDurations) : FALLBACK_MEDIAN_WORD_MS;
+  const budgets = new Map<string, number>();
+  for (const [key, durations] of durationsBySpeaker) {
+    const speakerMedian =
+      durations.length >= MIN_MEDIAN_SAMPLE_WORDS ? median(durations) : meetingMedian;
+    budgets.set(key, Math.max(MAX_TURN_FINAL_WORD_MS, TURN_FINAL_WORD_MEDIAN_FACTOR * speakerMedian));
+  }
+  return budgets;
+}
+
+function median(values: readonly number[]): number {
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) {
+    return sorted[middle]!;
+  }
+  return (sorted[middle - 1]! + sorted[middle]!) / 2;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Overlap detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface Interval {
+  startMs: number;
+  endMs: number;
+}
+
+interface OverlapAccumulator {
+  peers: Map<string, { speakerLabel: string; overlapMs: number }>;
+  before: Interval[];
+  after: Interval[];
+  containedIn?: { id: string; peerDurationMs: number };
+  interrupts?: InterjectionContext;
+  resumes?: ResumptionContext;
+}
+
+/**
+ * Credible concurrent peers per block, keyed by block id. Blocks with nothing to
+ * report are absent from the map.
+ *
+ * Two blocks by the SAME speaker are never treated as overlapping each other.
+ * One person is not simultaneous with themselves; when their own segments
+ * intersect it is a producer segmentation artifact, not news for the reader.
+ *
+ * Overlap is measured between WORDS, not between block spans. This is not a
+ * refinement, it is the difference between a true and a false answer: the
+ * producer's readable writer groups a speaker's paragraphs across the other
+ * speaker's turns, so on published meetings two paragraphs routinely span the
+ * same stretch of tape while their words strictly alternate. Measured on one
+ * archived meeting, an Ivan paragraph [965.00–983.32] and a Chris paragraph
+ * [969.24–1004.60] intersect for 14.08 s of block span while their words never
+ * once sound together — Ivan speaks 965.2–968.0, Chris 969.2–970.4, Ivan
+ * 972.9–982.8, Chris 988.3 onwards. Reporting block-span intersection would
+ * have put a "14 s of simultaneous speech" badge on an ordinary conversation.
+ * Block spans are used only as a cheap prefilter for which pairs to compare.
+ *
+ * Sweep-line over a start-sorted COPY — O(n log n) for the prefilter plus a
+ * linear merge per surviving candidate pair, of which a real meeting has a
+ * handful. The input is never assumed to be sorted: the producer appends
+ * wordless segments last.
+ */
+export function analyzeOverlap(
+  blocks: readonly OverlapBlock[],
+  options: { readonly minOverlapMs?: number } = {},
+): Map<string, BlockOverlap> {
+  const minOverlapMs = options.minOverlapMs ?? MIN_CREDIBLE_OVERLAP_MS;
+  const ordered = blocks
+    .filter(
+      (block) =>
+        Number.isFinite(block.startMs) && Number.isFinite(block.endMs) && block.endMs > block.startMs,
+    )
+    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+
+  const accumulators = new Map<string, OverlapAccumulator>();
+  const accumulatorFor = (id: string): OverlapAccumulator => {
+    let accumulator = accumulators.get(id);
+    if (!accumulator) {
+      accumulator = { peers: new Map(), before: [], after: [] };
+      accumulators.set(id, accumulator);
+    }
+    return accumulator;
+  };
+  const spansCache = new Map<string, Interval[]>();
+  const spansOf = (block: OverlapBlock): Interval[] => {
+    let spans = spansCache.get(block.id);
+    if (!spans) {
+      spans = audibleSpansOf(block);
+      spansCache.set(block.id, spans);
+    }
+    return spans;
+  };
+
+  const active: OverlapBlock[] = [];
+  for (const current of ordered) {
+    // Anything that ended at or before this start can never overlap this block
+    // or a later one, since starts only increase from here.
+    for (let index = active.length - 1; index >= 0; index -= 1) {
+      if (active[index]!.endMs <= current.startMs) {
+        active.splice(index, 1);
+      }
+    }
+
+    for (const earlier of active) {
+      if (isSameSpeaker(earlier, current)) {
+        continue;
+      }
+      const intersections = intersectIntervals(spansOf(earlier), spansOf(current));
+      const overlapMs = totalMs(intersections);
+      if (overlapMs < minOverlapMs) {
+        continue;
+      }
+
+      const currentAccumulator = accumulatorFor(current.id);
+      const earlierAccumulator = accumulatorFor(earlier.id);
+      addPeer(currentAccumulator, earlier, overlapMs);
+      addPeer(earlierAccumulator, current, overlapMs);
+      currentAccumulator.before.push(...intersections);
+      earlierAccumulator.after.push(...intersections);
+
+      if (earlier.startMs <= current.startMs && earlier.endMs >= current.endMs) {
+        const peerDurationMs = earlier.endMs - earlier.startMs;
+        if (
+          !currentAccumulator.containedIn ||
+          peerDurationMs > currentAccumulator.containedIn.peerDurationMs
+        ) {
+          currentAccumulator.containedIn = { id: earlier.id, peerDurationMs };
+        }
+      }
+    }
+
+    active.push(current);
+  }
+
+  markSplitTurnInterjections(ordered, accumulatorFor);
+
+  const result = new Map<string, BlockOverlap>();
+  for (const [id, accumulator] of accumulators) {
+    const peers = [...accumulator.peers.entries()]
+      .map(([peerId, peer]) => ({
+        id: peerId,
+        speakerLabel: peer.speakerLabel,
+        overlapMs: peer.overlapMs,
+      }))
+      .sort((left, right) => right.overlapMs - left.overlapMs || left.id.localeCompare(right.id));
+    result.set(id, {
+      id,
+      overlapMs: unionMs([...accumulator.before, ...accumulator.after]),
+      overlapMsBefore: unionMs(accumulator.before),
+      overlapMsAfter: unionMs(accumulator.after),
+      peers,
+      ...(accumulator.containedIn ? { containedIn: accumulator.containedIn.id } : {}),
+      ...(accumulator.interrupts ? { interrupts: accumulator.interrupts } : {}),
+      ...(accumulator.resumes ? { resumes: accumulator.resumes } : {}),
+    });
+  }
+  return result;
+}
+
+/**
+ * When this block was actually audible, as disjoint ascending intervals.
+ *
+ * Display tokens first (they are what the reader sees highlighted, and what the
+ * timing repair adjusted), canonical words as the fallback, and the block span
+ * itself as the last resort — a wordless segment still occupies its stretch of
+ * tape and can still be genuinely simultaneous with someone.
+ */
+function audibleSpansOf(block: OverlapBlock): Interval[] {
+  const pool = block.tokens && block.tokens.length > 0 ? block.tokens : block.words;
+  const spans: Interval[] = [];
+  for (const span of pool ?? []) {
+    if (hasTiming(span) && (span.endMs as number) > (span.startMs as number)) {
+      spans.push({ startMs: span.startMs as number, endMs: span.endMs as number });
+    }
+  }
+  if (spans.length === 0) {
+    return [{ startMs: block.startMs, endMs: block.endMs }];
+  }
+  return mergeIntervals(spans);
+}
+
+function mergeIntervals(intervals: readonly Interval[]): Interval[] {
+  const sorted = [...intervals].sort((left, right) => left.startMs - right.startMs);
+  const merged: Interval[] = [];
+  for (const interval of sorted) {
+    const previous = merged.at(-1);
+    if (!previous || interval.startMs > previous.endMs) {
+      merged.push({ ...interval });
+      continue;
+    }
+    previous.endMs = Math.max(previous.endMs, interval.endMs);
+  }
+  return merged;
+}
+
+/** Two-pointer intersection of two ascending, disjoint interval lists. */
+function intersectIntervals(left: readonly Interval[], right: readonly Interval[]): Interval[] {
+  const result: Interval[] = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    const a = left[leftIndex]!;
+    const b = right[rightIndex]!;
+    const startMs = Math.max(a.startMs, b.startMs);
+    const endMs = Math.min(a.endMs, b.endMs);
+    if (endMs > startMs) {
+      result.push({ startMs, endMs });
+    }
+    if (a.endMs <= b.endMs) {
+      leftIndex += 1;
+    } else {
+      rightIndex += 1;
+    }
+  }
+  return result;
+}
+
+function totalMs(intervals: readonly Interval[]): number {
+  return intervals.reduce((total, interval) => total + (interval.endMs - interval.startMs), 0);
+}
+
+/**
+ * The A/B/A sandwich: one turn cut in half by the producer around the block that
+ * landed inside it.
+ *
+ * `MergeAndSortSegments` interleaves every speaker's words by start time and
+ * flushes a segment on each speaker change, so a backchannel inside a continuous
+ * turn is not emitted as two overlapping turns at all — it is emitted as three
+ * consecutive blocks with A's turn cut exactly where B's words begin. Measured
+ * on the overlap-and-pause fixture through current main, A's halves are
+ * CONTIGUOUS to the millisecond (`ana 1.02–5.20`, `ben 4.78–5.26`,
+ * `ana 5.20–8.24`; `cara 23.48–26.68`, `ana 26.56–27.24`, `cara 26.68–29.36`),
+ * which makes the seam a far stronger signal than the span intersection those
+ * same turns produce (0.42 s and 0.12 s against 0.63 s and 0.77 s of ground
+ * truth).
+ *
+ * Restricted to exactly ONE intervening block. That is the shape the producer
+ * emits, and it is the shape we can defend: with two or more different speakers
+ * between A's halves, "A never stopped" becomes a guess, and an affordance that
+ * over-claims an interruption is worse than none.
+ *
+ * The seam test runs on repaired spans, so a turn whose first half merely ENDED
+ * in an inflated punctuated word — leaving real silence for B to speak into — is
+ * correctly not reported: the repair opens the seam past the tolerance.
+ */
+function markSplitTurnInterjections(
+  ordered: readonly OverlapBlock[],
+  accumulatorFor: (id: string) => OverlapAccumulator,
+): void {
+  for (let index = 1; index + 1 < ordered.length; index += 1) {
+    const before = ordered[index - 1]!;
+    const middle = ordered[index]!;
+    const after = ordered[index + 1]!;
+    if (!isSameSpeaker(before, after) || isSameSpeaker(before, middle)) {
+      continue;
+    }
+    // Adjacency alone proves nothing: ordinary dialogue produces A/B/A all the
+    // time and must keep rendering as three separate turns. All four tests have
+    // to pass before we claim A never stopped talking.
+    if (after.startMs - before.endMs > INTERJECTION_MAX_SEAM_GAP_MS) {
+      continue;
+    }
+    if (middle.endMs - middle.startMs > INTERJECTION_MAX_MIDDLE_MS) {
+      continue;
+    }
+    if (middle.startMs - before.endMs > INTERJECTION_MAX_SIDE_GAP_MS) {
+      continue;
+    }
+    if (after.startMs - middle.endMs > INTERJECTION_MAX_SIDE_GAP_MS) {
+      continue;
+    }
+    const speakerLabel = before.speakerLabel?.trim() || "Unknown speaker";
+    accumulatorFor(middle.id).interrupts = {
+      speakerLabel,
+      beforeId: before.id,
+      afterId: after.id,
+    };
+    accumulatorFor(after.id).resumes = {
+      speakerLabel: middle.speakerLabel?.trim() || "Unknown speaker",
+      blockId: middle.id,
+    };
+  }
+}
+
+function addPeer(accumulator: OverlapAccumulator, peer: OverlapBlock, overlapMs: number): void {
+  const existing = accumulator.peers.get(peer.id);
+  if (existing) {
+    existing.overlapMs += overlapMs;
+    return;
+  }
+  accumulator.peers.set(peer.id, {
+    speakerLabel: peer.speakerLabel?.trim() || "Unknown speaker",
+    overlapMs,
+  });
+}
+
+/** Total covered milliseconds, counting time shared by several peers once. */
+function unionMs(intervals: readonly Interval[]): number {
+  return totalMs(mergeIntervals(intervals));
+}
+
+function isSameSpeaker(left: OverlapBlock, right: OverlapBlock): boolean {
+  if (left.speaker && right.speaker) {
+    return left.speaker === right.speaker;
+  }
+  return speakerKey(left) === speakerKey(right);
+}
+
+function speakerKey(block: OverlapBlock): string {
+  return block.speaker || block.speakerLabel?.trim() || "";
+}
+
+function hasTiming(span: OverlapTimedSpan | undefined): boolean {
+  return (
+    span !== undefined &&
+    Number.isFinite(span.startMs) &&
+    Number.isFinite(span.endMs) &&
+    (span.endMs as number) >= (span.startMs as number)
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Copy
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Badge and screen-reader copy for one block's simultaneity, or null when there
+ * is nothing credible to say.
+ *
+ * Three shapes, because the three situations read differently:
+ *   - a block sitting between the two halves of one continuous turn is a remark
+ *     made DURING that turn, and the measured intersection understates it, so
+ *     the duration is only quoted when it clears the reporting threshold;
+ *   - a turn wholly inside somebody else's span is a backchannel — "during";
+ *   - anything else is a partial overlap, usually the floor changing hands —
+ *     "with".
+ */
+export function describeOverlap(entry: BlockOverlap | undefined | null): OverlapDescription | null {
+  if (!entry) {
+    return null;
+  }
+  const peerList = entry.peers
+    .map((peer) => `${peer.speakerLabel} (${formatOverlapDuration(peer.overlapMs)})`)
+    .join(", ");
+
+  if (entry.interrupts) {
+    const label = entry.interrupts.speakerLabel;
+    const measured = entry.overlapMs > 0 ? `${formatOverlapDuration(entry.overlapMs)} ` : "";
+    return {
+      badge: `${measured}during ${label}`,
+      detail: `Simultaneous speech: this lands inside ${label}'s turn, which continues after it${
+        entry.overlapMs > 0 ? ` — ${formatOverlapDuration(entry.overlapMs)} of overlapping audio` : ""
+      }.`,
+    };
+  }
+
+  if (entry.peers.length === 0 || entry.overlapMs <= 0) {
+    return null;
+  }
+  const primary = entry.peers[0]!;
+  const duration = formatOverlapDuration(entry.overlapMs);
+
+  if (entry.containedIn === primary.id && entry.peers.length === 1) {
+    return {
+      badge: `${duration} during ${primary.speakerLabel}`,
+      detail: `Simultaneous speech: this whole turn falls inside ${primary.speakerLabel}'s turn — ${duration} of overlapping audio.`,
+    };
+  }
+  const remaining = entry.peers.length - 1;
+  return {
+    badge: `${duration} with ${primary.speakerLabel}${remaining > 0 ? ` +${remaining}` : ""}`,
+    detail: `Simultaneous speech: ${duration} of this turn overlaps ${peerList}. ${
+      entry.peers.length === 1 ? "Both voices are" : "Those voices are"
+    } on the recording at once.`,
+  };
+}
+
+/**
+ * Copy for the second half of a turn something landed inside, or null.
+ *
+ * This is the marker that stops A/B/A reading as three separate turns: without
+ * it, A's second half looks like a fresh turn taken back after B finished, when
+ * in fact A never stopped talking.
+ */
+export function describeResumption(
+  entry: BlockOverlap | undefined | null,
+): OverlapDescription | null {
+  if (!entry?.resumes) {
+    return null;
+  }
+  return {
+    badge: `continues past ${entry.resumes.speakerLabel}`,
+    detail: `Same turn continued: this is the rest of the turn ${entry.resumes.speakerLabel} spoke into — the speaker did not stop.`,
+  };
+}
+
+/**
+ * Reading rows: consecutive blocks, with an interrupted turn's three parts
+ * gathered into one row so the renderer can put a visual parent around them.
+ *
+ * The three canonical blocks are kept intact, in order, with their own ids,
+ * their own timestamps and their own seek anchors — nothing is concatenated and
+ * nothing is merged. Only the presentation changes: A-first-half, then the
+ * interjection nested inside, then A's continuation, so the page stops claiming
+ * that one continuous utterance was three separate turns.
+ *
+ * Expects blocks already in reading order (see sortBlocksInReadingOrder).
+ */
+export function groupInterruptedTurns<B extends OverlapBlock>(
+  blocks: readonly B[],
+  analysis: ReadonlyMap<string, BlockOverlap>,
+): Array<InterruptedTurnRow<B>> {
+  const rows: Array<InterruptedTurnRow<B>> = [];
+  for (let index = 0; index < blocks.length; index += 1) {
+    const first = blocks[index]!;
+    const middle = blocks[index + 1];
+    const last = blocks[index + 2];
+    const interjection = middle ? analysis.get(middle.id)?.interrupts : undefined;
+    if (
+      middle &&
+      last &&
+      interjection &&
+      interjection.beforeId === first.id &&
+      interjection.afterId === last.id
+    ) {
+      rows.push({
+        key: first.id,
+        interrupted: true,
+        speakerLabel: interjection.speakerLabel,
+        interjectionId: middle.id,
+        interjectorLabel: middle.speakerLabel?.trim() || "Unknown speaker",
+        members: [first, middle, last],
+      });
+      index += 2;
+      continue;
+    }
+    rows.push({
+      key: first.id,
+      interrupted: false,
+      speakerLabel: first.speakerLabel?.trim() || "Unknown speaker",
+      members: [first],
+    });
+  }
+  return rows;
+}
+
+export interface InterruptedTurnRow<B> {
+  readonly key: string;
+  readonly interrupted: boolean;
+  /** The interrupted speaker when `interrupted`, else this block's own speaker. */
+  readonly speakerLabel: string;
+  readonly interjectionId?: string;
+  readonly interjectorLabel?: string;
+  readonly members: readonly B[];
+}
+
+/** `0.6 s` below ten seconds, `12 s` above it — a decimal on a long overlap is noise. */
+export function formatOverlapDuration(ms: number): string {
+  const seconds = Math.max(0, ms) / 1000;
+  return seconds < 10 ? `${seconds.toFixed(1)} s` : `${Math.round(seconds)} s`;
+}
