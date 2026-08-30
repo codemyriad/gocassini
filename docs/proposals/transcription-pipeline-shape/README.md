@@ -134,6 +134,48 @@ The two populations therefore **overlap** in the 6–26 dB band on real audio �
 simultaneous speech reaches 26 dB, and real crosstalk starts at 6 dB. No threshold
 separates them perfectly.
 
+### Does the gap actually predict a wrong word? Adjudicated: yes
+
+A number nobody has shown predicts anything is not worth shipping, so this was tested
+against independent ground truth rather than argued.
+
+The twelve words on the real meeting whose gap exceeds 15 dB were extracted, and for four
+of them the owner's track and the loudest-other track were cut and adjudicated blind and
+per-track by `gemini-3.5-transcribe` — the same method the 2026-08-27 audit used, with a
+model that also emits per-word speaker labels.
+
+| gap | Parakeet published | what the owner's own track actually contains | verdict |
+|---|---|---|---|
+| 70.8 dB | chima: "Yeah." | `mit.` — a hallucination on near-silence | **fabricated** |
+| 60.6 dB | chima: "good" | `五` — a Chinese character, i.e. noise | **fabricated** |
+| 58.0 dB | Ivan: "you." | *nothing* | **fabricated** |
+| 50.5 dB | participant: "Okay." | `Um, yeah.` | genuine overlap |
+
+**Three of four are real fabrications that ship today.** They survive the existing
+within-track energy gate precisely because they are loud relative to *their own* track's
+floor — only the cross-track comparison can see them. The fourth is genuine simultaneous
+speech, which is the population overlap described above behaving exactly as predicted.
+
+One caveat on method: the first pass of this adjudication scored any non-empty
+transcription as "the owner spoke", which counted `mit.` and `五` as speech and reported
+the opposite conclusion. Reading the content is what produced the table. A check that
+looks like validation and is not is the recurring hazard in this whole document.
+
+### The measurement is right; the estimator is the wrong consumer
+
+Both things are now true at once. The gap identifies real fabrications, and on that same
+meeting the estimator flags **zero** of them — it waits for a tight bimodal mode, and real
+crosstalk is diffuse.
+
+So the estimator should not be the only consumer. D-683 already specifies the right one:
+*rank* the evidence and put it in an audit sidecar, rather than thresholding it. The
+ranked miner in `challenges.go` is that consumer, and on this sample its top entries would
+be 75% true positives. The estimator keeps a narrow job — room-system and speakerphone
+audio, where the mode genuinely is bimodal and deletion is defensible.
+
+What should ship, then, is the **measurement**: `attributionGapDb` on every word, plus the
+backend seam. The ranking belongs to the miner that already exists.
+
 ### What that means for the recommendation
 
 Deleting words on a threshold is the wrong default. What the evidence supports is:
