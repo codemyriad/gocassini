@@ -151,7 +151,7 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
   resolve-ffmpeg:
-    name: Resolve newest stable FFmpeg
+    name: Resolve FFmpeg version
     runs-on: ubuntu-latest
     needs: classify-changes
     if: needs.classify-changes.outputs.relevant == 'true'
@@ -159,12 +159,49 @@ jobs:
       version: ${{ steps.ffmpeg.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - name: Resolve release from ffmpeg.org
+      # Only needed to read the label off the current main image on tag builds.
+      - name: Log in to the container registry
+        if: github.ref_type == 'tag'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve FFmpeg version
         id: ffmpeg
         run: |
           set -euo pipefail
+          # Main resolves the newest stable FFmpeg, so an upstream release that
+          # breaks anything Cassini needs fails the image gate on main, where a
+          # human is already looking.
+          #
+          # A release must not be the first place a given FFmpeg appears. Tag
+          # builds therefore inherit the version the current main image was
+          # built with, rather than resolving upstream again: a release
+          # published minutes after an upstream one would otherwise ship an
+          # FFmpeg no main build has ever gated, and rebuilding that tag later
+          # would produce a different binary. Pinning here also decouples
+          # rollback — reverting a release no longer silently reverts FFmpeg
+          # along with our code.
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            main_image="${REGISTRY}/${IMAGE}:branch-main"
+            validated="$(docker buildx imagetools inspect "$main_image" \
+              --format '{{ json .Image.Config.Labels }}' 2>/dev/null \
+              | jq -r '."io.gocassini.ffmpeg.requested-version" // empty' || true)"
+            case "${validated}" in
+              "" | latest | *[!0-9.]* | .* | *..* | *.)
+                echo "::warning::${main_image} carries no validated FFmpeg version" \
+                  "(got '${validated:-none}'); falling back to resolving upstream"
+                ;;
+              *)
+                echo "Pinning FFmpeg ${validated}, as already gated by the current main image"
+                echo "version=${validated}" >> "$GITHUB_OUTPUT"
+                exit 0
+                ;;
+            esac
+          fi
           version=$(deployment/ffmpeg/resolve-latest.sh)
-          echo "Resolved FFmpeg ${version}"
+          echo "Resolved FFmpeg ${version} from ffmpeg.org"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
   build-image:
