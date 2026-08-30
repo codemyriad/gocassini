@@ -130,7 +130,7 @@ for case in "${CASES[@]}"; do
     printf '%s\n' "$build_out" >&2
     exit 1
   fi
-  if [[ "${REQUIRE_CUDA:-0}" == "1" ]] && ! grep -q 'STT policy: device=cuda ' <<<"$build_out"; then
+  if [[ "${REQUIRE_CUDA:-0}" == "1" ]] && ! grep -qE 'STT policy: (backend=[^ ]+ )?device=cuda ' <<<"$build_out"; then
     log "FAIL ${dur}s build did not report the required CUDA STT policy"
     printf '%s\n' "$build_out" >&2
     exit 1
