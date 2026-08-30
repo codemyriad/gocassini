@@ -1,0 +1,91 @@
+{
+  "scenario_id": "overlap-and-pause-v1",
+  "title": "Overlap and Pause",
+  "description": "A three-person release check-in written to exercise speech overlap honestly. It contains two genuine backchannel overlaps (a listener says a short word while another participant is mid-sentence), one genuine interruption where the floor changes hands, and several sentence-final words followed by long silences. The long silences are the point: a decoder that stretches a word's end through the following pause turns a clean gap into a fabricated overlap with whoever speaks next, so this fixture distinguishes real simultaneous speech from invented simultaneous speech.",
+  "duration_seconds": 40,
+  "participants": [
+    {
+      "id": "ana",
+      "display_name": "Ana Duarte",
+      "role": "Release Manager",
+      "voice": "af_sarah",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#60a5fa"
+    },
+    {
+      "id": "ben",
+      "display_name": "Ben Okafor",
+      "role": "Engineer",
+      "voice": "am_onyx",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#f59e0b"
+    },
+    {
+      "id": "cara",
+      "display_name": "Cara Lindqvist",
+      "role": "Technical Writer",
+      "voice": "af_heart",
+      "lang_code": "a",
+      "join_delay_seconds": 0,
+      "theme_color": "#34d399"
+    }
+  ],
+  "turns": [
+    {
+      "speaker": "ana",
+      "start_seconds": 1.0,
+      "text": "Let me walk through where the release actually stands today. The installer is finished and the documentation has already been merged.",
+      "note": "long turn; ends into a deliberate four second silence"
+    },
+    {
+      "speaker": "ben",
+      "start_seconds": 4.6,
+      "text": "Right.",
+      "note": "GENUINE OVERLAP: backchannel while ana is mid-sentence"
+    },
+    {
+      "speaker": "ben",
+      "start_seconds": 13.0,
+      "text": "Okay, so what is actually left before we can ship it?",
+      "note": "starts after a long gap; ana's final word must not stretch into this turn"
+    },
+    {
+      "speaker": "ana",
+      "start_seconds": 18.0,
+      "text": "Only the changelog.",
+      "note": "short turn followed by another long silence"
+    },
+    {
+      "speaker": "cara",
+      "start_seconds": 23.0,
+      "text": "I can take that one. I will write it this afternoon and post the link in the channel well before the standup tomorrow.",
+      "note": "long turn that a backchannel lands inside"
+    },
+    {
+      "speaker": "ana",
+      "start_seconds": 26.5,
+      "text": "Perfect.",
+      "note": "GENUINE OVERLAP: backchannel while cara is mid-sentence"
+    },
+    {
+      "speaker": "ben",
+      "start_seconds": 29.0,
+      "text": "Wait, does that block the announcement?",
+      "note": "GENUINE OVERLAP: real interruption, the floor changes hands"
+    },
+    {
+      "speaker": "cara",
+      "start_seconds": 33.5,
+      "text": "No, the announcement goes out separately.",
+      "note": "clean sequential control turn"
+    },
+    {
+      "speaker": "ana",
+      "start_seconds": 37.0,
+      "text": "Then we are done here.",
+      "note": "final turn; trailing silence to the end of the meeting"
+    }
+  ]
+}
