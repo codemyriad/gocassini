@@ -1,8 +1,8 @@
 # Cassini Portable Meeting Format
 
-Date: 2026-03-11
+Date: 2026-08-29
 
-Status: Proposed v1
+Status: v3 current; v1 and v2 readable for compatibility
 
 ## Goal
 
@@ -18,14 +18,14 @@ should implement.
 
 The `.opus` portable meeting file is the **one canonical, user-facing format**
 and the only durable, published Cassini contract. The producer now emits
-`org.cassini.portable-meeting/2` (v2); v1 remains readable for older files but
-is no longer emitted. The intermediate `.meeting` bundle directory (with its
-`cassini.json` and `manifest.json`) is transient build scratch, not a
-deliverable — see [Why `.meeting` is not a contract](#why-meeting-is-not-a-contract).
+`org.cassini.portable-meeting/3` (v3); v1 and v2 remain readable for older
+files but are no longer emitted. The intermediate `.meeting` bundle directory
+(with its `cassini.json` and `manifest.json`) is transient build scratch, not
+a deliverable — see [Why `.meeting` is not a contract](#why-meeting-is-not-a-contract).
 
 ## Decision
 
-Cassini v1 portable meeting files should be:
+Cassini portable meeting files use:
 
 - file extension: `.opus`
 - container: Ogg
@@ -66,12 +66,12 @@ This document defines:
 A file is a Cassini portable meeting file when all of the following are true:
 
 1. the container is Ogg Opus
-2. OpusTags contains `CASSINI_FORMAT=org.cassini.portable-meeting/2` (current) or
-   `org.cassini.portable-meeting/1` (older files, still readable)
+2. OpusTags contains `CASSINI_FORMAT=org.cassini.portable-meeting/3` (current),
+   `/2`, or `/1` (older files, still readable)
 3. OpusTags contains a valid Cassini payload descriptor
 
-Consumers MUST accept both versions. A consumer that accepts only `/1` rejects
-every file Cassini writes today.
+Consumers MUST accept all three versions. A consumer that accepts only `/1` or
+`/2` rejects every file Cassini writes today.
 
 If `CASSINI_FORMAT` is absent, consumers MUST treat the file as plain audio.
 
@@ -118,29 +118,33 @@ Cassini portable meeting file. Decode CASSINI_PAYLOAD_*: base64url -> gzip -> UT
 
 ### Cassini descriptor tags
 
-The following tags are REQUIRED. The `CASSINI_FORMAT` and `CASSINI_PAYLOAD_SCHEMA`
-values below are the v1 forms; a producer emitting v2 writes
-`org.cassini.portable-meeting/2` and the `…-v2.schema.json` URL instead, and adds
-the per-transcript descriptors described under
-[v2 (Multi-Transcription)](#v2-multi-transcription).
+The following tags are REQUIRED for current v3 files. V3 retains the
+multi-transcript descriptors introduced by
+[v2 (Multi-Transcription)](#v2-multi-transcription) and changes the audio
+identity contract as described under
+[v3 (Compressed Opus Integrity)](#v3-compressed-opus-integrity).
 
-- `CASSINI_FORMAT=org.cassini.portable-meeting/1`
+- `CASSINI_FORMAT=org.cassini.portable-meeting/3`
 - `CASSINI_PROFILE=ogg-opus`
 - `CASSINI_PAYLOAD_MIME=application/vnd.cassini.portable-meeting+json`
 - `CASSINI_PAYLOAD_ENCODING=base64url+gzip+utf8json`
-- `CASSINI_PAYLOAD_SCHEMA=https://cassini.local/spec/cassini-portable-meeting-manifest-v1.schema.json`
+- `CASSINI_PAYLOAD_SCHEMA=https://cassini.local/spec/cassini-portable-meeting-manifest-v3.schema.json`
 - `CASSINI_PAYLOAD_CHUNK_COUNT=<decimal integer>`
 - `CASSINI_PAYLOAD_SHA256=<lowercase hex sha256 of decompressed UTF-8 JSON bytes>`
 - `CASSINI_PAYLOAD_RAW_BYTES=<decimal integer>`
 - `CASSINI_PAYLOAD_GZIP_BYTES=<decimal integer>`
-- `CASSINI_AUDIO_PCM_FORMAT=s16le`
 - `CASSINI_AUDIO_SAMPLE_RATE=48000`
 - `CASSINI_AUDIO_CHANNELS=<1 or 2>`
 - `CASSINI_AUDIO_SAMPLE_COUNT=<decimal integer>`
 - `CASSINI_AUDIO_DURATION_MS=<decimal integer>`
-- `CASSINI_AUDIO_PCM_SHA256=<lowercase hex sha256 of decoded PCM bytes>`
-- `CASSINI_AUDIO_MATCH_POLICY=exact-pcm`
-- `CASSINI_DECODE_HINT=Concatenate CASSINI_PAYLOAD_000..N, base64url decode, gzip decompress, parse UTF-8 JSON.`
+- `CASSINI_AUDIO_OPUS_SHA256=<lowercase hex sha256 of canonical compressed Opus audio>`
+- `CASSINI_AUDIO_MATCH_POLICY=exact-opus-audio-v1`
+- `CASSINI_DECODE_HINT=Concatenate CASSINI_PAYLOAD_000..N for the manifest; for a transcript body concatenate CASSINI_TX_<ID>_PAYLOAD_000..N. Each chunk set: base64url decode, gzip decompress, parse UTF-8 JSON.`
+
+Legacy v1/v2 files instead carry `CASSINI_AUDIO_PCM_FORMAT=s16le`,
+`CASSINI_AUDIO_PCM_SHA256`, and `CASSINI_AUDIO_MATCH_POLICY=exact-pcm`.
+Readers MUST keep that verification path for existing recordings; writers MUST
+not reinterpret an old version as compressed-audio integrity.
 
 The following tags are RECOMMENDED summary tags:
 
@@ -294,17 +298,17 @@ The `audio` object MUST describe the playable audio actually stored in the file:
 The `integrity` object is required so Cassini can detect when audio has been
 edited but metadata survived.
 
-Required v1 fields:
+Required v3 fields:
 
 - `matchPolicy`
-- `pcmSha256`
-- `pcmFormat`
+- `opusAudioSha256`
 - `sampleRate`
 - `channels`
 - `sampleCount`
 - `durationMs`
 
-Optional v1 field:
+V1/v2 require `pcmSha256` and `pcmFormat` instead. V1 may also contain the
+legacy optional field:
 
 - `containerSha256`
 
@@ -443,15 +447,17 @@ Cassini producers MUST:
 
 - produce valid Ogg Opus audio
 - write all required Cassini descriptor tags
-- embed a manifest conforming to the v1 schema
-- compute `CASSINI_AUDIO_PCM_SHA256` from the decoded PCM actually represented by the file
+- embed a manifest conforming to the v3 schema
+- compute `CASSINI_AUDIO_OPUS_SHA256` from the canonical compressed Opus audio
+  packet stream defined in
+  [`spec/cassini-opus-audio-integrity-v1.md`](../spec/cassini-opus-audio-integrity-v1.md)
 - ensure summary tags and manifest agree
 
 Cassini producers SHOULD:
 
 - write compact JSON before compression
 - keep only canonical and useful derived data
-- avoid embedding large redundant indexes in v1
+- avoid embedding large redundant indexes
 
 ## Consumer Requirements
 
@@ -470,7 +476,7 @@ Cassini consumers SHOULD:
 
 ## Initial Embedded Payload Policy
 
-V1 SHOULD embed:
+Portable meeting manifests SHOULD embed:
 
 - meeting summary metadata
 - speaker table
@@ -556,7 +562,7 @@ by strict audio integrity checks.
 
 Date: 2026-05-12
 
-Status: Spec landed. Producer and viewer support roll out behind a feature flag.
+Status: Legacy writer format; reader support retained.
 
 ## What v2 changes
 
@@ -691,6 +697,49 @@ summary, attachments
 
 ---
 
+# v3 (Compressed Opus Integrity)
+
+Date: 2026-08-29
+
+Status: Current producer format.
+
+V3 preserves v2's multi-transcript manifest and OpusTag layout. It changes
+only the recording identity and integrity policy:
+
+- `CASSINI_FORMAT=org.cassini.portable-meeting/3`
+- `CASSINI_PAYLOAD_SCHEMA=https://cassini.local/spec/cassini-portable-meeting-manifest-v3.schema.json`
+- `integrity.matchPolicy=exact-opus-audio-v1`
+- `integrity.opusAudioSha256=<64 lowercase hex characters>`
+- `CASSINI_AUDIO_MATCH_POLICY=exact-opus-audio-v1`
+- `CASSINI_AUDIO_OPUS_SHA256=<the same digest>`
+
+The digest covers playback-relevant `OpusHead` fields, every compressed audio
+packet in order with packet boundaries, and the normalized playable sample
+count. It excludes `OpusTags` and raw Ogg framing, including page layout,
+serial numbers, CRCs, and granule positions.
+That makes the identity non-circular and stable across metadata-only remuxes:
+the manifest can contain its own audio digest without the tag rewrite changing
+that digest.
+
+Playable sample count and duration remain required shape fields. The canonical
+algorithm validates the Ogg stream, derives packet duration at Opus's 48 kHz
+clock, and honors valid end trimming without making muxer-specific granule
+normalization part of the digest. The complete byte-level contract is
+[`spec/cassini-opus-audio-integrity-v1.md`](../spec/cassini-opus-audio-integrity-v1.md).
+
+V3 producers MUST compute and verify this digest without decoding the audio.
+V3 consumers MUST fail closed on an unknown policy, a missing digest, a
+manifest/tag disagreement, or a digest/shape mismatch. V1/v2 consumers continue
+to decode and verify their exact-PCM hashes; those existing files are not
+silently upgraded during retagging.
+
+Fresh v3 content-derived meeting IDs use the compressed-audio digest. Therefore
+a metadata-only retag preserves the ID, while re-encoding the same audible
+content normally creates a different ID. The operator's catalog/job ID and its
+separate whole-file sealed digest are unaffected.
+
+---
+
 ## Why `.meeting` is not a contract
 
 The build pipeline still uses a `.meeting` bundle directory as an intermediate
@@ -701,7 +750,7 @@ working form. That directory carries two internal manifest files:
 
 These are **build scratch, not a published format**. The only durable Cassini
 deliverable is the `.opus` portable meeting file with its embedded
-`org.cassini.portable-meeting/2` manifest. The `.meeting` bundle and its two
+`org.cassini.portable-meeting/3` manifest. The `.meeting` bundle and its two
 manifest schemas exist purely to stage the pack into `.opus`; they are
 deliberately not documented as a consumer contract and are scheduled to be
 retired once the build/publish flows no longer depend on them. Do not treat the
@@ -725,8 +774,9 @@ the artifact it produced:
   build            attempt .meeting bundle
     │
   SEAL             cassini pack  ->  runs/<job>--attempt-NNN.seal/<jobID>.opus
-    │                  │  pack verifies its own output: it re-decodes the packed
-    │                  │  file and compares the PCM SHA-256 against the manifest
+    │                  │  pack verifies its own output: it parses the packed
+    │                  │  file and compares its compressed-audio SHA-256 and shape
+    │                  │  against the manifest
     │                  │  it embedded, so a zero exit means packed AND checked
     │                  ▼
     │              sha256(file)  ────────────┐  the sealed digest
@@ -755,8 +805,8 @@ Three properties follow, and each is worth stating on its own:
   the filesystem allows one — not an independent pack of the same meeting.
 - **The file that reaches the viewer is the file that was sealed.** The digest is
   a SHA-256 of the container bytes. That is a different question from
-  `integrity.pcmSha256`, which hashes decoded audio, survives a remux, and is
-  what the meeting id is derived from; both are kept because they answer
+  `integrity.opusAudioSha256`, which hashes canonical compressed audio, survives
+  a metadata-only remux, and is what a fresh v3 meeting id is derived from;
+  both are kept because they answer
   different questions — "is this the same recording?" and "is this the same
   file?".
-

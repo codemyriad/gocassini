@@ -2,10 +2,9 @@ package inspect
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -64,6 +63,44 @@ func TestInspectPathPortableMeetingOpus(t *testing.T) {
 	// read like a lookup that failed rather than like nothing to report.
 	if strings.Contains(out.String(), "origin ") {
 		t.Errorf("did not expect an origin line when the meeting has no room or job, got %q", out.String())
+	}
+}
+
+func TestInspectPathPortableV3UsesCompressedOpusIntegrity(t *testing.T) {
+	requireFFMediaTools(t)
+
+	tmp := t.TempDir()
+	path := createPortableOpusFixture(t, filepath.Join(tmp, "meeting-v3.opus"), portableFixtureOptions{version3: true})
+
+	var out bytes.Buffer
+	if err := InspectPath(&out, path); err != nil {
+		t.Fatalf("inspect portable v3 opus: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "cassini=ok") || !strings.Contains(got, "opus_sha256=") {
+		t.Fatalf("expected compressed Opus integrity success, got %q", got)
+	}
+	if strings.Contains(got, "pcm_sha256=") {
+		t.Fatalf("v3 unexpectedly decoded PCM: %q", got)
+	}
+}
+
+func TestLegacyPCMPolicyWithoutDigestFailsClosed(t *testing.T) {
+	requireFFMediaTools(t)
+
+	path := createTestOpus(t, filepath.Join(t.TempDir(), "missing-pcm-digest.opus"))
+	meta, err := probePortableAudio(path)
+	if err != nil {
+		t.Fatalf("probe fixture: %v", err)
+	}
+	if len(meta.Streams) == 0 {
+		t.Fatal("fixture has no audio stream")
+	}
+	_, err = verifyPortableLegacyPCMIntegrity(path, meta.Streams[0], nil, portable.Manifest{
+		Integrity: portable.Integrity{MatchPolicy: portable.LegacyAudioMatchPolicyPCM},
+	})
+	if err == nil || !strings.Contains(err.Error(), "has no pcmSha256") {
+		t.Fatalf("missing legacy digest error = %v", err)
 	}
 }
 
@@ -203,24 +240,15 @@ func createPortableV2OpusFixtureWith(t *testing.T, outPath string, opts portable
 	}
 
 	basePath := createTestOpus(t, filepath.Join(filepath.Dir(outPath), "base-v2.opus"))
-	meta, err := probePortableAudio(basePath)
+	audioIdentity := readTestOpusIntegrity(t, basePath)
+	sampleRate := audioIdentity.SampleRate
+	channels := audioIdentity.Channels
+	pcmSHA, pcmByteCount, err := hashDecodedAudioPCM(basePath, sampleRate, channels)
 	if err != nil {
-		t.Fatalf("probe base opus: %v", err)
+		t.Fatalf("hash decoded PCM: %v", err)
 	}
-	stream, err := firstAudioStream(meta)
-	if err != nil {
-		t.Fatalf("first audio stream: %v", err)
-	}
-	sampleRate := parseIntOrZero(stream.SampleRate)
-	channels := stream.Channels
-	pcmBytes, err := decodeAudioPCM(basePath, sampleRate, channels)
-	if err != nil {
-		t.Fatalf("decode pcm: %v", err)
-	}
-	pcmSum := sha256.Sum256(pcmBytes)
-	pcmSHA := hex.EncodeToString(pcmSum[:])
-	sampleCount := int64(len(pcmBytes) / (2 * channels))
-	durationMS := int64(sampleCount * 1000 / int64(sampleRate))
+	sampleCount := pcmByteCount / int64(2*channels)
+	durationMS := sampleCount * 1000 / int64(sampleRate)
 
 	items := make([]portable.TranscriptItem, 0, len(words))
 	for i, w := range words {
@@ -248,7 +276,7 @@ func createPortableV2OpusFixtureWith(t *testing.T, outPath string, opts portable
 			DurationMS:  durationMS,
 		},
 		Integrity: portable.Integrity{
-			MatchPolicy: portable.AudioMatchPolicy,
+			MatchPolicy: portable.LegacyAudioMatchPolicyPCM,
 			PCMFormat:   portable.AudioPCMFormat,
 			PCMSHA256:   pcmSHA,
 			SampleRate:  sampleRate,
@@ -334,41 +362,52 @@ type portableFixtureOptions struct {
 	stale       bool
 	withSummary bool
 	withOrigin  bool
+	version3    bool
 }
 
 func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtureOptions) string {
 	t.Helper()
 
 	basePath := createTestOpus(t, filepath.Join(filepath.Dir(outPath), "base.opus"))
-	meta, err := probePortableAudio(basePath)
-	if err != nil {
-		t.Fatalf("probe base opus: %v", err)
+	audioIdentity := readTestOpusIntegrity(t, basePath)
+	sampleRate := audioIdentity.SampleRate
+	channels := audioIdentity.Channels
+	sampleCount := audioIdentity.SampleCount
+	durationMS := audioIdentity.DurationMS
+	integrity := portable.Integrity{
+		MatchPolicy: portable.AudioMatchPolicy,
+		OpusSHA256:  audioIdentity.SHA256,
+		SampleRate:  sampleRate,
+		Channels:    channels,
+		SampleCount: sampleCount,
+		DurationMS:  durationMS,
 	}
-	stream, err := firstAudioStream(meta)
-	if err != nil {
-		t.Fatalf("first audio stream: %v", err)
+	if !opts.version3 {
+		pcmSHA, pcmByteCount, err := hashDecodedAudioPCM(basePath, sampleRate, channels)
+		if err != nil {
+			t.Fatalf("hash decoded PCM: %v", err)
+		}
+		sampleCount = pcmByteCount / int64(2*channels)
+		durationMS = sampleCount * 1000 / int64(sampleRate)
+		integrity = portable.Integrity{
+			MatchPolicy: portable.LegacyAudioMatchPolicyPCM,
+			PCMFormat:   portable.AudioPCMFormat,
+			PCMSHA256:   pcmSHA,
+			SampleRate:  sampleRate,
+			Channels:    channels,
+			SampleCount: sampleCount,
+			DurationMS:  durationMS,
+		}
 	}
-	sampleRate := parseIntOrZero(stream.SampleRate)
-	if sampleRate == 0 {
-		t.Fatalf("expected sample rate")
-	}
-	channels := stream.Channels
-	if channels == 0 {
-		t.Fatalf("expected channels")
-	}
-	pcmBytes, err := decodeAudioPCM(basePath, sampleRate, channels)
-	if err != nil {
-		t.Fatalf("decode pcm: %v", err)
-	}
-	pcmSum := sha256.Sum256(pcmBytes)
-	pcmSHA := hex.EncodeToString(pcmSum[:])
-	sampleCount := int64(len(pcmBytes) / (2 * channels))
-	durationMS := int64(sampleCount * 1000 / int64(sampleRate))
 	if opts.stale {
-		pcmSHA = strings.Repeat("0", 64)
+		if opts.version3 {
+			integrity.OpusSHA256 = strings.Repeat("0", 64)
+		} else {
+			integrity.PCMSHA256 = strings.Repeat("0", 64)
+		}
 	}
 
-	manifest := portable.NormalizeManifest(portable.Manifest{
+	manifest := portable.Manifest{
 		Meeting: portable.Meeting{
 			ID:           "meeting-20260311-weekly-sync",
 			Title:        "Weekly Sync",
@@ -384,15 +423,7 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 			SampleCount: sampleCount,
 			DurationMS:  durationMS,
 		},
-		Integrity: portable.Integrity{
-			MatchPolicy: portable.AudioMatchPolicy,
-			PCMFormat:   portable.AudioPCMFormat,
-			PCMSHA256:   pcmSHA,
-			SampleRate:  sampleRate,
-			Channels:    channels,
-			SampleCount: sampleCount,
-			DurationMS:  durationMS,
-		},
+		Integrity: integrity,
 		Speakers: []portable.Speaker{
 			{ID: "spk1", Label: "Silvio"},
 		},
@@ -420,7 +451,12 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 				Source:  "generated",
 			},
 		},
-	})
+	}
+	if opts.version3 {
+		manifest = portable.NormalizeManifestV3(manifest)
+	} else {
+		manifest = portable.NormalizeManifest(manifest)
+	}
 	if opts.withOrigin {
 		manifest.Meeting.RoomID = "rm_9f2a1c3d4e5b6a70"
 		manifest.Meeting.JobID = "01K3Q7W8ZC9F0MJXQ2NB8V4RTD"
@@ -442,11 +478,6 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 			"contentBase64": base64.StdEncoding.EncodeToString([]byte("# Meeting Summary\n")),
 		})
 	}
-	payload, err := portable.EncodeManifest(manifest, 256)
-	if err != nil {
-		t.Fatalf("encode manifest: %v", err)
-	}
-
 	args := []string{
 		"-y",
 		"-v", "error",
@@ -456,7 +487,34 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 		"-metadata", "TITLE=Weekly Sync",
 		"-metadata", "DESCRIPTION=Cassini portable meeting file. Decode CASSINI_PAYLOAD_*: base64url -> gzip -> UTF-8 JSON.",
 	}
-	for key, value := range portable.BuildOpusTags(manifest, payload) {
+	tags := map[string]string{}
+	if opts.version3 {
+		input := portable.TranscriptInput{
+			ID:         portable.RoleRawASR,
+			Role:       portable.RoleRawASR,
+			Default:    true,
+			Language:   manifest.Transcript.Language,
+			Provenance: manifest.Provenance.SpeechToText,
+			Body: portable.TranscriptBody{
+				Format:    manifest.Transcript.Format,
+				Language:  manifest.Transcript.Language,
+				WordCount: manifest.Transcript.WordCount,
+				Items:     manifest.Transcript.Items,
+			},
+		}
+		encoded, err := portable.EncodeManifestV3(manifest, []portable.TranscriptInput{input}, 256)
+		if err != nil {
+			t.Fatalf("encode v3 manifest: %v", err)
+		}
+		tags = portable.BuildOpusTagsV3(manifest, encoded, portable.RoleRawASR)
+	} else {
+		payload, err := portable.EncodeManifest(manifest, 256)
+		if err != nil {
+			t.Fatalf("encode v1 manifest: %v", err)
+		}
+		tags = portable.BuildOpusTags(manifest, payload)
+	}
+	for key, value := range tags {
 		args = append(args, "-metadata", fmt.Sprintf("%s=%s", key, value))
 	}
 	args = append(args, outPath)
@@ -465,6 +523,20 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 		t.Fatalf("write portable opus tags: %v", err)
 	}
 	return outPath
+}
+
+func readTestOpusIntegrity(t *testing.T, path string) portable.OpusAudioIntegrity {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("open Opus fixture: %v", err)
+	}
+	defer file.Close()
+	integrity, err := portable.ComputeOpusAudioIntegrity(file)
+	if err != nil {
+		t.Fatalf("compute Opus fixture integrity: %v", err)
+	}
+	return integrity
 }
 
 func runCommand(name string, args ...string) error {

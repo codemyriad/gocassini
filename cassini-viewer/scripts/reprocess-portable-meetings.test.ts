@@ -5,6 +5,19 @@ import {
   choosePreferredArtifactCandidate,
   classifyPortableTimingPrecision,
 } from "./reprocess-portable-meetings.mjs";
+import { requireLegacyV1ForJSRewrite } from "./repack-portable-display-transcripts.mjs";
+
+describe("legacy portable rewrite guard", () => {
+  it("refuses to downgrade v3 compressed-audio manifests", () => {
+    expect(() =>
+      requireLegacyV1ForJSRewrite({ version: 3 }, "meeting.opus"),
+    ).toThrow(/only rewrites v1/);
+  });
+
+  it("allows the legacy v1 maintenance path", () => {
+    expect(() => requireLegacyV1ForJSRewrite({ version: 1 })).not.toThrow();
+  });
+});
 
 describe("canonicalMeetingKey", () => {
   it("strips opus extensions and stt suffixes", () => {

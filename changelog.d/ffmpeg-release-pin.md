@@ -1,0 +1,2 @@
+### Changed
+- Release images now build with the FFmpeg version the current `main` image was already built and gated against, instead of resolving the newest upstream release again at tag time. Main keeps tracking the newest stable release, so an upstream regression still surfaces there first — but a release is never the first place a given FFmpeg appears, rebuilding a tag reproduces the same binary, and rolling back a release no longer silently rolls back FFmpeg with it.

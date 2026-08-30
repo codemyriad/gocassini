@@ -3,6 +3,10 @@ services:
     build:
       context: ..
       dockerfile: deployment/Dockerfile.operator
+      args:
+        # deployment/README.md resolves this before every build so a newly
+        # published stable FFmpeg release invalidates the cached bundle layer.
+        FFMPEG_VERSION: ${FFMPEG_VERSION:-latest}
     restart: unless-stopped
     # Reap zombie ffmpeg/recorder grandchildren (the operator is otherwise
     # PID 1) and give in-flight recordings time to finalize on stop: the

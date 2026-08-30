@@ -12,20 +12,25 @@ import (
 )
 
 const (
-	Format                  = "org.cassini.portable-meeting/1"
-	FormatV2                = "org.cassini.portable-meeting/2"
-	Profile                 = "ogg-opus"
-	PayloadMIME             = "application/vnd.cassini.portable-meeting+json"
-	PayloadMIMEV2           = "application/vnd.cassini.portable-meeting+json"
-	PayloadEncoding         = "base64url+gzip+utf8json"
-	PayloadSchema           = "https://cassini.local/spec/cassini-portable-meeting-manifest-v1.schema.json"
-	PayloadSchemaV2         = "https://cassini.local/spec/cassini-portable-meeting-manifest-v2.schema.json"
-	AudioPCMFormat          = "s16le"
-	AudioMatchPolicy        = "exact-pcm"
-	DefaultPayloadChunkSize = 4096
-	Description             = "Cassini portable meeting file. Decode CASSINI_PAYLOAD_*: base64url -> gzip -> UTF-8 JSON."
-	DecodeHint              = "Concatenate CASSINI_PAYLOAD_000..N, base64url decode, gzip decompress, parse UTF-8 JSON."
-	DecodeHintV2            = "Concatenate CASSINI_PAYLOAD_000..N for the manifest; for a transcript body concatenate CASSINI_TX_<ID>_PAYLOAD_000..N. Each chunk set: base64url decode, gzip decompress, parse UTF-8 JSON."
+	Format                    = "org.cassini.portable-meeting/1"
+	FormatV2                  = "org.cassini.portable-meeting/2"
+	FormatV3                  = "org.cassini.portable-meeting/3"
+	Profile                   = "ogg-opus"
+	PayloadMIME               = "application/vnd.cassini.portable-meeting+json"
+	PayloadMIMEV2             = "application/vnd.cassini.portable-meeting+json"
+	PayloadMIMEV3             = "application/vnd.cassini.portable-meeting+json"
+	PayloadEncoding           = "base64url+gzip+utf8json"
+	PayloadSchema             = "https://cassini.local/spec/cassini-portable-meeting-manifest-v1.schema.json"
+	PayloadSchemaV2           = "https://cassini.local/spec/cassini-portable-meeting-manifest-v2.schema.json"
+	PayloadSchemaV3           = "https://cassini.local/spec/cassini-portable-meeting-manifest-v3.schema.json"
+	AudioPCMFormat            = "s16le"
+	AudioMatchPolicy          = "exact-opus-audio-v1"
+	LegacyAudioMatchPolicyPCM = "exact-pcm"
+	DefaultPayloadChunkSize   = 4096
+	Description               = "Cassini portable meeting file. Decode CASSINI_PAYLOAD_*: base64url -> gzip -> UTF-8 JSON."
+	DecodeHint                = "Concatenate CASSINI_PAYLOAD_000..N, base64url decode, gzip decompress, parse UTF-8 JSON."
+	DecodeHintV2              = "Concatenate CASSINI_PAYLOAD_000..N for the manifest; for a transcript body concatenate CASSINI_TX_<ID>_PAYLOAD_000..N. Each chunk set: base64url decode, gzip decompress, parse UTF-8 JSON."
+	DecodeHintV3              = DecodeHintV2
 
 	TranscriptBodyMIMEWords    = "application/vnd.cassini.transcript-words+json"
 	TranscriptBodyMIMEReadable = "application/vnd.cassini.transcript-readable+json"
@@ -154,8 +159,9 @@ type Audio struct {
 
 type Integrity struct {
 	MatchPolicy     string `json:"matchPolicy"`
-	PCMFormat       string `json:"pcmFormat"`
-	PCMSHA256       string `json:"pcmSha256"`
+	OpusSHA256      string `json:"opusAudioSha256,omitempty"`
+	PCMFormat       string `json:"pcmFormat,omitempty"`
+	PCMSHA256       string `json:"pcmSha256,omitempty"`
 	ContainerSHA256 string `json:"containerSha256,omitempty"`
 	SampleRate      int    `json:"sampleRate"`
 	Channels        int    `json:"channels"`
@@ -204,11 +210,31 @@ func NormalizeManifest(manifest Manifest) Manifest {
 	manifest.Profile = Profile
 	manifest.Audio.Container = "ogg"
 	manifest.Audio.Codec = "opus"
-	manifest.Integrity.MatchPolicy = AudioMatchPolicy
-	manifest.Integrity.PCMFormat = AudioPCMFormat
+	manifest.Integrity.MatchPolicy = LegacyAudioMatchPolicyPCM
+	manifest.Integrity.OpusSHA256 = ""
+	if manifest.Integrity.PCMFormat == "" {
+		manifest.Integrity.PCMFormat = AudioPCMFormat
+	}
 	if manifest.Transcript.Format == "" {
 		manifest.Transcript.Format = "cassini.words.v1"
 	}
+	return manifest
+}
+
+// NormalizeManifestV3 selects the multi-transcript portable wire format whose
+// recording identity is the canonical compressed Opus audio essence. V1/V2
+// remain exact-PCM formats so older readers never misinterpret a missing PCM
+// digest as a successfully verified file.
+func NormalizeManifestV3(manifest Manifest) Manifest {
+	manifest.Kind = "cassini-portable-meeting"
+	manifest.Version = 3
+	manifest.Profile = Profile
+	manifest.Audio.Container = "ogg"
+	manifest.Audio.Codec = "opus"
+	manifest.Integrity.MatchPolicy = AudioMatchPolicy
+	manifest.Integrity.OpusSHA256 = strings.ToLower(strings.TrimSpace(manifest.Integrity.OpusSHA256))
+	manifest.Integrity.PCMFormat = ""
+	manifest.Integrity.PCMSHA256 = ""
 	return manifest
 }
 
@@ -279,6 +305,13 @@ func ChunkString(value string, size int) []string {
 }
 
 func MeetingIDFromPCMHash(hash string) string {
+	return MeetingIDFromAudioHash(hash)
+}
+
+// MeetingIDFromAudioHash derives the stable meeting identity from the
+// canonical compressed Opus digest. MeetingIDFromPCMHash remains as a legacy
+// alias for callers reading pre-opus-digest manifests.
+func MeetingIDFromAudioHash(hash string) string {
 	hash = strings.ToLower(strings.TrimSpace(hash))
 	if hash == "" {
 		return ""
@@ -303,19 +336,17 @@ func BuildOpusTags(manifest Manifest, payload EncodedPayload) map[string]string 
 		"CASSINI_PAYLOAD_SHA256":      payload.SHA256,
 		"CASSINI_PAYLOAD_RAW_BYTES":   fmt.Sprintf("%d", payload.RawBytes),
 		"CASSINI_PAYLOAD_GZIP_BYTES":  fmt.Sprintf("%d", payload.CompressedBytes),
-		"CASSINI_AUDIO_PCM_FORMAT":    AudioPCMFormat,
 		"CASSINI_AUDIO_SAMPLE_RATE":   fmt.Sprintf("%d", manifest.Audio.SampleRate),
 		"CASSINI_AUDIO_CHANNELS":      fmt.Sprintf("%d", manifest.Audio.Channels),
 		"CASSINI_AUDIO_SAMPLE_COUNT":  fmt.Sprintf("%d", manifest.Audio.SampleCount),
 		"CASSINI_AUDIO_DURATION_MS":   fmt.Sprintf("%d", manifest.Audio.DurationMS),
-		"CASSINI_AUDIO_PCM_SHA256":    manifest.Integrity.PCMSHA256,
-		"CASSINI_AUDIO_MATCH_POLICY":  AudioMatchPolicy,
 		"CASSINI_DECODE_HINT":         DecodeHint,
 		"CASSINI_MEETING_ID":          manifest.Meeting.ID,
 		"CASSINI_CREATED_AT":          manifest.Meeting.CreatedAtUTC,
 		"CASSINI_SPEAKER_COUNT":       fmt.Sprintf("%d", len(manifest.Speakers)),
 		"CASSINI_WORD_COUNT":          fmt.Sprintf("%d", manifest.Transcript.WordCount),
 	}
+	applyAudioIntegrityTags(tags, manifest.Integrity)
 	if manifest.Meeting.RecordedAtLocal != "" {
 		tags["CASSINI_RECORDED_AT_LOCAL"] = manifest.Meeting.RecordedAtLocal
 	}
@@ -339,6 +370,31 @@ func BuildOpusTags(manifest Manifest, payload EncodedPayload) map[string]string 
 		tags[fmt.Sprintf("CASSINI_PAYLOAD_%03d", idx)] = chunk
 	}
 	return tags
+}
+
+func applyAudioIntegrityTags(tags map[string]string, integrity Integrity) {
+	policy := integrity.MatchPolicy
+	if policy == "" {
+		if integrity.OpusSHA256 != "" {
+			policy = AudioMatchPolicy
+		} else if integrity.PCMSHA256 != "" {
+			policy = LegacyAudioMatchPolicyPCM
+		}
+	}
+	if policy != "" {
+		tags["CASSINI_AUDIO_MATCH_POLICY"] = policy
+	}
+	if integrity.OpusSHA256 != "" {
+		tags["CASSINI_AUDIO_OPUS_SHA256"] = integrity.OpusSHA256
+	}
+	if integrity.PCMSHA256 != "" {
+		pcmFormat := integrity.PCMFormat
+		if pcmFormat == "" {
+			pcmFormat = AudioPCMFormat
+		}
+		tags["CASSINI_AUDIO_PCM_FORMAT"] = pcmFormat
+		tags["CASSINI_AUDIO_PCM_SHA256"] = integrity.PCMSHA256
+	}
 }
 
 // applyRoomTags mirrors the meeting's room onto plain OpusTags, and only when
