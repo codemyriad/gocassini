@@ -50,7 +50,8 @@
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/processingStep" }
         },
-        "meetingSummary": { "$ref": "#/$defs/processingStep" }
+        "meetingSummary": { "$ref": "#/$defs/processingStep" },
+        "attribution": { "$ref": "#/$defs/attributionProvenance" }
       }
     },
     "chapters": {
@@ -181,6 +182,20 @@
         "host": { "type": "string" },
         "source": { "type": "string" },
         "version": { "type": "string" }
+      }
+    },
+    "attributionProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ran", "mode", "wordsMeasured", "wordsFlagged", "wordsDropped"],
+      "properties": {
+        "ran": { "type": "boolean", "description": "Whether the cross-track attribution stage ran against this file's default raw transcript." },
+        "mode": { "type": "string", "minLength": 1, "description": "How flagged words were handled: annotate (per-word evidence kept on the words), drop (flagged words deleted before publication; this record is then the only trace they existed), or disabled." },
+        "reason": { "type": "string", "description": "Why the stage did not run. Absent when ran is true." },
+        "wordsMeasured": { "type": "integer", "minimum": 0 },
+        "wordsFlagged": { "type": "integer", "minimum": 0 },
+        "wordsDropped": { "type": "integer", "minimum": 0 },
+        "thresholdDb": { "type": "number", "description": "The meeting's estimated crosstalk threshold in dB. Absent when the meeting showed no crosstalk population." }
       }
     },
     "chapter": {

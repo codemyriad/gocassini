@@ -78,6 +78,33 @@ type Provenance struct {
 	ReadableCleanup   *ProcessingStep `json:"readableCleanup,omitempty"`
 	DisplayTranscript *ProcessingStep `json:"displayTranscript,omitempty"`
 	MeetingSummary    *ProcessingStep `json:"meetingSummary,omitempty"`
+	// Attribution is meeting-level, not a per-transcript ProcessingStep: the
+	// cross-track attribution stage runs once against the default raw
+	// transcript. Nil for legacy files and attribution-less builds, and
+	// omitted from the wire in that case.
+	Attribution *AttributionProvenance `json:"attribution,omitempty"`
+}
+
+// AttributionProvenance is the cross-track attribution stage's record for the
+// file's default raw transcript, restated field-for-field from the build
+// artifact manifest (internal/transcribe writes that record; this package
+// deliberately does not import it). It exists because drop mode deletes
+// flagged words, and deleted words carry their per-word evidence away with
+// them: once the file is published, this record is the only remaining trace
+// that the words existed and why they are gone.
+type AttributionProvenance struct {
+	Ran bool `json:"ran"`
+	// Mode is "annotate" (per-word evidence kept on the words), "drop"
+	// (flagged words deleted before publication) or "disabled".
+	Mode string `json:"mode"`
+	// Reason says why the stage did not run; empty when Ran is true.
+	Reason        string `json:"reason,omitempty"`
+	WordsMeasured int    `json:"wordsMeasured"`
+	WordsFlagged  int    `json:"wordsFlagged"`
+	WordsDropped  int    `json:"wordsDropped"`
+	// ThresholdDB is the meeting's estimated crosstalk threshold; absent when
+	// the meeting showed no crosstalk population.
+	ThresholdDB *float64 `json:"thresholdDb,omitempty"`
 }
 
 type ProcessingStep struct {
@@ -373,6 +400,7 @@ func BuildOpusTags(manifest Manifest, payload EncodedPayload) map[string]string 
 	if manifest.Provenance != nil {
 		applyProcessingStepTags(tags, "CASSINI_STT", manifest.Provenance.SpeechToText)
 		applyProcessingStepTags(tags, "CASSINI_READABLE", manifest.Provenance.ReadableCleanup)
+		applyAttributionProvenanceTags(tags, manifest.Provenance.Attribution)
 	}
 
 	for idx, chunk := range payload.Chunks {
@@ -442,6 +470,31 @@ func applyProvenanceTags(tags map[string]string, meeting Meeting) {
 	}
 	if meeting.AttemptNumber > 0 {
 		tags["CASSINI_ATTEMPT_NUMBER"] = fmt.Sprintf("%d", meeting.AttemptNumber)
+	}
+}
+
+// applyAttributionProvenanceTags mirrors the attribution stage's record onto
+// plain OpusTags, following the same convention as the CASSINI_STT_* and
+// CASSINI_READABLE_* mirrors above it: the payload manifest's
+// provenance.attribution is the record, these tags are the one-ffprobe-call
+// convenience. In drop mode that record is the only remaining trace of the
+// deleted words, so the mirror matters more here, not less.
+func applyAttributionProvenanceTags(tags map[string]string, attribution *AttributionProvenance) {
+	if attribution == nil {
+		return
+	}
+	tags["CASSINI_ATTRIBUTION_RAN"] = fmt.Sprintf("%t", attribution.Ran)
+	if attribution.Mode != "" {
+		tags["CASSINI_ATTRIBUTION_MODE"] = attribution.Mode
+	}
+	if attribution.Reason != "" {
+		tags["CASSINI_ATTRIBUTION_REASON"] = attribution.Reason
+	}
+	tags["CASSINI_ATTRIBUTION_WORDS_MEASURED"] = fmt.Sprintf("%d", attribution.WordsMeasured)
+	tags["CASSINI_ATTRIBUTION_WORDS_FLAGGED"] = fmt.Sprintf("%d", attribution.WordsFlagged)
+	tags["CASSINI_ATTRIBUTION_WORDS_DROPPED"] = fmt.Sprintf("%d", attribution.WordsDropped)
+	if attribution.ThresholdDB != nil {
+		tags["CASSINI_ATTRIBUTION_THRESHOLD_DB"] = fmt.Sprintf("%g", *attribution.ThresholdDB)
 	}
 }
 

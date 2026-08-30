@@ -112,6 +112,14 @@
         "model": "cassini-cleanup-qwen35-0.8b-v35-q4km",
         "source": "generated"
       }
+    },
+    "attribution": {
+      "ran": true,
+      "mode": "annotate",
+      "wordsMeasured": 5182,
+      "wordsFlagged": 37,
+      "wordsDropped": 0,
+      "thresholdDb": 15.2
     }
   }
 }

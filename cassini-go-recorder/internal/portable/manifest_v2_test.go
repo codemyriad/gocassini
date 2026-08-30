@@ -541,3 +541,64 @@ func TestBuildOpusTagsV2AndWireCarryTheProvenance(t *testing.T) {
 		}
 	}
 }
+
+// TestMultiTranscriptWireCarriesAttributionProvenance guards the carry from
+// Manifest.Provenance.Attribution into the v2/v3 wire. It matters most for
+// drop mode: the flagged words are already deleted from every transcript body,
+// so this record is the only trace the publication keeps of them.
+func TestMultiTranscriptWireCarriesAttributionProvenance(t *testing.T) {
+	threshold := 14.5
+	manifest := baseManifestV3()
+	manifest.Provenance = &Provenance{
+		Attribution: &AttributionProvenance{
+			Ran:           true,
+			Mode:          "drop",
+			WordsMeasured: 120,
+			WordsFlagged:  7,
+			WordsDropped:  7,
+			ThresholdDB:   &threshold,
+		},
+	}
+	transcripts := []TranscriptInput{{
+		ID: "parakeet", Role: RoleRawASR, Default: true,
+		Body: sampleBody("spk_0", "what", "survived"),
+	}}
+	encoded, err := EncodeManifestV3(manifest, transcripts, 0)
+	if err != nil {
+		t.Fatalf("EncodeManifestV3: %v", err)
+	}
+
+	var wire manifestV2Wire
+	if err := json.Unmarshal(encoded.Main.JSON, &wire); err != nil {
+		t.Fatalf("decode v3 wire manifest: %v", err)
+	}
+	// No transcript input carries a step and there is no summary step, so
+	// attribution alone must keep the provenance object alive — before the
+	// carry existed, this wire had provenance == nil.
+	if wire.Provenance == nil || wire.Provenance.Attribution == nil {
+		t.Fatalf("wire provenance.attribution missing: %+v", wire.Provenance)
+	}
+	got := wire.Provenance.Attribution
+	if !got.Ran || got.Mode != "drop" || got.Reason != "" {
+		t.Errorf("attribution ran/mode/reason = %v/%q/%q, want true/drop/empty", got.Ran, got.Mode, got.Reason)
+	}
+	if got.WordsMeasured != 120 || got.WordsFlagged != 7 || got.WordsDropped != 7 {
+		t.Errorf("attribution counts = %d/%d/%d, want 120/7/7", got.WordsMeasured, got.WordsFlagged, got.WordsDropped)
+	}
+	if got.ThresholdDB == nil || *got.ThresholdDB != 14.5 {
+		t.Errorf("attribution thresholdDb = %v, want 14.5", got.ThresholdDB)
+	}
+
+	// An attribution-less manifest must keep omitting provenance entirely.
+	plain, err := EncodeManifestV3(baseManifestV3(), transcripts, 0)
+	if err != nil {
+		t.Fatalf("EncodeManifestV3 (plain): %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(plain.Main.JSON, &raw); err != nil {
+		t.Fatalf("decode plain wire manifest: %v", err)
+	}
+	if _, ok := raw["provenance"]; ok {
+		t.Errorf("attribution-less manifest emits a provenance key: %s", raw["provenance"])
+	}
+}
