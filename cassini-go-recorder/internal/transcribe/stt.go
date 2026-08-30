@@ -913,13 +913,17 @@ func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
 	var words []Word
 	var curText strings.Builder
 	var wordStartMs float64 = -1
-	var lastEndMs float64
+	var lastSpeechEndMs float64 = -1
 
 	flush := func() {
 		text := strings.TrimSpace(curText.String())
 		if text != "" {
-			endMs := lastEndMs
+			endMs := lastSpeechEndMs
 			if endMs < wordStartMs {
+				// Either the word carries no acoustic token at all (a standalone
+				// punctuation mark) or every one of them was stamped before the
+				// word start. Collapse to a zero-length word rather than
+				// inventing an extent.
 				endMs = wordStartMs
 			}
 			words = append(words, Word{
@@ -930,6 +934,11 @@ func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
 		}
 		curText.Reset()
 		wordStartMs = -1
+		// The end is per word: a word must never inherit the previous word's
+		// end, or a token stamped before it (a zero-duration boundary token,
+		// or a word re-decoded from an overlapping window) silently absorbs
+		// the whole preceding span.
+		lastSpeechEndMs = -1
 	}
 
 	for i, tok := range tokens {
@@ -949,28 +958,60 @@ func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
 		// structure and leads to visibly wrong seek points in the UI.
 		if strings.HasPrefix(tok, "▁") || strings.HasPrefix(tok, " ") || tok == "<space>" {
 			flush()
-			clean := strings.TrimPrefix(tok, "▁")
-			clean = strings.TrimLeft(clean, " ")
-			if clean != "" {
-				if wordStartMs < 0 {
-					wordStartMs = ts
-				}
-				curText.WriteString(clean)
-				// Some models emit zero-duration boundary tokens. Keep the running
-				// word end at least at the latest token timestamp so we never flush
-				// a new word with the previous word's end time.
-				lastEndMs = maxFloat64(lastEndMs, ts, end)
+			tok = strings.TrimPrefix(tok, "▁")
+			tok = strings.TrimLeft(tok, " ")
+			if tok == "" {
+				continue
 			}
-		} else {
-			if wordStartMs < 0 {
-				wordStartMs = ts
-			}
-			curText.WriteString(tok)
-			lastEndMs = maxFloat64(lastEndMs, ts, end)
+		}
+		if wordStartMs < 0 {
+			wordStartMs = ts
+		}
+		curText.WriteString(tok)
+		// The mark itself stays in the word's text; it just may not decide how
+		// far the word reaches. Parakeet stamps a sentence-final mark at the
+		// *next* acoustic onset, so honouring its timestamp stretches the word
+		// it is attached to across the pause that follows the sentence — which
+		// the viewer then paints as an overlap with whoever spoke during that
+		// pause.
+		if !tokenIsNonAcousticPunctuation(tok) {
+			// Some models emit zero-duration boundary tokens. Keep the word end
+			// at least at the token's own timestamp so a word is never flushed
+			// with an end that precedes its last spoken token.
+			lastSpeechEndMs = maxFloat64(lastSpeechEndMs, ts, end)
 		}
 	}
 	flush()
 	return splitMultiWordTokens(words)
+}
+
+// tokenIsNonAcousticPunctuation reports whether a decoder token is nothing but
+// delimiter punctuation. Parakeet's punctuation head writes these marks rather
+// than hearing them, and stamps a sentence-final one at the *next* acoustic
+// onset, so such a token's timestamp is evidence about the following word, not
+// about the extent of the one it is attached to.
+//
+// The set is deliberately narrow: only marks that are never spoken. Symbols
+// like % and $ stand for spoken words ("percent", "dollars") and carry real
+// audio, so they are not listed and keep extending the word end. A token that
+// mixes text and punctuation ("irit.") is not punctuation-only and also keeps
+// extending it.
+func tokenIsNonAcousticPunctuation(token string) bool {
+	trimmed := strings.TrimSpace(token)
+	if trimmed == "" {
+		return false
+	}
+	for _, r := range trimmed {
+		switch r {
+		case '.', ',', '?', '!', ';', ':',
+			'…', '‥', '¿', '¡',
+			'。', '．', '｡', '，', '、', '､', '？', '！', '；', '：',
+			'؟', '،', '؛', '।', '॥':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func maxFloat64(values ...float64) float64 {
