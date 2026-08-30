@@ -355,9 +355,17 @@ that defect. The architectural comparison holds either way.
    `mock` backend. `ben/ana/noah/jules.ogg` are low-frequency artifact, not voice
    (zero-crossing rate 0.003–0.005 against 0.013–0.047); Parakeet returns empty string for
    all four. Exactly one scripted start time is wrong —
-   `harness/scenarios/showcase-lantern-festival.v2.json` fixes it — currently untracked in
-   the working tree, committed to no branch. Anything
-   gated on this fixture is exercising two speakers, not six.
+   `harness/scenarios/showcase-lantern-festival.v2.json` fixes the scenario, and the
+   generator now slides a self-overlapping turn instead of aborting mid-run — aborting
+   partway left the earlier participants generated and the later ones missing, which is
+   exactly how a fixture ends up looking complete while being half mock.
+
+   **Scope correction:** I first wrote that "anything gated on this fixture is exercising
+   two speakers, not six". CI only ever uses `mira` — `MEDIA_PREFIX=…/mira` in
+   `ci-e2e-installed-exapp-talk.sh`, and the image workflow fetches only `mira.ivf` and
+   `mira.ogg` — and mira is one of the two tracks that works. So nothing in CI is silently
+   degraded today. The four dead tracks bite whoever tries to use this as a multi-speaker
+   fixture, which is how I found them, and the committed audio still needs regenerating.
 3. ~~`amix` over `aresample=async=1` sparse inputs aborts in ffmpeg 7.1.~~
    **Superseded by open PR #218** (`fix/ffmpeg-sparse-offset-crash`), which diagnoses the
    same root cause better: one-shot multi-minute compensation through

@@ -479,12 +479,22 @@ def main() -> None:
                 (participant.participant_id, turn.start_seconds)
             ]
             start_index = int(round(turn.start_seconds * sample_rate))
-            end_index = start_index + audio.size
             if start_index < previous_end:
-                raise SystemExit(
-                    f"scenario overlaps two turns for participant {participant.participant_id}: "
-                    f"{turn.start_seconds}s starts before the previous utterance ended"
+                # A scenario's start times are written by hand against guessed
+                # utterance lengths, so a turn can be scheduled before the same
+                # speaker's previous one has finished. Aborting here fails the
+                # whole run on one bad number, and — because the abort happens
+                # partway through — leaves the earlier participants generated and
+                # the later ones missing, which is easy to mistake for a complete
+                # fixture. Slide the turn instead and say so.
+                slipped = (previous_end - start_index) / sample_rate
+                print(
+                    f"note: {participant.participant_id} turn at {turn.start_seconds}s "
+                    f"starts before their previous one ended; sliding it {slipped:.2f}s",
+                    file=sys.stderr,
                 )
+                start_index = previous_end
+            end_index = start_index + audio.size
             if end_index > track.size:
                 expanded = np.zeros(end_index, dtype=np.float32)
                 expanded[: track.size] = track
