@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildTranscriptIndex,
+  canonicalWordsForBlock,
   isLikelyCrosstalkTurn,
   lowConfidenceWordCount,
   getActiveSegment,
@@ -162,6 +163,18 @@ describe("speaker attribution provenance", () => {
     expect(word.lowConfidenceSpeaker).toBeUndefined();
   });
 
+  // A producer that always emits the keys writes null for "not measured".
+  // That must degrade to "no evidence", never to a transcript that refuses
+  // to load — for both fields, symmetrically.
+  it("treats null attribution values as not measured instead of rejecting the transcript", () => {
+    const word = withAttribution({
+      attributionGapDb: null,
+      lowConfidenceSpeaker: null,
+    }).segments[0].words[0];
+    expect(word.attributionGapDb).toBeUndefined();
+    expect(word.lowConfidenceSpeaker).toBeUndefined();
+  });
+
   it("accepts a negative gap, which means the speaker's own microphone won", () => {
     const word = withAttribution({ attributionGapDb: -12.4 }).segments[0].words[0];
     expect(word.attributionGapDb).toBe(-12.4);
@@ -211,31 +224,88 @@ describe("crosstalk turn detection", () => {
     expect(isLikelyCrosstalkTurn([])).toBe(false);
   });
 
-  // The display-transcript path is what portable meetings always take. Its
-  // blocks carry tokens, not words, so the canonical words have to be gathered
-  // from the source segments or the badge can never fire in the common case.
-  it("judges a display block from the canonical words of its source segments", () => {
-    const parsed = validateTranscriptWordsV1({
-      version: "transcript.words.v1",
-      media: { src: "m.webm", durationMs: 5000 },
-      speakers: [{ id: "spk_1", label: "Alice" }],
-      segments: [
-        {
-          id: "seg_1",
-          speaker: "spk_1",
-          startMs: 0,
-          endMs: 500,
-          text: "okay",
-          words: [{ text: "okay", startMs: 0, endMs: 500, lowConfidenceSpeaker: true }],
-        },
+});
+
+// The display-transcript path is what portable meetings always take. Its
+// blocks carry tokens, not words, so the canonical words must be recovered
+// through canonicalWordsForBlock — the exact function MeetingView judges each
+// block with — or the badge can never fire in the common case.
+describe("canonicalWordsForBlock", () => {
+  const parsed = validateTranscriptWordsV1({
+    version: "transcript.words.v1",
+    media: { src: "m.opus", durationMs: 5000 },
+    speakers: [{ id: "spk_1", label: "Alice" }],
+    segments: [
+      {
+        id: "seg_000000",
+        speaker: "spk_1",
+        startMs: 0,
+        endMs: 500,
+        text: "okay",
+        words: [
+          {
+            id: "seg_000000:w_0",
+            text: "okay",
+            startMs: 0,
+            endMs: 500,
+            attributionGapDb: 31.7,
+            lowConfidenceSpeaker: true,
+          },
+        ],
+      },
+      {
+        id: "seg_000001",
+        speaker: "spk_1",
+        startMs: 600,
+        endMs: 1100,
+        text: "sure",
+        words: [{ id: "seg_000001:w_0", text: "sure", startMs: 600, endMs: 1100 }],
+      },
+    ],
+  });
+  const index = buildTranscriptIndex(parsed);
+
+  it("resolves display tokens' sourceWordIds to canonical indexed words", () => {
+    const words = canonicalWordsForBlock(index, {
+      // Producer-style segment ids that do NOT exist in the canonical index —
+      // the portable shape, where only the token mapping can find the words.
+      sourceSegmentIds: ["seg_1"],
+      tokens: [
+        { sourceWordIds: ["seg_000000:w_0"] },
+        { sourceWordIds: [] }, // punctuation token
       ],
     });
-    const index = buildTranscriptIndex(parsed);
-    const canonicalById = new Map(index.segments.map((s) => [s.id, s]));
-    const blockWords = ["seg_1"]
-      .map((id) => canonicalById.get(id))
-      .filter((s): s is NonNullable<typeof s> => Boolean(s))
-      .flatMap((s) => s.words);
-    expect(isLikelyCrosstalkTurn(blockWords)).toBe(true);
+    expect(words.map((word) => word.id)).toEqual(["seg_000000:w_0"]);
+    expect(words[0]?.attributionGapDb).toBe(31.7);
+    expect(isLikelyCrosstalkTurn(words)).toBe(true);
+  });
+
+  it("counts a word once when several tokens reference it", () => {
+    const words = canonicalWordsForBlock(index, {
+      sourceSegmentIds: [],
+      tokens: [
+        { sourceWordIds: ["seg_000001:w_0"] },
+        { sourceWordIds: ["seg_000001:w_0", "seg_000000:w_0"] },
+      ],
+    });
+    expect(words.map((word) => word.id)).toEqual(["seg_000001:w_0", "seg_000000:w_0"]);
+  });
+
+  it("falls back to the source segments when tokens carry no word alignment", () => {
+    const words = canonicalWordsForBlock(index, {
+      sourceSegmentIds: ["seg_000000"],
+      tokens: [{ sourceWordIds: [] }],
+    });
+    expect(words.map((word) => word.id)).toEqual(["seg_000000:w_0"]);
+    expect(isLikelyCrosstalkTurn(words)).toBe(true);
+  });
+
+  it("returns no words when neither tokens nor segment ids resolve", () => {
+    const words = canonicalWordsForBlock(index, {
+      sourceSegmentIds: ["seg_missing"],
+      tokens: [{ sourceWordIds: ["seg_missing:w_0"] }],
+    });
+    expect(words).toEqual([]);
+    expect(isLikelyCrosstalkTurn(words)).toBe(false);
   });
 });

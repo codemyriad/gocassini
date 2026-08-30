@@ -128,6 +128,11 @@ type portableTranscriptWord struct {
 	Text    string `json:"text"`
 	StartMS int64  `json:"startMs"`
 	EndMS   int64  `json:"endMs"`
+	// Optional cross-track speaker-attribution evidence, carried through to
+	// the packed portable transcript items. Pointer/omitempty so an
+	// unmeasured word round-trips with neither key present.
+	AttributionGapDB     *float64 `json:"attributionGapDb,omitempty"`
+	LowConfidenceSpeaker bool     `json:"lowConfidenceSpeaker,omitempty"`
 }
 
 type portableAudioIntegrity struct {
@@ -619,10 +624,12 @@ func flattenPortableTranscriptItems(transcript portableTranscriptArtifact) []por
 				continue
 			}
 			items = append(items, portable.TranscriptItem{
-				Speaker: segment.Speaker,
-				StartMS: word.StartMS,
-				EndMS:   word.EndMS,
-				Text:    word.Text,
+				Speaker:              segment.Speaker,
+				StartMS:              word.StartMS,
+				EndMS:                word.EndMS,
+				Text:                 word.Text,
+				AttributionGapDB:     word.AttributionGapDB,
+				LowConfidenceSpeaker: word.LowConfidenceSpeaker,
 			})
 		}
 	}

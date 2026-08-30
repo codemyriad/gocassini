@@ -5,7 +5,12 @@
   import { marked } from "marked";
   import DOMPurify from "dompurify";
   import { Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape } from "@lucide/svelte";
-  import { formatClockTime, isLikelyCrosstalkTurn, parseTimeHash } from "../core/transcript";
+  import {
+    canonicalWordsForBlock,
+    formatClockTime,
+    isLikelyCrosstalkTurn,
+    parseTimeHash,
+  } from "../core/transcript";
   import {
     getActiveTimedRange,
     getLatestStartingActiveTimedRange,
@@ -505,9 +510,12 @@
       // transcript is LLM-cleaned prose whose tokens hold no attribution, and
       // portable meetings always build one — so leaving this empty meant the
       // crosstalk badge never appeared for the common case, only for raw JSON
-      // with the exact-word view switched on. The words are not rendered here;
-      // they are what the segment is judged on.
-      const canonicalById = new Map(index.segments.map((segment) => [segment.id, segment]));
+      // with the exact-word view switched on. canonicalWordsForBlock resolves
+      // the tokens' sourceWordIds against the canonical index (sourceSegmentIds
+      // alone use producer segment ids that never match the per-item ids a
+      // portable manifest is re-projected into) and falls back to the
+      // sourceSegmentIds mapping for blocks with no word alignment. The words
+      // are not rendered here; they are what the segment is judged on.
       return display.blocks.map((block) => ({
         id: block.id,
         speaker: block.speaker,
@@ -516,10 +524,7 @@
         endMs: block.endMs,
         text: block.text,
         tokens: block.tokens,
-        words: block.sourceSegmentIds
-          .map((segmentId) => canonicalById.get(segmentId))
-          .filter((segment): segment is NonNullable<typeof segment> => Boolean(segment))
-          .flatMap((segment) => segment.words),
+        words: canonicalWordsForBlock(index, block),
         sourceSegmentIds: [...block.sourceSegmentIds],
       }));
     }
@@ -563,6 +568,17 @@
 
   function normalizeSpeakerLabel(label: string): string {
     return label.replace(/\s+(audio|video)\s*$/i, "").trim() || label;
+  }
+
+  // Tooltip fragment for a low-confidence word. Guarded against non-finite
+  // gaps (hosts can mount this published component with unvalidated data):
+  // never render "NaN dB" or "Infinity dB" — fall back to the unmeasured
+  // wording instead.
+  function describeAttributionGap(gapDb: number | undefined): string {
+    if (gapDb === undefined || !Number.isFinite(gapDb)) {
+      return "much louder";
+    }
+    return `${gapDb.toFixed(0)} dB louder`;
   }
 
   function getActiveDisplaySegment(
@@ -997,7 +1013,7 @@
                       : ''}"
                     on:click={() => seekTo(word.startMs)}
                     title={word.lowConfidenceSpeaker
-                      ? `Another microphone was ${word.attributionGapDb?.toFixed(0) ?? "much"} dB louder here — probably not ${segment.speakerLabel} speaking`
+                      ? `Another microphone was ${describeAttributionGap(word.attributionGapDb)} here — probably not ${segment.speakerLabel} speaking`
                       : undefined}
                     type="button"
                   >{word.text}</button>{/each}

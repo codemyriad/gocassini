@@ -62,6 +62,18 @@ function asOptionalNumber(value: unknown, label: string): number | undefined {
   return value;
 }
 
+// For attributionGapDb: `null` must read as "not measured", matching how
+// asOptionalBoolean treats `lowConfidenceSpeaker: null`. A producer that
+// always emits the key writes null when the attribution stage did not run,
+// and a missing measurement must degrade to "no evidence" — never to a
+// transcript that refuses to load.
+function asOptionalNumberOrNull(value: unknown, label: string): number | undefined {
+  if (value === null) {
+    return undefined;
+  }
+  return asOptionalNumber(value, label);
+}
+
 function validateWord(input: unknown, segmentId: string, wordIndex: number): TranscriptWord {
   const word = asObject(input, `segment ${segmentId} word ${wordIndex}`);
   const startMs = asInteger(word.startMs, `segment ${segmentId} word ${wordIndex} startMs`);
@@ -77,7 +89,7 @@ function validateWord(input: unknown, segmentId: string, wordIndex: number): Tra
     fail(`segment ${segmentId} word ${wordIndex} confidence must be between 0 and 1`);
   }
 
-  const attributionGapDb = asOptionalNumber(
+  const attributionGapDb = asOptionalNumberOrNull(
     word.attributionGapDb,
     `segment ${segmentId} word ${wordIndex} attributionGapDb`,
   );
@@ -429,6 +441,83 @@ export function buildTranscriptIndex(transcript: TranscriptWordsV1): TranscriptI
     segments,
     segmentStartTimes: segments.map((segment) => segment.startMs),
   };
+}
+
+interface IndexLookups {
+  wordsById: Map<string, IndexedWord>;
+  segmentsById: Map<string, IndexedSegment>;
+}
+
+// Lazy per-index lookup maps for canonicalWordsForBlock. Keyed weakly on the
+// index so repeated per-block calls during one render stay O(block size) after
+// the first, and a replaced index (transcript switch) drops its maps.
+const indexLookupsCache = new WeakMap<TranscriptIndex, IndexLookups>();
+
+function lookupsFor(index: TranscriptIndex): IndexLookups {
+  let lookups = indexLookupsCache.get(index);
+  if (!lookups) {
+    const wordsById = new Map<string, IndexedWord>();
+    const segmentsById = new Map<string, IndexedSegment>();
+    for (const segment of index.segments) {
+      segmentsById.set(segment.id, segment);
+      for (const word of segment.words) {
+        if (!wordsById.has(word.id)) {
+          wordsById.set(word.id, word);
+        }
+      }
+    }
+    lookups = { wordsById, segmentsById };
+    indexLookupsCache.set(index, lookups);
+  }
+  return lookups;
+}
+
+/**
+ * The canonical timed words a display block should be judged on (the crosstalk
+ * badge and per-word attribution styling).
+ *
+ * Display tokens name the exact canonical words they were aligned to via
+ * `sourceWordIds`, and those ids are minted by the same code that builds the
+ * canonical index — so they resolve on both the JSON-directory path and the
+ * portable (.opus) path. The block-level `sourceSegmentIds`, by contrast, carry
+ * producer segment ids that do NOT match the per-item segment ids a portable
+ * manifest is re-projected into (`seg_000000` per word item), which is why
+ * judging via sourceSegmentIds silently found no words for portable meetings.
+ * When no token resolves to a canonical word (a block with no word alignment at
+ * all), fall back to gathering every canonical word of the block's source
+ * segments — the mapping the JSON-directory path has always used.
+ */
+export function canonicalWordsForBlock(
+  index: TranscriptIndex,
+  block: {
+    sourceSegmentIds: readonly string[];
+    tokens: ReadonlyArray<{ sourceWordIds: readonly string[] }>;
+  },
+): IndexedWord[] {
+  const { wordsById, segmentsById } = lookupsFor(index);
+
+  const seen = new Set<string>();
+  const fromTokens: IndexedWord[] = [];
+  for (const token of block.tokens) {
+    for (const wordId of token.sourceWordIds) {
+      if (seen.has(wordId)) {
+        continue;
+      }
+      seen.add(wordId);
+      const word = wordsById.get(wordId);
+      if (word) {
+        fromTokens.push(word);
+      }
+    }
+  }
+  if (fromTokens.length > 0) {
+    return fromTokens;
+  }
+
+  return block.sourceSegmentIds
+    .map((segmentId) => segmentsById.get(segmentId))
+    .filter((segment): segment is IndexedSegment => Boolean(segment))
+    .flatMap((segment) => segment.words);
 }
 
 function upperBound(values: number[], target: number): number {

@@ -186,6 +186,15 @@ type TranscriptItem struct {
 	StartMS int64  `json:"startMs"`
 	EndMS   int64  `json:"endMs"`
 	Text    string `json:"text"`
+	// AttributionGapDB and LowConfidenceSpeaker mirror the per-word
+	// cross-track speaker-attribution evidence of transcript.words.v1.json
+	// (see internal/transcribe wordEntry). AttributionGapDB is present
+	// exactly on the words the attribution stage measured;
+	// LowConfidenceSpeaker is emitted only when true. Unmeasured words carry
+	// neither key, so a file packed without the stage is byte-identical to
+	// one packed before these fields existed.
+	AttributionGapDB     *float64 `json:"attributionGapDb,omitempty"`
+	LowConfidenceSpeaker bool     `json:"lowConfidenceSpeaker,omitempty"`
 }
 
 type Chapter struct {

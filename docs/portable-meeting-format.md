@@ -328,19 +328,26 @@ V1 transcript entries are word-timed items:
 - `endMs`
 - `text`
 
-Words MAY additionally carry cross-track speaker-attribution evidence. Both
-fields are omitted entirely when the attribution stage did not run, so a
-consumer that ignores them reads an unchanged V1 document:
+Items MAY additionally carry cross-track speaker-attribution evidence. The
+reference producer (`cassini pack`) copies both fields verbatim from the word
+entries of `transcript.words.v1.json` into the packed items — inline in a V1
+manifest, and in the `cassini.words.v1` transcript bodies of V2/V3 files:
 
-- `attributionGapDb` — how far the loudest OTHER participant's microphone sat
-  above its own noise floor compared with the attributed speaker's, in dB, at
-  this word. Near zero means the attributed speaker was the loudest voice; a
-  large positive value means somebody else was, and the word is a crosstalk
-  candidate rather than that participant speaking.
-- `lowConfidenceSpeaker` — true when the gap cleared the threshold estimated
-  from that meeting's own level distribution. The word is still canonical
-  transcript content; consumers MAY de-emphasise it, exclude it from a summary,
-  or surface it for review.
+- `attributionGapDb` (number) — how far the loudest OTHER participant's
+  microphone sat above its own noise floor compared with the attributed
+  speaker's, in dB, at this word. Near zero means the attributed speaker was
+  the loudest voice; a large positive value means somebody else was, and the
+  word is a crosstalk candidate rather than that participant speaking. Present
+  exactly on the words the attribution stage measured; omitted on every other
+  word.
+- `lowConfidenceSpeaker` (boolean) — true when the gap cleared the threshold
+  estimated from that meeting's own level distribution. Only ever written as
+  `true`; a confidently attributed word omits the key rather than writing
+  `false`. The word is still canonical transcript content; consumers MAY
+  de-emphasise it, exclude it from a summary, or surface it for review.
+
+A file whose attribution stage did not run carries neither key on any item, so
+a consumer that ignores them reads an unchanged document.
 
 The embedded transcript is the source of truth.
 

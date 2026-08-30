@@ -15,6 +15,7 @@ import {
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
 } from "./portable";
+import { canonicalWordsForBlock, isLikelyCrosstalkTurn } from "../core/transcript";
 import type { TranscriptWordsV1 } from "../core/types";
 
 const transcriptFixture = {
@@ -1020,6 +1021,182 @@ describe("loose-file vs packed `.opus` parity", () => {
     // packed path resolves the `.opus` against the document URL.
     expect(loose.audioSrc).toBe("http://127.0.0.1:8765/meetings/parity-meeting/meeting.opus");
     expect(packed.audioSrc).toBe("http://127.0.0.1:8765/parity-meeting.opus");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Attribution provenance over the packed `.opus` path (D-683).
+//
+// The production shape this guards: the Go packer flattens transcript words
+// into id-LESS per-word items (optionally carrying attributionGapDb /
+// lowConfidenceSpeaker; null = not measured), while the packed readable
+// transcript's sourceSegmentIds still name the PRODUCER's original segment
+// ids. The viewer re-projects items[] into synthetic seg_%06d segments — one
+// per item — so those readable ids resolve to nothing, and the crosstalk badge
+// can only fire if the display tokens' sourceWordIds path
+// (canonicalWordsForBlock, the mapping MeetingView judges each block with)
+// finds the flagged canonical words.
+// ---------------------------------------------------------------------------
+describe("portable attribution end-to-end (crosstalk badge judgement)", () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.window = originalWindow;
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  function serveOpus(portableBytes: Uint8Array) {
+    globalThis.fetch = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.endsWith(".opus")) {
+        return {
+          ok: true,
+          status: 206,
+          headers: new Headers({ "content-range": "bytes 0-1999/2000" }),
+          arrayBuffer: async () =>
+            portableBytes.buffer.slice(
+              portableBytes.byteOffset,
+              portableBytes.byteOffset + portableBytes.byteLength,
+            ),
+        } as Response;
+      }
+      return { ok: false } as Response;
+    }) as typeof fetch;
+  }
+
+  it("judges a flagged portable interjection as crosstalk through the real display mapping", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=attributed", protocol: "http:" },
+    } as Window;
+    const portableFixture = {
+      meeting: { durationMs: 4000 },
+      audio: { sha256: "abc123" },
+      speakers: [
+        { id: "spk_ana", label: "Ana" },
+        { id: "spk_ben", label: "Ben" },
+      ],
+      transcript: {
+        items: [
+          // Id-less word-level items, exactly as the Go packer writes them.
+          { speaker: "spk_ana", startMs: 0, endMs: 500, text: "we" },
+          { speaker: "spk_ana", startMs: 500, endMs: 1000, text: "should" },
+          { speaker: "spk_ana", startMs: 1000, endMs: 1500, text: "ship" },
+          { speaker: "spk_ana", startMs: 1500, endMs: 2000, text: "it" },
+          {
+            speaker: "spk_ben",
+            startMs: 2500,
+            endMs: 2900,
+            text: "yeah",
+            attributionGapDb: 31.7,
+            lowConfidenceSpeaker: true,
+          },
+        ],
+      },
+      readableTranscript: {
+        version: "transcript.readable.v1",
+        speakers: [
+          { id: "spk_ana", label: "Ana" },
+          { id: "spk_ben", label: "Ben" },
+        ],
+        segments: [
+          {
+            id: "readable_000000",
+            speaker: "spk_ana",
+            startMs: 0,
+            endMs: 2000,
+            text: "We should ship it.",
+            // Producer segment ids: they resolve to NOTHING in the
+            // re-projected canonical index (seg_000000..seg_000004, one per
+            // word item).
+            sourceSegmentIds: ["seg_0"],
+          },
+          {
+            id: "readable_000001",
+            speaker: "spk_ben",
+            startMs: 2500,
+            endMs: 2900,
+            text: "Yeah.",
+            sourceSegmentIds: ["seg_1"],
+          },
+        ],
+      },
+    };
+    serveOpus(buildPortableOpusFixture(portableFixture));
+
+    const artifact = await loadPortableArtifactFromAudioPath("./attributed.opus");
+
+    // The flag survived into the canonical index the viewer judges on.
+    const flaggedWords = artifact.index.segments.flatMap((segment) =>
+      segment.words.filter((word) => word.lowConfidenceSpeaker),
+    );
+    expect(flaggedWords).toHaveLength(1);
+    expect(flaggedWords[0]).toMatchObject({ text: "yeah", attributionGapDb: 31.7 });
+
+    // Fixture realism: the display blocks' sourceSegmentIds really do NOT
+    // resolve against the canonical index — only the token path can find the
+    // words, so a regression back to segment-only judgement fails this test.
+    const canonicalIds = new Set(artifact.index.segments.map((segment) => segment.id));
+    const blocks = artifact.displayTranscript?.blocks ?? [];
+    expect(blocks.length).toBeGreaterThan(0);
+    for (const block of blocks) {
+      for (const sourceSegmentId of block.sourceSegmentIds) {
+        expect(canonicalIds.has(sourceSegmentId)).toBe(false);
+      }
+    }
+
+    // MeetingView's judgement over the REAL display blocks the loader built.
+    const judged = blocks.map((block) => ({
+      speaker: block.speaker,
+      crosstalk: isLikelyCrosstalkTurn(canonicalWordsForBlock(artifact.index, block)),
+    }));
+    expect(judged).toEqual([
+      { speaker: "spk_ana", crosstalk: false },
+      { speaker: "spk_ben", crosstalk: true },
+    ]);
+  });
+
+  it("leaves unmeasured and null-measured portable items unflagged without crashing", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=unmeasured", protocol: "http:" },
+    } as Window;
+    serveOpus(
+      buildPortableOpusFixture({
+        meeting: { durationMs: 2000 },
+        speakers: [
+          { id: "spk_ana", label: "Ana" },
+          { id: "spk_ben", label: "Ben" },
+        ],
+        transcript: {
+          items: [
+            { speaker: "spk_ana", startMs: 0, endMs: 500, text: "hi" },
+            {
+              speaker: "spk_ben",
+              startMs: 600,
+              endMs: 1000,
+              text: "yo",
+              attributionGapDb: null,
+              lowConfidenceSpeaker: null,
+            },
+          ],
+        },
+      }),
+    );
+
+    const artifact = await loadPortableArtifactFromAudioPath("./unmeasured.opus");
+
+    const allWords = artifact.index.segments.flatMap((segment) => segment.words);
+    expect(allWords).toHaveLength(2);
+    for (const word of allWords) {
+      expect(word.lowConfidenceSpeaker).toBeUndefined();
+      expect(word.attributionGapDb).toBeUndefined();
+    }
+    const blocks = artifact.displayTranscript?.blocks ?? [];
+    expect(blocks.length).toBeGreaterThan(0);
+    for (const block of blocks) {
+      expect(isLikelyCrosstalkTurn(canonicalWordsForBlock(artifact.index, block))).toBe(false);
+    }
   });
 });
 

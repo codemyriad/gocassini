@@ -638,6 +638,10 @@ type TranscriptWord struct {
 	StartMS int64  `json:"startMs"`
 	EndMS   int64  `json:"endMs"`
 	Speaker string `json:"speaker,omitempty"`
+	// Optional cross-track speaker-attribution evidence, read back from the
+	// packed transcript items so a re-rendered words document keeps it.
+	AttributionGapDB     *float64 `json:"attributionGapDb,omitempty"`
+	LowConfidenceSpeaker bool     `json:"lowConfidenceSpeaker,omitempty"`
 }
 
 // ExtractedTranscript is the default words transcript recovered from a
@@ -680,10 +684,12 @@ func extractedFromTranscriptBody(id, format, language string, wordCount int, ite
 			continue
 		}
 		words = append(words, TranscriptWord{
-			Text:    item.Text,
-			StartMS: item.StartMS,
-			EndMS:   item.EndMS,
-			Speaker: item.Speaker,
+			Text:                 item.Text,
+			StartMS:              item.StartMS,
+			EndMS:                item.EndMS,
+			Speaker:              item.Speaker,
+			AttributionGapDB:     item.AttributionGapDB,
+			LowConfidenceSpeaker: item.LowConfidenceSpeaker,
 		})
 	}
 	if wordCount == 0 {
@@ -782,9 +788,11 @@ func decodeTranscriptBody(tags map[string]string, id string) (portable.Transcrip
 // can read it without bespoke parsing.
 func WriteTranscriptWordsV1JSON(out io.Writer, extracted ExtractedTranscript) error {
 	type wordsV1Word struct {
-		Text    string `json:"text"`
-		StartMS int64  `json:"startMs"`
-		EndMS   int64  `json:"endMs"`
+		Text                 string   `json:"text"`
+		StartMS              int64    `json:"startMs"`
+		EndMS                int64    `json:"endMs"`
+		AttributionGapDB     *float64 `json:"attributionGapDb,omitempty"`
+		LowConfidenceSpeaker bool     `json:"lowConfidenceSpeaker,omitempty"`
 	}
 	type wordsV1Segment struct {
 		Speaker string        `json:"speaker,omitempty"`
@@ -799,7 +807,13 @@ func WriteTranscriptWordsV1JSON(out io.Writer, extracted ExtractedTranscript) er
 
 	words := make([]wordsV1Word, 0, len(extracted.Words))
 	for _, w := range extracted.Words {
-		words = append(words, wordsV1Word{Text: w.Text, StartMS: w.StartMS, EndMS: w.EndMS})
+		words = append(words, wordsV1Word{
+			Text:                 w.Text,
+			StartMS:              w.StartMS,
+			EndMS:                w.EndMS,
+			AttributionGapDB:     w.AttributionGapDB,
+			LowConfidenceSpeaker: w.LowConfidenceSpeaker,
+		})
 	}
 	doc := wordsV1Doc{
 		Version:   "transcript.words.v1",
