@@ -120,6 +120,21 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
         <display-name>Operator API bearer token (optional)</display-name>
         <description>When set, direct (non-proxied) requests to the operator job API must send "Authorization: Bearer &lt;token&gt;". Requests proxied through Nextcloud are authenticated by AppAPI and are unaffected. Leave empty to keep the API reachable only through the AppAPI proxy authentication.</description>
       </variable>
+      <variable>
+        <name>CASSINI_STT_BACKEND</name>
+        <display-name>Speech-to-text backend (optional)</display-name>
+        <description>Which registered speech-to-text engine transcription uses. Leave empty for the default (sherpa-onnx). An unknown value fails the build loudly before any audio is decoded, so a typo cannot silently select a different engine.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_ATTRIBUTION_DISABLED</name>
+        <display-name>Disable speaker-attribution measurement (optional)</display-name>
+        <description>Set to 1 to skip the cross-track speaker-attribution stage entirely. By default every word is annotated with acoustic evidence of who was speaking; no words are changed or removed either way.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_ATTRIBUTION_DROP</name>
+        <display-name>Drop crosstalk words (optional)</display-name>
+        <description>Set to 1 to delete words the acoustic evidence contradicts instead of annotating them. Intended for room systems where one microphone audibly picks up every participant. The manifest records how many words were removed.</description>
+      </variable>
     </environment-variables>
 
     <routes>
