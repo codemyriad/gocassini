@@ -243,10 +243,13 @@ export interface OverlapTimedSpan {
   /** How a display token got its times: `source`, `interpolated` or `none`. */
   readonly alignment?: string;
   /**
-   * Set when every canonical word this token named resolved in the index and
-   * was rejected as incompatible with the block (transcript.ts,
-   * canonicalEvidenceForBlock). The token still renders and still seeks; it
-   * just no longer counts as evidence that its speaker was audible.
+   * Set when ANY canonical word this token named resolved in the index and was
+   * rejected as incompatible with the block (transcript.ts,
+   * canonicalEvidenceForBlock). One is enough: a token's times are the min
+   * start and max end of every word it matched, so a single rejected word
+   * donates a bound that no later clipping can take back. The token still
+   * renders and still seeks; it just no longer counts as evidence that its
+   * speaker was audible, and its accepted words carry the real interval.
    */
   readonly sourceWordsRejected?: boolean;
 }
