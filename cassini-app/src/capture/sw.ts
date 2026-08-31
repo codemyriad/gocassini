@@ -37,14 +37,20 @@ import { isTalkBundleURL } from "./protocol";
 
 declare const self: ServiceWorkerGlobalScope;
 
-// PAYLOAD_FILENAME sits next to this script under the ExApp's /ui/ prefix, so
-// the payload URL is derived from our own location rather than configured.
-const PAYLOAD_FILENAME = "capture-payload.js";
+// The payload source, inlined at build time by scripts/build-capture.mjs.
+//
+// Inlined rather than fetched. A separate fetch could return 200 with a
+// truncated body — a proxy hiccup, a half-written deploy — and a truncated
+// payload appended to Talk's bundle is a syntax error in Talk's own script,
+// which takes the call page down. There is no way to detect that reliably from
+// inside the worker, so the fetch is removed instead of guarded.
+declare const __CASSINI_PAYLOAD__: string;
 
-// payloadURL resolves the payload next to the service worker script itself.
-export function payloadURL(scriptURL: string): string {
-  return new URL(PAYLOAD_FILENAME, scriptURL).toString();
-}
+// TALK_BUNDLE_SENTINEL is a marker every Talk bundle contains. It is the last
+// check before rewriting: a URL that matches the path pattern but whose body is
+// not Talk's script (an error page, a redirect landing, a proxy notice) must be
+// passed through rather than have a payload welded onto it.
+const TALK_BUNDLE_SENTINEL = "OCA";
 
 // composeBundle appends the payload to Talk's bundle, separated by a newline
 // and a semicolon so a bundle whose last line lacks a terminator cannot swallow
@@ -54,13 +60,43 @@ export function composeBundle(talkSource: string, payloadSource: string): string
   return `${talkSource}\n;\n/* cassini source-capture payload */\n${payloadSource}\n`;
 }
 
+// shouldRewrite decides whether a response is really Talk's script and safe to
+// append to. Every condition here exists because getting it wrong corrupts
+// somebody else's application:
+//
+//   - destination "script": the same URL fetched as a document, a prefetch or
+//     an XHR is not being evaluated as Talk's bundle, and rewriting it would
+//     hand the caller a body it did not ask for.
+//   - status exactly 200: a 206 is a range, and appending to one fragment of a
+//     script produces garbage. Redirects and errors are not ours to touch.
+//   - a JavaScript content type: an error page served at the bundle's URL is
+//     not something to weld a payload onto.
+//   - the sentinel: last defence against a proxy notice or a login page that
+//     satisfies everything above.
+export function shouldRewrite(request: Request, response: Response, body: string): boolean {
+  if (request.headers.has("range")) {
+    return false;
+  }
+  if (request.destination !== "" && request.destination !== "script") {
+    return false;
+  }
+  if (response.status !== 200) {
+    return false;
+  }
+  const type = (response.headers.get("content-type") ?? "").toLowerCase();
+  if (!type.includes("javascript") && !type.includes("ecmascript")) {
+    return false;
+  }
+  return body.includes(TALK_BUNDLE_SENTINEL);
+}
+
 // handleFetch returns the augmented bundle, or null when this request is none
 // of our business (the caller then leaves the request entirely alone rather
 // than proxying it through us for no reason).
 export async function handleFetch(
   request: Request,
   fetchImpl: typeof fetch,
-  scriptURL: string,
+  payloadSource: string,
 ): Promise<Response | null> {
   if (request.method !== "GET" || !isTalkBundleURL(request.url)) {
     return null;
@@ -69,22 +105,23 @@ export async function handleFetch(
   if (!original.ok) {
     return original;
   }
-  let payloadSource: string;
-  try {
-    const payload = await fetchImpl(payloadURL(scriptURL), { credentials: "same-origin" });
-    if (!payload.ok) {
-      return original;
-    }
-    payloadSource = await payload.text();
-  } catch {
-    // Offline, proxy hiccup, ExApp down: Talk must still load.
+  // Read the body once, then decide: the sentinel check needs it, and a
+  // Response body cannot be consumed twice.
+  const talkSource = await original.clone().text();
+  if (!shouldRewrite(request, original, talkSource) || !payloadSource) {
     return original;
   }
-  const talkSource = await original.text();
   const headers = new Headers(original.headers);
-  // The body length changed, and a stale Content-Length truncates the script.
+  // The body length changed. A stale Content-Length truncates the script, and
+  // a stale Content-Encoding makes the browser try to decompress plain text.
   headers.delete("content-length");
   headers.delete("content-encoding");
+  // Validators and digests describe the ORIGINAL bytes; leaving them on a body
+  // we changed invites a cache to serve one and revalidate against the other.
+  headers.delete("etag");
+  headers.delete("last-modified");
+  headers.delete("digest");
+  headers.delete("content-digest");
   return new Response(composeBundle(talkSource, payloadSource), {
     status: original.status,
     statusText: original.statusText,
@@ -114,7 +151,7 @@ export function installListeners(scope: ServiceWorkerGlobalScope): void {
       return;
     }
     event.respondWith(
-      handleFetch(event.request, fetch, scope.location.href)
+      handleFetch(event.request, fetch, __CASSINI_PAYLOAD__)
         .then((response) => response ?? fetch(event.request))
         .catch(() => fetch(event.request)),
     );

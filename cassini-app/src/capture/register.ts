@@ -62,6 +62,14 @@ export async function registerAll(
   return outcomes;
 }
 
+// isOurs identifies a registration by the script it runs, not by its scope.
+// Scope alone would also match a future Talk-owned worker registered at the
+// call pages, and turning our feature off must not unregister somebody else's.
+function isOurs(registration: ServiceWorkerRegistration): boolean {
+  const worker = registration.active ?? registration.waiting ?? registration.installing;
+  return (worker?.scriptURL ?? "").includes(SW_FILENAME);
+}
+
 export async function unregisterAll(
   container: ServiceWorkerContainer,
   rootPath: string,
@@ -70,7 +78,7 @@ export async function unregisterAll(
   const registrations = await container.getRegistrations();
   for (const registration of registrations) {
     const path = new URL(registration.scope).pathname;
-    if (scopes.has(path)) {
+    if (scopes.has(path) && isOurs(registration)) {
       await registration.unregister();
     }
   }

@@ -260,3 +260,110 @@ func TestCaptureUploadHandlerReplacesEarlierUploadOfSameCall(t *testing.T) {
 		t.Fatalf("retry did not replace the earlier upload: %q", audio)
 	}
 }
+
+func TestValidateSidecarReservesTheSidecarName(t *testing.T) {
+	// A segment claiming the sidecar's own name would be written and then
+	// overwritten by the manifest, losing that audio with no trace.
+	sidecar := validSidecar()
+	sidecar.Segments[0].AudioName = captureSidecarName
+	if err := validateSidecar(&sidecar); err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("validateSidecar error = %v, want reserved", err)
+	}
+}
+
+func TestCaptureUploadHandlerRejectsAReservedSegmentPart(t *testing.T) {
+	rt := captureTestRuntime(t)
+	// The sidecar is well-formed; the multipart body sneaks the reserved name.
+	req := uploadRequest(t, validSidecar(), map[string][]byte{captureSidecarName: []byte("audio")})
+	req = req.WithContext(appapi.WithUserID(context.Background(), "bob"))
+	rec := httptest.NewRecorder()
+
+	rt.captureUploadHandler(nil, quietLogger())(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestCaptureUploadHandlerReportsOversizeAsTooLarge(t *testing.T) {
+	rt := captureTestRuntime(t)
+	// Lower the ceiling rather than move half a gigabyte through the handler.
+	original := captureMaxUploadBytes
+	// Large enough for the sidecar, far too small for the segment: the limit
+	// should be reported by the part that actually exceeds it.
+	captureMaxUploadBytes = 2048
+	t.Cleanup(func() { captureMaxUploadBytes = original })
+
+	req := uploadRequest(t, validSidecar(), map[string][]byte{
+		"segment-0.webm": bytes.Repeat([]byte("x"), 16384),
+	})
+	req = req.WithContext(appapi.WithUserID(context.Background(), "bob"))
+	rec := httptest.NewRecorder()
+
+	rt.captureUploadHandler(nil, quietLogger())(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413 (an oversize upload is not a malformed one)", rec.Code)
+	}
+	// And nothing of an over-cap upload is kept.
+	staged, _ := filepath.Glob(filepath.Join(rt.cfg.CaptureRoot, "upload-*"))
+	if len(staged) != 0 {
+		t.Fatalf("an oversize upload left staging behind: %v", staged)
+	}
+}
+
+func TestPromoteCaptureKeepsThePreviousUploadWhenTheSwapFails(t *testing.T) {
+	rt := captureTestRuntime(t)
+	final := filepath.Join(rt.cfg.CaptureRoot, "room", "bob", "1700")
+	if err := os.MkdirAll(final, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(final, "segment-0.webm"), []byte("the good one"), 0o640); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Staging does not exist, so the promotion rename fails. The participant's
+	// previous audio must survive that — they may well have deleted their only
+	// other copy.
+	err := rt.promoteCapture(filepath.Join(rt.cfg.CaptureRoot, "no-such-staging"), final)
+	if err == nil {
+		t.Fatal("expected the promotion to fail")
+	}
+	kept, readErr := os.ReadFile(filepath.Join(final, "segment-0.webm"))
+	if readErr != nil {
+		t.Fatalf("the previous upload was destroyed by a failed promotion: %v", readErr)
+	}
+	if string(kept) != "the good one" {
+		t.Fatalf("previous upload = %q", kept)
+	}
+	if entries, _ := filepath.Glob(final + ".superseded"); len(entries) != 0 {
+		t.Fatal("a superseded directory was left behind")
+	}
+}
+
+func TestCaptureUploadWritesTheSidecarBeforePromoting(t *testing.T) {
+	// A promoted directory must never exist without its manifest:
+	// DiscoverSourceCaptures reads the sidecar to decide a capture exists at
+	// all, so a directory without one is indistinguishable from a truncated
+	// upload.
+	rt := captureTestRuntime(t)
+	sidecar := validSidecar()
+	req := uploadRequest(t, sidecar, map[string][]byte{"segment-0.webm": []byte("audio")})
+	req = req.WithContext(appapi.WithUserID(context.Background(), "bob"))
+	rec := httptest.NewRecorder()
+
+	rt.captureUploadHandler(nil, quietLogger())(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d", rec.Code)
+	}
+
+	dir := captureUploadDir(rt.cfg.CaptureRoot, "abc123", "bob", sidecar.CallStartWallMS)
+	if _, err := os.Stat(filepath.Join(dir, captureSidecarName)); err != nil {
+		t.Fatalf("promoted directory has no sidecar: %v", err)
+	}
+	// And nothing is left staged.
+	staged, _ := filepath.Glob(filepath.Join(rt.cfg.CaptureRoot, "upload-*"))
+	if len(staged) != 0 {
+		t.Fatalf("staging directories left behind: %v", staged)
+	}
+}

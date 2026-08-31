@@ -16,17 +16,25 @@
 // there too.
 
 import { build } from "esbuild";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
 
+// The payload is built FIRST and inlined into the service worker. A worker that
+// fetched it separately could get a 200 with a truncated body, and a truncated
+// payload appended to Talk's bundle is a syntax error in Talk's own script —
+// which takes the call page down. Inlining removes the failure mode rather than
+// trying to detect it.
 const ENTRIES = [
+  { in: "src/capture/payload.ts", out: "capture-payload" },
   { in: "src/capture/sw.ts", out: "capture-sw" },
   { in: "src/capture/worker.ts", out: "capture-worker" },
-  { in: "src/capture/payload.ts", out: "capture-payload" },
 ];
+
+let payloadSource = "";
 
 for (const entry of ENTRIES) {
   await build({
@@ -34,6 +42,9 @@ for (const entry of ENTRIES) {
     entryPoints: [entry.in],
     outfile: join("dist", "capture", `${entry.out}.js`),
     bundle: true,
+    define: {
+      __CASSINI_PAYLOAD__: JSON.stringify(payloadSource),
+    },
     // Classic scripts, not modules: a service worker registered without
     // {type:"module"} and a Worker constructed the same way both need one
     // self-contained non-module file, and the payload is concatenated onto
@@ -45,5 +56,11 @@ for (const entry of ENTRIES) {
     sourcemap: false,
     legalComments: "none",
   });
+  if (entry.out === "capture-payload") {
+    payloadSource = await readFile(join(root, "dist", "capture", "capture-payload.js"), "utf8");
+    if (payloadSource.trim() === "") {
+      throw new Error("build-capture: the payload bundle is empty; refusing to inline nothing");
+    }
+  }
   console.log(`build-capture: dist/capture/${entry.out}.js`);
 }

@@ -15,8 +15,24 @@ function fakeContainer() {
         return {} as ServiceWorkerRegistration;
       }),
       getRegistrations: vi.fn(async () => [
-        { scope: "https://cloud.example.com/call/", unregister: async () => void unregistered.push("/call/") },
-        { scope: "https://cloud.example.com/", unregister: async () => void unregistered.push("/") },
+        {
+          scope: "https://cloud.example.com/call/",
+          active: { scriptURL: PROXY_BASE + "ui/capture-sw.js" },
+          unregister: async () => void unregistered.push("/call/"),
+        },
+        {
+          scope: "https://cloud.example.com/",
+          active: { scriptURL: "https://cloud.example.com/apps/files/preview-service-worker.js" },
+          unregister: async () => void unregistered.push("/"),
+        },
+        // A worker at OUR scope that is not ours: turning the feature off must
+        // not unregister somebody else's registration just because it sits on
+        // the call pages.
+        {
+          scope: "https://cloud.example.com/index.php/call/",
+          active: { scriptURL: "https://cloud.example.com/apps/spreed/js/some-talk-worker.js" },
+          unregister: async () => void unregistered.push("/index.php/call/"),
+        },
       ]),
     } as unknown as ServiceWorkerContainer,
   };
@@ -70,9 +86,11 @@ describe("registerAll", () => {
 });
 
 describe("unregisterAll", () => {
-  it("removes only our own scopes, leaving core's root worker alone", async () => {
+  it("removes only our own worker, by script rather than by scope", async () => {
     const { container, unregistered } = fakeContainer();
     await unregisterAll(container, "");
+    // Core's root worker is out of scope; the third registration is in scope
+    // but belongs to somebody else.
     expect(unregistered).toEqual(["/call/"]);
   });
 });

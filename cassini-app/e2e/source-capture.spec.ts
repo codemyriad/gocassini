@@ -27,7 +27,7 @@ test.afterAll(async () => {
 
 test.beforeEach(() => {
   server.uploads.length = 0;
-  server.state.failPayload = false;
+  server.state.bundleIsNotTalk = false;
 });
 
 // enableCapture visits the Cassini page, records consent and waits for the
@@ -56,21 +56,22 @@ test("the service worker appends the capture payload to Talk's bundle", async ({
   expect(bundle.indexOf("window.__talkReady")).toBeLessThan(bundle.indexOf("cassini source-capture payload"));
 });
 
-test("Talk's bundle is served untouched when the payload cannot be fetched", async ({ page }) => {
+test("a response that is not Talk's bundle is passed through untouched", async ({ page }) => {
   await enableCapture(page);
   await page.goto(`${server.origin}/call/testroom`);
 
-  // The ExApp going away must not take Talk's call page with it. Failed on the
-  // server, not with page.route: the service worker is what fetches the
-  // payload, and page-level interception never sees its requests.
-  server.state.failPayload = true;
-  const bundle = await page.evaluate(async () => {
+  // A login page or a proxy notice served at the bundle's URL satisfies the
+  // path pattern but is not a script to append to. Driven from the server, not
+  // with page.route: the service worker issues this request, and page-level
+  // interception never sees it.
+  server.state.bundleIsNotTalk = true;
+  const body = await page.evaluate(async () => {
     const response = await fetch("/apps/spreed/js/talk-main.mjs?retry=1", { cache: "no-store" });
     return response.text();
   });
 
-  expect(bundle).toContain("window.__talkReady");
-  expect(bundle).not.toContain("cassini source-capture payload");
+  expect(body).toBe("<html><body>Please log in</body></html>");
+  expect(body).not.toContain("cassini source-capture payload");
 });
 
 test("captures the participant's own audio through a lossy uplink and uploads it", async ({ page }) => {

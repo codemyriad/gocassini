@@ -49,6 +49,30 @@ const MUTE_POLL_MS = 250;
 
 const AUDIO_BITS_PER_SECOND = 128_000;
 
+// CAPTURE_MIME_CANDIDATES is tried in order. WebM/Opus is what Chromium and
+// Firefox record and what the server decodes most happily; Safari records only
+// MP4, and offering it nothing rather than a container it cannot produce is the
+// difference between "no capture" and "a throw mid-call". The chosen type
+// travels in the sidecar so the server never has to guess at the container.
+const CAPTURE_MIME_CANDIDATES = [
+  "audio/webm;codecs=opus",
+  "audio/webm",
+  "audio/mp4;codecs=opus",
+  "audio/mp4",
+];
+
+export function supportedCaptureMimeType(
+  isSupported: (type: string) => boolean = (type) =>
+    typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type),
+): string | null {
+  for (const candidate of CAPTURE_MIME_CANDIDATES) {
+    if (isSupported(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 // uploadURLFrom builds the operator's upload endpoint behind the AppAPI proxy.
 // Exported pure for tests: getting this wrong silently uploads nowhere.
 export function uploadURLFrom(rootPath: string): string {
@@ -116,9 +140,13 @@ function startSegment(session: CaptureState, sender: RTCRtpSender): void {
   const settings = typeof track.getSettings === "function" ? track.getSettings() : {};
   const index = session.segmentIndex;
   const audioName = `segment-${index}.webm`;
-  const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-    ? "audio/webm;codecs=opus"
-    : "audio/webm";
+  const mimeType = supportedCaptureMimeType();
+  if (!mimeType) {
+    // No container this browser will record. Safari has no audio/webm, so
+    // assuming one would have produced a recorder that throws on construction
+    // in the middle of somebody's call.
+    return;
+  }
   session.segmentStartWallMs = Date.now();
   session.worker.postMessage({
     type: "segment-start",
@@ -281,14 +309,20 @@ async function endCall(): Promise<void> {
   // stopSegment has already awaited the recorder's final chunk, so the worker's
   // view of the segment is complete before the sidecar is sealed.
   active.worker.onmessage = (event: MessageEvent) => {
-    if (event.data?.type === "finalized") {
-      void uploadCapture(event.data.sidecar as CaptureSidecar, event.data.dirName as string).catch(
-        () => {
-          // The OPFS buffer is deliberately left in place so a later page load
-          // can retry; nothing is lost to a transient upload failure.
-        },
-      );
+    if (event.data?.type !== "finalized") {
+      return;
     }
+    void uploadCapture(event.data.sidecar as CaptureSidecar, event.data.dirName as string)
+      .catch(() => {
+        // The OPFS buffer is deliberately left in place so a later page load
+        // can retry; nothing is lost to a transient upload failure.
+      })
+      .finally(() => {
+        // The call is over and the upload has settled either way. Leaving the
+        // worker alive holds a thread and its OPFS handles for as long as the
+        // Talk tab stays open, which is usually the rest of the working day.
+        active.worker.terminate();
+      });
   };
   active.worker.postMessage({ type: "finalize", dirName: active.dirName, base });
 }
@@ -386,22 +420,26 @@ function instrument(pc: RTCPeerConnection): void {
 // modules — so patching now still catches every connection the call creates.
 export function install(): void {
   const globals = globalThis as unknown as { RTCPeerConnection: typeof RTCPeerConnection };
-  const Original = globals.RTCPeerConnection as unknown as new (
-    ...args: unknown[]
-  ) => RTCPeerConnection;
+  const Original = globals.RTCPeerConnection;
   if (!Original || (Original as { __cassiniPatched?: boolean }).__cassiniPatched) {
     return;
   }
-  const Patched = function (this: unknown, ...args: unknown[]) {
-    const pc = new Original(...args);
-    try {
-      instrument(pc);
-    } catch {
-      // An uninstrumented connection is a missing recording, not a broken call.
-    }
-    return pc;
-  } as unknown as typeof RTCPeerConnection;
-  Patched.prototype = Original.prototype;
+  // A Proxy rather than a wrapper function. A wrapper loses new.target (so
+  // `class Mine extends RTCPeerConnection` builds the wrong prototype), drops
+  // static members such as generateCertificate, and gives Talk a constructor
+  // that is not the one it thinks it has. The construct trap changes exactly
+  // one thing: it instruments the connection on the way out.
+  const Patched = new Proxy(Original, {
+    construct(target, args, newTarget) {
+      const pc = Reflect.construct(target, args, newTarget) as RTCPeerConnection;
+      try {
+        instrument(pc);
+      } catch {
+        // An uninstrumented connection is a missing recording, not a broken call.
+      }
+      return pc;
+    },
+  });
   (Patched as { __cassiniPatched?: boolean }).__cassiniPatched = true;
   globals.RTCPeerConnection = Patched;
   // A page going away mid-upload keeps its OPFS buffer, so the worst case is a

@@ -57,6 +57,9 @@ const CALL_PAGE = `<!doctype html>
 // exists for — so the test can assert that the loss is visible on the received
 // side and absent from the captured side.
 const TALK_BUNDLE = `
+// Talk's bundle references OCA; the service worker uses that as its last check
+// that what it is about to append to really is Talk's script.
+window.OCA = window.OCA || {};
 window.__talkReady = (async () => {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const local = new RTCPeerConnection();
@@ -172,10 +175,11 @@ function parseMultipart(body, contentType) {
 
 export async function startFixtureServer() {
   const uploads = [];
-  // Lets a test take the ExApp away mid-flight. It has to be server state
-  // rather than a Playwright route: the payload is fetched by the SERVICE
-  // WORKER, not by the page, and page-level interception never sees it.
-  const state = { failPayload: false };
+  // Lets a test serve something OTHER than Talk's script at the bundle's URL —
+  // a login page, a proxy notice — which the worker must pass through
+  // untouched rather than weld a payload onto. Server state rather than a
+  // Playwright route because the worker, not the page, issues this request.
+  const state = { bundleIsNotTalk: false };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     const path = url.pathname;
@@ -189,6 +193,10 @@ export async function startFixtureServer() {
       return res.end(CALL_PAGE);
     }
     if (path === "/apps/spreed/js/talk-main.mjs") {
+      if (state.bundleIsNotTalk) {
+        res.writeHead(200, { "content-type": "text/html" });
+        return res.end("<html><body>Please log in</body></html>");
+      }
       res.writeHead(200, { "content-type": "text/javascript" });
       return res.end(TALK_BUNDLE);
     }
@@ -198,10 +206,6 @@ export async function startFixtureServer() {
     }
     if (path.startsWith(`${PROXY_PREFIX}/ui/`)) {
       const name = path.slice(`${PROXY_PREFIX}/ui/`.length);
-      if (name === "capture-payload.js" && state.failPayload) {
-        res.writeHead(503);
-        return res.end("ExApp unavailable");
-      }
       try {
         const body = await readFile(join(captureDist, name));
         const headers = { "content-type": "text/javascript" };

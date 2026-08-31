@@ -3,6 +3,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"cassini-operator/internal/operator/appapi"
@@ -43,11 +45,6 @@ import (
 // belongs with the stage that does the placement.
 
 const (
-	// captureMaxUploadBytes bounds one call's upload. An hour of 128 kbit/s
-	// mono Opus is ~57 MB; the ceiling leaves room for a long meeting split
-	// across several segments without letting a single request fill the volume.
-	captureMaxUploadBytes = 512 << 20
-
 	// captureMaxSegments bounds segment count. Segments are cut on track
 	// replacement (device switches), so a healthy call has one or two and a
 	// pathological one has a handful.
@@ -62,6 +59,13 @@ const (
 
 	captureMembershipTimeout = 15 * time.Second
 )
+
+// captureMaxUploadBytes bounds one call's upload. An hour of 128 kbit/s mono
+// Opus is ~57 MB; the ceiling leaves room for a long meeting split across
+// several segments without letting a single request fill the volume. A var
+// rather than a const so a test can exercise the limit without moving half a
+// gigabyte through the handler.
+var captureMaxUploadBytes int64 = 512 << 20
 
 // captureSafeName rejects anything that is not a plain file name. Segment names
 // arrive from the browser and are used to build paths.
@@ -131,6 +135,13 @@ func validateSidecar(sidecar *captureSidecar) error {
 		if !captureSafeName.MatchString(segment.AudioName) {
 			return fmt.Errorf("invalid segment name %q", segment.AudioName)
 		}
+		// The sidecar's own name is reserved: a segment claiming it would be
+		// written and then overwritten by the manifest, losing that audio
+		// silently and leaving the sidecar describing a file that is no longer
+		// what it says.
+		if segment.AudioName == captureSidecarName {
+			return fmt.Errorf("segment name %q is reserved", segment.AudioName)
+		}
 		if _, dup := seen[segment.AudioName]; dup {
 			return fmt.Errorf("duplicate segment name %q", segment.AudioName)
 		}
@@ -175,6 +186,78 @@ func (c ExAppConfig) talkRoomMembershipChecker() roomMembershipChecker {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 		return resp.StatusCode >= 200 && resp.StatusCode < 300, nil
 	}
+}
+
+// captureBodyTooLarge reports whether an error is MaxBytesReader refusing to
+// read further. The typed error is the reliable signal, but multipart's reader
+// does not always preserve the chain across its own wrapping, so the message
+// Go's own handler emits is checked too — the alternative is reporting an
+// oversize upload as a malformed one, which sends the client off debugging
+// their encoder.
+func captureBodyTooLarge(err error) bool {
+	if err == nil {
+		return false
+	}
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return true
+	}
+	return strings.Contains(err.Error(), "request body too large")
+}
+
+// capturePromotionMu serializes the swap below. Two uploads for the same call
+// are rare — a user retrying, or two tabs — but they target the same directory,
+// and interleaving their renames would leave a mixture of both.
+var capturePromotionMu sync.Mutex
+
+// writeFileSynced writes a file and fsyncs it, so a crash cannot leave a
+// zero-length sidecar that looks like a valid empty manifest.
+func writeFileSynced(path string, body []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o640)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(body); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// promoteCapture swaps a completed staging directory into its final path
+// without destroying a previous good upload until the new one is in place.
+//
+// The obvious "remove the old, rename the new" loses the previous capture if
+// the rename then fails — the participant's audio is gone and they have already
+// deleted their local copy. Moving the old aside first means the worst case is
+// a leftover directory, not a lost recording.
+func (rt *Runtime) promoteCapture(staging, final string) error {
+	capturePromotionMu.Lock()
+	defer capturePromotionMu.Unlock()
+
+	superseded := ""
+	if _, err := os.Stat(final); err == nil {
+		superseded = final + ".superseded"
+		_ = os.RemoveAll(superseded)
+		if err := os.Rename(final, superseded); err != nil {
+			return fmt.Errorf("set aside previous capture: %w", err)
+		}
+	}
+	if err := os.Rename(staging, final); err != nil {
+		if superseded != "" {
+			// Put the previous upload back rather than leaving nothing.
+			_ = os.Rename(superseded, final)
+		}
+		return fmt.Errorf("promote staging: %w", err)
+	}
+	if superseded != "" {
+		_ = os.RemoveAll(superseded)
+	}
+	return nil
 }
 
 // captureUploadHandler receives one participant's post-call source audio.
@@ -240,6 +323,10 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 				break
 			}
 			if err != nil {
+				if captureBodyTooLarge(err) {
+					http.Error(w, "capture upload is too large", http.StatusRequestEntityTooLarge)
+					return
+				}
 				http.Error(w, "malformed upload", http.StatusBadRequest)
 				return
 			}
@@ -247,6 +334,10 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 			case "sidecar":
 				var parsed captureSidecar
 				if err := json.NewDecoder(io.LimitReader(part, 32<<20)).Decode(&parsed); err != nil {
+					if captureBodyTooLarge(err) {
+						http.Error(w, "capture upload is too large", http.StatusRequestEntityTooLarge)
+						return
+					}
 					http.Error(w, "malformed sidecar", http.StatusBadRequest)
 					return
 				}
@@ -257,7 +348,7 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 				sidecar = &parsed
 			case "segments":
 				name := filepath.Base(part.FileName())
-				if !captureSafeName.MatchString(name) {
+				if !captureSafeName.MatchString(name) || name == captureSidecarName {
 					http.Error(w, "invalid segment name", http.StatusBadRequest)
 					return
 				}
@@ -270,6 +361,10 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 				n, copyErr := io.Copy(dest, part)
 				closeErr := dest.Close()
 				if copyErr != nil || closeErr != nil {
+					if captureBodyTooLarge(copyErr) {
+						http.Error(w, "capture upload is too large", http.StatusRequestEntityTooLarge)
+						return
+					}
 					http.Error(w, "upload truncated", http.StatusBadRequest)
 					return
 				}
@@ -313,31 +408,34 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 		sidecar.OwnerUserID = owner
 		sidecar.ReceivedAt = time.Now().UTC().Format(time.RFC3339)
 
+		// Complete the directory in staging, THEN swap it in. Writing the
+		// sidecar after promotion left a window where a crash or a disk error
+		// published a capture directory with no manifest — a state nothing
+		// downstream can tell from a truncated upload, since the sidecar is
+		// what DiscoverSourceCaptures reads.
+		body, err := json.Marshal(sidecar)
+		if err != nil {
+			http.Error(w, "could not record sidecar", http.StatusInternalServerError)
+			return
+		}
+		if err := writeFileSynced(filepath.Join(staging, captureSidecarName), body); err != nil {
+			logger.Printf("capture upload: write sidecar: %v", err)
+			http.Error(w, "capture storage unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
 		final := captureUploadDir(rt.cfg.CaptureRoot, sidecar.RoomToken, owner, sidecar.CallStartWallMS)
 		if err := os.MkdirAll(filepath.Dir(final), 0o750); err != nil {
 			logger.Printf("capture upload: mkdir %s: %v", final, err)
 			http.Error(w, "capture storage unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		// A retried upload of the same call replaces the previous one.
-		_ = os.RemoveAll(final)
-		if err := os.Rename(staging, final); err != nil {
+		if err := rt.promoteCapture(staging, final); err != nil {
 			logger.Printf("capture upload: promote %s -> %s: %v", staging, final, err)
 			http.Error(w, "capture storage unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		promoted = true
-
-		body, err := json.Marshal(sidecar)
-		if err != nil {
-			http.Error(w, "could not record sidecar", http.StatusInternalServerError)
-			return
-		}
-		if err := os.WriteFile(filepath.Join(final, captureSidecarName), body, 0o640); err != nil {
-			logger.Printf("capture upload: write sidecar: %v", err)
-			http.Error(w, "capture storage unavailable", http.StatusServiceUnavailable)
-			return
-		}
 
 		var total int64
 		for _, n := range written {
