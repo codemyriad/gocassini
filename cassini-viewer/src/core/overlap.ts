@@ -1092,11 +1092,23 @@ export function getSoundingBlocks<B extends OverlapBlock>(
 ): B[] {
   return blocks
     .filter((block) =>
-      bridgeGaps(audibleIntervalsOf(block), HIGHLIGHT_BRIDGE_MS).some((interval) =>
-        containsPlaybackTime(interval, timeMs),
-      ),
+      soundingIntervalsOf(block).some((interval) => containsPlaybackTime(interval, timeMs)),
     )
     .sort((left, right) => left.startMs - right.startMs);
+}
+
+/**
+ * The intervals a block's ring is actually drawn from: its audible intervals
+ * with the sub-`HIGHLIGHT_BRIDGE_MS` silences closed up.
+ *
+ * Extracted from `getSoundingBlocks`'s filter so that playhead.ts, which
+ * precomputes these once per transcript instead of once per animation frame,
+ * shares this definition rather than restating it. The bridging tolerance and
+ * what counts as audible stay this module's business; a second copy of either
+ * would be free to drift from the D-690 rules the tests here pin.
+ */
+export function soundingIntervalsOf(block: OverlapBlock): Interval[] {
+  return bridgeGaps(audibleIntervalsOf(block), HIGHLIGHT_BRIDGE_MS);
 }
 
 /** Ascending disjoint intervals with sub-`toleranceMs` silence closed up. */
