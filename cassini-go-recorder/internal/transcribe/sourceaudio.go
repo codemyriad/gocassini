@@ -386,7 +386,7 @@ func LoadSourceSidecar(dir string) (SourceSidecar, error) {
 // roomToken may be empty when the caller does not know it — building a bare MKV
 // outside the operator, say. The window check still applies; the room check is
 // skipped, and the caller is trusting the window alone.
-func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS int64) (map[string]string, error) {
+func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS int64) (map[string][]string, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, nil
 	}
@@ -399,8 +399,7 @@ func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS i
 		return nil, fmt.Errorf("scan capture root: %w", err)
 	}
 	sort.Strings(matches)
-	best := map[string]int64{}
-	found := map[string]string{}
+	found := map[string][]string{}
 	for _, match := range matches {
 		dir := filepath.Dir(match)
 		sidecar, err := LoadSourceSidecar(dir)
@@ -415,14 +414,11 @@ func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS i
 		if !windowsOverlap(sidecar.CallStartWallMS, sidecar.CallEndWallMS, windowStartMS, windowEndMS) {
 			continue
 		}
-		// Among candidates that DO belong to this recording, prefer the latest
-		// start: a participant who rejoined uploads once per call, and the
-		// later one is the longer-lived session.
-		if prev, ok := best[sidecar.OwnerUserID]; ok && prev >= sidecar.CallStartWallMS {
-			continue
-		}
-		best[sidecar.OwnerUserID] = sidecar.CallStartWallMS
-		found[sidecar.OwnerUserID] = dir
+		// EVERY matching capture, not just the newest. A participant who left
+		// and rejoined uploads one per session, and both belong to this
+		// recording; keeping only the later one while suppressing their
+		// recorded streams silently dropped the first half of what they said.
+		found[sidecar.OwnerUserID] = append(found[sidecar.OwnerUserID], dir)
 	}
 	return found, nil
 }
@@ -455,54 +451,67 @@ type SourceRenderReport struct {
 	Rejections []string `json:"rejections,omitempty"`
 }
 
-// RenderSourceTrack builds one speaker's timeline-aligned PCM from their
-// upload, or reports why it could not.
+// RenderSourceTrack builds one speaker's timeline-aligned PCM from every
+// capture they uploaded for this recording, or reports why it could not.
 //
-// A segment that cannot be placed is skipped rather than guessed at: the
-// recorded track remains the fallback for the whole speaker, and a half-placed
-// mixture would put words at times nobody can defend.
-func RenderSourceTrack(dir string, sidecar SourceSidecar, base SourceTimeBase, sampleRate int, outSamples int) ([]float32, SourceRenderReport, error) {
-	report := SourceRenderReport{Owner: sidecar.OwnerUserID, Segments: len(sidecar.Segments)}
+// All or nothing, deliberately. Skipping an unplaceable segment and keeping the
+// rest looked conservative and was the opposite: the caller substitutes this
+// render for the speaker AND drops their recorded streams, so a skipped segment
+// became silence where words had been. Losing speech is the one outcome worse
+// than not using the capture at all, so any segment that cannot be placed
+// fails the whole speaker back to the recorded track.
+//
+// Several directories because one participant can legitimately have more than
+// one capture for a single recording — they left and rejoined. Rendering only
+// the newest while suppressing their recorded streams lost the earlier
+// session the same way.
+func RenderSourceTrack(dirs []string, base SourceTimeBase, sampleRate int, outSamples int) ([]float32, SourceRenderReport, error) {
+	report := SourceRenderReport{}
 	out := make([]float32, outSamples)
 	timelineMS := int64(outSamples) * 1000 / int64(sampleRate)
 	var totalAnchors int
 	var worstResidual float64
 	var rateSum float64
-	for _, segment := range sidecar.Segments {
-		placement, err := FitPlacement(segment, base)
+
+	for _, dir := range dirs {
+		sidecar, err := LoadSourceSidecar(dir)
 		if err != nil {
-			report.Rejections = append(report.Rejections,
-				fmt.Sprintf("segment %d: %v", segment.Index, err))
-			continue
+			return nil, report, fmt.Errorf("%s: %w", filepath.Base(dir), err)
 		}
-		if !PlausibleOffset(placement, timelineMS) {
-			report.Rejections = append(report.Rejections,
-				fmt.Sprintf("segment %d: places at %.0f ms, outside a %d ms recording — the uploader's clock is not usable",
-					segment.Index, placement.OffsetMS, timelineMS))
-			continue
+		report.Owner = sidecar.OwnerUserID
+		report.Segments += len(sidecar.Segments)
+		for _, segment := range sidecar.Segments {
+			placement, err := FitPlacement(segment, base)
+			if err != nil {
+				return nil, report, fmt.Errorf("segment %d: %w", segment.Index, err)
+			}
+			if !PlausibleOffset(placement, timelineMS) {
+				return nil, report, fmt.Errorf(
+					"segment %d places at %.0f ms, outside a %d ms recording — the uploader's clock is not usable",
+					segment.Index, placement.OffsetMS, timelineMS)
+			}
+			samples, err := decodeSourceSegment(filepath.Join(dir, segment.AudioName), sampleRate)
+			if err != nil {
+				return nil, report, fmt.Errorf("segment %d: decode: %w", segment.Index, err)
+			}
+			placed := RenderOntoTimeline(samples, sampleRate, placement, outSamples)
+			for i := range out {
+				// Segments never overlap in time (each starts when the previous
+				// stopped), so summing is a placement, not a mix.
+				out[i] += placed[i]
+			}
+			report.Placed++
+			totalAnchors += placement.Anchors
+			rateSum += placement.Rate
+			if placement.ResidualMS > worstResidual {
+				worstResidual = placement.ResidualMS
+			}
+			report.CoverageMS += int64(float64(len(samples)) * 1000 / float64(sampleRate))
 		}
-		samples, err := decodeSourceSegment(filepath.Join(dir, segment.AudioName), sampleRate)
-		if err != nil {
-			report.Rejections = append(report.Rejections,
-				fmt.Sprintf("segment %d: decode: %v", segment.Index, err))
-			continue
-		}
-		placed := RenderOntoTimeline(samples, sampleRate, placement, outSamples)
-		for i := range out {
-			// Segments never overlap in time (each starts when the previous
-			// stopped), so summing is a placement, not a mix.
-			out[i] += placed[i]
-		}
-		report.Placed++
-		totalAnchors += placement.Anchors
-		rateSum += placement.Rate
-		if placement.ResidualMS > worstResidual {
-			worstResidual = placement.ResidualMS
-		}
-		report.CoverageMS += int64(float64(len(samples)) * 1000 / float64(sampleRate))
 	}
+
 	if report.Placed == 0 {
-		return nil, report, fmt.Errorf("no segment could be placed")
+		return nil, report, fmt.Errorf("no segment to place")
 	}
 	report.Anchors = totalAnchors
 	report.ResidualMS = worstResidual
@@ -529,23 +538,28 @@ func decodeSourceSegment(path string, sampleRate int) ([]float32, error) {
 	return runPCM16LECommand(cmd, 0)
 }
 
-// recordingWallWindow is the wall-clock span this recording covers, taken from
-// the earliest first-packet instant any track carries. Used to decide which
-// uploaded captures could belong to it at all.
+// recordingWallWindow is the wall-clock span this recording covers.
+//
+// Timeline zero is derived, not observed: a track whose first packet arrives
+// thirty seconds in sits at FirstTimelineNS=30s, so its wall instant is thirty
+// seconds AFTER the recording began. Taking the earliest first-packet time as
+// zero shifted the whole window later in a recording where nobody spoke
+// immediately, which could then select a later call in the same room.
 func recordingWallWindow(streams []AudioStream, timelineMS int64) (int64, int64) {
-	var start int64
+	var zero int64
 	for _, stream := range streams {
 		if !stream.TimeBase.Known {
 			continue
 		}
-		if start == 0 || stream.TimeBase.FirstPacketWallMS < start {
-			start = stream.TimeBase.FirstPacketWallMS
+		candidate := stream.TimeBase.FirstPacketWallMS - stream.TimeBase.FirstTimelineNS/1e6
+		if zero == 0 || candidate < zero {
+			zero = candidate
 		}
 	}
-	if start == 0 {
+	if zero <= 0 {
 		return 0, 0
 	}
-	return start, start + timelineMS
+	return zero, zero + timelineMS
 }
 
 // writeWAV16 writes mono 16-bit PCM. Hand-rolled rather than piped through
@@ -630,10 +644,18 @@ func ApplySourceAudio(streams []AudioStream, captureRoot, roomToken, workDir str
 	// and that participant's other streams are dropped from transcription —
 	// their audio is already inside the source render.
 	used := map[string]bool{}
+	// A participant whose render already failed is not retried per stream: the
+	// failure is a property of their capture, not of the stream we happened to
+	// try it on, and re-decoding a meeting's audio to fail identically is pure
+	// cost.
+	failed := map[string]bool{}
 	for i := range streams {
 		stream := &streams[i]
-		dir, ok := captures[stream.ParticipantID]
+		dirs, ok := captures[stream.ParticipantID]
 		if !ok || stream.ParticipantID == "" {
+			continue
+		}
+		if failed[stream.ParticipantID] {
 			continue
 		}
 		if used[stream.ParticipantID] {
@@ -645,20 +667,22 @@ func ApplySourceAudio(streams []AudioStream, captureRoot, roomToken, workDir str
 			fmt.Fprintf(stdout, "  source audio: %s uploaded, but this recording carries no wall-clock base for their track; keeping the recorded audio\n", stream.SpeakerLabel)
 			continue
 		}
-		sidecar, err := LoadSourceSidecar(dir)
-		if err != nil {
-			fmt.Fprintf(stdout, "  source audio: %s: %v\n", stream.SpeakerLabel, err)
-			continue
-		}
-		samples, report, err := RenderSourceTrack(dir, sidecar, stream.TimeBase, sampleRate, outSamples)
+		samples, report, err := RenderSourceTrack(dirs, stream.TimeBase, sampleRate, outSamples)
 		report.SpeakerID = stream.SpeakerID
 		if err != nil {
+			// The whole speaker stays on the recorded track, and the reason
+			// travels into the manifest: a transcript that quietly declined to
+			// use somebody's upload should say why.
+			report.Rejections = append(report.Rejections, err.Error())
+			failed[stream.ParticipantID] = true
 			fmt.Fprintf(stdout, "  source audio: %s: %v; keeping the recorded audio\n", stream.SpeakerLabel, err)
 			reports = append(reports, report)
 			continue
 		}
 		path := filepath.Join(workDir, "source-"+stream.SpeakerID+".wav")
 		if err := writeWAV16(path, samples, sampleRate); err != nil {
+			report.Rejections = append(report.Rejections, err.Error())
+			failed[stream.ParticipantID] = true
 			fmt.Fprintf(stdout, "  source audio: %s: %v; keeping the recorded audio\n", stream.SpeakerLabel, err)
 			reports = append(reports, report)
 			continue

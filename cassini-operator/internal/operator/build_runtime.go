@@ -287,14 +287,21 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	// (docs/source-audio-capture.md). Until the correlation refinement lands,
 	// an installation opts into that deliberately rather than by upgrading.
 	if sourceAudioIngestEnabled() {
-		if root := strings.TrimSpace(rt.cfg.CaptureRoot); root != "" {
-			buildArgs = append(buildArgs, "--source-audio", root)
-			// Scope the selection to this room. Without it the build can only
-			// filter by call window, which is weaker: two meetings close in
-			// time could each look plausible.
-			if binding, ok := rt.talkBindingForJob(task.JobID); ok && binding.RoomToken != "" {
-				buildArgs = append(buildArgs, "--source-audio-room", binding.RoomToken)
-			}
+		root := strings.TrimSpace(rt.cfg.CaptureRoot)
+		binding, hasBinding := rt.talkBindingForJob(task.JobID)
+		roomToken := ""
+		if hasBinding {
+			roomToken = strings.TrimSpace(binding.RoomToken)
+		}
+		// Both, or neither. Passing --source-audio without a room token leaves
+		// the build matching on call window alone, across every room this
+		// installation has ever captured — which is how one meeting's audio
+		// ends up in another's transcript. A job whose room cannot be resolved
+		// simply does not get source audio.
+		if root != "" && roomToken != "" {
+			buildArgs = append(buildArgs, "--source-audio", root, "--source-audio-room", roomToken)
+		} else if root != "" {
+			rt.logger.Printf("build %s: source-audio ingestion enabled but no room token is known for this job; skipping", task.JobID)
 		}
 	}
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, buildArgs...)

@@ -239,7 +239,11 @@ Uploads land under the operator's `--capture-root`
 ## Not done yet
 
 - **Cross-correlation refinement of the offset** (see above). This is the gap
-  that decides whether ingestion can be trusted on arbitrary clients.
+  that decides whether ingestion can be trusted on arbitrary clients, and the
+  reason ingestion is off by default.
+- **Account-scoped consent.** The opt-in lives in `localStorage`, which is
+  per-origin, not per-Nextcloud-account: two people sharing a browser profile
+  share the answer.
 - **Rebuild on late upload.** An upload arriving after the meeting was published
   does not trigger a rebuild; only a manual rerun picks it up.
 - **The published mix.** Ingestion changes the transcript only. The playable
@@ -248,8 +252,11 @@ Uploads land under the operator's `--capture-root`
   tracks, not the ingested ones.
 - **The opt-in UI**, and with it any consent copy worth shipping.
 - **Verification of an upload against the recorder's own audio** (see above).
-- **Retention.** Uploads accumulate under the capture root; nothing sweeps
-  uploads whose meeting never materialised.
+- **Retention and quota.** Uploads accumulate under the capture root. Nothing
+  sweeps uploads whose meeting never materialised, and nothing rate-limits a
+  participant: repeated uploads at the 512 MiB per-request cap can fill the
+  volume even with ingestion disabled. This is the largest remaining
+  operational risk of enabling capture at all.
 - **OPFS recovery.** A page that disappears mid-upload keeps its buffer, but
   nothing scans for one on a later load, so that recording is stranded until
   the browser's storage is cleared.

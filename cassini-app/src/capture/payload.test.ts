@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { consentGranted, pickAudioSender, rotateSegment, stopSegment, uploadURLFrom } from "./payload";
+import {
+  consentGranted,
+  pickAudioSender,
+  rotateSegment,
+  stopSegment,
+  stopWithoutRestart,
+  uploadURLFrom,
+} from "./payload";
 import { anchorsWithin } from "./worker";
 
 describe("uploadURLFrom", () => {
@@ -208,5 +215,33 @@ describe("rotateSegment", () => {
       globals.MediaRecorder = savedRecorder;
       globals.MediaStream = savedStream;
     }
+  });
+});
+
+describe("stopWithoutRestart", () => {
+  // replaceTrack(null) detaches the microphone. Continuing to record the old
+  // track kept writing whatever that detached source still produced.
+  it("closes the segment and does not open another", async () => {
+    const posted: Array<{ type: string }> = [];
+    const session = {
+      segmentIndex: 0,
+      muteIntervals: [] as Array<[number, number]>,
+      pendingChunks: Promise.resolve(),
+      rotation: Promise.resolve(),
+      worker: { postMessage: (message: { type: string }) => posted.push(message) },
+      recorder: {
+        onstop: null as null | (() => void),
+        stop() {
+          setTimeout(() => this.onstop?.(), 0);
+        },
+      },
+    } as unknown as import("./payload").CaptureState;
+
+    stopWithoutRestart(session);
+    await (session as unknown as { rotation: Promise<void> }).rotation;
+
+    const kinds = posted.map((message) => message.type);
+    expect(kinds).toContain("segment-stop");
+    expect(kinds).not.toContain("segment-start");
   });
 });

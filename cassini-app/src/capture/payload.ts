@@ -129,6 +129,12 @@ export interface CaptureState {
 
 let state: CaptureState | null = null;
 const publisherSenders = new Set<RTCRtpSender>();
+// The connection whose sender we are recording. A Talk call has one publishing
+// peer connection and many subscriber ones, and every subscriber closes
+// routinely as people come and go — ending the capture on any of those closures
+// truncated the recording mid-call, permanently, because endCall is idempotent
+// and the first spurious close won.
+let capturingConnection: RTCPeerConnection | null = null;
 
 function workerURL(): string {
   // The payload is served next to the worker under the ExApp's /ui/ prefix, and
@@ -263,8 +269,15 @@ function pollMute(session: CaptureState, sender: RTCRtpSender): void {
 }
 
 async function uploadCapture(sidecar: CaptureSidecar, dirName: string): Promise<void> {
-  const root = (globalThis as { OC?: { getRootPath?: () => string } }).OC?.getRootPath?.() ?? "";
   const opfsRoot = await navigator.storage.getDirectory();
+  // Consent is re-checked here, not only at the start. Somebody who turns
+  // capture off during a call has withdrawn permission for the recording that
+  // call produced, so it is deleted rather than uploaded.
+  if (!consentGranted(localStorage)) {
+    await opfsRoot.removeEntry(dirName, { recursive: true }).catch(() => {});
+    return;
+  }
+  const root = (globalThis as { OC?: { getRootPath?: () => string } }).OC?.getRootPath?.() ?? "";
   const dir = await opfsRoot.getDirectoryHandle(dirName);
   const form = new FormData();
   form.append("sidecar", new Blob([JSON.stringify(sidecar)], { type: "application/json" }), "capture.json");
@@ -300,6 +313,7 @@ async function endCall(): Promise<void> {
   // everything below works from `active` — the async tail of a recording
   // outlives the global by design.
   state = null;
+  capturingConnection = null;
   if (active.mutePoll !== null) {
     clearInterval(active.mutePoll);
   }
@@ -368,6 +382,14 @@ function beginCapture(sender: RTCRtpSender): void {
   session.mutePoll = setInterval(() => pollMute(session, sender), MUTE_POLL_MS) as unknown as number;
 }
 
+// stopWithoutRestart closes the current segment and leaves the recorder idle.
+// Used for replaceTrack(null), which detaches the microphone: the old track is
+// gone, so continuing to record it would keep writing whatever that detached
+// source still produces.
+export function stopWithoutRestart(session: CaptureState): void {
+  session.rotation = session.rotation.then(() => stopSegment(session)).catch(() => {});
+}
+
 // rotateSegment closes the current segment and opens the next, serialized on
 // the session's rotation chain.
 //
@@ -400,8 +422,14 @@ function watchSender(sender: RTCRtpSender): void {
   sender.replaceTrack = async (track: MediaStreamTrack | null) => {
     const result = await originalReplace(track);
     const session = state;
-    if (session && track && track.kind === "audio") {
-      rotateSegment(session, sender);
+    if (session) {
+      if (track && track.kind === "audio") {
+        rotateSegment(session, sender);
+      } else if (track === null) {
+        // The microphone was detached. Close the segment rather than keep
+        // recording a track Talk is no longer sending.
+        stopWithoutRestart(session);
+      }
     }
     return result;
   };
@@ -414,24 +442,30 @@ function instrument(pc: RTCPeerConnection): void {
     if (track.kind === "audio") {
       try {
         watchSender(sender);
+        if (state && capturingConnection === null) {
+          capturingConnection = pc;
+        }
       } catch {
         // Never let instrumentation break Talk's own addTrack.
       }
     }
     return sender;
   };
+  // ONLY the publishing connection ends the capture. Subscriber connections
+  // close constantly as participants come and go, and treating any of those as
+  // the end of the call truncated the recording.
   pc.addEventListener("connectionstatechange", () => {
+    if (pc !== capturingConnection) {
+      return;
+    }
     if (pc.connectionState === "closed" || pc.connectionState === "failed") {
-      const index = pickAudioSender(pc.getSenders());
-      if (index >= 0 || publisherSenders.size > 0) {
-        void endCall();
-      }
+      void endCall();
     }
   });
   const originalClose = pc.close.bind(pc);
   pc.close = () => {
     try {
-      if (pickAudioSender(pc.getSenders()) >= 0) {
+      if (pc === capturingConnection) {
         void endCall();
       }
     } catch {

@@ -350,8 +350,7 @@ func TestDiscoverSourceCapturesIsScopedToThisRecording(t *testing.T) {
 	root := t.TempDir()
 	// The right capture for this recording.
 	writeCapture(t, root, "room1", "alice", inWindowSidecar("alice", testWindowStartMS))
-	// The same person, same room, a call three hours later. Newer, so the old
-	// "latest wins" rule would have chosen it.
+	// The same person, same room, a call three hours later — out of window.
 	later := inWindowSidecar("alice", testWindowStartMS+3*3_600_000)
 	dir := filepath.Join(root, "room1", "alice", "later")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -373,8 +372,8 @@ func TestDiscoverSourceCapturesIsScopedToThisRecording(t *testing.T) {
 	if len(found) != 1 {
 		t.Fatalf("found %d captures, want exactly the in-window room1 one: %v", len(found), found)
 	}
-	if !strings.Contains(found["alice"], filepath.Join("room1", "alice", "1700")) {
-		t.Fatalf("selected the wrong capture: %s", found["alice"])
+	if len(found["alice"]) != 1 || !strings.Contains(found["alice"][0], filepath.Join("room1", "alice", "1700")) {
+		t.Fatalf("selected the wrong capture: %v", found["alice"])
 	}
 }
 
@@ -520,5 +519,101 @@ func TestPlausibleOffset(t *testing.T) {
 	// judged against a 2.5 s window.
 	if !PlausibleOffset(Placement{OffsetMS: -20_000}, 5_000) {
 		t.Fatal("the minimum slack floor is not being applied")
+	}
+}
+
+// A participant who leaves and rejoins uploads one capture per session, and
+// both belong to this recording. Keeping only the newest while suppressing
+// their recorded streams silently dropped the first half of what they said.
+func TestDiscoverSourceCapturesKeepsEveryMatchingCapture(t *testing.T) {
+	root := t.TempDir()
+	first := inWindowSidecar("alice", testWindowStartMS)
+	writeCapture(t, root, "room1", "alice", first)
+
+	second := inWindowSidecar("alice", testWindowStartMS+120_000)
+	dir := filepath.Join(root, "room1", "alice", "rejoin")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	raw, _ := json.Marshal(second)
+	if err := os.WriteFile(filepath.Join(dir, "capture.json"), raw, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	found, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	if err != nil {
+		t.Fatalf("DiscoverSourceCaptures: %v", err)
+	}
+	if len(found["alice"]) != 2 {
+		t.Fatalf("kept %d of alice's captures, want both sessions: %v", len(found["alice"]), found["alice"])
+	}
+}
+
+// Skipping an unplaceable segment and keeping the rest looked conservative and
+// was the opposite: the caller substitutes the render for the speaker AND drops
+// their recorded streams, so a skipped segment became silence where words had
+// been. Any segment that cannot be placed must fail the whole speaker back to
+// the recorded audio.
+func TestRenderSourceTrackRefusesAPartialCapture(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "capture")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Too few anchors to place: a short segment, e.g. after a device change
+	// near the end of a call. Placed FIRST so the refusal happens at the fit,
+	// before any decoding, which keeps the test free of fixture media.
+	bad := syntheticSegment(1000, 3, 1000, 0)
+	bad.AudioName = "segment-0.webm"
+	good := syntheticSegment(70_000, 60, 1000, 0)
+	good.Index = 1
+	good.AudioName = "segment-1.webm"
+
+	sidecar := SourceSidecar{
+		Format:          SourceCaptureFormat,
+		RoomToken:       "room1",
+		OwnerUserID:     "alice",
+		CallStartWallMS: testWindowStartMS,
+		CallEndWallMS:   testWindowEndMS,
+		Segments:        []SourceSegment{bad, good},
+	}
+	raw, _ := json.Marshal(sidecar)
+	if err := os.WriteFile(filepath.Join(dir, "capture.json"), raw, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	_, report, err := RenderSourceTrack([]string{dir}, testBase(), 16000, 16000*120)
+	if err == nil {
+		t.Fatal("a capture with an unplaceable segment was accepted; that silently deletes speech")
+	}
+	if !strings.Contains(err.Error(), "anchors") {
+		t.Fatalf("refused for the wrong reason: %v", err)
+	}
+	if report.Placed != 0 {
+		t.Fatalf("report claims %d segments placed by a refused capture", report.Placed)
+	}
+}
+
+func TestRecordingWallWindowDerivesTimelineZero(t *testing.T) {
+	const zero = int64(1_700_000_000_000)
+	// Nobody spoke for the first thirty seconds, so the earliest track's first
+	// packet is thirty seconds AFTER the recording began. Taking that instant
+	// as timeline zero shifted the whole matching window later, which could
+	// then select a later call in the same room.
+	streams := []AudioStream{
+		{TimeBase: SourceTimeBase{FirstPacketWallMS: zero + 30_000, FirstTimelineNS: 30_000_000_000, Known: true}},
+		{TimeBase: SourceTimeBase{FirstPacketWallMS: zero + 45_000, FirstTimelineNS: 45_000_000_000, Known: true}},
+	}
+	start, end := recordingWallWindow(streams, 600_000)
+	if start != zero {
+		t.Fatalf("window starts at %d, want %d (the recording's own zero)", start, zero)
+	}
+	if end != zero+600_000 {
+		t.Fatalf("window ends at %d, want %d", end, zero+600_000)
+	}
+
+	// No usable base at all: no window, so nothing is selected.
+	if s, e := recordingWallWindow([]AudioStream{{}}, 600_000); s != 0 || e != 0 {
+		t.Fatalf("unknown base produced a window: %d..%d", s, e)
 	}
 }
