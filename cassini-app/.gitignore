@@ -1,6 +1,5 @@
-dist
-dist/
-node_modules
-node_modules/
-!package.json
-!package-lock.json
+# Playwright browser-test artefacts (e2e/, see docs/source-audio-capture.md).
+# Kept here rather than in the repo-root .gitignore so the ignore lives with
+# the package that produces it.
+test-results/
+playwright-report/

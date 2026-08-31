@@ -160,6 +160,30 @@ SFU recording is an *attestation sample* — verify on the windows where it has
 intact audio, require some minimum verified fraction, then accept the whole
 track including the holes it fills.
 
+## Testing
+
+The arithmetic and the intake are covered by Go unit tests. The browser chain
+cannot be — a service worker rewriting another app's bundle, an encoded
+transform, OPFS and an upload only exist in a browser, and the harness has no
+browser at all (its Talk publishers are pion Go clients).
+
+`cassini-app/e2e/` therefore runs a real Chromium against a stub same-origin
+Nextcloud: the Cassini page registers the worker, a stub Talk bundle publishes
+audio over a real `RTCPeerConnection`, and **a transform on the receiving side
+drops a share of the encoded frames** — the lossy-uplink condition the feature
+exists for. The tests assert that the loss is real, that the captured copy is
+unaffected by it, that the anchors advance monotonically on the sender's clock,
+that a mute spell is recorded, and that nothing is uploaded without consent.
+
+```bash
+npm run build:capture -w cassini-app   # the worker serves the BUILT bundles
+npm run test:e2e -w cassini-app
+```
+
+It does not cover real Nextcloud, real Talk, real Janus, AppAPI's proxy and its
+header forwarding, or the operator's Go handler. Those gaps are deliberate and
+named in the CI job.
+
 ## Trying it
 
 Capture is off until a user opts in. The opt-in UI is not built yet; the control
@@ -180,9 +204,6 @@ Uploads land under the operator's `--capture-root`
 
 - **Cross-correlation refinement of the offset** (see above). This is the gap
   that decides whether ingestion can be trusted on arbitrary clients.
-- **An end-to-end browser test.** The harness has no browser at all — its
-  publishers are pion Go clients — so nothing yet exercises the service worker,
-  the payload, or the encoded transform in a real Chromium.
 - **Rebuild on late upload.** An upload arriving after the meeting was published
   does not trigger a rebuild; only a manual rerun picks it up.
 - **The published mix.** Ingestion changes the transcript only. The playable
