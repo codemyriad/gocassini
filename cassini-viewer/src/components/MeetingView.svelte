@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
+  import { writable, type Writable } from "svelte/store";
   import { fade, fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { marked } from "marked";
@@ -16,11 +17,15 @@
   import { getActiveTimedRange } from "../core/timing";
   import {
     buildTranscriptRows,
-    getSoundingBlocks,
     repairTurnFinalWordInflation,
     sortBlocksInReadingOrder,
     type TranscriptRow,
   } from "../core/overlap";
+  import {
+    buildPlayheadIndex,
+    resolvePlayhead,
+    type PlayheadIndex,
+  } from "../core/playhead";
   import type {
     DisplayTranscriptToken,
     DisplayTranscriptV1,
@@ -38,6 +43,7 @@
   import { formatMeetingDate, type MeetingCatalogEntry } from "../viewer/catalog";
   import type { DataProvider } from "../viewer/dataProvider";
   import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "../viewer/hashRouting";
+  import TranscriptTokens from "./TranscriptTokens.svelte";
 
   // The single-meeting reading surface (D-420 V1). It is "smart": given a
   // DataProvider and a meeting entry (or bundled mode) it loads the artifact,
@@ -103,6 +109,30 @@
   let loading = false;
 
   let currentTimeMs = 0;
+  // Highlight state, pushed by syncHighlight rather than derived per frame.
+  // `activeSegments` holds the very objects `displaySegments` holds — the word
+  // template identity-compares its token against `activeTokens`, so anything
+  // that copied a block or a token here would quietly extinguish every
+  // highlight while still looking right in a structural test.
+  let activeSegments: DisplaySegment[] = [];
+  let activeSegmentIds = new Set<string>();
+  let activeSegment: DisplaySegment | null = null;
+  // The authoritative answer, and the comparison basis: only segments whose
+  // entry here actually changed get their store written. Nothing in the template
+  // reads this map any more, which is the whole point — see TranscriptTokens.
+  let activeTokens = new Map<string, DisplayTranscriptToken | null>();
+  // One store per rendered block, so a write reaches only that block's words.
+  let tokenHighlights = new Map<string, Writable<DisplayTranscriptToken | null>>();
+  let activeWords = new Map<string, IndexedWord | null>();
+  let playheadIndex: PlayheadIndex<DisplaySegment> = buildPlayheadIndex<DisplaySegment>([]);
+  // The stretch `activeSegments`/`activeTokens` are known to be correct across.
+  // Deliberately empty to begin with, so the first call always resolves.
+  let highlightValidFromMs = Number.POSITIVE_INFINITY;
+  let highlightValidUntilMs = Number.NEGATIVE_INFINITY;
+  // Seeded to `showExactWords`'s own initial value. The empty validity window
+  // above already forces the first resolve, so this only has to avoid a
+  // spurious second one.
+  let highlightExactWords = false;
   let durationMs = 0;
   let playing = false;
   let followPlayback = true;
@@ -352,16 +382,34 @@
     }
   }
 
+  /**
+   * Read the playhead once. Deliberately does NOT schedule the next frame.
+   *
+   * It used to. Because it is also called from `handleTimeUpdate` (the media
+   * element fires `timeupdate` about four times a second) and from `seekTo`,
+   * every one of those calls started ANOTHER self-scheduling animation-frame
+   * chain while one was already running, and `animationFrameId` kept only the
+   * newest — so `stopPlaybackClock` could cancel exactly one of them and the
+   * rest ran until playback stopped. Counted in the browser: 139 callbacks in
+   * the first second of playback, 323 by the twelfth, and once the transcript
+   * highlight stopped starving the frame budget, 2,644 — forty-four clocks
+   * where there should be one, each re-reading `audioEl.currentTime` and
+   * re-entering the reactive graph. Scheduling now belongs to the clock alone.
+   */
   function syncPlaybackTime() {
     currentTimeMs = asFiniteMilliseconds(Math.round((audioEl?.currentTime ?? 0) * 1000));
+  }
+
+  function advancePlaybackClock() {
+    syncPlaybackTime();
     if (playing) {
-      animationFrameId = window.requestAnimationFrame(syncPlaybackTime);
+      animationFrameId = window.requestAnimationFrame(advancePlaybackClock);
     }
   }
 
   function startPlaybackClock() {
     stopPlaybackClock();
-    animationFrameId = window.requestAnimationFrame(syncPlaybackTime);
+    animationFrameId = window.requestAnimationFrame(advancePlaybackClock);
   }
 
   function stopPlaybackClock() {
@@ -567,22 +615,6 @@
     return `${gapDb.toFixed(0)} dB louder`;
   }
 
-  function getActiveDisplayToken(
-    segment: DisplaySegment | null,
-    timeMs: number,
-  ): DisplayTranscriptToken | null {
-    if (!segment || segment.tokens.length === 0) {
-      return null;
-    }
-    return getActiveTimedRange(
-      segment.tokens.filter(
-        (token): token is DisplayTranscriptToken & { startMs: number; endMs: number } =>
-          token.startMs !== undefined && token.endMs !== undefined,
-      ),
-      timeMs,
-    );
-  }
-
   function getActiveDisplayWord(
     segment: DisplaySegment | null,
     timeMs: number,
@@ -597,15 +629,8 @@
   // turns really are sounding, so both keep their ring and both track their own
   // word. Keyed by segment id because the template renders segments through
   // grouped rows and cannot rely on array position.
-  function activeTokensBySegment(
-    segments: DisplaySegment[],
-    timeMs: number,
-  ): Map<string, DisplayTranscriptToken | null> {
-    return new Map(segments.map((segment) => [segment.id, getActiveDisplayToken(segment, timeMs)]));
-  }
-
   function activeWordsBySegment(
-    segments: DisplaySegment[],
+    segments: readonly DisplaySegment[],
     timeMs: number,
   ): Map<string, IndexedWord | null> {
     return new Map(segments.map((segment) => [segment.id, getActiveDisplayWord(segment, timeMs)]));
@@ -629,6 +654,96 @@
       }
     }
     return keys;
+  }
+
+  /**
+   * Re-derive the highlight, but only when the playhead has actually left the
+   * stretch the last answer was good for.
+   *
+   * `resolvePlayhead` hands back the window its answer holds across, so the
+   * common case — a frame landing between two word boundaries — costs one
+   * comparison and returns without touching a single reactive source. Measured
+   * on a transcript shaped like the largest published meeting, 36 of 480 frames
+   * in an eight-second listen cross a boundary at all.
+   *
+   * The index is rebuilt when `displaySegments` changes, which is exactly when
+   * its identity changes: that array is recomputed and never mutated, so the
+   * identity test is both sound and complete. `showExactWords` forces a refresh
+   * because the canonical-word highlight is switched off at source while it is
+   * false, so its answer changes without the playhead moving.
+   */
+  function syncHighlight(
+    segments: DisplaySegment[],
+    exactWords: boolean,
+    timeMs: number,
+  ): void {
+    const rebuilt = playheadIndex.source !== segments;
+    if (rebuilt) {
+      playheadIndex = buildPlayheadIndex(segments);
+      tokenHighlights = new Map();
+      activeTokens = new Map();
+    }
+    if (
+      !rebuilt &&
+      exactWords === highlightExactWords &&
+      timeMs >= highlightValidFromMs &&
+      timeMs < highlightValidUntilMs
+    ) {
+      return;
+    }
+    highlightExactWords = exactWords;
+
+    const state = resolvePlayhead(playheadIndex, timeMs);
+    highlightValidFromMs = state.validFromMs;
+    highlightValidUntilMs = state.validUntilMs;
+
+    activeSegments = state.soundingBlocks as DisplaySegment[];
+    activeSegmentIds = new Set(activeSegments.map((segment) => segment.id));
+    // Scroll anchor: the active turn that has held the floor longest. Following
+    // the latest-starting one instead would bounce the page back and forth every
+    // time a one-word backchannel opens and closes inside a long turn.
+    activeSegment = activeSegments[0] ?? null;
+    activeWords = activeWordsBySegment(activeSegments, timeMs);
+
+    const next = new Map<string, DisplayTranscriptToken | null>(
+      activeSegments.map((segment, position) => [
+        segment.id,
+        (state.activeTokens[position] ?? null) as DisplayTranscriptToken | null,
+      ]),
+    );
+    // Write only what moved, comparing against the PREVIOUS answer — which is
+    // why `activeTokens` is not replaced until both loops have run. A block
+    // that was lit and still is, on the same word, must not be written at all:
+    // a store set always notifies, so an unconditional write would re-run that
+    // block's words for nothing.
+    for (const [id, token] of next) {
+      if (activeTokens.get(id) !== token) {
+        tokenHighlightFor(id).set(token);
+      }
+    }
+    for (const [id, token] of activeTokens) {
+      if (token !== null && !next.has(id)) {
+        tokenHighlightFor(id).set(null);
+      }
+    }
+    activeTokens = next;
+  }
+
+  /**
+   * The highlight store for one block, created on first use.
+   *
+   * Lazily, because the template asks for it while rendering and a block that
+   * never sounds never needs one. Cleared wholesale when the transcript
+   * changes, so a switch cannot leave a previous body's blocks holding stale
+   * stores — or leak them.
+   */
+  function tokenHighlightFor(segmentId: string): Writable<DisplayTranscriptToken | null> {
+    let store = tokenHighlights.get(segmentId);
+    if (!store) {
+      store = writable<DisplayTranscriptToken | null>(null);
+      tokenHighlights.set(segmentId, store);
+    }
+    return store;
   }
 
   // The blocks a row renders as its own speaker's prose — the turn's own
@@ -803,14 +918,19 @@
   // analysis judges on, not on paragraph extents: extents ring both speakers
   // (and follow-scroll the earlier paragraph) through stretches where their
   // words strictly alternate. Wordless blocks keep their extent.
-  $: activeSegments = getSoundingBlocks(displaySegments, currentTimeMs);
-  $: activeSegmentIds = new Set(activeSegments.map((segment) => segment.id));
-  // Scroll anchor: the active turn that has held the floor longest. Following
-  // the latest-starting one instead would bounce the page back and forth every
-  // time a one-word backchannel opens and closes inside a long turn.
-  $: activeSegment = activeSegments[0] ?? null;
-  $: activeTokens = activeTokensBySegment(activeSegments, currentTimeMs);
-  $: activeWords = activeWordsBySegment(activeSegments, currentTimeMs);
+  //
+  // PUSHED ON A BOUNDARY, NOT DERIVED ON A FRAME (D-692). These five were `$:`
+  // over `currentTimeMs`, so each of the sixty playhead writes a second rebuilt
+  // them — and because two of them are a fresh Map and a fresh Set, and legacy
+  // reactivity compares objects by identity, every consumer of the playhead was
+  // invalidated each time. On the largest published meeting that is 7,318
+  // word-button effects marked, scheduled and dirty-checked sixty times a
+  // second to discover that one or two of them changed; the profile was
+  // accordingly 93% busy, four fifths of it Svelte bookkeeping. `syncHighlight`
+  // keeps them assigned only when the answer actually moves — which, since a
+  // word lasts a few hundred milliseconds, is a few times a second rather than
+  // sixty. The work is not made cheaper; it is not entered.
+  $: syncHighlight(displaySegments, showExactWords, currentTimeMs);
   $: hasPrecomputedDisplay = displayTranscript !== null;
   $: metadataSections = artifactMetadata?.sections ?? [];
   $: safeDurationMs = asFiniteMilliseconds(durationMs);
@@ -1021,20 +1141,12 @@
              own, and two people who genuinely held the floor at once are named
              on each other's rows ("over Chris"). No durations anywhere: the
              model keeps the measurement, the page shows who. -->
-        {#snippet blockProse(block: DisplaySegment)}{#if block.tokens.length > 0 && hasTimedTokens(block)}{#each block.tokens as token}{#if token.spaceBefore}{' '}{/if}{#if token.startMs !== undefined && token.endMs !== undefined}<button
-                class="inline p-0 border-0 rounded text-[1.06rem] leading-[1.72] cursor-pointer transition duration-150 {token ===
-                  activeTokens.get(block.id)
-                  ? 'bg-primary ring-1 ring-primary'
-                  : 'bg-transparent hover:bg-primary/60'} {token.alignment === 'interpolated'
-                  ? 'border-b border-dashed border-warning/60'
-                  : ''}"
-                on:click={() => seekTo(token.startMs ?? block.startMs)}
-                type="button"
-              >{token.text}</button>{:else}<span
-                class="inline rounded text-[1.06rem] leading-[1.72] {token.kind === 'word'
-                  ? 'text-base-content/70'
-                  : 'text-base-content'}"
-              >{token.text}</span>{/if}{/each}{:else}<button
+        {#snippet blockProse(block: DisplaySegment)}{#if block.tokens.length > 0 && hasTimedTokens(block)}<TranscriptTokens
+              tokens={block.tokens}
+              fallbackStartMs={block.startMs}
+              activeToken={tokenHighlightFor(block.id)}
+              seek={seekTo}
+            />{:else}<button
               class="inline p-0 border-0 bg-transparent text-left text-[1.06rem] leading-[1.72] rounded cursor-pointer hover:bg-primary/40"
               on:click={() => seekTo(block.startMs)}
               type="button"
@@ -1103,7 +1215,7 @@
                 {#if block.words.length > 0}
                   <div class="block mt-3 pt-3 border-t border-base-300 text-base leading-normal">
                     {#each block.words as word, wordIndex}{#if wordIndex > 0}{' '}{/if}<button
-                        class="inline p-0 border-0 rounded text-base leading-normal cursor-pointer transition duration-150 {word.id ===
+                        class="inline p-0 border-0 rounded text-base leading-normal cursor-pointer {word.id ===
                           activeWords.get(block.id)?.id
                           ? 'bg-primary ring-1 ring-primary'
                           : 'hover:bg-primary'} {word.lowConfidenceSpeaker
