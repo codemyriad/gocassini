@@ -11,14 +11,12 @@
     isLikelyCrosstalkTurn,
     parseTimeHash,
   } from "../core/transcript";
-  import {
-    getActiveTimedRange,
-    getActiveTimedRanges,
-  } from "../core/timing";
+  import { getActiveTimedRange } from "../core/timing";
   import {
     analyzeOverlap,
     describeOverlap,
     describeResumption,
+    getSoundingBlocks,
     groupInterruptedTurns,
     repairTurnFinalWordInflation,
     sortBlocksInReadingOrder,
@@ -93,6 +91,13 @@
   let chaptersSrc: string | null = null;
   let timingPrecision: ArtifactTimingPrecision | null = null;
   let artifactMetadata: ArtifactMetadata | null = null;
+  // Whether the PRODUCER already bounded this artifact's word ends by the
+  // measured audio (manifest provenance.wordTimings.endsBoundedByAudio). When
+  // it did, the legacy display-time repair must stand down: its budget would
+  // clip a genuinely long word — one measured at 1.44 s against a 240 ms
+  // median — back to 1 s and undo the production fix. Absent on all 197
+  // already-published meetings, which is where the repair earns its keep.
+  let wordEndsBoundedByAudio = false;
   let availableTranscripts: PortableTranscriptDescriptor[] = [];
   let currentTranscriptId = "";
   let defaultTranscriptId = "";
@@ -181,6 +186,7 @@
     chaptersSrc = artifact.chaptersSrc;
     timingPrecision = artifact.timingPrecision;
     artifactMetadata = artifact.metadata;
+    wordEndsBoundedByAudio = artifact.wordEndsBoundedByAudio;
     availableTranscripts = artifact.availableTranscripts;
     currentTranscriptId = artifact.currentTranscriptId;
     defaultTranscriptId =
@@ -205,6 +211,7 @@
     readableTranscript = artifact.readableTranscript;
     timingPrecision = artifact.timingPrecision;
     artifactMetadata = artifact.metadata;
+    wordEndsBoundedByAudio = artifact.wordEndsBoundedByAudio;
     availableTranscripts = artifact.availableTranscripts;
     currentTranscriptId = artifact.currentTranscriptId;
     lastAutoScrollSegmentId = "";
@@ -224,6 +231,7 @@
     chaptersSrc = null;
     timingPrecision = null;
     artifactMetadata = null;
+    wordEndsBoundedByAudio = false;
     availableTranscripts = [];
     currentTranscriptId = "";
     defaultTranscriptId = "";
@@ -788,6 +796,7 @@
     ? sortBlocksInReadingOrder(
         repairTurnFinalWordInflation(
           buildDisplaySegments(transcriptIndex, readableTranscript, displayTranscript),
+          { endsBoundedByAudio: wordEndsBoundedByAudio },
         ),
       )
     : [];
@@ -798,7 +807,11 @@
   $: continuationIds = new Set(
     displaySegments.filter((_, index) => isSpeakerContinuation(displaySegments, index)).map((segment) => segment.id),
   );
-  $: activeSegments = getActiveTimedRanges(displaySegments, currentTimeMs);
+  // Highlight membership runs on the same effective audible spans the overlap
+  // analysis judges on, not on paragraph extents: extents ring both speakers
+  // (and follow-scroll the earlier paragraph) through stretches where their
+  // words strictly alternate. Wordless blocks keep their extent.
+  $: activeSegments = getSoundingBlocks(displaySegments, currentTimeMs);
   $: activeSegmentIds = new Set(activeSegments.map((segment) => segment.id));
   // Scroll anchor: the active turn that has held the floor longest. Following
   // the latest-starting one instead would bounce the page back and forth every

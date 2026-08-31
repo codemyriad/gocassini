@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  containsPlaybackTime,
-  getActiveTimedRange,
-  getActiveTimedRanges,
-} from "./timing";
+import { containsPlaybackTime, getActiveTimedRange } from "./timing";
 
 describe("timing helpers", () => {
   it("treats shared boundaries as belonging to the later range", () => {
@@ -45,37 +41,4 @@ describe("timing helpers", () => {
     expect(containsPlaybackTime(markers[0], 5000)).toBe(true);
     expect(containsPlaybackTime(markers[0], 5001)).toBe(false);
   });
-
-  it("reports every range containing the playhead during a nested overlap", () => {
-    const blocks = [
-      { id: "long-turn", startMs: 1000, endMs: 10_000 },
-      { id: "interjection", startMs: 3000, endMs: 3500 },
-    ];
-
-    expect(getActiveTimedRanges(blocks, 2999).map((block) => block.id)).toEqual(["long-turn"]);
-    expect(getActiveTimedRanges(blocks, 3200).map((block) => block.id)).toEqual([
-      "long-turn",
-      "interjection",
-    ]);
-    expect(getActiveTimedRanges(blocks, 3500).map((block) => block.id)).toEqual(["long-turn"]);
-  });
-
-  it("orders active ranges by start time rather than input order", () => {
-    const blocks = [
-      { id: "interjection", startMs: 3000, endMs: 3500 },
-      { id: "long-turn", startMs: 1000, endMs: 10_000 },
-    ];
-
-    expect(getActiveTimedRanges(blocks, 3200).map((block) => block.id)).toEqual([
-      "long-turn",
-      "interjection",
-    ]);
-  });
-
-  it("returns an empty list outside every range", () => {
-    const blocks = [{ id: "only", startMs: 1000, endMs: 2000 }];
-
-    expect(getActiveTimedRanges(blocks, 2500)).toEqual([]);
-  });
-
 });

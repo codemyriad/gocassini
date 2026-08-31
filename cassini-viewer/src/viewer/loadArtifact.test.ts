@@ -16,6 +16,13 @@ import {
   buildTranscriptWordsFromPortable,
 } from "./portable";
 import { canonicalWordsForBlock, isLikelyCrosstalkTurn } from "../core/transcript";
+import {
+  analyzeOverlap,
+  describeOverlap,
+  groupInterruptedTurns,
+  repairTurnFinalWordInflation,
+  sortBlocksInReadingOrder,
+} from "../core/overlap";
 import type { TranscriptWordsV1 } from "../core/types";
 
 const transcriptFixture = {
@@ -1197,6 +1204,359 @@ describe("portable attribution end-to-end (crosstalk badge judgement)", () => {
     for (const block of blocks) {
       expect(isLikelyCrosstalkTurn(canonicalWordsForBlock(artifact.index, block))).toBe(false);
     }
+  });
+});
+
+describe("word-timing provenance (does the legacy repair still apply?)", () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.window = originalWindow;
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  function stubWindow() {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/", protocol: "http:" },
+    } as Window;
+  }
+
+  function servePortable(manifest: object) {
+    const bytes = buildPortableOpusFixture(manifest);
+    globalThis.fetch = vi.fn(async (input: string | URL) => {
+      if (!String(input).endsWith(".opus")) {
+        return { ok: false } as Response;
+      }
+      return {
+        ok: true,
+        status: 206,
+        headers: new Headers({ "content-range": `bytes 0-${bytes.byteLength - 1}/${bytes.byteLength}` }),
+        arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      } as Response;
+    }) as typeof fetch;
+  }
+
+  const portableBase = {
+    meeting: { durationMs: 5000 },
+    audio: { sha256: "abc123" },
+    speakers: [{ id: "spk_1", label: "Alice" }],
+    transcript: {
+      items: [
+        {
+          id: "seg_1",
+          speaker: "spk_1",
+          startMs: 1000,
+          endMs: 1500,
+          text: "hello",
+          words: [{ id: "w_1", text: "hello", startMs: 1000, endMs: 1500 }],
+        },
+      ],
+    },
+  };
+
+  it("reads the marker off a portable manifest so the viewer stands the repair down", async () => {
+    stubWindow();
+    servePortable({
+      ...portableBase,
+      provenance: {
+        speechToText: { engine: "sherpa-onnx" },
+        wordTimings: { endsBoundedByAudio: true },
+      },
+    });
+
+    const artifact = await loadPortableArtifactFromAudioPath("./bounded.opus");
+
+    expect(artifact.wordEndsBoundedByAudio).toBe(true);
+  });
+
+  it("shows the reader that this artifact's word ends were measured", async () => {
+    stubWindow();
+    servePortable({
+      ...portableBase,
+      provenance: { wordTimings: { endsBoundedByAudio: true } },
+    });
+
+    const artifact = await loadPortableArtifactFromAudioPath("./bounded.opus");
+    const processing = artifact.metadata?.sections.find((section) => section.title === "Processing");
+
+    expect(processing?.rows).toContainEqual({
+      label: "Word timings",
+      value: "Ends bounded by measured audio",
+    });
+  });
+
+  it("leaves the repair running for a portable meeting with no marker", async () => {
+    stubWindow();
+    servePortable({ ...portableBase, provenance: { speechToText: { engine: "sherpa-onnx" } } });
+
+    const artifact = await loadPortableArtifactFromAudioPath("./legacy.opus");
+    const processing = artifact.metadata?.sections.find((section) => section.title === "Processing");
+
+    expect(artifact.wordEndsBoundedByAudio).toBe(false);
+    expect(processing?.rows.some((row) => row.label === "Word timings")).toBe(false);
+  });
+
+  it("leaves the repair running for a portable meeting with no provenance at all", async () => {
+    stubWindow();
+    servePortable(portableBase);
+
+    expect((await loadPortableArtifactFromAudioPath("./ancient.opus")).wordEndsBoundedByAudio).toBe(false);
+  });
+
+  it("refuses anything but the literal boolean, so a stray string cannot disarm the repair", async () => {
+    stubWindow();
+    servePortable({ ...portableBase, provenance: { wordTimings: { endsBoundedByAudio: "true" } } });
+
+    expect((await loadPortableArtifactFromAudioPath("./odd.opus")).wordEndsBoundedByAudio).toBe(false);
+  });
+
+  it("reads the marker off an artifact directory's manifest.json too", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=demo", protocol: "http:" },
+    } as Window;
+    globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "HEAD") {
+        return { ok: true } as Response;
+      }
+      if (url.endsWith("/transcript.words.v1.json")) {
+        return { ok: true, json: async () => transcriptFixture } as Response;
+      }
+      if (url.endsWith("/manifest.json")) {
+        return {
+          ok: true,
+          json: async () => ({ provenance: { wordTimings: { endsBoundedByAudio: true } } }),
+        } as Response;
+      }
+      return { ok: false } as Response;
+    }) as typeof fetch;
+
+    const artifact = await loadArtifactFromDirectory("./meetings/demo");
+
+    expect(artifact.wordEndsBoundedByAudio).toBe(true);
+  });
+
+  it("leaves the repair running for an artifact directory with no manifest", async () => {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/?meeting=demo", protocol: "http:" },
+    } as Window;
+    globalThis.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "HEAD") {
+        return { ok: true } as Response;
+      }
+      if (url.endsWith("/transcript.words.v1.json")) {
+        return { ok: true, json: async () => transcriptFixture } as Response;
+      }
+      return { ok: false } as Response;
+    }) as typeof fetch;
+
+    expect((await loadArtifactFromDirectory("./meetings/demo")).wordEndsBoundedByAudio).toBe(false);
+  });
+});
+
+describe("the display pipeline MeetingView runs, end to end", () => {
+  const originalWindow = globalThis.window;
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.window = originalWindow;
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  function servePortableMeeting(manifest: object) {
+    globalThis.window = {
+      location: { href: "http://127.0.0.1:8765/", protocol: "http:" },
+    } as Window;
+    const bytes = buildPortableOpusFixture(manifest);
+    globalThis.fetch = vi.fn(async (input: string | URL) => {
+      if (!String(input).endsWith(".opus")) {
+        return { ok: false } as Response;
+      }
+      return {
+        ok: true,
+        status: 206,
+        headers: new Headers({ "content-range": `bytes 0-${bytes.byteLength - 1}/${bytes.byteLength}` }),
+        arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      } as Response;
+    }) as typeof fetch;
+  }
+
+  /**
+   * Exactly what MeetingView's reactive block does to a loaded artifact:
+   * project each display block with the canonical words resolved onto it, then
+   * reading order, then the effective timings.
+   */
+  function displaySegmentsFor(artifact: LoadedArtifact) {
+    const blocks = (artifact.displayTranscript?.blocks ?? []).map((block) => ({
+      ...block,
+      words: canonicalWordsForBlock(artifact.index, block),
+    }));
+    return sortBlocksInReadingOrder(
+      repairTurnFinalWordInflation(blocks, {
+        endsBoundedByAudio: artifact.wordEndsBoundedByAudio,
+      }),
+    );
+  }
+
+  /**
+   * Ten ordinary 240 ms words and one that the producer MEASURED at 1.44 s.
+   * Against a 240 ms median the legacy budget is max(1000, 4 × 240) = 1000 ms,
+   * so the display-time repair would clip "held." to 5400 — undoing, in the
+   * viewer, the fix the producer just made.
+   */
+  const heldWordItems = [
+    ...Array.from({ length: 10 }, (_, index) => ({
+      id: `w_${index}`,
+      speaker: "spk_1",
+      text: `word${index}`,
+      startMs: 2000 + index * 240,
+      endMs: 2000 + (index + 1) * 240,
+    })),
+    { id: "w_last", speaker: "spk_1", text: "held.", startMs: 4400, endMs: 5840 },
+  ];
+
+  it("keeps a measured 1.44 s word intact all the way to the rendered spans", async () => {
+    // The fp32 evidence. "held." runs 1.44 s against a 240 ms median, which is
+    // four times the legacy budget's reference and would be clipped to 1 s by
+    // the display-time repair — undoing, in the viewer, the fix the producer
+    // just made.
+    servePortableMeeting({
+      meeting: { durationMs: 6000 },
+      audio: { sha256: "abc123" },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      provenance: { wordTimings: { endsBoundedByAudio: true } },
+      transcript: { items: heldWordItems },
+    });
+
+    const artifact = await loadPortableArtifactFromAudioPath("./measured-word-end.opus");
+    const segments = displaySegmentsFor(artifact);
+
+    expect(artifact.wordEndsBoundedByAudio).toBe(true);
+    expect(segments[0]?.tokens.filter((token) => token.kind === "word").at(-1)).toMatchObject({
+      text: "held",
+      startMs: 4400,
+      endMs: 5840,
+    });
+    expect(segments[0]?.words.at(-1)).toMatchObject({ text: "held.", startMs: 4400, endMs: 5840 });
+    expect(segments[0]?.endMs).toBe(5840);
+  });
+
+  it("clips that same word when the artifact carries no marker", async () => {
+    servePortableMeeting({
+      meeting: { durationMs: 6000 },
+      audio: { sha256: "abc123" },
+      speakers: [{ id: "spk_1", label: "Alice" }],
+      transcript: { items: heldWordItems },
+    });
+
+    const artifact = await loadPortableArtifactFromAudioPath("./unmarked-word-end.opus");
+    const segments = displaySegmentsFor(artifact);
+
+    expect(artifact.wordEndsBoundedByAudio).toBe(false);
+    expect(segments[0]?.tokens.filter((token) => token.kind === "word").at(-1)).toMatchObject({
+      text: "held",
+      startMs: 4400,
+      endMs: 5400,
+    });
+    expect(segments[0]?.words.at(-1)).toMatchObject({ text: "held.", startMs: 4400, endMs: 5400 });
+    expect(segments[0]?.endMs).toBe(5400);
+  });
+
+  /**
+   * The shape the deleted readable splitter used to act on, and the only shape
+   * it COULD act on: a legacy portable meeting with no baked display transcript
+   * (so the viewer rebuilds one at runtime) whose readable segments carry their
+   * own timed words (the splitter's precondition), with another speaker landing
+   * in the middle of one paragraph.
+   *
+   * Inventory of every portable meeting and artifact directory in the repo's
+   * export tree — 36 packed `.opus` files and 54 loose artifact directories —
+   * found this combination ZERO times: all 36 packed meetings carry readable
+   * words AND an embedded display transcript, and the 3 directories with no
+   * display transcript carry no readable words. So the splitter never fired,
+   * and this test pins what the reader gets instead of a prose split: the
+   * paragraph stays whole and the interjection is labelled as having happened
+   * during it — an affordance the splitter destroyed, because after cutting A
+   * in two neither half contained B any more.
+   */
+  it("keeps a rebuilt legacy paragraph whole and marks what landed inside it", async () => {
+    const hostWords = [
+      { text: "So", startMs: 1000, endMs: 1700 },
+      { text: "the", startMs: 1700, endMs: 2400 },
+      { text: "installer", startMs: 2400, endMs: 3100 },
+      { text: "is", startMs: 3100, endMs: 3800 },
+      { text: "finished", startMs: 3800, endMs: 4500 },
+      { text: "and", startMs: 4500, endMs: 5200 },
+      { text: "the", startMs: 5200, endMs: 5900 },
+      { text: "documentation", startMs: 5900, endMs: 6600 },
+      { text: "went", startMs: 6600, endMs: 7300 },
+      { text: "out.", startMs: 7300, endMs: 8000 },
+    ];
+    servePortableMeeting({
+      meeting: { durationMs: 9000 },
+      audio: { sha256: "abc123" },
+      speakers: [
+        { id: "spk_1", label: "Alice" },
+        { id: "spk_2", label: "Bob" },
+      ],
+      // The archive's canonical items carry no per-word timings at all, which
+      // is why the readable words are the only timing in the file.
+      transcript: {
+        items: [
+          { id: "seg_1", speaker: "spk_1", startMs: 1000, endMs: 4500, text: "So the installer is finished" },
+          { id: "seg_2", speaker: "spk_2", startMs: 4000, endMs: 4600, text: "Right." },
+          { id: "seg_3", speaker: "spk_1", startMs: 4500, endMs: 8000, text: "and the documentation went out." },
+        ],
+      },
+      readableTranscript: {
+        version: "transcript.readable.v1",
+        speakers: [
+          { id: "spk_1", label: "Alice" },
+          { id: "spk_2", label: "Bob" },
+        ],
+        segments: [
+          {
+            id: "rseg_1",
+            speaker: "spk_1",
+            startMs: 1000,
+            endMs: 8000,
+            text: hostWords.map((word) => word.text).join(" "),
+            sourceSegmentIds: ["seg_1", "seg_3"],
+            words: hostWords,
+          },
+          {
+            id: "rseg_2",
+            speaker: "spk_2",
+            startMs: 4000,
+            endMs: 4600,
+            text: "Right.",
+            sourceSegmentIds: ["seg_2"],
+            words: [{ text: "Right.", startMs: 4000, endMs: 4600 }],
+          },
+        ],
+      },
+    });
+
+    const artifact = await loadPortableArtifactFromAudioPath("./legacy-readable-words.opus");
+    const segments = displaySegmentsFor(artifact);
+    const analysis = analyzeOverlap(segments);
+
+    // The precondition the splitter needed is present in this fixture: the
+    // ONLY word timing in the file rides on the readable segments, so a timed
+    // display token proves the splitter's input was there.
+    expect(segments[0]?.tokens[0]).toMatchObject({ text: "So", startMs: 1000, endMs: 1700 });
+    // The paragraph is not cut, and no prose is redistributed by word count.
+    expect(segments).toHaveLength(2);
+    expect(segments[0]?.text).toBe("So the installer is finished and the documentation went out.");
+    expect(segments.map((segment) => segment.id)).toEqual(["rseg_1", "rseg_2"]);
+    expect(groupInterruptedTurns(segments, analysis)).toHaveLength(2);
+    // What the reader gets instead of the split.
+    expect(analysis.get("rseg_2")?.containedIn).toBe("rseg_1");
+    expect(describeOverlap(analysis.get("rseg_2"))?.badge).toBe("0.6 s during Alice");
   });
 });
 

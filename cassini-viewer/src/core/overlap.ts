@@ -23,11 +23,14 @@
  *    holds across every meeting sampled from the archive.
  *
  *    The producer-side fix only reaches meetings recorded from now on. 197
- *    meetings are already published and will not be reprocessed, and their
- *    .opus files carry no baked display transcript — the viewer rebuilds it at
- *    runtime — so repairing the timing HERE, at display time, reaches all of
- *    them on the next deploy with no repacking. Without the repair, feature 1
- *    would spend most of its time confidently labelling silence as crosstalk.
+ *    meetings are already published and will not be reprocessed, so repairing
+ *    the timing HERE, at display time, reaches all of them on the next deploy
+ *    with no repacking — whether the viewer reads their baked display
+ *    transcript or rebuilds one at runtime, both go through this module.
+ *    Without the repair, feature 1 would spend most of its time confidently
+ *    labelling silence as crosstalk. An artifact whose producer already
+ *    bounded word ends by the measured audio says so in its manifest and skips
+ *    the repair; see repairTurnFinalWordInflation.
  *
  * 3. THE PRODUCER HIDES THE COMMONEST OVERLAP ENTIRELY. `MergeAndSortSegments`
  *    interleaves every speaker's words by start time and flushes a segment on
@@ -52,6 +55,8 @@
  *
  * Pure module: no Svelte, no DOM, no I/O.
  */
+
+import { containsPlaybackTime } from "./timing";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -156,6 +161,47 @@ export const INTERJECTION_MAX_MIDDLE_MS = 2000;
  * exchange shape where A finishes, a beat passes, and B replies.
  */
 export const INTERJECTION_MAX_SIDE_GAP_MS = 500;
+
+/**
+ * How much of a turn's own audible time must fall inside one peer's audible
+ * time before the UI is allowed to say the WHOLE turn happened during that
+ * peer's.
+ *
+ * Paragraph containment is not the same claim: the readable writer glues a
+ * speaker's turns into paragraphs that reach across other speakers, so a block
+ * can sit entirely inside another block's extent while only 200 ms of its words
+ * overlap. Measured across nine archived meetings, paragraph extents intersect
+ * for 94.2 s against 15.7 s of word intersection — so containment judged on
+ * extents would put "this whole turn falls inside X's turn" on turns that
+ * mostly did not.
+ *
+ * 90% rather than 100% because the two edges are estimates: a backchannel's
+ * first and last words routinely poke a few tens of milliseconds past the
+ * surrounding speech, and on a 0.5 s "Right." that is already 10%.
+ */
+export const CONTAINED_TURN_MIN_COVERAGE = 0.9;
+
+/**
+ * Silence a block keeps its playback highlight across, so the ring does not
+ * blink off in the gaps BETWEEN a paragraph's words.
+ *
+ * Highlight membership is judged on the same audible spans as the overlap
+ * analysis — a paragraph that has stopped sounding must not keep the ring while
+ * the other speaker talks — but words inside one continuous paragraph do not
+ * abut. Measured over the 9437 positive gaps between consecutive timed tokens
+ * inside a block across nine archived meetings: median 160 ms, p90 960 ms,
+ * p99 4.3 s. Unbridged, the ring would blink several times a second.
+ *
+ * 400 ms is the same bound the seam gate uses and for the same reason: below it
+ * a gap is word-boundary noise or a breath, above it the speaker really has
+ * stopped — and 78% of those measured gaps fall under it, while the ones that
+ * do not are the multi-second silences the other speaker talks into, which is
+ * precisely where the ring must go out. It is also bounded damage: a bridged
+ * gap can add at most 400 ms of highlight, the same order as
+ * MIN_CREDIBLE_OVERLAP_MS, the smallest simultaneity this module is willing to
+ * report at all.
+ */
+export const HIGHLIGHT_BRIDGE_MS = 400;
 
 /**
  * The punctuation Parakeet emits as its own token and the producer glues onto
@@ -296,6 +342,16 @@ export function sortBlocksInReadingOrder<B extends { readonly startMs: number }>
  * landing inside another turn does not stop being an overlap because it happens
  * to end in a full stop.
  *
+ * WHEN IT MUST NOT RUN. The repair exists because the PRODUCER used to let a
+ * word's end run past its own audio. Now that the producer bounds word ends by
+ * the measured signal, an artifact built by it carries
+ * `provenance.wordTimings.endsBoundedByAudio: true`, and its long words are
+ * MEASURED rather than fabricated — one such word runs 1.44 s against a 240 ms
+ * median because the speaker really held it. Clipping that back to 1 s would
+ * undo the production fix in the viewer, so `endsBoundedByAudio` skips the
+ * repair entirely. Every one of the 197 already-published meetings lacks the
+ * marker and keeps the repair, which is exactly what it was written for.
+ *
  * WHY NOT ONLY THE LAST WORD OF EACH BLOCK. The artifact is created at the end
  * of an ASR TURN, and the readable writer glues many ASR turns into one display
  * paragraph, so most inflated words sit in the MIDDLE of a block. Measured over
@@ -308,9 +364,15 @@ export function sortBlocksInReadingOrder<B extends { readonly startMs: number }>
  * only reaches 4× its speaker's median when the decoder stretched it across a
  * silence.
  */
-export function repairTurnFinalWordInflation<B extends OverlapBlock>(blocks: readonly B[]): B[] {
+export function repairTurnFinalWordInflation<B extends OverlapBlock>(
+  blocks: readonly B[],
+  options: { readonly endsBoundedByAudio?: boolean } = {},
+): B[] {
   if (blocks.length === 0) {
     return [];
+  }
+  if (options.endsBoundedByAudio) {
+    return [...blocks];
   }
   const tokenBudgets = budgetsBySpeaker(blocks, (block) => block.tokens);
   const wordBudgets = budgetsBySpeaker(blocks, (block) => block.words);
@@ -349,7 +411,7 @@ function latestTimedEnd(
   words: readonly OverlapTimedSpan[] | undefined,
   fallbackMs: number,
 ): number {
-  const pool = tokens && tokens.length > 0 ? tokens : words;
+  const pool = firstPoolWith(tokens, words, hasTiming);
   let latest = Number.NEGATIVE_INFINITY;
   for (const span of pool ?? []) {
     if (hasTiming(span)) {
@@ -357,6 +419,33 @@ function latestTimedEnd(
     }
   }
   return Number.isFinite(latest) ? latest : fallbackMs;
+}
+
+/**
+ * The first of the two pools that actually carries a usable span.
+ *
+ * Display tokens come first because they are what the reader sees highlighted
+ * and what the timing repair adjusted — but PRESENCE of a tokens array proves
+ * nothing about timing. When cleanup rewrites a passage outright the display
+ * builder emits a full set of word tokens with `alignment: "none"` and no
+ * start or end at all (see "leaves fully rewritten cleaned blocks untimed at
+ * the word level"), and that shape is common in published meetings. Picking
+ * the pool by length instead of by content threw those blocks onto the
+ * paragraph envelope and ignored the canonical words, which are timed — the
+ * envelope being the very thing this module exists to stop trusting.
+ */
+function firstPoolWith(
+  tokens: readonly OverlapTimedSpan[] | undefined,
+  words: readonly OverlapTimedSpan[] | undefined,
+  isUsable: (span: OverlapTimedSpan) => boolean,
+): readonly OverlapTimedSpan[] | undefined {
+  if (tokens?.some(isUsable)) {
+    return tokens;
+  }
+  if (words?.some(isUsable)) {
+    return words;
+  }
+  return undefined;
 }
 
 /**
@@ -522,7 +611,8 @@ function median(values: readonly number[]): number {
 // Overlap detection
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface Interval {
+/** A stretch of tape one block was audible for. */
+export interface Interval {
   startMs: number;
   endMs: number;
 }
@@ -586,7 +676,7 @@ export function analyzeOverlap(
   const spansOf = (block: OverlapBlock): Interval[] => {
     let spans = spansCache.get(block.id);
     if (!spans) {
-      spans = audibleSpansOf(block);
+      spans = audibleIntervalsOf(block);
       spansCache.set(block.id, spans);
     }
     return spans;
@@ -619,15 +709,13 @@ export function analyzeOverlap(
       currentAccumulator.before.push(...intersections);
       earlierAccumulator.after.push(...intersections);
 
-      if (earlier.startMs <= current.startMs && earlier.endMs >= current.endMs) {
-        const peerDurationMs = earlier.endMs - earlier.startMs;
-        if (
-          !currentAccumulator.containedIn ||
-          peerDurationMs > currentAccumulator.containedIn.peerDurationMs
-        ) {
-          currentAccumulator.containedIn = { id: earlier.id, peerDurationMs };
-        }
-      }
+      // Containment is a claim about AUDIBLE time, not about extents. A block
+      // can sit wholly inside another block's extent while only 200 ms of its
+      // words overlap, and the badge for that says the whole turn happened
+      // during the other speaker's — so it is decided from how much of each
+      // turn's own audible time the intersection covers.
+      noteContainment(currentAccumulator, earlier, overlapMs, totalMs(spansOf(current)));
+      noteContainment(earlierAccumulator, current, overlapMs, totalMs(spansOf(earlier)));
     }
 
     active.push(current);
@@ -665,12 +753,17 @@ export function analyzeOverlap(
  * timing repair adjusted), canonical words as the fallback, and the block span
  * itself as the last resort — a wordless segment still occupies its stretch of
  * tape and can still be genuinely simultaneous with someone.
+ *
+ * "First" means the first pool carrying a real span, not the first non-empty
+ * array: a fully rewritten cleaned block has a complete set of UNTIMED word
+ * tokens over canonical words that are timed, and preferring those tokens
+ * dropped it onto its paragraph envelope (see firstPoolWith).
  */
-function audibleSpansOf(block: OverlapBlock): Interval[] {
-  const pool = block.tokens && block.tokens.length > 0 ? block.tokens : block.words;
+export function audibleIntervalsOf(block: OverlapBlock): Interval[] {
+  const pool = firstPoolWith(block.tokens, block.words, isAudibleSpan);
   const spans: Interval[] = [];
   for (const span of pool ?? []) {
-    if (hasTiming(span) && (span.endMs as number) > (span.startMs as number)) {
+    if (isAudibleSpan(span)) {
       spans.push({ startMs: span.startMs as number, endMs: span.endMs as number });
     }
   }
@@ -678,6 +771,54 @@ function audibleSpansOf(block: OverlapBlock): Interval[] {
     return [{ startMs: block.startMs, endMs: block.endMs }];
   }
   return mergeIntervals(spans);
+}
+
+function isAudibleSpan(span: OverlapTimedSpan): boolean {
+  return hasTiming(span) && (span.endMs as number) > (span.startMs as number);
+}
+
+/**
+ * Every block that is SOUNDING at `timeMs`, earliest start first.
+ *
+ * This is what the playback highlight and the follow-scroll anchor run on, and
+ * it has to answer the same question the overlap analysis answers or the page
+ * contradicts itself. Judged on paragraph extents it did not: the readable
+ * writer glues a speaker's turns into paragraphs that reach across other
+ * speakers, so across nine archived meetings extents intersect for 94.2 s
+ * against 15.7 s of word intersection — the viewer ringed both speakers, and
+ * follow-scroll anchored on the earlier paragraph, through stretches where
+ * their words strictly alternate and only one of them was talking.
+ *
+ * A block with no timed spans at all still has its extent to be highlighted on
+ * (audibleIntervalsOf falls back to it), so a wordless aside is not silently
+ * unhighlightable. Gaps shorter than HIGHLIGHT_BRIDGE_MS are bridged so the
+ * ring does not blink between a paragraph's words.
+ */
+export function getSoundingBlocks<B extends OverlapBlock>(
+  blocks: readonly B[],
+  timeMs: number,
+): B[] {
+  return blocks
+    .filter((block) =>
+      bridgeGaps(audibleIntervalsOf(block), HIGHLIGHT_BRIDGE_MS).some((interval) =>
+        containsPlaybackTime(interval, timeMs),
+      ),
+    )
+    .sort((left, right) => left.startMs - right.startMs);
+}
+
+/** Ascending disjoint intervals with sub-`toleranceMs` silence closed up. */
+function bridgeGaps(intervals: readonly Interval[], toleranceMs: number): Interval[] {
+  const bridged: Interval[] = [];
+  for (const interval of intervals) {
+    const previous = bridged.at(-1);
+    if (previous && interval.startMs - previous.endMs <= toleranceMs) {
+      previous.endMs = Math.max(previous.endMs, interval.endMs);
+      continue;
+    }
+    bridged.push({ ...interval });
+  }
+  return bridged;
 }
 
 function mergeIntervals(intervals: readonly Interval[]): Interval[] {
@@ -758,7 +899,14 @@ function markSplitTurnInterjections(
     // Adjacency alone proves nothing: ordinary dialogue produces A/B/A all the
     // time and must keep rendering as three separate turns. All four tests have
     // to pass before we claim A never stopped talking.
-    if (after.startMs - before.endMs > INTERJECTION_MAX_SEAM_GAP_MS) {
+    // The seam is bounded on BOTH sides. An upper bound alone let an
+    // arbitrarily NEGATIVE seam through, which is not a narrow seam at all but
+    // a massive self-overlap: A [0, 10000] / B [2000, 2500] / A [3000, 4000]
+    // has A's second half starting 7 s before its first half ends, and calling
+    // that one continuous turn interrupted by B is simply false. A genuinely
+    // uninterrupted A measures 0 ms to the millisecond, so the tolerance is
+    // symmetric around it.
+    if (Math.abs(after.startMs - before.endMs) > INTERJECTION_MAX_SEAM_GAP_MS) {
       continue;
     }
     if (middle.endMs - middle.startMs > INTERJECTION_MAX_MIDDLE_MS) {
@@ -780,6 +928,29 @@ function markSplitTurnInterjections(
       speakerLabel: middle.speakerLabel?.trim() || "Unknown speaker",
       blockId: middle.id,
     };
+  }
+}
+
+/**
+ * Record `peer` as the turn this block happened during, when the intersection
+ * covers essentially all of this block's audible time.
+ *
+ * Ties are broken towards the peer that was audible longest, so a backchannel
+ * that lands inside two stacked turns names the one a reader would recognise as
+ * "the turn" rather than whichever the sweep reached first.
+ */
+function noteContainment(
+  accumulator: OverlapAccumulator,
+  peer: OverlapBlock,
+  overlapMs: number,
+  ownAudibleMs: number,
+): void {
+  if (ownAudibleMs <= 0 || overlapMs < ownAudibleMs * CONTAINED_TURN_MIN_COVERAGE) {
+    return;
+  }
+  const peerDurationMs = peer.endMs - peer.startMs;
+  if (!accumulator.containedIn || peerDurationMs > accumulator.containedIn.peerDurationMs) {
+    accumulator.containedIn = { id: peer.id, peerDurationMs };
   }
 }
 

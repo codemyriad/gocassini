@@ -2,14 +2,28 @@ import { describe, expect, it } from "vitest";
 
 import {
   analyzeOverlap,
+  audibleIntervalsOf,
   describeOverlap,
   describeResumption,
   formatOverlapDuration,
+  getSoundingBlocks,
   groupInterruptedTurns,
   repairTurnFinalWordInflation,
   sortBlocksInReadingOrder,
   type OverlapBlock,
 } from "./overlap";
+
+/**
+ * The shape a fully rewritten cleaned block really has: a complete set of word
+ * TOKENS carrying no timing at all (alignment "none" — see portable.test.ts,
+ * "leaves fully rewritten cleaned blocks untimed at the word level") over
+ * canonical words that are timed. Both fields are populated, so choosing the
+ * pool by array length picks the untimed one and falls through to the
+ * paragraph envelope.
+ */
+function untimedTokensFor(text: string) {
+  return text.split(" ").map((word) => ({ text: word }));
+}
 
 /**
  * Fixtures are the shapes the producer really emits, not tidy idealisations.
@@ -161,6 +175,23 @@ describe("split-turn interjections (the A/B/A shape)", () => {
     ];
 
     expect(analyzeOverlap(beat).get("b1")?.interrupts).toBeUndefined();
+  });
+
+  it("does not group when the speaker's two halves overlap each other massively", () => {
+    // An upper-bound-only seam test passes any NEGATIVE seam, so this grouped:
+    // A's second half starts 7 s before its first half ends, and A's halves
+    // overlap B for its entire duration. Whatever this is, it is not one
+    // continuous turn with a backchannel dropped into a narrow seam.
+    const blocks: OverlapBlock[] = [
+      { id: "a1", speaker: "ana", speakerLabel: "Ana", startMs: 0, endMs: 10_000 },
+      { id: "b", speaker: "ben", speakerLabel: "Ben", startMs: 2000, endMs: 2500 },
+      { id: "a2", speaker: "ana", speakerLabel: "Ana", startMs: 3000, endMs: 4000 },
+    ];
+    const analysis = analyzeOverlap(blocks);
+
+    expect(analysis.get("b")?.interrupts).toBeUndefined();
+    expect(analysis.get("a2")?.resumes).toBeUndefined();
+    expect(groupInterruptedTurns(blocks, analysis)).toHaveLength(3);
   });
 
   it("does not group when the middle block is a full contribution rather than a backchannel", () => {
@@ -587,5 +618,308 @@ describe("copy", () => {
   it("says nothing when there is nothing to say", () => {
     expect(describeOverlap(null)).toBeNull();
     expect(describeOverlap(undefined)).toBeNull();
+  });
+});
+
+describe("provenance: artifacts the producer already bounded", () => {
+  /**
+   * The fp32 evidence that put the marker in the manifest. "held." runs 1.44 s
+   * against Ana's 240 ms median, so the legacy budget — max(1000, 4 × 240) =
+   * 1000 ms — would clip it to 1 s. On a modern artifact that end was MEASURED
+   * against Ana's own track, and clipping it undoes the producer-side fix.
+   */
+  const measured: OverlapBlock[] = [
+    {
+      id: "ana-turn",
+      speaker: "ana",
+      speakerLabel: "Ana Duarte",
+      startMs: 2000,
+      endMs: 13_280,
+      words: [...ordinaryWords(2000, 41), { text: "held.", startMs: 11_840, endMs: 13_280 }],
+    },
+  ];
+
+  it("clips the 1.44 s word when nothing vouches for the artifact's word ends", () => {
+    const repaired = repairTurnFinalWordInflation(measured);
+
+    expect(repaired[0]?.words?.at(-1)).toMatchObject({ endMs: 12_840 });
+    expect(repaired[0]?.endMs).toBe(12_840);
+  });
+
+  it("leaves the 1.44 s word alone when the producer bounded ends by audio", () => {
+    const repaired = repairTurnFinalWordInflation(measured, { endsBoundedByAudio: true });
+
+    expect(repaired[0]?.words?.at(-1)).toMatchObject({ text: "held.", startMs: 11_840, endMs: 13_280 });
+    expect(repaired[0]?.endMs).toBe(13_280);
+  });
+
+  it("still returns a fresh array so callers cannot be handed their own input", () => {
+    const repaired = repairTurnFinalWordInflation(measured, { endsBoundedByAudio: true });
+
+    expect(repaired).not.toBe(measured);
+    expect(repaired).toEqual(measured);
+  });
+
+  it("keeps the repair when the marker says the ends were NOT bounded", () => {
+    const repaired = repairTurnFinalWordInflation(measured, { endsBoundedByAudio: false });
+
+    expect(repaired[0]?.words?.at(-1)?.endMs).toBe(12_840);
+  });
+});
+
+describe("untimed display tokens over timed canonical words", () => {
+  /**
+   * The Ivan/Chris archive shape again, but carrying the tokens a fully
+   * rewritten cleanup emits. The paragraphs intersect for 14.08 s of extent
+   * while their words strictly alternate; the only timing in the blocks lives
+   * on the canonical words.
+   */
+  const rewritten: OverlapBlock[] = [
+    {
+      id: "ivan",
+      speaker: "ivan",
+      speakerLabel: "Ivan",
+      startMs: 965_000,
+      endMs: 983_320,
+      tokens: untimedTokensFor("So the installer finished and the docs went out"),
+      words: [...ordinaryWords(965_000, 12), ...ordinaryWords(972_920, 43)],
+    },
+    {
+      id: "chris",
+      speaker: "chris",
+      speakerLabel: "Chris",
+      startMs: 969_240,
+      endMs: 1_004_600,
+      tokens: untimedTokensFor("Right and then we shipped it"),
+      words: [...ordinaryWords(969_240, 5), ...ordinaryWords(988_280, 68)],
+    },
+  ];
+
+  it("judges audible time on the timed canonical words, not the untimed tokens", () => {
+    expect(audibleIntervalsOf(rewritten[0]!)).toEqual([
+      { startMs: 965_000, endMs: 967_880 },
+      { startMs: 972_920, endMs: 983_240 },
+    ]);
+    expect(analyzeOverlap(rewritten).size).toBe(0);
+  });
+
+  it("lets a repaired canonical word shrink a block whose tokens are untimed", () => {
+    const blocks: OverlapBlock[] = [
+      {
+        id: "ana-turn",
+        speaker: "ana",
+        speakerLabel: "Ana Duarte",
+        startMs: 2000,
+        endMs: 20_500,
+        tokens: untimedTokensFor("It fixes everything."),
+        words: [...ordinaryWords(2000, 41), { text: "everything.", startMs: 12_000, endMs: 20_500 }],
+      },
+    ];
+
+    expect(repairTurnFinalWordInflation(blocks)[0]?.endMs).toBe(13_000);
+  });
+
+  it("still prefers display tokens when they are the pool that carries timing", () => {
+    const block: OverlapBlock = {
+      id: "cleaned",
+      speaker: "ana",
+      speakerLabel: "Ana",
+      startMs: 1000,
+      endMs: 2000,
+      tokens: [{ text: "Hello", startMs: 1000, endMs: 1400 }],
+      words: [{ text: "hello", startMs: 1000, endMs: 1900 }],
+    };
+
+    expect(audibleIntervalsOf(block)).toEqual([{ startMs: 1000, endMs: 1400 }]);
+  });
+});
+
+describe("containment", () => {
+  it("does not claim a whole turn happened during a peer it merely sits inside", () => {
+    // Ben's paragraph is bracketed by Ana's, but only 0.2 s of their words
+    // sound together — the rest of Ben's turn lands in Ana's silences.
+    const blocks: OverlapBlock[] = [
+      {
+        id: "ana",
+        speaker: "ana",
+        speakerLabel: "Ana Duarte",
+        startMs: 1000,
+        endMs: 30_000,
+        words: [...ordinaryWords(1000, 20), ...ordinaryWords(14_800, 64)],
+      },
+      {
+        id: "ben",
+        speaker: "ben",
+        speakerLabel: "Ben Okafor",
+        startMs: 5600,
+        endMs: 14_720,
+        words: ordinaryWords(5600, 38),
+      },
+    ];
+    const analysis = analyzeOverlap(blocks);
+
+    // Ben's extent sits wholly inside Ana's, but 0.2 s of his 9.1 s of speech
+    // sounds at the same time as hers — the rest lands in her silences.
+    expect(analysis.get("ben")?.overlapMs).toBe(200);
+    expect(analysis.get("ben")?.containedIn).toBeUndefined();
+    expect(describeOverlap(analysis.get("ben"))?.badge).toBe("0.2 s with Ana Duarte");
+  });
+
+  it("still names the turn a genuine backchannel happened during", () => {
+    const blocks: OverlapBlock[] = [
+      {
+        id: "long",
+        speaker: "ana",
+        speakerLabel: "Ana Duarte",
+        startMs: 1000,
+        endMs: 21_000,
+        words: ordinaryWords(1000, 80),
+      },
+      {
+        id: "backchannel",
+        speaker: "ben",
+        speakerLabel: "Ben Okafor",
+        startMs: 8000,
+        endMs: 8600,
+        words: [{ text: "Right.", startMs: 8000, endMs: 8600 }],
+      },
+    ];
+
+    expect(analyzeOverlap(blocks).get("backchannel")?.containedIn).toBe("long");
+  });
+
+  it("names the containing turn even when both blocks start on the same millisecond", () => {
+    // Sorting puts the SHORTER block first, so extent containment never fired
+    // in this direction at all.
+    const blocks: OverlapBlock[] = [
+      {
+        id: "long",
+        speaker: "ana",
+        speakerLabel: "Ana Duarte",
+        startMs: 1000,
+        endMs: 21_000,
+        words: ordinaryWords(1000, 80),
+      },
+      {
+        id: "backchannel",
+        speaker: "ben",
+        speakerLabel: "Ben Okafor",
+        startMs: 1000,
+        endMs: 1600,
+        words: [{ text: "Right.", startMs: 1000, endMs: 1600 }],
+      },
+    ];
+
+    expect(analyzeOverlap(blocks).get("backchannel")?.containedIn).toBe("long");
+  });
+});
+
+describe("playback highlighting", () => {
+  const paragraphs: OverlapBlock[] = [
+    {
+      id: "ivan",
+      speaker: "ivan",
+      speakerLabel: "Ivan",
+      startMs: 965_000,
+      endMs: 983_320,
+      words: [...ordinaryWords(965_000, 12), ...ordinaryWords(972_920, 43)],
+    },
+    {
+      id: "chris",
+      speaker: "chris",
+      speakerLabel: "Chris",
+      startMs: 969_240,
+      endMs: 1_004_600,
+      words: [...ordinaryWords(969_240, 5), ...ordinaryWords(988_280, 68)],
+    },
+  ];
+
+  it("highlights only the speaker who is really sounding inside two overlapping extents", () => {
+    // 975 s falls inside both paragraph extents. Only Ivan's words are there.
+    expect(getSoundingBlocks(paragraphs, 975_000).map((block) => block.id)).toEqual(["ivan"]);
+    // 990 s is inside Ivan's extent too, but Ivan stopped at 983.24 s.
+    expect(getSoundingBlocks(paragraphs, 990_000).map((block) => block.id)).toEqual(["chris"]);
+  });
+
+  it("highlights both speakers while both are genuinely audible", () => {
+    const together: OverlapBlock[] = [
+      {
+        id: "ana",
+        speaker: "ana",
+        speakerLabel: "Ana",
+        startMs: 1000,
+        endMs: 10_000,
+        words: ordinaryWords(1000, 37),
+      },
+      {
+        id: "ben",
+        speaker: "ben",
+        speakerLabel: "Ben",
+        startMs: 3000,
+        endMs: 3500,
+        words: [{ text: "Right.", startMs: 3000, endMs: 3500 }],
+      },
+    ];
+
+    expect(getSoundingBlocks(together, 2999).map((block) => block.id)).toEqual(["ana"]);
+    expect(getSoundingBlocks(together, 3200).map((block) => block.id)).toEqual(["ana", "ben"]);
+    expect(getSoundingBlocks(together, 3500).map((block) => block.id)).toEqual(["ana"]);
+  });
+
+  it("orders the sounding blocks by start time rather than input order", () => {
+    const shuffled: OverlapBlock[] = [
+      {
+        id: "ben",
+        speaker: "ben",
+        speakerLabel: "Ben",
+        startMs: 3000,
+        endMs: 3500,
+        words: [{ text: "Right.", startMs: 3000, endMs: 3500 }],
+      },
+      {
+        id: "ana",
+        speaker: "ana",
+        speakerLabel: "Ana",
+        startMs: 1000,
+        endMs: 10_000,
+        words: ordinaryWords(1000, 37),
+      },
+    ];
+
+    expect(getSoundingBlocks(shuffled, 3200).map((block) => block.id)).toEqual(["ana", "ben"]);
+  });
+
+  it("returns nothing when nobody is sounding", () => {
+    expect(getSoundingBlocks(paragraphs, 985_000)).toEqual([]);
+  });
+
+  it("keeps a wordless block highlightable across its whole extent", () => {
+    const wordless: OverlapBlock[] = [
+      { id: "aside", speaker: "ana", speakerLabel: "Ana", startMs: 1000, endMs: 6000, words: [] },
+    ];
+
+    expect(getSoundingBlocks(wordless, 4000).map((block) => block.id)).toEqual(["aside"]);
+  });
+
+  it("holds the highlight across the gaps between a paragraph's own words", () => {
+    const gappy: OverlapBlock[] = [
+      {
+        id: "ana",
+        speaker: "ana",
+        speakerLabel: "Ana",
+        startMs: 1000,
+        endMs: 9000,
+        words: [
+          { text: "So", startMs: 1000, endMs: 1240 },
+          // A 300 ms breath, then the paragraph continues.
+          { text: "anyway", startMs: 1540, endMs: 1900 },
+          // Three seconds of real silence: the speaker has stopped.
+          { text: "right.", startMs: 4900, endMs: 5300 },
+        ],
+      },
+    ];
+
+    expect(getSoundingBlocks(gappy, 1400).map((block) => block.id)).toEqual(["ana"]);
+    expect(getSoundingBlocks(gappy, 3000)).toEqual([]);
   });
 });
