@@ -2,8 +2,12 @@
 
 Date: 2026-08-31
 
-Status: stage 1 (capture + intake) implemented; placement and rebuild not yet
-implemented.
+Status: **administrator-enabled prototype.** Capture, intake and ingestion are
+implemented and tested. The delivery mechanism (a service worker rewriting
+Talk's bundle) is explicitly not a shipping foundation — see "How the code
+reaches Talk's page" — and the offset half of the timing model still needs the
+correlation refinement described below before it can be trusted on clients
+whose clocks are not known to be synchronised.
 
 ## The problem
 
@@ -214,6 +218,9 @@ Uploads land under the operator's `--capture-root`
 - **Verification of an upload against the recorder's own audio** (see above).
 - **Retention.** Uploads accumulate under the capture root; nothing sweeps
   uploads whose meeting never materialised.
+- **OPFS recovery.** A page that disappears mid-upload keeps its buffer, but
+  nothing scans for one on a later load, so that recording is stranded until
+  the browser's storage is cleared.
 - **Firefox raw-audio path.** `MediaStreamTrackProcessor` is Chrome/Safari only.
   The timing path (`RTCRtpScriptTransform`) works in all three engines; the
   current capture path uses `MediaRecorder`, which is universal.
