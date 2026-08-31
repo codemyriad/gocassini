@@ -473,19 +473,48 @@ function lookupsFor(index: TranscriptIndex): IndexLookups {
 }
 
 /**
- * The canonical timed words a display block should be judged on (the crosstalk
- * badge and per-word attribution styling).
+ * Every canonical timed word a display block should be judged on — the crosstalk
+ * badge, per-word attribution styling, and (through MeetingView) the audible
+ * spans src/core/overlap.ts measures simultaneity and playback highlighting on.
  *
- * Display tokens name the exact canonical words they were aligned to via
- * `sourceWordIds`, and those ids are minted by the same code that builds the
- * canonical index — so they resolve on both the JSON-directory path and the
- * portable (.opus) path. The block-level `sourceSegmentIds`, by contrast, carry
- * producer segment ids that do NOT match the per-item segment ids a portable
- * manifest is re-projected into (`seg_000000` per word item), which is why
- * judging via sourceSegmentIds silently found no words for portable meetings.
- * When no token resolves to a canonical word (a block with no word alignment at
- * all), fall back to gathering every canonical word of the block's source
- * segments — the mapping the JSON-directory path has always used.
+ * The two mappings are UNIONED, not tried in turn, because neither reaches all
+ * of a cleaned block's words on its own:
+ *
+ *   - Display tokens name the exact canonical words they were aligned to via
+ *     `sourceWordIds`, and those ids are minted by the same code that builds the
+ *     canonical index — so they resolve on both the JSON-directory path and the
+ *     portable (.opus) path. But they only name the words that SURVIVED cleanup:
+ *     a token the cleanup rewrote carries `sourceWordIds: []`, and a canonical
+ *     word cleanup deleted outright is named by no token at all.
+ *   - The block-level `sourceSegmentIds` gather every canonical word of the
+ *     segments the block was built from — the mapping the JSON-directory path
+ *     has always used, and the only one that sees the words no token kept. The
+ *     producer emits one readable block per canonical segment and names it
+ *     (`seg_%06d`, format.go), so on that path the ids resolve and no two blocks
+ *     share one. They reach nothing on the portable path: 662 of the 692 display
+ *     blocks in the nine portable meetings in this repo's export tree leave the
+ *     field empty, and the 30 that do not are legacy split halves whose only id
+ *     is the literal string "undefined". That is why judging via
+ *     sourceSegmentIds alone silently found no words for portable meetings.
+ *
+ * Returning whichever came back non-empty first meant a partially rewritten
+ * block — one token still aligned, the rest of the passage rewritten — was
+ * judged on that one token's word and nothing else, and every canonical word
+ * covering the remainder was discarded. That is a claim about which stretches of
+ * tape the block was sounding on, so dropping them put the playback ring out and
+ * hid real simultaneity across the rest of the passage.
+ *
+ * Returned in canonical order (segment, then word), so a caller reading them as
+ * a sequence gets the order they were spoken in rather than the order cleanup
+ * happened to reference them in.
+ *
+ * The two mappings can only disagree about MEMBERSHIP, never about timing: both
+ * hand back the same IndexedWord objects out of the same index. A word could be
+ * claimed by two blocks only if those blocks shared a source segment id, which
+ * the current producer never emits — and the only artifacts in the export tree
+ * that do share one share the unresolvable "undefined" above, between two halves
+ * of the SAME speaker's split turn, so even then the cost would be a wider
+ * highlight rather than invented cross-speaker overlap.
  */
 export function canonicalWordsForBlock(
   index: TranscriptIndex,
@@ -497,27 +526,30 @@ export function canonicalWordsForBlock(
   const { wordsById, segmentsById } = lookupsFor(index);
 
   const seen = new Set<string>();
-  const fromTokens: IndexedWord[] = [];
+  const words: IndexedWord[] = [];
+  const take = (word: IndexedWord | undefined): void => {
+    if (!word || seen.has(word.id)) {
+      return;
+    }
+    seen.add(word.id);
+    words.push(word);
+  };
+
   for (const token of block.tokens) {
     for (const wordId of token.sourceWordIds) {
-      if (seen.has(wordId)) {
-        continue;
-      }
-      seen.add(wordId);
-      const word = wordsById.get(wordId);
-      if (word) {
-        fromTokens.push(word);
-      }
+      take(wordsById.get(wordId));
     }
   }
-  if (fromTokens.length > 0) {
-    return fromTokens;
+  for (const segmentId of block.sourceSegmentIds) {
+    for (const word of segmentsById.get(segmentId)?.words ?? []) {
+      take(word);
+    }
   }
 
-  return block.sourceSegmentIds
-    .map((segmentId) => segmentsById.get(segmentId))
-    .filter((segment): segment is IndexedSegment => Boolean(segment))
-    .flatMap((segment) => segment.words);
+  return words.sort(
+    (left, right) =>
+      left.segmentIndex - right.segmentIndex || left.wordIndex - right.wordIndex,
+  );
 }
 
 function upperBound(values: number[], target: number): number {

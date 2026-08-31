@@ -335,11 +335,14 @@ describe("buildReadableTranscriptFromPortable", () => {
     const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
     const chimaBlocks = display.blocks.filter((block) => block.speaker === "spk_chima");
 
-    // The readable splitter was deleted in D-690: it never fired on real
-    // producer artifacts (which carry no per-segment readable words), it
-    // rewrote LLM-cleaned prose by word count, and when it did fire it emitted
-    // blocks out of time order. Interruptions are now surfaced by
-    // src/core/overlap.ts, which annotates the turn rather than cutting it up.
+    // The readable splitter was deleted in D-690: it rewrote LLM-cleaned prose
+    // by word count, and when it did fire it emitted blocks out of time order.
+    // It also never fired on a real producer artifact — not for want of readable
+    // words, which every packed meeting carries per readable segment, but
+    // because every packed meeting ALSO carries a baked display transcript, and
+    // the viewer only rebuilds one (and so only reaches the splitter) when that
+    // is missing. Interruptions are now surfaced by src/core/overlap.ts, which
+    // annotates the turn rather than cutting it up.
     expect(chimaBlocks).toHaveLength(1);
     expect(chimaBlocks[0]?.text).toContain("Actually, I was wondering");
     expect(chimaBlocks[0]?.text).toContain("It's a pity, Chris, you're ruining everything.");

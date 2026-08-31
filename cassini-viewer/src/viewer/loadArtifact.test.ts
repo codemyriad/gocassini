@@ -1503,8 +1503,11 @@ describe("the display pipeline MeetingView runs, end to end", () => {
         { id: "spk_1", label: "Alice" },
         { id: "spk_2", label: "Bob" },
       ],
-      // The archive's canonical items carry no per-word timings at all, which
-      // is why the readable words are the only timing in the file.
+      // Segment-level canonical items, so the readable words are the only
+      // per-word timing in this fixture — the shape the splitter needed. The
+      // packed meetings in this repo's export tree are not like this: their
+      // items are word-level AND their readable segments carry words, so both
+      // pools are timed there.
       transcript: {
         items: [
           { id: "seg_1", speaker: "spk_1", startMs: 1000, endMs: 4500, text: "So the installer is finished" },

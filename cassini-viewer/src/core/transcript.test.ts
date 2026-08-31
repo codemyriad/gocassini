@@ -280,7 +280,9 @@ describe("canonicalWordsForBlock", () => {
     expect(isLikelyCrosstalkTurn(words)).toBe(true);
   });
 
-  it("counts a word once when several tokens reference it", () => {
+  it("counts a word once when several tokens reference it, in canonical order", () => {
+    // Cleanup may reference the words in any order it likes; the block is
+    // judged on when they were SPOKEN, so they come back in canonical order.
     const words = canonicalWordsForBlock(index, {
       sourceSegmentIds: [],
       tokens: [
@@ -288,7 +290,31 @@ describe("canonicalWordsForBlock", () => {
         { sourceWordIds: ["seg_000001:w_0", "seg_000000:w_0"] },
       ],
     });
-    expect(words.map((word) => word.id)).toEqual(["seg_000001:w_0", "seg_000000:w_0"]);
+    expect(words.map((word) => word.id)).toEqual(["seg_000000:w_0", "seg_000001:w_0"]);
+  });
+
+  it("keeps the canonical words the rewritten half of a block aligned to nothing", () => {
+    // The mixed shape: cleanup kept "sure" word for word and rewrote the rest,
+    // so only one token names a canonical word. Returning that one word alone
+    // discarded "okay" — half a second of speech the block really covers, and
+    // half a second the overlap analysis and the playback ring are judged on.
+    const words = canonicalWordsForBlock(index, {
+      sourceSegmentIds: ["seg_000000", "seg_000001"],
+      tokens: [{ sourceWordIds: [] }, { sourceWordIds: ["seg_000001:w_0"] }],
+    });
+    expect(words.map((word) => word.id)).toEqual(["seg_000000:w_0", "seg_000001:w_0"]);
+  });
+
+  it("keeps a token-mapped word its block's segment ids can never reach", () => {
+    // The portable shape: baked display blocks carry `sourceSegmentIds: []`, so
+    // the token mapping is the only route to the canonical words. Unioning the
+    // two mappings must not cost anything when one of them is empty.
+    const words = canonicalWordsForBlock(index, {
+      sourceSegmentIds: [],
+      tokens: [{ sourceWordIds: ["seg_000000:w_0"] }],
+    });
+    expect(words.map((word) => word.id)).toEqual(["seg_000000:w_0"]);
+    expect(words[0]?.attributionGapDb).toBe(31.7);
   });
 
   it("falls back to the source segments when tokens carry no word alignment", () => {

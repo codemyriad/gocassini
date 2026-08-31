@@ -719,7 +719,7 @@ describe("untimed display tokens over timed canonical words", () => {
     expect(repairTurnFinalWordInflation(blocks)[0]?.endMs).toBe(13_000);
   });
 
-  it("still prefers display tokens when they are the pool that carries timing", () => {
+  it("keeps display-token timing when it is the only timing there is", () => {
     const block: OverlapBlock = {
       id: "cleaned",
       speaker: "ana",
@@ -727,10 +727,147 @@ describe("untimed display tokens over timed canonical words", () => {
       startMs: 1000,
       endMs: 2000,
       tokens: [{ text: "Hello", startMs: 1000, endMs: 1400 }],
-      words: [{ text: "hello", startMs: 1000, endMs: 1900 }],
+      words: [{ text: "hello" }],
     };
 
     expect(audibleIntervalsOf(block)).toEqual([{ startMs: 1000, endMs: 1400 }]);
+  });
+});
+
+describe("mixed timing: some display tokens timed, some not", () => {
+  /**
+   * The reviewer's reproducer, reduced to the two spans that make the point:
+   * ONE display token covers the first half-second of a block whose canonical
+   * words run for two and a half seconds. Choosing a pool — either pool — is
+   * wrong here. Reading the tokens claims the speaker fell silent at 500 ms;
+   * reading only the words would throw away timing the reader's highlight hangs
+   * off. The block sounded across the whole 0–2500 ms and both pools are
+   * evidence for parts of it.
+   */
+  it("covers the whole passage when one timed token sits over longer canonical words", () => {
+    const block: OverlapBlock = {
+      id: "one-token",
+      speaker: "ana",
+      speakerLabel: "Ana Duarte",
+      startMs: 0,
+      endMs: 2500,
+      tokens: [
+        { text: "So", startMs: 0, endMs: 500 },
+        ...untimedTokensFor("we agreed to ship it on Friday"),
+      ],
+      words: ordinaryWords(0, 10, 250),
+    };
+
+    expect(audibleIntervalsOf(block)).toEqual([{ startMs: 0, endMs: 2500 }]);
+  });
+
+  /**
+   * A realistic partially rewritten passage, the shape 30 of the 421 display
+   * blocks in the nine portable meetings in this repo's export tree really have.
+   * Cleanup rewrote the opening of Ana's paragraph, so those tokens carry
+   * `alignment: "none"` and no times; the rest aligned word for word and is
+   * timed. The canonical words cover the WHOLE paragraph, opening included —
+   * they are the ASR's own record of when Ana made a noise.
+   *
+   * Ben's aside lands at 10.4–11.4 s, inside the opening that only the canonical
+   * words account for. Judged on the timed tokens alone, Ana is not speaking
+   * there at all: no overlap is reported, and the ring is off her paragraph
+   * while she is audibly mid-sentence.
+   */
+  const partiallyRewritten: OverlapBlock[] = [
+    {
+      id: "ana-mixed",
+      speaker: "ana",
+      speakerLabel: "Ana Duarte",
+      startMs: 10_000,
+      endMs: 18_000,
+      tokens: [
+        ...untimedTokensFor("Can you all hear me"),
+        { text: "let's", startMs: 12_000, endMs: 12_800 },
+        { text: "start", startMs: 12_800, endMs: 13_600 },
+        { text: "with", startMs: 13_600, endMs: 14_400 },
+        { text: "the", startMs: 14_400, endMs: 15_200 },
+        { text: "release", startMs: 15_200, endMs: 16_000 },
+        { text: "notes", startMs: 16_000, endMs: 18_000 },
+      ],
+      words: [
+        { text: "can", startMs: 10_000, endMs: 10_600 },
+        { text: "you", startMs: 10_600, endMs: 11_200 },
+        { text: "hear", startMs: 11_200, endMs: 11_600 },
+        { text: "me", startMs: 11_600, endMs: 12_000 },
+        { text: "lets", startMs: 12_000, endMs: 12_800 },
+        { text: "start", startMs: 12_800, endMs: 13_600 },
+        { text: "with", startMs: 13_600, endMs: 14_400 },
+        { text: "the", startMs: 14_400, endMs: 15_200 },
+        { text: "release", startMs: 15_200, endMs: 16_000 },
+        { text: "notes", startMs: 16_000, endMs: 18_000 },
+      ],
+    },
+    {
+      id: "ben-aside",
+      speaker: "ben",
+      speakerLabel: "Ben Okafor",
+      startMs: 10_400,
+      endMs: 11_400,
+      words: [
+        { text: "loud", startMs: 10_400, endMs: 10_900 },
+        { text: "and", startMs: 10_900, endMs: 11_150 },
+        { text: "clear", startMs: 11_150, endMs: 11_400 },
+      ],
+    },
+  ];
+
+  it("loses no audible region of a partially rewritten passage", () => {
+    expect(audibleIntervalsOf(partiallyRewritten[0]!)).toEqual([
+      { startMs: 10_000, endMs: 18_000 },
+    ]);
+  });
+
+  it("still reports the overlap that lands in the rewritten opening", () => {
+    const analysis = analyzeOverlap(partiallyRewritten);
+
+    expect(analysis.get("ana-mixed")?.overlapMs).toBe(1000);
+    expect(analysis.get("ana-mixed")?.peers.map((peer) => peer.id)).toEqual(["ben-aside"]);
+    expect(describeOverlap(analysis.get("ben-aside"))?.badge).toBe("1.0 s during Ana Duarte");
+  });
+
+  it("highlights the passage across its rewritten half as well as its timed half", () => {
+    // 10.8 s is inside the rewritten opening, 13.0 s inside the aligned
+    // remainder. Both are Ana talking, and the ring has to be on for both.
+    for (const timeMs of [10_100, 10_800, 11_900, 13_000, 17_500]) {
+      expect(getSoundingBlocks(partiallyRewritten, timeMs).map((block) => block.id)).toContain(
+        "ana-mixed",
+      );
+    }
+    expect(getSoundingBlocks(partiallyRewritten, 10_800).map((block) => block.id)).toEqual([
+      "ana-mixed",
+      "ben-aside",
+    ]);
+    // And it is genuinely bounded: nobody is sounding before the passage starts.
+    expect(getSoundingBlocks(partiallyRewritten, 9000)).toEqual([]);
+  });
+
+  it("keeps the canonical coverage when the repair shrinks a mixed block", () => {
+    // The block's one timed token stops at 500 ms; its canonical words run on
+    // to an inflated 20.5 s that the repair clips back to 13.0 s. The envelope
+    // has to follow the CLIPPED canonical end, not the token's, or the repair
+    // amputates eight seconds of speech that really happened.
+    const blocks: OverlapBlock[] = [
+      {
+        id: "ana-mixed",
+        speaker: "ana",
+        speakerLabel: "Ana Duarte",
+        startMs: 0,
+        endMs: 20_500,
+        tokens: [
+          { text: "So", startMs: 0, endMs: 500 },
+          ...untimedTokensFor("this fixes everything."),
+        ],
+        words: [...ordinaryWords(0, 41), { text: "everything.", startMs: 12_000, endMs: 20_500 }],
+      },
+    ];
+
+    expect(repairTurnFinalWordInflation(blocks)[0]?.endMs).toBe(13_000);
   });
 });
 

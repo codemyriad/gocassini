@@ -389,6 +389,10 @@ export function repairTurnFinalWordInflation<B extends OverlapBlock>(
     // them shrinks the block shrinks with it — otherwise the paragraph would
     // still claim silence it no longer contains, and overlap detection would
     // keep reading the fabricated span off the envelope instead of the word.
+    // "Its timed spans" means BOTH pools: the two describe the same speech
+    // through different lenses, and a block whose display tokens stop early
+    // because cleanup rewrote its tail still sounds for as long as its canonical
+    // words say it does.
     const endMs = Math.max(
       block.startMs,
       Math.min(block.endMs, latestTimedEnd(tokens ?? block.tokens, words ?? block.words, block.endMs)),
@@ -406,46 +410,29 @@ export function repairTurnFinalWordInflation<B extends OverlapBlock>(
   });
 }
 
+/**
+ * The latest end left in EITHER pool after the repair, or `fallbackMs` when the
+ * block has no timing at all.
+ *
+ * Both pools are clipped by repairTurnFinalWordInflation before this runs, so
+ * taking the later of the two cannot smuggle a fabricated end back in: an
+ * inflated word is inflated because the producer glued a punctuation token onto
+ * it, which is exactly what makes it a candidate in whichever pool carries it.
+ */
 function latestTimedEnd(
   tokens: readonly OverlapTimedSpan[] | undefined,
   words: readonly OverlapTimedSpan[] | undefined,
   fallbackMs: number,
 ): number {
-  const pool = firstPoolWith(tokens, words, hasTiming);
   let latest = Number.NEGATIVE_INFINITY;
-  for (const span of pool ?? []) {
-    if (hasTiming(span)) {
-      latest = Math.max(latest, span.endMs as number);
+  for (const pool of [tokens, words]) {
+    for (const span of pool ?? []) {
+      if (hasTiming(span)) {
+        latest = Math.max(latest, span.endMs as number);
+      }
     }
   }
   return Number.isFinite(latest) ? latest : fallbackMs;
-}
-
-/**
- * The first of the two pools that actually carries a usable span.
- *
- * Display tokens come first because they are what the reader sees highlighted
- * and what the timing repair adjusted — but PRESENCE of a tokens array proves
- * nothing about timing. When cleanup rewrites a passage outright the display
- * builder emits a full set of word tokens with `alignment: "none"` and no
- * start or end at all (see "leaves fully rewritten cleaned blocks untimed at
- * the word level"), and that shape is common in published meetings. Picking
- * the pool by length instead of by content threw those blocks onto the
- * paragraph envelope and ignored the canonical words, which are timed — the
- * envelope being the very thing this module exists to stop trusting.
- */
-function firstPoolWith(
-  tokens: readonly OverlapTimedSpan[] | undefined,
-  words: readonly OverlapTimedSpan[] | undefined,
-  isUsable: (span: OverlapTimedSpan) => boolean,
-): readonly OverlapTimedSpan[] | undefined {
-  if (tokens?.some(isUsable)) {
-    return tokens;
-  }
-  if (words?.some(isUsable)) {
-    return words;
-  }
-  return undefined;
 }
 
 /**
@@ -747,30 +734,56 @@ export function analyzeOverlap(
 }
 
 /**
- * When this block was actually audible, as disjoint ascending intervals.
+ * When this block was actually audible, as disjoint ascending intervals: the
+ * UNION of every timed span it carries, in either pool, with the block extent
+ * as the last resort — a wordless segment still occupies its stretch of tape
+ * and can still be genuinely simultaneous with someone.
  *
- * Display tokens first (they are what the reader sees highlighted, and what the
- * timing repair adjusted), canonical words as the fallback, and the block span
- * itself as the last resort — a wordless segment still occupies its stretch of
- * tape and can still be genuinely simultaneous with someone.
+ * UNION, NOT A CHOICE BETWEEN THE POOLS. Display tokens are what the reader sees
+ * highlighted and what the seek targets hang off; canonical words are the ASR's
+ * own record of when this speaker made a noise. Neither is complete on its own,
+ * and every rule that picked one of them lost real audible time:
  *
- * "First" means the first pool carrying a real span, not the first non-empty
- * array: a fully rewritten cleaned block has a complete set of UNTIMED word
- * tokens over canonical words that are timed, and preferring those tokens
- * dropped it onto its paragraph envelope (see firstPoolWith).
+ *   - picking the LONGER array dropped a fully rewritten cleaned block — a
+ *     complete set of word tokens with `alignment: "none"` and no times at all
+ *     (portable.test.ts, "leaves fully rewritten cleaned blocks untimed at the
+ *     word level") — onto its paragraph envelope, the very thing this module
+ *     exists to stop trusting;
+ *   - picking the first pool that carries ANY timed span lost the mixed case,
+ *     which is not exotic: 30 of the 421 display blocks in the nine portable
+ *     meetings in this repo's export tree carry some timed word tokens and some
+ *     untimed ones, because cleanup rewrote part of the passage. One token
+ *     spanning 0–500 ms over canonical words spanning 0–2500 ms collapsed the
+ *     block to [0, 500] — the ring went dark for the two seconds the speaker
+ *     was still talking through, and any simultaneity in them went unreported.
+ *
+ * Taking both pools cannot over-claim. Display tokens are timed by ALIGNMENT to
+ * the canonical words — portable.ts gives an aligned token the minimum start and
+ * maximum end of the words it matched, and interpolates an untimed interior run
+ * strictly between its timed neighbours — so a token span never reaches past the
+ * canonical speech it was derived from. The union is therefore bounded by the
+ * words the ASR actually heard, which is the honest answer to "was this block
+ * sounding here".
  */
 export function audibleIntervalsOf(block: OverlapBlock): Interval[] {
-  const pool = firstPoolWith(block.tokens, block.words, isAudibleSpan);
   const spans: Interval[] = [];
-  for (const span of pool ?? []) {
-    if (isAudibleSpan(span)) {
-      spans.push({ startMs: span.startMs as number, endMs: span.endMs as number });
-    }
-  }
+  collectAudibleSpans(block.tokens, spans);
+  collectAudibleSpans(block.words, spans);
   if (spans.length === 0) {
     return [{ startMs: block.startMs, endMs: block.endMs }];
   }
   return mergeIntervals(spans);
+}
+
+function collectAudibleSpans(
+  pool: readonly OverlapTimedSpan[] | undefined,
+  into: Interval[],
+): void {
+  for (const span of pool ?? []) {
+    if (isAudibleSpan(span)) {
+      into.push({ startMs: span.startMs as number, endMs: span.endMs as number });
+    }
+  }
 }
 
 function isAudibleSpan(span: OverlapTimedSpan): boolean {

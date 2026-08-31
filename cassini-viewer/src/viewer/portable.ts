@@ -539,10 +539,12 @@ function extractPortableReadableWords(
     }
     // Deliberately no attribution carry here: readable-segment words only ever
     // feed display TIMING (token start/end via sourceWords) — no judgement or
-    // rendering path reads attribution off them, and the producer never writes
-    // readable words at all. Attribution travels on the raw-asr items instead
-    // (see buildTranscriptWordsFromPortable), which is what the canonical
-    // index — and therefore the crosstalk badge — is built from.
+    // rendering path reads attribution off them. The producer does write them:
+    // every readable segment of every packed meeting in this repo's export tree
+    // carries words. It just never writes ATTRIBUTION on them. That travels on
+    // the raw-asr items instead (see buildTranscriptWordsFromPortable), which is
+    // what the canonical index — and therefore the crosstalk badge — is built
+    // from.
     return [{
       id: typeof word.id === "string" && word.id.trim() !== "" ? word.id : `${segmentId}:w_${index}`,
       text,
