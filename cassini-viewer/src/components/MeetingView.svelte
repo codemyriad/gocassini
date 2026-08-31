@@ -8,7 +8,7 @@
   import { Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape } from "@lucide/svelte";
   import {
     formatClockTime,
-    isLikelyCrosstalkTurn,
+    isLikelyCrosstalkAcrossBlocks,
     judgedDisplaySegments,
     normalizeSpeakerLabel,
     parseTimeHash,
@@ -17,6 +17,7 @@
   import { getActiveTimedRange } from "../core/timing";
   import {
     buildTranscriptRows,
+    followRowKeyForBlocks,
     repairTurnFinalWordInflation,
     sortBlocksInReadingOrder,
     type TranscriptRow,
@@ -116,7 +117,7 @@
   // highlight while still looking right in a structural test.
   let activeSegments: DisplaySegment[] = [];
   let activeSegmentIds = new Set<string>();
-  let activeSegment: DisplaySegment | null = null;
+  let activeFollowRowKey: string | null = null;
   // The authoritative answer, and the comparison basis: only segments whose
   // entry here actually changed get their store written. Nothing in the template
   // reads this map any more, which is the whole point — see TranscriptTokens.
@@ -142,7 +143,7 @@
   let transcriptPane: HTMLElement | null = null;
   let audioEl: HTMLAudioElement | null = null;
   let animationFrameId = 0;
-  let lastAutoScrollSegmentId = "";
+  let lastAutoScrollRowKey = "";
   let showExactWords = false;
 
   // The meeting-view section; used to resolve element lookups against the
@@ -213,7 +214,7 @@
     errorMessage = "";
     showExactWords = false;
     manualScrollLock = false;
-    lastAutoScrollSegmentId = "";
+    lastAutoScrollRowKey = "";
   }
 
   function applySwitchedTranscript(artifact: LoadedArtifact) {
@@ -232,7 +233,7 @@
     wordEndsBoundedByAudio = artifact.wordEndsBoundedByAudio;
     availableTranscripts = artifact.availableTranscripts;
     currentTranscriptId = artifact.currentTranscriptId;
-    lastAutoScrollSegmentId = "";
+    lastAutoScrollRowKey = "";
   }
 
   function resetLoadedArtifact() {
@@ -258,7 +259,7 @@
     durationMs = 0;
     showExactWords = false;
     manualScrollLock = false;
-    lastAutoScrollSegmentId = "";
+    lastAutoScrollRowKey = "";
   }
 
   function mergeMeetingRuntimeSummary(
@@ -510,9 +511,9 @@
   function resumeFollow() {
     followPlayback = true;
     manualScrollLock = false;
-    if (activeSegment) {
-      lastAutoScrollSegmentId = "";
-      void scrollSegmentIntoView(activeSegment.id, "smooth");
+    if (activeFollowRowKey) {
+      lastAutoScrollRowKey = "";
+      void scrollSegmentIntoView(activeFollowRowKey, "smooth");
     }
   }
 
@@ -699,10 +700,6 @@
 
     activeSegments = state.soundingBlocks as DisplaySegment[];
     activeSegmentIds = new Set(activeSegments.map((segment) => segment.id));
-    // Scroll anchor: the active turn that has held the floor longest. Following
-    // the latest-starting one instead would bounce the page back and forth every
-    // time a one-word backchannel opens and closes inside a long turn.
-    activeSegment = activeSegments[0] ?? null;
     activeWords = activeWordsBySegment(activeSegments, timeMs);
 
     const next = new Map<string, DisplayTranscriptToken | null>(
@@ -771,7 +768,11 @@
   }
 
   function isRowLikelyCrosstalk(row: TranscriptRow<DisplaySegment>): boolean {
-    return rowSpeechBlocks(row).some((block) => isLikelyCrosstalkTurn(block.words));
+    return isLikelyCrosstalkAcrossBlocks(rowSpeechBlocks(row));
+  }
+
+  function likelyCrosstalkTitle(speakerLabel: string): string {
+    return `Another participant's microphone was much louder here. This is probably their voice bleeding into ${speakerLabel}'s track, not ${speakerLabel} speaking.`;
   }
 
   // "over Chris", "over Chris and Dana" - names, never durations. The measured
@@ -913,6 +914,7 @@
   // change, so one sentence spoken over somebody else arrives as a dozen
   // fragments and only the turn they came from is worth reading (D-693).
   $: transcriptRows = buildTranscriptRows(displaySegments);
+  $: activeFollowRowKey = followRowKeyForBlocks(transcriptRows, activeSegments);
   $: continuationKeys = continuationRowKeys(transcriptRows);
   // Highlight membership runs on the same effective audible spans the overlap
   // analysis judges on, not on paragraph extents: extents ring both speakers
@@ -941,11 +943,11 @@
   $: if (
     followPlayback &&
     !manualScrollLock &&
-    activeSegment?.id &&
-    activeSegment.id !== lastAutoScrollSegmentId
+    activeFollowRowKey &&
+    activeFollowRowKey !== lastAutoScrollRowKey
   ) {
-    lastAutoScrollSegmentId = activeSegment.id;
-    void scrollSegmentIntoView(activeSegment.id, "smooth");
+    lastAutoScrollRowKey = activeFollowRowKey;
+    void scrollSegmentIntoView(activeFollowRowKey, "smooth");
   }
 </script>
 
@@ -1171,7 +1173,7 @@
               {#if isRowLikelyCrosstalk(row)}
                 <span
                   class="badge badge-md badge-warning badge-outline text-sm px-1"
-                  title="Another participant's microphone was much louder here. This turn is probably their voice bleeding into {row.speakerLabel}'s track, not {row.speakerLabel} speaking."
+                  title={likelyCrosstalkTitle(row.speakerLabel)}
                 >probably crosstalk</span>
               {/if}
               <button
@@ -1203,8 +1205,15 @@
             <p class="px-1.5 text-[1.06rem] leading-[1.72] text-base-content break-words">{#each row.members as member, memberIndex (member.key)}{#if memberIndex > 0}{' '}{/if}{#if member.kind === 'speech'}<span
                   id={segmentDomId(member.block.id)}
                 >{@render blockProse(member.block)}</span>{:else}<span
-                  class="box-decoration-clone rounded-md border border-base-300 bg-base-200/60 px-1.5 py-0.5 text-[0.94rem] text-base-content/60"
-                ><span class="sr-only select-none">Interjection by </span><span aria-hidden="true">(</span><span
+                   class="box-decoration-clone rounded-md border bg-base-200/60 px-1.5 py-0.5 text-[0.94rem] text-base-content/60 {isLikelyCrosstalkAcrossBlocks(
+                     member.blocks,
+                   )
+                     ? 'border-warning'
+                     : 'border-base-300'}"
+                   title={isLikelyCrosstalkAcrossBlocks(member.blocks)
+                     ? likelyCrosstalkTitle(member.speakerLabel)
+                     : undefined}
+                 >{#if isLikelyCrosstalkAcrossBlocks(member.blocks)}<span class="sr-only select-none">Probably crosstalk. </span>{/if}<span class="sr-only select-none">Interjection by </span><span aria-hidden="true">(</span><span
                     class="font-semibold">{member.speakerLabel}</span><span aria-hidden="true">:</span>{#each member.blocks as chipBlock (chipBlock.id)}{' '}<span
                       class="rounded {activeSegmentIds.has(chipBlock.id) ? 'bg-primary/25' : ''}"
                       id={segmentDomId(chipBlock.id)}

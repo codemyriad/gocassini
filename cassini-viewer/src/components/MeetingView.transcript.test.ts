@@ -213,4 +213,10 @@ describe("the transcript pane's markup", () => {
     expect(template).toContain('role="log"');
     expect(template).toContain('<span class="sr-only">Simultaneous speech: </span>over ');
   });
+
+  it("wires follow-scroll and nested crosstalk to the rendered turn", () => {
+    expect(template).toContain("followRowKeyForBlocks(transcriptRows, activeSegments)");
+    expect(template).toContain("isLikelyCrosstalkAcrossBlocks(member.blocks)");
+    expect(template).toContain("likelyCrosstalkTitle(member.speakerLabel)");
+  });
 });

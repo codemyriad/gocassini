@@ -11,6 +11,7 @@ import {
   canonicalEvidenceForBlock,
   canonicalWordsForBlock,
   judgedDisplaySegments,
+  isLikelyCrosstalkAcrossBlocks,
   isLikelyCrosstalkTurn,
   lowConfidenceWordCount,
   getActiveSegment,
@@ -231,6 +232,21 @@ describe("crosstalk turn detection", () => {
 
   it("is false for a turn with no words rather than vacuously true", () => {
     expect(isLikelyCrosstalkTurn([])).toBe(false);
+  });
+
+  it("judges all fragments of a reconstructed turn together", () => {
+    expect(
+      isLikelyCrosstalkAcrossBlocks([
+        { words: [w("ghost", true)] },
+        { words: [w("also ghost", true)] },
+      ]),
+    ).toBe(true);
+    expect(
+      isLikelyCrosstalkAcrossBlocks([
+        { words: [w("ghost", true)] },
+        { words: [w("real speech")] },
+      ]),
+    ).toBe(false);
   });
 
 });
