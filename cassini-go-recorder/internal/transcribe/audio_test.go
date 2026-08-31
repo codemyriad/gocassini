@@ -4,12 +4,46 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"testing/iotest"
 )
+
+func TestProbeFirstPacketTimeMSIgnoresSuccessfulFFprobeWarning(t *testing.T) {
+	binDir := t.TempDir()
+	ffprobe := filepath.Join(binDir, "ffprobe")
+	script := `#!/bin/sh
+printf '%s\n' '[matroska,webm @ 0x1] File ended prematurely' >&2
+if [ "${FAKE_FFPROBE_EMPTY:-}" = 1 ]; then
+	exit 0
+fi
+printf '%s\n' '12.345000'
+`
+	if err := os.WriteFile(ffprobe, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake ffprobe: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, err := probeFirstPacketTimeMS("truncated-but-readable.mkv", 6)
+	if err != nil {
+		t.Fatalf("probe first packet with stderr warning: %v", err)
+	}
+	if got != 12_345 {
+		t.Fatalf("first packet timestamp = %dms, want 12345ms", got)
+	}
+
+	t.Setenv("FAKE_FFPROBE_EMPTY", "1")
+	got, err = probeFirstPacketTimeMS("truncated-empty-track.mkv", 6)
+	if err != nil {
+		t.Fatalf("probe empty track with stderr warning: %v", err)
+	}
+	if got != 0 {
+		t.Fatalf("empty-track first packet timestamp = %dms, want 0ms", got)
+	}
+}
 
 func TestExtractSpeakerFloatsAppliesPacketOffsetExactlyOnce(t *testing.T) {
 	requireFFMediaTools(t)
