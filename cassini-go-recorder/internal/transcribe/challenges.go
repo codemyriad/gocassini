@@ -417,17 +417,19 @@ func mergeEnvelopeFrame(envelope *speakerEnvelope, frameIndex int, rmsDB float64
 // 32 ms frame. In particular, it does not use exec.Cmd.Output (whole decoded
 // byte stream) or construct a meeting-length []float32.
 func streamSpeakerRMS(ctx context.Context, mkvPath string, stream AudioStream, visit func(float64)) error {
-	cmd := exec.CommandContext(ctx, "ffmpeg",
+	args := []string{
 		"-v", "error",
 		"-i", mkvPath,
-		"-map", fmt.Sprintf("0:%d", stream.Index),
+	}
+	args = append(args, sparseTimelineDecodeArgs(stream, challengeSampleRate)...)
+	args = append(args,
 		"-vn", "-sn", "-dn",
-		"-af", sparseTimelineAudioFilter(),
 		"-ac", "1",
 		"-ar", fmt.Sprint(challengeSampleRate),
 		"-f", "s16le",
 		"pipe:1",
 	)
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -1040,11 +1042,11 @@ func challengeWindow(eventStartMS, eventEndMS, durationMS int64) (int64, int64) 
 }
 
 func overlapRatio(aStart, aEnd, bStart, bEnd int64) float64 {
-	overlap := minInt64(aEnd, bEnd) - maxInt64(aStart, bStart)
+	overlap := challengeMinInt64(aEnd, bEnd) - maxInt64(aStart, bStart)
 	if overlap <= 0 {
 		return 0
 	}
-	shorter := minInt64(aEnd-aStart, bEnd-bStart)
+	shorter := challengeMinInt64(aEnd-aStart, bEnd-bStart)
 	if shorter <= 0 {
 		return 0
 	}
@@ -1098,7 +1100,7 @@ func minInt(a, b int) int {
 	return b
 }
 
-func minInt64(a, b int64) int64 {
+func challengeMinInt64(a, b int64) int64 {
 	if a < b {
 		return a
 	}
