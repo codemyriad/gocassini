@@ -149,14 +149,27 @@ route; the capture, timing and upload code is identical either way.
 
 ## Two switches, both off by default
 
-`CASSINI_SOURCE_CAPTURE` decides whether anything is collected at all. With it
-off the browser assets are not served and the upload endpoint refuses, so a
-participant opting in client-side achieves nothing: no service worker can be
-registered, no page is rewritten, nothing is stored. This is the containment
-boundary for the known limitations below — consent recorded per browser origin
-rather than per Nextcloud account, and uploads without a per-participant quota.
-Both are acceptable for a deployment whose operator chose to run this
-prototype; neither is acceptable for one that merely upgraded.
+`CASSINI_SOURCE_CAPTURE` decides whether anything is collected at all.
+
+For a client that has not started, this is simple: the browser assets are not
+served, so no service worker can be registered and no page is rewritten.
+
+For a client already running it is not simple, and the obvious reading is
+wrong: 404ing the worker script does **not** deactivate an installed service
+worker, and a call already in progress would otherwise keep recording to its
+local buffer regardless. So the payload asks the server before it records
+anything and again every thirty seconds, at `operator/capture/enabled`, and
+that check fails closed — an unreachable or unclear answer means no recording.
+Switching the setting off therefore stops a call in progress within about half
+a minute rather than at the next page load. The upload endpoint refuses as a
+second line, and a client that gets that refusal deletes its buffer rather than
+keeping it for a retry.
+
+This is the containment boundary for the known limitations below — consent
+recorded per browser origin rather than per Nextcloud account, and uploads
+without a per-participant quota. Both are acceptable for a deployment whose
+operator chose to run this prototype; neither is acceptable for one that merely
+upgraded.
 
 `CASSINI_SOURCE_AUDIO_INGEST` decides whether collected audio reaches a
 transcript. See below.

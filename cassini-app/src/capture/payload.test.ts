@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  captureAllowedByServer,
   consentGranted,
+  enabledURLFrom,
   pickAudioSender,
   rotateSegment,
   stopSegment,
@@ -243,5 +245,42 @@ describe("stopWithoutRestart", () => {
     const kinds = posted.map((message) => message.type);
     expect(kinds).toContain("segment-stop");
     expect(kinds).not.toContain("segment-start");
+  });
+});
+
+describe("captureAllowedByServer", () => {
+  // The administrator switch is what makes the per-browser consent and the
+  // missing upload quota acceptable, so this check fails CLOSED: the cost of a
+  // false no is a missing transcript improvement, the cost of a false yes is
+  // collecting audio an administrator switched off.
+  it("records only on an explicit yes", async () => {
+    const yes = async () => new Response(JSON.stringify({ enabled: true }), { status: 200 });
+    await expect(captureAllowedByServer("", yes as never)).resolves.toBe(true);
+  });
+
+  it("refuses on an explicit no", async () => {
+    const no = async () => new Response(JSON.stringify({ enabled: false }), { status: 200 });
+    await expect(captureAllowedByServer("", no as never)).resolves.toBe(false);
+  });
+
+  it("refuses when the server cannot be reached", async () => {
+    const boom = async () => {
+      throw new Error("network down");
+    };
+    await expect(captureAllowedByServer("", boom as never)).resolves.toBe(false);
+  });
+
+  it("refuses on an error status or an unreadable answer", async () => {
+    const err = async () => new Response("nope", { status: 503 });
+    await expect(captureAllowedByServer("", err as never)).resolves.toBe(false);
+
+    const junk = async () => new Response("not json", { status: 200 });
+    await expect(captureAllowedByServer("", junk as never)).resolves.toBe(false);
+  });
+
+  it("targets the operator endpoint behind the AppAPI proxy", () => {
+    expect(enabledURLFrom("/nextcloud")).toBe(
+      "/nextcloud/index.php/apps/app_api/proxy/gocassini/operator/capture/enabled",
+    );
   });
 });

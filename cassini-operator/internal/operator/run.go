@@ -710,6 +710,9 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	// every logged-in account may upload its OWN audio, and the handler binds
 	// each upload to the authenticated caller and to a room they were in.
 	api.Handle("/capture/upload", rt.captureUploadHandler(exappCfg.talkRoomMembershipChecker(), logger))
+	// Polled by a running capture so that turning the administrator gate off
+	// reaches calls already in progress, not only the next one.
+	api.HandleFunc("/capture/enabled", rt.captureEnabledHandler)
 
 	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
 	// off by default). Requests that already passed the AppAPI middleware are

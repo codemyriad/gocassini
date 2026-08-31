@@ -314,6 +314,28 @@ func (rt *Runtime) promoteCapture(staging, final string) error {
 	return nil
 }
 
+// captureEnabledHandler tells a running client whether collection is still
+// permitted.
+//
+// It exists because turning the administrator gate off cannot, by itself, stop
+// clients that are already running: 404ing the service-worker script does not
+// deactivate an installed worker, and a call already in progress would keep
+// recording to OPFS regardless. The payload polls this, so withdrawing
+// permission reaches a live call rather than only the next one.
+//
+// Deliberately no-store: a cached "yes" is exactly the answer that would
+// outlive the switch being turned off.
+func (rt *Runtime) captureEnabledHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"enabled": sourceCaptureEnabled()})
+}
+
 // captureUploadHandler receives one participant's post-call source audio.
 func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *log.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

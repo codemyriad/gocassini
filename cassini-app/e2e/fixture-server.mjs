@@ -91,6 +91,13 @@ window.__talkReady = (async () => {
   await remote.setLocalDescription(answer);
   await local.setRemoteDescription(answer);
 
+  // A device change mid-call, as Talk performs one.
+  window.__replaceTrack = async () => {
+    const fresh = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const sender = local.getSenders().find((s) => s.track && s.track.kind === "audio");
+    await sender?.replaceTrack(fresh.getAudioTracks()[0]);
+  };
+
   window.__endCall = () => { local.close(); remote.close(); };
   return true;
 })();
@@ -179,7 +186,7 @@ export async function startFixtureServer() {
   // a login page, a proxy notice — which the worker must pass through
   // untouched rather than weld a payload onto. Server state rather than a
   // Playwright route because the worker, not the page, issues this request.
-  const state = { bundleIsNotTalk: false };
+  const state = { bundleIsNotTalk: false, captureEnabled: true };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     const path = url.pathname;
@@ -220,7 +227,17 @@ export async function startFixtureServer() {
         return res.end("no such capture asset");
       }
     }
+    if (path === `${PROXY_PREFIX}/operator/capture/enabled`) {
+      // The administrator switch, as a running capture sees it. A test can flip
+      // it mid-call to prove the boundary reaches clients already recording.
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      return res.end(JSON.stringify({ enabled: state.captureEnabled }));
+    }
     if (path === `${PROXY_PREFIX}/operator/capture/upload` && req.method === "POST") {
+      if (!state.captureEnabled) {
+        res.writeHead(403);
+        return res.end("source capture is not enabled on this installation");
+      }
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
       uploads.push(parseMultipart(Buffer.concat(chunks), req.headers["content-type"] ?? ""));

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -142,5 +143,34 @@ func TestCaptureAssetsAreAbsentUntilAnAdministratorEnablesThem(t *testing.T) {
 	cfg.serveCaptureAsset(rec, httptest.NewRequest(http.MethodGet, "/ui/"+captureSWFile, nil), captureSWFile, logger)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 — to a browser this is simply an installation without the feature", rec.Code)
+	}
+}
+
+// The switch has to reach a client that is already recording: 404ing the
+// worker script does not deactivate an installed service worker, so the
+// payload asks instead.
+func TestCaptureEnabledHandlerReportsTheAdministratorSwitch(t *testing.T) {
+	rt := &Runtime{}
+
+	t.Setenv(envSourceCaptureEnabled, "1")
+	rec := httptest.NewRecorder()
+	rt.captureEnabledHandler(rec, httptest.NewRequest(http.MethodGet, "/capture/enabled", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != `{"enabled":true}` {
+		t.Fatalf("body = %s", body)
+	}
+	// A cached "yes" is exactly the answer that would outlive the switch being
+	// turned off.
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", cc)
+	}
+
+	t.Setenv(envSourceCaptureEnabled, "")
+	rec = httptest.NewRecorder()
+	rt.captureEnabledHandler(rec, httptest.NewRequest(http.MethodGet, "/capture/enabled", nil))
+	if body := strings.TrimSpace(rec.Body.String()); body != `{"enabled":false}` {
+		t.Fatalf("body = %s", body)
 	}
 }

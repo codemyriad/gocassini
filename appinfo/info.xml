@@ -251,6 +251,15 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
            track; the handler is what makes that safe — it files the upload
            under the AppAPI-authenticated caller (never the participant id in
            the request body) and refuses a room the caller was not in. -->
+      <!-- USER: "may I still record?", polled by a capture in progress. The
+           administrator switch has to reach a call already running, and
+           404ing the service-worker script does not deactivate an installed
+           worker. Answered no-store for the same reason. -->
+      <route>
+        <url>^operator\/capture\/enabled\/?$</url>
+        <verb>GET</verb>
+        <access_level>USER</access_level>
+      </route>
       <route>
         <url>^operator\/capture\/upload\/?$</url>
         <verb>POST</verb>

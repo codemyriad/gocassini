@@ -49,6 +49,14 @@ const MUTE_POLL_MS = 250;
 
 const AUDIO_BITS_PER_SECOND = 128_000;
 
+// SERVER_CHECK_MS is how often a running capture re-asks the server whether
+// collection is still permitted. Turning the administrator switch off cannot
+// stop an existing client on its own — 404ing the worker script does not
+// deactivate an installed service worker, and a call already in progress would
+// otherwise keep recording — so the client asks, rather than the server having
+// to reach it.
+const SERVER_CHECK_MS = 30_000;
+
 // CAPTURE_MIME_CANDIDATES is tried in order. WebM/Opus is what Chromium and
 // Firefox record and what the server decodes most happily; Safari records only
 // MP4, and offering it nothing rather than a container it cannot produce is the
@@ -78,6 +86,37 @@ export function supportedCaptureMimeType(
 export function uploadURLFrom(rootPath: string): string {
   const root = (rootPath ?? "").replace(/\/+$/, "");
   return `${root}/index.php/apps/app_api/proxy/gocassini/operator/capture/upload`;
+}
+
+// enabledURLFrom builds the operator's "may I still record?" endpoint.
+export function enabledURLFrom(rootPath: string): string {
+  const root = (rootPath ?? "").replace(/\/+$/, "");
+  return `${root}/index.php/apps/app_api/proxy/gocassini/operator/capture/enabled`;
+}
+
+// captureAllowedByServer asks the operator whether collection is permitted.
+//
+// Fails CLOSED. A server that cannot be reached, or answers anything other than
+// an explicit yes, means no recording: the cost of a false no is a missing
+// transcript improvement, and the cost of a false yes is collecting audio an
+// administrator has switched off.
+export async function captureAllowedByServer(
+  rootPath: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<boolean> {
+  try {
+    const response = await fetchImpl(enabledURLFrom(rootPath), {
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return false;
+    }
+    const body = (await response.json()) as { enabled?: unknown };
+    return body.enabled === true;
+  } catch {
+    return false;
+  }
 }
 
 // pickAudioSender returns the sender carrying the participant's microphone.
@@ -111,6 +150,8 @@ export interface CaptureState {
   muteIntervals: Array<[number, number]>;
   muteSince: number | null;
   mutePoll: number | null;
+  // serverPoll re-asks the operator whether collection is still permitted.
+  serverPoll: number | null;
   segmentStartWallMs: number;
   finished: boolean;
   // discarded marks a session whose consent was withdrawn mid-call. It is
@@ -277,6 +318,9 @@ function pollMute(session: CaptureState, sender: RTCRtpSender): void {
     stopWithoutRestart(session);
     return;
   }
+  if (session.discarded) {
+    return;
+  }
   const enabled = sender.track?.enabled ?? true;
   if (!enabled && session.muteSince === null) {
     session.muteSince = Date.now();
@@ -324,6 +368,13 @@ async function uploadCapture(
     credentials: "same-origin",
     headers: { requesttoken: (globalThis as { OC?: { requestToken?: string } }).OC?.requestToken ?? "" },
   });
+  if (response.status === 403) {
+    // Not transient: the administrator has switched collection off. Keeping the
+    // buffer for a retry would mean holding audio this installation has said it
+    // does not collect.
+    await discardCapture(opfsRoot, dirName);
+    return;
+  }
   if (!response.ok) {
     // Leave OPFS untouched so the next Talk page load can retry. Losing the
     // recording to a transient 502 would defeat the point of buffering it.
@@ -350,6 +401,9 @@ async function endCall(): Promise<void> {
   capturingSender = null;
   if (active.mutePoll !== null) {
     clearInterval(active.mutePoll);
+  }
+  if (active.serverPoll !== null) {
+    clearInterval(active.serverPoll);
   }
   // Let any rotation still in flight finish before closing the final segment,
   // so a device change during the last seconds of a call does not race the
@@ -405,6 +459,7 @@ function beginCapture(sender: RTCRtpSender): void {
     muteIntervals: [],
     muteSince: null,
     mutePoll: null,
+    serverPoll: null,
     segmentStartWallMs: callStartWallMs,
     finished: false,
     discarded: false,
@@ -414,8 +469,30 @@ function beginCapture(sender: RTCRtpSender): void {
   state = session;
   capturingSender = sender;
   attachTimingTransform(session, sender);
-  startSegment(session, sender);
+  // Ask the server before recording anything, and keep asking. The
+  // administrator switch is the boundary that makes the per-browser consent
+  // and the missing upload quota acceptable, so it has to bind a client that
+  // is already running — not merely the next one to start.
+  const rootPath = (globalThis as { OC?: { getRootPath?: () => string } }).OC?.getRootPath?.() ?? "";
+  void captureAllowedByServer(rootPath).then((allowed) => {
+    if (!allowed) {
+      session.discarded = true;
+      return;
+    }
+    if (session.discarded || session.finished) {
+      return;
+    }
+    startSegment(session, sender);
+  });
   session.mutePoll = setInterval(() => pollMute(session, sender), MUTE_POLL_MS) as unknown as number;
+  session.serverPoll = setInterval(() => {
+    void captureAllowedByServer(rootPath).then((allowed) => {
+      if (!allowed && !session.discarded) {
+        session.discarded = true;
+        stopWithoutRestart(session);
+      }
+    });
+  }, SERVER_CHECK_MS) as unknown as number;
 }
 
 // stopWithoutRestart closes the current segment and leaves the recorder idle.
@@ -440,7 +517,16 @@ export function stopWithoutRestart(session: CaptureState): void {
 export function rotateSegment(session: CaptureState, sender: RTCRtpSender): void {
   session.rotation = session.rotation
     .then(() => stopSegment(session))
-    .then(() => startSegment(session, sender))
+    .then(() => {
+      // Re-checked HERE, not only when the rotation was queued. A session whose
+      // consent was withdrawn must not start recording again because the
+      // participant happened to change microphone afterwards; the upload was
+      // already blocked, but collection has to stop too.
+      if (session.discarded || session.finished) {
+        return;
+      }
+      startSegment(session, sender);
+    })
     .catch(() => {
       // A failed rotation costs this segment, not the recording.
     });

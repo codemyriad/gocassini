@@ -28,6 +28,7 @@ test.afterAll(async () => {
 test.beforeEach(() => {
   server.uploads.length = 0;
   server.state.bundleIsNotTalk = false;
+  server.state.captureEnabled = true;
 });
 
 // enableCapture visits the Cassini page, records consent and waits for the
@@ -156,10 +157,37 @@ test("consent withdrawn mid-call discards that call's recording", async ({ page 
   await page.evaluate(() => localStorage.setItem("cassini.sourceCapture.consent", "granted"));
   await page.waitForTimeout(500);
 
+  // And a device change afterwards must not restart collection either: the
+  // upload was already blocked, but a revoked session has to stop recording.
+  await page.evaluate(async () => {
+    const win = window as never as { __replaceTrack?: () => Promise<void> };
+    await win.__replaceTrack?.();
+  });
+  await page.waitForTimeout(800);
+
   await page.evaluate(() => (window as never as { __endCall: () => void }).__endCall());
   await page.waitForTimeout(3000);
 
   expect(server.uploads.length, "a recording made after consent was withdrawn was uploaded").toBe(0);
+});
+
+test("the administrator switch stops a capture already running", async ({ page }) => {
+  await enableCapture(page);
+  await page.goto(`${server.origin}/call/testroom`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await page.waitForTimeout(1500);
+
+  // Turning the server-side switch off has to reach a call in progress. It
+  // cannot be done by withdrawing the worker script — 404ing that does not
+  // deactivate an installed service worker — so the client asks, and the
+  // upload endpoint refuses as a second line.
+  server.state.captureEnabled = false;
+  await page.waitForTimeout(1000);
+
+  await page.evaluate(() => (window as never as { __endCall: () => void }).__endCall());
+  await page.waitForTimeout(3000);
+
+  expect(server.uploads.length, "a capture continued after the administrator switched it off").toBe(0);
 });
 
 test("captures nothing without an explicit opt-in", async ({ page }) => {
