@@ -211,7 +211,15 @@ func streamMetadataEntries(plan StreamPlan) []string {
 	// observed: 0 is a legal RTP timestamp, so a missing tag and a zero tag
 	// must stay distinguishable.
 	if plan.FirstRTPSet {
+		// Diagnostics only: Janus rewrites subscriber timestamps, so this is
+		// not the sender's clock. See StreamPlan.FirstRTPTimestamp.
 		entries = append(entries, "first_rtp_timestamp="+strconv.FormatInt(plan.FirstRTPTimestamp, 10))
+	}
+	// The wall-clock anchor source-audio ingestion places against. Emitted into
+	// the MKV so the build reads it with the ffprobe call it already makes,
+	// rather than reopening the session artifact.
+	if plan.FirstPacketWallMS > 0 {
+		entries = append(entries, "first_packet_wall_ms="+strconv.FormatInt(plan.FirstPacketWallMS, 10))
 		entries = append(entries, "first_timeline_ns="+strconv.FormatInt(plan.FirstTimelineNS, 10))
 	}
 	return entries

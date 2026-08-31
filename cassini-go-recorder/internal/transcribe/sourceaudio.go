@@ -22,41 +22,49 @@ import (
 // the call. This file turns one of those uploads into PCM on the meeting
 // timeline, which is the only shape the rest of the pipeline knows.
 //
-// # Why this does not correlate audio
+// # Two clocks, and which one does what
 //
-// The obvious way to align an upload is to cross-correlate it against the
-// recorder's copy of the same speaker. That fails exactly when the feature
-// matters: if the uplink was bad, the reference is full of holes.
+// A first design tried to map the client's RTP timestamps directly onto the
+// recorder's, on the theory that both are the sender's 48 kHz audio clock. They
+// are not. Janus rewrites the timestamps it relays to each subscriber —
+// janus_rtp_header_update computes last_ts = (timestamp - base_ts) +
+// base_ts_prev, and re-anchors on every SSRC change or pause — so what the
+// recorder logs sits in a per-subscriber space whose offset from the sender is
+// unknown and moves at those seams. Anchoring on it would place a
+// participant's words at a confidently wrong time.
 //
-// Instead the client reports the RTP timestamps of the frames it encoded, and
-// the recorder now records the RTP timestamp its first packet of each stream
-// carried (remux.StreamPlan.FirstRTPTimestamp, emitted into the MKV as
-// first_rtp_timestamp). Those are the same clock — the sender's own 48 kHz
-// audio sample clock — so a timestamp converts to a meeting-timeline position
-// by arithmetic:
+// So the two axes come from different places:
 //
-//	timelineMS(rtp) = first_timeline_ns/1e6 + (rtp - first_rtp_timestamp)*1000/clock_rate
+//	RATE, from the client's own anchors. Each anchor pairs a wall-clock
+//	instant with an RTP timestamp on the participant's audio sample clock. The
+//	ratio between them is that machine's sound-card drift, which is the
+//	dominant drift in this system — tens to hundreds of milliseconds over a
+//	long meeting — and the fit below solves it rather than estimating it.
+//	This part is immune to loss: the anchors describe frames the client
+//	ENCODED, so whether each one reached the server is irrelevant. A test
+//	asserts an 86% anchor loss rate moves nothing.
 //
-// Loss does not weaken this. The base comes from a packet that arrived, and
-// every anchor the client reports is on the sender's clock whether or not that
-// particular packet made it. Ten percent loss and ninety percent loss produce
-// the same mapping.
+//	OFFSET, from wall clock. The recorder records the wall-clock instant of
+//	each stream's first packet (remux.StreamPlan.FirstPacketWallMS, emitted as
+//	first_packet_wall_ms) against its position on the meeting timeline. Both
+//	derive from the same monotonic clock, so that mapping is exact on the
+//	recorder's side.
 //
-// # What is exact and what is not
+// # What that costs, stated plainly
 //
-// The RATE is exact: both sides of the fit below are ultimately the sender's
-// sample clock, so drift between the participant's sound card and the
-// recorder's host — tens to hundreds of milliseconds over a long meeting — is
-// solved rather than estimated.
+// The offset is only as good as the agreement between the participant's clock
+// and the recorder's, plus the encoder's roughly-constant latency. With both
+// machines NTP-disciplined that is tens of milliseconds, comfortably inside a
+// word. With a badly-synchronised client it is seconds, and the transcript
+// would carry that speaker's words at the wrong time.
 //
-// The OFFSET is not exact. Associating an anchor with a position inside the
-// local recording goes through wall-clock time, which carries the encoder's
-// latency: roughly constant, tens of milliseconds. So placement lands within a
-// few tens of ms rather than at sample accuracy. That is comfortably inside a
-// word, which is what the transcript needs. Removing the residual bias would
-// need correlation against an intact stretch of the recorded track, and is
-// deliberately not done here — it would reintroduce the dependency this design
-// exists to avoid, for an error smaller than a syllable.
+// PlausibleOffset below is a guard, not a fix: it rejects placements that fall
+// outside the recording, which catches a clock that is wrong by hours but not
+// one that is wrong by seconds. The real fix is a single cross-correlation
+// against any stretch where the recorded track has intact audio — one constant,
+// needing a few good seconds anywhere in the call rather than a good reference
+// throughout. That is not implemented yet, and until it is, ingestion should be
+// treated as trustworthy only where clients are known to be time-synchronised.
 
 // SourceCaptureFormat is the sidecar schema this ingester accepts. It must
 // match SOURCE_CAPTURE_FORMAT in cassini-app/src/capture/protocol.ts and
@@ -118,29 +126,41 @@ type SourceSidecar struct {
 	OwnerUserID string `json:"ownerUserId"`
 }
 
-// RTPTimeBase is the recorder's side of the mapping, read from the MKV stream
-// tags the remux writes.
-type RTPTimeBase struct {
-	FirstRTPTimestamp int64
+// SourceTimeBase is the recorder's side of the mapping, read from the MKV
+// stream tags the remux writes.
+type SourceTimeBase struct {
+	// FirstPacketWallMS is when this track's first packet arrived, in Unix
+	// milliseconds, and FirstTimelineNS is where that instant sits on the
+	// meeting timeline. Together they map recorder wall time to meeting time.
+	FirstPacketWallMS int64
 	FirstTimelineNS   int64
-	ClockRate         uint32
-	Known             bool
+	// ClockRate is the track's RTP clock rate, used to read the client's
+	// anchors as a media-time axis. Janus does not change the rate, only the
+	// offset, so this stays correct for the sender's clock.
+	ClockRate uint32
+	Known     bool
 }
 
-// timelineMS converts a sender-side RTP timestamp to a position on the meeting
-// timeline, in milliseconds.
-func (b RTPTimeBase) timelineMS(rtp int64) float64 {
-	delta := rtp - b.FirstRTPTimestamp
-	// Unwrap against the base rather than against the previous value: anchors
-	// are sampled, so consecutive ones can legitimately be far apart, and only
-	// the distance from the base matters here.
+// timelineMS converts a wall-clock instant to a position on the meeting
+// timeline. Exact on the recorder's side; the caller's error is whatever
+// separates its clock from the recorder's.
+func (b SourceTimeBase) timelineMS(wallMS int64) float64 {
+	return float64(b.FirstTimelineNS)/1e6 + float64(wallMS-b.FirstPacketWallMS)
+}
+
+// mediaMS reads an anchor's position inside the local recording from the
+// participant's own audio sample clock, relative to the segment's first anchor.
+// Unwrapped against that base rather than the previous value: anchors are
+// sampled, so consecutive ones can legitimately be far apart.
+func mediaMS(rtp, baseRTP int64, clockRate uint32) float64 {
+	delta := rtp - baseRTP
 	for delta < -rtpWrap/2 {
 		delta += rtpWrap
 	}
 	for delta > rtpWrap/2 {
 		delta -= rtpWrap
 	}
-	return float64(b.FirstTimelineNS)/1e6 + float64(delta)*1000/float64(b.ClockRate)
+	return float64(delta) * 1000 / float64(clockRate)
 }
 
 // Placement maps a segment's local recording time onto the meeting timeline:
@@ -170,19 +190,24 @@ func (p Placement) RatePPMDeviation() float64 {
 // sigma out, refit. The outliers being removed are wall-clock steps and
 // scheduling stalls in the browser, which are rare and large — not a
 // contaminated majority that would need something stronger.
-func FitPlacement(segment SourceSegment, base RTPTimeBase) (Placement, error) {
+func FitPlacement(segment SourceSegment, base SourceTimeBase) (Placement, error) {
 	if !base.Known || base.ClockRate == 0 {
-		return Placement{}, fmt.Errorf("recording carries no RTP time base for this speaker")
+		return Placement{}, fmt.Errorf("recording carries no wall-clock time base for this speaker")
 	}
 	if len(segment.Anchors) < minPlacementAnchors {
 		return Placement{}, fmt.Errorf("only %d anchors, need %d", len(segment.Anchors), minPlacementAnchors)
 	}
+	// The media axis is the participant's audio sample clock (their anchors,
+	// relative to the segment's first) and the meeting axis is wall clock. The
+	// slope between them is that machine's sound-card drift; the intercept is
+	// where the recording starts, carrying the client/recorder clock difference.
+	baseRTP := segment.Anchors[0].RTPTimestamp
 	type point struct{ local, meeting float64 }
 	points := make([]point, 0, len(segment.Anchors))
 	for _, anchor := range segment.Anchors {
 		points = append(points, point{
-			local:   float64(anchor.WallMS - segment.StartWallMS),
-			meeting: base.timelineMS(anchor.RTPTimestamp),
+			local:   mediaMS(anchor.RTPTimestamp, baseRTP, base.ClockRate),
+			meeting: base.timelineMS(anchor.WallMS),
 		})
 	}
 
@@ -245,6 +270,23 @@ func FitPlacement(segment SourceSegment, base RTPTimeBase) (Placement, error) {
 		return placement, fmt.Errorf("anchors disagree by %.1f ms RMS", rms)
 	}
 	return placement, nil
+}
+
+// PlausibleOffset rejects a placement that falls outside the recording.
+//
+// This is a guard against a client whose clock is wrong by hours or is not set
+// at all — the case where believing it would scatter one participant's words
+// across a timeline they never occupied. It cannot catch a clock that is wrong
+// by seconds; nothing here can, and a cross-correlation refinement is what
+// eventually should. Deliberately generous: half a meeting of slack, because
+// the cost of wrongly rejecting is only that the recorded track is used, while
+// the cost of wrongly accepting is a transcript nobody can trust.
+func PlausibleOffset(placement Placement, timelineMS int64) bool {
+	slack := float64(timelineMS) / 2
+	if slack < 30_000 {
+		slack = 30_000
+	}
+	return placement.OffsetMS > -slack && placement.OffsetMS < float64(timelineMS)+slack
 }
 
 // RenderOntoTimeline resamples one segment's PCM onto the meeting timeline.
@@ -354,9 +396,10 @@ type SourceRenderReport struct {
 // A segment that cannot be placed is skipped rather than guessed at: the
 // recorded track remains the fallback for the whole speaker, and a half-placed
 // mixture would put words at times nobody can defend.
-func RenderSourceTrack(dir string, sidecar SourceSidecar, base RTPTimeBase, sampleRate int, outSamples int) ([]float32, SourceRenderReport, error) {
+func RenderSourceTrack(dir string, sidecar SourceSidecar, base SourceTimeBase, sampleRate int, outSamples int) ([]float32, SourceRenderReport, error) {
 	report := SourceRenderReport{Owner: sidecar.OwnerUserID, Segments: len(sidecar.Segments)}
 	out := make([]float32, outSamples)
+	timelineMS := int64(outSamples) * 1000 / int64(sampleRate)
 	var totalAnchors int
 	var worstResidual float64
 	var rateSum float64
@@ -365,6 +408,12 @@ func RenderSourceTrack(dir string, sidecar SourceSidecar, base RTPTimeBase, samp
 		if err != nil {
 			report.Rejections = append(report.Rejections,
 				fmt.Sprintf("segment %d: %v", segment.Index, err))
+			continue
+		}
+		if !PlausibleOffset(placement, timelineMS) {
+			report.Rejections = append(report.Rejections,
+				fmt.Sprintf("segment %d: places at %.0f ms, outside a %d ms recording — the uploader's clock is not usable",
+					segment.Index, placement.OffsetMS, timelineMS))
 			continue
 		}
 		samples, err := decodeSourceSegment(filepath.Join(dir, segment.AudioName), sampleRate)
@@ -494,8 +543,8 @@ func ApplySourceAudio(streams []AudioStream, captureRoot, workDir string, sample
 		if !ok || stream.ParticipantID == "" {
 			continue
 		}
-		if !stream.RTPBase.Known {
-			fmt.Fprintf(stdout, "  source audio: %s uploaded, but this recording carries no RTP base for their track; keeping the recorded audio\n", stream.SpeakerLabel)
+		if !stream.TimeBase.Known {
+			fmt.Fprintf(stdout, "  source audio: %s uploaded, but this recording carries no wall-clock base for their track; keeping the recorded audio\n", stream.SpeakerLabel)
 			continue
 		}
 		sidecar, err := LoadSourceSidecar(dir)
@@ -503,7 +552,7 @@ func ApplySourceAudio(streams []AudioStream, captureRoot, workDir string, sample
 			fmt.Fprintf(stdout, "  source audio: %s: %v\n", stream.SpeakerLabel, err)
 			continue
 		}
-		samples, report, err := RenderSourceTrack(dir, sidecar, stream.RTPBase, sampleRate, outSamples)
+		samples, report, err := RenderSourceTrack(dir, sidecar, stream.TimeBase, sampleRate, outSamples)
 		report.SpeakerID = stream.SpeakerID
 		if err != nil {
 			fmt.Fprintf(stdout, "  source audio: %s: %v; keeping the recorded audio\n", stream.SpeakerLabel, err)

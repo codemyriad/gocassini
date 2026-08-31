@@ -11,9 +11,11 @@ import (
 
 const testClockRate = 48000
 
-func testBase() RTPTimeBase {
-	return RTPTimeBase{
-		FirstRTPTimestamp: 1_000_000,
+const testFirstPacketWallMS = int64(1_700_000_000_000)
+
+func testBase() SourceTimeBase {
+	return SourceTimeBase{
+		FirstPacketWallMS: testFirstPacketWallMS,
 		FirstTimelineNS:   2_000_000_000, // the speaker's track starts 2 s in
 		ClockRate:         testClockRate,
 		Known:             true,
@@ -21,52 +23,53 @@ func testBase() RTPTimeBase {
 }
 
 // syntheticSegment builds a segment whose anchors describe a recording that
-// started `offsetMS` into the meeting timeline, sampled every `stepMS`.
-// driftPPM skews the participant's wall clock against their sample clock, which
-// is what real hardware does.
+// starts `offsetMS` into the meeting timeline, sampled every `stepMS` of the
+// participant's wall clock.
+//
+// driftPPM is the participant's AUDIO sample clock running fast against their
+// wall clock, which is what real sound cards do and the dominant drift this
+// design corrects. The anchors therefore pair a wall instant with an RTP
+// timestamp that advances at (1+drift) times nominal.
 func syntheticSegment(offsetMS float64, count int, stepMS float64, driftPPM float64) SourceSegment {
 	base := testBase()
-	startWall := int64(1_700_000_000_000)
+	// A segment that starts offsetMS into the meeting timeline began at this
+	// wall instant, since timelineMS is wall-anchored.
+	startWall := testFirstPacketWallMS + int64(offsetMS-float64(base.FirstTimelineNS)/1e6)
+	baseRTP := int64(1_000_000)
 	segment := SourceSegment{Index: 0, AudioName: "segment-0.webm", StartWallMS: startWall}
 	for i := 0; i < count; i++ {
-		localMS := float64(i) * stepMS
-		meetingMS := offsetMS + localMS*(1+driftPPM/1e6)
-		rtp := base.FirstRTPTimestamp +
-			int64(math.Round((meetingMS-float64(base.FirstTimelineNS)/1e6)*float64(testClockRate)/1000))
+		wallElapsedMS := float64(i) * stepMS
+		audioElapsedMS := wallElapsedMS * (1 + driftPPM/1e6)
 		segment.Anchors = append(segment.Anchors, SourceAnchor{
 			FrameIndex:   int64(i) * 50,
-			RTPTimestamp: rtp,
+			RTPTimestamp: baseRTP + int64(math.Round(audioElapsedMS*float64(testClockRate)/1000)),
 			SSRC:         7,
-			WallMS:       startWall + int64(math.Round(localMS)),
+			WallMS:       startWall + int64(math.Round(wallElapsedMS)),
 		})
 	}
 	segment.StopWallMS = startWall + int64(float64(count)*stepMS)
 	return segment
 }
 
-func TestRTPTimeBaseTimelineMS(t *testing.T) {
+func TestSourceTimeBaseTimelineMS(t *testing.T) {
 	base := testBase()
-	if got := base.timelineMS(base.FirstRTPTimestamp); got != 2000 {
-		t.Fatalf("base timestamp maps to %v ms, want 2000", got)
+	if got := base.timelineMS(base.FirstPacketWallMS); got != 2000 {
+		t.Fatalf("the base instant maps to %v ms, want 2000 (where the track starts)", got)
 	}
-	// One second of samples later on the sender's 48 kHz clock.
-	if got := base.timelineMS(base.FirstRTPTimestamp + testClockRate); math.Abs(got-3000) > 1e-9 {
+	if got := base.timelineMS(base.FirstPacketWallMS + 1000); math.Abs(got-3000) > 1e-9 {
 		t.Fatalf("one second later maps to %v ms, want 3000", got)
 	}
 }
 
-func TestRTPTimeBaseUnwrapsAroundTheModulus(t *testing.T) {
-	// A meeting that straddles the 32-bit RTP wrap: the base sits just below
-	// the modulus and later timestamps have wrapped to small values.
-	base := RTPTimeBase{
-		FirstRTPTimestamp: (1 << 32) - testClockRate, // one second before wrapping
-		FirstTimelineNS:   0,
-		ClockRate:         testClockRate,
-		Known:             true,
+func TestMediaMSUnwrapsAroundTheModulus(t *testing.T) {
+	// A long call straddling the 32-bit RTP wrap: the segment's base sits just
+	// below the modulus and later anchors have wrapped to small values.
+	baseRTP := int64(1<<32) - testClockRate // one second before wrapping
+	if got := mediaMS(0, baseRTP, testClockRate); math.Abs(got-1000) > 1e-9 {
+		t.Fatalf("wrapped anchor reads as %v ms, want 1000", got)
 	}
-	// One second after the base, the counter has wrapped to 0.
-	if got := base.timelineMS(0); math.Abs(got-1000) > 1e-9 {
-		t.Fatalf("wrapped timestamp maps to %v ms, want 1000", got)
+	if got := mediaMS(baseRTP, baseRTP, testClockRate); got != 0 {
+		t.Fatalf("the base anchor reads as %v ms, want 0", got)
 	}
 }
 
@@ -79,8 +82,11 @@ func TestFitPlacementRecoversOffsetAndDrift(t *testing.T) {
 	if math.Abs(placement.OffsetMS-5000) > 2 {
 		t.Fatalf("offset = %.3f ms, want ~5000", placement.OffsetMS)
 	}
-	if math.Abs(placement.RatePPMDeviation()-80) > 5 {
-		t.Fatalf("rate = %.1f ppm, want ~80", placement.RatePPMDeviation())
+	// The audio clock ran 80 ppm FAST, so a millisecond of recorded audio
+	// covers slightly less than a millisecond of meeting: the fitted rate is
+	// below 1 by the same amount.
+	if math.Abs(placement.RatePPMDeviation()+80) > 5 {
+		t.Fatalf("rate = %.1f ppm, want ~-80", placement.RatePPMDeviation())
 	}
 	if placement.ResidualMS > 1 {
 		t.Fatalf("residual = %.3f ms on clean anchors", placement.ResidualMS)
@@ -130,8 +136,8 @@ func TestFitPlacementRejectsUntrustworthyFits(t *testing.T) {
 		}
 	})
 
-	t.Run("no RTP base in the recording", func(t *testing.T) {
-		if _, err := FitPlacement(syntheticSegment(1000, 50, 1000, 0), RTPTimeBase{}); err == nil {
+	t.Run("no wall-clock base in the recording", func(t *testing.T) {
+		if _, err := FitPlacement(syntheticSegment(1000, 50, 1000, 0), SourceTimeBase{}); err == nil {
 			t.Fatal("expected rejection without a base")
 		}
 	})
@@ -307,9 +313,9 @@ func TestDiscoverSourceCapturesEmptyRoot(t *testing.T) {
 	}
 }
 
-func TestRTPTimeBaseFromTags(t *testing.T) {
-	base := rtpTimeBaseFromTags("12345", "678", "48000")
-	if !base.Known || base.FirstRTPTimestamp != 12345 || base.FirstTimelineNS != 678 || base.ClockRate != 48000 {
+func TestSourceTimeBaseFromTags(t *testing.T) {
+	base := sourceTimeBaseFromTags("12345", "678", "48000")
+	if !base.Known || base.FirstPacketWallMS != 12345 || base.FirstTimelineNS != 678 || base.ClockRate != 48000 {
 		t.Fatalf("parsed base = %+v", base)
 	}
 	// A partial base cannot map anything, and treating a missing tag as zero
@@ -320,8 +326,9 @@ func TestRTPTimeBaseFromTags(t *testing.T) {
 		{"12345", "678", ""},
 		{"12345", "678", "0"},
 		{"nonsense", "678", "48000"},
+		{"0", "678", "48000"},
 	} {
-		if got := rtpTimeBaseFromTags(tc[0], tc[1], tc[2]); got.Known {
+		if got := sourceTimeBaseFromTags(tc[0], tc[1], tc[2]); got.Known {
 			t.Fatalf("tags %v produced a usable base %+v", tc, got)
 		}
 	}
@@ -349,5 +356,37 @@ func TestWriteWAV16RoundTrips(t *testing.T) {
 	}
 	if read(5) != 32767 || read(6) != -32767 {
 		t.Fatalf("clamping failed: %d, %d", read(5), read(6))
+	}
+}
+
+func TestPlausibleOffset(t *testing.T) {
+	const timelineMS = 600_000 // a ten-minute meeting
+
+	if !PlausibleOffset(Placement{OffsetMS: 0}, timelineMS) {
+		t.Fatal("a segment starting with the meeting is plausible")
+	}
+	if !PlausibleOffset(Placement{OffsetMS: 300_000}, timelineMS) {
+		t.Fatal("a segment starting mid-meeting is plausible")
+	}
+	// A little negative or a little past the end is tolerated: the guard exists
+	// to catch a clock that is wrong by hours, and rejecting wrongly only costs
+	// us the fallback to the recorded track.
+	if !PlausibleOffset(Placement{OffsetMS: -10_000}, timelineMS) {
+		t.Fatal("a small negative offset should be tolerated")
+	}
+
+	// A client whose clock is wrong by a day scatters its audio somewhere the
+	// meeting never was. That must be refused rather than transcribed.
+	if PlausibleOffset(Placement{OffsetMS: 86_400_000}, timelineMS) {
+		t.Fatal("an offset a day into the future was accepted")
+	}
+	if PlausibleOffset(Placement{OffsetMS: -86_400_000}, timelineMS) {
+		t.Fatal("an offset a day in the past was accepted")
+	}
+
+	// A very short recording still gets a floor of slack, so a 5 s clip is not
+	// judged against a 2.5 s window.
+	if !PlausibleOffset(Placement{OffsetMS: -20_000}, 5_000) {
+		t.Fatal("the minimum slack floor is not being applied")
 	}
 }

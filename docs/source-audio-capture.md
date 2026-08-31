@@ -44,26 +44,56 @@ attempts to flip it back.
 **It is the same signal the SFU encoded**, one step earlier. That is what makes
 verifying an upload against the server's own recording meaningful later.
 
-## Timing: why this survives a bad network
+## Timing: two clocks, and which one does what
 
-The obvious way to align an uploaded track with the meeting is to cross-correlate
-it against the recorder's copy of the same speaker. That fails exactly when the
-feature matters: if the uplink was bad, the reference is damaged too.
+The obvious way to align an upload is to cross-correlate it against the
+recorder's copy of the same speaker. That fails exactly when the feature
+matters: if the uplink was bad, the reference is full of holes.
 
-So the client carries its own timing instead. A `RTCRtpScriptTransform` on the
-outgoing audio sender sees every encoded Opus frame and reads its **RTP
-timestamp** — the sender's own 48 kHz sample clock, and the same number the
-recorder writes into its `.rtplog` for every packet that reached it.
-`pkg/core/timeline` already maps that onto the meeting timeline.
+The first design here tried to avoid correlation entirely by mapping the
+client's RTP timestamps straight onto the recorder's, on the theory that both
+are the sender's 48 kHz audio clock. **They are not.** Janus rewrites the
+timestamps it relays to each subscriber — `janus_rtp_header_update` computes
+`last_ts = (timestamp - base_ts) + base_ts_prev` and re-anchors on every SSRC
+change or pause — so what the recorder logs sits in a per-subscriber space whose
+offset from the sender is unknown and moves at those seams. Anchoring on it
+would place a participant's words at a confidently wrong time. The recorder
+still records its first RTP timestamp per stream, but as a diagnostic only.
 
-Packet loss destroys the audio the server received. It does not corrupt the
-timestamps on the packets that did arrive, and a handful of those anywhere in the
-call is enough to place a whole segment. Drift needs no special handling either:
-the RTP timestamp *is* the sender's capture clock, and sender-versus-recorder
-drift is what the timeline estimator already corrects.
+So the two axes of the fit come from different places:
 
-Correlation is therefore demoted from *the alignment mechanism* to *a
-verification step* — run where the SFU audio is intact, skipped where it is not.
+**Rate, from the client's own anchors.** Each anchor pairs a wall-clock instant
+with an RTP timestamp on the participant's audio sample clock. The ratio between
+them is that machine's sound-card drift — the dominant drift in this system,
+tens to hundreds of milliseconds over a long meeting — and the fit solves it
+rather than estimating it. This part is genuinely immune to loss: the anchors
+describe frames the client **encoded**, so whether each one reached the server is
+irrelevant. A test asserts that dropping six of every seven anchors, an 86% loss
+rate, moves the fitted rate and offset by less than a millisecond.
+
+**Offset, from wall clock.** The recorder records the wall-clock instant of each
+stream's first packet (`first_packet_wall_ms`) against its position on the
+meeting timeline. Both derive from the same monotonic clock, so that side is
+exact.
+
+### What that costs
+
+The offset is only as good as the agreement between the participant's clock and
+the recorder's, plus the encoder's roughly constant latency. With both machines
+NTP-disciplined that is tens of milliseconds — comfortably inside a word. With a
+badly synchronised client it is seconds, and that speaker's words would land at
+the wrong time.
+
+`PlausibleOffset` is a guard, not a fix: it rejects placements falling outside
+the recording, which catches a clock wrong by hours but not one wrong by
+seconds.
+
+**The real fix is not implemented yet:** a single cross-correlation against any
+stretch where the recorded track has intact audio. That is one constant, needing
+a few good seconds anywhere in the call rather than a good reference throughout,
+so it degrades far more gracefully than correlation-based alignment. Until it
+exists, ingestion should be treated as trustworthy only where clients are known
+to be time-synchronised.
 
 ## How the code reaches Talk's page
 
@@ -148,10 +178,17 @@ Uploads land under the operator's `--capture-root`
 
 ## Not done yet
 
-- **Placement and rebuild.** Nothing consumes an upload. The next stage maps the
-  sidecar anchors through `pkg/core/timeline`, renders the audio onto the meeting
-  timeline in the shape `ExtractSpeakerFloats` already returns, and re-runs the
-  build.
+- **Cross-correlation refinement of the offset** (see above). This is the gap
+  that decides whether ingestion can be trusted on arbitrary clients.
+- **An end-to-end browser test.** The harness has no browser at all — its
+  publishers are pion Go clients — so nothing yet exercises the service worker,
+  the payload, or the encoded transform in a real Chromium.
+- **Rebuild on late upload.** An upload arriving after the meeting was published
+  does not trigger a rebuild; only a manual rerun picks it up.
+- **The published mix.** Ingestion changes the transcript only. The playable
+  audio stays the recorded mix, which is what the viewer seeks against.
+- **Attribution.** The cross-track attribution stage still measures the recorded
+  tracks, not the ingested ones.
 - **The opt-in UI**, and with it any consent copy worth shipping.
 - **Verification of an upload against the recorder's own audio** (see above).
 - **Retention.** Uploads accumulate under the capture root; nothing sweeps
