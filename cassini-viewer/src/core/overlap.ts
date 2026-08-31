@@ -48,6 +48,19 @@
  *    0.38 s of ground truth), so the A/B/A sandwich is detected STRUCTURALLY
  *    rather than by intersecting spans.
  *
+ * 4. THE SAME SEGMENTATION SHREDS TWO PEOPLE WHO TALK AT ONCE. A/B/A is only
+ *    the small case. When two speakers genuinely hold the floor together the
+ *    producer alternates on every word, and BOTH of their sentences come out as
+ *    one- to three-word fragments: measured on the overlap-and-pause fixture,
+ *    Cara's sentence 41.0–49.0 s and Ben's competing sentence 43.2–49.0 s were
+ *    emitted as 31 alternating segments — "f the" / "final" / "sign" / "off".
+ *    One published meeting shows the same at scale: 262 segments, 34% of them
+ *    three words or fewer, sentences cut mid-clause. buildTurnModel is the
+ *    answer: it puts each speaker's fragments back into the turn they were,
+ *    says which short runs were said INSIDE somebody else's turn, and reports
+ *    where two turns genuinely collided — as data, so a renderer can present it
+ *    however it likes without redoing any of the judgement.
+ *
  * The repair is TIMING ONLY. It never changes displayed text, word order, or
  * the words themselves; it clips one word's end back to a defensible bound so
  * that overlap detection, the audio-sync highlight and word seek targets all
@@ -124,8 +137,8 @@ export const MIN_MEDIAN_SAMPLE_WORDS = 8;
 export const FALLBACK_MEDIAN_WORD_MS = 250;
 
 /**
- * How far apart the two halves of a split turn may sit before we stop calling
- * the speaker continuous across the block between them.
+ * How much silence there may be in a speaker's OWN speech before we stop calling
+ * them continuous across whatever somebody else said in the gap.
  *
  * The producer cuts A's turn at the exact word boundary where B starts, so a
  * genuinely uninterrupted A has a seam of 0 ms — measured, to the millisecond,
@@ -134,19 +147,45 @@ export const FALLBACK_MEDIAN_WORD_MS = 250;
  * alignment noise and a breath while staying far below any real turn exchange:
  * for A to resume within 400 ms of stopping, B must have been talking OVER A
  * rather than answering A. This is the load-bearing gate — ordinary dialogue
- * forms A/B/A constantly and must keep rendering as three separate turns.
+ * forms A/B/A constantly and must keep reading as separate turns.
+ *
+ * The same number governs the general case, where a whole turn is shredded into
+ * a chain of fragments rather than cut once. On the shredded double-talk
+ * fixture every gap inside one speaker's own run measures between −1 ms and
+ * 241 ms, while the smallest gap across a real floor change in that meeting is
+ * 4176 ms — an order of magnitude of clear air either side of 400 ms. The
+ * producer's own 1500 ms segment-gap threshold was rejected as the bound here
+ * because it answers a different question: how long a silence may be before a
+ * MONOLOGUE is worth splitting, with nobody competing. Here somebody else is
+ * talking in the gap, and a speaker silent for more than a breath while that
+ * happens has yielded the floor. 400 ms is also the conservative direction: the
+ * cost of being wrong is a turn that stays split, which is today's behaviour.
  */
 export const INTERJECTION_MAX_SEAM_GAP_MS = 400;
 
 /**
- * How long the interjecting block may run and still be treated as something
- * said inside somebody else's turn rather than a turn of its own.
+ * How much CONTINUOUS SPEECH OF THEIR OWN somebody may have and still be treated
+ * as talking inside another person's turn rather than taking one.
  *
- * The fixture's backchannels are 0.48 s ("Right.") and 0.68 s ("Perfect."). At
- * conversational rate 2 s is around six or seven words — past that, B is making
- * a contribution, and calling it an interjection would demote a real turn.
- * A long B that genuinely talks over A is still reported, as ordinary
- * simultaneous speech with a measured duration.
+ * Measured on the speaker's whole re-joined run with the silences removed, not
+ * on whatever the producer happened to emit as one segment. That is the
+ * difference between a true and a false answer, not a refinement: across the
+ * double-talk stretch Ben's competing sentence arrives as fifteen fragments of
+ * 160–560 ms, and judged one at a time every single one looks like a
+ * backchannel — his turn would be dismantled and scattered as fifteen asides
+ * inside Cara's. As the run it really is, he speaks for 5.2 s.
+ *
+ * The same bound still admits the genuine backchannels in that meeting: Ben's
+ * "Right." sounds for 401 ms and Ana's "Perfect." for 600 ms. So the decision on
+ * this fixture is between 600 ms and 5200 ms, and 2 s — around six or seven
+ * words at conversational rate, past which somebody is making a contribution
+ * rather than acknowledging one — sits in the middle of that gap.
+ *
+ * It is never the only test. A duration alone cannot tell a short remark from
+ * somebody holding the floor in short bursts, so the classification also asks
+ * WHERE the run sits: a backchannel lands in ONE gap in the host's speech,
+ * while a speaker who has the floor makes the host restart again and again.
+ * See bestHostFor.
  */
 export const INTERJECTION_MAX_MIDDLE_MS = 2000;
 
@@ -320,14 +359,6 @@ export interface BlockOverlap {
   readonly interrupts?: InterjectionContext;
   /** Set when this block is the second half of a turn something landed inside. */
   readonly resumes?: ResumptionContext;
-}
-
-/** Copy for one affordance. */
-export interface OverlapDescription {
-  /** Compact badge text, e.g. `0.6 s during Ana Duarte`. Carries no icon. */
-  readonly badge: string;
-  /** Full sentence for `title` and assistive technology. */
-  readonly detail: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -771,32 +802,10 @@ export function analyzeOverlap(
   options: { readonly minOverlapMs?: number } = {},
 ): Map<string, BlockOverlap> {
   const minOverlapMs = options.minOverlapMs ?? MIN_CREDIBLE_OVERLAP_MS;
-  const ordered = blocks
-    .filter(
-      (block) =>
-        Number.isFinite(block.startMs) && Number.isFinite(block.endMs) && block.endMs > block.startMs,
-    )
-    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+  const ordered = orderForSweep(blocks);
+  const spansOf = audibleSpanCache();
 
   const accumulators = new Map<string, OverlapAccumulator>();
-  const accumulatorFor = (id: string): OverlapAccumulator => {
-    let accumulator = accumulators.get(id);
-    if (!accumulator) {
-      accumulator = { peers: new Map(), before: [], after: [] };
-      accumulators.set(id, accumulator);
-    }
-    return accumulator;
-  };
-  const spansCache = new Map<string, Interval[]>();
-  const spansOf = (block: OverlapBlock): Interval[] => {
-    let spans = spansCache.get(block.id);
-    if (!spans) {
-      spans = audibleIntervalsOf(block);
-      spansCache.set(block.id, spans);
-    }
-    return spans;
-  };
-
   const active: OverlapBlock[] = [];
   for (const current of ordered) {
     // Anything that ended at or before this start can never overlap this block
@@ -817,8 +826,8 @@ export function analyzeOverlap(
         continue;
       }
 
-      const currentAccumulator = accumulatorFor(current.id);
-      const earlierAccumulator = accumulatorFor(earlier.id);
+      const currentAccumulator = accumulatorFor(accumulators, current.id);
+      const earlierAccumulator = accumulatorFor(accumulators, earlier.id);
       addPeer(currentAccumulator, earlier, overlapMs);
       addPeer(earlierAccumulator, current, overlapMs);
       currentAccumulator.before.push(...intersections);
@@ -836,7 +845,7 @@ export function analyzeOverlap(
     active.push(current);
   }
 
-  markSplitTurnInterjections(ordered, accumulatorFor, spansOf);
+  markRejoinedTurnInterjections(ordered, accumulators, spansOf);
 
   const result = new Map<string, BlockOverlap>();
   for (const [id, accumulator] of accumulators) {
@@ -859,6 +868,47 @@ export function analyzeOverlap(
     });
   }
   return result;
+}
+
+/**
+ * The blocks the sweep may compare, earliest first.
+ *
+ * A block whose extent is not a real forward interval cannot intersect anything
+ * and cannot bound anything, so it is dropped here rather than defended against
+ * at every use. The tie-break on `endMs` keeps the sweep deterministic.
+ */
+function orderForSweep<B extends OverlapBlock>(blocks: readonly B[]): B[] {
+  return blocks
+    .filter(
+      (block) =>
+        Number.isFinite(block.startMs) && Number.isFinite(block.endMs) && block.endMs > block.startMs,
+    )
+    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+}
+
+/** Memoised `audibleIntervalsOf`, keyed by block id. */
+function audibleSpanCache(): (block: OverlapBlock) => Interval[] {
+  const cache = new Map<string, Interval[]>();
+  return (block) => {
+    let spans = cache.get(block.id);
+    if (!spans) {
+      spans = audibleIntervalsOf(block);
+      cache.set(block.id, spans);
+    }
+    return spans;
+  };
+}
+
+function accumulatorFor(
+  accumulators: Map<string, OverlapAccumulator>,
+  id: string,
+): OverlapAccumulator {
+  let accumulator = accumulators.get(id);
+  if (!accumulator) {
+    accumulator = { peers: new Map(), before: [], after: [] };
+    accumulators.set(id, accumulator);
+  }
+  return accumulator;
 }
 
 /**
@@ -1103,90 +1153,329 @@ function totalMs(intervals: readonly Interval[]): number {
   return intervals.reduce((total, interval) => total + (interval.endMs - interval.startMs), 0);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Turn structure: re-joining what the producer shredded
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * The A/B/A sandwich: one turn cut in half by the producer around the block that
- * landed inside it.
+ * One rendered turn: the blocks of ONE speaker that the producer split apart
+ * only because somebody else's words landed between them.
  *
  * `MergeAndSortSegments` interleaves every speaker's words by start time and
- * flushes a segment on each speaker change, so a backchannel inside a continuous
- * turn is not emitted as two overlapping turns at all — it is emitted as three
- * consecutive blocks with A's turn cut exactly where B's words begin. Measured
- * on the overlap-and-pause fixture through current main, A's halves are
- * CONTIGUOUS to the millisecond (`ana 1.02–5.20`, `ben 4.78–5.26`,
- * `ana 5.20–8.24`; `cara 23.48–26.68`, `ana 26.56–27.24`, `cara 26.68–29.36`),
- * which makes the seam a far stronger signal than the span intersection those
- * same turns produce (0.42 s and 0.12 s against 0.63 s and 0.77 s of ground
- * truth).
+ * flushes a segment on each speaker change. One person talking alone therefore
+ * comes out as one block, but the moment two people hold the floor at once the
+ * pipeline alternates, and BOTH of their sentences are shredded into one- to
+ * three-word fragments. Measured on the overlap-and-pause fixture, whose ground
+ * truth is known: Cara speaks one sentence 41.0–49.0 s and Ben a different,
+ * competing sentence 43.2–49.0 s, and the producer emitted 31 alternating
+ * fragments — "f the" / "final" / "sign" / "off". A published meeting showed the
+ * same shape at scale: 262 segments, 34% of them three words or fewer.
  *
- * Restricted to exactly ONE intervening block. That is the shape the producer
- * emits, and it is the shape we can defend: with two or more different speakers
- * between A's halves, "A never stopped" becomes a guess, and an affordance that
- * over-claims an interruption is worse than none.
- *
- * The seam test runs on repaired spans, so a turn whose first half merely ENDED
- * in an inflated punctuated word — leaving real silence for B to speak into — is
- * correctly not reported: the repair opens the seam past the tolerance.
+ * A run is therefore the unit the reader actually cares about, and everything
+ * downstream — the row, its badge, its nested interjections — is derived from
+ * runs rather than from raw blocks.
  */
-function markSplitTurnInterjections(
-  ordered: readonly OverlapBlock[],
-  accumulatorFor: (id: string) => OverlapAccumulator,
+interface TurnRun<B extends OverlapBlock> {
+  readonly speakerKey: string;
+  readonly speakerLabel: string;
+  readonly blocks: B[];
+  /** First and last moment this speaker was AUDIBLE across the whole run. */
+  startMs: number;
+  endMs: number;
+  /**
+   * False when the run's block has no defensible audible time (its canonical
+   * references resolved and were all rejected). Such a block never joins a run
+   * and never nests: "this speaker never stopped" is a claim about sound.
+   */
+  readonly attested: boolean;
+}
+
+/** The turn one run landed inside, and the two halves of it that it sits between. */
+interface NestedTurn<B extends OverlapBlock> {
+  readonly host: TurnRun<B>;
+  readonly beforeId: string;
+  readonly afterId: string;
+}
+
+/** First and last audible millisecond of one block, or null when it has none. */
+function audibleBoundsOf(spans: readonly Interval[]): { startMs: number; endMs: number } | null {
+  const first = spans[0];
+  const last = spans.at(-1);
+  if (!first || !last || !Number.isFinite(first.startMs) || !Number.isFinite(last.endMs)) {
+    return null;
+  }
+  if (last.endMs <= first.startMs) {
+    return null;
+  }
+  return { startMs: first.startMs, endMs: last.endMs };
+}
+
+/**
+ * A speaker's blocks re-joined into the turns they were before the producer cut
+ * them up, in first-block order.
+ *
+ * THE RULE, and it is deliberately one rule: take EACH SPEAKER'S OWN blocks in
+ * time order and join two of them when the seam between them — measured on their
+ * own audible speech, not on their paragraph extents — is at most
+ * INTERJECTION_MAX_SEAM_GAP_MS in either direction. Whatever anybody else said
+ * in that seam is not consulted, because it is not evidence about whether THIS
+ * speaker stopped.
+ *
+ * Note what that does and a naive pass does not. In the shape this exists for,
+ * two adjacent blocks in the sorted list are never the same speaker — the
+ * producer flushes on every speaker change, so the fragments strictly alternate
+ * — and "merge neighbouring same-speaker blocks" therefore does nothing at all.
+ * The grouping has to be per speaker, ACROSS the alternation.
+ *
+ * WHY INTERJECTION_MAX_SEAM_GAP_MS (400 ms), REUSED RATHER THAN A NEW CONSTANT.
+ * It already answers exactly this question for the single-interjection case —
+ * "has this speaker actually stopped?" — and the measurements it was chosen from
+ * are the same measurements that govern here. On the shredded double-talk
+ * fixture every gap inside one speaker's own run is between −1 ms and 241 ms,
+ * while the smallest gap across a real floor change in the same meeting is
+ * 4176 ms: an order of magnitude of clear air on each side of 400 ms. The
+ * producer's own 1500 ms segment-gap threshold was rejected as the re-join bound
+ * because it answers a different question — how long a silence may be before a
+ * MONOLOGUE is worth splitting into two segments, with nobody competing — while
+ * here another speaker is talking in the seam, and a speaker who is silent for
+ * more than a breath while somebody else talks has yielded the floor. 400 ms is
+ * the conservative direction: it never merges across a real pause, and the cost
+ * of being wrong is a turn that stays split, which is today's behaviour.
+ *
+ * The seam is bounded on BOTH sides. An upper bound alone lets an arbitrarily
+ * NEGATIVE seam through, which is not a narrow seam at all but a massive
+ * self-overlap; a genuinely uninterrupted speaker measures 0 ms to the
+ * millisecond, so the tolerance is symmetric around it.
+ */
+function buildTurnRuns<B extends OverlapBlock>(
+  ordered: readonly B[],
+  spansOf: (block: OverlapBlock) => Interval[],
+): Array<TurnRun<B>> {
+  const runs: Array<TurnRun<B>> = [];
+  const open = new Map<string, TurnRun<B>>();
+  for (const block of ordered) {
+    const key = speakerKey(block);
+    const bounds = audibleBoundsOf(spansOf(block));
+    const run = open.get(key);
+    if (
+      run &&
+      bounds &&
+      run.attested &&
+      Math.abs(bounds.startMs - run.endMs) <= INTERJECTION_MAX_SEAM_GAP_MS
+    ) {
+      run.blocks.push(block);
+      run.endMs = Math.max(run.endMs, bounds.endMs);
+    } else {
+      const fresh: TurnRun<B> = {
+        speakerKey: key,
+        speakerLabel: block.speakerLabel?.trim() || "Unknown speaker",
+        blocks: [block],
+        startMs: bounds?.startMs ?? block.startMs,
+        endMs: bounds?.endMs ?? block.endMs,
+        attested: bounds !== null,
+      };
+      runs.push(fresh);
+      open.set(key, fresh);
+    }
+  }
+  return runs;
+}
+
+/**
+ * Which runs are backchannels said INSIDE another run, and which are turns of
+ * their own.
+ *
+ * THIS IS THE BOUNDARY THE WHOLE FEATURE TURNS ON, and it is the same one
+ * INTERJECTION_MAX_MIDDLE_MS has always drawn — only now it is measured on the
+ * interjector's whole RE-JOINED run rather than on a single block. That change
+ * is the fix. In sustained double-talk the producer hands us Ben's competing
+ * sentence as fifteen fragments of 160–560 ms each; judged one at a time every
+ * single one looks like a backchannel, and Ben's turn would be dismantled and
+ * scattered as fifteen insets inside Cara's. Judged as the run it really is,
+ * Ben speaks for 5600 ms — nearly three times the bound — and comes out as what
+ * he is: a competing turn, rendered beside Cara's with the ordinary
+ * simultaneous-speech badge on both.
+ *
+ * The same bound still admits the genuine backchannels in that meeting: Ben's
+ * "Right." runs 401 ms and Ana's "Perfect." 600 ms. So on this fixture the
+ * decision is between 600 ms and 5600 ms, and 2000 ms — around six or seven
+ * words at conversational rate, past which a speaker is making a contribution
+ * rather than acknowledging one — sits in the middle of that gap with an order
+ * of magnitude of slack.
+ *
+ * The other three conditions are structural rather than judgemental:
+ *   - the host must actually be SPLIT around this run (a `before` half and an
+ *     `after` half). A host that was never cut has no paragraph break to remove,
+ *     and the block that landed inside it is already reported by the ordinary
+ *     containment badge;
+ *   - the run must not outlast the host's turn, or it is not inside it;
+ *   - the silence either side must be at most INTERJECTION_MAX_SIDE_GAP_MS, which
+ *     rules out the exchange shape where one speaker finishes, a beat passes, and
+ *     the other replies.
+ *
+ * Nesting is ONE LEVEL deep: a run that is itself nested may not host anything.
+ * Two levels of inset is not a shape the reader can parse, and the producer has
+ * never been observed to emit one.
+ */
+function nestTurnRuns<B extends OverlapBlock>(
+  runs: ReadonlyArray<TurnRun<B>>,
+  spansOf: (block: OverlapBlock) => Interval[],
+): Map<TurnRun<B>, NestedTurn<B>> {
+  const candidates = new Map<TurnRun<B>, NestedTurn<B>>();
+  for (const run of runs) {
+    const host = bestHostFor(run, runs, spansOf);
+    if (host) {
+      candidates.set(run, host);
+    }
+  }
+  const nested = new Map<TurnRun<B>, NestedTurn<B>>();
+  for (const [run, context] of candidates) {
+    if (!candidates.has(context.host)) {
+      nested.set(run, context);
+    }
+  }
+  return nested;
+}
+
+function bestHostFor<B extends OverlapBlock>(
+  run: TurnRun<B>,
+  runs: ReadonlyArray<TurnRun<B>>,
+  spansOf: (block: OverlapBlock) => Interval[],
+): NestedTurn<B> | null {
+  // Judged on this speaker's OWN CONTINUOUS SPEECH — the whole re-joined run,
+  // silences removed — not on whatever the producer happened to emit as one
+  // segment. That is the difference between a true and a false answer: across
+  // the double-talk stretch Ben's competing sentence arrives as fifteen
+  // fragments of 160-560 ms, every one of which looks like a backchannel on its
+  // own, and his turn would be dismantled and scattered as fifteen insets
+  // inside Cara's. As the run it really is he speaks for 5.2 s.
+  if (!run.attested || runAudibleMs(run, spansOf) > INTERJECTION_MAX_MIDDLE_MS) {
+    return null;
+  }
+  let best: NestedTurn<B> | null = null;
+  let bestBeforeEndMs = Number.NEGATIVE_INFINITY;
+  let bestSpanMs = -1;
+  for (const host of runs) {
+    if (host === run || !host.attested) {
+      continue;
+    }
+    if (host.speakerKey === run.speakerKey || run.endMs > host.endMs) {
+      continue;
+    }
+    const seam = seamAround(host, run.startMs, spansOf);
+    if (!seam) {
+      continue;
+    }
+    // AND a structural test, so the classification does not rest on a duration
+    // alone: a backchannel lands in ONE gap in the host's speech, while a
+    // speaker who is holding the floor weaves through it and the host's
+    // fragments keep restarting inside their run. One is allowed because the
+    // host routinely resumes while a genuine backchannel is still finishing —
+    // Ben's "Right." runs 4.86-5.26 s while Ana resumes at 5.20.
+    if (hostFragmentsStartingInside(host, run, spansOf) > 1) {
+      continue;
+    }
+    if (run.startMs - seam.beforeEndMs > INTERJECTION_MAX_SIDE_GAP_MS) {
+      continue;
+    }
+    if (seam.afterStartMs - run.endMs > INTERJECTION_MAX_SIDE_GAP_MS) {
+      continue;
+    }
+    // Ties go to the turn this run interrupted most immediately, then to the
+    // longer turn — the one a reader would call "the turn" rather than
+    // whichever the scan reached first.
+    const spanMs = host.endMs - host.startMs;
+    if (seam.beforeEndMs > bestBeforeEndMs || (seam.beforeEndMs === bestBeforeEndMs && spanMs > bestSpanMs)) {
+      best = { host, beforeId: seam.beforeId, afterId: seam.afterId };
+      bestBeforeEndMs = seam.beforeEndMs;
+      bestSpanMs = spanMs;
+    }
+  }
+  return best;
+}
+
+/** How many of the host's fragments begin while `run` is still going. */
+function hostFragmentsStartingInside<B extends OverlapBlock>(
+  host: TurnRun<B>,
+  run: TurnRun<B>,
+  spansOf: (block: OverlapBlock) => Interval[],
+): number {
+  let inside = 0;
+  for (const block of host.blocks) {
+    const bounds = audibleBoundsOf(spansOf(block));
+    if (bounds && bounds.startMs > run.startMs && bounds.startMs <= run.endMs) {
+      inside += 1;
+    }
+  }
+  return inside;
+}
+
+/**
+ * The two consecutive halves of `host` that `startMs` falls between, if any.
+ *
+ * Returning null when there is no half on both sides is what enforces "the host
+ * must actually have been SPLIT around this run". A host that was never cut has
+ * no paragraph break to remove, so a block that landed inside it is not nested;
+ * it stays a turn of its own, reported by the ordinary containment badge.
+ */
+function seamAround<B extends OverlapBlock>(
+  host: TurnRun<B>,
+  startMs: number,
+  spansOf: (block: OverlapBlock) => Interval[],
+): { beforeId: string; afterId: string; beforeEndMs: number; afterStartMs: number } | null {
+  let index = -1;
+  for (let position = 0; position < host.blocks.length; position += 1) {
+    const bounds = audibleBoundsOf(spansOf(host.blocks[position]!));
+    if (bounds && bounds.startMs < startMs) {
+      index = position;
+    }
+  }
+  const before = index < 0 ? undefined : host.blocks[index];
+  const after = index < 0 ? undefined : host.blocks[index + 1];
+  if (!before || !after) {
+    return null;
+  }
+  const beforeBounds = audibleBoundsOf(spansOf(before));
+  const afterBounds = audibleBoundsOf(spansOf(after));
+  if (!beforeBounds || !afterBounds) {
+    return null;
+  }
+  return {
+    beforeId: before.id,
+    afterId: after.id,
+    beforeEndMs: beforeBounds.endMs,
+    afterStartMs: afterBounds.startMs,
+  };
+}
+
+/**
+ * Mark each block of a nested run as spoken inside the turn it landed in, and
+ * the half that resumes as continuing past it.
+ *
+ * This replaces the old fixed A/B/A scan, which could only see exactly ONE
+ * intervening block. Chains of ten and more alternations are the real production
+ * shape, and a fixed three-block window sees none of them.
+ */
+function markRejoinedTurnInterjections<B extends OverlapBlock>(
+  ordered: readonly B[],
+  accumulators: Map<string, OverlapAccumulator>,
   spansOf: (block: OverlapBlock) => Interval[],
 ): void {
-  for (let index = 1; index + 1 < ordered.length; index += 1) {
-    const before = ordered[index - 1]!;
-    const middle = ordered[index]!;
-    const after = ordered[index + 1]!;
-    if (!isSameSpeaker(before, after) || isSameSpeaker(before, middle)) {
-      continue;
+  const runs = buildTurnRuns(ordered, spansOf);
+  for (const [run, context] of nestTurnRuns(runs, spansOf)) {
+    for (const block of run.blocks) {
+      accumulatorFor(accumulators, block.id).interrupts = {
+        speakerLabel: context.host.speakerLabel,
+        beforeId: context.beforeId,
+        afterId: context.afterId,
+      };
     }
-    // This pass runs on EXTENTS — the seam between A's halves, the length of
-    // the block between them — so it is the one place a block with no
-    // trustworthy evidence could still make a claim. "A never stopped talking
-    // and B spoke over her" is a statement about sound; a block whose evidence
-    // was rejected cannot be the B that proves it, and cannot be either half of
-    // the A it is said about. All three have to be real.
-    if (
-      isAcousticallyEmpty(spansOf(before)) ||
-      isAcousticallyEmpty(spansOf(middle)) ||
-      isAcousticallyEmpty(spansOf(after))
-    ) {
-      continue;
-    }
-    // Adjacency alone proves nothing: ordinary dialogue produces A/B/A all the
-    // time and must keep rendering as three separate turns. All four tests have
-    // to pass before we claim A never stopped talking.
-    // The seam is bounded on BOTH sides. An upper bound alone let an
-    // arbitrarily NEGATIVE seam through, which is not a narrow seam at all but
-    // a massive self-overlap: A [0, 10000] / B [2000, 2500] / A [3000, 4000]
-    // has A's second half starting 7 s before its first half ends, and calling
-    // that one continuous turn interrupted by B is simply false. A genuinely
-    // uninterrupted A measures 0 ms to the millisecond, so the tolerance is
-    // symmetric around it.
-    if (Math.abs(after.startMs - before.endMs) > INTERJECTION_MAX_SEAM_GAP_MS) {
-      continue;
-    }
-    if (middle.endMs - middle.startMs > INTERJECTION_MAX_MIDDLE_MS) {
-      continue;
-    }
-    if (middle.startMs - before.endMs > INTERJECTION_MAX_SIDE_GAP_MS) {
-      continue;
-    }
-    if (after.startMs - middle.endMs > INTERJECTION_MAX_SIDE_GAP_MS) {
-      continue;
-    }
-    const speakerLabel = before.speakerLabel?.trim() || "Unknown speaker";
-    accumulatorFor(middle.id).interrupts = {
-      speakerLabel,
-      beforeId: before.id,
-      afterId: after.id,
-    };
-    accumulatorFor(after.id).resumes = {
-      speakerLabel: middle.speakerLabel?.trim() || "Unknown speaker",
-      blockId: middle.id,
+    accumulatorFor(accumulators, context.afterId).resumes = {
+      speakerLabel: run.speakerLabel,
+      blockId: run.blocks[0]!.id,
     };
   }
 }
-
 /**
  * Record `peer` as the turn this block happened during, when the intersection
  * covers essentially all of this block's audible time.
@@ -1247,143 +1536,411 @@ function hasTiming(span: OverlapTimedSpan | undefined): boolean {
   );
 }
 
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Copy
+// The turn model
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Badge and screen-reader copy for one block's simultaneity, or null when there
- * is nothing credible to say.
+ * One rendered turn: a speaker's fragments back in one piece, whatever the
+ * producer cut them into.
  *
- * Three shapes, because the three situations read differently:
- *   - a block sitting between the two halves of one continuous turn is a remark
- *     made DURING that turn, and the measured intersection understates it, so
- *     the duration is only quoted when it clears the reporting threshold;
- *   - a turn wholly inside somebody else's span is a backchannel — "during";
- *   - anything else is a partial overlap, usually the floor changing hands —
- *     "with".
+ * NOTHING IS MERGED AND NO TEXT IS CONCATENATED. `blocks` are the very objects
+ * the caller passed in, in time order, each keeping its own id, its own words
+ * and its own seek anchors. A turn is a statement about which blocks belong
+ * together, not a new block.
  */
-export function describeOverlap(entry: BlockOverlap | undefined | null): OverlapDescription | null {
-  if (!entry) {
-    return null;
-  }
-  const peerList = entry.peers
-    .map((peer) => `${peer.speakerLabel} (${formatOverlapDuration(peer.overlapMs)})`)
-    .join(", ");
-
-  if (entry.interrupts) {
-    const label = entry.interrupts.speakerLabel;
-    const measured = entry.overlapMs > 0 ? `${formatOverlapDuration(entry.overlapMs)} ` : "";
-    return {
-      badge: `${measured}during ${label}`,
-      detail: `Simultaneous speech: this lands inside ${label}'s turn, which continues after it${
-        entry.overlapMs > 0 ? ` — ${formatOverlapDuration(entry.overlapMs)} of overlapping audio` : ""
-      }.`,
-    };
-  }
-
-  if (entry.peers.length === 0 || entry.overlapMs <= 0) {
-    return null;
-  }
-  const primary = entry.peers[0]!;
-  const duration = formatOverlapDuration(entry.overlapMs);
-
-  if (entry.containedIn === primary.id && entry.peers.length === 1) {
-    return {
-      badge: `${duration} during ${primary.speakerLabel}`,
-      detail: `Simultaneous speech: this whole turn falls inside ${primary.speakerLabel}'s turn — ${duration} of overlapping audio.`,
-    };
-  }
-  const remaining = entry.peers.length - 1;
-  return {
-    badge: `${duration} with ${primary.speakerLabel}${remaining > 0 ? ` +${remaining}` : ""}`,
-    detail: `Simultaneous speech: ${duration} of this turn overlaps ${peerList}. ${
-      entry.peers.length === 1 ? "Both voices are" : "Those voices are"
-    } on the recording at once.`,
-  };
+export interface Turn<B> {
+  /** Stable key: the id of the turn's first block. */
+  readonly key: string;
+  /** The speaker key the blocks agree on (`speaker`, else the trimmed label). */
+  readonly speaker: string;
+  readonly speakerLabel: string;
+  /** First and last moment this speaker was AUDIBLE across the whole turn. */
+  readonly startMs: number;
+  readonly endMs: number;
+  /** How long this speaker's own speech actually sounds, silences removed. */
+  readonly audibleMs: number;
+  /** The blocks, in time order. */
+  readonly blocks: readonly B[];
+  /** True when the producer split this turn and it has been put back together. */
+  readonly rejoined: boolean;
+  /** Short runs said inside this turn, in time order. */
+  readonly interjections: readonly Turn<B>[];
+  /** The key of the turn this one was said inside, when it is an interjection. */
+  readonly interjectionOf?: string;
+  /** The turn's own halves either side of an interjection, for a caller that wants them. */
+  readonly interjectionSeam?: { readonly beforeId: string; readonly afterId: string };
 }
 
 /**
- * Copy for the second half of a turn something landed inside, or null.
+ * One pair of turns that were genuinely audible at the same time.
  *
- * This is the marker that stops A/B/A reading as three separate turns: without
- * it, A's second half looks like a fresh turn taken back after B finished, when
- * in fact A never stopped talking.
+ * `intervals` is the tape itself — ascending, disjoint, and measured on words
+ * rather than paragraph extents — which is what a presentation needs to draw a
+ * band, a gutter mark or a margin note over the right stretch of the page.
+ *
+ * `totalMs` is kept because it is what the credibility floor is applied to and
+ * because a caller may want to sort or filter by it. It is NOT a thing to put
+ * on the page: "0.2 s during Ivan" is a precision nobody acts on.
  */
-export function describeResumption(
-  entry: BlockOverlap | undefined | null,
-): OverlapDescription | null {
-  if (!entry?.resumes) {
-    return null;
-  }
-  return {
-    badge: `continues past ${entry.resumes.speakerLabel}`,
-    detail: `Same turn continued: this is the rest of the turn ${entry.resumes.speakerLabel} spoke into — the speaker did not stop.`,
-  };
+export interface SimultaneousStretch {
+  /** The two turns, the one that started first named first. */
+  readonly turnKeys: readonly [string, string];
+  readonly speakerLabels: readonly [string, string];
+  /** Stretches of tape both were sounding, ascending and disjoint. */
+  readonly intervals: readonly Interval[];
+  /** Total simultaneous time. Measured; not a thing to show. */
+  readonly totalMs: number;
+  /**
+   * `interjection` when the second turn is a short backchannel said inside the
+   * first; `competing` when both were holding the floor.
+   */
+  readonly kind: "interjection" | "competing";
+}
+
+/** Turns in reading order, and the stretches where two of them collide. */
+export interface TurnModel<B> {
+  /** Top-level turns, earliest first. Interjections hang off their host. */
+  readonly turns: readonly Turn<B>[];
+  /** Every turn including the nested ones, keyed for lookup. */
+  readonly turnsByKey: ReadonlyMap<string, Turn<B>>;
+  /** Which turn each block belongs to, so a caller can go from a block to its turn. */
+  readonly turnKeyByBlockId: ReadonlyMap<string, string>;
+  /** Credible simultaneity, largest first. */
+  readonly simultaneous: readonly SimultaneousStretch[];
 }
 
 /**
- * Reading rows: consecutive blocks, with an interrupted turn's three parts
- * gathered into one row so the renderer can put a visual parent around them.
+ * The reading structure of a transcript: who held the floor, what was said
+ * inside somebody else's turn, and where two people genuinely spoke at once.
  *
- * The three canonical blocks are kept intact, in order, with their own ids,
- * their own timestamps and their own seek anchors — nothing is concatenated and
- * nothing is merged. Only the presentation changes: A-first-half, then the
- * interjection nested inside, then A's continuation, so the page stops claiming
- * that one continuous utterance was three separate turns.
+ * WHAT THIS IS FOR. The producer interleaves every speaker's words by start
+ * time and flushes a segment on each speaker change, so the moment two people
+ * hold the floor at once BOTH of their sentences are shredded into one- to
+ * three-word fragments that alternate. Measured on the overlap-and-pause
+ * fixture, whose ground truth is known: Cara speaks one sentence 41.0-49.0 s and
+ * Ben a different, competing sentence 43.2-49.0 s, and the producer emitted 31
+ * alternating fragments — "f the" / "final" / "sign" / "off". A published
+ * meeting showed the same at scale: 262 segments, 34% of them three words or
+ * fewer, sentences cut mid-clause. This model is what a renderer needs to stop
+ * showing that: the turns as they were spoken, with the fragments still intact
+ * underneath.
  *
- * Expects blocks already in reading order (see sortBlocksInReadingOrder).
+ * It deliberately makes no presentation decisions — no ordering beyond time, no
+ * nesting depth beyond one, no copy, no durations to display. The transcript
+ * pane still runs on groupInterruptedTurns, which sees only the small case;
+ * this is what the rebuilt pane will read, and it is shaped so that any of the
+ * treatments under consideration can be built on it without the judgement being
+ * redone.
  */
-export function groupInterruptedTurns<B extends OverlapBlock>(
+export function buildTurnModel<B extends OverlapBlock>(
   blocks: readonly B[],
-  analysis: ReadonlyMap<string, BlockOverlap>,
-): Array<InterruptedTurnRow<B>> {
-  const rows: Array<InterruptedTurnRow<B>> = [];
-  for (let index = 0; index < blocks.length; index += 1) {
-    const first = blocks[index]!;
-    const middle = blocks[index + 1];
-    const last = blocks[index + 2];
-    const interjection = middle ? analysis.get(middle.id)?.interrupts : undefined;
-    if (
-      middle &&
-      last &&
-      interjection &&
-      interjection.beforeId === first.id &&
-      interjection.afterId === last.id
-    ) {
-      rows.push({
-        key: first.id,
-        interrupted: true,
-        speakerLabel: interjection.speakerLabel,
-        interjectionId: middle.id,
-        interjectorLabel: middle.speakerLabel?.trim() || "Unknown speaker",
-        members: [first, middle, last],
-      });
-      index += 2;
+  options: { readonly minOverlapMs?: number } = {},
+): TurnModel<B> {
+  const ordered = sortBlocksInReadingOrder(blocks);
+  const spansOf = audibleSpanCache();
+  const runs = buildTurnRuns(ordered, spansOf);
+  const nested = nestTurnRuns(runs, spansOf);
+
+  const childrenByHost = new Map<TurnRun<B>, Array<TurnRun<B>>>();
+  for (const [run, context] of nested) {
+    const siblings = childrenByHost.get(context.host);
+    if (siblings) {
+      siblings.push(run);
+    } else {
+      childrenByHost.set(context.host, [run]);
+    }
+  }
+
+  const turnsByKey = new Map<string, Turn<B>>();
+  const turnKeyByBlockId = new Map<string, string>();
+  const turnByRun = new Map<TurnRun<B>, Turn<B>>();
+  const register = (run: TurnRun<B>, turn: Turn<B>): Turn<B> => {
+    turnsByKey.set(turn.key, turn);
+    turnByRun.set(run, turn);
+    for (const block of run.blocks) {
+      turnKeyByBlockId.set(block.id, turn.key);
+    }
+    return turn;
+  };
+
+  const turns: Array<Turn<B>> = [];
+  for (const run of runs) {
+    if (nested.has(run)) {
       continue;
     }
-    rows.push({
-      key: first.id,
-      interrupted: false,
-      speakerLabel: first.speakerLabel?.trim() || "Unknown speaker",
-      members: [first],
+    const children = (childrenByHost.get(run) ?? []).sort(
+      (left, right) => left.startMs - right.startMs,
+    );
+    const interjections = children.map((child) => {
+      const context = nested.get(child)!;
+      return register(child, {
+        ...turnOf(child, spansOf),
+        interjections: [],
+        interjectionOf: run.blocks[0]!.id,
+        interjectionSeam: { beforeId: context.beforeId, afterId: context.afterId },
+      });
     });
+    turns.push(register(run, { ...turnOf(run, spansOf), interjections }));
   }
-  return rows;
+
+  return {
+    turns,
+    turnsByKey,
+    turnKeyByBlockId,
+    simultaneous: measureSimultaneity(
+      runs,
+      turnByRun,
+      nested,
+      spansOf,
+      options.minOverlapMs ?? MIN_CREDIBLE_OVERLAP_MS,
+    ),
+  };
 }
 
-export interface InterruptedTurnRow<B> {
+function turnOf<B extends OverlapBlock>(
+  run: TurnRun<B>,
+  spansOf: (block: OverlapBlock) => Interval[],
+): Omit<Turn<B>, "interjections"> {
+  return {
+    key: run.blocks[0]!.id,
+    speaker: run.speakerKey,
+    speakerLabel: run.speakerLabel,
+    startMs: run.startMs,
+    endMs: run.endMs,
+    audibleMs: runAudibleMs(run, spansOf),
+    blocks: run.blocks,
+    rejoined: run.blocks.length > 1,
+  };
+}
+
+/**
+ * Credible simultaneity between whole turns, largest first.
+ *
+ * MEASURED BETWEEN TURNS, NOT BETWEEN FRAGMENTS, and that is not a refinement.
+ * Of the 31 fragment pairs the producer emits across the double-talk stretch,
+ * most intersect for less than the 150 ms credibility floor and would be thrown
+ * away one at a time; summing what survives quotes a fraction of the truth.
+ * Between the re-joined turns the same stretch measures 5.1 s.
+ *
+ * The same sweep the per-block analysis uses, over stand-in blocks whose
+ * "words" are each turn's own audible intervals — so the credibility floor, the
+ * union arithmetic and the never-simultaneous-with-yourself rule are the ones
+ * already measured and tested. A turn with no defensible audible time carries
+ * the rejection forward and so cannot fall back to its extent and fabricate the
+ * overlap the rejection removed.
+ */
+function measureSimultaneity<B extends OverlapBlock>(
+  runs: readonly TurnRun<B>[],
+  turnByRun: ReadonlyMap<TurnRun<B>, Turn<B>>,
+  nested: ReadonlyMap<TurnRun<B>, NestedTurn<B>>,
+  spansOf: (block: OverlapBlock) => Interval[],
+  minOverlapMs: number,
+): SimultaneousStretch[] {
+  const intervalsByRun = new Map<TurnRun<B>, Interval[]>();
+  for (const run of runs) {
+    intervalsByRun.set(run, mergeIntervals(run.blocks.flatMap((block) => spansOf(block))));
+  }
+
+  const stretches: SimultaneousStretch[] = [];
+  for (let left = 0; left < runs.length; left += 1) {
+    for (let right = left + 1; right < runs.length; right += 1) {
+      const earlier = runs[left]!;
+      const later = runs[right]!;
+      if (earlier.speakerKey === later.speakerKey) {
+        continue;
+      }
+      const intervals = intersectIntervals(
+        intervalsByRun.get(earlier) ?? [],
+        intervalsByRun.get(later) ?? [],
+      );
+      const simultaneousMs = totalMs(intervals);
+      if (simultaneousMs < minOverlapMs) {
+        continue;
+      }
+      const earlierTurn = turnByRun.get(earlier)!;
+      const laterTurn = turnByRun.get(later)!;
+      stretches.push({
+        turnKeys: [earlierTurn.key, laterTurn.key],
+        speakerLabels: [earlierTurn.speakerLabel, laterTurn.speakerLabel],
+        intervals,
+        totalMs: simultaneousMs,
+        kind:
+          nested.get(later)?.host === earlier || nested.get(earlier)?.host === later
+            ? "interjection"
+            : "competing",
+      });
+    }
+  }
+  return stretches.sort(
+    (left, right) =>
+      right.totalMs - left.totalMs || left.turnKeys[0].localeCompare(right.turnKeys[0]),
+  );
+}
+
+function runAudibleMs<B extends OverlapBlock>(
+  run: TurnRun<B>,
+  spansOf: (block: OverlapBlock) => Interval[],
+): number {
+  return totalMs(mergeIntervals(run.blocks.flatMap((block) => spansOf(block))));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reading rows
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One thing a row lays out inline: a stretch of the speaker's own speech, or
+ * somebody else's short remark dropped into it.
+ *
+ * A `speech` member is one of the producer's blocks, untouched — its own id,
+ * its own words, its own seek anchors. Several of them in a row are the
+ * fragments one turn was shredded into, and they are meant to be rendered as
+ * continuous prose with nothing between them but a space: the row is the
+ * paragraph, not the member.
+ *
+ * An `interjection` member is a whole nested turn (usually one block, sometimes
+ * a re-joined pair), sitting at the seam where it was actually said.
+ */
+export type TranscriptRowMember<B> =
+  | { readonly kind: "speech"; readonly key: string; readonly block: B }
+  | {
+      readonly kind: "interjection";
+      readonly key: string;
+      readonly speakerLabel: string;
+      readonly blocks: readonly B[];
+    };
+
+/**
+ * One turn, laid out for reading: who spoke, when they started, everything they
+ * said in one piece, and what was said inside or across it.
+ */
+export interface TranscriptRow<B> {
+  /** Stable key: the id of the turn's first block. */
   readonly key: string;
-  readonly interrupted: boolean;
-  /** The interrupted speaker when `interrupted`, else this block's own speaker. */
+  readonly speaker: string;
   readonly speakerLabel: string;
-  readonly interjectionId?: string;
-  readonly interjectorLabel?: string;
-  readonly members: readonly B[];
+  /** First and last audible moment of the turn, interjections excluded. */
+  readonly startMs: number;
+  readonly endMs: number;
+  /** The turn's own blocks in time order, with interjections at their seams. */
+  readonly members: readonly TranscriptRowMember<B>[];
+  /**
+   * The other speakers this turn was genuinely audible at the same time as,
+   * largest collision first and each named once. A backchannel is NOT in here:
+   * it is already on the page as a chip inside this row.
+   *
+   * Labels, not durations. "0.2 s with Chris" is a precision nobody acts on;
+   * "over Chris" is the whole of what a reader can do something with.
+   */
+  readonly over: readonly string[];
 }
 
-/** `0.6 s` below ten seconds, `12 s` above it — a decimal on a long overlap is noise. */
-export function formatOverlapDuration(ms: number): string {
-  const seconds = Math.max(0, ms) / 1000;
-  return seconds < 10 ? `${seconds.toFixed(1)} s` : `${Math.round(seconds)} s`;
+/**
+ * The transcript pane's rows: one row per turn, in the order they were spoken.
+ *
+ * This is the whole of the presentation decision, and it is deliberately small,
+ * because buildTurnModel has already made every judgement: which fragments were
+ * one turn, which short runs were said inside somebody else's, and where two
+ * people genuinely collided. All this adds is where each of those things goes
+ * on the page.
+ *
+ * WHAT A ROW IS. One turn — so a speaker's sixteen shredded fragments are one
+ * row and read as one paragraph, and the reader stops being told that one
+ * sentence was sixteen turns. Nothing is merged and no text is concatenated:
+ * the blocks come through as themselves, in order, and it is the renderer's job
+ * to set them as continuous prose. Every block keeps its id, its words and its
+ * seek targets.
+ *
+ * WHAT AN INTERJECTION IS. A backchannel is not a row of its own: it is a
+ * member of the row it landed in, placed after the block it followed, so that
+ * "(Ben: Right.)" reads where it happened instead of cutting the host's
+ * sentence in half. Its blocks are the same untouched blocks — a chip is still
+ * seekable, still highlightable, still countable.
+ *
+ * WHAT `over` IS. Two people holding the floor at once cannot be nested, so the
+ * collision is named on both rows and nowhere else. No duration: the model
+ * keeps the measurement, the page does not show it.
+ *
+ * Expects blocks already in reading order (see sortBlocksInReadingOrder);
+ * buildTurnModel sorts defensively anyway.
+ */
+export function buildTranscriptRows<B extends OverlapBlock>(
+  blocks: readonly B[],
+  options: { readonly minOverlapMs?: number } = {},
+): Array<TranscriptRow<B>> {
+  const model = buildTurnModel(blocks, options);
+
+  const over = new Map<string, string[]>();
+  const nameOver = (turnKey: string, speakerLabel: string): void => {
+    const named = over.get(turnKey);
+    if (!named) {
+      over.set(turnKey, [speakerLabel]);
+    } else if (!named.includes(speakerLabel)) {
+      named.push(speakerLabel);
+    }
+  };
+  for (const stretch of model.simultaneous) {
+    // Interjections are already on the page as chips; marking them again as a
+    // collision would put the noise back a different way.
+    if (stretch.kind !== "competing") {
+      continue;
+    }
+    nameOver(stretch.turnKeys[0], stretch.speakerLabels[1]);
+    nameOver(stretch.turnKeys[1], stretch.speakerLabels[0]);
+  }
+
+  return model.turns.map((turn) => ({
+    key: turn.key,
+    speaker: turn.speaker,
+    speakerLabel: turn.speakerLabel,
+    startMs: turn.startMs,
+    endMs: turn.endMs,
+    members: layOutTurn(turn),
+    over: over.get(turn.key) ?? [],
+  }));
+}
+
+/**
+ * A turn's blocks in time order, each interjection following the block it was
+ * said after.
+ *
+ * The seam is the model's own (`interjectionSeam.beforeId`) rather than a
+ * fresh comparison of timestamps, so the chip lands exactly where the producer
+ * cut the turn — which is where the reader heard it. An interjection whose seam
+ * names no block of this turn cannot be dropped on the floor: it goes last, so
+ * a malformed model loses a chip's position but never its words.
+ */
+function layOutTurn<B extends OverlapBlock>(turn: Turn<B>): Array<TranscriptRowMember<B>> {
+  const ownIds = new Set(turn.blocks.map((block) => block.id));
+  const lastId = turn.blocks.at(-1)?.id;
+  const atSeam = new Map<string, Array<Turn<B>>>();
+  for (const inner of turn.interjections) {
+    const seamId = inner.interjectionSeam?.beforeId;
+    const anchorId = seamId !== undefined && ownIds.has(seamId) ? seamId : lastId;
+    if (anchorId === undefined) {
+      continue;
+    }
+    const waiting = atSeam.get(anchorId);
+    if (waiting) {
+      waiting.push(inner);
+    } else {
+      atSeam.set(anchorId, [inner]);
+    }
+  }
+
+  const members: Array<TranscriptRowMember<B>> = [];
+  for (const block of turn.blocks) {
+    members.push({ kind: "speech", key: block.id, block });
+    for (const inner of atSeam.get(block.id) ?? []) {
+      members.push({
+        kind: "interjection",
+        key: inner.key,
+        speakerLabel: inner.speakerLabel,
+        blocks: inner.blocks,
+      });
+    }
+  }
+  return members;
 }

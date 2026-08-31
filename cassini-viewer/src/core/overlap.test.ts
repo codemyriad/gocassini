@@ -1,17 +1,30 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  INTERJECTION_MAX_MIDDLE_MS,
   analyzeOverlap,
+  buildTranscriptRows,
+  buildTurnModel,
   audibleIntervalsOf,
-  describeOverlap,
-  describeResumption,
-  formatOverlapDuration,
   getSoundingBlocks,
-  groupInterruptedTurns,
   repairTurnFinalWordInflation,
   sortBlocksInReadingOrder,
   type OverlapBlock,
+  type TranscriptRow,
 } from "./overlap";
+import { shreddedDoubleTalkSegments } from "./fixtures/shreddedDoubleTalk";
+
+/** Every block a row puts on the page, chips included, in the order it lays them out. */
+function blockIdsIn(row: TranscriptRow<OverlapBlock>): string[] {
+  return row.members.flatMap((member) =>
+    member.kind === "speech" ? [member.block.id] : member.blocks.map((block) => block.id),
+  );
+}
+
+/** The interjection chips a row carries. */
+function chipsIn(row: TranscriptRow<OverlapBlock>) {
+  return row.members.filter((member) => member.kind === "interjection");
+}
 
 /**
  * The shape a fully rewritten cleaned block really has: a complete set of word
@@ -114,27 +127,27 @@ describe("split-turn interjections (the A/B/A shape)", () => {
     expect(analysis.get("s8")?.resumes).toEqual({ speakerLabel: "Ana Duarte", blockId: "s7" });
   });
 
-  it("groups each interrupted turn into one reading row, keeping all three ids in order", () => {
-    const rows = groupInterruptedTurns(sortBlocksInReadingOrder(overlapAndPauseSegments), analysis);
-    const grouped = rows.filter((row) => row.interrupted);
+  it("puts each interrupted turn on one row, with the backchannel at its seam", () => {
+    const rows = buildTranscriptRows(overlapAndPauseSegments);
+    const hosts = rows.filter((row) => chipsIn(row).length > 0);
 
-    expect(grouped).toHaveLength(2);
-    expect(grouped[0]?.members.map((member) => member.id)).toEqual(["s1", "s2", "s3"]);
-    expect(grouped[0]?.speakerLabel).toBe("Ana Duarte");
-    expect(grouped[0]?.interjectorLabel).toBe("Ben Okafor");
-    expect(grouped[0]?.interjectionId).toBe("s2");
-    expect(grouped[1]?.members.map((member) => member.id)).toEqual(["s6", "s7", "s8"]);
-    expect(grouped[1]?.speakerLabel).toBe("Cara Lindqvist");
-    expect(grouped[1]?.interjectorLabel).toBe("Ana Duarte");
+    expect(hosts).toHaveLength(2);
+    // One paragraph, both halves of it, and the remark inline between them.
+    expect(blockIdsIn(hosts[0]!)).toEqual(["s1", "s2", "s3"]);
+    expect(hosts[0]?.speakerLabel).toBe("Ana Duarte");
+    expect(chipsIn(hosts[0]!).map((chip) => [chip.key, chip.speakerLabel])).toEqual([
+      ["s2", "Ben Okafor"],
+    ]);
+    expect(blockIdsIn(hosts[1]!)).toEqual(["s6", "s7", "s8"]);
+    expect(hosts[1]?.speakerLabel).toBe("Cara Lindqvist");
+    expect(chipsIn(hosts[1]!).map((chip) => chip.speakerLabel)).toEqual(["Ana Duarte"]);
   });
 
   it("keeps every block exactly once, in time order, across all rows", () => {
     const ordered = sortBlocksInReadingOrder(overlapAndPauseSegments);
-    const rows = groupInterruptedTurns(ordered, analysis);
+    const rows = buildTranscriptRows(overlapAndPauseSegments);
 
-    expect(rows.flatMap((row) => row.members.map((member) => member.id))).toEqual(
-      ordered.map((block) => block.id),
-    );
+    expect(rows.flatMap(blockIdsIn)).toEqual(ordered.map((block) => block.id));
   });
 
   it("does not group an ordinary three-turn exchange", () => {
@@ -149,7 +162,7 @@ describe("split-turn interjections (the A/B/A shape)", () => {
 
     expect(result.get("b1")?.interrupts).toBeUndefined();
     expect(result.get("a2")?.resumes).toBeUndefined();
-    expect(groupInterruptedTurns(exchange, result).every((row) => !row.interrupted)).toBe(true);
+    expect(buildTranscriptRows(exchange).map(blockIdsIn)).toEqual([["a1"], ["b1"], ["a2"]]);
   });
 
   it("does not group when a long pause separates the speaker's two halves", () => {
@@ -191,7 +204,7 @@ describe("split-turn interjections (the A/B/A shape)", () => {
 
     expect(analysis.get("b")?.interrupts).toBeUndefined();
     expect(analysis.get("a2")?.resumes).toBeUndefined();
-    expect(groupInterruptedTurns(blocks, analysis)).toHaveLength(3);
+    expect(buildTranscriptRows(blocks)).toHaveLength(3);
   });
 
   it("does not group when the middle block is a full contribution rather than a backchannel", () => {
@@ -240,7 +253,12 @@ describe("span overlap", () => {
     expect(analysis.get("backchannel")?.containedIn).toBe("long");
     expect(analysis.get("backchannel")?.overlapMs).toBe(600);
     expect(analysis.get("long")?.peers[0]?.speakerLabel).toBe("Ben Okafor");
-    expect(describeOverlap(analysis.get("backchannel"))?.badge).toBe("0.6 s during Ana Duarte");
+    // Ana's turn was never split around it, so it reads as its own short turn
+    // with each of them named over the other - and no duration either way.
+    expect(buildTranscriptRows(blocks).map((row) => [row.speakerLabel, [...row.over]])).toEqual([
+      ["Ana Duarte", ["Ben Okafor"]],
+      ["Ben Okafor", ["Ana Duarte"]],
+    ]);
   });
 
   it("measures words, not paragraph envelopes, when a speaker's paragraph spans another's", () => {
@@ -280,8 +298,8 @@ describe("span overlap", () => {
 
     expect(analysis.get("a")?.peers).toHaveLength(2);
     expect(analysis.get("a")?.overlapMs).toBe(3000);
-    expect(describeOverlap(analysis.get("a"))?.badge).toBe("3.0 s with B +1");
-    expect(describeOverlap(analysis.get("a"))?.detail).toContain("Those voices are on the recording at once.");
+    // Both peers are named on the page rather than counted ("+1").
+    expect(buildTranscriptRows(blocks)[0]?.over).toEqual(["B", "C"]);
   });
 
   it("never treats a speaker as simultaneous with themselves", () => {
@@ -310,7 +328,8 @@ describe("span overlap", () => {
     ];
 
     expect(analyzeOverlap(blocks).size).toBe(0);
-    expect(groupInterruptedTurns(blocks, analyzeOverlap(blocks))).toHaveLength(3);
+    // One speaker who never stopped is one paragraph, whatever the producer cut.
+    expect(buildTranscriptRows(blocks).map(blockIdsIn)).toEqual([["a", "b", "c"]]);
   });
 
   it("falls back to the block envelope for a turn with no words at all", () => {
@@ -371,7 +390,7 @@ describe("legacy turn-final inflation repair", () => {
     const repaired = repairTurnFinalWordInflation(fabricated);
 
     expect(analyzeOverlap(repaired).size).toBe(0);
-    expect(describeOverlap(analyzeOverlap(repaired).get("ben-turn"))).toBeNull();
+    expect(buildTranscriptRows(repaired).flatMap((row) => [...row.over])).toEqual([]);
   });
 
   it("clips the inflated word to start + the speaker's budget and shrinks the envelope", () => {
@@ -585,42 +604,6 @@ describe("legacy turn-final inflation repair", () => {
   });
 });
 
-describe("copy", () => {
-  it("says who and how long for a partial overlap", () => {
-    const analysis = analyzeOverlap(overlapAndPauseSegments);
-    const description = describeOverlap(analysis.get("s9"));
-
-    expect(description?.badge).toBe("0.2 s with Cara Lindqvist");
-    expect(description?.detail).toContain("Cara Lindqvist (0.2 s)");
-    expect(description?.detail).toContain("Both voices are on the recording at once.");
-  });
-
-  it("says 'during' for a turn that landed inside a continuing turn", () => {
-    const analysis = analyzeOverlap(overlapAndPauseSegments);
-
-    expect(describeOverlap(analysis.get("s2"))?.badge).toBe("0.4 s during Ana Duarte");
-    expect(describeOverlap(analysis.get("s2"))?.detail).toContain("continues after it");
-  });
-
-  it("names the interjector on the half that resumes", () => {
-    const analysis = analyzeOverlap(overlapAndPauseSegments);
-
-    expect(describeResumption(analysis.get("s3"))?.badge).toBe("continues past Ben Okafor");
-    expect(describeResumption(analysis.get("s2"))).toBeNull();
-  });
-
-  it("drops the decimal past ten seconds", () => {
-    expect(formatOverlapDuration(600)).toBe("0.6 s");
-    expect(formatOverlapDuration(9949)).toBe("9.9 s");
-    expect(formatOverlapDuration(12_400)).toBe("12 s");
-  });
-
-  it("says nothing when there is nothing to say", () => {
-    expect(describeOverlap(null)).toBeNull();
-    expect(describeOverlap(undefined)).toBeNull();
-  });
-});
-
 describe("provenance: artifacts the producer already bounded", () => {
   /**
    * The fp32 evidence that put the marker in the manifest. "held." runs 1.44 s
@@ -828,7 +811,10 @@ describe("mixed timing: some display tokens timed, some not", () => {
 
     expect(analysis.get("ana-mixed")?.overlapMs).toBe(1000);
     expect(analysis.get("ana-mixed")?.peers.map((peer) => peer.id)).toEqual(["ben-aside"]);
-    expect(describeOverlap(analysis.get("ben-aside"))?.badge).toBe("1.0 s during Ana Duarte");
+    expect(buildTranscriptRows(partiallyRewritten).map((row) => [...row.over])).toEqual([
+      ["Ben Okafor"],
+      ["Ana Duarte"],
+    ]);
   });
 
   it("highlights the passage across its rewritten half as well as its timed half", () => {
@@ -1250,11 +1236,8 @@ describe("blocks left with no trustworthy evidence", () => {
 
     expect(analysis.get("s2")?.interrupts).toBeUndefined();
     expect(analysis.get("s3")?.resumes).toBeUndefined();
-    expect(groupInterruptedTurns(sandwich, analysis).map((row) => row.interrupted)).toEqual([
-      false,
-      false,
-      false,
-    ]);
+    // And no row on the page adopts it as a chip: it reads as its own turn.
+    expect(buildTranscriptRows(sandwich).flatMap(chipsIn)).toEqual([]);
   });
 
   it("still groups the same three turns when all three are real", () => {
@@ -1263,7 +1246,7 @@ describe("blocks left with no trustworthy evidence", () => {
     const analysis = analyzeOverlap(sandwich);
 
     expect(analysis.get("s2")?.interrupts).toMatchObject({ beforeId: "s1", afterId: "s3" });
-    expect(groupInterruptedTurns(sandwich, analysis).map((row) => row.interrupted)).toEqual([true]);
+    expect(buildTranscriptRows(sandwich).map(blockIdsIn)).toEqual([["s1", "s2", "s3"]]);
   });
 });
 
@@ -1295,7 +1278,10 @@ describe("containment", () => {
     // sounds at the same time as hers — the rest lands in her silences.
     expect(analysis.get("ben")?.overlapMs).toBe(200);
     expect(analysis.get("ben")?.containedIn).toBeUndefined();
-    expect(describeOverlap(analysis.get("ben"))?.badge).toBe("0.2 s with Ana Duarte");
+    expect(buildTranscriptRows(blocks).map((row) => [row.speakerLabel, [...row.over]])).toEqual([
+      ["Ana Duarte", ["Ben Okafor"]],
+      ["Ben Okafor", ["Ana Duarte"]],
+    ]);
   });
 
   it("still names the turn a genuine backchannel happened during", () => {
@@ -1454,5 +1440,453 @@ describe("playback highlighting", () => {
 
     expect(getSoundingBlocks(gappy, 1400).map((block) => block.id)).toEqual(["ana"]);
     expect(getSoundingBlocks(gappy, 3000)).toEqual([]);
+  });
+});
+describe("the turn model on a shredded transcript", () => {
+  /**
+   * Ground truth, from the scenario and the TTS manifest that rendered the
+   * audio (`harness/scenarios/overlap-and-pause.v1.json`):
+   *
+   *   Cara  41.00–48.98  one sentence
+   *   Ben   43.20–48.96  a different, competing sentence
+   *
+   * Neither is backchannelling; both are producing whole sentences at the same
+   * time. The producer emitted that as 31 alternating fragments of one to three
+   * words. Every assertion below is about the structure a renderer is handed,
+   * not about what a helper returns.
+   */
+  const model = buildTurnModel(shreddedDoubleTalkSegments);
+
+  /** What one turn says, as the reader would read it. */
+  function spoken(turn: { blocks: readonly OverlapBlock[] }): string {
+    return turn.blocks.flatMap((block) => (block.words ?? []).map((word) => word.text)).join(" ");
+  }
+
+  function turnsBetween(startMs: number, endMs: number) {
+    return model.turns.filter((turn) => turn.startMs >= startMs && turn.startMs < endMs);
+  }
+
+  it("yields exactly one coherent turn per speaker across the double talk", () => {
+    const collision = turnsBetween(40_000, 50_000);
+
+    expect(collision.map((turn) => turn.speakerLabel)).toEqual(["Cara Lindqvist", "Ben Okafor"]);
+    // Cara's sentence, whole and in order — the producer had shredded it into
+    // 16 fragments ("f the" / "final" / "sign" / "off").
+    expect(spoken(collision[0]!)).toBe(
+      "So the only thing I still need from you is f the final sign off on the wording, because once it goes out, we cannot quietly edit it afterwards.",
+    );
+    expect(collision[0]?.blocks).toHaveLength(16);
+    // Ben's competing sentence, whole and in order, from his 15 fragments.
+    expect(spoken(collision[1]!)).toBe(
+      "Right, but hold on. I thought we agreed the wording was already settled last week when we went through it.",
+    );
+    expect(collision[1]?.blocks).toHaveLength(15);
+    expect(collision.map((turn) => turn.rejoined)).toEqual([true, true]);
+  });
+
+  it("classifies the double talk as two competing turns, neither inside the other", () => {
+    const collision = turnsBetween(40_000, 50_000);
+
+    expect(collision.map((turn) => turn.interjections)).toEqual([[], []]);
+    expect(collision.map((turn) => turn.interjectionOf)).toEqual([undefined, undefined]);
+    const stretch = model.simultaneous.find(
+      (candidate) => candidate.turnKeys[0] === collision[0]?.key,
+    );
+    expect(stretch?.kind).toBe("competing");
+    expect(stretch?.speakerLabels).toEqual(["Cara Lindqvist", "Ben Okafor"]);
+  });
+
+  it("measures the collision between the turns rather than between the fragments", () => {
+    // 5.1 s of Cara's turn and Ben's are on the recording at once, across nine
+    // separate stretches of tape. Measured fragment by fragment most of those
+    // 31 pairs fall under the 150 ms credibility floor and would be discarded.
+    const stretch = model.simultaneous[0]!;
+
+    expect(stretch.speakerLabels).toEqual(["Cara Lindqvist", "Ben Okafor"]);
+    expect(stretch.totalMs).toBeGreaterThan(5000);
+    expect(stretch.totalMs).toBeLessThan(5300);
+    expect(stretch.intervals.length).toBeGreaterThan(1);
+    // The intervals are the tape itself: ascending, disjoint, and inside the
+    // stretch both speakers were talking.
+    expect(stretch.intervals.every((interval) => interval.endMs > interval.startMs)).toBe(true);
+    expect(
+      stretch.intervals.every(
+        (interval, index) => index === 0 || interval.startMs >= stretch.intervals[index - 1]!.endMs,
+      ),
+    ).toBe(true);
+    expect(stretch.intervals[0]!.startMs).toBeGreaterThanOrEqual(43_260);
+    expect(stretch.intervals.at(-1)!.endMs).toBeLessThanOrEqual(48_860);
+  });
+
+  it("classifies the genuine backchannels as interjections inside the turn they landed in", () => {
+    const ana = model.turns[0]!;
+    const cara = model.turnsByKey.get("seg_000005")!;
+
+    expect(ana.speakerLabel).toBe("Ana Duarte");
+    expect(ana.interjections.map((inner) => [inner.speakerLabel, spoken(inner)])).toEqual([
+      ["Ben Okafor", "Right."],
+    ]);
+    expect(ana.interjections[0]?.interjectionOf).toBe("seg_000000");
+    expect(ana.interjections[0]?.interjectionSeam).toEqual({
+      beforeId: "seg_000000",
+      afterId: "seg_000002",
+    });
+    expect(cara.interjections.map((inner) => [inner.speakerLabel, spoken(inner)])).toEqual([
+      ["Ana Duarte", "Perfect."],
+    ]);
+    // And the sentence the backchannel cut in half is whole again: before the
+    // fix this turn's second paragraph opened mid-clause, on "link in the
+    // channel".
+    expect(spoken(cara)).toBe(
+      "can take that one. I will write it this afternoon and post the link in the channel well before the stand-up tomorrow.",
+    );
+    expect(
+      model.simultaneous.filter((stretch) => stretch.kind === "interjection").map((stretch) => stretch.speakerLabels),
+    ).toEqual([
+      ["Cara Lindqvist", "Ana Duarte"],
+      ["Ana Duarte", "Ben Okafor"],
+    ]);
+  });
+
+  it("leaves the clean sequential turns alone", () => {
+    const clean = ["seg_000003", "seg_000004", "seg_000009", "seg_000010", "seg_000042", "seg_000043"];
+
+    for (const key of clean) {
+      const turn = model.turnsByKey.get(key)!;
+      expect(turn.blocks.map((block) => block.id)).toEqual([key]);
+      expect(turn.rejoined).toBe(false);
+      expect(turn.interjections).toEqual([]);
+      expect(turn.interjectionOf).toBeUndefined();
+    }
+  });
+
+  it("does not re-join across a real floor change", () => {
+    // Ben takes the floor off Cara at 29.1 s and Cara comes back at 33.5 s,
+    // 4.2 s later. That is a new turn, not the old one resuming, and Ben's
+    // interruption is a turn of its own rather than something inside hers.
+    const caraTurns = model.turns.filter((turn) => turn.speakerLabel === "Cara Lindqvist");
+
+    expect(caraTurns.map((turn) => turn.key)).toEqual([
+      "seg_000005",
+      "seg_000009",
+      "seg_000011",
+      "seg_000043",
+    ]);
+    const benInterruption = model.turnsByKey.get("seg_000008")!;
+    expect(benInterruption.blocks.map((block) => block.id)).toEqual(["seg_000008"]);
+    expect(benInterruption.interjectionOf).toBeUndefined();
+    expect(
+      model.simultaneous.find((stretch) => stretch.turnKeys.includes("seg_000008"))?.kind,
+    ).toBe("competing");
+  });
+
+  it("breaks a re-joined turn at a genuine pause in the speaker's own speech", () => {
+    // The same shredded double talk, except Cara falls silent for 1.5 s in the
+    // middle of it while Ben talks on. Her own words either side of the hole are
+    // 1516 ms apart — past a breath by any measure, and past the producer's own
+    // 1500 ms segment-gap threshold — so she yielded the floor and took it back,
+    // and her turn must not be sewn together across it. Ben's fragments are
+    // untouched, so his turn must stay whole: the break belongs to her alone.
+    const silent = new Set(["seg_000027", "seg_000029", "seg_000031", "seg_000033"]);
+    const paused = buildTurnModel(
+      shreddedDoubleTalkSegments.filter((block) => !silent.has(block.id)),
+    );
+    const collision = paused.turns.filter(
+      (turn) => turn.startMs >= 40_000 && turn.startMs < 50_000,
+    );
+
+    expect(collision.map((turn) => [turn.speakerLabel, turn.key])).toEqual([
+      ["Cara Lindqvist", "seg_000011"],
+      ["Ben Okafor", "seg_000012"],
+      ["Cara Lindqvist", "seg_000035"],
+    ]);
+    expect(spoken(collision[0]!)).toBe(
+      "So the only thing I still need from you is f the final sign off on the wording,",
+    );
+    expect(spoken(collision[2]!)).toBe("cannot quietly edit it afterwards.");
+  });
+
+  it("keeps every block exactly once, with its own id, words and order", () => {
+    const everyTurn = [...model.turns, ...model.turns.flatMap((turn) => turn.interjections)];
+    const seen = everyTurn.flatMap((turn) => turn.blocks.map((block) => block.id));
+
+    expect([...seen].sort()).toEqual(shreddedDoubleTalkSegments.map((block) => block.id).sort());
+    expect(seen).toHaveLength(shreddedDoubleTalkSegments.length);
+    // A turn never reorders or rewrites what is inside it: each block is the
+    // very object the caller passed in, and blocks run in time order.
+    const byId = new Map(shreddedDoubleTalkSegments.map((block) => [block.id, block]));
+    expect(everyTurn.every((turn) => turn.blocks.every((block) => byId.get(block.id) === block))).toBe(
+      true,
+    );
+    expect(
+      everyTurn.every((turn) =>
+        turn.blocks.every(
+          (block, index) => index === 0 || block.startMs >= turn.blocks[index - 1]!.startMs,
+        ),
+      ),
+    ).toBe(true);
+    // And every block can be taken back to the turn it belongs to.
+    expect(model.turnKeyByBlockId.get("seg_000025")).toBe("seg_000011");
+    expect(model.turnKeyByBlockId.get("seg_000001")).toBe("seg_000001");
+    expect(model.turnKeyByBlockId.size).toBe(shreddedDoubleTalkSegments.length);
+  });
+
+  it("re-joins a legacy artifact only after the inflated word end is repaired", () => {
+    // The pre-fix producer stamped a trailing punctuation token at the NEXT
+    // acoustic onset, so "wording," runs 1.6 s past where Cara stopped saying
+    // it. That fabricated tail swallows her next fragment and the seam between
+    // her own two halves goes to -1.4 s: unrepaired, her turn falls apart at
+    // exactly the wrong place.
+    const legacy = shreddedDoubleTalkSegments.map((block) =>
+      block.id === "seg_000025"
+        ? {
+            ...block,
+            endMs: 47_000,
+            words: (block.words ?? []).map((word, index) =>
+              index === (block.words ?? []).length - 1 ? { ...word, endMs: 47_000 } : word,
+            ),
+          }
+        : block,
+    );
+    const caraTurns = (blocks: OverlapBlock[]) =>
+      buildTurnModel(blocks)
+        .turns.filter(
+          (turn) =>
+            turn.speakerLabel === "Cara Lindqvist" &&
+            turn.startMs >= 40_000 &&
+            turn.startMs < 50_000,
+        )
+        .map((turn) => turn.key);
+
+    expect(caraTurns(legacy)).toEqual(["seg_000011", "seg_000027"]);
+    expect(caraTurns(repairTurnFinalWordInflation(legacy))).toEqual(["seg_000011"]);
+    // This fixture's own ends are already measured, so the repair is a no-op on
+    // it and the marker changes nothing: the turns come out the same either way.
+    expect(caraTurns(repairTurnFinalWordInflation(shreddedDoubleTalkSegments))).toEqual([
+      "seg_000011",
+    ]);
+    expect(
+      caraTurns(
+        repairTurnFinalWordInflation(shreddedDoubleTalkSegments, { endsBoundedByAudio: true }),
+      ),
+    ).toEqual(["seg_000011"]);
+  });
+
+  it("takes no notice of the order the producer handed the blocks over in", () => {
+    const shuffled = buildTurnModel([...shreddedDoubleTalkSegments].reverse());
+
+    expect(shuffled.turns.map((turn) => turn.key)).toEqual(model.turns.map((turn) => turn.key));
+    expect(shuffled.turns.map((turn) => turn.blocks.map((block) => block.id))).toEqual(
+      model.turns.map((turn) => turn.blocks.map((block) => block.id)),
+    );
+  });
+});
+
+describe("turn re-joining", () => {
+  it("joins a speaker's own blocks wherever their speech runs on, and only there", () => {
+    // Two of Ana's blocks abut, a third opens a second later. The seam decides
+    // both, and nobody else's blocks are consulted: it is a question about
+    // whether ANA stopped.
+    const blocks: OverlapBlock[] = [
+      { id: "a1", speaker: "ana", speakerLabel: "Ana", startMs: 0, endMs: 1000 },
+      { id: "a2", speaker: "ana", speakerLabel: "Ana", startMs: 1000, endMs: 2000 },
+      { id: "a3", speaker: "ana", speakerLabel: "Ana", startMs: 3000, endMs: 4000 },
+    ];
+    const model = buildTurnModel(blocks);
+
+    expect(model.turns.map((turn) => turn.blocks.map((block) => block.id))).toEqual([
+      ["a1", "a2"],
+      ["a3"],
+    ]);
+    expect(model.turns.map((turn) => turn.rejoined)).toEqual([true, false]);
+    expect(model.turns[0]?.audibleMs).toBe(2000);
+  });
+
+  it("joins across the alternation, which is where a neighbour-only pass does nothing", () => {
+    // The production shape: no two ADJACENT blocks in the sorted list share a
+    // speaker, so merging neighbours would merge nothing. The grouping has to
+    // walk each speaker's own blocks.
+    const blocks: OverlapBlock[] = [
+      { id: "a1", speaker: "ana", speakerLabel: "Ana", startMs: 0, endMs: 500 },
+      { id: "b1", speaker: "ben", speakerLabel: "Ben", startMs: 400, endMs: 900 },
+      { id: "a2", speaker: "ana", speakerLabel: "Ana", startMs: 500, endMs: 1000 },
+      { id: "b2", speaker: "ben", speakerLabel: "Ben", startMs: 900, endMs: 1400 },
+      { id: "a3", speaker: "ana", speakerLabel: "Ana", startMs: 1000, endMs: 1500 },
+      { id: "b3", speaker: "ben", speakerLabel: "Ben", startMs: 1400, endMs: 1900 },
+    ];
+    const model = buildTurnModel(blocks);
+
+    expect(
+      blocks.every((block, index) => index === 0 || block.speaker !== blocks[index - 1]!.speaker),
+    ).toBe(true);
+    expect(model.turns.map((turn) => [turn.speakerLabel, turn.blocks.map((b) => b.id)])).toEqual([
+      ["Ana", ["a1", "a2", "a3"]],
+      ["Ben", ["b1", "b2", "b3"]],
+    ]);
+  });
+});
+
+describe("turn classification", () => {
+  it("keeps a turn that weaves through the host's speech out of the host", () => {
+    // Both gates have to be able to answer on their own, and here only the
+    // structural one can. Ben's OWN continuous speech is 0.9 s — well inside
+    // the backchannel bound, shorter than the fixture's real "Perfect." — but
+    // he says it in three goes and Ana restarts between every one of them.
+    // Somebody who is acknowledging your turn lands in one gap in it; somebody
+    // holding the floor makes you keep restarting, which is what this is.
+    const blocks: OverlapBlock[] = [
+      { id: "a1", speaker: "ana", speakerLabel: "Ana", startMs: 0, endMs: 1000 },
+      { id: "b1", speaker: "ben", speakerLabel: "Ben", startMs: 1000, endMs: 1300 },
+      { id: "a2", speaker: "ana", speakerLabel: "Ana", startMs: 1300, endMs: 1600 },
+      { id: "b2", speaker: "ben", speakerLabel: "Ben", startMs: 1600, endMs: 1900 },
+      { id: "a3", speaker: "ana", speakerLabel: "Ana", startMs: 1900, endMs: 2200 },
+      { id: "b3", speaker: "ben", speakerLabel: "Ben", startMs: 2200, endMs: 2500 },
+      { id: "a4", speaker: "ana", speakerLabel: "Ana", startMs: 2500, endMs: 4000 },
+    ];
+    const model = buildTurnModel(blocks);
+
+    expect(model.turns.map((turn) => [turn.speakerLabel, turn.blocks.length])).toEqual([
+      ["Ana", 4],
+      ["Ben", 3],
+    ]);
+    expect(model.turns.map((turn) => turn.interjections)).toEqual([[], []]);
+    // Under the duration bound alone Ben would have been demoted to a
+    // backchannel inside Ana's turn.
+    expect(model.turns[1]?.audibleMs).toBeLessThan(INTERJECTION_MAX_MIDDLE_MS);
+  });
+
+  it("keeps a long contribution out of the turn it landed in, single gap or not", () => {
+    // The other gate answering on its own. Ben lands in exactly ONE gap in
+    // Ana's speech — structurally he looks like a backchannel — but he holds
+    // the floor for four seconds while doing it. Somebody speaking for four
+    // seconds is making a contribution, and demoting it to an aside inside
+    // Ana's turn would lose a real turn off the page.
+    const blocks: OverlapBlock[] = [
+      { id: "a1", speaker: "ana", speakerLabel: "Ana", startMs: 0, endMs: 5000 },
+      { id: "ben", speaker: "ben", speakerLabel: "Ben", startMs: 3000, endMs: 7000 },
+      { id: "a2", speaker: "ana", speakerLabel: "Ana", startMs: 5000, endMs: 10_000 },
+    ];
+    const model = buildTurnModel(blocks);
+
+    expect(model.turns.map((turn) => [turn.speakerLabel, turn.blocks.map((b) => b.id)])).toEqual([
+      ["Ana", ["a1", "a2"]],
+      ["Ben", ["ben"]],
+    ]);
+    expect(model.turns.map((turn) => turn.interjections)).toEqual([[], []]);
+    expect(model.simultaneous.map((stretch) => stretch.kind)).toEqual(["competing"]);
+    expect(model.turns[1]?.audibleMs).toBeGreaterThan(INTERJECTION_MAX_MIDDLE_MS);
+  });
+
+  it("measures the contribution on the whole run, not on the fragments it arrived in", () => {
+    // The generalisation that makes the double talk come out right, isolated.
+    // Ben's three fragments are 1.2 s each — every one of them is inside the
+    // backchannel bound on its own — and they land in a single gap in Ana's
+    // speech, so the structural test passes them too. Only reading them as the
+    // 3.6 s of continuous speech they are keeps his turn a turn.
+    const blocks: OverlapBlock[] = [
+      { id: "a1", speaker: "ana", speakerLabel: "Ana", startMs: 0, endMs: 5000 },
+      { id: "b1", speaker: "ben", speakerLabel: "Ben", startMs: 3000, endMs: 4200 },
+      { id: "b2", speaker: "ben", speakerLabel: "Ben", startMs: 4300, endMs: 5500 },
+      { id: "a2", speaker: "ana", speakerLabel: "Ana", startMs: 5000, endMs: 10_000 },
+      { id: "b3", speaker: "ben", speakerLabel: "Ben", startMs: 5600, endMs: 6800 },
+    ];
+    const model = buildTurnModel(blocks);
+
+    expect(
+      blocks.every((block) => block.endMs - block.startMs <= INTERJECTION_MAX_MIDDLE_MS || block.speaker === "ana"),
+    ).toBe(true);
+    expect(model.turns.map((turn) => [turn.speakerLabel, turn.blocks.map((b) => b.id)])).toEqual([
+      ["Ana", ["a1", "a2"]],
+      ["Ben", ["b1", "b2", "b3"]],
+    ]);
+    expect(model.turns.map((turn) => turn.interjections)).toEqual([[], []]);
+    expect(model.turns[1]?.audibleMs).toBe(3600);
+  });
+
+  it("only folds in a remark that landed at the seam the turn was cut at", () => {
+    // Nesting undoes a SPLIT. Ben's remark here lands deep inside Ana's second
+    // fragment, 700 ms clear of either edge of it, so it is not what cut her
+    // turn — the producer would have cut around it if it had been. It is
+    // reported as two people speaking at once instead of being folded in.
+    const blocks: OverlapBlock[] = [
+      { id: "a1", speaker: "ana", speakerLabel: "Ana", startMs: 0, endMs: 1000 },
+      { id: "a2", speaker: "ana", speakerLabel: "Ana", startMs: 1300, endMs: 2000 },
+      { id: "ben", speaker: "ben", speakerLabel: "Ben", startMs: 1400, endMs: 1600 },
+      { id: "a3", speaker: "ana", speakerLabel: "Ana", startMs: 2300, endMs: 5000 },
+    ];
+    const model = buildTurnModel(blocks);
+
+    expect(model.turns.map((turn) => [turn.speakerLabel, turn.blocks.map((b) => b.id)])).toEqual([
+      ["Ana", ["a1", "a2", "a3"]],
+      ["Ben", ["ben"]],
+    ]);
+    expect(model.turns[0]?.interjections).toEqual([]);
+    expect(model.simultaneous.map((stretch) => stretch.kind)).toEqual(["competing"]);
+  });
+
+  it("keeps a backchannel inside a backchannel as a turn of its own, not a lost block", () => {
+    // Ana's turn is split around Ben's, and Ben's is split around Cara's. Ben
+    // is an interjection inside Ana; Cara's best host is Ben, who is himself an
+    // interjection. Two levels of nesting is not a shape a reader can parse,
+    // and a renderer that only draws a turn's own interjections would drop Cara
+    // off the page altogether.
+    const blocks: OverlapBlock[] = [
+      { id: "ana1", speaker: "ana", speakerLabel: "Ana", startMs: 0, endMs: 1000 },
+      { id: "ben1", speaker: "ben", speakerLabel: "Ben", startMs: 1000, endMs: 1100 },
+      { id: "cara", speaker: "cara", speakerLabel: "Cara", startMs: 1100, endMs: 1200 },
+      { id: "ben2", speaker: "ben", speakerLabel: "Ben", startMs: 1200, endMs: 1300 },
+      { id: "ana2", speaker: "ana", speakerLabel: "Ana", startMs: 1300, endMs: 4000 },
+    ];
+    const model = buildTurnModel(blocks);
+
+    expect(model.turns.map((turn) => [turn.speakerLabel, turn.blocks.map((block) => block.id)])).toEqual([
+      ["Ana", ["ana1", "ana2"]],
+      ["Cara", ["cara"]],
+    ]);
+    expect(model.turns[0]?.interjections.map((inner) => inner.blocks.map((block) => block.id))).toEqual([
+      ["ben1", "ben2"],
+    ]);
+    expect(model.turnKeyByBlockId.size).toBe(blocks.length);
+  });
+
+  it("gives a block with no defensible audible time a turn of its own", () => {
+    // A block whose canonical references resolved and were all rejected has no
+    // evidence it sounded at all. It cannot be re-joined into somebody's turn
+    // ("she never stopped" is a claim about sound), it cannot be an
+    // interjection, and it cannot host one.
+    const blocks: OverlapBlock[] = [
+      { id: "a1", speaker: "ana", speakerLabel: "Ana", startMs: 0, endMs: 2000 },
+      { id: "ghost", speaker: "ben", speakerLabel: "Ben", startMs: 1900, endMs: 2100, referencesRejected: true },
+      { id: "a2", speaker: "ana", speakerLabel: "Ana", startMs: 2000, endMs: 4000 },
+    ];
+    const model = buildTurnModel(blocks);
+
+    expect(model.turns.map((turn) => turn.blocks.map((block) => block.id))).toEqual([
+      ["a1", "a2"],
+      ["ghost"],
+    ]);
+    expect(model.turns[0]?.interjections).toEqual([]);
+    expect(model.simultaneous).toEqual([]);
+  });
+
+  it("does not let a real block join a discredited one's turn either", () => {
+    // The same rule from the other side. The discredited block comes FIRST, and
+    // Ana's real block opens the instant its extent ends. Joining them would
+    // hand the discredited block a place inside a turn that sounded, which is
+    // exactly the standing it was denied.
+    const blocks: OverlapBlock[] = [
+      { id: "ghost", speaker: "ana", speakerLabel: "Ana", startMs: 0, endMs: 2000, referencesRejected: true },
+      { id: "ben", speaker: "ben", speakerLabel: "Ben", startMs: 1900, endMs: 2100 },
+      { id: "a2", speaker: "ana", speakerLabel: "Ana", startMs: 2000, endMs: 4000 },
+    ];
+    const model = buildTurnModel(blocks);
+
+    expect(model.turns.map((turn) => turn.blocks.map((block) => block.id))).toEqual([
+      ["ghost"],
+      ["ben"],
+      ["a2"],
+    ]);
+    expect(model.turnsByKey.get("ghost")?.audibleMs).toBe(0);
+    expect(model.turnsByKey.get("a2")?.audibleMs).toBe(2000);
   });
 });
