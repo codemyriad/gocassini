@@ -557,11 +557,26 @@ export interface BlockCanonicalEvidence<T> {
   /** Canonical words compatible with this block, in canonical order. */
   readonly words: IndexedWord[];
   /**
-   * The block's own tokens, except that any whose canonical references were
-   * resolved and REJECTED carry `sourceWordsRejected: true`. Returned by
+   * The block's own tokens, except that any naming a canonical word that
+   * resolved and was REJECTED carry `sourceWordsRejected: true`. Returned by
    * identity when nothing was rejected.
    */
   readonly tokens: readonly T[];
+  /**
+   * At least one canonical reference this block named — through a token or
+   * through `sourceSegmentIds` — resolved in the index and was rejected.
+   *
+   * This is a claim about the BLOCK, not about any one token, and it is needed
+   * because the two pools fail differently. A block whose only evidence was
+   * block-level source-segment ids has no token to mark: every reference is
+   * thrown out, `words` comes back empty, and the block looks exactly like a
+   * genuinely wordless aside. src/core/overlap.ts falls back to the paragraph
+   * extent for those, which would hand back the whole turn — the very false
+   * overlap and false playback ring the rejection was for. Carrying the verdict
+   * at block level is what lets it tell "never had timed evidence" apart from
+   * "had it, and it was not this block's".
+   */
+  readonly referencesRejected: boolean;
 }
 
 /**
@@ -576,18 +591,23 @@ export interface BlockCanonicalEvidence<T> {
  * word the repair clipped (boundTokensBySourceWords): a token still standing
  * after the thing that justified it has gone.
  *
- * A token's references land in one of three states, and only the middle one
- * loses the token its acoustic vote:
+ * A token's references land in one of three states, and the middle one loses
+ * the token its acoustic vote:
  *
  *   1. NAMES NOTHING (`sourceWordIds: []`) — a rewritten or unaligned token.
  *      Untouched: there was never a canonical claim behind it to withdraw, and
  *      whatever times it has came from somewhere else entirely.
- *   2. NAMES WORDS THAT RESOLVE, AND EVERY ONE WAS REJECTED — the stale-id
- *      case. The index HAS those words; they belong to another speaker or to
- *      another part of the tape. The token's times were derived from words this
- *      block does not own, so it gets no vote. If even one named word survives,
- *      the token keeps its vote and boundTokensBySourceWords holds it to the
- *      survivors.
+ *   2. NAMES A WORD THAT RESOLVES AND IS REJECTED — the stale-id case, and ONE
+ *      such reference is enough, even when others survive. A token's times are
+ *      the min start and max end of ALL the words it matched, so a rejected
+ *      word contaminates whichever end it sat at. Keeping the token on the
+ *      strength of one survivor and trusting overlap.ts to bound it does not
+ *      work in either direction: boundTokensBySourceWords only ever lowers the
+ *      END, so a rejected EARLIER word still donates the token's start, and on
+ *      an artifact carrying `endsBoundedByAudio` that bounding pass is skipped
+ *      altogether and both ends leak. Nothing real is lost by dropping the
+ *      whole token, because its accepted words are already in `words` and
+ *      already supply their own intervals.
  *   3. NAMES WORDS THAT DO NOT RESOLVE AT ALL — untouched. This is the case we
  *      genuinely cannot judge, and it is not rare: 27,837 of the 181,311
  *      token-to-word references in the 51 baked display transcripts in this
@@ -627,10 +647,10 @@ export function canonicalEvidenceForBlock<T extends { sourceWordIds: readonly st
     words.push(word);
   };
 
+  let referencesRejected = false;
   const rejectedTokenIndexes = new Set<number>();
   for (let index_ = 0; index_ < block.tokens.length; index_ += 1) {
-    let keptCount = 0;
-    let rejectedCount = 0;
+    let rejected = false;
     for (const wordId of block.tokens[index_]!.sourceWordIds) {
       const word = wordsById.get(wordId);
       if (!word) {
@@ -638,20 +658,26 @@ export function canonicalEvidenceForBlock<T extends { sourceWordIds: readonly st
         continue;
       }
       if (isCompatibleWithBlock(block, segmentsById.get(word.segmentId), word)) {
-        keptCount += 1;
         take(word);
       } else {
-        rejectedCount += 1;
+        rejected = true;
       }
     }
-    if (keptCount === 0 && rejectedCount > 0) {
+    if (rejected) {
+      referencesRejected = true;
       rejectedTokenIndexes.add(index_);
     }
   }
 
   for (const segmentId of block.sourceSegmentIds) {
     const segment = segmentsById.get(segmentId);
-    if (!segment || !isCompatibleWithBlock(block, segment, segment)) {
+    if (!segment) {
+      continue;
+    }
+    if (!isCompatibleWithBlock(block, segment, segment)) {
+      // A rejected block-level reference marks nothing — it names no token —
+      // so the verdict has to be carried on the block itself.
+      referencesRejected = true;
       continue;
     }
     for (const word of segment.words) {
@@ -665,7 +691,7 @@ export function canonicalEvidenceForBlock<T extends { sourceWordIds: readonly st
   );
 
   if (rejectedTokenIndexes.size === 0) {
-    return { words, tokens: block.tokens };
+    return { words, tokens: block.tokens, referencesRejected };
   }
   // Copied, never mutated: the loaded artifact keeps its own tokens, and the
   // marked ones keep every field they had — text, spacing, times, alignment —
@@ -675,6 +701,7 @@ export function canonicalEvidenceForBlock<T extends { sourceWordIds: readonly st
     tokens: block.tokens.map((token, index_) =>
       rejectedTokenIndexes.has(index_) ? ({ ...token, sourceWordsRejected: true } as T) : token,
     ),
+    referencesRejected,
   };
 }
 
@@ -768,6 +795,13 @@ export interface JudgedDisplaySegment {
   tokens: readonly DisplayTranscriptToken[];
   words: IndexedWord[];
   sourceSegmentIds: string[];
+  /**
+   * A canonical reference this block named resolved and was rejected. Optional
+   * because the readable and raw projections have no references to reject;
+   * src/core/overlap.ts reads it to decide whether an evidence-free block may
+   * still fall back to its paragraph extent.
+   */
+  referencesRejected?: boolean;
 }
 
 /** Trailing " audio"/" video" is a device name, not part of a person's name. */
@@ -801,6 +835,7 @@ export function judgedDisplaySegments(
       tokens: evidence.tokens,
       words: evidence.words,
       sourceSegmentIds: [...block.sourceSegmentIds],
+      referencesRejected: evidence.referencesRejected,
     };
   });
 }

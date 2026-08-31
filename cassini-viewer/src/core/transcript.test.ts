@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { analyzeOverlap, getSoundingBlocks, type OverlapBlock } from "./overlap";
+import {
+  analyzeOverlap,
+  getSoundingBlocks,
+  groupInterruptedTurns,
+  repairTurnFinalWordInflation,
+  type OverlapBlock,
+} from "./overlap";
 import {
   buildTranscriptIndex,
   canonicalEvidenceForBlock,
@@ -409,6 +415,15 @@ describe("canonicalWordsForBlock rejects resolvable but incompatible references"
           words: [{ id: "seg_000001:w_0", text: "actually", startMs: 1000, endMs: 2500 }],
         },
         {
+          // Alice again, after Bob — the survivor in a partially stale token.
+          id: "seg_000003",
+          speaker: "spk_alice",
+          startMs: 2600,
+          endMs: 3000,
+          text: "sure",
+          words: [{ id: "seg_000003:w_0", text: "sure", startMs: 2600, endMs: 3000 }],
+        },
+        {
           // Alice again, ten minutes later — resolvable, same speaker, but
           // nowhere near the block that names it.
           id: "seg_000002",
@@ -747,25 +762,216 @@ describe("canonicalWordsForBlock rejects resolvable but incompatible references"
       expect(getSoundingBlocks(judged(), 250).map((block) => block.id)).toEqual(["d_alice"]);
     });
 
-    it("keeps the vote when one named word survives, bounded to the survivor", () => {
-      // Partly stale is not wholly stale: the token still has a canonical word
-      // of its own behind it, and boundTokensBySourceWords holds it to that.
-      const partly = {
+    /**
+     * PARTLY STALE IS STALE. A token's times are the minimum start and the
+     * maximum end of ALL the canonical words it matched, so a rejected word
+     * contaminates whichever end it happened to sit at — here the START, since
+     * Bob's word runs 1000–2500 and Alice's survivor only opens at 2600.
+     *
+     * Keeping the token on the strength of the survivor and trusting the repair
+     * to bound it fails twice over: boundTokensBySourceWords only ever lowers
+     * the END, and on an artifact carrying `endsBoundedByAudio` the bounding
+     * pass does not run at all. Both are covered below.
+     */
+    describe("a token with one rejected source and one accepted one", () => {
+      const partlyStale = {
         ...staleTokenBlock,
         tokens: [
           {
-            text: "okay",
-            startMs: 0,
-            endMs: 2500,
-            sourceWordIds: ["seg_000000:w_0", "seg_000001:w_0"],
+            text: "actually sure",
+            // min(Bob 1000, Alice 2600) … max(Bob 2500, Alice 3000)
+            startMs: 1000,
+            endMs: 3000,
+            sourceWordIds: ["seg_000001:w_0", "seg_000003:w_0"],
             alignment: "source",
           },
         ],
       };
-      const evidence = canonicalEvidenceForBlock(portableIndex, partly);
 
-      expect(evidence.tokens[0]).not.toHaveProperty("sourceWordsRejected");
-      expect(evidence.words.map((word) => word.id)).toEqual(["seg_000000:w_0"]);
+      function pipeline(tokens: unknown, endsBoundedByAudio: boolean): OverlapBlock[] {
+        return repairTurnFinalWordInflation(
+          [
+            {
+              id: partlyStale.id,
+              speaker: partlyStale.speaker,
+              speakerLabel: partlyStale.speakerLabel,
+              startMs: partlyStale.startMs,
+              endMs: partlyStale.endMs,
+              tokens: tokens as OverlapBlock["tokens"],
+              words: canonicalEvidenceForBlock(portableIndex, partlyStale).words,
+            },
+            bobBlock,
+          ],
+          { endsBoundedByAudio },
+        );
+      }
+
+      it("takes only the accepted word, and still marks the token", () => {
+        const evidence = canonicalEvidenceForBlock(portableIndex, partlyStale);
+
+        expect(evidence.words.map((word) => word.id)).toEqual(["seg_000003:w_0"]);
+        expect(evidence.tokens[0]).toMatchObject({
+          text: "actually sure",
+          startMs: 1000,
+          endMs: 3000,
+          sourceWordsRejected: true,
+        });
+        expect(evidence.referencesRejected).toBe(true);
+      });
+
+      for (const endsBoundedByAudio of [false, true]) {
+        const marker = `endsBoundedByAudio: ${endsBoundedByAudio}`;
+
+        it(`leaks the rejected word's start when the token still votes (${marker})`, () => {
+          // The token exactly as the display transcript carries it. The legacy
+          // bound cannot save this even when it runs: it would pull the END to
+          // 3000, which it already is, and the start stays on Bob's word.
+          const leaked = pipeline(partlyStale.tokens, endsBoundedByAudio);
+
+          expect(analyzeOverlap(leaked).get("d_alice")?.overlapMs).toBe(1500);
+          expect(getSoundingBlocks(leaked, 2000).map((block) => block.id)).toEqual([
+            "d_alice",
+            "d_bob",
+          ]);
+        });
+
+        it(`reports nothing once the whole token loses its vote (${marker})`, () => {
+          const judged = pipeline(
+            canonicalEvidenceForBlock(portableIndex, partlyStale).tokens,
+            endsBoundedByAudio,
+          );
+
+          expect(analyzeOverlap(judged).size).toBe(0);
+          expect(getSoundingBlocks(judged, 2000).map((block) => block.id)).toEqual(["d_bob"]);
+          // Alice's own accepted word still sounds where it really did.
+          expect(getSoundingBlocks(judged, 2800).map((block) => block.id)).toEqual(["d_alice"]);
+        });
+      }
+    });
+
+    /**
+     * A BLOCK WHOSE EVIDENCE WAS REJECTED IS NOT A WORDLESS BLOCK. The extent
+     * fallback exists so a genuinely untimed aside still occupies its stretch
+     * of tape. Applying it to a block whose references resolved and were thrown
+     * out would hand the whole paragraph back as audible time and rebuild the
+     * exact overlap and playback ring the rejection removed — the rejection
+     * would have bought nothing.
+     */
+    describe("a block left with no trustworthy evidence at all", () => {
+      // Only a block-level source-segment reference, and it is Bob's. There is
+      // no token here to carry the verdict, which is why the block carries it.
+      const segmentOnly = {
+        id: "d_alice",
+        speaker: "spk_alice",
+        speakerLabel: "Alice",
+        startMs: 0,
+        endMs: 3000,
+        sourceSegmentIds: ["seg_000001"],
+        tokens: [] as Array<{ sourceWordIds: readonly string[] }>,
+      };
+
+      it("says so on the block, not on a token", () => {
+        const evidence = canonicalEvidenceForBlock(portableIndex, segmentOnly);
+
+        expect(evidence.words).toEqual([]);
+        expect(evidence.tokens).toEqual([]);
+        expect(evidence.referencesRejected).toBe(true);
+      });
+
+      for (const endsBoundedByAudio of [false, true]) {
+        const marker = `endsBoundedByAudio: ${endsBoundedByAudio}`;
+
+        it(`falls back to the paragraph extent while it looks wordless (${marker})`, () => {
+          // The same block WITHOUT the verdict — indistinguishable from a
+          // genuinely untimed aside, and the extent covers all of Bob's turn.
+          const wordless = repairTurnFinalWordInflation(
+            [
+              {
+                id: segmentOnly.id,
+                speaker: segmentOnly.speaker,
+                speakerLabel: segmentOnly.speakerLabel,
+                startMs: segmentOnly.startMs,
+                endMs: segmentOnly.endMs,
+                words: [],
+              },
+              bobBlock,
+            ],
+            { endsBoundedByAudio },
+          );
+
+          expect(analyzeOverlap(wordless).get("d_alice")?.overlapMs).toBe(1500);
+          expect(getSoundingBlocks(wordless, 2000).map((block) => block.id)).toEqual([
+            "d_alice",
+            "d_bob",
+          ]);
+        });
+
+        it(`keeps no extent once the verdict is carried (${marker})`, () => {
+          const evidence = canonicalEvidenceForBlock(portableIndex, segmentOnly);
+          const judged = repairTurnFinalWordInflation(
+            [
+              {
+                id: segmentOnly.id,
+                speaker: segmentOnly.speaker,
+                speakerLabel: segmentOnly.speakerLabel,
+                startMs: segmentOnly.startMs,
+                endMs: segmentOnly.endMs,
+                words: evidence.words,
+                referencesRejected: evidence.referencesRejected,
+              },
+              bobBlock,
+            ],
+            { endsBoundedByAudio },
+          );
+
+          expect(analyzeOverlap(judged).size).toBe(0);
+          expect(getSoundingBlocks(judged, 2000).map((block) => block.id)).toEqual(["d_bob"]);
+          expect(getSoundingBlocks(judged, 250)).toEqual([]);
+        });
+      }
+
+      it("is not groupable as the interjection in an A/B/A sandwich", () => {
+        // The producer's commonest shape: Bob's turn cut in half around a block
+        // that landed inside it. "Bob never stopped and somebody spoke over
+        // him" is a claim about sound, and this middle block has none.
+        const evidence = canonicalEvidenceForBlock(portableIndex, segmentOnly);
+        const sandwich: OverlapBlock[] = [
+          {
+            id: "d_bob_first",
+            speaker: "spk_bob",
+            speakerLabel: "Bob",
+            startMs: 1000,
+            endMs: 2500,
+            words: [{ id: "seg_000001:w_0", text: "actually", startMs: 1000, endMs: 2500 }],
+          },
+          {
+            id: "d_alice",
+            speaker: "spk_alice",
+            speakerLabel: "Alice",
+            startMs: 2400,
+            endMs: 2600,
+            words: evidence.words,
+            referencesRejected: evidence.referencesRejected,
+          },
+          {
+            id: "d_bob_second",
+            speaker: "spk_bob",
+            speakerLabel: "Bob",
+            startMs: 2500,
+            endMs: 4000,
+            words: [{ id: "seg_000003:w_0", text: "anyway", startMs: 2500, endMs: 4000 }],
+          },
+        ];
+        const analysis = analyzeOverlap(sandwich);
+
+        expect(analysis.get("d_alice")?.interrupts).toBeUndefined();
+        expect(analysis.get("d_bob_second")?.resumes).toBeUndefined();
+        expect(groupInterruptedTurns(sandwich, analysis).map((row) => row.interrupted)).toEqual([
+          false,
+          false,
+          false,
+        ]);
+      });
     });
 
     it("leaves a token that names nothing, and one whose ids resolve to nothing", () => {

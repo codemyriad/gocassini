@@ -1187,6 +1187,86 @@ describe("interpolated token spans are excluded from audible evidence", () => {
   });
 });
 
+/**
+ * A BLOCK WHOSE EVIDENCE WAS REJECTED IS NOT A WORDLESS BLOCK.
+ *
+ * The extent fallback is there so a genuinely untimed aside still occupies its
+ * stretch of tape and can still be reported as simultaneous with somebody. A
+ * block whose canonical references resolved and were thrown out as another
+ * speaker's is the opposite case: it is not untimed, it is DISCREDITED, and
+ * handing it its paragraph extent would rebuild exactly the false overlap and
+ * false playback ring the rejection removed.
+ */
+describe("blocks left with no trustworthy evidence", () => {
+  const discredited: OverlapBlock = {
+    id: "ana-stale",
+    speaker: "ana",
+    speakerLabel: "Ana Duarte",
+    startMs: 10_000,
+    endMs: 14_000,
+    referencesRejected: true,
+    tokens: [
+      // Timed, aligned-looking, and every canonical word behind it rejected.
+      { text: "hello", startMs: 10_000, endMs: 14_000, sourceWordsRejected: true },
+    ],
+  };
+  const benTurn: OverlapBlock = {
+    id: "ben-turn",
+    speaker: "ben",
+    speakerLabel: "Ben Okafor",
+    startMs: 11_000,
+    endMs: 13_000,
+    words: [{ text: "carry", startMs: 11_000, endMs: 13_000 }],
+  };
+
+  it("has no audible time at all", () => {
+    expect(audibleIntervalsOf(discredited)).toEqual([]);
+  });
+
+  it("still gives a genuinely wordless block its whole extent", () => {
+    // The other side of the same branch: no verdict, no timed spans, so the
+    // aside keeps the extent it always had.
+    const { referencesRejected: _omitted, tokens: _noTokens, ...wordless } = discredited;
+
+    expect(audibleIntervalsOf(wordless)).toEqual([{ startMs: 10_000, endMs: 14_000 }]);
+  });
+
+  it("reports no simultaneous speech and holds no playback ring", () => {
+    const blocks = [discredited, benTurn];
+
+    expect(analyzeOverlap(blocks).size).toBe(0);
+    expect(getSoundingBlocks(blocks, 12_000).map((block) => block.id)).toEqual(["ben-turn"]);
+    expect(getSoundingBlocks(blocks, 10_500)).toEqual([]);
+  });
+
+  it("is not groupable as the half of a turn something landed inside", () => {
+    // The A/B/A pass runs on EXTENTS, so it is the one place a discredited
+    // block could still make a claim. Here the FIRST half of the interrupted
+    // turn is the discredited one: "Ana never stopped talking" cannot be said
+    // about a block with nothing to say it from.
+    const [first, middle, last] = overlapAndPauseSegments;
+    const sandwich: OverlapBlock[] = [{ ...first!, referencesRejected: true }, middle!, last!];
+    const analysis = analyzeOverlap(sandwich);
+
+    expect(analysis.get("s2")?.interrupts).toBeUndefined();
+    expect(analysis.get("s3")?.resumes).toBeUndefined();
+    expect(groupInterruptedTurns(sandwich, analysis).map((row) => row.interrupted)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it("still groups the same three turns when all three are real", () => {
+    // The positive control: the guard must not have cost the feature.
+    const sandwich = overlapAndPauseSegments.slice(0, 3);
+    const analysis = analyzeOverlap(sandwich);
+
+    expect(analysis.get("s2")?.interrupts).toMatchObject({ beforeId: "s1", afterId: "s3" });
+    expect(groupInterruptedTurns(sandwich, analysis).map((row) => row.interrupted)).toEqual([true]);
+  });
+});
+
 describe("containment", () => {
   it("does not claim a whole turn happened during a peer it merely sits inside", () => {
     // Ben's paragraph is bracketed by Ana's, but only 0.2 s of their words

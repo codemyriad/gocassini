@@ -258,6 +258,17 @@ export interface OverlapTimedSpan {
  * the caller's own type carries.
  */
 export interface OverlapBlock {
+  /**
+   * A canonical reference this block named resolved in the index and was
+   * rejected as belonging to another speaker or another part of the tape
+   * (transcript.ts, canonicalEvidenceForBlock). Absent on fixtures and on the
+   * projections that have no references to reject.
+   *
+   * It is the difference between a block that never had timed evidence and one
+   * whose evidence was taken away, which audibleIntervalsOf has to know: only
+   * the first may fall back to its paragraph extent.
+   */
+  readonly referencesRejected?: boolean;
   readonly id: string;
   readonly speaker?: string;
   readonly speakerLabel?: string;
@@ -822,7 +833,7 @@ export function analyzeOverlap(
     active.push(current);
   }
 
-  markSplitTurnInterjections(ordered, accumulatorFor);
+  markSplitTurnInterjections(ordered, accumulatorFor, spansOf);
 
   const result = new Map<string, BlockOverlap>();
   for (const [id, accumulator] of accumulators) {
@@ -911,9 +922,29 @@ export function audibleIntervalsOf(block: OverlapBlock): Interval[] {
   collectAudibleSpans(block.tokens, spans);
   collectAudibleSpans(block.words, spans);
   if (spans.length === 0) {
-    return [{ startMs: block.startMs, endMs: block.endMs }];
+    // THE EXTENT FALLBACK IS FOR BLOCKS THAT NEVER HAD TIMED EVIDENCE, not for
+    // blocks whose evidence was taken away. A wordless aside genuinely occupies
+    // its stretch of tape and can genuinely be simultaneous with somebody, so
+    // it keeps the extent. A block whose references resolved and were all
+    // rejected is a different animal: falling back would hand the whole
+    // paragraph back as audible time and recreate exactly the false overlap and
+    // false playback ring the rejection was there to prevent — the rejection
+    // would buy nothing at all. It has no defensible audible time, so it has
+    // none.
+    return block.referencesRejected ? [] : [{ startMs: block.startMs, endMs: block.endMs }];
   }
   return mergeIntervals(spans);
+}
+
+/**
+ * A block nothing in the recording vouches for anywhere: no trustworthy span,
+ * and no right to its extent either.
+ *
+ * Distinct from "quiet" — a wordless aside is not acoustically empty, it is
+ * merely untimed, and it keeps its extent.
+ */
+function isAcousticallyEmpty(spans: readonly Interval[]): boolean {
+  return spans.length === 0;
 }
 
 function collectAudibleSpans(
@@ -1096,12 +1127,26 @@ function totalMs(intervals: readonly Interval[]): number {
 function markSplitTurnInterjections(
   ordered: readonly OverlapBlock[],
   accumulatorFor: (id: string) => OverlapAccumulator,
+  spansOf: (block: OverlapBlock) => Interval[],
 ): void {
   for (let index = 1; index + 1 < ordered.length; index += 1) {
     const before = ordered[index - 1]!;
     const middle = ordered[index]!;
     const after = ordered[index + 1]!;
     if (!isSameSpeaker(before, after) || isSameSpeaker(before, middle)) {
+      continue;
+    }
+    // This pass runs on EXTENTS — the seam between A's halves, the length of
+    // the block between them — so it is the one place a block with no
+    // trustworthy evidence could still make a claim. "A never stopped talking
+    // and B spoke over her" is a statement about sound; a block whose evidence
+    // was rejected cannot be the B that proves it, and cannot be either half of
+    // the A it is said about. All three have to be real.
+    if (
+      isAcousticallyEmpty(spansOf(before)) ||
+      isAcousticallyEmpty(spansOf(middle)) ||
+      isAcousticallyEmpty(spansOf(after))
+    ) {
       continue;
     }
     // Adjacency alone proves nothing: ordinary dialogue produces A/B/A all the
