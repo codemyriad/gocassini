@@ -6,10 +6,12 @@
   import DOMPurify from "dompurify";
   import { Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape } from "@lucide/svelte";
   import {
-    canonicalWordsForBlock,
     formatClockTime,
     isLikelyCrosstalkTurn,
+    judgedDisplaySegments,
+    normalizeSpeakerLabel,
     parseTimeHash,
+    type JudgedDisplaySegment,
   } from "../core/transcript";
   import { getActiveTimedRange } from "../core/timing";
   import {
@@ -67,17 +69,7 @@
     enriched: MeetingCatalogEntry;
   }>();
 
-  interface DisplaySegment {
-    id: string;
-    speaker?: string;
-    speakerLabel: string;
-    startMs: number;
-    endMs: number;
-    text: string;
-    tokens: DisplayTranscriptToken[];
-    words: IndexedWord[];
-    sourceSegmentIds: string[];
-  }
+  type DisplaySegment = JudgedDisplaySegment;
 
   const CONTINUATION_GAP_MS = 60_000;
 
@@ -524,27 +516,11 @@
     display: DisplayTranscriptV1 | null,
   ): DisplaySegment[] {
     if (display) {
-      // Carry the canonical words alongside the display tokens. A display
-      // transcript is LLM-cleaned prose whose tokens hold no attribution, and
-      // portable meetings always build one — so leaving this empty meant the
-      // crosstalk badge never appeared for the common case, only for raw JSON
-      // with the exact-word view switched on. canonicalWordsForBlock resolves
-      // the tokens' sourceWordIds against the canonical index (sourceSegmentIds
-      // alone use producer segment ids that never match the per-item ids a
-      // portable manifest is re-projected into) and falls back to the
-      // sourceSegmentIds mapping for blocks with no word alignment. The words
-      // are not rendered here; they are what the segment is judged on.
-      return display.blocks.map((block) => ({
-        id: block.id,
-        speaker: block.speaker,
-        speakerLabel: normalizeSpeakerLabel(block.speakerLabel),
-        startMs: block.startMs,
-        endMs: block.endMs,
-        text: block.text,
-        tokens: block.tokens,
-        words: canonicalWordsForBlock(index, block),
-        sourceSegmentIds: [...block.sourceSegmentIds],
-      }));
+      // The whole projection lives in core/transcript.ts: the canonical words a
+      // block is judged on and the tokens still allowed to vote on that
+      // judgement have to come out of one compatibility pass, and that has to
+      // be somewhere a test can reach. See judgedDisplaySegments.
+      return judgedDisplaySegments(index, display);
     }
 
     if (!readable) {
@@ -582,10 +558,6 @@
         sourceSegmentIds: [...segment.sourceSegmentIds],
       };
     });
-  }
-
-  function normalizeSpeakerLabel(label: string): string {
-    return label.replace(/\s+(audio|video)\s*$/i, "").trim() || label;
   }
 
   // Tooltip fragment for a low-confidence word. Guarded against non-finite

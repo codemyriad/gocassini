@@ -242,6 +242,13 @@ export interface OverlapTimedSpan {
   readonly sourceWordIds?: readonly string[];
   /** How a display token got its times: `source`, `interpolated` or `none`. */
   readonly alignment?: string;
+  /**
+   * Set when every canonical word this token named resolved in the index and
+   * was rejected as incompatible with the block (transcript.ts,
+   * canonicalEvidenceForBlock). The token still renders and still seeks; it
+   * just no longer counts as evidence that its speaker was audible.
+   */
+  readonly sourceWordsRejected?: boolean;
 }
 
 /**
@@ -457,7 +464,7 @@ function latestTimedEnd(
   let latest = Number.NEGATIVE_INFINITY;
   for (const pool of [tokens, words]) {
     for (const span of pool ?? []) {
-      if (hasTiming(span) && !isSyntheticTiming(span)) {
+      if (hasTiming(span) && !isUnattestedSpan(span)) {
         latest = Math.max(latest, span.endMs as number);
       }
     }
@@ -667,7 +674,7 @@ function budgetsBySpeaker<B extends OverlapBlock>(
       if (
         excluded.has(index) ||
         !hasTiming(span) ||
-        isSyntheticTiming(span) ||
+        isUnattestedSpan(span) ||
         !WORD_LIKE.test(span.text ?? "")
       ) {
         continue;
@@ -864,7 +871,7 @@ export function analyzeOverlap(
  *     block to [0, 500] — the ring went dark for the two seconds the speaker
  *     was still talking through, and any simultaneity in them went unreported.
  *
- * ONLY ACOUSTIC EVIDENCE GETS IN, which the union does not give for free. Two
+ * ONLY ACOUSTIC EVIDENCE GETS IN, which the union does not give for free. Three
  * things that look like timing are not evidence of anybody making a noise:
  *
  *   - a display token that OUTLIVES the canonical word it was aligned to. An
@@ -876,6 +883,13 @@ export function analyzeOverlap(
  *     the fabricated end, and this union would restore it. Those tokens are
  *     pulled back to their source words by the repair before this runs; see
  *     boundTokensBySourceWords;
+ *
+ *   - a token whose canonical words were REJECTED as belonging to another
+ *     speaker or another part of the tape. Its span was only ever the envelope
+ *     of those words, so once they go it stands on nothing, and counting it
+ *     would let one stale id fabricate through this pool exactly the overlap
+ *     the compatibility check refused through the other; see
+ *     isRejectedSourceTiming;
  *
  *   - an INTERPOLATED token, whose times nobody measured: portable.ts spreads a
  *     rewritten run evenly between its two aligned neighbours, so the span it
@@ -916,7 +930,7 @@ function collectAudibleSpans(
 function isAudibleSpan(span: OverlapTimedSpan): boolean {
   return (
     hasTiming(span) &&
-    !isSyntheticTiming(span) &&
+    !isUnattestedSpan(span) &&
     (span.endMs as number) > (span.startMs as number)
   );
 }
@@ -946,6 +960,29 @@ function isAudibleSpan(span: OverlapTimedSpan): boolean {
  */
 function isSyntheticTiming(span: OverlapTimedSpan): boolean {
   return span.alignment === "interpolated";
+}
+
+/**
+ * Times that came from canonical words this block turned out not to own.
+ *
+ * A display token's span is not its own measurement — it is the envelope of the
+ * canonical words it was aligned to. When every one of those words is thrown
+ * out as incompatible with the block (another speaker, or another part of the
+ * tape; see transcript.ts, canonicalEvidenceForBlock) the span is left standing
+ * on nothing. Counting it would let a single stale id fabricate the exact
+ * overlap the compatibility check just refused, through the other pool.
+ */
+function isRejectedSourceTiming(span: OverlapTimedSpan): boolean {
+  return span.sourceWordsRejected === true;
+}
+
+/**
+ * A span that nothing in the recording vouches for. Neither kind is deleted —
+ * both still render, highlight their own token and seek — they simply do not
+ * get to say that somebody was making a noise.
+ */
+function isUnattestedSpan(span: OverlapTimedSpan): boolean {
+  return isSyntheticTiming(span) || isRejectedSourceTiming(span);
 }
 
 /**

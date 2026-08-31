@@ -409,12 +409,22 @@ export function validateDisplayTranscriptV1(input: unknown): DisplayTranscriptV1
   };
 }
 
+/**
+ * The label both this index and the display builders fall back to when a
+ * segment or block carries no speaker at all.
+ *
+ * It names nobody, so isCompatibleWithBlock must not read a disagreement into
+ * it: "Unknown speaker" against "Alice" is a missing answer, not a different
+ * person.
+ */
+export const UNKNOWN_SPEAKER_LABEL = "Unknown speaker";
+
 export function buildTranscriptIndex(transcript: TranscriptWordsV1): TranscriptIndex {
   const speakersById = new Map(transcript.speakers.map((speaker) => [speaker.id, speaker]));
   const segments = transcript.segments.map((segment, segmentIndex) => {
     const speakerLabel = segment.speaker
       ? speakersById.get(segment.speaker)?.label ?? segment.speaker
-      : "Unknown speaker";
+      : UNKNOWN_SPEAKER_LABEL;
     const indexedWords = segment.words.map((word, wordIndex) => {
       const id = word.id ?? `${segment.id}:w${wordIndex}`;
       return {
@@ -539,6 +549,72 @@ export function canonicalWordsForBlock(
     tokens: ReadonlyArray<{ sourceWordIds: readonly string[] }>;
   },
 ): IndexedWord[] {
+  return canonicalEvidenceForBlock(index, block).words;
+}
+
+/** What one display block may be judged on: its words, and its voting tokens. */
+export interface BlockCanonicalEvidence<T> {
+  /** Canonical words compatible with this block, in canonical order. */
+  readonly words: IndexedWord[];
+  /**
+   * The block's own tokens, except that any whose canonical references were
+   * resolved and REJECTED carry `sourceWordsRejected: true`. Returned by
+   * identity when nothing was rejected.
+   */
+  readonly tokens: readonly T[];
+}
+
+/**
+ * canonicalWordsForBlock's answer, plus the verdict on each display token.
+ *
+ * REJECTING A WORD IS NOT ENOUGH ON ITS OWN. A display token carries its own
+ * `startMs`/`endMs`, and src/core/overlap.ts unions the token pool with the
+ * word pool — so throwing a stale canonical word out of `words` while handing
+ * the token that named it back untouched leaves the token free to fabricate the
+ * very overlap the rejection was meant to prevent, and to hold the playback
+ * highlight through it. It is the same shape as a token outliving the canonical
+ * word the repair clipped (boundTokensBySourceWords): a token still standing
+ * after the thing that justified it has gone.
+ *
+ * A token's references land in one of three states, and only the middle one
+ * loses the token its acoustic vote:
+ *
+ *   1. NAMES NOTHING (`sourceWordIds: []`) — a rewritten or unaligned token.
+ *      Untouched: there was never a canonical claim behind it to withdraw, and
+ *      whatever times it has came from somewhere else entirely.
+ *   2. NAMES WORDS THAT RESOLVE, AND EVERY ONE WAS REJECTED — the stale-id
+ *      case. The index HAS those words; they belong to another speaker or to
+ *      another part of the tape. The token's times were derived from words this
+ *      block does not own, so it gets no vote. If even one named word survives,
+ *      the token keeps its vote and boundTokensBySourceWords holds it to the
+ *      survivors.
+ *   3. NAMES WORDS THAT DO NOT RESOLVE AT ALL — untouched. This is the case we
+ *      genuinely cannot judge, and it is not rare: 27,837 of the 181,311
+ *      token-to-word references in the 51 baked display transcripts in this
+ *      repo's export tree resolve against nothing (15%), because a display
+ *      transcript baked against one transcript can be read beside another. On
+ *      the runtime portable path the opposite holds — all 26,739 references
+ *      across the nine portable meetings resolve. Silencing an unresolvable
+ *      reference would therefore blank a seventh of the aligned tokens in the
+ *      archive on no evidence, so the error is deliberately taken in the other
+ *      direction: absent proof of a bad reference, the token keeps its vote.
+ *
+ * States 2 and 3 are told apart by whether the id is IN THE INDEX at all —
+ * `wordsById.get(wordId)` returning a word means the reference resolved and the
+ * compatibility check had something real to judge; returning nothing means
+ * there was nothing to judge.
+ */
+export function canonicalEvidenceForBlock<T extends { sourceWordIds: readonly string[] }>(
+  index: TranscriptIndex,
+  block: {
+    speaker?: string;
+    speakerLabel?: string;
+    startMs: number;
+    endMs: number;
+    sourceSegmentIds: readonly string[];
+    tokens: readonly T[];
+  },
+): BlockCanonicalEvidence<T> {
   const { wordsById, segmentsById } = lookupsFor(index);
 
   const seen = new Set<string>();
@@ -551,14 +627,28 @@ export function canonicalWordsForBlock(
     words.push(word);
   };
 
-  for (const token of block.tokens) {
-    for (const wordId of token.sourceWordIds) {
+  const rejectedTokenIndexes = new Set<number>();
+  for (let index_ = 0; index_ < block.tokens.length; index_ += 1) {
+    let keptCount = 0;
+    let rejectedCount = 0;
+    for (const wordId of block.tokens[index_]!.sourceWordIds) {
       const word = wordsById.get(wordId);
-      if (word && isCompatibleWithBlock(block, segmentsById.get(word.segmentId), word)) {
+      if (!word) {
+        // State 3: nothing to judge. Neither taken nor held against the token.
+        continue;
+      }
+      if (isCompatibleWithBlock(block, segmentsById.get(word.segmentId), word)) {
+        keptCount += 1;
         take(word);
+      } else {
+        rejectedCount += 1;
       }
     }
+    if (keptCount === 0 && rejectedCount > 0) {
+      rejectedTokenIndexes.add(index_);
+    }
   }
+
   for (const segmentId of block.sourceSegmentIds) {
     const segment = segmentsById.get(segmentId);
     if (!segment || !isCompatibleWithBlock(block, segment, segment)) {
@@ -569,10 +659,23 @@ export function canonicalWordsForBlock(
     }
   }
 
-  return words.sort(
+  words.sort(
     (left, right) =>
       left.segmentIndex - right.segmentIndex || left.wordIndex - right.wordIndex,
   );
+
+  if (rejectedTokenIndexes.size === 0) {
+    return { words, tokens: block.tokens };
+  }
+  // Copied, never mutated: the loaded artifact keeps its own tokens, and the
+  // marked ones keep every field they had — text, spacing, times, alignment —
+  // so they still render and still seek. They only stop being evidence.
+  return {
+    words,
+    tokens: block.tokens.map((token, index_) =>
+      rejectedTokenIndexes.has(index_) ? ({ ...token, sourceWordsRejected: true } as T) : token,
+    ),
+  };
 }
 
 /**
@@ -595,11 +698,18 @@ export const MAX_CANONICAL_REFERENCE_DRIFT_MS = 5000;
 /**
  * Whether a canonical reference belongs to this block at all.
  *
- * SPEAKER. Rejected only when the two genuinely disagree: both carry a speaker
- * id and the ids differ, or neither does and both carry labels that differ.
- * A block with no speaker id pointing at a segment that has one proves nothing
- * — the readable writer leaves the field off — and rejecting on that would
- * throw away the block's own words.
+ * SPEAKER, in two steps, because identity is recorded two different ways and a
+ * reference may carry one on each side. Ids first when BOTH sides have one —
+ * they are the canonical identity. Otherwise fall back to the labels whenever
+ * both are MEANINGFUL, which covers the mixed case: a block naming only
+ * "Alice", a segment carrying id `spk_bob` and label "Bob", and no id to
+ * compare. Comparing nothing there let a plainly different person through.
+ *
+ * A label is meaningful when it is non-empty and is not UNKNOWN_SPEAKER_LABEL:
+ * both the index and the display builders mint that placeholder for anything
+ * with no speaker, so reading "Unknown speaker" against "Alice" as a
+ * disagreement would throw away a block's own words on the strength of a
+ * missing field. Only when neither pair is comparable do we accept unjudged.
  *
  * TIME. The reference must sit within MAX_CANONICAL_REFERENCE_DRIFT_MS of the
  * block's extent. Skipped when the block has no usable extent, since there is
@@ -617,9 +727,9 @@ function isCompatibleWithBlock(
     if (block.speaker !== segment.speaker) {
       return false;
     }
-  } else if (!block.speaker && !segment.speaker) {
-    const blockLabel = block.speakerLabel?.trim();
-    const segmentLabel = segment.speakerLabel?.trim();
+  } else {
+    const blockLabel = meaningfulSpeakerLabel(block.speakerLabel);
+    const segmentLabel = meaningfulSpeakerLabel(segment.speakerLabel);
     if (blockLabel && segmentLabel && blockLabel !== segmentLabel) {
       return false;
     }
@@ -636,6 +746,72 @@ function isCompatibleWithBlock(
     span.endMs >= block.startMs - MAX_CANONICAL_REFERENCE_DRIFT_MS &&
     span.startMs <= block.endMs + MAX_CANONICAL_REFERENCE_DRIFT_MS
   );
+}
+
+/**
+ * One display block projected into what the viewer renders AND judges it on.
+ *
+ * Lives here rather than in the component because the projection is the whole
+ * point: the words and the tokens have to come out of the same compatibility
+ * pass. Reading `words` from canonicalEvidenceForBlock while taking `tokens`
+ * straight off the block hands the audible evidence back through the other
+ * pool — src/core/overlap.ts unions them — so the two must be assembled
+ * together, where a test can see it happen.
+ */
+export interface JudgedDisplaySegment {
+  id: string;
+  speaker?: string;
+  speakerLabel: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+  tokens: readonly DisplayTranscriptToken[];
+  words: IndexedWord[];
+  sourceSegmentIds: string[];
+}
+
+/** Trailing " audio"/" video" is a device name, not part of a person's name. */
+export function normalizeSpeakerLabel(label: string): string {
+  return label.replace(/\s+(audio|video)\s*$/i, "").trim() || label;
+}
+
+/**
+ * Every block of a display transcript, carrying the canonical words it is
+ * judged on and the tokens that are still allowed to vote on that judgement.
+ *
+ * A display transcript is LLM-cleaned prose whose tokens hold no attribution,
+ * and portable meetings always build one — so without the canonical words the
+ * crosstalk badge could never appear for the common case, only for raw JSON
+ * with the exact-word view switched on. The words are not rendered; they are
+ * what the segment is judged on, here and in src/core/overlap.ts.
+ */
+export function judgedDisplaySegments(
+  index: TranscriptIndex,
+  display: DisplayTranscriptV1,
+): JudgedDisplaySegment[] {
+  return display.blocks.map((block) => {
+    const evidence = canonicalEvidenceForBlock(index, block);
+    return {
+      id: block.id,
+      speaker: block.speaker,
+      speakerLabel: normalizeSpeakerLabel(block.speakerLabel),
+      startMs: block.startMs,
+      endMs: block.endMs,
+      text: block.text,
+      tokens: evidence.tokens,
+      words: evidence.words,
+      sourceSegmentIds: [...block.sourceSegmentIds],
+    };
+  });
+}
+
+/** A label that names somebody, or undefined when it is empty or a placeholder. */
+function meaningfulSpeakerLabel(label: string | undefined): string | undefined {
+  const trimmed = label?.trim();
+  if (!trimmed || trimmed === UNKNOWN_SPEAKER_LABEL) {
+    return undefined;
+  }
+  return trimmed;
 }
 
 function upperBound(values: number[], target: number): number {

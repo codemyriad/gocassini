@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { analyzeOverlap, getSoundingBlocks, type OverlapBlock } from "./overlap";
 import {
   buildTranscriptIndex,
+  canonicalEvidenceForBlock,
   canonicalWordsForBlock,
+  judgedDisplaySegments,
   isLikelyCrosstalkTurn,
   lowConfidenceWordCount,
   getActiveSegment,
@@ -514,6 +516,135 @@ describe("canonicalWordsForBlock rejects resolvable but incompatible references"
     expect(getSoundingBlocks(blocks, 600_200)).toEqual([]);
   });
 
+  it("rejects a mixed-identity pair whose labels name different people", () => {
+    // One side has an id, the other only a label — the readable writer leaves
+    // the field off — so the IDS cannot be compared at all. The labels can, and
+    // they plainly disagree. The block carries a word of its own as well, so
+    // this is a real block being judged, not the wordless-extent fallback.
+    const labelOnlyBlock = {
+      id: "d_labelled",
+      speakerLabel: "Alice",
+      startMs: 0,
+      endMs: 2500,
+      sourceSegmentIds: ["seg_000001"],
+      tokens: [{ sourceWordIds: ["seg_000000:w_0"] }],
+    };
+
+    expect(canonicalWordsForBlock(portableIndex, labelOnlyBlock).map((word) => word.id)).toEqual([
+      "seg_000000:w_0",
+    ]);
+
+    const blocks: OverlapBlock[] = [
+      {
+        id: labelOnlyBlock.id,
+        speakerLabel: labelOnlyBlock.speakerLabel,
+        startMs: labelOnlyBlock.startMs,
+        endMs: labelOnlyBlock.endMs,
+        words: canonicalWordsForBlock(portableIndex, labelOnlyBlock),
+      },
+      bobBlock,
+    ];
+
+    expect(analyzeOverlap(blocks).size).toBe(0);
+    expect(getSoundingBlocks(blocks, 2000).map((block) => block.id)).toEqual(["d_bob"]);
+  });
+
+  it("takes a mixed-identity pair whose labels name the same person", () => {
+    const labelOnlyBlock = {
+      id: "d_labelled",
+      speakerLabel: "Alice",
+      startMs: 0,
+      endMs: 500,
+      sourceSegmentIds: ["seg_000000"],
+      tokens: [] as Array<{ sourceWordIds: readonly string[] }>,
+    };
+
+    expect(canonicalWordsForBlock(portableIndex, labelOnlyBlock).map((word) => word.id)).toEqual([
+      "seg_000000:w_0",
+    ]);
+  });
+
+  it("reads the unknown-speaker placeholder as a missing answer, not a disagreement", () => {
+    // A block with no speaker at all falls back to "Unknown speaker"; so does a
+    // segment. Treating that as a different name from "Alice" would throw away
+    // the block's own words on the strength of an absent field.
+    const unlabelledBlock = {
+      id: "d_unknown",
+      speakerLabel: "Unknown speaker",
+      startMs: 0,
+      endMs: 500,
+      sourceSegmentIds: ["seg_000000"],
+      tokens: [] as Array<{ sourceWordIds: readonly string[] }>,
+    };
+
+    expect(canonicalWordsForBlock(portableIndex, unlabelledBlock).map((word) => word.id)).toEqual([
+      "seg_000000:w_0",
+    ]);
+  });
+
+  /**
+   * The projection MeetingView actually renders and judges from. This is where
+   * the two halves are joined, so it is where taking the tokens straight off
+   * the block would put the rejected evidence back — the exact wiring that
+   * makes the compatibility check worth anything.
+   */
+  it("hands the viewer a projection whose tokens went through the same filter", () => {
+    const display = validateDisplayTranscriptV1({
+      version: "transcript.display.v1",
+      media: { src: "meeting.opus", durationMs: 700_000 },
+      speakers: [
+        { id: "spk_alice", label: "Alice audio" },
+        { id: "spk_bob", label: "Bob" },
+      ],
+      blocks: [
+        {
+          id: "d_alice",
+          speaker: "spk_alice",
+          speakerLabel: "Alice audio",
+          startMs: 0,
+          endMs: 3000,
+          text: "Okay actually",
+          sourceSegmentIds: [],
+          wordCount: 2,
+          timedWordCount: 2,
+          timingCoverage: 1,
+          tokens: [
+            {
+              text: "Okay",
+              spaceBefore: false,
+              kind: "word",
+              sourceWordIds: ["seg_000000:w_0"],
+              startMs: 0,
+              endMs: 500,
+              alignment: "source",
+            },
+            {
+              text: "actually",
+              spaceBefore: true,
+              kind: "word",
+              sourceWordIds: ["seg_000001:w_0"],
+              startMs: 1000,
+              endMs: 2500,
+              alignment: "source",
+            },
+          ],
+        },
+      ],
+    });
+
+    const segments = judgedDisplaySegments(portableIndex, display);
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.words.map((word) => word.id)).toEqual(["seg_000000:w_0"]);
+    expect(segments[0]?.tokens[1]).toMatchObject({ sourceWordsRejected: true });
+    // The device suffix is still stripped off the rendered name.
+    expect(segments[0]?.speakerLabel).toBe("Alice");
+
+    const blocks: OverlapBlock[] = [...segments, bobBlock];
+    expect(analyzeOverlap(blocks).size).toBe(0);
+    expect(getSoundingBlocks(blocks, 2000).map((block) => block.id)).toEqual(["d_bob"]);
+  });
+
   it("still takes a source segment that really is this block's own", () => {
     // The guard must not cost the JSON-directory path anything: same speaker,
     // inside the extent, so the words come through as they always did.
@@ -526,6 +657,139 @@ describe("canonicalWordsForBlock rejects resolvable but incompatible references"
     expect(canonicalWordsForBlock(portableIndex, honest).map((word) => word.id)).toEqual([
       "seg_000000:w_0",
     ]);
+  });
+
+  /**
+   * REJECTING THE WORD IS NOT ENOUGH — the token that named it carries its own
+   * times, and audibleIntervalsOf unions the token pool with the word pool. So
+   * the stale reference simply fabricates the same overlap through the other
+   * pool, and holds the playback ring through it, unless the token loses its
+   * acoustic vote as well.
+   *
+   * Same fixture: Alice's block spans 0–3000 and Bob really does speak inside
+   * it, so the two block extents intersect and the sweep genuinely compares
+   * them. Cleanup timed Alice's token off Bob's word, so the token reads
+   * 1000–2500 — Bob's span exactly.
+   */
+  describe("the token that named the rejected word", () => {
+    const staleTokenBlock = {
+      ...aliceBlock,
+      sourceSegmentIds: [],
+      tokens: [
+        { text: "okay", startMs: 0, endMs: 500, sourceWordIds: ["seg_000000:w_0"], alignment: "source" },
+        // Aligned, timed, and pointing at somebody else's word.
+        { text: "actually", startMs: 1000, endMs: 2500, sourceWordIds: ["seg_000001:w_0"], alignment: "source" },
+      ],
+    };
+
+    function judged(): OverlapBlock[] {
+      const evidence = canonicalEvidenceForBlock(portableIndex, staleTokenBlock);
+      return [
+        {
+          id: staleTokenBlock.id,
+          speaker: staleTokenBlock.speaker,
+          speakerLabel: staleTokenBlock.speakerLabel,
+          startMs: staleTokenBlock.startMs,
+          endMs: staleTokenBlock.endMs,
+          tokens: evidence.tokens,
+          words: evidence.words,
+        },
+        bobBlock,
+      ];
+    }
+
+    it("fabricates the overlap when the token votes, so the fixture is real", () => {
+      // The tokens exactly as the display transcript carries them — which is
+      // what MeetingView used to pass through.
+      const unchecked: OverlapBlock[] = [
+        {
+          id: staleTokenBlock.id,
+          speaker: staleTokenBlock.speaker,
+          speakerLabel: staleTokenBlock.speakerLabel,
+          startMs: staleTokenBlock.startMs,
+          endMs: staleTokenBlock.endMs,
+          tokens: staleTokenBlock.tokens,
+          words: canonicalWordsForBlock(portableIndex, staleTokenBlock),
+        },
+        bobBlock,
+      ];
+
+      expect(analyzeOverlap(unchecked).get("d_alice")?.overlapMs).toBe(1500);
+      expect(getSoundingBlocks(unchecked, 2000).map((block) => block.id)).toEqual([
+        "d_alice",
+        "d_bob",
+      ]);
+    });
+
+    it("marks the token rather than dropping it, so it still renders and seeks", () => {
+      const evidence = canonicalEvidenceForBlock(portableIndex, staleTokenBlock);
+
+      expect(evidence.tokens).toHaveLength(2);
+      expect(evidence.tokens[1]).toMatchObject({
+        text: "actually",
+        startMs: 1000,
+        endMs: 2500,
+        sourceWordsRejected: true,
+      });
+      // The honest token is handed back untouched.
+      expect(evidence.tokens[0]).not.toHaveProperty("sourceWordsRejected");
+      // And the artifact's own tokens are never mutated.
+      expect(staleTokenBlock.tokens[1]).not.toHaveProperty("sourceWordsRejected");
+    });
+
+    it("reports no simultaneous speech once the token loses its vote", () => {
+      expect(analyzeOverlap(judged()).size).toBe(0);
+    });
+
+    it("keeps the playback ring off the block through the stale token's span", () => {
+      expect(getSoundingBlocks(judged(), 2000).map((block) => block.id)).toEqual(["d_bob"]);
+      // Alice's own word still holds the ring where it really sounds.
+      expect(getSoundingBlocks(judged(), 250).map((block) => block.id)).toEqual(["d_alice"]);
+    });
+
+    it("keeps the vote when one named word survives, bounded to the survivor", () => {
+      // Partly stale is not wholly stale: the token still has a canonical word
+      // of its own behind it, and boundTokensBySourceWords holds it to that.
+      const partly = {
+        ...staleTokenBlock,
+        tokens: [
+          {
+            text: "okay",
+            startMs: 0,
+            endMs: 2500,
+            sourceWordIds: ["seg_000000:w_0", "seg_000001:w_0"],
+            alignment: "source",
+          },
+        ],
+      };
+      const evidence = canonicalEvidenceForBlock(portableIndex, partly);
+
+      expect(evidence.tokens[0]).not.toHaveProperty("sourceWordsRejected");
+      expect(evidence.words.map((word) => word.id)).toEqual(["seg_000000:w_0"]);
+    });
+
+    it("leaves a token that names nothing, and one whose ids resolve to nothing", () => {
+      // The two cases that must NOT be silenced: a rewritten token with no
+      // references at all, and a token whose references are simply absent from
+      // this index — 15% of the aligned tokens in the export tree.
+      const unjudgeable = {
+        ...staleTokenBlock,
+        tokens: [
+          { text: "rewritten", startMs: 100, endMs: 300, sourceWordIds: [], alignment: "none" },
+          {
+            text: "elsewhere",
+            startMs: 300,
+            endMs: 500,
+            sourceWordIds: ["some-other-transcript:w_9"],
+            alignment: "source",
+          },
+        ],
+      };
+      const evidence = canonicalEvidenceForBlock(portableIndex, unjudgeable);
+
+      expect(evidence.tokens).toBe(unjudgeable.tokens);
+      expect(evidence.tokens.every((token) => !("sourceWordsRejected" in token))).toBe(true);
+    });
   });
 
   it("drops a token-named word that belongs to another speaker too", () => {
