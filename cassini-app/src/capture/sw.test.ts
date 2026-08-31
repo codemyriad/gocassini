@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { composeBundle, handleFetch, shouldRewrite } from "./sw";
 
-const TALK_URL = "https://cloud.example.com/apps/spreed/js/talk-main.mjs";
+const ORIGIN = "https://cloud.example.com";
+const TALK_URL = `${ORIGIN}/apps/spreed/js/talk-main.mjs`;
 const PAYLOAD = "/* payload */ console.log(1)";
 
 // talkResponse mimics a real bundle response: a JavaScript content type and a
@@ -27,19 +28,22 @@ describe("composeBundle", () => {
 // Every one of these guards exists because getting it wrong corrupts another
 // application's script rather than merely disabling our own feature.
 describe("shouldRewrite", () => {
-  const talkRequest = () => new Request(TALK_URL);
+  // Requests the browser makes for a <script> carry destination "script";
+  // undici's Request defaults to "", so the tests state it explicitly.
+  const scriptRequest = (url = TALK_URL, init: RequestInit = {}) =>
+    Object.defineProperty(new Request(url, init), "destination", { value: "script" });
 
-  it("accepts a plain 200 JavaScript response carrying Talk's own code", () => {
-    expect(shouldRewrite(talkRequest(), talkResponse(), "OCA.Talk")).toBe(true);
+  it("accepts a same-origin 200 script response carrying Talk's own code", () => {
+    expect(shouldRewrite(scriptRequest(), talkResponse(), "OCA.Talk", ORIGIN)).toBe(true);
   });
 
   it("refuses a range request, whose body is one fragment of the script", () => {
-    const request = new Request(TALK_URL, { headers: { range: "bytes=0-100" } });
-    expect(shouldRewrite(request, talkResponse(), "OCA.Talk")).toBe(false);
+    const request = scriptRequest(TALK_URL, { headers: { range: "bytes=0-100" } });
+    expect(shouldRewrite(request, talkResponse(), "OCA.Talk", ORIGIN)).toBe(false);
   });
 
   it("refuses a partial-content response", () => {
-    expect(shouldRewrite(talkRequest(), talkResponse("OCA", { status: 206 }), "OCA")).toBe(false);
+    expect(shouldRewrite(scriptRequest(), talkResponse("OCA", { status: 206 }), "OCA", ORIGIN)).toBe(false);
   });
 
   it("refuses a response that is not JavaScript", () => {
@@ -47,12 +51,24 @@ describe("shouldRewrite", () => {
       status: 200,
       headers: { "content-type": "text/html" },
     });
-    expect(shouldRewrite(talkRequest(), html, "<html>login</html>")).toBe(false);
+    expect(shouldRewrite(scriptRequest(), html, "<html>login</html>", ORIGIN)).toBe(false);
   });
 
   it("refuses a JavaScript response that is not Talk's bundle", () => {
     // A proxy notice or an error page served at the bundle's URL.
-    expect(shouldRewrite(talkRequest(), talkResponse(), "throw new Error('gateway')")).toBe(false);
+    expect(shouldRewrite(scriptRequest(), talkResponse(), "throw new Error('gateway')", ORIGIN)).toBe(false);
+  });
+
+  it("refuses anything that is not being loaded as a script", () => {
+    // An XHR or a prefetch for the same URL is not Talk evaluating its bundle,
+    // and its caller did not ask for our payload.
+    const xhr = new Request(TALK_URL); // destination ""
+    expect(shouldRewrite(xhr, talkResponse(), "OCA.Talk", ORIGIN)).toBe(false);
+  });
+
+  it("refuses a cross-origin script even when the path matches", () => {
+    const foreign = scriptRequest("https://evil.example.net/apps/spreed/js/talk-main.mjs");
+    expect(shouldRewrite(foreign, talkResponse(), "OCA.Talk", ORIGIN)).toBe(false);
   });
 });
 
@@ -63,16 +79,18 @@ describe("handleFetch", () => {
       new Request("https://cloud.example.com/apps/files/js/main.mjs"),
       fetchImpl as never,
       PAYLOAD,
+      ORIGIN,
     );
     expect(result).toBeNull();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("appends the payload to Talk's bundle", async () => {
+    const scriptRequest = Object.defineProperty(new Request(TALK_URL), "destination", { value: "script" });
     const fetchImpl = vi.fn(async () =>
       talkResponse("OCA.Talk = {}; TALK", { headers: { "content-length": "19", etag: "\"abc\"" } }),
     );
-    const result = await handleFetch(new Request(TALK_URL), fetchImpl as never, PAYLOAD);
+    const result = await handleFetch(scriptRequest, fetchImpl as never, PAYLOAD, ORIGIN);
     const body = await result!.text();
 
     expect(body).toContain("TALK");
@@ -87,7 +105,7 @@ describe("handleFetch", () => {
 
   it("serves Talk untouched when there is no payload to append", async () => {
     const fetchImpl = vi.fn(async () => talkResponse());
-    const result = await handleFetch(new Request(TALK_URL), fetchImpl as never, "");
+    const result = await handleFetch(new Request(TALK_URL), fetchImpl as never, "", ORIGIN);
     expect(await result!.text()).toBe("OCA.Talk = {}; TALK");
   });
 
@@ -95,13 +113,13 @@ describe("handleFetch", () => {
     const fetchImpl = vi.fn(
       async () => new Response("<html>login</html>", { status: 200, headers: { "content-type": "text/html" } }),
     );
-    const result = await handleFetch(new Request(TALK_URL), fetchImpl as never, PAYLOAD);
+    const result = await handleFetch(new Request(TALK_URL), fetchImpl as never, PAYLOAD, ORIGIN);
     expect(await result!.text()).toBe("<html>login</html>");
   });
 
   it("passes an upstream failure through rather than inventing a bundle", async () => {
     const fetchImpl = vi.fn(async () => new Response("boom", { status: 500 }));
-    const result = await handleFetch(new Request(TALK_URL), fetchImpl as never, PAYLOAD);
+    const result = await handleFetch(new Request(TALK_URL), fetchImpl as never, PAYLOAD, ORIGIN);
     expect(result!.status).toBe(500);
   });
 });

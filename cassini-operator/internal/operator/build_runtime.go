@@ -188,6 +188,13 @@ func exponentialBuildRetryDelay(base time.Duration, deferralCount int) time.Dura
 	return delay
 }
 
+// sourceAudioIngestEnabled reports whether transcripts may be built from
+// participant-uploaded audio. Default off; see the call site.
+func sourceAudioIngestEnabled() bool {
+	enabled, err := parseBoolEnv("CASSINI_SOURCE_AUDIO_INGEST")
+	return err == nil && enabled
+}
+
 // scheduleDeferredBuild waits for the exponentially calculated retry time
 // before redelivery. The durable row remains build/queued throughout. Waiting
 // in a goroutine avoids occupying the sole build worker, and the blocking
@@ -271,14 +278,24 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	}
 
 	buildArgs := []string{"build", task.ArtifactRunPath, "--out", meetingPath}
-	// Hand the build the source-capture root so a participant whose browser
-	// uploaded its own audio is transcribed from that instead of from what
-	// survived their uplink (docs/source-audio-capture.md). Passed
-	// unconditionally: the build scans the directory itself and a run with no
-	// uploads simply finds nothing. Only speakers with a placeable upload AND a
-	// track in this recording are affected.
-	if root := strings.TrimSpace(rt.cfg.CaptureRoot); root != "" {
-		buildArgs = append(buildArgs, "--source-audio", root)
+	// Source-audio ingestion is OFF unless an administrator turns it on.
+	//
+	// Capture and intake are safe to run without it — they only collect — but
+	// substituting a participant's own recording into the transcript is a
+	// judgement about where somebody's words belong, and the offset half of
+	// that judgement still carries client clock skew
+	// (docs/source-audio-capture.md). Until the correlation refinement lands,
+	// an installation opts into that deliberately rather than by upgrading.
+	if sourceAudioIngestEnabled() {
+		if root := strings.TrimSpace(rt.cfg.CaptureRoot); root != "" {
+			buildArgs = append(buildArgs, "--source-audio", root)
+			// Scope the selection to this room. Without it the build can only
+			// filter by call window, which is weaker: two meetings close in
+			// time could each look plausible.
+			if binding, ok := rt.talkBindingForJob(task.JobID); ok && binding.RoomToken != "" {
+				buildArgs = append(buildArgs, "--source-audio-room", binding.RoomToken)
+			}
+		}
 	}
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, buildArgs...)
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)

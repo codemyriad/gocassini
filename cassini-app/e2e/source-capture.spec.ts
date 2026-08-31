@@ -42,18 +42,21 @@ async function enableCapture(page: import("@playwright/test").Page) {
 test("the service worker appends the capture payload to Talk's bundle", async ({ page }) => {
   await enableCapture(page);
 
-  // Fetched from a page the worker controls, so the worker sees the request —
-  // scope decides which clients it controls, not which URLs it may intercept.
+  // Asserted through the real path — the page loading its <script> — rather
+  // than by fetching the URL. The worker only rewrites requests whose
+  // destination is "script", so a fetch() would (correctly) get the original
+  // and prove nothing about what Talk actually evaluates.
   await page.goto(`${server.origin}/call/testroom`);
-  const bundle = await page.evaluate(async () => {
-    const response = await fetch("/apps/spreed/js/talk-main.mjs");
-    return response.text();
-  });
 
-  expect(bundle).toContain("cassini source-capture payload");
-  // Talk's own code must still be there, ahead of ours.
-  expect(bundle).toContain("window.__talkReady");
-  expect(bundle.indexOf("window.__talkReady")).toBeLessThan(bundle.indexOf("cassini source-capture payload"));
+  // Talk's own code ran: the payload is appended, so it cannot have replaced it.
+  await page.waitForFunction(
+    () => (window as never as { __talkReady?: unknown }).__talkReady !== undefined,
+  );
+  // And ours ran after it.
+  const patched = await page.evaluate(
+    () => (window.RTCPeerConnection as unknown as { __cassiniPatched?: boolean }).__cassiniPatched === true,
+  );
+  expect(patched, "the capture payload did not run on the call page").toBe(true);
 });
 
 test("a response that is not Talk's bundle is passed through untouched", async ({ page }) => {
@@ -65,13 +68,16 @@ test("a response that is not Talk's bundle is passed through untouched", async (
   // with page.route: the service worker issues this request, and page-level
   // interception never sees it.
   server.state.bundleIsNotTalk = true;
-  const body = await page.evaluate(async () => {
-    const response = await fetch("/apps/spreed/js/talk-main.mjs?retry=1", { cache: "no-store" });
-    return response.text();
-  });
+  await page.goto(`${server.origin}/call/testroom?v=2`);
+  await page.waitForTimeout(1000);
 
-  expect(body).toBe("<html><body>Please log in</body></html>");
-  expect(body).not.toContain("cassini source-capture payload");
+  // Nothing of ours was welded onto it, so nothing of ours ran either.
+  const patched = await page.evaluate(
+    () => (window.RTCPeerConnection as unknown as { __cassiniPatched?: boolean }).__cassiniPatched === true,
+  );
+  expect(patched, "the payload was appended to something that was not Talk's script").toBe(false);
+  const talkReady = await page.evaluate(() => (window as never as { __talkReady?: unknown }).__talkReady);
+  expect(talkReady, "the stub served HTML, so Talk cannot have initialised").toBeUndefined();
 });
 
 test("captures the participant's own audio through a lossy uplink and uploads it", async ({ page }) => {

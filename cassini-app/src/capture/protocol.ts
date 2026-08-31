@@ -25,13 +25,16 @@ export const TALK_CALL_PATH_SEGMENT = "call";
 
 // A CaptureAnchor ties one outgoing encoded Opus frame to wall-clock time.
 //
-// rtpTimestamp is the sender's own 48 kHz audio sample clock — the very number
-// the recorder writes into its .rtplog for the packets that arrived, and which
-// pkg/core/timeline already maps onto the meeting timeline. That is what makes
-// placement independent of network quality: packet loss destroys the audio the
-// server received, but the packets that DID arrive still carry exact
-// timestamps, and a handful of them anywhere in the meeting is enough to
-// anchor the whole segment.
+// rtpTimestamp is the participant's own 48 kHz audio sample clock. It is NOT
+// the value the recorder logs for the same audio: Janus rewrites the timestamps
+// it relays to each subscriber, so the two live in different spaces. What the
+// pair is good for is the RATE — how fast this machine's sound card runs
+// against its wall clock — which is the dominant drift in the system and which
+// the server solves from these anchors rather than estimating.
+//
+// That part is immune to loss: these describe frames the client ENCODED, so
+// whether each one reached the server is irrelevant. Placement's offset comes
+// from wall clock instead; see docs/source-audio-capture.md.
 export interface CaptureAnchor {
   // frameIndex counts encoded frames within the segment, from 0.
   frameIndex: number;

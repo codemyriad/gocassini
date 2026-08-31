@@ -88,6 +88,12 @@ NTP-disciplined that is tens of milliseconds — comfortably inside a word. With
 badly synchronised client it is seconds, and that speaker's words would land at
 the wrong time.
 
+Sample zero of the uploaded file is the instant `MediaRecorder` started, not the
+first sampled anchor — anchors arrive one per fifty encoded frames and the first
+comes after the encoder spins up, so anchoring on it placed every speaker late
+by up to a second. The anchors fix the rate; the segment's start instant fixes
+the offset.
+
 `PlausibleOffset` is a guard, not a fix: it rejects placements falling outside
 the recording, which catches a clock wrong by hours but not one wrong by
 seconds.
@@ -140,6 +146,32 @@ is not appropriate for a public Nextcloud app store listing, which wants a small
 PHP companion app doing the same job through `Util::addScript`. Only
 `src/capture/sw.ts` and `capture_assets.go` are specific to the service-worker
 route; the capture, timing and upload code is identical either way.
+
+## Ingestion is off by default
+
+Capture and intake only collect. Substituting a participant's own recording
+into the transcript is a judgement about where somebody's words belong, and the
+offset half of that judgement still carries client clock skew. So an
+installation opts in deliberately:
+
+```
+CASSINI_SOURCE_AUDIO_INGEST=1
+```
+
+Without it the operator never passes `--source-audio` to the build, uploads
+accumulate, and transcripts are built from the recorded tracks exactly as
+before.
+
+Selection is scoped to the recording: a capture must be from the same Talk room
+**and** from a call whose wall-clock window overlaps this one. Matching on
+participant id alone was wrong in two ways that both end with one meeting's
+speech in another's transcript — a later unrelated capture hid the correct
+older one, and two calls close in time each looked plausible.
+
+A participant with several tracks in one recording (a rejoin, a stream
+rotation) has their source render attached to exactly one of them; the others
+are dropped from transcription, because the render spans the whole timeline and
+transcribing both would emit every word twice.
 
 ## Intake and trust
 

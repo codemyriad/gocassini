@@ -31,6 +31,13 @@ func testBase() SourceTimeBase {
 // design corrects. The anchors therefore pair a wall instant with an RTP
 // timestamp that advances at (1+drift) times nominal.
 func syntheticSegment(offsetMS float64, count int, stepMS float64, driftPPM float64) SourceSegment {
+	return syntheticSegmentDelayed(offsetMS, count, stepMS, driftPPM, 0)
+}
+
+// syntheticSegmentDelayed additionally models the gap between MediaRecorder
+// starting and the first sampled anchor arriving — the encoder spinning up, and
+// one sampling interval of fifty frames.
+func syntheticSegmentDelayed(offsetMS float64, count int, stepMS float64, driftPPM float64, firstAnchorDelayMS float64) SourceSegment {
 	base := testBase()
 	// A segment that starts offsetMS into the meeting timeline began at this
 	// wall instant, since timelineMS is wall-anchored.
@@ -38,7 +45,7 @@ func syntheticSegment(offsetMS float64, count int, stepMS float64, driftPPM floa
 	baseRTP := int64(1_000_000)
 	segment := SourceSegment{Index: 0, AudioName: "segment-0.webm", StartWallMS: startWall}
 	for i := 0; i < count; i++ {
-		wallElapsedMS := float64(i) * stepMS
+		wallElapsedMS := firstAnchorDelayMS + float64(i)*stepMS
 		audioElapsedMS := wallElapsedMS * (1 + driftPPM/1e6)
 		segment.Anchors = append(segment.Anchors, SourceAnchor{
 			FrameIndex:   int64(i) * 50,
@@ -47,7 +54,7 @@ func syntheticSegment(offsetMS float64, count int, stepMS float64, driftPPM floa
 			WallMS:       startWall + int64(math.Round(wallElapsedMS)),
 		})
 	}
-	segment.StopWallMS = startWall + int64(float64(count)*stepMS)
+	segment.StopWallMS = startWall + int64(firstAnchorDelayMS+float64(count)*stepMS)
 	return segment
 }
 
@@ -90,6 +97,38 @@ func TestFitPlacementRecoversOffsetAndDrift(t *testing.T) {
 	}
 	if placement.ResidualMS > 1 {
 		t.Fatalf("residual = %.3f ms on clean anchors", placement.ResidualMS)
+	}
+}
+
+// Regression: local media time zero is the instant MediaRecorder started, not
+// the first sampled anchor. Anchors arrive one per fifty encoded frames and the
+// first comes after the encoder spins up, so anchoring on it shifted every
+// speaker's audio late by up to a second — inside a word, and enough to attach
+// the wrong speaker's name to it in a fast exchange.
+func TestFitPlacementIgnoresWhenTheFirstAnchorArrives(t *testing.T) {
+	prompt := syntheticSegmentDelayed(5000, 100, 1000, 60, 0)
+	late := syntheticSegmentDelayed(5000, 100, 1000, 60, 900)
+
+	promptPlacement, err := FitPlacement(prompt, testBase())
+	if err != nil {
+		t.Fatalf("FitPlacement(prompt): %v", err)
+	}
+	latePlacement, err := FitPlacement(late, testBase())
+	if err != nil {
+		t.Fatalf("FitPlacement(late): %v", err)
+	}
+
+	if math.Abs(latePlacement.OffsetMS-promptPlacement.OffsetMS) > 1 {
+		t.Fatalf("a 900 ms delay before the first anchor moved the placement by %.1f ms (prompt %.1f, late %.1f)",
+			math.Abs(latePlacement.OffsetMS-promptPlacement.OffsetMS),
+			promptPlacement.OffsetMS, latePlacement.OffsetMS)
+	}
+	if math.Abs(latePlacement.OffsetMS-5000) > 1 {
+		t.Fatalf("offset = %.1f ms, want 5000 — the segment starts where MediaRecorder started", latePlacement.OffsetMS)
+	}
+	// And the rate is still recovered from the anchors.
+	if math.Abs(latePlacement.RatePPMDeviation()+60) > 5 {
+		t.Fatalf("rate = %.1f ppm, want ~-60", latePlacement.RatePPMDeviation())
 	}
 }
 
@@ -262,14 +301,26 @@ func writeCapture(t *testing.T, root, room, owner string, sidecar SourceSidecar)
 	return dir
 }
 
+// A recording covering this wall-clock span. Captures are selected against it.
+const (
+	testWindowStartMS = int64(1_700_000_000_000)
+	testWindowEndMS   = testWindowStartMS + 600_000
+)
+
+func inWindowSidecar(owner string, startMS int64) SourceSidecar {
+	return SourceSidecar{
+		Format:          SourceCaptureFormat,
+		RoomToken:       "room1",
+		OwnerUserID:     owner,
+		CallStartWallMS: startMS,
+		CallEndWallMS:   startMS + 300_000,
+	}
+}
+
 func TestDiscoverSourceCaptures(t *testing.T) {
 	root := t.TempDir()
-	writeCapture(t, root, "room1", "alice", SourceSidecar{
-		Format: SourceCaptureFormat, OwnerUserID: "alice", CallStartWallMS: 1000,
-	})
-	writeCapture(t, root, "room1", "bob", SourceSidecar{
-		Format: SourceCaptureFormat, OwnerUserID: "bob", CallStartWallMS: 1000,
-	})
+	writeCapture(t, root, "room1", "alice", inWindowSidecar("alice", testWindowStartMS))
+	writeCapture(t, root, "room1", "bob", inWindowSidecar("bob", testWindowStartMS))
 	// A malformed upload must be skipped, not fail the scan: the meeting still
 	// has to publish.
 	broken := filepath.Join(root, "room1", "carol", "1700")
@@ -280,7 +331,7 @@ func TestDiscoverSourceCaptures(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	found, err := DiscoverSourceCaptures(root)
+	found, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
 	if err != nil {
 		t.Fatalf("DiscoverSourceCaptures: %v", err)
 	}
@@ -292,24 +343,105 @@ func TestDiscoverSourceCaptures(t *testing.T) {
 	}
 }
 
-func TestDiscoverSourceCapturesIgnoresUnknownFormat(t *testing.T) {
+// Selecting on participant id alone put one meeting's speech into another's
+// transcript two ways: a later unrelated capture hid the correct older one, and
+// two nearby calls both looked plausible.
+func TestDiscoverSourceCapturesIsScopedToThisRecording(t *testing.T) {
 	root := t.TempDir()
-	writeCapture(t, root, "room1", "alice", SourceSidecar{
-		Format: "org.cassini.source-capture/99", OwnerUserID: "alice",
-	})
-	found, err := DiscoverSourceCaptures(root)
+	// The right capture for this recording.
+	writeCapture(t, root, "room1", "alice", inWindowSidecar("alice", testWindowStartMS))
+	// The same person, same room, a call three hours later. Newer, so the old
+	// "latest wins" rule would have chosen it.
+	later := inWindowSidecar("alice", testWindowStartMS+3*3_600_000)
+	dir := filepath.Join(root, "room1", "alice", "later")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	raw, _ := json.Marshal(later)
+	if err := os.WriteFile(filepath.Join(dir, "capture.json"), raw, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// The same person in a DIFFERENT room, overlapping in time.
+	other := inWindowSidecar("alice", testWindowStartMS)
+	other.RoomToken = "room2"
+	writeCapture(t, root, "room2", "alice", other)
+
+	found, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
 	if err != nil {
 		t.Fatalf("DiscoverSourceCaptures: %v", err)
 	}
-	if len(found) != 0 {
-		t.Fatalf("a future format was accepted: %v", found)
+	if len(found) != 1 {
+		t.Fatalf("found %d captures, want exactly the in-window room1 one: %v", len(found), found)
+	}
+	if !strings.Contains(found["alice"], filepath.Join("room1", "alice", "1700")) {
+		t.Fatalf("selected the wrong capture: %s", found["alice"])
 	}
 }
 
-func TestDiscoverSourceCapturesEmptyRoot(t *testing.T) {
-	found, err := DiscoverSourceCaptures("")
-	if err != nil || found != nil {
-		t.Fatalf("empty root = %v, %v; want nil, nil", found, err)
+func TestDiscoverSourceCapturesWithoutARoomTokenStillFiltersByWindow(t *testing.T) {
+	root := t.TempDir()
+	writeCapture(t, root, "room1", "alice", inWindowSidecar("alice", testWindowStartMS))
+	far := inWindowSidecar("bob", testWindowStartMS+24*3_600_000)
+	far.RoomToken = "room9"
+	writeCapture(t, root, "room9", "bob", far)
+
+	found, err := DiscoverSourceCaptures(root, "", testWindowStartMS, testWindowEndMS)
+	if err != nil {
+		t.Fatalf("DiscoverSourceCaptures: %v", err)
+	}
+	if _, ok := found["bob"]; ok {
+		t.Fatal("a capture a day away was accepted when no room token was given")
+	}
+	if _, ok := found["alice"]; !ok {
+		t.Fatal("the in-window capture was rejected")
+	}
+}
+
+func TestWindowsOverlap(t *testing.T) {
+	const start, end = int64(1000), int64(2000)
+	cases := []struct {
+		name         string
+		aStart, aEnd int64
+		want         bool
+	}{
+		{"identical", start, end, true},
+		{"contained", 1200, 1800, true},
+		{"straddling the start", 500, 1200, true},
+		{"straddling the end", 1800, 5000, true},
+		{"just outside, inside the slack", end + 30_000, end + 60_000, true},
+		{"well after", end + 600_000, end + 900_000, false},
+		{"well before", start - 900_000, start - 600_000, false},
+		{"unset", 0, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := windowsOverlap(tc.aStart, tc.aEnd, start, end); got != tc.want {
+				t.Fatalf("windowsOverlap(%d,%d,%d,%d) = %v, want %v", tc.aStart, tc.aEnd, start, end, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTranscribableStreamsDropsSuppressed(t *testing.T) {
+	streams := []AudioStream{
+		{SpeakerID: "alice", SourceAudioPath: "/tmp/alice.wav"},
+		{SpeakerID: "alice", SuppressTranscription: true},
+		{SpeakerID: "bob"},
+	}
+	kept := transcribableStreams(streams)
+	if len(kept) != 2 {
+		t.Fatalf("kept %d streams, want 2", len(kept))
+	}
+	for _, stream := range kept {
+		if stream.SuppressTranscription {
+			t.Fatal("a suppressed stream survived")
+		}
+	}
+	// Unchanged when nothing is suppressed, which is every build with no
+	// uploads.
+	plain := []AudioStream{{SpeakerID: "a"}, {SpeakerID: "b"}}
+	if len(transcribableStreams(plain)) != 2 {
+		t.Fatal("plain streams were filtered")
 	}
 }
 

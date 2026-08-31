@@ -71,12 +71,13 @@ var captureMaxUploadBytes int64 = 512 << 20
 // arrive from the browser and are used to build paths.
 var captureSafeName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
-// captureAnchor ties one outgoing encoded frame to wall-clock time. RTPTimestamp
-// is the sender's 48 kHz sample clock — the same value the recorder logs for
-// every packet that reached it, and what pkg/core/timeline already maps onto the
-// meeting timeline. That is what makes placement survive a bad uplink: loss
-// destroys the audio the server received but not the timestamps on the packets
-// that did arrive.
+// captureAnchor ties one outgoing encoded frame to wall-clock time.
+// RTPTimestamp is the participant's own 48 kHz sample clock, and is NOT the
+// value the recorder logs for the same audio — Janus rewrites the timestamps it
+// relays to each subscriber. The pair's use is the RATE (this machine's
+// sound-card drift against its wall clock), which is immune to loss because
+// these describe frames the client encoded. This endpoint only stores them; the
+// build decides what they mean.
 type captureAnchor struct {
 	FrameIndex   int64 `json:"frameIndex"`
 	RTPTimestamp int64 `json:"rtpTimestamp"`

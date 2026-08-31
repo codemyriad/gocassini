@@ -41,6 +41,11 @@ type AudioStream struct {
 	// their own browser and already placed on the meeting timeline. It replaces
 	// the MKV track as the transcription input; see ExtractSpeakerFloats.
 	SourceAudioPath string
+	// SuppressTranscription drops this stream from the transcription pass. Set
+	// when the same participant's source capture already covers it on another
+	// stream: the render spans the whole timeline, so transcribing both would
+	// emit every word twice.
+	SuppressTranscription bool
 }
 
 // setPCMCapacityDurationHints replaces only the decoded-PCM allocation hint

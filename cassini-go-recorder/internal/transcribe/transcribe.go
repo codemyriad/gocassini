@@ -31,6 +31,10 @@ type BuildConfig struct {
 	// DropCrosstalk removes flagged words instead of only marking them. Off by
 	// default: the transcript stays canonical and the evidence travels with it.
 	DropCrosstalk bool
+	// SourceAudioRoom is the Talk room token this recording belongs to. Source
+	// captures are selected by room AND overlapping call window; without it the
+	// selection falls back to the window alone, which is weaker.
+	SourceAudioRoom string
 	// SourceAudioDir is the root of participant-uploaded source captures
 	// (the operator's capture root). When set, a speaker whose upload can be
 	// placed on the meeting timeline is transcribed from that audio instead of
@@ -129,7 +133,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 		if err != nil {
 			fmt.Fprintf(stdout, "  source audio: no work directory: %v\n", err)
 		} else {
-			sourceAudio = ApplySourceAudio(streams, cfg.SourceAudioDir, workDir, 16000, audioDurationMS, stdout)
+			sourceAudio = ApplySourceAudio(streams, cfg.SourceAudioDir, cfg.SourceAudioRoom, workDir, 16000, audioDurationMS, stdout)
 		}
 	}
 
@@ -363,11 +367,28 @@ func minimumMergedFallbackWords(participantWords int) int {
 // transcribePass runs one full transcription pass over every speaker stream
 // using the given recognizer config. Returns merged + sorted segments.
 func transcribePass(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, backend, device string, numThreads int, stdout io.Writer, guarantee *wordEndGuarantee) ([]Segment, error) {
+	// Streams a participant's source capture already covers are dropped here
+	// rather than inside each transcription path, so sequential and parallel
+	// cannot disagree about what was transcribed.
+	streams = transcribableStreams(streams)
 	conc := resolveStreamConcurrency(len(streams), numThreads, device)
 	if conc <= 1 {
 		return transcribeStreamsSequential(ctx, mkvPath, streams, modelPaths, vadPath, backend, device, numThreads, stdout, guarantee)
 	}
 	return transcribeStreamsParallel(ctx, mkvPath, streams, modelPaths, vadPath, backend, device, numThreads, conc, stdout, guarantee)
+}
+
+// transcribableStreams filters out streams suppressed by source-audio
+// ingestion. Returns everything when nothing is suppressed, which is every
+// build that has no uploads.
+func transcribableStreams(streams []AudioStream) []AudioStream {
+	keep := streams[:0:0]
+	for _, stream := range streams {
+		if !stream.SuppressTranscription {
+			keep = append(keep, stream)
+		}
+	}
+	return keep
 }
 
 // transcribeStreamsSequential transcribes each speaker stream one at a time with

@@ -48,7 +48,11 @@ import (
 //	each stream's first packet (remux.StreamPlan.FirstPacketWallMS, emitted as
 //	first_packet_wall_ms) against its position on the meeting timeline. Both
 //	derive from the same monotonic clock, so that mapping is exact on the
-//	recorder's side.
+//	recorder's side. The segment's own start instant — when MediaRecorder
+//	began, which is sample zero of the uploaded file — is what gets mapped
+//	through it. NOT the first anchor: anchors are sampled one per fifty frames
+//	and the first arrives after the encoder spins up, so anchoring on it placed
+//	every speaker late by up to a second.
 //
 // # What that costs, stated plainly
 //
@@ -197,17 +201,30 @@ func FitPlacement(segment SourceSegment, base SourceTimeBase) (Placement, error)
 	if len(segment.Anchors) < minPlacementAnchors {
 		return Placement{}, fmt.Errorf("only %d anchors, need %d", len(segment.Anchors), minPlacementAnchors)
 	}
-	// The media axis is the participant's audio sample clock (their anchors,
-	// relative to the segment's first) and the meeting axis is wall clock. The
-	// slope between them is that machine's sound-card drift; the intercept is
-	// where the recording starts, carrying the client/recorder clock difference.
+	if segment.StartWallMS <= 0 {
+		return Placement{}, fmt.Errorf("segment has no start time")
+	}
+
+	// Sample zero of the decoded file is the instant MediaRecorder started,
+	// which is segment.StartWallMS — NOT the first anchor.
+	//
+	// This distinction was got wrong once and is worth spelling out. Anchors
+	// are sampled one per fifty encoded frames and the first one arrives after
+	// the encoder has spun up (on the initial connection, after negotiation),
+	// so treating the first anchor as local time zero placed every speaker's
+	// audio late by up to a second. The anchors' job is the RATE; the file's
+	// start is what fixes the OFFSET.
+	//
+	// So: fit the participant's audio sample clock against their wall clock
+	// over the anchors, and take the offset from the segment's start instant
+	// mapped through the recorder's own wall anchor.
+	type point struct{ wall, audio float64 }
 	baseRTP := segment.Anchors[0].RTPTimestamp
-	type point struct{ local, meeting float64 }
 	points := make([]point, 0, len(segment.Anchors))
 	for _, anchor := range segment.Anchors {
 		points = append(points, point{
-			local:   mediaMS(anchor.RTPTimestamp, baseRTP, base.ClockRate),
-			meeting: base.timelineMS(anchor.WallMS),
+			wall:  float64(anchor.WallMS - segment.StartWallMS),
+			audio: mediaMS(anchor.RTPTimestamp, baseRTP, base.ClockRate),
 		})
 	}
 
@@ -218,14 +235,14 @@ func FitPlacement(segment SourceSegment, base SourceTimeBase) (Placement, error)
 		}
 		var sx, sy, sxx, sxy float64
 		for _, p := range pts {
-			sx += p.local
-			sy += p.meeting
-			sxx += p.local * p.local
-			sxy += p.local * p.meeting
+			sx += p.wall
+			sy += p.audio
+			sxx += p.wall * p.wall
+			sxy += p.wall * p.audio
 		}
 		denom := n*sxx - sx*sx
 		if denom == 0 {
-			// Every anchor at the same local time: no slope is determined.
+			// Every anchor at the same instant: no slope is determined.
 			return 0, 0, false
 		}
 		slope = (n*sxy - sx*sy) / denom
@@ -240,16 +257,19 @@ func FitPlacement(segment SourceSegment, base SourceTimeBase) (Placement, error)
 	residual := func(pts []point, slope, intercept float64) float64 {
 		var sum float64
 		for _, p := range pts {
-			d := p.meeting - (intercept + slope*p.local)
+			d := p.audio - (intercept + slope*p.wall)
 			sum += d * d
 		}
 		return math.Sqrt(sum / float64(len(pts)))
 	}
 	rms := residual(points, slope, intercept)
 	if rms > 0 {
+		// One robustness pass, not a full RANSAC: the outliers being removed
+		// are wall-clock steps and browser scheduling stalls, which are rare and
+		// large, not a contaminated majority.
 		kept := points[:0:0]
 		for _, p := range points {
-			if math.Abs(p.meeting-(intercept+slope*p.local)) <= 3*rms {
+			if math.Abs(p.audio-(intercept+slope*p.wall)) <= 3*rms {
 				kept = append(kept, p)
 			}
 		}
@@ -262,9 +282,19 @@ func FitPlacement(segment SourceSegment, base SourceTimeBase) (Placement, error)
 		}
 	}
 
-	placement := Placement{OffsetMS: intercept, Rate: slope, Anchors: len(points), ResidualMS: rms}
-	if math.Abs(slope-1) > maxPlacementRateDeviation {
-		return placement, fmt.Errorf("fitted rate %.6f is not plausible clock drift", slope)
+	// slope is audio-ms per wall-ms. A millisecond of recorded audio therefore
+	// covers 1/slope milliseconds of the meeting.
+	if slope <= 0 {
+		return Placement{}, fmt.Errorf("fitted audio clock does not advance")
+	}
+	placement := Placement{
+		OffsetMS:   base.timelineMS(segment.StartWallMS),
+		Rate:       1 / slope,
+		Anchors:    len(points),
+		ResidualMS: rms,
+	}
+	if math.Abs(placement.Rate-1) > maxPlacementRateDeviation {
+		return placement, fmt.Errorf("fitted rate %.6f is not plausible clock drift", placement.Rate)
 	}
 	if rms > maxPlacementResidualMS {
 		return placement, fmt.Errorf("anchors disagree by %.1f ms RMS", rms)
@@ -339,19 +369,32 @@ func LoadSourceSidecar(dir string) (SourceSidecar, error) {
 	return sidecar, nil
 }
 
-// DiscoverSourceCaptures finds every upload under root, keyed by the owner's
-// Nextcloud user id — the same value the MKV carries as PARTICIPANT_ID.
+// DiscoverSourceCaptures finds the uploads belonging to ONE recording, keyed by
+// the owner's Nextcloud user id — the same value the MKV carries as
+// PARTICIPANT_ID.
 //
 // Layout is <root>/<room>/<owner>/<call-start-ms>/, written by the operator's
-// capture_upload.go. When a participant has several (a rejoin, or a retried
-// upload of a different call), the one whose call window starts latest wins:
-// re-uploads replace in place, so multiple directories mean genuinely different
-// calls and the most recent is the one this recording is most likely to be.
-func DiscoverSourceCaptures(root string) (map[string]string, error) {
+// capture_upload.go.
+//
+// Selection is by room AND overlapping call window, not by participant alone.
+// Matching on participant alone was wrong in two ways that both end with one
+// meeting's speech in another's transcript: a later unrelated capture hid the
+// correct older one, and two calls close together in time could each satisfy
+// the (deliberately generous) placement check. A capture has to be from this
+// room and from a call overlapping this recording before it is a candidate.
+//
+// roomToken may be empty when the caller does not know it — building a bare MKV
+// outside the operator, say. The window check still applies; the room check is
+// skipped, and the caller is trusting the window alone.
+func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS int64) (map[string]string, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, nil
 	}
-	matches, err := filepath.Glob(filepath.Join(root, "*", "*", "*", "capture.json"))
+	roomGlob := "*"
+	if token := strings.TrimSpace(roomToken); token != "" {
+		roomGlob = token
+	}
+	matches, err := filepath.Glob(filepath.Join(root, roomGlob, "*", "*", "capture.json"))
 	if err != nil {
 		return nil, fmt.Errorf("scan capture root: %w", err)
 	}
@@ -366,6 +409,15 @@ func DiscoverSourceCaptures(root string) (map[string]string, error) {
 			// still there and the meeting still publishes.
 			continue
 		}
+		if roomToken != "" && sidecar.RoomToken != roomToken {
+			continue
+		}
+		if !windowsOverlap(sidecar.CallStartWallMS, sidecar.CallEndWallMS, windowStartMS, windowEndMS) {
+			continue
+		}
+		// Among candidates that DO belong to this recording, prefer the latest
+		// start: a participant who rejoined uploads once per call, and the
+		// later one is the longer-lived session.
 		if prev, ok := best[sidecar.OwnerUserID]; ok && prev >= sidecar.CallStartWallMS {
 			continue
 		}
@@ -373,6 +425,19 @@ func DiscoverSourceCaptures(root string) (map[string]string, error) {
 		found[sidecar.OwnerUserID] = dir
 	}
 	return found, nil
+}
+
+// windowsOverlap reports whether two wall-clock spans intersect, with a minute
+// of slack on each side. The slack covers a client that started recording
+// slightly before the recorder attached or stopped slightly after it detached;
+// it is far tighter than the placement guard, which is what makes it useful for
+// telling two nearby meetings apart.
+func windowsOverlap(aStart, aEnd, bStart, bEnd int64) bool {
+	const slackMS = 60_000
+	if aStart <= 0 || bStart <= 0 {
+		return false
+	}
+	return aStart-slackMS <= bEnd && bStart-slackMS <= aEnd
 }
 
 // SourceRenderReport records what ingestion did for one speaker, for the build
@@ -464,6 +529,25 @@ func decodeSourceSegment(path string, sampleRate int) ([]float32, error) {
 	return runPCM16LECommand(cmd, 0)
 }
 
+// recordingWallWindow is the wall-clock span this recording covers, taken from
+// the earliest first-packet instant any track carries. Used to decide which
+// uploaded captures could belong to it at all.
+func recordingWallWindow(streams []AudioStream, timelineMS int64) (int64, int64) {
+	var start int64
+	for _, stream := range streams {
+		if !stream.TimeBase.Known {
+			continue
+		}
+		if start == 0 || stream.TimeBase.FirstPacketWallMS < start {
+			start = stream.TimeBase.FirstPacketWallMS
+		}
+	}
+	if start == 0 {
+		return 0, 0
+	}
+	return start, start + timelineMS
+}
+
 // writeWAV16 writes mono 16-bit PCM. Hand-rolled rather than piped through
 // ffmpeg because the render is already in memory as float32 and a subprocess
 // buys nothing: the header is 44 fixed bytes and the conversion is a clamp.
@@ -523,8 +607,9 @@ func writeWAV16(path string, samples []float32, sampleRate int) error {
 // uploaded. Being a member of the room is what the upload endpoint can check;
 // having actually been in THIS call is what a matching track proves, and that
 // is the check that belongs here.
-func ApplySourceAudio(streams []AudioStream, captureRoot, workDir string, sampleRate int, timelineMS int64, stdout io.Writer) []SourceRenderReport {
-	captures, err := DiscoverSourceCaptures(captureRoot)
+func ApplySourceAudio(streams []AudioStream, captureRoot, roomToken, workDir string, sampleRate int, timelineMS int64, stdout io.Writer) []SourceRenderReport {
+	windowStartMS, windowEndMS := recordingWallWindow(streams, timelineMS)
+	captures, err := DiscoverSourceCaptures(captureRoot, roomToken, windowStartMS, windowEndMS)
 	if err != nil {
 		fmt.Fprintf(stdout, "  source audio: cannot scan %s: %v\n", captureRoot, err)
 		return nil
@@ -537,10 +622,23 @@ func ApplySourceAudio(streams []AudioStream, captureRoot, workDir string, sample
 		return nil
 	}
 	var reports []SourceRenderReport
+	// One participant can own several MKV streams: a rejoin, or a rotation
+	// where the RTP identity changed mid-call. The rendered source track spans
+	// the WHOLE meeting timeline, so handing the same file to each of those
+	// streams would transcribe that participant once per stream and put every
+	// word in the transcript two or three times. It goes to exactly one stream,
+	// and that participant's other streams are dropped from transcription —
+	// their audio is already inside the source render.
+	used := map[string]bool{}
 	for i := range streams {
 		stream := &streams[i]
 		dir, ok := captures[stream.ParticipantID]
 		if !ok || stream.ParticipantID == "" {
+			continue
+		}
+		if used[stream.ParticipantID] {
+			stream.SuppressTranscription = true
+			fmt.Fprintf(stdout, "  source audio: %s has another stream already covered by their capture; not transcribing it twice\n", stream.SpeakerLabel)
 			continue
 		}
 		if !stream.TimeBase.Known {
@@ -566,6 +664,7 @@ func ApplySourceAudio(streams []AudioStream, captureRoot, workDir string, sample
 			continue
 		}
 		stream.SourceAudioPath = path
+		used[stream.ParticipantID] = true
 		fmt.Fprintf(stdout, "  source audio: %s transcribing from participant capture (%d/%d segments, %d anchors, %.1f ms residual, %.0f ppm drift)\n",
 			stream.SpeakerLabel, report.Placed, report.Segments, report.Anchors, report.ResidualMS, report.RatePPM)
 		reports = append(reports, report)

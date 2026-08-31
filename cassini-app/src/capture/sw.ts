@@ -73,11 +73,32 @@ export function composeBundle(talkSource: string, payloadSource: string): string
 //     not something to weld a payload onto.
 //   - the sentinel: last defence against a proxy notice or a login page that
 //     satisfies everything above.
-export function shouldRewrite(request: Request, response: Response, body: string): boolean {
+export function shouldRewrite(
+  request: Request,
+  response: Response,
+  body: string,
+  origin: string,
+): boolean {
   if (request.headers.has("range")) {
     return false;
   }
-  if (request.destination !== "" && request.destination !== "script") {
+  // Same-origin only. Talk's bundle is served by this Nextcloud; a
+  // CORS-readable cross-origin URL that happens to match the path pattern is
+  // somebody else's script and must not be rewritten.
+  try {
+    if (new URL(request.url).origin !== origin) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  // Script destination only. The same URL fetched as an XHR, a prefetch or a
+  // document is not being evaluated as Talk's bundle, and handing that caller
+  // a body with our payload welded on is not what it asked for. An earlier
+  // version also allowed "" for the convenience of a fetch()-based test; that
+  // was the test dictating the policy, and the test now drives the real path
+  // instead.
+  if (request.destination !== "script") {
     return false;
   }
   if (response.status !== 200) {
@@ -97,6 +118,7 @@ export async function handleFetch(
   request: Request,
   fetchImpl: typeof fetch,
   payloadSource: string,
+  origin: string,
 ): Promise<Response | null> {
   if (request.method !== "GET" || !isTalkBundleURL(request.url)) {
     return null;
@@ -108,7 +130,7 @@ export async function handleFetch(
   // Read the body once, then decide: the sentinel check needs it, and a
   // Response body cannot be consumed twice.
   const talkSource = await original.clone().text();
-  if (!shouldRewrite(request, original, talkSource) || !payloadSource) {
+  if (!shouldRewrite(request, original, talkSource, origin) || !payloadSource) {
     return original;
   }
   const headers = new Headers(original.headers);
@@ -151,7 +173,7 @@ export function installListeners(scope: ServiceWorkerGlobalScope): void {
       return;
     }
     event.respondWith(
-      handleFetch(event.request, fetch, __CASSINI_PAYLOAD__)
+      handleFetch(event.request, fetch, __CASSINI_PAYLOAD__, scope.location.origin)
         .then((response) => response ?? fetch(event.request))
         .catch(() => fetch(event.request)),
     );

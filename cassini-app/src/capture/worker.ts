@@ -8,14 +8,14 @@
 //    passes through here on its way to the network. We read its RTP timestamp
 //    and hand the frame straight back, unmodified.
 //
-//    Those timestamps are the whole reason this design survives a bad uplink.
-//    The RTP timestamp is the sender's own 48 kHz sample clock, and it is the
-//    same number the recorder logs for every packet that reached it — which
-//    pkg/core/timeline already maps onto the meeting timeline. Packet loss
-//    destroys the audio the server received; it does not corrupt the timestamps
-//    on the packets that did arrive, and a handful of those anywhere in the
-//    call is enough to place the whole segment. Alignment therefore does not
-//    depend on the damaged SFU audio being good enough to correlate against.
+//    These timestamps are the participant's own 48 kHz sample clock. They are
+//    NOT what the recorder logs for the same audio — Janus rewrites the
+//    timestamps it relays to each subscriber — so they cannot be matched to it
+//    directly. What they give, paired with the wall-clock time recorded
+//    alongside, is the RATE: how fast this machine's sound card runs against
+//    its wall clock. That is the dominant drift in the system, and it is
+//    immune to loss, because these describe frames the client ENCODED rather
+//    than packets that arrived. See docs/source-audio-capture.md.
 //
 // 2. Storage. OPFS's createSyncAccessHandle is worker-only, and it is the right
 //    place for this: quota is a share of free disk rather than localStorage's
