@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { analyzeOverlap, getSoundingBlocks, type OverlapBlock } from "./overlap";
 import {
   buildTranscriptIndex,
   canonicalWordsForBlock,
@@ -267,6 +268,10 @@ describe("canonicalWordsForBlock", () => {
 
   it("resolves display tokens' sourceWordIds to canonical indexed words", () => {
     const words = canonicalWordsForBlock(index, {
+      speaker: "spk_1",
+      speakerLabel: "Alice",
+      startMs: 0,
+      endMs: 500,
       // Producer-style segment ids that do NOT exist in the canonical index —
       // the portable shape, where only the token mapping can find the words.
       sourceSegmentIds: ["seg_1"],
@@ -284,6 +289,10 @@ describe("canonicalWordsForBlock", () => {
     // Cleanup may reference the words in any order it likes; the block is
     // judged on when they were SPOKEN, so they come back in canonical order.
     const words = canonicalWordsForBlock(index, {
+      speaker: "spk_1",
+      speakerLabel: "Alice",
+      startMs: 0,
+      endMs: 1100,
       sourceSegmentIds: [],
       tokens: [
         { sourceWordIds: ["seg_000001:w_0"] },
@@ -299,6 +308,10 @@ describe("canonicalWordsForBlock", () => {
     // discarded "okay" — half a second of speech the block really covers, and
     // half a second the overlap analysis and the playback ring are judged on.
     const words = canonicalWordsForBlock(index, {
+      speaker: "spk_1",
+      speakerLabel: "Alice",
+      startMs: 0,
+      endMs: 1100,
       sourceSegmentIds: ["seg_000000", "seg_000001"],
       tokens: [{ sourceWordIds: [] }, { sourceWordIds: ["seg_000001:w_0"] }],
     });
@@ -310,6 +323,10 @@ describe("canonicalWordsForBlock", () => {
     // the token mapping is the only route to the canonical words. Unioning the
     // two mappings must not cost anything when one of them is empty.
     const words = canonicalWordsForBlock(index, {
+      speaker: "spk_1",
+      speakerLabel: "Alice",
+      startMs: 0,
+      endMs: 500,
       sourceSegmentIds: [],
       tokens: [{ sourceWordIds: ["seg_000000:w_0"] }],
     });
@@ -319,6 +336,10 @@ describe("canonicalWordsForBlock", () => {
 
   it("falls back to the source segments when tokens carry no word alignment", () => {
     const words = canonicalWordsForBlock(index, {
+      speaker: "spk_1",
+      speakerLabel: "Alice",
+      startMs: 0,
+      endMs: 500,
       sourceSegmentIds: ["seg_000000"],
       tokens: [{ sourceWordIds: [] }],
     });
@@ -328,10 +349,196 @@ describe("canonicalWordsForBlock", () => {
 
   it("returns no words when neither tokens nor segment ids resolve", () => {
     const words = canonicalWordsForBlock(index, {
+      speaker: "spk_1",
+      speakerLabel: "Alice",
+      startMs: 0,
+      endMs: 500,
       sourceSegmentIds: ["seg_missing"],
       tokens: [{ sourceWordIds: ["seg_missing:w_0"] }],
     });
     expect(words).toEqual([]);
     expect(isLikelyCrosstalkTurn(words)).toBe(false);
+  });
+});
+
+/**
+ * RESOLVABLE IS NOT COMPATIBLE (the reviewer's D-690 blocker).
+ *
+ * The portable path re-projects `transcript.items[]` into one SYNTHETIC segment
+ * per WORD and names them `seg_%06d` (portable.ts) — the same shape the Go
+ * producer names its real, many-word segments. A display block cleaned against
+ * a producer pack therefore carries block-level `sourceSegmentIds` that RESOLVE
+ * on the portable path, against whichever single word happens to sit at that
+ * ordinal: any speaker, anywhere in the meeting.
+ *
+ * These words are what src/core/overlap.ts measures a block's audible spans
+ * from, so one stale id is enough to put somebody else's speech into this
+ * block's evidence — and the viewer then draws a simultaneous-speech badge on a
+ * turn where only one person was talking.
+ */
+describe("canonicalWordsForBlock rejects resolvable but incompatible references", () => {
+  // The portable projection: one synthetic segment per word, ids by ordinal.
+  const portableIndex = buildTranscriptIndex(
+    validateTranscriptWordsV1({
+      version: "transcript.words.v1",
+      media: { src: "meeting.opus", durationMs: 700_000 },
+      speakers: [
+        { id: "spk_alice", label: "Alice" },
+        { id: "spk_bob", label: "Bob" },
+      ],
+      segments: [
+        {
+          id: "seg_000000",
+          speaker: "spk_alice",
+          startMs: 0,
+          endMs: 500,
+          text: "okay",
+          words: [{ id: "seg_000000:w_0", text: "okay", startMs: 0, endMs: 500 }],
+        },
+        {
+          // Bob, speaking INSIDE Alice's block extent. A stale id landing here
+          // is the dangerous case: the block spans do intersect, so the sweep
+          // compares them and the foreign word decides the answer.
+          id: "seg_000001",
+          speaker: "spk_bob",
+          startMs: 1000,
+          endMs: 2500,
+          text: "actually",
+          words: [{ id: "seg_000001:w_0", text: "actually", startMs: 1000, endMs: 2500 }],
+        },
+        {
+          // Alice again, ten minutes later — resolvable, same speaker, but
+          // nowhere near the block that names it.
+          id: "seg_000002",
+          speaker: "spk_alice",
+          startMs: 600_000,
+          endMs: 600_500,
+          text: "anyway",
+          words: [{ id: "seg_000002:w_0", text: "anyway", startMs: 600_000, endMs: 600_500 }],
+        },
+      ],
+    }),
+  );
+
+  const aliceBlock = {
+    id: "d_alice",
+    speaker: "spk_alice",
+    speakerLabel: "Alice",
+    startMs: 0,
+    endMs: 3000,
+    // The stale producer id, alongside the token mapping that really is Alice's.
+    sourceSegmentIds: ["seg_000001"],
+    tokens: [{ sourceWordIds: ["seg_000000:w_0"] }],
+  };
+
+  const bobBlock: OverlapBlock = {
+    id: "d_bob",
+    speaker: "spk_bob",
+    speakerLabel: "Bob",
+    startMs: 1000,
+    endMs: 2500,
+    words: [{ id: "seg_000001:w_0", text: "actually", startMs: 1000, endMs: 2500 }],
+  };
+
+  function overlapBlocks(): OverlapBlock[] {
+    return [
+      {
+        id: aliceBlock.id,
+        speaker: aliceBlock.speaker,
+        speakerLabel: aliceBlock.speakerLabel,
+        startMs: aliceBlock.startMs,
+        endMs: aliceBlock.endMs,
+        words: canonicalWordsForBlock(portableIndex, aliceBlock),
+      },
+      bobBlock,
+    ];
+  }
+
+  it("does not take another speaker's word from a stale but resolvable id", () => {
+    expect(canonicalWordsForBlock(portableIndex, aliceBlock).map((word) => word.id)).toEqual([
+      "seg_000000:w_0",
+    ]);
+  });
+
+  it("invents the crosstalk when the reference is trusted, so the fixture is real", () => {
+    // The same block judged WITHOUT the compatibility check: Bob's word joins
+    // Alice's evidence and the two blocks now share 1.5 s that never happened.
+    const unchecked: OverlapBlock[] = [
+      {
+        ...bobBlock,
+        id: aliceBlock.id,
+        speaker: aliceBlock.speaker,
+        speakerLabel: aliceBlock.speakerLabel,
+        startMs: aliceBlock.startMs,
+        endMs: aliceBlock.endMs,
+        words: [
+          { id: "seg_000000:w_0", text: "okay", startMs: 0, endMs: 500 },
+          { id: "seg_000001:w_0", text: "actually", startMs: 1000, endMs: 2500 },
+        ],
+      },
+      bobBlock,
+    ];
+
+    expect(analyzeOverlap(unchecked).get("d_alice")?.overlapMs).toBe(1500);
+  });
+
+  it("reports no simultaneous speech between the two blocks", () => {
+    expect(analyzeOverlap(overlapBlocks()).size).toBe(0);
+  });
+
+  it("keeps the playback ring off the block the stale id pointed into", () => {
+    expect(getSoundingBlocks(overlapBlocks(), 2000).map((block) => block.id)).toEqual(["d_bob"]);
+    expect(getSoundingBlocks(overlapBlocks(), 250).map((block) => block.id)).toEqual(["d_alice"]);
+  });
+
+  it("rejects a same-speaker reference from elsewhere in the meeting", () => {
+    const drifted = {
+      ...aliceBlock,
+      sourceSegmentIds: ["seg_000002"],
+    };
+
+    expect(canonicalWordsForBlock(portableIndex, drifted).map((word) => word.id)).toEqual([
+      "seg_000000:w_0",
+    ]);
+    // And the consequence: the block does not light up ten minutes later.
+    const blocks: OverlapBlock[] = [
+      {
+        id: drifted.id,
+        speaker: drifted.speaker,
+        speakerLabel: drifted.speakerLabel,
+        startMs: drifted.startMs,
+        endMs: drifted.endMs,
+        words: canonicalWordsForBlock(portableIndex, drifted),
+      },
+    ];
+    expect(getSoundingBlocks(blocks, 600_200)).toEqual([]);
+  });
+
+  it("still takes a source segment that really is this block's own", () => {
+    // The guard must not cost the JSON-directory path anything: same speaker,
+    // inside the extent, so the words come through as they always did.
+    const honest = {
+      ...aliceBlock,
+      sourceSegmentIds: ["seg_000000"],
+      tokens: [{ sourceWordIds: [] }],
+    };
+
+    expect(canonicalWordsForBlock(portableIndex, honest).map((word) => word.id)).toEqual([
+      "seg_000000:w_0",
+    ]);
+  });
+
+  it("drops a token-named word that belongs to another speaker too", () => {
+    // Baked display transcripts persist sourceWordIds, so a re-transcribed
+    // canonical index can leave those stale in exactly the same way.
+    const staleToken = {
+      ...aliceBlock,
+      sourceSegmentIds: [],
+      tokens: [{ sourceWordIds: ["seg_000000:w_0", "seg_000001:w_0"] }],
+    };
+
+    expect(canonicalWordsForBlock(portableIndex, staleToken).map((word) => word.id)).toEqual([
+      "seg_000000:w_0",
+    ]);
   });
 });

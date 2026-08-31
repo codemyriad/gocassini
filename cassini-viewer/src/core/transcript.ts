@@ -509,16 +509,32 @@ function lookupsFor(index: TranscriptIndex): IndexLookups {
  * happened to reference them in.
  *
  * The two mappings can only disagree about MEMBERSHIP, never about timing: both
- * hand back the same IndexedWord objects out of the same index. A word could be
- * claimed by two blocks only if those blocks shared a source segment id, which
- * the current producer never emits — and the only artifacts in the export tree
- * that do share one share the unresolvable "undefined" above, between two halves
- * of the SAME speaker's split turn, so even then the cost would be a wider
- * highlight rather than invented cross-speaker overlap.
+ * hand back the same IndexedWord objects out of the same index.
+ *
+ * RESOLVABLE IS NOT THE SAME AS COMPATIBLE, which is why every reference is
+ * checked against the block before it is taken. The portable path re-projects
+ * `transcript.items[]` into one SYNTHETIC segment per word and names them
+ * `seg_%06d` (portable.ts) — the very shape the Go producer names its real,
+ * many-word segments (format.go). So a display block carrying a producer id
+ * from the pack it was cleaned against resolves, on the portable path, against
+ * whichever single word happens to sit at that ordinal: any speaker, anywhere
+ * in the meeting. These words are what the block's AUDIBLE SPANS are measured
+ * from (src/core/overlap.ts), so one stale id is enough to put another person's
+ * speech into this block's evidence and invent cross-speaker overlap out of it.
+ *
+ * The two checks are in isCompatibleWithBlock. Neither costs anything on real
+ * data: across the 51 baked display transcripts in this repo's export tree,
+ * 153,474 token-resolved words and 153,686 resolved source-segment references
+ * produced ZERO speaker mismatches, and no resolved word fell outside its
+ * block's extent by more than 2.69 s.
  */
 export function canonicalWordsForBlock(
   index: TranscriptIndex,
   block: {
+    speaker?: string;
+    speakerLabel?: string;
+    startMs: number;
+    endMs: number;
     sourceSegmentIds: readonly string[];
     tokens: ReadonlyArray<{ sourceWordIds: readonly string[] }>;
   },
@@ -537,11 +553,18 @@ export function canonicalWordsForBlock(
 
   for (const token of block.tokens) {
     for (const wordId of token.sourceWordIds) {
-      take(wordsById.get(wordId));
+      const word = wordsById.get(wordId);
+      if (word && isCompatibleWithBlock(block, segmentsById.get(word.segmentId), word)) {
+        take(word);
+      }
     }
   }
   for (const segmentId of block.sourceSegmentIds) {
-    for (const word of segmentsById.get(segmentId)?.words ?? []) {
+    const segment = segmentsById.get(segmentId);
+    if (!segment || !isCompatibleWithBlock(block, segment, segment)) {
+      continue;
+    }
+    for (const word of segment.words) {
       take(word);
     }
   }
@@ -549,6 +572,69 @@ export function canonicalWordsForBlock(
   return words.sort(
     (left, right) =>
       left.segmentIndex - right.segmentIndex || left.wordIndex - right.wordIndex,
+  );
+}
+
+/**
+ * How far outside a display block's own extent a canonical reference may sit
+ * before it is read as a stale id rather than as this block's own speech.
+ *
+ * A block's extent is derived from its TIMED tokens, so when cleanup rewrites a
+ * block's head or tail the extent is pulled INSIDE the source segment that
+ * produced it, and a legitimate reference lands outside. Measured across the
+ * 153,686 resolved source-segment references in this repo's export tree, that
+ * happens 155 times and the worst case is 2.69 s (median 0 — the reference
+ * merely touches the boundary); every one of the 153,474 token-resolved words
+ * touches at worst. 5 s leaves headroom over the worst case measured, because
+ * dropping a legitimate reference costs real audible time, while admitting a
+ * word 5 s away costs at most a slightly wider highlight — the speaker check,
+ * not this one, is what stops another person's speech getting in.
+ */
+export const MAX_CANONICAL_REFERENCE_DRIFT_MS = 5000;
+
+/**
+ * Whether a canonical reference belongs to this block at all.
+ *
+ * SPEAKER. Rejected only when the two genuinely disagree: both carry a speaker
+ * id and the ids differ, or neither does and both carry labels that differ.
+ * A block with no speaker id pointing at a segment that has one proves nothing
+ * — the readable writer leaves the field off — and rejecting on that would
+ * throw away the block's own words.
+ *
+ * TIME. The reference must sit within MAX_CANONICAL_REFERENCE_DRIFT_MS of the
+ * block's extent. Skipped when the block has no usable extent, since there is
+ * then nothing to judge against.
+ */
+function isCompatibleWithBlock(
+  block: { speaker?: string; speakerLabel?: string; startMs: number; endMs: number },
+  segment: IndexedSegment | undefined,
+  span: { startMs: number; endMs: number },
+): boolean {
+  if (!segment) {
+    return false;
+  }
+  if (block.speaker && segment.speaker) {
+    if (block.speaker !== segment.speaker) {
+      return false;
+    }
+  } else if (!block.speaker && !segment.speaker) {
+    const blockLabel = block.speakerLabel?.trim();
+    const segmentLabel = segment.speakerLabel?.trim();
+    if (blockLabel && segmentLabel && blockLabel !== segmentLabel) {
+      return false;
+    }
+  }
+
+  if (
+    !Number.isFinite(block.startMs) ||
+    !Number.isFinite(block.endMs) ||
+    block.endMs <= block.startMs
+  ) {
+    return true;
+  }
+  return (
+    span.endMs >= block.startMs - MAX_CANONICAL_REFERENCE_DRIFT_MS &&
+    span.startMs <= block.endMs + MAX_CANONICAL_REFERENCE_DRIFT_MS
   );
 }
 

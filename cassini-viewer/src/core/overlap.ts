@@ -221,11 +221,27 @@ const WORD_LIKE = /[\p{L}\p{N}]/u;
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** One timed thing inside a block: a display token, or a canonical word. */
+/**
+ * One timed thing inside a block: a display token, or a canonical word.
+ *
+ * The last three fields are what a DISPLAY TOKEN carries and a canonical word
+ * does not, and they are what decides whether the span counts as ACOUSTIC
+ * evidence at all: `id` names a canonical word, `sourceWordIds` names the
+ * canonical words a token was aligned to, and `alignment` says how the token
+ * came by its times. All optional, because the canonical-word pool and a plain
+ * fixture carry only some of them — but where they are present they are
+ * load-bearing. See boundTokensBySourceWords and isSyntheticTiming.
+ */
 export interface OverlapTimedSpan {
   readonly text: string;
   readonly startMs?: number;
   readonly endMs?: number;
+  /** Canonical word id — carried by the canonical-word pool. */
+  readonly id?: string;
+  /** Canonical words this display token was aligned to. */
+  readonly sourceWordIds?: readonly string[];
+  /** How a display token got its times: `source`, `interpolated` or `none`. */
+  readonly alignment?: string;
 }
 
 /**
@@ -379,8 +395,16 @@ export function repairTurnFinalWordInflation<B extends OverlapBlock>(
 
   return blocks.map((block) => {
     const key = speakerKey(block);
-    const tokens = clipInflatedSpans(block.tokens, tokenBudgets.get(key));
+    const clippedTokens = clipInflatedSpans(block.tokens, tokenBudgets.get(key));
     const words = clipInflatedSpans(block.words, wordBudgets.get(key));
+    // A clip a canonical word took has to REACH the display tokens derived from
+    // it. Clipping the two pools independently does not do that, because the
+    // repair fires on text and cleanup is exactly what removes the punctuation
+    // it fires on — so the token keeps the end the word just lost, and the
+    // union in audibleIntervalsOf hands the fabricated span straight back.
+    const tokens =
+      boundTokensBySourceWords(clippedTokens ?? block.tokens, words ?? block.words) ??
+      clippedTokens;
     if (!tokens && !words) {
       return block;
     }
@@ -414,10 +438,16 @@ export function repairTurnFinalWordInflation<B extends OverlapBlock>(
  * The latest end left in EITHER pool after the repair, or `fallbackMs` when the
  * block has no timing at all.
  *
- * Both pools are clipped by repairTurnFinalWordInflation before this runs, so
- * taking the later of the two cannot smuggle a fabricated end back in: an
- * inflated word is inflated because the producer glued a punctuation token onto
- * it, which is exactly what makes it a candidate in whichever pool carries it.
+ * Taking the later of the two pools is only safe because the tokens have
+ * already been bounded by the canonical words they were derived from
+ * (boundTokensBySourceWords). Clipping the pools independently is NOT enough:
+ * the repair fires on text, and cleanup strips exactly the punctuation that
+ * identifies the artifact, so a clipped canonical `Yeah.` routinely sits under
+ * an unclipped display token `Yeah` still carrying the fabricated end.
+ *
+ * Synthetic token spans do not count towards the envelope either — it is a
+ * claim about how long the block was audible, and they are not evidence of
+ * that. See isSyntheticTiming.
  */
 function latestTimedEnd(
   tokens: readonly OverlapTimedSpan[] | undefined,
@@ -427,12 +457,82 @@ function latestTimedEnd(
   let latest = Number.NEGATIVE_INFINITY;
   for (const pool of [tokens, words]) {
     for (const span of pool ?? []) {
-      if (hasTiming(span)) {
+      if (hasTiming(span) && !isSyntheticTiming(span)) {
         latest = Math.max(latest, span.endMs as number);
       }
     }
   }
   return Number.isFinite(latest) ? latest : fallbackMs;
+}
+
+/**
+ * Copy of `spans` with every display token pulled back to the end of the
+ * canonical words it was aligned to, or null when none needed it.
+ *
+ * THE HOLE THIS CLOSES. The repair is a rule about TEXT: a span is a candidate
+ * because it ends in terminal punctuation. The LLM cleanup pass is exactly what
+ * takes that punctuation off the display token — canonical `Yeah.` is shown as
+ * `Yeah` — so the canonical word is recognised and clipped while the token that
+ * took its times FROM that word is not recognised at all and keeps the inflated
+ * end. Before audibleIntervalsOf unioned the pools that only meant a slightly
+ * wider paragraph; with the union it means the fabricated span comes back whole
+ * and, with it, the invented cross-speaker overlap the repair exists to delete.
+ *
+ * The bound is exact rather than heuristic, because a display token's times are
+ * not its own: portable.ts gives an aligned token the minimum start and the
+ * maximum end of the canonical words it matched. A token may therefore not
+ * outlive the words it was derived from, whatever text cleanup gave it. Starts
+ * are never touched, as everywhere else in the repair, so no seek target moves.
+ *
+ * MEASURED, over the 51 baked display transcripts in this repo's export tree:
+ * 268 display tokens run past 1 s while the canonical word they were aligned to
+ * ends in terminal punctuation and the token itself no longer does — 126.2 s of
+ * fabricated tail. Tokens that run past 1 s and DO still carry the punctuation:
+ * zero. So on this corpus the token pool never once sees the artifact on its
+ * own, and without this bound the union re-admits all of it.
+ *
+ * Tokens that name no canonical word, or name words this block does not carry,
+ * are left exactly as they are: there is nothing here to bound them by.
+ */
+function boundTokensBySourceWords(
+  spans: readonly OverlapTimedSpan[] | undefined,
+  words: readonly OverlapTimedSpan[] | undefined,
+): OverlapTimedSpan[] | null {
+  if (!spans || spans.length === 0 || !words || words.length === 0) {
+    return null;
+  }
+  const endByWordId = new Map<string, number>();
+  for (const word of words) {
+    if (word.id === undefined || !hasTiming(word)) {
+      continue;
+    }
+    const known = endByWordId.get(word.id);
+    endByWordId.set(word.id, known === undefined ? (word.endMs as number) : Math.max(known, word.endMs as number));
+  }
+  if (endByWordId.size === 0) {
+    return null;
+  }
+
+  let next: OverlapTimedSpan[] | null = null;
+  for (let index = 0; index < spans.length; index += 1) {
+    const span = spans[index]!;
+    if (!hasTiming(span) || !span.sourceWordIds || span.sourceWordIds.length === 0) {
+      continue;
+    }
+    let boundMs = Number.NEGATIVE_INFINITY;
+    for (const wordId of span.sourceWordIds) {
+      const endMs = endByWordId.get(wordId);
+      if (endMs !== undefined) {
+        boundMs = Math.max(boundMs, endMs);
+      }
+    }
+    if (!Number.isFinite(boundMs) || (span.endMs as number) <= boundMs) {
+      continue;
+    }
+    next ??= [...spans];
+    next[index] = { ...span, endMs: Math.max(span.startMs as number, boundMs) };
+  }
+  return next;
 }
 
 /**
@@ -530,6 +630,8 @@ function candidateRuns(spans: readonly OverlapTimedSpan[]): CandidateRun[] {
  *     punctuation, wherever in the block it sits;
  *   - pure punctuation spans, which duplicate their source word's span rather
  *     than being words in their own right;
+ *   - synthetic (interpolated) token spans, which measure the gap cleanup left
+ *     rather than how long this speaker's words run;
  *   - non-positive durations.
  *
  * A speaker with fewer than MIN_MEDIAN_SAMPLE_WORDS reference words falls back
@@ -562,7 +664,12 @@ function budgetsBySpeaker<B extends OverlapBlock>(
     }
     for (let index = 0; index < spans.length; index += 1) {
       const span = spans[index]!;
-      if (excluded.has(index) || !hasTiming(span) || !WORD_LIKE.test(span.text ?? "")) {
+      if (
+        excluded.has(index) ||
+        !hasTiming(span) ||
+        isSyntheticTiming(span) ||
+        !WORD_LIKE.test(span.text ?? "")
+      ) {
         continue;
       }
       const durationMs = (span.endMs as number) - (span.startMs as number);
@@ -757,13 +864,33 @@ export function analyzeOverlap(
  *     block to [0, 500] — the ring went dark for the two seconds the speaker
  *     was still talking through, and any simultaneity in them went unreported.
  *
- * Taking both pools cannot over-claim. Display tokens are timed by ALIGNMENT to
- * the canonical words — portable.ts gives an aligned token the minimum start and
- * maximum end of the words it matched, and interpolates an untimed interior run
- * strictly between its timed neighbours — so a token span never reaches past the
- * canonical speech it was derived from. The union is therefore bounded by the
- * words the ASR actually heard, which is the honest answer to "was this block
- * sounding here".
+ * ONLY ACOUSTIC EVIDENCE GETS IN, which the union does not give for free. Two
+ * things that look like timing are not evidence of anybody making a noise:
+ *
+ *   - a display token that OUTLIVES the canonical word it was aligned to. An
+ *     aligned token takes the minimum start and maximum end of the words it
+ *     matched (portable.ts), so it should not be able to — but the legacy repair
+ *     recognises an inflated word by its terminal punctuation, and cleanup is
+ *     exactly what strips that punctuation off the display token. The clipped
+ *     canonical `Yeah.` then sits under an unclipped token `Yeah` still carrying
+ *     the fabricated end, and this union would restore it. Those tokens are
+ *     pulled back to their source words by the repair before this runs; see
+ *     boundTokensBySourceWords;
+ *
+ *   - an INTERPOLATED token, whose times nobody measured: portable.ts spreads a
+ *     rewritten run evenly between its two aligned neighbours, so the span it
+ *     covers is BY CONSTRUCTION the stretch where this block's own aligned
+ *     tokens were not sounding — the block's silence, plus whatever anybody else
+ *     said in it. Excluded here (isSyntheticTiming carries the measurement).
+ *
+ *     Excluding is the same answer as the other available fix, bounding those
+ *     spans by the block's canonical audible intervals — identical, not merely
+ *     close. Those intervals are ALREADY part of this union, so intersecting a
+ *     synthetic span with them can only return time the union covers anyway:
+ *     the bounded variant contributes exactly nothing the canonical words have
+ *     not already contributed. Excluding reaches that set without the pass.
+ *     Interpolated tokens keep their times for rendering and seeking; they just
+ *     get no vote on whether the speaker was audible.
  */
 export function audibleIntervalsOf(block: OverlapBlock): Interval[] {
   const spans: Interval[] = [];
@@ -787,7 +914,38 @@ function collectAudibleSpans(
 }
 
 function isAudibleSpan(span: OverlapTimedSpan): boolean {
-  return hasTiming(span) && (span.endMs as number) > (span.startMs as number);
+  return (
+    hasTiming(span) &&
+    !isSyntheticTiming(span) &&
+    (span.endMs as number) > (span.startMs as number)
+  );
+}
+
+/**
+ * Times a display token was GIVEN rather than measured.
+ *
+ * `interpolated` marks the tokens portable.ts spread evenly across the gap
+ * between two aligned neighbours when cleanup rewrote the words in between. It
+ * is a rendering and seeking convenience, not an observation: the run is laid
+ * out uniformly over the whole anchor-to-anchor interval whatever is actually
+ * in it, and that interval is precisely where this block's own aligned tokens
+ * are silent.
+ *
+ * Measured over the 354 interpolated tokens in the 51 baked display transcripts
+ * in this repo's export tree — 251.7 s of synthetic span in total:
+ *   - 76.4 s falls on canonical words the block itself carries, so the union
+ *     already covers it with real evidence behind it;
+ *   - 86.3 s falls where the ASR recorded no word by anybody — silence;
+ *   - 9.7 s falls squarely inside ANOTHER speaker's canonical words, which is
+ *     fabricated crosstalk of exactly the kind this module exists to delete;
+ *   - the rest falls on the same speaker's words in other blocks, which those
+ *     blocks already report.
+ * Median span 400 ms, p90 1.5 s, longest 15.2 s — so the short ones disappear
+ * under HIGHLIGHT_BRIDGE_MS anyway, and the long ones are the ones that must
+ * not be trusted.
+ */
+function isSyntheticTiming(span: OverlapTimedSpan): boolean {
+  return span.alignment === "interpolated";
 }
 
 /**

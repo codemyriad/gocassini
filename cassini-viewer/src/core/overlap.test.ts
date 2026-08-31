@@ -871,6 +871,322 @@ describe("mixed timing: some display tokens timed, some not", () => {
   });
 });
 
+/**
+ * THE TWO POOLS CAN UNDO EACH OTHER'S REPAIR (the reviewer's D-690 blocker).
+ *
+ * The repair recognises an inflated word by its TERMINAL PUNCTUATION. The LLM
+ * cleanup pass is the thing that takes terminal punctuation off — canonical
+ * `Yeah.` is shown to the reader as `Yeah` — and the display token keeps the
+ * canonical word's times, because portable.ts gives an aligned token the
+ * minimum start and maximum end of the words it matched.
+ *
+ * So the canonical word is a candidate and gets clipped, the token is not a
+ * candidate and does not, and the two now disagree by the whole fabricated
+ * span. audibleIntervalsOf unions the pools, latestTimedEnd takes the later
+ * end, and the inflated word walks straight back in with the invented
+ * cross-speaker overlap hanging off it.
+ */
+describe("cross-pool repair: a clipped canonical word under an unclipped token", () => {
+  /** Ten ordinary 240 ms words, so Ana's own median sets a 1000 ms budget. */
+  function alignedRun(startMs: number, count: number) {
+    return Array.from({ length: count }, (_, index) => ({
+      id: `ana-w${index}`,
+      text: `word${index}`,
+      startMs: startMs + index * 240,
+      endMs: startMs + (index + 1) * 240,
+    }));
+  }
+
+  /** The display token cleanup produced from one canonical word. */
+  function tokenFor(word: { id: string; text: string; startMs: number; endMs: number }, text = word.text) {
+    return {
+      text,
+      startMs: word.startMs,
+      endMs: word.endMs,
+      sourceWordIds: [word.id],
+      alignment: "source" as const,
+    };
+  }
+
+  const canonicalRun = alignedRun(0, 10);
+  // The artifact: canonical `Yeah.` stamped at the NEXT onset, 8.5 s long.
+  const inflated = { id: "ana-yeah", text: "Yeah.", startMs: 12_000, endMs: 20_500 };
+
+  const blocks: OverlapBlock[] = [
+    {
+      id: "ana-turn",
+      speaker: "ana",
+      speakerLabel: "Ana Duarte",
+      startMs: 0,
+      endMs: 20_500,
+      // Cleanup stripped the full stop: the TOKEN reads `Yeah`, so nothing in
+      // the token pool marks it as a repair candidate.
+      tokens: [...canonicalRun.map((word) => tokenFor(word)), tokenFor(inflated, "Yeah")],
+      words: [...canonicalRun, inflated],
+    },
+    {
+      id: "ben-aside",
+      speaker: "ben",
+      speakerLabel: "Ben Okafor",
+      startMs: 15_000,
+      endMs: 16_000,
+      words: [{ id: "ben-w0", text: "sure", startMs: 15_000, endMs: 16_000 }],
+    },
+  ];
+
+  it("fabricates the overlap before the repair, so the fixture is real", () => {
+    const analysis = analyzeOverlap(blocks);
+
+    expect(analysis.get("ana-turn")?.overlapMs).toBe(1000);
+    expect(analysis.get("ben-aside")?.peers.map((peer) => peer.id)).toEqual(["ana-turn"]);
+  });
+
+  it("pulls the punctuation-free token back to the canonical word it came from", () => {
+    const repaired = repairTurnFinalWordInflation(blocks);
+
+    expect(repaired[0]?.words?.at(-1)?.endMs).toBe(13_000);
+    // The token has no punctuation of its own to be judged on. It is bounded
+    // because its times were never its own in the first place.
+    expect(repaired[0]?.tokens?.at(-1)?.endMs).toBe(13_000);
+    expect(repaired[0]?.tokens?.at(-1)?.startMs).toBe(12_000);
+    expect(repaired[0]?.endMs).toBe(13_000);
+  });
+
+  it("keeps the fabricated span out of the audible evidence", () => {
+    const repaired = repairTurnFinalWordInflation(blocks);
+
+    expect(audibleIntervalsOf(repaired[0]!)).toEqual([
+      { startMs: 0, endMs: 2400 },
+      { startMs: 12_000, endMs: 13_000 },
+    ]);
+  });
+
+  it("reports no overlap once the token is bounded by its canonical word", () => {
+    expect(analyzeOverlap(repairTurnFinalWordInflation(blocks)).size).toBe(0);
+  });
+
+  it("takes the ring off Ana through the silence her inflated word invented", () => {
+    const repaired = repairTurnFinalWordInflation(blocks);
+
+    expect(getSoundingBlocks(repaired, 15_500).map((block) => block.id)).toEqual(["ben-aside"]);
+    expect(getSoundingBlocks(repaired, 12_500).map((block) => block.id)).toEqual(["ana-turn"]);
+  });
+
+  it("leaves a token alone when the canonical word under it was never clipped", () => {
+    const honest = { id: "ana-yes", text: "Yes.", startMs: 12_000, endMs: 12_600 };
+    const repaired = repairTurnFinalWordInflation([
+      {
+        id: "ana-turn",
+        speaker: "ana",
+        speakerLabel: "Ana Duarte",
+        startMs: 0,
+        endMs: 12_600,
+        tokens: [...canonicalRun.map((word) => tokenFor(word)), tokenFor(honest, "Yes")],
+        words: [...canonicalRun, honest],
+      },
+    ]);
+
+    expect(repaired[0]?.tokens?.at(-1)?.endMs).toBe(12_600);
+    expect(repaired[0]?.endMs).toBe(12_600);
+  });
+
+  it("leaves a token alone when it names no canonical word this block carries", () => {
+    // A rewritten token names nothing, and a stale one names a word that is not
+    // here. Neither can be bounded, and neither is silently dropped.
+    const repaired = repairTurnFinalWordInflation([
+      {
+        id: "ana-turn",
+        speaker: "ana",
+        speakerLabel: "Ana Duarte",
+        startMs: 0,
+        endMs: 20_500,
+        tokens: [
+          ...canonicalRun.map((word) => tokenFor(word)),
+          { text: "Yeah", startMs: 12_000, endMs: 20_500, sourceWordIds: ["not-in-this-block"] },
+        ],
+        words: canonicalRun,
+      },
+    ]);
+
+    expect(repaired[0]?.tokens?.at(-1)?.endMs).toBe(20_500);
+  });
+});
+
+/**
+ * INTERPOLATED TOKEN TIMING IS NOT ACOUSTIC EVIDENCE (the reviewer's D-690
+ * blocker).
+ *
+ * When cleanup rewrites a run of words, portable.ts spreads the rewritten
+ * tokens evenly between the two aligned neighbours around them and marks them
+ * `alignment: "interpolated"`. The interval they are spread across is exactly
+ * the stretch where this block's own aligned tokens are silent — so it holds
+ * the block's pauses, and anything anybody else said in them.
+ */
+describe("interpolated token spans are excluded from audible evidence", () => {
+  /**
+   * Ana says one aligned word, cleanup rewrote the middle of her paragraph, and
+   * she says one more aligned word 5.6 s later. Ben has the floor for two of
+   * those seconds. The interpolated tokens cover the whole gap regardless.
+   */
+  function anaBlock(alignment: "interpolated" | "source"): OverlapBlock {
+    return {
+      id: "ana-mixed",
+      speaker: "ana",
+      speakerLabel: "Ana Duarte",
+      startMs: 10_000,
+      endMs: 16_400,
+      tokens: [
+        {
+          text: "So",
+          startMs: 10_000,
+          endMs: 10_400,
+          sourceWordIds: ["ana-w0"],
+          alignment: "source",
+        },
+        { text: "the", startMs: 10_400, endMs: 12_266, sourceWordIds: [], alignment },
+        { text: "release", startMs: 12_266, endMs: 14_133, sourceWordIds: [], alignment },
+        { text: "notes", startMs: 14_133, endMs: 16_000, sourceWordIds: [], alignment },
+        {
+          text: "shipped",
+          startMs: 16_000,
+          endMs: 16_400,
+          sourceWordIds: ["ana-w1"],
+          alignment: "source",
+        },
+      ],
+      words: [
+        { id: "ana-w0", text: "So", startMs: 10_000, endMs: 10_400 },
+        { id: "ana-w1", text: "shipped", startMs: 16_000, endMs: 16_400 },
+      ],
+    };
+  }
+
+  const benTurn: OverlapBlock = {
+    id: "ben-turn",
+    speaker: "ben",
+    speakerLabel: "Ben Okafor",
+    startMs: 12_000,
+    endMs: 14_000,
+    words: [
+      { id: "ben-w0", text: "hang", startMs: 12_000, endMs: 13_000 },
+      { id: "ben-w1", text: "on", startMs: 13_000, endMs: 14_000 },
+    ],
+  };
+
+  it("counts only the aligned neighbours as audible", () => {
+    expect(audibleIntervalsOf(anaBlock("interpolated"))).toEqual([
+      { startMs: 10_000, endMs: 10_400 },
+      { startMs: 16_000, endMs: 16_400 },
+    ]);
+  });
+
+  it("reports no crosstalk over the speaker the run was spread across", () => {
+    expect(analyzeOverlap([anaBlock("interpolated"), benTurn]).size).toBe(0);
+  });
+
+  it("keeps the ring off Ana while Ben has the floor, and off the silence too", () => {
+    const blocks = [anaBlock("interpolated"), benTurn];
+
+    expect(getSoundingBlocks(blocks, 13_000).map((block) => block.id)).toEqual(["ben-turn"]);
+    // 15 s is inside the interpolated run and inside nobody's speech at all.
+    expect(getSoundingBlocks(blocks, 15_000)).toEqual([]);
+    // The aligned words either side are untouched.
+    expect(getSoundingBlocks(blocks, 10_200).map((block) => block.id)).toEqual(["ana-mixed"]);
+    expect(getSoundingBlocks(blocks, 16_200).map((block) => block.id)).toEqual(["ana-mixed"]);
+  });
+
+  it("is the alignment kind that decides, not the numbers", () => {
+    // The identical spans, marked as measured rather than invented, are
+    // evidence — and then the overlap is real and must be reported.
+    const measured = [anaBlock("source"), benTurn];
+
+    expect(audibleIntervalsOf(measured[0]!)).toEqual([{ startMs: 10_000, endMs: 16_400 }]);
+    expect(analyzeOverlap(measured).get("ben-turn")?.overlapMs).toBe(2000);
+  });
+
+  it("leaves the interpolated times on the tokens for rendering and seeking", () => {
+    // Excluded from the audibility judgement, not deleted: the reader still
+    // gets a highlightable, seekable token for every rewritten word.
+    const repaired = repairTurnFinalWordInflation([anaBlock("interpolated"), benTurn]);
+
+    expect(repaired[0]?.tokens?.map((token) => token.startMs)).toEqual([
+      10_000, 10_400, 12_266, 14_133, 16_000,
+    ]);
+  });
+
+  it("does not let a synthetic span hold the block envelope open", () => {
+    // The repair recomputes a clipped block's envelope from its timed spans.
+    // A synthetic span reaching past the clipped canonical end would hold the
+    // paragraph open across the silence the clip just removed.
+    const aligned = Array.from({ length: 8 }, (_, index) => ({
+      id: `ana-w${index}`,
+      text: `word${index}`,
+      startMs: index * 240,
+      endMs: (index + 1) * 240,
+    }));
+    const repaired = repairTurnFinalWordInflation([
+      {
+        id: "ana-turn",
+        speaker: "ana",
+        speakerLabel: "Ana Duarte",
+        startMs: 0,
+        endMs: 20_500,
+        tokens: [
+          { text: "rewritten", startMs: 2000, endMs: 20_500, sourceWordIds: [], alignment: "interpolated" as const },
+        ],
+        words: [...aligned, { id: "ana-yeah", text: "Yeah.", startMs: 12_000, endMs: 20_500 }],
+      },
+    ]);
+
+    expect(repaired[0]?.endMs).toBe(13_000);
+  });
+
+  it("does not let a synthetic span set a speaker's clip budget", () => {
+    // An interpolated run is a measurement of the gap cleanup left, not of how
+    // long this speaker's words are. Ana's eight aligned 240 ms words must set
+    // the budget on their own, or a 1.9 s synthetic span raises it and the
+    // inflated word beside them escapes the repair.
+    const aligned = Array.from({ length: 8 }, (_, index) => ({
+      id: `ana-w${index}`,
+      text: `word${index}`,
+      startMs: index * 240,
+      endMs: (index + 1) * 240,
+    }));
+    const repaired = repairTurnFinalWordInflation([
+      {
+        id: "ana-turn",
+        speaker: "ana",
+        speakerLabel: "Ana Duarte",
+        startMs: 0,
+        endMs: 28_500,
+        tokens: [
+          ...aligned.map((word) => ({
+            text: word.text,
+            startMs: word.startMs,
+            endMs: word.endMs,
+            sourceWordIds: [word.id],
+            alignment: "source" as const,
+          })),
+          // The rewritten run: eight synthetic 2 s spans. Counted as reference
+          // words they drag Ana's median from 240 ms to 1120 ms and the budget
+          // from 1.0 s to 4.5 s, and the inflated word survives with 3.5 s of
+          // fabricated tail still on it.
+          ...Array.from({ length: 8 }, (_, index) => ({
+            text: `rewritten${index}`,
+            startMs: 2000 + index * 2000,
+            endMs: 4000 + index * 2000,
+            sourceWordIds: [],
+            alignment: "interpolated" as const,
+          })),
+          { text: "Yeah.", startMs: 20_000, endMs: 28_500, sourceWordIds: [], alignment: "source" as const },
+        ],
+      },
+    ]);
+
+    expect(repaired[0]?.tokens?.at(-1)?.endMs).toBe(21_000);
+  });
+});
+
 describe("containment", () => {
   it("does not claim a whole turn happened during a peer it merely sits inside", () => {
     // Ben's paragraph is bracketed by Ana's, but only 0.2 s of their words
