@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { consentGranted, pickAudioSender, stopSegment, uploadURLFrom } from "./payload";
+import { consentGranted, pickAudioSender, rotateSegment, stopSegment, uploadURLFrom } from "./payload";
 import { anchorsWithin } from "./worker";
 
 describe("uploadURLFrom", () => {
@@ -142,5 +142,71 @@ describe("stopSegment", () => {
     await stopSegment(session);
 
     expect(posted).toEqual([]);
+  });
+});
+
+describe("rotateSegment", () => {
+  // Regression: rotation used to be chained onto `pendingChunks`, the very
+  // field stopSegment awaits. That made the field refer to a promise containing
+  // the stopSegment call waiting on it, so one mid-call device change hung
+  // capture for the rest of the meeting and no upload ever happened.
+  it("completes rather than deadlocking against the chunk chain", async () => {
+    const posted: Array<{ type: string }> = [];
+
+    // Minimal stand-ins for the browser globals startSegment reaches for.
+    class FakeRecorder {
+      static isTypeSupported() {
+        return true;
+      }
+      onstop: (() => void) | null = null;
+      ondataavailable: unknown = null;
+      start() {}
+      stop() {
+        setTimeout(() => this.onstop?.(), 0);
+      }
+    }
+    const globals = globalThis as unknown as Record<string, unknown>;
+    const savedRecorder = globals.MediaRecorder;
+    const savedStream = globals.MediaStream;
+    globals.MediaRecorder = FakeRecorder;
+    globals.MediaStream = class {
+      constructor(_tracks: unknown) {}
+    };
+
+    try {
+      const session = {
+        segmentIndex: 0,
+        muteIntervals: [] as Array<[number, number]>,
+        pendingChunks: Promise.resolve(),
+        rotation: Promise.resolve(),
+        dirName: "capture-x-1",
+        segmentStartWallMs: 0,
+        worker: { postMessage: (message: { type: string }) => posted.push(message) },
+        recorder: new FakeRecorder(),
+      } as unknown as import("./payload").CaptureState;
+
+      const sender = {
+        track: { kind: "audio", readyState: "live", enabled: true, getSettings: () => ({}) },
+      } as unknown as RTCRtpSender;
+
+      rotateSegment(session, sender);
+
+      const rotation = (session as unknown as { rotation: Promise<void> }).rotation;
+      await expect(
+        Promise.race([
+          rotation.then(() => "done"),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("rotation deadlocked")), 3000)),
+        ]),
+      ).resolves.toBe("done");
+
+      // The old segment was closed and a new one opened, in that order.
+      const kinds = posted.map((message) => message.type);
+      expect(kinds).toContain("segment-stop");
+      expect(kinds).toContain("segment-start");
+      expect(kinds.indexOf("segment-stop")).toBeLessThan(kinds.lastIndexOf("segment-start"));
+    } finally {
+      globals.MediaRecorder = savedRecorder;
+      globals.MediaStream = savedStream;
+    }
   });
 });

@@ -115,6 +115,12 @@ interface OpenSegment {
   meta: Omit<CaptureSegment, "anchors" | "muteIntervals" | "stopWallMs">;
   stopWallMs: number;
   muteIntervals: Array<[number, number]>;
+  // failed marks a segment whose file could not be written completely — a full
+  // disk, a revoked handle. Such a segment is dropped at finalize rather than
+  // described in the sidecar: a manifest that promises audio the file does not
+  // contain is worse than one segment fewer, because the server would place
+  // and transcribe the truncation as if it were the meeting.
+  failed: boolean;
 }
 
 let captureDir: FileSystemDirectoryHandle | null = null;
@@ -134,7 +140,7 @@ async function openSegment(dirName: string, meta: OpenSegment["meta"]): Promise<
   const fileHandle = await dir.getFileHandle(meta.audioName, { create: true });
   const handle = await fileHandle.createSyncAccessHandle();
   handle.truncate(0);
-  segments.set(meta.index, { handle, offset: 0, meta, stopWallMs: 0, muteIntervals: [] });
+  segments.set(meta.index, { handle, offset: 0, meta, stopWallMs: 0, muteIntervals: [], failed: false });
 }
 
 function appendChunk(index: number, buffer: ArrayBuffer): void {
@@ -142,8 +148,13 @@ function appendChunk(index: number, buffer: ArrayBuffer): void {
   if (!segment) {
     return;
   }
-  segment.handle.write(new Uint8Array(buffer), { at: segment.offset });
-  segment.offset += buffer.byteLength;
+  try {
+    segment.handle.write(new Uint8Array(buffer), { at: segment.offset });
+    segment.offset += buffer.byteLength;
+  } catch (error) {
+    segment.failed = true;
+    self.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });
+  }
 }
 
 function closeSegment(index: number, stopWallMs: number, muteIntervals: Array<[number, number]>): void {
@@ -151,8 +162,13 @@ function closeSegment(index: number, stopWallMs: number, muteIntervals: Array<[n
   if (!segment) {
     return;
   }
-  segment.handle.flush();
-  segment.handle.close();
+  try {
+    segment.handle.flush();
+    segment.handle.close();
+  } catch (error) {
+    segment.failed = true;
+    self.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });
+  }
   segment.stopWallMs = stopWallMs;
   segment.muteIntervals = muteIntervals;
 }
@@ -173,6 +189,13 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
   const dir = await ensureDir(dirName);
   const built: CaptureSegment[] = [];
   for (const segment of [...segments.values()].sort((a, b) => a.meta.index - b.meta.index)) {
+    if (segment.failed || segment.offset === 0) {
+      // Never describe a segment whose bytes are not all there, and never
+      // describe an empty one: the upload would be refused for a missing file,
+      // taking the good segments with it.
+      await dir.removeEntry(segment.meta.audioName).catch(() => {});
+      continue;
+    }
     built.push({
       ...segment.meta,
       stopWallMs: segment.stopWallMs,
@@ -181,6 +204,9 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
     });
   }
   const sidecar: CaptureSidecar = { ...base, segments: built };
+  if (built.length === 0) {
+    throw new Error("no segment was written completely");
+  }
   const fileHandle = await dir.getFileHandle("capture.json", { create: true });
   const handle = await fileHandle.createSyncAccessHandle();
   handle.truncate(0);

@@ -118,6 +118,13 @@ export interface CaptureState {
   // a Blob into an ArrayBuffer is itself async — so sealing the sidecar without
   // awaiting this drops the end of the recording.
   pendingChunks: Promise<void>;
+  // rotation serializes segment changes, and is deliberately a DIFFERENT chain
+  // from pendingChunks. Rotation has to await the outstanding chunk hand-offs;
+  // chaining it onto pendingChunks made that field refer to a promise
+  // containing the very stopSegment call that awaits it, so the await could
+  // never resolve and a mid-call device change hung capture for the rest of
+  // the meeting.
+  rotation: Promise<void>;
 }
 
 let state: CaptureState | null = null;
@@ -296,6 +303,10 @@ async function endCall(): Promise<void> {
   if (active.mutePoll !== null) {
     clearInterval(active.mutePoll);
   }
+  // Let any rotation still in flight finish before closing the final segment,
+  // so a device change during the last seconds of a call does not race the
+  // teardown.
+  await active.rotation.catch(() => {});
   await stopSegment(active);
   const base: Omit<CaptureSidecar, "segments"> = {
     format: SOURCE_CAPTURE_FORMAT,
@@ -349,11 +360,32 @@ function beginCapture(sender: RTCRtpSender): void {
     segmentStartWallMs: callStartWallMs,
     finished: false,
     pendingChunks: Promise.resolve(),
+    rotation: Promise.resolve(),
   };
   state = session;
   attachTimingTransform(session, sender);
   startSegment(session, sender);
   session.mutePoll = setInterval(() => pollMute(session, sender), MUTE_POLL_MS) as unknown as number;
+}
+
+// rotateSegment closes the current segment and opens the next, serialized on
+// the session's rotation chain.
+//
+// The chain is `rotation`, never `pendingChunks`. stopSegment awaits
+// pendingChunks to catch the recorder's final chunk; chaining rotation onto
+// that same field made it refer to a promise containing the very stopSegment
+// call that awaits it, so the await could never resolve and one mid-call
+// device change hung capture for the rest of the meeting.
+//
+// Not awaited by the caller: Talk's own replaceTrack must not wait on our
+// bookkeeping.
+export function rotateSegment(session: CaptureState, sender: RTCRtpSender): void {
+  session.rotation = session.rotation
+    .then(() => stopSegment(session))
+    .then(() => startSegment(session, sender))
+    .catch(() => {
+      // A failed rotation costs this segment, not the recording.
+    });
 }
 
 function watchSender(sender: RTCRtpSender): void {
@@ -369,13 +401,7 @@ function watchSender(sender: RTCRtpSender): void {
     const result = await originalReplace(track);
     const session = state;
     if (session && track && track.kind === "audio") {
-      // A replaced track restarts the recorder's media clock, so it has to
-      // become a new segment. Talk's own call must not wait on our bookkeeping,
-      // hence the un-awaited chain — but it IS chained, so the new segment
-      // cannot start writing before the old one is closed.
-      session.pendingChunks = session.pendingChunks
-        .then(() => stopSegment(session))
-        .then(() => startSegment(session, sender));
+      rotateSegment(session, sender);
     }
     return result;
   };
