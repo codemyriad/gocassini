@@ -130,8 +130,61 @@ func validateSidecar(sidecar *captureSidecar) error {
 	if sidecar.CallStartWallMS <= 0 || sidecar.CallEndWallMS < sidecar.CallStartWallMS {
 		return fmt.Errorf("invalid call window")
 	}
+	// Everything below is the client's account of its own recording. None of it
+	// is trusted for identity or authorisation — those are decided from the
+	// authenticated caller — but it IS the input to placement, and a sidecar
+	// that contradicts itself would produce a confident, wrong answer about
+	// where somebody's words belong. Contradictions are cheaper to refuse here
+	// than to reason about in the build.
 	seen := make(map[string]struct{}, len(sidecar.Segments))
+	seenIndex := make(map[int]struct{}, len(sidecar.Segments))
 	for _, segment := range sidecar.Segments {
+		if segment.Index < 0 {
+			return fmt.Errorf("segment index %d is negative", segment.Index)
+		}
+		if _, dup := seenIndex[segment.Index]; dup {
+			return fmt.Errorf("duplicate segment index %d", segment.Index)
+		}
+		seenIndex[segment.Index] = struct{}{}
+		if segment.StartWallMS <= 0 || segment.StopWallMS < segment.StartWallMS {
+			return fmt.Errorf("segment %d has an invalid window", segment.Index)
+		}
+		// A segment cannot have been recorded outside the call it belongs to.
+		// One second of slack on each side: the client stamps these from its
+		// own clock at slightly different moments in the teardown.
+		const segmentWindowSlackMS = 1000
+		if segment.StartWallMS < sidecar.CallStartWallMS-segmentWindowSlackMS ||
+			segment.StopWallMS > sidecar.CallEndWallMS+segmentWindowSlackMS {
+			return fmt.Errorf("segment %d falls outside the call window", segment.Index)
+		}
+		var lastFrame int64 = -1
+		var lastWall int64 = -1
+		for _, anchor := range segment.Anchors {
+			// Anchors are sampled from a monotonic frame counter, so they must
+			// arrive in order. Out-of-order anchors mean a rebuilt or spliced
+			// sidecar, not a lossy network.
+			if anchor.FrameIndex <= lastFrame {
+				return fmt.Errorf("segment %d has out-of-order anchors", segment.Index)
+			}
+			lastFrame = anchor.FrameIndex
+			if anchor.WallMS < lastWall {
+				return fmt.Errorf("segment %d has anchors going back in time", segment.Index)
+			}
+			lastWall = anchor.WallMS
+			if anchor.WallMS < segment.StartWallMS-segmentWindowSlackMS ||
+				anchor.WallMS > segment.StopWallMS+segmentWindowSlackMS {
+				return fmt.Errorf("segment %d has an anchor outside its own window", segment.Index)
+			}
+			// RTP timestamps are 32-bit unsigned on the wire.
+			if anchor.RTPTimestamp < 0 || anchor.RTPTimestamp >= 1<<32 {
+				return fmt.Errorf("segment %d has an out-of-range RTP timestamp", segment.Index)
+			}
+		}
+		for _, interval := range segment.MuteIntervals {
+			if interval[1] < interval[0] {
+				return fmt.Errorf("segment %d has a backwards mute interval", segment.Index)
+			}
+		}
 		if !captureSafeName.MatchString(segment.AudioName) {
 			return fmt.Errorf("invalid segment name %q", segment.AudioName)
 		}

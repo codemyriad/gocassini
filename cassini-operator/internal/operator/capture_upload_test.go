@@ -367,3 +367,122 @@ func TestCaptureUploadWritesTheSidecarBeforePromoting(t *testing.T) {
 		t.Fatalf("staging directories left behind: %v", staged)
 	}
 }
+
+// The sidecar is the client's account of its own recording. It is not trusted
+// for identity, but it IS the input to placement, so a self-contradicting one
+// must be refused rather than produce a confident wrong answer about where
+// somebody's words belong.
+func TestValidateSidecarRejectsSelfContradiction(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*captureSidecar)
+		want   string
+	}{
+		{
+			"duplicate segment indices",
+			func(s *captureSidecar) {
+				second := s.Segments[0]
+				second.AudioName = "segment-1.webm"
+				s.Segments = append(s.Segments, second)
+			},
+			"duplicate segment index",
+		},
+		{
+			"a negative segment index",
+			func(s *captureSidecar) { s.Segments[0].Index = -1 },
+			"negative",
+		},
+		{
+			"a backwards segment window",
+			func(s *captureSidecar) { s.Segments[0].StopWallMS = s.Segments[0].StartWallMS - 1 },
+			"invalid window",
+		},
+		{
+			"a segment recorded outside its own call",
+			func(s *captureSidecar) {
+				s.Segments[0].StartWallMS = s.CallStartWallMS - 60_000
+				s.Segments[0].StopWallMS = s.CallStartWallMS - 30_000
+			},
+			"outside the call window",
+		},
+		{
+			"anchors out of order",
+			func(s *captureSidecar) {
+				s.Segments[0].Anchors = []captureAnchor{
+					{FrameIndex: 50, RTPTimestamp: 5000, WallMS: s.Segments[0].StartWallMS + 100},
+					{FrameIndex: 10, RTPTimestamp: 6000, WallMS: s.Segments[0].StartWallMS + 200},
+				}
+			},
+			"out-of-order anchors",
+		},
+		{
+			"anchors going back in time",
+			func(s *captureSidecar) {
+				s.Segments[0].Anchors = []captureAnchor{
+					{FrameIndex: 10, RTPTimestamp: 5000, WallMS: s.Segments[0].StartWallMS + 900},
+					{FrameIndex: 20, RTPTimestamp: 6000, WallMS: s.Segments[0].StartWallMS + 100},
+				}
+			},
+			"back in time",
+		},
+		{
+			"an anchor outside its segment",
+			func(s *captureSidecar) {
+				s.Segments[0].Anchors[0].WallMS = s.Segments[0].StopWallMS + 60_000
+			},
+			"outside its own window",
+		},
+		{
+			"an out-of-range RTP timestamp",
+			func(s *captureSidecar) { s.Segments[0].Anchors[0].RTPTimestamp = 1 << 33 },
+			"out-of-range RTP",
+		},
+		{
+			"a backwards mute interval",
+			func(s *captureSidecar) { s.Segments[0].MuteIntervals = [][2]int64{{500, 100}} },
+			"backwards mute",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sidecar := validSidecar()
+			tc.mutate(&sidecar)
+			err := validateSidecar(&sidecar)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateSidecar error = %v, want containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateSidecarAcceptsARealisticMultiSegmentCapture(t *testing.T) {
+	// What the client actually produces after a device change mid-call: two
+	// segments, a continuing frame counter, mute intervals, sampled anchors.
+	sidecar := validSidecar()
+	start := sidecar.CallStartWallMS
+	sidecar.Segments = []captureSegment{
+		{
+			Index: 0, AudioName: "segment-0.webm", MimeType: "audio/webm;codecs=opus",
+			StartWallMS: start, StopWallMS: start + 20_000,
+			Anchors: []captureAnchor{
+				{FrameIndex: 0, RTPTimestamp: 1_000_000, SSRC: 7, WallMS: start + 20},
+				{FrameIndex: 50, RTPTimestamp: 1_048_000, SSRC: 7, WallMS: start + 1020},
+			},
+			MuteIntervals: [][2]int64{{start + 5_000, start + 8_000}},
+		},
+		{
+			Index: 1, AudioName: "segment-1.webm", MimeType: "audio/webm;codecs=opus",
+			StartWallMS: start + 20_000, StopWallMS: start + 40_000,
+			Anchors: []captureAnchor{
+				// A new SSRC after the renegotiation, and the frame counter
+				// continues across the seam because the transform outlives the
+				// track.
+				{FrameIndex: 1000, RTPTimestamp: 90_000, SSRC: 9, WallMS: start + 20_100},
+			},
+		},
+	}
+	sidecar.CallEndWallMS = start + 40_000
+	if err := validateSidecar(&sidecar); err != nil {
+		t.Fatalf("a realistic two-segment capture was rejected: %v", err)
+	}
+}
