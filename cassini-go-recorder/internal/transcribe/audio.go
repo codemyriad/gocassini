@@ -139,9 +139,11 @@ func probeFirstPacketTimeMS(mkv string, streamIndex int) (int64, error) {
 		"-of", "default=noprint_wrappers=1:nokey=1",
 		mkv,
 	)
-	out, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		return 0, fmt.Errorf("ffprobe first packet for stream %d: %w\n%s", streamIndex, err, truncate(string(out), 800))
+		return 0, fmt.Errorf("ffprobe first packet for stream %d: %w\n%s", streamIndex, err, truncate(stderr.String(), 800))
 	}
 	value := strings.TrimSpace(string(out))
 	if value == "" || value == "N/A" {
