@@ -524,3 +524,47 @@ func TestWriteManifestRecordsAttributionProvenance(t *testing.T) {
 		t.Errorf("attribution must be omitted when not recorded, got:\n%s", legacyRaw)
 	}
 }
+
+// Every build this package produces measures each word's end against its own
+// speaker's track. Consumers cannot see that from the timings — a long word
+// looks the same whether it was measured or inherited from a punctuation
+// mark's timestamp — and the 197 artifacts built before the rule changed carry
+// timings of the second kind, which consumers repair by clipping. So the claim
+// has to be stated in the manifest, and stated unconditionally: there is no
+// build of this code that does not make it.
+func TestWriteManifestAlwaysRecordsAudioBoundedWordEnds(t *testing.T) {
+	tmp := t.TempDir()
+	streams := []AudioStream{{SpeakerID: "spk_alex", SpeakerLabel: "Alex"}}
+
+	// The leanest possible call: no readable pass, no summary, no additional
+	// transcripts, no attribution record. The marker must still be there.
+	path := filepath.Join(tmp, "manifest.json")
+	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cpu", "", false, "", false, nil, nil); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var got struct {
+		Provenance struct {
+			WordTimings map[string]any `json:"wordTimings"`
+		} `json:"provenance"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	timings := got.Provenance.WordTimings
+	if timings == nil {
+		t.Fatalf("provenance.wordTimings missing from:\n%s", raw)
+	}
+	if timings["endsBoundedByAudio"] != true {
+		t.Errorf("endsBoundedByAudio = %v, want true", timings["endsBoundedByAudio"])
+	}
+	// Exactly one key: consumers key off the record's presence, and every key
+	// added here has to be declared by the closed portable-meeting schemas
+	// before it can be published.
+	if len(timings) != 1 {
+		t.Errorf("wordTimings = %v; want exactly one key, endsBoundedByAudio", timings)
+	}
+}

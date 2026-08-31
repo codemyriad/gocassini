@@ -83,6 +83,32 @@ type Provenance struct {
 	// transcript. Nil for legacy files and attribution-less builds, and
 	// omitted from the wire in that case.
 	Attribution *AttributionProvenance `json:"attribution,omitempty"`
+	// WordTimings is meeting-level for the same reason: one decode rule
+	// produced every word in the file. Nil for every file built before the
+	// rule changed, and omitted from the wire in that case — its absence is
+	// the signal.
+	WordTimings *WordTimingProvenance `json:"wordTimings,omitempty"`
+}
+
+// WordTimingProvenance records how the producer decided where a word ends,
+// restated field-for-field from the build artifact manifest (internal/transcribe
+// writes that record; this package deliberately does not import it).
+//
+// It exists because the rule changed and the timings do not say which one
+// produced them. Files built before D-690 ended a word at its last token
+// including a trailing punctuation mark, which the ASR stamps at the *next*
+// acoustic onset, so a sentence-final word could run for seconds over silence;
+// consumers reasonably grew repairs that clip an over-long word back towards
+// the meeting's median. Files carrying this record ended each word where the
+// speaker's own audio ended, so an over-long word is now a measurement and
+// clipping it corrupts correct timing.
+//
+// A consumer keys off presence, not value: absent means the ends came from a
+// punctuation mark's timestamp and the legacy repair still applies.
+type WordTimingProvenance struct {
+	// EndsBoundedByAudio is true when each word's end was measured against its
+	// speaker's own track rather than taken from its last token's timestamp.
+	EndsBoundedByAudio bool `json:"endsBoundedByAudio"`
 }
 
 // AttributionProvenance is the cross-track attribution stage's record for the

@@ -251,8 +251,30 @@ type artifactTranscriptRef struct {
 type provenanceInfo struct {
 	SpeechToText    *provStep              `json:"speechToText,omitempty"`
 	Attribution     *AttributionProvenance `json:"attribution,omitempty"`
+	WordTimings     *WordTimingProvenance  `json:"wordTimings,omitempty"`
 	ReadableCleanup *provStep              `json:"readableCleanup,omitempty"`
 	MeetingSummary  *provStep              `json:"meetingSummary,omitempty"`
+}
+
+// WordTimingProvenance says how this build decided where a word ends.
+//
+// It exists because the answer changed, and consumers cannot tell from the
+// timings themselves. Builds before D-690 ended a word at its last token
+// including a trailing punctuation mark, which Parakeet stamps at the *next*
+// acoustic onset — so a sentence-final word could be seconds long with the
+// speaker silent throughout, and consumers grew repairs that clip a suspicious
+// word back towards the meeting's median. This build ends a word where the
+// speaker's own audio ends, measured against the owner's track, so a long word
+// is now evidence of a long sound and clipping it destroys correct timing. A
+// consumer must be able to tell the two apart, and only the producer knows.
+//
+// Absent on every artifact built before this change, which is exactly what a
+// consumer keys off: presence means the ends were measured, absence means they
+// were inherited from a punctuation mark's timestamp.
+type WordTimingProvenance struct {
+	// EndsBoundedByAudio is true when each word's end was measured against its
+	// speaker's own track rather than taken from its last token's timestamp.
+	EndsBoundedByAudio bool `json:"endsBoundedByAudio"`
 }
 
 // AttributionProvenance records what the cross-track attribution stage did to
@@ -336,6 +358,12 @@ func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int
 			Device:  sttDevice,
 		},
 		Attribution: attribution,
+		// Unconditional, and deliberately not a parameter: every word this
+		// package emits goes through filterWordsByEnergy, which is what makes
+		// the claim true. A build that stopped doing that would have to delete
+		// this line, which is the point of writing it here rather than
+		// threading a flag from the caller.
+		WordTimings: &WordTimingProvenance{EndsBoundedByAudio: true},
 	}
 	if hasReadable {
 		prov.ReadableCleanup = &provStep{

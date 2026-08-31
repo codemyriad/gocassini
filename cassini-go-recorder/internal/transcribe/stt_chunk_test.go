@@ -782,10 +782,11 @@ func TestFilterWordsByEnergyFollowsAudioPastTheLastSpeechToken(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("filterWordsByEnergy = %#v; want the word kept", got)
 	}
-	// The audio runs out at 1600ms; one frame of grace lands the end at 1680ms,
-	// far short of the 2500ms the punctuation mark would have imposed.
-	if got[0].StartMS != 1000 || got[0].EndMS != 1600+wordEndGraceMS {
-		t.Fatalf("word = %d-%dms; want 1000-%dms", got[0].StartMS, got[0].EndMS, 1600+wordEndGraceMS)
+	// The audio runs out at 1600ms and the end lands exactly there — far short
+	// of the 2500ms the punctuation mark would have imposed, and not one
+	// millisecond past the last sample the gate calls active.
+	if got[0].StartMS != 1000 || got[0].EndMS != 1600 {
+		t.Fatalf("word = %d-%dms; want 1000-1600ms", got[0].StartMS, got[0].EndMS)
 	}
 	if got[0].extentCap != 0 {
 		t.Errorf("the cap must be cleared once applied, got %d", got[0].extentCap)
@@ -811,8 +812,8 @@ func TestFilterWordsByEnergyStopsWhereTheAudioStops(t *testing.T) {
 // boundary is wordEndGapToleranceMS, pinned here from both sides.
 func TestFilterWordsByEnergyBridgesAClosureButNotAPause(t *testing.T) {
 	const sampleRate = 16000
-	if wordEndGapToleranceMS != 200 || wordEndGraceMS != 80 {
-		t.Fatalf("gap tolerance/grace = %dms/%dms; want 200ms/80ms", wordEndGapToleranceMS, wordEndGraceMS)
+	if wordEndGapToleranceMS != 200 {
+		t.Fatalf("gap tolerance = %dms; want 200ms", wordEndGapToleranceMS)
 	}
 	samples := activeAudio(sampleRate, 3000,
 		[2]int64{1000, 1150}, // "o-"
@@ -827,8 +828,8 @@ func TestFilterWordsByEnergyBridgesAClosureButNotAPause(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("filterWordsByEnergy = %#v; want the word kept", got)
 	}
-	if got[0].EndMS != 1450+wordEndGraceMS {
-		t.Fatalf("word ends at %dms; want %dms (closure bridged, pause not crossed)", got[0].EndMS, 1450+wordEndGraceMS)
+	if got[0].EndMS != 1450 {
+		t.Fatalf("word ends at %dms; want 1450ms (closure bridged, pause not crossed)", got[0].EndMS)
 	}
 
 	// One tolerance either side of the boundary, from the word's stamped end.
@@ -836,8 +837,8 @@ func TestFilterWordsByEnergyBridgesAClosureButNotAPause(t *testing.T) {
 		[2]int64{1000, 1150},
 		[2]int64{1150 + wordEndGapToleranceMS - 10, 1600},
 	)
-	if got := filterWordsByEnergy(justUnder, sampleRate, spoken()); len(got) != 1 || got[0].EndMS != 1600+wordEndGraceMS {
-		t.Fatalf("a %dms gap = %#v; want the audio after it kept, ending at %dms", wordEndGapToleranceMS-10, got, 1600+wordEndGraceMS)
+	if got := filterWordsByEnergy(justUnder, sampleRate, spoken()); len(got) != 1 || got[0].EndMS != 1600 {
+		t.Fatalf("a %dms gap = %#v; want the audio after it kept, ending at 1600ms", wordEndGapToleranceMS-10, got)
 	}
 	justOver := activeAudio(sampleRate, 3000,
 		[2]int64{1000, 1150},
@@ -871,6 +872,67 @@ func TestFilterWordsByEnergyNeverExceedsTheCap(t *testing.T) {
 	}
 }
 
+// A word built entirely from punctuation may never be extended, end to end
+// through both stages that decide a word's extent.
+//
+// Parakeet stamps a standalone mark with a timestamp and a duration like any
+// other token, but it writes those marks rather than hearing them: no sample
+// anywhere belongs to the mark. A zero-length "…" whose speaker resumes 100ms
+// later still clears the energy gate — the gate's 200ms post-margin reaches
+// into that next utterance — so if such a word carried an extension ceiling
+// the gate would walk it forward over audio that is plainly the next word's.
+//
+// This is a seam test on purpose: tokensToWords decides whether a ceiling
+// exists and filterWordsByEnergy decides how much of it to spend, and either
+// half in isolation looks correct. "Marco." is the control — it carries a real
+// spoken token, so it keeps its ceiling and is extended over its own audio in
+// this very same call.
+func TestPunctuationOnlyWordIsNotExtendedOverTheNextUtterance(t *testing.T) {
+	const sampleRate = 16000
+	// "Okay" 1000-1300ms, then a pause, then "Marco" from 1600ms to 2400ms.
+	// The mark is stamped at 1500ms, inside the pause and 100ms before the
+	// speaker resumes.
+	samples := activeAudio(sampleRate, 3500, [2]int64{1000, 1300}, [2]int64{1600, 2400})
+	tokens := []string{"▁Okay", "▁…", "▁Marco", "."}
+	timestamps := []float32{1.00, 1.50, 1.60, 2.60}
+	durations := []float32{0.30, 0.32, 0.32, 0.00}
+
+	words := tokensToWords(tokens, timestamps, durations)
+	if len(words) != 3 {
+		t.Fatalf("tokensToWords = %#v; want three words", words)
+	}
+	point := words[1]
+	if point.Text != "…" {
+		t.Fatalf("words[1] = %q; want the standalone mark", point.Text)
+	}
+	if point.extentCapMS() != point.EndMS {
+		t.Errorf("a punctuation-only word carries a ceiling of %dms above its end %dms; it must carry none",
+			point.extentCapMS(), point.EndMS)
+	}
+
+	got := filterWordsByEnergy(samples, sampleRate, words)
+	if len(got) != 3 {
+		t.Fatalf("filterWordsByEnergy = %#v; want all three words kept — the mark must clear the gate for this test to be testing anything", got)
+	}
+	gatedPoint, gatedNext := got[1], got[2]
+	if gatedPoint.StartMS != 1500 || gatedPoint.EndMS != 1500 {
+		t.Errorf("the mark = %d-%dms; want 1500-1500ms, exactly where its token stamped it",
+			gatedPoint.StartMS, gatedPoint.EndMS)
+	}
+	if gatedPoint.EndMS > gatedNext.StartMS {
+		t.Errorf("the mark reaches %dms, past the next word's start at %dms: it expanded across speech that is not its own",
+			gatedPoint.EndMS, gatedNext.StartMS)
+	}
+	// The control: the spoken word in the same call is extended from the 1920ms
+	// its saturating duration head reported to the 2400ms its audio actually
+	// runs to, so the mark is being left alone by the ceiling rule and not by a
+	// dead extension path.
+	if gatedNext.Text != "Marco." || gatedNext.EndMS != 2400 {
+		t.Errorf("control word = %q ending %dms; want \"Marco.\" extended over its own audio to 2400ms",
+			gatedNext.Text, gatedNext.EndMS)
+	}
+}
+
 // A cap does not rescue a word with no audio under it: the gate still drops it,
 // and the extension never runs on a word that was not kept.
 func TestFilterWordsByEnergyStillDropsSilentWordsWithACap(t *testing.T) {
@@ -886,7 +948,8 @@ func TestFilterWordsByEnergyStillDropsSilentWordsWithACap(t *testing.T) {
 // The properties the rule must have for every input, swept over caps, ends and
 // audio layouts: a start never moves, an end never goes backwards (no real
 // speech is cut and no word collapses to zero length), and an end never passes
-// the cap (no overlap is fabricated).
+// the cap (so the end never exceeds what the punctuation-inclusive rule
+// produced).
 func TestFilterWordsByEnergyExtensionProperties(t *testing.T) {
 	const sampleRate = 16000
 	layouts := [][][2]int64{
