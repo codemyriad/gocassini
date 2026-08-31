@@ -51,7 +51,8 @@
           "additionalProperties": { "$ref": "#/$defs/processingStep" }
         },
         "meetingSummary": { "$ref": "#/$defs/processingStep" },
-        "attribution": { "$ref": "#/$defs/attributionProvenance" }
+        "attribution": { "$ref": "#/$defs/attributionProvenance" },
+        "wordTimings": { "$ref": "#/$defs/wordTimingProvenance" }
       }
     },
     "chapters": {
@@ -196,6 +197,15 @@
         "wordsFlagged": { "type": "integer", "minimum": 0 },
         "wordsDropped": { "type": "integer", "minimum": 0 },
         "thresholdDb": { "type": "number", "description": "The meeting's estimated crosstalk threshold in dB. Absent when the meeting showed no crosstalk population." }
+      }
+    },
+    "wordTimingProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endsBoundedByAudio"],
+      "description": "How the producer decided where each word ends. Absent on files produced before the rule changed, and on files whose speech recognizer makes no such guarantee. Absent means only that the guarantee was not made: the ends may be token-derived, in which case a word's end came from its last token including a trailing punctuation mark \u2014 a mark the recognizer stamps at the next acoustic onset, so such a word can run for seconds while its speaker is silent \u2014 or they may be sound and simply undeclared. A consumer keys off presence: absent means those ends are unvouched-for and a repair that clips an over-long word is appropriate; present means they were measured against the speaker's own audio and clipping them destroys correct timing.",
+      "properties": {
+        "endsBoundedByAudio": { "type": "boolean", "description": "True when each word's end was measured against its own speaker's track rather than taken from its last token's timestamp." }
       }
     },
     "chapter": {

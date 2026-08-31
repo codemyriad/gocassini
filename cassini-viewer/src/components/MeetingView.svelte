@@ -6,15 +6,25 @@
   import DOMPurify from "dompurify";
   import { Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape } from "@lucide/svelte";
   import {
-    canonicalWordsForBlock,
     formatClockTime,
     isLikelyCrosstalkTurn,
+    judgedDisplaySegments,
+    normalizeSpeakerLabel,
     parseTimeHash,
+    type JudgedDisplaySegment,
   } from "../core/transcript";
+  import { getActiveTimedRange } from "../core/timing";
   import {
-    getActiveTimedRange,
-    getLatestStartingActiveTimedRange,
-  } from "../core/timing";
+    analyzeOverlap,
+    describeOverlap,
+    describeResumption,
+    getSoundingBlocks,
+    groupInterruptedTurns,
+    repairTurnFinalWordInflation,
+    sortBlocksInReadingOrder,
+    type BlockOverlap,
+    type OverlapDescription,
+  } from "../core/overlap";
   import type {
     DisplayTranscriptToken,
     DisplayTranscriptV1,
@@ -59,17 +69,7 @@
     enriched: MeetingCatalogEntry;
   }>();
 
-  interface DisplaySegment {
-    id: string;
-    speaker?: string;
-    speakerLabel: string;
-    startMs: number;
-    endMs: number;
-    text: string;
-    tokens: DisplayTranscriptToken[];
-    words: IndexedWord[];
-    sourceSegmentIds: string[];
-  }
+  type DisplaySegment = JudgedDisplaySegment;
 
   const CONTINUATION_GAP_MS = 60_000;
 
@@ -83,6 +83,13 @@
   let chaptersSrc: string | null = null;
   let timingPrecision: ArtifactTimingPrecision | null = null;
   let artifactMetadata: ArtifactMetadata | null = null;
+  // Whether the PRODUCER already bounded this artifact's word ends by the
+  // measured audio (manifest provenance.wordTimings.endsBoundedByAudio). When
+  // it did, the legacy display-time repair must stand down: its budget would
+  // clip a genuinely long word — one measured at 1.44 s against a 240 ms
+  // median — back to 1 s and undo the production fix. Absent on all 197
+  // already-published meetings, which is where the repair earns its keep.
+  let wordEndsBoundedByAudio = false;
   let availableTranscripts: PortableTranscriptDescriptor[] = [];
   let currentTranscriptId = "";
   let defaultTranscriptId = "";
@@ -171,6 +178,7 @@
     chaptersSrc = artifact.chaptersSrc;
     timingPrecision = artifact.timingPrecision;
     artifactMetadata = artifact.metadata;
+    wordEndsBoundedByAudio = artifact.wordEndsBoundedByAudio;
     availableTranscripts = artifact.availableTranscripts;
     currentTranscriptId = artifact.currentTranscriptId;
     defaultTranscriptId =
@@ -195,6 +203,7 @@
     readableTranscript = artifact.readableTranscript;
     timingPrecision = artifact.timingPrecision;
     artifactMetadata = artifact.metadata;
+    wordEndsBoundedByAudio = artifact.wordEndsBoundedByAudio;
     availableTranscripts = artifact.availableTranscripts;
     currentTranscriptId = artifact.currentTranscriptId;
     lastAutoScrollSegmentId = "";
@@ -214,6 +223,7 @@
     chaptersSrc = null;
     timingPrecision = null;
     artifactMetadata = null;
+    wordEndsBoundedByAudio = false;
     availableTranscripts = [];
     currentTranscriptId = "";
     defaultTranscriptId = "";
@@ -506,27 +516,11 @@
     display: DisplayTranscriptV1 | null,
   ): DisplaySegment[] {
     if (display) {
-      // Carry the canonical words alongside the display tokens. A display
-      // transcript is LLM-cleaned prose whose tokens hold no attribution, and
-      // portable meetings always build one — so leaving this empty meant the
-      // crosstalk badge never appeared for the common case, only for raw JSON
-      // with the exact-word view switched on. canonicalWordsForBlock resolves
-      // the tokens' sourceWordIds against the canonical index (sourceSegmentIds
-      // alone use producer segment ids that never match the per-item ids a
-      // portable manifest is re-projected into) and falls back to the
-      // sourceSegmentIds mapping for blocks with no word alignment. The words
-      // are not rendered here; they are what the segment is judged on.
-      return display.blocks.map((block) => ({
-        id: block.id,
-        speaker: block.speaker,
-        speakerLabel: normalizeSpeakerLabel(block.speakerLabel),
-        startMs: block.startMs,
-        endMs: block.endMs,
-        text: block.text,
-        tokens: block.tokens,
-        words: canonicalWordsForBlock(index, block),
-        sourceSegmentIds: [...block.sourceSegmentIds],
-      }));
+      // The whole projection lives in core/transcript.ts: the canonical words a
+      // block is judged on and the tokens still allowed to vote on that
+      // judgement have to come out of one compatibility pass, and that has to
+      // be somewhere a test can reach. See judgedDisplaySegments.
+      return judgedDisplaySegments(index, display);
     }
 
     if (!readable) {
@@ -566,10 +560,6 @@
     });
   }
 
-  function normalizeSpeakerLabel(label: string): string {
-    return label.replace(/\s+(audio|video)\s*$/i, "").trim() || label;
-  }
-
   // Tooltip fragment for a low-confidence word. Guarded against non-finite
   // gaps (hosts can mount this published component with unvalidated data):
   // never render "NaN dB" or "Infinity dB" — fall back to the unmeasured
@@ -579,13 +569,6 @@
       return "much louder";
     }
     return `${gapDb.toFixed(0)} dB louder`;
-  }
-
-  function getActiveDisplaySegment(
-    segments: DisplaySegment[],
-    timeMs: number,
-  ): DisplaySegment | null {
-    return getLatestStartingActiveTimedRange(segments, timeMs);
   }
 
   function getActiveDisplayToken(
@@ -612,6 +595,41 @@
       return null;
     }
     return getActiveTimedRange(segment.words, timeMs);
+  }
+
+  // Highlighting is per ACTIVE SEGMENT, not per meeting: during an overlap two
+  // turns really are sounding, so both keep their ring and both track their own
+  // word. Keyed by segment id because the template renders segments through
+  // grouped rows and cannot rely on array position.
+  function activeTokensBySegment(
+    segments: DisplaySegment[],
+    timeMs: number,
+  ): Map<string, DisplayTranscriptToken | null> {
+    return new Map(segments.map((segment) => [segment.id, getActiveDisplayToken(segment, timeMs)]));
+  }
+
+  function activeWordsBySegment(
+    segments: DisplaySegment[],
+    timeMs: number,
+  ): Map<string, IndexedWord | null> {
+    return new Map(segments.map((segment) => [segment.id, getActiveDisplayWord(segment, timeMs)]));
+  }
+
+  function overlapNotesFor(
+    analysis: Map<string, BlockOverlap>,
+  ): Map<string, { overlap: OverlapDescription | null; resumption: OverlapDescription | null }> {
+    const notes = new Map<
+      string,
+      { overlap: OverlapDescription | null; resumption: OverlapDescription | null }
+    >();
+    for (const [id, entry] of analysis) {
+      const overlap = describeOverlap(entry);
+      const resumption = describeResumption(entry);
+      if (overlap || resumption) {
+        notes.set(id, { overlap, resumption });
+      }
+    }
+    return notes;
   }
 
   function isSpeakerContinuation(segments: DisplaySegment[], index: number): boolean {
@@ -739,13 +757,40 @@
 
   $: summaryHtml = renderSummaryHtml(summaryMarkdown);
   $: speakers = transcriptIndex?.transcript.speakers ?? [];
+  // Reading order, then EFFECTIVE timings, then overlap. The order matters:
+  // the producer appends wordless segments last so the array cannot be trusted
+  // to be sorted, and the overlap analysis has to see repaired spans or it
+  // spends most of its time labelling decoder-fabricated silence as crosstalk
+  // (D-690). repairTurnFinalWordInflation copies rather than mutates, so the
+  // loaded artifact keeps its canonical times and every word keeps its original
+  // START — seek targets never move.
   $: displaySegments = transcriptIndex
-    ? buildDisplaySegments(transcriptIndex, readableTranscript, displayTranscript)
+    ? sortBlocksInReadingOrder(
+        repairTurnFinalWordInflation(
+          buildDisplaySegments(transcriptIndex, readableTranscript, displayTranscript),
+          { endsBoundedByAudio: wordEndsBoundedByAudio },
+        ),
+      )
     : [];
   $: visibleSegments = displaySegments;
-  $: activeSegment = getActiveDisplaySegment(displaySegments, currentTimeMs);
-  $: activeToken = getActiveDisplayToken(activeSegment, currentTimeMs);
-  $: activeWord = getActiveDisplayWord(activeSegment, currentTimeMs);
+  $: overlapAnalysis = analyzeOverlap(displaySegments);
+  $: overlapNotes = overlapNotesFor(overlapAnalysis);
+  $: transcriptRows = groupInterruptedTurns(displaySegments, overlapAnalysis);
+  $: continuationIds = new Set(
+    displaySegments.filter((_, index) => isSpeakerContinuation(displaySegments, index)).map((segment) => segment.id),
+  );
+  // Highlight membership runs on the same effective audible spans the overlap
+  // analysis judges on, not on paragraph extents: extents ring both speakers
+  // (and follow-scroll the earlier paragraph) through stretches where their
+  // words strictly alternate. Wordless blocks keep their extent.
+  $: activeSegments = getSoundingBlocks(displaySegments, currentTimeMs);
+  $: activeSegmentIds = new Set(activeSegments.map((segment) => segment.id));
+  // Scroll anchor: the active turn that has held the floor longest. Following
+  // the latest-starting one instead would bounce the page back and forth every
+  // time a one-word backchannel opens and closes inside a long turn.
+  $: activeSegment = activeSegments[0] ?? null;
+  $: activeTokens = activeTokensBySegment(activeSegments, currentTimeMs);
+  $: activeWords = activeWordsBySegment(activeSegments, currentTimeMs);
   $: hasPrecomputedDisplay = displayTranscript !== null;
   $: metadataSections = artifactMetadata?.sections ?? [];
   $: safeDurationMs = asFiniteMilliseconds(durationMs);
@@ -944,19 +989,41 @@
         on:wheel={() => (manualScrollLock = true)}
         role="log"
       >
-        {#each visibleSegments as segment, segmentIndex}
+        <!-- Rows, not segments: when the producer cut one continuous turn in
+             half around a backchannel, its three blocks share a row and get a
+             visual parent (a left rule) with the interjection inset inside it,
+             so the page stops reading as "A finished, B spoke, A started
+             again". The three canonical blocks keep their own ids, timestamps
+             and seek anchors, in DOM and playback order - nothing is merged and
+             no text is concatenated. Ungrouped rows use `display: contents`, so
+             a lone turn is laid out by the transcript grid exactly as before. -->
+        {#each transcriptRows as row (row.key)}
+          <div
+            aria-label={row.interrupted
+              ? `${row.speakerLabel}'s turn, interrupted by ${row.interjectorLabel}`
+              : undefined}
+            class={row.interrupted
+              ? 'grid gap-2 pl-3 border-l-2 border-primary/50 rounded-sm'
+              : 'contents'}
+            role={row.interrupted ? 'group' : undefined}
+          >
+          {#each row.members as segment}
           <article
-            aria-current={segment.id === activeSegment?.id ? "true" : undefined}
-            class="transition-all {isSpeakerContinuation(visibleSegments, segmentIndex)
+            aria-current={activeSegmentIds.has(segment.id) ? "true" : undefined}
+            class="transition-all {continuationIds.has(segment.id)
               ? '-mt-1'
-              : ''} {segment.id === activeSegment?.id
+              : ''} {segment.id === row.interjectionId
+              ? 'ml-3 pl-3 border-l-2 border-base-300'
+              : ''} {activeSegmentIds.has(segment.id)
               ? 'ring-2 ring-primary ring-offset-6 ring-offset-base-100 bg-base-100 rounded-sm'
               : ''}"
             id={segmentDomId(segment.id)}
           >
-            <!-- Header row: speaker name + timestamp, both aligned left. -->
-            <div class="flex items-center gap-1 mb-1">
-              {#if !isSpeakerContinuation(visibleSegments, segmentIndex)}
+            <!-- Header row: speaker name + timestamp, both aligned left.
+                 flex-wrap so the simultaneity badge drops to its own line on a
+                 narrow screen instead of squeezing the speaker name. -->
+            <div class="flex flex-wrap items-center gap-1 mb-1">
+              {#if !continuationIds.has(segment.id)}
                 <span class="badge badge-md badge-info text-sm px-1 font-bold">{segment.speakerLabel}</span>
               {/if}
               {#if isLikelyCrosstalkTurn(segment.words)}
@@ -964,6 +1031,27 @@
                   class="badge badge-md badge-warning badge-outline text-sm px-1"
                   title="Another participant's microphone was much louder here. This turn is probably their voice bleeding into {segment.speakerLabel}'s track, not {segment.speakerLabel} speaking."
                 >probably crosstalk</span>
+              {/if}
+              <!-- Simultaneity. Static per transcript (it never depends on the
+                   playhead), so it does not churn the role="log" live region.
+                   The arrow is decorative; the visually-hidden prefix makes the
+                   badge a sentence for a screen reader, and the title carries
+                   the full detail for everyone else. -->
+              {#if overlapNotes.get(segment.id)?.overlap}
+                <span
+                  class="badge badge-md badge-accent text-sm px-1 whitespace-nowrap"
+                  title={overlapNotes.get(segment.id)?.overlap?.detail}
+                ><span aria-hidden="true" class="mr-1">&#8644;</span><span class="sr-only"
+                  >Simultaneous speech: </span
+                  >{overlapNotes.get(segment.id)?.overlap?.badge}</span>
+              {/if}
+              {#if overlapNotes.get(segment.id)?.resumption}
+                <span
+                  class="badge badge-md badge-ghost text-sm px-1 whitespace-nowrap"
+                  title={overlapNotes.get(segment.id)?.resumption?.detail}
+                ><span aria-hidden="true" class="mr-1">&#8627;</span><span class="sr-only"
+                  >Same turn: </span
+                  >{overlapNotes.get(segment.id)?.resumption?.badge}</span>
               {/if}
               <button
                 class="badge badge-md text-sm bg-base-200 px-1 text-base-content/60 hover:bg-primary/60 hover:text-base-content cursor-pointer tabular-nums"
@@ -977,8 +1065,8 @@
             {#if segment.tokens.length > 0 && hasTimedTokens(segment)}
               <div class="text-base leading-normal px-1.5">
                 {#each segment.tokens as token}{#if token.spaceBefore}{' '}{/if}{#if token.startMs !== undefined && token.endMs !== undefined}<button
-                      class="inline p-0 border-0 rounded text-base leading-normal cursor-pointer transition duration-150 {segment.id ===
-                        activeSegment?.id && token === activeToken
+                      class="inline p-0 border-0 rounded text-base leading-normal cursor-pointer transition duration-150 {token ===
+                        activeTokens.get(segment.id)
                         ? 'bg-primary ring-1 ring-primary'
                         : 'bg-transparent hover:bg-primary/60'} {token.alignment === 'interpolated'
                         ? 'border-b border-dashed border-warning/60'
@@ -1005,8 +1093,8 @@
             {#if !hasPrecomputedDisplay && showExactWords && segment.words.length > 0}
               <div class="block mt-3 pt-3 border-t border-base-300 text-base leading-normal">
                 {#each segment.words as word, wordIndex}{#if wordIndex > 0}{' '}{/if}<button
-                    class="inline p-0 border-0 rounded text-base leading-normal cursor-pointer transition duration-150 {segment.id ===
-                      activeSegment?.id && word.id === activeWord?.id
+                    class="inline p-0 border-0 rounded text-base leading-normal cursor-pointer transition duration-150 {word.id ===
+                      activeWords.get(segment.id)?.id
                       ? 'bg-primary ring-1 ring-primary'
                       : 'hover:bg-primary'} {word.lowConfidenceSpeaker
                       ? 'text-base-content/55 border-b border-dashed border-warning/60'
@@ -1020,6 +1108,8 @@
               </div>
             {/if}
           </article>
+          {/each}
+          </div>
         {/each}
       </div>
 

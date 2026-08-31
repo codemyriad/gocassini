@@ -19,10 +19,18 @@ const (
 // transcriptSourceDerived labels prose that this CLI assembled from word
 // timings rather than read from an LLM-cleaned transcript.
 //
-// It is load-bearing, not decoration. A portable .opus does not currently carry
-// a readable transcript at all — the producer drops it (see followups) — so
-// every consumer gets derived prose, and an agent must not present it as
-// cleaned-up text. The viewer marks its equivalent fallback the same way.
+// It is load-bearing, not decoration. An operator-published .opus — the file a
+// user opens through Nextcloud — carries the raw-ASR words and nothing else:
+// no readable transcript, no display transcript, the producer drops them (see
+// followups). So every consumer gets derived prose, and an agent must not
+// present it as cleaned-up text. The viewer marks its equivalent fallback the
+// same way.
+//
+// The re-exported copies in the static-site export tree are the exception that
+// proves it: that path bakes a readable transcript back in, so a file found
+// there is not evidence about what the operator publishes. Either way this CLI
+// reads only the default raw-ASR entry (inspect.ExtractMeeting), so the prose
+// below is always assembled from word timings.
 const transcriptSourceDerived = "derived-from-words"
 
 // proseSegment is one speaker-attributed paragraph of derived prose.

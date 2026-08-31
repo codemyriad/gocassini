@@ -331,7 +331,7 @@ func TestWriteManifestIncludesRuntimeSummaryFields(t *testing.T) {
 		Path:    "transcript.parakeet-v2.json",
 		ModelID: ModelParakeet06BV3,
 	}}
-	if err := WriteManifest(path, "source.mkv", sourceDurationMS, playableDurationMS, streams, segments, "fake-engine", ModelParakeet06B, "cuda", "openai/gpt-4o-mini", true, "", false, additional, nil); err != nil {
+	if err := WriteManifest(path, "source.mkv", sourceDurationMS, playableDurationMS, streams, segments, "fake-engine", ModelParakeet06B, "cuda", "openai/gpt-4o-mini", true, "", false, additional, nil, nil); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 

@@ -30,6 +30,32 @@ type Word struct {
 	// human. It is never set unless the meeting shows an unambiguous crosstalk
 	// population.
 	LowConfidenceSpeaker bool
+
+	// extentCap is the furthest EndMS this word is ever allowed to reach: the
+	// end of its last token INCLUDING a trailing punctuation mark. EndMS itself
+	// stops at the last speech-bearing token, which Parakeet's 320ms-capped
+	// duration head routinely leaves short of the real acoustic end, so the
+	// energy gate may push EndMS forward over the speaker's own continuing
+	// audio — but never past this cap, which is the end the punctuation-
+	// inclusive rule would have produced. Keeping it as a ceiling rather than
+	// as the end is what stops a sentence-final mark, stamped at the *next*
+	// onset, from stretching a word across the pause that follows it.
+	//
+	// It is decode-pipeline scaffolding, not transcript data: unexported so it
+	// cannot reach any JSON artifact, and cleared by filterWordsByEnergy once
+	// applied. A zero (or otherwise not-greater-than-EndMS) value means "no
+	// extension permitted", so Words built anywhere else are left alone.
+	extentCap int64
+}
+
+// extentCapMS is the ceiling filterWordsByEnergy may extend this word to. An
+// unset cap collapses to the word's own end, so the rule can only ever leave
+// such a word exactly as it was.
+func (w Word) extentCapMS() int64 {
+	if w.extentCap > w.EndMS {
+		return w.extentCap
+	}
+	return w.EndMS
 }
 
 // Recognizer wraps a sherpa-onnx offline recognizer with Silero VAD segmentation.
@@ -59,6 +85,43 @@ const (
 	minimumActiveDurationMS  = 5
 	wordEnergyPreMarginMS    = int64(100)
 	wordEnergyPostMarginMS   = int64(200)
+)
+
+// Constants for the word-end extension in filterWordsByEnergy.
+//
+// wordEndScanWindowMS is the resolution the owner's own track is examined at.
+// A window counts as active on exactly the gate's existing terms: at least
+// minimumActiveDurationMS of it at or above minimumActiveAmplitude (-66 dBFS).
+// 10ms is one feature frame of the model's front end and twice the minimum
+// active duration, so a window can neither be won nor lost by a single sample.
+//
+// wordEndGapToleranceMS is how long a silence inside the extension is still
+// part of the word rather than the end of it. It is the gate's own
+// wordEnergyPostMarginMS, and for the same reason: Parakeet has been measured
+// placing a word up to 180ms before its PCM (see
+// TestFilterWordsByEnergyAllowsMeasuredDecoderLead), so the gap between a
+// word's stamped end and the rest of its own sound is jitter of that order,
+// and an unvoiced stop closure inside a word ("okay", "that") is shorter
+// still. Measured over the 506 capped words of the reference meeting, against
+// the recorder's own samples: 80ms leaves 18 words missing at least 100ms of
+// their own continuing audio, 160ms leaves 4, 200ms leaves 3 — and those three
+// are the next utterance's onset arriving before the mark that closed this
+// word, which the next word covers. Bridging further would start absorbing
+// other turns, which is the bug this whole rule exists to prevent.
+//
+// The word ends at the last active window and no further. There is
+// deliberately no grace past it: the scan has just measured the audio itself
+// at 10ms resolution, which settles the question the model's 80ms timestamp
+// quantisation left open, and every window beyond the last active one is by
+// definition below the gate's own activity floor — sub-threshold tail or
+// silence, and the measurement showed such a window can instead hold another
+// speaker.
+//
+// Extending is bounded by the cap in every case, so the walk can never reach
+// further than the punctuation-inclusive rule already did.
+const (
+	wordEndScanWindowMS   = int64(10)
+	wordEndGapToleranceMS = wordEnergyPostMarginMS
 )
 
 // vadDrainEverySamples controls how often queued speech segments are popped
@@ -273,16 +336,49 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 	return allWords, nil
 }
 
+// WordEndsAreBoundedByAudio declares the AudioBoundedWordEnds guarantee for
+// the bundled decoder: this recognizer's words reach the caller only through
+// finalizeTranscriptWords, which ends each one where the speaker's own audio
+// ends (filterWordsByEnergy) instead of at its last token's timestamp.
+//
+// The declaration lives next to the code that earns it, and both return paths
+// of Transcribe above go through that one function — the only other exit is
+// the empty-input case, which returns no words to make a claim about. A build
+// that stopped measuring would have to delete this method, and the compile-time
+// AudioBoundedWordEnds assertion in backend.go turns that into a build failure
+// rather than a manifest that quietly keeps claiming it.
+func (r *Recognizer) WordEndsAreBoundedByAudio() bool { return true }
+
 func finalizeTranscriptWords(samples []float32, sampleRate int, words []Word, audioEndMS, paddedTailMS int64) []Word {
 	words = clampWordsToTimelineEnd(words, audioEndMS, paddedTailMS)
 	return filterWordsByEnergy(samples, sampleRate, words)
 }
 
-// filterWordsByEnergy drops decoder output whose source interval is digital
-// silence or near-silence. A 100ms pre-margin and 200ms post-margin tolerate
-// measured model timestamp jitter without widening both sides unnecessarily.
-// Requiring a -60 dBFS peak, -80 dBFS RMS, and 5ms of active samples rejects
-// isolated clicks while remaining conservative around quiet acknowledgements.
+// filterWordsByEnergy decides, against the owner's own track, both whether a
+// word is real and how far it reaches.
+//
+// It drops decoder output whose source interval is digital silence or
+// near-silence. A 100ms pre-margin and 200ms post-margin tolerate measured
+// model timestamp jitter without widening both sides unnecessarily. Requiring
+// a -60 dBFS peak, -80 dBFS RMS, and 5ms of active samples rejects isolated
+// clicks while remaining conservative around quiet acknowledgements.
+//
+// A retained word is then extended forward over its speaker's own continuing
+// audio, up to its extentCap (see Word). Parakeet's duration head saturates at
+// 320ms, so the last speech token of a longer word stops hundreds of
+// milliseconds short of the sound; without this the word would be clipped
+// mid-syllable. The cap is what the punctuation-inclusive rule would have
+// produced, so the end can never exceed the legacy end — which bounds
+// fabricated overlap at the level the punctuation-inclusive rule already
+// produced rather than eliminating it — and the extension never goes
+// backwards, so no real speech can be cut. The cap is cleared on the way out:
+// it is decode scaffolding and nothing downstream has any business reading it.
+//
+// The measurement is deliberately local to this stage, which already owns the
+// owner's samples and the -66 dBFS / 5ms activity terms. It does not borrow
+// the attribution stage's envelope: word timing must not depend on whether or
+// how attribution ran.
+//
 // The input slice may be compacted in place.
 func filterWordsByEnergy(samples []float32, sampleRate int, words []Word) []Word {
 	if len(words) == 0 || len(samples) == 0 || sampleRate <= 0 {
@@ -338,10 +434,92 @@ func filterWordsByEnergy(samples []float32, sampleRate int, words []Word) []Word
 		meanSquare := squareSum / float64(end-start)
 		minimumMeanSquare := float64(minimumWordRMSAmplitude) * float64(minimumWordRMSAmplitude)
 		if peak >= minimumWordPeakAmplitude && meanSquare >= minimumMeanSquare && activeSamples >= minimumActiveSamples {
+			word.EndMS = wordEndOverContinuingAudio(samples, sampleRate, word, audioEndMS)
+			word.extentCap = 0
 			kept = append(kept, word)
 		}
 	}
 	return kept
+}
+
+// wordEndOverContinuingAudio returns the word's end after following its
+// speaker's own audio forward from the end of its last speech-bearing token.
+//
+// It walks wordEndScanWindowMS windows from word.EndMS towards the cap, using
+// the gate's own activity terms, and keeps going while the audio is still
+// there; a gap shorter than wordEndGapToleranceMS is bridged (a stop closure
+// inside a word is not the end of the word), a longer one ends the walk. The
+// end lands at the last active window, and never past the cap.
+//
+// Two properties hold by construction, and are pinned by tests:
+//   - the result is never above the cap, so it is never above the end the
+//     punctuation-inclusive rule produced. That bounds fabricated overlap by
+//     what the legacy rule already produced; it does not eliminate it, because
+//     the legacy end could itself sit over a neighbour's speech;
+//   - the result is never below word.EndMS, so it cannot truncate speech, move
+//     a start, or collapse a word to zero length.
+//
+// A word whose audio has genuinely stopped finds no active window and keeps
+// the end its tokens gave it. A word that is silent throughout never reaches
+// here: the gate above has already dropped it.
+func wordEndOverContinuingAudio(samples []float32, sampleRate int, word Word, audioEndMS int64) int64 {
+	end := word.EndMS
+	capMS := word.extentCapMS()
+	if capMS > audioEndMS {
+		capMS = audioEndMS
+	}
+	if capMS <= end || sampleRate <= 0 {
+		return end
+	}
+	windowSamples := int((int64(sampleRate)*wordEndScanWindowMS + 999) / 1000)
+	if windowSamples <= 0 {
+		return end
+	}
+	minimumActiveSamples := (sampleRate*minimumActiveDurationMS + 999) / 1000
+	lastActiveMS := int64(-1)
+	for at := end; at < capMS; at += wordEndScanWindowMS {
+		start := int(at * int64(sampleRate) / 1000)
+		stop := start + windowSamples
+		if stop > len(samples) {
+			stop = len(samples)
+		}
+		if start < 0 || start >= stop {
+			break
+		}
+		active := 0
+		for _, sample := range samples[start:stop] {
+			if sample < 0 {
+				sample = -sample
+			}
+			if sample >= minimumActiveAmplitude {
+				active++
+			}
+		}
+		if active >= minimumActiveSamples {
+			lastActiveMS = at + wordEndScanWindowMS
+			continue
+		}
+		since := lastActiveMS
+		if since < 0 {
+			since = end
+		}
+		if at-since >= wordEndGapToleranceMS {
+			break
+		}
+	}
+	if lastActiveMS < 0 {
+		// Nothing but silence follows the last spoken token. The token end is
+		// the whole truth about this word.
+		return end
+	}
+	extended := lastActiveMS
+	if extended > capMS {
+		extended = capMS
+	}
+	if extended < end {
+		extended = end
+	}
+	return extended
 }
 
 // transcribeSegment transcribes one source span, splitting it into sub-chunks
@@ -414,6 +592,11 @@ func (r *Recognizer) transcribeSegment(samples []float32, sampleRate int, segOff
 		for i := range words {
 			words[i].StartMS += chunkOffsetMS
 			words[i].EndMS += chunkOffsetMS
+			// The cap lives on the same timeline as the end it bounds. An unset
+			// cap stays unset in effect: it can only ever be shifted to a value
+			// at or below the shifted end, which extentCapMS reads as "no
+			// extension".
+			words[i].extentCap += chunkOffsetMS
 		}
 		// The recognizer may timestamp a genuine final token inside the synthetic
 		// 0.5s decoder tail. Clamp tokens stamped within the actual padding to a
@@ -494,6 +677,12 @@ func clampWordsToTimelineEnd(words []Word, endMS, paddedTailMS int64) []Word {
 			word.EndMS = endMS
 		} else if word.EndMS > endMS {
 			word.EndMS = endMS
+		}
+		// Decoder and VAD padding never extends public timestamps, and it must
+		// not extend the ceiling either: audio past the real PCM boundary is
+		// synthetic and cannot justify reaching into it.
+		if word.extentCap > endMS {
+			word.extentCap = endMS
 		}
 		kept = append(kept, word)
 	}
@@ -913,23 +1102,57 @@ func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
 	var words []Word
 	var curText strings.Builder
 	var wordStartMs float64 = -1
-	var lastEndMs float64
+	var lastSpeechEndMs float64 = -1
+	var lastTokenEndMs float64 = -1
+	hasSpeechToken := false
 
 	flush := func() {
 		text := strings.TrimSpace(curText.String())
 		if text != "" {
-			endMs := lastEndMs
+			endMs := lastSpeechEndMs
 			if endMs < wordStartMs {
+				// Either the word carries no acoustic token at all (a standalone
+				// punctuation mark) or every one of them was stamped before the
+				// word start. Collapse to a zero-length word rather than
+				// inventing an extent.
 				endMs = wordStartMs
 			}
+			// The punctuation-inclusive end travels with the word as a ceiling,
+			// not as the end. Parakeet's duration head is quantised to at most
+			// 320ms and cannot describe a longer word, so the last speech token
+			// often stops short of the real acoustic end; the energy gate walks
+			// the owner's own audio forward from there, and this is how far it
+			// may go — exactly the end the old punctuation-inclusive rule
+			// produced, and never further.
+			//
+			// Only a word that carries a speech-bearing token gets that
+			// ceiling. A word built entirely from punctuation has no audio of
+			// its own for the gate to follow: everything after it belongs to
+			// whatever speaks next, and the mark's own timestamp IS that next
+			// onset, so a ceiling there is an invitation to walk the word
+			// across a neighbour's speech. Such a word keeps exactly the
+			// zero-length extent its tokens stamped.
+			capMs := endMs
+			if hasSpeechToken {
+				capMs = maxFloat64(lastTokenEndMs, endMs)
+			}
 			words = append(words, Word{
-				Text:    text,
-				StartMS: int64(wordStartMs),
-				EndMS:   int64(endMs),
+				Text:      text,
+				StartMS:   int64(wordStartMs),
+				EndMS:     int64(endMs),
+				extentCap: int64(capMs),
 			})
 		}
 		curText.Reset()
 		wordStartMs = -1
+		// The end is per word: a word must never inherit the previous word's
+		// end, or a token stamped before it (a zero-duration boundary token,
+		// or a word re-decoded from an overlapping window) silently absorbs
+		// the whole preceding span. The cap and the speech-bearing flag are
+		// per word for the same reason.
+		lastSpeechEndMs = -1
+		lastTokenEndMs = -1
+		hasSpeechToken = false
 	}
 
 	for i, tok := range tokens {
@@ -949,28 +1172,62 @@ func tokensToWords(tokens []string, timestamps, durations []float32) []Word {
 		// structure and leads to visibly wrong seek points in the UI.
 		if strings.HasPrefix(tok, "▁") || strings.HasPrefix(tok, " ") || tok == "<space>" {
 			flush()
-			clean := strings.TrimPrefix(tok, "▁")
-			clean = strings.TrimLeft(clean, " ")
-			if clean != "" {
-				if wordStartMs < 0 {
-					wordStartMs = ts
-				}
-				curText.WriteString(clean)
-				// Some models emit zero-duration boundary tokens. Keep the running
-				// word end at least at the latest token timestamp so we never flush
-				// a new word with the previous word's end time.
-				lastEndMs = maxFloat64(lastEndMs, ts, end)
+			tok = strings.TrimPrefix(tok, "▁")
+			tok = strings.TrimLeft(tok, " ")
+			if tok == "" {
+				continue
 			}
-		} else {
-			if wordStartMs < 0 {
-				wordStartMs = ts
-			}
-			curText.WriteString(tok)
-			lastEndMs = maxFloat64(lastEndMs, ts, end)
+		}
+		if wordStartMs < 0 {
+			wordStartMs = ts
+		}
+		curText.WriteString(tok)
+		lastTokenEndMs = maxFloat64(lastTokenEndMs, ts, end)
+		// The mark itself stays in the word's text; it just may not decide how
+		// far the word reaches. Parakeet stamps a sentence-final mark at the
+		// *next* acoustic onset, so honouring its timestamp stretches the word
+		// it is attached to across the pause that follows the sentence — which
+		// the viewer then paints as an overlap with whoever spoke during that
+		// pause. It survives only as a ceiling on the audio-driven end.
+		if !tokenIsNonAcousticPunctuation(tok) {
+			// Some models emit zero-duration boundary tokens. Keep the word end
+			// at least at the token's own timestamp so a word is never flushed
+			// with an end that precedes its last spoken token.
+			hasSpeechToken = true
+			lastSpeechEndMs = maxFloat64(lastSpeechEndMs, ts, end)
 		}
 	}
 	flush()
 	return splitMultiWordTokens(words)
+}
+
+// tokenIsNonAcousticPunctuation reports whether a decoder token is nothing but
+// delimiter punctuation. Parakeet's punctuation head writes these marks rather
+// than hearing them, and stamps a sentence-final one at the *next* acoustic
+// onset, so such a token's timestamp is evidence about the following word, not
+// about the extent of the one it is attached to.
+//
+// The set is deliberately narrow: only marks that are never spoken. Symbols
+// like % and $ stand for spoken words ("percent", "dollars") and carry real
+// audio, so they are not listed and keep extending the word end. A token that
+// mixes text and punctuation ("irit.") is not punctuation-only and also keeps
+// extending it.
+func tokenIsNonAcousticPunctuation(token string) bool {
+	trimmed := strings.TrimSpace(token)
+	if trimmed == "" {
+		return false
+	}
+	for _, r := range trimmed {
+		switch r {
+		case '.', ',', '?', '!', ';', ':',
+			'…', '‥', '¿', '¡',
+			'。', '．', '｡', '，', '、', '､', '？', '！', '；', '：',
+			'؟', '،', '؛', '।', '॥':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func maxFloat64(values ...float64) float64 {
@@ -1005,11 +1262,18 @@ func splitMultiWordTokens(words []Word) []Word {
 			if end < start {
 				end = start
 			}
-			out = append(out, Word{
+			split := Word{
 				Text:    part,
 				StartMS: start,
 				EndMS:   end,
-			})
+			}
+			if index == len(parts)-1 {
+				// Only the phrase's last part may reach the phrase's ceiling.
+				// The interior parts end where the next one starts, and letting
+				// them grow would overlap their own neighbours.
+				split.extentCap = word.extentCap
+			}
+			out = append(out, split)
 		}
 	}
 	return out

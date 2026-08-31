@@ -266,7 +266,7 @@ describe("buildReadableTranscriptFromPortable", () => {
     expect(display.blocks[0]?.timingCoverage).toBe(1);
   });
 
-  it("splits synthetic readable blocks around interruptions from other speakers", () => {
+  it("keeps an interrupted readable block whole instead of splitting it (D-690)", () => {
     const portable = {
       meeting: { durationMs: 110_000 },
       speakers: [
@@ -335,15 +335,26 @@ describe("buildReadableTranscriptFromPortable", () => {
     const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
     const chimaBlocks = display.blocks.filter((block) => block.speaker === "spk_chima");
 
-    expect(chimaBlocks).toHaveLength(2);
+    // The readable splitter was deleted in D-690: it rewrote LLM-cleaned prose
+    // by word count, and when it did fire it emitted blocks out of time order.
+    // It also never fired on a real producer artifact — not for want of readable
+    // words, which every packed meeting carries per readable segment, but
+    // because every packed meeting ALSO carries a baked display transcript, and
+    // the viewer only rebuilds one (and so only reaches the splitter) when that
+    // is missing. Interruptions are now surfaced by src/core/overlap.ts, which
+    // annotates the turn rather than cutting it up.
+    expect(chimaBlocks).toHaveLength(1);
     expect(chimaBlocks[0]?.text).toContain("Actually, I was wondering");
-    expect(chimaBlocks[0]?.text).not.toContain("It's a pity");
-    expect(chimaBlocks[0]?.endMs).toBeLessThanOrEqual(64_837);
-    expect(chimaBlocks[1]?.text).toContain("It's a pity, Chris, you're ruining everything.");
-    expect(chimaBlocks[1]?.startMs).toBeGreaterThanOrEqual(78_757);
+    expect(chimaBlocks[0]?.text).toContain("It's a pity, Chris, you're ruining everything.");
+    expect(display.blocks.map((block) => block.id)).not.toContain(
+      expect.stringContaining("__split_"),
+    );
+    expect(display.blocks.map((block) => block.startMs)).toEqual(
+      [...display.blocks.map((block) => block.startMs)].sort((left, right) => left - right),
+    );
   });
 
-  it("uses exact transcript words when splitting readable blocks around interruptions", () => {
+  it("keeps an interrupted block whole even with exact transcript words (D-690)", () => {
     const chimaWords = [
       ["Actually,", 54_981, 55_381],
       ["I", 55_381, 55_541],
@@ -439,12 +450,13 @@ describe("buildReadableTranscriptFromPortable", () => {
     const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
     const chimaBlocks = display.blocks.filter((block) => block.speaker === "spk_chima");
 
-    expect(chimaBlocks).toHaveLength(2);
+    // See the note on the previous test: the splitter was deleted in D-690, so
+    // exact transcript words no longer cut the block in two either.
+    expect(chimaBlocks).toHaveLength(1);
     expect(chimaBlocks[0]?.text).toContain("doing something else.");
-    expect(chimaBlocks[0]?.text).not.toContain("It's a pity");
-    expect(chimaBlocks[0]?.endMs).toBe(62_021);
-    expect(chimaBlocks[1]?.text).toBe("It's a pity, Chris, you're ruining everything.");
-    expect(chimaBlocks[1]?.startMs).toBe(77_541);
+    expect(chimaBlocks[0]?.text).toContain("It's a pity, Chris, you're ruining everything.");
+    expect(chimaBlocks[0]?.startMs).toBe(54_981);
+    expect(chimaBlocks[0]?.endMs).toBe(80_742);
   });
 
   it("leaves fully rewritten cleaned blocks untimed at the word level", () => {

@@ -180,3 +180,51 @@ func schemaTypeAdmits(t *testing.T, declared json.RawMessage, want string) bool 
 	}
 	return false
 }
+
+// Word.extentCap is decode-pipeline scaffolding — the ceiling the energy gate
+// may extend a word's end up to — and it must never become transcript data.
+// The written word object is pinned to its documented key set so a future
+// field cannot slip into the contract the viewer and the portable packer read.
+func TestTranscriptJSONNeverCarriesTheWordExtentCap(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "transcript.words.v1.json")
+	streams := []AudioStream{{SpeakerID: "spk_one", SpeakerLabel: "One"}}
+	segments := []Segment{{SpeakerID: "spk_one", StartMS: 0, EndMS: 900, Text: "capped word",
+		Words: []Word{
+			{Text: "capped", StartMS: 0, EndMS: 400, extentCap: 3600},
+			{Text: "word", StartMS: 450, EndMS: 900, extentCap: 7777},
+		}}}
+
+	if err := WriteTranscriptJSON(path, streams, segments, 900); err != nil {
+		t.Fatalf("WriteTranscriptJSON: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	if strings.Contains(string(raw), "3600") || strings.Contains(string(raw), "7777") {
+		t.Fatalf("a word ceiling reached the written transcript: %s", raw)
+	}
+	var doc struct {
+		Segments []struct {
+			Words []map[string]any `json:"words"`
+		} `json:"segments"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse transcript: %v", err)
+	}
+	if len(doc.Segments) != 1 || len(doc.Segments[0].Words) != 2 {
+		t.Fatalf("expected one segment with two words, got %s", raw)
+	}
+	allowed := map[string]bool{
+		"id": true, "text": true, "startMs": true, "endMs": true,
+		"attributionGapDb": true, "lowConfidenceSpeaker": true,
+	}
+	for _, word := range doc.Segments[0].Words {
+		for key := range word {
+			if !allowed[key] {
+				t.Errorf("unexpected key %q in a transcript word: %v", key, word)
+			}
+		}
+	}
+}

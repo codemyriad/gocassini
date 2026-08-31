@@ -275,7 +275,7 @@ func TestWriteManifestRecordsSummaryWhenPresent(t *testing.T) {
 	streams := []AudioStream{{SpeakerID: "spk_alex", SpeakerLabel: "Alex"}}
 	segments := []Segment{{SpeakerID: "spk_alex", StartMS: 0, EndMS: 1000, Text: "hi", Words: []Word{{Text: "hi", StartMS: 0, EndMS: 1000}}}}
 
-	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, segments, SherpaOnnxBackend, ModelID("test-stt"), "cuda", "test-llm", true, "summary-model", true, nil, nil); err != nil {
+	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, segments, SherpaOnnxBackend, ModelID("test-stt"), "cuda", "test-llm", true, "summary-model", true, nil, nil, nil); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 
@@ -311,7 +311,7 @@ func TestWriteManifestCountsUniqueLogicalSpeakers(t *testing.T) {
 		{Index: -1, SpeakerID: "merged", SpeakerLabel: "Everyone"}, // synthetic fallback, not a participant
 	}
 
-	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cuda", "", false, "", false, nil, nil); err != nil {
+	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cuda", "", false, "", false, nil, nil, nil); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 
@@ -357,7 +357,7 @@ func TestWriteManifestOmitsSummaryWhenAbsent(t *testing.T) {
 	streams := []AudioStream{{SpeakerID: "spk_alex", SpeakerLabel: "Alex"}}
 	segments := []Segment{{SpeakerID: "spk_alex", StartMS: 0, EndMS: 1000, Text: "hi", Words: []Word{{Text: "hi", StartMS: 0, EndMS: 1000}}}}
 
-	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, segments, SherpaOnnxBackend, ModelID("test-stt"), "cuda", "", false, "", false, nil, nil); err != nil {
+	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, segments, SherpaOnnxBackend, ModelID("test-stt"), "cuda", "", false, "", false, nil, nil, nil); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 
@@ -473,7 +473,7 @@ func TestWriteManifestRecordsAttributionProvenance(t *testing.T) {
 	}
 
 	path := filepath.Join(tmp, "manifest.json")
-	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cpu", "", false, "", false, nil, attr); err != nil {
+	if err := WriteManifest(path, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cpu", "", false, "", false, nil, attr, nil); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}
 	raw, err := os.ReadFile(path)
@@ -513,7 +513,7 @@ func TestWriteManifestRecordsAttributionProvenance(t *testing.T) {
 
 	// Absent entirely for a producer that records nothing (legacy callers).
 	legacyPath := filepath.Join(tmp, "manifest-legacy.json")
-	if err := WriteManifest(legacyPath, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cpu", "", false, "", false, nil, nil); err != nil {
+	if err := WriteManifest(legacyPath, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cpu", "", false, "", false, nil, nil, nil); err != nil {
 		t.Fatalf("WriteManifest legacy: %v", err)
 	}
 	legacyRaw, err := os.ReadFile(legacyPath)
@@ -522,5 +522,76 @@ func TestWriteManifestRecordsAttributionProvenance(t *testing.T) {
 	}
 	if strings.Contains(string(legacyRaw), `"attribution"`) {
 		t.Errorf("attribution must be omitted when not recorded, got:\n%s", legacyRaw)
+	}
+}
+
+// provenance.wordTimings is a claim about how the words were timed, so
+// WriteManifest writes exactly what the caller earned and nothing more.
+// Presence with endsBoundedByAudio:true means the ends were measured against
+// the speaker's own audio; absence of the whole object means they may have
+// been inherited from a punctuation mark's timestamp, and a consumer keys off
+// that absence to run its own repair. Both halves are pinned here, because
+// writing the record by default is precisely the bug this replaced: it would
+// hand the guarantee to any backend that never made it.
+func TestWriteManifestWritesWordTimingsOnlyWhenTheCallerEarnedIt(t *testing.T) {
+	tmp := t.TempDir()
+	streams := []AudioStream{{SpeakerID: "spk_alex", SpeakerLabel: "Alex"}}
+
+	readWordTimings := func(t *testing.T, path string) (map[string]any, string) {
+		t.Helper()
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read manifest: %v", err)
+		}
+		var got struct {
+			Provenance struct {
+				WordTimings map[string]any `json:"wordTimings"`
+			} `json:"provenance"`
+		}
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("parse manifest: %v", err)
+		}
+		return got.Provenance.WordTimings, string(raw)
+	}
+
+	// The leanest possible call: no readable pass, no summary, no additional
+	// transcripts, no attribution record. The earned marker must still be there.
+	measured := filepath.Join(tmp, "manifest.json")
+	if err := WriteManifest(measured, "src.mkv", 1000, 1000, streams, nil, SherpaOnnxBackend, ModelID("test-stt"), "cpu", "", false, "", false, nil, nil,
+		&WordTimingProvenance{EndsBoundedByAudio: true}); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	timings, raw := readWordTimings(t, measured)
+	if timings == nil {
+		t.Fatalf("provenance.wordTimings missing from:\n%s", raw)
+	}
+	if timings["endsBoundedByAudio"] != true {
+		t.Errorf("endsBoundedByAudio = %v, want true", timings["endsBoundedByAudio"])
+	}
+	// Exactly one key: consumers key off the record's presence, and every key
+	// added here has to be declared by the closed portable-meeting schemas
+	// before it can be published.
+	if len(timings) != 1 {
+		t.Errorf("wordTimings = %v; want exactly one key, endsBoundedByAudio", timings)
+	}
+
+	// A caller that did not earn it passes nil, and the key must not exist at
+	// all — not endsBoundedByAudio:false, which a consumer reading the object
+	// rather than the flag could still misread as a producer that measured.
+	unmeasured := filepath.Join(tmp, "manifest-unmeasured.json")
+	if err := WriteManifest(unmeasured, "src.mkv", 1000, 1000, streams, nil, "some-other-engine", ModelID("test-stt"), "cpu", "", false, "", false, nil, nil, nil); err != nil {
+		t.Fatalf("WriteManifest (unmeasured): %v", err)
+	}
+	absent, rawAbsent := readWordTimings(t, unmeasured)
+	if absent != nil {
+		t.Errorf("wordTimings = %v, want the key absent entirely", absent)
+	}
+	if strings.Contains(rawAbsent, "wordTimings") {
+		t.Errorf("the manifest still mentions wordTimings:\n%s", rawAbsent)
+	}
+	// The rest of the provenance object must survive, or this half of the test
+	// would pass on a manifest that lost provenance altogether.
+	if !strings.Contains(rawAbsent, `"speechToText"`) {
+		t.Errorf("provenance.speechToText went missing:\n%s", rawAbsent)
 	}
 }

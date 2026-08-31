@@ -113,3 +113,70 @@ func TestBackendReturningNilRecognizerIsAnError(t *testing.T) {
 		t.Error("a backend that returns no recognizer must be an error, not a nil deref later")
 	}
 }
+
+// declaringRecognizer is a backend that makes the audio-bounded word-end
+// promise; stubRecognizer above makes none, which is what every engine that
+// has not thought about the question looks like.
+type declaringRecognizer struct{ stubRecognizer }
+
+func (d *declaringRecognizer) WordEndsAreBoundedByAudio() bool { return true }
+
+// The bundled decoder is the reference implementation of the guarantee, and
+// the manifest marker exists for it. Constructing a real Recognizer needs a
+// sherpa model on disk, so this asserts the declaration itself — the only part
+// of it the pipeline can read.
+func TestBundledDecoderDeclaresAudioBoundedWordEnds(t *testing.T) {
+	var rec SpeechRecognizer = &Recognizer{}
+	if !declaresAudioBoundedWordEnds(rec) {
+		t.Error("the bundled sherpa-onnx recognizer no longer declares AudioBoundedWordEnds, so every artifact it builds silently loses provenance.wordTimings")
+	}
+}
+
+// A backend registered through the public registry promises timed words and
+// nothing else. It must not pick up the audio-bounded guarantee by being
+// registered: the viewer skips its own timing repair on that claim, so
+// inheriting it would corrupt the timings of every meeting the new engine
+// decodes.
+func TestARegisteredBackendDoesNotInheritTheAudioBoundedClaim(t *testing.T) {
+	if declaresAudioBoundedWordEnds(&stubRecognizer{}) {
+		t.Error("a plain SpeechRecognizer claims audio-bounded word ends without implementing the capability")
+	}
+	if !declaresAudioBoundedWordEnds(&declaringRecognizer{}) {
+		t.Error("a backend that explicitly declares the guarantee was not believed")
+	}
+}
+
+// The manifest record covers every word in the artifact, and a build can run
+// several passes (the merged-mix fallback, one per additional model). One pass
+// that did not measure is enough to make the record a lie, so the claim is an
+// AND across passes — and a build that decoded nothing claims nothing.
+func TestWordEndGuaranteeNeedsEveryPassToDeclareIt(t *testing.T) {
+	var nothingDecoded wordEndGuarantee
+	if got := nothingDecoded.provenance(); got != nil {
+		t.Errorf("a build with no decode claims %+v; want no record", got)
+	}
+
+	var allDeclared wordEndGuarantee
+	allDeclared.observe(&declaringRecognizer{})
+	allDeclared.observe(&declaringRecognizer{})
+	got := allDeclared.provenance()
+	if got == nil || !got.EndsBoundedByAudio {
+		t.Errorf("every pass declared the guarantee, got %+v", got)
+	}
+
+	var mixed wordEndGuarantee
+	mixed.observe(&declaringRecognizer{})
+	mixed.observe(&stubRecognizer{})
+	if got := mixed.provenance(); got != nil {
+		t.Errorf("one pass that measured nothing still yielded %+v; want no record", got)
+	}
+
+	// Order must not decide it: the merged-mix fallback runs after the
+	// participant pass, and an additional model after both.
+	var mixedReversed wordEndGuarantee
+	mixedReversed.observe(&stubRecognizer{})
+	mixedReversed.observe(&declaringRecognizer{})
+	if got := mixedReversed.provenance(); got != nil {
+		t.Errorf("a later declaring pass reinstated the claim: %+v", got)
+	}
+}
