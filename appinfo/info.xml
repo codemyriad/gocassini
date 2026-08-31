@@ -230,6 +230,18 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
         <access_level>USER</access_level>
       </route>
 
+      <!-- USER: source-audio upload (capture_upload.go). A participant posts
+           the audio their OWN browser captured before the network touched it.
+           USER rather than ADMIN because every participant uploads their own
+           track; the handler is what makes that safe — it files the upload
+           under the AppAPI-authenticated caller (never the participant id in
+           the request body) and refuses a room the caller was not in. -->
+      <route>
+        <url>^operator\/capture\/upload\/?$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
+
       <!--
         PUBLIC: Talk recording-backend protocol. Lets the "Start recording"
         button in Talk reach Cassini through the AppAPI proxy when Cassini
@@ -278,6 +290,32 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
            too. USER, like the viewer JS. -->
       <route>
         <url>^ui\/viewer\.css$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>USER</access_level>
+      </route>
+
+      <!-- USER: source-audio capture browser assets (capture_assets.go).
+           capture-sw.js is a service worker the Cassini page registers at
+           Talk's call scopes; the operator serves it with
+           `Service-Worker-Allowed: /` and AppAPI's proxy forwards that header,
+           which is what lets a script under this proxy path claim a scope
+           elsewhere on the origin. capture-payload.js is the code that worker
+           appends to Talk's own bundle, and capture-worker.js is the dedicated
+           worker that reads outgoing RTP timestamps and writes to OPFS. All
+           USER, like the viewer assets: every logged-in account may fetch
+           them, and capture only ever starts after an explicit opt-in. -->
+      <route>
+        <url>^ui\/capture-sw\.js$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>USER</access_level>
+      </route>
+      <route>
+        <url>^ui\/capture-payload\.js$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>USER</access_level>
+      </route>
+      <route>
+        <url>^ui\/capture-worker\.js$</url>
         <verb>GET,HEAD</verb>
         <access_level>USER</access_level>
       </route>

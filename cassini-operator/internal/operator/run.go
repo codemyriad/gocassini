@@ -42,6 +42,11 @@ type Config struct {
 	DBPath           string
 	WorkRoot         string
 	SiteRoot         string
+	// CaptureRoot stores participant-uploaded source audio (capture_upload.go)
+	// until a later stage places it on the meeting timeline. Separate from
+	// WorkRoot because its contents arrive from browsers rather than from the
+	// recorder, and its lifetime is tied to the upload rather than to a job.
+	CaptureRoot string
 	CassiniBin       string
 	TalkSharedSecret string
 	TalkBackendURL   string
@@ -318,6 +323,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	logger.Printf("db -> %s", cfg.DBPath)
 	logger.Printf("work_root -> %s", cfg.WorkRoot)
 	logger.Printf("site_root -> %s", cfg.SiteRoot)
+	logger.Printf("capture_root -> %s", cfg.CaptureRoot)
 	// Report the destination we actually constructed. cfg.PublishSink stays raw
 	// (and is commonly empty in an ExApp), so applying the standalone default to
 	// it here would misreport the resolved nextcloud-files sink as local.
@@ -428,6 +434,10 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 		imageDefaultWorkRoot, "operator/jobs",
 		filepath.Join(defaultDataRoot, "jobs")), "per-job artifact root")
 	fs.StringVar(&cfg.SiteRoot, "site-root", defaultSiteRoot(persistRoot, defaultDataRoot), "published site output root")
+	fs.StringVar(&cfg.CaptureRoot, "capture-root", exAppDataPathDefault(persistRoot,
+		envOrDefaultAny([]string{"CASSINI_OPERATOR_CAPTURE_ROOT"}, ""),
+		"", "operator/capture",
+		filepath.Join(defaultDataRoot, "capture")), "participant source-audio upload root")
 	fs.StringVar(&cfg.CassiniBin, "cassini-bin", envOrDefaultAny([]string{"CASSINI_BIN"}, defaultCassiniBinPath(repoRoot)), "Cassini CLI binary path")
 	fs.StringVar(&cfg.TalkSharedSecret, "talk-shared-secret", envOrDefaultAny([]string{"CASSINI_TALK_RECORDING_SECRET", "TALK_RECORDING_SECRET"}, ""), "shared secret for Talk recording backend requests")
 	fs.StringVar(&cfg.TalkBackendURL, "talk-backend-url", envOrDefaultAny([]string{"CASSINI_TALK_BACKEND_URL", "TALK_BACKEND_URL"}, ""), "Nextcloud Talk base URL for operator-to-Nextcloud calls")
@@ -477,6 +487,7 @@ Flags:
 	cfg.DBPath = resolveConfigPath(repoRoot, cfg.DBPath)
 	cfg.WorkRoot = resolveConfigPath(repoRoot, cfg.WorkRoot)
 	cfg.SiteRoot = resolveConfigPath(repoRoot, cfg.SiteRoot)
+	cfg.CaptureRoot = resolveConfigPath(repoRoot, cfg.CaptureRoot)
 	cfg.CassiniBin = resolveConfigPath(repoRoot, cfg.CassiniBin)
 	cfg.TalkBackendURL = strings.TrimRight(strings.TrimSpace(cfg.TalkBackendURL), "/")
 	if cfg.MaxRecordWorkers < 1 {
@@ -695,6 +706,10 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/setup", rt.setupHandler)
 	api.HandleFunc("/settings", rt.settingsHandler)
 	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
+	// Source-audio intake (capture_upload.go). USER-level in appinfo/info.xml:
+	// every logged-in account may upload its OWN audio, and the handler binds
+	// each upload to the authenticated caller and to a room they were in.
+	api.Handle("/capture/upload", rt.captureUploadHandler(exappCfg.talkRoomMembershipChecker(), logger))
 
 	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
 	// off by default). Requests that already passed the AppAPI middleware are

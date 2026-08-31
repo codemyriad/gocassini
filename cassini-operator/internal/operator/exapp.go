@@ -487,6 +487,14 @@ func (c ExAppConfig) uiAssetHandler(logger *log.Logger) http.Handler {
 		case viewerCSSPath:
 			c.serveEmbeddedAsset(w, r, c.ViewerDist, envViewerDist, embeddedCSSFile, "text/css; charset=utf-8", logger)
 		default:
+			// Source-capture bundles (capture_assets.go) share the /ui/ prefix:
+			// they are browser assets fetched through the same proxy, and the
+			// service worker among them needs a response header the embedded
+			// path does not set.
+			if file, ok := captureAssetFileFor(r.URL.Path); ok {
+				c.serveCaptureAsset(w, r, file, logger)
+				return
+			}
 			http.NotFound(w, r)
 		}
 	})

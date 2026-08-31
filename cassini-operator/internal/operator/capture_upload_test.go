@@ -1,0 +1,262 @@
+package operator
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"cassini-operator/internal/operator/appapi"
+)
+
+func validSidecar() captureSidecar {
+	return captureSidecar{
+		Format:          captureSourceFormat,
+		RoomToken:       "abc123",
+		ParticipantID:   "alice",
+		CallStartWallMS: 1_700_000_000_000,
+		CallEndWallMS:   1_700_000_060_000,
+		Segments: []captureSegment{{
+			Index:       0,
+			AudioName:   "segment-0.webm",
+			MimeType:    "audio/webm;codecs=opus",
+			StartWallMS: 1_700_000_000_000,
+			StopWallMS:  1_700_000_060_000,
+			Anchors: []captureAnchor{
+				{FrameIndex: 0, RTPTimestamp: 4_000_000, SSRC: 42, WallMS: 1_700_000_000_100},
+			},
+		}},
+	}
+}
+
+func TestValidateSidecar(t *testing.T) {
+	t.Run("accepts a well-formed sidecar", func(t *testing.T) {
+		sidecar := validSidecar()
+		if err := validateSidecar(&sidecar); err != nil {
+			t.Fatalf("validateSidecar: %v", err)
+		}
+	})
+
+	cases := []struct {
+		name   string
+		mutate func(*captureSidecar)
+		want   string
+	}{
+		{"rejects an unknown format", func(s *captureSidecar) { s.Format = "org.cassini.source-capture/9" }, "unsupported capture format"},
+		{"rejects an empty room token", func(s *captureSidecar) { s.RoomToken = "" }, "invalid room token"},
+		{"rejects a traversing room token", func(s *captureSidecar) { s.RoomToken = "../../etc" }, "invalid room token"},
+		{"rejects no segments", func(s *captureSidecar) { s.Segments = nil }, "no segments"},
+		{"rejects a traversing segment name", func(s *captureSidecar) { s.Segments[0].AudioName = "../escape.webm" }, "invalid segment name"},
+		{"rejects an absolute segment name", func(s *captureSidecar) { s.Segments[0].AudioName = "/etc/passwd" }, "invalid segment name"},
+		{"rejects a backwards call window", func(s *captureSidecar) { s.CallEndWallMS = s.CallStartWallMS - 1 }, "invalid call window"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sidecar := validSidecar()
+			tc.mutate(&sidecar)
+			err := validateSidecar(&sidecar)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateSidecar error = %v, want containing %q", err, tc.want)
+			}
+		})
+	}
+
+	t.Run("rejects duplicate segment names", func(t *testing.T) {
+		sidecar := validSidecar()
+		sidecar.Segments = append(sidecar.Segments, sidecar.Segments[0])
+		if err := validateSidecar(&sidecar); err == nil || !strings.Contains(err.Error(), "duplicate") {
+			t.Fatalf("validateSidecar error = %v, want duplicate", err)
+		}
+	})
+
+	t.Run("rejects an unreasonable segment count", func(t *testing.T) {
+		sidecar := validSidecar()
+		for i := 1; i <= captureMaxSegments; i++ {
+			sidecar.Segments = append(sidecar.Segments, captureSegment{
+				Index: i, AudioName: fmt.Sprintf("segment-%d.webm", i),
+			})
+		}
+		if err := validateSidecar(&sidecar); err == nil || !strings.Contains(err.Error(), "too many") {
+			t.Fatalf("validateSidecar error = %v, want too many", err)
+		}
+	})
+}
+
+func TestCaptureUploadDir(t *testing.T) {
+	got := captureUploadDir("/data/capture", "abc123", "alice", 1700)
+	if want := filepath.Join("/data/capture", "abc123", "alice", "1700"); got != want {
+		t.Fatalf("captureUploadDir = %q, want %q", got, want)
+	}
+}
+
+// uploadRequest builds a multipart source-capture upload.
+func uploadRequest(t *testing.T, sidecar captureSidecar, segments map[string][]byte) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("sidecar", captureSidecarName)
+	if err != nil {
+		t.Fatalf("create sidecar part: %v", err)
+	}
+	if err := json.NewEncoder(part).Encode(sidecar); err != nil {
+		t.Fatalf("encode sidecar: %v", err)
+	}
+	for name, content := range segments {
+		filePart, err := writer.CreateFormFile("segments", name)
+		if err != nil {
+			t.Fatalf("create segment part: %v", err)
+		}
+		if _, err := filePart.Write(content); err != nil {
+			t.Fatalf("write segment: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/capture/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req
+}
+
+func captureTestRuntime(t *testing.T) *Runtime {
+	t.Helper()
+	return &Runtime{cfg: Config{CaptureRoot: filepath.Join(t.TempDir(), "capture")}}
+}
+
+func quietLogger() *log.Logger { return log.New(io.Discard, "", 0) }
+
+func TestCaptureUploadHandlerRejectsUnauthenticated(t *testing.T) {
+	rt := captureTestRuntime(t)
+	req := uploadRequest(t, validSidecar(), map[string][]byte{"segment-0.webm": []byte("audio")})
+	rec := httptest.NewRecorder()
+
+	rt.captureUploadHandler(nil, quietLogger())(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestCaptureUploadHandlerRejectsNonMethod(t *testing.T) {
+	rt := captureTestRuntime(t)
+	req := httptest.NewRequest(http.MethodGet, "/capture/upload", nil)
+	rec := httptest.NewRecorder()
+
+	rt.captureUploadHandler(nil, quietLogger())(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", rec.Code)
+	}
+}
+
+func TestCaptureUploadHandlerStoresUnderAuthenticatedOwner(t *testing.T) {
+	rt := captureTestRuntime(t)
+	sidecar := validSidecar()
+	req := uploadRequest(t, sidecar, map[string][]byte{"segment-0.webm": []byte("audio-bytes")})
+	// The client claims to be "alice"; the authenticated caller is "bob". The
+	// authenticated identity is what the recording must be filed under —
+	// PARTICIPANT_ID in the MKV comes from the same Talk user id, so believing
+	// the body would let anyone attach audio to somebody else's track.
+	req = req.WithContext(appapi.WithUserID(context.Background(), "bob"))
+	rec := httptest.NewRecorder()
+
+	rt.captureUploadHandler(nil, quietLogger())(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d body = %s, want 202", rec.Code, rec.Body.String())
+	}
+	dir := captureUploadDir(rt.cfg.CaptureRoot, "abc123", "bob", sidecar.CallStartWallMS)
+	audio, err := os.ReadFile(filepath.Join(dir, "segment-0.webm"))
+	if err != nil {
+		t.Fatalf("read stored segment: %v", err)
+	}
+	if string(audio) != "audio-bytes" {
+		t.Fatalf("stored segment = %q", audio)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, captureSidecarName))
+	if err != nil {
+		t.Fatalf("read stored sidecar: %v", err)
+	}
+	var stored captureSidecar
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("parse stored sidecar: %v", err)
+	}
+	if stored.OwnerUserID != "bob" {
+		t.Fatalf("stored owner = %q, want bob (the authenticated caller, not the claimed participantId)", stored.OwnerUserID)
+	}
+	if stored.ReceivedAt == "" {
+		t.Fatal("stored sidecar has no ReceivedAt")
+	}
+	if len(stored.Segments[0].Anchors) != 1 || stored.Segments[0].Anchors[0].RTPTimestamp != 4_000_000 {
+		t.Fatalf("RTP anchors did not survive intake: %+v", stored.Segments[0].Anchors)
+	}
+}
+
+func TestCaptureUploadHandlerRejectsNonParticipant(t *testing.T) {
+	rt := captureTestRuntime(t)
+	req := uploadRequest(t, validSidecar(), map[string][]byte{"segment-0.webm": []byte("audio")})
+	req = req.WithContext(appapi.WithUserID(context.Background(), "mallory"))
+	rec := httptest.NewRecorder()
+
+	notAMember := func(context.Context, string, string) (bool, error) { return false, nil }
+	rt.captureUploadHandler(notAMember, quietLogger())(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	entries, err := os.ReadDir(rt.cfg.CaptureRoot)
+	if err != nil {
+		t.Fatalf("read capture root: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("rejected upload left %d entries behind", len(entries))
+	}
+}
+
+func TestCaptureUploadHandlerRejectsMissingSegment(t *testing.T) {
+	rt := captureTestRuntime(t)
+	// Sidecar promises a segment the body never sends.
+	req := uploadRequest(t, validSidecar(), map[string][]byte{})
+	req = req.WithContext(appapi.WithUserID(context.Background(), "bob"))
+	rec := httptest.NewRecorder()
+
+	rt.captureUploadHandler(nil, quietLogger())(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestCaptureUploadHandlerReplacesEarlierUploadOfSameCall(t *testing.T) {
+	rt := captureTestRuntime(t)
+	sidecar := validSidecar()
+	logger := quietLogger()
+
+	for _, content := range []string{"first", "second"} {
+		req := uploadRequest(t, sidecar, map[string][]byte{"segment-0.webm": []byte(content)})
+		req = req.WithContext(appapi.WithUserID(context.Background(), "bob"))
+		rec := httptest.NewRecorder()
+		rt.captureUploadHandler(nil, logger)(rec, req)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	dir := captureUploadDir(rt.cfg.CaptureRoot, "abc123", "bob", sidecar.CallStartWallMS)
+	audio, err := os.ReadFile(filepath.Join(dir, "segment-0.webm"))
+	if err != nil {
+		t.Fatalf("read stored segment: %v", err)
+	}
+	if string(audio) != "second" {
+		t.Fatalf("retry did not replace the earlier upload: %q", audio)
+	}
+}
