@@ -751,3 +751,196 @@ func itoa(n int64) string {
 	}
 	return string(buf[i:])
 }
+
+// activeAudio returns a buffer of totalMS milliseconds at sampleRate where
+// every [from,to) span carries steady energy well above the gate's -66 dBFS
+// activity floor and everything else is digital silence.
+func activeAudio(sampleRate int, totalMS int64, spans ...[2]int64) []float32 {
+	samples := make([]float32, totalMS*int64(sampleRate)/1000)
+	for _, span := range spans {
+		for i := span[0] * int64(sampleRate) / 1000; i < span[1]*int64(sampleRate)/1000 && i < int64(len(samples)); i++ {
+			if i%2 == 0 {
+				samples[i] = 0.05
+			} else {
+				samples[i] = -0.05
+			}
+		}
+	}
+	return samples
+}
+
+// Parakeet's duration head saturates at 320ms, so a longer word's last speech
+// token stops short of the sound. The energy gate must follow the speaker's own
+// audio to its real end instead of clipping the word mid-syllable — this is the
+// case that made a spoken "Okay." 150ms long.
+func TestFilterWordsByEnergyFollowsAudioPastTheLastSpeechToken(t *testing.T) {
+	const sampleRate = 16000
+	samples := activeAudio(sampleRate, 3000, [2]int64{1000, 1600})
+	words := []Word{{Text: "Okay.", StartMS: 1000, EndMS: 1150, extentCap: 2500}}
+
+	got := filterWordsByEnergy(samples, sampleRate, words)
+	if len(got) != 1 {
+		t.Fatalf("filterWordsByEnergy = %#v; want the word kept", got)
+	}
+	// The audio runs out at 1600ms; one frame of grace lands the end at 1680ms,
+	// far short of the 2500ms the punctuation mark would have imposed.
+	if got[0].StartMS != 1000 || got[0].EndMS != 1600+wordEndGraceMS {
+		t.Fatalf("word = %d-%dms; want 1000-%dms", got[0].StartMS, got[0].EndMS, 1600+wordEndGraceMS)
+	}
+	if got[0].extentCap != 0 {
+		t.Errorf("the cap must be cleared once applied, got %d", got[0].extentCap)
+	}
+}
+
+// The mirror image: when the speaker really has stopped, the word ends where
+// its tokens said it did. Nothing is spent on silence, so the pause the
+// punctuation mark sat across is not painted as speech.
+func TestFilterWordsByEnergyStopsWhereTheAudioStops(t *testing.T) {
+	const sampleRate = 16000
+	samples := activeAudio(sampleRate, 3000, [2]int64{1000, 1150}, [2]int64{2400, 2600})
+	words := []Word{{Text: "Yeah.", StartMS: 1000, EndMS: 1150, extentCap: 2500}}
+
+	got := filterWordsByEnergy(samples, sampleRate, words)
+	if len(got) != 1 || got[0].StartMS != 1000 || got[0].EndMS != 1150 {
+		t.Fatalf("filterWordsByEnergy = %#v; want the word kept unchanged at 1000-1150ms", got)
+	}
+}
+
+// An unvoiced stop closure inside a word ("okay", "that") is a short silence
+// the extension must bridge; the pause before the next utterance is not. The
+// boundary is wordEndGapToleranceMS, pinned here from both sides.
+func TestFilterWordsByEnergyBridgesAClosureButNotAPause(t *testing.T) {
+	const sampleRate = 16000
+	if wordEndGapToleranceMS != 200 || wordEndGraceMS != 80 {
+		t.Fatalf("gap tolerance/grace = %dms/%dms; want 200ms/80ms", wordEndGapToleranceMS, wordEndGraceMS)
+	}
+	samples := activeAudio(sampleRate, 3000,
+		[2]int64{1000, 1150}, // "o-"
+		[2]int64{1210, 1450}, // "-kay" after a 60ms closure
+		[2]int64{2400, 2600}, // the next utterance, where the "." is stamped
+	)
+	// filterWordsByEnergy compacts its input in place, so each call gets its own
+	// word.
+	spoken := func() []Word { return []Word{{Text: "Okay.", StartMS: 1000, EndMS: 1150, extentCap: 2500}} }
+
+	got := filterWordsByEnergy(samples, sampleRate, spoken())
+	if len(got) != 1 {
+		t.Fatalf("filterWordsByEnergy = %#v; want the word kept", got)
+	}
+	if got[0].EndMS != 1450+wordEndGraceMS {
+		t.Fatalf("word ends at %dms; want %dms (closure bridged, pause not crossed)", got[0].EndMS, 1450+wordEndGraceMS)
+	}
+
+	// One tolerance either side of the boundary, from the word's stamped end.
+	justUnder := activeAudio(sampleRate, 3000,
+		[2]int64{1000, 1150},
+		[2]int64{1150 + wordEndGapToleranceMS - 10, 1600},
+	)
+	if got := filterWordsByEnergy(justUnder, sampleRate, spoken()); len(got) != 1 || got[0].EndMS != 1600+wordEndGraceMS {
+		t.Fatalf("a %dms gap = %#v; want the audio after it kept, ending at %dms", wordEndGapToleranceMS-10, got, 1600+wordEndGraceMS)
+	}
+	justOver := activeAudio(sampleRate, 3000,
+		[2]int64{1000, 1150},
+		[2]int64{1150 + wordEndGapToleranceMS + 10, 1600},
+	)
+	if got := filterWordsByEnergy(justOver, sampleRate, spoken()); len(got) != 1 || got[0].EndMS != 1150 {
+		t.Fatalf("a %dms gap = %#v; want the word to end at 1150ms", wordEndGapToleranceMS+10, got)
+	}
+}
+
+// The cap is the end the punctuation-inclusive rule produced. Continuing audio
+// may never take a word past it, so this rule can never invent overlap that
+// main did not already have. A word with no cap is never extended at all.
+func TestFilterWordsByEnergyNeverExceedsTheCap(t *testing.T) {
+	const sampleRate = 16000
+	samples := activeAudio(sampleRate, 4000, [2]int64{1000, 3500})
+	words := []Word{
+		{Text: "capped", StartMS: 1000, EndMS: 1150, extentCap: 1400},
+		{Text: "uncapped", StartMS: 2000, EndMS: 2150},
+	}
+
+	got := filterWordsByEnergy(samples, sampleRate, words)
+	if len(got) != 2 {
+		t.Fatalf("filterWordsByEnergy = %#v; want both words kept", got)
+	}
+	if got[0].EndMS != 1400 {
+		t.Errorf("capped word ends at %dms; want the cap, 1400ms", got[0].EndMS)
+	}
+	if got[1].EndMS != 2150 {
+		t.Errorf("uncapped word ends at %dms; want its own end, 2150ms", got[1].EndMS)
+	}
+}
+
+// A cap does not rescue a word with no audio under it: the gate still drops it,
+// and the extension never runs on a word that was not kept.
+func TestFilterWordsByEnergyStillDropsSilentWordsWithACap(t *testing.T) {
+	const sampleRate = 16000
+	samples := activeAudio(sampleRate, 4000, [2]int64{3000, 3500})
+	words := []Word{{Text: "hallucinated.", StartMS: 1000, EndMS: 1150, extentCap: 3400}}
+
+	if got := filterWordsByEnergy(samples, sampleRate, words); len(got) != 0 {
+		t.Fatalf("filterWordsByEnergy = %#v; want the silent word dropped", got)
+	}
+}
+
+// The properties the rule must have for every input, swept over caps, ends and
+// audio layouts: a start never moves, an end never goes backwards (no real
+// speech is cut and no word collapses to zero length), and an end never passes
+// the cap (no overlap is fabricated).
+func TestFilterWordsByEnergyExtensionProperties(t *testing.T) {
+	const sampleRate = 16000
+	layouts := [][][2]int64{
+		{{1000, 1150}},
+		{{1000, 1600}},
+		{{1000, 1150}, {1210, 1450}},
+		{{1000, 1150}, {1400, 1450}, {1900, 2600}},
+		{{900, 2999}},
+	}
+	for layoutIndex, spans := range layouts {
+		samples := activeAudio(sampleRate, 3000, spans...)
+		for _, endMS := range []int64{1050, 1150, 1320, 1470} {
+			for _, capMS := range []int64{0, 1000, 1155, 1600, 2500, 9000} {
+				word := Word{Text: "w", StartMS: 1000, EndMS: endMS, extentCap: capMS}
+				got := filterWordsByEnergy(samples, sampleRate, []Word{word})
+				if len(got) == 0 {
+					continue
+				}
+				out := got[0]
+				if out.StartMS != word.StartMS {
+					t.Fatalf("layout %d end=%d cap=%d: start moved %d->%d", layoutIndex, endMS, capMS, word.StartMS, out.StartMS)
+				}
+				if out.EndMS < word.EndMS {
+					t.Fatalf("layout %d end=%d cap=%d: end went backwards to %d", layoutIndex, endMS, capMS, out.EndMS)
+				}
+				if out.EndMS > word.extentCapMS() {
+					t.Fatalf("layout %d end=%d cap=%d: end %d passed the cap %d", layoutIndex, endMS, capMS, out.EndMS, word.extentCapMS())
+				}
+				if out.EndMS <= out.StartMS {
+					t.Fatalf("layout %d end=%d cap=%d: word collapsed to %d-%d", layoutIndex, endMS, capMS, out.StartMS, out.EndMS)
+				}
+			}
+		}
+	}
+}
+
+// Synthetic decoder padding may not justify reaching into it: the ceiling is
+// clipped to the real PCM boundary along with the end it bounds.
+func TestClampWordsToTimelineEndClampsTheExtentCap(t *testing.T) {
+	words := []Word{
+		{Text: "straddles", StartMS: 900, EndMS: 1100, extentCap: 1400},
+		{Text: "boundary", StartMS: 1000, EndMS: 1000, extentCap: 1400},
+		{Text: "inside", StartMS: 800, EndMS: 900, extentCap: 950},
+	}
+	got := clampWordsToTimelineEnd(words, 1000, 32)
+	if len(got) != 3 {
+		t.Fatalf("clampWordsToTimelineEnd = %#v; want three words", got)
+	}
+	for _, word := range got[:2] {
+		if word.extentCap != 1000 {
+			t.Errorf("word %q cap = %d; want the timeline end, 1000", word.Text, word.extentCap)
+		}
+	}
+	if got[2].extentCap != 950 {
+		t.Errorf("a cap inside the timeline must survive, got %d", got[2].extentCap)
+	}
+}

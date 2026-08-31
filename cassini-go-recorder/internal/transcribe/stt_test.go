@@ -204,3 +204,72 @@ func absInt64(value int64) int64 {
 	}
 	return value
 }
+
+// The punctuation-inclusive end is not thrown away: it travels with the word as
+// a ceiling the energy gate may extend up to, and no further. The end itself
+// still stops at the last speech-bearing token. A phrase-sized token that
+// splitMultiWordTokens divides passes the ceiling to its final part only, since
+// the interior parts end where their neighbours begin.
+func TestTokensToWordsCarriesThePunctuationEndAsACapOnly(t *testing.T) {
+	got := tokensToWords(
+		[]string{"▁Right", "?", "!", "▁U", ".", "S", ".", "▁okay then", ".", "▁Next"},
+		[]float32{1.00, 3.50, 3.52, 3.60, 3.72, 3.80, 3.96, 4.20, 9.00, 9.10},
+		[]float32{0.40, 0.08, 0.08, 0.12, 0.08, 0.16, 0.08, 0.80, 0.08, 0.20},
+	)
+
+	type capCase struct {
+		text   string
+		endMS  int64
+		capMS  int64
+		hasCap bool
+	}
+	want := []capCase{
+		{text: "Right?!", endMS: 1400, capMS: 3600, hasCap: true},
+		{text: "U.S.", endMS: 3960, capMS: 4040, hasCap: true},
+		{text: "okay", endMS: 4600, capMS: 4600},
+		{text: "then.", endMS: 5000, capMS: 9080, hasCap: true},
+		{text: "Next", endMS: 9300, capMS: 9300},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("word count mismatch: got=%d want=%d (%#v)", len(got), len(want), got)
+	}
+	for index, expect := range want {
+		word := got[index]
+		if word.Text != expect.text || absInt64(word.EndMS-expect.endMS) > 1 {
+			t.Fatalf("word %d = %q %d-%dms; want %q ending at %dms", index, word.Text, word.StartMS, word.EndMS, expect.text, expect.endMS)
+		}
+		// extentCapMS is what the energy gate reads: an unset cap collapses to
+		// the word's own end, which permits no extension at all.
+		if absInt64(word.extentCapMS()-expect.capMS) > 1 {
+			t.Errorf("word %q cap = %dms; want %dms", word.Text, word.extentCapMS(), expect.capMS)
+		}
+		if expect.hasCap && word.extentCapMS() <= word.EndMS {
+			t.Errorf("word %q must carry a ceiling above its end, got %d <= %d", word.Text, word.extentCapMS(), word.EndMS)
+		}
+		if !expect.hasCap && word.extentCap > word.EndMS {
+			t.Errorf("word %q must not carry a ceiling, got %d", word.Text, word.extentCap)
+		}
+	}
+}
+
+// The ceiling is per word for the same reason the end is: a word must never
+// inherit a neighbour's reach.
+func TestTokensToWordsDoesNotInheritThePreviousCap(t *testing.T) {
+	// The zero-duration boundary token is stamped a long way before the mark
+	// that closed the previous word, so a leaked ceiling is unmistakable.
+	got := tokensToWords(
+		[]string{"▁Done", ".", "▁mm"},
+		[]float32{1.00, 9.00, 1.20},
+		[]float32{0.56, 0.08, 0},
+	)
+
+	if len(got) != 2 {
+		t.Fatalf("got %#v; want two words", got)
+	}
+	if absInt64(got[0].extentCapMS()-9080) > 1 {
+		t.Fatalf("first word ceiling = %dms; want the mark at 9080ms", got[0].extentCapMS())
+	}
+	if got[1].extentCapMS() != got[1].EndMS {
+		t.Fatalf("second word inherited a ceiling of %dms; want its own end %dms", got[1].extentCapMS(), got[1].EndMS)
+	}
+}
