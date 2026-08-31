@@ -179,15 +179,23 @@ test("the administrator switch stops a capture already running", async ({ page }
 
   // Turning the server-side switch off has to reach a call in progress. It
   // cannot be done by withdrawing the worker script — 404ing that does not
-  // deactivate an installed service worker — so the client asks, and the
-  // upload endpoint refuses as a second line.
+  // deactivate an installed service worker — so the client asks.
   server.state.captureEnabled = false;
-  await page.waitForTimeout(1000);
+  // Long enough for at least one poll at the shortened interval the stub page
+  // sets. Without this wait the test would pass on the upload endpoint's 403
+  // instead, proving nothing about the client.
+  await page.waitForTimeout(2500);
 
+  // Switch it back ON before hanging up, so the upload endpoint would happily
+  // accept. Anything that arrives now is the client having failed to stop.
+  server.state.captureEnabled = true;
   await page.evaluate(() => (window as never as { __endCall: () => void }).__endCall());
   await page.waitForTimeout(3000);
 
-  expect(server.uploads.length, "a capture continued after the administrator switched it off").toBe(0);
+  expect(
+    server.uploads.length,
+    "the capture kept running after the administrator switched it off; the upload was accepted because the switch was back on",
+  ).toBe(0);
 });
 
 test("captures nothing without an explicit opt-in", async ({ page }) => {

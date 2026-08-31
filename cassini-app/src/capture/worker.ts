@@ -186,6 +186,13 @@ export function anchorsWithin(
 }
 
 async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">): Promise<CaptureSidecar> {
+  if (segments.size === 0) {
+    // Nothing was ever opened — a capture denied or revoked before it started.
+    // Creating the directory just to throw would leave an empty one behind on
+    // the participant's disk, which is exactly what a denied capture must not
+    // do.
+    throw new Error("nothing was recorded");
+  }
   const dir = await ensureDir(dirName);
   const built: CaptureSegment[] = [];
   for (const segment of [...segments.values()].sort((a, b) => a.meta.index - b.meta.index)) {
@@ -232,6 +239,8 @@ export async function onMessage(event: MessageEvent): Promise<void> {
         self.postMessage({ type: "segment-stopped", index: message.index });
         break;
       case "finalize": {
+        // A failure here reaches the page as "error", which is what releases
+        // the worker: there will be no "finalized" to do it.
         const sidecar = await finalize(message.dirName, message.base);
         self.postMessage({ type: "finalized", dirName: message.dirName, sidecar });
         break;

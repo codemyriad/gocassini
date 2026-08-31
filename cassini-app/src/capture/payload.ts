@@ -57,6 +57,21 @@ const AUDIO_BITS_PER_SECOND = 128_000;
 // to reach it.
 const SERVER_CHECK_MS = 30_000;
 
+// SERVER_CHECK_TIMEOUT_MS bounds each of those requests. Without a deadline a
+// hung fetch never settles, so the check does not fail closed at all and
+// recording continues past the interval above while further polls pile up
+// behind it.
+const SERVER_CHECK_TIMEOUT_MS = 5_000;
+
+// serverCheckIntervalMS lets a test shorten the poll. It can only make the
+// check MORE frequent, never less: a hostile value on the page cannot use this
+// to keep a recorder alive, and anything that can set globals here could
+// simply delete this code instead.
+export function serverCheckIntervalMS(override: unknown): number {
+  const requested = typeof override === "number" && override > 0 ? override : SERVER_CHECK_MS;
+  return Math.min(SERVER_CHECK_MS, requested);
+}
+
 // CAPTURE_MIME_CANDIDATES is tried in order. WebM/Opus is what Chromium and
 // Firefox record and what the server decodes most happily; Safari records only
 // MP4, and offering it nothing rather than a container it cannot produce is the
@@ -103,19 +118,42 @@ export function enabledURLFrom(rootPath: string): string {
 export async function captureAllowedByServer(
   rootPath: string,
   fetchImpl: typeof fetch = fetch,
+  timeoutMS: number = SERVER_CHECK_TIMEOUT_MS,
 ): Promise<boolean> {
+  const controller = new AbortController();
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  // Raced, not merely aborted. Aborting signals a fetch that honours the
+  // signal, but it does not settle the promise we are awaiting — so a
+  // transport that ignores it would still hang here forever, and the check
+  // would not fail closed at all. The abort is still issued so the abandoned
+  // request does not stay open.
+  const expired = new Promise<never>((_, reject) => {
+    deadline = setTimeout(() => {
+      controller.abort();
+      reject(new Error("capture permission check timed out"));
+    }, timeoutMS);
+  });
   try {
-    const response = await fetchImpl(enabledURLFrom(rootPath), {
-      credentials: "same-origin",
-      cache: "no-store",
-    });
+    const response = await Promise.race([
+      fetchImpl(enabledURLFrom(rootPath), {
+        credentials: "same-origin",
+        cache: "no-store",
+        signal: controller.signal,
+      }),
+      expired,
+    ]);
     if (!response.ok) {
       return false;
     }
     const body = (await response.json()) as { enabled?: unknown };
     return body.enabled === true;
   } catch {
+    // Aborted, offline, unparseable: all of them mean "do not record".
     return false;
+  } finally {
+    if (deadline !== undefined) {
+      clearTimeout(deadline);
+    }
   }
 }
 
@@ -150,8 +188,6 @@ export interface CaptureState {
   muteIntervals: Array<[number, number]>;
   muteSince: number | null;
   mutePoll: number | null;
-  // serverPoll re-asks the operator whether collection is still permitted.
-  serverPoll: number | null;
   segmentStartWallMs: number;
   finished: boolean;
   // discarded marks a session whose consent was withdrawn mid-call. It is
@@ -402,9 +438,6 @@ async function endCall(): Promise<void> {
   if (active.mutePoll !== null) {
     clearInterval(active.mutePoll);
   }
-  if (active.serverPoll !== null) {
-    clearInterval(active.serverPoll);
-  }
   // Let any rotation still in flight finish before closing the final segment,
   // so a device change during the last seconds of a call does not race the
   // teardown.
@@ -422,6 +455,13 @@ async function endCall(): Promise<void> {
   // stopSegment has already awaited the recorder's final chunk, so the worker's
   // view of the segment is complete before the sidecar is sealed.
   active.worker.onmessage = (event: MessageEvent) => {
+    if (event.data?.type === "error") {
+      // The worker could not seal anything — nothing was recorded, or a write
+      // failed. There will be no "finalized", so release the thread here or it
+      // lives as long as the Talk tab.
+      active.worker.terminate();
+      return;
+    }
     if (event.data?.type !== "finalized") {
       return;
     }
@@ -438,61 +478,6 @@ async function endCall(): Promise<void> {
       });
   };
   active.worker.postMessage({ type: "finalize", dirName: active.dirName, base });
-}
-
-function beginCapture(sender: RTCRtpSender): void {
-  if (state) {
-    return;
-  }
-  const roomToken = roomTokenFromPath(location.pathname);
-  if (!roomToken || !consentGranted(localStorage)) {
-    return;
-  }
-  const callStartWallMs = Date.now();
-  const session: CaptureState = {
-    roomToken,
-    dirName: captureDirName(roomToken, callStartWallMs),
-    callStartWallMs,
-    worker: new Worker(workerURL()),
-    segmentIndex: 0,
-    recorder: null,
-    muteIntervals: [],
-    muteSince: null,
-    mutePoll: null,
-    serverPoll: null,
-    segmentStartWallMs: callStartWallMs,
-    finished: false,
-    discarded: false,
-    pendingChunks: Promise.resolve(),
-    rotation: Promise.resolve(),
-  };
-  state = session;
-  capturingSender = sender;
-  attachTimingTransform(session, sender);
-  // Ask the server before recording anything, and keep asking. The
-  // administrator switch is the boundary that makes the per-browser consent
-  // and the missing upload quota acceptable, so it has to bind a client that
-  // is already running — not merely the next one to start.
-  const rootPath = (globalThis as { OC?: { getRootPath?: () => string } }).OC?.getRootPath?.() ?? "";
-  void captureAllowedByServer(rootPath).then((allowed) => {
-    if (!allowed) {
-      session.discarded = true;
-      return;
-    }
-    if (session.discarded || session.finished) {
-      return;
-    }
-    startSegment(session, sender);
-  });
-  session.mutePoll = setInterval(() => pollMute(session, sender), MUTE_POLL_MS) as unknown as number;
-  session.serverPoll = setInterval(() => {
-    void captureAllowedByServer(rootPath).then((allowed) => {
-      if (!allowed && !session.discarded) {
-        session.discarded = true;
-        stopWithoutRestart(session);
-      }
-    });
-  }, SERVER_CHECK_MS) as unknown as number;
 }
 
 // stopWithoutRestart closes the current segment and leaves the recorder idle.
@@ -532,12 +517,75 @@ export function rotateSegment(session: CaptureState, sender: RTCRtpSender): void
     });
 }
 
-function watchSender(sender: RTCRtpSender): void {
+// serverAllowsCapture caches the administrator switch, refreshed on a timer.
+//
+// It is resolved BEFORE a call starts rather than when one does, and that
+// ordering is forced by the platform: an encoded transform has to be attached
+// to a sender before negotiation, so there is no room for a round trip inside
+// addTrack. Asking there attached the transform a round trip late and produced
+// a recording with no timing anchors at all.
+//
+// null means "not answered yet", and it is treated as no. A Talk tab that has
+// only just loaded declines to capture the call somebody joins in the same
+// instant; the next one is fine, and that is the right way round.
+let serverAllowsCapture: boolean | null = null;
+
+// refreshCapturePermission updates the cache and stops an active capture the
+// moment the answer turns to no, so the switch reaches a call in progress.
+async function refreshCapturePermission(rootPath: string): Promise<void> {
+  const allowed = await captureAllowedByServer(rootPath);
+  serverAllowsCapture = allowed;
+  if (!allowed && state && !state.discarded) {
+    state.discarded = true;
+    stopWithoutRestart(state);
+  }
+}
+
+function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void {
+  if (state) {
+    return;
+  }
+  const roomToken = roomTokenFromPath(location.pathname);
+  if (!roomToken || !consentGranted(localStorage)) {
+    return;
+  }
+  // The administrator switch, answered before we got here. Anything other than
+  // an explicit yes — including "not answered yet" — means nothing is created:
+  // no worker thread, no transform on a live call's sender, no OPFS directory.
+  if (serverAllowsCapture !== true) {
+    return;
+  }
+  const callStartWallMs = Date.now();
+  const session: CaptureState = {
+    roomToken,
+    dirName: captureDirName(roomToken, callStartWallMs),
+    callStartWallMs,
+    worker: new Worker(workerURL()),
+    segmentIndex: 0,
+    recorder: null,
+    muteIntervals: [],
+    muteSince: null,
+    mutePoll: null,
+    segmentStartWallMs: callStartWallMs,
+    finished: false,
+    discarded: false,
+    pendingChunks: Promise.resolve(),
+    rotation: Promise.resolve(),
+  };
+  state = session;
+  capturingSender = sender;
+  capturingConnection = connection;
+  attachTimingTransform(session, sender);
+  startSegment(session, sender);
+  session.mutePoll = setInterval(() => pollMute(session, sender), MUTE_POLL_MS) as unknown as number;
+}
+
+function watchSender(sender: RTCRtpSender, connection: RTCPeerConnection): void {
   if (publisherSenders.has(sender)) {
     return;
   }
   publisherSenders.add(sender);
-  beginCapture(sender);
+  beginCapture(sender, connection);
   // A replaced track (device switch, or Talk rebuilding its media pipeline)
   // restarts the recorder's media clock, so it has to become a new segment.
   const originalReplace = sender.replaceTrack.bind(sender);
@@ -565,10 +613,7 @@ function instrument(pc: RTCPeerConnection): void {
     const sender = originalAddTrack(track, ...streams);
     if (track.kind === "audio") {
       try {
-        watchSender(sender);
-        if (state && capturingConnection === null) {
-          capturingConnection = pc;
-        }
+        watchSender(sender, pc);
       } catch {
         // Never let instrumentation break Talk's own addTrack.
       }
@@ -626,6 +671,16 @@ export function install(): void {
   });
   (Patched as { __cassiniPatched?: boolean }).__cassiniPatched = true;
   globals.RTCPeerConnection = Patched;
+  // Resolve the administrator switch now, and keep it fresh. Doing it here
+  // rather than at call start is what leaves room to attach the encoded
+  // transform in time, and the same timer is what carries a mid-call
+  // withdrawal to a capture already running.
+  const rootPath = (globals as unknown as { OC?: { getRootPath?: () => string } }).OC?.getRootPath?.() ?? "";
+  void refreshCapturePermission(rootPath);
+  setInterval(
+    () => void refreshCapturePermission(rootPath),
+    serverCheckIntervalMS((globalThis as { __cassiniCaptureCheckMs?: unknown }).__cassiniCaptureCheckMs),
+  );
   // A page going away mid-upload keeps its OPFS buffer, so the worst case is a
   // retry rather than a lost recording.
   window.addEventListener("pagehide", () => void endCall());

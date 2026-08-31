@@ -3,6 +3,7 @@ import {
   captureAllowedByServer,
   consentGranted,
   enabledURLFrom,
+  serverCheckIntervalMS,
   pickAudioSender,
   rotateSegment,
   stopSegment,
@@ -282,5 +283,43 @@ describe("captureAllowedByServer", () => {
     expect(enabledURLFrom("/nextcloud")).toBe(
       "/nextcloud/index.php/apps/app_api/proxy/gocassini/operator/capture/enabled",
     );
+  });
+});
+
+describe("captureAllowedByServer deadlines", () => {
+  // Without a deadline a hung request never settles, so the check does not fail
+  // closed at all: recording continues past the poll interval while further
+  // polls pile up behind it.
+  it("refuses when the request never settles", async () => {
+    const hangs = () => new Promise<Response>(() => {});
+    await expect(captureAllowedByServer("", hangs as never, 50)).resolves.toBe(false);
+  });
+
+  it("aborts the request it gave up on", async () => {
+    let seenSignal: AbortSignal | undefined;
+    const hangs = (_url: string, init?: RequestInit) => {
+      seenSignal = init?.signal ?? undefined;
+      return new Promise<Response>(() => {});
+    };
+    await captureAllowedByServer("", hangs as never, 50);
+    expect(seenSignal?.aborted, "the abandoned request was left running").toBe(true);
+  });
+});
+
+describe("serverCheckIntervalMS", () => {
+  // The override exists for tests. It must only ever make the check stricter,
+  // so a hostile value on the page cannot use it to keep a recorder alive.
+  it("accepts a shorter interval", () => {
+    expect(serverCheckIntervalMS(1000)).toBe(1000);
+  });
+
+  it("refuses to be made less frequent", () => {
+    expect(serverCheckIntervalMS(600_000)).toBe(30_000);
+  });
+
+  it("falls back to the default for anything else", () => {
+    expect(serverCheckIntervalMS(undefined)).toBe(30_000);
+    expect(serverCheckIntervalMS(-1)).toBe(30_000);
+    expect(serverCheckIntervalMS("soon")).toBe(30_000);
   });
 });

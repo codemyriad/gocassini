@@ -37,6 +37,10 @@ const CALL_PAGE = `<!doctype html>
 <body>
 <script>
   // Talk's own globals, as the payload expects to find them.
+  // Shorten the payload's permission poll so a test can prove the runtime
+  // shutdown rather than wait half a minute for it. The clamp in
+  // serverCheckIntervalMS only lets this make the check stricter.
+  window.__cassiniCaptureCheckMs = 700;
   window.OC = {
     getRootPath: () => "",
     getCurrentUser: () => ({ uid: "alice" }),
