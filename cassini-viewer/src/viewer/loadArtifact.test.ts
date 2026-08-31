@@ -18,8 +18,7 @@ import {
 import { canonicalWordsForBlock, isLikelyCrosstalkTurn } from "../core/transcript";
 import {
   analyzeOverlap,
-  describeOverlap,
-  groupInterruptedTurns,
+  buildTranscriptRows,
   repairTurnFinalWordInflation,
   sortBlocksInReadingOrder,
 } from "../core/overlap";
@@ -1556,10 +1555,13 @@ describe("the display pipeline MeetingView runs, end to end", () => {
     expect(segments).toHaveLength(2);
     expect(segments[0]?.text).toBe("So the installer is finished and the documentation went out.");
     expect(segments.map((segment) => segment.id)).toEqual(["rseg_1", "rseg_2"]);
-    expect(groupInterruptedTurns(segments, analysis)).toHaveLength(2);
-    // What the reader gets instead of the split.
+    // What the reader gets instead of the split: two paragraphs, each naming
+    // the other speaker as having been on the recording at the same time.
     expect(analysis.get("rseg_2")?.containedIn).toBe("rseg_1");
-    expect(describeOverlap(analysis.get("rseg_2"))?.badge).toBe("0.6 s during Alice");
+    expect(buildTranscriptRows(segments).map((row) => [row.key, [...row.over]])).toEqual([
+      ["rseg_1", ["Bob"]],
+      ["rseg_2", ["Alice"]],
+    ]);
   });
 });
 

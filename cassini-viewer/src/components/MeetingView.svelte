@@ -15,15 +15,11 @@
   } from "../core/transcript";
   import { getActiveTimedRange } from "../core/timing";
   import {
-    analyzeOverlap,
-    describeOverlap,
-    describeResumption,
+    buildTranscriptRows,
     getSoundingBlocks,
-    groupInterruptedTurns,
     repairTurnFinalWordInflation,
     sortBlocksInReadingOrder,
-    type BlockOverlap,
-    type OverlapDescription,
+    type TranscriptRow,
   } from "../core/overlap";
   import type {
     DisplayTranscriptToken,
@@ -615,36 +611,61 @@
     return new Map(segments.map((segment) => [segment.id, getActiveDisplayWord(segment, timeMs)]));
   }
 
-  function overlapNotesFor(
-    analysis: Map<string, BlockOverlap>,
-  ): Map<string, { overlap: OverlapDescription | null; resumption: OverlapDescription | null }> {
-    const notes = new Map<
-      string,
-      { overlap: OverlapDescription | null; resumption: OverlapDescription | null }
-    >();
-    for (const [id, entry] of analysis) {
-      const overlap = describeOverlap(entry);
-      const resumption = describeResumption(entry);
-      if (overlap || resumption) {
-        notes.set(id, { overlap, resumption });
+  // A row whose speaker just held the floor a moment ago does not repeat its
+  // own name: the same rule as before, only asked of turns rather than of the
+  // fragments a turn arrives in. A monologue the producer split at a two-second
+  // pause is two turns, and the second one keeps its timestamp but drops the
+  // duplicate header.
+  function continuationRowKeys(rows: TranscriptRow<DisplaySegment>[]): Set<string> {
+    const keys = new Set<string>();
+    for (let index = 1; index < rows.length; index += 1) {
+      const previous = rows[index - 1]!;
+      const current = rows[index]!;
+      if (!current.speaker || previous.speaker !== current.speaker) {
+        continue;
+      }
+      if (current.startMs - previous.endMs <= CONTINUATION_GAP_MS) {
+        keys.add(current.key);
       }
     }
-    return notes;
+    return keys;
   }
 
-  function isSpeakerContinuation(segments: DisplaySegment[], index: number): boolean {
-    if (index === 0) {
-      return false;
+  // The blocks a row renders as its own speaker's prose — the turn's own
+  // fragments, not the chips nested in it. What rings when the turn is
+  // sounding, and what the crosstalk warning is judged on.
+  function rowSpeechBlocks(row: TranscriptRow<DisplaySegment>): DisplaySegment[] {
+    return row.members
+      .filter((member): member is Extract<typeof member, { kind: "speech" }> => member.kind === "speech")
+      .map((member) => member.block);
+  }
+
+  // Every block a row renders, chips included: what the exact-words strip
+  // enumerates, so no block loses its canonical-word view by being nested.
+  function rowAllBlocks(row: TranscriptRow<DisplaySegment>): DisplaySegment[] {
+    return row.members.flatMap((member) =>
+      member.kind === "speech" ? [member.block] : [...member.blocks],
+    );
+  }
+
+  // The ring says "this speaker is sounding now". It is judged on the turn's
+  // OWN blocks: a backchannel inside the turn is sounding on its own account
+  // and lights its own chip, and must not claim the host was still talking.
+  function isRowSounding(row: TranscriptRow<DisplaySegment>, sounding: Set<string>): boolean {
+    return rowSpeechBlocks(row).some((block) => sounding.has(block.id));
+  }
+
+  function isRowLikelyCrosstalk(row: TranscriptRow<DisplaySegment>): boolean {
+    return rowSpeechBlocks(row).some((block) => isLikelyCrosstalkTurn(block.words));
+  }
+
+  // "over Chris", "over Chris and Dana" - names, never durations. The measured
+  // simultaneity stays in the model; a reader can act on who, not on how long.
+  function formatSpeakerList(labels: readonly string[]): string {
+    if (labels.length <= 1) {
+      return labels[0] ?? "";
     }
-    const previous = segments[index - 1];
-    const current = segments[index];
-    if (!previous || !current) {
-      return false;
-    }
-    if (!current.speaker || previous.speaker !== current.speaker) {
-      return false;
-    }
-    return current.startMs - previous.endMs <= CONTINUATION_GAP_MS;
+    return `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
   }
 
   function hasTimedTokens(segment: DisplaySegment): boolean {
@@ -773,12 +794,11 @@
       )
     : [];
   $: visibleSegments = displaySegments;
-  $: overlapAnalysis = analyzeOverlap(displaySegments);
-  $: overlapNotes = overlapNotesFor(overlapAnalysis);
-  $: transcriptRows = groupInterruptedTurns(displaySegments, overlapAnalysis);
-  $: continuationIds = new Set(
-    displaySegments.filter((_, index) => isSpeakerContinuation(displaySegments, index)).map((segment) => segment.id),
-  );
+  // Rows are TURNS, not blocks: the producer flushes a segment at every speaker
+  // change, so one sentence spoken over somebody else arrives as a dozen
+  // fragments and only the turn they came from is worth reading (D-693).
+  $: transcriptRows = buildTranscriptRows(displaySegments);
+  $: continuationKeys = continuationRowKeys(transcriptRows);
   // Highlight membership runs on the same effective audible spans the overlap
   // analysis judges on, not on paragraph extents: extents ring both speakers
   // (and follow-scroll the earlier paragraph) through stretches where their
@@ -989,127 +1009,117 @@
         on:wheel={() => (manualScrollLock = true)}
         role="log"
       >
-        <!-- Rows, not segments: when the producer cut one continuous turn in
-             half around a backchannel, its three blocks share a row and get a
-             visual parent (a left rule) with the interjection inset inside it,
-             so the page stops reading as "A finished, B spoke, A started
-             again". The three canonical blocks keep their own ids, timestamps
-             and seek anchors, in DOM and playback order - nothing is merged and
-             no text is concatenated. Ungrouped rows use `display: contents`, so
-             a lone turn is laid out by the transcript grid exactly as before. -->
+        <!-- One row per TURN, and a turn is ONE PARAGRAPH. The producer
+             flushes a segment at every speaker change, so a sentence spoken
+             over somebody else arrives here as a dozen one- to three-word
+             fragments; buildTranscriptRows puts them back into the turn they
+             were and this loop sets them as continuous prose. NOTHING IS
+             MERGED: every block keeps its own id, its own words, its own seek
+             anchors and its own scroll target - only the paragraph breaks and
+             the repeated headers between them are gone. A short remark said
+             inside a turn is a chip where it happened rather than a row of its
+             own, and two people who genuinely held the floor at once are named
+             on each other's rows ("over Chris"). No durations anywhere: the
+             model keeps the measurement, the page shows who. -->
+        {#snippet blockProse(block: DisplaySegment)}{#if block.tokens.length > 0 && hasTimedTokens(block)}{#each block.tokens as token}{#if token.spaceBefore}{' '}{/if}{#if token.startMs !== undefined && token.endMs !== undefined}<button
+                class="inline p-0 border-0 rounded text-[1.06rem] leading-[1.72] cursor-pointer transition duration-150 {token ===
+                  activeTokens.get(block.id)
+                  ? 'bg-primary ring-1 ring-primary'
+                  : 'bg-transparent hover:bg-primary/60'} {token.alignment === 'interpolated'
+                  ? 'border-b border-dashed border-warning/60'
+                  : ''}"
+                on:click={() => seekTo(token.startMs ?? block.startMs)}
+                type="button"
+              >{token.text}</button>{:else}<span
+                class="inline rounded text-[1.06rem] leading-[1.72] {token.kind === 'word'
+                  ? 'text-base-content/70'
+                  : 'text-base-content'}"
+              >{token.text}</span>{/if}{/each}{:else}<button
+              class="inline p-0 border-0 bg-transparent text-left text-[1.06rem] leading-[1.72] rounded cursor-pointer hover:bg-primary/40"
+              on:click={() => seekTo(block.startMs)}
+              type="button"
+            >{block.text}</button>{/if}{/snippet}
         {#each transcriptRows as row (row.key)}
-          <div
-            aria-label={row.interrupted
-              ? `${row.speakerLabel}'s turn, interrupted by ${row.interjectorLabel}`
-              : undefined}
-            class={row.interrupted
-              ? 'grid gap-2 pl-3 border-l-2 border-primary/50 rounded-sm'
-              : 'contents'}
-            role={row.interrupted ? 'group' : undefined}
-          >
-          {#each row.members as segment}
           <article
-            aria-current={activeSegmentIds.has(segment.id) ? "true" : undefined}
-            class="transition-all {continuationIds.has(segment.id)
-              ? '-mt-1'
-              : ''} {segment.id === row.interjectionId
-              ? 'ml-3 pl-3 border-l-2 border-base-300'
-              : ''} {activeSegmentIds.has(segment.id)
+            aria-current={isRowSounding(row, activeSegmentIds) ? "true" : undefined}
+            class="transition-all {continuationKeys.has(row.key) ? '-mt-1' : ''} {isRowSounding(
+              row,
+              activeSegmentIds,
+            )
               ? 'ring-2 ring-primary ring-offset-6 ring-offset-base-100 bg-base-100 rounded-sm'
               : ''}"
-            id={segmentDomId(segment.id)}
           >
             <!-- Header row: speaker name + timestamp, both aligned left.
-                 flex-wrap so the simultaneity badge drops to its own line on a
+                 flex-wrap so the simultaneity marker drops to its own line on a
                  narrow screen instead of squeezing the speaker name. -->
             <div class="flex flex-wrap items-center gap-1 mb-1">
-              {#if !continuationIds.has(segment.id)}
-                <span class="badge badge-md badge-info text-sm px-1 font-bold">{segment.speakerLabel}</span>
+              {#if !continuationKeys.has(row.key)}
+                <span class="badge badge-md badge-info text-sm px-1 font-bold">{row.speakerLabel}</span>
               {/if}
-              {#if isLikelyCrosstalkTurn(segment.words)}
+              {#if isRowLikelyCrosstalk(row)}
                 <span
                   class="badge badge-md badge-warning badge-outline text-sm px-1"
-                  title="Another participant's microphone was much louder here. This turn is probably their voice bleeding into {segment.speakerLabel}'s track, not {segment.speakerLabel} speaking."
+                  title="Another participant's microphone was much louder here. This turn is probably their voice bleeding into {row.speakerLabel}'s track, not {row.speakerLabel} speaking."
                 >probably crosstalk</span>
-              {/if}
-              <!-- Simultaneity. Static per transcript (it never depends on the
-                   playhead), so it does not churn the role="log" live region.
-                   The arrow is decorative; the visually-hidden prefix makes the
-                   badge a sentence for a screen reader, and the title carries
-                   the full detail for everyone else. -->
-              {#if overlapNotes.get(segment.id)?.overlap}
-                <span
-                  class="badge badge-md badge-accent text-sm px-1 whitespace-nowrap"
-                  title={overlapNotes.get(segment.id)?.overlap?.detail}
-                ><span aria-hidden="true" class="mr-1">&#8644;</span><span class="sr-only"
-                  >Simultaneous speech: </span
-                  >{overlapNotes.get(segment.id)?.overlap?.badge}</span>
-              {/if}
-              {#if overlapNotes.get(segment.id)?.resumption}
-                <span
-                  class="badge badge-md badge-ghost text-sm px-1 whitespace-nowrap"
-                  title={overlapNotes.get(segment.id)?.resumption?.detail}
-                ><span aria-hidden="true" class="mr-1">&#8627;</span><span class="sr-only"
-                  >Same turn: </span
-                  >{overlapNotes.get(segment.id)?.resumption?.badge}</span>
               {/if}
               <button
                 class="badge badge-md text-sm bg-base-200 px-1 text-base-content/60 hover:bg-primary/60 hover:text-base-content cursor-pointer tabular-nums"
-                on:click={() => seekTo(segment.startMs)}
+                on:click={() => seekTo(row.startMs)}
                 type="button"
               >
-                {formatClockTime(segment.startMs)}
+                {formatClockTime(row.startMs)}
               </button>
+              <!-- Simultaneity, quietly: WHO this turn ran over, and nothing
+                   else. Static per transcript (it never depends on the
+                   playhead), so it does not churn the role="log" live region. -->
+              {#if row.over.length > 0}
+                <span
+                  class="text-sm text-base-content/55 min-w-0"
+                  title="Simultaneous speech: {formatSpeakerList(row.over)} {row.over.length > 1
+                    ? 'were'
+                    : 'was'} speaking at the same time."
+                ><span class="sr-only">Simultaneous speech: </span>over {formatSpeakerList(row.over)}</span>
+              {/if}
             </div>
 
-            {#if segment.tokens.length > 0 && hasTimedTokens(segment)}
-              <div class="text-base leading-normal px-1.5">
-                {#each segment.tokens as token}{#if token.spaceBefore}{' '}{/if}{#if token.startMs !== undefined && token.endMs !== undefined}<button
-                      class="inline p-0 border-0 rounded text-base leading-normal cursor-pointer transition duration-150 {token ===
-                        activeTokens.get(segment.id)
-                        ? 'bg-primary ring-1 ring-primary'
-                        : 'bg-transparent hover:bg-primary/60'} {token.alignment === 'interpolated'
-                        ? 'border-b border-dashed border-warning/60'
-                        : ''}"
-                      on:click={() => seekTo(token.startMs ?? segment.startMs)}
-                      type="button"
-                    >{token.text}</button>{:else}<span
-                      class="inline rounded text-[1.06rem] leading-[1.72] {token.kind ===
-                      'word'
-                        ? 'text-base-content/70'
-                        : 'text-base-content'}"
-                    >{token.text}</span>{/if}{/each}
-              </div>
-            {:else}
-              <button
-                class="block w-full p-0 border-0 bg-transparent text-left text-base-content text-[1.06rem] leading-[1.72] rounded"
-                on:click={() => seekTo(segment.startMs)}
-                type="button"
-              >
-                {segment.text}
-              </button>
-            {/if}
+            <!-- The turn, as one paragraph. Members are laid end to end with a
+                 single space between them: the fragments the producer cut are
+                 sentences again, and an interjection sits inline at the seam it
+                 was said in. A chip's copy text reads "(Ben: Right.)" - the
+                 parens and the name are real text nodes, the screen-reader
+                 prefix is `select-none` so it never lands in the clipboard. -->
+            <p class="px-1.5 text-[1.06rem] leading-[1.72] text-base-content break-words">{#each row.members as member, memberIndex (member.key)}{#if memberIndex > 0}{' '}{/if}{#if member.kind === 'speech'}<span
+                  id={segmentDomId(member.block.id)}
+                >{@render blockProse(member.block)}</span>{:else}<span
+                  class="box-decoration-clone rounded-md border border-base-300 bg-base-200/60 px-1.5 py-0.5 text-[0.94rem] text-base-content/60"
+                ><span class="sr-only select-none">Interjection by </span><span aria-hidden="true">(</span><span
+                    class="font-semibold">{member.speakerLabel}</span><span aria-hidden="true">:</span>{#each member.blocks as chipBlock (chipBlock.id)}{' '}<span
+                      class="rounded {activeSegmentIds.has(chipBlock.id) ? 'bg-primary/25' : ''}"
+                      id={segmentDomId(chipBlock.id)}
+                    >{@render blockProse(chipBlock)}</span>{/each}<span aria-hidden="true">)</span></span>{/if}{/each}</p>
 
-            {#if !hasPrecomputedDisplay && showExactWords && segment.words.length > 0}
-              <div class="block mt-3 pt-3 border-t border-base-300 text-base leading-normal">
-                {#each segment.words as word, wordIndex}{#if wordIndex > 0}{' '}{/if}<button
-                    class="inline p-0 border-0 rounded text-base leading-normal cursor-pointer transition duration-150 {word.id ===
-                      activeWords.get(segment.id)?.id
-                      ? 'bg-primary ring-1 ring-primary'
-                      : 'hover:bg-primary'} {word.lowConfidenceSpeaker
-                      ? 'text-base-content/55 border-b border-dashed border-warning/60'
-                      : ''}"
-                    on:click={() => seekTo(word.startMs)}
-                    title={word.lowConfidenceSpeaker
-                      ? `Another microphone was ${describeAttributionGap(word.attributionGapDb)} here — probably not ${segment.speakerLabel} speaking`
-                      : undefined}
-                    type="button"
-                  >{word.text}</button>{/each}
-              </div>
+            {#if !hasPrecomputedDisplay && showExactWords}
+              {#each rowAllBlocks(row) as block (block.id)}
+                {#if block.words.length > 0}
+                  <div class="block mt-3 pt-3 border-t border-base-300 text-base leading-normal">
+                    {#each block.words as word, wordIndex}{#if wordIndex > 0}{' '}{/if}<button
+                        class="inline p-0 border-0 rounded text-base leading-normal cursor-pointer transition duration-150 {word.id ===
+                          activeWords.get(block.id)?.id
+                          ? 'bg-primary ring-1 ring-primary'
+                          : 'hover:bg-primary'} {word.lowConfidenceSpeaker
+                          ? 'text-base-content/55 border-b border-dashed border-warning/60'
+                          : ''}"
+                        on:click={() => seekTo(word.startMs)}
+                        title={word.lowConfidenceSpeaker
+                          ? `Another microphone was ${describeAttributionGap(word.attributionGapDb)} here — probably not ${block.speakerLabel} speaking`
+                          : undefined}
+                        type="button"
+                      >{word.text}</button>{/each}
+                  </div>
+                {/if}
+              {/each}
             {/if}
           </article>
-          {/each}
-          </div>
         {/each}
       </div>
 

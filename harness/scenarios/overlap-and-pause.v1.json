@@ -1,8 +1,8 @@
 {
   "scenario_id": "overlap-and-pause-v1",
   "title": "Overlap and Pause",
-  "description": "A three-person release check-in written to exercise speech overlap honestly. It contains two genuine backchannel overlaps (a listener says a short word while another participant is mid-sentence), one genuine interruption where the floor changes hands, and several sentence-final words followed by long silences. The long silences are the point: a decoder that stretches a word's end through the following pause turns a clean gap into a fabricated overlap with whoever speaks next, so this fixture distinguishes real simultaneous speech from invented simultaneous speech.",
-  "duration_seconds": 40,
+  "description": "A three-person release check-in written to exercise speech overlap honestly. It contains two genuine backchannel overlaps (a listener says a short word while another participant is mid-sentence), one genuine interruption where the floor changes hands, and several sentence-final words followed by long silences. The long silences are the point: a decoder that stretches a word's end through the following pause turns a clean gap into a fabricated overlap with whoever speaks next, so this fixture distinguishes real simultaneous speech from invented simultaneous speech. It also contains a stretch of sustained double-talk where two participants hold the floor at the same time for several seconds, which is the shape that shreds a transcript when every speaker change starts a new turn: neither speaker is backchannelling, both are producing whole sentences, and their words interleave.",
+  "duration_seconds": 62,
   "participants": [
     {
       "id": "ana",
@@ -86,6 +86,30 @@
       "start_seconds": 37.0,
       "text": "Then we are done here.",
       "note": "final turn; trailing silence to the end of the meeting"
+    },
+    {
+      "speaker": "cara",
+      "start_seconds": 41.0,
+      "text": "So the only thing I still need from you is the final sign off on the wording, because once it goes out we cannot quietly edit it afterwards.",
+      "note": "SUSTAINED DOUBLE TALK: cara holds the floor while ben talks over her for several seconds"
+    },
+    {
+      "speaker": "ben",
+      "start_seconds": 43.2,
+      "text": "Right, but hold on, I thought we agreed the wording was already settled last week when we went through it.",
+      "note": "SUSTAINED DOUBLE TALK: a full competing sentence, not a backchannel"
+    },
+    {
+      "speaker": "ana",
+      "start_seconds": 52.5,
+      "text": "One at a time please.",
+      "note": "resolves the double talk"
+    },
+    {
+      "speaker": "cara",
+      "start_seconds": 55.0,
+      "text": "Sorry. Yes, it is settled. I just want it in writing.",
+      "note": "clean sequential control after the collision"
     }
   ]
 }

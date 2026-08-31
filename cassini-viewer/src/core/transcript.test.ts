@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   analyzeOverlap,
+  buildTranscriptRows,
   getSoundingBlocks,
-  groupInterruptedTurns,
   repairTurnFinalWordInflation,
   type OverlapBlock,
 } from "./overlap";
@@ -966,11 +966,12 @@ describe("canonicalWordsForBlock rejects resolvable but incompatible references"
 
         expect(analysis.get("d_alice")?.interrupts).toBeUndefined();
         expect(analysis.get("d_bob_second")?.resumes).toBeUndefined();
-        expect(groupInterruptedTurns(sandwich, analysis).map((row) => row.interrupted)).toEqual([
-          false,
-          false,
-          false,
-        ]);
+        // And the page does not adopt it as a chip inside Bob's paragraph: it
+        // reads as a turn of its own, next to the one Bob never stopped.
+        const rows = buildTranscriptRows(sandwich);
+        expect(
+          rows.map((row) => row.members.map((member) => member.kind === "speech" ? member.block.id : member.key)),
+        ).toEqual([["d_bob_first", "d_bob_second"], ["d_alice"]]);
       });
     });
 
