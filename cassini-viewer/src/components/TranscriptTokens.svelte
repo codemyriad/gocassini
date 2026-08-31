@@ -48,6 +48,14 @@
    * most of the cost and the ring only part of it. An instant highlight is both
    * cheaper and more honest about where the playhead is.
    *
+   * THE SEPARATOR IS AN EXPRESSION, NOT A BLOCK. `{#if token.spaceBefore}` was
+   * a conditional block, and Svelte gives every block an anchor comment and a
+   * branch effect — for a value that is fixed the moment the transcript loads
+   * and can never change. On the largest published meeting that was one wasted
+   * comment node per word. A ternary renders the same space as a plain text
+   * node with no anchor and no branch. The space has to stay OUTSIDE the button
+   * either way, or the highlight would extend through the gap between words.
+   *
    * (Class names are spelled carefully in this file's prose: Tailwind v4
    * content-scans source text, so naming a utility in a comment is enough to
    * put its rule back into the bundle.)
@@ -60,7 +68,7 @@
   export let seek: (ms: number) => void;
 </script>
 
-{#each tokens as token}{#if token.spaceBefore}{' '}{/if}{#if token.startMs !== undefined && token.endMs !== undefined}<button
+{#each tokens as token}{token.spaceBefore ? " " : ""}{#if token.startMs !== undefined && token.endMs !== undefined}<button
         class="inline p-0 border-0 rounded text-[1.06rem] leading-[1.72] cursor-pointer {token ===
           $activeToken
           ? 'bg-primary ring-1 ring-primary'
