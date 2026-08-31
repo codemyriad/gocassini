@@ -77,7 +77,7 @@ export function consentGranted(storage: Pick<Storage, "getItem">): boolean {
   }
 }
 
-interface CaptureState {
+export interface CaptureState {
   roomToken: string;
   dirName: string;
   callStartWallMs: number;
@@ -89,6 +89,11 @@ interface CaptureState {
   mutePoll: number | null;
   segmentStartWallMs: number;
   finished: boolean;
+  // pendingChunks chains every ondataavailable hand-off. MediaRecorder emits
+  // its final chunk asynchronously AFTER stop() and before onstop, and turning
+  // a Blob into an ArrayBuffer is itself async — so sealing the sidecar without
+  // awaiting this drops the end of the recording.
+  pendingChunks: Promise<void>;
 }
 
 let state: CaptureState | null = null;
@@ -103,26 +108,26 @@ function workerURL(): string {
   return `${root.replace(/\/+$/, "")}/index.php/apps/app_api/proxy/gocassini/ui/capture-worker.js`;
 }
 
-function startSegment(sender: RTCRtpSender): void {
-  if (!state || !sender.track) {
+function startSegment(session: CaptureState, sender: RTCRtpSender): void {
+  if (!sender.track) {
     return;
   }
   const track = sender.track;
   const settings = typeof track.getSettings === "function" ? track.getSettings() : {};
-  const index = state.segmentIndex;
+  const index = session.segmentIndex;
   const audioName = `segment-${index}.webm`;
   const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
     ? "audio/webm;codecs=opus"
     : "audio/webm";
-  state.segmentStartWallMs = Date.now();
-  state.worker.postMessage({
+  session.segmentStartWallMs = Date.now();
+  session.worker.postMessage({
     type: "segment-start",
-    dirName: state.dirName,
+    dirName: session.dirName,
     meta: {
       index,
       audioName,
       mimeType,
-      startWallMs: state.segmentStartWallMs,
+      startWallMs: session.segmentStartWallMs,
       sampleRate: settings.sampleRate ?? null,
       channelCount: settings.channelCount ?? null,
     },
@@ -133,39 +138,55 @@ function startSegment(sender: RTCRtpSender): void {
     audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
   });
   recorder.ondataavailable = (event) => {
-    if (!state || event.data.size === 0) {
+    if (event.data.size === 0) {
       return;
     }
-    void event.data.arrayBuffer().then((buffer) => {
-      state?.worker.postMessage({ type: "chunk", index, buffer }, [buffer]);
+    // Chain rather than fire-and-forget, and close over `session` rather than
+    // reading the module global: by the time the last chunk arrives the call
+    // has ended and the global is already cleared.
+    session.pendingChunks = session.pendingChunks.then(async () => {
+      const buffer = await event.data.arrayBuffer();
+      session.worker.postMessage({ type: "chunk", index, buffer }, [buffer]);
     });
   };
   recorder.start(TIMESLICE_MS);
-  state.recorder = recorder;
+  session.recorder = recorder;
 }
 
-function stopSegment(): void {
-  if (!state?.recorder) {
+// stopSegment closes the current segment and resolves once the recorder has
+// really stopped and every chunk it produced has been handed to the worker.
+//
+// The ordering matters and is not obvious: stop() makes MediaRecorder emit a
+// final dataavailable and only then onstop, and each chunk hand-off is itself
+// async. Posting segment-stop before those land would have the worker close the
+// file handle with the tail of the recording still in flight.
+export async function stopSegment(session: CaptureState): Promise<void> {
+  const recorder = session.recorder;
+  if (!recorder) {
     return;
   }
-  const index = state.segmentIndex;
-  const recorder = state.recorder;
-  state.recorder = null;
-  recorder.onstop = () => {
-    state?.worker.postMessage({
-      type: "segment-stop",
-      index,
-      stopWallMs: Date.now(),
-      muteIntervals: state?.muteIntervals ?? [],
-    });
-  };
-  try {
-    recorder.stop();
-  } catch {
-    // Already inactive; the stop message above is what matters.
-  }
-  state.segmentIndex += 1;
-  state.muteIntervals = [];
+  const index = session.segmentIndex;
+  const muteIntervals = session.muteIntervals;
+  session.recorder = null;
+  await new Promise<void>((resolve) => {
+    recorder.onstop = () => resolve();
+    try {
+      recorder.stop();
+    } catch {
+      // Already inactive: nothing more will arrive, so do not wait for an
+      // onstop that will never fire.
+      resolve();
+    }
+  });
+  await session.pendingChunks;
+  session.worker.postMessage({
+    type: "segment-stop",
+    index,
+    stopWallMs: Date.now(),
+    muteIntervals,
+  });
+  session.segmentIndex += 1;
+  session.muteIntervals = [];
 }
 
 // RTCRtpScriptTransform is not in every lib.dom we build against, and the sender
@@ -173,11 +194,11 @@ function stopSegment(): void {
 // loosely and keep the looseness contained to this function.
 type ScriptTransformCtor = new (worker: Worker, options: unknown) => object;
 
-function attachTimingTransform(sender: RTCRtpSender): void {
+function attachTimingTransform(session: CaptureState, sender: RTCRtpSender): void {
   const ScriptTransform = (globalThis as { RTCRtpScriptTransform?: ScriptTransformCtor })
     .RTCRtpScriptTransform;
   const senderWithTransform = sender as unknown as { transform?: object | null };
-  if (!ScriptTransform || !state) {
+  if (!ScriptTransform) {
     // Without encoded transforms there are no RTP anchors, so the server falls
     // back to wall-clock plus correlation against whatever intact SFU audio it
     // has. Degraded placement, still a usable upload.
@@ -190,22 +211,19 @@ function attachTimingTransform(sender: RTCRtpSender): void {
     return;
   }
   try {
-    senderWithTransform.transform = new ScriptTransform(state.worker, { kind: "audio" });
+    senderWithTransform.transform = new ScriptTransform(session.worker, { kind: "audio" });
   } catch {
     // Older shape or a sender that refuses a transform: anchors are optional.
   }
 }
 
-function pollMute(sender: RTCRtpSender): void {
-  if (!state) {
-    return;
-  }
+function pollMute(session: CaptureState, sender: RTCRtpSender): void {
   const enabled = sender.track?.enabled ?? true;
-  if (!enabled && state.muteSince === null) {
-    state.muteSince = Date.now();
-  } else if (enabled && state.muteSince !== null) {
-    state.muteIntervals.push([state.muteSince, Date.now()]);
-    state.muteSince = null;
+  if (!enabled && session.muteSince === null) {
+    session.muteSince = Date.now();
+  } else if (enabled && session.muteSince !== null) {
+    session.muteIntervals.push([session.muteSince, Date.now()]);
+    session.muteSince = null;
   }
 }
 
@@ -233,16 +251,24 @@ async function uploadCapture(sidecar: CaptureSidecar, dirName: string): Promise<
   await opfsRoot.removeEntry(dirName, { recursive: true });
 }
 
-function endCall(): void {
+// endCall seals the recording and starts the upload. It is idempotent: several
+// things legitimately signal the end of a call (the publishing peer connection
+// closing, its state going to closed/failed, the page going away) and they can
+// all fire for the same call.
+async function endCall(): Promise<void> {
   if (!state || state.finished) {
     return;
   }
   state.finished = true;
   const active = state;
+  // Cleared up front so a second signal cannot start a parallel teardown, while
+  // everything below works from `active` — the async tail of a recording
+  // outlives the global by design.
+  state = null;
   if (active.mutePoll !== null) {
     clearInterval(active.mutePoll);
   }
-  stopSegment();
+  await stopSegment(active);
   const base: Omit<CaptureSidecar, "segments"> = {
     format: SOURCE_CAPTURE_FORMAT,
     roomToken: active.roomToken,
@@ -252,20 +278,19 @@ function endCall(): void {
     callEndWallMs: Date.now(),
     userAgent: navigator.userAgent,
   };
-  // Let the final MediaRecorder chunk land before sealing the sidecar.
-  setTimeout(() => {
-    active.worker.onmessage = (event: MessageEvent) => {
-      if (event.data?.type === "finalized") {
-        void uploadCapture(event.data.sidecar as CaptureSidecar, event.data.dirName as string).catch(
-          () => {
-            // Retried by the recovery pass on a later page load.
-          },
-        );
-      }
-    };
-    active.worker.postMessage({ type: "finalize", dirName: active.dirName, base });
-  }, 500);
-  state = null;
+  // stopSegment has already awaited the recorder's final chunk, so the worker's
+  // view of the segment is complete before the sidecar is sealed.
+  active.worker.onmessage = (event: MessageEvent) => {
+    if (event.data?.type === "finalized") {
+      void uploadCapture(event.data.sidecar as CaptureSidecar, event.data.dirName as string).catch(
+        () => {
+          // The OPFS buffer is deliberately left in place so a later page load
+          // can retry; nothing is lost to a transient upload failure.
+        },
+      );
+    }
+  };
+  active.worker.postMessage({ type: "finalize", dirName: active.dirName, base });
 }
 
 function beginCapture(sender: RTCRtpSender): void {
@@ -277,7 +302,7 @@ function beginCapture(sender: RTCRtpSender): void {
     return;
   }
   const callStartWallMs = Date.now();
-  state = {
+  const session: CaptureState = {
     roomToken,
     dirName: captureDirName(roomToken, callStartWallMs),
     callStartWallMs,
@@ -289,10 +314,12 @@ function beginCapture(sender: RTCRtpSender): void {
     mutePoll: null,
     segmentStartWallMs: callStartWallMs,
     finished: false,
+    pendingChunks: Promise.resolve(),
   };
-  attachTimingTransform(sender);
-  startSegment(sender);
-  state.mutePoll = setInterval(() => pollMute(sender), MUTE_POLL_MS) as unknown as number;
+  state = session;
+  attachTimingTransform(session, sender);
+  startSegment(session, sender);
+  session.mutePoll = setInterval(() => pollMute(session, sender), MUTE_POLL_MS) as unknown as number;
 }
 
 function watchSender(sender: RTCRtpSender): void {
@@ -306,9 +333,15 @@ function watchSender(sender: RTCRtpSender): void {
   const originalReplace = sender.replaceTrack.bind(sender);
   sender.replaceTrack = async (track: MediaStreamTrack | null) => {
     const result = await originalReplace(track);
-    if (state && track && track.kind === "audio") {
-      stopSegment();
-      startSegment(sender);
+    const session = state;
+    if (session && track && track.kind === "audio") {
+      // A replaced track restarts the recorder's media clock, so it has to
+      // become a new segment. Talk's own call must not wait on our bookkeeping,
+      // hence the un-awaited chain — but it IS chained, so the new segment
+      // cannot start writing before the old one is closed.
+      session.pendingChunks = session.pendingChunks
+        .then(() => stopSegment(session))
+        .then(() => startSegment(session, sender));
     }
     return result;
   };
@@ -331,7 +364,7 @@ function instrument(pc: RTCPeerConnection): void {
     if (pc.connectionState === "closed" || pc.connectionState === "failed") {
       const index = pickAudioSender(pc.getSenders());
       if (index >= 0 || publisherSenders.size > 0) {
-        endCall();
+        void endCall();
       }
     }
   });
@@ -339,7 +372,7 @@ function instrument(pc: RTCPeerConnection): void {
   pc.close = () => {
     try {
       if (pickAudioSender(pc.getSenders()) >= 0) {
-        endCall();
+        void endCall();
       }
     } catch {
       // Fall through to the real close regardless.
@@ -371,7 +404,9 @@ export function install(): void {
   Patched.prototype = Original.prototype;
   (Patched as { __cassiniPatched?: boolean }).__cassiniPatched = true;
   globals.RTCPeerConnection = Patched;
-  window.addEventListener("pagehide", endCall);
+  // A page going away mid-upload keeps its OPFS buffer, so the worst case is a
+  // retry rather than a lost recording.
+  window.addEventListener("pagehide", () => void endCall());
 }
 
 if (typeof window !== "undefined" && roomTokenFromPath(location.pathname)) {

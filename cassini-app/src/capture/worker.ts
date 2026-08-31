@@ -220,9 +220,18 @@ export async function onMessage(event: MessageEvent): Promise<void> {
 
 // Wire the worker globals only in a real worker. Importing this module in a
 // unit test must not throw on a missing `self`.
+//
+// Messages are serialized through one promise chain rather than dispatched
+// concurrently. Opening a segment is async (getFileHandle, then
+// createSyncAccessHandle) while appending a chunk is not, so a chunk that
+// arrived while the open was still in flight would find no open segment and be
+// dropped without a trace. Chaining costs nothing here — the writes are
+// sequential anyway — and makes the message order the page sent the order the
+// worker applies.
 if (typeof self !== "undefined" && typeof self.postMessage === "function") {
   self.onrtctransform = onTransform;
+  let queue: Promise<void> = Promise.resolve();
   self.onmessage = (event: MessageEvent) => {
-    void onMessage(event);
+    queue = queue.then(() => onMessage(event));
   };
 }

@@ -42,21 +42,30 @@ type SkippedStream struct {
 }
 
 type StreamPlan struct {
-	StreamID               string  `json:"stream_id"`
-	LTID                   string  `json:"ltid"`
-	Kind                   string  `json:"kind"`
-	Codec                  string  `json:"codec"`
-	ParticipantID          string  `json:"participant_id,omitempty"`
-	ParticipantName        string  `json:"participant_name,omitempty"`
-	MID                    string  `json:"mid,omitempty"`
-	RID                    string  `json:"rid,omitempty"`
-	ClockRate              uint32  `json:"clock_rate,omitempty"`
-	PT                     uint8   `json:"pt,omitempty"`
-	RTPPackets             int     `json:"rtp_packets"`
-	FirstRecvNS            uint64  `json:"first_recv_ns"`
-	FirstTimelineNS        int64   `json:"first_timeline_ns"`
-	TimelineAdjustNS       int64   `json:"timeline_adjust_ns"`
-	TimelineSamples        int     `json:"timeline_samples"`
+	StreamID         string `json:"stream_id"`
+	LTID             string `json:"ltid"`
+	Kind             string `json:"kind"`
+	Codec            string `json:"codec"`
+	ParticipantID    string `json:"participant_id,omitempty"`
+	ParticipantName  string `json:"participant_name,omitempty"`
+	MID              string `json:"mid,omitempty"`
+	RID              string `json:"rid,omitempty"`
+	ClockRate        uint32 `json:"clock_rate,omitempty"`
+	PT               uint8  `json:"pt,omitempty"`
+	RTPPackets       int    `json:"rtp_packets"`
+	FirstRecvNS      uint64 `json:"first_recv_ns"`
+	FirstTimelineNS  int64  `json:"first_timeline_ns"`
+	TimelineAdjustNS int64  `json:"timeline_adjust_ns"`
+	TimelineSamples  int    `json:"timeline_samples"`
+	// FirstRTPTimestamp is the RTP timestamp of this segment's first counted
+	// packet, on the sender's own audio sample clock, and FirstRTPSet says
+	// whether one was observed. Together with ClockRate and FirstTimelineNS
+	// they convert a sender-side RTP timestamp into a position on the meeting
+	// timeline — the mapping source-audio ingestion needs
+	// (docs/source-audio-capture.md). Zero is a legal RTP timestamp, hence the
+	// explicit set flag rather than a sentinel.
+	FirstRTPTimestamp      int64   `json:"first_rtp_timestamp"`
+	FirstRTPSet            bool    `json:"first_rtp_set"`
 	TimelineRawDurationNS  int64   `json:"timeline_raw_duration_ns"`
 	TimelineCorrDurationNS int64   `json:"timeline_corrected_duration_ns"`
 	SourceStartSeconds     float64 `json:"source_start_seconds"`
@@ -450,6 +459,8 @@ func buildStreamPlans(sess session.Session, segments []segmentArtifact, planned 
 			FirstRecvNS:            seg.FirstNS,
 			FirstTimelineNS:        seg.FirstTimelineNS,
 			TimelineAdjustNS:       seg.TimelineAdjustNS,
+			FirstRTPTimestamp:      seg.TimelineProfile.FirstRTPTimestamp,
+			FirstRTPSet:            seg.TimelineProfile.FirstRTPSet,
 			TimelineSamples:        seg.TimelineProfile.Samples,
 			TimelineRawDurationNS:  seg.TimelineProfile.RawDurationNS,
 			TimelineCorrDurationNS: seg.TimelineProfile.CorrectedDurationNS,

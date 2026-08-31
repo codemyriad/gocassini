@@ -36,17 +36,17 @@ const (
 )
 
 type Config struct {
-	RepoRoot         string
-	BindAddr         string
-	BasePath         string
-	DBPath           string
-	WorkRoot         string
-	SiteRoot         string
+	RepoRoot string
+	BindAddr string
+	BasePath string
+	DBPath   string
+	WorkRoot string
+	SiteRoot string
 	// CaptureRoot stores participant-uploaded source audio (capture_upload.go)
 	// until a later stage places it on the meeting timeline. Separate from
 	// WorkRoot because its contents arrive from browsers rather than from the
 	// recorder, and its lifetime is tied to the upload rather than to a job.
-	CaptureRoot string
+	CaptureRoot      string
 	CassiniBin       string
 	TalkSharedSecret string
 	TalkBackendURL   string

@@ -25,6 +25,7 @@ type buildOptions struct {
 	outDir                string
 	device                string
 	keepWork              bool
+	sourceAudioDir        string
 	rebuild               bool
 	strictReadableCleanup bool
 }
@@ -41,6 +42,7 @@ func runBuild(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs.StringVar(&opts.outDir, "out", "", "output .meeting bundle directory or portable .opus file")
 	fs.StringVar(&opts.device, "device", "auto", "transcriber device: auto, cpu, cuda")
 	fs.BoolVar(&opts.keepWork, "keep-work", false, "keep transcriber work files inside the meeting bundle")
+	fs.StringVar(&opts.sourceAudioDir, "source-audio", "", "root of participant-uploaded source captures; speakers whose upload can be placed are transcribed from it instead of from the recorded track")
 	fs.BoolVar(&opts.rebuild, "rebuild-image", false, "ignored (kept for compatibility)")
 	fs.BoolVar(&opts.strictReadableCleanup, "strict-readable-cleanup", opts.strictReadableCleanup, "fail if readable cleanup errors instead of skipping readable artifacts")
 	fs.Usage = func() {
@@ -268,6 +270,7 @@ func executeBuildIntoBundle(ctx context.Context, input buildInput, bundle Meetin
 	cfg := transcribe.DefaultBuildConfig()
 	// An explicit --device wins; the default "auto" leaves the env/auto-detect
 	// resolution (CASSINI_STT_DEVICE or GPU detection) in place.
+	cfg.SourceAudioDir = strings.TrimSpace(opts.sourceAudioDir)
 	if d := strings.ToLower(strings.TrimSpace(opts.device)); d == "cpu" || d == "cuda" {
 		cfg.Device = opts.device
 	}

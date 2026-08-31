@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { consentGranted, pickAudioSender, uploadURLFrom } from "./payload";
+import { consentGranted, pickAudioSender, stopSegment, uploadURLFrom } from "./payload";
 import { anchorsWithin } from "./worker";
 
 describe("uploadURLFrom", () => {
@@ -53,5 +53,94 @@ describe("anchorsWithin", () => {
 
   it("returns nothing for a segment recorded without encoded-transform support", () => {
     expect(anchorsWithin([], 0, 10_000)).toEqual([]);
+  });
+});
+
+describe("stopSegment", () => {
+  // Regression: endCall used to clear the module-level capture state
+  // synchronously, so MediaRecorder's final dataavailable and its onstop — both
+  // of which fire AFTER stop() — found no state and silently dropped the tail of
+  // the recording along with the segment-stop the worker needs to close its file
+  // handle. The ordering asserted here is the fix.
+  function fakeSession(posted: unknown[]) {
+    let onstop: (() => void) | null = null;
+    let ondata: ((event: { data: { size: number; arrayBuffer(): Promise<ArrayBuffer> } }) => void) | null = null;
+    const session = {
+      segmentIndex: 3,
+      muteIntervals: [[10, 20]] as Array<[number, number]>,
+      pendingChunks: Promise.resolve(),
+      worker: { postMessage: (message: unknown) => posted.push(message) },
+      recorder: {
+        stop() {
+          // A real MediaRecorder emits its last chunk before onstop.
+          ondata?.({
+            data: { size: 4, arrayBuffer: async () => new ArrayBuffer(4) },
+          });
+          setTimeout(() => onstop?.(), 0);
+        },
+        set onstop(handler: () => void) {
+          onstop = handler;
+        },
+      },
+    } as unknown as import("./payload").CaptureState;
+    return {
+      session,
+      emitFinalChunk: () => {
+        const s = session as unknown as { pendingChunks: Promise<void> };
+        s.pendingChunks = s.pendingChunks.then(async () => {
+          posted.push({ type: "chunk", index: 3 });
+        });
+      },
+      setOnData: (handler: typeof ondata) => {
+        ondata = handler;
+      },
+    };
+  }
+
+  it("posts segment-stop only after the final chunk has been handed over", async () => {
+    const posted: unknown[] = [];
+    const { session, emitFinalChunk, setOnData } = fakeSession(posted);
+    setOnData(() => emitFinalChunk());
+
+    await stopSegment(session);
+
+    const kinds = posted.map((message) => (message as { type: string }).type);
+    expect(kinds).toEqual(["chunk", "segment-stop"]);
+  });
+
+  it("carries the segment's mute intervals and advances the index", async () => {
+    const posted: unknown[] = [];
+    const { session } = fakeSession(posted);
+
+    await stopSegment(session);
+
+    const stop = posted.find((m) => (m as { type: string }).type === "segment-stop") as {
+      index: number;
+      muteIntervals: Array<[number, number]>;
+    };
+    expect(stop.index).toBe(3);
+    expect(stop.muteIntervals).toEqual([[10, 20]]);
+    expect((session as unknown as { segmentIndex: number }).segmentIndex).toBe(4);
+  });
+
+  it("does not hang when the recorder was already inactive", async () => {
+    const posted: unknown[] = [];
+    const { session } = fakeSession(posted);
+    (session as unknown as { recorder: { stop(): void } }).recorder.stop = () => {
+      throw new Error("InvalidStateError");
+    };
+
+    await expect(stopSegment(session)).resolves.toBeUndefined();
+    expect(posted.map((m) => (m as { type: string }).type)).toContain("segment-stop");
+  });
+
+  it("is a no-op with no active recorder", async () => {
+    const posted: unknown[] = [];
+    const { session } = fakeSession(posted);
+    (session as unknown as { recorder: unknown }).recorder = null;
+
+    await stopSegment(session);
+
+    expect(posted).toEqual([]);
   });
 });

@@ -31,6 +31,16 @@ type AudioStream struct {
 	// mix duration when available. Packet timestamps, FirstPacketTimeMS, and
 	// StartTimeMS remain the authority for audio timing.
 	TimelineDurationMS int64
+	// RTPBase is this track's sender-clock anchor, written by the remux. It is
+	// what lets participant-captured source audio be placed on the meeting
+	// timeline without correlating against this (possibly damaged) track — see
+	// sourceaudio.go. Zero-valued with Known=false for recordings made before
+	// the remux emitted it.
+	RTPBase RTPTimeBase
+	// SourceAudioPath, when set, is a rendered WAV of this speaker captured in
+	// their own browser and already placed on the meeting timeline. It replaces
+	// the MKV track as the transcription input; see ExtractSpeakerFloats.
+	SourceAudioPath string
 }
 
 // setPCMCapacityDurationHints replaces only the decoded-PCM allocation hint
@@ -55,6 +65,9 @@ type ffprobeOutput struct {
 			Title           string `json:"title"`
 			ParticipantID   string `json:"PARTICIPANT_ID"`
 			ParticipantName string `json:"PARTICIPANT_NAME"`
+			FirstRTP        string `json:"FIRST_RTP_TIMESTAMP"`
+			FirstTimelineNS string `json:"FIRST_TIMELINE_NS"`
+			ClockRate       string `json:"CLOCK_RATE"`
 		} `json:"tags"`
 	} `json:"streams"`
 	Format struct {
@@ -66,7 +79,7 @@ type ffprobeOutput struct {
 func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 	cmd := exec.Command("ffprobe",
 		"-v", "error",
-		"-show_entries", "stream=index,codec_type,channels,start_time:stream_tags=title,participant_id,participant_name:format=duration",
+		"-show_entries", "stream=index,codec_type,channels,start_time:stream_tags=title,participant_id,participant_name,first_rtp_timestamp,first_timeline_ns,clock_rate:format=duration",
 		"-of", "json",
 		mkv,
 	)
@@ -104,6 +117,7 @@ func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 		}
 		streams = append(streams, AudioStream{
 			Index:              s.Index,
+			RTPBase:            rtpTimeBaseFromTags(s.Tags.FirstRTP, s.Tags.FirstTimelineNS, s.Tags.ClockRate),
 			ParticipantID:      participantID,
 			SpeakerID:          speakerIDFromLabel(speakerIdentity),
 			SpeakerLabel:       label,
@@ -161,7 +175,36 @@ func probeFirstPacketTimeMS(mkv string, streamIndex int) (int64, error) {
 // normalised to [-1, 1]) by streaming raw PCM from ffmpeg. The return type
 // necessarily owns four bytes per sample; decoding incrementally avoids the
 // former additional two-byte-per-sample, full-duration raw buffer.
+// rtpTimeBaseFromTags parses the sender-clock anchor the remux writes into each
+// audio stream. All three tags must be present and parseable: a partial base
+// cannot map anything, and silently treating a missing one as zero would place
+// somebody's audio at a confidently wrong time.
+func rtpTimeBaseFromTags(firstRTP, firstTimelineNS, clockRate string) RTPTimeBase {
+	rtp, err1 := strconv.ParseInt(strings.TrimSpace(firstRTP), 10, 64)
+	timelineNS, err2 := strconv.ParseInt(strings.TrimSpace(firstTimelineNS), 10, 64)
+	rate, err3 := strconv.ParseUint(strings.TrimSpace(clockRate), 10, 32)
+	if err1 != nil || err2 != nil || err3 != nil || rate == 0 {
+		return RTPTimeBase{}
+	}
+	return RTPTimeBase{
+		FirstRTPTimestamp: rtp,
+		FirstTimelineNS:   timelineNS,
+		ClockRate:         uint32(rate),
+		Known:             true,
+	}
+}
+
 func ExtractSpeakerFloats(mkv string, stream AudioStream) ([]float32, error) {
+	// A rendered source-audio track has already been placed on the meeting
+	// timeline (sourceaudio.go), so it is decoded as a plain file — none of the
+	// sparse-gap machinery below applies to it.
+	if stream.SourceAudioPath != "" {
+		samples, err := ExtractMixedFloats(stream.SourceAudioPath)
+		if err != nil {
+			return nil, fmt.Errorf("extract source audio for %s: %w", stream.SpeakerLabel, err)
+		}
+		return samples, nil
+	}
 	durationMS := stream.TimelineDurationMS
 	if durationMS <= 0 {
 		// Preserve the memory bound for direct callers that construct AudioStream

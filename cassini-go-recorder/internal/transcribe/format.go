@@ -249,11 +249,16 @@ type artifactTranscriptRef struct {
 }
 
 type provenanceInfo struct {
-	SpeechToText    *provStep              `json:"speechToText,omitempty"`
-	Attribution     *AttributionProvenance `json:"attribution,omitempty"`
-	WordTimings     *WordTimingProvenance  `json:"wordTimings,omitempty"`
-	ReadableCleanup *provStep              `json:"readableCleanup,omitempty"`
-	MeetingSummary  *provStep              `json:"meetingSummary,omitempty"`
+	SpeechToText *provStep              `json:"speechToText,omitempty"`
+	Attribution  *AttributionProvenance `json:"attribution,omitempty"`
+	WordTimings  *WordTimingProvenance  `json:"wordTimings,omitempty"`
+	// SourceAudio lists the speakers whose transcript was built from audio
+	// captured in their own browser rather than from what the SFU delivered.
+	// A reader deserves to know which words came from a different recording of
+	// the meeting, and the fit quality that placed them.
+	SourceAudio     []SourceRenderReport `json:"sourceAudio,omitempty"`
+	ReadableCleanup *provStep            `json:"readableCleanup,omitempty"`
+	MeetingSummary  *provStep            `json:"meetingSummary,omitempty"`
 }
 
 // WordTimingProvenance says how this build decided where a word ends.
@@ -323,7 +328,7 @@ type provStep struct {
 // the answer on its own: it depends on which decoder ran (see
 // AudioBoundedWordEnds in backend.go), and a manifest that asserted it here
 // would claim it for every future backend too.
-func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int64, streams []AudioStream, segments []Segment, sttBackend string, sttModelID ModelID, sttDevice, llmModel string, hasReadable bool, summaryModel string, hasSummary bool, additional []AdditionalTranscript, attribution *AttributionProvenance, wordTimings *WordTimingProvenance) error {
+func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int64, streams []AudioStream, segments []Segment, sttBackend string, sttModelID ModelID, sttDevice, llmModel string, hasReadable bool, summaryModel string, hasSummary bool, additional []AdditionalTranscript, attribution *AttributionProvenance, wordTimings *WordTimingProvenance, sourceAudio []SourceRenderReport) error {
 	wordCount := 0
 	for _, seg := range segments {
 		wordCount += len(seg.Words)

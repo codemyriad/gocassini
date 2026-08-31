@@ -270,7 +270,17 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 		return meetingPath, err
 	}
 
-	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "build", task.ArtifactRunPath, "--out", meetingPath)
+	buildArgs := []string{"build", task.ArtifactRunPath, "--out", meetingPath}
+	// Hand the build the source-capture root so a participant whose browser
+	// uploaded its own audio is transcribed from that instead of from what
+	// survived their uplink (docs/source-audio-capture.md). Passed
+	// unconditionally: the build scans the directory itself and a run with no
+	// uploads simply finds nothing. Only speakers with a placeable upload AND a
+	// track in this recording are affected.
+	if root := strings.TrimSpace(rt.cfg.CaptureRoot); root != "" {
+		buildArgs = append(buildArgs, "--source-audio", root)
+	}
+	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, buildArgs...)
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
 	cmd.Env = buildEnv
