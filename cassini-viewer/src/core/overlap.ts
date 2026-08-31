@@ -1973,15 +1973,67 @@ export function buildTranscriptRows<B extends OverlapBlock>(
     nameOver(stretch.turnKeys[1], stretch.speakerLabels[0]);
   }
 
-  return model.turns.map((turn) => ({
-    key: turn.key,
-    speaker: turn.speaker,
-    speakerLabel: turn.speakerLabel,
-    startMs: turn.startMs,
-    endMs: turn.endMs,
-    members: layOutTurn(turn),
-    over: over.get(turn.key) ?? [],
-  }));
+  // Where the producer's own paragraph breaks fall. A turn is one turn however
+  // long it ran, but a turn is not one PARAGRAPH: when a speaker holds the floor
+  // for minutes the producer ends a block on its word-count limit and starts the
+  // next one immediately, and those breaks are the only paragraphing a long
+  // update has. Rejoining them too turns a real standup answer into a wall of
+  // text - measured on one meeting, rows of 209 s, 101 s and 97 s against a
+  // median of 8.7 s. So the reading unit splits where nothing came between two
+  // of the speaker's blocks, and stays whole where somebody else's speech did,
+  // which is the shredding this module exists to undo.
+  const readingPosition = new Map<string, number>();
+  sortBlocksInReadingOrder(blocks).forEach((block, index) => {
+    readingPosition.set(block.id, index);
+  });
+  const producerBrokeHere = (before: B, after: B): boolean => {
+    const from = readingPosition.get(before.id);
+    const to = readingPosition.get(after.id);
+    return from !== undefined && to !== undefined && to === from + 1;
+  };
+
+  const rows: Array<TranscriptRow<B>> = [];
+  for (const turn of model.turns) {
+    const paragraphs: Array<Array<TranscriptRowMember<B>>> = [];
+    let current: Array<TranscriptRowMember<B>> = [];
+    let previousSpeech: B | null = null;
+    for (const member of layOutTurn(turn)) {
+      if (
+        member.kind === "speech" &&
+        previousSpeech &&
+        current.at(-1)?.kind === "speech" &&
+        producerBrokeHere(previousSpeech, member.block)
+      ) {
+        paragraphs.push(current);
+        current = [];
+      }
+      current.push(member);
+      if (member.kind === "speech") {
+        previousSpeech = member.block;
+      }
+    }
+    if (current.length > 0) {
+      paragraphs.push(current);
+    }
+    paragraphs.forEach((members, index) => {
+      const blocksHere = members.flatMap((m) => (m.kind === "speech" ? [m.block] : m.blocks));
+      rows.push({
+        // The turn's own key on the first paragraph, so callers that resolve a
+        // turn by key still land on it; later paragraphs key by their own first
+        // block, which is also their scroll anchor.
+        key: index === 0 ? turn.key : members[0]!.key,
+        speaker: turn.speaker,
+        speakerLabel: turn.speakerLabel,
+        startMs: Math.min(...blocksHere.map((block) => block.startMs)),
+        endMs: Math.max(...blocksHere.map((block) => block.endMs)),
+        members,
+        // Naming the collision once per turn: repeating it on every paragraph
+        // of a long answer is the badge noise this rendering removed.
+        over: index === 0 ? (over.get(turn.key) ?? []) : [],
+      });
+    });
+  }
+  return rows;
 }
 
 /**
