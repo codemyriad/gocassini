@@ -30,6 +30,8 @@ import (
 const (
 	captureSubdir = "capture"
 
+	envSourceCaptureEnabled = "CASSINI_SOURCE_CAPTURE"
+
 	captureSWFile      = "capture-sw.js"
 	capturePayloadFile = "capture-payload.js"
 	captureWorkerFile  = "capture-worker.js"
@@ -40,6 +42,25 @@ var captureAssetFiles = map[string]string{
 	captureSWFile:      captureSWFile,
 	capturePayloadFile: capturePayloadFile,
 	captureWorkerFile:  captureWorkerFile,
+}
+
+// sourceCaptureEnabled reports whether this installation collects
+// participant-captured audio at all.
+//
+// This is the containment boundary for the whole feature, and it is separate
+// from CASSINI_SOURCE_AUDIO_INGEST (which only decides whether collected audio
+// reaches a transcript). With this off, the browser assets 404 and the upload
+// endpoint refuses: no service worker can be registered, no page can be
+// rewritten, nothing is stored, and no disk can be filled. A user opting in
+// client-side achieves nothing an administrator has not allowed.
+//
+// Off by default. The known residual risks — consent recorded per browser
+// origin rather than per Nextcloud account, and an upload endpoint with no
+// per-participant quota — are acceptable for a deployment whose operator chose
+// to run this prototype, and are not acceptable for one that merely upgraded.
+func sourceCaptureEnabled() bool {
+	enabled, err := parseBoolEnv(envSourceCaptureEnabled)
+	return err == nil && enabled
 }
 
 // serveCaptureAsset streams one built capture bundle from <dist>/capture/.
@@ -61,6 +82,13 @@ func (c ExAppConfig) serveCaptureAsset(w http.ResponseWriter, r *http.Request, f
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !sourceCaptureEnabled() {
+		// 404 rather than 403: to a browser this is simply an installation
+		// with no such feature, and a registration that cannot fetch its
+		// script does not install.
+		http.NotFound(w, r)
 		return
 	}
 	if c.ViewerDist == "" {

@@ -126,6 +126,11 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
         <description>Which registered speech-to-text engine transcription uses. Leave empty for the default (sherpa-onnx). An unknown value fails the build loudly before any audio is decoded, so a typo cannot silently select a different engine.</description>
       </variable>
       <variable>
+        <name>CASSINI_SOURCE_CAPTURE</name>
+        <display-name>Collect participant-captured audio (experimental)</display-name>
+        <description>Set to 1 to let participants' browsers record their own microphone during a call and upload it afterwards, so a transcript can later be built from audio the network never damaged. Off by default, and nothing happens until a participant also opts in themselves. With this off the browser assets are not served and uploads are refused, so no recording is collected and no storage is used. Note the current limitations before enabling: a participant's opt-in is remembered per browser rather than per account, so another person signing in on the same browser profile inherits it, and uploads are not yet quota-limited per participant. See docs/source-audio-capture.md.</description>
+      </variable>
+      <variable>
         <name>CASSINI_SOURCE_AUDIO_INGEST</name>
         <display-name>Use participant-captured audio for transcripts (experimental)</display-name>
         <description>Set to 1 to build transcripts from audio participants captured in their own browser, where they uploaded it, instead of from what reached the recorder over the network. Off by default. Capture and upload are collected either way; this switch controls only whether that audio replaces the recorded track for transcription. Experimental: placement of the uploaded audio depends on the participant's clock agreeing with the server's, so enable it only where clients are time-synchronised. See docs/source-audio-capture.md.</description>

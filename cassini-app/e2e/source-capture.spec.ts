@@ -142,6 +142,26 @@ test("captures the participant's own audio through a lossy uplink and uploads it
   expect(muteEnd - muteStart).toBeGreaterThan(500);
 });
 
+test("consent withdrawn mid-call discards that call's recording", async ({ page }) => {
+  await enableCapture(page);
+  await page.goto(`${server.origin}/call/testroom`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await page.waitForTimeout(1500);
+
+  // Turn capture off while the call is still running, then back on before it
+  // ends. The audio recorded in between was captured without permission, and
+  // re-granting must not resurrect it.
+  await page.evaluate(() => localStorage.removeItem("cassini.sourceCapture.consent"));
+  await page.waitForTimeout(1000);
+  await page.evaluate(() => localStorage.setItem("cassini.sourceCapture.consent", "granted"));
+  await page.waitForTimeout(500);
+
+  await page.evaluate(() => (window as never as { __endCall: () => void }).__endCall());
+  await page.waitForTimeout(3000);
+
+  expect(server.uploads.length, "a recording made after consent was withdrawn was uploaded").toBe(0);
+});
+
 test("captures nothing without an explicit opt-in", async ({ page }) => {
   // The service worker still has to be registered for the payload to arrive at
   // all, so register it and then withdraw consent — the state a user is in

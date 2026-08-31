@@ -129,6 +129,10 @@ func uploadRequest(t *testing.T, sidecar captureSidecar, segments map[string][]b
 
 func captureTestRuntime(t *testing.T) *Runtime {
 	t.Helper()
+	// Source capture is off unless an administrator enables it, so every test
+	// of the intake path has to turn it on first — which is itself the
+	// assertion that the gate is real.
+	t.Setenv(envSourceCaptureEnabled, "1")
 	return &Runtime{cfg: Config{CaptureRoot: filepath.Join(t.TempDir(), "capture")}}
 }
 
@@ -484,5 +488,25 @@ func TestValidateSidecarAcceptsARealisticMultiSegmentCapture(t *testing.T) {
 	sidecar.CallEndWallMS = start + 40_000
 	if err := validateSidecar(&sidecar); err != nil {
 		t.Fatalf("a realistic two-segment capture was rejected: %v", err)
+	}
+}
+
+func TestCaptureUploadIsRefusedUntilAnAdministratorEnablesIt(t *testing.T) {
+	rt := captureTestRuntime(t)
+	// A client holding a stale service worker from before the feature was
+	// turned off must still be unable to store anything.
+	t.Setenv(envSourceCaptureEnabled, "")
+
+	req := uploadRequest(t, validSidecar(), map[string][]byte{"segment-0.webm": []byte("audio")})
+	req = req.WithContext(appapi.WithUserID(context.Background(), "bob"))
+	rec := httptest.NewRecorder()
+
+	rt.captureUploadHandler(nil, quietLogger())(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	if _, err := os.Stat(rt.cfg.CaptureRoot); err == nil {
+		t.Fatal("a refused upload created the capture root")
 	}
 }

@@ -147,6 +147,20 @@ PHP companion app doing the same job through `Util::addScript`. Only
 `src/capture/sw.ts` and `capture_assets.go` are specific to the service-worker
 route; the capture, timing and upload code is identical either way.
 
+## Two switches, both off by default
+
+`CASSINI_SOURCE_CAPTURE` decides whether anything is collected at all. With it
+off the browser assets are not served and the upload endpoint refuses, so a
+participant opting in client-side achieves nothing: no service worker can be
+registered, no page is rewritten, nothing is stored. This is the containment
+boundary for the known limitations below — consent recorded per browser origin
+rather than per Nextcloud account, and uploads without a per-participant quota.
+Both are acceptable for a deployment whose operator chose to run this
+prototype; neither is acceptable for one that merely upgraded.
+
+`CASSINI_SOURCE_AUDIO_INGEST` decides whether collected audio reaches a
+transcript. See below.
+
 ## Ingestion is off by default
 
 Capture and intake only collect. Substituting a participant's own recording

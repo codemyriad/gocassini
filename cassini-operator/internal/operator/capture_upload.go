@@ -322,6 +322,13 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !sourceCaptureEnabled() {
+			// The administrator gate, checked server-side on every upload. A
+			// client that kept a stale service worker from before the feature
+			// was turned off still cannot store anything.
+			http.Error(w, "source capture is not enabled on this installation", http.StatusForbidden)
+			return
+		}
 		owner := strings.TrimSpace(appapi.UserID(r.Context()))
 		if owner == "" {
 			// Without an authenticated caller there is no way to know whose

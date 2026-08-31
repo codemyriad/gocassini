@@ -12,6 +12,7 @@ import (
 
 func captureDistWith(t *testing.T, files map[string]string) string {
 	t.Helper()
+	t.Setenv(envSourceCaptureEnabled, "1")
 	dist := t.TempDir()
 	captureDir := filepath.Join(dist, captureSubdir)
 	if err := os.MkdirAll(captureDir, 0o755); err != nil {
@@ -80,6 +81,9 @@ func TestServeCaptureAssetSetsServiceWorkerAllowed(t *testing.T) {
 
 func TestServeCaptureAssetDegradesWithoutDist(t *testing.T) {
 	logger := log.New(io.Discard, "", 0)
+	// The gate is on for this case; what is being tested is the missing-assets
+	// path, not the gate.
+	t.Setenv(envSourceCaptureEnabled, "1")
 
 	rec := httptest.NewRecorder()
 	ExAppConfig{}.serveCaptureAsset(rec, httptest.NewRequest(http.MethodGet, "/ui/"+captureSWFile, nil), captureSWFile, logger)
@@ -120,5 +124,23 @@ func TestUIAssetHandlerServesCaptureBundles(t *testing.T) {
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, uiAssetURLPrefix+"/unknown.js", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown asset: status = %d, want 404", rec.Code)
+	}
+}
+
+// The administrator gate is the containment boundary for the whole feature.
+// With it off, a user opting in client-side achieves nothing: no worker script
+// to register, so no page is ever rewritten.
+func TestCaptureAssetsAreAbsentUntilAnAdministratorEnablesThem(t *testing.T) {
+	dist := captureDistWith(t, map[string]string{captureSWFile: "// sw"})
+	cfg := ExAppConfig{ViewerDist: dist}
+	logger := log.New(io.Discard, "", 0)
+
+	// captureDistWith turned it on; turn it back off for this case.
+	t.Setenv(envSourceCaptureEnabled, "")
+
+	rec := httptest.NewRecorder()
+	cfg.serveCaptureAsset(rec, httptest.NewRequest(http.MethodGet, "/ui/"+captureSWFile, nil), captureSWFile, logger)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 — to a browser this is simply an installation without the feature", rec.Code)
 	}
 }

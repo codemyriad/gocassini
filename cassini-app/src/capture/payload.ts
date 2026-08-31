@@ -113,6 +113,11 @@ export interface CaptureState {
   mutePoll: number | null;
   segmentStartWallMs: number;
   finished: boolean;
+  // discarded marks a session whose consent was withdrawn mid-call. It is
+  // terminal: re-granting during the same call does not resurrect audio
+  // recorded while permission was absent, because the person who withdrew it
+  // was not consenting to that stretch.
+  discarded: boolean;
   // pendingChunks chains every ondataavailable hand-off. MediaRecorder emits
   // its final chunk asynchronously AFTER stop() and before onstop, and turning
   // a Blob into an ArrayBuffer is itself async — so sealing the sidecar without
@@ -135,6 +140,11 @@ const publisherSenders = new Set<RTCRtpSender>();
 // truncated the recording mid-call, permanently, because endCall is idempotent
 // and the first spurious close won.
 let capturingConnection: RTCPeerConnection | null = null;
+// The sender we are actually recording. A call can carry a second audio sender
+// — shared system audio, for one — and letting any of them drive the session
+// meant that sender's replaceTrack(null) stopped the microphone capture, or its
+// replaceTrack rotated capture onto itself.
+let capturingSender: RTCRtpSender | null = null;
 
 function workerURL(): string {
   // The payload is served next to the worker under the ExApp's /ui/ prefix, and
@@ -259,6 +269,14 @@ function attachTimingTransform(session: CaptureState, sender: RTCRtpSender): voi
 }
 
 function pollMute(session: CaptureState, sender: RTCRtpSender): void {
+  // The same tick that watches mute watches consent. Withdrawing it during a
+  // call has to stop the recording then, not merely suppress the upload at the
+  // end — the participant asked for the microphone to be let go.
+  if (!session.discarded && !consentGranted(localStorage)) {
+    session.discarded = true;
+    stopWithoutRestart(session);
+    return;
+  }
   const enabled = sender.track?.enabled ?? true;
   if (!enabled && session.muteSince === null) {
     session.muteSince = Date.now();
@@ -268,13 +286,21 @@ function pollMute(session: CaptureState, sender: RTCRtpSender): void {
   }
 }
 
-async function uploadCapture(sidecar: CaptureSidecar, dirName: string): Promise<void> {
+// discardCapture deletes a buffered recording without uploading it.
+async function discardCapture(opfsRoot: FileSystemDirectoryHandle, dirName: string): Promise<void> {
+  await opfsRoot.removeEntry(dirName, { recursive: true }).catch(() => {});
+}
+
+async function uploadCapture(
+  sidecar: CaptureSidecar,
+  dirName: string,
+  revokedDuringCall: boolean,
+): Promise<void> {
   const opfsRoot = await navigator.storage.getDirectory();
-  // Consent is re-checked here, not only at the start. Somebody who turns
-  // capture off during a call has withdrawn permission for the recording that
-  // call produced, so it is deleted rather than uploaded.
-  if (!consentGranted(localStorage)) {
-    await opfsRoot.removeEntry(dirName, { recursive: true }).catch(() => {});
+  // Consent withdrawn at any point during the call is terminal for that call's
+  // recording, whether or not it was granted again afterwards.
+  if (revokedDuringCall || !consentGranted(localStorage)) {
+    await discardCapture(opfsRoot, dirName);
     return;
   }
   const root = (globalThis as { OC?: { getRootPath?: () => string } }).OC?.getRootPath?.() ?? "";
@@ -284,6 +310,13 @@ async function uploadCapture(sidecar: CaptureSidecar, dirName: string): Promise<
   for (const segment of sidecar.segments) {
     const fileHandle = await dir.getFileHandle(segment.audioName);
     form.append("segments", await fileHandle.getFile(), segment.audioName);
+  }
+  // Last check, immediately before the bytes leave: reading the segments back
+  // out of OPFS above is several awaits long, and consent can be withdrawn in
+  // that window.
+  if (!consentGranted(localStorage)) {
+    await discardCapture(opfsRoot, dirName);
+    return;
   }
   const response = await fetch(uploadURLFrom(root), {
     method: "POST",
@@ -314,6 +347,7 @@ async function endCall(): Promise<void> {
   // outlives the global by design.
   state = null;
   capturingConnection = null;
+  capturingSender = null;
   if (active.mutePoll !== null) {
     clearInterval(active.mutePoll);
   }
@@ -337,7 +371,7 @@ async function endCall(): Promise<void> {
     if (event.data?.type !== "finalized") {
       return;
     }
-    void uploadCapture(event.data.sidecar as CaptureSidecar, event.data.dirName as string)
+    void uploadCapture(event.data.sidecar as CaptureSidecar, event.data.dirName as string, active.discarded)
       .catch(() => {
         // The OPFS buffer is deliberately left in place so a later page load
         // can retry; nothing is lost to a transient upload failure.
@@ -373,10 +407,12 @@ function beginCapture(sender: RTCRtpSender): void {
     mutePoll: null,
     segmentStartWallMs: callStartWallMs,
     finished: false,
+    discarded: false,
     pendingChunks: Promise.resolve(),
     rotation: Promise.resolve(),
   };
   state = session;
+  capturingSender = sender;
   attachTimingTransform(session, sender);
   startSegment(session, sender);
   session.mutePoll = setInterval(() => pollMute(session, sender), MUTE_POLL_MS) as unknown as number;
@@ -422,7 +458,9 @@ function watchSender(sender: RTCRtpSender): void {
   sender.replaceTrack = async (track: MediaStreamTrack | null) => {
     const result = await originalReplace(track);
     const session = state;
-    if (session) {
+    // Only the sender we are recording drives the session. Another audio
+    // sender's track changes are none of our business.
+    if (session && sender === capturingSender) {
       if (track && track.kind === "audio") {
         rotateSegment(session, sender);
       } else if (track === null) {
