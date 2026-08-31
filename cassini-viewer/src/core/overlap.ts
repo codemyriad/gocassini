@@ -1200,6 +1200,8 @@ interface TurnRun<B extends OverlapBlock> {
    * and never nests: "this speaker never stopped" is a claim about sound.
    */
   readonly attested: boolean;
+  /** Position of the latest block in the producer's reading order. */
+  lastPosition: number;
 }
 
 /** The turn one run landed inside, and the two halves of it that it sits between. */
@@ -1265,7 +1267,8 @@ function buildTurnRuns<B extends OverlapBlock>(
 ): Array<TurnRun<B>> {
   const runs: Array<TurnRun<B>> = [];
   const open = new Map<string, TurnRun<B>>();
-  for (const block of ordered) {
+  for (let position = 0; position < ordered.length; position += 1) {
+    const block = ordered[position]!;
     const key = speakerKey(block);
     const bounds = audibleBoundsOf(spansOf(block));
     const run = open.get(key);
@@ -1273,10 +1276,12 @@ function buildTurnRuns<B extends OverlapBlock>(
       run &&
       bounds &&
       run.attested &&
-      Math.abs(bounds.startMs - run.endMs) <= INTERJECTION_MAX_SEAM_GAP_MS
+      Math.abs(bounds.startMs - run.endMs) <= INTERJECTION_MAX_SEAM_GAP_MS &&
+      seamHasContinuityEvidence(run, block, position, ordered, spansOf)
     ) {
       run.blocks.push(block);
       run.endMs = Math.max(run.endMs, bounds.endMs);
+      run.lastPosition = position;
     } else {
       const fresh: TurnRun<B> = {
         speakerKey: key,
@@ -1285,12 +1290,77 @@ function buildTurnRuns<B extends OverlapBlock>(
         startMs: bounds?.startMs ?? block.startMs,
         endMs: bounds?.endMs ?? block.endMs,
         attested: bounds !== null,
+        lastPosition: position,
       };
       runs.push(fresh);
       open.set(key, fresh);
     }
   }
   return runs;
+}
+
+/**
+ * Keep fast turn-taking in chronological order.
+ *
+ * A short same-speaker gap is enough when the blocks are adjacent. When another
+ * speaker occupies the gap, however, it is evidence of one continuous turn
+ * only if that speaker touches or overlaps either side of the seam. This
+ * retains the producer's shredded double-talk/backchannel shape (whose word
+ * boundaries can meet exactly) while leaving a clean A/B/A exchange as three
+ * turns. It deliberately does not attempt to decide finer conversational
+ * semantics from a few milliseconds of decoder jitter.
+ */
+function seamHasContinuityEvidence<B extends OverlapBlock>(
+  run: TurnRun<B>,
+  next: B,
+  nextPosition: number,
+  ordered: readonly B[],
+  spansOf: (block: OverlapBlock) => Interval[],
+): boolean {
+  if (nextPosition === run.lastPosition + 1) {
+    return true;
+  }
+
+  const previous = run.blocks.at(-1);
+  if (!previous) {
+    return false;
+  }
+  const previousSpans = spansOf(previous);
+  const nextSpans = spansOf(next);
+  let sawAttestedInterveningSpeech = false;
+  for (let position = run.lastPosition + 1; position < nextPosition; position += 1) {
+    const between = ordered[position]!;
+    if (speakerKey(between) === run.speakerKey) {
+      continue;
+    }
+    const betweenSpans = spansOf(between);
+    if (betweenSpans.length === 0) {
+      continue;
+    }
+    sawAttestedInterveningSpeech = true;
+    if (
+      intervalPoolsNearlyTouch(betweenSpans, previousSpans) ||
+      intervalPoolsNearlyTouch(betweenSpans, nextSpans)
+    ) {
+      return true;
+    }
+  }
+  return !sawAttestedInterveningSpeech;
+}
+
+// Treat a sub-perceptual timestamp crack as a boundary touch, not as evidence
+// that somebody yielded the floor. The rapid-exchange control has 50 ms of
+// clean air on both sides and remains separate.
+const TURN_SEAM_TOUCH_TOLERANCE_MS = 20;
+
+function intervalPoolsNearlyTouch(left: readonly Interval[], right: readonly Interval[]): boolean {
+  return left.some((a) =>
+    right.some(
+      (b) =>
+        Math.max(a.startMs, b.startMs) - Math.min(a.endMs, b.endMs) <=
+        TURN_SEAM_TOUCH_TOLERANCE_MS,
+    ),
+  );
 }
 
 /**
@@ -1912,6 +1982,34 @@ export function buildTranscriptRows<B extends OverlapBlock>(
     members: layOutTurn(turn),
     over: over.get(turn.key) ?? [],
   }));
+}
+
+/**
+ * Stable scroll target for the blocks sounding now.
+ *
+ * A rendered row can contain many producer fragments (and an interjection
+ * chip). Following those raw ids makes smooth scrolling bounce inside one
+ * paragraph. Resolve them back to the first top-level row that contains any
+ * sounding block instead; competing rows still choose the earlier row in
+ * reading order.
+ */
+export function followRowKeyForBlocks<B extends OverlapBlock>(
+  rows: readonly TranscriptRow<B>[],
+  soundingBlocks: readonly B[],
+): string | null {
+  const soundingIds = new Set(soundingBlocks.map((block) => block.id));
+  if (soundingIds.size === 0) {
+    return null;
+  }
+  for (const row of rows) {
+    for (const member of row.members) {
+      const blocks = member.kind === "speech" ? [member.block] : member.blocks;
+      if (blocks.some((block) => soundingIds.has(block.id))) {
+        return row.key;
+      }
+    }
+  }
+  return null;
 }
 
 /**

@@ -6,6 +6,7 @@ import {
   buildTranscriptRows,
   buildTurnModel,
   audibleIntervalsOf,
+  followRowKeyForBlocks,
   getSoundingBlocks,
   repairTurnFinalWordInflation,
   sortBlocksInReadingOrder,
@@ -1680,6 +1681,22 @@ describe("the turn model on a shredded transcript", () => {
       model.turns.map((turn) => turn.blocks.map((block) => block.id)),
     );
   });
+
+  it("maps every sounding fragment to its stable rendered row", () => {
+    const rows = buildTranscriptRows(shreddedDoubleTalkSegments);
+    const byId = new Map(shreddedDoubleTalkSegments.map((block) => [block.id, block]));
+
+    // A late fragment of Cara's shredded sentence follows the same row as its
+    // opening fragment, while Ben's competing sentence follows Ben's row.
+    expect(followRowKeyForBlocks(rows, [byId.get("seg_000025")!])).toBe("seg_000011");
+    expect(followRowKeyForBlocks(rows, [byId.get("seg_000030")!])).toBe("seg_000012");
+    // Ben's short "Right" is rendered as a chip inside Ana's row.
+    expect(followRowKeyForBlocks(rows, [byId.get("seg_000001")!])).toBe("seg_000000");
+    // If two top-level turns sound together, follow the earlier reading row.
+    expect(
+      followRowKeyForBlocks(rows, [byId.get("seg_000030")!, byId.get("seg_000025")!]),
+    ).toBe("seg_000011");
+  });
 });
 
 describe("turn re-joining", () => {
@@ -1723,6 +1740,36 @@ describe("turn re-joining", () => {
       ["Ana", ["a1", "a2", "a3"]],
       ["Ben", ["b1", "b2", "b3"]],
     ]);
+  });
+
+  it("leaves a rapid but non-overlapping exchange in chronological order", () => {
+    const blocks: OverlapBlock[] = [
+      { id: "a1", speaker: "ana", speakerLabel: "Ana", startMs: 0, endMs: 200 },
+      { id: "b1", speaker: "ben", speakerLabel: "Ben", startMs: 250, endMs: 450 },
+      { id: "a2", speaker: "ana", speakerLabel: "Ana", startMs: 500, endMs: 700 },
+      { id: "b2", speaker: "ben", speakerLabel: "Ben", startMs: 750, endMs: 950 },
+      { id: "a3", speaker: "ana", speakerLabel: "Ana", startMs: 1000, endMs: 1200 },
+    ];
+
+    expect(buildTranscriptRows(blocks).flatMap(blockIdsIn)).toEqual([
+      "a1",
+      "b1",
+      "a2",
+      "b2",
+      "a3",
+    ]);
+  });
+
+  it("does not split a backchannel over a few milliseconds of timestamp noise", () => {
+    const blocks: OverlapBlock[] = [
+      { id: "a1", speaker: "ana", speakerLabel: "Ana", startMs: 0, endMs: 1000 },
+      { id: "b", speaker: "ben", speakerLabel: "Ben", startMs: 1010, endMs: 1090 },
+      { id: "a2", speaker: "ana", speakerLabel: "Ana", startMs: 1100, endMs: 2000 },
+    ];
+    const rows = buildTranscriptRows(blocks);
+
+    expect(rows).toHaveLength(1);
+    expect(blockIdsIn(rows[0]!)).toEqual(["a1", "b", "a2"]);
   });
 });
 

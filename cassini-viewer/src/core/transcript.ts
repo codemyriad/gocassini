@@ -996,3 +996,10 @@ export function isLikelyCrosstalkTurn(words: readonly TranscriptWord[]): boolean
   if (words.length === 0) return false;
   return lowConfidenceWordCount(words) === words.length;
 }
+
+/** Judge a reconstructed turn once, across all of its producer fragments. */
+export function isLikelyCrosstalkAcrossBlocks(
+  blocks: readonly { readonly words?: readonly TranscriptWord[] }[],
+): boolean {
+  return isLikelyCrosstalkTurn(blocks.flatMap((block) => block.words ?? []));
+}
