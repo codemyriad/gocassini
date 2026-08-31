@@ -85,8 +85,9 @@ type Provenance struct {
 	Attribution *AttributionProvenance `json:"attribution,omitempty"`
 	// WordTimings is meeting-level for the same reason: one decode rule
 	// produced every word in the file. Nil for every file built before the
-	// rule changed, and omitted from the wire in that case — its absence is
-	// the signal.
+	// rule changed, and for any file whose decoder never claimed to measure
+	// word ends; omitted from the wire in both cases — its absence is the
+	// signal.
 	WordTimings *WordTimingProvenance `json:"wordTimings,omitempty"`
 }
 
@@ -103,8 +104,9 @@ type Provenance struct {
 // speaker's own audio ended, so an over-long word is now a measurement and
 // clipping it corrupts correct timing.
 //
-// A consumer keys off presence, not value: absent means the ends came from a
-// punctuation mark's timestamp and the legacy repair still applies.
+// A consumer keys off presence, not value: absent means the ends may have come
+// from a punctuation mark's timestamp — either an older build, or a decoder
+// that never made the claim — and the legacy repair still applies.
 type WordTimingProvenance struct {
 	// EndsBoundedByAudio is true when each word's end was measured against its
 	// speaker's own track rather than taken from its last token's timestamp.

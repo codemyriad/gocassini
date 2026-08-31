@@ -336,6 +336,19 @@ func (r *Recognizer) Transcribe(samples []float32, sampleRate int, useVAD bool) 
 	return allWords, nil
 }
 
+// WordEndsAreBoundedByAudio declares the AudioBoundedWordEnds guarantee for
+// the bundled decoder: this recognizer's words reach the caller only through
+// finalizeTranscriptWords, which ends each one where the speaker's own audio
+// ends (filterWordsByEnergy) instead of at its last token's timestamp.
+//
+// The declaration lives next to the code that earns it, and both return paths
+// of Transcribe above go through that one function — the only other exit is
+// the empty-input case, which returns no words to make a claim about. A build
+// that stopped measuring would have to delete this method, and the compile-time
+// AudioBoundedWordEnds assertion in backend.go turns that into a build failure
+// rather than a manifest that quietly keeps claiming it.
+func (r *Recognizer) WordEndsAreBoundedByAudio() bool { return true }
+
 func finalizeTranscriptWords(samples []float32, sampleRate int, words []Word, audioEndMS, paddedTailMS int64) []Word {
 	words = clampWordsToTimelineEnd(words, audioEndMS, paddedTailMS)
 	return filterWordsByEnergy(samples, sampleRate, words)

@@ -20,6 +20,11 @@ import (
 // off, including speaker attribution (see attribution.go), so a model that can
 // only return a flat transcript cannot be plugged in here without a forced
 // aligner in front of it.
+//
+// What the interface does NOT promise is where those bounds came from. A
+// backend that measures each word's end against the audio can say so by also
+// implementing AudioBoundedWordEnds below; one that does not stays here and
+// publishes no such claim.
 type SpeechRecognizer interface {
 	// Transcribe returns timed words for 16 kHz mono float32 samples in
 	// [-1,1]. Timestamps are relative to the start of samples.
@@ -31,6 +36,99 @@ type SpeechRecognizer interface {
 // The bundled sherpa-onnx recognizer is the reference implementation of the
 // seam; this assertion fails the build if it ever drifts out of shape.
 var _ SpeechRecognizer = (*Recognizer)(nil)
+
+// AudioBoundedWordEnds is the optional guarantee a recognizer may declare on
+// top of SpeechRecognizer, and the only way an artifact earns
+// provenance.wordTimings.endsBoundedByAudio.
+//
+// SpeechRecognizer promises timed words and says nothing about where those
+// times came from. A word's end can be its last token's timestamp — for
+// Parakeet a trailing punctuation mark, stamped at the NEXT acoustic onset, so
+// a sentence-final word runs seconds long over silence — or it can be measured
+// against the speaker's own audio. Nothing in the timings tells the two apart,
+// and consumers repair the first kind by clipping a long word back towards the
+// meeting's median, which destroys the second kind. Only a decoder knows which
+// rule produced its ends, so only a decoder can make the claim.
+//
+// Declaring it is opt-in, and that is the point. A backend registered tomorrow
+// that returns the decoder's raw timestamps simply does not implement this
+// interface; the manifest then omits provenance.wordTimings entirely and every
+// consumer keeps its legacy repair, which is the correct behaviour for that
+// backend. A default-on claim would have been silently wrong for it.
+type AudioBoundedWordEnds interface {
+	SpeechRecognizer
+	// WordEndsAreBoundedByAudio reports whether every word this recognizer
+	// returns from Transcribe had its end measured against the audio it was
+	// decoded from, rather than left at its last token's timestamp.
+	WordEndsAreBoundedByAudio() bool
+}
+
+// The bundled decoder is the one backend that makes the promise today. The
+// assertion fails the build if the declaration is dropped, so losing the
+// marker cannot be silent.
+var _ AudioBoundedWordEnds = (*Recognizer)(nil)
+
+// declaresAudioBoundedWordEnds reports whether rec makes the guarantee. Not
+// implementing the interface is answered exactly like declaring false: no
+// claim.
+func declaresAudioBoundedWordEnds(rec SpeechRecognizer) bool {
+	decl, ok := rec.(AudioBoundedWordEnds)
+	return ok && decl.WordEndsAreBoundedByAudio()
+}
+
+// wordEndGuarantee accumulates that answer across every transcription pass of
+// one build. The manifest record describes the whole artifact, so it survives
+// only if EVERY recognizer that decoded for it declared the guarantee: the
+// merged-mix fallback and each additional-model pass build their own
+// recognizers, and a single pass that did not measure makes the record a lie.
+// The zero value means nothing has been decoded yet, and claims nothing.
+type wordEndGuarantee struct {
+	mu       sync.Mutex
+	observed bool
+	allBound bool
+}
+
+// observe records what one recognizer declares. Called at construction, before
+// it decodes anything, and safe to call from the parallel stream workers,
+// which each build their own recognizer.
+func (g *wordEndGuarantee) observe(rec SpeechRecognizer) {
+	bounded := declaresAudioBoundedWordEnds(rec)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.observed {
+		g.observed, g.allBound = true, bounded
+		return
+	}
+	g.allBound = g.allBound && bounded
+}
+
+// provenance returns the record the manifest may publish, or nil when this
+// build did not earn it.
+//
+// nil is not a neutral default. An omitted provenance.wordTimings is precisely
+// the signal a consumer keys off to run its own timing repair, so it is what
+// every build that cannot prove its word ends were measured has to publish —
+// including a build whose backend never told us either way.
+func (g *wordEndGuarantee) provenance() *WordTimingProvenance {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.observed || !g.allBound {
+		return nil
+	}
+	return &WordTimingProvenance{EndsBoundedByAudio: true}
+}
+
+// newRecognizerForPass builds a recognizer for one transcription pass and
+// records its word-end guarantee in the same step, so a new construction site
+// cannot pick up the recognizer while forgetting what it promises.
+func newRecognizerForPass(id string, paths ModelPaths, vadModelPath, provider string, numThreads int, guarantee *wordEndGuarantee) (SpeechRecognizer, error) {
+	rec, err := NewRecognizerForBackend(id, paths, vadModelPath, provider, numThreads)
+	if err != nil {
+		return nil, err
+	}
+	guarantee.observe(rec)
+	return rec, nil
+}
 
 // RecognizerFactory constructs a recognizer for an already-resolved model and
 // device. Resolution (quality tier -> model, auto -> cpu/cuda) stays in

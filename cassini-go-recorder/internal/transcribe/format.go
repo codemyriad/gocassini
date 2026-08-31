@@ -268,9 +268,12 @@ type provenanceInfo struct {
 // is now evidence of a long sound and clipping it destroys correct timing. A
 // consumer must be able to tell the two apart, and only the producer knows.
 //
-// Absent on every artifact built before this change, which is exactly what a
-// consumer keys off: presence means the ends were measured, absence means they
-// were inherited from a punctuation mark's timestamp.
+// Absent on every artifact built before this change, and absent on any build
+// whose decoder does not declare AudioBoundedWordEnds (backend.go) — a second
+// engine registered through the public registry gets no claim it did not make.
+// That absence is exactly what a consumer keys off: presence means the ends
+// were measured, absence means they may have been inherited from a punctuation
+// mark's timestamp and the consumer's own repair should run.
 type WordTimingProvenance struct {
 	// EndsBoundedByAudio is true when each word's end was measured against its
 	// speaker's own track rather than taken from its last token's timestamp.
@@ -314,7 +317,13 @@ type provStep struct {
 // primary and additional ASR passes; provenance must name the engine that
 // actually produced the words, not assume the bundled one. attribution is the
 // attribution stage's record for the primary transcript (nil omits it).
-func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int64, streams []AudioStream, segments []Segment, sttBackend string, sttModelID ModelID, sttDevice, llmModel string, hasReadable bool, summaryModel string, hasSummary bool, additional []AdditionalTranscript, attribution *AttributionProvenance) error {
+//
+// wordTimings is the word-end guarantee this build earned, and nil omits it.
+// It is a parameter rather than a constant because the producer cannot know
+// the answer on its own: it depends on which decoder ran (see
+// AudioBoundedWordEnds in backend.go), and a manifest that asserted it here
+// would claim it for every future backend too.
+func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int64, streams []AudioStream, segments []Segment, sttBackend string, sttModelID ModelID, sttDevice, llmModel string, hasReadable bool, summaryModel string, hasSummary bool, additional []AdditionalTranscript, attribution *AttributionProvenance, wordTimings *WordTimingProvenance) error {
 	wordCount := 0
 	for _, seg := range segments {
 		wordCount += len(seg.Words)
@@ -358,12 +367,12 @@ func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int
 			Device:  sttDevice,
 		},
 		Attribution: attribution,
-		// Unconditional, and deliberately not a parameter: every word this
-		// package emits goes through filterWordsByEnergy, which is what makes
-		// the claim true. A build that stopped doing that would have to delete
-		// this line, which is the point of writing it here rather than
-		// threading a flag from the caller.
-		WordTimings: &WordTimingProvenance{EndsBoundedByAudio: true},
+		// nil here writes no wordTimings key at all, which is what a consumer
+		// reads as "these ends were not measured, run the legacy repair". A
+		// caller that cannot prove the guarantee must pass nil rather than a
+		// false record: absence is the honest answer, and it is the one shape
+		// every existing consumer already handles.
+		WordTimings: wordTimings,
 	}
 	if hasReadable {
 		prov.ReadableCleanup = &provStep{

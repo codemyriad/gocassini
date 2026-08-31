@@ -684,6 +684,7 @@ func TestWriteManifestWordTimingsDecodeIntoThePackerModel(t *testing.T) {
 		path, "source.mkv", 250, 250, streams, nil,
 		transcribe.SherpaOnnxBackend, transcribe.ModelID("test-stt"), "cpu",
 		"", false, "", false, nil, nil,
+		&transcribe.WordTimingProvenance{EndsBoundedByAudio: true},
 	); err != nil {
 		t.Fatalf("WriteManifest: %v", err)
 	}

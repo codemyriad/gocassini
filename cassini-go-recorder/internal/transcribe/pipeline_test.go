@@ -484,3 +484,118 @@ func TestBuildMeetingArtifactRecordsSkippedAttributionProvenance(t *testing.T) {
 			attr.WordsMeasured, attr.WordsFlagged, attr.WordsDropped)
 	}
 }
+
+// boundedWordsRecognizer is a fake decoder that DOES declare the
+// AudioBoundedWordEnds guarantee. It measures nothing — it is the declaration
+// itself that is under test, since the declaration is the only thing the
+// pipeline can see.
+type boundedWordsRecognizer struct{ fixedWordsRecognizer }
+
+func (r *boundedWordsRecognizer) WordEndsAreBoundedByAudio() bool { return true }
+
+// registerBoundedBackend installs a backend whose recognizer declares the
+// audio-bounded word-end guarantee, registered exactly like a real engine.
+func registerBoundedBackend(t *testing.T, id string, words []Word) {
+	t.Helper()
+	if err := RegisterRecognizerBackend(id, func(ModelPaths, string, string, int) (SpeechRecognizer, error) {
+		return &boundedWordsRecognizer{fixedWordsRecognizer{words: words}}, nil
+	}); err != nil {
+		t.Fatalf("register %s: %v", id, err)
+	}
+	t.Cleanup(func() {
+		backendMu.Lock()
+		delete(backendRegistry, id)
+		backendMu.Unlock()
+	})
+}
+
+// readManifestWordTimings returns the manifest's provenance.wordTimings as raw
+// JSON — key level, so an absent object and a false field stay distinguishable
+// — together with the word count, so a test can prove the build actually
+// produced words to make a claim about.
+func readManifestWordTimings(t *testing.T, outDir string) (map[string]any, int, string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(outDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest struct {
+		WordCount  int `json:"wordCount"`
+		Provenance struct {
+			WordTimings map[string]any `json:"wordTimings"`
+		} `json:"provenance"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatalf("parse manifest: %v", err)
+	}
+	return manifest.Provenance.WordTimings, manifest.WordCount, string(raw)
+}
+
+// buildWithBackendForWordTimings runs the real BuildMeetingArtifact over the
+// two-track fixture with the named backend and returns the output directory.
+func buildWithBackendForWordTimings(t *testing.T, backendID string) string {
+	t.Helper()
+	requireFFMediaTools(t)
+	stubModelEnsurers(t)
+	t.Setenv("CASSINI_STT_BACKEND", backendID)
+	t.Setenv("CASSINI_ATTRIBUTION_DISABLED", "")
+	t.Setenv("CASSINI_ATTRIBUTION_DROP", "")
+	t.Setenv("CASSINI_STT_STREAM_CONCURRENCY", "")
+
+	dir := t.TempDir()
+	mkv := buildTwoTrackMeetingFromSmoke(t, dir)
+	outDir := filepath.Join(dir, "out")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := BuildConfig{Device: "cpu", ModelID: ModelID("stub-model"), CacheDir: t.TempDir(), NumThreads: 1}
+	var stdout bytes.Buffer
+	if err := BuildMeetingArtifact(context.Background(), mkv, outDir, cfg, &stdout); err != nil {
+		t.Fatalf("BuildMeetingArtifact: %v\noutput:\n%s", err, stdout.String())
+	}
+	return outDir
+}
+
+// The guarantee must be earned, not inherited. This registers a second engine
+// through the public registry — the whole integration surface a Voxtral or
+// custom backend uses — returning perfectly well-formed timed words that never
+// went near the energy gate, and drives it through the real
+// BuildMeetingArtifact. The published manifest must carry no wordTimings key
+// at all, so the viewer keeps running its legacy repair over ends this backend
+// never measured. Before the capability existed, the producer wrote
+// endsBoundedByAudio:true here regardless of who decoded.
+func TestBuildMeetingArtifactMakesNoWordTimingClaimForABackendThatDoesNotDeclareOne(t *testing.T) {
+	registerFixedBackend(t, "fake-unmeasured-ends", fixedTimedWords(12))
+	outDir := buildWithBackendForWordTimings(t, "fake-unmeasured-ends")
+
+	timings, wordCount, raw := readManifestWordTimings(t, outDir)
+	if wordCount == 0 {
+		t.Fatalf("the build produced no words, so this test asserts nothing:\n%s", raw)
+	}
+	if timings != nil {
+		t.Errorf("a backend that declares nothing got provenance.wordTimings = %v", timings)
+	}
+	// Absence of the whole object is the signal, not endsBoundedByAudio:false.
+	if strings.Contains(raw, "wordTimings") {
+		t.Errorf("the manifest mentions wordTimings for an undeclared backend:\n%s", raw)
+	}
+}
+
+// The other half: a backend that DOES declare the guarantee gets it published.
+// Without this, deleting the claim entirely would pass the test above, and the
+// viewer would clip correctly measured word ends on every real build.
+func TestBuildMeetingArtifactPublishesTheWordTimingClaimADeclaringBackendMakes(t *testing.T) {
+	registerBoundedBackend(t, "fake-measured-ends", fixedTimedWords(12))
+	outDir := buildWithBackendForWordTimings(t, "fake-measured-ends")
+
+	timings, wordCount, raw := readManifestWordTimings(t, outDir)
+	if wordCount == 0 {
+		t.Fatalf("the build produced no words, so this test asserts nothing:\n%s", raw)
+	}
+	if timings == nil {
+		t.Fatalf("a declaring backend got no provenance.wordTimings:\n%s", raw)
+	}
+	if timings["endsBoundedByAudio"] != true {
+		t.Errorf("endsBoundedByAudio = %v, want true", timings["endsBoundedByAudio"])
+	}
+}
