@@ -88,13 +88,11 @@ for id in "$@"; do
     test -f "$src_dir/$f" || { echo "missing $f in $id archive" >&2; ls "$src_dir" >&2; exit 1; }
     cp "$src_dir/$f" "$model_dir/"
   done
-  # Optional extras: the BPE vocab some tokenizers ship. Anything a model
-  # cannot load without belongs in model_files above.
-  for f in bpe.vocab; do
-    if [ -f "$src_dir/$f" ]; then
-      cp "$src_dir/$f" "$model_dir/"
-    fi
-  done
+  # Optional extra: the BPE vocab some tokenizers ship. Anything a model cannot
+  # load without belongs in model_files above instead.
+  if [ -f "$src_dir/bpe.vocab" ]; then
+    cp "$src_dir/bpe.vocab" "$model_dir/"
+  fi
 
   printf '%s\n' \
     "$title" \
