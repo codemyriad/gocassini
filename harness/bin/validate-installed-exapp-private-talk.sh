@@ -95,6 +95,7 @@ normalize_base_url() {
 BASE_URL="$(normalize_base_url "$NEXTCLOUD_HOST")"
 PROXY_URL="$BASE_URL/index.php/apps/app_api/proxy/gocassini"
 CATALOG_URL="$PROXY_URL/published/catalog.json"
+MEETINGS_LIST_URL="$PROXY_URL/published/meetings-list"
 FILES_ROOT_URL="$BASE_URL/remote.php/dav/files/$ADMIN_USER/Cassini/Recordings"
 AUTH=(-u "$ADMIN_USER:$ADMIN_PASSWORD")
 # The standard viewer user the harness creates (harness_create_standard_viewer_user).
@@ -205,6 +206,42 @@ validate_files_archive_entry() {
   assert_files_source "$CATALOG_URL" "${label}-catalog" || return 1
   grep -Eiq '^Cache-Control:.*no-store' "$LOG_DIR/${label}-catalog-source.headers" || return 1
   assert_files_source "$PROXY_URL/published/${audio_path#./}" "${label}-opus" 'bytes=0-3' || return 1
+  validate_meetings_list_endpoint "$label" "$job_id" || return 1
+}
+
+# The meetings-list endpoint (D-701), asserted against the REAL AppAPI proxy.
+#
+# The load-bearing assertion is the filtered one. Nothing else Cassini serves
+# through the proxy carries a query string, so that AppAPI forwards it was only
+# ever established by reading its ExAppProxyController -- not by observing it on
+# a supported Nextcloud. A stripped query would be invisible in every unit test
+# and would silently turn every filtered request into an unfiltered one.
+validate_meetings_list_endpoint() {
+  local label="$1" job_id="$2"
+  local listing="$LOG_DIR/meetings-list-${label}.json" code
+
+  # Unfiltered: the caller who was in the room sees their meeting here, exactly
+  # as they do in the catalog.
+  fetch_json "$MEETINGS_LIST_URL" "$listing" false || return 1
+  jq -e --arg id "$job_id" '[.meetings[] | select(.id == $id)] | length == 1' "$listing" >/dev/null || return 1
+  jq -e '.version == "cassini.viewer.catalog.v1"' "$listing" >/dev/null || return 1
+  # An unfiltered listing carries no filter echo, so a client cannot mistake one.
+  jq -e 'has("filter") | not' "$listing" >/dev/null || return 1
+
+  # A range that predates every recording must come back empty AND echo the
+  # bounds the server parsed. Both halves matter: the echo proves the query
+  # string arrived, and the empty list proves it was applied. A stripped query
+  # would return the full listing with no echo, failing both.
+  fetch_json "$MEETINGS_LIST_URL?from=1970-01-01&to=1970-01-02" "$listing" false || return 1
+  jq -e '.meetings | length == 0' "$listing" >/dev/null || return 1
+  jq -e '.filter.from == "1970-01-01 00:00:00"' "$listing" >/dev/null || return 1
+  # A bare `to` date covers the whole day, rather than stopping at its midnight.
+  jq -e '.filter.to == "1970-01-02 23:59:59"' "$listing" >/dev/null || return 1
+
+  # A caller error is 400, not a 502 and not an empty 200 -- an agent has to be
+  # able to tell "fix your query" from "retry later".
+  code="$(curl -sS "${AUTH[@]}" -o /dev/null -w '%{http_code}' "$MEETINGS_LIST_URL?from=nonsense")" || return 1
+  [[ "$code" == 400 ]] || return 1
 }
 
 # A user who was not in the room must see nothing and be able to fetch nothing.
@@ -232,6 +269,15 @@ validate_non_participant_denied() {
   code="$(curl -sS "${outsider_auth[@]}" -o /dev/null -w '%{http_code}' \
     "$BASE_URL/remote.php/dav/files/$OUTSIDER_USER/Cassini/Recordings/meetings/${job_id}.opus")" || return 1
   [[ "$code" == 404 || "$code" == 403 ]] || return 1
+
+  # The list endpoint denies identically. It is louder than catalog.json about
+  # SUBSTRATE failures, which makes it worth pinning that a genuine denial is
+  # still a plain empty 200 here -- if this ever became a 4xx/5xx, the endpoint
+  # would be telling an outsider that something exists to be refused.
+  local listing="$LOG_DIR/meetings-list-${label}-outsider.json"
+  code="$(curl -sS "${outsider_auth[@]}" -o "$listing" -w '%{http_code}' "$MEETINGS_LIST_URL")" || return 1
+  [[ "$code" == 200 ]] || return 1
+  jq -e '.meetings | length == 0' "$listing" >/dev/null 2>&1 || return 1
 }
 
 catalog_ids() {
@@ -572,6 +618,7 @@ Installed ExApp private Talk validation passed.
   Runs:      $RUN_COUNT
   Jobs:      ${new_job_ids[*]}
   Catalog:   $CATALOG_URL
+  List:      $MEETINGS_LIST_URL
   Evidence:  $LOG_DIR
   Summary:   $LOG_DIR/summary.json
 EOF
