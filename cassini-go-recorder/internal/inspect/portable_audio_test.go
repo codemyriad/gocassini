@@ -546,3 +546,135 @@ func runCommand(name string, args ...string) error {
 	}
 	return nil
 }
+
+// A padded chunk set is a cosmetic difference, not a damaged file. Producers
+// write base64url unpadded, but SPEC.md's worked example pipes the chunks
+// through a base64 tool that pads, and most languages' encoders pad by default,
+// so a reader that refuses '=' loses a transcript it could have read. The
+// wrapped case is here because a Vorbis comment value is arbitrary UTF-8: a
+// tool that rewrapped a long chunk may legally have left a newline in it, and
+// the padding has to be judged after the whitespace goes, not before.
+func TestDecodePortablePayloadAcceptsPaddedBase64URL(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		rewrite func(encoded string) string
+	}{
+		{name: "unpadded", rewrite: func(encoded string) string { return encoded }},
+		{name: "padded", rewrite: padBase64URL},
+		{name: "padded and wrapped", rewrite: func(encoded string) string {
+			return "\n" + padBase64URL(encoded) + "\n"
+		}},
+		{name: "wrapped", rewrite: func(encoded string) string { return encoded + "\r\n" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			words := []string{"Hello", "team", "lantern", "festival", "tonight"}
+			tags := buildPortableV3Tags(t, words)
+			rewriteChunkSet(t, tags, "CASSINI_PAYLOAD_", tc.rewrite)
+			rewriteChunkSet(t, tags, portable.TranscriptIDToTagPrefix(portable.RoleRawASR), tc.rewrite)
+
+			payload, manifest, err := decodePortableMeeting(tags)
+			if err != nil {
+				t.Fatalf("decodePortableMeeting: %v", err)
+			}
+			if manifest.Version != 3 {
+				t.Fatalf("Manifest.Version = %d, want 3", manifest.Version)
+			}
+			if payload.RawBytes != len(payload.JSON) {
+				t.Errorf("RawBytes = %d, want %d", payload.RawBytes, len(payload.JSON))
+			}
+			if len(manifest.Transcripts) != 1 {
+				t.Fatalf("decoded %d transcripts, want 1", len(manifest.Transcripts))
+			}
+			body, err := decodeTranscriptBody(tags, manifest.Transcripts[0].ID)
+			if err != nil {
+				t.Fatalf("decodeTranscriptBody: %v", err)
+			}
+			if body.WordCount != len(words) {
+				t.Errorf("body.WordCount = %d, want %d", body.WordCount, len(words))
+			}
+		})
+	}
+}
+
+// padBase64URL appends the '=' padding an unpadded base64url string would carry
+// had it been produced by a padding encoder.
+func padBase64URL(encoded string) string {
+	if remainder := len(encoded) % 4; remainder != 0 {
+		return encoded + strings.Repeat("=", 4-remainder)
+	}
+	return encoded
+}
+
+// rewriteChunkSet reassembles one chunk set, hands the concatenated text to
+// rewrite, and writes the result back over the same numbered tags — adjusting
+// the chunk count when the rewrite changes how many chunks it takes.
+func rewriteChunkSet(t *testing.T, tags map[string]string, prefix string, rewrite func(string) string) {
+	t.Helper()
+	count := parseIntOrZero(tags[prefix+"CHUNK_COUNT"])
+	if count <= 0 {
+		t.Fatalf("chunk set %s has no chunks", prefix)
+	}
+	var encoded strings.Builder
+	for idx := 0; idx < count; idx++ {
+		key := fmt.Sprintf("%s%03d", prefix, idx)
+		encoded.WriteString(tags[key])
+		delete(tags, key)
+	}
+	chunks := portable.ChunkString(rewrite(encoded.String()), portableTestChunkSize)
+	for idx, chunk := range chunks {
+		tags[fmt.Sprintf("%s%03d", prefix, idx)] = chunk
+	}
+	tags[prefix+"CHUNK_COUNT"] = fmt.Sprintf("%d", len(chunks))
+}
+
+// portableTestChunkSize is small enough that every fixture below spans several
+// chunks, which is the only way a reassembly bug shows up at all.
+const portableTestChunkSize = 64
+
+// buildPortableV3Tags builds the OpusTag set of a one-transcript v3 file
+// without going near ffmpeg. The reader's tag layer takes a map, so a decode
+// test does not need a container, an audio stream, or the tools to make one.
+func buildPortableV3Tags(t *testing.T, words []string) map[string]string {
+	t.Helper()
+	items := make([]portable.TranscriptItem, 0, len(words))
+	for i, word := range words {
+		items = append(items, portable.TranscriptItem{
+			Speaker: "spk1",
+			StartMS: int64(i * 100),
+			EndMS:   int64(i*100 + 80),
+			Text:    word,
+		})
+	}
+	manifest := portable.NormalizeManifestV3(portable.Manifest{
+		Meeting: portable.Meeting{
+			ID:           "meeting-v3",
+			Title:        "Lantern Festival",
+			CreatedAtUTC: "2026-03-11T08:30:00Z",
+			DurationMS:   int64(len(words) * 100),
+			Language:     "en",
+		},
+		Audio: portable.Audio{Container: "ogg", Codec: "opus", SampleRate: 48000, Channels: 1},
+		Integrity: portable.Integrity{
+			MatchPolicy: portable.AudioMatchPolicy,
+			OpusSHA256:  strings.Repeat("a", 64),
+		},
+		Speakers: []portable.Speaker{{ID: "spk1", Label: "Silvio"}},
+	})
+	input := portable.TranscriptInput{
+		ID:       portable.RoleRawASR,
+		Role:     portable.RoleRawASR,
+		Default:  true,
+		Language: "en",
+		Body: portable.TranscriptBody{
+			Format:    "cassini.words.v1",
+			Language:  "en",
+			WordCount: len(items),
+			Items:     items,
+		},
+	}
+	encoded, err := portable.EncodeManifestV3(manifest, []portable.TranscriptInput{input}, portableTestChunkSize)
+	if err != nil {
+		t.Fatalf("encode v3 manifest: %v", err)
+	}
+	return portable.BuildOpusTagsV3(manifest, encoded, portable.RoleRawASR)
+}

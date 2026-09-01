@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"gocassini/internal/portable"
 )
@@ -336,6 +337,30 @@ func firstAudioStream(meta probedPortableAudio) (probedPortableAudioStream, erro
 	return probedPortableAudioStream{}, errors.New("portable audio file has no audio stream")
 }
 
+// decodeCassiniBase64URL decodes one concatenated chunk set.
+//
+// Producers write the unpadded base64url alphabet of RFC 4648 section 5, and so
+// does the packer in internal/portable, but a reader is not the producer: a
+// padded chunk set is a cosmetic difference, not a damaged file, and refusing
+// it turns a readable meeting into a lost one. SPEC.md's own worked example
+// pipes the chunks through a base64 tool that pads, and most languages' encoders
+// pad by default, so files written by hand and by other implementations arrive
+// both ways.
+//
+// ASCII whitespace is discarded before the padding is considered, not after: a
+// Vorbis comment value is arbitrary UTF-8 and a tool that rewrapped a long
+// chunk may legally have left a newline in it, so deciding on padding from the
+// unstripped text is a bug that only shows on some inputs.
+func decodeCassiniBase64URL(encoded string) ([]byte, error) {
+	stripped := strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, encoded)
+	return base64.RawURLEncoding.DecodeString(strings.TrimRight(stripped, "="))
+}
+
 func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portable.Manifest, error) {
 	chunkCount := parseIntOrZero(metadataTag(tags, "CASSINI_PAYLOAD_CHUNK_COUNT"))
 	if chunkCount <= 0 {
@@ -351,7 +376,7 @@ func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portabl
 		encoded.WriteString(part)
 	}
 
-	compressed, err := base64.RawURLEncoding.DecodeString(encoded.String())
+	compressed, err := decodeCassiniBase64URL(encoded.String())
 	if err != nil {
 		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("decode base64url Cassini payload: %w", err)
 	}
@@ -748,7 +773,7 @@ func decodeTranscriptBody(tags map[string]string, id string) (portable.Transcrip
 		encoded.WriteString(part)
 	}
 
-	compressed, err := base64.RawURLEncoding.DecodeString(encoded.String())
+	compressed, err := decodeCassiniBase64URL(encoded.String())
 	if err != nil {
 		return portable.TranscriptBody{}, fmt.Errorf("decode base64url transcript payload: %w", err)
 	}
