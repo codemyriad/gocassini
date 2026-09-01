@@ -29,6 +29,7 @@ test.beforeEach(() => {
   server.uploads.length = 0;
   server.state.captureEnabled = true;
   server.state.companionEnabled = true;
+  server.state.recordingStatus = 0;
 });
 
 // enableCapture records the participant's opt-in on the same origin. The
@@ -36,6 +37,20 @@ test.beforeEach(() => {
 async function enableCapture(page: import("@playwright/test").Page) {
   await page.goto(`${server.origin}/`);
   await page.evaluate(() => localStorage.setItem("cassini.sourceCapture.consent", "granted"));
+}
+
+async function setOfficialRecording(
+  page: import("@playwright/test").Page,
+  status: 0 | 1 | 2 | 3 | 4 | 5,
+  roomToken = "testroom",
+) {
+  server.state.recordingStatus = status;
+  await page.evaluate(
+    ({ nextStatus, room }) =>
+      (window as never as { __setRecordingStatus: (status: number, room: string) => void })
+        .__setRecordingStatus(nextStatus, room),
+    { nextStatus: status, room: roomToken },
+  );
 }
 
 test("the companion payload runs before Talk negotiates", async ({ page }) => {
@@ -52,6 +67,79 @@ test("the companion payload runs before Talk negotiates", async ({ page }) => {
     patchedBeforeTalk,
     "the capture payload ran too late to attach its encoded transform before negotiation",
   ).toBe(true);
+});
+
+test("joining a call does not record locally before Talk recording starts", async ({ page }) => {
+  await enableCapture(page);
+  await page.goto(`${server.origin}/call/testroom`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await page.waitForTimeout(1200);
+
+  const captures = await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    const names: string[] = [];
+    for await (const [name] of root.entries()) {
+      if (name.startsWith("capture-")) names.push(name);
+    }
+    return names;
+  });
+  expect(captures, "joining alone created local source-audio storage").toEqual([]);
+  expect(server.uploads).toHaveLength(0);
+});
+
+test("starting states do not capture; confirmed active starts and confirmed off uploads", async ({ page }) => {
+  await enableCapture(page);
+  await page.goto(`${server.origin}/call/testroom`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+
+  await setOfficialRecording(page, 4);
+  await page.waitForTimeout(600);
+  expect(server.uploads).toHaveLength(0);
+
+  await setOfficialRecording(page, 2);
+  await page.waitForTimeout(1400);
+  await setOfficialRecording(page, 0);
+  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(1);
+
+  // Talk's peer remains alive: the upload was driven by recording-off, not by
+  // leaving the room or closing the page.
+  expect(
+    await page.evaluate(
+      () => (window as never as { __localTrack: MediaStreamTrack }).__localTrack.readyState,
+    ),
+  ).toBe("live");
+});
+
+test("reloading during an active Talk recording resumes and preserves both sides", async ({ page }) => {
+  await enableCapture(page);
+  await page.goto(`${server.origin}/call/testroom`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await setOfficialRecording(page, 2);
+  await page.waitForTimeout(2600);
+
+  // The room resource remains active across navigation. The outgoing page must
+  // durably seal its interval, and the incoming page must bootstrap from this
+  // status rather than waiting for another signaling transition that may never
+  // arrive.
+  await page.reload();
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await page.waitForTimeout(2600);
+  await setOfficialRecording(page, 0);
+
+  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(2);
+  expect(server.uploads.every((upload) => upload.segments.some((segment) => segment.bytes > 1000))).toBe(true);
+});
+
+test("leaving the room seals and uploads an active source capture", async ({ page }) => {
+  await enableCapture(page);
+  await page.goto(`${server.origin}/call/testroom`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await setOfficialRecording(page, 2);
+  await page.waitForTimeout(2200);
+
+  await page.evaluate(() => (window as never as { __endCall: () => void }).__endCall());
+  await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(1);
+  expect(server.uploads[0].segments[0].bytes).toBeGreaterThan(1000);
 });
 
 test("a call started from Talk's index route is instrumented before SPA navigation", async ({ page }) => {
@@ -119,6 +207,7 @@ test("captures the participant's own audio through a lossy uplink and uploads it
   await page.goto(`${server.origin}/call/testroom?loss=0.2`);
   await page.waitForFunction(() => (window as never as { __talkReady?: Promise<boolean> }).__talkReady !== undefined);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await setOfficialRecording(page, 2);
 
   // Talk long enough for several encoded frames and at least one recorder
   // chunk boundary, with a spell of mute in the middle.
@@ -140,7 +229,7 @@ test("captures the participant's own audio through a lossy uplink and uploads it
   expect(received!.frames).toBeGreaterThan(50);
   expect(received!.dropped, "the simulated uplink dropped nothing").toBeGreaterThan(5);
 
-  await page.evaluate(() => (window as never as { __endCall: () => void }).__endCall());
+  await setOfficialRecording(page, 0);
   await expect.poll(() => server.uploads.length, { timeout: 20_000 }).toBe(1);
 
   const upload = server.uploads[0];
@@ -178,6 +267,7 @@ test("consent withdrawn mid-call discards that call's recording", async ({ page 
   await enableCapture(page);
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await setOfficialRecording(page, 2);
   await page.waitForTimeout(1500);
 
   // Turn capture off while the call is still running, then back on before it
@@ -196,7 +286,7 @@ test("consent withdrawn mid-call discards that call's recording", async ({ page 
   });
   await page.waitForTimeout(800);
 
-  await page.evaluate(() => (window as never as { __endCall: () => void }).__endCall());
+  await setOfficialRecording(page, 0);
   await page.waitForTimeout(3000);
 
   expect(server.uploads.length, "a recording made after consent was withdrawn was uploaded").toBe(0);
@@ -206,6 +296,7 @@ test("the administrator switch stops a capture already running", async ({ page }
   await enableCapture(page);
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await setOfficialRecording(page, 2);
   await page.waitForTimeout(1500);
 
   // Turning the server-side switch off has to reach a call in progress. The
@@ -219,7 +310,7 @@ test("the administrator switch stops a capture already running", async ({ page }
   // Switch it back ON before hanging up, so the upload endpoint would happily
   // accept. Anything that arrives now is the client having failed to stop.
   server.state.captureEnabled = true;
-  await page.evaluate(() => (window as never as { __endCall: () => void }).__endCall());
+  await setOfficialRecording(page, 0);
   await page.waitForTimeout(3000);
 
   expect(
@@ -234,8 +325,9 @@ test("captures nothing without an explicit opt-in", async ({ page }) => {
 
   await page.goto(`${server.origin}/call/testroom`);
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+  await setOfficialRecording(page, 2);
   await page.waitForTimeout(2000);
-  await page.evaluate(() => (window as never as { __endCall: () => void }).__endCall());
+  await setOfficialRecording(page, 0);
   await page.waitForTimeout(2000);
 
   expect(server.uploads.length, "audio was uploaded without consent").toBe(0);

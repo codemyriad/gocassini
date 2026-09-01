@@ -4,13 +4,12 @@ declare(strict_types=1);
 
 namespace OCA\CassiniCapture\Listener;
 
+use OCA\AppAPI\Service\ExAppConfigService;
 use OCA\CassiniCapture\AppInfo\Application;
-use OCP\App\IAppManager;
 use OCP\AppFramework\Services\IInitialState;
 use OCP\Collaboration\Resources\LoadAdditionalScriptsEvent;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
-use OCP\IAppConfig;
 use OCP\IRequest;
 use OCP\IURLGenerator;
 use OCP\Util;
@@ -33,9 +32,23 @@ final class LoadTalkCaptureScriptListener implements IEventListener {
 		private readonly IRequest $request,
 		private readonly IInitialState $initialState,
 		private readonly IURLGenerator $urlGenerator,
-		private readonly IAppConfig $appConfig,
-		private readonly IAppManager $appManager,
+		private readonly ExAppConfigService $exAppConfig,
 	) {
+	}
+
+	private function sourceCaptureEnabled(): bool {
+		$values = $this->exAppConfig->getAppConfigValues(
+			self::EXAPP_ID,
+			[self::ENABLED_CONFIG_KEY],
+		) ?? [];
+		foreach ($values as $value) {
+			if (($value['configkey'] ?? null) !== self::ENABLED_CONFIG_KEY) {
+				continue;
+			}
+			$configured = strtolower(trim((string)($value['configvalue'] ?? '')));
+			return in_array($configured, ['1', 'true', 'yes', 'on'], true);
+		}
+		return false;
 	}
 
 	public static function isTalkCallRoute(string $route): bool {
@@ -52,17 +65,11 @@ final class LoadTalkCaptureScriptListener implements IEventListener {
 				return;
 			}
 
-			// AppAPI's ExAppConfigService stores every value through setValueString,
-			// even when the JSON input was boolean. Reading it with getValueBool would
-			// therefore raise an AppConfig type-conflict exception on NC 32+.
-			$configured = strtolower($this->appConfig->getValueString(
-				self::EXAPP_ID,
-				self::ENABLED_CONFIG_KEY,
-				'false',
-				lazy: true,
-			));
-			$enabled = $this->appManager->isEnabledForUser(self::EXAPP_ID)
-				&& in_array($configured, ['1', 'true', 'yes', 'on'], true);
+			// ExApps do not live in core's app manager or oc_appconfig. AppAPI keeps
+			// their settings in appconfig_ex, exposed by ExAppConfigService. Reading
+			// IAppConfig here makes every installed ExApp look disabled — exactly the
+			// failure this companion exists to avoid.
+			$enabled = $this->sourceCaptureEnabled();
 			$webroot = rtrim($this->urlGenerator->getWebroot(), '/');
 			$this->initialState->provideInitialState('capture', [
 				'enabled' => $enabled,

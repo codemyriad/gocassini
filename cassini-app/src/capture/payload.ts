@@ -29,6 +29,7 @@ import { retireLegacyCaptureWorkers } from "./register";
 
 import {
   SOURCE_CAPTURE_FORMAT,
+  SOURCE_CAPTURE_PENDING_NAME,
   captureDirName,
   roomTokenFromPath,
   type CaptureSidecar,
@@ -81,10 +82,11 @@ export function captureDeliveryFromInitialState(): CaptureDeliveryConfig {
 
 let deliveryConfig: CaptureDeliveryConfig = DISABLED_DELIVERY;
 
-// TIMESLICE_MS is how often MediaRecorder hands us a chunk to persist. Ten
-// seconds bounds what an unclean tab kill can lose while keeping the message
-// and OPFS write rate negligible.
-const TIMESLICE_MS = 10_000;
+// TIMESLICE_MS is how often MediaRecorder hands us a chunk to persist. Page
+// teardown cannot wait for MediaRecorder's asynchronous final chunk, so this
+// is also the crash/reload loss bound. Two seconds keeps OPFS traffic modest
+// while making a reload a small seam rather than a missing stretch of speech.
+const TIMESLICE_MS = 2_000;
 
 // MUTE_POLL_MS samples Talk's mute state. MediaStreamTrack has no "enabled
 // changed" event, so polling is the only way to observe it. The recording is
@@ -105,6 +107,13 @@ const SERVER_CHECK_MS = 30_000;
 // recording continues past the interval above while further polls pile up
 // behind it.
 const SERVER_CHECK_TIMEOUT_MS = 5_000;
+
+// Talk's external signaling delivers recording changes immediately. The room
+// status request is the bootstrap path (joining or reloading while a recording
+// is already active) and the fallback for installations using internal
+// signaling, where Talk does not forward recording events to the browser.
+const RECORDING_STATUS_POLL_MS = 2_000;
+const RECORDING_STATUS_FETCH_TIMEOUT_MS = 5_000;
 
 // serverCheckIntervalMS lets a test shorten the poll. It can only make the
 // check MORE frequent, never less: a hostile value on the page cannot use this
@@ -148,6 +157,102 @@ export function uploadURLFrom(proxyBase: string): string {
 // enabledURLFrom builds the operator's "may I still record?" endpoint.
 export function enabledURLFrom(proxyBase: string): string {
   return `${proxyBase.replace(/\/+$/, "")}/operator/capture/enabled`;
+}
+
+const TALK_RECORDING_OFF = 0;
+const TALK_RECORDING_VIDEO = 1;
+const TALK_RECORDING_AUDIO = 2;
+const TALK_RECORDING_VIDEO_STARTING = 3;
+const TALK_RECORDING_AUDIO_STARTING = 4;
+const TALK_RECORDING_FAILED = 5;
+
+function isTalkRecordingStatus(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) >= TALK_RECORDING_OFF && Number(value) <= TALK_RECORDING_FAILED;
+}
+
+// talkRecordingStatusFromSignalingData recognizes only the authoritative room
+// message Talk itself consumes. It deliberately ignores chat messages, events
+// for another room, malformed extension traffic, and the moderator's HTTP
+// start/stop response (which is only a request, not confirmation).
+export function talkRecordingStatusFromSignalingData(data: unknown, roomToken: string): number | null {
+  let message: unknown = data;
+  if (typeof message === "string") {
+    try {
+      message = JSON.parse(message);
+    } catch {
+      return null;
+    }
+  }
+  if (!message || typeof message !== "object") {
+    return null;
+  }
+  const frame = message as {
+    type?: unknown;
+    event?: {
+      target?: unknown;
+      type?: unknown;
+      message?: {
+        roomid?: unknown;
+        data?: { type?: unknown; recording?: { status?: unknown } };
+      };
+    };
+  };
+  const roomMessage = frame.event?.message;
+  const status = roomMessage?.data?.recording?.status;
+  if (
+    frame.type !== "event" ||
+    frame.event?.target !== "room" ||
+    frame.event?.type !== "message" ||
+    roomMessage?.roomid !== roomToken ||
+    roomMessage.data?.type !== "recording" ||
+    !isTalkRecordingStatus(status)
+  ) {
+    return null;
+  }
+  return Number(status);
+}
+
+export function talkRoomStatusURL(roomToken: string, rootPath: string): string {
+  return `${rootPath.replace(/\/+$/, "")}/ocs/v2.php/apps/spreed/api/v4/room/${encodeURIComponent(roomToken)}?format=json`;
+}
+
+export async function fetchTalkRecordingStatus(
+  roomToken: string,
+  rootPath: string,
+  fetchImpl: typeof fetch = fetch,
+  timeoutMS: number = RECORDING_STATUS_FETCH_TIMEOUT_MS,
+): Promise<number | null> {
+  const controller = new AbortController();
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    deadline = setTimeout(() => {
+      controller.abort();
+      reject(new Error("Talk recording status timed out"));
+    }, timeoutMS);
+  });
+  try {
+    const response = await Promise.race([
+      fetchImpl(talkRoomStatusURL(roomToken, rootPath), {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "OCS-APIRequest": "true", Accept: "application/json" },
+        signal: controller.signal,
+      }),
+      expired,
+    ]);
+    if (!response.ok) {
+      return null;
+    }
+    const body = (await response.json()) as { ocs?: { data?: { callRecording?: unknown } } };
+    const status = body.ocs?.data?.callRecording;
+    return isTalkRecordingStatus(status) ? Number(status) : null;
+  } catch {
+    return null;
+  } finally {
+    if (deadline !== undefined) {
+      clearTimeout(deadline);
+    }
+  }
 }
 
 // captureAllowedByServer asks the operator whether collection is permitted.
@@ -252,6 +357,16 @@ export interface CaptureState {
 
 let state: CaptureState | null = null;
 const publisherSenders = new Set<RTCRtpSender>();
+// The transform has to be attached before Talk negotiates, but audio must not
+// be recorded until Talk confirms that the official recording is active. This
+// worker is therefore prepared early and remains inert: it creates no OPFS
+// directory and retains no timing anchors until beginCapture activates it.
+let preparedWorker: Worker | null = null;
+let talkRecordingActive = false;
+let recordingStatusRevision = 0;
+let recordingStatusFetchInFlight = false;
+let recordingStatusPoll: number | null = null;
+let talkRoomToken: string | null = null;
 // The connection whose sender we are recording. A Talk call has one publishing
 // peer connection and many subscriber ones, and every subscriber closes
 // routinely as people come and go — ending the capture on any of those closures
@@ -358,7 +473,7 @@ export async function stopSegment(session: CaptureState): Promise<void> {
 // loosely and keep the looseness contained to this function.
 type ScriptTransformCtor = new (worker: Worker, options: unknown) => object;
 
-function attachTimingTransform(session: CaptureState, sender: RTCRtpSender): void {
+function attachTimingTransform(worker: Worker, sender: RTCRtpSender): void {
   const ScriptTransform = (globalThis as { RTCRtpScriptTransform?: ScriptTransformCtor })
     .RTCRtpScriptTransform;
   const senderWithTransform = sender as unknown as { transform?: object | null };
@@ -375,7 +490,7 @@ function attachTimingTransform(session: CaptureState, sender: RTCRtpSender): voi
     return;
   }
   try {
-    senderWithTransform.transform = new ScriptTransform(session.worker, { kind: "audio" });
+    senderWithTransform.transform = new ScriptTransform(worker, { kind: "audio" });
   } catch {
     // Older shape or a sender that refuses a transform: anchors are optional.
   }
@@ -452,13 +567,74 @@ async function uploadCapture(
     throw new Error(`upload failed: ${response.status}`);
   }
   await opfsRoot.removeEntry(dirName, { recursive: true });
+  console.info("Cassini source capture: upload accepted");
 }
 
-// endCall seals the recording and starts the upload. It is idempotent: several
-// things legitimately signal the end of a call (the publishing peer connection
-// closing, its state going to closed/failed, the page going away) and they can
-// all fire for the same call.
-async function endCall(): Promise<void> {
+function isBufferedCaptureSidecar(value: unknown): value is CaptureSidecar {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const sidecar = value as Partial<CaptureSidecar>;
+  return (
+    sidecar.format === SOURCE_CAPTURE_FORMAT &&
+    typeof sidecar.roomToken === "string" &&
+    typeof sidecar.callStartWallMs === "number" &&
+    typeof sidecar.callEndWallMs === "number" &&
+    Array.isArray(sidecar.segments) &&
+    sidecar.segments.length > 0
+  );
+}
+
+// A navigation is allowed to cancel the network request: the completed
+// capture remains in OPFS. Every new Talk page retries those sealed captures
+// before recording anything else, which turns reload into two contiguous
+// source sessions rather than a lost first half.
+export async function retryBufferedCaptures(): Promise<number> {
+  if (!consentGranted(localStorage) || serverAllowsCapture !== true) {
+    return 0;
+  }
+  const root = await navigator.storage.getDirectory();
+  let uploaded = 0;
+  for await (const [dirName, handle] of root.entries()) {
+    if (handle.kind !== "directory" || !dirName.startsWith("capture-")) {
+      continue;
+    }
+    try {
+      const dir = handle as FileSystemDirectoryHandle;
+      let sidecarFile: File;
+      try {
+        sidecarFile = await (await dir.getFileHandle("capture.json")).getFile();
+      } catch {
+        sidecarFile = await (await dir.getFileHandle(SOURCE_CAPTURE_PENDING_NAME)).getFile();
+      }
+      const sidecar = JSON.parse(await sidecarFile.text()) as unknown;
+      if (!isBufferedCaptureSidecar(sidecar)) {
+        continue;
+      }
+      await uploadCapture(sidecar, dirName, false);
+      uploaded += 1;
+    } catch {
+      // No sidecar means the previous page died before sealing. Leave the
+      // directory untouched; periodic chunks may still be recoverable by a
+      // future repair tool, while deleting it here would make that impossible.
+    }
+  }
+  return uploaded;
+}
+
+// finishCapture seals the current official-recording interval and starts its
+// upload. Talk's confirmed recording-off event calls this while the participant
+// remains in the room; peer close and pagehide call it with callEnded=true as
+// an idempotent fallback.
+async function finishCapture(callEnded: boolean): Promise<void> {
+  if (callEnded) {
+    talkRecordingActive = false;
+    const idleWorker = preparedWorker;
+    preparedWorker = null;
+    capturingConnection = null;
+    capturingSender = null;
+    idleWorker?.terminate();
+  }
   if (!state || state.finished) {
     return;
   }
@@ -468,11 +644,10 @@ async function endCall(): Promise<void> {
   // everything below works from `active` — the async tail of a recording
   // outlives the global by design.
   state = null;
-  capturingConnection = null;
-  capturingSender = null;
   if (active.mutePoll !== null) {
     clearInterval(active.mutePoll);
   }
+  active.worker.postMessage({ type: "timing-active", active: false });
   // Let any rotation still in flight finish before closing the final segment,
   // so a device change during the last seconds of a call does not race the
   // teardown.
@@ -492,8 +667,7 @@ async function endCall(): Promise<void> {
   active.worker.onmessage = (event: MessageEvent) => {
     if (event.data?.type === "error") {
       // The worker could not seal anything — nothing was recorded, or a write
-      // failed. There will be no "finalized", so release the thread here or it
-      // lives as long as the Talk tab.
+      // failed. There will be no "finalized" to finish this interval.
       active.worker.terminate();
       return;
     }
@@ -504,15 +678,27 @@ async function endCall(): Promise<void> {
       .catch(() => {
         // The OPFS buffer is deliberately left in place so a later page load
         // can retry; nothing is lost to a transient upload failure.
+        console.warn("Cassini source capture: upload deferred; buffered audio remains in browser storage");
       })
       .finally(() => {
-        // The call is over and the upload has settled either way. Leaving the
-        // worker alive holds a thread and its OPFS handles for as long as the
-        // Talk tab stays open, which is usually the rest of the working day.
-        active.worker.terminate();
+        if (callEnded || capturingConnection === null) {
+          active.worker.terminate();
+          return;
+        }
+        // The official recording stopped but the call continues. Keep the
+        // transform's pass-through worker alive so stopping Cassini cannot
+        // interrupt Talk's outgoing audio. The worker reset after finalize and
+        // can be reused if recording starts again.
+        if (preparedWorker === null) {
+          preparedWorker = active.worker;
+        }
       });
   };
   active.worker.postMessage({ type: "finalize", dirName: active.dirName, base });
+}
+
+async function endCall(): Promise<void> {
+  await finishCapture(true);
 }
 
 // stopWithoutRestart closes the current segment and leaves the recorder idle.
@@ -575,25 +761,34 @@ async function refreshCapturePermission(proxyBase: string): Promise<void> {
 }
 
 function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void {
-  if (state) {
+  if (state || !talkRecordingActive) {
     return;
   }
   const roomToken = roomTokenFromPath(location.pathname);
   if (!roomToken || !consentGranted(localStorage)) {
     return;
   }
+  talkRoomToken = roomToken;
   // The administrator switch was injected before this script ran. Anything
-  // other than an explicit yes means nothing is created:
-  // no worker thread, no transform on a live call's sender, no OPFS directory.
+  // other than an explicit yes means no recorder or OPFS directory is created.
   if (serverAllowsCapture !== true) {
     return;
   }
+  const worker = preparedWorker ?? new Worker(workerURL());
+  if (preparedWorker === null) {
+    // A second recording interval can start after the first worker finalized.
+    // Reattaching may be unavailable because the sender still owns the first
+    // transform; source audio remains usable and simply carries no RTP-rate
+    // anchors in that uncommon shape.
+    attachTimingTransform(worker, sender);
+  }
+  preparedWorker = null;
   const callStartWallMs = Date.now();
   const session: CaptureState = {
     roomToken,
     dirName: captureDirName(roomToken, callStartWallMs),
     callStartWallMs,
-    worker: new Worker(workerURL()),
+    worker,
     segmentIndex: 0,
     recorder: null,
     muteIntervals: [],
@@ -608,8 +803,22 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
   state = session;
   capturingSender = sender;
   capturingConnection = connection;
-  attachTimingTransform(session, sender);
+  worker.postMessage({
+    type: "capture-start",
+    dirName: session.dirName,
+    base: {
+      format: SOURCE_CAPTURE_FORMAT,
+      roomToken: session.roomToken,
+      participantId:
+        (globalThis as { OC?: { getCurrentUser?: () => { uid?: string } } }).OC?.getCurrentUser?.()
+          ?.uid ?? "",
+      callStartWallMs: session.callStartWallMs,
+      userAgent: navigator.userAgent,
+    },
+  });
+  worker.postMessage({ type: "timing-active", active: true });
   startSegment(session, sender);
+  console.info("Cassini source capture: Talk recording active; local source recording started");
   session.mutePoll = setInterval(() => pollMute(session, sender), MUTE_POLL_MS) as unknown as number;
 }
 
@@ -618,7 +827,20 @@ function watchSender(sender: RTCRtpSender, connection: RTCPeerConnection): void 
     return;
   }
   publisherSenders.add(sender);
-  beginCapture(sender, connection);
+  const roomToken = roomTokenFromPath(location.pathname);
+  if (roomToken) {
+    talkRoomToken = roomToken;
+    void refreshTalkRecordingStatus(roomToken);
+  }
+  if (capturingSender === null) {
+    capturingSender = sender;
+    capturingConnection = connection;
+    if (serverAllowsCapture && consentGranted(localStorage)) {
+      preparedWorker = new Worker(workerURL());
+      attachTimingTransform(preparedWorker, sender);
+    }
+    beginCapture(sender, connection);
+  }
   // A replaced track (device switch, or Talk rebuilding its media pipeline)
   // restarts the recorder's media clock, so it has to become a new segment.
   const originalReplace = sender.replaceTrack.bind(sender);
@@ -627,17 +849,143 @@ function watchSender(sender: RTCRtpSender, connection: RTCPeerConnection): void 
     const session = state;
     // Only the sender we are recording drives the session. Another audio
     // sender's track changes are none of our business.
-    if (session && sender === capturingSender) {
-      if (track && track.kind === "audio") {
+    if (sender === capturingSender) {
+      if (session && track && track.kind === "audio") {
         rotateSegment(session, sender);
-      } else if (track === null) {
+      } else if (session && track === null) {
         // The microphone was detached. Close the segment rather than keep
         // recording a track Talk is no longer sending.
         stopWithoutRestart(session);
+      } else if (!session && track && track.kind === "audio") {
+        beginCapture(sender, connection);
       }
     }
     return result;
   };
+}
+
+function applyTalkRecordingStatus(status: number): void {
+  if (status === TALK_RECORDING_VIDEO || status === TALK_RECORDING_AUDIO) {
+    talkRecordingActive = true;
+    if (capturingSender && capturingConnection) {
+      beginCapture(capturingSender, capturingConnection);
+    }
+    return;
+  }
+  if (status === TALK_RECORDING_VIDEO_STARTING || status === TALK_RECORDING_AUDIO_STARTING) {
+    // A moderator requested recording, but Talk's backend has not confirmed it.
+    // Starting here would collect audio from a recording that might fail.
+    return;
+  }
+  if (status === TALK_RECORDING_OFF || status === TALK_RECORDING_FAILED) {
+    talkRecordingActive = false;
+    if (state) {
+      console.info("Cassini source capture: Talk recording stopped; sealing and uploading");
+      void finishCapture(false);
+    }
+  }
+}
+
+async function refreshTalkRecordingStatus(roomToken: string): Promise<void> {
+  if (recordingStatusFetchInFlight) {
+    return;
+  }
+  recordingStatusFetchInFlight = true;
+  const revision = recordingStatusRevision;
+  const rootPath =
+    (globalThis as { OC?: { getRootPath?: () => string } }).OC?.getRootPath?.() ?? "";
+  try {
+    const status = await fetchTalkRecordingStatus(roomToken, rootPath);
+    // A signaling event received while this request was in flight is newer
+    // than the response and wins. This prevents a slow bootstrap response of
+    // OFF from tearing down a recording the socket just confirmed active.
+    if (status !== null && revision === recordingStatusRevision) {
+      applyTalkRecordingStatus(status);
+    }
+  } finally {
+    recordingStatusFetchInFlight = false;
+  }
+}
+
+type SignalingSocketLike = {
+  addEventListener(type: string, listener: (event: MessageEvent) => void): void;
+};
+
+const watchedSignalingSockets = new WeakSet<object>();
+let signalingSocketObserved = false;
+
+function watchSignalingSocket(socket: unknown): void {
+  if (
+    !socket ||
+    typeof socket !== "object" ||
+    typeof (socket as Partial<SignalingSocketLike>).addEventListener !== "function" ||
+    watchedSignalingSockets.has(socket)
+  ) {
+    return;
+  }
+  watchedSignalingSockets.add(socket);
+  signalingSocketObserved = true;
+  (socket as SignalingSocketLike).addEventListener("message", (event: MessageEvent) => {
+    const roomToken = talkRoomToken ?? roomTokenFromPath(location.pathname);
+    if (!roomToken) {
+      return;
+    }
+    talkRoomToken = roomToken;
+    const status = talkRecordingStatusFromSignalingData(event.data, roomToken);
+    if (status === null) {
+      return;
+    }
+    recordingStatusRevision += 1;
+    applyTalkRecordingStatus(status);
+  });
+  // Reconnecting can span a transition. The room resource gives us the
+  // current state without guessing which events were missed.
+  const roomToken = talkRoomToken ?? roomTokenFromPath(location.pathname);
+  if (roomToken) {
+    talkRoomToken = roomToken;
+    void refreshTalkRecordingStatus(roomToken);
+  }
+}
+
+function installSignalingSocketObserver(): void {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  const descriptor = Object.getOwnPropertyDescriptor(globals, "signalingSocket");
+  if (descriptor && descriptor.configurable === false) {
+    watchSignalingSocket(globals.signalingSocket);
+    return;
+  }
+  let current = globals.signalingSocket;
+  Object.defineProperty(globals, "signalingSocket", {
+    configurable: true,
+    enumerable: descriptor?.enumerable ?? true,
+    get: () => current,
+    set: (value: unknown) => {
+      current = value;
+      watchSignalingSocket(value);
+    },
+  });
+  watchSignalingSocket(current);
+}
+
+function installTalkRecordingLifecycle(): void {
+  installSignalingSocketObserver();
+  const initialRoomToken = roomTokenFromPath(location.pathname);
+  if (initialRoomToken) {
+    talkRoomToken = initialRoomToken;
+    void refreshTalkRecordingStatus(initialRoomToken);
+  }
+  recordingStatusPoll = setInterval(() => {
+    // External signaling is immediate. Poll only as its missed-event watchdog
+    // while recording, or as the lifecycle source when no socket exists (Talk
+    // installations using internal signaling).
+    if (!signalingSocketObserved || talkRecordingActive) {
+      const roomToken = talkRoomToken ?? roomTokenFromPath(location.pathname);
+      if (roomToken) {
+        talkRoomToken = roomToken;
+        void refreshTalkRecordingStatus(roomToken);
+      }
+    }
+  }, RECORDING_STATUS_POLL_MS) as unknown as number;
 }
 
 function instrument(pc: RTCPeerConnection): void {
@@ -692,6 +1040,8 @@ export function install(config: CaptureDeliveryConfig = captureDeliveryFromIniti
   if (!Original || (Original as { __cassiniPatched?: boolean }).__cassiniPatched) {
     return;
   }
+  void retryBufferedCaptures().catch(() => {});
+  installTalkRecordingLifecycle();
   // A Proxy rather than a wrapper function. A wrapper loses new.target (so
   // `class Mine extends RTCPeerConnection` builds the wrong prototype), drops
   // static members such as generateCertificate, and gives Talk a constructor

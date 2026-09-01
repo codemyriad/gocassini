@@ -77,6 +77,24 @@ window.OCA = window.OCA || {};
 if (window.__talkRouteToken) {
   history.pushState({}, "", "/call/" + window.__talkRouteToken);
 }
+// Talk exposes its external-signaling socket on window. The real socket carries
+// this exact nested room message after the recording backend confirms each
+// transition. EventTarget is enough for the fixture because Cassini is a
+// passive message observer and must not replace or consume Talk's handler.
+const signalingSocket = new EventTarget();
+window.signalingSocket = signalingSocket;
+window.__setRecordingStatus = (status, roomid = "testroom") => {
+  signalingSocket.dispatchEvent(new MessageEvent("message", {
+    data: JSON.stringify({
+      type: "event",
+      event: {
+        target: "room",
+        type: "message",
+        message: { roomid, data: { type: "recording", recording: { status } } },
+      },
+    }),
+  }));
+};
 window.__capturePatchedBeforeTalk = window.RTCPeerConnection.__cassiniPatched === true;
 window.__talkReady = (async () => {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -194,7 +212,7 @@ function parseMultipart(body, contentType) {
 
 export async function startFixtureServer() {
   const uploads = [];
-  const state = { captureEnabled: true, companionEnabled: true };
+  const state = { captureEnabled: true, companionEnabled: true, recordingStatus: 0 };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     const path = url.pathname;
@@ -252,6 +270,10 @@ export async function startFixtureServer() {
       // it mid-call to prove the boundary reaches clients already recording.
       res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
       return res.end(JSON.stringify({ enabled: state.captureEnabled }));
+    }
+    if (path === "/ocs/v2.php/apps/spreed/api/v4/room/testroom") {
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      return res.end(JSON.stringify({ ocs: { data: { callRecording: state.recordingStatus } } }));
     }
     if (path === `${PROXY_PREFIX}/operator/capture/upload` && req.method === "POST") {
       if (!state.captureEnabled) {

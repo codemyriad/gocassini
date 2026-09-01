@@ -23,8 +23,9 @@ captured at the source or not at all.
 ## The shape
 
 The participant's browser records the track Talk is **sending**, before Opus
-encoding and before the network, buffers it locally for the whole call, and
-uploads it afterwards.
+encoding and before the network, while Talk's official recording is active.
+It buffers locally and uploads as soon as Talk confirms recording stopped;
+leaving the room is an idempotent fallback rather than the normal trigger.
 
 ```text
   mic ─▶ Talk's media pipeline ─▶ sender track ─┬─▶ Opus ─▶ network ─▶ SFU ─▶ recorder ─▶ .mkv
@@ -126,8 +127,8 @@ supports authenticated participants only.
 
 `CASSINI_SOURCE_CAPTURE` decides whether anything is collected at all.
 
-The ExApp synchronizes this setting into Nextcloud app config, so the companion
-can inject an authoritative answer before the payload runs. With it off the
+The ExApp synchronizes this setting into AppAPI's ExApp config store, so the
+companion can inject an authoritative answer before the payload runs. With it off the
 payload does not instrument Talk, the ExApp assets are absent, and uploads are
 refused.
 
@@ -210,7 +211,10 @@ audio over a real `RTCPeerConnection`, and **a transform on the receiving side
 drops a share of the encoded frames** — the lossy-uplink condition the feature
 exists for. The tests assert that the loss is real, that the captured copy is
 unaffected by it, that the anchors advance monotonically on the sender's clock,
-that a mute spell is recorded, and that nothing is uploaded without consent.
+that a mute spell is recorded, that joining alone creates no audio storage,
+that confirmed recording-off uploads while the call stays connected, that a
+reload resumes and preserves both durable intervals, and that nothing is
+uploaded without consent.
 
 ```bash
 npm run build:capture -w cassini-app
@@ -257,7 +261,10 @@ localStorage.setItem("cassini.sourceCapture.consent", "granted")
 ```
 
 Then join an **authenticated** Talk call (guest pages are not supported —
-Talk does not dispatch the hook there), talk, and leave. Uploads land under the
+Talk does not dispatch the hook there), press Talk's **Record** control, talk,
+and press **Stop recording**. Cassini starts only after Talk confirms the
+recording active and uploads at the confirmed stop; leaving the room performs
+the same teardown as a fallback. Uploads land under the
 operator's `--capture-root` (`CASSINI_OPERATOR_CAPTURE_ROOT`, default
 `<data>/capture`) as `<room>/<user>/<call-start-ms>/`, holding `capture.json`
 and the segment files.
@@ -288,9 +295,10 @@ logged-in user. The client fails closed at every one of those.
   participant: repeated uploads at the 512 MiB per-request cap can fill the
   volume even with ingestion disabled. This is the largest remaining
   operational risk of enabling capture at all.
-- **OPFS recovery.** A page that disappears mid-upload keeps its buffer, but
-  nothing scans for one on a later load, so that recording is stranded until
-  the browser's storage is cleared.
+- **Abrupt-page tail.** A reload or crash can lose the not-yet-checkpointed tail
+  of the current MediaRecorder chunk (at most about two seconds). Completed
+  chunks and their recovery sidecar survive in OPFS, are retried on the next
+  Talk page, and an active Talk recording resumes as a new capture session.
 - **Salvage after a write failure.** A worker error during finalization
   sacrifices the segments that were written correctly along with the one that
   was not. It only arises after an OPFS write or flush has already failed, so

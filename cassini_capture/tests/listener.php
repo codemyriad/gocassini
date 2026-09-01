@@ -40,26 +40,12 @@ namespace OCP\AppFramework\Services {
 	}
 }
 
-namespace OCP\App {
-	interface IAppManager {
-		public function isEnabledForUser(string $appId): bool;
-	}
-}
-
 namespace OCP {
 	interface IRequest {
 		public function getParam(string $key, mixed $default = null): mixed;
 	}
 	interface IURLGenerator {
 		public function getWebroot(): string;
-	}
-	interface IAppConfig {
-		public function getValueString(
-			string $app,
-			string $key,
-			string $default = '',
-			bool $lazy = false,
-		): string;
 	}
 	final class Util {
 		/** @var list<array{string,string}> */
@@ -70,14 +56,33 @@ namespace OCP {
 	}
 }
 
+namespace OCA\AppAPI\Service {
+	class ExAppConfigService {
+		/** @param list<array{configkey:string,configvalue:string}>|null $values */
+		public function __construct(
+			private ?array $values,
+			private bool $fails = false,
+		) {
+		}
+		/** @return list<array{configkey:string,configvalue:string}>|null */
+		public function getAppConfigValues(string $appId, array $configKeys): ?array {
+			\CassiniCaptureTests\check($appId === 'gocassini', 'listener read the wrong ExApp config');
+			\CassiniCaptureTests\check($configKeys === ['source_capture_enabled'], 'listener read the wrong config key');
+			if ($this->fails) {
+				throw new \RuntimeException('broken AppAPI config');
+			}
+			return $this->values;
+		}
+	}
+}
+
 namespace CassiniCaptureTests {
+	use OCA\AppAPI\Service\ExAppConfigService;
 	use OCA\CassiniCapture\AppInfo\Application;
 	use OCA\CassiniCapture\Listener\LoadTalkCaptureScriptListener;
-	use OCP\App\IAppManager;
 	use OCP\AppFramework\Bootstrap\IRegistrationContext;
 	use OCP\AppFramework\Services\IInitialState;
 	use OCP\Collaboration\Resources\LoadAdditionalScriptsEvent;
-	use OCP\IAppConfig;
 	use OCP\IRequest;
 	use OCP\IURLGenerator;
 	use OCP\Util;
@@ -111,41 +116,21 @@ namespace CassiniCaptureTests {
 		public function getWebroot(): string { return '/nextcloud/'; }
 	}
 
-	final class AppConfig implements IAppConfig {
-		public function __construct(private bool $enabled, private bool $fails = false) {}
-		public function getValueString(
-			string $app,
-			string $key,
-			string $default = '',
-			bool $lazy = false,
-		): string {
-			check($app === 'gocassini', 'listener read the wrong app config');
-			check($key === 'source_capture_enabled', 'listener read the wrong config key');
-			check($lazy, 'listener did not read AppAPI lazy config');
-			if ($this->fails) {
-				throw new \RuntimeException('broken app config');
-			}
-			return $this->enabled ? 'true' : 'false';
-		}
+	function appConfig(bool $enabled, bool $fails = false): ExAppConfigService {
+		return new ExAppConfigService([[
+			'configkey' => 'source_capture_enabled',
+			'configvalue' => $enabled ? 'true' : 'false',
+		]], $fails);
 	}
 
-	final class AppManager implements IAppManager {
-		public function __construct(private bool $enabled) {}
-		public function isEnabledForUser(string $appId): bool {
-			check($appId === 'gocassini', 'listener checked the wrong app');
-			return $this->enabled;
-		}
-	}
-
-	function listener(string $route, bool $config = true, bool $exApp = true): array {
+	function listener(string $route, bool $config = true): array {
 		Util::$scripts = [];
 		$state = new InitialState();
 		$listener = new LoadTalkCaptureScriptListener(
 			new Request($route),
 			$state,
 			new URLGenerator(),
-			new AppConfig($config),
-			new AppManager($exApp),
+			appConfig($config),
 		);
 		$listener->handle(new LoadAdditionalScriptsEvent());
 		$listener->handle(new LoadAdditionalScriptsEvent());
@@ -167,10 +152,19 @@ namespace CassiniCaptureTests {
 		check($state === [] && $scripts === [], "$route unexpectedly loaded capture");
 	}
 
-	[$state] = listener('spreed.Page.showCall', false, true);
+	[$state] = listener('spreed.Page.showCall', false);
 	check($state['capture']['enabled'] === false, 'disabled switch was not fail-closed');
-	[$state] = listener('spreed.Page.showCall', true, false);
-	check($state['capture']['enabled'] === false, 'disabled gocassini app was reported enabled');
+
+	Util::$scripts = [];
+	$state = new InitialState();
+	$missing = new LoadTalkCaptureScriptListener(
+		new Request('spreed.Page.showCall'),
+		$state,
+		new URLGenerator(),
+		new ExAppConfigService(null),
+	);
+	$missing->handle(new LoadAdditionalScriptsEvent());
+	check($state->values['capture']['enabled'] === false, 'missing ExApp config was not fail-closed');
 
 	Util::$scripts = [];
 	$state = new InitialState();
@@ -178,8 +172,7 @@ namespace CassiniCaptureTests {
 		new Request('spreed.Page.showCall'),
 		$state,
 		new URLGenerator(),
-		new AppConfig(true, true),
-		new AppManager(true),
+		appConfig(true, true),
 	);
 	$failing->handle(new LoadAdditionalScriptsEvent());
 	check($state->values === [] && Util::$scripts === [], 'configuration failure could break or instrument Talk');

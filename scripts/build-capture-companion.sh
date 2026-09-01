@@ -51,7 +51,7 @@ tree="$staging/cassini_capture"
 rm -rf "$tree"
 mkdir -p "$tree/appinfo" "$tree/lib/AppInfo" "$tree/lib/Listener" "$tree/js" "$(dirname "$output")"
 
-cp "$root/cassini_capture/appinfo/info.xml" "$root/cassini_capture/appinfo/app.php" "$tree/appinfo/"
+cp "$root/cassini_capture/appinfo/info.xml" "$tree/appinfo/"
 cp "$root/cassini_capture/lib/AppInfo/Application.php" "$tree/lib/AppInfo/"
 cp "$root/cassini_capture/lib/Listener/LoadTalkCaptureScriptListener.php" "$tree/lib/Listener/"
 cp "$root/cassini_capture/README.md" "$root/LICENSE" "$tree/"

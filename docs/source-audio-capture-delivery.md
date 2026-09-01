@@ -31,11 +31,13 @@ authenticated call. The event is part of the public `OCP` API since Nextcloud
    nonce-authorized script. No Talk asset is intercepted or rewritten.
 4. Injects `enabled` and the ExApp proxy base through `IInitialState` before the
    script runs. The ExApp synchronizes its `CASSINI_SOURCE_CAPTURE` value into
-   Nextcloud app config on lifecycle edges; the companion also verifies that
-   `gocassini` itself is enabled.
+   AppAPI's ExApp config store on lifecycle edges, and the companion reads that
+   store through `ExAppConfigService` (ordinary `IAppConfig` cannot see ExApps).
 
 The payload is deliberately loaded before Talk's bundle. Its `addTrack` wrapper
-therefore attaches `RTCRtpScriptTransform` synchronously, before negotiation.
+therefore attaches an inert `RTCRtpScriptTransform` synchronously, before
+negotiation. It creates no audio file or OPFS directory until Talk's confirmed
+recording-active status; confirmed recording-off seals and uploads immediately.
 The browser e2e asserts that ordering against a real `RTCPeerConnection`.
 
 The ExApp remains responsible for the worker, OPFS capture, upload intake,
