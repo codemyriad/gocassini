@@ -138,6 +138,9 @@ func inspectPortableAudio(out io.Writer, path string) error {
 // file's per-transcript chunk sets, as against what its manifest index says is
 // in there.
 type portableTranscriptBodies struct {
+	// DefaultID is the transcript a viewer opens first, resolved from the
+	// manifest. It is the one whose word count stands for the meeting.
+	DefaultID string
 	// WordCounts holds the decoded word count per transcript id. A transcript
 	// whose body could not be read is absent from the map, not zero in it.
 	WordCounts map[string]int
@@ -171,7 +174,8 @@ func readPortableTranscriptBodies(tags map[string]string, manifest portable.Mani
 	if manifest.Version != 2 && manifest.Version != 3 {
 		return bodies
 	}
-	if _, warnings, ok := defaultWordsTranscriptEntry(tags, manifest); ok {
+	if entry, warnings, ok := defaultWordsTranscriptEntry(tags, manifest); ok {
+		bodies.DefaultID = entry.ID
 		bodies.Warnings = append(bodies.Warnings, warnings...)
 	}
 	for _, entry := range manifest.Transcripts {
@@ -216,15 +220,15 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	language := firstNonEmpty(manifest.Transcript.Language, manifest.Meeting.Language)
 	if manifest.Version == 2 || manifest.Version == 3 {
 		// v2 stores transcript bodies in separate chunk sets; the main payload
-		// only carries descriptors. Count the words that came back out of those
-		// chunk sets rather than the ones the descriptors claim, so a file whose
-		// bodies are unreachable reports nothing read instead of the index's
-		// word count, and fall back to the default raw-ASR transcript's
-		// language tag.
-		wordCount = 0
-		for _, entry := range manifest.Transcripts {
-			wordCount += bodies.WordCounts[entry.ID]
-		}
+		// only carries descriptors. Two things follow for the meeting's word
+		// count. It is the words that came back out of a chunk set, not the
+		// ones a descriptor claims, so a file whose bodies are unreachable
+		// reports nothing read rather than the index's figure. And it is the
+		// default transcript's alone: a second raw transcript is another pass
+		// over the same speech, so adding the two together describes no meeting
+		// that ever happened — three words spoken twice were reported as six.
+		// The per-transcript lines below still carry every transcript.
+		wordCount = bodies.WordCounts[bodies.DefaultID]
 		if language == "" {
 			for _, entry := range manifest.Transcripts {
 				if entry.Default && entry.Language != "" {

@@ -900,3 +900,40 @@ func TestReadPortableTranscriptBodiesSeparatesReadFromDeclared(t *testing.T) {
 		t.Error("err() = nil, want the unreadable transcript reported to the caller")
 	}
 }
+
+// Alternative raw transcripts are passes over the same speech, not twice as
+// much meeting. The summary's `words=` is the default transcript's count — the
+// one a viewer opens — and the per-transcript lines carry every transcript with
+// its own. Summing them across the file reported five words for a meeting of
+// three, and the arithmetic got worse the more passes a producer published.
+func TestPrintPortableMeetingReportsTheDefaultTranscriptsWords(t *testing.T) {
+	tags := buildPortableV3TagsTwoTranscripts(t, portable.RoleRawASR)
+	payload, manifest, err := decodePortableMeeting(tags)
+	if err != nil {
+		t.Fatalf("decodePortableMeeting: %v", err)
+	}
+	bodies := readPortableTranscriptBodies(tags, manifest)
+	if bodies.DefaultID != portable.RoleRawASR {
+		t.Fatalf("default transcript = %q, want %q", bodies.DefaultID, portable.RoleRawASR)
+	}
+
+	var out bytes.Buffer
+	printPortableMeeting(&out, "meeting.opus", portableAudioSummary{Path: "meeting.opus"},
+		payload, manifest, bodies, portableIntegrityResult{Status: "ok"})
+	got := out.String()
+
+	if !strings.Contains(got, " words=3 ") {
+		t.Errorf("expected words=3, the default transcript's count, got %q", got)
+	}
+	if strings.Contains(got, " words=5 ") {
+		t.Errorf("expected the default transcript's count, not the sum across transcripts, got %q", got)
+	}
+	for _, want := range []string{
+		"transcript id=raw-asr role=raw-asr default=yes",
+		"transcript id=second-pass role=raw-asr default=no",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected the summary to list %q, got %q", want, got)
+		}
+	}
+}
