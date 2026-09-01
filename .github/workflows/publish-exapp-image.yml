@@ -544,6 +544,17 @@ jobs:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
         run: ./harness/bin/ci-smoke-exapp.sh
 
+      # The portable image is the one a CPU install runs, and every quality tier
+      # it declares must be executable there. This asserts the models are
+      # bundled and pass the recorder's pre-build checks; it needs no GPU and no
+      # transcription, so it belongs on this runner rather than only where the
+      # CUDA smoke happens to look (D-702).
+      - name: Assert the image bundles and validates every model it declares
+        env:
+          IMAGE_REF: ${{ steps.load.outputs.ref }}
+          CASSINI_SMOKE_MODELS_ONLY: '1'
+        run: ./harness/bin/ci-transcribe-smoke-exapp.sh
+
   build-cuda-base:
     name: Build CUDA base image (model + CUDA libs)
     # The fat, slow-changing substrate (~2.3GB fp32 model + CUDA native libs +

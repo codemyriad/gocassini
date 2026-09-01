@@ -29,14 +29,22 @@
 set -euo pipefail
 
 : "${IMAGE_REF:?IMAGE_REF must be set (e.g. ghcr.io/codemyriad/gocassini:sha-abc)}"
-"$(dirname "${BASH_SOURCE[0]}")/ci-ffmpeg-bundle.sh"
+
+# CASSINI_SMOKE_MODELS_ONLY=1 checks only the image's model contract — every
+# declared model bundled and accepted by the recorder's pre-build checks. That
+# needs no GPU, no transcription, no ffmpeg and no LFS fixture, so the portable
+# image can be held to it on a plain runner (D-702).
+MODELS_ONLY="${CASSINI_SMOKE_MODELS_ONLY:-0}"
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 FIXTURE_HOST="${REPO_ROOT}/harness/media/parakeet-smoke.mkv"
-if [[ ! -s "${FIXTURE_HOST}" ]]; then
-  echo "[transcribe-smoke] FAIL fixture missing or empty: ${FIXTURE_HOST}" >&2
-  echo "[transcribe-smoke] run scripts/fetch-smoke-fixture.sh to regenerate" >&2
-  exit 1
+if [[ "${MODELS_ONLY}" != "1" ]]; then
+  "$(dirname "${BASH_SOURCE[0]}")/ci-ffmpeg-bundle.sh"
+  if [[ ! -s "${FIXTURE_HOST}" ]]; then
+    echo "[transcribe-smoke] FAIL fixture missing or empty: ${FIXTURE_HOST}" >&2
+    echo "[transcribe-smoke] run scripts/fetch-smoke-fixture.sh to regenerate" >&2
+    exit 1
+  fi
 fi
 
 CONTAINER_NAME="cassini-transcribe-smoke-$$"
@@ -87,14 +95,14 @@ DISALLOW=$(read_env CASSINI_DISALLOW_MODEL_DOWNLOAD)
 # CUDA images need GPU exposed via CDI. Set DOCKER_RUN_GPU=1 to opt-in (or
 # set CASSINI_STT_DEVICE=cuda in the image ENV — we honor either).
 GPU_FLAGS=()
-if [[ "${DEVICE}" == "cuda" || "${DOCKER_RUN_GPU:-0}" == "1" ]]; then
+if [[ "${MODELS_ONLY}" != "1" ]] && [[ "${DEVICE}" == "cuda" || "${DOCKER_RUN_GPU:-0}" == "1" ]]; then
   GPU_FLAGS=(--device nvidia.com/gpu=all)
 fi
 
 # Assertion 5 (see header): prove the GPU is actually used when the image
 # says device=cuda. Needs the host's nvidia-smi to observe compute apps.
 GPU_ASSERT=0
-if [[ "${DEVICE}" == "cuda" && "${CASSINI_SMOKE_GPU_ASSERT:-1}" == "1" ]]; then
+if [[ "${DEVICE}" == "cuda" && "${MODELS_ONLY}" != "1" && "${CASSINI_SMOKE_GPU_ASSERT:-1}" == "1" ]]; then
   GPU_ASSERT=1
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     log "FAIL device=cuda but nvidia-smi is not on the host PATH"
@@ -215,6 +223,16 @@ for model in "${TIER_MODELS[@]}"; do
   fi
   log "OK   doctor accepts ${model}"
 done
+
+# The image contract — every declared model bundled, and every one of them
+# accepted by the recorder's own pre-build checks — holds for both variants and
+# needs no GPU and no transcription. CASSINI_SMOKE_MODELS_ONLY=1 runs just that
+# part, so the portable image can be held to it on a plain runner instead of
+# being covered only where a GPU happens to be (D-702).
+if [[ "${MODELS_ONLY}" == "1" ]]; then
+  log "PASS image bundles and validates every model it declares (${BUNDLED_MODELS})"
+  exit 0
+fi
 
 # ---- Assertion 2 + 3: `cassini build` succeeds + no download log line ----
 docker exec "${CONTAINER_NAME}" mkdir -p /tmp/smoke-in /tmp/smoke-out
