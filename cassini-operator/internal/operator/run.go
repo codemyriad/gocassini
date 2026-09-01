@@ -171,6 +171,11 @@ type Runtime struct {
 	settingsMu   sync.RWMutex
 	settings     STTSettings
 	settingsPath string
+	// LLM policy (D-696): persisted beside the STT policy, guarded the same way
+	// for job-spawn reads against PUT /settings/llm writes.
+	llmMu           sync.RWMutex
+	llm             LLMSettings
+	llmSettingsPath string
 }
 
 type TriggerRequest struct {
@@ -624,6 +629,7 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		publishJobTimeout:         defaultPublishJobTimeout,
 		recordHealthTimeout:       recordHealthProbeTimeout,
 		settingsPath:              settingsPath(cfg),
+		llmSettingsPath:           llmSettingsPath(cfg),
 	}
 	// Detect hardware on first start (or track it under an auto default) and
 	// load the persisted STT policy. A failure here must not take the operator
@@ -633,6 +639,14 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 		rt.settings = detectSettings()
 	} else {
 		rt.settings = settings
+	}
+	// Same for the LLM policy: seed from the deploy env on first start; on a
+	// load failure keep running on the deploy env rather than refusing to start.
+	if llm, err := LoadOrInitLLMSettings(rt.llmSettingsPath, os.Getenv); err != nil {
+		logger.Printf("llm_settings load failed (%v); using the deploy environment", err)
+		rt.llm = SeedLLMSettings(os.Getenv)
+	} else {
+		rt.llm = llm
 	}
 	store.SetStateChangePublisher(rt.publishStateChangeEvent)
 	rt.recordJobFn = rt.executeRecordCLI
@@ -694,6 +708,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 	api.HandleFunc("/status", rt.statusHandler)
 	api.HandleFunc("/setup", rt.setupHandler)
 	api.HandleFunc("/settings", rt.settingsHandler)
+	api.HandleFunc("/settings/", rt.llmSettingsHandler)
 	api.HandleFunc("/talk/provisioning", rt.talkProvisioningHandler)
 
 	// Optional bearer auth for the standalone job API (CASSINI_OPERATOR_API_TOKEN,
@@ -735,6 +750,7 @@ func mountBasePathOnto(root *http.ServeMux, basePath string, api http.Handler) {
 		root.Handle("/status", api)
 		root.Handle("/setup", api)
 		root.Handle("/settings", api)
+		root.Handle("/settings/", api)
 		root.Handle("/talk/provisioning", api)
 		return
 	}

@@ -62,7 +62,7 @@ There is one HTTP client, `chatCompletion(cfg, system, user)` in `llm.go`, used 
 | `ReadableCleanup` (step 8) | `BuildConfig.LLM` | `openai/gpt-4o-mini` | `LLM_MODEL` |
 | `BuildMeetingSummary` (step 9) | `BuildConfig.SummaryLLM` | inherits from `LLM_MODEL`; falls back to `openai/gpt-4o-mini` | `SUMMARY_MODEL` |
 
-Both share the same auth (`OPENROUTER_API_KEY`) and base URL (`OPENROUTER_BASE_URL`, falling back to `LLM_BASE_URL`).
+Both share the same auth (`OPENROUTER_API_KEY`) and base URL (`OPENROUTER_BASE_URL`, falling back to `LLM_BASE_URL`), unless a step is given its own endpoint: `READABLE_BASE_URL` / `READABLE_API_KEY` / `READABLE_MODEL` and `SUMMARY_BASE_URL` / `SUMMARY_API_KEY` / `SUMMARY_MODEL` override the shared values for that step alone. An endpoint override brings its own key — the shared key is never sent to a different host. The operator emits these per step from its persisted LLM settings.
 
 **The base URL is the switch, not the key.** `IsConfigured()` requires a base URL and an unset kill-switch; the API key is optional, because a self-hosted OpenAI-compatible server (llama.cpp, vLLM, Ollama) usually has none. When the key is empty the `Authorization` header is omitted entirely rather than sent as an empty bearer token, which some self-hosted servers reject. With no base URL, both steps are skipped silently.
 
@@ -98,7 +98,8 @@ type BuildConfig struct {
 | `OPENROUTER_API_KEY` | `LLM.APIKey` and `SummaryLLM.APIKey` |
 | `OPENROUTER_BASE_URL` (or `LLM_BASE_URL`) | `LLM.BaseURL` and `SummaryLLM.BaseURL` |
 | `LLM_MODEL` | `LLM.Model` (and `SummaryLLM.Model` until overridden) |
-| `SUMMARY_MODEL` | `SummaryLLM.Model` (overrides the default) |
+| `READABLE_BASE_URL` / `READABLE_API_KEY` / `READABLE_MODEL` | `LLM.BaseURL` / `LLM.APIKey` / `LLM.Model` for cleanup alone |
+| `SUMMARY_BASE_URL` / `SUMMARY_API_KEY` / `SUMMARY_MODEL` | `SummaryLLM.BaseURL` / `SummaryLLM.APIKey` / `SummaryLLM.Model` for the summary alone |
 | `CASSINI_LLM_TIMEOUT_SEC` | `TimeoutSec` on both (default 900; raise for CPU-bound local models) |
 | `CASSINI_LLM_MAX_TOKENS` | `MaxTokens` on both (default 4096) |
 | `CASSINI_SUMMARY_DISABLED` | `SummaryLLM.Disabled` |

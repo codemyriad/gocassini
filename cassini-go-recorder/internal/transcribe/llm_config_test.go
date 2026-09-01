@@ -159,3 +159,63 @@ func TestChatCompletionFallsBackToDefaultMaxTokens(t *testing.T) {
 		t.Errorf("max_tokens = %v, want %d", gotBody["max_tokens"], defaultLLMMaxTokens)
 	}
 }
+
+func clearStepEndpointEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"READABLE_BASE_URL", "READABLE_API_KEY", "READABLE_MODEL",
+		"SUMMARY_BASE_URL", "SUMMARY_API_KEY", "SUMMARY_MODEL",
+		"CASSINI_READABLE_DISABLED", "CASSINI_SUMMARY_DISABLED",
+	} {
+		t.Setenv(key, "")
+	}
+}
+
+func TestDefaultBuildConfigStepEndpointBringsItsOwnKey(t *testing.T) {
+	clearStepEndpointEnv(t)
+	t.Setenv("OPENROUTER_BASE_URL", "")
+	t.Setenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+	t.Setenv("OPENROUTER_API_KEY", "hosted-key")
+	t.Setenv("LLM_MODEL", "openai/gpt-4o-mini")
+	t.Setenv("SUMMARY_BASE_URL", "http://qwen.internal:8000/v1")
+	t.Setenv("READABLE_MODEL", "cheap-model")
+
+	cfg := DefaultBuildConfig()
+
+	if cfg.LLM.BaseURL != "https://openrouter.ai/api/v1" || cfg.LLM.APIKey != "hosted-key" {
+		t.Fatalf("readable should keep the shared endpoint and key, got %+v", cfg.LLM)
+	}
+	if cfg.LLM.Model != "cheap-model" {
+		t.Fatalf("READABLE_MODEL should override the shared model, got %q", cfg.LLM.Model)
+	}
+	if cfg.SummaryLLM.BaseURL != "http://qwen.internal:8000/v1" {
+		t.Fatalf("SUMMARY_BASE_URL should override the shared endpoint, got %q", cfg.SummaryLLM.BaseURL)
+	}
+	if cfg.SummaryLLM.APIKey != "" {
+		t.Fatalf("the shared key must not follow the summary step to a different host, got %q", cfg.SummaryLLM.APIKey)
+	}
+	if cfg.SummaryLLM.Model != "openai/gpt-4o-mini" {
+		t.Fatalf("summary should inherit the shared model, got %q", cfg.SummaryLLM.Model)
+	}
+	if !cfg.LLM.IsConfigured() || !cfg.SummaryLLM.IsConfigured() {
+		t.Fatalf("both steps should be configured: readable=%v summary=%v", cfg.LLM.IsConfigured(), cfg.SummaryLLM.IsConfigured())
+	}
+}
+
+func TestDefaultBuildConfigStepEndpointsWithoutSharedEndpoint(t *testing.T) {
+	clearStepEndpointEnv(t)
+	t.Setenv("OPENROUTER_BASE_URL", "")
+	t.Setenv("LLM_BASE_URL", "")
+	t.Setenv("OPENROUTER_API_KEY", "")
+	t.Setenv("READABLE_BASE_URL", "http://qwen.internal:8000/v1")
+	t.Setenv("READABLE_API_KEY", "local-key")
+
+	cfg := DefaultBuildConfig()
+
+	if !cfg.LLM.IsConfigured() || cfg.LLM.BaseURL != "http://qwen.internal:8000/v1" || cfg.LLM.APIKey != "local-key" {
+		t.Fatalf("readable should be configured from its own endpoint, got %+v", cfg.LLM)
+	}
+	if cfg.SummaryLLM.IsConfigured() {
+		t.Fatalf("summary has no endpoint and must stay off, got %+v", cfg.SummaryLLM)
+	}
+}

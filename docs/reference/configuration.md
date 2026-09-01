@@ -40,6 +40,12 @@ Optional capability pass-through:
 The base URL is what enables these steps; the API key is optional, so a
 self-hosted OpenAI-compatible endpoint with no authentication works.
 
+When the recorder is run by the operator, these LLM variables only seed the
+operator's own LLM settings on its first start (`llm-settings.json` beside the
+job database; `GET`/`PUT /settings/llm`). After that the persisted settings —
+not the environment — are what every build receives, so endpoints and models
+change without a redeploy.
+
 Those capability variables affect optional build layers. They are not required just to bring the base stack up.
 
 ## Operator process flags and env vars

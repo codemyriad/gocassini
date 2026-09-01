@@ -98,17 +98,17 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       <variable>
         <name>OPENROUTER_API_KEY</name>
         <display-name>LLM API key (optional)</display-name>
-        <description>API key for transcript cleanup and meeting summaries, sent to OpenRouter or any OpenAI-compatible endpoint (see LLM_BASE_URL). Leave empty when the endpoint needs no key, as a self-hosted model server usually does not — the key is not what switches the feature on; LLM_BASE_URL is.</description>
+        <description>Initial API key for the LLM endpoint (see LLM_BASE_URL), used to pre-fill the app's LLM settings on first start; afterwards manage keys in the app. Leave empty when the endpoint needs no key, as a self-hosted model server usually does not.</description>
       </variable>
       <variable>
         <name>LLM_BASE_URL</name>
         <display-name>LLM base URL (optional)</display-name>
-        <description>OpenAI-compatible API base URL used for transcript cleanup and meeting summaries — a hosted provider or your own model server. This is what enables the feature: leave it empty to publish raw transcripts without summaries. Defaults to https://openrouter.ai/api/v1 when OPENROUTER_API_KEY is set.</description>
+        <description>Initial OpenAI-compatible API base URL for transcript cleanup and meeting summaries — a hosted provider or your own model server. It pre-fills the app's LLM settings on first start; afterwards endpoints are managed in the app without a redeploy. Leave empty to start with no LLM endpoint. Defaults to https://openrouter.ai/api/v1 when OPENROUTER_API_KEY is set.</description>
       </variable>
       <variable>
         <name>LLM_MODEL</name>
         <display-name>LLM model (optional)</display-name>
-        <description>Model identifier for transcript cleanup and meeting summaries (default: openai/gpt-4o-mini).</description>
+        <description>Initial model identifier for transcript cleanup and meeting summaries (default: openai/gpt-4o-mini); pre-fills the app's LLM settings on first start.</description>
       </variable>
       <variable>
         <name>CASSINI_ROOM_ID_PEPPER</name>
@@ -179,7 +179,7 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
            surface's Settings panel (D-420 V3). Kept ADMIN like the rest of the
            operator API — a non-admin's PUT/GET 403s at the proxy boundary. -->
       <route>
-        <url>^operator\/settings\/?$</url>
+        <url>^operator\/settings(\/.*)?$</url>
         <verb>GET,PUT</verb>
         <access_level>ADMIN</access_level>
       </route>

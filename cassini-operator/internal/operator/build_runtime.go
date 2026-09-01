@@ -264,7 +264,7 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	// Probe free VRAM only after any RAM wait, immediately before launch. That
 	// reading is an admission snapshot; taking it before a long memory wait
 	// would let another workload consume the GPU in between.
-	env := rt.currentSettings().ChildEnv(os.Environ())
+	env := rt.childEnv()
 	buildEnv, err := limits.applyToEnv(env, true)
 	if err != nil {
 		return meetingPath, err
