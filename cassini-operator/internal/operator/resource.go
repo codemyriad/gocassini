@@ -136,10 +136,39 @@ func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (str
 			permanent: true,
 		}
 	}
-	if err := rt.requireBundledModel(model); err != nil {
+	err := rt.requireBundledModel(model)
+	if err == nil {
+		return model, nil
+	}
+	// An automatic policy exists to pick something this host can run, so when
+	// the image does not carry the tier's model, use the best tier it does
+	// carry rather than stranding a recording nobody chose a tier for. This is
+	// the CUDA image that lost its GPU: it falls back to CPU decoding and
+	// carries only fp32, which is exactly the "best" tier. A pinned tier or a
+	// pinned model is the administrator's own decision and still blocks with
+	// the actionable message.
+	if settings.Source == sttSourceUser || strings.TrimSpace(settings.ModelOverride) != "" {
 		return "", err
 	}
-	return model, nil
+	if alternative, ok := rt.bestBundledModel(device); ok {
+		return alternative, nil
+	}
+	return "", err
+}
+
+// bestBundledModel returns the most accurate tier's model that this image both
+// supports on device and actually carries.
+func (rt *Runtime) bestBundledModel(device string) (string, bool) {
+	for _, quality := range []string{sttQualityBest, sttQualityBalanced, sttQualityFast} {
+		model := modelForQuality(quality, device)
+		if !modelSupportsDevice(model, device) {
+			continue
+		}
+		if rt.requireBundledModel(model) == nil {
+			return model, true
+		}
+	}
+	return "", false
 }
 
 // requireBundledModel refuses a tier whose model the running image does not

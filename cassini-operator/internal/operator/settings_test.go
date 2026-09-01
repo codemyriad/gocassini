@@ -544,9 +544,14 @@ func TestPutSettingsRejectsUnauditedCUDAModel(t *testing.T) {
 }
 
 func TestGetSettingsReturnsEffectiveView(t *testing.T) {
-	t.Setenv(envSTTCUDACapable, "0")
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
+	// After newTestRuntime, which declares CUDA capability itself: setting this
+	// first would be silently overwritten, and the test would then assert the
+	// CPU path while a GPU host resolved CUDA. Stub the device too so the
+	// assertion does not depend on the host at all.
+	t.Setenv(envSTTCUDACapable, "0")
+	stubNVIDIADevice(t, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
 	rec := httptest.NewRecorder()

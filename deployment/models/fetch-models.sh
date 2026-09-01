@@ -46,7 +46,11 @@ model_files() {
   case "$1" in
     parakeet-tdt-ctc-110m-en-int8) echo "model.int8.onnx tokens.txt" ;;
     parakeet-tdt-0.6b-v3-int8)     echo "encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt" ;;
-    parakeet-tdt-0.6b-v3)          echo "encoder.onnx decoder.onnx joiner.onnx tokens.txt" ;;
+    # encoder.weights is external-data for encoder.onnx: sherpa cannot load the
+    # encoder without it, so it is required, not a sidecar to copy if present.
+    # A missing one must fail this build rather than bake a model that only
+    # fails when a meeting is being transcribed.
+    parakeet-tdt-0.6b-v3)          echo "encoder.onnx encoder.weights decoder.onnx joiner.onnx tokens.txt" ;;
     *) return 1 ;;
   esac
 }
@@ -84,10 +88,9 @@ for id in "$@"; do
     test -f "$src_dir/$f" || { echo "missing $f in $id archive" >&2; ls "$src_dir" >&2; exit 1; }
     cp "$src_dir/$f" "$model_dir/"
   done
-  # Optional sidecars: external onnx weights (the fp32 encoder references
-  # encoder.weights via external_data and will not load without it) and the BPE
-  # vocab some tokenizers ship.
-  for f in encoder.weights bpe.vocab; do
+  # Optional extras: the BPE vocab some tokenizers ship. Anything a model
+  # cannot load without belongs in model_files above.
+  for f in bpe.vocab; do
     if [ -f "$src_dir/$f" ]; then
       cp "$src_dir/$f" "$model_dir/"
     fi

@@ -172,6 +172,27 @@ if [[ -z "${BUNDLED_MODELS}" ]]; then
 fi
 read -r -a TIER_MODELS <<< "${BUNDLED_MODELS}"
 log "declared bundled models: ${BUNDLED_MODELS}"
+
+# The declaration is only worth checking against if it covers the tiers this
+# image's device can select — otherwise dropping a model from both the image and
+# its declaration stays invisible. A CUDA image serves every tier with fp32; a
+# portable image needs one model per CPU tier.
+CUDA_CAPABLE=$(read_env CASSINI_STT_CUDA_CAPABLE)
+if [[ "${CUDA_CAPABLE}" == "1" || "${CUDA_CAPABLE}" == "true" ]]; then
+  REQUIRED_TIER_MODELS=(parakeet-tdt-0.6b-v3)
+else
+  REQUIRED_TIER_MODELS=(parakeet-tdt-ctc-110m-en-int8 parakeet-tdt-0.6b-v3-int8 parakeet-tdt-0.6b-v3)
+fi
+for required in "${REQUIRED_TIER_MODELS[@]}"; do
+  case " ${BUNDLED_MODELS} " in
+    *" ${required} "*) ;;
+    *)
+      log "FAIL image does not declare ${required}"
+      log "     a quality tier an administrator can select would have no model to load"
+      exit 1
+      ;;
+  esac
+done
 for model in "${TIER_MODELS[@]}"; do
   model_dir="${CACHE_ROOT}/models/${model}"
   log "asserting bundled model files exist at ${model_dir}"

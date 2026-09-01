@@ -890,10 +890,14 @@ func TestAdmitModelForDeviceRequiresTheModelToBeBundled(t *testing.T) {
 		t.Fatalf("bundled model was refused: %v", err)
 	}
 
-	_, err := rt.admitModelForDevice(STTSettings{Quality: sttQualityBalanced}, deviceCPU)
+	// A tier the administrator pinned blocks: they chose it, and quietly
+	// running a different one would be the silent substitution this whole
+	// change exists to avoid.
+	pinned := STTSettings{Quality: sttQualityBalanced, Source: sttSourceUser}
+	_, err := rt.admitModelForDevice(pinned, deviceCPU)
 	var unavailable *resourceUnavailableError
 	if !errors.As(err, &unavailable) || unavailable.resource != "model bundle" {
-		t.Fatalf("unbundled tier error = %v, want model bundle resourceUnavailableError", err)
+		t.Fatalf("unbundled pinned tier error = %v, want model bundle resourceUnavailableError", err)
 	}
 	if !unavailable.permanent {
 		t.Error("a model the image does not carry cannot appear by waiting; want permanent")
@@ -902,9 +906,21 @@ func TestAdmitModelForDeviceRequiresTheModelToBeBundled(t *testing.T) {
 		t.Errorf("detail %q does not name the missing model", unavailable.detail)
 	}
 
+	// An automatic policy is the operator's own choice, so it takes the best
+	// tier the image does carry instead of stranding the recording — the CUDA
+	// image that lost its GPU and carries only fp32.
+	auto := STTSettings{Quality: sttQualityBalanced, Source: sttSourceAuto}
+	got, err := rt.admitModelForDevice(auto, deviceCPU)
+	if err != nil {
+		t.Fatalf("auto policy was blocked instead of using a bundled tier: %v", err)
+	}
+	if got != modelParakeetV3Fp32 {
+		t.Errorf("auto fallback model = %q, want the bundled %s", got, modelParakeetV3Fp32)
+	}
+
 	// An image that permits downloads is not gated on what it happens to carry.
 	downloads := &Runtime{cfg: Config{ModelCacheRoot: cacheRoot}}
-	if _, err := downloads.admitModelForDevice(STTSettings{Quality: sttQualityBalanced}, deviceCPU); err != nil {
+	if _, err := downloads.admitModelForDevice(pinned, deviceCPU); err != nil {
 		t.Fatalf("download-capable image was gated on the bundle: %v", err)
 	}
 }

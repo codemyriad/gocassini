@@ -166,6 +166,13 @@ func (rt *Runtime) statusHandler(w http.ResponseWriter, r *http.Request) {
 	settings := rt.currentSettings()
 	effective := settings.effective()
 	usable, detail := rt.effectiveComputeStatus(settings, effective.Device)
+	// Report the model a build would actually load: on an image that does not
+	// carry the tier's model, an automatic policy is admitted with the best
+	// tier the image does carry, and /status must name that one rather than the
+	// one the tier nominally maps to.
+	if admitted, err := rt.admitModelForDevice(settings, effective.Device); err == nil {
+		effective.Model = admitted
+	}
 	resp := statusResponse{
 		Version:     strings.TrimSpace(os.Getenv(envAppVersion)),
 		VCSRevision: buildVCSRevision(),

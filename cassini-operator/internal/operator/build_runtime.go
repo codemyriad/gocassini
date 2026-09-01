@@ -271,6 +271,10 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	// the attempt log should never have to infer it from the elapsed time.
 	rt.logger.Printf("resource governor: job %s admitted on %s (quality=%s model=%s)",
 		task.JobID, device, normalizeQuality(settings.Quality), model)
+	if tierModel := settings.modelForDevice(device); tierModel != model {
+		rt.logger.Printf("resource governor: job %s uses %s because this image does not bundle %s for the %s tier",
+			task.JobID, model, tierModel, normalizeQuality(settings.Quality))
+	}
 	if err := limits.waitForMemory(ctx, limits.minFreeMemForBuild(device, model), rt.logger.Printf); err != nil {
 		return meetingPath, err
 	}

@@ -1052,7 +1052,7 @@ func TestStatusHandlerReportsAnUnbundledTierAsUnusable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rt.setSettings(STTSettings{Quality: sttQualityBalanced})
+	rt.setSettings(STTSettings{Quality: sttQualityBalanced, Source: sttSourceUser})
 	rt.computeProbe = func(string) (bool, string) { return true, "cpu inference (no GPU required)" }
 
 	rec := httptest.NewRecorder()
@@ -1065,14 +1065,21 @@ func TestStatusHandlerReportsAnUnbundledTierAsUnusable(t *testing.T) {
 		t.Fatalf("decode status response: %v", err)
 	}
 	if resp.STT.DeviceUsable || !strings.Contains(resp.STT.Detail, modelParakeetV3Int8) {
-		t.Fatalf("unbundled tier reported as usable or unexplained: %#v", resp.STT)
+		t.Fatalf("unbundled pinned tier reported as usable or unexplained: %#v", resp.STT)
 	}
 
-	// The tier whose model the image does carry is ready on the same host.
-	rt.setSettings(STTSettings{Quality: sttQualityBest})
+	// The same host with an automatic policy is ready, and says which model it
+	// will really load — the bundled fp32, not the tier's nominal int8.
+	rt.setSettings(STTSettings{Quality: sttQualityBalanced, Source: sttSourceAuto})
 	rec = httptest.NewRecorder()
 	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("bundled tier status = %d, want 200 body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("auto policy status = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.STT.ModelID != modelParakeetV3Fp32 {
+		t.Fatalf("model_id = %q, want the bundled %s a build would actually load", resp.STT.ModelID, modelParakeetV3Fp32)
 	}
 }
