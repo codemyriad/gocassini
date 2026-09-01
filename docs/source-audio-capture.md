@@ -224,19 +224,48 @@ named in the CI job.
 
 ## Trying it
 
-Capture is off until a user opts in. The opt-in UI is not built yet; the control
-is exposed on the Cassini page:
+Three things have to be true before a single byte is captured, and they are
+deliberately independent: an administrator enables collection, the companion
+app is installed so the payload reaches Talk at all, and the participant opts
+in themselves.
 
-```js
-// On the Cassini page in Nextcloud:
-await window.cassiniSourceCapture.enable()
-// Join an authenticated Talk call, leave it, and the upload runs.
-await window.cassiniSourceCapture.disable()  // removes consent
+**1. Install the companion app.** The payload is delivered by `cassini_capture`,
+a separate native Nextcloud app (see
+[source-audio-capture-delivery.md](source-audio-capture-delivery.md)). The
+ExApp does not contain it and installing the ExApp does not install it. A
+release tag publishes a `cassini_capture.tar.gz`; from a branch, build one:
+
+```bash
+./scripts/build-capture-companion.sh          # -> build/artifacts/capture-companion/
+# then unpack it into the Nextcloud custom_apps directory and:
+occ app:enable cassini_capture
 ```
 
-Uploads land under the operator's `--capture-root`
-(`CASSINI_OPERATOR_CAPTURE_ROOT`, default `<data>/capture`) as
-`<room>/<user>/<call-start-ms>/` holding `capture.json` and the segment files.
+**2. Enable collection on the ExApp.** `CASSINI_SOURCE_CAPTURE=1`, set as a
+deploy option at registration (`app_api:app:register … --env`). The ExApp
+mirrors it into Nextcloud app config, which is what the companion reads while
+building the call page's initial state — the operator logs
+`source capture: synchronized companion initial state enabled=true` when that
+lands. Add `CASSINI_SOURCE_AUDIO_INGEST=1` as well if you want the uploaded
+audio to reach a transcript rather than only be stored.
+
+**3. Opt in, per participant.** There is no UI for this yet. On any Nextcloud
+page in that browser:
+
+```js
+localStorage.setItem("cassini.sourceCapture.consent", "granted")
+```
+
+Then join an **authenticated** Talk call (guest pages are not supported —
+Talk does not dispatch the hook there), talk, and leave. Uploads land under the
+operator's `--capture-root` (`CASSINI_OPERATOR_CAPTURE_ROOT`, default
+`<data>/capture`) as `<room>/<user>/<call-start-ms>/`, holding `capture.json`
+and the segment files.
+
+If nothing arrives, check in this order: the companion is enabled
+(`occ app:list | grep cassini_capture`), the operator logged the synchronized
+initial state, and `operator/capture/enabled` answers `{"enabled":true}` for a
+logged-in user. The client fails closed at every one of those.
 
 ## Not done yet
 
