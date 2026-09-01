@@ -106,4 +106,27 @@ bash -n "$setup_sh" || fail "bash -n failed for manual-test-setup.sh"
 bash -n "$SCRIPT_DIR/lib-exapp-image.sh" || fail "bash -n failed for lib-exapp-image.sh"
 bash -n "$stack_sh" || fail "bash -n failed for lib/stack.sh"
 
+# 7. Every operator image declares whether its native runtime actually bundles
+# CUDA. Hardware visibility is not enough: AppAPI may place the portable image
+# on a GPU daemon after a silent -cuda tag fallback, and admission must still
+# fail closed before the ASR binary starts.
+for dockerfile in deployment/Dockerfile.exapp deployment/Dockerfile.operator; do
+  grep -q 'CASSINI_STT_CUDA_CAPABLE=0' "$PROJECT_ROOT/$dockerfile" \
+    || fail "$dockerfile does not declare the portable/CUDA-ineligible runtime"
+done
+grep -q 'CASSINI_STT_CUDA_CAPABLE=1' "$PROJECT_ROOT/deployment/Dockerfile.exapp.cuda" \
+  || fail "Dockerfile.exapp.cuda does not declare its CUDA-capable runtime"
+
+# 8. Local image builds resolve a concrete newest-stable FFmpeg version before
+# invoking Docker. Passing only the literal value "latest" would allow the
+# Docker cache to retain an older upstream release indefinitely.
+grep -qF 'deployment/ffmpeg/resolve-latest.sh' "$stack_sh" \
+  || fail "harness image build does not resolve newest stable FFmpeg"
+# shellcheck disable=SC2016 # Match the literal shell source, not this test's variables.
+grep -qF -- '--build-arg "FFMPEG_VERSION=$ffmpeg_version"' "$stack_sh" \
+  || fail "harness image build does not pass the resolved FFmpeg version"
+# shellcheck disable=SC2016 # Match the literal Compose interpolation syntax.
+grep -qF 'FFMPEG_VERSION: ${FFMPEG_VERSION:-latest}' "$PROJECT_ROOT/deployment/compose.yml" \
+  || fail "Compose operator build does not forward its resolved FFmpeg version"
+
 echo "PASS: ExApp image setup delegates to the manifest-derived canonical helper (<image-tag>=$real_tag)"

@@ -228,6 +228,12 @@
               },
               "text": {
                 "type": "string"
+              },
+              "attributionGapDb": {
+                "type": "number"
+              },
+              "lowConfidenceSpeaker": {
+                "type": "boolean"
               }
             }
           }

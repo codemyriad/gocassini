@@ -12,6 +12,9 @@ import (
 // ListInterruptedTalkRecordJobs filters on the current sweep timestamp to
 // notify each interruption exactly once — re-stamping would re-send spreed a
 // failed callback for the same dead job on every restart (D-352/D-362).
+// Resource-blocked builds are terminal until an administrator fixes the GPU
+// runtime/capacity and explicitly reruns them, so restart recovery must leave
+// their diagnostic state and ready run bundle intact.
 // QueueRerunAttempt clears interrupted_at when a job is rerun, so nothing
 // depends on refreshing the stamp.
 //
@@ -36,16 +39,16 @@ func (s *Store) MarkIncompleteJobsInterrupted(ctx context.Context, interruptedAt
 	result, err := tx.ExecContext(ctx, `
 UPDATE jobs
 SET state = ?, updated_at = ?, interrupted_at = ?
-WHERE state NOT IN (?, ?, ?)
-  AND NOT (state = 'queued' AND stage IN ('build', 'seal', 'publish'))`, "interrupted", interruptedAt, interruptedAt, "succeeded", "failed", "interrupted")
+WHERE state NOT IN (?, ?, ?, ?)
+  AND NOT (state = 'queued' AND stage IN ('build', 'seal', 'publish'))`, "interrupted", interruptedAt, interruptedAt, "succeeded", "failed", "interrupted", "blocked")
 	if err != nil {
 		return 0, fmt.Errorf("mark incomplete jobs interrupted: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE job_attempts
 SET state = ?, updated_at = ?, interrupted_at = ?
-WHERE state NOT IN (?, ?, ?)
-  AND NOT (state = 'queued' AND stage IN ('build', 'seal', 'publish'))`, "interrupted", interruptedAt, interruptedAt, "succeeded", "failed", "interrupted"); err != nil {
+WHERE state NOT IN (?, ?, ?, ?)
+  AND NOT (state = 'queued' AND stage IN ('build', 'seal', 'publish'))`, "interrupted", interruptedAt, interruptedAt, "succeeded", "failed", "interrupted", "blocked"); err != nil {
 		return 0, fmt.Errorf("mark incomplete attempts interrupted: %w", err)
 	}
 	count, err := result.RowsAffected()

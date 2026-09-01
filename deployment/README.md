@@ -11,8 +11,15 @@ This folder is the repo-root Docker Compose bundle for:
 ```bash
 cd deployment
 cp .env.example .env   # optional: only needed to change defaults or set secrets
-docker compose up --build
+FFMPEG_VERSION="$(./ffmpeg/resolve-latest.sh)" docker compose up --build
 ```
+
+The resolver selects the newest stable source release advertised by
+`ffmpeg.org` each time this command runs. Passing the resolved version as a
+build argument prevents Docker from reusing an older cached `latest` layer.
+The built image records the selected source and checksum in
+`/opt/cassini/ffmpeg/BUILDINFO`; image smoke tests exercise Cassini's required
+formats, filters, Opus encode/remux/decode path, and shared-library closure.
 
 Default browser surfaces (published on loopback only):
 
@@ -101,7 +108,8 @@ this exposes the operator on all host interfaces, see "Network exposure"):
 
 ```bash
 cd deployment
-docker compose -f compose.yml -f compose.hostnet.yml up -d --build
+FFMPEG_VERSION="$(./ffmpeg/resolve-latest.sh)" \
+  docker compose -f compose.yml -f compose.hostnet.yml up -d --build
 ```
 
 Then configure Talk's recording backend with the host gateway URL that the
@@ -143,7 +151,7 @@ Then run the same command:
 
 ```bash
 cd deployment
-docker compose up --build
+FFMPEG_VERSION="$(./ffmpeg/resolve-latest.sh)" docker compose up --build
 ```
 
 ## Optional capability pass-through
@@ -157,6 +165,9 @@ The bundle also passes these optional operator capability envs through when you 
 - `SUMMARY_MODEL`
 - `CASSINI_SUMMARY_DISABLED`
 - `CASSINI_READABLE_STRICT_BATCHES`
+- `CASSINI_STT_BACKEND`
+- `CASSINI_ATTRIBUTION_DISABLED`
+- `CASSINI_ATTRIBUTION_DROP`
 
 They are intentionally not part of the narrow core deployment contract.
 
@@ -164,7 +175,7 @@ They are intentionally not part of the narrow core deployment contract.
 
 ```bash
 cd deployment
-docker compose up --build
+FFMPEG_VERSION="$(./ffmpeg/resolve-latest.sh)" docker compose up --build
 curl -s http://127.0.0.1:4000/jobs
 curl -s http://127.0.0.1:4173/jobs
 curl -s http://127.0.0.1:8765/catalog.json

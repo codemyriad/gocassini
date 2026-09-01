@@ -3,6 +3,7 @@
   import { Sun, Moon, Search, PanelLeft, X } from "@lucide/svelte";
   import {
     filterMeetingCatalogEntries,
+    formatMeetingDateShort,
     formatMeetingDuration,
     type MeetingCatalogEntry,
   } from "../viewer/catalog";
@@ -162,7 +163,7 @@
             <span class="row-main">
               <span class="row-title">{meeting.title}</span>
               <span class="row-meta">
-                <span>{meeting.dateLabel}</span>
+                <span>{formatMeetingDateShort(meeting.dateLabel)}</span>
                 <span class="dot" aria-hidden="true"></span>
                 <span class="row-room">{roomLabelOf(meeting)}</span>
                 {#if typeof meeting.speakerCount === "number"}

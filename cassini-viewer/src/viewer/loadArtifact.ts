@@ -38,6 +38,19 @@ export interface LoadedArtifact {
   chaptersSrc: string | null;
   timingPrecision: ArtifactTimingPrecision;
   metadata: ArtifactMetadata | null;
+  /**
+   * The producer already clipped this artifact's word ends to the audio it
+   * measured (manifest `provenance.wordTimings.endsBoundedByAudio`).
+   *
+   * The viewer carries a display-time repair for the opposite case, where a
+   * word's end was stamped at the next acoustic onset and so ran across the
+   * following silence. That repair must not run on an artifact whose ends are
+   * already measured: it would clip a genuinely long word — 1.44 s against a
+   * 240 ms median, in the fp32 evidence that put this flag here — back to its
+   * 1 s budget and undo the production fix. False for every artifact that
+   * predates the marker, which is all 197 published meetings.
+   */
+  wordEndsBoundedByAudio: boolean;
   availableTranscripts: PortableTranscriptDescriptor[];
   currentTranscriptId: string;
 }
@@ -331,6 +344,7 @@ function buildPortableLoadedArtifact({
       "portable-opus",
       buildPortableMetadataRaw(manifest, transcript, displayTranscript, readableTranscript),
     ),
+    wordEndsBoundedByAudio: readWordEndsBoundedByAudio(manifest.provenance),
     availableTranscripts,
     currentTranscriptId,
   };
@@ -383,6 +397,7 @@ async function loadArtifactFromPaths(paths: {
       paths.audioPath ? "manual-artifact" : "artifact-directory",
       buildDirectoryMetadataRaw(manifest, transcript, displayTranscript, readableTranscript),
     ),
+    wordEndsBoundedByAudio: readWordEndsBoundedByAudio(manifest?.provenance),
     availableTranscripts: SYNTHETIC_SINGLE_TRANSCRIPT,
     currentTranscriptId: "default",
   };
@@ -541,6 +556,20 @@ async function probeOptionalText(assetPath: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Does the manifest vouch that word ends were bounded by the measured audio?
+ *
+ * The marker is `provenance.wordTimings.endsBoundedByAudio` and only the
+ * literal boolean `true` counts. Anything else — absent provenance, an absent
+ * `wordTimings`, a string "true", a truthy number — leaves it false, because
+ * the false answer is the safe one: it keeps the display-time repair running,
+ * which is the behaviour every artifact had before the marker existed.
+ */
+export function readWordEndsBoundedByAudio(provenance: unknown): boolean {
+  const wordTimings = asMaybeObject(asMaybeObject(provenance)?.wordTimings);
+  return wordTimings?.endsBoundedByAudio === true;
 }
 
 function asLooseObject(input: unknown): Record<string, unknown> {
@@ -728,6 +757,12 @@ function buildProcessingMetadataRows(raw: Record<string, unknown>): ArtifactMeta
   const displayTranscript = describeProcessingStep(asMaybeObject(provenance?.displayTranscript));
   if (displayTranscript) {
     rows.push({ label: "Display alignment", value: displayTranscript });
+  }
+  // Surfaced because it changes what the reader is looking at: with the marker
+  // the word ends on screen are measured, without it the viewer is clipping
+  // decoder-inflated ends back to a budget before judging simultaneity.
+  if (readWordEndsBoundedByAudio(provenance)) {
+    rows.push({ label: "Word timings", value: "Ends bounded by measured audio" });
   }
 
   const sourceTranscriptVersion = asNonEmptyString(stats?.sourceTranscriptVersion);
@@ -960,6 +995,8 @@ export async function readTranscriptFile(file: File): Promise<LoadedArtifact> {
       },
       speakers: transcript.speakers,
     }),
+    // A bare words file carries no manifest, so nothing vouches for its ends.
+    wordEndsBoundedByAudio: false,
     availableTranscripts: SYNTHETIC_SINGLE_TRANSCRIPT,
     currentTranscriptId: "default",
   };

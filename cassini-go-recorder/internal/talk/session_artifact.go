@@ -32,6 +32,14 @@ type sessionCaptureArtifact struct {
 	sessionID   string
 	sessionMeta session.Session
 
+	// monoOrigin retains the monotonic component returned by time.Now, while
+	// monoBaseNS retains that instant's Unix-nanosecond coordinate. Persisted
+	// *MonoNS values are base + monotonic elapsed time: streams share one stable
+	// clock, and external capture-boundary tools retain the existing Unix-ns
+	// coordinate during normal operation.
+	monoOrigin time.Time
+	monoBaseNS uint64
+
 	eventsFile   *os.File
 	eventsWriter *bufio.Writer
 
@@ -108,12 +116,15 @@ func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName
 		return nil, fmt.Errorf("open events file: %w", err)
 	}
 
-	now := time.Now().UTC()
+	// Keep the original time.Time for its process-monotonic component. Calling
+	// UTC is only appropriate for the separately persisted wall-clock label.
+	now := time.Now()
+	monoBaseNS := uint64(now.UnixNano())
 	meta := session.Session{
 		Version:        session.SchemaVersion,
 		SessionID:      fmt.Sprintf("%s_%s", base, sessionID),
-		StartedWallUTC: now.Format(time.RFC3339Nano),
-		StartedMonoNS:  uint64(now.UnixNano()),
+		StartedWallUTC: now.UTC().Format(time.RFC3339Nano),
+		StartedMonoNS:  monoBaseNS,
 		Platform: session.Platform{
 			Name:       "nextcloudtalk",
 			Deployment: "custom",
@@ -133,6 +144,8 @@ func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName
 		eventsPath:   eventsPath,
 		sessionID:    sessionID,
 		sessionMeta:  meta,
+		monoOrigin:   now,
+		monoBaseNS:   monoBaseNS,
 		eventsFile:   eventsFile,
 		eventsWriter: bufio.NewWriter(eventsFile),
 		streams:      map[string]*sessionCaptureStream{},
@@ -150,7 +163,7 @@ func newSessionCaptureArtifact(finalOutputPath, callURL, roomToken, recorderName
 		"final_output":  finalOutputPath,
 		"room_token":    roomToken,
 		"recorder_name": recorderName,
-	}, uint64(now.UnixNano())); err != nil {
+	}, now); err != nil {
 		_ = eventsFile.Close()
 		return nil, err
 	}
@@ -172,9 +185,9 @@ func (a *sessionCaptureArtifact) openStream(
 
 	midSafe := sanitizeSessionPathPart(desc.mid)
 	ridSafe := sanitizeSessionPathPart(desc.rid)
-	startMonoNS := uint64(arrival.UnixNano())
+	startMonoNS := a.monoNS(arrival)
 	pid := a.ensureParticipantLocked(remoteSessionID, participantID, participantName)
-	ltid := a.ensureLogicalTrackLocked(pid, desc.kind, desc.mid, desc.rid, arrival)
+	ltid := a.ensureLogicalTrackLocked(pid, desc.kind, desc.mid, desc.rid, startMonoNS)
 	streamID := fmt.Sprintf("s_%06d", a.streamSeq+1)
 	a.streamSeq++
 
@@ -212,9 +225,10 @@ func (a *sessionCaptureArtifact) openStream(
 			FmtpSnapshot: cloneStringMap(desc.fmtp),
 			StartMonoNS:  startMonoNS,
 		},
-		writer:    w,
-		logPath:   streamPath,
-		indexPath: indexPath,
+		writer:     w,
+		logPath:    streamPath,
+		indexPath:  indexPath,
+		lastRecvNS: startMonoNS,
 	}
 	a.streams[streamID] = state
 	a.sessionMeta.PacketStreams = append(a.sessionMeta.PacketStreams, state.stream)
@@ -233,7 +247,7 @@ func (a *sessionCaptureArtifact) openStream(
 		"codec":             desc.codec,
 		"primary_ssrc":      primarySSRC,
 		"pt":                payloadType,
-	}, uint64(arrival.UnixNano())); err != nil {
+	}, arrival); err != nil {
 		_ = w.Close()
 		a.removeStream(streamID)
 		a.noteCaptureFailure("open", streamID, err)
@@ -310,7 +324,7 @@ func (a *sessionCaptureArtifact) writeRTP(streamID string, pkt *rtp.Packet, recv
 		a.mu.Unlock()
 		return fmt.Errorf("stream not writable: %s", streamID)
 	}
-	recvMonoNS := clampMonoNS(stream, uint64(recv.UnixNano()))
+	recvMonoNS := clampMonoNS(stream, a.monoNS(recv))
 	writer := stream.writer
 	a.mu.Unlock()
 
@@ -359,7 +373,7 @@ func (a *sessionCaptureArtifact) writeRTCP(streamID string, packets []rtcp.Packe
 	}
 	writer := stream.writer
 	recvTimes := make([]uint64, 0, len(wirePackets))
-	recvMonoNS := uint64(recv.UnixNano())
+	recvMonoNS := a.monoNS(recv)
 	for range wirePackets {
 		recvMonoNS = clampMonoNS(stream, recvMonoNS)
 		recvTimes = append(recvTimes, recvMonoNS)
@@ -437,7 +451,7 @@ func (a *sessionCaptureArtifact) closeStream(streamID, reason string, endedAt ti
 		"stream_id":    streamID,
 		"reason":       reason,
 		"packet_count": packetCount,
-	}, uint64(endedAt.UnixNano())); err != nil && closeErr == nil {
+	}, endedAt); err != nil && closeErr == nil {
 		closeErr = err
 	}
 	if closeErr != nil {
@@ -471,7 +485,7 @@ func (a *sessionCaptureArtifact) close() error {
 	if err := a.emitEvent(map[string]any{
 		"type":   "session_closed",
 		"reason": "recorder-close",
-	}, uint64(time.Now().UnixNano())); err != nil && firstErr == nil {
+	}, time.Now()); err != nil && firstErr == nil {
 		firstErr = err
 	}
 
@@ -537,7 +551,7 @@ func (a *sessionCaptureArtifact) summary() sessionCaptureSummary {
 	}
 }
 
-func (a *sessionCaptureArtifact) ensureLogicalTrackLocked(participantID, kind, mid, rid string, observed time.Time) string {
+func (a *sessionCaptureArtifact) ensureLogicalTrackLocked(participantID, kind, mid, rid string, createdMonoNS uint64) string {
 	key := logicalTrackKey(participantID, kind, mid, rid)
 	if ltid := a.logicalBy[key]; ltid != "" {
 		return ltid
@@ -555,7 +569,7 @@ func (a *sessionCaptureArtifact) ensureLogicalTrackLocked(participantID, kind, m
 		ParticipantID: sanitizeSessionPathPart(participantID),
 		MID:           sanitizeSessionPathPart(mid),
 		RID:           sanitizeSessionPathPart(rid),
-		CreatedMonoNS: uint64(observed.UnixNano()),
+		CreatedMonoNS: createdMonoNS,
 	})
 	return ltid
 }
@@ -583,14 +597,14 @@ func (a *sessionCaptureArtifact) ensureParticipantLocked(remoteSessionID, partic
 	return pid
 }
 
-func (a *sessionCaptureArtifact) emitEvent(fields map[string]any, monoNS uint64) error {
+func (a *sessionCaptureArtifact) emitEvent(fields map[string]any, observed time.Time) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.eventsWriter == nil {
 		return nil
 	}
 	payload := map[string]any{
-		"mono_ns": monoNS,
+		"mono_ns": a.monoNS(observed),
 	}
 	for key, val := range fields {
 		payload[key] = val
@@ -604,6 +618,20 @@ func (a *sessionCaptureArtifact) emitEvent(fields map[string]any, monoNS uint64)
 		return err
 	}
 	return a.eventsWriter.Flush()
+}
+
+// monoNS maps an observation carrying Go's monotonic clock reading into the
+// session timeline. In production all callers pass time.Now-derived values,
+// so time.Sub uses monotonic elapsed time even if the system wall clock moves.
+// Anchoring that elapsed value at the session's initial Unix-ns coordinate
+// preserves normal external boundary comparisons without following later
+// realtime clock corrections.
+func (a *sessionCaptureArtifact) monoNS(observed time.Time) uint64 {
+	elapsed := observed.Sub(a.monoOrigin)
+	if elapsed <= 0 {
+		return a.monoBaseNS
+	}
+	return a.monoBaseNS + uint64(elapsed)
 }
 
 func (a *sessionCaptureArtifact) persistSessionLocked() error {

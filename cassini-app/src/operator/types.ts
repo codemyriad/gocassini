@@ -23,6 +23,8 @@ export interface Job {
   record_started_at: string | null;
   record_finished_at: string | null;
   build_queued_at: string | null;
+  build_retry_not_before: string | null;
+  build_deferral_count: number;
   build_started_at: string | null;
   build_finished_at: string | null;
   seal_queued_at: string | null;
@@ -63,6 +65,8 @@ export interface JobAttempt {
   record_started_at: string | null;
   record_finished_at: string | null;
   build_queued_at: string | null;
+  build_retry_not_before: string | null;
+  build_deferral_count: number;
   build_started_at: string | null;
   build_finished_at: string | null;
   seal_queued_at: string | null;
@@ -89,6 +93,7 @@ export interface Settings {
   quality: SettingsQuality;
   device_override: string;
   model_override: string;
+  transcription_terms: string[];
   source: string;
   detected_gpu: boolean;
   cores: number;
@@ -100,4 +105,5 @@ export interface SettingsUpdate {
   quality: SettingsQuality;
   device_override: string;
   model_override: string;
+  transcription_terms: string[];
 }

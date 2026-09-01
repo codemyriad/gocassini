@@ -26,7 +26,7 @@ func baseManifestV2() Manifest {
 			DurationMS:  60000,
 		},
 		Integrity: Integrity{
-			MatchPolicy: AudioMatchPolicy,
+			MatchPolicy: LegacyAudioMatchPolicyPCM,
 			PCMFormat:   AudioPCMFormat,
 			PCMSHA256:   strings.Repeat("a", 64),
 			SampleRate:  48000,
@@ -36,6 +36,19 @@ func baseManifestV2() Manifest {
 		},
 		Speakers: []Speaker{{ID: "spk_0", Label: "Alice"}},
 	}
+}
+
+func baseManifestV3() Manifest {
+	manifest := baseManifestV2()
+	manifest.Integrity = Integrity{
+		MatchPolicy: AudioMatchPolicy,
+		OpusSHA256:  strings.Repeat("b", 64),
+		SampleRate:  48000,
+		Channels:    1,
+		SampleCount: 2_880_000,
+		DurationMS:  60000,
+	}
+	return manifest
 }
 
 func sampleBody(speaker string, words ...string) TranscriptBody {
@@ -232,6 +245,57 @@ func TestEncodeManifestV2EmitsExpectedShape(t *testing.T) {
 	}
 	if wire.Provenance.SpeechToText["canary"] == nil || wire.Provenance.SpeechToText["canary"].Model != "canary-1b-v2" {
 		t.Errorf("canary provenance wrong: %+v", wire.Provenance.SpeechToText["canary"])
+	}
+}
+
+func TestEncodeManifestV3UsesCompressedOpusIntegrity(t *testing.T) {
+	manifest := baseManifestV3()
+	transcripts := []TranscriptInput{{
+		ID: "parakeet", Role: RoleRawASR, Default: true,
+		Body: sampleBody("spk_0", "compressed", "identity"),
+	}}
+	encoded, err := EncodeManifestV3(manifest, transcripts, 0)
+	if err != nil {
+		t.Fatalf("EncodeManifestV3: %v", err)
+	}
+
+	var wire manifestV2Wire
+	if err := json.Unmarshal(encoded.Main.JSON, &wire); err != nil {
+		t.Fatalf("decode v3 wire: %v", err)
+	}
+	if wire.Version != 3 {
+		t.Errorf("version = %d, want 3", wire.Version)
+	}
+	if wire.Integrity.MatchPolicy != AudioMatchPolicy {
+		t.Errorf("matchPolicy = %q, want %q", wire.Integrity.MatchPolicy, AudioMatchPolicy)
+	}
+	if wire.Integrity.OpusSHA256 != strings.Repeat("b", 64) {
+		t.Errorf("opusAudioSha256 = %q", wire.Integrity.OpusSHA256)
+	}
+	if wire.Integrity.PCMSHA256 != "" || wire.Integrity.PCMFormat != "" {
+		t.Errorf("v3 leaked legacy PCM integrity: %+v", wire.Integrity)
+	}
+
+	tags := BuildOpusTagsV3(manifest, encoded, "parakeet")
+	if tags["CASSINI_FORMAT"] != FormatV3 {
+		t.Errorf("CASSINI_FORMAT = %q, want %q", tags["CASSINI_FORMAT"], FormatV3)
+	}
+	if tags["CASSINI_AUDIO_OPUS_SHA256"] != strings.Repeat("b", 64) {
+		t.Errorf("CASSINI_AUDIO_OPUS_SHA256 = %q", tags["CASSINI_AUDIO_OPUS_SHA256"])
+	}
+	if _, ok := tags["CASSINI_AUDIO_PCM_SHA256"]; ok {
+		t.Error("v3 emitted CASSINI_AUDIO_PCM_SHA256")
+	}
+}
+
+func TestEncodeManifestV3RequiresCompressedDigest(t *testing.T) {
+	manifest := baseManifestV3()
+	manifest.Integrity.OpusSHA256 = ""
+	_, err := EncodeManifestV3(manifest, []TranscriptInput{{
+		ID: "parakeet", Role: RoleRawASR, Default: true, Body: sampleBody("spk_0", "x"),
+	}}, 0)
+	if err == nil || !strings.Contains(err.Error(), "opusAudioSha256") {
+		t.Fatalf("error = %v, want missing opusAudioSha256", err)
 	}
 }
 
@@ -475,5 +539,66 @@ func TestBuildOpusTagsV2AndWireCarryTheProvenance(t *testing.T) {
 		if _, ok := plainTags[key]; ok {
 			t.Errorf("%s is present on a meeting with no operator lineage, want absent", key)
 		}
+	}
+}
+
+// TestMultiTranscriptWireCarriesAttributionProvenance guards the carry from
+// Manifest.Provenance.Attribution into the v2/v3 wire. It matters most for
+// drop mode: the flagged words are already deleted from every transcript body,
+// so this record is the only trace the publication keeps of them.
+func TestMultiTranscriptWireCarriesAttributionProvenance(t *testing.T) {
+	threshold := 14.5
+	manifest := baseManifestV3()
+	manifest.Provenance = &Provenance{
+		Attribution: &AttributionProvenance{
+			Ran:           true,
+			Mode:          "drop",
+			WordsMeasured: 120,
+			WordsFlagged:  7,
+			WordsDropped:  7,
+			ThresholdDB:   &threshold,
+		},
+	}
+	transcripts := []TranscriptInput{{
+		ID: "parakeet", Role: RoleRawASR, Default: true,
+		Body: sampleBody("spk_0", "what", "survived"),
+	}}
+	encoded, err := EncodeManifestV3(manifest, transcripts, 0)
+	if err != nil {
+		t.Fatalf("EncodeManifestV3: %v", err)
+	}
+
+	var wire manifestV2Wire
+	if err := json.Unmarshal(encoded.Main.JSON, &wire); err != nil {
+		t.Fatalf("decode v3 wire manifest: %v", err)
+	}
+	// No transcript input carries a step and there is no summary step, so
+	// attribution alone must keep the provenance object alive — before the
+	// carry existed, this wire had provenance == nil.
+	if wire.Provenance == nil || wire.Provenance.Attribution == nil {
+		t.Fatalf("wire provenance.attribution missing: %+v", wire.Provenance)
+	}
+	got := wire.Provenance.Attribution
+	if !got.Ran || got.Mode != "drop" || got.Reason != "" {
+		t.Errorf("attribution ran/mode/reason = %v/%q/%q, want true/drop/empty", got.Ran, got.Mode, got.Reason)
+	}
+	if got.WordsMeasured != 120 || got.WordsFlagged != 7 || got.WordsDropped != 7 {
+		t.Errorf("attribution counts = %d/%d/%d, want 120/7/7", got.WordsMeasured, got.WordsFlagged, got.WordsDropped)
+	}
+	if got.ThresholdDB == nil || *got.ThresholdDB != 14.5 {
+		t.Errorf("attribution thresholdDb = %v, want 14.5", got.ThresholdDB)
+	}
+
+	// An attribution-less manifest must keep omitting provenance entirely.
+	plain, err := EncodeManifestV3(baseManifestV3(), transcripts, 0)
+	if err != nil {
+		t.Fatalf("EncodeManifestV3 (plain): %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(plain.Main.JSON, &raw); err != nil {
+		t.Fatalf("decode plain wire manifest: %v", err)
+	}
+	if _, ok := raw["provenance"]; ok {
+		t.Errorf("attribution-less manifest emits a provenance key: %s", raw["provenance"])
 	}
 }

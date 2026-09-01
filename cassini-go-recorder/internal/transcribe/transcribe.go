@@ -20,13 +20,28 @@ type BuildConfig struct {
 	LLM                   LLMConfig  // optional; if not configured, skip readable cleanup
 	SummaryLLM            LLMConfig  // optional; if not configured, skip summary generation
 	StrictReadableCleanup bool       // fail the build if readable cleanup cannot complete
-	NumThreads            int        // 0 = derive from core count
+	NumThreads            int        // 0 = derive from device (CUDA=1; CPU=core count, capped)
 	Quality               STTQuality // "" = balanced; picks model/device when not explicitly set
+	TranscriptionTerms    []string   // optional preferred spellings for LLM readable cleanup; does not affect raw ASR
+	// Backend selects the speech decoder ("" = CASSINI_STT_BACKEND, else the
+	// bundled sherpa-onnx). See backend.go.
+	Backend string
+	// SkipAttribution disables the cross-track attribution stage entirely.
+	SkipAttribution bool
+	// DropCrosstalk removes flagged words instead of only marking them. Off by
+	// default: the transcript stays canonical and the evidence travels with it.
+	DropCrosstalk bool
 }
 
 var (
 	readableCleanupFn     = ReadableCleanup
 	buildMeetingSummaryFn = BuildMeetingSummary
+	// ensureModelFn / ensureVADFn / buildSpeakerEnvelopesFn are seams so the
+	// pipeline can be exercised end-to-end with a registered fake backend and
+	// no multi-hundred-MB model download.
+	ensureModelFn           = EnsureModel
+	ensureVADFn             = EnsureVAD
+	buildSpeakerEnvelopesFn = BuildSpeakerEnvelopes
 )
 
 // BuildMeetingArtifact transcribes an MKV recording and writes all meeting
@@ -39,15 +54,26 @@ var (
 func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg BuildConfig, stdout io.Writer) error {
 	// Resolve the STT execution policy for this host: an explicit device/model
 	// always wins; otherwise derive both from the quality tier and detected
-	// hardware (a GPU box runs fp32, a CPU box int8) and use all the cores.
+	// hardware (a GPU box runs fp32, a CPU box int8). CUDA uses one host thread
+	// by default so GPU inference does not create unnecessary CPU/RAM pressure.
 	cfg.Device = ResolveDevice(cfg.Device)
 	if cfg.ModelID == "" {
 		cfg.ModelID = ModelForQuality(cfg.Quality, cfg.Device)
 	}
 	if cfg.NumThreads < 1 {
-		cfg.NumThreads = DefaultNumThreads()
+		cfg.NumThreads = DefaultNumThreadsForDevice(cfg.Device)
 	}
-	fmt.Fprintf(stdout, "  STT policy: device=%s model=%s threads=%d quality=%s\n",
+	// Resolve AND validate the backend before any real work. The registry is
+	// the authority on what exists; an unknown id must fail here, not after
+	// the full mixdown, audio hash and model download have already run — the
+	// misconfiguration lives in the environment, so a late failure repeats
+	// all of that work on every operator retry.
+	backend, err := LookupRecognizerBackend(cfg.Backend)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "  STT policy: backend=%s device=%s model=%s threads=%d quality=%s\n",
+		backend,
 		cfg.Device, cfg.ModelID, cfg.NumThreads, NormalizeQuality(string(cfg.Quality)))
 	if cfg.CacheDir == "" {
 		cfg.CacheDir = defaultCacheDir()
@@ -78,15 +104,19 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	if err != nil {
 		return fmt.Errorf("get audio duration: %w", err)
 	}
+	// Source container duration remains provenance, but malformed container
+	// metadata can vastly overstate it. The measured playable mix is a safer
+	// allocation hint for per-speaker PCM; packet PTS still controls timing.
+	setPCMCapacityDurationHints(streams, audioDurationMS)
 
 	// --- 3. Download / verify STT model and VAD ---
 	fmt.Fprintf(stdout, "  ensuring model %s is cached...\n", cfg.ModelID)
-	modelPaths, err := EnsureModel(cfg.CacheDir, cfg.ModelID, stdout)
+	modelPaths, err := ensureModelFn(cfg.CacheDir, cfg.ModelID, stdout)
 	if err != nil {
 		return fmt.Errorf("ensure model: %w", err)
 	}
 
-	vadPath, err := EnsureVAD(cfg.CacheDir, stdout)
+	vadPath, err := ensureVADFn(cfg.CacheDir, stdout)
 	if err != nil {
 		return fmt.Errorf("ensure VAD model: %w", err)
 	}
@@ -95,7 +125,12 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// The primary model writes the default transcript.words.v1.json (v1
 	// fallback). Each additional model writes a sibling transcript file and
 	// is recorded under manifest.files.transcripts for v2 multi-tx output.
-	segments, err := transcribePass(ctx, mkvPath, streams, modelPaths, vadPath, cfg.Device, cfg.NumThreads, stdout)
+	// Whether the manifest may claim provenance.wordTimings.endsBoundedByAudio
+	// is decided by the recognizers, not by this function: every pass below
+	// records what its decoder declared, and the claim survives only if all of
+	// them made it. See wordEndGuarantee in backend.go.
+	wordEnds := &wordEndGuarantee{}
+	segments, err := transcribePass(ctx, mkvPath, streams, modelPaths, vadPath, backend, cfg.Device, cfg.NumThreads, stdout, wordEnds)
 	if err != nil {
 		return err
 	}
@@ -104,16 +139,35 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// that defeats the VAD even when the mixed timeline clearly contains
 	// speech. Fall back to transcribing the already-mixed meeting.webm under
 	// a synthetic "merged" speaker so the bundle still ships usable content.
-	streams, segments, err = ensureMergedFallback(ctx, webmPath, streams, segments, modelPaths, vadPath, cfg.Device, cfg.NumThreads, stdout)
+	streams, segments, err = ensureMergedFallback(ctx, webmPath, streams, segments, modelPaths, vadPath, backend, cfg.Device, cfg.NumThreads, stdout, wordEnds)
 	if err != nil {
 		return err
+	}
+
+	// --- Cross-track speaker attribution ---
+	// Measure every word against the per-track energy on the shared timeline and
+	// record the result as provenance. This is what makes crosstalk visible: a
+	// word the decoder produced on a participant's track while somebody else was
+	// decisively louder is a bleed candidate, not that participant speaking.
+	// Annotate-only by default; see attribution.go for why dropping is opt-in.
+	// The envelopes depend only on the audio, not on the STT model, so one
+	// cache serves the primary transcript and every additional model: each
+	// track is decoded for attribution once per build, not once per pass.
+	envCache := &speakerEnvelopeCache{}
+	attrProv := &AttributionProvenance{Mode: attributionModeForConfig(cfg)}
+	if cfg.SkipAttribution {
+		// Even a disabled stage leaves a trace: otherwise a build that never
+		// measured anything is indistinguishable from one that ran clean.
+		attrProv.Reason = "disabled by configuration (CASSINI_ATTRIBUTION_DISABLED)"
+	} else {
+		segments = applyAttributionReported(mkvPath, streams, segments, modelPaths.SampleRate, cfg, envCache, stdout, attrProv)
 	}
 
 	if err := writeTranscriptWithHash(filepath.Join(outputDir, "transcript.words.v1.json"), "transcript.words.v1", streams, segments, audioDurationMS, sha256hex); err != nil {
 		return fmt.Errorf("write transcript: %w", err)
 	}
 
-	additionalTranscripts, err := runAdditionalTranscripts(ctx, mkvPath, outputDir, streams, audioDurationMS, sha256hex, cfg, stdout)
+	additionalTranscripts, err := runAdditionalTranscripts(ctx, mkvPath, outputDir, streams, audioDurationMS, sha256hex, backend, cfg, envCache, stdout, wordEnds)
 	if err != nil {
 		return err
 	}
@@ -129,6 +183,15 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	if hasReadable {
 		summaryInput = cleanedSegs
 	}
+	// The canonical transcript keeps every word; the summary does not. A reader
+	// can see and overrule a word marked as probable crosstalk, but a generated
+	// summary has no such reader, and a fabricated interjection there becomes a
+	// decision somebody supposedly made. This is a no-op unless the meeting's own
+	// distribution showed an unambiguous crosstalk population.
+	if filtered, removed := WithoutLowConfidenceWords(summaryInput); removed > 0 {
+		fmt.Fprintf(stdout, "  excluding %d low-confidence words from the summary input\n", removed)
+		summaryInput = filtered
+	}
 	hasSummary, err := writeSummaryArtifact(outputDir, streams, summaryInput, cfg, stdout)
 	if err != nil {
 		return err
@@ -137,7 +200,7 @@ func BuildMeetingArtifact(ctx context.Context, mkvPath, outputDir string, cfg Bu
 	// --- 10. Write manifest ---
 	manifestPath := filepath.Join(outputDir, "manifest.json")
 	srcBasename := filepath.Base(mkvPath)
-	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, streams, segments, cfg.ModelID, cfg.LLM.Model, hasReadable, cfg.SummaryLLM.Model, hasSummary, additionalTranscripts); err != nil {
+	if err := WriteManifest(manifestPath, srcBasename, srcDurationMS, audioDurationMS, streams, segments, backend, cfg.ModelID, cfg.Device, cfg.LLM.Model, hasReadable, cfg.SummaryLLM.Model, hasSummary, additionalTranscripts, attrProv, wordEnds.provenance()); err != nil {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 
@@ -153,16 +216,17 @@ type AdditionalTranscript struct {
 	ID      string  // sanitised model id, suitable for tag namespace (a-z 0-9 - _, max 32 chars)
 	Path    string  // relative to outputDir, e.g. transcript-parakeet-tdt-06b-v2-int8.words.v1.json
 	ModelID ModelID // raw STT model id, kept for provenance
+	Backend string  // resolved STT backend id that produced this transcript
 }
 
 // ensureMergedFallback transcribes the already-mixed meeting.webm under a
-// synthetic "merged" speaker when the per-participant pass found nothing.
+// synthetic "merged" speaker when the per-participant pass is too thin.
 // Talk-recorder per-participant tracks can be sparse (DTX, comfort-noise
 // frames between speaking turns) in ways that defeat the VAD even though
 // the same audio sums to a clearly-transcribable mix; rather than ship an
-// empty transcript in that case, fall back to the mix. Returns the
+// empty or nearly empty transcript in that case, fall back to the mix. Returns the
 // (possibly extended) streams + segments. Does nothing when the
-// per-participant pass already produced content.
+// per-participant pass meets the minimum word threshold.
 // minWordsBeforeMergedFallback is the per-participant word threshold below
 // which we re-run transcription over the merged mix. The strict ==0 gate
 // was observed to skip fallback when a single stray word survived through
@@ -171,6 +235,15 @@ type AdditionalTranscript struct {
 // passing-run baseline of ~12-14 verbatim words, well over the noise.
 const minWordsBeforeMergedFallback = 10
 
+// The merged pass has no participant attribution, so it must recover more
+// than a token or two before replacing words that still identify a speaker.
+// Require at least two additional words and at least a 20% coverage gain. The
+// zero-word failure mode remains special: any non-empty mix is an improvement.
+const (
+	mergedFallbackMinExtraWords          = 2
+	mergedFallbackMinRelativeGainPercent = 20
+)
+
 // shouldFireMergedFallback decides whether the merged-mix fallback pass
 // is worth running. Extracted so the trigger threshold has a dedicated
 // regression test without needing a sherpa-onnx model + audio fixture.
@@ -178,7 +251,7 @@ func shouldFireMergedFallback(segments []Segment) bool {
 	return CountWords(segments) < minWordsBeforeMergedFallback
 }
 
-func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioStream, segments []Segment, modelPaths ModelPaths, vadPath, device string, numThreads int, stdout io.Writer) ([]AudioStream, []Segment, error) {
+func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioStream, segments []Segment, modelPaths ModelPaths, vadPath, backend, device string, numThreads int, stdout io.Writer, guarantee *wordEndGuarantee) ([]AudioStream, []Segment, error) {
 	if !shouldFireMergedFallback(segments) {
 		return streams, segments, nil
 	}
@@ -192,7 +265,7 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 		StartTimeMS:  0,
 	}
 
-	rec, err := NewRecognizer(modelPaths, vadPath, device, numThreads)
+	rec, err := newRecognizerForPass(backend, modelPaths, vadPath, device, numThreads, guarantee)
 	if err != nil {
 		return streams, segments, fmt.Errorf("create recognizer for merged fallback: %w", err)
 	}
@@ -225,27 +298,60 @@ func ensureMergedFallback(ctx context.Context, webmPath string, streams []AudioS
 	}
 
 	mergedSegs := AssembleSegments(mergedStream.SpeakerID, words, 0, 0)
+	chosenSegments, useMerged := chooseMergedFallback(segments, mergedSegs)
+	if !useMerged {
+		fmt.Fprintf(stdout, "    merged fallback did not clear attribution-preserving margin (need at least %d words vs %d attributed); keeping participant pass\n",
+			minimumMergedFallbackWords(CountWords(segments)), CountWords(segments))
+		return streams, chosenSegments, nil
+	}
+
+	// The mixed pass covers the same meeting timeline as the participant pass.
+	// Treat these as alternative hypotheses, never additive sources: appending
+	// both duplicated every word that survived the thin participant pass. Only
+	// a mixed hypothesis that clears the attribution-preserving margin reaches
+	// the transcript.
 	extendedStreams := append(append([]AudioStream(nil), streams...), mergedStream)
-	mergedSegments := MergeAndSortSegments([][]Segment{segments, mergedSegs})
-	return extendedStreams, mergedSegments, nil
+	return extendedStreams, chosenSegments, nil
+}
+
+// chooseMergedFallback keeps the two transcription hypotheses mutually
+// exclusive. Attribution is more valuable than a marginal coverage increase,
+// so the synthetic mixed pass replaces the participant pass only when it clears
+// the documented absolute and relative recovery margin above.
+func chooseMergedFallback(participantSegments, mergedSegments []Segment) ([]Segment, bool) {
+	if CountWords(mergedSegments) < minimumMergedFallbackWords(CountWords(participantSegments)) {
+		return participantSegments, false
+	}
+	return MergeAndSortSegments([][]Segment{mergedSegments}), true
+}
+
+func minimumMergedFallbackWords(participantWords int) int {
+	if participantWords == 0 {
+		return 1
+	}
+	relativeGain := (participantWords*mergedFallbackMinRelativeGainPercent + 99) / 100
+	if relativeGain < mergedFallbackMinExtraWords {
+		relativeGain = mergedFallbackMinExtraWords
+	}
+	return participantWords + relativeGain
 }
 
 // transcribePass runs one full transcription pass over every speaker stream
 // using the given recognizer config. Returns merged + sorted segments.
-func transcribePass(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, device string, numThreads int, stdout io.Writer) ([]Segment, error) {
+func transcribePass(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, backend, device string, numThreads int, stdout io.Writer, guarantee *wordEndGuarantee) ([]Segment, error) {
 	conc := resolveStreamConcurrency(len(streams), numThreads, device)
 	if conc <= 1 {
-		return transcribeStreamsSequential(ctx, mkvPath, streams, modelPaths, vadPath, device, numThreads, stdout)
+		return transcribeStreamsSequential(ctx, mkvPath, streams, modelPaths, vadPath, backend, device, numThreads, stdout, guarantee)
 	}
-	return transcribeStreamsParallel(ctx, mkvPath, streams, modelPaths, vadPath, device, numThreads, conc, stdout)
+	return transcribeStreamsParallel(ctx, mkvPath, streams, modelPaths, vadPath, backend, device, numThreads, conc, stdout, guarantee)
 }
 
 // transcribeStreamsSequential transcribes each speaker stream one at a time with
 // a single shared recognizer. Used when concurrency resolves to 1 (single
 // speaker, tight thread budget, or low free RAM).
-func transcribeStreamsSequential(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, device string, numThreads int, stdout io.Writer) ([]Segment, error) {
+func transcribeStreamsSequential(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, backend, device string, numThreads int, stdout io.Writer, guarantee *wordEndGuarantee) ([]Segment, error) {
 	fmt.Fprintf(stdout, "  loading recognizer (device=%s)...\n", device)
-	rec, err := NewRecognizer(modelPaths, vadPath, device, numThreads)
+	rec, err := newRecognizerForPass(backend, modelPaths, vadPath, device, numThreads, guarantee)
 	if err != nil {
 		return nil, fmt.Errorf("create recognizer: %w", err)
 	}
@@ -280,7 +386,7 @@ func transcribeStreamsSequential(ctx context.Context, mkvPath string, streams []
 // resolveStreamConcurrency), so this never oversubscribes or OOMs the host.
 // Per-speaker results are written by index, so the merged output is independent
 // of completion order. The first error cancels the rest.
-func transcribeStreamsParallel(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, device string, numThreads, conc int, stdout io.Writer) ([]Segment, error) {
+func transcribeStreamsParallel(ctx context.Context, mkvPath string, streams []AudioStream, modelPaths ModelPaths, vadPath, backend, device string, numThreads, conc int, stdout io.Writer, guarantee *wordEndGuarantee) ([]Segment, error) {
 	threadsPer := numThreads / conc
 	if threadsPer < 1 {
 		threadsPer = 1
@@ -318,7 +424,7 @@ func transcribeStreamsParallel(ctx context.Context, mkvPath string, streams []Au
 
 	worker := func() {
 		defer wg.Done()
-		rec, err := NewRecognizer(modelPaths, vadPath, device, threadsPer)
+		rec, err := newRecognizerForPass(backend, modelPaths, vadPath, device, threadsPer, guarantee)
 		if err != nil {
 			fail(fmt.Errorf("create recognizer: %w", err))
 			return
@@ -368,11 +474,14 @@ feed:
 
 // runAdditionalTranscripts re-transcribes the same audio with each model in
 // cfg.AdditionalModels and writes a sibling transcript file per model.
-func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, streams []AudioStream, audioDurationMS int64, sha256hex string, cfg BuildConfig, stdout io.Writer) ([]AdditionalTranscript, error) {
+// backend is the already-validated recognizer id from BuildMeetingArtifact and
+// envCache carries the per-track attribution envelopes so extra models reuse
+// the primary pass's decode instead of re-running ffmpeg over every track.
+func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, streams []AudioStream, audioDurationMS int64, sha256hex, backend string, cfg BuildConfig, envCache *speakerEnvelopeCache, stdout io.Writer, guarantee *wordEndGuarantee) ([]AdditionalTranscript, error) {
 	if len(cfg.AdditionalModels) == 0 {
 		return nil, nil
 	}
-	vadPath, err := EnsureVAD(cfg.CacheDir, stdout)
+	vadPath, err := ensureVADFn(cfg.CacheDir, stdout)
 	if err != nil {
 		return nil, fmt.Errorf("ensure VAD model: %w", err)
 	}
@@ -389,19 +498,25 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 		seen[id] = true
 
 		fmt.Fprintf(stdout, "  ensuring additional model %s is cached...\n", modelID)
-		modelPaths, err := EnsureModel(cfg.CacheDir, modelID, stdout)
+		modelPaths, err := ensureModelFn(cfg.CacheDir, modelID, stdout)
 		if err != nil {
 			return nil, fmt.Errorf("ensure additional model %s: %w", modelID, err)
 		}
-		segs, err := transcribePass(ctx, mkvPath, streams, modelPaths, vadPath, cfg.Device, cfg.NumThreads, stdout)
+		segs, err := transcribePass(ctx, mkvPath, streams, modelPaths, vadPath, backend, cfg.Device, cfg.NumThreads, stdout, guarantee)
 		if err != nil {
 			return nil, fmt.Errorf("additional transcribe %s: %w", modelID, err)
+		}
+		// Every transcript this build emits carries the same attribution
+		// contract, or switching models would silently change whether a word
+		// has provenance.
+		if !cfg.SkipAttribution {
+			segs = applyAttributionCached(mkvPath, streams, segs, modelPaths.SampleRate, cfg, envCache, stdout)
 		}
 		path := fmt.Sprintf("transcript-%s.words.v1.json", id)
 		if err := writeTranscriptWithHash(filepath.Join(outputDir, path), "transcript.words.v1", streams, segs, audioDurationMS, sha256hex); err != nil {
 			return nil, fmt.Errorf("write additional transcript %s: %w", id, err)
 		}
-		out = append(out, AdditionalTranscript{ID: id, Path: path, ModelID: modelID})
+		out = append(out, AdditionalTranscript{ID: id, Path: path, ModelID: modelID, Backend: backend})
 	}
 	return out, nil
 }
@@ -477,6 +592,10 @@ func DefaultBuildConfig() BuildConfig {
 		StrictReadableCleanup: envBool("CASSINI_READABLE_STRICT_BATCHES"),
 		NumThreads:            envInt("CASSINI_STT_NUM_THREADS"),
 		Quality:               NormalizeQuality(os.Getenv("CASSINI_STT_QUALITY")),
+		Backend:               ResolveRecognizerBackend(""),
+		SkipAttribution:       envBool("CASSINI_ATTRIBUTION_DISABLED"),
+		DropCrosstalk:         envBool("CASSINI_ATTRIBUTION_DROP"),
+		TranscriptionTerms:    parseTranscriptionTerms(os.Getenv("CASSINI_TRANSCRIPTION_TERMS")),
 	}
 }
 
@@ -506,7 +625,9 @@ func writeReadableArtifacts(outputDir string, streams []AudioStream, segments []
 	}
 
 	fmt.Fprintln(stdout, "  running LLM readable cleanup...")
-	readableSegs, err := readableCleanupFn(cfg.LLM, segments)
+	llmCfg := cfg.LLM
+	llmCfg.PreferredSpellings = preferredSpellingsForCleanup(cfg.TranscriptionTerms, streams)
+	readableSegs, err := readableCleanupFn(llmCfg, segments)
 	if err != nil {
 		if cfg.StrictReadableCleanup {
 			return nil, false, fmt.Errorf("readable cleanup: %w", err)
@@ -587,4 +708,150 @@ func writeTranscriptWithHash(path string, version string, streams []AudioStream,
 	default:
 		return fmt.Errorf("unsupported transcript version %q", version)
 	}
+}
+
+// speakerEnvelopeCache memoises the per-track attribution envelopes for one
+// build. Envelopes depend only on the audio and the analysis sample rate,
+// never on the STT model, so the primary transcript and every additional
+// model share one ffmpeg decode per track instead of re-decoding the whole
+// meeting once per transcription pass.
+type speakerEnvelopeCache struct {
+	mu           sync.Mutex
+	bySampleRate map[int][]*SpeakerEnvelope
+}
+
+// envelopes returns the cached envelopes for sampleRate, building them on the
+// first call. A nil receiver builds directly, uncached.
+func (c *speakerEnvelopeCache) envelopes(mkvPath string, streams []AudioStream, sampleRate int, progress io.Writer) ([]*SpeakerEnvelope, error) {
+	if c == nil {
+		return buildSpeakerEnvelopesFn(mkvPath, streams, sampleRate, progress)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if envs, ok := c.bySampleRate[sampleRate]; ok {
+		return envs, nil
+	}
+	envs, err := buildSpeakerEnvelopesFn(mkvPath, streams, sampleRate, progress)
+	if err != nil {
+		return nil, err
+	}
+	if c.bySampleRate == nil {
+		c.bySampleRate = make(map[int][]*SpeakerEnvelope, 1)
+	}
+	c.bySampleRate[sampleRate] = envs
+	return envs, nil
+}
+
+// segmentsBelongToAnyStream reports whether at least one segment is attributed
+// to one of the given participant streams.
+func segmentsBelongToAnyStream(segments []Segment, streams []AudioStream) bool {
+	ids := make(map[string]bool, len(streams))
+	for _, s := range streams {
+		ids[s.SpeakerID] = true
+	}
+	for _, seg := range segments {
+		if ids[seg.SpeakerID] {
+			return true
+		}
+	}
+	return false
+}
+
+// applyAttribution annotates words with cross-track attribution evidence.
+//
+// It is deliberately non-fatal: attribution is provenance, and failing to
+// measure it must never cost the operator a transcript that decoded fine. On
+// any error the segments are returned untouched and the reason is reported.
+func applyAttribution(mkvPath string, streams []AudioStream, segments []Segment, sampleRate int, cfg BuildConfig, stdout io.Writer) []Segment {
+	return applyAttributionCached(mkvPath, streams, segments, sampleRate, cfg, nil, stdout)
+}
+
+// attributionModeForConfig names how the attribution stage was configured for
+// this build: "disabled", "drop", or the default "annotate".
+func attributionModeForConfig(cfg BuildConfig) string {
+	switch {
+	case cfg.SkipAttribution:
+		return "disabled"
+	case cfg.DropCrosstalk:
+		return "drop"
+	default:
+		return "annotate"
+	}
+}
+
+// applyAttributionCached is applyAttribution with a per-build envelope cache;
+// a nil cache builds the envelopes directly.
+func applyAttributionCached(mkvPath string, streams []AudioStream, segments []Segment, sampleRate int, cfg BuildConfig, cache *speakerEnvelopeCache, stdout io.Writer) []Segment {
+	return applyAttributionReported(mkvPath, streams, segments, sampleRate, cfg, cache, stdout, nil)
+}
+
+// applyAttributionReported additionally records what the stage did — or why
+// it did nothing — into report, for the manifest's provenance. In drop mode
+// the deleted words carry their evidence away with them, so this record is
+// the only trace the deletion leaves; without it, rebuilding the same
+// recording without CASSINI_ATTRIBUTION_DROP yields a different transcript
+// with byte-identical provenance. A nil report skips the bookkeeping.
+func applyAttributionReported(mkvPath string, streams []AudioStream, segments []Segment, sampleRate int, cfg BuildConfig, cache *speakerEnvelopeCache, stdout io.Writer, report *AttributionProvenance) []Segment {
+	realStreams := make([]AudioStream, 0, len(streams))
+	for _, s := range streams {
+		// The merged-fallback speaker is a synthetic mix of everyone, so it has
+		// no track of its own to compare against and must not become a rival.
+		if s.Index < 0 {
+			continue
+		}
+		realStreams = append(realStreams, s)
+	}
+	if len(realStreams) < 2 {
+		// Attribution compares tracks against each other; with one participant
+		// there is nothing for a word to be misattributed away from.
+		if report != nil {
+			report.Reason = "single participant track; no rival track to measure against"
+		}
+		return segments
+	}
+	// After the merged fallback replaces the transcript, every word belongs to
+	// the synthetic "merged" speaker: no envelope can ever match it, so
+	// decoding every participant track would measure nothing at real cost.
+	if !segmentsBelongToAnyStream(segments, realStreams) {
+		fmt.Fprintln(stdout, "  attribution skipped: no transcript words belong to a participant track; nothing to measure")
+		if report != nil {
+			report.Reason = "no transcript words belong to a participant track (merged fallback)"
+		}
+		return segments
+	}
+
+	fmt.Fprintln(stdout, "  measuring cross-track speaker attribution...")
+	envelopes, err := cache.envelopes(mkvPath, realStreams, sampleRate, nil)
+	if err != nil {
+		fmt.Fprintf(stdout, "  warn: attribution skipped: %v\n", err)
+		if report != nil {
+			report.Reason = fmt.Sprintf("failed: %v", err)
+		}
+		return segments
+	}
+	annotated, res := AnnotateAttribution(segments, envelopes, cfg.DropCrosstalk)
+	if report != nil {
+		report.Ran = true
+		report.WordsMeasured = res.WordsMeasured
+		report.WordsFlagged = res.Flagged
+		report.WordsDropped = res.Dropped
+		if res.ThresholdFound {
+			threshold := res.ThresholdDB
+			report.ThresholdDB = &threshold
+		}
+	}
+	switch {
+	case res.WordsMeasured == 0:
+		fmt.Fprintln(stdout, "    no words could be measured; transcript unchanged")
+	case !res.ThresholdFound:
+		fmt.Fprintf(stdout, "    %d words measured; no crosstalk population in this meeting\n",
+			res.WordsMeasured)
+	case cfg.DropCrosstalk:
+		fmt.Fprintf(stdout, "    %d words measured; threshold %.1f dB; %d dropped as crosstalk\n",
+			res.WordsMeasured, res.ThresholdDB, res.Dropped)
+	default:
+		fmt.Fprintf(stdout, "    %d words measured; threshold %.1f dB; %d flagged low-confidence\n",
+			res.WordsMeasured, res.ThresholdDB, res.Flagged)
+	}
+	return annotated
 }

@@ -1,12 +1,14 @@
 package cassini
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,7 +60,7 @@ type portableMeetingSource struct {
 	AdditionalTranscripts []portableNamedTranscript
 }
 
-// portableNamedTranscript pairs a loaded transcript file with the v2 metadata
+// portableNamedTranscript pairs a loaded transcript file with the multi-track metadata
 // the producer needs (id, role, default, provenance).
 type portableNamedTranscript struct {
 	ID         string
@@ -89,11 +91,11 @@ type portableMeetingArtifact struct {
 	WordCount    int `json:"wordCount"`
 }
 
-// portableMeetingTranscriptInputFile describes one transcript file in a v2
+// portableMeetingTranscriptInputFile describes one transcript file in a
 // multi-transcript bundle. Present in manifest.json under `files.transcripts`.
-// When this list is non-empty the packer emits a v2 portable-meeting file with
+// When this list is non-empty the packer emits a v3 portable-meeting file with
 // one entry per element; the singular `files.transcript` is ignored. When the
-// list is empty, a v2 file with one synthesized raw-asr entry is emitted.
+// list is empty, a v3 file with one synthesized raw-asr entry is emitted.
 type portableMeetingTranscriptInputFile struct {
 	ID         string                   `json:"id"`
 	Path       string                   `json:"path"`
@@ -126,21 +128,11 @@ type portableTranscriptWord struct {
 	Text    string `json:"text"`
 	StartMS int64  `json:"startMs"`
 	EndMS   int64  `json:"endMs"`
-}
-
-type portableAudioProbe struct {
-	Streams []portableAudioProbeStream `json:"streams"`
-	Format  struct {
-		Duration string `json:"duration"`
-	} `json:"format"`
-}
-
-type portableAudioProbeStream struct {
-	CodecType  string `json:"codec_type"`
-	CodecName  string `json:"codec_name"`
-	SampleRate string `json:"sample_rate"`
-	Channels   int    `json:"channels"`
-	Duration   string `json:"duration"`
+	// Optional cross-track speaker-attribution evidence, carried through to
+	// the packed portable transcript items. Pointer/omitempty so an
+	// unmeasured word round-trips with neither key present.
+	AttributionGapDB     *float64 `json:"attributionGapDb,omitempty"`
+	LowConfidenceSpeaker bool     `json:"lowConfidenceSpeaker,omitempty"`
 }
 
 type portableAudioIntegrity struct {
@@ -148,8 +140,16 @@ type portableAudioIntegrity struct {
 	Channels    int
 	SampleCount int64
 	DurationMS  int64
+	OpusSHA256  string
 	PCMSHA256   string
 }
+
+// maxPortableMeetingIdentityPasses bounds metadata remux convergence. FFmpeg
+// can normalize an Ogg Opus final granule on the first Ogg -> Ogg stream copy
+// (notably after an amix/alimiter WebM input). The next copy is stable in the
+// affected FFmpeg 9 path, but keep this bounded and fail closed rather than
+// silently publishing a manifest for different playable audio.
+const maxPortableMeetingIdentityPasses = 4
 
 func isPortableMeetingOutput(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".opus")
@@ -233,34 +233,68 @@ func packMeetingBundle(ctx context.Context, meetingDir string, outPath string, o
 		return fmt.Errorf("stage portable meeting audio: %w", err)
 	}
 
-	audio, err := computePortableAudioIntegrity(stagedAudioPath)
-	if err != nil {
-		return err
-	}
-	manifest, err := buildPortableMeetingManifest(source, audio, resolvedOut, opts)
-	if err != nil {
-		return err
-	}
+	// Build tags from the identity of the file that feeds the metadata remux,
+	// then confirm the output has that same identity. FFmpeg normally preserves
+	// it on the first pass. For end-trim-sensitive mixed WebM, FFmpeg 9 can
+	// normalize the first Ogg final granule by a few samples on the next remux.
+	// When that happens, treat the remuxed file as the normalized input, rebuild
+	// the manifest/meeting ID, and try again. This preserves end-trim binding in
+	// exact-opus-audio-v1 instead of weakening the digest to ignore the change.
+	currentAudioPath := stagedAudioPath
+	for pass := 1; pass <= maxPortableMeetingIdentityPasses; pass++ {
+		audio, err := computePortableAudioIntegrity(currentAudioPath)
+		if err != nil {
+			return err
+		}
+		manifest, err := buildPortableMeetingManifest(source, audio, resolvedOut, opts)
+		if err != nil {
+			return err
+		}
+		opusTags, err := buildPortableMeetingV3TagsFromSource(manifest, source)
+		if err != nil {
+			return err
+		}
 
-	opusTags, err := buildPortableMeetingV2TagsFromSource(manifest, source)
-	if err != nil {
-		return err
+		candidatePath, err := createPortableStagePath(resolvedOut)
+		if err != nil {
+			return err
+		}
+		defer func(path string) {
+			_ = os.Remove(path)
+		}(candidatePath)
+		if err := writePortableMeetingFile(ctx, currentAudioPath, candidatePath, opusTags); err != nil {
+			return err
+		}
+		candidateAudio, err := computePortableAudioIntegrity(candidatePath)
+		if err != nil {
+			return err
+		}
+		if portableAudioIntegrityEqual(audio, candidateAudio) {
+			if err := verifyPortableOpusIntegrity(candidateAudio, manifest.Integrity); err != nil {
+				return err
+			}
+			return commitPortableMeetingOutput(candidatePath, resolvedOut)
+		}
+		if pass == maxPortableMeetingIdentityPasses {
+			return fmt.Errorf(
+				"portable Opus identity did not stabilize after %d metadata remuxes: before sha256=%s samples=%d duration_ms=%d; after sha256=%s samples=%d duration_ms=%d",
+				pass,
+				audio.OpusSHA256, audio.SampleCount, audio.DurationMS,
+				candidateAudio.OpusSHA256, candidateAudio.SampleCount, candidateAudio.DurationMS,
+			)
+		}
+		_ = os.Remove(currentAudioPath)
+		currentAudioPath = candidatePath
 	}
+	return fmt.Errorf("portable Opus identity stabilization exhausted unexpectedly")
+}
 
-	finalStagePath, err := createPortableStagePath(resolvedOut)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = os.Remove(finalStagePath)
-	}()
-	if err := writePortableMeetingFile(ctx, stagedAudioPath, finalStagePath, opusTags); err != nil {
-		return err
-	}
-	if err := verifyPortableMeetingFile(finalStagePath, manifest); err != nil {
-		return err
-	}
-	return commitPortableMeetingOutput(finalStagePath, resolvedOut)
+func portableAudioIntegrityEqual(left, right portableAudioIntegrity) bool {
+	return left.OpusSHA256 == right.OpusSHA256 &&
+		left.SampleRate == right.SampleRate &&
+		left.Channels == right.Channels &&
+		left.SampleCount == right.SampleCount &&
+		left.DurationMS == right.DurationMS
 }
 
 // commitPortableMeetingOutput publishes the verified stage file as the portable
@@ -452,40 +486,22 @@ func loadPortableDisplayTranscript(rootDir string, artifactPath string) (map[str
 }
 
 func computePortableAudioIntegrity(audioPath string) (portableAudioIntegrity, error) {
-	probe, err := probePortableSourceAudio(audioPath)
+	file, err := os.Open(audioPath)
 	if err != nil {
-		return portableAudioIntegrity{}, err
+		return portableAudioIntegrity{}, fmt.Errorf("open portable Opus audio: %w", err)
 	}
-	stream, err := firstPortableAudioStream(probe)
-	if err != nil {
-		return portableAudioIntegrity{}, err
-	}
-	if !strings.EqualFold(stream.CodecName, "opus") {
-		return portableAudioIntegrity{}, fmt.Errorf("portable meeting audio must be Opus, got %s", strings.TrimSpace(stream.CodecName))
-	}
+	defer file.Close()
 
-	sampleRate := parsePortableInt(stream.SampleRate)
-	if sampleRate != 48000 {
-		return portableAudioIntegrity{}, fmt.Errorf("portable meeting audio must be 48000 Hz, got %d", sampleRate)
-	}
-	channels := stream.Channels
-	if channels != 1 && channels != 2 {
-		return portableAudioIntegrity{}, fmt.Errorf("portable meeting audio must have 1 or 2 channels, got %d", channels)
-	}
-
-	pcmBytes, err := decodePortablePCM(audioPath, sampleRate, channels)
+	integrity, err := portable.ComputeOpusAudioIntegrity(file)
 	if err != nil {
-		return portableAudioIntegrity{}, err
+		return portableAudioIntegrity{}, fmt.Errorf("hash portable Opus audio: %w", err)
 	}
-	sum := sha256.Sum256(pcmBytes)
-	sampleCount := int64(len(pcmBytes) / (2 * channels))
-	durationMS := int64(sampleCount * 1000 / int64(sampleRate))
 	return portableAudioIntegrity{
-		SampleRate:  sampleRate,
-		Channels:    channels,
-		SampleCount: sampleCount,
-		DurationMS:  durationMS,
-		PCMSHA256:   hex.EncodeToString(sum[:]),
+		SampleRate:  integrity.SampleRate,
+		Channels:    integrity.Channels,
+		SampleCount: integrity.SampleCount,
+		DurationMS:  integrity.DurationMS,
+		OpusSHA256:  integrity.SHA256,
 	}, nil
 }
 
@@ -520,9 +536,9 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 	}
 	processedAtUTC := strings.TrimSpace(source.Artifact.GeneratedAt)
 
-	manifest := portable.NormalizeManifest(portable.Manifest{
+	manifest := portable.NormalizeManifestV3(portable.Manifest{
 		Meeting: portable.Meeting{
-			ID:              portable.MeetingIDFromPCMHash(audio.PCMSHA256),
+			ID:              portable.MeetingIDFromAudioHash(audio.OpusSHA256),
 			Title:           title,
 			CreatedAtUTC:    createdAt,
 			RecordedAtLocal: recordedAtLocal,
@@ -547,8 +563,7 @@ func buildPortableMeetingManifest(source portableMeetingSource, audio portableAu
 		},
 		Integrity: portable.Integrity{
 			MatchPolicy: portable.AudioMatchPolicy,
-			PCMFormat:   portable.AudioPCMFormat,
-			PCMSHA256:   audio.PCMSHA256,
+			OpusSHA256:  audio.OpusSHA256,
 			SampleRate:  audio.SampleRate,
 			Channels:    audio.Channels,
 			SampleCount: audio.SampleCount,
@@ -609,10 +624,12 @@ func flattenPortableTranscriptItems(transcript portableTranscriptArtifact) []por
 				continue
 			}
 			items = append(items, portable.TranscriptItem{
-				Speaker: segment.Speaker,
-				StartMS: word.StartMS,
-				EndMS:   word.EndMS,
-				Text:    word.Text,
+				Speaker:              segment.Speaker,
+				StartMS:              word.StartMS,
+				EndMS:                word.EndMS,
+				Text:                 word.Text,
+				AttributionGapDB:     word.AttributionGapDB,
+				LowConfidenceSpeaker: word.LowConfidenceSpeaker,
 			})
 		}
 	}
@@ -679,12 +696,39 @@ func createPortableStagePath(outPath string) (string, error) {
 }
 
 func verifyPortableMeetingFile(path string, manifest portable.Manifest) error {
-	audio, err := computePortableAudioIntegrity(path)
+	policy := strings.ToLower(strings.TrimSpace(manifest.Integrity.MatchPolicy))
+	if policy == "" {
+		if manifest.Integrity.OpusSHA256 != "" {
+			policy = portable.AudioMatchPolicy
+		} else {
+			policy = portable.LegacyAudioMatchPolicyPCM
+		}
+	}
+
+	var (
+		audio portableAudioIntegrity
+		err   error
+	)
+	switch policy {
+	case portable.AudioMatchPolicy:
+		audio, err = computePortableAudioIntegrity(path)
+		if err != nil {
+			return fmt.Errorf("verify portable meeting file: %w", err)
+		}
+		return verifyPortableOpusIntegrity(audio, manifest.Integrity)
+	case portable.LegacyAudioMatchPolicyPCM:
+		if manifest.Integrity.PCMFormat != "" && !strings.EqualFold(manifest.Integrity.PCMFormat, portable.AudioPCMFormat) {
+			return fmt.Errorf("verify portable meeting file: unsupported pcm format %q", manifest.Integrity.PCMFormat)
+		}
+		audio, err = computeLegacyPortablePCMIntegrity(path, manifest.Integrity.SampleRate, manifest.Integrity.Channels)
+		if err == nil && audio.PCMSHA256 != manifest.Integrity.PCMSHA256 {
+			return fmt.Errorf("verify portable meeting file: decoded PCM sha256 mismatch")
+		}
+	default:
+		return fmt.Errorf("verify portable meeting file: unsupported audio match policy %q", policy)
+	}
 	if err != nil {
 		return fmt.Errorf("verify portable meeting file: %w", err)
-	}
-	if audio.PCMSHA256 != manifest.Integrity.PCMSHA256 {
-		return fmt.Errorf("verify portable meeting file: pcm sha256 mismatch")
 	}
 	if audio.SampleRate != manifest.Integrity.SampleRate {
 		return fmt.Errorf("verify portable meeting file: sample rate mismatch")
@@ -701,35 +745,42 @@ func verifyPortableMeetingFile(path string, manifest portable.Manifest) error {
 	return nil
 }
 
-func probePortableSourceAudio(path string) (portableAudioProbe, error) {
-	raw, err := exec.Command(
-		"ffprobe",
-		"-v", "error",
-		"-show_entries", "format=duration:stream=codec_type,codec_name,sample_rate,channels,duration",
-		"-of", "json",
-		path,
-	).Output()
-	if err != nil {
-		return portableAudioProbe{}, fmt.Errorf("ffprobe meeting audio: %w", err)
+func verifyPortableOpusIntegrity(audio portableAudioIntegrity, integrity portable.Integrity) error {
+	if audio.OpusSHA256 != integrity.OpusSHA256 {
+		return fmt.Errorf(
+			"verify portable meeting file: compressed Opus sha256 mismatch: manifest=%s actual=%s manifest_samples=%d actual_samples=%d manifest_duration_ms=%d actual_duration_ms=%d",
+			integrity.OpusSHA256,
+			audio.OpusSHA256,
+			integrity.SampleCount,
+			audio.SampleCount,
+			integrity.DurationMS,
+			audio.DurationMS,
+		)
 	}
-
-	var probe portableAudioProbe
-	if err := json.Unmarshal(raw, &probe); err != nil {
-		return portableAudioProbe{}, fmt.Errorf("parse ffprobe meeting audio json: %w", err)
+	if audio.SampleRate != integrity.SampleRate {
+		return fmt.Errorf("verify portable meeting file: sample rate mismatch")
 	}
-	return probe, nil
+	if audio.Channels != integrity.Channels {
+		return fmt.Errorf("verify portable meeting file: channel mismatch")
+	}
+	if audio.SampleCount != integrity.SampleCount {
+		return fmt.Errorf("verify portable meeting file: sample count mismatch")
+	}
+	if audio.DurationMS != integrity.DurationMS {
+		return fmt.Errorf("verify portable meeting file: duration mismatch")
+	}
+	return nil
 }
 
-func firstPortableAudioStream(probe portableAudioProbe) (portableAudioProbeStream, error) {
-	for _, stream := range probe.Streams {
-		if strings.EqualFold(stream.CodecType, "audio") {
-			return stream, nil
-		}
+// computeLegacyPortablePCMIntegrity exists only for checking v1/v2 files.
+// New files use ComputeOpusAudioIntegrity and never decode their recording for
+// identity. Stream stdout into the digest so inspecting a long legacy meeting
+// does not buffer hours of PCM in memory.
+func computeLegacyPortablePCMIntegrity(path string, sampleRate, channels int) (portableAudioIntegrity, error) {
+	if sampleRate <= 0 || channels <= 0 {
+		return portableAudioIntegrity{}, fmt.Errorf("legacy PCM integrity needs a positive sample rate and channel count")
 	}
-	return portableAudioProbeStream{}, fmt.Errorf("meeting audio file has no audio stream")
-}
 
-func decodePortablePCM(path string, sampleRate int, channels int) ([]byte, error) {
 	cmd := exec.Command(
 		"ffmpeg",
 		"-v", "error",
@@ -741,20 +792,34 @@ func decodePortablePCM(path string, sampleRate int, channels int) ([]byte, error
 		"-ac", strconv.Itoa(channels),
 		"-",
 	)
-	raw, err := cmd.Output()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("ffmpeg decode meeting audio: %w", err)
+		return portableAudioIntegrity{}, fmt.Errorf("open ffmpeg PCM output: %w", err)
 	}
-	return raw, nil
-}
-
-func parsePortableInt(value string) int {
-	if strings.TrimSpace(value) == "" {
-		return 0
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return portableAudioIntegrity{}, fmt.Errorf("start ffmpeg PCM decode: %w", err)
 	}
-	i, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil {
-		return 0
+	digest := sha256.New()
+	byteCount, copyErr := io.Copy(digest, stdout)
+	waitErr := cmd.Wait()
+	if copyErr != nil {
+		return portableAudioIntegrity{}, fmt.Errorf("read ffmpeg PCM output: %w", copyErr)
 	}
-	return i
+	if waitErr != nil {
+		return portableAudioIntegrity{}, fmt.Errorf("ffmpeg decode meeting audio: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
+	}
+	bytesPerSampleFrame := int64(2 * channels)
+	if byteCount%bytesPerSampleFrame != 0 {
+		return portableAudioIntegrity{}, fmt.Errorf("ffmpeg produced %d PCM bytes, not a whole number of %d-byte frames", byteCount, bytesPerSampleFrame)
+	}
+	sampleCount := byteCount / bytesPerSampleFrame
+	return portableAudioIntegrity{
+		SampleRate:  sampleRate,
+		Channels:    channels,
+		SampleCount: sampleCount,
+		DurationMS:  sampleCount * 1000 / int64(sampleRate),
+		PCMSHA256:   hex.EncodeToString(digest.Sum(nil)),
+	}, nil
 }

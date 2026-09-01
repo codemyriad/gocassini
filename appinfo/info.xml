@@ -18,7 +18,7 @@ steps. Optional LLM transcript cleanup and summaries are the only step that send
 data to a third party, and they run only when an OpenRouter (or compatible) API
 key is configured. Without a key, nothing leaves your infrastructure. See the
 full data-processing note: https://github.com/codemyriad/gocassini/blob/main/docs/privacy.md]]></description>
-  <version>0.2.0-beta.2</version>
+  <version>0.2.0-beta.6</version>
   <licence>agpl</licence>
   <author>codemyriad</author>
   <namespace>Cassini</namespace>
@@ -53,7 +53,7 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
            exact build this manifest was released with, never a moving
            `latest`. CI rejects a manifest where the two disagree; bump both
            together with scripts/bump-exapp-version.sh. -->
-      <image-tag>0.2.0-beta.2</image-tag>
+      <image-tag>0.2.0-beta.6</image-tag>
     </docker-install>
 
     <!--
@@ -119,6 +119,21 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
         <name>CASSINI_OPERATOR_API_TOKEN</name>
         <display-name>Operator API bearer token (optional)</display-name>
         <description>When set, direct (non-proxied) requests to the operator job API must send "Authorization: Bearer &lt;token&gt;". Requests proxied through Nextcloud are authenticated by AppAPI and are unaffected. Leave empty to keep the API reachable only through the AppAPI proxy authentication.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_STT_BACKEND</name>
+        <display-name>Speech-to-text backend (optional)</display-name>
+        <description>Which registered speech-to-text engine transcription uses. Leave empty for the default (sherpa-onnx). An unknown value fails the build loudly before any audio is decoded, so a typo cannot silently select a different engine.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_ATTRIBUTION_DISABLED</name>
+        <display-name>Disable speaker-attribution measurement (optional)</display-name>
+        <description>Set to 1 to skip the cross-track speaker-attribution stage entirely. By default every word is annotated with acoustic evidence of who was speaking; no words are changed or removed either way.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_ATTRIBUTION_DROP</name>
+        <display-name>Drop crosstalk words (optional)</display-name>
+        <description>Set to 1 to delete words the acoustic evidence contradicts instead of annotating them. Intended for room systems where one microphone audibly picks up every participant. The manifest records how many words were removed.</description>
       </variable>
     </environment-variables>
 

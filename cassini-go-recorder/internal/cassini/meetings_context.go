@@ -28,9 +28,12 @@ type meetingContext struct {
 	Speakers []meetingContextSpeaker `json:"speakers,omitempty"`
 
 	// TranscriptSource says how the prose was produced. Always
-	// "derived-from-words" today, and deliberately explicit: a published .opus
-	// carries no LLM-cleaned readable transcript, so a consumer must not
-	// present this text as one.
+	// "derived-from-words" today, and deliberately explicit: an
+	// operator-published .opus carries no LLM-cleaned readable transcript at
+	// all — only raw-ASR words — so a consumer must not present this text as
+	// one. (Re-exported copies in the static-site export tree do carry a
+	// readable transcript; this command reads the default raw-ASR entry
+	// regardless.)
 	TranscriptSource string `json:"transcriptSource"`
 	// SourceTranscriptID and SourceTranscriptFormat identify the transcript the
 	// prose was derived from, so a claim can be traced back to the file.

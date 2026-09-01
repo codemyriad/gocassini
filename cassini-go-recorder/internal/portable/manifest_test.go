@@ -25,7 +25,7 @@ func TestBuildOpusTagsIncludesProcessingProvenanceSummary(t *testing.T) {
 			DurationMS:  1000,
 		},
 		Integrity: Integrity{
-			MatchPolicy: AudioMatchPolicy,
+			MatchPolicy: LegacyAudioMatchPolicyPCM,
 			PCMFormat:   AudioPCMFormat,
 			PCMSHA256:   "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 			SampleRate:  48000,

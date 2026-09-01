@@ -50,7 +50,9 @@
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/processingStep" }
         },
-        "meetingSummary": { "$ref": "#/$defs/processingStep" }
+        "meetingSummary": { "$ref": "#/$defs/processingStep" },
+        "attribution": { "$ref": "#/$defs/attributionProvenance" },
+        "wordTimings": { "$ref": "#/$defs/wordTimingProvenance" }
       }
     },
     "chapters": {
@@ -181,6 +183,29 @@
         "host": { "type": "string" },
         "source": { "type": "string" },
         "version": { "type": "string" }
+      }
+    },
+    "attributionProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ran", "mode", "wordsMeasured", "wordsFlagged", "wordsDropped"],
+      "properties": {
+        "ran": { "type": "boolean", "description": "Whether the cross-track attribution stage ran against this file's default raw transcript." },
+        "mode": { "type": "string", "minLength": 1, "description": "How flagged words were handled: annotate (per-word evidence kept on the words), drop (flagged words deleted before publication; this record is then the only trace they existed), or disabled." },
+        "reason": { "type": "string", "description": "Why the stage did not run. Absent when ran is true." },
+        "wordsMeasured": { "type": "integer", "minimum": 0 },
+        "wordsFlagged": { "type": "integer", "minimum": 0 },
+        "wordsDropped": { "type": "integer", "minimum": 0 },
+        "thresholdDb": { "type": "number", "description": "The meeting's estimated crosstalk threshold in dB. Absent when the meeting showed no crosstalk population." }
+      }
+    },
+    "wordTimingProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endsBoundedByAudio"],
+      "description": "How the producer decided where each word ends. Absent on files produced before the rule changed, and on files whose speech recognizer makes no such guarantee. Absent means only that the guarantee was not made: the ends may be token-derived, in which case a word's end came from its last token including a trailing punctuation mark \u2014 a mark the recognizer stamps at the next acoustic onset, so such a word can run for seconds while its speaker is silent \u2014 or they may be sound and simply undeclared. A consumer keys off presence: absent means those ends are unvouched-for and a repair that clips an over-long word is appropriate; present means they were measured against the speaker's own audio and clipping them destroys correct timing.",
+      "properties": {
+        "endsBoundedByAudio": { "type": "boolean", "description": "True when each word's end was measured against its own speaker's track rather than taken from its last token's timestamp." }
       }
     },
     "chapter": {

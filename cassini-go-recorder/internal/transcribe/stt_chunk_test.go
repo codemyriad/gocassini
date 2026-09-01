@@ -121,10 +121,8 @@ func TestDedupOverlappingWordsKeepsOverlapWordOnce(t *testing.T) {
 		overlapMS     = int64(500)
 	)
 
-	// Previous window's decode, already in acc. The word "shared" sits in the
-	// overlap, before the cut (start 14600 < 14750), so it stays with window 0.
-	// "late" starts at 14800 (>= cut): it must be trimmed from acc and re-owned
-	// by window 1.
+	// Previous window's decode, already in acc. "shared" has more left-window
+	// context, while "late" has more right-window context.
 	acc := []Word{
 		{Text: "hello", StartMS: 1000, EndMS: 1400},
 		{Text: "world", StartMS: 5000, EndMS: 5400},
@@ -135,8 +133,8 @@ func TestDedupOverlappingWordsKeepsOverlapWordOnce(t *testing.T) {
 	// Next window's decode. It re-emits "shared" and "late" (both windows saw
 	// them), then continues past the overlap.
 	next := []Word{
-		{Text: "shared", StartMS: 14600, EndMS: 14760}, // before cut -> dropped here
-		{Text: "late", StartMS: 14800, EndMS: 14980},   // at/after cut -> kept here
+		{Text: "shared", StartMS: 14600, EndMS: 14760}, // duplicate; older copy wins
+		{Text: "late", StartMS: 14800, EndMS: 14980},   // duplicate; newer copy wins
 		{Text: "again", StartMS: 16000, EndMS: 16400},
 		{Text: "more", StartMS: 20000, EndMS: 20400},
 	}
@@ -167,6 +165,235 @@ func TestDedupOverlappingWordsKeepsOverlapWordOnce(t *testing.T) {
 	}
 }
 
+func TestDedupOverlappingWordsHandlesTimestampJitterAcrossOldMidpoint(t *testing.T) {
+	const (
+		windowStartMS = int64(9500)
+		overlapMS     = int64(500)
+	)
+	for _, tc := range []struct {
+		name      string
+		accStart  int64
+		nextStart int64
+	}{
+		{name: "old-before-new-after", accStart: 9740, nextStart: 9760},
+		{name: "old-after-new-before", accStart: 9760, nextStart: 9740},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			acc := []Word{
+				{Text: "before", StartMS: 9000, EndMS: 9200},
+				{Text: "Shared,", StartMS: tc.accStart, EndMS: tc.accStart + 100},
+			}
+			next := []Word{
+				{Text: "shared", StartMS: tc.nextStart, EndMS: tc.nextStart + 100},
+				{Text: "after", StartMS: 10200, EndMS: 10400},
+			}
+			got := dedupOverlappingWords(acc, next, false, windowStartMS, overlapMS)
+			if len(got) != 3 {
+				t.Fatalf("merged words = %#v; want before, one shared copy, after", got)
+			}
+			counts := map[string]int{}
+			for _, word := range got {
+				counts[normalizeOverlapWord(word.Text)]++
+			}
+			if counts["shared"] != 1 {
+				t.Fatalf("shared copies = %d in %#v; want exactly one", counts["shared"], got)
+			}
+		})
+	}
+}
+
+func TestDedupOverlappingWordsRetainsOneSidedOverlapWords(t *testing.T) {
+	acc := []Word{
+		{Text: "before", StartMS: 9000, EndMS: 9200},
+		{Text: "old-only", StartMS: 9800, EndMS: 9900},
+	}
+	next := []Word{
+		{Text: "new-only", StartMS: 9700, EndMS: 9800},
+		{Text: "after", StartMS: 10200, EndMS: 10400},
+	}
+	got := dedupOverlappingWords(acc, next, false, 9500, 500)
+	want := []string{"before", "new-only", "old-only", "after"}
+	if len(got) != len(want) {
+		t.Fatalf("merged words = %#v; want %v", got, want)
+	}
+	for i := range want {
+		if got[i].Text != want[i] {
+			t.Fatalf("merged word %d = %q; want %q (all=%#v)", i, got[i].Text, want[i], got)
+		}
+	}
+}
+
+func TestNonVADChunkedDisagreeingSeamUsesMidpointOwnership(t *testing.T) {
+	// The merged fallback's int8 decoder can hear the same overlap as one word
+	// in the preceding window and several different words in the next. With no
+	// text/time match, alignment alone would retain both readings. Keep the old
+	// midpoint ownership for this path so only one hypothesis owns each instant.
+	acc := []Word{
+		{Text: "before", StartMS: 14000, EndMS: 14200},
+		{Text: "recognize", StartMS: 14600, EndMS: 14900},
+		{Text: "old-late", StartMS: 14820, EndMS: 14920},
+	}
+	next := []Word{
+		{Text: "wreck", StartMS: 14610, EndMS: 14650},
+		{Text: "a", StartMS: 14660, EndMS: 14700},
+		{Text: "nice", StartMS: 14810, EndMS: 14850},
+		{Text: "after", StartMS: 15100, EndMS: 15300},
+	}
+
+	got := dedupMergedFallbackWords(acc, next, false, 14500, 500)
+	want := []Word{acc[0], acc[1], next[2], next[3]}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("disagreeing non-VAD seam = %#v; want midpoint-owned %#v", got, want)
+	}
+
+	// The VAD-window merge intentionally keeps one-sided lexical evidence; its
+	// private-corpus evaluation covers that behavior and must not inherit the
+	// merged fallback's disagreement policy.
+	gotVAD := dedupOverlappingWords(acc, next, false, 14500, 500)
+	if len(gotVAD) != len(acc)+len(next) {
+		t.Fatalf("disagreeing VAD seam = %#v; want both one-sided hypotheses", gotVAD)
+	}
+}
+
+func TestNonVADChunkedBoundaryContactDoesNotTriggerDisagreementCut(t *testing.T) {
+	// The preceding word only touches the overlap start; it does not populate
+	// the overlap. The one-sided next-window word must therefore survive rather
+	// than activating the merged fallback's disagreement policy.
+	acc := []Word{{Text: "before", StartMS: 9300, EndMS: 9500}}
+	next := []Word{
+		{Text: "new-only", StartMS: 9600, EndMS: 9700},
+		{Text: "after", StartMS: 10100, EndMS: 10300},
+	}
+	want := []Word{acc[0], next[0], next[1]}
+	got := dedupMergedFallbackWords(acc, next, false, 9500, 500)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("boundary-contact seam = %#v; want one-sided words %#v", got, want)
+	}
+}
+
+func TestNonVADChunkedConfidentMatchKeepsOneSidedOverlapWord(t *testing.T) {
+	// Midpoint ownership is only the zero-match fallback. Once one shared word
+	// anchors the hypotheses, retain additional one-sided lexical evidence from
+	// the aligned merge even when it lies before the old midpoint cut.
+	acc := []Word{{Text: "shared", StartMS: 9600, EndMS: 9700}}
+	next := []Word{
+		{Text: "shared", StartMS: 9610, EndMS: 9710},
+		{Text: "new-only", StartMS: 9700, EndMS: 9740},
+		{Text: "after", StartMS: 10100, EndMS: 10300},
+	}
+	got := dedupMergedFallbackWords(acc, next, false, 9500, 500)
+	wantText := []string{"shared", "new-only", "after"}
+	if len(got) != len(wantText) {
+		t.Fatalf("anchored non-VAD seam = %#v; want %v", got, wantText)
+	}
+	for i, text := range wantText {
+		if got[i].Text != text {
+			t.Fatalf("anchored non-VAD seam word %d = %q; want %q (all=%#v)", i, got[i].Text, text, got)
+		}
+	}
+}
+
+func TestDedupOverlappingWordsReplacesClampedBoundaryCopy(t *testing.T) {
+	acc := []Word{
+		{Text: "before", StartMS: 9300, EndMS: 9500},
+		{Text: "final", StartMS: 10000, EndMS: 10000},
+	}
+	next := []Word{
+		{Text: "final", StartMS: 9800, EndMS: 9950},
+		{Text: "after", StartMS: 10100, EndMS: 10300},
+	}
+	got := dedupOverlappingWords(acc, next, false, 9500, 500)
+	want := []Word{
+		{Text: "before", StartMS: 9300, EndMS: 9500},
+		{Text: "final", StartMS: 9800, EndMS: 9950},
+		{Text: "after", StartMS: 10100, EndMS: 10300},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("merged boundary words = %#v; want %#v", got, want)
+	}
+}
+
+func TestDedupOverlappingWordsAlignsShiftedPhrase(t *testing.T) {
+	// This shape was observed in the private evaluation: the old midpoint
+	// splice produced "pass it pass it" because the second hypothesis shifted
+	// the repeated phrase about 300ms later.
+	acc := []Word{
+		{Text: "I", StartMS: 9400, EndMS: 9500},
+		{Text: "can", StartMS: 9500, EndMS: 9660},
+		{Text: "pass", StartMS: 9660, EndMS: 9820},
+		{Text: "it", StartMS: 9820, EndMS: 9980},
+	}
+	next := []Word{
+		{Text: "pass", StartMS: 9960, EndMS: 10120},
+		{Text: "it", StartMS: 10120, EndMS: 10280},
+		{Text: "to", StartMS: 10280, EndMS: 10440},
+	}
+	got := dedupOverlappingWords(acc, next, false, 9500, 500)
+	wantText := []string{"I", "can", "pass", "it", "to"}
+	if len(got) != len(wantText) {
+		t.Fatalf("shifted phrase = %#v; want %v", got, wantText)
+	}
+	for i, text := range wantText {
+		if got[i].Text != text {
+			t.Fatalf("shifted phrase word %d = %q; want %q (all=%#v)", i, got[i].Text, text, got)
+		}
+	}
+}
+
+func TestDedupOverlappingWordsKeepsRapidRepeatedSingleton(t *testing.T) {
+	acc := []Word{{Text: "yes", StartMS: 9550, EndMS: 9650}}
+	next := []Word{{Text: "yes", StartMS: 9900, EndMS: 10000}}
+	got := dedupOverlappingWords(acc, next, false, 9500, 500)
+	if !reflect.DeepEqual(got, []Word{acc[0], next[0]}) {
+		t.Fatalf("rapid repeated singleton = %#v; want both occurrences", got)
+	}
+}
+
+func TestDedupOverlappingWordsKeepsRapidZeroLengthNextSingleton(t *testing.T) {
+	acc := []Word{{Text: "yes", StartMS: 9600, EndMS: 9700}}
+	next := []Word{{Text: "yes", StartMS: 10000, EndMS: 10000}}
+	got := dedupOverlappingWords(acc, next, false, 9500, 500)
+	if !reflect.DeepEqual(got, []Word{acc[0], next[0]}) {
+		t.Fatalf("zero-length next singleton = %#v; want both occurrences", got)
+	}
+}
+
+func TestDedupOverlappingWordsPreservesSemanticPunctuation(t *testing.T) {
+	acc := []Word{{Text: "C++", StartMS: 9700, EndMS: 9800}}
+	next := []Word{
+		{Text: "C#", StartMS: 9710, EndMS: 9810},
+		{Text: "C", StartMS: 9720, EndMS: 9820},
+	}
+	got := dedupOverlappingWords(acc, next, false, 9500, 500)
+	if len(got) != 3 {
+		t.Fatalf("technical tokens = %#v; want C++, C#, and C", got)
+	}
+	for _, tc := range []struct {
+		word string
+		want string
+	}{
+		{word: "C++", want: "c++"},
+		{word: "C#", want: "c#"},
+		{word: "a-b", want: "a-b"},
+		{word: "ab", want: "ab"},
+		{word: "“DON’T!”", want: "don't"},
+	} {
+		if got := normalizeOverlapWord(tc.word); got != tc.want {
+			t.Errorf("normalizeOverlapWord(%q) = %q; want %q", tc.word, got, tc.want)
+		}
+	}
+}
+
+func TestDedupOverlappingWordsKeepsStableSourceOrderForEqualStarts(t *testing.T) {
+	acc := []Word{{Text: "old", StartMS: 9800, EndMS: 10000}}
+	next := []Word{{Text: "new", StartMS: 9800, EndMS: 9900}}
+	got := dedupOverlappingWords(acc, next, false, 9500, 500)
+	want := []Word{acc[0], next[0]}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("equal-start source order = %#v; want %#v", got, want)
+	}
+}
+
 // TestDedupOverlappingWordsFirstWindowVerbatim pins that the first window is
 // kept verbatim (no preceding overlap to dedup against).
 func TestDedupOverlappingWordsFirstWindowVerbatim(t *testing.T) {
@@ -177,6 +404,256 @@ func TestDedupOverlappingWordsFirstWindowVerbatim(t *testing.T) {
 	got := dedupOverlappingWords(nil, next, true /*firstWindow*/, 0, 500)
 	if !reflect.DeepEqual(got, next) {
 		t.Fatalf("first window not kept verbatim: got %#v want %#v", got, next)
+	}
+}
+
+func TestClampWordsToTimelineEndPreservesBoundaryTokensWithinDecoderPadding(t *testing.T) {
+	words := []Word{
+		{Text: "within", StartMS: 13000, EndMS: 14000},
+		{Text: "straddles", StartMS: 14000, EndMS: 14950},
+		{Text: "boundary", StartMS: 14455, EndMS: 14800},
+		{Text: "inside-padding", StartMS: 14800, EndMS: 14950},
+		{Text: "padding-limit", StartMS: 14955, EndMS: 15000},
+		{Text: "beyond-padding", StartMS: 14956, EndMS: 15000},
+		{Text: "reversed-padding", StartMS: 14800, EndMS: 14799},
+	}
+
+	got := clampWordsToTimelineEnd(words, 14455, 500)
+	want := []Word{
+		{Text: "within", StartMS: 13000, EndMS: 14000},
+		{Text: "straddles", StartMS: 14000, EndMS: 14455},
+		{Text: "boundary", StartMS: 14455, EndMS: 14455},
+		{Text: "inside-padding", StartMS: 14455, EndMS: 14455},
+		{Text: "padding-limit", StartMS: 14455, EndMS: 14455},
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("clampWordsToTimelineEnd =\n  %#v\nwant\n  %#v", got, want)
+	}
+}
+
+func TestClampWordsToTimelineEndWithoutPaddingKeepsOnlyExactBoundary(t *testing.T) {
+	words := []Word{
+		{Text: "boundary", StartMS: 1000, EndMS: 1100},
+		{Text: "past-boundary", StartMS: 1001, EndMS: 1100},
+	}
+	want := []Word{{Text: "boundary", StartMS: 1000, EndMS: 1000}}
+	if got := clampWordsToTimelineEnd(words, 1000, 0); !reflect.DeepEqual(got, want) {
+		t.Fatalf("clampWordsToTimelineEnd without padding = %#v; want %#v", got, want)
+	}
+}
+
+func TestFilterWordsByEnergyRejectsSilenceAndClicksButKeepsQuietInterjections(t *testing.T) {
+	const sampleRate = 16000
+	samples := make([]float32, 3*sampleRate)
+	// A quiet 30ms utterance begins 50ms before the model timestamp. The energy
+	// margin must preserve it at the -60 dBFS peak boundary.
+	for i := 950 * sampleRate / 1000; i < 980*sampleRate/1000; i++ {
+		samples[i] = minimumWordPeakAmplitude
+	}
+	// Negative PCM contributes to peak and RMS by absolute/magnitude values.
+	for i := 1500 * sampleRate / 1000; i < 1530*sampleRate/1000; i++ {
+		samples[i] = -0.01
+	}
+	// A lone full-scale click passes the peak and RMS floors but must fail the
+	// minimum active-duration requirement.
+	samples[1950*sampleRate/1000] = 1
+	words := []Word{
+		{Text: "quiet", StartMS: 1000, EndMS: 1100},
+		{Text: "negative", StartMS: 1500, EndMS: 1600},
+		{Text: "click", StartMS: 2000, EndMS: 2100},
+		{Text: "silence", StartMS: 2400, EndMS: 2500},
+		{Text: "outside", StartMS: 4000, EndMS: 4100},
+	}
+
+	got := filterWordsByEnergy(samples, sampleRate, words)
+	want := []Word{
+		{Text: "quiet", StartMS: 1000, EndMS: 1100},
+		{Text: "negative", StartMS: 1500, EndMS: 1600},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("filterWordsByEnergy =\n  %#v\nwant\n  %#v", got, want)
+	}
+}
+
+func TestFilterWordsByEnergyAllowsMeasuredDecoderLead(t *testing.T) {
+	const sampleRate = 16000
+	if wordEnergyPreMarginMS != 100 || wordEnergyPostMarginMS != 200 {
+		t.Fatalf("word energy margins = %dms/%dms; want 100ms/200ms", wordEnergyPreMarginMS, wordEnergyPostMarginMS)
+	}
+	samples := make([]float32, 2*sampleRate)
+	// Real Parakeet output has placed a word up to 180ms before its direct PCM.
+	// Keep that measured decoder lead while still requiring sustained energy.
+	for i := 780 * sampleRate / 1000; i < 830*sampleRate/1000; i++ {
+		samples[i] = 0.01
+	}
+	words := []Word{{Text: "delayed-energy", StartMS: 500, EndMS: 600}}
+
+	got := filterWordsByEnergy(samples, sampleRate, words)
+	if !reflect.DeepEqual(got, words) {
+		t.Fatalf("filterWordsByEnergy measured decoder lead = %#v; want %#v", got, words)
+	}
+}
+
+func TestFilterWordsByEnergyRejectsMalformedTimestamps(t *testing.T) {
+	samples := make([]float32, 16000)
+	for i := range samples {
+		samples[i] = 0.1
+	}
+	words := []Word{
+		{Text: "max", StartMS: int64(1<<63 - 1), EndMS: int64(1<<63 - 1)},
+		{Text: "min", StartMS: int64(-1 << 63), EndMS: int64(-1 << 63)},
+		{Text: "reversed", StartMS: 800, EndMS: 700},
+	}
+	if got := filterWordsByEnergy(samples, 16000, words); len(got) != 0 {
+		t.Fatalf("filterWordsByEnergy malformed timestamps = %#v; want none", got)
+	}
+}
+
+func TestFinalizeTranscriptWordsClampsBeforeEnergyGate(t *testing.T) {
+	const sampleRate = 16000
+	samples := make([]float32, sampleRate)
+	for i := range samples {
+		samples[i] = 0.01
+	}
+	words := []Word{
+		{Text: "straddles", StartMS: 900, EndMS: 1100},
+		{Text: "boundary", StartMS: 1000, EndMS: 1200},
+		{Text: "inside-vad-padding", StartMS: 1032, EndMS: 1100},
+		{Text: "beyond-vad-padding", StartMS: 1033, EndMS: 1100},
+	}
+	got := finalizeTranscriptWords(samples, sampleRate, words, 1000, 32)
+	want := []Word{
+		{Text: "straddles", StartMS: 900, EndMS: 1000},
+		{Text: "boundary", StartMS: 1000, EndMS: 1000},
+		{Text: "inside-vad-padding", StartMS: 1000, EndMS: 1000},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("finalizeTranscriptWords = %#v; want %#v", got, want)
+	}
+}
+
+func TestSamplesToCeilMSMatchesActualVADTailPadding(t *testing.T) {
+	if got := samplesToCeilMS(0, 16000); got != 0 {
+		t.Fatalf("zero padding = %dms; want 0", got)
+	}
+	if got := samplesToCeilMS(511, 16000); got != 32 {
+		t.Fatalf("511-sample VAD padding = %dms; want ceil(31.9375)=32", got)
+	}
+	if got := samplesToCeilMS(8000, 16000); got != 500 {
+		t.Fatalf("decoder padding = %dms; want 500", got)
+	}
+}
+
+func TestDecoderTailPadSamplesPadsEveryVADSegment(t *testing.T) {
+	const sampleRate = 16000
+	for _, seconds := range []int{1, 9, 10, 15, 25, 55} {
+		if got := decoderTailPadSamples(seconds*sampleRate, sampleRate, true); got != sampleRate/2 {
+			t.Errorf("%ds VAD segment padding = %d samples; want %d", seconds, got, sampleRate/2)
+		}
+	}
+}
+
+func TestLongVADSegmentUsesOverlappingDecoderWindows(t *testing.T) {
+	const sampleRate = 16000
+	got := vadSegmentWindowBounds(25*sampleRate+700, sampleRate)
+	want := []windowBound{
+		{start: 0, end: 10 * sampleRate},
+		{start: 9*sampleRate + sampleRate/2, end: 19*sampleRate + sampleRate/2},
+		{start: 19 * sampleRate, end: 25*sampleRate + 700},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("25s VAD bounds = %#v; want %#v", got, want)
+	}
+	if got := vadSegmentWindowBounds(10*sampleRate, sampleRate); !reflect.DeepEqual(got, []windowBound{{start: 0, end: 10 * sampleRate}}) {
+		t.Fatalf("10s VAD bounds = %#v; want one unsplit window", got)
+	}
+	barelyLong := 10*sampleRate + 1
+	if got := vadSegmentWindowBounds(barelyLong, sampleRate); !reflect.DeepEqual(got, []windowBound{{start: 0, end: barelyLong}}) {
+		t.Fatalf("10s+1-sample VAD bounds = %#v; want one extended window", got)
+	}
+	tinyTerminal := 19*sampleRate + sampleRate/2 + 1
+	wantMergedTerminal := []windowBound{
+		{start: 0, end: 10 * sampleRate},
+		{start: 9*sampleRate + sampleRate/2, end: 15*sampleRate + 1},
+		{start: 14*sampleRate + sampleRate/2 + 1, end: tinyTerminal},
+	}
+	if got := vadSegmentWindowBounds(tinyTerminal, sampleRate); !reflect.DeepEqual(got, wantMergedTerminal) {
+		t.Fatalf("tiny-terminal VAD bounds = %#v; want %#v", got, wantMergedTerminal)
+	}
+}
+
+func TestVADSegmentWindowBoundsStayBoundedWithExactOverlap(t *testing.T) {
+	const sampleRate = 16000
+	for _, total := range []int{
+		10*sampleRate + sampleRate/2 + 1,
+		11 * sampleRate,
+		19*sampleRate + sampleRate/2 + 1,
+		20 * sampleRate,
+		25*sampleRate + 123,
+		55*sampleRate - 1,
+	} {
+		bounds := vadSegmentWindowBounds(total, sampleRate)
+		if len(bounds) < 2 {
+			t.Fatalf("total=%d produced %d bounds; want a split", total, len(bounds))
+		}
+		if bounds[0].start != 0 || bounds[len(bounds)-1].end != total {
+			t.Fatalf("total=%d is not fully covered: %#v", total, bounds)
+		}
+		for i, bound := range bounds {
+			length := bound.end - bound.start
+			if length < vadDecodeMinTerminal || length > vadDecodeWindowSamples {
+				t.Fatalf("total=%d window %d length=%d; want [%d,%d] (all=%#v)",
+					total, i, length, vadDecodeMinTerminal, vadDecodeWindowSamples, bounds)
+			}
+			if i > 0 {
+				if overlap := bounds[i-1].end - bound.start; overlap != vadDecodeWindowOverlap {
+					t.Fatalf("total=%d overlap %d->%d = %d; want %d (all=%#v)",
+						total, i-1, i, overlap, vadDecodeWindowOverlap, bounds)
+				}
+			}
+		}
+	}
+}
+
+func TestDecoderTailPadSamplesPreservesNonVADWindowPolicy(t *testing.T) {
+	const sampleRate = 16000
+	if got := decoderTailPadSamples(9*sampleRate, sampleRate, false); got != sampleRate/2 {
+		t.Fatalf("9s non-VAD chunk padding = %d samples; want %d", got, sampleRate/2)
+	}
+	if got := decoderTailPadSamples(10*sampleRate, sampleRate, false); got != 0 {
+		t.Fatalf("10s non-VAD chunk padding = %d samples; want 0", got)
+	}
+	if got := decoderTailPadSamples(15*sampleRate, sampleRate, false); got != 0 {
+		t.Fatalf("15s non-VAD window padding = %d samples; want 0", got)
+	}
+	for _, tc := range []struct {
+		name       string
+		samples    int
+		sampleRate int
+	}{
+		{name: "empty", samples: 0, sampleRate: sampleRate},
+		{name: "invalid-rate", samples: sampleRate, sampleRate: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := decoderTailPadSamples(tc.samples, tc.sampleRate, true); got != 0 {
+				t.Fatalf("padding = %d samples; want 0", got)
+			}
+		})
+	}
+}
+
+func TestShortInterjectionVADConfig(t *testing.T) {
+	t.Setenv("CASSINI_VAD_DEVICE", "cpu")
+	cfg := newVADModelConfig("vad.onnx", 16000)
+	if cfg.SileroVad.Model != "vad.onnx" || cfg.SampleRate != 16000 {
+		t.Fatalf("VAD identity config = model %q sample rate %d", cfg.SileroVad.Model, cfg.SampleRate)
+	}
+	if cfg.SileroVad.Threshold != 0.18 || cfg.SileroVad.MinSpeechDuration != 0.10 {
+		t.Fatalf("VAD short-turn config = threshold %g min speech %g; want 0.18 / 0.10", cfg.SileroVad.Threshold, cfg.SileroVad.MinSpeechDuration)
+	}
+	if cfg.SileroVad.WindowSize != vadWindowSamples || cfg.NumThreads != 1 || cfg.Provider != "cpu" {
+		t.Fatalf("VAD runtime config = window %d threads %d provider %q", cfg.SileroVad.WindowSize, cfg.NumThreads, cfg.Provider)
 	}
 }
 
@@ -220,7 +697,7 @@ func TestNonVADChunkedDedupEndToEndShape(t *testing.T) {
 	first := true
 	for _, b := range bounds {
 		windowStartMS := int64(b.start) * 1000 / int64(sr)
-		merged = dedupOverlappingWords(merged, decodeWindow(b), first, windowStartMS, overlapMS)
+		merged = dedupMergedFallbackWords(merged, decodeWindow(b), first, windowStartMS, overlapMS)
 		first = false
 	}
 
@@ -273,4 +750,260 @@ func itoa(n int64) string {
 		buf[i] = '-'
 	}
 	return string(buf[i:])
+}
+
+// activeAudio returns a buffer of totalMS milliseconds at sampleRate where
+// every [from,to) span carries steady energy well above the gate's -66 dBFS
+// activity floor and everything else is digital silence.
+func activeAudio(sampleRate int, totalMS int64, spans ...[2]int64) []float32 {
+	samples := make([]float32, totalMS*int64(sampleRate)/1000)
+	for _, span := range spans {
+		for i := span[0] * int64(sampleRate) / 1000; i < span[1]*int64(sampleRate)/1000 && i < int64(len(samples)); i++ {
+			if i%2 == 0 {
+				samples[i] = 0.05
+			} else {
+				samples[i] = -0.05
+			}
+		}
+	}
+	return samples
+}
+
+// Parakeet's duration head saturates at 320ms, so a longer word's last speech
+// token stops short of the sound. The energy gate must follow the speaker's own
+// audio to its real end instead of clipping the word mid-syllable — this is the
+// case that made a spoken "Okay." 150ms long.
+func TestFilterWordsByEnergyFollowsAudioPastTheLastSpeechToken(t *testing.T) {
+	const sampleRate = 16000
+	samples := activeAudio(sampleRate, 3000, [2]int64{1000, 1600})
+	words := []Word{{Text: "Okay.", StartMS: 1000, EndMS: 1150, extentCap: 2500}}
+
+	got := filterWordsByEnergy(samples, sampleRate, words)
+	if len(got) != 1 {
+		t.Fatalf("filterWordsByEnergy = %#v; want the word kept", got)
+	}
+	// The audio runs out at 1600ms and the end lands exactly there — far short
+	// of the 2500ms the punctuation mark would have imposed, and not one
+	// millisecond past the last sample the gate calls active.
+	if got[0].StartMS != 1000 || got[0].EndMS != 1600 {
+		t.Fatalf("word = %d-%dms; want 1000-1600ms", got[0].StartMS, got[0].EndMS)
+	}
+	if got[0].extentCap != 0 {
+		t.Errorf("the cap must be cleared once applied, got %d", got[0].extentCap)
+	}
+}
+
+// The mirror image: when the speaker really has stopped, the word ends where
+// its tokens said it did. Nothing is spent on silence, so the pause the
+// punctuation mark sat across is not painted as speech.
+func TestFilterWordsByEnergyStopsWhereTheAudioStops(t *testing.T) {
+	const sampleRate = 16000
+	samples := activeAudio(sampleRate, 3000, [2]int64{1000, 1150}, [2]int64{2400, 2600})
+	words := []Word{{Text: "Yeah.", StartMS: 1000, EndMS: 1150, extentCap: 2500}}
+
+	got := filterWordsByEnergy(samples, sampleRate, words)
+	if len(got) != 1 || got[0].StartMS != 1000 || got[0].EndMS != 1150 {
+		t.Fatalf("filterWordsByEnergy = %#v; want the word kept unchanged at 1000-1150ms", got)
+	}
+}
+
+// An unvoiced stop closure inside a word ("okay", "that") is a short silence
+// the extension must bridge; the pause before the next utterance is not. The
+// boundary is wordEndGapToleranceMS, pinned here from both sides.
+func TestFilterWordsByEnergyBridgesAClosureButNotAPause(t *testing.T) {
+	const sampleRate = 16000
+	if wordEndGapToleranceMS != 200 {
+		t.Fatalf("gap tolerance = %dms; want 200ms", wordEndGapToleranceMS)
+	}
+	samples := activeAudio(sampleRate, 3000,
+		[2]int64{1000, 1150}, // "o-"
+		[2]int64{1210, 1450}, // "-kay" after a 60ms closure
+		[2]int64{2400, 2600}, // the next utterance, where the "." is stamped
+	)
+	// filterWordsByEnergy compacts its input in place, so each call gets its own
+	// word.
+	spoken := func() []Word { return []Word{{Text: "Okay.", StartMS: 1000, EndMS: 1150, extentCap: 2500}} }
+
+	got := filterWordsByEnergy(samples, sampleRate, spoken())
+	if len(got) != 1 {
+		t.Fatalf("filterWordsByEnergy = %#v; want the word kept", got)
+	}
+	if got[0].EndMS != 1450 {
+		t.Fatalf("word ends at %dms; want 1450ms (closure bridged, pause not crossed)", got[0].EndMS)
+	}
+
+	// One tolerance either side of the boundary, from the word's stamped end.
+	justUnder := activeAudio(sampleRate, 3000,
+		[2]int64{1000, 1150},
+		[2]int64{1150 + wordEndGapToleranceMS - 10, 1600},
+	)
+	if got := filterWordsByEnergy(justUnder, sampleRate, spoken()); len(got) != 1 || got[0].EndMS != 1600 {
+		t.Fatalf("a %dms gap = %#v; want the audio after it kept, ending at 1600ms", wordEndGapToleranceMS-10, got)
+	}
+	justOver := activeAudio(sampleRate, 3000,
+		[2]int64{1000, 1150},
+		[2]int64{1150 + wordEndGapToleranceMS + 10, 1600},
+	)
+	if got := filterWordsByEnergy(justOver, sampleRate, spoken()); len(got) != 1 || got[0].EndMS != 1150 {
+		t.Fatalf("a %dms gap = %#v; want the word to end at 1150ms", wordEndGapToleranceMS+10, got)
+	}
+}
+
+// The cap is the end the punctuation-inclusive rule produced. Continuing audio
+// may never take a word past it, so this rule can never invent overlap that
+// main did not already have. A word with no cap is never extended at all.
+func TestFilterWordsByEnergyNeverExceedsTheCap(t *testing.T) {
+	const sampleRate = 16000
+	samples := activeAudio(sampleRate, 4000, [2]int64{1000, 3500})
+	words := []Word{
+		{Text: "capped", StartMS: 1000, EndMS: 1150, extentCap: 1400},
+		{Text: "uncapped", StartMS: 2000, EndMS: 2150},
+	}
+
+	got := filterWordsByEnergy(samples, sampleRate, words)
+	if len(got) != 2 {
+		t.Fatalf("filterWordsByEnergy = %#v; want both words kept", got)
+	}
+	if got[0].EndMS != 1400 {
+		t.Errorf("capped word ends at %dms; want the cap, 1400ms", got[0].EndMS)
+	}
+	if got[1].EndMS != 2150 {
+		t.Errorf("uncapped word ends at %dms; want its own end, 2150ms", got[1].EndMS)
+	}
+}
+
+// A word built entirely from punctuation may never be extended, end to end
+// through both stages that decide a word's extent.
+//
+// Parakeet stamps a standalone mark with a timestamp and a duration like any
+// other token, but it writes those marks rather than hearing them: no sample
+// anywhere belongs to the mark. A zero-length "…" whose speaker resumes 100ms
+// later still clears the energy gate — the gate's 200ms post-margin reaches
+// into that next utterance — so if such a word carried an extension ceiling
+// the gate would walk it forward over audio that is plainly the next word's.
+//
+// This is a seam test on purpose: tokensToWords decides whether a ceiling
+// exists and filterWordsByEnergy decides how much of it to spend, and either
+// half in isolation looks correct. "Marco." is the control — it carries a real
+// spoken token, so it keeps its ceiling and is extended over its own audio in
+// this very same call.
+func TestPunctuationOnlyWordIsNotExtendedOverTheNextUtterance(t *testing.T) {
+	const sampleRate = 16000
+	// "Okay" 1000-1300ms, then a pause, then "Marco" from 1600ms to 2400ms.
+	// The mark is stamped at 1500ms, inside the pause and 100ms before the
+	// speaker resumes.
+	samples := activeAudio(sampleRate, 3500, [2]int64{1000, 1300}, [2]int64{1600, 2400})
+	tokens := []string{"▁Okay", "▁…", "▁Marco", "."}
+	timestamps := []float32{1.00, 1.50, 1.60, 2.60}
+	durations := []float32{0.30, 0.32, 0.32, 0.00}
+
+	words := tokensToWords(tokens, timestamps, durations)
+	if len(words) != 3 {
+		t.Fatalf("tokensToWords = %#v; want three words", words)
+	}
+	point := words[1]
+	if point.Text != "…" {
+		t.Fatalf("words[1] = %q; want the standalone mark", point.Text)
+	}
+	if point.extentCapMS() != point.EndMS {
+		t.Errorf("a punctuation-only word carries a ceiling of %dms above its end %dms; it must carry none",
+			point.extentCapMS(), point.EndMS)
+	}
+
+	got := filterWordsByEnergy(samples, sampleRate, words)
+	if len(got) != 3 {
+		t.Fatalf("filterWordsByEnergy = %#v; want all three words kept — the mark must clear the gate for this test to be testing anything", got)
+	}
+	gatedPoint, gatedNext := got[1], got[2]
+	if gatedPoint.StartMS != 1500 || gatedPoint.EndMS != 1500 {
+		t.Errorf("the mark = %d-%dms; want 1500-1500ms, exactly where its token stamped it",
+			gatedPoint.StartMS, gatedPoint.EndMS)
+	}
+	if gatedPoint.EndMS > gatedNext.StartMS {
+		t.Errorf("the mark reaches %dms, past the next word's start at %dms: it expanded across speech that is not its own",
+			gatedPoint.EndMS, gatedNext.StartMS)
+	}
+	// The control: the spoken word in the same call is extended from the 1920ms
+	// its saturating duration head reported to the 2400ms its audio actually
+	// runs to, so the mark is being left alone by the ceiling rule and not by a
+	// dead extension path.
+	if gatedNext.Text != "Marco." || gatedNext.EndMS != 2400 {
+		t.Errorf("control word = %q ending %dms; want \"Marco.\" extended over its own audio to 2400ms",
+			gatedNext.Text, gatedNext.EndMS)
+	}
+}
+
+// A cap does not rescue a word with no audio under it: the gate still drops it,
+// and the extension never runs on a word that was not kept.
+func TestFilterWordsByEnergyStillDropsSilentWordsWithACap(t *testing.T) {
+	const sampleRate = 16000
+	samples := activeAudio(sampleRate, 4000, [2]int64{3000, 3500})
+	words := []Word{{Text: "hallucinated.", StartMS: 1000, EndMS: 1150, extentCap: 3400}}
+
+	if got := filterWordsByEnergy(samples, sampleRate, words); len(got) != 0 {
+		t.Fatalf("filterWordsByEnergy = %#v; want the silent word dropped", got)
+	}
+}
+
+// The properties the rule must have for every input, swept over caps, ends and
+// audio layouts: a start never moves, an end never goes backwards (no real
+// speech is cut and no word collapses to zero length), and an end never passes
+// the cap (so the end never exceeds what the punctuation-inclusive rule
+// produced).
+func TestFilterWordsByEnergyExtensionProperties(t *testing.T) {
+	const sampleRate = 16000
+	layouts := [][][2]int64{
+		{{1000, 1150}},
+		{{1000, 1600}},
+		{{1000, 1150}, {1210, 1450}},
+		{{1000, 1150}, {1400, 1450}, {1900, 2600}},
+		{{900, 2999}},
+	}
+	for layoutIndex, spans := range layouts {
+		samples := activeAudio(sampleRate, 3000, spans...)
+		for _, endMS := range []int64{1050, 1150, 1320, 1470} {
+			for _, capMS := range []int64{0, 1000, 1155, 1600, 2500, 9000} {
+				word := Word{Text: "w", StartMS: 1000, EndMS: endMS, extentCap: capMS}
+				got := filterWordsByEnergy(samples, sampleRate, []Word{word})
+				if len(got) == 0 {
+					continue
+				}
+				out := got[0]
+				if out.StartMS != word.StartMS {
+					t.Fatalf("layout %d end=%d cap=%d: start moved %d->%d", layoutIndex, endMS, capMS, word.StartMS, out.StartMS)
+				}
+				if out.EndMS < word.EndMS {
+					t.Fatalf("layout %d end=%d cap=%d: end went backwards to %d", layoutIndex, endMS, capMS, out.EndMS)
+				}
+				if out.EndMS > word.extentCapMS() {
+					t.Fatalf("layout %d end=%d cap=%d: end %d passed the cap %d", layoutIndex, endMS, capMS, out.EndMS, word.extentCapMS())
+				}
+				if out.EndMS <= out.StartMS {
+					t.Fatalf("layout %d end=%d cap=%d: word collapsed to %d-%d", layoutIndex, endMS, capMS, out.StartMS, out.EndMS)
+				}
+			}
+		}
+	}
+}
+
+// Synthetic decoder padding may not justify reaching into it: the ceiling is
+// clipped to the real PCM boundary along with the end it bounds.
+func TestClampWordsToTimelineEndClampsTheExtentCap(t *testing.T) {
+	words := []Word{
+		{Text: "straddles", StartMS: 900, EndMS: 1100, extentCap: 1400},
+		{Text: "boundary", StartMS: 1000, EndMS: 1000, extentCap: 1400},
+		{Text: "inside", StartMS: 800, EndMS: 900, extentCap: 950},
+	}
+	got := clampWordsToTimelineEnd(words, 1000, 32)
+	if len(got) != 3 {
+		t.Fatalf("clampWordsToTimelineEnd = %#v; want three words", got)
+	}
+	for _, word := range got[:2] {
+		if word.extentCap != 1000 {
+			t.Errorf("word %q cap = %d; want the timeline end, 1000", word.Text, word.extentCap)
+		}
+	}
+	if got[2].extentCap != 950 {
+		t.Errorf("a cap inside the timeline must survive, got %d", got[2].extentCap)
+	}
 }

@@ -1,95 +1,132 @@
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
-  buildPortableManifestFromArtifact,
   canonicalPortableMeetingName,
-  flattenPortableTranscriptItems,
-  inferRecordedAtLocal,
+  discoverArtifactDirectories,
+  isReadyMeetingBundle,
+  main,
+  packArtifactDirectory,
 } from "./pack-portable-artifacts.mjs";
 
-describe("flattenPortableTranscriptItems", () => {
-  it("preserves exact word timing when source transcript has words", () => {
-    expect(
-      flattenPortableTranscriptItems({
-        segments: [
-          {
-            speaker: "spk_1",
-            words: [
-              { text: "hello", startMs: 100, endMs: 200 },
-              { text: "team", startMs: 220, endMs: 320 },
-            ],
-          },
-        ],
-      }),
-    ).toEqual([
-      { speaker: "spk_1", text: "hello", startMs: 100, endMs: 200 },
-      { speaker: "spk_1", text: "team", startMs: 220, endMs: 320 },
+// Mirrors writeReadyMeetingBundleFixture in cassini-go-recorder's
+// internal/cassini/cli_test.go: the minimal directory `cassini pack` accepts.
+// With realAudio the audio is an actual Opus-in-WebM (needs ffmpeg); without
+// it, a placeholder good enough for discovery tests, which only stat files.
+function writeReadyBundleFixture(bundleDir: string, opts: { realAudio?: boolean; state?: string } = {}) {
+  mkdirSync(bundleDir, { recursive: true });
+  if (opts.realAudio) {
+    execFileSync("ffmpeg", [
+      "-y",
+      "-v",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "sine=frequency=660:sample_rate=48000:duration=0.25",
+      "-c:a",
+      "libopus",
+      "-application",
+      "voip",
+      join(bundleDir, "meeting.webm"),
     ]);
-  });
-});
-
-describe("buildPortableManifestFromArtifact", () => {
-  it("builds a portable manifest that keeps exact transcript items", () => {
-    const artifact = {
-      rootDir: "/tmp/daily-meeting-2026-03-12--12:29--stt-parakeet-ctc-0.6b",
-      audioPath: "/tmp/meeting.opus",
-      manifest: {
-        generatedAt: "2026-03-18T12:00:00Z",
-        source: {
-          basename: "daily-meeting-2026-03-12--12:29.mkv",
+  } else {
+    writeFileSync(join(bundleDir, "meeting.webm"), "placeholder-audio");
+  }
+  writeFileSync(
+    join(bundleDir, "transcript.words.v1.json"),
+    JSON.stringify({
+      version: "transcript.words.v1",
+      media: { src: "meeting.webm", durationMs: 250 },
+      speakers: [{ id: "spk_host", label: "Host" }],
+      segments: [
+        {
+          speaker: "spk_host",
+          startMs: 0,
+          endMs: 200,
+          text: "hello team",
+          words: [
+            { text: "hello", startMs: 0, endMs: 80 },
+            { text: "team", startMs: 100, endMs: 200 },
+          ],
         },
-        provenance: {
-          speechToText: {
-            backend: "sherpa-onnx",
-            model: "parakeet-tdt-0.6b-v2-int8",
-          },
-        },
+      ],
+    }),
+  );
+  writeFileSync(
+    join(bundleDir, "manifest.json"),
+    JSON.stringify({
+      version: "cassini.meeting-artifact.v1",
+      generatedAt: "2026-03-11T10:00:00Z",
+      source: { basename: "source.mkv", durationMs: 250 },
+      files: { audio: "meeting.webm", transcript: "transcript.words.v1.json" },
+      speakerCount: 1,
+      wordCount: 2,
+    }),
+  );
+  writeFileSync(
+    join(bundleDir, "cassini.json"),
+    JSON.stringify({
+      kind: "meeting",
+      version: "cassini.meeting.v1",
+      created_at_utc: "2026-03-11T10:00:00Z",
+      state: opts.state ?? "ready",
+      stage: opts.state ?? "ready",
+      source_kind: "mkv",
+      source_path: "/tmp/source.mkv",
+      files: {
+        audio: "meeting.webm",
+        transcript: "transcript.words.v1.json",
+        artifact_manifest: "manifest.json",
       },
-      transcript: {
-        version: "transcript.words.v1",
-        media: { src: "meeting.opus", durationMs: 1000 },
-        speakers: [{ id: "spk_1", label: "Chris" }],
-        segments: [
-          {
-            speaker: "spk_1",
-            startMs: 100,
-            endMs: 320,
-            text: "hello team",
-            words: [
-              { text: "hello", startMs: 100, endMs: 200 },
-              { text: "team", startMs: 220, endMs: 320 },
-            ],
-          },
-        ],
-      },
-      readableTranscript: null,
-      displayTranscript: null,
-    };
+    }),
+  );
+}
 
-    const manifest = buildPortableManifestFromArtifact(artifact, "/tmp/output.opus", {
-      pcmSha256: "abc123",
-      sampleRate: 48000,
-      channels: 1,
-      sampleCount: 48000,
-      durationMs: 1000,
-    });
+// The pre-#219 shape this script used to consume when it produced portable
+// files itself. The Go packer refuses it; discovery must too.
+function writeLegacyArtifactFixture(artifactDir: string) {
+  mkdirSync(artifactDir, { recursive: true });
+  writeFileSync(join(artifactDir, "meeting.opus"), "legacy-audio");
+  writeFileSync(join(artifactDir, "transcript.words.v1.json"), "{}");
+}
 
-    expect(manifest.transcript.items).toEqual([
-      { speaker: "spk_1", text: "hello", startMs: 100, endMs: 200 },
-      { speaker: "spk_1", text: "team", startMs: 220, endMs: 320 },
+function toolAvailable(command: string, args: string[]): boolean {
+  try {
+    return spawnSync(command, args, { stdio: "ignore" }).status === 0;
+  } catch {
+    return false;
+  }
+}
+
+const hasRealCliToolchain = toolAvailable("go", ["version"]) && toolAvailable("ffmpeg", ["-version"]);
+if (!hasRealCliToolchain) {
+  console.warn(
+    "pack-portable-artifacts: skipping the real-CLI pack test — it needs `go` and `ffmpeg` on PATH",
+  );
+}
+
+describe("packArtifactDirectory", () => {
+  it("delegates portable v3 production to the canonical Go packer", async () => {
+    const calls: unknown[][] = [];
+    const result = await packArtifactDirectory(
+      "/tmp/example.meeting",
+      "/tmp/example.opus",
+      (...args: unknown[]) => calls.push(args),
+    );
+
+    expect(result).toEqual({ status: "write" });
+    expect(calls).toEqual([
+      [
+        "cassini",
+        ["pack", "/tmp/example.meeting", "--out", "/tmp/example.opus"],
+        { stdio: "inherit" },
+      ],
     ]);
-    expect(manifest.readableTranscript?.version).toBe("transcript.readable.v1");
-    expect(manifest.displayTranscript?.version).toBe("transcript.display.v1");
-    expect(manifest.meeting.recordedAtLocal).toBe("2026-03-12T12:29:00");
-    expect(manifest.meeting.processedAtUtc).toBe("2026-03-18T12:00:00Z");
-  });
-});
-
-describe("inferRecordedAtLocal", () => {
-  it("parses the meeting timestamp from common Cassini names", () => {
-    expect(inferRecordedAtLocal("daily-meeting-2026-03-10--12:30.mkv")).toBe("2026-03-10T12:30:00");
-    expect(inferRecordedAtLocal("daily-meeting--2026-03-05--12:38:29.opus")).toBe("2026-03-05T12:38:29");
-    expect(inferRecordedAtLocal("demo--20260310T123045")).toBe("2026-03-10T12:30:45");
   });
 });
 
@@ -105,4 +142,128 @@ describe("canonicalPortableMeetingName", () => {
       "daily-meeting-2026-03-12--12:29",
     );
   });
+});
+
+describe("discoverArtifactDirectories", () => {
+  it("selects ready bundles and reports the legacy artifact shape separately", () => {
+    const root = mkdtempSync(join(tmpdir(), "cassini-pack-discover-"));
+    try {
+      const readyDir = join(root, "a-ready.meeting");
+      writeReadyBundleFixture(readyDir);
+      const legacyDir = join(root, "b-legacy");
+      writeLegacyArtifactFixture(legacyDir);
+      // Unrelated directory: neither shape, silently ignored.
+      mkdirSync(join(root, "c-unrelated"));
+
+      const { bundleDirs, legacyDirs } = discoverArtifactDirectories(root);
+      expect(bundleDirs).toEqual([readyDir]);
+      expect(legacyDirs).toEqual([legacyDir]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a bundle whose cassini.json state is not ready", () => {
+    const root = mkdtempSync(join(tmpdir(), "cassini-pack-notready-"));
+    try {
+      const failedDir = join(root, "failed.meeting");
+      writeReadyBundleFixture(failedDir, { state: "failed" });
+
+      expect(isReadyMeetingBundle(failedDir)).toBe(false);
+      expect(discoverArtifactDirectories(root).bundleDirs).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a bundle missing one of the files the Go packer requires", () => {
+    const root = mkdtempSync(join(tmpdir(), "cassini-pack-partial-"));
+    try {
+      const partialDir = join(root, "partial.meeting");
+      writeReadyBundleFixture(partialDir);
+      rmSync(join(partialDir, "manifest.json"));
+
+      expect(isReadyMeetingBundle(partialDir)).toBe(false);
+      expect(discoverArtifactDirectories(root).bundleDirs).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("treats an unset bundle state as ready, like the Go packer does", () => {
+    const root = mkdtempSync(join(tmpdir(), "cassini-pack-unset-"));
+    try {
+      const dir = join(root, "unset.meeting");
+      writeReadyBundleFixture(dir);
+      const manifestPath = join(dir, "cassini.json");
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      delete manifest.state;
+      writeFileSync(manifestPath, JSON.stringify(manifest));
+
+      expect(isReadyMeetingBundle(dir)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("main", () => {
+  it("fails with an actionable error when the source holds only legacy artifacts", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cassini-pack-legacyonly-"));
+    try {
+      writeLegacyArtifactFixture(join(root, "source", "old-artifact"));
+
+      await expect(
+        main(["--source-dir", join(root, "source"), "--output-dir", join(root, "out")]),
+      ).rejects.toThrow(/No ready \.meeting bundles found .* legacy artifact directory skipped/);
+      expect(existsSync(join(root, "out"))).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("pack:portable-artifacts against the real cassini CLI", () => {
+  // Proves the delegated command actually accepts what discovery selects:
+  // builds the Go packer, discovers a real ready bundle, and lets the script
+  // run `cassini pack` on it for real (no mocked runner).
+  it.skipIf(!hasRealCliToolchain)(
+    "packs a discovered ready bundle end-to-end and skips a legacy artifact",
+    { timeout: 240_000 },
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "cassini-pack-cli-"));
+      try {
+        const goRecorderDir = fileURLToPath(new URL("../../cassini-go-recorder/", import.meta.url));
+        const cassiniBin = join(root, "cassini");
+        execFileSync("go", ["build", "-o", cassiniBin, "./cmd/cassini"], {
+          cwd: goRecorderDir,
+          stdio: "pipe",
+        });
+
+        const sourceDir = join(root, "source");
+        writeReadyBundleFixture(join(sourceDir, "demo.meeting"), { realAudio: true });
+        writeLegacyArtifactFixture(join(sourceDir, "old-artifact"));
+        const outputDir = join(root, "out");
+
+        const scriptPath = fileURLToPath(new URL("./pack-portable-artifacts.mjs", import.meta.url));
+        const stdout = execFileSync(
+          process.execPath,
+          [scriptPath, "--source-dir", sourceDir, "--output-dir", outputDir],
+          { env: { ...process.env, CASSINI_BIN: cassiniBin }, encoding: "utf8" },
+        );
+
+        const packedPath = join(outputDir, "demo.opus");
+        expect(stdout).toContain(`write ${packedPath}`);
+        expect(existsSync(packedPath)).toBe(true);
+        const packed = readFileSync(packedPath);
+        expect(packed.length).toBeGreaterThan(0);
+        // The packer commits a real Ogg Opus file, not a renamed input.
+        expect(packed.subarray(0, 4).toString("ascii")).toBe("OggS");
+        // The legacy neighbor is skipped, not packed.
+        expect(existsSync(join(outputDir, "old-artifact.opus"))).toBe(false);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });

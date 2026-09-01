@@ -58,6 +58,15 @@ jobs:
           image_ref="${{ env.REGISTRY }}/${{ env.IMAGE }}:${safe_tag}"
           echo "ref=$image_ref" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve newest stable FFmpeg
+        id: ffmpeg
+        if: ${{ inputs.image_tag != '' }}
+        run: |
+          set -euo pipefail
+          version=$(deployment/ffmpeg/resolve-latest.sh)
+          echo "Resolved FFmpeg ${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push ExApp image
         if: ${{ inputs.image_tag != '' }}
         uses: docker/build-push-action@v6
@@ -67,6 +76,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.image.outputs.ref }}
+          build-args: |
+            FFMPEG_VERSION=${{ steps.ffmpeg.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

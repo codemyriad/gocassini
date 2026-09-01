@@ -1,12 +1,32 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
+  import { writable, type Writable } from "svelte/store";
   import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
   import { Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape, X } from "@lucide/svelte";
-  import { formatClockTime, parseTimeHash } from "../core/transcript";
+  import {
+    formatClockTime,
+    isLikelyCrosstalkAcrossBlocks,
+    judgedDisplaySegments,
+    normalizeSpeakerLabel,
+    parseTimeHash,
+    type JudgedDisplaySegment,
+  } from "../core/transcript";
   import { getActiveTimedRange } from "../core/timing";
+  import {
+    buildTranscriptRows,
+    followRowKeyForBlocks,
+    repairTurnFinalWordInflation,
+    sortBlocksInReadingOrder,
+    type TranscriptRow,
+  } from "../core/overlap";
+  import {
+    buildPlayheadIndex,
+    resolvePlayhead,
+    type PlayheadIndex,
+  } from "../core/playhead";
   import type {
     DisplayTranscriptToken,
     DisplayTranscriptV1,
@@ -24,6 +44,7 @@
   import { formatMeetingDate, type MeetingCatalogEntry } from "../viewer/catalog";
   import type { DataProvider } from "../viewer/dataProvider";
   import { buildViewerHash, readViewerHash, viewerUrlWithHash } from "../viewer/hashRouting";
+  import TranscriptTokens from "./TranscriptTokens.svelte";
 
   // The single-meeting reading surface (D-420 V1). It is "smart": given a
   // DataProvider and a meeting entry (or bundled mode) it loads the artifact,
@@ -53,19 +74,10 @@
     enriched: MeetingCatalogEntry;
   }>();
 
-  interface DisplaySegment {
-    id: string;
-    speaker?: string;
-    speakerLabel: string;
-    startMs: number;
-    endMs: number;
-    text: string;
-    tokens: DisplayTranscriptToken[];
-    words: IndexedWord[];
-    sourceSegmentIds: string[];
-  }
+  type DisplaySegment = JudgedDisplaySegment;
 
   const CONTINUATION_GAP_MS = 60_000;
+
 
   let transcriptIndex: TranscriptIndex | null = null;
   let displayTranscript: DisplayTranscriptV1 | null = null;
@@ -76,6 +88,13 @@
   let chaptersSrc: string | null = null;
   let timingPrecision: ArtifactTimingPrecision | null = null;
   let artifactMetadata: ArtifactMetadata | null = null;
+  // Whether the PRODUCER already bounded this artifact's word ends by the
+  // measured audio (manifest provenance.wordTimings.endsBoundedByAudio). When
+  // it did, the legacy display-time repair must stand down: its budget would
+  // clip a genuinely long word — one measured at 1.44 s against a 240 ms
+  // median — back to 1 s and undo the production fix. Absent on all 197
+  // already-published meetings, which is where the repair earns its keep.
+  let wordEndsBoundedByAudio = false;
   let availableTranscripts: PortableTranscriptDescriptor[] = [];
   let currentTranscriptId = "";
   let defaultTranscriptId = "";
@@ -93,6 +112,30 @@
   let loading = false;
 
   let currentTimeMs = 0;
+  // Highlight state, pushed by syncHighlight rather than derived per frame.
+  // `activeSegments` holds the very objects `displaySegments` holds — the word
+  // template identity-compares its token against `activeTokens`, so anything
+  // that copied a block or a token here would quietly extinguish every
+  // highlight while still looking right in a structural test.
+  let activeSegments: DisplaySegment[] = [];
+  let activeSegmentIds = new Set<string>();
+  let activeFollowRowKey: string | null = null;
+  // The authoritative answer, and the comparison basis: only segments whose
+  // entry here actually changed get their store written. Nothing in the template
+  // reads this map any more, which is the whole point — see TranscriptTokens.
+  let activeTokens = new Map<string, DisplayTranscriptToken | null>();
+  // One store per rendered block, so a write reaches only that block's words.
+  let tokenHighlights = new Map<string, Writable<DisplayTranscriptToken | null>>();
+  let activeWords = new Map<string, IndexedWord | null>();
+  let playheadIndex: PlayheadIndex<DisplaySegment> = buildPlayheadIndex<DisplaySegment>([]);
+  // The stretch `activeSegments`/`activeTokens` are known to be correct across.
+  // Deliberately empty to begin with, so the first call always resolves.
+  let highlightValidFromMs = Number.POSITIVE_INFINITY;
+  let highlightValidUntilMs = Number.NEGATIVE_INFINITY;
+  // Seeded to `showExactWords`'s own initial value. The empty validity window
+  // above already forces the first resolve, so this only has to avoid a
+  // spurious second one.
+  let highlightExactWords = false;
   let durationMs = 0;
   let playing = false;
   let followPlayback = true;
@@ -102,7 +145,7 @@
   let transcriptPane: HTMLElement | null = null;
   let audioEl: HTMLAudioElement | null = null;
   let animationFrameId = 0;
-  let lastAutoScrollSegmentId = "";
+  let lastAutoScrollRowKey = "";
   let showExactWords = false;
 
   // The meeting-view section; used to resolve element lookups against the
@@ -164,6 +207,7 @@
     chaptersSrc = artifact.chaptersSrc;
     timingPrecision = artifact.timingPrecision;
     artifactMetadata = artifact.metadata;
+    wordEndsBoundedByAudio = artifact.wordEndsBoundedByAudio;
     availableTranscripts = artifact.availableTranscripts;
     currentTranscriptId = artifact.currentTranscriptId;
     defaultTranscriptId =
@@ -172,7 +216,7 @@
     errorMessage = "";
     showExactWords = false;
     manualScrollLock = false;
-    lastAutoScrollSegmentId = "";
+    lastAutoScrollRowKey = "";
   }
 
   function applySwitchedTranscript(artifact: LoadedArtifact) {
@@ -188,9 +232,10 @@
     readableTranscript = artifact.readableTranscript;
     timingPrecision = artifact.timingPrecision;
     artifactMetadata = artifact.metadata;
+    wordEndsBoundedByAudio = artifact.wordEndsBoundedByAudio;
     availableTranscripts = artifact.availableTranscripts;
     currentTranscriptId = artifact.currentTranscriptId;
-    lastAutoScrollSegmentId = "";
+    lastAutoScrollRowKey = "";
   }
 
   function resetLoadedArtifact() {
@@ -207,6 +252,7 @@
     chaptersSrc = null;
     timingPrecision = null;
     artifactMetadata = null;
+    wordEndsBoundedByAudio = false;
     availableTranscripts = [];
     currentTranscriptId = "";
     defaultTranscriptId = "";
@@ -215,7 +261,7 @@
     durationMs = 0;
     showExactWords = false;
     manualScrollLock = false;
-    lastAutoScrollSegmentId = "";
+    lastAutoScrollRowKey = "";
   }
 
   function mergeMeetingRuntimeSummary(
@@ -339,16 +385,34 @@
     }
   }
 
+  /**
+   * Read the playhead once. Deliberately does NOT schedule the next frame.
+   *
+   * It used to. Because it is also called from `handleTimeUpdate` (the media
+   * element fires `timeupdate` about four times a second) and from `seekTo`,
+   * every one of those calls started ANOTHER self-scheduling animation-frame
+   * chain while one was already running, and `animationFrameId` kept only the
+   * newest — so `stopPlaybackClock` could cancel exactly one of them and the
+   * rest ran until playback stopped. Counted in the browser: 139 callbacks in
+   * the first second of playback, 323 by the twelfth, and once the transcript
+   * highlight stopped starving the frame budget, 2,644 — forty-four clocks
+   * where there should be one, each re-reading `audioEl.currentTime` and
+   * re-entering the reactive graph. Scheduling now belongs to the clock alone.
+   */
   function syncPlaybackTime() {
     currentTimeMs = asFiniteMilliseconds(Math.round((audioEl?.currentTime ?? 0) * 1000));
+  }
+
+  function advancePlaybackClock() {
+    syncPlaybackTime();
     if (playing) {
-      animationFrameId = window.requestAnimationFrame(syncPlaybackTime);
+      animationFrameId = window.requestAnimationFrame(advancePlaybackClock);
     }
   }
 
   function startPlaybackClock() {
     stopPlaybackClock();
-    animationFrameId = window.requestAnimationFrame(syncPlaybackTime);
+    animationFrameId = window.requestAnimationFrame(advancePlaybackClock);
   }
 
   function stopPlaybackClock() {
@@ -449,9 +513,9 @@
   function resumeFollow() {
     followPlayback = true;
     manualScrollLock = false;
-    if (activeSegment) {
-      lastAutoScrollSegmentId = "";
-      void scrollSegmentIntoView(activeSegment.id, "smooth");
+    if (activeFollowRowKey) {
+      lastAutoScrollRowKey = "";
+      void scrollSegmentIntoView(activeFollowRowKey, "smooth");
     }
   }
 
@@ -499,17 +563,11 @@
     display: DisplayTranscriptV1 | null,
   ): DisplaySegment[] {
     if (display) {
-      return display.blocks.map((block) => ({
-        id: block.id,
-        speaker: block.speaker,
-        speakerLabel: normalizeSpeakerLabel(block.speakerLabel),
-        startMs: block.startMs,
-        endMs: block.endMs,
-        text: block.text,
-        tokens: block.tokens,
-        words: [],
-        sourceSegmentIds: [...block.sourceSegmentIds],
-      }));
+      // The whole projection lives in core/transcript.ts: the canonical words a
+      // block is judged on and the tokens still allowed to vote on that
+      // judgement have to come out of one compatibility pass, and that has to
+      // be somewhere a test can reach. See judgedDisplaySegments.
+      return judgedDisplaySegments(index, display);
     }
 
     if (!readable) {
@@ -549,31 +607,15 @@
     });
   }
 
-  function normalizeSpeakerLabel(label: string): string {
-    return label.replace(/\s+(audio|video)\s*$/i, "").trim() || label;
-  }
-
-  function getActiveDisplaySegment(
-    segments: DisplaySegment[],
-    timeMs: number,
-  ): DisplaySegment | null {
-    return getActiveTimedRange(segments, timeMs);
-  }
-
-  function getActiveDisplayToken(
-    segment: DisplaySegment | null,
-    timeMs: number,
-  ): DisplayTranscriptToken | null {
-    if (!segment || segment.tokens.length === 0) {
-      return null;
+  // Tooltip fragment for a low-confidence word. Guarded against non-finite
+  // gaps (hosts can mount this published component with unvalidated data):
+  // never render "NaN dB" or "Infinity dB" — fall back to the unmeasured
+  // wording instead.
+  function describeAttributionGap(gapDb: number | undefined): string {
+    if (gapDb === undefined || !Number.isFinite(gapDb)) {
+      return "much louder";
     }
-    return getActiveTimedRange(
-      segment.tokens.filter(
-        (token): token is DisplayTranscriptToken & { startMs: number; endMs: number } =>
-          token.startMs !== undefined && token.endMs !== undefined,
-      ),
-      timeMs,
-    );
+    return `${gapDb.toFixed(0)} dB louder`;
   }
 
   function getActiveDisplayWord(
@@ -586,19 +628,162 @@
     return getActiveTimedRange(segment.words, timeMs);
   }
 
-  function isSpeakerContinuation(segments: DisplaySegment[], index: number): boolean {
-    if (index === 0) {
-      return false;
+  // Highlighting is per ACTIVE SEGMENT, not per meeting: during an overlap two
+  // turns really are sounding, so both keep their ring and both track their own
+  // word. Keyed by segment id because the template renders segments through
+  // grouped rows and cannot rely on array position.
+  function activeWordsBySegment(
+    segments: readonly DisplaySegment[],
+    timeMs: number,
+  ): Map<string, IndexedWord | null> {
+    return new Map(segments.map((segment) => [segment.id, getActiveDisplayWord(segment, timeMs)]));
+  }
+
+  // A row whose speaker just held the floor a moment ago does not repeat its
+  // own name: the same rule as before, only asked of turns rather than of the
+  // fragments a turn arrives in. A monologue the producer split at a two-second
+  // pause is two turns, and the second one keeps its timestamp but drops the
+  // duplicate header.
+  function continuationRowKeys(rows: TranscriptRow<DisplaySegment>[]): Set<string> {
+    const keys = new Set<string>();
+    for (let index = 1; index < rows.length; index += 1) {
+      const previous = rows[index - 1]!;
+      const current = rows[index]!;
+      if (!current.speaker || previous.speaker !== current.speaker) {
+        continue;
+      }
+      if (current.startMs - previous.endMs <= CONTINUATION_GAP_MS) {
+        keys.add(current.key);
+      }
     }
-    const previous = segments[index - 1];
-    const current = segments[index];
-    if (!previous || !current) {
-      return false;
+    return keys;
+  }
+
+  /**
+   * Re-derive the highlight, but only when the playhead has actually left the
+   * stretch the last answer was good for.
+   *
+   * `resolvePlayhead` hands back the window its answer holds across, so the
+   * common case — a frame landing between two word boundaries — costs one
+   * comparison and returns without touching a single reactive source. Measured
+   * on a transcript shaped like the largest published meeting, 36 of 480 frames
+   * in an eight-second listen cross a boundary at all.
+   *
+   * The index is rebuilt when `displaySegments` changes, which is exactly when
+   * its identity changes: that array is recomputed and never mutated, so the
+   * identity test is both sound and complete. `showExactWords` forces a refresh
+   * because the canonical-word highlight is switched off at source while it is
+   * false, so its answer changes without the playhead moving.
+   */
+  function syncHighlight(
+    segments: DisplaySegment[],
+    exactWords: boolean,
+    timeMs: number,
+  ): void {
+    const rebuilt = playheadIndex.source !== segments;
+    if (rebuilt) {
+      playheadIndex = buildPlayheadIndex(segments);
+      tokenHighlights = new Map();
+      activeTokens = new Map();
     }
-    if (!current.speaker || previous.speaker !== current.speaker) {
-      return false;
+    if (
+      !rebuilt &&
+      exactWords === highlightExactWords &&
+      timeMs >= highlightValidFromMs &&
+      timeMs < highlightValidUntilMs
+    ) {
+      return;
     }
-    return current.startMs - previous.endMs <= CONTINUATION_GAP_MS;
+    highlightExactWords = exactWords;
+
+    const state = resolvePlayhead(playheadIndex, timeMs);
+    highlightValidFromMs = state.validFromMs;
+    highlightValidUntilMs = state.validUntilMs;
+
+    activeSegments = state.soundingBlocks as DisplaySegment[];
+    activeSegmentIds = new Set(activeSegments.map((segment) => segment.id));
+    activeWords = activeWordsBySegment(activeSegments, timeMs);
+
+    const next = new Map<string, DisplayTranscriptToken | null>(
+      activeSegments.map((segment, position) => [
+        segment.id,
+        (state.activeTokens[position] ?? null) as DisplayTranscriptToken | null,
+      ]),
+    );
+    // Write only what moved, comparing against the PREVIOUS answer — which is
+    // why `activeTokens` is not replaced until both loops have run. A block
+    // that was lit and still is, on the same word, must not be written at all:
+    // a store set always notifies, so an unconditional write would re-run that
+    // block's words for nothing.
+    for (const [id, token] of next) {
+      if (activeTokens.get(id) !== token) {
+        tokenHighlightFor(id).set(token);
+      }
+    }
+    for (const [id, token] of activeTokens) {
+      if (token !== null && !next.has(id)) {
+        tokenHighlightFor(id).set(null);
+      }
+    }
+    activeTokens = next;
+  }
+
+  /**
+   * The highlight store for one block, created on first use.
+   *
+   * Lazily, because the template asks for it while rendering and a block that
+   * never sounds never needs one. Cleared wholesale when the transcript
+   * changes, so a switch cannot leave a previous body's blocks holding stale
+   * stores — or leak them.
+   */
+  function tokenHighlightFor(segmentId: string): Writable<DisplayTranscriptToken | null> {
+    let store = tokenHighlights.get(segmentId);
+    if (!store) {
+      store = writable<DisplayTranscriptToken | null>(null);
+      tokenHighlights.set(segmentId, store);
+    }
+    return store;
+  }
+
+  // The blocks a row renders as its own speaker's prose — the turn's own
+  // fragments, not the chips nested in it. What rings when the turn is
+  // sounding, and what the crosstalk warning is judged on.
+  function rowSpeechBlocks(row: TranscriptRow<DisplaySegment>): DisplaySegment[] {
+    return row.members
+      .filter((member): member is Extract<typeof member, { kind: "speech" }> => member.kind === "speech")
+      .map((member) => member.block);
+  }
+
+  // Every block a row renders, chips included: what the exact-words strip
+  // enumerates, so no block loses its canonical-word view by being nested.
+  function rowAllBlocks(row: TranscriptRow<DisplaySegment>): DisplaySegment[] {
+    return row.members.flatMap((member) =>
+      member.kind === "speech" ? [member.block] : [...member.blocks],
+    );
+  }
+
+  // The ring says "this speaker is sounding now". It is judged on the turn's
+  // OWN blocks: a backchannel inside the turn is sounding on its own account
+  // and lights its own chip, and must not claim the host was still talking.
+  function isRowSounding(row: TranscriptRow<DisplaySegment>, sounding: Set<string>): boolean {
+    return rowSpeechBlocks(row).some((block) => sounding.has(block.id));
+  }
+
+  function isRowLikelyCrosstalk(row: TranscriptRow<DisplaySegment>): boolean {
+    return isLikelyCrosstalkAcrossBlocks(rowSpeechBlocks(row));
+  }
+
+  function likelyCrosstalkTitle(speakerLabel: string): string {
+    return `Another participant's microphone was much louder here. This is probably their voice bleeding into ${speakerLabel}'s track, not ${speakerLabel} speaking.`;
+  }
+
+  // "over Chris", "over Chris and Dana" - names, never durations. The measured
+  // simultaneity stays in the model; a reader can act on who, not on how long.
+  function formatSpeakerList(labels: readonly string[]): string {
+    if (labels.length <= 1) {
+      return labels[0] ?? "";
+    }
+    return `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
   }
 
   function hasTimedTokens(segment: DisplaySegment): boolean {
@@ -711,13 +896,45 @@
 
   $: summaryHtml = renderSummaryHtml(summaryMarkdown);
   $: speakers = transcriptIndex?.transcript.speakers ?? [];
+  // Reading order, then EFFECTIVE timings, then overlap. The order matters:
+  // the producer appends wordless segments last so the array cannot be trusted
+  // to be sorted, and the overlap analysis has to see repaired spans or it
+  // spends most of its time labelling decoder-fabricated silence as crosstalk
+  // (D-690). repairTurnFinalWordInflation copies rather than mutates, so the
+  // loaded artifact keeps its canonical times and every word keeps its original
+  // START — seek targets never move.
   $: displaySegments = transcriptIndex
-    ? buildDisplaySegments(transcriptIndex, readableTranscript, displayTranscript)
+    ? sortBlocksInReadingOrder(
+        repairTurnFinalWordInflation(
+          buildDisplaySegments(transcriptIndex, readableTranscript, displayTranscript),
+          { endsBoundedByAudio: wordEndsBoundedByAudio },
+        ),
+      )
     : [];
   $: visibleSegments = displaySegments;
-  $: activeSegment = getActiveDisplaySegment(displaySegments, currentTimeMs);
-  $: activeToken = getActiveDisplayToken(activeSegment, currentTimeMs);
-  $: activeWord = getActiveDisplayWord(activeSegment, currentTimeMs);
+  // Rows are TURNS, not blocks: the producer flushes a segment at every speaker
+  // change, so one sentence spoken over somebody else arrives as a dozen
+  // fragments and only the turn they came from is worth reading (D-693).
+  $: transcriptRows = buildTranscriptRows(displaySegments);
+  $: activeFollowRowKey = followRowKeyForBlocks(transcriptRows, activeSegments);
+  $: continuationKeys = continuationRowKeys(transcriptRows);
+  // Highlight membership runs on the same effective audible spans the overlap
+  // analysis judges on, not on paragraph extents: extents ring both speakers
+  // (and follow-scroll the earlier paragraph) through stretches where their
+  // words strictly alternate. Wordless blocks keep their extent.
+  //
+  // PUSHED ON A BOUNDARY, NOT DERIVED ON A FRAME (D-692). These five were `$:`
+  // over `currentTimeMs`, so each of the sixty playhead writes a second rebuilt
+  // them — and because two of them are a fresh Map and a fresh Set, and legacy
+  // reactivity compares objects by identity, every consumer of the playhead was
+  // invalidated each time. On the largest published meeting that is 7,318
+  // word-button effects marked, scheduled and dirty-checked sixty times a
+  // second to discover that one or two of them changed; the profile was
+  // accordingly 93% busy, four fifths of it Svelte bookkeeping. `syncHighlight`
+  // keeps them assigned only when the answer actually moves — which, since a
+  // word lasts a few hundred milliseconds, is a few times a second rather than
+  // sixty. The work is not made cheaper; it is not entered.
+  $: syncHighlight(displaySegments, showExactWords, currentTimeMs);
   $: hasPrecomputedDisplay = displayTranscript !== null;
   $: metadataSections = artifactMetadata?.sections ?? [];
   $: safeDurationMs = asFiniteMilliseconds(durationMs);
@@ -728,11 +945,11 @@
   $: if (
     followPlayback &&
     !manualScrollLock &&
-    activeSegment?.id &&
-    activeSegment.id !== lastAutoScrollSegmentId
+    activeFollowRowKey &&
+    activeFollowRowKey !== lastAutoScrollRowKey
   ) {
-    lastAutoScrollSegmentId = activeSegment.id;
-    void scrollSegmentIntoView(activeSegment.id, "smooth");
+    lastAutoScrollRowKey = activeFollowRowKey;
+    void scrollSegmentIntoView(activeFollowRowKey, "smooth");
   }
 </script>
 
@@ -927,69 +1144,114 @@
         on:wheel={() => (manualScrollLock = true)}
         role="log"
       >
-        {#each visibleSegments as segment, segmentIndex}
+        <!-- One row per TURN, and a turn is ONE PARAGRAPH. The producer
+             flushes a segment at every speaker change, so a sentence spoken
+             over somebody else arrives here as a dozen one- to three-word
+             fragments; buildTranscriptRows puts them back into the turn they
+             were and this loop sets them as continuous prose. NOTHING IS
+             MERGED: every block keeps its own id, its own words, its own seek
+             anchors and its own scroll target - only the paragraph breaks and
+             the repeated headers between them are gone. A short remark said
+             inside a turn is a chip where it happened rather than a row of its
+             own, and two people who genuinely held the floor at once are named
+             on each other's rows ("over Chris"). No durations anywhere: the
+             model keeps the measurement, the page shows who. -->
+        {#snippet blockProse(block: DisplaySegment)}{#if block.tokens.length > 0 && hasTimedTokens(block)}<TranscriptTokens
+              tokens={block.tokens}
+              fallbackStartMs={block.startMs}
+              activeToken={tokenHighlightFor(block.id)}
+              seek={seekTo}
+            />{:else}<button
+              class="inline p-0 border-0 bg-transparent text-left text-[1.06rem] leading-[1.72] rounded cursor-pointer hover:bg-primary/40"
+              on:click={() => seekTo(block.startMs)}
+              type="button"
+            >{block.text}</button>{/if}{/snippet}
+        {#each transcriptRows as row (row.key)}
           <article
-            aria-current={segment.id === activeSegment?.id ? "true" : undefined}
-            class="transition-all {isSpeakerContinuation(visibleSegments, segmentIndex)
-              ? '-mt-1'
-              : ''} {segment.id === activeSegment?.id
+            aria-current={isRowSounding(row, activeSegmentIds) ? "true" : undefined}
+            class="transition-all {continuationKeys.has(row.key) ? '-mt-1' : ''} {isRowSounding(
+              row,
+              activeSegmentIds,
+            )
               ? 'ring-2 ring-primary ring-offset-6 ring-offset-base-100 bg-base-100 rounded-sm'
               : ''}"
-            id={segmentDomId(segment.id)}
           >
-            <!-- Header row: speaker name + timestamp, both aligned left. -->
-            <div class="flex items-center gap-1 mb-1">
-              {#if !isSpeakerContinuation(visibleSegments, segmentIndex)}
-                <span class="badge badge-md badge-info text-sm px-1 font-bold">{segment.speakerLabel}</span>
+            <!-- Header row: speaker name + timestamp, both aligned left.
+                 flex-wrap so the simultaneity marker drops to its own line on a
+                 narrow screen instead of squeezing the speaker name. -->
+            <div class="flex flex-wrap items-center gap-1 mb-1">
+              {#if !continuationKeys.has(row.key)}
+                <span class="badge badge-md badge-info text-sm px-1 font-bold">{row.speakerLabel}</span>
+              {/if}
+              {#if isRowLikelyCrosstalk(row)}
+                <span
+                  class="badge badge-md badge-warning badge-outline text-sm px-1"
+                  title={likelyCrosstalkTitle(row.speakerLabel)}
+                >probably crosstalk</span>
               {/if}
               <button
                 class="badge badge-md text-sm bg-base-200 px-1 text-base-content/60 hover:bg-primary/60 hover:text-base-content cursor-pointer tabular-nums"
-                on:click={() => seekTo(segment.startMs)}
+                on:click={() => seekTo(row.startMs)}
                 type="button"
               >
-                {formatClockTime(segment.startMs)}
+                {formatClockTime(row.startMs)}
               </button>
+              <!-- Simultaneity, quietly: WHO this turn ran over, and nothing
+                   else. Static per transcript (it never depends on the
+                   playhead), so it does not churn the role="log" live region. -->
+              {#if row.over.length > 0}
+                <span
+                  class="text-sm text-base-content/55 min-w-0"
+                  title="Simultaneous speech: {formatSpeakerList(row.over)} {row.over.length > 1
+                    ? 'were'
+                    : 'was'} speaking at the same time."
+                ><span class="sr-only">Simultaneous speech: </span>over {formatSpeakerList(row.over)}</span>
+              {/if}
             </div>
 
-            {#if segment.tokens.length > 0 && hasTimedTokens(segment)}
-              <div class="text-base leading-normal px-1.5">
-                {#each segment.tokens as token}{#if token.spaceBefore}{' '}{/if}{#if token.startMs !== undefined && token.endMs !== undefined}<button
-                      class="inline p-0 border-0 rounded text-base leading-normal cursor-pointer transition duration-150 {segment.id ===
-                        activeSegment?.id && token === activeToken
-                        ? 'bg-primary ring-1 ring-primary'
-                        : 'bg-transparent hover:bg-primary/60'} {token.alignment === 'interpolated'
-                        ? 'border-b border-dashed border-warning/60'
-                        : ''}"
-                      on:click={() => seekTo(token.startMs ?? segment.startMs)}
-                      type="button"
-                    >{token.text}</button>{:else}<span
-                      class="inline rounded text-[1.06rem] leading-[1.72] {token.kind ===
-                      'word'
-                        ? 'text-base-content/70'
-                        : 'text-base-content'}"
-                    >{token.text}</span>{/if}{/each}
-              </div>
-            {:else}
-              <button
-                class="block w-full p-0 border-0 bg-transparent text-left text-base-content text-[1.06rem] leading-[1.72] rounded"
-                on:click={() => seekTo(segment.startMs)}
-                type="button"
-              >
-                {segment.text}
-              </button>
-            {/if}
+            <!-- The turn, as one paragraph. Members are laid end to end with a
+                 single space between them: the fragments the producer cut are
+                 sentences again, and an interjection sits inline at the seam it
+                 was said in. A chip's copy text reads "(Ben: Right.)" - the
+                 parens and the name are real text nodes, the screen-reader
+                 prefix is `select-none` so it never lands in the clipboard. -->
+            <p class="px-1.5 text-[1.06rem] leading-[1.72] text-base-content break-words">{#each row.members as member, memberIndex (member.key)}{#if memberIndex > 0}{' '}{/if}{#if member.kind === 'speech'}<span
+                  id={segmentDomId(member.block.id)}
+                >{@render blockProse(member.block)}</span>{:else}<span
+                   class="box-decoration-clone rounded-md border bg-base-200/60 px-1.5 py-0.5 text-[0.94rem] text-base-content/60 {isLikelyCrosstalkAcrossBlocks(
+                     member.blocks,
+                   )
+                     ? 'border-warning'
+                     : 'border-base-300'}"
+                   title={isLikelyCrosstalkAcrossBlocks(member.blocks)
+                     ? likelyCrosstalkTitle(member.speakerLabel)
+                     : undefined}
+                 >{#if isLikelyCrosstalkAcrossBlocks(member.blocks)}<span class="sr-only select-none">Probably crosstalk. </span>{/if}<span class="sr-only select-none">Interjection by </span><span aria-hidden="true">(</span><span
+                    class="font-semibold">{member.speakerLabel}</span><span aria-hidden="true">:</span>{#each member.blocks as chipBlock (chipBlock.id)}{' '}<span
+                      class="rounded {activeSegmentIds.has(chipBlock.id) ? 'bg-primary/25' : ''}"
+                      id={segmentDomId(chipBlock.id)}
+                    >{@render blockProse(chipBlock)}</span>{/each}<span aria-hidden="true">)</span></span>{/if}{/each}</p>
 
-            {#if !hasPrecomputedDisplay && showExactWords && segment.words.length > 0}
-              <div class="block mt-3 pt-3 border-t border-base-300 text-base leading-normal">
-                {#each segment.words as word, wordIndex}{#if wordIndex > 0}{' '}{/if}<button
-                    class="inline p-0 border-0 rounded text-base leading-normal cursor-pointer transition duration-150 {segment.id ===
-                      activeSegment?.id && word.id === activeWord?.id
-                      ? 'bg-primary ring-1 ring-primary'
-                      : 'hover:bg-primary'}"
-                    on:click={() => seekTo(word.startMs)}
-                    type="button"
-                  >{word.text}</button>{/each}
-              </div>
+            {#if !hasPrecomputedDisplay && showExactWords}
+              {#each rowAllBlocks(row) as block (block.id)}
+                {#if block.words.length > 0}
+                  <div class="block mt-3 pt-3 border-t border-base-300 text-base leading-normal">
+                    {#each block.words as word, wordIndex}{#if wordIndex > 0}{' '}{/if}<button
+                        class="inline p-0 border-0 rounded text-base leading-normal cursor-pointer {word.id ===
+                          activeWords.get(block.id)?.id
+                          ? 'bg-primary ring-1 ring-primary'
+                          : 'hover:bg-primary'} {word.lowConfidenceSpeaker
+                          ? 'text-base-content/55 border-b border-dashed border-warning/60'
+                          : ''}"
+                        on:click={() => seekTo(word.startMs)}
+                        title={word.lowConfidenceSpeaker
+                          ? `Another microphone was ${describeAttributionGap(word.attributionGapDb)} here — probably not ${block.speakerLabel} speaking`
+                          : undefined}
+                        type="button"
+                      >{word.text}</button>{/each}
+                  </div>
+                {/if}
+              {/each}
             {/if}
           </article>
         {/each}

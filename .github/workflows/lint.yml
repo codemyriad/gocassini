@@ -81,7 +81,12 @@ jobs:
           # here uses a python block, so it is deliberately not installed — but
           # that means adding one would go unlinted with nothing said. Install
           # pyflakes (pip) in the same breath as the first `shell: python`.
-          sudo apt-get install -y --no-install-recommends shellcheck xsltproc libxml2-utils ripgrep
+          # python3-numpy: prepare-synthetic-meeting.py (exercised by
+          # test-prepare-synthetic-meeting.sh below) imports numpy at module
+          # load. apt rather than pip: the runner's system python is
+          # externally managed (PEP 668), and the suite rule is no network
+          # at test time — the install step is where dependencies belong.
+          sudo apt-get install -y --no-install-recommends shellcheck xsltproc libxml2-utils ripgrep python3-numpy
 
       # Every tracked shell script, not an allow-list. The allow-list existed
       # because older scripts under harness/ and deployment/ did not pass — that
@@ -173,6 +178,10 @@ jobs:
           # compute device deriving the image variant instead of forking the
           # deploy, and no reachable --rm-data. Pure functions, no network.
           ./ops/deploy/test-exapp-register.sh
+          # The production driver's manifest handoff. Its ssh/scp/docker stubs
+          # pin collision-safe names and the cleanup/timeout ownership rules
+          # without reaching a host, registry or Nextcloud.
+          ./ops/deploy/test-deploy-exapp-staging.sh
           # Negative control: proves verify-session-artifact.sh goes RED on a
           # 0-packet capture (D-510). This guard is what the per-PR private
           # e2e leg relies on to catch D-454 empty captures, and it used to
@@ -184,3 +193,8 @@ jobs:
           ./harness/bin/test-av-drift-pair-requirement.sh
           ./harness/bin/test-ci-e2e-mute-timing.sh
           ./harness/bin/test-stack-resume.sh
+          # The synthetic-meeting generator's self-overlap slide: a slid
+          # turn is recorded at its slid start, the declared duration is
+          # recomputed after sliding, and every track shares that extent.
+          # ffmpeg/ffprobe stubbed, mock TTS only — no rendering coverage.
+          ./harness/bin/test-prepare-synthetic-meeting.sh

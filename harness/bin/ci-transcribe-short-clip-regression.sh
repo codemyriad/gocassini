@@ -13,13 +13,13 @@
 # (cassini-go-recorder/internal/transcribe/stt.go transcribeSegment
 # pad-tail logic):
 #
-#   length   words (no fix)   words (with fix)   asserts ≥
-#   5s       1                2                  1
-#   6s       0                3                  1
-#   7s       0                0–8 (model-flaky)  0   (informational only)
-#   8s       0                14                 5
-#   9s       0                14                 5
-#   10s+     15               15                 5
+#   length   words (no fix)   observed with fix   asserts ≥
+#   5s       1                11                  1
+#   6s       0                14                  1
+#   7s       0                17                  0   (informational only)
+#   8s       0                20                  5
+#   9s       0                23                  5
+#   10s+     15               24                  5
 #
 # Without the fix the 6s/8s/9s rows would print "0" and the script
 # would exit non-zero. The 7s row is informational because the model
@@ -34,7 +34,6 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SOURCE_OGG="${SOURCE_OGG:-$REPO_ROOT/harness/media/processed/showcase-lantern-festival-v1/mira.ogg}"
-WORK_DIR="${WORK_DIR:-/tmp/cassini-short-clip-$$}"
 CONTAINER_NAME="cassini-short-clip-$$"
 
 if [[ ! -s "$SOURCE_OGG" ]]; then
@@ -51,14 +50,6 @@ if head -c 100 "$SOURCE_OGG" | grep -q 'git-lfs'; then
   exit 1
 fi
 
-# Slicing happens on the host (the container only remuxes + transcribes).
-if ! command -v ffmpeg >/dev/null 2>&1; then
-  echo "FAIL: host ffmpeg is required to slice $SOURCE_OGG (apt-get install ffmpeg)" >&2
-  exit 1
-fi
-
-mkdir -p "$WORK_DIR"
-
 cleanup() {
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 }
@@ -66,11 +57,38 @@ trap cleanup EXIT
 
 log() { printf '[short-clip] %s\n' "$*"; }
 
-log "starting container $CONTAINER_NAME from $IMAGE_REF"
+read_env() {
+  local var="$1"
+  docker inspect --format "{{range .Config.Env}}{{println .}}{{end}}" "$IMAGE_REF" \
+    | awk -F= -v v="$var" '$1==v {sub(/^[^=]+=/,""); print; exit}'
+}
+
+DEVICE=$(read_env CASSINI_STT_DEVICE)
+: "${DEVICE:=cpu}"
+if [[ "${REQUIRE_CUDA:-0}" == "1" && "$DEVICE" != "cuda" ]]; then
+  log "FAIL CUDA is required, but image CASSINI_STT_DEVICE is '$DEVICE'"
+  exit 1
+fi
+GPU_FLAGS=()
+if [[ "$DEVICE" == "cuda" || "${DOCKER_RUN_GPU:-0}" == "1" ]]; then
+  GPU_FLAGS=(--device nvidia.com/gpu=all)
+fi
+
+log "starting container $CONTAINER_NAME from $IMAGE_REF (device=$DEVICE)"
 docker run -d --rm \
   --name "$CONTAINER_NAME" \
+  "${GPU_FLAGS[@]}" \
   --entrypoint /bin/sh \
   "$IMAGE_REF" -c 'tail -f /dev/null' >/dev/null
+
+# Use the exact image under test for slicing as well as transcription. This
+# keeps the CUDA guard independent of host ffmpeg packages on the sudoless
+# self-hosted runner.
+if ! docker exec "$CONTAINER_NAME" sh -c 'command -v ffmpeg' >/dev/null 2>&1; then
+  log "FAIL image does not contain ffmpeg for fixture slicing"
+  exit 1
+fi
+docker cp "$SOURCE_OGG" "$CONTAINER_NAME:/tmp/source.ogg" >/dev/null
 
 # Cases: length_seconds:min_words. Words is the lower bound at which the
 # test passes; -1 means informational (do not gate).
@@ -90,16 +108,33 @@ for case in "${CASES[@]}"; do
   dur="${case%%:*}"
   min_words="${case##*:}"
 
-  ffmpeg -hide_banner -nostdin -y -ss 0 -t "$dur" -i "$SOURCE_OGG" \
-    -c copy "$WORK_DIR/clip-${dur}s.ogg" >/dev/null 2>&1
+  docker exec "$CONTAINER_NAME" rm -rf /tmp/out /tmp/clip.ogg /tmp/clip.mkv
+  docker exec "$CONTAINER_NAME" ffmpeg -hide_banner -nostdin -y \
+    -ss 0 -t "$dur" -i /tmp/source.ogg -c copy /tmp/clip.ogg \
+    >/dev/null 2>&1
+  docker exec "$CONTAINER_NAME" ffmpeg -hide_banner -nostdin -y \
+    -i /tmp/clip.ogg -c copy /tmp/clip.mkv >/dev/null 2>&1
 
-  docker cp "$WORK_DIR/clip-${dur}s.ogg" \
-    "$CONTAINER_NAME:/tmp/clip.ogg" >/dev/null 2>&1
-
-  docker exec "$CONTAINER_NAME" sh -c \
-    'rm -rf /tmp/out; ffmpeg -hide_banner -nostdin -y -i /tmp/clip.ogg -c copy /tmp/clip.mkv 2>/dev/null' >/dev/null
-
-  build_out=$(docker exec "$CONTAINER_NAME" cassini build /tmp/clip.mkv --out /tmp/out 2>&1)
+  set +e
+  build_out=$(docker exec "$CONTAINER_NAME" cassini build /tmp/clip.mkv \
+    --out /tmp/out --device "$DEVICE" 2>&1)
+  build_rc=$?
+  set -e
+  if (( build_rc != 0 )); then
+    log "FAIL ${dur}s build exited ${build_rc}"
+    printf '%s\n' "$build_out" >&2
+    exit 1
+  fi
+  if grep -qiE 'fallback to cpu|falling back to cpu' <<<"$build_out"; then
+    log "FAIL ${dur}s decode fell back to CPU"
+    printf '%s\n' "$build_out" >&2
+    exit 1
+  fi
+  if [[ "${REQUIRE_CUDA:-0}" == "1" ]] && ! grep -qE 'STT policy: (backend=[^ ]+ )?device=cuda ' <<<"$build_out"; then
+    log "FAIL ${dur}s build did not report the required CUDA STT policy"
+    printf '%s\n' "$build_out" >&2
+    exit 1
+  fi
   words=$(printf '%s' "$build_out" | sed -n 's/.*Speaker 1: \([0-9][0-9]*\) words.*/\1/p' | head -1)
   words="${words:-0}"
 

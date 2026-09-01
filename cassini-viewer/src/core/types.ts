@@ -15,6 +15,22 @@ export interface TranscriptWord {
   startMs: number;
   endMs: number;
   confidence?: number;
+  /**
+   * How far the loudest OTHER participant's microphone sat above its own noise
+   * floor compared with this speaker's, in dB, at this word. Near zero means the
+   * attributed speaker was the loudest voice; a large positive value means
+   * somebody else was, and the word is probably crosstalk bleeding into this
+   * track rather than this person speaking. Absent when the producer did not
+   * measure attribution.
+   */
+  attributionGapDb?: number;
+  /**
+   * Set when the gap cleared the threshold estimated from that meeting's own
+   * level distribution. The word is still canonical transcript content — it is
+   * shown, and can be read and overruled — but it is de-emphasised, and
+   * generated summaries exclude it.
+   */
+  lowConfidenceSpeaker?: boolean;
 }
 
 export interface TranscriptSegment {

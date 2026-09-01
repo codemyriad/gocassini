@@ -33,11 +33,11 @@ import (
 //
 // Three properties this command holds onto:
 //
-//   - THE AUDIO IS NOT RE-ENCODED. `-c:a copy`, and the PCM SHA-256 of the
-//     output is compared against the manifest's before anything is renamed into
-//     place — the same contract `pack` holds. Under D-612 a published recording
-//     cannot be deleted, so a corrupt overwrite is permanent; the only place to
-//     catch it is before it is sent.
+//   - THE AUDIO IS NOT RE-ENCODED. `-c:a copy`, and the output is checked using
+//     the manifest's declared policy: canonical compressed Opus for v3, decoded
+//     PCM for legacy v1/v2. Under D-612 a published recording cannot be deleted,
+//     so a corrupt overwrite is permanent; the only place to catch it is before
+//     it is sent.
 //   - NOTHING ELSE IN THE MANIFEST CHANGES. The payload is edited as a generic
 //     JSON document rather than round-tripped through portable.Manifest, so a v2
 //     file's per-transcript descriptors, a provenance map, chapters,
