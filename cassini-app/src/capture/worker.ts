@@ -168,6 +168,33 @@ function recoverableSegments(now: number): CaptureSegment[] {
     });
 }
 
+// PENDING_SIDECAR_MIN_INTERVAL_MS bounds how often the recovery sidecar is
+// rewritten. It is a full re-serialization of every segment through a fresh
+// sync access handle, and chunks now arrive every two seconds, so writing one
+// per chunk makes OPFS traffic grow with the length of the call for no gain:
+// what a crash can lose is bounded by the chunk cadence either way, and the
+// segment files themselves are already on disk. A segment closing forces a
+// write regardless, so the sidecar is never stale about a sealed segment.
+const PENDING_SIDECAR_MIN_INTERVAL_MS = 5_000;
+let lastPendingWriteMs = 0;
+
+// refreshPendingSidecar isolates the recovery sidecar from the recording. The
+// sidecar exists to salvage a capture whose page died; failing to write it
+// must never cost a segment whose own audio was written correctly, and must
+// never surface as the fatal "error" that tears the worker down.
+async function refreshPendingSidecar(force: boolean): Promise<void> {
+  const now = Date.now();
+  if (!force && now - lastPendingWriteMs < PENDING_SIDECAR_MIN_INTERVAL_MS) {
+    return;
+  }
+  lastPendingWriteMs = now;
+  try {
+    await writePendingSidecar();
+  } catch (error) {
+    self.postMessage({ type: "pending-sidecar-failed", detail: String(error) });
+  }
+}
+
 async function writePendingSidecar(): Promise<void> {
   if (!pendingBase || !pendingDirName) {
     return;
@@ -199,11 +226,12 @@ async function appendChunk(index: number, buffer: ArrayBuffer): Promise<void> {
   try {
     segment.handle.write(new Uint8Array(buffer), { at: segment.offset });
     segment.offset += buffer.byteLength;
-    await writePendingSidecar();
   } catch (error) {
     segment.failed = true;
     self.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });
+    return;
   }
+  await refreshPendingSidecar(false);
 }
 
 async function closeSegment(
@@ -224,7 +252,7 @@ async function closeSegment(
   }
   segment.stopWallMs = stopWallMs;
   segment.muteIntervals = muteIntervals;
-  await writePendingSidecar();
+  await refreshPendingSidecar(true);
 }
 
 // anchorsWithin slices the call-wide anchor stream to one segment's wall-clock
@@ -285,6 +313,7 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
   lastSSRC = -1;
   pendingDirName = null;
   pendingBase = null;
+  lastPendingWriteMs = 0;
   return sidecar;
 }
 
@@ -303,6 +332,7 @@ export async function onMessage(event: MessageEvent): Promise<void> {
       case "capture-start":
         pendingDirName = message.dirName;
         pendingBase = message.base;
+        lastPendingWriteMs = 0;
         break;
       case "segment-start":
         await openSegment(message.dirName, message.meta);
