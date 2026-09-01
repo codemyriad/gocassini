@@ -27,6 +27,8 @@ func TestStatusHandlerReportsCurrentEffectiveCUDASettings(t *testing.T) {
 	// which is what /status must report.
 	t.Setenv("CASSINI_STT_DEVICE", "cpu")
 	t.Setenv("CASSINI_STT_MODEL", "stale-image-model")
+	t.Setenv(envSTTCUDACapable, "1")
+	stubNVIDIADevice(t, true)
 	rt.setSettings(STTSettings{Quality: sttQualityFast})
 	var probedDevices []string
 	rt.computeProbe = func(device string) (bool, string) {
@@ -55,8 +57,8 @@ func TestStatusHandlerReportsCurrentEffectiveCUDASettings(t *testing.T) {
 	if resp.STT.Device != "cuda" || resp.STT.Quality != sttQualityFast || !resp.STT.DeviceUsable {
 		t.Fatalf("unexpected stt status: %#v", resp.STT)
 	}
-	if resp.STT.ModelID != auditedCUDAParakeetV3 {
-		t.Fatalf("model_id = %q, want %s", resp.STT.ModelID, auditedCUDAParakeetV3)
+	if resp.STT.ModelID != modelParakeetV3Fp32 {
+		t.Fatalf("model_id = %q, want %s", resp.STT.ModelID, modelParakeetV3Fp32)
 	}
 	if len(probedDevices) != 1 || probedDevices[0] != "cuda" {
 		t.Fatalf("probed devices = %v, want [cuda]", probedDevices)
@@ -154,6 +156,8 @@ func TestStatusHandlerReportsTalkConfigPresenceOnly(t *testing.T) {
 func TestStatusHandlerReportsCudaUnusable(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
+	t.Setenv(envSTTCUDACapable, "1")
+	stubNVIDIADevice(t, true)
 	t.Setenv("CASSINI_STT_DEVICE", "cpu") // stale process env must not win
 	rt.computeProbe = func(device string) (bool, string) {
 		if device != "cuda" {
@@ -238,14 +242,49 @@ func TestImageCUDACapabilityFailsClosed(t *testing.T) {
 	}
 }
 
-func TestStatusHandlerRejectsLegacyCPUOverride(t *testing.T) {
+func TestStatusHandlerReportsPinnedCPUAsReady(t *testing.T) {
+	// A pinned CPU device is a supported policy on any image: readiness must
+	// describe it, not fail the install because the image has no CUDA (D-702).
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	rt.setSettings(STTSettings{Quality: sttQualityBest, DeviceOverride: "cpu"})
-	probeCalled := false
+	t.Setenv(envSTTCUDACapable, "0")
+	rt.setSettings(STTSettings{Quality: sttQualityBest, DeviceOverride: deviceCPU})
+	var probedDevices []string
 	rt.computeProbe = func(device string) (bool, string) {
+		probedDevices = append(probedDevices, device)
+		return probeComputeDevice(device)
+	}
+
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.STT.Device != deviceCPU || !resp.STT.DeviceUsable {
+		t.Fatalf("pinned CPU reported unusable: %#v", resp.STT)
+	}
+	if resp.STT.ModelID != modelParakeetV3Fp32 {
+		t.Fatalf("model_id = %q, want %s (best on CPU is fp32)", resp.STT.ModelID, modelParakeetV3Fp32)
+	}
+	if len(probedDevices) != 1 || probedDevices[0] != deviceCPU {
+		t.Fatalf("probed devices = %v, want [cpu]", probedDevices)
+	}
+}
+
+func TestStatusHandlerRejectsUnknownDeviceOverride(t *testing.T) {
+	// A device the operator cannot execute is still unhealthy, and must be
+	// rejected before any hardware probe runs.
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.setSettings(STTSettings{Quality: sttQualityBest, DeviceOverride: "tpu"})
+	probeCalled := false
+	rt.computeProbe = func(string) (bool, string) {
 		probeCalled = true
-		return true, "cuda ready"
+		return true, "ready"
 	}
 
 	rec := httptest.NewRecorder()
@@ -257,11 +296,11 @@ func TestStatusHandlerRejectsLegacyCPUOverride(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode status response: %v", err)
 	}
-	if resp.STT.Device != "cuda" || resp.STT.DeviceUsable || !strings.Contains(resp.STT.Detail, "GPU-only") {
-		t.Fatalf("unexpected legacy override status: %#v", resp.STT)
+	if resp.STT.DeviceUsable || !strings.Contains(resp.STT.Detail, "not a device this operator can run on") {
+		t.Fatalf("unexpected unknown-override status: %#v", resp.STT)
 	}
 	if probeCalled {
-		t.Fatal("hardware probe ran despite an invalid stored CPU policy")
+		t.Fatal("hardware probe ran despite an unexecutable stored device policy")
 	}
 }
 
@@ -312,6 +351,7 @@ func TestProbeComputeDeviceCPUVariants(t *testing.T) {
 func TestLogComputeDeviceStatusLoudWhenUnusable(t *testing.T) {
 	t.Setenv(envSTTCUDACapable, "1")
 	buf := &syncBuffer{}
+	stubNVIDIADevice(t, true)
 	rt := &Runtime{
 		logger:       log.New(buf, "", 0),
 		settings:     STTSettings{Quality: sttQualityBest},
@@ -322,6 +362,37 @@ func TestLogComputeDeviceStatusLoudWhenUnusable(t *testing.T) {
 	if !strings.Contains(out, "ERROR") || !strings.Contains(out, "cuda") || !strings.Contains(out, "GPU absent") {
 		t.Fatalf("expected loud unusable-device log, got %q", out)
 	}
+}
+
+func TestLogComputeDeviceStatusWarnsWhenACUDAImageFallsBackToCPU(t *testing.T) {
+	// Falling back is correct, but a -cuda image deployed on a GPU daemon that
+	// suddenly has no GPU is a host problem worth shouting about: the build
+	// still runs, an order of magnitude slower.
+	t.Setenv(envSTTCUDACapable, "1")
+	stubNVIDIADevice(t, false)
+	buf := &syncBuffer{}
+	rt := &Runtime{
+		logger:       log.New(buf, "", 0),
+		settings:     STTSettings{Quality: sttQualityBalanced},
+		computeProbe: func(device string) (bool, string) { return probeComputeDevice(device) },
+	}
+	rt.logComputeDeviceStatus()
+	out := buf.String()
+	if !strings.Contains(out, "stt_device -> cpu") {
+		t.Fatalf("expected the resolved CPU device to be logged, got %q", out)
+	}
+	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "no NVIDIA device is visible") {
+		t.Fatalf("expected a warning that the CUDA image lost its GPU, got %q", out)
+	}
+}
+
+// stubNVIDIADevice fixes NVIDIA device visibility for one test, so the device
+// decision can be exercised on hosts with and without a GPU.
+func stubNVIDIADevice(t *testing.T, present bool) {
+	t.Helper()
+	orig := probeNVIDIADevice
+	probeNVIDIADevice = func() bool { return present }
+	t.Cleanup(func() { probeNVIDIADevice = orig })
 }
 
 func TestTTLProbeSingleflightAndTTL(t *testing.T) {

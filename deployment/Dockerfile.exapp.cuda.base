@@ -15,50 +15,28 @@
 # under that id).
 
 ARG CASSINI_BUNDLED_MODEL_ID=parakeet-tdt-0.6b-v3
-ARG CASSINI_BUNDLED_MODEL_URL=https://assets.gocassini.codemyriad.io/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3.tar.bz2
+# Every CUDA tier loads the fp32 model, but a CUDA image whose GPU has gone
+# missing now falls back to CPU decoding (D-702), where the tiers select
+# different models. Bundle the CPU set too so the fallback can serve any tier
+# under CASSINI_DISALLOW_MODEL_DOWNLOAD=1 — ~565MB on top of the fp32 model.
+ARG CASSINI_BUNDLED_MODELS="parakeet-tdt-0.6b-v3 parakeet-tdt-0.6b-v3-int8 parakeet-tdt-ctc-110m-en-int8"
 ARG SHERPA_CUDA_VERSION=v1.13.1
 ARG SHERPA_CUDA_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.1/sherpa-onnx-v1.13.1-cuda-12.x-cudnn-9.x-linux-x64-gpu.tar.bz2
 
-# ---- Stage: model-fetcher (downloads + extracts the fp32 model) ----
+# ---- Stage: model-fetcher (downloads + extracts the bundled models) ----
 FROM debian:bookworm-slim AS model-fetcher
-ARG CASSINI_BUNDLED_MODEL_ID
-ARG CASSINI_BUNDLED_MODEL_URL
+ARG CASSINI_BUNDLED_MODELS
 ARG SILERO_VAD_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl tar bzip2 \
  && rm -rf /var/lib/apt/lists/*
+COPY deployment/models /tmp/cassini-models
 RUN set -eux; \
- model_dir="/out/models/${CASSINI_BUNDLED_MODEL_ID}"; \
- mkdir -p "$model_dir" /out/vad /tmp/extract; \
- curl -fSL "${CASSINI_BUNDLED_MODEL_URL}" -o /tmp/model.tar.bz2; \
- tar -xjf /tmp/model.tar.bz2 -C /tmp/extract; \
- # Archive top-level may be "sherpa-onnx-*" (int8 repacks) or just the model
- # id (fp32 release on assets.gocassini.codemyriad.io). Don't rely on name.
- src_dir=$(find /tmp/extract -mindepth 1 -maxdepth 1 -type d | head -n1); \
- test -n "$src_dir" || (echo "no extracted dir under /tmp/extract:" >&2; ls /tmp/extract >&2; exit 1); \
- # Required core files (must exist).
- for f in encoder.onnx decoder.onnx joiner.onnx tokens.txt; do \
-   test -f "$src_dir/$f" || (echo "missing $f in extracted archive" >&2; ls "$src_dir" >&2; exit 1); \
-   cp "$src_dir/$f" "$model_dir/"; \
- done; \
- # Optional sidecars present in fp32 builds (external onnx weights, BPE vocab
- # for some tokenizers). Copy if present — sherpa will fail to load the encoder
- # without encoder.weights when the onnx references it via external_data.
- for f in encoder.weights bpe.vocab; do \
-   if [ -f "$src_dir/$f" ]; then \
-     cp "$src_dir/$f" "$model_dir/"; \
-   fi; \
- done; \
- rm -rf /tmp/model.tar.bz2 /tmp/extract; \
- printf '%s\n' \
-   "NeMo Parakeet TDT 0.6B v3 fp32 (sherpa-onnx repack, CUDA variant)" \
-   "Source: ${CASSINI_BUNDLED_MODEL_URL}" \
-   "License: cc-by-4.0 (NVIDIA Parakeet, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)" \
-   "Bundled in: ghcr.io/codemyriad/gocassini (CUDA variant)" \
-   > "$model_dir/NOTICE"; \
- # Bundle Silero VAD alongside the STT model so the recorder doesn't dial out.
+ /tmp/cassini-models/fetch-models.sh /out ${CASSINI_BUNDLED_MODELS}; \
+ mkdir -p /out/vad; \
+ # Bundle Silero VAD alongside the STT models so the recorder doesn't dial out.
  curl -fSL "${SILERO_VAD_URL}" -o /out/vad/silero_vad.onnx; \
- ls -la "$model_dir/" /out/vad/
+ ls -la /out/models /out/vad/
 
 # ---- Stage: sherpa-cuda-fetcher (CUDA-enabled native libs) ----
 FROM debian:bookworm-slim AS sherpa-cuda-fetcher

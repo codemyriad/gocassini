@@ -20,12 +20,20 @@ ARG FRP_VERSION=0.61.1
 ARG FFMPEG_VERSION=latest
 ARG FFMPEG_BUILD_JOBS=2
 
-# Default bundled model for the CPU image. The CUDA variant overrides these in
-# Dockerfile.exapp.cuda (per PR #32). Keep the model id in sync with
-# transcribe.ModelParakeet06BV3Int8 — that is what the recorder will look for
-# at runtime under ${CASSINI_CACHE_ROOT}/models/${CASSINI_BUNDLED_MODEL_ID}/.
+# Models bundled into the CPU image: one per quality tier. The runtime stage
+# sets CASSINI_DISALLOW_MODEL_DOWNLOAD=1, so a tier whose model is not bundled
+# cannot run at all — and on a host with no GPU these tiers are the whole of the
+# quality setting (D-702). Keep the ids in step with transcribe.ModelForQuality:
+# fast = 110M CTC, balanced = 0.6B v3 int8, best = 0.6B v3 fp32. The URLs and
+# per-model file lists live in deployment/models/fetch-models.sh.
+#
+# Bundling all three costs ~2.5GB of image over the balanced model alone, almost
+# all of it the fp32 encoder. Drop an id here to trade a tier for pull size.
+ARG CASSINI_BUNDLED_MODELS="parakeet-tdt-ctc-110m-en-int8 parakeet-tdt-0.6b-v3-int8 parakeet-tdt-0.6b-v3"
+# The CASSINI_STT_MODEL default baked into the runtime stage, for direct CLI use
+# inside the container. Operator-managed builds never see it: the operator
+# strips CASSINI_STT_MODEL from the child env so the quality tier decides.
 ARG CASSINI_BUNDLED_MODEL_ID=parakeet-tdt-0.6b-v3-int8
-ARG CASSINI_BUNDLED_MODEL_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2
 
 # "latest" is an uncached-build fallback. Repository build entry points resolve
 # the newest stable version before invoking Docker and pass the concrete value,
@@ -44,37 +52,22 @@ RUN FFMPEG_BUILD_JOBS="${FFMPEG_BUILD_JOBS}" \
     /tmp/cassini-ffmpeg-build/build.sh "${FFMPEG_VERSION}" /out/ffmpeg
 
 FROM debian:bookworm-slim AS model-fetcher
-ARG CASSINI_BUNDLED_MODEL_ID
-ARG CASSINI_BUNDLED_MODEL_URL
+ARG CASSINI_BUNDLED_MODELS
 ARG SILERO_VAD_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl tar bzip2 \
  && rm -rf /var/lib/apt/lists/*
-# Download + extract in a single layer so the archive never lands in the
-# final image's filesystem. Files copied to /out/<id>/ get COPY'd into the
-# runtime stage as their own layer.
+COPY deployment/models /tmp/cassini-models
+# Download + extract in a single layer so the archives never land in the final
+# image's filesystem. Files under /out/models/<id>/ get COPY'd into the runtime
+# stage as their own layer.
 RUN set -eux; \
- model_dir="/out/models/${CASSINI_BUNDLED_MODEL_ID}"; \
- mkdir -p "$model_dir" /out/vad; \
- curl -fSL "${CASSINI_BUNDLED_MODEL_URL}" -o /tmp/model.tar.bz2; \
- tar -xjf /tmp/model.tar.bz2 -C /tmp; \
- src_dir=$(find /tmp -maxdepth 1 -type d -name 'sherpa-onnx-*' | head -n1); \
- test -n "$src_dir" || (echo "no extracted dir found under /tmp:" >&2; ls /tmp >&2; exit 1); \
- for f in encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt; do \
-   test -f "$src_dir/$f" || (echo "missing $f in extracted archive" >&2; exit 1); \
-   cp "$src_dir/$f" "$model_dir/"; \
- done; \
- rm -rf /tmp/model.tar.bz2 "$src_dir"; \
- printf '%s\n' \
-   "NeMo Parakeet TDT 0.6B v3 int8 (sherpa-onnx repack)" \
-   "Source: ${CASSINI_BUNDLED_MODEL_URL}" \
-   "License: cc-by-4.0 (NVIDIA Parakeet, https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)" \
-   "Bundled in: ghcr.io/codemyriad/gocassini" \
-   > "$model_dir/NOTICE"; \
- # Bundle the Silero VAD model alongside the STT model (~630 KB) so the
+ /tmp/cassini-models/fetch-models.sh /out ${CASSINI_BUNDLED_MODELS}; \
+ mkdir -p /out/vad; \
+ # Bundle the Silero VAD model alongside the STT models (~630 KB) so the
  # recorder doesn't need to dial out at first run.
  curl -fSL "${SILERO_VAD_URL}" -o /out/vad/silero_vad.onnx; \
- ls -la "$model_dir/" /out/vad/
+ ls -la /out/models /out/vad/
 
 FROM golang:1.24-bookworm AS go-builder
 WORKDIR /src

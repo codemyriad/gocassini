@@ -142,20 +142,31 @@ docker run -d --rm \
   -c 'tail -f /dev/null' >/dev/null
 
 # ---- Assertion 1: model files exist BEFORE any cassini operation runs ----
-log "asserting bundled model files exist at ${MODEL_DIR}"
-if [[ "${MODEL_ID}" == *-int8 ]]; then
-  expected_files=(encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt NOTICE)
-else
-  # fp32 (CUDA) variants: unsuffixed onnx + external weights sidecar
-  expected_files=(encoder.onnx encoder.weights decoder.onnx joiner.onnx tokens.txt NOTICE)
-fi
-for f in "${expected_files[@]}"; do
-  if ! docker exec "${CONTAINER_NAME}" test -s "${MODEL_DIR}/${f}"; then
-    log "FAIL bundled file missing or empty: ${MODEL_DIR}/${f}"
-    docker exec "${CONTAINER_NAME}" ls -la "${MODEL_DIR}" 2>&1 || true
-    exit 1
-  fi
-  log "OK   present ${MODEL_DIR}/${f}"
+# Every quality tier's model, not just the image default: the runtime forbids
+# downloads, so a tier whose model is missing is a tier the admin can select and
+# never run (D-702). fast -> 110M CTC, balanced -> 0.6B int8, best -> 0.6B fp32.
+tier_model_files() {
+  case "$1" in
+    parakeet-tdt-ctc-110m-en-int8) echo "model.int8.onnx tokens.txt NOTICE" ;;
+    *-int8)                        echo "encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt NOTICE" ;;
+    # fp32 variants: unsuffixed onnx + external weights sidecar
+    *)                             echo "encoder.onnx encoder.weights decoder.onnx joiner.onnx tokens.txt NOTICE" ;;
+  esac
+}
+
+TIER_MODELS=(parakeet-tdt-ctc-110m-en-int8 parakeet-tdt-0.6b-v3-int8 parakeet-tdt-0.6b-v3)
+for model in "${TIER_MODELS[@]}"; do
+  model_dir="${CACHE_ROOT}/models/${model}"
+  log "asserting bundled model files exist at ${model_dir}"
+  for f in $(tier_model_files "${model}"); do
+    if ! docker exec "${CONTAINER_NAME}" test -s "${model_dir}/${f}"; then
+      log "FAIL bundled file missing or empty: ${model_dir}/${f}"
+      docker exec "${CONTAINER_NAME}" ls -la "${model_dir}" 2>&1 || true
+      log "     every quality tier must be executable in an image that disallows downloads"
+      exit 1
+    fi
+    log "OK   present ${model_dir}/${f}"
+  done
 done
 
 # VAD is bundled separately at ${CACHE_ROOT}/vad/silero_vad.onnx

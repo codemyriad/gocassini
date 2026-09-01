@@ -367,7 +367,7 @@ jobs:
           sudo apt-get update
           # Portable-image mode probes retained audio inside the image and does
           # not decode speech or require host ffmpeg/ffprobe.
-          sudo apt-get install -y --no-install-recommends jq libxml2-utils
+          sudo apt-get install -y --no-install-recommends jq libxml2-utils ffmpeg
           git lfs version
 
       - name: Materialize only the known audible participant fixture
@@ -405,10 +405,11 @@ jobs:
         env:
           IMAGE_REF: ${{ steps.load.outputs.ref }}
           LOG_DIR: ${{ runner.temp }}/faithful-installed-exapp-talk-cpu
-          # The portable image runs on a GPU-less hosted runner. It must still
-          # capture and preserve Talk media, then immediately block build with
-          # an actionable request for the matching CUDA image; completing a
-          # transcript here would prove an illegal CPU fallback.
+          # The portable image runs on a GPU-less hosted runner, and must
+          # complete the whole vertical there: capture, then transcribe on the
+          # CPU, then publish a transcript with decoded words (D-702). The mode
+          # also asserts the operator reported device=cpu, so a runner that
+          # quietly had a GPU could not pass this off as the CPU path.
           CASSINI_EXPECT_GPU_UNAVAILABLE: '1'
         run: ./harness/bin/ci-e2e-installed-exapp-talk.sh
 
@@ -588,11 +589,13 @@ jobs:
       - name: Resolve base ref + check existence
         id: base
         # The hash covers every input that defines the base's bytes: the asset
-        # URLs (read from the base Dockerfile's ARG defaults — single source of
-        # truth), a best-effort content fingerprint of each (so an in-place
-        # overwrite of a non-versioned URL still moves the hash), the resolved
-        # nvidia base digest (catches silent upstream re-pushes), and the base
-        # Dockerfile's own bytes. No timestamps/random — fully reproducible.
+        # URLs (model ids from the base Dockerfile's ARG default, resolved to
+        # URLs by the fetch script — each remains a single source of truth), a
+        # best-effort content fingerprint of each (so an in-place overwrite of a
+        # non-versioned URL still moves the hash), the resolved nvidia base
+        # digest (catches silent upstream re-pushes), and the bytes of both the
+        # base Dockerfile and the fetch script. No timestamps/random — fully
+        # reproducible.
         run: |
           set -euo pipefail
           DF=deployment/Dockerfile.exapp.cuda.base
@@ -607,7 +610,12 @@ jobs:
             printf '%s' "$v"
           }
           MODEL_ID="$(df_get "$DF" CASSINI_BUNDLED_MODEL_ID)"
-          MODEL_URL="$(df_get "$DF" CASSINI_BUNDLED_MODEL_URL)"
+          # The base bundles a set of models (CPU fallback tiers alongside the
+          # fp32 CUDA model), and their URLs live in the fetch script rather
+          # than in ARG defaults. Resolve ids through the script itself so the
+          # hash still covers every asset the base downloads.
+          MODEL_IDS="$(df_get "$DF" CASSINI_BUNDLED_MODELS | tr -d '"')"
+          FETCH=deployment/models/fetch-models.sh
           SHERPA_URL="$(df_get "$DF" SHERPA_CUDA_URL)"
           VAD_URL="$(df_get "$DF" SILERO_VAD_URL)"
 
@@ -638,12 +646,19 @@ jobs:
           fp() { curl -fsSL -I "$1" 2>/dev/null | tr -d '\r' \
                  | awk -F': ' 'tolower($1)=="etag"||tolower($1)=="last-modified"{print $2; exit}' || true; }
 
+          MODEL_INPUTS="$(for id in $MODEL_IDS; do
+            url="$("$FETCH" --print-url "$id")"
+            test -n "$url" || { echo "no URL for bundled model $id" >&2; exit 1; }
+            printf '%s\n%s\n%s\n' "$id" "$url" "$(fp "$url")"
+          done)"
+
           BASE_HASH="$(printf '%s\n' \
-            "$MODEL_ID" "$MODEL_URL" "$(fp "$MODEL_URL")" \
+            "$MODEL_ID" "$MODEL_INPUTS" \
             "$SHERPA_URL" "$(fp "$SHERPA_URL")" \
             "$VAD_URL" "$(fp "$VAD_URL")" \
             "$NV_DIGEST" \
             "$(sha256sum "$DF" | cut -d' ' -f1)" \
+            "$(sha256sum "$FETCH" | cut -d' ' -f1)" \
             | sha256sum | cut -c1-16)"
           BASE_REF="${{ env.REGISTRY }}/${{ github.repository_owner }}/gocassini-cuda-base:${BASE_HASH}"
           echo "base_ref=${BASE_REF}" >> "$GITHUB_OUTPUT"

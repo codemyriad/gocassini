@@ -86,11 +86,11 @@ func TestChildEnvOverridesAreAppended(t *testing.T) {
 		"CASSINI_STT_MODEL=parakeet-tdt-0.6b-v3-int8",
 		"CASSINI_STT_DEVICE=cpu",
 	}
-	s := STTSettings{Quality: sttQualityBalanced, DeviceOverride: "cuda", ModelOverride: auditedCUDAParakeetV3}
+	s := STTSettings{Quality: sttQualityBalanced, DeviceOverride: "cuda", ModelOverride: modelParakeetV3Fp32}
 	env := s.ChildEnv(base)
 
-	if m, ok := envValue(env, envSTTModel); !ok || m != auditedCUDAParakeetV3 {
-		t.Fatalf("CASSINI_STT_MODEL = %q ok=%v, want %s", m, ok, auditedCUDAParakeetV3)
+	if m, ok := envValue(env, envSTTModel); !ok || m != modelParakeetV3Fp32 {
+		t.Fatalf("CASSINI_STT_MODEL = %q ok=%v, want %s", m, ok, modelParakeetV3Fp32)
 	}
 	if d, ok := envValue(env, envSTTDevice); !ok || d != "cuda" {
 		t.Fatalf("CASSINI_STT_DEVICE = %q ok=%v, want cuda", d, ok)
@@ -112,7 +112,7 @@ func TestChildEnvOverridesAreAppended(t *testing.T) {
 func TestChildEnvFailsSafeForUnauditedModelOverride(t *testing.T) {
 	env := (STTSettings{
 		Quality:       sttQualityBest,
-		ModelOverride: "parakeet-tdt-0.6b-v3-int8",
+		ModelOverride: "custom/model",
 	}).ChildEnv([]string{
 		"CASSINI_STT_MODEL=unsafe-inherited",
 		"CASSINI_STT_ADDITIONAL_MODELS=also-unsafe",
@@ -125,14 +125,21 @@ func TestChildEnvFailsSafeForUnauditedModelOverride(t *testing.T) {
 	}
 }
 
-func TestValidCUDAModelOverrideAllowlist(t *testing.T) {
-	for _, model := range []string{"", "  ", auditedCUDAParakeetV3, "  " + auditedCUDAParakeetV3 + "  "} {
-		if !validCUDAModelOverride(model) {
-			t.Errorf("audited CUDA model %q was rejected", model)
+func TestValidModelOverrideAllowlist(t *testing.T) {
+	// Every model a quality tier can select is audited: with CPU builds
+	// supported, pinning the int8 or 110M model is as legitimate as pinning
+	// fp32 (D-702). Anything outside the tier set stays rejected.
+	audited := []string{"", "  "}
+	for _, model := range auditedModels() {
+		audited = append(audited, model, "  "+model+"  ")
+	}
+	for _, model := range audited {
+		if !validModelOverride(model) {
+			t.Errorf("audited model %q was rejected", model)
 		}
 	}
-	for _, model := range []string{"parakeet-tdt-0.6b-v3-int8", "custom", "PARAKEET-TDT-0.6B-V3"} {
-		if validCUDAModelOverride(model) {
+	for _, model := range []string{"custom", "PARAKEET-TDT-0.6B-V3", "parakeet-tdt-0.6b-v2-int8"} {
+		if validModelOverride(model) {
 			t.Errorf("unaudited model %q was accepted", model)
 		}
 	}
@@ -225,7 +232,7 @@ func TestSaveLoadRoundTripUserSettings(t *testing.T) {
 	want := STTSettings{
 		Quality:             sttQualityFast,
 		DeviceOverride:      "cuda",
-		ModelOverride:       auditedCUDAParakeetV3,
+		ModelOverride:       modelParakeetV3Fp32,
 		TranscriptionTerms:  []string{"Gocassini", "Nextcloud Talk"},
 		Source:              sttSourceUser,
 		HardwareFingerprint: "gpu=true;cores=16",
@@ -249,12 +256,24 @@ func TestSaveLoadRoundTripUserSettings(t *testing.T) {
 
 func TestSaveRejectsUnsupportedOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	if err := Save(path, STTSettings{Quality: sttQualityBest, ModelOverride: "custom"}); err == nil || !strings.Contains(err.Error(), "not an audited CUDA model") {
-		t.Fatalf("Save() error = %v, want unaudited CUDA rejection", err)
+	if err := Save(path, STTSettings{Quality: sttQualityBest, ModelOverride: "custom"}); err == nil || !strings.Contains(err.Error(), "not an audited model") {
+		t.Fatalf("Save() error = %v, want unaudited model rejection", err)
 	}
-	for _, device := range []string{"cpu", "tpu"} {
-		if err := Save(path, STTSettings{Quality: sttQualityBest, DeviceOverride: device}); err == nil || !strings.Contains(err.Error(), "GPU-only") {
-			t.Errorf("Save(device_override=%q) error = %v, want GPU-only rejection", device, err)
+	if err := Save(path, STTSettings{Quality: sttQualityBest, DeviceOverride: "tpu"}); err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Errorf("Save(device_override=\"tpu\") error = %v, want rejection", err)
+	}
+	// cpu is a device the operator can execute, so it must persist rather than
+	// be rejected as it was under the GPU-only policy (D-702).
+	for _, device := range []string{deviceCPU, deviceCUDA} {
+		if err := Save(path, STTSettings{Quality: sttQualityBest, DeviceOverride: device, Source: sttSourceUser}); err != nil {
+			t.Errorf("Save(device_override=%q) error = %v, want accepted", device, err)
+		}
+		loaded, err := LoadOrInitSettings(path)
+		if err != nil {
+			t.Fatalf("LoadOrInitSettings() error = %v", err)
+		}
+		if loaded.DeviceOverride != device {
+			t.Errorf("device_override = %q, want %q preserved", loaded.DeviceOverride, device)
 		}
 	}
 }
@@ -269,22 +288,22 @@ func TestLoadLegacySettingsHealsUnsupportedOverrides(t *testing.T) {
 		messageBits []string
 	}{
 		{
-			name:       "cpu device and unaudited model",
+			// cpu survives the migration untouched — only the model is healed.
+			name:       "supported cpu device with an unaudited model",
 			device:     "cpu",
-			model:      "parakeet-tdt-0.6b-v3-int8",
-			wantDevice: "",
+			model:      "custom/model",
+			wantDevice: "cpu",
 			wantModel:  "",
 			messageBits: []string{
-				`unsupported device_override="cpu"`,
-				`unaudited model_override="parakeet-tdt-0.6b-v3-int8"`,
+				`unaudited model_override="custom/model"`,
 			},
 		},
 		{
 			name:       "unknown device",
 			device:     "tpu",
-			model:      auditedCUDAParakeetV3,
+			model:      modelParakeetV3Fp32,
 			wantDevice: "",
-			wantModel:  auditedCUDAParakeetV3,
+			wantModel:  modelParakeetV3Fp32,
 			messageBits: []string{
 				`unsupported device_override="tpu"`,
 			},
@@ -343,7 +362,7 @@ func TestLoadLegacySettingsHealsUnsupportedOverrides(t *testing.T) {
 			for _, bit := range append(tc.messageBits,
 				path,
 				`preserved quality="fast", source="user", and 2 transcription terms`,
-				"use Settings to select CUDA",
+				"the policy now auto-selects the device",
 			) {
 				if !strings.Contains(message, bit) {
 					t.Errorf("migration message %q does not contain %q", message, bit)
@@ -473,7 +492,7 @@ func TestPutSettingsInvalidDeviceRejected(t *testing.T) {
 	}
 }
 
-func TestPutSettingsRejectsCPUForGPUOnlyOperator(t *testing.T) {
+func TestPutSettingsAcceptsCPUOverride(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
@@ -481,11 +500,28 @@ func TestPutSettingsRejectsCPUForGPUOnlyOperator(t *testing.T) {
 	rec := httptest.NewRecorder()
 	rt.settingsHandler(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("PUT CPU device = %d, want 400 body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT CPU device = %d, want 200 body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "GPU-only") {
-		t.Fatalf("CPU rejection did not explain GPU-only policy: %s", rec.Body.String())
+	var resp settingsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.DeviceOverride != deviceCPU || resp.Effective.Device != deviceCPU {
+		t.Fatalf("device_override = %q effective.device = %q, want both cpu: %s",
+			resp.DeviceOverride, resp.Effective.Device, rec.Body.String())
+	}
+	// best on CPU is fp32 — the tiers mean something again once builds are not
+	// forced onto CUDA.
+	if resp.Effective.Model != modelParakeetV3Fp32 {
+		t.Fatalf("effective.model = %q, want %s", resp.Effective.Model, modelParakeetV3Fp32)
+	}
+	persisted, err := LoadOrInitSettings(rt.settingsPath)
+	if err != nil {
+		t.Fatalf("LoadOrInitSettings() error = %v", err)
+	}
+	if persisted.DeviceOverride != deviceCPU {
+		t.Fatalf("persisted device_override = %q, want cpu", persisted.DeviceOverride)
 	}
 }
 
@@ -493,19 +529,22 @@ func TestPutSettingsRejectsUnauditedCUDAModel(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(`{"quality":"best","model_override":"parakeet-tdt-0.6b-v3-int8"}`))
+	req := httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(`{"quality":"best","model_override":"custom/model"}`))
 	rec := httptest.NewRecorder()
 	rt.settingsHandler(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("PUT unaudited model = %d, want 400 body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), auditedCUDAParakeetV3) {
-		t.Fatalf("model rejection did not name the audited CUDA model: %s", rec.Body.String())
+	for _, model := range auditedModels() {
+		if !strings.Contains(rec.Body.String(), model) {
+			t.Fatalf("model rejection did not name the audited model %s: %s", model, rec.Body.String())
+		}
 	}
 }
 
 func TestGetSettingsReturnsEffectiveView(t *testing.T) {
+	t.Setenv(envSTTCUDACapable, "0")
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
@@ -520,11 +559,17 @@ func TestGetSettingsReturnsEffectiveView(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.Effective.Device != "cuda" {
-		t.Fatalf("effective.device = %q, want forced cuda: %s", resp.Effective.Device, rec.Body.String())
+	// A portable image reports the device it will really use — the CPU — and
+	// the model that tier loads there, instead of claiming a forced CUDA run
+	// the host cannot perform.
+	if resp.Effective.Device != deviceCPU {
+		t.Fatalf("effective.device = %q, want cpu: %s", resp.Effective.Device, rec.Body.String())
 	}
-	if resp.Effective.Model != auditedCUDAParakeetV3 {
-		t.Fatalf("effective.model = %q, want %s: %s", resp.Effective.Model, auditedCUDAParakeetV3, rec.Body.String())
+	if resp.Effective.Model != modelForQuality(resp.Quality, deviceCPU) {
+		t.Fatalf("effective.model = %q, want %s: %s", resp.Effective.Model, modelForQuality(resp.Quality, deviceCPU), rec.Body.String())
+	}
+	if resp.Effective.Note == "" {
+		t.Error("effective.note is empty; the panel has nothing to explain the device with")
 	}
 	if resp.Effective.Quality != normalizeQuality(resp.Quality) {
 		t.Fatalf("effective.quality = %q, want %q", resp.Effective.Quality, normalizeQuality(resp.Quality))
@@ -537,7 +582,7 @@ func TestGetSettingsLogsPersistedPolicyMigration(t *testing.T) {
 
 	legacy := STTSettings{
 		Quality:            sttQualityBest,
-		DeviceOverride:     "cpu",
+		DeviceOverride:     "tpu",
 		ModelOverride:      "legacy-int8-model",
 		TranscriptionTerms: []string{"Gocassini"},
 		Source:             sttSourceUser,
@@ -561,12 +606,64 @@ func TestGetSettingsLogsPersistedPolicyMigration(t *testing.T) {
 	}
 	for _, bit := range []string{
 		"operator: stt_settings migrated",
-		`unsupported device_override="cpu"`,
+		`unsupported device_override="tpu"`,
 		`unaudited model_override="legacy-int8-model"`,
-		"use Settings to select CUDA",
+		"the policy now auto-selects the device",
 	} {
 		if !strings.Contains(logs.String(), bit) {
 			t.Errorf("migration log %q does not contain %q", logs.String(), bit)
 		}
+	}
+}
+
+func TestLoadPreservesStoredCPUOverrideWithoutMigrating(t *testing.T) {
+	// A pinned CPU device is a supported policy, not a legacy value to heal:
+	// clearing it (as the GPU-only loader did) silently changed what the
+	// administrator asked for on every restart.
+	path := filepath.Join(t.TempDir(), "settings.json")
+	stored := STTSettings{
+		Quality:        sttQualityFast,
+		DeviceOverride: deviceCPU,
+		Source:         sttSourceUser,
+	}
+	raw, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var migrations []SettingsMigration
+	got, err := LoadOrInitSettingsWithMigrationReporter(path, func(m SettingsMigration) {
+		migrations = append(migrations, m)
+	})
+	if err != nil {
+		t.Fatalf("LoadOrInitSettingsWithMigrationReporter() error = %v", err)
+	}
+	if got.DeviceOverride != deviceCPU {
+		t.Errorf("device_override = %q, want cpu preserved", got.DeviceOverride)
+	}
+	if len(migrations) != 0 {
+		t.Errorf("migrations = %d (%v), want none for a supported policy", len(migrations), migrations)
+	}
+}
+
+func TestEffectiveDeviceReportsThePinnedDevice(t *testing.T) {
+	t.Setenv(envSTTCUDACapable, "0")
+	if device, note := effectiveDevice(deviceCPU); device != deviceCPU || note == "" {
+		t.Errorf("effectiveDevice(cpu) = %q/%q, want cpu with a note", device, note)
+	}
+	// An unsatisfiable CUDA pin still reports cuda: the administrator's intent
+	// is what /status then explains as unusable, rather than a silent CPU swap.
+	device, note := effectiveDevice(deviceCUDA)
+	if device != deviceCUDA {
+		t.Errorf("effectiveDevice(cuda) = %q, want cuda", device)
+	}
+	if !strings.Contains(note, "no usable CUDA runtime") {
+		t.Errorf("effectiveDevice(cuda) note = %q, want an explanation of why it cannot run", note)
+	}
+	if device, _ := effectiveDevice(""); device != deviceCPU {
+		t.Errorf("effectiveDevice(auto) on a portable image = %q, want cpu", device)
 	}
 }

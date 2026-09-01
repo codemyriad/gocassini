@@ -10,9 +10,9 @@ Goal:
 - start a local Nextcloud + AppAPI/HaRP + Talk stack
 - build and install Cassini as an ExApp (the production topology)
 - record a Talk meeting through Talk's record button
-- verify Talk audio is retained and the plain image immediately blocks the
-  GPU-only build with actionable recovery instructions
-- on a CUDA deployment, watch build -> seal -> publish and open the meeting
+- watch build -> seal -> publish and open the meeting — on a GPU-less host the
+  plain image transcribes on the CPU, more slowly, and reports which device it
+  used
 
 ## Before you begin
 

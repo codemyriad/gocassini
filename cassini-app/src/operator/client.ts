@@ -3,6 +3,7 @@ import type {
   JobAttempt,
   JobDetailResponse,
   Settings,
+  SettingsEffective,
   SettingsQuality,
   SettingsUpdate,
 } from "./types";
@@ -151,10 +152,16 @@ export class OperatorClient {
 // "balanced" so the UI always has a renderable, well-typed shape.
 function normalizeSettings(raw: unknown): Settings {
   const value = (raw ?? {}) as Record<string, unknown>;
-  const effective =
+  const rawEffective =
     value.effective != null && typeof value.effective === "object"
       ? (value.effective as Record<string, unknown>)
       : {};
+  const effective: SettingsEffective = {
+    quality: normalizeQuality(rawEffective.quality),
+    device: asString(rawEffective.device),
+    model: asString(rawEffective.model),
+    note: asString(rawEffective.note),
+  };
   return {
     quality: normalizeQuality(value.quality),
     device_override: asString(value.device_override),

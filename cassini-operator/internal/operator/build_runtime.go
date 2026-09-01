@@ -251,21 +251,31 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	}
 
 	// Resource governor: never let a build starve or OOM the host (the ExApp can
-	// run uncapped next to Nextcloud/Talk). Reject a missing CUDA runtime/device
-	// before waiting for RAM: a portable image can never become eligible merely
-	// because host memory frees up. Then wait — bounded — for RAM headroom.
+	// run uncapped next to Nextcloud/Talk). Resolve the device before waiting
+	// for RAM — an unsatisfiable explicit override can never become eligible
+	// merely because host memory frees up — and size the RAM floor for the
+	// device/model pair that resolution produced. Then wait, bounded, for
+	// headroom.
 	limits := resourceLimitsFromEnv()
-	if admissionErr := rt.buildCUDAAdmission(); admissionErr != nil {
+	settings := rt.currentSettings()
+	device, admissionErr := resolveDeviceForSettings(settings)
+	if admissionErr != nil {
 		return meetingPath, admissionErr
 	}
-	if err := limits.waitForMemory(ctx, rt.logger.Printf); err != nil {
+	model := settings.modelForDevice(device)
+	// Say which device won before any audio is decoded: a CPU build is a
+	// legitimate outcome but a much slower one, and an administrator reading
+	// the attempt log should never have to infer it from the elapsed time.
+	rt.logger.Printf("resource governor: job %s admitted on %s (quality=%s model=%s)",
+		task.JobID, device, normalizeQuality(settings.Quality), model)
+	if err := limits.waitForMemory(ctx, limits.minFreeMemForBuild(device, model), rt.logger.Printf); err != nil {
 		return meetingPath, err
 	}
 	// Probe free VRAM only after any RAM wait, immediately before launch. That
 	// reading is an admission snapshot; taking it before a long memory wait
 	// would let another workload consume the GPU in between.
-	env := rt.currentSettings().ChildEnv(os.Environ())
-	buildEnv, err := limits.applyToEnv(env, true)
+	env := settings.ChildEnv(os.Environ())
+	buildEnv, err := limits.applyToEnv(env, device)
 	if err != nil {
 		return meetingPath, err
 	}
