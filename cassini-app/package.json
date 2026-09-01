@@ -15,6 +15,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@nextcloud/initial-state": "^3.0.0",
     "cassini-viewer": "*"
   },
   "devDependencies": {

@@ -1,4 +1,5 @@
-// The payload the service worker appends to Nextcloud Talk's bundle.
+// The payload the cassini_capture companion app loads on Nextcloud Talk's
+// authenticated call page through LoadAdditionalScriptsEvent.
 //
 // It records the participant's own microphone at the source — before Opus
 // encoding and before the network — so the transcript can later be rebuilt from
@@ -18,10 +19,13 @@
 //   only by the encode and the network, which is what makes verifying an upload
 //   against the server's own recording meaningful.
 //
-// Everything here is defensive. This code runs inside a live call, appended to
-// another application's bundle: a throw in the wrong place degrades a real
-// meeting for everyone in it. Every entry point is wrapped, and every failure
-// mode ends in "do not capture", never in "break Talk".
+// Everything here is defensive. This code runs inside a live call: a throw in
+// the wrong place degrades a real meeting for everyone in it. Every entry point
+// is wrapped, and every failure mode ends in "do not capture", never in "break
+// Talk".
+
+import { loadState } from "@nextcloud/initial-state";
+import { retireLegacyCaptureWorkers } from "./register";
 
 import {
   SOURCE_CAPTURE_FORMAT,
@@ -35,6 +39,47 @@ import {
 // itself on silently is not one we are willing to ship regardless of how much
 // the transcript would improve.
 const CONSENT_STORAGE_KEY = "cassini.sourceCapture.consent";
+
+const INITIAL_STATE_APP = "cassini_capture";
+const INITIAL_STATE_KEY = "capture";
+
+export interface CaptureDeliveryConfig {
+  enabled: boolean;
+  proxyBase: string;
+}
+
+const DISABLED_DELIVERY: CaptureDeliveryConfig = { enabled: false, proxyBase: "" };
+
+// normalizeCaptureDeliveryConfig is deliberately strict. Initial state is
+// supplied by the companion app, but a missing/malformed value still has to
+// fail closed: without a trusted proxy base neither the worker nor the
+// revocation check has a safe destination.
+export function normalizeCaptureDeliveryConfig(value: unknown): CaptureDeliveryConfig {
+  if (!value || typeof value !== "object") {
+    return DISABLED_DELIVERY;
+  }
+  const candidate = value as { enabled?: unknown; proxyBase?: unknown };
+  if (candidate.enabled !== true || typeof candidate.proxyBase !== "string") {
+    return DISABLED_DELIVERY;
+  }
+  const proxyBase = candidate.proxyBase.trim().replace(/\/+$/, "");
+  if (!proxyBase.startsWith("/") || proxyBase.startsWith("//")) {
+    return DISABLED_DELIVERY;
+  }
+  return { enabled: true, proxyBase };
+}
+
+export function captureDeliveryFromInitialState(): CaptureDeliveryConfig {
+  try {
+    return normalizeCaptureDeliveryConfig(
+      loadState<unknown>(INITIAL_STATE_APP, INITIAL_STATE_KEY, DISABLED_DELIVERY),
+    );
+  } catch {
+    return DISABLED_DELIVERY;
+  }
+}
+
+let deliveryConfig: CaptureDeliveryConfig = DISABLED_DELIVERY;
 
 // TIMESLICE_MS is how often MediaRecorder hands us a chunk to persist. Ten
 // seconds bounds what an unclean tab kill can lose while keeping the message
@@ -51,10 +96,8 @@ const AUDIO_BITS_PER_SECOND = 128_000;
 
 // SERVER_CHECK_MS is how often a running capture re-asks the server whether
 // collection is still permitted. Turning the administrator switch off cannot
-// stop an existing client on its own — 404ing the worker script does not
-// deactivate an installed service worker, and a call already in progress would
-// otherwise keep recording — so the client asks, rather than the server having
-// to reach it.
+// retract code already running in a call, so the client asks rather than the
+// server having to reach it.
 const SERVER_CHECK_MS = 30_000;
 
 // SERVER_CHECK_TIMEOUT_MS bounds each of those requests. Without a deadline a
@@ -98,15 +141,13 @@ export function supportedCaptureMimeType(
 
 // uploadURLFrom builds the operator's upload endpoint behind the AppAPI proxy.
 // Exported pure for tests: getting this wrong silently uploads nowhere.
-export function uploadURLFrom(rootPath: string): string {
-  const root = (rootPath ?? "").replace(/\/+$/, "");
-  return `${root}/index.php/apps/app_api/proxy/gocassini/operator/capture/upload`;
+export function uploadURLFrom(proxyBase: string): string {
+  return `${proxyBase.replace(/\/+$/, "")}/operator/capture/upload`;
 }
 
 // enabledURLFrom builds the operator's "may I still record?" endpoint.
-export function enabledURLFrom(rootPath: string): string {
-  const root = (rootPath ?? "").replace(/\/+$/, "");
-  return `${root}/index.php/apps/app_api/proxy/gocassini/operator/capture/enabled`;
+export function enabledURLFrom(proxyBase: string): string {
+  return `${proxyBase.replace(/\/+$/, "")}/operator/capture/enabled`;
 }
 
 // captureAllowedByServer asks the operator whether collection is permitted.
@@ -116,7 +157,7 @@ export function enabledURLFrom(rootPath: string): string {
 // transcript improvement, and the cost of a false yes is collecting audio an
 // administrator has switched off.
 export async function captureAllowedByServer(
-  rootPath: string,
+  proxyBase: string,
   fetchImpl: typeof fetch = fetch,
   timeoutMS: number = SERVER_CHECK_TIMEOUT_MS,
 ): Promise<boolean> {
@@ -135,7 +176,7 @@ export async function captureAllowedByServer(
   });
   try {
     const response = await Promise.race([
-      fetchImpl(enabledURLFrom(rootPath), {
+      fetchImpl(enabledURLFrom(proxyBase), {
         credentials: "same-origin",
         cache: "no-store",
         signal: controller.signal,
@@ -224,12 +265,7 @@ let capturingConnection: RTCPeerConnection | null = null;
 let capturingSender: RTCRtpSender | null = null;
 
 function workerURL(): string {
-  // The payload is served next to the worker under the ExApp's /ui/ prefix, and
-  // the service worker rewrote Talk's bundle rather than ours, so the payload's
-  // own URL is not discoverable from document.currentScript here. Derive it
-  // from the same proxy path the upload uses.
-  const root = (globalThis as { OC?: { getRootPath?: () => string } }).OC?.getRootPath?.() ?? "";
-  return `${root.replace(/\/+$/, "")}/index.php/apps/app_api/proxy/gocassini/ui/capture-worker.js`;
+  return `${deliveryConfig.proxyBase}/ui/capture-worker.js`;
 }
 
 function startSegment(session: CaptureState, sender: RTCRtpSender): void {
@@ -383,7 +419,6 @@ async function uploadCapture(
     await discardCapture(opfsRoot, dirName);
     return;
   }
-  const root = (globalThis as { OC?: { getRootPath?: () => string } }).OC?.getRootPath?.() ?? "";
   const dir = await opfsRoot.getDirectoryHandle(dirName);
   const form = new FormData();
   form.append("sidecar", new Blob([JSON.stringify(sidecar)], { type: "application/json" }), "capture.json");
@@ -398,7 +433,7 @@ async function uploadCapture(
     await discardCapture(opfsRoot, dirName);
     return;
   }
-  const response = await fetch(uploadURLFrom(root), {
+  const response = await fetch(uploadURLFrom(deliveryConfig.proxyBase), {
     method: "POST",
     body: form,
     credentials: "same-origin",
@@ -517,7 +552,8 @@ export function rotateSegment(session: CaptureState, sender: RTCRtpSender): void
     });
 }
 
-// serverAllowsCapture caches the administrator switch, refreshed on a timer.
+// serverAllowsCapture starts from the value injected by the companion app and
+// is refreshed on a timer.
 //
 // It is resolved BEFORE a call starts rather than when one does, and that
 // ordering is forced by the platform: an encoded transform has to be attached
@@ -525,15 +561,12 @@ export function rotateSegment(session: CaptureState, sender: RTCRtpSender): void
 // addTrack. Asking there attached the transform a round trip late and produced
 // a recording with no timing anchors at all.
 //
-// null means "not answered yet", and it is treated as no. A Talk tab that has
-// only just loaded declines to capture the call somebody joins in the same
-// instant; the next one is fine, and that is the right way round.
-let serverAllowsCapture: boolean | null = null;
+let serverAllowsCapture = false;
 
 // refreshCapturePermission updates the cache and stops an active capture the
 // moment the answer turns to no, so the switch reaches a call in progress.
-async function refreshCapturePermission(rootPath: string): Promise<void> {
-  const allowed = await captureAllowedByServer(rootPath);
+async function refreshCapturePermission(proxyBase: string): Promise<void> {
+  const allowed = await captureAllowedByServer(proxyBase);
   serverAllowsCapture = allowed;
   if (!allowed && state && !state.discarded) {
     state.discarded = true;
@@ -549,8 +582,8 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
   if (!roomToken || !consentGranted(localStorage)) {
     return;
   }
-  // The administrator switch, answered before we got here. Anything other than
-  // an explicit yes — including "not answered yet" — means nothing is created:
+  // The administrator switch was injected before this script ran. Anything
+  // other than an explicit yes means nothing is created:
   // no worker thread, no transform on a live call's sender, no OPFS directory.
   if (serverAllowsCapture !== true) {
     return;
@@ -644,10 +677,16 @@ function instrument(pc: RTCPeerConnection): void {
   };
 }
 
-// install patches the RTCPeerConnection constructor. Talk resolves it from the
-// global at call time — the bundle body we are appended to only defines
-// modules — so patching now still catches every connection the call creates.
-export function install(): void {
+// install patches the RTCPeerConnection constructor. The companion loads this
+// ordinary script before Talk's bundle, so every connection the call creates
+// resolves the patched constructor.
+export function install(config: CaptureDeliveryConfig = captureDeliveryFromInitialState()): void {
+  const normalized = normalizeCaptureDeliveryConfig(config);
+  if (!normalized.enabled) {
+    return;
+  }
+  deliveryConfig = normalized;
+  serverAllowsCapture = true;
   const globals = globalThis as unknown as { RTCPeerConnection: typeof RTCPeerConnection };
   const Original = globals.RTCPeerConnection;
   if (!Original || (Original as { __cassiniPatched?: boolean }).__cassiniPatched) {
@@ -671,14 +710,12 @@ export function install(): void {
   });
   (Patched as { __cassiniPatched?: boolean }).__cassiniPatched = true;
   globals.RTCPeerConnection = Patched;
-  // Resolve the administrator switch now, and keep it fresh. Doing it here
-  // rather than at call start is what leaves room to attach the encoded
-  // transform in time, and the same timer is what carries a mid-call
-  // withdrawal to a capture already running.
-  const rootPath = (globals as unknown as { OC?: { getRootPath?: () => string } }).OC?.getRootPath?.() ?? "";
-  void refreshCapturePermission(rootPath);
+  // Initial state resolves the administrator switch before this ordinary
+  // script runs, leaving the synchronous addTrack path free to attach the
+  // encoded transform before negotiation. Polling remains for revocation
+  // during an already-running call.
   setInterval(
-    () => void refreshCapturePermission(rootPath),
+    () => void refreshCapturePermission(deliveryConfig.proxyBase),
     serverCheckIntervalMS((globalThis as { __cassiniCaptureCheckMs?: unknown }).__cassiniCaptureCheckMs),
   );
   // A page going away mid-upload keeps its OPFS buffer, so the worst case is a
@@ -686,9 +723,16 @@ export function install(): void {
   window.addEventListener("pagehide", () => void endCall());
 }
 
-if (typeof window !== "undefined" && roomTokenFromPath(location.pathname)) {
+if (typeof window !== "undefined") {
   try {
-    install();
+    // A user can reach Talk before revisiting Cassini after the migration.
+    // Retire the abandoned bundle-rewriting worker here as well; this does not
+    // delay installation or negotiation.
+    void retireLegacyCaptureWorkers(navigator.serviceWorker).catch(() => {});
+    const config = captureDeliveryFromInitialState();
+    if (config.enabled) {
+      install(config);
+    }
   } catch {
     // Talk loads normally whatever happens here.
   }

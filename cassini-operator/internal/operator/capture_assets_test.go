@@ -28,7 +28,7 @@ func captureDistWith(t *testing.T, files map[string]string) string {
 }
 
 func TestCaptureAssetFileFor(t *testing.T) {
-	for _, name := range []string{captureSWFile, capturePayloadFile, captureWorkerFile} {
+	for _, name := range []string{capturePayloadFile, captureWorkerFile} {
 		file, ok := captureAssetFileFor(uiAssetURLPrefix + "/" + name)
 		if !ok || file != name {
 			t.Fatalf("captureAssetFileFor(%q) = %q, %v", name, file, ok)
@@ -37,8 +37,8 @@ func TestCaptureAssetFileFor(t *testing.T) {
 	for _, path := range []string{
 		uiAssetURLPrefix + "/viewer.js",
 		uiAssetURLPrefix + "/../../etc/passwd",
-		uiAssetURLPrefix + "/nested/capture-sw.js",
-		"/capture-sw.js",
+		uiAssetURLPrefix + "/capture-sw.js",
+		uiAssetURLPrefix + "/nested/capture-worker.js",
 	} {
 		if _, ok := captureAssetFileFor(path); ok {
 			t.Fatalf("captureAssetFileFor(%q) unexpectedly matched", path)
@@ -46,35 +46,20 @@ func TestCaptureAssetFileFor(t *testing.T) {
 	}
 }
 
-// The whole injection chain hangs off this header. A service worker may only
-// claim a scope at or below its own script path unless Service-Worker-Allowed
-// raises the ceiling, and this script is served from deep inside the AppAPI
-// proxy path while the scopes it needs are Talk's call pages. AppAPI's proxy
-// forwards response headers verbatim, so what is set here is what the browser
-// sees. Nextcloud core does the same for its Files preview worker.
-func TestServeCaptureAssetSetsServiceWorkerAllowed(t *testing.T) {
+func TestServeCaptureAssetServesOrdinaryScripts(t *testing.T) {
 	cfg := ExAppConfig{ViewerDist: captureDistWith(t, map[string]string{
-		captureSWFile:      "// sw",
 		capturePayloadFile: "// payload",
 	})}
 	logger := log.New(io.Discard, "", 0)
 
 	rec := httptest.NewRecorder()
-	cfg.serveCaptureAsset(rec, httptest.NewRequest(http.MethodGet, uiAssetURLPrefix+"/"+captureSWFile, nil), captureSWFile, logger)
+	cfg.serveCaptureAsset(rec, httptest.NewRequest(http.MethodGet, uiAssetURLPrefix+"/"+capturePayloadFile, nil), capturePayloadFile, logger)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
-	}
-	if got := rec.Header().Get("Service-Worker-Allowed"); got != "/" {
-		t.Fatalf("Service-Worker-Allowed = %q, want /", got)
 	}
 	if got := rec.Header().Get("Content-Type"); got != "text/javascript; charset=utf-8" {
 		t.Fatalf("Content-Type = %q", got)
 	}
-
-	// Only the service worker needs it; the payload and worker are ordinary
-	// scripts and should not advertise a scope they never claim.
-	rec = httptest.NewRecorder()
-	cfg.serveCaptureAsset(rec, httptest.NewRequest(http.MethodGet, uiAssetURLPrefix+"/"+capturePayloadFile, nil), capturePayloadFile, logger)
 	if got := rec.Header().Get("Service-Worker-Allowed"); got != "" {
 		t.Fatalf("payload carried Service-Worker-Allowed = %q", got)
 	}
@@ -87,7 +72,7 @@ func TestServeCaptureAssetDegradesWithoutDist(t *testing.T) {
 	t.Setenv(envSourceCaptureEnabled, "1")
 
 	rec := httptest.NewRecorder()
-	ExAppConfig{}.serveCaptureAsset(rec, httptest.NewRequest(http.MethodGet, "/ui/"+captureSWFile, nil), captureSWFile, logger)
+	ExAppConfig{}.serveCaptureAsset(rec, httptest.NewRequest(http.MethodGet, "/ui/"+capturePayloadFile, nil), capturePayloadFile, logger)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unset dist: status = %d, want 503", rec.Code)
 	}
@@ -96,16 +81,16 @@ func TestServeCaptureAssetDegradesWithoutDist(t *testing.T) {
 	// capture build step) must not 500.
 	cfg := ExAppConfig{ViewerDist: captureDistWith(t, map[string]string{})}
 	rec = httptest.NewRecorder()
-	cfg.serveCaptureAsset(rec, httptest.NewRequest(http.MethodGet, "/ui/"+captureSWFile, nil), captureSWFile, logger)
+	cfg.serveCaptureAsset(rec, httptest.NewRequest(http.MethodGet, "/ui/"+capturePayloadFile, nil), capturePayloadFile, logger)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("missing file: status = %d, want 503", rec.Code)
 	}
 }
 
 func TestServeCaptureAssetRejectsWrites(t *testing.T) {
-	cfg := ExAppConfig{ViewerDist: captureDistWith(t, map[string]string{captureSWFile: "// sw"})}
+	cfg := ExAppConfig{ViewerDist: captureDistWith(t, map[string]string{capturePayloadFile: "// payload"})}
 	rec := httptest.NewRecorder()
-	cfg.serveCaptureAsset(rec, httptest.NewRequest(http.MethodPost, "/ui/"+captureSWFile, nil), captureSWFile, log.New(io.Discard, "", 0))
+	cfg.serveCaptureAsset(rec, httptest.NewRequest(http.MethodPost, "/ui/"+capturePayloadFile, nil), capturePayloadFile, log.New(io.Discard, "", 0))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", rec.Code)
 	}
@@ -129,10 +114,10 @@ func TestUIAssetHandlerServesCaptureBundles(t *testing.T) {
 }
 
 // The administrator gate is the containment boundary for the whole feature.
-// With it off, a user opting in client-side achieves nothing: no worker script
-// to register, so no page is ever rewritten.
+// With it off, a user opting in client-side achieves nothing: the ordinary
+// capture scripts disappear and uploads remain forbidden.
 func TestCaptureAssetsAreAbsentUntilAnAdministratorEnablesThem(t *testing.T) {
-	dist := captureDistWith(t, map[string]string{captureSWFile: "// sw"})
+	dist := captureDistWith(t, map[string]string{capturePayloadFile: "// payload"})
 	cfg := ExAppConfig{ViewerDist: dist}
 	logger := log.New(io.Discard, "", 0)
 
@@ -140,15 +125,14 @@ func TestCaptureAssetsAreAbsentUntilAnAdministratorEnablesThem(t *testing.T) {
 	t.Setenv(envSourceCaptureEnabled, "")
 
 	rec := httptest.NewRecorder()
-	cfg.serveCaptureAsset(rec, httptest.NewRequest(http.MethodGet, "/ui/"+captureSWFile, nil), captureSWFile, logger)
+	cfg.serveCaptureAsset(rec, httptest.NewRequest(http.MethodGet, "/ui/"+capturePayloadFile, nil), capturePayloadFile, logger)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 — to a browser this is simply an installation without the feature", rec.Code)
 	}
 }
 
-// The switch has to reach a client that is already recording: 404ing the
-// worker script does not deactivate an installed service worker, so the
-// payload asks instead.
+// The switch has to reach a client that is already recording: the companion
+// cannot retract JavaScript already executing in a call, so the payload asks.
 func TestCaptureEnabledHandlerReportsTheAdministratorSwitch(t *testing.T) {
 	rt := &Runtime{}
 

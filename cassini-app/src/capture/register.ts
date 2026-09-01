@@ -1,24 +1,12 @@
-// Registration of the capture service worker, called from the Cassini page.
+// Per-browser consent and retirement of PR #228's legacy service worker.
 //
-// The service worker is the only same-origin way an ExApp can get code onto
-// Talk's call page (see sw.ts for why), and it can only be registered by a page
-// on that origin — which means the user has to open Cassini once. That visit is
-// also where consent is recorded, so the two happen together: enabling source
-// capture registers the worker, disabling it unregisters and forgets.
-
-import { talkCallScopes } from "./protocol";
+// Capture delivery now belongs to the cassini_capture companion app. The
+// Cassini ExApp page only records a participant's explicit opt-in. It never
+// registers a worker or claims a Talk URL scope.
 
 export const CONSENT_STORAGE_KEY = "cassini.sourceCapture.consent";
 
-// SW_FILENAME is served by the operator with `Service-Worker-Allowed: /`, which
-// is what lets a script under the ExApp's proxy path claim a scope elsewhere on
-// the origin. The header widens the MAXIMUM permitted scope; the narrow Talk
-// scopes below are what we actually claim.
-const SW_FILENAME = "ui/capture-sw.js";
-
-export function serviceWorkerURL(proxyBase: string): string {
-  return proxyBase.replace(/\/+$/, "") + "/" + SW_FILENAME;
-}
+const LEGACY_CAPTURE_WORKER_SUFFIX = "/apps/app_api/proxy/gocassini/ui/capture-sw.js";
 
 export function isEnabled(storage: Pick<Storage, "getItem">): boolean {
   try {
@@ -28,74 +16,36 @@ export function isEnabled(storage: Pick<Storage, "getItem">): boolean {
   }
 }
 
-export interface RegistrationOutcome {
-  scope: string;
-  ok: boolean;
-  error?: string;
-}
-
-// registerAll claims each Talk call scope. Two registrations because a
-// registration has exactly one scope and Nextcloud serves calls at both
-// "<root>/call/<token>" and "<root>/index.php/call/<token>"; an install that
-// only ever uses one shape simply gets one dormant registration.
-//
-// Note these scopes are narrower than the "/" scope Nextcloud's Files app
-// registers its own preview service worker at. That is deliberate and load
-// bearing: same-scope registration REPLACES, so claiming "/" would silently
-// disable core's worker, while a narrower scope only wins on the pages it
-// covers.
-export async function registerAll(
-  container: ServiceWorkerContainer,
-  proxyBase: string,
-  rootPath: string,
-): Promise<RegistrationOutcome[]> {
-  const url = serviceWorkerURL(proxyBase);
-  const outcomes: RegistrationOutcome[] = [];
-  for (const scope of talkCallScopes(rootPath)) {
+function legacyCaptureWorker(registration: ServiceWorkerRegistration): boolean {
+  return [registration.active, registration.waiting, registration.installing].some((worker) => {
+    if (!worker?.scriptURL) {
+      return false;
+    }
     try {
-      await container.register(url, { scope });
-      outcomes.push({ scope, ok: true });
-    } catch (error) {
-      outcomes.push({ scope, ok: false, error: String(error) });
+      return new URL(worker.scriptURL).pathname.endsWith(LEGACY_CAPTURE_WORKER_SUFFIX);
+    } catch {
+      return false;
     }
+  });
+}
+
+// Existing installs may still have the bundle-rewriting worker from the draft
+// prototype. Removing its route does not remove an installed worker, so both
+// the Cassini page and the new Talk payload call this migration helper. Match
+// the script URL, never the scope: a Talk- or Files-owned worker at the same
+// scope must survive.
+export async function retireLegacyCaptureWorkers(
+  container: Pick<ServiceWorkerContainer, "getRegistrations"> | undefined,
+): Promise<number> {
+  if (!container) {
+    return 0;
   }
-  return outcomes;
-}
-
-// isOurs identifies a registration by the script it runs, not by its scope.
-// Scope alone would also match a future Talk-owned worker registered at the
-// call pages, and turning our feature off must not unregister somebody else's.
-function isOurs(registration: ServiceWorkerRegistration): boolean {
-  const worker = registration.active ?? registration.waiting ?? registration.installing;
-  return (worker?.scriptURL ?? "").includes(SW_FILENAME);
-}
-
-export async function unregisterAll(
-  container: ServiceWorkerContainer,
-  rootPath: string,
-): Promise<void> {
-  const scopes = new Set(talkCallScopes(rootPath));
   const registrations = await container.getRegistrations();
+  let removed = 0;
   for (const registration of registrations) {
-    const path = new URL(registration.scope).pathname;
-    if (scopes.has(path) && isOurs(registration)) {
-      await registration.unregister();
+    if (legacyCaptureWorker(registration) && (await registration.unregister())) {
+      removed += 1;
     }
   }
-}
-
-// setUp registers the worker when the user has opted in, and does nothing at
-// all otherwise. Called on every Cassini page load: re-registering an identical
-// script and scope is a no-op in the browser, and it repairs a registration the
-// user cleared through site data.
-export async function setUp(
-  container: ServiceWorkerContainer | undefined,
-  storage: Pick<Storage, "getItem">,
-  proxyBase: string,
-  rootPath: string,
-): Promise<RegistrationOutcome[]> {
-  if (!container || !isEnabled(storage)) {
-    return [];
-  }
-  return registerAll(container, proxyBase, rootPath);
+  return removed;
 }

@@ -128,7 +128,7 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       <variable>
         <name>CASSINI_SOURCE_CAPTURE</name>
         <display-name>Collect participant-captured audio (experimental)</display-name>
-        <description>Set to 1 to let participants' browsers record their own microphone during a call and upload it afterwards, so a transcript can later be built from audio the network never damaged. Off by default, and nothing happens until a participant also opts in themselves. With this off the browser assets are not served and uploads are refused, so no recording is collected and no storage is used. Note the current limitations before enabling: a participant's opt-in is remembered per browser rather than per account, so another person signing in on the same browser profile inherits it, and uploads are not yet quota-limited per participant. See docs/source-audio-capture.md.</description>
+        <description>Set to 1 to let authenticated Talk participants' browsers record their own microphone during a call and upload it afterwards, so a transcript can later be built from audio the network never damaged. Requires the matching cassini_capture native companion app and an explicit participant opt-in. Off by default. With this off the browser assets are not served and uploads are refused, so no recording is collected and no storage is used. Note the current limitations before enabling: a participant's opt-in is remembered per browser rather than per account, so another person signing in on the same browser profile inherits it, and uploads are not yet quota-limited per participant. See docs/source-audio-capture.md.</description>
       </variable>
       <variable>
         <name>CASSINI_SOURCE_AUDIO_INGEST</name>
@@ -252,9 +252,8 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
            under the AppAPI-authenticated caller (never the participant id in
            the request body) and refuses a room the caller was not in. -->
       <!-- USER: "may I still record?", polled by a capture in progress. The
-           administrator switch has to reach a call already running, and
-           404ing the service-worker script does not deactivate an installed
-           worker. Answered no-store for the same reason. -->
+           administrator switch has to reach JavaScript already running in a
+           call. Answered no-store for the same reason. -->
       <route>
         <url>^operator\/capture\/enabled\/?$</url>
         <verb>GET</verb>
@@ -319,20 +318,10 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
       </route>
 
       <!-- USER: source-audio capture browser assets (capture_assets.go).
-           capture-sw.js is a service worker the Cassini page registers at
-           Talk's call scopes; the operator serves it with
-           `Service-Worker-Allowed: /` and AppAPI's proxy forwards that header,
-           which is what lets a script under this proxy path claim a scope
-           elsewhere on the origin. capture-payload.js is the code that worker
-           appends to Talk's own bundle, and capture-worker.js is the dedicated
-           worker that reads outgoing RTP timestamps and writes to OPFS. All
-           USER, like the viewer assets: every logged-in account may fetch
-           them, and capture only ever starts after an explicit opt-in. -->
-      <route>
-        <url>^ui\/capture-sw\.js$</url>
-        <verb>GET,HEAD</verb>
-        <access_level>USER</access_level>
-      </route>
+           The native cassini_capture companion injects capture-payload.js on
+           authenticated Talk call pages through LoadAdditionalScriptsEvent;
+           capture-worker.js reads outgoing RTP timestamps and writes to OPFS.
+           Both remain behind the ExApp's source-capture gate. -->
       <route>
         <url>^ui\/capture-payload\.js$</url>
         <verb>GET,HEAD</verb>

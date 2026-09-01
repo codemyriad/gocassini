@@ -3,6 +3,7 @@ import {
   captureAllowedByServer,
   consentGranted,
   enabledURLFrom,
+  normalizeCaptureDeliveryConfig,
   serverCheckIntervalMS,
   pickAudioSender,
   rotateSegment,
@@ -14,13 +15,34 @@ import { anchorsWithin } from "./worker";
 
 describe("uploadURLFrom", () => {
   it("targets the operator endpoint behind the AppAPI proxy", () => {
-    expect(uploadURLFrom("")).toBe("/index.php/apps/app_api/proxy/gocassini/operator/capture/upload");
-    expect(uploadURLFrom("/nextcloud")).toBe(
+    expect(uploadURLFrom("/index.php/apps/app_api/proxy/gocassini")).toBe(
+      "/index.php/apps/app_api/proxy/gocassini/operator/capture/upload",
+    );
+    expect(uploadURLFrom("/nextcloud/index.php/apps/app_api/proxy/gocassini/")).toBe(
       "/nextcloud/index.php/apps/app_api/proxy/gocassini/operator/capture/upload",
     );
-    expect(uploadURLFrom("/nextcloud/")).toBe(
-      "/nextcloud/index.php/apps/app_api/proxy/gocassini/operator/capture/upload",
-    );
+  });
+});
+
+describe("normalizeCaptureDeliveryConfig", () => {
+  it("accepts only an explicit enabled state and same-origin proxy path", () => {
+    expect(
+      normalizeCaptureDeliveryConfig({
+        enabled: true,
+        proxyBase: "/nextcloud/index.php/apps/app_api/proxy/gocassini/",
+      }),
+    ).toEqual({
+      enabled: true,
+      proxyBase: "/nextcloud/index.php/apps/app_api/proxy/gocassini",
+    });
+  });
+
+  it("fails closed for absent, disabled, or cross-origin state", () => {
+    expect(normalizeCaptureDeliveryConfig(undefined).enabled).toBe(false);
+    expect(normalizeCaptureDeliveryConfig({ enabled: false, proxyBase: "/proxy" }).enabled).toBe(false);
+    expect(
+      normalizeCaptureDeliveryConfig({ enabled: true, proxyBase: "https://elsewhere.example/proxy" }).enabled,
+    ).toBe(false);
   });
 });
 
@@ -280,7 +302,7 @@ describe("captureAllowedByServer", () => {
   });
 
   it("targets the operator endpoint behind the AppAPI proxy", () => {
-    expect(enabledURLFrom("/nextcloud")).toBe(
+    expect(enabledURLFrom("/nextcloud/index.php/apps/app_api/proxy/gocassini")).toBe(
       "/nextcloud/index.php/apps/app_api/proxy/gocassini/operator/capture/enabled",
     );
   });

@@ -58,6 +58,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
       publish: ${{ steps.v.outputs.publish }}
+      companion: ${{ steps.companion.outputs.present }}
     steps:
       - name: Checkout the release tag
         uses: actions/checkout@v4
@@ -91,6 +92,18 @@ jobs:
       - name: Install xmllint
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
 
+      # Manual dispatch remains useful for repairing historical releases cut
+      # before cassini_capture existed. New tags always contain it; old tags
+      # keep publishing only the ExApp package they actually shipped.
+      - name: Detect native capture companion
+        id: companion
+        run: |
+          if [[ -f cassini_capture/appinfo/info.xml ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Manifest, tag and changelog agree with the version
         env:
           VERSION: ${{ steps.v.outputs.version }}
@@ -104,6 +117,13 @@ jobs:
           fi
           if [[ "$IMAGE_TAG" != "$VERSION" ]]; then
             echo "::error::appinfo/info.xml <image-tag> ($IMAGE_TAG) != version ($VERSION)"; exit 1
+          fi
+          if [[ -f cassini_capture/appinfo/info.xml ]]; then
+            xmllint --noout cassini_capture/appinfo/info.xml
+            COMPANION="$(xmllint --xpath 'string(/info/version)' cassini_capture/appinfo/info.xml)"
+            if [[ "$COMPANION" != "$VERSION" ]]; then
+              echo "::error::cassini_capture/appinfo/info.xml <version> ($COMPANION) != version ($VERSION)"; exit 1
+            fi
           fi
           if ! git describe --exact-match --tags HEAD | grep -qx "v${VERSION}"; then
             echo "::error::HEAD is not exactly tag v${VERSION}"; exit 1
@@ -163,6 +183,22 @@ jobs:
       - name: Install store-schema validators
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xsltproc libxml2-utils
 
+      - name: Setup Node for the capture companion
+        if: ${{ needs.validate.outputs.companion == 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: '**/package-lock.json'
+
+      - name: Build the native capture companion
+        if: ${{ needs.validate.outputs.companion == 'true' }}
+        run: |
+          set -euo pipefail
+          npm ci
+          ./scripts/build-capture-companion.sh
+          ( cd build/artifacts/capture-companion && sha256sum cassini_capture.tar.gz > cassini_capture.tar.gz.sha256 )
+
       - name: Build, sign, and validate the tarball
         env:
           APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
@@ -182,6 +218,7 @@ jobs:
       - name: Create or update the GitHub release and attach the asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMPANION_PRESENT: ${{ needs.validate.outputs.companion }}
         run: |
           set -euo pipefail
           ./scripts/extract-release-notes.sh --version "$VERSION" > notes.md
@@ -195,8 +232,17 @@ jobs:
           else
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" "${args[@]}"
           fi
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
-            build/artifacts/appstore/gocassini.tar.gz build/artifacts/appstore/gocassini.tar.gz.sha256
+          assets=(
+            build/artifacts/appstore/gocassini.tar.gz
+            build/artifacts/appstore/gocassini.tar.gz.sha256
+          )
+          if [[ "$COMPANION_PRESENT" == "true" ]]; then
+            assets+=(
+              build/artifacts/capture-companion/cassini_capture.tar.gz
+              build/artifacts/capture-companion/cassini_capture.tar.gz.sha256
+            )
+          fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
 
       - name: Publish to apps.nextcloud.com
         if: ${{ needs.validate.outputs.publish == 'true' }}

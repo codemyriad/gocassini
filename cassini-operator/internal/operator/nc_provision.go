@@ -193,7 +193,8 @@ func randomPassword() (string, error) {
 }
 
 // enabledCallback is the AppAPI lifecycle hook, or nil outside an AppAPI
-// deployment. Provisioning is all it does.
+// deployment. It synchronizes the browser-delivery gate for the companion app
+// on both lifecycle edges, then provisions Files access on the enabled edge.
 //
 // It exists as a named function rather than a closure at the call site because
 // of how it was nearly lost. The assignment used to sit inside
@@ -210,6 +211,10 @@ func (c ExAppConfig) enabledCallback(ctx context.Context, logger *log.Logger) fu
 		return nil
 	}
 	return func(enabled bool) {
+		captureEnabled := enabled && sourceCaptureEnabled()
+		if err := c.syncSourceCaptureInitialState(ctx, captureEnabled, logger); err != nil && logger != nil {
+			logger.Printf("ERROR: source capture: could not synchronize companion initial state: %v", err)
+		}
 		if !enabled {
 			return
 		}

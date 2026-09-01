@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test";
 // @ts-expect-error - plain ESM fixture, no types needed
-import { startFixtureServer } from "./fixture-server.mjs";
+import { PROXY_PREFIX, startFixtureServer } from "./fixture-server.mjs";
 
 // End-to-end browser coverage for source capture.
 //
-// Everything load-bearing here only exists in a browser: a service worker
-// rewriting another app's bundle, a WebRTC encoded transform reading outgoing
+// Everything load-bearing here only exists in a browser: the companion's
+// ordinary script loading before Talk, a WebRTC encoded transform reading outgoing
 // RTP timestamps, OPFS, and an upload. The Go tests cover the arithmetic and
 // the intake; this covers the chain that produces their input.
 //
@@ -27,58 +27,89 @@ test.afterAll(async () => {
 
 test.beforeEach(() => {
   server.uploads.length = 0;
-  server.state.bundleIsNotTalk = false;
   server.state.captureEnabled = true;
+  server.state.companionEnabled = true;
 });
 
-// enableCapture visits the Cassini page, records consent and waits for the
-// service worker to be in control — the same sequence a user performs by
-// opting in, minus the UI that does not exist yet.
+// enableCapture records the participant's opt-in on the same origin. The
+// companion app, not this page, delivers code to Talk.
 async function enableCapture(page: import("@playwright/test").Page) {
   await page.goto(`${server.origin}/`);
   await page.evaluate(() => localStorage.setItem("cassini.sourceCapture.consent", "granted"));
-  await page.waitForFunction(() => (window as never as { __swScope?: string }).__swScope !== undefined);
 }
 
-test("the service worker appends the capture payload to Talk's bundle", async ({ page }) => {
+test("the companion payload runs before Talk negotiates", async ({ page }) => {
   await enableCapture(page);
-
-  // Asserted through the real path — the page loading its <script> — rather
-  // than by fetching the URL. The worker only rewrites requests whose
-  // destination is "script", so a fetch() would (correctly) get the original
-  // and prove nothing about what Talk actually evaluates.
   await page.goto(`${server.origin}/call/testroom`);
 
-  // Talk's own code ran: the payload is appended, so it cannot have replaced it.
   await page.waitForFunction(
     () => (window as never as { __talkReady?: unknown }).__talkReady !== undefined,
   );
-  // And ours ran after it.
-  const patched = await page.evaluate(
-    () => (window.RTCPeerConnection as unknown as { __cassiniPatched?: boolean }).__cassiniPatched === true,
+  const patchedBeforeTalk = await page.evaluate(
+    () => (window as never as { __capturePatchedBeforeTalk?: boolean }).__capturePatchedBeforeTalk,
   );
-  expect(patched, "the capture payload did not run on the call page").toBe(true);
+  expect(
+    patchedBeforeTalk,
+    "the capture payload ran too late to attach its encoded transform before negotiation",
+  ).toBe(true);
 });
 
-test("a response that is not Talk's bundle is passed through untouched", async ({ page }) => {
+test("a call started from Talk's index route is instrumented before SPA navigation", async ({ page }) => {
   await enableCapture(page);
+  await page.goto(`${server.origin}/apps/spreed/`);
+  await page.waitForFunction(
+    () => (window as never as { __talkReady?: unknown }).__talkReady !== undefined,
+  );
+  expect(new URL(page.url()).pathname).toBe("/call/testroom");
+  expect(
+    await page.evaluate(
+      () => (window as never as { __capturePatchedBeforeTalk?: boolean }).__capturePatchedBeforeTalk,
+    ),
+  ).toBe(true);
+});
+
+test("disabling the companion stops loading the payload without breaking Talk", async ({ page }) => {
+  await enableCapture(page);
+  server.state.companionEnabled = false;
   await page.goto(`${server.origin}/call/testroom`);
-
-  // A login page or a proxy notice served at the bundle's URL satisfies the
-  // path pattern but is not a script to append to. Driven from the server, not
-  // with page.route: the service worker issues this request, and page-level
-  // interception never sees it.
-  server.state.bundleIsNotTalk = true;
-  await page.goto(`${server.origin}/call/testroom?v=2`);
-  await page.waitForTimeout(1000);
-
-  // Nothing of ours was welded onto it, so nothing of ours ran either.
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
   const patched = await page.evaluate(
     () => (window.RTCPeerConnection as unknown as { __cassiniPatched?: boolean }).__cassiniPatched === true,
   );
-  expect(patched, "the payload was appended to something that was not Talk's script").toBe(false);
-  const talkReady = await page.evaluate(() => (window as never as { __talkReady?: unknown }).__talkReady);
-  expect(talkReady, "the stub served HTML, so Talk cannot have initialised").toBeUndefined();
+  expect(patched).toBe(false);
+  await page.evaluate(() => (window as never as { __endCall: () => void }).__endCall());
+  await page.waitForTimeout(1000);
+  expect(server.uploads).toHaveLength(0);
+});
+
+test("the companion retires the abandoned capture worker without touching the call", async ({ page }) => {
+  await page.goto(`${server.origin}/`);
+  await page.evaluate(async (workerURL) => {
+    const registration = await navigator.serviceWorker.register(workerURL, { scope: "/call/" });
+    const worker = registration.installing ?? registration.waiting ?? registration.active;
+    if (worker && worker.state !== "activated") {
+      await new Promise<void>((resolve) => {
+        worker.addEventListener("statechange", () => {
+          if (worker.state === "activated") resolve();
+        });
+      });
+    }
+  }, `${server.origin}${PROXY_PREFIX}/ui/capture-sw.js`);
+
+  await page.goto(`${server.origin}/call/testroom`);
+  await page.waitForFunction(async () => {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    return registrations.every((registration) => {
+      const worker = registration.active ?? registration.waiting ?? registration.installing;
+      return !worker?.scriptURL.endsWith("/apps/app_api/proxy/gocassini/ui/capture-sw.js");
+    });
+  });
+  expect(await page.title()).toBe("Stub Talk call");
+  expect(
+    await page.evaluate(
+      () => (window as never as { __capturePatchedBeforeTalk?: boolean }).__capturePatchedBeforeTalk,
+    ),
+  ).toBe(true);
 });
 
 test("captures the participant's own audio through a lossy uplink and uploads it", async ({ page }) => {
@@ -177,9 +208,8 @@ test("the administrator switch stops a capture already running", async ({ page }
   await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
   await page.waitForTimeout(1500);
 
-  // Turning the server-side switch off has to reach a call in progress. It
-  // cannot be done by withdrawing the worker script — 404ing that does not
-  // deactivate an installed service worker — so the client asks.
+  // Turning the server-side switch off has to reach a call in progress. The
+  // companion cannot retract a script already executing, so the client asks.
   server.state.captureEnabled = false;
   // Long enough for at least one poll at the shortened interval the stub page
   // sets. Without this wait the test would pass on the upload endpoint's 403
@@ -199,9 +229,6 @@ test("the administrator switch stops a capture already running", async ({ page }
 });
 
 test("captures nothing without an explicit opt-in", async ({ page }) => {
-  // The service worker still has to be registered for the payload to arrive at
-  // all, so register it and then withdraw consent — the state a user is in
-  // after turning the feature off.
   await enableCapture(page);
   await page.evaluate(() => localStorage.removeItem("cassini.sourceCapture.consent"));
 

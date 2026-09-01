@@ -139,8 +139,8 @@ jobs:
   # job rather than a `ui` matrix entry because it needs a real Chromium, which
   # the unit matrix has no reason to install.
   #
-  # What it covers: the service worker appending the capture payload to Talk's
-  # bundle, the payload finding the outgoing audio sender on a real
+  # What it covers: the companion-delivered payload running before Talk's
+  # bundle, finding the outgoing audio sender on a real
   # RTCPeerConnection, the encoded transform reading outgoing RTP timestamps,
   # OPFS buffering, mute observation, and the post-call upload — under a stub
   # call that drops a share of the encoded frames on the receiving side, which
@@ -163,6 +163,11 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: '**/package-lock.json'
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          coverage: none
       - name: Install workspace
         run: npm ci
       # Chromium only: the chain needs fake-device getUserMedia, WebRTC encoded
@@ -171,13 +176,29 @@ jobs:
       # the runner image does not carry Chromium's shared libraries.
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
-      # The service worker serves the BUILT bundles, so the build is part of
-      # what is under test: a bundling change that breaks the payload fails
+      # The fixture serves the BUILT companion payload and worker, so the build
+      # is part of what is under test: a bundling change fails
       # here rather than in production.
       - name: Build capture bundles
         run: npm run build:capture -w cassini-app
       - name: Run browser tests
         run: npm run test:e2e -w cassini-app
+
+      - name: Verify and package the native capture companion
+        run: |
+          php -l cassini_capture/lib/AppInfo/Application.php
+          php -l cassini_capture/lib/Listener/LoadTalkCaptureScriptListener.php
+          php cassini_capture/tests/listener.php
+          ./scripts/build-capture-companion.sh --skip-js-build
+          tar -tzf build/artifacts/capture-companion/cassini_capture.tar.gz \
+            | grep -qx 'cassini_capture/js/capture-payload.js'
+
+      - name: Upload capture companion package
+        uses: actions/upload-artifact@v4
+        with:
+          name: cassini-capture-companion
+          path: build/artifacts/capture-companion/cassini_capture.tar.gz
+          retention-days: 14
 
   unit:
     name: Unit tests (${{ matrix.module }})

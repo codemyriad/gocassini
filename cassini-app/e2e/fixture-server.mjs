@@ -1,17 +1,18 @@
 // A minimal same-origin stand-in for a Nextcloud install running Talk.
 //
-// The source-capture chain is entirely browser-side — a service worker
-// rewriting another app's bundle, an encoded transform reading outgoing RTP
-// timestamps, OPFS, an upload — and none of that can be exercised by a unit
+// The source-capture chain is entirely browser-side — a companion-delivered
+// script, an encoded transform reading outgoing RTP timestamps, OPFS, an
+// upload — and none of that can be exercised by a unit
 // test. The harness has no browser at all (its Talk publishers are pion Go
 // clients), so this serves the smallest thing the chain needs to be real:
 //
-//   /                       the Cassini page: registers the service worker
+//   /                       neutral page used to record browser consent
 //   /call/<token>           the "Talk" call page
+//   /apps/cassini_capture/js/capture-payload.js
+//                           the companion app's ordinary script
 //   /apps/spreed/js/talk-main.mjs
 //                           a stub Talk bundle that publishes audio over a
-//                           real RTCPeerConnection, which the service worker
-//                           must find and append the payload to
+//                           real RTCPeerConnection
 //   <proxy>/ui/capture-*.js the real built bundles
 //   <proxy>/operator/capture/upload
 //                           collects what the payload uploads
@@ -31,7 +32,15 @@ const captureDist = join(here, "..", "dist", "capture");
 
 export const PROXY_PREFIX = "/index.php/apps/app_api/proxy/gocassini";
 
-const CALL_PAGE = `<!doctype html>
+function callPage(state, routeToken = "") {
+  const initialState = Buffer.from(
+    JSON.stringify({ enabled: state.captureEnabled, proxyBase: PROXY_PREFIX }),
+  ).toString("base64");
+  const companion = state.companionEnabled
+    ? `<input type="hidden" id="initial-state-cassini_capture-capture" value="${initialState}">
+<script src="/apps/cassini_capture/js/capture-payload.js"></script>`
+    : "";
+  return `<!doctype html>
 <meta charset="utf-8">
 <title>Stub Talk call</title>
 <body>
@@ -41,14 +50,17 @@ const CALL_PAGE = `<!doctype html>
   // shutdown rather than wait half a minute for it. The clamp in
   // serverCheckIntervalMS only lets this make the check stricter.
   window.__cassiniCaptureCheckMs = 700;
+  window.__talkRouteToken = ${JSON.stringify(routeToken)};
   window.OC = {
     getRootPath: () => "",
     getCurrentUser: () => ({ uid: "alice" }),
     requestToken: "stub-token",
   };
 </script>
+${companion}
 <script type="module" src="/apps/spreed/js/talk-main.mjs"></script>
 </body>`;
+}
 
 // The stub Talk bundle. It does what matters for capture: builds a real
 // RTCPeerConnection with a real outgoing audio track, so the payload's
@@ -61,9 +73,11 @@ const CALL_PAGE = `<!doctype html>
 // exists for — so the test can assert that the loss is visible on the received
 // side and absent from the captured side.
 const TALK_BUNDLE = `
-// Talk's bundle references OCA; the service worker uses that as its last check
-// that what it is about to append to really is Talk's script.
 window.OCA = window.OCA || {};
+if (window.__talkRouteToken) {
+  history.pushState({}, "", "/call/" + window.__talkRouteToken);
+}
+window.__capturePatchedBeforeTalk = window.RTCPeerConnection.__cassiniPatched === true;
 window.__talkReady = (async () => {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const local = new RTCPeerConnection();
@@ -131,20 +145,14 @@ self.onrtctransform = (event) => {
 };
 `;
 
-const CASSINI_PAGE = `<!doctype html>
+// A harmless stand-in for the abandoned bundle-rewriting worker. It exists
+// only so the migration test can prove that the companion payload unregisters
+// an already-installed copy by exact script URL.
+const LEGACY_CAPTURE_WORKER = `self.addEventListener("fetch", () => {});`;
+
+const NEUTRAL_PAGE = `<!doctype html>
 <meta charset="utf-8">
-<title>Stub Cassini page</title>
-<body>
-<script type="module">
-  try {
-    const reg = await navigator.serviceWorker.register("${PROXY_PREFIX}/ui/capture-sw.js", { scope: "/call/" });
-    await reg.update().catch(() => {});
-    window.__swScope = reg.scope;
-  } catch (error) {
-    window.__swError = String(error);
-  }
-</script>
-</body>`;
+<title>Stub Nextcloud page</title>`;
 
 // parseMultipart pulls the sidecar and the segment sizes out of the upload.
 // Minimal on purpose: the operator's Go handler is what parses this for real
@@ -186,45 +194,53 @@ function parseMultipart(body, contentType) {
 
 export async function startFixtureServer() {
   const uploads = [];
-  // Lets a test serve something OTHER than Talk's script at the bundle's URL —
-  // a login page, a proxy notice — which the worker must pass through
-  // untouched rather than weld a payload onto. Server state rather than a
-  // Playwright route because the worker, not the page, issues this request.
-  const state = { bundleIsNotTalk: false, captureEnabled: true };
+  const state = { captureEnabled: true, companionEnabled: true };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     const path = url.pathname;
 
     if (path === "/") {
       res.writeHead(200, { "content-type": "text/html" });
-      return res.end(CASSINI_PAGE);
+      return res.end(NEUTRAL_PAGE);
     }
     if (path.startsWith("/call/")) {
       res.writeHead(200, { "content-type": "text/html" });
-      return res.end(CALL_PAGE);
+      return res.end(callPage(state));
+    }
+    if (path === "/apps/spreed/" || path === "/index.php/apps/spreed/") {
+      res.writeHead(200, { "content-type": "text/html" });
+      return res.end(callPage(state, "testroom"));
     }
     if (path === "/apps/spreed/js/talk-main.mjs") {
-      if (state.bundleIsNotTalk) {
-        res.writeHead(200, { "content-type": "text/html" });
-        return res.end("<html><body>Please log in</body></html>");
-      }
       res.writeHead(200, { "content-type": "text/javascript" });
       return res.end(TALK_BUNDLE);
+    }
+    if (path === "/apps/cassini_capture/js/capture-payload.js") {
+      try {
+        const body = await readFile(join(captureDist, "capture-payload.js"));
+        res.writeHead(200, { "content-type": "text/javascript" });
+        return res.end(body);
+      } catch {
+        res.writeHead(404);
+        return res.end("capture companion payload was not built");
+      }
     }
     if (path === `${PROXY_PREFIX}/ui/loss-worker.js`) {
       res.writeHead(200, { "content-type": "text/javascript" });
       return res.end(LOSS_WORKER);
     }
+    if (path === `${PROXY_PREFIX}/ui/capture-sw.js`) {
+      res.writeHead(200, {
+        "content-type": "text/javascript",
+        "service-worker-allowed": "/",
+      });
+      return res.end(LEGACY_CAPTURE_WORKER);
+    }
     if (path.startsWith(`${PROXY_PREFIX}/ui/`)) {
       const name = path.slice(`${PROXY_PREFIX}/ui/`.length);
       try {
         const body = await readFile(join(captureDist, name));
-        const headers = { "content-type": "text/javascript" };
-        // The header the whole delivery mechanism depends on. In production
-        // AppAPI's proxy forwards what the operator sets; here the fixture
-        // stands in for both.
-        if (name === "capture-sw.js") headers["service-worker-allowed"] = "/";
-        res.writeHead(200, headers);
+        res.writeHead(200, { "content-type": "text/javascript" });
         return res.end(body);
       } catch {
         res.writeHead(404);

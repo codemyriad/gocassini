@@ -1,49 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { isEnabled, registerAll, serviceWorkerURL, setUp, unregisterAll } from "./register";
-
-const PROXY_BASE = "https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/";
-
-function fakeContainer() {
-  const registered: Array<{ url: string; scope: string }> = [];
-  const unregistered: string[] = [];
-  return {
-    registered,
-    unregistered,
-    container: {
-      register: vi.fn(async (url: string, options?: { scope?: string }) => {
-        registered.push({ url, scope: options?.scope ?? "" });
-        return {} as ServiceWorkerRegistration;
-      }),
-      getRegistrations: vi.fn(async () => [
-        {
-          scope: "https://cloud.example.com/call/",
-          active: { scriptURL: PROXY_BASE + "ui/capture-sw.js" },
-          unregister: async () => void unregistered.push("/call/"),
-        },
-        {
-          scope: "https://cloud.example.com/",
-          active: { scriptURL: "https://cloud.example.com/apps/files/preview-service-worker.js" },
-          unregister: async () => void unregistered.push("/"),
-        },
-        // A worker at OUR scope that is not ours: turning the feature off must
-        // not unregister somebody else's registration just because it sits on
-        // the call pages.
-        {
-          scope: "https://cloud.example.com/index.php/call/",
-          active: { scriptURL: "https://cloud.example.com/apps/spreed/js/some-talk-worker.js" },
-          unregister: async () => void unregistered.push("/index.php/call/"),
-        },
-      ]),
-    } as unknown as ServiceWorkerContainer,
-  };
-}
-
-describe("serviceWorkerURL", () => {
-  it("points at the operator asset served with Service-Worker-Allowed", () => {
-    expect(serviceWorkerURL(PROXY_BASE)).toBe(PROXY_BASE + "ui/capture-sw.js");
-    expect(serviceWorkerURL(PROXY_BASE.replace(/\/$/, ""))).toBe(PROXY_BASE + "ui/capture-sw.js");
-  });
-});
+import { isEnabled, retireLegacyCaptureWorkers } from "./register";
 
 describe("isEnabled", () => {
   it("requires an explicit grant", () => {
@@ -63,52 +19,60 @@ describe("isEnabled", () => {
   });
 });
 
-describe("registerAll", () => {
-  it("claims both Talk call scopes and never the root", async () => {
-    const { container, registered } = fakeContainer();
-    const outcomes = await registerAll(container, PROXY_BASE, "");
-    expect(outcomes.every((o) => o.ok)).toBe(true);
-    expect(registered.map((r) => r.scope)).toEqual(["/call/", "/index.php/call/"]);
-    expect(registered.map((r) => r.scope)).not.toContain("/");
-  });
-
-  it("reports a failing scope without abandoning the other", async () => {
+describe("retireLegacyCaptureWorkers", () => {
+  it("removes only Cassini's obsolete worker by script URL", async () => {
+    const legacy = vi.fn(async () => true);
+    const files = vi.fn(async () => true);
+    const talk = vi.fn(async () => true);
+    const unrelatedCaptureName = vi.fn(async () => true);
     const container = {
-      register: vi.fn(async (_url: string, options?: { scope?: string }) => {
-        if (options?.scope === "/call/") throw new Error("SecurityError");
-        return {} as ServiceWorkerRegistration;
-      }),
+      getRegistrations: vi.fn(async () => [
+        {
+          scope: "https://cloud.example.com/call/",
+          active: {
+            scriptURL:
+              "https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/ui/capture-sw.js",
+          },
+          unregister: legacy,
+        },
+        {
+          scope: "https://cloud.example.com/",
+          active: { scriptURL: "https://cloud.example.com/apps/files/preview-service-worker.js" },
+          unregister: files,
+        },
+        {
+          scope: "https://cloud.example.com/call/",
+          active: { scriptURL: "https://cloud.example.com/apps/spreed/js/talk-worker.js" },
+          unregister: talk,
+        },
+        {
+          scope: "https://cloud.example.com/another/",
+          active: {
+            scriptURL:
+              "https://cloud.example.com/index.php/apps/app_api/proxy/another-app/ui/capture-sw.js",
+          },
+          unregister: unrelatedCaptureName,
+        },
+        {
+          scope: "https://cloud.example.com/index.php/call/",
+          active: { scriptURL: "https://cloud.example.com/apps/spreed/js/talk-worker.js" },
+          waiting: {
+            scriptURL:
+              "https://cloud.example.com/index.php/apps/app_api/proxy/gocassini/ui/capture-sw.js",
+          },
+          unregister: legacy,
+        },
+      ]),
     } as unknown as ServiceWorkerContainer;
-    const outcomes = await registerAll(container, PROXY_BASE, "");
-    expect(outcomes[0].ok).toBe(false);
-    expect(outcomes[1].ok).toBe(true);
-  });
-});
 
-describe("unregisterAll", () => {
-  it("removes only our own worker, by script rather than by scope", async () => {
-    const { container, unregistered } = fakeContainer();
-    await unregisterAll(container, "");
-    // Core's root worker is out of scope; the third registration is in scope
-    // but belongs to somebody else.
-    expect(unregistered).toEqual(["/call/"]);
-  });
-});
-
-describe("setUp", () => {
-  it("does nothing without consent", async () => {
-    const { container, registered } = fakeContainer();
-    await setUp(container, { getItem: () => null }, PROXY_BASE, "");
-    expect(registered).toHaveLength(0);
+    await expect(retireLegacyCaptureWorkers(container)).resolves.toBe(2);
+    expect(legacy).toHaveBeenCalledTimes(2);
+    expect(files).not.toHaveBeenCalled();
+    expect(talk).not.toHaveBeenCalled();
+    expect(unrelatedCaptureName).not.toHaveBeenCalled();
   });
 
-  it("registers once consent is recorded", async () => {
-    const { container, registered } = fakeContainer();
-    await setUp(container, { getItem: () => "granted" }, PROXY_BASE, "");
-    expect(registered).toHaveLength(2);
-  });
-
-  it("is a no-op in a browser without service workers", async () => {
-    await expect(setUp(undefined, { getItem: () => "granted" }, PROXY_BASE, "")).resolves.toEqual([]);
+  it("is harmless without service-worker support", async () => {
+    await expect(retireLegacyCaptureWorkers(undefined)).resolves.toBe(0);
   });
 });

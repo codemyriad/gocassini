@@ -3,11 +3,10 @@
 Date: 2026-08-31
 
 Status: **administrator-enabled prototype.** Capture, intake and ingestion are
-implemented and tested. The delivery mechanism (a service worker rewriting
-Talk's bundle) is explicitly not a shipping foundation — see "How the code
-reaches Talk's page" — and the offset half of the timing model still needs the
-correlation refinement described below before it can be trusted on clients
-whose clocks are not known to be synchronised.
+implemented and tested. A tiny native companion app now delivers the payload
+through Nextcloud's sanctioned additional-scripts event; the offset half of the
+timing model still needs the correlation refinement described below before it
+can be trusted on clients whose clocks are not known to be synchronised.
 
 ## The problem
 
@@ -107,59 +106,34 @@ to be time-synchronised.
 
 ## How the code reaches Talk's page
 
-Cassini is an AppAPI ExApp: no PHP runs inside Nextcloud, so there is no
-supported way to add a script to another app's page. AppAPI's `ui/script`
-registration is applied only by its own `TopMenuController`, for type
-`top_menu`, on AppAPI's embedded page; the navigation entry it adds elsewhere is
-a plain link with no JavaScript attached.
+Cassini's ExApp cannot add code to Talk by itself. The separately packaged
+`cassini_capture` native app listens for Talk's public
+`LoadAdditionalScriptsEvent`, scopes the shared event to authenticated Talk call
+routes, injects the ExApp proxy base and administrator switch as initial state,
+and loads `capture-payload.js` with `Util::addScript()`.
 
-A service worker is the one remaining same-origin mechanism:
+That ordinary script is emitted before Talk's bundle, so the outgoing transform
+is attached synchronously in `addTrack` before negotiation. No Talk bundle is
+intercepted or modified, no service-worker scope is claimed, and disabling the
+companion stops injection on the next page load. See
+[source-audio-capture-delivery.md](source-audio-capture-delivery.md).
 
-1. The operator serves `/ui/capture-sw.js` with `Service-Worker-Allowed: /`
-   (`capture_assets.go`).
-2. AppAPI's proxy forwards that header verbatim —
-   `ExAppProxyController::createProxyResponse` copies every response header
-   except its own auth set.
-3. The Cassini page registers the worker at the Talk call scopes
-   (`src/capture/register.ts`).
-4. A worker's scope decides which **clients** it controls, not which URLs it may
-   intercept. From a call page it sees every subresource that page requests,
-   Talk's own bundle included, and serves that bundle with the capture payload
-   appended.
-
-Nextcloud core relies on the same header for its Files preview worker
-(`apps/files/lib/Controller/ApiController.php`).
-
-Two constraints worth knowing before touching this:
-
-- **Never claim the `/` scope.** Core's Files worker is registered there, and a
-  same-scope registration *replaces* rather than coexists. The Talk call scopes
-  are narrower, so they win on call pages and leave core's alone.
-- **Append, never patch.** Appending survives Talk upgrades that any textual
-  patch of Talk's source would not, and any failure must return Talk's real
-  bundle — a broken capture feature costs a transcript improvement, a broken
-  bundle costs Talk.
-
-This mechanism is **unsupported**: it modifies another app's JavaScript on the
-user's origin. It is appropriate for a deployment whose operator controls it. It
-is not appropriate for a public Nextcloud app store listing, which wants a small
-PHP companion app doing the same job through `Util::addScript`. Only
-`src/capture/sw.ts` and `capture_assets.go` are specific to the service-worker
-route; the capture, timing and upload code is identical either way.
+Current Talk does not dispatch the event on its anonymous guest path, and the
+upload endpoint deliberately requires a logged-in user. Source capture therefore
+supports authenticated participants only.
 
 ## Two switches, both off by default
 
 `CASSINI_SOURCE_CAPTURE` decides whether anything is collected at all.
 
-For a client that has not started, this is simple: the browser assets are not
-served, so no service worker can be registered and no page is rewritten.
+The ExApp synchronizes this setting into Nextcloud app config, so the companion
+can inject an authoritative answer before the payload runs. With it off the
+payload does not instrument Talk, the ExApp assets are absent, and uploads are
+refused.
 
-For a client already running it is not simple, and the obvious reading is
-wrong: 404ing the worker script does **not** deactivate an installed service
-worker, and a call already in progress would otherwise keep recording to its
-local buffer regardless. So the payload asks the server before it records
-anything and again every thirty seconds, at `operator/capture/enabled`, and
-that check fails closed — an unreachable or unclear answer means no recording.
+A call already running still has JavaScript in memory. The payload therefore
+asks the server again every thirty seconds at `operator/capture/enabled`; that
+check fails closed — an unreachable or unclear answer means no recording.
 Switching the setting off therefore stops a call in progress within about half
 a minute rather than at the next page load. The upload endpoint refuses as a
 second line, and a client that gets that refusal deletes its buffer rather than
@@ -225,13 +199,13 @@ track including the holes it fills.
 
 ## Testing
 
-The arithmetic and the intake are covered by Go unit tests. The browser chain
-cannot be — a service worker rewriting another app's bundle, an encoded
-transform, OPFS and an upload only exist in a browser, and the harness has no
+The arithmetic and intake are covered by Go unit tests. The browser chain — an
+ordinary script loaded before Talk, an encoded transform, OPFS and an upload —
+only exists in a browser, and the harness has no
 browser at all (its Talk publishers are pion Go clients).
 
 `cassini-app/e2e/` therefore runs a real Chromium against a stub same-origin
-Nextcloud: the Cassini page registers the worker, a stub Talk bundle publishes
+Nextcloud: a script tag models the companion hook, a stub Talk bundle publishes
 audio over a real `RTCPeerConnection`, and **a transform on the receiving side
 drops a share of the encoded frames** — the lossy-uplink condition the feature
 exists for. The tests assert that the loss is real, that the captured copy is
@@ -239,8 +213,9 @@ unaffected by it, that the anchors advance monotonically on the sender's clock,
 that a mute spell is recorded, and that nothing is uploaded without consent.
 
 ```bash
-npm run build:capture -w cassini-app   # the worker serves the BUILT bundles
+npm run build:capture -w cassini-app
 npm run test:e2e -w cassini-app
+./scripts/build-capture-companion.sh --skip-js-build
 ```
 
 It does not cover real Nextcloud, real Talk, real Janus, AppAPI's proxy and its
@@ -253,10 +228,10 @@ Capture is off until a user opts in. The opt-in UI is not built yet; the control
 is exposed on the Cassini page:
 
 ```js
-// On the Cassini page in Nextcloud (registers the service worker):
+// On the Cassini page in Nextcloud:
 await window.cassiniSourceCapture.enable()
-// Then reload, join a Talk call, leave it, and the upload runs.
-await window.cassiniSourceCapture.disable()  // unregisters, removes consent
+// Join an authenticated Talk call, leave it, and the upload runs.
+await window.cassiniSourceCapture.disable()  // removes consent
 ```
 
 Uploads land under the operator's `--capture-root`
@@ -292,10 +267,6 @@ Uploads land under the operator's `--capture-root`
   was not. It only arises after an OPFS write or flush has already failed, so
   it costs a recording that was partly lost anyway — but the good half is
   recoverable in principle and is not recovered.
-- **A call joined in the same instant the tab loads** is skipped, because the
-  administrator switch has not been answered yet and an unanswered switch counts
-  as no. Deliberate: fail-closed is the right direction for this, and the next
-  call captures normally.
 - **Firefox raw-audio path.** `MediaStreamTrackProcessor` is Chrome/Safari only.
   The timing path (`RTCRtpScriptTransform`) works in all three engines; the
   current capture path uses `MediaRecorder`, which is universal.

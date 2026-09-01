@@ -44,6 +44,9 @@ install — see [Standalone operator (dev/staging only)](#standalone-operator-de
   signaling / HPB configured with an internal client secret (`[clients]`
   `internalsecret`). Cassini's default Talk recorder path uses this
   HPB-internal mode.
+- Only for experimental participant source-audio capture: the matching
+  `cassini_capture` native companion app. Ordinary Cassini recording and
+  transcription do not need it.
 
 Persistent storage is automatic: AppAPI creates a named volume for every
 docker-deployed ExApp and the operator stores all durable data under it
@@ -252,6 +255,36 @@ Options).
 | `LLM_BASE_URL` | No | OpenAI-compatible API base URL; defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
 | `LLM_MODEL` | No | Model for cleanup/summaries (default `openai/gpt-4o-mini`) |
 | `CASSINI_OPERATOR_API_TOKEN` | No | Bearer token for direct non-AppAPI operator API calls. AppAPI-proxied requests are authenticated by Nextcloud/AppAPI |
+
+### Installing the source-capture companion (experimental)
+
+The ExApp cannot place JavaScript on a Talk page. If you enable
+`CASSINI_SOURCE_CAPTURE`, install the same-version `cassini_capture.tar.gz`
+CI artifact (or tagged GitHub release asset) as a second native app:
+
+```bash
+tar -xzf cassini_capture.tar.gz -C /path/to/nextcloud/apps
+occ app:enable cassini_capture
+```
+
+For a local build:
+
+```bash
+npm ci
+npm run build:capture -w cassini-app
+./scripts/build-capture-companion.sh --skip-js-build
+```
+
+The companion uses Nextcloud's public additional-scripts event and loads only
+on authenticated Talk call routes. It carries no audio/storage logic. On each
+AppAPI lifecycle edge the ExApp mirrors `CASSINI_SOURCE_CAPTURE` into the
+initial state the companion reads; after first installing the companion,
+disable/re-enable or redeploy `gocassini` once if it was already running.
+
+To turn the feature off, first redeploy with `CASSINI_SOURCE_CAPTURE` unset and
+wait at least 30 seconds for open calls to observe the fail-closed poll, then
+disable `cassini_capture`. Anonymous Talk guests and mobile clients are not
+captured.
 
 ### Updating deploy options after install
 

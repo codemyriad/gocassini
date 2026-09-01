@@ -34,9 +34,7 @@ import App from "./App.svelte";
 import {
   CONSENT_STORAGE_KEY,
   isEnabled as sourceCaptureEnabled,
-  registerAll as registerSourceCapture,
-  setUp as setUpSourceCapture,
-  unregisterAll as unregisterSourceCapture,
+  retireLegacyCaptureWorkers,
 } from "./capture/register";
 // The shell's stylesheet composes the viewing layer's app.css and adds a
 // @source for the shell's own components (nav + operator surface) — D-420 V3.
@@ -247,45 +245,33 @@ function mountEmbeddedShell(): void {
   mount(App, { target: appRoot, props: { ncMode } });
 }
 
-// nextcloudRootPath is the path Nextcloud is served under: "" at a domain root,
-// "/nextcloud" for a subfolder install. Both the service-worker scopes and the
-// upload URL are built from it.
-function nextcloudRootPath(win: Window): string {
-  const oc = (win as unknown as { OC?: { getRootPath?: () => string } }).OC;
-  return oc?.getRootPath?.() ?? "";
-}
-
 // installSourceCaptureControls exposes the per-user opt-in for source audio
-// capture (see src/capture/) and registers the service worker when the user has
-// already opted in.
+// capture (see src/capture/). Delivery onto Talk belongs to the separate
+// cassini_capture companion app; this page never claims a Talk worker scope.
 //
 // Capture records a meeting, so it never starts on its own: nothing happens
-// until an explicit grant is stored, and revoking it unregisters the worker so
-// no code is left on Talk's page. The control is on `window` rather than in the
+// until an explicit grant is stored. The control is on `window` rather than in the
 // shell UI because the opt-in surface is the one piece of this feature not
 // built yet — the plumbing is complete and testable without it, and shipping a
 // half-considered consent dialog would be worse than shipping none.
 export function installSourceCaptureControls(win: Window): void {
   const container = navigator.serviceWorker as ServiceWorkerContainer | undefined;
-  const proxyBase = win.__CASSINI_VIEWER_BASE__ ?? "";
-  const rootPath = nextcloudRootPath(win);
   (win as unknown as { cassiniSourceCapture?: unknown }).cassiniSourceCapture = {
     isEnabled: () => sourceCaptureEnabled(localStorage),
     enable: async () => {
       localStorage.setItem(CONSENT_STORAGE_KEY, "granted");
-      return container ? registerSourceCapture(container, proxyBase, rootPath) : [];
     },
     disable: async () => {
       localStorage.removeItem(CONSENT_STORAGE_KEY);
-      if (container) {
-        await unregisterSourceCapture(container, rootPath);
-      }
+      await retireLegacyCaptureWorkers(container);
     },
   };
-  // Re-registering the same script at the same scope is a no-op in the browser,
-  // and it repairs a registration the user cleared through site data.
-  void setUpSourceCapture(container, localStorage, proxyBase, rootPath).catch(() => {
-    // A browser that refuses the registration simply has no source capture.
+  // A worker installed by the abandoned delivery prototype survives a 404 at
+  // its script URL. Retire it on every Cassini page load; the companion payload
+  // repeats this on Talk pages for users who do not revisit Cassini first.
+  void retireLegacyCaptureWorkers(container).catch(() => {
+    // Cleanup failure cannot stop the shell mounting. The server-side capture
+    // gate and the payload's periodic check remain fail-closed.
   });
 }
 

@@ -8,10 +8,9 @@
 // and uploads it after the call so the transcript can be built from audio the
 // network never touched.
 //
-// This module holds the pieces the service worker, the injected payload, the
-// capture worker and the unit tests must all agree on. Everything here is
-// pure: no DOM, no globals, so it runs in a worker, in a service worker, and
-// in vitest unchanged.
+// This module holds the pieces the injected payload, capture worker and unit
+// tests must all agree on. Everything here is pure: no DOM and no globals, so
+// it runs in the worker and in vitest unchanged.
 
 // SOURCE_CAPTURE_FORMAT identifies the sidecar schema. The operator rejects an
 // upload whose sidecar does not carry exactly this string, so bumping it is
@@ -84,51 +83,6 @@ export interface CaptureSidecar {
   callEndWallMs: number;
   userAgent: string;
   segments: CaptureSegment[];
-}
-
-// normalizeRootPath turns Nextcloud's root path into a "/…/" form with exactly
-// one trailing slash. Nextcloud returns "" for an install at the domain root
-// and "/nextcloud" for a subfolder install.
-export function normalizeRootPath(rootPath: string | null | undefined): string {
-  const trimmed = (rootPath ?? "").trim().replace(/\/+$/, "");
-  if (trimmed === "") {
-    return "/";
-  }
-  return (trimmed.startsWith("/") ? trimmed : "/" + trimmed) + "/";
-}
-
-// talkCallScopes lists the service-worker scopes that cover Talk's call pages.
-//
-// Two shapes, so two registrations: a service worker registration has exactly
-// one scope. Both are deliberately NARROWER than the "/" scope Nextcloud's own
-// Files app registers its preview service worker at (apps/files/src/services/
-// ServiceWorker.js). Registering at "/" would REPLACE core's registration for
-// every page; a narrower scope wins only on the pages it covers, so ours takes
-// the call pages and core keeps everything else.
-export function talkCallScopes(rootPath: string | null | undefined): string[] {
-  const root = normalizeRootPath(rootPath);
-  return [`${root}${TALK_CALL_PATH_SEGMENT}/`, `${root}index.php/${TALK_CALL_PATH_SEGMENT}/`];
-}
-
-// isTalkBundleURL reports whether a URL is one of Talk's own script bundles —
-// the response the service worker appends the capture payload to.
-//
-// Matching the app's script directory rather than a pinned filename is
-// deliberate: Talk renames its entry bundle between releases (talk-main.js ->
-// talk-main.mjs, plus a build hash), and a pinned name would silently stop
-// matching after an upgrade, disabling capture with no error anywhere.
-export function isTalkBundleURL(rawURL: string): boolean {
-  let pathname: string;
-  try {
-    pathname = new URL(rawURL).pathname;
-  } catch {
-    return false;
-  }
-  if (!/\/apps\/spreed\/js\//.test(pathname)) {
-    return false;
-  }
-  const file = pathname.slice(pathname.lastIndexOf("/") + 1);
-  return /^talk-main[.-]/.test(file) && /\.m?js$/.test(file);
 }
 
 // roomTokenFromPath extracts the Talk conversation token from a call URL,

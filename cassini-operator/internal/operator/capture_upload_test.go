@@ -493,8 +493,8 @@ func TestValidateSidecarAcceptsARealisticMultiSegmentCapture(t *testing.T) {
 
 func TestCaptureUploadIsRefusedUntilAnAdministratorEnablesIt(t *testing.T) {
 	rt := captureTestRuntime(t)
-	// A client holding a stale service worker from before the feature was
-	// turned off must still be unable to store anything.
+	// A stale client from before the feature was turned off must still be
+	// unable to store anything.
 	t.Setenv(envSourceCaptureEnabled, "")
 
 	req := uploadRequest(t, validSidecar(), map[string][]byte{"segment-0.webm": []byte("audio")})

@@ -8,8 +8,7 @@ import { defineConfig } from "@playwright/test";
 // matrix here would be three-quarters skips pretending to be coverage.
 export default defineConfig({
   testDir: "./e2e",
-  // These drive a real call: a few seconds of audio each, plus service-worker
-  // registration.
+  // These drive a real call and a few seconds of audio each.
   timeout: 60_000,
   expect: { timeout: 15_000 },
   // One at a time. The tests share an OPFS-backed origin per worker and the

@@ -318,9 +318,8 @@ func (rt *Runtime) promoteCapture(staging, final string) error {
 // permitted.
 //
 // It exists because turning the administrator gate off cannot, by itself, stop
-// clients that are already running: 404ing the service-worker script does not
-// deactivate an installed worker, and a call already in progress would keep
-// recording to OPFS regardless. The payload polls this, so withdrawing
+// clients that are already running: the companion app cannot retract a script
+// from a call already in progress. The payload polls this, so withdrawing
 // permission reaches a live call rather than only the next one.
 //
 // Deliberately no-store: a cached "yes" is exactly the answer that would
@@ -346,8 +345,8 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 		}
 		if !sourceCaptureEnabled() {
 			// The administrator gate, checked server-side on every upload. A
-			// client that kept a stale service worker from before the feature
-			// was turned off still cannot store anything.
+			// stale client from before the feature was turned off still cannot
+			// store anything.
 			http.Error(w, "source capture is not enabled on this installation", http.StatusForbidden)
 			return
 		}
