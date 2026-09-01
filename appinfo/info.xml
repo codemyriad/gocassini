@@ -90,31 +90,6 @@ was published, enforced by Nextcloud's own advanced file ACLs.]]></description>
         <description>Model identifier for transcript cleanup and meeting summaries (default: openai/gpt-4o-mini).</description>
       </variable>
       <variable>
-        <name>SUMMARY_MODEL</name>
-        <display-name>Summary model (optional)</display-name>
-        <description>Model identifier used for meeting summaries, when it should differ from LLM_MODEL. Leave empty to use the same model for both steps.</description>
-      </variable>
-      <variable>
-        <name>CASSINI_SUMMARY_DISABLED</name>
-        <display-name>Disable meeting summaries (optional)</display-name>
-        <description>Set to 1 to skip summary generation while leaving the rest of the LLM configuration in place. Recordings still publish, without a summary.</description>
-      </variable>
-      <variable>
-        <name>CASSINI_READABLE_DISABLED</name>
-        <display-name>Disable readable transcript cleanup (optional)</display-name>
-        <description>Set to 1 to skip the LLM pass that rewrites the raw transcript into readable prose. The verbatim transcript is unaffected — it is always produced and always published.</description>
-      </variable>
-      <variable>
-        <name>CASSINI_LLM_TIMEOUT_SEC</name>
-        <display-name>LLM request timeout in seconds (optional)</display-name>
-        <description>How long a single request to the model endpoint may take before it is abandoned (default: 900). Raise it for a CPU-bound self-hosted model, which can be far slower than a hosted one.</description>
-      </variable>
-      <variable>
-        <name>CASSINI_LLM_MAX_TOKENS</name>
-        <display-name>LLM response token limit (optional)</display-name>
-        <description>Upper bound on the length of a single model response (default: 4096). Raise it if long meeting summaries are being cut off.</description>
-      </variable>
-      <variable>
         <name>CASSINI_OPERATOR_API_TOKEN</name>
         <display-name>Operator API bearer token (optional)</display-name>
         <description>When set, direct (non-proxied) requests to the operator job API must send "Authorization: Bearer &lt;token&gt;". Requests proxied through Nextcloud are authenticated by AppAPI and are unaffected. Leave empty to keep the API reachable only through the AppAPI proxy authentication.</description>

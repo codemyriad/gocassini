@@ -774,10 +774,7 @@ harness_register_exapp() {
     register_args+=(--env "CASSINI_TALK_BACKEND_URL=$CASSINI_TALK_BACKEND_URL")
   fi
   local optional_env
-  for optional_env in OPENROUTER_API_KEY LLM_BASE_URL LLM_MODEL SUMMARY_MODEL \
-    CASSINI_LLM_TIMEOUT_SEC CASSINI_LLM_MAX_TOKENS \
-    CASSINI_SUMMARY_DISABLED CASSINI_READABLE_DISABLED \
-    CASSINI_OPERATOR_API_TOKEN; do
+  for optional_env in OPENROUTER_API_KEY LLM_BASE_URL LLM_MODEL CASSINI_OPERATOR_API_TOKEN; do
     if [[ -n "${!optional_env:-}" ]]; then
       register_args+=(--env "$optional_env=${!optional_env}")
     fi

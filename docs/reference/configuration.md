@@ -31,10 +31,7 @@ Optional capability pass-through:
 | `LLM_BASE_URL` | readable/summary capability configuration |
 | `LLM_MODEL` | readable cleanup model |
 | `SUMMARY_MODEL` | summary generation model |
-| `CASSINI_LLM_TIMEOUT_SEC` | per-request timeout in seconds (default 900) |
-| `CASSINI_LLM_MAX_TOKENS` | per-response token limit (default 4096) |
 | `CASSINI_SUMMARY_DISABLED` | disable summary generation |
-| `CASSINI_READABLE_DISABLED` | disable readable transcript cleanup |
 | `CASSINI_READABLE_STRICT_BATCHES` | readable cleanup behavior |
 
 The base URL is what enables these steps; the API key is optional, so a

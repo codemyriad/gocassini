@@ -241,11 +241,6 @@ Options).
 | `OPENROUTER_API_KEY` | No | API key for the LLM endpoint, when it needs one. A self-hosted model server usually does not — the key is not what enables the feature, `LLM_BASE_URL` is |
 | `LLM_BASE_URL` | No | OpenAI-compatible API base URL for transcript cleanup + meeting summaries — a hosted provider or your own model server. **The full local transcript is sent to whatever endpoint this names** (transcription itself is always local). Unset, raw transcripts are published without summaries. Defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
 | `LLM_MODEL` | No | Model for cleanup/summaries (default `openai/gpt-4o-mini`) |
-| `SUMMARY_MODEL` | No | Model for summaries, when it should differ from `LLM_MODEL` |
-| `CASSINI_SUMMARY_DISABLED` | No | `1` skips summary generation, leaving the rest of the LLM config in place |
-| `CASSINI_READABLE_DISABLED` | No | `1` skips readable transcript cleanup. The verbatim transcript is always produced and published |
-| `CASSINI_LLM_TIMEOUT_SEC` | No | Per-request timeout in seconds (default 900). Raise it for a CPU-bound self-hosted model |
-| `CASSINI_LLM_MAX_TOKENS` | No | Per-response token limit (default 4096). Raise it if long summaries are cut off |
 | `CASSINI_OPERATOR_API_TOKEN` | No | Bearer token for direct non-AppAPI operator API calls. AppAPI-proxied requests are authenticated by Nextcloud/AppAPI |
 
 ### Updating deploy options after install

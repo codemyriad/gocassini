@@ -24,11 +24,6 @@ AppAPI only forwards env vars declared in `info.xml`, so declaring it there is a
 | `OPENROUTER_API_KEY` | Optional | Admin deploy option | API key for the endpoint above, when it needs one. A self-hosted model server usually does not. |
 | `LLM_BASE_URL` | Optional | Admin deploy option | OpenAI-compatible base URL — a hosted provider or your own model server. This is what enables transcript cleanup / summaries. Privacy: the full local transcript is sent to whatever endpoint this names; transcription itself is always local. |
 | `LLM_MODEL` | Optional | Admin deploy option | Model identifier for cleanup/summaries. |
-| `SUMMARY_MODEL` | Optional | Admin deploy option | Model identifier for summaries, when it should differ from `LLM_MODEL`. |
-| `CASSINI_SUMMARY_DISABLED` | Optional | Admin deploy option | `1` skips summary generation. |
-| `CASSINI_READABLE_DISABLED` | Optional | Admin deploy option | `1` skips readable transcript cleanup. The verbatim transcript is unaffected. |
-| `CASSINI_LLM_TIMEOUT_SEC` | Optional | Admin deploy option | Per-request timeout in seconds (default 900). |
-| `CASSINI_LLM_MAX_TOKENS` | Optional | Admin deploy option | Per-response token limit (default 4096). |
 | `CASSINI_OPERATOR_API_TOKEN` | Optional | Admin deploy option | Bearer token for direct non-AppAPI operator API calls; proxied AppAPI requests are authenticated by AppAPI. |
 
 ## AppAPI-injected runtime vars

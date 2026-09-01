@@ -22,10 +22,7 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_MODEL: ${LLM_MODEL:-}
       SUMMARY_MODEL: ${SUMMARY_MODEL:-}
-      CASSINI_LLM_TIMEOUT_SEC: ${CASSINI_LLM_TIMEOUT_SEC:-}
-      CASSINI_LLM_MAX_TOKENS: ${CASSINI_LLM_MAX_TOKENS:-}
       CASSINI_SUMMARY_DISABLED: ${CASSINI_SUMMARY_DISABLED:-}
-      CASSINI_READABLE_DISABLED: ${CASSINI_READABLE_DISABLED:-}
       CASSINI_READABLE_STRICT_BATCHES: ${CASSINI_READABLE_STRICT_BATCHES:-}
     # The operator job API is unauthenticated, so published ports bind to
     # loopback by default. Docker port publishing bypasses host firewalls
