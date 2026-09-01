@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1027,5 +1029,50 @@ func TestSetupRejectsNonGET(t *testing.T) {
 	rt.setupHandler(rec, httptest.NewRequest(http.MethodPost, "/setup", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /setup = %d, want 405", rec.Code)
+	}
+}
+
+func TestStatusHandlerReportsAnUnbundledTierAsUnusable(t *testing.T) {
+	// A CUDA image that has fallen back to the CPU carries only the fp32 model.
+	// Asking it for another tier blocks every build permanently, so readiness
+	// must say so rather than report a host that will never finish a build
+	// (D-702): status and admission run the same predicate.
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	cacheRoot := t.TempDir()
+	t.Setenv("CASSINI_CACHE_ROOT", cacheRoot)
+	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "1")
+	t.Setenv(envSTTCUDACapable, "1")
+	stubNVIDIADevice(t, false) // the GPU went missing: auto falls back to CPU
+	bundled := filepath.Join(cacheRoot, "models", modelParakeetV3Fp32)
+	if err := os.MkdirAll(bundled, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundled, "encoder.onnx"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rt.setSettings(STTSettings{Quality: sttQualityBalanced})
+	rt.computeProbe = func(string) (bool, string) { return true, "cpu inference (no GPU required)" }
+
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 body=%s", rec.Code, rec.Body.String())
+	}
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.STT.DeviceUsable || !strings.Contains(resp.STT.Detail, modelParakeetV3Int8) {
+		t.Fatalf("unbundled tier reported as usable or unexplained: %#v", resp.STT)
+	}
+
+	// The tier whose model the image does carry is ready on the same host.
+	rt.setSettings(STTSettings{Quality: sttQualityBest})
+	rec = httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bundled tier status = %d, want 200 body=%s", rec.Code, rec.Body.String())
 	}
 }
