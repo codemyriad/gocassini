@@ -33,12 +33,10 @@
   let settings: Settings | null = null;
   let quality: SettingsQuality = "balanced";
   let deviceOverride = "";
-  let modelOverride = "";
   let transcriptionTermsText = "";
 
   let savedQuality: SettingsQuality = "balanced";
   let savedDeviceOverride = "";
-  let savedModelOverride = "";
   let savedTranscriptionTermsText = "";
 
   let loading = true;
@@ -77,7 +75,6 @@
       const next = await operatorClient.putSettings({
         quality,
         device_override: deviceOverride,
-        model_override: modelOverride,
         transcription_terms: transcriptionTermsText.split(/\r?\n/),
       });
       applySettings(next);
@@ -92,11 +89,9 @@
     settings = next;
     quality = next.quality;
     deviceOverride = next.device_override;
-    modelOverride = next.model_override;
     transcriptionTermsText = next.transcription_terms.join("\n");
     savedQuality = next.quality;
     savedDeviceOverride = next.device_override;
-    savedModelOverride = next.model_override;
     savedTranscriptionTermsText = transcriptionTermsText;
   }
 
@@ -137,7 +132,6 @@
     settings !== null &&
     (quality !== savedQuality ||
       deviceOverride !== savedDeviceOverride ||
-      modelOverride !== savedModelOverride ||
       transcriptionTermsText !== savedTranscriptionTermsText);
 </script>
 
@@ -288,7 +282,7 @@
         >
           <div class="flex items-center gap-2">
             <SettingsIcon size={16} aria-hidden="true" />
-            <h3 class="text-sm font-semibold">Device model and overrides</h3>
+            <h3 class="text-sm font-semibold">Device</h3>
           </div>
           <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
             <label class="flex w-full flex-col gap-1">
@@ -298,15 +292,10 @@
                 <option value="cpu">CPU</option>
                 <option value="cuda">CUDA</option>
               </select>
-            </label>
-            <label class="flex w-full flex-col gap-1">
-              <span class="text-xs font-medium text-base-content/70">Model override</span>
-              <input
-                bind:value={modelOverride}
-                type="text"
-                class="input input-sm w-full border-base-300 shadow-none"
-                placeholder="(use default for selected quality)"
-              />
+              <span class="text-xs text-base-content/60">
+                Auto uses the GPU when this host has a usable one. Pinning a device the host
+                cannot provide blocks builds rather than quietly using the other.
+              </span>
             </label>
           </div>
         </section>

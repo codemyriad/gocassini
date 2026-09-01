@@ -843,34 +843,6 @@ func TestCPUFloorsRankByTierCost(t *testing.T) {
 	}
 }
 
-func TestAdmitModelForDeviceRejectsAnInt8ModelOnCUDA(t *testing.T) {
-	// The int8 graphs fragment back to the host under the CUDA EP, so pinning
-	// one alongside CUDA would report a GPU run and do something else. Refuse
-	// the pair instead of silently mis-describing the execution (D-702).
-	for _, model := range []string{modelParakeetV3Int8, modelParakeet110M} {
-		settings := STTSettings{Quality: sttQualityBalanced, ModelOverride: model}
-		rt := &Runtime{}
-		_, err := rt.admitModelForDevice(settings, deviceCUDA)
-		var unavailable *resourceUnavailableError
-		if !errors.As(err, &unavailable) || unavailable.resource != "model policy" {
-			t.Fatalf("admitModelForDevice(%s, cuda) error = %v, want model policy error", model, err)
-		}
-		if !unavailable.permanent {
-			t.Errorf("%s on cuda is a policy error that waiting cannot fix; want permanent", model)
-		}
-		// The same pin is legitimate on the CPU.
-		if got, err := rt.admitModelForDevice(settings, deviceCPU); err != nil || got != model {
-			t.Errorf("admitModelForDevice(%s, cpu) = %q, %v; want the pinned model", model, got, err)
-		}
-	}
-
-	// fp32 is audited on both devices.
-	settings := STTSettings{Quality: sttQualityBest, ModelOverride: modelParakeetV3Fp32}
-	if got, err := (&Runtime{}).admitModelForDevice(settings, deviceCUDA); err != nil || got != modelParakeetV3Fp32 {
-		t.Errorf("admitModelForDevice(fp32, cuda) = %q, %v; want the fp32 model", got, err)
-	}
-}
-
 func TestAdmitModelForDeviceRequiresTheModelToBeBundled(t *testing.T) {
 	// A CUDA image that has fallen back to the CPU can be asked for a tier
 	// whose model it never shipped. Block at admission with an actionable

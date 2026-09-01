@@ -24,7 +24,6 @@ import (
 type STTSettings struct {
 	Quality             string   `json:"quality"`
 	DeviceOverride      string   `json:"device_override,omitempty"`
-	ModelOverride       string   `json:"model_override,omitempty"`
 	TranscriptionTerms  []string `json:"transcription_terms,omitempty"`
 	Source              string   `json:"source"` // "auto" | "user"
 	HardwareFingerprint string   `json:"hardware_fingerprint"`
@@ -59,7 +58,6 @@ const (
 type SettingsMigration struct {
 	Path                   string
 	ClearedDeviceOverride  string
-	ClearedModelOverride   string
 	Quality                string
 	Source                 string
 	TranscriptionTermCount int
@@ -69,21 +67,13 @@ type SettingsMigration struct {
 // how an administrator can restore an explicit, supported override without
 // logging the vocabulary itself.
 func (m SettingsMigration) Message() string {
-	cleared := make([]string, 0, 2)
-	if m.ClearedDeviceOverride != "" {
-		cleared = append(cleared, fmt.Sprintf("unsupported device_override=%q", m.ClearedDeviceOverride))
-	}
-	if m.ClearedModelOverride != "" {
-		cleared = append(cleared, fmt.Sprintf("unaudited model_override=%q", m.ClearedModelOverride))
-	}
 	return fmt.Sprintf(
-		"stt_settings migrated %s: cleared %s; preserved quality=%q, source=%q, and %d transcription terms; the policy now auto-selects the device, and Settings can still pin cpu or cuda, or one of the audited models %s",
+		"stt_settings migrated %s: cleared unsupported device_override=%q; preserved quality=%q, source=%q, and %d transcription terms; the policy now auto-selects the device, and Settings can still pin cpu or cuda",
 		m.Path,
-		strings.Join(cleared, " and "),
+		m.ClearedDeviceOverride,
 		m.Quality,
 		m.Source,
 		m.TranscriptionTermCount,
-		strings.Join(auditedModels(), ", "),
 	)
 }
 
@@ -92,27 +82,6 @@ func (m SettingsMigration) Message() string {
 // startup use the Runtime logger without coupling this persistence helper to a
 // process-global logger.
 type SettingsMigrationReporter func(SettingsMigration)
-
-// auditedModels are the models whose complete production path has been
-// measured on the device that selects them. An explicit model_override is
-// restricted to this list: accepting arbitrary IDs would let a build allocate
-// an unmeasured graph outside the governor's RAM/VRAM budget.
-func auditedModels() []string {
-	return []string{modelParakeetV3Fp32, modelParakeetV3Int8, modelParakeet110M}
-}
-
-func validModelOverride(model string) bool {
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return true
-	}
-	for _, audited := range auditedModels() {
-		if model == audited {
-			return true
-		}
-	}
-	return false
-}
 
 // normalizeTranscriptionTerms turns user-entered glossary rows into bounded
 // preferred spellings for readable-transcript cleanup. The first spelling wins
@@ -270,15 +239,6 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	}
 	s.DeviceOverride = deviceOverride
 
-	originalModelOverride := s.ModelOverride
-	s.ModelOverride = strings.TrimSpace(s.ModelOverride)
-	if !validModelOverride(s.ModelOverride) {
-		migration.ClearedModelOverride = originalModelOverride
-		s.ModelOverride = ""
-	}
-	if s.ModelOverride != originalModelOverride {
-		needsRewrite = true
-	}
 	s.Quality = normalizeQuality(s.Quality)
 	if s.Source != sttSourceUser {
 		s.Source = sttSourceAuto
@@ -299,14 +259,14 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 			if err := Save(path, s); err != nil {
 				return STTSettings{}, err
 			}
-			if migration.ClearedDeviceOverride != "" || migration.ClearedModelOverride != "" {
+			if migration.ClearedDeviceOverride != "" {
 				reportSettingsMigration(report, path, migration, s)
 			}
 		} else if needsRewrite {
 			if err := Save(path, s); err != nil {
 				return STTSettings{}, err
 			}
-			if migration.ClearedDeviceOverride != "" || migration.ClearedModelOverride != "" {
+			if migration.ClearedDeviceOverride != "" {
 				reportSettingsMigration(report, path, migration, s)
 			}
 		}
@@ -327,7 +287,7 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 		if err := Save(path, s); err != nil {
 			return STTSettings{}, err
 		}
-		if migration.ClearedDeviceOverride != "" || migration.ClearedModelOverride != "" {
+		if migration.ClearedDeviceOverride != "" {
 			reportSettingsMigration(report, path, migration, s)
 		}
 	} else if displayChanged {
@@ -354,10 +314,6 @@ func reportSettingsMigration(report SettingsMigrationReporter, path string, migr
 func Save(path string, s STTSettings) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("settings path must not be empty")
-	}
-	s.ModelOverride = strings.TrimSpace(s.ModelOverride)
-	if !validModelOverride(s.ModelOverride) {
-		return fmt.Errorf("model_override %q is not an audited model", s.ModelOverride)
 	}
 	deviceOverride := strings.ToLower(strings.TrimSpace(s.DeviceOverride))
 	if !validDeviceOverride(deviceOverride) {
@@ -437,10 +393,6 @@ func (s STTSettings) ChildEnv(base []string) []string {
 	if s.DeviceOverride != "" {
 		out = append(out, envSTTDevice+"="+s.DeviceOverride)
 	}
-	modelOverride := strings.TrimSpace(s.ModelOverride)
-	if modelOverride != "" && validModelOverride(modelOverride) {
-		out = append(out, envSTTModel+"="+modelOverride)
-	}
 	if terms, err := normalizeTranscriptionTerms(s.TranscriptionTerms); err == nil && len(terms) > 0 {
 		encoded, _ := json.Marshal(terms)
 		out = append(out, envTranscriptionTerms+"="+string(encoded))
@@ -459,8 +411,7 @@ type effectiveSTT struct {
 	// inject into the next admitted build. Raw user intent remains available
 	// separately as DeviceOverride.
 	Device string `json:"device"`
-	// Model is the concrete model the recorder will load on Device. Raw user
-	// intent remains available separately as ModelOverride.
+	// Model is the concrete model the recorder will load on Device.
 	Model string `json:"model,omitempty"`
 	Note  string `json:"note"`
 }
@@ -500,16 +451,10 @@ func (rt *Runtime) effectiveFor(s STTSettings) effectiveSTT {
 
 func (s STTSettings) effective() effectiveSTT {
 	device, note := effectiveDevice(s.DeviceOverride)
-	model := s.modelForDevice(device)
-	if !modelSupportsDevice(model, device) {
-		note = fmt.Sprintf(
-			"model_override %q is a CPU model and cannot run on CUDA: builds stay blocked until the model override is cleared or set to %s",
-			model, modelParakeetV3Fp32)
-	}
 	return effectiveSTT{
 		Quality: normalizeQuality(s.Quality),
 		Device:  device,
-		Model:   model,
+		Model:   s.modelForDevice(device),
 		Note:    note,
 	}
 }
@@ -541,12 +486,10 @@ func effectiveDevice(override string) (string, string) {
 }
 
 // modelForDevice is the model an admitted build will load on device: the
-// administrator's explicit override when there is one, else the quality tier's
-// model for that device.
+// quality tier's model for that device. The tier is the only control — a
+// per-model override existed, accepted exactly the three models the tiers
+// already reach, and was removed (D-702).
 func (s STTSettings) modelForDevice(device string) string {
-	if model := strings.TrimSpace(s.ModelOverride); model != "" {
-		return model
-	}
 	return modelForQuality(s.Quality, device)
 }
 
@@ -560,7 +503,6 @@ type settingsResponse struct {
 type settingsUpdate struct {
 	Quality            string    `json:"quality"`
 	DeviceOverride     *string   `json:"device_override"`
-	ModelOverride      *string   `json:"model_override"`
 	TranscriptionTerms *[]string `json:"transcription_terms"`
 }
 
@@ -660,24 +602,6 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			device = ""
 		}
 		updated.DeviceOverride = device
-	}
-	if in.ModelOverride != nil {
-		model := strings.TrimSpace(*in.ModelOverride)
-		if !validModelOverride(model) {
-			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("model_override must be empty or one of the audited models %s (got %q)", strings.Join(auditedModels(), ", "), *in.ModelOverride))
-			return
-		}
-		updated.ModelOverride = model
-	}
-	// Reject a pair that could never run rather than saving it and failing at
-	// build time: an int8 model under CUDA fragments back onto the host CPU, so
-	// it is neither the device nor the model the administrator asked for.
-	if updated.ModelOverride != "" && strings.EqualFold(updated.DeviceOverride, deviceCUDA) &&
-		!modelSupportsDevice(updated.ModelOverride, deviceCUDA) {
-		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf(
-			"model_override %q is a CPU model and cannot be combined with device_override=cuda; select %s or clear the device override",
-			updated.ModelOverride, modelParakeetV3Fp32))
-		return
 	}
 	if in.TranscriptionTerms != nil {
 		terms, err := normalizeTranscriptionTerms(*in.TranscriptionTerms)

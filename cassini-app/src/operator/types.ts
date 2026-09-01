@@ -104,7 +104,6 @@ export interface SettingsEffective {
 export interface Settings {
   quality: SettingsQuality;
   device_override: string;
-  model_override: string;
   transcription_terms: string[];
   source: string;
   detected_gpu: boolean;
@@ -116,6 +115,5 @@ export interface Settings {
 export interface SettingsUpdate {
   quality: SettingsQuality;
   device_override: string;
-  model_override: string;
   transcription_terms: string[];
 }

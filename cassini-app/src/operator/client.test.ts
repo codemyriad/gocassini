@@ -91,7 +91,6 @@ describe("operator settings client", () => {
     const settings = await new OperatorClient("https://operator.test").putSettings({
       quality: "balanced",
       device_override: "",
-      model_override: "",
       transcription_terms: [" Gocassini ", "Nextcloud Talk", "gocassini"],
     });
 

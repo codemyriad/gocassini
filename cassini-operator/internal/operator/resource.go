@@ -127,15 +127,6 @@ func (e *resourceUnavailableError) Error() string {
 // silently fragments back onto the host CPU.
 func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (string, error) {
 	model := settings.modelForDevice(device)
-	if !modelSupportsDevice(model, device) {
-		return "", &resourceUnavailableError{
-			resource: "model policy",
-			detail: fmt.Sprintf(
-				"model_override=%q is a CPU model and cannot run on CUDA (its quantized ops fragment back to the host); clear the model override or select %s",
-				model, modelParakeetV3Fp32),
-			permanent: true,
-		}
-	}
 	err := rt.requireBundledModel(model)
 	if err == nil {
 		return model, nil
@@ -144,10 +135,10 @@ func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (str
 	// the image does not carry the tier's model, use the best tier it does
 	// carry rather than stranding a recording nobody chose a tier for. This is
 	// the CUDA image that lost its GPU: it falls back to CPU decoding and
-	// carries only fp32, which is exactly the "best" tier. A pinned tier or a
-	// pinned model is the administrator's own decision and still blocks with
-	// the actionable message.
-	if settings.Source == sttSourceUser || strings.TrimSpace(settings.ModelOverride) != "" {
+	// carries only fp32, which is exactly the "best" tier. A tier the
+	// administrator pinned is their own decision and still blocks with the
+	// actionable message.
+	if settings.Source == sttSourceUser {
 		return "", err
 	}
 	if alternative, ok := rt.bestBundledModel(device); ok {
@@ -161,9 +152,6 @@ func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (str
 func (rt *Runtime) bestBundledModel(device string) (string, bool) {
 	for _, quality := range []string{sttQualityBest, sttQualityBalanced, sttQualityFast} {
 		model := modelForQuality(quality, device)
-		if !modelSupportsDevice(model, device) {
-			continue
-		}
 		if rt.requireBundledModel(model) == nil {
 			return model, true
 		}

@@ -165,7 +165,6 @@ function normalizeSettings(raw: unknown): Settings {
   return {
     quality: normalizeQuality(value.quality),
     device_override: asString(value.device_override),
-    model_override: asString(value.model_override),
     transcription_terms: asStringArray(value.transcription_terms),
     source: asString(value.source) || "auto",
     detected_gpu: value.detected_gpu === true,

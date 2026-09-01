@@ -86,17 +86,19 @@ func TestChildEnvOverridesAreAppended(t *testing.T) {
 		"CASSINI_STT_MODEL=parakeet-tdt-0.6b-v3-int8",
 		"CASSINI_STT_DEVICE=cpu",
 	}
-	s := STTSettings{Quality: sttQualityBalanced, DeviceOverride: "cuda", ModelOverride: modelParakeetV3Fp32}
+	s := STTSettings{Quality: sttQualityBalanced, DeviceOverride: "cuda"}
 	env := s.ChildEnv(base)
 
-	if m, ok := envValue(env, envSTTModel); !ok || m != modelParakeetV3Fp32 {
-		t.Fatalf("CASSINI_STT_MODEL = %q ok=%v, want %s", m, ok, modelParakeetV3Fp32)
+	// The inherited model is stripped and NOT replaced: the tier decides, and
+	// the governor pins the model it sized the build for in applyToEnv.
+	if m, ok := envValue(env, envSTTModel); ok {
+		t.Fatalf("CASSINI_STT_MODEL = %q, want it stripped so the quality tier decides", m)
 	}
 	if d, ok := envValue(env, envSTTDevice); !ok || d != "cuda" {
 		t.Fatalf("CASSINI_STT_DEVICE = %q ok=%v, want cuda", d, ok)
 	}
-	// Exactly one model/device entry (the inherited ones were stripped).
-	for _, key := range []string{envSTTModel, envSTTDevice} {
+	// Exactly one device entry (the inherited one was stripped).
+	for _, key := range []string{envSTTDevice} {
 		count := 0
 		for _, kv := range env {
 			if strings.HasPrefix(kv, key+"=") {
@@ -105,42 +107,6 @@ func TestChildEnvOverridesAreAppended(t *testing.T) {
 		}
 		if count != 1 {
 			t.Fatalf("expected exactly one %s entry, got %d: %v", key, count, env)
-		}
-	}
-}
-
-func TestChildEnvFailsSafeForUnauditedModelOverride(t *testing.T) {
-	env := (STTSettings{
-		Quality:       sttQualityBest,
-		ModelOverride: "custom/model",
-	}).ChildEnv([]string{
-		"CASSINI_STT_MODEL=unsafe-inherited",
-		"CASSINI_STT_ADDITIONAL_MODELS=also-unsafe",
-	})
-	if _, ok := envValue(env, envSTTModel); ok {
-		t.Fatalf("unaudited model override escaped into child environment: %v", env)
-	}
-	if _, ok := envValue(env, envSTTAdditionalModels); ok {
-		t.Fatalf("additional models escaped into child environment: %v", env)
-	}
-}
-
-func TestValidModelOverrideAllowlist(t *testing.T) {
-	// Every model a quality tier can select is audited: with CPU builds
-	// supported, pinning the int8 or 110M model is as legitimate as pinning
-	// fp32 (D-702). Anything outside the tier set stays rejected.
-	audited := []string{"", "  "}
-	for _, model := range auditedModels() {
-		audited = append(audited, model, "  "+model+"  ")
-	}
-	for _, model := range audited {
-		if !validModelOverride(model) {
-			t.Errorf("audited model %q was rejected", model)
-		}
-	}
-	for _, model := range []string{"custom", "PARAKEET-TDT-0.6B-V3", "parakeet-tdt-0.6b-v2-int8"} {
-		if validModelOverride(model) {
-			t.Errorf("unaudited model %q was accepted", model)
 		}
 	}
 }
@@ -232,7 +198,6 @@ func TestSaveLoadRoundTripUserSettings(t *testing.T) {
 	want := STTSettings{
 		Quality:             sttQualityFast,
 		DeviceOverride:      "cuda",
-		ModelOverride:       modelParakeetV3Fp32,
 		TranscriptionTerms:  []string{"Gocassini", "Nextcloud Talk"},
 		Source:              sttSourceUser,
 		HardwareFingerprint: "gpu=true;cores=16",
@@ -249,16 +214,13 @@ func TestSaveLoadRoundTripUserSettings(t *testing.T) {
 	if got.Source != sttSourceUser {
 		t.Fatalf("Source = %q, want user (must not be overwritten)", got.Source)
 	}
-	if got.Quality != want.Quality || got.DeviceOverride != want.DeviceOverride || got.ModelOverride != want.ModelOverride || strings.Join(got.TranscriptionTerms, "|") != strings.Join(want.TranscriptionTerms, "|") {
+	if got.Quality != want.Quality || got.DeviceOverride != want.DeviceOverride || strings.Join(got.TranscriptionTerms, "|") != strings.Join(want.TranscriptionTerms, "|") {
 		t.Fatalf("user policy not preserved: got %#v want %#v", got, want)
 	}
 }
 
 func TestSaveRejectsUnsupportedOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	if err := Save(path, STTSettings{Quality: sttQualityBest, ModelOverride: "custom"}); err == nil || !strings.Contains(err.Error(), "not an audited model") {
-		t.Fatalf("Save() error = %v, want unaudited model rejection", err)
-	}
 	if err := Save(path, STTSettings{Quality: sttQualityBest, DeviceOverride: "tpu"}); err == nil || !strings.Contains(err.Error(), "not supported") {
 		t.Errorf("Save(device_override=\"tpu\") error = %v, want rejection", err)
 	}
@@ -282,40 +244,15 @@ func TestLoadLegacySettingsHealsUnsupportedOverrides(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		device      string
-		model       string
 		wantDevice  string
-		wantModel   string
 		messageBits []string
 	}{
 		{
-			// cpu survives the migration untouched — only the model is healed.
-			name:       "supported cpu device with an unaudited model",
-			device:     "cpu",
-			model:      "custom/model",
-			wantDevice: "cpu",
-			wantModel:  "",
-			messageBits: []string{
-				`unaudited model_override="custom/model"`,
-			},
-		},
-		{
 			name:       "unknown device",
 			device:     "tpu",
-			model:      modelParakeetV3Fp32,
 			wantDevice: "",
-			wantModel:  modelParakeetV3Fp32,
 			messageBits: []string{
 				`unsupported device_override="tpu"`,
-			},
-		},
-		{
-			name:       "unaudited model only",
-			device:     "cuda",
-			model:      "custom/model",
-			wantDevice: "cuda",
-			wantModel:  "",
-			messageBits: []string{
-				`unaudited model_override="custom/model"`,
 			},
 		},
 	} {
@@ -324,7 +261,6 @@ func TestLoadLegacySettingsHealsUnsupportedOverrides(t *testing.T) {
 			legacy := STTSettings{
 				Quality:             sttQualityFast,
 				DeviceOverride:      tc.device,
-				ModelOverride:       tc.model,
 				TranscriptionTerms:  []string{" Gocassini ", "Nextcloud\tTalk", "gocassini"},
 				Source:              sttSourceUser,
 				HardwareFingerprint: "legacy-host",
@@ -346,8 +282,8 @@ func TestLoadLegacySettingsHealsUnsupportedOverrides(t *testing.T) {
 			if err != nil {
 				t.Fatalf("LoadOrInitSettingsWithMigrationReporter() error = %v", err)
 			}
-			if got.DeviceOverride != tc.wantDevice || got.ModelOverride != tc.wantModel {
-				t.Fatalf("healed overrides = device %q model %q, want %q/%q", got.DeviceOverride, got.ModelOverride, tc.wantDevice, tc.wantModel)
+			if got.DeviceOverride != tc.wantDevice {
+				t.Fatalf("healed device override = %q, want %q", got.DeviceOverride, tc.wantDevice)
 			}
 			if got.Quality != sttQualityFast || got.Source != sttSourceUser {
 				t.Fatalf("legacy quality/source were not preserved: %#v", got)
@@ -379,8 +315,8 @@ func TestLoadLegacySettingsHealsUnsupportedOverrides(t *testing.T) {
 			if err := json.Unmarshal(persistedRaw, &persisted); err != nil {
 				t.Fatalf("decode healed settings: %v", err)
 			}
-			if persisted.DeviceOverride != tc.wantDevice || persisted.ModelOverride != tc.wantModel {
-				t.Fatalf("persisted overrides = device %q model %q, want %q/%q", persisted.DeviceOverride, persisted.ModelOverride, tc.wantDevice, tc.wantModel)
+			if persisted.DeviceOverride != tc.wantDevice {
+				t.Fatalf("persisted device override = %q, want %q", persisted.DeviceOverride, tc.wantDevice)
 			}
 			if persisted.Quality != sttQualityFast || persisted.Source != sttSourceUser || strings.Join(persisted.TranscriptionTerms, "|") != "Gocassini|Nextcloud Talk" {
 				t.Fatalf("persisted policy was not preserved: %#v", persisted)
@@ -525,24 +461,6 @@ func TestPutSettingsAcceptsCPUOverride(t *testing.T) {
 	}
 }
 
-func TestPutSettingsRejectsUnauditedCUDAModel(t *testing.T) {
-	rt, cleanup := newTestRuntime(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(`{"quality":"best","model_override":"custom/model"}`))
-	rec := httptest.NewRecorder()
-	rt.settingsHandler(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("PUT unaudited model = %d, want 400 body=%s", rec.Code, rec.Body.String())
-	}
-	for _, model := range auditedModels() {
-		if !strings.Contains(rec.Body.String(), model) {
-			t.Fatalf("model rejection did not name the audited model %s: %s", model, rec.Body.String())
-		}
-	}
-}
-
 func TestGetSettingsReturnsEffectiveView(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
@@ -588,7 +506,6 @@ func TestGetSettingsLogsPersistedPolicyMigration(t *testing.T) {
 	legacy := STTSettings{
 		Quality:            sttQualityBest,
 		DeviceOverride:     "tpu",
-		ModelOverride:      "legacy-int8-model",
 		TranscriptionTerms: []string{"Gocassini"},
 		Source:             sttSourceUser,
 	}
@@ -612,7 +529,6 @@ func TestGetSettingsLogsPersistedPolicyMigration(t *testing.T) {
 	for _, bit := range []string{
 		"operator: stt_settings migrated",
 		`unsupported device_override="tpu"`,
-		`unaudited model_override="legacy-int8-model"`,
 		"the policy now auto-selects the device",
 	} {
 		if !strings.Contains(logs.String(), bit) {
@@ -670,48 +586,6 @@ func TestEffectiveDeviceReportsThePinnedDevice(t *testing.T) {
 	}
 	if device, _ := effectiveDevice(""); device != deviceCPU {
 		t.Errorf("effectiveDevice(auto) on a portable image = %q, want cpu", device)
-	}
-}
-
-func TestPutSettingsRejectsACPUModelPinnedToCUDA(t *testing.T) {
-	// Saving the pair and failing at build time would strand a recording; the
-	// combination can never run, so refuse it at the API (D-702).
-	rt, cleanup := newTestRuntime(t)
-	defer cleanup()
-
-	req := httptest.NewRequest(http.MethodPut, "/settings",
-		strings.NewReader(`{"quality":"balanced","device_override":"cuda","model_override":"parakeet-tdt-0.6b-v3-int8"}`))
-	rec := httptest.NewRecorder()
-	rt.settingsHandler(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("PUT int8 model + cuda = %d, want 400 body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), modelParakeetV3Fp32) {
-		t.Errorf("rejection does not name the model that does run on CUDA: %s", rec.Body.String())
-	}
-
-	// The same model without the CUDA pin is fine.
-	req = httptest.NewRequest(http.MethodPut, "/settings",
-		strings.NewReader(`{"quality":"balanced","model_override":"parakeet-tdt-0.6b-v3-int8"}`))
-	rec = httptest.NewRecorder()
-	rt.settingsHandler(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PUT int8 model on auto = %d, want 200 body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestEffectiveExplainsAnUnrunnableModelDevicePair(t *testing.T) {
-	effective := STTSettings{
-		Quality:        sttQualityBalanced,
-		DeviceOverride: deviceCUDA,
-		ModelOverride:  modelParakeetV3Int8,
-	}.effective()
-	if effective.Device != deviceCUDA || effective.Model != modelParakeetV3Int8 {
-		t.Fatalf("effective = %+v, want the administrator's own pins reported back", effective)
-	}
-	if !strings.Contains(effective.Note, "cannot run on CUDA") {
-		t.Errorf("note %q does not explain why builds will block", effective.Note)
 	}
 }
 
