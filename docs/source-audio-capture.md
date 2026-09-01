@@ -304,6 +304,12 @@ logged-in user. The client fails closed at every one of those.
   was not. It only arises after an OPFS write or flush has already failed, so
   it costs a recording that was partly lost anyway — but the good half is
   recoverable in principle and is not recovered.
+- **A disabled ExApp with the switch left on.** The companion reads
+  `source_capture_enabled` from AppAPI's ExApp config, which outlives disabling
+  the ExApp, so the payload still loads on a Talk call. It records nothing: the
+  payload's own permission check goes through the AppAPI proxy, which a disabled
+  ExApp does not serve, and an unanswered check counts as no. The cost is a
+  script tag on the page, not audio.
 - **Firefox raw-audio path.** `MediaStreamTrackProcessor` is Chrome/Safari only.
   The timing path (`RTCRtpScriptTransform`) works in all three engines; the
   current capture path uses `MediaRecorder`, which is universal.

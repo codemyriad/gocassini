@@ -33,6 +33,11 @@ authenticated call. The event is part of the public `OCP` API since Nextcloud
    script runs. The ExApp synchronizes its `CASSINI_SOURCE_CAPTURE` value into
    AppAPI's ExApp config store on lifecycle edges, and the companion reads that
    store through `ExAppConfigService` (ordinary `IAppConfig` cannot see ExApps).
+   That service is resolved from the server container while the event is being
+   handled, not type-hinted in the constructor: a constructor parameter is
+   resolved by the container inside Talk's dispatcher, where an install without
+   AppAPI would raise past every catch of ours and take the call page with it.
+   Resolved late, a missing AppAPI is just a switch that answers no.
 
 The payload is deliberately loaded before Talk's bundle. Its `addTrack` wrapper
 therefore attaches an inert `RTCRtpScriptTransform` synchronously, before

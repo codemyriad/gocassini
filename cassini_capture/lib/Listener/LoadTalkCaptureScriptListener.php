@@ -11,6 +11,7 @@ use OCP\Collaboration\Resources\LoadAdditionalScriptsEvent;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
 use OCP\IRequest;
+use OCP\IServerContainer;
 use OCP\IURLGenerator;
 use OCP\Util;
 
@@ -32,12 +33,23 @@ final class LoadTalkCaptureScriptListener implements IEventListener {
 		private readonly IRequest $request,
 		private readonly IInitialState $initialState,
 		private readonly IURLGenerator $urlGenerator,
-		private readonly ExAppConfigService $exAppConfig,
+		// The AppAPI service is resolved lazily, inside handle()'s try, rather
+		// than type-hinted here. A constructor parameter is resolved by the
+		// container when Talk dispatches the event — outside any catch of ours —
+		// so on an install without AppAPI enabled the missing class would throw
+		// during a Talk page load. That is the Talk outage this listener's own
+		// contract forbids.
+		private readonly IServerContainer $container,
 	) {
 	}
 
 	private function sourceCaptureEnabled(): bool {
-		$values = $this->exAppConfig->getAppConfigValues(
+		if (!class_exists(ExAppConfigService::class)) {
+			return false;
+		}
+		/** @var ExAppConfigService $exAppConfig */
+		$exAppConfig = $this->container->get(ExAppConfigService::class);
+		$values = $exAppConfig->getAppConfigValues(
 			self::EXAPP_ID,
 			[self::ENABLED_CONFIG_KEY],
 		) ?? [];

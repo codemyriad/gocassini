@@ -47,6 +47,9 @@ namespace OCP {
 	interface IURLGenerator {
 		public function getWebroot(): string;
 	}
+	interface IServerContainer {
+		public function get(string $id): mixed;
+	}
 	final class Util {
 		/** @var list<array{string,string}> */
 		public static array $scripts = [];
@@ -84,6 +87,7 @@ namespace CassiniCaptureTests {
 	use OCP\AppFramework\Services\IInitialState;
 	use OCP\Collaboration\Resources\LoadAdditionalScriptsEvent;
 	use OCP\IRequest;
+	use OCP\IServerContainer;
 	use OCP\IURLGenerator;
 	use OCP\Util;
 
@@ -116,6 +120,23 @@ namespace CassiniCaptureTests {
 		public function getWebroot(): string { return '/nextcloud/'; }
 	}
 
+	// Container mirrors how Nextcloud resolves another app's service: the
+	// listener asks for it while handling the event, so an install without
+	// AppAPI raises where the listener can catch it rather than while Talk is
+	// building its page.
+	final class Container implements IServerContainer {
+		public int $resolutions = 0;
+		public function __construct(private mixed $service, private bool $missing = false) {}
+		public function get(string $id): mixed {
+			$this->resolutions++;
+			check($id === ExAppConfigService::class, 'listener resolved the wrong AppAPI service');
+			if ($this->missing) {
+				throw new \RuntimeException('AppAPI is not installed');
+			}
+			return $this->service;
+		}
+	}
+
 	function appConfig(bool $enabled, bool $fails = false): ExAppConfigService {
 		return new ExAppConfigService([[
 			'configkey' => 'source_capture_enabled',
@@ -130,7 +151,7 @@ namespace CassiniCaptureTests {
 			new Request($route),
 			$state,
 			new URLGenerator(),
-			appConfig($config),
+			new Container(appConfig($config)),
 		);
 		$listener->handle(new LoadAdditionalScriptsEvent());
 		$listener->handle(new LoadAdditionalScriptsEvent());
@@ -161,7 +182,7 @@ namespace CassiniCaptureTests {
 		new Request('spreed.Page.showCall'),
 		$state,
 		new URLGenerator(),
-		new ExAppConfigService(null),
+		new Container(new ExAppConfigService(null)),
 	);
 	$missing->handle(new LoadAdditionalScriptsEvent());
 	check($state->values['capture']['enabled'] === false, 'missing ExApp config was not fail-closed');
@@ -172,10 +193,38 @@ namespace CassiniCaptureTests {
 		new Request('spreed.Page.showCall'),
 		$state,
 		new URLGenerator(),
-		appConfig(true, true),
+		new Container(appConfig(true, true)),
 	);
 	$failing->handle(new LoadAdditionalScriptsEvent());
 	check($state->values === [] && Util::$scripts === [], 'configuration failure could break or instrument Talk');
+
+	// An install without AppAPI must construct the listener and survive the
+	// event. Constructing it is the half that matters: a type-hinted AppAPI
+	// service would raise inside Talk's dispatcher, where no catch of ours runs.
+	Util::$scripts = [];
+	$state = new InitialState();
+	$container = new Container(null, true);
+	$withoutAppAPI = new LoadTalkCaptureScriptListener(
+		new Request('spreed.Page.showCall'),
+		$state,
+		new URLGenerator(),
+		$container,
+	);
+	check($container->resolutions === 0, 'listener resolved AppAPI before Talk dispatched the event');
+	$withoutAppAPI->handle(new LoadAdditionalScriptsEvent());
+	check($container->resolutions === 1, 'listener did not resolve AppAPI while handling the event');
+	check($state->values === [] && Util::$scripts === [], 'a missing AppAPI could break or instrument Talk');
+
+	// A route Talk never dispatches capture on must not even reach AppAPI.
+	Util::$scripts = [];
+	$quiet = new Container(appConfig(true));
+	(new LoadTalkCaptureScriptListener(
+		new Request('files.View.index'),
+		new InitialState(),
+		new URLGenerator(),
+		$quiet,
+	))->handle(new LoadAdditionalScriptsEvent());
+	check($quiet->resolutions === 0, 'a non-Talk route resolved the AppAPI service');
 
 	final class Registration implements IRegistrationContext {
 		/** @var list<array{string,string}> */
