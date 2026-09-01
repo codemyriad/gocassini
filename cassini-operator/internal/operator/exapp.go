@@ -625,6 +625,19 @@ func spaHandler(dir, urlPrefix string, logger *log.Logger) http.Handler {
 	})
 }
 
+// isPublishedArchivePath reports whether a path under the published prefix is
+// archive data rather than a viewer asset.
+//
+// These paths must never fall through to the SPA fallback: a JSON or audio
+// fetch answered with index.html is worse than a miss. Note meetings-list does
+// not collide with the meetings/ prefix — it is a sibling, not a child, so a
+// recording can never be named such that it shadows the endpoint.
+func isPublishedArchivePath(relPath string) bool {
+	return relPath == "catalog.json" ||
+		relPath == meetingsListPath ||
+		strings.HasPrefix(relPath, "meetings/")
+}
+
 // viewerHandler serves the standalone viewer SPA while preserving the static
 // export layout the viewer expects: catalog.json and meetings/* live next to the
 // SPA entry when Cassini is exported, but in an ExApp they are stored under the
@@ -645,7 +658,7 @@ func viewerHandler(viewerDir, publishedDir, urlPrefix string, logger *log.Logger
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		relPath := strings.TrimPrefix(r.URL.Path, urlPrefix)
 		relPath = strings.TrimPrefix(relPath, "/")
-		if relPath == "catalog.json" || strings.HasPrefix(relPath, "meetings/") {
+		if isPublishedArchivePath(relPath) {
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				w.Header().Set("Allow", "GET, HEAD")
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -709,7 +722,7 @@ func publishedHandler(dir, urlPrefix string, logger *log.Logger, ncProxy ncFiles
 		// the archive source only outside AppAPI (D-529).
 		relPath := strings.TrimPrefix(r.URL.Path, urlPrefix)
 		relPath = strings.TrimPrefix(relPath, "/")
-		if ncProxy != nil && (relPath == "catalog.json" || strings.HasPrefix(relPath, "meetings/")) {
+		if ncProxy != nil && isPublishedArchivePath(relPath) {
 			if ncProxy(w, r, relPath) {
 				return
 			}
