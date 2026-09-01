@@ -46,12 +46,37 @@
           "type": "string",
           "format": "date-time"
         },
+        "recordedAtLocal": {
+          "type": "string"
+        },
+        "processedAtUtc": {
+          "type": "string",
+          "format": "date-time"
+        },
         "durationMs": {
           "type": "integer",
           "minimum": 0
         },
         "language": {
           "type": "string"
+        },
+        "roomId": {
+          "type": "string",
+          "description": "Id of the conversation this meeting was recorded in: a deterministic one-way derivation of the room's identity, never the identity itself. For a Nextcloud Talk recording it derives from the conversation token, which is also that room's join link and is therefore never published. Shaped rm_<16 lowercase hex>. Absent when the room is unknown.",
+          "pattern": "^rm_[0-9a-f]{16}$"
+        },
+        "roomName": {
+          "type": "string",
+          "description": "LEGACY, read-only. The room's display name frozen at record time. Producers stopped writing this: a display name is editable and a published recording is not, so the current name lives in the catalog entry instead. The record-time name is still available as the meeting title. Absent in anything packed after that change."
+        },
+        "jobId": {
+          "type": "string",
+          "description": "Id of the operator job that produced this artifact. Absent when the producer was not an operator job. Discloses nothing new: the operator publishes the artifact under this same id."
+        },
+        "attemptNumber": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Which attempt of that job produced this artifact, 1-based. Absent when unknown. There is no separate attempt id: an attempt's identity is the pair (jobId, attemptNumber)."
         },
         "summary": {
           "type": "string"
@@ -203,6 +228,12 @@
               },
               "text": {
                 "type": "string"
+              },
+              "attributionGapDb": {
+                "type": "number"
+              },
+              "lowConfidenceSpeaker": {
+                "type": "boolean"
               }
             }
           }

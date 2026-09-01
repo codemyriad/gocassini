@@ -23,7 +23,25 @@ type MeetingBundleManifest struct {
 	// Title is an optional human-readable meeting name (e.g. the Talk room
 	// name the operator resolved at recording time). Packing prefers it over
 	// names derived from file paths; empty means "no known name".
-	Title            string            `json:"title,omitempty"`
+	Title string `json:"title,omitempty"`
+	// RoomToken and RoomName name the conversation the recording came from —
+	// for Talk, the room token and its display name. The operator stamps them
+	// alongside Title after the build, and `cassini pack` derives the published
+	// room id from them (D-622). Empty means "no known room", which is the
+	// normal state for a bundle built from a file rather than a call.
+	//
+	// The bundle holds the raw token because it is the operator's own working
+	// directory — the same exposure as the jobs table it came from. The token
+	// goes no further: packing derives, and the artifact carries only the
+	// derivation.
+	RoomToken string `json:"room_token,omitempty"`
+	RoomName  string `json:"room_name,omitempty"`
+	// JobID and AttemptNumber name the operator job and attempt that built the
+	// bundle (D-640), stamped by the same call that stamps the room. They exist
+	// here so `cassini publish <bundle>` — the path that packs a bundle without
+	// going through the seal — carries the same provenance the seal does.
+	JobID            string            `json:"job_id,omitempty"`
+	AttemptNumber    int               `json:"attempt_number,omitempty"`
 	State            string            `json:"state,omitempty"`
 	Stage            string            `json:"stage,omitempty"`
 	Error            string            `json:"error,omitempty"`

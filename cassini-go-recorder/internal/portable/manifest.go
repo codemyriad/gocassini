@@ -12,20 +12,25 @@ import (
 )
 
 const (
-	Format                  = "org.cassini.portable-meeting/1"
-	FormatV2                = "org.cassini.portable-meeting/2"
-	Profile                 = "ogg-opus"
-	PayloadMIME             = "application/vnd.cassini.portable-meeting+json"
-	PayloadMIMEV2           = "application/vnd.cassini.portable-meeting+json"
-	PayloadEncoding         = "base64url+gzip+utf8json"
-	PayloadSchema           = "https://cassini.local/spec/cassini-portable-meeting-manifest-v1.schema.json"
-	PayloadSchemaV2         = "https://cassini.local/spec/cassini-portable-meeting-manifest-v2.schema.json"
-	AudioPCMFormat          = "s16le"
-	AudioMatchPolicy        = "exact-pcm"
-	DefaultPayloadChunkSize = 4096
-	Description             = "Cassini portable meeting file. Decode CASSINI_PAYLOAD_*: base64url -> gzip -> UTF-8 JSON."
-	DecodeHint              = "Concatenate CASSINI_PAYLOAD_000..N, base64url decode, gzip decompress, parse UTF-8 JSON."
-	DecodeHintV2            = "Concatenate CASSINI_PAYLOAD_000..N for the manifest; for a transcript body concatenate CASSINI_TX_<ID>_PAYLOAD_000..N. Each chunk set: base64url decode, gzip decompress, parse UTF-8 JSON."
+	Format                    = "org.cassini.portable-meeting/1"
+	FormatV2                  = "org.cassini.portable-meeting/2"
+	FormatV3                  = "org.cassini.portable-meeting/3"
+	Profile                   = "ogg-opus"
+	PayloadMIME               = "application/vnd.cassini.portable-meeting+json"
+	PayloadMIMEV2             = "application/vnd.cassini.portable-meeting+json"
+	PayloadMIMEV3             = "application/vnd.cassini.portable-meeting+json"
+	PayloadEncoding           = "base64url+gzip+utf8json"
+	PayloadSchema             = "https://cassini.local/spec/cassini-portable-meeting-manifest-v1.schema.json"
+	PayloadSchemaV2           = "https://cassini.local/spec/cassini-portable-meeting-manifest-v2.schema.json"
+	PayloadSchemaV3           = "https://cassini.local/spec/cassini-portable-meeting-manifest-v3.schema.json"
+	AudioPCMFormat            = "s16le"
+	AudioMatchPolicy          = "exact-opus-audio-v1"
+	LegacyAudioMatchPolicyPCM = "exact-pcm"
+	DefaultPayloadChunkSize   = 4096
+	Description               = "Cassini portable meeting file. Decode CASSINI_PAYLOAD_*: base64url -> gzip -> UTF-8 JSON."
+	DecodeHint                = "Concatenate CASSINI_PAYLOAD_000..N, base64url decode, gzip decompress, parse UTF-8 JSON."
+	DecodeHintV2              = "Concatenate CASSINI_PAYLOAD_000..N for the manifest; for a transcript body concatenate CASSINI_TX_<ID>_PAYLOAD_000..N. Each chunk set: base64url decode, gzip decompress, parse UTF-8 JSON."
+	DecodeHintV3              = DecodeHintV2
 
 	TranscriptBodyMIMEWords    = "application/vnd.cassini.transcript-words+json"
 	TranscriptBodyMIMEReadable = "application/vnd.cassini.transcript-readable+json"
@@ -73,6 +78,61 @@ type Provenance struct {
 	ReadableCleanup   *ProcessingStep `json:"readableCleanup,omitempty"`
 	DisplayTranscript *ProcessingStep `json:"displayTranscript,omitempty"`
 	MeetingSummary    *ProcessingStep `json:"meetingSummary,omitempty"`
+	// Attribution is meeting-level, not a per-transcript ProcessingStep: the
+	// cross-track attribution stage runs once against the default raw
+	// transcript. Nil for legacy files and attribution-less builds, and
+	// omitted from the wire in that case.
+	Attribution *AttributionProvenance `json:"attribution,omitempty"`
+	// WordTimings is meeting-level for the same reason: one decode rule
+	// produced every word in the file. Nil for every file built before the
+	// rule changed, and for any file whose decoder never claimed to measure
+	// word ends; omitted from the wire in both cases — its absence is the
+	// signal.
+	WordTimings *WordTimingProvenance `json:"wordTimings,omitempty"`
+}
+
+// WordTimingProvenance records how the producer decided where a word ends,
+// restated field-for-field from the build artifact manifest (internal/transcribe
+// writes that record; this package deliberately does not import it).
+//
+// It exists because the rule changed and the timings do not say which one
+// produced them. Files built before D-690 ended a word at its last token
+// including a trailing punctuation mark, which the ASR stamps at the *next*
+// acoustic onset, so a sentence-final word could run for seconds over silence;
+// consumers reasonably grew repairs that clip an over-long word back towards
+// the meeting's median. Files carrying this record ended each word where the
+// speaker's own audio ended, so an over-long word is now a measurement and
+// clipping it corrupts correct timing.
+//
+// A consumer keys off presence, not value: absent means the ends may have come
+// from a punctuation mark's timestamp — either an older build, or a decoder
+// that never made the claim — and the legacy repair still applies.
+type WordTimingProvenance struct {
+	// EndsBoundedByAudio is true when each word's end was measured against its
+	// speaker's own track rather than taken from its last token's timestamp.
+	EndsBoundedByAudio bool `json:"endsBoundedByAudio"`
+}
+
+// AttributionProvenance is the cross-track attribution stage's record for the
+// file's default raw transcript, restated field-for-field from the build
+// artifact manifest (internal/transcribe writes that record; this package
+// deliberately does not import it). It exists because drop mode deletes
+// flagged words, and deleted words carry their per-word evidence away with
+// them: once the file is published, this record is the only remaining trace
+// that the words existed and why they are gone.
+type AttributionProvenance struct {
+	Ran bool `json:"ran"`
+	// Mode is "annotate" (per-word evidence kept on the words), "drop"
+	// (flagged words deleted before publication) or "disabled".
+	Mode string `json:"mode"`
+	// Reason says why the stage did not run; empty when Ran is true.
+	Reason        string `json:"reason,omitempty"`
+	WordsMeasured int    `json:"wordsMeasured"`
+	WordsFlagged  int    `json:"wordsFlagged"`
+	WordsDropped  int    `json:"wordsDropped"`
+	// ThresholdDB is the meeting's estimated crosstalk threshold; absent when
+	// the meeting showed no crosstalk population.
+	ThresholdDB *float64 `json:"thresholdDb,omitempty"`
 }
 
 type ProcessingStep struct {
@@ -95,6 +155,44 @@ type Meeting struct {
 	ProcessedAtUTC  string `json:"processedAtUtc,omitempty"`
 	DurationMS      int64  `json:"durationMs"`
 	Language        string `json:"language,omitempty"`
+	// RoomID identifies the conversation the meeting was recorded in: a
+	// deterministic one-way derivation of the room's identity (D-622), never
+	// the Talk token itself. Optional — a meeting packed from a file, a dev
+	// run, or a Talk job whose room lookup failed has no room, and an absent
+	// room is not an error anywhere downstream.
+	RoomID string `json:"roomId,omitempty"`
+	// RoomName is LEGACY and is no longer written (D-640). Producers before
+	// D-640 froze the room's display name into every artifact; a display name
+	// is editable, so honouring a rename meant rewriting every file that room
+	// ever produced — and under D-612 a published recording cannot even be
+	// deleted.
+	//
+	// The room's name at record time is still in the file, as the Title: that
+	// is what a player shows and what the operator has always stamped there.
+	// The room's CURRENT name lives in the catalog entry, which is mutable and
+	// which the operator restamps on every publish.
+	//
+	// Kept on the struct, in both schemas and in every reader, because files
+	// written before D-640 still carry it and `cassini retag` preserves what a
+	// file already has rather than stripping it.
+	RoomName string `json:"roomName,omitempty"`
+	// JobID and AttemptNumber record which operator job and which of its
+	// attempts produced this artifact (D-640). Both optional: a meeting packed
+	// by hand, or by any producer that is not the operator, has neither.
+	//
+	// JobID discloses nothing new — the operator publishes the artifact as
+	// meetings/<jobID>.opus and the catalog entry's id is the same value, so
+	// it is already the file's name. AttemptNumber is genuinely new: a rerun
+	// produces a different attempt of the same job, and nothing else in the
+	// file says which one this is.
+	//
+	// There is deliberately no "attempt id": an attempt's identity in the
+	// operator is the composite (job id, attempt number), and inventing a
+	// single string for it here would invent an identifier the operator does
+	// not have. AttemptNumber is 1-based, so the omitempty zero is
+	// unambiguously "unknown" rather than a legal value.
+	JobID         string `json:"jobId,omitempty"`
+	AttemptNumber int    `json:"attemptNumber,omitempty"`
 	// Summary is reserved for surfacing summary content as a *meeting attribute*
 	// (e.g. a TL;DR readable without unpacking the gzipped payload). Currently
 	// left empty — picking a meaning (TL;DR? full markdown? first heading?)
@@ -116,8 +214,9 @@ type Audio struct {
 
 type Integrity struct {
 	MatchPolicy     string `json:"matchPolicy"`
-	PCMFormat       string `json:"pcmFormat"`
-	PCMSHA256       string `json:"pcmSha256"`
+	OpusSHA256      string `json:"opusAudioSha256,omitempty"`
+	PCMFormat       string `json:"pcmFormat,omitempty"`
+	PCMSHA256       string `json:"pcmSha256,omitempty"`
 	ContainerSHA256 string `json:"containerSha256,omitempty"`
 	SampleRate      int    `json:"sampleRate"`
 	Channels        int    `json:"channels"`
@@ -142,6 +241,15 @@ type TranscriptItem struct {
 	StartMS int64  `json:"startMs"`
 	EndMS   int64  `json:"endMs"`
 	Text    string `json:"text"`
+	// AttributionGapDB and LowConfidenceSpeaker mirror the per-word
+	// cross-track speaker-attribution evidence of transcript.words.v1.json
+	// (see internal/transcribe wordEntry). AttributionGapDB is present
+	// exactly on the words the attribution stage measured;
+	// LowConfidenceSpeaker is emitted only when true. Unmeasured words carry
+	// neither key, so a file packed without the stage is byte-identical to
+	// one packed before these fields existed.
+	AttributionGapDB     *float64 `json:"attributionGapDb,omitempty"`
+	LowConfidenceSpeaker bool     `json:"lowConfidenceSpeaker,omitempty"`
 }
 
 type Chapter struct {
@@ -166,11 +274,31 @@ func NormalizeManifest(manifest Manifest) Manifest {
 	manifest.Profile = Profile
 	manifest.Audio.Container = "ogg"
 	manifest.Audio.Codec = "opus"
-	manifest.Integrity.MatchPolicy = AudioMatchPolicy
-	manifest.Integrity.PCMFormat = AudioPCMFormat
+	manifest.Integrity.MatchPolicy = LegacyAudioMatchPolicyPCM
+	manifest.Integrity.OpusSHA256 = ""
+	if manifest.Integrity.PCMFormat == "" {
+		manifest.Integrity.PCMFormat = AudioPCMFormat
+	}
 	if manifest.Transcript.Format == "" {
 		manifest.Transcript.Format = "cassini.words.v1"
 	}
+	return manifest
+}
+
+// NormalizeManifestV3 selects the multi-transcript portable wire format whose
+// recording identity is the canonical compressed Opus audio essence. V1/V2
+// remain exact-PCM formats so older readers never misinterpret a missing PCM
+// digest as a successfully verified file.
+func NormalizeManifestV3(manifest Manifest) Manifest {
+	manifest.Kind = "cassini-portable-meeting"
+	manifest.Version = 3
+	manifest.Profile = Profile
+	manifest.Audio.Container = "ogg"
+	manifest.Audio.Codec = "opus"
+	manifest.Integrity.MatchPolicy = AudioMatchPolicy
+	manifest.Integrity.OpusSHA256 = strings.ToLower(strings.TrimSpace(manifest.Integrity.OpusSHA256))
+	manifest.Integrity.PCMFormat = ""
+	manifest.Integrity.PCMSHA256 = ""
 	return manifest
 }
 
@@ -180,7 +308,21 @@ func EncodeManifest(manifest Manifest, chunkSize int) (EncodedPayload, error) {
 	if err != nil {
 		return EncodedPayload{}, fmt.Errorf("marshal portable meeting manifest: %w", err)
 	}
+	return EncodePayloadBytes(rawJSON, chunkSize)
+}
 
+// EncodePayloadBytes runs already-serialised manifest JSON through the payload
+// pipeline: gzip, base64url, chunk, and the digest and byte counts the tags
+// declare.
+//
+// Split out of EncodeManifest for the editors rather than the producers.
+// `cassini retag` rewrites one field of an existing file's manifest and must
+// re-emit everything else exactly as it found it — including whatever wire
+// version that file uses and any key this build has never heard of — so it
+// edits the JSON document and hands the bytes here. Marshalling a
+// portable.Manifest instead would silently drop every field the struct does not
+// model, which on a v2 file is its entire transcript descriptor set.
+func EncodePayloadBytes(rawJSON []byte, chunkSize int) (EncodedPayload, error) {
 	var compressed bytes.Buffer
 	gzw := gzip.NewWriter(&compressed)
 	if _, err := gzw.Write(rawJSON); err != nil {
@@ -227,6 +369,13 @@ func ChunkString(value string, size int) []string {
 }
 
 func MeetingIDFromPCMHash(hash string) string {
+	return MeetingIDFromAudioHash(hash)
+}
+
+// MeetingIDFromAudioHash derives the stable meeting identity from the
+// canonical compressed Opus digest. MeetingIDFromPCMHash remains as a legacy
+// alias for callers reading pre-opus-digest manifests.
+func MeetingIDFromAudioHash(hash string) string {
 	hash = strings.ToLower(strings.TrimSpace(hash))
 	if hash == "" {
 		return ""
@@ -251,25 +400,25 @@ func BuildOpusTags(manifest Manifest, payload EncodedPayload) map[string]string 
 		"CASSINI_PAYLOAD_SHA256":      payload.SHA256,
 		"CASSINI_PAYLOAD_RAW_BYTES":   fmt.Sprintf("%d", payload.RawBytes),
 		"CASSINI_PAYLOAD_GZIP_BYTES":  fmt.Sprintf("%d", payload.CompressedBytes),
-		"CASSINI_AUDIO_PCM_FORMAT":    AudioPCMFormat,
 		"CASSINI_AUDIO_SAMPLE_RATE":   fmt.Sprintf("%d", manifest.Audio.SampleRate),
 		"CASSINI_AUDIO_CHANNELS":      fmt.Sprintf("%d", manifest.Audio.Channels),
 		"CASSINI_AUDIO_SAMPLE_COUNT":  fmt.Sprintf("%d", manifest.Audio.SampleCount),
 		"CASSINI_AUDIO_DURATION_MS":   fmt.Sprintf("%d", manifest.Audio.DurationMS),
-		"CASSINI_AUDIO_PCM_SHA256":    manifest.Integrity.PCMSHA256,
-		"CASSINI_AUDIO_MATCH_POLICY":  AudioMatchPolicy,
 		"CASSINI_DECODE_HINT":         DecodeHint,
 		"CASSINI_MEETING_ID":          manifest.Meeting.ID,
 		"CASSINI_CREATED_AT":          manifest.Meeting.CreatedAtUTC,
 		"CASSINI_SPEAKER_COUNT":       fmt.Sprintf("%d", len(manifest.Speakers)),
 		"CASSINI_WORD_COUNT":          fmt.Sprintf("%d", manifest.Transcript.WordCount),
 	}
+	applyAudioIntegrityTags(tags, manifest.Integrity)
 	if manifest.Meeting.RecordedAtLocal != "" {
 		tags["CASSINI_RECORDED_AT_LOCAL"] = manifest.Meeting.RecordedAtLocal
 	}
 	if manifest.Meeting.ProcessedAtUTC != "" {
 		tags["CASSINI_PROCESSED_AT"] = manifest.Meeting.ProcessedAtUTC
 	}
+	applyRoomTags(tags, manifest.Meeting)
+	applyProvenanceTags(tags, manifest.Meeting)
 
 	language := firstNonEmpty(manifest.Transcript.Language, manifest.Meeting.Language)
 	if language != "" {
@@ -279,12 +428,102 @@ func BuildOpusTags(manifest Manifest, payload EncodedPayload) map[string]string 
 	if manifest.Provenance != nil {
 		applyProcessingStepTags(tags, "CASSINI_STT", manifest.Provenance.SpeechToText)
 		applyProcessingStepTags(tags, "CASSINI_READABLE", manifest.Provenance.ReadableCleanup)
+		applyAttributionProvenanceTags(tags, manifest.Provenance.Attribution)
 	}
 
 	for idx, chunk := range payload.Chunks {
 		tags[fmt.Sprintf("CASSINI_PAYLOAD_%03d", idx)] = chunk
 	}
 	return tags
+}
+
+func applyAudioIntegrityTags(tags map[string]string, integrity Integrity) {
+	policy := integrity.MatchPolicy
+	if policy == "" {
+		if integrity.OpusSHA256 != "" {
+			policy = AudioMatchPolicy
+		} else if integrity.PCMSHA256 != "" {
+			policy = LegacyAudioMatchPolicyPCM
+		}
+	}
+	if policy != "" {
+		tags["CASSINI_AUDIO_MATCH_POLICY"] = policy
+	}
+	if integrity.OpusSHA256 != "" {
+		tags["CASSINI_AUDIO_OPUS_SHA256"] = integrity.OpusSHA256
+	}
+	if integrity.PCMSHA256 != "" {
+		pcmFormat := integrity.PCMFormat
+		if pcmFormat == "" {
+			pcmFormat = AudioPCMFormat
+		}
+		tags["CASSINI_AUDIO_PCM_FORMAT"] = pcmFormat
+		tags["CASSINI_AUDIO_PCM_SHA256"] = integrity.PCMSHA256
+	}
+}
+
+// applyRoomTags mirrors the meeting's room onto plain OpusTags, and only when
+// there is one to mirror.
+//
+// The room is already in the gzipped CASSINI_PAYLOAD_* manifest, so these tags
+// are strictly redundant for a Go or Node reader. They exist for the readers
+// that are neither: reading the room out of the payload means concatenating N
+// chunks, base64url-decoding, gunzipping and parsing JSON, which is a program
+// — while these tags fall out of one `ffprobe -show_entries format_tags` call.
+// The catalog backfill (D-622) is a shell script for exactly that reason, and
+// so is anything an operator writes at a terminal.
+//
+// Absent rather than empty when unknown: an empty CASSINI_ROOM_ID would read as
+// "this meeting has a room whose id is the empty string", and a consumer
+// checking presence would have to know to also check emptiness.
+func applyRoomTags(tags map[string]string, meeting Meeting) {
+	if meeting.RoomID != "" {
+		tags["CASSINI_ROOM_ID"] = meeting.RoomID
+	}
+	if meeting.RoomName != "" {
+		tags["CASSINI_ROOM_NAME"] = meeting.RoomName
+	}
+}
+
+// applyProvenanceTags mirrors which job and attempt produced the file, for the
+// same reason applyRoomTags exists: one `ffprobe -show_entries format_tags`
+// call, no program required.
+//
+// Both are absent rather than empty when unknown. CASSINI_ATTEMPT_NUMBER is
+// omitted for any non-positive value — attempts are 1-based, so a zero is
+// "nobody told us" and writing it would assert an attempt that cannot exist.
+func applyProvenanceTags(tags map[string]string, meeting Meeting) {
+	if meeting.JobID != "" {
+		tags["CASSINI_JOB_ID"] = meeting.JobID
+	}
+	if meeting.AttemptNumber > 0 {
+		tags["CASSINI_ATTEMPT_NUMBER"] = fmt.Sprintf("%d", meeting.AttemptNumber)
+	}
+}
+
+// applyAttributionProvenanceTags mirrors the attribution stage's record onto
+// plain OpusTags, following the same convention as the CASSINI_STT_* and
+// CASSINI_READABLE_* mirrors above it: the payload manifest's
+// provenance.attribution is the record, these tags are the one-ffprobe-call
+// convenience. In drop mode that record is the only remaining trace of the
+// deleted words, so the mirror matters more here, not less.
+func applyAttributionProvenanceTags(tags map[string]string, attribution *AttributionProvenance) {
+	if attribution == nil {
+		return
+	}
+	tags["CASSINI_ATTRIBUTION_RAN"] = fmt.Sprintf("%t", attribution.Ran)
+	if attribution.Mode != "" {
+		tags["CASSINI_ATTRIBUTION_MODE"] = attribution.Mode
+	}
+	if attribution.Reason != "" {
+		tags["CASSINI_ATTRIBUTION_REASON"] = attribution.Reason
+	}
+	tags["CASSINI_ATTRIBUTION_WORDS_MEASURED"] = fmt.Sprintf("%d", attribution.WordsMeasured)
+	tags["CASSINI_ATTRIBUTION_WORDS_FLAGGED"] = fmt.Sprintf("%d", attribution.WordsFlagged)
+	tags["CASSINI_ATTRIBUTION_WORDS_DROPPED"] = fmt.Sprintf("%d", attribution.WordsDropped)
+	if attribution.ThresholdDB != nil {
+		tags["CASSINI_ATTRIBUTION_THRESHOLD_DB"] = fmt.Sprintf("%g", *attribution.ThresholdDB)
+	}
 }
 
 func applyProcessingStepTags(tags map[string]string, prefix string, step *ProcessingStep) {

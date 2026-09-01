@@ -55,6 +55,16 @@ type publishDelivery struct {
 	// knowing anything about sealing, so every destination — including ones that
 	// land later — inherits the guarantee. Empty means "nothing to check".
 	AssetDigests map[string]string
+	// RoomName is the conversation's display name as it stands NOW, resolved
+	// from the job's Talk binding at publish time (D-640). It is the one thing
+	// about a meeting that the artifact deliberately does not carry, because a
+	// display name is editable and a sealed recording is not — so a rename
+	// reaches the archive on the room's next publish rather than by rewriting
+	// every file it ever produced.
+	//
+	// Empty is normal: a non-Talk job has no room, and a job whose room lookup
+	// failed has no name. It never erases a name an earlier publish resolved.
+	RoomName string
 }
 
 // publishSink delivers a published meeting to one destination.
@@ -153,7 +163,7 @@ func (s *localPublishSink) Deliver(_ context.Context, d publishDelivery) (string
 	if err != nil {
 		return "", err
 	}
-	merged, err := upsertSiteCatalog(existing, incoming)
+	merged, err := upsertSiteCatalog(existing, incoming, catalogEntryOverlay{RoomName: d.RoomName})
 	if err != nil {
 		return "", err
 	}

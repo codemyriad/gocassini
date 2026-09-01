@@ -2,6 +2,7 @@ package operator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,14 +10,23 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
 
-const defaultBuildWorkerCount = 1
+const (
+	defaultBuildWorkerCount        = 1
+	defaultBuildResourceRetryDelay = 15 * time.Second
+	maxBuildResourceRetryDelay     = 15 * time.Minute
+	// Sixteen bounded deferrals cover about 2h46m, so a normal hour-scale
+	// neighbor workload on a shared GPU does not strand a valid recording.
+	defaultMaxBuildResourceDeferrals = 16
+)
 
 type buildTask struct {
 	JobID           string
 	AttemptNumber   int
 	ArtifactRunPath string
+	DeferralCount   int
 }
 
 func (rt *Runtime) startBuildWorkers() {
@@ -39,8 +49,17 @@ func (rt *Runtime) buildWorker(index int) {
 }
 
 func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
+	// MaxBuildWorkers controls queue consumers, not simultaneous GPU inference.
+	// Hold one process-wide admission lock across claim, resource checks, and the
+	// complete build so two workers cannot both observe the same RAM/VRAM as free.
+	rt.buildExecutionMu.Lock()
+	defer rt.buildExecutionMu.Unlock()
+	if rt.ctx.Err() != nil {
+		return
+	}
+
 	startedAt := nowUTCString()
-	claimed, err := rt.store.ClaimBuildRunning(context.Background(), task.JobID, startedAt)
+	claimed, err := rt.store.ClaimBuildRunning(context.Background(), task, startedAt)
 	if err != nil {
 		rt.logger.Printf("build start update failed id=%s worker=%d: %v", task.JobID, workerIndex, err)
 		return
@@ -57,6 +76,51 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 	attemptMeetingPath, err := rt.buildJobFn(rt.ctx, task)
 	finishedAt := nowUTCString()
 	if err != nil {
+		var unavailable *resourceUnavailableError
+		if errors.As(err, &unavailable) {
+			maxDeferrals := rt.maxBuildResourceDeferrals
+			if maxDeferrals <= 0 {
+				maxDeferrals = defaultMaxBuildResourceDeferrals
+			}
+			nextDeferral := task.DeferralCount + 1
+			if unavailable.permanent || nextDeferral > maxDeferrals {
+				blocked, blockErr := rt.store.MarkBuildBlocked(
+					context.Background(), task, strings.TrimSpace(unavailable.Error()), finishedAt,
+				)
+				if blockErr != nil {
+					rt.logger.Printf("build resource block update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, blockErr)
+					return
+				}
+				if !blocked {
+					rt.logger.Printf("build resource block skipped id=%s attempt=%d worker=%d: job is no longer build/running", task.JobID, task.AttemptNumber, workerIndex)
+					return
+				}
+				reason := "permanent resource condition"
+				if !unavailable.permanent {
+					reason = fmt.Sprintf("retry ceiling reached after %d deferrals", task.DeferralCount)
+				}
+				rt.logger.Printf("build blocked id=%s attempt=%d worker=%d (%s): %v", task.JobID, task.AttemptNumber, workerIndex, reason, unavailable)
+				return
+			}
+			delay := exponentialBuildRetryDelay(rt.buildResourceRetryDelay, nextDeferral)
+			retryNotBefore := time.Now().UTC().Add(delay)
+			deferred, deferErr := rt.store.MarkBuildDeferred(
+				context.Background(), task, nextDeferral, strings.TrimSpace(unavailable.Error()),
+				finishedAt, formatUTCString(retryNotBefore),
+			)
+			if deferErr != nil {
+				rt.logger.Printf("build resource defer update failed id=%s attempt=%d worker=%d: %v", task.JobID, task.AttemptNumber, workerIndex, deferErr)
+				return
+			}
+			if !deferred {
+				rt.logger.Printf("build resource defer skipped id=%s attempt=%d worker=%d: job is no longer build/running", task.JobID, task.AttemptNumber, workerIndex)
+				return
+			}
+			task.DeferralCount = nextDeferral
+			rt.logger.Printf("build deferred id=%s attempt=%d worker=%d count=%d retry_in=%s: %v", task.JobID, task.AttemptNumber, workerIndex, nextDeferral, delay, unavailable)
+			rt.scheduleDeferredBuild(task, retryNotBefore)
+			return
+		}
 		detail := rt.extractBuildFailureDetail(attemptMeetingPath, err)
 		rt.logger.Printf("build failed id=%s attempt=%d worker=%d: %s", task.JobID, task.AttemptNumber, workerIndex, detail)
 		if updateErr := rt.store.MarkBuildFailed(context.Background(), task.JobID, attemptMeetingPath, detail, finishedAt); updateErr != nil {
@@ -64,16 +128,20 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		}
 		return
 	}
-	// Stamp the Talk room name into the ATTEMPT bundle, before it is promoted.
-	// The seal that follows packs this bundle and the promoted copy inherits the
-	// stamp, so one write names both — and the name reaches the `.opus` the
-	// viewer reads rather than only the bundle nobody publishes any more (D-462).
-	// Best-effort: a failed stamp costs the name, never the meeting.
-	meetingTitle := rt.talkRoomNameForJob(task.JobID)
-	if meetingTitle != "" {
-		if err := SetMeetingBundleTitle(attemptMeetingPath, meetingTitle); err != nil {
-			rt.logger.Printf("meeting title stamp failed id=%s meeting=%s: %v (viewer falls back to Untitled meeting)", task.JobID, attemptMeetingPath, err)
-		}
+	// Stamp the Talk room into the ATTEMPT bundle, before it is promoted. The
+	// seal that follows packs this bundle and the promoted copy inherits the
+	// stamp, so one write names both — and it reaches the `.opus` the viewer
+	// reads rather than only the bundle nobody publishes any more (D-462).
+	//
+	// The room's name is also the meeting title, and its token is what the
+	// published room id is derived from (D-622). The job and attempt go on the
+	// same stamp (D-640), and unconditionally: a bundle always has a job, even
+	// when it has no room, and it is the only lineage a `.opus` published
+	// through `cassini publish <bundle>` would otherwise carry.
+	// Best-effort: a failed stamp costs the room, never the meeting.
+	roomToken, meetingTitle := rt.talkRoomForJob(task.JobID)
+	if err := SetMeetingBundleRoom(attemptMeetingPath, meetingTitle, roomToken, meetingTitle, task.JobID, task.AttemptNumber); err != nil {
+		rt.logger.Printf("meeting room stamp failed id=%s meeting=%s: %v (viewer falls back to Untitled meeting; the meeting will carry no room)", task.JobID, attemptMeetingPath, err)
 	}
 	canonicalMeetingPath, promoteErr := promoteMeetingBundle(rt.cfg.WorkRoot, attemptMeetingPath, task.JobID)
 	if promoteErr != nil {
@@ -98,6 +166,56 @@ func (rt *Runtime) runBuildJob(task buildTask, workerIndex int) {
 		return
 	}
 	rt.logger.Printf("build succeeded id=%s attempt=%d worker=%d attempt_meeting=%s canonical_meeting=%s seal_queued_at=%s", task.JobID, task.AttemptNumber, workerIndex, attemptMeetingPath, canonicalMeetingPath, finishedAt)
+}
+
+func exponentialBuildRetryDelay(base time.Duration, deferralCount int) time.Duration {
+	if base <= 0 {
+		base = defaultBuildResourceRetryDelay
+	}
+	if deferralCount < 1 {
+		deferralCount = 1
+	}
+	delay := base
+	for count := 1; count < deferralCount && delay < maxBuildResourceRetryDelay; count++ {
+		if delay > maxBuildResourceRetryDelay/2 {
+			return maxBuildResourceRetryDelay
+		}
+		delay *= 2
+	}
+	if delay > maxBuildResourceRetryDelay {
+		return maxBuildResourceRetryDelay
+	}
+	return delay
+}
+
+// scheduleDeferredBuild waits for the exponentially calculated retry time
+// before redelivery. The durable row remains build/queued throughout. Waiting
+// in a goroutine avoids occupying the sole build worker, and the blocking
+// channel handoff (bounded by shutdown) guarantees delivery even when the
+// requeue dispatcher's duplicate tracker still remembers the original handoff.
+func (rt *Runtime) scheduleDeferredBuild(task buildTask, retryNotBefore time.Time) {
+	go func() {
+		delay := time.Until(retryNotBefore)
+		if delay < 0 {
+			delay = 0
+		}
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-rt.ctx.Done():
+			return
+		case <-timer.C:
+		}
+		// Prefer shutdown over delivery when both become ready together.
+		if rt.ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-rt.ctx.Done():
+		case rt.buildQueue <- task:
+			rt.logger.Printf("build resource retry queued id=%s attempt=%d", task.JobID, task.AttemptNumber)
+		}
+	}()
 }
 
 // enqueueBuildJob durably marks the job build/queued and hands it to a worker
@@ -133,18 +251,29 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	}
 
 	// Resource governor: never let a build starve or OOM the host (the ExApp can
-	// run uncapped next to Nextcloud/Talk). Wait — bounded — for RAM headroom,
-	// then size STT threads and the GPU choice to what is actually available.
+	// run uncapped next to Nextcloud/Talk). Reject a missing CUDA runtime/device
+	// before waiting for RAM: a portable image can never become eligible merely
+	// because host memory frees up. Then wait — bounded — for RAM headroom.
 	limits := resourceLimitsFromEnv()
+	if admissionErr := rt.buildCUDAAdmission(); admissionErr != nil {
+		return meetingPath, admissionErr
+	}
 	if err := limits.waitForMemory(ctx, rt.logger.Printf); err != nil {
+		return meetingPath, err
+	}
+	// Probe free VRAM only after any RAM wait, immediately before launch. That
+	// reading is an admission snapshot; taking it before a long memory wait
+	// would let another workload consume the GPU in between.
+	env := rt.currentSettings().ChildEnv(os.Environ())
+	buildEnv, err := limits.applyToEnv(env, true)
+	if err != nil {
 		return meetingPath, err
 	}
 
 	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "build", task.ArtifactRunPath, "--out", meetingPath)
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
-	env := rt.currentSettings().ChildEnv(os.Environ())
-	cmd.Env = limits.applyToEnv(env, rt.buildIntendsCUDA(), rt.logger.Printf)
+	cmd.Env = buildEnv
 	// Kill the whole process group on ctx cancel so transcriber/ffmpeg
 	// grandchildren don't outlive the build.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

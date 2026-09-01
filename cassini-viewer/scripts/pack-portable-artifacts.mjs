@@ -1,13 +1,25 @@
-import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
+// Pack every ready `.meeting` bundle in --source-dir into a portable `.opus`
+// file in --output-dir by delegating to `cassini pack` (set CASSINI_BIN to
+// point at the binary; default: `cassini` on PATH).
+//
+// Input contract (changed when #219 delegated production to the Go packer):
+// a directory is packed only when it is a bundle `cassini pack` accepts — a
+// `cassini.json` whose kind is "meeting" and whose state is ready (or unset),
+// alongside `meeting.webm`, `transcript.words.v1.json`, and `manifest.json`.
+// Before #219 this script was its own portable producer and accepted the
+// legacy viewer-artifact shape (`meeting.opus` + `transcript.words.v1.json`);
+// the Go packer refuses that shape, so those directories are now reported and
+// skipped rather than handed to a command guaranteed to fail. Rebuild a legacy
+// artifact into a `.meeting` bundle with `cassini build` before packing it.
+//
+// Discovery here is a shallow readiness screen so we never invoke the packer
+// on a directory it categorically rejects; `cassini pack` remains the
+// authority and still validates the bundle in depth (manifest `files` map,
+// audio integrity, ...).
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-import { buildDisplayTranscriptFromArtifacts, groupTranscriptSegmentsAsReadable } from "./export-static-meetings.mjs";
-import { buildOpusTags, encodeManifest, normalizeManifest, rewritePortableTags } from "./repack-portable-display-transcripts.mjs";
-
-const DEFAULT_CHUNK_SIZE = 4096;
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   await main();
@@ -15,15 +27,25 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 
 export async function main(argv = process.argv.slice(2)) {
   const { outputDir, sourceDir } = parseArgs(argv);
-  const artifactDirs = listArtifactDirectories(sourceDir);
-  if (artifactDirs.length === 0) {
-    throw new Error(`No artifact directories found in ${sourceDir}`);
+  const { bundleDirs, legacyDirs } = discoverArtifactDirectories(sourceDir);
+  for (const legacyDir of legacyDirs) {
+    console.warn(
+      `skip ${legacyDir}: legacy portable artifact (meeting.opus without a ready cassini.json bundle); ` +
+        "`cassini pack` needs a ready .meeting bundle — rebuild it with `cassini build` first",
+    );
+  }
+  if (bundleDirs.length === 0) {
+    const legacyNote =
+      legacyDirs.length > 0
+        ? ` (${legacyDirs.length} legacy artifact director${legacyDirs.length === 1 ? "y" : "ies"} skipped — see warnings above)`
+        : "";
+    throw new Error(`No ready .meeting bundles found in ${sourceDir}${legacyNote}`);
   }
 
   mkdirSync(outputDir, { recursive: true });
-  for (const artifactDir of artifactDirs) {
-    const outputPath = join(outputDir, `${canonicalPortableMeetingName(artifactDir)}.opus`);
-    const result = await packArtifactDirectory(artifactDir, outputPath);
+  for (const bundleDir of bundleDirs) {
+    const outputPath = join(outputDir, `${canonicalPortableMeetingName(bundleDir)}.opus`);
+    const result = await packArtifactDirectory(bundleDir, outputPath);
     console.log(`${result.status} ${outputPath}`);
   }
 }
@@ -67,244 +89,69 @@ export function parseArgs(argv) {
   return { outputDir, sourceDir };
 }
 
-export function listArtifactDirectories(sourceDir) {
+// Mirrors the Go packer's input gate (internal/cassini: LoadMeetingBundle,
+// bundleIsReady, validateReadyMeetingBundleContents): a cassini.json of kind
+// "meeting" whose state is "ready" (or unset, which the packer treats as
+// ready), plus the three files every ready bundle carries. Deeper checks —
+// the artifact manifest's `files` map naming only existing files — stay with
+// `cassini pack` itself.
+export function isReadyMeetingBundle(dir) {
+  const manifestPath = join(dir, "cassini.json");
+  if (!existsSync(manifestPath)) {
+    return false;
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  } catch {
+    return false;
+  }
+  if (String(manifest?.kind ?? "").toLowerCase() !== "meeting") {
+    return false;
+  }
+  const state = String(manifest?.state ?? "").trim().toLowerCase();
+  if (state !== "" && state !== "ready") {
+    return false;
+  }
+  return ["meeting.webm", "transcript.words.v1.json", "manifest.json"].every((name) =>
+    existsSync(join(dir, name)),
+  );
+}
+
+// The shape this script consumed before #219, when it produced portable files
+// itself. The Go packer refuses it, so discovery reports it instead of
+// packing it.
+export function isLegacyPortableArtifact(dir) {
+  return existsSync(join(dir, "meeting.opus")) && existsSync(join(dir, "transcript.words.v1.json"));
+}
+
+export function discoverArtifactDirectories(sourceDir) {
   if (!existsSync(sourceDir)) {
     throw new Error(`Missing source directory: ${sourceDir}`);
   }
   if (!statSync(sourceDir).isDirectory()) {
     throw new Error(`Source path must be a directory: ${sourceDir}`);
   }
-  return readdirSync(sourceDir, { withFileTypes: true })
+  const candidates = readdirSync(sourceDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
     .map((entry) => join(sourceDir, entry.name))
-    .filter((entry) => existsSync(join(entry, "transcript.words.v1.json")) && existsSync(join(entry, "meeting.opus")))
     .sort();
-}
-
-export async function packArtifactDirectory(artifactDir, outputPath) {
-  const artifact = loadArtifactMeeting(artifactDir);
-  const audioIdentity = await computeAudioIdentity(artifact.audioPath);
-  const manifest = buildPortableManifestFromArtifact(artifact, outputPath, audioIdentity);
-  const payload = encodeManifest(manifest, DEFAULT_CHUNK_SIZE);
-  const tags = buildOpusTags(manifest, payload);
-  rewritePortableTags(artifact.audioPath, outputPath, tags);
-  return { status: "write" };
-}
-
-export function buildPortableManifestFromArtifact(artifact, outputPath, audioIdentity) {
-  const title = basename(outputPath, extname(outputPath)) || basename(artifact.rootDir);
-  const createdAtUtc = safeToString(artifact.manifest?.generatedAt) || new Date().toISOString();
-  const recordedAtLocal =
-    safeToString(artifact.manifest?.source?.recordedAtLocal) ||
-    inferRecordedAtLocal(
-      safeToString(artifact.manifest?.source?.basename) || canonicalPortableMeetingName(artifact.rootDir),
-    );
-  const transcript = artifact.transcript;
-  const readableTranscript = artifact.readableTranscript ?? {
-    version: "transcript.readable.v1",
-    media: { ...(transcript.media ?? {}) },
-    speakers: Array.isArray(transcript?.speakers) ? transcript.speakers : [],
-    sourceTranscriptVersion: transcript.version ?? "transcript.words.v1",
-    segments: groupTranscriptSegmentsAsReadable(Array.isArray(transcript?.segments) ? transcript.segments : []),
-  };
-  const displayTranscript = artifact.displayTranscript ?? buildDisplayTranscriptFromArtifacts(transcript, readableTranscript);
-  const items = flattenPortableTranscriptItems(transcript);
-
-  return normalizeManifest({
-    meeting: {
-      id: audioIdentity.pcmSha256 ? `mtg_${audioIdentity.pcmSha256}` : "",
-      title,
-      createdAtUtc,
-      recordedAtLocal,
-      processedAtUtc: createdAtUtc,
-      durationMs: audioIdentity.durationMs,
-    },
-    audio: {
-      container: "ogg",
-      codec: "opus",
-      sampleRate: audioIdentity.sampleRate,
-      channels: audioIdentity.channels,
-      sampleCount: audioIdentity.sampleCount,
-      durationMs: audioIdentity.durationMs,
-    },
-    integrity: {
-      matchPolicy: "exact-pcm",
-      pcmFormat: "s16le",
-      pcmSha256: audioIdentity.pcmSha256,
-      sampleRate: audioIdentity.sampleRate,
-      channels: audioIdentity.channels,
-      sampleCount: audioIdentity.sampleCount,
-      durationMs: audioIdentity.durationMs,
-    },
-    speakers: Array.isArray(transcript?.speakers) ? transcript.speakers : [],
-    transcript: {
-      format: "cassini.words.v1",
-      language: safeToString(transcript?.language),
-      wordCount: items.length,
-      items,
-    },
-    provenance: artifact.manifest?.provenance,
-    readableTranscript,
-    displayTranscript,
-  });
-}
-
-export function flattenPortableTranscriptItems(transcript) {
-  const segments = Array.isArray(transcript?.segments) ? transcript.segments : [];
-  const items = [];
-  for (const segment of segments) {
-    const words = Array.isArray(segment?.words) ? segment.words : [];
-    if (words.length === 0) {
-      const text = safeToString(segment?.text).trim();
-      if (!text) {
-        continue;
-      }
-      items.push({
-        speaker: safeToString(segment?.speaker),
-        startMs: safeToInt(segment?.startMs, 0),
-        endMs: safeToInt(segment?.endMs, safeToInt(segment?.startMs, 0)),
-        text,
-      });
-      continue;
-    }
-    for (const word of words) {
-      const text = safeToString(word?.text).trim();
-      if (!text) {
-        continue;
-      }
-      items.push({
-        speaker: safeToString(segment?.speaker),
-        startMs: safeToInt(word?.startMs, 0),
-        endMs: safeToInt(word?.endMs, safeToInt(word?.startMs, 0)),
-        text,
-      });
-    }
-  }
-  return items;
-}
-
-function loadArtifactMeeting(rootDir) {
-  const manifestPath = join(rootDir, "manifest.json");
-  const transcriptPath = join(rootDir, "transcript.words.v1.json");
-  const readablePath = join(rootDir, "transcript.readable.v1.json");
-  const displayPath = join(rootDir, "transcript.display.v1.json");
   return {
-    rootDir,
-    audioPath: join(rootDir, "meeting.opus"),
-    manifest: existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, "utf8")) : {},
-    transcript: JSON.parse(readFileSync(transcriptPath, "utf8")),
-    readableTranscript: existsSync(readablePath) ? JSON.parse(readFileSync(readablePath, "utf8")) : null,
-    displayTranscript: existsSync(displayPath) ? JSON.parse(readFileSync(displayPath, "utf8")) : null,
+    bundleDirs: candidates.filter((dir) => isReadyMeetingBundle(dir)),
+    legacyDirs: candidates.filter((dir) => !isReadyMeetingBundle(dir) && isLegacyPortableArtifact(dir)),
   };
 }
 
-async function computeAudioIdentity(audioPath) {
-  const stream = await probeFirstAudioStream(audioPath);
-  const sampleRate = safeToInt(stream?.sample_rate, 0);
-  const channels = safeToInt(stream?.channels, 0);
-  const pcmSha256 = await hashDecodedPcm(audioPath);
-  const durationSeconds = Number.parseFloat(String(stream?.duration ?? "0"));
-  const durationMs = Number.isFinite(durationSeconds) ? Math.round(durationSeconds * 1000) : 0;
-  const sampleCount = sampleRate > 0 ? Math.round((durationMs * sampleRate) / 1000) : 0;
-  return { pcmSha256, sampleRate, channels, sampleCount, durationMs };
+export function listArtifactDirectories(sourceDir) {
+  return discoverArtifactDirectories(sourceDir).bundleDirs;
 }
 
-function probeFirstAudioStream(audioPath) {
-  return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn("ffprobe", [
-      "-v",
-      "error",
-      "-show_entries",
-      "stream=sample_rate,channels,duration",
-      "-of",
-      "json",
-      audioPath,
-    ]);
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString("utf8");
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.on("error", rejectPromise);
-    child.on("close", (code) => {
-      if (code !== 0) {
-        rejectPromise(new Error(`ffprobe failed for ${audioPath}: ${stderr.trim()}`));
-        return;
-      }
-      resolvePromise(JSON.parse(stdout)?.streams?.[0] ?? {});
-    });
-  });
-}
-
-function hashDecodedPcm(audioPath) {
-  return new Promise((resolvePromise, rejectPromise) => {
-    const hash = createHash("sha256");
-    const child = spawn("ffmpeg", [
-      "-v",
-      "error",
-      "-i",
-      audioPath,
-      "-f",
-      "s16le",
-      "-acodec",
-      "pcm_s16le",
-      "-",
-    ]);
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      hash.update(chunk);
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString("utf8");
-    });
-    child.on("error", rejectPromise);
-    child.on("close", (code) => {
-      if (code !== 0) {
-        rejectPromise(new Error(`ffmpeg failed for ${audioPath}: ${stderr.trim()}`));
-        return;
-      }
-      resolvePromise(hash.digest("hex"));
-    });
-  });
-}
-
-function safeToInt(value, fallback) {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.trunc(value);
-  }
-  if (typeof value === "string") {
-    const parsed = Number.parseInt(value, 10);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-  return fallback;
-}
-
-function safeToString(value) {
-  return typeof value === "string" ? value : "";
-}
-
-export function inferRecordedAtLocal(value) {
-  const raw = safeToString(value).trim();
-  const text = raw ? basename(raw, extname(raw)) : "";
-  if (!text) {
-    return "";
-  }
-  const compact = /^(.*)--(\d{8})T(\d{2})(\d{2})(\d{2})$/.exec(text);
-  if (compact) {
-    return `${compact[2].slice(0, 4)}-${compact[2].slice(4, 6)}-${compact[2].slice(6, 8)}T${compact[3]}:${compact[4]}:${compact[5]}`;
-  }
-  const doubled = /^(.*)--(\d{4})-(\d{2})-(\d{2})--(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(text);
-  if (doubled) {
-    return `${doubled[2]}-${doubled[3]}-${doubled[4]}T${doubled[5]}:${doubled[6]}:${doubled[7] || "00"}`;
-  }
-  const embedded = /^(.*)-(\d{4})-(\d{2})-(\d{2})--(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(text);
-  if (embedded) {
-    return `${embedded[2]}-${embedded[3]}-${embedded[4]}T${embedded[5]}:${embedded[6]}:${embedded[7] || "00"}`;
-  }
-  return "";
+export async function packArtifactDirectory(artifactDir, outputPath, runCassini = execFileSync) {
+  // Keep one portable producer. The Go packer owns the v3 manifest, canonical
+  // compressed-Opus identity, and the post-remux integrity check. Reimplementing
+  // those rules here previously left this maintenance command producing v1
+  // exact-PCM files after the application had moved on.
+  const cassiniBin = String(process.env.CASSINI_BIN ?? "cassini").trim() || "cassini";
+  runCassini(cassiniBin, ["pack", artifactDir, "--out", outputPath], { stdio: "inherit" });
+  return { status: "write" };
 }

@@ -33,6 +33,9 @@ Optional capability pass-through:
 | `SUMMARY_MODEL` | summary generation model |
 | `CASSINI_SUMMARY_DISABLED` | disable summary generation |
 | `CASSINI_READABLE_STRICT_BATCHES` | readable cleanup behavior |
+| `CASSINI_STT_BACKEND` | speech-to-text engine id (default `sherpa-onnx`; unknown ids fail the build loudly) |
+| `CASSINI_ATTRIBUTION_DISABLED` | skip the cross-track speaker-attribution measurement |
+| `CASSINI_ATTRIBUTION_DROP` | delete words the attribution evidence contradicts instead of annotating them |
 
 The base URL is what enables these steps; the API key is optional, so a
 self-hosted OpenAI-compatible endpoint with no authentication works.

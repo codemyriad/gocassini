@@ -57,6 +57,8 @@ jobs:
         # deny-list predicate, the load-bearing empty-path guard, and a drift
         # assertion that this deny-list still matches ci.yml's paths-ignore (D-505).
         run: ./scripts/test-classify-image-relevance.sh
+      - name: Test newest-stable FFmpeg resolver
+        run: ./deployment/ffmpeg/test-resolve-latest.sh
       - name: Run offline harness regressions
         run: |
           ./harness/bin/test-base-helpers.sh
@@ -79,6 +81,10 @@ jobs:
       - name: Shellcheck D-453 contract scripts
         run: >-
           shellcheck
+          deployment/ffmpeg/resolve-latest.sh
+          deployment/ffmpeg/build.sh
+          deployment/ffmpeg/test-resolve-latest.sh
+          harness/bin/ci-ffmpeg-bundle.sh
           scripts/test-info-schema.sh
           harness/bin/lib-exapp-manifest.sh
           harness/bin/test-exapp-image-ref.sh

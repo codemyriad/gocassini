@@ -212,6 +212,18 @@ func stagePublishInput(ctx context.Context, inputPath string) (string, string, [
 		}
 		if err := packMeetingBundle(ctx, sourceDir, target, portablePackOptions{
 			Title: packTitle,
+			// The room comes from the same stamped manifest as the title, and
+			// for the same reason: publishing a `.meeting` bundle directly is a
+			// second path to a published meeting, and a meeting that reached the
+			// catalog this way would otherwise be the only kind that silently
+			// lost its room (D-622).
+			RoomToken: strings.TrimSpace(bundle.Manifest.RoomToken),
+			RoomName:  strings.TrimSpace(bundle.Manifest.RoomName),
+			// Same reasoning for the provenance (D-640): a meeting that
+			// reached the catalog through this path would otherwise be the
+			// only kind that cannot say which job produced it.
+			JobID:         strings.TrimSpace(bundle.Manifest.JobID),
+			AttemptNumber: bundle.Manifest.AttemptNumber,
 		}); err != nil {
 			return fmt.Errorf("pack meeting bundle %s: %w", sourceDir, err)
 		}

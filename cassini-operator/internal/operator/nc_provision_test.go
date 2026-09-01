@@ -318,8 +318,17 @@ func TestProvisionFreshUsesEveryoneAndDedicatedOwner(t *testing.T) {
 		if r.auth != adminAuth {
 			t.Errorf("create folder auth = %q, want act-as-administrator", r.auth)
 		}
-		if !strings.Contains(r.body, "acl_default_no_permission=1") || !strings.Contains(r.body, "mountpoint=Cassini") {
-			t.Errorf("create folder body = %q, want Cassini default-deny", r.body)
+		if !strings.Contains(r.body, "mountpoint=Cassini") {
+			t.Errorf("create folder body = %q, want the Cassini mount point", r.body)
+		}
+		// The flag must NOT be sent (D-612). On Group Folders v21+ it pins the
+		// base permission at READ, making every recording in the folder
+		// permanently undeletable and un-moveable by every account, including
+		// administrators — and there is no setter, so a folder created with it
+		// can only be recreated. The explicit root ACL provisioning writes a few
+		// steps later gives the same effective permissions without that.
+		if strings.Contains(r.body, "acl_default_no_permission") {
+			t.Errorf("create folder body = %q, must not set the default-deny flag", r.body)
 		}
 	}
 
@@ -927,5 +936,83 @@ func TestProvisionSurfacesARefusedFolderCreate(t *testing.T) {
 	}
 	if !strings.Contains(out, "groupfolders:create") {
 		t.Errorf("the refusal must name the recovery; got: %s", out)
+	}
+}
+
+// A Nextcloud whose Team folder is already correct must provision cleanly, even
+// when every Group Folders write is refused.
+//
+// This is the case every Nextcloud 34+ install lands in: password confirmation
+// blocks the writes, an administrator builds the topology by hand, and from then
+// on provisioning has nothing to do. Before this fix it failed anyway —
+// ensureFolderGroup re-asserted a mapping that was already present, took the
+// 403, and reported the substrate degraded on an instance that was entirely
+// correct. Observed on the sandbox against real Nextcloud 34:
+//
+//	nc provision: add group "everyone" to folder=1 -> OCS 403: Password confirmation is required
+//
+// with the folder already reading cassini=31, everyone=1, acl=true, manage=cassini.
+func TestProvisionAdoptsAFolderThatIsAlreadyCorrect(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	mock := &provisionMock{
+		// Exactly the topology provisioning wants, already in place.
+		folders: `{"1":{"id":1,"mount_point":"Cassini","acl":true,` +
+			`"groups":{"cassini":31,"everyone":1},` +
+			`"manage":[{"type":"user","id":"` + ncRecordingsOwner + `"}]}}`,
+		groups:               `["admin","everyone","` + ncRecordingsOwnerGroup + `"]`,
+		ownerPrepared:        true,
+		confirmationRequired: true,
+		refuseFolderWrites:   true,
+	}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	cfg := testExAppConfig(srv.URL)
+	cfg.provisionNCFilesAccess(context.Background(), log.New(io.Discard, "", 0))
+
+	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); !snap.OK {
+		t.Fatalf("a correctly prepared folder was reported not-ok: state=%s step=%s detail=%s",
+			snap.State, snap.Step, snap.Detail)
+	}
+	// And it must not have written anything it did not need to.
+	for _, path := range []string{
+		"/folders/1/groups",
+		"/folders/1/groups/everyone",
+		"/folders/1/acl",
+	} {
+		if _, ok := mock.find(http.MethodPost, path); ok {
+			t.Errorf("provisioning wrote %s on a folder that was already correct", path)
+		}
+	}
+}
+
+// A folder created by an earlier Cassini carries acl_default_no_permission, and
+// nothing can repair it in place. Provisioning must finish — recordings still
+// publish and are access-controlled — but say so, because the consequence
+// (nobody can ever delete a recording) is invisible until someone tries.
+func TestProvisionReportsALegacyDenyFloor(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	mock := &provisionMock{
+		folders: `{"1":{"id":1,"mount_point":"Cassini","acl":true,` +
+			`"acl_default_no_permission":true,` +
+			`"groups":{"cassini":31,"everyone":1},` +
+			`"manage":[{"type":"user","id":"` + ncRecordingsOwner + `"}]}}`,
+		groups: `["admin","everyone","` + ncRecordingsOwnerGroup + `"]`,
+	}
+	srv := httptest.NewServer(mock.handler(t))
+	defer srv.Close()
+
+	var logs strings.Builder
+	cfg := testExAppConfig(srv.URL)
+	cfg.provisionNCFilesAccess(context.Background(), log.New(&logs, "", 0))
+
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.Step != "legacy_deny_floor" {
+		t.Fatalf("the legacy deny floor was not reported: state=%s step=%s", snap.State, snap.Step)
+	}
+	if !strings.Contains(snap.Detail, "deleted") {
+		t.Errorf("the report does not say what the flag costs: %s", snap.Detail)
 	}
 }

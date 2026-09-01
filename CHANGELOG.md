@@ -14,6 +14,81 @@ sections below are script-managed: `scripts/fold-changelog.sh` (run by
 version and removes the consumed fragments. Edit released sections only to fix
 mistakes; add new entries as fragments. See [`docs/release.md`](docs/release.md).
 
+## [0.2.0-beta.6] - 2026-08-29
+
+### Fixed
+- Fixed transcript reruns failing validation when overlapping decoder-window words end out of start-time order.
+
+## [0.2.0-beta.5] - 2026-08-29
+
+### Fixed
+- Long speech turns admitted by the interjection-sensitive VAD are decoded in bounded overlapping windows, reducing Parakeet's silent omissions from 20–25-second utterances without reverting the short-interjection VAD thresholds. Dense merged-fallback windows also retain deterministic seam ownership when adjacent decodes disagree completely.
+- Production ExApp deploys now use collision-safe temporary manifest paths and clean them after settled runs, so a stale file from another operator cannot block an upgrade.
+- ExApp startup logs now report the effective publication sink instead of contradicting a resolved Nextcloud Files destination with a later `local` line.
+
+## [0.2.0-beta.4] - 2026-08-28
+
+### Changed
+- **GPU transcription upgrade:** existing portable/plain-image ExApp installations continue to capture and preserve Talk audio, but operator-managed transcription now enters `build/blocked` instead of using CPU ASR. Install the matching `-cuda` image on a GPU deploy daemon, then choose **Rerun** for each preserved blocked job in Cassini Admin.
+
+### Fixed
+- Short interjections now retain their real timeline position and speaker attribution. Transcription drains final VAD audio, recovers more subsecond turns, and rejects near-silent decoder hallucinations without discarding speech whose decoded timestamp leads its waveform.
+- Transcript construction no longer applies duplicate timeline offsets or retains both sides of a mixed-track fallback, and genuine final words emitted in decoder or VAD padding are preserved at the real audio boundary.
+- Meeting duration now comes from playable audio without discarding source-container provenance or preallocating PCM from corrupt duration metadata.
+- GPU readiness failures are reported explicitly, and generated artifacts record the effective ASR device.
+
+## [0.2.0-beta.3] - 2026-08-28
+
+### Added
+- `cassini retag` rewrites an already-packed `.opus` file's room and job fields without re-encoding its audio, verifying the result against the manifest's own PCM digest before writing it. It is what lets a recovered room survive a republish, and what the maintenance scripts below use.
+- A meeting's portable `.opus` now records which operator job and attempt produced it (`meeting.jobId`, `meeting.attemptNumber`, mirrored as `CASSINI_JOB_ID` and `CASSINI_ATTEMPT_NUMBER`). Both are optional; a file packed outside the operator has neither.
+- `cassini inspect` prints an `origin` line with a portable file's room, job and attempt — previously it decoded the room and printed nothing, so checking the producer chain by hand meant a raw `ffprobe`.
+- `cassini meetings context` includes the room the meeting came from, in both the markdown and the `--json` form.
+- `scripts/backfill-catalog-rooms.sh` gains `--jobs-db PATH`, `--no-jobs-db` and `--no-retag`; `scripts/reattribute-catalog-room.sh` gains `--force`, `--jobs-db PATH`, `--no-jobs-db` and `--no-retag`.
+
+### Changed
+- **A recording's room is now recovered from the operator's own job history rather than guessed from its file name.** The catalog entry's id is the job id, and `jobs.talk_binding` still holds the Talk room token for every job the operator ran — so `scripts/backfill-catalog-rooms.sh` derives the real room id for anything this installation produced, and falls back to a name-derived id only where no job row survives. Re-running it merges rooms an earlier pass split in two.
+- **Both maintenance scripts now re-tag the published `.opus`, not just `catalog.json`.** The exporter re-derives a catalog entry's room from the file on every republish, so a catalog-only change was silently undone by the next re-seal. Pass `--no-retag` to keep the old behaviour and accept that the change is temporary.
+- **`scripts/reattribute-catalog-room.sh` refuses to move a meeting the operator has a recorded room binding for** (new exit code 5, `--force` to override), including in a dry run. For those meetings the real room id is recoverable and the backfill is the correct tool; asserting a different one would leave a recording whose lineage and published room permanently disagree.
+- **A room that got split in two is repaired by re-running the backfill, not merged by hand.** 0.2.0-beta.2 said a split — from a pepper rotation, or from a recording made before that release — stayed until you merged it yourself. Re-running `scripts/backfill-catalog-rooms.sh` now re-derives every meeting whose job row survives and closes the split; only recordings imported from elsewhere still need `scripts/reattribute-catalog-room.sh`.
+- **A meeting's room name now lives in `catalog.json`, not in the recording.** 0.2.0-beta.2 announced the display name as something the portable `.opus` carries; it no longer does — the file carries the room id, and the operator writes the name into the catalog on every publish, preserving it across a republish. A display name is editable and a sealed recording is not, so honouring a rename used to mean rewriting every file that room ever produced; it is now one edit in a file that is rewritten anyway. The stamped name is the one that job recorded, not the room's current name — a republish restamps the same value — so what this buys is the ability to correct a name, not a name that follows Talk. The name at record time is still in the file, as the meeting title.
+
+### Fixed
+- A publish interrupted partway no longer leaves an unprotected recording behind: the next publish denies, removes and re-creates it.
+- A re-publish no longer resets a recording's access rules, so permissions changed by hand in Nextcloud Files now survive it.
+- An interrupted upload is no longer published as a silently truncated recording; the delivery fails and can be re-run.
+- A publish now fails instead of rewriting the archive when the meeting index cannot be read. A server error answered with a JSON body used to read as "this archive is empty", which replaced every meeting in the index with the one being published.
+- A room recovered by the backfill no longer reverts the next time its meeting is re-sealed or republished.
+
+### Security
+- Recordings are now given their access rules before they hold any audio. A recording used to be uploaded first and made private in a second request, so it was readable by every account on the instance in between — and permanently readable if that second request failed.
+- The meeting index gets the same treatment, in both places that write it: the one-shot Nextcloud Files migration used to upload the index of every migrated meeting — titles, room names, dates — before locking it to the owner.
+
+## [0.2.0-beta.2] - 2026-08-20
+
+### Added
+- **Data-processing & privacy note.** A new `docs/privacy.md` documents what
+  Cassini stores, where it lives, the single optional step (LLM cleanup and
+  summaries) that sends data off your infrastructure, and what deletion and
+  uninstall remove.
+- The App Store listing now shows what Cassini is: screenshots of the meeting viewer and the admin control panel, an `ai` category alongside `integration`, and user/admin documentation links. A screenshot-less entry reads as abandoned; the listing now presents the product.
+- **Meetings now know which conversation they came from, and you can list and filter by it.** Until now a recording's room name was flattened into its title and the room's identity was discarded, so there was no way to ask for "the meetings from this room". Every recording made from here on carries a room id and display name in its portable `.opus` and in the published catalog, and the CLI gains two ways to use that: `cassini meetings rooms` lists the conversations your account has readable recordings from, and `cassini meetings list` accepts `--room`, `--from` and `--to` (all optional, and they combine — `--from 2026-08-01 --to 2026-08-31` means all of August). The agent skill for reading meetings now narrows by room and date before listing, instead of fetching the whole archive and guessing.
+- **A new setting, `CASSINI_ROOM_ID_PEPPER`.** The room id published on a meeting is a one-way derivation of the Talk conversation's identity, never the conversation's own token — for a public conversation that token is also the link that joins it, and every signed-in account can read those recordings. Setting this to a stable secret is what makes the derivation resistant to being reversed: a Talk token is short enough that an unpeppered one can be recovered by working through the possibilities offline. Choose it once — changing it changes every room id, and meetings already published keep the ids they were written with, so a room splits in two until you merge it again.
+
+### Changed
+- The Nextcloud App Store description now discloses that recording and
+  transcription stay on your infrastructure and that only the optional
+  external-LLM step sends data to a third party.
+- **Recordings published before this update can be given their room back, from the files themselves.** Run `./scripts/backfill-catalog-rooms.sh` once, by hand, on the host where the app container runs; it reports what it would change and writes nothing until you add `--apply`. It recovers each meeting's room name from its published recording and derives a room id from that name, because those files never carried the conversation's token and it cannot be recovered from them.
+- **Because of that, one conversation can appear as two rooms** — one identified from its token, for recordings made since the update, and one identified from its name, for everything older. Cassini cannot prove they are the same conversation: two conversations can share a display name, and a room can be renamed between recordings. When you know they are the same, `./scripts/reattribute-catalog-room.sh --from <id> --to <id>` merges them, and like the backfill it shows you every meeting it would move before it writes anything.
+
+### Fixed
+- **Published recordings can be deleted again.** Cassini created its `Cassini` Team folder with a Group Folders flag that, on recent versions, made every file in it permanently undeletable and un-moveable — by everyone, including the Cassini account and Nextcloud administrators. New installations no longer set it, and nothing else changes: who can read a recording is decided by the same per-recording permissions as before. An existing folder cannot be repaired automatically, because Group Folders offers no way to clear the flag after creation; the app's status page now reports the condition and what it costs instead of leaving it invisible.
+- **Setting up recordings no longer fails on an installation that is already correct.** On a Nextcloud that requires password confirmation for administration, an administrator has to create the recordings folder by hand — after which Cassini re-applied the same group and permission settings anyway, was refused, and reported the setup as broken even though nothing was wrong. It now checks what is already in place and only writes what is missing.
+- The app's status page no longer reports a completed setup as healthy when a step failed along the way.
+- **Setting up the recordings folder now reports why it failed.** The Group Folders API answers a refused request with `HTTP 200` and the failure recorded only inside the response body, so Cassini read a refusal as a success and then failed while decoding it — reporting a JSON error that named neither the problem nor the cause. On Nextcloud installations that require password confirmation for administration, every one of these requests is refused, and the app's status page said only that setup was incomplete. Cassini now reports the actual reason and, when it cannot proceed, names the `occ` commands that create the Team folder by hand — which it then adopts on the next enable.
+- **Setting up recordings no longer fails on Nextcloud installations that require password confirmation for user administration.** Cassini creates a `cassini` service account and its group when the app is enabled; on Nextcloud 34 (and any instance enforcing password confirmation) those calls are refused, because an app has no browser session in which to confirm a password. An administrator can create the account and group by hand — but Cassini did not check whether they already existed before trying to create them, so a correctly prepared installation looked identical to an empty one and setup failed permanently. Cassini now looks first, adopts what is already there, and when it genuinely cannot proceed it names the `occ` commands that fix it.
+
 ## [0.2.0-beta.1] - 2026-08-14
 
 ### Added

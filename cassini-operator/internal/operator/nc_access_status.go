@@ -149,13 +149,25 @@ func (s *ncAccessSubstrateStatus) record(state ncSubstrateState, step string, ca
 }
 
 // succeed records a provisioning run that got all the way through.
+// succeed records that provisioning ran to completion.
+//
+// A degradation recorded EARLIER in the same run survives it. Some steps are
+// deliberately non-fatal — the ACL-manager delegation, the legacy deny floor —
+// and provisioning continues past them; before this, the final succeed() wiped
+// the record, so the acl_manager degradation whose own comment says it exists
+// "so a half-provisioned folder is never reported as provisioned" did exactly
+// that. Reaching the end means every step that must work did; it does not mean
+// nothing was wrong.
 func (s *ncAccessSubstrateStatus) succeed() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.checkedAtUTC = nowUTCString()
+	if s.state == ncSubstrateDegraded || s.state == ncSubstrateUnavailable {
+		return
+	}
 	s.state = ncSubstrateProvisioned
 	s.step = ""
 	s.detail = ""
-	s.checkedAtUTC = nowUTCString()
 }
 
 // setAdminUser records the administrator provisioning resolved. Deliberately

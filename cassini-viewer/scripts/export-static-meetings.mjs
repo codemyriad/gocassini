@@ -178,7 +178,11 @@ export function portableDefaultSegmentCount(portable) {
 export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, recordingsBaseUrl = null }) {
   if (sourceType === "portable") {
     const portable = extractPortableManifest(sourcePath);
-    const { title, dateLabel } = describeMeeting(meetingId, portable?.meeting?.createdAtUtc);
+    const { title, dateLabel } = describeMeeting(
+      meetingId,
+      portable?.meeting?.createdAtUtc,
+      portable?.meeting?.recordedAtLocal,
+    );
     const transcript = buildTranscriptWordsFromPortable(portable);
     // A real embedded title (e.g. the Talk room name the operator captured
     // at recording time) beats anything derived from the file name; packer
@@ -201,11 +205,17 @@ export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, re
       // "already populated" and never correct).
       segmentCount: transcript.segments?.length || portableDefaultSegmentCount(portable),
       digestDurationMs: transcript.media?.durationMs ?? 0,
+      // The room the recording came from, when the file carries one (D-622).
+      // Spread last and conditionally, so a meeting with no room ships no room
+      // keys at all rather than two empty strings.
+      ...portableRoomFields(portable),
     };
   }
 
   // Directory packs carry no createdAtUtc in the metadata the exporter reads
-  // (manifest.json), so their dateLabel still comes from the id alone.
+  // (manifest.json), and no room either — manifest.json has never had one, and
+  // this branch serves the pre-portable format that will not gain fields. Such
+  // meetings are exported without a room, which is what they have.
   const { title, dateLabel } = describeMeeting(meetingId);
 
   if (recordingsBaseUrl) {
@@ -435,9 +445,8 @@ export function buildReadableTranscriptFromPortable(portable, transcript) {
   };
 }
 
-function buildReadableDisplaySourceBlocks(readable, speakerLabels, transcriptSegments) {
-  const segmentById = new Map((Array.isArray(transcriptSegments) ? transcriptSegments : []).map((segment) => [segment.id, segment]));
-  const baseBlocks = readable.segments.map((segment, index) => {
+function buildReadableDisplaySourceBlocks(readable, speakerLabels) {
+  return readable.segments.map((segment, index) => {
     const blockId =
       typeof segment?.id === "string" && segment.id.trim() !== ""
         ? segment.id
@@ -452,292 +461,8 @@ function buildReadableDisplaySourceBlocks(readable, speakerLabels, transcriptSeg
       text: typeof segment?.text === "string" ? segment.text : "",
       sourceSegmentIds,
       words: extractPortableReadableWords(segment, blockId),
-      sourceWords: collectReadableSourceWords({
-        segment,
-        sourceSegmentIds,
-        segmentById,
-        transcriptSegments,
-      }),
     };
   });
-  return splitReadableBlocksOnInterruptions(baseBlocks);
-}
-
-function collectReadableSourceWords({ segment, sourceSegmentIds, segmentById, transcriptSegments }) {
-  const resolved = sourceSegmentIds
-    .map((segmentId) => segmentById.get(segmentId))
-    .filter(Boolean);
-  const candidates = resolved.length > 0
-    ? resolved
-    : (Array.isArray(transcriptSegments) ? transcriptSegments : []).filter((candidate) => {
-        const startMs = safeToInt(candidate?.startMs, 0);
-        const endMs = safeToInt(candidate?.endMs, startMs);
-        if (endMs < safeToInt(segment?.startMs, 0) || startMs > safeToInt(segment?.endMs, startMs)) {
-          return false;
-        }
-        if (typeof segment?.speaker === "string" && candidate?.speaker && candidate.speaker !== segment.speaker) {
-          return false;
-        }
-        return true;
-      });
-  return candidates.flatMap((candidate) =>
-    Array.isArray(candidate?.words)
-      ? candidate.words
-          .filter((word) => word && typeof word === "object")
-          .map((word, index) => ({
-            id: typeof word.id === "string" && word.id.trim() !== "" ? word.id : `${candidate.id}:w_${index}`,
-            text: safeToString(word.text).trim(),
-            startMs: safeToInt(word.startMs, Number.NaN),
-            endMs: safeToInt(word.endMs, safeToInt(word.startMs, Number.NaN)),
-          }))
-          .filter((word) => word.text && Number.isFinite(word.startMs) && Number.isFinite(word.endMs))
-      : [],
-  );
-}
-
-function splitReadableBlocksOnInterruptions(blocks) {
-  return blocks.flatMap((block, blockIndex) => splitReadableBlockOnInterruptions(block, blockIndex, blocks));
-}
-
-function splitReadableBlockOnInterruptions(block, blockIndex, allBlocks) {
-  if (!Array.isArray(block.words) || block.words.length === 0 || !block.speaker) {
-    return [block];
-  }
-
-  const interruptions = mergeTimeWindows(
-    allBlocks
-      .filter((other, index) => index !== blockIndex && other.speaker && other.speaker !== block.speaker)
-      .map((other) => ({
-        startMs: Math.max(block.startMs, other.startMs),
-        endMs: Math.min(block.endMs, other.endMs),
-      }))
-      .filter((window) => window.endMs - window.startMs >= 400),
-  );
-  const windows = subtractTimeWindows(
-    { startMs: block.startMs, endMs: block.endMs },
-    interruptions,
-  ).filter((window) => window.endMs - window.startMs >= 250);
-
-  if (windows.length <= 1) {
-    return [block];
-  }
-
-  const transcriptWordCounts =
-    Array.isArray(block.sourceWords) && block.sourceWords.length > 0
-      ? assignWordsToWindows(block.sourceWords, windows)
-      : null;
-  const uniformlyInterpolated = wordsLookUniformlyInterpolated(block.words, block.startMs, block.endMs);
-  const counts = transcriptWordCounts && transcriptWordCounts.some((count) => count > 0)
-    ? transcriptWordCounts
-    : uniformlyInterpolated
-      ? allocateWordCountsAcrossWindows(block.words.length, windows)
-      : assignWordsToWindows(block.words, windows);
-  const plan = windows
-    .map((window, index) => ({ window, count: counts[index] ?? 0 }))
-    .filter((entry) => entry.count > 0);
-
-  if (plan.length <= 1) {
-    return [block];
-  }
-
-  const textParts = splitTextByWordCounts(block.text, plan.map((entry) => entry.count));
-  const derivedBlocks = [];
-  let wordOffset = 0;
-  let sourceWordOffset = 0;
-  for (let index = 0; index < plan.length; index += 1) {
-    const { window, count } = plan[index];
-    const words = block.words.slice(wordOffset, wordOffset + count);
-    const sourceWords = Array.isArray(block.sourceWords)
-      ? block.sourceWords.slice(sourceWordOffset, sourceWordOffset + count)
-      : [];
-    wordOffset += count;
-    sourceWordOffset += count;
-    if (words.length === 0) {
-      continue;
-    }
-    const timedWords = uniformlyInterpolated ? retimeWordsWithinWindow(words, window) : words;
-    derivedBlocks.push({
-      ...block,
-      id: `${block.id}__split_${String(index).padStart(2, "0")}`,
-      startMs: sourceWords[0]?.startMs ?? timedWords[0]?.startMs ?? window.startMs,
-      endMs: sourceWords[sourceWords.length - 1]?.endMs ?? timedWords[timedWords.length - 1]?.endMs ?? window.endMs,
-      text: textParts[index] ?? rebuildTextFromWords(timedWords),
-      words: timedWords,
-      sourceWords,
-      sourceSegmentIds: sourceWords.length > 0
-        ? [...new Set(sourceWords.map((word) => String(word.id ?? "").split(":")[0]).filter(Boolean))]
-        : block.sourceSegmentIds,
-    });
-  }
-
-  return derivedBlocks.length > 0 ? derivedBlocks : [block];
-}
-
-function mergeTimeWindows(windows) {
-  const sorted = [...windows].sort((left, right) => left.startMs - right.startMs);
-  const merged = [];
-  for (const window of sorted) {
-    const previous = merged.at(-1);
-    if (!previous || window.startMs > previous.endMs) {
-      merged.push({ ...window });
-      continue;
-    }
-    previous.endMs = Math.max(previous.endMs, window.endMs);
-  }
-  return merged;
-}
-
-function subtractTimeWindows(range, removals) {
-  const windows = [];
-  let cursor = range.startMs;
-  for (const removal of removals) {
-    if (removal.endMs <= cursor) {
-      continue;
-    }
-    if (removal.startMs > cursor) {
-      windows.push({
-        startMs: cursor,
-        endMs: Math.min(removal.startMs, range.endMs),
-      });
-    }
-    cursor = Math.max(cursor, removal.endMs);
-    if (cursor >= range.endMs) {
-      break;
-    }
-  }
-  if (cursor < range.endMs) {
-    windows.push({ startMs: cursor, endMs: range.endMs });
-  }
-  return windows.filter((window) => window.endMs > window.startMs);
-}
-
-function wordsLookUniformlyInterpolated(words, startMs, endMs) {
-  if (!Array.isArray(words) || words.length === 0) {
-    return false;
-  }
-  const span = Math.max(0, endMs - startMs);
-  const toleranceMs = Math.max(25, Math.floor(span / Math.max(words.length, 1) / 5));
-  return words.every((word, index) => {
-    const expectedStart = words.length <= 1
-      ? startMs
-      : startMs + Math.floor((span * index) / words.length);
-    const expectedEnd = words.length <= 1
-      ? endMs
-      : startMs + Math.floor((span * (index + 1)) / words.length);
-    return (
-      Math.abs(safeToInt(word.startMs, expectedStart) - expectedStart) <= toleranceMs &&
-      Math.abs(safeToInt(word.endMs, expectedEnd) - expectedEnd) <= toleranceMs
-    );
-  });
-}
-
-function allocateWordCountsAcrossWindows(totalWords, windows) {
-  const totalDuration = windows.reduce((sum, window) => sum + Math.max(0, window.endMs - window.startMs), 0);
-  if (totalDuration <= 0) {
-    return windows.map((_, index) => (index === windows.length - 1 ? totalWords : 0));
-  }
-  const counts = windows.map((window) =>
-    Math.floor((totalWords * Math.max(0, window.endMs - window.startMs)) / totalDuration),
-  );
-  let assigned = counts.reduce((sum, count) => sum + count, 0);
-  const rankedRemainders = windows
-    .map((window, index) => ({
-      index,
-      remainder:
-        ((totalWords * Math.max(0, window.endMs - window.startMs)) / totalDuration) - (counts[index] ?? 0),
-    }))
-    .sort((left, right) => right.remainder - left.remainder);
-  for (const { index } of rankedRemainders) {
-    if (assigned >= totalWords) {
-      break;
-    }
-    counts[index] = (counts[index] ?? 0) + 1;
-    assigned += 1;
-  }
-  if (assigned < totalWords) {
-    counts[counts.length - 1] = (counts[counts.length - 1] ?? 0) + (totalWords - assigned);
-  }
-  return counts;
-}
-
-function assignWordsToWindows(words, windows) {
-  const counts = windows.map(() => 0);
-  for (const word of words) {
-    const midpoint = Math.floor((safeToInt(word.startMs, 0) + safeToInt(word.endMs, 0)) / 2);
-    let winnerIndex = windows.findIndex((window) => midpoint >= window.startMs && midpoint < window.endMs);
-    if (winnerIndex < 0) {
-      winnerIndex = windows.reduce((bestIndex, window, index) => {
-        const bestWindow = windows[bestIndex];
-        const bestDistance = distanceToWindow(midpoint, bestWindow);
-        const nextDistance = distanceToWindow(midpoint, window);
-        return nextDistance < bestDistance ? index : bestIndex;
-      }, 0);
-    }
-    counts[winnerIndex] = (counts[winnerIndex] ?? 0) + 1;
-  }
-  return counts;
-}
-
-function distanceToWindow(value, window) {
-  if (value < window.startMs) {
-    return window.startMs - value;
-  }
-  if (value > window.endMs) {
-    return value - window.endMs;
-  }
-  return 0;
-}
-
-function retimeWordsWithinWindow(words, window) {
-  if (!Array.isArray(words) || words.length === 0) {
-    return [];
-  }
-  const span = Math.max(0, window.endMs - window.startMs);
-  return words.map((word, index) => ({
-    ...word,
-    startMs: words.length <= 1 ? window.startMs : window.startMs + Math.floor((span * index) / words.length),
-    endMs: words.length <= 1 ? window.endMs : window.startMs + Math.floor((span * (index + 1)) / words.length),
-  }));
-}
-
-function splitTextByWordCounts(text, counts) {
-  const tokens = tokenizeDisplayText(text);
-  const parts = [];
-  let tokenStart = 0;
-  for (const count of counts) {
-    let tokenEnd = tokenStart;
-    let wordsSeen = 0;
-    while (tokenEnd < tokens.length && wordsSeen < count) {
-      if (tokens[tokenEnd]?.kind === "word") {
-        wordsSeen += 1;
-      }
-      tokenEnd += 1;
-    }
-    while (tokenEnd < tokens.length && tokens[tokenEnd]?.kind !== "word") {
-      tokenEnd += 1;
-    }
-    parts.push(rebuildTextFromTokens(tokens.slice(tokenStart, tokenEnd)));
-    tokenStart = tokenEnd;
-  }
-  if (parts.length > 0 && tokenStart < tokens.length) {
-    parts[parts.length - 1] = `${parts[parts.length - 1]}${rebuildTextFromTokens(tokens.slice(tokenStart))}`;
-  }
-  return parts;
-}
-
-function rebuildTextFromTokens(tokens) {
-  let text = "";
-  for (const token of tokens) {
-    if (token.spaceBefore && text !== "") {
-      text += " ";
-    }
-    text += token.text;
-  }
-  return text;
-}
-
-function rebuildTextFromWords(words) {
-  return words.map((word) => word.text).join(" ");
 }
 
 export function groupTranscriptSegmentsAsReadable(segments) {
@@ -920,7 +645,7 @@ export function buildDisplayTranscriptFromArtifacts(transcript, readable) {
   const segmentById = new Map(transcriptSegments.map((segment) => [segment.id, segment]));
   const sourceBlocks =
     readable && readable.version === "transcript.readable.v1" && Array.isArray(readable.segments)
-      ? buildReadableDisplaySourceBlocks(readable, speakerLabels, transcriptSegments)
+      ? buildReadableDisplaySourceBlocks(readable, speakerLabels)
       : transcriptSegments.map((segment) => ({
           id: `d_${segment.id}`,
           speaker: segment.speaker,
@@ -930,7 +655,6 @@ export function buildDisplayTranscriptFromArtifacts(transcript, readable) {
           text: segment.text,
           sourceSegmentIds: [segment.id],
           words: [],
-          sourceWords: Array.isArray(segment.words) ? segment.words : [],
         }));
 
   return {
@@ -1303,6 +1027,49 @@ export function isPortableMeeting(fileName) {
   return extname(fileName).toLowerCase() === ".opus";
 }
 
+// portableRoomFields returns the room and lineage fields a catalog entry should
+// carry, or {} when the meeting has none of them.
+//
+// Absent rather than empty: an entry with `roomId: ""` would read as "this
+// meeting has a room whose id is the empty string", and every consumer — the
+// viewer's grouping, the CLI's --room filter — would have to check presence
+// AND emptiness. Meetings recorded before D-622, and Talk recordings whose room
+// lookup failed, genuinely have no room, and saying so is the correct answer.
+//
+// roomName is still read here, and is no longer WRITTEN by any producer
+// (D-640): a display name is editable and a sealed recording is not, so the
+// current name is stamped onto the entry by the operator at publish time and
+// carried across a republish by upsertSiteCatalog. Files packed before that
+// change still carry one, and it is still the best answer available for them.
+export function portableRoomFields(portable) {
+  const fields = {};
+  const roomId = typeof portable?.meeting?.roomId === "string" ? portable.meeting.roomId.trim() : "";
+  const roomName = typeof portable?.meeting?.roomName === "string" ? portable.meeting.roomName.trim() : "";
+  const jobId = typeof portable?.meeting?.jobId === "string" ? portable.meeting.jobId.trim() : "";
+  // Strict on the type, like every other optional field here and in
+  // catalog.ts: a wrong-typed value means "not recorded", never "coerce it".
+  // Number("2") is 2, so a lenient read would quietly promote a string in a
+  // hand-edited or third-party manifest into a lineage claim.
+  const attemptNumber = portable?.meeting?.attemptNumber;
+  if (roomId !== "") {
+    fields.roomId = roomId;
+  }
+  if (roomName !== "") {
+    fields.roomName = roomName;
+  }
+  // Which job and attempt produced the artifact (D-640). jobId normally equals
+  // the entry's own id — the operator publishes meetings/<jobID>.opus — and is
+  // carried anyway, because that equality is a convention of one publish path
+  // and not something a consumer should have to assume.
+  if (jobId !== "") {
+    fields.jobId = jobId;
+  }
+  if (typeof attemptNumber === "number" && Number.isInteger(attemptNumber) && attemptNumber > 0) {
+    fields.attemptNumber = attemptNumber;
+  }
+  return fields;
+}
+
 // preferredPortableTitle returns the title embedded in a portable meeting's
 // manifest when it is a real human-readable name (e.g. the Talk room name the
 // operator resolved at recording time, D-462). Packer defaults — the meeting
@@ -1322,24 +1089,50 @@ export function preferredPortableTitle(portable, meetingId) {
   return raw;
 }
 
-export function describeMeeting(meetingId, createdAtUtc = "") {
-  // Pack metadata beats filename heuristics: backfilled ids like
-  // "daily-meeting-2026-04-08" carry no time part, so without metadata the
-  // dateLabel echoes the raw slug and sorts to the bottom of the catalog
-  // (D-588). The title still comes from the id.
+// describeMeeting picks the catalog title and dateLabel for a meeting.
+//
+// The dateLabel answers "when did this meeting happen", NOT "when did we
+// process it" — the two diverge every time a pack is rebuilt, and a re-run of
+// the whole archive would otherwise stamp every meeting with the rebuild day
+// (D-685). Sources, best first:
+//
+//   1. recordedAtLocal — the recording's own wall clock, the only field that
+//      states when people were actually in the room.
+//   2. the meeting id — filename stamps and ULID job ids both encode the
+//      recording start. A slug-only id like "daily-meeting-2026-04-08" yields a
+//      date with no time, which is still the right DAY.
+//   3. createdAtUtc — when the pack was written. Wrong by construction for any
+//      rebuild, and kept only as a last resort so a meeting with no other
+//      timestamp still parses and sorts instead of showing a raw slug (D-588).
+//
+// The title always comes from the id.
+export function describeMeeting(meetingId, createdAtUtc = "", recordedAtLocal = "") {
   const described = describeMeetingFromId(meetingId);
+  const { dateFromId, ...describedFields } = described;
+
+  const recordedDateLabel = dateLabelFromLocalTimestamp(recordedAtLocal);
+  if (recordedDateLabel !== "") {
+    return { title: described.title, dateLabel: recordedDateLabel };
+  }
+  if (dateFromId) {
+    return describedFields;
+  }
   const metadataDateLabel = dateLabelFromTimestamp(createdAtUtc);
   if (metadataDateLabel !== "") {
     return { title: described.title, dateLabel: metadataDateLabel };
   }
-  return described;
+  return describedFields;
 }
 
+// describeMeetingFromId also reports `dateFromId`: false means the dateLabel is
+// just the raw id echoed back because nothing in it looked like a timestamp.
+// describeMeeting uses that to decide whether pack metadata is worth reaching
+// for; the flag is stripped before the result leaves describeMeeting.
 function describeMeetingFromId(meetingId) {
   const normalizedMeetingId = stripVariantSuffix(meetingId);
   const colonTimeStamp = parseTimestampFromDoubledDashParts(normalizedMeetingId, "--");
   if (colonTimeStamp) {
-    return colonTimeStamp;
+    return { ...colonTimeStamp, dateFromId: true };
   }
 
   const modernStamp = /^(.*)--(\d{8})T(\d{2})(\d{2})(\d{2})$/.exec(normalizedMeetingId);
@@ -1348,6 +1141,7 @@ function describeMeetingFromId(meetingId) {
     return {
       title: toTitleCase(rawTitle),
       dateLabel: `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)} ${hour}:${minute}`,
+      dateFromId: true,
     };
   }
 
@@ -1357,7 +1151,27 @@ function describeMeetingFromId(meetingId) {
     return {
       title: toTitleCase(rawTitle),
       dateLabel: `${year}-${month}-${day} ${hour}:${minute}`,
+      dateFromId: true,
     };
+  }
+
+  // Some backfilled dailies have only a calendar date in their id and a
+  // generic source basename (recording.mkv). They therefore have neither a
+  // trustworthy createdAtUtc nor a recordedAtLocal after reprocessing. The
+  // date carried by the id is still authoritative even though no start time is
+  // recoverable (D-685).
+  const dateOnlyStamp = /^(.*)-(\d{4})-(\d{2})-(\d{2})$/.exec(
+    normalizedMeetingId,
+  );
+  if (dateOnlyStamp) {
+    const [, rawTitle, year, month, day] = dateOnlyStamp;
+    if (rawTitle && isValidCalendarDate(year, month, day)) {
+      return {
+        title: toTitleCase(rawTitle),
+        dateLabel: `${year}-${month}-${day}`,
+        dateFromId: true,
+      };
+    }
   }
 
   // Talk recordings are named by the operator's ULID job id, which carries no
@@ -1368,12 +1182,14 @@ function describeMeetingFromId(meetingId) {
     return {
       title: "Untitled meeting",
       dateLabel: ulidDateLabel,
+      dateFromId: true,
     };
   }
 
   return {
     title: toTitleCase(normalizedMeetingId),
     dateLabel: normalizedMeetingId,
+    dateFromId: false,
   };
 }
 
@@ -1402,6 +1218,71 @@ function dateLabelFromUlid(meetingId) {
     return "";
   }
   return formatUtcDateLabel(new Date(ms));
+}
+
+// dateLabelFromLocalTimestamp renders "YYYY-MM-DD HH:MM" from a pack's
+// recordedAtLocal ("2026-03-10T12:30:00") — a LOCAL wall clock with no zone.
+// Its digits are reformatted as-is rather than round-tripped through Date:
+// Date.parse would read a zoneless string in the exporter's local zone, and the
+// UTC render on the far side would shift a 12:30 meeting to 11:30 whenever the
+// machine running the export is not on UTC. The viewer makes no timezone claim
+// about these labels either (D-484), so the digits are the whole truth.
+function dateLabelFromLocalTimestamp(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?$/.exec(
+    value.trim(),
+  );
+  if (!match) {
+    return "";
+  }
+  const [, year, month, day, hour, minute, second] = match;
+  // Out-of-range fields mean the value is not a timestamp we can trust; fall
+  // through to the next source rather than emit a label that sorts wrongly.
+  if (!isValidCalendarDate(year, month, day)) {
+    return "";
+  }
+  if (
+    Number(hour) > 23 ||
+    Number(minute) > 59 ||
+    (second !== undefined && Number(second) > 59)
+  ) {
+    return "";
+  }
+  return `${year}-${month}-${day} ${hour}:${minute}`;
+}
+
+function isValidCalendarDate(year, month, day) {
+  const y = Number(year);
+  const m = Number(month);
+  const d = Number(day);
+  if (
+    !Number.isInteger(y) ||
+    !Number.isInteger(m) ||
+    !Number.isInteger(d) ||
+    m < 1 ||
+    m > 12 ||
+    d < 1
+  ) {
+    return false;
+  }
+  const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+  const daysInMonth = [
+    31,
+    leap ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  return d <= daysInMonth[m - 1];
 }
 
 // dateLabelFromTimestamp renders "YYYY-MM-DD HH:MM" (UTC, same shape as the

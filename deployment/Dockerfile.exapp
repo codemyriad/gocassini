@@ -17,6 +17,8 @@
 # operator's viewerHandler, so no CASSINI_PUBLISH_REBUILD_VIEWER is set here.
 
 ARG FRP_VERSION=0.61.1
+ARG FFMPEG_VERSION=latest
+ARG FFMPEG_BUILD_JOBS=2
 
 # Default bundled model for the CPU image. The CUDA variant overrides these in
 # Dockerfile.exapp.cuda (per PR #32). Keep the model id in sync with
@@ -24,6 +26,22 @@ ARG FRP_VERSION=0.61.1
 # at runtime under ${CASSINI_CACHE_ROOT}/models/${CASSINI_BUNDLED_MODEL_ID}/.
 ARG CASSINI_BUNDLED_MODEL_ID=parakeet-tdt-0.6b-v3-int8
 ARG CASSINI_BUNDLED_MODEL_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2
+
+# "latest" is an uncached-build fallback. Repository build entry points resolve
+# the newest stable version before invoking Docker and pass the concrete value,
+# so a newly published release invalidates this layer without a source pin.
+# The image records the selected version in BUILDINFO and smoke tests gate
+# capabilities instead of naming a fixed release.
+FROM debian:bookworm-slim AS ffmpeg-builder
+ARG FFMPEG_VERSION
+ARG FFMPEG_BUILD_JOBS
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential ca-certificates curl gnupg libopus-dev nasm pkg-config xz-utils \
+ && rm -rf /var/lib/apt/lists/*
+COPY deployment/ffmpeg /tmp/cassini-ffmpeg-build
+RUN FFMPEG_BUILD_JOBS="${FFMPEG_BUILD_JOBS}" \
+    /tmp/cassini-ffmpeg-build/build.sh "${FFMPEG_VERSION}" /out/ffmpeg
 
 FROM debian:bookworm-slim AS model-fetcher
 ARG CASSINI_BUNDLED_MODEL_ID
@@ -130,9 +148,11 @@ RUN set -eux; \
 
 FROM node:22-bookworm-slim
 ARG CASSINI_BUNDLED_MODEL_ID
+ARG FFMPEG_VERSION
+LABEL io.gocassini.ffmpeg.requested-version=${FFMPEG_VERSION}
 ENV CASSINI_STT_MODEL=${CASSINI_BUNDLED_MODEL_ID}
 RUN apt-get update \
- && apt-get install -y --no-install-recommends bash ca-certificates curl ffmpeg tini \
+ && apt-get install -y --no-install-recommends bash ca-certificates curl libopus0 tini \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /var/lib/cassini-operator
@@ -155,8 +175,10 @@ ENV CASSINI_BIN=/usr/local/bin/cassini \
     APP_HOST=0.0.0.0 \
     APP_PORT=8080 \
     CASSINI_APPAPI_REQUIRED=true \
+    CASSINI_STT_CUDA_CAPABLE=0 \
     CASSINI_STT_DEVICE=cpu \
     CASSINI_DISALLOW_MODEL_DOWNLOAD=1
+ENV PATH=/opt/cassini/ffmpeg/bin:${PATH}
 
 # AppAPI deploys inject only APP_*/HP_*/NEXTCLOUD_URL (see app_api
 # DockerActions::buildDeployEnvs) — never CASSINI_*. Bake the base path the
@@ -168,6 +190,7 @@ ENV CASSINI_OPERATOR_BASE_PATH=/operator
 COPY --from=go-builder /out/cassini /usr/local/bin/cassini
 COPY --from=go-builder /out/cassini-operator /usr/local/bin/cassini-operator
 COPY --from=go-builder /out/lib /opt/cassini/lib
+COPY --from=ffmpeg-builder /out/ffmpeg /opt/cassini/ffmpeg
 COPY --from=frpc-fetcher /out/frpc /usr/local/bin/frpc
 # Bundled default STT model + Silero VAD (CPU variant). Lives outside
 # /var/lib/cassini-operator so the AppAPI/compose persistent volume mount
@@ -183,7 +206,7 @@ COPY --from=web-builder /src/cassini-app/dist /opt/cassini/cassini-app/dist
 COPY deployment/exapp-start.sh /usr/local/bin/cassini-exapp-entrypoint.sh
 COPY deployment/exapp-healthcheck.sh /usr/local/bin/healthcheck.sh
 
-RUN printf '%s\n' /opt/cassini/lib > /etc/ld.so.conf.d/cassini.conf \
+RUN printf '%s\n' /opt/cassini/lib /opt/cassini/ffmpeg/lib > /etc/ld.so.conf.d/cassini.conf \
  && ldconfig \
  && chmod +x \
    /usr/local/bin/cassini \

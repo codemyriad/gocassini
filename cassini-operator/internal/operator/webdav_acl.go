@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -478,6 +479,142 @@ func hasExplicitEveryoneGroupRule(rules []aclRule) bool {
 		}
 	}
 	return false
+}
+
+// everyoneRuleGovernsRead reports whether the leaf's broad-group rule actually
+// decides the read bit — i.e. whether the recording's visibility is stated by
+// the leaf rather than inherited from the container.
+//
+// The mask is the part that is easy to miss. Group Folders applies a rule as
+// `perms & ^mask | (rulePerms & mask)`, so a bit the mask does not cover is
+// left inherited: an `everyone` row whose mask omits READ neither grants nor
+// denies anything, and the leaf still picks up the container's `everyone: READ`.
+// The Advanced-permissions dialog produces exactly that when someone flips a
+// recording's `everyone` toggle back to "inherit" — which the operator docs
+// invite them to do.
+//
+// So this, not hasExplicitEveryoneGroupRule, is what the delivery gate has to
+// ask. "There is a rule" and "there is a rule that does anything" are different
+// claims, and only the second one means the recording is not world-readable.
+func everyoneRuleGovernsRead(rules []aclRule) bool {
+	for _, r := range rules {
+		if r.Type == "group" && r.ID == ncRecordingsEveryoneGroup && r.Mask&aclPermRead != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// audienceApplied reports whether a leaf's rules go beyond the owner-only
+// baseline that recordingACLRules(nil, false) writes at create time — that is,
+// whether the meeting's audience was ever actually frozen onto it.
+//
+// The distinction is load-bearing, and it is why hasExplicitEveryoneGroupRule is
+// not enough on its own: the baseline ALREADY states an `everyone` row (a deny),
+// so "does this leaf have an ACL?" cannot tell "protected and finished" from
+// "protected, but the audience write never landed". Treating the second as
+// finished would make a publish that died between the content PUT and the
+// audience PROPPATCH permanently invisible to its own participants — every later
+// republish would see a rule set it considered healthy and skip the audience
+// forever.
+//
+// A meeting counts as audience-applied when it either grants the broad group
+// read — a public conversation's `everyone` allow IS its audience (D-552) — or
+// names at least one principal besides the two the baseline writes. An admin's
+// hand-added grant counts, which is deliberate: it means a republish leaves a
+// manually widened recording alone.
+func audienceApplied(rules []aclRule) bool {
+	for _, r := range rules {
+		switch {
+		case r.Type == "group" && r.ID == ncRecordingsEveryoneGroup:
+			if r.Permissions&aclPermRead != 0 {
+				return true
+			}
+		case r.Type == "user" && r.ID == ncRecordingsOwner:
+			// The baseline's own owner row.
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// ncLeafState is what one PROPFIND tells us about a delivered recording: whether
+// it is there at all, how many bytes Nextcloud thinks it holds, and the ACL rows
+// bound to it.
+type ncLeafState struct {
+	Exists bool
+	Size   int64
+	Rules  []aclRule
+}
+
+// davPropfindLeafState reads one leaf's length and ACL rules in a single Depth-0
+// PROPFIND. It is both the health gate a re-delivery branches on and the
+// post-condition an upload is verified against.
+//
+// A 404 is not an error — "the recording is not there yet" is the ordinary state
+// of a first publish, and the caller distinguishes it via Exists.
+func (c ExAppConfig) davPropfindLeafState(ctx context.Context, client *http.Client, userID, relPath string) (ncLeafState, error) {
+	reqBody := []byte(`<?xml version="1.0" encoding="UTF-8"?>` +
+		`<d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns">` +
+		`<d:prop><d:getcontentlength/><nc:acl-list/></d:prop></d:propfind>`)
+	req, err := http.NewRequestWithContext(ctx, "PROPFIND", c.davFileURL(userID, relPath), bytes.NewReader(reqBody))
+	if err != nil {
+		return ncLeafState{}, err
+	}
+	c.setAppAPIDAVHeadersForUser(req, userID)
+	req.Header.Set("Depth", "0")
+	req.Header.Set("Content-Type", ncFilesACLMediaType)
+	req.ContentLength = int64(len(reqBody))
+	resp, err := client.Do(req)
+	if err != nil {
+		return ncLeafState{}, err
+	}
+	defer drainClose(resp.Body)
+	if resp.StatusCode == http.StatusNotFound {
+		return ncLeafState{}, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ncLeafState{}, fmt.Errorf("PROPFIND %s -> %d", relPath, resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return ncLeafState{}, err
+	}
+	var ms struct {
+		Responses []struct {
+			Propstat []struct {
+				Length string `xml:"prop>getcontentlength"`
+				ACLs   []struct {
+					Type        string `xml:"acl-mapping-type"`
+					ID          string `xml:"acl-mapping-id"`
+					Mask        int    `xml:"acl-mask"`
+					Permissions int    `xml:"acl-permissions"`
+				} `xml:"prop>acl-list>acl"`
+			} `xml:"propstat"`
+		} `xml:"response"`
+	}
+	if err := xml.Unmarshal(body, &ms); err != nil {
+		return ncLeafState{}, fmt.Errorf("parse leaf multistatus for %s: %w", relPath, err)
+	}
+	if len(ms.Responses) == 0 {
+		return ncLeafState{}, fmt.Errorf("PROPFIND %s: multistatus named no resource", relPath)
+	}
+	state := ncLeafState{Exists: true}
+	// A property the resource does not carry comes back in its own 404 propstat
+	// with an empty value, so both fields are gathered across every propstat and
+	// an unparseable or absent length simply leaves Size at zero.
+	for _, ps := range ms.Responses[0].Propstat {
+		if trimmed := strings.TrimSpace(ps.Length); trimmed != "" {
+			if n, convErr := strconv.ParseInt(trimmed, 10, 64); convErr == nil {
+				state.Size = n
+			}
+		}
+		for _, a := range ps.ACLs {
+			state.Rules = append(state.Rules, aclRule{Type: a.Type, ID: a.ID, Mask: a.Mask, Permissions: a.Permissions})
+		}
+	}
+	return state, nil
 }
 
 // migrateLegacyAudienceRule translates the old static broad-group principal to

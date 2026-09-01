@@ -278,14 +278,26 @@ func buildSegmentMKVs(
 			seg.FirstTimelineNS = int64(seg.FirstNS)
 			continue
 		}
-		seg.TimelineProfile = profile
-		seg.TimelineAdjustNS = recommendedTimelineStartAdjustmentNS(profile)
-		seg.FirstTimelineNS = int64(seg.FirstNS) + seg.TimelineAdjustNS
-		if seg.FirstTimelineNS < 0 {
-			seg.FirstTimelineNS = 0
-		}
+		applyReceiveTimelineProfile(seg, profile)
 	}
 	return out, skipped, nil
+}
+
+func applyReceiveTimelineProfile(seg *segmentArtifact, profile timelineProfile) {
+	seg.TimelineProfile = profile
+	// WriteElementaryFromRTPLog has already rewritten every output frame's
+	// RTP timestamp from its receive-monotonic time. That gives the
+	// elementary stream the same gap-preserving clock used by FirstNS.
+	//
+	// Do not subsequently move the stream start by half the difference
+	// between its original RTP-clock duration and the receive-time
+	// duration. That legacy centering heuristic applies a second,
+	// independent correction to each track (up to +/-250 ms), introducing
+	// A/V and cross-speaker skew even though the emitted media is already
+	// on the receive timeline. Retain the profile as diagnostics, but make
+	// receive time the sole synchronization authority.
+	seg.TimelineAdjustNS = 0
+	seg.FirstTimelineNS = int64(seg.FirstNS)
 }
 
 func composeSingleTrackMKV(inputPath, outputPath, kind string) error {

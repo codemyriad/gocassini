@@ -25,35 +25,37 @@ type JobAttempt struct {
 	// same job can write it, which is what lets the publish worker deliver the
 	// exact artifact this attempt sealed (D-583). ArtifactOpusSHA256 is that
 	// file's digest.
-	ArtifactOpusPath   *string `json:"artifact_opus_path"`
-	ArtifactOpusSHA256 *string `json:"artifact_opus_sha256"`
-	ArtifactSitePath   *string `json:"artifact_site_path"`
-	Error              *string `json:"error"`
-	StopReason         *string `json:"stop_reason"`
-	StopRequestedAt    *string `json:"stop_requested_at"`
-	StopSignalSentAt   *string `json:"stop_signal_sent_at"`
-	RecordExitCode     *int    `json:"record_exit_code"`
-	RecordStopDetail   *string `json:"record_stop_detail"`
-	RecordLogPath      *string `json:"record_log_path"`
-	BuildLogPath       *string `json:"build_log_path"`
-	SealLogPath        *string `json:"seal_log_path"`
-	PublishLogPath     *string `json:"publish_log_path"`
-	CreatedAt          string  `json:"created_at"`
-	UpdatedAt          string  `json:"updated_at"`
-	RecordQueuedAt     *string `json:"record_queued_at"`
-	RecordStartedAt    *string `json:"record_started_at"`
-	RecordFinishedAt   *string `json:"record_finished_at"`
-	BuildQueuedAt      *string `json:"build_queued_at"`
-	BuildStartedAt     *string `json:"build_started_at"`
-	BuildFinishedAt    *string `json:"build_finished_at"`
-	SealQueuedAt       *string `json:"seal_queued_at"`
-	SealStartedAt      *string `json:"seal_started_at"`
-	SealFinishedAt     *string `json:"seal_finished_at"`
-	PublishQueuedAt    *string `json:"publish_queued_at"`
-	PublishStartedAt   *string `json:"publish_started_at"`
-	PublishFinishedAt  *string `json:"publish_finished_at"`
-	InterruptedAt      *string `json:"interrupted_at"`
-	CompletedAt        *string `json:"completed_at"`
+	ArtifactOpusPath    *string `json:"artifact_opus_path"`
+	ArtifactOpusSHA256  *string `json:"artifact_opus_sha256"`
+	ArtifactSitePath    *string `json:"artifact_site_path"`
+	Error               *string `json:"error"`
+	StopReason          *string `json:"stop_reason"`
+	StopRequestedAt     *string `json:"stop_requested_at"`
+	StopSignalSentAt    *string `json:"stop_signal_sent_at"`
+	RecordExitCode      *int    `json:"record_exit_code"`
+	RecordStopDetail    *string `json:"record_stop_detail"`
+	RecordLogPath       *string `json:"record_log_path"`
+	BuildLogPath        *string `json:"build_log_path"`
+	SealLogPath         *string `json:"seal_log_path"`
+	PublishLogPath      *string `json:"publish_log_path"`
+	CreatedAt           string  `json:"created_at"`
+	UpdatedAt           string  `json:"updated_at"`
+	RecordQueuedAt      *string `json:"record_queued_at"`
+	RecordStartedAt     *string `json:"record_started_at"`
+	RecordFinishedAt    *string `json:"record_finished_at"`
+	BuildQueuedAt       *string `json:"build_queued_at"`
+	BuildRetryNotBefore *string `json:"build_retry_not_before"`
+	BuildDeferralCount  int     `json:"build_deferral_count"`
+	BuildStartedAt      *string `json:"build_started_at"`
+	BuildFinishedAt     *string `json:"build_finished_at"`
+	SealQueuedAt        *string `json:"seal_queued_at"`
+	SealStartedAt       *string `json:"seal_started_at"`
+	SealFinishedAt      *string `json:"seal_finished_at"`
+	PublishQueuedAt     *string `json:"publish_queued_at"`
+	PublishStartedAt    *string `json:"publish_started_at"`
+	PublishFinishedAt   *string `json:"publish_finished_at"`
+	InterruptedAt       *string `json:"interrupted_at"`
+	CompletedAt         *string `json:"completed_at"`
 }
 
 func insertInitialAttemptTx(tx *sql.Tx, job Job) error {
@@ -134,7 +136,7 @@ WHERE id = ?`, job.ID).Scan(&state, &requestJSON, &currentAttemptNumber, &artifa
 		}
 		return Job{}, fmt.Errorf("load job for rerun: %w", err)
 	}
-	if state != "failed" && state != "succeeded" && state != "interrupted" {
+	if state != "failed" && state != "succeeded" && state != "interrupted" && state != "blocked" {
 		return Job{}, ErrJobNotEligibleForRerun
 	}
 
@@ -176,7 +178,7 @@ SET stage = ?, state = ?,
     artifact_run_path = ?,
     error = NULL,
     updated_at = ?,
-    build_queued_at = ?, build_started_at = NULL, build_finished_at = NULL,
+	    build_queued_at = ?, build_retry_not_before = NULL, build_deferral_count = 0, build_started_at = NULL, build_finished_at = NULL,
     seal_queued_at = NULL, seal_started_at = NULL, seal_finished_at = NULL,
     publish_queued_at = NULL, publish_started_at = NULL, publish_finished_at = NULL,
     interrupted_at = NULL, completed_at = NULL
@@ -207,7 +209,7 @@ SELECT job_id, attempt_number, trigger_kind, request_json,
        record_log_path, build_log_path, seal_log_path, publish_log_path,
        created_at, updated_at,
        record_queued_at, record_started_at, record_finished_at,
-       build_queued_at, build_started_at, build_finished_at,
+       build_queued_at, build_retry_not_before, build_deferral_count, build_started_at, build_finished_at,
        seal_queued_at, seal_started_at, seal_finished_at,
        publish_queued_at, publish_started_at, publish_finished_at,
        interrupted_at, completed_at
@@ -257,6 +259,7 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 	var recordStartedAt sql.NullString
 	var recordFinishedAt sql.NullString
 	var buildQueuedAt sql.NullString
+	var buildRetryNotBefore sql.NullString
 	var buildStartedAt sql.NullString
 	var buildFinishedAt sql.NullString
 	var sealQueuedAt sql.NullString
@@ -296,6 +299,8 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 		&recordStartedAt,
 		&recordFinishedAt,
 		&buildQueuedAt,
+		&buildRetryNotBefore,
+		&attempt.BuildDeferralCount,
 		&buildStartedAt,
 		&buildFinishedAt,
 		&sealQueuedAt,
@@ -330,6 +335,7 @@ func scanJobAttempt(scanner rowScanner) (JobAttempt, error) {
 	attempt.RecordStartedAt = nullableStringPtr(recordStartedAt)
 	attempt.RecordFinishedAt = nullableStringPtr(recordFinishedAt)
 	attempt.BuildQueuedAt = nullableStringPtr(buildQueuedAt)
+	attempt.BuildRetryNotBefore = nullableStringPtr(buildRetryNotBefore)
 	attempt.BuildStartedAt = nullableStringPtr(buildStartedAt)
 	attempt.BuildFinishedAt = nullableStringPtr(buildFinishedAt)
 	attempt.SealQueuedAt = nullableStringPtr(sealQueuedAt)

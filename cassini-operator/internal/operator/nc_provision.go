@@ -315,6 +315,25 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 		return
 	}
 
+	// 2b. A folder created by an earlier Cassini carries acl_default_no_permission,
+	//     which makes every recording in it permanently undeletable and
+	//     un-moveable — by anyone, including administrators (D-612). New folders
+	//     are no longer created with it, but an existing one cannot be repaired
+	//     in place: the flag is written only by createFolder and Group Folders
+	//     exposes no setter, so the remedy is an administrator's decision about
+	//     data that is already there.
+	//
+	//     Reported, not fatal. Recordings publish, serve and are access-
+	//     controlled correctly in a flagged folder; only removal is blocked. So
+	//     provisioning finishes and /status names the condition rather than
+	//     failing an install that otherwise works.
+	if folder.ACLDefaultNoPermission {
+		logger.Printf("nc provision: the %q Team folder was created with acl_default_no_permission — recordings in it cannot be deleted or moved by anyone, including administrators (D-612)", ncRecordingsMount)
+		ncAccessSubstrate.degraded("legacy_deny_floor", fmt.Errorf(
+			"the %q Team folder carries Group Folders' acl_default_no_permission flag, set by an earlier version: recordings in it can be published and read but never deleted or moved, by any account including administrators. Group Folders exposes no setter for the flag, so repairing it means recreating the folder (only safe while it holds no recordings) or clearing the column directly; recordings themselves are unaffected",
+			ncRecordingsMount))
+	}
+
 	// 3. Mount mappings: the virtual all-users group gets a READ capability
 	//    ceiling; the narrow owner group gets ALL so the service account can
 	//    write. ACL-manager status alone cannot elevate a READ mount to write.
@@ -329,7 +348,7 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 		{ncRecordingsEveryoneGroup, aclPermRead},
 		{ncRecordingsOwnerGroup, aclMaskAll},
 	} {
-		if err := c.ensureFolderGroup(ctx, client, folderID, mapping.group, mapping.perms, logger); err != nil {
+		if err := c.ensureFolderGroup(ctx, client, folder, folderID, mapping.group, mapping.perms, logger); err != nil {
 			ncAccessSubstrate.degraded("mount_mapping:"+mapping.group, fmt.Errorf("the %q mount mapping on the %q Team folder could not be installed: %w", mapping.group, ncRecordingsMount, err))
 			return
 		}
@@ -341,7 +360,7 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	//    per-leaf override, so continuing would make every registered account
 	//    able to read every recording. Before D-554 this path was reachable only
 	//    behind a flag that defaulted off; it now runs on every install.
-	if err := c.folderSetACL(ctx, client, folderID, true); err != nil {
+	if err := c.folderSetACLIfNeeded(ctx, client, folder, folderID, true); err != nil {
 		logger.Printf("nc provision: enable advanced ACL folder=%d: %v — refusing to widen the root without it", folderID, err)
 		ncAccessSubstrate.degraded("acl_enable", fmt.Errorf("advanced ACL could not be enabled on the %q Team folder, so the default-deny floor is missing: %w", ncRecordingsMount, err))
 		return
@@ -451,6 +470,14 @@ type gfFolder struct {
 	MountPoint string          `json:"mount_point"`
 	Groups     json.RawMessage `json:"groups"`
 	Manage     []gfManage      `json:"manage"`
+	// ACL is whether advanced ACL is already on, so provisioning can skip a
+	// write it does not need — see groupPerms for why skipping matters.
+	ACL bool `json:"acl"`
+	// ACLDefaultNoPermission reports Group Folders' default-deny flag. Cassini
+	// no longer sets it (D-612); this is here to DETECT a folder created by an
+	// earlier version, which cannot be repaired in place — the flag is written
+	// only by createFolder and has no setter.
+	ACLDefaultNoPermission bool `json:"acl_default_no_permission"`
 }
 
 type gfManage struct {
@@ -476,6 +503,31 @@ func (f gfFolder) hasManager(mtype, mid string) bool {
 		}
 	}
 	return false
+}
+
+// groupPerms returns the permissions a group is already mapped to on this
+// folder. Provisioning consults it before writing a mapping, because on a
+// Nextcloud that enforces password confirmation the write is refused with a
+// 403 that says nothing about the current state — so re-asserting a mapping
+// that is already correct fails an instance that is already right.
+//
+// That is not hypothetical: it is what current main does to every Nextcloud 34
+// install whose topology an administrator set up by hand. The folder listing
+// already carries the answer, so this costs no request.
+func (f gfFolder) groupPerms(group string) (int, bool) {
+	var groups map[string]json.Number
+	if err := json.Unmarshal(f.Groups, &groups); err != nil {
+		return 0, false
+	}
+	raw, ok := groups[group]
+	if !ok {
+		return 0, false
+	}
+	perms, err := raw.Int64()
+	if err != nil {
+		return 0, false
+	}
+	return int(perms), true
 }
 
 func (f gfFolder) hasGroup(group string) bool {
@@ -548,9 +600,27 @@ func ocsRefusal(status int, body []byte) string {
 // adopts it on the next enable (findFolder runs before any create).
 const manualFolderHint = "if this Nextcloud requires password confirmation, an ExApp cannot satisfy it — create the Team folder by hand (`occ groupfolders:create %[1]s`, then `occ groupfolders:group <id> %[2]s read write share delete`, `occ groupfolders:group <id> %[3]s read`, `occ groupfolders:permissions <id> --enable` and `occ groupfolders:permissions <id> -m --user %[2]s`) and Cassini will adopt it on the next enable"
 
-// ensureRecordingsFolder returns the existing "Cassini" group folder or creates
-// it with the default-deny floor (acl_default_no_permission), which can only be
-// set at creation time.
+// ensureRecordingsFolder returns the existing "Cassini" group folder, or creates
+// it.
+//
+// It deliberately does NOT set acl_default_no_permission (D-612). On Group
+// Folders v21+ that flag pins getBasePermission at READ, which makes
+// canDeleteTree false for every path and every account — including the service
+// account and instance administrators — so no recording could ever be deleted
+// or moved across directories. Measured on a live Nextcloud 34 + Group Folders
+// 22: DELETE and cross-directory MOVE answer 403 with the flag, 204/201
+// without it.
+//
+// It widens nothing. The base permission is only consulted where no rule
+// applies anywhere up the path, and provisioning PROPPATCHes the mount root
+// with `cassini: ALL, everyone: READ` a few steps below, which shadows the base
+// throughout the tree. Effective permissions computed by Group Folders itself
+// are identical either way; the flag's only live effect in this topology was to
+// zero the base.
+//
+// The floor it was there to provide — the window before the root ACL lands — is
+// protected by ordering instead: the migration narrows the root to owner-only
+// and widens it only at the end.
 func (c ExAppConfig) ensureRecordingsFolder(ctx context.Context, client *http.Client) (gfFolder, error) {
 	if f, ok, err := c.findFolder(ctx, client, ncRecordingsMount); err != nil {
 		return gfFolder{}, err
@@ -558,8 +628,7 @@ func (c ExAppConfig) ensureRecordingsFolder(ctx context.Context, client *http.Cl
 		return f, nil
 	}
 	status, body, err := c.apiPostForm(ctx, client, c.gfURL("/folders"), url.Values{
-		"mountpoint":                {ncRecordingsMount},
-		"acl_default_no_permission": {"1"},
+		"mountpoint": {ncRecordingsMount},
 	})
 	if err != nil {
 		return gfFolder{}, err
@@ -652,14 +721,25 @@ func lowestIDMatch(folders []gfFolder, mount string) (gfFolder, bool) {
 // nobody has the folder at all, and without the owner group's ALL mapping the
 // service account cannot write into it. Reporting `provisioned` after either
 // failed would be exactly the silent-green shape D-585 removes.
-func (c ExAppConfig) ensureFolderGroup(ctx context.Context, client *http.Client, folderID int, group string, perms int, logger *log.Logger) error {
+func (c ExAppConfig) ensureFolderGroup(ctx context.Context, client *http.Client, folder gfFolder, folderID int, group string, perms int, logger *log.Logger) error {
+	// Already exactly right: say nothing, write nothing. Both calls below are
+	// #[PasswordConfirmationRequired], which an ExApp can never satisfy, and the
+	// 403 they answer with does not report the current state — so writing
+	// unconditionally fails an instance whose topology is already correct.
+	if current, ok := folder.groupPerms(group); ok && current == perms {
+		return nil
+	}
 	// addGroup: 2xx on first add, non-2xx ("Group already assigned") afterwards.
 	if status, body, err := c.apiPostForm(ctx, client, c.gfURL(fmt.Sprintf("/folders/%d/groups", folderID)), url.Values{"group": {group}}); err != nil {
 		logger.Printf("nc provision: add group %q to folder=%d: %v", group, folderID, err)
 		return fmt.Errorf("add group %q to folder=%d: %w", group, folderID, err)
 	} else if refusal := ocsRefusal(status, body); refusal != "" && !strings.Contains(strings.ToLower(string(body)), "already") {
-		logger.Printf("nc provision: add group %q to folder=%d -> %s", group, folderID, refusal)
-		return fmt.Errorf("add group %q to folder=%d -> %s", group, folderID, refusal)
+		// A refused add over a mapping that is already present is survivable —
+		// only the permissions below still need to land.
+		if !folder.hasGroup(group) {
+			logger.Printf("nc provision: add group %q to folder=%d -> %s", group, folderID, refusal)
+			return fmt.Errorf("add group %q to folder=%d -> %s", group, folderID, refusal)
+		}
 	}
 	if status, body, err := c.apiPostForm(ctx, client, c.gfURL(fmt.Sprintf("/folders/%d/groups/%s", folderID, url.PathEscape(group))), url.Values{"permissions": {fmt.Sprintf("%d", perms)}}); err != nil {
 		logger.Printf("nc provision: set permissions group=%q folder=%d: %v", group, folderID, err)
@@ -680,6 +760,17 @@ func (c ExAppConfig) removeFolderGroup(ctx context.Context, client *http.Client,
 		return fmt.Errorf("remove group %q from folder=%d -> %s", group, folderID, refusal)
 	}
 	return nil
+}
+
+// folderSetACLIfNeeded skips the write when advanced ACL is already in the
+// wanted state, for the same reason ensureFolderGroup does: the write is
+// password-confirmation protected and its refusal says nothing about the
+// current state.
+func (c ExAppConfig) folderSetACLIfNeeded(ctx context.Context, client *http.Client, folder gfFolder, folderID int, enabled bool) error {
+	if folder.ACL == enabled {
+		return nil
+	}
+	return c.folderSetACL(ctx, client, folderID, enabled)
 }
 
 func (c ExAppConfig) folderSetACL(ctx context.Context, client *http.Client, folderID int, enabled bool) error {

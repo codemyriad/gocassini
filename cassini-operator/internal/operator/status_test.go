@@ -18,12 +18,21 @@ import (
 // about how the failure is reported, not what caused it.
 var errStatusSubstrateProbe = errors.New("groupfolders app not enabled")
 
-func TestStatusHandlerReportsHealthyCPU(t *testing.T) {
+func TestStatusHandlerReportsCurrentEffectiveCUDASettings(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 	t.Setenv("APP_VERSION", "9.9.9")
-	t.Setenv("CASSINI_STT_DEVICE", "")
-	t.Setenv("CASSINI_STT_MODEL", "test-model")
+	// These image/process values are deliberately stale. Build execution is
+	// governed by the live settings snapshot and forced-CUDA admission policy,
+	// which is what /status must report.
+	t.Setenv("CASSINI_STT_DEVICE", "cpu")
+	t.Setenv("CASSINI_STT_MODEL", "stale-image-model")
+	rt.setSettings(STTSettings{Quality: sttQualityFast})
+	var probedDevices []string
+	rt.computeProbe = func(device string) (bool, string) {
+		probedDevices = append(probedDevices, device)
+		return true, "cuda ready"
+	}
 	rt.cfg.TalkSharedSecret = "super-secret-value"
 
 	req := httptest.NewRequest(http.MethodGet, "/status", nil)
@@ -43,11 +52,14 @@ func TestStatusHandlerReportsHealthyCPU(t *testing.T) {
 	if resp.Version != "9.9.9" || resp.ImageTag != "9.9.9" {
 		t.Fatalf("version/image_tag = %q/%q, want 9.9.9", resp.Version, resp.ImageTag)
 	}
-	if resp.STT.Device != "cpu" || !resp.STT.DeviceUsable {
+	if resp.STT.Device != "cuda" || resp.STT.Quality != sttQualityFast || !resp.STT.DeviceUsable {
 		t.Fatalf("unexpected stt status: %#v", resp.STT)
 	}
-	if resp.STT.ModelID != "test-model" {
-		t.Fatalf("model_id = %q, want test-model", resp.STT.ModelID)
+	if resp.STT.ModelID != auditedCUDAParakeetV3 {
+		t.Fatalf("model_id = %q, want %s", resp.STT.ModelID, auditedCUDAParakeetV3)
+	}
+	if len(probedDevices) != 1 || probedDevices[0] != "cuda" {
+		t.Fatalf("probed devices = %v, want [cuda]", probedDevices)
 	}
 	if !resp.Talk.SecretConfigured || resp.Talk.SignalingInternalSecretConfigured || resp.Talk.BackendURLOverrideConfigured {
 		t.Fatalf("unexpected talk status: %#v", resp.Talk)
@@ -58,6 +70,25 @@ func TestStatusHandlerReportsHealthyCPU(t *testing.T) {
 	// The endpoint must report secret presence only, never the value.
 	if strings.Contains(rec.Body.String(), "super-secret-value") {
 		t.Fatal("status response leaked the Talk shared secret")
+	}
+
+	// A later policy update uses a fresh settings snapshot. The effective device
+	// is unchanged, so its expensive readiness result remains briefly cached.
+	rt.setSettings(STTSettings{Quality: sttQualityBest, DeviceOverride: "cuda"})
+	second := httptest.NewRecorder()
+	rt.statusHandler(second, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status = %d, want %d body=%s", second.Code, http.StatusOK, second.Body.String())
+	}
+	var secondResp statusResponse
+	if err := json.Unmarshal(second.Body.Bytes(), &secondResp); err != nil {
+		t.Fatalf("decode second status response: %v", err)
+	}
+	if secondResp.STT.Quality != sttQualityBest {
+		t.Fatalf("second quality = %q, want best", secondResp.STT.Quality)
+	}
+	if len(probedDevices) != 1 || probedDevices[0] != "cuda" {
+		t.Fatalf("probed devices after cached refresh = %v, want [cuda]", probedDevices)
 	}
 }
 
@@ -92,6 +123,7 @@ func TestStatusHandlerReportsTalkConfigPresenceOnly(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rt, cleanup := newTestRuntime(t)
 			defer cleanup()
+			rt.computeProbe = func(device string) (bool, string) { return true, "cuda ready" }
 			rt.cfg.TalkSharedSecret = tc.recording
 			rt.cfg.TalkBackendURL = tc.backendURL
 			t.Setenv("CASSINI_TALK_SIGNALING_INTERNAL_SECRET", tc.internal)
@@ -122,8 +154,13 @@ func TestStatusHandlerReportsTalkConfigPresenceOnly(t *testing.T) {
 func TestStatusHandlerReportsCudaUnusable(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	t.Setenv("CASSINI_STT_DEVICE", "cuda")
-	rt.computeProbe = func() (bool, string) { return false, "no NVIDIA device visible" }
+	t.Setenv("CASSINI_STT_DEVICE", "cpu") // stale process env must not win
+	rt.computeProbe = func(device string) (bool, string) {
+		if device != "cuda" {
+			t.Fatalf("compute probe device = %q, want cuda", device)
+		}
+		return false, "no NVIDIA device visible"
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/status", nil)
 	rec := httptest.NewRecorder()
@@ -145,11 +182,93 @@ func TestStatusHandlerReportsCudaUnusable(t *testing.T) {
 	if !strings.Contains(resp.STT.Detail, "no NVIDIA device visible") {
 		t.Fatalf("expected actionable detail, got %q", resp.STT.Detail)
 	}
+	if !resp.DB.OK || !resp.Storage.WorkRoot.OK || !resp.Storage.SiteRoot.OK || !resp.RecordingsAccess.OK {
+		t.Fatalf("CUDA must be the sole failed readiness dimension: %#v", resp)
+	}
+}
+
+func TestStatusHandlerRejectsPortableImageOnGPUHost(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	t.Setenv(envSTTCUDACapable, "0")
+	rt.setSettings(STTSettings{Quality: sttQualityBest, DeviceOverride: "cuda"})
+	probeCalled := false
+	rt.computeProbe = func(device string) (bool, string) {
+		probeCalled = true
+		return true, "cuda hardware visible"
+	}
+
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.STT.DeviceUsable || !strings.Contains(resp.STT.Detail, "portable image") || !strings.Contains(resp.STT.Detail, "-cuda") {
+		t.Fatalf("unexpected portable-image status: %#v", resp.STT)
+	}
+	if probeCalled {
+		t.Fatal("GPU hardware probe ran even though the image has no CUDA runtime")
+	}
+}
+
+func TestImageCUDACapabilityFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name, value string
+		want        bool
+	}{
+		{name: "declared CUDA", value: "1", want: true},
+		{name: "portable", value: "0", want: false},
+		{name: "missing", value: "", want: false},
+		{name: "invalid", value: "maybe", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(envSTTCUDACapable, tc.value)
+			got, detail := imageCUDACapability()
+			if got != tc.want {
+				t.Fatalf("imageCUDACapability() = %t, want %t (%s)", got, tc.want, detail)
+			}
+			if !got && strings.TrimSpace(detail) == "" {
+				t.Fatal("unusable image capability has no actionable detail")
+			}
+		})
+	}
+}
+
+func TestStatusHandlerRejectsLegacyCPUOverride(t *testing.T) {
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.setSettings(STTSettings{Quality: sttQualityBest, DeviceOverride: "cpu"})
+	probeCalled := false
+	rt.computeProbe = func(device string) (bool, string) {
+		probeCalled = true
+		return true, "cuda ready"
+	}
+
+	rec := httptest.NewRecorder()
+	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	var resp statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode status response: %v", err)
+	}
+	if resp.STT.Device != "cuda" || resp.STT.DeviceUsable || !strings.Contains(resp.STT.Detail, "GPU-only") {
+		t.Fatalf("unexpected legacy override status: %#v", resp.STT)
+	}
+	if probeCalled {
+		t.Fatal("hardware probe ran despite an invalid stored CPU policy")
+	}
 }
 
 func TestStatusHandlerMountedUnderBasePath(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
+	rt.computeProbe = func(device string) (bool, string) { return true, "cuda ready" }
 	rt.cfg.BasePath = "/operator"
 	handler := newHTTPHandler(log.New(ioDiscard{}, "", 0), rt, ExAppConfig{})
 
@@ -191,11 +310,12 @@ func TestProbeComputeDeviceCPUVariants(t *testing.T) {
 }
 
 func TestLogComputeDeviceStatusLoudWhenUnusable(t *testing.T) {
-	t.Setenv("CASSINI_STT_DEVICE", "cuda")
+	t.Setenv(envSTTCUDACapable, "1")
 	buf := &syncBuffer{}
 	rt := &Runtime{
 		logger:       log.New(buf, "", 0),
-		computeProbe: func() (bool, string) { return false, "GPU absent" },
+		settings:     STTSettings{Quality: sttQualityBest},
+		computeProbe: func(device string) (bool, string) { return false, "GPU absent" },
 	}
 	rt.logComputeDeviceStatus()
 	out := buf.String()
@@ -234,6 +354,51 @@ func TestTTLProbeSingleflightAndTTL(t *testing.T) {
 	}
 	if got := runs.Load(); got != 2 {
 		t.Fatalf("post-TTL check ran the probe %d times total, want 2", got)
+	}
+}
+
+func TestComputeStatusProbeSingleflightTTLAndDeviceKey(t *testing.T) {
+	var runs atomic.Int32
+	gate := make(chan struct{})
+	probe := newComputeStatusProbe(80*time.Millisecond, func(device string) (bool, string) {
+		runs.Add(1)
+		if device == "cuda" {
+			<-gate
+		}
+		return true, device + " ready"
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			usable, detail := probe.check("cuda")
+			if !usable || detail != "cuda ready" {
+				t.Errorf("check(cuda) = %t %q", usable, detail)
+			}
+		}()
+	}
+	time.Sleep(20 * time.Millisecond)
+	close(gate)
+	wg.Wait()
+	if got := runs.Load(); got != 1 {
+		t.Fatalf("concurrent CUDA checks ran %d probes, want 1", got)
+	}
+
+	if usable, detail := probe.check("other"); !usable || detail != "other ready" {
+		t.Fatalf("device-key invalidation = %t %q", usable, detail)
+	}
+	if got := runs.Load(); got != 2 {
+		t.Fatalf("new device did not invalidate cache: runs=%d", got)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	if usable, detail := probe.check("other"); !usable || detail != "other ready" {
+		t.Fatalf("post-TTL check = %t %q", usable, detail)
+	}
+	if got := runs.Load(); got != 3 {
+		t.Fatalf("post-TTL runs=%d, want 3", got)
 	}
 }
 
@@ -419,6 +584,7 @@ func TestStatusReportsAStandaloneOperatorAsHealthyWithNoSubstrate(t *testing.T) 
 	t.Cleanup(ncAccessSubstrate.reset)
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
+	rt.computeProbe = func(device string) (bool, string) { return true, "cuda ready" }
 
 	rec := httptest.NewRecorder()
 	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
@@ -448,6 +614,7 @@ func TestStatusReportsAProvisionedSubstrate(t *testing.T) {
 	ncAccessSubstrate.succeed()
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
+	rt.computeProbe = func(device string) (bool, string) { return true, "cuda ready" }
 
 	rec := httptest.NewRecorder()
 	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
@@ -619,6 +786,7 @@ func TestStatusDoesNotJudgeALocalSinkOnANextcloudSubstrate(t *testing.T) {
 	ncAccessSubstrate.unavailable("app_missing:"+ncAppGroupFolders, errStatusSubstrateProbe)
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
+	rt.computeProbe = func(device string) (bool, string) { return true, "cuda ready" }
 
 	rec := httptest.NewRecorder()
 	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))

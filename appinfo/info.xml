@@ -4,19 +4,40 @@
   <id>gocassini</id>
   <name>Cassini</name>
   <summary>Record, transcribe, and publish Nextcloud Talk meetings.</summary>
-  <description><![CDATA[Cassini joins a Nextcloud Talk room as a bot, records the call,
-transcribes and summarizes it, and publishes a readable archive in Nextcloud
-Files. Recording control and job history live in the admin-only control panel;
-each recording is readable only by the people who were in the Talk room when it
-was published, enforced by Nextcloud's own advanced file ACLs.]]></description>
-  <version>0.2.0-beta.1</version>
+  <description><![CDATA[Cassini records a Nextcloud Talk call without joining as a participant, then
+transcribes and publishes a readable archive in Nextcloud Files. Optionally, it
+can also summarize each meeting when you configure an OpenRouter (or compatible)
+API key. Recording control and job history live in the admin-only control panel;
+each private recording is readable only by the people who had access to the Talk
+room (its attendee list) when it was published, enforced by Nextcloud's own
+advanced file ACLs.
+
+Data processing: recording and speech-to-text transcription run entirely within
+your own infrastructure. No audio or transcript leaves your servers for those
+steps. Optional LLM transcript cleanup and summaries are the only step that sends
+data to a third party, and they run only when an OpenRouter (or compatible) API
+key is configured. Without a key, nothing leaves your infrastructure. See the
+full data-processing note: https://github.com/codemyriad/gocassini/blob/main/docs/privacy.md]]></description>
+  <version>0.2.0-beta.6</version>
   <licence>agpl</licence>
   <author>codemyriad</author>
   <namespace>Cassini</namespace>
+  <documentation>
+    <user>https://github.com/codemyriad/gocassini/blob/main/docs/start-here.md</user>
+    <admin>https://github.com/codemyriad/gocassini/blob/main/docs/exapp-install.md</admin>
+  </documentation>
   <category>integration</category>
+  <category>ai</category>
   <website>https://github.com/codemyriad/gocassini</website>
   <bugs>https://github.com/codemyriad/gocassini/issues</bugs>
   <repository>https://github.com/codemyriad/gocassini</repository>
+
+  <!-- Store screenshots (D-406). HTTPS-hosted, ≤2 MiB each, up to 10; the store
+       fetches these URLs at listing time (they are not bundled in the tarball).
+       Committed under img/screenshots/, served via raw.githubusercontent.com
+       from main — so they resolve once this lands on main. -->
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/gocassini-browse.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/codemyriad/gocassini/main/img/screenshots/gocassini-operator.png</screenshot>
 
   <dependencies>
     <!-- HaRP (the recommended AppAPI deploy daemon) requires NC 32+; older
@@ -32,7 +53,7 @@ was published, enforced by Nextcloud's own advanced file ACLs.]]></description>
            exact build this manifest was released with, never a moving
            `latest`. CI rejects a manifest where the two disagree; bump both
            together with scripts/bump-exapp-version.sh. -->
-      <image-tag>0.2.0-beta.1</image-tag>
+      <image-tag>0.2.0-beta.6</image-tag>
     </docker-install>
 
     <!--
@@ -90,9 +111,29 @@ was published, enforced by Nextcloud's own advanced file ACLs.]]></description>
         <description>Model identifier for transcript cleanup and meeting summaries (default: openai/gpt-4o-mini).</description>
       </variable>
       <variable>
+        <name>CASSINI_ROOM_ID_PEPPER</name>
+        <display-name>Room id pepper (optional)</display-name>
+        <description>Deployment-wide secret mixed into the one-way derivation of each meeting's room id, so the Talk conversation token it is derived from cannot be recovered by enumeration. Recommended. Choose it ONCE: changing it changes every room id, and meetings already published keep the ids they were written with, so rooms split. Re-running scripts/backfill-catalog-rooms.sh --apply repairs every meeting this installation has a job row for; only recordings imported from elsewhere need the manual merge in scripts/reattribute-catalog-room.sh.</description>
+      </variable>
+      <variable>
         <name>CASSINI_OPERATOR_API_TOKEN</name>
         <display-name>Operator API bearer token (optional)</display-name>
         <description>When set, direct (non-proxied) requests to the operator job API must send "Authorization: Bearer &lt;token&gt;". Requests proxied through Nextcloud are authenticated by AppAPI and are unaffected. Leave empty to keep the API reachable only through the AppAPI proxy authentication.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_STT_BACKEND</name>
+        <display-name>Speech-to-text backend (optional)</display-name>
+        <description>Which registered speech-to-text engine transcription uses. Leave empty for the default (sherpa-onnx). An unknown value fails the build loudly before any audio is decoded, so a typo cannot silently select a different engine.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_ATTRIBUTION_DISABLED</name>
+        <display-name>Disable speaker-attribution measurement (optional)</display-name>
+        <description>Set to 1 to skip the cross-track speaker-attribution stage entirely. By default every word is annotated with acoustic evidence of who was speaking; no words are changed or removed either way.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_ATTRIBUTION_DROP</name>
+        <display-name>Drop crosstalk words (optional)</display-name>
+        <description>Set to 1 to delete words the acoustic evidence contradicts instead of annotating them. Intended for room systems where one microphone audibly picks up every participant. The manifest records how many words were removed.</description>
       </variable>
     </environment-variables>
 

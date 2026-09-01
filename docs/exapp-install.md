@@ -122,7 +122,7 @@ CI publishes to `ghcr.io/codemyriad/gocassini`:
 
 | Tag | What it is |
 |---|---|
-| `X.Y.Z` | CPU release build. Immutable by convention; matches `<version>`/`<image-tag>` in `appinfo/info.xml` |
+| `X.Y.Z` | Portable capture image. Immutable by convention; matches `<version>`/`<image-tag>` in `appinfo/info.xml`. It records without a GPU, while operator-managed transcription immediately enters `build/blocked` instead of using CPU ASR. |
 | `X.Y.Z-cuda` | CUDA release build (CUDA 12 / cuDNN 9 sherpa-onnx, fp32 Parakeet model, `CASSINI_STT_DEVICE=cuda`) |
 | `X.Y.Z-rocm` | Alias of the CPU build so ROCm-tagged daemons install; no ROCm acceleration yet |
 | `sha-<shortsha>` / `sha-<shortsha>-cuda` | Every pushed commit, for pinning a specific build |
@@ -148,7 +148,10 @@ publish when the git tag and the manifest version disagree, or when
 
 You don't select the `-cuda` tag by hand: when the deploy daemon's compute
 device is CUDA, AppAPI automatically tries `<image-tag>-cuda` first and falls
-back to the plain tag.
+back to the plain tag. Cassini detects that fallback: the plain image remains
+available for capture, `/operator/status` reports CUDA unavailable, and build
+jobs immediately enter `build/blocked` with instructions to install the matching
+`-cuda` image instead of decoding on CPU.
 
 The checked-in manifest already pins the current release; to install a
 different build, download `appinfo/info.xml`, set `<image-tag>` to the
@@ -237,7 +240,11 @@ Options).
 | `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped/failed notifications) and OCS calls. Leave empty to use the backend URL Talk sends with each request |
 | `CASSINI_NC_ADMIN_USER` | On instances where no discovered account is an administrator | Administrator account used only to create the `cassini` service account, its narrow owner group, and the Team-folder topology. Leave empty for automatic discovery (see [Administrator discovery](#administrator-discovery)); set it when discovery cannot find one or picks the wrong account. Recordings are still owned, written, and managed by `cassini` |
 | `CASSINI_PUBLISH_SINK` | No | Where published recordings are stored. `nextcloud-files` (the default for an installed app) puts them in the `Cassini` Team folder with per-participant ACLs; `local` keeps them on the app's own volume with no access control and no Nextcloud prerequisites. Set `local` only deliberately |
+| `CASSINI_STT_BACKEND` | No | Which registered speech-to-text engine transcription uses; empty selects the default (`sherpa-onnx`). An unknown value fails the build loudly before any audio is decoded |
+| `CASSINI_ATTRIBUTION_DISABLED` | No | Set `1` to skip the cross-track speaker-attribution stage. By default every word is annotated with acoustic evidence; no words are changed or removed either way |
+| `CASSINI_ATTRIBUTION_DROP` | No | Set `1` to delete words the acoustic evidence contradicts instead of annotating them (room-system microphones). The manifest records how many words were removed |
 | `CASSINI_ARTIFACT_RETENTION` | No | How much of each recording's per-run working files the app keeps on its own volume. `sealed` (the default) reclaims a completed run's working copies — all duplicated in the canonical library or transient staging — and keeps the sealed meeting file and every log; `superseded` reclaims only runs a rerun replaced; `all` keeps everything, as the escape hatch when something must be recovered from a completed run. Nothing removes the last copy of anything, and published recordings are never touched |
+| `CASSINI_ROOM_ID_PEPPER` | No (recommended) | Deployment-wide secret mixed into the one-way derivation of each meeting's room id. A meeting publishes a derived id rather than its Talk conversation token, because for a public conversation that token is also the link that joins it — and a Talk token is short enough that an unpeppered derivation can be reversed by enumeration offline. With a pepper set it cannot. **Choose it once:** changing it changes every room id, while meetings already published keep the ids they were written with, so a room splits in two. Re-running `scripts/backfill-catalog-rooms.sh --apply` repairs every meeting this installation has a job row for; only recordings imported from elsewhere need the manual merge in `scripts/reattribute-catalog-room.sh` |
 | `OPENROUTER_API_KEY` | No | API key for the LLM endpoint, when it needs one. A self-hosted model server usually does not — the key is not what enables the feature, `LLM_BASE_URL` is |
 | `LLM_BASE_URL` | No | OpenAI-compatible API base URL for transcript cleanup + meeting summaries — a hosted provider or your own model server. **The full local transcript is sent to whatever endpoint this names** (transcription itself is always local). Unset, raw transcripts are published without summaries. Defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
 | `LLM_MODEL` | No | Model for cleanup/summaries (default `openai/gpt-4o-mini`) |
@@ -600,6 +607,20 @@ the container via Docker device requests. The Docker engine running the ExApp
 needs the NVIDIA driver + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/);
 verify with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`
 on that engine before registering the app.
+
+There is no CPU transcription fallback. A plain portable image is a permanent
+inference mismatch: recording finishes, but the build immediately enters
+`build/blocked` with no `build_retry_not_before`; `/operator/status` answers 503
+with an actionable `stt.detail`. Install/redeploy the matching `-cuda` image,
+then use **Rerun** in Cassini Admin to process the preserved recording.
+
+On a CUDA-capable image, temporary RAM or VRAM pressure is different. The
+operator keeps the build queued, records `build_retry_not_before`, and retries
+with exponential backoff (starting at 15 seconds and capped at 15 minutes).
+After sixteen unsuccessful deferrals (about 2¾ hours at the default schedule)
+it moves the job to `build/blocked` instead
+of retrying forever. Restore capacity and use **Rerun** to create a fresh
+attempt.
 
 ### Remote GPU node
 

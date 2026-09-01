@@ -51,6 +51,41 @@ type meetingsCatalogEntry struct {
 	SpeakerCount     int    `json:"speakerCount,omitempty"`
 	SegmentCount     int    `json:"segmentCount,omitempty"`
 	DigestDurationMS int64  `json:"digestDurationMs,omitempty"`
+	// RoomID and RoomName name the conversation the meeting was recorded in
+	// (D-622). RoomID is a one-way derivation of the room's identity — never
+	// the Talk token itself — so it is safe to publish and print.
+	//
+	// Both are optional. A meeting published before the field existed carries
+	// neither until the catalog backfill gives it what its file still holds,
+	// and a meeting that came from no conversation at all never gets either.
+	RoomID   string `json:"roomId,omitempty"`
+	RoomName string `json:"roomName,omitempty"`
+	// JobID and AttemptNumber name the operator job and attempt that produced
+	// the recording (D-640). Optional — a meeting published by anything other
+	// than an operator job has neither.
+	//
+	// JobID normally equals ID, because the operator publishes its artifact
+	// under the job id. It is carried as its own field anyway, because that
+	// equality is a convention of one publish path and a consumer should not
+	// have to assume it.
+	//
+	// The maintenance scripts do NOT read it: they derive the job id from the
+	// catalog id themselves, because they must also work on an archive
+	// published before this field existed. It is here for consumers, and as the
+	// thing that makes the convention checkable.
+	JobID         string `json:"jobId,omitempty"`
+	AttemptNumber int    `json:"attemptNumber,omitempty"`
+}
+
+// roomSelector is the value `meetings rooms` prints and `meetings list --room`
+// accepts for this entry's room, or "" when the entry has no room.
+//
+// It is simply the id. Every room that can be identified at all has one — a
+// live recording derives it from the Talk token, a backfilled one from the
+// room name — so there is exactly one kind of room identifier and nothing to
+// disambiguate.
+func (e meetingsCatalogEntry) roomSelector() string {
+	return strings.TrimSpace(e.RoomID)
 }
 
 // meetingsCatalogItem pairs one decoded entry with the raw JSON it came from and
@@ -268,12 +303,30 @@ func parseMeetingDateLabel(label string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// meetingsFilterEcho is the filter as it appears in --json, so a consumer
+// reading a short list can tell what narrowed it without re-parsing argv.
+type meetingsFilterEcho struct {
+	From string `json:"from,omitempty"`
+	To   string `json:"to,omitempty"`
+	Room string `json:"room,omitempty"`
+}
+
 // writeMeetingsCatalogJSON re-emits the catalog in display order, preserving
 // each entry's bytes verbatim and adding where they came from.
-func writeMeetingsCatalogJSON(out io.Writer, listing meetingsListing) error {
-	meetings := make([]json.RawMessage, 0, len(listing.Items))
-	for _, item := range listing.Items {
+func writeMeetingsCatalogJSON(out io.Writer, listing meetingsListing, filter meetingsFilter, result meetingsFilterResult) error {
+	meetings := make([]json.RawMessage, 0, len(result.items))
+	for _, item := range result.items {
 		meetings = append(meetings, item.raw)
+	}
+	var echo *meetingsFilterEcho
+	if filter.active() {
+		echo = &meetingsFilterEcho{Room: filter.room}
+		if filter.hasFrom {
+			echo.From = filter.from.Format(meetingsFilterStampLayout)
+		}
+		if filter.hasTo {
+			echo.To = filter.to.Format(meetingsFilterStampLayout)
+		}
 	}
 	document := struct {
 		Version string `json:"version"`
@@ -281,13 +334,27 @@ func writeMeetingsCatalogJSON(out io.Writer, listing meetingsListing) error {
 		// Skipped tells a programmatic consumer the list is incomplete. Without
 		// it, --json — the path an agent actually reads — is the only one that
 		// cannot tell a short list from a complete one.
-		Skipped  int               `json:"skipped"`
-		Meetings []json.RawMessage `json:"meetings"`
+		//
+		// It keeps its original meaning — entries with no id, i.e. a malformed
+		// catalog — and deliberately does NOT absorb filtered-out entries. An
+		// agent reads a non-zero skipped as "something is wrong with the
+		// server's data", which a filter doing its job is not.
+		Skipped int                 `json:"skipped"`
+		Filter  *meetingsFilterEcho `json:"filter,omitempty"`
+		// Excluded counts entries the filter removed; ExcludedUndated is the
+		// subset dropped because a date filter was set and their dateLabel
+		// could not be parsed — nothing the caller typed is wrong in that case.
+		Excluded        int               `json:"excluded"`
+		ExcludedUndated int               `json:"excludedUndated"`
+		Meetings        []json.RawMessage `json:"meetings"`
 	}{
-		Version:  listing.Version,
-		Source:   listing.Source,
-		Skipped:  listing.Skipped,
-		Meetings: meetings,
+		Version:         listing.Version,
+		Source:          listing.Source,
+		Skipped:         listing.Skipped,
+		Filter:          echo,
+		Excluded:        result.excluded,
+		ExcludedUndated: result.undated,
+		Meetings:        meetings,
 	}
 	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")

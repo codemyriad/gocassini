@@ -3,6 +3,10 @@ services:
     build:
       context: ..
       dockerfile: deployment/Dockerfile.operator
+      args:
+        # deployment/README.md resolves this before every build so a newly
+        # published stable FFmpeg release invalidates the cached bundle layer.
+        FFMPEG_VERSION: ${FFMPEG_VERSION:-latest}
     restart: unless-stopped
     # Reap zombie ffmpeg/recorder grandchildren (the operator is otherwise
     # PID 1) and give in-flight recordings time to finalize on stop: the
@@ -24,6 +28,9 @@ services:
       SUMMARY_MODEL: ${SUMMARY_MODEL:-}
       CASSINI_SUMMARY_DISABLED: ${CASSINI_SUMMARY_DISABLED:-}
       CASSINI_READABLE_STRICT_BATCHES: ${CASSINI_READABLE_STRICT_BATCHES:-}
+      CASSINI_STT_BACKEND: ${CASSINI_STT_BACKEND:-}
+      CASSINI_ATTRIBUTION_DISABLED: ${CASSINI_ATTRIBUTION_DISABLED:-}
+      CASSINI_ATTRIBUTION_DROP: ${CASSINI_ATTRIBUTION_DROP:-}
     # The operator job API is unauthenticated, so published ports bind to
     # loopback by default. Docker port publishing bypasses host firewalls
     # (ufw/firewalld); only widen CASSINI_PUBLISH_ADDRESS deliberately.

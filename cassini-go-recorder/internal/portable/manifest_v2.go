@@ -13,9 +13,9 @@ import (
 	"strings"
 )
 
-// v2 wire format. Defined as a private set of structs so the v1 Manifest type
-// stays untouched; the producer derives a v2 manifest from a v1 Manifest plus
-// the per-transcript bodies it wants to embed.
+// Multi-transcript v2/v3 wire format. Defined as a private set of structs so
+// the v1 Manifest type stays untouched; v3 reuses the v2 transcript layout and
+// changes only the audio-integrity contract.
 
 type manifestV2Wire struct {
 	Kind                string            `json:"kind"`
@@ -38,6 +38,8 @@ type provenanceV2Wire struct {
 	ReadableCleanup   map[string]*ProcessingStep `json:"readableCleanup,omitempty"`
 	DisplayTranscript map[string]*ProcessingStep `json:"displayTranscript,omitempty"`
 	MeetingSummary    *ProcessingStep            `json:"meetingSummary,omitempty"`
+	Attribution       *AttributionProvenance     `json:"attribution,omitempty"`
+	WordTimings       *WordTimingProvenance      `json:"wordTimings,omitempty"`
 }
 
 // TranscriptEntry describes one transcript body embedded in a v2 portable
@@ -108,6 +110,7 @@ type TranscriptInput struct {
 
 var (
 	transcriptIDRE        = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+	sha256HexRE           = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	reservedTranscriptIDs = map[string]struct{}{
 		"payload":     {},
 		"format":      {},
@@ -196,11 +199,30 @@ func EncodeTranscriptBody(body TranscriptBody, id string, role string, chunkSize
 // per-transcript payload for each input. Validates ids, default-per-role, and
 // derived-role source pointers.
 func EncodeManifestV2(manifest Manifest, transcripts []TranscriptInput, chunkSize int) (EncodedManifestV2, error) {
+	manifest.Integrity.MatchPolicy = LegacyAudioMatchPolicyPCM
+	manifest.Integrity.OpusSHA256 = ""
+	if manifest.Integrity.PCMFormat == "" {
+		manifest.Integrity.PCMFormat = AudioPCMFormat
+	}
+	return encodeMultiTranscriptManifest(manifest, transcripts, chunkSize, 2)
+}
+
+// EncodeManifestV3 retains the v2 multi-transcript layout while switching the
+// audio identity contract to a decoder-independent compressed Opus digest.
+func EncodeManifestV3(manifest Manifest, transcripts []TranscriptInput, chunkSize int) (EncodedManifestV2, error) {
+	manifest = NormalizeManifestV3(manifest)
+	if !sha256HexRE.MatchString(manifest.Integrity.OpusSHA256) {
+		return EncodedManifestV2{}, fmt.Errorf("v3 manifest needs integrity.opusAudioSha256 as 64 lowercase hex characters")
+	}
+	return encodeMultiTranscriptManifest(manifest, transcripts, chunkSize, 3)
+}
+
+func encodeMultiTranscriptManifest(manifest Manifest, transcripts []TranscriptInput, chunkSize, version int) (EncodedManifestV2, error) {
 	if chunkSize <= 0 {
 		chunkSize = DefaultPayloadChunkSize
 	}
 	if len(transcripts) == 0 {
-		return EncodedManifestV2{}, fmt.Errorf("v2 manifest needs at least one transcript")
+		return EncodedManifestV2{}, fmt.Errorf("v%d manifest needs at least one transcript", version)
 	}
 
 	if err := validateTranscriptInputs(transcripts); err != nil {
@@ -213,8 +235,19 @@ func EncodeManifestV2(manifest Manifest, transcripts []TranscriptInput, chunkSiz
 	readableEncoded := make([]NamedEncodedPayload, 0)
 
 	provenance := &provenanceV2Wire{}
-	if manifest.Provenance != nil && manifest.Provenance.MeetingSummary != nil {
+	if manifest.Provenance != nil {
 		provenance.MeetingSummary = manifest.Provenance.MeetingSummary
+		// Meeting-level, not keyed by transcript id: the attribution stage
+		// runs once against the default raw transcript. In drop mode this
+		// record is the only remaining trace of the deleted words, so a wire
+		// that sheds it publishes a file with no audit trail at all.
+		provenance.Attribution = manifest.Provenance.Attribution
+		// Meeting-level for the same reason: one word-end rule produced every
+		// word in the file, and its absence is what tells a consumer the ends
+		// came from a punctuation mark's timestamp. A wire that sheds it
+		// publishes a file consumers must treat as legacy, and the legacy
+		// repair clips correct timings back to a guess.
+		provenance.WordTimings = manifest.Provenance.WordTimings
 	}
 
 	for _, input := range transcripts {
@@ -269,7 +302,7 @@ func EncodeManifestV2(manifest Manifest, transcripts []TranscriptInput, chunkSiz
 
 	wire := manifestV2Wire{
 		Kind:                "cassini-portable-meeting",
-		Version:             2,
+		Version:             version,
 		Profile:             Profile,
 		Meeting:             manifest.Meeting,
 		Audio:               manifest.Audio,
@@ -285,15 +318,15 @@ func EncodeManifestV2(manifest Manifest, transcripts []TranscriptInput, chunkSiz
 
 	rawJSON, err := json.Marshal(wire)
 	if err != nil {
-		return EncodedManifestV2{}, fmt.Errorf("marshal v2 manifest: %w", err)
+		return EncodedManifestV2{}, fmt.Errorf("marshal v%d manifest: %w", version, err)
 	}
 	var compressed bytes.Buffer
 	gzw := gzip.NewWriter(&compressed)
 	if _, err := gzw.Write(rawJSON); err != nil {
-		return EncodedManifestV2{}, fmt.Errorf("gzip v2 manifest: %w", err)
+		return EncodedManifestV2{}, fmt.Errorf("gzip v%d manifest: %w", version, err)
 	}
 	if err := gzw.Close(); err != nil {
-		return EncodedManifestV2{}, fmt.Errorf("close gzip v2 manifest: %w", err)
+		return EncodedManifestV2{}, fmt.Errorf("close gzip v%d manifest: %w", version, err)
 	}
 	sum := sha256.Sum256(rawJSON)
 	encoded := base64.RawURLEncoding.EncodeToString(compressed.Bytes())
@@ -318,7 +351,8 @@ func hasAnyProvenance(p *provenanceV2Wire) bool {
 	if p == nil {
 		return false
 	}
-	return len(p.SpeechToText) > 0 || len(p.ReadableCleanup) > 0 || len(p.DisplayTranscript) > 0 || p.MeetingSummary != nil
+	return len(p.SpeechToText) > 0 || len(p.ReadableCleanup) > 0 || len(p.DisplayTranscript) > 0 ||
+		p.MeetingSummary != nil || p.Attribution != nil || p.WordTimings != nil
 }
 
 func validateTranscriptInputs(transcripts []TranscriptInput) error {
@@ -388,38 +422,52 @@ func validateTranscriptInputs(transcripts []TranscriptInput) error {
 // human-readable summary tags, v2 descriptor tags, the main manifest chunk
 // set, and one chunk set per transcript body.
 func BuildOpusTagsV2(manifest Manifest, encoded EncodedManifestV2, defaultRawID string) map[string]string {
+	manifest.Integrity.MatchPolicy = LegacyAudioMatchPolicyPCM
+	manifest.Integrity.OpusSHA256 = ""
+	if manifest.Integrity.PCMFormat == "" {
+		manifest.Integrity.PCMFormat = AudioPCMFormat
+	}
+	return buildMultiTranscriptOpusTags(manifest, encoded, defaultRawID, FormatV2, PayloadMIMEV2, PayloadSchemaV2, DecodeHintV2)
+}
+
+func BuildOpusTagsV3(manifest Manifest, encoded EncodedManifestV2, defaultRawID string) map[string]string {
+	manifest = NormalizeManifestV3(manifest)
+	return buildMultiTranscriptOpusTags(manifest, encoded, defaultRawID, FormatV3, PayloadMIMEV3, PayloadSchemaV3, DecodeHintV3)
+}
+
+func buildMultiTranscriptOpusTags(manifest Manifest, encoded EncodedManifestV2, defaultRawID, format, payloadMIME, payloadSchema, decodeHint string) map[string]string {
 	tags := map[string]string{
 		"TITLE":                       manifest.Meeting.Title,
 		"DATE":                        manifest.Meeting.CreatedAtUTC,
 		"DESCRIPTION":                 Description,
 		"ENCODER":                     "Cassini",
-		"CASSINI_FORMAT":              FormatV2,
+		"CASSINI_FORMAT":              format,
 		"CASSINI_PROFILE":             Profile,
-		"CASSINI_PAYLOAD_MIME":        PayloadMIMEV2,
+		"CASSINI_PAYLOAD_MIME":        payloadMIME,
 		"CASSINI_PAYLOAD_ENCODING":    PayloadEncoding,
-		"CASSINI_PAYLOAD_SCHEMA":      PayloadSchemaV2,
+		"CASSINI_PAYLOAD_SCHEMA":      payloadSchema,
 		"CASSINI_PAYLOAD_CHUNK_COUNT": fmt.Sprintf("%d", len(encoded.Main.Chunks)),
 		"CASSINI_PAYLOAD_SHA256":      encoded.Main.SHA256,
 		"CASSINI_PAYLOAD_RAW_BYTES":   fmt.Sprintf("%d", encoded.Main.RawBytes),
 		"CASSINI_PAYLOAD_GZIP_BYTES":  fmt.Sprintf("%d", encoded.Main.CompressedBytes),
-		"CASSINI_AUDIO_PCM_FORMAT":    AudioPCMFormat,
 		"CASSINI_AUDIO_SAMPLE_RATE":   fmt.Sprintf("%d", manifest.Audio.SampleRate),
 		"CASSINI_AUDIO_CHANNELS":      fmt.Sprintf("%d", manifest.Audio.Channels),
 		"CASSINI_AUDIO_SAMPLE_COUNT":  fmt.Sprintf("%d", manifest.Audio.SampleCount),
 		"CASSINI_AUDIO_DURATION_MS":   fmt.Sprintf("%d", manifest.Audio.DurationMS),
-		"CASSINI_AUDIO_PCM_SHA256":    manifest.Integrity.PCMSHA256,
-		"CASSINI_AUDIO_MATCH_POLICY":  AudioMatchPolicy,
-		"CASSINI_DECODE_HINT":         DecodeHintV2,
+		"CASSINI_DECODE_HINT":         decodeHint,
 		"CASSINI_MEETING_ID":          manifest.Meeting.ID,
 		"CASSINI_CREATED_AT":          manifest.Meeting.CreatedAtUTC,
 		"CASSINI_SPEAKER_COUNT":       fmt.Sprintf("%d", len(manifest.Speakers)),
 	}
+	applyAudioIntegrityTags(tags, manifest.Integrity)
 	if manifest.Meeting.RecordedAtLocal != "" {
 		tags["CASSINI_RECORDED_AT_LOCAL"] = manifest.Meeting.RecordedAtLocal
 	}
 	if manifest.Meeting.ProcessedAtUTC != "" {
 		tags["CASSINI_PROCESSED_AT"] = manifest.Meeting.ProcessedAtUTC
 	}
+	applyRoomTags(tags, manifest.Meeting)
+	applyProvenanceTags(tags, manifest.Meeting)
 
 	// Main payload chunks
 	for idx, chunk := range encoded.Main.Chunks {

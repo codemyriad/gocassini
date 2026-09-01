@@ -119,7 +119,9 @@ func TestMeetingsListSendsBasicAuthToTheProxiedCatalogRoute(t *testing.T) {
 	if !strings.Contains(stdout, "meetings=2 caller=alice source=nextcloud-files") {
 		t.Errorf("missing summary line in:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "meeting=NEWER date=2026-08-11 10:32 title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes") {
+	// room=- because this catalog predates room metadata, which is what most of
+	// a real archive looks like.
+	if !strings.Contains(stdout, "meeting=NEWER date=2026-08-11 10:32 room=- title=Daily Standup speakers=3 segments=120 duration_ms=1800000 fetchable=yes") {
 		t.Errorf("missing meeting line in:\n%s", stdout)
 	}
 }
@@ -989,4 +991,77 @@ func TestMeetingsFetchRefusesAnEmptyRecording(t *testing.T) {
 		t.Errorf("no file should be written, stat err=%v", err)
 	}
 	assertNoStrayFiles(t, tmp)
+}
+
+// roomCatalog exercises every room state a real archive holds at once: two
+// recordings from a room whose id was derived from its Talk token, one
+// backfilled recording whose id was derived from its name instead (its file
+// never carried a token), and one from before the field existed at all.
+//
+// The ids are opaque by design — a one-way derivation, never the token — so the
+// fixture uses plausible literals rather than recomputing the derivation, which
+// is pinned in internal/portable.
+const roomCatalogTokenRoomID = "rm_9f2a1c3d4e5b6a70"
+const roomCatalogNameRoomID = "rm_11bb22cc33dd44ee"
+
+const roomCatalog = `{
+  "version": "cassini.viewer.catalog.v1",
+  "meetings": [
+    {"id": "SYNC1", "title": "Weekly Sync (Parakeet Tdt-0.6b-v2)", "dateLabel": "2026-08-11 10:32",
+     "audioPath": "./meetings/SYNC1.opus", "roomId": "rm_9f2a1c3d4e5b6a70", "roomName": "Weekly Sync"},
+    {"id": "SYNC2", "title": "Weekly Sync (Parakeet Tdt-0.6b-v2)", "dateLabel": "2026-08-04 10:30",
+     "audioPath": "./meetings/SYNC2.opus", "roomId": "rm_9f2a1c3d4e5b6a70", "roomName": "Weekly Sync"},
+    {"id": "LEGACY", "title": "Old Standup", "dateLabel": "2026-07-02 09:00",
+     "audioPath": "./meetings/LEGACY.opus", "roomId": "rm_11bb22cc33dd44ee", "roomName": "Old Standup"},
+    {"id": "NOROOM", "title": "Untitled meeting", "dateLabel": "2026-06-01 08:00",
+     "audioPath": "./meetings/NOROOM.opus"}
+  ]
+}`
+
+func TestMeetingsCatalogEntryCarriesTheRoom(t *testing.T) {
+	fake := newMeetingsFakeNextcloud(t, serveCatalog(roomCatalog))
+	client := newMeetingsClient(meetingsConfig{
+		nextcloudURL: fake.server.URL, user: "alice", appPassword: "app-pw-1234", appID: meetingsDefaultAppID,
+	})
+	listing, err := client.fetchCatalog(context.Background())
+	if err != nil {
+		t.Fatalf("fetchCatalog: %v", err)
+	}
+
+	byID := map[string]meetingsCatalogEntry{}
+	for _, entry := range listing.Entries() {
+		byID[entry.ID] = entry
+	}
+	if got := byID["SYNC1"]; got.RoomID != roomCatalogTokenRoomID || got.RoomName != "Weekly Sync" {
+		t.Errorf("SYNC1 room = %q/%q, want %q/%q", got.RoomID, got.RoomName, roomCatalogTokenRoomID, "Weekly Sync")
+	}
+	if got := byID["LEGACY"]; got.RoomID != roomCatalogNameRoomID || got.RoomName != "Old Standup" {
+		t.Errorf("LEGACY room = %q/%q, want %q/%q", got.RoomID, got.RoomName, roomCatalogNameRoomID, "Old Standup")
+	}
+	if got := byID["NOROOM"]; got.RoomID != "" || got.RoomName != "" {
+		t.Errorf("NOROOM room = %q/%q, want both empty", got.RoomID, got.RoomName)
+	}
+}
+
+func TestMeetingsCatalogEntryRoomSelector(t *testing.T) {
+	cases := []struct {
+		name  string
+		entry meetingsCatalogEntry
+		want  string
+	}{
+		{"the id is the selector", meetingsCatalogEntry{RoomID: "rm_abc", RoomName: "Weekly Sync"}, "rm_abc"},
+		// A name alone selects nothing. Every room that can be identified has an
+		// id — derived from its token, or from its name by the backfill — so a
+		// name with no id means the entry was never given one.
+		{"a name without an id is not a room", meetingsCatalogEntry{RoomName: "Old Standup"}, ""},
+		{"neither", meetingsCatalogEntry{}, ""},
+		{"blank id", meetingsCatalogEntry{RoomID: "   ", RoomName: "Old Standup"}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.entry.roomSelector(); got != tc.want {
+				t.Errorf("roomSelector() = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }

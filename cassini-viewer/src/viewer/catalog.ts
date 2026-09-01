@@ -9,6 +9,32 @@ export interface MeetingCatalogEntry {
   speakerCount?: number;
   segmentCount?: number;
   digestDurationMs?: number;
+  // Which conversation the meeting was recorded in (D-622). roomId is a
+  // deterministic one-way derivation of the room's identity — for a Talk
+  // recording, of its conversation token — and never the token itself, because
+  // for a public conversation that token is also the link that joins it. Both
+  // are optional: a meeting recorded before the field existed, or one whose
+  // room lookup failed, simply has no room, and no consumer may require one.
+  //
+  // roomName often equals title, and is still a separate field: a title is
+  // free text that may have been overridden or derived from a file name, while
+  // roomName is a claim about which room this is. Only the second is safe to
+  // group by.
+  //
+  // The two have different homes as of D-640, which matters to anything that
+  // wants to CHANGE one. roomId lives in the .opus and the exporter re-derives
+  // it from there on every republish, so changing it means re-tagging the file.
+  // roomName lives only here — a display name is editable and a sealed
+  // recording is not — and is stamped by the operator on every publish.
+  roomId?: string;
+  roomName?: string;
+  // Which operator job and attempt produced the artifact (D-640). Both
+  // optional; a meeting published by any other producer has neither. jobId
+  // normally equals `id`, because the operator publishes its artifact under the
+  // job id — carried explicitly rather than assumed, since that equality is a
+  // convention of one publish path.
+  jobId?: string;
+  attemptNumber?: number;
 }
 
 export interface MeetingCatalog {
@@ -126,7 +152,44 @@ function validateMeetingCatalogEntry(
       value.digestDurationMs,
       `catalog entry ${index} digestDurationMs`,
     ),
+    // This function rebuilds every entry from an explicit literal, so a field
+    // missing HERE is dropped at load with no error anywhere — even though it
+    // is present in the catalog the browser just fetched.
+    //
+    // Read leniently, unlike artifactPath/audioPath above. Those are
+    // load-bearing — an entry with a blank one cannot be opened, so refusing
+    // the catalog is the honest answer. A blank room is merely a room we do not
+    // know, which is the normal state for most of an archive; and
+    // validateMeetingCatalog has no per-entry recovery, so throwing here would
+    // let one stray `""` from a hand-edited or third-party catalog take down
+    // the whole meeting list.
+    roomId: optionalRoomString(value.roomId),
+    roomName: optionalRoomString(value.roomName),
+    jobId: optionalRoomString(value.jobId),
+    attemptNumber: optionalPositiveInteger(value.attemptNumber),
   };
+}
+
+// optionalPositiveInteger reads an optional 1-based ordinal. Anything that is
+// not one — missing, a string, a float, zero — means "not recorded", on the
+// same principle as optionalRoomString: this is lineage, not something the
+// viewer opens a meeting with, so a bad value must not fail the catalog load.
+function optionalPositiveInteger(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    return undefined;
+  }
+  return value;
+}
+
+// optionalRoomString reads an optional room field. A missing value, a blank
+// one, or one that is not a string all mean the same thing — no room was
+// recorded — and none of them is an error.
+function optionalRoomString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed;
 }
 
 // Newest first. Entries whose dateLabel cannot be parsed (e.g. legacy catalogs
@@ -259,20 +322,33 @@ const SHORT_DATE_FORMAT = new Intl.DateTimeFormat("en-GB", {
 });
 
 // Compact variant of formatMeetingDate for places with little space
-// (e.g. catalog cards). "13 Mar 2026" — day, short month, year.
-// Locale-pinned to en-GB so the day-month-year order is consistent
+// (e.g. catalog cards). "13 Mar 2026, 12:29" — day, short month, year, and the
+// meeting's start time when the label carries one (D-685). Locale-pinned to
+// en-GB so the day-month-year order and the 24-hour clock are consistent
 // regardless of the viewer's browser locale.
+//
+// The time is appended from the label's own digits rather than through Intl:
+// like formatMeetingDate, this makes no timezone claim (D-484), and hour12
+// would otherwise turn a compact "12:29" into "12:29 pm" on a card that has
+// none of that room.
 export function formatMeetingDateShort(dateLabel: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateLabel);
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/.exec(dateLabel);
   if (!match) {
     return dateLabel;
   }
-  const [, y, m, d] = match;
+  const [, y, m, d, h, mn] = match;
   const date = new Date(Number(y), Number(m) - 1, Number(d));
   if (Number.isNaN(date.getTime())) {
     return dateLabel;
   }
-  return SHORT_DATE_FORMAT.format(date);
+  const day = SHORT_DATE_FORMAT.format(date);
+  if (h === undefined || mn === undefined) {
+    return day;
+  }
+  if (Number(h) > 23 || Number(mn) > 59) {
+    return day;
+  }
+  return `${day}, ${h}:${mn}`;
 }
 
 function requireNonEmptyString(value: unknown, label: string): string {

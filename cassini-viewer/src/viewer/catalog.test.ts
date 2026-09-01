@@ -62,6 +62,101 @@ describe("validateMeetingCatalog", () => {
     expect(catalog.meetings[0]?.speakerCount).toBeUndefined();
   });
 
+  it("carries the room a meeting was recorded in", () => {
+    // parseMeetingCatalogEntry rebuilds each entry from an explicit literal, so
+    // a field it does not name is dropped at load with no error — even though
+    // it was in the catalog the browser just fetched (D-622).
+    const catalog = validateMeetingCatalog({
+      version: "cassini.viewer.catalog.v1",
+      meetings: [
+        {
+          id: "01JZ8K3M4N5P6Q7R8S9T0VWXYZ",
+          audioPath: "./meetings/01JZ8K3M4N5P6Q7R8S9T0VWXYZ.opus",
+          title: "Weekly Sync (Parakeet Tdt-0.6b-v2)",
+          dateLabel: "2026-08-11 10:32",
+          roomId: "a7bc3k9x",
+          roomName: "Weekly Sync",
+        },
+      ],
+    });
+
+    expect(catalog.meetings[0]?.roomId).toBe("a7bc3k9x");
+    expect(catalog.meetings[0]?.roomName).toBe("Weekly Sync");
+  });
+
+  it("accepts a meeting with no room, and one with only a room name", () => {
+    // Both are ordinary states, not errors: a meeting published before the
+    // field existed has neither, and one whose name was backfilled from the
+    // published file has only the name — the Talk token was never written into
+    // the artifact and cannot be recovered from it.
+    const catalog = validateMeetingCatalog({
+      version: "cassini.viewer.catalog.v1",
+      meetings: [
+        {
+          id: "no-room",
+          audioPath: "./meetings/no-room.opus",
+          title: "Untitled meeting",
+          dateLabel: "2026-03-18 12:30",
+        },
+        {
+          id: "name-only",
+          audioPath: "./meetings/name-only.opus",
+          title: "Old Standup",
+          dateLabel: "2026-03-19 12:30",
+          roomName: "Old Standup",
+        },
+      ],
+    });
+
+    expect(catalog.meetings[0]?.roomId).toBeUndefined();
+    expect(catalog.meetings[0]?.roomName).toBeUndefined();
+    expect(catalog.meetings[1]?.roomId).toBeUndefined();
+    expect(catalog.meetings[1]?.roomName).toBe("Old Standup");
+  });
+
+  it("carries the job and attempt that produced a meeting", () => {
+    // This function rebuilds every entry from an explicit literal, so a field
+    // missing there is dropped at load with no error — present in the catalog
+    // the browser just fetched and invisible in the browser.
+    const catalog = validateMeetingCatalog({
+      version: "cassini.viewer.catalog.v1",
+      meetings: [
+        {
+          id: "01K3Q7W8ZC9F0MJXQ2NB8V4RTD",
+          audioPath: "./meetings/01K3Q7W8ZC9F0MJXQ2NB8V4RTD.opus",
+          title: "Weekly Sync",
+          dateLabel: "2026-08-11 10:32",
+          jobId: "01K3Q7W8ZC9F0MJXQ2NB8V4RTD",
+          attemptNumber: 2,
+        },
+      ],
+    });
+
+    expect(catalog.meetings[0]?.jobId).toBe("01K3Q7W8ZC9F0MJXQ2NB8V4RTD");
+    expect(catalog.meetings[0]?.attemptNumber).toBe(2);
+  });
+
+  it("reads a bad attempt number as not recorded rather than failing the load", () => {
+    // Lineage, not something the viewer opens a meeting with. validateMeetingCatalog
+    // has no per-entry recovery, so throwing here would let one stray value in a
+    // hand-edited catalog take down the whole meeting list.
+    for (const attemptNumber of [0, -1, 1.5, "2", null]) {
+      const catalog = validateMeetingCatalog({
+        version: "cassini.viewer.catalog.v1",
+        meetings: [
+          {
+            id: "job-1",
+            audioPath: "./meetings/job-1.opus",
+            title: "Weekly Sync",
+            dateLabel: "2026-08-11 10:32",
+            attemptNumber,
+          },
+        ],
+      });
+      expect(catalog.meetings[0]?.attemptNumber).toBeUndefined();
+    }
+  });
+
   it("rejects invalid catalog versions", () => {
     expect(() =>
       validateMeetingCatalog({
@@ -397,8 +492,22 @@ describe("filterMeetingCatalogEntries", () => {
 });
 
 describe("formatMeetingDateShort", () => {
-  it("renders a compact en-GB date", () => {
-    expect(formatMeetingDateShort("2026-03-12 12:29")).toBe("12 Mar 2026");
+  it("renders a compact en-GB date with the meeting's start time (D-685)", () => {
+    expect(formatMeetingDateShort("2026-03-12 12:29")).toBe("12 Mar 2026, 12:29");
+  });
+
+  it("keeps the label's own digits — no timezone shift, no am/pm (D-484)", () => {
+    // 24-hour, wall clock as written: the label makes no timezone claim, and a
+    // list card has no room for a "pm" suffix.
+    expect(formatMeetingDateShort("2026-03-12T00:15")).toBe("12 Mar 2026, 00:15");
+  });
+
+  it("renders date only when the label carries no time", () => {
+    expect(formatMeetingDateShort("2026-04-08")).toBe("8 Apr 2026");
+  });
+
+  it("drops an out-of-range time rather than rendering it", () => {
+    expect(formatMeetingDateShort("2026-04-08 99:99")).toBe("8 Apr 2026");
   });
 
   it("passes through labels that are not dates", () => {

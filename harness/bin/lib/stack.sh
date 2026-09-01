@@ -501,6 +501,12 @@ harness_validate_resume_resources() {
 harness_check_existing_resources_for_up() {
   harness_require_docker
 
+  if [[ "${CASSINI_HARNESS_CASSINI_MODE:-none}" == "installed-exapp" ]] \
+    && ! command -v jq >/dev/null 2>&1; then
+    echo "jq is required for installed-ExApp status verification" >&2
+    return 1
+  fi
+
   local mode="${CASSINI_HARNESS_EXISTING:-fail}"
   local compose_resources exapp_resources resources
   compose_resources="$(harness_project_resources)"
@@ -661,7 +667,7 @@ harness_prepare_exapp_image() {
 
   local image_mode="${CASSINI_HARNESS_EXAPP_IMAGE_MODE:-reuse-local}"
   local image_local="cassini-exapp:e2e-v3-cpu-gpu"
-  local info_xml image_tag image_as_production
+  local info_xml image_tag image_as_production ffmpeg_version
   # shellcheck source=../lib-exapp-image.sh disable=SC1091 # path built from TEST_DIR at runtime
   source "$TEST_DIR/bin/lib-exapp-image.sh"
   info_xml="$(harness_exapp_info_xml_path)"
@@ -671,7 +677,13 @@ harness_prepare_exapp_image() {
   case "$image_mode" in
     build)
       log "ExApp image phase: building $image_local"
-      docker build -f "$REPO_ROOT/deployment/Dockerfile.exapp" -t "$image_local" "$REPO_ROOT"
+      ffmpeg_version="$("$REPO_ROOT/deployment/ffmpeg/resolve-latest.sh")"
+      log "ExApp image phase: selected newest stable FFmpeg $ffmpeg_version"
+      docker build \
+        --build-arg "FFMPEG_VERSION=$ffmpeg_version" \
+        -f "$REPO_ROOT/deployment/Dockerfile.exapp" \
+        -t "$image_local" \
+        "$REPO_ROOT"
       docker tag "$image_local" "$image_as_production"
       log "ExApp image phase: tagged $image_local as $image_as_production"
       ;;
@@ -754,6 +766,54 @@ harness_http_ok_with_retry() {
   return 1
 }
 
+# /operator/status is aggregate readiness, so a GPU-less capture-only host
+# correctly answers 503 even though its AppAPI routes, Talk adapter, database,
+# and recording storage are usable. Keep that distinction explicit: normal
+# generic local stack startup accepts either a ready GPU image or that narrow
+# capture-only state. Contract tests set the expectation to 0 (require 200) or
+# 1 (require sole-STT 503) so an unexpected execution mode fails loudly.
+harness_operator_status_matches() {
+  local code="$1" body="$2" expectation="${CASSINI_HARNESS_EXPECT_GPU_UNAVAILABLE:-auto}"
+  [[ "$expectation" == "auto" || "$expectation" == "0" || "$expectation" == "1" ]] \
+    || return 1
+  if [[ "$expectation" != "1" && "$code" == "200" ]]; then
+    jq -e '.ok == true' <<<"$body" >/dev/null 2>&1
+    return
+  fi
+  if [[ "$expectation" != "0" && "$code" == "503" ]]; then
+    jq -e '
+      .ok == false
+      and .stt.device == "cuda"
+      and .stt.device_usable == false
+      and (.stt.detail | type == "string" and length > 0)
+      and .db.ok == true
+      and .storage.work_root.ok == true
+      and .storage.site_root.ok == true
+      and .recordings_access.ok == true
+    ' <<<"$body" >/dev/null 2>&1
+    return
+  fi
+  return 1
+}
+
+harness_operator_status_with_retry() {
+  local desc="$1" url="$2" response="" body="" code=""
+  local _attempt
+  for _attempt in $(seq 1 60); do
+    if response=$(curl -sS -u admin:admin -w $'\n%{http_code}' "$url" 2>&1); then
+      code="${response##*$'\n'}"
+      body="${response%$'\n'*}"
+      if harness_operator_status_matches "$code" "$body"; then
+        printf '%s' "$body"
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  echo "$desc failed: HTTP ${code:-unknown}: $body" >&2
+  return 1
+}
+
 harness_register_exapp() {
   harness_validate_recording_secrets
   harness_default_installed_exapp_backend_url
@@ -793,9 +853,11 @@ harness_verify_exapp_routes() {
   welcome_json="$(harness_http_body_with_retry "welcome route" "$proxy_url/api/v1/welcome")"
   echo "$welcome_json" | grep -q '"version":1' || { echo "unexpected welcome response: $welcome_json" >&2; return 1; }
 
-  status_json="$(harness_http_body_with_retry "operator status" -u admin:admin "$proxy_url/operator/status")"
-  echo "$status_json" | grep -q '"secret_configured":true' || { echo "recording secret missing from status: $status_json" >&2; return 1; }
-  echo "$status_json" | grep -q '"signaling_internal_secret_configured":true' || { echo "signaling internal secret missing from status: $status_json" >&2; return 1; }
+  status_json="$(harness_operator_status_with_retry "operator status" "$proxy_url/operator/status")"
+  jq -e '.talk.secret_configured == true' <<<"$status_json" >/dev/null \
+    || { echo "recording secret missing from status: $status_json" >&2; return 1; }
+  jq -e '.talk.signaling_internal_secret_configured == true' <<<"$status_json" >/dev/null \
+    || { echo "signaling internal secret missing from status: $status_json" >&2; return 1; }
 
   # D-420: one unified "Cassini" entry — the separate admin control-panel route
   # is gone; the operator surface lives inside the single app (admin-gated in V3).

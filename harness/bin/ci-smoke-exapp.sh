@@ -13,6 +13,7 @@
 set -euo pipefail
 
 : "${IMAGE_REF:?IMAGE_REF must be set (e.g. ghcr.io/codemyriad/gocassini:sha-abc)}"
+"$(dirname "${BASH_SOURCE[0]}")/ci-ffmpeg-bundle.sh"
 PORT="${PORT:-18080}"
 CONTAINER_NAME="cassini-exapp-smoke-$$"
 LOG_DIR="${LOG_DIR:-/tmp/cassini-smoke-${$}}"

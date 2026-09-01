@@ -183,11 +183,46 @@ The generated `catalog.json` looks like:
       "dateLabel": "2026-03-04 12:36",
       "speakerCount": 6,
       "segmentCount": 42,
-      "digestDurationMs": 1830000
+      "digestDurationMs": 1830000,
+      "roomId": "rm_9f2a1c3d4e5b6a70",
+      "roomName": "Daily Meeting",
+      "jobId": "01K3Q7W8ZC9F0MJXQ2NB8V4RTD",
+      "attemptNumber": 1
     }
   ]
 }
 ```
+
+`roomId` and `roomName` name the conversation the meeting was recorded in.
+`roomId` is a deterministic one-way derivation of the room's identity — for a
+Talk recording, of its conversation token — never the token itself, because for
+a public conversation that token is also the link that joins it. Both are
+optional and often absent: a meeting recorded before Cassini kept the room, or
+one whose room lookup failed, simply has no room, and no consumer may require
+one. They are separate from `title` because a title is free text that may have
+been overridden or derived from a file name, while `roomName` is a claim about
+which room this is — only the second is safe to group by.
+
+**The two have different homes, which matters to anything that wants to change
+one.** `roomId` lives in the `.opus`, and the exporter re-derives it from there
+on every republish — so changing it means re-tagging the file (`cassini retag`,
+which both maintenance scripts use). `roomName` lives only in this catalog: a
+display name is editable and a sealed recording is not, so freezing a copy into
+every artifact would mean honouring a rename by rewriting every file that room
+ever produced. The operator stamps it onto the entry on every publish, from the
+job's Talk binding, and carries the previous value across a republish when it
+has none to stamp.
+
+That name is the one the *job* recorded — the binding is written once, at record
+start — so a republish restamps the same value rather than picking up a rename.
+What moving it out of the artifact buys is not freshness but the ability to
+correct it in one place; nothing refreshes it from Talk today.
+
+`jobId` and `attemptNumber` say which operator job and attempt produced the
+artifact. Both are optional — a meeting published by any other producer has
+neither. `jobId` normally equals `id`, because the operator publishes its
+artifact under the job id, but it is carried explicitly rather than assumed:
+that equality is a convention of one publish path.
 
 After the app has been built once, adding a new meeting to a deployed static site does not require
 rebuilding JavaScript. Copy a new artifact directory under `meetings/<meeting-id>/` and append a new

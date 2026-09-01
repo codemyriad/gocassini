@@ -53,8 +53,9 @@ if [[ ! -f "$SHERPA_LIB/libonnxruntime.so" ]] || [[ ! -f "$SHERPA_LIB/libsherpa-
   echo "expected libs not found under $SHERPA_LIB" >&2
   exit 1
 fi
-if ! strings "$SHERPA_LIB/libonnxruntime.so" | grep -q "CUDAExecutionProvider"; then
-  echo "downloaded onnxruntime has no CUDAExecutionProvider symbol" >&2
+CUDA_PROVIDER="$SHERPA_LIB/libonnxruntime_providers_cuda.so"
+if [[ ! -f "$CUDA_PROVIDER" ]] || ! strings "$CUDA_PROVIDER" | grep -F "CUDAExecutionProvider" >/dev/null; then
+  echo "downloaded onnxruntime has no CUDA execution-provider library" >&2
   exit 1
 fi
 
@@ -88,7 +89,7 @@ EOF
 echo "==> building cassini-bin"
 (
   cd "$REC"
-  GOWORK="$GOWORK_FILE" go build -o "$DIST/cassini-bin" ./cmd/cassini
+  GOWORK="$GOWORK_FILE" go build -p 2 -o "$DIST/cassini-bin" ./cmd/cassini
 )
 
 echo "==> copying runtime libs"
@@ -102,8 +103,9 @@ echo "==> verifying CUDA symbols"
 if ldd "$DIST/cassini-bin" >/dev/null 2>&1; then
   ldd "$DIST/cassini-bin" | grep -E "onnxruntime|sherpa" || true
 fi
-if ! strings "$DIST/libonnxruntime.so" | grep -q "CUDAExecutionProvider"; then
-  echo "FAIL: shipped libonnxruntime.so has no CUDAExecutionProvider" >&2
+if [[ ! -f "$DIST/libonnxruntime_providers_cuda.so" ]] || \
+   ! strings "$DIST/libonnxruntime_providers_cuda.so" | grep -F "CUDAExecutionProvider" >/dev/null; then
+  echo "FAIL: shipped runtime has no CUDA execution-provider library" >&2
   exit 1
 fi
 

@@ -42,7 +42,8 @@ Run it when you need a quick installed-ExApp smoke test:
 
 ```bash
 docker build -f deployment/Dockerfile.exapp -t cassini-exapp:local .
-IMAGE_REF=cassini-exapp:local ./harness/bin/ci-e2e-install-exapp.sh
+CASSINI_EXPECT_GPU_UNAVAILABLE=1 IMAGE_REF=cassini-exapp:local \
+  ./harness/bin/ci-e2e-install-exapp.sh
 ```
 
 Important scope note: this script uses a local/manual install shape and does
@@ -117,22 +118,26 @@ helper:
 multipass exec dev-vm -- bash -lc '
   cd /home/ubuntu/dev/workspace
   ./harness/bin/validate-installed-exapp-private-talk.sh \
+    --expect-build-blocked \
     --nextcloud-host <vm-ip> \
     --duration 60
 '
 ```
 
 The helper uses `./bin/cassini dev play-private` to create/reuse the admin +
-Erlich Bachman private one-to-one conversation, triggers recording through
-Talk so the installed ExApp receives the backend request, waits for publish,
-then runs a second recording and verifies both new transcripts remain visible
-in the viewer catalog.
+Erlich Bachman private one-to-one conversation and triggers recording through
+Talk. With the locally built plain image, `--expect-build-blocked` proves both
+recordings retain non-empty audio, immediately enter `build/blocked` with no
+retry timestamp and an actionable CUDA error, never launch CPU ASR, and do not
+disturb the existing viewer catalog. On a CUDA daemon with the matching `-cuda`
+image, omit that flag to require both transcripts in the viewer catalog.
 
 ### Archive preservation checks
 
-The validation helper captures catalog IDs before recording, then fails if the
-second publish removes either the first new job or any pre-existing catalog ID.
-For manual inspection of the AppAPI persistent volume:
+The validation helper captures catalog IDs before recording. CUDA-positive mode
+fails if the second publish removes the first new job or any pre-existing ID;
+capture-only mode requires all prior IDs to remain and neither blocked job to
+appear. For manual inspection of the AppAPI persistent volume:
 
 ```bash
 docker exec nc_app_gocassini sh -lc 'find "$APP_PERSISTENT_STORAGE/operator/jobs/current" -maxdepth 1 -name "*.meeting" | sort'
@@ -145,9 +150,10 @@ print([m.get("id") for m in d.get("meetings", [])])
 PY'
 ```
 
-Expected result after the D-395 helper: at least the two new job IDs remain in
-`catalog.json`; if a catalog existed before the run, those earlier IDs remain
-too.
+Expected result in CUDA-positive mode: at least the two new job IDs remain in
+`catalog.json`. In capture-only mode they remain absent until the matching CUDA
+image is installed and an admin retries the blocked jobs; any catalog IDs that
+existed before the run remain in both modes.
 
 ## Related direct-container Talk test
 

@@ -20,7 +20,7 @@ func TestBuildPortableMeetingV2TagsSyntheszisesRawASREntry(t *testing.T) {
 			Container: "ogg", Codec: "opus", SampleRate: 48000, Channels: 1, SampleCount: 48000, DurationMS: 1000,
 		},
 		Integrity: portable.Integrity{
-			MatchPolicy: portable.AudioMatchPolicy, PCMFormat: portable.AudioPCMFormat,
+			MatchPolicy: portable.LegacyAudioMatchPolicyPCM, PCMFormat: portable.AudioPCMFormat,
 			PCMSHA256: strings.Repeat("a", 64), SampleRate: 48000, Channels: 1, SampleCount: 48000, DurationMS: 1000,
 		},
 		Speakers: []portable.Speaker{{ID: "spk_0", Label: "Alice"}},
@@ -72,7 +72,7 @@ func TestBuildPortableMeetingV2TagsFromSourceMultiTranscript(t *testing.T) {
 			Container: "ogg", Codec: "opus", SampleRate: 48000, Channels: 1, SampleCount: 48000, DurationMS: 1000,
 		},
 		Integrity: portable.Integrity{
-			MatchPolicy: portable.AudioMatchPolicy, PCMFormat: portable.AudioPCMFormat,
+			MatchPolicy: portable.LegacyAudioMatchPolicyPCM, PCMFormat: portable.AudioPCMFormat,
 			PCMSHA256: strings.Repeat("b", 64), SampleRate: 48000, Channels: 1, SampleCount: 48000, DurationMS: 1000,
 		},
 		Speakers: []portable.Speaker{{ID: "spk_0", Label: "Alice"}},

@@ -1,3 +1,60 @@
+<script module lang="ts">
+  import type { Job } from "./operator/types";
+
+  type JobStatus = Pick<Job, "stage" | "state" | "build_retry_not_before">;
+  type RerunnableJob = Pick<Job, "stage" | "state" | "artifact_run_path">;
+
+  const STATUS_STAGE_LABELS: Record<string, string> = {
+    record: "Record",
+    build: "Build",
+    seal: "Seal",
+    publish: "Publish",
+  };
+
+  export function isBuildWaitingForGPU(job: JobStatus): boolean {
+    return job.stage === "build" && job.state === "queued" && job.build_retry_not_before != null;
+  }
+
+  export function isBuildGPUBlocked(job: JobStatus): boolean {
+    return job.stage === "build" && job.state === "blocked";
+  }
+
+  export function hasGPUResourceNotice(job: JobStatus): boolean {
+    return isBuildWaitingForGPU(job) || isBuildGPUBlocked(job);
+  }
+
+  export function jobStatusLabel(job: JobStatus): string {
+    if (isBuildGPUBlocked(job)) return "GPU unavailable";
+    if (isBuildWaitingForGPU(job)) return "Waiting for GPU";
+    if (job.state === "failed") return "Failed";
+    if (job.state === "stopped") return "Stopped";
+    if (job.state === "interrupted") return "Interrupted";
+    if (job.state === "succeeded" && job.stage === "done") return "Published";
+    if (job.state === "queued") return "Queued";
+    if (job.state === "running") {
+      const stage = STATUS_STAGE_LABELS[job.stage];
+      return stage ? `${stage}ing` : "Running";
+    }
+    return `${job.stage} / ${job.state}`;
+  }
+
+  export function jobStatusToneClass(job: JobStatus): string {
+    if (hasGPUResourceNotice(job) || job.state === "stopped") return "text-warning";
+    if (job.state === "failed" || job.state === "interrupted") return "text-error";
+    if (job.state === "succeeded") return "text-success";
+    return "text-base-content/70";
+  }
+
+  export function isRerunnableJob(job: RerunnableJob): boolean {
+    const terminalState = job.stage === "done" || (job.stage === "build" && job.state === "blocked");
+    return terminalState && !!job.artifact_run_path;
+  }
+
+  export function isJobActive(job: Pick<Job, "stage" | "state">): boolean {
+    return job.stage !== "done" && job.state !== "blocked";
+  }
+</script>
+
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import { Activity, ArrowLeft, CassetteTape, ChevronRight, Inbox, RefreshCw, Square, TriangleAlert } from "@lucide/svelte";
@@ -371,10 +428,6 @@
     }
   }
 
-  function isJobActive(job: Job): boolean {
-    return job.stage !== "done";
-  }
-
   function asMessage(error: unknown): string {
     if (error instanceof OperatorHttpError) {
       return error.message;
@@ -405,7 +458,7 @@
     { key: "publish", label: "Publish" },
   ] as const;
 
-  type StageStatus = "pending" | "queued" | "active" | "done" | "failed";
+  type StageStatus = "pending" | "queued" | "active" | "done" | "failed" | "blocked";
 
   function stageTimes(job: Job | JobAttempt, key: string) {
     const row = job as unknown as Record<string, string | null | undefined>;
@@ -417,7 +470,8 @@
   }
 
   function stageProgress(job: Job | JobAttempt): Array<{ label: string; status: StageStatus }> {
-    const halted = job.state === "failed" || job.state === "stopped" || job.state === "interrupted";
+    const gpuBlocked = isBuildGPUBlocked(job);
+    const halted = gpuBlocked || job.state === "failed" || job.state === "stopped" || job.state === "interrupted";
     let lastTouched = -1;
     const times = STAGES.map((stage, index) => {
       const t = stageTimes(job, stage.key);
@@ -437,7 +491,7 @@
         status = "queued";
       }
       if (halted && index === lastTouched) {
-        status = "failed";
+        status = gpuBlocked ? "blocked" : "failed";
       }
       return { label: stage.label, status };
     });
@@ -451,6 +505,8 @@
         return "bg-primary";
       case "failed":
         return "bg-error";
+      case "blocked":
+        return "bg-warning";
       case "queued":
         return "bg-primary/55";
       default:
@@ -471,26 +527,6 @@
     }
   }
 
-  function jobStatusLabel(job: Pick<Job, "stage" | "state">): string {
-    if (job.state === "failed") return "Failed";
-    if (job.state === "stopped") return "Stopped";
-    if (job.state === "interrupted") return "Interrupted";
-    if (job.state === "succeeded" && job.stage === "done") return "Published";
-    if (job.state === "queued") return "Queued";
-    if (job.state === "running") {
-      const stage = STAGES.find((entry) => entry.key === job.stage);
-      return stage ? `${stage.label}ing` : "Running";
-    }
-    return formatStageState(job);
-  }
-
-  function jobStatusToneClass(job: Pick<Job, "stage" | "state">): string {
-    if (job.state === "failed" || job.state === "interrupted") return "text-error";
-    if (job.state === "stopped") return "text-warning";
-    if (job.state === "succeeded") return "text-success";
-    return "text-base-content/70";
-  }
-
   function relativeTime(value: string | null | undefined): string {
     if (!value) return "—";
     const then = Date.parse(value);
@@ -502,10 +538,6 @@
     const hours = Math.round(minutes / 60);
     if (hours < 24) return `${hours}h ago`;
     return `${Math.round(hours / 24)}d ago`;
-  }
-
-  function formatStageState(job: Pick<Job, "stage" | "state">): string {
-    return `${job.stage} / ${job.state}`;
   }
 
   function attemptStageLabel(attempt: JobAttempt): string {
@@ -576,9 +608,10 @@
   $: canStartJob = !submittingStart && meetingUrl.trim() !== "";
   $: stopApplies = selectedJob?.job.stage === "record" && selectedJob?.job.state === "running";
   $: jobFinished = selectedJob?.job.stage === "done";
-  $: rerunApplies = jobFinished && !!selectedJob?.job.artifact_run_path;
+  $: rerunVisible = !!selectedJob?.job && (jobFinished || isBuildGPUBlocked(selectedJob.job));
+  $: rerunApplies = !!selectedJob?.job && isRerunnableJob(selectedJob.job);
   $: rerunBlockedReason =
-    jobFinished && !selectedJob?.job.artifact_run_path
+    rerunVisible && !selectedJob?.job.artifact_run_path
       ? "This run produced no recording to rerun from."
       : "";
   $: canStopSelectedJob = !submittingStop && stopApplies;
@@ -730,8 +763,16 @@
                           <span class={jobStatusToneClass(job)}>{jobStatusLabel(job)}</span>
                           <span class="text-base-content/50"> · {relativeTime(job.updated_at)}</span>
                         </p>
+                        {#if isBuildWaitingForGPU(job)}
+                          <p class="truncate text-warning" title={formatTimestamp(job.build_retry_not_before)}>
+                            Next retry {formatTimestamp(job.build_retry_not_before)} · {job.build_deferral_count}
+                            {job.build_deferral_count === 1 ? "deferral" : "deferrals"}
+                          </p>
+                        {/if}
                         {#if job.error}
-                          <p class="truncate text-base-content/55">{job.error}</p>
+                          <p class="truncate {hasGPUResourceNotice(job) ? 'text-warning' : 'text-base-content/55'}" title={job.error}>
+                            {job.error}
+                          </p>
                         {/if}
                       </div>
                     </div>
@@ -783,7 +824,7 @@
                     Stop
                   {/if}
                 </button>
-              {:else if jobFinished || submittingRerun}
+              {:else if rerunVisible || submittingRerun}
                 <button
                   class="btn btn-outline btn-sm text-sm"
                   disabled={!canRerunSelectedJob}
@@ -850,14 +891,36 @@
                       {#each stageProgress(selectedJob.job) as stage}
                         <span
                           class="flex-1"
-                          class:font-medium={stage.status === "active" || stage.status === "failed"}
+                          class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
                         >
                           {stage.label}
                         </span>
                       {/each}
                     </div>
                   </div>
-                  {#if selectedJob.job.error || selectedJob.job.stop_reason || selectedJob.job.record_stop_detail}
+                  {#if hasGPUResourceNotice(selectedJob.job)}
+                    <div class="grid gap-2 rounded-box border border-warning/50 bg-warning/10 p-3">
+                      <div class="flex items-center gap-2 text-warning">
+                        <TriangleAlert size={16} class="shrink-0" aria-hidden="true" />
+                        <p class="text-sm font-semibold">{jobStatusLabel(selectedJob.job)}</p>
+                      </div>
+                      {#if selectedJob.job.error}
+                        <p class="text-xs break-words text-base-content/75">{selectedJob.job.error}</p>
+                      {/if}
+                      <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                        {#if isBuildWaitingForGPU(selectedJob.job)}
+                          <div class="flex gap-1">
+                            <dt class="text-base-content/50">Next retry</dt>
+                            <dd>{formatTimestamp(selectedJob.job.build_retry_not_before)}</dd>
+                          </div>
+                        {/if}
+                        <div class="flex gap-1">
+                          <dt class="text-base-content/50">GPU deferrals</dt>
+                          <dd>{selectedJob.job.build_deferral_count}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  {:else if selectedJob.job.error || selectedJob.job.stop_reason || selectedJob.job.record_stop_detail}
                     <div class="grid gap-1 rounded-box border border-error/40 bg-error/10 p-3">
                       {#if selectedJob.job.error}
                         <p class="text-sm font-medium text-error">{selectedJob.job.error}</p>
@@ -958,7 +1021,29 @@
                         </summary>
 
                         <div class="grid gap-3 bg-base-200 px-3 pt-3 pb-3">
-                          {#if attempt.error || attempt.stop_reason || attempt.record_stop_detail}
+                          {#if hasGPUResourceNotice(attempt)}
+                            <div class="grid gap-2 rounded-box border border-warning/50 bg-warning/10 p-3">
+                              <div class="flex items-center gap-2 text-warning">
+                                <TriangleAlert size={16} class="shrink-0" aria-hidden="true" />
+                                <p class="text-sm font-semibold">{jobStatusLabel(attempt)}</p>
+                              </div>
+                              {#if attempt.error}
+                                <p class="text-xs break-words text-base-content/75">{attempt.error}</p>
+                              {/if}
+                              <dl class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                                {#if isBuildWaitingForGPU(attempt)}
+                                  <div class="flex gap-1">
+                                    <dt class="text-base-content/50">Next retry</dt>
+                                    <dd>{formatTimestamp(attempt.build_retry_not_before)}</dd>
+                                  </div>
+                                {/if}
+                                <div class="flex gap-1">
+                                  <dt class="text-base-content/50">GPU deferrals</dt>
+                                  <dd>{attempt.build_deferral_count}</dd>
+                                </div>
+                              </dl>
+                            </div>
+                          {:else if attempt.error || attempt.stop_reason || attempt.record_stop_detail}
                             <div class="grid gap-1 rounded-box border border-error/40 bg-error/10 p-3">
                               {#if attempt.error}
                                 <p class="text-sm font-medium text-error">{attempt.error}</p>
@@ -992,7 +1077,10 @@
                             </div>
                             <div class="mt-1 flex gap-1 text-xs text-base-content/60">
                               {#each stageProgress(attempt) as stage}
-                                <span class="flex-1" class:font-medium={stage.status === "active" || stage.status === "failed"}>
+                                <span
+                                  class="flex-1"
+                                  class:font-medium={stage.status === "active" || stage.status === "failed" || stage.status === "blocked"}
+                                >
                                   {stage.label}
                                 </span>
                               {/each}

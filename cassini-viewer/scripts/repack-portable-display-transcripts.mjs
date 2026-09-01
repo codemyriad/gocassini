@@ -76,6 +76,7 @@ export function listPortableMeetingFiles(sourceDir) {
 
 export function repackPortableMeeting(path) {
   const portable = extractPortableManifest(path);
+  requireLegacyV1ForJSRewrite(portable, path);
   const normalizedPortable = normalizePortableReadableTranscript(portable);
   const transcript = buildTranscriptWordsFromPortable(normalizedPortable);
   const readable = buildReadableTranscriptFromPortable(normalizedPortable, transcript);
@@ -109,6 +110,19 @@ export function repackPortableMeeting(path) {
     rmSync(stagePath, { force: true });
   }
   return { status: "rewrite" };
+}
+
+// This script predates multi-transcript portable files and rebuilds a v1
+// manifest. Refuse v2/v3 rather than silently dropping their transcript chunk
+// sets or downgrading compressed-audio integrity to decoded PCM. New packing
+// is delegated to the Go `cassini pack` implementation.
+export function requireLegacyV1ForJSRewrite(portable, path = "portable meeting") {
+  const version = Number(portable?.version ?? 1);
+  if (version !== 1) {
+    throw new Error(
+      `${path} uses portable manifest v${version}; this legacy display repacker only rewrites v1`,
+    );
+  }
 }
 
 export function normalizePortableReadableTranscript(portable) {
@@ -219,6 +233,35 @@ export function buildOpusTags(manifest, payload) {
     CASSINI_SPEAKER_COUNT: String(Array.isArray(normalized.speakers) ? normalized.speakers.length : 0),
     CASSINI_WORD_COUNT: String(normalized.transcript?.wordCount ?? 0),
   };
+
+  // The room, mirroring Go's applyRoomTags (internal/portable/manifest.go).
+  // rewritePortableTags runs ffmpeg with -map_metadata -1, so a tag this
+  // function does not re-emit is DELETED from every repacked file — the room
+  // would survive in the gzipped payload and vanish from the plain tags, which
+  // are the ones a shell reader (the catalog backfill) can actually get at.
+  // Absent rather than empty when unknown, as on the Go side.
+  const roomId = typeof normalized.meeting?.roomId === "string" ? normalized.meeting.roomId.trim() : "";
+  const roomName = typeof normalized.meeting?.roomName === "string" ? normalized.meeting.roomName.trim() : "";
+  if (roomId) {
+    tags.CASSINI_ROOM_ID = roomId;
+  }
+  if (roomName) {
+    tags.CASSINI_ROOM_NAME = roomName;
+  }
+
+  // The operator lineage, mirroring Go's applyProvenanceTags. Same deletion
+  // hazard as the room above: a tag not re-emitted here is gone from every
+  // repacked file. attemptNumber is 1-based, so a non-positive value is
+  // "unknown" and is omitted rather than written as an attempt that cannot
+  // exist.
+  const jobId = typeof normalized.meeting?.jobId === "string" ? normalized.meeting.jobId.trim() : "";
+  const attemptNumber = normalized.meeting?.attemptNumber;
+  if (jobId) {
+    tags.CASSINI_JOB_ID = jobId;
+  }
+  if (typeof attemptNumber === "number" && Number.isInteger(attemptNumber) && attemptNumber > 0) {
+    tags.CASSINI_ATTEMPT_NUMBER = String(attemptNumber);
+  }
 
   const language = firstNonEmpty(normalized.transcript?.language, normalized.meeting?.language);
   if (language) {

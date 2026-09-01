@@ -45,6 +45,7 @@ NEXTCLOUD_URL_INTERNAL="${NEXTCLOUD_URL_INTERNAL:-http://nextcloud}"
 TEST_USER="${TEST_USER:-e2euser}"
 TEST_USER_PASSWORD="${TEST_USER_PASSWORD:-Tn8mY3qVrJ2x!E2e}"
 APP_SECRET="${APP_SECRET:-$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 32)}"
+EXPECT_GPU_UNAVAILABLE="${CASSINI_EXPECT_GPU_UNAVAILABLE:-0}"
 
 mkdir -p "$LOG_DIR"
 
@@ -314,10 +315,25 @@ done
 cycle_exapp
 await_substrate provisioned
 
-substrate_status=$(curl -sS -u "admin:admin" -o /dev/null -w '%{http_code}' "$SUBSTRATE_PROXY/operator/status")
-if [[ "$substrate_status" != "200" ]]; then
+substrate_status_body="$LOG_DIR/operator-status-provisioned.json"
+substrate_status=$(curl -sS -u "admin:admin" -o "$substrate_status_body" -w '%{http_code}' "$SUBSTRATE_PROXY/operator/status")
+if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
+  if [[ "$substrate_status" != "503" ]] || ! jq -e '
+    .ok == false
+    and .stt.device == "cuda"
+    and .stt.device_usable == false
+    and (.stt.detail | type == "string" and length > 0)
+    and .db.ok == true
+    and .storage.work_root.ok == true
+    and .storage.site_root.ok == true
+    and .recordings_access.ok == true
+  ' "$substrate_status_body" >/dev/null; then
+    log "recordings_access: $(substrate_json)"
+    fail "a provisioned GPU-less substrate must answer structured sole-STT 503, got HTTP $substrate_status"
+  fi
+elif [[ "$substrate_status" != "200" ]] || ! jq -e '.ok == true' "$substrate_status_body" >/dev/null; then
   log "recordings_access: $(substrate_json)"
-  fail "a provisioned substrate must answer 200, got $substrate_status"
+  fail "a ready provisioned substrate must answer 200/ok, got HTTP $substrate_status"
 fi
 # The sink must be the RESOLVED one. An ExApp that sets no CASSINI_PUBLISH_SINK
 # resolves to nextcloud-files, and reporting the raw (empty) config as `local`
@@ -330,7 +346,7 @@ admin_user=$(substrate_field admin_user)
 enabled_prereqs=$(substrate_json | jq '[.prerequisites[] | select(.state == "enabled")] | length' 2>/dev/null || echo 0)
 [[ "$enabled_prereqs" == "2" ]] \
   || fail "expected both prerequisites reported enabled, got $enabled_prereqs"
-log "OK   /status: provisioned, sink=$sink, admin_user=$admin_user, 2 prerequisites enabled"
+log "OK   /status: provisioned, expected GPU readiness, sink=$sink, admin_user=$admin_user, 2 prerequisites enabled"
 
 # The USER-readable half of the same verdict. This is the only route that lets
 # someone who is NOT an administrator find out that an install was never
@@ -347,6 +363,47 @@ setup_keys=$(jq -r 'keys | join(",")' "$setup_json" 2>/dev/null || echo "")
 [[ "$setup_keys" == "ok,state" ]] \
   || fail "operator/setup must expose ok+state only — a non-admin has no business with the step, the administrator or the paths; got keys: $setup_keys"
 log "OK   operator/setup: readable by $TEST_USER, verdict only (keys: $setup_keys)"
+
+# A fresh install must produce a Team folder whose recordings can be DELETED and
+# MOVED across directories. This is D-612's acceptance, asserted live so the flag cannot silently
+# come back: Cassini used to create the folder with Group Folders'
+# acl_default_no_permission, which on v21+ pins the base permission at READ and
+# makes canDeleteTree false for EVERY path and EVERY account — the service
+# account and instance administrators included. Nothing in the product deletes a
+# recording today, so no other check here would notice.
+#
+# Probed as the service account, because that is the identity that would have to
+# do it, and through a throwaway file so the assertion never depends on a
+# recording existing. Run from inside the ExApp container using the same
+# act-as-user credential the operator itself uses — the account's password is
+# generated and never stored, so Basic auth is not available to us.
+d612_probe=$(docker exec "$CONTAINER_NAME" sh -c '
+  AUTH=$(printf "cassini:%s" "$APP_SECRET" | base64 -w0)
+  ROOT="$NEXTCLOUD_URL/remote.php/dav/files/cassini/Cassini/Recordings"
+  SRC="$ROOT/d612-probe.txt"
+  DST="$ROOT/meetings/d612-probe-moved.txt"
+  put=$(curl -sS -o /dev/null -w "%{http_code}" -X PUT --data-binary d612 \
+    -H "AUTHORIZATION-APP-API: $AUTH" -H "EX-APP-ID: $APP_ID" -H "EX-APP-VERSION: $APP_VERSION" "$SRC")
+  # Cross-directory MOVE, not a same-directory rename: only the former exercises
+  # canDeleteTree on the source, which is what the flag zeroes.
+  mv=$(curl -sS -o /dev/null -w "%{http_code}" -X MOVE -H "Destination: $DST" -H "Overwrite: T" \
+    -H "AUTHORIZATION-APP-API: $AUTH" -H "EX-APP-ID: $APP_ID" -H "EX-APP-VERSION: $APP_VERSION" "$SRC")
+  del=$(curl -sS -o /dev/null -w "%{http_code}" -X DELETE \
+    -H "AUTHORIZATION-APP-API: $AUTH" -H "EX-APP-ID: $APP_ID" -H "EX-APP-VERSION: $APP_VERSION" "$DST")
+  # Best effort: if the MOVE did not happen the source is still there.
+  curl -sS -o /dev/null -X DELETE \
+    -H "AUTHORIZATION-APP-API: $AUTH" -H "EX-APP-ID: $APP_ID" -H "EX-APP-VERSION: $APP_VERSION" "$SRC" || true
+  printf "%s %s %s" "$put" "$mv" "$del"
+' 2>/dev/null || echo "000 000 000")
+read -r d612_put d612_mv d612_del <<<"$d612_probe"
+[[ "$d612_put" == "201" || "$d612_put" == "204" ]] \
+  || fail "the service account could not write into the Team folder (PUT -> $d612_put); the substrate is not usable"
+# 201 created at the destination, 204 overwrote an existing one.
+[[ "$d612_mv" == "201" || "$d612_mv" == "204" ]] \
+  || fail "the service account cannot MOVE across directories in the Team folder (MOVE -> $d612_mv). That is D-612: the folder carries acl_default_no_permission, which zeroes canDeleteTree for every account. This is the operation D-594 needs."
+[[ "$d612_del" == "204" ]] \
+  || fail "the service account cannot DELETE inside the Team folder (DELETE -> $d612_del). That is D-612: no recording in the folder can ever be deleted, by anyone including administrators."
+log "OK   d612: the service account can write, cross-directory move and delete in the Team folder (PUT -> $d612_put, MOVE -> $d612_mv, DELETE -> $d612_del)"
 
 # The service account, created because the app was installed — no occ recipe.
 occ user:info cassini >/dev/null 2>&1 \
@@ -374,18 +431,28 @@ jq -e '.ocs.data[] | select(.mount_point == "Cassini") | .manage[] | select(.typ
   || fail "cassini is not the ACL manager of the Cassini Team folder"
 log "OK   Cassini Team folder: acl=true, everyone:1, cassini:31, manager=cassini"
 
-# The default-deny floor is only settable at creation and is not exposed by the
-# HTTP index, so this one needs occ. Note the key is `mountPoint` here and
-# `mount_point` over HTTP — the two surfaces genuinely disagree, and using the
-# HTTP spelling against occ silently selects nothing.
+# The flag must be ABSENT (D-612). It used to be asserted present, as the
+# default-deny floor; on Group Folders v21+ it instead pins the base permission
+# at READ, which makes every recording in the folder permanently undeletable and
+# un-moveable by every account, administrators included. The floor it was meant
+# to provide comes from the explicit root ACL asserted above, and the DELETE
+# probe earlier in this script is the behavioural half of the same claim.
+#
+# Still via occ: the flag is not exposed by the HTTP index. Note the key is
+# `mountPoint` here and `mount_point` over HTTP — the two surfaces genuinely
+# disagree, and using the HTTP spelling against occ silently selects nothing,
+# which would make this assertion vacuously true.
 occ groupfolders:list --output=json_pretty > "$LOG_DIR/groupfolders-occ.json" 2>/dev/null \
   || fail "occ groupfolders:list failed"
-if ! jq -e '[.[] | select(.mountPoint == "Cassini") | select(.acl_default_no_permission == true)] | length == 1' \
+jq -e '[.[] | select(.mountPoint == "Cassini")] | length == 1' \
+   "$LOG_DIR/groupfolders-occ.json" >/dev/null 2>&1 \
+  || fail "expected exactly one Cassini Team folder in occ groupfolders:list"
+if ! jq -e '[.[] | select(.mountPoint == "Cassini") | select(.acl_default_no_permission == false)] | length == 1' \
      "$LOG_DIR/groupfolders-occ.json" >/dev/null 2>&1; then
   log "groupfolders (occ): $(head -c 400 "$LOG_DIR/groupfolders-occ.json")"
-  fail "the Cassini Team folder does not have acl_default_no_permission"
+  fail "the Cassini Team folder carries acl_default_no_permission — recordings in it can never be deleted or moved (D-612)"
 fi
-log "OK   the Cassini Team folder has its default-deny floor"
+log "OK   the Cassini Team folder has no default-deny flag (D-612)"
 
 # THE DISCRIMINATOR. From `cassini` a private home directory and a mounted Team
 # folder are indistinguishable — both answer 207 to its own PROPFIND. From a

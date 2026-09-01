@@ -419,7 +419,11 @@ def main() -> None:
     args = parse_args()
     ensure_tools()
 
-    scenario_path = Path(args.scenario).resolve()
+    # No resolve() here: for a piped `--scenario /dev/stdin`, resolve()
+    # rewrites the path to a dead /proc/<pid>/fd/pipe:[...] target that can
+    # no longer be opened. The unresolved path reads fine, and .name is the
+    # only other thing we keep from it.
+    scenario_path = Path(args.scenario)
     output_dir = Path(args.output_dir).resolve()
     manifest_path = output_dir / "manifest.json"
 
@@ -464,37 +468,80 @@ def main() -> None:
                 len(audio) / sample_rate,
             )
 
+    # A scenario's start times are written by hand against guessed utterance
+    # lengths, so a turn can be scheduled before the same speaker's previous
+    # one has finished. Aborting on that fails the whole run on one bad
+    # number, and — because the abort happens partway through — leaves the
+    # earlier participants generated and the later ones missing, which is
+    # easy to mistake for a complete fixture. Slide the turn instead and say
+    # so.
+    #
+    # Scheduling is a separate pass that runs BEFORE the final extent is
+    # computed and before any turn is recorded: the reference and manifest
+    # must describe the audio as mixed, not the scenario as written. (An
+    # earlier version slid the audio inside the mixing loop while still
+    # recording the scenario's original start_seconds — ground truth that
+    # disagreed with its own audio, exactly the deceptively-valid fixture
+    # the slide exists to prevent.)
+    scheduled: dict[tuple[str, float], tuple[int, float]] = {}
+    for participant in participants:
+        previous_end = -1
+        for turn in turns_by_speaker[participant.participant_id]:
+            audio, _ = synthesized[(participant.participant_id, turn.start_seconds)]
+            start_index = int(round(turn.start_seconds * sample_rate))
+            # Keep the scenario's own float for turns that do not move, so a
+            # well-formed scenario round-trips byte-identically.
+            start_seconds = turn.start_seconds
+            if start_index < previous_end:
+                slipped = (previous_end - start_index) / sample_rate
+                print(
+                    f"note: {participant.participant_id} turn at {turn.start_seconds}s "
+                    f"starts before their previous one ended; sliding it {slipped:.2f}s",
+                    file=sys.stderr,
+                )
+                start_index = previous_end
+                start_seconds = start_index / sample_rate
+            previous_end = start_index + audio.size
+            scheduled[(participant.participant_id, turn.start_seconds)] = (
+                start_index,
+                start_seconds,
+            )
+
+    # The common final extent, computed from the SCHEDULED starts so a slid
+    # turn extends the declared duration exactly as far as it extends the
+    # audio. Every track is allocated at this length and never grows past it.
     max_end = duration_seconds
     for turn in turns:
         _, actual_duration = synthesized[(turn.speaker, turn.start_seconds)]
-        max_end = max(max_end, turn.start_seconds + actual_duration + 0.6)
+        _, scheduled_start = scheduled[(turn.speaker, turn.start_seconds)]
+        max_end = max(max_end, scheduled_start + actual_duration + 0.6)
     total_samples = int(math.ceil(max_end * sample_rate))
 
     for participant in participants:
         track = np.zeros(total_samples, dtype=np.float32)
-        previous_end = -1
         actual_turns: list[dict[str, Any]] = []
         for turn in turns_by_speaker[participant.participant_id]:
             audio, actual_duration = synthesized[
                 (participant.participant_id, turn.start_seconds)
             ]
-            start_index = int(round(turn.start_seconds * sample_rate))
+            start_index, start_seconds = scheduled[
+                (participant.participant_id, turn.start_seconds)
+            ]
             end_index = start_index + audio.size
-            if start_index < previous_end:
-                raise SystemExit(
-                    f"scenario overlaps two turns for participant {participant.participant_id}: "
-                    f"{turn.start_seconds}s starts before the previous utterance ended"
-                )
             if end_index > track.size:
-                expanded = np.zeros(end_index, dtype=np.float32)
-                expanded[: track.size] = track
-                track = expanded
+                # The extent above covers every scheduled turn plus padding;
+                # a turn past it means the schedule and the mix have diverged.
+                # Growing this one track instead would break the invariant
+                # that all tracks share the declared duration.
+                raise SystemExit(
+                    f"internal error: turn for {participant.participant_id} ends at "
+                    f"sample {end_index}, past the computed extent {track.size}"
+                )
             track[start_index:end_index] += audio
-            previous_end = end_index
             actual_turns.append({
                 "speaker": participant.participant_id,
                 "display_name": participant.display_name,
-                "start_seconds": round(turn.start_seconds, 3),
+                "start_seconds": round(start_seconds, 3),
                 "actual_duration_seconds": round(actual_duration, 3),
                 "text": turn.text,
             })

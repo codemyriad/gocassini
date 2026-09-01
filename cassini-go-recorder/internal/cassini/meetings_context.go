@@ -28,9 +28,12 @@ type meetingContext struct {
 	Speakers []meetingContextSpeaker `json:"speakers,omitempty"`
 
 	// TranscriptSource says how the prose was produced. Always
-	// "derived-from-words" today, and deliberately explicit: a published .opus
-	// carries no LLM-cleaned readable transcript, so a consumer must not
-	// present this text as one.
+	// "derived-from-words" today, and deliberately explicit: an
+	// operator-published .opus carries no LLM-cleaned readable transcript at
+	// all — only raw-ASR words — so a consumer must not present this text as
+	// one. (Re-exported copies in the static-site export tree do carry a
+	// readable transcript; this command reads the default raw-ASR entry
+	// regardless.)
 	TranscriptSource string `json:"transcriptSource"`
 	// SourceTranscriptID and SourceTranscriptFormat identify the transcript the
 	// prose was derived from, so a claim can be traced back to the file.
@@ -48,6 +51,17 @@ type meetingContextMeeting struct {
 	Title        string `json:"title"`
 	CreatedAtUTC string `json:"createdAtUtc,omitempty"`
 	DurationMS   int64  `json:"durationMs,omitempty"`
+	// RoomID and RoomName say which conversation this meeting came out of
+	// (D-640). Both optional — a meeting with no room is an ordinary state —
+	// and both read from the CATALOG entry rather than from the file, because
+	// the room's current name lives only in the catalog.
+	//
+	// They are here because "which room was this?" is a question an agent
+	// summarising a meeting routinely needs answered, and the command the docs
+	// point it at for reading a meeting used to hand back a document that could
+	// not answer it.
+	RoomID   string `json:"roomId,omitempty"`
+	RoomName string `json:"roomName,omitempty"`
 }
 
 type meetingContextSpeaker struct {
@@ -154,7 +168,18 @@ Requires ffprobe on PATH to read the meeting file's metadata.
 		return 1
 	}
 
-	bundle := buildMeetingContext(meetingID, meeting)
+	// The room reaches the bundle from the CATALOG entry, not from the file
+	// (D-640). The artifact carries a room id and no name — a display name is
+	// editable and a sealed recording is not — so the entry is the only place
+	// both halves exist. resolveMeeting already found it; look it up again
+	// rather than widen its signature, and treat a miss as "no room": it cannot
+	// happen after a successful resolve, and an agent reading a transcript is
+	// the wrong caller to fail over a label.
+	var entry meetingsCatalogEntry
+	if found, err := listing.find(meetingID); err == nil {
+		entry = found
+	}
+	bundle := buildMeetingContext(meetingID, meeting, entry)
 
 	out, closeOut, err := openMeetingsOutput(outFile, stdout)
 	if err != nil {
@@ -211,9 +236,24 @@ func (c *meetingsClient) stageMeetingOpus(ctx context.Context, audioURL *url.URL
 // meeting id so the bundle can be correlated with the catalog entry it came
 // from. The manifest id is content-derived (a hash of the audio) and is not the
 // id the published catalog indexes by.
-func buildMeetingContext(catalogID string, meeting inspectpkg.ExtractedMeeting) meetingContext {
+func buildMeetingContext(catalogID string, meeting inspectpkg.ExtractedMeeting, entry meetingsCatalogEntry) meetingContext {
 	labels := meeting.SpeakerLabels()
 	segments := deriveProseSegments(meeting.Transcript.Words, labels)
+
+	// The catalog is authoritative for the room, and the file is the fallback.
+	// A catalog entry's room id is kept current by the backfill and by any
+	// reattribution an operator has made, while the file's is whatever it was
+	// last tagged with — so preferring the entry means a merged room reads as
+	// merged here too. The file's legacy room name is used only when the
+	// catalog has none, which is what a pre-D-640 archive looks like.
+	roomID := strings.TrimSpace(entry.RoomID)
+	if roomID == "" {
+		roomID = strings.TrimSpace(meeting.Manifest.Meeting.RoomID)
+	}
+	roomName := strings.TrimSpace(entry.RoomName)
+	if roomName == "" {
+		roomName = strings.TrimSpace(meeting.Manifest.Meeting.RoomName)
+	}
 
 	bundle := meetingContext{
 		Version: meetingContextVersion,
@@ -222,6 +262,8 @@ func buildMeetingContext(catalogID string, meeting inspectpkg.ExtractedMeeting) 
 			Title:        strings.TrimSpace(meeting.Manifest.Meeting.Title),
 			CreatedAtUTC: strings.TrimSpace(meeting.Manifest.Meeting.CreatedAtUTC),
 			DurationMS:   meeting.Manifest.Meeting.DurationMS,
+			RoomID:       roomID,
+			RoomName:     roomName,
 		},
 		TranscriptSource:       transcriptSourceDerived,
 		SourceTranscriptID:     meeting.Transcript.TranscriptID,
@@ -276,6 +318,20 @@ func writeMeetingContextMarkdown(out io.Writer, bundle meetingContext) error {
 	fmt.Fprintf(buf, "# %s\n\n", title)
 
 	fmt.Fprintf(buf, "- Meeting id: `%s`\n", bundle.Meeting.ID)
+	// The room, when there is one. Named as "Room" with the id in backticks
+	// beside it, because the id is what `meetings list --room` takes and the
+	// name is not — an agent that copies the label instead of the id gets an
+	// empty list and no explanation.
+	if bundle.Meeting.RoomID != "" || bundle.Meeting.RoomName != "" {
+		switch {
+		case bundle.Meeting.RoomName != "" && bundle.Meeting.RoomID != "":
+			fmt.Fprintf(buf, "- Room: %s (`%s`)\n", bundle.Meeting.RoomName, bundle.Meeting.RoomID)
+		case bundle.Meeting.RoomID != "":
+			fmt.Fprintf(buf, "- Room: `%s`\n", bundle.Meeting.RoomID)
+		default:
+			fmt.Fprintf(buf, "- Room: %s\n", bundle.Meeting.RoomName)
+		}
+	}
 	if bundle.Meeting.CreatedAtUTC != "" {
 		fmt.Fprintf(buf, "- Recorded (UTC): %s\n", bundle.Meeting.CreatedAtUTC)
 	}

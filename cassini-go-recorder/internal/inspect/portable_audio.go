@@ -51,13 +51,14 @@ type portablePayloadInfo struct {
 }
 
 type portableIntegrityResult struct {
-	Status        string
-	Warnings      []string
-	SampleRate    int
-	Channels      int
-	SampleCount   int64
-	DurationMS    int64
-	PCMHashSHA256 string
+	Status         string
+	Warnings       []string
+	SampleRate     int
+	Channels       int
+	SampleCount    int64
+	DurationMS     int64
+	OpusHashSHA256 string
+	PCMHashSHA256  string
 }
 
 func detectPortableAudioPath(path string) (string, bool) {
@@ -95,7 +96,7 @@ func inspectPortableAudio(out io.Writer, path string) error {
 		printPlainPortableAudio(out, audioSummary, "plain-audio", "")
 		return nil
 	}
-	if !strings.EqualFold(formatTag, portable.Format) && !strings.EqualFold(formatTag, portable.FormatV2) {
+	if !strings.EqualFold(formatTag, portable.Format) && !strings.EqualFold(formatTag, portable.FormatV2) && !strings.EqualFold(formatTag, portable.FormatV3) {
 		printPlainPortableAudio(out, audioSummary, "unknown-cassini-format", fmt.Sprintf("unsupported CASSINI_FORMAT=%s", formatTag))
 		return nil
 	}
@@ -146,7 +147,7 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	createdAt := blankDash(manifest.Meeting.CreatedAtUTC)
 	wordCount := manifest.Transcript.WordCount
 	language := firstNonEmpty(manifest.Transcript.Language, manifest.Meeting.Language)
-	if manifest.Version == 2 {
+	if manifest.Version == 2 || manifest.Version == 3 {
 		// v2 stores transcript bodies in separate chunk sets; the main payload
 		// only carries descriptors. Sum word counts from those descriptors and
 		// fall back to the default raw-ASR transcript's language tag.
@@ -174,11 +175,19 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	}
 	fmt.Fprintf(out, "portable_meeting=%s title=%s meeting_id=%s created_at=%s speakers=%d words=%d duration_ms=%d cassini=%s\n",
 		path, title, meetingID, createdAt, len(manifest.Speakers), wordCount, manifest.Meeting.DurationMS, integrity.Status)
-	fmt.Fprintf(out, "audio container=%s codec=%s sample_rate=%d channels=%d duration_ms=%d pcm_sha256=%s\n",
-		audio.Container, audio.Codec, integrity.SampleRate, integrity.Channels, integrity.DurationMS, blankDash(integrity.PCMHashSHA256))
+	fmt.Fprintf(out, "audio container=%s codec=%s sample_rate=%d channels=%d duration_ms=%d",
+		audio.Container, audio.Codec, integrity.SampleRate, integrity.Channels, integrity.DurationMS)
+	if integrity.OpusHashSHA256 != "" {
+		fmt.Fprintf(out, " opus_sha256=%s", integrity.OpusHashSHA256)
+	}
+	if integrity.PCMHashSHA256 != "" {
+		fmt.Fprintf(out, " pcm_sha256=%s", integrity.PCMHashSHA256)
+	}
+	fmt.Fprintln(out)
 	fmt.Fprintf(out, "payload encoding=%s schema=%s chunks=%d raw_bytes=%d compressed_bytes=%d sha256=%s language=%s\n",
 		payload.Encoding, blankDash(payload.Schema), payload.ChunkCount, payload.RawBytes, payload.CompressedBytes, blankDash(payload.SHA256), blankDash(language))
-	if manifest.Version == 2 {
+	printPortableOrigin(out, manifest.Meeting)
+	if manifest.Version == 2 || manifest.Version == 3 {
 		for _, entry := range manifest.Transcripts {
 			printPortableTranscriptEntry(out, "transcript", entry)
 		}
@@ -196,6 +205,33 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	for _, warning := range integrity.Warnings {
 		fmt.Fprintf(out, "warning=%s\n", warning)
 	}
+}
+
+// printPortableOrigin prints where a meeting came from: the room it was
+// recorded in, and the operator job and attempt that produced the file.
+//
+// It is the by-hand verification path for the whole producer chain, and until
+// D-640 it did not exist — `cassini inspect` decoded the room and dropped it, so
+// checking that a recording carried its room meant a raw `ffprobe` against tag
+// names the docs did not list. That is a poor answer for the command the docs
+// point at, and a worse one now that a maintenance tool can rewrite these
+// fields and an operator needs to confirm the rewrite landed.
+//
+// The whole line is omitted when a meeting has none of them, rather than
+// printing four dashes: a file packed by hand genuinely has no origin, and a
+// row of dashes reads like a lookup that failed.
+func printPortableOrigin(out io.Writer, meeting portable.Meeting) {
+	if meeting.RoomID == "" && meeting.RoomName == "" && meeting.JobID == "" && meeting.AttemptNumber == 0 {
+		return
+	}
+	attempt := "-"
+	if meeting.AttemptNumber > 0 {
+		attempt = fmt.Sprintf("%d", meeting.AttemptNumber)
+	}
+	// room_name is shown because a file may still carry a legacy one; it is no
+	// longer written, and the catalog is where a room's current name lives.
+	fmt.Fprintf(out, "origin room_id=%s room_name=%s job_id=%s attempt=%s\n",
+		blankDash(meeting.RoomID), blankDash(meeting.RoomName), blankDash(meeting.JobID), attempt)
 }
 
 func printPortableTranscriptEntry(out io.Writer, label string, entry portable.TranscriptEntry) {
@@ -351,7 +387,7 @@ func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portabl
 	if manifest.Kind != "cassini-portable-meeting" {
 		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("unexpected payload kind %q", manifest.Kind)
 	}
-	if manifest.Version != 1 && manifest.Version != 2 {
+	if manifest.Version != 1 && manifest.Version != 2 && manifest.Version != 3 {
 		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("unsupported payload version %d", manifest.Version)
 	}
 	if manifest.Profile != portable.Profile {
@@ -371,6 +407,73 @@ func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portabl
 }
 
 func verifyPortableAudioIntegrity(path string, stream probedPortableAudioStream, tags map[string]string, manifest portable.Manifest) (portableIntegrityResult, error) {
+	manifestPolicy := strings.ToLower(strings.TrimSpace(manifest.Integrity.MatchPolicy))
+	tagPolicy := strings.ToLower(strings.TrimSpace(metadataTag(tags, "CASSINI_AUDIO_MATCH_POLICY")))
+	if manifestPolicy != "" && tagPolicy != "" && manifestPolicy != tagPolicy {
+		return portableIntegrityResult{}, fmt.Errorf("audio integrity policy mismatch: manifest=%q tag=%q", manifestPolicy, tagPolicy)
+	}
+	policy := manifestPolicy
+	if policy == "" {
+		policy = tagPolicy
+	}
+	if policy == "" {
+		if manifest.Integrity.OpusSHA256 != "" || metadataTag(tags, "CASSINI_AUDIO_OPUS_SHA256") != "" {
+			policy = portable.AudioMatchPolicy
+		} else {
+			policy = portable.LegacyAudioMatchPolicyPCM
+		}
+	}
+
+	switch policy {
+	case portable.AudioMatchPolicy:
+		return verifyPortableOpusIntegrity(path, tags, manifest)
+	case portable.LegacyAudioMatchPolicyPCM:
+		return verifyPortableLegacyPCMIntegrity(path, stream, tags, manifest)
+	default:
+		return portableIntegrityResult{}, fmt.Errorf("unsupported audio integrity matchPolicy %q", policy)
+	}
+}
+
+func verifyPortableOpusIntegrity(path string, tags map[string]string, manifest portable.Manifest) (portableIntegrityResult, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return portableIntegrityResult{}, fmt.Errorf("open portable Opus audio: %w", err)
+	}
+	defer file.Close()
+
+	audio, err := portable.ComputeOpusAudioIntegrity(file)
+	if err != nil {
+		return portableIntegrityResult{}, fmt.Errorf("hash portable Opus audio: %w", err)
+	}
+	expect := strings.ToLower(strings.TrimSpace(manifest.Integrity.OpusSHA256))
+	tagExpect := strings.ToLower(strings.TrimSpace(metadataTag(tags, "CASSINI_AUDIO_OPUS_SHA256")))
+	if expect != "" && tagExpect != "" && expect != tagExpect {
+		return portableIntegrityResult{}, fmt.Errorf("compressed Opus sha256 mismatch between manifest and tag")
+	}
+	if expect == "" {
+		expect = tagExpect
+	}
+	if expect == "" {
+		return portableIntegrityResult{}, fmt.Errorf("compressed Opus integrity policy has no opusSha256")
+	}
+
+	status, warnings := comparePortableAudioShape(manifest.Integrity, audio.SampleRate, audio.Channels, audio.SampleCount, audio.DurationMS)
+	if expect != audio.SHA256 {
+		status = "stale-audio"
+		warnings = append([]string{fmt.Sprintf("compressed Opus sha256 mismatch: manifest=%s actual=%s", expect, audio.SHA256)}, warnings...)
+	}
+	return portableIntegrityResult{
+		Status:         status,
+		Warnings:       warnings,
+		SampleRate:     audio.SampleRate,
+		Channels:       audio.Channels,
+		SampleCount:    audio.SampleCount,
+		DurationMS:     audio.DurationMS,
+		OpusHashSHA256: audio.SHA256,
+	}, nil
+}
+
+func verifyPortableLegacyPCMIntegrity(path string, stream probedPortableAudioStream, tags map[string]string, manifest portable.Manifest) (portableIntegrityResult, error) {
 	if manifest.Integrity.PCMFormat != "" && !strings.EqualFold(manifest.Integrity.PCMFormat, "s16le") {
 		return portableIntegrityResult{}, fmt.Errorf("unsupported integrity pcmFormat %q", manifest.Integrity.PCMFormat)
 	}
@@ -387,40 +490,32 @@ func verifyPortableAudioIntegrity(path string, stream probedPortableAudioStream,
 		return portableIntegrityResult{}, fmt.Errorf("missing actual audio sample rate or channel count")
 	}
 
-	pcmBytes, err := decodeAudioPCM(path, sampleRate, channels)
+	pcmSHA, pcmByteCount, err := hashDecodedAudioPCM(path, sampleRate, channels)
 	if err != nil {
 		return portableIntegrityResult{}, err
 	}
-	sum := sha256.Sum256(pcmBytes)
-	pcmSHA := hex.EncodeToString(sum[:])
-	sampleCount := int64(len(pcmBytes) / (2 * channels))
+	bytesPerSampleFrame := int64(2 * channels)
+	if pcmByteCount%bytesPerSampleFrame != 0 {
+		return portableIntegrityResult{}, fmt.Errorf("ffmpeg produced %d PCM bytes, not a whole number of %d-byte frames", pcmByteCount, bytesPerSampleFrame)
+	}
+	sampleCount := pcmByteCount / bytesPerSampleFrame
 	durationMS := int64(sampleCount * 1000 / int64(sampleRate))
 
-	warnings := []string{}
-	status := "ok"
+	status, warnings := comparePortableAudioShape(manifest.Integrity, sampleRate, channels, sampleCount, durationMS)
 	expect := strings.ToLower(strings.TrimSpace(manifest.Integrity.PCMSHA256))
+	tagExpect := strings.ToLower(strings.TrimSpace(metadataTag(tags, "CASSINI_AUDIO_PCM_SHA256")))
+	if expect != "" && tagExpect != "" && expect != tagExpect {
+		return portableIntegrityResult{}, fmt.Errorf("decoded PCM sha256 mismatch between manifest and tag")
+	}
 	if expect == "" {
-		expect = strings.ToLower(strings.TrimSpace(metadataTag(tags, "CASSINI_AUDIO_PCM_SHA256")))
+		expect = tagExpect
 	}
-	if expect != "" && expect != pcmSHA {
-		status = "stale-audio"
-		warnings = append(warnings, fmt.Sprintf("decoded PCM sha256 mismatch: manifest=%s actual=%s", expect, pcmSHA))
+	if expect == "" {
+		return portableIntegrityResult{}, fmt.Errorf("decoded PCM integrity policy has no pcmSha256")
 	}
-	if manifest.Integrity.SampleRate > 0 && manifest.Integrity.SampleRate != sampleRate {
+	if expect != pcmSHA {
 		status = "stale-audio"
-		warnings = append(warnings, fmt.Sprintf("sample rate mismatch: manifest=%d actual=%d", manifest.Integrity.SampleRate, sampleRate))
-	}
-	if manifest.Integrity.Channels > 0 && manifest.Integrity.Channels != channels {
-		status = "stale-audio"
-		warnings = append(warnings, fmt.Sprintf("channel count mismatch: manifest=%d actual=%d", manifest.Integrity.Channels, channels))
-	}
-	if manifest.Integrity.SampleCount > 0 && manifest.Integrity.SampleCount != sampleCount {
-		status = "stale-audio"
-		warnings = append(warnings, fmt.Sprintf("sample count mismatch: manifest=%d actual=%d", manifest.Integrity.SampleCount, sampleCount))
-	}
-	if manifest.Integrity.DurationMS > 0 && deltaAbs(manifest.Integrity.DurationMS, durationMS) > 1 {
-		status = "stale-audio"
-		warnings = append(warnings, fmt.Sprintf("duration mismatch: manifest=%d actual=%d", manifest.Integrity.DurationMS, durationMS))
+		warnings = append([]string{fmt.Sprintf("decoded PCM sha256 mismatch: manifest=%s actual=%s", expect, pcmSHA)}, warnings...)
 	}
 	return portableIntegrityResult{
 		Status:        status,
@@ -433,7 +528,29 @@ func verifyPortableAudioIntegrity(path string, stream probedPortableAudioStream,
 	}, nil
 }
 
-func decodeAudioPCM(path string, sampleRate int, channels int) ([]byte, error) {
+func comparePortableAudioShape(expected portable.Integrity, sampleRate, channels int, sampleCount, durationMS int64) (string, []string) {
+	status := "ok"
+	warnings := []string{}
+	if expected.SampleRate > 0 && expected.SampleRate != sampleRate {
+		status = "stale-audio"
+		warnings = append(warnings, fmt.Sprintf("sample rate mismatch: manifest=%d actual=%d", expected.SampleRate, sampleRate))
+	}
+	if expected.Channels > 0 && expected.Channels != channels {
+		status = "stale-audio"
+		warnings = append(warnings, fmt.Sprintf("channel count mismatch: manifest=%d actual=%d", expected.Channels, channels))
+	}
+	if expected.SampleCount > 0 && expected.SampleCount != sampleCount {
+		status = "stale-audio"
+		warnings = append(warnings, fmt.Sprintf("sample count mismatch: manifest=%d actual=%d", expected.SampleCount, sampleCount))
+	}
+	if expected.DurationMS > 0 && deltaAbs(expected.DurationMS, durationMS) > 1 {
+		status = "stale-audio"
+		warnings = append(warnings, fmt.Sprintf("duration mismatch: manifest=%d actual=%d", expected.DurationMS, durationMS))
+	}
+	return status, warnings
+}
+
+func hashDecodedAudioPCM(path string, sampleRate int, channels int) (string, int64, error) {
 	cmd := exec.Command(
 		"ffmpeg",
 		"-v", "error",
@@ -445,11 +562,25 @@ func decodeAudioPCM(path string, sampleRate int, channels int) ([]byte, error) {
 		"-ac", strconv.Itoa(channels),
 		"-",
 	)
-	raw, err := cmd.Output()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("ffmpeg decode portable audio: %w", err)
+		return "", 0, fmt.Errorf("open ffmpeg portable PCM output: %w", err)
 	}
-	return raw, nil
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return "", 0, fmt.Errorf("start ffmpeg portable PCM decode: %w", err)
+	}
+	digest := sha256.New()
+	byteCount, copyErr := io.Copy(digest, stdout)
+	waitErr := cmd.Wait()
+	if copyErr != nil {
+		return "", 0, fmt.Errorf("read ffmpeg portable PCM output: %w", copyErr)
+	}
+	if waitErr != nil {
+		return "", 0, fmt.Errorf("ffmpeg decode portable audio: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
+	}
+	return hex.EncodeToString(digest.Sum(nil)), byteCount, nil
 }
 
 func durationStringToMS(value string) int64 {
@@ -507,6 +638,10 @@ type TranscriptWord struct {
 	StartMS int64  `json:"startMs"`
 	EndMS   int64  `json:"endMs"`
 	Speaker string `json:"speaker,omitempty"`
+	// Optional cross-track speaker-attribution evidence, read back from the
+	// packed transcript items so a re-rendered words document keeps it.
+	AttributionGapDB     *float64 `json:"attributionGapDb,omitempty"`
+	LowConfidenceSpeaker bool     `json:"lowConfidenceSpeaker,omitempty"`
 }
 
 // ExtractedTranscript is the default words transcript recovered from a
@@ -549,10 +684,12 @@ func extractedFromTranscriptBody(id, format, language string, wordCount int, ite
 			continue
 		}
 		words = append(words, TranscriptWord{
-			Text:    item.Text,
-			StartMS: item.StartMS,
-			EndMS:   item.EndMS,
-			Speaker: item.Speaker,
+			Text:                 item.Text,
+			StartMS:              item.StartMS,
+			EndMS:                item.EndMS,
+			Speaker:              item.Speaker,
+			AttributionGapDB:     item.AttributionGapDB,
+			LowConfidenceSpeaker: item.LowConfidenceSpeaker,
 		})
 	}
 	if wordCount == 0 {
@@ -651,9 +788,11 @@ func decodeTranscriptBody(tags map[string]string, id string) (portable.Transcrip
 // can read it without bespoke parsing.
 func WriteTranscriptWordsV1JSON(out io.Writer, extracted ExtractedTranscript) error {
 	type wordsV1Word struct {
-		Text    string `json:"text"`
-		StartMS int64  `json:"startMs"`
-		EndMS   int64  `json:"endMs"`
+		Text                 string   `json:"text"`
+		StartMS              int64    `json:"startMs"`
+		EndMS                int64    `json:"endMs"`
+		AttributionGapDB     *float64 `json:"attributionGapDb,omitempty"`
+		LowConfidenceSpeaker bool     `json:"lowConfidenceSpeaker,omitempty"`
 	}
 	type wordsV1Segment struct {
 		Speaker string        `json:"speaker,omitempty"`
@@ -668,7 +807,13 @@ func WriteTranscriptWordsV1JSON(out io.Writer, extracted ExtractedTranscript) er
 
 	words := make([]wordsV1Word, 0, len(extracted.Words))
 	for _, w := range extracted.Words {
-		words = append(words, wordsV1Word{Text: w.Text, StartMS: w.StartMS, EndMS: w.EndMS})
+		words = append(words, wordsV1Word{
+			Text:                 w.Text,
+			StartMS:              w.StartMS,
+			EndMS:                w.EndMS,
+			AttributionGapDB:     w.AttributionGapDB,
+			LowConfidenceSpeaker: w.LowConfidenceSpeaker,
+		})
 	}
 	doc := wordsV1Doc{
 		Version:   "transcript.words.v1",

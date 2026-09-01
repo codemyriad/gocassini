@@ -1,0 +1,12 @@
+# Prototype for docs/proposals/transcription-pipeline-shape.
+# sherpa-onnx is pinned to the version the recorder links (cassini-go-recorder/go.mod).
+sherpa-onnx==1.13.1
+numpy>=1.26
+scipy>=1.11
+jiwer>=3
+# only for build_fixture.py
+kokoro-onnx>=0.4.9,<1
+soundfile>=0.12
+# hosted backends (optional): no extra deps — urllib only.
+#   OpenRouter    : export OPENROUTER_API_KEY
+#   Gemini        : gcloud services api-keys get-key-string <uid> --project <gcp-project>

@@ -12,6 +12,7 @@ import {
   describeMeeting,
   describeSpeechToTextVariant,
   preferredPortableTitle,
+  portableRoomFields,
   describeVariantSuffix,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
@@ -101,32 +102,140 @@ describe("describeMeeting", () => {
     });
   });
 
-  it("derives the date from pack createdAtUtc when the id has no time part (D-588)", () => {
-    expect(describeMeeting("daily-meeting-2026-04-08", "2026-04-08T07:31:02Z")).toEqual({
-      title: "Daily Meeting 2026 04 08",
-      dateLabel: "2026-04-08 07:31",
+  it("prefers a date-only id over pack processing time (D-685)", () => {
+    expect(describeMeeting("daily-meeting-2026-04-08", "2026-08-29T09:14:07Z")).toEqual({
+      title: "Daily Meeting",
+      dateLabel: "2026-04-08",
     });
   });
 
-  it("prefers pack createdAtUtc over filename timestamps", () => {
-    // Metadata is authoritative (UTC); filename stamps are a fallback only.
-    expect(describeMeeting("daily-meeting--2026-03-05--12:38:29", "2026-03-05T10:38:29Z")).toEqual({
+  it("prefers recordedAtLocal — when the meeting happened — over everything else (D-685)", () => {
+    // A pack rebuilt on 29 Aug still describes a meeting held on 10 Mar.
+    expect(
+      describeMeeting(
+        "daily-meeting-2026-03-10--12:30",
+        "2026-08-29T09:14:07Z",
+        "2026-03-10T12:30:00",
+      ),
+    ).toEqual({
       title: "Daily Meeting",
-      dateLabel: "2026-03-05 10:38",
+      dateLabel: "2026-03-10 12:30",
     });
+  });
+
+  it("keeps recordedAtLocal's own wall-clock digits, with no timezone shift", () => {
+    // The value carries no zone, so it must not be round-tripped through Date:
+    // a UTC render on a CET exporter would move 12:30 to 11:30.
+    expect(
+      describeMeeting("daily-meeting-2026-04-08", "", "2026-04-08T00:15:00").dateLabel,
+    ).toBe("2026-04-08 00:15");
+  });
+
+  it("prefers a filename timestamp over pack createdAtUtc (D-685)", () => {
+    // createdAtUtc is when the pack was WRITTEN. Reprocessing the archive
+    // rewrites it to the rebuild day, which is never the meeting's date; the
+    // id's own stamp is a claim about the recording and outranks it.
+    expect(
+      describeMeeting("daily-meeting--2026-03-05--12:38:29", "2026-08-29T09:14:07Z"),
+    ).toEqual({
+      title: "Daily Meeting",
+      dateLabel: "2026-03-05 12:38",
+    });
+  });
+
+  it("prefers a ULID job id's recording time over pack createdAtUtc (D-685)", () => {
+    expect(
+      describeMeeting("01KKA70QN0ABCDEFGHJKMNPQRS", "2026-08-29T09:14:07Z").dateLabel,
+    ).toBe(describeMeeting("01KKA70QN0ABCDEFGHJKMNPQRS").dateLabel);
+  });
+
+  it("ignores an unparseable or out-of-range recordedAtLocal", () => {
+    expect(
+      describeMeeting("weekly-sync", "2026-04-08T07:31:02Z", "not-a-timestamp")
+        .dateLabel,
+    ).toBe("2026-04-08 07:31");
+    expect(
+      describeMeeting("weekly-sync", "2026-04-08T07:31:02Z", "2026-13-40T99:99:00")
+        .dateLabel,
+    ).toBe("2026-04-08 07:31");
+    expect(
+      describeMeeting("weekly-sync", "2026-04-08T07:31:02Z", "2026-02-30T12:00:00")
+        .dateLabel,
+    ).toBe("2026-04-08 07:31");
+    expect(
+      describeMeeting("weekly-sync", "2026-04-08T07:31:02Z", "2026-04-08T12:00:99junk")
+        .dateLabel,
+    ).toBe("2026-04-08 07:31");
   });
 
   it("falls back to the id when createdAtUtc is missing or unparseable", () => {
-    expect(describeMeeting("daily-meeting-2026-04-08")).toEqual({
-      title: "Daily Meeting 2026 04 08",
-      dateLabel: "daily-meeting-2026-04-08",
+    expect(describeMeeting("weekly-sync")).toEqual({
+      title: "Weekly Sync",
+      dateLabel: "weekly-sync",
     });
-    expect(describeMeeting("daily-meeting-2026-04-08", "not-a-timestamp").dateLabel).toBe(
-      "daily-meeting-2026-04-08",
+    expect(describeMeeting("weekly-sync", "not-a-timestamp").dateLabel).toBe(
+      "weekly-sync",
     );
-    expect(describeMeeting("daily-meeting-2026-04-08", "   ").dateLabel).toBe(
-      "daily-meeting-2026-04-08",
+    expect(describeMeeting("weekly-sync", "   ").dateLabel).toBe(
+      "weekly-sync",
     );
+  });
+});
+
+describe("portableRoomFields", () => {
+  it("carries both halves of the room when the file has them", () => {
+    expect(
+      portableRoomFields({ meeting: { roomId: " a7bc3k9x ", roomName: "  Weekly Sync  " } }),
+    ).toEqual({ roomId: "a7bc3k9x", roomName: "Weekly Sync" });
+  });
+
+  it("omits the keys entirely rather than writing empty strings", () => {
+    // An entry with roomId: "" would read as "this meeting has a room whose id
+    // is the empty string", and every consumer would have to check presence AND
+    // emptiness. A meeting with no room is a normal state, not a broken one.
+    expect(portableRoomFields({ meeting: { roomId: "   ", roomName: "" } })).toEqual({});
+    expect(portableRoomFields({ meeting: {} })).toEqual({});
+    expect(portableRoomFields({})).toEqual({});
+    expect(portableRoomFields(null)).toEqual({});
+  });
+
+  it("carries a room name with no id", () => {
+    // What a legacy recording with no job row looks like: its published .opus
+    // never carried a Talk token, so only the name is recoverable from it.
+    expect(portableRoomFields({ meeting: { roomName: "Old Standup" } })).toEqual({
+      roomName: "Old Standup",
+    });
+  });
+
+  it("carries the job and attempt that produced the artifact", () => {
+    expect(
+      portableRoomFields({
+        meeting: { roomId: "rm_9f2a1c3d4e5b6a70", jobId: " 01K3Q7W8ZC9F0MJXQ2NB8V4RTD ", attemptNumber: 2 },
+      }),
+    ).toEqual({
+      roomId: "rm_9f2a1c3d4e5b6a70",
+      jobId: "01K3Q7W8ZC9F0MJXQ2NB8V4RTD",
+      attemptNumber: 2,
+    });
+  });
+
+  it("treats a non-positive or non-integer attempt as not recorded", () => {
+    // Attempts are 1-based, so a zero is "nobody told us" and not an attempt
+    // that could have produced anything.
+    for (const attemptNumber of [0, -1, 1.5, "2", null]) {
+      expect(portableRoomFields({ meeting: { jobId: "01ABC", attemptNumber } })).toEqual({
+        jobId: "01ABC",
+      });
+    }
+  });
+
+  it("reads a room name a pre-D-640 file still carries", () => {
+    // Producers stopped writing roomName — a display name is editable and a
+    // sealed recording is not — but files packed before that change still have
+    // one, and for them it is still the best answer available.
+    expect(
+      portableRoomFields({ meeting: { roomId: "rm_9f2a1c3d4e5b6a70", roomName: "Weekly Sync" } }),
+    ).toEqual({ roomId: "rm_9f2a1c3d4e5b6a70", roomName: "Weekly Sync" });
   });
 });
 
@@ -401,7 +510,7 @@ describe("describeMeeting", () => {
     expect(wordTokens[5]).toMatchObject({ text: "very", startMs: 2400, endMs: 2800 });
   });
 
-  it("splits synthetic readable blocks around interruptions from other speakers", () => {
+  it("keeps an interrupted readable block whole instead of splitting it (D-690)", () => {
     const portable = {
       meeting: { durationMs: 110_000 },
       speakers: [
@@ -470,15 +579,26 @@ describe("describeMeeting", () => {
     const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
     const chimaBlocks = display.blocks.filter((block) => block.speaker === "spk_chima");
 
-    expect(chimaBlocks).toHaveLength(2);
+    // The readable splitter was deleted in D-690: it rewrote LLM-cleaned prose
+    // by word count, and when it did fire it emitted blocks out of time order.
+    // It also never fired on a real producer artifact — not for want of readable
+    // words, which every packed meeting carries per readable segment, but
+    // because every packed meeting ALSO carries a baked display transcript, and
+    // the viewer only rebuilds one (and so only reaches the splitter) when that
+    // is missing. Interruptions are now surfaced by src/core/overlap.ts, which
+    // annotates the turn rather than cutting it up.
+    expect(chimaBlocks).toHaveLength(1);
     expect(chimaBlocks[0]?.text).toContain("Actually, I was wondering");
-    expect(chimaBlocks[0]?.text).not.toContain("It's a pity");
-    expect(chimaBlocks[0]?.endMs).toBeLessThanOrEqual(64_837);
-    expect(chimaBlocks[1]?.text).toContain("It's a pity, Chris, you're ruining everything.");
-    expect(chimaBlocks[1]?.startMs).toBeGreaterThanOrEqual(78_757);
+    expect(chimaBlocks[0]?.text).toContain("It's a pity, Chris, you're ruining everything.");
+    expect(display.blocks.map((block) => block.id)).not.toContain(
+      expect.stringContaining("__split_"),
+    );
+    expect(display.blocks.map((block) => block.startMs)).toEqual(
+      [...display.blocks.map((block) => block.startMs)].sort((left, right) => left - right),
+    );
   });
 
-  it("uses exact transcript words when splitting readable blocks around interruptions", () => {
+  it("keeps an interrupted block whole even with exact transcript words (D-690)", () => {
     const chimaWords = [
       ["Actually,", 54_981, 55_381],
       ["I", 55_381, 55_541],
@@ -574,12 +694,13 @@ describe("describeMeeting", () => {
     const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
     const chimaBlocks = display.blocks.filter((block) => block.speaker === "spk_chima");
 
-    expect(chimaBlocks).toHaveLength(2);
+    // See the note on the previous test: the splitter was deleted in D-690, so
+    // exact transcript words no longer cut the block in two either.
+    expect(chimaBlocks).toHaveLength(1);
     expect(chimaBlocks[0]?.text).toContain("doing something else.");
-    expect(chimaBlocks[0]?.text).not.toContain("It's a pity");
-    expect(chimaBlocks[0]?.endMs).toBe(62_021);
-    expect(chimaBlocks[1]?.text).toBe("It's a pity, Chris, you're ruining everything.");
-    expect(chimaBlocks[1]?.startMs).toBe(77_541);
+    expect(chimaBlocks[0]?.text).toContain("It's a pity, Chris, you're ruining everything.");
+    expect(chimaBlocks[0]?.startMs).toBe(54_981);
+    expect(chimaBlocks[0]?.endMs).toBe(80_742);
   });
 
   it("builds a viewer-ready display transcript with timed cleaned tokens", () => {
@@ -1260,10 +1381,9 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
     }
   });
 
-  // D-588: slug-named portable packs (e.g. backfilled dailies) carry no time
-  // part in the id; the dateLabel must come from the pack's createdAtUtc, with
-  // the raw-slug fallback intact when the metadata lacks it too.
-  it("derives dateLabel from pack createdAtUtc for slug-named portable packs", () => {
+  // D-685: date-only slug ids are still recording-time claims. They must win
+  // over a portable's createdAtUtc even though no start time is recoverable.
+  it("derives dateLabel from date-only ids for slug-named portable packs", () => {
     const root = mkdtempSync(join(tmpdir(), "cassini-export-createdat-"));
     try {
       const distDir = join(root, "dist");
@@ -1326,15 +1446,88 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
 
       const catalog = JSON.parse(readFileSync(join(outputDir, "catalog.json"), "utf8"));
       const byId = new Map(catalog.meetings.map((meeting: { id: string }) => [meeting.id, meeting]));
-      // Metadata present: a real "YYYY-MM-DD HH:MM" (UTC) label the viewer can
-      // parse and sort by.
+      // A date-only id is a recording-time claim and therefore outranks the
+      // portable's createdAtUtc batch-processing timestamp.
       expect(byId.get("daily-meeting-2026-04-08")).toMatchObject({
-        dateLabel: "2026-04-08 07:31",
+        dateLabel: "2026-04-08",
       });
-      // Metadata absent: the raw-slug fallback still applies.
+      // The same remains true when createdAtUtc is absent.
       expect(byId.get("daily-meeting-2026-04-09")).toMatchObject({
-        dateLabel: "daily-meeting-2026-04-09",
+        dateLabel: "2026-04-09",
       });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // D-622: the room a recording came from must reach the catalog as its own
+  // fields. The catalog title is not a usable substitute — it has the STT
+  // variant appended, and nothing in it distinguishes "this room is called X"
+  // from "we never learned the room name and fell back to the id".
+  it("carries the room from the .opus into the catalog entry", () => {
+    const root = mkdtempSync(join(tmpdir(), "cassini-export-room-"));
+    try {
+      const distDir = join(root, "dist");
+      mkdirSync(distDir, { recursive: true });
+
+      const stubBinDir = join(root, "bin");
+      mkdirSync(stubBinDir, { recursive: true });
+      const stubPath = join(stubBinDir, "ffprobe");
+      writeFileSync(stubPath, '#!/bin/sh\nfor arg in "$@"; do last="$arg"; done\nexec cat "${last}.ffprobe.json"\n');
+      chmodSync(stubPath, 0o755);
+
+      const sourceDir = join(root, "source");
+      mkdirSync(sourceDir, { recursive: true });
+      const writePortablePack = (meetingId: string, meeting: Record<string, unknown>) => {
+        const payload = gzipSync(Buffer.from(JSON.stringify({ meeting }), "utf8")).toString("base64url");
+        writeFileSync(join(sourceDir, `${meetingId}.opus`), "");
+        writeFileSync(
+          join(sourceDir, `${meetingId}.opus.ffprobe.json`),
+          JSON.stringify({
+            format: { tags: { CASSINI_PAYLOAD_CHUNK_COUNT: "1", CASSINI_PAYLOAD_000: payload } },
+            streams: [],
+          }),
+        );
+      };
+
+      writePortablePack("01JZ8K3M4N5P6Q7R8S9T0VWXYZ", {
+        id: "01JZ8K3M4N5P6Q7R8S9T0VWXYZ",
+        title: "Weekly Sync",
+        createdAtUtc: "2026-08-11T10:32:00Z",
+        roomId: "a7bc3k9x",
+        roomName: "Weekly Sync",
+      });
+      writePortablePack("01JZ8K3M4N5P6Q7R8S9T0VWXZZ", {
+        id: "01JZ8K3M4N5P6Q7R8S9T0VWXZZ",
+        title: "Cassini Meeting",
+        createdAtUtc: "2026-08-12T10:32:00Z",
+      });
+
+      const outputDir = join(root, "out");
+      execFileSync(
+        process.execPath,
+        [scriptPath, "--source-dir", sourceDir, "--output-dir", outputDir, "--recordings-base-url", "https://example.test/"],
+        {
+          env: { ...process.env, CASSINI_VIEWER_DIST_DIR: distDir, PATH: `${stubBinDir}:${process.env.PATH}` },
+          encoding: "utf8",
+        },
+      );
+
+      const catalog = JSON.parse(readFileSync(join(outputDir, "catalog.json"), "utf8"));
+      const byId = new Map(catalog.meetings.map((meeting: { id: string }) => [meeting.id, meeting]));
+      expect(byId.get("01JZ8K3M4N5P6Q7R8S9T0VWXYZ")).toMatchObject({
+        roomId: "a7bc3k9x",
+        roomName: "Weekly Sync",
+      });
+      // A meeting with no room ships no room keys at all, rather than two empty
+      // strings a consumer would have to distinguish from a real value.
+      const withoutRoom = byId.get("01JZ8K3M4N5P6Q7R8S9T0VWXZZ") as Record<string, unknown>;
+      expect(withoutRoom).toBeDefined();
+      expect("roomId" in withoutRoom).toBe(false);
+      expect("roomName" in withoutRoom).toBe(false);
+      // The version must be untouched: five unlinked readers check it for exact
+      // equality, so the new fields have to be purely additive.
+      expect(catalog.version).toBe("cassini.viewer.catalog.v1");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
