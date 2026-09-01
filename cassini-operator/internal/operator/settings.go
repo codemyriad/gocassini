@@ -2,6 +2,7 @@ package operator
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -479,8 +480,20 @@ const (
 // /settings, /status, the admin panel — must name that same model.
 func (rt *Runtime) effectiveFor(s STTSettings) effectiveSTT {
 	effective := s.effective()
-	if admitted, err := rt.admitModelForDevice(s, effective.Device); err == nil {
+	admitted, err := rt.admitModelForDevice(s, effective.Device)
+	if err == nil {
 		effective.Model = admitted
+		return effective
+	}
+	// Admission refused this policy, so the panel must say why instead of
+	// describing a run that will never happen. This is not an exotic state: any
+	// save sets Source=user, so an administrator who edits the vocabulary on an
+	// image that does not carry their tier's model pins it by doing so.
+	var unavailable *resourceUnavailableError
+	if errors.As(err, &unavailable) {
+		effective.Note = unavailable.detail
+	} else {
+		effective.Note = err.Error()
 	}
 	return effective
 }

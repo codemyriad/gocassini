@@ -758,7 +758,14 @@ func TestGetSettingsReportsTheModelABuildWouldLoad(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bundled, "encoder.onnx"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	rt.setSettings(STTSettings{Quality: sttQualityBalanced, Source: sttSourceAuto})
+	// GET /settings re-reads from disk, so the policy has to be persisted: an
+	// in-memory set alone would be replaced by whatever the loader detects, and
+	// the assertion would then depend on the host.
+	auto := STTSettings{Quality: sttQualityBalanced, Source: sttSourceAuto}
+	if err := Save(rt.settingsPath, auto); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	rt.setSettings(auto)
 
 	rec := httptest.NewRecorder()
 	rt.settingsHandler(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
@@ -771,5 +778,26 @@ func TestGetSettingsReportsTheModelABuildWouldLoad(t *testing.T) {
 	}
 	if resp.Effective.Model != modelParakeetV3Fp32 {
 		t.Fatalf("effective.model = %q, want the bundled %s the build will load", resp.Effective.Model, modelParakeetV3Fp32)
+	}
+
+	// Pinning the same tier — which any save does, by setting Source=user —
+	// blocks every build, so the panel must carry the reason rather than
+	// describing a run that will not happen.
+	pinned := STTSettings{Quality: sttQualityBalanced, Source: sttSourceUser}
+	if err := Save(rt.settingsPath, pinned); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	rt.setSettings(pinned)
+
+	rec = httptest.NewRecorder()
+	rt.settingsHandler(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !strings.Contains(resp.Effective.Note, modelParakeetV3Int8) {
+		t.Fatalf("effective.note = %q, want the block reason naming the missing model", resp.Effective.Note)
 	}
 }
