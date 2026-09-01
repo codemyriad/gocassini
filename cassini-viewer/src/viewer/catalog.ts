@@ -338,6 +338,19 @@ export function formatMeetingDateShort(dateLabel: string): string {
   return SHORT_DATE_FORMAT.format(date);
 }
 
+// formatMeetingDuration renders a catalog entry's duration the way the browse
+// list wants it: a coarse "46m" / "1h 5m", not a clock time. The list is a
+// scanning surface — the exact seconds belong to the player, which shows them.
+// Rounds to the nearest minute, and floors at "1m" so a short-but-real
+// recording never reads as an empty one.
+export function formatMeetingDuration(durationMs: number): string {
+  const minutes = Math.max(1, Math.round(durationMs / 60000));
+  if (minutes < 60) {
+    return `${minutes}m`;
+  }
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 function requireNonEmptyString(value: unknown, label: string): string {
   if (typeof value !== "string" || value.trim() === "") {
     throw new Error(`${label} must be a non-empty string`);
