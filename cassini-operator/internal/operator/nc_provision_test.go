@@ -750,6 +750,10 @@ func TestEnabledCallbackProvisionsWheneverAppAPIIsActive(t *testing.T) {
 	var mu sync.Mutex
 	var called bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == appAPIAppConfigPath {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		mu.Lock()
 		called = true
 		mu.Unlock()

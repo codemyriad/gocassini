@@ -126,6 +126,21 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
         <description>Which registered speech-to-text engine transcription uses. Leave empty for the default (sherpa-onnx). An unknown value fails the build loudly before any audio is decoded, so a typo cannot silently select a different engine.</description>
       </variable>
       <variable>
+        <name>CASSINI_SOURCE_CAPTURE</name>
+        <display-name>Collect participant-captured audio (experimental)</display-name>
+        <description>Set to 1 to let authenticated Talk participants' browsers record their own microphone during a call and upload it afterwards, so a transcript can later be built from audio the network never damaged. Requires the matching cassini_capture native companion app and an explicit participant opt-in. Off by default. With this off the browser assets are not served and uploads are refused, so no recording is collected and no storage is used. Note the current limitations before enabling: a participant's opt-in is remembered per browser rather than per account, so another person signing in on the same browser profile inherits it, and uploads are not yet quota-limited per participant. See docs/source-audio-capture.md.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_SOURCE_AUDIO_INGEST</name>
+        <display-name>Use participant-captured audio for transcripts (experimental)</display-name>
+        <description>Set to 1 to build transcripts from audio participants captured in their own browser, where they uploaded it, instead of from what reached the recorder over the network. Off by default. Capture and upload are collected either way; this switch controls only whether that audio replaces the recorded track for transcription. Experimental: placement of the uploaded audio depends on the participant's clock agreeing with the server's, so enable it only where clients are time-synchronised. See docs/source-audio-capture.md.</description>
+      </variable>
+      <variable>
+        <name>CASSINI_OPERATOR_CAPTURE_ROOT</name>
+        <display-name>Participant audio upload directory (optional)</display-name>
+        <description>Where participant-uploaded source audio is stored before a build uses it. Leave empty for the default under the app's persistent volume. Uploads accumulate here whether or not CASSINI_SOURCE_AUDIO_INGEST is set.</description>
+      </variable>
+      <variable>
         <name>CASSINI_ATTRIBUTION_DISABLED</name>
         <display-name>Disable speaker-attribution measurement (optional)</display-name>
         <description>Set to 1 to skip the cross-track speaker-attribution stage entirely. By default every word is annotated with acoustic evidence of who was speaking; no words are changed or removed either way.</description>
@@ -230,6 +245,26 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
         <access_level>USER</access_level>
       </route>
 
+      <!-- USER: source-audio upload (capture_upload.go). A participant posts
+           the audio their OWN browser captured before the network touched it.
+           USER rather than ADMIN because every participant uploads their own
+           track; the handler is what makes that safe — it files the upload
+           under the AppAPI-authenticated caller (never the participant id in
+           the request body) and refuses a room the caller was not in. -->
+      <!-- USER: "may I still record?", polled by a capture in progress. The
+           administrator switch has to reach JavaScript already running in a
+           call. Answered no-store for the same reason. -->
+      <route>
+        <url>^operator\/capture\/enabled\/?$</url>
+        <verb>GET</verb>
+        <access_level>USER</access_level>
+      </route>
+      <route>
+        <url>^operator\/capture\/upload\/?$</url>
+        <verb>POST</verb>
+        <access_level>USER</access_level>
+      </route>
+
       <!--
         PUBLIC: Talk recording-backend protocol. Lets the "Start recording"
         button in Talk reach Cassini through the AppAPI proxy when Cassini
@@ -278,6 +313,22 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
            too. USER, like the viewer JS. -->
       <route>
         <url>^ui\/viewer\.css$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>USER</access_level>
+      </route>
+
+      <!-- USER: source-audio capture browser assets (capture_assets.go).
+           The native cassini_capture companion injects capture-payload.js on
+           authenticated Talk call pages through LoadAdditionalScriptsEvent;
+           capture-worker.js reads outgoing RTP timestamps and writes to OPFS.
+           Both remain behind the ExApp's source-capture gate. -->
+      <route>
+        <url>^ui\/capture-payload\.js$</url>
+        <verb>GET,HEAD</verb>
+        <access_level>USER</access_level>
+      </route>
+      <route>
+        <url>^ui\/capture-worker\.js$</url>
         <verb>GET,HEAD</verb>
         <access_level>USER</access_level>
       </route>

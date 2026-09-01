@@ -44,6 +44,9 @@ install — see [Standalone operator (dev/staging only)](#standalone-operator-de
   signaling / HPB configured with an internal client secret (`[clients]`
   `internalsecret`). Cassini's default Talk recorder path uses this
   HPB-internal mode.
+- Only for experimental participant source-audio capture: the matching
+  `cassini_capture` native companion app. Ordinary Cassini recording and
+  transcription do not need it.
 
 Persistent storage is automatic: AppAPI creates a named volume for every
 docker-deployed ExApp and the operator stores all durable data under it
@@ -244,11 +247,44 @@ Options).
 | `CASSINI_ATTRIBUTION_DISABLED` | No | Set `1` to skip the cross-track speaker-attribution stage. By default every word is annotated with acoustic evidence; no words are changed or removed either way |
 | `CASSINI_ATTRIBUTION_DROP` | No | Set `1` to delete words the acoustic evidence contradicts instead of annotating them (room-system microphones). The manifest records how many words were removed |
 | `CASSINI_ARTIFACT_RETENTION` | No | How much of each recording's per-run working files the app keeps on its own volume. `sealed` (the default) reclaims a completed run's working copies — all duplicated in the canonical library or transient staging — and keeps the sealed meeting file and every log; `superseded` reclaims only runs a rerun replaced; `all` keeps everything, as the escape hatch when something must be recovered from a completed run. Nothing removes the last copy of anything, and published recordings are never touched |
+| `CASSINI_SOURCE_CAPTURE` | No | Set `1` to let participants' browsers record their own microphone during a call and upload it afterwards. **Off by default, and experimental.** Nothing happens until a participant also opts in themselves; with this off the browser assets are not served and uploads are refused, so nothing is collected and no storage is used. Known limitations before you enable it: a participant's opt-in is remembered per browser rather than per account, so another person signing in on the same browser profile inherits it, and uploads are not yet quota-limited per participant. See [docs/source-audio-capture.md](source-audio-capture.md) |
+| `CASSINI_SOURCE_AUDIO_INGEST` | No | Set `1` to build transcripts from audio participants captured in their own browser, where they uploaded it, instead of from what reached the recorder over the network. **Off by default, and experimental.** Capture and upload are collected either way; this switch controls only whether that audio replaces the recorded track for transcription. Placing an upload depends on the participant's clock agreeing with the server's, so enable it only where clients are time-synchronised. See [docs/source-audio-capture.md](source-audio-capture.md) |
+| `CASSINI_OPERATOR_CAPTURE_ROOT` | No | Where participant-uploaded source audio is stored before a build uses it. Leave empty for the default under the app's persistent volume. Uploads accumulate here whether or not `CASSINI_SOURCE_AUDIO_INGEST` is set, and nothing sweeps them yet |
 | `CASSINI_ROOM_ID_PEPPER` | No (recommended) | Deployment-wide secret mixed into the one-way derivation of each meeting's room id. A meeting publishes a derived id rather than its Talk conversation token, because for a public conversation that token is also the link that joins it — and a Talk token is short enough that an unpeppered derivation can be reversed by enumeration offline. With a pepper set it cannot. **Choose it once:** changing it changes every room id, while meetings already published keep the ids they were written with, so a room splits in two. Re-running `scripts/backfill-catalog-rooms.sh --apply` repairs every meeting this installation has a job row for; only recordings imported from elsewhere need the manual merge in `scripts/reattribute-catalog-room.sh` |
 | `OPENROUTER_API_KEY` | No | API key for LLM transcript cleanup + meeting summaries. **When set, the full local transcript is sent to that third-party endpoint** for cleanup/summarisation (transcription itself is always local). Unset, raw transcripts are published without summaries |
 | `LLM_BASE_URL` | No | OpenAI-compatible API base URL; defaults to `https://openrouter.ai/api/v1` when `OPENROUTER_API_KEY` is set |
 | `LLM_MODEL` | No | Model for cleanup/summaries (default `openai/gpt-4o-mini`) |
 | `CASSINI_OPERATOR_API_TOKEN` | No | Bearer token for direct non-AppAPI operator API calls. AppAPI-proxied requests are authenticated by Nextcloud/AppAPI |
+
+### Installing the source-capture companion (experimental)
+
+The ExApp cannot place JavaScript on a Talk page. If you enable
+`CASSINI_SOURCE_CAPTURE`, install the same-version `cassini_capture.tar.gz`
+CI artifact (or tagged GitHub release asset) as a second native app:
+
+```bash
+tar -xzf cassini_capture.tar.gz -C /path/to/nextcloud/apps
+occ app:enable cassini_capture
+```
+
+For a local build:
+
+```bash
+npm ci
+npm run build:capture -w cassini-app
+./scripts/build-capture-companion.sh --skip-js-build
+```
+
+The companion uses Nextcloud's public additional-scripts event and loads only
+on authenticated Talk call routes. It carries no audio/storage logic. On each
+AppAPI lifecycle edge the ExApp mirrors `CASSINI_SOURCE_CAPTURE` into the
+initial state the companion reads; after first installing the companion,
+disable/re-enable or redeploy `gocassini` once if it was already running.
+
+To turn the feature off, first redeploy with `CASSINI_SOURCE_CAPTURE` unset and
+wait at least 30 seconds for open calls to observe the fail-closed poll, then
+disable `cassini_capture`. Anonymous Talk guests and mobile clients are not
+captured.
 
 ### Updating deploy options after install
 

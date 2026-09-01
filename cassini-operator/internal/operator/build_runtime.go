@@ -188,6 +188,13 @@ func exponentialBuildRetryDelay(base time.Duration, deferralCount int) time.Dura
 	return delay
 }
 
+// sourceAudioIngestEnabled reports whether transcripts may be built from
+// participant-uploaded audio. Default off; see the call site.
+func sourceAudioIngestEnabled() bool {
+	enabled, err := parseBoolEnv("CASSINI_SOURCE_AUDIO_INGEST")
+	return err == nil && enabled
+}
+
 // scheduleDeferredBuild waits for the exponentially calculated retry time
 // before redelivery. The durable row remains build/queued throughout. Waiting
 // in a goroutine avoids occupying the sole build worker, and the blocking
@@ -270,7 +277,34 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 		return meetingPath, err
 	}
 
-	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, "build", task.ArtifactRunPath, "--out", meetingPath)
+	buildArgs := []string{"build", task.ArtifactRunPath, "--out", meetingPath}
+	// Source-audio ingestion is OFF unless an administrator turns it on.
+	//
+	// Capture and intake are safe to run without it — they only collect — but
+	// substituting a participant's own recording into the transcript is a
+	// judgement about where somebody's words belong, and the offset half of
+	// that judgement still carries client clock skew
+	// (docs/source-audio-capture.md). Until the correlation refinement lands,
+	// an installation opts into that deliberately rather than by upgrading.
+	if sourceAudioIngestEnabled() {
+		root := strings.TrimSpace(rt.cfg.CaptureRoot)
+		binding, hasBinding := rt.talkBindingForJob(task.JobID)
+		roomToken := ""
+		if hasBinding {
+			roomToken = strings.TrimSpace(binding.RoomToken)
+		}
+		// Both, or neither. Passing --source-audio without a room token leaves
+		// the build matching on call window alone, across every room this
+		// installation has ever captured — which is how one meeting's audio
+		// ends up in another's transcript. A job whose room cannot be resolved
+		// simply does not get source audio.
+		if root != "" && roomToken != "" {
+			buildArgs = append(buildArgs, "--source-audio", root, "--source-audio-room", roomToken)
+		} else if root != "" {
+			rt.logger.Printf("build %s: source-audio ingestion enabled but no room token is known for this job; skipping", task.JobID)
+		}
+	}
+	cmd := exec.CommandContext(ctx, rt.cfg.CassiniBin, buildArgs...)
 	cmd.Stdout = io.MultiWriter(writerOrDiscard(rt.stdout), logFile)
 	cmd.Stderr = io.MultiWriter(writerOrDiscard(rt.stderr), logFile)
 	cmd.Env = buildEnv

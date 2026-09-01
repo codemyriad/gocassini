@@ -1,0 +1,1136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="description" content="A discussion proposal for fast, permission-safe LLM access to Cassini meeting transcripts.">
+  <title>Cassini × LLMs — transcript access and search proposal</title>
+  <style>
+    :root {
+      --paper: #f3efe6;
+      --paper-deep: #e9e1d2;
+      --ink: #17211f;
+      --muted: #5f6964;
+      --line: #cbc3b5;
+      --teal: #087e73;
+      --teal-dark: #075e58;
+      --orange: #e26d3f;
+      --orange-soft: #f7d9ca;
+      --green-soft: #d9e9df;
+      --yellow-soft: #f3e7bc;
+      --red-soft: #efd4cf;
+      --white: #fffdf8;
+      --shadow: 0 14px 36px rgba(26, 37, 34, .09);
+      --radius: 18px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 12% 0%, rgba(8, 126, 115, .10), transparent 27rem),
+        linear-gradient(180deg, #f8f5ee 0, var(--paper) 48rem);
+      font-family: var(--sans);
+      font-size: 16px;
+      line-height: 1.58;
+    }
+
+    a { color: var(--teal-dark); text-underline-offset: 3px; }
+    a:hover { color: var(--orange); }
+    code, pre { font-family: var(--mono); }
+    code {
+      padding: .12em .36em;
+      border: 1px solid rgba(23, 33, 31, .09);
+      border-radius: 5px;
+      background: rgba(255, 255, 255, .56);
+      font-size: .9em;
+    }
+
+    .shell { width: min(1180px, calc(100% - 34px)); margin: 0 auto; }
+    .topbar {
+      position: sticky;
+      z-index: 10;
+      top: 0;
+      border-bottom: 1px solid rgba(23, 33, 31, .10);
+      background: rgba(248, 245, 238, .91);
+      backdrop-filter: blur(14px);
+    }
+    .topbar-inner {
+      min-height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+    .brand { font-weight: 780; letter-spacing: -.02em; }
+    .brand span { color: var(--teal); }
+    .topbar nav { display: flex; gap: 16px; font-size: 13px; }
+    .topbar nav a { color: var(--muted); text-decoration: none; }
+    .topbar nav a:hover { color: var(--ink); }
+
+    header { padding: 78px 0 48px; }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 253, 248, .70);
+      color: var(--muted);
+      font: 700 12px/1.2 var(--mono);
+      letter-spacing: .07em;
+      text-transform: uppercase;
+    }
+    .eyebrow::before {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--orange);
+      content: "";
+    }
+    h1 {
+      max-width: 930px;
+      margin: 24px 0 20px;
+      font-size: clamp(44px, 7vw, 84px);
+      line-height: .98;
+      letter-spacing: -.058em;
+    }
+    .lede {
+      max-width: 800px;
+      margin: 0;
+      color: #38423e;
+      font-size: clamp(19px, 2.2vw, 25px);
+      line-height: 1.45;
+    }
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 20px;
+      margin-top: 28px;
+      color: var(--muted);
+      font: 600 13px/1.4 var(--mono);
+    }
+
+    main { padding-bottom: 90px; }
+    section { scroll-margin-top: 80px; margin: 42px 0 82px; }
+    .section-kicker {
+      color: var(--teal-dark);
+      font: 750 12px/1.2 var(--mono);
+      letter-spacing: .09em;
+      text-transform: uppercase;
+    }
+    h2 {
+      max-width: 850px;
+      margin: 9px 0 16px;
+      font-size: clamp(30px, 4vw, 48px);
+      line-height: 1.08;
+      letter-spacing: -.04em;
+    }
+    h3 { margin: 0 0 9px; font-size: 20px; line-height: 1.25; letter-spacing: -.02em; }
+    h4 { margin: 0 0 8px; font-size: 15px; }
+    .intro { max-width: 820px; color: var(--muted); font-size: 18px; }
+
+    .verdict {
+      display: grid;
+      grid-template-columns: minmax(0, 1.4fr) minmax(280px, .6fr);
+      gap: 28px;
+      padding: 30px;
+      border: 1px solid #8dbeb5;
+      border-radius: 24px;
+      background: linear-gradient(135deg, rgba(217, 233, 223, .80), rgba(255, 253, 248, .86));
+      box-shadow: var(--shadow);
+    }
+    .verdict .big {
+      margin: 0 0 13px;
+      font-size: clamp(24px, 3vw, 35px);
+      font-weight: 770;
+      line-height: 1.18;
+      letter-spacing: -.035em;
+    }
+    .verdict p:last-child { margin-bottom: 0; }
+    .verdict-side {
+      align-self: stretch;
+      padding: 20px;
+      border-radius: 14px;
+      background: var(--ink);
+      color: #f7f2e8;
+    }
+    .verdict-side strong { display: block; margin-bottom: 10px; color: #9cddd2; }
+    .verdict-side p { margin: 0; color: #d8ded9; font-size: 14px; }
+
+    .metric-grid, .card-grid, .decision-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 24px;
+    }
+    .metric, .card, .decision {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 253, 248, .78);
+    }
+    .metric { padding: 20px; }
+    .metric b {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--teal-dark);
+      font-size: clamp(25px, 3vw, 38px);
+      line-height: 1;
+      letter-spacing: -.05em;
+    }
+    .metric span { color: var(--muted); font-size: 13px; line-height: 1.35; }
+    .fineprint { margin-top: 10px; color: var(--muted); font-size: 12px; }
+
+    .principles {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 24px;
+    }
+    .principle {
+      padding: 21px;
+      border-top: 4px solid var(--teal);
+      border-radius: 4px var(--radius) var(--radius) var(--radius);
+      background: var(--white);
+      box-shadow: 0 7px 20px rgba(26, 37, 34, .05);
+    }
+    .principle p { margin: 0; color: var(--muted); font-size: 14px; }
+
+    .table-wrap {
+      overflow-x: auto;
+      margin-top: 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--white);
+      box-shadow: 0 8px 24px rgba(26, 37, 34, .04);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 14px 16px; border-bottom: 1px solid #ddd6ca; text-align: left; vertical-align: top; }
+    th {
+      color: #52605b;
+      background: #f1ece2;
+      font: 750 11px/1.25 var(--mono);
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+    tr:last-child td { border-bottom: 0; }
+    td:first-child { font-weight: 690; }
+    .fit, .partial, .miss, .open {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font: 750 11px/1.25 var(--mono);
+      white-space: nowrap;
+    }
+    .fit { background: var(--green-soft); color: #285640; }
+    .partial { background: var(--yellow-soft); color: #685718; }
+    .miss { background: var(--red-soft); color: #74372f; }
+    .open { background: var(--orange-soft); color: #804020; }
+    .selected-row td { background: rgba(217, 233, 223, .48); }
+
+    .architecture {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) 56px minmax(220px, 1.15fr) 56px minmax(180px, 1fr);
+      align-items: stretch;
+      gap: 10px;
+      margin-top: 28px;
+    }
+    .arch-box {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--white);
+    }
+    .arch-box.primary { border-color: #70aaa1; box-shadow: 0 8px 22px rgba(8, 126, 115, .09); }
+    .arch-box.cache { border-style: dashed; background: #fbf5e5; }
+    .arch-box ul { margin: 12px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+    .arch-arrow { display: grid; place-items: center; color: var(--teal); font-size: 28px; font-weight: 800; }
+    .arch-label { color: var(--muted); font: 700 10px/1.3 var(--mono); letter-spacing: .05em; text-transform: uppercase; }
+    .arch-title { display: block; margin-top: 5px; font-size: 18px; font-weight: 780; }
+    .flow-caption { margin-top: 13px; color: var(--muted); font-size: 13px; text-align: center; }
+
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 20px;
+      margin-top: 24px;
+    }
+    .card { padding: 23px; }
+    .card p { margin: 0 0 12px; color: var(--muted); font-size: 14px; }
+    .card ul { margin: 0; padding-left: 19px; color: var(--muted); font-size: 14px; }
+    .card.recommend { border-color: #75aea5; background: rgba(217, 233, 223, .53); }
+    .card.warn { border-color: #dfb78e; background: rgba(255, 248, 232, .74); }
+
+    .code-block {
+      overflow-x: auto;
+      margin: 14px 0 0;
+      padding: 17px;
+      border-radius: 13px;
+      background: #16201e;
+      color: #e9f1ed;
+      font: 12.5px/1.55 var(--mono);
+      white-space: pre;
+    }
+    .code-block .dim { color: #97aaa4; }
+    .code-block .key { color: #9bddcf; }
+    .code-block .str { color: #f4bd91; }
+
+    .decision-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .decision { position: relative; padding: 22px; }
+    .decision .num {
+      position: absolute;
+      top: 16px;
+      right: 17px;
+      color: #b6aca0;
+      font: 800 28px/1 var(--mono);
+    }
+    .decision p { margin: 7px 0 0; padding-right: 26px; color: var(--muted); font-size: 14px; }
+    .decision .lean { display: block; margin-top: 12px; color: var(--teal-dark); font-size: 13px; font-weight: 720; }
+
+    .slice-list { margin-top: 28px; counter-reset: slice; }
+    .slice {
+      display: grid;
+      grid-template-columns: 84px minmax(0, 1fr) 190px;
+      gap: 22px;
+      padding: 24px 0;
+      border-top: 1px solid var(--line);
+      counter-increment: slice;
+    }
+    .slice:last-child { border-bottom: 1px solid var(--line); }
+    .slice-no {
+      color: var(--teal-dark);
+      font: 800 12px/1.25 var(--mono);
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .slice h3 { margin-bottom: 6px; }
+    .slice p { margin: 0; color: var(--muted); font-size: 14px; }
+    .slice ul { margin: 11px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+    .effort { color: var(--muted); font: 680 12px/1.5 var(--mono); }
+    .effort b { display: block; color: var(--ink); font-size: 16px; }
+
+    .callout {
+      margin-top: 24px;
+      padding: 22px 24px;
+      border-left: 5px solid var(--orange);
+      border-radius: 3px 14px 14px 3px;
+      background: var(--orange-soft);
+    }
+    .callout strong { display: block; margin-bottom: 5px; }
+    .callout p { margin: 0; color: #5f4437; }
+
+    .cost-bar {
+      display: grid;
+      grid-template-columns: 1fr 1.35fr 1.25fr 1fr;
+      overflow: hidden;
+      margin-top: 24px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--white);
+    }
+    .cost-part { min-height: 122px; padding: 18px; border-right: 1px solid var(--line); }
+    .cost-part:last-child { border-right: 0; }
+    .cost-part b { display: block; margin-bottom: 7px; font-size: 20px; }
+    .cost-part span { color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .cost-part.db { background: #e0eee8; }
+
+    details {
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: rgba(255, 253, 248, .75);
+    }
+    summary { cursor: pointer; padding: 15px 17px; font-weight: 720; }
+    details > div { padding: 0 17px 17px; color: var(--muted); font-size: 14px; }
+    details ul { margin: 8px 0 0; padding-left: 19px; }
+
+    .ticket-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 24px;
+    }
+    .ticket {
+      display: block;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 253, 248, .72);
+      color: var(--ink);
+      text-decoration: none;
+    }
+    .ticket:hover { border-color: var(--teal); color: var(--ink); }
+    .ticket b { color: var(--teal-dark); font-family: var(--mono); }
+    .ticket span { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+
+    .final-question {
+      padding: 34px;
+      border-radius: 24px;
+      background: var(--ink);
+      color: #f7f2e8;
+      box-shadow: var(--shadow);
+    }
+    .final-question h2 { margin-top: 0; color: white; }
+    .final-question p { max-width: 780px; color: #cad4cf; }
+    .final-question ol { max-width: 820px; padding-left: 22px; }
+    .final-question li { margin: 11px 0; }
+
+    footer {
+      padding: 28px 0 42px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    footer .shell { display: flex; justify-content: space-between; gap: 18px; }
+
+    @media (max-width: 900px) {
+      .metric-grid { grid-template-columns: repeat(2, 1fr); }
+      .principles, .ticket-grid { grid-template-columns: repeat(2, 1fr); }
+      .architecture { grid-template-columns: 1fr; }
+      .arch-arrow { transform: rotate(90deg); min-height: 30px; }
+      .cost-bar { grid-template-columns: repeat(2, 1fr); }
+      .cost-part:nth-child(2) { border-right: 0; }
+      .cost-part:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+      .slice { grid-template-columns: 70px minmax(0, 1fr); }
+      .effort { grid-column: 2; }
+    }
+
+    @media (max-width: 650px) {
+      .shell { width: min(100% - 24px, 1180px); }
+      .topbar nav { display: none; }
+      header { padding-top: 54px; }
+      h1 { font-size: 47px; }
+      .verdict, .split, .decision-grid { grid-template-columns: 1fr; }
+      .metric-grid, .principles, .ticket-grid { grid-template-columns: 1fr; }
+      .slice { grid-template-columns: 1fr; gap: 8px; }
+      .effort { grid-column: 1; }
+      .cost-bar { grid-template-columns: 1fr; }
+      .cost-part, .cost-part:nth-child(2) { border-right: 0; border-bottom: 1px solid var(--line); }
+      .cost-part:last-child { border-bottom: 0; }
+      footer .shell { flex-direction: column; }
+    }
+
+    @media print {
+      .topbar { position: static; }
+      body { background: white; }
+      .shell { width: 100%; }
+      section { break-inside: avoid; }
+      .verdict, .card, .metric, .principle, .decision { box-shadow: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="shell topbar-inner">
+      <div class="brand">Cassini <span>× LLMs</span></div>
+      <nav aria-label="Page sections">
+        <a href="#decision">Decision</a>
+        <a href="#meeting-evidence">Evidence</a>
+        <a href="#shapes">Options</a>
+        <a href="#design">Design</a>
+        <a href="#delivery">Delivery</a>
+        <a href="#questions">Decide</a>
+      </nav>
+    </div>
+  </div>
+
+  <header class="shell">
+    <span class="eyebrow">Proposal for discussion · 28 Aug 2026</span>
+    <h1>Give LLMs a meeting memory—without creating a second truth.</h1>
+    <p class="lede">Keep <code>catalog.json</code> and portable <code>.opus</code> meetings authoritative. Add fast, permission-safe hydration and a stable search contract first; then maintain a small, persistent and fully rebuildable search projection if real retrieval evaluations justify it. Operator-local SQLite is the leading placement—not a foregone conclusion.</p>
+    <div class="hero-meta">
+      <span>STATUS / SHAPED, NOT DECIDED</span>
+      <span>SCOPE / SEARCH + TRANSCRIPT HYDRATION</span>
+      <span>EXCLUDES / INSIGHTS + EMBEDDINGS</span>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section id="decision">
+      <div class="verdict">
+        <div>
+          <div class="section-kicker">Recommended direction</div>
+          <p class="big">A stable retrieval contract; a thin, local SQLite read model is the leading persistent backend.</p>
+          <p>Ship this in two independently useful steps. First, expose <code>cassini.meetings.context.v1</code> from bounded file prefixes instead of whole audio—no database required. Then evaluate the search contract with a scan baseline and add contentless FTS5 if it wins. The low-level index returns references; the first useful agent workflow hydrates bounded excerpts as the caller before loading selected full meetings.</p>
+        </div>
+        <aside class="verdict-side">
+          <strong>The actual answer to “do we need a DB?”</strong>
+          <p>Not for known-meeting or “process all selected meetings” workflows. Probably for repeated ad-hoc search across a growing archive. The team endorsed the capability but previously asked that FTS/RAG complexity earn its place in evals. Once adopted, the DB is persistent—not ephemeral—and rebuild is a migration/recovery operation.</p>
+        </aside>
+      </div>
+
+      <div class="metric-grid" aria-label="Current extraction measurements">
+        <div class="metric"><b>7.4–27.4 MB</b><span>whole-file size across nine real portable meeting fixtures</span></div>
+        <div class="metric"><b>85–309 KB</b><span>offset where complete OpusTags metadata ends in those fixtures</span></div>
+        <div class="metric"><b>468×</b><span>download-to-context overhead in a separate four-meeting sample</span></div>
+        <div class="metric"><b>0 ACL copies</b><span>permissions remain live in Nextcloud, not duplicated in SQLite</span></div>
+      </div>
+      <p class="fineprint">Measurements are directional, not a performance SLA: nine repository demo fixtures for metadata bounds; four meetings totaling 65.9 MB yielding about 141 KB of context for the transfer ratio.</p>
+    </section>
+
+    <section id="frame">
+      <div class="section-kicker">Frame</div>
+      <h2>The job is retrieval, not a new content platform.</h2>
+      <p class="intro">An LLM needs two distinct operations: find likely moments across the meetings it may read, then load selected meeting context. Search data is a deterministic projection. A saved summary or synthesis is a different, authored artifact with provenance and a still-open multi-meeting audience model.</p>
+
+      <div class="principles">
+        <article class="principle">
+          <h3>Files are durable truth</h3>
+          <p>The published catalog and self-contained Opus meeting survive moves, backups, and complete index loss. SQLite persists in normal operation but can be reconstructed exactly.</p>
+        </article>
+        <article class="principle">
+          <h3>Nextcloud is access truth</h3>
+          <p>No permissions or group membership are copied into the search DB. Revocation changes the next request immediately.</p>
+        </article>
+        <article class="principle">
+          <h3>Context is a wire contract</h3>
+          <p>CLI, app preparation, agent skills, and later adapters consume the same versioned <code>context.v1</code> representation.</p>
+        </article>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ID</th><th>Requirement</th><th>How we know it is met</th></tr></thead>
+          <tbody>
+            <tr><td>R1</td><td>Portable meeting files remain primary</td><td>Build a replacement index from the archive and atomically swap it in; normal operation keeps the live DB persistent.</td></tr>
+            <tr><td>R2</td><td>No transcript leaks across Nextcloud permissions</td><td>A hidden hit cannot affect visible result pagination; denied and absent meeting hydration both return 404.</td></tr>
+            <tr><td>R3</td><td>Agent-friendly lookup latency</td><td>The production indexed backend does not download or parse the caller’s whole archive; the evaluation scan is capped and reports incomplete coverage.</td></tr>
+            <tr><td>R4</td><td>One extraction and context contract</td><td>Server and CLI produce byte-equivalent canonical JSON for v1 and v2 fixtures.</td></tr>
+            <tr><td>R5</td><td>Selectable, bounded context</td><td>Bulk calls name meetings explicitly, stream responses, and enforce count/byte limits.</td></tr>
+            <tr><td>R6</td><td>Absence is distinct from infrastructure failure</td><td>No matches is 200; missing caller, failed visibility scan, or unavailable index fails loudly.</td></tr>
+            <tr><td>R7</td><td>Storage and egress are legible</td><td>Privacy docs disclose the index; search bodies, transcripts, and scores stay out of logs.</td></tr>
+            <tr><td>R8</td><td>Transcript fallibility remains visible</td><td>Every hit retains a timestamp/source revision; important claims can jump back to audio, and retrieval evaluation includes known omissions and ordering errors.</td></tr>
+            <tr><td>R9</td><td>Every agent has an attributable principal</td><td>A shared agent uses its own explicitly granted Nextcloud identity—or an end user’s delegated identity—never the archive-owning service account.</td></tr>
+            <tr><td>R10</td><td>The useful workflow returns relevant evidence</td><td>Search refs are hydrated into short, caller-authorized excerpts with timestamps and audio links before an LLM judges which full meetings to load.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="meeting-evidence">
+      <div class="section-kicker">Primary meeting evidence</div>
+      <h2>What the team said changes the emphasis.</h2>
+      <p class="intro">This revision retrieved searchable context for all 119 meetings visible to the authorized account (0 skipped), then read the relevant discussions from June through August. None carried a generated summary. The source is word-derived and imperfect, so the items below are careful paraphrases with timestamp pointers—not polished quotations or claims of unanimous decisions.</p>
+
+      <div class="decision-grid">
+        <article class="card recommend">
+          <div class="section-kicker">Direction · mechanism open</div>
+          <h3>Search capability is endorsed; its engine is conditional</h3>
+          <p>On 11 Aug at 01:26–04:50, the proposed sequence was raw meeting files + skill, then filters, with FTS/RAG added only if evals justified the complexity. A second session at 24:59–26:32 called for a stable interface whose backend could evolve. On 24–25 Aug, demand for cross-meeting full-text search became stronger.</p>
+          <span class="fit">Design for evolution; evaluate FTS</span>
+        </article>
+        <article class="card">
+          <div class="section-kicker">Open decision</div>
+          <h3>Catalog migration is a different decision</h3>
+          <p>On 17, 20, 25, and 27 Aug, the team repeatedly separated room/catalog metadata from search and debated SQLite as catalog authority. <code>catalog.json</code> was explicitly valued for portable, shareable bundles; migration was lower priority and lacked a crisp user outcome.</p>
+          <span class="fit">Supports: separate search DB</span>
+        </article>
+        <article class="card">
+          <div class="section-kicker">Direction</div>
+          <h3>CLI + skill and UI are complementary</h3>
+          <p>On 24 Aug at 28:15, the working choice was a CLI-backed skill rather than MCP. On 27 Aug at 28:59–30:48, actual use showed that even technical users still wanted summaries and the convenience of an in-app experience.</p>
+          <span class="partial">Infrastructure first; UI follows</span>
+        </article>
+        <article class="card">
+          <div class="section-kicker">Principle</div>
+          <h3>Authorization outranks plumbing</h3>
+          <p>On 25 Aug at 26:25–30:05, the team prioritized how people receive meeting access over a SQLite catalog migration, while favoring a useful default and learning from users. The 26 Aug access-control discussion reinforced that future sharing policy is larger than read access.</p>
+          <span class="fit">Supports: live Files visibility</span>
+        </article>
+        <article class="card">
+          <div class="section-kicker">Principle</div>
+          <h3>External LLM use must be optional</h3>
+          <p>On 24 Aug at 21:28, local operation and explicit opt-in for third-party processing were named as core design principles. Search itself should therefore be local and useful without sending a query or transcript to a model provider.</p>
+          <span class="fit">Supports: lexical search first</span>
+        </article>
+        <article class="card warn">
+          <div class="section-kicker">Observed constraint</div>
+          <h3>The transcript is not flawless truth</h3>
+          <p>On 27 Aug at 32:14–35:08, the team identified dropped speech, misordered interjections, and an agent repeatedly resurfacing work that had been explicitly rejected. The meeting corpus was proposed as the evaluation material for improving this.</p>
+          <span class="open">Adds: provenance + audio verification</span>
+        </article>
+        <article class="card recommend">
+          <div class="section-kicker">Original requirement</div>
+          <h3>Return relevant bits, not only meeting IDs</h3>
+          <p>On 18 Jun at 13:44–14:23, the desired experience was to reach the relevant portions of prior meetings. A references-only index is a useful internal boundary, but the first user-facing agent workflow must hydrate short authorized excerpts and link back to their timestamps.</p>
+          <span class="fit">Changes plan: excerpts in first workflow</span>
+        </article>
+        <article class="card">
+          <div class="section-kicker">Principle</div>
+          <h3>A shared agent is not the service owner</h3>
+          <p>On 27 Aug at 12:13, shared agents were given their own attributable identities instead of writing as a team member. Apply the same principle to meeting reads: explicit grants, least privilege, and an auditable principal—not Cassini’s archive-owner visibility.</p>
+          <span class="fit">Adds: agent identity requirement</span>
+        </article>
+        <article class="card warn">
+          <div class="section-kicker">Not resolved by the record</div>
+          <h3>App-owned Nextcloud tables are still an option</h3>
+          <p>The 30 Jul discussion rejected relying on Nextcloud’s internal database for authorization and replacing the Files boundary with Cassini-owned permission logic. It did not evaluate a native app storing Cassini’s own projection tables while continuing to authorize through Files. That is a legitimate new tradeoff, not an overturned decision.</p>
+          <span class="open">Adds: storage-placement gate</span>
+        </article>
+      </div>
+
+      <div class="callout">
+        <strong>Product boundary clarified by the meetings.</strong>
+        <p>This search/hydration layer is necessary, but not the whole “Ask Your Meetings” experience. The eventual agent is expected to combine meetings with current Linear, GitHub, Zulip, and calendar context; saved summaries and automatic delivery remain separate workflows with their own provenance and audience rules.</p>
+      </div>
+
+      <details>
+        <summary>Evidence index: decisions, directions, proposals, and open questions</summary>
+        <div>
+          <ul>
+            <li><strong>Requirement:</strong> <code>daily-meeting-2026-06-18</code>, 13:44–14:23 — link an agent to relevant bits of past meetings.</li>
+            <li><strong>Rejected direction:</strong> <code>01KYS98R8YDBMDW49REXPMJY4N</code>, 30 Jul, 05:59–13:18 — using Nextcloud’s internal database as the authorization integration was judged too complex and misaligned with Files authority; Cassini-owned native app tables were not separately evaluated.</li>
+            <li><strong>Proposal:</strong> <code>01KZR1NHM0VMZTDJ4T9H2JEV5Y</code>, 11 Aug, 01:26–04:50 and 22:29–23:43 — climb from files to filters to FTS/RAG only when evals justify it.</li>
+            <li><strong>Direction:</strong> <code>01KZR33WWBJ40Y98ZR48FZM13G</code>, 11 Aug, 19:19–21:18 and 24:59–26:32 — keep search separate from insights and stabilize the retrieval interface while its backend evolves.</li>
+            <li><strong>Direction:</strong> <code>01KZTRXQBS0A4X7PDKZAG2EZ6M</code>, 12 Aug, 07:22–13:41 — search must work without an LLM; meetings, workflows, and insights remain separate layers.</li>
+            <li><strong>Open:</strong> <code>01M0FBHKB7C4CMPXDYAAQ9ZV53</code>, 20 Aug, 39:36–41:05 — FTS can proceed independently; SQLite catalog authority remained unresolved.</li>
+            <li><strong>Direction:</strong> <code>01M0SN4J6PJ8PMDNTXKP8A6YM4</code>, 24 Aug, 18:23, 21:28, and 28:15 — useful search without LLM, optional external processing, CLI-backed skill over MCP.</li>
+            <li><strong>Priority:</strong> <code>01M0W7KV148H75FBF70S92MYHE</code>, 25 Aug, 22:23–30:05 — search is worthwhile; permission behavior comes before catalog migration.</li>
+            <li><strong>Authorization direction:</strong> <code>01M0YR8NVM99C6G8T70Z6Y3E4N</code>, 26 Aug, 19:49–21:02 — index the exact successful publication, but re-check current Files visibility on every read because ACLs can later change.</li>
+            <li><strong>North star:</strong> <code>01M0YTB6T1TZFNWJDRBCJDAGFP</code>, 26 Aug, 10:04–11:29 — a team agent should consult meetings alongside other current work sources.</li>
+            <li><strong>Observed:</strong> <code>01M11CF8G9FAVXB5GW0Y94VCNF</code>, 27 Aug, 28:59–35:08 — demand for UI summaries; transcript omissions, ordering errors, and stale conclusions need evaluation and provenance.</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
+    <section id="shapes">
+      <div class="section-kicker">Competing shapes</div>
+      <h2>A projection can live beside Cassini or inside Nextcloud. Those are different commitments.</h2>
+      <p class="intro">These remain team choices. A shape only passes when its permission mechanism and operational lifecycle are concrete; an unknown mechanism is not a quiet “yes.”</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Shape</th><th>Search cost</th><th>Permission boundary</th><th>Data retained outside Files</th><th>Fit</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>A · No DB, scan visible meetings</td>
+              <td>Linear in accessible archive on every query</td>
+              <td>Every read goes through Nextcloud as caller</td>
+              <td>None</td>
+              <td><span class="partial">Small / infrequent only</span></td>
+            </tr>
+            <tr>
+              <td>B · Nextcloud-native search</td>
+              <td>Potentially fast</td>
+              <td>Could be native, but embedded OpusTags and sidecar ACL inheritance are unresolved</td>
+              <td>Depends on Nextcloud index</td>
+              <td><span class="miss">Mechanism unknown</span></td>
+            </tr>
+            <tr>
+              <td>C · Cassini-owned tables in Nextcloud’s DB</td>
+              <td>Fast, but full-text SQL differs by the instance’s DB engine</td>
+              <td>A native app can use current Files APIs; the tables themselves do not confer file access</td>
+              <td>Transcript-derived index enters Nextcloud backup / HA lifecycle</td>
+              <td><span class="partial">Operationally attractive; larger integration</span></td>
+            </tr>
+            <tr>
+              <td>D · Local SQLite with stored contexts</td>
+              <td>Fast search and snippets</td>
+              <td>Live visibility join, then operator emits stored text</td>
+              <td>Full transcript projection</td>
+              <td><span class="partial">Fast, wider blast radius</span></td>
+            </tr>
+            <tr class="selected-row">
+              <td>E · Local contentless SQLite + authorized hydration</td>
+              <td>Fast search; one batch follow-up</td>
+              <td>Visible basenames join inside SQL; transcript later crosses Nextcloud as caller</td>
+              <td>FTS token index + structural refs</td>
+              <td><span class="fit">Provisional after eval</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout">
+        <strong>“Contentless” does not mean secret.</strong>
+        <p>FTS5 can omit a retrievable transcript column and make a references-only response structural, but someone with the database file can still reconstruct much of its vocabulary and ordering. Keep it owner-only, disclose it as transcript-derived storage, and treat the operator volume as sensitive.</p>
+      </div>
+
+      <div class="split">
+        <article class="card recommend">
+          <h3>Do not conflate two “Nextcloud DB” options</h3>
+          <p><strong>Reading Nextcloud’s internal tables</strong> for files or ACLs is the direction discussed on 30 Jul and should remain rejected. Those tables are not Cassini’s API, and direct SQL does not safely reproduce Files authorization.</p>
+          <p><strong>Cassini-owned app tables</strong> are legitimate for a native PHP app through Nextcloud’s supported <a href="https://docs.nextcloud.com/server/stable/developer_manual/basics/storage/database.html">database API and migrations</a>. They would share the administrator’s existing backup, replication, HA, and monitoring regime. That option was not resolved by the meeting discussion and deserves to remain on the table.</p>
+        </article>
+        <article class="card warn">
+          <h3>Why operator-local SQLite still leads</h3>
+          <p>Cassini is currently a Go <a href="https://docs.nextcloud.com/server/stable/developer_manual/exapp_development/development_overview/ExAppOverview.html">AppAPI ExApp</a>, not a native PHP app. AppAPI gives it HTTP APIs and a persistent volume, but its <a href="https://docs.nextcloud.com/server/stable/developer_manual/exapp_development/tech_details/api/index.html">documented APIs</a> do not expose arbitrary app tables. Current AppAPI <a href="https://github.com/nextcloud/app_api/blob/stable34/lib/Fetcher/ExAppArchiveFetcher.php">only extracts ExApp metadata and translations</a>; it does not install executable PHP or run migrations from the ExApp package. A supported Nextcloud-table design therefore needs a <em>separately installed</em> native companion app with its own app ID and a private API to Go—or an AppAPI enhancement. Directly injecting Nextcloud DB credentials into the ExApp would instead create deployment and coupling problems.</p>
+          <p>The operator already runs migrated <code>jobs.sqlite3</code> on that persistent volume, so a native companion would not eliminate ExApp persistence. A separate <code>search.sqlite3</code> adds no database service, credentials, or engine matrix, and can be rebuilt/swapped without touching job history. It also gives every supported Nextcloud deployment the same FTS5 behavior; Nextcloud itself may use <a href="https://docs.nextcloud.com/server/stable/admin_manual/installation/system_requirements.html">MariaDB, PostgreSQL, or SQLite</a>, whose full-text features are not portable.</p>
+        </article>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Storage fit check</th><th>ExApp-local <code>search.sqlite3</code></th><th>Cassini-owned Nextcloud tables</th></tr></thead>
+          <tbody>
+            <tr><td>New deployment surface</td><td>None: same Go process and existing AppAPI volume</td><td>Separately installed native PHP companion/private API, or a future supported AppAPI database service</td></tr>
+            <tr><td>Search implementation</td><td>One pinned FTS5 schema, tokenizer, and ranking behavior</td><td>Portable basic SQL, but full-text schema/query/ranking per MariaDB, PostgreSQL, and SQLite</td></tr>
+            <tr><td>Backup and HA</td><td>Separate volume policy; fully reconstructible if lost</td><td>Joins central backup, replication, failover, and monitoring—but also enlarges dumps, WAL/binlogs, replicas, and restore work</td></tr>
+            <tr><td>Failure blast radius</td><td>Index load and corruption are isolated from Nextcloud’s control database</td><td>Search writes, growth, and expensive queries share Nextcloud’s primary database</td></tr>
+            <tr><td>Rebuild strategy</td><td>Build and validate a sibling file, then atomic rename</td><td>Generation tables or a coordinated in-database cutover; large rebuilds affect shared DB operations</td></tr>
+            <tr><td>Multiple operator replicas</td><td>Needs an elected index owner or different shared store</td><td>Natural fit for concurrent clients when the Nextcloud DB is already highly available</td></tr>
+            <tr><td>Permission correctness</td><td>Live Files visibility before ranking/limit</td><td>Still requires live Files visibility before ranking/limit; app-table location alone grants nothing</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout" style="border-left-color:var(--orange);background:var(--orange-soft)">
+        <strong>When Nextcloud-owned tables would become the better shape.</strong>
+        <p>Revisit Shape C if Cassini must run multiple operator replicas against one index, if administrators require the index in central database backup/restore, or if a native Nextcloud search provider becomes a product requirement. Do it as a separately installed native companion with Cassini-owned tables and Files-API authorization—not by sharing Nextcloud’s raw database credentials. Until one of those conditions exists, the second app lifecycle, extra PHP/API boundary, primary-database load, and cross-engine search work buy little user value.</p>
+      </div>
+
+      <div class="callout">
+        <strong>What the no-DB slice still buys us.</strong>
+        <p>Bounded prefix reads make one or a handful of known meetings cheap. They also serve workflows that intentionally process every selected meeting, where retrieval adds no value and can hide relevant context. A simple scan/filter implementation behind the stable search contract provides a baseline. FTS earns activation by materially improving recurring ad-hoc questions at acceptable operational cost.</p>
+      </div>
+    </section>
+
+    <section id="design">
+      <div class="section-kicker">Provisional design</div>
+      <h2>Search is a hint. Nextcloud-authorized hydration provides the words.</h2>
+
+      <div class="architecture" role="img" aria-label="Architecture: agent calls operator, which checks live Nextcloud visibility and queries a persistent, rebuildable SQLite projection; selected references are then hydrated from authoritative portable meetings through Nextcloud.">
+        <div class="arch-box">
+          <span class="arch-label">Consumer</span>
+          <span class="arch-title">CLI / LLM skill / app</span>
+          <ul><li>Attributable Nextcloud principal</li><li>Search terms</li><li>Authorized excerpts</li><li>Explicit meeting selections</li><li><code>context.v1</code></li></ul>
+        </div>
+        <div class="arch-arrow" aria-hidden="true">→</div>
+        <div class="arch-box primary">
+          <span class="arch-label">Request boundary</span>
+          <span class="arch-title">Cassini operator</span>
+          <ul><li>Verified AppAPI caller—never owner fallback</li><li>Stable <code>SearchBackend</code> contract</li><li>Strict catalog snapshot</li><li>Visibility joined before rank + limit</li><li>Bounded range extraction</li></ul>
+        </div>
+        <div class="arch-arrow" aria-hidden="true">⇄</div>
+        <div>
+          <div class="arch-box primary">
+            <span class="arch-label">Authority</span>
+            <span class="arch-title">Nextcloud Files</span>
+            <ul><li><code>catalog.json</code></li><li><code>meetings/*.opus</code></li><li>Live ACL enforcement</li></ul>
+          </div>
+          <div class="arch-box cache" style="margin-top:10px">
+            <span class="arch-label">Persistent, rebuildable projection</span>
+            <span class="arch-title">search.sqlite3</span>
+            <ul><li>Enabled after retrieval eval</li><li>FTS tokens</li><li>Timed window refs</li><li>Source fingerprint</li></ul>
+          </div>
+        </div>
+      </div>
+      <p class="flow-caption">Read path: search refs → caller-authorized excerpts → selected full contexts. Write path: successful publish → best-effort index ingest. Recovery path: build, validate, and swap a replacement projection.</p>
+
+      <div class="callout" style="border-left-color:var(--teal);background:var(--green-soft)">
+        <strong>Resolved implementation seam: reuse the process boundary first.</strong>
+        <p>A compiled <code>cassini inspect --transcript</code> recovered and validated timed-word metadata from capped prefixes in about 40–50 ms locally; all nine fixtures succeeded by 512 KiB. Because ffprobe needs a few early audio pages after the OpusTags packet, this is a bounded prefix—not a tags-only read—but it cannot scan or decode audio beyond the staged cap. A new machine mode still has to invoke the existing <code>context.v1</code> builder. The operator already validates and ships <code>CASSINI_BIN</code> plus <code>ffprobe</code>. A shared Go module would stop exactly after OpusTags and remove temp files, roughly 56 MiB of short-lived subprocess RSS per decode, and a native parser boundary, but is estimated to add 3–5 days before user value. Promote if p95 local decode exceeds 250 ms, extraction queues exceed 2 seconds, failures exceed 1%, memory limits constrain useful concurrency, or another streaming Go consumer appears.</p>
+      </div>
+
+      <div class="split">
+        <article class="card">
+          <h3>1 · Hydration path</h3>
+          <ul>
+            <li>Resolve meeting ID from the caller-filtered catalog; never infer a filename from the ID.</li>
+            <li>Validate exactly one local asset shaped like <code>meetings/&lt;name&gt;.opus</code>; reject traversal, duplicate basename, or malformed mappings.</li>
+            <li>Read prefix ranges progressively—proposed 512 KiB, then 1/2/4 MiB, with a validated configurable cap and an 8 MiB hard ceiling.</li>
+            <li>Force <code>Accept-Encoding: identity</code>, validate <code>Content-Range</code>, and refetch from byte zero pinned to one ETag with <code>If-Match</code>. Abort or restart if the source changes.</li>
+            <li>Refuse redirects so AppAPI credentials cannot follow them. If upstream ignores Range, read only cap + 1 and close directly. Never fall back to downloading audio server-side.</li>
+            <li>For the MVP, stage the capped prefix in a private temp directory and call the already-shipped <code>cassini inspect</code> decoder. Retry only a typed <code>need_more_metadata</code>; checksum, JSON, limit, and malformed errors are terminal.</li>
+            <li>Decode portable v1/v2 and emit canonical <code>cassini.meetings.context.v1</code>.</li>
+          </ul>
+        </article>
+        <article class="card">
+          <h3>2 · Search path</h3>
+          <ul>
+            <li>Resolve the AppAPI user; missing identity is an infrastructure error.</li>
+            <li>PROPFIND the caller’s visible recording basenames and load a strict catalog snapshot.</li>
+            <li>Use the same response contract for the capped scan baseline and an indexed backend.</li>
+            <li>For FTS, join that allow-set in SQL before <code>MATCH</code>, ranking, and <code>LIMIT</code>.</li>
+            <li>Return meeting metadata plus timestamp/speaker references—no text, score, or archive-wide counts.</li>
+            <li>Use a bounded first page only in v1; do not pretend offset pagination is stable across index or permission changes.</li>
+            <li>For the user-facing workflow, group top refs by meeting and re-read each prefix as the same caller to emit short excerpts with surrounding context.</li>
+            <li>Hydrate chosen full meetings in one separate bounded, streaming batch.</li>
+          </ul>
+        </article>
+      </div>
+
+      <h3 style="margin-top:34px">Wire sketch</h3>
+      <div class="split">
+        <div>
+          <div class="code-block"><span class="dim">POST</span> /published/search
+{
+  <span class="key">"version"</span>: <span class="str">"cassini.meetings.search.request.v1"</span>,
+  <span class="key">"query"</span>: <span class="str">"derived artifact ACL"</span>,
+  <span class="key">"limit"</span>: 10
+}
+
+<span class="dim">200</span>
+{
+  <span class="key">"version"</span>: <span class="str">"cassini.meetings.search.v1"</span>,
+  <span class="key">"coverage"</span>: {
+    <span class="key">"state"</span>: <span class="str">"partial"</span>,
+    <span class="key">"visible"</span>: 84,
+    <span class="key">"searchable"</span>: 82,
+    <span class="key">"reconciledAt"</span>: <span class="str">"2026-08-28T…Z"</span>
+  },
+  <span class="key">"results"</span>: [{
+    <span class="key">"meetingId"</span>: <span class="str">"01…"</span>,
+    <span class="key">"title"</span>: <span class="str">"Planning"</span>,
+    <span class="key">"startMs"</span>: 1065000,
+    <span class="key">"endMs"</span>: 1095000,
+    <span class="key">"speakerId"</span>: <span class="str">"speaker-2"</span>,
+    <span class="key">"sourceRevision"</span>: <span class="str">"sha256:…"</span>
+  }]
+}</div>
+        </div>
+        <div>
+          <div class="code-block"><span class="dim">POST</span> /published/excerpts
+{
+  <span class="key">"version"</span>: <span class="str">"cassini.meetings.excerpts.request.v1"</span>,
+  <span class="key">"refs"</span>: [{
+    <span class="key">"meetingId"</span>: <span class="str">"01…"</span>,
+    <span class="key">"startMs"</span>: 1065000,
+    <span class="key">"endMs"</span>: 1095000,
+    <span class="key">"sourceRevision"</span>: <span class="str">"sha256:…"</span>
+  }],
+  <span class="key">"contextBeforeMs"</span>: 15000,
+  <span class="key">"contextAfterMs"</span>: 15000
+}
+
+<span class="dim">200 · application/x-ndjson</span>
+{<span class="key">"version"</span>:<span class="str">"cassini.meetings.excerpt.v1"</span>,
+ <span class="key">"meetingId"</span>:<span class="str">"01…"</span>,<span class="key">"startMs"</span>:1050000,
+ <span class="key">"endMs"</span>:1110000,<span class="key">"speakerId"</span>:<span class="str">"speaker-2"</span>,
+ <span class="key">"text"</span>:<span class="str">"…"</span>,<span class="key">"sourceRevision"</span>:<span class="str">"sha256:…"</span>,
+ <span class="key">"audio"</span>:{<span class="key">"meetingId"</span>:<span class="str">"01…"</span>,<span class="key">"atMs"</span>:1065000}}
+
+<span class="dim">GET</span> /published/contexts/01….json
+<span class="dim">→ cassini.meetings.context.v1</span>
+
+<span class="dim">POST</span> /published/contexts/batch
+<span class="dim">→ ordered application/x-ndjson</span>
+
+<span class="dim">Common response headers</span>
+Cache-Control: no-store
+X-Cassini-Meeting-Source: nextcloud-files</div>
+        </div>
+      </div>
+      <p class="fineprint">Excerpts are a transcript-disclosure surface even though search itself is references-only. Each unique source is re-read through Nextcloud as the caller; a denied meeting or changed revision emits a typed unavailable/retry line rather than text from the index. For both excerpt and context batches, the lean is ordered per-line errors with a request-level failure only when authorization infrastructure is unavailable.</p>
+
+      <h3 style="margin-top:38px">Minimal search projection</h3>
+      <div class="code-block">PRAGMA journal_mode = WAL;
+PRAGMA user_version = 1;
+
+CREATE TABLE indexed_meeting (
+  opus_name       TEXT PRIMARY KEY,
+  source_etag     TEXT,
+  source_digest   TEXT,
+  context_version TEXT NOT NULL,
+  window_count    INTEGER NOT NULL,
+  indexed_at      TEXT NOT NULL,
+  state           TEXT NOT NULL,
+  error_code      TEXT
+);
+
+CREATE TABLE window_ref (
+  rowid       INTEGER PRIMARY KEY,
+  opus_name   TEXT NOT NULL REFERENCES indexed_meeting(opus_name) ON DELETE CASCADE,
+  ordinal     INTEGER NOT NULL,
+  start_ms    INTEGER NOT NULL,
+  end_ms      INTEGER NOT NULL,
+  speaker_id  TEXT NOT NULL,
+  UNIQUE(opus_name, ordinal, speaker_id)
+);
+
+CREATE VIRTUAL TABLE window_fts USING fts5(
+  text, content='', contentless_delete=1, tokenize='unicode61'
+);
+
+<span class="dim">-- The security-critical ordering</span>
+SELECT r.opus_name, r.start_ms, r.end_ms, r.speaker_id
+FROM window_fts f
+JOIN window_ref r ON r.rowid = f.rowid
+JOIN json_each(?1) visible ON visible.value = r.opus_name
+WHERE window_fts MATCH ?2
+ORDER BY rank
+LIMIT ?3;</div>
+      <p class="fineprint">Window proposal: deterministic 30-second wall-clock windows every 15 seconds, with one row per speaker represented in the window. Do not index display names or speaker labels. Tune only after evaluating real queries.</p>
+
+      <div class="callout" style="border-left-color:var(--teal);background:var(--green-soft)">
+        <strong>Persistent in normal operation; rebuildable by design.</strong>
+        <p><code>search.sqlite3</code> is expected to remain in place indefinitely, survive restarts, and receive incremental publish/reconcile updates. “Rebuildable” is the recovery and migration property: create <code>search.sqlite3.next</code> beside the live DB, complete and validate a coherent archive pass, then atomically swap it in. Only the superseded copy is removed after rollback confidence. Because its contents are transcript-derived and reproducible, deployments may exclude it from backups—but any retained copies must receive the same sensitive-data controls.</p>
+      </div>
+
+      <div class="decision-grid">
+        <article class="decision">
+          <span class="num">01</span>
+          <h3>Ranked or chronological?</h3>
+          <p>FTS5’s global BM25 statistics can weakly influence ordering even after the live visibility join. Raw scores and counts stay hidden, but ordering remains a corpus oracle.</p>
+          <span class="lean">Lean: ranked results + rate limits; decide explicitly.</span>
+        </article>
+        <article class="decision">
+          <span class="num">02</span>
+          <h3>References or snippets?</h3>
+          <p>References keep transcript bytes behind Nextcloud but cost a batch round trip. Snippets improve relevance judgment but make the search handler a text-disclosure surface.</p>
+          <span class="lean">Lean: refs-only search API; first CLI/app workflow immediately hydrates bounded excerpts as caller.</span>
+        </article>
+        <article class="decision">
+          <span class="num">03</span>
+          <h3>Process bridge or shared module?</h3>
+          <p>The recorder owns the only Go decoder/context builder; the operator already ships and invokes the <code>cassini</code> binary. A process bridge is the smallest coherent change. A shared pure-Go module removes process overhead but creates module and container-build work.</p>
+          <span class="lean">Lean: process bridge for MVP; promote after measured batch overhead.</span>
+        </article>
+        <article class="decision">
+          <span class="num">04</span>
+          <h3>How fresh must search be?</h3>
+          <p>Publish-time ingest is fast but can fail independently. Rebuild and reconcile cadence determines how quickly repaired, replaced, or deleted sources converge.</p>
+          <span class="lean">Lean: non-fatal ingest + explicit rebuild + daily reconcile.</span>
+        </article>
+        <article class="decision">
+          <span class="num">05</span>
+          <h3>Partial or ready-only search?</h3>
+          <p>Immediate partial search is useful during a large backfill but easy for agents to mistake for the complete corpus. A negative result is invalid whenever searchable &lt; visible. Returning 503 until one coherent pass is simpler but delays first use.</p>
+          <span class="lean">Lean: partial is explicit; CLI refuses to phrase it as “no match.”</span>
+        </article>
+        <article class="decision">
+          <span class="num">06</span>
+          <h3>Duplicate overlapping hits?</h3>
+          <p>Thirty-second windows on a fifteen-second stride improve boundary recall, but adjacent rows can represent the same passage and consume the result limit.</p>
+          <span class="lean">Lean: collapse adjacent hits per meeting before the final limit.</span>
+        </article>
+        <article class="decision">
+          <span class="num">07</span>
+          <h3>What happens with a local sink?</h3>
+          <p>Without <code>nextcloud-files</code>, there is no per-caller Files authorization substrate. Treating local development as implicitly public can hide a production security bug.</p>
+          <span class="lean">Lean: disable user routes; require an explicit dev-only policy.</span>
+        </article>
+        <article class="decision">
+          <span class="num">08</span>
+          <h3>How much concurrency?</h3>
+          <p>Every search performs a visibility scan; every hydration may start an external decoder in the MVP. Each measured process briefly used about 56 MiB RSS. Unbounded batches can exhaust DAV, memory, or process capacity.</p>
+          <span class="lean">Lean: per-caller rate limit + process-wide semaphore 2; backfill gets 1 slot.</span>
+        </article>
+        <article class="decision">
+          <span class="num">09</span>
+          <h3>Which backend earns activation?</h3>
+          <p>The stable contract can be backed by known-meeting lookup, an authorized linear scan, local FTS, or later semantic retrieval. Building the contract does not decide the engine.</p>
+          <span class="lean">Lean: measure scan first; enable FTS only when recurring real questions materially improve.</span>
+        </article>
+        <article class="decision">
+          <span class="num">10</span>
+          <h3>Where should the index live?</h3>
+          <p>Nextcloud-owned tables inherit central database operations but require a native companion and portable full-text behavior. Local SQLite reuses Cassini’s existing ExApp persistence and one implementation.</p>
+          <span class="lean">Lean: separate local search.sqlite3; revisit for multi-replica HA or native-search integration.</span>
+        </article>
+      </div>
+    </section>
+
+    <section id="delivery">
+      <div class="section-kicker">Implementation plan</div>
+      <h2>Deliver vertical slices without making the database authoritative.</h2>
+      <p class="intro">The first slice removes today’s largest inefficiency and ships independently. The search API is then evaluated with a simple baseline before persistent FTS becomes the enabled backend.</p>
+
+      <div class="slice-list">
+        <article class="slice">
+          <div class="slice-no">Slice 0</div>
+          <div>
+            <h3>Expose the existing decoder as a bounded machine seam</h3>
+            <p>Extend <code>cassini inspect</code> with a versioned context-JSON machine mode and catalog ID. Probe compatibility once at operator startup because <code>CASSINI_BIN</code> is configurable. The operator stages only a capped prefix, invokes the decoder under a timeout/semaphore, kills the whole process group on cancellation, caps stdout/stderr, and deletes the private temp directory. Do not duplicate the portable decoder.</p>
+            <ul><li>Golden equivalence across portable v1/v2</li><li>Limit tag/chunk counts, base64/gzip expansion, decoded JSON, and word/item counts before accepting untrusted metadata; declared sizes are not trusted limits</li><li>Return typed “need more” separately from malformed, corrupt, or oversized</li><li>Use an explicit ephemeral <code>/tmp</code> root, 0700 directories, 0600 files, and startup scavenging—do not inherit the image’s persistent <code>TMPDIR</code></li><li>Define a canonical cross-version transcript digest; never call the v1 manifest hash a transcript hash</li><li>Malformed, duplicate, traversal, oversized-tag fixtures</li><li>Record process overhead; promote to a shared pure-Go module only if needed</li></ul>
+          </div>
+          <div class="effort"><b>1–2 days</b>High-leverage seam; estimate needs owner validation.</div>
+        </article>
+
+        <article class="slice">
+          <div class="slice-no">Slice 1</div>
+          <div>
+            <h3>Fast single and explicit batch context</h3>
+            <p>Add user routes in the operator, progressive caller-authenticated Range reads, canonical JSON, streaming NDJSON batch, and CLI capability detection with the existing local full-download path retained only for old servers.</p>
+            <ul><li>Exact context parity</li><li>&gt;95% aggregate transfer reduction on the fixture corpus</li><li>Range ignored / 416 / redirect refused / changed ETag / upstream timeout / denied 404 tests</li><li>Process-wide deadline and semaphore; request body, batch count, stdout, stderr, and decoded-byte caps</li><li>Old or incompatible <code>CASSINI_BIN</code> disables only context/search with explicit status—not recording or publishing</li></ul>
+          </div>
+          <div class="effort"><b>2–4 days</b><span class="fit">Useful without DB</span></div>
+        </article>
+
+        <article class="slice">
+          <div class="slice-no">Slice 2</div>
+          <div>
+            <h3>Ship the stable search contract with a scan baseline</h3>
+            <p>Add <code>POST /published/search</code> behind a <code>SearchBackend</code> interface, initially scanning a capped caller-visible archive. Add the CLI orchestration that immediately turns returned references into bounded, caller-authorized excerpts, then loads full context only for selected meetings.</p>
+            <ul><li>Small server-built query grammar and bounded first page</li><li>Explicit maximum scan corpus and partial-coverage semantics</li><li>No query body, transcript, score, or global count in logs or response</li><li>Denied/absent hydration is 404; changed source revision is a typed retry</li><li>Specific POST handlers mount before the generic archive handler; routes activate only with <code>nextcloud-files</code></li></ul>
+          </div>
+          <div class="effort"><b>2–3 days</b><span class="fit">Useful contract, no index yet</span></div>
+        </article>
+
+        <article class="slice">
+          <div class="slice-no">Checkpoint</div>
+          <div>
+            <h3>Decide whether persistent FTS earns activation</h3>
+            <p>Test actual agent tasks against realistic accessible archives. Compare known-meeting, all-selected-meetings, the shipped scan baseline, and an offline FTS prototype. Use evidence to decide whether a persistent index improves enough recurring questions to justify its lifecycle.</p>
+            <ul><li>Define 20–30 expected-result questions; include exact terms, paraphrases, names, dates, and known failure cases</li><li>Measure top-10 recall, task completion, latency, bytes, visible meeting count, and coverage—not live query text</li><li>Verify important examples against surrounding transcript and audio because real transcripts have omitted and misordered speech</li><li>Record the chosen storage placement separately: local SQLite now, or a native Nextcloud companion if its operational benefits justify the extra boundary</li></ul>
+          </div>
+          <div class="effort"><b>Team decision</b>No sunk-cost pressure.</div>
+        </article>
+
+        <article class="slice">
+          <div class="slice-no">Slice 3</div>
+          <div>
+            <h3>Build the persistent FTS projection if the gate passes</h3>
+            <p>Open a separate <code>search.sqlite3</code> on the existing AppAPI persistent volume, with WAL and schema versioning. Build fixed windows directly from raw timed words—not the prose projection—ingest the exact sealed attempt after successful publication, and add an explicit owner-authorized archive rebuild command.</p>
+            <ul><li>Transactional replace per basename</li><li>Use <code>task.OpusPath</code> + <code>task.OpusSHA256</code>, never a mutable <code>current/</code> artifact</li><li>On failed reindex, delete stale hits and mark coverage unavailable</li><li>Build <code>search.sqlite3.next</code>, validate one coherent archive pass, atomically swap, and retain the old copy only for a bounded rollback window</li><li>Publish still succeeds when indexing fails</li></ul>
+          </div>
+          <div class="effort"><b>3–5 days</b>The SQL itself is the small part.</div>
+        </article>
+
+        <article class="slice">
+          <div class="slice-no">Slice 4</div>
+          <div>
+            <h3>Make indexed search permission-correct and operable</h3>
+            <p>Join the live caller-visible basename set inside the FTS query before rank and limit. Reconcile new, replaced, and deleted Opus sources; expose caller-relative coverage; update privacy/operator docs; ship disabled, rebuild, shadow-test, then switch the same API from scan to FTS.</p>
+            <ul><li>Property test: inaccessible top hits never consume LIMIT</li><li>No caller / PROPFIND failure / DB failure are not empty success</li><li>An empty partial result cannot support a “no match” conclusion</li><li>Deletion is suppressed immediately by live visibility, then purged</li><li>Fresh install, volume-loss recovery, migration swap, and stale-source cases tested</li><li>Per-caller rate limits; privacy language treats the index as transcript-derived storage</li></ul>
+          </div>
+          <div class="effort"><b>2–4 days</b>Security-critical production slice.</div>
+        </article>
+
+        <article class="slice">
+          <div class="slice-no">Product follow-on</div>
+          <div>
+            <h3>Use the same contracts in the app</h3>
+            <p>Add room-aware search, explicit meeting selection, and context-bundle preparation to the Nextcloud UI. Treat preparing or sending transcript context as visible data egress. Automated summaries remain a separate versioned workflow that can target a local model by default and records provenance before delivery.</p>
+            <ul><li>No second UI-only extraction or search implementation</li><li>Reading a meeting does not silently grant permission to re-share a saved insight</li><li>Keep the CLI-backed skill as the composable agent interface; no MCP requirement</li></ul>
+          </div>
+          <div class="effort"><b>Separate scope</b>Important product work, not DB plumbing.</div>
+        </article>
+
+        <article class="slice">
+          <div class="slice-no">Later</div>
+          <div>
+            <h3>Earn semantic retrieval with evidence</h3>
+            <p>Evaluate lexical search plus query reformulation on the question set. Add embeddings or a reranker only if expected meetings materially miss the top ten, and preserve the same authorization and excerpt-hydration contract.</p>
+          </div>
+          <div class="effort"><b>Not estimated</b><span class="open">Evidence-triggered</span></div>
+        </article>
+      </div>
+
+      <h3 style="margin-top:38px">Where the work actually goes</h3>
+      <div class="cost-bar" aria-label="Rough engineering cost allocation">
+        <div class="cost-part db"><b>~15%</b><span>SQLite schema, FTS query, migrations</span></div>
+        <div class="cost-part"><b>~30%</b><span>Bounded portable decoding, machine adapter, context wire</span></div>
+        <div class="cost-part"><b>~30%</b><span>Live authorization, failure semantics, adversarial tests</span></div>
+        <div class="cost-part"><b>~25%</b><span>Publish hook, rebuild, reconcile, coverage, docs</span></div>
+      </div>
+      <p class="fineprint">Rough shape, not a commitment: about 10–18 engineering days to a hardened FTS beta for one engineer if the evaluation gate passes, with useful hydration after roughly 3–6 days and a scan-backed search workflow after roughly 5–9. Existing SQLite, AppAPI/WebDAV, <code>CASSINI_BIN</code>, and ffprobe packaging reduce infrastructure work; lifecycle races and adversarial fixtures are the main estimate risks. A native Nextcloud-table implementation is not included.</p>
+
+      <div class="split">
+        <article class="card">
+          <h3>Likely code seams</h3>
+          <ul>
+            <li><code>cassini-go-recorder/internal/inspect/portable_audio.go</code> — canonical decoder; add decompression limits</li>
+            <li><code>cassini-go-recorder/internal/cassini/cli.go</code> — machine-oriented inspect mode</li>
+            <li><code>cassini-go-recorder/internal/cassini/meetings_context.go</code> — current full-download context path</li>
+            <li><code>cassini-operator/internal/operator/exapp.go</code> + <code>appinfo/info.xml</code> — mount specific POST handlers before the generic GET/HEAD archive handler and permit USER-level POST</li>
+            <li><code>webdav_acl.go</code> / <code>webdav_upload.go</code> — strict visibility and conditional ranged reads</li>
+            <li><code>publish_runtime.go</code> — post-success, non-fatal ingest hook</li>
+            <li>new <code>search_store.go</code>, <code>search_index.go</code>, <code>search_http.go</code></li>
+          </ul>
+        </article>
+        <article class="card">
+          <h3>Explicitly out of scope</h3>
+          <ul>
+            <li>Making SQLite the catalog authority</li>
+            <li>Reading Nextcloud’s internal tables or copying ACLs</li>
+            <li>A native PHP companion / Nextcloud-owned projection, unless the storage-placement gate selects it</li>
+            <li>Maintaining per-user indexes</li>
+            <li>Transcript sidecar files in Nextcloud</li>
+            <li>Embeddings, vector infrastructure, or ANN</li>
+            <li>Saved summaries / insight artifact delivery</li>
+            <li>Automatic whole-archive prompt assembly</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="risks">
+      <div class="section-kicker">Failure modes worth designing first</div>
+      <h2>The dangerous bugs look like convenience.</h2>
+
+      <details open>
+        <summary>Filtering after global LIMIT</summary>
+        <div>Hidden meetings can consume the result limit and make visible matches disappear. This is both incorrect and observable. The caller-visible basename set must participate in the SQL query before ranking and limit.</div>
+      </details>
+      <details>
+        <summary>Treating an empty visibility scan as success</summary>
+        <div>The current catalog path sometimes collapses provisioning/upstream failure into an empty catalog. Search cannot do that: “no matches” must be distinguishable from “could not establish what this caller may see.”</div>
+      </details>
+      <details>
+        <summary>Trusting catalog paths via <code>path.Base</code></summary>
+        <div>A basename is the correct join key, but only after validating a strict local <code>meetings/*.opus</code> asset. Otherwise malformed or external catalog paths can alias the indexed resource. Parse once into a typed snapshot and reject ambiguity.</div>
+      </details>
+      <details>
+        <summary>Silently falling back to whole-file downloads</summary>
+        <div>A Range-ignoring upstream can reintroduce the original 10–30 MB transfer and become a denial-of-service primitive. The server must enforce its own byte cap, close early, and report an unsupported/oversized artifact.</div>
+      </details>
+      <details>
+        <summary>Treating compressed metadata as harmless</summary>
+        <div>OpusTags are caller-selected input to the decoder. Existing unbounded chunk assembly and <code>io.ReadAll</code> over gzip need explicit encoded, compressed, expanded-JSON, word-count, subprocess-output, and time limits before this path becomes a user HTTP route.</div>
+      </details>
+      <details>
+        <summary>Calling contentless FTS “no transcript storage”</summary>
+        <div>It narrows the API and storage shape; it does not make the token index confidential. Backups, volume deletion, access controls, and the privacy page must treat it accordingly.</div>
+      </details>
+      <details>
+        <summary>Letting search state become an insight store</summary>
+        <div>Deterministic timed windows are persistent derived state, but replaceable from source meetings. Saved summaries, decisions, or cross-meeting synthesis require provenance, lifecycle, and a multi-source audience rule. Keep that work in the insight-artifact track.</div>
+      </details>
+      <details>
+        <summary>Treating a transcript hit as an exact quote</summary>
+        <div>Real team use found omitted speech and misordered interjections. Search and context must label text as derived from timed words, carry an opaque source revision and timestamps, and let a user or agent return to the authorized audio before making an important verbatim or attribution claim.</div>
+      </details>
+    </section>
+
+    <section id="tickets">
+      <div class="section-kicker">Ticket landscape</div>
+      <h2>Use the existing work as evidence, not scripture.</h2>
+      <p class="intro">The proposal preserves the strongest constraints in the current tickets while reopening their solution choices where implementation evidence changes the tradeoff.</p>
+      <div class="ticket-grid">
+        <a class="ticket" href="https://linear.app/code-myriad/issue/D-617"><b>D-617</b><span>Agent meeting access and context contract</span></a>
+        <a class="ticket" href="https://linear.app/code-myriad/issue/D-626"><b>D-626</b><span>Prepare selected meeting bundles in the app</span></a>
+        <a class="ticket" href="https://linear.app/code-myriad/issue/D-624"><b>D-624</b><span>Versioned workflow skills over context bundles</span></a>
+        <a class="ticket" href="https://linear.app/code-myriad/issue/D-621"><b>D-621</b><span>First-class insight runs and provenance</span></a>
+        <a class="ticket" href="https://linear.app/code-myriad/issue/D-267"><b>D-267</b><span>Chunking only after real long-context failure</span></a>
+        <a class="ticket" href="https://linear.app/code-myriad/issue/D-647"><b>D-647</b><span>Derived-artifact audience remains open</span></a>
+        <a class="ticket" href="https://linear.app/code-myriad/issue/D-404"><b>D-404</b><span>Privacy and data-processing disclosure</span></a>
+        <a class="ticket" href="https://linear.app/code-myriad/issue/D-623"><b>D-623</b><span>Cross-meeting FTS shaping spike</span></a>
+        <a class="ticket" href="https://linear.app/code-myriad/issue/D-631"><b>D-631</b><span>Do not invert catalog authority into SQLite</span></a>
+      </div>
+    </section>
+
+    <section id="questions" class="final-question">
+      <div class="section-kicker" style="color:#9cddd2">Decision requested</div>
+      <h2>Approve the direction, then settle six gates.</h2>
+      <p>The proposal is deliberately reversible: hydration and the scan-backed search contract stand alone. If FTS is adopted, its live database is expected to remain; schema changes and recovery use a validated build-and-swap rebuild rather than routine deletion. Before indexed search is enabled, the team should record answers to:</p>
+      <ol>
+        <li>Is references-only low-level search acceptable when the first CLI/app workflow immediately hydrates authorized excerpts?</li>
+        <li>Do we accept ranked ordering’s weak global-corpus signal if scores/counts are hidden and requests are rate-limited?</li>
+        <li>Is a default 4 MiB metadata cap sufficient, or should it start at 8 MiB?</li>
+        <li>Should search be available with loudly marked partial coverage, or return 503 until the first coherent rebuild?</li>
+        <li>Which real-question evaluation and coverage threshold is sufficient to enable persistent FTS for agents?</li>
+        <li>Does v1 use operator-local SQLite, or do backup/HA/native-search requirements justify a native Nextcloud companion with Cassini-owned tables?</li>
+      </ol>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell">
+      <span>Prepared from repository inspection, Linear evidence, and collaborating Codex sessions. No verbatim meeting transcript content is included.</span>
+      <span>Method: <a href="https://github.com/rjs/shaping-skills">rjs/shaping-skills</a> · Engine: <a href="https://www.sqlite.org/fts5.html">SQLite FTS5</a></span>
+    </div>
+  </footer>
+</body>
+</html>

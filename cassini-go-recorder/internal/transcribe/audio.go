@@ -31,6 +31,21 @@ type AudioStream struct {
 	// mix duration when available. Packet timestamps, FirstPacketTimeMS, and
 	// StartTimeMS remain the authority for audio timing.
 	TimelineDurationMS int64
+	// TimeBase is this track's wall-clock anchor, written by the remux: when
+	// its first packet arrived and where that instant sits on the meeting
+	// timeline. It is what participant-captured source audio is placed against
+	// (sourceaudio.go). Zero-valued with Known=false for recordings made before
+	// the remux emitted it.
+	TimeBase SourceTimeBase
+	// SourceAudioPath, when set, is a rendered WAV of this speaker captured in
+	// their own browser and already placed on the meeting timeline. It replaces
+	// the MKV track as the transcription input; see ExtractSpeakerFloats.
+	SourceAudioPath string
+	// SuppressTranscription drops this stream from the transcription pass. Set
+	// when the same participant's source capture already covers it on another
+	// stream: the render spans the whole timeline, so transcribing both would
+	// emit every word twice.
+	SuppressTranscription bool
 }
 
 // setPCMCapacityDurationHints replaces only the decoded-PCM allocation hint
@@ -52,9 +67,12 @@ type ffprobeOutput struct {
 		Channels  int    `json:"channels"`
 		StartTime string `json:"start_time"`
 		Tags      struct {
-			Title           string `json:"title"`
-			ParticipantID   string `json:"PARTICIPANT_ID"`
-			ParticipantName string `json:"PARTICIPANT_NAME"`
+			Title             string `json:"title"`
+			ParticipantID     string `json:"PARTICIPANT_ID"`
+			ParticipantName   string `json:"PARTICIPANT_NAME"`
+			FirstPacketWallMS string `json:"FIRST_PACKET_WALL_MS"`
+			FirstTimelineNS   string `json:"FIRST_TIMELINE_NS"`
+			ClockRate         string `json:"CLOCK_RATE"`
 		} `json:"tags"`
 	} `json:"streams"`
 	Format struct {
@@ -66,7 +84,7 @@ type ffprobeOutput struct {
 func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 	cmd := exec.Command("ffprobe",
 		"-v", "error",
-		"-show_entries", "stream=index,codec_type,channels,start_time:stream_tags=title,participant_id,participant_name:format=duration",
+		"-show_entries", "stream=index,codec_type,channels,start_time:stream_tags=title,participant_id,participant_name,first_packet_wall_ms,first_timeline_ns,clock_rate:format=duration",
 		"-of", "json",
 		mkv,
 	)
@@ -104,6 +122,7 @@ func ProbeMKV(mkv string) ([]AudioStream, int64, error) {
 		}
 		streams = append(streams, AudioStream{
 			Index:              s.Index,
+			TimeBase:           sourceTimeBaseFromTags(s.Tags.FirstPacketWallMS, s.Tags.FirstTimelineNS, s.Tags.ClockRate),
 			ParticipantID:      participantID,
 			SpeakerID:          speakerIDFromLabel(speakerIdentity),
 			SpeakerLabel:       label,
@@ -161,7 +180,36 @@ func probeFirstPacketTimeMS(mkv string, streamIndex int) (int64, error) {
 // normalised to [-1, 1]) by streaming raw PCM from ffmpeg. The return type
 // necessarily owns four bytes per sample; decoding incrementally avoids the
 // former additional two-byte-per-sample, full-duration raw buffer.
+// sourceTimeBaseFromTags parses the wall-clock anchor the remux writes into
+// each audio stream. All three tags must be present and parseable: a partial
+// base cannot map anything, and silently treating a missing one as zero would
+// place somebody's audio at a confidently wrong time.
+func sourceTimeBaseFromTags(firstPacketWallMS, firstTimelineNS, clockRate string) SourceTimeBase {
+	wallMS, err1 := strconv.ParseInt(strings.TrimSpace(firstPacketWallMS), 10, 64)
+	timelineNS, err2 := strconv.ParseInt(strings.TrimSpace(firstTimelineNS), 10, 64)
+	rate, err3 := strconv.ParseUint(strings.TrimSpace(clockRate), 10, 32)
+	if err1 != nil || err2 != nil || err3 != nil || rate == 0 || wallMS <= 0 {
+		return SourceTimeBase{}
+	}
+	return SourceTimeBase{
+		FirstPacketWallMS: wallMS,
+		FirstTimelineNS:   timelineNS,
+		ClockRate:         uint32(rate),
+		Known:             true,
+	}
+}
+
 func ExtractSpeakerFloats(mkv string, stream AudioStream) ([]float32, error) {
+	// A rendered source-audio track has already been placed on the meeting
+	// timeline (sourceaudio.go), so it is decoded as a plain file — none of the
+	// sparse-gap machinery below applies to it.
+	if stream.SourceAudioPath != "" {
+		samples, err := ExtractMixedFloats(stream.SourceAudioPath)
+		if err != nil {
+			return nil, fmt.Errorf("extract source audio for %s: %w", stream.SpeakerLabel, err)
+		}
+		return samples, nil
+	}
 	durationMS := stream.TimelineDurationMS
 	if durationMS <= 0 {
 		// Preserve the memory bound for direct callers that construct AudioStream

@@ -26,6 +26,20 @@ type timelineProfile struct {
 	LastCorrectedPTSNS  uint64
 	RawDurationNS       int64
 	CorrectedDurationNS int64
+	// FirstRTPTimestamp is the RTP timestamp of this segment's first packet,
+	// and FirstRTPSet says whether one was seen (a segment with no RTP records
+	// has no base, and 0 is a legal timestamp).
+	//
+	// It is carried out of the analysis rather than discarded because it is the
+	// anchor the sender's own clock can be mapped through. A participant's
+	// browser can report the RTP timestamps of the frames it encoded (source
+	// capture, docs/source-audio-capture.md); combined with this base, the
+	// segment's clock rate and FirstTimelineNS, an offset in the sender's
+	// timeline converts to one on the meeting timeline exactly. Loss does not
+	// weaken that: the base comes from a packet that arrived, and every later
+	// timestamp is arithmetic on the sender's sample clock.
+	FirstRTPTimestamp int64
+	FirstRTPSet       bool
 }
 
 func analyzeTimeline(logPath string, primarySSRC uint32, clockRate uint32) (timelineProfile, error) {
@@ -83,6 +97,8 @@ func analyzeTimeline(logPath string, primarySSRC uint32, clockRate uint32) (time
 			if profile.Samples == 0 {
 				profile.FirstRecvNS = rec.RecvMonoNS
 				profile.FirstCorrectedPTSNS = ptsNS
+				profile.FirstRTPTimestamp = firstRaw
+				profile.FirstRTPSet = true
 			}
 			profile.LastRecvNS = rec.RecvMonoNS
 			profile.LastCorrectedPTSNS = ptsNS
