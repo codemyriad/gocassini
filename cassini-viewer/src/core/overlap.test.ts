@@ -329,8 +329,13 @@ describe("span overlap", () => {
     ];
 
     expect(analyzeOverlap(blocks).size).toBe(0);
-    // One speaker who never stopped is one paragraph, whatever the producer cut.
-    expect(buildTranscriptRows(blocks).map(blockIdsIn)).toEqual([["a", "b", "c"]]);
+    // One speaker who never stopped is one TURN, but not one paragraph. Nobody
+    // spoke between these, so the producer ended each block on its word-count
+    // limit, and those breaks are the only paragraphing a long answer has:
+    // rejoining them rendered a real standup update as a single 209 s block of
+    // text. The reading unit follows the producer here and only overrides it
+    // where somebody else's speech cut the sentence in half.
+    expect(buildTranscriptRows(blocks).map(blockIdsIn)).toEqual([["a"], ["b"], ["c"]]);
   });
 
   it("falls back to the block envelope for a turn with no words at all", () => {
