@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -120,17 +121,88 @@ func (e *resourceUnavailableError) Error() string {
 	return fmt.Sprintf("resource governor: %s unavailable: %s", e.resource, e.detail)
 }
 
+// admitModelForDevice returns the model an admitted build will load, refusing a
+// combination the model was never audited for. An administrator who pinned an
+// int8 model and CUDA gets a loud, permanent error rather than a GPU run that
+// silently fragments back onto the host CPU.
+func admitModelForDevice(settings STTSettings, device string) (string, error) {
+	model := settings.modelForDevice(device)
+	if !modelSupportsDevice(model, device) {
+		return "", &resourceUnavailableError{
+			resource: "model policy",
+			detail: fmt.Sprintf(
+				"model_override=%q is a CPU model and cannot run on CUDA (its quantized ops fragment back to the host); clear the model override or select %s",
+				model, modelParakeetV3Fp32),
+			permanent: true,
+		}
+	}
+	if err := requireBundledModel(model); err != nil {
+		return "", err
+	}
+	return model, nil
+}
+
+// requireBundledModel refuses a tier whose model the running image does not
+// carry, when that image also forbids runtime downloads. Each image variant
+// bundles the models for the device it exists to serve — the CUDA image carries
+// fp32, the portable image carries the CPU tiers — so a CUDA image that has
+// fallen back to the CPU can be asked for a model it never shipped. Saying so
+// at admission gives an actionable block instead of a missing-file failure deep
+// inside the recorder, minutes into a build.
+func requireBundledModel(model string) error {
+	if !envBool("CASSINI_DISALLOW_MODEL_DOWNLOAD") {
+		return nil
+	}
+	root := strings.TrimSpace(os.Getenv("CASSINI_CACHE_ROOT"))
+	if root == "" {
+		// No declared cache root: the recorder's own doctor is then the
+		// authority on whether the files are there.
+		return nil
+	}
+	dir := filepath.Join(root, "models", model)
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		return &resourceUnavailableError{
+			resource: "model bundle",
+			detail: fmt.Sprintf(
+				"this image does not bundle model %q (expected at %s) and runtime downloads are disabled; select a quality tier whose model is bundled, or install the image variant that carries it",
+				model, dir),
+			permanent: true,
+		}
+	}
+	return nil
+}
+
+// envBool reports whether an env var is set to a truthy value.
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
 // applyToEnv injects the STT execution policy for the device resolveBuildDevice
 // admitted. The device is always written explicitly so the child process cannot
 // re-detect a different one between admission and launch. CUDA builds are
 // pinned to one host thread and require a trustworthy VRAM reading at or above
 // the configured floor; CPU builds get the host thread budget and no VRAM probe.
-func (l resourceLimits) applyToEnv(env []string, device string) ([]string, error) {
+func (l resourceLimits) applyToEnv(env []string, device, model string) ([]string, error) {
 	// The recorder intentionally exposes a stream-concurrency escape hatch for
 	// manual benchmarking. It is not safe in the operator: every worker owns a
 	// separate recognizer/model allocation, and concurrent CUDA provider setup
 	// has crashed in practice. Override even a stale inherited value.
 	env = setEnvKey(env, envSTTStreamConcurrency, "1")
+
+	// Pin the model the governor sized this build for. The recorder would
+	// derive the same one from the tier and device, but deriving it twice makes
+	// admission and execution independent copies of one policy: pinning it here
+	// makes them identical by construction, so a future edit to either mapping
+	// cannot admit a build for one model and then load a larger one.
+	if strings.TrimSpace(model) != "" {
+		env = setEnvKey(env, envSTTModel, model)
+	}
 
 	if !isCUDA(device) {
 		env = setEnvKey(env, envSTTDevice, "cpu")

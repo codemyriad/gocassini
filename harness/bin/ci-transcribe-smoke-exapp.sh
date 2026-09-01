@@ -142,9 +142,10 @@ docker run -d --rm \
   -c 'tail -f /dev/null' >/dev/null
 
 # ---- Assertion 1: model files exist BEFORE any cassini operation runs ----
-# Every quality tier's model, not just the image default: the runtime forbids
-# downloads, so a tier whose model is missing is a tier the admin can select and
-# never run (D-702). fast -> 110M CTC, balanced -> 0.6B int8, best -> 0.6B fp32.
+# Every model the image declares, not just its default: the runtime forbids
+# downloads, so this set is exactly the set of quality tiers the image can
+# execute, and a missing one is a tier an admin can select and never run
+# (D-702).
 tier_model_files() {
   case "$1" in
     parakeet-tdt-ctc-110m-en-int8) echo "model.int8.onnx tokens.txt NOTICE" ;;
@@ -154,7 +155,15 @@ tier_model_files() {
   esac
 }
 
-TIER_MODELS=(parakeet-tdt-ctc-110m-en-int8 parakeet-tdt-0.6b-v3-int8 parakeet-tdt-0.6b-v3)
+# The image declares what it bundles; each variant carries the models for the
+# device it serves (the portable image the CPU tiers, the CUDA image fp32).
+BUNDLED_MODELS=$(read_env CASSINI_BUNDLED_MODELS)
+if [[ -z "${BUNDLED_MODELS}" ]]; then
+  log "FAIL image does not declare CASSINI_BUNDLED_MODELS"
+  exit 1
+fi
+read -r -a TIER_MODELS <<< "${BUNDLED_MODELS}"
+log "declared bundled models: ${BUNDLED_MODELS}"
 for model in "${TIER_MODELS[@]}"; do
   model_dir="${CACHE_ROOT}/models/${model}"
   log "asserting bundled model files exist at ${model_dir}"
@@ -190,6 +199,22 @@ if (( ENC_MTIME > IMG_CREATED_TS + 5 )); then
   exit 1
 fi
 log "OK   ${enc_file} mtime (${ENC_MTIME}) <= image created (${IMG_CREATED_TS})"
+
+# ---- Assertion 1b: every tier passes the recorder's own pre-build checks ----
+# Presence is not enough: `cassini build` runs doctor first and aborts on a
+# failed check, so a tier can be bundled and still be unrunnable if doctor
+# expects a different file layout (D-702 — the CTC "fast" model was checked
+# against transducer file names). doctor loads no model, so this is cheap.
+for model in "${TIER_MODELS[@]}"; do
+  log "running cassini doctor with CASSINI_STT_MODEL=${model}"
+  if ! docker exec -e "CASSINI_STT_MODEL=${model}" "${CONTAINER_NAME}" \
+       /usr/local/bin/cassini doctor > "${LOG_DIR}/doctor-${model}.log" 2>&1; then
+    log "FAIL cassini doctor rejected bundled model ${model}"
+    sed -n '1,40p' "${LOG_DIR}/doctor-${model}.log" | while IFS= read -r line; do log "     ${line}"; done
+    exit 1
+  fi
+  log "OK   doctor accepts ${model}"
+done
 
 # ---- Assertion 2 + 3: `cassini build` succeeds + no download log line ----
 docker exec "${CONTAINER_NAME}" mkdir -p /tmp/smoke-in /tmp/smoke-out

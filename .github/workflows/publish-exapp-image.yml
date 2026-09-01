@@ -629,6 +629,16 @@ jobs:
             exit 1
           fi
 
+          # The app image advertises the bundled set as ENV, and tests trust it
+          # to decide which quality tiers must be executable. If it drifts from
+          # what the base actually baked, the image would claim a tier it cannot
+          # run — the same class of failure as a model-less image.
+          APP_MODEL_IDS="$(df_get "$APP_DF" CASSINI_BUNDLED_MODELS | tr -d '"')"
+          if [ "$MODEL_IDS" != "$APP_MODEL_IDS" ]; then
+            echo "CASSINI_BUNDLED_MODELS mismatch: base=[$MODEL_IDS] app=[$APP_MODEL_IDS]" >&2
+            exit 1
+          fi
+
           # Pin the nvidia base by digest (catches silent upstream re-pushes).
           # Retry: Docker Hub anonymous manifest reads occasionally rate-limit.
           NV_REF="nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04"

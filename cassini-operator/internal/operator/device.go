@@ -36,6 +36,28 @@ func isCUDA(device string) bool {
 	return strings.EqualFold(strings.TrimSpace(device), deviceCUDA)
 }
 
+// cudaCapableHost reports whether this image can run CUDA inference AND an
+// NVIDIA device is visible. Raw device visibility alone is not enough: AppAPI
+// can install the plain image on a GPU daemon, which then sees /dev/nvidia*
+// while carrying no CUDA execution provider. Every decision that depends on
+// "will this build actually use the GPU" must ask this, not detectGPU.
+func cudaCapableHost() bool {
+	capable, _ := imageCUDACapability()
+	return capable && probeNVIDIADevice()
+}
+
+// modelSupportsDevice reports whether a model is audited for a device. The
+// dynamic-int8 graphs are CPU models: under the onnxruntime CUDA EP their
+// quantized ops fragment back to the host, so pinning one alongside CUDA would
+// report a GPU run while doing something else. fp32 v3 is the only model
+// audited on both.
+func modelSupportsDevice(model, device string) bool {
+	if !isCUDA(device) {
+		return true
+	}
+	return strings.TrimSpace(model) == modelParakeetV3Fp32
+}
+
 // modelForQuality returns the model an admitted build will load for a quality
 // tier on a resolved device. Every CUDA tier is fp32 v3; the CPU tiers trade
 // accuracy for speed.

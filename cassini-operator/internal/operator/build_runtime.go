@@ -262,7 +262,10 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	if admissionErr != nil {
 		return meetingPath, admissionErr
 	}
-	model := settings.modelForDevice(device)
+	model, modelErr := admitModelForDevice(settings, device)
+	if modelErr != nil {
+		return meetingPath, modelErr
+	}
 	// Say which device won before any audio is decoded: a CPU build is a
 	// legitimate outcome but a much slower one, and an administrator reading
 	// the attempt log should never have to infer it from the elapsed time.
@@ -275,7 +278,7 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	// reading is an admission snapshot; taking it before a long memory wait
 	// would let another workload consume the GPU in between.
 	env := settings.ChildEnv(os.Environ())
-	buildEnv, err := limits.applyToEnv(env, device)
+	buildEnv, err := limits.applyToEnv(env, device, model)
 	if err != nil {
 		return meetingPath, err
 	}

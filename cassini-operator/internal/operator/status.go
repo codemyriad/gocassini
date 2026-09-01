@@ -340,7 +340,11 @@ func probeCUDADevice() (bool, string) {
 	}
 	smi, err := exec.LookPath("nvidia-smi")
 	if err != nil {
-		return true, "cuda: NVIDIA driver visible (nvidia-smi not present to verify further)"
+		// Readiness must not promise what admission will refuse: the resource
+		// governor reads free VRAM through nvidia-smi and declines to launch a
+		// CUDA build without a trustworthy reading, so an image that cannot run
+		// nvidia-smi is not ready for CUDA however visible the driver is.
+		return false, "CASSINI_STT_DEVICE=cuda but nvidia-smi is not installed in this image, so free VRAM cannot be measured and no CUDA build will be admitted; install the matching -cuda image, or clear device_override=cuda to transcribe on the CPU"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

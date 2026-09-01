@@ -166,15 +166,23 @@ func detectGPU() bool {
 // default can detect when the hardware changed (GPU added/removed) across
 // restarts and re-derive accordingly.
 func hardwareFingerprint(gpu bool, cores int) string {
-	return fmt.Sprintf("gpu=%t;cores=%d", gpu, cores)
+	// CUDA capability is part of the fingerprint because it changes what a
+	// build does without any hardware changing: swapping the plain image for
+	// the -cuda one on the same host must re-derive an auto policy.
+	return fmt.Sprintf("gpu=%t;cuda=%t;cores=%d", gpu, cudaCapableHost(), cores)
 }
 
-// defaultQualityForHardware picks the auto-default tier: on a GPU fp32 is both
-// the quality ceiling and fast, so "best"; on CPU keep "balanced" (int8), which
-// preserves the historical CPU speed/quality default and is the tier a 4-core
-// host can actually sustain.
-func defaultQualityForHardware(gpu bool) string {
-	if gpu {
+// defaultQualityForHardware picks the auto-default tier from the device builds
+// will really use. On CUDA fp32 is both the quality ceiling and the fast
+// option, so "best"; otherwise "balanced" (int8), the tier a 4-core host can
+// sustain and whose RAM floor it can meet.
+//
+// This takes effective CUDA capability, not raw device visibility: the plain
+// image installed on a GPU daemon sees /dev/nvidia* but transcribes on the CPU,
+// and defaulting it to "best" would pick the 4.5GiB fp32 tier for a host that
+// wanted balanced.
+func defaultQualityForHardware(cudaCapable bool) string {
+	if cudaCapable {
 		return sttQualityBest
 	}
 	return sttQualityBalanced
@@ -200,7 +208,7 @@ func detectSettings() STTSettings {
 	gpu := detectGPU()
 	cores := runtime.NumCPU()
 	return STTSettings{
-		Quality:             defaultQualityForHardware(gpu),
+		Quality:             defaultQualityForHardware(cudaCapableHost()),
 		Source:              sttSourceAuto,
 		HardwareFingerprint: hardwareFingerprint(gpu, cores),
 		DetectedGPU:         gpu,
@@ -467,10 +475,16 @@ const (
 
 func (s STTSettings) effective() effectiveSTT {
 	device, note := effectiveDevice(s.DeviceOverride)
+	model := s.modelForDevice(device)
+	if !modelSupportsDevice(model, device) {
+		note = fmt.Sprintf(
+			"model_override %q is a CPU model and cannot run on CUDA: builds stay blocked until the model override is cleared or set to %s",
+			model, modelParakeetV3Fp32)
+	}
 	return effectiveSTT{
 		Quality: normalizeQuality(s.Quality),
 		Device:  device,
-		Model:   s.modelForDevice(device),
+		Model:   model,
 		Note:    note,
 	}
 }
@@ -629,6 +643,16 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		updated.ModelOverride = model
+	}
+	// Reject a pair that could never run rather than saving it and failing at
+	// build time: an int8 model under CUDA fragments back onto the host CPU, so
+	// it is neither the device nor the model the administrator asked for.
+	if updated.ModelOverride != "" && strings.EqualFold(updated.DeviceOverride, deviceCUDA) &&
+		!modelSupportsDevice(updated.ModelOverride, deviceCUDA) {
+		writeJSONError(w, http.StatusBadRequest, fmt.Sprintf(
+			"model_override %q is a CPU model and cannot be combined with device_override=cuda; select %s or clear the device override",
+			updated.ModelOverride, modelParakeetV3Fp32))
+		return
 	}
 	if in.TranscriptionTerms != nil {
 		terms, err := normalizeTranscriptionTerms(*in.TranscriptionTerms)

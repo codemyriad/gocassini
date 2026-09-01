@@ -104,7 +104,7 @@ func TestApplyToEnv(t *testing.T) {
 	// CPU: no VRAM probe, device pinned so the child cannot re-detect, and the
 	// thread budget (cores minus reserve) rather than the CUDA single thread.
 	probeGPUFreeMB = func() (int, bool) { return 0, false }
-	out, err := l.applyToEnv([]string{"X=1", "CASSINI_STT_DEVICE=cuda"}, deviceCPU)
+	out, err := l.applyToEnv([]string{"X=1", "CASSINI_STT_DEVICE=cuda"}, deviceCPU, modelParakeetV3Int8)
 	if err != nil {
 		t.Fatalf("CPU applyToEnv() error = %v", err)
 	}
@@ -117,12 +117,17 @@ func TestApplyToEnv(t *testing.T) {
 	if countKey(out, "CASSINI_STT_DEVICE=") != 1 {
 		t.Errorf("stale device override survived: %v", out)
 	}
+	// The governor sized this build for a model; the child must load exactly
+	// that one rather than re-deriving it from the tier.
+	if !contains(out, "CASSINI_STT_MODEL="+modelParakeetV3Int8) {
+		t.Errorf("admitted model was not pinned into the child environment: %v", out)
+	}
 
 	var unavailable *resourceUnavailableError
 
 	// CUDA intended, GPU full -> defer rather than silently using host CPU/RAM.
 	probeGPUFreeMB = func() (int, bool) { return 1000, true }
-	out, err = l.applyToEnv(nil, deviceCUDA)
+	out, err = l.applyToEnv(nil, deviceCUDA, modelParakeetV3Fp32)
 	unavailable = nil
 	if !errors.As(err, &unavailable) || unavailable.resource != "GPU memory" {
 		t.Fatalf("low VRAM error = %v, want GPU resourceUnavailableError", err)
@@ -137,7 +142,7 @@ func TestApplyToEnv(t *testing.T) {
 	out, err = l.applyToEnv([]string{
 		"CASSINI_STT_NUM_THREADS=12",
 		"CASSINI_STT_STREAM_CONCURRENCY=4",
-	}, deviceCUDA)
+	}, deviceCUDA, modelParakeetV3Fp32)
 	if err != nil {
 		t.Fatalf("CUDA applyToEnv() error = %v", err)
 	}
@@ -150,18 +155,18 @@ func TestApplyToEnv(t *testing.T) {
 		t.Errorf("stale CUDA stream concurrency override survived: %v", out)
 	}
 	probeGPUFreeMB = func() (int, bool) { return 5500, true }
-	if _, err := (resourceLimits{gpuMinFreeMB: 5500}).applyToEnv(nil, deviceCUDA); err != nil {
+	if _, err := (resourceLimits{gpuMinFreeMB: 5500}).applyToEnv(nil, deviceCUDA, modelParakeetV3Fp32); err != nil {
 		t.Errorf("VRAM exactly at floor must be eligible: %v", err)
 	}
 	probeGPUFreeMB = func() (int, bool) { return 5499, true }
-	if _, err := (resourceLimits{gpuMinFreeMB: 5500}).applyToEnv(nil, deviceCUDA); err == nil {
+	if _, err := (resourceLimits{gpuMinFreeMB: 5500}).applyToEnv(nil, deviceCUDA, modelParakeetV3Fp32); err == nil {
 		t.Error("VRAM one MiB below floor must be deferred")
 	}
 
 	// Unknown VRAM fails closed: launching without a usable capacity reading
 	// cannot uphold the host-safety guarantee.
 	probeGPUFreeMB = func() (int, bool) { return 0, false }
-	out, err = l.applyToEnv(nil, deviceCUDA)
+	out, err = l.applyToEnv(nil, deviceCUDA, modelParakeetV3Fp32)
 	unavailable = nil
 	if !errors.As(err, &unavailable) || unavailable.resource != "GPU memory" {
 		t.Fatalf("unknown VRAM error = %v, want GPU memory resourceUnavailableError", err)
@@ -835,5 +840,71 @@ func TestCPUFloorsRankByTierCost(t *testing.T) {
 	}
 	if fast <= 0 {
 		t.Fatalf("fast tier floor = %d, want a positive floor", fast)
+	}
+}
+
+func TestAdmitModelForDeviceRejectsAnInt8ModelOnCUDA(t *testing.T) {
+	// The int8 graphs fragment back to the host under the CUDA EP, so pinning
+	// one alongside CUDA would report a GPU run and do something else. Refuse
+	// the pair instead of silently mis-describing the execution (D-702).
+	for _, model := range []string{modelParakeetV3Int8, modelParakeet110M} {
+		settings := STTSettings{Quality: sttQualityBalanced, ModelOverride: model}
+		_, err := admitModelForDevice(settings, deviceCUDA)
+		var unavailable *resourceUnavailableError
+		if !errors.As(err, &unavailable) || unavailable.resource != "model policy" {
+			t.Fatalf("admitModelForDevice(%s, cuda) error = %v, want model policy error", model, err)
+		}
+		if !unavailable.permanent {
+			t.Errorf("%s on cuda is a policy error that waiting cannot fix; want permanent", model)
+		}
+		// The same pin is legitimate on the CPU.
+		if got, err := admitModelForDevice(settings, deviceCPU); err != nil || got != model {
+			t.Errorf("admitModelForDevice(%s, cpu) = %q, %v; want the pinned model", model, got, err)
+		}
+	}
+
+	// fp32 is audited on both devices.
+	settings := STTSettings{Quality: sttQualityBest, ModelOverride: modelParakeetV3Fp32}
+	if got, err := admitModelForDevice(settings, deviceCUDA); err != nil || got != modelParakeetV3Fp32 {
+		t.Errorf("admitModelForDevice(fp32, cuda) = %q, %v; want the fp32 model", got, err)
+	}
+}
+
+func TestAdmitModelForDeviceRequiresTheModelToBeBundled(t *testing.T) {
+	// A CUDA image that has fallen back to the CPU can be asked for a tier
+	// whose model it never shipped. Block at admission with an actionable
+	// message instead of failing minutes into a build.
+	cacheRoot := t.TempDir()
+	t.Setenv("CASSINI_CACHE_ROOT", cacheRoot)
+	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "1")
+
+	bundled := filepath.Join(cacheRoot, "models", modelParakeetV3Fp32)
+	if err := os.MkdirAll(bundled, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundled, "encoder.onnx"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := admitModelForDevice(STTSettings{Quality: sttQualityBest}, deviceCPU); err != nil {
+		t.Fatalf("bundled model was refused: %v", err)
+	}
+
+	_, err := admitModelForDevice(STTSettings{Quality: sttQualityBalanced}, deviceCPU)
+	var unavailable *resourceUnavailableError
+	if !errors.As(err, &unavailable) || unavailable.resource != "model bundle" {
+		t.Fatalf("unbundled tier error = %v, want model bundle resourceUnavailableError", err)
+	}
+	if !unavailable.permanent {
+		t.Error("a model the image does not carry cannot appear by waiting; want permanent")
+	}
+	if !strings.Contains(unavailable.detail, modelParakeetV3Int8) {
+		t.Errorf("detail %q does not name the missing model", unavailable.detail)
+	}
+
+	// An image that permits downloads is not gated on what it happens to carry.
+	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "0")
+	if _, err := admitModelForDevice(STTSettings{Quality: sttQualityBalanced}, deviceCPU); err != nil {
+		t.Fatalf("download-capable image was gated on the bundle: %v", err)
 	}
 }

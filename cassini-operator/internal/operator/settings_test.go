@@ -667,3 +667,69 @@ func TestEffectiveDeviceReportsThePinnedDevice(t *testing.T) {
 		t.Errorf("effectiveDevice(auto) on a portable image = %q, want cpu", device)
 	}
 }
+
+func TestPutSettingsRejectsACPUModelPinnedToCUDA(t *testing.T) {
+	// Saving the pair and failing at build time would strand a recording; the
+	// combination can never run, so refuse it at the API (D-702).
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"quality":"balanced","device_override":"cuda","model_override":"parakeet-tdt-0.6b-v3-int8"}`))
+	rec := httptest.NewRecorder()
+	rt.settingsHandler(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT int8 model + cuda = %d, want 400 body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), modelParakeetV3Fp32) {
+		t.Errorf("rejection does not name the model that does run on CUDA: %s", rec.Body.String())
+	}
+
+	// The same model without the CUDA pin is fine.
+	req = httptest.NewRequest(http.MethodPut, "/settings",
+		strings.NewReader(`{"quality":"balanced","model_override":"parakeet-tdt-0.6b-v3-int8"}`))
+	rec = httptest.NewRecorder()
+	rt.settingsHandler(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT int8 model on auto = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestEffectiveExplainsAnUnrunnableModelDevicePair(t *testing.T) {
+	effective := STTSettings{
+		Quality:        sttQualityBalanced,
+		DeviceOverride: deviceCUDA,
+		ModelOverride:  modelParakeetV3Int8,
+	}.effective()
+	if effective.Device != deviceCUDA || effective.Model != modelParakeetV3Int8 {
+		t.Fatalf("effective = %+v, want the administrator's own pins reported back", effective)
+	}
+	if !strings.Contains(effective.Note, "cannot run on CUDA") {
+		t.Errorf("note %q does not explain why builds will block", effective.Note)
+	}
+}
+
+func TestAutoQualityFollowsEffectiveCUDACapability(t *testing.T) {
+	// The plain image on a GPU daemon sees /dev/nvidia* but transcribes on the
+	// CPU. Defaulting it to "best" would pick the fp32 tier — 1.4x realtime and
+	// a 4.5GiB floor — for a host that will never touch the GPU.
+	t.Setenv(envSTTCUDACapable, "0")
+	stubNVIDIADevice(t, true)
+	if got := detectSettings().Quality; got != sttQualityBalanced {
+		t.Errorf("auto quality on a portable image with a visible GPU = %q, want balanced", got)
+	}
+
+	t.Setenv(envSTTCUDACapable, "1")
+	if got := detectSettings().Quality; got != sttQualityBest {
+		t.Errorf("auto quality on a CUDA-capable host = %q, want best", got)
+	}
+
+	// The fingerprint must move when capability changes on unchanged hardware,
+	// or an auto policy would never re-derive after a -cuda image swap.
+	capable := hardwareFingerprint(true, 8)
+	t.Setenv(envSTTCUDACapable, "0")
+	if incapable := hardwareFingerprint(true, 8); incapable == capable {
+		t.Errorf("fingerprint %q does not distinguish a CUDA-capable image from a portable one", capable)
+	}
+}
