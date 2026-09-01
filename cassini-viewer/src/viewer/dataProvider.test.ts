@@ -19,6 +19,7 @@ const {
   switchPortableTranscript,
   loadBundledArtifact,
   loadMeetingCatalog,
+  loadMeetingsList,
   FakePortableMeetingStore,
 } = vi.hoisted(() => {
   class FakePortableMeetingStore {}
@@ -39,6 +40,9 @@ const {
     loadMeetingCatalog: vi.fn((..._args: unknown[]) =>
       Promise.resolve({ version: "cassini.viewer.catalog.v1", meetings: [] }),
     ),
+    loadMeetingsList: vi.fn((..._args: unknown[]) =>
+      Promise.resolve({ status: "absent" as const }),
+    ),
     FakePortableMeetingStore,
   };
 });
@@ -54,9 +58,10 @@ vi.mock("./loadArtifact", () => ({
 
 vi.mock("./catalog", () => ({
   loadMeetingCatalog,
+  loadMeetingsList,
 }));
 
-import { StaticCatalogProvider } from "./dataProvider";
+import { OperatorListProvider, StaticCatalogProvider } from "./dataProvider";
 
 function entry(overrides: Partial<MeetingCatalogEntry>): MeetingCatalogEntry {
   return {
@@ -176,5 +181,76 @@ describe("StaticCatalogProvider", () => {
     expect(storeA).toBeInstanceOf(FakePortableMeetingStore);
     expect(storeB).toBeInstanceOf(FakePortableMeetingStore);
     expect(storeA).not.toBe(storeB);
+  });
+});
+
+// OperatorListProvider (D-701): the list comes from the operator endpoint, and
+// everything else is still an asset fetch delegated to the static provider.
+describe("OperatorListProvider", () => {
+  // Scoped here: the suite above has its own afterEach, so without this the
+  // call counts these tests assert on would accumulate across them.
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const listCatalog = {
+    version: "cassini.viewer.catalog.v1",
+    meetings: [entry({ id: "m1", audioPath: "./m1.opus" })],
+  };
+
+  it("serves the list from the endpoint without touching catalog.json", async () => {
+    loadMeetingsList.mockResolvedValueOnce({ status: "ok", catalog: listCatalog });
+
+    await expect(new OperatorListProvider().loadCatalog()).resolves.toBe(listCatalog);
+    expect(loadMeetingCatalog).not.toHaveBeenCalled();
+  });
+
+  it("falls back to catalog.json when the route is not served", async () => {
+    loadMeetingsList.mockResolvedValueOnce({ status: "absent" });
+
+    await expect(new OperatorListProvider().loadCatalog()).resolves.toEqual({
+      version: "cassini.viewer.catalog.v1",
+      meetings: [],
+    });
+    expect(loadMeetingCatalog).toHaveBeenCalledTimes(1);
+  });
+
+  // A deployment without the route must not pay a failed request on every
+  // refresh poll.
+  it("latches the fallback after one absent answer", async () => {
+    loadMeetingsList.mockResolvedValueOnce({ status: "absent" });
+    const provider = new OperatorListProvider();
+
+    await provider.loadCatalog();
+    await provider.loadCatalog();
+    await provider.loadCatalog();
+
+    expect(loadMeetingsList).toHaveBeenCalledTimes(1);
+    expect(loadMeetingCatalog).toHaveBeenCalledTimes(3);
+  });
+
+  // The property the endpoint exists for: a substrate failure must propagate so
+  // App.svelte keeps the last known-good list, NOT be swallowed into a fallback
+  // that would answer an empty catalog.
+  it("propagates a substrate failure instead of falling back", async () => {
+    loadMeetingsList.mockRejectedValueOnce(new Error("archive unreachable"));
+
+    await expect(new OperatorListProvider().loadCatalog()).rejects.toThrow("archive unreachable");
+    expect(loadMeetingCatalog).not.toHaveBeenCalled();
+  });
+
+  it("delegates asset loading to the static provider", async () => {
+    const provider = new OperatorListProvider();
+    const portable = entry({ id: "m1", audioPath: "./m1.opus" });
+
+    await provider.loadMeetingForEntry(portable);
+    await provider.loadMeetingSummary(portable);
+    await provider.switchTranscript(portable, "readable");
+    await provider.loadBundledArtifact();
+
+    expect(loadPortableArtifactFromAudioPath).toHaveBeenCalled();
+    expect(loadPortableMeetingSummary).toHaveBeenCalled();
+    expect(switchPortableTranscript).toHaveBeenCalled();
+    expect(loadBundledArtifact).toHaveBeenCalled();
   });
 });

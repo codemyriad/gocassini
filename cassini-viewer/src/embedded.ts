@@ -26,7 +26,7 @@
 
 import { mount } from "svelte";
 import App from "./App.svelte";
-import { StaticCatalogProvider } from "./viewer/dataProvider";
+import { OperatorListProvider } from "./viewer/dataProvider";
 import "./app.css";
 
 // VIEWER_JS_SRC_PATTERN matches the registered ui/viewer.js src and captures
@@ -163,7 +163,12 @@ function mountEmbeddedViewer(): void {
     const themesStr = document.body.dataset.themes ?? enabledThemes?.join(" ") ?? "";
     ncMode = applyNextcloudTheme(shadowHost, themesStr, primaryColor);
   }
-  mount(App, { target: appRoot, props: { ncMode, dataProvider: new StaticCatalogProvider() } });
+  // The embedded build is the one deployment with an operator behind it, so it
+  // is the one that reads the list from published/meetings-list (D-701) and
+  // falls back to catalog.json when that route is not served. main.ts keeps
+  // StaticCatalogProvider: a standalone export and the nginx viewer mode have
+  // no backend in the request path at all.
+  mount(App, { target: appRoot, props: { ncMode, dataProvider: new OperatorListProvider() } });
 }
 
 function bootstrap(): void {
