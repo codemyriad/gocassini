@@ -287,6 +287,15 @@ Uploads land under the operator's `--capture-root`
 - **OPFS recovery.** A page that disappears mid-upload keeps its buffer, but
   nothing scans for one on a later load, so that recording is stranded until
   the browser's storage is cleared.
+- **Salvage after a write failure.** A worker error during finalization
+  sacrifices the segments that were written correctly along with the one that
+  was not. It only arises after an OPFS write or flush has already failed, so
+  it costs a recording that was partly lost anyway — but the good half is
+  recoverable in principle and is not recovered.
+- **A call joined in the same instant the tab loads** is skipped, because the
+  administrator switch has not been answered yet and an unanswered switch counts
+  as no. Deliberate: fail-closed is the right direction for this, and the next
+  call captures normally.
 - **Firefox raw-audio path.** `MediaStreamTrackProcessor` is Chrome/Safari only.
   The timing path (`RTCRtpScriptTransform`) works in all three engines; the
   current capture path uses `MediaRecorder`, which is universal.
