@@ -94,11 +94,11 @@ func ExtractMeeting(path string) (ExtractedMeeting, error) {
 		return extracted, nil
 	}
 
-	entry, ok := defaultWordsTranscriptEntry(tags, manifest)
+	entry, _, ok := defaultWordsTranscriptEntry(tags, manifest)
 	if !ok {
 		return ExtractedMeeting{}, fmt.Errorf("portable meeting %s declares no default words transcript", path)
 	}
-	body, err := decodeTranscriptBody(tags, entry.ID)
+	body, _, err := decodeTranscriptBody(tags, entry)
 	if err != nil {
 		return ExtractedMeeting{}, fmt.Errorf("decode transcript %q body: %w", entry.ID, err)
 	}
