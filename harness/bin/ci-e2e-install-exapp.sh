@@ -318,10 +318,12 @@ await_substrate provisioned
 substrate_status_body="$LOG_DIR/operator-status-provisioned.json"
 substrate_status=$(curl -sS -u "admin:admin" -o "$substrate_status_body" -w '%{http_code}' "$SUBSTRATE_PROXY/operator/status")
 if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
-  if [[ "$substrate_status" != "503" ]] || ! jq -e '
-    .ok == false
-    and .stt.device == "cuda"
-    and .stt.device_usable == false
+  # A GPU-less substrate is ready: it transcribes on the CPU (D-702). Assert the
+  # device explicitly so a runner that quietly has a GPU cannot pass as this mode.
+  if [[ "$substrate_status" != "200" ]] || ! jq -e '
+    .ok == true
+    and .stt.device == "cpu"
+    and .stt.device_usable == true
     and (.stt.detail | type == "string" and length > 0)
     and .db.ok == true
     and .storage.work_root.ok == true
@@ -329,7 +331,7 @@ if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
     and .recordings_access.ok == true
   ' "$substrate_status_body" >/dev/null; then
     log "recordings_access: $(substrate_json)"
-    fail "a provisioned GPU-less substrate must answer structured sole-STT 503, got HTTP $substrate_status"
+    fail "a provisioned GPU-less substrate must answer 200 with a usable CPU device, got HTTP $substrate_status"
   fi
 elif [[ "$substrate_status" != "200" ]] || ! jq -e '.ok == true' "$substrate_status_body" >/dev/null; then
   log "recordings_access: $(substrate_json)"

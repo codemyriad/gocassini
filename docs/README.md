@@ -25,14 +25,15 @@ in these docs should be read in light of them.
   sherpa-onnx / ONNX Runtime with NVIDIA **Parakeet** models and **Silero VAD**.
   There is **no third-party or remote transcription** — no audio and no
   transcript leaves the host for the transcription step.
-- **Operator-managed transcription is GPU-only.** The default ExApp image is a
-  portable capture image: it can retain a Talk recording without a GPU, but its
-  build immediately enters `build/blocked` with instructions to install the
-  matching `-cuda` image. The **GPU/CUDA** image runs fp32
-  `parakeet-tdt-0.6b-v3` with `CASSINI_STT_DEVICE=cuda`. Low-level Cassini CLI
-  tooling still carries an int8 CPU runtime for explicit local diagnostics;
-  the production operator never selects it as an ASR fallback. On an eligible
-  CUDA image, transient RAM/VRAM pressure is retried with exponential backoff;
+- **Transcription runs on the GPU when there is one, and on the CPU when there
+  is not.** The operator resolves the device before each build: CUDA when the
+  image carries the CUDA runtime and an NVIDIA device is visible, CPU
+  otherwise. A CPU build is correct but much slower, so the resolved device is
+  reported in Cassini Admin, in `/operator/status` and in the build log before
+  any audio is decoded — it is never a silent substitution. An administrator can
+  pin the device (`cpu` or `cuda`); pinning `cuda` on a host that cannot provide
+  it blocks the build with an actionable message rather than quietly running on
+  the CPU. Transient RAM/VRAM pressure is retried with exponential backoff;
   repeated pressure eventually becomes `build/blocked` instead of retrying
   forever.
 - **Speaker labels come from signaling, not diarization.** Each participant is a
@@ -117,12 +118,12 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
 
 ### CPU vs GPU image choice
 
-- **Portable/capture-only**: tag `X.Y.Z`. It can capture and durably retain a
-  Talk recording on a host without a GPU, but operator-managed speech
-  recognition is GPU-only: the build immediately becomes `build/blocked` with
-  an actionable request for the matching `X.Y.Z-cuda` image instead of falling
-  back to CPU. After installing that image, use **Rerun** in Cassini Admin to
-  reuse the preserved recording.
+- **Portable**: tag `X.Y.Z`. Captures, transcribes and publishes on a host with
+  no GPU. It bundles all three quality tiers' models (110M CTC, 0.6B int8, 0.6B
+  fp32), so every tier is selectable — at CPU speed, which for the fp32 "Best"
+  tier is slow enough that Balanced is the default on a GPU-less host. Moving to
+  the `-cuda` image later is a device change, not a data migration: use **Rerun**
+  in Cassini Admin to re-transcribe an existing recording on the GPU.
 - **GPU/CUDA**: tag `X.Y.Z-cuda`. CUDA-enabled sherpa-onnx + fp32 Parakeet, with
   `CASSINI_STT_DEVICE=cuda` baked in. Set the deploy daemon's **Compute device**
   to CUDA and AppAPI pulls the `-cuda` image automatically — the device is a

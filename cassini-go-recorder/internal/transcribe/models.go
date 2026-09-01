@@ -52,6 +52,12 @@ type modelSpec struct {
 	DecoderFile string
 	JoinerFile  string
 
+	// WeightsFile is an external-data sidecar the encoder graph references
+	// (fp32 exports keep their weights outside the .onnx). sherpa cannot load
+	// the encoder without it, so it counts as a required file even though it is
+	// never named in the session config.
+	WeightsFile string
+
 	TokensFile string
 	ModelType  string // sherpa-onnx model type hint
 	SampleRate int
@@ -96,6 +102,7 @@ var knownModels = map[ModelID]modelSpec{
 		EncoderFile: "encoder.onnx",
 		DecoderFile: "decoder.onnx",
 		JoinerFile:  "joiner.onnx",
+		WeightsFile: "encoder.weights",
 		TokensFile:  "tokens.txt",
 		ModelType:   "nemo_transducer",
 		SampleRate:  16000,
@@ -113,6 +120,9 @@ type ModelPaths struct {
 	EncoderFile string
 	DecoderFile string
 	JoinerFile  string
+	// WeightsFile is the encoder's external-data sidecar when the export has
+	// one; empty otherwise. Required on disk, never passed to sherpa.
+	WeightsFile string
 
 	TokensFile string
 	ModelType  string
@@ -204,6 +214,9 @@ func resolveModelPaths(modelDir string, spec modelSpec) ModelPaths {
 		p.EncoderFile = filepath.Join(modelDir, spec.EncoderFile)
 		p.DecoderFile = filepath.Join(modelDir, spec.DecoderFile)
 		p.JoinerFile = filepath.Join(modelDir, spec.JoinerFile)
+		if spec.WeightsFile != "" {
+			p.WeightsFile = filepath.Join(modelDir, spec.WeightsFile)
+		}
 	} else {
 		p.ModelFile = filepath.Join(modelDir, spec.ModelFile)
 	}
@@ -212,9 +225,31 @@ func resolveModelPaths(modelDir string, spec modelSpec) ModelPaths {
 
 func requiredModelFiles(paths ModelPaths, spec modelSpec) []string {
 	if spec.EncoderFile != "" {
-		return []string{paths.EncoderFile, paths.DecoderFile, paths.JoinerFile, paths.TokensFile}
+		files := []string{paths.EncoderFile, paths.DecoderFile, paths.JoinerFile, paths.TokensFile}
+		if paths.WeightsFile != "" {
+			files = append(files, paths.WeightsFile)
+		}
+		return files
 	}
 	return []string{paths.ModelFile, paths.TokensFile}
+}
+
+// RequiredModelFileNames returns the base names a bundle of this model must
+// contain, or nil for an unknown id. Callers that check a bundled model without
+// loading it — doctor, image smoke tests — must derive the list from here
+// rather than restating one architecture's file names: a CTC model ships a
+// single model.int8.onnx where a transducer ships encoder/decoder/joiner, and
+// asserting the wrong shape fails a model that is present and correct.
+func RequiredModelFileNames(id ModelID) []string {
+	spec, ok := knownModels[id]
+	if !ok {
+		return nil
+	}
+	names := requiredModelFiles(resolveModelPaths("", spec), spec)
+	for i, name := range names {
+		names[i] = filepath.Base(name)
+	}
+	return names
 }
 
 func allExist(files []string) bool {

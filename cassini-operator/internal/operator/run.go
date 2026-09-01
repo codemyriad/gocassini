@@ -61,6 +61,16 @@ type Config struct {
 	TalkRecordingBackendURL string
 	MaxRecordWorkers        int
 	MaxBuildWorkers         int
+	// ModelCacheRoot is where the image bundles STT models
+	// (${CASSINI_CACHE_ROOT}/models/<id>) and DisallowModelDownload mirrors the
+	// runtime's refusal to fetch a missing one. The governor consults both to
+	// refuse a quality tier this image cannot execute, before a build starts.
+	// They live here rather than being read from the process environment at
+	// admission time so the policy is fixed once at startup, and so a test —
+	// or a developer whose shell exports CASSINI_* for the recorder — cannot
+	// change what admission decides.
+	ModelCacheRoot        string
+	DisallowModelDownload bool
 	// APIToken (CASSINI_OPERATOR_API_TOKEN) optionally guards the operator
 	// JSON API with bearer auth for standalone deploys; empty disables it
 	// and AppAPI-authenticated requests bypass it (D-376).
@@ -419,6 +429,10 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.SetOutput(stderr)
 
 	cfg := Config{RepoRoot: repoRoot}
+	// Not flags: these describe the image the operator is running inside, not a
+	// choice an invocation makes.
+	cfg.ModelCacheRoot = envOrDefaultAny([]string{"CASSINI_CACHE_ROOT"}, "")
+	cfg.DisallowModelDownload = envBool("CASSINI_DISALLOW_MODEL_DOWNLOAD")
 	fs.StringVar(&cfg.BindAddr, "bind", envOrDefaultAny([]string{"CASSINI_OPERATOR_BIND_ADDR"}, defaultBind), "HTTP bind address")
 	fs.StringVar(&cfg.BasePath, "base-path", envOrDefaultAny([]string{"CASSINI_OPERATOR_BASE_PATH"}, defaultOperatorBasePath), "HTTP route prefix")
 	// Data path defaults are persistent-storage aware: under an AppAPI docker

@@ -20,6 +20,9 @@
 ARG BASE_IMAGE
 ARG FRP_VERSION=0.61.1
 ARG CASSINI_BUNDLED_MODEL_ID=parakeet-tdt-0.6b-v3
+# Keep in step with Dockerfile.exapp.cuda.base: the GPU image carries only the
+# fp32 model, which is what every CUDA quality tier loads.
+ARG CASSINI_BUNDLED_MODELS="parakeet-tdt-0.6b-v3"
 ARG FFMPEG_VERSION=latest
 ARG FFMPEG_BUILD_JOBS=2
 
@@ -93,9 +96,11 @@ RUN set -eux; \
 
 # ---- Runtime stage: the prebuilt CUDA base + thin per-commit layers ----
 FROM ${BASE_IMAGE}
+ARG CASSINI_BUNDLED_MODELS
 ARG CASSINI_BUNDLED_MODEL_ID
 ARG FFMPEG_VERSION
 LABEL io.gocassini.ffmpeg.requested-version=${FFMPEG_VERSION}
+ENV CASSINI_BUNDLED_MODELS="${CASSINI_BUNDLED_MODELS}"
 ENV CASSINI_STT_MODEL=${CASSINI_BUNDLED_MODEL_ID}
 
 WORKDIR /var/lib/cassini-operator

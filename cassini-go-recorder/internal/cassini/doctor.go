@@ -209,22 +209,16 @@ func sttModelCacheChecks() []doctorCheck {
 // (CASSINI_DISALLOW_MODEL_DOWNLOAD=1) a missing file is fatal at recorder
 // startup, so doctor surfaces it up front.
 func modelFilesCheck(modelDir string, modelID transcribe.ModelID) doctorCheck {
-	required := []string{
-		"encoder.int8.onnx",
-		"decoder.int8.onnx",
-		"joiner.int8.onnx",
-		"tokens.txt",
-	}
-	if modelID == transcribe.ModelParakeet06BV3 {
-		// fp32 (CUDA) variant ships unsuffixed onnx files plus an external
-		// weights sidecar that the encoder.onnx references via external_data.
-		// Without encoder.weights, sherpa fails to load the encoder.
-		required = []string{
-			"encoder.onnx",
-			"encoder.weights",
-			"decoder.onnx",
-			"joiner.onnx",
-			"tokens.txt",
+	// Ask the model registry which files this bundle needs rather than naming
+	// one architecture's: the 110M "fast" tier is a CTC model shipping a single
+	// model.int8.onnx, and demanding encoder/decoder/joiner of it failed a model
+	// that was present and correct (D-702).
+	required := transcribe.RequiredModelFileNames(modelID)
+	if len(required) == 0 {
+		return doctorCheck{
+			status:  doctorWarn,
+			summary: fmt.Sprintf("unknown STT model %q; cannot verify its files in %s", modelID, modelDir),
+			advice:  "set CASSINI_STT_MODEL to a known model id, or leave it unset to use the quality tier's model",
 		}
 	}
 	missing := []string{}

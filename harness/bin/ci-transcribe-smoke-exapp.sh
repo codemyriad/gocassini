@@ -29,14 +29,22 @@
 set -euo pipefail
 
 : "${IMAGE_REF:?IMAGE_REF must be set (e.g. ghcr.io/codemyriad/gocassini:sha-abc)}"
-"$(dirname "${BASH_SOURCE[0]}")/ci-ffmpeg-bundle.sh"
+
+# CASSINI_SMOKE_MODELS_ONLY=1 checks only the image's model contract — every
+# declared model bundled and accepted by the recorder's pre-build checks. That
+# needs no GPU, no transcription, no ffmpeg and no LFS fixture, so the portable
+# image can be held to it on a plain runner (D-702).
+MODELS_ONLY="${CASSINI_SMOKE_MODELS_ONLY:-0}"
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 FIXTURE_HOST="${REPO_ROOT}/harness/media/parakeet-smoke.mkv"
-if [[ ! -s "${FIXTURE_HOST}" ]]; then
-  echo "[transcribe-smoke] FAIL fixture missing or empty: ${FIXTURE_HOST}" >&2
-  echo "[transcribe-smoke] run scripts/fetch-smoke-fixture.sh to regenerate" >&2
-  exit 1
+if [[ "${MODELS_ONLY}" != "1" ]]; then
+  "$(dirname "${BASH_SOURCE[0]}")/ci-ffmpeg-bundle.sh"
+  if [[ ! -s "${FIXTURE_HOST}" ]]; then
+    echo "[transcribe-smoke] FAIL fixture missing or empty: ${FIXTURE_HOST}" >&2
+    echo "[transcribe-smoke] run scripts/fetch-smoke-fixture.sh to regenerate" >&2
+    exit 1
+  fi
 fi
 
 CONTAINER_NAME="cassini-transcribe-smoke-$$"
@@ -87,14 +95,14 @@ DISALLOW=$(read_env CASSINI_DISALLOW_MODEL_DOWNLOAD)
 # CUDA images need GPU exposed via CDI. Set DOCKER_RUN_GPU=1 to opt-in (or
 # set CASSINI_STT_DEVICE=cuda in the image ENV — we honor either).
 GPU_FLAGS=()
-if [[ "${DEVICE}" == "cuda" || "${DOCKER_RUN_GPU:-0}" == "1" ]]; then
+if [[ "${MODELS_ONLY}" != "1" ]] && [[ "${DEVICE}" == "cuda" || "${DOCKER_RUN_GPU:-0}" == "1" ]]; then
   GPU_FLAGS=(--device nvidia.com/gpu=all)
 fi
 
 # Assertion 5 (see header): prove the GPU is actually used when the image
 # says device=cuda. Needs the host's nvidia-smi to observe compute apps.
 GPU_ASSERT=0
-if [[ "${DEVICE}" == "cuda" && "${CASSINI_SMOKE_GPU_ASSERT:-1}" == "1" ]]; then
+if [[ "${DEVICE}" == "cuda" && "${MODELS_ONLY}" != "1" && "${CASSINI_SMOKE_GPU_ASSERT:-1}" == "1" ]]; then
   GPU_ASSERT=1
   if ! command -v nvidia-smi >/dev/null 2>&1; then
     log "FAIL device=cuda but nvidia-smi is not on the host PATH"
@@ -142,20 +150,61 @@ docker run -d --rm \
   -c 'tail -f /dev/null' >/dev/null
 
 # ---- Assertion 1: model files exist BEFORE any cassini operation runs ----
-log "asserting bundled model files exist at ${MODEL_DIR}"
-if [[ "${MODEL_ID}" == *-int8 ]]; then
-  expected_files=(encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt NOTICE)
-else
-  # fp32 (CUDA) variants: unsuffixed onnx + external weights sidecar
-  expected_files=(encoder.onnx encoder.weights decoder.onnx joiner.onnx tokens.txt NOTICE)
+# Every model the image declares, not just its default: the runtime forbids
+# downloads, so this set is exactly the set of quality tiers the image can
+# execute, and a missing one is a tier an admin can select and never run
+# (D-702).
+tier_model_files() {
+  case "$1" in
+    parakeet-tdt-ctc-110m-en-int8) echo "model.int8.onnx tokens.txt NOTICE" ;;
+    *-int8)                        echo "encoder.int8.onnx decoder.int8.onnx joiner.int8.onnx tokens.txt NOTICE" ;;
+    # fp32 variants: unsuffixed onnx + external weights sidecar
+    *)                             echo "encoder.onnx encoder.weights decoder.onnx joiner.onnx tokens.txt NOTICE" ;;
+  esac
+}
+
+# The image declares what it bundles; each variant carries the models for the
+# device it serves (the portable image the CPU tiers, the CUDA image fp32).
+BUNDLED_MODELS=$(read_env CASSINI_BUNDLED_MODELS)
+if [[ -z "${BUNDLED_MODELS}" ]]; then
+  log "FAIL image does not declare CASSINI_BUNDLED_MODELS"
+  exit 1
 fi
-for f in "${expected_files[@]}"; do
-  if ! docker exec "${CONTAINER_NAME}" test -s "${MODEL_DIR}/${f}"; then
-    log "FAIL bundled file missing or empty: ${MODEL_DIR}/${f}"
-    docker exec "${CONTAINER_NAME}" ls -la "${MODEL_DIR}" 2>&1 || true
-    exit 1
-  fi
-  log "OK   present ${MODEL_DIR}/${f}"
+read -r -a TIER_MODELS <<< "${BUNDLED_MODELS}"
+log "declared bundled models: ${BUNDLED_MODELS}"
+
+# The declaration is only worth checking against if it covers the tiers this
+# image's device can select — otherwise dropping a model from both the image and
+# its declaration stays invisible. A CUDA image serves every tier with fp32; a
+# portable image needs one model per CPU tier.
+CUDA_CAPABLE=$(read_env CASSINI_STT_CUDA_CAPABLE)
+if [[ "${CUDA_CAPABLE}" == "1" || "${CUDA_CAPABLE}" == "true" ]]; then
+  REQUIRED_TIER_MODELS=(parakeet-tdt-0.6b-v3)
+else
+  REQUIRED_TIER_MODELS=(parakeet-tdt-ctc-110m-en-int8 parakeet-tdt-0.6b-v3-int8 parakeet-tdt-0.6b-v3)
+fi
+for required in "${REQUIRED_TIER_MODELS[@]}"; do
+  case " ${BUNDLED_MODELS} " in
+    *" ${required} "*) ;;
+    *)
+      log "FAIL image does not declare ${required}"
+      log "     a quality tier an administrator can select would have no model to load"
+      exit 1
+      ;;
+  esac
+done
+for model in "${TIER_MODELS[@]}"; do
+  model_dir="${CACHE_ROOT}/models/${model}"
+  log "asserting bundled model files exist at ${model_dir}"
+  for f in $(tier_model_files "${model}"); do
+    if ! docker exec "${CONTAINER_NAME}" test -s "${model_dir}/${f}"; then
+      log "FAIL bundled file missing or empty: ${model_dir}/${f}"
+      docker exec "${CONTAINER_NAME}" ls -la "${model_dir}" 2>&1 || true
+      log "     every quality tier must be executable in an image that disallows downloads"
+      exit 1
+    fi
+    log "OK   present ${model_dir}/${f}"
+  done
 done
 
 # VAD is bundled separately at ${CACHE_ROOT}/vad/silero_vad.onnx
@@ -179,6 +228,32 @@ if (( ENC_MTIME > IMG_CREATED_TS + 5 )); then
   exit 1
 fi
 log "OK   ${enc_file} mtime (${ENC_MTIME}) <= image created (${IMG_CREATED_TS})"
+
+# ---- Assertion 1b: every tier passes the recorder's own pre-build checks ----
+# Presence is not enough: `cassini build` runs doctor first and aborts on a
+# failed check, so a tier can be bundled and still be unrunnable if doctor
+# expects a different file layout (D-702 — the CTC "fast" model was checked
+# against transducer file names). doctor loads no model, so this is cheap.
+for model in "${TIER_MODELS[@]}"; do
+  log "running cassini doctor with CASSINI_STT_MODEL=${model}"
+  if ! docker exec -e "CASSINI_STT_MODEL=${model}" "${CONTAINER_NAME}" \
+       /usr/local/bin/cassini doctor > "${LOG_DIR}/doctor-${model}.log" 2>&1; then
+    log "FAIL cassini doctor rejected bundled model ${model}"
+    sed -n '1,40p' "${LOG_DIR}/doctor-${model}.log" | while IFS= read -r line; do log "     ${line}"; done
+    exit 1
+  fi
+  log "OK   doctor accepts ${model}"
+done
+
+# The image contract — every declared model bundled, and every one of them
+# accepted by the recorder's own pre-build checks — holds for both variants and
+# needs no GPU and no transcription. CASSINI_SMOKE_MODELS_ONLY=1 runs just that
+# part, so the portable image can be held to it on a plain runner instead of
+# being covered only where a GPU happens to be (D-702).
+if [[ "${MODELS_ONLY}" == "1" ]]; then
+  log "PASS image bundles and validates every model it declares (${BUNDLED_MODELS})"
+  exit 0
+fi
 
 # ---- Assertion 2 + 3: `cassini build` succeeds + no download log line ----
 docker exec "${CONTAINER_NAME}" mkdir -p /tmp/smoke-in /tmp/smoke-out

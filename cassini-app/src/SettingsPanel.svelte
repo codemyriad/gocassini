@@ -107,6 +107,19 @@
     return error instanceof Error ? error.message : String(error);
   }
 
+  // deviceLabel names the resolved execution device the way an administrator
+  // thinks about it. The operator speaks "cuda"/"cpu"; the panel should not
+  // make anyone translate.
+  function deviceLabel(device: string): string {
+    if (device === "cuda") {
+      return "GPU (CUDA)";
+    }
+    if (device === "cpu") {
+      return "CPU";
+    }
+    return device || "—";
+  }
+
   function sourceLabel(source: string): string {
     if (source === "user") {
       return "User override";
@@ -116,6 +129,9 @@
     }
     return source || "—";
   }
+
+  $: effectiveDevice = settings?.effective.device ?? "";
+  $: runsOnGPU = effectiveDevice === "cuda";
 
   $: isDirty =
     settings !== null &&
@@ -173,6 +189,26 @@
     <div class="flex items-center justify-center p-6 text-sm text-base-content/60">No settings available.</div>
   {:else}
     <div class="grid gap-4 p-4">
+      <!--
+        What the next build will actually do, straight from the operator. The
+        quality tier alone does not answer it: the device is auto-selected, and
+        on a host with no usable GPU that answer is the CPU — slower, but a
+        transcript. Saying so here is what keeps the fallback explicit rather
+        than something an admin discovers from a blocked build (D-702).
+      -->
+      <section class="rounded-box border border-base-300 bg-base-200 p-3">
+        <p class="text-sm">
+          Transcribes on
+          <span class="font-semibold">{deviceLabel(settings.effective.device)}</span>
+          {#if settings.effective.model}
+            using <code class="text-xs">{settings.effective.model}</code>
+          {/if}
+        </p>
+        {#if settings.effective.note}
+          <p class="mt-1 text-xs text-base-content/60">{settings.effective.note}</p>
+        {/if}
+      </section>
+
       <div
         class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1.15fr)]"
       >
@@ -216,6 +252,13 @@
             <CircleGauge size={16} aria-hidden="true" />
             <h3 id="stt-quality-heading" class="text-sm font-semibold">Quality</h3>
           </div>
+          <p class="text-xs text-base-content/60">
+            {#if runsOnGPU}
+              Every tier loads the same fp32 model on CUDA — this choice takes effect on CPU builds.
+            {:else}
+              A higher tier loads a larger model: more accurate, and slower on this host.
+            {/if}
+          </p>
           <div class="grid gap-3" role="radiogroup" aria-labelledby="stt-quality-heading">
             {#each QUALITY_OPTIONS as option}
               <label
@@ -252,6 +295,7 @@
               <span class="text-xs font-medium text-base-content/70">Device override</span>
               <select bind:value={deviceOverride} class="select select-sm w-full border-base-300 shadow-none">
                 <option value="">Auto</option>
+                <option value="cpu">CPU</option>
                 <option value="cuda">CUDA</option>
               </select>
             </label>

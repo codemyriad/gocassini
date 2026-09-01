@@ -89,6 +89,18 @@ export type SettingsQuality = "fast" | "balanced" | "best";
 // Settings mirror GET/PUT <basePath>/settings (D-435). The panel stays tolerant
 // of extra or missing fields so a server on a slightly older/newer contract
 // still renders rather than erroring.
+// SettingsEffective is the operator's answer to "what will the next build
+// actually do": the device its resource governor will admit, the model the
+// recorder will load on it, and one sentence of context. On a host with no
+// usable GPU that device is the CPU — a supported, slower outcome the panel
+// must show rather than leave the admin to infer from a failed build.
+export interface SettingsEffective {
+  quality: SettingsQuality;
+  device: string;
+  model: string;
+  note: string;
+}
+
 export interface Settings {
   quality: SettingsQuality;
   device_override: string;
@@ -98,7 +110,7 @@ export interface Settings {
   detected_gpu: boolean;
   cores: number;
   hardware_fingerprint: string;
-  effective: Record<string, unknown>;
+  effective: SettingsEffective;
 }
 
 export interface SettingsUpdate {
