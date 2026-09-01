@@ -473,6 +473,18 @@ const (
 		"blocked until one is available, or until the override is cleared so they can fall back to the CPU"
 )
 
+// effectiveFor is STTSettings.effective corrected by what this image can
+// actually load: an automatic policy on an image that does not carry the tier's
+// model runs a bundled one instead, and every surface an administrator reads —
+// /settings, /status, the admin panel — must name that same model.
+func (rt *Runtime) effectiveFor(s STTSettings) effectiveSTT {
+	effective := s.effective()
+	if admitted, err := rt.admitModelForDevice(s, effective.Device); err == nil {
+		effective.Model = admitted
+	}
+	return effective
+}
+
 func (s STTSettings) effective() effectiveSTT {
 	device, note := effectiveDevice(s.DeviceOverride)
 	model := s.modelForDevice(device)
@@ -597,7 +609,7 @@ func (rt *Runtime) handleGetSettings(w http.ResponseWriter) {
 	} else {
 		rt.setSettings(s)
 	}
-	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: s, Effective: s.effective()})
+	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: s, Effective: rt.effectiveFor(s)})
 }
 
 func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
@@ -676,5 +688,5 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rt.setSettings(updated)
-	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: updated, Effective: updated.effective()})
+	writeJSON(w, http.StatusOK, settingsResponse{STTSettings: updated, Effective: rt.effectiveFor(updated)})
 }

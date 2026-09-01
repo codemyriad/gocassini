@@ -738,3 +738,38 @@ func TestAutoQualityFollowsEffectiveCUDACapability(t *testing.T) {
 		t.Errorf("fingerprint %q does not distinguish a CUDA-capable image from a portable one", capable)
 	}
 }
+
+func TestGetSettingsReportsTheModelABuildWouldLoad(t *testing.T) {
+	// An image that does not carry the tier's model runs a bundled one for an
+	// automatic policy. The panel reads /settings, so it must name that model —
+	// otherwise the two endpoints an administrator can consult disagree about
+	// what is running.
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	cacheRoot := t.TempDir()
+	rt.cfg.ModelCacheRoot = cacheRoot
+	rt.cfg.DisallowModelDownload = true
+	t.Setenv(envSTTCUDACapable, "0")
+	stubNVIDIADevice(t, false)
+	bundled := filepath.Join(cacheRoot, "models", modelParakeetV3Fp32)
+	if err := os.MkdirAll(bundled, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundled, "encoder.onnx"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt.setSettings(STTSettings{Quality: sttQualityBalanced, Source: sttSourceAuto})
+
+	rec := httptest.NewRecorder()
+	rt.settingsHandler(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+	var resp settingsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Effective.Model != modelParakeetV3Fp32 {
+		t.Fatalf("effective.model = %q, want the bundled %s the build will load", resp.Effective.Model, modelParakeetV3Fp32)
+	}
+}
