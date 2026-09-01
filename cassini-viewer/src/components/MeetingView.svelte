@@ -1,11 +1,11 @@
 <script lang="ts">
   import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
   import { writable, type Writable } from "svelte/store";
-  import { fade, fly } from "svelte/transition";
+  import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { marked } from "marked";
   import DOMPurify from "dompurify";
-  import { Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape } from "@lucide/svelte";
+  import { Play, Pause, Keyboard, Calendar, Clock, Users, ArrowLeft, CassetteTape, X } from "@lucide/svelte";
   import {
     formatClockTime,
     isLikelyCrosstalkAcrossBlocks,
@@ -55,11 +55,13 @@
   export let dataProvider: DataProvider;
   export let meeting: MeetingCatalogEntry | null = null;
   export let bundled = false;
+  // inSheet is true when the shell has opened this meeting as a sheet over the
+  // browse list (D-654) rather than mounting it as a page of its own. It only
+  // decides how leaving is offered: a close control at every width, instead of
+  // the narrow-viewport-only back arrow a two-column layout needed.
+  export let inSheet = false;
   export let isDesktop = false;
   export let prefersReducedMotion = false;
-  // The region fly params are computed by the shell (they depend on
-  // reduced-motion / viewport state the shell owns) and passed through.
-  export let flyParams: Parameters<typeof fly>[1] = { duration: 0 };
   // hasCatalog drives the "choose a meeting" empty-state copy (a list exists to
   // choose from) vs the bare viewer-ready copy.
   export let hasCatalog = false;
@@ -954,8 +956,7 @@
 <section
   bind:this={viewRootEl}
   aria-label="Meeting view"
-  class="meeting-viewer relative flex flex-col row-start-1 col-start-1 min-[981px]:col-start-2 h-full min-h-0 min-w-0"
-  transition:fly={flyParams}
+  class="meeting-viewer relative flex flex-col h-full min-h-0 min-w-0"
 >
   <!-- Scroll container: holds the sticky header and all main content.
        Bottom padding keeps the last lines of the transcript reachable
@@ -967,7 +968,7 @@
          Using base-100 (not base-200) so the header reads distinct from the
          page bg even when there's no transcript content behind it. -->
     <header class="sticky top-0 z-20 flex-none flex items-center gap-3 min-h-12 px-4 py-3 bg-base-200 border-b border-base-300 min-[981px]:border-none min-[981px]:bg-base-200/50 backdrop-blur-lg">
-    {#if !isDesktop}
+    {#if !isDesktop && !inSheet}
       <button
         on:click={() => dispatch("back")}
         class="btn btn-square btn-neutral btn-xs"
@@ -1041,6 +1042,18 @@
     >
       <Keyboard size={14} aria-hidden="true" />
     </button>
+
+    {#if inSheet}
+      <button
+        type="button"
+        class="btn btn-ghost btn-xs btn-square"
+        on:click={() => dispatch("back")}
+        aria-label="Close the meeting"
+        title="Close (Esc)"
+      >
+        <X size={16} aria-hidden="true" />
+      </button>
+    {/if}
   </header>
 
   {#if !transcriptIndex && (errorMessage || notFoundMessage)}
