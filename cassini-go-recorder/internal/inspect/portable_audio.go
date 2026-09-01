@@ -108,21 +108,87 @@ func inspectPortableAudio(out io.Writer, path string) error {
 		return nil
 	}
 
+	bodies := readPortableTranscriptBodies(tags, manifest)
+
 	integrity, verifyErr := verifyPortableAudioIntegrity(path, stream, tags, manifest)
 	if verifyErr != nil {
-		printPortableMeeting(out, path, audioSummary, payload, manifest, portableIntegrityResult{
+		integrity = portableIntegrityResult{
 			Status:   "integrity-unverified",
 			Warnings: []string{verifyErr.Error()},
-		})
-		fmt.Fprintln(out, "fallback=plain-audio")
-		return nil
+		}
+	}
+	audioStatus := integrity.Status
+	// The metadata verdict outranks the audio verdict. A file whose transcript
+	// body cannot be read is invalid-cassini-metadata however the audio turned
+	// out, and `cassini=ok` printed beside a transcript nobody could read is
+	// exactly the reading this command exists to prevent. The audio verdict
+	// still decides the plain-audio fallback, which is about the audio.
+	if len(bodies.Unreadable) > 0 {
+		integrity.Status = "invalid-cassini-metadata"
 	}
 
-	printPortableMeeting(out, path, audioSummary, payload, manifest, integrity)
-	if integrity.Status != "ok" {
+	printPortableMeeting(out, path, audioSummary, payload, manifest, bodies, integrity)
+	if audioStatus != "ok" {
 		fmt.Fprintln(out, "fallback=plain-audio")
 	}
-	return nil
+	return bodies.err(path)
+}
+
+// portableTranscriptBodies is what a reader could actually get out of one
+// file's per-transcript chunk sets, as against what its manifest index says is
+// in there.
+type portableTranscriptBodies struct {
+	// WordCounts holds the decoded word count per transcript id. A transcript
+	// whose body could not be read is absent from the map, not zero in it.
+	WordCounts map[string]int
+	// Unreadable names every transcript whose body could not be read, in
+	// manifest order.
+	Unreadable []string
+	Warnings   []string
+}
+
+// err reports the transcripts whose bodies could not be read, so `cassini
+// inspect` exits non-zero on a file it could not read the meeting out of. A
+// command that prints a summary and exits 0 tells a script the file is fine.
+func (b portableTranscriptBodies) err(path string) error {
+	if len(b.Unreadable) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s: could not read the transcript body of %s", path, strings.Join(b.Unreadable, ", "))
+}
+
+// readPortableTranscriptBodies decodes every transcript body a v2/v3 file
+// declares.
+//
+// inspect used to print the manifest index's declared wordCount and label it
+// `words=`, which meant the one number it reported about the transcript was the
+// only one it had not checked: a file whose chunk set had a hole in it still
+// printed `cassini=ok words=900` while the transcript was unreachable. Reading
+// the bodies costs one gzip inflate each against metadata already in memory,
+// and it is the only way `words=` can mean anything.
+func readPortableTranscriptBodies(tags map[string]string, manifest portable.Manifest) portableTranscriptBodies {
+	bodies := portableTranscriptBodies{WordCounts: map[string]int{}}
+	if manifest.Version != 2 && manifest.Version != 3 {
+		return bodies
+	}
+	if _, warnings, ok := defaultWordsTranscriptEntry(tags, manifest); ok {
+		bodies.Warnings = append(bodies.Warnings, warnings...)
+	}
+	for _, entry := range manifest.Transcripts {
+		body, warnings, err := decodeTranscriptBody(tags, entry)
+		bodies.Warnings = append(bodies.Warnings, warnings...)
+		if err != nil {
+			bodies.Unreadable = append(bodies.Unreadable, entry.ID)
+			bodies.Warnings = append(bodies.Warnings, fmt.Sprintf("transcript %s body could not be read: %v", entry.ID, err))
+			continue
+		}
+		count := body.WordCount
+		if count == 0 {
+			count = len(body.Items)
+		}
+		bodies.WordCounts[entry.ID] = count
+	}
+	return bodies
 }
 
 type portableAudioSummary struct {
@@ -142,7 +208,7 @@ func printPlainPortableAudio(out io.Writer, audio portableAudioSummary, cassiniS
 	}
 }
 
-func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary, payload portablePayloadInfo, manifest portable.Manifest, integrity portableIntegrityResult) {
+func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary, payload portablePayloadInfo, manifest portable.Manifest, bodies portableTranscriptBodies, integrity portableIntegrityResult) {
 	title := blankDash(manifest.Meeting.Title)
 	meetingID := blankDash(manifest.Meeting.ID)
 	createdAt := blankDash(manifest.Meeting.CreatedAtUTC)
@@ -150,11 +216,14 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	language := firstNonEmpty(manifest.Transcript.Language, manifest.Meeting.Language)
 	if manifest.Version == 2 || manifest.Version == 3 {
 		// v2 stores transcript bodies in separate chunk sets; the main payload
-		// only carries descriptors. Sum word counts from those descriptors and
-		// fall back to the default raw-ASR transcript's language tag.
+		// only carries descriptors. Count the words that came back out of those
+		// chunk sets rather than the ones the descriptors claim, so a file whose
+		// bodies are unreachable reports nothing read instead of the index's
+		// word count, and fall back to the default raw-ASR transcript's
+		// language tag.
 		wordCount = 0
 		for _, entry := range manifest.Transcripts {
-			wordCount += entry.WordCount
+			wordCount += bodies.WordCounts[entry.ID]
 		}
 		if language == "" {
 			for _, entry := range manifest.Transcripts {
@@ -203,6 +272,9 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	}
 	printSummaryMetadata(out, manifest.Summary)
 	printAttachments(out, manifest.Attachments)
+	for _, warning := range bodies.Warnings {
+		fmt.Fprintf(out, "warning=%s\n", warning)
+	}
 	for _, warning := range integrity.Warnings {
 		fmt.Fprintf(out, "warning=%s\n", warning)
 	}

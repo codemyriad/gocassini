@@ -220,6 +220,10 @@ type portableV2FixtureOptions struct {
 	speakers    []portable.Speaker
 	withSummary bool
 	summaryBody string
+	// dropLastTranscriptChunk leaves a hole in the raw-ASR chunk set, the way a
+	// metadata editor that dropped one comment does: every count still names
+	// the chunk that is gone.
+	dropLastTranscriptChunk bool
 }
 
 func createPortableV2OpusFixture(t *testing.T, outPath string, words []string) string {
@@ -320,6 +324,10 @@ func createPortableV2OpusFixtureWith(t *testing.T, outPath string, opts portable
 		t.Fatalf("encode v2 manifest: %v", err)
 	}
 	tags := portable.BuildOpusTagsV2(manifest, encoded, portable.RoleRawASR)
+	if opts.dropLastTranscriptChunk {
+		prefix := portable.TranscriptIDToTagPrefix(portable.RoleRawASR)
+		delete(tags, fmt.Sprintf("%s%03d", prefix, parseIntOrZero(tags[prefix+"CHUNK_COUNT"])-1))
+	}
 
 	args := []string{"-y", "-v", "error", "-i", basePath, "-map", "0:a:0", "-c", "copy"}
 	for key, value := range tags {
@@ -807,5 +815,88 @@ func TestDefaultWordsTranscriptEntryPrefersTheManifestFlag(t *testing.T) {
 				t.Errorf("warnings = %q, want none", gotWarning)
 			}
 		})
+	}
+}
+
+// `words=` is the only number inspect prints about the transcript, and until
+// now it was the one number it had not checked: it came from the manifest
+// index's declared wordCount, so a file whose chunk set had a hole in it still
+// reported `cassini=ok words=900` while the transcript itself was unreachable.
+// Only `--transcript` found that out, and even that exited 0.
+func TestInspectPathPortableMeetingReportsTheWordsItDecoded(t *testing.T) {
+	requireFFMediaTools(t)
+
+	tmp := t.TempDir()
+	words := []string{"Hello", "team", "lantern", "festival", "tonight"}
+
+	t.Run("readable body", func(t *testing.T) {
+		path := createPortableV2OpusFixtureWith(t, filepath.Join(tmp, "readable.opus"), portableV2FixtureOptions{
+			words: words,
+		})
+		var out bytes.Buffer
+		if err := InspectPath(&out, path); err != nil {
+			t.Fatalf("inspect portable opus: %v", err)
+		}
+		if got := out.String(); !strings.Contains(got, fmt.Sprintf(" words=%d ", len(words))) {
+			t.Errorf("expected words=%d, got %q", len(words), got)
+		}
+	})
+
+	t.Run("unreadable body", func(t *testing.T) {
+		path := createPortableV2OpusFixtureWith(t, filepath.Join(tmp, "holed.opus"), portableV2FixtureOptions{
+			words:                   words,
+			dropLastTranscriptChunk: true,
+		})
+		var out bytes.Buffer
+		err := InspectPath(&out, path)
+		if err == nil {
+			t.Fatalf("inspect reported success on a file whose transcript body is unreachable: %q", out.String())
+		}
+		if !strings.Contains(err.Error(), "could not read the transcript body of raw-asr") {
+			t.Errorf("error = %v, want it to name the transcript it could not read", err)
+		}
+		got := out.String()
+		if !strings.Contains(got, "cassini=invalid-cassini-metadata") {
+			t.Errorf("expected cassini=invalid-cassini-metadata, got %q", got)
+		}
+		if !strings.Contains(got, " words=0 ") {
+			t.Errorf("expected words=0 for a transcript nothing could be read out of, got %q", got)
+		}
+		if !strings.Contains(got, "warning=transcript raw-asr body could not be read: missing transcript chunk CASSINI_TX_RAW_ASR_PAYLOAD_") {
+			t.Errorf("expected a warning naming the missing chunk, got %q", got)
+		}
+	})
+}
+
+// readPortableTranscriptBodies is where that number now comes from: a
+// transcript whose body could not be read is absent from the count, not zero
+// in it, and it is named so the caller can say which one went missing.
+func TestReadPortableTranscriptBodiesSeparatesReadFromDeclared(t *testing.T) {
+	words := []string{"Hello", "team", "lantern", "festival", "tonight"}
+	tags := buildPortableV3Tags(t, words)
+	_, manifest, err := decodePortableMeeting(tags)
+	if err != nil {
+		t.Fatalf("decodePortableMeeting: %v", err)
+	}
+
+	bodies := readPortableTranscriptBodies(tags, manifest)
+	if got := bodies.WordCounts[portable.RoleRawASR]; got != len(words) {
+		t.Errorf("decoded word count = %d, want %d", got, len(words))
+	}
+	if len(bodies.Unreadable) != 0 || bodies.err("meeting.opus") != nil {
+		t.Errorf("a whole file reported %v unreadable", bodies.Unreadable)
+	}
+
+	prefix := portable.TranscriptIDToTagPrefix(portable.RoleRawASR)
+	delete(tags, prefix+"001")
+	bodies = readPortableTranscriptBodies(tags, manifest)
+	if len(bodies.WordCounts) != 0 {
+		t.Errorf("word counts = %v, want none from a chunk set with a hole in it", bodies.WordCounts)
+	}
+	if len(bodies.Unreadable) != 1 || bodies.Unreadable[0] != portable.RoleRawASR {
+		t.Errorf("Unreadable = %v, want [raw-asr]", bodies.Unreadable)
+	}
+	if err := bodies.err("meeting.opus"); err == nil {
+		t.Error("err() = nil, want the unreadable transcript reported to the caller")
 	}
 }
