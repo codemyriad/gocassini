@@ -585,7 +585,7 @@ func TestDecodePortablePayloadAcceptsPaddedBase64URL(t *testing.T) {
 			if len(manifest.Transcripts) != 1 {
 				t.Fatalf("decoded %d transcripts, want 1", len(manifest.Transcripts))
 			}
-			body, err := decodeTranscriptBody(tags, manifest.Transcripts[0].ID)
+			body, _, err := decodeTranscriptBody(tags, manifest.Transcripts[0])
 			if err != nil {
 				t.Fatalf("decodeTranscriptBody: %v", err)
 			}
@@ -677,4 +677,135 @@ func buildPortableV3Tags(t *testing.T, words []string) map[string]string {
 		t.Fatalf("encode v3 manifest: %v", err)
 	}
 	return portable.BuildOpusTagsV3(manifest, encoded, portable.RoleRawASR)
+}
+
+// buildPortableV3TagsTwoTranscripts builds the tag set of a v3 file carrying
+// two raw transcripts, with defaultRawID written into CASSINI_TRANSCRIPT_DEFAULT
+// so a caller can put that tag and the manifest's `default` flag at odds.
+func buildPortableV3TagsTwoTranscripts(t *testing.T, defaultRawID string) map[string]string {
+	t.Helper()
+	tags := buildPortableV3Tags(t, []string{"Hello", "team", "again"})
+	manifest := portable.NormalizeManifestV3(portable.Manifest{
+		Meeting:   portable.Meeting{ID: "meeting-v3", Title: "Lantern Festival", CreatedAtUTC: "2026-03-11T08:30:00Z", Language: "en"},
+		Audio:     portable.Audio{Container: "ogg", Codec: "opus", SampleRate: 48000, Channels: 1},
+		Integrity: portable.Integrity{MatchPolicy: portable.AudioMatchPolicy, OpusSHA256: strings.Repeat("a", 64)},
+		Speakers:  []portable.Speaker{{ID: "spk1", Label: "Silvio"}},
+	})
+	inputs := []portable.TranscriptInput{
+		{
+			ID: portable.RoleRawASR, Role: portable.RoleRawASR, Default: true, Language: "en",
+			Body: portable.TranscriptBody{Format: "cassini.words.v1", Language: "en", WordCount: 3, Items: []portable.TranscriptItem{
+				{Speaker: "spk1", StartMS: 0, EndMS: 80, Text: "Hello"},
+				{Speaker: "spk1", StartMS: 100, EndMS: 180, Text: "team"},
+				{Speaker: "spk1", StartMS: 200, EndMS: 280, Text: "again"},
+			}},
+		},
+		{
+			ID: "second-pass", Role: portable.RoleRawASR, Language: "en",
+			Body: portable.TranscriptBody{Format: "cassini.words.v1", Language: "en", WordCount: 2, Items: []portable.TranscriptItem{
+				{Speaker: "spk1", StartMS: 0, EndMS: 80, Text: "Hello"},
+				{Speaker: "spk1", StartMS: 100, EndMS: 180, Text: "team"},
+			}},
+		},
+	}
+	encoded, err := portable.EncodeManifestV3(manifest, inputs, portableTestChunkSize)
+	if err != nil {
+		t.Fatalf("encode two-transcript v3 manifest: %v", err)
+	}
+	for key := range tags {
+		delete(tags, key)
+	}
+	for key, value := range portable.BuildOpusTagsV3(manifest, encoded, defaultRawID) {
+		tags[key] = value
+	}
+	return tags
+}
+
+// The manifest is the record and the CASSINI_TX_<ID>_PAYLOAD_CHUNK_COUNT tag is
+// a copy of it, so a reader that has decoded the manifest gathers the number of
+// chunks payloadRef names. Believing the tag instead refused a transcript that
+// was all there when the tag ran high, and quietly returned a truncated one when
+// it ran low — a tool that rewrote one layer and not the other could do either.
+func TestDecodeTranscriptBodyPrefersTheManifestChunkCount(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		taggedCount string
+		wantWarning bool
+	}{
+		{name: "agrees"},
+		{name: "tag too high", taggedCount: "9", wantWarning: true},
+		{name: "tag too low", taggedCount: "1", wantWarning: true},
+		{name: "tag absent", taggedCount: "-"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			words := []string{"Hello", "team", "lantern", "festival", "tonight"}
+			tags := buildPortableV3Tags(t, words)
+			prefix := portable.TranscriptIDToTagPrefix(portable.RoleRawASR)
+			switch tc.taggedCount {
+			case "":
+			case "-":
+				delete(tags, prefix+"CHUNK_COUNT")
+			default:
+				tags[prefix+"CHUNK_COUNT"] = tc.taggedCount
+			}
+
+			_, manifest, err := decodePortableMeeting(tags)
+			if err != nil {
+				t.Fatalf("decodePortableMeeting: %v", err)
+			}
+			body, warnings, err := decodeTranscriptBody(tags, manifest.Transcripts[0])
+			if err != nil {
+				t.Fatalf("decodeTranscriptBody: %v", err)
+			}
+			if body.WordCount != len(words) || len(body.Items) != len(words) {
+				t.Errorf("decoded %d of %d words (wordCount=%d)", len(body.Items), len(words), body.WordCount)
+			}
+			gotWarning := strings.Join(warnings, "\n")
+			if tc.wantWarning && !strings.Contains(gotWarning, "chunk count disagrees between manifest and tag") {
+				t.Errorf("warnings = %q, want the tag/manifest disagreement reported", gotWarning)
+			}
+			if !tc.wantWarning && gotWarning != "" {
+				t.Errorf("warnings = %q, want none", gotWarning)
+			}
+		})
+	}
+}
+
+// CASSINI_TRANSCRIPT_DEFAULT is the same kind of copy: it exists so a reader
+// holding only ffprobe can name the default before it decodes anything, and it
+// stops deciding the moment the manifest is in hand. Obeying it let a tool that
+// rewrote the tag alone move which transcript every consumer read.
+func TestDefaultWordsTranscriptEntryPrefersTheManifestFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		taggedID    string
+		wantID      string
+		wantWarning bool
+	}{
+		{name: "agrees", taggedID: portable.RoleRawASR, wantID: portable.RoleRawASR},
+		{name: "tag names another transcript", taggedID: "second-pass", wantID: portable.RoleRawASR, wantWarning: true},
+		{name: "tag absent", taggedID: "", wantID: portable.RoleRawASR},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tags := buildPortableV3TagsTwoTranscripts(t, tc.taggedID)
+			_, manifest, err := decodePortableMeeting(tags)
+			if err != nil {
+				t.Fatalf("decodePortableMeeting: %v", err)
+			}
+			entry, warnings, ok := defaultWordsTranscriptEntry(tags, manifest)
+			if !ok {
+				t.Fatal("defaultWordsTranscriptEntry found no default transcript")
+			}
+			if entry.ID != tc.wantID {
+				t.Errorf("default transcript = %q, want %q", entry.ID, tc.wantID)
+			}
+			gotWarning := strings.Join(warnings, "\n")
+			if tc.wantWarning && !strings.Contains(gotWarning, "default transcript disagrees between manifest and tag") {
+				t.Errorf("warnings = %q, want the tag/manifest disagreement reported", gotWarning)
+			}
+			if !tc.wantWarning && gotWarning != "" {
+				t.Errorf("warnings = %q, want none", gotWarning)
+			}
+		})
+	}
 }

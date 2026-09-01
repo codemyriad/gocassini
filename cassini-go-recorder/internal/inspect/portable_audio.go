@@ -730,81 +730,120 @@ func extractedFromTranscriptBody(id, format, language string, wordCount int, ite
 }
 
 // defaultWordsTranscriptEntry picks the default raw-words transcript descriptor
-// from a decoded v2 manifest. Preference: the entry named by the
-// CASSINI_TRANSCRIPT_DEFAULT tag, then any entry flagged Default, then the
+// out of a decoded v2/v3 manifest, and reports any disagreement it had to
+// resolve on the way.
+//
+// The manifest decides. An entry's `default` flag is the record;
+// CASSINI_TRANSCRIPT_DEFAULT is the copy that exists so a reader holding only
+// ffprobe can see something before it decodes anything, and once the manifest
+// is decoded the copy is spent. This used to run the other way round, which
+// meant a tool that rewrote the tag and not the manifest silently moved which
+// transcript every consumer read.
+//
+// Preference: the entry flagged Default, then the entry the tag names, then the
 // first raw transcript entry.
-func defaultWordsTranscriptEntry(tags map[string]string, manifest portable.Manifest) (portable.TranscriptEntry, bool) {
+func defaultWordsTranscriptEntry(tags map[string]string, manifest portable.Manifest) (portable.TranscriptEntry, []string, bool) {
 	if len(manifest.Transcripts) == 0 {
-		return portable.TranscriptEntry{}, false
+		return portable.TranscriptEntry{}, nil, false
 	}
-	if defaultID := strings.TrimSpace(metadataTag(tags, "CASSINI_TRANSCRIPT_DEFAULT")); defaultID != "" {
+	taggedID := strings.TrimSpace(metadataTag(tags, "CASSINI_TRANSCRIPT_DEFAULT"))
+	for _, entry := range manifest.Transcripts {
+		if !entry.Default {
+			continue
+		}
+		var warnings []string
+		if taggedID != "" && taggedID != entry.ID {
+			warnings = append(warnings, fmt.Sprintf(
+				"default transcript disagrees between manifest and tag: manifest=%s CASSINI_TRANSCRIPT_DEFAULT=%s",
+				entry.ID, taggedID))
+		}
+		return entry, warnings, true
+	}
+	if taggedID != "" {
 		for _, entry := range manifest.Transcripts {
-			if entry.ID == defaultID {
-				return entry, true
+			if entry.ID == taggedID {
+				return entry, nil, true
 			}
 		}
 	}
-	for _, entry := range manifest.Transcripts {
-		if entry.Default {
-			return entry, true
-		}
-	}
-	return manifest.Transcripts[0], true
+	return manifest.Transcripts[0], nil, true
 }
 
-// decodeTranscriptBody reverses portable.EncodeTranscriptBody for one v2
-// transcript: it reads CASSINI_TX_<ID>_PAYLOAD_CHUNK_COUNT +
-// CASSINI_TX_<ID>_PAYLOAD_000..N, concatenates them, base64url-decodes,
-// gzip-decompresses, validates the optional sha256/byte-count tags, and parses
-// the TranscriptBody JSON.
-func decodeTranscriptBody(tags map[string]string, id string) (portable.TranscriptBody, error) {
-	prefix := portable.TranscriptIDToTagPrefix(id)
-	chunkCount := parseIntOrZero(metadataTag(tags, prefix+"CHUNK_COUNT"))
+// decodeTranscriptBody reverses portable.EncodeTranscriptBody for one v2/v3
+// transcript: it gathers CASSINI_TX_<ID>_PAYLOAD_000..N, concatenates them,
+// base64url-decodes, gzip-decompresses, validates the optional sha256/byte-count
+// tags, and parses the TranscriptBody JSON. It returns any tag/manifest
+// disagreement it resolved alongside the body.
+//
+// How many chunks to gather comes from the entry's payloadRef, not from
+// CASSINI_TX_<ID>_PAYLOAD_CHUNK_COUNT. The manifest is the record and the
+// descriptor tags are a copy of it, so once the manifest is decoded the copy no
+// longer decides anything: believing the tag meant a file whose two layers had
+// drifted by one chunk failed to decode a transcript that was all there, in one
+// direction, and silently returned a truncated one in the other. The tag is
+// still read, because a disagreement is worth reporting — but it is a warning,
+// not a failure.
+func decodeTranscriptBody(tags map[string]string, entry portable.TranscriptEntry) (portable.TranscriptBody, []string, error) {
+	prefix := portable.TranscriptIDToTagPrefix(entry.ID)
+	var warnings []string
+	chunkCount := entry.PayloadRef.ChunkCount
+	tagged := parseIntOrZero(metadataTag(tags, prefix+"CHUNK_COUNT"))
+	switch {
+	case chunkCount <= 0:
+		// A manifest with no payloadRef.chunkCount leaves the tag as the only
+		// count there is; a file like that is already outside the format, so
+		// read what it offers rather than refusing it outright.
+		chunkCount = tagged
+	case tagged > 0 && tagged != chunkCount:
+		warnings = append(warnings, fmt.Sprintf(
+			"transcript %s chunk count disagrees between manifest and tag: payloadRef.chunkCount=%d %sCHUNK_COUNT=%d",
+			entry.ID, chunkCount, prefix, tagged))
+	}
 	if chunkCount <= 0 {
-		return portable.TranscriptBody{}, fmt.Errorf("missing or invalid %sCHUNK_COUNT", prefix)
+		return portable.TranscriptBody{}, warnings, fmt.Errorf("missing or invalid %sCHUNK_COUNT", prefix)
 	}
 	var encoded strings.Builder
 	for idx := 0; idx < chunkCount; idx++ {
 		key := fmt.Sprintf("%s%03d", prefix, idx)
 		part := metadataTag(tags, key)
 		if part == "" {
-			return portable.TranscriptBody{}, fmt.Errorf("missing transcript chunk %s", key)
+			return portable.TranscriptBody{}, warnings, fmt.Errorf("missing transcript chunk %s", key)
 		}
 		encoded.WriteString(part)
 	}
 
 	compressed, err := decodeCassiniBase64URL(encoded.String())
 	if err != nil {
-		return portable.TranscriptBody{}, fmt.Errorf("decode base64url transcript payload: %w", err)
+		return portable.TranscriptBody{}, warnings, fmt.Errorf("decode base64url transcript payload: %w", err)
 	}
 	reader, err := gzip.NewReader(bytes.NewReader(compressed))
 	if err != nil {
-		return portable.TranscriptBody{}, fmt.Errorf("open gzip transcript payload: %w", err)
+		return portable.TranscriptBody{}, warnings, fmt.Errorf("open gzip transcript payload: %w", err)
 	}
 	defer func() { _ = reader.Close() }()
 	rawJSON, err := io.ReadAll(reader)
 	if err != nil {
-		return portable.TranscriptBody{}, fmt.Errorf("decompress gzip transcript payload: %w", err)
+		return portable.TranscriptBody{}, warnings, fmt.Errorf("decompress gzip transcript payload: %w", err)
 	}
 
 	if declared := parseIntOrZero(metadataTag(tags, prefix+"RAW_BYTES")); declared > 0 && declared != len(rawJSON) {
-		return portable.TranscriptBody{}, fmt.Errorf("transcript raw byte count mismatch: tags=%d decoded=%d", declared, len(rawJSON))
+		return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript raw byte count mismatch: tags=%d decoded=%d", declared, len(rawJSON))
 	}
 	if declared := parseIntOrZero(metadataTag(tags, prefix+"GZIP_BYTES")); declared > 0 && declared != len(compressed) {
-		return portable.TranscriptBody{}, fmt.Errorf("transcript compressed byte count mismatch: tags=%d decoded=%d", declared, len(compressed))
+		return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript compressed byte count mismatch: tags=%d decoded=%d", declared, len(compressed))
 	}
 	if declared := strings.TrimSpace(strings.ToLower(metadataTag(tags, prefix+"SHA256"))); declared != "" {
 		sum := sha256.Sum256(rawJSON)
 		if hex.EncodeToString(sum[:]) != declared {
-			return portable.TranscriptBody{}, fmt.Errorf("transcript payload sha256 mismatch")
+			return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript payload sha256 mismatch")
 		}
 	}
 
 	var body portable.TranscriptBody
 	if err := json.Unmarshal(rawJSON, &body); err != nil {
-		return portable.TranscriptBody{}, fmt.Errorf("parse transcript body JSON: %w", err)
+		return portable.TranscriptBody{}, warnings, fmt.Errorf("parse transcript body JSON: %w", err)
 	}
-	return body, nil
+	return body, warnings, nil
 }
 
 // WriteTranscriptWordsV1JSON renders an extracted transcript as a
