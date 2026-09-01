@@ -849,7 +849,8 @@ func TestAdmitModelForDeviceRejectsAnInt8ModelOnCUDA(t *testing.T) {
 	// the pair instead of silently mis-describing the execution (D-702).
 	for _, model := range []string{modelParakeetV3Int8, modelParakeet110M} {
 		settings := STTSettings{Quality: sttQualityBalanced, ModelOverride: model}
-		_, err := admitModelForDevice(settings, deviceCUDA)
+		rt := &Runtime{}
+		_, err := rt.admitModelForDevice(settings, deviceCUDA)
 		var unavailable *resourceUnavailableError
 		if !errors.As(err, &unavailable) || unavailable.resource != "model policy" {
 			t.Fatalf("admitModelForDevice(%s, cuda) error = %v, want model policy error", model, err)
@@ -858,14 +859,14 @@ func TestAdmitModelForDeviceRejectsAnInt8ModelOnCUDA(t *testing.T) {
 			t.Errorf("%s on cuda is a policy error that waiting cannot fix; want permanent", model)
 		}
 		// The same pin is legitimate on the CPU.
-		if got, err := admitModelForDevice(settings, deviceCPU); err != nil || got != model {
+		if got, err := rt.admitModelForDevice(settings, deviceCPU); err != nil || got != model {
 			t.Errorf("admitModelForDevice(%s, cpu) = %q, %v; want the pinned model", model, got, err)
 		}
 	}
 
 	// fp32 is audited on both devices.
 	settings := STTSettings{Quality: sttQualityBest, ModelOverride: modelParakeetV3Fp32}
-	if got, err := admitModelForDevice(settings, deviceCUDA); err != nil || got != modelParakeetV3Fp32 {
+	if got, err := (&Runtime{}).admitModelForDevice(settings, deviceCUDA); err != nil || got != modelParakeetV3Fp32 {
 		t.Errorf("admitModelForDevice(fp32, cuda) = %q, %v; want the fp32 model", got, err)
 	}
 }
@@ -875,8 +876,7 @@ func TestAdmitModelForDeviceRequiresTheModelToBeBundled(t *testing.T) {
 	// whose model it never shipped. Block at admission with an actionable
 	// message instead of failing minutes into a build.
 	cacheRoot := t.TempDir()
-	t.Setenv("CASSINI_CACHE_ROOT", cacheRoot)
-	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "1")
+	rt := &Runtime{cfg: Config{ModelCacheRoot: cacheRoot, DisallowModelDownload: true}}
 
 	bundled := filepath.Join(cacheRoot, "models", modelParakeetV3Fp32)
 	if err := os.MkdirAll(bundled, 0o755); err != nil {
@@ -886,11 +886,11 @@ func TestAdmitModelForDeviceRequiresTheModelToBeBundled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := admitModelForDevice(STTSettings{Quality: sttQualityBest}, deviceCPU); err != nil {
+	if _, err := rt.admitModelForDevice(STTSettings{Quality: sttQualityBest}, deviceCPU); err != nil {
 		t.Fatalf("bundled model was refused: %v", err)
 	}
 
-	_, err := admitModelForDevice(STTSettings{Quality: sttQualityBalanced}, deviceCPU)
+	_, err := rt.admitModelForDevice(STTSettings{Quality: sttQualityBalanced}, deviceCPU)
 	var unavailable *resourceUnavailableError
 	if !errors.As(err, &unavailable) || unavailable.resource != "model bundle" {
 		t.Fatalf("unbundled tier error = %v, want model bundle resourceUnavailableError", err)
@@ -903,8 +903,8 @@ func TestAdmitModelForDeviceRequiresTheModelToBeBundled(t *testing.T) {
 	}
 
 	// An image that permits downloads is not gated on what it happens to carry.
-	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "0")
-	if _, err := admitModelForDevice(STTSettings{Quality: sttQualityBalanced}, deviceCPU); err != nil {
+	downloads := &Runtime{cfg: Config{ModelCacheRoot: cacheRoot}}
+	if _, err := downloads.admitModelForDevice(STTSettings{Quality: sttQualityBalanced}, deviceCPU); err != nil {
 		t.Fatalf("download-capable image was gated on the bundle: %v", err)
 	}
 }

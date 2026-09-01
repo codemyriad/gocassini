@@ -1040,8 +1040,8 @@ func TestStatusHandlerReportsAnUnbundledTierAsUnusable(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 	cacheRoot := t.TempDir()
-	t.Setenv("CASSINI_CACHE_ROOT", cacheRoot)
-	t.Setenv("CASSINI_DISALLOW_MODEL_DOWNLOAD", "1")
+	rt.cfg.ModelCacheRoot = cacheRoot
+	rt.cfg.DisallowModelDownload = true
 	t.Setenv(envSTTCUDACapable, "1")
 	stubNVIDIADevice(t, false) // the GPU went missing: auto falls back to CPU
 	bundled := filepath.Join(cacheRoot, "models", modelParakeetV3Fp32)

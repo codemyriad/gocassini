@@ -125,7 +125,7 @@ func (e *resourceUnavailableError) Error() string {
 // combination the model was never audited for. An administrator who pinned an
 // int8 model and CUDA gets a loud, permanent error rather than a GPU run that
 // silently fragments back onto the host CPU.
-func admitModelForDevice(settings STTSettings, device string) (string, error) {
+func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (string, error) {
 	model := settings.modelForDevice(device)
 	if !modelSupportsDevice(model, device) {
 		return "", &resourceUnavailableError{
@@ -136,7 +136,7 @@ func admitModelForDevice(settings STTSettings, device string) (string, error) {
 			permanent: true,
 		}
 	}
-	if err := requireBundledModel(model); err != nil {
+	if err := rt.requireBundledModel(model); err != nil {
 		return "", err
 	}
 	return model, nil
@@ -149,11 +149,11 @@ func admitModelForDevice(settings STTSettings, device string) (string, error) {
 // fallen back to the CPU can be asked for a model it never shipped. Saying so
 // at admission gives an actionable block instead of a missing-file failure deep
 // inside the recorder, minutes into a build.
-func requireBundledModel(model string) error {
-	if !envBool("CASSINI_DISALLOW_MODEL_DOWNLOAD") {
+func (rt *Runtime) requireBundledModel(model string) error {
+	if !rt.cfg.DisallowModelDownload {
 		return nil
 	}
-	root := strings.TrimSpace(os.Getenv("CASSINI_CACHE_ROOT"))
+	root := strings.TrimSpace(rt.cfg.ModelCacheRoot)
 	if root == "" {
 		// No declared cache root: the recorder's own doctor is then the
 		// authority on whether the files are there.

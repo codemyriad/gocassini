@@ -293,7 +293,7 @@ func (rt *Runtime) effectiveComputeStatus(settings STTSettings, device string) (
 	// CPU carries only the fp32 model, so a tier that needs another one blocks
 	// permanently — reporting that host as ready would leave an administrator
 	// waiting for builds that can never start.
-	if _, err := admitModelForDevice(settings, device); err != nil {
+	if _, err := rt.admitModelForDevice(settings, device); err != nil {
 		var unavailable *resourceUnavailableError
 		if errors.As(err, &unavailable) {
 			return false, unavailable.detail

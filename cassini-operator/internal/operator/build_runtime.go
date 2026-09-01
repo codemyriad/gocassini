@@ -262,7 +262,7 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	if admissionErr != nil {
 		return meetingPath, admissionErr
 	}
-	model, modelErr := admitModelForDevice(settings, device)
+	model, modelErr := rt.admitModelForDevice(settings, device)
 	if modelErr != nil {
 		return meetingPath, modelErr
 	}
