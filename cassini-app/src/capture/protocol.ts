@@ -17,6 +17,11 @@
 // how a breaking client change is fenced off from older servers.
 export const SOURCE_CAPTURE_FORMAT = "org.cassini.source-capture/1";
 
+// The worker refreshes this recovery sidecar as durable MediaRecorder chunks
+// land. A normal stop replaces it with capture.json; after reload/crash the
+// next Talk page can upload the completed prefix instead of losing it.
+export const SOURCE_CAPTURE_PENDING_NAME = "capture.pending.json";
+
 // TALK_CALL_PATH_SEGMENT is the path Nextcloud Talk serves a call under. Both
 // URL shapes matter: pretty URLs give "<root>/call/<token>", and installs with
 // the front controller in the path give "<root>/index.php/call/<token>".

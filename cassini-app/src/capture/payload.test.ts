@@ -3,12 +3,15 @@ import {
   captureAllowedByServer,
   consentGranted,
   enabledURLFrom,
+  fetchTalkRecordingStatus,
   normalizeCaptureDeliveryConfig,
   serverCheckIntervalMS,
   pickAudioSender,
   rotateSegment,
   stopSegment,
   stopWithoutRestart,
+  talkRecordingStatusFromSignalingData,
+  talkRoomStatusURL,
   uploadURLFrom,
 } from "./payload";
 import { anchorsWithin } from "./worker";
@@ -43,6 +46,54 @@ describe("normalizeCaptureDeliveryConfig", () => {
     expect(
       normalizeCaptureDeliveryConfig({ enabled: true, proxyBase: "https://elsewhere.example/proxy" }).enabled,
     ).toBe(false);
+  });
+});
+
+describe("Talk recording lifecycle", () => {
+  const frame = (roomid: string, status: number) =>
+    JSON.stringify({
+      type: "event",
+      event: {
+        target: "room",
+        type: "message",
+        message: { roomid, data: { type: "recording", recording: { status } } },
+      },
+    });
+
+  it("reads only authoritative recording events for this room", () => {
+    expect(talkRecordingStatusFromSignalingData(frame("room-a", 1), "room-a")).toBe(1);
+    expect(talkRecordingStatusFromSignalingData(frame("room-a", 0), "room-a")).toBe(0);
+    expect(talkRecordingStatusFromSignalingData(frame("room-b", 1), "room-a")).toBeNull();
+    expect(talkRecordingStatusFromSignalingData("not json", "room-a")).toBeNull();
+    expect(
+      talkRecordingStatusFromSignalingData(
+        JSON.stringify({
+          type: "event",
+          event: {
+            target: "room",
+            type: "message",
+            message: { roomid: "room-a", data: { type: "chat", recording: { status: 1 } } },
+          },
+        }),
+        "room-a",
+      ),
+    ).toBeNull();
+  });
+
+  it("reads the canonical room status for reload and internal-signaling fallback", async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ ocs: { data: { callRecording: 2 } } }), { status: 200 });
+    await expect(fetchTalkRecordingStatus("room/a", "/nextcloud", fetchImpl as never)).resolves.toBe(2);
+    expect(talkRoomStatusURL("room/a", "/nextcloud/")).toBe(
+      "/nextcloud/ocs/v2.php/apps/spreed/api/v4/room/room%2Fa?format=json",
+    );
+  });
+
+  it("does not invent a lifecycle state from a failed or malformed room request", async () => {
+    const failed = async () => new Response("no", { status: 503 });
+    const malformed = async () => new Response(JSON.stringify({ ocs: { data: {} } }), { status: 200 });
+    await expect(fetchTalkRecordingStatus("room", "", failed as never)).resolves.toBeNull();
+    await expect(fetchTalkRecordingStatus("room", "", malformed as never)).resolves.toBeNull();
   });
 });
 

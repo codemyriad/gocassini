@@ -24,7 +24,7 @@
 //    makes "upload after the call" safe rather than a way to lose meetings.
 
 import type { CaptureAnchor, CaptureSegment, CaptureSidecar } from "./protocol";
-import { mergeMuteIntervals } from "./protocol";
+import { SOURCE_CAPTURE_PENDING_NAME, mergeMuteIntervals } from "./protocol";
 
 declare const self: DedicatedWorkerGlobalScope & {
   onrtctransform: ((event: RTCTransformEvent) => void) | null;
@@ -60,8 +60,16 @@ interface RTCEncodedAudioFrame {
 let anchors: CaptureAnchor[] = [];
 let frameIndex = 0;
 let lastSSRC = -1;
+// The transform is installed before Talk negotiates so it cannot be attached
+// late, but it remains a pure pass-through until Talk confirms that its own
+// recording is active. Thus no timing evidence, audio file, or OPFS directory
+// is collected merely because somebody joined a call.
+let timingActive = false;
 
 function recordAnchor(frame: RTCEncodedAudioFrame): void {
+  if (!timingActive) {
+    return;
+  }
   const metadata = frame.getMetadata();
   const ssrc = metadata.synchronizationSource ?? -1;
   // Always anchor on an SSRC change: that is a re-negotiation, and it is also
@@ -125,6 +133,8 @@ interface OpenSegment {
 
 let captureDir: FileSystemDirectoryHandle | null = null;
 const segments = new Map<number, OpenSegment>();
+let pendingDirName: string | null = null;
+let pendingBase: Omit<CaptureSidecar, "segments" | "callEndWallMs"> | null = null;
 
 async function ensureDir(name: string): Promise<FileSystemDirectoryHandle> {
   if (captureDir) {
@@ -143,7 +153,45 @@ async function openSegment(dirName: string, meta: OpenSegment["meta"]): Promise<
   segments.set(meta.index, { handle, offset: 0, meta, stopWallMs: 0, muteIntervals: [], failed: false });
 }
 
-function appendChunk(index: number, buffer: ArrayBuffer): void {
+function recoverableSegments(now: number): CaptureSegment[] {
+  return [...segments.values()]
+    .filter((segment) => !segment.failed && segment.offset > 0)
+    .sort((a, b) => a.meta.index - b.meta.index)
+    .map((segment) => {
+      const stopWallMs = segment.stopWallMs > 0 ? segment.stopWallMs : now;
+      return {
+        ...segment.meta,
+        stopWallMs,
+        anchors: anchorsWithin(anchors, segment.meta.startWallMs, stopWallMs),
+        muteIntervals: mergeMuteIntervals(segment.muteIntervals),
+      };
+    });
+}
+
+async function writePendingSidecar(): Promise<void> {
+  if (!pendingBase || !pendingDirName) {
+    return;
+  }
+  const now = Date.now();
+  const built = recoverableSegments(now);
+  if (built.length === 0) {
+    return;
+  }
+  const dir = await ensureDir(pendingDirName);
+  const fileHandle = await dir.getFileHandle(SOURCE_CAPTURE_PENDING_NAME, { create: true });
+  const handle = await fileHandle.createSyncAccessHandle();
+  const sidecar: CaptureSidecar = {
+    ...pendingBase,
+    callEndWallMs: Math.max(...built.map((segment) => segment.stopWallMs)),
+    segments: built,
+  };
+  handle.truncate(0);
+  handle.write(new TextEncoder().encode(JSON.stringify(sidecar)), { at: 0 });
+  handle.flush();
+  handle.close();
+}
+
+async function appendChunk(index: number, buffer: ArrayBuffer): Promise<void> {
   const segment = segments.get(index);
   if (!segment) {
     return;
@@ -151,13 +199,18 @@ function appendChunk(index: number, buffer: ArrayBuffer): void {
   try {
     segment.handle.write(new Uint8Array(buffer), { at: segment.offset });
     segment.offset += buffer.byteLength;
+    await writePendingSidecar();
   } catch (error) {
     segment.failed = true;
     self.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });
   }
 }
 
-function closeSegment(index: number, stopWallMs: number, muteIntervals: Array<[number, number]>): void {
+async function closeSegment(
+  index: number,
+  stopWallMs: number,
+  muteIntervals: Array<[number, number]>,
+): Promise<void> {
   const segment = segments.get(index);
   if (!segment) {
     return;
@@ -171,6 +224,7 @@ function closeSegment(index: number, stopWallMs: number, muteIntervals: Array<[n
   }
   segment.stopWallMs = stopWallMs;
   segment.muteIntervals = muteIntervals;
+  await writePendingSidecar();
 }
 
 // anchorsWithin slices the call-wide anchor stream to one segment's wall-clock
@@ -220,6 +274,17 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
   handle.write(new TextEncoder().encode(JSON.stringify(sidecar)), { at: 0 });
   handle.flush();
   handle.close();
+  await dir.removeEntry(SOURCE_CAPTURE_PENDING_NAME).catch(() => {});
+  // The call can continue after the official recording stops. Release every
+  // handle and reset interval-local evidence so this same pass-through worker
+  // can serve a later recording interval without mixing their files or clocks.
+  segments.clear();
+  captureDir = null;
+  anchors = [];
+  frameIndex = 0;
+  lastSSRC = -1;
+  pendingDirName = null;
+  pendingBase = null;
   return sidecar;
 }
 
@@ -227,15 +292,27 @@ export async function onMessage(event: MessageEvent): Promise<void> {
   const message = event.data;
   try {
     switch (message?.type) {
+      case "timing-active":
+        timingActive = message.active === true;
+        if (timingActive) {
+          anchors = [];
+          frameIndex = 0;
+          lastSSRC = -1;
+        }
+        break;
+      case "capture-start":
+        pendingDirName = message.dirName;
+        pendingBase = message.base;
+        break;
       case "segment-start":
         await openSegment(message.dirName, message.meta);
         self.postMessage({ type: "segment-started", index: message.meta.index });
         break;
       case "chunk":
-        appendChunk(message.index, message.buffer);
+        await appendChunk(message.index, message.buffer);
         break;
       case "segment-stop":
-        closeSegment(message.index, message.stopWallMs, message.muteIntervals ?? []);
+        await closeSegment(message.index, message.stopWallMs, message.muteIntervals ?? []);
         self.postMessage({ type: "segment-stopped", index: message.index });
         break;
       case "finalize": {
