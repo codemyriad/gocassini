@@ -66,6 +66,37 @@ describe("StoragePanel", () => {
     expect(catchBlock).toContain("operatorClient.getStorage()");
   });
 
+  // The plan is emitted in dependency order and everything after the apps lives
+  // INSIDE them: creating the Team folder POSTs to /apps/groupfolders/…, which
+  // 404s while the app is absent. Running the browser steps first aborted the
+  // whole run at the folder on exactly the instance this feature is for — one
+  // with neither app installed.
+  it("installs the Nextcloud apps before the steps that live inside them", () => {
+    const runSetup = storagePanelSource.slice(
+      storagePanelSource.indexOf("async function runSetup("),
+      storagePanelSource.indexOf("function modeOptionFor("),
+    );
+    const installAt = runSetup.indexOf("installStorageApps()");
+    const browserAt = runSetup.indexOf("runSetupPlan(");
+    expect(installAt).toBeGreaterThan(-1);
+    expect(browserAt).toBeGreaterThan(-1);
+    expect(installAt).toBeLessThan(browserAt);
+  });
+
+  // The operator cannot SEE a Team folder until groupfolders is enabled, so a
+  // plan built before the install says "create the folder" whether or not one
+  // exists. Acting on the stale plan would make a second Cassini folder.
+  it("recomputes the plan after installing the apps", () => {
+    const runSetup = storagePanelSource.slice(
+      storagePanelSource.indexOf("async function runSetup("),
+      storagePanelSource.indexOf("function modeOptionFor("),
+    );
+    expect(runSetup).toContain("modeOptionFor(status, plan.mode)");
+    expect(runSetup).toContain("plan = refreshed");
+    // …and it stops rather than running folder steps that would 404.
+    expect(runSetup).toContain("refreshed.setup.some((step) => !step.browser)");
+  });
+
   it("renders the operator's own words rather than copy of its own", () => {
     for (const field of ["option.summary", "option.blocker", "pending.consequence", "status.detail"]) {
       expect(storagePanelSource).toContain(`{${field}}`);

@@ -27,7 +27,9 @@ install — see [Standalone operator (dev/staging only)](#standalone-operator-de
   enabled.
 - A registered AppAPI **deploy daemon** (next section).
 - **Required.** A `cassini` service account. Every recording is written and
-  read as it, in either storage mode, and Cassini does **not** create it:
+  read as it, in either storage mode. Cassini can create it for you: open
+  **Cassini → Setup** and accept the offer, and it will make the account as you,
+  after Nextcloud's own password prompt. By hand instead:
 
   ```bash
   occ group:add cassini
@@ -36,11 +38,11 @@ install — see [Standalone operator (dev/staging only)](#standalone-operator-de
 
 - **Required for access-controlled storage only.** The native **Group folders /
   Team folders** (`groupfolders`) and **Everyone Group** (`group_everyone`)
-  apps, plus a `Cassini` Team folder mapped and ACL-enabled. Cassini installs
-  neither app and creates no folder — an ExApp reaches Nextcloud only over HTTP,
-  cannot install a PHP app, and this release deliberately scaffolds nothing.
-  The Setup tab prints the exact recipe and `/operator/status` reports what is
-  missing. The Everyone Group is instance-wide and may appear in other Nextcloud
+  apps, plus a `Cassini` Team folder mapped and ACL-enabled. The Setup tab
+  builds the folder, its mappings and its permissions for you, as you. It cannot
+  install the two apps: Nextcloud requires your password on that request itself
+  and Cassini will not handle it, so it attempts the install through its own
+  backend and otherwise links you to Nextcloud's own Apps page. The Everyone Group is instance-wide and may appear in other Nextcloud
   sharing pickers; see
   [Recording permissions](./exapp-nextcloud-recordings-permissions.md).
 
