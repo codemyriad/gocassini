@@ -17,25 +17,31 @@ Give an agent the three things it needs to reason about your meetings:
 
 ## How it works
 
-Nothing here is a new API. The Cassini app already serves a **per-caller** read
-surface for its own viewer, and these commands are a client for it. The app
-fetches from Nextcloud Files **as the calling user**, so Nextcloud performs the
-authorization and Cassini keeps no separate list of who may see what.
+The Cassini app serves a **per-caller** read surface, and these commands are a
+client for it. The app fetches from Nextcloud Files **as the calling user**, so
+Nextcloud performs the authorization and Cassini keeps no separate list of who
+may see what.
 
 ```text
-  cassini meetings list
+  cassini meetings list --from 2026-08-01
         │
-        │  GET https://<nextcloud>/index.php/apps/app_api/proxy/gocassini/published/catalog.json
+        │  GET https://<nextcloud>/index.php/apps/app_api/proxy/gocassini/published/meetings-list?from=...
         │      Authorization: Basic <user>:<app password>
         ▼
   Nextcloud  ── authenticates the app password
         │     ── mints the app-API identity for the session
         ▼
-  Cassini app ── PROPFIND / GET Nextcloud Files AS THAT USER
+  Cassini app ── GET catalog.json as the recordings owner   (what exists)
+        │     ── PROPFIND meetings/ AS THE CALLING USER     (what they may read)
+        │     ── intersect, then narrow by the query
         │
-        ├── catalog.json  filtered to what the caller may read
+        ├── the meeting list, filtered to what the caller may read
         └── meetings/<id>.opus   ... or 404
 ```
+
+An app older than the list route answers `404` there, and the CLI falls back to
+`published/catalog.json` and filters client-side. That fallback is why a CLI on
+your laptop keeps working against a server it was not upgraded alongside.
 
 Three consequences worth internalising before you build on this:
 
@@ -43,10 +49,11 @@ Three consequences worth internalising before you build on this:
   not exist.** That is deliberate: a recording you cannot see never reveals that
   it exists. The CLI therefore never says "forbidden" or "no such meeting" — it
   says *no recording you can read*.
-- **An empty list is ambiguous.** The app answers `200` with no meetings both
-  when the account genuinely has none and when the recordings folder is
-  mis-provisioned or unreachable. It cannot distinguish them, so neither can the
-  CLI; it exits `0` and says so.
+- **An empty list means an empty list.** Against a current app, a failure to
+  reach the archive is an error with a non-zero exit, not a `200` with nothing
+  in it — so an agent can act on the difference. Against an older app reached
+  through the `catalog.json` fallback the two are still indistinguishable, and
+  the CLI says so rather than guessing.
 - **The surface is read-only.** Only `GET` and `HEAD` reach it. Starting,
   stopping and re-running jobs stays on the operator's admin routes, off the
   agent path entirely.

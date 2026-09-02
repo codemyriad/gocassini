@@ -45,6 +45,13 @@ const (
 	// proxied app root.
 	meetingsCatalogPath = "published/catalog.json"
 
+	// meetingsListPath is the app's server-side list route (D-701): the same
+	// catalog envelope, already narrowed by the query, and — unlike
+	// meetingsCatalogPath — loud about a substrate failure instead of answering
+	// a valid empty list. An app that predates it answers 404, which is what
+	// makes falling back to the catalog safe.
+	meetingsListPath = "published/meetings-list"
+
 	// meetingsSourceHeader is set by the app on every response it served out
 	// of Nextcloud Files. Its absence on a 200 means the reply came from
 	// somewhere else — a dev operator serving a local archive with no access
@@ -286,6 +293,29 @@ func redactURLish(text string) string {
 	return text[:scheme+3] + userinfo + rest[at:]
 }
 
+// meetingsTargetLabel renders a request URL for an error message or a log line:
+// the userinfo password masked, and the query string dropped entirely.
+//
+// url.Redacted() masks only the password, so before D-701 the whole query
+// survived into `GET %s: %w` and into meetingsHTTPError.URL — both of which
+// reportMeetingsError prints with %v, including on the 502 branch that
+// substrate failures take. Filter values are innocuous, but the query string is
+// where a search term would go next (D-623), and "?q=severance+package+for+Bob"
+// landing in an agent transcript or a CI log is not something to discover
+// later. Nothing downstream needs the query to explain a failure, so it is
+// dropped rather than selectively masked.
+func meetingsTargetLabel(target *url.URL) string {
+	if target == nil {
+		return ""
+	}
+	clone := *target
+	clone.RawQuery = ""
+	clone.ForceQuery = false
+	clone.Fragment = ""
+	clone.RawFragment = ""
+	return clone.Redacted()
+}
+
 // meetingsClient talks to the app's published routes through Nextcloud's AppAPI
 // proxy, authenticating as a Nextcloud user with an app password.
 //
@@ -374,13 +404,13 @@ func (c *meetingsClient) get(ctx context.Context, target *url.URL, client *http.
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("GET %s: %w", target.Redacted(), err)
+		return nil, fmt.Errorf("GET %s: %w", meetingsTargetLabel(target), err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		defer resp.Body.Close()
 		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return nil, &meetingsHTTPError{
-			URL:     target.Redacted(),
+			URL:     meetingsTargetLabel(target),
 			Status:  resp.StatusCode,
 			Snippet: strings.TrimSpace(string(snippet)),
 		}

@@ -84,7 +84,11 @@ summary in a single file. Use `+"`cassini meetings list`"+` to find the id.
 // id the caller may not read indistinguishable from one that does not exist:
 // the catalog is already filtered to the caller, so the id is simply not there.
 func (c *meetingsClient) resolveMeeting(ctx context.Context, meetingID string) (*url.URL, meetingsListing, error) {
-	listing, err := c.fetchCatalog(ctx)
+	// Same loud path as `list`. It matters more here, not less: an unreachable
+	// archive yields an empty listing, `find` then reports the id as absent, and
+	// reportMeetingsError phrases that as "no recording you can read at that id"
+	// with a permissions hint — an outage described as a denial (D-701).
+	listing, _, err := c.fetchMeetings(ctx, meetingsFilter{})
 	if err != nil {
 		return nil, meetingsListing{}, err
 	}
