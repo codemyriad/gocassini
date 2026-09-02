@@ -372,6 +372,16 @@ install_capture_companion() {
   docker cp "$WORK_DIR/companion/$CAPTURE_COMPANION_ID" "$AIO_NEXTCLOUD:/var/www/html/custom_apps/"
   docker exec -u root "$AIO_NEXTCLOUD" chown -R www-data:www-data "/var/www/html/custom_apps/$CAPTURE_COMPANION_ID"
   occ app:enable "$CAPTURE_COMPANION_ID" >/dev/null
+
+  # Talk's own recording consent is THE consent for source capture: Cassini no
+  # longer asks participants separately (docs/privacy.md). That only holds if
+  # Talk actually asks, so a capture-enabled sandbox requires it for every
+  # conversation (1 = required everywhere; 2 would leave it to moderators).
+  # Left in place when capture is later switched off — a consent prompt for
+  # recorded calls is never the wrong default. Tolerated on a Talk too old to
+  # know the key.
+  occ config:app:set spreed recording_consent --value 1 >/dev/null 2>&1 \
+    || log "Talk does not accept recording_consent; participants will see the recording indicator only"
 }
 
 reset_admin_password() {
