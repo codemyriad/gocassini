@@ -3,6 +3,7 @@ package transcribe
 import (
 	"archive/tar"
 	"compress/bzip2"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -214,21 +215,90 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 				"missing: %s", id, strings.Join(missing, ", "))
 	}
 
-	if err := os.MkdirAll(modelDir, 0o755); err != nil {
-		return ModelPaths{}, fmt.Errorf("create model dir: %w", err)
-	}
-
-	fmt.Fprintf(progress, "downloading model %s from %s\n", id, spec.URL)
-	if err := downloadAndExtract(spec.URL, modelDir, RequiredModelFileNames(id), progress); err != nil {
+	required := RequiredModelFileNames(id)
+	// One writer per model, across processes. Without the lock two downloaders
+	// can both judge the destination invalid, and the loser removes the
+	// directory the winner just promoted, while a third process loads from it.
+	// This is a file lock, so the kernel releases it when a process dies, which
+	// is what lets the next holder clean up an abandoned staging directory.
+	if err := withModelLock(cacheDir, string(id), func() error {
+		// Another process can have finished this model while this one waited.
+		if modelDirValid(modelDir, required) {
+			return nil
+		}
+		removeOrphanStaging(filepath.Join(cacheDir, "models"), string(id), progress)
+		fmt.Fprintf(progress, "downloading model %s from %s\n", id, spec.URL)
+		return downloadAndExtract(spec.URL, modelDir, required, progress)
+	}); err != nil {
 		return ModelPaths{}, fmt.Errorf("download model %s: %w", id, err)
 	}
 
-	for _, f := range requiredModelFiles(paths, spec) {
-		if !fileExists(f) {
-			return ModelPaths{}, fmt.Errorf("model file not found after extraction: %s", f)
-		}
+	if !modelDirValid(modelDir, required) {
+		return ModelPaths{}, fmt.Errorf("model %s is still incomplete after download", id)
 	}
 	return paths, nil
+}
+
+// modelLockWait bounds how long one build waits for another process to finish
+// the same model. It sits above the HTTP timeout, so a live download is never
+// abandoned, and a wedged holder cannot occupy the build worker forever.
+const modelLockWait = 35 * time.Minute
+
+// withModelLock runs fn while holding an exclusive lock for one model. The lock
+// covers staging cleanup, the free-space budget, extraction and promotion, so
+// two processes cannot each reserve the same free space or race on the
+// destination directory.
+func withModelLock(cacheDir, id string, fn func() error) error {
+	dir := filepath.Join(cacheDir, "models")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create model cache dir: %w", err)
+	}
+	lockPath := filepath.Join(dir, "."+id+".lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return fmt.Errorf("open model lock %s: %w", lockPath, err)
+	}
+	defer f.Close()
+
+	deadline := time.Now().Add(modelLockWait)
+	for {
+		lockErr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if lockErr == nil {
+			break
+		}
+		if !errors.Is(lockErr, syscall.EWOULDBLOCK) {
+			return fmt.Errorf("lock model %s: %w", id, lockErr)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf(
+				"another process has been downloading model %s for over %s; "+
+					"wait for it to finish, or select a quality tier this image bundles", id, modelLockWait)
+		}
+		time.Sleep(2 * time.Second)
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN) //nolint:errcheck
+
+	return fn()
+}
+
+// removeOrphanStaging deletes staging directories left by a download that the
+// kernel killed before its cleanup ran. The caller holds the model lock, so a
+// staging directory for this model is abandoned by definition. Each one holds
+// up to gigabytes on the volume that also stores the recordings.
+func removeOrphanStaging(modelsDir, id string, progress io.Writer) {
+	entries, err := os.ReadDir(modelsDir)
+	if err != nil {
+		return
+	}
+	prefix := ".staging-" + id + "-"
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(modelsDir, entry.Name())); err == nil {
+			fmt.Fprintf(progress, "  removed abandoned download %s\n", entry.Name())
+		}
+	}
 }
 
 // EnsureVAD returns the path of the Silero VAD model, downloading it only when
@@ -327,12 +397,16 @@ func RequiredModelFileNames(id ModelID) []string {
 	return names
 }
 
-// allNonEmpty reports whether every file exists and holds at least one byte.
-// A zero-length file is the signature of a download that died mid-write.
+// allNonEmpty reports whether every path is a regular file with at least one
+// byte in it. A zero-length file is the signature of a download that died
+// mid-write. The regular-file test matters as much: a malformed archive can
+// create a directory or a symlink named model.int8.onnx, and that would
+// otherwise promote as a valid model and poison the cache for good. Lstat, so
+// a symlink is judged as itself rather than as its target.
 func allNonEmpty(files []string) bool {
 	for _, f := range files {
-		info, err := os.Stat(f)
-		if err != nil || info.Size() == 0 {
+		info, err := os.Lstat(f)
+		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 			return false
 		}
 	}
@@ -430,9 +504,12 @@ func downloadAndExtract(url, destDir string, required []string, progress io.Writ
 		return err
 	}
 	for _, name := range required {
-		info, err := os.Stat(filepath.Join(staging, name))
+		info, err := os.Lstat(filepath.Join(staging, name))
 		if err != nil {
 			return fmt.Errorf("downloaded archive from %s has no %s", url, name)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("downloaded archive from %s has %s as %s, not a file", url, name, info.Mode().Type())
 		}
 		if info.Size() == 0 {
 			return fmt.Errorf("downloaded file %s from %s is empty", name, url)

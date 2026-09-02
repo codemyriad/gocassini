@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -250,10 +251,118 @@ func TestEnsureModelRejectsAnArchiveThatEscapesTheCache(t *testing.T) {
 	t.Cleanup(func() { knownModels[id] = original })
 
 	cacheRoot := t.TempDir()
-	if _, err := EnsureModel(cacheRoot, id, io.Discard); err == nil {
+	_, err := EnsureModel(cacheRoot, id, io.Discard)
+	if err == nil {
 		t.Fatal("EnsureModel() accepted an archive that writes outside the cache")
 	}
+	// Assert the refusal, not merely any error: "required file missing" would
+	// also fail here, and would hide a containment hole.
+	if !strings.Contains(err.Error(), "escapes the destination") {
+		t.Fatalf("error = %v, want the extractor to refuse the entry", err)
+	}
+	// The entry is ../../escaped.onnx relative to <cache>/models/<id>, so the
+	// vulnerable output is <cache>/escaped.onnx.
+	if _, err := os.Stat(filepath.Join(cacheRoot, "escaped.onnx")); err == nil {
+		t.Fatal("the archive wrote outside the model directory")
+	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(cacheRoot), "escaped.onnx")); err == nil {
-		t.Fatal("the archive wrote outside the cache directory")
+		t.Fatal("the archive wrote outside the cache root")
+	}
+}
+
+func TestEnsureModelClearsStagingLeftByAKilledDownload(t *testing.T) {
+	// SIGKILL skips every deferred cleanup, so a staging directory of several
+	// gigabytes can outlive the process on a persistent volume. The next holder
+	// of the model lock removes it.
+	const id = ModelParakeet110M
+	required := RequiredModelFileNames(id)
+	files := map[string]string{}
+	for _, name := range required {
+		files[name] = "content of " + name
+	}
+	spec := knownModels[id]
+	original := spec
+	spec.URL = serveModelArchive(t, files)
+	knownModels[id] = spec
+	t.Cleanup(func() { knownModels[id] = original })
+
+	cacheRoot := t.TempDir()
+	modelsDir := filepath.Join(cacheRoot, "models")
+	orphan := filepath.Join(modelsDir, ".staging-"+string(id)+"-abandoned")
+	if err := os.MkdirAll(orphan, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, "half-written.onnx"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := EnsureModel(cacheRoot, id, io.Discard); err != nil {
+		t.Fatalf("EnsureModel() error = %v", err)
+	}
+	if _, err := os.Stat(orphan); err == nil {
+		t.Error("the abandoned staging directory survived the next download")
+	}
+}
+
+func TestEnsureModelSerializesConcurrentDownloads(t *testing.T) {
+	// Two writers must not both judge the destination invalid: the loser would
+	// remove the directory the winner promoted, while a reader loads from it.
+	const id = ModelParakeet110M
+	required := RequiredModelFileNames(id)
+	files := map[string]string{}
+	for _, name := range required {
+		files[name] = "content of " + name
+	}
+	spec := knownModels[id]
+	original := spec
+	spec.URL = serveModelArchive(t, files)
+	knownModels[id] = spec
+	t.Cleanup(func() { knownModels[id] = original })
+
+	cacheRoot := t.TempDir()
+	var wg sync.WaitGroup
+	errs := make([]error, 4)
+	for i := range errs {
+		wg.Add(1)
+		go func(slot int) {
+			defer wg.Done()
+			_, errs[slot] = EnsureModel(cacheRoot, id, io.Discard)
+		}(i)
+	}
+	wg.Wait()
+	for slot, err := range errs {
+		if err != nil {
+			t.Errorf("concurrent EnsureModel %d error = %v", slot, err)
+		}
+	}
+	if !modelDirValid(filepath.Join(cacheRoot, "models", string(id)), required) {
+		t.Fatal("the model directory is not valid after concurrent downloads")
+	}
+}
+
+func TestEnsureModelRejectsADirectoryNamedLikeTheModelFile(t *testing.T) {
+	// An archive entry of "model.int8.onnx/child" makes the extractor create a
+	// directory with the name of the required file. A size test alone accepts
+	// it, and the cache is persistent, so it would poison that tier for good.
+	const id = ModelParakeet110M
+	spec := knownModels[id]
+	original := spec
+	spec.URL = serveModelArchive(t, map[string]string{
+		"model.int8.onnx/child": "not the model",
+		"tokens.txt":            "tokens",
+	})
+	knownModels[id] = spec
+	t.Cleanup(func() { knownModels[id] = original })
+
+	cacheRoot := t.TempDir()
+	_, err := EnsureModel(cacheRoot, id, io.Discard)
+	if err == nil {
+		t.Fatal("EnsureModel() accepted a directory in place of the model file")
+	}
+	if !strings.Contains(err.Error(), "not a file") {
+		t.Fatalf("error = %v, want a refusal that names the wrong file type", err)
+	}
+	if modelDirComplete(filepath.Join(cacheRoot, "models", string(id))) {
+		t.Error("a rejected download was promoted anyway")
 	}
 }
