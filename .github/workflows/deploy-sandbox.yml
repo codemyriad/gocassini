@@ -16,6 +16,14 @@ on:
         description: Only re-register Cassini; skip HaRP/daemon setup
         type: boolean
         default: false
+      source_capture:
+        description: Enable participant source-audio capture and install the cassini_capture companion (needs image_tag; default off)
+        type: boolean
+        default: false
+      source_audio_ingest:
+        description: Let uploaded captures reach transcripts (experimental; default off)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -99,6 +107,8 @@ jobs:
           SANDBOX_NC_ADMIN_PASSWORD: ${{ secrets.SANDBOX_NC_ADMIN_PASSWORD }}
           IMAGE_REF: ${{ steps.image.outputs.ref }}
           REGISTER_ONLY: ${{ inputs.register_only }}
+          SOURCE_CAPTURE: ${{ inputs.source_capture }}
+          SOURCE_AUDIO_INGEST: ${{ inputs.source_audio_ingest }}
         run: |
           set -euo pipefail
           args=()
@@ -108,6 +118,16 @@ jobs:
           fi
           if [ "$REGISTER_ONLY" = "true" ]; then
             args+=(--register-only)
+          fi
+          # Source capture is a per-deploy decision and the switches are passed
+          # explicitly either way, so a deploy without them also turns them OFF
+          # on an instance where a previous deploy turned them on.
+          if [ "$SOURCE_CAPTURE" = "true" ]; then
+            [ -n "$IMAGE_REF" ] || { echo "source_capture needs image_tag: the companion is built from this checkout" >&2; exit 1; }
+            args+=(--with-capture)
+          fi
+          if [ "$SOURCE_AUDIO_INGEST" = "true" ]; then
+            args+=(--with-ingest)
           fi
 
           # The admin password is read from stdin into the remote env so it never

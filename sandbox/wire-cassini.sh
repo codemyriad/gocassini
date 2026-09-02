@@ -60,6 +60,14 @@ HARP_FRP_PORT="${HARP_FRP_PORT:-8782}"     # frpc tunnel the ExApp dials back on
 
 # Where to source Cassini from: "store" (latest published release) or "image".
 CASSINI_INSTALL_SOURCE="${CASSINI_INSTALL_SOURCE:-store}"
+# Source-side audio capture (docs/source-audio-capture.md). Both switches are
+# passed to AppAPI at registration exactly as a production install would set
+# them, and both default to off: this is the same dogfood instance people keep
+# real recordings in, and collecting participants' microphones is a decision an
+# operator makes on purpose, per deploy, not something a script turns on.
+CASSINI_SOURCE_CAPTURE="${CASSINI_SOURCE_CAPTURE:-0}"
+CASSINI_SOURCE_AUDIO_INGEST="${CASSINI_SOURCE_AUDIO_INGEST:-0}"
+CAPTURE_COMPANION_ID="cassini_capture"
 CASSINI_EXAPP_IMAGE="${CASSINI_EXAPP_IMAGE:-ghcr.io/codemyriad/gocassini:latest}"
 CASSINI_APPSTORE_ID="${CASSINI_APPSTORE_ID:-gocassini}"
 CASSINI_APPSTORE_CATALOG_URL="${CASSINI_APPSTORE_CATALOG_URL:-https://apps.nextcloud.com/api/v1/appapi_apps.json}"
@@ -80,6 +88,8 @@ while [[ $# -gt 0 ]]; do
     --image)         CASSINI_EXAPP_IMAGE="$2"; CASSINI_INSTALL_SOURCE=image; shift 2 ;;
     --register-only) REGISTER_ONLY=true; shift ;;
     --reset)         RESET_HARP=true; shift ;;
+    --with-capture)  CASSINI_SOURCE_CAPTURE=1; shift ;;
+    --with-ingest)   CASSINI_SOURCE_AUDIO_INGEST=1; shift ;;
     -h|--help)
       cat <<EOF
 Usage: sandbox/wire-cassini.sh [options]
@@ -90,6 +100,11 @@ Installs/updates Cassini on an already-provisioned Nextcloud AIO host
 Options:
   --from-store        Install the latest published release from the App Store (default)
   --image IMAGE       Register this container image instead of the store release
+  --with-capture      Enable participant source-audio capture and install the
+                      cassini_capture companion app (needs --image: the companion
+                      is built from this checkout and must match the image)
+  --with-ingest       Let uploaded captures reach transcripts (implies nothing
+                      about --with-capture; see docs/source-audio-capture.md)
   --register-only     Only (re-)register Cassini; skip HaRP/daemon setup
   --reset             Rebuild the HaRP container + daemon from scratch (use after
                       a HaRP key change or a broken/half-configured daemon)
@@ -278,6 +293,8 @@ register_cassini() {
     --env "CASSINI_TALK_SIGNALING_INTERNAL_SECRET=$int_secret" \
     --env "CASSINI_TALK_BACKEND_URL=$PUBLIC_URL" \
     --env "CASSINI_PUBLISH_SINK=${CASSINI_PUBLISH_SINK:-nextcloud-files}" \
+    --env "CASSINI_SOURCE_CAPTURE=$CASSINI_SOURCE_CAPTURE" \
+    --env "CASSINI_SOURCE_AUDIO_INGEST=$CASSINI_SOURCE_AUDIO_INGEST" \
     --wait-finish || true
   # --wait-finish can outlive its window on first deploy; ensure enabled.
   occ app_api:app:enable "$CASSINI_APPSTORE_ID" || true
@@ -307,6 +324,56 @@ handoff_talk_recording() {
   occ config:app:set spreed call_recording --value yes >/dev/null
 }
 
+# install_capture_companion installs or retires the native companion app that
+# delivers the capture payload to Talk's call page. The ExApp cannot do this
+# for itself: it reaches Nextcloud over HTTP, never occ, and a native app can
+# only be placed by something with the filesystem.
+#
+# The payload is taken from the RUNNING ExApp container rather than built here.
+# That keeps the sandbox free of a Node toolchain, and it makes the companion
+# carry byte-for-byte the script the image serves at /ui/capture-payload.js —
+# the harness leg proves that identity and this deploy inherits it.
+#
+# Lockstep is why this needs --image. The companion manifest must carry the
+# same version as the ExApp's (scripts/test-info-schema.sh enforces it in CI),
+# and only a checkout that produced the image is guaranteed to match it. A
+# store release was cut from some other commit, so its version and this
+# checkout's companion would drift the first time they differed.
+install_capture_companion() {
+  if [[ "$CASSINI_SOURCE_CAPTURE" != "1" ]]; then
+    # Backing out completely means the companion goes too: it is a separate
+    # app that outlives the ExApp's own switch and keeps injecting the payload
+    # into every Talk call page until it is disabled (docs/privacy.md).
+    if occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${CAPTURE_COMPANION_ID}:"; then
+      log "Source capture is off; disabling $CAPTURE_COMPANION_ID so Talk pages stop carrying the payload"
+      occ app:disable "$CAPTURE_COMPANION_ID" >/dev/null 2>&1 || true
+    fi
+    return 0
+  fi
+  [[ "$CASSINI_INSTALL_SOURCE" == "image" ]] \
+    || die "--with-capture needs --image: the $CAPTURE_COMPANION_ID companion is built from this checkout and must be the same version as the deployed ExApp"
+
+  log "Installing $CAPTURE_COMPANION_ID from the payload the deployed image serves"
+  local c="nc_app_$CASSINI_APPSTORE_ID"
+  local payload="$WORK_DIR/capture-payload.js"
+  docker exec "$c" cat /opt/cassini/cassini-app/dist/capture/capture-payload.js >"$payload" 2>/dev/null \
+    || die "Could not read the capture payload from '$c'. Is the ExApp registered and running, and does this image carry it?"
+  [[ -s "$payload" ]] || die "The capture payload read from '$c' is empty"
+
+  "$SCRIPT_DIR/../scripts/build-capture-companion.sh" \
+    --payload "$payload" \
+    --staging "$WORK_DIR/companion" \
+    --output "$WORK_DIR/$CAPTURE_COMPANION_ID.tar.gz" >"$WORK_DIR/build-companion.log" 2>&1 \
+    || { cat "$WORK_DIR/build-companion.log" >&2; die "Building the $CAPTURE_COMPANION_ID package failed"; }
+
+  # Replace, never merge: a leftover file from an older version is exactly
+  # the kind of drift the lockstep check exists to prevent.
+  docker exec -u root "$AIO_NEXTCLOUD" rm -rf "/var/www/html/custom_apps/$CAPTURE_COMPANION_ID"
+  docker cp "$WORK_DIR/companion/$CAPTURE_COMPANION_ID" "$AIO_NEXTCLOUD:/var/www/html/custom_apps/"
+  docker exec -u root "$AIO_NEXTCLOUD" chown -R www-data:www-data "/var/www/html/custom_apps/$CAPTURE_COMPANION_ID"
+  occ app:enable "$CAPTURE_COMPANION_ID" >/dev/null
+}
+
 reset_admin_password() {
   [[ -n "${SANDBOX_NC_ADMIN_PASSWORD:-}" ]] || { log "SANDBOX_NC_ADMIN_PASSWORD unset; leaving admin password as-is"; return 0; }
   log "Reconciling admin password to SANDBOX_NC_ADMIN_PASSWORD"
@@ -327,6 +394,13 @@ verify() {
     printf '         handle /exapps/* { reverse_proxy 127.0.0.1:%s }\n' "$HARP_HTTP_PORT" >&2
   fi
   occ app_api:app:list 2>/dev/null | grep -i "$CASSINI_APPSTORE_ID" || true
+  if [[ "$CASSINI_SOURCE_CAPTURE" == "1" ]]; then
+    if occ app:list 2>/dev/null | sed -n '/^Enabled:/,/^Disabled:/p' | grep -q "  - ${CAPTURE_COMPANION_ID}:"; then
+      printf '  ok   %s enabled; participants opt in per docs/source-audio-capture.md "Trying it"\n' "$CAPTURE_COMPANION_ID"
+    else
+      printf '  FAIL %s is not enabled\n' "$CAPTURE_COMPANION_ID" >&2
+    fi
+  fi
 }
 
 # --- Run ---------------------------------------------------------------------
@@ -339,6 +413,7 @@ fi
 resolve_info_xml
 register_cassini
 handoff_talk_recording
+install_capture_companion
 reset_admin_password
 verify
 
@@ -349,6 +424,7 @@ Cassini wired onto AIO.
   Nextcloud:  $PUBLIC_URL
   Cassini:    open the "Cassini" entry in the top bar (admins get the operator surface)
   Source:     $CASSINI_INSTALL_SOURCE
+  Capture:    collect=$CASSINI_SOURCE_CAPTURE ingest=$CASSINI_SOURCE_AUDIO_INGEST  (docs/source-audio-capture.md)
   State dir:  $STATE_DIR  (HaRP shared key)
   Talk secret: self-generated by Cassini (D-447), registered in spreed automatically
 EOF

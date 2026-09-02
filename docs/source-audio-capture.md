@@ -298,6 +298,10 @@ building the call page's initial state — the operator logs
 lands. Add `CASSINI_SOURCE_AUDIO_INGEST=1` as well if you want the uploaded
 audio to reach a transcript rather than only be stored.
 
+On the demo sandbox, steps 1 and 2 are one command or one workflow dispatch:
+`sandbox/wire-cassini.sh --image … --with-capture`, or the `Deploy Sandbox`
+workflow with `source_capture` set. See `sandbox/README.md`.
+
 **3. Opt in, per participant.** There is no UI for this yet. On any Nextcloud
 page in that browser:
 

@@ -126,6 +126,30 @@ sandbox/wire-cassini.sh --image ghcr.io/codemyriad/gocassini:sha-<shortsha>  # t
 sandbox/wire-cassini.sh --register-only                                      # re-register only
 ```
 
+### Source capture on the sandbox
+
+Participant source-audio capture ([docs/source-audio-capture.md](../docs/source-audio-capture.md))
+is **off** on every deploy unless asked for, and both of its switches are passed
+to AppAPI explicitly each time, so a deploy without them also turns them off
+again on a host where an earlier deploy had them on.
+
+```bash
+sandbox/wire-cassini.sh --image ghcr.io/codemyriad/gocassini:sha-<shortsha> --with-capture   # collect only
+sandbox/wire-cassini.sh --image ghcr.io/codemyriad/gocassini:sha-<shortsha> --with-capture --with-ingest
+```
+
+`--with-capture` also installs the `cassini_capture` companion app, built around
+the payload read from the running ExApp container so the two are byte-identical,
+and it needs `--image` for that reason: the companion must carry the same version
+as the ExApp, and only the checkout that produced the image is guaranteed to.
+Without `--with-capture` an enabled companion is disabled again, which is what
+backing the feature out completely requires.
+
+From GitHub, the `Deploy Sandbox` workflow exposes the same two choices as the
+`source_capture` and `source_audio_ingest` inputs. Participants still opt in
+themselves, per "Trying it" in the capture document; nothing is collected until
+they do.
+
 The HaRP shared key persists in a fixed **`/opt/cassini-aio`**
 (override with `CASSINI_AIO_STATE`), **not** in the repo. It must be a single
 shared path — not a per-user home — so every operator and CI use the *same* HaRP
