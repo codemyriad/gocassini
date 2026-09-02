@@ -266,6 +266,13 @@ validate_meetings_list_contract() {
   code="$(curl -sS "${AUTH[@]}" -o /dev/null -w '%{http_code}' "$MEETINGS_LIST_URL?from=nonsense")" \
     || fail "cannot probe the meetings list with a malformed date"
   [[ "$code" == 400 ]] || fail "a malformed date returned HTTP $code, expected 400"
+
+  # Say so on success. Every assertion above exits on failure, so silence here
+  # reads in a log exactly like the function never having been called -- which
+  # is precisely how these assertions sat green without running once, before
+  # they were split out of the publish path. A gate you cannot audit from its
+  # own output is one you end up auditing by archaeology.
+  success "✓ meetings-list contract validated through the AppAPI proxy (query forwarded, filter applied, bad query refused)"
 }
 
 # A user who was not in the room must see nothing and be able to fetch nothing.
