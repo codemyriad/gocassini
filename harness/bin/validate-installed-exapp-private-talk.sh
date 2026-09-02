@@ -209,39 +209,63 @@ validate_files_archive_entry() {
   validate_meetings_list_endpoint "$label" "$job_id" || return 1
 }
 
-# The meetings-list endpoint (D-701), asserted against the REAL AppAPI proxy.
+# The publish-dependent half of the meetings-list assertions: a meeting that
+# just published is listed to the caller who was in the room.
+#
+# Everything about the endpoint that does NOT need a published recording lives
+# in validate_meetings_list_contract instead, because this function only runs on
+# the publish path — and the CPU CI job runs with --expect-build-blocked, where
+# nothing publishes and nothing here executes.
+validate_meetings_list_endpoint() {
+  local label="$1" job_id="$2"
+  local listing="$LOG_DIR/meetings-list-${label}.json"
+
+  fetch_json "$MEETINGS_LIST_URL" "$listing" false || return 1
+  jq -e --arg id "$job_id" '[.meetings[] | select(.id == $id)] | length == 1' "$listing" >/dev/null || return 1
+}
+
+# The meetings-list endpoint's wire contract (D-701), asserted against the REAL
+# AppAPI proxy and needing NO published recording — so it runs on every PR,
+# including the --expect-build-blocked variant where nothing is ever published.
 #
 # The load-bearing assertion is the filtered one. Nothing else Cassini serves
 # through the proxy carries a query string, so that AppAPI forwards it was only
-# ever established by reading its ExAppProxyController -- not by observing it on
-# a supported Nextcloud. A stripped query would be invisible in every unit test
-# and would silently turn every filtered request into an unfiltered one.
-validate_meetings_list_endpoint() {
-  local label="$1" job_id="$2"
-  local listing="$LOG_DIR/meetings-list-${label}.json" code
+# ever established by reading its ExAppProxyController -- never by observing it
+# on a supported Nextcloud. A stripped query is invisible to every unit test in
+# the repo and would silently turn each filtered request into an unfiltered one,
+# which fails OPEN: the caller gets more meetings than they asked for and
+# nothing says so.
+validate_meetings_list_contract() {
+  local listing="$LOG_DIR/meetings-list-contract.json" code
 
-  # Unfiltered: the caller who was in the room sees their meeting here, exactly
-  # as they do in the catalog.
-  fetch_json "$MEETINGS_LIST_URL" "$listing" false || return 1
-  jq -e --arg id "$job_id" '[.meetings[] | select(.id == $id)] | length == 1' "$listing" >/dev/null || return 1
-  jq -e '.version == "cassini.viewer.catalog.v1"' "$listing" >/dev/null || return 1
-  # An unfiltered listing carries no filter echo, so a client cannot mistake one.
-  jq -e 'has("filter") | not' "$listing" >/dev/null || return 1
+  # Unfiltered: a valid envelope, and no filter echo for a client to misread.
+  fetch_json "$MEETINGS_LIST_URL" "$listing" false || fail "cannot fetch the meetings list"
+  jq -e '.version == "cassini.viewer.catalog.v1"' "$listing" >/dev/null \
+    || fail "meetings list did not carry the catalog envelope version"
+  jq -e '.meetings | type == "array"' "$listing" >/dev/null \
+    || fail "meetings list did not carry a meetings array"
+  jq -e 'has("filter") | not' "$listing" >/dev/null \
+    || fail "an unfiltered meetings list echoed a filter"
 
-  # A range that predates every recording must come back empty AND echo the
-  # bounds the server parsed. Both halves matter: the echo proves the query
-  # string arrived, and the empty list proves it was applied. A stripped query
-  # would return the full listing with no echo, failing both.
-  fetch_json "$MEETINGS_LIST_URL?from=1970-01-01&to=1970-01-02" "$listing" false || return 1
-  jq -e '.meetings | length == 0' "$listing" >/dev/null || return 1
-  jq -e '.filter.from == "1970-01-01 00:00:00"' "$listing" >/dev/null || return 1
-  # A bare `to` date covers the whole day, rather than stopping at its midnight.
-  jq -e '.filter.to == "1970-01-02 23:59:59"' "$listing" >/dev/null || return 1
+  # A range predating every recording must come back empty AND echo the bounds
+  # the server parsed. Both halves matter: the echo proves the query string
+  # arrived, the empty list proves it was applied. A stripped query returns the
+  # full listing with no echo and fails both, so they cannot pass by accident.
+  fetch_json "$MEETINGS_LIST_URL?from=1970-01-01&to=1970-01-02" "$listing" false \
+    || fail "cannot fetch a date-filtered meetings list"
+  jq -e '.meetings | length == 0' "$listing" >/dev/null \
+    || fail "a 1970 date range returned meetings; the query string may not have reached the app"
+  jq -e '.filter.from == "1970-01-01 00:00:00"' "$listing" >/dev/null \
+    || fail "the app did not echo the parsed 'from' bound; the query string may have been stripped by the proxy"
+  # A bare `to` date covers its whole day rather than stopping at midnight.
+  jq -e '.filter.to == "1970-01-02 23:59:59"' "$listing" >/dev/null \
+    || fail "the app did not extend a bare 'to' date to the end of its day"
 
-  # A caller error is 400, not a 502 and not an empty 200 -- an agent has to be
+  # A caller error is 400 -- not a 502, and not an empty 200. An agent has to be
   # able to tell "fix your query" from "retry later".
-  code="$(curl -sS "${AUTH[@]}" -o /dev/null -w '%{http_code}' "$MEETINGS_LIST_URL?from=nonsense")" || return 1
-  [[ "$code" == 400 ]] || return 1
+  code="$(curl -sS "${AUTH[@]}" -o /dev/null -w '%{http_code}' "$MEETINGS_LIST_URL?from=nonsense")" \
+    || fail "cannot probe the meetings list with a malformed date"
+  [[ "$code" == 400 ]] || fail "a malformed date returned HTTP $code, expected 400"
 }
 
 # A user who was not in the room must see nothing and be able to fetch nothing.
@@ -495,6 +519,7 @@ log "Validating installed Cassini ExApp at $PROXY_URL"
 log "Evidence directory: $LOG_DIR"
 ensure_nextcloud_host_trusted "$(base_url_host)"
 curl -fsS "$PROXY_URL/api/v1/welcome" | grep -q '"version":1' || fail "welcome route did not return version=1"
+validate_meetings_list_contract
 status_code="$(curl -sS "${AUTH[@]}" -o "$LOG_DIR/operator-status.json" -w '%{http_code}' "$PROXY_URL/operator/status")"
 if (( EXPECT_BUILD_BLOCKED )); then
   [[ "$status_code" == "503" ]] || fail "GPU-less operator status returned HTTP $status_code, expected 503"
