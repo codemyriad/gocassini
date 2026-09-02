@@ -19,12 +19,28 @@ func resetStorageMode(t *testing.T) {
 // setStorageMode arranges a resolved mode and points the singleton at a
 // throwaway settings file, so a test that triggers a persist does not write
 // into the repo.
+//
+// It does NOT touch ncAccessSubstrate. The default model's read path requires
+// both a resolved mode and a substrate the last probe agreed with, so a test
+// about reading has to arrange both — see setUsableStorageMode.
 func setStorageMode(t *testing.T, accessControlled bool) string {
 	t.Helper()
 	resetStorageMode(t)
 	path := filepath.Join(t.TempDir(), storageSettingsFileName)
 	ncStorage.setPath(path)
 	ncStorage.set(accessControlled, storageModeSourceConfigured)
+	return path
+}
+
+// setUsableStorageMode is setStorageMode plus a substrate the preflight proved:
+// the shape of a deployment that is actually running in that mode.
+func setUsableStorageMode(t *testing.T, accessControlled bool) string {
+	t.Helper()
+	path := setStorageMode(t, accessControlled)
+	ncAccessSubstrate.reset()
+	t.Cleanup(ncAccessSubstrate.reset)
+	ncAccessSubstrate.markApplicable()
+	ncAccessSubstrate.succeed()
 	return path
 }
 

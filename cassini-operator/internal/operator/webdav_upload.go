@@ -268,8 +268,7 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 		}
 
 		// Which identity the bytes are fetched as is the whole access model
-		// (D-616), so the condition is written to fail closed in both of the
-		// ways it can be wrong.
+		// (D-616):
 		//
 		//	access controlled   read AS THE CALLER. Nextcloud's own advanced
 		//	                    ACLs decide; a meeting they may not read 404s.
@@ -278,14 +277,13 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 		//	                    as the caller does not restrict the archive — it
 		//	                    hides all of it, from everyone.
 		//
-		// The owner path is taken only when the mode has actually been RESOLVED
-		// and resolved to default. An unresolved mode — a container that has
-		// restarted but not yet seen an enabled edge — keeps the per-caller
-		// path, because guessing wrong in that direction would hand every
-		// account the whole archive, and guessing wrong in the other only shows
-		// an empty list until the preflight runs.
+		// ncStorageServesAsOwner is where the condition lives, because it is not
+		// just "which mode": it also requires the last probe to have AGREED that
+		// nothing is mounted over the canonical path. Everything else here
+		// treats the per-caller path as the default, which is the direction that
+		// fails closed.
 		readAs := caller
-		if accessControlled, resolved := ncStorage.mode(); resolved && !accessControlled {
+		if ncStorageServesAsOwner() {
 			readAs = ncRecordingsOwner
 		}
 

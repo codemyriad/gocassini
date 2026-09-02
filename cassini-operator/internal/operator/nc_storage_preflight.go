@@ -52,6 +52,13 @@ func (c ExAppConfig) preflightNCStorage(ctx context.Context, logger *log.Logger)
 // inside the same critical section that performed the change — so no publish
 // can observe the moved archive under the old mode.
 func (c ExAppConfig) preflightNCStorageLocked(ctx context.Context, client *http.Client, logger *log.Logger) {
+	// This run's verdict is this run's. Without it a degradation recorded on an
+	// earlier run survives every later one — succeed() will not overwrite it —
+	// so installing the missing app, or switching the mode from the Setup tab,
+	// leaves publishing and recording refused with the old reason still on
+	// /status.
+	ncAccessSubstrate.beginRun()
+
 	probe, err := c.probeNCStorage(ctx, client, logger)
 	if err != nil {
 		logger.Printf("nc storage: %v — set %s to an account in the \"admin\" group; storage preflight skipped", err, envNCAdminUser)

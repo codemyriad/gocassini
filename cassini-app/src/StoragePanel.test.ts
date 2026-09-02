@@ -28,11 +28,19 @@ describe("StoragePanel", () => {
     expect(storagePanelSource).toContain("disabled={option.active || !option.available || switching}");
   });
 
-  it("leaves the mode alone when a switch fails, and says the mode is unchanged", () => {
-    // The catch must NOT write `status`: the operator moves nothing it cannot
-    // finish, so the buttons have to snap back to the mode really in force.
+  it("re-reads the mode after a failed switch instead of claiming nothing changed", () => {
+    // A transition that fails AFTER moving the archive HAS changed the mode the
+    // operator is using, and its own message says so. Asserting "the mode was
+    // not changed" there would contradict the sentence printed beneath it.
     expect(storagePanelSource).toContain("switchError = asMessage(error);");
-    expect(storagePanelSource).toContain("The storage mode was not changed.");
+    expect(storagePanelSource).toContain("Switching the storage mode failed.");
+    expect(storagePanelSource).not.toContain("The storage mode was not changed.");
+    // The catch block re-reads before it finishes.
+    const catchBlock = storagePanelSource.slice(
+      storagePanelSource.indexOf("switchError = asMessage(error);"),
+      storagePanelSource.indexOf("} finally {", storagePanelSource.indexOf("switchError = asMessage(error);")),
+    );
+    expect(catchBlock).toContain("operatorClient.getStorage()");
   });
 
   it("renders the operator's own words rather than copy of its own", () => {

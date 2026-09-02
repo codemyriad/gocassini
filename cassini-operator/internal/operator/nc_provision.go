@@ -544,6 +544,24 @@ func (f gfFolder) groupPerms(group string) (int, bool) {
 	return int(perms), true
 }
 
+// anyGroupMapped reports whether ANY group maps to this folder, which is what
+// decides whether it is mounted into anybody's Files — and therefore whether it
+// shadows a same-named home directory (D-660, D-616).
+//
+// Deliberately not "are Cassini's own two mappings there": an administrator can
+// map any group they like, and a folder mounted through some third group wins
+// the canonical path exactly as hard. The question the default model needs
+// answered is physical, not about Cassini's topology.
+func (f gfFolder) anyGroupMapped() bool {
+	var groups map[string]json.RawMessage
+	if err := json.Unmarshal(f.Groups, &groups); err != nil {
+		// No mappings serializes as `[]`, which fails this decode. Any other
+		// unparseable shape is not evidence of a mapping either.
+		return false
+	}
+	return len(groups) > 0
+}
+
 func (f gfFolder) hasGroup(group string) bool {
 	var groups map[string]json.RawMessage
 	if err := json.Unmarshal(f.Groups, &groups); err != nil {

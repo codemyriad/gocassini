@@ -114,17 +114,25 @@ func (c ExAppConfig) switchStorageMode(ctx context.Context, enableAccessControl 
 		return result, err
 	}
 
-	if path := ncStorage.settingsPath(); path != "" {
-		if err := SaveStorageSettings(path, enableAccessControl); err != nil {
-			// The bytes have already moved. Refusing now would leave the archive
-			// in the new place under the old mode, which is worse than saying
-			// what happened — so this is reported, not swallowed, and the caller
-			// turns it into a visible error the administrator can act on.
-			return result, fmt.Errorf("the archive was moved, but the new storage mode could not be saved to %s: %w — set it again once the volume is writable, or the next enable will move it back", path, err)
-		}
-	}
+	// The archive has moved, so this process must operate as the new mode from
+	// here on whatever happens to the file — a running operator that keeps
+	// believing the old mode would write the next recording to the place the
+	// recordings just left. Set it BEFORE the persist, and let the persist
+	// failure be reported rather than allowed to leave memory disagreeing with
+	// the bytes.
 	ncStorage.set(enableAccessControl, storageModeSourceConfigured)
 	result.Mode = storageModeName(enableAccessControl)
+
+	if path := ncStorage.settingsPath(); path != "" {
+		if err := SaveStorageSettings(path, enableAccessControl); err != nil {
+			// Reported, not swallowed: the mode is right for this process but
+			// will be re-derived on the next enable, which could move the
+			// archive straight back. Refresh the record first so /status
+			// describes the archive as it now is.
+			c.preflightNCStorageLocked(ctx, client, logger)
+			return result, fmt.Errorf("the archive was moved and Cassini is using the new mode, but it could not be saved to %s: %w — set it again once the volume is writable, or the next enable may move it back", path, err)
+		}
+	}
 
 	// Re-run the preflight in the same critical section so /status, /setup and
 	// the publish gate describe the archive as it is NOW, rather than as it was
@@ -207,20 +215,22 @@ func (c ExAppConfig) moveArchiveIntoTeamFolder(ctx context.Context, client *http
 // moving.
 func (c ExAppConfig) moveArchiveOutOfTeamFolder(ctx context.Context, client *http.Client, probe ncStorageProbe, logger *log.Logger) (storageTransitionResult, error) {
 	result := storageTransitionResult{SourceRoot: ncRecordingsRoot, DestinationRoot: ncRecordingsRoot}
+	staging := ncStorageStagingRoot + "/Recordings"
 
 	if !probe.FolderMounted {
-		// Nothing is mounted over the canonical path, so this instance is
-		// already storing recordings the default way and only the flag is out
-		// of step. Make the tree and stop — moving nothing is the correct
-		// amount of moving.
-		if err := c.mkcolRecordingsTree(ctx, client); err != nil {
-			return result, err
-		}
-		logger.Printf("nc storage: opted out of access control; no %q Team folder is mounted, so nothing had to be moved", ncRecordingsMount)
-		return result, nil
+		// Nothing is mounted over the canonical path — but that is TWO
+		// situations, and only one of them means there is nothing to do.
+		//
+		// The other is an opt-out that died between unmapping the folder and
+		// carrying the archive back: the folder is unmounted, so it looks
+		// finished, while every recording is still sitting under the staging
+		// name. Reporting success there writes the flag and leaves the archive
+		// invisible, and — because the mode now matches — the no-op branch in
+		// the handler refuses to let anybody try again. So finish the move
+		// before concluding there was none.
+		return c.restoreFromStaging(ctx, client, staging, result, logger)
 	}
 
-	staging := ncStorageStagingRoot + "/Recordings"
 	for _, dir := range recordingsTreeDirs(staging) {
 		if err := c.davMkcol(ctx, client, ncRecordingsOwner, dir); err != nil {
 			return result, fmt.Errorf("mkcol %s: %w", dir, err)
@@ -268,25 +278,42 @@ func (c ExAppConfig) moveArchiveOutOfTeamFolder(ctx context.Context, client *htt
 		result.UnmappedGroups = append(result.UnmappedGroups, group)
 	}
 
-	// 4. Back to the canonical path, one leaf at a time rather than by renaming
-	//    the staging directory onto it.
-	//
-	//    Renaming is the obvious move and it is the wrong one: `Cassini` in the
-	//    service account's home is not reliably free. A previous opt-in leaves a
-	//    server-renamed `Cassini (N)` behind, an administrator may have made one
-	//    by hand, and a directory MOVE onto an existing destination either 412s
-	//    (leaving the whole archive stranded under the staging name) or — with
-	//    Overwrite — DELETES the destination tree first. Per-leaf moves merge
-	//    into whatever is there, and a genuine name collision fails as one
-	//    recording rather than as the archive.
+	// 4. Back to the canonical path.
+	return c.restoreFromStaging(ctx, client, staging, result, logger)
+}
+
+// restoreFromStaging carries the archive from the staging tree back to the
+// canonical path, one leaf at a time rather than by renaming the directory onto
+// it.
+//
+// Renaming is the obvious move and it is the wrong one: `Cassini` in the
+// service account's home is not reliably free. A previous opt-in leaves a
+// server-renamed `Cassini (N)` behind, an administrator may have made one by
+// hand, and a directory MOVE onto an existing destination either 412s (leaving
+// the whole archive stranded under the staging name) or — with Overwrite —
+// DELETES the destination tree first. Per-leaf moves merge into whatever is
+// there, and a genuine name collision fails as one recording rather than as the
+// archive.
+//
+// It is also the resume point. Called with nothing staged it just makes the
+// canonical collections, so the opt-out's "nothing was mounted" path and its
+// final step are the same code — which is what makes re-running an interrupted
+// opt-out finish it instead of declaring it done.
+func (c ExAppConfig) restoreFromStaging(ctx context.Context, client *http.Client, staging string, result storageTransitionResult, logger *log.Logger) (storageTransitionResult, error) {
 	for _, dir := range recordingsTreeDirs(ncRecordingsRoot) {
 		if err := c.davMkcol(ctx, client, ncRecordingsOwner, dir); err != nil {
 			return result, fmt.Errorf("mkcol %s (the recordings are safe, in %q): %w", dir, staging, err)
 		}
 	}
-	if _, err := c.moveMeetings(ctx, client, staging+"/meetings", ncRecordingsRoot+"/meetings", false, false, logger); err != nil {
+	restored, err := c.moveMeetings(ctx, client, staging+"/meetings", ncRecordingsRoot+"/meetings", false, false, logger)
+	if err != nil {
 		result.LeftoverSource = ncStorageStagingRoot
 		return result, fmt.Errorf("%w — the recordings are safe under %q and the switch can be re-run", err, ncStorageStagingRoot)
+	}
+	// A resumed opt-out moved nothing out of the folder this time round, so the
+	// count it reports is what it carried back.
+	if result.MeetingsMoved == 0 {
+		result.MeetingsMoved = restored
 	}
 	if _, err := c.mergeCatalogInto(ctx, client, staging+"/catalog.json", ncRecordingsRoot+"/catalog.json", false, logger); err != nil {
 		result.LeftoverSource = ncStorageStagingRoot
@@ -299,7 +326,7 @@ func (c ExAppConfig) moveArchiveOutOfTeamFolder(ctx context.Context, client *htt
 		result.LeftoverSource = left
 	}
 
-	logger.Printf("nc storage: opted out of access control — moved %d recordings out of the %q Team folder into %q's own %s", result.MeetingsMoved, ncRecordingsMount, ncRecordingsOwner, ncRecordingsRoot)
+	logger.Printf("nc storage: default storage is in place at %q's own %s (%d recordings carried back from %q)", ncRecordingsOwner, ncRecordingsRoot, restored, ncStorageStagingRoot)
 	return result, nil
 }
 
@@ -506,7 +533,16 @@ func (c ExAppConfig) findStrandedRecordingsRoot(ctx context.Context, client *htt
 	}
 	for _, candidate := range candidates {
 		root := candidate + "/Recordings"
-		if _, ok, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, root); err == nil && ok {
+		_, ok, err := c.davPropfindChildren(ctx, client, ncRecordingsOwner, root)
+		if err != nil {
+			// A failed look is not "there is no archive here". Swallowing it
+			// would let the opt-in complete having moved nothing, write the
+			// flag — and then the handler's no-op branch refuses to re-run the
+			// switch, because the mode already matches. The recordings would
+			// stay in the stranded tree with nothing left to notice them.
+			return "", fmt.Errorf("inspect %s: %w", root, err)
+		}
+		if ok {
 			return root, nil
 		}
 	}

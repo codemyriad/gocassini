@@ -92,7 +92,7 @@ func TestAccessControlledPublishStillWritesTheLeafACL(t *testing.T) {
 // account's home, so reading as the caller does not restrict the archive — it
 // hides all of it from everyone.
 func TestDefaultModeProxyReadsAsTheServiceAccount(t *testing.T) {
-	setStorageMode(t, false)
+	setUsableStorageMode(t, false)
 	catalog := `{"version":"cassini.viewer.catalog.v1","meetings":[` +
 		`{"id":"a","audioPath":"./meetings/JOB1.opus"},{"id":"b","audioPath":"./meetings/JOB2.opus"}]}`
 	var catalogGetAs, opusGetAs string
@@ -139,31 +139,68 @@ func TestDefaultModeProxyReadsAsTheServiceAccount(t *testing.T) {
 	}
 }
 
-// The fail-open guard. Between a container restart and the next enabled edge
-// the mode is unresolved, and taking the owner path there would hand every
-// account the whole archive. Unresolved must behave exactly like access
-// control: read as the caller, and let Nextcloud decide.
-func TestUnresolvedModeProxyStillReadsAsTheCaller(t *testing.T) {
-	resetStorageMode(t)
-	var opusGetAs string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		opusGetAs = davUserOf(r.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
-	proxy := aclProxyConfig(srv.URL).ncFilesProxy(log.New(ioDiscard{}, "", 0))
-
-	rec := httptest.NewRecorder()
-	proxy(rec, callerReq(http.MethodGet, "/published/meetings/JOB1.opus", "alice"), "meetings/JOB1.opus")
-	if opusGetAs != "alice" {
-		t.Fatalf("an unresolved storage mode read as %q; it must stay per-caller until a preflight decides", opusGetAs)
+// The fail-open guard, in both of the ways it can be wrong.
+//
+// The owner read path hands out the whole archive, so it needs two independent
+// facts: the recorded mode says default, AND the last probe agreed with it. A
+// recorded `default` on an instance that still has a mounted Team folder is a
+// state the preflight itself names `mode_mismatch` — and in it, reading as the
+// owner would serve every account every recording in that folder, past its
+// per-recording ACLs, as the ACL manager.
+func TestOwnerReadPathNeedsBothTheModeAndTheEvidence(t *testing.T) {
+	readIdentity := func(t *testing.T) string {
+		t.Helper()
+		var readAs string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			readAs = davUserOf(r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+		proxy := aclProxyConfig(srv.URL).ncFilesProxy(log.New(ioDiscard{}, "", 0))
+		proxy(httptest.NewRecorder(), callerReq(http.MethodGet, "/published/meetings/JOB1.opus", "alice"), "meetings/JOB1.opus")
+		return readAs
 	}
+
+	t.Run("unresolved mode reads as the caller", func(t *testing.T) {
+		// A container that restarted but has not seen an enabled edge.
+		resetStorageMode(t)
+		ncAccessSubstrate.reset()
+		t.Cleanup(ncAccessSubstrate.reset)
+		if got := readIdentity(t); got != "alice" {
+			t.Fatalf("read as %q; an unresolved mode must stay per-caller until a preflight decides", got)
+		}
+	})
+
+	t.Run("default mode with a substrate the probe rejected reads as the caller", func(t *testing.T) {
+		setStorageMode(t, false)
+		ncAccessSubstrate.reset()
+		t.Cleanup(ncAccessSubstrate.reset)
+		ncAccessSubstrate.markApplicable()
+		ncAccessSubstrate.unavailable(storageStepModeMismatch+":"+storageStepFolderMount, errTransitionNotReady)
+		if got := readIdentity(t); got != "alice" {
+			t.Fatalf("read as %q while the preflight was reporting a mode mismatch — that serves an access-controlled archive to everybody", got)
+		}
+	})
+
+	t.Run("default mode with a proven substrate reads as the owner", func(t *testing.T) {
+		setUsableStorageMode(t, false)
+		if got := readIdentity(t); got != ncRecordingsOwner {
+			t.Fatalf("read as %q, want %q — the default model has no other way to serve the archive", got, ncRecordingsOwner)
+		}
+	})
+
+	t.Run("access control never reads as the owner", func(t *testing.T) {
+		setUsableStorageMode(t, true)
+		if got := readIdentity(t); got != "alice" {
+			t.Fatalf("read as %q under access control; Nextcloud has to be the one deciding", got)
+		}
+	})
 }
 
 // An anonymous request gets nothing in either mode: the owner path is about
 // which identity Nextcloud is asked as, never about skipping the USER gate.
 func TestDefaultModeProxyStillRequiresACaller(t *testing.T) {
-	setStorageMode(t, false)
+	setUsableStorageMode(t, false)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("an anonymous request reached Nextcloud: %s %s", r.Method, r.URL.Path)
 	}))
