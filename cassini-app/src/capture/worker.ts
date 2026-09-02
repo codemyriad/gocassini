@@ -245,10 +245,21 @@ async function closeSegment(
   }
   try {
     segment.handle.flush();
-    segment.handle.close();
   } catch (error) {
     segment.failed = true;
     self.postMessage({ type: "error", detail: `segment ${index}: ${String(error)}` });
+  }
+  try {
+    // Closed even when the flush threw. A sync access handle holds an
+    // exclusive lock on its file, and this worker now survives a failed
+    // finalize to keep the call's audio flowing — so a handle leaked here is
+    // not collected with the worker any more. It outlives the recording and
+    // locks a file the next interval may need to write.
+    segment.handle.close();
+  } catch {
+    // Already closed, or closing failed too. Either way there is nothing
+    // further to do with it, and the flush error above is the one worth
+    // reporting.
   }
   segment.stopWallMs = stopWallMs;
   segment.muteIntervals = muteIntervals;
@@ -311,6 +322,16 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
 // recording stops, so this same pass-through worker may serve a later interval
 // and must not mix their files or clocks.
 function resetRecordingInterval(): void {
+  // Release anything closeSegment never reached — an interval abandoned
+  // mid-recording leaves its handles open, and this worker outlives the
+  // interval now.
+  for (const segment of segments.values()) {
+    try {
+      segment.handle.close();
+    } catch {
+      // Already closed. The point is only that none stays locked.
+    }
+  }
   segments.clear();
   captureDir = null;
   anchors = [];

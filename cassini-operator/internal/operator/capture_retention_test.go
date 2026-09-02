@@ -145,8 +145,13 @@ func TestMeasureCaptureRootSeparatesStoredCapturesFromTransientBytes(t *testing.
 	if usage.Bytes != wantBytes {
 		t.Fatalf("bytes = %d, want %d (everything on the volume, transient included)", usage.Bytes, wantBytes)
 	}
-	if usage.ByOwner["alice"] != int64(1000+500+len(`{"format":"x"}`)) {
-		t.Fatalf("alice's bytes = %d, want her capture plus her set-aside one", usage.ByOwner["alice"])
+	// Bytes counts the volume; ByOwner does not count a set-aside copy. The
+	// per-owner quota is the TERMINAL refusal — the client deletes its only
+	// copy on it — and a set-aside directory is this participant's own previous
+	// copy of a call they are re-uploading right now, about to be swept.
+	// Charging it would let their old copy destroy their new one.
+	if usage.ByOwner["alice"] != int64(1000+len(`{"format":"x"}`)) {
+		t.Fatalf("alice's bytes = %d, want her live capture only, not the set-aside copy awaiting the sweep", usage.ByOwner["alice"])
 	}
 	if usage.ByOwner["bob"] != int64(2000+len(`{"format":"x"}`)) {
 		t.Fatalf("bob's bytes = %d", usage.ByOwner["bob"])

@@ -400,6 +400,10 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 			refuseCaptureUpload(w, logger, owner, refusal.status, refusal.reason, refusal.message)
 			return
 		}
+		// Released however this request ends. Until it does, the bytes it was
+		// promised are held against every other upload, because they are not
+		// yet on disk where a measurement could see them.
+		defer releaseCaptureAdmission(admission.owner, admission.reserved)
 		r.Body = http.MaxBytesReader(w, r.Body, captureMaxUploadBytes)
 		reader, err := r.MultipartReader()
 		if err != nil {

@@ -335,13 +335,11 @@ logged-in user. The client fails closed at every one of those.
   tracks, not the ingested ones.
 - **The opt-in UI**, and with it any consent copy worth shipping.
 - **Verification of an upload against the recorder's own audio** (see above).
-- **Retention and quota.** Uploads accumulate under the capture root and are
-  never removed. No retention policy covers that root — the artifact retention
-  policy applies to attempt artifacts under `runs/` — nothing sweeps uploads whose
-  meeting never materialised, and deleting the job or the published recording
-  leaves them in place. With ingestion on there is a second copy: the rendered
-  `_work/sourceaudio/source-<speaker>.wav` travels with the meeting bundle into
-  `current/`, which retention never prunes. Nothing rate-limits a participant
+- **The second copy of ingested audio.** Captures themselves are now bounded and
+  swept — see the capture quota and retention settings — but with ingestion on
+  the rendered `_work/sourceaudio/source-<speaker>.wav` travels with the meeting
+  bundle into `current/`, which retention never prunes. That copy is unbounded
+  and outlives the capture it came from. Nothing rate-limits a participant
   either: repeated uploads at the 512 MiB per-request cap can fill the volume
   even with ingestion disabled. This is the largest remaining operational risk
   of enabling capture at all.

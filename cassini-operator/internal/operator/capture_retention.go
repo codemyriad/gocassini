@@ -246,7 +246,20 @@ func measureCaptureRoot(root string) (captureUsage, error) {
 				if err != nil {
 					return usage, err
 				}
+				// Bytes is every byte on the volume, set-aside copies included,
+				// because the disk does not care why they are there and the
+				// bound it feeds is retryable.
 				usage.Bytes += bytes
+				if strings.HasSuffix(capture.Name(), captureSupersededSuffix) {
+					// ByOwner deliberately excludes them. It feeds the per-owner
+					// quota, whose refusal is TERMINAL — the client deletes its
+					// only copy — and a set-aside directory is this
+					// participant's own previous copy of a call they are
+					// re-uploading right now, about to be removed by the sweep.
+					// Charging it would let their old copy destroy their new
+					// one.
+					continue
+				}
 				usage.ByOwner[owner.Name()] += bytes
 				if strings.HasSuffix(capture.Name(), captureSupersededSuffix) {
 					continue
@@ -352,6 +365,10 @@ func (r *captureRefusal) Error() string { return r.message }
 type captureAdmission struct {
 	ownerRemaining int64
 	totalRemaining int64
+	// reserved is what this upload promised to the shared bounds, and owner is
+	// who it was promised for. releaseCaptureAdmission gives them back.
+	reserved int64
+	owner    string
 }
 
 // remaining is how many bytes this upload may still write. Capped at the
@@ -412,7 +429,49 @@ func (a captureAdmission) consume(n int64) captureAdmission {
 // the full per-request ceiling against the disk floor, and every quota is
 // re-checked against the bytes that actually arrive, because a Content-Length
 // can be absent, wrong, or a lie.
+// captureAdmissionMu serializes admission, and captureInFlight tracks what
+// admitted uploads have been allowed but not yet written.
+//
+// Without both, the quotas are not bounds at all: every concurrent upload reads
+// the same usage snapshot, every one is told it fits, and the volume they share
+// with the job database absorbs the sum. The reservation is released by
+// releaseCaptureAdmission once the upload has finished, succeeded or not, at
+// which point its bytes are either on disk and measurable or gone.
+var (
+	captureAdmissionMu sync.Mutex
+	captureInFlight    = map[string]int64{}
+	captureInFlightAll int64
+)
+
+// releaseCaptureAdmission gives back what an upload reserved and did not use.
+func releaseCaptureAdmission(owner string, reserved int64) {
+	if reserved <= 0 {
+		return
+	}
+	captureAdmissionMu.Lock()
+	defer captureAdmissionMu.Unlock()
+	captureInFlightAll -= reserved
+	if captureInFlightAll < 0 {
+		captureInFlightAll = 0
+	}
+	if remaining := captureInFlight[owner] - reserved; remaining > 0 {
+		captureInFlight[owner] = remaining
+	} else {
+		delete(captureInFlight, owner)
+	}
+}
+
 func admitCaptureUpload(root, owner string, declared int64, limits captureLimits) (captureAdmission, *captureRefusal) {
+	captureAdmissionMu.Lock()
+	defer captureAdmissionMu.Unlock()
+
+	// An undeclared length is charged the ceiling against the DISK, because a
+	// volume cannot be asked to give the space back afterwards. It is not
+	// charged against the owner's quota, because that refusal is terminal: the
+	// client deletes its only copy, and destroying a recording that would have
+	// fitted because its length was not declared in advance is exactly the
+	// wrong direction. The streaming check below catches a real overrun with
+	// the bytes in hand.
 	need := declared
 	if need <= 0 {
 		need = captureMaxUploadBytes
@@ -428,7 +487,7 @@ func admitCaptureUpload(root, owner string, declared int64, limits captureLimits
 				message: "capture storage cannot be measured right now; try again later",
 			}
 		}
-		if free-need < limits.minFreeDisk {
+		if free-need-captureInFlightAll < limits.minFreeDisk {
 			return captureAdmission{}, &captureRefusal{
 				status:  http.StatusInsufficientStorage,
 				reason:  "disk_floor",
@@ -452,18 +511,32 @@ func admitCaptureUpload(root, owner string, declared int64, limits captureLimits
 			message: "capture storage cannot be measured right now; try again later",
 		}
 	}
+	// Bytes already promised to uploads still arriving count against the next
+	// one, or concurrent callers each spend the same allowance.
 	if limits.ownerQuota > 0 {
-		admission.ownerRemaining = limits.ownerQuota - usage.ByOwner[owner]
+		admission.ownerRemaining = limits.ownerQuota - usage.ByOwner[owner] - captureInFlight[owner]
 	}
 	if limits.totalQuota > 0 {
-		admission.totalRemaining = limits.totalQuota - usage.Bytes
+		admission.totalRemaining = limits.totalQuota - usage.Bytes - captureInFlightAll
 	}
 	// Charge the declared length before anything is written. The streaming
 	// check catches a body that lied; this catches the ordinary case one
 	// request earlier, without moving half a gigabyte first.
-	if refusal := admission.consume(need).overrunIfSpent(); refusal != nil {
-		return captureAdmission{}, refusal
+	//
+	// Only a DECLARED length is charged here. An undeclared one has already
+	// been charged against the disk above, where the reservation is what
+	// matters, but charging it against a quota would refuse a small chunked
+	// upload as if it were the ceiling — and that refusal is terminal, so the
+	// client would delete a recording that fitted.
+	if declared > 0 {
+		if refusal := admission.consume(declared).overrunIfSpent(); refusal != nil {
+			return captureAdmission{}, refusal
+		}
 	}
+	captureInFlight[owner] += need
+	captureInFlightAll += need
+	admission.reserved = need
+	admission.owner = owner
 	return admission, nil
 }
 
@@ -480,7 +553,32 @@ func sweepCaptureRoot(root string, maxAge time.Duration, now time.Time) ([]strin
 		return nil, nil
 	}
 	var removed []string
-	remove := func(path, why string) error {
+	// Removals take the same lock promotion does, and re-check the age with it
+	// held.
+	//
+	// Everything below decides what to delete from a directory listing taken
+	// earlier, and a re-upload can promote a fresh capture into one of those
+	// paths in between. Without this the sweep deletes the replacement — after
+	// the browser has already discarded its only copy on the 202 — and the
+	// recording is gone for good. Re-reading the age under the lock is what
+	// makes the decision and the deletion refer to the same directory.
+	remove := func(path, why string, age time.Duration) error {
+		capturePromotionMu.Lock()
+		defer capturePromotionMu.Unlock()
+		if age > 0 {
+			info, err := os.Stat(path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return nil
+				}
+				return fmt.Errorf("sweep %s: %w", path, err)
+			}
+			if now.Sub(info.ModTime()) < age {
+				// Replaced while we were deciding. Leave it; the next sweep
+				// will judge it on its own age.
+				return nil
+			}
+		}
 		if err := os.RemoveAll(path); err != nil {
 			return fmt.Errorf("sweep %s: %w", path, err)
 		}
@@ -515,7 +613,7 @@ func sweepCaptureRoot(root string, maxAge time.Duration, now time.Time) ([]strin
 			if !olderThan(room, captureStagingGrace) {
 				continue
 			}
-			if err := remove(roomDir, "orphaned upload staging"); err != nil {
+			if err := remove(roomDir, "orphaned upload staging", captureStagingGrace); err != nil {
 				return removed, err
 			}
 			continue
@@ -552,7 +650,7 @@ func sweepCaptureRoot(root string, maxAge time.Duration, now time.Time) ([]strin
 						// costs disk; removing it costs a recording.
 						continue
 					}
-					if err := remove(dir, "superseded by a completed re-upload"); err != nil {
+					if err := remove(dir, "superseded by a completed re-upload", 0); err != nil {
 						return removed, err
 					}
 					continue
@@ -560,7 +658,7 @@ func sweepCaptureRoot(root string, maxAge time.Duration, now time.Time) ([]strin
 				if maxAge <= 0 || !olderThan(capture, maxAge) {
 					continue
 				}
-				if err := remove(dir, fmt.Sprintf("older than %s", maxAge)); err != nil {
+				if err := remove(dir, fmt.Sprintf("older than %s", maxAge), maxAge); err != nil {
 					return removed, err
 				}
 			}

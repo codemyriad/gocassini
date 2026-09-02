@@ -648,10 +648,17 @@ function restoreOutgoingAudio(): void {
   if (attached === null) {
     return;
   }
-  attachedTransform = null;
   if (attached.connection.connectionState === "closed") {
+    // Nothing left to rescue, and nothing left to protect either.
+    attachedTransform = null;
     return;
   }
+  // attachedTransform is cleared ONLY once the sender is someone else's
+  // problem. It is what stops releaseTimingWorker terminating a worker whose
+  // transform is still on a live sender, and terminating is the one move with
+  // no way back: the sender stays frozen and no later attempt can reach it. So
+  // every path that fails to substitute leaves it set, deliberately, and the
+  // broken worker keeps running as the only thing still draining frames.
   const ScriptTransform = (globalThis as { RTCRtpScriptTransform?: ScriptTransformCtor })
     .RTCRtpScriptTransform;
   if (!ScriptTransform) {
@@ -669,6 +676,7 @@ function restoreOutgoingAudio(): void {
       passThrough,
       { kind: "audio" },
     );
+    attachedTransform = null;
   } catch {
     // A policy that forbids a blob worker leaves the participant where the
     // broken capture worker left them. Nothing else here can reach that sender.

@@ -197,11 +197,21 @@ exist in no other copy.
 
 ### How long it is kept
 
-Indefinitely. Nothing sweeps the capture root: `CASSINI_ARTIFACT_RETENTION`
-covers attempt artifacts under `runs/` and does not apply here, an upload whose
-meeting never materialised is never cleaned up, and deleting the published
-recording from Nextcloud Files does not touch the audio it was built from.
-Removing an upload today means deleting it from the volume by hand.
+Two weeks by default, then it is deleted. A sweep runs when the operator starts
+and after each published meeting, and removes captures older than
+`CASSINI_CAPTURE_MAX_AGE_HOURS` (336 hours), abandoned part-uploads older than a
+day, and copies set aside by a re-upload once the replacement is in place.
+
+How much may accumulate before then is bounded too:
+`CASSINI_CAPTURE_OWNER_QUOTA_MB` (2 GiB) per participant and
+`CASSINI_CAPTURE_TOTAL_QUOTA_MB` (20 GiB) across the installation, with uploads
+refused below `CASSINI_CAPTURE_MIN_FREE_DISK_MB` (4 GiB) of free disk.
+
+Two things this does not do. `CASSINI_ARTIFACT_RETENTION` is a different
+setting covering attempt artifacts under `runs/`, and does not apply here. And
+deleting the published recording from Nextcloud Files does not touch the audio
+it was built from: that is governed by the sweep above, and until it runs the
+upload outlives the meeting a reader can see.
 
 With ingestion enabled there is a second copy on the same volume: each accepted
 upload is rendered into a full-length per-speaker WAV
@@ -218,9 +228,15 @@ to one request, not to a person, a room, or a day.
 (`cassini.sourceCapture.consent`), set by hand or through
 `window.cassiniSourceCapture.enable()` and `.disable()` on the Cassini page.
 Withdrawing during a call stops the recorder within a fraction of a second and
-discards that call's buffer without uploading it; withdrawing after the call but
-before the upload discards it too. Withdrawal is terminal for that call — granting
-again a moment later does not resurrect the audio recorded meanwhile.
+discards that call's buffer without uploading it. Withdrawal is terminal for
+that call — granting again a moment later does not resurrect the audio recorded
+meanwhile.
+
+Withdrawing after the call is weaker than it sounds. It reliably stops a
+buffered recording being uploaded, because the retry path checks consent before
+it sends anything. It does not delete what is already buffered: that audio stays
+in the browser's storage, unsent, until the browser reclaims it or the
+participant clears the site's data.
 
 **Cannot:** anything at all about audio already uploaded. There is no withdrawal
 path for it, no list of what they have uploaded, and no way to have one deleted
