@@ -58,16 +58,37 @@ artifacts:
 
 ### Who can read a published recording
 
-Each private recording is readable **only by the people who had access to the
-Talk room when it was published** — its attendee list, which includes people who
-were invited but never joined, not only those present on the call. This is
-enforced by Nextcloud's own advanced file access controls, not by Cassini keeping
-a separate copy or its own permission list.
+**This depends on the storage mode**, chosen by an administrator in the Cassini
+app's **Setup** tab. The mode in force is reported by `GET /operator/storage`
+and shown on that tab.
 
-**Public Talk room recordings are readable by every signed-in Nextcloud account** (never
-anonymously). Access control is provisioned automatically; it depends on the Team
-folders and Everyone Group apps being present (see
+**Default mode.** Every recording is readable by every signed-in account that
+can open Cassini (never anonymously). Recordings live in a dedicated `cassini`
+service account's own folder and Cassini serves them as that account, so there
+is no per-recording permission to enforce. This mode needs no extra Nextcloud
+apps, which is why it is what an instance without them gets.
+
+**Access-controlled mode.** Each private recording is readable **only by the
+people who had access to the Talk room when it was published** — its attendee
+list, which includes people who were invited but never joined, not only those
+present on the call. This is enforced by Nextcloud's own advanced file access
+controls, not by Cassini keeping a separate copy or its own permission list.
+Recordings of **public** Talk rooms are readable by every signed-in account
+(never anonymously). This mode requires the Team folders and Everyone Group
+apps and a Team folder an administrator sets up (see
 [Recording permissions](./exapp-nextcloud-recordings-permissions.md)).
+
+**Switching to access control does not retroactively restrict anything.**
+Recordings that already existed are moved into the Team folder readable by every
+signed-in account: Cassini does not guess who was in a past meeting. Narrowing
+them is a deliberate act, per recording, from the Files app. Switching the other
+way drops every access rule, and makes every recording readable by everyone who
+can open Cassini.
+
+**An instance that was already access-controlled stays that way.** The mode is
+derived once, on the first start after upgrading, and resolves to access control
+whenever the substrate for it is already in place — so an upgrade never widens
+an existing archive on its own.
 
 **Recordings migrated from an older version are owner-only.** Installations that
 published before recordings moved into Nextcloud Files migrate them with

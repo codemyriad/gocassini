@@ -26,16 +26,30 @@ install — see [Standalone operator (dev/staging only)](#standalone-operator-de
   is tested against Nextcloud 33+) with the **AppAPI** app installed and
   enabled.
 - A registered AppAPI **deploy daemon** (next section).
-- **Required.** The native **Group folders / Team folders** (`groupfolders`)
-  and **Everyone Group** (`group_everyone`) apps, installed and enabled *before*
-  Cassini is enabled. Recordings are always access-controlled, and Cassini
-  provisions the Team folder, the `cassini` service account and every ACL itself
-  — but an ExApp reaches Nextcloud only over HTTP and cannot install a PHP app.
-  Without them recordings are served to nobody and `/operator/status` reports the
-  reason. The Everyone Group is instance-wide and may appear in other Nextcloud
+- **Required.** A `cassini` service account. Every recording is written and
+  read as it, in either storage mode, and Cassini does **not** create it:
+
+  ```bash
+  occ group:add cassini
+  occ user:add --group=cassini cassini
+  ```
+
+- **Required for access-controlled storage only.** The native **Group folders /
+  Team folders** (`groupfolders`) and **Everyone Group** (`group_everyone`)
+  apps, plus a `Cassini` Team folder mapped and ACL-enabled. Cassini installs
+  neither app and creates no folder — an ExApp reaches Nextcloud only over HTTP,
+  cannot install a PHP app, and this release deliberately scaffolds nothing.
+  The Setup tab prints the exact recipe and `/operator/status` reports what is
+  missing. The Everyone Group is instance-wide and may appear in other Nextcloud
   sharing pickers; see
   [Recording permissions](./exapp-nextcloud-recordings-permissions.md).
-- An administrator account Cassini can act as, for one-time setup only. See
+
+  Without them Cassini still records and publishes — in its **default** storage
+  mode, where recordings live in the `cassini` account's own home and everyone
+  who can open the app can read all of them. Which mode an instance is in, and
+  how to switch, is in the app's **Setup** tab.
+- An administrator account Cassini can act as, to check how the instance is set
+  up and to move recordings when the mode changes. See
   [Administrator discovery](#administrator-discovery) — in almost all cases this
   needs no configuration.
 - A Docker engine for the ExApp container. For GPU transcription it needs the
@@ -239,7 +253,7 @@ Options).
 | `CASSINI_TALK_SIGNALING_INTERNAL_SECRET` | For HPB-internal/default Talk recording | Internal client secret for standalone Talk signaling / HPB; must match `[clients] internalsecret`. Required for private, group, and one-to-one Talk recording |
 | `CASSINI_TALK_BACKEND_URL` | No | Override for operator→Talk callbacks (started/stopped/failed notifications) and OCS calls. Leave empty to use the backend URL Talk sends with each request |
 | `CASSINI_NC_ADMIN_USER` | On instances where no discovered account is an administrator | Administrator account used only to create the `cassini` service account, its narrow owner group, and the Team-folder topology. Leave empty for automatic discovery (see [Administrator discovery](#administrator-discovery)); set it when discovery cannot find one or picks the wrong account. Recordings are still owned, written, and managed by `cassini` |
-| `CASSINI_PUBLISH_SINK` | No | Where published recordings are stored. `nextcloud-files` (the default for an installed app) puts them in the `Cassini` Team folder with per-participant ACLs; `local` keeps them on the app's own volume with no access control and no Nextcloud prerequisites. Set `local` only deliberately |
+| `CASSINI_PUBLISH_SINK` | No | Where published recordings are stored. `nextcloud-files` (the default for an installed app) puts them in Nextcloud Files; `local` keeps them on the app's own volume. Set `local` only deliberately. Under `nextcloud-files`, *who may read* a recording is a separate choice made in the app's Setup tab, not here |
 | `CASSINI_STT_BACKEND` | No | Which registered speech-to-text engine transcription uses; empty selects the default (`sherpa-onnx`). An unknown value fails the build loudly before any audio is decoded |
 | `CASSINI_ATTRIBUTION_DISABLED` | No | Set `1` to skip the cross-track speaker-attribution stage. By default every word is annotated with acoustic evidence; no words are changed or removed either way |
 | `CASSINI_ATTRIBUTION_DROP` | No | Set `1` to delete words the acoustic evidence contradicts instead of annotating them (room-system microphones). The manifest records how many words were removed |
@@ -360,9 +374,9 @@ substrate is visible rather than a silently empty archive.
 | `state` | Means | What to do |
 |---|---|---|
 | `provisioned` | Setup completed. | Nothing. |
-| `unavailable` | A **named** thing is missing. `step` says which: `app_missing:<id>` or `administrator`. | Install the app, or set `CASSINI_NC_ADMIN_USER`; then re-enable Cassini. |
-| `degraded` | A setup **call failed**. `step` names it (`acl_enable`, `mount_mapping:everyone`, `root_acl`, …). | Read the matching `nc provision:` line in the container log, fix the fault, re-enable Cassini. |
-| `unknown` | Setup has not run in this process — the container was restarted without the app being re-enabled. | Disable and re-enable Cassini. **Publishing is refused until then**: nothing has verified where recordings would land. |
+| `unavailable` | A **named** thing is missing. `step` says which: `owner_account`, `app_missing:<id>`, `group_folder`, `mount_mapping:<group>`, `group_folder_acl`, `group_folder_manager`, `administrator`, or `mode_mismatch:…`. `detail` carries the command that fixes it. | Run the command in `detail` (or pick a storage mode in the Setup tab, for `mode_mismatch`), then re-enable Cassini. |
+| `degraded` | A setup **call failed**. `step` names it (`acl_enable`, `root_acl`, `migration`, …). | Read the matching `nc storage:` line in the container log, fix the fault, re-enable Cassini. |
+| `unknown` | The preflight has not run in this process — the container was restarted without the app being re-enabled. | Disable and re-enable Cassini. **Publishing is refused until then**: nothing has verified where recordings would land. |
 | `not_applicable` | This deployment does not serve recordings from Nextcloud Files (standalone operator, or `CASSINI_PUBLISH_SINK=local`). | Nothing. |
 
 ```json
@@ -374,9 +388,15 @@ substrate is visible rather than a silently empty archive.
 ```
 
 Until the substrate is `provisioned`, publishing **fails** rather than writing
-recordings into the `cassini` account's private home where nobody can reach
-them. The `occ`-side verification of the resulting topology is in
+recordings somewhere the read path is not looking, and Talk **refuses to start**
+a recording whose storage is missing a named prerequisite — the moderator gets
+Talk's own "The recording failed" and the reason is in Cassini's Setup tab. The
+`occ`-side verification of the resulting topology is in
 [Recording permissions](./exapp-nextcloud-recordings-permissions.md).
+
+`recordings_access` also reports `mode` (`default` / `access_controlled`) and
+`mode_source` (`configured` / `derived`). `GET /operator/storage` is the fuller
+view: both modes, which one is active, and what the other one still needs.
 
 ### What people see when setup is not finished
 
@@ -747,6 +767,7 @@ The manifest declares per-route access levels enforced by Nextcloud's proxy:
 | `/operator/jobs`, `/operator/jobs/...`, `/operator/events` | ADMIN | Operator JSON + SSE API |
 | `/operator/settings` | ADMIN | STT-quality settings (read + update) |
 | `/operator/status` | ADMIN | Doctor/status endpoint (version, device usability, Talk config, DB/storage health) |
+| `/operator/storage` | ADMIN | Storage mode: which one is active, what the other needs, and the switch (`PUT` moves the archive) |
 | `/operator/setup` | USER | Whether recordings can be served at all — `{"ok":…,"state":…}` and nothing else |
 | `/viewer/*` | USER | Viewer SPA |
 | `/published/*` | USER | Published meeting bundles (catalog + recordings) |
