@@ -9,11 +9,19 @@ them, and publishes a readable archive. Recording and transcription happen
 entirely within your own infrastructure. Exactly one step sends data to a third
 party. It is optional, off by default, and enabled only when you set an API key.
 
+One optional feature collects a class of personal data the rest of Cassini never
+touches: source-side capture records a participant's microphone in their own
+browser, before the network. It is off by default, it is an experimental
+prototype, and if you are considering it, read
+[Participant source-audio capture](#participant-source-audio-capture) before the
+rest of this page.
+
 ## Summary
 
 | Step                           | Where it runs                                             | Data leaves your infrastructure? |
 | ------------------------------ | --------------------------------------------------------- | -------------------------------- |
 | Recording the call             | Local (the Cassini container)                             | No                               |
+| Source-side capture            | Local (the participant's browser, then the container)     | No                               |
 | Transcription (speech-to-text) | Local (Parakeet / Silero VAD models)                      | No                               |
 | Speaker labels                 | Local (from Talk signaling, not audio analysis)           | No                               |
 | Transcript cleanup + summary   | Third-party LLM — **only if `OPENROUTER_API_KEY` is set** | **Yes, when enabled**            |
@@ -22,6 +30,13 @@ party. It is optional, off by default, and enabled only when you set an API key.
 **Without an LLM key: nothing leaves your infrastructure.** The raw local
 transcript is still produced and published; only the transcript cleanup/summary is
 skipped.
+
+**Source-side capture is off by default**, and three separate things have to be
+switched on before any browser records anything. It is the only step that runs
+code inside a participant's browser, and the only data Cassini stores that no
+retention policy covers and no participant can have deleted — see
+[Participant source-audio capture](#participant-source-audio-capture) before
+turning it on.
 
 ## What Cassini stores
 
@@ -32,6 +47,11 @@ artifacts:
   audio track per participant.
 - **Audio** — the processed meeting audio, ultimately the portable single-file
   `.opus`.
+- **Participant source audio** — only when source-side capture is enabled: what a
+  participant's own browser recorded of the microphone track Talk was sending,
+  as compressed audio segments plus a JSON sidecar describing their timing. With
+  ingestion also enabled, a build renders each accepted upload into a
+  full-length per-speaker WAV inside the job's meeting bundle.
 - **Transcripts** — a timestamped word-level transcript and an optional
   human-readable transcript.
 - **Captions** — an optional `captions.vtt` subtitle track.
@@ -51,6 +71,11 @@ artifacts:
   **AppAPI persistent volume** (`APP_PERSISTENT_STORAGE`), under the operator
   work root. They are not exposed to Nextcloud users and are not covered by
   Nextcloud's file access controls — they are internal to the Cassini container.
+- **Participant source audio** lives on the same **AppAPI persistent volume**,
+  under its own root — `CASSINI_OPERATOR_CAPTURE_ROOT`, by default
+  `<persistent volume>/operator/capture` — as
+  `<room token>/<user id>/<call start>/`. Like the working artifacts it is
+  internal to the container and outside Nextcloud's file access controls.
 - **Published recordings** are written to **Nextcloud Files**, under
   `Cassini/Recordings/`, by the default `nextcloud-files` publish sink. This is
   what people in your Nextcloud open and view, subject to the access controls
@@ -82,6 +107,132 @@ Because published recordings live in Nextcloud Files, they follow **Nextcloud's*
 retention, backup, and deletion — not Cassini's. Deleting a recording from
 Nextcloud Files deletes that copy.
 
+None of this applies to participant source audio: it never enters Nextcloud
+Files, so no Nextcloud account reaches it and no Nextcloud access control governs
+it. See [Participant source-audio capture](#participant-source-audio-capture).
+
+## Participant source-audio capture
+
+This is the one feature that collects personal data the rest of Cassini never
+sees: a participant's microphone as their own browser hears it, before Opus
+encoding and before the network. It exists because the audio the recorder
+receives through the SFU is only whatever survived that participant's uplink — on
+a bad connection the words are not degraded, they are absent. See
+[Source-side audio capture](./source-audio-capture.md) for how it works.
+
+It is off by default, and it is an experimental prototype. What follows is what
+an installation that turns it on actually does today, including the parts that
+are not finished.
+
+### Three switches, not one
+
+Nothing is captured unless all three are true, and they are independent:
+
+- **`CASSINI_SOURCE_CAPTURE=1`** on the Cassini ExApp. Off by default. With it
+  off the browser assets 404 and the upload endpoint refuses, so nothing is
+  collected and no storage is used.
+- **The `cassini_capture` companion app is installed and enabled.** It is a
+  separate native Nextcloud app; installing or updating Cassini does not install
+  it, and without it no capture code reaches Talk's page at all.
+- **The participant opted in, in that browser.** Capture never starts on its own.
+
+Turning the administrator switch back off reaches a call already in progress. The
+payload re-asks the server every thirty seconds and treats an unreachable or
+unclear answer as no, so an in-flight recording stops within about half a minute,
+and the endpoint refuses whatever a stale client still tries to send.
+
+### What is captured, and when
+
+Cassini does not open a microphone of its own. It records the audio track Talk is
+already **sending** — the same signal the SFU encodes, taken one step earlier.
+Two consequences matter here:
+
+- **Talk's mute is honoured at the source.** Muting in Talk sets `enabled =
+  false` on that very track, and a disabled track delivers silence to every sink,
+  so a muted participant is recorded as silence. There is no code path in the
+  capture payload that can produce a hot mic.
+- **Capture runs only while Talk's own recording is confirmed active** — that is,
+  while Talk is already telling everyone in the room that the meeting is being
+  recorded. Joining a call collects nothing. A recording a moderator requested
+  but that Talk never confirmed collects nothing. Capture stops and uploads when
+  Talk confirms the recording stopped.
+
+Only signed-in participants are affected: Talk does not dispatch the injection
+hook on its guest pages, and the upload endpoint requires an authenticated user.
+
+### Where it goes
+
+During the call the audio is buffered **in the participant's own browser**, in
+the origin private file system for your Nextcloud origin, as compressed audio
+segments — WebM/Opus, or MP4 on a browser that records only that — and a JSON
+sidecar of timing anchors. It is deleted from there once the server has accepted
+it, and also when the server refuses it outright. A delivery that merely failed
+is kept for the next Talk page to retry, and given up on after five attempts.
+
+The upload is a `POST` to `operator/capture/upload` through Nextcloud's AppAPI
+proxy, so it travels as the signed-in Nextcloud user. Two things are decided by
+the server and never read from the request body:
+
+- **Who it belongs to** — the AppAPI-authenticated caller, not the participant id
+  the client states. That is the same identity the recorder writes into each MKV
+  audio track, which is what lets a build join an upload to a track.
+- **Whether it is allowed** — the caller must be a participant of that room,
+  checked against Talk acting as that user rather than believed.
+
+It lands under the capture root as `<room token>/<user id>/<call start>/`. A
+re-upload of the same call replaces the previous one.
+
+### Who can read it
+
+Nobody, through Nextcloud. Uploads never enter Nextcloud Files, so the
+per-recording access controls that govern published recordings neither protect
+them nor can be used to share them. They are readable by the Cassini container,
+and by anyone with access to the persistent volume or to a backup of it — in
+practice, the server's administrators.
+
+The words reach further than the files do. With `CASSINI_SOURCE_AUDIO_INGEST=1`
+they become transcript text, and that transcript is published to everyone the
+recording is published to — including the sentences the network lost, which
+exist in no other copy.
+
+### How long it is kept
+
+Indefinitely. Nothing sweeps the capture root: `CASSINI_ARTIFACT_RETENTION`
+covers attempt artifacts under `runs/` and does not apply here, an upload whose
+meeting never materialised is never cleaned up, and deleting the published
+recording from Nextcloud Files does not touch the audio it was built from.
+Removing an upload today means deleting it from the volume by hand.
+
+With ingestion enabled there is a second copy on the same volume: each accepted
+upload is rendered into a full-length per-speaker WAV
+(`_work/sourceaudio/source-<speaker>.wav`) inside the job's meeting bundle, which
+is promoted into `current/` — the one directory retention never prunes. It is not
+published to Nextcloud Files, and nothing deletes it when the meeting is deleted.
+
+Uploads are not quota-limited per participant either. The 512 MiB ceiling applies
+to one request, not to a person, a room, or a day.
+
+### What a participant can and cannot do
+
+**Can:** grant and withdraw the opt-in. It is a browser storage key
+(`cassini.sourceCapture.consent`), set by hand or through
+`window.cassiniSourceCapture.enable()` and `.disable()` on the Cassini page.
+Withdrawing during a call stops the recorder within a fraction of a second and
+discards that call's buffer without uploading it; withdrawing after the call but
+before the upload discards it too. Withdrawal is terminal for that call — granting
+again a moment later does not resurrect the audio recorded meanwhile.
+
+**Cannot:** anything at all about audio already uploaded. There is no withdrawal
+path for it, no list of what they have uploaded, and no way to have one deleted
+except by asking an administrator to remove it from the volume.
+
+**There is no interface for any of this yet** — no dialog, no toggle, no consent
+copy. Setting a storage key by hand is not informed consent in the sense a
+privacy notice needs, and the key is stored per browser profile rather than per
+Nextcloud account, so two people signing in on the same profile share one answer
+and the second of them was never asked. Treat the opt-in as a pilot mechanism,
+not the finished one, and tell participants about the feature yourself.
+
 ## What leaves your infrastructure, and when
 
 The only step that transmits data off your infrastructure is optional LLM
@@ -96,7 +247,9 @@ processes the transcript under its own terms; review them before enabling this.
 
 Call audio and the recording are **never** sent off your infrastructure for the
 sake of this step. Only the text transcript is transmitted, and only for
-post-processing.
+post-processing. That includes participant source audio: the audio itself is
+never transmitted, but with `CASSINI_SOURCE_AUDIO_INGEST` on, the words it
+recovers are part of the transcript text this step sends.
 
 Controls:
 
@@ -117,6 +270,9 @@ and the [env-var reference](./exapp-talk-env-vars.md) for the full set of knobs.
   leaves your infrastructure for transcription.
 - **Speaker labels are not inferred from audio.** They come from Talk's signaling
   server (participant join events), so no diarization or voice analysis is done.
+- **Participant source audio stays here too.** Uploads are stored and read only
+  by the operator, and the transcription that consumes them is the same local
+  one. No audio, recorded or captured, is sent anywhere for any purpose.
 - **No telemetry or analytics.** Cassini does not phone home — it reports nothing
   about you or your meetings.
 
@@ -129,6 +285,13 @@ and the [env-var reference](./exapp-talk-env-vars.md) for the full set of knobs.
 - **A delivered attempt's staging copy is removed once Nextcloud accepts it**, so
   the full recording does not linger on the app volume outside the Nextcloud
   access model.
+- **Participant source audio is never pruned.** No retention policy covers the
+  capture root and nothing sweeps it, so uploads stay until somebody deletes them
+  from the volume or the volume itself is deleted. Deleting the job, or the
+  published recording in Nextcloud Files, leaves them where they are. With
+  ingestion enabled the rendered per-speaker WAV in the job's meeting bundle is
+  kept as well, in the `current/` copy that retention never prunes — so such an
+  installation holds each participant's audio twice.
 - **Published recordings persist in Nextcloud Files** independently of Cassini.
   Removing or disabling the Cassini app does not delete them; they are managed as
   ordinary Nextcloud files.
@@ -148,3 +311,5 @@ and the [env-var reference](./exapp-talk-env-vars.md) for the full set of knobs.
   LLM knobs.
 - [Artifacts and filesystem](./reference/artifacts-and-filesystem.md) — artifact
   types, the operator layout, and retention.
+- [Source-side audio capture](./source-audio-capture.md) — how participant
+  capture works, what it is for, and what is still missing.

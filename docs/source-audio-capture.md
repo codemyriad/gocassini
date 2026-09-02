@@ -8,6 +8,10 @@ through Nextcloud's sanctioned additional-scripts event; the offset half of the
 timing model still needs the correlation refinement described below before it
 can be trusted on clients whose clocks are not known to be synchronised.
 
+What this collects, where it lands, who can read it and how long it is kept is
+in [Data processing & privacy](privacy.md#participant-source-audio-capture).
+Read that before enabling it on an instance with real participants on it.
+
 ## The problem
 
 Cassini's recorder joins the room as a subscriber and stores what the SFU
@@ -315,20 +319,25 @@ logged-in user. The client fails closed at every one of those.
   tracks, not the ingested ones.
 - **The opt-in UI**, and with it any consent copy worth shipping.
 - **Verification of an upload against the recorder's own audio** (see above).
-- **Retention and quota.** Uploads accumulate under the capture root. Nothing
-  sweeps uploads whose meeting never materialised, and nothing rate-limits a
-  participant: repeated uploads at the 512 MiB per-request cap can fill the
-  volume even with ingestion disabled. This is the largest remaining
-  operational risk of enabling capture at all.
+- **Retention and quota.** Uploads accumulate under the capture root and are
+  never removed. No retention policy covers that root — the artifact retention
+  policy applies to attempt artifacts under `runs/` — nothing sweeps uploads whose
+  meeting never materialised, and deleting the job or the published recording
+  leaves them in place. With ingestion on there is a second copy: the rendered
+  `_work/sourceaudio/source-<speaker>.wav` travels with the meeting bundle into
+  `current/`, which retention never prunes. Nothing rate-limits a participant
+  either: repeated uploads at the 512 MiB per-request cap can fill the volume
+  even with ingestion disabled. This is the largest remaining operational risk
+  of enabling capture at all.
+- **Erasure.** A participant can withdraw consent — which stops a recording in
+  progress and discards a buffer not yet sent — but there is nothing they can do
+  about audio already uploaded. They cannot see what they have uploaded, cannot
+  ask for it back, and cannot have it deleted except by an administrator
+  removing the directory from the volume by hand.
 - **Abrupt-page tail.** A reload or crash can lose the not-yet-checkpointed tail
   of the current MediaRecorder chunk (at most about two seconds). Completed
   chunks and their recovery sidecar survive in OPFS, are retried on the next
   Talk page, and an active Talk recording resumes as a new capture session.
-- **Salvage after a write failure.** A worker error during finalization
-  sacrifices the segments that were written correctly along with the one that
-  was not. It only arises after an OPFS write or flush has already failed, so
-  it costs a recording that was partly lost anyway — but the good half is
-  recoverable in principle and is not recovered.
 - **A disabled ExApp still loads the payload.** The companion is a separate
   native app and reads `source_capture_enabled` from AppAPI's ExApp config,
   which outlives disabling the ExApp, so the script tag keeps appearing on Talk
@@ -339,12 +348,15 @@ logged-in user. The client fails closed at every one of those.
   as no. So the cost is a script tag, not audio — but that safety rests entirely
   on the check failing closed, which is a second line, not the first.
 
-  Disabling the ExApp *does* now write `false` into that config before it stops.
-  Until D-698 that write was issued in a goroutine after the lifecycle response,
-  on a context that AppAPI cancelled by stopping the container, so it never
-  landed; the stored value stayed `true` indefinitely. Verified against a real
-  install. To back the feature out completely, disable `cassini_capture` as
-  well.
+  Disabling the ExApp *does* now write `false` into that config. The write
+  cannot happen inside the lifecycle request — like `UIRegistrar` it calls back
+  into Nextcloud, which deadlocks a single-worker PHP setup — so it is issued
+  after the response and shutdown waits a few seconds for it, and edges carry a
+  sequence number claimed on arrival so a slow enable cannot overwrite a later
+  disable. Until D-698 that write ran on a context AppAPI cancelled by stopping
+  the container, so it never landed at all and the stored value stayed `true`
+  indefinitely. It is a race the operator bounds rather than one it wins, so to
+  back the feature out completely, disable `cassini_capture` as well.
 - **Firefox raw-audio path.** `MediaStreamTrackProcessor` is Chrome/Safari only.
   The timing path (`RTCRtpScriptTransform`) works in all three engines; the
   current capture path uses `MediaRecorder`, which is universal.
