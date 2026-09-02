@@ -22,6 +22,11 @@ const (
 	appAPIAppConfigPath       = "/ocs/v2.php/apps/app_api/api/v1/ex-app/config"
 )
 
+// captureConfigSyncTimeout bounds the companion-state write. It is held open
+// across an AppAPI lifecycle request on the disable edge, so it must be short
+// enough that a slow Nextcloud cannot stall disabling the app.
+const captureConfigSyncTimeout = 5 * time.Second
+
 func (c ExAppConfig) syncSourceCaptureInitialState(ctx context.Context, enabled bool, logger *log.Logger) error {
 	if !c.appAPIActive() {
 		return nil

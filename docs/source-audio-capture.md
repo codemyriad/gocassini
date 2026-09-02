@@ -304,12 +304,22 @@ logged-in user. The client fails closed at every one of those.
   was not. It only arises after an OPFS write or flush has already failed, so
   it costs a recording that was partly lost anyway — but the good half is
   recoverable in principle and is not recovered.
-- **A disabled ExApp with the switch left on.** The companion reads
-  `source_capture_enabled` from AppAPI's ExApp config, which outlives disabling
-  the ExApp, so the payload still loads on a Talk call. It records nothing: the
-  payload's own permission check goes through the AppAPI proxy, which a disabled
-  ExApp does not serve, and an unanswered check counts as no. The cost is a
-  script tag on the page, not audio.
+- **A disabled ExApp still loads the payload.** The companion is a separate
+  native app and reads `source_capture_enabled` from AppAPI's ExApp config,
+  which outlives disabling the ExApp, so the script tag keeps appearing on Talk
+  call pages until the companion itself is disabled.
+
+  It records nothing: the payload's own permission check goes through the AppAPI
+  proxy, which a disabled ExApp does not serve, and an unanswered check counts
+  as no. So the cost is a script tag, not audio — but that safety rests entirely
+  on the check failing closed, which is a second line, not the first.
+
+  Disabling the ExApp *does* now write `false` into that config before it stops.
+  Until D-698 that write was issued in a goroutine after the lifecycle response,
+  on a context that AppAPI cancelled by stopping the container, so it never
+  landed; the stored value stayed `true` indefinitely. Verified against a real
+  install. To back the feature out completely, disable `cassini_capture` as
+  well.
 - **Firefox raw-audio path.** `MediaStreamTrackProcessor` is Chrome/Safari only.
   The timing path (`RTCRtpScriptTransform`) works in all three engines; the
   current capture path uses `MediaRecorder`, which is universal.

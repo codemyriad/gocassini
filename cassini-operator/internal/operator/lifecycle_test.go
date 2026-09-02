@@ -2,10 +2,13 @@ package operator
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -274,5 +277,73 @@ func TestInitRejectsGET(t *testing.T) {
 	mux.ServeHTTP(w, r)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("got %d, want 405", w.Code)
+	}
+}
+
+// On the disable edge the callback must finish BEFORE the response is written.
+//
+// AppAPI stops the container as soon as this request returns, so a callback
+// started in a goroutine loses the race against SIGTERM. That is how the
+// source-capture switch stayed `true` in Nextcloud after an administrator
+// disabled the app: the write was cancelled with the runtime context, and the
+// companion — a separate app reading that value — kept injecting the capture
+// payload into every Talk call page.
+func TestDisableEdgeCallbackCompletesBeforeResponding(t *testing.T) {
+	h, _ := newTestHandlers(t)
+
+	var mu sync.Mutex
+	var order []string
+	h.EnabledCallback = func(enabled bool) {
+		// Any real work here takes time; make the race deterministic.
+		time.Sleep(20 * time.Millisecond)
+		mu.Lock()
+		order = append(order, fmt.Sprintf("callback(%v)", enabled))
+		mu.Unlock()
+	}
+
+	w := putEnabled(t, h, "enabled=0", "")
+	mu.Lock()
+	order = append(order, "responded")
+	got := append([]string(nil), order...)
+	mu.Unlock()
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	want := []string{"callback(false)", "responded"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("order = %v, want %v — the disable callback must not outlive the response", got, want)
+	}
+}
+
+// The enable edge stays asynchronous. The container is staying up, and
+// provisioning behind this callback is far too slow to hold AppAPI's request.
+func TestEnableEdgeCallbackDoesNotBlockTheResponse(t *testing.T) {
+	h, _ := newTestHandlers(t)
+
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	h.EnabledCallback = func(bool) {
+		entered <- struct{}{}
+		<-release
+	}
+	defer close(release)
+
+	done := make(chan int, 1)
+	go func() { done <- putEnabled(t, h, "enabled=1", "").Code }()
+
+	select {
+	case code := <-done:
+		if code != http.StatusOK {
+			t.Fatalf("got %d, want 200", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the enable edge blocked on its callback; AppAPI's request must return immediately")
+	}
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("EnabledCallback was never called on the enable edge")
 	}
 }

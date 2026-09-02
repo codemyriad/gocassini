@@ -212,7 +212,19 @@ func (c ExAppConfig) enabledCallback(ctx context.Context, logger *log.Logger) fu
 	}
 	return func(enabled bool) {
 		captureEnabled := enabled && sourceCaptureEnabled()
-		if err := c.syncSourceCaptureInitialState(ctx, captureEnabled, logger); err != nil && logger != nil {
+		// Detached from the runtime context and bounded on its own.
+		//
+		// On the disable edge this runs while AppAPI's request is held open and
+		// the container is about to be stopped. Inheriting cancellation from
+		// the runtime would make the write fail exactly when it matters most —
+		// leaving Nextcloud believing capture is still enabled, and the
+		// companion still injecting the payload into Talk pages. The timeout is
+		// what keeps a slow or unreachable Nextcloud from holding up an app
+		// disable.
+		syncCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), captureConfigSyncTimeout)
+		err := c.syncSourceCaptureInitialState(syncCtx, captureEnabled, logger)
+		cancel()
+		if err != nil && logger != nil {
 			logger.Printf("ERROR: source capture: could not synchronize companion initial state: %v", err)
 		}
 		if !enabled {
