@@ -522,7 +522,7 @@ func runAdditionalTranscripts(ctx context.Context, mkvPath, outputDir string, st
 }
 
 // sanitizeTranscriptID maps a model id to the format-v2 transcript-id regex
-// ^[a-z0-9][a-z0-9_-]{0,31}$. Dots and other unsupported runes become hyphens
+// ^[a-z0-9][a-z0-9-]{0,31}$. Dots and other unsupported runes become hyphens
 // and the result is truncated to 32 runes.
 func sanitizeTranscriptID(id string) string {
 	var b strings.Builder

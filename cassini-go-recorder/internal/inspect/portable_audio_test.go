@@ -856,8 +856,8 @@ func TestInspectPathPortableMeetingReportsTheWordsItDecoded(t *testing.T) {
 			t.Errorf("error = %v, want it to name the transcript it could not read", err)
 		}
 		got := out.String()
-		if !strings.Contains(got, "cassini=invalid-cassini-metadata") {
-			t.Errorf("expected cassini=invalid-cassini-metadata, got %q", got)
+		if strings.Contains(got, "cassini=invalid-cassini-metadata") {
+			t.Errorf("an unreadable body is that transcript's problem, not the file's; got %q", got)
 		}
 		if !strings.Contains(got, " words=0 ") {
 			t.Errorf("expected words=0 for a transcript nothing could be read out of, got %q", got)

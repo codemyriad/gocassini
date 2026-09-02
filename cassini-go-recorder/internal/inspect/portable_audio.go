@@ -118,14 +118,11 @@ func inspectPortableAudio(out io.Writer, path string) error {
 		}
 	}
 	audioStatus := integrity.Status
-	// The metadata verdict outranks the audio verdict. A file whose transcript
-	// body cannot be read is invalid-cassini-metadata however the audio turned
-	// out, and `cassini=ok` printed beside a transcript nobody could read is
-	// exactly the reading this command exists to prevent. The audio verdict
-	// still decides the plain-audio fallback, which is about the audio.
-	if len(bodies.Unreadable) > 0 {
-		integrity.Status = "invalid-cassini-metadata"
-	}
+	// A transcript body that cannot be read makes that transcript unavailable,
+	// not the file: the state describes the manifest and the audio, and the
+	// meeting, the speakers and the other transcripts are still good. The
+	// warning names the transcript, `words=` counts only what was read, and
+	// the command still exits non-zero so a script notices.
 
 	printPortableMeeting(out, path, audioSummary, payload, manifest, bodies, integrity)
 	if audioStatus != "ok" {
@@ -860,14 +857,16 @@ func defaultWordsTranscriptEntry(tags map[string]string, manifest portable.Manif
 		}
 		return entry, warnings, true
 	}
-	if taggedID != "" {
-		for _, entry := range manifest.Transcripts {
-			if entry.ID == taggedID {
-				return entry, nil, true
-			}
-		}
+	// No flagged default: array order decides. The tag is a copy and never
+	// the resolver, so a tag naming a different entry is only a warning.
+	first := manifest.Transcripts[0]
+	var warnings []string
+	if taggedID != "" && taggedID != first.ID {
+		warnings = append(warnings, fmt.Sprintf(
+			"default transcript disagrees between manifest and tag: manifest=%s CASSINI_TRANSCRIPT_DEFAULT=%s",
+			first.ID, taggedID))
 	}
-	return manifest.Transcripts[0], nil, true
+	return first, warnings, true
 }
 
 // decodeTranscriptBody reverses portable.EncodeTranscriptBody for one v2/v3

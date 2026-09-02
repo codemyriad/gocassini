@@ -111,7 +111,7 @@ type TranscriptInput struct {
 }
 
 var (
-	transcriptIDRE        = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
+	transcriptIDRE        = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 	sha256HexRE           = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	reservedTranscriptIDs = map[string]struct{}{
 		"payload":     {},
@@ -131,7 +131,7 @@ var (
 // list. Returns nil on success.
 func ValidateTranscriptID(id string) error {
 	if !transcriptIDRE.MatchString(id) {
-		return fmt.Errorf("transcript id %q does not match ^[a-z0-9][a-z0-9_-]{0,31}$", id)
+		return fmt.Errorf("transcript id %q does not match ^[a-z0-9][a-z0-9-]{0,31}$", id)
 	}
 	if _, reserved := reservedTranscriptIDs[id]; reserved {
 		return fmt.Errorf("transcript id %q is reserved (collides with the descriptor tag namespace)", id)
@@ -376,7 +376,7 @@ func validateTranscriptInputs(transcripts []TranscriptInput) error {
 		seenID[input.ID] = struct{}{}
 
 		switch input.Role {
-		case RoleRawASR, RoleHumanCorrected, RoleTranslation:
+		case RoleRawASR, RoleHumanCorrected, RoleTranslation, RoleScripted:
 			if input.Default {
 				rawDefaults++
 			}
