@@ -198,3 +198,16 @@ describe("StoragePanel transition preview", () => {
     expect(cancel).toContain("preview = null");
   });
 });
+
+describe("StoragePanel on an install whose routes predate the tab", () => {
+  // AppAPI learns an ExApp's routes from the manifest it was REGISTERED with, so
+  // an installation updated in place from a version that predates /storage would
+  // 404 every request this tab makes. Whether that actually happens is
+  // unverified (see docs/exapp-update-constraints.md 5a) — but a Setup tab whose
+  // buttons all fail with a bare HTTP error says nothing about the cause, and
+  // saying so costs one branch.
+  it("explains a 404 as a stale registration rather than showing the status code", () => {
+    expect(storagePanelSource).toContain("error.status === 404");
+    expect(storagePanelSource).toContain("Re-register the app in Nextcloud");
+  });
+});

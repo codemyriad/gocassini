@@ -183,6 +183,45 @@ curling `/exapps/…`, which returns 502 whether the route is right or wrong.
 - [ ] Route or access-level changes reviewed: the manifest's `<routes>` is the
       enforcement point
 
+### 5a. Whether the Update button refreshes `<routes>` is UNVERIFIED
+
+Rule 5 is measured for deploy options: they are creation-time, and
+`app_api:app:update` reuses the stored ones. Whether the same is true of
+`<routes>` has never been tested either way.
+
+It matters because D-616 added `^operator/storage/?$`, which the whole Setup tab
+is built on. If routes do not refresh on update, every installation upgraded in
+place gets a Setup tab where each button 404s — and the symptom says nothing
+about the cause.
+
+The paragraph above ("an update re-runs the deploy against the same daemon with
+a newer manifest") reads as though they DO refresh, but that sentence is about
+the image and the daemon, and nothing asserts it about routes.
+
+**The check, when somebody has a stack to hand:**
+
+```bash
+# 1. Register with a manifest that predates the route.
+git stash && git checkout <pre-D-616-tag> -- appinfo/info.xml
+./bin/cassini dev stack up --cassini installed-exapp
+
+# 2. Restore the current manifest and update in place.
+git checkout HEAD -- appinfo/info.xml
+occ app_api:app:update gocassini
+
+# 3. Does the route exist?
+curl -sS -u admin:admin -o /dev/null -w '%{http_code}\n' \
+  "http://127.0.0.1:28080/index.php/apps/app_api/proxy/gocassini/operator/storage"
+```
+
+200 means routes refresh and this section can be deleted. 404 means a release
+note telling administrators to re-register, and the mitigation below becomes the
+supported path rather than a courtesy.
+
+**Mitigation already in place:** the Setup tab turns a 404 from `/storage` into
+an explanation naming re-registration, rather than a bare HTTP error. So the
+worst case is recoverable and self-describing even if nobody runs the check.
+
 ## Related
 
 - [`exapp-install.md`](./exapp-install.md) — install, verify, Talk handoff
