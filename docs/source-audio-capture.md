@@ -202,8 +202,8 @@ track including the holes it fills.
 
 The arithmetic and intake are covered by Go unit tests. The browser chain — an
 ordinary script loaded before Talk, an encoded transform, OPFS and an upload —
-only exists in a browser, and the harness has no
-browser at all (its Talk publishers are pion Go clients).
+only exists in a browser, so the fast browser suite isolates those mechanics
+from the slower full-stack seam.
 
 `cassini-app/e2e/` therefore runs a real Chromium against a stub same-origin
 Nextcloud: a script tag models the companion hook, a stub Talk bundle publishes
@@ -246,10 +246,26 @@ multipart POST in `uploadCapture`.
 IMAGE_REF=cassini-exapp:e2e-v3-cpu-gpu ./harness/bin/ci-e2e-installed-exapp-capture.sh
 ```
 
-What neither leg covers is the two joined: a browser in a real Talk call,
-through a real SFU, posting to the real proxy. That is the manual check in
-"Trying it" below; the operator's `capture upload: room=… owner=… segments=…
-bytes=…` log line is the runtime evidence that it worked.
+The seam between those legs is
+`harness/bin/ci-e2e-browser-call-capture.sh`. It installs the exact image and
+its companion into the full harness stack, logs two real Chromium participants
+into Nextcloud, and joins both to the real Talk/HPB call with fake media. Alice
+opts in, Talk starts an official audio recording, and Alice changes microphone
+mid-call so the payload must rotate and upload multiple source segments. Bob
+sends audio in the same call without capture consent and is the differential
+negative control. The leg accepts success only after Alice's browser-observed
+multipart response accounts for the same byte-plausible segment set found
+under Alice's authenticated owner path on the ExApp; Bob must create neither
+OPFS capture state nor a server owner directory.
+
+```bash
+IMAGE_REF=cassini-exapp:e2e-v3-cpu-gpu ./harness/bin/ci-e2e-browser-call-capture.sh
+```
+
+This real-browser leg is advisory in `publish-exapp-image.yml`, alongside the
+server-only capture leg. The stub-browser test remains responsible for lossy
+transport, reload, mute, and retry matrices; the server-only leg remains
+responsible for proxy refusal and replacement matrices.
 
 ## Trying it
 
