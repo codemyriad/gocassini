@@ -1,9 +1,15 @@
 package transcribe
 
 import (
+	"archive/tar"
+	"bytes"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -138,5 +144,116 @@ func TestEnsureModelRejectsAnEmptyCachedFile(t *testing.T) {
 
 	if _, err := EnsureModel(cacheRoot, ModelParakeet06BV3Int8, io.Discard); err == nil {
 		t.Fatal("EnsureModel() accepted empty model files")
+	}
+}
+
+// serveModelArchive builds a .tar.bz2 with one top-level directory and the
+// given files, and serves it. It needs the bzip2 command because the standard
+// library only decompresses.
+func serveModelArchive(t *testing.T, files map[string]string) string {
+	t.Helper()
+	if _, err := exec.LookPath("bzip2"); err != nil {
+		t.Skip("bzip2 is not installed")
+	}
+	var plain bytes.Buffer
+	tw := tar.NewWriter(&plain)
+	for name, body := range files {
+		hdr := &tar.Header{Name: "model-top-dir/" + name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bzip2", "-c")
+	cmd.Stdin = &plain
+	compressed, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("bzip2: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(compressed)))
+		w.Write(compressed)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL + "/model.tar.bz2"
+}
+
+func TestEnsureModelReplacesTheRemainsOfAnInterruptedDownload(t *testing.T) {
+	// Rename refuses a destination that exists and is not empty. Without
+	// clearing it, one interrupted download would block that tier on that host
+	// forever, and the cache is persistent.
+	const id = ModelParakeet110M
+	required := RequiredModelFileNames(id)
+	files := map[string]string{}
+	for _, name := range required {
+		files[name] = "real content for " + name
+	}
+
+	spec := knownModels[id]
+	original := spec
+	spec.URL = serveModelArchive(t, files)
+	knownModels[id] = spec
+	t.Cleanup(func() { knownModels[id] = original })
+
+	cacheRoot := t.TempDir()
+	stale := filepath.Join(cacheRoot, "models", string(id))
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The shape an interrupted download leaves: the files exist, one is
+	// truncated, and no marker was ever written.
+	for _, name := range required {
+		if err := os.WriteFile(filepath.Join(stale, name), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	paths, err := EnsureModel(cacheRoot, id, io.Discard)
+	if err != nil {
+		t.Fatalf("EnsureModel() error = %v, want the stale directory replaced", err)
+	}
+	if !strings.HasPrefix(paths.ModelFile, stale) {
+		t.Fatalf("model file = %q, want it inside %q", paths.ModelFile, stale)
+	}
+	if !modelDirComplete(stale) {
+		t.Error("the promoted directory has no completion marker")
+	}
+	body, err := os.ReadFile(paths.ModelFile)
+	if err != nil || len(body) == 0 {
+		t.Fatalf("promoted model file is empty or unreadable: %v", err)
+	}
+
+	// No staging directory survives a success.
+	entries, err := os.ReadDir(filepath.Join(cacheRoot, "models"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".staging-") {
+			t.Errorf("staging directory %s was left behind", e.Name())
+		}
+	}
+}
+
+func TestEnsureModelRejectsAnArchiveThatEscapesTheCache(t *testing.T) {
+	// The extractor must refuse a hostile entry, and must leave nothing behind.
+	const id = ModelParakeet110M
+	spec := knownModels[id]
+	original := spec
+	spec.URL = serveModelArchive(t, map[string]string{"../../escaped.onnx": "x"})
+	knownModels[id] = spec
+	t.Cleanup(func() { knownModels[id] = original })
+
+	cacheRoot := t.TempDir()
+	if _, err := EnsureModel(cacheRoot, id, io.Discard); err == nil {
+		t.Fatal("EnsureModel() accepted an archive that writes outside the cache")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(cacheRoot), "escaped.onnx")); err == nil {
+		t.Fatal("the archive wrote outside the cache directory")
 	}
 }

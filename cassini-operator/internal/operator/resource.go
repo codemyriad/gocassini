@@ -149,15 +149,31 @@ func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (str
 // wait: the recorder performs the download, and fails with an actionable error
 // when the host has no network egress.
 func (rt *Runtime) modelNeedsDownload(model string) bool {
-	present := func(root string) bool {
+	// The image root is built and verified by the image smoke test, so a
+	// directory there counts. The cache is written at run time, and only the
+	// completion marker proves a download finished: an interrupted one leaves
+	// files that exist. This mirrors EnsureModel in the recorder, which is a
+	// separate module, so the marker name lives in both places.
+	bundled := func(root string) bool {
 		if strings.TrimSpace(root) == "" {
 			return false
 		}
 		entries, err := os.ReadDir(filepath.Join(root, "models", model))
 		return err == nil && len(entries) > 0
 	}
-	return !present(rt.cfg.BundledModelRoot) && !present(rt.cfg.ModelCacheRoot)
+	cached := func(root string) bool {
+		if strings.TrimSpace(root) == "" {
+			return false
+		}
+		_, err := os.Stat(filepath.Join(root, "models", model, modelCompletionMarker))
+		return err == nil
+	}
+	return !bundled(rt.cfg.BundledModelRoot) && !cached(rt.cfg.ModelCacheRoot)
 }
+
+// modelCompletionMarker is transcribe.completionMarker. The operator and the
+// recorder are separate modules, so the name is duplicated. Keep them equal.
+const modelCompletionMarker = ".cassini-model-complete"
 
 // applyToEnv injects the STT execution policy for the device resolveBuildDevice
 // admitted. The device is always written explicitly so the child process cannot

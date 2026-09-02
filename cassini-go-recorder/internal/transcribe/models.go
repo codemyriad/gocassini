@@ -366,6 +366,10 @@ var modelHTTPClient = &http.Client{
 // recordings.
 const maxExtractedBytes = 8 << 30
 
+// diskReserveBytes stays free for the job database and the recordings that
+// share the persistent volume with this cache.
+const diskReserveBytes = 1 << 30
+
 // completionMarker marks a model directory that finished extraction and passed
 // validation. Its presence is the only proof a directory is usable: a truncated
 // file from an interrupted download still "exists", and the cache now lives on
@@ -438,15 +442,42 @@ func downloadAndExtract(url, destDir string, required []string, progress io.Writ
 		return fmt.Errorf("write completion marker: %w", err)
 	}
 
+	// Rename refuses a destination that exists and is not empty, so the remains
+	// of an interrupted download would block every later attempt forever.
+	// Remove such a directory first. A valid one is left alone: another build
+	// finished this model while this one ran.
+	if dirExists(destDir) && !modelDirValid(destDir, required) {
+		if err := os.RemoveAll(destDir); err != nil {
+			return fmt.Errorf("remove incomplete model directory %s: %w", destDir, err)
+		}
+	}
 	if err := os.Rename(staging, destDir); err != nil {
-		// Another build finished this model first. Its directory is complete,
-		// so use it and discard this copy.
-		if modelDirComplete(destDir) {
+		// The loser of a race uses the winner's directory, but only after it
+		// passes the same validation this copy just passed.
+		if modelDirValid(destDir, required) {
 			return nil
 		}
 		return fmt.Errorf("promote model into %s: %w", destDir, err)
 	}
 	return nil
+}
+
+// modelDirValid reports whether a directory holds a finished, usable model: the
+// completion marker and every required file with at least one byte in it.
+func modelDirValid(dir string, required []string) bool {
+	if !modelDirComplete(dir) {
+		return false
+	}
+	paths := make([]string, 0, len(required))
+	for _, name := range required {
+		paths = append(paths, filepath.Join(dir, name))
+	}
+	return allNonEmpty(paths)
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func extractInto(url, destDir string, progress io.Writer) error {
@@ -458,11 +489,12 @@ func extractInto(url, destDir string, progress io.Writer) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
 	}
-	// This cache shares its volume with the job database and the recordings,
-	// so refuse a download that would leave the volume near full. A bz2 model
-	// archive expands to roughly 1.4x its size, and 1GiB stays free for the
-	// rest of the deployment.
-	if err := ensureDiskSpace(destDir, 2*resp.ContentLength+(1<<30)); err != nil {
+	// Bound the extraction by the space actually available, not by the size of
+	// the archive: a compressed file says nothing reliable about what it
+	// expands to. This volume also holds the job database and the recordings,
+	// so 1GiB stays free for them.
+	budget, err := extractionBudget(destDir)
+	if err != nil {
 		return err
 	}
 
@@ -496,14 +528,17 @@ func extractInto(url, destDir string, progress io.Writer) error {
 		if err != nil {
 			return err
 		}
-		n, err := io.Copy(f, io.LimitReader(tr, maxExtractedBytes-written))
+		n, err := io.Copy(f, io.LimitReader(tr, budget-written+1))
 		f.Close()
 		if err != nil {
 			return err
 		}
 		written += n
-		if written >= maxExtractedBytes {
-			return fmt.Errorf("archive from %s is larger than the %d byte limit", url, int64(maxExtractedBytes))
+		if written > budget {
+			return fmt.Errorf(
+				"archive from %s expands beyond the %d MB this volume can spare; "+
+					"free space, or select a quality tier this image bundles",
+				url, budget/(1<<20))
 		}
 		fmt.Fprintf(progress, "  extracted: %s\n", filepath.Base(outPath))
 	}
@@ -535,26 +570,28 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// ensureDiskSpace refuses to start a download that the volume cannot hold.
-// need of zero or less means the server did not declare a length, and the
-// check then asks for a fixed 4GiB, above the largest model this repository
-// ships.
-func ensureDiskSpace(dir string, need int64) error {
-	if need <= 1<<30 {
-		need = 4 << 30
-	}
+// extractionBudget is the number of bytes an extraction may write: the space
+// free on this filesystem, less a reserve for the job database and the
+// recordings that share the volume, and never more than maxExtractedBytes.
+// Enforcing a budget while writing is the only bound that holds, because the
+// size of a compressed archive does not limit what it expands to.
+func extractionBudget(dir string) (int64, error) {
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(dir, &stat); err != nil {
-		// The check is a guard, not a gate: an unreadable filesystem should not
-		// stop a download that would have worked.
-		return nil
+		// An unreadable filesystem must not stop a download that would have
+		// worked, so fall back to the absolute cap.
+		return maxExtractedBytes, nil
 	}
 	free := int64(stat.Bavail) * int64(stat.Bsize)
-	if free < need {
-		return fmt.Errorf(
-			"model download needs about %d MB free in %s but only %d MB is available; "+
-				"free space on the volume or select a quality tier this image bundles",
-			need/(1<<20), dir, free/(1<<20))
+	budget := free - diskReserveBytes
+	if budget <= 0 {
+		return 0, fmt.Errorf(
+			"only %d MB is free in %s, and %d MB stays reserved for the recordings and the job database; "+
+				"free space, or select a quality tier this image bundles",
+			free/(1<<20), dir, int64(diskReserveBytes)/(1<<20))
 	}
-	return nil
+	if budget > maxExtractedBytes {
+		budget = maxExtractedBytes
+	}
+	return budget, nil
 }

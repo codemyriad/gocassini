@@ -850,7 +850,7 @@ func TestModelNeedsDownload(t *testing.T) {
 	cacheRoot := t.TempDir()
 	rt := &Runtime{cfg: Config{BundledModelRoot: bundledRoot, ModelCacheRoot: cacheRoot}}
 
-	seed := func(root, model string) {
+	seed := func(root, model string, complete bool) {
 		t.Helper()
 		dir := filepath.Join(root, "models", model)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -859,20 +859,33 @@ func TestModelNeedsDownload(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "encoder.onnx"), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		if complete {
+			if err := os.WriteFile(filepath.Join(dir, modelCompletionMarker), []byte("t\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 
 	if !rt.modelNeedsDownload(modelParakeetV3Int8) {
 		t.Error("a model in neither root must read as a download")
 	}
 
-	seed(bundledRoot, modelParakeetV3Fp32)
+	seed(bundledRoot, modelParakeetV3Fp32, false)
 	if rt.modelNeedsDownload(modelParakeetV3Fp32) {
 		t.Error("a model baked into the image must not be downloaded")
 	}
 
-	seed(cacheRoot, modelParakeetV3Int8)
+	// An interrupted download leaves files without the marker. That directory
+	// must still read as a download, or the operator would promise a build the
+	// recorder cannot start.
+	seed(cacheRoot, modelParakeetV3Int8, false)
+	if !rt.modelNeedsDownload(modelParakeetV3Int8) {
+		t.Error("an unfinished cache directory must still read as a download")
+	}
+
+	seed(cacheRoot, modelParakeetV3Int8, true)
 	if rt.modelNeedsDownload(modelParakeetV3Int8) {
-		t.Error("a model already in the cache must not be fetched again")
+		t.Error("a completed download must not be fetched again")
 	}
 }
 
