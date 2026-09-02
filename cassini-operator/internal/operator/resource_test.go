@@ -843,56 +843,35 @@ func TestCPUFloorsRankByTierCost(t *testing.T) {
 	}
 }
 
-func TestAdmitModelForDeviceRequiresTheModelToBeBundled(t *testing.T) {
-	// A CUDA image that has fallen back to the CPU can be asked for a tier
-	// whose model it never shipped. Block at admission with an actionable
-	// message instead of failing minutes into a build.
+func TestModelNeedsDownload(t *testing.T) {
+	// Each image carries the models for the device it serves. A tier outside
+	// that set arrives by one download into the persistent cache (D-704).
+	bundledRoot := t.TempDir()
 	cacheRoot := t.TempDir()
-	rt := &Runtime{cfg: Config{ModelCacheRoot: cacheRoot, DisallowModelDownload: true}}
+	rt := &Runtime{cfg: Config{BundledModelRoot: bundledRoot, ModelCacheRoot: cacheRoot}}
 
-	bundled := filepath.Join(cacheRoot, "models", modelParakeetV3Fp32)
-	if err := os.MkdirAll(bundled, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(bundled, "encoder.onnx"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := rt.admitModelForDevice(STTSettings{Quality: sttQualityBest}, deviceCPU); err != nil {
-		t.Fatalf("bundled model was refused: %v", err)
-	}
-
-	// A tier the administrator pinned blocks: they chose it, and quietly
-	// running a different one would be the silent substitution this whole
-	// change exists to avoid.
-	pinned := STTSettings{Quality: sttQualityBalanced, Source: sttSourceUser}
-	_, err := rt.admitModelForDevice(pinned, deviceCPU)
-	var unavailable *resourceUnavailableError
-	if !errors.As(err, &unavailable) || unavailable.resource != "model bundle" {
-		t.Fatalf("unbundled pinned tier error = %v, want model bundle resourceUnavailableError", err)
-	}
-	if !unavailable.permanent {
-		t.Error("a model the image does not carry cannot appear by waiting; want permanent")
-	}
-	if !strings.Contains(unavailable.detail, modelParakeetV3Int8) {
-		t.Errorf("detail %q does not name the missing model", unavailable.detail)
+	seed := func(root, model string) {
+		t.Helper()
+		dir := filepath.Join(root, "models", model)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "encoder.onnx"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
-	// An automatic policy is the operator's own choice, so it takes the best
-	// tier the image does carry instead of stranding the recording — the CUDA
-	// image that lost its GPU and carries only fp32.
-	auto := STTSettings{Quality: sttQualityBalanced, Source: sttSourceAuto}
-	got, err := rt.admitModelForDevice(auto, deviceCPU)
-	if err != nil {
-		t.Fatalf("auto policy was blocked instead of using a bundled tier: %v", err)
-	}
-	if got != modelParakeetV3Fp32 {
-		t.Errorf("auto fallback model = %q, want the bundled %s", got, modelParakeetV3Fp32)
+	if !rt.modelNeedsDownload(modelParakeetV3Int8) {
+		t.Error("a model in neither root must read as a download")
 	}
 
-	// An image that permits downloads is not gated on what it happens to carry.
-	downloads := &Runtime{cfg: Config{ModelCacheRoot: cacheRoot}}
-	if _, err := downloads.admitModelForDevice(pinned, deviceCPU); err != nil {
-		t.Fatalf("download-capable image was gated on the bundle: %v", err)
+	seed(bundledRoot, modelParakeetV3Fp32)
+	if rt.modelNeedsDownload(modelParakeetV3Fp32) {
+		t.Error("a model baked into the image must not be downloaded")
+	}
+
+	seed(cacheRoot, modelParakeetV3Int8)
+	if rt.modelNeedsDownload(modelParakeetV3Int8) {
+		t.Error("a model already in the cache must not be fetched again")
 	}
 }

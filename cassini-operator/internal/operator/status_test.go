@@ -7,8 +7,6 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1032,54 +1030,32 @@ func TestSetupRejectsNonGET(t *testing.T) {
 	}
 }
 
-func TestStatusHandlerReportsAnUnbundledTierAsUnusable(t *testing.T) {
-	// A CUDA image that has fallen back to the CPU carries only the fp32 model.
-	// Asking it for another tier blocks every build permanently, so readiness
-	// must say so rather than report a host that will never finish a build
-	// (D-702): status and admission run the same predicate.
+func TestStatusHandlerReportsATierTheImageMustDownloadAsReady(t *testing.T) {
+	// A tier the image does not carry is no longer a blocked build: the model
+	// downloads once into the persistent cache (D-704). Readiness must say the
+	// host is ready, because it is.
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	cacheRoot := t.TempDir()
-	rt.cfg.ModelCacheRoot = cacheRoot
-	rt.cfg.DisallowModelDownload = true
-	t.Setenv(envSTTCUDACapable, "1")
-	stubNVIDIADevice(t, false) // the GPU went missing: auto falls back to CPU
-	bundled := filepath.Join(cacheRoot, "models", modelParakeetV3Fp32)
-	if err := os.MkdirAll(bundled, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(bundled, "encoder.onnx"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
+	rt.cfg.BundledModelRoot = t.TempDir()
+	rt.cfg.ModelCacheRoot = t.TempDir()
+	t.Setenv(envSTTCUDACapable, "0")
+	stubNVIDIADevice(t, false)
 	rt.setSettings(STTSettings{Quality: sttQualityBalanced, Source: sttSourceUser})
-	rt.computeProbe = func(string) (bool, string) { return true, "cpu inference (no GPU required)" }
+	rt.computeProbe = func(device string) (bool, string) { return probeComputeDevice(device) }
 
 	rec := httptest.NewRecorder()
 	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503 body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rec.Code, rec.Body.String())
 	}
 	var resp statusResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode status response: %v", err)
 	}
-	if resp.STT.DeviceUsable || !strings.Contains(resp.STT.Detail, modelParakeetV3Int8) {
-		t.Fatalf("unbundled pinned tier reported as usable or unexplained: %#v", resp.STT)
+	if !resp.STT.DeviceUsable || resp.STT.ModelID != modelParakeetV3Int8 {
+		t.Fatalf("unexpected stt status for a downloadable tier: %#v", resp.STT)
 	}
-
-	// The same host with an automatic policy is ready, and says which model it
-	// will really load — the bundled fp32, not the tier's nominal int8.
-	rt.setSettings(STTSettings{Quality: sttQualityBalanced, Source: sttSourceAuto})
-	rec = httptest.NewRecorder()
-	rt.statusHandler(rec, httptest.NewRequest(http.MethodGet, "/status", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("auto policy status = %d, want 200 body=%s", rec.Code, rec.Body.String())
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode status response: %v", err)
-	}
-	if resp.STT.ModelID != modelParakeetV3Fp32 {
-		t.Fatalf("model_id = %q, want the bundled %s a build would actually load", resp.STT.ModelID, modelParakeetV3Fp32)
+	if !rt.modelNeedsDownload(resp.STT.ModelID) {
+		t.Fatal("this fixture must describe a model that is in neither root")
 	}
 }

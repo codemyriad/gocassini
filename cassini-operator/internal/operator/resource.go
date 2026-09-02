@@ -121,83 +121,28 @@ func (e *resourceUnavailableError) Error() string {
 	return fmt.Sprintf("resource governor: %s unavailable: %s", e.resource, e.detail)
 }
 
-// admitModelForDevice returns the model an admitted build will load, refusing a
-// combination the model was never audited for. An administrator who pinned an
-// int8 model and CUDA gets a loud, permanent error rather than a GPU run that
-// silently fragments back onto the host CPU.
+// admitModelForDevice returns the model an admitted build will load: the model
+// of the quality tier on the resolved device. Every tier can run on every
+// image, because a model the image does not carry is downloaded once into the
+// persistent cache (D-704).
 func (rt *Runtime) admitModelForDevice(settings STTSettings, device string) (string, error) {
-	model := settings.modelForDevice(device)
-	err := rt.requireBundledModel(model)
-	if err == nil {
-		return model, nil
-	}
-	// An automatic policy exists to pick something this host can run, so when
-	// the image does not carry the tier's model, use the best tier it does
-	// carry rather than stranding a recording nobody chose a tier for. This is
-	// the CUDA image that lost its GPU: it falls back to CPU decoding and
-	// carries only fp32, which is exactly the "best" tier. A tier the
-	// administrator pinned is their own decision and still blocks with the
-	// actionable message.
-	if settings.Source == sttSourceUser {
-		return "", err
-	}
-	if alternative, ok := rt.bestBundledModel(device); ok {
-		return alternative, nil
-	}
-	return "", err
+	return settings.modelForDevice(device), nil
 }
 
-// bestBundledModel returns the most accurate tier's model that this image both
-// supports on device and actually carries.
-func (rt *Runtime) bestBundledModel(device string) (string, bool) {
-	for _, quality := range []string{sttQualityBest, sttQualityBalanced, sttQualityFast} {
-		model := modelForQuality(quality, device)
-		if rt.requireBundledModel(model) == nil {
-			return model, true
+// modelNeedsDownload reports whether a build must fetch this model before it
+// can transcribe. Each image carries the models for the device it serves, so a
+// tier outside that set arrives by download. The operator only reports the
+// wait: the recorder performs the download, and fails with an actionable error
+// when the host has no network egress.
+func (rt *Runtime) modelNeedsDownload(model string) bool {
+	present := func(root string) bool {
+		if strings.TrimSpace(root) == "" {
+			return false
 		}
+		entries, err := os.ReadDir(filepath.Join(root, "models", model))
+		return err == nil && len(entries) > 0
 	}
-	return "", false
-}
-
-// requireBundledModel refuses a tier whose model the running image does not
-// carry, when that image also forbids runtime downloads. Each image variant
-// bundles the models for the device it exists to serve — the CUDA image carries
-// fp32, the portable image carries the CPU tiers — so a CUDA image that has
-// fallen back to the CPU can be asked for a model it never shipped. Saying so
-// at admission gives an actionable block instead of a missing-file failure deep
-// inside the recorder, minutes into a build.
-func (rt *Runtime) requireBundledModel(model string) error {
-	if !rt.cfg.DisallowModelDownload {
-		return nil
-	}
-	root := strings.TrimSpace(rt.cfg.ModelCacheRoot)
-	if root == "" {
-		// No declared cache root: the recorder's own doctor is then the
-		// authority on whether the files are there.
-		return nil
-	}
-	dir := filepath.Join(root, "models", model)
-	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) == 0 {
-		return &resourceUnavailableError{
-			resource: "model bundle",
-			detail: fmt.Sprintf(
-				"this image does not bundle model %q (expected at %s) and runtime downloads are disabled; select a quality tier whose model is bundled, or install the image variant that carries it",
-				model, dir),
-			permanent: true,
-		}
-	}
-	return nil
-}
-
-// envBool reports whether an env var is set to a truthy value.
-func envBool(key string) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
-	case "1", "true", "yes":
-		return true
-	default:
-		return false
-	}
+	return !present(rt.cfg.BundledModelRoot) && !present(rt.cfg.ModelCacheRoot)
 }
 
 // applyToEnv injects the STT execution policy for the device resolveBuildDevice

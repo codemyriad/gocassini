@@ -189,7 +189,25 @@ func sttModelCacheChecks() []doctorCheck {
 		parentWritableCheck(cacheRoot, "cassini cache root"),
 	}
 
+	// Look in the image's read-only bundled root first, the same order
+	// EnsureModel uses: a tier the image carries is never downloaded, and a
+	// tier it does not carry is fetched once into the writable cache (D-704).
 	modelDir := filepath.Join(cacheRoot, "models", string(modelID))
+	if root := strings.TrimSpace(os.Getenv("CASSINI_BUNDLED_MODEL_ROOT")); root != "" {
+		bundledDir := filepath.Join(root, "models", string(modelID))
+		if check := modelFilesCheck(bundledDir, modelID); check.status == doctorOK {
+			checks = append(checks, check)
+			return append(checks, doctorCheck{
+				status:  doctorOK,
+				summary: fmt.Sprintf("STT model %s is bundled in this image", modelID),
+			})
+		}
+		checks = append(checks, doctorCheck{
+			status: doctorWarn,
+			summary: fmt.Sprintf("STT model %s is not bundled in this image; it downloads once into %s on first use",
+				modelID, modelDir),
+		})
+	}
 	checks = append(checks, modelFilesCheck(modelDir, modelID))
 
 	if info, err := os.Stat(modelDir); err == nil && info.IsDir() {

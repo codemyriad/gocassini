@@ -20,16 +20,13 @@ ARG FRP_VERSION=0.61.1
 ARG FFMPEG_VERSION=latest
 ARG FFMPEG_BUILD_JOBS=2
 
-# Models bundled into the CPU image: one per quality tier. The runtime stage
-# sets CASSINI_DISALLOW_MODEL_DOWNLOAD=1, so a tier whose model is not bundled
-# cannot run at all — and on a host with no GPU these tiers are the whole of the
-# quality setting (D-702). Keep the ids in step with transcribe.ModelForQuality:
-# fast = 110M CTC, balanced = 0.6B v3 int8, best = 0.6B v3 fp32. The URLs and
-# per-model file lists live in deployment/models/fetch-models.sh.
-#
-# Bundling all three costs ~2.5GB of image over the balanced model alone, almost
-# all of it the fp32 encoder. Drop an id here to trade a tier for pull size.
-ARG CASSINI_BUNDLED_MODELS="parakeet-tdt-ctc-110m-en-int8 parakeet-tdt-0.6b-v3-int8 parakeet-tdt-0.6b-v3"
+# The model this image bakes: the one its default quality tier loads. A CPU host
+# runs "balanced" by default, so the portable image carries the 0.6B int8 model
+# and nothing else. Fast and Best download once into the persistent model cache
+# when an administrator selects them (D-704), which keeps this image small
+# without removing a tier. The URLs and per-model file lists live in
+# deployment/models/fetch-models.sh.
+ARG CASSINI_BUNDLED_MODELS="parakeet-tdt-0.6b-v3-int8"
 # The CASSINI_STT_MODEL default baked into the runtime stage, for direct CLI use
 # inside the container. Operator-managed builds never see it: the operator
 # strips CASSINI_STT_MODEL from the child env so the quality tier decides.
@@ -174,7 +171,7 @@ ENV CASSINI_BIN=/usr/local/bin/cassini \
     CASSINI_APPAPI_REQUIRED=true \
     CASSINI_STT_CUDA_CAPABLE=0 \
     CASSINI_STT_DEVICE=cpu \
-    CASSINI_DISALLOW_MODEL_DOWNLOAD=1
+    CASSINI_BUNDLED_MODEL_ROOT=/opt/cassini/cache
 ENV PATH=/opt/cassini/ffmpeg/bin:${PATH}
 
 # AppAPI deploys inject only APP_*/HP_*/NEXTCLOUD_URL (see app_api

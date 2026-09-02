@@ -44,6 +44,14 @@ const (
 	envSTTStreamConcurrency = "CASSINI_STT_STREAM_CONCURRENCY"
 	envSTTAdditionalModels  = "CASSINI_STT_ADDITIONAL_MODELS"
 	envTranscriptionTerms   = "CASSINI_TRANSCRIPTION_TERMS"
+	// envCacheRoot points the recorder at the writable model cache. The
+	// operator sets it per build so a tier the image does not bundle downloads
+	// onto the persistent volume (D-704).
+	envCacheRoot = "CASSINI_CACHE_ROOT"
+	// envDisallowModelDownload is stripped from every child: the image used to
+	// forbid all downloads, which is now expressed by declaring the models it
+	// bundles instead. A stale value would block the one-off fetch.
+	envDisallowModelDownload = "CASSINI_DISALLOW_MODEL_DOWNLOAD"
 
 	maxTranscriptionTerms     = 100
 	maxTranscriptionTermRunes = 100
@@ -369,12 +377,13 @@ func (s STTSettings) ChildEnv(base []string) []string {
 	// override) keeps the result duplicate-free and makes the appended override
 	// the single, authoritative value.
 	drop := map[string]bool{
-		envSTTQuality:          true,
-		envSTTNumThreads:       true,
-		envSTTDevice:           true,
-		envSTTModel:            true,
-		envSTTAdditionalModels: true,
-		envTranscriptionTerms:  true,
+		envDisallowModelDownload: true,
+		envSTTQuality:            true,
+		envSTTNumThreads:         true,
+		envSTTDevice:             true,
+		envSTTModel:              true,
+		envSTTAdditionalModels:   true,
+		envTranscriptionTerms:    true,
 	}
 
 	out := make([]string, 0, len(base)+4)

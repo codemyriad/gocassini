@@ -613,33 +613,24 @@ func TestAutoQualityFollowsEffectiveCUDACapability(t *testing.T) {
 	}
 }
 
-func TestGetSettingsReportsTheModelABuildWouldLoad(t *testing.T) {
-	// An image that does not carry the tier's model runs a bundled one for an
-	// automatic policy. The panel reads /settings, so it must name that model —
-	// otherwise the two endpoints an administrator can consult disagree about
-	// what is running.
+func TestGetSettingsReportsTheTiersModel(t *testing.T) {
+	// The panel reads /settings, and every tier runs on every image now: a
+	// model the image does not carry is downloaded once (D-704). So the
+	// reported model is the tier's own model, not whatever the image happens
+	// to bundle.
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
-	cacheRoot := t.TempDir()
-	rt.cfg.ModelCacheRoot = cacheRoot
-	rt.cfg.DisallowModelDownload = true
 	t.Setenv(envSTTCUDACapable, "0")
 	stubNVIDIADevice(t, false)
-	bundled := filepath.Join(cacheRoot, "models", modelParakeetV3Fp32)
-	if err := os.MkdirAll(bundled, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(bundled, "encoder.onnx"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+
 	// GET /settings re-reads from disk, so the policy has to be persisted: an
 	// in-memory set alone would be replaced by whatever the loader detects, and
 	// the assertion would then depend on the host.
-	auto := STTSettings{Quality: sttQualityBalanced, Source: sttSourceAuto}
-	if err := Save(rt.settingsPath, auto); err != nil {
+	balanced := STTSettings{Quality: sttQualityBalanced, Source: sttSourceUser}
+	if err := Save(rt.settingsPath, balanced); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
-	rt.setSettings(auto)
+	rt.setSettings(balanced)
 
 	rec := httptest.NewRecorder()
 	rt.settingsHandler(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
@@ -650,28 +641,10 @@ func TestGetSettingsReportsTheModelABuildWouldLoad(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.Effective.Model != modelParakeetV3Fp32 {
-		t.Fatalf("effective.model = %q, want the bundled %s the build will load", resp.Effective.Model, modelParakeetV3Fp32)
+	if resp.Effective.Device != deviceCPU {
+		t.Fatalf("effective.device = %q, want cpu", resp.Effective.Device)
 	}
-
-	// Pinning the same tier — which any save does, by setting Source=user —
-	// blocks every build, so the panel must carry the reason rather than
-	// describing a run that will not happen.
-	pinned := STTSettings{Quality: sttQualityBalanced, Source: sttSourceUser}
-	if err := Save(rt.settingsPath, pinned); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	rt.setSettings(pinned)
-
-	rec = httptest.NewRecorder()
-	rt.settingsHandler(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /settings = %d, want 200 body=%s", rec.Code, rec.Body.String())
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if !strings.Contains(resp.Effective.Note, modelParakeetV3Int8) {
-		t.Fatalf("effective.note = %q, want the block reason naming the missing model", resp.Effective.Note)
+	if resp.Effective.Model != modelParakeetV3Int8 {
+		t.Fatalf("effective.model = %q, want the balanced tier model %s", resp.Effective.Model, modelParakeetV3Int8)
 	}
 }

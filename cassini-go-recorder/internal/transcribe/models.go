@@ -130,13 +130,57 @@ type ModelPaths struct {
 	FeatureDim int
 }
 
+// envBundledModelRoot names the read-only directory where an image bakes its
+// models, and envBundledModels lists which model ids that image claims to
+// carry. An image serves the device it exists for: the portable image bundles
+// the CPU default, the CUDA image bundles fp32. A tier outside that list is
+// downloaded once into the writable cache, which the ExApp keeps on its
+// persistent volume so the download survives a container recreate (D-704).
+const (
+	envBundledModelRoot = "CASSINI_BUNDLED_MODEL_ROOT"
+	envBundledModels    = "CASSINI_BUNDLED_MODELS"
+)
+
+// bundledModelDeclared reports whether the running image says it carries this
+// model. A declared model that is not on disk is a broken image, so the caller
+// must fail loudly instead of downloading over the top of it.
+func bundledModelDeclared(id ModelID) bool {
+	for _, declared := range strings.Fields(os.Getenv(envBundledModels)) {
+		if declared == string(id) {
+			return true
+		}
+	}
+	return false
+}
+
 // EnsureModel downloads and extracts the model if not already cached,
-// returning the resolved file paths. cacheDir is the root cache directory
-// (e.g. ~/.cache/cassini).
+// returning the resolved file paths. cacheDir is the writable cache root
+// (e.g. ~/.cache/cassini). Files baked into the image are found first, under
+// CASSINI_BUNDLED_MODEL_ROOT, and are never written to.
 func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, error) {
 	spec, ok := knownModels[id]
 	if !ok {
 		return ModelPaths{}, fmt.Errorf("unknown model %q", id)
+	}
+
+	if root := strings.TrimSpace(os.Getenv(envBundledModelRoot)); root != "" {
+		bundledDir := filepath.Join(root, "models", string(id))
+		bundled := resolveModelPaths(bundledDir, spec)
+		if allExist(requiredModelFiles(bundled, spec)) {
+			return bundled, nil
+		}
+		if bundledModelDeclared(id) {
+			missing := []string{}
+			for _, f := range requiredModelFiles(bundled, spec) {
+				if !fileExists(f) {
+					missing = append(missing, f)
+				}
+			}
+			return ModelPaths{}, fmt.Errorf(
+				"image declares model %s in %s but these files are missing: %s; "+
+					"rebuild the image, do not expect a download to repair a bundled model",
+				id, envBundledModels, strings.Join(missing, ", "))
+		}
 	}
 
 	modelDir := filepath.Join(cacheDir, "models", string(id))
@@ -146,10 +190,11 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 		return paths, nil
 	}
 
-	// Production images (Nextcloud ExApp, etc.) bundle the default model into
-	// the image and set CASSINI_DISALLOW_MODEL_DOWNLOAD=1 so that a missing
-	// bundled file fails loudly instead of silently triggering a multi-hundred-
-	// MiB download from a container that may have no network egress.
+	// CASSINI_DISALLOW_MODEL_DOWNLOAD=1 forbids every download, for an
+	// air-gapped install that wants a loud failure instead of a fetch. Images
+	// no longer set it: they declare what they bake in CASSINI_BUNDLED_MODELS,
+	// which fails loudly for a missing bundled model while still allowing a
+	// tier the image does not carry to download once (D-704).
 	if envBool("CASSINI_DISALLOW_MODEL_DOWNLOAD") {
 		missing := []string{}
 		for _, f := range requiredModelFiles(paths, spec) {
@@ -179,11 +224,19 @@ func EnsureModel(cacheDir string, id ModelID, progress io.Writer) (ModelPaths, e
 	return paths, nil
 }
 
-// EnsureVAD downloads the Silero VAD model if not already cached,
-// returning its path. Honors CASSINI_DISALLOW_MODEL_DOWNLOAD: production
-// images (where VAD is also bundled) get a clear error instead of a
-// runtime download.
+// EnsureVAD returns the path of the Silero VAD model, downloading it only when
+// neither the image nor the cache has it. Honors
+// CASSINI_DISALLOW_MODEL_DOWNLOAD for an air-gapped install.
 func EnsureVAD(cacheDir string, progress io.Writer) (string, error) {
+	// Every image bakes the VAD, so look in the read-only bundled root first.
+	// Without this the writable cache on the persistent volume would refetch a
+	// file the image already has (D-704).
+	if root := strings.TrimSpace(os.Getenv(envBundledModelRoot)); root != "" {
+		bundled := filepath.Join(root, "vad", "silero_vad.onnx")
+		if fileExists(bundled) {
+			return bundled, nil
+		}
+	}
 	vadPath := filepath.Join(cacheDir, "vad", "silero_vad.onnx")
 	if fileExists(vadPath) {
 		return vadPath, nil

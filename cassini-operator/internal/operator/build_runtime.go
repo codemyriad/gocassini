@@ -271,9 +271,11 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	// the attempt log should never have to infer it from the elapsed time.
 	rt.logger.Printf("resource governor: job %s admitted on %s (quality=%s model=%s)",
 		task.JobID, device, normalizeQuality(settings.Quality), model)
-	if tierModel := settings.modelForDevice(device); tierModel != model {
-		rt.logger.Printf("resource governor: job %s uses %s because this image does not bundle %s for the %s tier",
-			task.JobID, model, tierModel, normalizeQuality(settings.Quality))
+	if rt.modelNeedsDownload(model) {
+		// A one-off fetch of several hundred MB delays the first build of this
+		// tier. Say so, or the build looks stalled.
+		rt.logger.Printf("resource governor: job %s downloads model %s into %s before it transcribes; this happens once",
+			task.JobID, model, rt.cfg.ModelCacheRoot)
 	}
 	if err := limits.waitForMemory(ctx, limits.minFreeMemForBuild(device, model), rt.logger.Printf); err != nil {
 		return meetingPath, err
@@ -282,6 +284,12 @@ func (rt *Runtime) executeBuildCLI(ctx context.Context, task buildTask) (string,
 	// reading is an admission snapshot; taking it before a long memory wait
 	// would let another workload consume the GPU in between.
 	env := settings.ChildEnv(os.Environ())
+	if root := strings.TrimSpace(rt.cfg.ModelCacheRoot); root != "" {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return meetingPath, fmt.Errorf("create model cache root %s: %w", root, err)
+		}
+		env = setEnvKey(env, envCacheRoot, root)
+	}
 	buildEnv, err := limits.applyToEnv(env, device, model)
 	if err != nil {
 		return meetingPath, err
