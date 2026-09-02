@@ -122,3 +122,49 @@ export interface SettingsUpdate {
   device_override: string;
   transcription_terms: string[];
 }
+
+// StorageMode mirrors the operator's storage_settings.json vocabulary (D-616).
+// "" is a third answer, not a missing one: it means no preflight has resolved a
+// mode yet, which the Setup tab has to be able to tell apart from "default".
+export type StorageMode = "" | "default" | "access_controlled";
+
+// StorageModeOption is one of the two models as GET <basePath>/storage
+// describes it. The copy — summary, consequence, blocker, instructions — comes
+// from the operator rather than from this app, because that is the layer that
+// knows the Team folder's id, the group names and which prerequisite is
+// actually absent. The panel renders it and decides nothing.
+export interface StorageModeOption {
+  mode: Exclude<StorageMode, "">;
+  label: string;
+  active: boolean;
+  available: boolean;
+  summary: string;
+  consequence: string;
+  blocker: string;
+  step: string;
+  instructions: string[];
+}
+
+// StorageTransition is what a switch actually did, present only on the PUT that
+// performed one.
+export interface StorageTransition {
+  mode: string;
+  meetings_moved: number;
+  catalog_moved: boolean;
+  source_root: string;
+  destination_root: string;
+  leftover_source: string;
+  unmapped_groups: string[];
+}
+
+export interface StorageStatus {
+  mode: StorageMode;
+  mode_source: string;
+  ok: boolean;
+  state: string;
+  step: string;
+  detail: string;
+  checked_at: string;
+  modes: StorageModeOption[];
+  transition: StorageTransition | null;
+}

@@ -10,24 +10,39 @@
 //
 // The two param spaces never collide: `browse` is the default and writes NO
 // marker (so standalone/share URLs stay clean and the viewer owns meeting/tx/t
-// unshadowed), and the `operator` surface carries no meeting/tx/t of its own.
+// unshadowed), and the admin surfaces carry no meeting/tx/t of their own.
 // The viewer's readViewerHash() ignores the surface param; readSurface() here
 // ignores everything else.
+//
+// `setup` (D-616) is the third surface: instance-level configuration, today the
+// storage-mode switch. It is deliberately not a panel inside the operator
+// surface — the operator surface is about runs, and a control that moves every
+// recording in the instance does not belong beside a run list.
 
-export type Surface = "browse" | "operator";
+export type Surface = "browse" | "operator" | "setup";
 
 const SURFACE_PARAM = "surface";
 const JOB_PARAM = "job";
 
-export function readSurface(hash: string): Surface {
-  const params = new URLSearchParams(hash.replace(/^#/, ""));
-  return params.get(SURFACE_PARAM) === "operator" ? "operator" : "browse";
+// ADMIN_SURFACES are the ones the shell shows only when the operator boundary
+// probe succeeds. Keeping them in one list is what stops readSurface and the
+// tab bar drifting apart when a fourth is added.
+export const ADMIN_SURFACES: readonly Surface[] = ["operator", "setup"];
+
+function isAdminSurface(value: string | null): value is Surface {
+  return value !== null && (ADMIN_SURFACES as readonly string[]).includes(value);
 }
 
-// surfaceHash returns the fragment for a surface: "#surface=operator" for the
-// operator surface, "" for browse (the default — no marker).
+export function readSurface(hash: string): Surface {
+  const params = new URLSearchParams(hash.replace(/^#/, ""));
+  const value = params.get(SURFACE_PARAM);
+  return isAdminSurface(value) ? value : "browse";
+}
+
+// surfaceHash returns the fragment for a surface: "#surface=operator" for an
+// admin surface, "" for browse (the default — no marker).
 export function surfaceHash(surface: Surface): string {
-  return surface === "operator" ? `#${SURFACE_PARAM}=operator` : "";
+  return surface === "browse" ? "" : `#${SURFACE_PARAM}=${surface}`;
 }
 
 // applySurface sets/clears the surface param on an EXISTING hash while
@@ -39,7 +54,7 @@ export function applySurface(hash: string, surface: Surface): string {
     .replace(/^#/, "")
     .split("&")
     .filter((part) => part !== "" && !part.startsWith(`${SURFACE_PARAM}=`));
-  const parts = surface === "operator" ? [`${SURFACE_PARAM}=operator`, ...rest] : rest;
+  const parts = surface === "browse" ? rest : [`${SURFACE_PARAM}=${surface}`, ...rest];
   return parts.length > 0 ? `#${parts.join("&")}` : "";
 }
 

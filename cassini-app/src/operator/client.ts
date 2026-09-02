@@ -6,6 +6,10 @@ import type {
   SettingsEffective,
   SettingsQuality,
   SettingsUpdate,
+  StorageMode,
+  StorageModeOption,
+  StorageStatus,
+  StorageTransition,
 } from "./types";
 
 const SETTINGS_QUALITIES: readonly SettingsQuality[] = ["fast", "balanced", "best"];
@@ -104,6 +108,27 @@ export class OperatorClient {
     );
   }
 
+  async getStorage(): Promise<StorageStatus> {
+    return normalizeStorage(await this.#request<unknown>("/storage"));
+  }
+
+  // putStorage switches the storage model, which MOVES every published
+  // recording. It is one call and it blocks for the length of the move: the
+  // operator holds its provisioning lock for the whole transition and re-runs
+  // its preflight before answering, so there is no half-switched state to poll
+  // for and nothing useful this client could do with one.
+  async putStorage(accessControlEnabled: boolean): Promise<StorageStatus> {
+    return normalizeStorage(
+      await this.#request<unknown>("/storage", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ access_control_enabled: accessControlEnabled }),
+      }),
+    );
+  }
+
   openEventStream(handlers: OperatorStreamHandlers): EventSource {
     const eventSource = new EventSource(`${this.#baseUrl}/events`);
     const handleMessage = (event: MessageEvent<string>) => {
@@ -195,4 +220,81 @@ function asStringArray(value: unknown): string[] {
     return [];
   }
   return value.filter((item): item is string => typeof item === "string");
+}
+
+const STORAGE_MODES: readonly StorageMode[] = ["", "default", "access_controlled"];
+
+// normalizeStorage does for /storage what normalizeSettings does for /settings:
+// give the panel a renderable, well-typed shape whatever the server sent.
+//
+// The one field it will not guess is `available`. Everything else degrades to
+// an empty string or an empty list, but a mode the server did not explicitly
+// call available must not become available here — that boolean is what decides
+// whether the UI offers to move an entire archive.
+function normalizeStorage(raw: unknown): StorageStatus {
+  const value = (raw ?? {}) as Record<string, unknown>;
+  return {
+    mode: normalizeStorageMode(value.mode),
+    mode_source: asString(value.mode_source),
+    ok: value.ok === true,
+    state: asString(value.state),
+    step: asString(value.step),
+    detail: asString(value.detail),
+    checked_at: asString(value.checked_at),
+    modes: normalizeStorageModes(value.modes),
+    transition: normalizeStorageTransition(value.transition),
+  };
+}
+
+function normalizeStorageMode(value: unknown): StorageMode {
+  return STORAGE_MODES.includes(value as StorageMode) ? (value as StorageMode) : "";
+}
+
+function normalizeStorageModes(value: unknown): StorageModeOption[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const out: StorageModeOption[] = [];
+  for (const entry of value) {
+    if (entry == null || typeof entry !== "object") {
+      continue;
+    }
+    const row = entry as Record<string, unknown>;
+    const mode = normalizeStorageMode(row.mode);
+    if (mode === "") {
+      // A row naming no mode is not a mode this build can offer to switch to.
+      continue;
+    }
+    out.push({
+      mode,
+      label: asString(row.label) || mode,
+      active: row.active === true,
+      available: row.available === true,
+      summary: asString(row.summary),
+      consequence: asString(row.consequence),
+      blocker: asString(row.blocker),
+      step: asString(row.step),
+      instructions: asStringArray(row.instructions),
+    });
+  }
+  return out;
+}
+
+function normalizeStorageTransition(value: unknown): StorageTransition | null {
+  if (value == null || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  return {
+    mode: asString(row.mode),
+    meetings_moved:
+      typeof row.meetings_moved === "number" && Number.isFinite(row.meetings_moved)
+        ? row.meetings_moved
+        : 0,
+    catalog_moved: row.catalog_moved === true,
+    source_root: asString(row.source_root),
+    destination_root: asString(row.destination_root),
+    leftover_source: asString(row.leftover_source),
+    unmapped_groups: asStringArray(row.unmapped_groups),
+  };
 }
