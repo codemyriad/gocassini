@@ -188,6 +188,16 @@ full data-processing note: https://github.com/codemyriad/gocassini/blob/main/doc
         <verb>GET,PUT</verb>
         <access_level>ADMIN</access_level>
       </route>
+      <!-- ADMIN: storage mode (D-616). GET reports which storage model this
+           archive is under and what the other one would need; PUT switches
+           between them, which MOVES every published recording. ADMIN like the
+           rest of the operator API — the blockers name accounts and folder ids,
+           and the PUT relocates the archive. -->
+      <route>
+        <url>^operator\/storage\/?$</url>
+        <verb>GET,PUT</verb>
+        <access_level>ADMIN</access_level>
+      </route>
       <!-- ADMIN: doctor/status endpoint (version, STT device usability,
            Talk config presence, DB/storage health — never secret values) -->
       <route>

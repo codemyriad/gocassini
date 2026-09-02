@@ -351,6 +351,43 @@ func (c ExAppConfig) serveFilteredCatalog(ctx context.Context, w http.ResponseWr
 	writeCatalogJSON(w, body)
 }
 
+// serveOwnerCatalog writes the caller the authoritative catalog verbatim — the
+// default model's read path (D-616).
+//
+// It is deliberately the plain sibling of serveFilteredCatalog rather than a
+// flag on it, because the two answer different questions. Filtering exists to
+// hide meetings a caller may not read; in the default model there are none, and
+// the machinery that would do the hiding — a per-caller PROPFIND of a tree only
+// the service account has — cannot answer at all. Reusing it here would not be
+// conservative, it would serve an empty archive to every account on the
+// instance.
+//
+// What it does keep is the failure shape: an unreadable or missing catalog
+// yields the empty one, never an error page the viewer would render as
+// "HTTP 502".
+func (c ExAppConfig) serveOwnerCatalog(ctx context.Context, w http.ResponseWriter, client *http.Client, logger *log.Logger) {
+	raw, status, err := c.davGetBytes(ctx, client, ncRecordingsOwner, ncRecordingsRoot+"/catalog.json")
+	if err != nil {
+		if logger != nil {
+			logger.Printf("nc files read: catalog fetch failed: %v", err)
+		}
+		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
+		return
+	}
+	if status == http.StatusNotFound {
+		writeCatalogJSON(w, []byte(emptyCatalogJSON))
+		return
+	}
+	if status < 200 || status >= 300 {
+		if logger != nil {
+			logger.Printf("nc files read: catalog -> %d", status)
+		}
+		http.Error(w, "Nextcloud Files unavailable", http.StatusBadGateway)
+		return
+	}
+	writeCatalogJSON(w, raw)
+}
+
 func writeCatalogJSON(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")

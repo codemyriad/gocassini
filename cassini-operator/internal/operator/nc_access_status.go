@@ -89,7 +89,19 @@ type ncAccessSubstrateStatus struct {
 	// "administrator".
 	adminUser string
 	prereqs   []ncPrerequisiteStatus
-	// checkedAtUTC is when provisioning last ran to completion or gave up.
+	// mode and modeSource are the resolved storage model and where it came
+	// from (D-616). Empty until the preflight has resolved one, which is a
+	// different thing from `default` and must stay distinguishable: the UI
+	// branches on it, and "nobody has decided yet" is not a decision.
+	mode       string
+	modeSource string
+	// probe is the last read-only look at Nextcloud. It is kept whole rather
+	// than reduced to a verdict, because /storage has to answer "is the OTHER
+	// mode available" — the mode you are not in, whose readiness no single
+	// state field could carry.
+	probe    ncStorageProbe
+	hasProbe bool
+	// checkedAtUTC is when the preflight last ran to completion or gave up.
 	// Empty means it has not run yet.
 	checkedAtUTC string
 }
@@ -187,6 +199,35 @@ func (s *ncAccessSubstrateStatus) setPrerequisites(prereqs []ncPrerequisiteStatu
 	s.prereqs = append(s.prereqs[:0:0], prereqs...)
 }
 
+// setMode records the resolved storage model. Like setAdminUser it deliberately
+// does not touch the state: the mode is context for whatever outcome follows,
+// and a mode that is resolved says nothing about whether the storage under it
+// is usable.
+func (s *ncAccessSubstrateStatus) setMode(mode, source string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mode = mode
+	s.modeSource = source
+}
+
+// setProbe records the last read-only look at Nextcloud.
+func (s *ncAccessSubstrateStatus) setProbe(probe ncStorageProbe) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.probe = probe
+	s.hasProbe = true
+}
+
+// lastProbe returns the recorded probe, and whether there has been one. The
+// /storage endpoint reads it rather than re-probing, for the same reason
+// /status does not: every check it promises is cheap, and this one is a
+// handful of round-trips to Nextcloud.
+func (s *ncAccessSubstrateStatus) lastProbe() (ncStorageProbe, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.probe, s.hasProbe
+}
+
 // usable reports whether the substrate is proven enough to write recordings
 // into. The publish sink asks this because WebDAV cannot: MKCOL into the
 // service account's own home returns the same 201 as MKCOL into a mounted group
@@ -195,6 +236,36 @@ func (s *ncAccessSubstrateStatus) usable() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.state == ncSubstrateProvisioned
+}
+
+// recordingRefusal reports why a recording must not be started at all, or ""
+// when it may go ahead.
+//
+// It is deliberately NARROWER than usable(). The publish gate refuses anything
+// short of `provisioned`, which is right for a write that is about to happen;
+// refusing to RECORD is a bigger claim, because the meeting is happening now
+// and there is no second chance at it. So only `unavailable` refuses — a named
+// prerequisite is absent, no amount of waiting fixes it, and capturing an hour
+// of audio that provably cannot be published wastes the call rather than
+// saving it.
+//
+//	unavailable  refuse. Something is missing and the step names it.
+//	degraded     record. A call failed; it may not fail again by publish time.
+//	unknown      record. The preflight runs on the AppAPI enabled edge, never on
+//	             start (D-541), so a container that restarted an hour ago is
+//	             here — and it is very probably fine. Refusing every recording
+//	             until somebody re-enables the app would turn a reboot into an
+//	             outage.
+func (s *ncAccessSubstrateStatus) recordingRefusal() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.applicable || s.state != ncSubstrateUnavailable {
+		return ""
+	}
+	if s.detail != "" {
+		return s.detail
+	}
+	return s.step
 }
 
 // reset returns the record to its zero state. Only tests need it; provisioning
@@ -209,6 +280,10 @@ func (s *ncAccessSubstrateStatus) reset() {
 	s.detail = ""
 	s.adminUser = ""
 	s.prereqs = nil
+	s.mode = ""
+	s.modeSource = ""
+	s.probe = ncStorageProbe{}
+	s.hasProbe = false
 	s.checkedAtUTC = ""
 }
 
@@ -223,6 +298,8 @@ func (s *ncAccessSubstrateStatus) snapshot(publishSink string) statusRecordingsA
 		Step:        s.step,
 		Detail:      s.detail,
 		AdminUser:   s.adminUser,
+		Mode:        s.mode,
+		ModeSource:  s.modeSource,
 		CheckedAt:   s.checkedAtUTC,
 	}
 	for _, p := range s.prereqs {

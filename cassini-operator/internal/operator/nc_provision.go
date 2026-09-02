@@ -213,19 +213,26 @@ func (c ExAppConfig) enabledCallback(ctx context.Context, logger *log.Logger) fu
 		if !enabled {
 			return
 		}
-		// Ensure the dedicated recordings owner, then provision the Team-folder
-		// + ACL topology, so the first delivery acts as an existing, mounted
-		// owner. Deferred to this edge because during AppAPI registration
-		// outbound act-as-user calls are rejected: running at process start
-		// deterministically gets 401.
-		c.provisionNCFilesAccess(ctx, logger)
+		// Find out which storage model this instance is set up for, resolve the
+		// mode, and arrange the tree inside it (D-616). Deferred to this edge
+		// because during AppAPI registration outbound act-as-user calls are
+		// rejected: running at process start deterministically gets 401.
+		c.preflightNCStorage(ctx, logger)
 	}
 }
 
 // provisionNCFilesAccess first establishes the ownership/provisioning
 // identities, then creates (idempotently) the group folder + ACL topology the
-// access-control model needs. No-op only outside AppAPI. Runs on the enabled
-// edge, in the EnabledCallback goroutine.
+// access-control model needs. No-op only outside AppAPI.
+//
+// Since D-616 it is no longer the enabled-edge entry point: preflightNCStorage
+// is, and it reaches this only for an instance whose access-controlled
+// prerequisites are ALREADY satisfied. Every step here reads before it writes,
+// so under that gate nothing is left to create and what runs is the
+// arrangement — the container ACL, the leaf self-heal, the canonical
+// collections. Left whole rather than split apart because the D-534/D-594
+// ordering it encodes (narrow the root, repair every leaf, widen the root last)
+// is the archive's safety property, not an implementation detail.
 //
 // Every step used to be best-effort in the strict sense that nothing recorded
 // whether it worked: failures were logged and forgotten. They are still
@@ -240,6 +247,13 @@ func (c ExAppConfig) provisionNCFilesAccess(ctx context.Context, logger *log.Log
 	}
 	provisionMu.Lock()
 	defer provisionMu.Unlock()
+	c.provisionNCFilesAccessLocked(ctx, logger)
+}
+
+// provisionNCFilesAccessLocked is the body, with provisionMu already held. The
+// preflight takes that lock for the whole probe/resolve/arrange sequence, and
+// sync.Mutex is not reentrant.
+func (c ExAppConfig) provisionNCFilesAccessLocked(ctx context.Context, logger *log.Logger) {
 	client := &http.Client{Timeout: ncProvisionTimeout}
 
 	// P1. Resolve the administrator BEFORE anything acts as one. Proceeding as

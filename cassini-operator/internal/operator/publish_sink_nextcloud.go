@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 )
 
@@ -93,9 +92,14 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 	// CASSINI_PUBLISH_SINK=local, which is a different sink object entirely and
 	// never reaches this code.
 	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.Applicable && !ncAccessSubstrate.usable() {
-		return "", fmt.Errorf("the recordings substrate is not provisioned (%s: %s); refusing to write recordings into the %q account's private home — see GET /status recordings_access, or set %s=local to keep recordings on this app's own volume",
-			snap.Step, snap.Detail, ncRecordingsOwner, envPublishSinkName)
+		return "", fmt.Errorf("the recordings storage is not ready (%s: %s); refusing to publish — see GET /status recordings_access and the Setup tab in the Cassini app, or set %s=local to keep recordings on this app's own volume",
+			snap.Step, snap.Detail, envPublishSinkName)
 	}
+	// Which storage model this archive is under (D-616). Read ONCE, here, so a
+	// mode that changes mid-delivery cannot leave one asset ruled and the next
+	// one not. The gate above guarantees it is resolved: the substrate cannot
+	// report `provisioned` before the preflight decided.
+	accessControlled := ncStorage.accessControlled()
 	incoming, ok, err := loadSiteCatalog(d.AttemptSitePath)
 	if err != nil {
 		return "", err
@@ -156,11 +160,7 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 		return "", fmt.Errorf("attempt site %s names no deliverable assets", d.AttemptSitePath)
 	}
 
-	for _, dir := range []string{
-		path.Dir(ncRecordingsRoot),     // Cassini
-		ncRecordingsRoot,               // Cassini/Recordings
-		ncRecordingsRoot + "/meetings", // Cassini/Recordings/meetings
-	} {
+	for _, dir := range recordingsTreeDirs(ncRecordingsRoot) {
 		if dir == "." || dir == "" {
 			continue
 		}
@@ -205,7 +205,7 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 	alreadyIndexed := catalogNamesMeeting(existingCatalog, d.JobID)
 
 	for _, item := range uploads {
-		fresh, err := s.deliverAsset(ctx, item, alreadyIndexed)
+		fresh, err := s.deliverAsset(ctx, item, alreadyIndexed, accessControlled)
 		if err != nil {
 			return "", err
 		}
@@ -218,13 +218,20 @@ func (s *nextcloudFilesPublishSink) Deliver(ctx context.Context, d publishDelive
 	// not land is never advertised — the catalog is the thing that makes a
 	// recording discoverable, and writing it first is what let a failed ACL
 	// produce an indexed, readable recording.
-	if audienceNeeded && s.applyAccess != nil {
+	//
+	// In the default model there is no audience to freeze. The tree is the
+	// service account's own, nobody else has a mount of it, and the operator
+	// serves every caller the whole archive as the owner — so a per-file ACL
+	// would restrict nothing and `nc:acl-list` is not even a settable property
+	// outside a Team folder with advanced ACL (it answers 207 with a 403
+	// propstat, which is how a recording gets written with no rules at all).
+	if accessControlled && audienceNeeded && s.applyAccess != nil {
 		if err := s.applyAccess(ctx, d.JobID); err != nil {
 			return "", fmt.Errorf("access: %w", err)
 		}
 	}
 
-	if err := s.upsertRemoteCatalog(ctx, existingCatalog, catalogMissing, incoming, catalogEntryOverlay{RoomName: d.RoomName}); err != nil {
+	if err := s.upsertRemoteCatalog(ctx, existingCatalog, catalogMissing, incoming, catalogEntryOverlay{RoomName: d.RoomName}, accessControlled); err != nil {
 		return "", err
 	}
 	return ncRecordingsRoot, nil
@@ -272,14 +279,25 @@ type upload struct {
 //
 // The last row is deliberate: a re-delivery replaces content, never access. An
 // audience someone widened by hand in the Files UI survives it.
-func (s *nextcloudFilesPublishSink) deliverAsset(ctx context.Context, item upload, alreadyIndexed bool) (audienceNeeded bool, err error) {
+//
+// None of it applies in the default model (D-616). There the whole reason for
+// the dance is absent: the tree is private to the service account, no other
+// account has a mount of it, and nothing about a leaf's existence discloses
+// anything to anybody. Writing the bytes IS the delivery. Reserving an empty
+// file to PROPPATCH rules onto it would not merely be wasted work — the
+// PROPPATCH would be REJECTED, because `nc:acl-list` is only settable inside a
+// Team folder with advanced ACL, and every publish would fail.
+func (s *nextcloudFilesPublishSink) deliverAsset(ctx context.Context, item upload, alreadyIndexed, accessControlled bool) (audienceNeeded bool, err error) {
+	if !accessControlled {
+		return false, s.putAssetBytes(ctx, item, accessControlled)
+	}
 	if item.isDir {
 		// A legacy artifactPath export is a directory, which has no single leaf
 		// to reserve, no length to verify, and — the reason for the early exit
 		// rather than a few skipped steps — nothing that should ever be fed to
 		// the repair branch, where a missing rule set would DELETE the tree.
 		// This asset shape is carried exactly as it was before D-594.
-		return false, s.putAssetBytes(ctx, item)
+		return false, s.putAssetBytes(ctx, item, accessControlled)
 	}
 
 	state, err := s.cfg.davPropfindLeafState(ctx, s.client, ncRecordingsOwner, item.remote)
@@ -319,7 +337,7 @@ func (s *nextcloudFilesPublishSink) deliverAsset(ctx context.Context, item uploa
 		audienceNeeded = !audienceApplied(state.Rules) && !alreadyIndexed
 	}
 
-	if err := s.putAssetBytes(ctx, item); err != nil {
+	if err := s.putAssetBytes(ctx, item, accessControlled); err != nil {
 		return false, err
 	}
 	return audienceNeeded, nil
@@ -367,7 +385,7 @@ func (s *nextcloudFilesPublishSink) repairUnprotectedLeaf(ctx context.Context, r
 // published path, keeps the fileid and keeps the ACL, so nothing downstream can
 // tell. Comparing the stored length against what we sent turns that into a failed
 // publish the operator can re-run.
-func (s *nextcloudFilesPublishSink) putAssetBytes(ctx context.Context, item upload) error {
+func (s *nextcloudFilesPublishSink) putAssetBytes(ctx context.Context, item upload, accessControlled bool) error {
 	if _, err := s.cfg.davPutFileStatus(ctx, s.client, ncRecordingsOwner, item.remote, item.local, ncRecordingsContentType); err != nil {
 		return fmt.Errorf("put %s: %w", item.remote, err)
 	}
@@ -392,7 +410,11 @@ func (s *nextcloudFilesPublishSink) putAssetBytes(ctx context.Context, item uplo
 	// then this PUT created a NEW leaf, with a new fileid and therefore no rules
 	// at all, now holding the audio. Fail rather than return to a caller that
 	// would go on to advertise it.
-	if !everyoneRuleGovernsRead(state.Rules) {
+	//
+	// Only under access control. In the default model a leaf HAS no rules by
+	// design, so this exact check would fail every publish — and what it is
+	// guarding against, a recording readable by every account, is the model.
+	if accessControlled && !everyoneRuleGovernsRead(state.Rules) {
 		return fmt.Errorf("refusing to publish %s: it carries no effective %q rule after the upload — it would be readable by every account; re-run the publish",
 			item.remote, ncRecordingsEveryoneGroup)
 	}
@@ -435,7 +457,7 @@ func (s *nextcloudFilesPublishSink) readRemoteCatalog(ctx context.Context) (cata
 // upsertRemoteCatalog merges the delivered meetings into the catalog snapshot
 // read before delivery, preserving the archive and applying the operator's
 // catalog-only fields before it writes the protected index.
-func (s *nextcloudFilesPublishSink) upsertRemoteCatalog(ctx context.Context, existing siteCatalog, catalogMissing bool, incoming siteCatalog, overlay catalogEntryOverlay) error {
+func (s *nextcloudFilesPublishSink) upsertRemoteCatalog(ctx context.Context, existing siteCatalog, catalogMissing bool, incoming siteCatalog, overlay catalogEntryOverlay, accessControlled bool) error {
 	catalogRemote := ncRecordingsRoot + "/catalog.json"
 
 	merged, err := upsertSiteCatalog(existing, incoming, overlay)
@@ -457,6 +479,17 @@ func (s *nextcloudFilesPublishSink) upsertRemoteCatalog(ctx context.Context, exi
 	// rules of its own, inheriting the container's `everyone: READ` until the
 	// PROPPATCH below lands. Reserve it empty and deny it first; the rules then
 	// survive this and every later overwrite, because the fileid does.
+	// In the default model none of this applies: the catalog lives in the
+	// service account's own home, no other account has a path to it, and the
+	// operator is the only reader. The PROPPATCHes below would be rejected
+	// outside a Team folder with advanced ACL, so skipping them is not a
+	// weakening — it is the difference between publishing and failing.
+	if !accessControlled {
+		if err := s.cfg.davPutBytes(ctx, s.client, ncRecordingsOwner, catalogRemote, body, "application/json"); err != nil {
+			return fmt.Errorf("put catalog: %w", err)
+		}
+		return nil
+	}
 	if catalogMissing {
 		if _, err := s.cfg.davPutEmpty(ctx, s.client, ncRecordingsOwner, catalogRemote, "application/json"); err != nil {
 			return fmt.Errorf("reserve catalog: %w", err)
