@@ -98,6 +98,9 @@ export interface SettingsEffective {
   quality: SettingsQuality;
   device: string;
   model: string;
+  // Approximate download size in MB when the running image does not bake this
+  // model, and 0 when the build starts without a download.
+  model_download_mb: number;
   note: string;
 }
 

@@ -198,6 +198,12 @@
             using <code class="text-xs">{settings.effective.model}</code>
           {/if}
         </p>
+        {#if settings.effective.model_download_mb > 0}
+          <p class="mt-1 text-xs text-warning">
+            This image does not carry that model. The first build downloads it once,
+            about {settings.effective.model_download_mb} MB, and later builds start at once.
+          </p>
+        {/if}
         {#if settings.effective.note}
           <p class="mt-1 text-xs text-base-content/60">{settings.effective.note}</p>
         {/if}

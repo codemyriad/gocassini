@@ -648,3 +648,36 @@ func TestGetSettingsReportsTheTiersModel(t *testing.T) {
 		t.Fatalf("effective.model = %q, want the balanced tier model %s", resp.Effective.Model, modelParakeetV3Int8)
 	}
 }
+
+func TestEffectiveReportsAPendingModelDownload(t *testing.T) {
+	// The first build of a tier the image does not bake waits for one download.
+	// The panel reads /settings, so the size belongs there and not only in the
+	// operator log (D-704).
+	rt, cleanup := newTestRuntime(t)
+	defer cleanup()
+	rt.cfg.BundledModelRoot = t.TempDir()
+	rt.cfg.ModelCacheRoot = t.TempDir()
+	t.Setenv(envSTTCUDACapable, "0")
+	stubNVIDIADevice(t, false)
+
+	effective := rt.effectiveFor(STTSettings{Quality: sttQualityBest, Source: sttSourceUser})
+	if effective.Model != modelParakeetV3Fp32 {
+		t.Fatalf("effective.model = %q, want %s", effective.Model, modelParakeetV3Fp32)
+	}
+	if effective.ModelDownloadMB != modelDownloadMB(modelParakeetV3Fp32) {
+		t.Errorf("model_download_mb = %d, want %d", effective.ModelDownloadMB, modelDownloadMB(modelParakeetV3Fp32))
+	}
+
+	// A model the image bakes needs no download, and the field stays zero so
+	// the panel shows nothing.
+	dir := filepath.Join(rt.cfg.BundledModelRoot, "models", modelParakeetV3Fp32)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "encoder.onnx"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.effectiveFor(STTSettings{Quality: sttQualityBest}).ModelDownloadMB; got != 0 {
+		t.Errorf("model_download_mb = %d for a bundled model, want 0", got)
+	}
+}

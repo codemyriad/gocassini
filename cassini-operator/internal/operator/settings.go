@@ -422,7 +422,11 @@ type effectiveSTT struct {
 	Device string `json:"device"`
 	// Model is the concrete model the recorder will load on Device.
 	Model string `json:"model,omitempty"`
-	Note  string `json:"note"`
+	// ModelDownloadMB is the approximate download size when the running image
+	// does not bake Model, and 0 when the build starts without a download. The
+	// first build of such a tier waits for that fetch once (D-704).
+	ModelDownloadMB int    `json:"model_download_mb,omitempty"`
+	Note            string `json:"note"`
 }
 
 const (
@@ -443,6 +447,9 @@ func (rt *Runtime) effectiveFor(s STTSettings) effectiveSTT {
 	admitted, err := rt.admitModelForDevice(s, effective.Device)
 	if err == nil {
 		effective.Model = admitted
+		if rt.modelNeedsDownload(admitted) {
+			effective.ModelDownloadMB = modelDownloadMB(admitted)
+		}
 		return effective
 	}
 	// Admission refused this policy, so the panel must say why instead of

@@ -160,6 +160,10 @@ function normalizeSettings(raw: unknown): Settings {
     quality: normalizeQuality(rawEffective.quality),
     device: asString(rawEffective.device),
     model: asString(rawEffective.model),
+    model_download_mb:
+      typeof rawEffective.model_download_mb === "number" && Number.isFinite(rawEffective.model_download_mb)
+        ? rawEffective.model_download_mb
+        : 0,
     note: asString(rawEffective.note),
   };
   return {

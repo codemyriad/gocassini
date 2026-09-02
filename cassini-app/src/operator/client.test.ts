@@ -51,6 +51,7 @@ describe("operator settings client", () => {
       quality: "balanced",
       device: "cpu",
       model: "parakeet-tdt-0.6b-v3-int8",
+      model_download_mb: 0,
       note: "no usable GPU on this host",
     });
   });
@@ -68,7 +69,13 @@ describe("operator settings client", () => {
 
     const settings = await new OperatorClient("https://operator.test").getSettings();
 
-    expect(settings.effective).toEqual({ quality: "balanced", device: "", model: "", note: "" });
+    expect(settings.effective).toEqual({
+      quality: "balanced",
+      device: "",
+      model: "",
+      model_download_mb: 0,
+      note: "",
+    });
   });
 
   it("sends and reads transcription terms through PUT settings", async () => {

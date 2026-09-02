@@ -94,3 +94,20 @@ func modelBuildPeakMB(model string) int {
 		return 3584
 	}
 }
+
+// modelDownloadMB is the approximate download size of each model, in MB, from
+// the compressed archive each one ships as. The panel shows it before the first
+// build of a tier the image does not bake, so an administrator knows whether
+// the wait is seconds or minutes (D-704).
+func modelDownloadMB(model string) int {
+	switch strings.TrimSpace(model) {
+	case modelParakeet110M:
+		return 100
+	case modelParakeetV3Int8:
+		return 465
+	case modelParakeetV3Fp32:
+		return 2300
+	default:
+		return 0
+	}
+}
