@@ -89,8 +89,8 @@ func TestPackPrefersManifestTitleOverFileName(t *testing.T) {
 	if manifest.Version != portable.WireVersion || manifest.Integrity.MatchPolicy != portable.AudioMatchPolicy {
 		t.Fatalf("packed integrity contract = v%d/%q, want v%d/%q", manifest.Version, manifest.Integrity.MatchPolicy, portable.WireVersion, portable.AudioMatchPolicy)
 	}
-	if len(manifest.Integrity.OpusSHA256) != 64 || manifest.Integrity.PCMSHA256 != "" {
-		t.Fatalf("packed integrity = %+v, want compressed Opus digest and no PCM digest", manifest.Integrity)
+	if len(manifest.Integrity.OpusSHA256) != 64 {
+		t.Fatalf("packed integrity = %+v, want compressed Opus digest", manifest.Integrity)
 	}
 	if got := readOpusTag(t, outPath, "CASSINI_FORMAT"); got != portable.Format {
 		t.Errorf("CASSINI_FORMAT = %q, want %q", got, portable.Format)
@@ -98,20 +98,11 @@ func TestPackPrefersManifestTitleOverFileName(t *testing.T) {
 	if got := readOpusTag(t, outPath, "CASSINI_AUDIO_OPUS_SHA256"); got != manifest.Integrity.OpusSHA256 {
 		t.Errorf("CASSINI_AUDIO_OPUS_SHA256 = %q, manifest says %q", got, manifest.Integrity.OpusSHA256)
 	}
-	if got := readOpusTag(t, outPath, "CASSINI_AUDIO_PCM_SHA256"); got != "" {
-		t.Errorf("CASSINI_AUDIO_PCM_SHA256 = %q, want absent", got)
-	}
 }
 
 // TestPackEmitsThePublishedWireVersionAndSchema pins what a packed file tells
 // the outside world it is: format tag org.cassini.portable-meeting/1, manifest
 // version 1, and the schema URL that resolves.
-//
-// The producer wrote /3 and version 3 until the format was published. Those
-// numbers belonged to drafts nobody outside Cassini ever saw, so the first
-// version an outside implementer can write against is 1, and that is what a
-// file has to say. The schema URL used to be under cassini.local, a host that
-// does not exist — a reader that followed it got nothing.
 func TestPackEmitsThePublishedWireVersionAndSchema(t *testing.T) {
 	requireFFMediaTools(t)
 	tmp := t.TempDir()
@@ -141,9 +132,7 @@ func TestPackEmitsThePublishedWireVersionAndSchema(t *testing.T) {
 	if manifest.Version != 1 {
 		t.Errorf("manifest version = %d, want 1", manifest.Version)
 	}
-	// Version 1 alone no longer says which shape this is, so pin the shape too:
-	// a published file indexes its transcripts and states the Opus match policy.
-	if !manifest.IsMultiTranscript() {
+	if len(manifest.Transcripts) == 0 {
 		t.Errorf("packed manifest carries no transcripts index: %+v", manifest)
 	}
 	if got, want := manifest.Integrity.MatchPolicy, portable.AudioMatchPolicy; got != want {
@@ -161,8 +150,8 @@ func TestPackStabilizesMixedWebMOpusIdentity(t *testing.T) {
 
 	// Mirror MixDownToWebM's multi-track path. FFmpeg 9.0.1 writes a final
 	// granule 24 samples lower on the first Ogg -> Ogg metadata remux for this
-	// exact one-second shape. Compressed packets remain identical, but v3 also
-	// binds playable end trim, so packing must normalize and rebuild its
+	// exact one-second shape. Compressed packets remain identical, but the
+	// integrity contract also binds playable end trim, so packing must rebuild its
 	// manifest rather than publishing the first, now-stale digest.
 	output, err := exec.Command(
 		"ffmpeg", "-y", "-v", "error",

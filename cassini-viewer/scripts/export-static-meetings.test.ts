@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,9 +17,75 @@ import {
   describeVariantSuffix,
   buildReadableTranscriptFromPortable,
   buildTranscriptWordsFromPortable,
-  portableDefaultSegmentCount,
   parseArgs,
+  validatePublishedPortableManifest,
 } from "./export-static-meetings.mjs";
+
+function writePublishedPortableProbeFixture(
+  sourceDir: string,
+  meetingId: string,
+  meeting: Record<string, unknown>,
+) {
+  const encode = (value: unknown) => {
+    const raw = Buffer.from(JSON.stringify(value), "utf8");
+    const gzip = gzipSync(raw);
+    return {
+      chunk: gzip.toString("base64url"),
+      sha256: createHash("sha256").update(raw).digest("hex"),
+      rawBytes: raw.byteLength,
+      gzipBytes: gzip.byteLength,
+    };
+  };
+  const body = encode({ format: "cassini.words.v1", wordCount: 0, items: [] });
+  const manifest = encode({
+    kind: "cassini-portable-meeting",
+    version: 1,
+    profile: "ogg-opus",
+    meeting,
+    integrity: {
+      matchPolicy: "exact-opus-audio-v1",
+      opusAudioSha256: "a".repeat(64),
+    },
+    transcripts: [{
+      id: "raw-asr",
+      role: "raw-asr",
+      default: true,
+      format: "cassini.words.v1",
+      payloadRef: {
+        prefix: "CASSINI_TX_RAW_ASR_PAYLOAD_",
+        chunkCount: 1,
+        sha256: body.sha256,
+        rawBytes: body.rawBytes,
+        gzipBytes: body.gzipBytes,
+        mime: "application/vnd.cassini.transcript-words+json",
+        encoding: "base64url+gzip+utf8json",
+      },
+    }],
+  });
+  writeFileSync(join(sourceDir, `${meetingId}.opus`), "");
+  writeFileSync(
+    join(sourceDir, `${meetingId}.opus.ffprobe.json`),
+    JSON.stringify({
+      format: { tags: {
+        CASSINI_FORMAT: "org.cassini.portable-meeting/1",
+        CASSINI_PROFILE: "ogg-opus",
+        CASSINI_PAYLOAD_MIME: "application/vnd.cassini.portable-meeting+json",
+        CASSINI_PAYLOAD_ENCODING: "base64url+gzip+utf8json",
+        CASSINI_PAYLOAD_SCHEMA:
+          "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json",
+        CASSINI_PAYLOAD_CHUNK_COUNT: "1",
+        CASSINI_PAYLOAD_SHA256: manifest.sha256,
+        CASSINI_PAYLOAD_RAW_BYTES: String(manifest.rawBytes),
+        CASSINI_PAYLOAD_GZIP_BYTES: String(manifest.gzipBytes),
+        CASSINI_PAYLOAD_000: manifest.chunk,
+        CASSINI_AUDIO_MATCH_POLICY: "exact-opus-audio-v1",
+        CASSINI_AUDIO_OPUS_SHA256: "a".repeat(64),
+        CASSINI_TX_RAW_ASR_PAYLOAD_000: body.chunk,
+      } },
+      streams: [],
+    }),
+  );
+}
 
 describe("describeMeeting", () => {
   it("parses colon-separated legacy meeting ids", () => {
@@ -370,49 +437,6 @@ describe("describeMeeting", () => {
     expect(readable.segments[0]?.text).toBe("Okay, that works.");
     expect(readable.segments[1]?.text).toBe("Long pause.");
     expect(readable.segments[2]?.text).toBe("Other speaker.");
-  });
-
-  it("accepts historical readable transcripts mislabeled as transcript.words.v1", () => {
-    const portable = {
-      meeting: { durationMs: 4_000 },
-      speakers: [{ id: "spk_1", label: "Alice" }],
-      transcript: {
-        items: [
-          { id: "seg_1", speaker: "spk_1", startMs: 1000, endMs: 1400, text: "um" },
-          { id: "seg_2", speaker: "spk_1", startMs: 1400, endMs: 1900, text: "hello" },
-          { id: "seg_3", speaker: "spk_1", startMs: 1900, endMs: 2400, text: "there" },
-        ],
-      },
-      readableTranscript: {
-        version: "transcript.words.v1",
-        speakers: [{ id: "spk_1", label: "Alice" }],
-        segments: [
-          {
-            id: "rseg_1",
-            speaker: "spk_1",
-            startMs: 1000,
-            endMs: 2400,
-            text: "Hello there.",
-            sourceSegmentIds: ["seg_1", "seg_2", "seg_3"],
-          },
-        ],
-      },
-    };
-    const transcript = {
-      version: "transcript.words.v1",
-      media: { src: "meeting.opus", durationMs: 4_000, sha256: "" },
-      speakers: portable.speakers,
-      segments: portable.transcript.items.map((item) => ({
-        ...item,
-        words: [{ id: `${item.id}:w_0`, text: item.text, startMs: item.startMs, endMs: item.endMs }],
-      })),
-    };
-
-    const readable = buildReadableTranscriptFromPortable(portable, transcript);
-    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
-
-    expect(readable.segments[0]?.text).toBe("Hello there.");
-    expect(display.blocks[0]?.text).toBe("Hello there.");
   });
 
   it("leaves multi-word portable transcript items passage-timed instead of faking word timing", () => {
@@ -1400,24 +1424,12 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
 
       const sourceDir = join(root, "source");
       mkdirSync(sourceDir, { recursive: true });
-      const writePortablePack = (meetingId: string, meeting: Record<string, unknown>) => {
-        const payload = gzipSync(Buffer.from(JSON.stringify({ meeting }), "utf8")).toString("base64url");
-        writeFileSync(join(sourceDir, `${meetingId}.opus`), "");
-        writeFileSync(
-          join(sourceDir, `${meetingId}.opus.ffprobe.json`),
-          JSON.stringify({
-            format: { tags: { CASSINI_PAYLOAD_CHUNK_COUNT: "1", CASSINI_PAYLOAD_000: payload } },
-            streams: [],
-          }),
-        );
-      };
-
-      writePortablePack("daily-meeting-2026-04-08", {
+      writePublishedPortableProbeFixture(sourceDir, "daily-meeting-2026-04-08", {
         id: "daily-meeting-2026-04-08",
         title: "Cassini Meeting",
         createdAtUtc: "2026-04-08T07:31:02Z",
       });
-      writePortablePack("daily-meeting-2026-04-09", {
+      writePublishedPortableProbeFixture(sourceDir, "daily-meeting-2026-04-09", {
         id: "daily-meeting-2026-04-09",
         title: "Cassini Meeting",
       });
@@ -1478,26 +1490,14 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
 
       const sourceDir = join(root, "source");
       mkdirSync(sourceDir, { recursive: true });
-      const writePortablePack = (meetingId: string, meeting: Record<string, unknown>) => {
-        const payload = gzipSync(Buffer.from(JSON.stringify({ meeting }), "utf8")).toString("base64url");
-        writeFileSync(join(sourceDir, `${meetingId}.opus`), "");
-        writeFileSync(
-          join(sourceDir, `${meetingId}.opus.ffprobe.json`),
-          JSON.stringify({
-            format: { tags: { CASSINI_PAYLOAD_CHUNK_COUNT: "1", CASSINI_PAYLOAD_000: payload } },
-            streams: [],
-          }),
-        );
-      };
-
-      writePortablePack("01JZ8K3M4N5P6Q7R8S9T0VWXYZ", {
+      writePublishedPortableProbeFixture(sourceDir, "01JZ8K3M4N5P6Q7R8S9T0VWXYZ", {
         id: "01JZ8K3M4N5P6Q7R8S9T0VWXYZ",
         title: "Weekly Sync",
         createdAtUtc: "2026-08-11T10:32:00Z",
         roomId: "a7bc3k9x",
         roomName: "Weekly Sync",
       });
-      writePortablePack("01JZ8K3M4N5P6Q7R8S9T0VWXZZ", {
+      writePublishedPortableProbeFixture(sourceDir, "01JZ8K3M4N5P6Q7R8S9T0VWXZZ", {
         id: "01JZ8K3M4N5P6Q7R8S9T0VWXZZ",
         title: "Cassini Meeting",
         createdAtUtc: "2026-08-12T10:32:00Z",
@@ -1534,50 +1534,53 @@ describe("CLI entry point (export-static-meetings.mjs run directly)", () => {
   });
 });
 
-describe("portableDefaultSegmentCount (v2 .opus segmentCount fallback)", () => {
-  // A v2 portable main manifest carries per-transcript metadata in transcripts[]
-  // (wordCount); the actual items live in separate CASSINI_TX_* chunk sets the
-  // exporter does not decode. So buildTranscriptWordsFromPortable sees no inline
-  // items and yields 0 segments — the catalog must fall back to wordCount, or it
-  // would publish segmentCount: 0 for every fresh v2 .opus.
-  const v2Manifest = {
+describe("validatePublishedPortableManifest", () => {
+  const manifest = {
     kind: "cassini-portable-meeting",
-    version: 2,
-    speakers: [{ id: "spk_0", label: "Alice" }],
-    transcripts: [
-      { id: "raw-asr", role: "speech-to-text", default: true, wordCount: 42 },
-      { id: "cleaned", role: "cleaned", default: false, wordCount: 40 },
-    ],
+    version: 1,
+    profile: "ogg-opus",
+    integrity: {
+      matchPolicy: "exact-opus-audio-v1",
+      opusAudioSha256: "a".repeat(64),
+    },
+    transcripts: [{
+      id: "raw-asr",
+      role: "raw-asr",
+      default: true,
+      format: "transcript.words.v1",
+      payloadRef: {
+        prefix: "CASSINI_TX_RAW_ASR_PAYLOAD_",
+        chunkCount: 1,
+        sha256: "b".repeat(64),
+        rawBytes: 2,
+        gzipBytes: 22,
+        mime: "application/vnd.cassini.transcript-words+json",
+        encoding: "base64url+gzip+utf8json",
+      },
+    }],
   };
 
-  it("buildTranscriptWordsFromPortable yields 0 segments for a v2 main manifest (the bug condition)", () => {
-    expect(buildTranscriptWordsFromPortable(v2Manifest).segments).toHaveLength(0);
+  it("accepts the published indexed manifest", () => {
+    expect(() => validatePublishedPortableManifest(manifest)).not.toThrow();
   });
 
-  it("uses the default transcript's wordCount as the segment count", () => {
-    expect(portableDefaultSegmentCount(v2Manifest)).toBe(42);
+  it("rejects an unsupported wire version", () => {
+    expect(() => validatePublishedPortableManifest({ ...manifest, version: 0 })).toThrow(
+      /unsupported portable manifest version/i,
+    );
   });
 
-  it("the catalog fallback (segments.length || portableDefaultSegmentCount) avoids segmentCount: 0", () => {
-    const transcript = buildTranscriptWordsFromPortable(v2Manifest);
-    const segmentCount = transcript.segments?.length || portableDefaultSegmentCount(v2Manifest);
-    expect(segmentCount).toBe(42);
-  });
-
-  it("falls back to the first transcript when none is marked default", () => {
-    expect(
-      portableDefaultSegmentCount({
-        transcripts: [
-          { id: "a", wordCount: 7 },
-          { id: "b", wordCount: 9 },
-        ],
-      }),
-    ).toBe(7);
-  });
-
-  it("returns 0 when there are no transcripts or no numeric wordCount", () => {
-    expect(portableDefaultSegmentCount({})).toBe(0);
-    expect(portableDefaultSegmentCount({ transcripts: [] })).toBe(0);
-    expect(portableDefaultSegmentCount({ transcripts: [{ id: "a" }] })).toBe(0);
+  it("rejects malformed or unsupported transcript descriptors", () => {
+    expect(() => validatePublishedPortableManifest({
+      ...manifest,
+      transcripts: [{ ...manifest.transcripts[0], role: "unknown" }],
+    })).toThrow(/unsupported portable transcript role/i);
+    expect(() => validatePublishedPortableManifest({
+      ...manifest,
+      transcripts: [{
+        ...manifest.transcripts[0],
+        payloadRef: { ...manifest.transcripts[0].payloadRef, encoding: "unknown" },
+      }],
+    })).toThrow(/unsupported transcript encoding/i);
   });
 });

@@ -59,7 +59,6 @@ type portableIntegrityResult struct {
 	SampleCount    int64
 	DurationMS     int64
 	OpusHashSHA256 string
-	PCMHashSHA256  string
 }
 
 func detectPortableAudioPath(path string) (string, bool) {
@@ -97,20 +96,21 @@ func inspectPortableAudio(out io.Writer, path string) error {
 		printPlainPortableAudio(out, audioSummary, "plain-audio", "")
 		return nil
 	}
-	if !knownPortableFormatTag(formatTag) {
-		printPlainPortableAudio(out, audioSummary, "unknown-cassini-format", fmt.Sprintf("unsupported CASSINI_FORMAT=%s", formatTag))
-		return nil
+	if !isPublishedPortableFormat(formatTag) {
+		err := fmt.Errorf("unsupported CASSINI_FORMAT=%s", formatTag)
+		printPlainPortableAudio(out, audioSummary, "unknown-cassini-format", err.Error())
+		return err
 	}
 
 	payload, manifest, err := decodePortableMeeting(tags)
 	if err != nil {
 		printPlainPortableAudio(out, audioSummary, "invalid-cassini-metadata", err.Error())
-		return nil
+		return err
 	}
 
 	bodies := readPortableTranscriptBodies(tags, manifest)
 
-	integrity, verifyErr := verifyPortableAudioIntegrity(path, stream, tags, manifest)
+	integrity, verifyErr := verifyPortableAudioIntegrity(path, tags, manifest)
 	if verifyErr != nil {
 		integrity = portableIntegrityResult{
 			Status:   "integrity-unverified",
@@ -160,9 +160,8 @@ func (b portableTranscriptBodies) err(path string) error {
 	return fmt.Errorf("%s: could not read the transcript body of %s", path, strings.Join(b.Unreadable, ", "))
 }
 
-// readPortableTranscriptBodies decodes every transcript body a
-// multi-transcript file declares. A draft-1 file declares none: its words are
-// inline in the main manifest.
+// readPortableTranscriptBodies decodes every transcript body the manifest
+// declares.
 //
 // inspect used to print the manifest index's declared wordCount and label it
 // `words=`, which meant the one number it reported about the transcript was the
@@ -172,9 +171,6 @@ func (b portableTranscriptBodies) err(path string) error {
 // and it is the only way `words=` can mean anything.
 func readPortableTranscriptBodies(tags map[string]string, manifest portable.Manifest) portableTranscriptBodies {
 	bodies := portableTranscriptBodies{WordCounts: map[string]int{}}
-	if !manifest.IsMultiTranscript() {
-		return bodies
-	}
 	if entry, warnings, ok := defaultWordsTranscriptEntry(tags, manifest); ok {
 		bodies.DefaultID = entry.ID
 		bodies.Warnings = append(bodies.Warnings, warnings...)
@@ -192,6 +188,14 @@ func readPortableTranscriptBodies(tags map[string]string, manifest portable.Mani
 			count = len(body.Items)
 		}
 		bodies.WordCounts[entry.ID] = count
+	}
+	for _, entry := range manifest.ReadableTranscripts {
+		_, warnings, err := decodeTranscriptBody(tags, entry)
+		bodies.Warnings = append(bodies.Warnings, warnings...)
+		if err != nil {
+			bodies.Unreadable = append(bodies.Unreadable, entry.ID)
+			bodies.Warnings = append(bodies.Warnings, fmt.Sprintf("transcript %s body could not be read: %v", entry.ID, err))
+		}
 	}
 	return bodies
 }
@@ -217,25 +221,16 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	title := blankDash(manifest.Meeting.Title)
 	meetingID := blankDash(manifest.Meeting.ID)
 	createdAt := blankDash(manifest.Meeting.CreatedAtUTC)
-	wordCount := manifest.Transcript.WordCount
-	language := firstNonEmpty(manifest.Transcript.Language, manifest.Meeting.Language)
-	if manifest.IsMultiTranscript() {
-		// A multi-transcript file stores its bodies in separate chunk sets; the main payload
-		// only carries descriptors. Two things follow for the meeting's word
-		// count. It is the words that came back out of a chunk set, not the
-		// ones a descriptor claims, so a file whose bodies are unreachable
-		// reports nothing read rather than the index's figure. And it is the
-		// default transcript's alone: a second raw transcript is another pass
-		// over the same speech, so adding the two together describes no meeting
-		// that ever happened — three words spoken twice were reported as six.
-		// The per-transcript lines below still carry every transcript.
-		wordCount = bodies.WordCounts[bodies.DefaultID]
-		if language == "" {
-			for _, entry := range manifest.Transcripts {
-				if entry.Default && entry.Language != "" {
-					language = entry.Language
-					break
-				}
+	// The main payload carries descriptors; the word count comes from the body
+	// that was actually decoded, not the descriptor's claim. Alternative raw
+	// transcripts are additional passes over the same speech and are not summed.
+	wordCount := bodies.WordCounts[bodies.DefaultID]
+	language := manifest.Meeting.Language
+	if language == "" {
+		for _, entry := range manifest.Transcripts {
+			if entry.Default && entry.Language != "" {
+				language = entry.Language
+				break
 			}
 		}
 	}
@@ -255,20 +250,15 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	if integrity.OpusHashSHA256 != "" {
 		fmt.Fprintf(out, " opus_sha256=%s", integrity.OpusHashSHA256)
 	}
-	if integrity.PCMHashSHA256 != "" {
-		fmt.Fprintf(out, " pcm_sha256=%s", integrity.PCMHashSHA256)
-	}
 	fmt.Fprintln(out)
 	fmt.Fprintf(out, "payload encoding=%s schema=%s chunks=%d raw_bytes=%d compressed_bytes=%d sha256=%s language=%s\n",
 		payload.Encoding, blankDash(payload.Schema), payload.ChunkCount, payload.RawBytes, payload.CompressedBytes, blankDash(payload.SHA256), blankDash(language))
 	printPortableOrigin(out, manifest.Meeting)
-	if manifest.IsMultiTranscript() {
-		for _, entry := range manifest.Transcripts {
-			printPortableTranscriptEntry(out, "transcript", entry)
-		}
-		for _, entry := range manifest.ReadableTranscripts {
-			printPortableTranscriptEntry(out, "readable_transcript", entry)
-		}
+	for _, entry := range manifest.Transcripts {
+		printPortableTranscriptEntry(out, "transcript", entry)
+	}
+	for _, entry := range manifest.ReadableTranscripts {
+		printPortableTranscriptEntry(out, "readable_transcript", entry)
 	}
 	if manifest.Provenance != nil {
 		printProcessingStep(out, "speech_to_text", manifest.Provenance.SpeechToText)
@@ -299,17 +289,15 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 // printing four dashes: a file packed by hand genuinely has no origin, and a
 // row of dashes reads like a lookup that failed.
 func printPortableOrigin(out io.Writer, meeting portable.Meeting) {
-	if meeting.RoomID == "" && meeting.RoomName == "" && meeting.JobID == "" && meeting.AttemptNumber == 0 {
+	if meeting.RoomID == "" && meeting.JobID == "" && meeting.AttemptNumber == 0 {
 		return
 	}
 	attempt := "-"
 	if meeting.AttemptNumber > 0 {
 		attempt = fmt.Sprintf("%d", meeting.AttemptNumber)
 	}
-	// room_name is shown because a file may still carry a legacy one; it is no
-	// longer written, and the catalog is where a room's current name lives.
-	fmt.Fprintf(out, "origin room_id=%s room_name=%s job_id=%s attempt=%s\n",
-		blankDash(meeting.RoomID), blankDash(meeting.RoomName), blankDash(meeting.JobID), attempt)
+	fmt.Fprintf(out, "origin room_id=%s job_id=%s attempt=%s\n",
+		blankDash(meeting.RoomID), blankDash(meeting.JobID), attempt)
 }
 
 func printPortableTranscriptEntry(out io.Writer, label string, entry portable.TranscriptEntry) {
@@ -438,31 +426,35 @@ func decodeCassiniBase64URL(encoded string) ([]byte, error) {
 	return base64.RawURLEncoding.DecodeString(strings.TrimRight(stripped, "="))
 }
 
-// knownPortableFormatTag reports whether CASSINI_FORMAT names a portable
-// meeting shape this build can read: the published format, or any of the three
-// pre-publication drafts. The published format and draft 1 share a string, so
-// this answers "is it one of ours", not "which one is it" — what a file
-// actually contains is settled by Manifest.IsMultiTranscript.
-func knownPortableFormatTag(formatTag string) bool {
-	for _, known := range []string{portable.Format, portable.FormatDraft1, portable.FormatDraft2, portable.FormatDraft3} {
-		if strings.EqualFold(formatTag, known) {
-			return true
-		}
-	}
-	return false
-}
-
-// knownPortableWireVersion reports whether the manifest's own version number is
-// one this build reads. Version 1 covers both the published format and draft 1.
-func knownPortableWireVersion(version int) bool {
-	switch version {
-	case portable.WireVersion, portable.Draft2WireVersion, portable.Draft3WireVersion:
-		return true
-	}
-	return false
+func isPublishedPortableFormat(formatTag string) bool {
+	return strings.TrimSpace(formatTag) == portable.Format
 }
 
 func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portable.Manifest, error) {
+	formatTag := metadataTag(tags, "CASSINI_FORMAT")
+	if formatTag == "" {
+		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("missing CASSINI_FORMAT")
+	}
+	if !isPublishedPortableFormat(formatTag) {
+		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("unsupported CASSINI_FORMAT=%s", formatTag)
+	}
+	for _, required := range []struct {
+		name string
+		want string
+	}{
+		{name: "CASSINI_PROFILE", want: portable.Profile},
+		{name: "CASSINI_PAYLOAD_MIME", want: portable.PayloadMIME},
+		{name: "CASSINI_PAYLOAD_ENCODING", want: portable.PayloadEncoding},
+		{name: "CASSINI_PAYLOAD_SCHEMA", want: portable.PayloadSchema},
+		{name: "CASSINI_AUDIO_MATCH_POLICY", want: portable.AudioMatchPolicy},
+	} {
+		if got := strings.TrimSpace(metadataTag(tags, required.name)); got != required.want {
+			return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("unsupported %s=%q", required.name, got)
+		}
+	}
+	if digest := strings.TrimSpace(metadataTag(tags, "CASSINI_AUDIO_OPUS_SHA256")); !validPortableDigest(digest) {
+		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("missing or invalid CASSINI_AUDIO_OPUS_SHA256")
+	}
 	chunkCount := parseIntOrZero(metadataTag(tags, "CASSINI_PAYLOAD_CHUNK_COUNT"))
 	if chunkCount <= 0 {
 		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("missing or invalid CASSINI_PAYLOAD_CHUNK_COUNT")
@@ -493,35 +485,34 @@ func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portabl
 		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("decompress gzip Cassini payload: %w", err)
 	}
 
-	if declared := parseIntOrZero(metadataTag(tags, "CASSINI_PAYLOAD_RAW_BYTES")); declared > 0 && declared != len(rawJSON) {
+	if declared := parseIntOrZero(metadataTag(tags, "CASSINI_PAYLOAD_RAW_BYTES")); declared <= 0 || declared != len(rawJSON) {
 		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("payload raw byte count mismatch: tags=%d decoded=%d", declared, len(rawJSON))
 	}
-	if declared := parseIntOrZero(metadataTag(tags, "CASSINI_PAYLOAD_GZIP_BYTES", "CASSINI_PAYLOAD_XZ_BYTES")); declared > 0 && declared != len(compressed) {
+	if declared := parseIntOrZero(metadataTag(tags, "CASSINI_PAYLOAD_GZIP_BYTES")); declared <= 0 || declared != len(compressed) {
 		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("payload compressed byte count mismatch: tags=%d decoded=%d", declared, len(compressed))
 	}
-	if declared := strings.TrimSpace(strings.ToLower(metadataTag(tags, "CASSINI_PAYLOAD_SHA256"))); declared != "" {
-		sum := sha256.Sum256(rawJSON)
-		if hex.EncodeToString(sum[:]) != declared {
-			return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("payload sha256 mismatch")
-		}
+	declared := strings.TrimSpace(metadataTag(tags, "CASSINI_PAYLOAD_SHA256"))
+	if !validPortableDigest(declared) {
+		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("missing or invalid CASSINI_PAYLOAD_SHA256")
+	}
+	sum := sha256.Sum256(rawJSON)
+	if hex.EncodeToString(sum[:]) != declared {
+		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("payload sha256 mismatch")
 	}
 
-	var manifest portable.Manifest
-	if err := json.Unmarshal(rawJSON, &manifest); err != nil {
-		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("parse Cassini payload JSON: %w", err)
+	manifest, err := portable.DecodePublishedManifest(rawJSON)
+	if err != nil {
+		return portablePayloadInfo{}, portable.Manifest{}, err
 	}
-	if manifest.Kind != "cassini-portable-meeting" {
-		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("unexpected payload kind %q", manifest.Kind)
-	}
-	if !knownPortableWireVersion(manifest.Version) {
-		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("unsupported payload version %d", manifest.Version)
-	}
-	if manifest.Profile != portable.Profile {
-		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("unsupported payload profile %q", manifest.Profile)
+	if tagged := strings.TrimSpace(metadataTag(tags, "CASSINI_AUDIO_OPUS_SHA256")); tagged != manifest.Integrity.OpusSHA256 {
+		return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf(
+			"compressed Opus sha256 disagrees between tag and manifest: tag=%s manifest=%s",
+			tagged, manifest.Integrity.OpusSHA256,
+		)
 	}
 
 	return portablePayloadInfo{
-		Encoding:        firstNonEmpty(metadataTag(tags, "CASSINI_PAYLOAD_ENCODING"), "base64url+gzip+utf8json"),
+		Encoding:        metadataTag(tags, "CASSINI_PAYLOAD_ENCODING"),
 		Schema:          metadataTag(tags, "CASSINI_PAYLOAD_SCHEMA"),
 		ChunkCount:      chunkCount,
 		RawBytes:        len(rawJSON),
@@ -532,7 +523,15 @@ func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portabl
 	}, manifest, nil
 }
 
-func verifyPortableAudioIntegrity(path string, stream probedPortableAudioStream, tags map[string]string, manifest portable.Manifest) (portableIntegrityResult, error) {
+func validPortableDigest(value string) bool {
+	if len(value) != 64 || value != strings.ToLower(value) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func verifyPortableAudioIntegrity(path string, tags map[string]string, manifest portable.Manifest) (portableIntegrityResult, error) {
 	manifestPolicy := strings.ToLower(strings.TrimSpace(manifest.Integrity.MatchPolicy))
 	tagPolicy := strings.ToLower(strings.TrimSpace(metadataTag(tags, "CASSINI_AUDIO_MATCH_POLICY")))
 	if manifestPolicy != "" && tagPolicy != "" && manifestPolicy != tagPolicy {
@@ -542,22 +541,10 @@ func verifyPortableAudioIntegrity(path string, stream probedPortableAudioStream,
 	if policy == "" {
 		policy = tagPolicy
 	}
-	if policy == "" {
-		if manifest.Integrity.OpusSHA256 != "" || metadataTag(tags, "CASSINI_AUDIO_OPUS_SHA256") != "" {
-			policy = portable.AudioMatchPolicy
-		} else {
-			policy = portable.LegacyAudioMatchPolicyPCM
-		}
-	}
-
-	switch policy {
-	case portable.AudioMatchPolicy:
-		return verifyPortableOpusIntegrity(path, tags, manifest)
-	case portable.LegacyAudioMatchPolicyPCM:
-		return verifyPortableLegacyPCMIntegrity(path, stream, tags, manifest)
-	default:
+	if policy != portable.AudioMatchPolicy {
 		return portableIntegrityResult{}, fmt.Errorf("unsupported audio integrity matchPolicy %q", policy)
 	}
+	return verifyPortableOpusIntegrity(path, tags, manifest)
 }
 
 func verifyPortableOpusIntegrity(path string, tags map[string]string, manifest portable.Manifest) (portableIntegrityResult, error) {
@@ -599,61 +586,6 @@ func verifyPortableOpusIntegrity(path string, tags map[string]string, manifest p
 	}, nil
 }
 
-func verifyPortableLegacyPCMIntegrity(path string, stream probedPortableAudioStream, tags map[string]string, manifest portable.Manifest) (portableIntegrityResult, error) {
-	if manifest.Integrity.PCMFormat != "" && !strings.EqualFold(manifest.Integrity.PCMFormat, "s16le") {
-		return portableIntegrityResult{}, fmt.Errorf("unsupported integrity pcmFormat %q", manifest.Integrity.PCMFormat)
-	}
-
-	sampleRate := parseIntOrZero(stream.SampleRate)
-	if sampleRate == 0 {
-		sampleRate = parseIntOrZero(metadataTag(tags, "CASSINI_AUDIO_SAMPLE_RATE"))
-	}
-	channels := stream.Channels
-	if channels == 0 {
-		channels = parseIntOrZero(metadataTag(tags, "CASSINI_AUDIO_CHANNELS"))
-	}
-	if sampleRate <= 0 || channels <= 0 {
-		return portableIntegrityResult{}, fmt.Errorf("missing actual audio sample rate or channel count")
-	}
-
-	pcmSHA, pcmByteCount, err := hashDecodedAudioPCM(path, sampleRate, channels)
-	if err != nil {
-		return portableIntegrityResult{}, err
-	}
-	bytesPerSampleFrame := int64(2 * channels)
-	if pcmByteCount%bytesPerSampleFrame != 0 {
-		return portableIntegrityResult{}, fmt.Errorf("ffmpeg produced %d PCM bytes, not a whole number of %d-byte frames", pcmByteCount, bytesPerSampleFrame)
-	}
-	sampleCount := pcmByteCount / bytesPerSampleFrame
-	durationMS := int64(sampleCount * 1000 / int64(sampleRate))
-
-	status, warnings := comparePortableAudioShape(manifest.Integrity, sampleRate, channels, sampleCount, durationMS)
-	expect := strings.ToLower(strings.TrimSpace(manifest.Integrity.PCMSHA256))
-	tagExpect := strings.ToLower(strings.TrimSpace(metadataTag(tags, "CASSINI_AUDIO_PCM_SHA256")))
-	if expect != "" && tagExpect != "" && expect != tagExpect {
-		return portableIntegrityResult{}, fmt.Errorf("decoded PCM sha256 mismatch between manifest and tag")
-	}
-	if expect == "" {
-		expect = tagExpect
-	}
-	if expect == "" {
-		return portableIntegrityResult{}, fmt.Errorf("decoded PCM integrity policy has no pcmSha256")
-	}
-	if expect != pcmSHA {
-		status = "stale-audio"
-		warnings = append([]string{fmt.Sprintf("decoded PCM sha256 mismatch: manifest=%s actual=%s", expect, pcmSHA)}, warnings...)
-	}
-	return portableIntegrityResult{
-		Status:        status,
-		Warnings:      warnings,
-		SampleRate:    sampleRate,
-		Channels:      channels,
-		SampleCount:   sampleCount,
-		DurationMS:    durationMS,
-		PCMHashSHA256: pcmSHA,
-	}, nil
-}
-
 func comparePortableAudioShape(expected portable.Integrity, sampleRate, channels int, sampleCount, durationMS int64) (string, []string) {
 	status := "ok"
 	warnings := []string{}
@@ -674,39 +606,6 @@ func comparePortableAudioShape(expected portable.Integrity, sampleRate, channels
 		warnings = append(warnings, fmt.Sprintf("duration mismatch: manifest=%d actual=%d", expected.DurationMS, durationMS))
 	}
 	return status, warnings
-}
-
-func hashDecodedAudioPCM(path string, sampleRate int, channels int) (string, int64, error) {
-	cmd := exec.Command(
-		"ffmpeg",
-		"-v", "error",
-		"-i", path,
-		"-map", "0:a:0",
-		"-f", "s16le",
-		"-acodec", "pcm_s16le",
-		"-ar", strconv.Itoa(sampleRate),
-		"-ac", strconv.Itoa(channels),
-		"-",
-	)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", 0, fmt.Errorf("open ffmpeg portable PCM output: %w", err)
-	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		return "", 0, fmt.Errorf("start ffmpeg portable PCM decode: %w", err)
-	}
-	digest := sha256.New()
-	byteCount, copyErr := io.Copy(digest, stdout)
-	waitErr := cmd.Wait()
-	if copyErr != nil {
-		return "", 0, fmt.Errorf("read ffmpeg portable PCM output: %w", copyErr)
-	}
-	if waitErr != nil {
-		return "", 0, fmt.Errorf("ffmpeg decode portable audio: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
-	}
-	return hex.EncodeToString(digest.Sum(nil)), byteCount, nil
 }
 
 func durationStringToMS(value string) int64 {
@@ -786,9 +685,9 @@ type ExtractedTranscript struct {
 // out of a published portable .opus. It is the inverse of
 // portable.EncodeTranscriptBody: it reuses the same ffprobe tag read and main
 // manifest decode as inspect (probePortableAudio + decodePortableMeeting),
-// finds the default transcript id from the decoded manifest (v2) or the inline
-// transcript (v1), gathers that transcript's CASSINI_TX_<ID>_PAYLOAD_* chunk
-// set, concatenates + base64url-decodes + gzip-decompresses + parses the
+// finds the default transcript id, gathers that transcript's
+// CASSINI_TX_<ID>_PAYLOAD_* chunk set, concatenates + base64url-decodes +
+// gzip-decompresses + parses the
 // TranscriptBody JSON, and reconstructs the ordered words.
 //
 // It is a projection of ExtractMeeting, which does that whole decode and also
@@ -831,8 +730,8 @@ func extractedFromTranscriptBody(id, format, language string, wordCount int, ite
 }
 
 // defaultWordsTranscriptEntry picks the default raw-words transcript descriptor
-// out of a decoded v2/v3 manifest, and reports any disagreement it had to
-// resolve on the way.
+// out of a decoded manifest, and reports any disagreement it had to resolve on
+// the way.
 //
 // The manifest decides. An entry's `default` flag is the record;
 // CASSINI_TRANSCRIPT_DEFAULT is the copy that exists so a reader holding only
@@ -870,7 +769,7 @@ func defaultWordsTranscriptEntry(tags map[string]string, manifest portable.Manif
 	return manifest.Transcripts[0], nil, true
 }
 
-// decodeTranscriptBody reverses portable.EncodeTranscriptBody for one v2/v3
+// decodeTranscriptBody reverses portable.EncodeTranscriptBody for one
 // transcript: it gathers CASSINI_TX_<ID>_PAYLOAD_000..N, concatenates them,
 // base64url-decodes, gzip-decompresses, validates the optional sha256/byte-count
 // tags, and parses the TranscriptBody JSON. It returns any tag/manifest
@@ -889,19 +788,10 @@ func decodeTranscriptBody(tags map[string]string, entry portable.TranscriptEntry
 	var warnings []string
 	chunkCount := entry.PayloadRef.ChunkCount
 	tagged := parseIntOrZero(metadataTag(tags, prefix+"CHUNK_COUNT"))
-	switch {
-	case chunkCount <= 0:
-		// A manifest with no payloadRef.chunkCount leaves the tag as the only
-		// count there is; a file like that is already outside the format, so
-		// read what it offers rather than refusing it outright.
-		chunkCount = tagged
-	case tagged > 0 && tagged != chunkCount:
+	if tagged > 0 && tagged != chunkCount {
 		warnings = append(warnings, fmt.Sprintf(
 			"transcript %s chunk count disagrees between manifest and tag: payloadRef.chunkCount=%d %sCHUNK_COUNT=%d",
 			entry.ID, chunkCount, prefix, tagged))
-	}
-	if chunkCount <= 0 {
-		return portable.TranscriptBody{}, warnings, fmt.Errorf("missing or invalid %sCHUNK_COUNT", prefix)
 	}
 	var encoded strings.Builder
 	for idx := 0; idx < chunkCount; idx++ {
@@ -927,16 +817,31 @@ func decodeTranscriptBody(tags map[string]string, entry portable.TranscriptEntry
 		return portable.TranscriptBody{}, warnings, fmt.Errorf("decompress gzip transcript payload: %w", err)
 	}
 
-	if declared := parseIntOrZero(metadataTag(tags, prefix+"RAW_BYTES")); declared > 0 && declared != len(rawJSON) {
-		return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript raw byte count mismatch: tags=%d decoded=%d", declared, len(rawJSON))
+	if entry.PayloadRef.RawBytes != len(rawJSON) {
+		return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript raw byte count mismatch: manifest=%d decoded=%d", entry.PayloadRef.RawBytes, len(rawJSON))
 	}
-	if declared := parseIntOrZero(metadataTag(tags, prefix+"GZIP_BYTES")); declared > 0 && declared != len(compressed) {
-		return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript compressed byte count mismatch: tags=%d decoded=%d", declared, len(compressed))
+	if entry.PayloadRef.GzipBytes != len(compressed) {
+		return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript compressed byte count mismatch: manifest=%d decoded=%d", entry.PayloadRef.GzipBytes, len(compressed))
 	}
-	if declared := strings.TrimSpace(strings.ToLower(metadataTag(tags, prefix+"SHA256"))); declared != "" {
-		sum := sha256.Sum256(rawJSON)
-		if hex.EncodeToString(sum[:]) != declared {
-			return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript payload sha256 mismatch")
+	sum := sha256.Sum256(rawJSON)
+	actualSHA := hex.EncodeToString(sum[:])
+	if actualSHA != entry.PayloadRef.SHA256 {
+		return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript payload sha256 mismatch: manifest=%s decoded=%s", entry.PayloadRef.SHA256, actualSHA)
+	}
+
+	for _, mirror := range []struct {
+		name string
+		want string
+	}{
+		{name: "RAW_BYTES", want: strconv.Itoa(entry.PayloadRef.RawBytes)},
+		{name: "GZIP_BYTES", want: strconv.Itoa(entry.PayloadRef.GzipBytes)},
+		{name: "SHA256", want: entry.PayloadRef.SHA256},
+	} {
+		if tagged := strings.TrimSpace(metadataTag(tags, prefix+mirror.name)); tagged != "" && tagged != mirror.want {
+			warnings = append(warnings, fmt.Sprintf(
+				"transcript %s %s disagrees between manifest and tag: manifest=%s tag=%s",
+				entry.ID, strings.ToLower(mirror.name), mirror.want, tagged,
+			))
 		}
 	}
 

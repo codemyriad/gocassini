@@ -2,7 +2,11 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, write
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describeMeeting, rewriteIndexHtmlForCatalog } from "./export-static-meetings.mjs";
+import {
+  describeMeeting,
+  readPortableMeeting,
+  rewriteIndexHtmlForCatalog,
+} from "./export-static-meetings.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const viewerDir = resolve(scriptDir, "..");
@@ -27,6 +31,7 @@ export function main(argv = process.argv.slice(2)) {
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((entry) => {
       const meetingId = entry.name.slice(0, -extname(entry.name).length) || "meeting";
+      readPortableMeeting(join(sourceDir, entry.name));
       const summary = describeMeeting(meetingId);
       return {
         id: meetingId,

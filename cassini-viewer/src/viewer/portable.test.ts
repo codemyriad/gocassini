@@ -76,49 +76,6 @@ describe("describeMeeting", () => {
 });
 
 describe("buildReadableTranscriptFromPortable", () => {
-  it("accepts historical readable transcripts mislabeled as transcript.words.v1", () => {
-    const portable = {
-      meeting: { durationMs: 4_000 },
-      speakers: [{ id: "spk_1", label: "Alice" }],
-      transcript: {
-        items: [
-          { id: "seg_1", speaker: "spk_1", startMs: 1000, endMs: 1400, text: "um" },
-          { id: "seg_2", speaker: "spk_1", startMs: 1400, endMs: 1900, text: "hello" },
-          { id: "seg_3", speaker: "spk_1", startMs: 1900, endMs: 2400, text: "there" },
-        ],
-      },
-      readableTranscript: {
-        version: "transcript.words.v1",
-        speakers: [{ id: "spk_1", label: "Alice" }],
-        segments: [
-          {
-            id: "rseg_1",
-            speaker: "spk_1",
-            startMs: 1000,
-            endMs: 2400,
-            text: "Hello there.",
-            sourceSegmentIds: ["seg_1", "seg_2", "seg_3"],
-          },
-        ],
-      },
-    };
-    const transcript = {
-      version: "transcript.words.v1" as const,
-      media: { src: "meeting.opus", durationMs: 4_000, sha256: "" },
-      speakers: portable.speakers,
-      segments: portable.transcript.items.map((item) => ({
-        ...item,
-        words: [{ id: `${item.id}:w_0`, text: item.text, startMs: item.startMs, endMs: item.endMs }],
-      })),
-    };
-
-    const readable = buildReadableTranscriptFromPortable(portable as never, transcript);
-    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
-
-    expect(readable.segments[0]?.text).toBe("Hello there.");
-    expect(display.blocks[0]?.text).toBe("Hello there.");
-  });
-
   it("leaves multi-word portable transcript items passage-timed instead of faking word timing", () => {
     const portable = {
       meeting: { durationMs: 10_000 },
@@ -709,7 +666,7 @@ function encodeTranscriptBodyAsTags(
   };
 }
 
-describe("loadPortableTranscriptBody (v2 transport)", () => {
+describe("loadPortableTranscriptBody", () => {
   it("round-trips a transcript body through the chunk set and verifies sha256", async () => {
     const body = {
       format: "cassini.words.v1",
@@ -785,25 +742,26 @@ function makeTranscriptEntry(
 }
 
 describe("listAvailableTranscripts / describeTranscript", () => {
-  it("returns a synthetic single-entry list for v1 manifests", () => {
-    const list = listAvailableTranscripts({} as PortableMeetingManifest);
-    expect(list).toEqual([
-      { id: "default", role: "asr", label: "Transcript", description: "", isDefault: true },
-    ]);
-    expect(getDefaultTranscriptId({} as PortableMeetingManifest)).toBe("default");
+  it("rejects a manifest without transcript descriptors", () => {
+    expect(() => listAvailableTranscripts({} as PortableMeetingManifest)).toThrow(
+      /no transcripts/,
+    );
+    expect(() => getDefaultTranscriptId({} as PortableMeetingManifest)).toThrow(
+      /no transcripts/,
+    );
   });
 
-  it("labels v2 transcripts from the transcript id, not the engine name", () => {
+  it("labels published transcripts from the transcript id, not the engine name", () => {
     const manifest: PortableMeetingManifest = {
-      version: 2,
+      version: 1,
       transcripts: [
         makeTranscriptEntry({ id: "parakeet" }),
         makeTranscriptEntry({ id: "canary", default: true }),
       ],
       provenance: {
         speechToText: {
-          parakeet: { engine: "sherpa-onnx", model: "parakeet-tdt-0.6b-v2-int8" },
-          canary: { engine: "sherpa-onnx", model: "canary-1b-v2" },
+          parakeet: { engine: "sherpa-onnx", model: "parakeet-model" },
+          canary: { engine: "sherpa-onnx", model: "canary-model" },
         },
       } as unknown,
     };
@@ -813,14 +771,14 @@ describe("listAvailableTranscripts / describeTranscript", () => {
     expect(list.map((entry) => entry.label)).toEqual(["Parakeet", "Canary"]);
     // Engine/model/backend land in description for the tooltip.
     expect(list[0]?.description).toContain("sherpa-onnx");
-    expect(list[0]?.description).toContain("parakeet-tdt-0.6b-v2-int8");
-    expect(list[1]?.description).toContain("canary-1b-v2");
+    expect(list[0]?.description).toContain("parakeet-model");
+    expect(list[1]?.description).toContain("canary-model");
     expect(getDefaultTranscriptId(manifest)).toBe("canary");
   });
 
-  it("uses the v2 multi-transcript shape for compressed-integrity v3 manifests", () => {
+  it("uses the published indexed shape", () => {
     const manifest: PortableMeetingManifest = {
-      version: 3,
+      version: 1,
       integrity: {
         matchPolicy: "exact-opus-audio-v1",
         opusAudioSha256: "a".repeat(64),
@@ -835,7 +793,7 @@ describe("listAvailableTranscripts / describeTranscript", () => {
     // Regression: an older version of describeTranscript labeled by engine
     // first, so two sherpa-onnx transcripts both rendered as "sherpa-onnx".
     const manifest: PortableMeetingManifest = {
-      version: 2,
+      version: 1,
       transcripts: [
         makeTranscriptEntry({ id: "tx-a" }),
         makeTranscriptEntry({ id: "tx-b" }),
@@ -854,7 +812,7 @@ describe("listAvailableTranscripts / describeTranscript", () => {
 
   it("humanizes transcript ids that contain hyphens and underscores", () => {
     const entry = makeTranscriptEntry({ id: "whisper-large-v3_en" });
-    const descriptor = describeTranscript(entry, { version: 2 } as PortableMeetingManifest, false);
+    const descriptor = describeTranscript(entry, { version: 1 } as PortableMeetingManifest, false);
     expect(descriptor.label).toBe("Whisper Large V3 En");
     expect(descriptor.description).toBe("");
   });
@@ -862,7 +820,7 @@ describe("listAvailableTranscripts / describeTranscript", () => {
 
 describe("pickReadableForTranscript", () => {
   const manifest: PortableMeetingManifest = {
-    version: 2,
+    version: 1,
     readableTranscripts: [
       {
         id: "readable-paired-canary",
@@ -876,6 +834,7 @@ describe("pickReadableForTranscript", () => {
         role: "readable-cleanup",
         format: "cassini.readable.v1",
         default: true,
+        sourceTranscriptId: "parakeet",
         payloadRef: { prefix: "Y_", chunkCount: 1, sha256: "0".repeat(64) },
       },
     ],
@@ -885,8 +844,12 @@ describe("pickReadableForTranscript", () => {
     expect(pickReadableForTranscript(manifest, "canary")?.id).toBe("readable-paired-canary");
   });
 
-  it("falls back to the default-flagged entry", () => {
+  it("matches another transcript to its own readable body", () => {
     expect(pickReadableForTranscript(manifest, "parakeet")?.id).toBe("readable-default");
+  });
+
+  it("does not substitute a body derived from another transcript", () => {
+    expect(pickReadableForTranscript(manifest, "whisper")).toBeNull();
   });
 
   it("returns null when no readable transcripts are present", () => {

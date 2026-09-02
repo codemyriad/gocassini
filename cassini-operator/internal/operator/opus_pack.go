@@ -29,8 +29,8 @@ import (
 //     let it publish something else.
 //
 // `cassini pack` verifies its own output before renaming it into place: it
-// re-decodes the packed file and compares the PCM SHA-256 against the manifest
-// it embedded. A zero exit therefore means "packed and integrity-checked", and
+// compares the packed Opus audio essence against the digest in the manifest it
+// embedded. A zero exit therefore means "packed and integrity-checked", and
 // the operator's own post-conditions are the two things pack cannot tell it —
 // that the file is there, and that it is not empty.
 // The meeting bundle is passed in rather than re-derived: it is what the build

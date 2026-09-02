@@ -24,7 +24,6 @@
     "pack:portable-artifacts": "node ./scripts/pack-portable-artifacts.mjs",
     "demo-data:clean": "node ./scripts/demo-data-clean.mjs",
     "demo-data:pull": "node ./scripts/demo-data-pull.mjs",
-    "reprocess:portable": "node ./scripts/reprocess-portable-meetings.mjs",
     "preview": "vite preview",
     "test": "vitest run"
   },

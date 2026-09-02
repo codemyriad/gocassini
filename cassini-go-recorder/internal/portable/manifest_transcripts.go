@@ -13,10 +13,9 @@ import (
 	"strings"
 )
 
-// The multi-transcript wire format. Defined as a private set of structs so
-// the Manifest type, which still models draft 1's inline transcript, stays
-// untouched. Draft 2 introduced this layout; the published format reuses it
-// unchanged and differs only in the audio-integrity contract.
+// The published manifest indexes transcript bodies stored in independent
+// OpusTag chunk sets. Private wire structs keep map-shaped provenance separate
+// from the convenient flattened read model in Manifest.
 
 type multiTranscriptWire struct {
 	Kind                string                         `json:"kind"`
@@ -70,8 +69,7 @@ type PayloadRef struct {
 	Encoding   string `json:"encoding"`
 }
 
-// TranscriptBody is the JSON shape of a per-transcript chunk set body. It is
-// identical to draft 1's inline Transcript object.
+// TranscriptBody is the JSON shape of a per-transcript chunk set body.
 type TranscriptBody struct {
 	Format    string           `json:"format"`
 	Language  string           `json:"language,omitempty"`
@@ -103,11 +101,74 @@ type TranscriptInput struct {
 	ID                 string
 	Role               string
 	Default            bool
+	Format             string
 	Language           string
+	WordCount          int
 	CreatedAtUTC       string
 	SourceTranscriptID string // required for readable-cleanup / display roles
-	Body               TranscriptBody
-	Provenance         *ProcessingStep
+	// Body is the JSON document stored in this transcript's independent chunk
+	// set. Raw transcripts normally use TranscriptBody; readable and display
+	// transcripts retain their native version/segments or version/blocks shape.
+	Body       any
+	Provenance *ProcessingStep
+}
+
+// DecodePublishedManifest parses the published index shape into the convenient
+// read model. Per-transcript provenance is keyed by transcript id on the wire;
+// Manifest exposes the steps belonging to each default transcript so callers
+// that read a meeting do not need to understand that indexing detail.
+func DecodePublishedManifest(rawJSON []byte) (Manifest, error) {
+	var wire multiTranscriptWire
+	if err := json.Unmarshal(rawJSON, &wire); err != nil {
+		return Manifest{}, fmt.Errorf("parse portable meeting manifest: %w", err)
+	}
+	manifest := Manifest{
+		Kind: wire.Kind, Version: wire.Version, Profile: wire.Profile,
+		Meeting: wire.Meeting, Audio: wire.Audio, Integrity: wire.Integrity,
+		Speakers: wire.Speakers, Transcripts: wire.Transcripts,
+		ReadableTranscripts: wire.ReadableTranscripts, Chapters: wire.Chapters,
+		Summary: wire.Summary, Attachments: wire.Attachments,
+	}
+	if wire.Provenance != nil {
+		manifest.Provenance = &Provenance{
+			SpeechToText:      defaultProcessingStep(wire.Provenance.SpeechToText, wire.Transcripts, ""),
+			ReadableCleanup:   defaultProcessingStep(wire.Provenance.ReadableCleanup, wire.ReadableTranscripts, RoleReadableCleanup),
+			DisplayTranscript: defaultProcessingStep(wire.Provenance.DisplayTranscript, wire.ReadableTranscripts, RoleDisplay),
+			MeetingSummary:    wire.Provenance.MeetingSummary,
+			Attribution:       wire.Provenance.Attribution,
+			WordTimings:       wire.Provenance.WordTimings,
+		}
+		if manifest.Provenance.SpeechToText == nil && manifest.Provenance.ReadableCleanup == nil &&
+			manifest.Provenance.DisplayTranscript == nil && manifest.Provenance.MeetingSummary == nil &&
+			manifest.Provenance.Attribution == nil && manifest.Provenance.WordTimings == nil {
+			manifest.Provenance = nil
+		}
+	}
+	if err := ValidatePublishedManifest(manifest); err != nil {
+		return Manifest{}, err
+	}
+	return manifest, nil
+}
+
+func defaultProcessingStep(steps map[string]*ProcessingStep, entries []TranscriptEntry, role string) *ProcessingStep {
+	if len(steps) == 0 {
+		return nil
+	}
+	for _, entry := range entries {
+		if entry.Default && (role == "" || entry.Role == role) {
+			if step := steps[entry.ID]; step != nil {
+				return step
+			}
+		}
+	}
+	for _, entry := range entries {
+		if role == "" || entry.Role == role {
+			if step := steps[entry.ID]; step != nil {
+				return step
+			}
+		}
+	}
+	return nil
 }
 
 var (
@@ -152,7 +213,7 @@ func TranscriptIDToTagPrefix(id string) string {
 
 // EncodeTranscriptBody compresses and encodes one transcript body and returns
 // an EncodedPayload plus a PayloadRef ready to embed in a manifest index.
-func EncodeTranscriptBody(body TranscriptBody, id string, role string, chunkSize int) (EncodedPayload, PayloadRef, error) {
+func EncodeTranscriptBody(body any, id string, role string, chunkSize int) (EncodedPayload, PayloadRef, error) {
 	if chunkSize <= 0 {
 		chunkSize = DefaultPayloadChunkSize
 	}
@@ -196,22 +257,6 @@ func EncodeTranscriptBody(body TranscriptBody, id string, role string, chunkSize
 		}, nil
 }
 
-// EncodeDraft2Manifest derives a draft-2 wire manifest from a Manifest plus a
-// list of transcript inputs. Returns the main index payload and one named
-// per-transcript payload for each input. Validates ids, default-per-role, and
-// derived-role source pointers.
-//
-// Draft 2 was never published; this stays for reading and for the fixtures
-// that stand in for the files it produced.
-func EncodeDraft2Manifest(manifest Manifest, transcripts []TranscriptInput, chunkSize int) (EncodedMultiTranscriptManifest, error) {
-	manifest.Integrity.MatchPolicy = LegacyAudioMatchPolicyPCM
-	manifest.Integrity.OpusSHA256 = ""
-	if manifest.Integrity.PCMFormat == "" {
-		manifest.Integrity.PCMFormat = AudioPCMFormat
-	}
-	return encodeMultiTranscriptManifest(manifest, transcripts, chunkSize, Draft2WireVersion)
-}
-
 // EncodePublishedManifest encodes the published wire format: the
 // multi-transcript layout, with the audio identity contract a
 // decoder-independent compressed Opus digest. This is what producers call.
@@ -220,15 +265,15 @@ func EncodePublishedManifest(manifest Manifest, transcripts []TranscriptInput, c
 	if !sha256HexRE.MatchString(manifest.Integrity.OpusSHA256) {
 		return EncodedMultiTranscriptManifest{}, fmt.Errorf("published manifest needs integrity.opusAudioSha256 as 64 lowercase hex characters")
 	}
-	return encodeMultiTranscriptManifest(manifest, transcripts, chunkSize, WireVersion)
+	return encodeMultiTranscriptManifest(manifest, transcripts, chunkSize)
 }
 
-func encodeMultiTranscriptManifest(manifest Manifest, transcripts []TranscriptInput, chunkSize, version int) (EncodedMultiTranscriptManifest, error) {
+func encodeMultiTranscriptManifest(manifest Manifest, transcripts []TranscriptInput, chunkSize int) (EncodedMultiTranscriptManifest, error) {
 	if chunkSize <= 0 {
 		chunkSize = DefaultPayloadChunkSize
 	}
 	if len(transcripts) == 0 {
-		return EncodedMultiTranscriptManifest{}, fmt.Errorf("version %d manifest needs at least one transcript", version)
+		return EncodedMultiTranscriptManifest{}, fmt.Errorf("portable meeting manifest needs at least one transcript")
 	}
 
 	if err := validateTranscriptInputs(transcripts); err != nil {
@@ -257,6 +302,7 @@ func encodeMultiTranscriptManifest(manifest Manifest, transcripts []TranscriptIn
 	}
 
 	for _, input := range transcripts {
+		format, wordCount := transcriptInputDescriptor(input)
 		payload, ref, err := EncodeTranscriptBody(input.Body, input.ID, input.Role, chunkSize)
 		if err != nil {
 			return EncodedMultiTranscriptManifest{}, err
@@ -265,9 +311,9 @@ func encodeMultiTranscriptManifest(manifest Manifest, transcripts []TranscriptIn
 			ID:                 input.ID,
 			Role:               input.Role,
 			Default:            input.Default,
-			Format:             input.Body.Format,
+			Format:             format,
 			Language:           input.Language,
-			WordCount:          input.Body.WordCount,
+			WordCount:          wordCount,
 			SourceTranscriptID: input.SourceTranscriptID,
 			CreatedAtUTC:       input.CreatedAtUTC,
 			PayloadRef:         ref,
@@ -308,7 +354,7 @@ func encodeMultiTranscriptManifest(manifest Manifest, transcripts []TranscriptIn
 
 	wire := multiTranscriptWire{
 		Kind:                "cassini-portable-meeting",
-		Version:             version,
+		Version:             WireVersion,
 		Profile:             Profile,
 		Meeting:             manifest.Meeting,
 		Audio:               manifest.Audio,
@@ -324,15 +370,15 @@ func encodeMultiTranscriptManifest(manifest Manifest, transcripts []TranscriptIn
 
 	rawJSON, err := json.Marshal(wire)
 	if err != nil {
-		return EncodedMultiTranscriptManifest{}, fmt.Errorf("marshal v%d manifest: %w", version, err)
+		return EncodedMultiTranscriptManifest{}, fmt.Errorf("marshal portable meeting manifest: %w", err)
 	}
 	var compressed bytes.Buffer
 	gzw := gzip.NewWriter(&compressed)
 	if _, err := gzw.Write(rawJSON); err != nil {
-		return EncodedMultiTranscriptManifest{}, fmt.Errorf("gzip v%d manifest: %w", version, err)
+		return EncodedMultiTranscriptManifest{}, fmt.Errorf("gzip portable meeting manifest: %w", err)
 	}
 	if err := gzw.Close(); err != nil {
-		return EncodedMultiTranscriptManifest{}, fmt.Errorf("close gzip v%d manifest: %w", version, err)
+		return EncodedMultiTranscriptManifest{}, fmt.Errorf("close gzip portable meeting manifest: %w", err)
 	}
 	sum := sha256.Sum256(rawJSON)
 	encoded := base64.RawURLEncoding.EncodeToString(compressed.Bytes())
@@ -367,6 +413,9 @@ func validateTranscriptInputs(transcripts []TranscriptInput) error {
 	readableDefaults := 0
 	displayDefaults := 0
 	for _, input := range transcripts {
+		if input.Body == nil {
+			return fmt.Errorf("transcript %q has no body", input.ID)
+		}
 		if err := ValidateTranscriptID(input.ID); err != nil {
 			return err
 		}
@@ -374,13 +423,20 @@ func validateTranscriptInputs(transcripts []TranscriptInput) error {
 			return fmt.Errorf("duplicate transcript id %q", input.ID)
 		}
 		seenID[input.ID] = struct{}{}
+		format, wordCount := transcriptInputDescriptor(input)
+		if strings.TrimSpace(format) == "" {
+			return fmt.Errorf("transcript %q has an empty format", input.ID)
+		}
+		if wordCount < 0 {
+			return fmt.Errorf("transcript %q has a negative word count", input.ID)
+		}
 
 		switch input.Role {
 		case RoleRawASR, RoleHumanCorrected, RoleTranslation:
 			if input.Default {
 				rawDefaults++
 			}
-			if input.SourceTranscriptID != "" && input.Role != RoleTranslation && input.Role != RoleHumanCorrected {
+			if input.SourceTranscriptID != "" {
 				return fmt.Errorf("transcript %q (role %q) must not set sourceTranscriptId", input.ID, input.Role)
 			}
 		case RoleReadableCleanup:
@@ -424,16 +480,36 @@ func validateTranscriptInputs(transcripts []TranscriptInput) error {
 	return nil
 }
 
-// BuildDraft2OpusTags emits the OpusTags map for a draft-2 portable meeting
-// file: human-readable summary tags, transcript descriptor tags, the main
-// manifest chunk set, and one chunk set per transcript body.
-func BuildDraft2OpusTags(manifest Manifest, encoded EncodedMultiTranscriptManifest, defaultRawID string) map[string]string {
-	manifest.Integrity.MatchPolicy = LegacyAudioMatchPolicyPCM
-	manifest.Integrity.OpusSHA256 = ""
-	if manifest.Integrity.PCMFormat == "" {
-		manifest.Integrity.PCMFormat = AudioPCMFormat
+func transcriptInputDescriptor(input TranscriptInput) (string, int) {
+	format := strings.TrimSpace(input.Format)
+	wordCount := input.WordCount
+	switch body := input.Body.(type) {
+	case TranscriptBody:
+		if format == "" {
+			format = strings.TrimSpace(body.Format)
+		}
+		if wordCount == 0 {
+			wordCount = body.WordCount
+		}
+	case *TranscriptBody:
+		if body != nil {
+			if format == "" {
+				format = strings.TrimSpace(body.Format)
+			}
+			if wordCount == 0 {
+				wordCount = body.WordCount
+			}
+		}
+	case map[string]any:
+		if format == "" {
+			if value, ok := body["format"].(string); ok {
+				format = strings.TrimSpace(value)
+			} else if value, ok := body["version"].(string); ok {
+				format = strings.TrimSpace(value)
+			}
+		}
 	}
-	return buildMultiTranscriptOpusTags(manifest, encoded, defaultRawID, FormatDraft2, PayloadMIME, PayloadSchemaDraft2, DecodeHint)
+	return format, wordCount
 }
 
 // BuildPublishedOpusTags emits the OpusTags map of a published portable
@@ -441,20 +517,20 @@ func BuildDraft2OpusTags(manifest Manifest, encoded EncodedMultiTranscriptManife
 // that resolves.
 func BuildPublishedOpusTags(manifest Manifest, encoded EncodedMultiTranscriptManifest, defaultRawID string) map[string]string {
 	manifest = NormalizePublishedManifest(manifest)
-	return buildMultiTranscriptOpusTags(manifest, encoded, defaultRawID, Format, PayloadMIME, PayloadSchema, DecodeHint)
+	return buildMultiTranscriptOpusTags(manifest, encoded, defaultRawID)
 }
 
-func buildMultiTranscriptOpusTags(manifest Manifest, encoded EncodedMultiTranscriptManifest, defaultRawID, format, payloadMIME, payloadSchema, decodeHint string) map[string]string {
+func buildMultiTranscriptOpusTags(manifest Manifest, encoded EncodedMultiTranscriptManifest, defaultRawID string) map[string]string {
 	tags := map[string]string{
 		"TITLE":                       manifest.Meeting.Title,
 		"DATE":                        manifest.Meeting.CreatedAtUTC,
 		"DESCRIPTION":                 Description,
 		"ENCODER":                     "Cassini",
-		"CASSINI_FORMAT":              format,
+		"CASSINI_FORMAT":              Format,
 		"CASSINI_PROFILE":             Profile,
-		"CASSINI_PAYLOAD_MIME":        payloadMIME,
+		"CASSINI_PAYLOAD_MIME":        PayloadMIME,
 		"CASSINI_PAYLOAD_ENCODING":    PayloadEncoding,
-		"CASSINI_PAYLOAD_SCHEMA":      payloadSchema,
+		"CASSINI_PAYLOAD_SCHEMA":      PayloadSchema,
 		"CASSINI_PAYLOAD_CHUNK_COUNT": fmt.Sprintf("%d", len(encoded.Main.Chunks)),
 		"CASSINI_PAYLOAD_SHA256":      encoded.Main.SHA256,
 		"CASSINI_PAYLOAD_RAW_BYTES":   fmt.Sprintf("%d", encoded.Main.RawBytes),
@@ -463,7 +539,7 @@ func buildMultiTranscriptOpusTags(manifest Manifest, encoded EncodedMultiTranscr
 		"CASSINI_AUDIO_CHANNELS":      fmt.Sprintf("%d", manifest.Audio.Channels),
 		"CASSINI_AUDIO_SAMPLE_COUNT":  fmt.Sprintf("%d", manifest.Audio.SampleCount),
 		"CASSINI_AUDIO_DURATION_MS":   fmt.Sprintf("%d", manifest.Audio.DurationMS),
-		"CASSINI_DECODE_HINT":         decodeHint,
+		"CASSINI_DECODE_HINT":         DecodeHint,
 		"CASSINI_MEETING_ID":          manifest.Meeting.ID,
 		"CASSINI_CREATED_AT":          manifest.Meeting.CreatedAtUTC,
 		"CASSINI_SPEAKER_COUNT":       fmt.Sprintf("%d", len(manifest.Speakers)),
@@ -477,6 +553,11 @@ func buildMultiTranscriptOpusTags(manifest Manifest, encoded EncodedMultiTranscr
 	}
 	applyRoomTags(tags, manifest.Meeting)
 	applyProvenanceTags(tags, manifest.Meeting)
+	if manifest.Provenance != nil {
+		applyProcessingStepTags(tags, "CASSINI_STT", manifest.Provenance.SpeechToText)
+		applyProcessingStepTags(tags, "CASSINI_READABLE", manifest.Provenance.ReadableCleanup)
+		applyAttributionProvenanceTags(tags, manifest.Provenance.Attribution)
+	}
 
 	// Main payload chunks
 	for idx, chunk := range encoded.Main.Chunks {

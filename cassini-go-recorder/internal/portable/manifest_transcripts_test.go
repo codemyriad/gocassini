@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func baseDraft2Manifest() Manifest {
+func basePublishedManifest() Manifest {
 	return Manifest{
 		Meeting: Meeting{
 			ID:           "mtg_" + strings.Repeat("a", 64),
@@ -26,9 +26,8 @@ func baseDraft2Manifest() Manifest {
 			DurationMS:  60000,
 		},
 		Integrity: Integrity{
-			MatchPolicy: LegacyAudioMatchPolicyPCM,
-			PCMFormat:   AudioPCMFormat,
-			PCMSHA256:   strings.Repeat("a", 64),
+			MatchPolicy: AudioMatchPolicy,
+			OpusSHA256:  strings.Repeat("b", 64),
 			SampleRate:  48000,
 			Channels:    1,
 			SampleCount: 2_880_000,
@@ -36,19 +35,6 @@ func baseDraft2Manifest() Manifest {
 		},
 		Speakers: []Speaker{{ID: "spk_0", Label: "Alice"}},
 	}
-}
-
-func basePublishedManifest() Manifest {
-	manifest := baseDraft2Manifest()
-	manifest.Integrity = Integrity{
-		MatchPolicy: AudioMatchPolicy,
-		OpusSHA256:  strings.Repeat("b", 64),
-		SampleRate:  48000,
-		Channels:    1,
-		SampleCount: 2_880_000,
-		DurationMS:  60000,
-	}
-	return manifest
 }
 
 func sampleBody(speaker string, words ...string) TranscriptBody {
@@ -181,8 +167,8 @@ func io_ReadAll(r interface{ Read(p []byte) (int, error) }) ([]byte, error) {
 	}
 }
 
-func TestEncodeDraft2ManifestEmitsExpectedShape(t *testing.T) {
-	manifest := baseDraft2Manifest()
+func TestEncodePublishedManifestEmitsExpectedShape(t *testing.T) {
+	manifest := basePublishedManifest()
 	transcripts := []TranscriptInput{
 		{
 			ID:      "parakeet",
@@ -192,7 +178,7 @@ func TestEncodeDraft2ManifestEmitsExpectedShape(t *testing.T) {
 			Provenance: &ProcessingStep{
 				Backend: "sherpa-onnx-go",
 				Engine:  "sherpa-onnx",
-				Model:   "parakeet-tdt-0.6b-v2-int8",
+				Model:   "parakeet-model",
 			},
 		},
 		{
@@ -203,13 +189,13 @@ func TestEncodeDraft2ManifestEmitsExpectedShape(t *testing.T) {
 			Provenance: &ProcessingStep{
 				Backend: "sherpa-onnx-go",
 				Engine:  "sherpa-onnx",
-				Model:   "canary-1b-v2",
+				Model:   "canary-model",
 			},
 		},
 	}
-	encoded, err := EncodeDraft2Manifest(manifest, transcripts, 0)
+	encoded, err := EncodePublishedManifest(manifest, transcripts, 0)
 	if err != nil {
-		t.Fatalf("EncodeDraft2Manifest: %v", err)
+		t.Fatalf("EncodePublishedManifest: %v", err)
 	}
 	if len(encoded.Transcripts) != 2 {
 		t.Fatalf("expected 2 transcripts encoded, got %d", len(encoded.Transcripts))
@@ -226,8 +212,8 @@ func TestEncodeDraft2ManifestEmitsExpectedShape(t *testing.T) {
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		t.Fatalf("unmarshal main manifest: %v", err)
 	}
-	if wire.Version != 2 {
-		t.Errorf("version = %d, want 2", wire.Version)
+	if wire.Version != WireVersion {
+		t.Errorf("version = %d, want %d", wire.Version, WireVersion)
 	}
 	if wire.Kind != "cassini-portable-meeting" {
 		t.Errorf("kind = %q", wire.Kind)
@@ -243,7 +229,7 @@ func TestEncodeDraft2ManifestEmitsExpectedShape(t *testing.T) {
 	if wire.Provenance == nil || wire.Provenance.SpeechToText == nil {
 		t.Fatalf("provenance.speechToText missing")
 	}
-	if wire.Provenance.SpeechToText["canary"] == nil || wire.Provenance.SpeechToText["canary"].Model != "canary-1b-v2" {
+	if wire.Provenance.SpeechToText["canary"] == nil || wire.Provenance.SpeechToText["canary"].Model != "canary-model" {
 		t.Errorf("canary provenance wrong: %+v", wire.Provenance.SpeechToText["canary"])
 	}
 }
@@ -272,19 +258,12 @@ func TestEncodePublishedManifestUsesCompressedOpusIntegrity(t *testing.T) {
 	if wire.Integrity.OpusSHA256 != strings.Repeat("b", 64) {
 		t.Errorf("opusAudioSha256 = %q", wire.Integrity.OpusSHA256)
 	}
-	if wire.Integrity.PCMSHA256 != "" || wire.Integrity.PCMFormat != "" {
-		t.Errorf("published wire leaked legacy PCM integrity: %+v", wire.Integrity)
-	}
-
 	tags := BuildPublishedOpusTags(manifest, encoded, "parakeet")
 	if tags["CASSINI_FORMAT"] != Format {
 		t.Errorf("CASSINI_FORMAT = %q, want %q", tags["CASSINI_FORMAT"], Format)
 	}
 	if tags["CASSINI_AUDIO_OPUS_SHA256"] != strings.Repeat("b", 64) {
 		t.Errorf("CASSINI_AUDIO_OPUS_SHA256 = %q", tags["CASSINI_AUDIO_OPUS_SHA256"])
-	}
-	if _, ok := tags["CASSINI_AUDIO_PCM_SHA256"]; ok {
-		t.Error("published wire emitted CASSINI_AUDIO_PCM_SHA256")
 	}
 }
 
@@ -299,8 +278,8 @@ func TestEncodePublishedManifestRequiresCompressedDigest(t *testing.T) {
 	}
 }
 
-func TestEncodeDraft2ManifestRejectsBadInputs(t *testing.T) {
-	manifest := baseDraft2Manifest()
+func TestEncodePublishedManifestRejectsBadInputs(t *testing.T) {
+	manifest := basePublishedManifest()
 	body := sampleBody("spk_0", "x")
 
 	cases := []struct {
@@ -368,7 +347,7 @@ func TestEncodeDraft2ManifestRejectsBadInputs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := EncodeDraft2Manifest(manifest, tc.transcripts, 0)
+			_, err := EncodePublishedManifest(manifest, tc.transcripts, 0)
 			if err == nil {
 				t.Fatalf("expected error containing %q, got nil", tc.expectMsg)
 			}
@@ -379,8 +358,8 @@ func TestEncodeDraft2ManifestRejectsBadInputs(t *testing.T) {
 	}
 }
 
-func TestBuildDraft2OpusTagsEmitsPerTranscriptDescriptorsAndChunks(t *testing.T) {
-	manifest := baseDraft2Manifest()
+func TestBuildPublishedOpusTagsEmitsPerTranscriptDescriptorsAndChunks(t *testing.T) {
+	manifest := basePublishedManifest()
 	manifest.Meeting.RecordedAtLocal = "2026-05-12T12:00:00"
 	transcripts := []TranscriptInput{
 		{
@@ -400,11 +379,11 @@ func TestBuildDraft2OpusTagsEmitsPerTranscriptDescriptorsAndChunks(t *testing.T)
 			},
 		},
 	}
-	encoded, err := EncodeDraft2Manifest(manifest, transcripts, 0)
+	encoded, err := EncodePublishedManifest(manifest, transcripts, 0)
 	if err != nil {
-		t.Fatalf("EncodeDraft2Manifest: %v", err)
+		t.Fatalf("EncodePublishedManifest: %v", err)
 	}
-	tags := BuildDraft2OpusTags(manifest, encoded, "canary")
+	tags := BuildPublishedOpusTags(manifest, encoded, "canary")
 
 	mustHave := []string{
 		"CASSINI_FORMAT",
@@ -428,8 +407,8 @@ func TestBuildDraft2OpusTagsEmitsPerTranscriptDescriptorsAndChunks(t *testing.T)
 			t.Errorf("missing tag %q", key)
 		}
 	}
-	if got := tags["CASSINI_FORMAT"]; got != FormatDraft2 {
-		t.Errorf("CASSINI_FORMAT = %q, want %q", got, FormatDraft2)
+	if got := tags["CASSINI_FORMAT"]; got != Format {
+		t.Errorf("CASSINI_FORMAT = %q, want %q", got, Format)
 	}
 	if got := tags["CASSINI_TRANSCRIPT_DEFAULT"]; got != "canary" {
 		t.Errorf("CASSINI_TRANSCRIPT_DEFAULT = %q", got)
@@ -452,65 +431,59 @@ func TestBuildDraft2OpusTagsEmitsPerTranscriptDescriptorsAndChunks(t *testing.T)
 	}
 }
 
-func TestBuildDraft2OpusTagsAndWireCarryTheRoom(t *testing.T) {
-	manifest := baseDraft2Manifest()
+func TestBuildPublishedOpusTagsAndWireCarryTheRoomID(t *testing.T) {
+	manifest := basePublishedManifest()
 	manifest.Meeting.RoomID = "a7bc3k9x"
-	manifest.Meeting.RoomName = "Weekly Sync"
 	transcripts := []TranscriptInput{
 		{ID: "canary", Role: RoleRawASR, Default: true, Body: sampleBody("spk_0", "alpha")},
 	}
-	encoded, err := EncodeDraft2Manifest(manifest, transcripts, 0)
+	encoded, err := EncodePublishedManifest(manifest, transcripts, 0)
 	if err != nil {
-		t.Fatalf("EncodeDraft2Manifest: %v", err)
+		t.Fatalf("EncodePublishedManifest: %v", err)
 	}
 
-	tags := BuildDraft2OpusTags(manifest, encoded, "canary")
+	tags := BuildPublishedOpusTags(manifest, encoded, "canary")
 	if got := tags["CASSINI_ROOM_ID"]; got != "a7bc3k9x" {
 		t.Errorf("CASSINI_ROOM_ID = %q, want %q", got, "a7bc3k9x")
 	}
-	if got := tags["CASSINI_ROOM_NAME"]; got != "Weekly Sync" {
-		t.Errorf("CASSINI_ROOM_NAME = %q, want %q", got, "Weekly Sync")
-	}
 
-	// v2 is the format the operator actually emits, so the room has to survive
+	// the published format the operator actually emits, so the room has to survive
 	// into the wire manifest too — the plain tags are a convenience, not the
 	// contract the viewer and the exporter read.
 	var wire struct {
 		Meeting struct {
-			RoomID   string `json:"roomId"`
-			RoomName string `json:"roomName"`
+			RoomID string `json:"roomId"`
 		} `json:"meeting"`
 	}
 	if err := json.Unmarshal(encoded.Main.JSON, &wire); err != nil {
-		t.Fatalf("decode v2 wire manifest: %v", err)
+		t.Fatalf("decode published wire manifest: %v", err)
 	}
-	if wire.Meeting.RoomID != "a7bc3k9x" || wire.Meeting.RoomName != "Weekly Sync" {
-		t.Errorf("wire meeting room = %q/%q, want %q/%q",
-			wire.Meeting.RoomID, wire.Meeting.RoomName, "a7bc3k9x", "Weekly Sync")
+	if wire.Meeting.RoomID != "a7bc3k9x" {
+		t.Errorf("wire meeting room id = %q, want %q", wire.Meeting.RoomID, "a7bc3k9x")
 	}
 
 	// No room: no tags, and no empty keys in the wire manifest either.
-	plainTags := BuildDraft2OpusTags(baseDraft2Manifest(), encoded, "canary")
-	for _, key := range []string{"CASSINI_ROOM_ID", "CASSINI_ROOM_NAME"} {
+	plainTags := BuildPublishedOpusTags(basePublishedManifest(), encoded, "canary")
+	for _, key := range []string{"CASSINI_ROOM_ID"} {
 		if _, ok := plainTags[key]; ok {
 			t.Errorf("%s is present on a meeting with no room, want absent", key)
 		}
 	}
 }
 
-func TestBuildDraft2OpusTagsAndWireCarryTheProvenance(t *testing.T) {
-	manifest := baseDraft2Manifest()
+func TestBuildPublishedOpusTagsAndWireCarryTheProvenance(t *testing.T) {
+	manifest := basePublishedManifest()
 	manifest.Meeting.JobID = "01K3Q7W8ZC9F0MJXQ2NB8V4RTD"
 	manifest.Meeting.AttemptNumber = 2
 	transcripts := []TranscriptInput{
 		{ID: "canary", Role: RoleRawASR, Default: true, Body: sampleBody("spk_0", "alpha")},
 	}
-	encoded, err := EncodeDraft2Manifest(manifest, transcripts, 0)
+	encoded, err := EncodePublishedManifest(manifest, transcripts, 0)
 	if err != nil {
-		t.Fatalf("EncodeDraft2Manifest: %v", err)
+		t.Fatalf("EncodePublishedManifest: %v", err)
 	}
 
-	tags := BuildDraft2OpusTags(manifest, encoded, "canary")
+	tags := BuildPublishedOpusTags(manifest, encoded, "canary")
 	if got := tags["CASSINI_JOB_ID"]; got != "01K3Q7W8ZC9F0MJXQ2NB8V4RTD" {
 		t.Errorf("CASSINI_JOB_ID = %q, want the job id", got)
 	}
@@ -518,7 +491,7 @@ func TestBuildDraft2OpusTagsAndWireCarryTheProvenance(t *testing.T) {
 		t.Errorf("CASSINI_ATTEMPT_NUMBER = %q, want %q", got, "2")
 	}
 
-	// v2 is the format the operator emits, so — as with the room — the plain
+	// the published format the operator emits, so — as with the room — the plain
 	// tags are the convenience and the wire manifest is the contract.
 	var wire struct {
 		Meeting struct {
@@ -527,14 +500,14 @@ func TestBuildDraft2OpusTagsAndWireCarryTheProvenance(t *testing.T) {
 		} `json:"meeting"`
 	}
 	if err := json.Unmarshal(encoded.Main.JSON, &wire); err != nil {
-		t.Fatalf("decode v2 wire manifest: %v", err)
+		t.Fatalf("decode published wire manifest: %v", err)
 	}
 	if wire.Meeting.JobID != "01K3Q7W8ZC9F0MJXQ2NB8V4RTD" || wire.Meeting.AttemptNumber != 2 {
 		t.Errorf("wire meeting provenance = %q/%d, want the job id and attempt 2",
 			wire.Meeting.JobID, wire.Meeting.AttemptNumber)
 	}
 
-	plainTags := BuildDraft2OpusTags(baseDraft2Manifest(), encoded, "canary")
+	plainTags := BuildPublishedOpusTags(basePublishedManifest(), encoded, "canary")
 	for _, key := range []string{"CASSINI_JOB_ID", "CASSINI_ATTEMPT_NUMBER"} {
 		if _, ok := plainTags[key]; ok {
 			t.Errorf("%s is present on a meeting with no operator lineage, want absent", key)
@@ -543,7 +516,7 @@ func TestBuildDraft2OpusTagsAndWireCarryTheProvenance(t *testing.T) {
 }
 
 // TestMultiTranscriptWireCarriesAttributionProvenance guards the carry from
-// Manifest.Provenance.Attribution into the v2/v3 wire. It matters most for
+// Manifest.Provenance.Attribution into the published wire. It matters most for
 // drop mode: the flagged words are already deleted from every transcript body,
 // so this record is the only trace the publication keeps of them.
 func TestMultiTranscriptWireCarriesAttributionProvenance(t *testing.T) {
@@ -570,7 +543,7 @@ func TestMultiTranscriptWireCarriesAttributionProvenance(t *testing.T) {
 
 	var wire multiTranscriptWire
 	if err := json.Unmarshal(encoded.Main.JSON, &wire); err != nil {
-		t.Fatalf("decode v3 wire manifest: %v", err)
+		t.Fatalf("decode published wire manifest: %v", err)
 	}
 	// No transcript input carries a step and there is no summary step, so
 	// attribution alone must keep the provenance object alive — before the

@@ -28,7 +28,9 @@ export interface PortableTranscriptEntry {
 }
 
 export interface PortableMeetingManifest {
+	kind?: string;
   version?: number;
+	profile?: string;
   meeting?: {
     durationMs?: number;
     createdAtUtc?: string;
@@ -43,7 +45,6 @@ export interface PortableMeetingManifest {
   integrity?: {
     matchPolicy?: string;
     opusAudioSha256?: string;
-    pcmSha256?: string;
   };
   speakers?: unknown[];
   transcript?: {
@@ -92,19 +93,110 @@ export async function extractPortableManifestFromArrayBuffer(
 ): Promise<ExtractedPortableManifest> {
   const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
   const tags = parseOpusCommentTags(bytes);
+  const format = String(tags.CASSINI_FORMAT ?? "").trim();
+  if (!format) {
+    throw new Error("portable opus file is missing CASSINI_FORMAT");
+  }
+  if (format !== "org.cassini.portable-meeting/1") {
+    throw new Error(`portable opus file uses unsupported CASSINI_FORMAT=${format}`);
+  }
+  for (const [name, expected] of Object.entries({
+    CASSINI_PROFILE: "ogg-opus",
+    CASSINI_PAYLOAD_MIME: "application/vnd.cassini.portable-meeting+json",
+    CASSINI_PAYLOAD_ENCODING: "base64url+gzip+utf8json",
+    CASSINI_PAYLOAD_SCHEMA:
+      "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json",
+    CASSINI_AUDIO_MATCH_POLICY: "exact-opus-audio-v1",
+  })) {
+    if (String(tags[name] ?? "").trim() !== expected) {
+      throw new Error(`portable opus file uses unsupported ${name}=${String(tags[name] ?? "")}`);
+    }
+  }
+  if (!/^[0-9a-f]{64}$/.test(String(tags.CASSINI_AUDIO_OPUS_SHA256 ?? "").trim())) {
+    throw new Error("portable opus file has a missing or invalid CASSINI_AUDIO_OPUS_SHA256");
+  }
   const indexManifest = await readMainPortablePayload(tags);
-  const version = typeof indexManifest.version === "number" ? indexManifest.version : 1;
+  validatePortableIndexManifest(indexManifest);
+  const tagAudioDigest = String(tags.CASSINI_AUDIO_OPUS_SHA256).trim();
+  const manifestAudioDigest = String(indexManifest.integrity?.opusAudioSha256 ?? "").trim();
+  if (tagAudioDigest !== manifestAudioDigest) {
+    throw new Error("portable opus audio digest disagrees between tags and manifest");
+  }
+  const manifest = await resolvePortableDefaultBodies(indexManifest, tags);
+  return { manifest, tags };
+}
 
-  if (version === 1) {
-    return { manifest: indexManifest, tags };
+function validatePortableIndexManifest(manifest: PortableMeetingManifest): void {
+  if (manifest.kind !== "cassini-portable-meeting") {
+    throw new Error(`portable manifest has unsupported kind ${String(manifest.kind)}`);
   }
-  if (version === 2 || version === 3) {
-    const manifest = await resolvePortableV2DefaultBodies(indexManifest, tags);
-    return { manifest, tags };
+  if (manifest.version !== 1) {
+    throw new Error(`portable opus file uses unsupported manifest version ${String(manifest.version)}`);
   }
-  throw new Error(
-    `portable opus file uses unsupported manifest version ${version}; please update the viewer`,
-  );
+  if (manifest.profile !== "ogg-opus") {
+    throw new Error(`portable manifest has unsupported profile ${String(manifest.profile)}`);
+  }
+  if (manifest.integrity?.matchPolicy !== "exact-opus-audio-v1") {
+    throw new Error(
+      `portable manifest has unsupported audio integrity policy ${String(manifest.integrity?.matchPolicy)}`,
+    );
+  }
+  if (!/^[0-9a-f]{64}$/.test(String(manifest.integrity?.opusAudioSha256 ?? ""))) {
+    throw new Error("portable manifest has an invalid Opus digest");
+  }
+  if (!Array.isArray(manifest.transcripts) || manifest.transcripts.length === 0) {
+    throw new Error("portable manifest has no transcripts[]");
+  }
+  const readable = Array.isArray(manifest.readableTranscripts)
+    ? manifest.readableTranscripts
+    : [];
+  const rawIds = new Set<string>();
+  const allIds = new Set<string>();
+  for (const entry of manifest.transcripts) {
+    validatePortableTranscriptEntry(entry, new Set(["raw-asr", "human-corrected", "translation"]));
+    if (allIds.has(entry.id)) {
+      throw new Error(`portable manifest has duplicate transcript id ${entry.id}`);
+    }
+    allIds.add(entry.id);
+    rawIds.add(entry.id);
+  }
+  for (const entry of readable) {
+    validatePortableTranscriptEntry(entry, new Set(["readable-cleanup", "display"]));
+    if (allIds.has(entry.id)) {
+      throw new Error(`portable manifest has duplicate transcript id ${entry.id}`);
+    }
+    if (!rawIds.has(String(entry.sourceTranscriptId ?? ""))) {
+      throw new Error(`portable transcript ${entry.id} has an unknown sourceTranscriptId`);
+    }
+    allIds.add(entry.id);
+  }
+}
+
+function validatePortableTranscriptEntry(
+  entry: PortableTranscriptEntry,
+  roles: ReadonlySet<string>,
+): void {
+  const id = String(entry?.id ?? "");
+  if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(id)) {
+    throw new Error(`portable manifest has an invalid transcript id ${JSON.stringify(id)}`);
+  }
+  if (!roles.has(entry?.role)) {
+    throw new Error(`portable transcript ${id} has unsupported role ${String(entry?.role)}`);
+  }
+  if (typeof entry?.format !== "string" || entry.format.trim() === "") {
+    throw new Error(`portable transcript ${id} has an invalid format`);
+  }
+  const ref = entry?.payloadRef;
+  const expectedPrefix = `CASSINI_TX_${id.toUpperCase().replace(/-/g, "_")}_PAYLOAD_`;
+  if (!ref || ref.prefix !== expectedPrefix || !Number.isInteger(ref.chunkCount) || ref.chunkCount < 1) {
+    throw new Error(`portable transcript ${id} has an invalid payloadRef`);
+  }
+  if (ref.encoding !== "base64url+gzip+utf8json") {
+    throw new Error(`portable transcript ${id} uses an unsupported payload encoding`);
+  }
+  if (!/^[0-9a-f]{64}$/.test(String(ref.sha256 ?? ""))) {
+    throw new Error(`portable transcript ${id} has an invalid payload digest`);
+  }
 }
 
 async function readMainPortablePayload(
@@ -127,37 +219,38 @@ async function readMainPortablePayload(
 
   const compressed = decodeBase64Url(encoded);
   const declaredGzipBytes = safeToInt(tags.CASSINI_PAYLOAD_GZIP_BYTES, 0);
-  if (declaredGzipBytes > 0 && declaredGzipBytes !== compressed.byteLength) {
+  if (declaredGzipBytes <= 0 || declaredGzipBytes !== compressed.byteLength) {
     throw new Error(
       `portable manifest gzip byte count mismatch (expected ${declaredGzipBytes}, got ${compressed.byteLength})`,
     );
   }
   const rawManifest = await gunzipBytes(compressed);
   const declaredRawBytes = safeToInt(tags.CASSINI_PAYLOAD_RAW_BYTES, 0);
-  if (declaredRawBytes > 0 && declaredRawBytes !== rawManifest.byteLength) {
+  if (declaredRawBytes <= 0 || declaredRawBytes !== rawManifest.byteLength) {
     throw new Error(
       `portable manifest raw byte count mismatch (expected ${declaredRawBytes}, got ${rawManifest.byteLength})`,
     );
   }
   const expectedSHA = String(tags.CASSINI_PAYLOAD_SHA256 ?? "").trim().toLowerCase();
-  if (expectedSHA) {
-    const actualSHA = await sha256Hex(rawManifest);
-    if (actualSHA !== expectedSHA) {
-      throw new Error(
-        `portable manifest sha256 mismatch (expected ${expectedSHA}, got ${actualSHA})`,
-      );
-    }
+  if (!/^[0-9a-f]{64}$/.test(expectedSHA)) {
+    throw new Error("portable manifest has a missing or invalid CASSINI_PAYLOAD_SHA256");
+  }
+  const actualSHA = await sha256Hex(rawManifest);
+  if (actualSHA !== expectedSHA) {
+    throw new Error(
+      `portable manifest sha256 mismatch (expected ${expectedSHA}, got ${actualSHA})`,
+    );
   }
   return JSON.parse(new TextDecoder().decode(rawManifest)) as PortableMeetingManifest;
 }
 
-async function resolvePortableV2DefaultBodies(
+async function resolvePortableDefaultBodies(
   indexManifest: PortableMeetingManifest,
   tags: Record<string, string>,
 ): Promise<PortableMeetingManifest> {
   const transcripts = Array.isArray(indexManifest.transcripts) ? indexManifest.transcripts : [];
   if (transcripts.length === 0) {
-    throw new Error(`portable v${indexManifest.version ?? 2} manifest has no transcripts[]`);
+    throw new Error("portable manifest has no transcripts[]");
   }
   const defaultTranscript = pickDefaultTranscript(transcripts);
   const transcriptBody = await loadPortableTranscriptBody(tags, defaultTranscript.payloadRef);
@@ -166,13 +259,23 @@ async function resolvePortableV2DefaultBodies(
   const readableTranscripts = Array.isArray(indexManifest.readableTranscripts)
     ? indexManifest.readableTranscripts
     : [];
-  if (readableTranscripts.length > 0) {
-    const defaultReadable =
-      readableTranscripts.find((entry) => entry.default) ?? readableTranscripts[0];
-    if (defaultReadable) {
-      const readableBody = await loadPortableTranscriptBody(tags, defaultReadable.payloadRef);
-      indexManifest.readableTranscript = readableBody as PortableMeetingManifest["readableTranscript"];
-    }
+  const defaultReadable = pickDerivedTranscript(
+    readableTranscripts,
+    "readable-cleanup",
+    defaultTranscript.id,
+  );
+  if (defaultReadable) {
+    const readableBody = await loadPortableTranscriptBody(tags, defaultReadable.payloadRef);
+    indexManifest.readableTranscript = readableBody as PortableMeetingManifest["readableTranscript"];
+  }
+  const defaultDisplay = pickDerivedTranscript(
+    readableTranscripts,
+    "display",
+    defaultTranscript.id,
+  );
+  if (defaultDisplay) {
+    const displayBody = await loadPortableTranscriptBody(tags, defaultDisplay.payloadRef);
+    indexManifest.displayTranscript = displayBody as PortableMeetingManifest["displayTranscript"];
   }
 
   return indexManifest;
@@ -185,10 +288,19 @@ function pickDefaultTranscript(
   return flagged ?? transcripts[0]!;
 }
 
+function pickDerivedTranscript(
+  entries: PortableTranscriptEntry[],
+  role: string,
+  sourceTranscriptId: string,
+): PortableTranscriptEntry | null {
+  const candidates = entries.filter((entry) => entry.role === role);
+  return candidates.find((entry) => entry.sourceTranscriptId === sourceTranscriptId) ?? null;
+}
+
 /**
  * Returns the readableTranscripts[] entry whose sourceTranscriptId matches the
- * given raw transcript id, falling back to the default-flagged entry, then the
- * first entry. Returns null when no readable transcripts are present.
+ * given raw transcript id. Returns null when no matching readable transcript
+ * exists; a body derived from a different ASR result must never be substituted.
  */
 export function pickReadableForTranscript(
   manifest: PortableMeetingManifest,
@@ -200,12 +312,7 @@ export function pickReadableForTranscript(
   if (readables.length === 0) {
     return null;
   }
-  const paired = readables.find((entry) => entry.sourceTranscriptId === transcriptId);
-  if (paired) {
-    return paired;
-  }
-  const flagged = readables.find((entry) => entry.default);
-  return flagged ?? readables[0]!;
+  return pickDerivedTranscript(readables, "readable-cleanup", transcriptId);
 }
 
 /**
@@ -240,36 +347,26 @@ export function describeTranscript(
 }
 
 /**
- * Lists the transcripts available in this manifest as UI descriptors. v1
- * manifests get a single synthetic descriptor so the switcher logic is uniform.
+ * Lists the transcript descriptors in a published portable manifest.
  */
 export function listAvailableTranscripts(
   manifest: PortableMeetingManifest,
 ): PortableTranscriptDescriptor[] {
   const transcripts = Array.isArray(manifest.transcripts) ? manifest.transcripts : [];
   if (transcripts.length === 0) {
-    return [
-      {
-        id: "default",
-        role: "asr",
-        label: "Transcript",
-        description: "",
-        isDefault: true,
-      },
-    ];
+    throw new Error("portable manifest has no transcripts[]");
   }
   const defaultEntry = pickDefaultTranscript(transcripts);
   return transcripts.map((entry) => describeTranscript(entry, manifest, entry === defaultEntry));
 }
 
 /**
- * Returns the id of the transcript that the producer marked as default, or
- * `"default"` for v1 manifests.
+ * Returns the id of the transcript that the producer marked as default.
  */
 export function getDefaultTranscriptId(manifest: PortableMeetingManifest): string {
   const transcripts = Array.isArray(manifest.transcripts) ? manifest.transcripts : [];
   if (transcripts.length === 0) {
-    return "default";
+    throw new Error("portable manifest has no transcripts[]");
   }
   return pickDefaultTranscript(transcripts).id;
 }
@@ -291,11 +388,17 @@ export async function loadPortableTranscriptBody(
   payloadRef: PortablePayloadRef,
 ): Promise<unknown> {
   if (!payloadRef || typeof payloadRef.prefix !== "string" || payloadRef.prefix === "") {
-    throw new Error("portable v2 transcript payloadRef is missing a prefix");
+    throw new Error("portable transcript payloadRef is missing a prefix");
   }
   const chunkCount = typeof payloadRef.chunkCount === "number" ? payloadRef.chunkCount : 0;
   if (chunkCount <= 0) {
-    throw new Error(`portable v2 transcript ${payloadRef.prefix} has invalid chunkCount`);
+    throw new Error(`portable transcript ${payloadRef.prefix} has invalid chunkCount`);
+  }
+  if (!/^CASSINI_TX_[A-Z0-9_]+_PAYLOAD_$/.test(payloadRef.prefix)) {
+    throw new Error(`portable transcript payloadRef has invalid prefix ${payloadRef.prefix}`);
+  }
+  if (payloadRef.encoding !== undefined && payloadRef.encoding !== "base64url+gzip+utf8json") {
+    throw new Error(`portable transcript ${payloadRef.prefix} uses unsupported encoding`);
   }
 
   let encoded = "";
@@ -309,13 +412,19 @@ export async function loadPortableTranscriptBody(
   }
 
   const compressed = decodeBase64Url(encoded);
+  if (typeof payloadRef.gzipBytes === "number" && compressed.byteLength !== payloadRef.gzipBytes) {
+    throw new Error(`portable transcript ${payloadRef.prefix} gzip byte count mismatch`);
+  }
   const raw = await gunzipBytes(compressed);
+  if (typeof payloadRef.rawBytes === "number" && raw.byteLength !== payloadRef.rawBytes) {
+    throw new Error(`portable transcript ${payloadRef.prefix} raw byte count mismatch`);
+  }
   const expected = typeof payloadRef.sha256 === "string" ? payloadRef.sha256.toLowerCase() : "";
   if (expected) {
     const actual = await sha256Hex(raw);
     if (actual !== expected) {
       throw new Error(
-        `portable v2 transcript ${payloadRef.prefix} sha256 mismatch (expected ${expected}, got ${actual})`,
+        `portable transcript ${payloadRef.prefix} sha256 mismatch (expected ${expected}, got ${actual})`,
       );
     }
   }
@@ -591,11 +700,8 @@ export function buildReadableTranscriptFromPortable(
   const speakers = normalizeSpeakers(portable.speakers || transcript.speakers || []);
   const validSpeakerIds = new Set(speakers.map((speaker) => speaker.id));
 
-  // Older portable meetings accidentally embedded cleaned transcripts with the
-  // raw transcript version tag. The field name is still authoritative here, so
-  // accept either tag when a readable segment payload is present.
   if (
-    (provided.version === "transcript.readable.v1" || provided.version === "transcript.words.v1") &&
+    provided.version === "transcript.readable.v1" &&
     Array.isArray(provided.segments)
   ) {
     return {
@@ -1129,7 +1235,7 @@ function parseOpusCommentTags(bytes: Uint8Array): Record<string, string> {
     if (separator <= 0) {
       continue;
     }
-    tags[comment.slice(0, separator)] = comment.slice(separator + 1);
+    tags[comment.slice(0, separator).toUpperCase()] = comment.slice(separator + 1);
   }
 
   return tags;

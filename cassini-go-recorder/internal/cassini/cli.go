@@ -457,7 +457,7 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
 
 	// --transcript reads the default words transcript back out of a published
 	// portable .opus and writes it as transcript.words.v1.json to stdout. This
-	// is the inverse of the v2 transcript packer: it proves the published .opus
+	// is the inverse of the transcript packer: it proves the published .opus
 	// actually embeds the expected transcript, not just that it is non-empty.
 	if *dumpTranscript {
 		extracted, err := inspectpkg.ExtractTranscriptWords(path)

@@ -6,43 +6,16 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"strings"
 )
 
 const (
-	// Format is the published portable meeting wire format: version 1 of the
-	// Cassini portable meeting specification, the one anyone outside Cassini
-	// can implement against. Producers write this, and this only.
+	// Format is the published portable meeting wire format.
 	Format = "org.cassini.portable-meeting/1"
 
-	// FormatDraft1, FormatDraft2 and FormatDraft3 are the three shapes this
-	// producer wrote before the format was published. They were never
-	// documented outside Cassini and no file carrying them left our own
-	// storage, so they are read but never written.
-	//
-	// FormatDraft1 holds the same string as Format on purpose. The published
-	// format took version 1 because it is the first version there is anything
-	// to be compatible with; the number the drafts happened to use carries no
-	// claim on it. The version number therefore cannot tell a published file
-	// from a draft-1 file, and nothing in this package asks it to: the two are
-	// told apart by shape. A published file indexes its transcripts in a
-	// `transcripts` array and states integrity.matchPolicy
-	// exact-opus-audio-v1; a draft-1 file carries one inline `transcript`
-	// object and matchPolicy exact-pcm. Manifest.IsMultiTranscript is the test.
-	FormatDraft1 = "org.cassini.portable-meeting/1"
-	FormatDraft2 = "org.cassini.portable-meeting/2"
-	FormatDraft3 = "org.cassini.portable-meeting/3"
-
-	// WireVersion is the manifest `version` a producer writes, matching Format.
+	// WireVersion is the manifest version paired with Format.
 	WireVersion = 1
-	// Draft1WireVersion, Draft2WireVersion and Draft3WireVersion are the
-	// numbers the drafts wrote. Draft1WireVersion equals WireVersion for the
-	// reason spelled out on FormatDraft1.
-	Draft1WireVersion = 1
-	Draft2WireVersion = 2
-	Draft3WireVersion = 3
 
 	Profile         = "ogg-opus"
 	PayloadMIME     = "application/vnd.cassini.portable-meeting+json"
@@ -51,25 +24,11 @@ const (
 	// PayloadSchema is the published JSON Schema for a version 1 manifest. It
 	// resolves: a reader that fetches it gets the schema the file was written
 	// against.
-	PayloadSchema = "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json"
-	// The draft schema URLs never resolved — cassini.local is not a host. They
-	// are kept so a reader can recognise what an old file pointed at, and are
-	// never written.
-	PayloadSchemaDraft1 = "https://cassini.local/spec/cassini-portable-meeting-manifest-v1.schema.json"
-	PayloadSchemaDraft2 = "https://cassini.local/spec/cassini-portable-meeting-manifest-v2.schema.json"
-	PayloadSchemaDraft3 = "https://cassini.local/spec/cassini-portable-meeting-manifest-v3.schema.json"
-
-	AudioPCMFormat            = "s16le"
-	AudioMatchPolicy          = "exact-opus-audio-v1"
-	LegacyAudioMatchPolicyPCM = "exact-pcm"
-	DefaultPayloadChunkSize   = 4096
-	Description               = "Cassini portable meeting file. Decode CASSINI_PAYLOAD_*: base64url -> gzip -> UTF-8 JSON."
-
-	// DecodeHint describes the multi-transcript layout the published format
-	// uses; drafts 2 and 3 share it. DecodeHintDraft1 describes draft 1's
-	// single inline transcript.
-	DecodeHint       = "Concatenate CASSINI_PAYLOAD_000..N for the manifest; for a transcript body concatenate CASSINI_TX_<ID>_PAYLOAD_000..N. Each chunk set: base64url decode, gzip decompress, parse UTF-8 JSON."
-	DecodeHintDraft1 = "Concatenate CASSINI_PAYLOAD_000..N, base64url decode, gzip decompress, parse UTF-8 JSON."
+	PayloadSchema           = "https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json"
+	AudioMatchPolicy        = "exact-opus-audio-v1"
+	DefaultPayloadChunkSize = 4096
+	Description             = "Cassini portable meeting file. Decode CASSINI_PAYLOAD_*: base64url -> gzip -> UTF-8 JSON."
+	DecodeHint              = "Concatenate CASSINI_PAYLOAD_000..N for the manifest; for a transcript body concatenate CASSINI_TX_<ID>_PAYLOAD_000..N. Each chunk set: base64url decode, gzip decompress, parse UTF-8 JSON."
 
 	TranscriptBodyMIMEWords    = "application/vnd.cassini.transcript-words+json"
 	TranscriptBodyMIMEReadable = "application/vnd.cassini.transcript-readable+json"
@@ -89,20 +48,12 @@ type Manifest struct {
 	Audio     Audio     `json:"audio"`
 	Integrity Integrity `json:"integrity"`
 	Speakers  []Speaker `json:"speakers"`
-	// Draft 1 carried the whole transcript inline here and required the field;
-	// no multi-transcript wire includes it (omitempty on a non-pointer struct
-	// is a no-op, so draft-1 writes always render this — fine).
-	Transcript Transcript `json:"transcript"`
-	// The multi-transcript descriptor arrays, introduced by draft 2 and kept
-	// by the published format. Populated when reading such a file; ignored on
-	// draft-1 writes. Multi-transcript writes happen through
-	// multiTranscriptWire (see manifest_v2.go), so these fields never appear
-	// in that JSON either.
+	// Transcript bodies live in independent OpusTag chunk sets referenced by
+	// these descriptors. Keeping the index separate lets one meeting carry
+	// multiple raw, cleaned, corrected, or translated transcripts.
 	Transcripts         []TranscriptEntry `json:"transcripts,omitempty"`
 	ReadableTranscripts []TranscriptEntry `json:"readableTranscripts,omitempty"`
 	Provenance          *Provenance       `json:"provenance,omitempty"`
-	ReadableTranscript  map[string]any    `json:"readableTranscript,omitempty"`
-	DisplayTranscript   map[string]any    `json:"displayTranscript,omitempty"`
 	Chapters            []Chapter         `json:"chapters,omitempty"`
 	// Summary holds metadata about the meeting summary artifact (model,
 	// templateVersion, format). Schema is intentionally open: map[string]any
@@ -203,21 +154,6 @@ type Meeting struct {
 	// run, or a Talk job whose room lookup failed has no room, and an absent
 	// room is not an error anywhere downstream.
 	RoomID string `json:"roomId,omitempty"`
-	// RoomName is LEGACY and is no longer written (D-640). Producers before
-	// D-640 froze the room's display name into every artifact; a display name
-	// is editable, so honouring a rename meant rewriting every file that room
-	// ever produced — and under D-612 a published recording cannot even be
-	// deleted.
-	//
-	// The room's name at record time is still in the file, as the Title: that
-	// is what a player shows and what the operator has always stamped there.
-	// The room's CURRENT name lives in the catalog entry, which is mutable and
-	// which the operator restamps on every publish.
-	//
-	// Kept on the struct, in both schemas and in every reader, because files
-	// written before D-640 still carry it and `cassini retag` preserves what a
-	// file already has rather than stripping it.
-	RoomName string `json:"roomName,omitempty"`
 	// JobID and AttemptNumber record which operator job and which of its
 	// attempts produced this artifact (D-640). Both optional: a meeting packed
 	// by hand, or by any producer that is not the operator, has neither.
@@ -255,27 +191,17 @@ type Audio struct {
 }
 
 type Integrity struct {
-	MatchPolicy     string `json:"matchPolicy"`
-	OpusSHA256      string `json:"opusAudioSha256,omitempty"`
-	PCMFormat       string `json:"pcmFormat,omitempty"`
-	PCMSHA256       string `json:"pcmSha256,omitempty"`
-	ContainerSHA256 string `json:"containerSha256,omitempty"`
-	SampleRate      int    `json:"sampleRate"`
-	Channels        int    `json:"channels"`
-	SampleCount     int64  `json:"sampleCount"`
-	DurationMS      int64  `json:"durationMs"`
+	MatchPolicy string `json:"matchPolicy"`
+	OpusSHA256  string `json:"opusAudioSha256"`
+	SampleRate  int    `json:"sampleRate"`
+	Channels    int    `json:"channels"`
+	SampleCount int64  `json:"sampleCount"`
+	DurationMS  int64  `json:"durationMs"`
 }
 
 type Speaker struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
-}
-
-type Transcript struct {
-	Format    string           `json:"format"`
-	Language  string           `json:"language,omitempty"`
-	WordCount int              `json:"wordCount"`
-	Items     []TranscriptItem `json:"items"`
 }
 
 type TranscriptItem struct {
@@ -310,43 +236,9 @@ type EncodedPayload struct {
 	Chunks          []string
 }
 
-// IsMultiTranscript reports whether this manifest indexes its transcripts in
-// a `transcripts` array rather than carrying one inline.
-//
-// This is how a reader tells the published format from draft 1, and it has to
-// be, because the two share a version number: the published format is version
-// 1 and so was the first draft. The shape does not collide — a draft-1
-// manifest has no `transcripts` key at all — so every branch that used to ask
-// which version a file claimed now asks this instead.
-func (m Manifest) IsMultiTranscript() bool {
-	return len(m.Transcripts) > 0 || len(m.ReadableTranscripts) > 0
-}
-
-// NormalizeDraft1Manifest fills in the draft-1 wire's required fields. Draft 1
-// was never published and is not written any more; this remains so the
-// draft-1 encoder can build fixtures of files that still exist.
-func NormalizeDraft1Manifest(manifest Manifest) Manifest {
-	manifest.Kind = "cassini-portable-meeting"
-	manifest.Version = Draft1WireVersion
-	manifest.Profile = Profile
-	manifest.Audio.Container = "ogg"
-	manifest.Audio.Codec = "opus"
-	manifest.Integrity.MatchPolicy = LegacyAudioMatchPolicyPCM
-	manifest.Integrity.OpusSHA256 = ""
-	if manifest.Integrity.PCMFormat == "" {
-		manifest.Integrity.PCMFormat = AudioPCMFormat
-	}
-	if manifest.Transcript.Format == "" {
-		manifest.Transcript.Format = "cassini.words.v1"
-	}
-	return manifest
-}
-
 // NormalizePublishedManifest fills in the published wire format: the
 // multi-transcript layout whose recording identity is the canonical
-// compressed Opus audio essence. Drafts 1 and 2 remain exact-PCM formats so
-// readers of those never misinterpret a missing PCM digest as a successfully
-// verified file.
+// compressed Opus audio essence.
 func NormalizePublishedManifest(manifest Manifest) Manifest {
 	manifest.Kind = "cassini-portable-meeting"
 	manifest.Version = WireVersion
@@ -355,33 +247,105 @@ func NormalizePublishedManifest(manifest Manifest) Manifest {
 	manifest.Audio.Codec = "opus"
 	manifest.Integrity.MatchPolicy = AudioMatchPolicy
 	manifest.Integrity.OpusSHA256 = strings.ToLower(strings.TrimSpace(manifest.Integrity.OpusSHA256))
-	manifest.Integrity.PCMFormat = ""
-	manifest.Integrity.PCMSHA256 = ""
 	return manifest
 }
 
-// EncodeDraft1Manifest encodes a draft-1 manifest, whose transcript travels
-// inline in the main payload. Reading path only: no producer writes draft 1.
-func EncodeDraft1Manifest(manifest Manifest, chunkSize int) (EncodedPayload, error) {
-	manifest = NormalizeDraft1Manifest(manifest)
-	rawJSON, err := json.Marshal(manifest)
-	if err != nil {
-		return EncodedPayload{}, fmt.Errorf("marshal portable meeting manifest: %w", err)
+// ValidatePublishedManifest rejects payloads outside the single portable
+// meeting contract understood by this build. Callers should run this after
+// decoding and before acting on any manifest field.
+func ValidatePublishedManifest(manifest Manifest) error {
+	if manifest.Kind != "cassini-portable-meeting" {
+		return fmt.Errorf("unexpected payload kind %q", manifest.Kind)
 	}
-	return EncodePayloadBytes(rawJSON, chunkSize)
+	if manifest.Version != WireVersion {
+		return fmt.Errorf("unsupported payload version %d", manifest.Version)
+	}
+	if manifest.Profile != Profile {
+		return fmt.Errorf("unsupported payload profile %q", manifest.Profile)
+	}
+	if len(manifest.Transcripts) == 0 {
+		return fmt.Errorf("invalid portable meeting manifest: transcripts must contain at least one entry")
+	}
+	if policy := strings.ToLower(strings.TrimSpace(manifest.Integrity.MatchPolicy)); policy != AudioMatchPolicy {
+		return fmt.Errorf("unsupported audio integrity matchPolicy %q", policy)
+	}
+	if !sha256HexRE.MatchString(manifest.Integrity.OpusSHA256) {
+		return fmt.Errorf("invalid integrity.opusAudioSha256: expected 64 lowercase hex characters")
+	}
+
+	seen := make(map[string]struct{}, len(manifest.Transcripts)+len(manifest.ReadableTranscripts))
+	rawIDs := make(map[string]struct{}, len(manifest.Transcripts))
+	for _, entry := range manifest.Transcripts {
+		if err := validatePublishedTranscriptEntry(entry, false); err != nil {
+			return err
+		}
+		if _, exists := seen[entry.ID]; exists {
+			return fmt.Errorf("duplicate transcript id %q", entry.ID)
+		}
+		seen[entry.ID] = struct{}{}
+		rawIDs[entry.ID] = struct{}{}
+	}
+	for _, entry := range manifest.ReadableTranscripts {
+		if err := validatePublishedTranscriptEntry(entry, true); err != nil {
+			return err
+		}
+		if _, exists := seen[entry.ID]; exists {
+			return fmt.Errorf("duplicate transcript id %q", entry.ID)
+		}
+		if _, exists := rawIDs[entry.SourceTranscriptID]; !exists {
+			return fmt.Errorf("transcript %q has unknown sourceTranscriptId %q", entry.ID, entry.SourceTranscriptID)
+		}
+		seen[entry.ID] = struct{}{}
+	}
+	return nil
+}
+
+func validatePublishedTranscriptEntry(entry TranscriptEntry, readable bool) error {
+	if err := ValidateTranscriptID(entry.ID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(entry.Format) == "" {
+		return fmt.Errorf("transcript %q has an empty format", entry.ID)
+	}
+	if readable {
+		if entry.Role != RoleReadableCleanup && entry.Role != RoleDisplay {
+			return fmt.Errorf("transcript %q has unsupported readable role %q", entry.ID, entry.Role)
+		}
+		if strings.TrimSpace(entry.SourceTranscriptID) == "" {
+			return fmt.Errorf("transcript %q requires sourceTranscriptId", entry.ID)
+		}
+	} else {
+		switch entry.Role {
+		case RoleRawASR, RoleHumanCorrected, RoleTranslation:
+		default:
+			return fmt.Errorf("transcript %q has unsupported role %q", entry.ID, entry.Role)
+		}
+	}
+	wantPrefix := TranscriptIDToTagPrefix(entry.ID)
+	if entry.PayloadRef.Prefix != wantPrefix || entry.PayloadRef.ChunkCount < 1 {
+		return fmt.Errorf("transcript %q has invalid payloadRef", entry.ID)
+	}
+	if entry.PayloadRef.Encoding != PayloadEncoding {
+		return fmt.Errorf("transcript %q has unsupported payload encoding %q", entry.ID, entry.PayloadRef.Encoding)
+	}
+	if !sha256HexRE.MatchString(entry.PayloadRef.SHA256) {
+		return fmt.Errorf("transcript %q has invalid payload sha256", entry.ID)
+	}
+	if strings.TrimSpace(entry.PayloadRef.MIME) == "" || entry.PayloadRef.RawBytes < 0 || entry.PayloadRef.GzipBytes < 0 {
+		return fmt.Errorf("transcript %q has invalid payload metadata", entry.ID)
+	}
+	return nil
 }
 
 // EncodePayloadBytes runs already-serialised manifest JSON through the payload
 // pipeline: gzip, base64url, chunk, and the digest and byte counts the tags
 // declare.
 //
-// Split out of EncodeDraft1Manifest for the editors rather than the producers.
+// Split out of the typed encoder for editors rather than producers.
 // `cassini retag` rewrites one field of an existing file's manifest and must
-// re-emit everything else exactly as it found it — including whatever wire
-// version that file uses and any key this build has never heard of — so it
-// edits the JSON document and hands the bytes here. Marshalling a
-// portable.Manifest instead would silently drop every field the struct does not
-// model, which on a v2 file is its entire transcript descriptor set.
+// re-emit everything else exactly as it found it, so it edits the JSON document
+// and hands the bytes here. Marshalling a portable.Manifest instead would
+// silently drop any extension field the struct does not model.
 func EncodePayloadBytes(rawJSON []byte, chunkSize int) (EncodedPayload, error) {
 	var compressed bytes.Buffer
 	gzw := gzip.NewWriter(&compressed)
@@ -428,13 +392,8 @@ func ChunkString(value string, size int) []string {
 	return chunks
 }
 
-func MeetingIDFromPCMHash(hash string) string {
-	return MeetingIDFromAudioHash(hash)
-}
-
 // MeetingIDFromAudioHash derives the stable meeting identity from the
-// canonical compressed Opus digest. MeetingIDFromPCMHash remains as a legacy
-// alias for callers reading pre-opus-digest manifests.
+// canonical compressed Opus digest.
 func MeetingIDFromAudioHash(hash string) string {
 	hash = strings.ToLower(strings.TrimSpace(hash))
 	if hash == "" {
@@ -443,85 +402,16 @@ func MeetingIDFromAudioHash(hash string) string {
 	return "mtg_" + hash
 }
 
-// BuildDraft1OpusTags emits the OpusTag map of a draft-1 file. Reading path
-// only, like EncodeDraft1Manifest: it is what builds fixtures of the files
-// this producer wrote before the format was published.
-func BuildDraft1OpusTags(manifest Manifest, payload EncodedPayload) map[string]string {
-	manifest = NormalizeDraft1Manifest(manifest)
-
-	tags := map[string]string{
-		"TITLE":                       manifest.Meeting.Title,
-		"DATE":                        manifest.Meeting.CreatedAtUTC,
-		"DESCRIPTION":                 Description,
-		"ENCODER":                     "Cassini",
-		"CASSINI_FORMAT":              FormatDraft1,
-		"CASSINI_PROFILE":             Profile,
-		"CASSINI_PAYLOAD_MIME":        PayloadMIME,
-		"CASSINI_PAYLOAD_ENCODING":    PayloadEncoding,
-		"CASSINI_PAYLOAD_SCHEMA":      PayloadSchemaDraft1,
-		"CASSINI_PAYLOAD_CHUNK_COUNT": fmt.Sprintf("%d", len(payload.Chunks)),
-		"CASSINI_PAYLOAD_SHA256":      payload.SHA256,
-		"CASSINI_PAYLOAD_RAW_BYTES":   fmt.Sprintf("%d", payload.RawBytes),
-		"CASSINI_PAYLOAD_GZIP_BYTES":  fmt.Sprintf("%d", payload.CompressedBytes),
-		"CASSINI_AUDIO_SAMPLE_RATE":   fmt.Sprintf("%d", manifest.Audio.SampleRate),
-		"CASSINI_AUDIO_CHANNELS":      fmt.Sprintf("%d", manifest.Audio.Channels),
-		"CASSINI_AUDIO_SAMPLE_COUNT":  fmt.Sprintf("%d", manifest.Audio.SampleCount),
-		"CASSINI_AUDIO_DURATION_MS":   fmt.Sprintf("%d", manifest.Audio.DurationMS),
-		"CASSINI_DECODE_HINT":         DecodeHintDraft1,
-		"CASSINI_MEETING_ID":          manifest.Meeting.ID,
-		"CASSINI_CREATED_AT":          manifest.Meeting.CreatedAtUTC,
-		"CASSINI_SPEAKER_COUNT":       fmt.Sprintf("%d", len(manifest.Speakers)),
-		"CASSINI_WORD_COUNT":          fmt.Sprintf("%d", manifest.Transcript.WordCount),
-	}
-	applyAudioIntegrityTags(tags, manifest.Integrity)
-	if manifest.Meeting.RecordedAtLocal != "" {
-		tags["CASSINI_RECORDED_AT_LOCAL"] = manifest.Meeting.RecordedAtLocal
-	}
-	if manifest.Meeting.ProcessedAtUTC != "" {
-		tags["CASSINI_PROCESSED_AT"] = manifest.Meeting.ProcessedAtUTC
-	}
-	applyRoomTags(tags, manifest.Meeting)
-	applyProvenanceTags(tags, manifest.Meeting)
-
-	language := firstNonEmpty(manifest.Transcript.Language, manifest.Meeting.Language)
-	if language != "" {
-		tags["LANGUAGE"] = language
-		tags["CASSINI_TRANSCRIPT_LANGUAGE"] = language
-	}
-	if manifest.Provenance != nil {
-		applyProcessingStepTags(tags, "CASSINI_STT", manifest.Provenance.SpeechToText)
-		applyProcessingStepTags(tags, "CASSINI_READABLE", manifest.Provenance.ReadableCleanup)
-		applyAttributionProvenanceTags(tags, manifest.Provenance.Attribution)
-	}
-
-	for idx, chunk := range payload.Chunks {
-		tags[fmt.Sprintf("CASSINI_PAYLOAD_%03d", idx)] = chunk
-	}
-	return tags
-}
-
 func applyAudioIntegrityTags(tags map[string]string, integrity Integrity) {
 	policy := integrity.MatchPolicy
 	if policy == "" {
-		if integrity.OpusSHA256 != "" {
-			policy = AudioMatchPolicy
-		} else if integrity.PCMSHA256 != "" {
-			policy = LegacyAudioMatchPolicyPCM
-		}
+		policy = AudioMatchPolicy
 	}
 	if policy != "" {
 		tags["CASSINI_AUDIO_MATCH_POLICY"] = policy
 	}
 	if integrity.OpusSHA256 != "" {
 		tags["CASSINI_AUDIO_OPUS_SHA256"] = integrity.OpusSHA256
-	}
-	if integrity.PCMSHA256 != "" {
-		pcmFormat := integrity.PCMFormat
-		if pcmFormat == "" {
-			pcmFormat = AudioPCMFormat
-		}
-		tags["CASSINI_AUDIO_PCM_FORMAT"] = pcmFormat
-		tags["CASSINI_AUDIO_PCM_SHA256"] = integrity.PCMSHA256
 	}
 }
 
@@ -542,9 +432,6 @@ func applyAudioIntegrityTags(tags map[string]string, integrity Integrity) {
 func applyRoomTags(tags map[string]string, meeting Meeting) {
 	if meeting.RoomID != "" {
 		tags["CASSINI_ROOM_ID"] = meeting.RoomID
-	}
-	if meeting.RoomName != "" {
-		tags["CASSINI_ROOM_NAME"] = meeting.RoomName
 	}
 }
 
