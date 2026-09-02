@@ -380,8 +380,18 @@ func validateTranscriptInputs(transcripts []TranscriptInput) error {
 			if input.Default {
 				rawDefaults++
 			}
-			if input.SourceTranscriptID != "" && input.Role != RoleTranslation && input.Role != RoleHumanCorrected {
-				return fmt.Errorf("transcript %q (role %q) must not set sourceTranscriptId", input.ID, input.Role)
+			// raw-asr came from the audio and scripted is what the audio
+			// performs; neither is derived from another transcript. The other
+			// two are, and MUST name their source.
+			switch input.Role {
+			case RoleRawASR, RoleScripted:
+				if input.SourceTranscriptID != "" {
+					return fmt.Errorf("transcript %q (role %q) must not set sourceTranscriptId", input.ID, input.Role)
+				}
+			default:
+				if strings.TrimSpace(input.SourceTranscriptID) == "" {
+					return fmt.Errorf("transcript %q (role %q) requires sourceTranscriptId", input.ID, input.Role)
+				}
 			}
 		case RoleReadableCleanup:
 			if strings.TrimSpace(input.SourceTranscriptID) == "" {

@@ -528,15 +528,15 @@ func sanitizeTranscriptID(id string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(id) {
 		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
 			b.WriteRune(r)
 		default:
 			b.WriteRune('-')
 		}
 	}
-	out := strings.Trim(b.String(), "-_")
+	out := strings.Trim(b.String(), "-")
 	if len(out) > 32 {
-		out = strings.TrimRight(out[:32], "-_")
+		out = strings.TrimRight(out[:32], "-")
 	}
 	return out
 }
