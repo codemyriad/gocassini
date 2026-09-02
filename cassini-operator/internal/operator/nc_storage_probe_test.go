@@ -17,6 +17,7 @@ func readyProbe() ncStorageProbe {
 		},
 		NativeApps:     true,
 		ServiceAccount: true,
+		OwnerGroup:     true,
 		EveryoneGroup:  true,
 		Folder:         gfFolder{ID: "7", MountPoint: ncRecordingsMount, ACL: true},
 		FolderProbed:   true,

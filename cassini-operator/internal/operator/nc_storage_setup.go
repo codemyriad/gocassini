@@ -80,29 +80,34 @@ type storageSetupStep struct {
 func storageSetupPlan(accessControlled bool, p ncStorageProbe) []storageSetupStep {
 	var steps []storageSetupStep
 
+	// The group and the account are separate steps because they genuinely come
+	// apart: `occ user:add` without `--group` leaves an account with no group,
+	// and the Team folder's write mapping is onto the GROUP. Inferring one from
+	// the other emitted a `map_group` step for a group that did not exist, which
+	// Nextcloud refuses.
+	if !p.OwnerGroup {
+		steps = append(steps, storageSetupStep{
+			ID:      "group",
+			Action:  setupActionCreateGroup,
+			Title:   fmt.Sprintf("Create the %q group", ncRecordingsOwnerGroup),
+			Args:    map[string]string{"group": ncRecordingsOwnerGroup},
+			Browser: true,
+			Occ:     "occ group:add " + ncRecordingsOwnerGroup,
+		})
+	}
 	if !p.ServiceAccount {
-		steps = append(steps,
-			storageSetupStep{
-				ID:      "group",
-				Action:  setupActionCreateGroup,
-				Title:   fmt.Sprintf("Create the %q group", ncRecordingsOwnerGroup),
-				Args:    map[string]string{"group": ncRecordingsOwnerGroup},
-				Browser: true,
-				Occ:     "occ group:add " + ncRecordingsOwnerGroup,
+		steps = append(steps, storageSetupStep{
+			ID:     "account",
+			Action: setupActionCreateUser,
+			Title:  fmt.Sprintf("Create the %q service account, which owns every recording", ncRecordingsOwner),
+			Args: map[string]string{
+				"user":         ncRecordingsOwner,
+				"group":        ncRecordingsOwnerGroup,
+				"display_name": "Cassini recordings",
 			},
-			storageSetupStep{
-				ID:     "account",
-				Action: setupActionCreateUser,
-				Title:  fmt.Sprintf("Create the %q service account, which owns every recording", ncRecordingsOwner),
-				Args: map[string]string{
-					"user":         ncRecordingsOwner,
-					"group":        ncRecordingsOwnerGroup,
-					"display_name": "Cassini recordings",
-				},
-				Browser: true,
-				Occ:     fmt.Sprintf("occ user:add --group=%s %s", ncRecordingsOwnerGroup, ncRecordingsOwner),
-			},
-		)
+			Browser: true,
+			Occ:     fmt.Sprintf("occ user:add --group=%s %s", ncRecordingsOwnerGroup, ncRecordingsOwner),
+		})
 	}
 
 	if !accessControlled {

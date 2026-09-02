@@ -164,16 +164,27 @@ async function ncPost(
   const code = meta?.statuscode;
 
   // Idempotent already-there answers are successes. A setup flow is re-run
-  // after a partial failure more often than it is run clean, so "the group is
-  // already there" must not read as a failure.
-  if (code === 102 || /already exists|group exists/i.test(meta?.message ?? "")) {
+  // after a partial failure more often than it is run clean, so "it is already
+  // there" must not read as a failure.
+  //
+  // The match is on "already" rather than on a specific sentence because the
+  // three writes that can hit it say three different things — OCS 102 "group
+  // exists" and "User already exists" from the provisioning API, "Group already
+  // assigned" from Group Folders. The operator's own provisioner settled on the
+  // same loose test for the same reason (nc_provision.go).
+  if (code === 102 || /already/i.test(meta?.message ?? "")) {
     return payload;
   }
   if (response.ok && (code === undefined || code === 100 || code === 200)) {
     return payload;
   }
   const message = meta?.message || `HTTP ${response.status}`;
-  if (response.status === 403) {
+  // A refusal can arrive as an HTTP 403 or as an HTTP **200** carrying 403 in
+  // the OCS envelope — which is exactly what every Group Folders write does,
+  // and it is the shape that matters most here: those are the steps most likely
+  // to straddle the confirmation window. Keying this on the HTTP status alone
+  // made the re-confirm-and-retry path below dead for all of them.
+  if (response.status === 403 || code === 403) {
     throw new NcSetupError(
       "denied",
       `Nextcloud refused: ${message}. Your confirmation may have expired — try again.`,
@@ -194,6 +205,14 @@ function randomPassword(): string {
     .replace(/\//g, "_")
     .replace(/=+$/, "");
   return `Cw1!${base64}`;
+}
+
+// FolderCache is the one Team-folder lookup a run performs, shared between the
+// idempotency check and the steps that map onto the folder.
+interface FolderCache {
+  id: number | null;
+  resolve: (mount: string) => Promise<number | null>;
+  invalidate: () => void;
 }
 
 export interface SetupProgress {
@@ -269,29 +288,51 @@ export async function runSetupPlan(
 
   await confirmPassword();
 
-  let folderId: number | null = null;
+  // One resolution of the Team folder id, shared by every step that needs it —
+  // the existence check that makes creating it idempotent, and the mappings
+  // afterwards. Creating invalidates it, because the id it should now return is
+  // the one that did not exist a moment ago.
+  const folders: FolderCache = {
+    id: null,
+    async resolve(mount: string) {
+      if (this.id === null) {
+        this.id = await findFolderId(mount, fetchImpl);
+      }
+      return this.id;
+    },
+    invalidate() {
+      this.id = null;
+    },
+  };
   const requireFolder = async (step: StorageSetupStep): Promise<number> => {
     const mount = step.args?.mount ?? "";
-    if (folderId === null) {
-      folderId = await findFolderId(mount, fetchImpl);
-    }
-    if (folderId === null) {
+    const id = await folders.resolve(mount);
+    if (id === null) {
       throw new NcSetupError("failed", `Could not find the ${mount} Team folder.`, step.id);
     }
-    return folderId;
+    return id;
   };
 
   for (let index = 0; index < browserSteps.length; index += 1) {
     const step = browserSteps[index];
     options.onProgress?.({ step, index, total: browserSteps.length });
     try {
-      await runStep(step, requireFolder, fetchImpl);
+      await runStep(step, requireFolder, folders, fetchImpl);
     } catch (error) {
       // A denial mid-run is almost always the confirmation window closing.
       // Re-confirm and retry the step once; anything else is real.
       if (error instanceof NcSetupError && error.reason === "denied") {
         await confirmPassword();
-        await runStep(step, requireFolder, fetchImpl);
+        try {
+          await runStep(step, requireFolder, folders, fetchImpl);
+        } catch (retryError) {
+          // The retry's failure has to carry the step too, or the second
+          // attempt reports less than the first did.
+          if (retryError instanceof NcSetupError) {
+            retryError.step = step.id;
+          }
+          throw retryError;
+        }
         continue;
       }
       if (error instanceof NcSetupError) {
@@ -305,6 +346,7 @@ export async function runSetupPlan(
 async function runStep(
   step: StorageSetupStep,
   requireFolder: (step: StorageSetupStep) => Promise<number>,
+  folders: FolderCache,
   fetchImpl: typeof fetch,
 ): Promise<void> {
   const args = step.args ?? {};
@@ -327,13 +369,26 @@ async function runStep(
         fetchImpl,
       );
       return;
-    case "create_team_folder":
+    case "create_team_folder": {
+      // Look before creating. `POST /folders` has no idempotency of its own —
+      // it makes a NEW folder every time, mount point and all — so a re-run
+      // after a partial failure would leave two folders called `Cassini`, and
+      // Nextcloud would mount whichever it liked. Everything else here tolerates
+      // being done twice; this is the one call that cannot.
+      const mount = args.mount ?? "";
+      if ((await folders.resolve(mount)) !== null) {
+        return;
+      }
       await ncPost(
         "/index.php/apps/groupfolders/folders?format=json",
-        { mountpoint: args.mount ?? "" },
+        { mountpoint: mount },
         fetchImpl,
       );
+      // The id the cache should now hand out is the one that did not exist a
+      // moment ago.
+      folders.invalidate();
       return;
+    }
     case "map_group": {
       const id = await requireFolder(step);
       await ncPost(

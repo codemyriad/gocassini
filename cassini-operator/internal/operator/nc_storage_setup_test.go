@@ -269,3 +269,49 @@ func TestInstallMissingAppsSkipsTheOnesThatAreAlreadyEnabled(t *testing.T) {
 		t.Fatalf("attempted %v, want only %q", attempted, ncAppEveryoneGroup)
 	}
 }
+
+// The group and the account come apart in practice: `occ user:add` without
+// `--group` leaves an account with no group. Inferring the group from the
+// account emitted a mapping step for a group that does not exist, which
+// Nextcloud refuses — so the plan has to fix the group too.
+func TestSetupPlanCreatesTheOwnerGroupEvenWhenTheAccountExists(t *testing.T) {
+	probe := readyProbe()
+	probe.OwnerGroup = false
+	probe.OwnerAll = false // no group, so no write mapping either
+
+	steps := storageSetupPlan(true, probe)
+
+	group := planStep(t, steps, "group")
+	if group.Action != setupActionCreateGroup || !group.Browser {
+		t.Fatalf("group step = %+v, want a browser-doable create_group", group)
+	}
+	for _, step := range steps {
+		if step.ID == "account" {
+			t.Fatal("the account exists; the plan must not offer to create it again")
+		}
+	}
+	// …and it comes BEFORE the mapping that needs it.
+	ids := planIDs(steps)
+	groupAt, mountAt := -1, -1
+	for i, id := range ids {
+		if id == "group" {
+			groupAt = i
+		}
+		if id == "mount:"+ncRecordingsOwnerGroup {
+			mountAt = i
+		}
+	}
+	if groupAt < 0 || mountAt < 0 || groupAt > mountAt {
+		t.Fatalf("plan %v does not create the group before mapping it", ids)
+	}
+}
+
+// The reverse: a group with no account. Both are separately reachable, and the
+// plan must offer exactly what is missing.
+func TestSetupPlanCreatesOnlyTheAccountWhenTheGroupExists(t *testing.T) {
+	probe := ncStorageProbe{AdminUser: "admin", OwnerGroup: true, FolderProbed: true}
+
+	if got := planIDs(storageSetupPlan(false, probe)); len(got) != 1 || got[0] != "account" {
+		t.Fatalf("plan = %v, want just the account", got)
+	}
+}

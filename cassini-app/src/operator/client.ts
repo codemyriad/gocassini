@@ -134,7 +134,10 @@ export class OperatorClient {
   //
   // The setup writes happen in the browser (D-671), so the operator cannot see
   // them until it re-probes — without this the Setup tab would go on reporting
-  // what was missing before the administrator fixed it.
+  // what was missing before the administrator fixed it. It is also what a plan
+  // is RECOMPUTED from: the operator cannot see a Team folder until
+  // `groupfolders` is enabled, so a plan built before the apps went in is stale
+  // about everything after them.
   async recheckStorage(): Promise<StorageStatus> {
     return normalizeStorage(
       await this.#request<unknown>("/storage", {
