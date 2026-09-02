@@ -198,6 +198,11 @@ type Runtime struct {
 	// health endpoint cannot fan out doctor subprocesses (D-376).
 	recordHealth        *ttlProbe
 	recordHealthTimeout time.Duration
+	// captureUsage caches the capture root's figures for /status. Measuring it
+	// is a filesystem walk, and /status is polled, so it gets the same
+	// singleflight-plus-TTL treatment as the nvidia-smi probe. Nil in a Config
+	// built directly (as tests do), which falls back to measuring inline.
+	captureUsage *captureUsageProbe
 	// settings is the operator-owned STT policy, injected into every
 	// record/build/doctor subprocess. settingsMu guards in-memory reads (at job
 	// spawn time) against PUT /settings writes; settingsPath is where it
@@ -358,6 +363,11 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	// it here would misreport the resolved nextcloud-files sink as local.
 	logger.Printf("publish_sink -> %s", sink.Name())
 	logger.Printf("artifact_retention -> %s", artifactRetentionOrDefault(cfg.ArtifactRetention))
+	captureStorage := captureLimitsFromEnv()
+	logger.Printf("source_capture -> collection=%t ingest=%t owner_quota=%dMiB total_quota=%dMiB min_free_disk=%dMiB max_age=%s",
+		sourceCaptureEnabled(), sourceAudioIngestEnabled(),
+		captureStorage.ownerQuota>>20, captureStorage.totalQuota>>20,
+		captureStorage.minFreeDisk>>20, captureStorage.maxAge)
 	if persistRoot := persistentStorageRoot(); persistRoot != "" {
 		logger.Printf("app_persistent_storage -> %s", persistRoot)
 	}
@@ -569,6 +579,13 @@ Flags:
 	if err := validateArtifactRetentionName(cfg.ArtifactRetention); err != nil {
 		return Config{}, 2, err
 	}
+	// Env-only, like the resource governor's knobs, but validated here rather
+	// than defaulted silently: an administrator who mistyped a capture quota
+	// would otherwise get the built-in one and no hint that their number was
+	// never read (capture_retention.go).
+	if err := validateCaptureLimits(); err != nil {
+		return Config{}, 2, err
+	}
 	if strings.TrimSpace(cfg.CassiniBin) == "" {
 		return Config{}, 2, errors.New("--cassini-bin must not be empty")
 	}
@@ -729,6 +746,9 @@ func NewRuntime(ctx context.Context, store *Store, cfg Config, logger *log.Logge
 	rt.computeProbe = probeComputeDevice
 	rt.computeReadiness = newComputeStatusProbe(computeReadinessProbeTTL, func(device string) (bool, string) {
 		return rt.computeProbe(device)
+	})
+	rt.captureUsage = newCaptureUsageProbe(captureUsageProbeTTL, func() (captureUsage, error) {
+		return measureCaptureRoot(rt.cfg.CaptureRoot)
 	})
 	rt.recordHealth = newTTLProbe(recordHealthProbeTTL, func() error {
 		probeCtx := rt.ctx
