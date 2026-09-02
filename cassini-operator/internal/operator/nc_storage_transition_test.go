@@ -582,3 +582,109 @@ func TestOptInRefusesWhenTheOwnerRootCannotBeListed(t *testing.T) {
 		t.Fatal("the recording was moved despite the failure")
 	}
 }
+
+// The preview must describe the move without performing any of it. This is the
+// property that makes it safe to run from a confirmation dialog.
+func TestTransitionPreviewWritesNothing(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+
+	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(), recordingsRoot: true}
+	cfg := testExAppConfig(mock.server(t).URL)
+
+	if _, err := cfg.previewStorageModeSwitch(context.Background(), true, log.New(io.Discard, "", 0)); err != nil {
+		t.Fatalf("previewStorageModeSwitch() error = %v", err)
+	}
+
+	for _, method := range []string{"MOVE", "MKCOL", "PROPPATCH", http.MethodPut, http.MethodDelete} {
+		mock.mu.Lock()
+		reqs := append([]string(nil), mock.reqs...)
+		mock.mu.Unlock()
+		for _, r := range reqs {
+			if strings.HasPrefix(r, method+" ") {
+				t.Errorf("the preview issued %s — it must only read", r)
+			}
+		}
+	}
+}
+
+// What the confirmation actually needs: the counts, and the surprises.
+func TestTransitionPreviewReportsTheDiffAndItsSurprises(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+
+	// An archive Nextcloud renamed out of the way when the Team folder took the
+	// canonical path — the D-660 collision, and the case an administrator is
+	// least likely to have guessed.
+	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder()}
+	mock.homeChildren = []string{"Cassini (1)"}
+	mock.dirs = map[string][]string{
+		"Cassini (1)/Recordings":          {"meetings", "catalog.json"},
+		"Cassini (1)/Recordings/meetings": {"a.opus", "b.opus", "c.opus"},
+	}
+	cfg := testExAppConfig(mock.server(t).URL)
+
+	got, err := cfg.previewStorageModeSwitch(context.Background(), true, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("previewStorageModeSwitch() error = %v", err)
+	}
+	if got.SourceRoot != "Cassini (1)/Recordings" {
+		t.Fatalf("SourceRoot = %q, want the displaced archive", got.SourceRoot)
+	}
+	if got.Meetings != 3 || !got.CatalogPresent {
+		t.Fatalf("preview = %+v, want 3 meetings and a catalog", got)
+	}
+	if got.NothingToMove {
+		t.Fatal("reported nothing to move with three recordings to move")
+	}
+	joined := strings.Join(got.Warnings, "\n")
+	if !strings.Contains(joined, "Cassini (1)") {
+		t.Errorf("warnings never mention the displaced archive:\n%s", joined)
+	}
+	if !strings.Contains(joined, "readable by every account") {
+		t.Errorf("warnings never state the audience change, which is the irreversible part:\n%s", joined)
+	}
+}
+
+// A switch with nothing to move says so, because "moved 0 recordings" and
+// "moved 41 recordings" need different confirmation copy.
+func TestTransitionPreviewSaysWhenThereIsNothingToMove(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+
+	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder()}
+	cfg := testExAppConfig(mock.server(t).URL)
+
+	got, err := cfg.previewStorageModeSwitch(context.Background(), true, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("previewStorageModeSwitch() error = %v", err)
+	}
+	if !got.NothingToMove || got.Meetings != 0 {
+		t.Fatalf("preview = %+v, want nothing to move", got)
+	}
+}
+
+// A target the instance cannot support is reported as not-ready with the reason,
+// rather than as a diff the administrator could confirm.
+func TestTransitionPreviewReportsAnUnsupportedTarget(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+
+	mock := &storageMock{apps: []string{}, serviceAccount: true}
+	cfg := testExAppConfig(mock.server(t).URL)
+
+	got, err := cfg.previewStorageModeSwitch(context.Background(), true, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("previewStorageModeSwitch() error = %v", err)
+	}
+	if got.Ready {
+		t.Fatal("reported ready to switch into access control with neither app installed")
+	}
+	if got.Step == "" || got.Detail == "" {
+		t.Fatalf("preview = %+v, want the blocker named", got)
+	}
+}

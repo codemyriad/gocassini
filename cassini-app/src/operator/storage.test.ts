@@ -181,3 +181,69 @@ describe("OperatorClient storage", () => {
     });
   });
 });
+
+describe("previewStorageSwitch", () => {
+  it("asks for a preview of the named mode and does not move anything", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({
+        mode: "default",
+        preview: {
+          mode: "access_controlled",
+          ready: true,
+          source_root: "Cassini (1)/Recordings",
+          destination_root: "Cassini/Recordings",
+          meetings: 3,
+          catalog_present: true,
+          destination_meetings: 0,
+          nothing_to_move: false,
+          warnings: ["all three become readable by every account"],
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const status = await new OperatorClient("/operator").previewStorageSwitch(true);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/storage");
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      action: "preview",
+      access_control_enabled: true,
+    });
+    expect(status.preview?.meetings).toBe(3);
+    expect(status.preview?.source_root).toBe("Cassini (1)/Recordings");
+    expect(status.preview?.warnings).toEqual(["all three become readable by every account"]);
+  });
+
+  it("keeps a missing preview null rather than inventing an empty one", async () => {
+    // "no preview was asked for" and "a preview that found nothing" render
+    // differently, and conflating them would let a dialog claim there is
+    // nothing to move when nobody has looked.
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ mode: "default" })));
+
+    const status = await new OperatorClient("/operator").getStorage();
+
+    expect(status.preview).toBeNull();
+  });
+
+  it("will not turn a nonsense count into a number it would state as fact", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          mode: "default",
+          preview: { mode: "access_controlled", meetings: "lots", destination_meetings: -4 },
+        }),
+      ),
+    );
+
+    const status = await new OperatorClient("/operator").previewStorageSwitch(true);
+
+    expect(status.preview?.meetings).toBe(0);
+    expect(status.preview?.destination_meetings).toBe(0);
+    expect(status.preview?.ready).toBe(false);
+    expect(status.preview?.warnings).toEqual([]);
+  });
+});
