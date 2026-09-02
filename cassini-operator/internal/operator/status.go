@@ -97,6 +97,13 @@ type statusRecordingsAccess struct {
 	// AdminUser is the account provisioning resolved and acted as. Its absence
 	// is itself the diagnosis when Step is "administrator".
 	AdminUser string `json:"admin_user,omitempty"`
+	// Mode is the resolved storage model — "default" or "access_controlled"
+	// (D-616) — and ModeSource is "configured" (read from storage_settings.json)
+	// or "derived" (absent, so this run derived it from the instance and wrote
+	// it). Both are empty until a preflight has resolved one, which is not the
+	// same as "default": nobody has decided yet.
+	Mode       string `json:"mode,omitempty"`
+	ModeSource string `json:"mode_source,omitempty"`
 	// Prerequisites reports the native Nextcloud apps an ExApp cannot install
 	// for itself, so a missing one is named rather than inferred.
 	Prerequisites []statusPrerequisite `json:"prerequisites,omitempty"`
