@@ -65,7 +65,7 @@
     type OperatorStateChangeEvent,
   } from "./operator/client";
   import type { Job, JobAttempt, JobDetailResponse } from "./operator/types";
-  import { shouldShowDetailLoading } from "./operator/viewState";
+  import { meetingLabel, requestUrlLabel, shouldShowDetailLoading } from "./operator/viewState";
   import { applyJob, readJob } from "./surfaceRouting";
   import SettingsPanel from "./SettingsPanel.svelte";
 
@@ -514,19 +514,6 @@
     }
   }
 
-  function meetingLabel(requestJSON: string): string {
-    const url = requestUrlLabel(requestJSON);
-    if (url === "\u2014") {
-      return "Recording";
-    }
-    try {
-      const token = new URL(url).pathname.split("/").filter(Boolean).pop();
-      return token ? `Call ${token}` : url;
-    } catch {
-      return url;
-    }
-  }
-
   function relativeTime(value: string | null | undefined): string {
     if (!value) return "—";
     const then = Date.parse(value);
@@ -542,15 +529,6 @@
 
   function attemptStageLabel(attempt: JobAttempt): string {
     return `${attempt.attempt_number} · ${attempt.stage} / ${attempt.state}`;
-  }
-
-  function requestUrlLabel(requestJSON: string): string {
-    try {
-      const payload = JSON.parse(requestJSON) as { url?: unknown };
-      return typeof payload.url === "string" && payload.url.trim() !== "" ? payload.url : "—";
-    } catch {
-      return "—";
-    }
   }
 
   function streamStatusTone(status: typeof streamStatus): string {
@@ -750,7 +728,7 @@
                     <div class="card-body min-w-0 gap-1 p-3">
                       <div class="flex min-w-0 items-start justify-between gap-2">
                         <p class="min-w-0 flex-1 truncate text-sm font-medium" title={requestUrlLabel(job.request_json)}>
-                          {meetingLabel(job.request_json)}
+                          {meetingLabel(job)}
                         </p>
                         {#if job.current_attempt_number > 1}
                           <span class="badge badge-outline badge-sm shrink-0 border-base-content/20 text-base-content"
@@ -870,7 +848,7 @@
                 <section class="grid gap-3 rounded-box border border-base-300 bg-base-200 p-4">
                   <div class="min-w-0">
                     <h3 class="truncate text-lg font-semibold" title={requestUrlLabel(selectedJob.job.request_json)}>
-                      {meetingLabel(selectedJob.job.request_json)}
+                      {meetingLabel(selectedJob.job)}
                     </h3>
                     <p class="text-sm {jobStatusToneClass(selectedJob.job)}">
                       {jobStatusLabel(selectedJob.job)}
