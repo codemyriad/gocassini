@@ -67,7 +67,7 @@ func ExtractMeeting(path string) (ExtractedMeeting, error) {
 	if formatTag == "" {
 		return ExtractedMeeting{}, fmt.Errorf("%s carries no CASSINI_FORMAT metadata (not a portable meeting)", path)
 	}
-	if !strings.EqualFold(formatTag, portable.Format) && !strings.EqualFold(formatTag, portable.FormatV2) && !strings.EqualFold(formatTag, portable.FormatV3) {
+	if !knownPortableFormatTag(formatTag) {
 		return ExtractedMeeting{}, fmt.Errorf("unsupported CASSINI_FORMAT=%s", formatTag)
 	}
 
@@ -82,8 +82,10 @@ func ExtractMeeting(path string) (ExtractedMeeting, error) {
 		SummaryMarkdown: summaryMarkdownFromAttachments(manifest.Attachments),
 	}
 
-	// v1 files carry the words inline in the main manifest.
-	if manifest.Version == 1 {
+	// Draft-1 files carry the words inline in the main manifest. The test is
+	// the manifest's shape, not its version number: the published format is
+	// version 1 too, so the number no longer separates them.
+	if !manifest.IsMultiTranscript() {
 		extracted.Transcript = extractedFromTranscriptBody(
 			"transcript",
 			manifest.Transcript.Format,

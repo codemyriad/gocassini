@@ -8,14 +8,14 @@ import (
 	"gocassini/internal/portable"
 )
 
-// TestExtractMeetingV1RecoversManifestTranscriptAndSummary proves the one-pass
-// reader returns everything a context bundle needs out of a v1 file: the
-// manifest fields the agent shows the user, the inline words, and the summary
-// markdown decoded from the attachment.
-func TestExtractMeetingV1RecoversManifestTranscriptAndSummary(t *testing.T) {
+// TestExtractMeetingDraft1RecoversManifestTranscriptAndSummary proves the
+// one-pass reader returns everything a context bundle needs out of a draft-1
+// file: the manifest fields the agent shows the user, the inline words, and
+// the summary markdown decoded from the attachment.
+func TestExtractMeetingDraft1RecoversManifestTranscriptAndSummary(t *testing.T) {
 	requireFFMediaTools(t)
 	tmp := t.TempDir()
-	path := createPortableOpusFixture(t, filepath.Join(tmp, "v1.opus"), portableFixtureOptions{withSummary: true})
+	path := createPortableOpusFixture(t, filepath.Join(tmp, "draft1.opus"), portableFixtureOptions{withSummary: true})
 
 	meeting, err := ExtractMeeting(path)
 	if err != nil {
@@ -25,8 +25,8 @@ func TestExtractMeetingV1RecoversManifestTranscriptAndSummary(t *testing.T) {
 	if meeting.FormatTag != portable.Format {
 		t.Errorf("FormatTag = %q, want %q", meeting.FormatTag, portable.Format)
 	}
-	if meeting.Manifest.Version != 1 {
-		t.Errorf("Manifest.Version = %d, want 1", meeting.Manifest.Version)
+	if meeting.Manifest.Version != portable.Draft1WireVersion {
+		t.Errorf("Manifest.Version = %d, want %d", meeting.Manifest.Version, portable.Draft1WireVersion)
 	}
 	if got, want := meeting.Manifest.Meeting.Title, "Weekly Sync"; got != want {
 		t.Errorf("Meeting.Title = %q, want %q", got, want)
@@ -69,14 +69,63 @@ func TestExtractMeetingV1RecoversManifestTranscriptAndSummary(t *testing.T) {
 	}
 }
 
-// TestExtractMeetingV2RecoversChunkedTranscriptAndSummary covers the shape the
-// producer actually writes today: a v2 file whose transcript body lives in its
+// TestExtractMeetingTellsADraft1FileFromAPublishedOneByShape is the regression
+// test for the version-number collision. The published format is version 1;
+// so was the first, never-published draft. A reader that decides what a file
+// contains from `version` therefore looks at a draft-1 file, concludes it has
+// a `transcripts` index, finds none and returns a meeting with no words in it.
+//
+// The fixture below is a genuine draft-1 file: one inline transcript,
+// matchPolicy exact-pcm, format tag org.cassini.portable-meeting/1, version 1
+// — the same format tag and the same version number a file this producer
+// writes today carries. What separates them is the shape, and the words this
+// test recovers came out of the inline object.
+func TestExtractMeetingTellsADraft1FileFromAPublishedOneByShape(t *testing.T) {
+	requireFFMediaTools(t)
+	tmp := t.TempDir()
+	path := createPortableOpusFixture(t, filepath.Join(tmp, "draft1.opus"), portableFixtureOptions{})
+
+	meeting, err := ExtractMeeting(path)
+	if err != nil {
+		t.Fatalf("ExtractMeeting: %v", err)
+	}
+
+	// The collision itself: tag and version are the published ones.
+	if meeting.FormatTag != portable.Format {
+		t.Fatalf("FormatTag = %q, want the published tag %q", meeting.FormatTag, portable.Format)
+	}
+	if meeting.Manifest.Version != portable.WireVersion {
+		t.Fatalf("Manifest.Version = %d, want %d", meeting.Manifest.Version, portable.WireVersion)
+	}
+
+	// And the shape, which is what actually decides.
+	if meeting.Manifest.IsMultiTranscript() {
+		t.Fatalf("draft-1 manifest reported a transcripts index: %+v", meeting.Manifest.Transcripts)
+	}
+	if got, want := meeting.Manifest.Integrity.MatchPolicy, portable.LegacyAudioMatchPolicyPCM; got != want {
+		t.Errorf("Integrity.MatchPolicy = %q, want %q", got, want)
+	}
+
+	if got, want := meeting.Transcript.WordCount, 2; got != want {
+		t.Fatalf("Transcript.WordCount = %d, want %d", got, want)
+	}
+	texts := make([]string, 0, len(meeting.Transcript.Words))
+	for _, word := range meeting.Transcript.Words {
+		texts = append(texts, word.Text)
+	}
+	if got, want := strings.Join(texts, " "), "Hello team"; got != want {
+		t.Errorf("recovered words = %q, want %q", got, want)
+	}
+}
+
+// TestExtractMeetingDraft2RecoversChunkedTranscriptAndSummary covers the
+// multi-transcript shape: a draft-2 file whose transcript body lives in its
 // own CASSINI_TX_<ID>_PAYLOAD_* chunk set.
-func TestExtractMeetingV2RecoversChunkedTranscriptAndSummary(t *testing.T) {
+func TestExtractMeetingDraft2RecoversChunkedTranscriptAndSummary(t *testing.T) {
 	requireFFMediaTools(t)
 	tmp := t.TempDir()
 	words := []string{"Hello", "team", "lantern", "festival", "tonight"}
-	path := createPortableV2OpusFixtureWith(t, filepath.Join(tmp, "v2.opus"), portableV2FixtureOptions{
+	path := createPortableDraft2OpusFixtureWith(t, filepath.Join(tmp, "v2.opus"), portableDraft2FixtureOptions{
 		words:       words,
 		withSummary: true,
 		summaryBody: "# Lantern Festival\n\n- Decided the date.\n",
@@ -87,11 +136,11 @@ func TestExtractMeetingV2RecoversChunkedTranscriptAndSummary(t *testing.T) {
 		t.Fatalf("ExtractMeeting: %v", err)
 	}
 
-	if meeting.FormatTag != portable.FormatV2 {
-		t.Errorf("FormatTag = %q, want %q", meeting.FormatTag, portable.FormatV2)
+	if meeting.FormatTag != portable.FormatDraft2 {
+		t.Errorf("FormatTag = %q, want %q", meeting.FormatTag, portable.FormatDraft2)
 	}
-	if meeting.Manifest.Version != 2 {
-		t.Errorf("Manifest.Version = %d, want 2", meeting.Manifest.Version)
+	if meeting.Manifest.Version != portable.Draft2WireVersion {
+		t.Errorf("Manifest.Version = %d, want %d", meeting.Manifest.Version, portable.Draft2WireVersion)
 	}
 	if got, want := meeting.Manifest.Meeting.Title, "Lantern Festival"; got != want {
 		t.Errorf("Meeting.Title = %q, want %q", got, want)
@@ -120,7 +169,7 @@ func TestExtractMeetingV2RecoversChunkedTranscriptAndSummary(t *testing.T) {
 func TestExtractMeetingWithoutSummaryIsNotAnError(t *testing.T) {
 	requireFFMediaTools(t)
 	tmp := t.TempDir()
-	path := createPortableV2OpusFixture(t, filepath.Join(tmp, "no-summary.opus"), []string{"Hello", "team"})
+	path := createPortableDraft2OpusFixture(t, filepath.Join(tmp, "no-summary.opus"), []string{"Hello", "team"})
 
 	meeting, err := ExtractMeeting(path)
 	if err != nil {

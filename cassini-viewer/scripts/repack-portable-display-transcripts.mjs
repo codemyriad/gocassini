@@ -16,6 +16,9 @@ const FORMAT = "org.cassini.portable-meeting/1";
 const PROFILE = "ogg-opus";
 const PAYLOAD_MIME = "application/vnd.cassini.portable-meeting+json";
 const PAYLOAD_ENCODING = "base64url+gzip+utf8json";
+// The draft-1 constants, spelled out because this script rewrites draft-1
+// files and has to hand them back unchanged in every respect but the display
+// transcript. The published format's own tags live in the Go producer.
 const PAYLOAD_SCHEMA = "https://cassini.local/spec/cassini-portable-meeting-manifest-v1.schema.json";
 const AUDIO_PCM_FORMAT = "s16le";
 const AUDIO_MATCH_POLICY = "exact-pcm";
@@ -116,11 +119,18 @@ export function repackPortableMeeting(path) {
 // manifest. Refuse v2/v3 rather than silently dropping their transcript chunk
 // sets or downgrading compressed-audio integrity to decoded PCM. New packing
 // is delegated to the Go `cassini pack` implementation.
+// This repacker rewrites the draft-1 shape and nothing else: it reads the
+// transcript inline and writes it back inline. It must refuse every
+// multi-transcript file, and it cannot tell one from a draft by version
+// number, because the published format is version 1 and so was draft 1. The
+// shape decides: a draft-1 manifest has no `transcripts` index.
 export function requireLegacyV1ForJSRewrite(portable, path = "portable meeting") {
   const version = Number(portable?.version ?? 1);
-  if (version !== 1) {
+  const multiTranscript =
+    Array.isArray(portable?.transcripts) && portable.transcripts.length > 0;
+  if (version !== 1 || multiTranscript) {
     throw new Error(
-      `${path} uses portable manifest v${version}; this legacy display repacker only rewrites v1`,
+      `${path} uses the multi-transcript portable manifest (v${version}); this legacy display repacker only rewrites the inline-transcript draft`,
     );
   }
 }

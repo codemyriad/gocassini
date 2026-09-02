@@ -7,8 +7,8 @@ import (
 	"gocassini/internal/portable"
 )
 
-func TestBuildPortableMeetingV2TagsSyntheszisesRawASREntry(t *testing.T) {
-	manifest := portable.NormalizeManifest(portable.Manifest{
+func TestBuildPortableMeetingDraft2TagsSyntheszisesRawASREntry(t *testing.T) {
+	manifest := portable.NormalizeDraft1Manifest(portable.Manifest{
 		Meeting: portable.Meeting{
 			ID:             "mtg_" + strings.Repeat("a", 64),
 			Title:          "Test",
@@ -38,12 +38,12 @@ func TestBuildPortableMeetingV2TagsSyntheszisesRawASREntry(t *testing.T) {
 		},
 	})
 
-	tags, err := buildPortableMeetingV2Tags(manifest)
+	tags, err := buildPortableMeetingDraft2Tags(manifest)
 	if err != nil {
-		t.Fatalf("buildPortableMeetingV2Tags: %v", err)
+		t.Fatalf("buildPortableMeetingDraft2Tags: %v", err)
 	}
-	if tags["CASSINI_FORMAT"] != portable.FormatV2 {
-		t.Errorf("CASSINI_FORMAT = %q, want %q", tags["CASSINI_FORMAT"], portable.FormatV2)
+	if tags["CASSINI_FORMAT"] != portable.FormatDraft2 {
+		t.Errorf("CASSINI_FORMAT = %q, want %q", tags["CASSINI_FORMAT"], portable.FormatDraft2)
 	}
 	if tags["CASSINI_TRANSCRIPT_IDS"] != "raw-asr" {
 		t.Errorf("CASSINI_TRANSCRIPT_IDS = %q, want %q", tags["CASSINI_TRANSCRIPT_IDS"], "raw-asr")
@@ -59,8 +59,8 @@ func TestBuildPortableMeetingV2TagsSyntheszisesRawASREntry(t *testing.T) {
 	}
 }
 
-func TestBuildPortableMeetingV2TagsFromSourceMultiTranscript(t *testing.T) {
-	manifest := portable.NormalizeManifest(portable.Manifest{
+func TestBuildPortableMeetingDraft2TagsFromSourceMultiTranscript(t *testing.T) {
+	manifest := portable.NormalizeDraft1Manifest(portable.Manifest{
 		Meeting: portable.Meeting{
 			ID:             "mtg_" + strings.Repeat("b", 64),
 			Title:          "Two engines",
@@ -106,9 +106,9 @@ func TestBuildPortableMeetingV2TagsFromSourceMultiTranscript(t *testing.T) {
 		},
 	}
 
-	tags, err := buildPortableMeetingV2TagsFromSource(manifest, source)
+	tags, err := buildPortableMeetingDraft2TagsFromSource(manifest, source)
 	if err != nil {
-		t.Fatalf("buildPortableMeetingV2TagsFromSource: %v", err)
+		t.Fatalf("buildPortableMeetingDraft2TagsFromSource: %v", err)
 	}
 
 	if got := tags["CASSINI_TRANSCRIPT_IDS"]; got != "canary,parakeet" {

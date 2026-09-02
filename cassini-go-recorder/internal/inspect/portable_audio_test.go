@@ -66,11 +66,11 @@ func TestInspectPathPortableMeetingOpus(t *testing.T) {
 	}
 }
 
-func TestInspectPathPortableV3UsesCompressedOpusIntegrity(t *testing.T) {
+func TestInspectPathPortablePublishedUsesCompressedOpusIntegrity(t *testing.T) {
 	requireFFMediaTools(t)
 
 	tmp := t.TempDir()
-	path := createPortableOpusFixture(t, filepath.Join(tmp, "meeting-v3.opus"), portableFixtureOptions{version3: true})
+	path := createPortableOpusFixture(t, filepath.Join(tmp, "meeting-published.opus"), portableFixtureOptions{published: true})
 
 	var out bytes.Buffer
 	if err := InspectPath(&out, path); err != nil {
@@ -172,12 +172,12 @@ func TestInspectPathPortableMeetingOpusDetectsStaleAudio(t *testing.T) {
 	}
 }
 
-func TestExtractTranscriptWordsFromV2Opus(t *testing.T) {
+func TestExtractTranscriptWordsFromDraft2Opus(t *testing.T) {
 	requireFFMediaTools(t)
 
 	tmp := t.TempDir()
 	wantWords := []string{"Hello", "team", "lantern", "festival", "tonight"}
-	path := createPortableV2OpusFixture(t, filepath.Join(tmp, "v2.opus"), wantWords)
+	path := createPortableDraft2OpusFixture(t, filepath.Join(tmp, "v2.opus"), wantWords)
 
 	extracted, err := ExtractTranscriptWords(path)
 	if err != nil {
@@ -208,10 +208,10 @@ func TestExtractTranscriptWordsFromV2Opus(t *testing.T) {
 	}
 }
 
-// portableV2FixtureOptions varies a v2 portable fixture beyond the plain
+// portableDraft2FixtureOptions varies a v2 portable fixture beyond the plain
 // single-speaker word list: an explicit per-word speaker assignment (so speaker
 // changes can be exercised) and an attached summary.md.
-type portableV2FixtureOptions struct {
+type portableDraft2FixtureOptions struct {
 	words []string
 	// speakerOf assigns a speaker id per word index. Nil means every word is
 	// spoken by spk1.
@@ -226,12 +226,12 @@ type portableV2FixtureOptions struct {
 	dropLastTranscriptChunk bool
 }
 
-func createPortableV2OpusFixture(t *testing.T, outPath string, words []string) string {
+func createPortableDraft2OpusFixture(t *testing.T, outPath string, words []string) string {
 	t.Helper()
-	return createPortableV2OpusFixtureWith(t, outPath, portableV2FixtureOptions{words: words})
+	return createPortableDraft2OpusFixtureWith(t, outPath, portableDraft2FixtureOptions{words: words})
 }
 
-func createPortableV2OpusFixtureWith(t *testing.T, outPath string, opts portableV2FixtureOptions) string {
+func createPortableDraft2OpusFixtureWith(t *testing.T, outPath string, opts portableDraft2FixtureOptions) string {
 	t.Helper()
 	words := opts.words
 	speakerOf := opts.speakerOf
@@ -263,7 +263,7 @@ func createPortableV2OpusFixtureWith(t *testing.T, outPath string, opts portable
 			Text:    w,
 		})
 	}
-	manifest := portable.NormalizeManifest(portable.Manifest{
+	manifest := portable.NormalizeDraft1Manifest(portable.Manifest{
 		Meeting: portable.Meeting{
 			ID:           "meeting-v2",
 			Title:        "Lantern Festival",
@@ -319,11 +319,11 @@ func createPortableV2OpusFixtureWith(t *testing.T, outPath string, opts portable
 			Items:     items,
 		},
 	}
-	encoded, err := portable.EncodeManifestV2(manifest, []portable.TranscriptInput{input}, 256)
+	encoded, err := portable.EncodeDraft2Manifest(manifest, []portable.TranscriptInput{input}, 256)
 	if err != nil {
 		t.Fatalf("encode v2 manifest: %v", err)
 	}
-	tags := portable.BuildOpusTagsV2(manifest, encoded, portable.RoleRawASR)
+	tags := portable.BuildDraft2OpusTags(manifest, encoded, portable.RoleRawASR)
 	if opts.dropLastTranscriptChunk {
 		prefix := portable.TranscriptIDToTagPrefix(portable.RoleRawASR)
 		delete(tags, fmt.Sprintf("%s%03d", prefix, parseIntOrZero(tags[prefix+"CHUNK_COUNT"])-1))
@@ -370,7 +370,7 @@ type portableFixtureOptions struct {
 	stale       bool
 	withSummary bool
 	withOrigin  bool
-	version3    bool
+	published   bool
 }
 
 func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtureOptions) string {
@@ -390,7 +390,7 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 		SampleCount: sampleCount,
 		DurationMS:  durationMS,
 	}
-	if !opts.version3 {
+	if !opts.published {
 		pcmSHA, pcmByteCount, err := hashDecodedAudioPCM(basePath, sampleRate, channels)
 		if err != nil {
 			t.Fatalf("hash decoded PCM: %v", err)
@@ -408,7 +408,7 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 		}
 	}
 	if opts.stale {
-		if opts.version3 {
+		if opts.published {
 			integrity.OpusSHA256 = strings.Repeat("0", 64)
 		} else {
 			integrity.PCMSHA256 = strings.Repeat("0", 64)
@@ -460,10 +460,10 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 			},
 		},
 	}
-	if opts.version3 {
-		manifest = portable.NormalizeManifestV3(manifest)
+	if opts.published {
+		manifest = portable.NormalizePublishedManifest(manifest)
 	} else {
-		manifest = portable.NormalizeManifest(manifest)
+		manifest = portable.NormalizeDraft1Manifest(manifest)
 	}
 	if opts.withOrigin {
 		manifest.Meeting.RoomID = "rm_9f2a1c3d4e5b6a70"
@@ -496,7 +496,7 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 		"-metadata", "DESCRIPTION=Cassini portable meeting file. Decode CASSINI_PAYLOAD_*: base64url -> gzip -> UTF-8 JSON.",
 	}
 	tags := map[string]string{}
-	if opts.version3 {
+	if opts.published {
 		input := portable.TranscriptInput{
 			ID:         portable.RoleRawASR,
 			Role:       portable.RoleRawASR,
@@ -510,17 +510,17 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 				Items:     manifest.Transcript.Items,
 			},
 		}
-		encoded, err := portable.EncodeManifestV3(manifest, []portable.TranscriptInput{input}, 256)
+		encoded, err := portable.EncodePublishedManifest(manifest, []portable.TranscriptInput{input}, 256)
 		if err != nil {
-			t.Fatalf("encode v3 manifest: %v", err)
+			t.Fatalf("encode published manifest: %v", err)
 		}
-		tags = portable.BuildOpusTagsV3(manifest, encoded, portable.RoleRawASR)
+		tags = portable.BuildPublishedOpusTags(manifest, encoded, portable.RoleRawASR)
 	} else {
-		payload, err := portable.EncodeManifest(manifest, 256)
+		payload, err := portable.EncodeDraft1Manifest(manifest, 256)
 		if err != nil {
-			t.Fatalf("encode v1 manifest: %v", err)
+			t.Fatalf("encode draft-1 manifest: %v", err)
 		}
-		tags = portable.BuildOpusTags(manifest, payload)
+		tags = portable.BuildDraft1OpusTags(manifest, payload)
 	}
 	for key, value := range tags {
 		args = append(args, "-metadata", fmt.Sprintf("%s=%s", key, value))
@@ -576,7 +576,7 @@ func TestDecodePortablePayloadAcceptsPaddedBase64URL(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			words := []string{"Hello", "team", "lantern", "festival", "tonight"}
-			tags := buildPortableV3Tags(t, words)
+			tags := buildPublishedPortableTags(t, words)
 			rewriteChunkSet(t, tags, "CASSINI_PAYLOAD_", tc.rewrite)
 			rewriteChunkSet(t, tags, portable.TranscriptIDToTagPrefix(portable.RoleRawASR), tc.rewrite)
 
@@ -584,8 +584,8 @@ func TestDecodePortablePayloadAcceptsPaddedBase64URL(t *testing.T) {
 			if err != nil {
 				t.Fatalf("decodePortableMeeting: %v", err)
 			}
-			if manifest.Version != 3 {
-				t.Fatalf("Manifest.Version = %d, want 3", manifest.Version)
+			if manifest.Version != portable.WireVersion {
+				t.Fatalf("Manifest.Version = %d, want %d", manifest.Version, portable.WireVersion)
 			}
 			if payload.RawBytes != len(payload.JSON) {
 				t.Errorf("RawBytes = %d, want %d", payload.RawBytes, len(payload.JSON))
@@ -639,10 +639,10 @@ func rewriteChunkSet(t *testing.T, tags map[string]string, prefix string, rewrit
 // chunks, which is the only way a reassembly bug shows up at all.
 const portableTestChunkSize = 64
 
-// buildPortableV3Tags builds the OpusTag set of a one-transcript v3 file
+// buildPublishedPortableTags builds the OpusTag set of a one-transcript v3 file
 // without going near ffmpeg. The reader's tag layer takes a map, so a decode
 // test does not need a container, an audio stream, or the tools to make one.
-func buildPortableV3Tags(t *testing.T, words []string) map[string]string {
+func buildPublishedPortableTags(t *testing.T, words []string) map[string]string {
 	t.Helper()
 	items := make([]portable.TranscriptItem, 0, len(words))
 	for i, word := range words {
@@ -653,7 +653,7 @@ func buildPortableV3Tags(t *testing.T, words []string) map[string]string {
 			Text:    word,
 		})
 	}
-	manifest := portable.NormalizeManifestV3(portable.Manifest{
+	manifest := portable.NormalizePublishedManifest(portable.Manifest{
 		Meeting: portable.Meeting{
 			ID:           "meeting-v3",
 			Title:        "Lantern Festival",
@@ -680,20 +680,20 @@ func buildPortableV3Tags(t *testing.T, words []string) map[string]string {
 			Items:     items,
 		},
 	}
-	encoded, err := portable.EncodeManifestV3(manifest, []portable.TranscriptInput{input}, portableTestChunkSize)
+	encoded, err := portable.EncodePublishedManifest(manifest, []portable.TranscriptInput{input}, portableTestChunkSize)
 	if err != nil {
-		t.Fatalf("encode v3 manifest: %v", err)
+		t.Fatalf("encode published manifest: %v", err)
 	}
-	return portable.BuildOpusTagsV3(manifest, encoded, portable.RoleRawASR)
+	return portable.BuildPublishedOpusTags(manifest, encoded, portable.RoleRawASR)
 }
 
-// buildPortableV3TagsTwoTranscripts builds the tag set of a v3 file carrying
+// buildPublishedPortableTagsTwoTranscripts builds the tag set of a v3 file carrying
 // two raw transcripts, with defaultRawID written into CASSINI_TRANSCRIPT_DEFAULT
 // so a caller can put that tag and the manifest's `default` flag at odds.
-func buildPortableV3TagsTwoTranscripts(t *testing.T, defaultRawID string) map[string]string {
+func buildPublishedPortableTagsTwoTranscripts(t *testing.T, defaultRawID string) map[string]string {
 	t.Helper()
-	tags := buildPortableV3Tags(t, []string{"Hello", "team", "again"})
-	manifest := portable.NormalizeManifestV3(portable.Manifest{
+	tags := buildPublishedPortableTags(t, []string{"Hello", "team", "again"})
+	manifest := portable.NormalizePublishedManifest(portable.Manifest{
 		Meeting:   portable.Meeting{ID: "meeting-v3", Title: "Lantern Festival", CreatedAtUTC: "2026-03-11T08:30:00Z", Language: "en"},
 		Audio:     portable.Audio{Container: "ogg", Codec: "opus", SampleRate: 48000, Channels: 1},
 		Integrity: portable.Integrity{MatchPolicy: portable.AudioMatchPolicy, OpusSHA256: strings.Repeat("a", 64)},
@@ -716,14 +716,14 @@ func buildPortableV3TagsTwoTranscripts(t *testing.T, defaultRawID string) map[st
 			}},
 		},
 	}
-	encoded, err := portable.EncodeManifestV3(manifest, inputs, portableTestChunkSize)
+	encoded, err := portable.EncodePublishedManifest(manifest, inputs, portableTestChunkSize)
 	if err != nil {
 		t.Fatalf("encode two-transcript v3 manifest: %v", err)
 	}
 	for key := range tags {
 		delete(tags, key)
 	}
-	for key, value := range portable.BuildOpusTagsV3(manifest, encoded, defaultRawID) {
+	for key, value := range portable.BuildPublishedOpusTags(manifest, encoded, defaultRawID) {
 		tags[key] = value
 	}
 	return tags
@@ -747,7 +747,7 @@ func TestDecodeTranscriptBodyPrefersTheManifestChunkCount(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			words := []string{"Hello", "team", "lantern", "festival", "tonight"}
-			tags := buildPortableV3Tags(t, words)
+			tags := buildPublishedPortableTags(t, words)
 			prefix := portable.TranscriptIDToTagPrefix(portable.RoleRawASR)
 			switch tc.taggedCount {
 			case "":
@@ -795,7 +795,7 @@ func TestDefaultWordsTranscriptEntryPrefersTheManifestFlag(t *testing.T) {
 		{name: "tag absent", taggedID: "", wantID: portable.RoleRawASR},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tags := buildPortableV3TagsTwoTranscripts(t, tc.taggedID)
+			tags := buildPublishedPortableTagsTwoTranscripts(t, tc.taggedID)
 			_, manifest, err := decodePortableMeeting(tags)
 			if err != nil {
 				t.Fatalf("decodePortableMeeting: %v", err)
@@ -830,7 +830,7 @@ func TestInspectPathPortableMeetingReportsTheWordsItDecoded(t *testing.T) {
 	words := []string{"Hello", "team", "lantern", "festival", "tonight"}
 
 	t.Run("readable body", func(t *testing.T) {
-		path := createPortableV2OpusFixtureWith(t, filepath.Join(tmp, "readable.opus"), portableV2FixtureOptions{
+		path := createPortableDraft2OpusFixtureWith(t, filepath.Join(tmp, "readable.opus"), portableDraft2FixtureOptions{
 			words: words,
 		})
 		var out bytes.Buffer
@@ -843,7 +843,7 @@ func TestInspectPathPortableMeetingReportsTheWordsItDecoded(t *testing.T) {
 	})
 
 	t.Run("unreadable body", func(t *testing.T) {
-		path := createPortableV2OpusFixtureWith(t, filepath.Join(tmp, "holed.opus"), portableV2FixtureOptions{
+		path := createPortableDraft2OpusFixtureWith(t, filepath.Join(tmp, "holed.opus"), portableDraft2FixtureOptions{
 			words:                   words,
 			dropLastTranscriptChunk: true,
 		})
@@ -873,7 +873,7 @@ func TestInspectPathPortableMeetingReportsTheWordsItDecoded(t *testing.T) {
 // in it, and it is named so the caller can say which one went missing.
 func TestReadPortableTranscriptBodiesSeparatesReadFromDeclared(t *testing.T) {
 	words := []string{"Hello", "team", "lantern", "festival", "tonight"}
-	tags := buildPortableV3Tags(t, words)
+	tags := buildPublishedPortableTags(t, words)
 	_, manifest, err := decodePortableMeeting(tags)
 	if err != nil {
 		t.Fatalf("decodePortableMeeting: %v", err)
@@ -907,7 +907,7 @@ func TestReadPortableTranscriptBodiesSeparatesReadFromDeclared(t *testing.T) {
 // its own. Summing them across the file reported five words for a meeting of
 // three, and the arithmetic got worse the more passes a producer published.
 func TestPrintPortableMeetingReportsTheDefaultTranscriptsWords(t *testing.T) {
-	tags := buildPortableV3TagsTwoTranscripts(t, portable.RoleRawASR)
+	tags := buildPublishedPortableTagsTwoTranscripts(t, portable.RoleRawASR)
 	payload, manifest, err := decodePortableMeeting(tags)
 	if err != nil {
 		t.Fatalf("decodePortableMeeting: %v", err)
