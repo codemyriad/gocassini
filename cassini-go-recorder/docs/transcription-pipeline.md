@@ -51,7 +51,9 @@ After a successful build, `outputDir` contains:
 
 The viewer (`cassini-viewer`) treats `summary.md`, `captions.vtt`, and `chapters.vtt` as **optional** sidecars — see `cassini-viewer/scripts/demo-data-pull.mjs:144`. A 404 is tolerated; the UI falls back to a "no summary" state. This is what makes step 9's warn-and-skip semantics safe end-to-end.
 
-The portable `.opus` packer (`internal/cassini/portable_meeting.go`) currently embeds the audio, transcript, and readable transcript into a base64-gzip payload. It does **not** yet read `summary.md` — a Followups item, since the V0 contract is a sidecar file and V6 (self-host bundle) is the right place to decide if/how to embed it.
+The portable `.opus` packer (`internal/cassini/portable_meeting.go`) embeds the audio, the transcripts, and — when the bundle carries one — `summary.md` as a manifest attachment plus summary metadata (`format`, `templateVersion`, `model`), so a published file carries its summary inside.
+
+For files sealed **before** summaries existed, `cassini meetings summarize <meeting.opus>` backfills one without re-running transcription: it reads the transcript back out of the file, makes the same single LLM call `cassini build` would make (configured by the same environment variables), and rewrites the metadata through the stage-verify-rename path with the audio bytes untouched. A file that already carries a summary is skipped unless `--force` replaces it, and a backfilled summary is recognisable by `provenance.meetingSummary.source = "backfill"` in the manifest.
 
 ## LLM integration
 
