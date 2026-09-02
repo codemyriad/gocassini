@@ -124,7 +124,7 @@ func (c ExAppConfig) switchStorageMode(ctx context.Context, enableAccessControl 
 	result.Mode = storageModeName(enableAccessControl)
 
 	if path := ncStorage.settingsPath(); path != "" {
-		if err := SaveStorageSettings(path, enableAccessControl); err != nil {
+		if err := SaveStorageSettings(path, enableAccessControl, storageModeSourceUser); err != nil {
 			// Reported, not swallowed: the mode is right for this process but
 			// will be re-derived on the next enable, which could move the
 			// archive straight back. Refresh the record first so /status

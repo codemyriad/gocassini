@@ -67,6 +67,9 @@ const (
 	// storageModeSourceDerived means the flag was absent and this run derived
 	// it. It is only ever reported for the run that also persisted it.
 	storageModeSourceDerived = "derived"
+	// storageModeSourceUser means an administrator chose it, by switching modes
+	// in the Setup tab. Never reconsidered.
+	storageModeSourceUser = "user"
 
 	storageSettingsFileName = "storage_settings.json"
 )
@@ -82,7 +85,25 @@ const (
 // access-controlled archive into an org-wide one.
 type StorageSettings struct {
 	AccessControlEnabled *bool `json:"access_control_enabled"`
+	// Source is how the flag got there: storageModeSourceDerived when Cassini
+	// worked it out from the instance, storageModeSourceUser when somebody
+	// chose it.
+	//
+	// The difference decides one thing only, and it is worth the extra field:
+	// whether a `default` may be RECONSIDERED. A derived one may — it was a
+	// guess made at whatever moment the enabled edge happened to fire, and on a
+	// Nextcloud still being set up (or one whose occ-made changes had not yet
+	// reached the web workers) that guess is wrong and permanent. A chosen one
+	// may not: an administrator who picked default meant it.
+	//
+	// Absent in files written before this field existed, which reads as derived
+	// — those were all written by the derivation.
+	Source string `json:"source,omitempty"`
 }
+
+// Chosen reports whether an administrator picked this mode, as opposed to
+// Cassini having derived it.
+func (s StorageSettings) Chosen() bool { return s.Source == storageModeSourceUser }
 
 // Configured reports whether a decision has been recorded.
 func (s StorageSettings) Configured() bool { return s.AccessControlEnabled != nil }
@@ -138,14 +159,14 @@ func LoadStorageSettings(path string) (StorageSettings, error) {
 // SaveStorageSettings records a decision atomically (temp file + rename), so a
 // crash mid-write cannot leave a truncated file that the loader above would
 // then refuse — which would take the operator's storage mode with it.
-func SaveStorageSettings(path string, accessControlEnabled bool) error {
+func SaveStorageSettings(path string, accessControlEnabled bool, source string) error {
 	if strings.TrimSpace(path) == "" {
 		return fmt.Errorf("storage settings path must not be empty")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir storage settings dir: %w", err)
 	}
-	data, err := json.MarshalIndent(StorageSettings{AccessControlEnabled: &accessControlEnabled}, "", "  ")
+	data, err := json.MarshalIndent(StorageSettings{AccessControlEnabled: &accessControlEnabled, Source: source}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal storage settings: %w", err)
 	}
