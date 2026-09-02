@@ -499,3 +499,80 @@ func TestPreflightNeverReconsidersAModeAnAdministratorChose(t *testing.T) {
 		t.Fatalf("step = %q, want the mismatch reported rather than silently fixed", snap.Step)
 	}
 }
+
+// The declared mode wins over the derivation on a fresh install, and is written
+// down as stated — so it survives, and is never reconsidered.
+func TestPreflightHonoursTheDeclaredInitialMode(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	ncStorage.setPath(path)
+	t.Setenv(envStorageMode, "default")
+
+	// An instance whose substrate is complete: the derivation would say access
+	// controlled, and the declaration must beat it.
+	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(), recordingsRoot: true}
+	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
+
+	if accessControlled, _ := ncStorage.mode(); accessControlled {
+		t.Fatal("the derivation overrode a declared mode")
+	}
+	persisted := readPersistedMode(t, path)
+	if persisted.AccessControlled() || !persisted.Chosen() {
+		t.Fatalf("%s = %+v, want a stated default", storageSettingsFileName, persisted)
+	}
+	// Stated, so the narrowing self-heal leaves it alone on the next run.
+	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
+	if accessControlled, _ := ncStorage.mode(); accessControlled {
+		t.Fatal("a declared default was reconsidered; a stated mode is never touched")
+	}
+}
+
+// Declaring access control on a stack that has not been built yet is the
+// debugging shape the harness's --debug-skip-storage-scaffold produces: the
+// mode is selected, nothing exists, and the app reports what is missing rather
+// than quietly falling back to the open model.
+func TestPreflightHonoursADeclaredAccessControlOnAnEmptyInstance(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	ncStorage.setPath(filepath.Join(t.TempDir(), storageSettingsFileName))
+	t.Setenv(envStorageMode, "acl-enabled")
+
+	mock := &storageMock{apps: []string{}}
+	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
+
+	if accessControlled, _ := ncStorage.mode(); !accessControlled {
+		t.Fatal("a declared access-controlled mode fell back to default")
+	}
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.OK {
+		t.Fatal("reported healthy with nothing built")
+	}
+	if !strings.HasPrefix(snap.Step, "app_missing:") {
+		t.Fatalf("step = %q, want the first missing prerequisite named", snap.Step)
+	}
+}
+
+// A misspelt deploy option falls back to deriving rather than to a guess, and
+// says so — the value is the operator's typo, not a mode.
+func TestPreflightIgnoresAnUnrecognisedDeclaredMode(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	ncStorage.setPath(filepath.Join(t.TempDir(), storageSettingsFileName))
+	t.Setenv(envStorageMode, "acl_enabld")
+
+	mock := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(), recordingsRoot: true}
+	var logs strings.Builder
+	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(&logs, "", 0))
+
+	// Derived, not defaulted: this instance is access-controlled.
+	if accessControlled, _ := ncStorage.mode(); !accessControlled {
+		t.Fatalf("fell back to the open model instead of deriving:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "acl_enabld") {
+		t.Fatalf("the rejected value was not named in the log:\n%s", logs.String())
+	}
+}

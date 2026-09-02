@@ -70,6 +70,21 @@ const (
 	// storageModeSourceUser means an administrator chose it, by switching modes
 	// in the Setup tab. Never reconsidered.
 	storageModeSourceUser = "user"
+	// storageModeSourceEnv means the deployment declared it, through
+	// envStorageMode. Also never reconsidered: an operator who set it said what
+	// they wanted, and a deploy option is as explicit as a button.
+	storageModeSourceEnv = "env"
+
+	// envStorageMode declares the mode a FRESH install starts in. It seeds the
+	// flag and nothing more: once storage_settings.json records a decision, the
+	// file is authoritative and changing this variable does not move an archive
+	// that already exists.
+	//
+	// It exists because deriving the mode from the instance is a guess about
+	// timing — it reads whatever Nextcloud looks like on the first enabled edge,
+	// which on a stack still being built is the wrong moment. A deployment that
+	// KNOWS which model it wants should be able to say so instead.
+	envStorageMode = "CASSINI_STORAGE_MODE"
 
 	storageSettingsFileName = "storage_settings.json"
 )
@@ -101,9 +116,40 @@ type StorageSettings struct {
 	Source string `json:"source,omitempty"`
 }
 
-// Chosen reports whether an administrator picked this mode, as opposed to
-// Cassini having derived it.
-func (s StorageSettings) Chosen() bool { return s.Source == storageModeSourceUser }
+// Chosen reports whether somebody STATED this mode — an administrator in the
+// Setup tab, or a deployment through CASSINI_STORAGE_MODE — as opposed to
+// Cassini having derived it. A stated mode is never reconsidered.
+func (s StorageSettings) Chosen() bool {
+	return s.Source == storageModeSourceUser || s.Source == storageModeSourceEnv
+}
+
+// storageModeFromEnv reads the declared initial mode.
+//
+// `ok` is false when the variable is unset, which is the ordinary case and
+// means "derive it". `ok` is also false for a value that is set but
+// unrecognised, and `raw` is then non-empty so the caller can say so loudly —
+// silently ignoring a typo would start the instance in a mode nobody asked for.
+//
+// The spellings are deliberately generous. The harness flag says `acl-enabled`,
+// the API and the config file say `access_controlled`, and a person setting a
+// deploy option should not have to know which vocabulary they are in.
+func storageModeFromEnv(lookup func(string) string) (accessControlled bool, ok bool, raw string) {
+	raw = strings.TrimSpace(lookup(envStorageMode))
+	switch strings.ToLower(raw) {
+	case "":
+		return false, false, ""
+	case storageModeDefault, "off", "none":
+		return false, true, raw
+	case storageModeAccessControlled, "access-controlled", "acl-enabled", "acl", "on":
+		return true, true, raw
+	default:
+		return false, false, raw
+	}
+}
+
+// storageModeEnvValues is what an error message offers instead of the value it
+// rejected.
+const storageModeEnvValues = `"` + storageModeDefault + `" or "` + storageModeAccessControlled + `"`
 
 // Configured reports whether a decision has been recorded.
 func (s StorageSettings) Configured() bool { return s.AccessControlEnabled != nil }
