@@ -175,6 +175,21 @@ func (h *LifecycleHandlers) handleEnabled(w http.ResponseWriter, r *http.Request
 	// Nextcloud sent the edges in, and a delayed enable could then out-rank a
 	// later disable and put a stale value back.
 	edge := atomic.AddUint64(&h.edgeSeq, 1)
+	// Counted from ARRIVAL, not from where the callback is launched. If the
+	// count only rose just before the goroutine, a shutdown racing a handler
+	// that had not reached that point yet would see zero and stop waiting for
+	// a callback that was about to run.
+	callbackLaunched := false
+	if h.EnabledCallback != nil {
+		h.Background.Add(1)
+		defer func() {
+			// Every early return below (bad method, unparseable body, failed
+			// state write) has to give the count back.
+			if !callbackLaunched {
+				h.Background.Done()
+			}
+		}()
+	}
 
 	enabledRaw := strings.TrimSpace(r.URL.Query().Get("enabled"))
 	if enabledRaw == "" {
@@ -223,7 +238,7 @@ func (h *LifecycleHandlers) handleEnabled(w http.ResponseWriter, r *http.Request
 	// Background lets the process wait for it during shutdown, which is the
 	// only place it can be waited on without reintroducing the deadlock.
 	if h.EnabledCallback != nil {
-		h.Background.Add(1)
+		callbackLaunched = true
 		go func() {
 			defer h.Background.Done()
 			h.EnabledCallback(enabled, edge)

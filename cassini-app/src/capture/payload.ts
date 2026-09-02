@@ -578,8 +578,22 @@ function pollMute(session: CaptureState, sender: RTCRtpSender): void {
 }
 
 // discardCapture deletes a buffered recording without uploading it.
-async function discardCapture(opfsRoot: FileSystemDirectoryHandle, dirName: string): Promise<void> {
-  await opfsRoot.removeEntry(dirName, { recursive: true }).catch(() => {});
+// discardCapture removes a capture and reports whether it is actually gone.
+//
+// It still never throws — a failed delete must not break the caller's flow —
+// but callers that key state on the capture being gone (the upload attempt
+// counter) need to know, or a failed delete silently resets that state and the
+// capture is offered again forever.
+async function discardCapture(
+  opfsRoot: FileSystemDirectoryHandle,
+  dirName: string,
+): Promise<boolean> {
+  try {
+    await opfsRoot.removeEntry(dirName, { recursive: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function uploadCapture(
@@ -647,8 +661,9 @@ async function uploadCapture(
     console.warn(
       `Cassini source capture: upload rejected (${response.status}); discarding this recording`,
     );
-    await discardCapture(opfsRoot, dirName);
-    clearUploadAttempts(dirName);
+    if (await discardCapture(opfsRoot, dirName)) {
+      clearUploadAttempts(dirName);
+    }
     return;
   }
   if (!response.ok) {
@@ -662,8 +677,9 @@ async function uploadCapture(
         `Cassini source capture: giving up after ${MAX_UPLOAD_ATTEMPTS} attempts ` +
           `(last status ${response.status}); discarding this recording`,
       );
-      await discardCapture(opfsRoot, dirName);
-      clearUploadAttempts(dirName);
+      if (await discardCapture(opfsRoot, dirName)) {
+        clearUploadAttempts(dirName);
+      }
       return;
     }
     throw new Error(`upload failed: ${response.status}`);
