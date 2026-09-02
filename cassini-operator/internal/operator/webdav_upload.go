@@ -241,6 +241,23 @@ func (c ExAppConfig) davPutFileStatus(ctx context.Context, client *http.Client, 
 
 // ncFilesProxy returns the read-proxy closure, or nil when the ExApp env is
 // absent (dev/standalone serve straight from local disk as before).
+//
+// Constructed on AppAPI presence alone, NOT on the resolved publish sink — a
+// deliberate deferral, recorded here because it looks like an oversight.
+//
+// Under CASSINI_PUBLISH_SINK=local the proxy is still installed and still claims
+// catalog.json and meetings/*, against a Nextcloud tree nothing ever writes to.
+// Scoping its construction properly means threading the sink through
+// exapp.go:297 and every test around it, for a configuration that is an escape
+// hatch nobody runs with AppAPI active.
+//
+// What makes the deferral safe is not the sink but the substrate: reading as the
+// owner additionally requires ncAccessSubstrate.usable(), and under a `local`
+// sink the substrate is never marked applicable, so it never reaches
+// `provisioned`. The owner-identity path is therefore unreachable there.
+// TestNCFilesProxyCannotServeAsOwnerUnderALocalSink is what turns that from
+// safe-by-accident into safe-by-test — which matters, because "it should hold"
+// is the sentence that preceded the disclosure the D-616 review reproduced.
 func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 	if !c.appAPIActive() {
 		return nil
@@ -249,11 +266,11 @@ func (c ExAppConfig) ncFilesProxy(logger *log.Logger) ncFilesProxyFunc {
 	// bounded by the request context; a hung upstream is bounded on headers.
 	client := &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: ncFilesProxyHeadersTTL}}
 	return func(w http.ResponseWriter, r *http.Request, relPath string) bool {
-		// Per-user access control (D-534, unconditional since D-554): serve each
-		// caller only what they may read. The caller identity comes from the
-		// AppAPI-verified request; these routes are USER-gated, so it is always
-		// present. There is no owner-identity path left — serving the archive as
-		// the owner is precisely the org-wide behaviour D-521 retired.
+		// The caller identity comes from the AppAPI-verified request; these
+		// routes are USER-gated, so it is always present. An absent one is a
+		// bug, not an anonymous reader, and it fails closed in BOTH modes —
+		// USER-level authentication is the entire access control in the default
+		// model, so an unidentified caller must get nothing there too.
 		caller := appapi.UserID(r.Context())
 		if caller == "" {
 			if logger != nil {
