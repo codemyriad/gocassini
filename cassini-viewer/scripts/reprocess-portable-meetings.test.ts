@@ -8,13 +8,25 @@ import {
 import { requireLegacyV1ForJSRewrite } from "./repack-portable-display-transcripts.mjs";
 
 describe("legacy portable rewrite guard", () => {
-  it("refuses to downgrade v3 compressed-audio manifests", () => {
+  it("refuses to downgrade a draft multi-transcript manifest", () => {
     expect(() =>
       requireLegacyV1ForJSRewrite({ version: 3 }, "meeting.opus"),
-    ).toThrow(/only rewrites v1/);
+    ).toThrow(/only rewrites the inline-transcript draft/);
   });
 
-  it("allows the legacy v1 maintenance path", () => {
+  // The published format is version 1, and so was the first draft. A guard
+  // that reads the version number alone lets a published file into a repacker
+  // that would rewrite it as a draft.
+  it("refuses a published manifest even though it says version 1", () => {
+    expect(() =>
+      requireLegacyV1ForJSRewrite(
+        { version: 1, transcripts: [{ id: "raw-asr" }] },
+        "meeting.opus",
+      ),
+    ).toThrow(/only rewrites the inline-transcript draft/);
+  });
+
+  it("allows the legacy inline-transcript maintenance path", () => {
     expect(() => requireLegacyV1ForJSRewrite({ version: 1 })).not.toThrow();
   });
 });

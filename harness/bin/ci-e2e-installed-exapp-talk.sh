@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Faithful D-453 product vertical: exact image -> AppAPI/HaRP install -> Talk -> GPU policy/artifact.
+# Faithful D-453 product vertical: exact image -> AppAPI/HaRP install -> Talk -> device policy/artifact.
 
 set -euo pipefail
 
@@ -62,12 +62,15 @@ fetch_operator_status() {
   local destination="$1" code
   code="$(curl -sS -u admin:admin -o "$destination" -w '%{http_code}' "$PROXY_URL/operator/status")" \
     || return 1
+  [[ "$code" == "200" ]] || return 1
   if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
-    [[ "$code" == "503" ]] || return 1
+    # No GPU here: the operator is ready anyway and says it will transcribe on
+    # the CPU. Asserting the device (not merely ok=true) is what keeps a
+    # silently GPU-enabled runner from passing this as the CPU vertical.
     jq -e '
-      .ok == false
-      and .stt.device == "cuda"
-      and .stt.device_usable == false
+      .ok == true
+      and .stt.device == "cpu"
+      and .stt.device_usable == true
       and (.stt.detail | type == "string" and length > 0)
       and .db.ok == true
       and .storage.work_root.ok == true
@@ -76,7 +79,7 @@ fetch_operator_status() {
     ' "$destination" >/dev/null
     return
   fi
-  [[ "$code" == "200" ]] && jq -e '.ok == true' "$destination" >/dev/null
+  jq -e '.ok == true' "$destination" >/dev/null
 }
 
 # The D-453 hooks make a green run mean something weaker than "recorded a real
@@ -181,17 +184,17 @@ finish() {
 }
 trap finish EXIT INT TERM
 
-# CUDA-positive artifact validation runs the host CLI, whose transcript
-# extraction needs host ffprobe and ffmpeg. Portable-image mode proves capture
-# and immediate build blocking without decoding speech.
+# Artifact validation runs the host CLI, whose transcript extraction needs host
+# ffprobe and ffmpeg. Both device modes reach it: a GPU-less host produces a
+# real transcript on the CPU (D-702) rather than a blocked build.
 for tool in docker curl jq python3; do
   command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
 done
-if [[ "$EXPECT_GPU_UNAVAILABLE" != "1" ]]; then
-  for tool in ffprobe ffmpeg; do
-    command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
-  done
-fi
+# Both execution modes now decode the published artifact, because both produce
+# one: a GPU-less host transcribes on the CPU instead of blocking the build.
+for tool in ffprobe ffmpeg; do
+  command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
+done
 [[ -f "$MANIFEST_PATH" ]] || fail "manifest not found: $MANIFEST_PATH"
 [[ -s "$MEDIA_PREFIX.ivf" && -s "$MEDIA_PREFIX.ogg" ]] \
   || fail "materialize known media pair: $MEDIA_PREFIX.{ivf,ogg}"
@@ -288,32 +291,15 @@ validator_args=(
   --poll-interval "$POLL_INTERVAL"
   --project-name "$PROJECT_NAME"
 )
-if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
-  validator_args+=(--expect-build-blocked)
-fi
+
 LOG_DIR="$VALIDATOR_LOG_DIR" \
   "$SCRIPT_DIR/validate-installed-exapp-private-talk.sh" "${validator_args[@]}"
 
 validator_summary="$VALIDATOR_LOG_DIR/summary.json"
+jq -e '.result == "passed" and (.runs | length) == 1 and .runs[0].artifact.segment_count > 0 and .runs[0].artifact.word_count > 0' \
+  "$validator_summary" >/dev/null || fail "validator summary lacks one positive segment/word result"
 if [[ "$EXPECT_GPU_UNAVAILABLE" == "1" ]]; then
-  jq -e '
-    .result == "passed"
-    and (.runs | length) == 1
-    and .runs[0].blocked.stage == "build"
-    and .runs[0].blocked.state == "blocked"
-    and .runs[0].blocked.record_exit_code == 0
-    and (.runs[0].blocked.recording_bytes | type == "number" and . > 0)
-    and (.runs[0].blocked.audio_packets | type == "number" and . >= 10)
-    and .runs[0].blocked.build_retry_not_before == null
-    and .runs[0].blocked.build_deferral_count == 0
-    and .runs[0].blocked.artifact_meeting_path == null
-    and (.runs[0].blocked.error | ascii_downcase | contains("resource governor: cuda runtime unavailable"))
-    and (.runs[0].blocked.error | ascii_downcase | contains("matching -cuda image"))
-  ' "$validator_summary" >/dev/null \
-    || fail "validator summary lacks one durable recording with an immediate actionable portable-image block"
-  log "faithful CPU-host vertical passed: recording preserved, portable-image build blocked, no CPU transcription"
+  log "faithful CPU-host vertical passed: portable image transcribed on the CPU, positive segments and decoded words"
 else
-  jq -e '.result == "passed" and (.runs | length) == 1 and .runs[0].artifact.segment_count > 0 and .runs[0].artifact.word_count > 0' \
-    "$validator_summary" >/dev/null || fail "validator summary lacks one positive segment/word result"
   log "faithful product vertical passed with exact image, positive segments, and decoded words"
 fi
