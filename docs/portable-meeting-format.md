@@ -1,8 +1,22 @@
 # Cassini Portable Meeting Format
 
-Date: 2026-08-29
+Date: 2026-09-02
 
-Status: v3 current; v1 and v2 readable for compatibility
+Status: published as version 1; the three pre-publication drafts stay readable
+
+The format has been published, and the published specification at
+<https://cassini-format.codemyriad.io/> is now the contract. It is version 1:
+the first version there is anyone outside Cassini to be compatible with. The
+shapes this document called v1, v2 and v3 never left our own storage and are
+recorded here as drafts 1, 2 and 3 — read, never written. Draft 3 is the shape
+that was published, unchanged but for its version number and schema URL.
+
+Draft 1 and the published format therefore share a version number. They are
+told apart by shape, not by that number: a published file indexes its
+transcripts in a `transcripts` array and declares
+`integrity.matchPolicy=exact-opus-audio-v1`, while a draft-1 file carries one
+inline `transcript` object and `exact-pcm`. Every reader here and in the
+reference implementations discriminates that way.
 
 ## Goal
 
@@ -17,9 +31,9 @@ This format is the contract that both Cassini producers and Cassini consumers
 should implement.
 
 The `.opus` portable meeting file is the **one canonical, user-facing format**
-and the only durable, published Cassini contract. The producer now emits
-`org.cassini.portable-meeting/3` (v3); v1 and v2 remain readable for older
-files but are no longer emitted. The intermediate `.meeting` bundle directory
+and the only durable, published Cassini contract. The producer emits
+`org.cassini.portable-meeting/1` with `"version": 1`; the drafts remain
+readable for older files but are no longer emitted. The intermediate `.meeting` bundle directory
 (with its `cassini.json` and `manifest.json`) is transient build scratch, not
 a deliverable — see [Why `.meeting` is not a contract](#why-meeting-is-not-a-contract).
 
@@ -66,12 +80,13 @@ This document defines:
 A file is a Cassini portable meeting file when all of the following are true:
 
 1. the container is Ogg Opus
-2. OpusTags contains `CASSINI_FORMAT=org.cassini.portable-meeting/3` (current),
-   `/2`, or `/1` (older files, still readable)
+2. OpusTags contains `CASSINI_FORMAT=org.cassini.portable-meeting/1`
+   (published, and also draft 1), `/2`, or `/3` (drafts, still readable)
 3. OpusTags contains a valid Cassini payload descriptor
 
-Consumers MUST accept all three versions. A consumer that accepts only `/1` or
-`/2` rejects every file Cassini writes today.
+Consumers MUST accept all of them, and MUST decide what a file contains from
+its manifest's shape rather than from the version number, which no longer
+separates the published format from draft 1.
 
 If `CASSINI_FORMAT` is absent, consumers MUST treat the file as plain audio.
 
@@ -118,17 +133,17 @@ Cassini portable meeting file. Decode CASSINI_PAYLOAD_*: base64url -> gzip -> UT
 
 ### Cassini descriptor tags
 
-The following tags are REQUIRED for current v3 files. V3 retains the
-multi-transcript descriptors introduced by
-[v2 (Multi-Transcription)](#v2-multi-transcription) and changes the audio
-identity contract as described under
+The following tags are REQUIRED for published files. The published format
+retains the multi-transcript descriptors introduced by
+[v2 (Multi-Transcription)](#v2-multi-transcription) and the audio identity
+contract described under
 [v3 (Compressed Opus Integrity)](#v3-compressed-opus-integrity).
 
-- `CASSINI_FORMAT=org.cassini.portable-meeting/3`
+- `CASSINI_FORMAT=org.cassini.portable-meeting/1`
 - `CASSINI_PROFILE=ogg-opus`
 - `CASSINI_PAYLOAD_MIME=application/vnd.cassini.portable-meeting+json`
 - `CASSINI_PAYLOAD_ENCODING=base64url+gzip+utf8json`
-- `CASSINI_PAYLOAD_SCHEMA=https://cassini.local/spec/cassini-portable-meeting-manifest-v3.schema.json`
+- `CASSINI_PAYLOAD_SCHEMA=https://cassini-format.codemyriad.io/schema/cassini-portable-meeting-manifest-v1.schema.json`
 - `CASSINI_PAYLOAD_CHUNK_COUNT=<decimal integer>`
 - `CASSINI_PAYLOAD_SHA256=<lowercase hex sha256 of decompressed UTF-8 JSON bytes>`
 - `CASSINI_PAYLOAD_RAW_BYTES=<decimal integer>`
@@ -141,7 +156,7 @@ identity contract as described under
 - `CASSINI_AUDIO_MATCH_POLICY=exact-opus-audio-v1`
 - `CASSINI_DECODE_HINT=Concatenate CASSINI_PAYLOAD_000..N for the manifest; for a transcript body concatenate CASSINI_TX_<ID>_PAYLOAD_000..N. Each chunk set: base64url decode, gzip decompress, parse UTF-8 JSON.`
 
-Legacy v1/v2 files instead carry `CASSINI_AUDIO_PCM_FORMAT=s16le`,
+Draft 1 and draft 2 files instead carry `CASSINI_AUDIO_PCM_FORMAT=s16le`,
 `CASSINI_AUDIO_PCM_SHA256`, and `CASSINI_AUDIO_MATCH_POLICY=exact-pcm`.
 Readers MUST keep that verification path for existing recordings; writers MUST
 not reinterpret an old version as compressed-audio integrity.
@@ -567,6 +582,9 @@ by strict audio integrity checks.
 
 # v2 (Multi-Transcription)
 
+> Draft 2, never published. Kept because files in this shape exist and must
+> stay readable. The layout it introduced is the one the published format uses.
+
 Date: 2026-05-12
 
 Status: Legacy writer format; reader support retained.
@@ -705,6 +723,10 @@ summary, attachments
 ---
 
 # v3 (Compressed Opus Integrity)
+
+> Draft 3, never published. The published format is this shape: only the format
+> string, the manifest `version` and the schema URL differ, and the sections
+> above give their published values.
 
 Date: 2026-08-29
 
