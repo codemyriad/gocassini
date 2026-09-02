@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,27 @@ type storageMock struct {
 	// failAppList makes Nextcloud refuse to say which apps are enabled, which
 	// is a different answer from "that app is off" and must not be read as one.
 	failAppList bool
+
+	// homeChildren and dirs give the service account a filesystem, for the
+	// tests that care what is IN the archive rather than only whether its root
+	// exists. homeChildren lists the account's home root; dirs maps a
+	// home-relative directory to its children. Absent from dirs means 404,
+	// which is how "no such collection" reads on the wire.
+	homeChildren []string
+	dirs         map[string][]string
+}
+
+// propfindMultistatus renders a Depth-1 listing the way davPropfindChildren
+// parses it: the collection lists itself first, then each child.
+func propfindMultistatus(selfPath string, children []string) string {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">`)
+	b.WriteString(`<d:response><d:href>` + selfPath + `/</d:href></d:response>`)
+	for _, name := range children {
+		b.WriteString(`<d:response><d:href>` + strings.TrimRight(selfPath, "/") + "/" + url.PathEscape(name) + `</d:href></d:response>`)
+	}
+	b.WriteString(`</d:multistatus>`)
+	return b.String()
 }
 
 func (m *storageMock) saw(method, suffix string) bool {
@@ -100,6 +122,26 @@ func (m *storageMock) server(t *testing.T) *httptest.Server {
 				t.Fatalf("encode folder fixture: %v", err)
 			}
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":`+string(encoded)+`}}`)
+		case r.Method == "PROPFIND" && (m.homeChildren != nil || m.dirs != nil):
+			// A modelled filesystem. The home root lists homeChildren; every
+			// other collection lists dirs[rel], and anything absent is a 404.
+			prefix := "/remote.php/dav/files/" + ncRecordingsOwner
+			rel := strings.Trim(strings.TrimPrefix(p, prefix), "/")
+			if decoded, err := url.PathUnescape(rel); err == nil {
+				rel = decoded
+			}
+			children, known := m.dirs[rel], false
+			if rel == "" {
+				children, known = m.homeChildren, true
+			} else {
+				_, known = m.dirs[rel]
+			}
+			if !known {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusMultiStatus)
+			io.WriteString(w, propfindMultistatus(p, children))
 		case r.Method == "PROPFIND" && strings.HasSuffix(p, "/"+ncRecordingsRoot):
 			if !m.recordingsRoot {
 				w.WriteHeader(http.StatusNotFound)

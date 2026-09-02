@@ -149,6 +149,29 @@ export class OperatorClient {
     );
   }
 
+  // previewStorageSwitch asks what a mode switch would do, without doing it.
+  //
+  // The transition relocates an entire published archive and, going into the
+  // Team folder, makes every already-published recording readable by every
+  // account. The confirmation used to state the policy but none of the facts —
+  // how many recordings, whether anything is already at the destination,
+  // whether a previous run left a staging root behind — so an administrator
+  // pressed the button and found out afterwards.
+  //
+  // Read-only: the operator issues PROPFINDs and nothing else.
+  async previewStorageSwitch(accessControlEnabled: boolean): Promise<StorageStatus> {
+    return normalizeStorage(
+      await this.#request<unknown>("/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "preview",
+          access_control_enabled: accessControlEnabled,
+        }),
+      }),
+    );
+  }
+
   // installStorageApps asks the operator to attempt the native app installs.
   //
   // This is the one part of the setup the browser cannot do — those routes want
@@ -281,7 +304,41 @@ function normalizeStorage(raw: unknown): StorageStatus {
     modes: normalizeStorageModes(value.modes),
     transition: normalizeStorageTransition(value.transition),
     installs: normalizeInstalls(value.installs),
+    preview: normalizeStoragePreview(value.preview),
   };
+}
+
+// normalizeStoragePreview keeps `null` meaning "no preview was asked for",
+// which is not the same as "a preview that found nothing" — the confirmation
+// renders those differently, and conflating them would let a dialog claim there
+// is nothing to move when nobody has looked.
+function normalizeStoragePreview(value: unknown): StorageTransitionPreview | null {
+  if (value == null || typeof value !== "object") {
+    return null;
+  }
+  const row = value as Record<string, unknown>;
+  return {
+    mode: normalizeStorageMode(row.mode),
+    ready: row.ready === true,
+    step: asString(row.step),
+    detail: asString(row.detail),
+    source_root: asString(row.source_root),
+    destination_root: asString(row.destination_root),
+    meetings: asCount(row.meetings),
+    catalog_present: row.catalog_present === true,
+    destination_meetings: asCount(row.destination_meetings),
+    nothing_to_move: row.nothing_to_move === true,
+    warnings: Array.isArray(row.warnings)
+      ? row.warnings.filter((w): w is string => typeof w === "string" && w !== "")
+      : [],
+  };
+}
+
+// asCount will not turn a missing or nonsense count into something the UI would
+// state as fact. A dialog saying "0 recordings will move" when the server never
+// said so is worse than saying nothing.
+function asCount(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
 }
 
 function normalizeInstalls(value: unknown): AppInstallOutcome[] {

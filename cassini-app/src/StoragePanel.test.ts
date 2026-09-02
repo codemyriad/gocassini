@@ -137,3 +137,64 @@ describe("the Setup surface", () => {
     expect(appSource).not.toContain('class:cassini-shell-hidden={surface === "operator"}');
   });
 });
+
+describe("StoragePanel transition preview", () => {
+  // The transition relocates an entire published archive and, going into the
+  // Team folder, makes every already-published recording readable by every
+  // account. The confirmation stated the policy but none of the facts, so an
+  // administrator pressed the button and found out afterwards.
+  it("fetches the preview when the prompt opens, not when it is confirmed", () => {
+    expect(storagePanelSource).toContain("void loadPreview(option)");
+    // Inside requestSwitch, which is what opens the prompt.
+    const requestSwitch = storagePanelSource.slice(
+      storagePanelSource.indexOf("function requestSwitch"),
+      storagePanelSource.indexOf("async function loadPreview"),
+    );
+    expect(requestSwitch).toContain("loadPreview");
+    // And NOT inside confirmSwitch, where it would be too late to matter.
+    const confirmSwitch = storagePanelSource.slice(
+      storagePanelSource.indexOf("async function confirmSwitch"),
+      storagePanelSource.indexOf("function asMessage"),
+    );
+    expect(confirmSwitch).not.toContain("loadPreview");
+  });
+
+  it("only previews a switch, never a setup", () => {
+    expect(storagePanelSource).toContain('if (pendingKind === "switch")');
+  });
+
+  it("discards a diff for a mode nobody is looking at any more", () => {
+    // The prompt can be cancelled or re-pointed while the request is in flight.
+    expect(storagePanelSource).toContain("if (pending?.mode === asked)");
+  });
+
+  it("renders the counts and the source and destination roots", () => {
+    expect(storagePanelSource).toContain("preview.meetings");
+    expect(storagePanelSource).toContain("preview.source_root");
+    expect(storagePanelSource).toContain("preview.destination_root");
+  });
+
+  it("says there is nothing to move rather than showing an empty diff", () => {
+    expect(storagePanelSource).toContain("preview.nothing_to_move");
+    expect(storagePanelSource).toContain("no published recordings to move");
+  });
+
+  it("renders every warning the operator returned", () => {
+    expect(storagePanelSource).toContain("{#each preview.warnings as warning");
+  });
+
+  it("does not let a failed preview read as an empty one", () => {
+    // A preview that could not run must not render as "nothing to move" — and
+    // must not block the switch either, since the transition has its own guards.
+    expect(storagePanelSource).toContain("previewError");
+    expect(storagePanelSource).toContain("could not work out what would move");
+  });
+
+  it("clears the preview when the prompt is cancelled", () => {
+    const cancel = storagePanelSource.slice(
+      storagePanelSource.indexOf("function cancelSwitch"),
+      storagePanelSource.indexOf("function cancelSwitch") + 200,
+    );
+    expect(cancel).toContain("preview = null");
+  });
+});
