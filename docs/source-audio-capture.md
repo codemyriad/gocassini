@@ -334,6 +334,14 @@ logged-in user. The client fails closed at every one of those.
   about audio already uploaded. They cannot see what they have uploaded, cannot
   ask for it back, and cannot have it deleted except by an administrator
   removing the directory from the volume by hand.
+- **Silent outcomes at the client.** A capture the server refuses — the terminal
+  status allowlist, 400/403/413/415/422 — is deleted from OPFS unsent, and so is
+  one that has failed `MAX_UPLOAD_ATTEMPTS` times. Both are deliberate: keeping
+  either would re-offer a meeting-sized body on every Talk page load forever,
+  with no backoff. But the only trace either leaves is a `console.warn`. The
+  participant is not told the recording was destroyed, and nothing server-side
+  records that one was dropped before it arrived, so a deployment refusing every
+  upload looks the same from the operator as one nobody opted into.
 - **Abrupt-page tail.** A reload or crash can lose the not-yet-checkpointed tail
   of the current MediaRecorder chunk (at most about two seconds). Completed
   chunks and their recovery sidecar survive in OPFS, are retried on the next

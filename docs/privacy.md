@@ -226,6 +226,14 @@ again a moment later does not resurrect the audio recorded meanwhile.
 path for it, no list of what they have uploaded, and no way to have one deleted
 except by asking an administrator to remove it from the volume.
 
+**Is not told what became of it either.** A recording the server refuses —
+capture switched off since, no longer a participant of that room, a payload it
+rejects — is deleted from the browser unsent, and so is one whose delivery keeps
+failing. Both are the right call; the alternative is a meeting-sized upload
+re-offered on every Talk page load forever. But neither is announced anywhere a
+participant would look, so somebody who opted in cannot tell whether their audio
+reached the server, was discarded, or is still waiting to be sent.
+
 **There is no interface for any of this yet** — no dialog, no toggle, no consent
 copy. Setting a storage key by hand is not informed consent in the sense a
 privacy notice needs, and the key is stored per browser profile rather than per
@@ -300,8 +308,9 @@ and the [env-var reference](./exapp-talk-env-vars.md) for the full set of knobs.
   **keeps** its persistent volume. The operator database and any un-pruned
   working artifacts stay until the volume is deleted. Adding **`--rm-data`** also
   deletes that volume, discarding the operator database and every working
-  artifact on it (raw recordings and job history included). Either way, recordings
-  already published to Nextcloud Files are unaffected.
+  artifact on it (raw recordings, participant source audio and job history
+  included). Either way, recordings already published to Nextcloud Files are
+  unaffected.
 
 ## See also
 
