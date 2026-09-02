@@ -19,6 +19,13 @@
 # your installation is already past the migration point and there is nothing to
 # do.
 #
+# It also refuses on an installation running the DEFAULT storage mode (D-616).
+# Everything it writes is protected by Team-folder ACL rules, and those mean
+# nothing in the service account's own home — which is where the default mode
+# keeps recordings, readable by every signed-in account by design. If you meant
+# to move an archive INTO the Team folder, switch storage modes in the app's
+# Setup tab instead: that moves the recordings that are already published.
+#
 #   ./scripts/backfill-nc-files.sh --dry-run      # check first, change nothing
 #   ./scripts/backfill-nc-files.sh                # migrate; recordings stay private
 #   ./scripts/backfill-nc-files.sh --public       # migrate; everyone may read them
