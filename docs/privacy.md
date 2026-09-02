@@ -16,12 +16,12 @@ party. It is optional, off by default, and enabled only when you set an API key.
 | Recording the call             | Local (the Cassini container)                             | No                               |
 | Transcription (speech-to-text) | Local (Parakeet / Silero VAD models)                      | No                               |
 | Speaker labels                 | Local (from Talk signaling, not audio analysis)           | No                               |
-| Transcript cleanup + summary   | Third-party LLM — **only if `OPENROUTER_API_KEY` is set** | **Yes, when enabled**            |
+| Meeting summary                | LLM endpoint — **only if one is configured**              | **Yes, when enabled**            |
 | Publishing the archive         | Nextcloud Files, on your servers                          | No                               |
 
-**Without an LLM key: nothing leaves your infrastructure.** The raw local
-transcript is still produced and published; only the transcript cleanup/summary is
-skipped.
+**Without an LLM endpoint: nothing leaves your infrastructure.** The local
+transcript is still produced and published; only the summary is skipped. A
+self-hosted endpoint keeps summaries on your own network too.
 
 ## What Cassini stores
 
@@ -32,9 +32,8 @@ artifacts:
   audio track per participant.
 - **Audio** — the processed meeting audio, ultimately the portable single-file
   `.opus`.
-- **Transcripts** — a timestamped word-level transcript and an optional
-  human-readable transcript.
-- **Captions** — an optional `captions.vtt` subtitle track.
+- **Transcripts** — a timestamped word-level transcript.
+- **Captions** — a `captions.vtt` subtitle track.
 - **Summaries** — an optional `summary.md`, produced only when the LLM step is
   enabled.
 - **Manifests** — internal bundle descriptors (`cassini.json`, `manifest.json`)

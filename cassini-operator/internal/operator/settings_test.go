@@ -3,7 +3,6 @@ package operator
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -33,10 +32,7 @@ func TestChildEnvStripsImageModelPinAndStaleQuality(t *testing.T) {
 		"CASSINI_STT_ADDITIONAL_MODELS=parakeet-tdt-0.6b-v3-int8",
 		"CASSINI_TRANSCRIPTION_TERMS=[\"stale\"]",
 	}
-	s := STTSettings{
-		Quality:            sttQualityBest,
-		TranscriptionTerms: []string{" Gocassini ", "Nextcloud Talk", "gocassini"},
-	}
+	s := STTSettings{Quality: sttQualityBest}
 	env := s.ChildEnv(base)
 
 	if q, ok := envValue(env, envSTTQuality); !ok || q != sttQualityBest {
@@ -54,16 +50,8 @@ func TestChildEnvStripsImageModelPinAndStaleQuality(t *testing.T) {
 	if _, ok := envValue(env, envSTTAdditionalModels); ok {
 		t.Fatalf("CASSINI_STT_ADDITIONAL_MODELS must be stripped by GPU-only policy; env=%v", env)
 	}
-	termsJSON, ok := envValue(env, envTranscriptionTerms)
-	if !ok {
-		t.Fatalf("CASSINI_TRANSCRIPTION_TERMS must be set; env=%v", env)
-	}
-	var terms []string
-	if err := json.Unmarshal([]byte(termsJSON), &terms); err != nil {
-		t.Fatalf("decode CASSINI_TRANSCRIPTION_TERMS: %v", err)
-	}
-	if got := strings.Join(terms, "|"); got != "Gocassini|Nextcloud Talk" {
-		t.Fatalf("CASSINI_TRANSCRIPTION_TERMS = %q, want normalized preferred spellings", got)
+	if _, ok := envValue(env, "CASSINI_TRANSCRIPTION_TERMS"); ok {
+		t.Fatalf("retired CASSINI_TRANSCRIPTION_TERMS must be stripped; env=%v", env)
 	}
 	// No stale duplicate quality.
 	count := 0
@@ -157,37 +145,6 @@ func TestNormalizeQuality(t *testing.T) {
 	}
 }
 
-func TestNormalizeTranscriptionTerms(t *testing.T) {
-	terms, err := normalizeTranscriptionTerms([]string{
-		"  Gocassini  ",
-		"Nextcloud\t Talk",
-		"gocassini",
-		"",
-		"  ",
-	})
-	if err != nil {
-		t.Fatalf("normalizeTranscriptionTerms() error = %v", err)
-	}
-	if got := strings.Join(terms, "|"); got != "Gocassini|Nextcloud Talk" {
-		t.Fatalf("normalized terms = %q, want Gocassini|Nextcloud Talk", got)
-	}
-}
-
-func TestNormalizeTranscriptionTermsEnforcesBounds(t *testing.T) {
-	tooLong := strings.Repeat("x", maxTranscriptionTermRunes+1)
-	if _, err := normalizeTranscriptionTerms([]string{tooLong}); err == nil {
-		t.Fatal("expected overlong term to be rejected")
-	}
-
-	tooMany := make([]string, maxTranscriptionTerms+1)
-	for i := range tooMany {
-		tooMany[i] = fmt.Sprintf("term-%d", i)
-	}
-	if _, err := normalizeTranscriptionTerms(tooMany); err == nil {
-		t.Fatal("expected excess terms to be rejected")
-	}
-}
-
 func TestLoadOrInitSettingsFirstStartWritesAutoDefault(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 
@@ -226,7 +183,6 @@ func TestSaveLoadRoundTripUserSettings(t *testing.T) {
 		Quality:             sttQualityFast,
 		DeviceOverride:      "cuda",
 		ModelOverride:       auditedCUDAParakeetV3,
-		TranscriptionTerms:  []string{"Gocassini", "Nextcloud Talk"},
 		Source:              sttSourceUser,
 		HardwareFingerprint: "gpu=true;cores=16",
 		DetectedGPU:         true,
@@ -242,7 +198,7 @@ func TestSaveLoadRoundTripUserSettings(t *testing.T) {
 	if got.Source != sttSourceUser {
 		t.Fatalf("Source = %q, want user (must not be overwritten)", got.Source)
 	}
-	if got.Quality != want.Quality || got.DeviceOverride != want.DeviceOverride || got.ModelOverride != want.ModelOverride || strings.Join(got.TranscriptionTerms, "|") != strings.Join(want.TranscriptionTerms, "|") {
+	if got.Quality != want.Quality || got.DeviceOverride != want.DeviceOverride || got.ModelOverride != want.ModelOverride {
 		t.Fatalf("user policy not preserved: got %#v want %#v", got, want)
 	}
 }
@@ -306,7 +262,6 @@ func TestLoadLegacySettingsHealsUnsupportedOverrides(t *testing.T) {
 				Quality:             sttQualityFast,
 				DeviceOverride:      tc.device,
 				ModelOverride:       tc.model,
-				TranscriptionTerms:  []string{" Gocassini ", "Nextcloud\tTalk", "gocassini"},
 				Source:              sttSourceUser,
 				HardwareFingerprint: "legacy-host",
 				DetectedGPU:         false,
@@ -333,16 +288,13 @@ func TestLoadLegacySettingsHealsUnsupportedOverrides(t *testing.T) {
 			if got.Quality != sttQualityFast || got.Source != sttSourceUser {
 				t.Fatalf("legacy quality/source were not preserved: %#v", got)
 			}
-			if terms := strings.Join(got.TranscriptionTerms, "|"); terms != "Gocassini|Nextcloud Talk" {
-				t.Fatalf("legacy transcription terms = %q, want normalized preserved terms", terms)
-			}
 			if len(migrations) != 1 {
 				t.Fatalf("migration reports = %d, want exactly 1", len(migrations))
 			}
 			message := migrations[0].Message()
 			for _, bit := range append(tc.messageBits,
 				path,
-				`preserved quality="fast", source="user", and 2 transcription terms`,
+				`preserved quality="fast" and source="user"`,
 				"use Settings to select CUDA",
 			) {
 				if !strings.Contains(message, bit) {
@@ -363,7 +315,7 @@ func TestLoadLegacySettingsHealsUnsupportedOverrides(t *testing.T) {
 			if persisted.DeviceOverride != tc.wantDevice || persisted.ModelOverride != tc.wantModel {
 				t.Fatalf("persisted overrides = device %q model %q, want %q/%q", persisted.DeviceOverride, persisted.ModelOverride, tc.wantDevice, tc.wantModel)
 			}
-			if persisted.Quality != sttQualityFast || persisted.Source != sttSourceUser || strings.Join(persisted.TranscriptionTerms, "|") != "Gocassini|Nextcloud Talk" {
+			if persisted.Quality != sttQualityFast || persisted.Source != sttSourceUser {
 				t.Fatalf("persisted policy was not preserved: %#v", persisted)
 			}
 
@@ -384,7 +336,7 @@ func TestPutSettingsValidPersistsUserSource(t *testing.T) {
 	rt, cleanup := newTestRuntime(t)
 	defer cleanup()
 
-	body := `{"quality":"best","device_override":"cuda","transcription_terms":[" Gocassini ","Nextcloud Talk","gocassini"]}`
+	body := `{"quality":"best","device_override":"cuda"}`
 	req := httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	rt.settingsHandler(rec, req)
@@ -405,9 +357,6 @@ func TestPutSettingsValidPersistsUserSource(t *testing.T) {
 	if resp.DeviceOverride != "cuda" {
 		t.Fatalf("DeviceOverride = %q, want cuda", resp.DeviceOverride)
 	}
-	if got := strings.Join(resp.TranscriptionTerms, "|"); got != "Gocassini|Nextcloud Talk" {
-		t.Fatalf("TranscriptionTerms = %q, want normalized preferred spellings", got)
-	}
 	if resp.Effective.Device != "cuda" {
 		t.Fatalf("Effective.Device = %q, want cuda", resp.Effective.Device)
 	}
@@ -422,28 +371,8 @@ func TestPutSettingsValidPersistsUserSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload error = %v", err)
 	}
-	if reloaded.Quality != sttQualityBest || reloaded.Source != sttSourceUser || strings.Join(reloaded.TranscriptionTerms, "|") != "Gocassini|Nextcloud Talk" {
+	if reloaded.Quality != sttQualityBest || reloaded.Source != sttSourceUser {
 		t.Fatalf("persisted settings mismatch: %#v", reloaded)
-	}
-}
-
-func TestPutSettingsRejectsOutOfBoundsTranscriptionTerms(t *testing.T) {
-	rt, cleanup := newTestRuntime(t)
-	defer cleanup()
-
-	body, err := json.Marshal(map[string]any{
-		"quality":             "best",
-		"transcription_terms": []string{strings.Repeat("x", maxTranscriptionTermRunes+1)},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(string(body)))
-	rec := httptest.NewRecorder()
-	rt.settingsHandler(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("PUT overlong transcription term = %d, want 400 body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -536,11 +465,10 @@ func TestGetSettingsLogsPersistedPolicyMigration(t *testing.T) {
 	defer cleanup()
 
 	legacy := STTSettings{
-		Quality:            sttQualityBest,
-		DeviceOverride:     "cpu",
-		ModelOverride:      "legacy-int8-model",
-		TranscriptionTerms: []string{"Gocassini"},
-		Source:             sttSourceUser,
+		Quality:        sttQualityBest,
+		DeviceOverride: "cpu",
+		ModelOverride:  "legacy-int8-model",
+		Source:         sttSourceUser,
 	}
 	raw, err := json.Marshal(legacy)
 	if err != nil {

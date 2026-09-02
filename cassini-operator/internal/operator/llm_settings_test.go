@@ -35,10 +35,8 @@ func TestSeedLLMSettingsFromKeylessEndpoint(t *testing.T) {
 	if p.ID != "default" || p.Name != "qwen.internal:8000" || p.BaseURL != "http://qwen.internal:8000/v1" || p.APIKey != "" {
 		t.Fatalf("provider = %+v", p)
 	}
-	for name, step := range map[string]LLMStep{"readable": s.Readable, "summary": s.Summary} {
-		if !step.Enabled || step.Provider != "default" || step.Model != "qwen3-30b" {
-			t.Fatalf("%s = %+v, want enabled on default with qwen3-30b", name, step)
-		}
+	if !s.Summary.Enabled || s.Summary.Provider != "default" || s.Summary.Model != "qwen3-30b" {
+		t.Fatalf("summary = %+v, want enabled on default with qwen3-30b", s.Summary)
 	}
 }
 
@@ -53,20 +51,20 @@ func TestSeedLLMSettingsKeyAloneImpliesOpenRouter(t *testing.T) {
 	}
 }
 
-func TestSeedLLMSettingsHonoursSwitchesAndSummaryModel(t *testing.T) {
+func TestSeedLLMSettingsHonoursSwitchAndSummaryModel(t *testing.T) {
 	s := SeedLLMSettings(llmGetenv(map[string]string{
-		envLLMBaseURL:       "http://qwen.internal:8000/v1",
-		envLLMModel:         "small",
-		envSummaryModel:     "large",
-		envReadableDisabled: "1",
-		envLLMTimeoutSec:    "1800",
-		envLLMMaxTokens:     "8192",
+		envLLMBaseURL:      "http://qwen.internal:8000/v1",
+		envLLMModel:        "small",
+		envSummaryModel:    "large",
+		envSummaryDisabled: "1",
+		envLLMTimeoutSec:   "1800",
+		envLLMMaxTokens:    "8192",
 	}))
-	if s.Readable.Enabled || s.Readable.Provider != "default" {
-		t.Fatalf("readable = %+v, want disabled but still pointing at default", s.Readable)
+	if s.Summary.Enabled || s.Summary.Provider != "default" {
+		t.Fatalf("summary = %+v, want disabled but still pointing at default", s.Summary)
 	}
-	if !s.Summary.Enabled || s.Summary.Model != "large" {
-		t.Fatalf("summary = %+v", s.Summary)
+	if s.Summary.Model != "large" {
+		t.Fatalf("summary model = %q, want large", s.Summary.Model)
 	}
 	if s.TimeoutSec != 1800 || s.MaxTokens != 8192 {
 		t.Fatalf("bounds = %d/%d", s.TimeoutSec, s.MaxTokens)
@@ -75,7 +73,7 @@ func TestSeedLLMSettingsHonoursSwitchesAndSummaryModel(t *testing.T) {
 
 func TestSeedLLMSettingsEmptyWithoutEndpoint(t *testing.T) {
 	s := SeedLLMSettings(llmGetenv(map[string]string{envLLMModel: "ignored"}))
-	if len(s.Providers) != 0 || s.Readable.Enabled || s.Summary.Enabled {
+	if len(s.Providers) != 0 || s.Summary.Enabled {
 		t.Fatalf("settings = %+v, want empty and off", s)
 	}
 	env := s.ChildEnv([]string{"PATH=/bin"})
@@ -90,8 +88,7 @@ func TestLLMChildEnvStripsInheritedAndEmitsPerStep(t *testing.T) {
 			{ID: "hosted", Name: "OpenRouter", BaseURL: openRouterBaseURL, APIKey: "sk-or-secret"},
 			{ID: "local", Name: "Qwen", BaseURL: "http://qwen.internal:8000/v1"},
 		},
-		Readable:   LLMStep{Enabled: true, Provider: "local", Model: "cheap"},
-		Summary:    LLMStep{Enabled: true, Provider: "hosted"},
+		Summary:    LLMStep{Enabled: true, Provider: "hosted", Model: "big"},
 		TimeoutSec: 600,
 	}
 	base := []string{
@@ -110,10 +107,9 @@ func TestLLMChildEnvStripsInheritedAndEmitsPerStep(t *testing.T) {
 
 	want := map[string]string{
 		"PATH":                    "/bin",
-		"READABLE_BASE_URL":       "http://qwen.internal:8000/v1",
-		"READABLE_MODEL":          "cheap",
 		"SUMMARY_BASE_URL":        openRouterBaseURL,
 		"SUMMARY_API_KEY":         "sk-or-secret",
+		"SUMMARY_MODEL":           "big",
 		"CASSINI_LLM_TIMEOUT_SEC": "600",
 	}
 	for key, value := range want {
@@ -122,9 +118,9 @@ func TestLLMChildEnvStripsInheritedAndEmitsPerStep(t *testing.T) {
 		}
 	}
 	for _, key := range []string{
-		"OPENROUTER_API_KEY", "OPENROUTER_BASE_URL", "LLM_BASE_URL", "LLM_MODEL", "SUMMARY_MODEL",
+		"OPENROUTER_API_KEY", "OPENROUTER_BASE_URL", "LLM_BASE_URL", "LLM_MODEL",
 		"CASSINI_SUMMARY_DISABLED", "CASSINI_READABLE_DISABLED", "CASSINI_LLM_MAX_TOKENS",
-		"READABLE_API_KEY",
+		"READABLE_BASE_URL", "READABLE_API_KEY", "READABLE_MODEL",
 	} {
 		if got, ok := envValue(env, key); ok {
 			t.Fatalf("%s should be absent, got %q", key, got)
@@ -138,15 +134,11 @@ func TestLLMChildEnvStripsInheritedAndEmitsPerStep(t *testing.T) {
 func TestLLMChildEnvDisabledStepEmitsNothing(t *testing.T) {
 	s := LLMSettings{
 		Providers: []LLMProvider{{ID: "local", BaseURL: "http://qwen.internal:8000/v1"}},
-		Readable:  LLMStep{Enabled: false, Provider: "local", Model: "cheap"},
-		Summary:   LLMStep{Enabled: true, Provider: "local"},
+		Summary:   LLMStep{Enabled: false, Provider: "local", Model: "cheap"},
 	}
 	env := s.ChildEnv(nil)
-	if _, ok := envValue(env, "READABLE_BASE_URL"); ok {
-		t.Fatalf("disabled readable step leaked into env: %v", env)
-	}
-	if got, _ := envValue(env, "SUMMARY_BASE_URL"); got != "http://qwen.internal:8000/v1" {
-		t.Fatalf("SUMMARY_BASE_URL = %q; env=%v", got, env)
+	if _, ok := envValue(env, "SUMMARY_BASE_URL"); ok {
+		t.Fatalf("disabled summary step leaked into env: %v", env)
 	}
 }
 
@@ -173,8 +165,8 @@ func TestLoadOrInitLLMSettingsSeedsAndRoundTrips(t *testing.T) {
 	if len(reloaded.Providers) != 1 || reloaded.Providers[0].APIKey != "sk-or-secret" {
 		t.Fatalf("reloaded = %+v, want the persisted key", reloaded)
 	}
-	if reloaded.Summary != seeded.Summary || reloaded.Readable != seeded.Readable {
-		t.Fatalf("reloaded steps %+v/%+v differ from seeded %+v/%+v", reloaded.Readable, reloaded.Summary, seeded.Readable, seeded.Summary)
+	if reloaded.Summary != seeded.Summary {
+		t.Fatalf("reloaded summary %+v differs from seeded %+v", reloaded.Summary, seeded.Summary)
 	}
 }
 
@@ -197,12 +189,12 @@ func TestNormalizeLLMSettingsRejectsUnresolvablePolicy(t *testing.T) {
 }
 
 func TestNormalizeLLMSettingsForgetsDanglingDisabledProvider(t *testing.T) {
-	s, err := normalizeLLMSettings(LLMSettings{Readable: LLMStep{Enabled: false, Provider: "gone", Model: "m"}})
+	s, err := normalizeLLMSettings(LLMSettings{Summary: LLMStep{Enabled: false, Provider: "gone", Model: "m"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if s.Readable.Provider != "" || s.Readable.Model != "m" {
-		t.Fatalf("readable = %+v, want provider cleared and model kept", s.Readable)
+	if s.Summary.Provider != "" || s.Summary.Model != "m" {
+		t.Fatalf("summary = %+v, want provider cleared and model kept", s.Summary)
 	}
 }
 
@@ -252,7 +244,6 @@ func TestPutLLMSettingsSwitchesEndpointWithoutTouchingStoredKey(t *testing.T) {
 	    {"id": "default", "name": "OpenRouter", "base_url": "https://openrouter.ai/api/v1"},
 	    {"id": "local", "name": "Qwen", "base_url": "http://qwen.internal:8000/v1"}
 	  ],
-	  "readable": {"enabled": false},
 	  "summary": {"enabled": true, "provider": "local", "model": "qwen3-30b"}
 	}`
 	rec := httptest.NewRecorder()
@@ -261,9 +252,6 @@ func TestPutLLMSettingsSwitchesEndpointWithoutTouchingStoredKey(t *testing.T) {
 
 	if len(out.Providers) != 2 || !out.Providers[0].APIKeyConfigured || out.Providers[1].APIKeyConfigured {
 		t.Fatalf("providers = %+v", out.Providers)
-	}
-	if out.Effective.Readable != nil {
-		t.Fatalf("readable should be off, got %+v", out.Effective.Readable)
 	}
 	if out.Effective.Summary == nil || out.Effective.Summary.BaseURL != "http://qwen.internal:8000/v1" || out.Effective.Summary.Model != "qwen3-30b" {
 		t.Fatalf("effective summary = %+v", out.Effective.Summary)

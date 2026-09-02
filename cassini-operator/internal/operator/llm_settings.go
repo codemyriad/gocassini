@@ -21,8 +21,7 @@ import (
 )
 
 // LLMSettings is the operator-owned, persisted LLM policy: the endpoints an
-// administrator has registered and which one each LLM step — readable
-// transcript cleanup and the meeting summary — runs on. It lives beside
+// administrator has registered and which one the meeting summary runs on. It lives beside
 // settings.json on the AppAPI volume and is the single source of the
 // recorder's LLM environment: ChildEnv strips every inherited LLM variable and
 // re-emits exactly what the policy says, so changing endpoints never needs an
@@ -33,7 +32,6 @@ import (
 // ignored after that. API keys are persisted here and never served.
 type LLMSettings struct {
 	Providers  []LLMProvider `json:"providers"`
-	Readable   LLMStep       `json:"readable"`
 	Summary    LLMStep       `json:"summary"`
 	TimeoutSec int           `json:"timeout_sec,omitempty"`
 	MaxTokens  int           `json:"max_tokens,omitempty"`
@@ -68,8 +66,7 @@ const (
 	envLLMTimeoutSec    = "CASSINI_LLM_TIMEOUT_SEC"
 	envLLMMaxTokens     = "CASSINI_LLM_MAX_TOKENS"
 
-	llmStepReadable = "READABLE"
-	llmStepSummary  = "SUMMARY"
+	llmStepSummary = "SUMMARY"
 
 	openRouterBaseURL = "https://openrouter.ai/api/v1"
 
@@ -92,13 +89,13 @@ func llmStepEnv(step string) (baseURL, apiKey, model string) {
 func inheritedLLMEnv() map[string]bool {
 	drop := map[string]bool{
 		envLLMAPIKey: true, envLLMBaseURLLegacy: true, envLLMBaseURL: true, envLLMModel: true,
-		envSummaryModel: true, envSummaryDisabled: true, envReadableDisabled: true,
-		envLLMTimeoutSec: true, envLLMMaxTokens: true,
+		envSummaryModel: true, envSummaryDisabled: true, envLLMTimeoutSec: true, envLLMMaxTokens: true,
+		// Retired names an older deploy may still carry: the readable-cleanup
+		// kill switch and its per-step wire (the cleanup step was removed).
+		envReadableDisabled: true, "READABLE_BASE_URL": true, "READABLE_API_KEY": true, "READABLE_MODEL": true,
 	}
-	for _, step := range []string{llmStepReadable, llmStepSummary} {
-		b, k, m := llmStepEnv(step)
-		drop[b], drop[k], drop[m] = true, true, true
-	}
+	b, k, m := llmStepEnv(llmStepSummary)
+	drop[b], drop[k], drop[m] = true, true, true
 	return drop
 }
 
@@ -157,12 +154,10 @@ func SeedLLMSettings(getenv func(string) string) LLMSettings {
 	}
 	provider := LLMProvider{ID: "default", Name: llmProviderNameFor(base), BaseURL: base, APIKey: key}
 	s.Providers = append(s.Providers, provider)
-	model := strings.TrimSpace(getenv(envLLMModel))
 	summaryModel := strings.TrimSpace(getenv(envSummaryModel))
 	if summaryModel == "" {
-		summaryModel = model
+		summaryModel = strings.TrimSpace(getenv(envLLMModel))
 	}
-	s.Readable = LLMStep{Enabled: !envBoolFrom(getenv, envReadableDisabled), Provider: provider.ID, Model: model}
 	s.Summary = LLMStep{Enabled: !envBoolFrom(getenv, envSummaryDisabled), Provider: provider.ID, Model: summaryModel}
 	return s
 }
@@ -256,9 +251,6 @@ func normalizeLLMSettings(s LLMSettings) (LLMSettings, error) {
 	}
 	s.Providers = providers
 	var err error
-	if s.Readable, err = normalizeLLMStep("readable", s.Readable, ids); err != nil {
-		return s, err
-	}
 	if s.Summary, err = normalizeLLMStep("summary", s.Summary, ids); err != nil {
 		return s, err
 	}
@@ -345,7 +337,6 @@ func (s LLMSettings) ChildEnv(base []string) []string {
 		}
 		out = append(out, kv)
 	}
-	out = s.appendStepEnv(out, llmStepReadable, s.Readable)
 	out = s.appendStepEnv(out, llmStepSummary, s.Summary)
 	if s.TimeoutSec > 0 {
 		out = append(out, envLLMTimeoutSec+"="+strconv.Itoa(s.TimeoutSec))
@@ -414,13 +405,11 @@ type llmEffectiveStep struct {
 }
 
 type llmEffective struct {
-	Readable *llmEffectiveStep `json:"readable"`
-	Summary  *llmEffectiveStep `json:"summary"`
+	Summary *llmEffectiveStep `json:"summary"`
 }
 
 type llmSettingsResponse struct {
 	Providers  []llmProviderView `json:"providers"`
-	Readable   LLMStep           `json:"readable"`
 	Summary    LLMStep           `json:"summary"`
 	TimeoutSec int               `json:"timeout_sec"`
 	MaxTokens  int               `json:"max_tokens"`
@@ -434,11 +423,10 @@ func (s LLMSettings) view() llmSettingsResponse {
 	}
 	return llmSettingsResponse{
 		Providers:  providers,
-		Readable:   s.Readable,
 		Summary:    s.Summary,
 		TimeoutSec: s.TimeoutSec,
 		MaxTokens:  s.MaxTokens,
-		Effective:  llmEffective{Readable: s.effectiveStep(s.Readable), Summary: s.effectiveStep(s.Summary)},
+		Effective:  llmEffective{Summary: s.effectiveStep(s.Summary)},
 	}
 }
 
@@ -463,7 +451,6 @@ type llmProviderUpdate struct {
 // providers list replaces the stored one.
 type llmSettingsUpdate struct {
 	Providers  *[]llmProviderUpdate `json:"providers"`
-	Readable   *LLMStep             `json:"readable"`
 	Summary    *LLMStep             `json:"summary"`
 	TimeoutSec *int                 `json:"timeout_sec"`
 	MaxTokens  *int                 `json:"max_tokens"`
@@ -543,9 +530,6 @@ func (rt *Runtime) handlePutLLMSettings(w http.ResponseWriter, r *http.Request) 
 			providers = append(providers, next)
 		}
 		updated.Providers = providers
-	}
-	if in.Readable != nil {
-		updated.Readable = *in.Readable
 	}
 	if in.Summary != nil {
 		updated.Summary = *in.Summary

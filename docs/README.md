@@ -40,14 +40,14 @@ in these docs should be read in light of them.
   server**. Display names arrive on signaling join/participants events, ride
   through the MKV/remux stream titles, and are read back at transcription time.
   No audio-inferred diarization is used.
-- **Summarisation is WIP and the only third-party step.** LLM transcript cleanup
-  and meeting summaries are optional and run **only** when `OPENROUTER_API_KEY`
-  is set. When enabled, the **full transcript text is sent to that third party**
-  (OpenRouter or a compatible endpoint) — see the
-  [privacy caveat](#summarisation--the-privacy-caveat). No key means both steps
-  are silently skipped and the raw local transcript is still published.
+- **Summarisation is the only step that can leave the host.** Meeting summaries
+  are optional and run **only** when an LLM endpoint is configured. When
+  enabled, the **full transcript text is sent to that endpoint** (a hosted
+  provider or your own model server) — see the
+  [privacy caveat](#summarisation--the-privacy-caveat). With no endpoint the
+  summary is skipped and the local transcript is still published.
 - **Self-contained outputs.** A portable single-file `.opus` carries audio +
-  transcript + readable transcript (integrity-hashed), and a separate
+  transcript (integrity-hashed), and a separate
   **static-site export** (`catalog.json` + `meetings/`; the viewer SPA shell —
   `index.html` + `assets/` — is served from the image by default and embedded
   into the export only on `--rebuild-viewer`)
@@ -65,7 +65,7 @@ Start here if you are about to work with Cassini.
 - **[Start here](./start-here.md)** — the shortest orientation: record → build → publish, and the two browser surfaces.
 - **[Mental model](./mental-model.md)** — the smallest useful system picture and the file-driven pipeline.
 - **[System architecture](./architecture.md)** — the modules, the language each is in, and the data contracts between them.
-- **[Core pipeline](./core-pipeline.md)** — the stage-by-stage flow: **record → remux → transcribe → optional LLM cleanup/summary → publish → view**.
+- **[Core pipeline](./core-pipeline.md)** — the stage-by-stage flow: **record → remux → transcribe → optional LLM summary → publish → view**.
 - **[Portable meeting format](./portable-meeting-format.md)** — the single self-contained `.opus` meeting file (audio + embedded transcript, integrity-hashed).
 - **[Audio & media glossary](./audio-glossary.md)** — containers, codecs, RTP, VAD/STT, timestamps, integrity.
 
@@ -87,7 +87,7 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
                                             │
               remux speaker tracks ─────────┤
               transcribe (LOCAL: Parakeet/VAD)
-              optional LLM cleanup + summary (OpenRouter, third-party)
+              optional LLM summary (hosted or self-hosted endpoint)
               pack portable .opus / static site
 ```
 
@@ -136,20 +136,19 @@ Talk room ──▶ record (multitrack .mkv) ──▶ build ──▶ publish �
 
 ### Summarisation & the privacy caveat
 
-Summaries and readable-transcript cleanup are **off by default**. To enable them,
-set `LLM_BASE_URL` to any OpenAI-compatible endpoint — a hosted provider or your
-own model server — plus `LLM_MODEL`/`SUMMARY_MODEL` (default
-`openai/gpt-4o-mini`). Add `OPENROUTER_API_KEY` when the endpoint needs a key;
-setting it alone defaults `LLM_BASE_URL` to `https://openrouter.ai/api/v1`.
-A self-hosted endpoint with no authentication works without a key.
+Summaries are **off by default**. To enable them, set `LLM_BASE_URL` to any
+OpenAI-compatible endpoint — a hosted provider or your own model server — plus
+`LLM_MODEL`/`SUMMARY_MODEL` (default `openai/gpt-4o-mini`). Add
+`OPENROUTER_API_KEY` when the endpoint needs a key; setting it alone defaults
+`LLM_BASE_URL` to `https://openrouter.ai/api/v1`. A self-hosted endpoint with no
+authentication works without a key. In an installed app, these values only seed
+the first start — after that, summaries are configured in the app's Settings.
 
-> **Privacy warning.** When these are enabled, the **full local transcript text
-> is sent to the configured third party** (OpenRouter or a compatible endpoint)
-> for cleanup and summarisation. Only enable this if sending meeting transcripts
-> off-host is acceptable for your deployment. Transcription itself never leaves
-> the host; only this optional post-processing step does. Set
-> `CASSINI_SUMMARY_DISABLED` to keep readable cleanup while turning summaries
-> off. With no key, the raw local transcript is still published.
+> **Privacy warning.** When summaries are enabled, the **full local transcript
+> text is sent to the configured endpoint**. Only enable this if sending meeting
+> transcripts off-host is acceptable for your deployment. Transcription itself
+> never leaves the host; only this optional step does. With no endpoint, the
+> local transcript is still published.
 
 ### Local development stack
 

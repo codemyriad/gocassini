@@ -23,7 +23,7 @@ AppAPI only forwards env vars declared in `info.xml`, so declaring it there is a
 | `CASSINI_TALK_BACKEND_URL` | Optional, sometimes required | Admin deploy option declared in `appinfo/info.xml` | Override base URL the operator uses for status callbacks and OCS calls back to Nextcloud. Use when Talk advertises a URL unreachable from the ExApp container. |
 | `OPENROUTER_API_KEY` | Optional | Admin deploy option | Initial API key for the endpoint below, when it needs one; seeds the app's LLM settings on first start only. |
 | `LLM_BASE_URL` | Optional | Admin deploy option | Initial OpenAI-compatible base URL — a hosted provider or your own model server; seeds the app's LLM settings on first start, after which endpoints are managed in the app. Privacy: the full local transcript is sent to whatever endpoint is configured; transcription itself is always local. |
-| `LLM_MODEL` | Optional | Admin deploy option | Initial model identifier for cleanup/summaries; seeds the app's LLM settings on first start only. |
+| `LLM_MODEL` | Optional | Admin deploy option | Initial model identifier for summaries; seeds the app's LLM settings on first start only. |
 | `CASSINI_OPERATOR_API_TOKEN` | Optional | Admin deploy option | Bearer token for direct non-AppAPI operator API calls; proxied AppAPI requests are authenticated by AppAPI. |
 
 ## AppAPI-injected runtime vars

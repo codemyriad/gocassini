@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"unicode/utf8"
 )
 
 // STTSettings is the operator-owned, persisted speech-to-text policy. The
@@ -21,14 +20,13 @@ import (
 // CASSINI_STT_MODEL=int8, which would otherwise shadow the chosen tier) so the
 // recorder's auto-detect + tier resolution (D-434) actually runs (D-435).
 type STTSettings struct {
-	Quality             string   `json:"quality"`
-	DeviceOverride      string   `json:"device_override,omitempty"`
-	ModelOverride       string   `json:"model_override,omitempty"`
-	TranscriptionTerms  []string `json:"transcription_terms,omitempty"`
-	Source              string   `json:"source"` // "auto" | "user"
-	HardwareFingerprint string   `json:"hardware_fingerprint"`
-	DetectedGPU         bool     `json:"detected_gpu"`
-	Cores               int      `json:"cores"`
+	Quality             string `json:"quality"`
+	DeviceOverride      string `json:"device_override,omitempty"`
+	ModelOverride       string `json:"model_override,omitempty"`
+	Source              string `json:"source"` // "auto" | "user"
+	HardwareFingerprint string `json:"hardware_fingerprint"`
+	DetectedGPU         bool   `json:"detected_gpu"`
+	Cores               int    `json:"cores"`
 }
 
 const (
@@ -43,16 +41,12 @@ const (
 	envSTTNumThreads        = "CASSINI_STT_NUM_THREADS"
 	envSTTStreamConcurrency = "CASSINI_STT_STREAM_CONCURRENCY"
 	envSTTAdditionalModels  = "CASSINI_STT_ADDITIONAL_MODELS"
-	envTranscriptionTerms   = "CASSINI_TRANSCRIPTION_TERMS"
 
 	// auditedCUDAParakeetV3 is currently the only model whose complete
 	// production path has been measured with the bundled CUDA runtime. Add a
 	// model to validCUDAModelOverride only after an equivalent GPU/CPU-fallback
 	// audit; accepting arbitrary model IDs would undermine GPU-only admission.
 	auditedCUDAParakeetV3 = "parakeet-tdt-0.6b-v3"
-
-	maxTranscriptionTerms     = 100
-	maxTranscriptionTermRunes = 100
 )
 
 // SettingsMigration describes a persisted STT policy that was accepted by an
@@ -63,12 +57,11 @@ const (
 // Callers receive this value only after the healed file has been persisted, so
 // logging Message cannot claim a migration that failed to reach disk.
 type SettingsMigration struct {
-	Path                   string
-	ClearedDeviceOverride  string
-	ClearedModelOverride   string
-	Quality                string
-	Source                 string
-	TranscriptionTermCount int
+	Path                  string
+	ClearedDeviceOverride string
+	ClearedModelOverride  string
+	Quality               string
+	Source                string
 }
 
 // Message is suitable for the operator log. It explains both what changed and
@@ -83,12 +76,11 @@ func (m SettingsMigration) Message() string {
 		cleared = append(cleared, fmt.Sprintf("unaudited model_override=%q", m.ClearedModelOverride))
 	}
 	return fmt.Sprintf(
-		"stt_settings migrated %s: cleared %s; preserved quality=%q, source=%q, and %d transcription terms; use Settings to select CUDA or the audited model %q if an explicit override is required",
+		"stt_settings migrated %s: cleared %s; preserved quality=%q and source=%q; use Settings to select CUDA or the audited model %q if an explicit override is required",
 		m.Path,
 		strings.Join(cleared, " and "),
 		m.Quality,
 		m.Source,
-		m.TranscriptionTermCount,
 		auditedCUDAParakeetV3,
 	)
 }
@@ -106,36 +98,6 @@ func validCUDAModelOverride(model string) bool {
 	default:
 		return false
 	}
-}
-
-// normalizeTranscriptionTerms turns user-entered glossary rows into bounded
-// preferred spellings for readable-transcript cleanup. The first spelling wins
-// when entries differ only by case.
-func normalizeTranscriptionTerms(terms []string) ([]string, error) {
-	out := make([]string, 0, len(terms))
-	seen := make(map[string]struct{}, len(terms))
-	for _, term := range terms {
-		term = strings.Join(strings.Fields(term), " ")
-		if term == "" {
-			continue
-		}
-		if utf8.RuneCountInString(term) > maxTranscriptionTermRunes {
-			return nil, fmt.Errorf("term %q exceeds %d characters", term, maxTranscriptionTermRunes)
-		}
-		key := strings.ToLower(term)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		if len(out) == maxTranscriptionTerms {
-			return nil, fmt.Errorf("at most %d terms are allowed", maxTranscriptionTerms)
-		}
-		seen[key] = struct{}{}
-		out = append(out, term)
-	}
-	if len(out) == 0 {
-		return nil, nil
-	}
-	return out, nil
 }
 
 // settingsPath returns the settings.json location: the same persistent dir as
@@ -234,10 +196,6 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return STTSettings{}, fmt.Errorf("parse settings %s: %w", path, err)
 	}
-	s.TranscriptionTerms, err = normalizeTranscriptionTerms(s.TranscriptionTerms)
-	if err != nil {
-		return STTSettings{}, fmt.Errorf("parse settings %s transcription_terms: %w", path, err)
-	}
 
 	var migration SettingsMigration
 	needsRewrite := false
@@ -276,11 +234,7 @@ func LoadOrInitSettingsWithMigrationReporter(path string, report SettingsMigrati
 	if s.Source == sttSourceAuto {
 		if fingerprint != s.HardwareFingerprint {
 			// Hardware changed under an auto default: re-derive and rewrite.
-			terms := s.TranscriptionTerms
 			s = detectSettings()
-			// Vocabulary is independent of the hardware-derived quality tier.
-			// Preserve it when re-fingerprinting an auto policy.
-			s.TranscriptionTerms = terms
 			if err := Save(path, s); err != nil {
 				return STTSettings{}, err
 			}
@@ -330,7 +284,6 @@ func reportSettingsMigration(report SettingsMigrationReporter, path string, migr
 	migration.Path = path
 	migration.Quality = s.Quality
 	migration.Source = s.Source
-	migration.TranscriptionTermCount = len(s.TranscriptionTerms)
 	report(migration)
 }
 
@@ -355,11 +308,6 @@ func Save(path string, s STTSettings) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir settings dir: %w", err)
 	}
-	terms, err := normalizeTranscriptionTerms(s.TranscriptionTerms)
-	if err != nil {
-		return fmt.Errorf("normalize transcription_terms: %w", err)
-	}
-	s.TranscriptionTerms = terms
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal settings: %w", err)
@@ -390,8 +338,6 @@ func Save(path string, s STTSettings) error {
 //   - CASSINI_STT_ADDITIONAL_MODELS is always stripped. Unreviewed secondary
 //     graphs could fall back to CPU or allocate another model outside the
 //     operator's GPU/RAM admission budget.
-//   - CASSINI_TRANSCRIPTION_TERMS carries the optional, normalized preferred
-//     spellings used only by LLM readable cleanup.
 func (s STTSettings) ChildEnv(base []string) []string {
 	// Always strip the STT keys, then re-append exactly what the policy
 	// dictates. Stripping unconditionally (rather than only when there is no
@@ -403,7 +349,8 @@ func (s STTSettings) ChildEnv(base []string) []string {
 		envSTTDevice:           true,
 		envSTTModel:            true,
 		envSTTAdditionalModels: true,
-		envTranscriptionTerms:  true,
+		// Retired: preferred spellings fed only the removed readable cleanup.
+		"CASSINI_TRANSCRIPTION_TERMS": true,
 	}
 
 	out := make([]string, 0, len(base)+4)
@@ -425,10 +372,6 @@ func (s STTSettings) ChildEnv(base []string) []string {
 	modelOverride := strings.TrimSpace(s.ModelOverride)
 	if modelOverride != "" && validCUDAModelOverride(modelOverride) {
 		out = append(out, envSTTModel+"="+modelOverride)
-	}
-	if terms, err := normalizeTranscriptionTerms(s.TranscriptionTerms); err == nil && len(terms) > 0 {
-		encoded, _ := json.Marshal(terms)
-		out = append(out, envTranscriptionTerms+"="+string(encoded))
 	}
 	return out
 }
@@ -473,10 +416,9 @@ type settingsResponse struct {
 // settingsUpdate is the PUT body. Pointers distinguish "field omitted" from
 // "field set to empty"; quality is required.
 type settingsUpdate struct {
-	Quality            string    `json:"quality"`
-	DeviceOverride     *string   `json:"device_override"`
-	ModelOverride      *string   `json:"model_override"`
-	TranscriptionTerms *[]string `json:"transcription_terms"`
+	Quality        string  `json:"quality"`
+	DeviceOverride *string `json:"device_override"`
+	ModelOverride  *string `json:"model_override"`
 }
 
 // currentSettings returns a copy of the in-memory STT policy, safe for
@@ -585,15 +527,6 @@ func (rt *Runtime) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		updated.ModelOverride = model
 	}
-	if in.TranscriptionTerms != nil {
-		terms, err := normalizeTranscriptionTerms(*in.TranscriptionTerms)
-		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("invalid transcription_terms: %v", err))
-			return
-		}
-		updated.TranscriptionTerms = terms
-	}
-
 	// Refresh the host display fields so the persisted record reflects the
 	// current hardware even as the user pins policy.
 	gpu := detectGPU()

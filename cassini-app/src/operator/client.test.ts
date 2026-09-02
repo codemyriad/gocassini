@@ -7,7 +7,7 @@ afterEach(() => {
 });
 
 describe("operator settings client", () => {
-  it("defaults transcription terms for an older settings response", async () => {
+  it("normalizes an older or partial settings response", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -20,41 +20,31 @@ describe("operator settings client", () => {
 
     const settings = await new OperatorClient("https://operator.test").getSettings();
 
-    expect(settings.transcription_terms).toEqual([]);
+    expect(settings.quality).toBe("best");
+    expect(settings.device_override).toBe("");
+    expect(settings.source).toBe("auto");
   });
 
-  it("sends and reads transcription terms through PUT settings", async () => {
+  it("round-trips a PUT settings payload", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return new Response(
-        JSON.stringify({
-          ...payload,
-          source: "user",
-          transcription_terms: ["Gocassini", "Nextcloud Talk"],
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
+      return new Response(JSON.stringify({ ...payload, source: "user" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
     });
     vi.stubGlobal("fetch", fetchMock);
 
     const settings = await new OperatorClient("https://operator.test").putSettings({
       quality: "balanced",
-      device_override: "",
+      device_override: "cuda",
       model_override: "",
-      transcription_terms: [" Gocassini ", "Nextcloud Talk", "gocassini"],
     });
 
     expect(fetchMock).toHaveBeenCalledOnce();
-    const request = fetchMock.mock.calls[0]?.[1];
-    expect(JSON.parse(String(request?.body)).transcription_terms).toEqual([
-      " Gocassini ",
-      "Nextcloud Talk",
-      "gocassini",
-    ]);
-    expect(settings.transcription_terms).toEqual(["Gocassini", "Nextcloud Talk"]);
+    expect(settings.quality).toBe("balanced");
+    expect(settings.device_override).toBe("cuda");
+    expect(settings.source).toBe("user");
   });
 });
 
@@ -74,7 +64,6 @@ describe("llm settings client", () => {
                 api_key: "LEAKED-NEVER-CARRY",
               },
             ],
-            readable: null,
             summary: { enabled: true, provider: "default" },
             timeout_sec: -5,
           }),
@@ -87,10 +76,9 @@ describe("llm settings client", () => {
 
     expect(JSON.stringify(settings)).not.toContain("LEAKED-NEVER-CARRY");
     expect(settings.providers[0]?.api_key_configured).toBe(true);
-    expect(settings.readable).toEqual({ enabled: false, provider: "", model: "" });
     expect(settings.summary.enabled).toBe(true);
     expect(settings.timeout_sec).toBe(0);
-    expect(settings.effective).toEqual({ readable: null, summary: null });
+    expect(settings.effective).toEqual({ summary: null });
   });
 
   it("omits api_key when unchanged and sends an empty string to clear it", async () => {

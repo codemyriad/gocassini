@@ -12,7 +12,7 @@ This document describes the post-recording transcription pipeline that turns a f
 | Pipeline orchestration | `internal/transcribe/transcribe.go` | The 10-step build flow described below |
 | Audio + STT | `internal/transcribe/audio.go`, `models.go`, `stt.go` | ffmpeg probe/mix, model download/cache, sherpa-onnx recognizer |
 | Segmentation + format | `internal/transcribe/format.go` | Segment assembly, JSON/VTT emitters, manifest writer |
-| LLM integration | `internal/transcribe/llm.go` | OpenAI-compatible HTTP client, readable-cleanup batch logic |
+| LLM integration | `internal/transcribe/llm.go` | OpenAI-compatible HTTP client for the summary call |
 | Summary generation (V4) | `internal/transcribe/summary.go` | Embedded V0 template, system prompt, transcript flattening |
 | Template (V0 contract) | `internal/transcribe/templates/summary.v0.md` | The summary's section structure — single source of truth |
 
@@ -29,11 +29,11 @@ This document describes the post-recording transcription pipeline that turns a f
 | 5 | Create recognizer | `NewRecognizer` loads the sherpa-onnx model on the chosen device (`cpu`/`cuda`) | — |
 | 6 | Per-speaker transcribe | For each input stream: extract floats, transcribe, assemble into segments | — |
 | 7 | Merge + sort + write words | `MergeAndSortSegments` then `writeTranscriptWithHash(version="transcript.words.v1")` | `transcript.words.v1.json` |
-| 8 | LLM readable cleanup *(optional)* | `writeReadableArtifacts` batches segments through `chatCompletion`, reapplies cleaned text via `ApplyReadableText`, redistributes word timings, writes captions | `transcript.readable.v1.json`, `captions.vtt` |
+| 8 | Captions | `WriteCaptionsVTT` renders the canonical transcript as WebVTT | `captions.vtt` |
 | **9** | **Meeting summary *(optional)*** | **`writeSummaryArtifact` calls `BuildMeetingSummary` (system prompt embeds the V0 template) and writes the model's markdown output as a sidecar** | **`summary.md`** |
-| 10 | Manifest | `WriteManifest` emits the artifact catalog with provenance for STT and LLM cleanup | `manifest.json` |
+| 10 | Manifest | `WriteManifest` emits the artifact catalog with provenance for STT and the summary | `manifest.json` |
 
-Step 9 prefers the cleaned (post-step-8) segments when available, and falls back to raw words when readable cleanup is disabled or skipped. This keeps the summary input quality consistent with what the viewer would render in the readable transcript.
+Step 9 summarises the canonical transcript, minus words the crosstalk gate marked low-confidence.
 
 ## Output bundle
 
@@ -43,7 +43,6 @@ After a successful build, `outputDir` contains:
 <meeting-output>/
   meeting.webm                    (always)
   transcript.words.v1.json        (always)
-  transcript.readable.v1.json     (only if step 8 ran)
   captions.vtt                    (only if step 8 ran)
   summary.md                      (only if step 9 ran)
   manifest.json                   (always)
@@ -64,17 +63,16 @@ There is one HTTP client, `chatCompletion(cfg, system, user)` in `llm.go`, used 
 | `ReadableCleanup` (step 8) | `BuildConfig.LLM` | `openai/gpt-4o-mini` | `LLM_MODEL` |
 | `BuildMeetingSummary` (step 9) | `BuildConfig.SummaryLLM` | inherits from `LLM_MODEL`; falls back to `openai/gpt-4o-mini` | `SUMMARY_MODEL` |
 
-Both share the same auth (`OPENROUTER_API_KEY`) and base URL (`OPENROUTER_BASE_URL`, falling back to `LLM_BASE_URL`), unless a step is given its own endpoint: `READABLE_BASE_URL` / `READABLE_API_KEY` / `READABLE_MODEL` and `SUMMARY_BASE_URL` / `SUMMARY_API_KEY` / `SUMMARY_MODEL` override the shared values for that step alone. An endpoint override brings its own key — the shared key is never sent to a different host. The operator emits these per step from its persisted LLM settings.
+The summary call reads the shared auth (`OPENROUTER_API_KEY`) and base URL (`OPENROUTER_BASE_URL`, falling back to `LLM_BASE_URL`), unless given its own endpoint: `SUMMARY_BASE_URL` / `SUMMARY_API_KEY` / `SUMMARY_MODEL` override the shared values. An endpoint override brings its own key — the shared key is never sent to a different host. The operator emits these from its persisted LLM settings.
 
 **The base URL is the switch, not the key.** `IsConfigured()` requires a base URL and an unset kill-switch; the API key is optional, because a self-hosted OpenAI-compatible server (llama.cpp, vLLM, Ollama) usually has none. When the key is empty the `Authorization` header is omitted entirely rather than sent as an empty bearer token, which some self-hosted servers reject. With no base URL, both steps are skipped silently.
 
-Each step also has its own kill-switch — `CASSINI_SUMMARY_DISABLED` and `CASSINI_READABLE_DISABLED` — applied to a copy of the shared config, so disabling one never disables the other.
+`CASSINI_SUMMARY_DISABLED=1` turns summaries off while keeping the endpoint configuration in place.
 
-This split exists because the two tasks have different cost/quality profiles — readable cleanup runs many small batches (cheap is fine), while summary generation is one large prompt where a stronger frontier model is justified. Operators set `SUMMARY_MODEL=anthropic/claude-...` (or similar) without disturbing cleanup.
+`SUMMARY_MODEL` overrides `LLM_MODEL` for the summary call, so a stronger model can be picked without changing the shared default.
 
 ### Failure semantics
 
-- **Readable cleanup (step 8):** warn-and-skip by default; can be made strict via `CASSINI_READABLE_STRICT_BATCHES=1` (`BuildConfig.StrictReadableCleanup`).
 - **Summary generation (step 9):** warn-and-skip only — no strict mode. If the LLM fails or returns empty, the pipeline succeeds without a `summary.md`. This matches the V4 acceptance criterion that disabling summary generation does not break the pipeline.
 
 ## Configuration surface
@@ -88,7 +86,6 @@ type BuildConfig struct {
     CacheDir              string    // model cache root
     LLM                   LLMConfig // step 8
     SummaryLLM            LLMConfig // step 9
-    StrictReadableCleanup bool      // strict gate for step 8
     NumThreads            int
 }
 ```
@@ -100,13 +97,10 @@ type BuildConfig struct {
 | `OPENROUTER_API_KEY` | `LLM.APIKey` and `SummaryLLM.APIKey` |
 | `OPENROUTER_BASE_URL` (or `LLM_BASE_URL`) | `LLM.BaseURL` and `SummaryLLM.BaseURL` |
 | `LLM_MODEL` | `LLM.Model` (and `SummaryLLM.Model` until overridden) |
-| `READABLE_BASE_URL` / `READABLE_API_KEY` / `READABLE_MODEL` | `LLM.BaseURL` / `LLM.APIKey` / `LLM.Model` for cleanup alone |
 | `SUMMARY_BASE_URL` / `SUMMARY_API_KEY` / `SUMMARY_MODEL` | `SummaryLLM.BaseURL` / `SummaryLLM.APIKey` / `SummaryLLM.Model` for the summary alone |
 | `CASSINI_LLM_TIMEOUT_SEC` | `TimeoutSec` on both (default 900; raise for CPU-bound local models) |
 | `CASSINI_LLM_MAX_TOKENS` | `MaxTokens` on both (default 4096) |
 | `CASSINI_SUMMARY_DISABLED` | `SummaryLLM.Disabled` |
-| `CASSINI_READABLE_DISABLED` | `LLM.Disabled` |
-| `CASSINI_READABLE_STRICT_BATCHES` | `StrictReadableCleanup` |
 | `CASSINI_CACHE_ROOT` | `CacheDir` (default cache location) |
 
 ## How V4 (D-242) fits in
@@ -117,7 +111,7 @@ V4 introduces step 9 — meeting summary generation — and nothing else in the 
 - **No new dependencies.** Reuses `chatCompletion` from `llm.go`.
 - **No manifest schema change.** `manifest.json` does not currently list `summary.md` or summary provenance — see Followups for V6.
 - **No new CLI flags.** Operators set an endpoint (`LLM_BASE_URL`, or `OPENROUTER_API_KEY` which implies the OpenRouter one) and optionally `SUMMARY_MODEL`, and the summary path turns on automatically. With no endpoint, step 9 is skipped silently along with step 8; `CASSINI_SUMMARY_DISABLED=1` skips step 9 alone.
-- **Test mocking** uses the same `func` package-var pattern step 8 introduced (`readableCleanupFn` / `buildMeetingSummaryFn`), so no live LLM is called in CI.
+- **Test mocking** uses the `func` package-var pattern (`buildMeetingSummaryFn`), so no live LLM is called in CI.
 
 The acceptance criteria from D-242 map to:
 

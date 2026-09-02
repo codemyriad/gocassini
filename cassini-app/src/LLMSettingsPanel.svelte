@@ -22,7 +22,6 @@
 
   let settings: LLMSettings | null = null;
   let providers: ProviderRow[] = [];
-  let readable: LLMStep = { enabled: false, provider: "", model: "" };
   let summary: LLMStep = { enabled: false, provider: "", model: "" };
   let timeoutSec = 0;
   let maxTokens = 0;
@@ -69,11 +68,10 @@
       keyInput: "",
       keyCleared: false,
     }));
-    readable = { ...next.readable };
     summary = { ...next.summary };
     timeoutSec = next.timeout_sec;
     maxTokens = next.max_tokens;
-    snapshot = JSON.stringify({ providers, readable, summary, timeoutSec, maxTokens });
+    snapshot = JSON.stringify({ providers, summary, timeoutSec, maxTokens });
   }
 
   function newProviderId(): string {
@@ -93,9 +91,6 @@
     providers = providers.filter((p) => p.id !== id);
     // A step pointing at the removed endpoint cannot stay enabled — the server
     // would reject it; disable it and forget the reference instead.
-    if (readable.provider === id) {
-      readable = { ...readable, provider: "", enabled: false };
-    }
     if (summary.provider === id) {
       summary = { ...summary, provider: "", enabled: false };
     }
@@ -138,7 +133,6 @@
             }
             return update;
           }),
-          readable,
           summary,
           timeout_sec: Number(timeoutSec) || 0,
           max_tokens: Number(maxTokens) || 0,
@@ -158,26 +152,25 @@
     return error instanceof Error ? error.message : String(error);
   }
 
-  function effectiveLabel(step: "readable" | "summary"): string {
-    const effective = step === "readable" ? settings?.effective.readable : settings?.effective.summary;
+  function effectiveLabel(): string {
+    const effective = settings?.effective.summary;
     if (!effective) {
-      return "Currently off — this step is skipped.";
+      return "Currently off — meetings publish without a summary.";
     }
     return `Currently: ${effective.base_url} · ${effective.model || "endpoint default model"}`;
   }
 
-  $: current = JSON.stringify({ providers, readable, summary, timeoutSec, maxTokens });
+  $: current = JSON.stringify({ providers, summary, timeoutSec, maxTokens });
   $: isDirty = settings !== null && current !== snapshot;
 </script>
 
 <section class="rounded-box border border-base-300 bg-base-100 shadow-sm">
   <header class="flex items-center justify-between gap-3 px-4 py-3">
     <div>
-      <h2 class="font-semibold">Summaries &amp; cleanup</h2>
+      <h2 class="font-semibold">Meeting summaries</h2>
       <p class="text-xs text-base-content/60">
-        Which model endpoints turn transcripts into readable text and meeting summaries. The full
-        transcript is sent to the endpoint a step uses; with no step enabled, meetings publish raw
-        transcripts and no summary.
+        Which model endpoint writes each meeting's summary. The full transcript is sent to that
+        endpoint; with summaries off, meetings publish without one.
       </p>
     </div>
     <div class="flex items-center gap-2">
@@ -302,98 +295,51 @@
         {/each}
       </section>
 
-      <div class="grid gap-4 lg:grid-cols-2">
-        <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3">
-          <label class="flex cursor-pointer items-center gap-2">
-            <input type="checkbox" class="toggle toggle-primary toggle-sm" bind:checked={readable.enabled} />
-            <h3 class="text-sm font-semibold">Readable transcript cleanup</h3>
-          </label>
-          <label class="flex w-full flex-col gap-1">
-            <span class="text-xs font-medium text-base-content/70">Endpoint</span>
-            <select bind:value={readable.provider} class="select select-sm w-full border-base-300 shadow-none">
-              <option value="">— none —</option>
-              {#each providers as p (p.id)}
-                <option value={p.id}>{p.name || p.baseUrl || p.id}</option>
-              {/each}
-            </select>
-          </label>
-          <label class="flex w-full flex-col gap-1">
-            <span class="text-xs font-medium text-base-content/70">Model</span>
-            <div class="flex w-full items-center gap-1">
-              <input
-                bind:value={readable.model}
-                type="text"
-                class="input input-sm w-full border-base-300 shadow-none"
-                placeholder="endpoint default"
-                list="llm-models-readable"
-              />
-              <button
-                class="btn btn-ghost btn-sm shrink-0"
-                type="button"
-                disabled={readable.provider === "" || loadingModelsFor !== ""}
-                on:click={() => loadModels(readable.provider)}
-              >
-                {#if loadingModelsFor !== "" && loadingModelsFor === readable.provider}
-                  <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-                {:else}
-                  Load models
-                {/if}
-              </button>
-            </div>
-            <datalist id="llm-models-readable">
-              {#each modelsByProvider[readable.provider] ?? [] as model (model.id)}
-                <option value={model.id}>{model.name ?? model.id}</option>
-              {/each}
-            </datalist>
-          </label>
-          <p class="text-xs text-base-content/60">{effectiveLabel("readable")}</p>
-        </section>
-        <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3">
-          <label class="flex cursor-pointer items-center gap-2">
-            <input type="checkbox" class="toggle toggle-primary toggle-sm" bind:checked={summary.enabled} />
-            <h3 class="text-sm font-semibold">Meeting summary</h3>
-          </label>
-          <label class="flex w-full flex-col gap-1">
-            <span class="text-xs font-medium text-base-content/70">Endpoint</span>
-            <select bind:value={summary.provider} class="select select-sm w-full border-base-300 shadow-none">
-              <option value="">— none —</option>
-              {#each providers as p (p.id)}
-                <option value={p.id}>{p.name || p.baseUrl || p.id}</option>
-              {/each}
-            </select>
-          </label>
-          <label class="flex w-full flex-col gap-1">
-            <span class="text-xs font-medium text-base-content/70">Model</span>
-            <div class="flex w-full items-center gap-1">
-              <input
-                bind:value={summary.model}
-                type="text"
-                class="input input-sm w-full border-base-300 shadow-none"
-                placeholder="endpoint default"
-                list="llm-models-summary"
-              />
-              <button
-                class="btn btn-ghost btn-sm shrink-0"
-                type="button"
-                disabled={summary.provider === "" || loadingModelsFor !== ""}
-                on:click={() => loadModels(summary.provider)}
-              >
-                {#if loadingModelsFor !== "" && loadingModelsFor === summary.provider}
-                  <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
-                {:else}
-                  Load models
-                {/if}
-              </button>
-            </div>
-            <datalist id="llm-models-summary">
-              {#each modelsByProvider[summary.provider] ?? [] as model (model.id)}
-                <option value={model.id}>{model.name ?? model.id}</option>
-              {/each}
-            </datalist>
-          </label>
-          <p class="text-xs text-base-content/60">{effectiveLabel("summary")}</p>
-        </section>
-      </div>
+      <section class="grid content-start gap-2 rounded-box border border-base-300 bg-base-200 p-3">
+        <label class="flex cursor-pointer items-center gap-2">
+          <input type="checkbox" class="toggle toggle-primary toggle-sm" bind:checked={summary.enabled} />
+          <h3 class="text-sm font-semibold">Meeting summary</h3>
+        </label>
+        <label class="flex w-full flex-col gap-1">
+          <span class="text-xs font-medium text-base-content/70">Endpoint</span>
+          <select bind:value={summary.provider} class="select select-sm w-full border-base-300 shadow-none">
+            <option value="">— none —</option>
+            {#each providers as p (p.id)}
+              <option value={p.id}>{p.name || p.baseUrl || p.id}</option>
+            {/each}
+          </select>
+        </label>
+        <label class="flex w-full flex-col gap-1">
+          <span class="text-xs font-medium text-base-content/70">Model</span>
+          <div class="flex w-full items-center gap-1">
+            <input
+              bind:value={summary.model}
+              type="text"
+              class="input input-sm w-full border-base-300 shadow-none"
+              placeholder="endpoint default"
+              list="llm-models-summary"
+            />
+            <button
+              class="btn btn-ghost btn-sm shrink-0"
+              type="button"
+              disabled={summary.provider === "" || loadingModelsFor !== ""}
+              on:click={() => loadModels(summary.provider)}
+            >
+              {#if loadingModelsFor !== "" && loadingModelsFor === summary.provider}
+                <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+              {:else}
+                Load models
+              {/if}
+            </button>
+          </div>
+          <datalist id="llm-models-summary">
+            {#each modelsByProvider[summary.provider] ?? [] as model (model.id)}
+              <option value={model.id}>{model.name ?? model.id}</option>
+            {/each}
+          </datalist>
+        </label>
+        <p class="text-xs text-base-content/60">{effectiveLabel()}</p>
+      </section>
       {#if modelsError}
         <div class="alert alert-warning text-sm">{modelsError}</div>
       {/if}

@@ -372,10 +372,10 @@ jobs:
         env:
           DEVICE: cuda
           # No LLM endpoint configured (neither LLM_BASE_URL nor
-          # OPENROUTER_API_KEY): with no base URL the recorder skips both the
-          # readable-transcript cleanup and the summary. The LLM pass was the
-          # dominant per-meeting wall-clock cost on this preview pipeline;
-          # skipping it keeps opt-in previews closer to GPU-bound time.
+          # OPENROUTER_API_KEY): with no base URL the recorder skips the
+          # summary. The LLM pass was the dominant per-meeting wall-clock cost
+          # on this preview pipeline; skipping it keeps opt-in previews closer
+          # to GPU-bound time.
         run: |
           set -euo pipefail
           RECORDINGS_DIR="$RAW_DIR" \

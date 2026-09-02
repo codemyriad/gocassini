@@ -93,7 +93,6 @@ export interface Settings {
   quality: SettingsQuality;
   device_override: string;
   model_override: string;
-  transcription_terms: string[];
   source: string;
   detected_gpu: boolean;
   cores: number;
@@ -105,7 +104,6 @@ export interface SettingsUpdate {
   quality: SettingsQuality;
   device_override: string;
   model_override: string;
-  transcription_terms: string[];
 }
 
 // --- LLM settings (D-696): mirror GET/PUT <basePath>/settings/llm. Keys are
@@ -133,12 +131,10 @@ export interface LLMEffectiveStep {
 
 export interface LLMSettings {
   providers: LLMProviderView[];
-  readable: LLMStep;
   summary: LLMStep;
   timeout_sec: number;
   max_tokens: number;
   effective: {
-    readable: LLMEffectiveStep | null;
     summary: LLMEffectiveStep | null;
   };
 }
@@ -154,7 +150,6 @@ export interface LLMProviderUpdate {
 
 export interface LLMSettingsUpdate {
   providers?: LLMProviderUpdate[];
-  readable?: LLMStep;
   summary?: LLMStep;
   timeout_sec?: number;
   max_tokens?: number;

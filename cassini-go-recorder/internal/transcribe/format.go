@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -323,7 +322,7 @@ type provStep struct {
 // the answer on its own: it depends on which decoder ran (see
 // AudioBoundedWordEnds in backend.go), and a manifest that asserted it here
 // would claim it for every future backend too.
-func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int64, streams []AudioStream, segments []Segment, sttBackend string, sttModelID ModelID, sttDevice, llmModel string, hasReadable bool, summaryModel string, hasSummary bool, additional []AdditionalTranscript, attribution *AttributionProvenance, wordTimings *WordTimingProvenance) error {
+func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int64, streams []AudioStream, segments []Segment, sttBackend string, sttModelID ModelID, sttDevice, summaryModel string, hasSummary bool, additional []AdditionalTranscript, attribution *AttributionProvenance, wordTimings *WordTimingProvenance) error {
 	wordCount := 0
 	for _, seg := range segments {
 		wordCount += len(seg.Words)
@@ -352,10 +351,7 @@ func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int
 			})
 		}
 	}
-	if hasReadable {
-		files.ReadableTranscript = "transcript.readable.v1.json"
-		files.Captions = "captions.vtt"
-	}
+	files.Captions = "captions.vtt"
 	if hasSummary {
 		files.Summary = "summary.md"
 	}
@@ -373,12 +369,6 @@ func WriteManifest(path, srcBasename string, srcDurationMS, digestDurationMS int
 		// false record: absence is the honest answer, and it is the one shape
 		// every existing consumer already handles.
 		WordTimings: wordTimings,
-	}
-	if hasReadable {
-		prov.ReadableCleanup = &provStep{
-			Backend: "openai-compatible",
-			Model:   llmModel,
-		}
 	}
 	if hasSummary {
 		prov.MeetingSummary = &provStep{
@@ -709,114 +699,6 @@ func ValidateSegments(segments []Segment) error {
 		}
 	}
 	return nil
-}
-
-// ApplyReadableText replaces segment text with LLM-cleaned text while
-// keeping original word-level timestamps.
-func ApplyReadableText(original, readable []Segment) []Segment {
-	out := make([]Segment, len(original))
-	copy(out, original)
-	for i := range out {
-		if i < len(readable) {
-			out[i].Text = readable[i].Text
-			// Re-distribute word timings proportionally over the cleaned text.
-			out[i].Words = redistributeWords(out[i].Words, readable[i].Text)
-		}
-	}
-	return out
-}
-
-// redistributeWords keeps original timestamps but splits cleaned text
-// proportionally across the original word slots.
-func redistributeWords(origWords []Word, cleanedText string) []Word {
-	cleanWords := strings.Fields(cleanedText)
-	if len(cleanWords) == 0 || len(origWords) == 0 {
-		return origWords
-	}
-
-	// Map cleaned words onto the original time slots proportionally.
-	out := make([]Word, len(cleanWords))
-	origN := len(origWords)
-	cleanN := len(cleanWords)
-	segStart := origWords[0].StartMS
-	segEnd := origWords[origN-1].EndMS
-	totalMS := segEnd - segStart
-	if totalMS <= 0 {
-		totalMS = 1
-	}
-
-	// Carry attribution provenance across the rewrite. Cleaned words are new
-	// text on interpolated slots, so the mapping has to be temporal — and it
-	// has to hold in both directions:
-	//
-	// cleaned→source: each cleaned word inherits the measurement of its
-	// SINGLE best-overlapping source word. "Any overlap" would let one
-	// contradicted source word flag two cleaned words, deleting legitimate
-	// neighbouring text from the summary.
-	//
-	// source→cleaned: every flagged source word must end up flagging some
-	// cleaned word. The first direction alone guarantees nothing when cleanup
-	// shortens the text (the ordinary case): every slot is then wider than a
-	// source word, the flagged word straddles two slots and is the argmax of
-	// neither, and the flag silently vanishes — readable cleanup and
-	// summarisation normally share one configured LLM, so the summary would
-	// read the crosstalk word while the canonical transcript shows it
-	// flagged. A flagged source not already represented through the first
-	// direction marks exactly its best-overlapping cleaned word, so the flag
-	// can neither vanish nor spread to non-overlapping neighbours.
-	bestSrc := make([]int, cleanN)
-	slotStart := make([]int64, cleanN)
-	slotEnd := make([]int64, cleanN)
-	// flaggedGap marks cleaned words whose gap already came from a flagged
-	// source; further flagged contributions take the max. A gap inherited
-	// from an unflagged source only is kept as-is.
-	flaggedGap := make([]bool, cleanN)
-	for i, w := range cleanWords {
-		t0 := segStart + int64(math.Round(float64(i)*float64(totalMS)/float64(cleanN)))
-		t1 := segStart + int64(math.Round(float64(i+1)*float64(totalMS)/float64(cleanN)))
-		if t1 > segEnd {
-			t1 = segEnd
-		}
-		out[i] = Word{Text: w, StartMS: t0, EndMS: t1}
-		slotStart[i], slotEnd[i] = t0, t1
-		best, bestOverlap := -1, int64(0)
-		for j, orig := range origWords {
-			overlap := minInt64(t1, orig.EndMS) - maxInt64(t0, orig.StartMS)
-			if overlap > bestOverlap {
-				best, bestOverlap = j, overlap
-			}
-		}
-		bestSrc[i] = best
-		if best >= 0 {
-			src := origWords[best]
-			out[i].HasAttributionGap = src.HasAttributionGap
-			out[i].AttributionGapDB = src.AttributionGapDB
-			if src.LowConfidenceSpeaker {
-				out[i].LowConfidenceSpeaker = true
-				flaggedGap[i] = src.HasAttributionGap
-			}
-		}
-	}
-
-	represented := make([]bool, origN)
-	for _, j := range bestSrc {
-		if j >= 0 {
-			represented[j] = true
-		}
-	}
-	for j, orig := range origWords {
-		if !orig.LowConfidenceSpeaker || represented[j] {
-			continue
-		}
-		i := bestSlotForSourceWord(orig, slotStart, slotEnd, segStart, totalMS, cleanN)
-		out[i].LowConfidenceSpeaker = true
-		if orig.HasAttributionGap && (!flaggedGap[i] || orig.AttributionGapDB > out[i].AttributionGapDB) {
-			out[i].AttributionGapDB = orig.AttributionGapDB
-			out[i].HasAttributionGap = true
-			flaggedGap[i] = true
-		}
-	}
-	return out
 }
 
 // bestSlotForSourceWord picks the cleaned slot a flagged source word marks:

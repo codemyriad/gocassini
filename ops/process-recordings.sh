@@ -4,7 +4,7 @@
 # with sherpa-onnx for STT.
 #
 # Set LLM_BASE_URL (any OpenAI-compatible endpoint, hosted or self-hosted) for
-# LLM-based readable transcript cleanup, plus OPENROUTER_API_KEY if it needs a
+# LLM-based meeting summaries, plus OPENROUTER_API_KEY if it needs a
 # key. Setting only OPENROUTER_API_KEY defaults the endpoint to OpenRouter.
 # Set DEVICE=cuda to use GPU acceleration (default: cpu).
 #
@@ -22,7 +22,7 @@ export CASSINI_CACHE_ROOT="${CASSINI_CACHE_ROOT:-/mnt/data/cassini/.cache}"
 export LD_LIBRARY_PATH="${CASSINI_LIB_DIR}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 if [[ -z "${LLM_BASE_URL:-}" && -z "${OPENROUTER_BASE_URL:-}" && -z "${OPENROUTER_API_KEY:-}" ]]; then
-  echo "warn: no LLM endpoint configured — readable transcript (LLM cleanup) and summaries will be skipped" >&2
+  echo "warn: no LLM endpoint configured — meeting summaries will be skipped" >&2
 fi
 
 mkdir -p "$PROCESSED_DIR"
