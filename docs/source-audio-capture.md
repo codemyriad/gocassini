@@ -226,6 +226,31 @@ It does not cover real Nextcloud, real Talk, real Janus, AppAPI's proxy and its
 header forwarding, or the operator's Go handler. Those gaps are deliberate and
 named in the CI job.
 
+The server half is `harness/bin/ci-e2e-installed-exapp-capture.sh`, which
+`publish-exapp-image.yml` runs against the exact ExApp image: Nextcloud with
+AppAPI/HaRP installs the image, the companion is packaged around the payload
+that image carries and enabled on that Nextcloud, and the script then asserts
+what a browser would have met — a real Talk call page and Talk's index carry
+the payload script and an enabled initial state for a logged-in participant,
+Files and Talk's guest page carry nothing, flipping the ExApp config flips the
+state, the assets and permission poll answer through the proxy — and what the
+payload's upload would have done: a participant's synthetic capture lands
+byte-for-byte under the capture root owned by the authenticated user, a retry
+replaces it, a non-participant gets 403, an anonymous caller is refused at the
+proxy, a malformed sidecar gets the handler's 400 through the proxy, and a
+two-segment capture lands whole. It needs no browser because it stands in for
+the payload at the one point where its behaviour is fully specified, the
+multipart POST in `uploadCapture`.
+
+```bash
+IMAGE_REF=cassini-exapp:e2e-v3-cpu-gpu ./harness/bin/ci-e2e-installed-exapp-capture.sh
+```
+
+What neither leg covers is the two joined: a browser in a real Talk call,
+through a real SFU, posting to the real proxy. That is the manual check in
+"Trying it" below; the operator's `capture upload: room=… owner=… segments=…
+bytes=…` log line is the runtime evidence that it worked.
+
 ## Trying it
 
 Three things have to be true before a single byte is captured, and they are
