@@ -144,10 +144,10 @@ a minute rather than at the next page load. The upload endpoint refuses as a
 second line, and a client that gets that refusal deletes its buffer rather than
 keeping it for a retry.
 
-This is the containment boundary for the known limitations below — consent
-recorded per browser origin rather than per Nextcloud account, and uploads
-without a per-participant quota. Both are acceptable for a deployment whose
-operator chose to run this prototype; neither is acceptable for one that merely
+This is the containment boundary for the known limitations below — chiefly
+consent recorded per browser origin rather than per Nextcloud account. That is
+acceptable for a deployment whose operator chose to run this prototype; it is
+not acceptable for one that merely
 upgraded.
 
 `CASSINI_SOURCE_AUDIO_INGEST` decides whether collected audio reaches a
@@ -339,15 +339,18 @@ logged-in user. The client fails closed at every one of those.
   swept — see the capture quota and retention settings — but with ingestion on
   the rendered `_work/sourceaudio/source-<speaker>.wav` travels with the meeting
   bundle into `current/`, which retention never prunes. That copy is unbounded
-  and outlives the capture it came from. Nothing rate-limits a participant
-  either: repeated uploads at the 512 MiB per-request cap can fill the volume
-  even with ingestion disabled. This is the largest remaining operational risk
-  of enabling capture at all.
-- **Erasure.** A participant can withdraw consent — which stops a recording in
-  progress and discards a buffer not yet sent — but there is nothing they can do
-  about audio already uploaded. They cannot see what they have uploaded, cannot
-  ask for it back, and cannot have it deleted except by an administrator
-  removing the directory from the volume by hand.
+  and outlives the capture it came from, expiring with neither the capture
+  quota nor the capture sweep. Separately, nothing rate-limits a participant:
+  the quotas bound how much may be held at once, not how often somebody may
+  upload, so churn is unbounded even though volume is not.
+- **Erasure.** Withdrawing consent stops a recording in progress and discards
+  its buffer. After the call it is weaker than it sounds: it reliably stops a
+  buffered recording being sent, because the retry path checks consent first,
+  but it does not delete what is already buffered in the browser. And there is
+  nothing a participant can do about audio already uploaded. They cannot see
+  what they have uploaded, cannot ask for it back, and cannot have it deleted
+  ahead of the sweep except by an administrator removing the directory by
+  hand.
 - **Silent outcomes at the client.** A capture the server refuses — the terminal
   status allowlist, 400/403/413/415/422 — is deleted from OPFS unsent, and so is
   one that has failed `MAX_UPLOAD_ATTEMPTS` times. Both are deliberate: keeping

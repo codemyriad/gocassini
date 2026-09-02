@@ -180,6 +180,8 @@ func TestMeasureCaptureRootDoesNotCreateWhatItMeasures(t *testing.T) {
 // recording, anything else makes it keep the buffer and retry. A quota the
 // owner spent themselves is terminal; a full volume is not theirs to fix.
 func TestCaptureAdmissionStatusPerRefusalReason(t *testing.T) {
+	t.Cleanup(resetCaptureAdmissions)
+	resetCaptureAdmissions()
 	root := t.TempDir()
 	seedCapture(t, root, "room-a", "alice", 1700, 4<<20, time.Hour)
 	limits := captureLimits{
@@ -234,6 +236,8 @@ func TestCaptureAdmissionStatusPerRefusalReason(t *testing.T) {
 // floor, because the only honest assumption about an undeclared body is that it
 // is as large as one is allowed to be.
 func TestCaptureAdmissionChargesAnUndeclaredBodyTheWholeCeiling(t *testing.T) {
+	t.Cleanup(resetCaptureAdmissions)
+	resetCaptureAdmissions()
 	root := t.TempDir()
 	limits := captureLimits{minFreeDisk: 1 << 30}
 	// Room for the floor, but not for the floor plus a maximum upload.
@@ -627,6 +631,8 @@ func TestCaptureFreeBytesWalksUpToAnExistingAncestor(t *testing.T) {
 // A capture root whose contents cannot be measured must refuse rather than let
 // an unbounded upload through, and it must refuse retryably.
 func TestCaptureAdmissionRefusesWhenTheRootCannotBeMeasured(t *testing.T) {
+	t.Cleanup(resetCaptureAdmissions)
+	resetCaptureAdmissions()
 	root := t.TempDir()
 	unreadable := filepath.Join(root, "room-a")
 	if err := os.MkdirAll(unreadable, 0o750); err != nil {
@@ -648,6 +654,8 @@ func TestCaptureAdmissionRefusesWhenTheRootCannotBeMeasured(t *testing.T) {
 }
 
 func TestCaptureAdmissionWithNoLimitsAdmitsUpToTheRequestCeiling(t *testing.T) {
+	t.Cleanup(resetCaptureAdmissions)
+	resetCaptureAdmissions()
 	root := t.TempDir()
 	seedCapture(t, root, "room-a", "alice", 1700, 1<<20, time.Hour)
 

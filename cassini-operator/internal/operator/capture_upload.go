@@ -507,6 +507,19 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 					return
 				}
 				sidecar = &parsed
+				// A re-upload replaces a capture that is still on disk, and
+				// until this point the quota was charged as if both would
+				// coexist. They never do: promotion sets the old one aside and
+				// the sweep removes it. Charging it would let a participant's
+				// own previous copy of this very call refuse the replacement,
+				// and that refusal is terminal — the browser deletes its only
+				// copy. The room and call are only knowable here, because the
+				// sidecar is the first part on the wire.
+				replaced, err := captureDirBytes(
+					captureUploadDir(rt.cfg.CaptureRoot, parsed.RoomToken, owner, parsed.CallStartWallMS))
+				if err == nil {
+					admission = admission.credit(replaced)
+				}
 			case captureSegmentPart:
 				name := filepath.Base(part.FileName())
 				if !captureSafeName.MatchString(name) || name == captureSidecarName {

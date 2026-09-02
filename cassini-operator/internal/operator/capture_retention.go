@@ -382,6 +382,13 @@ func (a captureAdmission) remaining() int64 {
 	if limit > captureMaxUploadBytes {
 		limit = captureMaxUploadBytes
 	}
+	// Never more than was reserved. The reservation is what every concurrent
+	// caller was told to expect, so a request allowed to stream past it would
+	// spend an allowance somebody else has already been promised — and the
+	// bounds would stop being bounds, which is the whole point of taking one.
+	if a.reserved > 0 && limit > a.reserved {
+		limit = a.reserved
+	}
 	return limit
 }
 
@@ -415,6 +422,17 @@ func (a captureAdmission) overrunIfSpent() *captureRefusal {
 	return a.overrun()
 }
 
+// credit gives back allowance for bytes that this upload will itself displace.
+// It never raises the reservation, which bounds the disk rather than the quota.
+func (a captureAdmission) credit(n int64) captureAdmission {
+	if n <= 0 {
+		return a
+	}
+	a.ownerRemaining += n
+	a.totalRemaining += n
+	return a
+}
+
 func (a captureAdmission) consume(n int64) captureAdmission {
 	a.ownerRemaining -= n
 	a.totalRemaining -= n
@@ -439,9 +457,29 @@ func (a captureAdmission) consume(n int64) captureAdmission {
 // which point its bytes are either on disk and measurable or gone.
 var (
 	captureAdmissionMu sync.Mutex
-	captureInFlight    = map[string]int64{}
-	captureInFlightAll int64
+	// captureInFlightDisk is what admitted uploads may still write, held at the
+	// per-request ceiling because a declared length may be wrong. It guards the
+	// DISK, whose refusal is retryable.
+	//
+	// It deliberately does not feed the per-owner quota. That refusal is
+	// terminal — the client deletes its only copy — and holding a ceiling per
+	// concurrent request would let a participant's own parallel uploads spend
+	// their allowance and destroy a recording over a condition that lasts
+	// seconds. The quota is therefore measured from disk and is approximate by
+	// a bounded amount: at most the concurrent uploads in flight, which the
+	// disk floor already limits.
+	captureInFlightDisk int64
 )
+
+// resetCaptureAdmissions drops every outstanding reservation. It exists for
+// tests, which call admitCaptureUpload directly and so never reach the
+// handler's release; without it one test's reservation refuses the next one's
+// upload and the failure lands somewhere unrelated.
+func resetCaptureAdmissions() {
+	captureAdmissionMu.Lock()
+	defer captureAdmissionMu.Unlock()
+	captureInFlightDisk = 0
+}
 
 // releaseCaptureAdmission gives back what an upload reserved and did not use.
 func releaseCaptureAdmission(owner string, reserved int64) {
@@ -450,14 +488,9 @@ func releaseCaptureAdmission(owner string, reserved int64) {
 	}
 	captureAdmissionMu.Lock()
 	defer captureAdmissionMu.Unlock()
-	captureInFlightAll -= reserved
-	if captureInFlightAll < 0 {
-		captureInFlightAll = 0
-	}
-	if remaining := captureInFlight[owner] - reserved; remaining > 0 {
-		captureInFlight[owner] = remaining
-	} else {
-		delete(captureInFlight, owner)
+	captureInFlightDisk -= reserved
+	if captureInFlightDisk < 0 {
+		captureInFlightDisk = 0
 	}
 }
 
@@ -487,7 +520,7 @@ func admitCaptureUpload(root, owner string, declared int64, limits captureLimits
 				message: "capture storage cannot be measured right now; try again later",
 			}
 		}
-		if free-need-captureInFlightAll < limits.minFreeDisk {
+		if free-need-captureInFlightDisk < limits.minFreeDisk {
 			return captureAdmission{}, &captureRefusal{
 				status:  http.StatusInsufficientStorage,
 				reason:  "disk_floor",
@@ -501,6 +534,12 @@ func admitCaptureUpload(root, owner string, declared int64, limits captureLimits
 		totalRemaining: captureMaxUploadBytes,
 	}
 	if limits.ownerQuota <= 0 && limits.totalQuota <= 0 {
+		// No quotas, but the free-space floor above still needs the
+		// reservation: without it concurrent uploads read the same reading of
+		// the disk and each believe they fit.
+		captureInFlightDisk += captureMaxUploadBytes
+		admission.reserved = captureMaxUploadBytes
+		admission.owner = owner
 		return admission, nil
 	}
 	usage, err := measureCaptureRoot(root)
@@ -511,13 +550,11 @@ func admitCaptureUpload(root, owner string, declared int64, limits captureLimits
 			message: "capture storage cannot be measured right now; try again later",
 		}
 	}
-	// Bytes already promised to uploads still arriving count against the next
-	// one, or concurrent callers each spend the same allowance.
 	if limits.ownerQuota > 0 {
-		admission.ownerRemaining = limits.ownerQuota - usage.ByOwner[owner] - captureInFlight[owner]
+		admission.ownerRemaining = limits.ownerQuota - usage.ByOwner[owner]
 	}
 	if limits.totalQuota > 0 {
-		admission.totalRemaining = limits.totalQuota - usage.Bytes - captureInFlightAll
+		admission.totalRemaining = limits.totalQuota - usage.Bytes
 	}
 	// Charge the declared length before anything is written. The streaming
 	// check catches a body that lied; this catches the ordinary case one
@@ -533,9 +570,14 @@ func admitCaptureUpload(root, owner string, declared int64, limits captureLimits
 			return captureAdmission{}, refusal
 		}
 	}
-	captureInFlight[owner] += need
-	captureInFlightAll += need
-	admission.reserved = need
+	// Reserved at the CEILING, deliberately, even when a smaller length was
+	// declared. The declaration is the client's claim and the contract above
+	// says it may be wrong; a reservation that trusted it would let several
+	// requests each declare a byte and then stream half a gigabyte. What is
+	// charged against the quota is still the honest declared figure — only what
+	// is HELD against concurrent callers is the worst case.
+	captureInFlightDisk += captureMaxUploadBytes
+	admission.reserved = captureMaxUploadBytes
 	admission.owner = owner
 	return admission, nil
 }

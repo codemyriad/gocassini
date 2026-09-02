@@ -219,8 +219,11 @@ upload is rendered into a full-length per-speaker WAV
 is promoted into `current/` — the one directory retention never prunes. It is not
 published to Nextcloud Files, and nothing deletes it when the meeting is deleted.
 
-Uploads are not quota-limited per participant either. The 512 MiB ceiling applies
-to one request, not to a person, a room, or a day.
+Uploads are bounded per participant as well as per request: the 512 MiB ceiling
+applies to one request, `CASSINI_CAPTURE_OWNER_QUOTA_MB` (2 GiB) to a person,
+and `CASSINI_CAPTURE_TOTAL_QUOTA_MB` (20 GiB) to the installation. What is not
+bounded is a rate: nothing limits how often somebody may upload, only how much
+may be held at once.
 
 ### What a participant can and cannot do
 
@@ -309,13 +312,17 @@ and the [env-var reference](./exapp-talk-env-vars.md) for the full set of knobs.
 - **A delivered attempt's staging copy is removed once Nextcloud accepts it**, so
   the full recording does not linger on the app volume outside the Nextcloud
   access model.
-- **Participant source audio is never pruned.** No retention policy covers the
-  capture root and nothing sweeps it, so uploads stay until somebody deletes them
-  from the volume or the volume itself is deleted. Deleting the job, or the
-  published recording in Nextcloud Files, leaves them where they are. With
-  ingestion enabled the rendered per-speaker WAV in the job's meeting bundle is
-  kept as well, in the `current/` copy that retention never prunes — so such an
-  installation holds each participant's audio twice.
+- **Participant source audio is swept on its own schedule.** The capture root
+  is not covered by `CASSINI_ARTIFACT_RETENTION`; a separate sweep removes
+  uploads older than `CASSINI_CAPTURE_MAX_AGE_HOURS` (two weeks by default) when
+  the app starts and after each published meeting. Deleting the job, or the
+  published recording in Nextcloud Files, does not bring that forward: an upload
+  outlives the meeting a reader can see, until its own age expires.
+
+  With ingestion enabled there is a second copy that this does **not** cover.
+  The rendered per-speaker WAV in the job's meeting bundle is kept in the
+  `current/` copy, which retention never prunes, so such an installation holds
+  each participant's audio twice and only one of them expires.
 - **Published recordings persist in Nextcloud Files** independently of Cassini.
   Removing or disabling the Cassini app does not delete them; they are managed as
   ordinary Nextcloud files.
