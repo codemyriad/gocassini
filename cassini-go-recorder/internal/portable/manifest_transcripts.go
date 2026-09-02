@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // The published manifest indexes transcript bodies stored in independent
@@ -75,6 +76,25 @@ type TranscriptBody struct {
 	Language  string           `json:"language,omitempty"`
 	WordCount int              `json:"wordCount"`
 	Items     []TranscriptItem `json:"items"`
+}
+
+// ValidateTranscriptBody enforces the published cassini.words.v1 body shape.
+// Each timed item is one word; paragraph-sized text belongs in a readable or
+// display body instead.
+func ValidateTranscriptBody(body TranscriptBody) error {
+	if body.Format != "cassini.words.v1" {
+		return fmt.Errorf("unsupported words transcript format %q", body.Format)
+	}
+	if body.WordCount != len(body.Items) {
+		return fmt.Errorf("words transcript wordCount=%d does not match %d items", body.WordCount, len(body.Items))
+	}
+	for index, item := range body.Items {
+		text := strings.TrimSpace(item.Text)
+		if text == "" || strings.IndexFunc(item.Text, unicode.IsSpace) >= 0 {
+			return fmt.Errorf("words transcript item %d must contain exactly one word", index)
+		}
+	}
+	return nil
 }
 
 // NamedEncodedPayload is one transcript body, already encoded, paired with
@@ -215,6 +235,20 @@ func TranscriptIDToTagPrefix(id string) string {
 // EncodeTranscriptBody compresses and encodes one transcript body and returns
 // an EncodedPayload plus a PayloadRef ready to embed in a manifest index.
 func EncodeTranscriptBody(body any, id string, role string, chunkSize int) (EncodedPayload, PayloadRef, error) {
+	if role != RoleReadableCleanup && role != RoleDisplay {
+		switch typed := body.(type) {
+		case TranscriptBody:
+			if err := ValidateTranscriptBody(typed); err != nil {
+				return EncodedPayload{}, PayloadRef{}, fmt.Errorf("transcript %q: %w", id, err)
+			}
+		case *TranscriptBody:
+			if typed != nil {
+				if err := ValidateTranscriptBody(*typed); err != nil {
+					return EncodedPayload{}, PayloadRef{}, fmt.Errorf("transcript %q: %w", id, err)
+				}
+			}
+		}
+	}
 	if chunkSize <= 0 {
 		chunkSize = DefaultPayloadChunkSize
 	}

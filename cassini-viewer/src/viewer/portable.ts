@@ -624,9 +624,10 @@ export function buildTranscriptWordsFromPortable(
     const endMs = safeToInt(segment.endMs, startMs);
     const text = typeof segment.text === "string" ? segment.text : "";
     const wordText = text.trim();
-    const words = wordText
-      ? [{ id: "w_0", text: wordText, startMs, endMs }]
-      : [];
+    if (!wordText || /\s/u.test(text)) {
+      throw new Error(`portable transcript item ${index} must contain exactly one word`);
+    }
+    const words = [{ id: "w_0", text: wordText, startMs, endMs }];
     const speaker =
       typeof segment.speaker === "string" && segment.speaker.trim() !== "" ? segment.speaker : undefined;
     // Attribution provenance rides on the raw-asr items themselves (optional
@@ -1509,29 +1510,6 @@ function mergeSmallReadableSegments(
     merged.push(segment);
   }
   return merged;
-}
-
-export function splitTextIntoWords(
-  text: string,
-  startMs: number,
-  endMs: number,
-): Array<{ id: string; text: string; startMs: number; endMs: number }> {
-  const parts = typeof text === "string" ? text.trim().split(/\s+/).filter(Boolean) : [];
-  if (parts.length === 0) {
-    return [];
-  }
-
-  const span = Math.max(0, endMs - startMs);
-  return parts.map((part, index) => {
-    const from = parts.length <= 1 ? startMs : startMs + Math.floor((span * index) / parts.length);
-    const to = parts.length <= 1 ? endMs : startMs + Math.floor((span * (index + 1)) / parts.length);
-    return {
-      id: `w_${index}`,
-      text: part,
-      startMs: Math.min(Math.max(from, startMs), endMs),
-      endMs: Math.max(Math.min(to, endMs), startMs),
-    };
-  });
 }
 
 function normalizeSpeakers(value: unknown): TranscriptSpeaker[] {

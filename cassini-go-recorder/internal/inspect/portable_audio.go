@@ -880,6 +880,11 @@ func decodeTranscriptBody(tags map[string]string, entry portable.TranscriptEntry
 	if err := json.Unmarshal(rawJSON, &body); err != nil {
 		return portable.TranscriptBody{}, warnings, fmt.Errorf("parse transcript body JSON: %w", err)
 	}
+	if entry.Role != portable.RoleReadableCleanup && entry.Role != portable.RoleDisplay {
+		if err := portable.ValidateTranscriptBody(body); err != nil {
+			return portable.TranscriptBody{}, warnings, fmt.Errorf("invalid published transcript body: %w", err)
+		}
+	}
 	return body, warnings, nil
 }
 

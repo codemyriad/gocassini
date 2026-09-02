@@ -355,7 +355,7 @@ describe("describeMeeting", () => {
     );
   });
 
-  it("groups portable fallback transcript items into multi-word readable blocks", () => {
+  it("groups published word items into multi-word readable blocks", () => {
     const portable = {
       meeting: { durationMs: 10_000 },
       speakers: [{ id: "spk_1", label: "Chris" }],
@@ -389,6 +389,16 @@ describe("describeMeeting", () => {
     });
   });
 
+  it("rejects a transcript body item containing more than one word", () => {
+    expect(() => buildTranscriptWordsFromPortable({
+      meeting: { durationMs: 1000 },
+      speakers: [{ id: "spk_1", label: "Chris" }],
+      transcript: {
+        items: [{ speaker: "spk_1", startMs: 0, endMs: 500, text: "two words" }],
+      },
+    })).toThrow("portable transcript item 0 must contain exactly one word");
+  });
+
   it("keeps a hard break across large pauses or speaker changes", () => {
     const portable = {
       meeting: { durationMs: 20_000 },
@@ -399,9 +409,12 @@ describe("describeMeeting", () => {
       transcript: {
         items: [
           { id: "seg_1", speaker: "spk_1", startMs: 0, endMs: 500, text: "Okay," },
-          { id: "seg_2", speaker: "spk_1", startMs: 500, endMs: 1000, text: "that works." },
-          { id: "seg_3", speaker: "spk_1", startMs: 6000, endMs: 6500, text: "Long pause." },
-          { id: "seg_4", speaker: "spk_2", startMs: 7000, endMs: 7600, text: "Other speaker." },
+          { id: "seg_2", speaker: "spk_1", startMs: 500, endMs: 750, text: "that" },
+          { id: "seg_3", speaker: "spk_1", startMs: 750, endMs: 1000, text: "works." },
+          { id: "seg_4", speaker: "spk_1", startMs: 6000, endMs: 6250, text: "Long" },
+          { id: "seg_5", speaker: "spk_1", startMs: 6250, endMs: 6500, text: "pause." },
+          { id: "seg_6", speaker: "spk_2", startMs: 7000, endMs: 7300, text: "Other" },
+          { id: "seg_7", speaker: "spk_2", startMs: 7300, endMs: 7600, text: "speaker." },
         ],
       },
     };
@@ -421,94 +434,6 @@ describe("describeMeeting", () => {
     expect(readable.segments[0]?.text).toBe("Okay, that works.");
     expect(readable.segments[1]?.text).toBe("Long pause.");
     expect(readable.segments[2]?.text).toBe("Other speaker.");
-  });
-
-  it("keeps an interrupted readable block whole instead of splitting it (D-690)", () => {
-    const portable = {
-      meeting: { durationMs: 110_000 },
-      speakers: [
-        { id: "spk_chima", label: "chima" },
-        { id: "spk_silvio", label: "Silvio" },
-      ],
-      transcript: {
-        items: [
-          {
-            id: "seg_chima",
-            speaker: "spk_chima",
-            startMs: 54_981,
-            endMs: 83_541,
-            text: "Actually, I was wondering if I should have pinged you in the afternoon, and I didn't because I was busy doing something else. It's a pity, Chris, you're ruining everything.",
-          },
-          {
-            id: "seg_silvio",
-            speaker: "spk_silvio",
-            startMs: 64_837,
-            endMs: 78_757,
-            text: "Telling Mattia off about homework.",
-          },
-        ],
-      },
-      readableTranscript: {
-        version: "transcript.readable.v1",
-        speakers: [
-          { id: "spk_chima", label: "chima" },
-          { id: "spk_silvio", label: "Silvio" },
-        ],
-        segments: [
-          {
-            id: "readable_000002",
-            speaker: "spk_chima",
-            startMs: 54_981,
-            endMs: 83_541,
-            text: "Actually, I was wondering if I should have pinged you in the afternoon, and I didn't because I was busy doing something else. It's a pity, Chris, you're ruining everything.",
-            words: [
-              "Actually,","I","was","wondering","if","I","should","have","pinged","you","in","the","afternoon,","and","I","didn't","because","I","was","busy","doing","something","else.","It's","a","pity,","Chris,","you're","ruining","everything.",
-            ].map((text, index, words) => ({
-              text,
-              startMs: 54_981 + Math.floor(((83_541 - 54_981) * index) / words.length),
-              endMs: 54_981 + Math.floor(((83_541 - 54_981) * (index + 1)) / words.length),
-            })),
-          },
-          {
-            id: "readable_000003",
-            speaker: "spk_silvio",
-            startMs: 64_837,
-            endMs: 78_757,
-            text: "Telling Mattia off about homework.",
-            words: [
-              { text: "Telling", startMs: 64_837, endMs: 65_470 },
-              { text: "Mattia", startMs: 65_470, endMs: 66_102 },
-              { text: "off", startMs: 66_102, endMs: 66_735 },
-              { text: "about", startMs: 66_735, endMs: 67_368 },
-              { text: "homework.", startMs: 67_368, endMs: 68_001 },
-            ],
-          },
-        ],
-      },
-    };
-
-    const transcript = buildTranscriptWordsFromPortable(portable);
-    const readable = buildReadableTranscriptFromPortable(portable, transcript);
-    const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
-    const chimaBlocks = display.blocks.filter((block) => block.speaker === "spk_chima");
-
-    // The readable splitter was deleted in D-690: it rewrote LLM-cleaned prose
-    // by word count, and when it did fire it emitted blocks out of time order.
-    // It also never fired on a real producer artifact — not for want of readable
-    // words, which every packed meeting carries per readable segment, but
-    // because every packed meeting ALSO carries a baked display transcript, and
-    // the viewer only rebuilds one (and so only reaches the splitter) when that
-    // is missing. Interruptions are now surfaced by src/core/overlap.ts, which
-    // annotates the turn rather than cutting it up.
-    expect(chimaBlocks).toHaveLength(1);
-    expect(chimaBlocks[0]?.text).toContain("Actually, I was wondering");
-    expect(chimaBlocks[0]?.text).toContain("It's a pity, Chris, you're ruining everything.");
-    expect(display.blocks.map((block) => block.id)).not.toContain(
-      expect.stringContaining("__split_"),
-    );
-    expect(display.blocks.map((block) => block.startMs)).toEqual(
-      [...display.blocks.map((block) => block.startMs)].sort((left, right) => left - right),
-    );
   });
 
   it("keeps an interrupted block whole even with exact transcript words (D-690)", () => {
@@ -559,13 +484,19 @@ describe("describeMeeting", () => {
             endMs,
             text,
           })),
-          {
-            id: "seg_silvio",
+          ...[
+            ["Telling", 64_837, 65_470],
+            ["Mattia", 65_470, 66_102],
+            ["off", 66_102, 66_735],
+            ["about", 66_735, 67_368],
+            ["homework.", 67_368, 68_001],
+          ].map(([text, startMs, endMs], index) => ({
+            id: `seg_silvio_${index}`,
             speaker: "spk_silvio",
-            startMs: 64_837,
-            endMs: 78_757,
-            text: "Telling Mattia off about homework.",
-          },
+            startMs,
+            endMs,
+            text,
+          })),
         ],
       },
       readableTranscript: {
@@ -596,7 +527,7 @@ describe("describeMeeting", () => {
             startMs: 64_837,
             endMs: 78_757,
             text: "Telling Mattia off about homework.",
-            sourceSegmentIds: ["seg_silvio"],
+            sourceSegmentIds: [0, 1, 2, 3, 4].map((index) => `seg_silvio_${index}`),
           },
         ],
       },
@@ -607,8 +538,8 @@ describe("describeMeeting", () => {
     const display = buildDisplayTranscriptFromArtifacts(transcript, readable);
     const chimaBlocks = display.blocks.filter((block) => block.speaker === "spk_chima");
 
-    // See the note on the previous test: the splitter was deleted in D-690, so
-    // exact transcript words no longer cut the block in two either.
+    // Exact transcript words do not cut the readable block in two; the viewer
+    // annotates the interruption without rewriting the cleaned prose.
     expect(chimaBlocks).toHaveLength(1);
     expect(chimaBlocks[0]?.text).toContain("doing something else.");
     expect(chimaBlocks[0]?.text).toContain("It's a pity, Chris, you're ruining everything.");

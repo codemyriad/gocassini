@@ -81,7 +81,7 @@ export function main(argv = process.argv.slice(2)) {
 
   if (rebuildViewer) {
     const builtIndexHtml = readFileSync(distIndexPath, "utf8");
-    writeFileSync(join(outputDir, "index.html"), rewriteIndexHtmlForCatalog(builtIndexHtml), "utf8");
+    writeFileSync(join(outputDir, "index.html"), builtIndexHtml, "utf8");
     cpSync(join(distDir, "assets"), join(outputDir, "assets"), { recursive: true });
   }
 
@@ -152,12 +152,6 @@ export function parseArgs(argv) {
     }
   }
   return { outputDir, sourceDir, recordingsBaseUrl, rebuildViewer };
-}
-
-export function rewriteIndexHtmlForCatalog(indexHtml) {
-  // Vite is configured with base: "./" so asset paths are already relative.
-  // This function is kept for compatibility but performs no transformation.
-  return indexHtml;
 }
 
 export function exportMeeting({ meetingId, sourcePath, sourceType, outputDir, recordingsBaseUrl = null }) {
@@ -510,7 +504,10 @@ export function buildTranscriptWordsFromPortable(portable) {
     const endMs = safeToInt(item?.endMs, startMs);
     const text = typeof item?.text === "string" ? item.text : "";
     const wordText = text.trim();
-    const words = wordText ? [{ id: "w_0", text: wordText, startMs, endMs }] : [];
+    if (!wordText || /\s/u.test(text)) {
+      throw new Error(`portable transcript item ${index} must contain exactly one word`);
+    }
+    const words = [{ id: "w_0", text: wordText, startMs, endMs }];
     const speaker = typeof item?.speaker === "string" && item.speaker.trim() !== "" ? item.speaker : undefined;
 
     return {
@@ -1115,27 +1112,6 @@ function resolveInterpolatedSpan({ prevTimedToken, nextTimedToken, fallbackStart
 
 function tokenHasTiming(token) {
   return Boolean(token) && Number.isInteger(token.startMs) && Number.isInteger(token.endMs);
-}
-
-export function splitTextIntoWords(text, startMs, endMs) {
-  const parts = typeof text === "string" ? text.trim().split(/\s+/).filter(Boolean) : [];
-  if (parts.length === 0) {
-    return [];
-  }
-
-  const span = Math.max(0, endMs - startMs);
-  return parts.map((part, index) => {
-    const from = parts.length <= 1 ? startMs : startMs + Math.floor((span * index) / parts.length);
-    const to = parts.length <= 1
-      ? endMs
-      : startMs + Math.floor((span * (index + 1)) / parts.length);
-    return {
-      id: `w_${index}`,
-      text: part,
-      startMs: Math.min(Math.max(from, startMs), endMs),
-      endMs: Math.max(Math.min(to, endMs), startMs),
-    };
-  });
 }
 
 export function ensureDisplayTranscript(targetMeetingDir) {

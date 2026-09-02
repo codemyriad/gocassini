@@ -148,6 +148,20 @@ func TestEncodeTranscriptBodyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestEncodeTranscriptBodyRejectsSegmentText(t *testing.T) {
+	body := TranscriptBody{
+		Format:    "cassini.words.v1",
+		WordCount: 1,
+		Items: []TranscriptItem{{
+			Speaker: "spk_0", StartMS: 0, EndMS: 300, Text: "two words",
+		}},
+	}
+	if _, _, err := EncodeTranscriptBody(body, "raw-asr", RoleRawASR, 0); err == nil ||
+		!strings.Contains(err.Error(), "must contain exactly one word") {
+		t.Fatalf("EncodeTranscriptBody error = %v, want one-word contract rejection", err)
+	}
+}
+
 // Inline ReadAll to avoid pulling io into the test imports when other tests
 // don't need it.
 func io_ReadAll(r interface{ Read(p []byte) (int, error) }) ([]byte, error) {

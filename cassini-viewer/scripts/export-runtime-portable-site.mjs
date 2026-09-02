@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import {
   describeMeeting,
   readPortableMeeting,
-  rewriteIndexHtmlForCatalog,
 } from "./export-static-meetings.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -51,7 +50,7 @@ export function main(argv = process.argv.slice(2)) {
   cpSync(join(distDir, "assets"), assetsDir, { recursive: true });
 
   const builtIndexHtml = readFileSync(distIndexPath, "utf8");
-  writeFileSync(join(outputDir, "index.html"), rewriteIndexHtmlForCatalog(builtIndexHtml), "utf8");
+  writeFileSync(join(outputDir, "index.html"), builtIndexHtml, "utf8");
   writeFileSync(
     join(outputDir, "catalog.json"),
     `${JSON.stringify({ version: "cassini.viewer.catalog.v1", meetings }, null, 2)}\n`,

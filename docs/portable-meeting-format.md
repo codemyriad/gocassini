@@ -161,6 +161,9 @@ Words transcript bodies have this shape:
 }
 ```
 
+Each `items[]` entry is exactly one timed word. Its `text` is non-empty and
+contains no whitespace; paragraph text belongs in a readable or display body.
+
 Readable-cleanup and display entries retain their native JSON documents:
 `transcript.readable.v1` with `segments`, and `transcript.display.v1` with
 `blocks`. The entry's `format`, role, and MIME identify which body it carries;
