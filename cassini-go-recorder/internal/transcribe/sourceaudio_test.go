@@ -787,19 +787,19 @@ func TestCoverageIsComplete(t *testing.T) {
 		{"a minute short of the bar", 600_000, 539_000, true},
 		{"half the call missing", 600_000, 300_000, true},
 		{"almost nothing survived", 3_600_000, 120_000, true},
-		{"no call window to compare against", 0, 120_000, false},
-		{"a negative window is not a comparison", -1, 120_000, false},
+		{"no call window fails closed", 0, 120_000, true},
+		{"a negative window fails closed too", -1, 120_000, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := coverageIsComplete(SourceRenderReport{CallMS: tc.callMS, DeclaredMS: tc.declaredMS})
+			err := coverageIsComplete("capture-1", tc.callMS, tc.declaredMS)
 			if tc.wantErr && err == nil {
 				t.Fatalf("a capture accounting for %d of %d ms was accepted", tc.declaredMS, tc.callMS)
 			}
 			if !tc.wantErr && err != nil {
 				t.Fatalf("a healthy capture was refused: %v", err)
 			}
-			if tc.wantErr && !strings.Contains(err.Error(), "replace that speech with silence") {
+			if tc.wantErr && !strings.Contains(err.Error(), "silence") && !strings.Contains(err.Error(), "no call window") {
 				t.Fatalf("refusal does not say why: %v", err)
 			}
 		})
@@ -843,5 +843,111 @@ func TestRenderSourceTrackRefusesAnIncompleteCapture(t *testing.T) {
 	}
 	if report.DeclaredMS >= report.CallMS {
 		t.Fatalf("declared %d ms of a %d ms call; the fixture is not short", report.DeclaredMS, report.CallMS)
+	}
+}
+
+// Summing segment durations is not the same as covering the call. These are the
+// shapes where the sum looks healthy and the audio is not there.
+func TestCoveredCallMSUsesTheUnionOfWindows(t *testing.T) {
+	const start = int64(1_700_000_000_000)
+	seg := func(from, to int64) SourceSegment {
+		return SourceSegment{StartWallMS: start + from, StopWallMS: start + to}
+	}
+	cases := []struct {
+		name     string
+		callMS   int64
+		segments []SourceSegment
+		want     int64
+	}{
+		{"contiguous segments cover the call", 600_000,
+			[]SourceSegment{seg(0, 300_000), seg(300_000, 600_000)}, 600_000},
+		{"two copies of the same window count once", 600_000,
+			[]SourceSegment{seg(0, 300_000), seg(0, 300_000)}, 300_000},
+		{"overlapping windows count once", 600_000,
+			[]SourceSegment{seg(0, 400_000), seg(200_000, 600_000)}, 600_000},
+		{"a hole in the middle is not covered", 600_000,
+			[]SourceSegment{seg(0, 100_000), seg(500_000, 600_000)}, 200_000},
+		{"a segment running past the call is clipped", 600_000,
+			[]SourceSegment{seg(0, 900_000)}, 600_000},
+		{"a segment before the call is clipped", 600_000,
+			[]SourceSegment{seg(-200_000, 100_000)}, 100_000},
+		{"a backwards window spans nothing", 600_000,
+			[]SourceSegment{seg(300_000, 200_000)}, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := coveredCallMS(SourceSidecar{
+				CallStartWallMS: start,
+				CallEndWallMS:   start + tc.callMS,
+				Segments:        tc.segments,
+			})
+			if got != tc.want {
+				t.Fatalf("coveredCallMS = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// Two copies of the same half of a call sum to the whole of it. Before the
+// union this passed, and the other half was replaced with silence.
+func TestCoverageRejectsDuplicateSegmentsThatSumToTheCall(t *testing.T) {
+	const start = int64(1_700_000_000_000)
+	sidecar := SourceSidecar{
+		CallStartWallMS: start,
+		CallEndWallMS:   start + 600_000,
+		Segments: []SourceSegment{
+			{StartWallMS: start, StopWallMS: start + 300_000},
+			{StartWallMS: start, StopWallMS: start + 300_000},
+		},
+	}
+	covered := coveredCallMS(sidecar)
+	if covered != 300_000 {
+		t.Fatalf("covered = %d, want 300000: duplicates must count once", covered)
+	}
+	if err := coverageIsComplete("dup", 600_000, covered); err == nil {
+		t.Fatal("a capture holding half a call twice was accepted")
+	}
+}
+
+// A participant who left and rejoined uploads one capture per session, and both
+// render onto the same timeline. Checking the totals lets a long healthy
+// capture carry a broken short one, and the interval it lost is still silenced.
+func TestRenderSourceTrackChecksEachRejoinSeparately(t *testing.T) {
+	root := t.TempDir()
+	write := func(name string, sidecar SourceSidecar) string {
+		dir := filepath.Join(root, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		raw, err := json.Marshal(sidecar)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "capture.json"), raw, 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		return dir
+	}
+
+	// A healthy first session, and a rejoin that lost almost everything.
+	whole := syntheticSegmentDelayed(0, 60, 1000, 0, 0)
+	healthy := write("session-1", SourceSidecar{
+		Format: SourceCaptureFormat, RoomToken: "room1", OwnerUserID: "alice",
+		CallStartWallMS: whole.StartWallMS, CallEndWallMS: whole.StopWallMS,
+		Segments: []SourceSegment{whole},
+	})
+	stub := syntheticSegmentDelayed(0, 5, 1000, 0, 0)
+	broken := write("session-2", SourceSidecar{
+		Format: SourceCaptureFormat, RoomToken: "room1", OwnerUserID: "alice",
+		CallStartWallMS: stub.StartWallMS, CallEndWallMS: stub.StartWallMS + 600_000,
+		Segments: []SourceSegment{stub},
+	})
+
+	_, _, err := RenderSourceTrack(context.Background(), []string{healthy, broken}, testBase(), 16000, 16000*600)
+	if err == nil {
+		t.Fatal("a broken rejoin was carried over the bar by a healthy session")
+	}
+	if !strings.Contains(err.Error(), "session-2") {
+		t.Fatalf("refusal should name the capture that fell short: %v", err)
 	}
 }

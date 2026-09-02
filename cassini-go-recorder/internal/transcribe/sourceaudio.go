@@ -495,22 +495,72 @@ type SourceRenderReport struct {
 // deleting speech.
 const minCoveredFraction = 0.9
 
+// coveredCallMS is how much of a capture's declared call its segments actually
+// span: the UNION of their windows, clipped to the call.
+//
+// Summing durations instead would be wrong in both directions. Two segments
+// that overlap — a rotation that restarted, a sidecar that repeats one — would
+// count the same milliseconds twice and pass while leaving an arbitrarily large
+// hole elsewhere. A segment running past the declared call would inflate the
+// total for time the call did not contain.
+func coveredCallMS(sidecar SourceSidecar) int64 {
+	callStart, callEnd := sidecar.CallStartWallMS, sidecar.CallEndWallMS
+	if callEnd <= callStart {
+		return 0
+	}
+	type span struct{ start, stop int64 }
+	spans := make([]span, 0, len(sidecar.Segments))
+	for _, segment := range sidecar.Segments {
+		start, stop := segment.StartWallMS, segment.StopWallMS
+		if stop <= start {
+			// A backwards or empty window spans nothing.
+			continue
+		}
+		if start < callStart {
+			start = callStart
+		}
+		if stop > callEnd {
+			stop = callEnd
+		}
+		if stop > start {
+			spans = append(spans, span{start, stop})
+		}
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
+
+	var covered int64
+	var cursor int64 = callStart
+	for _, sp := range spans {
+		if sp.stop <= cursor {
+			continue
+		}
+		if sp.start > cursor {
+			cursor = sp.start
+		}
+		covered += sp.stop - cursor
+		cursor = sp.stop
+	}
+	return covered
+}
+
 // coverageIsComplete refuses a capture whose segments do not span the call it
 // declares. It compares the sidecar against itself and makes no assumption
 // about the meeting, so a participant who joined late or left early is not
 // penalised for a recording they were not present for.
-func coverageIsComplete(report SourceRenderReport) error {
-	if report.CallMS <= 0 {
-		// Nothing to compare against. A sidecar with no usable call window is
-		// already refused at intake, so this is belt and braces.
-		return nil
+func coverageIsComplete(name string, callMS, coveredMS int64) error {
+	if callMS <= 0 {
+		// Fails CLOSED. Intake accepts a call window of zero length, discovery
+		// can match one through its slack, and a capture that declares no call
+		// would then replace a participant's whole recorded track on the
+		// strength of whatever few seconds it happens to hold.
+		return fmt.Errorf("capture %s declares no call window, so there is nothing its audio can be said to cover", name)
 	}
-	if float64(report.DeclaredMS) >= float64(report.CallMS)*minCoveredFraction {
+	if coveredMS >= 0 && float64(coveredMS) >= float64(callMS)*minCoveredFraction {
 		return nil
 	}
 	return fmt.Errorf(
-		"capture covers %d ms of the %d ms call it came from (%.0f%%); the rest has no audio, and substituting it would replace that speech with silence",
-		report.DeclaredMS, report.CallMS, float64(report.DeclaredMS)*100/float64(report.CallMS))
+		"capture %s spans %d ms of the %d ms call it came from (%.0f%%); the rest has no audio, and substituting it would replace that speech with silence",
+		name, coveredMS, callMS, float64(coveredMS)*100/float64(callMS))
 }
 
 // RenderSourceTrack builds one speaker's timeline-aligned PCM from every
@@ -546,14 +596,19 @@ func RenderSourceTrack(ctx context.Context, dirs []string, base SourceTimeBase, 
 		}
 		report.Owner = sidecar.OwnerUserID
 		report.Segments += len(sidecar.Segments)
-		report.CallMS += sidecar.CallEndWallMS - sidecar.CallStartWallMS
-		for _, segment := range sidecar.Segments {
-			report.DeclaredMS += segment.StopWallMS - segment.StartWallMS
+		callMS := sidecar.CallEndWallMS - sidecar.CallStartWallMS
+		coveredMS := coveredCallMS(sidecar)
+		report.CallMS += callMS
+		report.DeclaredMS += coveredMS
+		// Checked PER CAPTURE, not on the totals. A participant who left and
+		// rejoined uploads one capture per session and both are rendered onto
+		// the same timeline, so aggregating first lets a long healthy capture
+		// carry a badly broken short one over the bar — and the interval that
+		// short one lost is still replaced with silence.
+		if err := coverageIsComplete(filepath.Base(dir), callMS, coveredMS); err != nil {
+			return nil, report, err
 		}
 		loaded = append(loaded, sidecar)
-	}
-	if err := coverageIsComplete(report); err != nil {
-		return nil, report, err
 	}
 
 	for i, dir := range dirs {
@@ -586,7 +641,20 @@ func RenderSourceTrack(ctx context.Context, dirs []string, base SourceTimeBase, 
 			if placement.ResidualMS > worstResidual {
 				worstResidual = placement.ResidualMS
 			}
-			report.CoverageMS += int64(float64(len(samples)) * 1000 / float64(sampleRate))
+			decodedMS := int64(float64(len(samples)) * 1000 / float64(sampleRate))
+			report.CoverageMS += decodedMS
+			// The window check above trusts the sidecar's arithmetic. This
+			// checks the audio against it: a segment may declare ten minutes
+			// and hold one, and nothing before now would have noticed, because
+			// intake validates that a declared file ARRIVED and not that it
+			// contains what was claimed. Whole-track substitution makes the
+			// difference nine minutes of silence.
+			if declaredMS := segment.StopWallMS - segment.StartWallMS; declaredMS > 0 &&
+				float64(decodedMS) < float64(declaredMS)*minCoveredFraction {
+				return nil, report, fmt.Errorf(
+					"segment %d holds %d ms of the %d ms it declares (%.0f%%); the audio does not match the sidecar",
+					segment.Index, decodedMS, declaredMS, float64(decodedMS)*100/float64(declaredMS))
+			}
 		}
 	}
 
@@ -811,6 +879,15 @@ func ApplySourceAudio(ctx context.Context, streams []AudioStream, captureRoot, r
 	// try it on, and re-decoding a meeting's audio to fail identically is pure
 	// cost.
 	failed := map[string]bool{}
+	// A participant with ANY stream lacking a wall-clock base is refused up
+	// front. Deciding inside the loop made the outcome depend on which of their
+	// streams came first: an anchorless stream seen last was harmless, the same
+	// stream seen first abandoned the substitution.
+	for i := range streams {
+		if streams[i].ParticipantID != "" && !streams[i].TimeBase.Known {
+			failed[streams[i].ParticipantID] = true
+		}
+	}
 	for i := range streams {
 		stream := &streams[i]
 		dirs, ok := captures[stream.ParticipantID]
@@ -826,11 +903,15 @@ func ApplySourceAudio(ctx context.Context, streams []AudioStream, captureRoot, r
 			continue
 		}
 		if !stream.TimeBase.Known {
-			// Marked failed, not merely skipped. Without this the participant's
-			// OTHER stream could still render — the render spans the whole
-			// timeline, including this stream's span — while this one keeps its
-			// recorded audio and is transcribed alongside it, putting every word
-			// the participant said here into the transcript twice.
+			// Marked failed, not merely skipped, and decided the same way
+			// whichever order the streams arrive in: anchorlessParticipants was
+			// computed over all of them before this loop began.
+			//
+			// Without it the participant's OTHER stream could still render —
+			// the render spans the whole timeline, including this stream's span
+			// — while this one keeps its recorded audio and is transcribed
+			// alongside it, putting every word said here into the transcript
+			// twice.
 			failed[stream.ParticipantID] = true
 			fmt.Fprintf(stdout, "  source audio: %s uploaded, but this recording carries no wall-clock base for their track; keeping the recorded audio\n", stream.SpeakerLabel)
 			continue
