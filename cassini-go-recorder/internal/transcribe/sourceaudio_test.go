@@ -548,7 +548,9 @@ func TestRenderSourceTrackRefusesAPartialCapture(t *testing.T) {
 	// before any decoding, which keeps the test free of fixture media.
 	bad := syntheticSegment(1000, 3, 1000, 0)
 	bad.AudioName = "segment-0.webm"
-	good := syntheticSegment(70_000, 60, 1000, 0)
+	// Directly after `bad`, so the pair spans its call without a hole: a hole
+	// is a different defect with its own refusal, and it would fire first.
+	good := syntheticSegment(4_000, 60, 1000, 0)
 	good.Index = 1
 	good.AudioName = "segment-1.webm"
 
@@ -556,8 +558,8 @@ func TestRenderSourceTrackRefusesAPartialCapture(t *testing.T) {
 		Format:          SourceCaptureFormat,
 		RoomToken:       "room1",
 		OwnerUserID:     "alice",
-		CallStartWallMS: testWindowStartMS,
-		CallEndWallMS:   testWindowEndMS,
+		CallStartWallMS: bad.StartWallMS,
+		CallEndWallMS:   good.StopWallMS,
 		Segments:        []SourceSegment{bad, good},
 	}
 	raw, _ := json.Marshal(sidecar)
@@ -765,5 +767,81 @@ func TestDecodeSourceSegmentEnforcesTheCeiling(t *testing.T) {
 	}
 	if len(samples) < 16000*9 {
 		t.Fatalf("decoded %d samples, want about ten seconds", len(samples))
+	}
+}
+
+// A capture whose segments no longer add up to the call it declares has lost
+// segments — the browser worker drops one whose storage write failed and
+// uploads the rest, so everything remaining places cleanly and nothing else
+// notices. Substituting it deletes the speech those segments should have held.
+func TestCoverageIsComplete(t *testing.T) {
+	cases := []struct {
+		name       string
+		callMS     int64
+		declaredMS int64
+		wantErr    bool
+	}{
+		{"a whole capture", 600_000, 600_000, false},
+		{"rotation gaps are not a shortfall", 600_000, 597_000, false},
+		{"exactly at the bar", 600_000, 540_000, false},
+		{"a minute short of the bar", 600_000, 539_000, true},
+		{"half the call missing", 600_000, 300_000, true},
+		{"almost nothing survived", 3_600_000, 120_000, true},
+		{"no call window to compare against", 0, 120_000, false},
+		{"a negative window is not a comparison", -1, 120_000, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := coverageIsComplete(SourceRenderReport{CallMS: tc.callMS, DeclaredMS: tc.declaredMS})
+			if tc.wantErr && err == nil {
+				t.Fatalf("a capture accounting for %d of %d ms was accepted", tc.declaredMS, tc.callMS)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("a healthy capture was refused: %v", err)
+			}
+			if tc.wantErr && !strings.Contains(err.Error(), "replace that speech with silence") {
+				t.Fatalf("refusal does not say why: %v", err)
+			}
+		})
+	}
+}
+
+// The refusal has to travel through the render, because a caller that only
+// checks the error would otherwise substitute an incomplete capture anyway.
+func TestRenderSourceTrackRefusesAnIncompleteCapture(t *testing.T) {
+	dir := t.TempDir()
+	// A well-formed sixty-second segment, offered as the whole of a ten-minute
+	// call: exactly the shape the browser worker produces when it drops
+	// segments whose storage write failed and uploads the rest.
+	segment := syntheticSegmentDelayed(0, 60, 1000, 0, 0)
+	sidecar := SourceSidecar{
+		Format:          SourceCaptureFormat,
+		RoomToken:       "room1",
+		OwnerUserID:     "alice",
+		CallStartWallMS: segment.StartWallMS,
+		CallEndWallMS:   segment.StartWallMS + 600_000,
+		Segments:        []SourceSegment{segment},
+	}
+	raw, err := json.Marshal(sidecar)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "capture.json"), raw, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	_, report, err := RenderSourceTrack(context.Background(), []string{dir}, testBase(), 16000, 16000*600)
+	if err == nil {
+		t.Fatal("an incomplete capture was rendered; substituting it deletes nine minutes of speech")
+	}
+	if !strings.Contains(err.Error(), "replace that speech with silence") {
+		t.Fatalf("refused for the wrong reason: %v", err)
+	}
+	// The figures travel even on refusal, so a pilot can see how close it was.
+	if report.CallMS != 600_000 {
+		t.Fatalf("report carries call=%d, want 600000", report.CallMS)
+	}
+	if report.DeclaredMS >= report.CallMS {
+		t.Fatalf("declared %d ms of a %d ms call; the fixture is not short", report.DeclaredMS, report.CallMS)
 	}
 }

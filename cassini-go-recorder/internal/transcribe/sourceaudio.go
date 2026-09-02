@@ -446,15 +446,71 @@ func windowsOverlap(aStart, aEnd, bStart, bEnd int64) bool {
 // manifest. A transcript built partly from audio the server never received
 // should say so.
 type SourceRenderReport struct {
-	SpeakerID  string   `json:"speaker_id"`
-	Owner      string   `json:"owner"`
-	Segments   int      `json:"segments"`
-	Placed     int      `json:"placed"`
-	Anchors    int      `json:"anchors"`
-	ResidualMS float64  `json:"residual_ms"`
-	RatePPM    float64  `json:"rate_ppm"`
-	CoverageMS int64    `json:"coverage_ms"`
+	SpeakerID  string  `json:"speaker_id"`
+	Owner      string  `json:"owner"`
+	Segments   int     `json:"segments"`
+	Placed     int     `json:"placed"`
+	Anchors    int     `json:"anchors"`
+	ResidualMS float64 `json:"residual_ms"`
+	RatePPM    float64 `json:"rate_ppm"`
+	CoverageMS int64   `json:"coverage_ms"`
+	// DeclaredMS is how much audio the capture's own sidecar says it holds:
+	// the sum of its segment windows. CoverageMS is how much actually decoded.
+	// The two are reported side by side because their ratio is the only signal
+	// that a capture is internally incomplete, and a pilot needs the numbers to
+	// choose a threshold rather than inherit a guessed one.
+	DeclaredMS int64    `json:"declared_ms"`
+	CallMS     int64    `json:"call_ms"`
 	Rejections []string `json:"rejections,omitempty"`
+}
+
+// minCoveredFraction is how much of its own call a capture must account for
+// before its audio may replace a recorded track.
+//
+// The hazard is not a capture that fails, which is handled everywhere: it is a
+// capture that succeeds while covering only part of the call it came from.
+// Substitution is whole-track — the render replaces the participant's recorded
+// audio for the entire meeting — so every span the capture does not cover
+// becomes digital silence while the recorded track is suppressed. Words the
+// recorder heard perfectly well disappear, and nothing downstream can tell.
+//
+// A capture can be short of its call for two quite different reasons, and this
+// deliberately does not try to distinguish them, because the consequence is
+// identical. The browser worker drops a segment whose storage write failed and
+// uploads the rest, leaving a self-consistent sidecar whose remaining segments
+// all place cleanly. Or the participant detached their microphone for a minute
+// and the capture legitimately has a hole in it. Either way the audio for that
+// span does not exist, and putting silence there is worse than keeping what the
+// network delivered.
+//
+// The bar is deliberately loose: rotation gaps are sub-second, so a healthy
+// capture sits within a percent or two of its call and anything near this
+// threshold is missing minutes. It is a detector for one condition, not a
+// quality score. The manifest carries the raw figures either way, so a real
+// threshold can be chosen from pilot data rather than guessed here.
+//
+// The right long-term answer is not a threshold at all: splice the capture in
+// only over the spans it covers and leave the recorded track everywhere else.
+// Until that exists this is the guard that keeps whole-track substitution from
+// deleting speech.
+const minCoveredFraction = 0.9
+
+// coverageIsComplete refuses a capture whose segments do not span the call it
+// declares. It compares the sidecar against itself and makes no assumption
+// about the meeting, so a participant who joined late or left early is not
+// penalised for a recording they were not present for.
+func coverageIsComplete(report SourceRenderReport) error {
+	if report.CallMS <= 0 {
+		// Nothing to compare against. A sidecar with no usable call window is
+		// already refused at intake, so this is belt and braces.
+		return nil
+	}
+	if float64(report.DeclaredMS) >= float64(report.CallMS)*minCoveredFraction {
+		return nil
+	}
+	return fmt.Errorf(
+		"capture covers %d ms of the %d ms call it came from (%.0f%%); the rest has no audio, and substituting it would replace that speech with silence",
+		report.DeclaredMS, report.CallMS, float64(report.DeclaredMS)*100/float64(report.CallMS))
 }
 
 // RenderSourceTrack builds one speaker's timeline-aligned PCM from every
@@ -479,6 +535,10 @@ func RenderSourceTrack(ctx context.Context, dirs []string, base SourceTimeBase, 
 	var worstResidual float64
 	var rateSum float64
 
+	// Load every sidecar first and check the arithmetic before decoding
+	// anything. The completeness check below needs no audio, and a capture that
+	// is going to be refused should not cost a meeting's worth of ffmpeg first.
+	loaded := make([]SourceSidecar, 0, len(dirs))
 	for _, dir := range dirs {
 		sidecar, err := LoadSourceSidecar(dir)
 		if err != nil {
@@ -486,6 +546,18 @@ func RenderSourceTrack(ctx context.Context, dirs []string, base SourceTimeBase, 
 		}
 		report.Owner = sidecar.OwnerUserID
 		report.Segments += len(sidecar.Segments)
+		report.CallMS += sidecar.CallEndWallMS - sidecar.CallStartWallMS
+		for _, segment := range sidecar.Segments {
+			report.DeclaredMS += segment.StopWallMS - segment.StartWallMS
+		}
+		loaded = append(loaded, sidecar)
+	}
+	if err := coverageIsComplete(report); err != nil {
+		return nil, report, err
+	}
+
+	for i, dir := range dirs {
+		sidecar := loaded[i]
 		for _, segment := range sidecar.Segments {
 			placement, err := FitPlacement(segment, base)
 			if err != nil {
@@ -754,6 +826,12 @@ func ApplySourceAudio(ctx context.Context, streams []AudioStream, captureRoot, r
 			continue
 		}
 		if !stream.TimeBase.Known {
+			// Marked failed, not merely skipped. Without this the participant's
+			// OTHER stream could still render — the render spans the whole
+			// timeline, including this stream's span — while this one keeps its
+			// recorded audio and is transcribed alongside it, putting every word
+			// the participant said here into the transcript twice.
+			failed[stream.ParticipantID] = true
 			fmt.Fprintf(stdout, "  source audio: %s uploaded, but this recording carries no wall-clock base for their track; keeping the recorded audio\n", stream.SpeakerLabel)
 			continue
 		}
