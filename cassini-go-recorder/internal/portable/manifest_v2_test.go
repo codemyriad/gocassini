@@ -80,7 +80,7 @@ func TestValidateTranscriptID(t *testing.T) {
 		{"readable-qwen", false},
 		{"a", false},
 		{"a1", false},
-		{"a_b_c", true},  // underscore is not in the published grammar
+		{"a_b_c", true},                 // underscore is not in the published grammar
 		{"PARAKEET", true},              // uppercase rejected
 		{"-leading", true},              // must start with [a-z0-9]
 		{"with space", true},            // no spaces

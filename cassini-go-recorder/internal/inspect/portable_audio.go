@@ -157,7 +157,7 @@ type portableTranscriptBodies struct {
 	// Repeated is set when a body's chunk tag appears twice. Unlike a missing
 	// chunk, that is the file's problem: invalid-cassini-metadata.
 	Repeated bool
-	Warnings   []string
+	Warnings []string
 }
 
 // err reports the transcripts whose bodies could not be read, so `cassini
