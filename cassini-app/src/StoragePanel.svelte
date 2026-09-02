@@ -248,6 +248,18 @@
       }
     }
     if (error instanceof OperatorHttpError) {
+      if (error.status === 404) {
+        // AppAPI learns an ExApp's routes from the manifest it was REGISTERED
+        // with. An installation still on a manifest that predates this tab
+        // therefore 404s every request it makes, and the symptom — a Setup tab
+        // whose buttons all fail — says nothing about the cause. Re-registering
+        // is what refreshes the routes.
+        return (
+          "This Nextcloud does not know about Cassini's storage routes, which happens when the app " +
+          "was updated in place from a version that predates them. Re-register the app in Nextcloud " +
+          "(External Apps → remove and add Cassini again, keeping its data), or use the commands below."
+        );
+      }
       return error.message;
     }
     return error instanceof Error ? error.message : String(error);
@@ -265,7 +277,10 @@
 
   function modeSourceLabel(source: string): string {
     if (source === "configured") return "Chosen";
+    // Written by a build that inferred the mode from the instance. Nothing
+    // produces it any more, but installs from that build still carry it.
     if (source === "derived") return "Detected from this Nextcloud";
+    if (source === "default") return "Default, nothing chose otherwise";
     return source || "—";
   }
 
