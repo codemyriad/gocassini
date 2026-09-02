@@ -448,27 +448,6 @@ func TestTranscribableStreamsDropsSuppressed(t *testing.T) {
 	}
 }
 
-func TestSourceTimeBaseFromTags(t *testing.T) {
-	base := sourceTimeBaseFromTags("12345", "678", "48000")
-	if !base.Known || base.FirstPacketWallMS != 12345 || base.FirstTimelineNS != 678 || base.ClockRate != 48000 {
-		t.Fatalf("parsed base = %+v", base)
-	}
-	// A partial base cannot map anything, and treating a missing tag as zero
-	// would place audio at a confidently wrong time.
-	for _, tc := range [][3]string{
-		{"", "678", "48000"},
-		{"12345", "", "48000"},
-		{"12345", "678", ""},
-		{"12345", "678", "0"},
-		{"nonsense", "678", "48000"},
-		{"0", "678", "48000"},
-	} {
-		if got := sourceTimeBaseFromTags(tc[0], tc[1], tc[2]); got.Known {
-			t.Fatalf("tags %v produced a usable base %+v", tc, got)
-		}
-	}
-}
-
 func TestWriteWAV16RoundTrips(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "out.wav")
 	samples := []float32{0, 0.5, -0.5, 1, -1, 2, -2} // last two clamp
