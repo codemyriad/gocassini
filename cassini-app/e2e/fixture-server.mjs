@@ -119,6 +119,10 @@ window.__talkReady = (async () => {
   // the test drives it the same way.
   window.__localTrack = track;
   local.addTrack(track, stream);
+  // The sender the payload attaches its encoded transform to. The tests read
+  // its outbound RTP stats, because a transform left on it with nothing reading
+  // it stops the packets and is a participant nobody can hear.
+  window.__audioSender = local.getSenders().find((s) => s.track && s.track.kind === "audio");
 
   const offer = await local.createOffer();
   await local.setLocalDescription(offer);
@@ -162,6 +166,15 @@ self.onrtctransform = (event) => {
   })).pipeTo(writable).catch(() => {});
 };
 `;
+
+// The two ways the timing worker can be broken on the wire, both of them real:
+// an ExApp restarted or upgraded mid-call answers 404 for a script the page
+// already committed to, and a half-written or skewed bundle loads and then
+// does nothing. The silent one is the dangerous shape, because nothing
+// reports it: no error event, no rejected fetch, just an encoded transform on
+// a live sender with no reader behind it.
+const THROWING_CAPTURE_WORKER = `throw new Error("capture worker failed to evaluate");`;
+const SILENT_CAPTURE_WORKER = `self.onmessage = () => {};`;
 
 // A harmless stand-in for the abandoned bundle-rewriting worker. It exists
 // only so the migration test can prove that the companion payload unregisters
@@ -216,7 +229,15 @@ function parseMultipart(body, contentType) {
 
 export async function startFixtureServer() {
   const uploads = [];
-  const state = { captureEnabled: true, companionEnabled: true, recordingStatus: 0 };
+  // captureWorker decides what the proxy serves for the timing worker:
+  // "ok" the real built bundle, "missing" a 404, "throws" a script that dies
+  // on load, "silent" one that loads and never signals anything.
+  const state = {
+    captureEnabled: true,
+    companionEnabled: true,
+    recordingStatus: 0,
+    captureWorker: "ok",
+  };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
     const path = url.pathname;
@@ -250,6 +271,16 @@ export async function startFixtureServer() {
     if (path === `${PROXY_PREFIX}/ui/loss-worker.js`) {
       res.writeHead(200, { "content-type": "text/javascript" });
       return res.end(LOSS_WORKER);
+    }
+    if (path === `${PROXY_PREFIX}/ui/capture-worker.js` && state.captureWorker !== "ok") {
+      if (state.captureWorker === "missing") {
+        res.writeHead(404);
+        return res.end("no capture worker on this installation");
+      }
+      res.writeHead(200, { "content-type": "text/javascript" });
+      return res.end(
+        state.captureWorker === "throws" ? THROWING_CAPTURE_WORKER : SILENT_CAPTURE_WORKER,
+      );
     }
     if (path === `${PROXY_PREFIX}/ui/capture-sw.js`) {
       res.writeHead(200, {

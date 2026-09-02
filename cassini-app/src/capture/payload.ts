@@ -419,9 +419,15 @@ let state: CaptureState | null = null;
 const publisherSenders = new Set<RTCRtpSender>();
 // The transform has to be attached before Talk negotiates, but audio must not
 // be recorded until Talk confirms that the official recording is active. This
-// worker is therefore prepared early and remains inert: it creates no OPFS
+// worker is therefore started early and remains inert: it creates no OPFS
 // directory and retains no timing anchors until beginCapture activates it.
+// Early also buys the readiness deadline its head start, so a worker that will
+// never run is usually caught before the call has a frame to send.
 let preparedWorker: Worker | null = null;
+// captureAbandoned is terminal for this page. A worker that could not start is
+// not going to start on the next attempt, and every attempt is another
+// transform offered to a sender carrying a live call.
+let captureAbandoned = false;
 let talkRecordingActive = false;
 let recordingStatusRevision = 0;
 let recordingStatusFetchInFlight = false;
@@ -533,7 +539,226 @@ export async function stopSegment(session: CaptureState): Promise<void> {
 // loosely and keep the looseness contained to this function.
 type ScriptTransformCtor = new (worker: Worker, options: unknown) => object;
 
-function attachTimingTransform(worker: Worker, sender: RTCRtpSender): void {
+// attachedTransform records the one transform this payload attached, and what
+// it is attached to. There is at most one: it belongs to the publishing sender,
+// and the worker behind it is either idle or the running session's.
+let attachedTransform: {
+  worker: Worker;
+  sender: RTCRtpSender;
+  connection: RTCPeerConnection;
+} | null = null;
+let readyDeadline: number | null = null;
+let readyDeadlineWorker: Worker | null = null;
+
+// PASS_THROUGH_WORKER_SOURCE is the transform that does nothing at all: it
+// hands every encoded frame straight back. It is inline, and that is the whole
+// point of it — it needs no network, no build artifact and no version
+// agreement, so it is the one worker that cannot fail the way the capture
+// worker just did. See restoreOutgoingAudio.
+const PASS_THROUGH_WORKER_SOURCE =
+  "self.onrtctransform=(e)=>{e.transformer.readable.pipeTo(e.transformer.writable).catch(()=>{})};";
+
+// WORKER_READY_TIMEOUT_MS bounds the wait for a worker to report for duty.
+//
+// The participant is mute for as long as this runs, because the transform is
+// already attached to their sender by then and a worker that never started is
+// not reading it — so this is a silence budget, not a patience budget. It is
+// measured from the worker's creation at install, which is a whole Talk
+// bootstrap before the call negotiates and starts sending, so in practice a
+// healthy worker has answered long before any frame is at stake and a broken
+// one is caught before one is either. Three seconds is well past the point
+// where a few kilobytes served from the same origin is merely slow.
+const WORKER_READY_TIMEOUT_MS = 3_000;
+
+// prepareTimingWorker starts the worker and watches it prove it is alive.
+//
+// Three failures leave a worker on the page that will never read a frame: the
+// script 404s (an ExApp restarted or upgraded mid-call), it throws while it
+// evaluates, or it loads and does nothing (a skewed build). onerror reports the
+// second and, in most browsers, the first. The deadline covers all three,
+// because a 404 fires no error event in some browsers and a silent script fires
+// none anywhere.
+function prepareTimingWorker(): void {
+  if (preparedWorker !== null || captureAbandoned) {
+    return;
+  }
+  let worker: Worker;
+  try {
+    worker = new Worker(workerURL());
+  } catch {
+    // A constructor that throws — a blocked URL, a policy that forbids the
+    // worker — will throw again on the next call. Stop asking.
+    captureAbandoned = true;
+    return;
+  }
+  preparedWorker = worker;
+  worker.onerror = () => abandonCapture(worker, "the timing worker failed to start");
+  worker.onmessageerror = () =>
+    abandonCapture(worker, "the timing worker sent an unreadable message");
+  // addEventListener rather than onmessage: finishCapture assigns its own
+  // onmessage to await the sealed sidecar, and would otherwise assign over the
+  // readiness signal.
+  worker.addEventListener("message", (event: MessageEvent) => {
+    if (event.data?.type === "ready") {
+      clearReadyDeadline(worker);
+    }
+  });
+  readyDeadlineWorker = worker;
+  readyDeadline = setTimeout(
+    () => abandonCapture(worker, "the timing worker never reported ready"),
+    WORKER_READY_TIMEOUT_MS,
+  ) as unknown as number;
+}
+
+function clearReadyDeadline(worker: Worker): void {
+  if (readyDeadlineWorker !== worker || readyDeadline === null) {
+    return;
+  }
+  clearTimeout(readyDeadline);
+  readyDeadline = null;
+  readyDeadlineWorker = null;
+}
+
+// attachedSenderCanStillSend reports whether the transform we attached is on a
+// sender that can send again. Only a closed connection is a definite no:
+// "failed" can be recovered by an ICE restart, and a worker stopped in that
+// window takes the participant's audio with it.
+function attachedSenderCanStillSend(): boolean {
+  return attachedTransform !== null && attachedTransform.connection.connectionState !== "closed";
+}
+
+// restoreOutgoingAudio is what a failed capture owes the call.
+//
+// The transform is attached before negotiation and cannot wait for the worker
+// to prove itself: a transform attached after the sender has negotiated is
+// ignored by the platform and collects nothing, which is why the attach is
+// eager in the first place. So by the time a worker turns out to be broken, the
+// participant's every encoded frame is already being routed into it, and
+// nobody in the room can hear them.
+//
+// Replacing the transform is the only exit. Measured on Chromium 151.0.7922.34:
+// `sender.transform = null` does NOT release the sender — it freezes at zero
+// packets sent, and so does a HEALTHY transform detached the same way, and
+// neither a replaceTrack nor waiting brings it back. Assigning a working
+// transform over the failed one restores the flow immediately. So the sender
+// gets a pass-through built from an inline string: no fetch, no build artifact,
+// nothing that can be missing or skewed the way the capture worker just was.
+function restoreOutgoingAudio(): void {
+  const attached = attachedTransform;
+  if (attached === null) {
+    return;
+  }
+  attachedTransform = null;
+  if (attached.connection.connectionState === "closed") {
+    return;
+  }
+  const ScriptTransform = (globalThis as { RTCRtpScriptTransform?: ScriptTransformCtor })
+    .RTCRtpScriptTransform;
+  if (!ScriptTransform) {
+    return;
+  }
+  try {
+    const source = URL.createObjectURL(
+      new Blob([PASS_THROUGH_WORKER_SOURCE], { type: "text/javascript" }),
+    );
+    // The URL is deliberately not revoked. Revoking races the worker's own
+    // fetch of it, and one blob URL on a page whose capture has just failed is
+    // not worth that risk.
+    const passThrough = new Worker(source);
+    (attached.sender as unknown as { transform?: object | null }).transform = new ScriptTransform(
+      passThrough,
+      { kind: "audio" },
+    );
+  } catch {
+    // A policy that forbids a blob worker leaves the participant where the
+    // broken capture worker left them. Nothing else here can reach that sender.
+  }
+}
+
+// releaseTimingWorker is the only place in this file that stops a worker.
+//
+// Terminating one whose transform is still on a sender that can send makes the
+// participant INAUDIBLE to the whole room for the rest of the call: their
+// encoded frames are routed into a worker that no longer reads them, Talk goes
+// on showing them as unmuted and transmitting, and only a page reload ends it.
+// A worker whose transform is live is therefore left running as the pure
+// pass-through it already is, and only one that nothing depends on is stopped.
+// Callers that must stop a live one call restoreOutgoingAudio first, which
+// hands the sender a transform that works. Safe to call twice.
+function releaseTimingWorker(worker: Worker | null): void {
+  if (worker === null) {
+    return;
+  }
+  if (attachedTransform?.worker === worker) {
+    if (attachedSenderCanStillSend()) {
+      return;
+    }
+    attachedTransform = null;
+  }
+  if (preparedWorker === worker) {
+    preparedWorker = null;
+  }
+  clearReadyDeadline(worker);
+  worker.terminate();
+}
+
+// retireSessionWorker gives a finished session's worker back to the idle slot,
+// or stops it when nothing depends on it any more. Which of the two happens is
+// not this function's choice: while its transform is on a sender that can still
+// send, the worker IS part of Talk's outgoing audio path.
+function retireSessionWorker(worker: Worker): void {
+  releaseTimingWorker(worker);
+  if (preparedWorker === null && attachedTransform?.worker === worker) {
+    preparedWorker = worker;
+  }
+}
+
+// abandonCapture gives up on collecting for the rest of this page's life, and
+// gives the call back its audio first. The worker is the storage as well as the
+// timing, so one that cannot start is not a degraded capture but no capture at
+// all — and handing a live sender another transform backed by the same broken
+// script is the one trade this feature must never make. Audio already buffered
+// in OPFS is left alone: a later page load still uploads it.
+function abandonCapture(worker: Worker, reason: string): void {
+  captureAbandoned = true;
+  if (attachedTransform?.worker === worker) {
+    restoreOutgoingAudio();
+  }
+  const failed = state?.worker === worker ? state : null;
+  if (failed) {
+    state = null;
+    failed.finished = true;
+    if (failed.mutePoll !== null) {
+      clearInterval(failed.mutePoll);
+    }
+    try {
+      failed.recorder?.stop();
+    } catch {
+      // Already inactive. Stopping it touches only the recorder; the track it
+      // reads stays Talk's, live and unchanged.
+    }
+    failed.recorder = null;
+  }
+  releaseTimingWorker(worker);
+  console.warn(`Cassini source capture: ${reason}; capture abandoned for this page`);
+}
+
+// attachTimingTransform installs the encoded transform, and does it eagerly:
+// synchronously inside Talk's addTrack, before the connection negotiates.
+//
+// That ordering is forced by the platform, not chosen. A transform attached
+// after the sender has negotiated is ignored — measured on Chromium
+// 151.0.7922.34, a first transform attached a moment too late receives no
+// frames at all while the audio flows past it — so a capture that waits for its
+// worker to prove itself is a capture with no timing anchors, ever. The price
+// of attaching before the worker has answered is that a broken worker takes the
+// participant's audio with it until the readiness deadline above notices and
+// restoreOutgoingAudio gives the sender a transform that works.
+function attachTimingTransform(
+  worker: Worker,
+  sender: RTCRtpSender,
+  connection: RTCPeerConnection,
+): void {
   const ScriptTransform = (globalThis as { RTCRtpScriptTransform?: ScriptTransformCtor })
     .RTCRtpScriptTransform;
   const senderWithTransform = sender as unknown as { transform?: object | null };
@@ -545,12 +770,14 @@ function attachTimingTransform(worker: Worker, sender: RTCRtpSender): void {
   }
   if (senderWithTransform.transform) {
     // Talk's end-to-end encryption already owns the single transform slot on
-    // this sender (src/utils/e2ee/JitsiE2EEContext.js). Taking it would break
-    // the call's encryption; capture continues without anchors.
+    // this sender (src/utils/e2ee/JitsiE2EEContext.js), or it is ours from an
+    // earlier recording interval. Taking it would break the call's encryption;
+    // capture continues without anchors.
     return;
   }
   try {
     senderWithTransform.transform = new ScriptTransform(worker, { kind: "audio" });
+    attachedTransform = { worker, sender, connection };
   } catch {
     // Older shape or a sender that refuses a transform: anchors are optional.
   }
@@ -752,10 +979,12 @@ async function finishCapture(callEnded: boolean): Promise<void> {
   if (callEnded) {
     talkRecordingActive = false;
     const idleWorker = preparedWorker;
-    preparedWorker = null;
     capturingConnection = null;
     capturingSender = null;
-    idleWorker?.terminate();
+    // Stops the worker only if its transform is not on a sender that can still
+    // send. pagehide reaches here with the connection still up, and a page on
+    // its way out has nothing to gain from stopping it a moment early.
+    releaseTimingWorker(idleWorker);
   }
   if (!state || state.finished) {
     return;
@@ -789,8 +1018,12 @@ async function finishCapture(callEnded: boolean): Promise<void> {
   active.worker.onmessage = (event: MessageEvent) => {
     if (event.data?.type === "error") {
       // The worker could not seal anything — nothing was recorded, or a write
-      // failed. There will be no "finalized" to finish this interval.
-      active.worker.terminate();
+      // failed. There will be no "finalized" to finish this interval, so the
+      // worker is retired here instead. Retired, not terminated: a full disk
+      // during a call that is still running must not cost the participant
+      // their audio, and the worker has reset its own interval state and can
+      // serve the next one.
+      retireSessionWorker(active.worker);
       return;
     }
     if (event.data?.type !== "finalized") {
@@ -803,17 +1036,12 @@ async function finishCapture(callEnded: boolean): Promise<void> {
         console.warn("Cassini source capture: upload deferred; buffered audio remains in browser storage");
       })
       .finally(() => {
-        if (callEnded || capturingConnection === null) {
-          active.worker.terminate();
-          return;
-        }
-        // The official recording stopped but the call continues. Keep the
-        // transform's pass-through worker alive so stopping Cassini cannot
-        // interrupt Talk's outgoing audio. The worker reset after finalize and
-        // can be reused if recording starts again.
-        if (preparedWorker === null) {
-          preparedWorker = active.worker;
-        }
+        // The official recording may have stopped while the call continues.
+        // Keeping the transform's pass-through worker alive is then the whole
+        // point: stopping Cassini must not interrupt Talk's outgoing audio.
+        // The worker reset after finalize and can be reused if recording
+        // starts again.
+        retireSessionWorker(active.worker);
       });
   };
   active.worker.postMessage({ type: "finalize", dirName: active.dirName, base });
@@ -896,15 +1124,20 @@ function beginCapture(sender: RTCRtpSender, connection: RTCPeerConnection): void
   if (serverAllowsCapture !== true) {
     return;
   }
-  const worker = preparedWorker ?? new Worker(workerURL());
-  if (preparedWorker === null) {
-    // A second recording interval can start after the first worker finalized.
-    // Reattaching may be unavailable because the sender still owns the first
-    // transform; source audio remains usable and simply carries no RTP-rate
-    // anchors in that uncommon shape.
-    attachTimingTransform(worker, sender);
+  // Consent can be given after install, so this may be the first worker.
+  prepareTimingWorker();
+  const worker = preparedWorker;
+  if (worker === null) {
+    // The worker is the storage as well as the timing. Without one there is
+    // nothing to record into.
+    return;
   }
   preparedWorker = null;
+  // Usually a no-op: watchSender attached the transform inside addTrack. This
+  // covers consent granted after the call started, where there was no worker
+  // to attach then — the platform ignores a transform attached this late, so
+  // that capture simply carries no anchors.
+  attachTimingTransform(worker, sender, connection);
   const callStartWallMs = Date.now();
   const session: CaptureState = {
     roomToken,
@@ -958,8 +1191,10 @@ function watchSender(sender: RTCRtpSender, connection: RTCPeerConnection): void 
     capturingSender = sender;
     capturingConnection = connection;
     if (serverAllowsCapture && consentGranted(localStorage)) {
-      preparedWorker = new Worker(workerURL());
-      attachTimingTransform(preparedWorker, sender);
+      prepareTimingWorker();
+      if (preparedWorker !== null) {
+        attachTimingTransform(preparedWorker, sender, connection);
+      }
     }
     beginCapture(sender, connection);
   }
@@ -1164,6 +1399,15 @@ export function install(config: CaptureDeliveryConfig = captureDeliveryFromIniti
   }
   void retryBufferedCaptures().catch(() => {});
   installTalkRecordingLifecycle();
+  if (consentGranted(localStorage)) {
+    // Here rather than at addTrack, because the readiness deadline runs from
+    // this line and a participant is mute for whatever is left of it. Talk
+    // still has to load its bundle, mount, and ask for the microphone before
+    // the first addTrack — far longer than a few kilobytes of worker takes to
+    // start — so a broken worker is normally caught before the call has
+    // negotiated, and the deadline never costs anybody a spoken word.
+    prepareTimingWorker();
+  }
   // A Proxy rather than a wrapper function. A wrapper loses new.target (so
   // `class Mine extends RTCPeerConnection` builds the wrong prototype), drops
   // static members such as generateCertificate, and gives Talk a constructor
