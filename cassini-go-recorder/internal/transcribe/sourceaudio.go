@@ -1,6 +1,7 @@
 package transcribe
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Ingestion of participant-captured source audio.
@@ -386,6 +388,11 @@ func LoadSourceSidecar(dir string) (SourceSidecar, error) {
 // roomToken may be empty when the caller does not know it — building a bare MKV
 // outside the operator, say. The window check still applies; the room check is
 // skipped, and the caller is trusting the window alone.
+// supersededSuffix is the name the upload handler gives a capture it has set
+// aside while promoting a newer one for the same call. It must never be
+// discovered as a capture in its own right; see the loop below.
+const supersededSuffix = ".superseded"
+
 func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS int64) (map[string][]string, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, nil
@@ -402,6 +409,16 @@ func DiscoverSourceCaptures(root, roomToken string, windowStartMS, windowEndMS i
 	found := map[string][]string{}
 	for _, match := range matches {
 		dir := filepath.Dir(match)
+		// The upload handler promotes a re-upload by renaming the previous one
+		// aside before moving the new one into place. That name sits at the
+		// same depth as a real capture, so it matches the glob above, and a
+		// build that ran inside the rename window — or after a crash left one
+		// behind — would find two directories for one owner and sum both onto
+		// the timeline: the same speech twice, at double amplitude, with the
+		// recorded track already suppressed.
+		if strings.HasSuffix(filepath.Base(dir), supersededSuffix) {
+			continue
+		}
 		sidecar, err := LoadSourceSidecar(dir)
 		if err != nil {
 			// A malformed upload must not fail the build: the recorded track is
@@ -465,7 +482,7 @@ type SourceRenderReport struct {
 // one capture for a single recording — they left and rejoined. Rendering only
 // the newest while suppressing their recorded streams lost the earlier
 // session the same way.
-func RenderSourceTrack(dirs []string, base SourceTimeBase, sampleRate int, outSamples int) ([]float32, SourceRenderReport, error) {
+func RenderSourceTrack(ctx context.Context, dirs []string, base SourceTimeBase, sampleRate int, outSamples int) ([]float32, SourceRenderReport, error) {
 	report := SourceRenderReport{}
 	out := make([]float32, outSamples)
 	timelineMS := int64(outSamples) * 1000 / int64(sampleRate)
@@ -490,7 +507,8 @@ func RenderSourceTrack(dirs []string, base SourceTimeBase, sampleRate int, outSa
 					"segment %d places at %.0f ms, outside a %d ms recording — the uploader's clock is not usable",
 					segment.Index, placement.OffsetMS, timelineMS)
 			}
-			samples, err := decodeSourceSegment(filepath.Join(dir, segment.AudioName), sampleRate)
+			samples, err := decodeSourceSegment(ctx, filepath.Join(dir, segment.AudioName), sampleRate,
+				sourceDecodeTimeout(segment.StopWallMS-segment.StartWallMS))
 			if err != nil {
 				return nil, report, fmt.Errorf("segment %d: decode: %w", segment.Index, err)
 			}
@@ -525,8 +543,37 @@ func RenderSourceTrack(dirs []string, base SourceTimeBase, sampleRate int, outSa
 // straight to ffmpeg. That is the same exposure the recorder already has to its
 // own captured media, but the provenance is different and worth naming: this
 // arrived over HTTP from a participant's machine.
-func decodeSourceSegment(path string, sampleRate int) ([]float32, error) {
-	cmd := exec.Command("ffmpeg",
+// sourceDecodeTimeout bounds the decode of one participant-supplied segment.
+//
+// Every other input this pipeline decodes was produced by the recorder. This
+// one arrived over HTTP from a participant's machine, so it is the first media
+// an outsider chooses, and an unbounded ffmpeg on it would hold the single
+// build worker for as long as the attacker liked while every queued meeting
+// waits behind it.
+//
+// Decoding runs far faster than real time, so a generous multiple of the
+// segment's own declared length is still a tight bound, and the floor keeps a
+// short segment workable on a loaded host. The ceiling is what actually
+// contains a file whose declared length is a lie.
+func sourceDecodeTimeout(segmentMS int64) time.Duration {
+	const (
+		floor   = 60 * time.Second
+		ceiling = 10 * time.Minute
+	)
+	budget := time.Duration(segmentMS/10) * time.Millisecond
+	if budget < floor {
+		budget = floor
+	}
+	if budget > ceiling {
+		budget = ceiling
+	}
+	return budget
+}
+
+func decodeSourceSegment(ctx context.Context, path string, sampleRate int, timeout time.Duration) ([]float32, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-v", "error",
 		"-i", path,
 		"-vn", "-sn", "-dn",
@@ -535,7 +582,11 @@ func decodeSourceSegment(path string, sampleRate int) ([]float32, error) {
 		"-f", "s16le",
 		"-",
 	)
-	return runPCM16LECommand(cmd, 0)
+	samples, err := runPCM16LECommand(cmd, 0)
+	if err != nil && ctx.Err() == context.DeadlineExceeded {
+		return nil, fmt.Errorf("decode exceeded its %s budget; treating the upload as unusable", timeout)
+	}
+	return samples, err
 }
 
 // recordingWallWindow is the wall-clock span this recording covers.
@@ -599,12 +650,30 @@ func writeWAV16(path string, samples []float32, sampleRate int) error {
 	if err != nil {
 		return fmt.Errorf("create wav: %w", err)
 	}
-	defer f.Close()
+	// Sync and check the close. Everything else in this file treats a failure
+	// as a skip that leaves the recorded track in place, but a WAV that was
+	// truncated by a full disk and never reported would be handed to the
+	// transcription pass as if it were whole, and that failure is fatal to the
+	// build. A meeting must not be lost to a feature that is only ever meant
+	// to improve one.
+	closed := false
+	defer func() {
+		if !closed {
+			_ = f.Close()
+		}
+	}()
 	if _, err := f.Write(header); err != nil {
 		return fmt.Errorf("write wav header: %w", err)
 	}
 	if _, err := f.Write(body); err != nil {
 		return fmt.Errorf("write wav body: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("sync wav: %w", err)
+	}
+	closed = true
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close wav: %w", err)
 	}
 	return nil
 }
@@ -621,7 +690,7 @@ func writeWAV16(path string, samples []float32, sampleRate int) error {
 // uploaded. Being a member of the room is what the upload endpoint can check;
 // having actually been in THIS call is what a matching track proves, and that
 // is the check that belongs here.
-func ApplySourceAudio(streams []AudioStream, captureRoot, roomToken, workDir string, sampleRate int, timelineMS int64, stdout io.Writer) []SourceRenderReport {
+func ApplySourceAudio(ctx context.Context, streams []AudioStream, captureRoot, roomToken, workDir string, sampleRate int, timelineMS int64, stdout io.Writer) []SourceRenderReport {
 	windowStartMS, windowEndMS := recordingWallWindow(streams, timelineMS)
 	captures, err := DiscoverSourceCaptures(captureRoot, roomToken, windowStartMS, windowEndMS)
 	if err != nil {
@@ -667,7 +736,7 @@ func ApplySourceAudio(streams []AudioStream, captureRoot, roomToken, workDir str
 			fmt.Fprintf(stdout, "  source audio: %s uploaded, but this recording carries no wall-clock base for their track; keeping the recorded audio\n", stream.SpeakerLabel)
 			continue
 		}
-		samples, report, err := RenderSourceTrack(dirs, stream.TimeBase, sampleRate, outSamples)
+		samples, report, err := RenderSourceTrack(ctx, dirs, stream.TimeBase, sampleRate, outSamples)
 		report.SpeakerID = stream.SpeakerID
 		if err != nil {
 			// The whole speaker stays on the recorded track, and the reason

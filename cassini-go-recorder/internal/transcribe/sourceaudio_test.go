@@ -1,12 +1,14 @@
 package transcribe
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testClockRate = 48000
@@ -582,7 +584,7 @@ func TestRenderSourceTrackRefusesAPartialCapture(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	_, report, err := RenderSourceTrack([]string{dir}, testBase(), 16000, 16000*120)
+	_, report, err := RenderSourceTrack(context.Background(), []string{dir}, testBase(), 16000, 16000*120)
 	if err == nil {
 		t.Fatal("a capture with an unplaceable segment was accepted; that silently deletes speech")
 	}
@@ -615,5 +617,85 @@ func TestRecordingWallWindowDerivesTimelineZero(t *testing.T) {
 	// No usable base at all: no window, so nothing is selected.
 	if s, e := recordingWallWindow([]AudioStream{{}}, 600_000); s != 0 || e != 0 {
 		t.Fatalf("unknown base produced a window: %d..%d", s, e)
+	}
+}
+
+// A re-upload is promoted by renaming the previous capture aside. That name
+// lives at the same depth as a real capture, so discovery has to reject it by
+// name: finding both would render the same speech twice onto one timeline,
+// summed, while the recorded track is already suppressed.
+func TestDiscoverSourceCapturesIgnoresSupersededDirectories(t *testing.T) {
+	root := t.TempDir()
+	live := writeCapture(t, root, "room1", "alice", inWindowSidecar("alice", testWindowStartMS))
+
+	aside := live + supersededSuffix
+	if err := os.MkdirAll(aside, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	raw, err := json.Marshal(inWindowSidecar("alice", testWindowStartMS))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(aside, "capture.json"), raw, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	found, err := DiscoverSourceCaptures(root, "room1", testWindowStartMS, testWindowEndMS)
+	if err != nil {
+		t.Fatalf("DiscoverSourceCaptures: %v", err)
+	}
+	dirs := found["alice"]
+	if len(dirs) != 1 {
+		t.Fatalf("found %d captures for alice, want only the live one: %v", len(dirs), dirs)
+	}
+	if dirs[0] != live {
+		t.Fatalf("discovered %s, want the live capture %s", dirs[0], live)
+	}
+}
+
+// The decode budget has to be generous enough for a real segment on a loaded
+// host and tight enough that a file whose declared length is a lie cannot hold
+// the only build worker.
+func TestSourceDecodeTimeoutIsBounded(t *testing.T) {
+	cases := []struct {
+		name      string
+		segmentMS int64
+		want      time.Duration
+	}{
+		{"a zero-length claim still gets the floor", 0, 60 * time.Second},
+		{"a negative claim cannot shrink it", -100_000, 60 * time.Second},
+		{"a two-minute segment stays on the floor", 120_000, 60 * time.Second},
+		{"a one-hour segment scales up", 3_600_000, 6 * time.Minute},
+		{"a claimed month is capped", 30 * 24 * 3_600_000, 10 * time.Minute},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sourceDecodeTimeout(tc.segmentMS); got != tc.want {
+				t.Fatalf("sourceDecodeTimeout(%d) = %s, want %s", tc.segmentMS, got, tc.want)
+			}
+		})
+	}
+}
+
+// A WAV that cannot be written must say so. Reporting success on a truncated
+// file hands it to the transcription pass as if it were whole, and that
+// failure is fatal to a build that would otherwise have published.
+func TestWriteWAV16ReportsAFailedWrite(t *testing.T) {
+	dir := t.TempDir()
+	// A directory is not a file: Create fails, and the error must surface.
+	if err := writeWAV16(dir, []float32{0.1, -0.1}, 16000); err == nil {
+		t.Fatal("writing over a directory reported success")
+	}
+
+	good := filepath.Join(dir, "ok.wav")
+	if err := writeWAV16(good, []float32{0.5, -0.5, 0}, 16000); err != nil {
+		t.Fatalf("writeWAV16: %v", err)
+	}
+	info, err := os.Stat(good)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if want := int64(44 + 3*2); info.Size() != want {
+		t.Fatalf("wrote %d bytes, want %d (44-byte header plus three samples)", info.Size(), want)
 	}
 }

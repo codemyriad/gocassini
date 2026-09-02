@@ -554,16 +554,31 @@ async function uploadCapture(
     credentials: "same-origin",
     headers: { requesttoken: (globalThis as { OC?: { requestToken?: string } }).OC?.requestToken ?? "" },
   });
-  if (response.status === 403) {
-    // Not transient: the administrator has switched collection off. Keeping the
-    // buffer for a retry would mean holding audio this installation has said it
-    // does not collect.
+  if (response.status >= 400 && response.status < 500) {
+    // Every 4xx is terminal, and the buffer goes.
+    //
+    // The server has decided about THIS upload, and retrying an identical body
+    // cannot change the answer: collection switched off (403), a body over the
+    // size cap (413), a sidecar the server rejects (400), a room we were not in
+    // (403), a quota already spent (413). The retry path has no backoff and
+    // fires on every Talk page load, so keeping the buffer would mean every
+    // affected participant re-uploading a meeting-sized body, forever, through
+    // the proxy — and disabling the companion, the recommended way to back the
+    // feature out, also removes the only code that would ever clean it up.
+    //
+    // The cost is honest: a recording is discarded and the participant is not
+    // told. That is the right trade against an unbounded upload loop, but it is
+    // why a rejection must stay legible in the console.
+    console.warn(
+      `Cassini source capture: upload rejected (${response.status}); discarding this recording`,
+    );
     await discardCapture(opfsRoot, dirName);
     return;
   }
   if (!response.ok) {
-    // Leave OPFS untouched so the next Talk page load can retry. Losing the
-    // recording to a transient 502 would defeat the point of buffering it.
+    // 5xx and anything else: the server did not decide, it failed. Leave OPFS
+    // untouched so the next Talk page load can retry. Losing the recording to a
+    // transient 502 would defeat the point of buffering it.
     throw new Error(`upload failed: ${response.status}`);
   }
   await opfsRoot.removeEntry(dirName, { recursive: true });
