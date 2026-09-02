@@ -696,3 +696,146 @@ func TestADeclaredModeRescuesAnInstanceStuckOnTheFallback(t *testing.T) {
 		t.Fatalf("recorded source = %q, want %q", settings.Source, storageModeSourceEnv)
 	}
 }
+
+// The folder list must never be swallowed into "there is no Cassini folder".
+//
+// Group Folders answers with EVERY folder on the instance in one list, and Go
+// fails the whole decode if any single record does not fit gfFolder — one
+// unrelated folder whose `acl` comes back as 0 rather than false is enough. Read
+// as "absent", that answer passes the default mode's sanity check on an instance
+// that really does have a mapped, ACL-enabled Cassini Team folder: the substrate
+// records `provisioned`, and the read proxy then serves the entire archive as
+// the ACL manager to every authenticated account.
+//
+// Each case below is a real Cassini folder the probe must NOT miss. The
+// assertion is that the probe fails closed (FolderProbed false → the default
+// mode is refused), not that it finds the folder.
+func TestProbeRefusesAFolderListItCouldNotUnderstand(t *testing.T) {
+	cassini := mappedCassiniFolder()
+	encoded, err := json.Marshal(map[string]gfFolder{string(cassini.ID): *cassini})
+	if err != nil {
+		t.Fatalf("encode folder fixture: %v", err)
+	}
+	withCassini := string(encoded[1 : len(encoded)-1]) // strip the braces to splice siblings in
+
+	cases := []struct {
+		name string
+		data string
+	}{
+		{
+			// The one that actually happens: another folder on the instance whose
+			// `acl` is an int. The Cassini record right beside it is perfect.
+			name: "a sibling folder with acl as an int",
+			data: `{` + withCassini + `,"3":{"id":3,"mount_point":"Other","groups":[],"acl":0}}`,
+		},
+		{
+			name: "a sibling whose manage is an object rather than a list",
+			data: `{` + withCassini + `,"3":{"id":"3","mount_point":"Other","manage":{"type":"user"}}}`,
+		},
+		{"data is null", `null`},
+		{"data is a scalar", `"nope"`},
+		{"data is a number", `12`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetProvisioningUser(t)
+			resetSubstrateRecord(t)
+			resetStorageMode(t)
+			ncStorage.setPath(filepath.Join(t.TempDir(), storageSettingsFileName))
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch p := r.URL.Path; {
+				case p == "/ocs/v2.php/apps/app_api/api/v1/users":
+					io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":["admin"]}}`)
+				case p == "/ocs/v2.php/cloud/groups/admin":
+					io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"users":["admin"]}}}`)
+				case p == "/ocs/v2.php/cloud/apps":
+					io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"apps":`+jsonArray(ncRequiredNativeApps)+`}}}`)
+				case p == "/ocs/v2.php/cloud/users/"+ncRecordingsOwner:
+					io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"id":"`+ncRecordingsOwner+`"}}}`)
+				case p == "/ocs/v2.php/cloud/groups":
+					io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"groups":`+jsonArray([]string{ncRecordingsEveryoneGroup})+`}}}`)
+				case p == "/index.php/apps/groupfolders/folders":
+					io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":`+tc.data+`}}`)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			cfg := testExAppConfig(srv.URL)
+			probe, err := cfg.probeNCStorage(context.Background(), &http.Client{}, log.New(io.Discard, "", 0))
+			if err != nil {
+				t.Fatalf("probeNCStorage() error = %v", err)
+			}
+			if probe.FolderProbed {
+				t.Fatalf("FolderProbed = true after a list the probe could not read; an unanswered question must not read as \"no folder\"")
+			}
+			// Which is what makes the default mode refuse rather than serve.
+			if ok, step, _ := probe.sanity(false); ok {
+				t.Fatal("the default mode was accepted on an unreadable folder list")
+			} else if step != storageStepModeMismatch+":"+storageStepFolderUnknown {
+				t.Fatalf("step = %q, want the folder-unknown mismatch", step)
+			}
+		})
+	}
+}
+
+// The counterpart: a list the probe CAN read, with an unrelated sibling, still
+// finds the Cassini folder. Failing closed must not mean failing always.
+func TestProbeFindsCassiniBesideAWellFormedSibling(t *testing.T) {
+	cassini := mappedCassiniFolder()
+	encoded, err := json.Marshal(map[string]gfFolder{string(cassini.ID): *cassini})
+	if err != nil {
+		t.Fatalf("encode folder fixture: %v", err)
+	}
+	data := `{` + string(encoded[1:len(encoded)-1]) + `,"3":{"id":"3","mount_point":"Other","groups":{},"acl":false}}`
+
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	ncStorage.setPath(filepath.Join(t.TempDir(), storageSettingsFileName))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch p := r.URL.Path; {
+		case p == "/ocs/v2.php/apps/app_api/api/v1/users":
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":["admin"]}}`)
+		case p == "/ocs/v2.php/cloud/groups/admin":
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"users":["admin"]}}}`)
+		case p == "/ocs/v2.php/cloud/apps":
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"apps":`+jsonArray(ncRequiredNativeApps)+`}}}`)
+		case p == "/ocs/v2.php/cloud/users/"+ncRecordingsOwner:
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"id":"`+ncRecordingsOwner+`"}}}`)
+		case p == "/ocs/v2.php/cloud/groups":
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"groups":`+jsonArray([]string{ncRecordingsEveryoneGroup})+`}}}`)
+		case p == "/index.php/apps/groupfolders/folders":
+			io.WriteString(w, `{"ocs":{"meta":{"statuscode":100},"data":`+data+`}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	probe, err := testExAppConfig(srv.URL).probeNCStorage(context.Background(), &http.Client{}, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("probeNCStorage() error = %v", err)
+	}
+	if !probe.FolderProbed || !probe.FolderPresent || !probe.FolderMounted {
+		t.Fatalf("probe = %+v, want the Cassini folder found beside its sibling", probe)
+	}
+	if ready, step, detail := probe.accessControlReady(); !ready {
+		t.Fatalf("access control not ready: %s — %s", step, detail)
+	}
+}
+
+// An empty instance answers `[]`, and that IS an answer: no folders.
+func TestProbeAcceptsAnEmptyFolderList(t *testing.T) {
+	mock := &storageMock{apps: nil, serviceAccount: true}
+	cfg, _ := runStoragePreflight(t, mock, io.Discard)
+	_ = cfg
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if !snap.OK {
+		t.Fatalf("substrate = %+v, want usable: an empty folder list means no folder is in the way", snap)
+	}
+}
