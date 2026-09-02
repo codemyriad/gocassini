@@ -22,6 +22,9 @@ type meetingsFakeNextcloud struct {
 
 	// requests holds every path the CLI asked for, in order.
 	requests []string
+	// queries holds each request's raw query string, positionally matching
+	// requests, so a test can pin what the CLI actually put on the wire.
+	queries []string
 	// lastAuth is the Basic-auth pair from the most recent request.
 	lastUser, lastPassword string
 	lastAuthOK             bool
@@ -37,6 +40,7 @@ func newMeetingsFakeNextcloud(t *testing.T, handler func(w http.ResponseWriter, 
 	fake := &meetingsFakeNextcloud{handler: handler}
 	fake.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fake.requests = append(fake.requests, r.URL.Path)
+		fake.queries = append(fake.queries, r.URL.RawQuery)
 		user, password, ok := r.BasicAuth()
 		fake.lastUser, fake.lastPassword, fake.lastAuthOK = user, password, ok
 		fake.lastHeaders = r.Header.Clone()
@@ -49,6 +53,7 @@ func newMeetingsFakeNextcloud(t *testing.T, handler func(w http.ResponseWriter, 
 // catalogPath is the proxied path the CLI must ask for. Written out literally
 // rather than composed from the constants, so a change to either is caught.
 const meetingsTestCatalogPath = "/index.php/apps/app_api/proxy/gocassini/published/catalog.json"
+const meetingsTestListPath = "/index.php/apps/app_api/proxy/gocassini/published/meetings-list"
 
 // serveCatalog answers the catalog route with body and 200, and everything else
 // with 404, mimicking the app's own routing.
@@ -99,8 +104,12 @@ func TestMeetingsListSendsBasicAuthToTheProxiedCatalogRoute(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit=%d stderr=%q", code, stderr)
 	}
-	if len(fake.requests) != 1 || fake.requests[0] != meetingsTestCatalogPath {
-		t.Fatalf("requested %v, want exactly [%s]", fake.requests, meetingsTestCatalogPath)
+	// The list route is tried first and this fake does not serve it, so the CLI
+	// falls back to the catalog — which is exactly what it must do against an
+	// app older than D-701, or one publishing to the local sink.
+	want := []string{meetingsTestListPath, meetingsTestCatalogPath}
+	if len(fake.requests) != len(want) || fake.requests[0] != want[0] || fake.requests[1] != want[1] {
+		t.Fatalf("requested %v, want exactly %v", fake.requests, want)
 	}
 	if !fake.lastAuthOK {
 		t.Fatal("request carried no Basic auth")
