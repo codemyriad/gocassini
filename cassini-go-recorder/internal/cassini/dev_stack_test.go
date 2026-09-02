@@ -799,3 +799,144 @@ func TestRunDevStackUpPassesResolvedEnv(t *testing.T) {
 		t.Fatalf("missing resolved env in %v", gotEnv)
 	}
 }
+
+// The storage mode is EXPLICIT (D-616 follow-up). It used to be implied: the
+// harness built the access-controlled substrate unconditionally, so "default
+// mode" and "the substrate has not appeared yet" looked identical — and the
+// ExApp derived its own mode from whichever it happened to see at that instant.
+func TestResolveDevStackPlanStorageModeDefaultsToAccessControlled(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("plan", nil, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if plan.StorageMode != devStackStorageACL {
+		t.Fatalf("StorageMode = %q, want %q — the harness has always built this and the e2e suites assert it",
+			plan.StorageMode, devStackStorageACL)
+	}
+	if plan.SkipStorageScaffold {
+		t.Fatal("SkipStorageScaffold defaulted on")
+	}
+}
+
+func TestResolveDevStackPlanStorageModeFromFlagAndEnv(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("plan", []string{"--storage-mode", devStackStorageDefault}, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if plan.StorageMode != devStackStorageDefault {
+		t.Fatalf("StorageMode = %q, want %q", plan.StorageMode, devStackStorageDefault)
+	}
+
+	plan, _, err = resolveDevStackPlan("plan", nil, testEnv(map[string]string{
+		"CASSINI_HARNESS_STORAGE_MODE": devStackStorageDefault,
+	}))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if plan.StorageMode != devStackStorageDefault {
+		t.Fatalf("env-sourced StorageMode = %q, want %q", plan.StorageMode, devStackStorageDefault)
+	}
+
+	// Flag beats env, like every other input here.
+	plan, _, err = resolveDevStackPlan("plan", []string{"--storage-mode", devStackStorageACL}, testEnv(map[string]string{
+		"CASSINI_HARNESS_STORAGE_MODE": devStackStorageDefault,
+	}))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if plan.StorageMode != devStackStorageACL {
+		t.Fatalf("flag did not beat env: StorageMode = %q", plan.StorageMode)
+	}
+}
+
+// A typo must not quietly build the other model.
+func TestResolveDevStackPlanRejectsAnUnknownStorageMode(t *testing.T) {
+	_, _, err := resolveDevStackPlan("plan", []string{"--storage-mode", "acl"}, testEnv(nil))
+	if err == nil {
+		t.Fatal("an unknown storage mode was accepted")
+	}
+	if !strings.Contains(err.Error(), devStackStorageACL) {
+		t.Fatalf("error %q does not offer the spellings that work", err)
+	}
+}
+
+// The harness speaks `acl-enabled` because it reads well on a command line; the
+// app's config file, API and UI all say `access_controlled`. Only one of those
+// crosses the boundary into the ExApp.
+func TestDevStackExportsTheExAppsOwnVocabulary(t *testing.T) {
+	for _, tc := range []struct{ harness, exapp string }{
+		{devStackStorageACL, "access_controlled"},
+		{devStackStorageDefault, "default"},
+	} {
+		plan, _, err := resolveDevStackPlan("plan", []string{"--storage-mode", tc.harness}, testEnv(nil))
+		if err != nil {
+			t.Fatalf("resolveDevStackPlan(%s): %v", tc.harness, err)
+		}
+		env := plan.env()
+		if !containsEnv(env, "CASSINI_HARNESS_STORAGE_MODE="+tc.harness) {
+			t.Errorf("harness env missing CASSINI_HARNESS_STORAGE_MODE=%s: %v", tc.harness, env)
+		}
+		if !containsEnv(env, "CASSINI_STORAGE_MODE="+tc.exapp) {
+			t.Errorf("ExApp env missing CASSINI_STORAGE_MODE=%s: %v", tc.exapp, env)
+		}
+	}
+}
+
+func TestResolveDevStackPlanSkipStorageScaffold(t *testing.T) {
+	plan, _, err := resolveDevStackPlan("plan", []string{"--debug-skip-storage-scaffold"}, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if !plan.SkipStorageScaffold {
+		t.Fatal("--debug-skip-storage-scaffold did not take")
+	}
+	if !containsEnv(plan.env(), "CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=1") {
+		t.Fatalf("skip flag did not reach the scripts: %v", plan.env())
+	}
+
+	// It composes with the mode: skipping the scaffold does not change which
+	// mode the ExApp is told to start in, which is what makes
+	// "access control selected, nothing built" reachable — the state the app's
+	// own setup flow exists to fix.
+	plan, _, err = resolveDevStackPlan("plan", []string{"--debug-skip-storage-scaffold"}, testEnv(nil))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if !containsEnv(plan.env(), "CASSINI_STORAGE_MODE=access_controlled") {
+		t.Fatalf("skipping the scaffold changed the declared mode: %v", plan.env())
+	}
+}
+
+// Off by default, and only "1" turns it on: an ambient empty or "0" must not
+// silently strip a stack of its storage.
+func TestSkipStorageScaffoldIsOffUnlessExplicitlyOne(t *testing.T) {
+	for _, value := range []string{"", "0", "false", "yes"} {
+		plan, _, err := resolveDevStackPlan("plan", nil, testEnv(map[string]string{
+			"CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD": value,
+		}))
+		if err != nil {
+			t.Fatalf("resolveDevStackPlan(%q): %v", value, err)
+		}
+		if plan.SkipStorageScaffold {
+			t.Errorf("CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=%q turned the scaffold off", value)
+		}
+	}
+	plan, _, err := resolveDevStackPlan("plan", nil, testEnv(map[string]string{
+		"CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD": "1",
+	}))
+	if err != nil {
+		t.Fatalf("resolveDevStackPlan: %v", err)
+	}
+	if !plan.SkipStorageScaffold {
+		t.Fatal("CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD=1 did not take")
+	}
+}
+
+func containsEnv(env []string, want string) bool {
+	for _, entry := range env {
+		if entry == want {
+			return true
+		}
+	}
+	return false
+}

@@ -318,7 +318,16 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		ncStorage.set(true, storageModeSourceConfigured)
 	} else if settings.Configured() {
 		ncStorage.set(settings.AccessControlled(), storageModeSourceConfigured)
-		logger.Printf("storage_mode -> %s (configured)", settings.Mode())
+		logger.Printf("storage_mode -> %s (recorded, source=%s)", settings.Mode(), settings.Source)
+	} else if declared, ok, raw := storageModeFromEnv(os.Getenv); ok {
+		// Declared but not yet recorded: the first enabled edge will persist it.
+		// Logged here so a deployment can see its own setting took, without
+		// waiting for that edge.
+		logger.Printf("storage_mode -> %s (declared by %s=%s; recorded on first enable)", storageModeName(declared), envStorageMode, raw)
+	} else if raw != "" {
+		// Refused at startup rather than only on the enabled edge, because this
+		// is where a deploy option's typo is cheapest to notice.
+		logger.Printf("ERROR: %s=%q is not %s; it will be ignored and the storage mode derived from the instance instead", envStorageMode, raw, storageModeEnvValues)
 	}
 
 	// The preflight remains tied to the AppAPI enabled edge, but not to the

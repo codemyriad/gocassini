@@ -813,6 +813,41 @@ harness_operator_status_with_retry() {
   return 1
 }
 
+# harness_skip_storage_scaffold reports whether this stack was asked to build no
+# recordings storage at all. A debugging shape: it is how you get the state a
+# real Nextcloud is in before anybody has set Cassini up, which is exactly what
+# the app's own setup flow needs to be exercised against.
+harness_skip_storage_scaffold() {
+  [[ "${CASSINI_HARNESS_SKIP_STORAGE_SCAFFOLD:-0}" == "1" ]]
+}
+
+# harness_storage_mode_is_acl reports whether this stack is being built for the
+# access-controlled model. Defaults to true, which is what the harness has
+# always built and what the e2e suites assert.
+harness_storage_mode_is_acl() {
+  [[ "${CASSINI_HARNESS_STORAGE_MODE:-acl-enabled}" != "default" ]]
+}
+
+# harness_exapp_storage_mode names the mode the ExApp is told to START in, in
+# the app's own vocabulary rather than the harness flag's.
+#
+# It is derived from the same predicate that decides what gets built, so the two
+# cannot disagree. They would otherwise: `bin/cassini dev stack` exports both
+# variables together, but a script driving the harness directly sets only
+# CASSINI_HARNESS_STORAGE_MODE — and a stack built for the default model while
+# the app starts in access-controlled mode is precisely the `mode_mismatch`
+# state, with publishing refused and no obvious cause. An explicit
+# CASSINI_STORAGE_MODE still wins, for testing a deliberate mismatch.
+harness_exapp_storage_mode() {
+  if [[ -n "${CASSINI_STORAGE_MODE:-}" ]]; then
+    printf '%s' "$CASSINI_STORAGE_MODE"
+  elif harness_storage_mode_is_acl; then
+    printf 'access_controlled'
+  else
+    printf 'default'
+  fi
+}
+
 harness_register_exapp() {
   harness_validate_recording_secrets
   harness_default_installed_exapp_backend_url
@@ -825,6 +860,11 @@ harness_register_exapp() {
     --env "CASSINI_TALK_RECORDING_SECRET=$CASSINI_TALK_RECORDING_SECRET"
     --env "CASSINI_TALK_SIGNALING_INTERNAL_SECRET=$CASSINI_TALK_SIGNALING_INTERNAL_SECRET"
     --env "CASSINI_PUBLISH_SINK=${CASSINI_PUBLISH_SINK:-nextcloud-files}"
+    # The mode the ExApp STARTS in. Declared rather than left to be derived,
+    # because deriving reads whatever Nextcloud looks like on the first enabled
+    # edge — and on a stack still being assembled that is the wrong moment. The
+    # app records it once; the Setup tab is what changes it afterwards.
+    --env "CASSINI_STORAGE_MODE=$(harness_exapp_storage_mode)"
     --test-deploy-mode
     --log "$register_log"
     --enable-cycle
