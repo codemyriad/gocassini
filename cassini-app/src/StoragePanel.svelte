@@ -74,11 +74,18 @@
       status = await operatorClient.putStorage(target.mode === "access_controlled");
       pending = null;
     } catch (error) {
-      // The mode is unchanged — the operator moves nothing it cannot finish —
-      // so leave `status` exactly as it was and let the buttons snap back to
-      // the mode that is really in force.
       switchError = asMessage(error);
       pending = null;
+      // Re-read rather than trusting the pre-switch snapshot. Most failures
+      // change nothing — the operator refuses before it touches anything — but
+      // one does not: a transition that fails AFTER moving the archive has
+      // already changed the mode this operator is using, and its message says
+      // so. Showing the state from before the attempt would contradict it.
+      try {
+        status = await operatorClient.getStorage();
+      } catch {
+        // Keep what we had; the switch error is the thing worth showing.
+      }
     } finally {
       switching = false;
     }
@@ -245,7 +252,11 @@
         <div class="alert alert-error items-start gap-3 text-sm" role="alert">
           <TriangleAlert size={16} class="mt-0.5 shrink-0" aria-hidden="true" />
           <div class="grid gap-1">
-            <p class="font-semibold">The storage mode was not changed.</p>
+            <!-- Deliberately not "the mode was not changed": that is true of
+                 almost every failure but not of all of them, and the operator's
+                 own sentence below says which happened. The cards above are
+                 re-read after a failure, so they show the mode really in force. -->
+            <p class="font-semibold">Switching the storage mode failed.</p>
             <p class="text-xs break-words">{switchError}</p>
           </div>
         </div>

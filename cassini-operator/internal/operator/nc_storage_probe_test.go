@@ -19,6 +19,7 @@ func readyProbe() ncStorageProbe {
 		ServiceAccount: true,
 		EveryoneGroup:  true,
 		Folder:         gfFolder{ID: "7", MountPoint: ncRecordingsMount, ACL: true},
+		FolderProbed:   true,
 		FolderPresent:  true,
 		FolderMounted:  true,
 		ACLEnabled:     true,
@@ -140,7 +141,7 @@ func TestAccessControlBlockersNameTheStepAndTheCommand(t *testing.T) {
 // third-party app is installed — which is the whole point of the deps-free
 // model.
 func TestDefaultModeNeedsOnlyTheServiceAccount(t *testing.T) {
-	probe := ncStorageProbe{AdminUser: "admin", ServiceAccount: true}
+	probe := ncStorageProbe{AdminUser: "admin", ServiceAccount: true, FolderProbed: true}
 	if ok, step, detail := probe.defaultReady(); !ok {
 		t.Fatalf("defaultReady() = false (%s: %s) on an instance with neither app but a service account", step, detail)
 	}
@@ -180,6 +181,26 @@ func TestSanityCatchesDefaultModeUnderAMountedTeamFolder(t *testing.T) {
 	probe.FolderMounted = false
 	if ok, step, detail := probe.sanity(false); !ok {
 		t.Fatalf("sanity(default) = false (%s: %s) with no mount in the way", step, detail)
+	}
+}
+
+// The default model's safety rests on nothing being mounted over the canonical
+// path. "We could not look" is not evidence of that, and treating it as such is
+// how an access-controlled archive gets served to everybody: the probe skips
+// the Team-folder read, FolderMounted stays false, sanity passes, and the read
+// proxy switches to reading as the owner.
+func TestSanityRefusesDefaultModeWhenTheFolderCouldNotBeLookedAt(t *testing.T) {
+	probe := ncStorageProbe{AdminUser: "admin", ServiceAccount: true, FolderProbed: false}
+
+	ok, step, detail := probe.sanity(false)
+	if ok {
+		t.Fatal("sanity(default) = true without ever answering whether a Team folder is mounted")
+	}
+	if step != storageStepModeMismatch+":"+storageStepFolderUnknown {
+		t.Fatalf("step = %q, want %q", step, storageStepModeMismatch+":"+storageStepFolderUnknown)
+	}
+	if !strings.Contains(detail, ncRecordingsMount) {
+		t.Fatalf("detail %q does not name what could not be checked", detail)
 	}
 }
 

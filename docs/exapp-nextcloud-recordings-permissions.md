@@ -196,19 +196,23 @@ accordingly.
 
 The prerequisites are **yours**. Cassini creates no account, no group, no Team
 folder and installs no app; it checks and reports. The full recipe for the
-access-controlled mode, exactly as the Setup tab prints it:
+access-controlled mode, in the order the Setup tab lists whatever is still
+missing:
 
 ```bash
-occ app:install groupfolders && occ app:enable groupfolders
-occ app:install group_everyone && occ app:enable group_everyone
 occ group:add cassini
 occ user:add --group=cassini cassini
+occ app:install groupfolders && occ app:enable groupfolders
+occ app:install group_everyone && occ app:enable group_everyone
 occ groupfolders:create Cassini            # note the id it prints
 occ groupfolders:group <id> cassini read write share delete
 occ groupfolders:group <id> everyone read
 occ groupfolders:permissions <id> --enable
 occ groupfolders:permissions <id> -m --user cassini
 ```
+
+The Setup tab prints only the lines this instance still needs, so it is usually
+shorter than the block above.
 
 Then disable and re-enable the app (setup runs on the AppAPI **enabled** edge,
 not on start), and switch the mode in the Setup tab if it is not already on.
@@ -338,9 +342,15 @@ it rather than matching prose.
 "step": "mount_mapping:everyone"       → occ groupfolders:group <id> everyone read
 "step": "group_folder_acl"             → occ groupfolders:permissions <id> --enable
 "step": "group_folder_manager"         → occ groupfolders:permissions <id> -m --user cassini
-"step": "mode_mismatch:…"              → the mode and the storage disagree; pick
-                                         one in the Setup tab
-"step": "acl_enable"                   → a call failed; read the nc storage: log
+"step": "mode_mismatch:group_folder_mount"
+                                       → access control is off but a Cassini Team
+                                         folder is still mapped; pick a mode in
+                                         the Setup tab
+"step": "mode_mismatch:group_folder_unknown"
+                                       → Cassini could not find out whether one is
+                                         mounted, and will not assume there is not
+"step": "acl_enable"                   → a call failed; read the nc storage:
+                                         and nc provision: log lines
 ```
 
 Every `unavailable` step's `detail` carries the exact command, so nothing above
@@ -350,9 +360,12 @@ has to be looked up.
 does not serve recordings from Nextcloud Files — a standalone operator, or an
 ExApp pinned to `CASSINI_PUBLISH_SINK=local` — so there is no substrate to
 expect. `state: unknown` means the container was restarted without the app being
-re-enabled, so setup has not run in this process. Disable and re-enable Cassini —
-publishing is refused until then, because nothing has verified where recordings
-would land.
+re-enabled, so the preflight has not run in this process. Disable and re-enable
+Cassini — publishing is refused until then, because nothing has verified where
+recordings would land, and in the **default** mode reading is too: serving the
+whole archive as its owner is only safe once something has confirmed that no
+Team folder is mounted over the canonical path. Under access control reads are
+unaffected, because Nextcloud is the one deciding.
 
 The full state table and worked examples are in
 [the install guide](./exapp-install.md#verifying-the-recordings-substrate).
@@ -492,7 +505,7 @@ procedure.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/operator/status` answers 503 | The storage the selected mode needs is not ready | Read `recordings_access.state` and `.step`. `unavailable` names a thing to install or set and carries the command in `.detail`; `degraded` means a call failed — the matching `nc storage:` log line has it |
+| `/operator/status` answers 503 | The storage the selected mode needs is not ready | Read `recordings_access.state` and `.step`. `unavailable` names a thing to install or set and carries the command in `.detail`; `degraded` means a call failed — the matching `nc storage:` or `nc provision:` log line has it |
 | `state=unavailable`, `step=app_missing:<id>` | That native app is not enabled | `occ app:install <id> && occ app:enable <id>`, then re-enable Cassini |
 | `state=unavailable`, `step=administrator` | No probed account is an administrator Cassini may act as | Set `CASSINI_NC_ADMIN_USER` to one, then re-enable Cassini |
 | `state=unknown` | The container restarted without the app being re-enabled, so the preflight has not run in this process (D-541) | Disable and re-enable Cassini |
@@ -504,7 +517,7 @@ procedure.
 | The probe cannot see an account or folder you created | Administrator discovery picked the wrong account, so the admin-gated reads answer 401/403 | Inspect `nc storage:` logs; set `CASSINI_NC_ADMIN_USER` to the correct administrator and re-enable Cassini |
 | `step=group_folder` | There is no `Cassini` Team folder; Cassini does not create one | `occ groupfolders:create Cassini`, map its groups and enable its ACL (see Setup), then re-enable Cassini |
 | Fresh user has no Cassini mount | `group_everyone` disabled or Team-folder mapping missing | Confirm `occ user:info <user>` includes `everyone` and `groupfolders:list` assigns `everyone:1` |
-| Root becomes owner-only after upgrade | Legacy leaf/catalog ACL migration failed | Inspect `nc storage:` logs, correct the DAV/ACL error, then re-enable Cassini |
+| Root becomes owner-only after upgrade | Legacy leaf/catalog ACL migration failed | Inspect the `nc provision:` logs, correct the DAV/ACL error, then re-enable Cassini |
 | Everyone sees a private meeting | Leaf lacks an explicit `everyone` deny or ACLs were disabled | Re-enable Cassini to run protection; inspect the leaf's Advanced permissions |
 | Granted user sees an empty list | Caller cannot traverse or leaf ACL was not applied | Confirm advanced ACL, `everyone:1` mount, root read, and the participant allow |
 | Meeting visible to nobody | Non-Talk job or private room with only non-local participants | Share the `.opus` manually |

@@ -32,6 +32,9 @@ type storageMock struct {
 	everyoneGroup  bool
 	folder         *gfFolder
 	recordingsRoot bool
+	// failAppList makes Nextcloud refuse to say which apps are enabled, which
+	// is a different answer from "that app is off" and must not be read as one.
+	failAppList bool
 }
 
 func (m *storageMock) saw(method, suffix string) bool {
@@ -64,6 +67,10 @@ func (m *storageMock) server(t *testing.T) *httptest.Server {
 			}
 			io.WriteString(w, `{"ocs":{"meta":{"statuscode":200},"data":{"users":["admin"]}}}`)
 		case r.Method == http.MethodGet && p == "/ocs/v2.php/cloud/apps":
+			if m.failAppList {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			apps := m.apps
 			if apps == nil {
 				apps = ncRequiredNativeApps
@@ -305,5 +312,101 @@ func TestPreflightScaffoldsNothingWhenAccessControlIsIncomplete(t *testing.T) {
 	}
 	if !strings.Contains(snap.Detail, "occ groupfolders:create") {
 		t.Fatalf("detail %q does not carry the command that would fix it", snap.Detail)
+	}
+}
+
+// A preflight run must report ITS OWN verdict. succeed() deliberately refuses
+// to overwrite a recorded degradation, which is right within one run and wrong
+// across them: without a reset an administrator who installs the missing app
+// and re-enables Cassini gets a run where everything works and a status that
+// still says what was wrong before it — so publishing and recording stay
+// refused and the documented remedy appears to do nothing.
+func TestPreflightClearsAnEarlierFailureWhenTheInstanceIsFixed(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	if err := SaveStorageSettings(path, true); err != nil {
+		t.Fatalf("SaveStorageSettings() error = %v", err)
+	}
+	ncStorage.setPath(path)
+
+	// First run: the Team folder is missing, so the substrate is unavailable.
+	broken := &storageMock{serviceAccount: true, everyoneGroup: true}
+	testExAppConfig(broken.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
+	if snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles); snap.Step != storageStepGroupFolder {
+		t.Fatalf("first run step = %q, want %q", snap.Step, storageStepGroupFolder)
+	}
+
+	// The administrator creates the folder and re-enables the app.
+	fixed := &storageMock{serviceAccount: true, everyoneGroup: true, folder: mappedCassiniFolder(), recordingsRoot: true}
+	testExAppConfig(fixed.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
+
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if !snap.OK {
+		t.Fatalf("substrate = %+v after the fix; the earlier failure was never cleared", snap)
+	}
+	if !ncAccessSubstrate.usable() {
+		t.Fatal("publishing is still refused on an instance that is now correct")
+	}
+	if ncAccessSubstrate.recordingRefusal() != "" {
+		t.Fatal("recording is still refused on an instance that is now correct")
+	}
+}
+
+// The dangerous shape the read-path guard exists for: `group_everyone` off
+// while `groupfolders` is on and a mapped Cassini folder still shadows the
+// canonical path. The Team folder must still be looked at.
+func TestPreflightStillSeesAMountedFolderWhenTheEveryoneAppIsOff(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	if err := SaveStorageSettings(path, false); err != nil {
+		t.Fatalf("SaveStorageSettings() error = %v", err)
+	}
+	ncStorage.setPath(path)
+
+	mock := &storageMock{
+		apps:           []string{ncAppGroupFolders},
+		serviceAccount: true,
+		folder:         mappedCassiniFolder(),
+		recordingsRoot: true,
+	}
+	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
+
+	probe, probed := ncAccessSubstrate.lastProbe()
+	if !probed || !probe.FolderMounted {
+		t.Fatalf("probe did not see the mounted Team folder: %+v", probe)
+	}
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.OK {
+		t.Fatal("default mode reported healthy over a mounted Team folder")
+	}
+	if ncStorageServesAsOwner() {
+		t.Fatal("the read proxy would serve the Team folder's recordings as their ACL manager, to everybody")
+	}
+}
+
+// An unanswerable apps question must not read as "no Team folder can exist".
+func TestPreflightRefusesDefaultModeWhenNextcloudWillNotSayWhichAppsAreOn(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	resetStorageMode(t)
+	path := filepath.Join(t.TempDir(), storageSettingsFileName)
+	if err := SaveStorageSettings(path, false); err != nil {
+		t.Fatalf("SaveStorageSettings() error = %v", err)
+	}
+	ncStorage.setPath(path)
+
+	mock := &storageMock{serviceAccount: true, failAppList: true}
+	testExAppConfig(mock.server(t).URL).preflightNCStorage(context.Background(), log.New(io.Discard, "", 0))
+
+	snap := ncAccessSubstrate.snapshot(publishSinkNextcloudFiles)
+	if snap.OK {
+		t.Fatalf("substrate = %+v; an unanswered apps question is not evidence that nothing is mounted", snap)
+	}
+	if ncStorageServesAsOwner() {
+		t.Fatal("the read proxy switched to reading as the owner on an instance nothing could be established about")
 	}
 }

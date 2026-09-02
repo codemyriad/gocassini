@@ -47,6 +47,9 @@ type transitionMock struct {
 	serviceAccount bool
 	everyoneGroup  bool
 	apps           []string
+	// failPropfind makes a PROPFIND of exactly this path answer 500 — a failed
+	// LOOK, which is a different answer from "there is nothing here".
+	failPropfind string
 }
 
 func newTransitionMock() *transitionMock {
@@ -215,6 +218,10 @@ func (m *transitionMock) server(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusCreated)
 		case r.Method == "PROPFIND":
 			rel := relOf(p)
+			if m.failPropfind != "" && rel == m.failPropfind {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			if _, isFile := m.files[rel]; !isFile && !m.dirs[rel] && rel != "" {
 				w.WriteHeader(http.StatusNotFound)
 				return
@@ -506,5 +513,72 @@ func TestDavPropfindChildrenExcludesTheCollectionItself(t *testing.T) {
 		if ncCollisionSuffix.MatchString(notCollision) {
 			t.Errorf("%q was mistaken for a server-renamed collision", notCollision)
 		}
+	}
+}
+
+// An opt-out that died between unmapping the Team folder and carrying the
+// archive back leaves a state that LOOKS finished: nothing is mounted, so the
+// naive "nothing to move" shortcut reports success and writes the flag — after
+// which the handler's no-op branch refuses to let anyone try again, and the
+// recordings sit under the staging name with nothing left to notice them.
+func TestOptOutResumesAnInterruptedMoveInsteadOfDeclaringItDone(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	settings := setStorageMode(t, true)
+
+	// The state an interrupted opt-out leaves: folder unmapped, archive staged.
+	mock := newTransitionMock()
+	mock.folder = &gfFolder{ID: "7", MountPoint: ncRecordingsMount, Groups: json.RawMessage(`{}`)}
+	mock.mounted = false
+	mock.addFile(ncStorageStagingRoot+"/Recordings/meetings/m1.opus", "audio-1")
+	mock.addFile(ncStorageStagingRoot+"/Recordings/catalog.json", catalogWith("m1"))
+
+	cfg := testExAppConfig(mock.server(t).URL)
+	result, err := cfg.switchStorageMode(context.Background(), false, log.New(io.Discard, "", 0))
+	if err != nil {
+		t.Fatalf("switchStorageMode(false) error = %v", err)
+	}
+	if result.MeetingsMoved != 1 {
+		t.Fatalf("moved %d recordings, want the 1 that was stranded", result.MeetingsMoved)
+	}
+	if !mock.has("Cassini/Recordings/meetings/m1.opus") {
+		t.Fatalf("the stranded recording never reached the canonical path; files: %v", mock.files)
+	}
+	if mock.has(ncStorageStagingRoot + "/Recordings/meetings/m1.opus") {
+		t.Error("the recording is still in the staging tree as well")
+	}
+	if ids := idsIn(t, mock.files["Cassini/Recordings/catalog.json"]); len(ids) != 1 {
+		t.Fatalf("catalog ids = %v, want the stranded meeting", ids)
+	}
+	if persisted := readPersistedMode(t, settings); !persisted.Configured() || persisted.AccessControlled() {
+		t.Fatalf("%s = %+v, want access_control_enabled=false", storageSettingsFileName, persisted)
+	}
+}
+
+// A failed look is not "there is no archive here". Swallowing it would let the
+// opt-in complete having moved nothing and write the flag, after which the
+// handler refuses to re-run the switch because the mode already matches.
+func TestOptInRefusesWhenTheOwnerRootCannotBeListed(t *testing.T) {
+	resetProvisioningUser(t)
+	resetSubstrateRecord(t)
+	setStorageMode(t, false)
+
+	mock := newTransitionMock()
+	mock.folder = mappedCassiniFolder()
+	mock.mounted = true
+	mock.addDir(ncRecordingsMount, ncRecordingsRoot, ncRecordingsRoot+"/meetings")
+	mock.addFile("Cassini (1)/Recordings/meetings/old-a.opus", "audio-a")
+	mock.failPropfind = "Cassini (1)/Recordings"
+
+	cfg := testExAppConfig(mock.server(t).URL)
+	_, err := cfg.switchStorageMode(context.Background(), true, log.New(io.Discard, "", 0))
+	if err == nil {
+		t.Fatal("switchStorageMode(true) succeeded while it could not read the stranded archive")
+	}
+	if accessControlled, _ := ncStorage.mode(); accessControlled {
+		t.Fatal("the mode was flipped even though the archive was never inspected")
+	}
+	if mock.has("Cassini/Recordings/meetings/old-a.opus") {
+		t.Fatal("the recording was moved despite the failure")
 	}
 }

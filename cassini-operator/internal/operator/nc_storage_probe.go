@@ -60,7 +60,15 @@ type ncStorageProbe struct {
 	// would be a trap, not a substitute (see nc_provision.go step 1).
 	EveryoneGroup bool
 
-	// Folder and the four booleans under it describe the `Cassini` Team folder.
+	// FolderProbed says the Team-folder question was ANSWERED — either the
+	// folder list was read, or `groupfolders` is definitely not enabled and so
+	// nothing can be mounted. It is NOT the same as FolderPresent being false,
+	// and conflating the two is how "we could not look" becomes "there is
+	// nothing there": the default model's whole safety argument is that no Team
+	// folder shadows the service account's home, and an unanswered question is
+	// not evidence of that.
+	FolderProbed bool
+	// Folder and the booleans under it describe the `Cassini` Team folder.
 	// FolderPresent says it exists; FolderMounted says at least one group maps
 	// to it, which is what makes it appear in anybody's Files — and therefore
 	// what makes it shadow a same-named home directory.
@@ -83,6 +91,33 @@ type ncStorageProbe struct {
 	PrivateRoot bool
 }
 
+// prereqEnabled reports whether one native app was positively reported as
+// enabled. An `unknown` state — the check itself failed — is not enabled.
+func prereqEnabled(prereqs []ncPrerequisiteStatus, name string) bool {
+	for _, p := range prereqs {
+		if p.Name == name {
+			return p.State == ncPrerequisiteEnabled
+		}
+	}
+	return false
+}
+
+// prereqsAnswered reports whether Nextcloud actually told us which apps are
+// enabled. It is the difference between "that app is off" and "we could not
+// ask", which for the Team-folder question decides whether a `false` means
+// anything at all.
+func prereqsAnswered(prereqs []ncPrerequisiteStatus) bool {
+	if len(prereqs) == 0 {
+		return false
+	}
+	for _, p := range prereqs {
+		if p.State == ncPrerequisiteUnknown {
+			return false
+		}
+	}
+	return true
+}
+
 // storageProbeStep is a machine-readable name for the thing that is missing,
 // in the same vocabulary /status has always used for provisioning steps, so a
 // monitor or a test can key on it.
@@ -93,6 +128,11 @@ const (
 	storageStepFolderMount    = "group_folder_mount"
 	storageStepFolderACL      = "group_folder_acl"
 	storageStepFolderManager  = "group_folder_manager"
+	// storageStepFolderUnknown means the Team-folder question could not be
+	// answered. Under the default model that is disqualifying rather than
+	// merely unfortunate: the model's safety rests on nothing being mounted
+	// over the canonical path, and "we could not look" is not evidence of that.
+	storageStepFolderUnknown = "group_folder_unknown"
 	// storageStepModeMismatch means the recorded mode and the storage disagree.
 	// Nothing is missing; the two just are not the same thing, and writing
 	// under that disagreement is how recordings end up somewhere nobody is
@@ -130,15 +170,40 @@ func (c ExAppConfig) probeNCStorage(ctx context.Context, client *http.Client, lo
 		probe.ServiceAccount = exists
 	}
 
-	if probe.NativeApps {
+	if prereqEnabled(prereqs, ncAppEveryoneGroup) {
 		if exists, err := c.groupExists(ctx, client, ncRecordingsEveryoneGroup); err != nil {
 			logger.Printf("nc storage: check universal group %q: %v", ncRecordingsEveryoneGroup, err)
 		} else {
 			probe.EveryoneGroup = exists
 		}
-		if folder, ok, err := c.findFolder(ctx, client, ncRecordingsMount); err != nil {
+	}
+
+	// The Team folder is read on its own condition, not on NativeApps.
+	//
+	// Bundling it with the Everyone Group app is what made this dangerous: on an
+	// instance where `group_everyone` is off but `groupfolders` is on and a
+	// mapped `Cassini` folder is still shadowing the canonical path, the folder
+	// was never looked at, `FolderMounted` stayed false, and an
+	// access-controlled archive read as an unmounted one — which the default
+	// model then serves to everybody. The two apps answer different questions
+	// and are asked separately.
+	switch {
+	case !prereqsAnswered(prereqs):
+		// Nextcloud did not say which apps are enabled, so we cannot even
+		// conclude that a Team folder is impossible. Unanswered, not absent.
+		probe.FolderProbed = false
+	case !prereqEnabled(prereqs, ncAppGroupFolders):
+		// The app is not enabled, so no Team folder is mounted anywhere. That is
+		// an answer, and it is the one that makes a deps-free instance usable.
+		probe.FolderProbed = true
+	default:
+		folder, ok, err := c.findFolder(ctx, client, ncRecordingsMount)
+		if err != nil {
 			logger.Printf("nc storage: list Team folders: %v", err)
-		} else if ok {
+			break
+		}
+		probe.FolderProbed = true
+		if ok {
 			probe.Folder = folder
 			probe.FolderPresent = true
 			probe.ACLEnabled = folder.ACL
@@ -146,7 +211,7 @@ func (c ExAppConfig) probeNCStorage(ctx context.Context, client *http.Client, lo
 			ownerPerms, ownerMapped := folder.groupPerms(ncRecordingsOwnerGroup)
 			probe.EveryoneRead = everyoneMapped && everyonePerms&aclPermRead != 0
 			probe.OwnerAll = ownerMapped && ownerPerms == aclMaskAll
-			probe.FolderMounted = everyoneMapped || ownerMapped
+			probe.FolderMounted = folder.anyGroupMapped()
 			probe.OwnerManages = folder.hasManager("user", ncRecordingsOwner)
 		}
 	}
@@ -263,6 +328,16 @@ func (p ncStorageProbe) sanity(accessControlled bool) (ok bool, step, detail str
 	if ready, step, detail := p.defaultReady(); !ready {
 		return false, step, detail
 	}
+	if !p.FolderProbed {
+		// Refusing here is what keeps an unanswered question from being read as
+		// a clean bill of health. The default model serves the whole archive as
+		// its owner, so "no Team folder is in the way" has to be something we
+		// KNOW, not something we failed to disprove.
+		return false, storageStepModeMismatch + ":" + storageStepFolderUnknown,
+			fmt.Sprintf(
+				"Cassini could not determine whether a %q Team folder is mounted over %q, so it will not assume there is none — a mounted folder would put recordings somewhere the default mode is not looking. Check that Nextcloud is answering and re-enable Cassini",
+				ncRecordingsMount, ncRecordingsRoot)
+	}
 	if p.FolderMounted {
 		return false, storageStepModeMismatch + ":" + storageStepFolderMount,
 			fmt.Sprintf(
@@ -328,6 +403,7 @@ func summarizeProbe(p ncStorageProbe) string {
 		fmt.Sprintf("service_account=%t", p.ServiceAccount),
 		fmt.Sprintf("native_apps=%t", p.NativeApps),
 		fmt.Sprintf("everyone_group=%t", p.EveryoneGroup),
+		fmt.Sprintf("folder_probed=%t", p.FolderProbed),
 		fmt.Sprintf("team_folder=%t", p.FolderPresent),
 		fmt.Sprintf("mounted=%t", p.FolderMounted),
 		fmt.Sprintf("acl=%t", p.ACLEnabled),

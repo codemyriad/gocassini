@@ -160,6 +160,28 @@ func (s *ncAccessSubstrateStatus) record(state ncSubstrateState, step string, ca
 	s.checkedAtUTC = nowUTCString()
 }
 
+// beginRun clears the previous run's verdict so this run reports its own.
+//
+// It exists because succeed() deliberately refuses to overwrite a recorded
+// degradation — which is right WITHIN one run, where a non-fatal step must
+// survive the steps after it, and wrong ACROSS runs, where it made a failure
+// permanent for the life of the process. An administrator who installs the
+// missing app and re-enables Cassini, or who fixes a mode mismatch from the
+// Setup tab, gets a run in which everything works and a status that still says
+// what was wrong before it. Publishing and recording stay refused, and the
+// documented remedy appears to do nothing.
+//
+// Applicability, the resolved administrator, the mode and the probe are NOT
+// cleared: they are either properties of the deployment or values this run is
+// about to overwrite anyway.
+func (s *ncAccessSubstrateStatus) beginRun() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state = ""
+	s.step = ""
+	s.detail = ""
+}
+
 // succeed records a provisioning run that got all the way through.
 // succeed records that provisioning ran to completion.
 //
@@ -236,6 +258,39 @@ func (s *ncAccessSubstrateStatus) usable() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.state == ncSubstrateProvisioned
+}
+
+// ncStorageServesAsOwner reports whether the read proxy may fetch the archive
+// as the owning service account instead of as the caller.
+//
+// This is the guard that keeps the default model's read path from failing open,
+// and it deliberately asks TWO different questions:
+//
+//	the recorded mode says default   an administrator's decision, or one
+//	                                 derived from the instance and written down
+//	the substrate is provisioned     the last probe AGREED — in particular that
+//	                                 no Team folder is mounted over the
+//	                                 canonical path, which is exactly what
+//	                                 sanity(default) checks
+//
+// The mode alone is not enough, and that is not theoretical. A recorded
+// `default` on an instance that still has a mapped `Cassini` Team folder is a
+// state the preflight explicitly names `mode_mismatch` — and in it, reading as
+// the owner hands every authenticated account every recording in that folder,
+// past its per-recording ACLs, as the ACL manager. Publishing and recording are
+// already gated on this same record; reading was not, and reading is the one
+// that discloses.
+//
+// The cost is that a container which has restarted but not been re-enabled
+// reports `unknown`, so a default-mode archive reads empty until the enabled
+// edge runs — the same window in which publishing is already refused (D-541,
+// D-669). An empty list is the recoverable failure; the other one is not.
+func ncStorageServesAsOwner() bool {
+	accessControlled, resolved := ncStorage.mode()
+	if !resolved || accessControlled {
+		return false
+	}
+	return ncAccessSubstrate.usable()
 }
 
 // recordingRefusal reports why a recording must not be started at all, or ""
