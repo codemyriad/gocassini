@@ -345,6 +345,45 @@ func TestPromoteCaptureKeepsThePreviousUploadWhenTheSwapFails(t *testing.T) {
 	}
 }
 
+// The name promoteCapture gives a set-aside upload is a cross-module contract.
+// The build's capture discovery lives in a different Go module
+// (cassini-go-recorder, internal/transcribe/sourceaudio.go) and cannot import a
+// constant from here, so it filters on the literal ".superseded". A directory
+// at that depth which discovery does not recognise is found as a second
+// capture for the same speaker and summed onto the timeline: the same speech
+// twice, at double amplitude, with the recorded track already suppressed.
+//
+// This pins the name by observing it. promoteCapture clears any stale
+// set-aside directory before it renames, so a leftover under the expected name
+// must be gone afterwards. Change the suffix and this fails.
+func TestSupersededSuffixIsTheNameDiscoveryFiltersOn(t *testing.T) {
+	// The literal cassini-go-recorder greps for. Keep the two in step.
+	const discoveryFiltersOn = ".superseded"
+
+	root := t.TempDir()
+	final := filepath.Join(root, "1700")
+	staging := filepath.Join(root, "upload-xyz")
+	stale := final + discoveryFiltersOn
+	for _, dir := range []string{final, staging, stale} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	// A marker so a surviving directory is unmistakably the stale one.
+	if err := os.WriteFile(filepath.Join(stale, "marker"), []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	rt := &Runtime{}
+	if err := rt.promoteCapture(staging, final); err != nil {
+		t.Fatalf("promoteCapture: %v", err)
+	}
+
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("a directory named %q survived promotion (err=%v). Either promoteCapture no longer uses that suffix, or it stopped clearing a stale one; in both cases cassini-go-recorder's discovery filter in internal/transcribe/sourceaudio.go must be updated in the same change", filepath.Base(stale), err)
+	}
+}
+
 func TestCaptureUploadWritesTheSidecarBeforePromoting(t *testing.T) {
 	// A promoted directory must never exist without its manifest:
 	// DiscoverSourceCaptures reads the sidecar to decide a capture exists at
