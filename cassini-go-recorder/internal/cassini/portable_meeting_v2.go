@@ -121,7 +121,7 @@ func pickV2DefaultRawID(inputs []portable.TranscriptInput) string {
 
 func isRawRole(role string) bool {
 	switch role {
-	case portable.RoleRawASR, portable.RoleHumanCorrected, portable.RoleTranslation:
+	case portable.RoleRawASR, portable.RoleHumanCorrected, portable.RoleTranslation, portable.RoleScripted:
 		return true
 	default:
 		return false

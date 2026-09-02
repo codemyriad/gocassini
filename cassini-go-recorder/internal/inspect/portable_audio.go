@@ -104,8 +104,11 @@ func inspectPortableAudio(out io.Writer, path string) error {
 
 	payload, manifest, err := decodePortableMeeting(tags)
 	if err != nil {
+		// The metadata is unusable, so nothing of it is printed and the
+		// command fails: a summary printed with exit 0 tells a script the
+		// file is fine.
 		printPlainPortableAudio(out, audioSummary, "invalid-cassini-metadata", err.Error())
-		return nil
+		return fmt.Errorf("%s: %w", path, err)
 	}
 
 	bodies := readPortableTranscriptBodies(tags, manifest)
@@ -117,16 +120,20 @@ func inspectPortableAudio(out io.Writer, path string) error {
 			Warnings: []string{verifyErr.Error()},
 		}
 	}
-	audioStatus := integrity.Status
-	// The metadata verdict outranks the audio verdict. A file whose transcript
-	// body cannot be read is invalid-cassini-metadata however the audio turned
-	// out, and `cassini=ok` printed beside a transcript nobody could read is
-	// exactly the reading this command exists to prevent. The audio verdict
-	// still decides the plain-audio fallback, which is about the audio.
-	if len(bodies.Unreadable) > 0 {
-		integrity.Status = "invalid-cassini-metadata"
+	// A repeated load-bearing tag means the file was edited and nothing in the
+	// manifest can be trusted, so print none of it: "The consumer MUST NOT show
+	// any manifest field."
+	if bodies.Repeated {
+		printPlainPortableAudio(out, audioSummary, "invalid-cassini-metadata", strings.Join(bodies.Warnings, "; "))
+		return fmt.Errorf("%s: a load-bearing tag appears twice", path)
 	}
 
+	audioStatus := integrity.Status
+	// A transcript body that cannot be read makes that transcript unavailable,
+	// not the file: the state describes the manifest and the audio, and the
+	// meeting, the speakers and the other transcripts are still good. The
+	// warning names the transcript, `words=` counts only what was read, and
+	// the command still exits non-zero so a script notices.
 	printPortableMeeting(out, path, audioSummary, payload, manifest, bodies, integrity)
 	if audioStatus != "ok" {
 		fmt.Fprintln(out, "fallback=plain-audio")
@@ -147,7 +154,10 @@ type portableTranscriptBodies struct {
 	// Unreadable names every transcript whose body could not be read, in
 	// manifest order.
 	Unreadable []string
-	Warnings   []string
+	// Repeated is set when a body's chunk tag appears twice. Unlike a missing
+	// chunk, that is the file's problem: invalid-cassini-metadata.
+	Repeated bool
+	Warnings []string
 }
 
 // err reports the transcripts whose bodies could not be read, so `cassini
@@ -183,15 +193,21 @@ func readPortableTranscriptBodies(tags map[string]string, manifest portable.Mani
 		body, warnings, err := decodeTranscriptBody(tags, entry)
 		bodies.Warnings = append(bodies.Warnings, warnings...)
 		if err != nil {
+			if errors.Is(err, errRepeatedTag) {
+				bodies.Repeated = true
+			}
 			bodies.Unreadable = append(bodies.Unreadable, entry.ID)
 			bodies.Warnings = append(bodies.Warnings, fmt.Sprintf("transcript %s body could not be read: %v", entry.ID, err))
 			continue
 		}
-		count := body.WordCount
-		if count == 0 {
-			count = len(body.Items)
+		// "wordCount ... A convenience; items wins on disagreement." The count
+		// this command prints is the one it read out of the chunk set.
+		if body.WordCount != 0 && body.WordCount != len(body.Items) {
+			bodies.Warnings = append(bodies.Warnings, fmt.Sprintf(
+				"transcript %s declares wordCount=%d and carries %d items; using the items",
+				entry.ID, body.WordCount, len(body.Items)))
 		}
-		bodies.WordCounts[entry.ID] = count
+		bodies.WordCounts[entry.ID] = len(body.Items)
 	}
 	return bodies
 }
@@ -232,7 +248,7 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 		wordCount = bodies.WordCounts[bodies.DefaultID]
 		if language == "" {
 			for _, entry := range manifest.Transcripts {
-				if entry.Default && entry.Language != "" {
+				if entry.ID == bodies.DefaultID {
 					language = entry.Language
 					break
 				}
@@ -264,10 +280,10 @@ func printPortableMeeting(out io.Writer, path string, audio portableAudioSummary
 	printPortableOrigin(out, manifest.Meeting)
 	if manifest.IsMultiTranscript() {
 		for _, entry := range manifest.Transcripts {
-			printPortableTranscriptEntry(out, "transcript", entry)
+			printPortableTranscriptEntry(out, "transcript", entry, bodies.DefaultID)
 		}
 		for _, entry := range manifest.ReadableTranscripts {
-			printPortableTranscriptEntry(out, "readable_transcript", entry)
+			printPortableTranscriptEntry(out, "readable_transcript", entry, "")
 		}
 	}
 	if manifest.Provenance != nil {
@@ -312,9 +328,11 @@ func printPortableOrigin(out io.Writer, meeting portable.Meeting) {
 		blankDash(meeting.RoomID), blankDash(meeting.RoomName), blankDash(meeting.JobID), attempt)
 }
 
-func printPortableTranscriptEntry(out io.Writer, label string, entry portable.TranscriptEntry) {
+func printPortableTranscriptEntry(out io.Writer, label string, entry portable.TranscriptEntry, defaultID string) {
+	// Zero flagged defaults is a legal file: array order resolves it, so the
+	// entry this reader actually opens is the one marked default here.
 	defaultMarker := "no"
-	if entry.Default {
+	if entry.ID != "" && entry.ID == defaultID {
 		defaultMarker = "yes"
 	}
 	source := entry.SourceTranscriptID
@@ -462,6 +480,31 @@ func knownPortableWireVersion(version int) bool {
 	return false
 }
 
+// errRepeatedTag marks a load-bearing CASSINI_* comment that appears twice.
+// ffprobe joins a repeated comment's values with ";", a byte no base64url
+// chunk can contain, so for chunk tags the join is proof of the repeat. The
+// published format makes a repeat invalid-cassini-metadata: it is evidence
+// the file was edited, whichever value is the right one.
+var errRepeatedTag = errors.New("repeated tag")
+
+// tagIntString renders a payloadRef count the way its descriptor tag spells
+// it, so the two can be compared as written. Zero means the manifest declared
+// nothing, which is not a disagreement.
+func tagIntString(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return fmt.Sprint(n)
+}
+
+func chunkValue(tags map[string]string, key string) (string, error) {
+	part := metadataTag(tags, key)
+	if strings.Contains(part, ";") {
+		return "", fmt.Errorf("%w %s", errRepeatedTag, key)
+	}
+	return part, nil
+}
+
 func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portable.Manifest, error) {
 	chunkCount := parseIntOrZero(metadataTag(tags, "CASSINI_PAYLOAD_CHUNK_COUNT"))
 	if chunkCount <= 0 {
@@ -470,7 +513,10 @@ func decodePortableMeeting(tags map[string]string) (portablePayloadInfo, portabl
 	var encoded strings.Builder
 	for idx := 0; idx < chunkCount; idx++ {
 		key := fmt.Sprintf("CASSINI_PAYLOAD_%03d", idx)
-		part := metadataTag(tags, key)
+		part, err := chunkValue(tags, key)
+		if err != nil {
+			return portablePayloadInfo{}, portable.Manifest{}, err
+		}
 		if part == "" {
 			return portablePayloadInfo{}, portable.Manifest{}, fmt.Errorf("missing payload chunk %s", key)
 		}
@@ -860,14 +906,16 @@ func defaultWordsTranscriptEntry(tags map[string]string, manifest portable.Manif
 		}
 		return entry, warnings, true
 	}
-	if taggedID != "" {
-		for _, entry := range manifest.Transcripts {
-			if entry.ID == taggedID {
-				return entry, nil, true
-			}
-		}
+	// No flagged default: array order decides. The tag is a copy and never
+	// the resolver, so a tag naming a different entry is only a warning.
+	first := manifest.Transcripts[0]
+	var warnings []string
+	if taggedID != "" && taggedID != first.ID {
+		warnings = append(warnings, fmt.Sprintf(
+			"default transcript disagrees between manifest and tag: manifest=%s CASSINI_TRANSCRIPT_DEFAULT=%s",
+			first.ID, taggedID))
 	}
-	return manifest.Transcripts[0], nil, true
+	return first, warnings, true
 }
 
 // decodeTranscriptBody reverses portable.EncodeTranscriptBody for one v2/v3
@@ -885,8 +933,20 @@ func defaultWordsTranscriptEntry(tags map[string]string, manifest portable.Manif
 // still read, because a disagreement is worth reporting — but it is a warning,
 // not a failure.
 func decodeTranscriptBody(tags map[string]string, entry portable.TranscriptEntry) (portable.TranscriptBody, []string, error) {
-	prefix := portable.TranscriptIDToTagPrefix(entry.ID)
+	// "payloadRef.prefix is authoritative; a consumer MUST use it as written
+	// and MUST NOT re-derive it." Deriving it is the producer's job, and a
+	// file whose prefix does not match its id is still a legal file.
+	prefix := strings.TrimSpace(entry.PayloadRef.Prefix)
 	var warnings []string
+	if prefix == "" {
+		prefix = portable.TranscriptIDToTagPrefix(entry.ID)
+		warnings = append(warnings, fmt.Sprintf(
+			"transcript %s has no payloadRef.prefix; deriving %s from the id", entry.ID, prefix))
+	}
+	if enc := strings.TrimSpace(entry.PayloadRef.Encoding); enc != "" && enc != portable.PayloadEncoding {
+		return portable.TranscriptBody{}, warnings, fmt.Errorf(
+			"transcript %s: unsupported payloadRef.encoding %q", entry.ID, enc)
+	}
 	chunkCount := entry.PayloadRef.ChunkCount
 	tagged := parseIntOrZero(metadataTag(tags, prefix+"CHUNK_COUNT"))
 	switch {
@@ -906,7 +966,10 @@ func decodeTranscriptBody(tags map[string]string, entry portable.TranscriptEntry
 	var encoded strings.Builder
 	for idx := 0; idx < chunkCount; idx++ {
 		key := fmt.Sprintf("%s%03d", prefix, idx)
-		part := metadataTag(tags, key)
+		part, err := chunkValue(tags, key)
+		if err != nil {
+			return portable.TranscriptBody{}, warnings, err
+		}
 		if part == "" {
 			return portable.TranscriptBody{}, warnings, fmt.Errorf("missing transcript chunk %s", key)
 		}
@@ -927,16 +990,38 @@ func decodeTranscriptBody(tags map[string]string, entry portable.TranscriptEntry
 		return portable.TranscriptBody{}, warnings, fmt.Errorf("decompress gzip transcript payload: %w", err)
 	}
 
-	if declared := parseIntOrZero(metadataTag(tags, prefix+"RAW_BYTES")); declared > 0 && declared != len(rawJSON) {
-		return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript raw byte count mismatch: tags=%d decoded=%d", declared, len(rawJSON))
+	// The manifest is the record and the descriptor tags are the copy, so the
+	// checks below run against payloadRef. A tag that disagrees with it is
+	// worth reporting and nothing more.
+	sum := sha256.Sum256(rawJSON)
+	gotSHA := hex.EncodeToString(sum[:])
+	if want := entry.PayloadRef.RawBytes; want > 0 && want != len(rawJSON) {
+		return portable.TranscriptBody{}, warnings, fmt.Errorf(
+			"transcript raw byte count mismatch: payloadRef=%d decoded=%d", want, len(rawJSON))
 	}
-	if declared := parseIntOrZero(metadataTag(tags, prefix+"GZIP_BYTES")); declared > 0 && declared != len(compressed) {
-		return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript compressed byte count mismatch: tags=%d decoded=%d", declared, len(compressed))
+	if want := entry.PayloadRef.GzipBytes; want > 0 && want != len(compressed) {
+		return portable.TranscriptBody{}, warnings, fmt.Errorf(
+			"transcript compressed byte count mismatch: payloadRef=%d decoded=%d", want, len(compressed))
 	}
-	if declared := strings.TrimSpace(strings.ToLower(metadataTag(tags, prefix+"SHA256"))); declared != "" {
-		sum := sha256.Sum256(rawJSON)
-		if hex.EncodeToString(sum[:]) != declared {
-			return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript payload sha256 mismatch")
+	if want := strings.TrimSpace(strings.ToLower(entry.PayloadRef.SHA256)); want != "" && want != gotSHA {
+		return portable.TranscriptBody{}, warnings, fmt.Errorf("transcript payload sha256 mismatch")
+	}
+	for _, cmp := range []struct {
+		tag, got, want string
+	}{
+		{"SHA256", gotSHA, strings.ToLower(strings.TrimSpace(entry.PayloadRef.SHA256))},
+		{"RAW_BYTES", fmt.Sprint(len(rawJSON)), tagIntString(entry.PayloadRef.RawBytes)},
+		{"GZIP_BYTES", fmt.Sprint(len(compressed)), tagIntString(entry.PayloadRef.GzipBytes)},
+		{"ENCODING", "", strings.TrimSpace(entry.PayloadRef.Encoding)},
+	} {
+		declared := strings.TrimSpace(metadataTag(tags, prefix+cmp.tag))
+		if cmp.tag == "SHA256" {
+			declared = strings.ToLower(declared)
+		}
+		if declared != "" && cmp.want != "" && declared != cmp.want {
+			warnings = append(warnings, fmt.Sprintf(
+				"transcript %s %s%s disagrees with payloadRef: tag=%s payloadRef=%s",
+				entry.ID, prefix, cmp.tag, declared, cmp.want))
 		}
 	}
 
@@ -970,21 +1055,34 @@ func WriteTranscriptWordsV1JSON(out io.Writer, extracted ExtractedTranscript) er
 		Segments  []wordsV1Segment `json:"segments"`
 	}
 
-	words := make([]wordsV1Word, 0, len(extracted.Words))
+	// Items are in speaker-turn order, and a turn is a maximal run of
+	// consecutive items with the same speaker. One segment per turn keeps the
+	// attribution that a single speakerless segment threw away.
+	segments := make([]wordsV1Segment, 0, 8)
+	emitted := 0
 	for _, w := range extracted.Words {
-		words = append(words, wordsV1Word{
+		word := wordsV1Word{
 			Text:                 w.Text,
 			StartMS:              w.StartMS,
 			EndMS:                w.EndMS,
 			AttributionGapDB:     w.AttributionGapDB,
 			LowConfidenceSpeaker: w.LowConfidenceSpeaker,
-		})
+		}
+		if n := len(segments); n > 0 && segments[n-1].Speaker == w.Speaker {
+			segments[n-1].Words = append(segments[n-1].Words, word)
+		} else {
+			segments = append(segments, wordsV1Segment{Speaker: w.Speaker, Words: []wordsV1Word{word}})
+		}
+		emitted++
+	}
+	if len(segments) == 0 {
+		segments = []wordsV1Segment{{Words: []wordsV1Word{}}}
 	}
 	doc := wordsV1Doc{
 		Version:   "transcript.words.v1",
 		Language:  extracted.Language,
-		WordCount: extracted.WordCount,
-		Segments:  []wordsV1Segment{{Words: words}},
+		WordCount: emitted,
+		Segments:  segments,
 	}
 	enc := json.NewEncoder(out)
 	enc.SetIndent("", "  ")

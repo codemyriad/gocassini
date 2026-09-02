@@ -224,6 +224,9 @@ type portableDraft2FixtureOptions struct {
 	// metadata editor that dropped one comment does: every count still names
 	// the chunk that is gone.
 	dropLastTranscriptChunk bool
+	// repeatFirstTranscriptChunk writes the first body chunk the way ffprobe
+	// reports a comment that appears twice: both values joined with ";".
+	repeatFirstTranscriptChunk bool
 }
 
 func createPortableDraft2OpusFixture(t *testing.T, outPath string, words []string) string {
@@ -327,6 +330,11 @@ func createPortableDraft2OpusFixtureWith(t *testing.T, outPath string, opts port
 	if opts.dropLastTranscriptChunk {
 		prefix := portable.TranscriptIDToTagPrefix(portable.RoleRawASR)
 		delete(tags, fmt.Sprintf("%s%03d", prefix, parseIntOrZero(tags[prefix+"CHUNK_COUNT"])-1))
+	}
+	if opts.repeatFirstTranscriptChunk {
+		prefix := portable.TranscriptIDToTagPrefix(portable.RoleRawASR)
+		key := prefix + "000"
+		tags[key] = tags[key] + ";" + tags[key]
 	}
 
 	args := []string{"-y", "-v", "error", "-i", basePath, "-map", "0:a:0", "-c", "copy"}
@@ -856,8 +864,8 @@ func TestInspectPathPortableMeetingReportsTheWordsItDecoded(t *testing.T) {
 			t.Errorf("error = %v, want it to name the transcript it could not read", err)
 		}
 		got := out.String()
-		if !strings.Contains(got, "cassini=invalid-cassini-metadata") {
-			t.Errorf("expected cassini=invalid-cassini-metadata, got %q", got)
+		if strings.Contains(got, "cassini=invalid-cassini-metadata") {
+			t.Errorf("an unreadable body is that transcript's problem, not the file's; got %q", got)
 		}
 		if !strings.Contains(got, " words=0 ") {
 			t.Errorf("expected words=0 for a transcript nothing could be read out of, got %q", got)
