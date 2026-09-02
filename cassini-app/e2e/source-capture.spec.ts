@@ -30,6 +30,7 @@ test.beforeEach(() => {
   server.state.captureEnabled = true;
   server.state.companionEnabled = true;
   server.state.recordingStatus = 0;
+  server.state.captureWorker = "ok";
 });
 
 // enableCapture records the participant's opt-in on the same origin. The
@@ -331,4 +332,93 @@ test("captures nothing without an explicit opt-in", async ({ page }) => {
   await page.waitForTimeout(2000);
 
   expect(server.uploads.length, "audio was uploaded without consent").toBe(0);
+});
+
+// A broken timing worker must cost the capture and nothing else.
+//
+// This is the failure that would end a pilot. The worker is attached to the
+// participant's outgoing audio as a WebRTC encoded transform, so every Opus
+// frame they send passes through it, and it has to be attached before the call
+// negotiates or it collects nothing at all. A worker that never runs therefore
+// gets the frames and never reads them: the participant goes silent to the
+// whole room while Talk still shows them unmuted and transmitting.
+//
+// The assertion that matters is audio, not tidiness. Measured on Chromium 151,
+// `sender.transform = null` leaves the sender frozen at zero packets sent — it
+// does that to a perfectly healthy transform too — so "the payload removed its
+// transform" would be satisfied by a payload that left the participant mute.
+// What these tests require is that the sender is still putting packets on the
+// wire afterwards, and that nothing was collected.
+
+// outboundPackets reads what the sender actually put on the wire. Talk's own
+// mute is a disabled track, which still sends, so this measures the one thing a
+// stalled transform destroys.
+async function outboundPackets(page: import("@playwright/test").Page): Promise<number> {
+  return await page.evaluate(async () => {
+    const sender = (window as never as { __audioSender: RTCRtpSender }).__audioSender;
+    let packets = 0;
+    (await sender.getStats()).forEach((report: { type: string; packetsSent?: number }) => {
+      if (report.type === "outbound-rtp") {
+        packets = report.packetsSent ?? 0;
+      }
+    });
+    return packets;
+  });
+}
+
+async function expectStillAudible(page: import("@playwright/test").Page) {
+  const before = await outboundPackets(page);
+  await page.waitForTimeout(1_500);
+  const after = await outboundPackets(page);
+  expect(
+    after - before,
+    "the participant stopped sending audio: the room can no longer hear them",
+  ).toBeGreaterThan(20);
+}
+
+async function joinWithBrokenWorker(page: import("@playwright/test").Page) {
+  await enableCapture(page);
+  await page.goto(`${server.origin}/call/testroom`);
+  await page.evaluate(() => (window as never as { __talkReady: Promise<boolean> }).__talkReady);
+}
+
+test("a timing worker that 404s costs the capture, not the participant's audio", async ({ page }) => {
+  // An ExApp restarted, upgraded, or rolled back mid-call answers 404 for a
+  // script the page is about to depend on.
+  server.state.captureWorker = "missing";
+  await joinWithBrokenWorker(page);
+  // Past the readiness deadline, so a worker that is never going to answer has
+  // been given up on rather than merely not arrived yet.
+  await page.waitForTimeout(4_000);
+  await expectStillAudible(page);
+  expect(server.uploads, "a capture was uploaded from a worker that never loaded").toHaveLength(0);
+});
+
+test("a timing worker that throws on load costs the capture, not the participant's audio", async ({
+  page,
+}) => {
+  server.state.captureWorker = "throws";
+  await joinWithBrokenWorker(page);
+  await page.waitForTimeout(4_000);
+  await expectStillAudible(page);
+  expect(server.uploads).toHaveLength(0);
+});
+
+test("a timing worker that never reports ready gives the call its audio back", async ({ page }) => {
+  // The dangerous shape: the script loads, so no error event fires anywhere,
+  // and it simply is not the worker this payload expects. Version skew between
+  // the companion app and the ExApp looks exactly like this, and it is the one
+  // case where the transform really is attached to a worker that will never
+  // read it — so this test watches the participant go mute and come back.
+  server.state.captureWorker = "silent";
+  await joinWithBrokenWorker(page);
+
+  expect(
+    await outboundPackets(page),
+    "the fixture never stalled the sender, so this test proves nothing",
+  ).toBe(0);
+
+  await page.waitForTimeout(4_000);
+  await expectStillAudible(page);
+  expect(server.uploads).toHaveLength(0);
 });

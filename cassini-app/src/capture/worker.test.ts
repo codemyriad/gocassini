@@ -140,9 +140,16 @@ describe("recovery sidecar", () => {
     vi.setSystemTime(20_000);
     await send({ type: "chunk", index: 0, buffer: new Uint8Array([1, 2, 3]).buffer });
 
-    // The failure is reported, but never as the fatal "error" that tears the
-    // worker down, and never by dropping the segment from the sealed sidecar.
-    expect(posted.map((message) => message.type)).toEqual(["segment-started", "pending-sidecar-failed"]);
+    // "ready" is the worker's first act on startup: it is how the page learns
+    // that the worker behind the transform it has already attached to the
+    // participant's live sender is real. The sidecar failure after it is
+    // reported, but never as the fatal "error" that tears the worker down, and
+    // never by dropping the segment from the sealed sidecar.
+    expect(posted.map((message) => message.type)).toEqual([
+      "ready",
+      "segment-started",
+      "pending-sidecar-failed",
+    ]);
 
     opfs.failFile = null;
     await send({ type: "segment-stop", index: 0, stopWallMs: 21_000, muteIntervals: [] });

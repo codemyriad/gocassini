@@ -303,9 +303,14 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
   handle.flush();
   handle.close();
   await dir.removeEntry(SOURCE_CAPTURE_PENDING_NAME).catch(() => {});
-  // The call can continue after the official recording stops. Release every
-  // handle and reset interval-local evidence so this same pass-through worker
-  // can serve a later recording interval without mixing their files or clocks.
+  return sidecar;
+}
+
+// resetRecordingInterval releases every handle and clears the evidence that
+// belongs to one recording interval. The call can continue after the official
+// recording stops, so this same pass-through worker may serve a later interval
+// and must not mix their files or clocks.
+function resetRecordingInterval(): void {
   segments.clear();
   captureDir = null;
   anchors = [];
@@ -314,7 +319,6 @@ async function finalize(dirName: string, base: Omit<CaptureSidecar, "segments">)
   pendingDirName = null;
   pendingBase = null;
   lastPendingWriteMs = 0;
-  return sidecar;
 }
 
 export async function onMessage(event: MessageEvent): Promise<void> {
@@ -346,10 +350,21 @@ export async function onMessage(event: MessageEvent): Promise<void> {
         self.postMessage({ type: "segment-stopped", index: message.index });
         break;
       case "finalize": {
-        // A failure here reaches the page as "error", which is what releases
-        // the worker: there will be no "finalized" to do it.
-        const sidecar = await finalize(message.dirName, message.base);
-        self.postMessage({ type: "finalized", dirName: message.dirName, sidecar });
+        // A failure here reaches the page as "error": there will be no
+        // "finalized" for this interval. It does not stop the worker. The
+        // worker is also the sender's encoded transform, and a page that
+        // terminated it mid-call would take the participant's outgoing audio
+        // with it.
+        try {
+          const sidecar = await finalize(message.dirName, message.base);
+          self.postMessage({ type: "finalized", dirName: message.dirName, sidecar });
+        } finally {
+          // Reset whether or not the seal worked. A failed finalize ends the
+          // interval just as much as a successful one, and anything left
+          // behind would be written into the NEXT recording: ensureDir caches
+          // the directory handle and segment indices restart at zero.
+          resetRecordingInterval();
+        }
         break;
       }
       default:
@@ -376,4 +391,13 @@ if (typeof self !== "undefined" && typeof self.postMessage === "function") {
   self.onmessage = (event: MessageEvent) => {
     queue = queue.then(() => onMessage(event));
   };
+  // Report for duty, and only once everything above is wired. The page cannot
+  // wait for this before attaching its encoded transform — a transform
+  // attached after the call negotiates collects nothing — so it attaches first
+  // and uses this message to learn that the worker it already committed to is
+  // real. Silence here means the participant's outgoing Opus frames are being
+  // routed into a worker that will never read them, which the page has a short
+  // deadline to notice and undo. Posting this before the handlers were wired
+  // would answer for a worker that still drops the frames it is handed.
+  self.postMessage({ type: "ready" });
 }
