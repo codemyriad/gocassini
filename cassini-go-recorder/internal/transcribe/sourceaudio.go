@@ -446,15 +446,121 @@ func windowsOverlap(aStart, aEnd, bStart, bEnd int64) bool {
 // manifest. A transcript built partly from audio the server never received
 // should say so.
 type SourceRenderReport struct {
-	SpeakerID  string   `json:"speaker_id"`
-	Owner      string   `json:"owner"`
-	Segments   int      `json:"segments"`
-	Placed     int      `json:"placed"`
-	Anchors    int      `json:"anchors"`
-	ResidualMS float64  `json:"residual_ms"`
-	RatePPM    float64  `json:"rate_ppm"`
-	CoverageMS int64    `json:"coverage_ms"`
+	SpeakerID  string  `json:"speaker_id"`
+	Owner      string  `json:"owner"`
+	Segments   int     `json:"segments"`
+	Placed     int     `json:"placed"`
+	Anchors    int     `json:"anchors"`
+	ResidualMS float64 `json:"residual_ms"`
+	RatePPM    float64 `json:"rate_ppm"`
+	CoverageMS int64   `json:"coverage_ms"`
+	// DeclaredMS is how much audio the capture's own sidecar says it holds:
+	// the sum of its segment windows. CoverageMS is how much actually decoded.
+	// The two are reported side by side because their ratio is the only signal
+	// that a capture is internally incomplete, and a pilot needs the numbers to
+	// choose a threshold rather than inherit a guessed one.
+	DeclaredMS int64    `json:"declared_ms"`
+	CallMS     int64    `json:"call_ms"`
 	Rejections []string `json:"rejections,omitempty"`
+}
+
+// minCoveredFraction is how much of its own call a capture must account for
+// before its audio may replace a recorded track.
+//
+// The hazard is not a capture that fails, which is handled everywhere: it is a
+// capture that succeeds while covering only part of the call it came from.
+// Substitution is whole-track — the render replaces the participant's recorded
+// audio for the entire meeting — so every span the capture does not cover
+// becomes digital silence while the recorded track is suppressed. Words the
+// recorder heard perfectly well disappear, and nothing downstream can tell.
+//
+// A capture can be short of its call for two quite different reasons, and this
+// deliberately does not try to distinguish them, because the consequence is
+// identical. The browser worker drops a segment whose storage write failed and
+// uploads the rest, leaving a self-consistent sidecar whose remaining segments
+// all place cleanly. Or the participant detached their microphone for a minute
+// and the capture legitimately has a hole in it. Either way the audio for that
+// span does not exist, and putting silence there is worse than keeping what the
+// network delivered.
+//
+// The bar is deliberately loose: rotation gaps are sub-second, so a healthy
+// capture sits within a percent or two of its call and anything near this
+// threshold is missing minutes. It is a detector for one condition, not a
+// quality score. The manifest carries the raw figures either way, so a real
+// threshold can be chosen from pilot data rather than guessed here.
+//
+// The right long-term answer is not a threshold at all: splice the capture in
+// only over the spans it covers and leave the recorded track everywhere else.
+// Until that exists this is the guard that keeps whole-track substitution from
+// deleting speech.
+const minCoveredFraction = 0.9
+
+// coveredCallMS is how much of a capture's declared call its segments actually
+// span: the UNION of their windows, clipped to the call.
+//
+// Summing durations instead would be wrong in both directions. Two segments
+// that overlap — a rotation that restarted, a sidecar that repeats one — would
+// count the same milliseconds twice and pass while leaving an arbitrarily large
+// hole elsewhere. A segment running past the declared call would inflate the
+// total for time the call did not contain.
+func coveredCallMS(sidecar SourceSidecar) int64 {
+	callStart, callEnd := sidecar.CallStartWallMS, sidecar.CallEndWallMS
+	if callEnd <= callStart {
+		return 0
+	}
+	type span struct{ start, stop int64 }
+	spans := make([]span, 0, len(sidecar.Segments))
+	for _, segment := range sidecar.Segments {
+		start, stop := segment.StartWallMS, segment.StopWallMS
+		if stop <= start {
+			// A backwards or empty window spans nothing.
+			continue
+		}
+		if start < callStart {
+			start = callStart
+		}
+		if stop > callEnd {
+			stop = callEnd
+		}
+		if stop > start {
+			spans = append(spans, span{start, stop})
+		}
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
+
+	var covered int64
+	var cursor int64 = callStart
+	for _, sp := range spans {
+		if sp.stop <= cursor {
+			continue
+		}
+		if sp.start > cursor {
+			cursor = sp.start
+		}
+		covered += sp.stop - cursor
+		cursor = sp.stop
+	}
+	return covered
+}
+
+// coverageIsComplete refuses a capture whose segments do not span the call it
+// declares. It compares the sidecar against itself and makes no assumption
+// about the meeting, so a participant who joined late or left early is not
+// penalised for a recording they were not present for.
+func coverageIsComplete(name string, callMS, coveredMS int64) error {
+	if callMS <= 0 {
+		// Fails CLOSED. Intake accepts a call window of zero length, discovery
+		// can match one through its slack, and a capture that declares no call
+		// would then replace a participant's whole recorded track on the
+		// strength of whatever few seconds it happens to hold.
+		return fmt.Errorf("capture %s declares no call window, so there is nothing its audio can be said to cover", name)
+	}
+	if coveredMS >= 0 && float64(coveredMS) >= float64(callMS)*minCoveredFraction {
+		return nil
+	}
+	return fmt.Errorf(
+		"capture %s spans %d ms of the %d ms call it came from (%.0f%%); the rest has no audio, and substituting it would replace that speech with silence",
+		name, coveredMS, callMS, float64(coveredMS)*100/float64(callMS))
 }
 
 // RenderSourceTrack builds one speaker's timeline-aligned PCM from every
@@ -479,6 +585,10 @@ func RenderSourceTrack(ctx context.Context, dirs []string, base SourceTimeBase, 
 	var worstResidual float64
 	var rateSum float64
 
+	// Load every sidecar first and check the arithmetic before decoding
+	// anything. The completeness check below needs no audio, and a capture that
+	// is going to be refused should not cost a meeting's worth of ffmpeg first.
+	loaded := make([]SourceSidecar, 0, len(dirs))
 	for _, dir := range dirs {
 		sidecar, err := LoadSourceSidecar(dir)
 		if err != nil {
@@ -486,6 +596,23 @@ func RenderSourceTrack(ctx context.Context, dirs []string, base SourceTimeBase, 
 		}
 		report.Owner = sidecar.OwnerUserID
 		report.Segments += len(sidecar.Segments)
+		callMS := sidecar.CallEndWallMS - sidecar.CallStartWallMS
+		coveredMS := coveredCallMS(sidecar)
+		report.CallMS += callMS
+		report.DeclaredMS += coveredMS
+		// Checked PER CAPTURE, not on the totals. A participant who left and
+		// rejoined uploads one capture per session and both are rendered onto
+		// the same timeline, so aggregating first lets a long healthy capture
+		// carry a badly broken short one over the bar — and the interval that
+		// short one lost is still replaced with silence.
+		if err := coverageIsComplete(filepath.Base(dir), callMS, coveredMS); err != nil {
+			return nil, report, err
+		}
+		loaded = append(loaded, sidecar)
+	}
+
+	for i, dir := range dirs {
+		sidecar := loaded[i]
 		for _, segment := range sidecar.Segments {
 			placement, err := FitPlacement(segment, base)
 			if err != nil {
@@ -514,7 +641,20 @@ func RenderSourceTrack(ctx context.Context, dirs []string, base SourceTimeBase, 
 			if placement.ResidualMS > worstResidual {
 				worstResidual = placement.ResidualMS
 			}
-			report.CoverageMS += int64(float64(len(samples)) * 1000 / float64(sampleRate))
+			decodedMS := int64(float64(len(samples)) * 1000 / float64(sampleRate))
+			report.CoverageMS += decodedMS
+			// The window check above trusts the sidecar's arithmetic. This
+			// checks the audio against it: a segment may declare ten minutes
+			// and hold one, and nothing before now would have noticed, because
+			// intake validates that a declared file ARRIVED and not that it
+			// contains what was claimed. Whole-track substitution makes the
+			// difference nine minutes of silence.
+			if declaredMS := segment.StopWallMS - segment.StartWallMS; declaredMS > 0 &&
+				float64(decodedMS) < float64(declaredMS)*minCoveredFraction {
+				return nil, report, fmt.Errorf(
+					"segment %d holds %d ms of the %d ms it declares (%.0f%%); the audio does not match the sidecar",
+					segment.Index, decodedMS, declaredMS, float64(decodedMS)*100/float64(declaredMS))
+			}
 		}
 	}
 
@@ -739,6 +879,15 @@ func ApplySourceAudio(ctx context.Context, streams []AudioStream, captureRoot, r
 	// try it on, and re-decoding a meeting's audio to fail identically is pure
 	// cost.
 	failed := map[string]bool{}
+	// A participant with ANY stream lacking a wall-clock base is refused up
+	// front. Deciding inside the loop made the outcome depend on which of their
+	// streams came first: an anchorless stream seen last was harmless, the same
+	// stream seen first abandoned the substitution.
+	for i := range streams {
+		if streams[i].ParticipantID != "" && !streams[i].TimeBase.Known {
+			failed[streams[i].ParticipantID] = true
+		}
+	}
 	for i := range streams {
 		stream := &streams[i]
 		dirs, ok := captures[stream.ParticipantID]
@@ -754,6 +903,16 @@ func ApplySourceAudio(ctx context.Context, streams []AudioStream, captureRoot, r
 			continue
 		}
 		if !stream.TimeBase.Known {
+			// Marked failed, not merely skipped, and decided the same way
+			// whichever order the streams arrive in: anchorlessParticipants was
+			// computed over all of them before this loop began.
+			//
+			// Without it the participant's OTHER stream could still render —
+			// the render spans the whole timeline, including this stream's span
+			// — while this one keeps its recorded audio and is transcribed
+			// alongside it, putting every word said here into the transcript
+			// twice.
+			failed[stream.ParticipantID] = true
 			fmt.Fprintf(stdout, "  source audio: %s uploaded, but this recording carries no wall-clock base for their track; keeping the recorded audio\n", stream.SpeakerLabel)
 			continue
 		}
