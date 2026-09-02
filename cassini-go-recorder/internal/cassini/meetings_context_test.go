@@ -17,7 +17,7 @@ import (
 // assembly and rendering can be tested without ffprobe or a packed file.
 func extractedMeetingFixture(words []inspectpkg.TranscriptWord, summary string) inspectpkg.ExtractedMeeting {
 	meeting := inspectpkg.ExtractedMeeting{
-		FormatTag: portable.FormatV2,
+		FormatTag: portable.FormatDraft2,
 		Manifest: portable.Manifest{
 			Version: 2,
 			Meeting: portable.Meeting{

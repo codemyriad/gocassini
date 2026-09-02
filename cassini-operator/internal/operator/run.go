@@ -61,6 +61,22 @@ type Config struct {
 	TalkRecordingBackendURL string
 	MaxRecordWorkers        int
 	MaxBuildWorkers         int
+	// BundledModelRoot is the read-only directory where the image baked its
+	// models, and ModelCacheRoot is the writable cache that receives a tier the
+	// image does not carry. Under an AppAPI deploy the cache lands on the
+	// persistent volume, so a downloaded model survives a container recreate.
+	// Both live here rather than being read from the process environment at
+	// admission time, so the policy is fixed once at startup and a developer
+	// whose shell exports CASSINI_* for the recorder cannot change what the
+	// operator decides.
+	BundledModelRoot string
+	ModelCacheRoot   string
+	// DisallowModelDownload is the air-gap switch. When an administrator sets
+	// it, the operator blocks a tier the image does not bake instead of
+	// fetching it, and the build child receives the same instruction. The
+	// operator sets the variable for every child from this value, so an
+	// inherited one can neither enable nor defeat the policy by accident.
+	DisallowModelDownload bool
 	// APIToken (CASSINI_OPERATOR_API_TOKEN) optionally guards the operator
 	// JSON API with bearer auth for standalone deploys; empty disables it
 	// and AppAPI-authenticated requests bypass it (D-376).
@@ -419,6 +435,10 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 	fs.SetOutput(stderr)
 
 	cfg := Config{RepoRoot: repoRoot}
+	// Not flags: these describe the image the operator is running inside, not a
+	// choice an invocation makes.
+	cfg.BundledModelRoot = envOrDefaultAny([]string{"CASSINI_BUNDLED_MODEL_ROOT"}, "")
+	cfg.DisallowModelDownload = envBool("CASSINI_DISALLOW_MODEL_DOWNLOAD")
 	fs.StringVar(&cfg.BindAddr, "bind", envOrDefaultAny([]string{"CASSINI_OPERATOR_BIND_ADDR"}, defaultBind), "HTTP bind address")
 	fs.StringVar(&cfg.BasePath, "base-path", envOrDefaultAny([]string{"CASSINI_OPERATOR_BASE_PATH"}, defaultOperatorBasePath), "HTTP route prefix")
 	// Data path defaults are persistent-storage aware: under an AppAPI docker
@@ -434,6 +454,10 @@ func loadConfig(args []string, stderr io.Writer) (Config, int, error) {
 		imageDefaultWorkRoot, "operator/jobs",
 		filepath.Join(defaultDataRoot, "jobs")), "per-job artifact root")
 	fs.StringVar(&cfg.SiteRoot, "site-root", defaultSiteRoot(persistRoot, defaultDataRoot), "published site output root")
+	fs.StringVar(&cfg.ModelCacheRoot, "model-cache-root", exAppDataPathDefault(persistRoot,
+		envOrDefaultAny([]string{"CASSINI_CACHE_ROOT"}, ""),
+		imageDefaultCacheRoot, "operator/models",
+		filepath.Join(defaultDataRoot, "models")), "writable cache for models the image does not bundle")
 	fs.StringVar(&cfg.CaptureRoot, "capture-root", exAppDataPathDefault(persistRoot,
 		envOrDefaultAny([]string{"CASSINI_OPERATOR_CAPTURE_ROOT"}, ""),
 		"", "operator/capture",

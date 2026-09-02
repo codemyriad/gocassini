@@ -66,11 +66,11 @@ func TestInspectPathPortableMeetingOpus(t *testing.T) {
 	}
 }
 
-func TestInspectPathPortableV3UsesCompressedOpusIntegrity(t *testing.T) {
+func TestInspectPathPortablePublishedUsesCompressedOpusIntegrity(t *testing.T) {
 	requireFFMediaTools(t)
 
 	tmp := t.TempDir()
-	path := createPortableOpusFixture(t, filepath.Join(tmp, "meeting-v3.opus"), portableFixtureOptions{version3: true})
+	path := createPortableOpusFixture(t, filepath.Join(tmp, "meeting-published.opus"), portableFixtureOptions{published: true})
 
 	var out bytes.Buffer
 	if err := InspectPath(&out, path); err != nil {
@@ -172,12 +172,12 @@ func TestInspectPathPortableMeetingOpusDetectsStaleAudio(t *testing.T) {
 	}
 }
 
-func TestExtractTranscriptWordsFromV2Opus(t *testing.T) {
+func TestExtractTranscriptWordsFromDraft2Opus(t *testing.T) {
 	requireFFMediaTools(t)
 
 	tmp := t.TempDir()
 	wantWords := []string{"Hello", "team", "lantern", "festival", "tonight"}
-	path := createPortableV2OpusFixture(t, filepath.Join(tmp, "v2.opus"), wantWords)
+	path := createPortableDraft2OpusFixture(t, filepath.Join(tmp, "v2.opus"), wantWords)
 
 	extracted, err := ExtractTranscriptWords(path)
 	if err != nil {
@@ -208,10 +208,10 @@ func TestExtractTranscriptWordsFromV2Opus(t *testing.T) {
 	}
 }
 
-// portableV2FixtureOptions varies a v2 portable fixture beyond the plain
+// portableDraft2FixtureOptions varies a v2 portable fixture beyond the plain
 // single-speaker word list: an explicit per-word speaker assignment (so speaker
 // changes can be exercised) and an attached summary.md.
-type portableV2FixtureOptions struct {
+type portableDraft2FixtureOptions struct {
 	words []string
 	// speakerOf assigns a speaker id per word index. Nil means every word is
 	// spoken by spk1.
@@ -220,14 +220,18 @@ type portableV2FixtureOptions struct {
 	speakers    []portable.Speaker
 	withSummary bool
 	summaryBody string
+	// dropLastTranscriptChunk leaves a hole in the raw-ASR chunk set, the way a
+	// metadata editor that dropped one comment does: every count still names
+	// the chunk that is gone.
+	dropLastTranscriptChunk bool
 }
 
-func createPortableV2OpusFixture(t *testing.T, outPath string, words []string) string {
+func createPortableDraft2OpusFixture(t *testing.T, outPath string, words []string) string {
 	t.Helper()
-	return createPortableV2OpusFixtureWith(t, outPath, portableV2FixtureOptions{words: words})
+	return createPortableDraft2OpusFixtureWith(t, outPath, portableDraft2FixtureOptions{words: words})
 }
 
-func createPortableV2OpusFixtureWith(t *testing.T, outPath string, opts portableV2FixtureOptions) string {
+func createPortableDraft2OpusFixtureWith(t *testing.T, outPath string, opts portableDraft2FixtureOptions) string {
 	t.Helper()
 	words := opts.words
 	speakerOf := opts.speakerOf
@@ -259,7 +263,7 @@ func createPortableV2OpusFixtureWith(t *testing.T, outPath string, opts portable
 			Text:    w,
 		})
 	}
-	manifest := portable.NormalizeManifest(portable.Manifest{
+	manifest := portable.NormalizeDraft1Manifest(portable.Manifest{
 		Meeting: portable.Meeting{
 			ID:           "meeting-v2",
 			Title:        "Lantern Festival",
@@ -315,11 +319,15 @@ func createPortableV2OpusFixtureWith(t *testing.T, outPath string, opts portable
 			Items:     items,
 		},
 	}
-	encoded, err := portable.EncodeManifestV2(manifest, []portable.TranscriptInput{input}, 256)
+	encoded, err := portable.EncodeDraft2Manifest(manifest, []portable.TranscriptInput{input}, 256)
 	if err != nil {
 		t.Fatalf("encode v2 manifest: %v", err)
 	}
-	tags := portable.BuildOpusTagsV2(manifest, encoded, portable.RoleRawASR)
+	tags := portable.BuildDraft2OpusTags(manifest, encoded, portable.RoleRawASR)
+	if opts.dropLastTranscriptChunk {
+		prefix := portable.TranscriptIDToTagPrefix(portable.RoleRawASR)
+		delete(tags, fmt.Sprintf("%s%03d", prefix, parseIntOrZero(tags[prefix+"CHUNK_COUNT"])-1))
+	}
 
 	args := []string{"-y", "-v", "error", "-i", basePath, "-map", "0:a:0", "-c", "copy"}
 	for key, value := range tags {
@@ -362,7 +370,7 @@ type portableFixtureOptions struct {
 	stale       bool
 	withSummary bool
 	withOrigin  bool
-	version3    bool
+	published   bool
 }
 
 func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtureOptions) string {
@@ -382,7 +390,7 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 		SampleCount: sampleCount,
 		DurationMS:  durationMS,
 	}
-	if !opts.version3 {
+	if !opts.published {
 		pcmSHA, pcmByteCount, err := hashDecodedAudioPCM(basePath, sampleRate, channels)
 		if err != nil {
 			t.Fatalf("hash decoded PCM: %v", err)
@@ -400,7 +408,7 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 		}
 	}
 	if opts.stale {
-		if opts.version3 {
+		if opts.published {
 			integrity.OpusSHA256 = strings.Repeat("0", 64)
 		} else {
 			integrity.PCMSHA256 = strings.Repeat("0", 64)
@@ -452,10 +460,10 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 			},
 		},
 	}
-	if opts.version3 {
-		manifest = portable.NormalizeManifestV3(manifest)
+	if opts.published {
+		manifest = portable.NormalizePublishedManifest(manifest)
 	} else {
-		manifest = portable.NormalizeManifest(manifest)
+		manifest = portable.NormalizeDraft1Manifest(manifest)
 	}
 	if opts.withOrigin {
 		manifest.Meeting.RoomID = "rm_9f2a1c3d4e5b6a70"
@@ -488,7 +496,7 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 		"-metadata", "DESCRIPTION=Cassini portable meeting file. Decode CASSINI_PAYLOAD_*: base64url -> gzip -> UTF-8 JSON.",
 	}
 	tags := map[string]string{}
-	if opts.version3 {
+	if opts.published {
 		input := portable.TranscriptInput{
 			ID:         portable.RoleRawASR,
 			Role:       portable.RoleRawASR,
@@ -502,17 +510,17 @@ func createPortableOpusFixture(t *testing.T, outPath string, opts portableFixtur
 				Items:     manifest.Transcript.Items,
 			},
 		}
-		encoded, err := portable.EncodeManifestV3(manifest, []portable.TranscriptInput{input}, 256)
+		encoded, err := portable.EncodePublishedManifest(manifest, []portable.TranscriptInput{input}, 256)
 		if err != nil {
-			t.Fatalf("encode v3 manifest: %v", err)
+			t.Fatalf("encode published manifest: %v", err)
 		}
-		tags = portable.BuildOpusTagsV3(manifest, encoded, portable.RoleRawASR)
+		tags = portable.BuildPublishedOpusTags(manifest, encoded, portable.RoleRawASR)
 	} else {
-		payload, err := portable.EncodeManifest(manifest, 256)
+		payload, err := portable.EncodeDraft1Manifest(manifest, 256)
 		if err != nil {
-			t.Fatalf("encode v1 manifest: %v", err)
+			t.Fatalf("encode draft-1 manifest: %v", err)
 		}
-		tags = portable.BuildOpusTags(manifest, payload)
+		tags = portable.BuildDraft1OpusTags(manifest, payload)
 	}
 	for key, value := range tags {
 		args = append(args, "-metadata", fmt.Sprintf("%s=%s", key, value))
@@ -545,4 +553,387 @@ func runCommand(name string, args ...string) error {
 		return fmt.Errorf("%s %v: %w: %s", name, args, err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+// A padded chunk set is a cosmetic difference, not a damaged file. Producers
+// write base64url unpadded, but SPEC.md's worked example pipes the chunks
+// through a base64 tool that pads, and most languages' encoders pad by default,
+// so a reader that refuses '=' loses a transcript it could have read. The
+// wrapped case is here because a Vorbis comment value is arbitrary UTF-8: a
+// tool that rewrapped a long chunk may legally have left a newline in it, and
+// the padding has to be judged after the whitespace goes, not before.
+func TestDecodePortablePayloadAcceptsPaddedBase64URL(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		rewrite func(encoded string) string
+	}{
+		{name: "unpadded", rewrite: func(encoded string) string { return encoded }},
+		{name: "padded", rewrite: padBase64URL},
+		{name: "padded and wrapped", rewrite: func(encoded string) string {
+			return "\n" + padBase64URL(encoded) + "\n"
+		}},
+		{name: "wrapped", rewrite: func(encoded string) string { return encoded + "\r\n" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			words := []string{"Hello", "team", "lantern", "festival", "tonight"}
+			tags := buildPublishedPortableTags(t, words)
+			rewriteChunkSet(t, tags, "CASSINI_PAYLOAD_", tc.rewrite)
+			rewriteChunkSet(t, tags, portable.TranscriptIDToTagPrefix(portable.RoleRawASR), tc.rewrite)
+
+			payload, manifest, err := decodePortableMeeting(tags)
+			if err != nil {
+				t.Fatalf("decodePortableMeeting: %v", err)
+			}
+			if manifest.Version != portable.WireVersion {
+				t.Fatalf("Manifest.Version = %d, want %d", manifest.Version, portable.WireVersion)
+			}
+			if payload.RawBytes != len(payload.JSON) {
+				t.Errorf("RawBytes = %d, want %d", payload.RawBytes, len(payload.JSON))
+			}
+			if len(manifest.Transcripts) != 1 {
+				t.Fatalf("decoded %d transcripts, want 1", len(manifest.Transcripts))
+			}
+			body, _, err := decodeTranscriptBody(tags, manifest.Transcripts[0])
+			if err != nil {
+				t.Fatalf("decodeTranscriptBody: %v", err)
+			}
+			if body.WordCount != len(words) {
+				t.Errorf("body.WordCount = %d, want %d", body.WordCount, len(words))
+			}
+		})
+	}
+}
+
+// padBase64URL appends the '=' padding an unpadded base64url string would carry
+// had it been produced by a padding encoder.
+func padBase64URL(encoded string) string {
+	if remainder := len(encoded) % 4; remainder != 0 {
+		return encoded + strings.Repeat("=", 4-remainder)
+	}
+	return encoded
+}
+
+// rewriteChunkSet reassembles one chunk set, hands the concatenated text to
+// rewrite, and writes the result back over the same numbered tags — adjusting
+// the chunk count when the rewrite changes how many chunks it takes.
+func rewriteChunkSet(t *testing.T, tags map[string]string, prefix string, rewrite func(string) string) {
+	t.Helper()
+	count := parseIntOrZero(tags[prefix+"CHUNK_COUNT"])
+	if count <= 0 {
+		t.Fatalf("chunk set %s has no chunks", prefix)
+	}
+	var encoded strings.Builder
+	for idx := 0; idx < count; idx++ {
+		key := fmt.Sprintf("%s%03d", prefix, idx)
+		encoded.WriteString(tags[key])
+		delete(tags, key)
+	}
+	chunks := portable.ChunkString(rewrite(encoded.String()), portableTestChunkSize)
+	for idx, chunk := range chunks {
+		tags[fmt.Sprintf("%s%03d", prefix, idx)] = chunk
+	}
+	tags[prefix+"CHUNK_COUNT"] = fmt.Sprintf("%d", len(chunks))
+}
+
+// portableTestChunkSize is small enough that every fixture below spans several
+// chunks, which is the only way a reassembly bug shows up at all.
+const portableTestChunkSize = 64
+
+// buildPublishedPortableTags builds the OpusTag set of a one-transcript v3 file
+// without going near ffmpeg. The reader's tag layer takes a map, so a decode
+// test does not need a container, an audio stream, or the tools to make one.
+func buildPublishedPortableTags(t *testing.T, words []string) map[string]string {
+	t.Helper()
+	items := make([]portable.TranscriptItem, 0, len(words))
+	for i, word := range words {
+		items = append(items, portable.TranscriptItem{
+			Speaker: "spk1",
+			StartMS: int64(i * 100),
+			EndMS:   int64(i*100 + 80),
+			Text:    word,
+		})
+	}
+	manifest := portable.NormalizePublishedManifest(portable.Manifest{
+		Meeting: portable.Meeting{
+			ID:           "meeting-v3",
+			Title:        "Lantern Festival",
+			CreatedAtUTC: "2026-03-11T08:30:00Z",
+			DurationMS:   int64(len(words) * 100),
+			Language:     "en",
+		},
+		Audio: portable.Audio{Container: "ogg", Codec: "opus", SampleRate: 48000, Channels: 1},
+		Integrity: portable.Integrity{
+			MatchPolicy: portable.AudioMatchPolicy,
+			OpusSHA256:  strings.Repeat("a", 64),
+		},
+		Speakers: []portable.Speaker{{ID: "spk1", Label: "Silvio"}},
+	})
+	input := portable.TranscriptInput{
+		ID:       portable.RoleRawASR,
+		Role:     portable.RoleRawASR,
+		Default:  true,
+		Language: "en",
+		Body: portable.TranscriptBody{
+			Format:    "cassini.words.v1",
+			Language:  "en",
+			WordCount: len(items),
+			Items:     items,
+		},
+	}
+	encoded, err := portable.EncodePublishedManifest(manifest, []portable.TranscriptInput{input}, portableTestChunkSize)
+	if err != nil {
+		t.Fatalf("encode published manifest: %v", err)
+	}
+	return portable.BuildPublishedOpusTags(manifest, encoded, portable.RoleRawASR)
+}
+
+// buildPublishedPortableTagsTwoTranscripts builds the tag set of a v3 file carrying
+// two raw transcripts, with defaultRawID written into CASSINI_TRANSCRIPT_DEFAULT
+// so a caller can put that tag and the manifest's `default` flag at odds.
+func buildPublishedPortableTagsTwoTranscripts(t *testing.T, defaultRawID string) map[string]string {
+	t.Helper()
+	tags := buildPublishedPortableTags(t, []string{"Hello", "team", "again"})
+	manifest := portable.NormalizePublishedManifest(portable.Manifest{
+		Meeting:   portable.Meeting{ID: "meeting-v3", Title: "Lantern Festival", CreatedAtUTC: "2026-03-11T08:30:00Z", Language: "en"},
+		Audio:     portable.Audio{Container: "ogg", Codec: "opus", SampleRate: 48000, Channels: 1},
+		Integrity: portable.Integrity{MatchPolicy: portable.AudioMatchPolicy, OpusSHA256: strings.Repeat("a", 64)},
+		Speakers:  []portable.Speaker{{ID: "spk1", Label: "Silvio"}},
+	})
+	inputs := []portable.TranscriptInput{
+		{
+			ID: portable.RoleRawASR, Role: portable.RoleRawASR, Default: true, Language: "en",
+			Body: portable.TranscriptBody{Format: "cassini.words.v1", Language: "en", WordCount: 3, Items: []portable.TranscriptItem{
+				{Speaker: "spk1", StartMS: 0, EndMS: 80, Text: "Hello"},
+				{Speaker: "spk1", StartMS: 100, EndMS: 180, Text: "team"},
+				{Speaker: "spk1", StartMS: 200, EndMS: 280, Text: "again"},
+			}},
+		},
+		{
+			ID: "second-pass", Role: portable.RoleRawASR, Language: "en",
+			Body: portable.TranscriptBody{Format: "cassini.words.v1", Language: "en", WordCount: 2, Items: []portable.TranscriptItem{
+				{Speaker: "spk1", StartMS: 0, EndMS: 80, Text: "Hello"},
+				{Speaker: "spk1", StartMS: 100, EndMS: 180, Text: "team"},
+			}},
+		},
+	}
+	encoded, err := portable.EncodePublishedManifest(manifest, inputs, portableTestChunkSize)
+	if err != nil {
+		t.Fatalf("encode two-transcript v3 manifest: %v", err)
+	}
+	for key := range tags {
+		delete(tags, key)
+	}
+	for key, value := range portable.BuildPublishedOpusTags(manifest, encoded, defaultRawID) {
+		tags[key] = value
+	}
+	return tags
+}
+
+// The manifest is the record and the CASSINI_TX_<ID>_PAYLOAD_CHUNK_COUNT tag is
+// a copy of it, so a reader that has decoded the manifest gathers the number of
+// chunks payloadRef names. Believing the tag instead refused a transcript that
+// was all there when the tag ran high, and quietly returned a truncated one when
+// it ran low — a tool that rewrote one layer and not the other could do either.
+func TestDecodeTranscriptBodyPrefersTheManifestChunkCount(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		taggedCount string
+		wantWarning bool
+	}{
+		{name: "agrees"},
+		{name: "tag too high", taggedCount: "9", wantWarning: true},
+		{name: "tag too low", taggedCount: "1", wantWarning: true},
+		{name: "tag absent", taggedCount: "-"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			words := []string{"Hello", "team", "lantern", "festival", "tonight"}
+			tags := buildPublishedPortableTags(t, words)
+			prefix := portable.TranscriptIDToTagPrefix(portable.RoleRawASR)
+			switch tc.taggedCount {
+			case "":
+			case "-":
+				delete(tags, prefix+"CHUNK_COUNT")
+			default:
+				tags[prefix+"CHUNK_COUNT"] = tc.taggedCount
+			}
+
+			_, manifest, err := decodePortableMeeting(tags)
+			if err != nil {
+				t.Fatalf("decodePortableMeeting: %v", err)
+			}
+			body, warnings, err := decodeTranscriptBody(tags, manifest.Transcripts[0])
+			if err != nil {
+				t.Fatalf("decodeTranscriptBody: %v", err)
+			}
+			if body.WordCount != len(words) || len(body.Items) != len(words) {
+				t.Errorf("decoded %d of %d words (wordCount=%d)", len(body.Items), len(words), body.WordCount)
+			}
+			gotWarning := strings.Join(warnings, "\n")
+			if tc.wantWarning && !strings.Contains(gotWarning, "chunk count disagrees between manifest and tag") {
+				t.Errorf("warnings = %q, want the tag/manifest disagreement reported", gotWarning)
+			}
+			if !tc.wantWarning && gotWarning != "" {
+				t.Errorf("warnings = %q, want none", gotWarning)
+			}
+		})
+	}
+}
+
+// CASSINI_TRANSCRIPT_DEFAULT is the same kind of copy: it exists so a reader
+// holding only ffprobe can name the default before it decodes anything, and it
+// stops deciding the moment the manifest is in hand. Obeying it let a tool that
+// rewrote the tag alone move which transcript every consumer read.
+func TestDefaultWordsTranscriptEntryPrefersTheManifestFlag(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		taggedID    string
+		wantID      string
+		wantWarning bool
+	}{
+		{name: "agrees", taggedID: portable.RoleRawASR, wantID: portable.RoleRawASR},
+		{name: "tag names another transcript", taggedID: "second-pass", wantID: portable.RoleRawASR, wantWarning: true},
+		{name: "tag absent", taggedID: "", wantID: portable.RoleRawASR},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tags := buildPublishedPortableTagsTwoTranscripts(t, tc.taggedID)
+			_, manifest, err := decodePortableMeeting(tags)
+			if err != nil {
+				t.Fatalf("decodePortableMeeting: %v", err)
+			}
+			entry, warnings, ok := defaultWordsTranscriptEntry(tags, manifest)
+			if !ok {
+				t.Fatal("defaultWordsTranscriptEntry found no default transcript")
+			}
+			if entry.ID != tc.wantID {
+				t.Errorf("default transcript = %q, want %q", entry.ID, tc.wantID)
+			}
+			gotWarning := strings.Join(warnings, "\n")
+			if tc.wantWarning && !strings.Contains(gotWarning, "default transcript disagrees between manifest and tag") {
+				t.Errorf("warnings = %q, want the tag/manifest disagreement reported", gotWarning)
+			}
+			if !tc.wantWarning && gotWarning != "" {
+				t.Errorf("warnings = %q, want none", gotWarning)
+			}
+		})
+	}
+}
+
+// `words=` is the only number inspect prints about the transcript, and until
+// now it was the one number it had not checked: it came from the manifest
+// index's declared wordCount, so a file whose chunk set had a hole in it still
+// reported `cassini=ok words=900` while the transcript itself was unreachable.
+// Only `--transcript` found that out, and even that exited 0.
+func TestInspectPathPortableMeetingReportsTheWordsItDecoded(t *testing.T) {
+	requireFFMediaTools(t)
+
+	tmp := t.TempDir()
+	words := []string{"Hello", "team", "lantern", "festival", "tonight"}
+
+	t.Run("readable body", func(t *testing.T) {
+		path := createPortableDraft2OpusFixtureWith(t, filepath.Join(tmp, "readable.opus"), portableDraft2FixtureOptions{
+			words: words,
+		})
+		var out bytes.Buffer
+		if err := InspectPath(&out, path); err != nil {
+			t.Fatalf("inspect portable opus: %v", err)
+		}
+		if got := out.String(); !strings.Contains(got, fmt.Sprintf(" words=%d ", len(words))) {
+			t.Errorf("expected words=%d, got %q", len(words), got)
+		}
+	})
+
+	t.Run("unreadable body", func(t *testing.T) {
+		path := createPortableDraft2OpusFixtureWith(t, filepath.Join(tmp, "holed.opus"), portableDraft2FixtureOptions{
+			words:                   words,
+			dropLastTranscriptChunk: true,
+		})
+		var out bytes.Buffer
+		err := InspectPath(&out, path)
+		if err == nil {
+			t.Fatalf("inspect reported success on a file whose transcript body is unreachable: %q", out.String())
+		}
+		if !strings.Contains(err.Error(), "could not read the transcript body of raw-asr") {
+			t.Errorf("error = %v, want it to name the transcript it could not read", err)
+		}
+		got := out.String()
+		if !strings.Contains(got, "cassini=invalid-cassini-metadata") {
+			t.Errorf("expected cassini=invalid-cassini-metadata, got %q", got)
+		}
+		if !strings.Contains(got, " words=0 ") {
+			t.Errorf("expected words=0 for a transcript nothing could be read out of, got %q", got)
+		}
+		if !strings.Contains(got, "warning=transcript raw-asr body could not be read: missing transcript chunk CASSINI_TX_RAW_ASR_PAYLOAD_") {
+			t.Errorf("expected a warning naming the missing chunk, got %q", got)
+		}
+	})
+}
+
+// readPortableTranscriptBodies is where that number now comes from: a
+// transcript whose body could not be read is absent from the count, not zero
+// in it, and it is named so the caller can say which one went missing.
+func TestReadPortableTranscriptBodiesSeparatesReadFromDeclared(t *testing.T) {
+	words := []string{"Hello", "team", "lantern", "festival", "tonight"}
+	tags := buildPublishedPortableTags(t, words)
+	_, manifest, err := decodePortableMeeting(tags)
+	if err != nil {
+		t.Fatalf("decodePortableMeeting: %v", err)
+	}
+
+	bodies := readPortableTranscriptBodies(tags, manifest)
+	if got := bodies.WordCounts[portable.RoleRawASR]; got != len(words) {
+		t.Errorf("decoded word count = %d, want %d", got, len(words))
+	}
+	if len(bodies.Unreadable) != 0 || bodies.err("meeting.opus") != nil {
+		t.Errorf("a whole file reported %v unreadable", bodies.Unreadable)
+	}
+
+	prefix := portable.TranscriptIDToTagPrefix(portable.RoleRawASR)
+	delete(tags, prefix+"001")
+	bodies = readPortableTranscriptBodies(tags, manifest)
+	if len(bodies.WordCounts) != 0 {
+		t.Errorf("word counts = %v, want none from a chunk set with a hole in it", bodies.WordCounts)
+	}
+	if len(bodies.Unreadable) != 1 || bodies.Unreadable[0] != portable.RoleRawASR {
+		t.Errorf("Unreadable = %v, want [raw-asr]", bodies.Unreadable)
+	}
+	if err := bodies.err("meeting.opus"); err == nil {
+		t.Error("err() = nil, want the unreadable transcript reported to the caller")
+	}
+}
+
+// Alternative raw transcripts are passes over the same speech, not twice as
+// much meeting. The summary's `words=` is the default transcript's count — the
+// one a viewer opens — and the per-transcript lines carry every transcript with
+// its own. Summing them across the file reported five words for a meeting of
+// three, and the arithmetic got worse the more passes a producer published.
+func TestPrintPortableMeetingReportsTheDefaultTranscriptsWords(t *testing.T) {
+	tags := buildPublishedPortableTagsTwoTranscripts(t, portable.RoleRawASR)
+	payload, manifest, err := decodePortableMeeting(tags)
+	if err != nil {
+		t.Fatalf("decodePortableMeeting: %v", err)
+	}
+	bodies := readPortableTranscriptBodies(tags, manifest)
+	if bodies.DefaultID != portable.RoleRawASR {
+		t.Fatalf("default transcript = %q, want %q", bodies.DefaultID, portable.RoleRawASR)
+	}
+
+	var out bytes.Buffer
+	printPortableMeeting(&out, "meeting.opus", portableAudioSummary{Path: "meeting.opus"},
+		payload, manifest, bodies, portableIntegrityResult{Status: "ok"})
+	got := out.String()
+
+	if !strings.Contains(got, " words=3 ") {
+		t.Errorf("expected words=3, the default transcript's count, got %q", got)
+	}
+	if strings.Contains(got, " words=5 ") {
+		t.Errorf("expected the default transcript's count, not the sum across transcripts, got %q", got)
+	}
+	for _, want := range []string{
+		"transcript id=raw-asr role=raw-asr default=yes",
+		"transcript id=second-pass role=raw-asr default=no",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected the summary to list %q, got %q", want, got)
+		}
+	}
 }
