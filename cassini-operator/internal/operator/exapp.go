@@ -275,7 +275,10 @@ func (c ExAppConfig) applyToBindAddr(existing string) string {
 //
 // stateDir is where the lifecycle state JSON file lives (typically the parent
 // directory of the operator DB).
-func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger *log.Logger) {
+//
+// Returns the handlers so shutdown can wait for callbacks still in flight; see
+// LifecycleHandlers.Background.
+func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger *log.Logger) *LifecycleHandlers {
 	lifecycle := &LifecycleHandlers{
 		Store:                NewFileLifecycleStore(filepath.Join(stateDir, "app-state.json")),
 		Logger:               logger,
@@ -312,6 +315,8 @@ func (c ExAppConfig) installRoutes(root *http.ServeMux, stateDir string, logger 
 	if localArchive != "" || ncProxy != nil {
 		root.Handle(publishedURLPrefix+"/", publishedHandler(localArchive, publishedURLPrefix, logger, ncProxy))
 	}
+
+	return lifecycle
 }
 
 // initProgressReporter returns a callback that PUTs `progress=100` to AppAPI's

@@ -100,6 +100,15 @@ const AUDIO_BITS_PER_SECOND = 128_000;
 // collection is still permitted. Turning the administrator switch off cannot
 // retract code already running in a call, so the client asks rather than the
 // server having to reach it.
+// Statuses that mean "this capture will never be accepted". Everything else,
+// 4xx included, leaves the buffer in place for the next Talk page load.
+//   400 the sidecar or a segment name is wrong, i.e. a client bug
+//   403 collection is off, or the uploader was not in that room
+//   413 the body is over the server's cap
+//   415 the body was not the multipart the server expects
+//   422 the sidecar contradicts itself
+const TERMINAL_UPLOAD_STATUSES = new Set([400, 403, 413, 415, 422]);
+
 const SERVER_CHECK_MS = 30_000;
 
 // SERVER_CHECK_TIMEOUT_MS bounds each of those requests. Without a deadline a
@@ -569,21 +578,21 @@ async function uploadCapture(
     credentials: "same-origin",
     headers: { requesttoken: (globalThis as { OC?: { requestToken?: string } }).OC?.requestToken ?? "" },
   });
-  if (response.status >= 400 && response.status < 500) {
-    // Every 4xx is terminal, and the buffer goes.
+  if (TERMINAL_UPLOAD_STATUSES.has(response.status)) {
+    // The server judged THIS capture, and retrying an identical body cannot
+    // change the answer. Keeping it would mean re-uploading a meeting-sized
+    // body on every Talk page load, forever, with no backoff — and disabling
+    // the companion, the recommended way to back the feature out, also removes
+    // the only code that would ever clean it up.
     //
-    // The server has decided about THIS upload, and retrying an identical body
-    // cannot change the answer: collection switched off (403), a body over the
-    // size cap (413), a sidecar the server rejects (400), a room we were not in
-    // (403), a quota already spent (413). The retry path has no backoff and
-    // fires on every Talk page load, so keeping the buffer would mean every
-    // affected participant re-uploading a meeting-sized body, forever, through
-    // the proxy — and disabling the companion, the recommended way to back the
-    // feature out, also removes the only code that would ever clean it up.
+    // The list is deliberately an allowlist rather than "any 4xx". A 4xx can
+    // also describe the delivery rather than the capture — a truncated body, a
+    // rate limit, an expired session — and discarding an intact recording
+    // because a proxy cut the request short would be the feature losing audio
+    // it was built to save.
     //
-    // The cost is honest: a recording is discarded and the participant is not
-    // told. That is the right trade against an unbounded upload loop, but it is
-    // why a rejection must stay legible in the console.
+    // The cost is still honest: a recording is discarded and the participant is
+    // not told, which is why the rejection has to stay legible in the console.
     console.warn(
       `Cassini source capture: upload rejected (${response.status}); discarding this recording`,
     );

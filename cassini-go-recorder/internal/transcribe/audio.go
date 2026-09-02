@@ -271,6 +271,14 @@ const pcmReadChunkBytes = 64 * 1024
 // stdout is consumed in fixed chunks and repeated decoder diagnostics cannot
 // grow stderr without limit on malformed media.
 func runPCM16LECommand(cmd *exec.Cmd, expectedSamples int) ([]float32, error) {
+	return runPCM16LECommandBounded(cmd, expectedSamples, 0)
+}
+
+// runPCM16LECommandBounded is runPCM16LECommand with a hard ceiling on how much
+// audio the child may produce. maxSamples <= 0 means unbounded, which is right
+// for inputs the recorder itself wrote and wrong for anything a participant
+// uploaded.
+func runPCM16LECommandBounded(cmd *exec.Cmd, expectedSamples, maxSamples int) ([]float32, error) {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("open PCM pipe: %w", err)
@@ -319,8 +327,18 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 // reads. expectedSamples is a capacity hint only; callers still get every
 // decoded sample if container metadata under-reports the duration.
 func readPCM16LEFloats(r io.Reader, expectedSamples int) ([]float32, error) {
+	return readPCM16LEFloatsBounded(r, expectedSamples, 0)
+}
+
+// readPCM16LEFloatsBounded stops and errors once maxSamples is exceeded, so a
+// small compressed file that expands without limit cannot exhaust memory before
+// any wall-clock deadline notices. maxSamples <= 0 disables the ceiling.
+func readPCM16LEFloatsBounded(r io.Reader, expectedSamples, maxSamples int) ([]float32, error) {
 	if expectedSamples < 0 {
 		expectedSamples = 0
+	}
+	if maxSamples > 0 && expectedSamples > maxSamples {
+		expectedSamples = maxSamples
 	}
 	samples := make([]float32, 0, expectedSamples)
 	raw := make([]byte, pcmReadChunkBytes)
@@ -333,6 +351,11 @@ func readPCM16LEFloats(r io.Reader, expectedSamples int) ([]float32, error) {
 			oldLen := len(samples)
 			sampleCount := n / 2
 			newLen := oldLen + sampleCount
+			if maxSamples > 0 && newLen > maxSamples {
+				return nil, fmt.Errorf(
+					"decoded audio exceeds the %d samples this input declared; refusing to buffer more",
+					maxSamples)
+			}
 			if newLen <= cap(samples) {
 				samples = samples[:newLen]
 			} else {

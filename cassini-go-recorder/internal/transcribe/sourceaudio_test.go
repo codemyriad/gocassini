@@ -1,6 +1,7 @@
 package transcribe
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"math"
@@ -697,5 +698,56 @@ func TestWriteWAV16ReportsAFailedWrite(t *testing.T) {
 	}
 	if want := int64(44 + 3*2); info.Size() != want {
 		t.Fatalf("wrote %d bytes, want %d (44-byte header plus three samples)", info.Size(), want)
+	}
+}
+
+// The wall-clock deadline does not bound how much audio a segment decodes to.
+// ffmpeg runs far faster than real time, so a small compressed file that
+// expands to hours — or loops — emits gigabytes of PCM well inside any timeout,
+// and the build dies on memory instead. The declared window is the only size
+// the client committed to.
+func TestMaxSourceSegmentSamplesBoundsDecodedAudio(t *testing.T) {
+	const rate = 16000
+	// expectedPCMSamples carries its own one-second allowance, so the bound is
+	// expressed through it rather than restated here.
+	floor := expectedPCMSamples(60_000, rate)
+
+	if got := maxSourceSegmentSamples(0, rate); got != floor {
+		t.Fatalf("a segment declaring no length got %d samples, want the %d floor", got, floor)
+	}
+	if got := maxSourceSegmentSamples(-5000, rate); got != floor {
+		t.Fatalf("a negative declaration got %d samples, want the %d floor", got, floor)
+	}
+	// Ten declared minutes plus the one-minute slack.
+	if got, want := maxSourceSegmentSamples(600_000, rate), expectedPCMSamples(660_000, rate); got != want {
+		t.Fatalf("a ten-minute segment got %d samples, want %d", got, want)
+	}
+	// The bound has to actually bind: an hour-long claim must not permit the
+	// gigabytes an expanding file would otherwise produce.
+	if got := maxSourceSegmentSamples(3_600_000, rate); got >= 4*expectedPCMSamples(3_600_000, rate) {
+		t.Fatalf("an hour-long segment permits %d samples; the ceiling is not binding", got)
+	}
+}
+
+// The reader must stop rather than keep buffering once the ceiling is passed.
+func TestReadPCM16LEFloatsBoundedRefusesRunawayOutput(t *testing.T) {
+	// 4000 samples of silence, against a 100-sample ceiling.
+	raw := make([]byte, 4000*2)
+	if _, err := readPCM16LEFloatsBounded(bytes.NewReader(raw), 0, 100); err == nil {
+		t.Fatal("a decode past the ceiling was accepted; that is the OOM path")
+	}
+
+	// Comfortably inside the ceiling still returns every sample.
+	samples, err := readPCM16LEFloatsBounded(bytes.NewReader(raw), 0, 8000)
+	if err != nil {
+		t.Fatalf("readPCM16LEFloatsBounded: %v", err)
+	}
+	if len(samples) != 4000 {
+		t.Fatalf("got %d samples, want 4000", len(samples))
+	}
+
+	// A zero ceiling means unbounded, for inputs the recorder itself wrote.
+	if _, err := readPCM16LEFloatsBounded(bytes.NewReader(raw), 0, 0); err != nil {
+		t.Fatalf("an unbounded read failed: %v", err)
 	}
 }

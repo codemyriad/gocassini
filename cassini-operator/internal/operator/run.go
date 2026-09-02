@@ -25,6 +25,12 @@ import (
 	"cassini-operator/internal/operator/appapi"
 )
 
+// lifecycleShutdownWait bounds how long shutdown waits for an AppAPI
+// enabled/disabled callback. AppAPI stops the container right after the
+// lifecycle response, and a container stop kills the process shortly after
+// SIGTERM, so this has to stay well inside that grace period.
+const lifecycleShutdownWait = 3 * time.Second
+
 const (
 	defaultBind                  = "0.0.0.0:4000"
 	defaultOperatorBasePath      = "/"
@@ -96,7 +102,12 @@ type Runtime struct {
 	// cancel stops rt.ctx; workerWG tracks the pipeline worker goroutines
 	// NewRuntime spawns (build, publish, requeue dispatch) so Shutdown can
 	// await their exit instead of leaving them writing under WorkRoot.
-	cancel       context.CancelFunc
+	cancel context.CancelFunc
+	// lifecycle is retained so shutdown can wait for an AppAPI enabled/disabled
+	// callback still in flight. The disable edge writes back into Nextcloud and
+	// cannot run before the response (single-worker PHP deadlocks), so waiting
+	// here is the only point at which it can be given a chance to finish.
+	lifecycle    *LifecycleHandlers
 	workerWG     sync.WaitGroup
 	store        *Store
 	cfg          Config
@@ -402,6 +413,22 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		// record job is still finalizing would SIGKILL the recorder
 		// mid-compose and destroy the recording (D-350). In-flight stops are
 		// enforced per process, so this wait is bounded.
+		// Give an in-flight AppAPI lifecycle callback a moment to land. On the
+		// disable edge this is the write that tells Nextcloud the ExApp's
+		// settings are no longer live; losing it leaves the companion app
+		// injecting a payload for an ExApp that is gone.
+		if runtime.lifecycle != nil {
+			done := make(chan struct{})
+			go func() {
+				runtime.lifecycle.Background.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(lifecycleShutdownWait):
+				logger.Printf("shutdown: lifecycle callback still running after %s", lifecycleShutdownWait)
+			}
+		}
 		if !runtime.WaitForRecordJobs(recordShutdownWait) {
 			logger.Printf("shutdown abandoned record jobs still running after %s", recordShutdownWait)
 		}
@@ -749,7 +776,7 @@ func newHTTPHandler(logger *log.Logger, rt *Runtime, exappCfg ExAppConfig) http.
 
 	root := http.NewServeMux()
 	// ExApp lifecycle + static prefixes (no-op when their env paths are unset).
-	exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger)
+	rt.lifecycle = exappCfg.installRoutes(root, filepath.Dir(rt.cfg.DBPath), logger)
 	// Operator JSON API under BasePath ("/" or "/operator", etc).
 	mountBasePathOnto(root, rt.cfg.BasePath, apiHandler)
 

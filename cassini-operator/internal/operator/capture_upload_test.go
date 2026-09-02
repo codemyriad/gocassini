@@ -676,3 +676,77 @@ func TestCaptureUploadStillIgnoresUnknownNonFileFields(t *testing.T) {
 		t.Fatalf("a non-file field was stored as a segment (err=%v)", err)
 	}
 }
+
+// A part carrying a file name the sidecar never declared must be refused, not
+// stored. Parts are classified as segments by carrying a file name at all, so
+// without this an undeclared file would be written into the capture directory
+// and promoted alongside the real audio.
+func TestCaptureUploadRejectsAnUndeclaredSegment(t *testing.T) {
+	sidecar := validSidecar()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("sidecar", captureSidecarName)
+	if err != nil {
+		t.Fatalf("create sidecar part: %v", err)
+	}
+	if err := json.NewEncoder(part).Encode(sidecar); err != nil {
+		t.Fatalf("encode sidecar: %v", err)
+	}
+	for _, name := range []string{"segment-0.webm", "stowaway.webm"} {
+		filePart, err := writer.CreateFormFile("segment_"+name, name)
+		if err != nil {
+			t.Fatalf("create part: %v", err)
+		}
+		if _, err := filePart.Write([]byte("audio")); err != nil {
+			t.Fatalf("write part: %v", err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/capture/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req = req.WithContext(appapi.WithUserID(context.Background(), "bob"))
+
+	rt := captureTestRuntime(t)
+	rec := httptest.NewRecorder()
+	rt.captureUploadHandler(nil, quietLogger())(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "stowaway.webm") {
+		t.Fatalf("refusal should name the undeclared file: %s", rec.Body.String())
+	}
+	dir := captureUploadDir(rt.cfg.CaptureRoot, sidecar.RoomToken, "bob", sidecar.CallStartWallMS)
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("a refused upload must not be promoted (err=%v)", err)
+	}
+}
+
+// A body truncated in transit is a property of the delivery, not of the
+// capture, so it must not answer with a status the client treats as terminal.
+// The client deletes its only copy on 400; a proxy cutting a request short
+// would then destroy an intact recording.
+func TestCaptureUploadReportsTruncationAsRetryable(t *testing.T) {
+	sidecar := validSidecar()
+	full := uploadRequest(t, sidecar, map[string][]byte{"segment-0.webm": []byte("audio-bytes")})
+	raw, err := io.ReadAll(full.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/capture/upload", bytes.NewReader(raw[:len(raw)/2]))
+	req.Header.Set("Content-Type", full.Header.Get("Content-Type"))
+	req = req.WithContext(appapi.WithUserID(context.Background(), "bob"))
+
+	rt := captureTestRuntime(t)
+	rec := httptest.NewRecorder()
+	rt.captureUploadHandler(nil, quietLogger())(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 so the client keeps its buffer; body=%s", rec.Code, rec.Body.String())
+	}
+}

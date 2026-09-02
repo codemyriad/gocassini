@@ -221,11 +221,23 @@ func (c ExAppConfig) enabledCallback(ctx context.Context, logger *log.Logger) fu
 		// companion still injecting the payload into Talk pages. The timeout is
 		// what keeps a slow or unreachable Nextcloud from holding up an app
 		// disable.
-		syncCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), captureConfigSyncTimeout)
-		err := c.syncSourceCaptureInitialState(syncCtx, captureEnabled, logger)
-		cancel()
-		if err != nil && logger != nil {
-			logger.Printf("ERROR: source capture: could not synchronize companion initial state: %v", err)
+		seq := nextCaptureConfigSync()
+		captureConfigSyncMu.Lock()
+		if latest := atomic.LoadUint64(&captureConfigSyncSeq); latest != seq {
+			// A later edge has already claimed a slot. Writing now would
+			// deliver a stale value after the newer one; drop it instead.
+			captureConfigSyncMu.Unlock()
+			if logger != nil {
+				logger.Printf("source capture: skipping superseded companion state write (enabled=%v)", captureEnabled)
+			}
+		} else {
+			syncCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), captureConfigSyncTimeout)
+			err := c.syncSourceCaptureInitialState(syncCtx, captureEnabled, logger)
+			cancel()
+			captureConfigSyncMu.Unlock()
+			if err != nil && logger != nil {
+				logger.Printf("ERROR: source capture: could not synchronize companion initial state: %v", err)
+			}
 		}
 		if !enabled {
 			return

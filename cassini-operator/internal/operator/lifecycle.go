@@ -127,7 +127,14 @@ type LifecycleHandlers struct {
 	// EnabledCallback runs asynchronously after an enabled/disabled state was
 	// persisted and answered. ExApp integrations use the enabled=true edge for
 	// callbacks that AppAPI would reject while registration is still disabled.
+	// It must not run before the response: like UIRegistrar it calls back into
+	// Nextcloud, and doing that inside the request deadlocks single-worker PHP.
 	EnabledCallback func(bool)
+	// Background counts callbacks still in flight so shutdown can wait for
+	// them. The disable edge is the reason it exists: AppAPI stops the
+	// container as soon as the response returns, and a write that loses that
+	// race leaves Nextcloud believing the ExApp's settings are still live.
+	Background sync.WaitGroup
 }
 
 func (h *LifecycleHandlers) logger() *log.Logger {
@@ -189,22 +196,6 @@ func (h *LifecycleHandlers) handleEnabled(w http.ResponseWriter, r *http.Request
 		return
 	}
 	h.logger().Printf("lifecycle enabled -> %v", enabled)
-	// The DISABLE edge runs before we answer, and blocks this request.
-	//
-	// AppAPI stops the container as soon as this response returns, so anything
-	// started in a goroutine here is racing a SIGTERM it loses. That is not
-	// hypothetical: the source-capture switch is mirrored into Nextcloud from
-	// this callback, and on disable the write died as `context canceled` every
-	// time, leaving the stored value saying `true`. The companion is a separate
-	// app that reads that value, so it kept injecting the capture payload into
-	// every Talk call page of an installation whose administrator had just
-	// disabled Cassini.
-	//
-	// The callback is responsible for bounding its own work; see
-	// ExAppConfig.enabledCallback.
-	if h.EnabledCallback != nil && !enabled {
-		h.EnabledCallback(enabled)
-	}
 	// AppAPI expects `{"error": ""}` on success, `{"error": "..."}` to refuse.
 	writeJSON(w, http.StatusOK, map[string]string{"error": ""})
 	// AppAPI's lifecycle docs have ExApps register their UI (top-menu
@@ -214,10 +205,19 @@ func (h *LifecycleHandlers) handleEnabled(w http.ResponseWriter, r *http.Request
 	if enabled && h.UIRegistrar != nil {
 		go h.UIRegistrar()
 	}
-	// The enable edge stays asynchronous: the container is staying up, and
-	// provisioning behind it is far too slow to hold AppAPI's request open.
-	if h.EnabledCallback != nil && enabled {
-		go h.EnabledCallback(enabled)
+	// Both edges stay asynchronous, and for the same reason UIRegistrar does:
+	// the callback calls back into Nextcloud, which deadlocks a single-worker
+	// PHP setup if it runs before this response is written.
+	//
+	// That makes the disable edge a race against the container being stopped.
+	// Background lets the process wait for it during shutdown, which is the
+	// only place it can be waited on without reintroducing the deadlock.
+	if h.EnabledCallback != nil {
+		h.Background.Add(1)
+		go func() {
+			defer h.Background.Done()
+			h.EnabledCallback(enabled)
+		}()
 	}
 }
 

@@ -507,8 +507,9 @@ func RenderSourceTrack(ctx context.Context, dirs []string, base SourceTimeBase, 
 					"segment %d places at %.0f ms, outside a %d ms recording — the uploader's clock is not usable",
 					segment.Index, placement.OffsetMS, timelineMS)
 			}
+			segmentMS := segment.StopWallMS - segment.StartWallMS
 			samples, err := decodeSourceSegment(ctx, filepath.Join(dir, segment.AudioName), sampleRate,
-				sourceDecodeTimeout(segment.StopWallMS-segment.StartWallMS))
+				sourceDecodeTimeout(segmentMS), maxSourceSegmentSamples(segmentMS, sampleRate))
 			if err != nil {
 				return nil, report, fmt.Errorf("segment %d: decode: %w", segment.Index, err)
 			}
@@ -570,7 +571,30 @@ func sourceDecodeTimeout(segmentMS int64) time.Duration {
 	return budget
 }
 
-func decodeSourceSegment(ctx context.Context, path string, sampleRate int, timeout time.Duration) ([]float32, error) {
+// maxSourceSegmentSamples is how much decoded audio one participant-supplied
+// segment may produce, from its own declared length.
+//
+// The deadline alone does not bound this. ffmpeg decodes far faster than real
+// time, so a small compressed file that expands to hours of audio — or loops —
+// emits gigabytes of PCM well inside any wall-clock budget, and the build dies
+// on memory rather than on the timeout. The declared window is the only size
+// the client committed to; anything past it plus generous slack is the file
+// contradicting its own sidecar.
+func maxSourceSegmentSamples(segmentMS int64, sampleRate int) int {
+	const slackMS = 60_000
+	if segmentMS < 0 {
+		segmentMS = 0
+	}
+	limit := expectedPCMSamples(segmentMS+slackMS, sampleRate)
+	if limit <= 0 {
+		// A segment that declares no length still gets a floor rather than a
+		// blank cheque.
+		limit = expectedPCMSamples(slackMS, sampleRate)
+	}
+	return limit
+}
+
+func decodeSourceSegment(ctx context.Context, path string, sampleRate int, timeout time.Duration, maxSamples int) ([]float32, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "ffmpeg",
@@ -582,7 +606,7 @@ func decodeSourceSegment(ctx context.Context, path string, sampleRate int, timeo
 		"-f", "s16le",
 		"-",
 	)
-	samples, err := runPCM16LECommand(cmd, 0)
+	samples, err := runPCM16LECommandBounded(cmd, 0, maxSamples)
 	if err != nil && ctx.Err() == context.DeadlineExceeded {
 		return nil, fmt.Errorf("decode exceeded its %s budget; treating the upload as unusable", timeout)
 	}

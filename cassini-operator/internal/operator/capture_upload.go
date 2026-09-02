@@ -418,7 +418,11 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 					http.Error(w, "capture upload is too large", http.StatusRequestEntityTooLarge)
 					return
 				}
-				http.Error(w, "malformed upload", http.StatusBadRequest)
+				// Truncation is a property of THIS delivery, not of the
+				// capture: a proxy or upstream cutting the body short must
+				// not make the client throw away an intact recording. 503
+				// is the status the client retries on.
+				http.Error(w, "upload truncated in transit", http.StatusServiceUnavailable)
 				return
 			}
 			// Parts are classified by whether they carry a FILE NAME, not by
@@ -450,6 +454,13 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 						http.Error(w, "capture upload is too large", http.StatusRequestEntityTooLarge)
 						return
 					}
+					// A sidecar that stops mid-JSON was cut in transit; a
+					// sidecar that parses wrong is the client's bug. Only the
+					// second is worth telling the client to give up over.
+					if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+						http.Error(w, "upload truncated in transit", http.StatusServiceUnavailable)
+						return
+					}
 					http.Error(w, "malformed sidecar", http.StatusBadRequest)
 					return
 				}
@@ -477,7 +488,8 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 						http.Error(w, "capture upload is too large", http.StatusRequestEntityTooLarge)
 						return
 					}
-					http.Error(w, "upload truncated", http.StatusBadRequest)
+					// Same reasoning as the reader error above: retryable.
+					http.Error(w, "upload truncated in transit", http.StatusServiceUnavailable)
 					return
 				}
 				written[name] = n
@@ -492,9 +504,22 @@ func (rt *Runtime) captureUploadHandler(isMember roomMembershipChecker, logger *
 			http.Error(w, "missing sidecar", http.StatusBadRequest)
 			return
 		}
+		declared := make(map[string]struct{}, len(sidecar.Segments))
 		for _, segment := range sidecar.Segments {
+			declared[segment.AudioName] = struct{}{}
 			if _, ok := written[segment.AudioName]; !ok {
 				http.Error(w, fmt.Sprintf("missing segment %q", segment.AudioName), http.StatusBadRequest)
+				return
+			}
+		}
+		// The sidecar is the manifest, so the stored set must equal it. Parts
+		// are classified as segments by carrying a file name, which means an
+		// undeclared one would otherwise be written into the capture directory
+		// and promoted alongside the real audio, where nothing downstream
+		// expects it.
+		for name := range written {
+			if _, ok := declared[name]; !ok {
+				http.Error(w, fmt.Sprintf("segment %q is not declared in the sidecar", name), http.StatusBadRequest)
 				return
 			}
 		}

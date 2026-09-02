@@ -2,13 +2,10 @@ package operator
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -280,70 +277,82 @@ func TestInitRejectsGET(t *testing.T) {
 	}
 }
 
-// On the disable edge the callback must finish BEFORE the response is written.
+// Neither edge may call back into Nextcloud before the response is written.
 //
-// AppAPI stops the container as soon as this request returns, so a callback
-// started in a goroutine loses the race against SIGTERM. That is how the
-// source-capture switch stayed `true` in Nextcloud after an administrator
-// disabled the app: the write was cancelled with the runtime context, and the
-// companion — a separate app reading that value — kept injecting the capture
-// payload into every Talk call page.
-func TestDisableEdgeCallbackCompletesBeforeResponding(t *testing.T) {
-	h, _ := newTestHandlers(t)
+// The callback POSTs into Nextcloud, and doing that while Nextcloud is still
+// blocked serving this request deadlocks a single-worker PHP setup — the same
+// reason UIRegistrar is deferred (see its doc comment). An earlier attempt to
+// fix the disable-edge race by running the callback first reintroduced exactly
+// that deadlock, so this asserts the ordering in both directions.
+func TestLifecycleCallbacksNeverRunBeforeTheResponse(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		name := "disable edge"
+		query := "enabled=0"
+		if enabled {
+			name, query = "enable edge", "enabled=1"
+		}
+		t.Run(name, func(t *testing.T) {
+			h, _ := newTestHandlers(t)
+			entered := make(chan struct{}, 1)
+			release := make(chan struct{})
+			h.EnabledCallback = func(bool) {
+				entered <- struct{}{}
+				<-release
+			}
+			defer close(release)
 
-	var mu sync.Mutex
-	var order []string
-	h.EnabledCallback = func(enabled bool) {
-		// Any real work here takes time; make the race deterministic.
-		time.Sleep(20 * time.Millisecond)
-		mu.Lock()
-		order = append(order, fmt.Sprintf("callback(%v)", enabled))
-		mu.Unlock()
-	}
+			done := make(chan int, 1)
+			go func() { done <- putEnabled(t, h, query, "").Code }()
 
-	w := putEnabled(t, h, "enabled=0", "")
-	mu.Lock()
-	order = append(order, "responded")
-	got := append([]string(nil), order...)
-	mu.Unlock()
+			select {
+			case code := <-done:
+				if code != http.StatusOK {
+					t.Fatalf("got %d, want 200", code)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("the response waited on the callback; that deadlocks single-worker PHP")
+			}
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("got %d, want 200; body=%s", w.Code, w.Body.String())
-	}
-	want := []string{"callback(false)", "responded"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("order = %v, want %v — the disable callback must not outlive the response", got, want)
+			select {
+			case <-entered:
+			case <-time.After(2 * time.Second):
+				t.Fatal("EnabledCallback was never called")
+			}
+		})
 	}
 }
 
-// The enable edge stays asynchronous. The container is staying up, and
-// provisioning behind this callback is far too slow to hold AppAPI's request.
-func TestEnableEdgeCallbackDoesNotBlockTheResponse(t *testing.T) {
+// Shutdown has to be able to wait for a callback still in flight. On the
+// disable edge that callback is the write telling Nextcloud the ExApp's
+// settings are no longer live, and AppAPI stops the container as soon as the
+// response returns — so without this the write is simply lost.
+func TestBackgroundTracksAnInFlightCallback(t *testing.T) {
 	h, _ := newTestHandlers(t)
-
 	release := make(chan struct{})
-	entered := make(chan struct{}, 1)
+	finished := make(chan struct{})
 	h.EnabledCallback = func(bool) {
-		entered <- struct{}{}
 		<-release
-	}
-	defer close(release)
-
-	done := make(chan int, 1)
-	go func() { done <- putEnabled(t, h, "enabled=1", "").Code }()
-
-	select {
-	case code := <-done:
-		if code != http.StatusOK {
-			t.Fatalf("got %d, want 200", code)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("the enable edge blocked on its callback; AppAPI's request must return immediately")
+		close(finished)
 	}
 
+	if code := putEnabled(t, h, "enabled=0", "").Code; code != http.StatusOK {
+		t.Fatalf("got %d, want 200", code)
+	}
+
+	waited := make(chan struct{})
+	go func() { h.Background.Wait(); close(waited) }()
+
 	select {
-	case <-entered:
+	case <-waited:
+		t.Fatal("Background.Wait returned while the callback was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	<-finished
+	select {
+	case <-waited:
 	case <-time.After(2 * time.Second):
-		t.Fatal("EnabledCallback was never called on the enable edge")
+		t.Fatal("Background.Wait did not return after the callback finished")
 	}
 }
